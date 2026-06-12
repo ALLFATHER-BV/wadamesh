@@ -1,0 +1,607 @@
+#include <Arduino.h>   // needed for PlatformIO
+#include <Mesh.h>
+#include "MyMesh.h"
+#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
+#include <Preferences.h>
+#include <esp_system.h>
+#include <esp_ota_ops.h>     // recovery-first boot: running slot + reset the boot pointer to factory
+#include <esp_partition.h>   // find/erase otadata so the bootloader returns to the recovery
+#include <helpers/TouchDiagTrace.h>
+#include <helpers/MeshTouchTxTrace.h>
+#include <helpers/esp32/TouchPrefsStore.h>   // touchPrefsGetUiRotation for the boot wordmark
+#endif
+
+// Believe it or not, this std C function is busted on some platforms!
+static uint32_t _atoi(const char* sp) {
+  uint32_t n = 0;
+  while (*sp && *sp >= '0' && *sp <= '9') {
+    n *= 10;
+    n += (*sp++ - '0');
+  }
+  return n;
+}
+
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  #include <InternalFileSystem.h>
+  #if defined(QSPIFLASH)
+    #include <CustomLFS_QSPIFlash.h>
+    DataStore store(InternalFS, QSPIFlash, rtc_clock);
+  #else
+  #if defined(EXTRAFS)
+    #include <CustomLFS.h>
+    CustomLFS ExtraFS(0xD4000, 0x19000, 128);
+    DataStore store(InternalFS, ExtraFS, rtc_clock);
+  #else
+    DataStore store(InternalFS, rtc_clock);
+  #endif
+  #endif
+#elif defined(RP2040_PLATFORM)
+  #include <LittleFS.h>
+  DataStore store(LittleFS, rtc_clock);
+#elif defined(ESP32)
+  #include <SPIFFS.h>
+  #if defined(HAS_TDECK_GT911)
+    #include <SD.h>
+    #include <Preferences.h>
+    #ifndef PIN_SD_CS
+      #define PIN_SD_CS 39      // T-Deck microSD chip-select
+    #endif
+  #endif
+  extern "C" void set_boot_phase(int phase);
+  namespace { struct MainBootTrace { MainBootTrace() { set_boot_phase(2); } } _main_boot_trace; }
+  DataStore store(SPIFFS, rtc_clock);
+  #if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
+    #include "WiFiConfig.h"
+  #endif
+#endif
+
+#ifdef ESP32
+  #ifdef MULTI_TRANSPORT_COMPANION
+    #include <helpers/esp32/MultiTransportCompanionInterface.h>
+    MultiTransportCompanionInterface serial_interface;
+    #ifndef TCP_PORT
+      #define TCP_PORT 5000
+    #endif
+    #ifndef WS_PORT
+      #define WS_PORT 8765
+    #endif
+  #elif defined(WIFI_SSID)
+    #include <helpers/esp32/SerialWifiInterface.h>
+    SerialWifiInterface serial_interface;
+    #ifndef TCP_PORT
+      #define TCP_PORT 5000
+    #endif
+  #elif defined(BLE_PIN_CODE)
+    #include <helpers/esp32/SerialBLEInterface.h>
+    SerialBLEInterface serial_interface;
+  #elif defined(SERIAL_RX)
+    #include <helpers/ArduinoSerialInterface.h>
+    ArduinoSerialInterface serial_interface;
+    HardwareSerial companion_serial(1);
+  #else
+    #include <helpers/ArduinoSerialInterface.h>
+    ArduinoSerialInterface serial_interface;
+  #endif
+#elif defined(RP2040_PLATFORM)
+  //#ifdef WIFI_SSID
+  //  #include <helpers/rp2040/SerialWifiInterface.h>
+  //  SerialWifiInterface serial_interface;
+  //  #ifndef TCP_PORT
+  //    #define TCP_PORT 5000
+  //  #endif
+  // #elif defined(BLE_PIN_CODE)
+  //   #include <helpers/rp2040/SerialBLEInterface.h>
+  //   SerialBLEInterface serial_interface;
+  #if defined(SERIAL_RX)
+    #include <helpers/ArduinoSerialInterface.h>
+    ArduinoSerialInterface serial_interface;
+    HardwareSerial companion_serial(1);
+  #else
+    #include <helpers/ArduinoSerialInterface.h>
+    ArduinoSerialInterface serial_interface;
+  #endif
+#elif defined(NRF52_PLATFORM)
+  #ifdef BLE_PIN_CODE
+    #include <helpers/nrf52/SerialBLEInterface.h>
+    SerialBLEInterface serial_interface;
+  #else
+    #include <helpers/ArduinoSerialInterface.h>
+    ArduinoSerialInterface serial_interface;
+  #endif
+#elif defined(STM32_PLATFORM)
+  #include <helpers/ArduinoSerialInterface.h>
+  ArduinoSerialInterface serial_interface;
+#else
+  #error "need to define a serial interface"
+#endif
+
+/* GLOBAL OBJECTS */
+#ifdef DISPLAY_CLASS
+  #include "UITask.h"
+  UITask ui_task(&board, &serial_interface);
+#endif
+
+StdRNG fast_rng;
+SimpleMeshTables tables;
+MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
+   #ifdef DISPLAY_CLASS
+      , &ui_task
+   #endif
+);
+
+/* END GLOBAL OBJECTS */
+
+#if defined(ESP32)
+volatile int g_boot_phase = 0;
+extern "C" void set_boot_phase(int phase) { g_boot_phase = phase; }
+#endif
+
+
+void halt() {
+  while (1) ;
+}
+
+/* WIFI RECONNECT TRACKERS */
+#if defined(ESP32) && defined(WIFI_SSID)
+  bool wifi_needs_reconnect = false;
+  unsigned long last_wifi_reconnect_attempt = 0;
+#endif
+
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+  Serial.println("[BOOT] setup start");
+
+#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
+  // Record which slot we booted from so the recovery's "Boot firmware" can return
+  // here. Recovery-first itself is enforced by the CUSTOM bootloader (it boots
+  // factory by default and an ota slot only on its one-shot flag), so we must NOT
+  // touch otadata here — otadata just tracks which A/B slot is current, and the
+  // bootloader's default-to-factory is what makes recovery survive ANY app
+  // (Meshtastic included). Skipped where there's no factory partition (V4 /
+  // standalone dual-OTA T-Deck).
+  {
+    const esp_partition_t* fac =
+        esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, NULL);
+    if (fac) {
+      const esp_partition_t* run = esp_ota_get_running_partition();
+      Preferences pslot;
+      if (pslot.begin("mcboot", false)) {
+        pslot.putString("slot", (run && run->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1) ? "ota_1" : "ota_0");
+        pslot.end();
+      }
+    }
+  }
+#endif
+  {
+    bool aes_ok = mesh::Utils::selfTestAES();
+    Serial.printf("[BOOT] AES self-test: %s\n", aes_ok ? "PASS" : "FAIL");
+  #if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
+    mesh_touch_tx_tracef("AES_SELFTEST: %s", aes_ok ? "PASS" : "FAIL");
+  #endif
+  }
+
+  board.begin();
+  Serial.println("[BOOT] board ok");
+
+#ifdef DISPLAY_CLASS
+  DisplayDriver* disp = NULL;
+  if (display.begin()) {
+    disp = &display;
+#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
+    // Rotate the panel to the saved UI orientation BEFORE painting the boot
+    // wordmark, so it's upright in landscape too (UITask applies the same
+    // hardware rotation later for the LVGL UI). ROT_90->1, ROT_270->3.
+    {
+      uint8_t r = touchPrefsGetUiRotation();
+      if (r == 1)      display.setDisplayRotation(1);
+      else if (r == 3) display.setDisplayRotation(3);
+    }
+#endif
+    disp->startFrame();
+    // Centered MESHCOMOD title so the pre-LVGL boot window looks like the
+    // product, not a debug screen. Size 2 fits comfortably in 240 px (size 3
+    // wraps the trailing "D" because the Adafruit GFX font has no kerning).
+    disp->setTextSize(2);
+    disp->drawTextCentered(disp->width() / 2, disp->height() / 2 - 8, "MESHCOMOD");
+    disp->endFrame();
+  }
+#endif
+
+  if (!radio_init()) { halt(); }
+  Serial.println("[BOOT] radio ok");
+
+  fast_rng.begin(radio_driver.getRngSeed());
+
+#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
+  {
+    Preferences prefs;
+    if (prefs.begin("mcboot", false)) {
+      uint32_t bn = prefs.getUInt("n", 0);
+      ++bn;
+      prefs.putUInt("n", bn);
+      prefs.end();
+      meshcomod_touch_set_boot_stats(bn, static_cast<uint8_t>(esp_reset_reason()));
+      Serial.printf("[BOOT] touch_boot_n=%lu reason=%u\n",
+                    static_cast<unsigned long>(bn),
+                    static_cast<unsigned>(esp_reset_reason()));
+    }
+    the_mesh.initTxtTxUniquenessFromRng();
+  }
+#endif
+
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  InternalFS.begin();
+  #if defined(QSPIFLASH)
+    if (!QSPIFlash.begin()) {
+      // debug output might not be available at this point, might be too early. maybe should fall back to InternalFS here?
+      MESH_DEBUG_PRINTLN("CustomLFS_QSPIFlash: failed to initialize");
+    } else {
+      MESH_DEBUG_PRINTLN("CustomLFS_QSPIFlash: initialized successfully");
+    }
+  #else
+  #if defined(EXTRAFS)
+      ExtraFS.begin();
+  #endif
+  #endif
+  store.begin();
+  the_mesh.begin(
+    #ifdef DISPLAY_CLASS
+        disp != NULL
+    #else
+        false
+    #endif
+  );
+
+#ifdef BLE_PIN_CODE
+  serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+#else
+  serial_interface.begin(Serial);
+#endif
+  the_mesh.startInterface(serial_interface);
+#elif defined(RP2040_PLATFORM)
+  LittleFS.begin();
+  store.begin();
+  the_mesh.begin(
+    #ifdef DISPLAY_CLASS
+        disp != NULL
+    #else
+        false
+    #endif
+  );
+
+  //#ifdef WIFI_SSID
+  //  WiFi.begin(WIFI_SSID, WIFI_PWD);
+  //  serial_interface.begin(TCP_PORT);
+  // #elif defined(BLE_PIN_CODE)
+  //   char dev_name[32+16];
+  //   sprintf(dev_name, "%s%s", BLE_NAME_PREFIX, the_mesh.getNodeName());
+  //   serial_interface.begin(dev_name, the_mesh.getBLEPin());
+  #if defined(SERIAL_RX)
+    companion_serial.setPins(SERIAL_RX, SERIAL_TX);
+    companion_serial.begin(115200);
+    serial_interface.begin(companion_serial);
+  #else
+    serial_interface.begin(Serial);
+  #endif
+    the_mesh.startInterface(serial_interface);
+#elif defined(ESP32)
+  // Storage selection. SPIFFS by default; use the SD card under /meshcomod when
+  // SPIFFS is unavailable (e.g. installed under Launcher) OR the user opted in
+  // ("Store data on SD"). The SD shares the LoRa SPI bus, already brought up by
+  // radio_init() above, so SD.begin's spi.begin is a no-op. Graceful: any SD
+  // failure falls back to SPIFFS so the device always boots.
+  bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
+  bool sd_storage = false;
+#if defined(HAS_TDECK_GT911)
+  {
+    extern SPIClass* tdeckSharedSPI();
+    bool use_sd_pref = false, setup_done = false;
+    { Preferences _p; if (_p.begin("touch", true)) {
+        use_sd_pref = _p.getBool("use_sd", false);    // explicit user choice
+        setup_done  = _p.getBool("setup_ok", false);  // finished first-run setup
+        _p.end();
+    } }
+
+    // First-run SD default: the very first time meshcomod boots on a brand-new
+    // device — the user hasn't finished setup yet AND nothing is stored on
+    // SPIFFS — prefer the SD card when one is present. Keeps internal flash free
+    // and is Launcher-friendly. The "no SPIFFS data" guard is what makes this
+    // safe: a device that already holds data on internal flash (e.g. one updated
+    // from an earlier build) is never silently migrated onto an empty card.
+    bool spiffs_has_data = spiffs_ok &&
+        (SPIFFS.exists("/new_prefs") || SPIFFS.exists("/node_prefs") ||
+         SPIFFS.exists("/identity/_main.id"));
+    bool fresh_install = !use_sd_pref && !setup_done && !spiffs_has_data;
+
+    bool want_sd = !spiffs_ok      // no usable SPIFFS partition -> must use SD
+                || use_sd_pref     // user opted in
+                || fresh_install;  // brand-new device: try SD first
+    SPIClass* _spi = tdeckSharedSPI();
+    if (want_sd && _spi) {
+      for (int a = 0; a < 4 && !sd_storage; ++a) {   // short mount ladder (cold cards)
+        SD.end();
+        delay(a == 0 ? 40 : 220);
+        if (SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 3) && SD.cardType() != CARD_NONE) {
+          sd_storage = store.useSdStorage();
+        }
+      }
+      // On a genuine first run, persist the auto-pick so the "Store data on SD"
+      // toggle reflects it and the choice sticks on every later boot.
+      if (fresh_install && sd_storage && !use_sd_pref) {
+        Preferences _p; if (_p.begin("touch", false)) { _p.putBool("use_sd", true); _p.end(); }
+        Serial.println("[BOOT] first run + SD card present -> data defaults to SD");
+      }
+    }
+  }
+#endif
+  if (!sd_storage && !spiffs_ok) SPIFFS.begin(true);   // last resort: format SPIFFS
+  Serial.printf("[BOOT] storage: %s\n", sd_storage ? "SD /meshcomod" : "SPIFFS");
+  store.begin();
+  the_mesh.begin(
+    #ifdef DISPLAY_CLASS
+        disp != NULL
+    #else
+        false
+    #endif
+  );
+  Serial.println("[BOOT] mesh ok");
+
+#if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
+  wifiConfigBegin();
+  Serial.println("[BOOT] wifiConfig ok");
+#endif
+
+#ifdef MULTI_TRANSPORT_COMPANION
+  board.setInhibitSleep(true);
+  serial_interface.begin(Serial, TCP_PORT, WS_PORT);
+  Serial.println("[BOOT] serial_interface ok");
+  serial_interface.setBroadcastResponses(true);  // RX log, channel messages, etc. go to all clients (USB + TCP + WS [+ BLE]), not only last sender
+  /* Pick BLE vs WiFi at boot. The ESP32-S3 doesn't have enough internal heap
+   * (esp_wifi_init needs ~50KB for DMA buffers) to run Bluedroid BLE +
+   * LVGL/TFT + WiFi all at once — esp_wifi_init silently returns ESP_ERR_NO_MEM,
+   * leaving WiFi.getMode() at WIFI_MODE_NULL. So we mutex them: if the user
+   * has saved WiFi credentials AND the radio is enabled, skip BLE init and
+   * use WiFi exclusively. Otherwise init BLE. Toggle by saving/clearing creds
+   * + reboot (saveWifiCb auto-restarts). On the touch build the user can also
+   * pick Wi-Fi with no creds yet (to scan/configure on-device) — wantsWifi()
+   * returns true for that case so the radio comes up scannable. */
+  bool want_wifi = wifiConfigWantsWifi();
+  /* Wi-Fi + BLE now COEXIST (NimBLE host is light enough — the old Bluedroid
+   * heap clash is gone). Bring Wi-Fi up FIRST: esp_wifi_init grabs a big
+   * contiguous DMA block, so let it claim memory before BLE. (Association
+   * happens later in loop(); this just inits the stack.) */
+  if (want_wifi) {
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(false);
+    WiFi.persistent(false);
+  }
+#if defined(BLE_PIN_CODE)
+  /* Always stash the BLE params so the toggle can bring BLE up live later, even
+   * if we defer it now. Then co-init BLE if the user has it enabled AND there's
+   * comfortable internal heap left after Wi-Fi — otherwise defer to Wi-Fi-only
+   * this boot rather than risk an OOM at NimBLE init (recoverable via the live
+   * toggle once memory frees). */
+  // Defensive: force node_name NUL-terminated before it builds the BLE device
+  // name. Under Launcher (degraded storage) it can load non-terminated, which
+  // is what overran the BLE name buffer; the snprintf there now bounds the write,
+  // and this bounds the read so the name is the first <=31 chars, not garbage.
+  { NodePrefs* _np = the_mesh.getNodePrefs();
+    _np->node_name[sizeof(_np->node_name) - 1] = '\0'; }
+  serial_interface.prepareBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+  if (wifiConfigGetBleEnabled()) {
+    const size_t BLE_COEXIST_MIN_FREE  = 50 * 1024;   // free heap after Wi-Fi to also start BLE
+    const size_t BLE_COEXIST_MIN_BLOCK = 20 * 1024;   // largest contiguous block (NimBLE controller/host)
+    const size_t freeh  = ESP.getFreeHeap();
+    const size_t maxblk = ESP.getMaxAllocHeap();
+    if (!want_wifi || (freeh >= BLE_COEXIST_MIN_FREE && maxblk >= BLE_COEXIST_MIN_BLOCK)) {
+      serial_interface.beginBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+      Serial.printf("[boot] BLE co-init OK (wifi=%d free=%u maxblk=%u)\n", (int)want_wifi, (unsigned)freeh, (unsigned)maxblk);
+    } else {
+      Serial.printf("[boot] BLE deferred: low heap (free=%u maxblk=%u) — Wi-Fi only\n", (unsigned)freeh, (unsigned)maxblk);
+    }
+  }
+#endif
+#elif defined(WIFI_SSID)
+  board.setInhibitSleep(true);   // prevent sleep when WiFi is active
+  WiFi.setAutoReconnect(true);
+
+  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info){
+      if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+          WIFI_DEBUG_PRINTLN("WiFi disconnected. Flagging for reconnect...");
+          wifi_needs_reconnect = true;
+      } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+          WIFI_DEBUG_PRINTLN("WiFi connected successfully!");
+          wifi_needs_reconnect = false;
+      }
+  });
+
+  if (wifiConfigHasRuntime()) {
+    char ssid[WIFI_CONFIG_SSID_MAX];
+    char pwd[WIFI_CONFIG_PWD_MAX];
+    wifiConfigGetSsid(ssid, sizeof(ssid));
+    wifiConfigGetPwd(pwd, sizeof(pwd));
+    WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
+  } else {
+    WiFi.begin(WIFI_SSID, WIFI_PWD);
+  }
+  serial_interface.begin(TCP_PORT);
+#elif defined(BLE_PIN_CODE)
+  serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+#elif defined(SERIAL_RX)
+  companion_serial.setPins(SERIAL_RX, SERIAL_TX);
+  companion_serial.begin(115200);
+  serial_interface.begin(companion_serial);
+#else
+  serial_interface.begin(Serial);
+#endif
+  the_mesh.startInterface(serial_interface);
+#else
+  #error "need to define filesystem"
+#endif
+
+  sensors.begin();
+
+#ifdef DISPLAY_CLASS
+  ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());  // still want to pass this in as dependency, as prefs might be moved
+#endif
+
+  board.onBootComplete();
+}
+
+void loop() {
+  // Run UI first every iteration so splash can dismiss at 3s even if mesh/serial blocks later (was stuck on version screen when the_mesh.loop() ran before ui_task.loop()).
+#ifdef DISPLAY_CLASS
+  ui_task.loop();
+#endif
+#ifdef MULTI_TRANSPORT_COMPANION
+  static bool wifi_started = false;
+  static uint32_t last_wifi_retry_ms = 0;
+  static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
+  static bool wifi_radio_prev = true;
+  static bool wifi_radio_inited = false;
+  /* BLE-vs-WiFi mutex (chosen at setup based on saved creds + radio_en pref):
+   * if BLE was initialized, do NOT attempt to bring WiFi up here — esp_wifi_init
+   * would fail with ESP_ERR_NO_MEM after Bluedroid grabbed the internal heap,
+   * and the resulting OOM cascade freezes LVGL. Only run the WiFi state
+   * machine if creds are saved AND the radio pref is on, mirroring `want_wifi`
+   * in setup(). (Touch may also want Wi-Fi up with no creds, to scan.) */
+  bool wifi_radio_en = wifiConfigWantsWifi();
+  if (!wifi_radio_inited) {
+    wifi_radio_inited = true;
+    wifi_radio_prev = wifi_radio_en;
+  } else if (wifi_radio_en != wifi_radio_prev) {
+    wifi_radio_prev = wifi_radio_en;
+    if (!wifi_radio_en) {
+      WiFi.disconnect(true);
+      delay(50);
+      WiFi.mode(WIFI_OFF);
+    }
+    wifi_started = false;
+  }
+  /* UI may have changed SSID/PWD and asked for a re-apply. Trigger re-begin
+   * by forcing wifi_started=false; on next iter the block below will WiFi.begin
+   * with the freshly-saved credentials. Also handles toggling radio_en off
+   * from the UI (the transition above already covered the on case). */
+  if (wifiConfigConsumeApplyRequest()) {
+    /* Only touch WiFi state if it was actually started this session. When
+     * BLE is the active transport (no creds saved), WiFi was never inited
+     * and calling WiFi.disconnect()/mode(WIFI_OFF) would trigger esp_wifi_init
+     * under low heap → crash. Setting wifi_started=false here is harmless;
+     * setup() will re-pick BLE-vs-WiFi on the auto-reboot from saveWifiCb. */
+    if (wifi_started) {
+      if (!wifi_radio_en) {
+        WiFi.disconnect(true);
+        delay(50);
+        WiFi.mode(WIFI_OFF);
+      } else {
+        WiFi.disconnect(false, false);
+        delay(50);
+      }
+    }
+    wifi_started = false;
+    last_wifi_retry_ms = 0;
+  }
+  if (wifi_radio_en) {
+    if (!wifi_started) {
+      wifi_started = true;
+      WiFi.mode(WIFI_STA);
+      if (wifiConfigHasRuntime()) {
+        char ssid[WIFI_CONFIG_SSID_MAX];
+        char pwd[WIFI_CONFIG_PWD_MAX];
+        wifiConfigGetSsid(ssid, sizeof(ssid));
+        wifiConfigGetPwd(pwd, sizeof(pwd));
+        if (strlen(ssid) > 0) {
+          WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
+          last_wifi_retry_ms = millis();
+        }
+      }
+    }
+    // Automatic WiFi recovery for TCP mode: retry connection periodically if link drops.
+    if (wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED) {
+      uint32_t now = millis();
+      if ((uint32_t)(now - last_wifi_retry_ms) >= WIFI_RETRY_INTERVAL_MS) {
+        last_wifi_retry_ms = now;
+        char ssid[WIFI_CONFIG_SSID_MAX];
+        char pwd[WIFI_CONFIG_PWD_MAX];
+        wifiConfigGetSsid(ssid, sizeof(ssid));
+        wifiConfigGetPwd(pwd, sizeof(pwd));
+        if (strlen(ssid) > 0) {
+          WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
+        }
+      }
+    }
+    /* SNTP: kick off when Wi-Fi associates; once system time syncs, push it
+     * into the mesh RTC so timestamps on messages are accurate. */
+    static bool sntp_kicked = false;
+    static bool sntp_pushed = false;
+    static uint32_t sntp_kick_ms = 0;
+    if (WiFi.status() == WL_CONNECTED) {
+      if (!sntp_kicked) {
+        /* Brussels timezone with DST rules baked in (POSIX "CET-1CEST,...").
+         * On touch builds the base is shifted by the user's manual hour offset
+         * (Settings -> Device -> Time offset) so localtime() matches what they
+         * set. configTzTime only affects localtime() display; the mesh RTC
+         * still stores UTC seconds (protocol-facing). */
+        char _tz[48];
+#if defined(HAS_TOUCH_UI)
+        touchPrefsBuildLocalTz(_tz, sizeof _tz);
+#else
+        strncpy(_tz, "CET-1CEST,M3.5.0,M10.5.0/3", sizeof _tz);
+        _tz[sizeof _tz - 1] = '\0';
+#endif
+        configTzTime(_tz, "pool.ntp.org", "time.google.com");
+        sntp_kicked = true;
+        sntp_kick_ms = millis();
+      } else if (!sntp_pushed && (uint32_t)(millis() - sntp_kick_ms) >= 1500) {
+        time_t t = time(nullptr);
+        if (t > 1700000000) {
+          /* Mesh RTC stores UTC seconds (protocol-facing); display layer
+           * converts to local via localtime_r() using the TZ from configTzTime. */
+          rtc_clock.setCurrentTime((uint32_t)t);
+          sntp_pushed = true;
+        }
+      }
+    } else {
+      // Link dropped: allow re-sync on next reconnect.
+      if (sntp_kicked && !sntp_pushed) sntp_kicked = false;
+    }
+  }
+  // Defer TCP and WebSocket until after splash dismisses so the_mesh.loop() never blocks on accept() before ui_task.loop() runs.
+  static const uint32_t TCP_DEFER_MS = 5000;   // 5 s: don't start TCP/WS until version screen has dismissed
+  /* Only start TCP / WS when WiFi was actually brought up. In BLE-only mode
+   * (no saved creds) the lwIP stack is never initialized — calling
+   * WiFiServer::begin() crashes with a tcpip_adapter assert. */
+  if (millis() > TCP_DEFER_MS && wifi_started) {
+    serial_interface.startTcpServer(WiFi.status() == WL_CONNECTED);
+    serial_interface.tickWebSocketHandshake();
+  }
+#endif
+  the_mesh.loop();
+  sensors.loop();
+  rtc_clock.tick();
+
+  // (1.16) sleep when there's no pending work — nRF power saving
+  if (!the_mesh.hasPendingWork()) {
+#if defined(NRF52_PLATFORM)
+    board.sleep(0); // nrf ignores seconds param, sleeps whenever possible
+#endif
+  }
+
+  // (1.16) non-blocking WiFi auto-reconnect (event-flagged in setup). Touch /
+  // multi-transport builds run their own WiFi reconnect state machine above and
+  // don't include SerialWifiInterface's WIFI_DEBUG_PRINTLN, so skip it there.
+#if defined(ESP32) && defined(WIFI_SSID) && !defined(MULTI_TRANSPORT_COMPANION)
+  if (wifi_needs_reconnect && (millis() - last_wifi_reconnect_attempt > 10000)) {
+    WIFI_DEBUG_PRINTLN("Attempting manual WiFi reconnect...");
+    WiFi.disconnect();
+    WiFi.reconnect();
+    last_wifi_reconnect_attempt = millis();
+  }
+#endif
+
+  // (fork) drive the in-firmware OTA staged-reboot
+#if defined(ESP32_PLATFORM)
+  board.pollHttpOtaReboot();
+#endif
+}
