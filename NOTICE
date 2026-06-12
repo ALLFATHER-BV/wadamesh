@@ -1,0 +1,48 @@
+wadamesh
+Copyright (c) 2026 Kaj Schittecat and the wadamesh contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See the LICENSE file for the full text.
+
+================================================================================
+Third-party components and their licenses
+================================================================================
+
+wadamesh incorporates and/or depends on the components below. Their own licenses
+are preserved and apply to those portions. MIT and Apache-2.0 are compatible with
+GPL-3.0; the combined work is distributed under GPL-3.0-or-later.
+
+MeshCore
+    Copyright (c) 2025 Scott Powell / rippleradios.com
+    MIT License — https://github.com/meshcore-dev/MeshCore
+    wadamesh derives its companion-radio application and core hooks from
+    MeshCore. The MeshCore-derived source files retain their MIT license
+    notices. The separate MeshCore fork that wadamesh builds against (the
+    Wi-Fi/BLE/UI hooks) is published under MIT, not GPL, so those hooks remain
+    upstreamable to MeshCore.
+
+LVGL
+    Copyright (c) LVGL Kft and contributors
+    MIT License — https://lvgl.io
+
+NimBLE-Arduino
+    Copyright (c) h2zero and contributors
+    Apache License 2.0 — https://github.com/h2zero/NimBLE-Arduino
+
+CayenneLPP
+    Copyright (c) Electronic Cats
+    MIT License — https://github.com/ElectronicCats/CayenneLPP
+
+RadioLib
+    Copyright (c) Jan Gromeš
+    MIT License — https://github.com/jgromes/RadioLib
+
+Noto Color Emoji (emoji glyph artwork, baked to image data)
+    Copyright (c) Google, Inc.
+    SIL Open Font License 1.1 — https://github.com/googlefonts/noto-emoji
+    Used as bundled image data with attribution.
+
+This list is not exhaustive and is expanded as dependencies are vendored or
+added (e.g. board/display/touch drivers and their respective licenses).
