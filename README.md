@@ -25,9 +25,12 @@ MeshCore fork via PlatformIO `lib_deps`.
 This repo holds only the **app**: the `companion_radio` glue, the `ui-touch`
 LVGL UI, the two boards' glue/variants, and `platformio.ini`. The **MeshCore
 core is not vendored here** — it's pulled as a library via `lib_deps` from the
-fork [`ALLFATHER-BV/meshcomod-core`](https://github.com/ALLFATHER-BV/meshcomod-core) (a clean
-fork of meshcore-dev/MeshCore), pinned by git tag. The build is byte-identical to
-the original in-tree meshcomod firmware.
+[`ALLFATHER-BV/meshcomod`](https://github.com/ALLFATHER-BV/meshcomod) monorepo
+(the same repo as the non-touch firmware), pinned by a lean source-only `core-*`
+git tag. The touch-app files this repo owns (TouchPrefsStore, WifiRuntimeStore,
+the transports, …) are dropped from the lib via `-DMC_VENDORED_TOUCH_APP` so they
+aren't compiled twice. The build is byte-identical to the original in-tree
+meshcomod firmware.
 
 ## Build
 
