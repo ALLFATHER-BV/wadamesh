@@ -28,7 +28,10 @@
     background:
       radial-gradient(46vw 38vh at 24% 4%, rgba(25,214,194,.16), transparent 62%),
       radial-gradient(40vw 34vh at 80% 0%, rgba(21,182,166,.10), transparent 62%);}
-  .mesh{position:fixed; inset:0; z-index:-2; opacity:.7}
+  #vanta-bg{position:fixed; inset:0; z-index:-2;
+    /* let the net breathe at the margins but fade out of the central text column */
+    -webkit-mask-image:linear-gradient(to right,#000 0%,transparent 27%,transparent 73%,#000 100%);
+            mask-image:linear-gradient(to right,#000 0%,transparent 27%,transparent 73%,#000 100%);}
   a{color:var(--teal-ink); text-decoration:none}
   .mono{font-family:'JetBrains Mono',ui-monospace,monospace}
   .wrap{max-width:1040px; margin:0 auto; padding:0 22px}
@@ -79,6 +82,10 @@
   section{padding:44px 0}
   .h2{font-size:clamp(1.55rem,4vw,2.15rem); font-weight:750; letter-spacing:-.5px; text-align:center}
   .p{color:var(--mut); text-align:center; max-width:560px; margin:10px auto 0}
+  /* lift hero + section text off the animated net so it stays readable */
+  .brand .word, .lede, .sub, .cue, .h2, .p{
+    text-shadow: 0 1px 3px #fff, 0 0 14px #fff, 0 0 14px #fff, 0 0 26px #fff, 0 0 26px #fff, 0 0 42px #fff;
+  }
 
   .paths{display:grid; gap:18px; grid-template-columns:1fr 1fr; margin-top:34px}
   @media(max-width:680px){.paths{grid-template-columns:1fr}}
@@ -154,7 +161,7 @@
 </style>
 </head>
 <body>
-<canvas class="mesh"></canvas>
+<div id="vanta-bg"></div>
 
 <header>
   <div class="wrap">
@@ -371,21 +378,25 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
   try { if (!localStorage.getItem('wm-cookie-ack')) cbar.classList.add('show'); } catch(_) {}
   document.getElementById('cookieok').addEventListener('click', () => { cbar.classList.remove('show'); try { localStorage.setItem('wm-cookie-ack','1'); } catch(_) {} });
 
-  // subtle mesh backdrop (teal on white)
-  const cv = document.querySelector('.mesh'), cx = cv.getContext('2d');
-  let W,H,pts;
-  function init(){ W=cv.width=innerWidth; H=cv.height=Math.max(innerHeight,520);
-    const n = Math.min(56, Math.floor(W*H/30000));
-    pts = Array.from({length:n}, ()=>({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.22,vy:(Math.random()-.5)*.22})); }
-  function tick(){ cx.clearRect(0,0,W,H);
-    for(const p of pts){ p.x+=p.vx; p.y+=p.vy; if(p.x<0||p.x>W)p.vx*=-1; if(p.y<0||p.y>H)p.vy*=-1; }
-    for(let i=0;i<pts.length;i++){ for(let j=i+1;j<pts.length;j++){
-      const a=pts[i],b=pts[j],d=Math.hypot(a.x-b.x,a.y-b.y);
-      if(d<140){ cx.strokeStyle='rgba(21,182,166,'+(.14*(1-d/140))+')'; cx.lineWidth=1;
-        cx.beginPath(); cx.moveTo(a.x,a.y); cx.lineTo(b.x,b.y); cx.stroke(); } } }
-    for(const p of pts){ cx.fillStyle='rgba(21,182,166,.32)'; cx.beginPath(); cx.arc(p.x,p.y,1.6,0,7); cx.fill(); }
-    requestAnimationFrame(tick); }
-  addEventListener('resize', init); init(); tick();
+</script>
+
+<!-- animated mesh backdrop — Vanta NET (3D dot-and-line network) in wadamesh teal on white.
+     Needs three.js r121 (Vanta breaks on newer three). Skipped under reduced-motion / no-WebGL. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r121/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vanta@latest/dist/vanta.net.min.js"></script>
+<script>
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches && window.VANTA && VANTA.NET) {
+    try {
+      VANTA.NET({
+        el: "#vanta-bg",
+        mouseControls: true, touchControls: true, gyroControls: false,
+        minHeight: 200.0, minWidth: 200.0, scale: 1.0, scaleMobile: 1.0,
+        color: 0x15b6a6,           // wadamesh teal — the net (dots + lines)
+        backgroundColor: 0xffffff, // matches the page so only the net shows
+        points: 12.0, maxDistance: 22.0, spacing: 18.0, showDots: true
+      });
+    } catch (e) { /* no WebGL → plain white + the CSS glow remain */ }
+  }
 </script>
 </body>
 </html>
