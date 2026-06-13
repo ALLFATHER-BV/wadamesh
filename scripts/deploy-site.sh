@@ -26,7 +26,9 @@ DRY=""
 
 # Mirror deploy/site/ -> web root. --delete prunes files no longer in the repo;
 # everything under deploy/site/ is static (html, svg, json manifests).
-rsync -avz $DRY --delete --chmod=D755,F644 "$SRC" "$DEST:$DEST_PATH/"
+# Note: -a preserves source perms (644 files / 755 dirs) — no --chmod, since the
+# rsync that ships with macOS rejects the D755,F644 per-type syntax.
+rsync -avz $DRY --delete "$SRC" "$DEST:$DEST_PATH/"
 
 if [ -z "$DRY" ]; then
   echo
