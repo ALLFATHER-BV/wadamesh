@@ -30,8 +30,8 @@
       radial-gradient(40vw 34vh at 80% 0%, rgba(21,182,166,.10), transparent 62%);}
   #vanta-bg{position:fixed; inset:0; z-index:-2;
     /* let the net breathe at the margins but fade out of the central text column */
-    -webkit-mask-image:linear-gradient(to right,#000 0%,transparent 27%,transparent 73%,#000 100%);
-            mask-image:linear-gradient(to right,#000 0%,transparent 27%,transparent 73%,#000 100%);}
+    -webkit-mask-image:linear-gradient(to right,#000 0%,rgba(0,0,0,.22) 32%,rgba(0,0,0,.22) 68%,#000 100%);
+            mask-image:linear-gradient(to right,#000 0%,rgba(0,0,0,.22) 32%,rgba(0,0,0,.22) 68%,#000 100%);}
   a{color:var(--teal-ink); text-decoration:none}
   .mono{font-family:'JetBrains Mono',ui-monospace,monospace}
   .wrap{max-width:1040px; margin:0 auto; padding:0 22px}
@@ -39,7 +39,8 @@
   header{padding:74px 0 30px; text-align:center}
   .kicker{display:inline-block; margin-bottom:24px; padding:6px 13px; border:1px solid var(--line);
     border-radius:100px; color:var(--mut); font-size:.78rem; letter-spacing:.05em; text-transform:uppercase;
-    font-family:'JetBrains Mono',monospace; background:#fff}
+    font-family:'JetBrains Mono',monospace; background:#fff; transition:border-color .15s, color .15s}
+  .kicker:hover{border-color:var(--teal); color:var(--ink)}
   .brand{display:flex; align-items:center; justify-content:center; gap:clamp(12px,2.6vw,20px); flex-wrap:wrap}
   .brand .mark{width:clamp(60px,13vw,88px); height:auto; flex:none}
   .brand .word{font-weight:700; font-size:clamp(2rem,7.5vw,3.35rem); letter-spacing:3px; color:var(--ink); line-height:1}
@@ -165,7 +166,7 @@
 
 <header>
   <div class="wrap">
-    <span class="kicker">open source · GPL-3.0</span>
+    <a class="kicker" href="https://github.com/ALLFATHER-BV/wadamesh" target="_blank" rel="noopener">open source · GPL-3.0</a>
     <!-- wadamesh brand: mark + wordmark, flex-centered -->
     <div class="brand">
       <svg class="mark" viewBox="0 0 180 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="wadamesh">
@@ -199,7 +200,7 @@
       <span class="word mono">WADA<span class="t">MESH</span></span>
     </div>
     <p class="lede">A real touchscreen UI for your mesh radio.</p>
-    <p class="sub">MeshCore firmware for the <b>LilyGo&nbsp;T-Deck</b> and <b>Heltec&nbsp;V4</b> — map, chat, channels and contacts on the device itself, <b>and</b> a companion radio for the <b>MeshCore app</b> at the same time.</p>
+    <p class="sub">MeshCore MESHCOMOD firmware for the <b>LilyGo&nbsp;T-Deck</b> and <b>Heltec&nbsp;V4</b> — map, chat, channels and contacts on the device itself, <b>and</b> a companion radio for the <b>MeshCore app</b> at the same time.</p>
     <div class="pills">
       <span class="pill" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 20l-6-3V4l6 3 6-3 6 3v13l-6-3-6 3z"/><path d="M9 7v13M15 4v13"/></svg>Offline map
         <span class="pop"><b>Offline map</b>A real OpenStreetMap you can pan and zoom on the device. Pre-load tile packs to an SD card for fully offline use, or fetch over Wi-Fi — and see your contacts' GPS positions plotted on it.</span></span>
@@ -231,10 +232,11 @@
       </article>
 
       <article class="path l" data-path="launcher" tabindex="0">
+        <span class="tag">T-Deck only</span>
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
         <h3>With Launcher</h3>
-        <p>Run WADAMESH as one app inside <b>bmorcelli's Launcher</b>.</p>
-        <div class="good">Best if you want to <b>keep multiple firmwares</b> and switch between them from a menu.</div>
+        <p>Run WADAMESH as one app inside <b>bmorcelli's Launcher</b> on the <b>LilyGo&nbsp;T-Deck</b>.</p>
+        <div class="good">Best if you want to <b>keep multiple firmwares</b> and switch between them from a menu. The <b>Heltec&nbsp;V4</b> installs Standalone only.</div>
         <span class="pick">Choose Launcher <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       </article>
     </div>
@@ -262,14 +264,13 @@
       <button class="back" data-back>← choose a different path</button>
       <div class="guide-head"><h3>Install with bmorcelli's Launcher</h3></div>
       <p class="p"><a href="https://bmorcelli.github.io/Launcher/" target="_blank" rel="noopener">Launcher</a> is a multi-app boot menu for ESP32 devices — keep it, and run WADAMESH as one of your apps.</p>
+      <p class="p" style="margin-top:10px"><b>This path is for the LilyGo&nbsp;T-Deck only.</b> On the Heltec&nbsp;V4, install <a href="#standalone" onclick="choose('standalone');return false">Standalone</a> instead.</p>
       <div class="steps" style="margin-top:22px">
         <div class="step"><div class="num">1</div><div><h4>Install Launcher first</h4><p>Flash bmorcelli's Launcher to your device, following its own installer — <a href="https://bmorcelli.github.io/Launcher/" target="_blank" rel="noopener">bmorcelli.github.io/Launcher</a>.</p></div></div>
         <div class="step"><div class="num">2</div><div><h4>Add the WADAMESH app</h4><p>Grab the WADAMESH <b>app image</b> for your board below, then install it from Launcher (via its web UI / OTA, or copy the <code>.bin</code> to your SD card).</p></div></div>
         <div class="step"><div class="num">3</div><div><h4>Launch WADAMESH</h4><p>Pick WADAMESH from the Launcher menu. Settings persist to SD, so they survive Launcher's slim partition.</p></div></div>
       </div>
-      <div class="boards">
-        <div class="board"><h4>Heltec V4 + TFT</h4><p>app image (no bootloader)</p>
-          <a class="dl" href="https://firmware.wadamesh.com/latest/wadamesh-heltec-v4-tft.bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</a></div>
+      <div class="boards" style="grid-template-columns:1fr; max-width:380px">
         <div class="board"><h4>LilyGo T-Deck / Plus</h4><p>app image (no bootloader)</p>
           <a class="dl" href="https://firmware.wadamesh.com/latest/wadamesh-tdeck.bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</a></div>
       </div>
