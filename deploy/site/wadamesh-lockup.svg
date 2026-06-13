@@ -1,8 +1,36 @@
 <svg viewBox="0 0 720 140" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="WADAMESH">
+  <defs>
+    <filter id="wmGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="1.5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style type="text/css">
+      .wm-flow path{fill:none;stroke:#19d6c2;stroke-width:5.5;stroke-linecap:round}
+      .wm-ping{fill:none;stroke:#19d6c2;stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center}
+      @media (prefers-reduced-motion:no-preference){
+        .wm-flow path{stroke-dasharray:2 18;animation:wm-flow .8s linear infinite}
+        .wm-flow .wm-top{animation-delay:-.4s}
+        @keyframes wm-flow{to{stroke-dashoffset:-20}}
+        .wm-ping{animation:wm-ping 2.4s ease-out infinite}
+        .wm-ping.c1{animation-delay:.3s}.wm-ping.c2{animation-delay:.6s}.wm-ping.c3{animation-delay:.9s}.wm-ping.c4{animation-delay:1.2s}
+        @keyframes wm-ping{0%{transform:scale(1);opacity:.55}70%,100%{transform:scale(2.4);opacity:0}}
+      }
+      @media (prefers-reduced-motion:reduce){.wm-flow{display:none}}
+    </style>
+  </defs>
   <!-- mark -->
   <g transform="translate(0 10)">
     <path d="M10 60 L50 108 L90 60 L130 108 L170 60" stroke="#15181E" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
     <path d="M10 60 L50 12 L90 60 L130 12 L170 60" stroke="#15181E" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <g class="wm-flow" filter="url(#wmGlow)">
+      <path class="wm-bot" pathLength="100" d="M10 60 L50 108 L90 60 L130 108 L170 60"/>
+      <path class="wm-top" pathLength="100" d="M10 60 L50 12 L90 60 L130 12 L170 60"/>
+    </g>
+    <g class="wm-pings">
+      <circle class="wm-ping c0" cx="10" cy="60" r="7.5"/><circle class="wm-ping c2" cx="90" cy="60" r="7.5"/><circle class="wm-ping c4" cx="170" cy="60" r="7.5"/>
+      <circle class="wm-ping c1" cx="50" cy="12" r="7.5"/><circle class="wm-ping c3" cx="130" cy="12" r="7.5"/>
+      <circle class="wm-ping c1" cx="50" cy="108" r="7.5"/><circle class="wm-ping c3" cx="130" cy="108" r="7.5"/>
+    </g>
     <g fill="#15B6A6">
       <circle cx="10" cy="60" r="7.5"/><circle cx="90" cy="60" r="7.5"/><circle cx="170" cy="60" r="7.5"/>
       <circle cx="50" cy="12" r="7.5"/><circle cx="130" cy="12" r="7.5"/>
