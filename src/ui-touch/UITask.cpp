@@ -12908,7 +12908,7 @@ static lv_point_t s_map_link_pts[k_map_markers_max][2];
 // STAR mode (our own sent floods) links each repeater that echoed us back to
 // "me". All overlay widgets live on the map pan layer and are freed by
 // freeMapMarkers() at the start of the next render.
-struct RouteNode { double lat, lon; bool has_pos; char tag[6]; };
+struct RouteNode { double lat, lon; bool has_pos; char tag[6]; char name[36]; char id[9]; };
 static constexpr int k_route_max = 10;
 static RouteNode   s_route[k_route_max] = {};
 static int         s_route_n      = 0;       // nodes captured
@@ -12920,6 +12920,14 @@ static lv_obj_t*   s_route_objs[k_route_max * 3] = {nullptr};   // lines + dots 
 static int         s_route_obj_n  = 0;
 static lv_point_t  s_route_seg_pts[k_route_max][2];             // persistent (lv_line keeps the ptr)
 static void drawRouteOverlay(lv_obj_t* parent, double cwx, double cwy);
+// Route-replay HUD: top banner with the current hop's repeater name + identifier,
+// plus a replay button. Lives on lv_layer_top while a route is shown on the map.
+static lv_obj_t*   s_route_hud     = nullptr;
+static lv_obj_t*   s_route_hud_lbl = nullptr;
+static void routeReplayTick(lv_timer_t* t);
+static void routeHudUpdate();
+static void showRouteHud();
+static void hideRouteHud();
 
 static void freeMapMarkers() {
   for (auto& m : s_map_markers) {
@@ -13190,6 +13198,7 @@ static void routeReplayTick(lv_timer_t* t) {
   if (s_route_reveal < s_route_n) {
     ++s_route_reveal;
     if (getActiveTab() == MAP_TAB_INDEX) renderMapMarkers();
+    routeHudUpdate();   // banner shows the hop we just revealed
   }
   if (s_route_reveal >= s_route_n) {
     if (s_route_timer) { lv_timer_del(s_route_timer); s_route_timer = nullptr; }
@@ -13202,7 +13211,22 @@ static void clearRouteReplay() {
   s_route_active = false;
   s_route_reveal = 0;
   s_route_n = 0;
+  hideRouteHud();
   if (was && getActiveTab() == MAP_TAB_INDEX) renderMapMarkers();   // drop the overlay
+}
+
+// Resolve a hop's hash to a repeater name (when known) + its hex identifier, for
+// the on-screen replay banner. Read-only lookup -> safe mid-RX.
+static void routeFillId(RouteNode& nd, const uint8_t* hash, uint8_t hsz) {
+  nd.id[0] = '\0';
+  for (uint8_t b = 0; b < hsz && b < 4; ++b) snprintf(nd.id + b * 2, 3, "%02X", hash[b]);
+  char nm[36];
+  if (the_mesh.uiHopName(hash, hsz, nm, sizeof nm)) {
+    strncpy(nd.name, nm, sizeof(nd.name) - 1);
+    nd.name[sizeof(nd.name) - 1] = '\0';
+  } else {
+    nd.name[0] = '\0';
+  }
 }
 
 // Build s_route[] from a message's repeater hops. Returns how many nodes have a
@@ -13230,6 +13254,7 @@ static int buildRouteFromMessage(const UITask::UIMessage& m) {
       s_route[s_route_n].lat = lat;
       s_route[s_route_n].lon = lon;
       snprintf(s_route[s_route_n].tag, sizeof(s_route[0].tag), "%u", (unsigned)(h + 1));
+      routeFillId(s_route[s_route_n], &m.in_path[off], hsz);
       ++s_route_n;
     }
     if (self_has && s_route_n < k_route_max) {
@@ -13238,6 +13263,9 @@ static int buildRouteFromMessage(const UITask::UIMessage& m) {
       s_route[s_route_n].lon = self_lon;
       strncpy(s_route[s_route_n].tag, "ME", sizeof(s_route[0].tag) - 1);
       s_route[s_route_n].tag[sizeof(s_route[0].tag) - 1] = '\0';
+      strncpy(s_route[s_route_n].name, "You", sizeof(s_route[0].name) - 1);
+      s_route[s_route_n].name[sizeof(s_route[0].name) - 1] = '\0';
+      s_route[s_route_n].id[0] = '\0';
       ++s_route_n;
     }
   } else if (m.outgoing && m.sent_fp && self_has) {
@@ -13248,6 +13276,9 @@ static int buildRouteFromMessage(const UITask::UIMessage& m) {
     s_route[s_route_n].lon = self_lon;
     strncpy(s_route[s_route_n].tag, "ME", sizeof(s_route[0].tag) - 1);
     s_route[s_route_n].tag[sizeof(s_route[0].tag) - 1] = '\0';
+    strncpy(s_route[s_route_n].name, "You", sizeof(s_route[0].name) - 1);
+    s_route[s_route_n].name[sizeof(s_route[0].name) - 1] = '\0';
+    s_route[s_route_n].id[0] = '\0';
     ++s_route_n;
     const uint8_t rhc = the_mesh.uiRepeatHopCount(m.sent_fp);
     for (uint8_t r = 0; r < rhc && s_route_n < k_route_max; ++r) {
@@ -13260,6 +13291,7 @@ static int buildRouteFromMessage(const UITask::UIMessage& m) {
       s_route[s_route_n].lat = lat;
       s_route[s_route_n].lon = lon;
       snprintf(s_route[s_route_n].tag, sizeof(s_route[0].tag), "R%u", (unsigned)(r + 1));
+      routeFillId(s_route[s_route_n], hh, hs);
       ++s_route_n;
     }
   }
@@ -13269,6 +13301,81 @@ static int buildRouteFromMessage(const UITask::UIMessage& m) {
   return plottable;
 }
 
+// ---- Route-replay HUD: a top banner with the current hop's repeater name +
+// identifier, and a replay button to re-run the reveal animation. ----
+static void routeBannerText(int i, char* buf, size_t n) {
+  if (!buf || !n) return;
+  if (i < 0 || i >= s_route_n) { buf[0] = '\0'; return; }
+  const RouteNode& nd = s_route[i];
+  if (nd.name[0] && nd.id[0])  snprintf(buf, n, "%s  \xC2\xB7  %s", nd.name, nd.id);  // name · identifier
+  else if (nd.name[0])         snprintf(buf, n, "%s", nd.name);                       // e.g. "You"
+  else if (nd.id[0])           snprintf(buf, n, "Repeater %s", nd.id);                // unknown name -> hash only
+  else                         snprintf(buf, n, "%s", nd.tag);
+}
+
+static void routeHudUpdate() {
+  if (!s_route_hud_lbl || s_route_n <= 0) return;
+  int idx = s_route_reveal - 1;                  // the hop most recently revealed
+  if (idx < 0) idx = 0;
+  if (idx >= s_route_n) idx = s_route_n - 1;
+  char buf[60];
+  routeBannerText(idx, buf, sizeof buf);
+  lv_label_set_text(s_route_hud_lbl, buf);
+}
+
+static void hideRouteHud() {
+  if (s_route_hud) { lv_obj_del(s_route_hud); s_route_hud = nullptr; s_route_hud_lbl = nullptr; }
+}
+
+// Replay button -> restart the reveal animation from the first hop.
+static void routeReplayRestartCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_route_n < 1) return;
+  s_route_active = true;
+  s_route_reveal = 1;
+  fitMapToRoute();
+  if (getActiveTab() == MAP_TAB_INDEX) { renderMapTiles(); renderMapMarkers(); }
+  routeHudUpdate();
+  if (s_route_timer) { lv_timer_del(s_route_timer); s_route_timer = nullptr; }
+  if (s_route_reveal < s_route_n)
+    s_route_timer = lv_timer_create(routeReplayTick, 650, nullptr);
+}
+
+static void showRouteHud() {
+  hideRouteHud();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  s_route_hud = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_route_hud);
+  lv_obj_set_size(s_route_hud, sw - 16, 34);
+  lv_obj_align(s_route_hud, LV_ALIGN_TOP_MID, 0, STATUSBAR_H + 4);
+  lv_obj_set_style_bg_color(s_route_hud, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_route_hud, LV_OPA_90, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_route_hud, 12, LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_route_hud, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_route_hud, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_border_opa(s_route_hud, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_clear_flag(s_route_hud, LV_OBJ_FLAG_SCROLLABLE);
+
+  s_route_hud_lbl = lv_label_create(s_route_hud);
+  lv_label_set_long_mode(s_route_hud_lbl, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(s_route_hud_lbl, sw - 16 - 12 - 42);   // leave room for the replay button
+  lv_obj_align(s_route_hud_lbl, LV_ALIGN_LEFT_MID, 8, 0);
+  lv_obj_set_style_text_color(s_route_hud_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_route_hud_lbl, &g_font_14, LV_PART_MAIN);
+  lv_label_set_text(s_route_hud_lbl, "");
+
+  lv_obj_t* rb = lv_btn_create(s_route_hud);
+  lv_obj_set_size(rb, 34, 26);
+  lv_obj_align(rb, LV_ALIGN_RIGHT_MID, -4, 0);
+  lv_obj_set_style_radius(rb, 8, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(rb, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(rb, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_add_event_cb(rb, routeReplayRestartCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* rl = lv_label_create(rb);
+  lv_label_set_text(rl, LV_SYMBOL_REFRESH);
+  lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_center(rl);
+}
+
 // Switch to the map and animate the route that buildRouteFromMessage() captured.
 static void startRouteReplay() {
   if (s_route_n < 2) return;
@@ -13276,6 +13383,8 @@ static void startRouteReplay() {
   s_route_reveal = 1;          // reveal node 1 immediately; the timer adds the rest
   fitMapToRoute();
   goToTab(MAP_TAB_INDEX);       // runs onMapTabActivated -> renders tiles + markers + overlay
+  showRouteHud();              // top banner (current hop name + identifier) + replay button
+  routeHudUpdate();
   if (s_route_timer) { lv_timer_del(s_route_timer); s_route_timer = nullptr; }
   if (s_route_reveal < s_route_n)
     s_route_timer = lv_timer_create(routeReplayTick, 650, nullptr);
@@ -14947,6 +15056,10 @@ static void closeMsgActionMenu() {
 }
 static void closeMsgInfoPopup() {
   if (s_msg_info_root) {
+    // Hide this frame so it vanishes instantly (e.g. when tapping "Replay route"
+    // the popup shouldn't linger over the map transition); the async del frees it
+    // on the next tick, which is safe to call from a child button's own callback.
+    lv_obj_add_flag(s_msg_info_root, LV_OBJ_FLAG_HIDDEN);
     lv_obj_del_async(s_msg_info_root);
     s_msg_info_root = nullptr;
   }
