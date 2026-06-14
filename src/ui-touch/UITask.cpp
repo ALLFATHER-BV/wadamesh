@@ -476,7 +476,8 @@ constexpr lv_coord_t STATUSBAR_H = 22;
 struct GlobalStatusBar {
   lv_obj_t* root;
   lv_obj_t* left_label;
-  lv_obj_t* conn_icon;
+  lv_obj_t* conn_icon;       // Wi-Fi glyph
+  lv_obj_t* ble_icon;        // Bluetooth glyph (separate from Wi-Fi)
   lv_obj_t* clock;
   lv_obj_t* batt_pct;
   lv_obj_t* batt_icon;
@@ -14134,6 +14135,7 @@ static void applyMapChrome(bool on) {
     if (g_statusbar.batt_pct)   lv_obj_set_style_text_color(g_statusbar.batt_pct, fg_sub, LV_PART_MAIN);
     if (g_statusbar.clock)      lv_obj_set_style_text_color(g_statusbar.clock, fg_sub, LV_PART_MAIN);
     if (g_statusbar.conn_icon)  lv_obj_set_style_text_color(g_statusbar.conn_icon, fg_sub, LV_PART_MAIN);
+    if (g_statusbar.ble_icon)   lv_obj_set_style_text_color(g_statusbar.ble_icon, fg_sub, LV_PART_MAIN);
   }
   // ---- Tab bar (bottom menu) — translucent so the map shows through ----
   if (g_lv.tabview) {
@@ -18294,7 +18296,7 @@ static void buildGlobalStatusBar() {
   lv_obj_add_event_cb(g_statusbar.chan_gear, channelGearCb, LV_EVENT_CLICKED, nullptr);
 
   // Right zone, anchored to the right edge (from rightmost to leftmost):
-  // battery icon, battery %, clock, conn icon. Compact spacings.
+  // battery icon, battery %, signal bars, Wi-Fi, Bluetooth, clock. Compact spacings.
   g_statusbar.batt_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.batt_icon, LV_SYMBOL_BATTERY_2);
   lv_obj_set_style_text_color(g_statusbar.batt_icon, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -18311,22 +18313,30 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.clock, TR("--:--"));
   lv_obj_set_style_text_color(g_statusbar.clock, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.clock, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -64, 0);
+  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -110, 0);
 
+  // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars).
   g_statusbar.conn_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.conn_icon, TR(""));
   lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.conn_icon, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID, -104, 0);
+  lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID, -73, 0);
 
-  // ---- Mesh signal-strength bars (left of the conn icon) ----
+  // Bluetooth glyph (left of Wi-Fi).
+  g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
+  lv_label_set_text(g_statusbar.ble_icon, TR(""));
+  lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
+  lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID, -95, 0);
+
+  // ---- Mesh signal-strength bars (just left of the battery) ----
   // Four bars of increasing height; the lit count reflects the SNR of the last
   // packet we heard (updateGlobalStatusBar recolors them). Dim = no recent RX.
   {
     lv_obj_t* sb = lv_obj_create(g_statusbar.root);
     lv_obj_remove_style_all(sb);
     lv_obj_set_size(sb, 15, 12);
-    lv_obj_align(sb, LV_ALIGN_RIGHT_MID, -126, 0);
+    lv_obj_align(sb, LV_ALIGN_RIGHT_MID, -54, 0);
     lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
     const int bw = 3, gap = 1;
     const int hh[4] = {4, 6, 9, 12};
@@ -18342,12 +18352,12 @@ static void buildGlobalStatusBar() {
     }
   }
 
-  // Keyboard layout indicator — sits between conn_icon and clock.
+  // Keyboard layout indicator — sits left of the clock (only shown while typing).
   g_statusbar.layout_label = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.layout_label, TR(""));
   lv_obj_set_style_text_color(g_statusbar.layout_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.layout_label, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -130, 0);
+  lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -150, 0);
   lv_obj_add_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -18469,18 +18479,21 @@ static void updateGlobalStatusBar() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   const bool wifi_up = (WiFi.status() == WL_CONNECTED);
   const bool ble_up  = g_lv.task->hasBleCapability() && g_lv.task->isBleEnabled();
-  // Wi-Fi + BLE coexist now, so show BOTH icons when both are up.
-  if (wifi_up && ble_up) {
-    lv_label_set_text(g_statusbar.conn_icon, LV_SYMBOL_WIFI " " LV_SYMBOL_BLUETOOTH);
-    lv_obj_clear_flag(g_statusbar.conn_icon, LV_OBJ_FLAG_HIDDEN);
-  } else if (wifi_up) {
+  // Wi-Fi and Bluetooth are independent glyphs now (Wi-Fi right of Bluetooth),
+  // each shown only when that radio is up.
+  if (wifi_up) {
     lv_label_set_text(g_statusbar.conn_icon, LV_SYMBOL_WIFI);
-    lv_obj_clear_flag(g_statusbar.conn_icon, LV_OBJ_FLAG_HIDDEN);
-  } else if (ble_up) {
-    lv_label_set_text(g_statusbar.conn_icon, LV_SYMBOL_BLUETOOTH);
     lv_obj_clear_flag(g_statusbar.conn_icon, LV_OBJ_FLAG_HIDDEN);
   } else {
     lv_obj_add_flag(g_statusbar.conn_icon, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (g_statusbar.ble_icon) {
+    if (ble_up) {
+      lv_label_set_text(g_statusbar.ble_icon, LV_SYMBOL_BLUETOOTH);
+      lv_obj_clear_flag(g_statusbar.ble_icon, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(g_statusbar.ble_icon, LV_OBJ_FLAG_HIDDEN);
+    }
   }
 #endif
 
@@ -18516,8 +18529,8 @@ static void updateGlobalStatusBar() {
   static bool s_last_charging = false;
   if (pct != s_last_pct || charging != s_last_charging) {
     char buf[8];
-    if (pct < 0)        snprintf(buf, sizeof(buf), "?");
-    else if (charging)  snprintf(buf, sizeof(buf), "CHG");   // on USB — cell % isn't observable
+    if (charging)       buf[0] = '\0';                       // charging -> batteryGlyphForMv shows the bolt; no text
+    else if (pct < 0)   snprintf(buf, sizeof(buf), "?");
     else                snprintf(buf, sizeof(buf), "%d%%", pct);
     lv_label_set_text(g_statusbar.batt_pct, buf);
     s_last_pct = pct;
