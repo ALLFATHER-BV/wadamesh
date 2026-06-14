@@ -12059,6 +12059,10 @@ static void tileFetchTaskFn(void* arg) {
       continue;
     }
     ++s_tile_fetch_iters;
+    // Yield once per dequeued item: a burst of queued tiles that are already on
+    // disk (the prefetch now enqueues without stat'ing) would otherwise be a
+    // tight no-yield loop of tileCacheExists() and could starve core-0 IDLE.
+    vTaskDelay(1);
     if (WiFi.status() != WL_CONNECTED) {
       Serial.printf("[TILE] skip z=%u x=%ld y=%ld: WiFi down\n",
                     (unsigned)req.z, (long)req.x, (long)req.y);
@@ -12290,22 +12294,30 @@ static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
 static void queueZoomPackForCenter() {
   if (s_map_center_lat == 0.0 && s_map_center_lon == 0.0) return;
   if (!s_tiles_fs_ready) return;
-  // Don't thrash a near-full cache: the wide prefetch below would just download
-  // tiles the partition can't hold. The visible-tile fetches in renderMapTiles are
-  // NOT gated by this, so the spot you're looking at always still tries to cache.
-  if (s_tiles_fs.totalBytes() > 0 &&
-      (s_tiles_fs.totalBytes() - s_tiles_fs.usedBytes()) < (512u * 1024u)) return;
-  // Span across a 3x3 grid at Belgium's latitude (~50.8N): z7 ~590 km (country +
-  // all borders), z8 ~295 km (whole country), z9 ~145 km (a province). Plus a
-  // single close overview (z12, town) + detail (z16, street) tile for the exact
-  // spot. r = tiles each side of center (0 = just the center tile).
+  // This runs on the UI thread (core 0), so it must do NO filesystem work. The
+  // old version stat'd ~58 tiles (tileCacheExists) + a usedBytes() traversal here
+  // every render; a zoom-out into an un-cached area fires renders back-to-back as
+  // tiles stream in, and that starved core-0 IDLE -> task-watchdog reboot
+  // (confirmed by coredump: loopTask stuck in tileCacheExists). We now ONLY
+  // enqueue (in-memory dedup + queue send); the background fetch task skips tiles
+  // already on disk. Throttle by area too: the prefetch covers a wide region, so
+  // only re-enqueue when the center crosses into a new z9 tile (~50 km).
+  static int32_t last_tx = INT32_MIN, last_ty = INT32_MIN;
+  double cwx, cwy;
+  latLonToWorldPx(s_map_center_lat, s_map_center_lon, 9, &cwx, &cwy);
+  const int32_t cz9x = (int32_t)floor(cwx / 256.0);
+  const int32_t cz9y = (int32_t)floor(cwy / 256.0);
+  if (cz9x == last_tx && cz9y == last_ty) return;   // same area — already enqueued
+  last_tx = cz9x; last_ty = cz9y;
+
+  // 3x3 grids at Belgium's latitude (~50.8N): z7 ~590 km (country + all borders),
+  // z8 ~295 km (whole country), z9 ~145 km (a province). Plus a single close
+  // overview (z12, town) + detail (z16, street). r = tiles each side of center.
   struct ZoomPack { uint8_t z; int8_t r; };
   static const ZoomPack packs[] = {
-    { 7, 1 },                                  // country + all borders
-    { 8, 1 },                                  // whole country
-    { 9, 1 },                                  // a province
-    { (uint8_t)(k_map_zoom_default - 2), 0 },  // z12 town overview
-    { (uint8_t)(k_map_zoom_default + 2), 0 },  // z16 street detail
+    { 7, 1 }, { 8, 1 }, { 9, 1 },
+    { (uint8_t)(k_map_zoom_default - 2), 0 },
+    { (uint8_t)(k_map_zoom_default + 2), 0 },
   };
   for (uint8_t p = 0; p < sizeof(packs) / sizeof(packs[0]); ++p) {
     const uint8_t z = packs[p].z;
@@ -12320,12 +12332,7 @@ static void queueZoomPackForCenter() {
       for (int8_t dx = -r; dx <= r; ++dx) {
         const int32_t tx = ctx + dx, ty = cty + dy;
         if (tx < 0 || ty < 0 || tx >= span || ty >= span) continue;  // off the world edge
-        char path[48];
-        snprintf(path, sizeof path, "/tiles/%u/%ld/%ld.jpg", (unsigned)z, (long)tx, (long)ty);
-        if (tileCacheExists(path)) continue;  // already have an offline pack tile
-        snprintf(path, sizeof path, "/tiles/%u/%ld/%ld.png", (unsigned)z, (long)tx, (long)ty);
-        if (tileCacheExists(path)) continue;  // already Wi-Fi-fetched
-        queueTileForFetch(z, tx, ty);
+        queueTileForFetch(z, tx, ty);   // in-memory dedup + enqueue; fetch task skips on-disk
       }
     }
   }
