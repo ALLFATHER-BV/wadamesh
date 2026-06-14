@@ -613,6 +613,7 @@ struct LvUiState {
   lv_indev_drv_t     indev_drv;
   lv_obj_t* tabview;
   lv_obj_t* home_state;
+  lv_obj_t* home_unread;   // clickable "envelope + Unread N" line -> Chats inbox
   lv_obj_t* home_stats;
   // Duty-cycle meter (label + bar) on the Home tab. Surfaces the live TX
   // budget remaining so the operator notices regulatory throttling before
@@ -11185,6 +11186,12 @@ static void homeChartClickedCb(lv_event_t* e) {
   openSignalInfoPopup();
 }
 
+// Tap the home "Unread" line -> jump straight to the Chats inbox.
+static void homeUnreadClickedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  goToTab(CHAT_INBOX_TAB_INDEX);
+}
+
 static void makeHome(lv_obj_t* tab) {
   // Layout (240 wide × 282 tall): title + heartbeat + battery at top, status
   // lines, TX/RX chart in the middle, Send Advert button at the bottom.
@@ -11220,6 +11227,19 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_style_text_color(g_lv.home_state, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_align(g_lv.home_state, LV_ALIGN_TOP_LEFT, 0, 4);
 
+  // Unread line — its own tappable row (mail icon + live count) that jumps to
+  // the Chats inbox. Kept separate from the memory line below so only the unread
+  // text is the touch target.
+  g_lv.home_unread = lv_label_create(tab);
+  lv_label_set_text(g_lv.home_unread, TR(""));
+  lv_obj_set_style_text_color(g_lv.home_unread, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_lv.home_unread, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_width(g_lv.home_unread, home_land ? (cw - 110) : cw);
+  lv_obj_align(g_lv.home_unread, LV_ALIGN_TOP_LEFT, 0, 22);
+  lv_obj_add_flag(g_lv.home_unread, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_ext_click_area(g_lv.home_unread, 8);
+  lv_obj_add_event_cb(g_lv.home_unread, homeUnreadClickedCb, LV_EVENT_CLICKED, nullptr);
+
   g_lv.home_stats = lv_label_create(tab);
   lv_label_set_text(g_lv.home_stats, TR(""));
   lv_obj_set_style_text_color(g_lv.home_stats, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -11229,7 +11249,7 @@ static void makeHome(lv_obj_t* tab) {
   // In landscape, keep the status text clear of the top-right button column.
   lv_obj_set_width(g_lv.home_stats, home_land ? (cw - 110) : cw);
   lv_label_set_long_mode(g_lv.home_stats, LV_LABEL_LONG_WRAP);
-  lv_obj_align(g_lv.home_stats, LV_ALIGN_TOP_LEFT, 0, 22);
+  lv_obj_align(g_lv.home_stats, LV_ALIGN_TOP_LEFT, 0, 40);
   // home_dc_label/bar reserved for a future bar widget; meter for now is
   // appended into home_stats so it lives in the same scarce vertical band
   // and doesn't collide with the TX/RX chart legend at y=64.
@@ -17971,8 +17991,20 @@ static void ccPowerCb(lv_event_t* e) {
   openPowerMenu();
 }
 
+// Long-press a control-center chip -> close the panel and open that feature's
+// full settings page. lv_indev_wait_release swallows the release's CLICKED so
+// the chip's normal tap-to-toggle action doesn't also fire after a long-press.
+static void ccLongNavCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
+  lv_indev_t* indev = lv_indev_get_act();
+  if (indev) lv_indev_wait_release(indev);
+  const int cat = (int)(intptr_t)lv_event_get_user_data(e);
+  closeControlCenter();
+  openSettingsCategory(cat);
+}
 static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
-                     bool active, lv_event_cb_t cb, int width = 66, int height = 54) {
+                     bool active, lv_event_cb_t cb, int width = 66, int height = 54,
+                     int long_cat = -1) {
   lv_obj_t* b = lv_btn_create(parent);
   lv_obj_set_size(b, width, height);
   styleButton(b);
@@ -17981,6 +18013,8 @@ static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
   lv_obj_set_style_bg_color(b, lv_color_hex(active ? COLOR_STATUS_OK : COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(b, active ? LV_OPA_COVER : LV_OPA_20, LV_PART_MAIN);
   lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+  if (long_cat >= 0)   // long-press jumps to this feature's full settings page
+    lv_obj_add_event_cb(b, ccLongNavCb, LV_EVENT_LONG_PRESSED, (void*)(intptr_t)long_cat);
   // Icon over label, both pinned with a fixed gap so they never collide even on
   // the shorter (44 px) T-Deck chips. Icon ~4 px from the top, label ~3 px from
   // the bottom.
@@ -18223,23 +18257,25 @@ static void openControlCenter() {
   tw = (card_w - 20 - 4 * 5) / 5;   // 5 chips (Wi-Fi/BT/GPS/Theme/Sound) + 4 gaps
   if (tw > 76) tw = 76;
 #endif
-  ccToggle(row, LV_SYMBOL_WIFI, "Wi-Fi", wifi_on, ccWifiCb, tw, th);
+  // Each chip: tap = toggle, long-press = jump to that feature's settings page
+  // (GPS -> Radio & Mesh, where the location-sharing settings live).
+  ccToggle(row, LV_SYMBOL_WIFI, "Wi-Fi", wifi_on, ccWifiCb, tw, th, CAT_WIFI);
   if (!g_lv.task || g_lv.task->hasBleCapability())
-    ccToggle(row, LV_SYMBOL_BLUETOOTH, "BT", ble_on, ccBleCb, tw, th);
-  ccToggle(row, LV_SYMBOL_GPS, "GPS", gps_on, ccGpsCb, tw, th);
-  ccToggle(row, LV_SYMBOL_TINT, "Theme", false, ccThemeCb, tw, th);
+    ccToggle(row, LV_SYMBOL_BLUETOOTH, "BT", ble_on, ccBleCb, tw, th, CAT_BLUETOOTH);
+  ccToggle(row, LV_SYMBOL_GPS, "GPS", gps_on, ccGpsCb, tw, th, CAT_RADIO);
+  ccToggle(row, LV_SYMBOL_TINT, "Theme", false, ccThemeCb, tw, th, CAT_DISPLAY);
 #if defined(HAS_TDECK_KEYBOARD)
   ccToggle(row, LV_SYMBOL_KEYBOARD,
            s_kb_bl_mode == 0 ? "off" : (s_kb_bl_mode == 1 ? "on" : "auto"),
-           s_kb_bl_mode != 0, ccKbBacklightCb, tw, th);
+           s_kb_bl_mode != 0, ccKbBacklightCb, tw, th, CAT_KEYBOARD);
 #endif
 #if defined(HAS_TDECK_GT911)
-  ccToggle(row, LV_SYMBOL_EYE_OPEN, "Lock", false, ccLockCb, tw, th);
+  ccToggle(row, LV_SYMBOL_EYE_OPEN, "Lock", false, ccLockCb, tw, th, CAT_LOCK);
 #endif
 #if defined(HAS_UI_SOUND)
   // Sound on/off (notification tones — T-Deck I2S speaker / Heltec V4 piezo).
   const bool sound_on = g_lv.task && !g_lv.task->isBuzzerQuiet();
-  ccToggle(row, LV_SYMBOL_AUDIO, "Sound", sound_on, ccSoundCb, tw, th);
+  ccToggle(row, LV_SYMBOL_AUDIO, "Sound", sound_on, ccSoundCb, tw, th, CAT_SOUND);
 #endif
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
 }
@@ -18699,13 +18735,17 @@ static void refreshStatusLabels() {
     const unsigned dram_pct = dram_tot ? (unsigned)(100 - (dram_free * 100 / dram_tot)) : 0;
     const unsigned ps_pct   = ps_tot   ? (unsigned)(100 - (ps_free   * 100 / ps_tot))   : 0;
     lv_label_set_text_fmt(g_lv.home_stats,
-                          TR("Unread %d\nRAM %u%%  \xC2\xB7  PSRAM %u%%"),
-                          g_lv.task->getUnreadTotal(),
+                          TR("RAM %u%%  \xC2\xB7  PSRAM %u%%"),
                           dram_pct, ps_pct);
 #else
-    lv_label_set_text_fmt(g_lv.home_stats, TR("Unread %d"),
-                          g_lv.task->getUnreadTotal());
+    if (g_lv.home_stats) lv_label_set_text(g_lv.home_stats, TR(""));
 #endif
+  }
+  // Unread line (its own tappable row): mail icon + translated count.
+  if (g_lv.home_unread && home_active) {
+    char ubuf[24];
+    snprintf(ubuf, sizeof ubuf, TR("Unread %d"), g_lv.task->getUnreadTotal());
+    lv_label_set_text_fmt(g_lv.home_unread, LV_SYMBOL_ENVELOPE "  %s", ubuf);
   }
   if (g_lv.settings_status && settings_active) {
 #if defined(ESP32)
