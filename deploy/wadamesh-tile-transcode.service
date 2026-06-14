@@ -1,0 +1,18 @@
+[Unit]
+Description=wadamesh tile transcode service (OSM PNG -> JPEG for touch firmware)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/wadamesh-tiles
+# Runs from a venv so it doesn't depend on the system Python's package set.
+# Falls back to /usr/bin/python3 if the venv isn't present (see deploy notes).
+ExecStart=/opt/wadamesh-tiles/venv/bin/python /opt/wadamesh-tiles/tile-transcode.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
