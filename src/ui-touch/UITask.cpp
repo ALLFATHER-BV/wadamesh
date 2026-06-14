@@ -11314,7 +11314,7 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_set_style_bg_opa(hint, LV_OPA_70, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(hint, 3, LV_PART_MAIN);
     lv_obj_set_style_radius(hint, 3, LV_PART_MAIN);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_RIGHT, -2, -2);
+    lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -2, 2);
   }
 
   // Send Advert button. Portrait: full-width row below the chart. Landscape:
@@ -22469,14 +22469,18 @@ void UITask::loop() {
   serviceLockingCountdown(now);   // advance / fire the spacebar "Locking…" countdown
 #endif
   refreshLiveDiag(now);
-  // Periodic "discover" probe so the top-bar signal icon stays fresh even when
-  // idle: a light zero-hop advert announces us to nearby repeaters/nodes (not
-  // flooded -> minimal airtime). The icon reads the SNR of what we hear.
+  // Keep the signal fresh with a "discover" probe: send a FLOOD advert whenever
+  // we have no recent signal, so nearby repeaters re-broadcast it and we measure
+  // their echo's SNR. Fires within seconds of boot (no signal yet) so the icon
+  // lights up fast; in a chatty mesh where we already hear traffic it stays
+  // quiet. (Zero-hop adverts can't be used here — they aren't re-broadcast, so
+  // they produce nothing for us to measure.)
   {
-    static unsigned long s_sig_probe_at = 8000;   // first probe ~8 s after boot
+    static unsigned long s_sig_probe_at = 4000;   // first attempt ~4 s after boot
     if ((long)(now - s_sig_probe_at) >= 0) {
-      s_sig_probe_at = now + 60000;   // every 60 s
-      sendAdvertZeroHop();
+      s_sig_probe_at = now + 60000;   // re-evaluate every 60 s
+      const uint32_t sms = the_mesh.uiSignalMs();
+      if (sms == 0 || (now - sms) > 100000UL) sendAdvertFlood();   // no/old signal -> probe
     }
   }
 
