@@ -444,6 +444,21 @@ public:
    *  to refresh the chat so the bubble's repeat tag updates live. */
   bool takeEchoDirty() { bool d = _echo_dirty; _echo_dirty = false; return d; }
 
+  /** UI: resolve a path-hop hash prefix to its (repeater) contact name. Bounded
+   *  + null-safe; writes out[] NUL-terminated and returns true ONLY on a named
+   *  match (otherwise the caller shows the bare hash). Read-only contact lookup,
+   *  so it can't corrupt anything even if called mid-RX. */
+  bool uiHopName(const uint8_t* hash, int prefix_len, char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return false;
+    out[0] = '\0';
+    if (!hash || prefix_len <= 0) return false;
+    ContactInfo* c = lookupContactByPubKey(hash, prefix_len);
+    if (!c || c->name[0] == '\0') return false;
+    strncpy(out, c->name, out_sz - 1);
+    out[out_sz - 1] = '\0';
+    return true;
+  }
+
   /** Send a 0-hop trace ping to a single neighbor (typically a repeater).
    *  Returns the trace tag we chose (non-zero on success) so the UI can
    *  match the onTracePingResult callback. The trace path is just the

@@ -14775,17 +14775,30 @@ static void openMessageInfoPopup(int msg_idx) {
     if (m.meta_flags & UITask::MSG_META_HAS_SCOPE) {
       blen += snprintf(body + blen, sizeof(body) - blen, "\nScope  %04X", (unsigned)m.in_scope);
     }
-    // Full inbound route as consistent hex hops (e.g. 24E0>6401>B303) — the
-    // repeaters this flood traversed. No name resolution (kept it uniform hex).
+    // Full inbound route — the repeaters this flood traversed. Resolve each hop's
+    // hash to its repeater name when that contact is known (else show the bare
+    // hash). Hard-bounded + hop-capped so it can never overflow body[] or grow
+    // past the card; the name lookup is read-only so it's safe mid-RX.
     if (is_flood && m.in_path_n > 0) {
       const uint8_t hsz = (uint8_t)((m.path_len >> 6) + 1);
       const uint8_t cnt = (uint8_t)(m.path_len & 0x3F);
-      blen += snprintf(body + blen, sizeof(body) - blen, "\nRoute  ");
+      blen += snprintf(body + blen, sizeof(body) - blen, "\nRoute");
+      const int kMaxHops = 6;                          // keep inside the card; "+N more" past this
       int off = 0;
-      for (uint8_t h = 0; h < cnt && off + hsz <= m.in_path_n; ++h, off += hsz) {
-        if (h) blen += snprintf(body + blen, sizeof(body) - blen, ">");
-        for (uint8_t b = 0; b < hsz; ++b)
-          blen += snprintf(body + blen, sizeof(body) - blen, "%02X", m.in_path[off + b]);
+      for (uint8_t h = 0; h < cnt && off + (int)hsz <= m.in_path_n; ++h, off += hsz) {
+        if (blen >= (int)sizeof(body) - 40) break;     // hard guard: never overflow body[]
+        if (h >= kMaxHops) {
+          blen += snprintf(body + blen, sizeof(body) - blen, "\n  ... +%u more", (unsigned)(cnt - h));
+          break;
+        }
+        char hashstr[9] = {0};
+        for (uint8_t b = 0; b < hsz && b < 4; ++b)
+          snprintf(hashstr + b * 2, sizeof(hashstr) - b * 2, "%02X", m.in_path[off + b]);
+        char nm[21];
+        if (the_mesh.uiHopName(&m.in_path[off], hsz, nm, sizeof(nm)))
+          blen += snprintf(body + blen, sizeof(body) - blen, "\n %u. %s  %s", (unsigned)(h + 1), nm, hashstr);
+        else
+          blen += snprintf(body + blen, sizeof(body) - blen, "\n %u. %s", (unsigned)(h + 1), hashstr);
       }
     }
   } else if (!m.outgoing) {
