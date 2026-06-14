@@ -1,0 +1,14 @@
+Replay a message's route on the map — it animates hop by hop, showing each repeater's name and ID on screen, with a button to replay it
+"Repeats heard" and the route trace now name the repeaters, and long names are no longer cut off
+Message Info popup scrolls, lists every hop, and colours each repeater to match its chat bubble
+New mesh signal-strength bars in the top bar, plus a live signal readout in the home graph (tap for details)
+Home top bar shows your profile name (scrolls if long); status icons reordered to battery, signal, Wi-Fi, Bluetooth, time
+Charging shows just a lightning bolt; the home "unread" line is now tappable and opens Chats
+Control center: long-press a tile to jump to its settings page; the slider and tiles follow your theme colour
+Theme colour no longer reverts to the default after a reboot
+Touch settings now live in files (SD/SPIFFS) instead of NVS — avoids the shared-storage "full" issue
+First-boot setup is Wi-Fi only; turn Bluetooth on afterwards from the control center
+Map prefetches a zoomed-out view (province to country to borders) for faster panning
+Fixed several reboots: map zoom-out, a full tile cache, and flash-heavy moments
+Smoother scrolling across the UI; the boot splash now shows MESHCOMOD
+Power menu adds a Download-mode button to reflash over USB without holding BOOT
