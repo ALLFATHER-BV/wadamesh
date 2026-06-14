@@ -498,6 +498,19 @@ public:
     return true;
   }
 
+  /** Resolve a path-hop hash prefix to the repeater's advertised position.
+   *  Returns true + fills lat/lon (degrees) when the contact is known AND has a
+   *  non-zero GPS position; false otherwise. Read-only — safe from the UI. */
+  bool uiHopPos(const uint8_t* hash, int prefix_len, double* out_lat, double* out_lon) {
+    if (!hash || prefix_len <= 0) return false;
+    ContactInfo* c = lookupContactByPubKey(hash, prefix_len);
+    if (!c) return false;
+    if (c->gps_lat == 0 && c->gps_lon == 0) return false;
+    if (out_lat) *out_lat = (double)c->gps_lat / 1.0e6;
+    if (out_lon) *out_lon = (double)c->gps_lon / 1.0e6;
+    return true;
+  }
+
   /** Send a 0-hop trace ping to a single neighbor (typically a repeater).
    *  Returns the trace tag we chose (non-zero on success) so the UI can
    *  match the onTracePingResult callback. The trace path is just the

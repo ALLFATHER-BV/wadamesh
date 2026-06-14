@@ -1335,6 +1335,7 @@ static void freeMapTiles();
 // Single entry point used by tabChangedCb. Recenters on self GPS and
 // rebuilds the tile grid. Defined alongside the map state below.
 static void onMapTabActivated();
+static void clearRouteReplay();        // drop the message-route overlay (defined with the map code)
 static void applyMapChrome(bool on);   // map-tab immersive chrome (transparent bars); defined near makeMapTab
 static void formatAgeBadge(char* buf, size_t cap, uint32_t age_secs);        // defined with the contacts list
 static void formatDistanceBadge(char* out, size_t out_cap, double self_lat, double self_lon,
@@ -3110,6 +3111,7 @@ static void tabChangedCb(lv_event_t* e) {
     onMapTabActivated();
   } else {
     if (prev_t == MAP_TAB_INDEX) applyMapChrome(false);   // restore opaque chrome
+    clearRouteReplay();    // drop any route-replay overlay when leaving the map
     // Drop tile JPEGs from PSRAM the moment we leave the tab — keeps the
     // working set small and lets the map cold-load with fresh data on
     // the next visit. (CPU stays at 160 MHz — the whole UI runs there.)
@@ -12695,6 +12697,26 @@ static bool       s_map_show_links = true;
 static lv_obj_t*  s_map_link_objs[k_map_markers_max] = {};
 static lv_point_t s_map_link_pts[k_map_markers_max][2];
 
+// ----- Route replay overlay -----
+// "Replay" in a message's Info popup resolves that message's repeater hops to
+// their advertised positions and animates them onto the map as a path, one node
+// at a time. CHAIN mode (received floods) links consecutive hops sender->us;
+// STAR mode (our own sent floods) links each repeater that echoed us back to
+// "me". All overlay widgets live on the map pan layer and are freed by
+// freeMapMarkers() at the start of the next render.
+struct RouteNode { double lat, lon; bool has_pos; char tag[6]; };
+static constexpr int k_route_max = 10;
+static RouteNode   s_route[k_route_max] = {};
+static int         s_route_n      = 0;       // nodes captured
+static int         s_route_reveal = 0;       // nodes shown so far (animation cursor)
+static bool        s_route_active = false;   // overlay currently shown
+static uint8_t     s_route_mode   = 0;       // 0 = chain, 1 = star
+static lv_timer_t* s_route_timer  = nullptr;
+static lv_obj_t*   s_route_objs[k_route_max * 3] = {nullptr};   // lines + dots + tags
+static int         s_route_obj_n  = 0;
+static lv_point_t  s_route_seg_pts[k_route_max][2];             // persistent (lv_line keeps the ptr)
+static void drawRouteOverlay(lv_obj_t* parent, double cwx, double cwy);
+
 static void freeMapMarkers() {
   for (auto& m : s_map_markers) {
     if (m.obj) { lv_obj_del(m.obj); m.obj = nullptr; }
@@ -12703,6 +12725,10 @@ static void freeMapMarkers() {
   for (auto& ln : s_map_link_objs) {
     if (ln) { lv_obj_del(ln); ln = nullptr; }
   }
+  for (int i = 0; i < s_route_obj_n; ++i) {
+    if (s_route_objs[i]) { lv_obj_del(s_route_objs[i]); s_route_objs[i] = nullptr; }
+  }
+  s_route_obj_n = 0;
 }
 
 static void openMarkerPopupForContact(int mesh_idx);
@@ -12838,6 +12864,217 @@ static void renderMapMarkers() {
     lv_obj_clear_flag(m.obj, LV_OBJ_FLAG_SCROLLABLE);
     ++slot;
   }
+
+  // Route-replay overlay — drawn last so the path + nodes sit above tiles,
+  // link lines and contact markers.
+  if (s_route_active) drawRouteOverlay(parent, cwx, cwy);
+}
+
+// ===== Route replay overlay =================================================
+// Paint the revealed portion of s_route[] onto the pan layer: amber segments
+// plus a numbered dot at each repeater. The "ME" node is left to the existing
+// GPS crosshair. Objects are tracked in s_route_objs[] and freed by the next
+// freeMapMarkers().
+static void drawRouteOverlay(lv_obj_t* parent, double cwx, double cwy) {
+  if (!s_route_active || s_route_n <= 0 || !parent) return;
+  const int reveal = (s_route_reveal < s_route_n) ? s_route_reveal : s_route_n;
+
+  int  nsx[k_route_max], nsy[k_route_max];
+  bool nhas[k_route_max];
+  for (int i = 0; i < s_route_n; ++i) {
+    nhas[i] = s_route[i].has_pos;
+    if (!nhas[i]) continue;
+    double wx, wy;
+    latLonToWorldPx(s_route[i].lat, s_route[i].lon, s_map_zoom, &wx, &wy);
+    nsx[i] = (int)(wx - cwx + k_map_canvas_w / 2);
+    nsy[i] = (int)(wy - cwy + k_map_canvas_h / 2);
+  }
+  auto clampc = [](int v) -> lv_coord_t {
+    if (v < -3000) v = -3000;
+    if (v >  3000) v =  3000;
+    return (lv_coord_t)v;
+  };
+  auto track = [&](lv_obj_t* o) {
+    if (o && s_route_obj_n < (int)(sizeof(s_route_objs) / sizeof(s_route_objs[0])))
+      s_route_objs[s_route_obj_n++] = o;
+  };
+
+  // Segments. chain: prev->cur; star: hub(node 0)->cur.
+  int seg = 0;
+  for (int i = 1; i < reveal && seg < k_route_max; ++i) {
+    const int a = (s_route_mode == 1) ? 0 : (i - 1);
+    const int b = i;
+    if (!nhas[a] || !nhas[b]) continue;
+    s_route_seg_pts[seg][0].x = clampc(nsx[a]); s_route_seg_pts[seg][0].y = clampc(nsy[a]);
+    s_route_seg_pts[seg][1].x = clampc(nsx[b]); s_route_seg_pts[seg][1].y = clampc(nsy[b]);
+    lv_obj_t* ln = lv_line_create(parent);
+    lv_line_set_points(ln, s_route_seg_pts[seg], 2);
+    lv_obj_set_style_line_width(ln, 3, LV_PART_MAIN);
+    lv_obj_set_style_line_color(ln, lv_color_hex(0xFFC233), LV_PART_MAIN);
+    lv_obj_set_style_line_opa(ln, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_line_rounded(ln, true, LV_PART_MAIN);
+    lv_obj_clear_flag(ln, LV_OBJ_FLAG_CLICKABLE);
+    track(ln);
+    ++seg;
+  }
+
+  // Numbered nodes (skip the "ME" hub — the GPS crosshair already marks self).
+  for (int i = 0; i < reveal && i < s_route_n; ++i) {
+    if (!nhas[i]) continue;
+    if (s_route[i].tag[0] == 'M' && s_route[i].tag[1] == 'E') continue;
+    if (nsx[i] < -24 || nsx[i] >= k_map_canvas_w + 24 ||
+        nsy[i] < -24 || nsy[i] >= k_map_canvas_h + 24) continue;
+    const bool latest = (i == reveal - 1);
+    const int  sz = latest ? 18 : 14;
+    lv_obj_t* d = lv_obj_create(parent);
+    lv_obj_remove_style_all(d);
+    lv_obj_set_size(d, sz, sz);
+    lv_obj_set_pos(d, nsx[i] - sz / 2, nsy[i] - sz / 2);
+    lv_obj_set_style_bg_color(d, lv_color_hex(latest ? 0xFFE08A : 0xFFC233), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(d, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(d, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_border_width(d, 2, LV_PART_MAIN);
+    lv_obj_set_style_radius(d, sz / 2, LV_PART_MAIN);
+    lv_obj_clear_flag(d, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(d, LV_OBJ_FLAG_SCROLLABLE);
+    track(d);
+    lv_obj_t* tl = lv_label_create(parent);
+    lv_label_set_text(tl, s_route[i].tag);
+    lv_obj_set_style_text_font(tl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(tl, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_pos(tl, nsx[i] - 5, nsy[i] - 8);
+    track(tl);
+  }
+}
+
+// Center + zoom the map so every positioned route node fits the canvas.
+static void fitMapToRoute() {
+  double minlat = 90.0, maxlat = -90.0, minlon = 180.0, maxlon = -180.0;
+  int n = 0;
+  for (int i = 0; i < s_route_n; ++i) {
+    if (!s_route[i].has_pos) continue;
+    if (s_route[i].lat < minlat) minlat = s_route[i].lat;
+    if (s_route[i].lat > maxlat) maxlat = s_route[i].lat;
+    if (s_route[i].lon < minlon) minlon = s_route[i].lon;
+    if (s_route[i].lon > maxlon) maxlon = s_route[i].lon;
+    ++n;
+  }
+  if (n == 0) return;
+  s_map_center_lat = (minlat + maxlat) / 2.0;
+  s_map_center_lon = (minlon + maxlon) / 2.0;
+  if (n == 1) { s_map_zoom = k_map_zoom_default; return; }
+  for (uint8_t z = k_map_zoom_max; ; --z) {
+    double ax, ay, bx, by;
+    latLonToWorldPx(maxlat, minlon, z, &ax, &ay);     // NW corner
+    latLonToWorldPx(minlat, maxlon, z, &bx, &by);     // SE corner
+    const double spanx = fabs(bx - ax), spany = fabs(by - ay);
+    if ((spanx <= k_map_canvas_w * 0.78 && spany <= k_map_canvas_h * 0.78) ||
+        z <= k_map_zoom_min) {
+      s_map_zoom = z;
+      break;
+    }
+  }
+}
+
+// Reveal one more node each tick; stop (and keep the full path drawn) at the end.
+static void routeReplayTick(lv_timer_t* t) {
+  (void)t;
+  if (!s_route_active) {
+    if (s_route_timer) { lv_timer_del(s_route_timer); s_route_timer = nullptr; }
+    return;
+  }
+  if (s_route_reveal < s_route_n) {
+    ++s_route_reveal;
+    if (getActiveTab() == MAP_TAB_INDEX) renderMapMarkers();
+  }
+  if (s_route_reveal >= s_route_n) {
+    if (s_route_timer) { lv_timer_del(s_route_timer); s_route_timer = nullptr; }
+  }
+}
+
+static void clearRouteReplay() {
+  if (s_route_timer) { lv_timer_del(s_route_timer); s_route_timer = nullptr; }
+  const bool was = s_route_active;
+  s_route_active = false;
+  s_route_reveal = 0;
+  s_route_n = 0;
+  if (was && getActiveTab() == MAP_TAB_INDEX) renderMapMarkers();   // drop the overlay
+}
+
+// Build s_route[] from a message's repeater hops. Returns how many nodes have a
+// known position (the button is only offered when >= 2).
+static int buildRouteFromMessage(const UITask::UIMessage& m) {
+  s_route_n = 0;
+  s_route_mode = 0;
+  const double self_lat = g_lv.task ? g_lv.task->getNodeLat() : 0.0;
+  const double self_lon = g_lv.task ? g_lv.task->getNodeLon() : 0.0;
+  const bool self_has   = (self_lat != 0.0 || self_lon != 0.0);
+  const bool has_rx     = (m.meta_flags & UITask::MSG_META_HAS_RX) != 0;
+  const bool is_flood   = (m.meta_flags & UITask::MSG_META_IS_FLOOD) != 0;
+
+  if (!m.outgoing && has_rx && is_flood && m.in_path_n > 0) {
+    // Received flood: chain of repeaters (sender side -> us), ending at ME.
+    s_route_mode = 0;
+    const uint8_t hsz = (uint8_t)((m.path_len >> 6) + 1);
+    const uint8_t cnt = (uint8_t)(m.path_len & 0x3F);
+    int off = 0;
+    for (uint8_t h = 0; h < cnt && off + (int)hsz <= m.in_path_n && s_route_n < k_route_max - 1;
+         ++h, off += hsz) {
+      double lat = 0, lon = 0;
+      const bool hp = the_mesh.uiHopPos(&m.in_path[off], hsz, &lat, &lon);
+      s_route[s_route_n].has_pos = hp;
+      s_route[s_route_n].lat = lat;
+      s_route[s_route_n].lon = lon;
+      snprintf(s_route[s_route_n].tag, sizeof(s_route[0].tag), "%u", (unsigned)(h + 1));
+      ++s_route_n;
+    }
+    if (self_has && s_route_n < k_route_max) {
+      s_route[s_route_n].has_pos = true;
+      s_route[s_route_n].lat = self_lat;
+      s_route[s_route_n].lon = self_lon;
+      strncpy(s_route[s_route_n].tag, "ME", sizeof(s_route[0].tag) - 1);
+      s_route[s_route_n].tag[sizeof(s_route[0].tag) - 1] = '\0';
+      ++s_route_n;
+    }
+  } else if (m.outgoing && m.sent_fp && self_has) {
+    // Our own sent flood: star from ME to each repeater that echoed it back.
+    s_route_mode = 1;
+    s_route[s_route_n].has_pos = true;
+    s_route[s_route_n].lat = self_lat;
+    s_route[s_route_n].lon = self_lon;
+    strncpy(s_route[s_route_n].tag, "ME", sizeof(s_route[0].tag) - 1);
+    s_route[s_route_n].tag[sizeof(s_route[0].tag) - 1] = '\0';
+    ++s_route_n;
+    const uint8_t rhc = the_mesh.uiRepeatHopCount(m.sent_fp);
+    for (uint8_t r = 0; r < rhc && s_route_n < k_route_max; ++r) {
+      uint8_t hh[4];
+      const uint8_t hs = the_mesh.uiRepeatHop(m.sent_fp, r, hh, sizeof(hh));
+      if (hs == 0) continue;
+      double lat = 0, lon = 0;
+      const bool hp = the_mesh.uiHopPos(hh, hs, &lat, &lon);
+      s_route[s_route_n].has_pos = hp;
+      s_route[s_route_n].lat = lat;
+      s_route[s_route_n].lon = lon;
+      snprintf(s_route[s_route_n].tag, sizeof(s_route[0].tag), "R%u", (unsigned)(r + 1));
+      ++s_route_n;
+    }
+  }
+
+  int plottable = 0;
+  for (int i = 0; i < s_route_n; ++i) if (s_route[i].has_pos) ++plottable;
+  return plottable;
+}
+
+// Switch to the map and animate the route that buildRouteFromMessage() captured.
+static void startRouteReplay() {
+  if (s_route_n < 2) return;
+  s_route_active = true;        // set BEFORE goToTab so onMapTabActivated keeps our fit
+  s_route_reveal = 1;          // reveal node 1 immediately; the timer adds the rest
+  fitMapToRoute();
+  goToTab(MAP_TAB_INDEX);       // runs onMapTabActivated -> renders tiles + markers + overlay
+  if (s_route_timer) { lv_timer_del(s_route_timer); s_route_timer = nullptr; }
+  if (s_route_reveal < s_route_n)
+    s_route_timer = lv_timer_create(routeReplayTick, 650, nullptr);
 }
 
 // (The on-map links toggle moved into the Map options popup below; the dotted
@@ -13650,7 +13887,9 @@ static void onMapTabActivated() {
   // no per-tab boost dance here anymore. (Tried 240 MHz briefly — the
   // PSRAM bus tightens enough at that clock for the SJPG decoder to
   // emit occasional RGB565 noise. 160 MHz is the sweet spot.)
-  if (g_lv.task) {
+  // A route replay sets its own fitted center+zoom before switching here, so
+  // don't recenter on self / auto-snap zoom in that case.
+  if (g_lv.task && !s_route_active) {
     s_map_center_lat = g_lv.task->getNodeLat();
     s_map_center_lon = g_lv.task->getNodeLon();
   }
@@ -13658,7 +13897,7 @@ static void onMapTabActivated() {
   // contains around this center. After this, the user's zoom-in/out
   // taps are honoured verbatim — they can pop above the pack and see
   // "no tile pack" (a clear cue to tap − to go back).
-  {
+  if (!s_route_active) {
     const uint8_t best = bestAvailableZoom(s_map_center_lat, s_map_center_lon);
     if (best != 0) s_map_zoom = best;
   }
@@ -14717,6 +14956,20 @@ static void msgInfoTraceCb(lv_event_t* e) {
   }
 }
 
+// "Replay" from the message Info popup: draw the message's repeater path on the
+// map and animate it. s_route[] was already filled by buildRouteFromMessage()
+// when the popup opened (that's how we decided to show the button).
+static void msgInfoReplayCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (s_route_n < 2) {
+    if (g_lv.task) g_lv.task->showAlert(TR("No mapped repeaters in this route"), 1600);
+    return;
+  }
+  closeMsgInfoPopup();
+  startRouteReplay();
+  if (g_lv.task) g_lv.task->showAlert(TR("Replaying route\xe2\x80\xa6"), 1200);
+}
+
 static void openMessageInfoPopup(int msg_idx) {
   if (!g_lv.task) return;
   UITask::UIMessage m;
@@ -14734,11 +14987,14 @@ static void openMessageInfoPopup(int msg_idx) {
   lv_obj_clear_flag(s_msg_info_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_msg_info_root, msgInfoBackdropCb, LV_EVENT_CLICKED, nullptr);
 
-  // DM messages get a taller card with a "Trace route" button at the bottom;
-  // channel messages have no single peer to trace, so they keep the compact card.
+  // DM messages get a "Trace route" button (live multi-hop SNR trace to the
+  // peer). Any message whose repeater path we can place on the map also gets a
+  // "Replay" button. Build the route now so we know whether to offer it.
   const bool show_trace = !m.channel;
+  const int  route_pts  = buildRouteFromMessage(m);
+  const bool show_route = (route_pts >= 2);
   const int card_w = 220;
-  const int card_h = show_trace ? 290 : 250;
+  const int card_h = (show_trace || show_route) ? 290 : 250;
   lv_obj_t* card = lv_obj_create(s_msg_info_root);
   lv_obj_remove_style_all(card);
   lv_obj_set_size(card, card_w, card_h);
@@ -14889,18 +15145,46 @@ static void openMessageInfoPopup(int msg_idx) {
   lv_obj_add_event_cb(lbl, copyLabelLongPressCb, LV_EVENT_LONG_PRESSED,
                       const_cast<char*>("info"));
 
-  // "Trace route" — full multi-hop trace to the conversation peer, with each
-  // repeater's SNR. DM threads only (a channel has no single peer to trace).
-  if (show_trace) {
-    lv_obj_t* tb = lv_btn_create(card);
-    lv_obj_set_size(tb, card_w - 20, 32);
-    lv_obj_set_pos(tb, 0, card_h - 20 - 32);
-    styleButton(tb);
-    lv_obj_add_event_cb(tb, msgInfoTraceCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* tl = lv_label_create(tb);
-    lv_label_set_text(tl, LV_SYMBOL_GPS "  Trace route");
-    lv_obj_set_style_text_font(tl, &g_font_12, LV_PART_MAIN);
-    lv_obj_center(tl);
+  // Bottom action row: "Replay" (draw + animate this message's repeater path on
+  // the map) and/or "Trace route" (live multi-hop SNR trace, DM only). Shown
+  // side-by-side when both apply, else full width.
+  if (show_route || show_trace) {
+    const int btn_h = 32;
+    const int by    = card_h - 20 - btn_h;
+    if (show_route && show_trace) {
+      const int bw = (card_w - 20 - 6) / 2;
+      lv_obj_t* rb = lv_btn_create(card);
+      lv_obj_set_size(rb, bw, btn_h);
+      lv_obj_set_pos(rb, 0, by);
+      styleButton(rb);
+      lv_obj_add_event_cb(rb, msgInfoReplayCb, LV_EVENT_CLICKED, nullptr);
+      lv_obj_t* rl = lv_label_create(rb);
+      lv_label_set_text_fmt(rl, LV_SYMBOL_GPS " %s", TR("Replay"));
+      lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN);
+      lv_obj_center(rl);
+
+      lv_obj_t* tb = lv_btn_create(card);
+      lv_obj_set_size(tb, bw, btn_h);
+      lv_obj_set_pos(tb, bw + 6, by);
+      styleButton(tb);
+      lv_obj_add_event_cb(tb, msgInfoTraceCb, LV_EVENT_CLICKED, nullptr);
+      lv_obj_t* tl = lv_label_create(tb);
+      lv_label_set_text(tl, TR("Trace"));
+      lv_obj_set_style_text_font(tl, &g_font_12, LV_PART_MAIN);
+      lv_obj_center(tl);
+    } else {
+      lv_obj_t* b = lv_btn_create(card);
+      lv_obj_set_size(b, card_w - 20, btn_h);
+      lv_obj_set_pos(b, 0, by);
+      styleButton(b);
+      lv_obj_add_event_cb(b, show_route ? msgInfoReplayCb : msgInfoTraceCb,
+                          LV_EVENT_CLICKED, nullptr);
+      lv_obj_t* l = lv_label_create(b);
+      lv_label_set_text_fmt(l, LV_SYMBOL_GPS "  %s",
+                            show_route ? TR("Replay route on map") : TR("Trace route"));
+      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+      lv_obj_center(l);
+    }
   }
 
   // Bottom-right Close button removed — the X badge at the top-right is
