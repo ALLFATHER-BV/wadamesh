@@ -3096,6 +3096,11 @@ static void tabChangedCb(lv_event_t* e) {
       lv_obj_add_flag(g_lv.ch.overlay, LV_OBJ_FLAG_HIDDEN);
       g_lv.ch.detail_open = false;
     }
+    // Leaving the inbox by ANY route (tab tap, swipe, or the route-replay jump to
+    // the map) drops the open chat's name + settings cog from the status bar.
+    // Previously only the explicit chat-close button cleared it, so a replay
+    // started inside a channel left that channel's title/cog showing on Home.
+    setChatStatusTitle(nullptr);
   } else {
     hideKb();
   }
