@@ -11307,7 +11307,7 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_align(s_home_chart_sig, LV_ALIGN_TOP_LEFT, 2, 2);
 
     lv_obj_t* hint = lv_label_create(s_home_chart);
-    lv_label_set_text(hint, LV_SYMBOL_LIST "  tap for details");
+    lv_label_set_text(hint, "tap for details");
     lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_color(hint, lv_color_hex(COLOR_BG), LV_PART_MAIN);
