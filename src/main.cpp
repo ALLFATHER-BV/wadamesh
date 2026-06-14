@@ -9,6 +9,8 @@
 #include <helpers/TouchDiagTrace.h>
 #include <helpers/MeshTouchTxTrace.h>
 #include <helpers/esp32/TouchPrefsStore.h>   // touchPrefsGetUiRotation for the boot wordmark
+#include "helpers/esp32/SdNvsPrefs.h"        // route prefs to file storage (SD/SPIFFS), off NVS
+                                             // (quoted: use wadamesh's src/ copy, not the lib's stale one)
 #include "wadamesh_mark_rgb.h"               // anti-aliased mesh-mark (RGB565) for the pre-LVGL boot screen
 #endif
 
@@ -345,6 +347,17 @@ void setup() {
 #endif
   if (!sd_storage && !spiffs_ok) SPIFFS.begin(true);   // last resort: format SPIFFS
   Serial.printf("[BOOT] storage: %s\n", sd_storage ? "SD /meshcomod" : "SPIFFS");
+#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
+  // Route touch settings + Wi-Fi creds to the active filesystem (SD when that's
+  // the data store, else SPIFFS) instead of NVS. Old NVS values still load and
+  // migrate on their next save, so this is a transparent in-place upgrade.
+  #if defined(HAS_TDECK_GT911)
+    SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD : (fs::FS*)&SPIFFS,
+                        sd_storage ? "/meshcomod" : "/prefs");
+  #else
+    SdNvsPrefs::useFile((fs::FS*)&SPIFFS, "/prefs");   // no SD on this board
+  #endif
+#endif
   store.begin();
   the_mesh.begin(
     #ifdef DISPLAY_CLASS

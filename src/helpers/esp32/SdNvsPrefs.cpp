@@ -2,42 +2,90 @@
 #if defined(ESP32)
 
 #include <SD.h>
+#include <SPIFFS.h>
 #include <string.h>
 
-// Backend is probed ONCE per boot and cached for every namespace/instance: a
-// device with healthy NVS keeps using NVS; a Launcher install (NVS full) routes
-// everything to /meshcomod/<ns>.kv on the SD card.
-static int s_backend = -1;   // -1 undecided, 0 = SD, 1 = NVS
+// ----------------------------- backend selection -----------------------------
+// File mode (set by SdNvsPrefs::useFile at boot): every namespace lives in a flat
+// <dir>/<ns>.kv file on the chosen filesystem; NVS is read-only (migration only).
+// Legacy mode (before useFile, e.g. the early boot-rotation read): NVS if it
+// works, else /meshcomod/<ns>.kv on SD — identical to the previous behaviour.
+static fs::FS* s_file_fs   = nullptr;
+static char    s_file_dir[24] = {0};
+static bool    s_file_mode = false;
+static int     s_legacy    = -1;   // legacy probe cache: -1 undecided, 0 SD, 1 NVS
+static int     s_migrate   = -1;   // -1 undecided, 0 = NVS has no legacy data, 1 = yes
 
-bool SdNvsPrefs::useNvs() {
-  if (s_backend < 0) {
+void SdNvsPrefs::useFile(fs::FS* fs, const char* dir) {
+  if (!fs) return;
+  s_file_fs = fs;
+  strncpy(s_file_dir, (dir && dir[0]) ? dir : "/prefs", sizeof(s_file_dir) - 1);
+  s_file_dir[sizeof(s_file_dir) - 1] = '\0';
+  s_file_mode = true;
+  Serial.printf("[PREFS] backend = FILE %s\n", s_file_dir);
+}
+
+bool SdNvsPrefs::fileMode() const { return s_file_mode && s_file_fs; }
+
+// Does NVS hold settings from an older (NVS) build worth migrating? Probed ONCE
+// (RO open of the main namespace) so fresh devices don't spam NOT_FOUND when we
+// open the per-namespace migration fallback.
+static bool nvsHasLegacyData() {
+  if (s_migrate < 0) {
+    Preferences p;
+    bool ok = p.begin("touch", true);   // TOUCH_NS, read-only
+    if (ok) p.end();
+    s_migrate = ok ? 1 : 0;
+  }
+  return s_migrate == 1;
+}
+
+bool SdNvsPrefs::legacyUseNvs() {
+  if (s_legacy < 0) {
     Preferences probe;
     bool ok = false;
-    if (probe.begin("mc_kvprobe", false)) {   // RW open must succeed...
-      ok = (probe.putUChar("v", 1) > 0);      // ...and a real write must land
+    if (probe.begin("mc_kvprobe", false)) {   // RW open + a real write must land
+      ok = (probe.putUChar("v", 1) > 0);
       probe.end();
     }
-    s_backend = ok ? 1 : 0;
-    Serial.printf("[PREFS] backend = %s\n", ok ? "NVS" : "SD /meshcomod");
+    s_legacy = ok ? 1 : 0;
+    Serial.printf("[PREFS] legacy backend = %s\n", ok ? "NVS" : "SD /meshcomod");
   }
-  return s_backend == 1;
+  return s_legacy == 1;
 }
 
 // ----------------------------- begin / end -----------------------------
 bool SdNvsPrefs::begin(const char* ns, bool readOnly) {
   _read_only = readOnly;
-  if (useNvs()) { _nvs_open = _nvs.begin(ns, readOnly); return _nvs_open; }
+  _sd.clear();
+  _sd_loaded = false;
+  if (_nvs_open) { _nvs.end(); _nvs_open = false; }
+
+  if (fileMode()) {
+    _fs = s_file_fs;
+    snprintf(_path, sizeof(_path), "%s/%s.kv", s_file_dir, ns);
+    sdLoad();
+    _sd_loaded = true;
+    // Read-only NVS as a migration source for keys not yet in the file. Only when
+    // the device actually carries legacy NVS data, so fresh devices stay quiet.
+    if (nvsHasLegacyData()) _nvs_open = _nvs.begin(ns, true);
+    return true;
+  }
+
+  // ---- legacy ----
+  if (legacyUseNvs()) { _nvs_open = _nvs.begin(ns, readOnly); return _nvs_open; }
+  _fs = &SD;
   snprintf(_path, sizeof(_path), "/meshcomod/%s.kv", ns);
-  if (!_sd_loaded) { sdLoad(); _sd_loaded = true; }
-  return true;   // SD store is always "open"
+  sdLoad();
+  _sd_loaded = true;
+  return true;
 }
 
 void SdNvsPrefs::end() {
-  if (useNvs() && _nvs_open) { _nvs.end(); _nvs_open = false; }
-  // SD mode keeps its RAM mirror across begin/end (flushed on every put).
+  if (_nvs_open) { _nvs.end(); _nvs_open = false; }
 }
 
-// ----------------------------- SD helpers -----------------------------
+// ----------------------------- file helpers -----------------------------
 SdNvsPrefs::Kv* SdNvsPrefs::sdFind(const char* key) {
   for (auto& e : _sd) if (strncmp(e.key, key, sizeof(e.key)) == 0) return &e;
   return nullptr;
@@ -57,13 +105,12 @@ void SdNvsPrefs::sdSet(const char* key, const uint8_t* data, size_t len) {
 
 void SdNvsPrefs::sdLoad() {
   _sd.clear();
-  File f = SD.open(_path, FILE_READ);
+  if (!_fs) return;
+  File f = _fs->open(_path, FILE_READ);
   if (!f) return;
-  // record = [keylen u8][key bytes][vallen u16 LE][val bytes]
-  // Sanity caps stop a corrupt/garbage file from triggering a huge allocation or
-  // an unbounded entry list (internal heap is tight on a Launcher boot). Real
-  // blobs are <=192 B and there are only a few dozen keys; on any bad record we
-  // stop parsing and keep whatever loaded cleanly before it.
+  // record = [keylen u8][key bytes][vallen u16 LE][val bytes]. Sanity caps stop a
+  // corrupt file from triggering a huge alloc; on any bad record we stop and keep
+  // whatever loaded cleanly before it.
   while (f.available() > 0 && _sd.size() < 256) {
     int kl = f.read();
     if (kl <= 0 || kl > 15) break;
@@ -72,7 +119,7 @@ void SdNvsPrefs::sdLoad() {
     int lo = f.read(), hi = f.read();
     if (lo < 0 || hi < 0) break;
     size_t vl = (size_t)lo | ((size_t)hi << 8);
-    if (vl > 2048) break;                       // implausible value length -> corrupt
+    if (vl > 2048) break;
     std::vector<uint8_t> v(vl);
     if (vl && f.read(v.data(), vl) != (int)vl) break;
     Kv e; strncpy(e.key, k, sizeof(e.key) - 1); e.key[sizeof(e.key) - 1] = '\0';
@@ -83,9 +130,14 @@ void SdNvsPrefs::sdLoad() {
 }
 
 void SdNvsPrefs::sdSave() {
-  if (_read_only) return;          // mirror Preferences: a write needs a RW begin
-  SD.mkdir("/meshcomod");
-  File f = SD.open(_path, FILE_WRITE);   // "w" — truncate + rewrite the whole file
+  if (_read_only || !_fs) return;
+  // Create the parent dir (SD needs /meshcomod; SPIFFS has no real dirs and just
+  // treats the whole path as a flat filename, so mkdir is a harmless no-op there).
+  char dir[48];
+  strncpy(dir, _path, sizeof(dir) - 1); dir[sizeof(dir) - 1] = '\0';
+  char* slash = strrchr(dir, '/');
+  if (slash && slash != dir) { *slash = '\0'; _fs->mkdir(dir); }
+  File f = _fs->open(_path, FILE_WRITE);   // truncate + rewrite the whole file
   if (!f) return;
   for (auto& e : _sd) {
     size_t kl = strnlen(e.key, sizeof(e.key));
@@ -116,44 +168,128 @@ size_t SdNvsPrefs::sdPutInt(const char* key, uint64_t v, int width) {
 }
 
 // ----------------------------- API -----------------------------
+// In file mode each getter checks the file first, then falls back to the legacy
+// NVS value (read-only) so old settings still load and migrate to the file on
+// the next save. Putters only ever touch the file — nothing new is written to NVS.
+
 bool SdNvsPrefs::isKey(const char* key) {
-  if (useNvs()) return _nvs_open && _nvs.isKey(key);
-  return sdFind(key) != nullptr;
+  if (fileMode()) return sdFind(key) != nullptr || (_nvs_open && _nvs.isKey(key));
+  return legacyUseNvs() ? (_nvs_open && _nvs.isKey(key)) : (sdFind(key) != nullptr);
 }
+
 bool SdNvsPrefs::remove(const char* key) {
-  if (useNvs()) return _nvs_open && _nvs.remove(key);
+  if (!fileMode() && legacyUseNvs()) return _nvs_open && _nvs.remove(key);
   for (size_t i = 0; i < _sd.size(); i++)
     if (strncmp(_sd[i].key, key, sizeof(_sd[i].key)) == 0) { _sd.erase(_sd.begin() + i); sdSave(); return true; }
   return false;
 }
+
 bool SdNvsPrefs::clear() {
-  if (useNvs()) return _nvs_open && _nvs.clear();
+  if (fileMode()) {
+    _sd.clear();
+    sdSave();
+    // Wipe any legacy NVS copy too, so a factory reset is permanent (and frees
+    // NVS). Derive the namespace from the file path "<dir>/<ns>.kv".
+    if (nvsHasLegacyData()) {
+      char ns[16] = {0};
+      const char* slash = strrchr(_path, '/');
+      const char* base  = slash ? slash + 1 : _path;
+      size_t n = 0; while (base[n] && base[n] != '.' && n < sizeof(ns) - 1) { ns[n] = base[n]; n++; }
+      ns[n] = '\0';
+      if (_nvs_open) { _nvs.end(); _nvs_open = false; }
+      Preferences p; if (p.begin(ns, false)) { p.clear(); p.end(); }
+    }
+    return true;
+  }
+  if (legacyUseNvs()) return _nvs_open && _nvs.clear();
   _sd.clear(); sdSave(); return true;
 }
 
-uint8_t  SdNvsPrefs::getUChar (const char* k, uint8_t def)  { return useNvs() ? _nvs.getUChar(k, def)  : (uint8_t)sdGetInt(k, def, 1); }
-size_t   SdNvsPrefs::putUChar (const char* k, uint8_t v)    { return useNvs() ? _nvs.putUChar(k, v)    : sdPutInt(k, v, 1); }
-int8_t   SdNvsPrefs::getChar  (const char* k, int8_t def)   { return useNvs() ? _nvs.getChar(k, def)   : (int8_t)sdGetInt(k, (uint8_t)def, 1); }
-size_t   SdNvsPrefs::putChar  (const char* k, int8_t v)     { return useNvs() ? _nvs.putChar(k, v)     : sdPutInt(k, (uint8_t)v, 1); }
-uint16_t SdNvsPrefs::getUShort(const char* k, uint16_t def) { return useNvs() ? _nvs.getUShort(k, def) : (uint16_t)sdGetInt(k, def, 2); }
-size_t   SdNvsPrefs::putUShort(const char* k, uint16_t v)   { return useNvs() ? _nvs.putUShort(k, v)   : sdPutInt(k, v, 2); }
-uint32_t SdNvsPrefs::getUInt  (const char* k, uint32_t def) { return useNvs() ? _nvs.getUInt(k, def)   : (uint32_t)sdGetInt(k, def, 4); }
-size_t   SdNvsPrefs::putUInt  (const char* k, uint32_t v)   { return useNvs() ? _nvs.putUInt(k, v)     : sdPutInt(k, v, 4); }
-bool     SdNvsPrefs::getBool  (const char* k, bool def)     { return useNvs() ? _nvs.getBool(k, def)   : (sdGetInt(k, def ? 1 : 0, 1) != 0); }
-size_t   SdNvsPrefs::putBool  (const char* k, bool v)       { return useNvs() ? _nvs.putBool(k, v)     : sdPutInt(k, v ? 1 : 0, 1); }
+uint8_t SdNvsPrefs::getUChar(const char* k, uint8_t def) {
+  if (fileMode()) {
+    if (sdFind(k)) return (uint8_t)sdGetInt(k, def, 1);
+    if (_nvs_open && _nvs.isKey(k)) return _nvs.getUChar(k, def);
+    return def;
+  }
+  return legacyUseNvs() ? _nvs.getUChar(k, def) : (uint8_t)sdGetInt(k, def, 1);
+}
+size_t SdNvsPrefs::putUChar(const char* k, uint8_t v) {
+  if (fileMode()) return sdPutInt(k, v, 1);
+  return legacyUseNvs() ? _nvs.putUChar(k, v) : sdPutInt(k, v, 1);
+}
+int8_t SdNvsPrefs::getChar(const char* k, int8_t def) {
+  if (fileMode()) {
+    if (sdFind(k)) return (int8_t)sdGetInt(k, (uint8_t)def, 1);
+    if (_nvs_open && _nvs.isKey(k)) return _nvs.getChar(k, def);
+    return def;
+  }
+  return legacyUseNvs() ? _nvs.getChar(k, def) : (int8_t)sdGetInt(k, (uint8_t)def, 1);
+}
+size_t SdNvsPrefs::putChar(const char* k, int8_t v) {
+  if (fileMode()) return sdPutInt(k, (uint8_t)v, 1);
+  return legacyUseNvs() ? _nvs.putChar(k, v) : sdPutInt(k, (uint8_t)v, 1);
+}
+uint16_t SdNvsPrefs::getUShort(const char* k, uint16_t def) {
+  if (fileMode()) {
+    if (sdFind(k)) return (uint16_t)sdGetInt(k, def, 2);
+    if (_nvs_open && _nvs.isKey(k)) return _nvs.getUShort(k, def);
+    return def;
+  }
+  return legacyUseNvs() ? _nvs.getUShort(k, def) : (uint16_t)sdGetInt(k, def, 2);
+}
+size_t SdNvsPrefs::putUShort(const char* k, uint16_t v) {
+  if (fileMode()) return sdPutInt(k, v, 2);
+  return legacyUseNvs() ? _nvs.putUShort(k, v) : sdPutInt(k, v, 2);
+}
+uint32_t SdNvsPrefs::getUInt(const char* k, uint32_t def) {
+  if (fileMode()) {
+    if (sdFind(k)) return (uint32_t)sdGetInt(k, def, 4);
+    if (_nvs_open && _nvs.isKey(k)) return _nvs.getUInt(k, def);
+    return def;
+  }
+  return legacyUseNvs() ? _nvs.getUInt(k, def) : (uint32_t)sdGetInt(k, def, 4);
+}
+size_t SdNvsPrefs::putUInt(const char* k, uint32_t v) {
+  if (fileMode()) return sdPutInt(k, v, 4);
+  return legacyUseNvs() ? _nvs.putUInt(k, v) : sdPutInt(k, v, 4);
+}
+bool SdNvsPrefs::getBool(const char* k, bool def) {
+  if (fileMode()) {
+    if (sdFind(k)) return sdGetInt(k, def ? 1 : 0, 1) != 0;
+    if (_nvs_open && _nvs.isKey(k)) return _nvs.getBool(k, def);
+    return def;
+  }
+  return legacyUseNvs() ? _nvs.getBool(k, def) : (sdGetInt(k, def ? 1 : 0, 1) != 0);
+}
+size_t SdNvsPrefs::putBool(const char* k, bool v) {
+  if (fileMode()) return sdPutInt(k, v ? 1 : 0, 1);
+  return legacyUseNvs() ? _nvs.putBool(k, v) : sdPutInt(k, v ? 1 : 0, 1);
+}
 
 String SdNvsPrefs::getString(const char* k, const String& def) {
-  if (useNvs()) return _nvs.getString(k, def);
-  Kv* e = sdFind(k);
-  if (!e) return def;
+  Kv* e = nullptr;
+  if (fileMode()) {
+    e = sdFind(k);
+    if (!e) return (_nvs_open && _nvs.isKey(k)) ? _nvs.getString(k, def) : def;
+  } else {
+    if (legacyUseNvs()) return _nvs.getString(k, def);
+    e = sdFind(k);
+    if (!e) return def;
+  }
   String s; s.reserve(e->val.size());
   for (uint8_t c : e->val) s += (char)c;
   return s;
 }
 size_t SdNvsPrefs::getString(const char* k, char* buf, size_t maxLen) {
-  if (useNvs()) return _nvs.getString(k, buf, maxLen);
   if (!buf || !maxLen) return 0;
-  Kv* e = sdFind(k);
+  Kv* e = nullptr;
+  if (fileMode()) {
+    e = sdFind(k);
+    if (!e) { if (_nvs_open && _nvs.isKey(k)) return _nvs.getString(k, buf, maxLen); buf[0] = '\0'; return 0; }
+  } else {
+    if (legacyUseNvs()) return _nvs.getString(k, buf, maxLen);
+    e = sdFind(k);
+  }
   size_t n = e ? e->val.size() : 0;
   if (n > maxLen - 1) n = maxLen - 1;
   if (e && n) memcpy(buf, e->val.data(), n);
@@ -161,24 +297,29 @@ size_t SdNvsPrefs::getString(const char* k, char* buf, size_t maxLen) {
   return n;
 }
 size_t SdNvsPrefs::putString(const char* k, const char* v) {
-  if (useNvs()) return _nvs.putString(k, v);
-  size_t n = v ? strlen(v) : 0;
-  sdSet(k, (const uint8_t*)v, n);
-  return n;
+  if (fileMode()) { size_t n = v ? strlen(v) : 0; sdSet(k, (const uint8_t*)v, n); return n; }
+  if (legacyUseNvs()) return _nvs.putString(k, v);
+  size_t n = v ? strlen(v) : 0; sdSet(k, (const uint8_t*)v, n); return n;
 }
 
 size_t SdNvsPrefs::getBytes(const char* k, void* buf, size_t maxLen) {
-  if (useNvs()) return _nvs.getBytes(k, buf, maxLen);
-  Kv* e = sdFind(k);
-  if (!e) return 0;
+  Kv* e = nullptr;
+  if (fileMode()) {
+    e = sdFind(k);
+    if (!e) return (_nvs_open && _nvs.isKey(k)) ? _nvs.getBytes(k, buf, maxLen) : 0;
+  } else {
+    if (legacyUseNvs()) return _nvs.getBytes(k, buf, maxLen);
+    e = sdFind(k);
+    if (!e) return 0;
+  }
   size_t n = e->val.size();
   if (buf && maxLen) { size_t c = n > maxLen ? maxLen : n; memcpy(buf, e->val.data(), c); }
   return n;
 }
 size_t SdNvsPrefs::putBytes(const char* k, const void* buf, size_t len) {
-  if (useNvs()) return _nvs.putBytes(k, buf, len);
-  sdSet(k, (const uint8_t*)buf, len);
-  return len;
+  if (fileMode()) { sdSet(k, (const uint8_t*)buf, len); return len; }
+  if (legacyUseNvs()) return _nvs.putBytes(k, buf, len);
+  sdSet(k, (const uint8_t*)buf, len); return len;
 }
 
 #endif  // ESP32
