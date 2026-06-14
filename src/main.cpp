@@ -8,7 +8,7 @@
 #include <esp_partition.h>   // find/erase otadata so the bootloader returns to the recovery
 #include <helpers/TouchDiagTrace.h>
 #include <helpers/MeshTouchTxTrace.h>
-#include <helpers/esp32/TouchPrefsStore.h>   // touchPrefsGetUiRotation for the boot wordmark
+#include "helpers/esp32/TouchPrefsStore.h"   // QUOTED: get wadamesh's copy (touchPrefsReload), not the lib's stale one
 #include "helpers/esp32/SdNvsPrefs.h"        // route prefs to file storage (SD/SPIFFS), off NVS
                                              // (quoted: use wadamesh's src/ copy, not the lib's stale one)
 #include "wadamesh_mark_rgb.h"               // anti-aliased mesh-mark (RGB565) for the pre-LVGL boot screen
@@ -357,6 +357,11 @@ void setup() {
   #else
     SdNvsPrefs::useFile((fs::FS*)&SPIFFS, "/prefs");   // no SD on this board
   #endif
+  // The boot wordmark already read a pref (UI rotation) BEFORE useFile switched
+  // the backend, caching the settings blob from legacy NVS. Re-read it now so
+  // file-saved values (theme accent, brightness, language, …) take effect this
+  // boot — otherwise a theme change "reverts" on every restart.
+  touchPrefsReload();
 #endif
   store.begin();
   the_mesh.begin(

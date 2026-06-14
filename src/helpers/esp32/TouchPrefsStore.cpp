@@ -229,6 +229,18 @@ void touchPrefsBegin() {
   if (s_begun) cfgLoadOrMigrate();
 }
 
+// Re-read settings from scratch. Used at boot AFTER SdNvsPrefs::useFile() flips
+// the backend to files: an earlier pref read (the boot-wordmark rotation) had
+// already loaded + cached the cfg blob from legacy NVS, so without this the
+// file-saved values (theme accent, brightness, language, …) would be ignored
+// until a later boot, and a theme change would appear to "revert" on restart.
+void touchPrefsReload() {
+  s_prefs.end();
+  s_begun = false;
+  s_cfg_loaded = false;
+  touchPrefsBegin();
+}
+
 // Arduino's Preferences::getString()/getBytes() emit an [E] nvs_get_* "NOT_FOUND"
 // log every time a key is absent — which floods the (USB-CDC) console on a fresh
 // device and on every empty Wi-Fi-slot read. isKey() (getType → raw nvs probes)

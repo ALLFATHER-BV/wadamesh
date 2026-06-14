@@ -1458,6 +1458,7 @@ enum { DSEC_DISPLAY = 0, DSEC_KEYBOARD, DSEC_SOUND, DSEC_LOCK, DSEC_SYSTEM };
 static lv_obj_t* s_settings_landing  = nullptr;  // the category landing container
 static lv_obj_t* s_settings_sheet    = nullptr;  // open detail sheet (layer_top); null = on landing
 static int       s_settings_open_cat = -1;       // which category is open (for About-label teardown)
+static bool      s_settings_from_cc  = false;    // settings sheet opened via a control-center long-press -> Back returns to the dropdown
 static void      closeSettingsCategory();        // fwd: tab-change + key-dismiss close the sheet
 
 // ---- Firmware update check (red badge on the Settings gear + About-tab line) ----
@@ -14734,6 +14735,7 @@ static void closeSettingsCategory() {
   s_settings_inline_parent = nullptr;
   if (s_settings_sheet) { lv_obj_del(s_settings_sheet); s_settings_sheet = nullptr; }
   s_settings_open_cat = -1;
+  s_settings_from_cc  = false;
   resetSettingsModalState();
   updateGlobalStatusBar();   // restore the normal status-bar left zone (drop Back/title)
 }
@@ -18001,6 +18003,7 @@ static void ccLongNavCb(lv_event_t* e) {
   const int cat = (int)(intptr_t)lv_event_get_user_data(e);
   closeControlCenter();
   openSettingsCategory(cat);
+  s_settings_from_cc = true;   // Back from here reopens the dropdown, not Home
 }
 static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
                      bool active, lv_event_cb_t cb, int width = 66, int height = 54,
@@ -18010,7 +18013,8 @@ static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
   styleButton(b);
   lv_obj_set_style_radius(b, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);   // reclaim the chip's inner area for the icon+label stack
-  lv_obj_set_style_bg_color(b, lv_color_hex(active ? COLOR_STATUS_OK : COLOR_ACCENT), LV_PART_MAIN);
+  // Follow the theme accent: solid when on, faint when off (was a fixed green when on).
+  lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(b, active ? LV_OPA_COVER : LV_OPA_20, LV_PART_MAIN);
   lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
   if (long_cat >= 0)   // long-press jumps to this feature's full settings page
@@ -18195,8 +18199,8 @@ static void openControlCenter() {
   lv_obj_align(bl, LV_ALIGN_TOP_RIGHT, 0, bl_y);
   lv_slider_set_range(bl, 5, 100);
   lv_slider_set_value(bl, s_brightness_pct, LV_ANIM_OFF);
-  lv_obj_set_style_bg_color(bl, lv_color_hex(COLOR_STATUS_OK), LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(bl, lv_color_hex(COLOR_STATUS_OK), LV_PART_KNOB);
+  lv_obj_set_style_bg_color(bl, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);   // follow the theme accent
+  lv_obj_set_style_bg_color(bl, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
   lv_obj_set_style_pad_all(bl, 4, LV_PART_KNOB);   // smaller knob to match the thin bar
   lv_obj_add_event_cb(bl, ccBrightnessCb,        LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(bl, ccBrightnessReleaseCb, LV_EVENT_RELEASED,      nullptr);
@@ -18284,7 +18288,12 @@ static void statusBarTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   // While a settings detail sheet is open the bar shows its Back chevron + title,
   // so a tap means "go back" rather than opening the control center.
-  if (s_settings_sheet) { closeSettingsCategory(); return; }
+  if (s_settings_sheet) {
+    const bool reopen_cc = s_settings_from_cc;   // did we get here from the dropdown?
+    closeSettingsCategory();                     // (clears s_settings_from_cc)
+    if (reopen_cc) openControlCenter();          // Back returns to the dropdown, not Home
+    return;
+  }
   if (s_cc_root) closeControlCenter(); else openControlCenter();
 }
 

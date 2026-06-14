@@ -9,6 +9,9 @@
 #include <stdint.h>
 
 void touchPrefsBegin();
+// Force a fresh load of the settings blob. Call after SdNvsPrefs::useFile() at
+// boot: an earlier pref read may have cached the blob from the legacy backend.
+void touchPrefsReload();
 
 /** Screen timeout in seconds; 0 = never sleep. Default 20. */
 uint16_t touchPrefsGetScreenTimeoutSecs();
