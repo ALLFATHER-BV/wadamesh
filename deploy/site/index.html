@@ -49,12 +49,11 @@
   .fab svg{width:21px; height:21px}
   .fab-tg{left:16px}
   .fab-bug{right:16px}
-  .brand{display:flex; align-items:center; justify-content:center; gap:clamp(12px,2.6vw,20px); flex-wrap:wrap}
+  .brand{display:flex; align-items:center; justify-content:center; gap:clamp(12px,2.6vw,20px); flex-wrap:wrap; position:relative}
   .brand .mark{width:clamp(60px,13vw,88px); height:auto; flex:none}
   .brand .word{font-weight:700; font-size:clamp(2rem,7.5vw,3.35rem); letter-spacing:3px; color:var(--ink); line-height:1}
   .brand .word .t{color:var(--teal)}
-  /* word in normal flow, byline floated beneath it — so the mark centres on the WORD, not word+byline */
-  .brand-text{position:relative; display:inline-block; line-height:1}
+  /* byline floats beneath the whole lockup, centred on mark+word combined (mark still centres on the word) */
   .byline{position:absolute; top:100%; left:0; width:100%; margin-top:7px; text-align:center;
     font-family:'JetBrains Mono',monospace; font-size:clamp(.62rem,1.7vw,.8rem); letter-spacing:.2em; text-transform:uppercase; color:var(--mut); font-weight:600}
   /* animated mesh mark — repeaters broadcast pings; signal packets ride the trails */
@@ -218,10 +217,8 @@
         <!-- repeater nodes -->
         <g class="wm-nodes" fill="#15B6A6"><circle cx="10" cy="60" r="7"/><circle cx="90" cy="60" r="7"/><circle cx="170" cy="60" r="7"/><circle cx="50" cy="12" r="7"/><circle cx="130" cy="12" r="7"/><circle cx="50" cy="108" r="7"/><circle cx="130" cy="108" r="7"/></g>
       </svg>
-      <div class="brand-text">
-        <span class="word mono">WADA<span class="t">MESH</span></span>
-        <span class="byline">by meshcomod</span>
-      </div>
+      <span class="word mono">WADA<span class="t">MESH</span></span>
+      <span class="byline">by meshcomod</span>
     </div>
     <p class="lede">A real touchscreen UI for your mesh radio.</p>
     <p class="sub">MeshCore MESHCOMOD firmware for the <b>LilyGo&nbsp;T-Deck</b> and <b>Heltec&nbsp;V4</b> — map, chat, channels and contacts on the device itself, <b>and</b> a companion radio for the <b>MeshCore app</b> at the same time.</p>
