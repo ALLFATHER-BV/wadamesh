@@ -37,10 +37,18 @@
   .wrap{max-width:1040px; margin:0 auto; padding:0 22px}
 
   header{padding:74px 0 30px; text-align:center}
-  .kicker{display:inline-block; margin-bottom:24px; padding:6px 13px; border:1px solid var(--line);
+  .kicker{display:inline-block; margin-bottom:10px; padding:6px 13px; border:1px solid var(--line);
     border-radius:100px; color:var(--mut); font-size:.78rem; letter-spacing:.05em; text-transform:uppercase;
     font-family:'JetBrains Mono',monospace; background:#fff; transition:border-color .15s, color .15s}
   .kicker:hover{border-color:var(--teal); color:var(--ink)}
+  .freeline{margin:0 auto 24px; color:var(--mut); font-size:.92rem}
+  .fab{position:fixed; top:16px; z-index:45; width:44px; height:44px; border-radius:50%; display:grid; place-items:center;
+    background:#fff; border:1px solid var(--line); color:#46525c; box-shadow:0 10px 26px -14px rgba(21,24,30,.45);
+    transition:border-color .15s, color .15s, transform .15s, box-shadow .15s}
+  .fab:hover{border-color:var(--teal); color:var(--teal-ink); transform:translateY(-2px); box-shadow:0 14px 30px -14px rgba(21,182,166,.5)}
+  .fab svg{width:21px; height:21px}
+  .fab-tg{left:16px}
+  .fab-bug{right:16px}
   .brand{display:flex; align-items:center; justify-content:center; gap:clamp(12px,2.6vw,20px); flex-wrap:wrap}
   .brand .mark{width:clamp(60px,13vw,88px); height:auto; flex:none}
   .brand .word{font-weight:700; font-size:clamp(2rem,7.5vw,3.35rem); letter-spacing:3px; color:var(--ink); line-height:1}
@@ -86,7 +94,7 @@
   .h2{font-size:clamp(1.55rem,4vw,2.15rem); font-weight:750; letter-spacing:-.5px; text-align:center}
   .p{color:var(--mut); text-align:center; max-width:560px; margin:10px auto 0}
   /* lift hero + section text off the animated net so it stays readable */
-  .brand .word, .byline, .lede, .sub, .cue, .h2, .p{
+  .brand .word, .byline, .freeline, .lede, .sub, .cue, .h2, .p{
     text-shadow: 0 1px 3px #fff, 0 0 14px #fff, 0 0 14px #fff, 0 0 26px #fff, 0 0 26px #fff, 0 0 42px #fff;
   }
 
@@ -166,9 +174,18 @@
 <body>
 <div id="vanta-bg"></div>
 
+<!-- floating quick links -->
+<a class="fab fab-tg" href="https://t.me/+fHuhG67-RFJlNmFk" target="_blank" rel="noopener" aria-label="Join us on Telegram" title="Join us on Telegram">
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.04 15.47 8.7 19.9c.5 0 .72-.22.98-.47l2.36-2.22 4.89 3.53c.9.5 1.53.24 1.77-.83l3.2-14.5c.3-1.33-.5-1.85-1.36-1.53L1.9 9.46c-1.3.5-1.28 1.22-.22 1.55l5.05 1.57L18.4 5.9c.55-.36 1.05-.16.64.2L9.04 15.47z"/></svg>
+</a>
+<a class="fab fab-bug" href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener" aria-label="Report a bug on GitHub" title="Report a bug">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="14" x="8" y="6" rx="4"/><path d="m19 7-3 2"/><path d="m5 7 3 2"/><path d="m19 19-3-2"/><path d="m5 19 3-2"/><path d="M20 13h-4"/><path d="M4 13h4"/><path d="m10 4 1 2"/><path d="m14 4-1 2"/></svg>
+</a>
+
 <header>
   <div class="wrap">
     <a class="kicker" href="https://github.com/ALLFATHER-BV/wadamesh" target="_blank" rel="noopener">open source · GPL-3.0</a>
+    <p class="freeline">Free — as it should be</p>
     <!-- wadamesh brand: mark + wordmark, flex-centered -->
     <div class="brand">
       <svg class="mark" viewBox="0 0 180 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="wadamesh">
