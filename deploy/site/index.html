@@ -53,8 +53,10 @@
   .brand .mark{width:clamp(60px,13vw,88px); height:auto; flex:none}
   .brand .word{font-weight:700; font-size:clamp(2rem,7.5vw,3.35rem); letter-spacing:3px; color:var(--ink); line-height:1}
   .brand .word .t{color:var(--teal)}
-  .brand-text{display:flex; flex-direction:column; align-items:center; gap:5px}
-  .byline{font-family:'JetBrains Mono',monospace; font-size:clamp(.62rem,1.7vw,.8rem); letter-spacing:.2em; text-transform:uppercase; color:var(--mut); font-weight:600}
+  /* word in normal flow, byline floated beneath it — so the mark centres on the WORD, not word+byline */
+  .brand-text{position:relative; display:inline-block; line-height:1}
+  .byline{position:absolute; top:100%; left:0; width:100%; margin-top:7px; text-align:center;
+    font-family:'JetBrains Mono',monospace; font-size:clamp(.62rem,1.7vw,.8rem); letter-spacing:.2em; text-transform:uppercase; color:var(--mut); font-weight:600}
   /* animated mesh mark — repeaters broadcast pings; signal packets ride the trails */
   .brand .mark{overflow:visible}
   .wm-flow{display:none}
