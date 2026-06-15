@@ -45,6 +45,8 @@
   .brand .mark{width:clamp(60px,13vw,88px); height:auto; flex:none}
   .brand .word{font-weight:700; font-size:clamp(2rem,7.5vw,3.35rem); letter-spacing:3px; color:var(--ink); line-height:1}
   .brand .word .t{color:var(--teal)}
+  .brand-text{display:flex; flex-direction:column; align-items:center; gap:5px}
+  .byline{font-family:'JetBrains Mono',monospace; font-size:clamp(.62rem,1.7vw,.8rem); letter-spacing:.2em; text-transform:uppercase; color:var(--mut); font-weight:600}
   /* animated mesh mark — repeaters broadcast pings; signal packets ride the trails */
   .brand .mark{overflow:visible}
   .wm-flow{display:none}
@@ -84,7 +86,7 @@
   .h2{font-size:clamp(1.55rem,4vw,2.15rem); font-weight:750; letter-spacing:-.5px; text-align:center}
   .p{color:var(--mut); text-align:center; max-width:560px; margin:10px auto 0}
   /* lift hero + section text off the animated net so it stays readable */
-  .brand .word, .lede, .sub, .cue, .h2, .p{
+  .brand .word, .byline, .lede, .sub, .cue, .h2, .p{
     text-shadow: 0 1px 3px #fff, 0 0 14px #fff, 0 0 14px #fff, 0 0 26px #fff, 0 0 26px #fff, 0 0 42px #fff;
   }
 
@@ -197,7 +199,10 @@
         <!-- repeater nodes -->
         <g class="wm-nodes" fill="#15B6A6"><circle cx="10" cy="60" r="7"/><circle cx="90" cy="60" r="7"/><circle cx="170" cy="60" r="7"/><circle cx="50" cy="12" r="7"/><circle cx="130" cy="12" r="7"/><circle cx="50" cy="108" r="7"/><circle cx="130" cy="108" r="7"/></g>
       </svg>
-      <span class="word mono">WADA<span class="t">MESH</span></span>
+      <div class="brand-text">
+        <span class="word mono">WADA<span class="t">MESH</span></span>
+        <span class="byline">by meshcomod</span>
+      </div>
     </div>
     <p class="lede">A real touchscreen UI for your mesh radio.</p>
     <p class="sub">MeshCore MESHCOMOD firmware for the <b>LilyGo&nbsp;T-Deck</b> and <b>Heltec&nbsp;V4</b> — map, chat, channels and contacts on the device itself, <b>and</b> a companion radio for the <b>MeshCore app</b> at the same time.</p>

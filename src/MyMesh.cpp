@@ -3705,6 +3705,36 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_SET_FLOOD_SCOPE && len >= 2 && cmd_frame[1] == 1) {  // ver 12+ (1.16 send_unscoped; fork keeps its cmd name/number 54)
     send_unscoped = true;
     writeOKFrame();
+  } else if (cmd_frame[0] == CMD_SET_DEFAULT_FLOOD_SCOPE && len >= 1) {
+    // MeshCore 1.16: persistent default region scope (companion-v1.16.0.3 / issue #31).
+    // Payload [63, name(31), key(16)]; an empty payload ([63]) clears it. Without this
+    // handler the official MeshCore app's "default scope" setting got no reply
+    // ("no_event_received"). The flood path already applies _prefs.default_scope_key.
+    if (len >= 1 + 31 + 16) {
+      int n = strlen((char *)&cmd_frame[1]);
+      if (n > 0 && n < 31) {
+        strcpy(_prefs.default_scope_name, (char *)&cmd_frame[1]);
+        memcpy(_prefs.default_scope_key, &cmd_frame[1 + 31], 16);
+        savePrefs();
+        writeOKFrame();
+      } else {
+        writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+      }
+    } else {
+      memset(_prefs.default_scope_name, 0, sizeof(_prefs.default_scope_name));  // null = unscoped
+      memset(_prefs.default_scope_key, 0, sizeof(_prefs.default_scope_key));
+      savePrefs();
+      writeOKFrame();
+    }
+  } else if (cmd_frame[0] == CMD_GET_DEFAULT_FLOOD_SCOPE) {
+    out_frame[0] = RESP_CODE_DEFAULT_FLOOD_SCOPE;
+    if (strlen(_prefs.default_scope_name) > 0) {
+      memcpy(&out_frame[1], _prefs.default_scope_name, 31);
+      memcpy(&out_frame[1 + 31], _prefs.default_scope_key, 16);
+      _serial->writeFrame(out_frame, 1 + 31 + 16);
+    } else {
+      _serial->writeFrame(out_frame, 1);   // no name/key = null
+    }
   } else if (cmd_frame[0] == CMD_SEND_CONTROL_DATA && len >= 2 && (cmd_frame[1] & 0x80) != 0) {
     auto resp = createControlData(&cmd_frame[1], len - 1);
     if (resp) {

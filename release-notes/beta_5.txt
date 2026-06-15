@@ -1,0 +1,41 @@
+# beta_5 — what's new (one user-facing note per non-blank, non-# line)
+
+# --- Contacts ---
+Contacts now show a person icon for people and an antenna for repeaters, instead of a generic envelope and lightning bolt
+Block or unblock anyone straight from their popup — blocked contacts get a red person icon and their messages are hidden
+The contacts list is a proper table now: dedicated "last heard" and distance columns, a Sort & Filter button, and multi-select delete with an are-you-sure prompt and a progress bar (favourites are protected — unfavourite them first)
+Time and distance are smaller and tucked to the right so names get more room; a name too long for two lines scrolls instead of spilling onto a third
+Un-favouriting a contact removes its star right away
+
+# --- Discovered nodes ---
+The Discovered list now survives reboots (it used to empty every boot) and holds up to 48 nodes
+New Discovered settings (cogwheel): auto-delete the oldest node when the list is full, and auto-delete anything heard via more than a set number of hops — keeps the list fresh and nearby
+The Discovered count badge shows "48!" when the list is full
+Adding a node from Discovered now appears in your Contacts immediately
+A purge-all button sits right next to Close in the Discovered list
+
+# --- Region / radio ---
+Setting the region / default scope from the official MeshCore app now works — it used to time out ("no_event_received"); public-channel floods are now region-tagged (issue #31)
+The US/Canada radio preset is corrected to the proper 910.525 MHz, 62.5 kHz, SF7 (was 915 MHz / 250 kHz / SF11)
+T-Deck transmit power is restored to the full +22 dBm — the SX1262 antenna switch was mis-driven, leaking most of the power (~4 mW) (issue #6)
+Auto-add settings moved to their own dedicated page (out of Radio), and are reachable from the Contacts menu too
+
+# --- Chats & sound ---
+Each chat and channel row now shows the time of its most recent message on the right
+Mute messages and/or @-mentions per channel, from that channel's settings
+The @-mentions screen has taller rows (fits two lines) and tapping a mention jumps to that exact message
+Volume is now plus/minus buttons instead of a hard-to-drag slider; a master Sound switch silences everything, with independent Messages and @-mention switches
+@-mentions can play their own distinct chime, with separate on/off and volume
+
+# --- Map ---
+The map remembers your zoom and pan when you leave and come back, instead of snapping back to your location every time
+Tapping a contact on the map opens a compact popup (no Block button there, to keep it small)
+
+# --- Keyboard & input ---
+T-Deck keyboard: backspace deletes at the cursor instead of always chopping the last character, and editing respects where you place the caret
+Quick replies page now scrolls so you can reach and edit every slot
+
+# --- UI polish ---
+Refined bottom tab bar — flat icons that take your theme colour with a soft glow under the active tab — plus an unread-count badge on the Chats icon
+App drawer: colourful app icons, the command tile relabelled "Cmdr", the Apps button in a contrasting accent, and three-per-row on the Heltec V4
+Full-screen settings pages with a clear X to close, a subtle new-message chip, and a full-page Signal view with a live readout and manual refresh

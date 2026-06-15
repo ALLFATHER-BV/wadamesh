@@ -7,6 +7,7 @@
 #if defined(ESP32)
 
 #include <stdint.h>
+#include <stddef.h>   // size_t (blob helpers below)
 
 void touchPrefsBegin();
 // Force a fresh load of the settings blob. Call after SdNvsPrefs::useFile() at
@@ -155,6 +156,36 @@ bool touchPrefsIsIgnored(const uint8_t* pub_key6);
 bool touchPrefsSetIgnored(const uint8_t* pub_key6, bool ignored);
 int  touchPrefsCopyIgnored(uint8_t* out_buf);
 
+/** Notification-sound prefs (the message chime itself stays on the core
+ *  buzzer_quiet flag). @-mention chime is a SEPARATE enable + a distinct sound,
+ *  so an operator can mute everything but still hear @-mentions. Volume is the
+ *  T-Deck I2S amplitude (0..100); the V4 piezo can't vary volume. */
+bool    touchPrefsGetSoundMessages();          // message chime on/off (under the master), default true
+void    touchPrefsSetSoundMessages(bool on);
+bool    touchPrefsGetDiscoveredAutoEvict();    // ring full -> auto-delete the oldest discovered node (default true)
+void    touchPrefsSetDiscoveredAutoEvict(bool on);
+uint8_t touchPrefsGetDiscoveredMaxHops();      // auto-delete discovered nodes heard via more hops than this (0 = off)
+void    touchPrefsSetDiscoveredMaxHops(uint8_t hops);
+bool    touchPrefsGetSoundMentions();          // default true
+void    touchPrefsSetSoundMentions(bool on);
+uint8_t touchPrefsGetSoundVolume();            // 0..100, default 70
+void    touchPrefsSetSoundVolume(uint8_t vol);
+
+/** Per-channel mute, keyed by channel name. Bit 0 = mute messages, bit 1 =
+ *  mute @-mentions. Suppresses the notification SOUND for that channel (the
+ *  unread badge/divider still work). A small name-keyed NVS blob. */
+constexpr int TOUCH_CHMUTE_MAX  = 24;
+constexpr int TOUCH_CHMUTE_NAME = 32;
+constexpr uint8_t TOUCH_CHMUTE_MSG = 0x1;
+constexpr uint8_t TOUCH_CHMUTE_MEN = 0x2;
+uint8_t touchPrefsGetChannelMute(const char* name);
+void    touchPrefsSetChannelMute(const char* name, uint8_t flags);
+
+/** Generic NVS blob (key/value). Used to persist the discovered-nodes list so
+ *  it survives a reboot. getBlob returns the byte count copied (0 if absent). */
+size_t touchPrefsGetBlob(const char* key, uint8_t* out, size_t maxlen);
+bool   touchPrefsSetBlob(const char* key, const uint8_t* data, size_t len);
+
 /** Map tile-server base URL. The device fetches missing map tiles by
  *  HTTP GET against `<base>/<z>/<x>/<y>.png`. Defaults to the meshcomod
  *  proxy. Plain HTTP only — mbedTLS doesn't fit in the ~5 KB of internal
@@ -239,5 +270,16 @@ bool touchPrefsSetSetupDone(bool done);
  *  init; `fallback` is the compile-time default. Applied on reboot. */
 uint32_t touchPrefsGetGpsBaud(uint32_t fallback);
 bool     touchPrefsSetGpsBaud(uint32_t baud);
+
+/** Mesh signal auto-discover probe. When ON (default), the firmware periodically
+ *  sends a flood advert so nearby repeaters re-broadcast it and we can measure
+ *  the echo's SNR — what drives the top-bar signal bars and the home-graph
+ *  readout. The poll interval is in whole minutes, clamped 1..1440 (1 min =
+ *  60 s minimum, no higher than a day). Both are exposed in the home-graph
+ *  "Signal & traffic" popup (tap the graph). */
+bool     touchPrefsGetSigProbeEnabled();
+bool     touchPrefsSetSigProbeEnabled(bool on);
+uint16_t touchPrefsGetSigPollMins();
+bool     touchPrefsSetSigPollMins(uint16_t mins);
 
 #endif

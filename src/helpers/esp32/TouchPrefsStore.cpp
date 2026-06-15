@@ -35,7 +35,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 1;
+static const uint8_t  TOUCH_CFG_VER   = 2;   // v2 adds sig_probe_en + sig_poll_min
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -46,6 +46,8 @@ static const uint8_t  DEFAULT_KB_SECONDARY     = 0;          // None
 static const uint32_t DEFAULT_LOCK_COLOR       = 0xE6F2FFu;  // soft white
 static const uint32_t DEFAULT_ACCENT           = 0x15B6A6u;  // brand teal
 static const bool     DEFAULT_DC_SHOW          = true;
+static const uint8_t  DEFAULT_SIG_PROBE_EN     = 1;          // signal discover probe ON
+static const uint16_t DEFAULT_SIG_POLL_MIN     = 5;          // minutes between probes
 
 struct __attribute__((packed)) TouchCfg {
   uint16_t magic;            // TOUCH_CFG_MAGIC — rejects a garbage/short read
@@ -68,6 +70,8 @@ struct __attribute__((packed)) TouchCfg {
   uint32_t lock_color;       // "lk_col"     0xRRGGBB
   uint32_t accent;           // "accent"     0xRRGGBB
   uint32_t gps_baud;         // "gps_baud"   0 = unset -> caller fallback
+  uint8_t  sig_probe_en;     // signal auto-discover probe on/off (bool) — v2
+  uint16_t sig_poll_min;     // minutes between signal probes, 1..1440  — v2
 };
 
 static TouchCfg s_cfg;
@@ -114,6 +118,8 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.lock_color    = DEFAULT_LOCK_COLOR;
   c.accent        = DEFAULT_ACCENT;
   c.gps_baud      = 0;          // 0 sentinel -> getter returns caller fallback
+  c.sig_probe_en  = DEFAULT_SIG_PROBE_EN;
+  c.sig_poll_min  = DEFAULT_SIG_POLL_MIN;
 }
 
 // Persist the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
@@ -258,6 +264,37 @@ uint16_t touchPrefsGetScreenTimeoutSecs() {
 bool touchPrefsSetScreenTimeoutSecs(uint16_t seconds) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.scr_to_s = seconds;
+  return cfgFlush();
+}
+
+// --- Mesh signal auto-discover probe (toggle + poll interval) ---------------
+// The interval is entered in whole minutes; clamp >1 min (one flood a minute is
+// already aggressive on shared airtime) .. 1 day so a bad/blank entry can't make
+// the probe hammer the mesh or effectively never run.
+static const uint16_t SIG_POLL_MIN_MINS = 1;   // 1 min = 60 s (the old fixed cadence)
+static const uint16_t SIG_POLL_MAX_MINS = 1440;
+
+bool touchPrefsGetSigProbeEnabled() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.sig_probe_en != 0;
+}
+bool touchPrefsSetSigProbeEnabled(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.sig_probe_en = on ? 1 : 0;
+  return cfgFlush();
+}
+uint16_t touchPrefsGetSigPollMins() {
+  if (!s_begun) touchPrefsBegin();
+  uint16_t m = s_cfg.sig_poll_min;
+  if (m < SIG_POLL_MIN_MINS) m = SIG_POLL_MIN_MINS;
+  if (m > SIG_POLL_MAX_MINS) m = SIG_POLL_MAX_MINS;
+  return m;
+}
+bool touchPrefsSetSigPollMins(uint16_t mins) {
+  if (mins < SIG_POLL_MIN_MINS) mins = SIG_POLL_MIN_MINS;
+  if (mins > SIG_POLL_MAX_MINS) mins = SIG_POLL_MAX_MINS;
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.sig_poll_min = mins;
   return cfgFlush();
 }
 
@@ -844,6 +881,112 @@ bool touchPrefsSetIgnored(const uint8_t* pub_key6, bool ignored) {
       memcpy(&buf[i * TOUCH_IGNORE_KEY_BYTES], &buf[(i + 1) * TOUCH_IGNORE_KEY_BYTES], TOUCH_IGNORE_KEY_BYTES);
     --n; ignWriteAll(buf, n); return false;
   }
+}
+
+// Notification-sound prefs (individual NVS keys — integer getters don't emit the
+// [E] NOT_FOUND log that getString/getBytes do on a fresh device) -----------
+static void prefsPutUChar(const char* key, uint8_t v) {
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return; }
+  s_prefs.putUChar(key, v);
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+}
+bool touchPrefsGetSoundMessages() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUChar("snd_msg", 1) != 0;
+}
+void touchPrefsSetSoundMessages(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_msg", on ? 1 : 0); }
+bool touchPrefsGetSoundMentions() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUChar("snd_men", 1) != 0;
+}
+void touchPrefsSetSoundMentions(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_men", on ? 1 : 0); }
+bool touchPrefsGetDiscoveredAutoEvict() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUChar("dsc_evict", 1) != 0;
+}
+void touchPrefsSetDiscoveredAutoEvict(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("dsc_evict", on ? 1 : 0); }
+uint8_t touchPrefsGetDiscoveredMaxHops() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUChar("dsc_hops", 0);   // 0 = off
+}
+void touchPrefsSetDiscoveredMaxHops(uint8_t hops) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("dsc_hops", hops); }
+
+// Generic blob (used to persist the discovered-nodes list across reboots).
+size_t touchPrefsGetBlob(const char* key, uint8_t* out, size_t maxlen) {
+  if (!s_begun) touchPrefsBegin();
+  if (!key || !out || !s_prefs.isKey(key)) return 0;
+  size_t n = s_prefs.getBytes(key, out, maxlen);
+  return (n > maxlen) ? 0 : n;
+}
+bool touchPrefsSetBlob(const char* key, const uint8_t* data, size_t len) {
+  if (!key) return false;
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
+  bool ok;
+  if (!data || len == 0) { s_prefs.remove(key); ok = true; }
+  else                   ok = s_prefs.putBytes(key, data, len) > 0;
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
+uint8_t touchPrefsGetSoundVolume() {
+  if (!s_begun) touchPrefsBegin();
+  uint8_t v = s_prefs.getUChar("snd_vol", 70);
+  return v > 100 ? 100 : v;
+}
+void touchPrefsSetSoundVolume(uint8_t vol) { if (vol > 100) vol = 100; if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_vol", vol); }
+
+// Per-channel mute (name-keyed NVS blob "chm" + tiny RAM cache) --------------
+static const char* KEY_CHM = "chm";
+static const int   CHM_ENTRY = TOUCH_CHMUTE_NAME + 1;   // 32-byte name + 1 flag byte
+static uint8_t     s_chm[TOUCH_CHMUTE_MAX * CHM_ENTRY];
+static int         s_chm_n = -1;   // -1 = not loaded yet
+static void chmLoad() {
+  if (s_chm_n >= 0) return;
+  s_chm_n = 0;
+  if (!s_begun) touchPrefsBegin();
+  if (!s_prefs.isKey(KEY_CHM)) return;
+  size_t n = s_prefs.getBytes(KEY_CHM, s_chm, sizeof(s_chm));
+  if (n == 0 || n > sizeof(s_chm)) { s_chm_n = 0; return; }
+  s_chm_n = (int)(n / CHM_ENTRY);
+}
+static int chmFind(const char* name) {
+  chmLoad();
+  for (int i = 0; i < s_chm_n; ++i)
+    if (strncmp((const char*)&s_chm[i * CHM_ENTRY], name, TOUCH_CHMUTE_NAME) == 0) return i;
+  return -1;
+}
+uint8_t touchPrefsGetChannelMute(const char* name) {
+  if (!name || !name[0]) return 0;
+  int i = chmFind(name);
+  return i < 0 ? 0 : s_chm[i * CHM_ENTRY + TOUCH_CHMUTE_NAME];
+}
+void touchPrefsSetChannelMute(const char* name, uint8_t flags) {
+  if (!name || !name[0]) return;
+  chmLoad();
+  int i = chmFind(name);
+  if (flags == 0) {
+    if (i < 0) return;
+    for (int j = i; j + 1 < s_chm_n; ++j) memcpy(&s_chm[j * CHM_ENTRY], &s_chm[(j + 1) * CHM_ENTRY], CHM_ENTRY);
+    --s_chm_n;
+  } else {
+    if (i < 0) {
+      if (s_chm_n >= TOUCH_CHMUTE_MAX) return;   // cap reached
+      i = s_chm_n++;
+      memset(&s_chm[i * CHM_ENTRY], 0, CHM_ENTRY);
+      strncpy((char*)&s_chm[i * CHM_ENTRY], name, TOUCH_CHMUTE_NAME - 1);
+    }
+    s_chm[i * CHM_ENTRY + TOUCH_CHMUTE_NAME] = flags;
+  }
+  s_prefs.end();
+  if (s_prefs.begin(TOUCH_NS, false)) {
+    if (s_chm_n == 0) s_prefs.remove(KEY_CHM);
+    else              s_prefs.putBytes(KEY_CHM, s_chm, (size_t)(s_chm_n * CHM_ENTRY));
+    s_prefs.end();
+  }
+  s_begun = s_prefs.begin(TOUCH_NS, true);
 }
 
 // Remembered repeater admin passwords --------------------------------------

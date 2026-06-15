@@ -77,7 +77,10 @@
   #if defined(ESP32)
     #include <Preferences.h>
     #include <helpers/esp32/SdNvsPrefs.h>   // NVS-or-SD prefs backend (Launcher-safe)
-    #include <helpers/esp32/TouchPrefsStore.h>
+    // QUOTED on purpose: the vendored core lib ships a STALE copy of this header in
+    // its include path, so an angle include picks that up and misses accessors we
+    // add here (e.g. the signal-probe prefs). Quotes force the local src/ copy.
+    #include "../helpers/esp32/TouchPrefsStore.h"
     #if defined(MULTI_TRANSPORT_COMPANION)
       #include <WiFi.h>
       #include <HTTPClient.h>
@@ -252,11 +255,14 @@ constexpr uint32_t COLOR_STATUS_DANGER= 0xA04040;  // muted red
 #define TOUCH_SYM_STAR_BIG "\xE2\x98\x85"  /* render ONLY with star_font_28    */
 extern "C" const lv_font_t star_font_28;
 extern "C" const lv_font_t star_font_14;
-// FontAwesome "user" glyph (U+F007) for the Contacts tab icon. Spliced into the
-// g_font_14 fallback chain (the tab bar's font) in initTouchFontFallbacks, so the
-// single PUA codepoint renders a person and still follows the tab's active colour.
+// FontAwesome glyphs (monochrome, bpp4) carried by person_font: U+F007 "user"
+// and U+F519 "tower-broadcast". Spliced into the g_font_16 fallback chain in
+// initTouchFontFallbacks, so these PUA codepoints render an icon that follows
+// the label's text colour. Used for the Contacts tab icon (person) and the
+// Contacts-list type icons (person = peer, antenna = repeater).
 extern "C" const lv_font_t person_font;
-#define TOUCH_SYM_PERSON "\xEF\x80\x87"    /* U+F007 */
+#define TOUCH_SYM_PERSON  "\xEF\x80\x87"   /* U+F007 user */
+#define TOUCH_SYM_ANTENNA "\xEF\x94\x99"   /* U+F519 tower-broadcast */
 
 // Extras fallback fonts — em-dash (U+2014), ellipsis (U+2026), middle dot
 // (U+00B7). LVGL's stock Montserrat subset doesn't include these, so any
@@ -321,6 +327,13 @@ static void initTouchFontFallbacks() {
   s_person_font = person_font;
   s_person_font.fallback = g_font_16.fallback;
   g_font_16.fallback = &s_person_font;
+  // Also reach the person/antenna glyphs from g_font_14 — the contact action
+  // sheet renders its title icon inline with the name in that font. fallback is
+  // only consulted on a glyph miss, so normal 14 px text pays nothing.
+  static lv_font_t s_person_font14;
+  s_person_font14 = person_font;
+  s_person_font14.fallback = g_font_14.fallback;
+  g_font_14.fallback = &s_person_font14;
 }
 
 // ---- T-Deck notification tones (I2S → MAX98357A speaker amp) ----
@@ -391,13 +404,22 @@ static void tdeckPlayToneRaw(int freq, int ms, int vol = 9000) {
 }
 
 static volatile bool s_notify_playing = false;
-// The chime body: install I2S, play the two notes, uninstall. ~300 ms of blocking
+static volatile bool s_notify_mention = false;   // play the @-mention pattern this round
+static volatile int  s_notify_vol     = 9000;    // amplitude, scaled from the volume pref
+// The chime body: install I2S, play the notes, uninstall. ~300 ms of blocking
 // i2s_write + driver setup/teardown — run on its own throwaway task (below).
 static void tdeckNotifyTaskFn(void* arg) {
   (void)arg;
   if (tdeckAudioInstall()) {
-    tdeckPlayToneRaw(880, 90);    // A5
-    tdeckPlayToneRaw(1318, 110);  // E6
+    const int v = s_notify_vol;
+    if (s_notify_mention) {              // @-mention: a brighter 3-note rising arpeggio
+      tdeckPlayToneRaw(1318, 70,  v);    // E6
+      tdeckPlayToneRaw(1760, 70,  v);    // A6
+      tdeckPlayToneRaw(2349, 130, v);    // D7
+    } else {                            // message: the two-note chime
+      tdeckPlayToneRaw(880,  90,  v);    // A5
+      tdeckPlayToneRaw(1318, 110, v);    // E6
+    }
     i2s_driver_uninstall(kI2sPort);
   }
   s_notify_playing = false;
@@ -409,9 +431,11 @@ static void tdeckNotifyTaskFn(void* arg) {
 // playing synchronously locked the screen for the whole chime. Skips while tiles
 // download (DMA-RAM contention → reboot) and won't stack itself. Caller checks the
 // sound pref.
-static void tdeckPlayNotify() {
+static void tdeckPlayNotify(bool mention) {
   if (s_tile_fetch_pending > 0) return;   // don't fight the Wi-Fi/tile DMA buffers
   if (s_notify_playing) return;           // already chiming — don't stack tasks/I2S
+  s_notify_mention = mention;
+  s_notify_vol = (int)touchPrefsGetSoundVolume() * 130;   // 0..100 -> 0..13000 amplitude
   s_notify_playing = true;
   if (xTaskCreate(tdeckNotifyTaskFn, "notify", 4096, nullptr, 3, nullptr) != pdPASS) {
     s_notify_playing = false;             // couldn't spawn (low DRAM) — skip the chime
@@ -430,22 +454,29 @@ static void tdeckPlayNotify() {
 // LEDC ch 5 (the TFT backlight uses ch 0); the pin is detached + parked high-Z
 // afterwards so the piezo is silent at idle.
 static volatile bool s_v4_beep_playing = false;
+static volatile bool s_v4_mention = false;
 static void v4BeepTaskFn(void* arg) {
   (void)arg;
   // Drive the GPIO6 piezo with Arduino tone() — the exact mechanism Meshtastic's
-  // RTTTL buzzer uses on this board (heltec-v4-tft). Raw LEDC (ledcWriteTone on a
-  // hand-picked channel) produced no sound, likely colliding with the TFT
-  // backlight's LEDC channel; tone() auto-manages its own channel. ~520 ms chime.
-  tone(HELTEC_V4_BUZZER_PIN, 1000);  vTaskDelay(pdMS_TO_TICKS(160));
-  tone(HELTEC_V4_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(160));
-  tone(HELTEC_V4_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(200));
+  // RTTTL buzzer uses on this board (heltec-v4-tft). (tone() can't vary volume,
+  // so the volume pref only affects the T-Deck.) @-mention = a higher, faster trill.
+  if (s_v4_mention) {
+    tone(HELTEC_V4_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(110));
+    tone(HELTEC_V4_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(110));
+    tone(HELTEC_V4_BUZZER_PIN, 2600);  vTaskDelay(pdMS_TO_TICKS(170));
+  } else {
+    tone(HELTEC_V4_BUZZER_PIN, 1000);  vTaskDelay(pdMS_TO_TICKS(160));
+    tone(HELTEC_V4_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(160));
+    tone(HELTEC_V4_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(200));
+  }
   noTone(HELTEC_V4_BUZZER_PIN);
   pinMode(HELTEC_V4_BUZZER_PIN, INPUT);   // high-Z → no idle current / no buzz
   s_v4_beep_playing = false;
   vTaskDelete(nullptr);
 }
-static void v4BuzzerBeep() {
+static void v4BuzzerBeep(bool mention) {
   if (s_v4_beep_playing) return;
+  s_v4_mention = mention;
   s_v4_beep_playing = true;
   if (xTaskCreate(v4BeepTaskFn, "v4beep", 2048, nullptr, 3, nullptr) != pdPASS)
     s_v4_beep_playing = false;
@@ -455,9 +486,17 @@ static void v4BuzzerBeep() {
 // Play the platform's notification chime. Caller checks the buzzer/sound pref.
 static inline void uiPlayNotify() {
 #if defined(HAS_TDECK_GT911)
-  tdeckPlayNotify();
+  tdeckPlayNotify(false);
 #elif defined(HELTEC_V4_BUZZER_PIN)
-  v4BuzzerBeep();
+  v4BuzzerBeep(false);
+#endif
+}
+// Play the distinct @-mention chime.
+static inline void uiPlayMention() {
+#if defined(HAS_TDECK_GT911)
+  tdeckPlayNotify(true);
+#elif defined(HELTEC_V4_BUZZER_PIN)
+  v4BuzzerBeep(true);
 #endif
 }
 
@@ -504,8 +543,10 @@ static void setChatStatusTitle(const char* sanitized) {   // already glyph-sanit
   updateGlobalStatusBar();
 }
 /** Bottom tab indices. Tabs: Home=0, Chats=1, Contacts=2, Map=3, Set=4. */
-constexpr int CHAT_INBOX_TAB_INDEX   = 1;
-constexpr int CONTACTS_TAB_INDEX     = 2;
+// Bottom-bar order, left→right: Chats, Contacts, Home (middle), Map, Settings.
+constexpr int CHAT_INBOX_TAB_INDEX   = 0;
+constexpr int CONTACTS_TAB_INDEX     = 1;
+constexpr int HOME_TAB_INDEX         = 2;
 constexpr int MAP_TAB_INDEX          = 3;
 constexpr int SETTINGS_TAB_INDEX     = 4;
 constexpr int TAB_LAST               = 4;
@@ -572,6 +613,8 @@ struct LvChatPanel {
 struct LvContactButtonCtx {
   uint32_t mesh_idx;
   bool     is_repeater;
+  bool     is_fav;       // favorites can't be multi-select-deleted (unfavorite first)
+  uint8_t  key6[6];      // stable identity for the multi-select set (pub_key prefix)
 };
 
 static LvContactButtonCtx s_contacts_ctx[128];
@@ -597,7 +640,7 @@ static const char* contactsSortLabel(uint8_t m) {
   return "?";
 }
 /** Last tab index before `tabChangedCb`; used to close chat overlays only when leaving Chats. */
-static int s_lv_tab_prev = 0;
+static int s_lv_tab_prev = HOME_TAB_INDEX;
 
 // ---- Top-level LVGL state ----
 struct LvUiState {
@@ -694,6 +737,20 @@ static lv_obj_t* s_kb_mirror_root = nullptr;
 static lv_obj_t* s_kb_mirror_ta = nullptr;
 /** Real textarea whose text is synced with `s_kb_mirror_ta` while the keyboard is open. */
 static lv_obj_t* s_kb_bind_ta = nullptr;
+// The T-Deck has a physical keyboard and never shows the on-screen keyboard or
+// the (hidden) mirror strip, so its keys bind STRAIGHT to the visible field —
+// the mirror indirection only exists for boards with an on-screen keyboard.
+// Routing the T-Deck through the mirror made every edit act at the mirror's
+// end-cursor, so backspace deleted the last character no matter where the caret
+// was. When this returns false, kbMirrorBind binds the field directly and the
+// mirror sync / redirects below are skipped.
+static inline bool kbMirrorActive() {
+#if defined(HAS_TDECK_KEYBOARD)
+  return false;
+#else
+  return true;
+#endif
+}
 
 // ---- Chats "+" add-channel modal pointers (see lower in file for impl) ----
 static lv_obj_t* s_addch_sheet      = nullptr;
@@ -743,7 +800,7 @@ static inline uint8_t effectiveKbRotation() {
 // Filled by UITask::discoveredContact() each time an advert comes in for a
 // node that's not in contacts[]. Browsable + addable via the Discovered
 // modal opened from the Contacts tab "Found" button.
-constexpr int DISCOVERED_MAX = 24;
+constexpr int DISCOVERED_MAX = 48;   // ring of recently-heard nodes not in contacts; persisted in chunks
 struct LvDiscoveredEntry {
   bool used;
   bool in_contacts;
@@ -767,6 +824,129 @@ static void* psAlloc(size_t n) {
 }
 static LvDiscoveredEntry* s_discovered = (LvDiscoveredEntry*)psAlloc(sizeof(LvDiscoveredEntry) * DISCOVERED_MAX);
 static uint32_t s_discovered_seq = 0;
+
+// Count of discovered adverts NOT yet in contacts (the "Discovered" badge).
+static int discoveredCount() {
+  int n = 0;
+  for (int i = 0; i < DISCOVERED_MAX; ++i)
+    if (s_discovered && s_discovered[i].used && !s_discovered[i].in_contacts) ++n;
+  return n;
+}
+// Drop every discovered entry (the Purge action on the Discovered list).
+static void purgeDiscovered() {
+  if (!s_discovered) return;
+  for (int i = 0; i < DISCOVERED_MAX; ++i) s_discovered[i].used = false;
+}
+
+// ---- Persist the discovered ring across reboots (NVS blob "disc") ----
+static const char*   KDISC = "disc";   // chunk 0 (older firmware wrote ≤24 records here)
+static bool          s_disc_dirty   = false;
+static unsigned long s_disc_save_at = 0;
+// Compact on-disk record (84 B/entry). SdNvsPrefs's SD .kv backend (used under
+// Launcher) silently DROPS any single value > 2048 B on load (sdLoad bails on
+// the oversize record), so we cap each stored blob at DISC_PER_CHUNK records
+// (2 + 24*84 = 2018 B) and split the ring across as many chunk keys ("disc",
+// "disc1", …) as DISCOVERED_MAX needs. We persist only what the Discovered list
+// redraws — the bulky parts of ContactInfo (out_path[64], shared_secret, …) are
+// re-derived live.
+static const uint8_t   DISC_BLOB_VER  = 1;
+static constexpr size_t DISC_REC_SZ    = PUB_KEY_SIZE + 32 + 4 + 16;   // pubkey + name + 4×u8 + 4×u32
+static constexpr int    DISC_PER_CHUNK = 24;                           // 2 + 24*84 = 2018 B < 2048 cap
+static constexpr int    DISC_CHUNKS    = (DISCOVERED_MAX + DISC_PER_CHUNK - 1) / DISC_PER_CHUNK;
+static uint8_t s_disc_blob[2 + DISC_PER_CHUNK * DISC_REC_SZ];
+static inline void     discPutU32(uint8_t*& p, uint32_t v) { p[0]=(uint8_t)v; p[1]=(uint8_t)(v>>8); p[2]=(uint8_t)(v>>16); p[3]=(uint8_t)(v>>24); p+=4; }
+static inline uint32_t discGetU32(const uint8_t*& p) { uint32_t v=(uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24); p+=4; return v; }
+static void discChunkKey(int chunk, char* out, size_t cap) {
+  if (chunk == 0) { strncpy(out, KDISC, cap - 1); out[cap - 1] = '\0'; }
+  else            { snprintf(out, cap, "disc%d", chunk); }
+}
+static void saveDiscovered() {
+  if (!s_discovered) return;
+  int src = 0;   // walk the ring once, emitting used entries into successive chunk blobs
+  for (int chunk = 0; chunk < DISC_CHUNKS; ++chunk) {
+    uint8_t* p = s_disc_blob;
+    *p++ = DISC_BLOB_VER;
+    uint8_t* pcount = p++;            // back-patched with the entry count
+    uint8_t count = 0;
+    while (src < DISCOVERED_MAX && count < DISC_PER_CHUNK) {
+      const LvDiscoveredEntry& e = s_discovered[src++];
+      if (!e.used) continue;
+      memcpy(p, e.ci.id.pub_key, PUB_KEY_SIZE); p += PUB_KEY_SIZE;
+      memcpy(p, e.ci.name, 32); p += 32;
+      *p++ = e.ci.type;
+      *p++ = e.ci.flags;
+      *p++ = e.path_len;
+      *p++ = e.in_contacts ? 1 : 0;
+      discPutU32(p, e.last_advert_ts);
+      discPutU32(p, e.recv_ms);
+      discPutU32(p, (uint32_t)e.ci.gps_lat);
+      discPutU32(p, (uint32_t)e.ci.gps_lon);
+      ++count;
+    }
+    *pcount = count;
+    char key[8]; discChunkKey(chunk, key, sizeof key);
+    if (count > 0) touchPrefsSetBlob(key, s_disc_blob, (size_t)(p - s_disc_blob));
+    else           touchPrefsSetBlob(key, nullptr, 0);   // clear an empty trailing chunk
+  }
+  s_disc_dirty = false;
+}
+static void loadDiscovered() {
+  if (!s_discovered) return;
+  memset(s_discovered, 0, sizeof(LvDiscoveredEntry) * DISCOVERED_MAX);
+  int dst = 0;
+  for (int chunk = 0; chunk < DISC_CHUNKS && dst < DISCOVERED_MAX; ++chunk) {
+    char key[8]; discChunkKey(chunk, key, sizeof key);
+    size_t got = touchPrefsGetBlob(key, s_disc_blob, sizeof(s_disc_blob));
+    if (got < 2 || s_disc_blob[0] != DISC_BLOB_VER) continue;   // missing / garbage chunk -> skip
+    uint8_t count = s_disc_blob[1];
+    const uint8_t* p   = s_disc_blob + 2;
+    const uint8_t* end = s_disc_blob + got;
+    for (uint8_t i = 0; i < count && dst < DISCOVERED_MAX && (size_t)(end - p) >= DISC_REC_SZ; ++i) {
+      LvDiscoveredEntry& e = s_discovered[dst++];
+      e.used = true;
+      memcpy(e.ci.id.pub_key, p, PUB_KEY_SIZE); p += PUB_KEY_SIZE;
+      memcpy(e.ci.name, p, 32); p += 32; e.ci.name[31] = '\0';
+      e.ci.type         = *p++;
+      e.ci.flags        = *p++;
+      e.path_len        = *p++;
+      e.ci.out_path_len = e.path_len;
+      e.in_contacts     = (*p++ != 0);
+      e.last_advert_ts  = discGetU32(p);
+      e.ci.last_advert_timestamp = e.last_advert_ts;
+      e.recv_ms         = discGetU32(p);
+      e.ci.gps_lat      = (int32_t)discGetU32(p);
+      e.ci.gps_lon      = (int32_t)discGetU32(p);
+      e.ci.shared_secret_valid = false;   // force secret recompute on first use
+    }
+  }
+}
+// Coalesce a burst of adverts into one write ~20 s later (flash-churn guard).
+static void markDiscoveredDirty() { s_disc_dirty = true; s_disc_save_at = millis() + 20000; }
+static void discoveredFlushIfDue(unsigned long now) {
+  if (s_disc_dirty && (long)(now - s_disc_save_at) >= 0) saveDiscovered();
+}
+// Synchronous flush for the deliberate reboot / power-off / download-mode paths
+// (mirrors the chat-history flush) so a manual reboot never drops recent finds.
+static void discoveredFlushNow() { if (s_disc_dirty) saveDiscovered(); }
+// Remove discovered entries heard via more hops than the configured limit (the
+// "auto-delete above N hops" setting; 0 = off). Returns true if anything went.
+static bool discoveredSweepHops() {
+  if (!s_discovered) return false;
+#if defined(ESP32)
+  const uint8_t maxhops = touchPrefsGetDiscoveredMaxHops();
+  if (maxhops == 0) return false;
+  bool changed = false;
+  for (int i = 0; i < DISCOVERED_MAX; ++i)
+    if (s_discovered[i].used && s_discovered[i].path_len > maxhops) {
+      s_discovered[i].used = false;
+      changed = true;
+    }
+  if (changed) markDiscoveredDirty();
+  return changed;
+#else
+  return false;
+#endif
+}
 
 // ---- Touch-init deferred flag ----
 static bool g_cap_touch_hw_started = false;
@@ -975,7 +1155,7 @@ static const MeshRadioPreset k_mesh_radio_presets[k_mesh_radio_preset_count] = {
     {"Czech Republic (Narrow)", 869.432f, 62.5f, 7, 5, 22, 10},
     {"Slovakia (Narrow)", 869.618f, 62.5f, 8, 8, 22, 10},
     {"EU 433MHz (Long Range)", 433.65f, 250.f, 11, 5, 22, 10},
-    {"US915", 915.f, 250.f, 11, 5, 22, 10},
+    {"US/Canada", 910.525f, 62.5f, 7, 5, 22, 10},
     {"USA: SoCal (Community)", 927.875f, 62.5f, 7, 5, 22, 10},
     {"USA: San Francisco (Community)", 910.525f, 62.5f, 7, 5, 22, 10},
     {"USA: Sacramento (Community)", 909.875f, 62.5f, 9, 5, 22, 10},
@@ -1209,6 +1389,8 @@ static void applyHardwarePanelRotation(uint8_t lvgl_rot) {
   else if (lvgl_rot == LV_DISP_ROT_270) display.setDisplayRotation(3);
 }
 
+static unsigned long s_slider_touch_ms = 0;   // last time a slider (volume, etc.) was dragged
+static bool s_wake_swallow = false;           // swallow the whole touch that wakes the screen (issue #4)
 static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   (void)indev;
   static lv_point_t p = {0, 0};
@@ -1239,7 +1421,11 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
     const bool detail_open = g_lv.dm.detail_open || g_lv.ch.detail_open;
     // Control center open: its brightness slider needs the full horizontal drag,
     // so don't abort the press there either.
-    if (!on_map && !detail_open && !s_cc_root) {
+    // A slider being dragged (e.g. the volume slider) needs the full horizontal
+    // drag too — exactly like the CC brightness slider — so don't abort its
+    // press. s_slider_touch_ms is stamped by the slider's own press/drag events.
+    const bool on_slider = (s_slider_touch_ms && (millis() - s_slider_touch_ms) < 300);
+    if (!on_map && !detail_open && !s_cc_root && !on_slider) {
       lv_indev_t* act = lv_indev_get_act();
       if (act) lv_indev_wait_release(act);
       data->state = LV_INDEV_STATE_RELEASED;
@@ -1257,6 +1443,7 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
     ++s_live_diag_tap_edges;
     raw_press = true;
   }
+  if (!raw_press) s_wake_swallow = false;   // finger lifted -> the next touch acts normally
   if (raw_press
 #if defined(HAS_TDECK_TRACKBALL)
       // Ignore a stray finger on the tab bar while the cursor is up.
@@ -1266,17 +1453,24 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
     p.x = static_cast<lv_coord_t>(x);
     p.y = static_cast<lv_coord_t>(y);
     data->point = p;
-#if defined(HAS_TDECK_GT911)
     // A finger press must NOT reach the hidden/locked UI. When merely
     // idle-dimmed, noteUserInput() wakes it; on a manual lock the touch is
     // inert (only a trackball *hold* unlocks), whether the lock screen is dark
-    // or lit. Either way the press is absorbed, not delivered.
+    // or lit. Either way the press is absorbed, not delivered — and we latch
+    // s_wake_swallow so the REST of this gesture is swallowed too. A tap spans
+    // several polls, so once the backlight is back on a still-down finger would
+    // otherwise press the UI underneath and trigger the action before you see
+    // it (issue #4). Applies to both boards (V4 + T-Deck).
     if (g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) {
       if (!g_lv.task->isManualLock()) g_lv.task->noteUserInput();
+      s_wake_swallow = true;
       data->state = LV_INDEV_STATE_RELEASED;
       return;
     }
-#endif
+    if (s_wake_swallow) {            // same finger that just woke the screen — keep swallowing
+      data->state = LV_INDEV_STATE_RELEASED;
+      return;
+    }
     data->state = LV_INDEV_STATE_PRESSED;
     if (g_lv.task) g_lv.task->noteUserInput();
     return;
@@ -1310,7 +1504,9 @@ static void openChannelScopeModal(int slot, const char* name);  // per-channel r
 static void channelGearCb(lv_event_t* e);
 static void openBlockedUsersModal();                            // ignore-list manager (unblock)
 static bool overlayBlocksTabSwipe();   // theme/channel-scope pickers swallow tab swipes
+static bool drawerPopupOpen();         // popups floating over the app drawer (signal/mentions/power/files)
 static void refreshContactsList();
+static void contactsListForceRefresh();   // refresh past the no-change cache (e.g. fav toggle, where the count is unchanged)
 static void refreshThreadLists();
 static void refreshStatusLabels();
 static void refreshLiveDiag(unsigned long now);
@@ -1420,7 +1616,8 @@ static lv_obj_t* getActiveTabPage() {
 // builders; Stage 2 will split the "Device" catch-all further.
 enum {
   CAT_PROFILE = 0,   // identity / name / advert location / QR / export-import
-  CAT_RADIO,         // radio params + auto-add + experimental
+  CAT_RADIO,         // radio params + experimental
+  CAT_AUTOADD,       // auto-add contacts (own page; also linked from the Contacts tab)
   CAT_WIFI,          // Wi-Fi config + saved slots
   CAT_BLUETOOTH,     // BLE enable + pairing code
   CAT_DISPLAY,       // screen timeout, units, bubbles, theme, orientation
@@ -1438,6 +1635,7 @@ struct SettingsCatDef { const char* label; const char* icon; };
 static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "Profile",       LV_SYMBOL_EDIT },
   { "Radio & Mesh",  LV_SYMBOL_GPS },
+  { "Auto-add",      LV_SYMBOL_DOWNLOAD },
   { "Wi-Fi",         LV_SYMBOL_WIFI },
   { "Bluetooth",     LV_SYMBOL_BLUETOOTH },
   { "Display",       LV_SYMBOL_IMAGE },
@@ -1460,6 +1658,7 @@ static lv_obj_t* s_settings_sheet    = nullptr;  // open detail sheet (layer_top
 static int       s_settings_open_cat = -1;       // which category is open (for About-label teardown)
 static bool      s_settings_from_cc  = false;    // settings sheet opened via a control-center long-press -> Back returns to the dropdown
 static void      closeSettingsCategory();        // fwd: tab-change + key-dismiss close the sheet
+static void      openSettingsCategory(int cat);  // fwd: the Contacts overflow links to CAT_AUTOADD
 
 // ---- Firmware update check (red badge on the Settings gear + About-tab line) ----
 // Compares our embedded release tag against the latest pre-alpha_N published to
@@ -1470,6 +1669,8 @@ static void      closeSettingsCategory();        // fwd: tab-change + key-dismis
 #define FIRMWARE_RELEASE_TAG ""
 #endif
 static lv_obj_t* s_update_badge     = nullptr;   // red "!" over the bottom-bar gear
+static lv_obj_t* s_chat_unread_badge = nullptr;  // red unread-count badge over the bottom-bar Chats icon
+static lv_obj_t* s_tab_indicator    = nullptr;   // thin rounded accent glow bar under the active tab
 static lv_obj_t* s_update_subtab_badge = nullptr;// red dot over the "About" sub-tab button
 static lv_obj_t* s_update_about_lbl = nullptr;   // status line on the About sub-tab
 static lv_obj_t* s_sysinfo_lbl      = nullptr;   // System-info text (refreshed live on the About tab)
@@ -1629,6 +1830,10 @@ static void versionCheckService(unsigned long now) {
 #endif
 }
 static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
+  // A slider was just being dragged — its horizontal drag must NOT be read as a
+  // tab/back swipe (e.g. raising the volume slider rightward kept triggering the
+  // settings "swipe right = back"). Ignore swipes briefly after any slider touch.
+  if (s_slider_touch_ms && (millis() - s_slider_touch_ms) < 500) return;
   // An open chat/channel: a left→right (rightward) swipe closes it (iOS-style
   // back). Any other swipe is swallowed so the conversation keeps the screen.
   if (hasChatDetailOpen()) {
@@ -1648,6 +1853,9 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
     if (swipe_y < 0) closeControlCenter();
     return;
   }
+  // Popups floating over the app drawer (or any tab): swallow the swipe so it
+  // can't switch tabs / close the drawer underneath them.
+  if (drawerPopupOpen()) return;
   if (!g_lv.tabview) return;
   if (swipe_x != 0) {
     // An open settings detail sheet: a left→right (rightward) swipe goes Back,
@@ -1906,6 +2114,7 @@ static void kbMirrorEnsureCreated() {
 }
 
 static void kbMirrorSyncToReal() {
+  if (!kbMirrorActive()) return;   // T-Deck edits the real field directly — nothing to sync
   if (!s_kb_bind_ta || !s_kb_mirror_ta) return;
   lv_textarea_set_text(s_kb_bind_ta, lv_textarea_get_text(s_kb_mirror_ta));
 }
@@ -1938,6 +2147,17 @@ static void kbBoundTaDeletedCb(lv_event_t* e) {
 /** Show keyboard bound to a top mirror of `real_ta` so typed text stays visible above the keyboard. */
 static void kbMirrorBind(lv_obj_t* real_ta) {
   if (!real_ta || !g_lv.keyboard) return;
+  if (!kbMirrorActive()) {
+    // Physical keyboard (T-Deck): bind the keys straight to the visible field so
+    // the caret tracks taps (no mirror, no live-sync). s_kb_bind_ta still names
+    // the bound field for the terminal/Enter logic; the mirror redirects are all
+    // gated on kbMirrorActive().
+    s_kb_bind_ta = real_ta;
+    lv_keyboard_set_textarea(g_lv.keyboard, real_ta);
+    lv_obj_remove_event_cb(real_ta, kbBoundTaDeletedCb);
+    lv_obj_add_event_cb(real_ta, kbBoundTaDeletedCb, LV_EVENT_DELETE, nullptr);
+    return;
+  }
   kbMirrorEnsureCreated();
   if (s_kb_bind_ta && s_kb_bind_ta != real_ta) kbMirrorSyncToReal();
   // Detach the bind while we mutate the mirror's properties below.
@@ -2388,6 +2608,7 @@ static void composerFocusCb(lv_event_t* e) {
 // instead of the bottom. Both cleared on leave (backBtnCb).
 static uint16_t s_unread_at_open   = 0;
 static bool     s_chat_just_opened = false;
+static int      s_chat_jump_msg_idx = -1;  // ring-slot index to scroll to on open (tapped @mention), or -1
 
 // Close an open chat/channel detail panel → back to the thread list. Shared by
 // the floating HOME button (backBtnCb) and the left→right swipe-back gesture.
@@ -2557,8 +2778,41 @@ static void threadSheetDeleteDmCb(lv_event_t* e) {
   showConfirm(msg, "Delete", chatDeleteApply);
 }
 
+// Per-channel mute toggles (in the channel action sheet). Mute suppresses the
+// notification SOUND for that channel; the unread badge/divider still work.
+static lv_obj_t* s_chmute_msg_btn = nullptr;
+static lv_obj_t* s_chmute_men_btn = nullptr;
+static bool channelLongSheetName(char* out, size_t outsz) {
+  if (s_channel_long_idx < 0 || !g_lv.task) return false;
+  bool ch; uint16_t un; uint32_t ts;
+  return g_lv.task->getThreadInfo(s_channel_long_idx, ch, un, ts, out, outsz);
+}
+static void chmuteRefreshLabels() {
+  char name[UITask::MAX_THREAD_NAME + 1] = "";
+  if (!channelLongSheetName(name, sizeof name)) return;
+  const uint8_t f = touchPrefsGetChannelMute(name);
+  if (s_chmute_msg_btn) { lv_obj_t* l = lv_obj_get_child(s_chmute_msg_btn, 0); const bool m = (f & TOUCH_CHMUTE_MSG);
+    if (l) lv_label_set_text_fmt(l, "%s  %s", m ? LV_SYMBOL_MUTE : LV_SYMBOL_AUDIO, m ? TR("Unmute messages") : TR("Mute messages")); }
+  if (s_chmute_men_btn) { lv_obj_t* l = lv_obj_get_child(s_chmute_men_btn, 0); const bool m = (f & TOUCH_CHMUTE_MEN);
+    if (l) lv_label_set_text_fmt(l, "%s  %s", m ? LV_SYMBOL_MUTE : LV_SYMBOL_AUDIO, m ? TR("Unmute @ mentions") : TR("Mute @ mentions")); }
+}
+static void channelMuteMsgCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  char name[UITask::MAX_THREAD_NAME + 1] = "";
+  if (!channelLongSheetName(name, sizeof name)) return;
+  touchPrefsSetChannelMute(name, touchPrefsGetChannelMute(name) ^ TOUCH_CHMUTE_MSG);
+  chmuteRefreshLabels();
+}
+static void channelMuteMenCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  char name[UITask::MAX_THREAD_NAME + 1] = "";
+  if (!channelLongSheetName(name, sizeof name)) return;
+  touchPrefsSetChannelMute(name, touchPrefsGetChannelMute(name) ^ TOUCH_CHMUTE_MEN);
+  chmuteRefreshLabels();
+}
+
 // Long-press action sheet for a thread (DM or channel). Channels also get
-// Share secret / Remove; DMs get Delete. Both get Mark as read.
+// Mute messages / Mute @ mentions / Share secret / Remove; DMs get Delete.
 static void openThreadActionSheet(int thread_idx, const char* name, bool is_channel) {
   closeChannelLongSheet();
   s_channel_long_idx = thread_idx;
@@ -2580,8 +2834,12 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   const int card_w = 220;
   const int btn_h = 42;
   const int pad = 10;
-  const int rows = is_channel ? 3 : 2;   // mark-read + (share/remove | delete)
-  const int card_h = 36 + rows * (btn_h + 6) + pad;
+  const int rows = is_channel ? 5 : 2;   // mark-read + (mute-msg/mute-men/share/remove | delete)
+  int card_h = 36 + rows * (btn_h + 6) + pad;
+  const int max_h = lv_disp_get_ver_res(nullptr) - STATUSBAR_H - 12;
+  const bool card_scroll = (card_h > max_h);
+  if (card_scroll) card_h = max_h;
+  s_chmute_msg_btn = nullptr; s_chmute_men_btn = nullptr;
   lv_obj_t* card = lv_obj_create(s_channel_long_sheet);
   lv_obj_remove_style_all(card);
   lv_obj_set_size(card, card_w, card_h);
@@ -2592,7 +2850,8 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  if (card_scroll) lv_obj_set_scroll_dir(card, LV_DIR_VER);
+  else             lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   addCloseXBadge(card, channelLongSheetDismissCb);
 
   lv_obj_t* title = lv_label_create(card);
@@ -2608,7 +2867,7 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   lv_obj_set_pos(title, 0, 0);
 
   int y = 28;
-  auto mk = [&](const char* lbl, lv_event_cb_t cb, uint32_t bg) {
+  auto mk = [&](const char* lbl, lv_event_cb_t cb, uint32_t bg) -> lv_obj_t* {
     lv_obj_t* b = lv_btn_create(card);
     lv_obj_set_size(b, card_w - 2 * pad, btn_h);
     lv_obj_set_pos(b, 0, y);
@@ -2619,9 +2878,13 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     lv_label_set_text(l, lbl);
     lv_obj_center(l);
     y += btn_h + 6;
+    return b;
   };
   mk(LV_SYMBOL_OK "  Mark as read", threadSheetMarkReadCb, 0);
   if (is_channel) {
+    s_chmute_msg_btn = mk("", channelMuteMsgCb, 0);   // labels set by chmuteRefreshLabels()
+    s_chmute_men_btn = mk("", channelMuteMenCb, 0);
+    chmuteRefreshLabels();
     mk(LV_SYMBOL_SHUFFLE "  Share secret",   channelLongSheetShareCb,  0);
     mk(LV_SYMBOL_TRASH   "  Remove channel", channelLongSheetDeleteCb, 0xB23A48);
   } else {
@@ -2817,7 +3080,7 @@ static void emojiInsertIndex(int idx) {
   // later kbMirrorSyncToReal() would overwrite our insert with the stale mirror
   // contents (same trap the Wi-Fi scan picker hit). When not bound, insert
   // straight into the real field.
-  lv_obj_t* dest = (s_kb_bind_ta == ta && s_kb_mirror_ta) ? s_kb_mirror_ta : ta;
+  lv_obj_t* dest = (kbMirrorActive() && s_kb_bind_ta == ta && s_kb_mirror_ta) ? s_kb_mirror_ta : ta;
   lv_textarea_add_text(dest, g);
   closeEmojiSheet();
 }
@@ -3081,13 +3344,39 @@ static void openQuickReplyPickerCb(lv_event_t* e) {
   lv_obj_set_pos(hint, 0, y + 2);
 }
 
+static void openAppDrawer();    // fwd — app-drawer overlay (defined below openControlCenter)
+static void closeAppDrawer();
+static void setHomeDrawer(bool show);
+static void closeMentionsScreen();           // fwd — @-mentions screen (defined with the drawer)
+static void closeAppDrawerSync();            // fwd — synchronous drawer close (safe outside the drawer's own event)
+static lv_obj_t* s_mentions_root = nullptr;  // @-mentions list overlay
+// The Home tab shows the command centre OR the app drawer; remember which so
+// leaving Home and coming back restores the same view. Toggled by the Home tab
+// button (tabBtnsCb); tabChangedCb shows/hides the overlay to match on enter/leave.
+static bool s_home_drawer_mode = false;
+static bool s_tab_changed = false;   // a real tab switch happened this tap; the Home-button toggle reads it
+// Slide the thin accent indicator bar under the active tab. Hidden on the
+// immersive map tab (transparent chrome, black icons over the tiles).
+static void updateTabIndicator() {
+  if (!s_tab_indicator || !g_lv.tabview) return;
+  const int idx = getActiveTab();
+  if (idx == MAP_TAB_INDEX) { lv_obj_add_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN); return; }
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const int cell = sw / 5;                 // 5 equal tab cells
+  const int xoff = (idx - 2) * cell;       // Home (index 2) is the centred tab
+  lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_align(s_tab_indicator, LV_ALIGN_BOTTOM_MID, xoff, -2);
+}
+
 static void tabChangedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   scheduleHeavyRefresh(170);
   closeSettingsModal();
   closeSettingsCategory();   // a category detail sheet floats on layer_top — drop it on tab change
+  closeMentionsScreen();     // transient overlay — switching tabs leaves it
 
   const int new_t         = getActiveTab();
+  updateTabIndicator();   // slide the accent glow bar under the newly-active tab
   const bool leaving_inbox =
       (s_lv_tab_prev == CHAT_INBOX_TAB_INDEX && new_t != CHAT_INBOX_TAB_INDEX);
   if (leaving_inbox) {
@@ -3117,6 +3406,18 @@ static void tabChangedCb(lv_event_t* e) {
 
   const int prev_t = s_lv_tab_prev;
   s_lv_tab_prev = new_t;
+  // App-drawer view follows the Home tab — ALL of it lives here, one owner. The
+  // tab btnmatrix bubbles a VALUE_CHANGED on every tap (same-tab OR switch), so:
+  //   • re-tap Home while already on Home -> toggle command centre / drawer
+  //   • arrive on Home from another tab   -> restore whatever was showing (mode)
+  //   • leave Home                        -> hide the overlay (mode kept), SYNC
+  //     delete so the map's blocking first tile render can't paint under it.
+  if (new_t != prev_t) s_tab_changed = true;   // the Home toggle reads this to tell a switch from a same-tap
+  if (new_t == HOME_TAB_INDEX && prev_t != HOME_TAB_INDEX) {
+    if (s_home_drawer_mode) openAppDrawer();    // returned to Home in drawer mode -> restore it (NO toggle here)
+  } else if (new_t != HOME_TAB_INDEX && prev_t == HOME_TAB_INDEX) {
+    closeAppDrawerSync();                        // leaving Home -> hide (mode kept); sync so the map can't paint under it
+  }
   if (new_t == CONTACTS_TAB_INDEX) refreshContactsList();
   if (new_t == MAP_TAB_INDEX) {
     applyMapChrome(true);    // transparent status bar + tab bar so the map shows through
@@ -3182,23 +3483,46 @@ static void toggleGpsCb(lv_event_t* e) {
   refreshStatusLabels();
 }
 
-static void toggleBuzzerCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+static void toggleBuzzerCb(lv_event_t* e) {   // message-sound switch (VALUE_CHANGED)
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
   g_lv.task->toggleBuzzer();
   const bool quiet = g_lv.task->isBuzzerQuiet();
-  // Refresh the button's own label in place — the Device page isn't rebuilt on
-  // tap, so a static "Sound: on" would otherwise never change.
-  lv_obj_t* btn = lv_event_get_target(e);
-  if (btn) {
-    lv_obj_t* lbl = lv_obj_get_child(btn, 0);
-    if (lbl) lv_label_set_text_fmt(lbl, TR("Sound: %s"), quiet ? "off" : "on");
-  }
   g_lv.task->showAlert(quiet ? TR("Sound off") : TR("Sound on"), 900);
 #if defined(HAS_UI_SOUND)
   if (!quiet) uiPlayNotify();   // confirmation chime when enabling
 #endif
   refreshStatusLabels();
 }
+
+#if defined(HAS_UI_SOUND)
+// Message-sound switch (under the master Sound switch). VALUE_CHANGED; previews.
+static void toggleMessageSoundCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetSoundMessages(on);
+  if (on) uiPlayNotify();
+}
+// @-mention-sound switch (distinct chime; lets you keep mentions on with messages off).
+static void toggleMentionSoundCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetSoundMentions(on);
+  if (on) uiPlayMention();
+}
+#if defined(HAS_TDECK_GT911)
+// Volume +/- step buttons (user_data = step, e.g. +10 / -10). Clamps 0..100,
+// updates the readout, previews. Simpler + more reliable than a drag slider.
+static lv_obj_t* s_vol_val_lbl = nullptr;
+static void volumeStepCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  int v = (int)touchPrefsGetSoundVolume() + (int)(intptr_t)lv_event_get_user_data(e);
+  if (v < 0) v = 0; if (v > 100) v = 100;
+  touchPrefsSetSoundVolume((uint8_t)v);
+  if (s_vol_val_lbl) lv_label_set_text_fmt(s_vol_val_lbl, "%d%%", v);
+  uiPlayNotify();   // preview at the new volume
+}
+#endif
+#endif
 
 static void settingsFieldFocusCb(lv_event_t* e) {
   const lv_event_code_t code = lv_event_get_code(e);
@@ -3318,7 +3642,7 @@ static void pasteTextareaLongPressCb(lv_event_t* e) {
   if (!s_clipboard[0]) return;
   lv_obj_t* ta = lv_event_get_target(e);
   if (!ta) return;
-  lv_obj_t* dest = (s_kb_bind_ta == ta && s_kb_mirror_ta) ? s_kb_mirror_ta : ta;
+  lv_obj_t* dest = (kbMirrorActive() && s_kb_bind_ta == ta && s_kb_mirror_ta) ? s_kb_mirror_ta : ta;
   lv_textarea_add_text(dest, s_clipboard);
   lv_indev_t* act = lv_indev_get_act();
   if (act) lv_indev_wait_release(act);
@@ -3982,6 +4306,9 @@ static void discoveredAddCb(lv_event_t* e) {
   if (the_mesh.addContact(e_disc.ci)) {
     the_mesh.uiPersistContacts();   // write /contacts3 so the add survives reboot
     e_disc.in_contacts = true;
+    markDiscoveredDirty();
+    refreshContactsList();          // rebuild the Contacts tab now (count changed) so the
+                                    // new contact shows without needing a tab reload
     g_lv.task->showAlert(TR("Added to contacts"), 1000);
     // Re-open the Discovered modal so the list updates immediately.
     closeSettingsModal();
@@ -3991,6 +4318,133 @@ static void discoveredAddCb(lv_event_t* e) {
   } else {
     g_lv.task->showAlert(TR("Contacts full"), 1200);
   }
+}
+
+static void discoveredPurgeApply() {
+  purgeDiscovered();
+  saveDiscovered();   // persist the cleared list immediately
+  closeSettingsModal();
+  lv_event_t synth{};
+  synth.code = LV_EVENT_CLICKED;
+  openDiscoveredModalCb(&synth);   // re-open so the list shows the now-empty state
+}
+static void discoveredPurgeCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  showConfirm(TR("Purge all discovered nodes?"), TR("Purge"), discoveredPurgeApply);
+}
+
+// ---- Discovered settings (cogwheel): a small sheet floated over the modal ----
+static lv_obj_t* s_disc_settings_root = nullptr;
+static void closeDiscoveredSettings() {
+  if (s_disc_settings_root) {
+    hideKb();   // dismiss the keyboard before the bound hop-limit textarea is freed
+    lv_obj_del_async(s_disc_settings_root);
+    s_disc_settings_root = nullptr;
+  }
+}
+static void discSettingsDismissCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  lv_indev_t* act = lv_indev_get_act(); if (act) lv_indev_wait_release(act);
+  const bool changed = discoveredSweepHops();   // apply the hop limit to existing entries
+  closeDiscoveredSettings();
+  if (changed) {   // re-render the Discovered list so the removed (over-limit) nodes disappear
+    closeSettingsModal();
+    lv_event_t synth{}; synth.code = LV_EVENT_CLICKED;
+    openDiscoveredModalCb(&synth);
+  }
+}
+#if defined(ESP32)
+static void discAutoEvictToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  touchPrefsSetDiscoveredAutoEvict(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+static void discHopsChangedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const char* t = lv_textarea_get_text(lv_event_get_target(e));
+  int v = (t && t[0]) ? atoi(t) : 0;
+  if (v < 0) v = 0;
+  if (v > 64) v = 64;
+  touchPrefsSetDiscoveredMaxHops((uint8_t)v);
+}
+#endif
+static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeDiscoveredSettings();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  // Full-screen backdrop ON TOP of the Discovered modal — its 58 px Close button
+  // is covered, so the sheet must be dismissed (tap outside) before the modal.
+  s_disc_settings_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_disc_settings_root);
+  lv_obj_set_size(s_disc_settings_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_disc_settings_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_disc_settings_root, lv_color_hex(0x000000), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_disc_settings_root, LV_OPA_60, LV_PART_MAIN);
+  lv_obj_clear_flag(s_disc_settings_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_move_foreground(s_disc_settings_root);
+  lv_obj_add_event_cb(s_disc_settings_root, discSettingsDismissCb, LV_EVENT_CLICKED, nullptr);
+
+  const int card_w = 220;
+  lv_obj_t* card = lv_obj_create(s_disc_settings_root);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, card_w, 188);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, -46);   // shifted up so the keyboard clears the hop field
+  lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* title = lv_label_create(card);
+  lv_label_set_text(title, TR("Discovered settings"));
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_pos(title, 0, 0);
+
+  lv_obj_t* lbl = lv_label_create(card);
+  lv_label_set_text(lbl, TR("Auto-delete oldest"));
+  lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(lbl, 0, 36);
+  lv_obj_t* sw_e = lv_switch_create(card);
+  lv_obj_align(sw_e, LV_ALIGN_TOP_RIGHT, 0, 30);
+#if defined(ESP32)
+  if (touchPrefsGetDiscoveredAutoEvict()) lv_obj_add_state(sw_e, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(sw_e, discAutoEvictToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+#endif
+
+  // Hop limit — numeric field on the right (like the switch). Type a number; the
+  // keyboard binds on focus exactly like the contacts-search field.
+  lv_obj_t* hlbl = lv_label_create(card);
+  lv_label_set_text(hlbl, TR("Auto-delete above hops"));
+  lv_obj_set_style_text_color(hlbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(hlbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(hlbl, 0, 80);
+  lv_obj_t* hop_ta = lv_textarea_create(card);
+  lv_obj_set_size(hop_ta, 48, 32);
+  lv_obj_align(hop_ta, LV_ALIGN_TOP_RIGHT, 0, 72);
+  lv_textarea_set_one_line(hop_ta, true);
+  lv_textarea_set_max_length(hop_ta, 2);
+  lv_textarea_set_accepted_chars(hop_ta, "0123456789");
+  lv_obj_set_style_text_font(hop_ta, &g_font_14, LV_PART_MAIN);
+#if defined(ESP32)
+  { uint8_t h = touchPrefsGetDiscoveredMaxHops();
+    if (h > 0) { char hb[4]; snprintf(hb, sizeof hb, "%u", h); lv_textarea_set_text(hop_ta, hb); } }
+  attachSettingsTaEvents(hop_ta);
+  lv_obj_add_event_cb(hop_ta, discHopsChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
+#endif
+
+  lv_obj_t* hint = lv_label_create(card);
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(hint, card_w - 24);
+  lv_label_set_text(hint,
+    TR("Auto-delete oldest makes room when full. Hops: 0 = keep all; nodes heard "
+       "via more hops are removed."));
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(hint, 0, 116);
 }
 
 static void openDiscoveredModalCb(lv_event_t* e) {
@@ -4046,6 +4500,36 @@ static void openDiscoveredModalCb(lv_event_t* e) {
       --j;
     }
     order[j + 1] = v;
+  }
+
+  // Header buttons left of Close: a cogwheel (Discovered settings) always, plus a
+  // red trash (Purge all) when there's something to purge. Header is the modal
+  // root's first child.
+  if (g_set_modal.root) {
+    lv_obj_t* header = lv_obj_get_child(g_set_modal.root, 0);
+    if (header) {
+      lv_obj_t* cog = lv_btn_create(header);
+      lv_obj_set_size(cog, 32, 32);
+      lv_obj_align(cog, LV_ALIGN_RIGHT_MID, -68, 0);   // just left of the 58 px "Close" (at -6)
+      styleButton(cog);
+      lv_obj_add_event_cb(cog, openDiscoveredSettingsSheetCb, LV_EVENT_CLICKED, nullptr);
+      lv_obj_t* cl = lv_label_create(cog);
+      lv_label_set_text(cl, LV_SYMBOL_SETTINGS);
+      lv_obj_set_style_text_color(cl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_center(cl);
+      if (n > 0) {
+        lv_obj_t* pb = lv_btn_create(header);
+        lv_obj_set_size(pb, 32, 32);
+        lv_obj_align(pb, LV_ALIGN_RIGHT_MID, -106, 0);   // left of the cog
+        styleButton(pb);
+        lv_obj_set_style_bg_color(pb, lv_color_hex(0x7A2A2A), LV_PART_MAIN);
+        lv_obj_add_event_cb(pb, discoveredPurgeCb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t* pl = lv_label_create(pb);
+        lv_label_set_text(pl, LV_SYMBOL_TRASH);
+        lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+        lv_obj_center(pl);
+      }
+    }
   }
 
   if (n == 0) {
@@ -4433,6 +4917,25 @@ static void clampDropdownListCb(lv_event_t* e) {
   else if (y1 + h > ver)        lv_obj_set_y(list, ver - h);        // hangs off the bottom edge
 }
 
+// Signal-probe controls also live in the home-graph "Signal & traffic" popup;
+// these handlers mirror it from the Radio settings page (same touch prefs).
+static lv_obj_t* s_radio_sig_poll_ta = nullptr;
+static void radioSigProbeToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  touchPrefsSetSigProbeEnabled(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+static void radioSigPollSaveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_radio_sig_poll_ta) return;
+  kbMirrorSyncToReal();
+  int m = atoi(lv_textarea_get_text(s_radio_sig_poll_ta));
+  if (m < 1)    m = 1;
+  if (m > 1440) m = 1440;
+  touchPrefsSetSigPollMins((uint16_t)m);
+  char b[8]; snprintf(b, sizeof b, "%d", m);
+  lv_textarea_set_text(s_radio_sig_poll_ta, b);
+  if (g_lv.task) { char msg[40]; snprintf(msg, sizeof msg, TR("Poll every %d min"), m); g_lv.task->showAlert(msg, 1100); }
+}
+
 static void buildRadioSettings() {
   // No "Radio" group header — it just duplicates the sub-tab button name.
   lv_obj_t* body = createSettingsModal("", SettingsModalKind::Radio);
@@ -4557,6 +5060,41 @@ static void buildRadioSettings() {
       lv_textarea_set_text(g_set_modal.region_ta, rbuf);
   }
   y += 38;
+
+  // Signal probe — same setting as the home-graph Signal popup. A periodic
+  // discover advert keeps the signal bars / graph fresh. Poll interval in whole
+  // minutes (1..1440); the toggle saves immediately, the field on its Set button.
+  mk_label("Signal probe");
+  {
+    int rh = settingsRowLabel(body, y, 6, "Auto-discover", COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetSigProbeEnabled()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, radioSigProbeToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, rh + 12);
+
+    lv_obj_t* pl = lv_label_create(body);
+    lv_label_set_text(pl, TR("Poll (min)"));
+    lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(pl, 2, y + 6);
+    s_radio_sig_poll_ta = lv_textarea_create(body);
+    lv_obj_set_size(s_radio_sig_poll_ta, 50, 30);
+    lv_obj_set_pos(s_radio_sig_poll_ta, cw - 114, y);
+    lv_textarea_set_one_line(s_radio_sig_poll_ta, true);
+    lv_textarea_set_max_length(s_radio_sig_poll_ta, 4);
+    attachSettingsTaEvents(s_radio_sig_poll_ta);
+    { char pb[8]; snprintf(pb, sizeof pb, "%u", (unsigned)touchPrefsGetSigPollMins());
+      lv_textarea_set_text(s_radio_sig_poll_ta, pb); }
+    lv_obj_t* psb = lv_btn_create(body);
+    lv_obj_set_size(psb, 56, 30);
+    lv_obj_set_pos(psb, cw - 58, y);
+    styleButton(psb);
+    lv_obj_add_event_cb(psb, radioSigPollSaveCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* psbl = lv_label_create(psb);
+    lv_label_set_text(psbl, TR("Set"));
+    lv_obj_center(psbl);
+    y += 38;
+  }
 
   lv_obj_t* b = lv_btn_create(body);
   lv_obj_set_size(b, lv_pct(100),34);
@@ -4706,6 +5244,11 @@ static void buildQuickReplySettings() {
     lv_obj_set_size(ta, 200, 32);
     lv_obj_set_pos(ta, 20, y);
     styleCard(ta);
+    // The 6 fields cover the whole page, so a drag always starts on a textarea.
+    // A one-line textarea otherwise grabs the drag for its own (horizontal)
+    // scroll and the page never scrolls — clear SCROLLABLE so the drag bubbles
+    // up to the scrollable settings page. Tap-to-focus/typing is unaffected.
+    lv_obj_clear_flag(ta, LV_OBJ_FLAG_SCROLLABLE);
     lv_textarea_set_one_line(ta, true);
     lv_textarea_set_max_length(ta, TOUCH_QUICK_REPLY_MAXLEN - 1);
     lv_textarea_set_text(ta, buf);
@@ -5207,15 +5750,66 @@ static void buildDeviceSettings(int sec) {
   if (sec == DSEC_SOUND) {   // --- Sound ---
   // Sound toggle — T-Deck I2S speaker or Heltec V4 expansion-kit piezo buzzer.
 #if defined(HAS_UI_SOUND)
-  lv_obj_t* b_bz = lv_btn_create(body);
-  lv_obj_set_size(b_bz, lv_pct(100),34);
-  lv_obj_set_pos(b_bz, 2, y);
-  styleButton(b_bz);
-  lv_obj_add_event_cb(b_bz, toggleBuzzerCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* lb = lv_label_create(b_bz);
-  lv_label_set_text_fmt(lb, TR("Sound: %s"), g_lv.task && !g_lv.task->isBuzzerQuiet() ? TR("on") : TR("off"));
-  lv_obj_center(lb);
-  y += 40;
+  // Master Sound switch — off overrules everything (fully silent).
+  {
+    int rh = settingsRowLabel(body, y, 6, "Sound", COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (g_lv.task && !g_lv.task->isBuzzerQuiet()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, toggleBuzzerCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, rh + 12);
+  }
+  // Message sounds switch (under the master).
+  {
+    int rh = settingsRowLabel(body, y, 6, "Messages", COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetSoundMessages()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, toggleMessageSoundCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, rh + 12);
+  }
+  // @-mention sounds switch (distinct chime).
+  {
+    int rh = settingsRowLabel(body, y, 6, "@ mention sound", COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetSoundMentions()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, toggleMentionSoundCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, rh + 12);
+  }
+#if defined(HAS_TDECK_GT911)
+  // Volume with - / + step buttons (T-Deck I2S; the V4 piezo can't vary volume).
+  {
+    lv_obj_t* vl = lv_label_create(body);
+    lv_label_set_text(vl, TR("Volume"));
+    lv_obj_set_style_text_color(vl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(vl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(vl, 2, y + 8);
+    const int rx = s_settings_content_w, bw = 38, vw = 50, gp = 6;
+    const int xplus = rx - bw, xval = xplus - gp - vw, xminus = xval - gp - bw;
+    auto vbtn = [&](const char* t, int bx, int delta){
+      lv_obj_t* b = lv_btn_create(body);
+      lv_obj_set_size(b, bw, 32);
+      lv_obj_set_pos(b, bx, y);
+      styleButton(b);
+      lv_obj_add_event_cb(b, volumeStepCb, LV_EVENT_CLICKED, (void*)(intptr_t)delta);
+      lv_obj_t* l = lv_label_create(b);
+      lv_label_set_text(l, t);
+      lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN);
+      lv_obj_center(l);
+    };
+    vbtn(LV_SYMBOL_MINUS, xminus, -10);
+    s_vol_val_lbl = lv_label_create(body);
+    lv_label_set_text_fmt(s_vol_val_lbl, "%d%%", (int)touchPrefsGetSoundVolume());
+    lv_obj_set_size(s_vol_val_lbl, vw, 32);
+    lv_obj_set_pos(s_vol_val_lbl, xval, y + 6);
+    lv_obj_set_style_text_color(s_vol_val_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_vol_val_lbl, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_vol_val_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    vbtn(LV_SYMBOL_PLUS, xplus, +10);
+    y += 40;
+  }
+#endif
 #endif
 
   }
@@ -7297,10 +7891,31 @@ static void actionSheetFavoriteCb(lv_event_t* e) {
   bool was_fav = touchPrefsIsFavorite(c.id.pub_key);
   bool now_fav = touchPrefsSetFavorite(c.id.pub_key, !was_fav);
   g_lv.task->showAlert(now_fav ? TR("Added to favorites") : TR("Removed from favorites"), 1100);
-  // Force a list rebuild so the star (or its removal) shows immediately.
-  refreshContactsList();
+  // Force a list rebuild so the star (or its removal) shows immediately — a plain
+  // refresh hits the no-change cache (the contact count is unchanged by a fav toggle).
+  contactsListForceRefresh();
 #else
   g_lv.task->showAlert(TR("Favorites unsupported"), 1100);
+#endif
+}
+
+// Block / unblock toggle: stores the sender's 6-byte pub-key prefix in the
+// ignore list (newMsgImpl drops messages from ignored senders). Same prefix
+// scheme as favorites; managed here or from the chat "Blocked users" sheet.
+static void actionSheetBlockCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  ContactInfo c;
+  bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
+  closeActionSheet();
+  if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+#if defined(ESP32)
+  bool was_blocked = touchPrefsIsIgnored(c.id.pub_key);
+  bool now_blocked = touchPrefsSetIgnored(c.id.pub_key, !was_blocked);
+  g_lv.task->showAlert(now_blocked ? TR("Blocked \xe2\x80\x94 their messages are hidden")
+                                   : TR("Unblocked"), 1300);
+  contactsListForceRefresh();   // show/hide the red blocked icon immediately
+#else
+  g_lv.task->showAlert(TR("Blocking unsupported"), 1100);
 #endif
 }
 
@@ -7913,7 +8528,7 @@ static void actionSheetLosCb(lv_event_t* e) {
 }
 #endif  // ESP32 && MULTI_TRANSPORT_COMPANION
 
-static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name) {
+static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name, bool from_map = false) {
   s_action_sheet_mesh_idx = mesh_idx;
   s_action_sheet_is_repeater = is_repeater;
   closeActionSheet();
@@ -7966,10 +8581,10 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   }
 #endif
   // Everything except Delete goes in a 2-column grid; Delete is a full-width
-  // bottom row. Grid items = msg/ping + telemetry + range + favorite +
-  // reset (5), + trace/admin for repeaters (2), + Join for rooms (1), +
+  // bottom row. Grid items = msg/ping + telemetry + range + favorite + reset +
+  // block (6), + trace/admin for repeaters (2), + Join for rooms (1), +
   // line-of-sight (1).
-  const int grid_items = 5 + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0);
+  const int grid_items = (from_map ? 5 : 6) + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0);
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
   const int card_h = title_h + (grid_rows + 1) * (btn_h + btn_gap) + padding;
   lv_obj_t* card = lv_obj_create(s_action_sheet_root);
@@ -7989,8 +8604,8 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   char nm[40];
   copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), name ? name : "");
   lv_label_set_text_fmt(title, TR("%s%s"),
-                        is_repeater ? LV_SYMBOL_CHARGE "  " :
-                        is_room     ? LV_SYMBOL_LOOP   "  " : LV_SYMBOL_ENVELOPE "  ",
+                        is_repeater ? TOUCH_SYM_ANTENNA "  " :
+                        is_room     ? LV_SYMBOL_LOOP    "  " : TOUCH_SYM_PERSON "  ",
                         nm[0] ? nm : "(unnamed)");
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
@@ -8077,6 +8692,18 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   mk_btn(TOUCH_SYM_STAR "  Favorite", actionSheetFavoriteCb, 0);
 #endif
   mk_btn(LV_SYMBOL_LOOP  "  Reset path", actionSheetResetPathCb, 0);
+  // Block / unblock — label flips on the current ignore state. Skipped when the
+  // sheet is opened from a map marker (keeps that popup compact).
+  if (!from_map) {
+#if defined(ESP32)
+    bool _blk = false;
+    ContactInfo _bc;
+    if (the_mesh.getContactByIdx(s_action_sheet_mesh_idx, _bc)) _blk = touchPrefsIsIgnored(_bc.id.pub_key);
+    mk_btn(_blk ? LV_SYMBOL_OK "  Unblock" : LV_SYMBOL_CLOSE "  Block", actionSheetBlockCb, 0);
+#else
+    mk_btn(LV_SYMBOL_CLOSE "  Block", actionSheetBlockCb, 0);
+#endif
+  }
   mk_btn_full(LV_SYMBOL_TRASH "  Delete", actionSheetDeleteCb, 0xB23A48);
 }
 
@@ -9269,7 +9896,7 @@ static void closeFullscreenView() {
 static void fullscreenHomeCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeFullscreenView();
-  if (g_lv.tabview) lv_tabview_set_act(g_lv.tabview, 0, LV_ANIM_OFF);   // back to Home
+  if (g_lv.tabview) lv_tabview_set_act(g_lv.tabview, HOME_TAB_INDEX, LV_ANIM_OFF);   // back to Home
 }
 
 static lv_obj_t* openFullscreenView(const char* title) {
@@ -10962,7 +11589,7 @@ static void fmBackCb(lv_event_t* e) {
   if (s_fm_search_ta) { fmToggleSearch(); return; }   // close search first
   if (!s_fm_fs) {   // already on the Storage (roots) page: Back == Home
     closeFullscreenView();
-    if (g_lv.tabview) lv_tabview_set_act(g_lv.tabview, 0, LV_ANIM_OFF);
+    if (g_lv.tabview) lv_tabview_set_act(g_lv.tabview, HOME_TAB_INDEX, LV_ANIM_OFF);
     return;
   }
   fmUp();
@@ -11100,8 +11727,15 @@ static void homeFilesCb(lv_event_t* e) {
 
 // ===== Signal & traffic detail popup (tap the home RX/TX graph) =============
 static lv_obj_t* s_siginfo_root = nullptr;
+static lv_obj_t* s_sig_poll_ta  = nullptr;   // poll-interval entry (minutes) inside the popup
 static void closeSigInfoPopup() {
-  if (s_siginfo_root) { lv_obj_del_async(s_siginfo_root); s_siginfo_root = nullptr; }
+  if (s_siginfo_root) {
+    // The poll-interval field can leave the shared on-screen keyboard up; tear it
+    // down so it doesn't linger over the home screen after the popup is gone.
+    if (g_lv.keyboard && !lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN)) hideKb();
+    s_sig_poll_ta = nullptr;
+    lv_obj_del_async(s_siginfo_root); s_siginfo_root = nullptr;
+  }
 }
 static void sigInfoDismissCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -11110,6 +11744,36 @@ static void sigInfoDismissCb(lv_event_t* e) {
   if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;
   lv_indev_t* a = lv_indev_get_act(); if (a) lv_indev_wait_release(a);
   closeSigInfoPopup();
+}
+// Auto-discover toggle in the signal popup: persist immediately — the loop probe
+// reads the flag each cycle, so the change takes effect without a reboot.
+static void sigProbeToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetSigProbeEnabled(on);
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Auto-discover on") : TR("Auto-discover off"), 900);
+}
+// Poll-interval "Set": parse the minutes field, clamp 1..1440, persist, and write
+// the clamped value back so the user sees exactly what was stored.
+static void sigPollSaveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_sig_poll_ta) return;
+  kbMirrorSyncToReal();
+  int m = atoi(lv_textarea_get_text(s_sig_poll_ta));
+  if (m < 1)    m = 1;
+  if (m > 1440) m = 1440;
+  touchPrefsSetSigPollMins((uint16_t)m);
+  char buf[8]; snprintf(buf, sizeof buf, "%d", m);
+  lv_textarea_set_text(s_sig_poll_ta, buf);
+  if (g_lv.task) {
+    char msg[40]; snprintf(msg, sizeof msg, TR("Poll every %d min"), m);
+    g_lv.task->showAlert(msg, 1100);
+  }
+}
+// Manual probe: send a flood advert now so nearby repeaters echo it back.
+static void sigProbeNowCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  g_lv.task->sendAdvertFlood();
+  g_lv.task->showAlert(TR("Probing\xE2\x80\xA6"), 900);   // "Probing…"
 }
 static void openSignalInfoPopup() {
   closeSigInfoPopup();
@@ -11124,8 +11788,8 @@ static void openSignalInfoPopup() {
   lv_obj_clear_flag(s_siginfo_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_siginfo_root, sigInfoDismissCb, LV_EVENT_CLICKED, nullptr);
 
-  const int card_w = 226;
-  int card_h = 248;
+  const int card_w = sw - 16;   // near full-width, like the Send-advert modal
+  int card_h = 340;             // signal + auto-discover + probe + traffic
   const int avail = sh - STATUSBAR_H - 8;
   if (card_h > avail) card_h = avail;
   lv_obj_t* card = lv_obj_create(s_siginfo_root);
@@ -11147,13 +11811,26 @@ static void openSignalInfoPopup() {
   lv_obj_set_style_text_font(ttl, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(ttl, 0, 2);
 
-  char body[420]; int n = 0;
+  // ---- Signal readout (compact: header + two value rows, paired columns) ----
   const uint32_t sms   = the_mesh.uiSignalMs();
   const bool     heard = (sms != 0);
   const uint32_t age   = heard ? (millis() - sms) : 0;
   const bool     stale = !heard || age > 300000UL;
+
+  // small helper: a font_12 label at a fixed cell position
+  auto sigCell = [&](const char* txt, int x, int y, uint32_t col) {
+    lv_obj_t* o = lv_label_create(card);
+    lv_label_set_text(o, txt);
+    lv_obj_set_style_text_color(o, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_text_font(o, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(o, x, y);
+  };
+
+  sigCell(stale && heard ? "Signal (stale)" : "Signal", 0, 30, COLOR_TEXT);
+  int cy;
   if (!heard) {
-    n += snprintf(body + n, sizeof(body) - n, "Signal\n  nothing heard yet");
+    sigCell("nothing heard yet", 8, 48, COLOR_SUB);
+    cy = 48 + 18 + 12;
   } else {
     const float snr  = the_mesh.uiSignalSnrQ4() / 4.0f;
     const int   rssi = the_mesh.uiSignalRssi();
@@ -11162,25 +11839,84 @@ static void openSignalInfoPopup() {
     if (age < 60000UL)        snprintf(ago, sizeof ago, "%lus ago", (unsigned long)(age / 1000));
     else if (age < 3600000UL) snprintf(ago, sizeof ago, "%lum ago", (unsigned long)(age / 60000));
     else                      snprintf(ago, sizeof ago, "%luh ago", (unsigned long)(age / 3600000UL));
-    n += snprintf(body + n, sizeof(body) - n,
-      "Signal%s\n  SNR    %.1f dB\n  RSSI   %d dBm\n  Bars   %d / 4\n  Heard  %s",
-      stale ? " (stale)" : "", (double)snr, rssi, level, ago);
+    char l1[28], r1[28], l2[28], r2[28];
+    snprintf(l1, sizeof l1, "SNR   %.1f dB", (double)snr);
+    snprintf(r1, sizeof r1, "RSSI  %d dBm", rssi);
+    snprintf(l2, sizeof l2, "Bars  %d / 4", level);
+    snprintf(r2, sizeof r2, "Heard %s", ago);
+    const int colx = (card_w - 20) / 2;              // second column start
+    sigCell(l1, 8, 48, COLOR_TEXT);  sigCell(r1, colx, 48, COLOR_TEXT);   // SNR | RSSI
+    sigCell(l2, 8, 66, COLOR_TEXT);  sigCell(r2, colx, 66, COLOR_TEXT);   // Bars | Heard
+    cy = 66 + 18 + 12;
   }
-  n += snprintf(body + n, sizeof(body) - n,
-    "\n\nTraffic (since boot)\n  Sent   %u flood, %u direct\n  Recv   %u flood, %u direct",
+
+  // ---- Auto-discover: on/off toggle (the periodic signal probe in loop()) ----
+  lv_obj_t* dlbl = lv_label_create(card);
+  lv_label_set_text(dlbl, TR("Auto-discover"));
+  lv_obj_set_style_text_color(dlbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(dlbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(dlbl, 0, cy + 4);
+  lv_obj_t* dsw = lv_switch_create(card);            // theme recolours the "on" track to the accent
+  lv_obj_set_size(dsw, 44, 24);
+  lv_obj_set_pos(dsw, card_w - 20 - 44, cy);
+  if (touchPrefsGetSigProbeEnabled()) lv_obj_add_state(dsw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(dsw, sigProbeToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  cy += 32;
+
+  // ---- Poll interval (minutes; clamped 1..1440 on Set) ----
+  lv_obj_t* plbl = lv_label_create(card);
+  lv_label_set_text(plbl, TR("Poll every"));
+  lv_obj_set_style_text_color(plbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(plbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(plbl, 0, cy + 7);
+  s_sig_poll_ta = lv_textarea_create(card);
+  lv_obj_set_size(s_sig_poll_ta, 46, 30);
+  lv_obj_set_pos(s_sig_poll_ta, 70, cy);
+  lv_textarea_set_one_line(s_sig_poll_ta, true);
+  lv_textarea_set_max_length(s_sig_poll_ta, 4);
+  attachSettingsTaEvents(s_sig_poll_ta);
+  { char b[8]; snprintf(b, sizeof b, "%u", (unsigned)touchPrefsGetSigPollMins());
+    lv_textarea_set_text(s_sig_poll_ta, b); }
+  lv_obj_t* ulbl = lv_label_create(card);
+  lv_label_set_text(ulbl, TR("min"));
+  lv_obj_set_style_text_color(ulbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(ulbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(ulbl, 122, cy + 7);
+  lv_obj_t* setb = lv_btn_create(card);
+  lv_obj_set_size(setb, 50, 30);
+  lv_obj_set_pos(setb, 168, cy);
+  styleButton(setb);
+  lv_obj_add_event_cb(setb, sigPollSaveCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* setl = lv_label_create(setb);
+  lv_label_set_text(setl, TR("Set"));
+  lv_obj_center(setl);
+  cy += 40;
+
+  // ---- Manual probe button ----
+  lv_obj_t* rfb = lv_btn_create(card);
+  lv_obj_set_size(rfb, card_w - 20, 32);
+  lv_obj_set_pos(rfb, 0, cy);
+  styleButton(rfb);
+  lv_obj_add_event_cb(rfb, sigProbeNowCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* rfl = lv_label_create(rfb);
+  lv_label_set_text(rfl, LV_SYMBOL_REFRESH "  Probe now");
+  lv_obj_set_style_text_font(rfl, &g_font_14, LV_PART_MAIN);
+  lv_obj_center(rfl);
+  cy += 40;
+
+  // ---- Traffic readout ----
+  char tbody[160];
+  snprintf(tbody, sizeof tbody,
+    "Traffic (since boot)\n  Sent   %u flood, %u direct\n  Recv   %u flood, %u direct",
     (unsigned)the_mesh.getNumSentFlood(), (unsigned)the_mesh.getNumSentDirect(),
     (unsigned)the_mesh.getNumRecvFlood(), (unsigned)the_mesh.getNumRecvDirect());
-  n += snprintf(body + n, sizeof(body) - n,
-    "\n\nAuto-discover: every 60 s (zero-hop advert)");
-  (void)n;
-
-  lv_obj_t* lbl = lv_label_create(card);
-  lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(lbl, card_w - 20);
-  lv_label_set_text(lbl, body);
-  lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_pos(lbl, 0, 30);
+  lv_obj_t* tlbl = lv_label_create(card);
+  lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(tlbl, card_w - 20);
+  lv_label_set_text(tlbl, tbody);
+  lv_obj_set_style_text_color(tlbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(tlbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(tlbl, 0, cy);
 }
 static void homeChartClickedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -11191,6 +11927,17 @@ static void homeChartClickedCb(lv_event_t* e) {
 static void homeUnreadClickedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   goToTab(CHAT_INBOX_TAB_INDEX);
+}
+
+// ---- App drawer (full-screen grid launcher) ----
+// A toggle-in alternative to the command-centre home. The full implementation
+// lives below openControlCenter (it links to the tool openers defined there);
+// the home's Apps button and the back-key handler reach it through these.
+static lv_obj_t* s_appdrawer_root = nullptr;
+static void openAppDrawer();
+static void closeAppDrawer();
+static void homeAppsBtnCb(lv_event_t* e) {   // "Apps" launcher on the command centre -> open the drawer
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) setHomeDrawer(true);
 }
 
 static void makeHome(lv_obj_t* tab) {
@@ -11370,23 +12117,28 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_center(adv_l);
 
 #if defined(HAS_TDECK_GT911)
-  // Terminal + File explorer launchers, stacked under Advert in the right column
-  // (same 46-px height + 8-px gap as Advert so the column reads as one set).
+  // Terminal / Files / Apps launchers, stacked under Advert in the right column.
+  // 34-px tall so all four (incl. Advert) fit the short landscape screen.
   if (home_land) {
-    auto make_launcher = [&](const char* label, int ly, lv_event_cb_t cb) {
+    auto make_launcher = [&](const char* label, int ly, lv_event_cb_t cb, uint32_t bg) {
       lv_obj_t* b = lv_btn_create(tab);
       styleButton(b);
-      lv_obj_set_size(b, 100, 46);
+      lv_obj_set_size(b, 100, 34);
       lv_obj_align(b, LV_ALIGN_TOP_LEFT, cw - 100, ly);
+      if (bg) { lv_obj_set_style_bg_color(b, lv_color_hex(bg), LV_PART_MAIN);
+                lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN); }
       lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
       lv_obj_t* l = lv_label_create(b);
       lv_label_set_text(l, TR(label));
       lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
-      lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_set_style_text_color(l, lv_color_hex(bg ? 0xFFFFFF : COLOR_TEXT), LV_PART_MAIN);
       lv_obj_center(l);
     };
-    make_launcher(">_  Terminal", 58, homeTerminalCb);
-    make_launcher(LV_SYMBOL_DIRECTORY "  Files", 112, homeFilesCb);
+    make_launcher(">_  Terminal", 54, homeTerminalCb, 0);
+    make_launcher(LV_SYMBOL_DIRECTORY "  Files", 92, homeFilesCb, 0);
+    // "Apps" (opens the app drawer) pops with the negative / inverse of the theme accent.
+    make_launcher(LV_SYMBOL_LIST "  Apps", 130, homeAppsBtnCb,
+                  0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu));
   }
 #endif
 }
@@ -11547,6 +12299,11 @@ static void contactsOverflowAddCb(lv_event_t* e) {
   closeContactsOverflowSheet();
   openAddContactModalCb(e);
 }
+static void contactsOverflowAutoAddCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeContactsOverflowSheet();
+  openSettingsCategory(CAT_AUTOADD);   // jump straight to the dedicated Auto-add page
+}
 static void openContactsOverflowSheetCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeContactsOverflowSheet();
@@ -11564,7 +12321,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   lv_obj_add_event_cb(s_contacts_overflow_root, contactsOverflowDismissCb, LV_EVENT_CLICKED, nullptr);
 
   const int card_w = 200, btn_h = 36, btn_gap = 6, title_h = 26, padding = 8;
-  const int rows = 3;
+  const int rows = 4;
   const int card_h = title_h + rows * (btn_h + btn_gap) + padding;
   lv_obj_t* card = lv_obj_create(s_contacts_overflow_root);
   lv_obj_remove_style_all(card);
@@ -11602,9 +12359,356 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
     y += btn_h + btn_gap;
   };
   mk(LV_SYMBOL_EYE_OPEN "  Search", contactsOverflowSearchCb, 0);
-  mk(LV_SYMBOL_LIST     "  Found",  contactsOverflowFoundCb,  0);
+  mk(LV_SYMBOL_LIST     "  Discovered", contactsOverflowFoundCb, 0);
   mk(LV_SYMBOL_PLUS     "  Add contact", contactsOverflowAddCb, 0);
+  mk(LV_SYMBOL_DOWNLOAD "  Auto-add settings", contactsOverflowAutoAddCb, 0);
 }
+
+// ============================================================
+// Contacts — Sort & filter sheet + multi-select delete
+// ============================================================
+static bool      s_ct_select_mode = false;
+static uint8_t   s_ct_sel[128][6];           // pub_key prefix of currently-selected (deletable) contacts
+static int       s_ct_sel_n       = 0;
+static bool      s_ct_list_force  = false;   // force refreshContactsList past its no-change cache
+static void contactsListForceRefresh() { s_ct_list_force = true; refreshContactsList(); }
+static lv_obj_t* s_ct_sort_sheet  = nullptr; // Sort & filter overlay
+static lv_obj_t* s_ct_normal_bar  = nullptr; // header toolbar shown in normal mode
+static lv_obj_t* s_ct_select_bar  = nullptr; // header toolbar shown in select mode
+static lv_obj_t* s_ct_del_btn     = nullptr; // "Delete (N)" button in the select bar
+static lv_obj_t* s_ct_sort_btns[3]   = { nullptr, nullptr, nullptr };
+static lv_obj_t* s_ct_filter_btns[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
+static lv_obj_t* s_ct_filter_btn_lbl = nullptr;   // header Filter button label (shows the active filter)
+static lv_obj_t* s_ct_disc_badge     = nullptr;   // count badge on the header Discovered button
+static const char* contactsFilterShortLabel() {
+  switch (g_lv.contacts_filter) {
+    case 1u: return "RPT";  case 2u: return "Peer"; case 3u: return "Fav"; case 4u: return "Loc";
+    default: return "All";
+  }
+}
+// Bulk-delete runs chunked across loop ticks (each uiRemoveContact rewrites the
+// contacts file to flash; doing 100+ synchronously froze the UI / tripped the WDT).
+static bool         s_ctd_active  = false;
+static int          s_ctd_total   = 0, s_ctd_done = 0;
+static ContactInfo* s_ctd_list    = nullptr;   // psAlloc'd snapshot of what to delete
+static lv_obj_t*    s_ctd_overlay = nullptr;   // progress modal
+static lv_obj_t*    s_ctd_bar     = nullptr;
+static lv_obj_t*    s_ctd_lbl     = nullptr;
+
+static bool ctSelHas(const uint8_t* k){ for(int i=0;i<s_ct_sel_n;++i) if(!memcmp(s_ct_sel[i],k,6)) return true; return false; }
+static void ctSelAdd(const uint8_t* k){ if(s_ct_sel_n<128 && !ctSelHas(k)) memcpy(s_ct_sel[s_ct_sel_n++],k,6); }
+static void ctSelDel(const uint8_t* k){ for(int i=0;i<s_ct_sel_n;++i) if(!memcmp(s_ct_sel[i],k,6)){ for(int j=i;j+1<s_ct_sel_n;++j) memcpy(s_ct_sel[j],s_ct_sel[j+1],6); --s_ct_sel_n; return; } }
+
+// Lower-case the active name-search needle into out[]; true if non-empty.
+static bool ctSearchNeedle(char* out, int outsz){
+  out[0]='\0';
+  if(!g_lv.contacts_search[0]) return false;
+  int n=(int)strlen(g_lv.contacts_search); if(n>outsz-1) n=outsz-1;
+  for(int i=0;i<n;++i){ char c=g_lv.contacts_search[i]; if(c>='A'&&c<='Z') c=(char)(c-'A'+'a'); out[i]=c; }
+  out[n]='\0'; return true;
+}
+// Shared predicate so the rendered list and Select-all use IDENTICAL rules.
+static bool ctPassesFilter(const ContactInfo& c, bool is_fav, int fav_count, const char* needle){
+  const bool is_rep = (c.type == ADV_TYPE_REPEATER);
+  switch(g_lv.contacts_filter){
+    case 1u: if(!is_rep) return false; break;                              // repeaters
+    case 2u: if(is_rep)  return false; break;                              // peers
+    case 3u: if(fav_count>0 && !is_fav) return false; break;               // favorites
+    case 4u: if(!(c.gps_lat!=0 || c.gps_lon!=0)) return false; break;      // has location
+    default: break;                                                        // 0 = all
+  }
+  if(needle && needle[0]){
+    char nl[40]; int nn=(int)strlen(c.name); if(nn>(int)sizeof(nl)-1) nn=(int)sizeof(nl)-1;
+    for(int j=0;j<nn;++j){ char ch=c.name[j]; if(ch>='A'&&ch<='Z') ch=(char)(ch-'A'+'a'); nl[j]=ch; }
+    nl[nn]='\0';
+    if(!strstr(nl,needle)) return false;
+  }
+  return true;
+}
+
+// In-place checkbox repaint (avoids a full list rebuild + scroll reset on tap).
+static void ctUpdateRowCheck(lv_obj_t* row, bool checked){
+  if(!row) return;
+  lv_obj_t* box = lv_obj_get_child(row, 0);   // checkbox is child 0 in select mode
+  if(!box) return;
+  lv_obj_set_style_bg_opa(box, checked ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_t* chk = lv_obj_get_child(box, 0);
+  if(chk){ if(checked) lv_obj_clear_flag(chk, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(chk, LV_OBJ_FLAG_HIDDEN); }
+}
+static void ctUpdateDelLabel(){
+  if(!s_ct_del_btn) return;
+  lv_obj_t* l = lv_obj_get_child(s_ct_del_btn, 0);
+  if(!l) return;
+  char b[28];
+  if(s_ct_sel_n>0) snprintf(b,sizeof b,"%s  %d", TR("Delete"), s_ct_sel_n);
+  else             snprintf(b,sizeof b,"%s", TR("Delete"));
+  lv_label_set_text(l, b);
+}
+
+// Row tap: in select mode toggles the checkbox (favorites refuse); otherwise the
+// normal action sheet (unchanged behaviour).
+static void contactRowTapCb(lv_event_t* e){
+  if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
+  lv_indev_t* act = lv_indev_get_act();
+  if(act){ if(lv_indev_get_scroll_obj(act)) return; if(lv_indev_get_scroll_dir(act)!=LV_DIR_NONE) return; }
+  auto* ctx = static_cast<LvContactButtonCtx*>(lv_event_get_user_data(e));
+  if(!ctx || !g_lv.task) return;
+  if(s_ct_select_mode){
+    if(ctx->is_fav){ g_lv.task->showAlert(TR("Unfavorite it first"), 1300); return; }
+    if(ctSelHas(ctx->key6)) ctSelDel(ctx->key6); else ctSelAdd(ctx->key6);
+    ctUpdateRowCheck(lv_event_get_current_target(e), ctSelHas(ctx->key6));
+    ctUpdateDelLabel();
+    return;
+  }
+  ContactInfo c;
+  if(!the_mesh.getContactByIdx(ctx->mesh_idx, c)){ g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  openContactActionSheet(ctx->mesh_idx, ctx->is_repeater, c.name);
+}
+
+static void ctSetSelectMode(bool on){
+  s_ct_select_mode = on;
+  s_ct_sel_n = 0;
+  if(s_ct_normal_bar){ if(on) lv_obj_add_flag(s_ct_normal_bar,LV_OBJ_FLAG_HIDDEN); else lv_obj_clear_flag(s_ct_normal_bar,LV_OBJ_FLAG_HIDDEN); }
+  if(s_ct_select_bar){ if(on) lv_obj_clear_flag(s_ct_select_bar,LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(s_ct_select_bar,LV_OBJ_FLAG_HIDDEN); }
+  ctUpdateDelLabel();
+  s_ct_list_force = true;
+  refreshContactsList();
+}
+
+// Select EVERY contact passing the current filter + search (favorites skipped).
+static void ctSelectAllFiltered(){
+  if(!g_lv.task) return;
+  s_ct_sel_n = 0;
+#if defined(ESP32)
+  uint8_t fav_buf[TOUCH_FAVORITES_MAX*TOUCH_FAVORITE_KEY_BYTES];
+  const int fav_count = touchPrefsCopyFavorites(fav_buf);
+#else
+  const int fav_count = 0; uint8_t* const fav_buf = nullptr; (void)fav_buf;
+#endif
+  char needle[24]; ctSearchNeedle(needle, sizeof needle);
+  const int cnt = the_mesh.getNumContacts();
+  for(int i=0;i<cnt && s_ct_sel_n<128;++i){
+    ContactInfo c;
+    if(!the_mesh.getContactByIdx((uint32_t)i,c) || !c.name[0]) continue;
+#if defined(ESP32)
+    const bool is_fav = touchPrefsFavoritesSnapshotContains(fav_buf, fav_count, c.id.pub_key);
+#else
+    const bool is_fav = false;
+#endif
+    if(is_fav) continue;                                   // favorites aren't deletable here
+    if(!ctPassesFilter(c, is_fav, fav_count, needle)) continue;
+    ctSelAdd(c.id.pub_key);
+  }
+  ctUpdateDelLabel();
+  s_ct_list_force = true;
+  refreshContactsList();
+}
+
+static void ctDeleteProgressClose(){
+  if(s_ctd_overlay){ lv_obj_del(s_ctd_overlay); s_ctd_overlay=nullptr; s_ctd_bar=nullptr; s_ctd_lbl=nullptr; }
+}
+static void ctDeleteProgressOpen(){
+  ctDeleteProgressClose();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_ctd_overlay = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_ctd_overlay);
+  lv_obj_set_size(s_ctd_overlay, sw, sh);
+  lv_obj_set_pos(s_ctd_overlay, 0, 0);
+  lv_obj_set_style_bg_color(s_ctd_overlay, lv_color_hex(0x000000), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_ctd_overlay, LV_OPA_70, LV_PART_MAIN);
+  lv_obj_clear_flag(s_ctd_overlay, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(s_ctd_overlay, LV_OBJ_FLAG_CLICKABLE);   // swallow taps during the delete
+
+  lv_obj_t* card = lv_obj_create(s_ctd_overlay);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, sw - 60, 94);
+  lv_obj_center(card);
+  lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(card, 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, 14, LV_PART_MAIN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* ttl = lv_label_create(card);
+  lv_label_set_text(ttl, TR("Deleting contacts"));
+  lv_obj_set_style_text_color(ttl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(ttl, &g_font_14, LV_PART_MAIN);
+  lv_obj_align(ttl, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  s_ctd_bar = lv_bar_create(card);
+  lv_obj_set_size(s_ctd_bar, sw - 60 - 28, 10);
+  lv_obj_align(s_ctd_bar, LV_ALIGN_TOP_LEFT, 0, 26);
+  lv_obj_set_style_bg_color(s_ctd_bar, lv_color_hex(0x2A2D31), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_ctd_bar, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_ctd_bar, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(s_ctd_bar, LV_OPA_COVER, LV_PART_INDICATOR);
+  lv_bar_set_range(s_ctd_bar, 0, 100);
+  lv_bar_set_value(s_ctd_bar, 0, LV_ANIM_OFF);
+
+  s_ctd_lbl = lv_label_create(card);
+  lv_label_set_text(s_ctd_lbl, "0 / 0");
+  lv_obj_set_style_text_color(s_ctd_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_ctd_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_align(s_ctd_lbl, LV_ALIGN_TOP_LEFT, 0, 44);
+}
+// Called every loop tick: delete a small batch, advance the bar. Spreading the
+// work keeps the loop responsive (UI repaints, watchdog fed) between flash writes.
+static void ctDeleteServiceTick(){
+  if(!s_ctd_active) return;
+  const int BATCH = 4;
+  for(int b=0; b<BATCH && s_ctd_done < s_ctd_total; ++b){
+    if(s_ctd_list) the_mesh.uiRemoveContact(s_ctd_list[s_ctd_done]);   // lookup-by-pubkey: shift-safe
+    ++s_ctd_done;
+  }
+  g_lv.dirty_threads = false;   // don't let the bulk delete trigger per-tick list rebuilds
+  if(s_ctd_bar) lv_bar_set_value(s_ctd_bar, s_ctd_total ? (s_ctd_done*100/s_ctd_total) : 100, LV_ANIM_OFF);
+  if(s_ctd_lbl){ char b[40]; snprintf(b,sizeof b,"%d / %d", s_ctd_done, s_ctd_total); lv_label_set_text(s_ctd_lbl, b); }
+  if(s_ctd_done >= s_ctd_total){
+    const int total = s_ctd_total;
+    s_ctd_active = false;
+    ctDeleteProgressClose();
+    if(g_lv.task){ char msg[32]; snprintf(msg,sizeof msg, TR("Deleted %d"), total); g_lv.task->showAlert(msg, 1200); }
+    g_lv.dirty_threads = true;   // one refresh now that we're done
+    ctSetSelectMode(false);      // exit select mode + rebuild the (now shorter) list
+  }
+}
+static void ctDoDelete(){
+  if(!g_lv.task) return;
+  if(!s_ctd_list) s_ctd_list = (ContactInfo*)psAlloc(sizeof(ContactInfo)*128);
+  if(!s_ctd_list){ ctSetSelectMode(false); return; }
+  int n = 0;
+  const int cnt = the_mesh.getNumContacts();
+  for(int i=0;i<cnt && n<128;++i){
+    ContactInfo c;
+    if(!the_mesh.getContactByIdx((uint32_t)i,c)) continue;
+    if(ctSelHas(c.id.pub_key)) s_ctd_list[n++] = c;   // snapshot first (delete shifts indices)
+  }
+  if(n==0){ ctSetSelectMode(false); return; }
+  s_ctd_total = n; s_ctd_done = 0; s_ctd_active = true;
+  ctDeleteProgressOpen();   // the loop tick does the actual deletion + advances the bar
+}
+
+static void ctCancelSelCb(lv_event_t* e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) ctSetSelectMode(false); }
+static void ctSelectAllCb(lv_event_t* e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) ctSelectAllFiltered(); }
+static void ctDeleteSelCb(lv_event_t* e){
+  if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
+  if(s_ct_sel_n==0){ if(g_lv.task) g_lv.task->showAlert(TR("Nothing selected"), 1100); return; }
+  char m[40]; snprintf(m,sizeof m, TR("Delete %d contact(s)?"), s_ct_sel_n);
+  showConfirm(m, TR("Delete"), ctDoDelete);
+}
+
+static void ctSortSheetClose(){ if(s_ct_sort_sheet){ lv_obj_del_async(s_ct_sort_sheet); s_ct_sort_sheet=nullptr; } }
+static void ctSortSheetBackdropCb(lv_event_t* e){
+  if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
+  if(lv_event_get_target(e)==lv_event_get_current_target(e)) ctSortSheetClose();   // backdrop tap only
+}
+static void ctSortSheetGestureCb(lv_event_t* e){
+  if(lv_event_get_code(e)!=LV_EVENT_GESTURE) return;
+  lv_indev_t* indev = lv_indev_get_act();
+  if(indev && lv_indev_get_gesture_dir(indev)==LV_DIR_RIGHT) ctSortSheetClose();   // swipe left->right to dismiss
+}
+static void ctPaintOpt(lv_obj_t* b, bool active){
+  if(!b) return;
+  lv_obj_set_style_bg_color(b, lv_color_hex(active ? COLOR_ACCENT : 0x1A1D20), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(b, active ? LV_OPA_40 : LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(b, active ? 1 : 0, LV_PART_MAIN);
+}
+static void ctSheetRepaint(){
+  for(int i=0;i<3;++i) ctPaintOpt(s_ct_sort_btns[i], g_contacts_sort==(uint8_t)i);
+  for(int i=0;i<5;++i) ctPaintOpt(s_ct_filter_btns[i], g_lv.contacts_filter==(uint8_t)i);
+}
+static void ctSortOptCb(lv_event_t* e){
+  if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
+  g_contacts_sort = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+  ctSheetRepaint(); s_ct_list_force = true; refreshContactsList();
+}
+static void ctFilterOptCb(lv_event_t* e){
+  if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
+  g_lv.contacts_filter = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+  updateContactsFilterSegments();
+  if(s_ct_filter_btn_lbl) lv_label_set_text_fmt(s_ct_filter_btn_lbl, "%s %s", LV_SYMBOL_DOWN, contactsFilterShortLabel());
+  ctSheetRepaint(); s_ct_list_force = true; refreshContactsList();
+}
+static void ctSelectFromSheetCb(lv_event_t* e){
+  if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
+  ctSortSheetClose();
+  ctSetSelectMode(true);
+}
+static lv_obj_t* ctSheetOption(lv_obj_t* parent, const char* label, lv_event_cb_t cb, int ud, bool active){
+  lv_obj_t* b = lv_btn_create(parent);
+  lv_obj_remove_style_all(b);
+  lv_obj_set_width(b, lv_pct(100));
+  lv_obj_set_height(b, 34);
+  lv_obj_set_style_radius(b, 6, LV_PART_MAIN);
+  lv_obj_set_style_border_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  ctPaintOpt(b, active);
+  lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, (void*)(intptr_t)ud);
+  lv_obj_t* l = lv_label_create(b);
+  lv_label_set_text(l, TR(label));
+  lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+  lv_obj_center(l);
+  return b;
+}
+// Shared shell for the Sort / Filter option sheets (only one is ever open).
+static lv_obj_t* ctOpenOptionSheet(const char* title){
+  ctSortSheetClose();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_ct_sort_sheet = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_ct_sort_sheet);
+  lv_obj_set_size(s_ct_sort_sheet, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_ct_sort_sheet, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_ct_sort_sheet, lv_color_hex(0x000000), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_ct_sort_sheet, LV_OPA_60, LV_PART_MAIN);
+  lv_obj_clear_flag(s_ct_sort_sheet, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_ct_sort_sheet, ctSortSheetBackdropCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(s_ct_sort_sheet, ctSortSheetGestureCb, LV_EVENT_GESTURE, nullptr);   // swipe-to-close
+
+  lv_obj_t* card = lv_obj_create(s_ct_sort_sheet);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_width(card, sw - 24);
+  lv_obj_set_height(card, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(card, sh - STATUSBAR_H - 16, LV_PART_MAIN);
+  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 8);
+  lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(card, 10, LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(card, 6, LV_PART_MAIN);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_scroll_dir(card, LV_DIR_VER);
+  lv_obj_add_flag(card, LV_OBJ_FLAG_GESTURE_BUBBLE);   // swipes on the card reach the sheet's swipe-to-close
+  addCloseXBadge(card, ctSortSheetBackdropCb);
+  lv_obj_t* ttl = lv_label_create(card);
+  lv_label_set_text(ttl, TR(title));
+  lv_obj_set_style_text_color(ttl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(ttl, &g_font_16, LV_PART_MAIN);
+  return card;
+}
+static void openContactsSortSheet(){
+  for(int i=0;i<5;++i) s_ct_filter_btns[i]=nullptr;   // the filter sheet's buttons are gone now
+  lv_obj_t* card = ctOpenOptionSheet("Sort by");
+  s_ct_sort_btns[0] = ctSheetOption(card, "Name (A-Z)",     ctSortOptCb, CONTACTS_SORT_AZ,         g_contacts_sort==CONTACTS_SORT_AZ);
+  s_ct_sort_btns[1] = ctSheetOption(card, "Recently heard", ctSortOptCb, CONTACTS_SORT_LAST_HEARD, g_contacts_sort==CONTACTS_SORT_LAST_HEARD);
+  s_ct_sort_btns[2] = ctSheetOption(card, "Recent message", ctSortOptCb, CONTACTS_SORT_LAST_MSG,   g_contacts_sort==CONTACTS_SORT_LAST_MSG);
+  lv_obj_t* sp = lv_obj_create(card); lv_obj_remove_style_all(sp); lv_obj_set_size(sp, 1, 4);
+  ctSheetOption(card, LV_SYMBOL_TRASH "  Select to delete", ctSelectFromSheetCb, 0, false);
+}
+static void openContactsSortSheetCb(lv_event_t* e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) openContactsSortSheet(); }
+static void openContactsFilterSheet(){
+  for(int i=0;i<3;++i) s_ct_sort_btns[i]=nullptr;     // the sort sheet's buttons are gone now
+  lv_obj_t* card = ctOpenOptionSheet("Filter");
+  s_ct_filter_btns[0] = ctSheetOption(card, "All",          ctFilterOptCb, 0, g_lv.contacts_filter==0);
+  s_ct_filter_btns[1] = ctSheetOption(card, "Repeaters",    ctFilterOptCb, 1, g_lv.contacts_filter==1);
+  s_ct_filter_btns[2] = ctSheetOption(card, "Peers",        ctFilterOptCb, 2, g_lv.contacts_filter==2);
+  s_ct_filter_btns[3] = ctSheetOption(card, "Favorites",    ctFilterOptCb, 3, g_lv.contacts_filter==3);
+  s_ct_filter_btns[4] = ctSheetOption(card, "Has location", ctFilterOptCb, 4, g_lv.contacts_filter==4);
+}
+static void openContactsFilterSheetCb(lv_event_t* e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) openContactsFilterSheet(); }
 
 static void makeContactsTab(lv_obj_t* tab) {
   g_lv.contacts_list   = nullptr;
@@ -11616,6 +12720,9 @@ static void makeContactsTab(lv_obj_t* tab) {
   g_lv.contacts_search_indicator = nullptr;
   for (int i = 0; i < 4; ++i) s_contacts_seg_btns[i] = nullptr;
   s_contacts_overflow_root = nullptr;
+  s_ct_select_mode = false; s_ct_sel_n = 0;
+  s_ct_sort_sheet = nullptr; s_ct_select_bar = nullptr; s_ct_normal_bar = nullptr; s_ct_del_btn = nullptr;
+  s_ct_disc_badge = nullptr; s_ct_filter_btn_lbl = nullptr;
 
   lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
   lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
@@ -11625,6 +12732,7 @@ static void makeContactsTab(lv_obj_t* tab) {
   lv_obj_set_style_pad_all(tab, 0, LV_PART_MAIN);
 
   lv_obj_t* row = lv_obj_create(tab);
+  s_ct_normal_bar = row;   // hidden while in multi-select mode (select bar shown instead)
   lv_obj_remove_style_all(row);
   // Row now matches the Chat tab's combined-inbox header (32 px tall, with
   // a 28-tall "+" button inset). Was 44 px previously, which made the
@@ -11644,49 +12752,72 @@ static void makeContactsTab(lv_obj_t* tab) {
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   constexpr lv_coord_t kChipH = 28;
 
-  // ---- Segmented filter: All / ★ / RPT / Peer ----
-  // Four equal segments (flex_grow) so they're big, evenly-sized tap
-  // targets. The active segment is filled; tapping one switches the view
-  // directly (no hidden toggle/cycle gestures — that was the "hard to
-  // operate" complaint).
-  lv_obj_t* seg = lv_obj_create(row);
-  lv_obj_remove_style_all(seg);
-  lv_obj_set_size(seg, 192, kChipH);
-  // Grow to fill the row width (minus the overflow button) so the four
-  // segments stretch across the screen in landscape instead of leaving a gap.
-  lv_obj_set_flex_grow(seg, 1);
-  lv_obj_set_flex_flow(seg, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(seg, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(seg, 0, LV_PART_MAIN);
-  lv_obj_set_style_pad_column(seg, 2, LV_PART_MAIN);
-  lv_obj_clear_flag(seg, LV_OBJ_FLAG_SCROLLABLE);
-
-  auto mk_seg = [&](int idx, const char* label, bool star) {
-    lv_obj_t* b = lv_btn_create(seg);
-    lv_obj_set_flex_grow(b, 1);
+  // ---- Big "Discovered" button (→ discovered list) with a count badge ----
+  {
+    lv_obj_t* b = lv_btn_create(row);
     lv_obj_set_height(b, kChipH);
-    lv_obj_set_style_radius(b, 4, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(b, 0, LV_PART_MAIN);
-    lv_obj_set_style_text_color(b, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
-    void* ud = reinterpret_cast<void*>(static_cast<uintptr_t>(k_contacts_seg_filter[idx]));
-    lv_obj_add_event_cb(b, contactsSegmentCb, LV_EVENT_CLICKED, ud);
+    lv_obj_set_flex_grow(b, 1);   // takes the width freed by the removed filter segments
+    styleButton(b);
+    lv_obj_set_style_pad_hor(b, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(b, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(b, contactsOverflowFoundCb, LV_EVENT_CLICKED, nullptr);   // opens the Discovered list
     lv_obj_t* l = lv_label_create(b);
-    lv_label_set_text(l, TR(label));
-    if (star) {
-      lv_obj_set_style_text_font(l, &star_font_14, LV_PART_MAIN);
-      lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    } else {
-      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
-    }
+    lv_label_set_text(l, LV_SYMBOL_EYE_OPEN "  Discovered");
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
+    s_ct_disc_badge = lv_label_create(b);   // red count pill, right side (updated by the loop)
+    lv_obj_set_size(s_ct_disc_badge, LV_SIZE_CONTENT, 16);
+    lv_obj_set_style_radius(s_ct_disc_badge, 8, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ct_disc_badge, lv_color_hex(0xE0533D), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ct_disc_badge, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ct_disc_badge, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_ct_disc_badge, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_ct_disc_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(s_ct_disc_badge, 3, LV_PART_MAIN);
+    lv_obj_align(s_ct_disc_badge, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_add_flag(s_ct_disc_badge, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  // ---- Filter button (replaces the All/★/RPT/Peer segments; shows the active filter) ----
+  {
+    lv_obj_t* b = lv_btn_create(row);
+    lv_obj_set_size(b, 46, kChipH);
+    styleButton(b);
+    lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(b, openContactsFilterSheetCb, LV_EVENT_CLICKED, nullptr);
+    s_ct_filter_btn_lbl = lv_label_create(b);
+    lv_label_set_text_fmt(s_ct_filter_btn_lbl, "%s %s", LV_SYMBOL_DOWN, contactsFilterShortLabel());
+    lv_obj_set_style_text_font(s_ct_filter_btn_lbl, &g_font_12, LV_PART_MAIN);
+    lv_obj_center(s_ct_filter_btn_lbl);
+  }
+
+  // ---- Sort button (opens the Sort sheet) ----
+  {
+    lv_obj_t* b = lv_btn_create(row);
+    lv_obj_set_size(b, 42, kChipH);
+    styleButton(b);
+    lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(b, openContactsSortSheetCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, TR("Sort"));
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
     lv_obj_center(l);
-    s_contacts_seg_btns[idx] = b;
-  };
-  mk_seg(0, "All",            false);
-  mk_seg(1, TOUCH_SYM_STAR_BIG, true);
-  mk_seg(2, "RPT",            false);
-  mk_seg(3, "Peer",           false);
-  updateContactsFilterSegments();   // paint the active (favorites) segment
+  }
+
+  // ---- Trash button: jump straight into multi-select delete mode ----
+  {
+    lv_obj_t* b = lv_btn_create(row);
+    lv_obj_set_size(b, 32, kChipH);
+    styleButton(b);
+    lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(b, ctSelectFromSheetCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, LV_SYMBOL_TRASH);
+    lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN);
+    lv_obj_center(l);
+  }
 
   // ---- "⋯" overflow: Search / Found / Add contact ----
   {
@@ -11724,6 +12855,47 @@ static void makeContactsTab(lv_obj_t* tab) {
   lv_obj_set_style_pad_all(g_lv.contacts_list, 0, LV_PART_MAIN);
   lv_obj_set_style_pad_row(g_lv.contacts_list, 1, LV_PART_MAIN);
   lv_obj_add_event_cb(g_lv.contacts_list, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
+
+  // ---- Select-mode toolbar (hidden until "Select to delete"): Cancel / Select all / Delete (N) ----
+  s_ct_select_bar = lv_obj_create(tab);
+  lv_obj_remove_style_all(s_ct_select_bar);
+  lv_obj_set_size(s_ct_select_bar, tabContentW(), 32);
+  lv_obj_set_pos(s_ct_select_bar, 0, 0);
+  lv_obj_set_style_bg_color(s_ct_select_bar, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_ct_select_bar, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_pad_hor(s_ct_select_bar, 4, LV_PART_MAIN);
+  lv_obj_set_style_pad_ver(s_ct_select_bar, 2, LV_PART_MAIN);
+  lv_obj_set_flex_flow(s_ct_select_bar, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(s_ct_select_bar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(s_ct_select_bar, 4, LV_PART_MAIN);
+  lv_obj_clear_flag(s_ct_select_bar, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(s_ct_select_bar, LV_OBJ_FLAG_HIDDEN);
+  {
+    lv_obj_t* b = lv_btn_create(s_ct_select_bar);
+    lv_obj_set_size(b, 60, kChipH); styleButton(b); lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(b, ctCancelSelCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, TR("Cancel"));
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l);
+  }
+  {
+    lv_obj_t* b = lv_btn_create(s_ct_select_bar);
+    lv_obj_set_height(b, kChipH); lv_obj_set_flex_grow(b, 1); styleButton(b); lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(b, ctSelectAllCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, TR("Select all"));
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l);
+  }
+  {
+    s_ct_del_btn = lv_btn_create(s_ct_select_bar);
+    lv_obj_set_size(s_ct_del_btn, 90, kChipH);
+    lv_obj_set_style_radius(s_ct_del_btn, 6, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ct_del_btn, lv_color_hex(0xC0392B), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ct_del_btn, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_ct_del_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(s_ct_del_btn, ctDeleteSelCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(s_ct_del_btn); lv_label_set_text(l, TR("Delete"));
+    lv_obj_set_style_text_color(l, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l);
+  }
 }
 
 // ============================================================
@@ -12028,6 +13200,7 @@ static uint8_t* decodeJpegToRgb565(const uint8_t* jpeg, size_t jpeg_len,
 static double   s_map_center_lat = 0.0;
 static double   s_map_center_lon = 0.0;
 static uint8_t  s_map_zoom       = k_map_zoom_default;
+static bool     s_map_view_inited = false;  // first map open did the recenter+zoom-snap; after that, remember the user's view (issue #5)
 static bool     s_map_has_pack   = false;   // toggles placeholder visibility
 
 // lat/lon → world pixel at given zoom (Web Mercator).
@@ -12975,7 +14148,7 @@ static void freeMapMarkers() {
 }
 
 static void openMarkerPopupForContact(int mesh_idx);
-static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name);
+static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name, bool from_map);
 static void openMapPicker(const int* idxs, int n);
 // (onMapMarkerClickedCb removed — marker taps are now dispatched centrally
 // from the canvas's RELEASED handler in mapCanvasEventCb. See the marker
@@ -13687,7 +14860,7 @@ static void openMarkerPopupForContact(int mesh_idx) {
   ContactInfo c;
   if (!the_mesh.getContactByIdx((uint32_t)mesh_idx, c)) return;
   const bool is_repeater = (c.type == ADV_TYPE_REPEATER);
-  openContactActionSheet((uint32_t)mesh_idx, is_repeater, c.name);
+  openContactActionSheet((uint32_t)mesh_idx, is_repeater, c.name, /*from_map=*/true);
 }
 
 // ----- Overlapping-markers picker -----
@@ -14242,19 +15415,25 @@ static void onMapTabActivated() {
   // no per-tab boost dance here anymore. (Tried 240 MHz briefly — the
   // PSRAM bus tightens enough at that clock for the SJPG decoder to
   // emit occasional RGB565 noise. 160 MHz is the sweet spot.)
-  // A route replay sets its own fitted center+zoom before switching here, so
-  // don't recenter on self / auto-snap zoom in that case.
-  if (g_lv.task && !s_route_active) {
-    s_map_center_lat = g_lv.task->getNodeLat();
-    s_map_center_lon = g_lv.task->getNodeLon();
-  }
-  // One-time auto-snap to the highest zoom level the pack actually
-  // contains around this center. After this, the user's zoom-in/out
-  // taps are honoured verbatim — they can pop above the pack and see
-  // "no tile pack" (a clear cue to tap − to go back).
-  if (!s_route_active) {
+  // Recenter on self + auto-snap zoom only on the FIRST map open this session
+  // (or until we actually have a location to center on). After that, the user's
+  // pan + zoom are remembered across tab switches (issue #5) — the center/zoom
+  // statics already survive leaving the tab; this was the only thing wiping
+  // them. A route replay sets its own fitted view (s_route_active).
+  const bool have_center = !(s_map_center_lat == 0.0 && s_map_center_lon == 0.0);
+  if (!s_route_active && (!s_map_view_inited || !have_center)) {
+    if (g_lv.task) {
+      const double la = g_lv.task->getNodeLat();
+      const double lo = g_lv.task->getNodeLon();
+      if (!(la == 0.0 && lo == 0.0)) { s_map_center_lat = la; s_map_center_lon = lo; }
+    }
+    // One-time auto-snap to the highest zoom level the pack actually contains
+    // around this center. After this, the user's zoom-in/out taps are honoured
+    // verbatim — they can pop above the pack and see "no tile pack" (a clear
+    // cue to tap − to go back).
     const uint8_t best = bestAvailableZoom(s_map_center_lat, s_map_center_lon);
     if (best != 0) s_map_zoom = best;
+    if (!(s_map_center_lat == 0.0 && s_map_center_lon == 0.0)) s_map_view_inited = true;
   }
   // 9 SPIFFS reads + JPEG decodes take ~1-3 seconds on first paint. Show a
   // visible "loading" hint and force an LVGL render pass BEFORE we block on
@@ -14310,7 +15489,10 @@ static void applyMapChrome(bool on) {
       // map tiles, no grey bar behind them.
       lv_obj_set_style_bg_opa(btns, on ? LV_OPA_TRANSP : LV_OPA_COVER, LV_PART_MAIN);
       lv_obj_set_style_text_color(btns, lv_color_hex(on ? 0x101010 : COLOR_SUB), LV_PART_ITEMS);
-      lv_obj_set_style_text_color(btns, lv_color_hex(on ? 0x000000 : COLOR_TEXT),
+      // Off-map: active icon back to the ACCENT colour (not white). On-map: black
+      // icon for contrast over the tiles. (The accent indicator bar is hidden on
+      // the map separately by updateTabIndicator().)
+      lv_obj_set_style_text_color(btns, lv_color_hex(on ? 0x000000 : COLOR_ACCENT),
                                   LV_PART_ITEMS | LV_STATE_CHECKED);
     }
   }
@@ -14791,7 +15973,8 @@ static void settingsCatBuild(int cat) {
   const lv_coord_t lblw = lv_disp_get_hor_res(nullptr) - 16;
   switch (cat) {
     case CAT_PROFILE:      buildProfileSettings(); break;
-    case CAT_RADIO:        buildRadioSettings(); buildAutoAddSettings(); buildExperimentalSettings(); break;
+    case CAT_RADIO:        buildRadioSettings(); buildExperimentalSettings(); break;
+    case CAT_AUTOADD:      buildAutoAddSettings(); break;
     case CAT_WIFI:         buildWifiSettings(); break;
     case CAT_BLUETOOTH:    buildBluetoothSettings(); break;
     case CAT_DISPLAY:      buildDeviceSettings(DSEC_DISPLAY); break;
@@ -14876,7 +16059,12 @@ static void closeSettingsCategory() {
     g_lv.settings_status = nullptr; g_lv.diag_id_label = nullptr; g_lv.diag_label = nullptr;
   }
   s_settings_inline_parent = nullptr;
-  if (s_settings_sheet) { lv_obj_del(s_settings_sheet); s_settings_sheet = nullptr; }
+  // del_async, NOT del: the sheet holds the scrollable page, and this close can
+  // fire mid-gesture (swipe-back / tab change while a settings page has scroll
+  // momentum). A synchronous delete frees the scroll_obj while LVGL is still
+  // walking the touch event chain -> use-after-free in indev_proc_release on the
+  // following release/scroll-throw. Deferring frees it after the event finishes.
+  if (s_settings_sheet) { lv_obj_del_async(s_settings_sheet); s_settings_sheet = nullptr; }
   s_settings_open_cat = -1;
   s_settings_from_cc  = false;
   resetSettingsModalState();
@@ -14886,6 +16074,9 @@ static void closeSettingsCategory() {
 // Open a category as a detail sheet (on layer_top, below the status bar). The
 // status bar itself carries the Back chevron + the page title (tapping the bar =
 // Back), so the sheet needs no header and the page uses the full height.
+static void settingsSheetCloseCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) closeSettingsCategory();
+}
 static void openSettingsCategory(int cat) {
   if (cat < 0 || cat >= CAT_COUNT) return;
   if (settingsModalIsOpen()) closeSettingsModal();
@@ -14910,11 +16101,35 @@ static void openSettingsCategory(int cat) {
   lv_obj_set_pos(page, 0, 0);
   lv_obj_set_size(page, sw, sh - STATUSBAR_H);
   prepSettingsPage(page);
+  lv_obj_set_style_pad_top(page, 36, LV_PART_MAIN);   // clear space for the floating X close
 
   resetSettingsModalState();
   s_settings_inline_parent = page;
   settingsCatBuild(cat);
   s_settings_inline_parent = nullptr;
+
+  // Let the last section card grow to fill the page so a SHORT category (e.g.
+  // Sound) reads as a full-screen panel instead of a small floating box — but
+  // ONLY when the content actually fits. Growing the last card on a TALL page
+  // (Wi-Fi, Keyboard, System, Quick replies, Lock screen, …) collapses the
+  // scroll bounds and hides the lower content, so lay out first and skip the
+  // grow if the page already overflows (it needs to stay scrollable).
+  lv_obj_update_layout(page);
+  if (lv_obj_get_scroll_bottom(page) <= 0) {
+    const int nch = lv_obj_get_child_cnt(page);
+    if (nch >= 1) {
+      lv_obj_t* wrap = lv_obj_get_child(page, nch - 1);
+      if (wrap && lv_obj_get_child_cnt(wrap) >= 1) {   // a grouped-card wrap (skip bare labels, e.g. About)
+        lv_obj_set_flex_grow(wrap, 1);
+        lv_obj_t* card = lv_obj_get_child(wrap, lv_obj_get_child_cnt(wrap) - 1);
+        if (card) lv_obj_set_flex_grow(card, 1);
+      }
+    }
+  }
+
+  // Explicit close (X) top-right — a child of the sheet root so it stays put
+  // above the scrolling page (the status-bar back chevron still works too).
+  addCloseXBadge(root, settingsSheetCloseCb);
 
   updateGlobalStatusBar();   // show the Back chevron + title in the bar immediately
 }
@@ -15674,6 +16889,7 @@ static void refreshChatDetail(LvChatPanel& p) {
   }
   bool divider_done = false;
   lv_coord_t divider_y = -1;
+  lv_coord_t jump_y    = -1;   // y of the tapped @mention message, if it's in the rendered window
 
   lv_coord_t y_pos = 0;
   for (int i = render_start; i < n; ++i) {
@@ -15857,6 +17073,7 @@ static void refreshChatDetail(LvChatPanel& p) {
         ? (kContentW - bw - kSideGutter)
         : kSideGutter;
     lv_obj_set_pos(bubble, x_pos, y_pos);
+    if (s_chat_jump_msg_idx >= 0 && msg_idx[i] == s_chat_jump_msg_idx) jump_y = y_pos;
     y_pos += bh + kRowGap;
   }
 
@@ -15864,13 +17081,18 @@ static void refreshChatDetail(LvChatPanel& p) {
   // instead of the bottom; otherwise show the newest message. Subsequent
   // refreshes (a message arrived while open) keep scrolling to the bottom.
   lv_obj_update_layout(p.msgs);
-  if (s_chat_just_opened && divider_y >= 0) {
+  if (s_chat_just_opened && jump_y >= 0) {
+    // Tapped an @mention: land on that exact message (a little context above it).
+    lv_coord_t target = (jump_y > 8) ? (jump_y - 8) : 0;
+    lv_obj_scroll_to_y(p.msgs, target, LV_ANIM_OFF);
+  } else if (s_chat_just_opened && divider_y >= 0) {
     lv_coord_t target = (divider_y > 8) ? (divider_y - 8) : 0;
     lv_obj_scroll_to_y(p.msgs, target, LV_ANIM_OFF);
   } else {
     lv_obj_scroll_to_y(p.msgs, LV_COORD_MAX, LV_ANIM_OFF);
   }
-  s_chat_just_opened = false;
+  s_chat_just_opened  = false;
+  s_chat_jump_msg_idx = -1;   // one-shot: consume the jump target so later refreshes go to the bottom
   if (p.jump_btn) {
     if (lv_obj_get_scroll_bottom(p.msgs) > 30) lv_obj_clear_flag(p.jump_btn, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(p.jump_btn, LV_OBJ_FLAG_HIDDEN);
@@ -15878,6 +17100,22 @@ static void refreshChatDetail(LvChatPanel& p) {
 }
 
 // Rebuild the thread list inside a tab.
+// Compact last-message time for a chat-list row: HH:MM today, "DD Mon" earlier
+// this year, "DD/MM/YY" older. Empty when there's no timestamp (ts == 0).
+static void formatChatRowTime(char* buf, size_t cap, uint32_t ts) {
+  if (!buf || cap < 1) return;
+  buf[0] = '\0';
+  if (ts == 0) return;
+  time_t t = (time_t)ts;
+  time_t now = time(nullptr);
+  struct tm tmv, tmn;
+  localtime_r(&t, &tmv);
+  localtime_r(&now, &tmn);
+  if (tmv.tm_year == tmn.tm_year && tmv.tm_yday == tmn.tm_yday) strftime(buf, cap, "%H:%M", &tmv);
+  else if (tmv.tm_year == tmn.tm_year)                         strftime(buf, cap, "%d %b", &tmv);
+  else                                                         strftime(buf, cap, "%d/%m/%y", &tmv);
+}
+
 static void refreshChatList(LvChatPanel& p) {
   if (!g_lv.task || !p.list_cont) return;
 
@@ -15947,16 +17185,34 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_pad_ver(btn, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_left(btn, 12, LV_PART_MAIN);
 
+    // Last-message time on the far right; the unread badge + @ sit to its left.
+    char tbuf[16];
+    formatChatRowTime(tbuf, sizeof(tbuf), ts);
+    lv_coord_t time_w = 0;
+    if (tbuf[0]) {
+      lv_point_t tsz;
+      lv_txt_get_size(&tsz, tbuf, &g_font_12, 0, 0, LV_COORD_MAX, 0);
+      time_w = tsz.x;
+      lv_obj_t* tlbl = lv_label_create(btn);
+      lv_obj_add_flag(tlbl, LV_OBJ_FLAG_IGNORE_LAYOUT);
+      lv_label_set_text(tlbl, tbuf);
+      lv_obj_set_style_text_font(tlbl, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(tlbl, lv_color_hex(unread > 0 ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
+      lv_obj_align(tlbl, LV_ALIGN_RIGHT_MID, -10, 0);
+    }
+    // Right edge for the unread / mention badges — just left of the time.
+    const lv_coord_t r_edge = (lv_coord_t)((time_w > 0) ? (-10 - time_w - 8) : -10);
+
     // Make long names scroll horizontally instead of being clipped.
     // lv_list_add_btn creates: child[0]=icon label, child[1]=text label.
     lv_obj_t* text_lbl = lv_obj_get_child(btn, 1);
     if (text_lbl) {
       lv_label_set_long_mode(text_lbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
-      // Leave room on the right for the unread badge.
-      lv_obj_set_width(text_lbl, lv_disp_get_hor_res(nullptr) - 116);
+      // Leave room on the right for the time + unread badge.
+      lv_obj_set_width(text_lbl, lv_disp_get_hor_res(nullptr) - 116 - time_w);
     }
 
-    // Right-aligned unread badge (pill with the count).
+    // Right-aligned unread badge (pill with the count), left of the time.
     if (unread > 0) {
       lv_obj_t* badge = lv_label_create(btn);
       lv_obj_add_flag(badge, LV_OBJ_FLAG_IGNORE_LAYOUT);   // float, not in the row flex
@@ -15970,7 +17226,7 @@ static void refreshChatList(LvChatPanel& p) {
       lv_obj_set_style_radius(badge, 9, LV_PART_MAIN);
       lv_obj_set_style_pad_hor(badge, 6, LV_PART_MAIN);
       lv_obj_set_style_pad_ver(badge, 1, LV_PART_MAIN);
-      lv_obj_align(badge, LV_ALIGN_RIGHT_MID, -10, 0);
+      lv_obj_align(badge, LV_ALIGN_RIGHT_MID, r_edge, 0);
     }
 
     // Blue "@" to the left of the count when an unread message here @mentions me.
@@ -15980,7 +17236,7 @@ static void refreshChatList(LvChatPanel& p) {
       lv_label_set_text(at, TR("@"));
       lv_obj_set_style_text_font(at, &g_font_14, LV_PART_MAIN);
       lv_obj_set_style_text_color(at, lv_color_hex(COLOR_MENTION), LV_PART_MAIN);
-      lv_obj_align(at, LV_ALIGN_RIGHT_MID, unread > 0 ? -48 : -10, 0);
+      lv_obj_align(at, LV_ALIGN_RIGHT_MID, (lv_coord_t)(unread > 0 ? r_edge - 38 : r_edge), 0);
     }
 
     p.ctx_store[i].idx     = idxs[i];
@@ -16097,6 +17353,7 @@ static void formatDistanceBadge(char* out, size_t out_cap,
 
 static void refreshContactsList() {
   if (!g_lv.contacts_list || !g_lv.task) return;
+  if (s_ctd_active) return;   // mid bulk-delete: don't rebuild rows under the progress modal
   // Cache: skip the rebuild unless the count / filter / sort / search
   // changed, or 30 seconds have elapsed (so age labels re-render).
   static int     s_last_count  = -1;
@@ -16120,10 +17377,11 @@ static void refreshContactsList() {
   const bool search_changed = strncmp(s_last_search, g_lv.contacts_search, sizeof(s_last_search)) != 0;
   if (curr_count == s_last_count && curr_filter == s_last_filter &&
       g_contacts_sort == s_last_sort && !age_refresh_due && !search_changed &&
-      curr_use_miles == s_last_use_miles &&
+      curr_use_miles == s_last_use_miles && !s_ct_list_force &&
       lv_obj_get_child_cnt(g_lv.contacts_list) > 0) {
     return;
   }
+  s_ct_list_force = false;
   s_last_count  = curr_count;
   s_last_filter = curr_filter;
   s_last_sort   = g_contacts_sort;
@@ -16146,9 +17404,11 @@ static void refreshContactsList() {
     bool     has_dir;
     bool     has_gps;
     bool     is_fav;
+    bool     is_blocked;   // on the ignore list -> red person icon
     uint32_t last_heard;
     int32_t  gps_lat;   // microdegrees (0 = unknown)
     int32_t  gps_lon;
+    uint8_t  key6[6];   // pub_key prefix — stable identity for multi-select
     char     name[40];
   };
   static Entry* s_entries = (Entry*)psAlloc(sizeof(Entry) * 128);
@@ -16160,9 +17420,14 @@ static void refreshContactsList() {
 #if defined(ESP32)
   uint8_t fav_buf[TOUCH_FAVORITES_MAX * TOUCH_FAVORITE_KEY_BYTES];
   const int fav_count = touchPrefsCopyFavorites(fav_buf);
+  // Same one-read-then-scan trick for the ignore list (touchPrefsIsIgnored
+  // re-reads the blob on every call).
+  uint8_t ign_buf[TOUCH_IGNORED_MAX * TOUCH_IGNORE_KEY_BYTES];
+  const int ign_count = touchPrefsCopyIgnored(ign_buf);
 #else
   const int fav_count = 0;
   uint8_t* const fav_buf = nullptr;
+  const int ign_count = 0;
 #endif
   // Lower-cased search needle, computed once per refresh, so the inner
   // strcasestr-style search doesn't re-lower-case the operator's input N
@@ -16183,33 +17448,18 @@ static void refreshContactsList() {
     ContactInfo c;
     if (!the_mesh.getContactByIdx(static_cast<uint32_t>(i), c) || !c.name[0]) continue;
     const bool is_rep = (c.type == ADV_TYPE_REPEATER);
-    if (curr_filter == 1u && !is_rep) continue;
-    if (curr_filter == 2u && is_rep) continue;
 #if defined(ESP32)
     const bool is_fav = touchPrefsFavoritesSnapshotContains(fav_buf, fav_count, c.id.pub_key);
+    bool is_blocked = false;
+    for (int b = 0; b < ign_count; ++b)
+      if (memcmp(&ign_buf[b * TOUCH_IGNORE_KEY_BYTES], c.id.pub_key, TOUCH_IGNORE_KEY_BYTES) == 0) { is_blocked = true; break; }
 #else
     const bool is_fav = false;
+    const bool is_blocked = false;
 #endif
-    // Favorites filter only narrows the list when the operator actually
-    // has favorites. With none set, "favorites" falls back to showing
-    // every contact rather than an empty list (this is also the default
-    // view on first open, so an operator who hasn't starred anyone still
-    // sees their contacts).
-    if (curr_filter == 3u && fav_count > 0 && !is_fav) continue;
-    // Text-search filter: case-insensitive substring match on the contact
-    // name. Cheap because contact names are <40 chars.
-    if (have_search) {
-      char name_lc[40];
-      int nlen = (int)strlen(c.name);
-      if (nlen > (int)sizeof(name_lc) - 1) nlen = (int)sizeof(name_lc) - 1;
-      for (int j = 0; j < nlen; ++j) {
-        char ch = c.name[j];
-        if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
-        name_lc[j] = ch;
-      }
-      name_lc[nlen] = '\0';
-      if (strstr(name_lc, search_lc) == nullptr) continue;
-    }
+    // Shared predicate (category filter incl. "has location" + name search) so
+    // the rendered list and the multi-select "Select all" apply IDENTICAL rules.
+    if (!ctPassesFilter(c, is_fav, fav_count, have_search ? search_lc : nullptr)) continue;
     Entry& e = s_entries[n_entries++];
     e.mesh_idx   = i;
     e.type       = c.type;
@@ -16218,7 +17468,9 @@ static void refreshContactsList() {
     e.gps_lat    = c.gps_lat;
     e.gps_lon    = c.gps_lon;
     e.is_fav     = is_fav;
+    e.is_blocked = is_blocked;
     e.last_heard = c.last_advert_timestamp;
+    memcpy(e.key6, c.id.pub_key, 6);
     strncpy(e.name, c.name, sizeof(e.name) - 1);
     e.name[sizeof(e.name) - 1] = '\0';
   }
@@ -16247,102 +17499,125 @@ static void refreshContactsList() {
   const double self_lat = g_lv.task->getNodeLat();
   const double self_lon = g_lv.task->getNodeLon();
 
+  // ---- Table rows: custom column layout (checkbox | icon | Name | Heard | Location | ★)
+  // Custom lv_obj rows (NOT lv_list_add_btn) with absolute-positioned children
+  // give aligned columns + a checkbox, and sidestep the lv_list_add_btn flex
+  // chain that bootlooped pre-alpha when siblings were added inside it.
+  const int  row_w   = tabContentW();
+  const bool sel_md  = s_ct_select_mode;
+  const int  ROW_H   = 34;
+  const int  star_x  = row_w - 18;                       // ★ favorite marker (reserved on every row)
+  const int  loc_w   = 46, loc_x   = star_x - 4 - loc_w; // Location column (compact, pushed right)
+  const int  hrd_w   = 32, heard_x = loc_x - 2 - hrd_w;  // Heard column (compact, pushed right)
+  const int  icon_x  = sel_md ? 34 : 8;
+  const int  name_x  = icon_x + 20;
+  int        name_w  = heard_x - name_x - 6;
+  if (name_w < 50) name_w = 50;
   for (int k = 0; k < n_entries; ++k) {
     if (k >= (int)(sizeof(s_contacts_ctx)/sizeof(s_contacts_ctx[0]))) break;
     const Entry& e = s_entries[k];
     const bool is_rep = (e.type == ADV_TYPE_REPEATER);
 
-    char san[40];
-    copyUtf8ReplacingMissingGlyphs(&g_font_14, san, sizeof(san), e.name);
-
-    // Compact ASCII metadata in the label itself (no nested widgets). This
-    // is plain `lv_list_add_btn` so the layout stays whatever lv_list does
-    // by default — that's the variant that booted reliably on pre-alpha_3.
-    const char* ttag = "USR";
-    switch (e.type) {
-      case ADV_TYPE_REPEATER: ttag = "RPT"; break;
-      case ADV_TYPE_ROOM:     ttag = "SRV"; break;
-      case ADV_TYPE_SENSOR:   ttag = "SNS"; break;
-      case ADV_TYPE_CHAT:
-      default:                ttag = "USR"; break;
-    }
-    char age_buf[12];
-    uint32_t age_secs = 0;
+    // Heard (age) + Location (distance / GPS / —) column strings.
+    char age_buf[12]; uint32_t age_secs = 0;
     if (now_secs > e.last_heard && e.last_heard != 0) age_secs = now_secs - e.last_heard;
     formatAgeBadge(age_buf, sizeof(age_buf), age_secs);
-    // Two-line row: name on line 1, metadata on line 2. Embedded "\n" +
-    // LV_LABEL_LONG_WRAP avoids appending a sibling label inside
-    // lv_list_add_btn's flex layout — earlier attempts to do that
-    // bootlooped on pre-alpha because the list-button's internal flex
-    // rearranged on first scroll. Single-label wrap is the safe variant.
-    // The favorite indicator is rendered separately below as a floating
-    // overlay so the * actually looks like a marker, not a typo on the
-    // first character.
-    // GPS column: show the live distance from our position to theirs when
-    // both fixes are known (e.g. "1.4km"); fall back to a plain "GPS" tag
-    // when they have a fix but we don't.
-    char gps_badge[16] = "";
+    char loc_buf[16];
     if (e.has_gps) {
       char dist[12];
-      formatDistanceBadge(dist, sizeof(dist), self_lat, self_lon,
-                          e.gps_lat, e.gps_lon);
-      if (dist[0]) snprintf(gps_badge, sizeof(gps_badge), "  %s", dist);
-      else         snprintf(gps_badge, sizeof(gps_badge), "  GPS");
+      formatDistanceBadge(dist, sizeof(dist), self_lat, self_lon, e.gps_lat, e.gps_lon);
+      snprintf(loc_buf, sizeof(loc_buf), "%s", dist[0] ? dist : "GPS");
+    } else {
+      loc_buf[0] = '-'; loc_buf[1] = '\0';
     }
-    // Landscape is wide enough to fit name + metadata on ONE line, so the row
-    // can be ~1/3 shorter; portrait keeps the two-line layout (name on top,
-    // metadata below).
-    const bool ct_land = chatLandscape();
-    char label[110];
-    snprintf(label, sizeof(label), "%s%s[%s]  %s%s%s",
-             san, ct_land ? "   " : "\n", ttag, age_buf,
-             e.has_dir ? "  DIR" : "",
-             gps_badge);
 
-    const char* icon = is_rep ? LV_SYMBOL_CHARGE : LV_SYMBOL_ENVELOPE;
-    lv_obj_t* btn = lv_list_add_btn(g_lv.contacts_list, icon, label);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x141516), LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(btn, lv_color_hex(0x141516), LV_PART_MAIN);
-    lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
-    lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_text_color(btn, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(btn, &g_font_14, LV_PART_MAIN);
-    // Two-line portrait row needs ~56; single-line landscape row fits in ~34.
-    lv_obj_set_style_min_height(btn, ct_land ? 34 : 56, LV_PART_MAIN);
-    lv_obj_set_style_pad_ver(btn, ct_land ? 4 : 6, LV_PART_MAIN);
-    lv_obj_set_style_pad_left(btn, 10, LV_PART_MAIN);
-    lv_obj_t* text_lbl = lv_obj_get_child(btn, 1);
-    if (text_lbl) {
-      // WRAP (not SCROLL) so the embedded \n produces a real second line
-      // without marquee-ing either line. recolor() lets us paint the
-      // metadata line in COLOR_SUB while keeping the name line in COLOR_TEXT.
-      // Landscape: single line, so give it the extra width to stay one row.
-      lv_label_set_long_mode(text_lbl, LV_LABEL_LONG_WRAP);
-      lv_obj_set_width(text_lbl, ct_land ? (tabContentW() - 80) : 195);
-    }
-    // Favorite marker: a large yellow asterisk pinned to the right edge of
-    // the row. Floating + IGNORE_LAYOUT keeps it out of the lv_list_add_btn
-    // flex chain (sibling children inside the flex was what bootlooped
-    // pre-alpha_4). LVGL/Montserrat doesn't ship a star glyph at all — '*'
-    // at font 28 yellow is the closest we get without a custom font subset.
-    if (e.is_fav) {
-      lv_obj_t* star = lv_label_create(btn);
-      lv_label_set_text(star, TOUCH_SYM_STAR_BIG);
-      // 14 px star — the 28 px one was a billboard pinned to the row edge.
-      // The smaller glyph reads as a discreet "favorite" marker without
-      // dominating the row layout.
-      lv_obj_set_style_text_font(star, &star_font_14, LV_PART_MAIN);
-      lv_obj_set_style_text_color(star, lv_color_hex(0xC9A24A), LV_PART_MAIN);
-      lv_obj_add_flag(star, LV_OBJ_FLAG_FLOATING);
-      lv_obj_add_flag(star, LV_OBJ_FLAG_IGNORE_LAYOUT);
-      lv_obj_align(star, LV_ALIGN_RIGHT_MID, -8, 0);
-    }
+    lv_obj_t* rb = lv_obj_create(g_lv.contacts_list);
+    lv_obj_remove_style_all(rb);
+    lv_obj_set_size(rb, row_w, ROW_H);
+    lv_obj_set_style_bg_color(rb, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(rb, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(rb, lv_color_hex(0x141516), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(rb, lv_color_hex(0x141516), LV_PART_MAIN);
+    lv_obj_set_style_border_width(rb, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_side(rb, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+    lv_obj_set_style_radius(rb, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(rb, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(rb, LV_OBJ_FLAG_CLICKABLE);
 
     s_contacts_ctx[k].mesh_idx    = static_cast<uint32_t>(e.mesh_idx);
     s_contacts_ctx[k].is_repeater = is_rep;
-    lv_obj_add_event_cb(btn, contactSelectCb, LV_EVENT_CLICKED, &s_contacts_ctx[k]);
+    s_contacts_ctx[k].is_fav      = e.is_fav;
+    memcpy(s_contacts_ctx[k].key6, e.key6, 6);
+    lv_obj_add_event_cb(rb, contactRowTapCb, LV_EVENT_CLICKED, &s_contacts_ctx[k]);
+
+    // Checkbox (select mode) — MUST be child 0 (ctUpdateRowCheck assumes it).
+    if (sel_md) {
+      lv_obj_t* box = lv_obj_create(rb);
+      lv_obj_remove_style_all(box);
+      lv_obj_set_size(box, 20, 20);
+      lv_obj_align(box, LV_ALIGN_LEFT_MID, 6, 0);
+      lv_obj_set_style_radius(box, 4, LV_PART_MAIN);
+      lv_obj_set_style_border_width(box, 2, LV_PART_MAIN);
+      lv_obj_set_style_border_color(box, lv_color_hex(e.is_fav ? 0x33383E : COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_style_bg_color(box, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(box, ctSelHas(e.key6) ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
+      lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_t* chk = lv_label_create(box);
+      lv_label_set_text(chk, LV_SYMBOL_OK);
+      lv_obj_set_style_text_font(chk, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(chk, lv_color_hex(0x062019), LV_PART_MAIN);
+      lv_obj_center(chk);
+      if (!ctSelHas(e.key6)) lv_obj_add_flag(chk, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // Type icon (person = peer, antenna = repeater). FontAwesome glyphs from
+    // person_font, which lives in g_font_16's fallback chain — so the icon label
+    // must render in g_font_16 for the PUA codepoints to resolve. Blocked
+    // contacts get a RED person icon so they stand out at a glance.
+    lv_obj_t* ic = lv_label_create(rb);
+    lv_label_set_text(ic, e.is_blocked ? TOUCH_SYM_PERSON : (is_rep ? TOUCH_SYM_ANTENNA : TOUCH_SYM_PERSON));
+    lv_obj_set_style_text_font(ic, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(ic, lv_color_hex(e.is_blocked ? 0xD7574E : COLOR_SUB), LV_PART_MAIN);
+    lv_obj_align(ic, LV_ALIGN_LEFT_MID, icon_x, 0);
+
+    // Name: wrap up to 2 lines; if the name would need a 3rd line (which
+    // overflows the fixed-height row), scroll it horizontally instead.
+    char san[40];
+    copyUtf8ReplacingMissingGlyphs(&g_font_14, san, sizeof(san), e.name);
+    lv_obj_t* nm = lv_label_create(rb);
+    lv_point_t nsz;
+    lv_txt_get_size(&nsz, san, &g_font_14, 0, 0, name_w, LV_TEXT_FLAG_NONE);
+    const int name_line_h = lv_font_get_line_height(&g_font_14);
+    lv_label_set_long_mode(nm, (nsz.y > 2 * name_line_h) ? LV_LABEL_LONG_SCROLL_CIRCULAR
+                                                         : LV_LABEL_LONG_DOT);
+    lv_obj_set_width(nm, name_w);
+    lv_label_set_text(nm, san);
+    lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(nm, LV_ALIGN_LEFT_MID, name_x, 0);
+
+    // Heard column (12 px — smaller than the 14 px name — and pushed right)
+    lv_obj_t* hl = lv_label_create(rb);
+    lv_label_set_text(hl, age_buf);
+    lv_obj_set_style_text_font(hl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(hl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_align(hl, LV_ALIGN_LEFT_MID, heard_x, 0);
+
+    // Location column
+    lv_obj_t* ll = lv_label_create(rb);
+    lv_label_set_text(ll, loc_buf);
+    lv_obj_set_style_text_font(ll, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(ll, lv_color_hex(e.has_gps ? COLOR_SUB : 0x4A4E54), LV_PART_MAIN);
+    lv_obj_align(ll, LV_ALIGN_LEFT_MID, loc_x, 0);
+
+    // Favorite star
+    if (e.is_fav) {
+      lv_obj_t* star = lv_label_create(rb);
+      lv_label_set_text(star, TOUCH_SYM_STAR_BIG);
+      lv_obj_set_style_text_font(star, &star_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(star, lv_color_hex(0xC9A24A), LV_PART_MAIN);
+      lv_obj_align(star, LV_ALIGN_LEFT_MID, star_x, 0);
+    }
   }
 
   if (n_entries == 0) {
@@ -16567,6 +17842,30 @@ static void updateTrackball(unsigned long now) {
 }
 #endif
 
+// Specific popups that float OVER the app drawer / a tab. Used to swallow swipe
+// gestures so they don't leak to the drawer or switch tabs underneath them.
+// Defined OUTSIDE HAS_TDECK_KEYBOARD so the ungated gesture handlers can use it.
+static bool drawerPopupOpen() {
+  return s_siginfo_root || s_mentions_root || s_power_menu || s_ct_sort_sheet || s_ctd_overlay || settingsModalIsOpen()
+#if defined(HAS_TDECK_GT911)
+         || s_fullscreen_view
+#endif
+         ;
+}
+// True if any popup/modal is currently up (mirror of hwKeyDismissTopPopup's set).
+static bool anyPopupOpen() {
+  return s_confirm_modal || s_map_picker_root || s_msg_menu_root || s_msg_info_root ||
+         s_admin_picker_root || s_admin_pw_root || s_addch_sheet || s_qr_sheet ||
+         s_channel_long_sheet || s_action_sheet_root || s_contacts_search_sheet ||
+         s_contacts_overflow_root || s_share_my_root || s_los_root || s_admin_root ||
+         s_meminfo_root || settingsModalIsOpen() || s_settings_sheet || s_cc_root ||
+         s_appdrawer_root || s_power_menu || s_siginfo_root || s_mentions_root || s_ct_sort_sheet || s_ctd_overlay
+#if defined(HAS_TDECK_GT911)
+         || s_fullscreen_view || s_term_picker_root || s_fm_prompt || s_fm_actions || s_editor_root || s_fm_img_root
+#endif
+         ;
+}
+
 #if defined(HAS_TDECK_KEYBOARD)
 // Close the topmost popup / modal (front-to-back priority), like tapping its
 // X / close button. Returns true if one was dismissed.
@@ -16580,7 +17879,7 @@ static bool hwKeyDismissTopPopup() {
   if (s_term_picker_root) { closeTermCmdPicker();     return true; }   // above the fullscreen view
   if (s_fullscreen_view) {
     closeFullscreenView();
-    if (g_lv.tabview) lv_tabview_set_act(g_lv.tabview, 0, LV_ANIM_OFF);
+    if (g_lv.tabview) lv_tabview_set_act(g_lv.tabview, HOME_TAB_INDEX, LV_ANIM_OFF);
     return true;
   }
 #endif
@@ -16605,6 +17904,10 @@ static bool hwKeyDismissTopPopup() {
   if (settingsModalIsOpen())    { closeSettingsModal();         return true; }
   if (s_power_menu)             { closePowerMenu();             return true; }
   if (s_cc_root)                { closeControlCenter();         return true; }
+  if (s_ct_sort_sheet)          { ctSortSheetClose();           return true; }
+  if (s_mentions_root)          { closeMentionsScreen();        return true; }
+  if (s_ct_select_mode)         { ctSetSelectMode(false);       return true; }
+  if (s_appdrawer_root)         { setHomeDrawer(false);         return true; }
   return false;
 }
 
@@ -16622,25 +17925,15 @@ static bool isDismissKey(int key) {
   }
 }
 
-// True if any popup/modal is currently up (mirror of hwKeyDismissTopPopup's set).
-static bool anyPopupOpen() {
-  return s_confirm_modal || s_map_picker_root || s_msg_menu_root || s_msg_info_root ||
-         s_admin_picker_root || s_admin_pw_root || s_addch_sheet || s_qr_sheet ||
-         s_channel_long_sheet || s_action_sheet_root || s_contacts_search_sheet ||
-         s_contacts_overflow_root || s_share_my_root || s_los_root || s_admin_root ||
-         s_meminfo_root || settingsModalIsOpen() || s_settings_sheet || s_cc_root
-#if defined(HAS_TDECK_GT911)
-         || s_fullscreen_view || s_term_picker_root || s_fm_prompt || s_fm_actions || s_editor_root || s_fm_img_root
-#endif
-         ;
-}
+// drawerPopupOpen() / anyPopupOpen() are defined just above the
+// HAS_TDECK_KEYBOARD block so the (ungated) gesture handlers can call them too.
 
 // Bottom-tab a key jumps to (no popup, no field focused), or -1. Space/H Home,
 // M Chats, C Contacts, L Map, S Settings.
 static int tabForKey(int key) {
   switch (key) {
     case ' ':
-    case 'h': case 'H': return 0;
+    case 'h': case 'H': return HOME_TAB_INDEX;
     case 'm': case 'M': return CHAT_INBOX_TAB_INDEX;
     case 'c': case 'C': return CONTACTS_TAB_INDEX;
     case 'l': case 'L': return MAP_TAB_INDEX;
@@ -17759,6 +19052,64 @@ static void showAlertToastLvgl(const char* text, uint32_t duration_ms) {
   lv_timer_set_repeat_count(s_alert_toast_timer, 1);
 }
 
+// A deliberately understated notification chip for background traffic (incoming
+// DM / channel / room message / new contact). Compact, muted and borderless —
+// no bright accent border, smaller font, content-sized pill — so it reads as a
+// passing hint, not a modal. These events are also reflected in the tab badges.
+// Its own object so it never restyles the shared (prominent) alert toast.
+static lv_obj_t*   s_notify_chip       = nullptr;
+static lv_timer_t* s_notify_chip_timer = nullptr;
+
+static void notifyChipTimerCb(lv_timer_t* t) {
+  s_notify_chip_timer = nullptr;
+  if (s_notify_chip) lv_obj_add_flag(s_notify_chip, LV_OBJ_FLAG_HIDDEN);
+  if (t) lv_timer_del(t);
+}
+
+static void showSubtleNotifyLvgl(const char* text, uint32_t duration_ms) {
+  if (!text || !text[0]) return;
+  if (!lv_disp_get_default() || !g_lv.ready) return;
+  if (duration_ms < 400u) duration_ms = 400u;
+  if (duration_ms > 8000u) duration_ms = 8000u;
+
+  if (s_notify_chip_timer) {
+    lv_timer_del(s_notify_chip_timer);
+    s_notify_chip_timer = nullptr;
+  }
+
+  if (!s_notify_chip) {
+    s_notify_chip = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_notify_chip);
+    lv_obj_set_size(s_notify_chip, LV_SIZE_CONTENT, LV_SIZE_CONTENT);  // hugs the text
+    lv_obj_set_style_bg_opa(s_notify_chip, LV_OPA_90, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_notify_chip, lv_color_hex(0x16191C), LV_PART_MAIN);   // muted dark grey, not the accent-bordered panel
+    lv_obj_set_style_radius(s_notify_chip, 14, LV_PART_MAIN);          // pill
+    lv_obj_set_style_border_width(s_notify_chip, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_notify_chip, lv_color_hex(0x33383E), LV_PART_MAIN);  // dim hairline, no bright accent
+    lv_obj_set_style_pad_hor(s_notify_chip, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(s_notify_chip, 5, LV_PART_MAIN);
+    lv_obj_clear_flag(s_notify_chip, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(s_notify_chip, LV_OBJ_FLAG_CLICKABLE);   // taps pass through
+    lv_obj_add_flag(s_notify_chip, LV_OBJ_FLAG_FLOATING);
+
+    lv_obj_t* l = lv_label_create(s_notify_chip);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);   // smaller than the alert toast
+  }
+
+  char san[64];
+  copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), text);
+  lv_obj_t* lbl = lv_obj_get_child(s_notify_chip, 0);
+  if (lbl) lv_label_set_text(lbl, san);
+  lv_obj_update_layout(s_notify_chip);
+  lv_obj_align(s_notify_chip, LV_ALIGN_TOP_MID, 0, STATUSBAR_H + 4);   // tucked under the status bar
+  lv_obj_clear_flag(s_notify_chip, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(s_notify_chip);
+
+  s_notify_chip_timer = lv_timer_create(notifyChipTimerCb, duration_ms, nullptr);
+  lv_timer_set_repeat_count(s_notify_chip_timer, 1);
+}
+
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 static const char* wifiStaStatusBrief(int s) {
   switch (s) {
@@ -18057,6 +19408,7 @@ static void powerOffCb(lv_event_t* e) {
 #if defined(ESP32)
   if (g_lv.task) {
     g_lv.task->persistHistoryNow();        // flush chat before we go down
+    discoveredFlushNow();                  // and the Discovered ring
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 click trackball to wake"), 1500);
   }
   // Let the toast paint, then enter deep sleep.
@@ -18099,6 +19451,7 @@ static void powerDownloadCb(lv_event_t* e) {
 #if defined(ESP32)
   if (g_lv.task) {
     g_lv.task->persistHistoryNow();   // flush chat before we go down
+    discoveredFlushNow();             // and the Discovered ring
     g_lv.task->showAlert(TR("Download mode\xE2\x80\xA6 reflash over USB"), 1500);
   }
   lv_refr_now(NULL);
@@ -18458,6 +19811,396 @@ static void openControlCenter() {
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
 }
 
+// ===== App drawer (full-screen grid launcher) =============================
+// Toggle-in alternative to the command-centre home: a grid of every tool. The
+// home's "Apps" button opens it; its own "Home" button (and the back key) close
+// it, revealing the command centre. Built as a self-contained lv_layer_top
+// overlay (NOT the T-Deck-only openFullscreenView) so it compiles on both boards.
+enum AppDrawerAction {
+  APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
+  APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
+  APPACT_TERMINAL, APPACT_FILES,
+};
+
+static void closeAppDrawer() {
+  if (s_appdrawer_root) { lv_obj_del_async(s_appdrawer_root); s_appdrawer_root = nullptr; }
+}
+
+// Synchronous close — removes the overlay THIS instant, not deferred. Only safe
+// where we're NOT inside the drawer's own event chain (e.g. tabChangedCb on a
+// bottom-bar tap). Leaving Home this way means the map's slow first tile render
+// can't paint under a still-present, del_async'd drawer.
+static void closeAppDrawerSync() {
+  if (s_appdrawer_root) { lv_obj_del(s_appdrawer_root); s_appdrawer_root = nullptr; }
+}
+
+// Set the Home tab's view (false = command centre, true = app drawer) and make the
+// overlay match. Idempotent. The mode persists across tab switches (tabChangedCb
+// shows/hides the overlay to match when re-entering / leaving Home).
+static void setHomeDrawer(bool show) {
+  s_home_drawer_mode = show;
+  s_tab_changed = false;   // explicit action — don't let a pending switch flag suppress the next Home toggle
+  if (show) { if (!s_appdrawer_root) openAppDrawer(); }
+  else        closeAppDrawer();
+}
+
+// Bottom-bar Home button = command-centre / app-drawer toggle, but ONLY when you
+// were already on Home (a same-tap, no switch). tabChangedCb sets s_tab_changed on
+// a real switch and owns the restore-on-return; this only flips the view when Home
+// is re-tapped in place, so the two never fight (the old bug was them fighting).
+static void homeTabClickedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const bool was_switch = s_tab_changed;
+  s_tab_changed = false;
+  if (!was_switch && getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(!s_home_drawer_mode);
+}
+
+// Swipe UP starting on the bottom menu bar -> open the app drawer, from any tab.
+// The gesture fires on whatever object the press began on, so a list-scroll swipe
+// (which starts on the list, not the bar) never triggers this.
+static void tabBarGestureCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_GESTURE) return;
+  if (anyPopupOpen()) return;   // don't open the drawer over an open popup (or when already open)
+  lv_indev_t* indev = lv_indev_get_act();
+  if (indev && lv_indev_get_gesture_dir(indev) == LV_DIR_TOP) {
+    goToTab(HOME_TAB_INDEX);
+    setHomeDrawer(true);
+  }
+}
+
+// ===== @-mentions screen ===================================================
+// Lists every channel message that @mentions you (textMentionsMe), newest first;
+// tapping a row jumps to that channel. Opened from the drawer's @ tile, floating
+// OVER the drawer (back returns to it). The bottom tab bar stays visible.
+static void closeMentionsScreen() {
+  if (s_mentions_root) { lv_obj_del_async(s_mentions_root); s_mentions_root = nullptr; }
+}
+
+// Channel thread index for a name, via the public getThreadInfo (findThreadByName
+// is private). -1 if no matching channel thread.
+static int findChannelThreadByName(const char* name) {
+  if (!g_lv.task || !name || !name[0]) return -1;
+  for (int i = 0; i < UITask::MAX_UI_THREADS; i++) {
+    bool ch; uint16_t unread; uint32_t ts; char tn[UITask::MAX_THREAD_NAME + 1];
+    if (!g_lv.task->getThreadInfo(i, ch, unread, ts, tn, sizeof tn)) continue;
+    if (ch && strncmp(tn, name, UITask::MAX_THREAD_NAME) == 0) return i;
+  }
+  return -1;
+}
+
+// Open a thread's chat detail by index — the same sequence the inbox tap uses.
+static void openThreadDetailByIdx(int idx, bool channel) {
+  if (!g_lv.task || idx < 0) return;
+  LvChatPanel& p = channel ? g_lv.ch : g_lv.dm;
+  g_lv.task->enterThread(channel, idx);
+  bool ch; uint16_t unread; uint32_t ts; char name[UITask::MAX_THREAD_NAME + 1];
+  if (g_lv.task->getThreadInfo(idx, ch, unread, ts, name, sizeof(name))) {
+    char san[UITask::MAX_THREAD_NAME + 8];
+    copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), name);
+    setChatStatusTitle(san);
+  }
+  refreshChatDetail(p);
+  p.detail_open = true;
+  hideKb();
+  if (p.overlay) { lv_obj_clear_flag(p.overlay, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(p.overlay); }
+}
+
+static void mentionRowCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int mi = (int)(intptr_t)lv_event_get_user_data(e);   // message ring-slot index
+  closeMentionsScreen();
+  setHomeDrawer(false);              // leave the drawer behind, back to the command centre on return
+  if (mi < 0 || !g_lv.task) return;
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(mi, m)) return;
+  const int t = findChannelThreadByName(m.thread);
+  if (t < 0) return;
+  s_chat_jump_msg_idx = mi;          // refreshChatDetail scrolls to this exact message on open
+  goToTab(CHAT_INBOX_TAB_INDEX);
+  openThreadDetailByIdx(t, true);
+}
+
+static void mentionsBackCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) closeMentionsScreen();
+}
+
+static void openMentionsScreen() {
+  closeMentionsScreen();
+  if (!g_lv.task) return;
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_mentions_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_mentions_root);
+  lv_obj_set_size(s_mentions_root, sw, sh - STATUSBAR_H - TABBAR_H);   // tab bar stays visible
+  lv_obj_set_pos(s_mentions_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_mentions_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_mentions_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_mentions_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_move_foreground(s_mentions_root);
+
+  // Header: "@ Mentions" + back-to-drawer button.
+  lv_obj_t* title = lv_label_create(s_mentions_root);
+  lv_label_set_text(title, "@  Mentions");
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 9);
+  lv_obj_t* back = lv_btn_create(s_mentions_root);
+  lv_obj_set_size(back, 40, 28);
+  lv_obj_align(back, LV_ALIGN_TOP_RIGHT, -8, 5);
+  styleButton(back);
+  lv_obj_add_event_cb(back, mentionsBackCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* bks = lv_label_create(back);
+  lv_label_set_text(bks, LV_SYMBOL_LEFT);
+  lv_obj_center(bks);
+
+  const int header_h = 38;
+  lv_obj_t* list = lv_obj_create(s_mentions_root);
+  lv_obj_remove_style_all(list);
+  lv_obj_set_size(list, sw, (sh - STATUSBAR_H - TABBAR_H) - header_h);
+  lv_obj_set_pos(list, 0, header_h);
+  lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(list, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(list, 6, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(list, LV_DIR_VER);
+
+  // Scan all channel messages that @mention me, newest first.
+  struct M { uint32_t ts; int idx; };
+  static M found[UITask::MAX_UI_MESSAGES];
+  int nf = 0;
+  for (int i = 0; i < UITask::MAX_UI_MESSAGES; i++) {
+    UITask::UIMessage m;
+    if (!g_lv.task->getMessageByIndex(i, m)) continue;
+    if (!m.thread[0] || !m.channel || m.outgoing) continue;
+    if (!textMentionsMe(m.text)) continue;
+    found[nf].ts = m.ts; found[nf].idx = i; nf++;
+  }
+  for (int a = 1; a < nf; a++) {   // insertion sort by ts, newest first
+    M key = found[a]; int b = a - 1;
+    while (b >= 0 && found[b].ts < key.ts) { found[b + 1] = found[b]; b--; }
+    found[b + 1] = key;
+  }
+
+  if (nf == 0) {
+    lv_obj_t* empty = lv_label_create(list);
+    lv_label_set_text(empty, TR("No @mentions yet"));
+    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(empty, &g_font_14, LV_PART_MAIN);
+    return;
+  }
+
+  const int row_w = sw - 16;   // list has 8 px padding each side
+  for (int k = 0; k < nf; k++) {
+    UITask::UIMessage m;
+    if (!g_lv.task->getMessageByIndex(found[k].idx, m)) continue;
+
+    lv_obj_t* row = lv_btn_create(list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, row_w, 68);   // taller: fits a 2-line message body
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, LV_OPA_40, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+    lv_obj_add_event_cb(row, mentionRowCb, LV_EVENT_CLICKED, (void*)(intptr_t)found[k].idx);
+
+    lv_obj_t* chl = lv_label_create(row);   // channel name (accent)
+    lv_label_set_long_mode(chl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(chl, row_w - 72);
+    lv_label_set_text(chl, m.thread);
+    lv_obj_set_style_text_color(chl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(chl, &g_font_12, LV_PART_MAIN);
+    lv_obj_align(chl, LV_ALIGN_TOP_LEFT, 8, 7);
+
+    char when[16] = {0};
+    if (m.ts > 1700000000UL) {
+      time_t tt = (time_t)m.ts; struct tm tmv; localtime_r(&tt, &tmv);
+      strftime(when, sizeof when, "%H:%M", &tmv);
+    }
+    if (when[0]) {
+      lv_obj_t* tl = lv_label_create(row);
+      lv_label_set_text(tl, when);
+      lv_obj_set_style_text_color(tl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_style_text_font(tl, &g_font_12, LV_PART_MAIN);
+      lv_obj_align(tl, LV_ALIGN_TOP_RIGHT, -8, 7);
+    }
+
+    char bodytxt[UITask::MAX_SENDER_NAME + UITask::MAX_MSG_TEXT + 4];
+    snprintf(bodytxt, sizeof bodytxt, "%s: %s", m.sender[0] ? m.sender : "?", m.text);
+    lv_obj_t* bd = lv_label_create(row);   // "sender: text", wraps to 2 lines
+    lv_label_set_long_mode(bd, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(bd, row_w - 16);
+    lv_label_set_text(bd, bodytxt);
+    lv_obj_set_style_text_color(bd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(bd, &g_font_12, LV_PART_MAIN);
+    lv_obj_align(bd, LV_ALIGN_TOP_LEFT, 8, 25);
+  }
+}
+
+static void appTileCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int act = (int)(intptr_t)lv_event_get_user_data(e);
+  // Tools open OVER the drawer (do NOT close it), so dismissing them returns to
+  // the drawer where they were launched — not the command centre.
+  switch (act) {
+    case APPACT_MENTIONS:  openMentionsScreen();  return;
+    case APPACT_CMDCENTER: setHomeDrawer(false);  return;   // explicit "back to command centre"
+    case APPACT_SIGNAL:    openSignalInfoPopup(); return;   // signal/traffic + auto-discover settings
+    case APPACT_ADVERT:    openAdvertModalCb(e);  return;
+    case APPACT_POWER:     openPowerMenu();      return;
+#if defined(HAS_TDECK_GT911)
+    case APPACT_TERMINAL:  homeTerminalCb(e);    return;
+    case APPACT_FILES:     homeFilesCb(e);       return;
+#endif
+    default: break;
+  }
+  // Navigation tiles: leave the drawer for the chosen tab.
+  closeAppDrawer();
+  switch (act) {
+    case APPACT_CHATS:    goToTab(CHAT_INBOX_TAB_INDEX); break;
+    case APPACT_CONTACTS: goToTab(CONTACTS_TAB_INDEX);   break;
+    case APPACT_MAP:      goToTab(MAP_TAB_INDEX);        break;
+    case APPACT_SETTINGS: goToTab(SETTINGS_TAB_INDEX);   break;
+    default: break;
+  }
+}
+
+// One launcher tile: a rounded panel with an accent icon over a label. The icon
+// font is g_font_16 — it carries the LV_SYMBOL set AND the spliced person glyph,
+// so every tile (including Contacts) renders without tofu.
+static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
+                       const char* icon, const char* label, int act, int badge,
+                       uint32_t icon_col) {
+  lv_obj_t* t = lv_btn_create(parent);
+  lv_obj_remove_style_all(t);
+  lv_obj_set_size(t, w, h);
+  lv_obj_set_pos(t, x, y);
+  lv_obj_set_style_bg_color(t, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(t, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(t, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(t, LV_OPA_40, LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_radius(t, 10, LV_PART_MAIN);
+  lv_obj_set_style_border_color(t, lv_color_hex(0x2A2D31), LV_PART_MAIN);
+  lv_obj_set_style_border_width(t, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(t, LV_OPA_70, LV_PART_MAIN);
+  lv_obj_add_event_cb(t, appTileCb, LV_EVENT_CLICKED, (void*)(intptr_t)act);
+
+  const int icon_y = h > 56 ? 12 : 6;
+  if (icon) {
+    lv_obj_t* ic = lv_label_create(t);
+    lv_label_set_text(ic, icon);
+    lv_obj_set_style_text_font(ic, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(ic, lv_color_hex(icon_col), LV_PART_MAIN);
+    lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, icon_y);
+  } else {
+    // No glyph for "signal" — draw 4 ascending accent bars (matches the status bar).
+    lv_obj_t* box = lv_obj_create(t);
+    lv_obj_remove_style_all(box);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(box, 22, 16);
+    lv_obj_align(box, LV_ALIGN_TOP_MID, 0, icon_y);
+    for (int b = 0; b < 4; b++) {
+      lv_obj_t* bar = lv_obj_create(box);
+      lv_obj_remove_style_all(bar);
+      const int bh = 5 + b * 3;            // 5, 8, 11, 14 px
+      lv_obj_set_size(bar, 4, bh);
+      lv_obj_set_pos(bar, b * 6, 16 - bh);  // bottom-aligned
+      lv_obj_set_style_bg_color(bar, lv_color_hex(icon_col), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_radius(bar, 1, LV_PART_MAIN);
+    }
+  }
+
+  lv_obj_t* lb = lv_label_create(t);
+  lv_label_set_text(lb, TR(label));
+  lv_obj_set_width(lb, w - 4);                          // fit narrow 4-col tiles
+  lv_label_set_long_mode(lb, LV_LABEL_LONG_DOT);        // ellipsize if still too wide
+  lv_obj_set_style_text_align(lb, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_style_text_font(lb, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(lb, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_align(lb, LV_ALIGN_BOTTOM_MID, 0, h > 56 ? -8 : -4);
+
+  // Notification badge: a small red count pill in the top-right corner.
+  if (badge > 0) {
+    lv_obj_t* bdg = lv_obj_create(t);
+    lv_obj_remove_style_all(bdg);
+    lv_obj_clear_flag(bdg, LV_OBJ_FLAG_CLICKABLE);   // taps pass through to the tile
+    lv_obj_set_style_bg_color(bdg, lv_color_hex(0xE0533D), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(bdg, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(bdg, 9, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(bdg, 4, LV_PART_MAIN);
+    lv_obj_set_size(bdg, LV_SIZE_CONTENT, 18);
+    lv_obj_align(bdg, LV_ALIGN_TOP_RIGHT, -4, 4);
+    lv_obj_t* bt = lv_label_create(bdg);
+    char bn[8]; snprintf(bn, sizeof bn, "%d", badge > 99 ? 99 : badge);
+    lv_label_set_text(bt, bn);
+    lv_obj_set_style_text_color(bt, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(bt, &g_font_12, LV_PART_MAIN);
+    lv_obj_center(bt);
+  }
+}
+
+static void openAppDrawer() {
+  closeAppDrawer();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_appdrawer_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_appdrawer_root);
+  // Cover only the tab CONTENT area — between the status bar and the bottom nav
+  // bar — so the drawer "replaces" the command centre while the tab bar stays
+  // visible + tappable (switching tabs there closes the drawer via tabChangedCb).
+  lv_obj_set_size(s_appdrawer_root, sw, sh - STATUSBAR_H - TABBAR_H);
+  lv_obj_set_pos(s_appdrawer_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_appdrawer_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_appdrawer_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(s_appdrawer_root, LV_DIR_VER);   // grid scrolls top->bottom when it overflows
+  lv_obj_move_foreground(s_appdrawer_root);
+
+  // First tile is "Command" (back to the command centre); the rest are the apps.
+  const int unread   = g_lv.task ? g_lv.task->getUnreadTotal()        : 0;
+  const int mentions = g_lv.task ? g_lv.task->getUnreadMentionCount() : 0;
+  // Per-tile icon colour. Command (house) + Signal follow the theme accent; the
+  // rest get a dedicated, meaningful hue so the grid isn't a wall of one colour.
+  struct { const char* icon; const char* label; int act; int badge; uint32_t color; } tiles[] = {
+    { LV_SYMBOL_HOME,      "Cmdr",      APPACT_CMDCENTER, 0,        COLOR_ACCENT },  // theme
+    { LV_SYMBOL_ENVELOPE,  "Chats",     APPACT_CHATS,    unread,    0x4F9DF7 },      // messaging blue
+    { TOUCH_SYM_PERSON,    "Contacts",  APPACT_CONTACTS, 0,         0xA784E0 },      // people violet
+    { LV_SYMBOL_GPS,       "Map",       APPACT_MAP,      0,         0x53C06B },      // location green
+    { "@",                 "Mentions",  APPACT_MENTIONS, mentions,  0xF2A33C },      // mention amber
+    { LV_SYMBOL_UPLOAD,    "Advertise", APPACT_ADVERT,   0,         0xE072B0 },      // broadcast magenta
+    { nullptr,             "Signal",    APPACT_SIGNAL,   0,         COLOR_ACCENT },  // theme (drawn signal bars)
+    { LV_SYMBOL_SETTINGS,  "Settings",  APPACT_SETTINGS, 0,         0x9AA3AD },      // neutral gear grey
+#if defined(HAS_TDECK_GT911)
+    { ">_",                "Terminal",  APPACT_TERMINAL, 0,         0x3DD27A },      // console green
+    { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
+#endif
+    { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
+  };
+  const int n = (int)(sizeof(tiles) / sizeof(tiles[0]));
+
+  // Column count: 4 on the T-Deck (11 tiles incl. Terminal/Files), 3 on the V4
+  // (9 tiles -> a clean 3x3 grid instead of a sparse 4+4+1). Tile height shrinks
+  // so ALL rows fit the screen with no scrolling, capped so tiles don't balloon.
+  // Scroll stays enabled only as a safety net if a row still overflows.
+#if defined(HAS_TDECK_GT911)
+  const int cols = 4;
+#else
+  const int cols = 3;
+#endif
+  const int pad = 10, gap = 8, top = 10;
+  const int grid_w = sw - 2 * pad;
+  const int tile_w = (grid_w - (cols - 1) * gap) / cols;
+  const int rows   = (n + cols - 1) / cols;
+  const int avail  = (sh - STATUSBAR_H - TABBAR_H) - top - 8;   // content area minus top inset + bottom margin
+  int tile_h = (avail - (rows - 1) * gap) / rows;
+  if (tile_h > 84) tile_h = 84;
+  for (int i = 0; i < n; i++) {
+    const int col = i % cols, row = i / cols;
+    addAppTile(s_appdrawer_root, pad + col * (tile_w + gap), top + row * (tile_h + gap),
+               tile_w, tile_h, tiles[i].icon, tiles[i].label, tiles[i].act, tiles[i].badge,
+               tiles[i].color);
+  }
+}
+
 static void statusBarTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   // While a settings detail sheet is open the bar shows its Back chevron + title,
@@ -18602,7 +20345,7 @@ static void updateGlobalStatusBar() {
   static char s_left_home_name[24] = {0};
   {
     int htab = (g_lv.tabview) ? (int)lv_tabview_get_tab_act(g_lv.tabview) : -1;
-    bool home_zone = (s_settings_open_cat < 0) && (s_chat_title[0] == '\0') && (htab == 0);
+    bool home_zone = (s_settings_open_cat < 0) && (s_chat_title[0] == '\0') && (htab == HOME_TAB_INDEX);
 #if defined(HAS_TDECK_GT911)
     if (s_fullscreen_view && s_fullscreen_title[0]) home_zone = false;
 #endif
@@ -18656,7 +20399,7 @@ static void updateGlobalStatusBar() {
     if (tab == MAP_TAB_INDEX) {
       // On the immersive map the left zone carries the required OSM attribution.
       lv_label_set_text(g_statusbar.left_label, TR("\xC2\xA9 OpenStreetMap"));
-    } else if (tab == 0) {
+    } else if (tab == HOME_TAB_INDEX) {
       // Home: the user's profile name, capped to a ~11-char-wide window. Longer
       // names marquee-scroll so they never run into the status icons. Reconfigure
       // only when the name actually changes (else the scroll restarts each tick).
@@ -18828,7 +20571,7 @@ static void refreshStatusLabels() {
   }
   uint16_t active_tab = 0xFFFF;
   if (g_lv.tabview) active_tab = lv_tabview_get_tab_act(g_lv.tabview);
-  const bool home_active = (active_tab == 0);
+  const bool home_active = (active_tab == HOME_TAB_INDEX);
   if (home_active) refreshHomeBattery();
   // Push a TX/RX sample onto the home chart: delta packets since last tick.
   if (home_active && s_home_chart && s_home_chart_tx && s_home_chart_rx) {
@@ -19925,7 +21668,7 @@ static bool overlayBlocksTabSwipe() {
 // ============================================================
 static void buildUiTree() {
   // Always boot to the Home tab (the last-used tab is no longer restored).
-  uint8_t saved_tab = 0;
+  uint8_t saved_tab = HOME_TAB_INDEX;
 
   // Load the saved theme accent before any widget is built so the whole tree
   // adopts it. g_lv.tabview/keyboard are still null here, so applyAccent only
@@ -19974,26 +21717,32 @@ static void buildUiTree() {
   // strip indistinguishable from the rest of the screen except for the
   // active-tab highlight.
   styleSurface(tab_btns, COLOR_BG, 0);
-  // Per-tab item: dim outline (low-opacity gray) by default; the active
-  // tab fills with the neutral accent at low opacity instead of the
-  // earlier bright fill. Stops the bottom strip from looking like a row
-  // of glowing buttons.
+  // Per-tab item: no background fill in either state — the bottom strip stays
+  // flat against the screen. The active tab is marked only by tinting its icon
+  // with the accent colour (inactive icons are dim grey), instead of the old
+  // low-opacity accent square behind the icon.
   lv_obj_set_style_bg_opa(tab_btns, LV_OPA_TRANSP, LV_PART_ITEMS);
-  lv_obj_set_style_bg_color(tab_btns, lv_color_hex(COLOR_ACCENT),
-                             LV_PART_ITEMS | LV_STATE_CHECKED);
-  lv_obj_set_style_bg_opa(tab_btns, LV_OPA_30, LV_PART_ITEMS | LV_STATE_CHECKED);
+  // Active tab: no theme fill / indicator line — the icon is tinted with the
+  // accent colour and a separate thin rounded accent bar (s_tab_indicator) glows
+  // at the bottom edge. Keep the checked cell transparent + borderless so the
+  // default theme's blue checked fill/indicator never shows.
   lv_obj_set_style_border_width(tab_btns, 0, LV_PART_ITEMS);
+  lv_obj_set_style_border_width(tab_btns, 0, LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_bg_opa(tab_btns, LV_OPA_TRANSP, LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_text_color(tab_btns, lv_color_hex(COLOR_SUB), LV_PART_ITEMS);
-  lv_obj_set_style_text_color(tab_btns, lv_color_hex(COLOR_TEXT),
+  lv_obj_set_style_text_color(tab_btns, lv_color_hex(COLOR_ACCENT),
                                LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_text_font(tab_btns, &g_font_14, LV_PART_MAIN);
+  lv_obj_add_event_cb(tab_btns, homeTabClickedCb, LV_EVENT_CLICKED, nullptr);   // Home re-tap toggles the drawer
+  lv_obj_add_event_cb(tab_btns, tabBarGestureCb, LV_EVENT_GESTURE, nullptr);    // swipe up from the bar opens the drawer
 
   // Tab labels: icons-only (house, envelope, list, GPS pin, gear) — saves
   // space and lets all five tabs sit comfortably in the 240px wide bar
   // (240/5 = 48 px per icon).
-  lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME);
+  // Add order == index order: Chats(0), Contacts(1), Home(2, middle), Map(3), Settings(4).
   lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE);
   lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON);   // person icon (FA user)
+  lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME);
   lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS);
   lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS);
   // Slightly larger font for icons so they're easy to tap.
@@ -20033,6 +21782,42 @@ static void buildUiTree() {
   lv_obj_set_style_pad_all(s_update_badge, 0, LV_PART_MAIN);
   lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -(TABBAR_H - 15));
   lv_obj_add_flag(s_update_badge, LV_OBJ_FLAG_HIDDEN);
+
+  // Unread-count badge over the Chats (envelope) tab — leftmost of 5. Same
+  // floating child-of-screen pattern as s_update_badge; the loop's refresh tick
+  // sets the count + show/hide. Content-width so it grows for 2-3 digits.
+  s_chat_unread_badge = lv_label_create(lv_scr_act());
+  lv_label_set_text(s_chat_unread_badge, "");
+  lv_obj_set_size(s_chat_unread_badge, LV_SIZE_CONTENT, 15);
+  lv_obj_set_style_radius(s_chat_unread_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_chat_unread_badge, lv_color_hex(0xE0533D), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_chat_unread_badge, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_chat_unread_badge, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_chat_unread_badge, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_align(s_chat_unread_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_style_pad_hor(s_chat_unread_badge, 3, LV_PART_MAIN);
+  lv_obj_set_style_pad_ver(s_chat_unread_badge, 0, LV_PART_MAIN);
+  lv_obj_align(s_chat_unread_badge, LV_ALIGN_BOTTOM_LEFT,
+               lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 15));
+  lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
+
+  // Thin rounded accent "glow" bar that marks the active tab. A child of the
+  // screen (like s_update_badge) created BEFORE the chat overlays so those cover
+  // it, and above the tabview so it shows over the bottom bar. A soft accent
+  // shadow gives it the glow; updateTabIndicator() slides it under the active
+  // tab and hides it on the map.
+  s_tab_indicator = lv_obj_create(lv_scr_act());
+  lv_obj_remove_style_all(s_tab_indicator);
+  lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(s_tab_indicator, 26, 4);
+  lv_obj_set_style_bg_color(s_tab_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_tab_indicator, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_tab_indicator, 2, LV_PART_MAIN);
+  lv_obj_set_style_shadow_color(s_tab_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_shadow_width(s_tab_indicator, 8, LV_PART_MAIN);
+  lv_obj_set_style_shadow_opa(s_tab_indicator, LV_OPA_40, LV_PART_MAIN);
+  lv_obj_set_style_shadow_spread(s_tab_indicator, 0, LV_PART_MAIN);
+  updateTabIndicator();   // place it under the initial active tab
 
   // Create full-screen detail overlays (hidden until a thread is tapped)
   makeChatDetail(g_lv.dm);
@@ -20228,6 +22013,22 @@ void UITask::discoveredContact(const ContactInfo& contact, bool is_new, uint8_t 
     return;
   }
 
+#if defined(ESP32)
+  // Hop filter: auto-delete nodes heard via more hops than the configured limit
+  // (0 = off). Drop the advert and remove any existing entry for this node.
+  {
+    const uint8_t maxhops = touchPrefsGetDiscoveredMaxHops();
+    if (maxhops > 0 && path_len > maxhops) {
+      for (int i = 0; i < DISCOVERED_MAX; ++i)
+        if (s_discovered[i].used &&
+            memcmp(s_discovered[i].ci.id.pub_key, contact.id.pub_key, PUB_KEY_SIZE) == 0)
+          s_discovered[i].used = false;
+      markDiscoveredDirty();
+      return;
+    }
+  }
+#endif
+
   int slot = -1;
   // Match by pubkey first so repeated adverts update the same entry.
   for (int i = 0; i < DISCOVERED_MAX; ++i) {
@@ -20248,7 +22049,15 @@ void UITask::discoveredContact(const ContactInfo& contact, bool is_new, uint8_t 
         oldest_idx = i;
       }
     }
-    if (slot < 0) slot = oldest_idx;
+    if (slot < 0) {
+      // Ring full. Evict the oldest only if "auto-delete oldest" is on (default),
+      // so the list stays fresh; otherwise keep the existing list and drop this
+      // new node (the badge shows "N!" to flag that it's full).
+#if defined(ESP32)
+      if (!touchPrefsGetDiscoveredAutoEvict()) return;
+#endif
+      slot = oldest_idx;
+    }
   }
   s_discovered[slot].used = true;
   s_discovered[slot].in_contacts = false;
@@ -20257,6 +22066,7 @@ void UITask::discoveredContact(const ContactInfo& contact, bool is_new, uint8_t 
   s_discovered[slot].recv_ms = (uint32_t)millis();
   s_discovered[slot].ci = contact;
   ++s_discovered_seq;
+  markDiscoveredDirty();   // persist across reboots (rate-capped write)
 }
 
 void UITask::onThreadsChanged() {
@@ -21939,6 +23749,13 @@ bool UITask::getMessageByIndex(int msg_idx, UIMessage& out) const {
   return true;
 }
 
+int UITask::getUnreadMentionCount() const {
+  int c = 0;
+  for (int i = 0; i < MAX_UI_THREADS; i++)
+    if (_ui_threads[i].used && _ui_threads[i].has_mention) c++;
+  return c;
+}
+
 void UITask::enterThread(bool channel_mode, int idx) { setActiveThread(idx, channel_mode); }
 
 bool UITask::ignoreSenderInActiveThread(const char* sender_name) {
@@ -22354,6 +24171,7 @@ void UITask::rebootDevice() {
   // flush is off-thread and rate-capped, so without this a reboot could
   // drop the most recent (or, if it never flushed, all) chat history.
   if (_history_dirty) saveHistoryToStorage();
+  discoveredFlushNow();   // persist the Discovered ring before we go down
   if (_board) _board->reboot();
 }
 
@@ -22367,14 +24185,23 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
                         uint8_t meta_flags, int8_t snr_q4, int8_t rssi) {
   (void)path_len;
   _msgcount = msgcount;
-#if defined(HAS_UI_SOUND)
-  // Notification chime (T-Deck I2S speaker / Heltec V4 piezo), gated on the pref.
-  if (!isBuzzerQuiet()) uiPlayNotify();
-#endif
   bool channel = (g_last_event == UIEventType::channelMessage);
   const char* thread = channel
       ? (from_name && from_name[0] ? from_name : "#unknown")
       : (from_name && from_name[0] ? from_name : "Unknown");
+#if defined(HAS_UI_SOUND)
+  // Notification chime (T-Deck I2S speaker / Heltec V4 piezo). @-mentions get a
+  // distinct sound + their own enable, so an operator can mute message sounds but
+  // still hear @-mentions. Each respects the per-channel mute flags.
+  {
+    const bool is_mention = channel && text && textMentionsMe(text);
+    const uint8_t cmute = channel ? touchPrefsGetChannelMute(thread) : 0;
+    if (!isBuzzerQuiet()) {   // master Sound switch: off = silent, overrules everything
+      if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) uiPlayMention();
+      else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          uiPlayNotify();
+    }
+  }
+#endif
 
   // For channel/group messages the on-wire `text` is "SenderName: body" —
   // split that so the bubble can show the sender as a small label and the
@@ -22480,14 +24307,24 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
 
 void UITask::notify(UIEventType t) {
   g_last_event = t;
+  const char* msg = nullptr;
   switch (t) {
-    case UIEventType::contactMessage:    showAlert(TR("New DM"),          1200); break;
-    case UIEventType::channelMessage:    showAlert(TR("New channel msg"),  1200); break;
-    case UIEventType::roomMessage:       showAlert(TR("New room msg"),     1200); break;
-    case UIEventType::newContactMessage: showAlert(TR("New contact"),      1200); break;
-    case UIEventType::ack:               showAlert(TR("Delivered"),         900); break;
-    default: break;
+    case UIEventType::contactMessage:    msg = TR("New DM");          break;
+    case UIEventType::channelMessage:    msg = TR("New channel msg");  break;
+    case UIEventType::roomMessage:       msg = TR("New room msg");     break;
+    case UIEventType::newContactMessage: msg = TR("New contact");      break;
+    case UIEventType::ack:               showAlert(TR("Delivered"), 900); return;
+    default: return;
   }
+  // Background traffic (also reflected in the tab badges): show a subtle, low-key
+  // chip rather than the prominent centre alert toast, so it's less intrusive.
+  strncpy(_alert, msg, sizeof(_alert) - 1);
+  _alert[sizeof(_alert) - 1] = '\0';
+  _alert_expiry = millis() + 1100UL;
+#if defined(HAS_TOUCH_UI)
+  pushDiagLine(msg);
+  showSubtleNotifyLvgl(msg, 1100);
+#endif
 }
 
 // ============================================================
@@ -22496,6 +24333,8 @@ void UITask::notify(UIEventType t) {
 void UITask::loop() {
   unsigned long now = millis();
   flushHistoryIfDue(now);
+  { static bool s_disc_loaded = false; if (!s_disc_loaded) { s_disc_loaded = true; loadDiscovered(); } }
+  discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
   updateGpsLocation(now);   // sync + persist node location from GPS once fixed
   ++s_live_diag_loops;
   if (_alert_expiry != 0 && now >= _alert_expiry) {
@@ -22732,6 +24571,30 @@ void UITask::loop() {
   }
   if (now >= _next_refresh) {
     refreshStatusLabels();
+    // Unread-count badge over the Chats tab icon (bottom bar).
+    if (s_chat_unread_badge) {
+      const int u = getUnreadTotal();
+      if (u > 0) {
+        char b[8]; if (u > 99) snprintf(b, sizeof b, "99+"); else snprintf(b, sizeof b, "%d", u);
+        lv_label_set_text(s_chat_unread_badge, b);
+        lv_obj_clear_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
+      } else {
+        lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
+      }
+    }
+    // Discovered-count badge on the Contacts-tab "Discovered" button.
+    if (s_ct_disc_badge) {
+      const int dc = discoveredCount();
+      if (dc > 0) {
+        char b[8];
+        if (dc >= DISCOVERED_MAX) snprintf(b, sizeof b, "%d!", dc);   // ring full
+        else                      snprintf(b, sizeof b, "%d", dc > 99 ? 99 : dc);
+        lv_label_set_text(s_ct_disc_badge, b);
+        lv_obj_clear_flag(s_ct_disc_badge, LV_OBJ_FLAG_HIDDEN);
+      } else {
+        lv_obj_add_flag(s_ct_disc_badge, LV_OBJ_FLAG_HIDDEN);
+      }
+    }
     _next_refresh = now + UI_REFRESH_MS;
   }
 #if defined(HAS_TDECK_TRACKBALL)
@@ -22769,19 +24632,29 @@ void UITask::loop() {
   // their echo's SNR. Fires within seconds of boot (no signal yet) so the icon
   // lights up fast; in a chatty mesh where we already hear traffic it stays
   // quiet. (Zero-hop adverts can't be used here — they aren't re-broadcast, so
-  // they produce nothing for us to measure.)
+  // they produce nothing for us to measure.) The user can turn the probe off or
+  // change its poll interval from the home-graph "Signal & traffic" popup.
   {
     static unsigned long s_sig_probe_at = 4000;   // first attempt ~4 s after boot
     if ((long)(now - s_sig_probe_at) >= 0) {
-      s_sig_probe_at = now + 60000;   // re-evaluate every 60 s
-      const uint32_t sms = the_mesh.uiSignalMs();
-      if (sms == 0 || (now - sms) > 100000UL) sendAdvertFlood();   // no/old signal -> probe
+      if (touchPrefsGetSigProbeEnabled()) {
+        const uint32_t poll_ms = (uint32_t)touchPrefsGetSigPollMins() * 60000UL;  // minutes -> ms
+        s_sig_probe_at = now + poll_ms;
+        const uint32_t sms = the_mesh.uiSignalMs();
+        // Skip the flood when we've heard signal within the poll window (ambient
+        // traffic already gives us a reading); the small margin keeps our own
+        // echo from suppressing the next probe in an otherwise-silent mesh.
+        if (sms == 0 || (now - sms) >= poll_ms - 5000UL) sendAdvertFlood();
+      } else {
+        s_sig_probe_at = now + 60000;   // probe off: just re-check the toggle each minute
+      }
     }
   }
 
   versionCheckService(now);   // firmware update check (gear badge + About line)
   refreshSysInfo(now);        // live uptime / heap on the About sub-tab
   wifiScanService();          // draw Wi-Fi scan results when the worker finishes
+  ctDeleteServiceTick();      // chunked contacts bulk-delete (advances the progress bar)
 
   // Accidental tab-switch guard: while content is actively being scrolled (and
   // for a short grace period after the scroll ends), make the bottom tab bar
