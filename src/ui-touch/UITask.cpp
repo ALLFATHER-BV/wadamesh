@@ -10000,6 +10000,11 @@ static lv_obj_t* s_fm_search_ta = nullptr;  // inline search field (when active)
 static lv_obj_t* s_fm_sort_lbl  = nullptr;  // sort button label (shows current mode)
 static fs::FS*   s_fm_fs        = nullptr;  // current filesystem (nullptr = roots screen)
 static char      s_fm_path[160]  = {0};     // current dir within s_fm_fs (e.g. "/" or "/foo")
+// Light the status-bar SD LED on any file-manager microSD access. The fm runs on
+// a generic fs::FS*; only &SD is real microSD I/O (Internal = SPIFFS). Browsing
+// (fmRefresh) and the file open/save paths call this; mutations re-list via
+// fmRefresh, so they blip the LED too.
+static inline void fmMarkSdIo() { if (s_fm_fs == &SD) markSdIo(); }
 static char      s_fm_store[12]  = {0};     // storage label ("Internal" / "SD")
 static char      s_fm_filter[40] = {0};     // active search filter (empty = none)
 static uint8_t   s_fm_sort       = 0;       // 0 Name A-Z, 1 Z-A, 2 Size, 3 Type
@@ -11305,6 +11310,7 @@ static void fmEditorSaveCb(lv_event_t* e) {
   if (!s_editor_ta || !s_fm_fs) { fmEditorClose(); return; }
   const char* txt = lv_textarea_get_text(s_editor_ta);
   size_t len = txt ? strlen(txt) : 0;
+  fmMarkSdIo();                              // SD file save -> activity LED
   File f = s_fm_fs->open(s_editor_path, "w");
   bool ok = false;
   if (f) { ok = (f.write((const uint8_t*)txt, len) == len); f.close(); }
@@ -11755,6 +11761,7 @@ static void fmRefresh() {
       root.close();
     }
   } else {
+    fmMarkSdIo();                                           // SD browse -> activity LED
     File dir = s_fm_fs->open(s_fm_path);                    // SD / FAT: real directory listing
     if (dir) {
       File e = dir.openNextFile();
