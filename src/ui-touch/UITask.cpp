@@ -20777,7 +20777,7 @@ static void openControlCenter() {
 enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
-  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR,
+  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SNAKE,
 };
 
 static void closeAppDrawer() {
@@ -20994,6 +20994,142 @@ static void openMentionsScreen() {
   }
 }
 
+// ----- Snake (Apps) -----
+// A small canvas-based snake. Swipe up/down/left/right to steer (works on either
+// board's touch); tap to restart after a game over; the X button closes it. The
+// game advances on its own lv_timer, so it pauses naturally when closed.
+static lv_obj_t*   s_snake_root   = nullptr;
+static lv_obj_t*   s_snake_canvas = nullptr;
+static lv_color_t* s_snake_buf    = nullptr;
+static lv_obj_t*   s_snake_score  = nullptr;
+static lv_timer_t* s_snake_timer  = nullptr;
+static const int   SNK_GRID = 14;                 // cells per side
+static int         s_snk_cell = 13;               // px/cell (set at open)
+static uint8_t     s_snk_bx[SNK_GRID * SNK_GRID], s_snk_by[SNK_GRID * SNK_GRID];  // body, [0]=head
+static int         s_snk_len = 0;
+static int         s_snk_dx = 1, s_snk_dy = 0;    // active direction
+static int         s_snk_ndx = 1, s_snk_ndy = 0;  // queued direction (applied next step)
+static uint8_t     s_snk_fx = 0, s_snk_fy = 0;    // food cell
+static bool        s_snk_over = false;
+static int         s_snk_score = 0;
+
+static void snakePlaceFood() {
+  for (int tries = 0; tries < 400; ++tries) {
+    const uint8_t fx = (uint8_t)random(SNK_GRID);
+    const uint8_t fy = (uint8_t)random(SNK_GRID);
+    bool on = false;
+    for (int i = 0; i < s_snk_len; ++i) if (s_snk_bx[i] == fx && s_snk_by[i] == fy) { on = true; break; }
+    if (!on) { s_snk_fx = fx; s_snk_fy = fy; return; }
+  }
+}
+static void snakeReset() {
+  s_snk_len = 3;
+  for (int i = 0; i < s_snk_len; ++i) { s_snk_bx[i] = (uint8_t)(SNK_GRID / 2 - i); s_snk_by[i] = SNK_GRID / 2; }
+  s_snk_dx = 1; s_snk_dy = 0; s_snk_ndx = 1; s_snk_ndy = 0;
+  s_snk_over = false; s_snk_score = 0;
+  snakePlaceFood();
+}
+static void snakeRender() {
+  if (!s_snake_canvas) return;
+  const int c = s_snk_cell;
+  lv_canvas_fill_bg(s_snake_canvas, lv_color_hex(0x0A0B0C), LV_OPA_COVER);
+  lv_draw_rect_dsc_t d; lv_draw_rect_dsc_init(&d); d.radius = 2;
+  d.bg_color = lv_color_hex(0xE0584C);   // food
+  lv_canvas_draw_rect(s_snake_canvas, s_snk_fx * c + 1, s_snk_fy * c + 1, c - 2, c - 2, &d);
+  for (int i = 0; i < s_snk_len; ++i) {  // body (head brighter)
+    d.bg_color = (i == 0) ? lv_color_hex(COLOR_ACCENT) : lv_color_hex(0x15B6A6);
+    lv_canvas_draw_rect(s_snake_canvas, s_snk_bx[i] * c + 1, s_snk_by[i] * c + 1, c - 2, c - 2, &d);
+  }
+}
+static void snakeStep() {
+  if (s_snk_over) return;
+  if (!(s_snk_ndx == -s_snk_dx && s_snk_ndy == -s_snk_dy)) { s_snk_dx = s_snk_ndx; s_snk_dy = s_snk_ndy; }
+  const int nx = s_snk_bx[0] + s_snk_dx, ny = s_snk_by[0] + s_snk_dy;
+  const bool eat = (nx == s_snk_fx && ny == s_snk_fy);
+  bool over = (nx < 0 || ny < 0 || nx >= SNK_GRID || ny >= SNK_GRID);
+  // Self-collision: the tail vacates this step unless we're growing, so skip it.
+  const int clen = eat ? s_snk_len : s_snk_len - 1;
+  for (int i = 0; i < clen && !over; ++i) if (s_snk_bx[i] == nx && s_snk_by[i] == ny) over = true;
+  if (over) {
+    s_snk_over = true;
+    if (s_snake_score) lv_label_set_text_fmt(s_snake_score, "Game over  \xe2\x80\x94  score %d   (tap to restart)", s_snk_score);
+    return;
+  }
+  int newlen = s_snk_len + (eat ? 1 : 0);
+  if (newlen > SNK_GRID * SNK_GRID) newlen = SNK_GRID * SNK_GRID;
+  memmove(&s_snk_bx[1], &s_snk_bx[0], (size_t)(newlen - 1));
+  memmove(&s_snk_by[1], &s_snk_by[0], (size_t)(newlen - 1));
+  s_snk_bx[0] = (uint8_t)nx; s_snk_by[0] = (uint8_t)ny;
+  s_snk_len = newlen;
+  if (eat) { s_snk_score++; snakePlaceFood(); if (s_snake_score) lv_label_set_text_fmt(s_snake_score, "score %d", s_snk_score); }
+  snakeRender();
+}
+static void snakeTimerCb(lv_timer_t* t) { (void)t; snakeStep(); }
+static void snakeGestureCb(lv_event_t* e) {
+  (void)e;
+  switch (lv_indev_get_gesture_dir(lv_indev_get_act())) {
+    case LV_DIR_TOP:    s_snk_ndx = 0;  s_snk_ndy = -1; break;
+    case LV_DIR_BOTTOM: s_snk_ndx = 0;  s_snk_ndy = 1;  break;
+    case LV_DIR_LEFT:   s_snk_ndx = -1; s_snk_ndy = 0;  break;
+    case LV_DIR_RIGHT:  s_snk_ndx = 1;  s_snk_ndy = 0;  break;
+    default: break;
+  }
+}
+static void snakeClickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (s_snk_over) { snakeReset(); if (s_snake_score) lv_label_set_text_fmt(s_snake_score, "score %d", s_snk_score); snakeRender(); }
+}
+static void snakeClose() {
+  if (s_snake_timer) { lv_timer_del(s_snake_timer); s_snake_timer = nullptr; }
+  if (s_snake_root)  { lv_obj_del(s_snake_root);  s_snake_root  = nullptr; }   // also deletes the canvas child
+  if (s_snake_buf)   { lvglPsramFree(s_snake_buf); s_snake_buf  = nullptr; }   // free AFTER the canvas is gone
+  s_snake_canvas = nullptr; s_snake_score = nullptr;
+}
+static void snakeCloseCb(lv_event_t* e) { (void)e; snakeClose(); }
+static void openSnakeGame() {
+  if (s_snake_root) return;
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_snake_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_snake_root);
+  lv_obj_set_size(s_snake_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_snake_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_snake_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_snake_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_snake_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(s_snake_root, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(s_snake_root, snakeGestureCb, LV_EVENT_GESTURE, nullptr);
+  lv_obj_add_event_cb(s_snake_root, snakeClickCb,   LV_EVENT_CLICKED, nullptr);
+
+  // Largest square playfield that fits below a 26-px score/close row.
+  const int avail_h = (int)(sh - STATUSBAR_H) - 28;
+  int side = ((int)sw < avail_h) ? (int)sw : avail_h;
+  s_snk_cell = side / SNK_GRID;
+  if (s_snk_cell < 6) s_snk_cell = 6;
+  const int canvas_px = s_snk_cell * SNK_GRID;
+  s_snake_buf = (lv_color_t*)lvglPsramAlloc((size_t)canvas_px * canvas_px * sizeof(lv_color_t));
+  if (!s_snake_buf) { snakeClose(); if (g_lv.task) g_lv.task->showAlert(TR("Out of memory"), 1500); return; }
+  s_snake_canvas = lv_canvas_create(s_snake_root);
+  lv_canvas_set_buffer(s_snake_canvas, s_snake_buf, canvas_px, canvas_px, LV_IMG_CF_TRUE_COLOR);
+  lv_obj_align(s_snake_canvas, LV_ALIGN_TOP_MID, 0, 26);
+
+  s_snake_score = lv_label_create(s_snake_root);
+  lv_obj_set_style_text_color(s_snake_score, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_snake_score, &g_font_12, LV_PART_MAIN);
+  lv_obj_align(s_snake_score, LV_ALIGN_TOP_LEFT, 6, 4);
+
+  lv_obj_t* x = lv_btn_create(s_snake_root);
+  lv_obj_set_size(x, 30, 24);
+  lv_obj_align(x, LV_ALIGN_TOP_RIGHT, -4, 0);
+  lv_obj_add_event_cb(x, snakeCloseCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* xl = lv_label_create(x); lv_label_set_text(xl, LV_SYMBOL_CLOSE); lv_obj_center(xl);
+
+  snakeReset();
+  lv_label_set_text_fmt(s_snake_score, "score %d   (swipe to steer)", s_snk_score);
+  snakeRender();
+  s_snake_timer = lv_timer_create(snakeTimerCb, 220, nullptr);   // 220 ms / step
+}
+
 static void appTileCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int act = (int)(intptr_t)lv_event_get_user_data(e);
@@ -21006,6 +21142,7 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_MONITOR:   openMonitorPage();    return;   // RF activity graph + repeater-style radio stats
     case APPACT_ADVERT:    openAdvertModalCb(e);  return;
     case APPACT_POWER:     openPowerMenu();      return;
+    case APPACT_SNAKE:     openSnakeGame();      return;
 #if defined(HAS_TDECK_GT911)
     case APPACT_TERMINAL:  homeTerminalCb(e);    return;
     case APPACT_FILES:     homeFilesCb(e);       return;
@@ -21133,6 +21270,7 @@ static void openAppDrawer() {
     { ">_",                "Terminal",  APPACT_TERMINAL, 0,         0x3DD27A },      // console green
     { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
 #endif
+    { "\xF0\x9F\x90\x8D",  "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // snake game
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
   const int n = (int)(sizeof(tiles) / sizeof(tiles[0]));
