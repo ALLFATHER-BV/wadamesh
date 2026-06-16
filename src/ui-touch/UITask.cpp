@@ -12973,7 +12973,16 @@ static inline void tileCacheMkdir(const char* rel) {
 // core-0 fetch task, never the UI thread. Reads keep working, so already-cached
 // areas still display — only NEW tiles stop being cached.
 static bool tilesFsLowSpace() {
-  if (!s_tiles_fs_ready) return false;            // no LittleFS cache partition -> nothing to guard
+  if (!s_tiles_fs_ready || !s_tile_fs) return false;   // no cache backend -> nothing to guard
+  // This guard exists ONLY for the small (4.75 MB) LittleFS "tiles" partition,
+  // where a full FS faults inside lfs_alloc during the dir mkdir. It must inspect
+  // the ACTIVE backend, not s_tiles_fs unconditionally. On the SD fallback
+  // (s_tile_fs == &SD, when the tiles partition didn't mount) the LittleFS object
+  // is UNMOUNTED, so s_tiles_fs.totalBytes() reads 0 -> "0 free < 320 KB" -> the
+  // gate wedged permanently ON and blocked EVERY tile download (the fetcher bailed
+  // before the HTTP GET: ok 0, fail N, http 0, wr 'S'). The SD card has gigabytes
+  // free, so it is never the constraint here — only guard the LittleFS partition.
+  if (s_tile_fs != &s_tiles_fs) return false;          // SD-backed cache: not space-constrained
   static uint32_t last_ms = 0;
   static bool     low     = false;
   const uint32_t now = millis();
@@ -12982,7 +12991,8 @@ static bool tilesFsLowSpace() {
     const size_t tot = s_tiles_fs.totalBytes();
     const size_t use = s_tiles_fs.usedBytes();
     const size_t freeb = (tot > use) ? (tot - use) : 0;
-    low = (freeb < 320 * 1024);                   // keep >= 320 KB headroom (tile + dir blocks + GC)
+    // tot == 0 means the partition isn't actually mounted — don't read that as "full".
+    low = (tot > 0) && (freeb < 320 * 1024);           // keep >= 320 KB headroom (tile + dir blocks + GC)
   }
   return low;
 }
@@ -13023,6 +13033,17 @@ static volatile bool     s_tile_fetch_spawn_ok = false;
 // failure), 4xx (no such tile), 5xx (server), 200 (ok) when serial is
 // unreadable. Negative values come from HTTPClient itself.
 static volatile int16_t  s_tile_fetch_last_code = 0;
+// Cache-write diagnostics. Serial is unreadable on this build, and a tile that
+// HTTP-200s but fails to land on disk (SD bus contention, full/write-protected
+// card, missing dir) is invisible otherwise — the map just sits on "Downloading…".
+// s_tile_fetch_last_wr is the last write outcome (shown on the map tab):
+//   'w' wrote ok   'O' open("w") failed (dir missing / SD write-protect / bus)
+//   'P' short/failed disk write (card full or SD error mid-write)
+//   'Z' bad/oversized content-length   'e' HTTP != 200
+//   'S' cache low-space gate   'H' internal-heap gate   'W' Wi-Fi down
+static volatile char     s_tile_fetch_last_wr   = '-';
+static volatile uint16_t s_tile_fetch_open_fail = 0;   // tileCacheOpen("w") returned an invalid File
+static volatile uint16_t s_tile_fetch_short_wr  = 0;   // f.write() committed fewer bytes than received
 // Recently-queued dedup ring — prevents the same (z,x,y) being enqueued
 // dozens of times on rapid pan. Sized to cover one full pass: the 9 visible
 // tiles + the ~20-tile zoomed-out prefetch pyramid + a little history.
@@ -13437,6 +13458,7 @@ static void tileFetchTaskFn(void* arg) {
       Serial.printf("[TILE] skip z=%u x=%ld y=%ld: WiFi down\n",
                     (unsigned)req.z, (long)req.x, (long)req.y);
       s_tile_fetch_step = '!';
+      s_tile_fetch_last_wr = 'W';
       ++s_tile_fetch_failed;
       if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
       continue;
@@ -13478,6 +13500,7 @@ static void tileFetchTaskFn(void* arg) {
       if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 12 * 1024) {
         // Still too tight — skip this tile; it'll be re-requested on the
         // next render miss. Keep counters coherent.
+        s_tile_fetch_last_wr = 'H';
         ++s_tile_fetch_failed;
         if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
         continue;
@@ -13487,6 +13510,7 @@ static void tileFetchTaskFn(void* arg) {
     // Tile-cache full? Stop writing — a full LittleFS faults inside lfs_alloc
     // during the dir mkdir below (reboot), instead of failing cleanly.
     if (tilesFsLowSpace()) {
+      s_tile_fetch_last_wr = 'S';
       ++s_tile_fetch_failed;
       if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
       continue;
@@ -13525,6 +13549,7 @@ static void tileFetchTaskFn(void* arg) {
     bool wrote = false;
     if (code != HTTP_CODE_OK) {
       s_tile_fetch_step = 'd';
+      s_tile_fetch_last_wr = 'e';                  // HTTP error (code shown as "http" on the map)
     }
     if (code == HTTP_CODE_OK) {
       s_tile_fetch_step = 'r';
@@ -13535,13 +13560,21 @@ static void tileFetchTaskFn(void* arg) {
         if (f) {
           WiFiClient* stream = http.getStreamPtr();
           uint8_t buf[1024];
-          int remaining = content_len;
+          int    remaining     = content_len;
+          size_t disk_written  = 0;                // bytes actually committed to the FS/card
+          bool   disk_err      = false;
           uint32_t dl_deadline = millis() + 12000;   // whole-tile cap: a half-dead socket can't hang the task
           while (remaining > 0 && http.connected()) {
             const size_t want = (size_t)(remaining > (int)sizeof(buf) ? sizeof(buf) : remaining);
             const int n = stream->readBytes(buf, want);
             if (n <= 0) break;
-            f.write(buf, n);
+            // Verify the FS write. A full / flaky / write-protected SD accepts the
+            // open() but silently short-writes; judging success by network bytes
+            // read alone marked these "cached" when the file was empty/truncated —
+            // the map then sat on "Downloading…" because the read-back found nothing.
+            const size_t wn = f.write(buf, n);
+            disk_written += wn;
+            if (wn != (size_t)n) { disk_err = true; break; }
             remaining -= n;
             // Yield to the IDLE task each chunk: readBytes' internal yield() only
             // runs equal-priority tasks, not IDLE — and IDLE is what feeds the
@@ -13551,9 +13584,19 @@ static void tileFetchTaskFn(void* arg) {
             if ((int32_t)(millis() - dl_deadline) > 0) break;
           }
           f.close();
-          if (remaining == 0) wrote = true;
-          else                tileCacheRemove(path_jpg);  // partial write — discard
+          if (!disk_err && remaining == 0 && disk_written == (size_t)content_len) {
+            wrote = true;
+          } else {
+            tileCacheRemove(path_jpg);               // partial / failed write — discard
+            ++s_tile_fetch_short_wr;
+            s_tile_fetch_last_wr = 'P';              // short/failed disk write (card full or SD error)
+          }
+        } else {
+          ++s_tile_fetch_open_fail;
+          s_tile_fetch_last_wr = 'O';                // open("w") failed: dir missing / write-protect / SD bus
         }
+      } else {
+        s_tile_fetch_last_wr = 'Z';                  // bad / oversized content-length
       }
     }
     // Close the socket and free its lwip buffers BEFORE we signal the
@@ -13568,6 +13611,7 @@ static void tileFetchTaskFn(void* arg) {
     if (wrote) {
       Serial.printf("[TILE]  -> wrote %s\n", path_jpg);
       s_tile_fetch_step = 'w';
+      s_tile_fetch_last_wr = 'w';
       ++s_tile_fetch_ok;
       s_tile_fetch_dirty = true;        // render thread picks this up
     } else {
@@ -13754,9 +13798,15 @@ static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len, int* out_w
 static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
                          uint8_t** out_data, size_t* out_len) {
 #if defined(ESP32)
-  // JPEG only. We deliberately do NOT fall back to .png: this device can't decode PNG
-  // without RGB565 noise + a 256 KB ARGB8888 buffer per tile. Offline packs + the Wi-Fi
-  // proxy are both .jpg, so an SD tile tree must be .jpg too.
+  // Format support:
+  //   • JPEG (.jpg)  — decoded by SJPG/TJpgDec straight to RGB565 in stripes (cheap).
+  //                    The LittleFS online cache stores ONLY .jpg (the tiles.wadamesh.com
+  //                    proxy transcodes OSM's PNG → JPEG, and the device fetches .jpg).
+  //   • PNG  (.png)  — decoded directly via lodepng (decodePngToRgb565), bypassing LVGL's
+  //                    lv_png (which renders noise on this board). Used by SD packs, which
+  //                    are OSM's native PNG.
+  // renderMapTiles sniffs the magic bytes and routes to the right decoder, so both formats
+  // render on the SD path; the LittleFS cache is JPEG-only by design (see above).
   char path[48];
   snprintf(path, sizeof(path), "/tiles/%u/%ld/%ld.jpg",
            (unsigned)z, (long)x, (long)y);
@@ -13773,7 +13823,18 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
       snprintf(ppath, sizeof(ppath), "/maps/osm/%u/%ld/%ld.PNG", (unsigned)z, (long)x, (long)y);
       fsd = SD.open(ppath, FILE_READ);
     }
-    if (!fsd) fsd = SD.open(path, FILE_READ);
+    // Plain /tiles/<z>/<x>/<y>.{png,PNG} — a PNG pack dropped straight into /tiles/
+    // (OSM's native format), not the /maps/osm layout. Decoded via lodepng like the
+    // /maps/osm PNGs above; the .jpg fallback below covers JPEG /tiles/ packs.
+    if (!fsd) {
+      snprintf(ppath, sizeof(ppath), "/tiles/%u/%ld/%ld.png", (unsigned)z, (long)x, (long)y);
+      fsd = SD.open(ppath, FILE_READ);
+    }
+    if (!fsd) {
+      snprintf(ppath, sizeof(ppath), "/tiles/%u/%ld/%ld.PNG", (unsigned)z, (long)x, (long)y);
+      fsd = SD.open(ppath, FILE_READ);
+    }
+    if (!fsd) fsd = SD.open(path, FILE_READ);   // legacy /tiles/<z>/<x>/<y>.jpg
     if (!fsd) return false;
     const size_t szsd = fsd.size();
     if (szsd == 0 || szsd > 256 * 1024) { fsd.close(); return false; }   // PNG tiles run larger than JPEG
@@ -13791,7 +13852,11 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   File f = tileCacheOpen(path, "r");
   if (!f) return false;
   const size_t sz = f.size();
-  if (sz == 0 || sz > 80 * 1024) { f.close(); return false; }  // sanity cap
+  // Cap MUST match the fetcher's write cap (100 KB, see tileFetchTaskFn). It was
+  // 80 KB here while the writer allowed up to 100 KB, so a dense tile saved at
+  // 80-100 KB was written to cache but then silently REJECTED on read — it never
+  // rendered, and the map sat on "Downloading…" for that area forever.
+  if (sz == 0 || sz > 100 * 1024) { f.close(); return false; }  // sanity cap (matches writer)
   uint8_t* buf = (uint8_t*)lvglPsramAlloc(sz);
   if (!buf) { f.close(); return false; }
   const size_t n = f.read(buf, sz);
@@ -13832,6 +13897,10 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
     snprintf(p, sizeof p, "/maps/osm/%u/%ld/%ld.png", (unsigned)z, x, y);
     if (SD.exists(p)) return true;
     snprintf(p, sizeof p, "/maps/osm/%u/%ld/%ld.PNG", (unsigned)z, x, y);   // upper-case packs
+    if (SD.exists(p)) return true;
+    snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.png", (unsigned)z, x, y);      // PNG pack in /tiles/
+    if (SD.exists(p)) return true;
+    snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.PNG", (unsigned)z, x, y);
     if (SD.exists(p)) return true;
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.jpg", (unsigned)z, x, y);
     return SD.exists(p);
@@ -14067,11 +14136,31 @@ static void renderMapTiles() {
   } else if (wifi_up) {
     // Wi-Fi up: the missing tiles were just queued for download. Reassure
     // the user it's working — the screen repaints (s_tile_fetch_dirty) as
-    // tiles land.
+    // tiles land. We also surface the fetch counters + last HTTP code here:
+    // serial is unreadable on this build (companion protocol owns the UART),
+    // so this on-screen line is the only window into whether fetches actually
+    // SUCCEED. "ok" climbing = tiles are being written; "fail" climbing with a
+    // non-200 "http" (e.g. 301 = HTTP→HTTPS redirect the device can't follow,
+    // 403/-1 = blocked/connect fail) means the server/proxy path is the problem,
+    // not the on-device renderer.
+#if defined(MULTI_TRANSPORT_COMPANION)
+    char dl[240];
+    snprintf(dl, sizeof dl,
+        "Downloading map tiles\xe2\x80\xa6  (%s)\n"
+        "ok %u   fail %u   http %d   wr %c\n"
+        "open-fail %u   short-wr %u\n\n"
+        "Keep Wi-Fi connected.\nTiles appear as they arrive.",
+        (s_tile_root[0] ? "SD cache" : "flash cache"),
+        (unsigned)s_tile_fetch_ok, (unsigned)s_tile_fetch_failed,
+        (int)s_tile_fetch_last_code, (char)s_tile_fetch_last_wr,
+        (unsigned)s_tile_fetch_open_fail, (unsigned)s_tile_fetch_short_wr);
+    lv_label_set_text(s_map_status_lbl, dl);
+#else
     lv_label_set_text(s_map_status_lbl,
         "Downloading map tiles\xe2\x80\xa6\n\n"
         "Keep Wi-Fi connected.\nTiles appear as they arrive\n"
         "and are saved for offline use.");
+#endif
   } else {
     // No Wi-Fi and no saved tiles here — be explicit about the fix.
     lv_label_set_text(s_map_status_lbl,
