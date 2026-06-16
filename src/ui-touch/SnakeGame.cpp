@@ -8,30 +8,39 @@
 // Mirrors the app's status-bar height; the overlay starts below it so the bar
 // stays visible. Kept local so this module needs nothing from UITask.
 static constexpr lv_coord_t kTopBar = 22;
+static constexpr uint32_t   kStepMs = 300;   // tick period (a touch slower than before)
 
 // Palette (hex literals so the module is self-contained).
-static constexpr uint32_t kColBg     = 0x0A0B0C;   // playfield background
-static constexpr uint32_t kColFood   = 0xE0584C;   // food
-static constexpr uint32_t kColBody   = 0x15B6A6;   // snake body (brand teal)
-static constexpr uint32_t kColHead   = 0x15B6A6;   // head (same hue; brighter via the head check)
-static constexpr uint32_t kColText   = 0xE6EAEE;
+static constexpr uint32_t kColBg   = 0x0A0B0C;   // playfield background
+static constexpr uint32_t kColFood = 0xE0584C;   // food
+static constexpr uint32_t kColBody = 0x15B6A6;   // snake body (brand teal)
+static constexpr uint32_t kColText = 0xE6EAEE;
 
 SnakeGame* SnakeGame::s_active = nullptr;
 
+bool SnakeGame::isOpen() { return s_active != nullptr && s_active->root_ != nullptr; }
+
+void SnakeGame::steer(int dx, int dy) {
+  if (!s_active || !s_active->started_ || s_active->over_) return;
+  // Trackball deltas -> one cardinal direction (dominant axis).
+  if (dx == 0 && dy == 0) return;
+  const int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+  if (adx >= ady) s_active->setDir(dx > 0 ? 1 : -1, 0);
+  else            s_active->setDir(0, dy > 0 ? 1 : -1);
+}
+
 void SnakeGame::launch() {
-  if (s_active) return;                 // already running
+  if (s_active) return;
   SnakeGame* g = new SnakeGame();
   s_active = g;
-  if (!g->open()) {                     // alloc failed — clean up, no overlay
-    s_active = nullptr;
-    delete g;
-  }
+  if (!g->open()) { s_active = nullptr; delete g; }
 }
 
 void SnakeGame::placeFood() {
-  for (int tries = 0; tries < 400; ++tries) {
-    const uint8_t fx = (uint8_t)random(kGrid);
-    const uint8_t fy = (uint8_t)random(kGrid);
+  const int cells = cols_ * rows_;
+  for (int tries = 0; tries < 4 * cells + 16; ++tries) {
+    const uint8_t fx = (uint8_t)random(cols_);
+    const uint8_t fy = (uint8_t)random(rows_);
     bool on = false;
     for (int i = 0; i < len_; ++i) if (bx_[i] == fx && by_[i] == fy) { on = true; break; }
     if (!on) { fx_ = fx; fy_ = fy; return; }
@@ -40,7 +49,8 @@ void SnakeGame::placeFood() {
 
 void SnakeGame::reset() {
   len_ = 3;
-  for (int i = 0; i < len_; ++i) { bx_[i] = (uint8_t)(kGrid / 2 - i); by_[i] = kGrid / 2; }
+  const uint8_t cx = (uint8_t)(cols_ / 2), cy = (uint8_t)(rows_ / 2);
+  for (int i = 0; i < len_; ++i) { bx_[i] = (uint8_t)(cx - i); by_[i] = cy; }
   dx_ = 1; dy_ = 0; ndx_ = 1; ndy_ = 0;
   over_ = false; score_val_ = 0;
   placeFood();
@@ -48,13 +58,13 @@ void SnakeGame::reset() {
 
 void SnakeGame::render() {
   if (!canvas_) return;
-  const int c = cell_;
+  const int c = kCellPx;
   lv_canvas_fill_bg(canvas_, lv_color_hex(kColBg), LV_OPA_COVER);
   lv_draw_rect_dsc_t d; lv_draw_rect_dsc_init(&d); d.radius = 2;
   d.bg_color = lv_color_hex(kColFood);
   lv_canvas_draw_rect(canvas_, fx_ * c + 1, fy_ * c + 1, c - 2, c - 2, &d);
   for (int i = 0; i < len_; ++i) {
-    d.bg_color = (i == 0) ? lv_color_hex(kColHead) : lv_color_hex(kColBody);
+    d.bg_color = lv_color_hex(kColBody);
     d.bg_opa   = (i == 0) ? LV_OPA_COVER : LV_OPA_80;   // head reads brighter
     lv_canvas_draw_rect(canvas_, bx_[i] * c + 1, by_[i] * c + 1, c - 2, c - 2, &d);
   }
@@ -62,22 +72,23 @@ void SnakeGame::render() {
 
 void SnakeGame::updateScoreLabel() {
   if (!score_) return;
-  if (over_) lv_label_set_text_fmt(score_, "Game over  \xe2\x80\x94  score %d   (tap to restart)", score_val_);
-  else       lv_label_set_text_fmt(score_, "score %d", score_val_);
+  if (over_)        lv_label_set_text_fmt(score_, "Game over  \xe2\x80\x94  score %d   (tap to restart)", score_val_);
+  else if (started_) lv_label_set_text_fmt(score_, "score %d", score_val_);
+  else              lv_label_set_text(score_, "Snake  \xe2\x80\x94  swipe or roll the trackball");
 }
 
 void SnakeGame::step() {
-  if (over_) return;
+  if (over_ || !started_) return;
   if (!(ndx_ == -dx_ && ndy_ == -dy_)) { dx_ = ndx_; dy_ = ndy_; }
   const int nx = bx_[0] + dx_, ny = by_[0] + dy_;
   const bool eat = (nx == fx_ && ny == fy_);
-  bool over = (nx < 0 || ny < 0 || nx >= kGrid || ny >= kGrid);
+  bool over = (nx < 0 || ny < 0 || nx >= cols_ || ny >= rows_);
   const int clen = eat ? len_ : len_ - 1;   // the tail vacates unless we grow
   for (int i = 0; i < clen && !over; ++i) if (bx_[i] == nx && by_[i] == ny) over = true;
   if (over) { over_ = true; updateScoreLabel(); return; }
 
   int newlen = len_ + (eat ? 1 : 0);
-  if (newlen > kGrid * kGrid) newlen = kGrid * kGrid;
+  if (newlen > cols_ * rows_) newlen = cols_ * rows_;
   memmove(&bx_[1], &bx_[0], (size_t)(newlen - 1));
   memmove(&by_[1], &by_[0], (size_t)(newlen - 1));
   bx_[0] = (uint8_t)nx; by_[0] = (uint8_t)ny;
@@ -87,6 +98,16 @@ void SnakeGame::step() {
 }
 
 void SnakeGame::setDir(int dx, int dy) { ndx_ = dx; ndy_ = dy; }
+
+void SnakeGame::startGame() {
+  if (started_) return;
+  started_ = true;
+  if (start_btn_) { lv_obj_del(start_btn_); start_btn_ = nullptr; }
+  reset();
+  updateScoreLabel();
+  render();
+  if (!timer_) timer_ = lv_timer_create(timerCb, kStepMs, this);
+}
 
 bool SnakeGame::open() {
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -102,17 +123,17 @@ bool SnakeGame::open() {
   lv_obj_add_event_cb(root_, gestureCb, LV_EVENT_GESTURE, this);
   lv_obj_add_event_cb(root_, tapCb,     LV_EVENT_CLICKED, this);
 
-  // Largest square playfield that fits below a 26-px score/close row.
-  const int avail_h = (int)(sh - kTopBar) - 28;
-  int side = ((int)sw < avail_h) ? (int)sw : avail_h;
-  cell_ = side / kGrid;
-  if (cell_ < 6) cell_ = 6;
-  const int canvas_px = cell_ * kGrid;
-  buf_ = (lv_color_t*)lvglPsramAlloc((size_t)canvas_px * canvas_px * sizeof(lv_color_t));
-  if (!buf_) return false;              // caller frees the half-built instance
+  // Fill the unoccupied screen below a 24-px score/close row. Whole cells only.
+  const int avail_w = (int)sw;
+  const int avail_h = (int)(sh - kTopBar) - 24;
+  cols_ = avail_w / kCellPx; if (cols_ > kMaxCols) cols_ = kMaxCols; if (cols_ < 6) cols_ = 6;
+  rows_ = avail_h / kCellPx; if (rows_ > kMaxRows) rows_ = kMaxRows; if (rows_ < 6) rows_ = 6;
+  const int pw = cols_ * kCellPx, ph = rows_ * kCellPx;
+  buf_ = (lv_color_t*)lvglPsramAlloc((size_t)pw * ph * sizeof(lv_color_t));
+  if (!buf_) return false;
   canvas_ = lv_canvas_create(root_);
-  lv_canvas_set_buffer(canvas_, buf_, canvas_px, canvas_px, LV_IMG_CF_TRUE_COLOR);
-  lv_obj_align(canvas_, LV_ALIGN_TOP_MID, 0, 26);
+  lv_canvas_set_buffer(canvas_, buf_, pw, ph, LV_IMG_CF_TRUE_COLOR);
+  lv_obj_align(canvas_, LV_ALIGN_BOTTOM_MID, 0, 0);   // playfield fills the lower area
 
   score_ = lv_label_create(root_);
   lv_obj_set_style_text_color(score_, lv_color_hex(kColText), LV_PART_MAIN);
@@ -124,18 +145,25 @@ bool SnakeGame::open() {
   lv_obj_add_event_cb(x, closeCb, LV_EVENT_CLICKED, this);
   lv_obj_t* xl = lv_label_create(x); lv_label_set_text(xl, LV_SYMBOL_CLOSE); lv_obj_center(xl);
 
+  // Paused: draw the initial snake, then wait on a centred "New game" button.
   reset();
-  lv_label_set_text_fmt(score_, "score %d   (swipe to steer)", score_val_);
+  updateScoreLabel();
   render();
-  timer_ = lv_timer_create(timerCb, 220, this);   // 220 ms / step
+  start_btn_ = lv_btn_create(root_);
+  lv_obj_set_size(start_btn_, 150, 44);
+  lv_obj_align(start_btn_, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_add_event_cb(start_btn_, startCb, LV_EVENT_CLICKED, this);
+  lv_obj_t* sl = lv_label_create(start_btn_);
+  lv_label_set_text(sl, LV_SYMBOL_PLAY "  New game");
+  lv_obj_center(sl);
   return true;
 }
 
 void SnakeGame::close() {
   if (timer_) { lv_timer_del(timer_); timer_ = nullptr; }
-  if (root_)  { lv_obj_del(root_);   root_  = nullptr; }   // deletes the canvas child
+  if (root_)  { lv_obj_del(root_);   root_  = nullptr; }   // deletes canvas + button children
   if (buf_)   { lvglPsramFree(buf_);  buf_  = nullptr; }   // free AFTER the canvas is gone
-  canvas_ = nullptr; score_ = nullptr;
+  canvas_ = nullptr; score_ = nullptr; start_btn_ = nullptr;
 }
 
 // ---- LVGL C-callback trampolines (user_data = the instance) ----
@@ -145,7 +173,7 @@ void SnakeGame::timerCb(lv_timer_t* t) {
 }
 void SnakeGame::gestureCb(lv_event_t* e) {
   auto* self = static_cast<SnakeGame*>(lv_event_get_user_data(e));
-  if (!self) return;
+  if (!self || !self->started_) return;
   switch (lv_indev_get_gesture_dir(lv_indev_get_act())) {
     case LV_DIR_TOP:    self->setDir(0, -1); break;
     case LV_DIR_BOTTOM: self->setDir(0, 1);  break;
@@ -156,7 +184,11 @@ void SnakeGame::gestureCb(lv_event_t* e) {
 }
 void SnakeGame::tapCb(lv_event_t* e) {
   auto* self = static_cast<SnakeGame*>(lv_event_get_user_data(e));
-  if (self && self->over_) { self->reset(); self->updateScoreLabel(); self->render(); }
+  if (self && self->started_ && self->over_) { self->reset(); self->updateScoreLabel(); self->render(); }
+}
+void SnakeGame::startCb(lv_event_t* e) {
+  auto* self = static_cast<SnakeGame*>(lv_event_get_user_data(e));
+  if (self) self->startGame();
 }
 void SnakeGame::closeCb(lv_event_t* e) {
   auto* self = static_cast<SnakeGame*>(lv_event_get_user_data(e));

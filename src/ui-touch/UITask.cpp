@@ -18761,6 +18761,16 @@ static void updateTrackball(unsigned long now) {
   const bool moved = tdeckTrackballReadMotion(&dx, &dy);
   if (s_tb_reverse) { dx = -dx; dy = -dy; }   // user opted to invert scrollball direction
 
+  // ---- Snake game ----
+  // While Snake is open the trackball steers it (no soft cursor on that page).
+  if (SnakeGame::isOpen()) {
+    if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
+      lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
+    s_tb_click_press = false;
+    if (moved && (dx != 0 || dy != 0)) { SnakeGame::steer(dx, dy); if (g_lv.task) g_lv.task->noteUserInput(); }
+    return;
+  }
+
   // ---- Emoji picker selector mode ----
   // While the emoji sheet is open the trackball drives a grid highlight instead
   // of the soft cursor: each motion step moves one cell, the centre click
@@ -25881,7 +25891,9 @@ void UITask::loop() {
     if (indev && lv_indev_get_scroll_obj(indev) != nullptr) {
       s_tabbar_lock_until = now + 350;
     }
-    const bool want_lock = (now < s_tabbar_lock_until);
+    // Also hard-lock the tab bar while Snake is open so a swipe/tap near the
+    // bottom can't slip through to the app switcher (e.g. into the map).
+    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen();
     if (want_lock != s_tabbar_locked && g_lv.tabview) {
       lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
       if (tab_btns) {
