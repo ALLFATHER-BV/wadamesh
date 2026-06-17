@@ -10103,13 +10103,15 @@ static void openBatteryChartWindow() {
   const lv_coord_t cardw = sw - 24;
   lv_obj_t* card = lv_obj_create(s_batt_chart_root);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, cardw, 246);
+  lv_obj_set_size(card, cardw, LV_SIZE_CONTENT);                       // grow to content...
+  lv_obj_set_style_max_height(card, sh - STATUSBAR_H - 16, LV_PART_MAIN);  // ...and scroll past the screen
+  lv_obj_set_style_min_height(card, 120, LV_PART_MAIN);
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 8);
   styleSurface(card, COLOR_PANEL, 8);
   lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(card, LV_DIR_VER);
   addCloseXBadge(card, batteryChartCloseCb);   // universal top-right X
 
   lv_obj_t* title = lv_label_create(card);
@@ -10154,8 +10156,7 @@ static void openBatteryChartWindow() {
     lv_label_set_text(empty, TR("No battery history yet.\n\nLogged to /meshcomod/battery.log\nevery 5 minutes."));
     lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(empty, LV_ALIGN_CENTER, 0, 6);
+    lv_obj_set_pos(empty, 0, 28);
     return;
   }
 
@@ -10169,7 +10170,7 @@ static void openBatteryChartWindow() {
   const int chart_x = 30, chart_rpad = 30, chart_y = 18, chart_h = 122;
   lv_obj_t* chart = lv_chart_create(card);
   lv_obj_set_size(chart, cardw - 20 - chart_x - chart_rpad, chart_h);
-  lv_obj_align(chart, LV_ALIGN_TOP_LEFT, chart_x, chart_y);
+  lv_obj_set_pos(chart, chart_x, chart_y);
   lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(chart, n);
   lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y,   y_bot, y_top);   // 3.4 V .. calibrated full (blue)
@@ -10218,9 +10219,25 @@ static void openBatteryChartWindow() {
   x_lbl("-24h", LV_ALIGN_OUT_BOTTOM_LEFT);
   x_lbl("now",  LV_ALIGN_OUT_BOTTOM_RIGHT);
 
-  // Bottom text, stacked so the points count gets its own line and the longer
-  // lines are width-capped to clear the bottom-right CPU + trash buttons.
-  const lv_coord_t btxt_w = cardw - 20 - 72;   // leave room for the CPU chip + trash button
+  // ---- Bottom block (running y, top-down so nothing overlaps; the card scrolls
+  // if it overflows the screen). Text capped to clear the CPU + trash buttons. ----
+  int by = chart_y + chart_h + 18;     // below the chart + its x-axis labels
+  const int row_y = by;                // buttons ride to the right of this block
+  const lv_coord_t btxt_w = cardw - 20 - 72;
+
+  // estimate (accent headline)
+  char est[44];
+  batteryEstimateText(eps, mvs, n, (int)full_mv, est, sizeof est);
+  lv_obj_t* el = lv_label_create(card);
+  lv_label_set_text(el, est);
+  lv_obj_set_style_text_font(el, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(el, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_width(el, btxt_w);
+  lv_label_set_long_mode(el, LV_LABEL_LONG_DOT);
+  lv_obj_set_pos(el, 0, by);
+  by += 22;
+
+  // stats
   char sub[72];
   if (s_batt_show_cpu)
     snprintf(sub, sizeof sub, "now %u.%02u V (full %u.%01u)   CPU %u MHz",
@@ -10237,28 +10254,21 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_width(sl, btxt_w);
   lv_label_set_long_mode(sl, LV_LABEL_LONG_DOT);
-  lv_obj_align(sl, LV_ALIGN_BOTTOM_LEFT, 0, -16);
+  lv_obj_set_pos(sl, 0, by);
+  by += 18;
 
-  lv_obj_t* pl = lv_label_create(card);   // points count on its own bottom line
+  // points count
+  lv_obj_t* pl = lv_label_create(card);
   lv_label_set_text_fmt(pl, "%d pts", n);
   lv_obj_set_style_text_font(pl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_align(pl, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  lv_obj_set_pos(pl, 0, by);
+  by += 18;
 
-  // Estimated remaining battery life (discharge-rate fit over the logged window).
-  char est[44];
-  batteryEstimateText(eps, mvs, n, (int)full_mv, est, sizeof est);
-  lv_obj_t* el = lv_label_create(card);
-  lv_label_set_text(el, est);
-  lv_obj_set_style_text_font(el, &g_font_14, LV_PART_MAIN);
-  lv_obj_set_style_text_color(el, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_width(el, btxt_w);
-  lv_obj_align(el, LV_ALIGN_BOTTOM_LEFT, 0, -32);
-
-  // Clear the battery history (with confirmation).
+  // Clear the battery history (with confirmation) — to the right of the text block.
   lv_obj_t* clr = lv_btn_create(card);
   lv_obj_set_size(clr, 30, 26);
-  lv_obj_align(clr, LV_ALIGN_BOTTOM_RIGHT, 0, 2);
+  lv_obj_align(clr, LV_ALIGN_TOP_RIGHT, 0, row_y);
   lv_obj_set_style_bg_color(clr, lv_color_hex(0xB23A48), LV_PART_MAIN);
   lv_obj_add_event_cb(clr, batteryClearCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* clrl = lv_label_create(clr); lv_label_set_text(clrl, LV_SYMBOL_TRASH); lv_obj_center(clrl);
@@ -10266,7 +10276,7 @@ static void openBatteryChartWindow() {
   // Show/hide the CPU-MHz series (same size/style as the trash button, to its left).
   lv_obj_t* cpub = lv_btn_create(card);
   lv_obj_set_size(cpub, 30, 26);
-  lv_obj_align(cpub, LV_ALIGN_BOTTOM_RIGHT, -36, 2);
+  lv_obj_align(cpub, LV_ALIGN_TOP_RIGHT, -36, row_y);
   lv_obj_set_style_pad_all(cpub, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(cpub, lv_color_hex(s_batt_show_cpu ? 0x7A5311 : 0x3A3D40), LV_PART_MAIN);
   lv_obj_add_event_cb(cpub, batteryCpuToggleCb, LV_EVENT_CLICKED, nullptr);
