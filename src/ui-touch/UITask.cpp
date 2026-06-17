@@ -21677,6 +21677,10 @@ static void updateGlobalStatusBar() {
       s_clk_center = want; s_clk_chg = charging;
       if (want) lv_obj_align(g_statusbar.clock, LV_ALIGN_CENTER, 0, 0);
       else      lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, charging ? -94 : -126, 0);
+      // Park the async-request spinner just LEFT of the clock wherever it lands,
+      // so it never paints over the clock (incl. the centred hide-name mode).
+      if (g_statusbar.async_icon)
+        lv_obj_align_to(g_statusbar.async_icon, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -4, 0);
     }
   }
 
