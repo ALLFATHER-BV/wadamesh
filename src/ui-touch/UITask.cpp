@@ -770,6 +770,8 @@ static uint32_t  s_live_diag_reads = 0;
 static uint32_t  s_live_diag_pressed = 0;
 static uint32_t  s_live_diag_tap_edges = 0;
 static unsigned long s_live_diag_next_ms = 0;
+// File-scope so tsNextWakeForcingDueMs can read it; initialised at first loop tick (~4 s).
+static unsigned long s_sig_probe_at = 4000;
 /** Keep live diag overlay available but hidden by default; flip true for field debugging. */
 constexpr bool k_show_live_diag_overlay = false;
 
@@ -22624,13 +22626,13 @@ static void takeScreenshotToSd() {
 
 // ---- Idle light-sleep hooks (see TouchSleep.h) ----
 // Called by touchSleep::gatePasses(); each hook probes the relevant subsystem.
-// Hooks that need real state (WiFi, BLE, battery, radio) return a conservative
-// false for now — Task 2 wires the real predicates.
 static bool tsScreenOff()  { return g_lv.task && g_lv.task->isScreenOff(); }
 static bool tsNoClient()   { return the_mesh.getProtoNumClients() == 0; }   // public accessor (proto_num_clients is private)
-// tsWifiOff: true when WiFi STA is not connected (same bool that shows the Wi-Fi glyph
-// in updateGlobalStatusBar — wifi_up = WiFi.status() == WL_CONNECTED).
-static bool tsWifiOff()    { return WiFi.status() != WL_CONNECTED; }
+// tsWifiOff: true only when the WiFi radio is actually powered off — the pref
+// wifiConfigGetRadioEnabled() is the source of truth (wifiConfigApply() drives
+// WiFi.mode(WIFI_OFF) when it is false).  WiFi.status() != WL_CONNECTED was
+// the previous check but returns true even while the modem is powered and scanning.
+static bool tsWifiOff()    { return !wifiConfigGetRadioEnabled() && WiFi.getMode() == WIFI_OFF; }
 // tsBleOff: true when no BLE capability is enabled (mirrors the ble_up flag in
 // updateGlobalStatusBar — hasBleCapability() && isBleEnabled()).
 static bool tsBleOff()     {
@@ -22642,11 +22644,12 @@ static bool tsOnBattery()  { return !batteryIsCharging(batteryMvSmoothed()); }
 // tsMeshIdle: true when no outbound packets are queued and no dirty contacts expiry is
 // pending — uses hasPendingWork() which checks _mgr->getOutboundTotal() + dirty_contacts_expiry.
 static bool tsMeshIdle()   { return !the_mesh.hasPendingWork(); }
-// tsNextWakeForcingDueMs: the advert probe timer (s_sig_probe_at) is a static local
-// inside UITask::loop — not accessible here.  Return UINT32_MAX so the MAX_SLEEP_MS
-// ceiling (5 min, matching the default probe cadence) governs the sleep budget.
-// No clock-alarm feature exists in this firmware yet.
-static uint32_t tsNextWakeForcingDueMs(uint32_t) { return UINT32_MAX; }
+// tsNextWakeForcingDueMs: advert/sig-probe is the only wake-forcing deadline today;
+// clock alarms TBD.  s_sig_probe_at is promoted to file scope so we can read it here.
+static uint32_t tsNextWakeForcingDueMs(uint32_t now_ms) {
+  if (s_sig_probe_at == 0) return UINT32_MAX;
+  return (uint32_t)(s_sig_probe_at > now_ms ? (s_sig_probe_at - now_ms) : 0);
+}
 static uint32_t tsEpochNow() { return (uint32_t)time(nullptr); }
 
 static void uiInstallTouchSleepHooks() {
@@ -28003,7 +28006,8 @@ void UITask::loop() {
   // they produce nothing for us to measure.) The user can turn the probe off or
   // change its poll interval from the home-graph "Signal & traffic" popup.
   {
-    static unsigned long s_sig_probe_at = 4000;   // first attempt ~4 s after boot
+    // s_sig_probe_at is file-scope (promoted for tsNextWakeForcingDueMs); no re-init here.
+    (void)0;  // placeholder — variable declared at file scope above
     if ((long)(now - s_sig_probe_at) >= 0) {
       if (touchPrefsGetSigProbeEnabled()) {
         const uint32_t poll_ms = (uint32_t)touchPrefsGetSigPollMins() * 60000UL;  // minutes -> ms
