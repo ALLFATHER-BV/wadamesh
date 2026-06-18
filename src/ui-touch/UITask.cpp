@@ -296,6 +296,13 @@ extern "C" const lv_font_t person_font14;   // 14 px — for g_font_14 (chat lis
 // own one-glyph font, spliced into the g_font_16 fallback chain like person_font.
 extern "C" const lv_font_t zoom_font;
 #define TOUCH_SYM_ZOOM    "\xEF\x80\x82"   /* U+F002 magnifying-glass */
+// FontAwesome sun (U+F185) + moon (U+F186) for sleep-state markers. Spliced into
+// the g_font_12, g_font_14, and g_font_16 chains in initTouchFontFallbacks so the
+// glyphs render at any of those sizes (the status-bar sleep icon uses g_font_12;
+// the battery-chart sleep markers will use g_font_14).
+extern "C" const lv_font_t sleepicons_font;
+#define TOUCH_SYM_SUN  "\xEF\x86\x85"   /* U+F185 sun */
+#define TOUCH_SYM_MOON "\xEF\x86\x86"   /* U+F186 moon */
 
 // Extras fallback fonts — em-dash (U+2014), ellipsis (U+2026), middle dot
 // (U+00B7). LVGL's stock Montserrat subset doesn't include these, so any
@@ -366,6 +373,22 @@ static void initTouchFontFallbacks() {
   s_zoom_font = zoom_font;
   s_zoom_font.fallback = g_font_16.fallback;
   g_font_16.fallback = &s_zoom_font;
+  // Sleep-state icons: sun (U+F185) + moon (U+F186). Spliced into all three
+  // chains — g_font_12 for the status-bar sleep indicator, g_font_14 for the
+  // battery-chart sleep markers, g_font_16 for any larger context. A single font
+  // object can only sit in one chain at a time; use distinct static copies.
+  static lv_font_t s_sleep_font_12;
+  s_sleep_font_12 = sleepicons_font;
+  s_sleep_font_12.fallback = g_font_12.fallback;
+  g_font_12.fallback = &s_sleep_font_12;
+  static lv_font_t s_sleep_font_14;
+  s_sleep_font_14 = sleepicons_font;
+  s_sleep_font_14.fallback = g_font_14.fallback;
+  g_font_14.fallback = &s_sleep_font_14;
+  static lv_font_t s_sleep_font_16;
+  s_sleep_font_16 = sleepicons_font;
+  s_sleep_font_16.fallback = g_font_16.fallback;
+  g_font_16.fallback = &s_sleep_font_16;
   // Also reach the person/antenna/group glyphs from g_font_14 — the contact
   // action sheet title and the Chats-list rows render the icon inline with 14 px
   // text. Use the 14 px-rendered person_font14 (NOT the 16 px person_font) so the
@@ -22928,9 +22951,8 @@ static void buildGlobalStatusBar() {
 #if defined(HAS_TDECK_GT911)
   // Idle light-sleep readiness indicator — eye-close glyph left of the clock.
   // Visible only when the feature is enabled; accent colour = ready, grey = blocked.
-  // TODO swap to TOUCH_SYM_MOON in glyph-font task.
   g_statusbar.sleep_icon = lv_label_create(g_statusbar.root);
-  lv_label_set_text(g_statusbar.sleep_icon, LV_SYMBOL_EYE_CLOSE);
+  lv_label_set_text(g_statusbar.sleep_icon, TOUCH_SYM_MOON);
   lv_obj_set_style_text_color(g_statusbar.sleep_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.sleep_icon, &g_font_12, LV_PART_MAIN);
   lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -145, 0);
