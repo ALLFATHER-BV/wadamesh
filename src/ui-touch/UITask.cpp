@@ -10359,7 +10359,10 @@ static void sleepEvtPrune(uint32_t now_epoch) {
   }
   rf.close(); wf.close();
   fs.remove(sleepEvtPath());
-  fs.rename(sleepEvtTmp(), sleepEvtPath());
+  if (fs.rename(sleepEvtTmp(), sleepEvtPath()) != 0) {
+    // rename failed — leave .tmp in place so data survives as recovery copy;
+    // do NOT delete it.  Caller already called markSdIo() if on SD.
+  }
 }
 
 // Append one regime-transition record and prune records older than 24h.
@@ -10376,8 +10379,11 @@ static void sleepEvtOnTransition(uint32_t epoch, bool entering) {
 }
 
 // Load sleep events whose epoch >= since_epoch into out[0..cap-1], sets n.
-// Prunes the file to 24h on the way through (same pass; free since we read
-// line by line). Returns true if the file existed and was parsed (even if n==0).
+// Returns the NEWEST up-to-cap in-window events in chronological order.
+// Uses a two-pass approach: pass 1 counts in-window records, pass 2 skips the
+// oldest (count - cap) of them so that out[] holds the tail of the window.
+// The 24h window is bounded to a few hundred records, so two passes are cheap.
+// Returns true if the file existed and was parsed (even if n==0).
 // Task 8 calls this when building the battery chart to get the moon/sun markers.
 bool sleepEventsLoad(SleepEvent* out, int cap, int& n, uint32_t since_epoch) {
   n = 0;
@@ -10386,19 +10392,41 @@ bool sleepEventsLoad(SleepEvent* out, int cap, int& n, uint32_t since_epoch) {
   // Run the prune pass first so stale records don't land in the chart.
   sleepEvtPrune(now_epoch);
   fs::FS& fs = sleepEvtFs();
-  File f = fs.open(sleepEvtPath(), FILE_READ);
-  if (!f) return false;
-  while (f.available() && n < cap) {
-    String ln = f.readStringUntil('\n');
-    if (ln.length() == 0) continue;
-    char* comma = strchr(const_cast<char*>(ln.c_str()), ',');
-    if (!comma) continue;
-    const uint32_t e   = (uint32_t)strtoul(ln.c_str(), nullptr, 10);
-    const uint8_t  ent = (uint8_t)strtoul(comma + 1, nullptr, 10);
-    if (e < since_epoch) continue;
-    out[n++] = SleepEvent{ e, ent };
+
+  // Pass 1: count in-window records.
+  int count = 0;
+  {
+    File f = fs.open(sleepEvtPath(), FILE_READ);
+    if (!f) return false;
+    while (f.available()) {
+      String ln = f.readStringUntil('\n');
+      if (ln.length() == 0) continue;
+      const uint32_t e = (uint32_t)strtoul(ln.c_str(), nullptr, 10);
+      if (e < since_epoch) continue;
+      ++count;
+    }
+    f.close();
   }
-  f.close();
+
+  // Pass 2: skip the oldest (count - cap) in-window records, copy the rest.
+  const int skip = (count > cap) ? (count - cap) : 0;
+  int skipped = 0;
+  {
+    File f = fs.open(sleepEvtPath(), FILE_READ);
+    if (!f) return false;
+    while (f.available() && n < cap) {
+      String ln = f.readStringUntil('\n');
+      if (ln.length() == 0) continue;
+      const char* comma = strchr(ln.c_str(), ',');
+      if (!comma) continue;
+      const uint32_t e   = (uint32_t)strtoul(ln.c_str(), nullptr, 10);
+      const uint8_t  ent = (uint8_t)strtoul(comma + 1, nullptr, 10);
+      if (e < since_epoch) continue;
+      if (skipped < skip) { ++skipped; continue; }
+      out[n++] = SleepEvent{ e, ent };
+    }
+    f.close();
+  }
   return true;
 }
 
