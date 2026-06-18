@@ -1,31 +1,34 @@
 # beta_7 — what's new (one user-facing note per non-blank, non-# line)
 
+# --- Community-built ---
+Most of beta_7 was contributed by the community — Dan Vybiral (Vybo) and Ruben Laban. Thank you both!
+
 # --- Chat reliability ---
-Fixed garbled and duplicated messages — chat text is no longer corrupted in transit, so messages arrive intact and duplicates are filtered out correctly (thanks to marcelverdult, issue #13)
-Unread badges are accurate again: the phantom and stuck unread counts on chats and channels are fixed
-More of your chat history is kept and reloaded across reboots, and it is saved more reliably than before
+Fixed garbled and duplicated messages — chat text is no longer corrupted in transit, so messages arrive intact and duplicates are filtered out correctly (thanks to marcelverdult for the report, issue #13)
+Unread badges are accurate again: the phantom and stuck unread counts on chats and channels are fixed (Ruben Laban, PR #15)
+More of your chat history is kept and reloaded across reboots, and it is saved more reliably than before (Ruben Laban, PR #15)
 
 # --- New: Snake game ---
-A Snake game is now in the app drawer — steer by swiping the screen or with the T-Deck trackball, with pause/resume and restart after a game over
+A Snake game is now in the app drawer — steer by swiping the screen or with the T-Deck trackball, with pause/resume and restart after a game over (Vybo, PR #12)
 While you play, touch stays inside the game and no longer leaks through to the screen behind it
 
 # --- Battery & telemetry ---
-Tap the battery in the status bar for a 24-hour history chart with an estimated time-left readout; battery level is logged every 5 minutes
-New per-node telemetry window: poll a node's battery, temperature and humidity, watch them on a live chart, and keep a per-node log
+Tap the battery in the status bar for a 24-hour history chart with an estimated time-left readout; battery level is logged every 5 minutes (Vybo, PR #12)
+New per-node telemetry window: poll a node's battery, temperature and humidity, watch them on a live chart, and keep a per-node log (Vybo, PR #12)
 
 # --- Map ---
-New map night mode — the status bar and tab bar invert to match the dark map instead of glaring
-A live zoom-level readout sits above the zoom slider, and the zoom button now shows a proper magnifier icon
-Contacts have a new "Show on map" action that centres the map on that node
+New map night mode — the status bar and tab bar invert to match the dark map instead of glaring (Vybo, PR #12)
+A live zoom-level readout sits above the zoom slider, and the zoom button now shows a proper magnifier icon (Vybo, PR #12)
+Contacts have a new "Show on map" action that centres the map on that node (Vybo, PR #12)
 
 # --- Status bar & tools ---
-A microSD activity LED lights whenever the card is accessed, including file-manager reads and copies
-An activity spinner shows while a telemetry, admin, ping, trace, range or sightline request is in flight, kept clear of the clock
-New option to hide the device name and move the clock to the left
-Press and hold the status bar to save a full-screen screenshot to the SD card
+A microSD activity LED lights whenever the card is accessed, including file-manager reads and copies (Vybo, PR #12)
+An activity spinner shows while a telemetry, admin, ping, trace, range or sightline request is in flight, kept clear of the clock (Vybo, PR #12)
+New option to hide the device name and move the clock to the left (Vybo, PR #12)
+Press and hold the status bar to save a full-screen screenshot to the SD card (Vybo, PR #12)
 
 # --- Files & images ---
-The file browser can preview PNG and BMP images now, not just JPEG, and no longer shows a stale image when you open several in a row
+The file browser can preview PNG and BMP images now, not just JPEG, and no longer shows a stale image when you open several in a row (Vybo, PR #12)
 Lock-screen wallpaper: open Files, view any JPEG on your SD card, and tap "Set as wallpaper" — no more slow scan or "no image found"
 
 # --- App drawer ---
@@ -41,5 +44,5 @@ Replying to a message with @ no longer overwrites text you were already typing
 Fixed an out-of-memory crash and made notification audio more reliable
 
 # --- Community ---
-Huge thanks to Dan Vybíral (Vybo) for the Snake game, battery history, per-node telemetry, map night mode, PNG/BMP image viewer and the status-bar tools (PR #12)
+Huge thanks to Dan Vybiral (Vybo) — most of beta_7 is his work: the Snake game, battery history, per-node telemetry, map night mode, PNG/BMP image viewer and the whole status-bar toolkit (PR #12)
 Thanks to Ruben Laban for the accurate unread-badge and chat-history-persistence fixes (PR #15)
