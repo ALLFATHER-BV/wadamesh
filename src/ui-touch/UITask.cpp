@@ -10384,8 +10384,11 @@ static void sleepEvtOnTransition(uint32_t epoch, bool entering) {
 // oldest (count - cap) of them so that out[] holds the tail of the window.
 // The 24h window is bounded to a few hundred records, so two passes are cheap.
 // Returns true if the file existed and was parsed (even if n==0).
-// Task 8 calls this when building the battery chart to get the moon/sun markers.
-bool sleepEventsLoad(SleepEvent* out, int cap, int& n, uint32_t since_epoch) {
+// out_total (optional): set to the full in-window count from pass 1, so callers
+// can compute true overflow = *out_total - cap without an extra scan.
+// Task 8 calls this once when building the battery chart to get the moon/sun markers.
+bool sleepEventsLoad(SleepEvent* out, int cap, int& n, uint32_t since_epoch,
+                     int* out_total = nullptr) {
   n = 0;
   const uint32_t now_epoch = (uint32_t)time(nullptr);
   if (battLogOnSd()) markSdIo();
@@ -10407,6 +10410,7 @@ bool sleepEventsLoad(SleepEvent* out, int cap, int& n, uint32_t since_epoch) {
     }
     f.close();
   }
+  if (out_total) *out_total = count;
 
   // Pass 2: skip the oldest (count - cap) in-window records, copy the rest.
   const int skip = (count > cap) ? (count - cap) : 0;
@@ -10463,9 +10467,14 @@ static void batteryCpuToggleCb(lv_event_t* e) {
 // more events exist, a small "+N" count badge is drawn in the top-left corner
 // instead of flooding the chart. Uses the g_font_14 fallback chain, which
 // already includes sleepicons_font (spliced in initTouchFontFallbacks).
+static const int k_draw_cap = 40;   // max individual glyphs drawn on the chart
 struct BattChartMarkerCtx {
-  lv_chart_series_t* vser;   // the primary-Y voltage series
-  int                n;      // number of samples in the chart (1..k_max_pts)
+  lv_chart_series_t* vser;                   // the primary-Y voltage series
+  int                n;                      // number of samples in the chart (1..k_max_pts)
+  uint32_t           window_start;           // epoch of the leftmost chart sample
+  SleepEvent         evts[k_draw_cap + 1];   // pre-loaded at open; DRAW_POST does no FS I/O
+  int                loaded;                 // how many events are in evts[] (0..k_draw_cap+1)
+  int                total;                  // full in-window count (for true overflow badge)
 };
 static void battChartSleepMarkerCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_DRAW_POST) return;
@@ -10473,27 +10482,15 @@ static void battChartSleepMarkerCb(lv_event_t* e) {
   BattChartMarkerCtx* ctx = static_cast<BattChartMarkerCtx*>(lv_event_get_user_data(e));
   if (!ctx || !ctx->vser || ctx->n <= 0) return;
 
-  static const int k_draw_cap = 40;
-  static const int k_pts      = 288;   // mirrors k_max_pts — 24h / 5min
-
-  const uint32_t now_epoch = (uint32_t)time(nullptr);
-  if (now_epoch < 1000000) return;   // clock not synced yet; nothing to draw
-
-  // Oldest sample in the chart window: the log keeps exactly 24h, so the
-  // leftmost plotted point corresponds to (now - (n-1)*300) seconds ago.
-  const uint32_t window_start = now_epoch - (uint32_t)(ctx->n - 1) * 300u;
-
-  // Load up to DRAW_CAP+1 events so we can detect overflow without extra cost.
-  static SleepEvent evts[k_draw_cap + 1];
-  int loaded = 0;
-  sleepEventsLoad(evts, k_draw_cap + 1, loaded, window_start);
-  if (loaded <= 0) return;
+  // Events were loaded once in openBatteryChartWindow — no FS I/O here.
+  if (ctx->loaded <= 0) return;
 
   lv_draw_ctx_t* draw_ctx = lv_event_get_draw_ctx(e);
 
   // How many events fit before we switch to badge mode.
-  const int draw_n   = (loaded <= k_draw_cap) ? loaded : k_draw_cap;
-  const int overflow = loaded - draw_n;   // > 0 when capped
+  const int draw_n   = (ctx->loaded <= k_draw_cap) ? ctx->loaded : k_draw_cap;
+  // True overflow = full in-window count minus the draw cap (not just loaded-cap).
+  const int overflow = (ctx->total > k_draw_cap) ? (ctx->total - k_draw_cap) : 0;
 
   lv_draw_label_dsc_t dsc;
   lv_draw_label_dsc_init(&dsc);
@@ -10502,7 +10499,7 @@ static void battChartSleepMarkerCb(lv_event_t* e) {
   for (int i = 0; i < draw_n; ++i) {
     // Map event epoch → nearest 5-min sample index into the chart array.
     const int32_t raw_idx =
-        (int32_t)lround((double)(evts[i].epoch - window_start) / 300.0);
+        (int32_t)lround((double)(ctx->evts[i].epoch - ctx->window_start) / 300.0);
     const uint16_t idx = (uint16_t)(raw_idx < 0 ? 0
                          : raw_idx >= ctx->n ? (uint16_t)(ctx->n - 1)
                          : (uint16_t)raw_idx);
@@ -10517,11 +10514,11 @@ static void battChartSleepMarkerCb(lv_event_t* e) {
 
     // Moon (entering sleep) in muted blue, sun (woke) in warm amber — distinct
     // from the chart's blue battery line and neutral enough at small size.
-    dsc.color = evts[i].entering
+    dsc.color = ctx->evts[i].entering
                 ? lv_color_hex(0x6A9FD8)   // moon: muted sky-blue
                 : lv_color_hex(0xD4A84B);  // sun:  warm amber
 
-    const char* glyph = evts[i].entering ? TOUCH_SYM_MOON : TOUCH_SYM_SUN;
+    const char* glyph = ctx->evts[i].entering ? TOUCH_SYM_MOON : TOUCH_SYM_SUN;
 
     // Centre a 14 px glyph on the data point: the glyph cell is ~10 px wide
     // and 14 px tall, so shift left/up by half to land its visual centre on (ax, ay).
@@ -10700,9 +10697,21 @@ static void openBatteryChartWindow() {
   // Moon/sun sleep-transition markers drawn in the DRAW_POST pass (after the
   // battery line is fully rendered) via battChartSleepMarkerCb. A single static
   // ctx lives per chart window lifetime; it's recreated fresh on each open().
+  // Events are loaded HERE — once — so the DRAW_POST callback does zero FS I/O.
   static BattChartMarkerCtx s_marker_ctx;
-  s_marker_ctx.vser = vser;
-  s_marker_ctx.n    = n;   // actual sample count loaded from the log
+  s_marker_ctx.vser         = vser;
+  s_marker_ctx.n            = n;   // actual sample count loaded from the log
+  s_marker_ctx.loaded       = 0;
+  s_marker_ctx.total        = 0;
+  {
+    const uint32_t now_ep = (uint32_t)time(nullptr);
+    if (now_ep >= 1000000) {
+      // Oldest sample epoch: leftmost point = (now - (n-1)*300) seconds ago.
+      s_marker_ctx.window_start = now_ep - (uint32_t)(n - 1) * 300u;
+      sleepEventsLoad(s_marker_ctx.evts, k_draw_cap + 1, s_marker_ctx.loaded,
+                      s_marker_ctx.window_start, &s_marker_ctx.total);
+    }
+  }
   lv_obj_add_event_cb(chart, battChartSleepMarkerCb, LV_EVENT_DRAW_POST, &s_marker_ctx);
   // CPU MHz series is optional (toggled by the "CPU" chip next to the trash button).
   lv_chart_series_t* cser = nullptr;
