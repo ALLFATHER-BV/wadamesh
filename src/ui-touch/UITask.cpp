@@ -2625,6 +2625,12 @@ static void closeChatPanel(LvChatPanel* p) {
   hideKb();
   if (p->overlay) lv_obj_add_flag(p->overlay, LV_OBJ_FLAG_HIDDEN);
   p->detail_open = false;
+  // Mark the active thread read on close so messages that arrived while the
+  // chat was open don't leave a stale unread badge in the inbox. Also force
+  // a list rebuild so the badge clears immediately instead of waiting for the
+  // next 4-second periodic refresh.
+  if (g_lv.task) g_lv.task->markThreadRead(g_lv.task->activeThreadIdx());
+  g_lv.dirty_threads = true;
   s_unread_at_open = 0;          // clear the unread divider when leaving the chat
   s_chat_just_opened = false;
   if (p->jump_btn) lv_obj_add_flag(p->jump_btn, LV_OBJ_FLAG_HIDDEN);
