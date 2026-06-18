@@ -577,6 +577,7 @@ struct GlobalStatusBar {
 };
 static GlobalStatusBar g_statusbar = {};
 static void updateGlobalStatusBar();   // fwd decl, called from refresh tick
+static const char* tsBlockReason();    // fwd decl (defined near idle-sleep hooks)
 
 // microSD read/write activity. markSdIo() stamps the time of the last SD access
 // (SD-backed tile cache, SD tile packs, file manager, mount). UITask::loop lights
@@ -6467,6 +6468,14 @@ static void buildDeviceSettings(int sec) {
 #endif
     lv_obj_add_event_cb(sw, sleepIdleToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
+
+    // Dynamic status subtext: blocking reason, or "Ready" when all gates pass.
+    {
+      const char* reason = tsBlockReason();
+      y += settingsRowLabel(body, y, 0,
+          reason ? reason : TR("Ready"),
+          COLOR_SUB, &g_font_12, 0) + 6;
+    }
 
     // Static informational caption: why deep sleep is not available.
     y += settingsRowLabel(body, y, 0,
