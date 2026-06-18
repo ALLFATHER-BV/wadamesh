@@ -26910,6 +26910,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // All hooks are installed here so main.cpp can call touchSleep::loopEnd() on
   // every loop tick without a separate begin() site in main.cpp.
   uiInstallTouchSleepHooks();
+  // Restore the persisted on/off state (default OFF until the user enables it).
+  touchSleep::setEnabled(touchPrefsGetSleepIdle());
 #endif
 }
 

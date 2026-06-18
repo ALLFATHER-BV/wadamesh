@@ -103,6 +103,10 @@ bool touchPrefsSetMapShowContacts(bool on);
  * Default false = the compact grid (T-Deck 4 cols / Heltec V4 3 cols). */
 bool touchPrefsGetAppGridLarge();
 bool touchPrefsSetAppGridLarge(bool on);
+/** Idle light-sleep feature: when ON, the device enters light sleep while the
+ *  screen is off and all activity gates pass. Default OFF. */
+bool touchPrefsGetSleepIdle();
+bool touchPrefsSetSleepIdle(bool on);
 
 /** Hide the device/profile name in the status bar and move the clock to the
  *  left where the name used to be. Default false (name shown). */

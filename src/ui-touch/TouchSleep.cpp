@@ -34,7 +34,7 @@ namespace {
 
   Hooks        g_hooks = {};
   TransitionCb g_transition = nullptr;
-  bool         g_enabled = true;      // bring-up default; Phase 2 (Task 3) sets default OFF + drives from NVS
+  bool         g_enabled = false;     // default OFF; driven from NVS via touchPrefsGetSleepIdle() at init
   bool         g_asleep_regime = false;
   uint32_t     g_wake_count = 0;
   WakeReason   g_last_reason = WakeReason::None;

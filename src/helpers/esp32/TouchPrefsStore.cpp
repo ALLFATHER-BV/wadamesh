@@ -35,7 +35,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 7;   // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large
+static const uint8_t  TOUCH_CFG_VER   = 8;   // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 sleep_idle
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -80,6 +80,7 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  map_show_tilexyz; // show the zoom + tile z/x/y line on the map (bool) — v6
   uint8_t  map_show_contacts;// show contact markers on the map (bool) — v6
   uint8_t  app_grid_large;   // app drawer: large grid (one fewer column, bigger icons) — v7
+  uint8_t  sleep_idle;       // idle light-sleep feature on/off (bool) — v8 (trailing after beta_9's v7 app_grid_large)
 };
 
 static TouchCfg s_cfg;
@@ -136,6 +137,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.map_show_tilexyz  = 1;
   c.map_show_contacts = 1;
   c.app_grid_large    = 0;      // default: compact app grid (T-Deck 4 cols / V4 3 cols)
+  c.sleep_idle    = 0;          // default: idle light-sleep OFF
 }
 
 // Persist the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
@@ -723,6 +725,15 @@ uint8_t touchPrefsGetMapZoom() {
 bool touchPrefsSetMapZoom(uint8_t z) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.map_zoom = z;
+  return cfgFlush();
+}
+bool touchPrefsGetSleepIdle() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.sleep_idle != 0;
+}
+bool touchPrefsSetSleepIdle(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.sleep_idle = on ? 1 : 0;
   return cfgFlush();
 }
 
