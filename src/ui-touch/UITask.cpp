@@ -10458,6 +10458,96 @@ static void batteryCpuToggleCb(lv_event_t* e) {
 }
 
 // Build the 24h battery-voltage chart popup from the SD log.
+// Overlay moon/sun sleep-transition markers on the battery chart (DRAW_POST).
+// One marker per SleepEvent in the 24h window; capped at DRAW_CAP glyphs — if
+// more events exist, a small "+N" count badge is drawn in the top-left corner
+// instead of flooding the chart. Uses the g_font_14 fallback chain, which
+// already includes sleepicons_font (spliced in initTouchFontFallbacks).
+struct BattChartMarkerCtx {
+  lv_chart_series_t* vser;   // the primary-Y voltage series
+  int                n;      // number of samples in the chart (1..k_max_pts)
+};
+static void battChartSleepMarkerCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_DRAW_POST) return;
+  lv_obj_t* chart = lv_event_get_target(e);
+  BattChartMarkerCtx* ctx = static_cast<BattChartMarkerCtx*>(lv_event_get_user_data(e));
+  if (!ctx || !ctx->vser || ctx->n <= 0) return;
+
+  static const int k_draw_cap = 40;
+  static const int k_pts      = 288;   // mirrors k_max_pts — 24h / 5min
+
+  const uint32_t now_epoch = (uint32_t)time(nullptr);
+  if (now_epoch < 1000000) return;   // clock not synced yet; nothing to draw
+
+  // Oldest sample in the chart window: the log keeps exactly 24h, so the
+  // leftmost plotted point corresponds to (now - (n-1)*300) seconds ago.
+  const uint32_t window_start = now_epoch - (uint32_t)(ctx->n - 1) * 300u;
+
+  // Load up to DRAW_CAP+1 events so we can detect overflow without extra cost.
+  static SleepEvent evts[k_draw_cap + 1];
+  int loaded = 0;
+  sleepEventsLoad(evts, k_draw_cap + 1, loaded, window_start);
+  if (loaded <= 0) return;
+
+  lv_draw_ctx_t* draw_ctx = lv_event_get_draw_ctx(e);
+
+  // How many events fit before we switch to badge mode.
+  const int draw_n   = (loaded <= k_draw_cap) ? loaded : k_draw_cap;
+  const int overflow = loaded - draw_n;   // > 0 when capped
+
+  lv_draw_label_dsc_t dsc;
+  lv_draw_label_dsc_init(&dsc);
+  dsc.font = &g_font_14;   // sleepicons_font is in the g_font_14 fallback chain
+
+  for (int i = 0; i < draw_n; ++i) {
+    // Map event epoch → nearest 5-min sample index into the chart array.
+    const int32_t raw_idx =
+        (int32_t)lround((double)(evts[i].epoch - window_start) / 300.0);
+    const uint16_t idx = (uint16_t)(raw_idx < 0 ? 0
+                         : raw_idx >= ctx->n ? (uint16_t)(ctx->n - 1)
+                         : (uint16_t)raw_idx);
+
+    // Ask the chart where sample idx plots (coords relative to chart->coords.x1/y1).
+    lv_point_t p;
+    lv_chart_get_point_pos_by_id(chart, ctx->vser, idx, &p);
+
+    // Convert to absolute screen coordinates.
+    const lv_coord_t ax = chart->coords.x1 + p.x;
+    const lv_coord_t ay = chart->coords.y1 + p.y;
+
+    // Moon (entering sleep) in muted blue, sun (woke) in warm amber — distinct
+    // from the chart's blue battery line and neutral enough at small size.
+    dsc.color = evts[i].entering
+                ? lv_color_hex(0x6A9FD8)   // moon: muted sky-blue
+                : lv_color_hex(0xD4A84B);  // sun:  warm amber
+
+    const char* glyph = evts[i].entering ? TOUCH_SYM_MOON : TOUCH_SYM_SUN;
+
+    // Centre a 14 px glyph on the data point: the glyph cell is ~10 px wide
+    // and 14 px tall, so shift left/up by half to land its visual centre on (ax, ay).
+    lv_area_t area;
+    area.x1 = ax - 7;
+    area.x2 = ax + 7;
+    area.y1 = ay - 9;
+    area.y2 = ay + 5;
+    lv_draw_label(draw_ctx, &dsc, &area, glyph, nullptr);
+  }
+
+  // If we loaded more events than the cap allows, show a count badge so the user
+  // knows the chart is truncated but the canvas isn't flooded.
+  if (overflow > 0) {
+    char badge[16];
+    lv_snprintf(badge, sizeof badge, "+%d", overflow);
+    dsc.color = lv_color_hex(COLOR_SUB);
+    lv_area_t ba;
+    ba.x1 = chart->coords.x1 + 4;
+    ba.x2 = chart->coords.x1 + 40;
+    ba.y1 = chart->coords.y1 + 4;
+    ba.y2 = chart->coords.y1 + 18;
+    lv_draw_label(draw_ctx, &dsc, &ba, badge, nullptr);
+  }
+}
+
 // Reformat the battery chart's primary-Y axis ticks from raw millivolts to volts
 // (e.g. 4200 -> "4.2"). Secondary-Y (CPU MHz) keeps the raw number. RF-monitor
 // pattern: hook DRAW_PART_BEGIN and rewrite the tick label buffer.
@@ -10607,6 +10697,13 @@ static void openBatteryChartWindow() {
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y,   4, 0, 4, 1, true, 40);
   lv_obj_add_event_cb(chart, battChartTickCb, LV_EVENT_DRAW_PART_BEGIN, nullptr);
   lv_chart_series_t* vser = lv_chart_add_series(chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);   // blue battery
+  // Moon/sun sleep-transition markers drawn in the DRAW_POST pass (after the
+  // battery line is fully rendered) via battChartSleepMarkerCb. A single static
+  // ctx lives per chart window lifetime; it's recreated fresh on each open().
+  static BattChartMarkerCtx s_marker_ctx;
+  s_marker_ctx.vser = vser;
+  s_marker_ctx.n    = n;   // actual sample count loaded from the log
+  lv_obj_add_event_cb(chart, battChartSleepMarkerCb, LV_EVENT_DRAW_POST, &s_marker_ctx);
   // CPU MHz series is optional (toggled by the "CPU" chip next to the trash button).
   lv_chart_series_t* cser = nullptr;
   if (s_batt_show_cpu) {
