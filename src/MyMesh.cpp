@@ -2553,6 +2553,20 @@ NodePrefs *MyMesh::getNodePrefs() {
 uint32_t MyMesh::getBLEPin() {
   return _active_ble_pin;
 }
+// User-chosen pairing code from the touch BLE settings page. Validated to a
+// 6-digit value, persisted to _prefs.ble_pin, and applied at the next boot
+// (begin() seeds _active_ble_pin from it) — same contract as the companion
+// CMD_SET_DEVICE_PIN. Returns false on an out-of-range PIN.
+bool MyMesh::setBLEPin(uint32_t pin) {
+  // Any 6-digit BLE passkey is valid, INCLUDING ones that start with 0 (e.g.
+  // "012345" == 12345) — the UI validates the 6-digit string and displays it
+  // zero-padded. Only reject 0 (the "use default/random" sentinel) and values
+  // that don't fit in 6 digits.
+  if (pin == 0 || pin > 999999) return false;
+  _prefs.ble_pin = pin;
+  savePrefs();
+  return true;
+}
 
 struct FreqRange {
   uint32_t lower_freq, upper_freq;

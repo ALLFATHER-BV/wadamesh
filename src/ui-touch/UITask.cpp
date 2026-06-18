@@ -361,6 +361,12 @@ extern volatile uint16_t s_tile_fetch_pending;
 // shrank the margin the tile-fetch worker relies on and made tile downloads
 // OOM-reboot. Transient install keeps steady-state internal RAM untouched.
 static bool tdeckAudioInstall() {
+  // Heap pre-flight. i2s_driver_install ESP_ERROR_CHECKs its internal DMA + timer
+  // allocations and abort()s the firmware on NO_MEM — this is the "esp_timer_create
+  // ESP_ERR_NO_MEM" crash testers hit toggling sound while BLE + Wi-Fi are both up
+  // and internal DRAM is exhausted. Skip the chime silently when it's too tight
+  // rather than crash. (Buffer sizing is separate; this is just a guard.)
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 16 * 1024) return false;
   i2s_config_t cfg = {};
   cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
   cfg.sample_rate = kI2sSampleRate;
@@ -3271,11 +3277,11 @@ static void qrPickCb(lv_event_t* e) {
   char buf[TOUCH_QUICK_REPLY_MAXLEN];
   int n = touchPrefsGetQuickReply((int)idx, buf, sizeof(buf));
   if (n <= 0) return;
-  // Stuff into the LVGL textarea (no auto-send: lets the operator tweak
-  // before tapping the send button — and keeps a stray tap from blasting
-  // out a macro). To send-on-tap, route directly through composerSend
-  // instead, but accidental sends are a worse UX than an extra tap.
-  lv_textarea_set_text(p->composer_ta, buf);
+  // Append at the cursor (NOT set_text) so a quick-reply tapped after an
+  // "@[name] " mention adds to it instead of wiping the address — matches the
+  // @-mention insert path. No auto-send: lets the operator tweak before the
+  // send button (a stray tap blasting a macro is worse UX than an extra tap).
+  lv_textarea_add_text(p->composer_ta, buf);
   // Move keyboard focus to the textarea so a quick send tap works next.
   lv_obj_add_state(p->composer_ta, LV_STATE_FOCUSED);
 #else
@@ -6610,20 +6616,48 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
 // Wi-Fi + BLE coexist now (NimBLE's host is light enough to share the ESP32-S3
 // internal heap with esp_wifi + LVGL), so this is a plain LIVE toggle of the BLE
 // radio — no reboot, and Wi-Fi is left untouched. State is persisted (ble_en).
+// The pairing code is editable here (persisted to _prefs.ble_pin; applied at the
+// next boot, since the passkey is baked into serial_interface.begin()).
+static lv_obj_t* s_ble_pin_ta = nullptr;   // editable 6-digit pairing-code field on the BLE page
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 static void saveBluetoothCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   if (!g_set_modal.wifi_sw) return;
   if (!g_lv.task->hasBleCapability()) { g_lv.task->showAlert(TR("No Bluetooth on this device"), 1400); return; }
+
+  // ---- Pairing code: persist a user-chosen 6-digit PIN (applies on next reboot,
+  // same contract as the companion CMD_SET_DEVICE_PIN). Handled BEFORE the toggle
+  // early-out so changing only the PIN still saves. ----
+  bool pin_saved = false;
+  if (s_ble_pin_ta && lv_obj_is_valid(s_ble_pin_ta)) {
+    kbMirrorSyncToReal();                       // pull any on-screen-keyboard text into the real textarea
+    const char* txt = lv_textarea_get_text(s_ble_pin_ta);
+    const size_t tlen = txt ? strlen(txt) : 0;
+    if (tlen == 6) {
+      uint32_t pin = (uint32_t)atol(txt);
+      NodePrefs* pr = the_mesh.getNodePrefs();
+      if (!pr || pin != pr->ble_pin) {
+        if (the_mesh.setBLEPin(pin)) pin_saved = true;
+        else { g_lv.task->showAlert(TR("Pairing code must be 6 digits"), 1600); return; }
+      }
+    } else if (tlen > 0) {
+      g_lv.task->showAlert(TR("Pairing code must be 6 digits"), 1600);
+      return;
+    }
+  }
+
+  // ---- BLE enable/disable (live; enableBle() lazily brings NimBLE up). ----
   const bool want_ble = lv_obj_has_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
   const bool ble_active_now = g_lv.task->isBleEnabled();
-  if (want_ble == ble_active_now) {
-    g_lv.task->showAlert(want_ble ? TR("Bluetooth already on") : TR("Bluetooth already off"), 1200);
-    return;
+  bool ble_toggled = false;
+  if (want_ble != ble_active_now) {
+    if (want_ble) g_lv.task->enableBle(); else g_lv.task->disableBle();
+    ble_toggled = true;
   }
-  // enableBle() lazily brings NimBLE up if it wasn't started at boot.
-  if (want_ble) g_lv.task->enableBle(); else g_lv.task->disableBle();
-  g_lv.task->showAlert(want_ble ? TR("Bluetooth on") : TR("Bluetooth off"), 1000);
+
+  if (pin_saved)        g_lv.task->showAlert(TR("Pairing code saved — reboot to apply"), 2200);
+  else if (ble_toggled) g_lv.task->showAlert(want_ble ? TR("Bluetooth on") : TR("Bluetooth off"), 1000);
+  else                  g_lv.task->showAlert(want_ble ? TR("Bluetooth already on") : TR("Bluetooth already off"), 1200);
 }
 #endif
 
@@ -6651,18 +6685,44 @@ static void buildBluetoothSettings() {
   lv_obj_set_pos(mode, 2, y);
   y += 18;
 
-  // ---- BLE pin line (visible regardless of mode — the pin is set at boot) ----
-  if (g_lv.task) {
-    char blebuf[40];
-    const uint32_t ble_pin = the_mesh.getBLEPin();
-    if (ble_pin > 0) snprintf(blebuf, sizeof(blebuf), TR("Pairing code: %06lu"), static_cast<unsigned long>(ble_pin));
-    else snprintf(blebuf, sizeof(blebuf), TR("Pairing code: n/a"));
-    lv_obj_t* ble_l = lv_label_create(body);
-    lv_label_set_text(ble_l, blebuf);
-    lv_obj_set_style_text_color(ble_l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_style_text_font(ble_l, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_pos(ble_l, 2, y);
-    y += 22;
+  // ---- Editable pairing code (6-digit; persisted to _prefs.ble_pin, applied at
+  // the next boot since the passkey is baked into serial_interface.begin()). ----
+  s_ble_pin_ta = nullptr;
+  if (g_lv.task && g_lv.task->hasBleCapability()) {
+    lv_obj_t* pin_lbl = lv_label_create(body);
+    lv_label_set_text(pin_lbl, TR("Pairing code"));
+    lv_obj_set_style_text_color(pin_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(pin_lbl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(pin_lbl, 2, y + 7);
+
+    s_ble_pin_ta = lv_textarea_create(body);
+    lv_obj_set_size(s_ble_pin_ta, 96, 32);
+    lv_obj_align(s_ble_pin_ta, LV_ALIGN_TOP_RIGHT, 0, y);
+    lv_textarea_set_one_line(s_ble_pin_ta, true);
+    lv_textarea_set_accepted_chars(s_ble_pin_ta, "0123456789");
+    lv_textarea_set_max_length(s_ble_pin_ta, 6);
+    {
+      // Show the CURRENT code as a greyed placeholder and leave the field EMPTY,
+      // so the user types a fresh 6-digit code without fighting the 6-char cap on
+      // a pre-filled value (which caused partial entries -> "must be 6 digits").
+      // Empty on save = leave the code unchanged.
+      const NodePrefs* pr = the_mesh.getNodePrefs();
+      const uint32_t cur = pr ? pr->ble_pin : 0;
+      char pb[12];
+      if (cur >= 1 && cur <= 999999) snprintf(pb, sizeof pb, "%06lu", static_cast<unsigned long>(cur));
+      else snprintf(pb, sizeof pb, "------");
+      lv_textarea_set_placeholder_text(s_ble_pin_ta, pb);
+      lv_textarea_set_text(s_ble_pin_ta, "");
+    }
+    attachSettingsTaEvents(s_ble_pin_ta);
+    y += 38;
+
+    lv_obj_t* hint = lv_label_create(body);
+    lv_label_set_text(hint, TR("Type a new 6-digit code \xC2\xB7 applies after a reboot"));
+    lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(hint, 2, y);
+    y += 18;
   }
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
@@ -9923,6 +9983,11 @@ static void homeBatteryLongPressCb(lv_event_t* e) {
   g_lv.task->showAlert(msg, 3500);
 }
 
+// Reason the last downscaling JPEG decode failed (shown in the UI). File-scope +
+// UNGUARDED: the decoder lives outside the HAS_TDECK_GT911 block below, while the
+// file-manager viewer (inside it) also reads it.
+static char s_jpgScaleErr[52] = {0};
+
 #if defined(HAS_TDECK_GT911)
 // ---- Full-screen tool views (Terminal / File explorer) ----
 // A fullscreen overlay below the status bar, with a Home button that returns to
@@ -11351,6 +11416,10 @@ static bool fmIsImage(const char* name) {
 // Defined further down (with the map tile code); used here by the image viewer.
 static uint8_t* decodeJpegToRgb565(const uint8_t* jpeg, size_t jpeg_len,
                                    int* out_w, int* out_h);
+// Same, but DOWNSCALES (tjpgd 1/2..1/8) so images larger than max_dim still
+// decode — into a small buffer — instead of being rejected. FM viewer + wallpaper.
+static uint8_t* decodeJpegScaledToRgb565(const uint8_t* jpeg, size_t jpeg_len,
+                                         int* out_w, int* out_h, int max_dim);
 
 static void fmImageClose() {
   // Sync delete (not async): the lv_img references s_fm_img_buf, so the widget
@@ -11373,6 +11442,12 @@ static void fmShowObj(lv_obj_t* o, bool show) {
   else      lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
 }
 
+// "Set as lock wallpaper" action shown in the windowed image viewer, plus the
+// open image's path / filesystem so the action can persist it.
+static lv_obj_t* s_fm_img_wall = nullptr;
+static char      s_fm_img_path[208] = {0};
+static bool      s_fm_img_on_sd     = false;
+
 // Position the image + chrome for the current mode. Windowed: slim header with
 // the close/full buttons, image scaled to fit below it (never upscaled). Full
 // screen: chrome hidden, image fitted to the whole display, a "tap to exit"
@@ -11388,6 +11463,7 @@ static void fmImageRelayout() {
   fmShowObj(s_fm_img_hdr,   !fs);
   fmShowObj(s_fm_img_close, !fs);
   fmShowObj(s_fm_img_full,  !fs);
+  fmShowObj(s_fm_img_wall,  !fs);
   fmShowObj(s_fm_img_hint,   fs);
   // The status bar lives on lv_layer_sys (above this overlay), so hide it
   // outright for a true full-screen image; restore it otherwise.
@@ -11430,10 +11506,30 @@ static void fmImageRootClickCb(lv_event_t* e) {
   fmImageRelayout();
 }
 
+// Persist the currently-viewed JPEG as the lock-screen wallpaper. By the time the
+// viewer is up the file is a confirmed JPEG (PNG is rejected earlier), so it's a
+// valid wallpaper. SD paths get the "sd:" prefix the decoder expects.
+static void fmSetWallpaperCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_fm_img_path[0]) return;
+  char pref[TOUCH_LOCK_WALLPAPER_MAXLEN];
+  if (s_fm_img_on_sd) snprintf(pref, sizeof pref, "sd:%s", s_fm_img_path);
+  else                snprintf(pref, sizeof pref, "%s", s_fm_img_path);
+  touchPrefsSetLockWallpaper(pref);
+  if (s_lockwall_btn_lbl && lv_obj_is_valid(s_lockwall_btn_lbl)) {   // update the settings button if still around
+    char disp[64]; lockwallDisplayName(pref, disp, sizeof disp);
+    lv_label_set_text(s_lockwall_btn_lbl, disp);
+  }
+  fmImageClose();
+  if (g_lv.task) g_lv.task->showAlert(TR("Lock wallpaper set"), 1300);
+}
+
 static void fmOpenImage(const char* name) {
   if (!s_fm_fs || !name || !name[0]) return;
   char path[200];
   fmFullPath(name, path, sizeof path);
+  strncpy(s_fm_img_path, path, sizeof s_fm_img_path - 1);
+  s_fm_img_path[sizeof s_fm_img_path - 1] = '\0';
+  s_fm_img_on_sd = (s_fm_fs == &SD);
   File f = s_fm_fs->open(path, "r");
   if (!f) { if (g_lv.task) g_lv.task->showAlert(TR("Cannot open file"), 1500); return; }
   size_t sz = f.size();
@@ -11462,10 +11558,14 @@ static void fmOpenImage(const char* name) {
   // to a TRUE_COLOR buffer is the same path the map tiles use, and it scales.
   int dw = 0, dh = 0;
   uint8_t* rgb = decodeJpegToRgb565(enc, rd, &dw, &dh);
+  if (!rgb) rgb = decodeJpegScaledToRgb565(enc, rd, &dw, &dh, 1024);   // bigger than 1024 px: downscale to fit
   free(enc);             // encoded bytes no longer needed once decoded
   if (!rgb || dw <= 0 || dh <= 0) {
     if (rgb) lvglPsramFree(rgb);
-    if (g_lv.task) g_lv.task->showAlert(TR("Can't display image\n(JPEG only, <= 1024 px)"), 2600);
+    char emsg[88];
+    if (s_jpgScaleErr[0]) snprintf(emsg, sizeof emsg, "%s", s_jpgScaleErr);   // specific, actionable reason
+    else                  snprintf(emsg, sizeof emsg, "Can't display image\n(JPEG only)");
+    if (g_lv.task) g_lv.task->showAlert(emsg, 3600);
     return;
   }
 
@@ -11529,6 +11629,20 @@ static void fmOpenImage(const char* name) {
   lv_obj_add_event_cb(full, fmImageFullCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* fll = lv_label_create(full); lv_label_set_text(fll, TR("Full"));
   lv_obj_set_style_text_font(fll, &g_font_12, LV_PART_MAIN); lv_obj_center(fll);
+
+  // "Set as lock wallpaper" — bottom-left, windowed chrome only.
+  lv_obj_t* wall = lv_btn_create(s_fm_img_root);
+  lv_obj_set_height(wall, 30);
+  lv_obj_align(wall, LV_ALIGN_BOTTOM_LEFT, 6, -6);
+  styleButton(wall);
+  lv_obj_set_style_bg_color(wall, lv_color_hex(0x35C9C9), LV_PART_MAIN);
+  lv_obj_add_event_cb(wall, fmSetWallpaperCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* wll = lv_label_create(wall);
+  lv_label_set_text(wll, LV_SYMBOL_IMAGE "  Set as wallpaper");
+  lv_obj_set_style_text_font(wll, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(wll, lv_color_black(), LV_PART_MAIN);
+  lv_obj_center(wll);
+  s_fm_img_wall = wall;
 
   // "tap to exit" hint, shown only in full-screen mode.
   lv_obj_t* hint = lv_label_create(s_fm_img_root);
@@ -13757,6 +13871,75 @@ static uint8_t* decodeJpegToRgb565(const uint8_t* jpeg, size_t jpeg_len,
   *out_h = h;
   return buf;
 }
+
+// Downscaling JPEG decode straight through tjpgd (LVGL's SJPG wrapper decodes at
+// full resolution only). Picks a 1/1..1/8 scale so the output fits within max_dim,
+// then converts tjpgd's RGB888 blocks to LVGL RGB565. Lets the file-manager viewer
+// and the lock wallpaper accept images bigger than 1024 px without a multi-MB
+// full-res buffer.
+#include "src/extra/libs/sjpg/tjpgd.h"
+struct TjpgIo { const uint8_t* data; size_t len; size_t pos; uint16_t* out; int ow; int oh; };
+extern "C" {
+static size_t tjpgInCb(JDEC* jd, uint8_t* buf, size_t n) {
+  TjpgIo* io = (TjpgIo*)jd->device;
+  size_t avail = io->len - io->pos;
+  if (n > avail) n = avail;
+  if (buf) memcpy(buf, io->data + io->pos, n);   // buf==NULL: skip n bytes
+  io->pos += n;
+  return n;
+}
+static int tjpgOutCb(JDEC* jd, void* bitmap, JRECT* r) {
+  TjpgIo* io = (TjpgIo*)jd->device;
+  const uint8_t* s = (const uint8_t*)bitmap;     // RGB888, row-major within the rect
+  for (int y = (int)r->top; y <= (int)r->bottom; ++y) {
+    uint16_t* d = (y < io->oh) ? (io->out + (size_t)y * io->ow + (int)r->left) : nullptr;
+    for (int x = (int)r->left; x <= (int)r->right; ++x) {
+      if (d && x < io->ow) { lv_color_t c = lv_color_make(s[0], s[1], s[2]); *d++ = c.full; }
+      s += 3;
+    }
+  }
+  return 1;   // continue
+}
+}  // extern "C"
+static uint8_t* decodeJpegScaledToRgb565(const uint8_t* jpeg, size_t jpeg_len,
+                                         int* out_w, int* out_h, int max_dim) {
+  s_jpgScaleErr[0] = '\0';
+  static uint8_t pool[4096];   // tjpgd work area (JD_FASTDECODE=0 ~3.1 KB); matches LVGL's TJPGD_WORKBUFF_SIZE
+  TjpgIo io; io.data = jpeg; io.len = jpeg_len; io.pos = 0; io.out = nullptr; io.ow = 0; io.oh = 0;
+  JDEC jd;
+  JRESULT rp = jd_prepare(&jd, tjpgInCb, pool, sizeof pool, &io);
+  if (rp != JDR_OK) {
+    if (rp == JDR_FMT3 || rp == JDR_FMT2)   // tjpgd can't decode progressive / unusual-sampling JPEGs
+      snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "Progressive JPEG.\nRe-save as a standard JPEG.");
+    else
+      snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "Decode error %d.", (int)rp);
+    Serial.printf("[JPG] jd_prepare rc=%d\n", (int)rp);
+    return nullptr;
+  }
+  int scale = 0;
+  while (scale < 3 && (((int)jd.width >> scale) > max_dim || ((int)jd.height >> scale) > max_dim)) scale++;
+  const int ow = (int)jd.width >> scale, oh = (int)jd.height >> scale;
+  Serial.printf("[JPG] %ux%u -> 1/%d -> %dx%d (cap %d)\n", jd.width, jd.height, 1 << scale, ow, oh, max_dim);
+  if (ow <= 0 || oh <= 0 || ow > max_dim || oh > max_dim) {
+    snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "%ux%u too big", jd.width, jd.height);
+    return nullptr;
+  }
+  uint16_t* buf = (uint16_t*)lvglPsramAlloc((size_t)ow * oh * sizeof(uint16_t));
+  if (!buf) {
+    snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "no memory (%dx%d)", ow, oh);
+    return nullptr;
+  }
+  io.out = buf; io.ow = ow; io.oh = oh;
+  JRESULT rd = jd_decomp(&jd, tjpgOutCb, (uint8_t)scale);
+  if (rd != JDR_OK) {
+    snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "decomp err %d", (int)rd);
+    Serial.printf("[JPG] jd_decomp rc=%d\n", (int)rd);
+    lvglPsramFree(buf);
+    return nullptr;
+  }
+  *out_w = ow; *out_h = oh;
+  return (uint8_t*)buf;
+}
 static double   s_map_center_lat = 0.0;
 static double   s_map_center_lon = 0.0;
 static uint8_t  s_map_zoom       = k_map_zoom_default;
@@ -14012,9 +14195,24 @@ static void tileFetchTaskFn(void* arg) {
     snprintf(path_png, sizeof(path_png),
              "/tiles/%u/%ld/%ld.png", (unsigned)req.z, (long)req.x, (long)req.y);
     if (tileCacheExists(path_jpg)) {
-      ++s_tile_fetch_ok;
-      if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
-      continue;
+      // Validate it's actually a JPEG. An older build — or a proxy/OSM error
+      // response cached as a .jpg — leaves a non-image that renders as a BLACK
+      // quadrant, and because the file "exists" the fetcher used to skip it
+      // forever (never re-fetched). Read the 2 magic bytes (cheap, on this fetch
+      // thread) and re-download if they're wrong.
+      bool good = false;
+      File vf = tileCacheOpen(path_jpg, "r");
+      if (vf) {
+        uint8_t m[2] = {0, 0};
+        if (vf.size() >= 2 && vf.read(m, 2) == 2 && m[0] == 0xFF && m[1] == 0xD8) good = true;
+        vf.close();
+      }
+      if (good) {
+        ++s_tile_fetch_ok;
+        if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+        continue;
+      }
+      tileCacheRemove(path_jpg);   // bad cached tile — fall through and re-download a good one
     }
     if (tileCacheExists(path_png)) {
       tileCacheRemove(path_png);   // stale noise-tile — reclaim the space
@@ -14102,11 +14300,19 @@ static void tileFetchTaskFn(void* arg) {
           int    remaining     = content_len;
           size_t disk_written  = 0;                // bytes actually committed to the FS/card
           bool   disk_err      = false;
+          bool   bad_content   = false;            // first bytes weren't a JPEG (proxy error/blank body)
           uint32_t dl_deadline = millis() + 12000;   // whole-tile cap: a half-dead socket can't hang the task
           while (remaining > 0 && http.connected()) {
             const size_t want = (size_t)(remaining > (int)sizeof(buf) ? sizeof(buf) : remaining);
             const int n = stream->readBytes(buf, want);
             if (n <= 0) break;
+            // First bytes MUST be a JPEG SOI marker (0xFF 0xD8). The proxy serves
+            // .jpg; a 200-with-error-page or blank body would otherwise be written
+            // to cache and render as a black quadrant. Reject up front.
+            if (disk_written == 0 && (n < 2 || buf[0] != 0xFF || buf[1] != 0xD8)) {
+              bad_content = true;
+              break;
+            }
             // Verify the FS write. A full / flaky / write-protected SD accepts the
             // open() but silently short-writes; judging success by network bytes
             // read alone marked these "cached" when the file was empty/truncated —
@@ -14123,12 +14329,16 @@ static void tileFetchTaskFn(void* arg) {
             if ((int32_t)(millis() - dl_deadline) > 0) break;
           }
           f.close();
-          if (!disk_err && remaining == 0 && disk_written == (size_t)content_len) {
+          if (!disk_err && !bad_content && remaining == 0 && disk_written == (size_t)content_len) {
             wrote = true;
           } else {
-            tileCacheRemove(path_jpg);               // partial / failed write — discard
-            ++s_tile_fetch_short_wr;
-            s_tile_fetch_last_wr = 'P';              // short/failed disk write (card full or SD error)
+            tileCacheRemove(path_jpg);               // partial / bad / failed write — discard
+            if (bad_content) {
+              s_tile_fetch_last_wr = 'J';            // not a JPEG (proxy error page / blank body)
+            } else {
+              ++s_tile_fetch_short_wr;
+              s_tile_fetch_last_wr = 'P';            // short/failed disk write (card full or SD error)
+            }
           }
         } else {
           ++s_tile_fetch_open_fail;
@@ -17491,6 +17701,10 @@ static void refreshChatDetail(LvChatPanel& p) {
     chatDetailShowPlaceholder(p, "No thread selected.\n\nTap a chat to open it.");
     return;
   }
+  // You're looking at this thread — keep its unread badge at zero even as new
+  // messages stream in (gated on detail_open so a stale active idx after the
+  // panel is closed can't wrongly clear an inbox badge).
+  if (p.detail_open) g_lv.task->markActiveThreadRead();
   int msg_idx[UITask::MAX_UI_MESSAGES];
   int n = g_lv.task->getActiveThreadMessageCount(msg_idx, UITask::MAX_UI_MESSAGES, false);
   if (n <= 0) {
@@ -18645,7 +18859,7 @@ static uint8_t* lockscreenDecodeWallpaper(int* out_w, int* out_h) {
   // this path only runs for user-selected wallpapers.)
   fs::FS* fsp = &SPIFFS;
   const char* fp = path;
-  if (!strncmp(path, "sd:", 3)) { fsp = &SD; fp = path + 3; }
+  if (!strncmp(path, "sd:", 3)) { fsp = &SD; fp = path + 3; fmSdTryMount(); }   // mount on demand so the chosen SD wallpaper decodes
 
   uint8_t* rgb = nullptr;
   if (fp && fp[0]) {
@@ -18658,7 +18872,10 @@ static uint8_t* lockscreenDecodeWallpaper(int* out_w, int* out_h) {
         if (enc) {
           size_t rd = f.readBytes((char*)enc, sz);
           const bool is_png = (rd >= 4 && enc[0] == 0x89 && enc[1] == 'P');
-          if (!is_png) rgb = decodeJpegToRgb565(enc, rd, out_w, out_h);
+          if (!is_png) {
+            rgb = decodeJpegToRgb565(enc, rd, out_w, out_h);
+            if (!rgb) rgb = decodeJpegScaledToRgb565(enc, rd, out_w, out_h, 640);  // big wallpaper: downscale (keeps the held buffer small)
+          }
           free(enc);
         }
       }
@@ -18851,6 +19068,37 @@ static void lockwallAddPath(const char* prefpath) {
   s_lockwall_paths[s_lockwall_count][TOUCH_LOCK_WALLPAPER_MAXLEN - 1] = '\0';
   s_lockwall_count++;
 }
+// Recursively list JPEGs on the SD card into the picker array. Depth-limited (2
+// levels), skips hidden + the FAT "System Volume Information" dir, and stops at
+// the array cap. Entries are closed before recursing so SD file handles don't
+// pile up past the FATFS limit.
+static void lockwallScanSd(const char* dirpath, int depth) {
+  const int cap = (int)(sizeof s_lockwall_paths / sizeof s_lockwall_paths[0]);
+  if (s_lockwall_count >= cap) return;
+  File d = SD.open(dirpath);
+  if (!d || !d.isDirectory()) { if (d) d.close(); return; }
+  File e = d.openNextFile();
+  while (e && s_lockwall_count < cap) {
+    const char* nm   = e.name();
+    const char* base = strrchr(nm, '/'); base = base ? base + 1 : nm;
+    const bool  isdir = e.isDirectory();
+    char child[TOUCH_LOCK_WALLPAPER_MAXLEN];
+    if (!strcmp(dirpath, "/")) snprintf(child, sizeof child, "/%s", base);
+    else                       snprintf(child, sizeof child, "%s/%s", dirpath, base);
+    e.close();   // close before recursing
+    if (isdir) {
+      if (depth < 2 && base[0] != '.' && strcmp(base, "System Volume Information") != 0)
+        lockwallScanSd(child, depth + 1);
+    } else if (lockwallIsJpg(base)) {
+      char pref[TOUCH_LOCK_WALLPAPER_MAXLEN];
+      snprintf(pref, sizeof pref, "sd:%s", child);   // e.g. "/Pics/a.jpg" -> "sd:/Pics/a.jpg"
+      lockwallAddPath(pref);
+    }
+    e = d.openNextFile();
+  }
+  if (e) e.close();
+  d.close();
+}
 static void lockwallScan() {
   s_lockwall_count = 0;
   // Internal SPIFFS is flat — match files whose full path is under /lock/.
@@ -18865,30 +19113,13 @@ static void lockwallScan() {
     }
     root.close();
   }
-  // SD: real directories. Look in /lock and the card root.
-  if (s_sd_mounted) {
-    const char* dirs[2] = { "/lock", "/" };
-    for (int di = 0; di < 2; ++di) {
-      File d = SD.open(dirs[di]);
-      if (d && d.isDirectory()) {
-        File e = d.openNextFile();
-        while (e) {
-          if (!e.isDirectory()) {
-            const char* nm = e.name();
-            const char* base = strrchr(nm, '/'); base = base ? base + 1 : nm;
-            if (lockwallIsJpg(base)) {
-              char pref[TOUCH_LOCK_WALLPAPER_MAXLEN];
-              if (!strcmp(dirs[di], "/")) snprintf(pref, sizeof pref, "sd:/%s", base);
-              else                        snprintf(pref, sizeof pref, "sd:%s/%s", dirs[di], base);
-              lockwallAddPath(pref);
-            }
-          }
-          e.close();
-          e = d.openNextFile();
-        }
-      }
-      if (d) d.close();
-    }
+  // SD: mount on demand — the lock-wallpaper page is reachable without ever
+  // opening the file manager, so the card may not be mounted yet (the old code
+  // checked s_sd_mounted and silently skipped the card => "no JPEGs found").
+  // Then walk it RECURSIVELY: users drop images in the root, /lock, /Pictures,
+  // /DCIM/<x>, or a folder they made — not just the root + /lock.
+  if (fmSdTryMount()) {
+    lockwallScanSd("/", 0);
   }
 }
 static void lockwallChosenCb(lv_event_t* e) {
@@ -18959,7 +19190,14 @@ static void openLockWallPicker() {
   }
 }
 static void openLockWallPickerCb(lv_event_t* e) {
-  if (lv_event_get_code(e) == LV_EVENT_CLICKED) openLockWallPicker();
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  // Open the file manager and let the user navigate to their image. Far faster
+  // than scanning the whole card (no recursive walk on the UI thread), and works
+  // at any folder depth. Tapping a JPEG opens the viewer, which now has a
+  // "Set as wallpaper" button.
+  lv_obj_t* body = openFullscreenView("Files");
+  buildFileManager(body);
+  if (g_lv.task) g_lv.task->showAlert(TR("Open a JPEG, then tap 'Set as wallpaper'"), 2600);
 }
 static void lockColorChosenCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -20750,38 +20988,55 @@ static void appTileCb(lv_event_t* e) {
 static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
                        const char* icon, const char* label, int act, int badge,
                        uint32_t icon_col) {
+  // App-style tile: a rounded-square icon chip with the label UNDERNEATH it,
+  // instead of a filled box with the text inside. Same grid footprint (w×h);
+  // the cell itself is transparent and only shows a faint highlight on press.
   lv_obj_t* t = lv_btn_create(parent);
   lv_obj_remove_style_all(t);
   lv_obj_set_size(t, w, h);
   lv_obj_set_pos(t, x, y);
-  lv_obj_set_style_bg_color(t, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(t, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_radius(t, 12, LV_PART_MAIN);
   lv_obj_set_style_bg_color(t, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_bg_opa(t, LV_OPA_40, LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_radius(t, 10, LV_PART_MAIN);
-  lv_obj_set_style_border_color(t, lv_color_hex(0x2A2D31), LV_PART_MAIN);
-  lv_obj_set_style_border_width(t, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_opa(t, LV_OPA_70, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(t, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(t, appTileCb, LV_EVENT_CLICKED, (void*)(intptr_t)act);
 
-  const int icon_y = h > 56 ? 12 : 6;
+  // Rounded-square chip (iOS-style squircle), tinted with the app's accent
+  // colour, centred up top. Bigger + a small proportional corner radius so it
+  // reads as a SQUARE app icon, not a circle.
+  int chip = h - 22;                 // leave one label line beneath
+  if (chip > w - 6) chip = w - 6;
+  if (chip > 58)    chip = 58;
+  if (chip < 30)    chip = 30;
+  lv_obj_t* chip_o = lv_obj_create(t);
+  lv_obj_remove_style_all(chip_o);
+  lv_obj_clear_flag(chip_o, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(chip_o, chip, chip);
+  lv_obj_align(chip_o, LV_ALIGN_TOP_MID, 0, 5);
+  lv_obj_set_style_bg_color(chip_o, lv_color_hex(icon_col), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(chip_o, LV_OPA_20, LV_PART_MAIN);
+  lv_obj_set_style_radius(chip_o, chip * 22 / 100, LV_PART_MAIN);   // ~22% squircle, not a circle
+  lv_obj_set_style_border_color(chip_o, lv_color_hex(icon_col), LV_PART_MAIN);
+  lv_obj_set_style_border_width(chip_o, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(chip_o, LV_OPA_50, LV_PART_MAIN);
+
   if (icon) {
-    lv_obj_t* ic = lv_label_create(t);
+    lv_obj_t* ic = lv_label_create(chip_o);
     lv_label_set_text(ic, icon);
     lv_obj_set_style_text_font(ic, &g_font_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(ic, lv_color_hex(icon_col), LV_PART_MAIN);
-    lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, icon_y);
+    lv_obj_center(ic);
   } else {
-    // No glyph for "signal" — draw 4 ascending accent bars (matches the status bar).
-    lv_obj_t* box = lv_obj_create(t);
+    // No glyph for "signal" — draw 4 ascending accent bars, centred in the chip.
+    lv_obj_t* box = lv_obj_create(chip_o);
     lv_obj_remove_style_all(box);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(box, 22, 16);
-    lv_obj_align(box, LV_ALIGN_TOP_MID, 0, icon_y);
+    lv_obj_center(box);
     for (int b = 0; b < 4; b++) {
       lv_obj_t* bar = lv_obj_create(box);
       lv_obj_remove_style_all(bar);
-      const int bh = 5 + b * 3;            // 5, 8, 11, 14 px
+      const int bh = 5 + b * 3;             // 5, 8, 11, 14 px
       lv_obj_set_size(bar, 4, bh);
       lv_obj_set_pos(bar, b * 6, 16 - bh);  // bottom-aligned
       lv_obj_set_style_bg_color(bar, lv_color_hex(icon_col), LV_PART_MAIN);
@@ -20790,14 +21045,15 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
     }
   }
 
+  // Label UNDER the chip.
   lv_obj_t* lb = lv_label_create(t);
   lv_label_set_text(lb, TR(label));
-  lv_obj_set_width(lb, w - 4);                          // fit narrow 4-col tiles
-  lv_label_set_long_mode(lb, LV_LABEL_LONG_DOT);        // ellipsize if still too wide
+  lv_obj_set_width(lb, w);
+  lv_label_set_long_mode(lb, LV_LABEL_LONG_DOT);        // ellipsize if too wide
   lv_obj_set_style_text_align(lb, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_text_font(lb, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(lb, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_align(lb, LV_ALIGN_BOTTOM_MID, 0, h > 56 ? -8 : -4);
+  lv_obj_align(lb, LV_ALIGN_BOTTOM_MID, 0, -2);
 
   // Notification badge: a small red count pill in the top-right corner.
   if (badge > 0) {
@@ -20809,7 +21065,7 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_set_style_radius(bdg, 9, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(bdg, 4, LV_PART_MAIN);
     lv_obj_set_size(bdg, LV_SIZE_CONTENT, 18);
-    lv_obj_align(bdg, LV_ALIGN_TOP_RIGHT, -4, 4);
+    lv_obj_align(bdg, LV_ALIGN_TOP_MID, chip / 2 - 6, 2);   // overhang the chip's top-right corner
     lv_obj_t* bt = lv_label_create(bdg);
     char bn[8]; snprintf(bn, sizeof bn, "%d", badge > 99 ? 99 : badge);
     lv_label_set_text(bt, bn);
@@ -24397,6 +24653,18 @@ void UITask::markThreadRead(int idx) {
   _ui_threads[idx].unread = 0;
   _ui_threads[idx].has_mention = false;
   markHistoryDirty(200);   // persist soon (survives a manual reboot)
+}
+
+// Clear unread for the thread whose detail is currently open. refreshChatDetail
+// calls this while a chat/channel is on screen, so messages that arrive *while
+// you're reading* don't keep inflating that thread's badge (the "unread count
+// too high" symptom on a busy channel you're watching). Opening already clears
+// once in setActiveThread; this keeps it at zero for the duration you're in it.
+void UITask::markActiveThreadRead() {
+  if (_active_thread_idx < 0) return;
+  if (_ui_threads[_active_thread_idx].unread == 0 && !_ui_threads[_active_thread_idx].has_mention) return;
+  markThreadRead(_active_thread_idx);
+  g_lv.dirty_threads = true;   // refresh the inbox row badge immediately
 }
 
 void UITask::markAllThreadsRead() {

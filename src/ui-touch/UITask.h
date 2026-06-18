@@ -255,6 +255,7 @@ public:
   int  getUnreadTotal() const;
   int  getUnreadMentionCount() const;   // # of threads with an unread @mention of me
   void markThreadRead(int idx);   // clear one thread's unread count (persisted)
+  void markActiveThreadRead();    // clear the currently-open thread's unread (viewing == read)
   void markAllThreadsRead();      // clear every thread's unread count
   bool threadHasMention(int idx) const;   // unread @mention of me in this thread
   int  getThreadCount(bool channel_mode, int out_indexes[], int max_out) const;

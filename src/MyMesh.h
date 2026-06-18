@@ -113,6 +113,7 @@ public:
   const char *getNodeName();
   NodePrefs *getNodePrefs();
   uint32_t getBLEPin();
+  bool     setBLEPin(uint32_t pin);   // user-chosen 6-digit pairing code (persisted; applies next boot)
 
   // Live device info accessors (used by the touch Settings → Device modal to
   // mirror the web client's "Device (live)" panel — public key prefix, channel
