@@ -578,6 +578,7 @@ struct GlobalStatusBar {
 static GlobalStatusBar g_statusbar = {};
 static void updateGlobalStatusBar();   // fwd decl, called from refresh tick
 static const char* tsBlockReason();    // fwd decl (defined near idle-sleep hooks)
+static const char* tsWakeReasonStr(touchSleep::WakeReason r);  // fwd decl (defined near idle-sleep hooks)
 
 // microSD read/write activity. markSdIo() stamps the time of the last SD access
 // (SD-backed tile cache, SD tile packs, file manager, mount). UITask::loop lights
@@ -1782,6 +1783,10 @@ static lv_obj_t* s_tab_indicator    = nullptr;   // thin rounded accent glow bar
 static lv_obj_t* s_update_subtab_badge = nullptr;// red dot over the "About" sub-tab button
 static lv_obj_t* s_update_about_lbl = nullptr;   // status line on the About sub-tab
 static lv_obj_t* s_sysinfo_lbl      = nullptr;   // System-info text (refreshed live on the About tab)
+#if defined(HAS_TDECK_GT911)
+static lv_obj_t* s_sleep_diag_lbl  = nullptr;   // Idle-sleep instrumentation label (Lock settings, line 1)
+static lv_obj_t* s_sleep_diag_lbl2 = nullptr;   // Idle-sleep instrumentation label (Lock settings, line 2)
+#endif
 static bool      s_update_available = false;
 static bool      s_verchk_ran       = false;     // a check has completed (ok or failed)
 static volatile bool s_verchk_request  = false;  // UI -> core-0 worker: please check
@@ -5653,6 +5658,37 @@ static void refreshSysInfo(unsigned long now) {
   lv_label_set_text(s_sysinfo_lbl, buf);
 }
 
+#if defined(HAS_TDECK_GT911)
+// Re-render the idle-sleep instrumentation labels ~1 Hz while the Lock settings
+// panel is open. Mirrors the refreshSysInfo() guard: skip if the right sheet is
+// not visible, or while the user is mid-scroll (avoids layout churn).
+static void refreshSleepDiag(unsigned long now) {
+  static unsigned long next = 0;
+  if ((long)(now - next) < 0) return;
+  if (!s_sleep_diag_lbl || !s_sleep_diag_lbl2 ||
+      getActiveTab() != SETTINGS_TAB_INDEX || s_settings_open_cat != CAT_LOCK) {
+    next = now + 1000;
+    return;
+  }
+  for (lv_indev_t* in = lv_indev_get_next(nullptr); in; in = lv_indev_get_next(in)) {
+    if (lv_indev_get_scroll_dir(in) != LV_DIR_NONE) { next = now + 120; return; }
+  }
+  next = now + 1000;
+
+  char buf[64];
+  snprintf(buf, sizeof buf, "%s · wakes %lu · asleep %u%%",
+           touchSleep::isSleeping() ? "sleeping" : "awake",
+           (unsigned long)touchSleep::wakeCount(),
+           (unsigned)touchSleep::pctAsleep());
+  lv_label_set_text(s_sleep_diag_lbl, buf);
+
+  char buf2[48];
+  snprintf(buf2, sizeof buf2, "%s%s",
+           TR("last wake: "), tsWakeReasonStr(touchSleep::lastWakeReason()));
+  lv_label_set_text(s_sleep_diag_lbl2, buf2);
+}
+#endif  // HAS_TDECK_GT911
+
 static void buildSystemInfoSettings() {
   lv_obj_t* body = createSettingsModal("System info", SettingsModalKind::SystemInfo);
   char buf[800];
@@ -6481,6 +6517,44 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0,
         TR("Deep sleep unavailable — LoRa IRQ is on GPIO45, outside the RTC wake domain"),
         COLOR_SUB, &g_font_12, 0) + 6;
+
+    // Idle-sleep instrumentation: live counters (state · wake count · % asleep)
+    // and the last-wake reason. Two labels stored in s_sleep_diag_lbl[2] so that
+    // refreshSleepDiag() can update them ~1 Hz while the Lock panel is open,
+    // matching the same live-label pattern used for the About/sysinfo block.
+    {
+      char buf[64];
+      snprintf(buf, sizeof buf, "%s · wakes %lu · asleep %u%%",
+               touchSleep::isSleeping() ? "sleeping" : "awake",
+               (unsigned long)touchSleep::wakeCount(),
+               (unsigned)touchSleep::pctAsleep());
+
+      lv_obj_t* lbl1 = lv_label_create(body);
+      s_sleep_diag_lbl = lbl1;
+      lv_obj_set_width(lbl1, lv_pct(100));
+      lv_obj_set_pos(lbl1, 4, y);
+      lv_obj_set_style_text_font(lbl1, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(lbl1, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_label_set_long_mode(lbl1, LV_LABEL_LONG_WRAP);
+      lv_label_set_text(lbl1, buf);
+      lv_obj_update_layout(lbl1);
+      y += lv_obj_get_height(lbl1) + 4;
+
+      char buf2[48];
+      snprintf(buf2, sizeof buf2, "%s%s",
+               TR("last wake: "), tsWakeReasonStr(touchSleep::lastWakeReason()));
+
+      lv_obj_t* lbl2 = lv_label_create(body);
+      s_sleep_diag_lbl2 = lbl2;
+      lv_obj_set_width(lbl2, lv_pct(100));
+      lv_obj_set_pos(lbl2, 4, y);
+      lv_obj_set_style_text_font(lbl2, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(lbl2, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_label_set_long_mode(lbl2, LV_LABEL_LONG_WRAP);
+      lv_label_set_text(lbl2, buf2);
+      lv_obj_update_layout(lbl2);
+      y += lv_obj_get_height(lbl2) + 6;
+    }
   }
 #endif
 
@@ -18022,6 +18096,11 @@ static void closeSettingsCategory() {
     s_ota_btn = nullptr; s_ota_btn_lbl = nullptr;
     g_lv.settings_status = nullptr; g_lv.diag_id_label = nullptr; g_lv.diag_label = nullptr;
   }
+#if defined(HAS_TDECK_GT911)
+  if (s_settings_open_cat == CAT_LOCK) {   // null the sleep-diag live-label ptrs
+    s_sleep_diag_lbl = nullptr; s_sleep_diag_lbl2 = nullptr;
+  }
+#endif
   s_settings_inline_parent = nullptr;
   // del_async, NOT del: the sheet holds the scrollable page, and this close can
   // fire mid-gesture (swipe-back / tab change while a settings page has scroll
@@ -22715,6 +22794,21 @@ static const char* tsBlockReason() {
   if (!tsNoClient())           return TR("client connected");
   if (!tsMeshIdle())           return TR("mesh busy");
   return nullptr;   // ready — only screen-off remains for the gate to pass
+}
+
+// tsWakeReasonStr: human-readable label for each WakeReason enum value, shown in
+// the idle-sleep diag panel so the user can see *why* the device last woke.
+// "-" is the sentinel for WakeReason::None (no wake yet since boot).
+static const char* tsWakeReasonStr(touchSleep::WakeReason r) {
+  using WR = touchSleep::WakeReason;
+  switch (r) {
+    case WR::Timer:  return "timer";
+    case WR::Packet: return "packet";
+    case WR::Touch:  return "touch";
+    case WR::Button: return "button";
+    case WR::Other:  return "other";
+    default:         return "-";
+  }
 }
 
 static void uiInstallTouchSleepHooks() {
@@ -28141,6 +28235,9 @@ void UITask::loop() {
 #endif
   versionCheckService(now);   // firmware update check (gear badge + About line)
   refreshSysInfo(now);        // live uptime / heap on the About sub-tab
+#if defined(HAS_TDECK_GT911)
+  refreshSleepDiag(now);     // live sleep counters on the Lock settings panel
+#endif
   wifiScanService();          // draw Wi-Fi scan results when the worker finishes
   ctDeleteServiceTick();      // chunked contacts bulk-delete (advances the progress bar)
 
