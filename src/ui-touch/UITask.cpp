@@ -1,4 +1,5 @@
 #include "UITask.h"
+#include "TouchSleep.h"
 
 #include "../MyMesh.h"
 
@@ -22621,6 +22622,29 @@ static void takeScreenshotToSd() {
 #endif
 }
 
+// ---- Idle light-sleep hooks (see TouchSleep.h) ----
+// Called by touchSleep::gatePasses(); each hook probes the relevant subsystem.
+// Hooks that need real state (WiFi, BLE, battery, radio) return a conservative
+// false for now — Task 2 wires the real predicates.
+static bool tsScreenOff()  { return g_lv.task && g_lv.task->isScreenOff(); }
+static bool tsNoClient()   { return the_mesh.getProtoNumClients() == 0; }   // public accessor (proto_num_clients is private)
+static bool tsWifiOff()    { return false; }   // Task 2: real WiFi-off state
+static bool tsBleOff()     { return false; }   // Task 2: real BLE-off state
+static bool tsOnBattery()  { return false; }   // Task 2: real on-battery state
+static bool tsMeshIdle()   { return false; }   // Task 2: radio idle + send queue empty
+static uint32_t tsNextWakeForcingDueMs(uint32_t) { return UINT32_MAX; } // Task 2: advert/alarm
+static uint32_t tsEpochNow() { return (uint32_t)time(nullptr); }
+
+void uiInstallTouchSleepHooks() {
+  touchSleep::Hooks h{};
+  h.screenOff = tsScreenOff;  h.noClient = tsNoClient;
+  h.wifiOff = tsWifiOff;      h.bleOff = tsBleOff;
+  h.onBattery = tsOnBattery;  h.meshIdle = tsMeshIdle;
+  h.nextWakeForcingDueMs = tsNextWakeForcingDueMs;
+  h.epochNow = tsEpochNow;
+  touchSleep::begin(h);
+}
+
 // Build the always-on status bar. Called once from UITask::begin after
 // lv_init. Lives on lv_layer_sys so it sits above lv_layer_top (modals,
 // keyboard mirror) — guarantees the time/battery are visible everywhere.
@@ -26865,6 +26889,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   g_lv.dirty_timeline     = true;
   g_lv.defer_heavy_refresh = false;
   g_lv.heavy_refresh_at_ms = 0;
+  // Wire the idle light-sleep predicate hooks once the UI is fully initialised.
+  // All hooks are installed here so main.cpp can call touchSleep::loopEnd() on
+  // every loop tick without a separate begin() site in main.cpp.
+  uiInstallTouchSleepHooks();
 #endif
 }
 

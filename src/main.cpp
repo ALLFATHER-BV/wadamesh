@@ -12,6 +12,7 @@
 #include "helpers/esp32/SdNvsPrefs.h"        // route prefs to file storage (SD/SPIFFS), off NVS
                                              // (quoted: use wadamesh's src/ copy, not the lib's stale one)
 #include "wadamesh_mark_rgb.h"               // anti-aliased mesh-mark (RGB565) for the pre-LVGL boot screen
+#include "ui-touch/TouchSleep.h"             // idle light-sleep controller (loopEnd called at end of loop())
 #endif
 
 // Believe it or not, this std C function is busted on some platforms!
@@ -671,5 +672,12 @@ void loop() {
   // (fork) drive the in-firmware OTA staged-reboot
 #if defined(ESP32_PLATFORM)
   board.pollHttpOtaReboot();
+#endif
+
+#if defined(HAS_TOUCH_UI)
+  // Idle light-sleep gate: evaluated every loop tick. g_enabled is false by
+  // default (Task 1 is inert); Task 2 sets it from the NVS pref and wires
+  // the real predicates so the gate can actually pass and arm light sleep.
+  touchSleep::loopEnd(millis());
 #endif
 }
