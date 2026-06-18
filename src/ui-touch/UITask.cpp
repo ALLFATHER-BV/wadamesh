@@ -10328,6 +10328,80 @@ static void batteryLogTick(uint32_t now_ms) {
                    (uint16_t)getCpuFrequencyMhz());
 }
 
+// ----- Sleep/wake event log (companion to the battery chart) -----
+// One CSV record per regime transition: "<epoch>,<entering>\n"
+// entering=1 = went to sleep (moon), entering=0 = woke to activity (sun).
+// Task 8 reads this with sleepEventsLoad() to overlay moon/sun markers on the
+// 24h battery chart. Reuses battLogFs()/battLogOnSd() for the SD-vs-SPIFFS
+// board split — no raw SD.* calls here; the selectors keep it board-safe.
+struct SleepEvent { uint32_t epoch; uint8_t entering; };   // entering: 1=moon, 0=sun
+static fs::FS&      sleepEvtFs()    { return battLogFs(); }
+static const char*  sleepEvtPath()  { return battLogOnSd() ? "/meshcomod/sleep_events.log" : "/sleep_events.log"; }
+static const char*  sleepEvtTmp()   { return battLogOnSd() ? "/meshcomod/sleep_events.tmp" : "/sleep_events.tmp"; }
+static const uint32_t k_sleep_evt_keep_secs = 24u * 60u * 60u;  // 24h window (mirrors battery log)
+
+// Prune records older than 24h from the sleep events file. Uses the same
+// tmp-rewrite-then-rename idiom as batteryLogAppend to keep memory cost minimal
+// (one short String per line). Called lazily on every append and load.
+static void sleepEvtPrune(uint32_t now_epoch) {
+  if (now_epoch == 0) return;                              // no valid clock yet
+  fs::FS& fs = sleepEvtFs();
+  File rf = fs.open(sleepEvtPath(), FILE_READ);
+  if (!rf) return;                                         // nothing to prune
+  File wf = fs.open(sleepEvtTmp(), FILE_WRITE);
+  if (!wf) { rf.close(); return; }
+  while (rf.available()) {
+    String ln = rf.readStringUntil('\n');
+    if (ln.length() == 0) continue;
+    const uint32_t e = (uint32_t)strtoul(ln.c_str(), nullptr, 10);
+    if (e != 0 && now_epoch > e && (now_epoch - e) > k_sleep_evt_keep_secs) continue;
+    wf.print(ln); wf.print('\n');
+  }
+  rf.close(); wf.close();
+  fs.remove(sleepEvtPath());
+  fs.rename(sleepEvtTmp(), sleepEvtPath());
+}
+
+// Append one regime-transition record and prune records older than 24h.
+// Registered via touchSleep::onTransition(sleepEvtOnTransition) in
+// uiInstallTouchSleepHooks so it fires on every sleep/wake boundary.
+static void sleepEvtOnTransition(uint32_t epoch, bool entering) {
+  if (battLogOnSd()) markSdIo();
+  // Prune stale records before appending so the file stays bounded.
+  sleepEvtPrune(epoch);
+  File f = sleepEvtFs().open(sleepEvtPath(), FILE_APPEND);
+  if (!f) return;
+  f.printf("%lu,%d\n", (unsigned long)epoch, entering ? 1 : 0);
+  f.close();
+}
+
+// Load sleep events whose epoch >= since_epoch into out[0..cap-1], sets n.
+// Prunes the file to 24h on the way through (same pass; free since we read
+// line by line). Returns true if the file existed and was parsed (even if n==0).
+// Task 8 calls this when building the battery chart to get the moon/sun markers.
+bool sleepEventsLoad(SleepEvent* out, int cap, int& n, uint32_t since_epoch) {
+  n = 0;
+  const uint32_t now_epoch = (uint32_t)time(nullptr);
+  if (battLogOnSd()) markSdIo();
+  // Run the prune pass first so stale records don't land in the chart.
+  sleepEvtPrune(now_epoch);
+  fs::FS& fs = sleepEvtFs();
+  File f = fs.open(sleepEvtPath(), FILE_READ);
+  if (!f) return false;
+  while (f.available() && n < cap) {
+    String ln = f.readStringUntil('\n');
+    if (ln.length() == 0) continue;
+    char* comma = strchr(const_cast<char*>(ln.c_str()), ',');
+    if (!comma) continue;
+    const uint32_t e   = (uint32_t)strtoul(ln.c_str(), nullptr, 10);
+    const uint8_t  ent = (uint8_t)strtoul(comma + 1, nullptr, 10);
+    if (e < since_epoch) continue;
+    out[n++] = SleepEvent{ e, ent };
+  }
+  f.close();
+  return true;
+}
+
 static void batteryChartClose() {
   if (s_batt_chart_root) { lv_obj_del(s_batt_chart_root); s_batt_chart_root = nullptr; }
 }
@@ -22842,6 +22916,10 @@ static void uiInstallTouchSleepHooks() {
   h.nextWakeForcingDueMs = tsNextWakeForcingDueMs;
   h.epochNow = tsEpochNow;
   touchSleep::begin(h);
+  // Register the persistent event log as the regime-transition consumer.
+  // sleepEvtOnTransition appends a moon/sun record so Task 8 can overlay
+  // markers on the 24h battery chart without requiring any in-memory state.
+  touchSleep::onTransition(sleepEvtOnTransition);
 }
 
 #if defined(HAS_TDECK_GT911)
