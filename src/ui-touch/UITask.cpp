@@ -22635,7 +22635,7 @@ static bool tsMeshIdle()   { return false; }   // Task 2: radio idle + send queu
 static uint32_t tsNextWakeForcingDueMs(uint32_t) { return UINT32_MAX; } // Task 2: advert/alarm
 static uint32_t tsEpochNow() { return (uint32_t)time(nullptr); }
 
-void uiInstallTouchSleepHooks() {
+static void uiInstallTouchSleepHooks() {
   touchSleep::Hooks h{};
   h.screenOff = tsScreenOff;  h.noClient = tsNoClient;
   h.wifiOff = tsWifiOff;      h.bleOff = tsBleOff;
