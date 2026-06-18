@@ -564,6 +564,7 @@ struct GlobalStatusBar {
   lv_obj_t* left_label;
   lv_obj_t* conn_icon;       // Wi-Fi glyph
   lv_obj_t* ble_icon;        // Bluetooth glyph (separate from Wi-Fi)
+  lv_obj_t* sleep_icon;      // idle light-sleep readiness indicator (T-Deck only)
   lv_obj_t* sd_icon;         // microSD read/write activity LED (left of Wi-Fi)
   lv_obj_t* async_icon;      // async mesh-request spinner glyph (centre, transient)
   lv_obj_t* clock;
@@ -5741,6 +5742,21 @@ static void clock12hToggleCb(lv_event_t* e) {
 }
 
 // Hard-lock (not just dim) when the screen idles off, so the touchscreen is
+#if defined(HAS_TDECK_GT911)
+// Toggle idle light-sleep via the Settings row. Updates NVS, the live
+// touchSleep state, and the status-bar icon in one shot (mirrors lockOnScreenOffToggleCb).
+static void sleepIdleToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetSleepIdle(on);
+#endif
+  touchSleep::setEnabled(on);
+  updateGlobalStatusBar();
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Idle sleep enabled") : TR("Idle sleep disabled"), 1200);
+}
+#endif
+
 // inert until a deliberate unlock. Cached in s_lock_on_screen_off so the loop's
 // idle check never hits NVS.
 static void lockOnScreenOffToggleCb(lv_event_t* e) {
@@ -6435,6 +6451,29 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, lockOnScreenOffToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
+
+#if defined(HAS_TDECK_GT911)
+  /* Idle light-sleep: park the CPU in light sleep while the screen is off,
+     no clients are connected, and all radios are quiet. The SX1262 DIO1 IRQ
+     (GPIO45) wakes on each received packet; RAM / LVGL UI survive (light sleep
+     only, NOT deep sleep). */
+  {
+    // Toggle row — initial state from NVS.
+    int h = settingsRowLabel(body, y, 6, "Idle light-sleep", COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (touchPrefsGetSleepIdle()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(sw, sleepIdleToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+
+    // Static informational caption: why deep sleep is not available.
+    y += settingsRowLabel(body, y, 0,
+        TR("Deep sleep unavailable — LoRa IRQ is on GPIO45, outside the RTC wake domain"),
+        COLOR_SUB, &g_font_12, 0) + 6;
+  }
+#endif
 
   }
 
@@ -17242,8 +17281,11 @@ static void applyMapChrome(bool on) {
     if (g_statusbar.batt_icon)  lv_obj_set_style_text_color(g_statusbar.batt_icon, fg, LV_PART_MAIN);
     if (g_statusbar.batt_pct)   lv_obj_set_style_text_color(g_statusbar.batt_pct, fg_sub, LV_PART_MAIN);
     if (g_statusbar.clock)      lv_obj_set_style_text_color(g_statusbar.clock, fg_sub, LV_PART_MAIN);
-    if (g_statusbar.conn_icon)  lv_obj_set_style_text_color(g_statusbar.conn_icon, fg_sub, LV_PART_MAIN);
-    if (g_statusbar.ble_icon)   lv_obj_set_style_text_color(g_statusbar.ble_icon, fg_sub, LV_PART_MAIN);
+    if (g_statusbar.conn_icon)   lv_obj_set_style_text_color(g_statusbar.conn_icon,  fg_sub, LV_PART_MAIN);
+    if (g_statusbar.ble_icon)    lv_obj_set_style_text_color(g_statusbar.ble_icon,   fg_sub, LV_PART_MAIN);
+#if defined(HAS_TDECK_GT911)
+    if (g_statusbar.sleep_icon)  lv_obj_set_style_text_color(g_statusbar.sleep_icon, fg_sub, LV_PART_MAIN);
+#endif
   }
   // ---- Tab bar (bottom menu) — translucent so the map shows through ----
   if (g_lv.tabview) {
@@ -22652,6 +22694,20 @@ static uint32_t tsNextWakeForcingDueMs(uint32_t now_ms) {
 }
 static uint32_t tsEpochNow() { return (uint32_t)time(nullptr); }
 
+// tsBlockReason: returns nullptr when the gate would pass once the screen dims
+// (i.e. the device is ready to idle-sleep); else returns the highest-priority
+// blocking condition as a human-readable string for the status-bar toast.
+// "feature disabled" is NOT a blocking reason — the caller hides the icon instead.
+static const char* tsBlockReason() {
+  if (!touchSleep::enabled())  return nullptr;          // hidden, not blocked
+  if (!tsOnBattery())          return TR("USB powered");
+  if (!tsWifiOff())            return TR("Wi-Fi on");
+  if (!tsBleOff())             return TR("BLE on");
+  if (!tsNoClient())           return TR("client connected");
+  if (!tsMeshIdle())           return TR("mesh busy");
+  return nullptr;   // ready — only screen-off remains for the gate to pass
+}
+
 static void uiInstallTouchSleepHooks() {
   touchSleep::Hooks h{};
   h.screenOff = tsScreenOff;  h.noClient = tsNoClient;
@@ -22661,6 +22717,17 @@ static void uiInstallTouchSleepHooks() {
   h.epochNow = tsEpochNow;
   touchSleep::begin(h);
 }
+
+#if defined(HAS_TDECK_GT911)
+// Tap on the sleep readiness icon: toast the current blocking reason so the
+// user knows WHY the device won't idle-sleep yet (mirrors batteryTapCb shape).
+static void sleepIconTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!g_lv.task) return;
+  const char* reason = tsBlockReason();
+  g_lv.task->showAlert(reason ? reason : TR("Sleep ready"), 1600);
+}
+#endif
 
 // Build the always-on status bar. Called once from UITask::begin after
 // lv_init. Lives on lv_layer_sys so it sits above lv_layer_top (modals,
@@ -22754,6 +22821,21 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
   lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID, -111, 0);
+
+#if defined(HAS_TDECK_GT911)
+  // Idle light-sleep readiness indicator — eye-close glyph left of the clock.
+  // Visible only when the feature is enabled; accent colour = ready, grey = blocked.
+  // TODO swap to TOUCH_SYM_MOON in glyph-font task.
+  g_statusbar.sleep_icon = lv_label_create(g_statusbar.root);
+  lv_label_set_text(g_statusbar.sleep_icon, LV_SYMBOL_EYE_CLOSE);
+  lv_obj_set_style_text_color(g_statusbar.sleep_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.sleep_icon, &g_font_12, LV_PART_MAIN);
+  lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -145, 0);
+  lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);     // hidden until feature is on
+  lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_ext_click_area(g_statusbar.sleep_icon, 8);
+  lv_obj_add_event_cb(g_statusbar.sleep_icon, sleepIconTapCb, LV_EVENT_CLICKED, nullptr);
+#endif
 
   // microSD read/write activity LED — a small amber dot in the gap just left of
   // the Wi-Fi glyph. Hidden when idle; UITask::loop lights it for ~180 ms after
@@ -22949,6 +23031,25 @@ static void updateGlobalStatusBar() {
       lv_obj_clear_flag(g_statusbar.ble_icon, LV_OBJ_FLAG_HIDDEN);
     } else {
       lv_obj_add_flag(g_statusbar.ble_icon, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+#endif
+
+#if defined(HAS_TDECK_GT911)
+  // ---- Idle light-sleep icon ---- (T-Deck only; predicates live in the same
+  // HAS_TDECK_GT911 build environment as the actual light-sleep execution)
+  if (g_statusbar.sleep_icon) {
+    if (!touchSleep::enabled()) {
+      // Feature off — hide entirely; no status to convey.
+      lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_clear_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);
+      const char* reason = tsBlockReason();
+      // Ready = accent colour (same warm highlight used for active glyphs elsewhere
+      // in the bar). Blocked = muted grey (COLOR_SUB) so it reads as "paused".
+      lv_obj_set_style_text_color(g_statusbar.sleep_icon,
+          lv_color_hex(reason == nullptr ? COLOR_ACCENT : (uint32_t)COLOR_SUB),
+          LV_PART_MAIN);
     }
   }
 #endif
