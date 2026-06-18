@@ -22628,11 +22628,25 @@ static void takeScreenshotToSd() {
 // false for now — Task 2 wires the real predicates.
 static bool tsScreenOff()  { return g_lv.task && g_lv.task->isScreenOff(); }
 static bool tsNoClient()   { return the_mesh.getProtoNumClients() == 0; }   // public accessor (proto_num_clients is private)
-static bool tsWifiOff()    { return false; }   // Task 2: real WiFi-off state
-static bool tsBleOff()     { return false; }   // Task 2: real BLE-off state
-static bool tsOnBattery()  { return false; }   // Task 2: real on-battery state
-static bool tsMeshIdle()   { return false; }   // Task 2: radio idle + send queue empty
-static uint32_t tsNextWakeForcingDueMs(uint32_t) { return UINT32_MAX; } // Task 2: advert/alarm
+// tsWifiOff: true when WiFi STA is not connected (same bool that shows the Wi-Fi glyph
+// in updateGlobalStatusBar — wifi_up = WiFi.status() == WL_CONNECTED).
+static bool tsWifiOff()    { return WiFi.status() != WL_CONNECTED; }
+// tsBleOff: true when no BLE capability is enabled (mirrors the ble_up flag in
+// updateGlobalStatusBar — hasBleCapability() && isBleEnabled()).
+static bool tsBleOff()     {
+  return !(g_lv.task && g_lv.task->hasBleCapability() && g_lv.task->isBleEnabled());
+}
+// tsOnBattery: true when NOT charging (mirrors the charging bool in updateGlobalStatusBar
+// — batteryIsCharging(batteryMvSmoothed())).
+static bool tsOnBattery()  { return !batteryIsCharging(batteryMvSmoothed()); }
+// tsMeshIdle: true when no outbound packets are queued and no dirty contacts expiry is
+// pending — uses hasPendingWork() which checks _mgr->getOutboundTotal() + dirty_contacts_expiry.
+static bool tsMeshIdle()   { return !the_mesh.hasPendingWork(); }
+// tsNextWakeForcingDueMs: the advert probe timer (s_sig_probe_at) is a static local
+// inside UITask::loop — not accessible here.  Return UINT32_MAX so the MAX_SLEEP_MS
+// ceiling (5 min, matching the default probe cadence) governs the sleep budget.
+// No clock-alarm feature exists in this firmware yet.
+static uint32_t tsNextWakeForcingDueMs(uint32_t) { return UINT32_MAX; }
 static uint32_t tsEpochNow() { return (uint32_t)time(nullptr); }
 
 static void uiInstallTouchSleepHooks() {
