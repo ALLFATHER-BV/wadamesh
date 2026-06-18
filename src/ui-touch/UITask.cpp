@@ -23002,9 +23002,11 @@ static bool tsBleOff()     {
 // tsOnBattery: true when NOT charging (mirrors the charging bool in updateGlobalStatusBar
 // — batteryIsCharging(batteryMvSmoothed())).
 static bool tsOnBattery()  { return !batteryIsCharging(batteryMvSmoothed()); }
-// tsMeshIdle: true when no outbound packets are queued and no dirty contacts expiry is
-// pending — uses hasPendingWork() which checks _mgr->getOutboundTotal() + dirty_contacts_expiry.
-static bool tsMeshIdle()   { return !the_mesh.hasPendingWork(); }
+// tsMeshIdle: true when the radio is NOT mid-receive (preamble→RxDone race guarded),
+// AND no outbound packets are queued / no dirty contacts expiry is pending.
+// hasPendingWork() checks _mgr->getOutboundTotal() + dirty_contacts_expiry.
+// isRadioReceiving() delegates to Dispatcher::_radio->isReceiving() (RadioLibWrapper override).
+static bool tsMeshIdle()   { return !the_mesh.hasPendingWork() && !the_mesh.isRadioReceiving(); }
 // tsNextWakeForcingDueMs: advert/sig-probe is the only wake-forcing deadline today;
 // clock alarms TBD.  s_sig_probe_at is promoted to file scope so we can read it here.
 static uint32_t tsNextWakeForcingDueMs(uint32_t now_ms) {

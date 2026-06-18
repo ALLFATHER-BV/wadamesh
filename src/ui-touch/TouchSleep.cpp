@@ -2,6 +2,7 @@
 #include <esp_sleep.h>
 #include <esp_timer.h>
 #include <driver/gpio.h>
+#include <esp_task_wdt.h>
 
 // PIN_TOUCH_INT is defined as a compile-unit fallback in TDeckTouch.cpp (not in
 // platformio.ini or a shared header). Mirror the same #ifndef guard here so
@@ -87,7 +88,9 @@ void loopEnd(uint32_t now_ms) {
   esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_ON);
 
   const uint64_t t0 = esp_timer_get_time();
-  esp_light_sleep_start();
+  esp_task_wdt_reset();   // feed before sleep: light sleep can last many minutes,
+  esp_light_sleep_start(); // which would starve TWDT if loopTask is subscribed.
+  esp_task_wdt_reset();   // feed after wake: pick up immediately on resume.
   g_acc_sleep_us += (esp_timer_get_time() - t0);
 
   // classify wake
