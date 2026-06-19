@@ -10805,6 +10805,38 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_text_font(cpul, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(cpul, lv_color_hex(s_batt_show_cpu ? 0xFFFFFF : COLOR_SUB), LV_PART_MAIN);
   lv_obj_center(cpul);
+
+  // ---- Idle light-sleep stats (snapshot mirror of the Lock-settings diag; the
+  // chart itself is a snapshot too, so this refreshes each time the window opens).
+  // Same two lines as refreshSleepDiag(): state / wakes / % asleep, then last-wake. ----
+  by += 8;
+  lv_obj_t* slph = lv_label_create(card);
+  lv_label_set_text(slph, TR("Idle light-sleep"));
+  lv_obj_set_style_text_font(slph, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(slph, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(slph, 0, by);
+  by += 18;
+
+  char slp1[64];
+  snprintf(slp1, sizeof slp1, "%s \xc2\xb7 wakes %lu \xc2\xb7 asleep %u%%",
+           touchSleep::isSleeping() ? "sleeping" : "awake",
+           (unsigned long)touchSleep::wakeCount(),
+           (unsigned)touchSleep::pctAsleep());
+  lv_obj_t* slp1l = lv_label_create(card);
+  lv_label_set_text(slp1l, slp1);
+  lv_obj_set_style_text_font(slp1l, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(slp1l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_width(slp1l, cardw - 20);
+  lv_label_set_long_mode(slp1l, LV_LABEL_LONG_WRAP);
+  lv_obj_set_pos(slp1l, 0, by);
+  by += 18;
+
+  lv_obj_t* slp2l = lv_label_create(card);
+  lv_label_set_text_fmt(slp2l, "%s%s", TR("last wake: "), tsWakeReasonStr(touchSleep::lastWakeReason()));
+  lv_obj_set_style_text_font(slp2l, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(slp2l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(slp2l, 0, by);
+  by += 18;
 }
 
 static void batteryTapCb(lv_event_t* e) {
