@@ -3,6 +3,7 @@
 #include <esp_timer.h>
 #include <driver/gpio.h>
 #include <esp_task_wdt.h>
+#include <freertos/FreeRTOS.h>
 
 // PIN_TOUCH_INT is defined as a compile-unit fallback in TDeckTouch.cpp (not in
 // platformio.ini or a shared header). Mirror the same #ifndef guard here so
@@ -30,6 +31,10 @@ namespace {
     { (gpio_num_t)PIN_TOUCH_INT, GPIO_INTR_LOW_LEVEL  },   // GT911 INT     -> GPIO16
   #endif
   };
+
+  // Serialises sleep entry and lets us disable the level wakeups on wake while
+  // interrupts are still masked (see loopEnd) — mirrors MeshCore ESP32Board.
+  portMUX_TYPE s_sleep_mux = portMUX_INITIALIZER_UNLOCKED;
 
   uint64_t g_acc_sleep_us = 0;
 
@@ -78,31 +83,56 @@ void loopEnd(uint32_t now_ms) {
   if (budget > MAX_SLEEP_MS) budget = MAX_SLEEP_MS;
   if (budget < MIN_SLEEP_MS) budget = MIN_SLEEP_MS;
 
-  // arm wakes
+  // Keep the flash/PSRAM power rail alive across light sleep (LVGL buffers live
+  // in PSRAM; powering down VDD_SPI would corrupt them).
+  esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_ON);
   esp_sleep_enable_timer_wakeup((uint64_t)budget * 1000ULL);
+  esp_task_wdt_reset();   // feed the Task WDT before sleeping (no-op if loopTask isn't subscribed)
+
+  // --- Flood-safe light-sleep entry (mirrors MeshCore ESP32Board::sleep) ---
+  // The wake pins are LEVEL-triggered. If a pin is still at its trigger level
+  // when esp_light_sleep_start() returns (e.g. DIO1 stays HIGH until the LoRa
+  // packet is read), the level interrupt FLOODS the CPU and the Interrupt
+  // Watchdog (300 ms) fires -> "Int reset". So we run inside a critical section
+  // and disable the level wakeups on wake BEFORE interrupts are re-enabled.
+  portENTER_CRITICAL(&s_sleep_mux);
+
+  // Skip the sleep entirely if a wake pin is already at its trigger level —
+  // sleeping would return instantly and thrash (e.g. a LoRa packet pending on
+  // DIO1, or a finger still on the screen). We'll retry next loop.
+  bool already_triggered = false;
+  for (const auto& w : kWakePins) {
+    const int lvl = gpio_get_level(w.pin);
+    if ((w.level == GPIO_INTR_HIGH_LEVEL && lvl) ||
+        (w.level == GPIO_INTR_LOW_LEVEL  && !lvl)) { already_triggered = true; break; }
+  }
+  if (already_triggered) { portEXIT_CRITICAL(&s_sleep_mux); return; }
+
   esp_sleep_enable_gpio_wakeup();
   for (const auto& w : kWakePins) gpio_wakeup_enable(w.pin, w.level);
 
-  // keep flash/PSRAM power domain alive across light sleep (LVGL buffers are in
-  // PSRAM; losing VDD_SPI would corrupt them — see spec §13 / design note)
-  esp_sleep_pd_config(ESP_PD_DOMAIN_VDDSDIO, ESP_PD_OPTION_ON);
-
   const uint64_t t0 = esp_timer_get_time();
-  esp_task_wdt_reset();   // feed before sleep: light sleep can last many minutes,
-  esp_light_sleep_start(); // which would starve TWDT if loopTask is subscribed.
-  esp_task_wdt_reset();   // feed after wake: pick up immediately on resume.
-  g_acc_sleep_us += (esp_timer_get_time() - t0);
+  esp_light_sleep_start();
+  const uint64_t slept = esp_timer_get_time() - t0;
 
-  // classify wake
-  switch (esp_sleep_get_wakeup_cause()) {
+  // Capture the wake cause + pin levels, then disable the level wakeups while
+  // still masked so the (still-asserted) trigger level cannot flood interrupts.
+  const esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+  const bool dio1_hi = gpio_get_level((gpio_num_t)P_LORA_DIO_1);
+  const bool btn_lo  = !gpio_get_level((gpio_num_t)PIN_USER_BTN);
+  for (const auto& w : kWakePins) gpio_wakeup_disable(w.pin);
+
+  portEXIT_CRITICAL(&s_sleep_mux);
+
+  esp_task_wdt_reset();   // feed again on resume
+  g_acc_sleep_us += slept;
+
+  switch (cause) {
     case ESP_SLEEP_WAKEUP_TIMER: g_last_reason = WakeReason::Timer; break;
-    case ESP_SLEEP_WAKEUP_GPIO: {
+    case ESP_SLEEP_WAKEUP_GPIO:
       // DIO1 high => a LoRa packet is waiting; button low => user button; else touch
-      if      (gpio_get_level((gpio_num_t)P_LORA_DIO_1))      g_last_reason = WakeReason::Packet;
-      else if (!gpio_get_level((gpio_num_t)PIN_USER_BTN))      g_last_reason = WakeReason::Button;
-      else                                                      g_last_reason = WakeReason::Touch;
+      g_last_reason = dio1_hi ? WakeReason::Packet : (btn_lo ? WakeReason::Button : WakeReason::Touch);
       break;
-    }
     default: g_last_reason = WakeReason::Other; break;
   }
   if (g_last_reason != WakeReason::Timer) g_wake_count++;
