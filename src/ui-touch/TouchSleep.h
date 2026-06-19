@@ -1,10 +1,11 @@
 #pragma once
 #include <stdint.h>
 
-// Idle light-sleep controller for the T-Deck (ESP32-S3). Parks the CPU in light
-// sleep between events while the SX1262 keeps listening; its DIO1 IRQ (GPIO45)
-// wakes us on every packet. RAM / LVGL UI / mesh state all survive (this is
-// light sleep, NOT deep sleep). See .notes/2026-06-18-light-sleep-rx-design.md.
+// Idle power-save controller for the T-Deck (ESP32-S3). When the device is parked
+// (screen off, on battery, standalone) it throttles the main loop with vTaskDelay
+// so the FreeRTOS idle task can halt the CPU between ticks. (Real esp_light_sleep
+// trips the Interrupt Watchdog in this dual-core / no-PM build — see TouchSleep.cpp
+// and .notes/2026-06-18-light-sleep-rx-design.md for the full story.)
 //
 // Decoupled from UI/mesh by predicate hooks supplied by the integration layer
 // (UITask.cpp), so this module pulls in no UI/mesh/LVGL headers.

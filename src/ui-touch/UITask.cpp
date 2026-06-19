@@ -5699,7 +5699,7 @@ static void refreshSleepDiag(unsigned long now) {
   next = now + 1000;
 
   char buf[64];
-  snprintf(buf, sizeof buf, "%s · wakes %lu · asleep %u%%",
+  snprintf(buf, sizeof buf, "%s · cycles %lu · asleep %u%%",
            touchSleep::isSleeping() ? "sleeping" : "awake",
            (unsigned long)touchSleep::wakeCount(),
            (unsigned)touchSleep::pctAsleep());
@@ -6513,13 +6513,13 @@ static void buildDeviceSettings(int sec) {
   }
 
 #if defined(HAS_TDECK_GT911)
-  /* Idle light-sleep: park the CPU in light sleep while the screen is off,
+  /* Idle power-save: park the CPU in light sleep while the screen is off,
      no clients are connected, and all radios are quiet. The SX1262 DIO1 IRQ
      (GPIO45) wakes on each received packet; RAM / LVGL UI survive (light sleep
      only, NOT deep sleep). */
   {
     // Toggle row — initial state from NVS.
-    int h = settingsRowLabel(body, y, 6, "Idle light-sleep", COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6, "Idle power-save", COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -6538,7 +6538,7 @@ static void buildDeviceSettings(int sec) {
 
     // Static informational caption: why deep sleep is not available.
     y += settingsRowLabel(body, y, 0,
-        TR("Deep sleep unavailable — LoRa IRQ is on GPIO45, outside the RTC wake domain"),
+        TR("Throttles the CPU when idle (screen off, on battery, standalone) to save power"),
         COLOR_SUB, &g_font_12, 0) + 6;
 
     // Idle-sleep instrumentation: live counters (state · wake count · % asleep)
@@ -6547,7 +6547,7 @@ static void buildDeviceSettings(int sec) {
     // matching the same live-label pattern used for the About/sysinfo block.
     {
       char buf[64];
-      snprintf(buf, sizeof buf, "%s · wakes %lu · asleep %u%%",
+      snprintf(buf, sizeof buf, "%s · cycles %lu · asleep %u%%",
                touchSleep::isSleeping() ? "sleeping" : "awake",
                (unsigned long)touchSleep::wakeCount(),
                (unsigned)touchSleep::pctAsleep());
@@ -10806,19 +10806,19 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_text_color(cpul, lv_color_hex(s_batt_show_cpu ? 0xFFFFFF : COLOR_SUB), LV_PART_MAIN);
   lv_obj_center(cpul);
 
-  // ---- Idle light-sleep stats (snapshot mirror of the Lock-settings diag; the
+  // ---- Idle power-save stats (snapshot mirror of the Lock-settings diag; the
   // chart itself is a snapshot too, so this refreshes each time the window opens).
   // Same two lines as refreshSleepDiag(): state / wakes / % asleep, then last-wake. ----
   by += 8;
   lv_obj_t* slph = lv_label_create(card);
-  lv_label_set_text(slph, TR("Idle light-sleep"));
+  lv_label_set_text(slph, TR("Idle power-save"));
   lv_obj_set_style_text_font(slph, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(slph, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_pos(slph, 0, by);
   by += 18;
 
   char slp1[64];
-  snprintf(slp1, sizeof slp1, "%s \xc2\xb7 wakes %lu \xc2\xb7 asleep %u%%",
+  snprintf(slp1, sizeof slp1, "%s \xc2\xb7 cycles %lu \xc2\xb7 asleep %u%%",
            touchSleep::isSleeping() ? "sleeping" : "awake",
            (unsigned long)touchSleep::wakeCount(),
            (unsigned)touchSleep::pctAsleep());
@@ -23017,7 +23017,7 @@ static void takeScreenshotToSd() {
 #endif
 }
 
-// ---- Idle light-sleep hooks (see TouchSleep.h) ----
+// ---- Idle power-save hooks (see TouchSleep.h) ----
 // Called by touchSleep::gatePasses(); each hook probes the relevant subsystem.
 static bool tsScreenOff()  { return g_lv.task && g_lv.task->isScreenOff(); }
 static bool tsNoClient()   { return the_mesh.getProtoNumClients() == 0; }   // public accessor (proto_num_clients is private)
@@ -23195,7 +23195,7 @@ static void buildGlobalStatusBar() {
   lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID, -111, 0);
 
 #if defined(HAS_TDECK_GT911)
-  // Idle light-sleep readiness indicator — eye-close glyph left of the clock.
+  // Idle power-save readiness indicator — eye-close glyph left of the clock.
   // Visible only when the feature is enabled; accent colour = ready, grey = blocked.
   g_statusbar.sleep_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.sleep_icon, TOUCH_SYM_MOON);
@@ -23410,7 +23410,7 @@ static void updateGlobalStatusBar() {
 #endif
 
 #if defined(HAS_TDECK_GT911)
-  // ---- Idle light-sleep icon ---- (T-Deck only; predicates live in the same
+  // ---- Idle power-save icon ---- (T-Deck only; predicates live in the same
   // HAS_TDECK_GT911 build environment as the actual light-sleep execution)
   if (g_statusbar.sleep_icon) {
     if (!touchSleep::enabled()) {
