@@ -23169,7 +23169,10 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.sleep_icon, TOUCH_SYM_MOON);
   lv_obj_set_style_text_color(g_statusbar.sleep_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.sleep_icon, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -145, 0);
+  // Sits LEFT of the right-side cluster so it never overlaps the clock, which
+  // lives at -126 (or -94 charging, or centred when the name is hidden). The
+  // charging shift slides the cluster rightward, away from this fixed slot.
+  lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -185, 0);
   lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);     // hidden until feature is on
   lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(g_statusbar.sleep_icon, 8);
