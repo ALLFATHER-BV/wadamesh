@@ -301,7 +301,6 @@ extern "C" const lv_font_t zoom_font;
 // glyphs render at any of those sizes (the status-bar sleep icon uses g_font_12;
 // the battery-chart sleep markers will use g_font_14).
 extern "C" const lv_font_t sleepicons_font;
-#define TOUCH_SYM_SUN  "\xEF\x86\x85"   /* U+F185 sun */
 #define TOUCH_SYM_MOON "\xEF\x86\x86"   /* U+F186 moon */
 
 // Extras fallback fonts — em-dash (U+2014), ellipsis (U+2026), middle dot
@@ -10328,112 +10327,6 @@ static void batteryLogTick(uint32_t now_ms) {
                    (uint16_t)getCpuFrequencyMhz());
 }
 
-// ----- Sleep/wake event log (companion to the battery chart) -----
-// One CSV record per regime transition: "<epoch>,<entering>\n"
-// entering=1 = went to sleep (moon), entering=0 = woke to activity (sun).
-// Task 8 reads this with sleepEventsLoad() to overlay moon/sun markers on the
-// 24h battery chart. Reuses battLogFs()/battLogOnSd() for the SD-vs-SPIFFS
-// board split — no raw SD.* calls here; the selectors keep it board-safe.
-struct SleepEvent { uint32_t epoch; uint8_t entering; };   // entering: 1=moon, 0=sun
-static fs::FS&      sleepEvtFs()    { return battLogFs(); }
-static const char*  sleepEvtPath()  { return battLogOnSd() ? "/meshcomod/sleep_events.log" : "/sleep_events.log"; }
-static const char*  sleepEvtTmp()   { return battLogOnSd() ? "/meshcomod/sleep_events.tmp" : "/sleep_events.tmp"; }
-static const uint32_t k_sleep_evt_keep_secs = 24u * 60u * 60u;  // 24h window (mirrors battery log)
-
-// Prune records older than 24h from the sleep events file. Uses the same
-// tmp-rewrite-then-rename idiom as batteryLogAppend to keep memory cost minimal
-// (one short String per line). Called lazily on every append and load.
-static void sleepEvtPrune(uint32_t now_epoch) {
-  if (now_epoch == 0) return;                              // no valid clock yet
-  fs::FS& fs = sleepEvtFs();
-  File rf = fs.open(sleepEvtPath(), FILE_READ);
-  if (!rf) return;                                         // nothing to prune
-  File wf = fs.open(sleepEvtTmp(), FILE_WRITE);
-  if (!wf) { rf.close(); return; }
-  while (rf.available()) {
-    String ln = rf.readStringUntil('\n');
-    if (ln.length() == 0) continue;
-    const uint32_t e = (uint32_t)strtoul(ln.c_str(), nullptr, 10);
-    if (e != 0 && now_epoch > e && (now_epoch - e) > k_sleep_evt_keep_secs) continue;
-    wf.print(ln); wf.print('\n');
-  }
-  rf.close(); wf.close();
-  fs.remove(sleepEvtPath());
-  if (fs.rename(sleepEvtTmp(), sleepEvtPath()) != 0) {
-    // rename failed — leave .tmp in place so data survives as recovery copy;
-    // do NOT delete it.  Caller already called markSdIo() if on SD.
-  }
-}
-
-// Append one regime-transition record and prune records older than 24h.
-// Registered via touchSleep::onTransition(sleepEvtOnTransition) in
-// uiInstallTouchSleepHooks so it fires on every sleep/wake boundary.
-static void sleepEvtOnTransition(uint32_t epoch, bool entering) {
-  if (battLogOnSd()) markSdIo();
-  // Prune stale records before appending so the file stays bounded.
-  sleepEvtPrune(epoch);
-  File f = sleepEvtFs().open(sleepEvtPath(), FILE_APPEND);
-  if (!f) return;
-  f.printf("%lu,%d\n", (unsigned long)epoch, entering ? 1 : 0);
-  f.close();
-}
-
-// Load sleep events whose epoch >= since_epoch into out[0..cap-1], sets n.
-// Returns the NEWEST up-to-cap in-window events in chronological order.
-// Uses a two-pass approach: pass 1 counts in-window records, pass 2 skips the
-// oldest (count - cap) of them so that out[] holds the tail of the window.
-// The 24h window is bounded to a few hundred records, so two passes are cheap.
-// Returns true if the file existed and was parsed (even if n==0).
-// out_total (optional): set to the full in-window count from pass 1, so callers
-// can compute true overflow = *out_total - cap without an extra scan.
-// Task 8 calls this once when building the battery chart to get the moon/sun markers.
-bool sleepEventsLoad(SleepEvent* out, int cap, int& n, uint32_t since_epoch,
-                     int* out_total = nullptr) {
-  n = 0;
-  const uint32_t now_epoch = (uint32_t)time(nullptr);
-  if (battLogOnSd()) markSdIo();
-  // Run the prune pass first so stale records don't land in the chart.
-  sleepEvtPrune(now_epoch);
-  fs::FS& fs = sleepEvtFs();
-
-  // Pass 1: count in-window records.
-  int count = 0;
-  {
-    File f = fs.open(sleepEvtPath(), FILE_READ);
-    if (!f) return false;
-    while (f.available()) {
-      String ln = f.readStringUntil('\n');
-      if (ln.length() == 0) continue;
-      const uint32_t e = (uint32_t)strtoul(ln.c_str(), nullptr, 10);
-      if (e < since_epoch) continue;
-      ++count;
-    }
-    f.close();
-  }
-  if (out_total) *out_total = count;
-
-  // Pass 2: skip the oldest (count - cap) in-window records, copy the rest.
-  const int skip = (count > cap) ? (count - cap) : 0;
-  int skipped = 0;
-  {
-    File f = fs.open(sleepEvtPath(), FILE_READ);
-    if (!f) return false;
-    while (f.available() && n < cap) {
-      String ln = f.readStringUntil('\n');
-      if (ln.length() == 0) continue;
-      const char* comma = strchr(ln.c_str(), ',');
-      if (!comma) continue;
-      const uint32_t e   = (uint32_t)strtoul(ln.c_str(), nullptr, 10);
-      const uint8_t  ent = (uint8_t)strtoul(comma + 1, nullptr, 10);
-      if (e < since_epoch) continue;
-      if (skipped < skip) { ++skipped; continue; }
-      out[n++] = SleepEvent{ e, ent };
-    }
-    f.close();
-  }
-  return true;
-}
-
 static void batteryChartClose() {
   if (s_batt_chart_root) { lv_obj_del(s_batt_chart_root); s_batt_chart_root = nullptr; }
 }
@@ -10459,90 +10352,6 @@ static void batteryCpuToggleCb(lv_event_t* e) {
   s_batt_show_cpu = !s_batt_show_cpu;
   batteryChartClose();
   openBatteryChartWindow();          // redraw immediately with the new visibility
-}
-
-// Build the 24h battery-voltage chart popup from the SD log.
-// Overlay moon/sun sleep-transition markers on the battery chart (DRAW_POST).
-// One marker per SleepEvent in the 24h window; capped at DRAW_CAP glyphs — if
-// more events exist, a small "+N" count badge is drawn in the top-left corner
-// instead of flooding the chart. Uses the g_font_14 fallback chain, which
-// already includes sleepicons_font (spliced in initTouchFontFallbacks).
-static const int k_draw_cap = 40;   // max individual glyphs drawn on the chart
-struct BattChartMarkerCtx {
-  lv_chart_series_t* vser;                   // the primary-Y voltage series
-  int                n;                      // number of samples in the chart (1..k_max_pts)
-  uint32_t           window_start;           // epoch of the leftmost chart sample
-  SleepEvent         evts[k_draw_cap + 1];   // pre-loaded at open; DRAW_POST does no FS I/O
-  int                loaded;                 // how many events are in evts[] (0..k_draw_cap+1)
-  int                total;                  // full in-window count (for true overflow badge)
-};
-static void battChartSleepMarkerCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_DRAW_POST) return;
-  lv_obj_t* chart = lv_event_get_target(e);
-  BattChartMarkerCtx* ctx = static_cast<BattChartMarkerCtx*>(lv_event_get_user_data(e));
-  if (!ctx || !ctx->vser || ctx->n <= 0) return;
-
-  // Events were loaded once in openBatteryChartWindow — no FS I/O here.
-  if (ctx->loaded <= 0) return;
-
-  lv_draw_ctx_t* draw_ctx = lv_event_get_draw_ctx(e);
-
-  // How many events fit before we switch to badge mode.
-  const int draw_n   = (ctx->loaded <= k_draw_cap) ? ctx->loaded : k_draw_cap;
-  // True overflow = full in-window count minus the draw cap (not just loaded-cap).
-  const int overflow = (ctx->total > k_draw_cap) ? (ctx->total - k_draw_cap) : 0;
-
-  lv_draw_label_dsc_t dsc;
-  lv_draw_label_dsc_init(&dsc);
-  dsc.font = &g_font_14;   // sleepicons_font is in the g_font_14 fallback chain
-
-  for (int i = 0; i < draw_n; ++i) {
-    // Map event epoch → nearest 5-min sample index into the chart array.
-    const int32_t raw_idx =
-        (int32_t)lround((double)(ctx->evts[i].epoch - ctx->window_start) / 300.0);
-    const uint16_t idx = (uint16_t)(raw_idx < 0 ? 0
-                         : raw_idx >= ctx->n ? (uint16_t)(ctx->n - 1)
-                         : (uint16_t)raw_idx);
-
-    // Ask the chart where sample idx plots (coords relative to chart->coords.x1/y1).
-    lv_point_t p;
-    lv_chart_get_point_pos_by_id(chart, ctx->vser, idx, &p);
-
-    // Convert to absolute screen coordinates.
-    const lv_coord_t ax = chart->coords.x1 + p.x;
-    const lv_coord_t ay = chart->coords.y1 + p.y;
-
-    // Moon (entering sleep) in muted blue, sun (woke) in warm amber — distinct
-    // from the chart's blue battery line and neutral enough at small size.
-    dsc.color = ctx->evts[i].entering
-                ? lv_color_hex(0x6A9FD8)   // moon: muted sky-blue
-                : lv_color_hex(0xD4A84B);  // sun:  warm amber
-
-    const char* glyph = ctx->evts[i].entering ? TOUCH_SYM_MOON : TOUCH_SYM_SUN;
-
-    // Centre a 14 px glyph on the data point: the glyph cell is ~10 px wide
-    // and 14 px tall, so shift left/up by half to land its visual centre on (ax, ay).
-    lv_area_t area;
-    area.x1 = ax - 7;
-    area.x2 = ax + 7;
-    area.y1 = ay - 9;
-    area.y2 = ay + 5;
-    lv_draw_label(draw_ctx, &dsc, &area, glyph, nullptr);
-  }
-
-  // If we loaded more events than the cap allows, show a count badge so the user
-  // knows the chart is truncated but the canvas isn't flooded.
-  if (overflow > 0) {
-    char badge[16];
-    lv_snprintf(badge, sizeof badge, "+%d", overflow);
-    dsc.color = lv_color_hex(COLOR_SUB);
-    lv_area_t ba;
-    ba.x1 = chart->coords.x1 + 4;
-    ba.x2 = chart->coords.x1 + 40;
-    ba.y1 = chart->coords.y1 + 4;
-    ba.y2 = chart->coords.y1 + 18;
-    lv_draw_label(draw_ctx, &dsc, &ba, badge, nullptr);
-  }
 }
 
 // Reformat the battery chart's primary-Y axis ticks from raw millivolts to volts
@@ -10694,25 +10503,6 @@ static void openBatteryChartWindow() {
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y,   4, 0, 4, 1, true, 40);
   lv_obj_add_event_cb(chart, battChartTickCb, LV_EVENT_DRAW_PART_BEGIN, nullptr);
   lv_chart_series_t* vser = lv_chart_add_series(chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);   // blue battery
-  // Moon/sun sleep-transition markers drawn in the DRAW_POST pass (after the
-  // battery line is fully rendered) via battChartSleepMarkerCb. A single static
-  // ctx lives per chart window lifetime; it's recreated fresh on each open().
-  // Events are loaded HERE — once — so the DRAW_POST callback does zero FS I/O.
-  static BattChartMarkerCtx s_marker_ctx;
-  s_marker_ctx.vser         = vser;
-  s_marker_ctx.n            = n;   // actual sample count loaded from the log
-  s_marker_ctx.loaded       = 0;
-  s_marker_ctx.total        = 0;
-  {
-    const uint32_t now_ep = (uint32_t)time(nullptr);
-    if (now_ep >= 1000000) {
-      // Oldest sample epoch: leftmost point = (now - (n-1)*300) seconds ago.
-      s_marker_ctx.window_start = now_ep - (uint32_t)(n - 1) * 300u;
-      sleepEventsLoad(s_marker_ctx.evts, k_draw_cap + 1, s_marker_ctx.loaded,
-                      s_marker_ctx.window_start, &s_marker_ctx.total);
-    }
-  }
-  lv_obj_add_event_cb(chart, battChartSleepMarkerCb, LV_EVENT_DRAW_POST, &s_marker_ctx);
   // CPU MHz series is optional (toggled by the "CPU" chip next to the trash button).
   lv_chart_series_t* cser = nullptr;
   if (s_batt_show_cpu) {
@@ -23084,10 +22874,6 @@ static void uiInstallTouchSleepHooks() {
   h.nextWakeForcingDueMs = tsNextWakeForcingDueMs;
   h.epochNow = tsEpochNow;
   touchSleep::begin(h);
-  // Register the persistent event log as the regime-transition consumer.
-  // sleepEvtOnTransition appends a moon/sun record so Task 8 can overlay
-  // markers on the 24h battery chart without requiring any in-memory state.
-  touchSleep::onTransition(sleepEvtOnTransition);
 }
 
 #if defined(HAS_TDECK_GT911)
