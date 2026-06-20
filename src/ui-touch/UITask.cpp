@@ -22964,7 +22964,7 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.clock, TR("--:--"));
   lv_obj_set_style_text_color(g_statusbar.clock, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.clock, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -126, 0);   // shifted left to free a slot for the SD LED
+  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -142, 0);   // shifted left for the SD LED + sleep moon
 
   // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars).
   g_statusbar.conn_icon = lv_label_create(g_statusbar.root);
@@ -22978,7 +22978,7 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.ble_icon, TR(""));
   lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID, -111, 0);
+  lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID, -127, 0);
 
 #if defined(HAS_TDECK_GT911)
   // Idle power-save readiness indicator — eye-close glyph left of the clock.
@@ -22987,10 +22987,10 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.sleep_icon, TOUCH_SYM_MOON);
   lv_obj_set_style_text_color(g_statusbar.sleep_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.sleep_icon, &g_font_12, LV_PART_MAIN);
-  // Sits LEFT of the right-side cluster so it never overlaps the clock, which
-  // lives at -126 (or -94 charging, or centred when the name is hidden). The
-  // charging shift slides the cluster rightward, away from this fixed slot.
-  lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -185, 0);
+  // Left of the SD-activity LED (ble/clock/layout were shifted left to open this
+  // slot). Tracks the charging d-shift like the rest of the cluster, and stays clear
+  // of the async-request glyph, which rides just left of the clock.
+  lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -105, 0);
   lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);     // hidden until feature is on
   lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(g_statusbar.sleep_icon, 8);
@@ -23050,7 +23050,7 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.layout_label, TR(""));
   lv_obj_set_style_text_color(g_statusbar.layout_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.layout_label, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -166, 0);   // follows the clock's shift
+  lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -182, 0);   // follows the clock's shift
   lv_obj_add_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -23261,9 +23261,10 @@ static void updateGlobalStatusBar() {
       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -54  + d, 0);
       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -73  + d, 0);
       if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -91  + d, 0);
-      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -111 + d, 0);
-      if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_RIGHT_MID, -126 + d, 0);
-      if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -166 + d, 0);
+      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -127 + d, 0);
+      if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_RIGHT_MID, -142 + d, 0);
+      if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -182 + d, 0);
+      if (g_statusbar.sleep_icon)   lv_obj_align(g_statusbar.sleep_icon,   LV_ALIGN_RIGHT_MID, -105 + d, 0);
     }
     s_last_pct = pct;
     s_last_charging = charging;
@@ -23305,7 +23306,7 @@ static void updateGlobalStatusBar() {
     if (want != s_clk_center || (!want && charging != s_clk_chg)) {
       s_clk_center = want; s_clk_chg = charging;
       if (want) lv_obj_align(g_statusbar.clock, LV_ALIGN_CENTER, 0, 0);
-      else      lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, charging ? -94 : -126, 0);
+      else      lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, charging ? -110 : -142, 0);
       // Park the async-request spinner just LEFT of the clock wherever it lands,
       // so it never paints over the clock (incl. the centred hide-name mode).
       if (g_statusbar.async_icon)
