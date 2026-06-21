@@ -148,6 +148,11 @@ bool    touchPrefsSetHomeIsDrawer(bool on);
 bool touchPrefsGetHideNodeName();
 bool touchPrefsSetHideNodeName(bool hide);
 
+/** Show the low-key toast/chip when a contact is auto-discovered/added.
+ *  Default true (toast shown). Off keeps the diag-log line + tab badge. */
+bool touchPrefsGetNewContactToast();
+bool touchPrefsSetNewContactToast(bool on);
+
 /** Store all device data (identity/prefs/contacts/channels) on the SD card under
  *  /meshcomod instead of internal SPIFFS. T-Deck only; read at boot before data
  *  loads, so changing it requires a reboot. Default false (SPIFFS). */

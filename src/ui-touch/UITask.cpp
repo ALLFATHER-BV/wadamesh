@@ -3256,26 +3256,35 @@ static void composerAutoGrowCb(lv_event_t* e) {
 // .cpp) so a hold doesn't auto-repeat — it cleanly long-presses instead.
 static const char* const kAccA[]   = {"à","á","â","ä","ã","å"};
 static const char* const kAccA_u[] = {"À","Á","Â","Ä","Ã","Å"};
-static const char* const kAccE[]   = {"è","é","ê","ë"};
-static const char* const kAccE_u[] = {"È","É","Ê","Ë"};
+static const char* const kAccE[]   = {"è","é","ê","ë","ě"};
+static const char* const kAccE_u[] = {"È","É","Ê","Ë","Ě"};
 static const char* const kAccI[]   = {"ì","í","î","ï"};
 static const char* const kAccI_u[] = {"Ì","Í","Î","Ï"};
 static const char* const kAccO[]   = {"ò","ó","ô","ö","õ","ø"};
 static const char* const kAccO_u[] = {"Ò","Ó","Ô","Ö","Õ","Ø"};
-static const char* const kAccU[]   = {"ù","ú","û","ü"};
-static const char* const kAccU_u[] = {"Ù","Ú","Û","Ü"};
+static const char* const kAccU[]   = {"ù","ú","û","ü","ů"};
+static const char* const kAccU_u[] = {"Ù","Ú","Û","Ü","Ů"};
 static const char* const kAccN[]   = {"ñ"};
 static const char* const kAccN_u[] = {"Ñ"};
-static const char* const kAccC[]   = {"ç"};
-static const char* const kAccC_u[] = {"Ç"};
+static const char* const kAccC[]   = {"ç","č"};
+static const char* const kAccC_u[] = {"Ç","Č"};
 static const char* const kAccS[]   = {"ß","ś","š"};
 static const char* const kAccY[]   = {"ý","ÿ"};
+// Czech carons / ring — base letters that otherwise carry no Latin-1 accent.
+static const char* const kAccT[]   = {"ť"};
+static const char* const kAccT_u[] = {"Ť"};
+static const char* const kAccZ[]   = {"ž"};
+static const char* const kAccZ_u[] = {"Ž"};
+static const char* const kAccR[]   = {"ř"};
+static const char* const kAccR_u[] = {"Ř"};
 struct AccentSet { char key; const char* const* v; uint8_t n; };
 static const AccentSet kAccentSets[] = {
-  {'a',kAccA,6},{'A',kAccA_u,6},{'e',kAccE,4},{'E',kAccE_u,4},
+  {'a',kAccA,6},{'A',kAccA_u,6},{'e',kAccE,5},{'E',kAccE_u,5},
   {'i',kAccI,4},{'I',kAccI_u,4},{'o',kAccO,6},{'O',kAccO_u,6},
-  {'u',kAccU,4},{'U',kAccU_u,4},{'n',kAccN,1},{'N',kAccN_u,1},
-  {'c',kAccC,1},{'C',kAccC_u,1},{'s',kAccS,3},{'y',kAccY,2},
+  {'u',kAccU,5},{'U',kAccU_u,5},{'n',kAccN,1},{'N',kAccN_u,1},
+  {'c',kAccC,2},{'C',kAccC_u,2},{'s',kAccS,3},{'y',kAccY,2},
+  {'t',kAccT,1},{'T',kAccT_u,1},{'z',kAccZ,1},{'Z',kAccZ_u,1},
+  {'r',kAccR,1},{'R',kAccR_u,1},
 };
 static const AccentSet* accentLookup(const char* key) {
   if (!key || !key[0] || key[1]) return nullptr;   // single ASCII-char keys only
@@ -3996,7 +4005,7 @@ static const char* const k_emoji_items[] = {
   "\xF0\x9F\x92\xAF","\xE2\x9C\x85","\xE2\x9D\x8C","\xE2\x9D\x97",
   "\xE2\x9D\x93","\xE2\x9A\xA0","\xF0\x9F\x92\xA9","\xE2\xAD\x90",
   "\xF0\x9F\x8C\x9F","\xE2\x9A\xA1","\xE2\x98\x80","\xE2\x98\x81",
-  "\xE2\x9D\x84","\xE2\x98\x94","\xE2\x98\x95","\xF0\x9F\x8D\xBB",
+  "\xE2\x9D\x84","\xE2\x98\x94","\xE2\x98\x95","\xF0\x9F\x8D\xBA","\xF0\x9F\x8D\xBB",
   "\xF0\x9F\x8D\x95","\xF0\x9F\x8E\x82","\xF0\x9F\x8E\x81","\xF0\x9F\x92\xAC",
   "\xF0\x9F\x92\xA4","\xF0\x9F\x92\xA5",
   // objects
@@ -6066,6 +6075,14 @@ static void buildRadioSettings() {
   lv_obj_center(l);
 }
 
+// New-contact toast toggle (Auto-add page). Persists immediately like the
+// auto-add switches; default ON. Diag-log line + tab badge are unaffected — this
+// only gates the low-key chip in UITask::notify().
+static void toggleNewContactToastCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  touchPrefsSetNewContactToast(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+
 static void buildAutoAddSettings() {
   lv_obj_t* body = createSettingsModal("Auto-add contacts", SettingsModalKind::AutoAdd);
   NodePrefs* prefs = the_mesh.getNodePrefs();
@@ -6084,6 +6101,17 @@ static void buildAutoAddSettings() {
   mk_switch("Auto sensor", &g_set_modal.auto_sensor_sw);
   mk_switch("Overwrite oldest", &g_set_modal.auto_overwrite_sw);
   g_set_modal.manual_add_sw = nullptr;   // master "manual add" removed — per-type switches are authoritative now
+
+  // "Notify on new contact" — a UI pref (not a NodePrefs autoadd bit), so it gets
+  // its own callback + persistence rather than mk_switch's autoAddSwitchCb.
+  {
+    int h = settingsRowLabel(body, y, 6, "Notify on new contact", COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetNewContactToast()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, toggleNewContactToastCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, h + 12);
+  }
 
   lv_obj_t* hops_l = lv_label_create(body);
   lv_label_set_text(hops_l, TR("Max hops (0..64)"));
@@ -14330,6 +14358,14 @@ static void homeChartClickedCb(lv_event_t* e) {
 
 // Tap the home "Unread" line -> jump straight to the Chats inbox.
 static void homeUnreadClickedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  goToTab(CHAT_INBOX_TAB_INDEX);
+}
+
+// Status-bar unread badge (✉ N) → Chats inbox. Wired on the bar's left_label;
+// only fires while updateGlobalStatusBar has flagged the badge state CLICKABLE,
+// so non-badge left-zone states keep the bar's control-center / Back tap.
+static void statusBarUnreadCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   goToTab(CHAT_INBOX_TAB_INDEX);
 }
@@ -24165,6 +24201,11 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_color(g_statusbar.left_label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_14, LV_PART_MAIN);
   lv_obj_align(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 6, 0);
+  // Tapping the unread badge (✉ N) jumps to the Chats inbox. The CLICKABLE flag is
+  // toggled per-tick in updateGlobalStatusBar so only the badge state intercepts the
+  // tap; every other left-zone state falls through to the bar's control-center tap.
+  lv_obj_set_ext_click_area(g_statusbar.left_label, 8);
+  lv_obj_add_event_cb(g_statusbar.left_label, statusBarUnreadCb, LV_EVENT_CLICKED, nullptr);
 
   // Channel-settings gear — left of the thread name, shown only inside a channel
   // chat (updateGlobalStatusBar toggles it + shifts the name). Opens the
@@ -24336,6 +24377,7 @@ static void updateGlobalStatusBar() {
   }
 
   // ---- Left zone ----
+  bool unread_badge = false;   // set true only by the branches that render the ✉ count
   if (s_settings_open_cat >= 0) {
     // A settings detail sheet is open: the bar carries its Back chevron + the page
     // title (the sheet has no header of its own; tapping the bar goes Back).
@@ -24356,6 +24398,7 @@ static void updateGlobalStatusBar() {
       if (total_unread > 99) snprintf(ub, sizeof ub, "99+"); else snprintf(ub, sizeof ub, "%d", total_unread);
       snprintf(buf, sizeof(buf), LV_SYMBOL_ENVELOPE " %s  %s", ub, s_chat_title);
       lv_label_set_text(g_statusbar.left_label, buf);
+      unread_badge = true;
     } else {
       lv_label_set_text(g_statusbar.left_label, s_chat_title);
     }
@@ -24418,6 +24461,7 @@ static void updateGlobalStatusBar() {
         if (total_unread > 99) snprintf(buf, sizeof(buf), LV_SYMBOL_ENVELOPE "  99+");
         else                   snprintf(buf, sizeof(buf), LV_SYMBOL_ENVELOPE "  %d", total_unread);
         lv_label_set_text(g_statusbar.left_label, buf);
+        unread_badge = true;
       } else {
         // No unread → blank the left zone entirely. Operator complaint was
         // the envelope was always lit even with an empty inbox, which read
@@ -24425,6 +24469,14 @@ static void updateGlobalStatusBar() {
         lv_label_set_text(g_statusbar.left_label, TR(""));
       }
     }
+  }
+
+  // Activate the unread→Chats shortcut only while the ✉ count is shown; other
+  // left-zone states (Back chevron, profile name, OSM credit, blank) keep the
+  // bar's normal control-center / Back tap.
+  if (g_statusbar.left_label) {
+    if (unread_badge) lv_obj_add_flag(g_statusbar.left_label, LV_OBJ_FLAG_CLICKABLE);
+    else              lv_obj_clear_flag(g_statusbar.left_label, LV_OBJ_FLAG_CLICKABLE);
   }
 
   // ---- Connection icon ----
@@ -29323,12 +29375,17 @@ void UITask::notify(UIEventType t) {
   }
   // Background traffic (also reflected in the tab badges): show a subtle, low-key
   // chip rather than the prominent centre alert toast, so it's less intrusive.
-  strncpy(_alert, msg, sizeof(_alert) - 1);
-  _alert[sizeof(_alert) - 1] = '\0';
-  _alert_expiry = millis() + 1100UL;
+  // New-contact discovery can be spammy in a busy mesh, so its chip is opt-out in
+  // Settings -> Auto-add; when suppressed we still log the diag line + tab badge.
+  const bool toast = (t != UIEventType::newContactMessage) || touchPrefsGetNewContactToast();
+  if (toast) {
+    strncpy(_alert, msg, sizeof(_alert) - 1);
+    _alert[sizeof(_alert) - 1] = '\0';
+    _alert_expiry = millis() + 1100UL;
+  }
 #if defined(HAS_TOUCH_UI)
   pushDiagLine(msg);
-  showSubtleNotifyLvgl(msg, 1100);
+  if (toast) showSubtleNotifyLvgl(msg, 1100);
 #endif
 }
 
