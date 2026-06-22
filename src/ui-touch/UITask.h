@@ -330,6 +330,7 @@ public:
   void toggleBuzzer();
   bool getGPSState();
   void toggleGPS();
+  bool getLocalEnvSummary(char* buf, size_t cap) const;
   /** True if the GPS currently reports a valid fix. */
   bool getGpsFix();
   /** Satellites currently in view, or -1 if unknown / no GPS hardware. */

@@ -1432,10 +1432,18 @@ static const char* gpsStatusStr() {
   return s;
 }
 
+static const char* localEnvStatusStr() {
+  static char s[96];
+  s[0] = '\0';
+  if (!g_lv.task || !g_lv.task->getLocalEnvSummary(s, sizeof s)) return "";
+  return s;
+}
+
 // Control-center popup state — declared up here so the periodic settings refresh
 // (which is defined above the control-center code) can update the live GPS line.
 static lv_obj_t* s_cc_root      = nullptr;
 static lv_obj_t* s_cc_gps_label = nullptr;
+static lv_obj_t* s_cc_env_label = nullptr;
 static lv_obj_t* s_cc_sys_label = nullptr;   // CPU/RAM/PSRAM/IP line; refreshed live while CC open
 static void ccBuildSysInfo(char* buf, size_t n);   // fwd-decl; defined with the CC helpers below
 static void closeControlCenter();   // defined in the control-center section below
@@ -22321,9 +22329,16 @@ static void refreshSettingsSectionSubtitles() {
 #endif
 
   if (g_set_sec_sub[SEC_DEVICE]) {
-    lv_label_set_text_fmt(g_set_sec_sub[SEC_DEVICE], TR("GPS %s · Buzzer %s"),
-                          onOff(g_lv.task->getGPSState()),
-                          g_lv.task->isBuzzerQuiet() ? "quiet" : "on");
+    char env[96];
+    if (g_lv.task->getLocalEnvSummary(env, sizeof env)) {
+      lv_label_set_text_fmt(g_set_sec_sub[SEC_DEVICE], TR("GPS %s · Buzzer %s\n%s"),
+                            onOff(g_lv.task->getGPSState()),
+                            g_lv.task->isBuzzerQuiet() ? "quiet" : "on", env);
+    } else {
+      lv_label_set_text_fmt(g_set_sec_sub[SEC_DEVICE], TR("GPS %s · Buzzer %s"),
+                            onOff(g_lv.task->getGPSState()),
+                            g_lv.task->isBuzzerQuiet() ? "quiet" : "on");
+    }
   }
 
   // Live GPS fix status on the Device-settings line while it's open. (The
@@ -22360,6 +22375,7 @@ static void refreshSettingsSectionSubtitles() {
 static void closeControlCenter() {
   if (s_cc_root) { lv_obj_del_async(s_cc_root); s_cc_root = nullptr; }
   s_cc_gps_label = nullptr;
+  s_cc_env_label = nullptr;
   s_cc_sys_label = nullptr;
 }
 // Build the control-center system-info line (CPU · RAM% · PSRAM% · IP/no-IP).
@@ -22797,6 +22813,17 @@ static void openControlCenter() {
   lv_obj_set_style_text_font(s_cc_gps_label, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_cc_gps_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_align(s_cc_gps_label, LV_ALIGN_TOP_LEFT, 0, gps_y);
+
+  const char* env_status = localEnvStatusStr();
+  if (env_status[0]) {
+    s_cc_env_label = lv_label_create(card);
+    lv_label_set_long_mode(s_cc_env_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s_cc_env_label, card_w - 20);
+    lv_label_set_text(s_cc_env_label, env_status);
+    lv_obj_set_style_text_font(s_cc_env_label, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_cc_env_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_align(s_cc_env_label, LV_ALIGN_TOP_LEFT, 0, gps_y + 12);
+  }
 
 #if defined(HAS_BACKLIGHT_PWM)
   // ---- Brightness slider (thin; a sun/gear glyph anchors it on the left so it
@@ -24134,6 +24161,7 @@ static void refreshStatusLabels() {
   // connects/drops, without having to close and reopen the panel.
   if (s_cc_root) {
     if (s_cc_gps_label) setLabelIfChanged(s_cc_gps_label, gpsStatusStr());
+    if (s_cc_env_label) setLabelIfChanged(s_cc_env_label, localEnvStatusStr());
     if (s_cc_sys_label) {
       char cc_sys[72];
       ccBuildSysInfo(cc_sys, sizeof cc_sys);
@@ -28410,6 +28438,61 @@ void UITask::toggleBuzzer() {
 bool UITask::getGPSState() {
   if (!_node_prefs) return false;
   return _node_prefs->gps_enabled != 0;
+}
+
+bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
+  if (!buf || cap == 0) return false;
+  buf[0] = '\0';
+  if (!_sensors) return false;
+
+  CayenneLPP telemetry(96);
+  if (!_sensors->querySensors(TELEM_PERM_ENVIRONMENT, telemetry)) return false;
+  const uint8_t len = telemetry.getSize();
+  if (len == 0) return false;
+
+  float temp_c = 0.0f, hum_pct = 0.0f, pressure_hpa = 0.0f;
+  bool have_temp = false, have_hum = false, have_pressure = false;
+  LPPReader rd(telemetry.getBuffer(), len);
+  uint8_t channel = 0, type = 0;
+  while (rd.readHeader(channel, type)) {
+    switch (type) {
+      case LPP_TEMPERATURE:
+        if (!have_temp) have_temp = rd.readTemperature(temp_c);
+        else rd.skipData(type);
+        break;
+      case LPP_RELATIVE_HUMIDITY:
+        if (!have_hum) have_hum = rd.readRelativeHumidity(hum_pct);
+        else rd.skipData(type);
+        break;
+      case LPP_BAROMETRIC_PRESSURE:
+        if (!have_pressure) have_pressure = rd.readPressure(pressure_hpa);
+        else rd.skipData(type);
+        break;
+      default:
+        rd.skipData(type);
+        break;
+    }
+  }
+
+  if (!have_temp && !have_hum && !have_pressure) return false;
+  int p = snprintf(buf, cap, LV_SYMBOL_EYE_OPEN " ");
+  if (p < 0 || (size_t)p >= cap) {
+    buf[cap - 1] = '\0';
+    return true;
+  }
+  bool any = false;
+  if (have_temp) {
+    p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)temp_c);
+    any = true;
+  }
+  if (have_hum && (size_t)p < cap) {
+    p += snprintf(buf + p, cap - (size_t)p, "%s%.0f%%RH", any ? "  " : "", (double)hum_pct);
+    any = true;
+  }
+  if (have_pressure && (size_t)p < cap) {
+    snprintf(buf + p, cap - (size_t)p, "%s%.0fhPa", any ? "  " : "", (double)pressure_hpa);
+  }
+  return true;
 }
 
 void UITask::toggleGPS() {
