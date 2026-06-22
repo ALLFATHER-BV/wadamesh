@@ -1433,10 +1433,22 @@ static const char* gpsStatusStr() {
 }
 
 static const char* localEnvStatusStr() {
-  static char s[96];
+  static char s[192];
   s[0] = '\0';
   if (!g_lv.task || !g_lv.task->getLocalEnvSummary(s, sizeof s)) return "";
   return s;
+}
+
+static void buildExpansionInfoText(char* out, size_t cap) {
+  if (!out || cap == 0) return;
+  out[0] = '\0';
+  if (!g_lv.task) return;
+  char env[192];
+  const bool have_env = g_lv.task->getLocalEnvSummary(env, sizeof env);
+  snprintf(out, cap, "Buzzer %s%s%s",
+           g_lv.task->isBuzzerQuiet() ? "quiet" : "on",
+           have_env ? "\n" : "",
+           have_env ? env : "");
 }
 
 // Control-center popup state — declared up here so the periodic settings refresh
@@ -1449,6 +1461,8 @@ static void ccBuildSysInfo(char* buf, size_t n);   // fwd-decl; defined with the
 static void closeControlCenter();   // defined in the control-center section below
 static lv_obj_t* s_power_menu   = nullptr;   // power off / reboot menu (control center)
 static void closePowerMenu();               // defined in the control-center section below
+static lv_obj_t* s_expansion_root = nullptr;
+static void closeExpansionCard();
 #if defined(HAS_TDECK_KEYBOARD)
 // Keyboard backlight: mode 0=off, 1=on, 2=auto (on while typing, off after idle).
 static uint8_t       s_kb_bl_mode    = 2;
@@ -4201,6 +4215,16 @@ static void toggleBuzzerCb(lv_event_t* e) {   // message-sound switch (VALUE_CHA
   refreshStatusLabels();
 }
 
+static void testBuzzerCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+#if defined(HAS_UI_SOUND)
+  uiPlayNotify();
+  g_lv.task->showAlert(TR("Buzzer test"), 900);
+#else
+  g_lv.task->showAlert(TR("No buzzer in this build"), 1200);
+#endif
+}
+
 #if defined(HAS_UI_SOUND)
 // Message-sound switch (under the master Sound switch). VALUE_CHANGED; previews.
 static void toggleMessageSoundCb(lv_event_t* e) {
@@ -6626,6 +6650,82 @@ static void openTimezonePicker() {
 }
 static void openTimezoneCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED) openTimezonePicker(); }
 
+static void expansionBackdropCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;
+  closeExpansionCard();
+}
+
+static void expansionCloseCb(lv_event_t* e) {
+  (void)e;
+  closeExpansionCard();
+}
+
+static void closeExpansionCard() {
+  if (s_expansion_root) { lv_obj_del_async(s_expansion_root); s_expansion_root = nullptr; }
+}
+
+static void openExpansionCard() {
+  if (s_expansion_root) { lv_obj_move_foreground(s_expansion_root); return; }
+
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_expansion_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_expansion_root);
+  lv_obj_set_size(s_expansion_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_expansion_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_expansion_root, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_expansion_root, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_clear_flag(s_expansion_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_expansion_root, expansionBackdropCb, LV_EVENT_CLICKED, nullptr);
+
+  const lv_coord_t card_w = LV_MIN(sw - 16, 224);
+  lv_obj_t* card = lv_obj_create(s_expansion_root);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, card_w, LV_SIZE_CONTENT);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+  styleSurface(card, COLOR_PANEL, 8);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  addCloseXBadge(card, expansionCloseCb);
+
+  lv_obj_t* title = lv_label_create(card);
+  lv_label_set_text(title, TR("Expansion Kit"));
+  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_width(title, card_w - 20 - 32);
+  lv_obj_set_pos(title, 0, 0);
+
+  char info[256];
+  buildExpansionInfoText(info, sizeof info);
+  lv_obj_t* lbl = lv_label_create(card);
+  lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(lbl, card_w - 20);
+  lv_label_set_text(lbl, info[0] ? info : TR("No local expansion data"));
+  lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(lbl, 0, 28);
+  lv_obj_update_layout(lbl);
+
+  lv_obj_t* b = lv_btn_create(card);
+  lv_obj_set_size(b, card_w - 20, 34);
+  lv_obj_set_pos(b, 0, 36 + lv_obj_get_height(lbl));
+  styleButton(b);
+  lv_obj_add_event_cb(b, testBuzzerCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* bl = lv_label_create(b);
+  lv_label_set_text(bl, TR("Test buzzer"));
+  lv_obj_center(bl);
+
+  lv_obj_set_height(card, 44 + lv_obj_get_height(lbl) + 42);
+  lv_obj_move_foreground(s_expansion_root);
+}
+
+static void openExpansionCardCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) openExpansionCard();
+}
+
 #if defined(HAS_TDECK_GT911)
 // Lock-screen settings live in the Device modal but the picker implementation
 // needs the SD-mount state (declared further down), so split: the small bits
@@ -6687,6 +6787,16 @@ static void buildDeviceSettings(int sec) {
   lv_obj_set_pos(g_set_modal.gps_status, 4, y);
   lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
   y += SC(22);
+
+  lv_obj_t* b_exp = lv_btn_create(body);
+  lv_obj_set_size(b_exp, lv_pct(100), SC(34));
+  lv_obj_set_pos(b_exp, 2, y);
+  styleButton(b_exp);
+  lv_obj_add_event_cb(b_exp, openExpansionCardCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* le = lv_label_create(b_exp);
+  lv_label_set_text(le, TR("Expansion Kit"));
+  lv_obj_center(le);
+  y += SC(38);
 
   // GPS serial baud. T-Deck Plus = 38400, T-Deck v1.0 = 9600. Persisted to NVS
   // and read at GPS init; reboot to apply. Also settable via `set gps.baud`.
@@ -28454,8 +28564,9 @@ bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
   bool have_batt = _board && _board->getBattMilliVolts() > 0;
 
   float bme_temp_c = 0.0f, bme_hum_pct = 0.0f, bme_pressure_hpa = 0.0f;
+  int16_t bme_alt_m = 0;
   float gxhtv3_temp_c = 0.0f, gxhtv3_hum_pct = 0.0f;
-  bool have_bme_temp = false, have_bme_hum = false, have_bme_pressure = false;
+  bool have_bme_temp = false, have_bme_hum = false, have_bme_pressure = false, have_bme_alt = false;
   bool have_gxhtv3_temp = false, have_gxhtv3_hum = false;
   LPPReader rd(telemetry.getBuffer(), len);
   uint8_t channel = 0, type = 0;
@@ -28475,20 +28586,30 @@ bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
         if (channel == 2 && !have_bme_pressure) have_bme_pressure = rd.readPressure(bme_pressure_hpa);
         else rd.skipData(type);
         break;
+      case LPP_ALTITUDE: {
+        float alt_m = 0.0f;
+        if (channel == 2 && !have_bme_alt && rd.readAltitude(alt_m)) {
+          bme_alt_m = (int16_t)lroundf(alt_m);
+          have_bme_alt = true;
+        } else {
+          rd.skipData(type);
+        }
+        break;
+      }
       default:
         rd.skipData(type);
         break;
     }
   }
 
-  if (!have_batt && !have_bme_temp && !have_bme_hum && !have_bme_pressure &&
+  if (!have_batt && !have_bme_temp && !have_bme_hum && !have_bme_pressure && !have_bme_alt &&
       !have_gxhtv3_temp && !have_gxhtv3_hum) return false;
 
   int p = 0;
   if (have_batt && p < (int)cap) {
     p += snprintf(buf + p, cap - (size_t)p, LV_SYMBOL_BATTERY_FULL " Battery %.2fV", (double)batt_v);
   }
-  if ((have_bme_temp || have_bme_hum || have_bme_pressure) && p < (int)cap) {
+  if ((have_bme_temp || have_bme_hum || have_bme_pressure || have_bme_alt) && p < (int)cap) {
     p += snprintf(buf + p, cap - (size_t)p, "%sBME280 ", p > 0 ? "\n" : "");
     bool first = true;
     if (have_bme_temp && p < (int)cap) {
@@ -28501,6 +28622,10 @@ bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
     }
     if (have_bme_pressure && p < (int)cap) {
       p += snprintf(buf + p, cap - (size_t)p, "%s%.0fhPa", first ? "" : "  ", (double)bme_pressure_hpa);
+      first = false;
+    }
+    if (have_bme_alt && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%s%dm", first ? "" : "  ", (int)bme_alt_m);
     }
   }
   if ((have_gxhtv3_temp || have_gxhtv3_hum) && p < (int)cap) {
