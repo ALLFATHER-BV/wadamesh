@@ -54,6 +54,9 @@ void MultiTransportCompanionInterface::stopTcpServer() {
 
 void MultiTransportCompanionInterface::enableTcp() {
   _tcp_enabled = true;
+  // Restart immediately: don't wait for the next main-loop tick, and don't
+  // require wifi_started to be true (TCP itself doesn't need an IP address).
+  startTcpServer(false);
 }
 
 void MultiTransportCompanionInterface::disableTcp() {

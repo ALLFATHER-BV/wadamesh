@@ -4186,8 +4186,9 @@ static void resetPathCb(lv_event_t* e) {
 
 static void toggleTcpCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
-  g_lv.task->isTcpEnabled() ? g_lv.task->disableTcp() : g_lv.task->enableTcp();
-  g_lv.task->showAlert(g_lv.task->isTcpEnabled() ? TR("TCP on") : TR("TCP off"), 900);
+  const bool was_on = g_lv.task->isTcpEnabled();
+  was_on ? g_lv.task->disableTcp() : g_lv.task->enableTcp();
+  g_lv.task->showAlert(was_on ? TR("TCP off") : TR("TCP on"), 900);
   refreshStatusLabels();
 }
 
@@ -18913,7 +18914,7 @@ static void settingsCatBuild(int cat) {
       // Only meaningful on a tagged build with OTA support; the callback
       // re-validates (Wi-Fi up, update known) and reports errors inline.
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-      if (FIRMWARE_OTA_ENV[0] && firmwareReleaseN() >= 0) {
+      if (FIRMWARE_OTA_ENV[0] && firmwareReleaseN() >= 0 && touchHasOtaUpdateSlot()) {
         s_ota_btn = lv_btn_create(page);
         lv_obj_set_size(s_ota_btn, lblw, 38);
         styleButton(s_ota_btn);
