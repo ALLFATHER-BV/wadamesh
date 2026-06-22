@@ -1,0 +1,7 @@
+export IDF_PATH=$(pwd)/esp-idf
+export IDF_TOOLS_PATH=$(pwd)/esp-idf-tools
+
+echo "ESP-IDF: $IDF_PATH"
+echo "TOOLS:   $IDF_TOOLS_PATH"
+
+source esp-idf/export.sh

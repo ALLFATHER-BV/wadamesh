@@ -113,11 +113,35 @@ bool touchPrefsSetSleepIdle(bool on);
 uint8_t touchPrefsGetUiScale();
 bool    touchPrefsSetUiScale(uint8_t scale);
 
-/* T-Deck trackball interaction mode: false (default) = the trackball drives a soft
- * mouse cursor; true = D-pad focus navigation (↑↓←→ move focus, ball click = enter),
- * like the Tanmatsu. Applied live (no reboot). */
-bool    touchPrefsGetTbKeypad();
-bool    touchPrefsSetTbKeypad(bool on);
+/* T-Deck keyboard navigation: false (default) = keys type / jump tabs as usual;
+ * true = when no text field is focused, the WASDZ cluster moves focus — W up, A
+ * left, Z down, D right, S select, Q back — and the programmable tab hotkeys
+ * (touchPrefsGetNavKey) jump straight to a tab. The trackball always stays a soft
+ * mouse cursor. Applied live (no reboot). */
+bool    touchPrefsGetKbdNav();
+bool    touchPrefsSetKbdNav(bool on);
+
+/* Keyboard-nav tab hotkeys: the ASCII key that jumps to each main tab while
+ * keyboard navigation is on. `tab` is the tab index 0..4 = chat / contacts / home
+ * / map / settings. Defaults E/R/T/U/I. Programmable in Settings → Keyboard. */
+uint8_t touchPrefsGetNavKey(int tab);
+bool    touchPrefsSetNavKey(int tab, uint8_t ch);
+
+/* Map zoom control style: false (default) = a zoom slider (toggled by the on-map
+ * button); true = a +/- button pair like older builds. Set in the Map options popup. */
+bool    touchPrefsGetMapZoomButtons();
+bool    touchPrefsSetMapZoomButtons(bool on);
+
+/* Keyboard-nav control keys (ASCII), one per action: idx 0..5 = up, down, left,
+ * right, select, back; 6..7 = scroll up, scroll down. Defaults W/Z/A/D/S/Q/F/C.
+ * Programmable in Settings → Keyboard. */
+uint8_t touchPrefsGetNavDirKey(int idx);
+bool    touchPrefsSetNavDirKey(int idx, uint8_t ch);
+
+/* Home tab default: false (default) = the Commander screen; true = the app drawer
+ * (for users who prefer the launcher as their home). Toggled in the app drawer's cog. */
+bool    touchPrefsGetHomeIsDrawer();
+bool    touchPrefsSetHomeIsDrawer(bool on);
 
 /** Hide the device/profile name in the status bar and move the clock to the
  *  left where the name used to be. Default false (name shown). */

@@ -696,6 +696,11 @@ constexpr int MAP_TAB_INDEX          = 3;
 constexpr int SETTINGS_TAB_INDEX     = 4;
 constexpr int TAB_LAST               = 4;
 
+// Objects flagged thus are clickable but must NOT be a keyboard-nav focus target —
+// navCollect skips them. Used for the full-area map touch/pan catcher, which would
+// otherwise get focused and painted solid by the focus highlight (white over the map).
+#define NAV_SKIP_FLAG LV_OBJ_FLAG_USER_1
+
 // ---- Chat overlay layout ----
 constexpr int CHAT_HDR_H       = 0;    // in-chat header bar removed; thread name shows in the status bar
 constexpr int CHAT_COMP_H      = 34;   // composer row, single line (slimmed 50 → 40 → 34; hugs the 30px textbox)
@@ -869,19 +874,18 @@ static float         s_tb_render_x = 160.0f, s_tb_render_y = 120.0f;  // eased r
 static unsigned long s_tb_prev_ms = 0;
 static unsigned long s_tb_last_active_ms = 0;
 static bool          s_tb_click_press = false;     // centre button held this frame
-// D-pad mode: when on, the trackball drives focus navigation (↑↓←→ + click=enter)
-// through s_nav_group instead of the soft cursor — the same focus group the
-// Tanmatsu uses. Cached from touchPrefsGetTbKeypad() so the per-tick poll never
-// hits NVS; s_tb_keypad_drv is the second (keypad) LVGL indev that drains navFifo.
-static bool           s_tb_keypad      = false;
-static lv_indev_drv_t s_tb_keypad_drv;
-static bool           s_tb_click_prev  = false;     // edge-detect the centre click in D-pad mode
+// Keyboard ESDFX navigation: when on, the physical-keyboard ESDFX cluster moves
+// focus through s_nav_group (the same focus group the Tanmatsu uses) whenever no
+// text field is focused — E up, X down, S left, F right, D select, Q back. The
+// trackball ALWAYS stays a soft mouse cursor. Cached from touchPrefsGetKbdNav() so
+// the per-tick poll never hits NVS; s_nav_keypad_drv is the keypad LVGL indev that
+// drains navFifo (fed from handleHwKey instead of the trackball).
+static bool           s_kbd_nav        = false;
+static lv_indev_drv_t s_nav_keypad_drv;
 constexpr int           kTbCursorDiameter = 16;    // px
 constexpr int           kTbCursorStepPx   = 12;    // px per encoder step
 constexpr float         kTbCursorSmoothMs = 60.0f; // ease time-constant (smaller = snappier)
 constexpr unsigned long kTbCursorHideMs   = 800;   // auto-hide after idle
-constexpr unsigned long kTbNavStepMs      = 110;   // D-pad mode: min ms between focus steps (caps a fast roll)
-static unsigned long    s_tb_nav_last_ms  = 0;     // last D-pad focus step time
 
 // True while the trackball cursor is visible AND screen-Y is within the bottom
 // tab bar. Used to swallow stray FINGER touches on the tab bar while the user is
@@ -1696,10 +1700,20 @@ static lv_obj_t* s_nav_first = nullptr;   // first/last focusable collected each
 static lv_obj_t* s_nav_last  = nullptr;   // arrows jump to these (usually top item / primary action)
 static lv_obj_t* s_nav_entered_obj = nullptr;  // widget Enter was just sent to; if it's a selection
                                                // that didn't navigate away, focus jumps to s_nav_last
-static int       s_nav_count    = 0;           // # focusable widgets collected this rebuild (diag)
+static int       s_nav_count    = 0;           // # focusable widgets collected this rebuild
+// Collected focusable widgets this rebuild, in tree order — used for 2D spatial
+// navigation (W/A/Z/D move to the nearest element in that physical direction, not
+// just the next/prev in the linear list).
+static const int kNavMax = 64;
+static lv_obj_t* s_nav_objs[kNavMax] = { nullptr };
 static lv_obj_t* s_nav_tabbar   = nullptr;     // the bottom tab bar (btnmatrix), added last to the group
 static bool      s_nav_want_tabbar = false;    // after switching tabs from the bar, refocus the bar
-static lv_obj_t* s_nav_styled   = nullptr;     // obj currently wearing the focus ring
+static lv_obj_t* s_nav_styled   = nullptr;     // obj currently wearing the focus highlight
+#if defined(HAS_TANMATSU)
+static bool      s_nav_show     = true;        // keyboard-only device: focus highlight is always visible
+#else
+static bool      s_nav_show     = false;       // T-Deck: focus-visible — paint only while keyboard-navigating (hidden after a touch/click)
+#endif
 static void goToTab(int idx);                  // (defined far below) tab switch + refresh
 static int  getActiveTab();                    // (defined below) current tabview index
 static bool hwKeyDismissTopPopup();            // (defined far below) close the topmost modal/sheet
@@ -1739,20 +1753,250 @@ static void navGoToMainTab(int tab) {
 }
 
 // Visible focus ring (the LVGL default theme's focus outline is invisible on this dark UI). Driven
-// by the group's focus-changed callback: outline the new focus, clear the old, scroll it into view.
+// by the group's focus-changed callback. Reverse-video ("negative") highlight: the
+// focused element is FILLED with the text colour and its text flipped to the
+// background colour — like a text selection — instead of a coloured ring. Applied as
+// LOCAL styles so it overrides each element's own styling, and restored exactly via
+// local-style introspection so app styling survives the unfocus. The bottom tab bar
+// (a btnmatrix) is the exception: a full fill there reads as a messy bar, so it keeps
+// a bright outline.
+static struct { bool bg_c, bg_o, txt; lv_style_value_t v_bg_c, v_bg_o, v_txt; } s_nav_sv;
+
+// Descendant labels that carry their OWN (local) text colour don't inherit the
+// container's flipped colour, so they'd stay light on the light fill -> unreadable.
+// Track + flip them to dark on focus, restore exactly on unfocus.
+static struct { lv_obj_t* o; lv_style_value_t v; } s_nav_txt[32];
+static int s_nav_txt_n = 0;
+static void navInvertText(lv_obj_t* o) {
+  lv_style_value_t v;
+  if (lv_obj_get_local_style_prop(o, LV_STYLE_TEXT_COLOR, &v, LV_PART_MAIN) == LV_STYLE_RES_FOUND &&
+      s_nav_txt_n < (int)(sizeof(s_nav_txt) / sizeof(s_nav_txt[0]))) {
+    s_nav_txt[s_nav_txt_n].o = o;
+    s_nav_txt[s_nav_txt_n].v = v;
+    s_nav_txt_n++;
+    lv_obj_set_style_text_color(o, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  }
+  uint32_t n = lv_obj_get_child_cnt(o);
+  for (uint32_t i = 0; i < n; i++) navInvertText(lv_obj_get_child(o, i));
+}
+static void navRestoreText() {
+  for (int i = 0; i < s_nav_txt_n; i++)
+    if (s_nav_txt[i].o && lv_obj_is_valid(s_nav_txt[i].o))
+      lv_obj_set_local_style_prop(s_nav_txt[i].o, LV_STYLE_TEXT_COLOR, s_nav_txt[i].v, LV_PART_MAIN);
+  s_nav_txt_n = 0;
+}
+
+static void navUnstyle(lv_obj_t* o) {
+  navRestoreText();                       // un-flip descendant text first (each is_valid-guarded)
+  if (!o || !lv_obj_is_valid(o)) return;
+  if (o == s_nav_tabbar) {                // tab bar: clear the inverted active-tab cell
+    lv_obj_remove_local_style_prop(o, LV_STYLE_BG_COLOR,   LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_remove_local_style_prop(o, LV_STYLE_BG_OPA,     LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_remove_local_style_prop(o, LV_STYLE_TEXT_COLOR, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_invalidate(o);
+    return;
+  }
+  lv_obj_set_style_outline_width(o, 0, LV_PART_MAIN);
+  if (s_nav_sv.bg_c) lv_obj_set_local_style_prop(o, LV_STYLE_BG_COLOR,   s_nav_sv.v_bg_c, LV_PART_MAIN);
+  else               lv_obj_remove_local_style_prop(o, LV_STYLE_BG_COLOR,   LV_PART_MAIN);
+  if (s_nav_sv.bg_o) lv_obj_set_local_style_prop(o, LV_STYLE_BG_OPA,     s_nav_sv.v_bg_o, LV_PART_MAIN);
+  else               lv_obj_remove_local_style_prop(o, LV_STYLE_BG_OPA,     LV_PART_MAIN);
+  if (s_nav_sv.txt)  lv_obj_set_local_style_prop(o, LV_STYLE_TEXT_COLOR,  s_nav_sv.v_txt,  LV_PART_MAIN);
+  else               lv_obj_remove_local_style_prop(o, LV_STYLE_TEXT_COLOR,  LV_PART_MAIN);
+  lv_obj_invalidate(o);
+}
+
 static void navFocusCb(lv_group_t* g) {
   lv_obj_t* f = lv_group_get_focused(g);
-  if (s_nav_styled && s_nav_styled != f && lv_obj_is_valid(s_nav_styled))
-    lv_obj_set_style_outline_width(s_nav_styled, 0, LV_PART_MAIN);
-  s_nav_styled = f;
-  if (f) {
-    lv_obj_set_style_outline_color(f, lv_color_hex(0xFFC400), LV_PART_MAIN);   // amber = focused
+  if (s_nav_styled && s_nav_styled != f) navUnstyle(s_nav_styled);
+  s_nav_styled = nullptr;                  // old highlight (if any) is now restored; nothing styled yet
+  if (!f || !s_nav_show) return;          // focus-visible: paint only while actively keyboard-navigating
+  s_nav_styled = f;                        // we ARE styling f now — only now does it own s_nav_sv / s_nav_txt
+  if (f == s_nav_tabbar) {
+    // Tab bar is a btnmatrix — invert just the active (checked) tab cell, which tracks
+    // the selection as you press left/right, instead of boxing the whole bar.
+    lv_obj_set_style_bg_color(f, lv_color_hex(COLOR_TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(f, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(f, lv_color_hex(COLOR_BG), LV_PART_ITEMS | LV_STATE_CHECKED);
+  } else if (lv_obj_check_type(f, &lv_switch_class) || lv_obj_check_type(f, &lv_slider_class)) {
+    // A switch/slider's look is its knob/indicator, not the MAIN bg, so a reverse-video
+    // fill doesn't read as focused — give it a bright outline instead.
+    s_nav_sv.bg_c = s_nav_sv.bg_o = s_nav_sv.txt = false;   // nothing to restore but the outline
+    lv_obj_set_style_outline_color(f, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_outline_width(f, 3, LV_PART_MAIN);
     lv_obj_set_style_outline_opa(f, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_outline_pad(f, 1, LV_PART_MAIN);
-    lv_obj_scroll_to_view(f, LV_ANIM_OFF);
+    lv_obj_set_style_outline_pad(f, 2, LV_PART_MAIN);
+  } else {
+    // Save the element's current local props, then apply the negative fill.
+    s_nav_sv.bg_c = lv_obj_get_local_style_prop(f, LV_STYLE_BG_COLOR,   &s_nav_sv.v_bg_c, LV_PART_MAIN) == LV_STYLE_RES_FOUND;
+    s_nav_sv.bg_o = lv_obj_get_local_style_prop(f, LV_STYLE_BG_OPA,     &s_nav_sv.v_bg_o, LV_PART_MAIN) == LV_STYLE_RES_FOUND;
+    s_nav_sv.txt  = lv_obj_get_local_style_prop(f, LV_STYLE_TEXT_COLOR, &s_nav_sv.v_txt,  LV_PART_MAIN) == LV_STYLE_RES_FOUND;
+    lv_obj_set_style_bg_color(f, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(f, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(f, lv_color_hex(COLOR_BG), LV_PART_MAIN);   // dark text on the light fill (inheritors)
+    lv_obj_set_style_outline_width(f, 0, LV_PART_MAIN);                       // no amber ring
+    lv_obj_set_style_outline_width(f, 0, LV_PART_MAIN | LV_STATE_FOCUS_KEY);  // no stock-theme blue ring
+    // …and flip any descendant labels that carry their own colour, so all text stays readable.
+    uint32_t nc = lv_obj_get_child_cnt(f);
+    for (uint32_t i = 0; i < nc; i++) navInvertText(lv_obj_get_child(f, i));
+  }
+  lv_obj_scroll_to_view(f, LV_ANIM_OFF);
+}
+
+#if defined(HAS_TDECK_TRACKBALL)
+// Hide the keyboard-nav focus highlight — called when the user touches the screen or
+// clicks the trackball (pointer input takes over). The group keeps its internal focus,
+// so the next ESDFX key resumes from the same place and re-reveals the highlight.
+static void navHideFocus() {
+  if (s_nav_styled) { navUnstyle(s_nav_styled); s_nav_styled = nullptr; }
+  s_nav_show = false;
+}
+
+// ---- Keyboard-nav tab hotkeys (programmable; default E/R/T/U/I) ----
+static uint8_t     s_nav_keys[5]       = { 'e','r','t','u','i' };  // per main tab [chat,contacts,home,map,settings]; loaded from prefs at boot
+static uint8_t     s_dir_keys[8]       = { 'w','z','a','d','s','q','f','c' }; // control keys: up,down,left,right,select,back,scroll-up,scroll-down; loaded from prefs at boot
+static int         s_navkey_capture    = -1;                       // binding idx awaiting a new key from the settings remap: 0-4 tab, 5-12 dir (-1 = idle)
+static lv_obj_t*   s_navkey_row_val[13] = { nullptr };             // the key labels in the settings rows (0-4 tabs, 5-12 dirs); refreshed on remap
+static lv_obj_t*   s_navkey_hint[5]    = { nullptr };              // small key labels over the menubar icons (tab hotkeys only)
+static const char* const kNavTabNames[5] = { "Messages", "Contacts", "Home", "Map", "Settings" };
+static const char* const kNavDirNames[8] = { "Up", "Down", "Left", "Right", "Select", "Back", "Scroll up", "Scroll down" };
+
+// 2D spatial focus move: jump to the nearest focusable element in the given physical
+// direction (not just next/prev in the linear list). Scores candidates in that
+// half-plane by primary-axis distance + a cross-axis penalty (prefers aligned + close).
+enum NavDir { NAV_UP, NAV_DOWN, NAV_LEFT, NAV_RIGHT };
+static void navMoveDir(int dir) {
+  if (!s_nav_group) return;
+  const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+  if (n <= 0) return;
+  lv_obj_t* cur = lv_group_get_focused(s_nav_group);
+  if (!cur || !lv_obj_is_valid(cur)) { s_nav_show = true; lv_group_focus_obj(s_nav_objs[0]); return; }
+  lv_area_t a; lv_obj_get_coords(cur, &a);
+  const int cx = (a.x1 + a.x2) / 2, cy = (a.y1 + a.y2) / 2;
+  lv_obj_t* best = nullptr;
+  long bestScore = 0x7FFFFFFFL;
+  for (int i = 0; i < n; i++) {
+    lv_obj_t* o = s_nav_objs[i];
+    if (!o || o == cur || !lv_obj_is_valid(o) || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) continue;
+    lv_area_t b; lv_obj_get_coords(o, &b);
+    const int dx = (b.x1 + b.x2) / 2 - cx, dy = (b.y1 + b.y2) / 2 - cy;
+    // Cross-axis distance is the GAP between the rects (0 when they overlap on that
+    // axis) — so a full-width row below a right-aligned switch still counts as
+    // "straight down" and isn't skipped for a far but column-aligned element.
+    long hgap = b.x1 - a.x2; if (a.x1 - b.x2 > hgap) hgap = a.x1 - b.x2; if (hgap < 0) hgap = 0;
+    long vgap = b.y1 - a.y2; if (a.y1 - b.y2 > vgap) vgap = a.y1 - b.y2; if (vgap < 0) vgap = 0;
+    const long adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+    bool ok; long primary, cross;
+    switch (dir) {
+      case NAV_UP:    ok = dy < 0; primary = ady; cross = hgap; break;
+      case NAV_DOWN:  ok = dy > 0; primary = ady; cross = hgap; break;
+      case NAV_LEFT:  ok = dx < 0; primary = adx; cross = vgap; break;
+      default:        ok = dx > 0; primary = adx; cross = vgap; break;  // NAV_RIGHT
+    }
+    if (!ok) continue;
+    const long score = primary + 4 * cross;   // overlapping (cross=0) candidates win; off-axis ones penalised
+    if (score < bestScore) { bestScore = score; best = o; }
+  }
+  if (best) { s_nav_show = true; lv_group_focus_obj(best); if (g_lv.task) g_lv.task->noteUserInput(); }
+}
+
+static inline int  navKeyLower(int k)   { return (k >= 'A' && k <= 'Z') ? k - 'A' + 'a' : k; }
+// Which binding currently uses key `lk` (0-4 = tab hotkey, 5-10 = up/down/left/right/
+// select/back), excluding binding `except`, or -1. Used to reject duplicate assignments.
+static int navKeyUsedBy(int lk, int except) {
+  for (int t = 0; t < 5; t++) if (t != except       && s_nav_keys[t] && navKeyLower(s_nav_keys[t]) == lk) return t;
+  for (int d = 0; d < 8; d++) if ((d + 5) != except && s_dir_keys[d] && navKeyLower(s_dir_keys[d]) == lk) return d + 5;
+  return -1;
+}
+// The main tab a key jumps to while keyboard nav is on, or -1.
+static int navTabForHotkey(int key) {
+  const int lk = navKeyLower(key);
+  for (int t = 0; t < 5; t++) if (s_nav_keys[t] && navKeyLower(s_nav_keys[t]) == lk) return t;
+  return -1;
+}
+// The control action a key triggers (0..5 move/select/back, 6/7 scroll up/down), or -1.
+static int navDirForKey(int key) {
+  const int lk = navKeyLower(key);
+  for (int d = 0; d < 8; d++) if (s_dir_keys[d] && navKeyLower(s_dir_keys[d]) == lk) return d;
+  return -1;
+}
+// Scroll the focused element's nearest scrollable ancestor (a list/page) without
+// moving the focus — for the scroll-up/down keys.
+static void navScrollFocused(bool up) {
+  lv_obj_t* o = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if (!o) o = lv_scr_act();
+  for (lv_obj_t* p = o; p; p = lv_obj_get_parent(p)) {
+    if (!lv_obj_has_flag(p, LV_OBJ_FLAG_SCROLLABLE)) continue;
+    const lv_coord_t room = up ? lv_obj_get_scroll_top(p) : lv_obj_get_scroll_bottom(p);
+    if (room <= 0) continue;   // nothing to scroll that way here — try the next ancestor
+    lv_coord_t step = lv_obj_get_height(p) * 2 / 3;   // ~two-thirds of the view per press
+    if (step > room) step = room;
+    lv_obj_scroll_by(p, 0, up ? step : -step, LV_ANIM_ON);
+    return;
   }
 }
+// Small key hints over each menubar icon — shown only while keyboard nav is on.
+static void navMenubarKeysSync() {
+  if (!g_lv.tabview) return;
+  lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
+  if (!bar) return;
+  const int bw = lv_obj_get_width(bar);
+  const int cw = bw > 0 ? bw / 5 : 0;
+  for (int i = 0; i < 5; i++) {
+    if (!s_kbd_nav) { if (s_navkey_hint[i]) lv_obj_add_flag(s_navkey_hint[i], LV_OBJ_FLAG_HIDDEN); continue; }
+    if (!s_navkey_hint[i]) {
+      lv_obj_t* l = lv_label_create(bar);
+      lv_obj_remove_style_all(l);
+      lv_obj_add_flag(l, LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_IGNORE_LAYOUT);
+      lv_obj_clear_flag(l, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(l, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      s_navkey_hint[i] = l;
+    }
+    const int lk = navKeyLower(s_nav_keys[i]);
+    char b[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : lk), 0 };
+    lv_label_set_text(s_navkey_hint[i], b);
+    lv_obj_clear_flag(s_navkey_hint[i], LV_OBJ_FLAG_HIDDEN);
+    if (cw > 0) lv_obj_align(s_navkey_hint[i], LV_ALIGN_LEFT_MID, cw * i + cw / 2 - 15, 8);   // bottom-left of the icon
+  }
+}
+// Apply a captured key to the tab being remapped (Settings → Keyboard).
+static void navKeyCaptureApply(int key) {
+  const int t = s_navkey_capture;   // 0-4 = tab hotkey, 5-12 = up/down/left/right/select/back/scroll-up/scroll-down
+  s_navkey_capture = -1;
+  if (t < 0 || t >= 13) return;
+  if (key == 0x1B || key == 0x08 || key == 0x7F) { if (g_lv.task) g_lv.task->showAlert(TR("Cancelled"), 700); return; }
+  if (!((key>='a'&&key<='z') || (key>='A'&&key<='Z'))) { if (g_lv.task) g_lv.task->showAlert(TR("Letters only"), 900); return; }
+  const int lk = navKeyLower(key);
+  if (navKeyUsedBy(lk, t) >= 0) { if (g_lv.task) g_lv.task->showAlert(TR("Key already in use"), 1100); return; }
+  if (t < 5) {
+    s_nav_keys[t] = (uint8_t)lk;
+#if defined(ESP32)
+    touchPrefsSetNavKey(t, (uint8_t)lk);
+#endif
+    navMenubarKeysSync();   // tab hotkey changed → refresh the menubar hint
+  } else {
+    s_dir_keys[t - 5] = (uint8_t)lk;
+#if defined(ESP32)
+    touchPrefsSetNavDirKey(t - 5, (uint8_t)lk);
+#endif
+  }
+  if (s_navkey_row_val[t] && lv_obj_is_valid(s_navkey_row_val[t])) {
+    char b[2] = { (char)(lk - 'a' + 'A'), 0 };
+    lv_label_set_text(s_navkey_row_val[t], b);
+  }
+  if (g_lv.task) g_lv.task->showAlert(TR("Hotkey saved"), 800);
+}
+static void navKeyCaptureStartCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int t = (int)(intptr_t)lv_event_get_user_data(e);
+  if (t < 0 || t >= 13) return;   // 0-4 = tab hotkeys, 5-12 = dir/select/back/scroll
+  s_navkey_capture = t;
+  if (g_lv.task) g_lv.task->showAlert(TR("Press a key…"), 4000);
+}
+// Reposition the menubar key hints when the tab bar is (re)sized — first layout + rotation.
+static void navMenubarSizeCb(lv_event_t* /*e*/) { navMenubarKeysSync(); }
+#endif
 
 // The widget currently focused in the nav group, iff it's an editable text field.
 static lv_obj_t* navFocusedTextarea() {
@@ -1921,11 +2165,13 @@ static bool navCollect(lv_obj_t* obj) {
     lv_obj_t* c = lv_obj_get_child(obj, i);
     if (c && navCollect(c)) descHasClickable = true;
   }
-  bool meClickable = lv_obj_has_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+  bool meClickable = lv_obj_has_flag(obj, LV_OBJ_FLAG_CLICKABLE)
+                     && !lv_obj_has_flag(obj, NAV_SKIP_FLAG);   // skip explicit non-nav targets (e.g. the map catcher)
   if (meClickable && !descHasClickable) {
     lv_group_add_obj(s_nav_group, obj);
     if (!s_nav_first) s_nav_first = obj;
     s_nav_last = obj;
+    if (s_nav_count < kNavMax) s_nav_objs[s_nav_count] = obj;   // for 2D spatial nav
     s_nav_count++;
   }
   return meClickable || descHasClickable;
@@ -1991,17 +2237,28 @@ static void navMaybeRebuild() {
   uint32_t sig = navTreeSig(root, 0) ^ (useTop ? 0xA5A5A5A5u : chat ? 0xC4A7C4A7u : ((uint32_t)getActiveTab() + 1) * 2654435761u);
   if (!s_nav_dirty && scr == s_nav_prev_scr && sig == s_nav_prev_sig) return;
   s_nav_dirty = false; s_nav_prev_scr = scr; s_nav_prev_sig = sig;
+  lv_obj_t* keep = lv_group_get_focused(s_nav_group);     // preserve focus across a same-page rebuild (toggle/click)
   lv_group_remove_all_objs(s_nav_group);
   s_nav_first = s_nav_last = nullptr; s_nav_count = 0;
   if (root) navCollect(root);                              // content items (focus starts here)
-  s_nav_tabbar = tabbar;
-  if (tabbar) lv_group_add_obj(s_nav_group, tabbar);       // tab bar = last focus stop
-  if (tabbar && s_nav_want_tabbar) lv_group_focus_obj(tabbar);   // just switched tabs → stay on the bar
+  // The menu/tab bar is intentionally NOT a focus stop: the directional keys (WASDZ
+  // / A-D) navigate screen CONTENT only. Tabs are switched by the dedicated hotkeys
+  // — the coloured F-keys on the Tanmatsu, the programmable E/R/T/U/I on the T-Deck —
+  // never by the directional keys. (navGoToMainTab handles those, independent of the
+  // focus group.)
+  (void)tabbar;
+  s_nav_tabbar = nullptr;
   s_nav_want_tabbar = false;
   // When a chat just opened, drop focus on its composer so typing goes straight in (issue: textfield
   // not auto-selected). Only on the open transition, so new messages don't steal focus mid-typing.
-  if (chat && chat != s_nav_prev_chat && chat->composer_ta && lv_obj_is_valid(chat->composer_ta))
-    lv_group_focus_obj(chat->composer_ta);
+  if (chat && chat != s_nav_prev_chat && chat->composer_ta && lv_obj_is_valid(chat->composer_ta)) {
+    lv_group_focus_obj(chat->composer_ta);   // chat just opened → focus the composer
+  } else if (keep && lv_obj_is_valid(keep)) {
+    // A toggle/click triggers a rebuild; if the previously-focused element survived,
+    // keep focus on it instead of jumping back to the top of the page.
+    const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+    for (int i = 0; i < n; i++) if (s_nav_objs[i] == keep) { lv_group_focus_obj(keep); break; }
+  }
   s_nav_prev_chat = chat;
   if (s_nav_debug) printf("[NAV] rebuilt count=%d %s tab=%d\n", s_nav_count, useTop ? "top" : chat ? "chat" : "tab", getActiveTab());
 }
@@ -2157,6 +2414,9 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
       data->state = LV_INDEV_STATE_RELEASED;
       return;
     }
+#if defined(HAS_TDECK_TRACKBALL)
+    navHideFocus();   // a real finger press = pointer input; drop the keyboard-nav focus highlight
+#endif
     data->state = LV_INDEV_STATE_PRESSED;
     if (g_lv.task) g_lv.task->noteUserInput();
     return;
@@ -4076,6 +4336,7 @@ static lv_obj_t* s_mentions_root = nullptr;  // @-mentions list overlay
 // leaving Home and coming back restores the same view. Toggled by the Home tab
 // button (tabBtnsCb); tabChangedCb shows/hides the overlay to match on enter/leave.
 static bool s_home_drawer_mode = false;
+static bool s_home_is_drawer   = false;   // persistent pref: Home tab defaults to the app drawer (loaded at boot)
 static bool s_tab_changed = false;   // a real tab switch happened this tap; the Home-button toggle reads it
 // Slide the thin accent indicator bar under the active tab. Hidden on the
 // immersive map tab (transparent chrome, black icons over the tiles).
@@ -4136,7 +4397,7 @@ static void tabChangedCb(lv_event_t* e) {
   //     delete so the map's blocking first tile render can't paint under it.
   if (new_t != prev_t) s_tab_changed = true;   // the Home toggle reads this to tell a switch from a same-tap
   if (new_t == HOME_TAB_INDEX && prev_t != HOME_TAB_INDEX) {
-    if (s_home_drawer_mode) openAppDrawer();    // returned to Home in drawer mode -> restore it (NO toggle here)
+    if (s_home_drawer_mode || s_home_is_drawer) openAppDrawer();  // returned to Home in drawer mode (or drawer-as-home pref) -> restore it (NO toggle here)
   } else if (new_t != HOME_TAB_INDEX && prev_t == HOME_TAB_INDEX) {
     closeAppDrawerSync();                        // leaving Home -> hide (mode kept); sync so the map can't paint under it
   }
@@ -6431,19 +6692,22 @@ static void scrollReverseToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Scrollball: reversed") : TR("Scrollball: normal"), 900);
 }
 
-// Trackball interaction mode: mouse cursor (default) vs D-pad focus navigation
-// (↑↓←→ move focus, click = select), like the Tanmatsu. Applied live: flip the
-// cached flag; when turning OFF, empty the focus group so the amber ring clears
-// and the soft cursor takes back over on the next poll.
-static void tbKeypadToggleCb(lv_event_t* e) {
+// Keyboard ESDFX navigation: off (default) vs on (E/X/S/F move focus, D select, Q
+// back, while no text field is focused). Applied live: flip the cached flag; when
+// turning OFF, empty the focus group so the amber ring clears on the next loop.
+static void kbdNavToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
 #if defined(ESP32)
-  touchPrefsSetTbKeypad(on);
+  touchPrefsSetKbdNav(on);
 #endif
-  s_tb_keypad = on;
-  if (!on && s_nav_group) { lv_group_remove_all_objs(s_nav_group); navMarkDirty(); }
-  if (g_lv.task) g_lv.task->showAlert(on ? TR("Trackball: D-pad navigation") : TR("Trackball: mouse cursor"), 1100);
+  s_kbd_nav = on;
+  if (!on) {
+    navHideFocus();                                                  // clear + hide the focus highlight
+    if (s_nav_group) { lv_group_remove_all_objs(s_nav_group); navMarkDirty(); }
+  }
+  navMenubarKeysSync();   // show/hide the per-tab key hints in the menubar
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Keyboard nav: WASDZ on") : TR("Keyboard nav: off"), 1100);
 }
 #endif
 
@@ -7134,21 +7398,73 @@ static void buildDeviceSettings(int sec) {
 #endif
 
 #if defined(HAS_TDECK_TRACKBALL)
-  /* Trackball interaction mode: mouse cursor (default) vs D-pad focus navigation
-     (roll = move focus up/down/left/right, click = select) — like the Tanmatsu.
-     Applied live, no reboot. */
+#if defined(HAS_TDECK_KEYBOARD)
+  /* Keyboard navigation: off (default) vs on. When no text field is focused, the
+     WASDZ cluster moves focus so the whole UI is reachable from the keyboard (incl.
+     Settings), and the tab hotkeys below jump straight to a tab. The trackball
+     always stays a mouse cursor. Applied live. */
   {
-    int h = settingsRowLabel(body, y, 4, "Trackball D-pad mode", COLOR_TEXT, &g_font_12, 56);
+    int h = settingsRowLabel(body, y, 4, "Keyboard navigation", COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
-    if (touchPrefsGetTbKeypad()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    if (touchPrefsGetKbdNav()) lv_obj_add_state(sw, LV_STATE_CHECKED);
 #endif
-    lv_obj_add_event_cb(sw, tbKeypadToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(sw, kbdNavToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, h + 10);
-    y += settingsRowLabel(body, y, 0, "off = mouse cursor   on = roll to move focus, click to select",
+    y += settingsRowLabel(body, y, 0, "W up  \xc2\xb7  A left  \xc2\xb7  D right  \xc2\xb7  Z down  \xc2\xb7  S select  \xc2\xb7  Q back",
                           COLOR_SUB, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, "drive the UI without the screen; keys still type in text fields",
+                          COLOR_SUB, &g_font_12, 0) + 2;
+    // Programmable tab hotkeys — tap a row, then press a key to reassign it.
+    y += settingsRowLabel(body, y, 0, "Tab hotkeys \xe2\x80\x94 tap a row, then press a key", COLOR_SUB, &g_font_12, 0) + 2;
+    for (int t = 0; t < 5; t++) {
+      lv_obj_t* row = lv_btn_create(body);
+      lv_obj_set_size(row, lv_pct(100), SC(30));
+      lv_obj_set_pos(row, 2, y);
+      styleButton(row);
+      lv_obj_add_event_cb(row, navKeyCaptureStartCb, LV_EVENT_CLICKED, (void*)(intptr_t)t);
+      lv_obj_t* nm = lv_label_create(row);
+      lv_label_set_text(nm, TR(kNavTabNames[t]));
+      lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_align(nm, LV_ALIGN_LEFT_MID, 8, 0);
+      lv_obj_t* kv = lv_label_create(row);
+      const int lk = navKeyLower(s_nav_keys[t]);
+      char kb[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : lk), 0 };
+      lv_label_set_text(kv, kb);
+      lv_obj_set_style_text_font(kv, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(kv, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      lv_obj_align(kv, LV_ALIGN_RIGHT_MID, -10, 0);
+      s_navkey_row_val[t] = kv;
+      y += SC(36);
+    }
+    // Programmable control keys (move/select/back + scroll up/down) — tap a row, press a key.
+    y += settingsRowLabel(body, y, 0, "Navigation keys \xe2\x80\x94 tap a row, then press a key", COLOR_SUB, &g_font_12, 0) + 2;
+    for (int d = 0; d < 8; d++) {
+      const int bi = d + 5;   // binding index 5-12
+      lv_obj_t* row = lv_btn_create(body);
+      lv_obj_set_size(row, lv_pct(100), SC(30));
+      lv_obj_set_pos(row, 2, y);
+      styleButton(row);
+      lv_obj_add_event_cb(row, navKeyCaptureStartCb, LV_EVENT_CLICKED, (void*)(intptr_t)bi);
+      lv_obj_t* nm = lv_label_create(row);
+      lv_label_set_text(nm, TR(kNavDirNames[d]));
+      lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_align(nm, LV_ALIGN_LEFT_MID, 8, 0);
+      lv_obj_t* kv = lv_label_create(row);
+      const int lk = navKeyLower(s_dir_keys[d]);
+      char kb[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : lk), 0 };
+      lv_label_set_text(kv, kb);
+      lv_obj_set_style_text_font(kv, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(kv, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      lv_obj_align(kv, LV_ALIGN_RIGHT_MID, -10, 0);
+      s_navkey_row_val[bi] = kv;
+      y += SC(36);
+    }
   }
+#endif
 
   /* Reverse scrollball: invert trackball direction (cursor, map pan, emoji
      selector) for users who expect the opposite roll-to-move mapping. */
@@ -15235,8 +15551,9 @@ static bool           s_tiles_fs_ready = false;
 // Active tile-cache backend + path prefix. Normally the dedicated "tiles"
 // LittleFS partition above (prefix ""). When that partition is ABSENT — e.g.
 // running under bmorcelli's Launcher, whose partition table has no "tiles"
-// partition — we fall back to the SD card under /meshcomod/tiles so Wi-Fi tiles
-// still cache + display (see the mount logic in begin()). All cache access goes
+// partition — we fall back to the SD card ROOT /tiles (alongside the offline map
+// library) so Wi-Fi tiles still cache + display (see the mount logic in begin()).
+// All cache access goes
 // through the tileCache* helpers, which apply s_tile_root and route to the
 // active fs. Concurrency is fine on either backend: esp_littlefs locks the
 // partition internally, and FATFS is built FF_FS_REENTRANT=1 (per-volume mutex),
@@ -15244,8 +15561,9 @@ static bool           s_tiles_fs_ready = false;
 static fs::FS*        s_tile_fs   = nullptr;
 static char           s_tile_root[16] = "";
 // The cache backend for NON-microSD-tile mode (the LittleFS "tiles" partition, or
-// the /meshcomod SD fallback) — captured at boot so toggling microSD-tile mode off
-// restores it. In microSD-tile mode the cache is re-pointed at the card ROOT
+// the SD /tiles fallback when that partition is absent) — captured at boot so
+// toggling microSD-tile mode off restores it. In microSD-tile mode the cache is
+// likewise re-pointed at the card ROOT
 // (/tiles/<z>/<x>/<y>.jpg, where loadTileJpeg's SD branch reads) so Wi-Fi-fetched
 // tiles MERGE with the user's SD library instead of the tiny internal partition (#20).
 static fs::FS*        s_tile_fs_default   = nullptr;
@@ -15618,6 +15936,15 @@ static uint8_t  s_map_zoom       = k_map_zoom_default;
 static bool     s_map_view_inited = false;  // first map open did the recenter+zoom-snap; after that, remember the user's view (issue #5)
 static bool       s_map_follow     = false; // auto-follow: recenter on self whenever the GPS coords change
 static lv_obj_t*  s_map_follow_btn = nullptr;
+// Map zoom control style: false = slider (default, toggled by the on-map button),
+// true = a +/- button pair (issue #26). Loaded from prefs at boot; toggled in the
+// Map options popup. mapZoomControlsApply() positions/shows the right controls.
+static bool       s_map_zoom_buttons   = false;
+static lv_obj_t*  s_map_btn_zoomtoggle = nullptr;   // "+/-" slider-toggle (slider mode)
+static lv_obj_t*  s_map_btn_zoomin     = nullptr;   // "+" (buttons mode)
+static lv_obj_t*  s_map_btn_zoomout    = nullptr;   // "-" (buttons mode)
+static lv_obj_t*  s_map_btn_recenter   = nullptr;   // GPS recenter (shifts down in buttons mode)
+static lv_obj_t*  s_map_btn_contacts   = nullptr;   // contacts list (shifts down in buttons mode)
 static bool     s_map_has_pack   = false;   // toggles placeholder visibility
 
 // lat/lon → world pixel at given zoom (Web Mercator).
@@ -16931,8 +17258,12 @@ static void drawRouteOverlay(lv_obj_t* parent, double cwx, double cwy) {
   }
 }
 
-// Center + zoom the map so every positioned route node fits the canvas.
+// Center + zoom the map so every positioned route node fits the canvas — on a wide
+// OVERVIEW so you can see where the hops start + the whole path. Fits the hops into
+// ~55% of the canvas (lots of surrounding context) and caps the zoom so even a tight
+// cluster opens area-level, never fully zoomed in. You can pan/zoom freely after.
 static void fitMapToRoute() {
+  constexpr uint8_t k_route_overview_max = 12;   // never open the replay more zoomed-in than this
   double minlat = 90.0, maxlat = -90.0, minlon = 180.0, maxlon = -180.0;
   int n = 0;
   for (int i = 0; i < s_route_n; ++i) {
@@ -16946,18 +17277,19 @@ static void fitMapToRoute() {
   if (n == 0) return;
   s_map_center_lat = (minlat + maxlat) / 2.0;
   s_map_center_lon = (minlon + maxlon) / 2.0;
-  if (n == 1) { s_map_zoom = k_map_zoom_default; return; }
+  if (n == 1) { s_map_zoom = k_route_overview_max; return; }
   for (uint8_t z = k_map_zoom_max; ; --z) {
     double ax, ay, bx, by;
     latLonToWorldPx(maxlat, minlon, z, &ax, &ay);     // NW corner
     latLonToWorldPx(minlat, maxlon, z, &bx, &by);     // SE corner
     const double spanx = fabs(bx - ax), spany = fabs(by - ay);
-    if ((spanx <= k_map_canvas_w * 0.78 && spany <= k_map_canvas_h * 0.78) ||
+    if ((spanx <= k_map_canvas_w * 0.55 && spany <= k_map_canvas_h * 0.55) ||
         z <= k_map_zoom_min) {
       s_map_zoom = z;
       break;
     }
   }
+  if (s_map_zoom > k_route_overview_max) s_map_zoom = k_route_overview_max;   // keep a wide overview
 }
 
 // Reveal one more node each tick; stop (and keep the full path drawn) at the end.
@@ -17129,6 +17461,7 @@ static void showRouteHud() {
   lv_obj_set_style_border_color(s_route_hud, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_border_opa(s_route_hud, LV_OPA_50, LV_PART_MAIN);
   lv_obj_clear_flag(s_route_hud, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(s_route_hud, LV_OBJ_FLAG_CLICKABLE);   // let pans pass through to the map (the replay button stays clickable)
 
   s_route_hud_lbl = lv_label_create(s_route_hud);
   lv_label_set_long_mode(s_route_hud_lbl, LV_LABEL_LONG_DOT);
@@ -17232,6 +17565,17 @@ static void mapOptContactsCb(lv_event_t* e) {
   touchPrefsSetMapShowContacts(s_map_show_contacts);
 #endif
   renderMapMarkers();   // add/remove the contact markers (+ their links)
+}
+
+static void mapZoomControlsApply();   // fwd (defined near the map build) — reposition zoom controls
+// Map zoom-control style toggle (map options popup): ON = +/- buttons, OFF = slider.
+static void mapOptZoomButtonsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_map_zoom_buttons = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetMapZoomButtons(s_map_zoom_buttons);
+#endif
+  mapZoomControlsApply();
 }
 
 #if defined(HAS_TDECK_GT911)
@@ -17440,6 +17784,20 @@ static void openMapOptions() {
     lv_obj_align(sw_night, LV_ALIGN_TOP_RIGHT, 0, y);
     if (s_map_night) lv_obj_add_state(sw_night, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw_night, mapOptNightCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += 40;
+  }
+
+  // Row: Zoom controls — slider (default, off) vs a +/- button pair (on, issue #26).
+  {
+    lv_obj_t* zl = lv_label_create(card);
+    lv_label_set_text(zl, TR("Zoom: +/- buttons"));
+    lv_obj_set_style_text_color(zl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(zl, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_pos(zl, 2, y + 4);
+    lv_obj_t* sw_zoom = lv_switch_create(card);
+    lv_obj_align(sw_zoom, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (s_map_zoom_buttons) lv_obj_add_state(sw_zoom, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw_zoom, mapOptZoomButtonsCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += 40;
   }
 
@@ -17729,6 +18087,7 @@ struct MapContactEntry {
 // popup shell so the Sort button can re-list without rebuilding the card.
 static void mapContactsFillList() {
   if (!s_map_contacts_list) return;
+  lv_indev_reset(nullptr, nullptr);   // #27: abort any scroll-throw before freeing these rows (UAF on telemetry/position rebuild mid-flick)
   lv_obj_clean(s_map_contacts_list);
 
   // Collect GPS-bearing contacts + their distance/age keys.
@@ -18062,6 +18421,9 @@ static void mapZoomInCb(lv_event_t* e) {
   const uint8_t want = s_map_zoom + 1;
 #endif
   s_map_zoom = want;
+#if defined(ESP32)
+  touchPrefsSetMapZoom(s_map_zoom);   // persist like the slider does
+#endif
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
@@ -18083,6 +18445,9 @@ static void mapZoomOutCb(lv_event_t* e) {
   const uint8_t want = s_map_zoom - 1;
 #endif
   s_map_zoom = want;
+#if defined(ESP32)
+  touchPrefsSetMapZoom(s_map_zoom);   // persist like the slider does
+#endif
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
@@ -18124,6 +18489,31 @@ static void mapZoomToggleCb(lv_event_t* e) {
     lv_obj_add_flag(s_map_zoom_slider, LV_OBJ_FLAG_HIDDEN);
     if (s_map_zoom_val) lv_obj_add_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
   }
+}
+// Position + show/hide the map zoom controls per s_map_zoom_buttons. The right-edge
+// button column is gear(4), [zoom], recenter, contacts, follow. The zoom section is
+// one slot (the "+/-" slider toggle) in slider mode or two (+ / -) in buttons mode,
+// so the buttons below shift down accordingly.
+static void mapZoomControlsApply() {
+  const int X = k_map_canvas_w - 32 - 4;
+  const int H = 32;
+  auto show = [&](lv_obj_t* b, int yy) { if (b) { lv_obj_set_pos(b, X, yy); lv_obj_clear_flag(b, LV_OBJ_FLAG_HIDDEN); } };
+  auto hide = [](lv_obj_t* b) { if (b) lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN); };
+  int y = 4 + H;   // below the gear
+  if (s_map_zoom_buttons) {
+    show(s_map_btn_zoomin,  y); y += H;
+    show(s_map_btn_zoomout, y); y += H;
+    hide(s_map_btn_zoomtoggle);
+    if (s_map_zoom_slider) lv_obj_add_flag(s_map_zoom_slider, LV_OBJ_FLAG_HIDDEN);   // no slider in buttons mode
+    if (s_map_zoom_val)    lv_obj_add_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    show(s_map_btn_zoomtoggle, y); y += H;
+    hide(s_map_btn_zoomin);
+    hide(s_map_btn_zoomout);
+  }
+  show(s_map_btn_recenter, y); y += H;
+  show(s_map_btn_contacts, y); y += H;
+  if (s_map_follow_btn) lv_obj_set_pos(s_map_follow_btn, X, y);
 }
 static void mapRecenterCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -18383,6 +18773,7 @@ static void makeMapTab(lv_obj_t* tab) {
   lv_obj_set_style_bg_opa(s_map_touch, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_clear_flag(s_map_touch, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(s_map_touch, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(s_map_touch, NAV_SKIP_FLAG);   // pan/drag catcher — never a keyboard-nav focus target (else the focus highlight paints it white)
   lv_obj_add_event_cb(s_map_touch, mapCanvasEventCb, LV_EVENT_PRESSED,    nullptr);
   lv_obj_add_event_cb(s_map_touch, mapCanvasEventCb, LV_EVENT_PRESSING,   nullptr);
   lv_obj_add_event_cb(s_map_touch, mapCanvasEventCb, LV_EVENT_RELEASED,   nullptr);
@@ -18409,10 +18800,15 @@ static void makeMapTab(lv_obj_t* tab) {
   };
   // Options gear sits at the TOP of the right-edge column; zoom/recenter below,
   // then a "contacts on map" picker (list of GPS-bearing contacts → recenter).
-  make_overlay_btn(LV_SYMBOL_SETTINGS, 4,         mapOpenOptionsCb);
-  make_overlay_btn("+/-",              4 + 32,    mapZoomToggleCb);   // +/- — toggles the zoom slider
-  make_overlay_btn(LV_SYMBOL_GPS,      4 + 32*2,  mapRecenterCb);
-  make_overlay_btn(LV_SYMBOL_LIST,     4 + 32*3,  mapOpenContactsCb);
+  make_overlay_btn(LV_SYMBOL_SETTINGS, 4,         mapOpenOptionsCb);   // gear (fixed top)
+  // Zoom controls — the "+/-" slider toggle OR a +/- button pair, chosen by
+  // s_map_zoom_buttons. All created here; mapZoomControlsApply() (below) positions
+  // + shows the right set and shifts recenter/contacts/follow down accordingly.
+  s_map_btn_zoomtoggle = make_overlay_btn("+/-", 4 + 32,    mapZoomToggleCb);   // toggles the zoom slider
+  s_map_btn_zoomin     = make_overlay_btn("+",   4 + 32,    mapZoomInCb);
+  s_map_btn_zoomout    = make_overlay_btn("-",   4 + 32*2,  mapZoomOutCb);
+  s_map_btn_recenter   = make_overlay_btn(LV_SYMBOL_GPS,  4 + 32*2, mapRecenterCb);
+  s_map_btn_contacts   = make_overlay_btn(LV_SYMBOL_LIST, 4 + 32*3, mapOpenContactsCb);
   // Auto-follow toggle: recenters on self whenever the GPS coords change. Lit
   // (accent) while active via the CHECKED state.
   s_map_follow_btn = make_overlay_btn(LV_SYMBOL_REFRESH, 4 + 32*4, mapFollowToggleCb);
@@ -18448,6 +18844,8 @@ static void makeMapTab(lv_obj_t* tab) {
   lv_obj_set_style_radius(s_map_zoom_val, 4, LV_PART_MAIN);
   lv_obj_align_to(s_map_zoom_val, s_map_zoom_slider, LV_ALIGN_OUT_TOP_MID, 0, -6);
   lv_obj_add_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
+
+  mapZoomControlsApply();   // position + show/hide slider-toggle vs +/- buttons per the pref
 
   // (OSM attribution now lives in the status bar's left zone on the map tab —
   // see updateGlobalStatusBar.)
@@ -18881,6 +19279,29 @@ static void crashDumpExportCb(lv_event_t* e) {
   } else {
     g_lv.task->showAlert("Crash export failed", 2000);
   }
+}
+
+// Boot-time crash prompt: when a panic coredump is waiting, proactively offer to save
+// + share it (most users never open Settings → About). On confirm, export it and tell
+// the user where it landed + how to send it. Dismiss keeps the dump (the About button
+// and the next boot still offer it).
+static void crashReportConfirmCb() {
+  char path[80] = {0};
+  if (crashDumpExport(path, sizeof path)) {
+    char msg[200];
+    snprintf(msg, sizeof msg,
+             "Crash report saved:\n%s\n\nShare this file with the developers\n"
+             "(open a GitHub issue at ALLFATHER-BV/wadamesh)\nso the bug can be fixed. Thank you!", path);
+    if (g_lv.task) g_lv.task->showAlert(msg, 6000);
+  } else if (g_lv.task) {
+    g_lv.task->showAlert("Could not save the crash report", 2500);
+  }
+}
+static void crashReportMaybePrompt() {
+  if (s_crash_dump_size == 0) return;
+  showConfirm(LV_SYMBOL_WARNING "  The device restarted after a crash.\n\n"
+              "Sending the crash report helps us find and fix the bug. Save it now?",
+              "Save report", crashReportConfirmCb);
 }
 #endif  // ESP32
 
@@ -19861,6 +20282,11 @@ static void refreshChatDetail(LvChatPanel& p) {
   // below resets the scroll, so we restore it after the rebuild.
   const lv_coord_t prev_scroll_y = lv_obj_get_scroll_y(p.msgs);
   const bool       was_at_bottom = lv_obj_get_scroll_bottom(p.msgs) <= 8;
+  // #27: if the user is mid-flick (scroll-throw) when a message arrives and we
+  // free these bubbles, LVGL's next indev tick dereferences the freed object and
+  // panics — the message-flood amplifier. reset_query forces the indev to fully
+  // reset (clearing the throw target) before its next throw, so nothing dangles.
+  lv_indev_reset(nullptr, nullptr);
   lv_obj_clean(p.msgs);
 
   if (!g_lv.task->hasActiveThread() ||
@@ -20222,6 +20648,7 @@ static void refreshChatList(LvChatPanel& p) {
   p.list_sig = sig;
 
   const lv_coord_t saved_scroll = lv_obj_get_scroll_y(p.list_cont);
+  lv_indev_reset(nullptr, nullptr);   // #27: abort any scroll-throw before freeing these rows (UAF on flood)
   lv_obj_clean(p.list_cont);
 
   if (count <= 0) {
@@ -20474,6 +20901,7 @@ static void refreshContactsList() {
   strncpy(s_last_search, g_lv.contacts_search, sizeof(s_last_search) - 1);
   s_last_search[sizeof(s_last_search) - 1] = '\0';
   s_last_age_refresh_ms = now_ms;
+  lv_indev_reset(nullptr, nullptr);   // #27: abort any scroll-throw before freeing these rows (UAF on advert flood)
   lv_obj_clean(g_lv.contacts_list);
   // Sync the search-active indicator chip with the current search state.
   if (g_lv.contacts_search_indicator) {
@@ -20861,15 +21289,6 @@ static void mapTrackballFinalizePan() {
   refreshMapInfoLabel();
 }
 
-// A trackball centre-click in D-pad mode = activate the focused widget, mirroring
-// navPump's Enter handling: switch to the next screen when the tab bar is focused,
-// advance a focused text field, else send ENTER (LVGL delivers CLICKED to the
-// focused widget). Called from the PIN_USER_BTN click block when s_tb_keypad is on.
-static void navTrackballClick() {
-  if (navOnTabBar()) { navSwitchTab(+1); return; }
-  navPushTap(navFocusedTextarea() ? LV_KEY_NEXT : LV_KEY_ENTER);
-}
-
 static void updateTrackball(unsigned long now) {
   if (!s_tb_cursor) return;
   const int W = lv_disp_get_hor_res(nullptr);
@@ -20931,28 +21350,7 @@ static void updateTrackball(unsigned long now) {
     return;
   }
 
-  // ---- D-pad navigation mode (every non-special tab) ----
-  // The trackball moves focus through s_nav_group instead of a soft cursor:
-  // vertical = focus prev/next, horizontal = prev/next (or switch tabs on the tab
-  // bar). The centre click = activate (handled in the PIN_USER_BTN block ->
-  // navTrackballClick). Rate-limited so a continuous roll doesn't fly across the UI.
-  if (s_tb_keypad) {
-    if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
-      lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
-    if (moved && (dx != 0 || dy != 0) && (now - s_tb_nav_last_ms) >= kTbNavStepMs) {
-      const int adx = dx < 0 ? -dx : dx;
-      const int ady = dy < 0 ? -dy : dy;
-      if (ady >= adx)         navPushTap(dy < 0 ? LV_KEY_PREV : LV_KEY_NEXT);   // vertical: focus up/down
-      else if (navOnTabBar()) navSwitchTab(dx < 0 ? -1 : +1);                   // on the tab bar: switch screens
-      else                    navPushTap(dx < 0 ? LV_KEY_PREV : LV_KEY_NEXT);   // horizontal: focus prev/next
-      s_tb_nav_last_ms = now;
-      if (g_lv.task) g_lv.task->noteUserInput();
-    }
-    s_tb_click_press = false;   // click routes to the focus group (navTrackballClick), not a cursor tap
-    return;
-  }
-
-  // ---- Cursor mode (every other tab) ----
+  // ---- Cursor mode (every tab; focus nav is on the keyboard ESDFX cluster) ----
   // Accumulate raw motion into the TARGET at full sensitivity (so total travel
   // per roll is unchanged); the rendered cursor eases toward it below.
   if (moved) {
@@ -21094,15 +21492,11 @@ static bool isDismissKey(int key) {
 // Bottom-tab a key jumps to (no popup, no field focused), or -1. Space/H Home,
 // M Chats, C Contacts, L Map, S Settings.
 static int tabForKey(int key) {
-  switch (key) {
-    case ' ':
-    case 'h': case 'H': return HOME_TAB_INDEX;
-    case 'm': case 'M': return CHAT_INBOX_TAB_INDEX;
-    case 'c': case 'C': return CONTACTS_TAB_INDEX;
-    case 'l': case 'L': return MAP_TAB_INDEX;
-    case 's': case 'S': return SETTINGS_TAB_INDEX;
-    default: return -1;
-  }
+  // Old fixed letter tab-jumps (h/m/c/l/s) removed — tab jumps are now the
+  // programmable keyboard-nav hotkeys (navTabForHotkey, default E/R/T/U/I), active
+  // only while keyboard navigation is on.
+  (void)key;
+  return -1;
 }
 
 #if defined(HAS_TDECK_GT911)
@@ -21799,15 +22193,17 @@ static void backupDeleteCb(lv_event_t* e) {
 }
 
 #if defined(HAS_TDECK_GT911)
-// Wipe the SD data folder (/meshcomod/*) but KEEP /meshcomod/tiles — the cached
-// Wi-Fi map tiles. Offline packs at /maps/osm are outside /meshcomod, untouched.
+// Wipe the SD data folder (/meshcomod/*) — identity, prefs, logs, telemetry, and
+// any orphaned pre-#20 /meshcomod/tiles cache. The live Wi-Fi tile cache + offline
+// packs now live at the SD ROOT (/tiles, /maps/osm), outside /meshcomod, so a
+// factory reset keeps the map tiles automatically.
 static void factoryWipeSdData() {
   if (!fmSdTryMount()) return;
   File d = SD.open("/meshcomod");
   if (!d || !d.isDirectory()) { if (d) d.close(); return; }
   // Collect the entries to wipe FIRST, then delete. Removing during the
   // openNextFile() walk skips entries on FatFS — a partial wipe is what left
-  // data behind after a factory reset. Keep /meshcomod/tiles (cached map tiles).
+  // data behind after a factory reset.
   static const int kMax = 24;
   char names[kMax][48];
   bool dirs[kMax];
@@ -21816,7 +22212,7 @@ static void factoryWipeSdData() {
   while (e && n < kMax) {
     const char* full = e.name();
     const char* base = strrchr(full, '/'); base = base ? base + 1 : full;
-    if (base[0] && strcasecmp(base, "tiles") != 0) {
+    if (base[0]) {
       strncpy(names[n], base, sizeof(names[n]) - 1);
       names[n][sizeof(names[n]) - 1] = '\0';
       dirs[n] = e.isDirectory();
@@ -21853,7 +22249,7 @@ static void doFactoryReset() {
   delay(150);                      // let the overlay actually hit the panel
   wdtHeavyBegin();                 // SPIFFS format is a long flash burst
 #if defined(HAS_TDECK_GT911)
-  factoryWipeSdData();             // SD /meshcomod data (keep tiles)
+  factoryWipeSdData();             // SD /meshcomod data (tiles at /tiles root are kept)
 #endif
   the_mesh.uiFactoryReset();       // SPIFFS.format() + nvs_flash_erase()
   ESP.restart();                   // fresh boot: new identity + first-boot wizard
@@ -22045,6 +22441,10 @@ static void handleHwKey(int key) {
   if (g_lv.task && g_lv.task->isManualLock()) { g_lv.task->lockscreenReveal(); return; }
   // Idle-dimmed (not hard-locked): ignore keys; a touch/click wakes into the UI.
   if (g_lv.task && g_lv.task->isScreenOff()) return;
+#if defined(HAS_TDECK_TRACKBALL)
+  // Remapping a tab hotkey (Settings → Keyboard): capture the next key press.
+  if (s_navkey_capture >= 0) { navKeyCaptureApply(key); return; }
+#endif
 #if defined(HAS_TDECK_KEYBOARD)
   // Any key other than the lock key (space) aborts a pending lock countdown.
   if (s_locking_deadline && key != ' ') cancelLockingCountdown();
@@ -22065,6 +22465,46 @@ static void handleHwKey(int key) {
     if (key == ' ') {
       startLockingCountdown();   // 1 s "Locking…" countdown; tap / any other key cancels
       return;
+    }
+#endif
+#if defined(HAS_TDECK_TRACKBALL)
+    // Keyboard navigation (opt-in): with no text field focused, the WASDZ cluster
+    // moves focus through s_nav_group — W up, Z down, A left, D right, S select,
+    // Q back — and the programmable tab hotkeys (default E/R/T/U/I) jump straight to
+    // a main tab. Lets you reach + drive the whole UI from the keyboard while the
+    // trackball stays a mouse cursor. navMaybeRebuild() (in the loop) keeps the
+    // focus group synced to the screen.
+    if (s_kbd_nav) {
+      const int act = navDirForKey(key);   // 0-5 = up,down,left,right,select,back (programmable), or -1
+      if (act >= 0) {
+        switch (act) {
+          case 0: navMoveDir(NAV_UP);    break;
+          case 1: navMoveDir(NAV_DOWN);  break;
+          case 2: navMoveDir(NAV_LEFT);  break;
+          case 3: navMoveDir(NAV_RIGHT); break;
+          case 4: if (navOnTabBar()) navSwitchTab(+1); else navPushTap(LV_KEY_ENTER); break;   // select
+          case 5:                                                                              // back: popup → chat → ESC
+            if (anyPopupOpen())                            hwKeyDismissTopPopup();
+            else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);                 // close an open chat/channel first
+            else                                           navPushTap(LV_KEY_ESC);
+            break;
+          case 6: navScrollFocused(true);  break;   // scroll up
+          default: navScrollFocused(false); break;  // scroll down (case 7)
+        }
+        s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;   // reveal the focus highlight
+      }
+      // Programmable tab hotkeys (default E/R/T/U/I) — jump straight to a main tab.
+      // The Home hotkey mirrors tapping the Home tab: on Home it toggles Commander
+      // <-> app drawer, otherwise it goes Home.
+      const int njump = navTabForHotkey(key);
+      if (njump >= 0) {
+        // Home hotkey mirrors tapping the Home tab: on Home toggle Commander <-> app
+        // drawer, else go Home. (homeKeyActivate is HAS_TANMATSU-only, so inline it.)
+        if (njump == HOME_TAB_INDEX && getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(!s_home_drawer_mode);
+        else                                                             navGoToMainTab(njump);
+        if (g_lv.task) g_lv.task->noteUserInput();
+        return;
+      }
     }
 #endif
     // Not editing a field. If a popup is up, the dismiss keys close it; on a
@@ -23408,6 +23848,7 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
     for (int b = 0; b < 4; b++) {
       lv_obj_t* bar = lv_obj_create(box);
       lv_obj_remove_style_all(bar);
+      lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);   // decorative — keep keyboard-nav off the individual bars (focus the app, not each bar)
       const int bh = 5 + b * 3;             // 5, 8, 11, 14 px
       lv_obj_set_size(bar, 4, bh);
       lv_obj_set_pos(bar, b * 6, 16 - bh);  // bottom-aligned
@@ -23466,6 +23907,15 @@ static void appGridChooseCb(lv_event_t* e) {
   if (s_appdrawer_root) { lv_obj_del(s_appdrawer_root); s_appdrawer_root = nullptr; }
   openAppDrawer();
 }
+static void appHomeIsDrawerCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetHomeIsDrawer(on);
+#endif
+  s_home_is_drawer = on;
+  if (on) s_home_drawer_mode = true;   // make the drawer the live Home view too (persists on return + reboot)
+}
 static void openAppGridSheet() {
   closeAppGridSheet();
   lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
@@ -23479,9 +23929,10 @@ static void openAppGridSheet() {
   lv_obj_add_event_cb(s_appgrid_sheet, appGridBackdropCb, LV_EVENT_CLICKED, nullptr);
 
   const int card_w = 210, btn_h = 46, pad = 12, hdr = 28, gap = 8;
+  const int home_row = 36;   // the "app drawer as home" toggle row below the size buttons
   lv_obj_t* card = lv_obj_create(s_appgrid_sheet);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, card_w, hdr + 2 * btn_h + gap + 2 * pad);
+  lv_obj_set_size(card, card_w, hdr + 2 * btn_h + gap + home_row + gap + 2 * pad);
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
@@ -23514,6 +23965,21 @@ static void openAppGridSheet() {
     lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(is_cur ? COLOR_ACCENT : COLOR_TEXT), LV_PART_MAIN);
     lv_obj_center(l);
+  }
+  // "App drawer as home" — make the launcher the persistent Home view (no Commander).
+  {
+    const int ty = hdr + 2 * (btn_h + gap);
+    lv_obj_t* hl = lv_label_create(card);
+    lv_label_set_text(hl, TR("App drawer as home"));
+    lv_obj_set_style_text_font(hl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(hl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(hl, LV_ALIGN_TOP_LEFT, 0, ty + 8);
+    lv_obj_t* sw = lv_switch_create(card);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, ty);
+#if defined(ESP32)
+    if (touchPrefsGetHomeIsDrawer()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(sw, appHomeIsDrawerCb, LV_EVENT_VALUE_CHANGED, nullptr);
   }
 }
 static void appDrawerSettingsCb(lv_event_t* e) {
@@ -25538,6 +26004,9 @@ static void buildUiTree() {
   lv_obj_set_style_text_font(tab_btns, &g_font_14, LV_PART_MAIN);
   lv_obj_add_event_cb(tab_btns, homeTabClickedCb, LV_EVENT_CLICKED, nullptr);   // Home re-tap toggles the drawer
   lv_obj_add_event_cb(tab_btns, tabBarGestureCb, LV_EVENT_GESTURE, nullptr);    // swipe up from the bar opens the drawer
+#if defined(HAS_TDECK_TRACKBALL)
+  lv_obj_add_event_cb(tab_btns, navMenubarSizeCb, LV_EVENT_SIZE_CHANGED, nullptr);  // keep the keyboard-nav key hints positioned
+#endif
 
   // Tab labels: icons-only (house, envelope, list, GPS pin, gear) — saves
   // space and lets all five tabs sit comfortably in the 240px wide bar
@@ -27724,6 +28193,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_map_show_contacts = touchPrefsGetMapShowContacts();
   { const uint8_t pz = touchPrefsGetMapZoom();    // restore the last user-set map zoom
     if (pz >= k_map_zoom_min && pz <= k_map_zoom_max) s_map_zoom = pz; }
+  s_map_zoom_buttons = touchPrefsGetMapZoomButtons();   // map zoom control: slider (default) vs +/- buttons
+  s_home_is_drawer   = touchPrefsGetHomeIsDrawer();     // Home tab default: Commander (default) vs app drawer
   // Monitor RX/RAW log rings live in PSRAM (2×28×80 = 4.4 KB) so they don't sit
   // in scarce internal DRAM that Wi-Fi DMA needs. Zero-init; the push/collect
   // helpers null-guard, so a (vanishingly unlikely) OOM just drops Monitor logs.
@@ -27804,9 +28275,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // Pick the active tile-cache backend now the partition mount has been tried.
   // Prefer the dedicated "tiles" partition; if it's absent — e.g. running under
   // Launcher, whose partition table has no "tiles" partition — fall back to the
-  // SD card under /meshcomod/tiles so Wi-Fi tiles still cache + display instead
-  // of failing with "Map storage error". s_tiles_fs_ready then means "a tile
-  // cache (partition OR SD) is available".
+  // SD card ROOT /tiles so Wi-Fi tiles still cache + display instead of failing
+  // with "Map storage error". s_tiles_fs_ready then means "a tile cache
+  // (partition OR SD) is available".
   if (s_tiles_fs_ready) {
     s_tile_fs = &s_tiles_fs;
     s_tile_root[0] = '\0';
@@ -27820,12 +28291,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // storage error. Only walk the mount ladder if the card isn't already up.
   else if (SD.cardType() != CARD_NONE || fmSdTryMount()) {
     s_sd_mounted = true;     // trust the live mount; skip future remount ladders
-    SD.mkdir("/meshcomod");
-    SD.mkdir("/meshcomod/tiles");
     s_tile_fs = &SD;
-    strncpy(s_tile_root, "/meshcomod", sizeof s_tile_root - 1);
+    s_tile_root[0] = '\0';   // cache to the SD ROOT /tiles/<z>/<x>/<y>.jpg — the same place
+                             // the offline library + microSD-tile mode use, so the Wi-Fi cache
+                             // MERGES with it. Retires the old separate /meshcomod/tiles spot;
+                             // the dir path is created on demand by the fetcher (tileCacheMkdir).
     s_tiles_fs_ready = true;
-    Serial.printf("[TILE] no tiles partition -> caching Wi-Fi tiles on SD /meshcomod/tiles (cardType=%d)\n",
+    Serial.printf("[TILE] no tiles partition -> caching Wi-Fi tiles on SD /tiles (cardType=%d)\n",
                   (int)SD.cardType());
   }
 #endif
@@ -28186,20 +28658,22 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     g_lv.indev_drv.disp    = lv_disp_get_default();
     if (!lv_indev_drv_register(&g_lv.indev_drv)) pushDiagLine("LVGL indev failed");
 #if defined(HAS_TDECK_TRACKBALL)
-    // Second indev for the optional trackball D-pad mode: a KEYPAD indev + focus
-    // group, registered always (cheap) but only DRIVEN when touchPrefsGetTbKeypad()
-    // is on (updateTrackball feeds navFifo; navMaybeRebuild runs in the loop). In
-    // mouse mode the group stays empty, so it shows no focus ring and does nothing.
+    // Second indev for the optional keyboard ESDFX nav: a KEYPAD indev + focus
+    // group, registered always (cheap) but only DRIVEN when touchPrefsGetKbdNav()
+    // is on (handleHwKey feeds navFifo; navMaybeRebuild runs in the loop). With it
+    // off the group stays empty, so it shows no focus ring and does nothing.
     s_nav_group = lv_group_create();
     lv_group_set_focus_cb(s_nav_group, navFocusCb);   // amber focus ring + scroll-into-view
-    lv_indev_drv_init(&s_tb_keypad_drv);
-    s_tb_keypad_drv.type    = LV_INDEV_TYPE_KEYPAD;
-    s_tb_keypad_drv.read_cb = tanmatsuKeypadRead;
-    s_tb_keypad_drv.disp    = lv_disp_get_default();
-    if (lv_indev_t* kp = lv_indev_drv_register(&s_tb_keypad_drv)) lv_indev_set_group(kp, s_nav_group);
-    else pushDiagLine("LVGL trackball keypad indev failed");
+    lv_indev_drv_init(&s_nav_keypad_drv);
+    s_nav_keypad_drv.type    = LV_INDEV_TYPE_KEYPAD;
+    s_nav_keypad_drv.read_cb = tanmatsuKeypadRead;
+    s_nav_keypad_drv.disp    = lv_disp_get_default();
+    if (lv_indev_t* kp = lv_indev_drv_register(&s_nav_keypad_drv)) lv_indev_set_group(kp, s_nav_group);
+    else pushDiagLine("LVGL nav keypad indev failed");
 #if defined(ESP32)
-    s_tb_keypad = touchPrefsGetTbKeypad();
+    s_kbd_nav = touchPrefsGetKbdNav();
+    for (int i = 0; i < 5; i++) { uint8_t k = touchPrefsGetNavKey(i);    if (k) s_nav_keys[i] = k; }   // load programmable tab hotkeys
+    for (int i = 0; i < 8; i++) { uint8_t k = touchPrefsGetNavDirKey(i); if (k) s_dir_keys[i] = k; }   // load programmable control + scroll keys
 #endif
 #endif
 #endif
@@ -28222,6 +28696,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // First-boot setup wizard (welcome -> name -> region -> Wi-Fi). Overlays the
     // freshly-built UI; gated by touchPrefsGetSetupDone() so it's shown once.
     setupWizardMaybeOpen();
+    // Drawer-as-home pref: open the launcher as the initial Home view (but not over
+    // the first-boot wizard, and only when Home is the active tab).
+    if (s_home_is_drawer && !s_setup_root && getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(true);
+#if defined(ESP32)
+    if (!s_setup_root) crashReportMaybePrompt();   // a panic coredump is waiting -> proactively offer to send it
+#endif
   }
   g_lv.dirty_threads      = true;
   g_lv.dirty_timeline     = true;
@@ -29194,15 +29674,6 @@ void UITask::loop() {
         s_tb_last_active_ms = now; noteUserInput();
       }
       s_tb_click_press = false;
-    } else if (s_tb_keypad) {
-      // D-pad mode: a fresh centre-click activates the focused widget (Enter),
-      // edge-triggered so a held click doesn't repeat. No cursor tap is injected.
-      if (tb_pressed && s_user_btn_prev == HIGH && !s_tb_wake_consume) {
-        navTrackballClick();
-        s_tb_last_active_ms = now; noteUserInput();
-      }
-      if (!tb_pressed) s_tb_wake_consume = false;
-      s_tb_click_press = false;
     } else {
       if (!tb_pressed) s_tb_wake_consume = false;   // released after unlock -> clicks re-armed
       s_tb_click_press = tb_pressed && !s_tb_wake_consume;
@@ -29533,7 +30004,7 @@ void UITask::loop() {
   navMaybeRebuild();   // keep the keyboard-nav focus group in sync with the visible screen
   navPump();           // drain bsp keys: queue focus moves, type straight into focused fields
 #elif defined(HAS_TDECK_TRACKBALL)
-  if (s_tb_keypad) navMaybeRebuild();   // D-pad mode: same focus group, fed from the trackball poll
+  if (s_kbd_nav) navMaybeRebuild();   // ESDFX keyboard nav: keep the focus group synced (fed by handleHwKey)
 #endif
   lv_timer_handler();
 #if defined(HAS_TANMATSU)

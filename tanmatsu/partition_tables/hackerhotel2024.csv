@@ -1,0 +1,11 @@
+# 	ESP-IDF Partition Table
+# 	Name	Type	SubType	Offset	Size
+	nvs,	data,	nvs,	0x9000,	16K,
+	otadata,	data,	ota,	0xD000,	8K,
+	phy_init,	data,	phy,	0xF000,	4K,
+	ota_0,	0,	ota_0,	0x10000,	2048K,
+	ota_1,	0,	ota_1,	0x210000,	2048K,
+	appfs,	0x43,	3,	0x410000,	6000K,
+	zb_storage,	data,	fat,	0x9EC000,	16K,
+	zb_fct,	data,	fat,	0x9F0000,	4K,
+	locfd,	data,	fat,	0x9F1000,	6204K,

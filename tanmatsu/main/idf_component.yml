@@ -1,0 +1,12 @@
+dependencies:
+  idf: ">=5.5.1"
+  badgeteam/badge-bsp: "^0.9.9"
+  nicolaielectronics/tanmatsu-wifi: "^1.1.2"
+  nicolaielectronics/tanmatsu-lora: "^0.3.0"   # SX1262 LoRa over the C6 — TanmatsuLoraRadio bridge
+  # arduino-esp32 as an IDF component so the shared wadamesh src/ (Arduino API) compiles.
+  # esp32p4 is a first-class target from 3.1.3+; 3.3.10 is the current stable.
+  espressif/arduino-esp32: "3.3.10"
+  # BLE companion over the C6: esp-nimble-cpp is the IDF-host NimBLE C++ wrapper (works with esp-hosted's
+  # remote BLE controller, unlike NimBLE-Arduino's bundled host). The Tanmatsu's vendored SerialBLEInterface
+  # copy is ported to this 2.x API. C6 controller comes up via hostedInitBLE().
+  h2zero/esp-nimble-cpp: "^2.3.0"

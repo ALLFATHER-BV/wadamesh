@@ -1,0 +1,27 @@
+# wadamesh-specific sdkconfig overlay, layered on top of sdkconfigs/general + sdkconfigs/tanmatsu.
+# Keep badge.team's files pristine; put all our overrides here.
+
+# arduino-esp32 (as an IDF component) hard-requires a 1000 Hz FreeRTOS tick.
+# badge.team defaults the Tanmatsu to 100 Hz; 1000 Hz matches what the S3 wadamesh
+# boards already run, so this is the correct value for our app.
+CONFIG_FREERTOS_HZ=1000
+
+# arduino-esp32's selective-compilation Kconfig doesn't actually filter in this setup, so we
+# turn off the FEATURES whose arduino libraries don't build against IDF 5.5.1 instead. First: BT.
+# The Tanmatsu has no native BLE (BT is hosted over the C6); arduino-esp32 3.3.10's bundled BLE
+# source won't compile against IDF 5.5.1's NimBLE (ble_gap_read_local_irk was renamed), and its
+# guard is (SOC_BLE_SUPPORTED || ESP_HOSTED_ENABLE_BT_NIMBLE) && (BLUEDROID || NIMBLE_ENABLED).
+# We don't use BLE yet (companion link = USB/LoRa), so disable the whole BT chain → arduino's
+# BLE/SimpleBLE/BluetoothSerial compile to nothing. Revisit hosted BLE for the phone app later.
+# BLE companion over the C6 (re-enabled 2026-06-21): NimBLE host on the P4 + the C6 as the BLE
+# controller via esp-hosted. Our SerialBLEInterface uses esp-nimble-cpp (IDF-host NimBLE C++). If
+# arduino-esp32's bundled Bluedroid BLE library breaks the build, it's excluded separately — it's
+# guarded on CONFIG_BT_BLUEDROID_ENABLED, which we leave OFF (we use NimBLE).
+CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_ENABLED=y
+
+# AsyncTCP (pulled by the core's ESP32Board HTTP-OTA) references CONFIG_ESP_TASK_WDT_TIMEOUT_S,
+# which IDF 5.5 only defines when the task watchdog is initialised. Enable it (5 s timeout).
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=5

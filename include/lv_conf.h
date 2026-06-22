@@ -48,6 +48,14 @@
 #define LV_FONT_MONTSERRAT_12 1
 #define LV_FONT_MONTSERRAT_14 1
 #define LV_FONT_MONTSERRAT_16 1
+/* Larger Montserrat sizes for the Tanmatsu's crisp "UI size" (Large/Huge) — render the UI bigger
+ * at native resolution instead of upscaling a low-res frame. Gated to the Tanmatsu so the
+ * flash-tighter S3 touch builds don't pay for fonts they never use. */
+#if defined(HAS_TANMATSU)
+#define LV_FONT_MONTSERRAT_18 1
+#define LV_FONT_MONTSERRAT_20 1
+#define LV_FONT_MONTSERRAT_24 1
+#endif
 /* 28 px Montserrat for the boot splash title — keeps the rest of the UI on
  * the smaller fonts so the .data cost stays modest. */
 #define LV_FONT_MONTSERRAT_28 1

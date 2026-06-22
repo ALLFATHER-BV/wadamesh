@@ -8,7 +8,9 @@
 #include <time.h>     // gmtime_r for the "clock" CLI command
 #ifdef ESP32
 #include <esp_system.h>          // esp_restart for the "bootloader" CLI command
-#include <soc/rtc_cntl_reg.h>    // RTC_CNTL_OPTION1_REG / FORCE_DOWNLOAD_BOOT
+#if !defined(HAS_TANMATSU)
+#include <soc/rtc_cntl_reg.h>    // RTC_CNTL_OPTION1_REG / FORCE_DOWNLOAD_BOOT (S3-only; P4 lacks it)
+#endif
 #endif
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/HttpOtaDisplayState.h>
@@ -560,9 +562,11 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
     // rest of RTC_CNTL_OPTION1 and wedges the RTC so esp_restart() hangs instead
     // of resetting (that was the earlier "freeze"). board.reboot() == esp_restart,
     // the proven reset path on this board; the RTC bit survives it.
+#if !defined(HAS_TANMATSU)
     uint32_t opt1 = REG_READ(RTC_CNTL_OPTION1_REG);
     REG_WRITE(RTC_CNTL_OPTION1_REG, opt1 | RTC_CNTL_FORCE_DOWNLOAD_BOOT);
-    board.reboot();
+#endif
+    board.reboot();   // Tanmatsu/P4: plain reboot (the launcher manages flashing)
 #else
     pushMeshcomodReply("bootloader: ESP32-only");
 #endif

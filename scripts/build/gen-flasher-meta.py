@@ -5,7 +5,9 @@
 #   - manifest-heltec-v4-tft.json   install dialog, so it must equal the tag)
 #
 # These live next to the rolling bins at firmware.wadamesh.com/latest/, so the
-# flasher always reflects the current release without a site redeploy.
+# flasher always reflects the current release without a site redeploy. The
+# manifests themselves point at the IMMUTABLE per-tag bins (see below) to dodge
+# the latest/*.bin 4h edge cache.
 #
 # Usage: gen-flasher-meta.py <tag> <outdir> [notes_file]
 #   notes_file: one note per non-empty line (plain text); optional.
@@ -35,7 +37,13 @@ for fn, (name, binf) in BOARDS.items():
         "new_install_prompt_erase": True,
         "builds": [{
             "chipFamily": "ESP32-S3",
-            "parts": [{"path": f"https://firmware.wadamesh.com/latest/{binf}", "offset": 0}],
+            # Point at the IMMUTABLE per-tag bin, NOT latest/. The latest/*.bin URLs
+            # are stable filenames cached 4h (max-age=14400) and overwritten in place,
+            # so for up to 4h after a release the flasher could hand out the PREVIOUS
+            # beta's bytes while version.json already advertised the new tag. The
+            # per-tag path is never overwritten, so its (24h) cache is always correct.
+            # The manifest itself is max-age=300, so this new path propagates in <=5min.
+            "parts": [{"path": f"https://firmware.wadamesh.com/releases/TOUCH/{tag}/{binf}", "offset": 0}],
         }],
     }
     with open(os.path.join(outdir, fn), "w") as f:

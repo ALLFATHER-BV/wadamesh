@@ -1,0 +1,16 @@
+# ESP-IDF managed components the Tanmatsu variant needs, on top of the Arduino core.
+# These come from the badge.team / Nicolai Electronics component registry and provide
+# the board's drivers so we don't write any: display, keyboard, power, WiFi-over-
+# coprocessor, and the LoRa modem. Pulling these into the PlatformIO/pioarduino build
+# (Arduino-as-IDF-component + the component manager) is the main integration unknown —
+# see TANMATSU_PORT.md.
+#
+# Versions track the upstream tanmatsu-template (badge-bsp / tanmatsu-wifi) plus the
+# LoRa component from the user's instructions (^0.3.0).
+dependencies:
+  idf: ">=5.5.1"
+  badgeteam/badge-bsp: "^0.9.9"          # display (MIPI), input/keyboard, power, led, device
+  nicolaielectronics/tanmatsu-wifi: "^1.1.2"   # WiFi/BLE hosted on the C6 coprocessor
+  nicolaielectronics/tanmatsu-lora: "^0.3.0"   # SX1262/1268 LoRa (remote, on the coprocessor)
+  # NOTE: pax-gfx is intentionally omitted — wadamesh renders with LVGL, flushed to the
+  # BSP display, not PAX.

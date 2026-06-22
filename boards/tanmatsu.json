@@ -1,0 +1,29 @@
+{
+  "build": {
+    "core": "esp32",
+    "extra_flags": [
+      "-DBOARD_HAS_PSRAM",
+      "-DARDUINO_USB_CDC_ON_BOOT=1",
+      "-DARDUINO_USB_MODE=1"
+    ],
+    "f_cpu": "400000000L",
+    "f_flash": "80000000L",
+    "f_psram": "200000000L",
+    "flash_mode": "qio",
+    "mcu": "esp32p4",
+    "variant": "esp32p4"
+  },
+  "connectivity": ["wifi", "bluetooth"],
+  "debug": { "openocd_target": "esp32p4.cfg" },
+  "frameworks": ["arduino", "espidf"],
+  "name": "Tanmatsu (ESP32-P4 + C6)",
+  "upload": {
+    "flash_size": "16MB",
+    "maximum_ram_size": 512000,
+    "maximum_size": 16777216,
+    "require_upload_port": true,
+    "speed": 1500000
+  },
+  "url": "https://nicolaielectronics.nl/",
+  "vendor": "Nicolai Electronics"
+}

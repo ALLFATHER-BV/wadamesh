@@ -1,0 +1,16 @@
+# project-local ESP-IDF + tools (bootstrapped by `make prepare`)
+esp-idf/
+esp-idf-tools/
+# build output + component manager cache
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+sdkconfig_tanmatsu
+.submodules_update_done
+
+# vendored dependency payloads (regenerate with fetch-deps.sh)
+components/ardlib_*/
+components/meshcore/core/
+components/ardlibs/upstream/
+components/lvgl/upstream/

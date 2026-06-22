@@ -1,0 +1,33 @@
+{
+  "Tanmatsu": {
+    "build": {
+      "compileArgs": [
+        "-DDEVICE=tanmatsu",
+        "-DFAT=0",
+        "-GNinja"
+      ],
+      "ninjaArgs": [],
+      "buildDirectoryPath": "build/tanmatsu",
+      "sdkconfigDefaults": [
+        "sdkconfigs/general",
+        "sdkconfigs/tanmatsu"
+      ],
+      "sdkconfigFilePath": "sdkconfig"
+    },
+    "env": {},
+    "idfTarget": "esp32p4",
+    "flashBaudRate": "",
+    "monitorBaudRate": "",
+    "openOCD": {
+      "debugLevel": 2,
+      "configs": [],
+      "args": []
+    },
+    "tasks": {
+      "preBuild": "",
+      "preFlash": "",
+      "postBuild": "",
+      "postFlash": ""
+    }
+  }
+}

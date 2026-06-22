@@ -35,7 +35,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 10;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle
+static const uint8_t  TOUCH_CFG_VER   = 16;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -81,8 +81,13 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  map_show_contacts;// show contact markers on the map (bool) — v6
   uint8_t  app_grid_large;   // app drawer: large grid (one fewer column, bigger icons) — v7
   uint8_t  ui_scale;         // UI resolution scale: 0=100% 1=150% 2=200% (Tanmatsu, applied at boot) — v8
-  uint8_t  tb_keypad;        // T-Deck trackball: 0=mouse cursor (default), 1=D-pad focus navigation — v9
+  uint8_t  kbd_nav;          // T-Deck keyboard ESDFX nav: 0=off (default), 1=on (E/X/S/F move focus, D select, Q back) — v9 (was tb_keypad)
   uint8_t  sleep_idle;       // idle light-sleep feature on/off (bool) — v10 (trailing so existing blobs default it OFF)
+  uint8_t  nav_keys[5];      // keyboard-nav tab hotkeys (ASCII), one per main tab [chat,contacts,home,map,settings] — v11 (trailing)
+  uint8_t  map_zoom_buttons; // map zoom control: 0=slider (default), 1=+/- buttons — v12 (trailing)
+  uint8_t  nav_dir_keys[6];  // keyboard-nav control keys (ASCII): up,down,left,right,select,back — v13 (trailing)
+  uint8_t  home_is_drawer;   // Home tab defaults to the app drawer (1) vs the Commander screen (0, default) — v14 (trailing)
+  uint8_t  nav_scroll_keys[2]; // keyboard-nav scroll keys (ASCII): scroll-up, scroll-down — v16 (trailing)
 };
 
 static TouchCfg s_cfg;
@@ -140,8 +145,13 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.map_show_contacts = 1;
   c.app_grid_large    = 0;      // default: compact app grid (T-Deck 4 cols / V4 3 cols)
   c.ui_scale          = 0;      // default: 100% UI scale (native resolution)
-  c.tb_keypad         = 0;      // default: trackball = mouse cursor
+  c.kbd_nav           = 1;      // default: keyboard navigation ON (v15)
   c.sleep_idle        = 0;      // default: idle light-sleep OFF
+  { const char* d = "ertui"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // default tab hotkeys E/R/T/U/I
+  c.map_zoom_buttons  = 0;      // default: map zoom = slider
+  { const char* d = "wzadsq"; for (int i = 0; i < 6; i++) c.nav_dir_keys[i] = (uint8_t)d[i]; }  // default W/Z/A/D/S/Q
+  c.home_is_drawer    = 0;      // default: Home = Commander screen
+  c.nav_scroll_keys[0] = 'f';  c.nav_scroll_keys[1] = 'c';   // default scroll-up F / scroll-down C
 }
 
 // Persist the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
@@ -182,6 +192,10 @@ static void cfgLoadOrMigrate() {
         // to the real Custom index on the first touchPrefsGetTimezone() call (the
         // zone count isn't known here). offset 0 stays zone 0 (Europe) = unchanged.
         if (s_cfg.ver < 3 && s_cfg.time_offs != 0) s_cfg.tz_zone = 0xFE;
+        // v15: keyboard navigation is now ON by default. Force it on ONCE for existing
+        // users (pre-v15) so they get the feature; their later explicit on/off then
+        // persists (this only fires for ver < 15, never again).
+        if (s_cfg.ver < 15) s_cfg.kbd_nav = 1;
         s_cfg.ver = TOUCH_CFG_VER;
         s_cfg.magic = TOUCH_CFG_MAGIC;
         cfgFlush();                // rewrite with new fields defaulted-in
@@ -788,13 +802,58 @@ bool touchPrefsSetUiScale(uint8_t scale) {
   return cfgFlush();
 }
 
-bool touchPrefsGetTbKeypad() {
+bool touchPrefsGetKbdNav() {
   if (!s_begun) touchPrefsBegin();
-  return s_cfg.tb_keypad != 0;
+  return s_cfg.kbd_nav != 0;
 }
-bool touchPrefsSetTbKeypad(bool on) {
+bool touchPrefsSetKbdNav(bool on) {
   if (!s_begun) touchPrefsBegin();
-  s_cfg.tb_keypad = on ? 1 : 0;
+  s_cfg.kbd_nav = on ? 1 : 0;
+  return cfgFlush();
+}
+
+uint8_t touchPrefsGetNavKey(int tab) {
+  if (!s_begun) touchPrefsBegin();
+  if (tab < 0 || tab >= 5) return 0;
+  return s_cfg.nav_keys[tab];
+}
+bool touchPrefsSetNavKey(int tab, uint8_t ch) {
+  if (!s_begun) touchPrefsBegin();
+  if (tab < 0 || tab >= 5) return false;
+  s_cfg.nav_keys[tab] = ch;
+  return cfgFlush();
+}
+
+bool touchPrefsGetMapZoomButtons() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.map_zoom_buttons != 0;
+}
+bool touchPrefsSetMapZoomButtons(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.map_zoom_buttons = on ? 1 : 0;
+  return cfgFlush();
+}
+
+uint8_t touchPrefsGetNavDirKey(int idx) {   // idx 0-5 = move/select/back, 6-7 = scroll up/down
+  if (!s_begun) touchPrefsBegin();
+  if (idx < 0 || idx >= 8) return 0;
+  return (idx < 6) ? s_cfg.nav_dir_keys[idx] : s_cfg.nav_scroll_keys[idx - 6];
+}
+bool touchPrefsSetNavDirKey(int idx, uint8_t ch) {
+  if (!s_begun) touchPrefsBegin();
+  if (idx < 0 || idx >= 8) return false;
+  if (idx < 6) s_cfg.nav_dir_keys[idx] = ch;
+  else         s_cfg.nav_scroll_keys[idx - 6] = ch;
+  return cfgFlush();
+}
+
+bool touchPrefsGetHomeIsDrawer() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.home_is_drawer != 0;
+}
+bool touchPrefsSetHomeIsDrawer(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.home_is_drawer = on ? 1 : 0;
   return cfgFlush();
 }
 
