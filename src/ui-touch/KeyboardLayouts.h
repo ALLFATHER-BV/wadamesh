@@ -20,6 +20,10 @@ enum class KeyboardLayoutId : uint8_t {
     EL = 5,   // Greek (ΕΛΟΤ-style phonetic)
     AR = 6,   // Arabic (RTL, Arabic-101 positions) — EXPERIMENTAL, needs on-device validation
     FR = 7,   // French (AZERTY)
+    NL = 8,   // Dutch (QWERTY + accent popups)
+    DE = 9,   // German (QWERTZ)
+    ES = 10,  // Spanish (QWERTY + accent popups)
+    IT = 11,  // Italian (QWERTY + accent popups)
     Count
 };
 

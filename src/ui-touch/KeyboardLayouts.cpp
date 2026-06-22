@@ -252,6 +252,40 @@ static const lv_btnmatrix_ctrl_t kb_fr_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
+/* Dutch mostly rides the standard QWERTY map; diaeresis / accents come from
+ * the existing accent popup. A dedicated layout id still lets the UI-language
+ * picker land on a matching keyboard name instead of generic EN. */
+
+/* German QWERTZ keeps the proven LVGL control rows and swaps the Y/Z alpha
+ * positions. Umlauts / eszett still come from the accent popup. */
+static const char* kb_de_lower[] = {
+    "1#", "q", "w", "e", "r", "t", "z", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
+    "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", LV_SYMBOL_NEW_LINE, "\n",
+    "_", "-", "y", "x", "c", "v", "b", "n", "m", ".", ",", ":", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+};
+
+static const lv_btnmatrix_ctrl_t kb_de_lower_ctrl[] = {
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+};
+
+static const char* kb_de_upper[] = {
+    "1#", "Q", "W", "E", "R", "T", "Z", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
+    "abc", "A", "S", "D", "F", "G", "H", "J", "K", "L", LV_SYMBOL_NEW_LINE, "\n",
+    "_", "-", "Y", "X", "C", "V", "B", "N", "M", ".", ",", ":", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+};
+
+static const lv_btnmatrix_ctrl_t kb_de_upper_ctrl[] = {
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+};
+
 struct OsKeyboardLayout {
     KeyboardLayoutId id;
     const char*      name;
@@ -286,6 +320,18 @@ static const OsKeyboardLayout k_os_layouts[] = {
     { KeyboardLayoutId::FR, "FR",
       kb_fr_lower, kb_fr_lower_ctrl,
       kb_fr_upper, kb_fr_upper_ctrl },
+    { KeyboardLayoutId::NL, "NL",
+      kb_en_lower, kb_en_lower_ctrl,
+      kb_en_upper, kb_en_upper_ctrl },
+    { KeyboardLayoutId::DE, "DE",
+      kb_de_lower, kb_de_lower_ctrl,
+      kb_de_upper, kb_de_upper_ctrl },
+    { KeyboardLayoutId::ES, "ES",
+      kb_en_lower, kb_en_lower_ctrl,
+      kb_en_upper, kb_en_upper_ctrl },
+    { KeyboardLayoutId::IT, "IT",
+      kb_en_lower, kb_en_lower_ctrl,
+      kb_en_upper, kb_en_upper_ctrl },
 };
 
 /* ================================================================
@@ -306,6 +352,10 @@ static const HwKeyboardLayout k_hw_layouts[] = {
     { KeyboardLayoutId::EL, "EL" },
     { KeyboardLayoutId::AR, "AR" },
     { KeyboardLayoutId::FR, "FR" },
+    { KeyboardLayoutId::NL, "NL" },
+    { KeyboardLayoutId::DE, "DE" },
+    { KeyboardLayoutId::ES, "ES" },
+    { KeyboardLayoutId::IT, "IT" },
 };
 
 /* Bulgarian phonetic mapping for T-Deck.
@@ -477,6 +527,21 @@ static const char* hw_fr_upper[26] = {
 static const char* hw_fr_digits[10]       = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
 static const char* hw_fr_digits_shift[10] = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
 
+/* German QWERTZ on the T-Deck's US-QWERTY hardware: swap Y/Z and keep the rest
+ * predictable. Umlauts / eszett stay available through accent popups. */
+static const char* hw_de_lower[26] = {
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
+    "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
+    "u", "v", "w", "x", "z", "y"
+};
+static const char* hw_de_upper[26] = {
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
+    "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
+    "U", "V", "W", "X", "Z", "Y"
+};
+static const char* hw_de_digits[10]       = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
+static const char* hw_de_digits_shift[10] = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
+
 /* ================================================================
  * Runtime state
  * ================================================================ */
@@ -553,6 +618,10 @@ static const HwPhoneticMap k_hw_maps[KEYBOARD_LAYOUT_COUNT] = {
     /* EL */ { hw_el_lower,  hw_el_upper,  hw_el_digits,   hw_el_digits_shift },
     /* AR */ { hw_ar_lower,  hw_ar_lower,  hw_ar_digits,   hw_ar_digits },  // unicameral
     /* FR */ { hw_fr_lower,  hw_fr_upper,  hw_fr_digits,   hw_fr_digits_shift },
+    /* NL */ { nullptr,      nullptr,      nullptr,        nullptr },
+    /* DE */ { hw_de_lower,  hw_de_upper,  hw_de_digits,   hw_de_digits_shift },
+    /* ES */ { nullptr,      nullptr,      nullptr,        nullptr },
+    /* IT */ { nullptr,      nullptr,      nullptr,        nullptr },
 };
 
 const char* keyboardLayoutMapHwKey(KeyboardLayoutId id, int key, bool shifted) {

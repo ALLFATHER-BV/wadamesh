@@ -813,6 +813,7 @@ struct LvUiState {
   lv_obj_t* home_unread;   // clickable "envelope + Unread N" line -> Chats inbox
   lv_obj_t* home_stats;
   lv_obj_t* home_env;
+  lv_obj_t* home_env_chart;
   // Duty-cycle meter (label + bar) on the Home tab. Surfaces the live TX
   // budget remaining so the operator notices regulatory throttling before
   // a ten-message-burst stalls. Created in makeHome iff the user pref is on.
@@ -1444,16 +1445,104 @@ static const char* localEnvStatusStr() {
   return s;
 }
 
+static constexpr int kHomeEnvHistoryPoints = 24;          // 24 * 15 s = 6 min
+static constexpr unsigned long kHomeEnvSampleMs = 15000;
+static uint16_t s_home_env_hist_batt_mv[kHomeEnvHistoryPoints] = {};
+static int16_t  s_home_env_hist_temp_t10[kHomeEnvHistoryPoints] = {};
+static int16_t  s_home_env_hist_hum[kHomeEnvHistoryPoints] = {};
+static bool     s_home_env_hist_seeded = false;
+static unsigned long s_home_env_last_sample_ms = 0;
+
+static bool localEnvHasAnySensors(const UITask::LocalEnvSnapshot& snap) {
+  return snap.have_batt || snap.have_bme_temp || snap.have_bme_hum || snap.have_bme_pressure ||
+         snap.have_bme_alt || snap.have_gxhtv3_temp || snap.have_gxhtv3_hum || snap.gps_present;
+}
+
+static const char* localEnvModuleState(bool detected, bool query_ok) {
+  if (detected) return "ok";
+  return query_ok ? "not detected" : "telemetry unavailable";
+}
+
+static void localEnvAppendHistorySpark(char* out, size_t cap, const char* label,
+                                       const int16_t* vals, int n, int16_t none_sentinel) {
+  if (!out || cap == 0 || !label || !vals || n <= 0) return;
+  size_t p = strlen(out);
+  if (p >= cap - 1) return;
+  if (p > 0) p += snprintf(out + p, cap - p, "\n");
+  p += snprintf(out + p, cap - p, "%s ", label);
+  for (int i = 0; i < n && p < cap - 1; ++i) {
+    if (vals[i] == none_sentinel) out[p++] = '.';
+    else if (i > 0 && vals[i] > vals[i - 1]) out[p++] = '/';
+    else if (i > 0 && vals[i] < vals[i - 1]) out[p++] = '\\';
+    else out[p++] = '-';
+  }
+  out[p] = '\0';
+}
+
+static void localEnvAppendHistorySparkU16(char* out, size_t cap, const char* label,
+                                          const uint16_t* vals, int n, uint16_t none_sentinel) {
+  if (!out || cap == 0 || !label || !vals || n <= 0) return;
+  size_t p = strlen(out);
+  if (p >= cap - 1) return;
+  if (p > 0) p += snprintf(out + p, cap - p, "\n");
+  p += snprintf(out + p, cap - p, "%s ", label);
+  for (int i = 0; i < n && p < cap - 1; ++i) {
+    if (vals[i] == none_sentinel) out[p++] = '.';
+    else if (i > 0 && vals[i] > vals[i - 1]) out[p++] = '/';
+    else if (i > 0 && vals[i] < vals[i - 1]) out[p++] = '\\';
+    else out[p++] = '-';
+  }
+  out[p] = '\0';
+}
+
+static void buildLocalEnvDetailText(const UITask::LocalEnvSnapshot& snap, char* out, size_t cap) {
+  if (!out || cap == 0) return;
+  out[0] = '\0';
+  size_t p = 0;
+  p += snprintf(out + p, cap - p, "Battery: %s", localEnvModuleState(snap.have_batt, snap.query_ok));
+  if (snap.have_batt && p < cap) p += snprintf(out + p, cap - p, "  %.2fV", (double)snap.batt_v);
+
+  if (p < cap) p += snprintf(out + p, cap - p, "\nBME280: %s", localEnvModuleState(
+      snap.have_bme_temp || snap.have_bme_hum || snap.have_bme_pressure || snap.have_bme_alt, snap.query_ok));
+  if (snap.have_bme_temp && p < cap)     p += snprintf(out + p, cap - p, "\n  Temp %.1fC", (double)snap.bme_temp_c);
+  if (snap.have_bme_hum && p < cap)      p += snprintf(out + p, cap - p, "\n  Hum  %.0f%%RH", (double)snap.bme_hum_pct);
+  if (snap.have_bme_pressure && p < cap) p += snprintf(out + p, cap - p, "\n  Press %.0fhPa", (double)snap.bme_pressure_hpa);
+  if (snap.have_bme_alt && p < cap)      p += snprintf(out + p, cap - p, "\n  Alt  %dm", (int)snap.bme_alt_m);
+
+  if (p < cap) p += snprintf(out + p, cap - p, "\nGXHTV3: %s", localEnvModuleState(
+      snap.have_gxhtv3_temp || snap.have_gxhtv3_hum, snap.query_ok));
+  if (snap.have_gxhtv3_temp && p < cap) p += snprintf(out + p, cap - p, "\n  Temp %.1fC", (double)snap.gxhtv3_temp_c);
+  if (snap.have_gxhtv3_hum && p < cap)  p += snprintf(out + p, cap - p, "\n  Hum  %.0f%%RH", (double)snap.gxhtv3_hum_pct);
+
+  if (p < cap) p += snprintf(out + p, cap - p, "\nGPS: %s", snap.gps_present ? "available" : "not detected");
+  if (snap.gps_present && p < cap) {
+    p += snprintf(out + p, cap - p, "\n  State %s", snap.gps_enabled ? "enabled" : "disabled");
+    if (snap.gps_sats >= 0 && p < cap) p += snprintf(out + p, cap - p, "  Sats %d", snap.gps_sats);
+    if (p < cap) p += snprintf(out + p, cap - p, "  Fix %s", snap.gps_fix ? "yes" : "no");
+  }
+
+  if (p < cap) p += snprintf(out + p, cap - p, "\nBuzzer: %s", snap.buzzer_available ? "available" : "not detected");
+  if (snap.buzzer_available && p < cap) p += snprintf(out + p, cap - p, "  %s", snap.buzzer_quiet ? "quiet" : "on");
+}
+
+static void buildHomeEnvSummary(char* out, size_t cap) {
+  if (!out || cap == 0) return;
+  out[0] = '\0';
+  if (!g_lv.task) return;
+  if (!g_lv.task->getLocalEnvSummary(out, cap)) return;
+  localEnvAppendHistorySparkU16(out, cap, "Batt", s_home_env_hist_batt_mv, kHomeEnvHistoryPoints, 0);
+  localEnvAppendHistorySpark(out, cap, "Temp", s_home_env_hist_temp_t10, kHomeEnvHistoryPoints, INT16_MIN);
+}
+
 static void buildExpansionInfoText(char* out, size_t cap) {
   if (!out || cap == 0) return;
   out[0] = '\0';
   if (!g_lv.task) return;
-  char env[192];
-  const bool have_env = g_lv.task->getLocalEnvSummary(env, sizeof env);
-  snprintf(out, cap, "Buzzer %s%s%s",
-           g_lv.task->isBuzzerQuiet() ? "quiet" : "on",
-           have_env ? "\n" : "",
-           have_env ? env : "");
+  UITask::LocalEnvSnapshot snap;
+  const bool have_env = g_lv.task->getLocalEnvSnapshot(snap);
+  char env[384];
+  buildLocalEnvDetailText(snap, env, sizeof env);
+  snprintf(out, cap, "%s", have_env ? env : TR("No local expansion data"));
 }
 
 // Control-center popup state — declared up here so the periodic settings refresh
@@ -1467,7 +1556,13 @@ static void closeControlCenter();   // defined in the control-center section bel
 static lv_obj_t* s_power_menu   = nullptr;   // power off / reboot menu (control center)
 static void closePowerMenu();               // defined in the control-center section below
 static lv_obj_t* s_expansion_root = nullptr;
+static lv_obj_t* s_local_sensors_root = nullptr;
 static void closeExpansionCard();
+static void closeLocalSensorsPage();
+static void openLocalSensorsPage();
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+static void homeTerminalCb(lv_event_t* e);
+#endif
 #if defined(HAS_TDECK_KEYBOARD)
 // Keyboard backlight: mode 0=off, 1=on, 2=auto (on while typing, off after idle).
 static uint8_t       s_kb_bl_mode    = 2;
@@ -2985,12 +3080,16 @@ static void kbSetRotateArrowsOpa(lv_opa_t opa) {
 // English -> each enabled secondary layout -> back, like the T-Deck's SPACE.
 static void kbLangBtnRefresh();
 static const char* kbLayoutCode(KeyboardLayoutId id) {
-  static const char* k_codes[] = { "EN", "BG", "RU", "UK", "SR", "EL", "AR", "FR" };
+  static const char* k_codes[] = { "EN", "BG", "RU", "UK", "SR", "EL", "AR", "FR", "NL", "DE", "ES", "IT" };
   const uint8_t i = static_cast<uint8_t>(id);
   return (i < (sizeof k_codes / sizeof k_codes[0])) ? k_codes[i] : "EN";
 }
 static KeyboardLayoutId kbDefaultLayoutForUiLang(uint8_t lang) {
   switch (lang) {
+    case LANG_NL: return KeyboardLayoutId::NL;
+    case LANG_DE: return KeyboardLayoutId::DE;
+    case LANG_ES: return KeyboardLayoutId::ES;
+    case LANG_IT: return KeyboardLayoutId::IT;
     case LANG_BG: return KeyboardLayoutId::BG;
     case LANG_RU: return KeyboardLayoutId::RU;
     case LANG_UK: return KeyboardLayoutId::UK;
@@ -6960,6 +7059,149 @@ static void closeExpansionCard() {
   if (s_expansion_root) { lv_obj_del_async(s_expansion_root); s_expansion_root = nullptr; }
 }
 
+static void localSensorsBackdropCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;
+  closeLocalSensorsPage();
+}
+
+static void localSensorsCloseCb(lv_event_t* e) {
+  (void)e;
+  closeLocalSensorsPage();
+}
+
+static void localSensorsOpenTerminalCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeLocalSensorsPage();
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+  homeTerminalCb(e);
+#else
+  if (g_lv.task) g_lv.task->showAlert(TR("Console not available on this build"), 1200);
+#endif
+}
+
+static void closeLocalSensorsPage() {
+  if (s_local_sensors_root) { lv_obj_del_async(s_local_sensors_root); s_local_sensors_root = nullptr; }
+}
+
+static void openLocalSensorsPage() {
+  if (s_local_sensors_root) { lv_obj_move_foreground(s_local_sensors_root); return; }
+
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  const int H = sh - STATUSBAR_H;
+  s_local_sensors_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_local_sensors_root);
+  lv_obj_set_size(s_local_sensors_root, sw, H);
+  lv_obj_set_pos(s_local_sensors_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_local_sensors_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_local_sensors_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_local_sensors_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_local_sensors_root, localSensorsBackdropCb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* title = lv_label_create(s_local_sensors_root);
+  lv_label_set_text(title, TR("Local sensors"));
+  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(title, 10, 6);
+  addCloseXBadge(s_local_sensors_root, localSensorsCloseCb);
+
+  UITask::LocalEnvSnapshot snap;
+  const bool have_env = g_lv.task && g_lv.task->getLocalEnvSnapshot(snap);
+
+  lv_obj_t* card = lv_obj_create(s_local_sensors_root);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, sw - 12, H - 44);
+  lv_obj_set_pos(card, 6, 36);
+  styleSurface(card, COLOR_PANEL, 8);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(card, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
+
+  lv_obj_t* status = lv_label_create(card);
+  lv_obj_set_width(status, lv_pct(100));
+  lv_label_set_long_mode(status, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(status, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  char detail[640];
+  buildLocalEnvDetailText(snap, detail, sizeof detail);
+  lv_label_set_text(status, have_env ? detail : TR("No local expansion data"));
+
+  bool have_hist = false;
+  for (int i = 0; i < kHomeEnvHistoryPoints; ++i) {
+    if (s_home_env_hist_batt_mv[i] > 0 || s_home_env_hist_temp_t10[i] != INT16_MIN || s_home_env_hist_hum[i] >= 0) {
+      have_hist = true;
+      break;
+    }
+  }
+  if (have_hist) {
+    lv_obj_t* chart = lv_chart_create(card);
+    lv_obj_set_size(chart, sw - 28, 116);
+    lv_obj_align(status, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_align_to(chart, status, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 8);
+    lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_point_count(chart, kHomeEnvHistoryPoints);
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 3400, 4600);
+    lv_chart_set_range(chart, LV_CHART_AXIS_SECONDARY_Y, -10, 100);
+    lv_chart_set_div_line_count(chart, 3, 4);
+    lv_obj_set_style_bg_color(chart, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(chart, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(chart, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_border_opa(chart, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_border_width(chart, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(chart, 6, LV_PART_MAIN);
+    lv_obj_set_style_line_color(chart, lv_color_hex(0x2A2E30), LV_PART_TICKS);
+    lv_obj_set_style_text_color(chart, lv_color_hex(COLOR_SUB), LV_PART_TICKS);
+    lv_obj_set_style_text_font(chart, &g_font_12, LV_PART_TICKS);
+    lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y, 4, 0, 3, 1, true, 40);
+    lv_chart_set_axis_tick(chart, LV_CHART_AXIS_SECONDARY_Y, 4, 0, 3, 1, true, 32);
+    lv_chart_series_t* bs = lv_chart_add_series(chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);
+    lv_chart_series_t* ts = lv_chart_add_series(chart, lv_color_hex(0xF5A623), LV_CHART_AXIS_SECONDARY_Y);
+    lv_chart_series_t* hs = lv_chart_add_series(chart, lv_color_hex(0x35C9C9), LV_CHART_AXIS_SECONDARY_Y);
+    for (int i = 0; i < kHomeEnvHistoryPoints; ++i) {
+      lv_chart_set_next_value(chart, bs, s_home_env_hist_batt_mv[i] > 0 ? (lv_coord_t)s_home_env_hist_batt_mv[i] : LV_CHART_POINT_NONE);
+      lv_chart_set_next_value(chart, ts, s_home_env_hist_temp_t10[i] != INT16_MIN ? (lv_coord_t)(s_home_env_hist_temp_t10[i] / 10) : LV_CHART_POINT_NONE);
+      lv_chart_set_next_value(chart, hs, s_home_env_hist_hum[i] >= 0 ? (lv_coord_t)s_home_env_hist_hum[i] : LV_CHART_POINT_NONE);
+    }
+    lv_obj_t* legend = lv_label_create(card);
+    lv_label_set_text(legend, TR("Blue battery  Orange temp  Cyan humidity"));
+    lv_obj_set_style_text_font(legend, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_align_to(legend, chart, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
+  }
+
+  lv_obj_t* btn_row = lv_obj_create(card);
+  lv_obj_remove_style_all(btn_row);
+  lv_obj_set_size(btn_row, sw - 28, 36);
+  lv_obj_align(btn_row, LV_ALIGN_BOTTOM_MID, 0, 0);
+
+  lv_obj_t* bz = lv_btn_create(btn_row);
+  lv_obj_set_size(bz, (sw - 40) / 2, 34);
+  lv_obj_align(bz, LV_ALIGN_LEFT_MID, 0, 0);
+  styleButton(bz);
+  lv_obj_add_event_cb(bz, testBuzzerCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* bzl = lv_label_create(bz);
+  lv_label_set_text(bzl, TR("Test buzzer"));
+  lv_obj_center(bzl);
+
+  lv_obj_t* term = lv_btn_create(btn_row);
+  lv_obj_set_size(term, (sw - 40) / 2, 34);
+  lv_obj_align(term, LV_ALIGN_RIGHT_MID, 0, 0);
+  styleButton(term);
+  lv_obj_add_event_cb(term, localSensorsOpenTerminalCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* tl = lv_label_create(term);
+  lv_label_set_text(tl, TR("Open console"));
+  lv_obj_center(tl);
+
+  lv_obj_move_foreground(s_local_sensors_root);
+}
+
+static void openLocalSensorsPageCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) openLocalSensorsPage();
+}
+
 static void openExpansionCard() {
   if (s_expansion_root) { lv_obj_move_foreground(s_expansion_root); return; }
 
@@ -7013,7 +7255,16 @@ static void openExpansionCard() {
   lv_label_set_text(bl, TR("Test buzzer"));
   lv_obj_center(bl);
 
-  lv_obj_set_height(card, 44 + lv_obj_get_height(lbl) + 42);
+  lv_obj_t* d = lv_btn_create(card);
+  lv_obj_set_size(d, card_w - 20, 34);
+  lv_obj_set_pos(d, 0, 76 + lv_obj_get_height(lbl));
+  styleButton(d);
+  lv_obj_add_event_cb(d, openLocalSensorsPageCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* dl = lv_label_create(d);
+  lv_label_set_text(dl, TR("Detailed sensors"));
+  lv_obj_center(dl);
+
+  lv_obj_set_height(card, 84 + lv_obj_get_height(lbl) + 42);
   lv_obj_move_foreground(s_expansion_root);
 }
 
@@ -7376,9 +7627,10 @@ static void buildDeviceSettings(int sec) {
     uint16_t en_mask = 0;
 #endif
     /* One row per non-English layout; index id-1 into the display names.
-       Keep in KeyboardLayoutId order (BG=1 .. FR=7). */
+       Keep in KeyboardLayoutId order (BG=1 .. IT=11). */
     static const char* k_kb_disp[] = {
-      "Bulgarian", "Russian", "Ukrainian", "Serbian", "Greek", "Arabic (experimental)", "French (AZERTY)"
+      "Bulgarian", "Russian", "Ukrainian", "Serbian", "Greek", "Arabic (experimental)",
+      "French (AZERTY)", "Dutch", "German (QWERTZ)", "Spanish", "Italian"
     };
     for (int id = 1; id < KEYBOARD_LAYOUT_COUNT; ++id) {
       int h = settingsRowLabel(body, y, 4, k_kb_disp[id - 1], COLOR_TEXT, &g_font_12, 56);
@@ -11161,6 +11413,10 @@ static lv_obj_t* s_home_heartbeat = nullptr;
 static lv_obj_t*       s_home_chart       = nullptr;
 static lv_chart_series_t* s_home_chart_tx = nullptr;
 static lv_chart_series_t* s_home_chart_rx = nullptr;
+static lv_obj_t*       s_home_env_chart   = nullptr;
+static lv_chart_series_t* s_home_env_batt = nullptr;
+static lv_chart_series_t* s_home_env_temp = nullptr;
+static lv_chart_series_t* s_home_env_hum  = nullptr;
 // Compact legend label above the chart showing live TX/RX totals.
 static lv_obj_t* s_home_chart_legend = nullptr;
 static lv_obj_t* s_home_chart_sig    = nullptr;   // live signal chip drawn inside the graph box
@@ -11893,7 +12149,9 @@ static const char* k_term_banner =
   "      type to send. 'exit' leaves. list / channels.\n"
   "      All incoming msgs print live.\n"
   "Config: ver clock status get advert reboot\n"
-  "        set <name|freq|bw|sf|cr|tx> <value>\n";
+  "        set <name|freq|bw|sf|cr|tx> <value>\n"
+  "MeshCom: wifi status, tcp status, ble status,\n"
+  "         ota status, tcp on/off, ble on/off.\n";
 
 // Quick-pick catalogue (mirrors the repeater admin picker). Commands here are
 // the ones MyMesh::handleMeshcomodCommand understands natively when run
@@ -11924,10 +12182,17 @@ static const AdminCmdEntry k_term_cmds[] = {
   { "set tx <dBm>",                   "set tx " },
   { "[ CONNECTIVITY ]", nullptr },
   { "wifi status",                    "wifi status" },
+  { "wifi on",                        "wifi on" },
+  { "wifi off",                       "wifi off" },
   { "wifi scan",                      "wifi scan" },
   { "tcp status",                     "tcp status" },
+  { "tcp on",                         "tcp on" },
+  { "tcp off",                        "tcp off" },
   { "ble status",                     "ble status" },
+  { "ble on",                         "ble on" },
+  { "ble off",                        "ble off" },
   { "ota start",                      "ota start" },
+  { "ota status",                     "ota status" },
   { "[ SYSTEM ]", nullptr },
   { "reboot",                         "reboot" },
   { "bootloader - download mode",     "bootloader" },
@@ -14527,10 +14792,12 @@ static void makeHome(lv_obj_t* tab) {
   s_home_batt_pct   = nullptr;
   s_home_batt_icon  = nullptr;
   s_home_chart_sig  = nullptr;
+  s_home_env_chart  = nullptr;
 #if defined(HAS_TANMATSU)
   s_home_info       = nullptr;
 #endif
   g_lv.home_env     = nullptr;
+  g_lv.home_env_chart = nullptr;
 
   g_lv.home_state = lv_label_create(tab);
   lv_label_set_text(g_lv.home_state, TR("Connecting..."));
@@ -14574,6 +14841,37 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_width(g_lv.home_env, home_land ? (cw - RSTRIP) : cw);
   lv_label_set_long_mode(g_lv.home_env, LV_LABEL_LONG_WRAP);
   lv_obj_align(g_lv.home_env, LV_ALIGN_TOP_LEFT, 0, SC(58));
+  lv_obj_add_flag(g_lv.home_env, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_ext_click_area(g_lv.home_env, 8);
+  lv_obj_add_event_cb(g_lv.home_env, openLocalSensorsPageCb, LV_EVENT_CLICKED, nullptr);
+
+  s_home_env_chart = lv_chart_create(tab);
+  g_lv.home_env_chart = s_home_env_chart;
+  lv_obj_set_size(s_home_env_chart, home_land ? (cw - RSTRIP) : cw, SC(34));
+  lv_obj_align(s_home_env_chart, LV_ALIGN_TOP_LEFT, 0, SC(92));
+  lv_obj_clear_flag(s_home_env_chart, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(s_home_env_chart, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_ext_click_area(s_home_env_chart, 6);
+  lv_obj_add_event_cb(s_home_env_chart, openLocalSensorsPageCb, LV_EVENT_CLICKED, nullptr);
+  lv_chart_set_type(s_home_env_chart, LV_CHART_TYPE_LINE);
+  lv_chart_set_point_count(s_home_env_chart, kHomeEnvHistoryPoints);
+  lv_chart_set_update_mode(s_home_env_chart, LV_CHART_UPDATE_MODE_SHIFT);
+  lv_chart_set_range(s_home_env_chart, LV_CHART_AXIS_PRIMARY_Y, 3400, 4600);
+  lv_chart_set_range(s_home_env_chart, LV_CHART_AXIS_SECONDARY_Y, -10, 100);
+  lv_chart_set_div_line_count(s_home_env_chart, 0, 0);
+  lv_obj_set_style_bg_color(s_home_env_chart, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_home_env_chart, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_home_env_chart, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_border_opa(s_home_env_chart, LV_OPA_20, LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_home_env_chart, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_home_env_chart, 6, LV_PART_MAIN);
+  lv_obj_set_style_size(s_home_env_chart, 0, LV_PART_INDICATOR);
+  s_home_env_batt = lv_chart_add_series(s_home_env_chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);
+  s_home_env_temp = lv_chart_add_series(s_home_env_chart, lv_color_hex(0xF5A623), LV_CHART_AXIS_SECONDARY_Y);
+  s_home_env_hum  = lv_chart_add_series(s_home_env_chart, lv_color_hex(0x35C9C9), LV_CHART_AXIS_SECONDARY_Y);
+  lv_chart_set_all_value(s_home_env_chart, s_home_env_batt, LV_CHART_POINT_NONE);
+  lv_chart_set_all_value(s_home_env_chart, s_home_env_temp, LV_CHART_POINT_NONE);
+  lv_chart_set_all_value(s_home_env_chart, s_home_env_hum, LV_CHART_POINT_NONE);
 
   // TX / RX rolling chart. 60 samples, two series (TX green, RX blue).
   // Compact legend strip above the chart shows live totals — updated on every
@@ -14584,7 +14882,7 @@ static void makeHome(lv_obj_t* tab) {
   // home_state at y=4, home_stats (two-line WRAP) at y=22 reaches roughly
   // y=50; chart group starts at y=60 with breathing room. Used to be y=94
   // when the title/clock/battery row lived inside the tab.
-  const int chart_y = SC(98);
+  const int chart_y = SC(138);
   s_home_chart_legend = lv_label_create(tab);
   lv_label_set_text(s_home_chart_legend, TR("TX 0  /  RX 0"));
   lv_obj_set_style_text_color(s_home_chart_legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -24767,8 +25065,49 @@ static inline void setLabelIfChanged(lv_obj_t* lbl, const char* txt) {
   if (lbl && strcmp(lv_label_get_text(lbl), txt) != 0) lv_label_set_text(lbl, txt);
 }
 
+static void localEnvHistoryShiftPush(uint16_t batt_mv, int16_t temp_t10, int16_t hum_pct) {
+  memmove(&s_home_env_hist_batt_mv[0], &s_home_env_hist_batt_mv[1], sizeof(s_home_env_hist_batt_mv[0]) * (kHomeEnvHistoryPoints - 1));
+  memmove(&s_home_env_hist_temp_t10[0], &s_home_env_hist_temp_t10[1], sizeof(s_home_env_hist_temp_t10[0]) * (kHomeEnvHistoryPoints - 1));
+  memmove(&s_home_env_hist_hum[0], &s_home_env_hist_hum[1], sizeof(s_home_env_hist_hum[0]) * (kHomeEnvHistoryPoints - 1));
+  s_home_env_hist_batt_mv[kHomeEnvHistoryPoints - 1] = batt_mv;
+  s_home_env_hist_temp_t10[kHomeEnvHistoryPoints - 1] = temp_t10;
+  s_home_env_hist_hum[kHomeEnvHistoryPoints - 1] = hum_pct;
+}
+
+static void localEnvHistoryMaybeSample(unsigned long now_ms) {
+  if (!g_lv.task) return;
+  if (s_home_env_last_sample_ms != 0 && (int32_t)(now_ms - s_home_env_last_sample_ms) < (int32_t)kHomeEnvSampleMs) return;
+
+  UITask::LocalEnvSnapshot snap;
+  g_lv.task->getLocalEnvSnapshot(snap);
+  const uint16_t batt_mv = snap.have_batt ? (uint16_t)lroundf(snap.batt_v * 1000.0f) : 0;
+  const int16_t temp_t10 = snap.have_bme_temp ? (int16_t)lroundf(snap.bme_temp_c * 10.0f)
+                        : (snap.have_gxhtv3_temp ? (int16_t)lroundf(snap.gxhtv3_temp_c * 10.0f) : INT16_MIN);
+  const int16_t hum_pct = snap.have_bme_hum ? (int16_t)lroundf(snap.bme_hum_pct)
+                       : (snap.have_gxhtv3_hum ? (int16_t)lroundf(snap.gxhtv3_hum_pct) : -1);
+
+  if (!s_home_env_hist_seeded) {
+    for (int i = 0; i < kHomeEnvHistoryPoints; ++i) {
+      s_home_env_hist_batt_mv[i] = batt_mv;
+      s_home_env_hist_temp_t10[i] = temp_t10;
+      s_home_env_hist_hum[i] = hum_pct;
+    }
+    s_home_env_hist_seeded = true;
+  } else {
+    localEnvHistoryShiftPush(batt_mv, temp_t10, hum_pct);
+  }
+  s_home_env_last_sample_ms = now_ms;
+
+  if (s_home_env_chart && s_home_env_batt && s_home_env_temp && s_home_env_hum) {
+    lv_chart_set_next_value(s_home_env_chart, s_home_env_batt, batt_mv > 0 ? (lv_coord_t)batt_mv : LV_CHART_POINT_NONE);
+    lv_chart_set_next_value(s_home_env_chart, s_home_env_temp, temp_t10 != INT16_MIN ? (lv_coord_t)(temp_t10 / 10) : LV_CHART_POINT_NONE);
+    lv_chart_set_next_value(s_home_env_chart, s_home_env_hum, hum_pct >= 0 ? (lv_coord_t)hum_pct : LV_CHART_POINT_NONE);
+  }
+}
+
 static void refreshStatusLabels() {
   if (!g_lv.task) return;
+  localEnvHistoryMaybeSample(millis());
   // Global status bar updates every refresh — visible on every tab, so
   // it's not gated on home_active like the home tab's body widgets.
   updateGlobalStatusBar();
@@ -24904,7 +25243,8 @@ static void refreshStatusLabels() {
   }
   if (g_lv.home_env && home_active) {
     char env[192];
-    if (g_lv.task->getLocalEnvSummary(env, sizeof env)) setLabelIfChanged(g_lv.home_env, env);
+    buildHomeEnvSummary(env, sizeof env);
+    if (env[0]) setLabelIfChanged(g_lv.home_env, env);
     else setLabelIfChanged(g_lv.home_env, TR(""));
   }
   // Unread line (its own tappable row): mail icon + translated count.
@@ -29076,50 +29416,50 @@ bool UITask::getGPSState() {
   return _node_prefs->gps_enabled != 0;
 }
 
-bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
-  if (!buf || cap == 0) return false;
-  buf[0] = '\0';
-  if (!_sensors) return false;
+bool UITask::getLocalEnvSnapshot(LocalEnvSnapshot& out) const {
+  out = LocalEnvSnapshot();
+  out.buzzer_available = true;
+  out.buzzer_quiet = _node_prefs ? (_node_prefs->buzzer_quiet != 0) : true;
+  out.gps_present = _sensors && _sensors->getLocationProvider();
+  out.gps_enabled = _node_prefs && _node_prefs->gps_enabled;
+  out.gps_fix = _sensors && _sensors->getLocationProvider() && _sensors->getLocationProvider()->isValid();
+  out.gps_sats = (_sensors && _sensors->getLocationProvider()) ? (int)_sensors->getLocationProvider()->satellitesCount() : -1;
+
+  if (_board) {
+    const uint16_t batt_mv = _board->getBattMilliVolts();
+    out.have_batt = batt_mv > 0;
+    out.batt_v = batt_mv / 1000.0f;
+  }
+  if (!_sensors) return localEnvHasAnySensors(out);
 
   CayenneLPP telemetry(96);
-  if (!_sensors->querySensors(TELEM_PERM_ENVIRONMENT, telemetry)) return false;
-  const uint8_t len = telemetry.getSize();
-  if (len == 0 && !_board) return false;
+  out.query_ok = _sensors->querySensors(TELEM_PERM_ENVIRONMENT, telemetry);
+  if (!out.query_ok) return localEnvHasAnySensors(out);
 
-  float batt_v = _board ? ((float)_board->getBattMilliVolts() / 1000.0f) : 0.0f;
-  bool have_batt = _board && _board->getBattMilliVolts() > 0;
-
-  float bme_temp_c = 0.0f, bme_hum_pct = 0.0f, bme_pressure_hpa = 0.0f;
-  int16_t bme_alt_m = 0;
-  float gxhtv3_temp_c = 0.0f, gxhtv3_hum_pct = 0.0f;
-  bool have_bme_temp = false, have_bme_hum = false, have_bme_pressure = false, have_bme_alt = false;
-  bool have_gxhtv3_temp = false, have_gxhtv3_hum = false;
-  LPPReader rd(telemetry.getBuffer(), len);
+  LPPReader rd(telemetry.getBuffer(), telemetry.getSize());
   uint8_t channel = 0, type = 0;
   while (rd.readHeader(channel, type)) {
     switch (type) {
       case LPP_TEMPERATURE:
-        if (channel == 2 && !have_bme_temp) have_bme_temp = rd.readTemperature(bme_temp_c);
-        else if (channel == 3 && !have_gxhtv3_temp) have_gxhtv3_temp = rd.readTemperature(gxhtv3_temp_c);
+        if (channel == 2 && !out.have_bme_temp) out.have_bme_temp = rd.readTemperature(out.bme_temp_c);
+        else if (channel == 3 && !out.have_gxhtv3_temp) out.have_gxhtv3_temp = rd.readTemperature(out.gxhtv3_temp_c);
         else rd.skipData(type);
         break;
       case LPP_RELATIVE_HUMIDITY:
-        if (channel == 2 && !have_bme_hum) have_bme_hum = rd.readRelativeHumidity(bme_hum_pct);
-        else if (channel == 3 && !have_gxhtv3_hum) have_gxhtv3_hum = rd.readRelativeHumidity(gxhtv3_hum_pct);
+        if (channel == 2 && !out.have_bme_hum) out.have_bme_hum = rd.readRelativeHumidity(out.bme_hum_pct);
+        else if (channel == 3 && !out.have_gxhtv3_hum) out.have_gxhtv3_hum = rd.readRelativeHumidity(out.gxhtv3_hum_pct);
         else rd.skipData(type);
         break;
       case LPP_BAROMETRIC_PRESSURE:
-        if (channel == 2 && !have_bme_pressure) have_bme_pressure = rd.readPressure(bme_pressure_hpa);
+        if (channel == 2 && !out.have_bme_pressure) out.have_bme_pressure = rd.readPressure(out.bme_pressure_hpa);
         else rd.skipData(type);
         break;
       case LPP_ALTITUDE: {
         float alt_m = 0.0f;
-        if (channel == 2 && !have_bme_alt && rd.readAltitude(alt_m)) {
-          bme_alt_m = (int16_t)lroundf(alt_m);
-          have_bme_alt = true;
-        } else {
-          rd.skipData(type);
-        }
+        if (channel == 2 && !out.have_bme_alt && rd.readAltitude(alt_m)) {
+          out.bme_alt_m = (int16_t)lroundf(alt_m);
+          out.have_bme_alt = true;
+        } else rd.skipData(type);
         break;
       }
       default:
@@ -29127,42 +29467,48 @@ bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
         break;
     }
   }
+  return localEnvHasAnySensors(out);
+}
 
-  if (!have_batt && !have_bme_temp && !have_bme_hum && !have_bme_pressure && !have_bme_alt &&
-      !have_gxhtv3_temp && !have_gxhtv3_hum) return false;
+bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
+  if (!buf || cap == 0) return false;
+  buf[0] = '\0';
+
+  LocalEnvSnapshot snap;
+  if (!getLocalEnvSnapshot(snap)) return false;
 
   int p = 0;
-  if (have_batt && p < (int)cap) {
-    p += snprintf(buf + p, cap - (size_t)p, LV_SYMBOL_BATTERY_FULL " Battery %.2fV", (double)batt_v);
+  if (snap.have_batt && p < (int)cap) {
+    p += snprintf(buf + p, cap - (size_t)p, LV_SYMBOL_BATTERY_FULL " Battery %.2fV", (double)snap.batt_v);
   }
-  if ((have_bme_temp || have_bme_hum || have_bme_pressure || have_bme_alt) && p < (int)cap) {
+  if ((snap.have_bme_temp || snap.have_bme_hum || snap.have_bme_pressure || snap.have_bme_alt) && p < (int)cap) {
     p += snprintf(buf + p, cap - (size_t)p, "%sBME280 ", p > 0 ? "\n" : "");
     bool first = true;
-    if (have_bme_temp && p < (int)cap) {
-      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)bme_temp_c);
+    if (snap.have_bme_temp && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)snap.bme_temp_c);
       first = false;
     }
-    if (have_bme_hum && p < (int)cap) {
-      p += snprintf(buf + p, cap - (size_t)p, "%s%.0f%%RH", first ? "" : "  ", (double)bme_hum_pct);
+    if (snap.have_bme_hum && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%s%.0f%%RH", first ? "" : "  ", (double)snap.bme_hum_pct);
       first = false;
     }
-    if (have_bme_pressure && p < (int)cap) {
-      p += snprintf(buf + p, cap - (size_t)p, "%s%.0fhPa", first ? "" : "  ", (double)bme_pressure_hpa);
+    if (snap.have_bme_pressure && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%s%.0fhPa", first ? "" : "  ", (double)snap.bme_pressure_hpa);
       first = false;
     }
-    if (have_bme_alt && p < (int)cap) {
-      p += snprintf(buf + p, cap - (size_t)p, "%s%dm", first ? "" : "  ", (int)bme_alt_m);
+    if (snap.have_bme_alt && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%s%dm", first ? "" : "  ", (int)snap.bme_alt_m);
     }
   }
-  if ((have_gxhtv3_temp || have_gxhtv3_hum) && p < (int)cap) {
+  if ((snap.have_gxhtv3_temp || snap.have_gxhtv3_hum) && p < (int)cap) {
     p += snprintf(buf + p, cap - (size_t)p, "%sGXHTV3 ", p > 0 ? "\n" : "");
     bool first = true;
-    if (have_gxhtv3_temp && p < (int)cap) {
-      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)gxhtv3_temp_c);
+    if (snap.have_gxhtv3_temp && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)snap.gxhtv3_temp_c);
       first = false;
     }
-    if (have_gxhtv3_hum && p < (int)cap) {
-      p += snprintf(buf + p, cap - (size_t)p, "%s%.0f%%RH", first ? "" : "  ", (double)gxhtv3_hum_pct);
+    if (snap.have_gxhtv3_hum && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%s%.0f%%RH", first ? "" : "  ", (double)snap.gxhtv3_hum_pct);
     }
   }
   if (cap > 0) buf[cap - 1] = '\0';
