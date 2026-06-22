@@ -494,6 +494,11 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
       s_meshcomod_pending_until_ms = 0;
       pushMeshcomodReply("cancelled");
       return true;
+    } else {
+      // Any other command while a confirmation is pending: block it so the
+      // new command cannot silently overwrite the pending action.
+      pushMeshcomodReply("pending confirmation — reply 'ok' to confirm or 'cancel' to abort");
+      return true;
     }
   }
 
