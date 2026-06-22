@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cstdarg>
 #include <cstdlib>
 #include <cmath>
 #if defined(ESP32)
@@ -1463,6 +1464,17 @@ static const char* localEnvModuleState(bool detected, bool query_ok) {
   return query_ok ? "not detected" : "telemetry unavailable";
 }
 
+static size_t localEnvAppendLine(char* out, size_t cap, size_t p, const char* fmt, ...) {
+  if (!out || cap == 0 || p >= cap) return p;
+  va_list ap;
+  va_start(ap, fmt);
+  const int wrote = vsnprintf(out + p, cap - p, fmt, ap);
+  va_end(ap);
+  if (wrote <= 0) return p;
+  size_t np = p + (size_t)wrote;
+  return np < cap ? np : cap - 1;
+}
+
 static void localEnvAppendHistorySpark(char* out, size_t cap, const char* label,
                                        const int16_t* vals, int n, int16_t none_sentinel) {
   if (!out || cap == 0 || !label || !vals || n <= 0) return;
@@ -1499,30 +1511,35 @@ static void buildLocalEnvDetailText(const UITask::LocalEnvSnapshot& snap, char* 
   if (!out || cap == 0) return;
   out[0] = '\0';
   size_t p = 0;
-  p += snprintf(out + p, cap - p, "Battery: %s", localEnvModuleState(snap.have_batt, snap.query_ok));
-  if (snap.have_batt && p < cap) p += snprintf(out + p, cap - p, "  %.2fV", (double)snap.batt_v);
+  const bool have_bme = snap.have_bme_temp || snap.have_bme_hum || snap.have_bme_pressure || snap.have_bme_alt;
+  const bool have_gx = snap.have_gxhtv3_temp || snap.have_gxhtv3_hum;
 
-  if (p < cap) p += snprintf(out + p, cap - p, "\nBME280: %s", localEnvModuleState(
-      snap.have_bme_temp || snap.have_bme_hum || snap.have_bme_pressure || snap.have_bme_alt, snap.query_ok));
-  if (snap.have_bme_temp && p < cap)     p += snprintf(out + p, cap - p, "\n  Temp %.1fC", (double)snap.bme_temp_c);
-  if (snap.have_bme_hum && p < cap)      p += snprintf(out + p, cap - p, "\n  Hum  %.0f%%RH", (double)snap.bme_hum_pct);
-  if (snap.have_bme_pressure && p < cap) p += snprintf(out + p, cap - p, "\n  Press %.0fhPa", (double)snap.bme_pressure_hpa);
-  if (snap.have_bme_alt && p < cap)      p += snprintf(out + p, cap - p, "\n  Alt  %dm", (int)snap.bme_alt_m);
+  p = localEnvAppendLine(out, cap, p, "Detected modules");
+  p = localEnvAppendLine(out, cap, p, "\nBattery rail (ch1): %s", localEnvModuleState(snap.have_batt, true));
+  if (snap.have_batt) p = localEnvAppendLine(out, cap, p, "  %.2fV", (double)snap.batt_v);
 
-  if (p < cap) p += snprintf(out + p, cap - p, "\nGXHTV3: %s", localEnvModuleState(
-      snap.have_gxhtv3_temp || snap.have_gxhtv3_hum, snap.query_ok));
-  if (snap.have_gxhtv3_temp && p < cap) p += snprintf(out + p, cap - p, "\n  Temp %.1fC", (double)snap.gxhtv3_temp_c);
-  if (snap.have_gxhtv3_hum && p < cap)  p += snprintf(out + p, cap - p, "\n  Hum  %.0f%%RH", (double)snap.gxhtv3_hum_pct);
+  p = localEnvAppendLine(out, cap, p, "\nBME280 (ch2): %s", localEnvModuleState(have_bme, snap.query_ok));
+  if (snap.have_bme_temp)     p = localEnvAppendLine(out, cap, p, "\n  Temp %.1fC", (double)snap.bme_temp_c);
+  if (snap.have_bme_hum)      p = localEnvAppendLine(out, cap, p, "\n  Hum  %.0f%%RH", (double)snap.bme_hum_pct);
+  if (snap.have_bme_pressure) p = localEnvAppendLine(out, cap, p, "\n  Press %.0fhPa", (double)snap.bme_pressure_hpa);
+  if (snap.have_bme_alt)      p = localEnvAppendLine(out, cap, p, "\n  Alt  %dm", (int)snap.bme_alt_m);
 
-  if (p < cap) p += snprintf(out + p, cap - p, "\nGPS: %s", snap.gps_present ? "available" : "not detected");
-  if (snap.gps_present && p < cap) {
-    p += snprintf(out + p, cap - p, "\n  State %s", snap.gps_enabled ? "enabled" : "disabled");
-    if (snap.gps_sats >= 0 && p < cap) p += snprintf(out + p, cap - p, "  Sats %d", snap.gps_sats);
-    if (p < cap) p += snprintf(out + p, cap - p, "  Fix %s", snap.gps_fix ? "yes" : "no");
+  p = localEnvAppendLine(out, cap, p, "\nGXHTV3/SHT4X (ch3): %s", localEnvModuleState(have_gx, snap.query_ok));
+  if (snap.have_gxhtv3_temp) p = localEnvAppendLine(out, cap, p, "\n  Temp %.1fC", (double)snap.gxhtv3_temp_c);
+  if (snap.have_gxhtv3_hum)  p = localEnvAppendLine(out, cap, p, "\n  Hum  %.0f%%RH", (double)snap.gxhtv3_hum_pct);
+
+  p = localEnvAppendLine(out, cap, p, "\nGPS module: %s", snap.gps_present ? "available" : "not detected");
+  if (snap.gps_present) {
+    p = localEnvAppendLine(out, cap, p, "\n  State %s", snap.gps_enabled ? "enabled" : "disabled");
+    if (snap.gps_sats >= 0) p = localEnvAppendLine(out, cap, p, "  Sats %d", snap.gps_sats);
+    p = localEnvAppendLine(out, cap, p, "  Fix %s", snap.gps_fix ? "yes" : "no");
   }
 
-  if (p < cap) p += snprintf(out + p, cap - p, "\nBuzzer: %s", snap.buzzer_available ? "available" : "not detected");
-  if (snap.buzzer_available && p < cap) p += snprintf(out + p, cap - p, "  %s", snap.buzzer_quiet ? "quiet" : "on");
+  p = localEnvAppendLine(out, cap, p, "\nBuzzer module: %s", snap.buzzer_available ? "available" : "not detected");
+  if (snap.buzzer_available) p = localEnvAppendLine(out, cap, p, "  %s", snap.buzzer_quiet ? "quiet" : "on");
+
+  p = localEnvAppendLine(out, cap, p, "\n\nTelemetry probe: %s", snap.query_ok ? "ok" : "failed");
+  p = localEnvAppendLine(out, cap, p, "\nReasoning: ch1 local rail, ch2 BME280, ch3 GXHTV3/SHT4X");
 }
 
 static void buildHomeEnvSummary(char* out, size_t cap) {
@@ -1560,7 +1577,7 @@ static lv_obj_t* s_local_sensors_root = nullptr;
 static void closeExpansionCard();
 static void closeLocalSensorsPage();
 static void openLocalSensorsPage();
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TOUCH_UI)
 static void homeTerminalCb(lv_event_t* e);
 #endif
 #if defined(HAS_TDECK_KEYBOARD)
@@ -7073,7 +7090,7 @@ static void localSensorsCloseCb(lv_event_t* e) {
 static void localSensorsOpenTerminalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeLocalSensorsPage();
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TOUCH_UI)
   homeTerminalCb(e);
 #else
   if (g_lv.task) g_lv.task->showAlert(TR("Console not available on this build"), 1200);
@@ -7192,7 +7209,7 @@ static void openLocalSensorsPage() {
   styleButton(term);
   lv_obj_add_event_cb(term, localSensorsOpenTerminalCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* tl = lv_label_create(term);
-  lv_label_set_text(tl, TR("Open console"));
+  lv_label_set_text(tl, TR("Open mesh console"));
   lv_obj_center(tl);
 
   lv_obj_move_foreground(s_local_sensors_root);
@@ -12057,7 +12074,7 @@ static void homeBatteryLongPressCb(lv_event_t* e) {
 // file-manager viewer (inside it) also reads it.
 static char s_jpgScaleErr[52] = {0};
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TOUCH_UI)
 // ---- Full-screen tool views (Terminal / File explorer) ----
 // (Tanmatsu shares this whole block; its SD-mount paths are kept HAS_TDECK_GT911-only and the
 //  file browser uses the internal FFat 'locfd' partition instead — see fmIsSd / fmInternalClickCb.)
@@ -12094,10 +12111,10 @@ static char      s_fm_path[160]  = {0};     // current dir within s_fm_fs (e.g. 
 // a generic fs::FS*; only &SD is real microSD I/O (Internal = SPIFFS). Browsing
 // (fmRefresh) and the file open/save paths call this; mutations re-list via
 // fmRefresh, so they blip the LED too.
-#if defined(HAS_TANMATSU)
-static inline bool fmIsSd(fs::FS*) { return false; }       // Tanmatsu: no Arduino SD global; the FM browses FFat
-#else
+#if defined(HAS_TDECK_GT911)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }
+#else
+static inline bool fmIsSd(fs::FS*) { return false; }       // Heltec/Tanmatsu: no Arduino SD global in this FM path
 #endif
 static inline void fmMarkSdIo() { if (fmIsSd(s_fm_fs)) markSdIo(); }
 #if defined(HAS_TANMATSU)
@@ -12717,7 +12734,7 @@ static void buildTerminal(lv_obj_t* body) {
 
 static void homeTerminalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_obj_t* body = openFullscreenView("Terminal");
+  lv_obj_t* body = openFullscreenView("Mesh console");
   buildTerminal(body);
 }
 
@@ -15048,7 +15065,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_style_text_font(adv_l, &g_font_14, LV_PART_MAIN);
   lv_obj_center(adv_l);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TOUCH_UI)
   // Terminal / Files / Apps launchers, stacked under Advert in the right column.
   // 34-px tall so all four (incl. Advert) fit the short landscape screen.
   if (home_land) {
@@ -15068,16 +15085,26 @@ static void makeHome(lv_obj_t* tab) {
     };
 #if defined(HAS_TANMATSU)
     make_launcher(">_  Terminal", tanBtnY(1), homeTerminalCb, 0, tan_btn_h);
+#if defined(HAS_TDECK_GT911)
     make_launcher(LV_SYMBOL_DIRECTORY "  Files", tanBtnY(2), homeFilesCb, 0, tan_btn_h);
     // "Apps" (opens the app drawer) pops with the negative / inverse of the theme accent.
     make_launcher(LV_SYMBOL_LIST "  Apps", tanBtnY(3), homeAppsBtnCb,
                   0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu), tan_btn_h);
 #else
+    make_launcher(LV_SYMBOL_LIST "  Apps", tanBtnY(2), homeAppsBtnCb,
+                  0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu), tan_btn_h);
+#endif
+#else
     make_launcher(">_  Terminal", 54, homeTerminalCb, 0, 34);
+#if defined(HAS_TDECK_GT911)
     make_launcher(LV_SYMBOL_DIRECTORY "  Files", 92, homeFilesCb, 0, 34);
     // "Apps" (opens the app drawer) pops with the negative / inverse of the theme accent.
     make_launcher(LV_SYMBOL_LIST "  Apps", 130, homeAppsBtnCb,
                   0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu), 34);
+#else
+    make_launcher(LV_SYMBOL_LIST "  Apps", 92, homeAppsBtnCb,
+                  0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu), 34);
+#endif
 #endif
   }
 #endif
@@ -24068,8 +24095,10 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_ADVERT:    openAdvertModalCb(e);  return;
     case APPACT_POWER:     openPowerMenu();      return;
     case APPACT_SNAKE:     SnakeGame::launch();  return;
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TOUCH_UI)
     case APPACT_TERMINAL:  homeTerminalCb(e);    return;
+#endif
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
     case APPACT_FILES:     homeFilesCb(e);       return;
 #endif
     default: break;
@@ -24354,8 +24383,10 @@ static void openAppDrawer() {
     { nullptr,             "Signal",    APPACT_SIGNAL,   0,         COLOR_ACCENT },  // theme (drawn signal bars)
     { TOUCH_SYM_ANTENNA,   "Monitor",   APPACT_MONITOR,  0,         0x35C9C9 },      // RF monitor cyan
     { LV_SYMBOL_SETTINGS,  "Settings",  APPACT_SETTINGS, 0,         0x9AA3AD },      // neutral gear grey
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TOUCH_UI)
     { ">_",                "Terminal",  APPACT_TERMINAL, 0,         0x3DD27A },      // console green
+#endif
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
     { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
 #endif
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // snake game (icon drawn from APPACT_SNAKE, not a glyph)
@@ -27307,7 +27338,7 @@ static void openTelemetryConfigWindow() {
   lv_obj_add_event_cb(clr, telemClearCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* cl = lv_label_create(clr); lv_label_set_text(cl, LV_SYMBOL_TRASH "  Clear history"); lv_obj_center(cl);
 }
-#endif  // HAS_TDECK_GT911 (telemetry window)
+#endif  // HAS_TOUCH_UI (fullscreen tools / terminal / file manager)
 
 // Decode a CayenneLPP-formatted telemetry response into a human-readable
 // window. Walks the channels with LPPReader and concatenates whatever common
