@@ -22329,7 +22329,7 @@ static void refreshSettingsSectionSubtitles() {
 #endif
 
   if (g_set_sec_sub[SEC_DEVICE]) {
-    char env[96];
+    char env[192];
     if (g_lv.task->getLocalEnvSummary(env, sizeof env)) {
       lv_label_set_text_fmt(g_set_sec_sub[SEC_DEVICE], TR("GPS %s · Buzzer %s\n%s"),
                             onOff(g_lv.task->getGPSState()),
@@ -28448,24 +28448,31 @@ bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
   CayenneLPP telemetry(96);
   if (!_sensors->querySensors(TELEM_PERM_ENVIRONMENT, telemetry)) return false;
   const uint8_t len = telemetry.getSize();
-  if (len == 0) return false;
+  if (len == 0 && !_board) return false;
 
-  float temp_c = 0.0f, hum_pct = 0.0f, pressure_hpa = 0.0f;
-  bool have_temp = false, have_hum = false, have_pressure = false;
+  float batt_v = _board ? ((float)_board->getBattMilliVolts() / 1000.0f) : 0.0f;
+  bool have_batt = _board && _board->getBattMilliVolts() > 0;
+
+  float bme_temp_c = 0.0f, bme_hum_pct = 0.0f, bme_pressure_hpa = 0.0f;
+  float gxhtv3_temp_c = 0.0f, gxhtv3_hum_pct = 0.0f;
+  bool have_bme_temp = false, have_bme_hum = false, have_bme_pressure = false;
+  bool have_gxhtv3_temp = false, have_gxhtv3_hum = false;
   LPPReader rd(telemetry.getBuffer(), len);
   uint8_t channel = 0, type = 0;
   while (rd.readHeader(channel, type)) {
     switch (type) {
       case LPP_TEMPERATURE:
-        if (!have_temp) have_temp = rd.readTemperature(temp_c);
+        if (channel == 2 && !have_bme_temp) have_bme_temp = rd.readTemperature(bme_temp_c);
+        else if (channel == 3 && !have_gxhtv3_temp) have_gxhtv3_temp = rd.readTemperature(gxhtv3_temp_c);
         else rd.skipData(type);
         break;
       case LPP_RELATIVE_HUMIDITY:
-        if (!have_hum) have_hum = rd.readRelativeHumidity(hum_pct);
+        if (channel == 2 && !have_bme_hum) have_bme_hum = rd.readRelativeHumidity(bme_hum_pct);
+        else if (channel == 3 && !have_gxhtv3_hum) have_gxhtv3_hum = rd.readRelativeHumidity(gxhtv3_hum_pct);
         else rd.skipData(type);
         break;
       case LPP_BAROMETRIC_PRESSURE:
-        if (!have_pressure) have_pressure = rd.readPressure(pressure_hpa);
+        if (channel == 2 && !have_bme_pressure) have_bme_pressure = rd.readPressure(bme_pressure_hpa);
         else rd.skipData(type);
         break;
       default:
@@ -28474,25 +28481,41 @@ bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
     }
   }
 
-  if (!have_temp && !have_hum && !have_pressure) return false;
-  int p = snprintf(buf, cap, LV_SYMBOL_EYE_OPEN " ");
-  if (p < 0 || (size_t)p >= cap) {
-    buf[cap - 1] = '\0';
-    return true;
+  if (!have_batt && !have_bme_temp && !have_bme_hum && !have_bme_pressure &&
+      !have_gxhtv3_temp && !have_gxhtv3_hum) return false;
+
+  int p = 0;
+  if (have_batt && p < (int)cap) {
+    p += snprintf(buf + p, cap - (size_t)p, LV_SYMBOL_BATTERY_FULL " Battery %.2fV", (double)batt_v);
   }
-  bool any = false;
-  if (have_temp) {
-    p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)temp_c);
-    any = true;
+  if ((have_bme_temp || have_bme_hum || have_bme_pressure) && p < (int)cap) {
+    p += snprintf(buf + p, cap - (size_t)p, "%sBME280 ", p > 0 ? "\n" : "");
+    bool first = true;
+    if (have_bme_temp && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)bme_temp_c);
+      first = false;
+    }
+    if (have_bme_hum && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%s%.0f%%RH", first ? "" : "  ", (double)bme_hum_pct);
+      first = false;
+    }
+    if (have_bme_pressure && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%s%.0fhPa", first ? "" : "  ", (double)bme_pressure_hpa);
+    }
   }
-  if (have_hum && (size_t)p < cap) {
-    p += snprintf(buf + p, cap - (size_t)p, "%s%.0f%%RH", any ? "  " : "", (double)hum_pct);
-    any = true;
+  if ((have_gxhtv3_temp || have_gxhtv3_hum) && p < (int)cap) {
+    p += snprintf(buf + p, cap - (size_t)p, "%sGXHTV3 ", p > 0 ? "\n" : "");
+    bool first = true;
+    if (have_gxhtv3_temp && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)gxhtv3_temp_c);
+      first = false;
+    }
+    if (have_gxhtv3_hum && p < (int)cap) {
+      p += snprintf(buf + p, cap - (size_t)p, "%s%.0f%%RH", first ? "" : "  ", (double)gxhtv3_hum_pct);
+    }
   }
-  if (have_pressure && (size_t)p < cap) {
-    snprintf(buf + p, cap - (size_t)p, "%s%.0fhPa", any ? "  " : "", (double)pressure_hpa);
-  }
-  return true;
+  if (cap > 0) buf[cap - 1] = '\0';
+  return buf[0] != '\0';
 }
 
 void UITask::toggleGPS() {
