@@ -688,14 +688,14 @@ static void setChatStatusTitle(const char* sanitized) {   // already glyph-sanit
   }
   updateGlobalStatusBar();
 }
-/** Bottom tab indices. Tabs: Home=0, Chats=1, Contacts=2, Map=3, Set=4. */
-// Bottom-bar order, left→right: Chats, Contacts, Home (middle), Map, Settings.
+/** Bottom tab indices. Left→right: Chats(0), Contacts(1), Home(2), Map(3), Sensors(4), Settings(5). */
 constexpr int CHAT_INBOX_TAB_INDEX   = 0;
 constexpr int CONTACTS_TAB_INDEX     = 1;
 constexpr int HOME_TAB_INDEX         = 2;
 constexpr int MAP_TAB_INDEX          = 3;
-constexpr int SETTINGS_TAB_INDEX     = 4;
-constexpr int TAB_LAST               = 4;
+constexpr int SENSORS_TAB_INDEX      = 4;
+constexpr int SETTINGS_TAB_INDEX     = 5;
+constexpr int TAB_LAST               = 5;
 
 // Objects flagged thus are clickable but must NOT be a keyboard-nav focus target —
 // navCollect skips them. Used for the full-area map touch/pan catcher, which would
@@ -1577,6 +1577,7 @@ static lv_obj_t* s_local_sensors_root = nullptr;
 static void closeExpansionCard();
 static void closeLocalSensorsPage();
 static void openLocalSensorsPage();
+static void relayoutHomeCharts();
 #if defined(HAS_TOUCH_UI)
 static void homeTerminalCb(lv_event_t* e);
 #endif
@@ -2567,6 +2568,7 @@ static void refreshContactsList();
 static void contactsListForceRefresh();   // refresh past the no-change cache (e.g. fav toggle, where the count is unchanged)
 static void refreshThreadLists();
 static void refreshStatusLabels();
+static void refreshSensorsTab();
 static void refreshLiveDiag(unsigned long now);
 static void refreshSettingsSectionSubtitles();
 static void refreshLogModalView();
@@ -4490,8 +4492,8 @@ static void updateTabIndicator() {
   const int idx = getActiveTab();
   if (idx == MAP_TAB_INDEX) { lv_obj_add_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN); return; }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const int cell = sw / 5;                 // 5 equal tab cells
-  const int xoff = (idx - 2) * cell;       // Home (index 2) is the centred tab
+  const int cell = sw / 6;                 // 6 equal tab cells
+  const int xoff = cell * idx + cell/2 - sw/2;   // center of tab idx relative to screen mid
   lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN);
   lv_obj_align(s_tab_indicator, LV_ALIGN_BOTTOM_MID, xoff, -2);
 }
@@ -4547,6 +4549,7 @@ static void tabChangedCb(lv_event_t* e) {
     closeAppDrawerSync();                        // leaving Home -> hide (mode kept); sync so the map can't paint under it
   }
   if (new_t == CONTACTS_TAB_INDEX) refreshContactsList();
+  if (new_t == SENSORS_TAB_INDEX) refreshSensorsTab();
   if (new_t == MAP_TAB_INDEX) {
     applyMapChrome(true);    // transparent status bar + tab bar so the map shows through
     onMapTabActivated();
@@ -7194,18 +7197,9 @@ static void openLocalSensorsPage() {
   lv_obj_set_size(btn_row, sw - 28, 36);
   lv_obj_align(btn_row, LV_ALIGN_BOTTOM_MID, 0, 0);
 
-  lv_obj_t* bz = lv_btn_create(btn_row);
-  lv_obj_set_size(bz, (sw - 40) / 2, 34);
-  lv_obj_align(bz, LV_ALIGN_LEFT_MID, 0, 0);
-  styleButton(bz);
-  lv_obj_add_event_cb(bz, testBuzzerCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* bzl = lv_label_create(bz);
-  lv_label_set_text(bzl, TR("Test buzzer"));
-  lv_obj_center(bzl);
-
   lv_obj_t* term = lv_btn_create(btn_row);
-  lv_obj_set_size(term, (sw - 40) / 2, 34);
-  lv_obj_align(term, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_set_size(term, sw - 40, 34);
+  lv_obj_align(term, LV_ALIGN_CENTER, 0, 0);
   styleButton(term);
   lv_obj_add_event_cb(term, localSensorsOpenTerminalCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* tl = lv_label_create(term);
@@ -7263,25 +7257,16 @@ static void openExpansionCard() {
   lv_obj_set_pos(lbl, 0, 28);
   lv_obj_update_layout(lbl);
 
-  lv_obj_t* b = lv_btn_create(card);
-  lv_obj_set_size(b, card_w - 20, 34);
-  lv_obj_set_pos(b, 0, 36 + lv_obj_get_height(lbl));
-  styleButton(b);
-  lv_obj_add_event_cb(b, testBuzzerCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* bl = lv_label_create(b);
-  lv_label_set_text(bl, TR("Test buzzer"));
-  lv_obj_center(bl);
-
   lv_obj_t* d = lv_btn_create(card);
   lv_obj_set_size(d, card_w - 20, 34);
-  lv_obj_set_pos(d, 0, 76 + lv_obj_get_height(lbl));
+  lv_obj_set_pos(d, 0, 36 + lv_obj_get_height(lbl));
   styleButton(d);
   lv_obj_add_event_cb(d, openLocalSensorsPageCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* dl = lv_label_create(d);
   lv_label_set_text(dl, TR("Detailed sensors"));
   lv_obj_center(dl);
 
-  lv_obj_set_height(card, 84 + lv_obj_get_height(lbl) + 42);
+  lv_obj_set_height(card, 44 + lv_obj_get_height(lbl) + 42);
   lv_obj_move_foreground(s_expansion_root);
 }
 
@@ -11434,6 +11419,7 @@ static lv_obj_t*       s_home_env_chart   = nullptr;
 static lv_chart_series_t* s_home_env_batt = nullptr;
 static lv_chart_series_t* s_home_env_temp = nullptr;
 static lv_chart_series_t* s_home_env_hum  = nullptr;
+static lv_obj_t*       s_home_adv_btn     = nullptr;
 // Compact legend label above the chart showing live TX/RX totals.
 static lv_obj_t* s_home_chart_legend = nullptr;
 static lv_obj_t* s_home_chart_sig    = nullptr;   // live signal chip drawn inside the graph box
@@ -14810,6 +14796,7 @@ static void makeHome(lv_obj_t* tab) {
   s_home_batt_icon  = nullptr;
   s_home_chart_sig  = nullptr;
   s_home_env_chart  = nullptr;
+  s_home_adv_btn    = nullptr;
 #if defined(HAS_TANMATSU)
   s_home_info       = nullptr;
 #endif
@@ -15041,6 +15028,7 @@ static void makeHome(lv_obj_t* tab) {
   // which is why the chart above was allowed to run full-height.
   const int adv_y = chart_y + 16 + chart_h + 8;
   lv_obj_t* adv = lv_btn_create(tab);
+  s_home_adv_btn = adv;
   styleButton(adv);
   lv_obj_set_style_bg_color(adv, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_set_style_bg_color(adv, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
@@ -15064,6 +15052,8 @@ static void makeHome(lv_obj_t* tab) {
                                       : LV_SYMBOL_UPLOAD "  Send advert");
   lv_obj_set_style_text_font(adv_l, &g_font_14, LV_PART_MAIN);
   lv_obj_center(adv_l);
+
+  relayoutHomeCharts();
 
 #if defined(HAS_TOUCH_UI)
   // Terminal / Files / Apps launchers, stacked under Advert in the right column.
@@ -25136,6 +25126,48 @@ static void localEnvHistoryMaybeSample(unsigned long now_ms) {
   }
 }
 
+static void relayoutHomeCharts() {
+  if (!g_lv.home_env || !s_home_env_chart || !s_home_chart_legend) return;
+
+  const bool home_land = lv_disp_get_hor_res(nullptr) > lv_disp_get_ver_res(nullptr);
+  const int cw = tabContentW();
+  const int BTNW = SC(100);
+  const int RSTRIP = BTNW + 10;
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+  const int chart_w = home_land ? (cw - RSTRIP) : cw;
+#else
+  const int chart_w = cw;
+#endif
+
+  lv_obj_update_layout(g_lv.home_env);
+  const lv_coord_t env_bottom = lv_obj_get_y(g_lv.home_env) + lv_obj_get_height(g_lv.home_env);
+  const int env_chart_y = LV_MAX(SC(92), (int)env_bottom + SC(6));
+  lv_obj_set_size(s_home_env_chart, chart_w, SC(34));
+  lv_obj_set_pos(s_home_env_chart, 0, env_chart_y);
+
+  const int legend_y = env_chart_y + SC(34) + SC(12);
+  lv_obj_set_pos(s_home_chart_legend, 0, legend_y);
+
+  const int home_avail = tabContentH() - 20;
+  int chart_h = home_avail - (legend_y + 16) - 4 - (home_land ? 0 : (8 + 36));
+  if (chart_h > 96) chart_h = 96;
+  if (chart_h < 28) chart_h = 28;
+#if defined(HAS_TANMATSU)
+  if (s_ui_fscale > 100) chart_h = 0;
+  else chart_h = 96;
+#endif
+
+  if (s_home_chart) {
+    lv_obj_set_size(s_home_chart, chart_w, chart_h);
+    lv_obj_set_pos(s_home_chart, 0, legend_y + 16);
+  }
+
+  if (s_home_adv_btn && !home_land) {
+    lv_obj_set_pos(s_home_adv_btn, 0, legend_y + 16 + chart_h + 8);
+    lv_obj_set_width(s_home_adv_btn, cw);
+  }
+}
+
 static void refreshStatusLabels() {
   if (!g_lv.task) return;
   localEnvHistoryMaybeSample(millis());
@@ -25193,6 +25225,7 @@ static void refreshStatusLabels() {
       }
     }
   }
+  if (active_tab == SENSORS_TAB_INDEX) refreshSensorsTab();
   const bool settings_active = (active_tab == SETTINGS_TAB_INDEX);
   // Map tab: refresh the bottom info strip (self GPS + on-map count) only
   // when the tab is actually visible. Cheap, but no point doing it on every
@@ -25277,6 +25310,7 @@ static void refreshStatusLabels() {
     buildHomeEnvSummary(env, sizeof env);
     if (env[0]) setLabelIfChanged(g_lv.home_env, env);
     else setLabelIfChanged(g_lv.home_env, TR(""));
+    relayoutHomeCharts();
   }
   // Unread line (its own tappable row): mail icon + translated count.
   if (g_lv.home_unread && home_active) {
@@ -26334,6 +26368,155 @@ static bool overlayBlocksTabSwipe() {
 }
 
 // ============================================================
+// Sensors tab
+// ============================================================
+static lv_obj_t* s_sens_atmo_lbl  = nullptr;  // Temp / Hum / Press / Alt block
+static lv_obj_t* s_sens_gps_lbl   = nullptr;  // GPS block
+static lv_obj_t* s_sens_batt_lbl  = nullptr;  // Battery block
+static lv_obj_t* s_sens_time_lbl  = nullptr;  // "Updated HH:MM:SS" footer
+
+static void refreshSensorsTab() {
+  if (!g_lv.task) return;
+  UITask::LocalEnvSnapshot snap;
+  const bool ok = g_lv.task->getLocalEnvSnapshot(snap);
+
+  // Atmosphere block
+  if (s_sens_atmo_lbl) {
+    char atmo[160];
+    size_t p = 0;
+    if (!ok || (!snap.have_bme_temp && !snap.have_bme_hum &&
+                !snap.have_bme_pressure && !snap.have_bme_alt &&
+                !snap.have_gxhtv3_temp && !snap.have_gxhtv3_hum)) {
+      snprintf(atmo, sizeof atmo, "No sensor detected");
+    } else {
+      if (snap.have_bme_temp)
+        p += snprintf(atmo + p, sizeof atmo - p, "Temp: %.1f\xC2\xB0""C\n", (double)snap.bme_temp_c);
+      else if (snap.have_gxhtv3_temp)
+        p += snprintf(atmo + p, sizeof atmo - p, "Temp: %.1f\xC2\xB0""C\n", (double)snap.gxhtv3_temp_c);
+      if (snap.have_bme_hum)
+        p += snprintf(atmo + p, sizeof atmo - p, "Humidity: %.0f%%RH\n", (double)snap.bme_hum_pct);
+      else if (snap.have_gxhtv3_hum)
+        p += snprintf(atmo + p, sizeof atmo - p, "Humidity: %.0f%%RH\n", (double)snap.gxhtv3_hum_pct);
+      if (snap.have_bme_pressure)
+        p += snprintf(atmo + p, sizeof atmo - p, "Pressure: %.1f hPa\n", (double)snap.bme_pressure_hpa);
+      if (snap.have_bme_alt)
+        p += snprintf(atmo + p, sizeof atmo - p, "Altitude: %d m", (int)snap.bme_alt_m);
+      // Strip trailing newline
+      while (p > 0 && atmo[p-1] == '\n') atmo[--p] = '\0';
+    }
+    setLabelIfChanged(s_sens_atmo_lbl, atmo);
+  }
+
+  // GPS block
+  if (s_sens_gps_lbl) {
+    char gps[160];
+    if (!snap.gps_present) {
+      snprintf(gps, sizeof gps, "No GPS");
+    } else {
+      size_t p = 0;
+      p += snprintf(gps + p, sizeof gps - p, "Fix: %s", snap.gps_fix ? "yes" : "no");
+      if (snap.gps_sats >= 0)
+        p += snprintf(gps + p, sizeof gps - p, "  Sats: %d", snap.gps_sats);
+      if (snap.gps_fix) {
+        const double lat = g_lv.task->getNodeLat();
+        const double lon = g_lv.task->getNodeLon();
+        p += snprintf(gps + p, sizeof gps - p, "\n%.5f  %.5f", lat, lon);
+      }
+    }
+    setLabelIfChanged(s_sens_gps_lbl, gps);
+  }
+
+  // Battery block
+  if (s_sens_batt_lbl) {
+    char batt[32];
+    if (snap.have_batt)
+      snprintf(batt, sizeof batt, "%.2f V", (double)snap.batt_v);
+    else
+      snprintf(batt, sizeof batt, "N/A");
+    setLabelIfChanged(s_sens_batt_lbl, batt);
+  }
+
+  // Footer timestamp
+  if (s_sens_time_lbl) {
+    char ts[24];
+    time_t t = (time_t)rtc_clock.getCurrentTime();
+    struct tm* tm = localtime(&t);
+    if (tm) strftime(ts, sizeof ts, "Updated %H:%M:%S", tm);
+    else     snprintf(ts, sizeof ts, "Updated --:--:--");
+    setLabelIfChanged(s_sens_time_lbl, ts);
+  }
+}
+
+static lv_obj_t* sensorsAddSection(lv_obj_t* page, int& y, const char* title) {
+  lv_obj_t* hdr = lv_label_create(page);
+  lv_label_set_text(hdr, title);
+  lv_obj_set_style_text_font(hdr, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(hdr, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_pos(hdr, 8, y);
+  y += SC(18);
+
+  lv_obj_t* val = lv_label_create(page);
+  lv_label_set_long_mode(val, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(val, lv_pct(100) - SC(16));
+  lv_obj_set_style_text_font(val, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(val, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(val, 8, y);
+  return val;
+}
+
+static void makeSensorsTab(lv_obj_t* tab) {
+  styleSurface(tab, COLOR_BG, 0);
+  lv_obj_set_scroll_dir(tab, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_add_event_cb(tab, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
+
+  int y = SC(6);
+
+  s_sens_atmo_lbl = sensorsAddSection(tab, y, LV_SYMBOL_CHARGE "  Atmosphere");
+  lv_label_set_text(s_sens_atmo_lbl, "...");
+  y += SC(72);
+
+  // Divider
+  {
+    lv_obj_t* div = lv_obj_create(tab);
+    lv_obj_remove_style_all(div);
+    lv_obj_set_size(div, lv_pct(100) - SC(16), 1);
+    lv_obj_set_pos(div, 8, y);
+    lv_obj_set_style_bg_color(div, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(div, LV_OPA_20, LV_PART_MAIN);
+    y += SC(10);
+  }
+
+  s_sens_gps_lbl = sensorsAddSection(tab, y, LV_SYMBOL_GPS "  GPS");
+  lv_label_set_text(s_sens_gps_lbl, "...");
+  y += SC(54);
+
+  // Divider
+  {
+    lv_obj_t* div = lv_obj_create(tab);
+    lv_obj_remove_style_all(div);
+    lv_obj_set_size(div, lv_pct(100) - SC(16), 1);
+    lv_obj_set_pos(div, 8, y);
+    lv_obj_set_style_bg_color(div, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(div, LV_OPA_20, LV_PART_MAIN);
+    y += SC(10);
+  }
+
+  s_sens_batt_lbl = sensorsAddSection(tab, y, LV_SYMBOL_BATTERY_FULL "  Battery");
+  lv_label_set_text(s_sens_batt_lbl, "...");
+  y += SC(28);
+
+  // Footer: last updated
+  s_sens_time_lbl = lv_label_create(tab);
+  lv_label_set_text(s_sens_time_lbl, "");
+  lv_obj_set_style_text_font(s_sens_time_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_sens_time_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(s_sens_time_lbl, 8, y);
+
+  refreshSensorsTab();
+}
+
+// ============================================================
 // Build full UI tree
 // ============================================================
 static void buildUiTree() {
@@ -26409,19 +26592,18 @@ static void buildUiTree() {
   lv_obj_add_event_cb(tab_btns, navMenubarSizeCb, LV_EVENT_SIZE_CHANGED, nullptr);  // keep the keyboard-nav key hints positioned
 #endif
 
-  // Tab labels: icons-only (house, envelope, list, GPS pin, gear) — saves
-  // space and lets all five tabs sit comfortably in the 240px wide bar
-  // (240/5 = 48 px per icon).
-  // Add order == index order: Chats(0), Contacts(1), Home(2, middle), Map(3), Settings(4).
+  // Tab labels: icons-only — 6 tabs at 40 px each on the 240 px bar.
+  // Order: Chats(0), Contacts(1), Home(2), Map(3), Sensors(4), Settings(5).
   lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE);
   lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON);   // person icon (FA user)
   lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME);
   lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS);
+  lv_obj_t* tab_sensors  = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_CHARGE);   // environment / sensors
   lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS);
   // Slightly larger font for icons so they're easy to tap.
   lv_obj_set_style_text_font(tab_btns, &g_font_16, LV_PART_MAIN);
 
-  // Home and Set tabs scroll vertically at the tab page level
+  // Home, Sensors and Settings tabs scroll vertically at the tab page level
   for (lv_obj_t* t : {tab_home, tab_settings}) {
     styleSurface(t, COLOR_BG, 0);
     lv_obj_set_scroll_dir(t, LV_DIR_VER);
@@ -26437,6 +26619,7 @@ static void buildUiTree() {
   makeChatList(tab_chats, g_lv.dm, false, true);
   makeContactsTab(tab_contacts);
   makeMapTab(tab_map);
+  makeSensorsTab(tab_sensors);
 
   // Red "!" update badge over the Settings gear (rightmost bottom tab). A child
   // of the screen (so it has no layout overriding its alignment) created BEFORE
@@ -26471,7 +26654,7 @@ static void buildUiTree() {
   lv_obj_set_style_pad_hor(s_chat_unread_badge, 3, LV_PART_MAIN);
   lv_obj_set_style_pad_ver(s_chat_unread_badge, 0, LV_PART_MAIN);
   lv_obj_align(s_chat_unread_badge, LV_ALIGN_BOTTOM_LEFT,
-               lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 15));
+               lv_disp_get_hor_res(nullptr) / 12 + 7, -(TABBAR_H - 15));
   lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
 
   // Thin rounded accent "glow" bar that marks the active tab. A child of the
