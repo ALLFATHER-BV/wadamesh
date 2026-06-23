@@ -2110,7 +2110,7 @@ static void navPump() {
       continue;
     }
     lv_obj_t* ta_focused = navFocusedTextarea();                            // a text field is focused
-    lv_obj_t* ta = (ta_focused && s_nav_ta_editing) ? ta_focused : nullptr; // …and editing = the typing/caret target
+    lv_obj_t* ta = (ta_focused && (!s_kbd_nav || s_nav_ta_editing)) ? ta_focused : nullptr; // editing target (kbd-nav off = type directly)
     if (ev.type == INPUT_EVENT_TYPE_NAVIGATION) {
       const bool down = ev.args_navigation.state;
       const uint32_t mod = ev.args_navigation.modifiers;
@@ -22751,9 +22751,11 @@ static void handleHwKey(int key) {
   // bound to it on focus — that binding is our target.
   lv_obj_t* ta_focused = lv_keyboard_get_textarea(g_lv.keyboard);
 #if defined(HAS_TDECK_TRACKBALL)
-  // Edit mode: a focused field only becomes the typing target after select/Enter (below);
-  // until then `ta` is null so the letter-nav keys navigate instead of typing into it.
-  lv_obj_t* ta = (ta_focused && s_nav_ta_editing) ? ta_focused : nullptr;
+  // Edit mode (keyboard-nav ON only): a focused field becomes the typing target after
+  // select/Enter (below) — until then `ta` is null so the letter-nav keys navigate. With
+  // keyboard-nav OFF there is no navigation to protect (and no nav group to set the edit
+  // flag), so a focused field always types directly — otherwise typing breaks entirely.
+  lv_obj_t* ta = (ta_focused && (!s_kbd_nav || s_nav_ta_editing)) ? ta_focused : nullptr;
 #else
   lv_obj_t* ta = ta_focused;
 #endif
