@@ -1,0 +1,29 @@
+# beta_13 — community drop (one user-facing note per non-blank, non-# line; # lines are section comments)
+
+# --- A note from Kaj (headline) ---
+This one's a community release — thank you! A bunch of the features below came from contributor pull requests, and the rest are the keyboard, typing and quality-of-life fixes I promised after the last drop. Huge thanks to everyone sending PRs, opening issues and reporting bugs: Yazutsu, tun0, Vybo and samuelcoustet all have their work in this build. Keep it coming.
+
+# --- Typing & keyboard navigation (T-Deck + Tanmatsu) ---
+Open a chat or channel and the cursor is ready — you can type straight away. Every other text field now waits for Enter before it captures the keyboard, so the letter-navigation keys keep working until you actually want to type.
+Pressing Enter (or Esc / the back button) on an empty message box drops the cursor and re-selects the field, so you can navigate away with the buttons again.
+The menu-bar letter shortcuts no longer jump you to another page while you're typing in a field.
+New "Show menu-bar letters" setting under Settings -> Keyboard (off by default) — turn it on to see the tab hotkey letters on the bar.
+The accent pop-up no longer grabs the keyboard when it appears, so you can keep typing right through it.
+
+# --- Composer ---
+New dedicated "Special characters" picker for symbols that aren't on the keyboard (% $ @ # & =, currency, maths, accents) — separate from the emoji picker.
+Long-press one of your sent messages to Resend it.
+
+# --- Clock ---
+The 12-hour clock setting now applies everywhere — the top bar, the chat bubbles and the lock screen — not just the chat list.
+
+# --- From contributors ---
+Room-server posts now show the actual author's name on each message instead of the room's own name. (Yazutsu, #40)
+New "Direct (0-hop)" filter for the contact list and the map — show only nodes you're hearing directly, with no repeater hops in between. (tun0, #39)
+Beer emoji in colour, tap the unread badge in the status bar to jump to your Chats, a new "notify on new contact" toggle, and Czech accents in the accent pop-up. (Vybo, #22)
+Optional trackball "edge scroll" — push the cursor past a screen edge to scroll the list underneath it (off by default, under Settings -> Keyboard). (tun0, #38)
+TCP now restarts immediately after you turn it off and on again, the OTA action is hidden when there's no update slot to use, and a TCP-toggle alert glitch is fixed. (samuelcoustet, #29)
+
+# --- Fixes ---
+Heltec V4: removed the after-crash report prompt — that board has no SD card or reachable storage to save the report to, so it was a dead end. (The T-Deck still offers it.)
+When both Wi-Fi and GPS are off, the clock now sets itself from the timestamps on messages received over the mesh.
