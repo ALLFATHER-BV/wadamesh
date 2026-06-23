@@ -16,19 +16,19 @@
           "role": "gui",
           "title": "Touch UI",
           "version": {
-            "beta_13": {
-              "notes": "This one's a community release — thank you! A bunch of the features below came from contributor pull requests, and the rest are the keyboard, typing and quality-of-life fixes I promised after the last drop. Huge thanks to everyone sending PRs, opening issues and reporting bugs: Yazutsu, tun0, Vybo and samuelcoustet all have their work in this build. Keep it coming.\nOpen a chat or channel and the cursor is ready — you can type straight away. Every other text field now waits for Enter before it captures the keyboard, so the letter-navigation keys keep working until you actually want to type.\nPressing Enter (or Esc / the back button) on an empty message box drops the cursor and re-selects the field, so you can navigate away with the buttons again.\nThe menu-bar letter shortcuts no longer jump you to another page while you're typing in a field.\nNew \"Show menu-bar letters\" setting under Settings -> Keyboard (off by default) — turn it on to see the tab hotkey letters on the bar.\nThe accent pop-up no longer grabs the keyboard when it appears, so you can keep typing right through it.\nNew dedicated \"Special characters\" picker for symbols that aren't on the keyboard (% $ @ # & =, currency, maths, accents) — separate from the emoji picker.\nLong-press one of your sent messages to Resend it.\nThe 12-hour clock setting now applies everywhere — the top bar, the chat bubbles and the lock screen — not just the chat list.\nRoom-server posts now show the actual author's name on each message instead of the room's own name. (Yazutsu, #40)\nNew \"Direct (0-hop)\" filter for the contact list and the map — show only nodes you're hearing directly, with no repeater hops in between. (tun0, #39)\nBeer emoji in colour, tap the unread badge in the status bar to jump to your Chats, a new \"notify on new contact\" toggle, and Czech accents in the accent pop-up. (Vybo, #22)\nOptional trackball \"edge scroll\" — push the cursor past a screen edge to scroll the list underneath it (off by default, under Settings -> Keyboard). (tun0, #38)\nTCP now restarts immediately after you turn it off and on again, the OTA action is hidden when there's no update slot to use, and a TCP-toggle alert glitch is fixed. (samuelcoustet, #29)\nHeltec V4: removed the after-crash report prompt — that board has no SD card or reachable storage to save the report to, so it was a dead end. (The T-Deck still offers it.)\nWhen both Wi-Fi and GPS are off, the clock now sets itself from the timestamps on messages received over the mesh.",
+            "beta_14": {
+              "notes": "Fixed a bug introduced in beta_13: if you had turned keyboard navigation OFF (Settings -> Keyboard), the physical keyboard stopped typing into text fields entirely on the T-Deck and Tanmatsu. Typing now works again with keyboard navigation off; with it on, nothing changed. (The Heltec V4 was never affected.)\nIncludes everything from beta_13: room-server posts show the author's name, the Direct (0-hop) contact + map filter, beer emoji with a status-bar unread tap and a new-contact toast toggle and Czech accents, optional trackball edge-scroll, the dedicated special-characters picker, the 12-hour clock applied everywhere, and the keyboard navigation + typing improvements.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-heltec-v4-tft-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_13/wadamesh-heltec-v4-tft-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_14/wadamesh-heltec-v4-tft-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-heltec-v4-tft.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_13/wadamesh-heltec-v4-tft.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_14/wadamesh-heltec-v4-tft.bin",
                   "title": "Update (app only)"
                 }
               ]
@@ -48,19 +48,19 @@
           "role": "gui",
           "title": "Touch UI",
           "version": {
-            "beta_13": {
-              "notes": "This one's a community release — thank you! A bunch of the features below came from contributor pull requests, and the rest are the keyboard, typing and quality-of-life fixes I promised after the last drop. Huge thanks to everyone sending PRs, opening issues and reporting bugs: Yazutsu, tun0, Vybo and samuelcoustet all have their work in this build. Keep it coming.\nOpen a chat or channel and the cursor is ready — you can type straight away. Every other text field now waits for Enter before it captures the keyboard, so the letter-navigation keys keep working until you actually want to type.\nPressing Enter (or Esc / the back button) on an empty message box drops the cursor and re-selects the field, so you can navigate away with the buttons again.\nThe menu-bar letter shortcuts no longer jump you to another page while you're typing in a field.\nNew \"Show menu-bar letters\" setting under Settings -> Keyboard (off by default) — turn it on to see the tab hotkey letters on the bar.\nThe accent pop-up no longer grabs the keyboard when it appears, so you can keep typing right through it.\nNew dedicated \"Special characters\" picker for symbols that aren't on the keyboard (% $ @ # & =, currency, maths, accents) — separate from the emoji picker.\nLong-press one of your sent messages to Resend it.\nThe 12-hour clock setting now applies everywhere — the top bar, the chat bubbles and the lock screen — not just the chat list.\nRoom-server posts now show the actual author's name on each message instead of the room's own name. (Yazutsu, #40)\nNew \"Direct (0-hop)\" filter for the contact list and the map — show only nodes you're hearing directly, with no repeater hops in between. (tun0, #39)\nBeer emoji in colour, tap the unread badge in the status bar to jump to your Chats, a new \"notify on new contact\" toggle, and Czech accents in the accent pop-up. (Vybo, #22)\nOptional trackball \"edge scroll\" — push the cursor past a screen edge to scroll the list underneath it (off by default, under Settings -> Keyboard). (tun0, #38)\nTCP now restarts immediately after you turn it off and on again, the OTA action is hidden when there's no update slot to use, and a TCP-toggle alert glitch is fixed. (samuelcoustet, #29)\nHeltec V4: removed the after-crash report prompt — that board has no SD card or reachable storage to save the report to, so it was a dead end. (The T-Deck still offers it.)\nWhen both Wi-Fi and GPS are off, the clock now sets itself from the timestamps on messages received over the mesh.",
+            "beta_14": {
+              "notes": "Fixed a bug introduced in beta_13: if you had turned keyboard navigation OFF (Settings -> Keyboard), the physical keyboard stopped typing into text fields entirely on the T-Deck and Tanmatsu. Typing now works again with keyboard navigation off; with it on, nothing changed. (The Heltec V4 was never affected.)\nIncludes everything from beta_13: room-server posts show the author's name, the Direct (0-hop) contact + map filter, beer emoji with a status-bar unread tap and a new-contact toast toggle and Czech accents, optional trackball edge-scroll, the dedicated special-characters picker, the 12-hour clock applied everywhere, and the keyboard navigation + typing improvements.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-tdeck-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_13/wadamesh-tdeck-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_14/wadamesh-tdeck-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-tdeck.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_13/wadamesh-tdeck.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_14/wadamesh-tdeck.bin",
                   "title": "Update (app only)"
                 }
               ]
