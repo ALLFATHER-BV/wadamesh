@@ -16516,10 +16516,16 @@ struct TileFetchUiEntry {
 };
 static constexpr int k_tile_fetch_ui_hist = 24;
 static TileFetchUiEntry s_tile_fetch_ui[k_tile_fetch_ui_hist] = {};
-static uint8_t  s_tile_fetch_ui_head = 0;
-static bool     s_tile_fetch_paused = false;
+static portMUX_TYPE     s_tile_fetch_ui_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint8_t  s_tile_fetch_ui_head = 0;
+static volatile bool     s_tile_fetch_paused = false;
+
+// NOTE: tileFetchUiFind/Alloc/Mark are called from the fetch task (core 0).
+// refreshTileQueueManager and tileQueueClearDoneCb run on UITask (core 1).
+// All accesses to s_tile_fetch_ui[] and s_tile_fetch_ui_head must hold s_tile_fetch_ui_mux.
 
 static TileFetchUiEntry* tileFetchUiFind(uint8_t z, int32_t x, int32_t y) {
+  // Caller must hold s_tile_fetch_ui_mux
   for (int i = 0; i < k_tile_fetch_ui_hist; ++i) {
     TileFetchUiEntry& e = s_tile_fetch_ui[i];
     if (e.used && e.z == z && e.x == x && e.y == y) return &e;
@@ -16528,6 +16534,7 @@ static TileFetchUiEntry* tileFetchUiFind(uint8_t z, int32_t x, int32_t y) {
 }
 
 static TileFetchUiEntry& tileFetchUiAlloc(uint8_t z, int32_t x, int32_t y) {
+  // Caller must hold s_tile_fetch_ui_mux
   TileFetchUiEntry* hit = tileFetchUiFind(z, x, y);
   if (hit) return *hit;
   TileFetchUiEntry& e = s_tile_fetch_ui[s_tile_fetch_ui_head];
@@ -16541,11 +16548,13 @@ static TileFetchUiEntry& tileFetchUiAlloc(uint8_t z, int32_t x, int32_t y) {
 }
 
 static void tileFetchUiMark(uint8_t z, int32_t x, int32_t y, char state, int16_t http_code = 0, bool bump_try = false) {
+  taskENTER_CRITICAL(&s_tile_fetch_ui_mux);
   TileFetchUiEntry& e = tileFetchUiAlloc(z, x, y);
   e.state = state;
   e.http_code = http_code;
   e.stamp_ms = millis();
   if (bump_try && e.tries < 255) ++e.tries;
+  taskEXIT_CRITICAL(&s_tile_fetch_ui_mux);
 }
 
 static const char* tileFetchStateText(char state) {
@@ -18676,11 +18685,20 @@ static void refreshTileQueueManager() {
                               LV_PART_MAIN);
   }
 
+  // Snapshot the ring-buffer under spinlock so the fetch task (core 0) can't
+  // modify it while we iterate. LVGL calls happen after we release the lock.
+  TileFetchUiEntry snap[k_tile_fetch_ui_hist];
+  uint8_t snap_head;
+  taskENTER_CRITICAL(&s_tile_fetch_ui_mux);
+  memcpy(snap, s_tile_fetch_ui, sizeof snap);
+  snap_head = s_tile_fetch_ui_head;
+  taskEXIT_CRITICAL(&s_tile_fetch_ui_mux);
+
   const uint32_t now_ms = millis();
   int rows = 0;
   for (int n = 0; n < k_tile_fetch_ui_hist; ++n) {
-    const int idx = (int)((s_tile_fetch_ui_head + k_tile_fetch_ui_hist - 1 - n) % k_tile_fetch_ui_hist);
-    const TileFetchUiEntry& e = s_tile_fetch_ui[idx];
+    const int idx = (int)((snap_head + k_tile_fetch_ui_hist - 1 - n) % k_tile_fetch_ui_hist);
+    const TileFetchUiEntry& e = snap[idx];
     if (!e.used) continue;
     ++rows;
     lv_obj_t* btn = lv_btn_create(s_tile_queue_list);
@@ -18757,12 +18775,12 @@ static void tileQueueQueueAreaCb(lv_event_t* e) {
 
 static void tileQueueClearDoneCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  taskENTER_CRITICAL(&s_tile_fetch_ui_mux);
   for (int i = 0; i < k_tile_fetch_ui_hist; ++i) {
     TileFetchUiEntry& te = s_tile_fetch_ui[i];
-    if (tileFetchStateIsDone(te.state)) {
-      te = TileFetchUiEntry{};
-    }
+    if (tileFetchStateIsDone(te.state)) te = TileFetchUiEntry{};
   }
+  taskEXIT_CRITICAL(&s_tile_fetch_ui_mux);
   refreshTileQueueManager();
 }
 
@@ -24489,6 +24507,7 @@ static void ccRotateCb(lv_event_t* e) {
                                                   : (uint8_t)LV_DISP_ROT_NONE;
   touchPrefsSetUiRotation(next);
 #endif
+  saveWaypointsToStorage();  // flush pending waypoint changes before reboot
   if (g_lv.task) {
     g_lv.task->showAlert(TR("Rotating\xe2\x80\xa6 rebooting"), 600);
     g_lv.task->rebootDevice();
@@ -29670,7 +29689,8 @@ static bool sendWaypointToContact(uint32_t mesh_idx, const LocalWaypoint& wp) {
 
 static bool importWaypointFromText(const char* sender, const char* text) {
   if (!text || strncmp(text, "WDMWP|", 6) != 0) return false;
-  char buf[192];
+  if (strlen(text) >= 256) return false;  // reject oversized / malformed payload
+  char buf[256];
   snprintf(buf, sizeof buf, "%s", text);
   char* parts[6] = {};
   int n = 0;
@@ -29699,6 +29719,7 @@ static bool importWaypointFromText(const char* sender, const char* text) {
   const double lat = atof(lat_s);
   const double lon = atof(lon_s);
   if (lat == 0.0 && lon == 0.0) return false;
+  if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) return false;
 
   char note[48];
   if (sender && sender[0] && note_s[0]) snprintf(note, sizeof note, "%s | %s", sender, note_s);
