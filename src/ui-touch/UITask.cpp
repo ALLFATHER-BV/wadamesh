@@ -24483,7 +24483,16 @@ static void ccThemeCb(lv_event_t* e) {
 static void ccRotateCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeControlCenter();
-  rotateScreenCycleCb(nullptr);
+#if defined(ESP32)
+  const uint8_t cur  = touchPrefsGetUiRotation();
+  const uint8_t next = (cur == LV_DISP_ROT_NONE) ? (uint8_t)LV_DISP_ROT_90
+                                                  : (uint8_t)LV_DISP_ROT_NONE;
+  touchPrefsSetUiRotation(next);
+#endif
+  if (g_lv.task) {
+    g_lv.task->showAlert(TR("Rotating\xe2\x80\xa6 rebooting"), 600);
+    g_lv.task->rebootDevice();
+  }
 }
 
 #if defined(HAS_TDECK_KEYBOARD)
@@ -24947,7 +24956,7 @@ static void openControlCenter() {
     ccToggle(row, LV_SYMBOL_BLUETOOTH, "BT", ble_on, ccBleCb, tw, th, CAT_BLUETOOTH);
   ccToggle(row, LV_SYMBOL_GPS, "GPS", gps_on, ccGpsCb, tw, th, CAT_RADIO);
   ccToggle(row, LV_SYMBOL_TINT, "Theme", false, ccThemeCb, tw, th, CAT_DISPLAY);
-  ccToggle(row, LV_SYMBOL_LOOP, is_landscape ? "Landscape" : "Portrait", is_landscape, ccRotateCb, tw, th, CAT_DISPLAY);
+  ccToggle(row, LV_SYMBOL_LOOP, is_landscape ? "Land" : "Port", is_landscape, ccRotateCb, tw, th, CAT_DISPLAY);
 #if defined(HAS_TDECK_KEYBOARD)
   ccToggle(row, LV_SYMBOL_KEYBOARD,
            s_kb_bl_mode == 0 ? "off" : (s_kb_bl_mode == 1 ? "on" : "auto"),
