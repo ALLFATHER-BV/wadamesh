@@ -473,6 +473,17 @@ void setup() {
   #error "need to define filesystem"
 #endif
 
+#if defined(ENV_INCLUDE_GPS) && (ENV_INCLUDE_GPS == 1)
+  // GPS UART resilience (slow / never-acquires TTFF fix): the core opens Serial1 for the
+  // NMEA GPS with Arduino's default 256-byte RX ring — only ~66 ms of slack at 38400 baud
+  // (~270 ms at 9600). A single long LVGL/map frame stalls this loop past that, dropping
+  // UART bytes and corrupting NMEA ephemeris subframes. Each corrupted subframe costs the
+  // receiver ~30 s of re-acquisition, so a busy UI turns a ~1-minute fix into several
+  // minutes — or, with frequent stalls, never. A larger ring absorbs the stalls. MUST
+  // precede the core's Serial1.begin() inside sensors.begin(); setRxBufferSize is a no-op
+  // once the UART is already running.
+  Serial1.setRxBufferSize(4096);
+#endif
   sensors.begin();
 
 #ifdef DISPLAY_CLASS
@@ -621,6 +632,22 @@ void loop() {
   }
 #endif
   the_mesh.loop();
+#if defined(GPS_BUF_DEBUG)
+  // Bench diagnostic (build with -DGPS_BUF_DEBUG only; absent in releases): peak GPS UART
+  // backlog accumulated between sensors.loop() drains. A peak above the old 256-byte default
+  // proves loop stalls were overflowing the default ring — i.e. NMEA was being lost, which
+  // is the slow/never-acquires TTFF mechanism. With the 4096 ring above it can climb past
+  // 256 without loss, so a >256 reading is direct proof the fix matters on this unit.
+  { static size_t s_gps_peak = 0; static uint32_t s_gps_log = 0;
+    size_t bl = Serial1.available();
+    if (bl > s_gps_peak) s_gps_peak = bl;
+    if (millis() - s_gps_log > 5000) {
+      s_gps_log = millis();
+      Serial.printf("[GPSBUF] peak=%u B / 5s (old cap 256, now 4096)\n", (unsigned)s_gps_peak);
+      s_gps_peak = 0;
+    }
+  }
+#endif
   sensors.loop();
 #if defined(ESP32)
   // GPS time guard (Ricky Leong's "stuck at 1902"): MicroNMEALocationProvider

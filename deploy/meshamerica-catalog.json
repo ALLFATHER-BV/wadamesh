@@ -16,19 +16,19 @@
           "role": "gui",
           "title": "Touch UI",
           "version": {
-            "beta_11": {
-              "notes": "New keyboard navigation — drive the whole UI from the keyboard, no touchscreen needed: the WASDZ cluster moves the on-screen selection in the actual direction you press (W up, A left, Z down, D right), S selects, Q goes back, and each bottom tab has its own hotkey (E Messages, R Contacts, T Home, U Map, I Settings) shown as a small letter on its icon. On by default; toggle it any time in Settings → Keyboard.\nEvery navigation key is hotkey-bindable — the directions, select, back, the per-tab hotkeys, and the new scroll-up / scroll-down keys (default F / C) — remap them all under Settings → Keyboard.\nThis lays the groundwork for upcoming keyboard-first devices like the Tanmatsu T-Pager that have no touchscreen, and it already gives every T-Deck a fast, reliable way to use wadamesh entirely from the keyboard.\nThe selected item now shows as clean reverse-video (a bright outline for switches) instead of a coloured border, and the highlight only appears while you're actively navigating with the keys.\nThe Home hotkey mirrors tapping the Home tab — press it again on Home to flip between the Commander screen and the app drawer.\nFixed a reboot that could occur when receiving a message, especially during advert/message floods — a use-after-free while a list rebuilt mid-scroll (#27).\nAfter a crash, the device now detects it on the next boot and offers to save the crash report so you can send it in, instead of you having to dig through Settings.\nMap options can now switch the zoom control between the slider and a +/- button pair, like older builds (#26).\nRoute replay now opens on a wide overview so you can see where the hops start and the whole path at a glance — and you can pan and zoom the map freely while it plays.\nNew \"App drawer as home\" option (in the app drawer's cog) makes the launcher your home screen instead of the Commander view, for people who prefer the app grid.\nThe in-progress Tanmatsu (ESP32-P4) port source is now part of the public tree.",
+            "beta_12": {
+              "notes": "Fixed GPS being slow to get a fix — or sometimes never acquiring at all — on the T-Deck. The GPS receives its data over a small serial buffer, and on the busy touch UI a heavy screen redraw could stall long enough to overflow it and drop the satellite data mid-stream, which forced the receiver to start over. The buffer is now 16x larger, so those redraws no longer cost you the fix — acquisition is back to normal (a fix in about a minute instead of several, or none).\nMore and more people are picking up wadamesh lately — which is genuinely awesome — and it's surfacing feature requests and bug reports fast, in big numbers.\nI can't get back to every post in every channel, but I'm on it: I'm prioritising the fixes and quality-of-life improvements, and I'll be working through them later today. Thanks for all the reports and for the patience!",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-heltec-v4-tft-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_11/wadamesh-heltec-v4-tft-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_12/wadamesh-heltec-v4-tft-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-heltec-v4-tft.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_11/wadamesh-heltec-v4-tft.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_12/wadamesh-heltec-v4-tft.bin",
                   "title": "Update (app only)"
                 }
               ]
@@ -48,19 +48,19 @@
           "role": "gui",
           "title": "Touch UI",
           "version": {
-            "beta_11": {
-              "notes": "New keyboard navigation — drive the whole UI from the keyboard, no touchscreen needed: the WASDZ cluster moves the on-screen selection in the actual direction you press (W up, A left, Z down, D right), S selects, Q goes back, and each bottom tab has its own hotkey (E Messages, R Contacts, T Home, U Map, I Settings) shown as a small letter on its icon. On by default; toggle it any time in Settings → Keyboard.\nEvery navigation key is hotkey-bindable — the directions, select, back, the per-tab hotkeys, and the new scroll-up / scroll-down keys (default F / C) — remap them all under Settings → Keyboard.\nThis lays the groundwork for upcoming keyboard-first devices like the Tanmatsu T-Pager that have no touchscreen, and it already gives every T-Deck a fast, reliable way to use wadamesh entirely from the keyboard.\nThe selected item now shows as clean reverse-video (a bright outline for switches) instead of a coloured border, and the highlight only appears while you're actively navigating with the keys.\nThe Home hotkey mirrors tapping the Home tab — press it again on Home to flip between the Commander screen and the app drawer.\nFixed a reboot that could occur when receiving a message, especially during advert/message floods — a use-after-free while a list rebuilt mid-scroll (#27).\nAfter a crash, the device now detects it on the next boot and offers to save the crash report so you can send it in, instead of you having to dig through Settings.\nMap options can now switch the zoom control between the slider and a +/- button pair, like older builds (#26).\nRoute replay now opens on a wide overview so you can see where the hops start and the whole path at a glance — and you can pan and zoom the map freely while it plays.\nNew \"App drawer as home\" option (in the app drawer's cog) makes the launcher your home screen instead of the Commander view, for people who prefer the app grid.\nThe in-progress Tanmatsu (ESP32-P4) port source is now part of the public tree.",
+            "beta_12": {
+              "notes": "Fixed GPS being slow to get a fix — or sometimes never acquiring at all — on the T-Deck. The GPS receives its data over a small serial buffer, and on the busy touch UI a heavy screen redraw could stall long enough to overflow it and drop the satellite data mid-stream, which forced the receiver to start over. The buffer is now 16x larger, so those redraws no longer cost you the fix — acquisition is back to normal (a fix in about a minute instead of several, or none).\nMore and more people are picking up wadamesh lately — which is genuinely awesome — and it's surfacing feature requests and bug reports fast, in big numbers.\nI can't get back to every post in every channel, but I'm on it: I'm prioritising the fixes and quality-of-life improvements, and I'll be working through them later today. Thanks for all the reports and for the patience!",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-tdeck-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_11/wadamesh-tdeck-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_12/wadamesh-tdeck-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-tdeck.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_11/wadamesh-tdeck.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_12/wadamesh-tdeck.bin",
                   "title": "Update (app only)"
                 }
               ]

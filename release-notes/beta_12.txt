@@ -1,4 +1,7 @@
-# beta_12 — what's new (one user-facing note per non-blank, non-# line; # lines are section comments)
+# beta_12 — GPS hotfix + UI follow-up (one user-facing note per non-blank, non-# line; # lines are section comments)
+
+# --- GPS fix (headline) ---
+Fixed GPS being slow to get a fix — or sometimes never acquiring at all — on the T-Deck. The GPS receives its data over a small serial buffer, and on the busy touch UI a heavy screen redraw could stall long enough to overflow it and drop the satellite data mid-stream, which forced the receiver to start over. The buffer is now 16x larger, so those redraws no longer cost you the fix — acquisition is back to normal (a fix in about a minute instead of several, or none).
 
 # --- Sensors / awareness ---
 New Sensors tab sits between Map and Settings and brings the local environment, GPS, battery, terrain alerts, altitude trend, track recording guard, and GPS fix/loss status together in one place.
@@ -10,3 +13,7 @@ Incoming `WDMWP|...` messages can now import waypoints directly into the local m
 
 # --- Stability ---
 Several follow-up stability fixes landed across the touch UI: safer buffers, fewer race conditions, and more reliable waypoint persistence across reboot.
+
+# --- A note from Kaj ---
+More and more people are picking up wadamesh lately — which is genuinely awesome — and it's surfacing feature requests and bug reports fast, in big numbers.
+I can't get back to every post in every channel, but I'm on it: I'm prioritising the fixes and quality-of-life improvements, and I'll be working through them later today. Thanks for all the reports and for the patience!
