@@ -6925,6 +6925,22 @@ static void kbLayoutSwitchCb(lv_event_t* e) {
   }
 }
 
+static lv_obj_t* s_orient_row = nullptr;  // Orientation button — disabled when rotation is locked
+
+// Rotation lock toggle: when locked the orientation button is disabled live.
+static void rotLockToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* sw = lv_event_get_target(e);
+  const bool locked = !lv_obj_has_state(sw, LV_STATE_CHECKED);   // checked = auto-rotation ON = not locked
+#if defined(ESP32)
+  touchPrefsSetRotLock(locked);
+#endif
+  if (s_orient_row) {
+    if (locked) lv_obj_add_state(s_orient_row, LV_STATE_DISABLED);
+    else        lv_obj_clear_state(s_orient_row, LV_STATE_DISABLED);
+  }
+}
+
 // Screen orientation: the persistent base rotation, applied at boot. Tapping
 // cycles Portrait -> Landscape -> Landscape (flipped) and reboots so the whole
 // UI rebuilds at the chosen resolution (rebootDevice() saves chat history
@@ -7587,6 +7603,21 @@ static void buildDeviceSettings(int sec) {
     y += SC(40);
   }
 
+  /* Auto-rotation: when OFF (toggle unchecked) the screen is locked to the
+     current orientation and the rotate button is hidden. Default ON. */
+  {
+    int h = settingsRowLabel(body, y, 6, TR("Auto-rotation"), COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (!touchPrefsGetRotLock()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#else
+    lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(sw, rotLockToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+  }
+
   }
 
   if (sec == DSEC_SYSTEM) {   // --- Storage (SD) ---
@@ -7767,17 +7798,22 @@ static void buildDeviceSettings(int sec) {
 
   if (sec == DSEC_DISPLAY) {   // --- Orientation (display) ---
   /* Screen orientation. Cycles Portrait -> Landscape -> Landscape (flipped);
-     applied at boot, so tapping reboots the device. */
+     applied at boot, so tapping reboots the device.
+     s_orient_row holds the button — disabled live by rotLockToggleCb when locked. */
   {
     y += settingsRowLabel(body, y, 0, "Orientation (tap to rotate, reboots)", COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* b_rot = lv_btn_create(body);
-    lv_obj_set_size(b_rot, lv_pct(100),SC(34));
+    lv_obj_set_size(b_rot, lv_pct(100), SC(34));
     lv_obj_set_pos(b_rot, 2, y);
     styleButton(b_rot);
     lv_obj_add_event_cb(b_rot, rotateScreenCycleCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lr = lv_label_create(b_rot);
     lv_label_set_text(lr, uiRotationLabel());
     lv_obj_center(lr);
+    s_orient_row = b_rot;
+#if defined(ESP32)
+    if (touchPrefsGetRotLock()) lv_obj_add_state(b_rot, LV_STATE_DISABLED);
+#endif
     y += SC(42);
   }
 

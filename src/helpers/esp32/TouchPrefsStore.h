@@ -163,6 +163,11 @@ bool touchPrefsSetUseSdStorage(bool use_sd);
 uint8_t touchPrefsGetUiRotation();
 bool    touchPrefsSetUiRotation(uint8_t rot);
 
+/** Screen rotation lock. When true the orientation button is hidden and the
+ *  saved rotation cannot be changed from the UI. Default false (unlocked). */
+bool touchPrefsGetRotLock();
+bool touchPrefsSetRotLock(bool locked);
+
 /** Calibrated battery "full" voltage in mV — the reading captured when the pack
  *  was fully charged, treated as 100%. 0 = not calibrated (use the 4200 mV
  *  default Li-ion full point). Lets custom batteries / builds read 100%. */
