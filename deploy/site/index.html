@@ -42,13 +42,13 @@
     font-family:'JetBrains Mono',monospace; background:#fff; transition:border-color .15s, color .15s}
   .kicker:hover{border-color:var(--teal); color:var(--ink)}
   .freeline{margin:0 auto 24px; color:var(--mut); font-size:.92rem}
-  .fab{position:fixed; top:16px; z-index:45; width:44px; height:44px; border-radius:50%; display:grid; place-items:center;
+  .fab-rail{position:fixed; top:16px; z-index:45; display:flex; flex-direction:column; gap:12px}
+  .fab-rail.left{left:16px} .fab-rail.right{right:16px}
+  .fab{width:44px; height:44px; border-radius:50%; display:grid; place-items:center; cursor:pointer;
     background:#fff; border:1px solid var(--line); color:#46525c; box-shadow:0 10px 26px -14px rgba(21,24,30,.45);
     transition:border-color .15s, color .15s, transform .15s, box-shadow .15s}
   .fab:hover{border-color:var(--teal); color:var(--teal-ink); transform:translateY(-2px); box-shadow:0 14px 30px -14px rgba(21,182,166,.5)}
   .fab svg{width:21px; height:21px}
-  .fab-tg{left:16px}
-  .fab-bug{right:16px}
   .brand{display:flex; align-items:center; justify-content:center; gap:clamp(12px,2.6vw,20px); flex-wrap:wrap; position:relative}
   .brand .mark{width:clamp(60px,13vw,88px); height:auto; flex:none}
   .brand .word{font-weight:700; font-size:clamp(2rem,7.5vw,3.35rem); letter-spacing:3px; color:var(--ink); line-height:1}
@@ -150,6 +150,27 @@
   .noserial{display:none;color:#b4631a;text-align:center;margin-top:14px}
   body.no-serial .noserial{display:block}
 
+  /* community videos */
+  .vids{display:grid; gap:18px; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); margin-top:34px}
+  .vid{border:1px solid var(--line); border-radius:16px; overflow:hidden; background:var(--card); box-shadow:0 12px 30px -22px rgba(21,24,30,.5)}
+  .vid-thumb{position:relative; aspect-ratio:16/9; width:100%; border:0; padding:0; cursor:pointer; display:block; background-size:cover; background-position:center}
+  .vid-thumb::after{content:""; position:absolute; inset:0; background:rgba(21,24,30,.12); transition:background .15s}
+  .vid-thumb:hover::after{background:rgba(21,24,30,0)}
+  .vid-thumb .play{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:62px; height:44px; border-radius:12px;
+    background:rgba(229,57,53,.94); display:grid; place-items:center; z-index:1; transition:transform .15s, background .15s}
+  .vid-thumb:hover .play{transform:translate(-50%,-50%) scale(1.07); background:#e53935}
+  .vid-thumb .play svg{width:24px; height:24px; color:#fff}
+  .vid-embed{aspect-ratio:16/9; width:100%; border:0; display:block; background:#000}
+  .vid-cap{padding:13px 15px; font-size:.92rem; color:var(--ink); font-weight:600}
+  .vid-cap span{display:block; color:var(--mut); font-size:.82rem; font-weight:400; margin-top:2px}
+
+  /* toast (docs placeholder etc.) */
+  .toast{position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(12px); z-index:70;
+    background:var(--ink); color:#fff; padding:11px 20px; border-radius:100px; font-size:.92rem; font-weight:600;
+    box-shadow:0 16px 36px -14px rgba(21,24,30,.55); opacity:0; visibility:hidden; pointer-events:none;
+    transition:opacity .2s ease, transform .2s ease}
+  .toast.show{opacity:1; visibility:visible; transform:translateX(-50%) translateY(0)}
+
   footer{border-top:1px solid var(--line); margin-top:48px; padding:30px 0 56px; text-align:center; color:var(--mut); font-size:.86rem}
   footer a{color:var(--teal-ink)}
   .legal-links{margin-top:12px}
@@ -176,12 +197,26 @@
 <div id="vanta-bg"></div>
 
 <!-- floating quick links -->
-<a class="fab fab-tg" href="https://t.me/+fHuhG67-RFJlNmFk" target="_blank" rel="noopener" aria-label="Join us on Telegram" title="Join us on Telegram">
-  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.04 15.47 8.7 19.9c.5 0 .72-.22.98-.47l2.36-2.22 4.89 3.53c.9.5 1.53.24 1.77-.83l3.2-14.5c.3-1.33-.5-1.85-1.36-1.53L1.9 9.46c-1.3.5-1.28 1.22-.22 1.55l5.05 1.57L18.4 5.9c.55-.36 1.05-.16.64.2L9.04 15.47z"/></svg>
-</a>
-<a class="fab fab-bug" href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener" aria-label="Report a bug on GitHub" title="Report a bug">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="14" x="8" y="6" rx="4"/><path d="m19 7-3 2"/><path d="m5 7 3 2"/><path d="m19 19-3-2"/><path d="m5 19 3-2"/><path d="M20 13h-4"/><path d="M4 13h4"/><path d="m10 4 1 2"/><path d="m14 4-1 2"/></svg>
-</a>
+<div class="fab-rail left">
+  <a class="fab" href="https://t.me/+fHuhG67-RFJlNmFk" target="_blank" rel="noopener" aria-label="Join us on Telegram" title="Join us on Telegram">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.04 15.47 8.7 19.9c.5 0 .72-.22.98-.47l2.36-2.22 4.89 3.53c.9.5 1.53.24 1.77-.83l3.2-14.5c.3-1.33-.5-1.85-1.36-1.53L1.9 9.46c-1.3.5-1.28 1.22-.22 1.55l5.05 1.57L18.4 5.9c.55-.36 1.05-.16.64.2L9.04 15.47z"/></svg>
+  </a>
+  <a class="fab" href="#videos" aria-label="Community videos" title="Community videos">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+  </a>
+</div>
+<div class="fab-rail right">
+  <a class="fab" href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener" aria-label="Report a bug on GitHub" title="Report a bug">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="14" x="8" y="6" rx="4"/><path d="m19 7-3 2"/><path d="m5 7 3 2"/><path d="m19 19-3-2"/><path d="m5 19 3-2"/><path d="M20 13h-4"/><path d="M4 13h4"/><path d="m10 4 1 2"/><path d="m14 4-1 2"/></svg>
+  </a>
+  <button class="fab" id="docsBtn" type="button" aria-label="Documentation" title="Documentation">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+  </button>
+  <a class="fab" href="https://t413.com/p/projects/MapTileDl/" target="_blank" rel="noopener" aria-label="Map tile downloader" title="Map tile downloader">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>
+  </a>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <header>
   <div class="wrap">
@@ -304,6 +339,14 @@
   </div>
 </section>
 
+<section id="videos">
+  <div class="wrap">
+    <h2 class="h2">Community videos</h2>
+    <p class="p">Walkthroughs, demos and reviews from the community.</p>
+    <div class="vids" id="vids"></div>
+  </div>
+</section>
+
 <footer>
   <div class="wrap">
     Built for the mesh · open source under GPL-3.0 ·
@@ -419,6 +462,40 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
       });
       if (notes.length) document.querySelectorAll('[data-whatsnew]').forEach(b => b.hidden = false);
     }).catch(()=>{});
+
+  // ---- community videos — add an entry here to add a video ----
+  const VIDEOS = [
+    { id: 'V19od8jbFRc', title: 'WadaMesh: The Best T-Deck Firmware So Far', by: 'KDHD Stuff' },
+    // { id: '<youtube-id>', title: '<title>', by: '<channel>' },
+  ];
+  const vidsEl = document.getElementById('vids');
+  if (vidsEl) VIDEOS.forEach(v => {
+    const card = document.createElement('div'); card.className = 'vid';
+    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'vid-thumb';
+    btn.setAttribute('aria-label', 'Play: ' + (v.title || 'community video'));
+    btn.style.backgroundImage = 'url(https://i.ytimg.com/vi/' + v.id + '/hqdefault.jpg)';
+    btn.innerHTML = '<span class="play"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>';
+    btn.addEventListener('click', () => {
+      const f = document.createElement('iframe'); f.className = 'vid-embed';
+      f.src = 'https://www.youtube-nocookie.com/embed/' + v.id + '?autoplay=1&rel=0';
+      f.title = v.title || 'Community video';
+      f.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+      f.allowFullscreen = true; f.loading = 'lazy';
+      card.replaceChild(f, btn);
+    });
+    card.appendChild(btn);
+    if (v.title) {
+      const cap = document.createElement('div'); cap.className = 'vid-cap'; cap.textContent = v.title;
+      if (v.by) { const s = document.createElement('span'); s.textContent = 'by ' + v.by; cap.appendChild(s); }
+      card.appendChild(cap);
+    }
+    vidsEl.appendChild(card);
+  });
+
+  // ---- toast + docs placeholder ----
+  function toast(msg){ const t = document.getElementById('toast'); if (!t) return; t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2400); }
+  const docsBtn = document.getElementById('docsBtn');
+  if (docsBtn) docsBtn.addEventListener('click', () => toast('Documentation — coming soon!'));
 
 </script>
 
