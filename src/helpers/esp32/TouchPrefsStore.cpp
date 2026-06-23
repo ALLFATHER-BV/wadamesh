@@ -1242,6 +1242,8 @@ bool touchPrefsGetNavMenubarKeys()         { if (!s_begun) touchPrefsBegin(); re
 void touchPrefsSetNavMenubarKeys(bool on)  { if (!s_begun) touchPrefsBegin(); prefsPutUChar("nav_mbk", on ? 1 : 0); }
 bool touchPrefsGetScrollReverse()   { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("tb_rev", 0) != 0; }
 void touchPrefsSetScrollReverse(bool on)   { if (!s_begun) touchPrefsBegin(); prefsPutUChar("tb_rev", on ? 1 : 0); }
+bool touchPrefsGetEdgeScroll()      { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("tb_edgesc", 0) != 0; }
+void touchPrefsSetEdgeScroll(bool on)      { if (!s_begun) touchPrefsBegin(); prefsPutUChar("tb_edgesc", on ? 1 : 0); }
 bool touchPrefsGetLockOnScreenOff() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("lock_off", 0) != 0; }
 void touchPrefsSetLockOnScreenOff(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("lock_off", on ? 1 : 0); }
 

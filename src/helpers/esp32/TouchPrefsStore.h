@@ -265,6 +265,8 @@ bool    touchPrefsGetNavMenubarKeys();         // show per-tab nav hotkey letter
 void    touchPrefsSetNavMenubarKeys(bool on);
 bool    touchPrefsGetScrollReverse();          // invert trackball/scrollball direction (default false)
 void    touchPrefsSetScrollReverse(bool on);
+bool    touchPrefsGetEdgeScroll();             // push cursor past edge to scroll content (default false)
+void    touchPrefsSetEdgeScroll(bool on);
 bool    touchPrefsGetLockOnScreenOff();        // idle screen-off auto-locks; only a deliberate hold wakes (default false)
 void    touchPrefsSetLockOnScreenOff(bool on);
 

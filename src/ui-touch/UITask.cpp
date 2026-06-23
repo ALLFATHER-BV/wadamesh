@@ -869,7 +869,8 @@ constexpr bool k_show_live_diag_overlay = false;
 static lv_obj_t*     s_tb_cursor = nullptr;
 static int           s_tb_cursor_x = 160;   // rendered position (landscape 320x240)
 static int           s_tb_cursor_y = 120;
-static bool          s_tb_reverse  = false;  // invert trackball direction (cached pref; refreshed at init + on toggle)
+static bool          s_tb_reverse     = false;  // invert trackball direction (cached pref; refreshed at init + on toggle)
+static bool          s_tb_edge_scroll = false;  // push past screen edge to scroll content under cursor
 static float         s_tb_target_x = 160.0f, s_tb_target_y = 120.0f;  // full-sensitivity target
 static float         s_tb_render_x = 160.0f, s_tb_render_y = 120.0f;  // eased render position
 static unsigned long s_tb_prev_ms = 0;
@@ -6824,6 +6825,17 @@ static void scrollReverseToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Scrollball: reversed") : TR("Scrollball: normal"), 900);
 }
 
+// Edge scroll: when cursor hits a screen edge, excess trackball motion scrolls
+// the content under the cursor instead of being absorbed. Applied live.
+static void edgeScrollToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetEdgeScroll(on);
+#endif
+  s_tb_edge_scroll = on;
+}
+
 // Keyboard ESDFX navigation: off (default) vs on (E/X/S/F move focus, D select, Q
 // back, while no text field is focused). Applied live: flip the cached flag; when
 // turning OFF, empty the focus group so the amber ring clears on the next loop.
@@ -7581,6 +7593,20 @@ static void buildDeviceSettings(int sec) {
 #endif
     lv_obj_add_event_cb(sw, scrollReverseToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, h + 10);
+  }
+
+  /* Edge scroll: push cursor past a screen edge to scroll the content beneath it. */
+  {
+    int h = settingsRowLabel(body, y, 4, "Edge scroll", COLOR_TEXT, &g_font_12, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (touchPrefsGetEdgeScroll()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(sw, edgeScrollToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, h + 10);
+    y += settingsRowLabel(body, y, 0, "push past a screen edge to scroll content",
+                          COLOR_SUB, &g_font_12, 0) + 2;
   }
 #endif
 
@@ -21497,6 +21523,35 @@ static void mapTrackballFinalizePan() {
   refreshMapInfoLabel();
 }
 
+// Hit-test at (x, y) to find the deepest visible widget, then climb its ancestors
+// to find the first one that is scrollable and has room to move in (ox, oy).
+// Searches lv_layer_top() first (overlays like the app drawer live there), then
+// falls back to lv_scr_act() for regular tab content.
+static lv_obj_t* tbFindScrollableAt(lv_coord_t x, lv_coord_t y, float ox, float oy) {
+  lv_obj_t* roots[2] = { lv_layer_top(), lv_scr_act() };
+  for (int r = 0; r < 2; r++) {
+    lv_obj_t* root = roots[r];
+    lv_obj_t* hit = root;
+    for (bool descend = true; descend; ) {
+      descend = false;
+      for (int i = (int)lv_obj_get_child_cnt(hit) - 1; i >= 0; i--) {
+        lv_obj_t* c = lv_obj_get_child(hit, i);
+        if (lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) continue;
+        lv_area_t a; lv_obj_get_coords(c, &a);
+        if (x >= a.x1 && x <= a.x2 && y >= a.y1 && y <= a.y2) { hit = c; descend = true; break; }
+      }
+    }
+    if (hit == root) continue;  // nothing visible in this layer at (x,y)
+    for (lv_obj_t* o = hit; o && o != root; o = lv_obj_get_parent(o)) {
+      if (!lv_obj_has_flag(o, LV_OBJ_FLAG_SCROLLABLE)) continue;
+      bool cx = (ox > 0 && lv_obj_get_scroll_right(o) > 0) || (ox < 0 && lv_obj_get_scroll_left(o) > 0);
+      bool cy = (oy > 0 && lv_obj_get_scroll_bottom(o) > 0) || (oy < 0 && lv_obj_get_scroll_top(o) > 0);
+      if (cx || cy) return o;
+    }
+  }
+  return nullptr;
+}
+
 static void updateTrackball(unsigned long now) {
   if (!s_tb_cursor) return;
   const int W = lv_disp_get_hor_res(nullptr);
@@ -21564,10 +21619,35 @@ static void updateTrackball(unsigned long now) {
   if (moved) {
     s_tb_target_x += (float)(dx * kTbCursorStepPx);
     s_tb_target_y += (float)(dy * kTbCursorStepPx);
-    if (s_tb_target_x < 0) s_tb_target_x = 0;
-    if (s_tb_target_y < 0) s_tb_target_y = 0;
-    if (s_tb_target_x > W - 1) s_tb_target_x = (float)(W - 1);
-    if (s_tb_target_y > H - 1) s_tb_target_y = (float)(H - 1);
+    // Clamp and record how much overshot each edge.
+    float ox = 0.0f, oy = 0.0f;
+    if      (s_tb_target_x < 0)       { ox = s_tb_target_x;           s_tb_target_x = 0.0f; }
+    else if (s_tb_target_x > W - 1)   { ox = s_tb_target_x - (W - 1); s_tb_target_x = (float)(W - 1); }
+    if      (s_tb_target_y < 0)       { oy = s_tb_target_y;           s_tb_target_y = 0.0f; }
+    else if (s_tb_target_y > H - 1)   { oy = s_tb_target_y - (H - 1); s_tb_target_y = (float)(H - 1); }
+    // When edge-scroll is on, hit-test inside the content area to find the scroll target.
+    // We inset the search coordinate past the status/tab bars so we land on the content
+    // list, not on the chrome. scroll_by(0,+dy) moves children DOWN = reveals earlier
+    // content (scroll up), so we negate oy/ox. Cap to available room because scroll_by
+    // has no internal bounds check.
+    if (s_tb_edge_scroll && (ox != 0.0f || oy != 0.0f)) {
+      lv_coord_t sx = s_tb_cursor_x;
+      // For vertical overflow, search at the centre of the content area rather than
+      // near the edge: the top/bottom pixel of the content area may be a header or
+      // footer widget, not the scrollable list itself.
+      lv_coord_t sy = (oy != 0.0f) ? (lv_coord_t)((STATUSBAR_H + (H - TABBAR_H)) / 2)
+                                    : s_tb_cursor_y;
+      lv_obj_t* sc = tbFindScrollableAt(sx, sy, ox, oy);
+      if (sc) {
+        lv_coord_t nsx = -(lv_coord_t)ox;
+        lv_coord_t nsy = -(lv_coord_t)oy;
+        if (nsy > 0) nsy = LV_MIN(nsy, lv_obj_get_scroll_top(sc));
+        else if (nsy < 0) nsy = LV_MAX(nsy, -lv_obj_get_scroll_bottom(sc));
+        if (nsx > 0) nsx = LV_MIN(nsx, lv_obj_get_scroll_left(sc));
+        else if (nsx < 0) nsx = LV_MAX(nsx, -lv_obj_get_scroll_right(sc));
+        if (nsx || nsy) lv_obj_scroll_by(sc, nsx, nsy, LV_ANIM_OFF);
+      }
+    }
     s_tb_last_active_ms = now;
     if (g_lv.task) g_lv.task->noteUserInput();
   }
@@ -26510,7 +26590,8 @@ static void buildUiTree() {
   s_tb_cursor_y = lv_disp_get_ver_res(nullptr) / 2;
   s_tb_target_x = s_tb_render_x = (float)s_tb_cursor_x;
   s_tb_target_y = s_tb_render_y = (float)s_tb_cursor_y;
-  s_tb_reverse = touchPrefsGetScrollReverse();
+  s_tb_reverse     = touchPrefsGetScrollReverse();
+  s_tb_edge_scroll = touchPrefsGetEdgeScroll();
 #endif
 
   // ---- Initial data population ----
