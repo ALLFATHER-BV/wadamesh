@@ -45,8 +45,16 @@ if os.path.exists(nf):
 # Both touch boards are ESP32-S3, single touch-UI ("gui") role. ota_0 sits at
 # 0x10000 on both (partitions_t*_touch.csv), so flash-update@0x10000 is correct.
 BOARDS = [
-    {"name": "wadamesh — Heltec V4 TFT", "slug": "heltec-v4-tft"},
-    {"name": "wadamesh — LilyGo T-Deck", "slug": "tdeck"},
+    {
+        "name": "wadamesh — Heltec V4 / Expansion Kit",
+        "slug": "heltec-v4-tft",
+        "description": "Firmware for the Heltec V4 touch build, with support for the Heltec V4 Expansion Kit sensors, buzzer, and local status UI.",
+    },
+    {
+        "name": "wadamesh — LilyGo T-Deck",
+        "slug": "tdeck",
+        "description": "Firmware for the LilyGo T-Deck touch build with keyboard and trackball support.",
+    },
 ]
 
 def device(b):
@@ -56,10 +64,10 @@ def device(b):
         "class": "wadamesh",
         "name": b["name"],
         "type": "esp32",
-        "tooltip": "<img class='device' src='%s'>" % ICON,
+        "tooltip": "<img class='device' src='%s'><p>%s</p>" % (ICON, b["description"]),
         "firmware": [{
             "role": "gui",
-            "title": "Touch UI",
+            "title": "Touch UI firmware",
             "version": {TAG: {
                 "notes": notes,
                 "files": [

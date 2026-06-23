@@ -8,16 +8,16 @@
     {
       "maker": "wadamesh",
       "class": "wadamesh",
-      "name": "wadamesh — Heltec V4 TFT",
+      "name": "wadamesh � Heltec V4 / Expansion Kit",
       "type": "esp32",
-      "tooltip": "<img class='device' src='https://wadamesh.com/wadamesh-icon-512.png'>",
+      "tooltip": "<img class='device' src='https://wadamesh.com/wadamesh-icon-512.png'><p>Firmware for the Heltec V4 touch build, with support for the Heltec V4 Expansion Kit sensors, buzzer, and local status UI.</p>",
       "firmware": [
         {
           "role": "gui",
-          "title": "Touch UI",
+          "title": "Touch UI firmware",
           "version": {
             "beta_12": {
-              "notes": "Fixed GPS being slow to get a fix — or sometimes never acquiring at all — on the T-Deck. The GPS receives its data over a small serial buffer, and on the busy touch UI a heavy screen redraw could stall long enough to overflow it and drop the satellite data mid-stream, which forced the receiver to start over. The buffer is now 16x larger, so those redraws no longer cost you the fix — acquisition is back to normal (a fix in about a minute instead of several, or none).\nMore and more people are picking up wadamesh lately — which is genuinely awesome — and it's surfacing feature requests and bug reports fast, in big numbers.\nI can't get back to every post in every channel, but I'm on it: I'm prioritising the fixes and quality-of-life improvements, and I'll be working through them later today. Thanks for all the reports and for the patience!",
+              "notes": "Fixed GPS being slow to get a fix � or sometimes never acquiring at all � on the T-Deck. The GPS receives its data over a small serial buffer, and on the busy touch UI a heavy screen redraw could stall long enough to overflow it and drop the satellite data mid-stream, which forced the receiver to start over. The buffer is now 16x larger, so those redraws no longer cost you the fix � acquisition is back to normal (a fix in about a minute instead of several, or none).\nNew Sensors tab sits between Map and Settings and brings the local environment, GPS, battery, terrain alerts, altitude trend, track recording guard, and GPS fix/loss status together in one place.\nThe Home and control surfaces now expose rotation state more clearly, with a compact rotation chip plus a persistent rotation-lock toggle in Display settings.\nMap tile downloads now have a proper queue manager: pause and resume downloads, retry failed tiles, queue the current map area, and clear finished jobs without leaving the device UI.\nIncoming `WDMWP|...` messages can now import waypoints directly into the local map, with duplicate coordinates updated instead of creating clutter.\nSeveral follow-up stability fixes landed across the touch UI: safer buffers, fewer race conditions, and more reliable waypoint persistence across reboot.\nMore and more people are picking up wadamesh lately � which is genuinely awesome � and it's surfacing feature requests and bug reports fast, in big numbers.\nI can't get back to every post in every channel, but I'm on it: I'm prioritising the fixes and quality-of-life improvements, and I'll be working through them later today. Thanks for all the reports and for the patience!",
               "files": [
                 {
                   "type": "flash-wipe",
@@ -40,16 +40,16 @@
     {
       "maker": "wadamesh",
       "class": "wadamesh",
-      "name": "wadamesh — LilyGo T-Deck",
+      "name": "wadamesh � LilyGo T-Deck",
       "type": "esp32",
-      "tooltip": "<img class='device' src='https://wadamesh.com/wadamesh-icon-512.png'>",
+      "tooltip": "<img class='device' src='https://wadamesh.com/wadamesh-icon-512.png'><p>Firmware for the LilyGo T-Deck touch build with keyboard and trackball support.</p>",
       "firmware": [
         {
           "role": "gui",
-          "title": "Touch UI",
+          "title": "Touch UI firmware",
           "version": {
             "beta_12": {
-              "notes": "Fixed GPS being slow to get a fix — or sometimes never acquiring at all — on the T-Deck. The GPS receives its data over a small serial buffer, and on the busy touch UI a heavy screen redraw could stall long enough to overflow it and drop the satellite data mid-stream, which forced the receiver to start over. The buffer is now 16x larger, so those redraws no longer cost you the fix — acquisition is back to normal (a fix in about a minute instead of several, or none).\nMore and more people are picking up wadamesh lately — which is genuinely awesome — and it's surfacing feature requests and bug reports fast, in big numbers.\nI can't get back to every post in every channel, but I'm on it: I'm prioritising the fixes and quality-of-life improvements, and I'll be working through them later today. Thanks for all the reports and for the patience!",
+              "notes": "Fixed GPS being slow to get a fix � or sometimes never acquiring at all � on the T-Deck. The GPS receives its data over a small serial buffer, and on the busy touch UI a heavy screen redraw could stall long enough to overflow it and drop the satellite data mid-stream, which forced the receiver to start over. The buffer is now 16x larger, so those redraws no longer cost you the fix � acquisition is back to normal (a fix in about a minute instead of several, or none).\nNew Sensors tab sits between Map and Settings and brings the local environment, GPS, battery, terrain alerts, altitude trend, track recording guard, and GPS fix/loss status together in one place.\nThe Home and control surfaces now expose rotation state more clearly, with a compact rotation chip plus a persistent rotation-lock toggle in Display settings.\nMap tile downloads now have a proper queue manager: pause and resume downloads, retry failed tiles, queue the current map area, and clear finished jobs without leaving the device UI.\nIncoming `WDMWP|...` messages can now import waypoints directly into the local map, with duplicate coordinates updated instead of creating clutter.\nSeveral follow-up stability fixes landed across the touch UI: safer buffers, fewer race conditions, and more reliable waypoint persistence across reboot.\nMore and more people are picking up wadamesh lately � which is genuinely awesome � and it's surfacing feature requests and bug reports fast, in big numbers.\nI can't get back to every post in every channel, but I'm on it: I'm prioritising the fixes and quality-of-life improvements, and I'll be working through them later today. Thanks for all the reports and for the patience!",
               "files": [
                 {
                   "type": "flash-wipe",
