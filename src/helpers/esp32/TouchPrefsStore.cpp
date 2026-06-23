@@ -35,7 +35,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 16;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys
+static const uint8_t  TOUCH_CFG_VER   = 17;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -88,6 +88,7 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  nav_dir_keys[6];  // keyboard-nav control keys (ASCII): up,down,left,right,select,back — v13 (trailing)
   uint8_t  home_is_drawer;   // Home tab defaults to the app drawer (1) vs the Commander screen (0, default) — v14 (trailing)
   uint8_t  nav_scroll_keys[2]; // keyboard-nav scroll keys (ASCII): scroll-up, scroll-down — v16 (trailing)
+  uint8_t  notify_new_contact;// toast/chip when a contact is auto-discovered (bool) — v17 (trailing)
 };
 
 static TouchCfg s_cfg;
@@ -160,6 +161,7 @@ static void cfgSetDefaults(TouchCfg& c) {
 #else
   c.nav_scroll_keys[0] = 'f';  c.nav_scroll_keys[1] = 'c';   // default scroll-up F / scroll-down C
 #endif
+  c.notify_new_contact = 1;     // default: show the new-contact toast (preserve prior behaviour)
 }
 
 // Persist the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
@@ -732,6 +734,17 @@ bool touchPrefsGetHideNodeName() {
 bool touchPrefsSetHideNodeName(bool hide) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.hide_node_name = hide ? 1 : 0;
+  return cfgFlush();
+}
+
+bool touchPrefsGetNewContactToast() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.notify_new_contact != 0;   // default = show the toast
+}
+
+bool touchPrefsSetNewContactToast(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.notify_new_contact = on ? 1 : 0;
   return cfgFlush();
 }
 
