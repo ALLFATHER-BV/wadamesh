@@ -147,6 +147,22 @@
   .dl:hover{background:var(--teal-ink)}
   .dl svg{width:15px;height:15px}
   .hint{max-width:760px;margin:18px auto 0;color:var(--mut);font-size:.86rem;text-align:center}
+  /* "install a previous version" picker */
+  .verpick{max-width:760px; margin:16px auto 0; border:1px solid var(--line); border-radius:12px; background:var(--bg2); text-align:left}
+  .verpick summary{cursor:pointer; padding:12px 16px; font-weight:600; font-size:.92rem; color:var(--ink); list-style:none; user-select:none}
+  .verpick summary::-webkit-details-marker{display:none}
+  .verpick summary::before{content:"\25B8"; color:var(--teal); margin-right:9px; display:inline-block; transition:transform .15s}
+  .verpick[open] summary::before{transform:rotate(90deg)}
+  .verpick-body{padding:2px 16px 16px}
+  .verpick-row{display:flex; align-items:center; gap:10px}
+  .verpick-row label{font-size:.9rem; color:var(--mut)}
+  #verSel{font:inherit; font-size:.92rem; padding:7px 11px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); cursor:pointer}
+  .verpick-note{margin:9px 0 0; font-size:.86rem; color:var(--teal-ink)}
+  .rn{margin-top:12px; max-height:280px; overflow:auto; font-size:.88rem; color:var(--mut); line-height:1.55}
+  .rn .rn-h{font-size:.92rem; color:var(--ink); font-weight:700; margin:13px 0 5px} .rn .rn-h:first-child{margin-top:0}
+  .rn ul{margin:5px 0 0; padding-left:18px} .rn li{margin:3px 0}
+  .rn p{margin:6px 0} .rn code{background:#fff; border:1px solid var(--line); border-radius:5px; padding:1px 5px; font-size:.86em}
+  .rn a{color:var(--teal-ink)}
   .noserial{display:none;color:#b4631a;text-align:center;margin-top:14px}
   body.no-serial .noserial{display:block}
 
@@ -312,10 +328,18 @@
       </div>
       <div class="boards">
         <div class="board"><h4>Heltec V4 + TFT</h4><p>ESP32-S3 with CHSC6x touch.</p>
-          <esp-web-install-button manifest="https://firmware.wadamesh.com/latest/manifest-heltec-v4-tft.json"></esp-web-install-button></div>
+          <esp-web-install-button id="inst-heltec" manifest="https://firmware.wadamesh.com/latest/manifest-heltec-v4-tft.json"></esp-web-install-button></div>
         <div class="board"><h4>LilyGo T-Deck / Plus</h4><p>ESP32-S3 keyboard handheld.</p>
-          <esp-web-install-button manifest="https://firmware.wadamesh.com/latest/manifest-tdeck.json"></esp-web-install-button></div>
+          <esp-web-install-button id="inst-tdeck" manifest="https://firmware.wadamesh.com/latest/manifest-tdeck.json"></esp-web-install-button></div>
       </div>
+      <details class="verpick">
+        <summary>Install a previous version</summary>
+        <div class="verpick-body">
+          <div class="verpick-row"><label for="verSel">Version</label><select id="verSel" aria-label="Firmware version"></select></div>
+          <p class="verpick-note" id="verActive" hidden></p>
+          <div id="verNotes" class="rn"></div>
+        </div>
+      </details>
       <div class="noserial">Your browser can't flash here — use <b>Chrome</b> or <b>Edge</b> on a desktop.</div>
       <p class="hint">T-Deck not detected? Hold the trackball while tapping reset to force download mode.</p>
     </div>
@@ -496,6 +520,48 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
   function toast(msg){ const t = document.getElementById('toast'); if (!t) return; t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2400); }
   const docsBtn = document.getElementById('docsBtn');
   if (docsBtn) docsBtn.addEventListener('click', () => toast('Documentation — coming soon!'));
+
+  // ---- standalone: install a previous version (latest 4 betas + release notes) ----
+  (function(){
+    const sel = document.getElementById('verSel'); if (!sel) return;
+    const wrap = sel.closest('.verpick');
+    const notesEl = document.getElementById('verNotes'), activeEl = document.getElementById('verActive');
+    const btnH = document.getElementById('inst-heltec'), btnT = document.getElementById('inst-tdeck');
+    const latestH = btnH && btnH.getAttribute('manifest'), latestT = btnT && btnT.getAttribute('manifest');
+    const num = t => parseInt((String(t).match(/beta_(\d+)/) || [])[1] || '-1', 10);
+    let notes = {};
+    const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const inl = s => esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`([^`]+?)`/g,'<code>$1</code>')
+      .replace(/\[(.+?)\]\((https?:\/\/[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+    function md(t){ let out='', ul=false; const close=()=>{ if(ul){ out+='</ul>'; ul=false; } };
+      (t||'').split(/\r?\n/).forEach(line=>{ line=line.trim(); let m;
+        if(!line) close();
+        else if(m=line.match(/^#{1,6}\s+(.*)/)){ close(); out+='<div class="rn-h">'+inl(m[1])+'</div>'; }
+        else if(m=line.match(/^[-*]\s+(.*)/)){ if(!ul){ out+='<ul>'; ul=true; } out+='<li>'+inl(m[1])+'</li>'; }
+        else { close(); out+='<p>'+inl(line)+'</p>'; } });
+      close(); return out; }
+    function showNotes(tag){ notesEl.innerHTML = notes[tag] ? md(notes[tag])
+      : '<p>Release notes on <a href="https://github.com/ALLFATHER-BV/wadamesh/releases/tag/'+tag+'" target="_blank" rel="noopener">GitHub</a>.</p>'; }
+    function blobManifest(tag, board){ const m = { name:'wadamesh '+tag, version:tag, new_install_prompt_erase:true,
+      builds:[{ chipFamily:'ESP32-S3', parts:[{ path:'https://firmware.wadamesh.com/releases/TOUCH/'+tag+'/wadamesh-'+board+'-merged.bin', offset:0 }] }] };
+      return URL.createObjectURL(new Blob([JSON.stringify(m)], {type:'application/json'})); }
+    function apply(){ const tag = sel.value, isLatest = sel.selectedIndex === 0;
+      if (isLatest){ if(btnH&&latestH) btnH.setAttribute('manifest', latestH); if(btnT&&latestT) btnT.setAttribute('manifest', latestT); activeEl.hidden = true; }
+      else { if(btnH) btnH.setAttribute('manifest', blobManifest(tag,'heltec-v4-tft')); if(btnT) btnT.setAttribute('manifest', blobManifest(tag,'tdeck'));
+        activeEl.hidden = false; activeEl.innerHTML = 'The <b>Install</b> buttons above now flash <b>'+tag+'</b>.'; }
+      showNotes(tag); }
+    // GitHub API gives version list + notes in one CORS-enabled call (the firmware
+    // host listing has no CORS); bins are still pulled from the firmware host.
+    fetch('https://api.github.com/repos/ALLFATHER-BV/wadamesh/releases?per_page=12').then(r=>r.ok?r.json():[]).then(rs=>{
+      const rels = (Array.isArray(rs)?rs:[]).filter(r=>r&&/^beta_\d+$/.test(r.tag_name||''));
+      rels.forEach(r=>{ notes[r.tag_name]=r.body||''; });
+      const tags = rels.map(r=>r.tag_name).sort((a,b)=>num(b)-num(a)).slice(0,4);
+      if (!tags.length){ if(wrap) wrap.hidden = true; return; }
+      sel.innerHTML = tags.map((t,i)=>'<option value="'+t+'">'+t+(i===0?' — latest':'')+'</option>').join('');
+      showNotes(tags[0]);
+      sel.addEventListener('change', apply);
+    }).catch(()=>{ if(wrap) wrap.hidden = true; });
+  })();
 
 </script>
 
