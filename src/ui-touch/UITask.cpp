@@ -26251,13 +26251,17 @@ static void openChannelScopeModal(int slot, const char* name) {
   s_chanscope_ta = lv_textarea_create(s_chanscope_modal);
   lv_textarea_set_one_line(s_chanscope_ta, true);
   lv_textarea_set_max_length(s_chanscope_ta, TOUCH_REGION_SCOPE_MAXLEN - 1);
-  lv_textarea_set_placeholder_text(s_chanscope_ta, TR("#region"));
   lv_obj_set_size(s_chanscope_ta, sw - 16, 36);
   lv_obj_set_pos(s_chanscope_ta, 8, 92);
 #if defined(ESP32)
   { char cur[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    char def[TOUCH_REGION_SCOPE_MAXLEN] = {0};
     touchPrefsGetChannelScope(slot, cur, sizeof cur);
-    if (cur[0]) lv_textarea_set_text(s_chanscope_ta, cur); }
+    if (cur[0]) lv_textarea_set_text(s_chanscope_ta, cur);
+    touchPrefsGetRegionScope(def, sizeof def);
+    lv_textarea_set_placeholder_text(s_chanscope_ta, def[0] ? def : TR("(no default)")); }
+#else
+  lv_textarea_set_placeholder_text(s_chanscope_ta, TR("(no default)"));
 #endif
   attachSettingsTaEvents(s_chanscope_ta);
 
