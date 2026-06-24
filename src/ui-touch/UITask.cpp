@@ -104,6 +104,9 @@
     #if defined(MULTI_TRANSPORT_COMPANION)
       #include <WiFi.h>
       #include <HTTPClient.h>
+      #if !defined(HAS_TANMATSU)
+        #include <Update.h>   // Arduino OTA writer (native dual-OTA boards; Tanmatsu is IDF/AppFS, no OTA)
+      #endif
       #include <helpers/esp32/WifiRuntimeStore.h>
     #endif
   #endif
@@ -2759,6 +2762,17 @@ static bool      s_verchk_ran       = false;     // a check has completed (ok or
 static volatile bool s_verchk_request  = false;  // UI -> core-0 worker: please check
 static volatile bool s_verchk_done     = false;  // worker -> UI: result ready
 static volatile int  s_verchk_latest_n = -1;     // highest published pre-alpha_N (-1 = failed)
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
+// Wi-Fi OTA self-update — native dual-OTA boards only (V4 + standalone T-Deck). The button is
+// gated on touchHasOtaUpdateSlot() (a spare A/B slot exists), so Launcher single-slot installs and
+// the Tanmatsu (AppFS) never reach this — they update out-of-band. Arduino Update.begin() does the
+// slot select + the image-fits-the-slot check, so a too-small legacy slot fails cleanly.
+static volatile bool s_ota_request = false;      // UI -> worker: download + flash the latest bin
+static volatile int  s_ota_state   = 0;          // 0 idle, 1 running, 2 success, 3 error
+static volatile int  s_ota_pct     = 0;          // download/write progress 0..100
+static char          s_ota_msg[80] = {0};        // error detail surfaced to the UI
+static bool          touchHasOtaUpdateSlot();    // fwd: spare-A/B-slot probe, defined further below
+#endif
 
 // ---- Wi-Fi scan (serviced by the core-0 fetch worker; results drawn in the
 // Network tab + the setup wizard) ----
@@ -2869,21 +2883,69 @@ static void otaButtonRefreshState() {
   }
 }
 
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
+static lv_timer_t* s_ota_poll_timer = nullptr;
+// UI-thread poll of the worker's OTA progress (the download/flash runs on the tile worker).
+static void otaPollTimerCb(lv_timer_t* t) {
+  (void)t;
+  const int st = s_ota_state;
+  if (st == 1) {   // still downloading / writing
+    if (s_ota_status_lbl) {
+      char b[64];
+      snprintf(b, sizeof b, "Updating %d%%\nDo not power off.", s_ota_pct);
+      lv_label_set_text(s_ota_status_lbl, b);
+    }
+    return;
+  }
+  if (s_ota_poll_timer) { lv_timer_del(s_ota_poll_timer); s_ota_poll_timer = nullptr; }
+  if (st == 2) {   // success -> boot the freshly-written slot (rebootDevice saves chat history first)
+    if (s_ota_status_lbl) lv_label_set_text(s_ota_status_lbl, "Update complete.\nRebooting...");
+    lv_refr_now(NULL);
+    if (g_lv.task) g_lv.task->rebootDevice();
+  } else {         // error -> show why, leave the button armed to retry, fall back to manual
+    if (s_ota_status_lbl) {
+      char b[112];
+      snprintf(b, sizeof b, "Update failed: %s\nUse flasher.wadamesh.com instead.",
+               s_ota_msg[0] ? s_ota_msg : "unknown");
+      lv_label_set_text(s_ota_status_lbl, b);
+    }
+    if (s_ota_btn) { lv_obj_clear_state(s_ota_btn, LV_STATE_DISABLED); lv_obj_add_flag(s_ota_btn, LV_OBJ_FLAG_CLICKABLE); }
+    s_ota_state = 0;
+  }
+}
+#endif
+
 static void otaInstallLatestCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  // Wi-Fi (OTA) self-update is temporarily disabled while we sort out update
-  // issues (OTA partition-slot sizing on V4 / T-Deck). The version check and the
-  // "update available" badge stay on — this button now points the user at the
-  // manual flasher instead of running the (currently unreliable) OTA path.
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
+  if (!touchHasOtaUpdateSlot()) {   // Launcher / no spare slot — the button shouldn't even be here
+    if (g_lv.task) g_lv.task->showAlert(TR("Update via the Launcher / flasher.wadamesh.com"), 3000);
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    if (s_ota_status_lbl) {
+      lv_label_set_text(s_ota_status_lbl, "Connect to Wi-Fi first, then try again.");
+      lv_obj_set_style_text_color(s_ota_status_lbl, lv_color_hex(0xE2A23A), LV_PART_MAIN);
+    }
+    if (g_lv.task) g_lv.task->showAlert(TR("Wi-Fi not connected"), 2000);
+    return;
+  }
+  if (s_ota_state == 1) return;   // already running
+  s_ota_msg[0] = 0; s_ota_pct = 0; s_ota_state = 1; s_ota_request = true;   // hand off to the worker
+  if (s_ota_btn) { lv_obj_add_state(s_ota_btn, LV_STATE_DISABLED); lv_obj_clear_flag(s_ota_btn, LV_OBJ_FLAG_CLICKABLE); }
   if (s_ota_status_lbl) {
-    lv_label_set_text(s_ota_status_lbl,
-      "Wi-Fi update is paused while we fix some issues.\n"
-      "Please update manually at flasher.wadamesh.com\n"
-      "(T-Deck under Launcher: reinstall the new bin there).");
+    lv_label_set_text(s_ota_status_lbl, "Starting update...\nDo not power off.");
     lv_obj_set_style_text_color(s_ota_status_lbl, lv_color_hex(0xE2A23A), LV_PART_MAIN);
   }
-  if (g_lv.task)
-    g_lv.task->showAlert(TR("Update manually at flasher.wadamesh.com\n(Wi-Fi update is paused for now)"), 3500);
+  if (!s_ota_poll_timer) s_ota_poll_timer = lv_timer_create(otaPollTimerCb, 400, nullptr);
+#else
+  // Launcher / Tanmatsu: no spare OTA slot to write into — update out-of-band.
+  if (s_ota_status_lbl) {
+    lv_label_set_text(s_ota_status_lbl, "Update via the Launcher / flasher.wadamesh.com.");
+    lv_obj_set_style_text_color(s_ota_status_lbl, lv_color_hex(0xE2A23A), LV_PART_MAIN);
+  }
+  if (g_lv.task) g_lv.task->showAlert(TR("Update via the Launcher"), 3000);
+#endif
 }
 
 // Trigger a check once Wi-Fi is up (then every 6 h); apply the result when ready.
@@ -16390,6 +16452,56 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms) {
   }
 }
 
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
+#if defined(HAS_TDECK_GT911)
+static const char* const OTA_BIN_NAME = "wadamesh-tdeck";
+#else
+static const char* const OTA_BIN_NAME = "wadamesh-heltec-v4-tft";   // Heltec V4 TFT (Tanmatsu excluded above)
+#endif
+// Download the latest published app-only bin over plain HTTP and flash it into the spare A/B slot
+// via the Arduino Update writer. Runs on the tile-fetcher worker (off the UI thread); reports
+// progress through s_ota_state / s_ota_pct / s_ota_msg for the UI poll timer. We fetch the
+// IMMUTABLE versioned path (releases/TOUCH/beta_<N>/...) rather than latest/* to dodge the CDN
+// cache on the mutable bin. esp_https_ota isn't usable here (no on-device TLS — see tile notes).
+static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
+  s_ota_pct = 0;
+  char url[176];
+  snprintf(url, sizeof url, "http://firmware.wadamesh.com/releases/TOUCH/beta_%d/%s.bin",
+           s_verchk_latest_n, OTA_BIN_NAME);
+  http.setReuse(false);
+  http.setConnectTimeout(8000);
+  http.setTimeout(20000);
+  http.setUserAgent("wadamesh-touch");
+  if (!http.begin(client, url)) { snprintf(s_ota_msg, sizeof s_ota_msg, "connect failed"); s_ota_state = 3; return; }
+  const int code = http.GET();
+  if (code != 200) { snprintf(s_ota_msg, sizeof s_ota_msg, "HTTP %d", code); http.end(); s_ota_state = 3; return; }
+  const int len = http.getSize();
+  if (len <= 0) { snprintf(s_ota_msg, sizeof s_ota_msg, "bad length"); http.end(); s_ota_state = 3; return; }
+  // Update.begin() picks the spare OTA slot AND verifies the image fits it -> the size guard. A
+  // legacy too-small slot (old partition table, only app-OTA'd since) fails here, cleanly.
+  if (!Update.begin((size_t)len)) {
+    snprintf(s_ota_msg, sizeof s_ota_msg, "won't fit: %s", Update.errorString());
+    http.end(); s_ota_state = 3; return;
+  }
+  Update.onProgress([](size_t done, size_t total) {
+    s_ota_pct = total ? (int)((uint64_t)done * 100 / total) : 0;
+  });
+  WiFiClient* stream = http.getStreamPtr();
+  const size_t written = stream ? Update.writeStream(*stream) : 0;
+  http.end();
+  if (written != (size_t)len) {
+    snprintf(s_ota_msg, sizeof s_ota_msg, "short read %u/%d", (unsigned)written, len);
+    Update.abort(); s_ota_state = 3; return;
+  }
+  if (!Update.end(true)) {   // finalize, verify, mark the new slot bootable
+    snprintf(s_ota_msg, sizeof s_ota_msg, "verify: %s", Update.errorString());
+    s_ota_state = 3; return;
+  }
+  s_ota_pct = 100;
+  s_ota_state = 2;   // success -> the UI poll timer reboots into the new slot
+}
+#endif
+
 static void tileFetchTaskFn(void* arg) {
   (void)arg;
   // Plain HTTP, not HTTPS. We can't do HTTPS on this device: mbedTLS
@@ -16454,6 +16566,14 @@ static void tileFetchTaskFn(void* arg) {
       s_verchk_done = true;
       continue;
     }
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
+    // Wi-Fi OTA self-update (user-initiated from About). Reuses this worker's stack + client.
+    if (s_ota_request) {
+      s_ota_request = false;
+      otaWorkerRun(client, http);
+      continue;
+    }
+#endif
     // Wi-Fi scan (user-initiated from the Network tab / setup wizard). Blocking
     // here on the Wi-Fi core, not the UI thread. Mirrors the CLI `wifi scan`.
     if (s_wifiscan_request) {
@@ -19773,7 +19893,7 @@ static void settingsCatBuild(int cat) {
         lv_obj_set_style_bg_color(s_ota_btn, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
         lv_obj_add_event_cb(s_ota_btn, otaInstallLatestCb, LV_EVENT_CLICKED, nullptr);
         s_ota_btn_lbl = lv_label_create(s_ota_btn);
-        lv_label_set_text(s_ota_btn_lbl, LV_SYMBOL_DOWNLOAD "  How to update");
+        lv_label_set_text(s_ota_btn_lbl, LV_SYMBOL_DOWNLOAD "  Install update");
         lv_obj_set_style_text_font(s_ota_btn_lbl, &g_font_14, LV_PART_MAIN);
         lv_obj_set_style_text_color(s_ota_btn_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
         lv_obj_center(s_ota_btn_lbl);
