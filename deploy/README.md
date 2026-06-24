@@ -3,7 +3,7 @@
 Distribution stack for wadamesh: a **VPS nginx origin behind Cloudflare**.
 
 ```
-tiles.wadamesh.com     →CF (HTTP, edge-cached) →  nginx → tile.openstreetmap.org
+tiles.wadamesh.com     →CF (HTTP, edge-cached) →  nginx → OpenTopoMap / OpenStreetMap
 firmware.wadamesh.com  →CF (cache bins)        →  nginx → /srv/wadamesh/firmware
 flasher.wadamesh.com   →CF (HTTPS)             →  web flasher        (TODO — see below)
 wadamesh.com           →CF (HTTPS)             →  landing page       (later)

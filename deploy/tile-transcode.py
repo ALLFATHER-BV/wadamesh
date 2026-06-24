@@ -39,6 +39,7 @@ except ImportError:
     sys.exit("ERROR: pip install flask pillow requests")
 
 OSM_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+OPENTOPO_URL = "https://tile.opentopomap.org/{z}/{x}/{y}.png"
 # OSM tile policy: identify yourself with a contactable UA. This is what OSM
 # sees — the device never talks to OSM directly.
 OSM_UA = "wadamesh-tile-proxy/1.0 (+https://wadamesh.com)"
@@ -57,29 +58,23 @@ _session = requests.Session()
 _session.headers.update({"User-Agent": OSM_UA, "Accept": "image/png,image/*"})
 
 
-@app.get("/<int:z>/<int:x>/<int:y>.jpg")
-def tile(z: int, x: int, y: int):
-    # Range-check before touching OSM so we can't be turned into an open proxy.
-    if not (0 <= z <= 19):
-        abort(404)
-    n = 1 << z
-    if not (0 <= x < n and 0 <= y < n):
-        abort(404)
-
+def _fetch_tile_png(upstream_url: str, z: int, x: int, y: int):
     try:
-        r = _session.get(OSM_URL.format(z=z, x=x, y=y), timeout=REQUEST_TIMEOUT,
+        r = _session.get(upstream_url.format(z=z, x=x, y=y), timeout=REQUEST_TIMEOUT,
                          stream=True)
     except requests.RequestException:
         abort(502)
 
     if r.status_code != 200:
-        # Pass OSM's status through (404 = empty/sea tile — nginx caches it).
         abort(r.status_code if r.status_code in (404, 429) else 502)
 
     raw = r.raw.read(MAX_TILE_BYTES + 1, decode_content=True)
     if len(raw) > MAX_TILE_BYTES:
         abort(502)
+    return raw
 
+
+def _tile_response_from_png(raw: bytes):
     try:
         img = Image.open(io.BytesIO(raw)).convert("RGB")
         out = io.BytesIO()
@@ -89,6 +84,36 @@ def tile(z: int, x: int, y: int):
 
     return Response(out.getvalue(), mimetype="image/jpeg",
                     headers={"Cache-Control": "public, max-age=2592000"})
+
+
+@app.get("/<int:z>/<int:x>/<int:y>.jpg")
+def tile(z: int, x: int, y: int):
+    if not (0 <= z <= 19):
+        abort(404)
+    n = 1 << z
+    if not (0 <= x < n and 0 <= y < n):
+        abort(404)
+    return _tile_response_from_png(_fetch_tile_png(OPENTOPO_URL, z, x, y))
+
+
+@app.get("/osm/<int:z>/<int:x>/<int:y>.jpg")
+def tile_osm(z: int, x: int, y: int):
+    if not (0 <= z <= 19):
+        abort(404)
+    n = 1 << z
+    if not (0 <= x < n and 0 <= y < n):
+        abort(404)
+    return _tile_response_from_png(_fetch_tile_png(OSM_URL, z, x, y))
+
+
+@app.get("/opentopo/<int:z>/<int:x>/<int:y>.jpg")
+def tile_opentopo(z: int, x: int, y: int):
+    if not (0 <= z <= 19):
+        abort(404)
+    n = 1 << z
+    if not (0 <= x < n and 0 <= y < n):
+        abort(404)
+    return _tile_response_from_png(_fetch_tile_png(OPENTOPO_URL, z, x, y))
 
 
 @app.get("/elev")
