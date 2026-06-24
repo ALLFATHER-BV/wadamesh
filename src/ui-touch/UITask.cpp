@@ -26076,7 +26076,15 @@ static void updateGlobalStatusBar() {
     if (want != s_clk_center || (!want && charging != s_clk_chg)) {
       s_clk_center = want; s_clk_chg = charging;
       if (want) lv_obj_align(g_statusbar.clock, LV_ALIGN_CENTER, 0, 0);
-      else      lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, charging ? -110 : -142, 0);
+      else {
+        // The narrow V4 portrait bar (<300 px) has no sleep-moon slot, so the clock must sit at
+        // its intended -126 build position; the wide-bar -142 ran it into the width-capped
+        // node-name window on the left (the long-standing "clock overlaps the name" bug). The
+        // wide T-Deck / Tanmatsu bars keep -142. Charging slides it +32 as the % column hides.
+        const bool narrow_bar = lv_disp_get_hor_res(nullptr) < 300;
+        const int clk_x = narrow_bar ? (charging ? -94 : -126) : (charging ? -110 : -142);
+        lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, clk_x, 0);
+      }
       // Park the async-request spinner just LEFT of the clock wherever it lands,
       // so it never paints over the clock (incl. the centred hide-name mode).
       if (g_statusbar.async_icon)
