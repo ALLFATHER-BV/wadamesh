@@ -18957,6 +18957,21 @@ static void onMapTabActivated() {
   refreshMapInfoLabel();
 }
 
+// Idle power-save indicator (iPhone Low-Power-Mode style, T-Deck only): instead of a separate moon
+// glyph, the status-bar battery turns amber while idle power-save is enabled. s_batt_base holds the
+// colour the theme/map chrome wants (off-white off-map, black/white over light tiles); applyBattColor
+// overlays the amber when power-save is on, so the map-chrome setter and the per-tick refresh share
+// one writer and never fight over the battery colour.
+static lv_color_t s_batt_base = lv_color_hex(COLOR_TEXT);
+static void applyBattColor() {
+  if (!g_statusbar.batt_icon) return;
+  lv_color_t c = s_batt_base;
+#if defined(HAS_TDECK_GT911)
+  if (touchSleep::enabled()) c = lv_color_hex(0xFFD60A);   // iOS systemYellow ≈ Low Power Mode
+#endif
+  lv_obj_set_style_text_color(g_statusbar.batt_icon, c, LV_PART_MAIN);
+}
+
 // Immersive map chrome: on the Map tab the status bar, bottom info strip and
 // tab bar all go transparent so the (full-screen) map shows through behind them.
 // Because OSM tiles are LIGHT, the status-bar text/icons are switched to BLACK
@@ -18987,7 +19002,8 @@ static void applyMapChrome(bool on) {
     const lv_color_t fg     = lv_color_hex(!on ? COLOR_TEXT : (night ? 0xF0F0F0 : 0x000000));
     const lv_color_t fg_sub = lv_color_hex(!on ? COLOR_SUB  : (night ? 0xC8CCD0 : 0x000000));
     if (g_statusbar.left_label) lv_obj_set_style_text_color(g_statusbar.left_label, fg, LV_PART_MAIN);
-    if (g_statusbar.batt_icon)  lv_obj_set_style_text_color(g_statusbar.batt_icon, fg, LV_PART_MAIN);
+    s_batt_base = fg;            // theme/map-driven battery colour...
+    applyBattColor();            // ...with the power-save amber overlaid if enabled
     if (g_statusbar.batt_pct)   lv_obj_set_style_text_color(g_statusbar.batt_pct, fg_sub, LV_PART_MAIN);
     if (g_statusbar.clock)      lv_obj_set_style_text_color(g_statusbar.clock, fg_sub, LV_PART_MAIN);
     if (g_statusbar.conn_icon)   lv_obj_set_style_text_color(g_statusbar.conn_icon,  fg_sub, LV_PART_MAIN);
@@ -25153,20 +25169,10 @@ static void updateGlobalStatusBar() {
 #if defined(HAS_TDECK_GT911)
   // ---- Idle power-save icon ---- (T-Deck only; predicates live in the same
   // HAS_TDECK_GT911 build environment as the actual light-sleep execution)
-  if (g_statusbar.sleep_icon) {
-    if (!touchSleep::enabled()) {
-      // Feature off — hide entirely; no status to convey.
-      lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);
-    } else {
-      lv_obj_clear_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);
-      const char* reason = tsBlockReason();
-      // Ready = accent colour (same warm highlight used for active glyphs elsewhere
-      // in the bar). Blocked = muted grey (COLOR_SUB) so it reads as "paused".
-      lv_obj_set_style_text_color(g_statusbar.sleep_icon,
-          lv_color_hex(reason == nullptr ? COLOR_ACCENT : (uint32_t)COLOR_SUB),
-          LV_PART_MAIN);
-    }
-  }
+  // Idle power-save state is now shown by tinting the status-bar battery glyph amber
+  // (iPhone-style, see applyBattColor), so the separate moon icon stays hidden. Kept in
+  // the tree (hidden) to preserve the bar layout and its tap handler.
+  if (g_statusbar.sleep_icon) lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);
 #endif
 
   // ---- Mesh signal strength ---- (SNR of the last packet we heard; dims when
@@ -25230,6 +25236,14 @@ static void updateGlobalStatusBar() {
     lv_label_set_text(g_statusbar.batt_icon, g);
     s_last_glyph = g;
   }
+#if defined(HAS_TDECK_GT911)
+  // Re-tint the battery amber/normal when idle power-save toggles (the toggle cb routes through
+  // here via updateGlobalStatusBar). Only on change, so no per-tick style churn.
+  { static int s_last_pwr = -1;
+    const int pwr = touchSleep::enabled() ? 1 : 0;
+    if (pwr != s_last_pwr) { s_last_pwr = pwr; applyBattColor(); }
+  }
+#endif
 
   // ---- Clock ----
 #if defined(ESP32)
