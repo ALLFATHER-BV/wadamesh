@@ -16,19 +16,19 @@
           "role": "gui",
           "title": "Touch UI",
           "version": {
-            "beta_15": {
-              "notes": "Power-saving now shows as an amber battery icon in the status bar — like iPhone's Low Power Mode — instead of a separate moon icon (T-Deck).\nNew @-mention picker: type @ in the message box to pick a contact from a list and drop their name in (thanks robinshizuyo-dev, #42).\nClosing a settings item, menu or chat no longer snaps the list back to the top — it stays where you left it (thanks ZorkaTheDog, #45).\nMessages you send from the MeshCore companion app now also show up on the device, in the right conversation (thanks HonzaDandy, #46).\nTyping is more reliable on the T-Deck and Tanmatsu: tapping a text field — even one that's already highlighted — starts typing right away, and the accent pop-up no longer interrupts typing outside of chats.\nThe text cursor now only appears when a field is actually ready for input, so it's a dependable \"you can type now\" cue.\nSmoother map panning: tile rendering no longer trips the watchdog and reboots during heavy scrolling.\nKeyboard navigation is now OFF by default. If you prefer driving the UI with the trackball / arrow keys, switch it back on in Settings -> Keyboard (your choice sticks until you change it). The Tanmatsu keeps it on, since it has no touchscreen.\nIncludes everything from beta_14 and the earlier betas.",
+            "beta_16": {
+              "notes": "Heltec V4 Expansion Kit support: a dedicated Sensors tab (temperature, humidity, pressure, GPS and battery, with small history charts), a Home-screen environment readout, and an on-device \"mesh console\" for poking at the radio. It only turns up when a sensor board is actually attached, so a bare V4 looks exactly as it did before. This one was a real grind to land — it came in as a huge pull request built on an old beta, and getting it in cleanly meant re-doing most of it by hand against the current code and carefully fencing it all off so it can't bloat or disturb the T-Deck and Tanmatsu builds. Thanks to Samuel Coustet for the original work (#29).\nFrench, Dutch, German, Spanish and Italian keyboards, on-screen and on the T-Deck's physical keys. Choosing one of those as your interface language now auto-selects the matching layout. Also from Samuel Coustet (#29).\nWi-Fi firmware updates are back: on a normally-flashed device (not the Launcher) you can update straight from Settings -> About, no cable needed.\nYou can also roll back now — \"Install a previous version\" lets you reinstall one of the last few releases over Wi-Fi, with a confirmation first since it's a downgrade.\nThe status-bar clock no longer overlaps the node name on the V4 (it had been crammed against it for a good while).\nClosing a dialog no longer lets a scroll carry through to the page behind it (thanks tun0, #50).\nThe contact action sheet no longer overflows the screen in landscape (thanks tun0, #49).\nThe per-channel region field now shows your default region as the hint, instead of a generic placeholder (thanks tun0, #48).\nEverything from beta_15 is included.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-heltec-v4-tft-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_15/wadamesh-heltec-v4-tft-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_16/wadamesh-heltec-v4-tft-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-heltec-v4-tft.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_15/wadamesh-heltec-v4-tft.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_16/wadamesh-heltec-v4-tft.bin",
                   "title": "Update (app only)"
                 }
               ]
@@ -48,19 +48,19 @@
           "role": "gui",
           "title": "Touch UI",
           "version": {
-            "beta_15": {
-              "notes": "Power-saving now shows as an amber battery icon in the status bar — like iPhone's Low Power Mode — instead of a separate moon icon (T-Deck).\nNew @-mention picker: type @ in the message box to pick a contact from a list and drop their name in (thanks robinshizuyo-dev, #42).\nClosing a settings item, menu or chat no longer snaps the list back to the top — it stays where you left it (thanks ZorkaTheDog, #45).\nMessages you send from the MeshCore companion app now also show up on the device, in the right conversation (thanks HonzaDandy, #46).\nTyping is more reliable on the T-Deck and Tanmatsu: tapping a text field — even one that's already highlighted — starts typing right away, and the accent pop-up no longer interrupts typing outside of chats.\nThe text cursor now only appears when a field is actually ready for input, so it's a dependable \"you can type now\" cue.\nSmoother map panning: tile rendering no longer trips the watchdog and reboots during heavy scrolling.\nKeyboard navigation is now OFF by default. If you prefer driving the UI with the trackball / arrow keys, switch it back on in Settings -> Keyboard (your choice sticks until you change it). The Tanmatsu keeps it on, since it has no touchscreen.\nIncludes everything from beta_14 and the earlier betas.",
+            "beta_16": {
+              "notes": "Heltec V4 Expansion Kit support: a dedicated Sensors tab (temperature, humidity, pressure, GPS and battery, with small history charts), a Home-screen environment readout, and an on-device \"mesh console\" for poking at the radio. It only turns up when a sensor board is actually attached, so a bare V4 looks exactly as it did before. This one was a real grind to land — it came in as a huge pull request built on an old beta, and getting it in cleanly meant re-doing most of it by hand against the current code and carefully fencing it all off so it can't bloat or disturb the T-Deck and Tanmatsu builds. Thanks to Samuel Coustet for the original work (#29).\nFrench, Dutch, German, Spanish and Italian keyboards, on-screen and on the T-Deck's physical keys. Choosing one of those as your interface language now auto-selects the matching layout. Also from Samuel Coustet (#29).\nWi-Fi firmware updates are back: on a normally-flashed device (not the Launcher) you can update straight from Settings -> About, no cable needed.\nYou can also roll back now — \"Install a previous version\" lets you reinstall one of the last few releases over Wi-Fi, with a confirmation first since it's a downgrade.\nThe status-bar clock no longer overlaps the node name on the V4 (it had been crammed against it for a good while).\nClosing a dialog no longer lets a scroll carry through to the page behind it (thanks tun0, #50).\nThe contact action sheet no longer overflows the screen in landscape (thanks tun0, #49).\nThe per-channel region field now shows your default region as the hint, instead of a generic placeholder (thanks tun0, #48).\nEverything from beta_15 is included.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-tdeck-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_15/wadamesh-tdeck-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_16/wadamesh-tdeck-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-tdeck.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_15/wadamesh-tdeck.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_16/wadamesh-tdeck.bin",
                   "title": "Update (app only)"
                 }
               ]
