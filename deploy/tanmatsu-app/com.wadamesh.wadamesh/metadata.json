@@ -1,6 +1,6 @@
 {
     "name": "WadaMesh",
-    "description": "MeshCore client running LoRa, Wi-Fi & Bluetooth at once — a standalone unit and phone companion in one.",
+    "description": "MeshCore client running LoRa Wi-Fi & Bluetooth at once. A standalone unit and phone companion in one.",
     "categories": [
         "tools",
         "utils",
