@@ -21870,10 +21870,16 @@ static void makeSettings(lv_obj_t* tab) {
     // never overlaps the text) and centre-aligns within that box; wrap keeps a long
     // translated name (e.g. "Πληκτρολόγιο", "Schnellantworten") inside the card.
     // No right chevron — it fought the centred text and pulled the eye off-centre.
-    lv_obj_set_width(lbl, card_w - 2 * 40);
+    // Fill the card to the RIGHT of the left accent icon and centre within that
+    // region. The old symmetric 40-px margins left only ~64 px on the T-Deck's
+    // 2-column landscape cards, so a single word ("Bluetooth") split mid-word and
+    // "Radio & Mesh" wrapped to two lines. Using the full post-icon width (~100 px)
+    // keeps every English category name on one line, unsplit; long translations
+    // still wrap at word boundaries.
+    lv_obj_set_width(lbl, card_w - 34 - 8);   // start just past the icon, small right margin
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 34, 0);
 
     if (c == CAT_ABOUT) {   // update-available dot rides on the About card
       s_update_subtab_badge = lv_obj_create(card);
