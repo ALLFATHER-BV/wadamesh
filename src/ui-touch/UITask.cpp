@@ -27015,7 +27015,7 @@ static void updateGlobalStatusBar() {
         // Reserve = clock anchor SC(126) + its text width + margin, so the name window
         // ends just before the (now SC-scaled) right-side icon cluster at any UI scale.
         lv_obj_set_width(g_statusbar.left_label,
-                         (sb_w >= 600) ? (sb_w - SC(190)) : (sb_w >= 300) ? 100 : 74);
+                         (sb_w >= 600) ? (sb_w - SC(190)) : (sb_w >= 300) ? 100 : 66);   // #47a: narrower window on the 240px V4 bar so a long name can't run into the clock
         lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
         lv_obj_set_style_anim_speed(g_statusbar.left_label, 14, LV_PART_MAIN);  // slow, readable marquee
         lv_label_set_text(g_statusbar.left_label, nm);
