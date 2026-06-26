@@ -56,16 +56,25 @@ public:
   uint32_t getPacketsSent() const { return _n_sent; }
 
 private:
-  // Push _cfg to the modem — but ONLY while not yet polling RX. The remote link's
-  // esp_hosted_send_custom_data() blocks indefinitely under continuous-RX load, so a
-  // live reconfig from the UI thread would freeze the app. Boot bring-up (before the
-  // RX loop starts) pushes fine; runtime changes update _cfg and apply on next init.
-  void pushConfig() { if (_started && !_rx_polling) lora_set_config(&_h, &_cfg); }
+  // Push _cfg to the modem. The remote link's esp_hosted_send_custom_data() can block
+  // under continuous-RX load, so a live lora_set_config() from the UI/companion thread
+  // (mid-RX) risked freezing the app — which is why this used to no-op once RX started,
+  // making a frequency/SF/BW change only take effect on the next reboot ("receives
+  // nothing on the new frequency", and wadamesh's settings never overrode the Tanmatsu
+  // OS's). Now: boot bring-up pushes directly; a runtime change marks _cfg dirty and
+  // recvRaw() applies it on the RX-poll thread, between polls (standby → push → re-arm),
+  // so wadamesh's settings actually reach the modem and win.
+  void pushConfig() {
+    if (!_started) return;
+    if (_rx_polling) { _cfg_dirty = true; return; }   // defer to recvRaw() (RX-poll thread)
+    lora_set_config(&_h, &_cfg);
+  }
 
   lora_handle_t                 _h   = {0};
   lora_protocol_config_params_t _cfg = {0};
   bool   _started    = false;
   bool   _rx_polling = false;   // set once recvRaw() starts draining — see pushConfig()
+  bool   _cfg_dirty  = false;   // runtime config change pending; applied by recvRaw() between polls
   bool   _sending    = false;
   bool   _rx_boost   = false;
   float  _last_rssi = 0.0f;

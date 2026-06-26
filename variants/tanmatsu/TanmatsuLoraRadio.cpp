@@ -54,6 +54,18 @@ int TanmatsuLoraRadio::recvRaw(uint8_t* bytes, int sz) {
     // one-shot is enough. It also gates pushConfig from here on (the remote link blocks under RX load).
     _rx_polling = true;
     lora_set_mode(&_h, LORA_PROTOCOL_MODE_RX);
+  } else if (_cfg_dirty) {
+    // A runtime setParams()/setTxPower()/setRxBoostedGainMode() (the wadamesh radio
+    // settings save, from the UI or the companion app) changed the PHY config. Apply it
+    // HERE, on the RX-poll thread, so the C6 remote link is never touched cross-thread:
+    // leave RX to STANDBY (so the link isn't under active-RX load and lora_set_config
+    // can't block), push the new config, then re-arm continuous RX. This is what makes a
+    // live frequency / SF / BW / CR / power change actually reach the modem (it used to
+    // need a reboot) AND lets wadamesh's settings override whatever the Tanmatsu OS set.
+    _cfg_dirty = false;
+    lora_set_mode(&_h, LORA_PROTOCOL_MODE_STANDBY_RC);
+    lora_set_config(&_h, &_cfg);
+    lora_set_mode(&_h, LORA_PROTOCOL_MODE_RX);
   }
   lora_protocol_lora_packet_t pkt;
   // Non-blocking poll of the RX queue (timeout 0).
