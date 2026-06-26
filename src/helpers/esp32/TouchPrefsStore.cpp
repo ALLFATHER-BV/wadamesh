@@ -35,7 +35,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 19;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab
+static const uint8_t  TOUCH_CFG_VER   = 20;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -90,6 +90,7 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  nav_scroll_keys[2]; // keyboard-nav scroll keys (ASCII): scroll-up, scroll-down — v16 (trailing)
   uint8_t  notify_new_contact;// toast/chip when a contact is auto-discovered (bool) — v17 (trailing)
   uint8_t  show_sensors_tab;  // V4 Expansion Kit: show the Sensors tab + Home env widget (bool, default 1) — v19 (trailing)
+  uint8_t  map_show_links;    // show self->contact link lines on the map (bool, default 1) — v20 (trailing)
 };
 
 static TouchCfg s_cfg;
@@ -168,6 +169,7 @@ static void cfgSetDefaults(TouchCfg& c) {
 #endif
   c.notify_new_contact = 1;     // default: show the new-contact toast (preserve prior behaviour)
   c.show_sensors_tab   = 1;     // default: show the V4 Expansion-Kit Sensors tab + Home env widget
+  c.map_show_links     = 1;     // default: show self->contact link lines
 }
 
 // Persist the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
@@ -825,6 +827,15 @@ bool touchPrefsGetMapShowContacts() {
 bool touchPrefsSetMapShowContacts(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.map_show_contacts = on ? 1 : 0;
+  return cfgFlush();
+}
+bool touchPrefsGetMapShowLinks() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.map_show_links != 0;
+}
+bool touchPrefsSetMapShowLinks(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.map_show_links = on ? 1 : 0;
   return cfgFlush();
 }
 bool touchPrefsGetAppGridLarge() {

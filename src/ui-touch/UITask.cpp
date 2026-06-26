@@ -19362,6 +19362,9 @@ static void mapOptLinesCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   lv_obj_t* sw = lv_event_get_target(e);
   s_map_show_links = lv_obj_has_state(sw, LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetMapShowLinks(s_map_show_links);
+#endif
   renderMapMarkers();   // rebuild links to reflect the new state
 }
 
@@ -31294,6 +31297,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_map_show_coords   = touchPrefsGetMapShowCoords();     // per-element map text/marker visibility
   s_map_show_tilexyz  = touchPrefsGetMapShowTileXYZ();
   s_map_show_contacts = touchPrefsGetMapShowContacts();
+  s_map_show_links    = touchPrefsGetMapShowLinks();     // dotted self->contact link lines
   { const uint8_t pz = touchPrefsGetMapZoom();    // restore the last user-set map zoom
     if (pz >= k_map_zoom_min && pz <= k_map_zoom_max) s_map_zoom = pz; }
   s_map_zoom_buttons = touchPrefsGetMapZoomButtons();   // map zoom control: slider (default) vs +/- buttons

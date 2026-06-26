@@ -98,6 +98,8 @@ bool touchPrefsGetMapShowTileXYZ();
 bool touchPrefsSetMapShowTileXYZ(bool on);
 bool touchPrefsGetMapShowContacts();
 bool touchPrefsSetMapShowContacts(bool on);
+bool touchPrefsGetMapShowLinks();
+bool touchPrefsSetMapShowLinks(bool on);
 
 /* App drawer: large grid (one fewer column → bigger icons + labels, for low vision).
  * Default false = the compact grid (T-Deck 4 cols / Heltec V4 3 cols). */
