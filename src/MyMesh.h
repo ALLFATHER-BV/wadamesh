@@ -6,6 +6,20 @@
 #include <helpers/MeshTouchTxTrace.h>
 #include "AbstractUITask.h"
 
+// Operational wire-debug. The companion link is a BINARY protocol over Serial (USB-CDC); writing raw
+// text to Serial during a session interleaves into that stream and corrupts it — the MeshCore app
+// then throws "Bad state: Streamsink is bound to a stream" and the connect / room login / repeater
+// admin all fail (GH #25, #54, #23). Compiled out in release; build -DCOMPANION_WIRE_DEBUG=1 to get
+// these traces back (only safe over a non-companion debug console).
+#ifndef COMPANION_WIRE_DEBUG
+#define COMPANION_WIRE_DEBUG 0
+#endif
+#if COMPANION_WIRE_DEBUG
+#define WIRE_DBG(...) Serial.printf(__VA_ARGS__)
+#else
+#define WIRE_DBG(...) do {} while (0)
+#endif
+
 /*------------ Frame Protocol --------------*/
 // Keep the fork's companion-protocol lineage (27 — a superset of upstream's 13)
 // so the existing meshcomod web/phone client still matches. 1.16's new companion
@@ -328,7 +342,7 @@ public:
     // Diagnostic (room-server login trace): which contact/type we sent the login
     // to and the send result. Pair with the "[ROOM] login resp" line in
     // onContactResponse to see exactly where a room login breaks.
-    Serial.printf("[ROOM] login send '%s' type=%u pwlen=%u sync_since=%lu -> r=%d\n",
+    WIRE_DBG("[ROOM] login send '%s' type=%u pwlen=%u sync_since=%lu -> r=%d\n",
                   recipient.name, (unsigned)recipient.type,
                   (unsigned)(password ? strlen(password) : 0),
                   (unsigned long)recipient.sync_since, r);

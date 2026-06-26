@@ -2201,7 +2201,7 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
     // Diagnostic (room-server login trace): the login response we matched +
     // whether we accepted it. resp byte: 0x4F 'O' = legacy "OK"; otherwise a
     // RESP_SERVER_LOGIN_OK / fail code. Pair with "[ROOM] login send".
-    Serial.printf("[ROOM] login resp '%s' resp=0x%02x ok=%d perms=%d\n",
+    WIRE_DBG("[ROOM] login resp '%s' resp=0x%02x ok=%d perms=%d\n",
                   contact.name, data[4], (int)ok, (int)perms);
 #ifdef DISPLAY_CLASS
     // Notify the touch UI so the admin console can flip from "logging in…"

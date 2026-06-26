@@ -17677,13 +17677,13 @@ static uint8_t* decodeJpegScaledToRgb565(const uint8_t* jpeg, size_t jpeg_len,
       snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "Progressive JPEG.\nRe-save as a standard JPEG.");
     else
       snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "Decode error %d.", (int)rp);
-    Serial.printf("[JPG] jd_prepare rc=%d\n", (int)rp);
+    WIRE_DBG("[JPG] jd_prepare rc=%d\n", (int)rp);
     return nullptr;
   }
   int scale = 0;
   while (scale < 3 && (((int)jd.width >> scale) > max_dim || ((int)jd.height >> scale) > max_dim)) scale++;
   const int ow = (int)jd.width >> scale, oh = (int)jd.height >> scale;
-  Serial.printf("[JPG] %ux%u -> 1/%d -> %dx%d (cap %d)\n", jd.width, jd.height, 1 << scale, ow, oh, max_dim);
+  WIRE_DBG("[JPG] %ux%u -> 1/%d -> %dx%d (cap %d)\n", jd.width, jd.height, 1 << scale, ow, oh, max_dim);
   if (ow <= 0 || oh <= 0 || ow > max_dim || oh > max_dim) {
     snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "%ux%u too big", jd.width, jd.height);
     return nullptr;
@@ -17697,7 +17697,7 @@ static uint8_t* decodeJpegScaledToRgb565(const uint8_t* jpeg, size_t jpeg_len,
   JRESULT rd = jd_decomp(&jd, tjpgOutCb, (uint8_t)scale);
   if (rd != JDR_OK) {
     snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "decomp err %d", (int)rd);
-    Serial.printf("[JPG] jd_decomp rc=%d\n", (int)rd);
+    WIRE_DBG("[JPG] jd_decomp rc=%d\n", (int)rd);
     lvglPsramFree(buf);
     return nullptr;
   }
@@ -17910,7 +17910,7 @@ static void tileFetchTaskFn(void* arg) {
   http.setReuse(false);
   http.setConnectTimeout(8000);
   http.setTimeout(15000);
-  Serial.println("[TILE] fetcher task started");
+  WIRE_DBG("[TILE] fetcher task started");
   s_tile_fetch_step = 'x';
 
   TileFetchReq req;
@@ -18010,7 +18010,7 @@ static void tileFetchTaskFn(void* arg) {
     // tight no-yield loop of tileCacheExists() and could starve core-0 IDLE.
     vTaskDelay(1);
     if (WiFi.status() != WL_CONNECTED) {
-      Serial.printf("[TILE] skip z=%u x=%ld y=%ld: WiFi down\n",
+      WIRE_DBG("[TILE] skip z=%u x=%ld y=%ld: WiFi down\n",
                     (unsigned)req.z, (long)req.x, (long)req.y);
       s_tile_fetch_step = '!';
       s_tile_fetch_last_wr = 'W';
@@ -18111,11 +18111,11 @@ static void tileFetchTaskFn(void* arg) {
     http.setTimeout(2000);
     // OSM policy: identifying User-Agent required; vague UAs get blocked.
     http.addHeader("User-Agent", "wadamesh-touch/0.4 (https://github.com/ALLFATHER-BV/wadamesh)");
-    Serial.printf("[TILE] GET %s\n", url);
+    WIRE_DBG("[TILE] GET %s\n", url);
     s_tile_fetch_step = 'g';
     int code = http.GET();
     s_tile_fetch_last_code = (int16_t)code;
-    Serial.printf("[TILE]  -> HTTP %d (size=%d)\n", code, http.getSize());
+    WIRE_DBG("[TILE]  -> HTTP %d (size=%d)\n", code, http.getSize());
     bool wrote = false;
     if (code != HTTP_CODE_OK) {
       s_tile_fetch_step = 'd';
@@ -18191,13 +18191,13 @@ static void tileFetchTaskFn(void* arg) {
     if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
 
     if (wrote) {
-      Serial.printf("[TILE]  -> wrote %s\n", path_jpg);
+      WIRE_DBG("[TILE]  -> wrote %s\n", path_jpg);
       s_tile_fetch_step = 'w';
       s_tile_fetch_last_wr = 'w';
       ++s_tile_fetch_ok;
       s_tile_fetch_dirty = true;        // render thread picks this up
     } else {
-      Serial.printf("[TILE]  -> FAILED %s\n", path_jpg);
+      WIRE_DBG("[TILE]  -> FAILED %s\n", path_jpg);
       ++s_tile_fetch_failed;
     }
 
@@ -18237,7 +18237,7 @@ void reserveTileFetchStack() {
         s, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (s_tile_fetch_stack) { s_tile_fetch_stack_bytes = s; break; }
   }
-  Serial.printf("[TILE] reserve stack %p sz=%u (free_int now %u)\n",
+  WIRE_DBG("[TILE] reserve stack %p sz=%u (free_int now %u)\n",
                 s_tile_fetch_stack, (unsigned)s_tile_fetch_stack_bytes,
                 (unsigned)ESP.getFreeHeap());
 }
@@ -18265,7 +18265,7 @@ static bool ensureTileFetchTaskRunning() {
       s_tile_fetch_stack, &s_tile_fetch_tcb,
       0 /*core 0 = wifi core*/);
   s_tile_fetch_spawn_ok = (s_tile_fetch_task != nullptr);
-  Serial.printf("[TILE] fetch task spawned %p free_int=%u free_psram=%u\n",
+  WIRE_DBG("[TILE] fetch task spawned %p free_int=%u free_psram=%u\n",
                 s_tile_fetch_task, (unsigned)ESP.getFreeHeap(),
                 (unsigned)ESP.getFreePsram());
   return s_tile_fetch_task != nullptr;
@@ -31369,10 +31369,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // forever even though the partition is present. format() targets the stored
   // "tiles" label, so force a wipe + remount. Tiles are a re-downloadable cache.
   if (!s_tiles_fs_ready) {
-    Serial.println("[TILE] tiles begin() failed — forcing format() + remount");
+    WIRE_DBG("[TILE] tiles begin() failed — forcing format() + remount");
     s_tiles_fs.format();
     s_tiles_fs_ready = s_tiles_fs.begin(true, "/tiles_lfs", 10, "tiles");
-    Serial.printf("[TILE] forced reformat -> ready=%d totalBytes=%u\n",
+    WIRE_DBG("[TILE] forced reformat -> ready=%d totalBytes=%u\n",
                   (int)s_tiles_fs_ready, (unsigned)s_tiles_fs.totalBytes());
   }
   // Corruption guard: the partition-table change (pre-alpha_12 grew the OTA
@@ -31386,11 +31386,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   if (s_tiles_fs_ready) {
     const size_t tb = s_tiles_fs.totalBytes();
     if (tb == 0 || tb > 8u * 1024u * 1024u) {   // tiles partition is ~4.75 MB
-      Serial.printf("[TILE] tiles FS bad (totalBytes=%u) — reformatting\n", (unsigned)tb);
+      WIRE_DBG("[TILE] tiles FS bad (totalBytes=%u) — reformatting\n", (unsigned)tb);
       s_tiles_fs.end();
       s_tiles_fs.format();
       s_tiles_fs_ready = s_tiles_fs.begin(true, "/tiles_lfs", 10, "tiles");
-      Serial.printf("[TILE] reformat -> ready=%d totalBytes=%u\n",
+      WIRE_DBG("[TILE] reformat -> ready=%d totalBytes=%u\n",
                     (int)s_tiles_fs_ready, (unsigned)s_tiles_fs.totalBytes());
     }
   }
@@ -31420,7 +31420,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
                              // MERGES with it. Retires the old separate /meshcomod/tiles spot;
                              // the dir path is created on demand by the fetcher (tileCacheMkdir).
     s_tiles_fs_ready = true;
-    Serial.printf("[TILE] no tiles partition -> caching Wi-Fi tiles on SD /tiles (cardType=%d)\n",
+    WIRE_DBG("[TILE] no tiles partition -> caching Wi-Fi tiles on SD /tiles (cardType=%d)\n",
                   (int)SD.cardType());
   }
 #endif
@@ -31436,7 +31436,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     s_tile_fs        = &FFat;
     s_tile_root[0]   = '\0';   // -> /tiles/<z>/<x>/<y>.jpg, a self-contained dir on locfd
     s_tiles_fs_ready = true;
-    Serial.println("[TILE] no tiles partition -> caching Wi-Fi tiles on FFat /tiles (Tanmatsu)");
+    WIRE_DBG("[TILE] no tiles partition -> caching Wi-Fi tiles on FFat /tiles (Tanmatsu)");
   }
 #endif
   else {
@@ -31454,7 +31454,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     s_sd_mounted = true;
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';
-    Serial.println("[TILE] microSD-tile mode -> caching Wi-Fi tiles on SD /tiles (merges with library)");
+    WIRE_DBG("[TILE] microSD-tile mode -> caching Wi-Fi tiles on SD /tiles (merges with library)");
   }
 #endif
 #endif
