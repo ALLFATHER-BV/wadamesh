@@ -492,7 +492,8 @@ extern volatile uint16_t s_tile_fetch_pending;
 // Holding the driver resident permanently kept ~2 KB of internal DMA RAM, which
 // shrank the margin the tile-fetch worker relies on and made tile downloads
 // OOM-reboot. Transient install keeps steady-state internal RAM untouched.
-static bool tdeckAudioInstall() {
+static bool fmSdTryMount();   // defined far below (microSD mount, T-Deck)
+static bool tdeckAudioInstallRate(int rate) {
   // Heap pre-flight. i2s_driver_install ESP_ERROR_CHECKs its internal DMA + timer
   // allocations and abort()s the firmware on NO_MEM — this is the "esp_timer_create
   // ESP_ERR_NO_MEM" crash testers hit toggling sound while BLE + Wi-Fi are both up
@@ -501,7 +502,7 @@ static bool tdeckAudioInstall() {
   if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 16 * 1024) return false;
   i2s_config_t cfg = {};
   cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
-  cfg.sample_rate = kI2sSampleRate;
+  cfg.sample_rate = rate;
   cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
   cfg.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;   // MAX98357A is mono
   cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
@@ -520,6 +521,7 @@ static bool tdeckAudioInstall() {
   if (i2s_set_pin(kI2sPort, &pins) != ESP_OK) { i2s_driver_uninstall(kI2sPort); return false; }
   return true;
 }
+static bool tdeckAudioInstall() { return tdeckAudioInstallRate(kI2sSampleRate); }
 
 // Render `freq` Hz for `ms` ms into the already-installed I2S as a 16-bit sine
 // with a short fade-in/out so it doesn't click.
@@ -546,22 +548,104 @@ static void tdeckPlayToneRaw(int freq, int ms, int vol = 9000) {
   i2s_zero_dma_buffer(kI2sPort);
 }
 
+// ---- Custom WAV notification playback (T-Deck I2S) -------------------------
+// Stream a small PCM WAV (internal SPIFFS or "sd:"-prefixed SD) straight to the
+// amp. Supports PCM 16-bit, mono or stereo (downmixed to the mono amp), sample
+// rate read from the header; capped to ~6 s so a stray big file can't hold the
+// notify task. Any problem -> false, and the caller falls back to the chime.
+static uint32_t wavRd32(File& f){ uint8_t b[4]; if(f.read(b,4)!=4) return 0; return (uint32_t)b[0]|((uint32_t)b[1]<<8)|((uint32_t)b[2]<<16)|((uint32_t)b[3]<<24); }
+static uint16_t wavRd16(File& f){ uint8_t b[2]; if(f.read(b,2)!=2) return 0; return (uint16_t)(b[0]|(b[1]<<8)); }
+static bool wavParse(File& f, uint16_t* pch, uint32_t* prate, uint32_t* pdata) {
+  char tag[4];
+  if (f.read((uint8_t*)tag,4)!=4 || memcmp(tag,"RIFF",4)) return false;
+  wavRd32(f);
+  if (f.read((uint8_t*)tag,4)!=4 || memcmp(tag,"WAVE",4)) return false;
+  uint16_t fmt=0, ch=0, bits=0; uint32_t rate=0, dlen=0; bool hf=false, hd=false;
+  while (f.available() >= 8) {
+    if (f.read((uint8_t*)tag,4)!=4) break;
+    uint32_t csz = wavRd32(f);
+    if (!memcmp(tag,"fmt ",4)) {
+      fmt = wavRd16(f); ch = wavRd16(f); rate = wavRd32(f); wavRd32(f); wavRd16(f); bits = wavRd16(f);
+      if (csz > 16) f.seek(f.position() + (csz - 16));
+      hf = true;
+    } else if (!memcmp(tag,"data",4)) { dlen = csz; hd = true; break; }
+    else f.seek(f.position() + csz + (csz & 1));
+  }
+  if (!hf || !hd || fmt != 1 || bits != 16 || (ch != 1 && ch != 2) || rate < 8000 || rate > 48000)
+    return false;
+  if (pch) *pch = ch; if (prate) *prate = rate; if (pdata) *pdata = dlen;
+  return true;
+}
+static bool wavOpen(const char* prefpath, File& f) {
+  if (!prefpath || !prefpath[0]) return false;
+  fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
+  if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; fmSdTryMount(); }
+  f = fsp->open(fp, FILE_READ);
+  if (!f || f.isDirectory()) { if (f) f.close(); return false; }
+  return true;
+}
+static bool wavIsSupported(const char* prefpath) {
+  File f; if (!wavOpen(prefpath, f)) return false;
+  bool ok = wavParse(f, nullptr, nullptr, nullptr);
+  f.close();
+  return ok;
+}
+static bool tdeckPlayWavFile(const char* prefpath, int vol) {
+  File f; if (!wavOpen(prefpath, f)) return false;
+  uint16_t ch=0; uint32_t rate=0, dlen=0;
+  if (!wavParse(f, &ch, &rate, &dlen)) { f.close(); return false; }
+  const uint32_t frameBytes = (uint32_t)ch * 2u;
+  const uint32_t maxBytes = rate * frameBytes * 6u;   // ~6 s cap
+  if (dlen > maxBytes) dlen = maxBytes;
+  if (!tdeckAudioInstallRate((int)rate)) { f.close(); return false; }
+  const float gain = (float)vol / 13000.0f;
+  int16_t in[256], out[256];
+  uint32_t remaining = dlen;
+  while (remaining >= frameBytes) {
+    size_t want = sizeof(in);
+    if (want > remaining) want = remaining - (remaining % frameBytes);
+    int got = f.read((uint8_t*)in, want);
+    if (got <= 0) break;
+    int frames = got / (int)frameBytes;
+    for (int i = 0; i < frames; ++i) {
+      int32_t smp = (ch == 2) ? (((int32_t)in[2*i] + in[2*i+1]) / 2) : in[i];
+      smp = (int32_t)(smp * gain);
+      if (smp > 32767) smp = 32767; else if (smp < -32768) smp = -32768;
+      out[i] = (int16_t)smp;
+    }
+    size_t bw = 0;
+    i2s_write(kI2sPort, out, (size_t)frames * sizeof(int16_t), &bw, pdMS_TO_TICKS(300));
+    remaining -= (uint32_t)got;
+  }
+  i2s_zero_dma_buffer(kI2sPort);
+  i2s_driver_uninstall(kI2sPort);
+  f.close();
+  return true;
+}
+
 static volatile bool s_notify_playing = false;
-static volatile bool s_notify_mention = false;   // play the @-mention pattern this round
+static volatile int  s_notify_slot    = TOUCH_SND_MSG;   // which per-event sound to play this round
 static volatile int  s_notify_vol     = 9000;    // amplitude, scaled from the volume pref
 // The chime body: install I2S, play the notes, uninstall. ~300 ms of blocking
 // i2s_write + driver setup/teardown — run on its own throwaway task (below).
 static void tdeckNotifyTaskFn(void* arg) {
   (void)arg;
-  if (tdeckAudioInstall()) {
-    const int v = s_notify_vol;
-    if (s_notify_mention) {              // @-mention: a brighter 3-note rising arpeggio
-      tdeckPlayToneRaw(1318, 70,  v);    // E6
-      tdeckPlayToneRaw(1760, 70,  v);    // A6
-      tdeckPlayToneRaw(2349, 130, v);    // D7
-    } else {                            // message: the two-note chime
-      tdeckPlayToneRaw(880,  90,  v);    // A5
-      tdeckPlayToneRaw(1318, 110, v);    // E6
+  const int v = s_notify_vol;
+  // Custom WAV for this slot (if set + valid) — installs/uninstalls I2S itself.
+  char path[TOUCH_SOUND_PATH_MAXLEN];
+  touchPrefsGetSoundFile(s_notify_slot, path, sizeof path);
+  bool played = (path[0] && tdeckPlayWavFile(path, v));
+  if (!played && tdeckAudioInstall()) {         // built-in chime fallback (distinct per slot)
+    if (s_notify_slot == TOUCH_SND_MEN) {        // @-mention: bright 3-note rising arpeggio
+      tdeckPlayToneRaw(1318, 70,  v);            // E6
+      tdeckPlayToneRaw(1760, 70,  v);            // A6
+      tdeckPlayToneRaw(2349, 130, v);            // D7
+    } else if (s_notify_slot == TOUCH_SND_DM) {  // direct message: distinct rising fifth
+      tdeckPlayToneRaw(1047, 90,  v);            // C6
+      tdeckPlayToneRaw(1568, 120, v);            // G6
+    } else {                                     // message: the original two-note chime
+      tdeckPlayToneRaw(880,  90,  v);            // A5
+      tdeckPlayToneRaw(1318, 110, v);            // E6
     }
     i2s_driver_uninstall(kI2sPort);
   }
@@ -574,13 +658,14 @@ static void tdeckNotifyTaskFn(void* arg) {
 // playing synchronously locked the screen for the whole chime. Skips while tiles
 // download (DMA-RAM contention → reboot) and won't stack itself. Caller checks the
 // sound pref.
-static void tdeckPlayNotify(bool mention) {
+static void tdeckPlayNotifySlot(int slot) {
   if (s_tile_fetch_pending > 0) return;   // don't fight the Wi-Fi/tile DMA buffers
   if (s_notify_playing) return;           // already chiming — don't stack tasks/I2S
-  s_notify_mention = mention;
+  s_notify_slot = slot;
   s_notify_vol = (int)touchPrefsGetSoundVolume() * 130;   // 0..100 -> 0..13000 amplitude
   s_notify_playing = true;
-  if (xTaskCreate(tdeckNotifyTaskFn, "notify", 4096, nullptr, 3, nullptr) != pdPASS) {
+  // bigger stack than the tone-only chime: WAV path uses a File handle + buffers.
+  if (xTaskCreate(tdeckNotifyTaskFn, "notify", 8192, nullptr, 3, nullptr) != pdPASS) {
     s_notify_playing = false;             // couldn't spawn (low DRAM) — skip the chime
   }
 }
@@ -630,25 +715,19 @@ static void v4BuzzerBeep(bool mention) {
 static void tanBeep();   // I2S notification tick; defined far below (with the CC volume slider)
 #endif
 // Play the platform's notification chime. Caller checks the buzzer/sound pref.
-static inline void uiPlayNotify() {
+static inline void uiPlaySlot(int slot) {
 #if defined(HAS_TDECK_GT911)
-  tdeckPlayNotify(false);
+  tdeckPlayNotifySlot(slot);
 #elif defined(HELTEC_V4_BUZZER_PIN)
-  v4BuzzerBeep(false);
+  v4BuzzerBeep(slot == TOUCH_SND_MEN);   // mention = higher trill; msg/DM = the lower chime
 #elif defined(HAS_TANMATSU)
-  tanBeep();   // I2S codec tick (same path as the volume-preview beep the user confirmed works)
+  tanBeep();   // single codec tick on these boards (no per-slot sounds)
 #endif
+  (void)slot;
 }
-// Play the distinct @-mention chime.
-static inline void uiPlayMention() {
-#if defined(HAS_TDECK_GT911)
-  tdeckPlayNotify(true);
-#elif defined(HELTEC_V4_BUZZER_PIN)
-  v4BuzzerBeep(true);
-#elif defined(HAS_TANMATSU)
-  tanBeep();   // no distinct mention chime on the Tanmatsu yet — same tick
-#endif
-}
+// Notification chimes. uiPlayNotify = generic message slot; uiPlayMention = @-mention slot.
+static inline void uiPlayNotify()  { uiPlaySlot(TOUCH_SND_MSG); }
+static inline void uiPlayMention() { uiPlaySlot(TOUCH_SND_MEN); }
 
 #if defined(HAS_TANMATSU)
 // Defined in the HAS_TANMATSU apply block far below; forward-declared so the
