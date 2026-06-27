@@ -7192,6 +7192,31 @@ static void radioSigPollSaveCb(lv_event_t* e) {
   if (g_lv.task) { char msg[40]; snprintf(msg, sizeof msg, TR("Poll every %d min"), m); g_lv.task->showAlert(msg, 1100); }
 }
 
+// Semtech LoRa time-on-air (ms) for a payload, computed from the PHY config in
+// closed form (datasheet formula — no measurement). Drives the airtime / duty-cycle
+// readout in radio settings so the user can see EU-868 compliance at a glance.
+static uint32_t loraToaMs(uint8_t sf, float bw_khz, uint8_t crDen, int payload) {
+  if (sf < 7) sf = 7;
+  if (bw_khz < 1.0f) bw_khz = 250.0f;
+  if (crDen < 5 || crDen > 8) crDen = 5;       // MeshCore cr is 5..8 == coding rate 4/5..4/8
+  const double bw   = (double)bw_khz * 1000.0;
+  const double tSym = (double)(1u << sf) / bw;
+  const int    de   = (tSym > 0.016) ? 1 : 0;  // low-data-rate optimize (SF11/12 @ 125 kHz)
+  const double tPreamble = (8 + 4.25) * tSym;  // 8-symbol preamble
+  const int    num  = 8 * payload - 4 * (int)sf + 28 + 16;   // +16 = CRC on, explicit header
+  const int    den  = 4 * ((int)sf - 2 * de);
+  double pe = ceil((double)num / (double)(den > 0 ? den : 1)) * (double)crDen;
+  if (pe < 0) pe = 0;
+  return (uint32_t)((tPreamble + (8 + pe) * tSym) * 1000.0);
+}
+
+static void telemetryAllowChangedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  g_lv.task->setTelemetryAllow(on);
+  g_lv.task->showAlert(on ? TR("Telemetry requests allowed") : TR("Telemetry requests off"), 1400);
+}
+
 static void buildRadioSettings() {
   // No "Radio" group header — it just duplicates the sub-tab button name.
   lv_obj_t* body = createSettingsModal("", SettingsModalKind::Radio);
@@ -7276,6 +7301,40 @@ static void buildRadioSettings() {
     g_radio_preset_cb_silent = true;
     lv_dropdown_set_selected(g_set_modal.radio_preset_dd, match < 0 ? 0 : static_cast<uint16_t>(match + 1));
     g_radio_preset_cb_silent = false;
+  }
+
+  // Airtime / duty-cycle readout — derived from the current PHY config so the user
+  // can see EU-868 compliance without doing the math. MeshCore stores airtime_factor
+  // = (100/duty) - 1, so duty% = 100/(af+1); paired with the time-on-air per packet.
+  {
+    const float af   = prefs ? prefs->airtime_factor : 0.0f;
+    const int   duty = (int)(100.0f / (af + 1.0f) + 0.5f);
+    const uint32_t toa = prefs ? loraToaMs(prefs->sf, prefs->bw, prefs->cr, 40) : 0;
+    lv_obj_t* rl = lv_label_create(body);
+    char rb[80];
+    snprintf(rb, sizeof rb, "\xE2\x89\x88 %d%% max duty cycle  \xC2\xB7  ~%lu ms / 40-byte packet",
+             duty, (unsigned long)toa);
+    lv_label_set_text(rl, rb);
+    lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_pos(rl, 2, y);
+    y += SC(22);
+  }
+
+  // Answer telemetry requests — surfaces MeshCore's telemetry_mode_* gate (battery +
+  // environment; location telemetry keeps its own separate setting so a simple
+  // "allow" can't leak position). Off = ignore other nodes' requests for our telemetry.
+  {
+    lv_obj_t* l = lv_label_create(body);
+    lv_label_set_text(l, TR("Answer telemetry requests"));
+    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_pos(l, 2, y + SC(4));
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_set_pos(sw, cw - SC(48), y);
+    if (prefs && prefs->telemetry_mode_base != 0) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, telemetryAllowChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += SC(40);
   }
 
   // Multi-byte routing: how many bytes of each repeater's hash this node stamps
@@ -32672,6 +32731,14 @@ void UITask::setPathHashMode(uint8_t mode) {
   if (!_node_prefs) return;
   if (mode > 2) mode = 2;
   _node_prefs->path_hash_mode = mode;
+  the_mesh.savePrefs();
+}
+void UITask::setTelemetryAllow(bool on) {
+  if (!_node_prefs) return;
+  // Battery + environment telemetry only — location telemetry keeps its own separate
+  // setting so this simple toggle can't expose position.
+  _node_prefs->telemetry_mode_base = on ? TELEM_MODE_ALLOW_ALL : TELEM_MODE_DENY;
+  _node_prefs->telemetry_mode_env  = on ? TELEM_MODE_ALLOW_ALL : TELEM_MODE_DENY;
   the_mesh.savePrefs();
 }
 

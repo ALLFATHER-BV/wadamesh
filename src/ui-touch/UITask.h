@@ -386,6 +386,7 @@ public:
   void setAdvertLocationPolicy(uint8_t policy);
   void setPathHashMode(uint8_t mode);
   void setExperimentalFlags(uint8_t multi_acks, uint8_t client_repeat, uint8_t rx_boosted);
+  void setTelemetryAllow(bool on);   // answer mesh telemetry requests (battery+env; location stays separate)
   /** Meshcomod CLI on device: `wifi on` / `wifi off`. */
   bool setWifiRadio(bool on);
   bool isTcpEnabled() const { return _serial && _serial->isTcpEnabled(); }
