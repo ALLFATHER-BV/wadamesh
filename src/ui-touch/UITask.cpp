@@ -33117,10 +33117,11 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // sounds but still hear @-mentions. Each respects the per-channel mute flags.
   {
     const bool is_mention = channel && text && textMentionsMe(text);
+    const bool is_dm = (g_last_event == UIEventType::contactMessage);   // private/direct message
     const uint8_t cmute = channel ? touchPrefsGetChannelMute(thread) : 0;
     if (!isBuzzerQuiet()) {   // master Sound switch: off = silent, overrules everything
-      if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) uiPlayMention();
-      else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          uiPlayNotify();
+      if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) uiPlaySlot(TOUCH_SND_MEN);
+      else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          uiPlaySlot(is_dm ? TOUCH_SND_DM : TOUCH_SND_MSG);
     }
   }
 #endif
