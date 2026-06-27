@@ -22,6 +22,7 @@
 #endif
 #ifdef MULTI_TRANSPORT_COMPANION
 #include <helpers/esp32/MultiTransportCompanionInterface.h>
+#include "helpers/esp32/MqttBridge.h"
 #endif
 #endif
 
@@ -2015,6 +2016,9 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
                            const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  mqtt_bridge.publishDM(from.name, from.id.pub_key, pkt->getSNR(), pkt->path_len, sender_timestamp, text);
+#endif
 }
 
 void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
@@ -2029,6 +2033,9 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
   // from.sync_since change needs to be persisted
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
   queueMessage(from, TXT_TYPE_SIGNED_PLAIN, pkt, sender_timestamp, sender_prefix, 4, text);
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  mqtt_bridge.publishDM(from.name, from.id.pub_key, pkt->getSNR(), pkt->path_len, sender_timestamp, text);
+#endif
 }
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
@@ -2073,6 +2080,16 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     frame[0] = PUSH_CODE_MSG_WAITING; // send push 'tickle'
     _serial->writeFrameToAll(frame, 1);
   }
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  {
+    const char* _ch_name = "";
+    ChannelDetails _cd{};
+    if (getChannel(channel_idx, _cd)) _ch_name = _cd.name;
+    mqtt_bridge.publishChannel(channel_idx, _ch_name, pkt->getSNR(),
+                               pkt->isRouteFlood() ? pkt->path_len : 0,
+                               timestamp, text);
+  }
+#endif
 #ifdef DISPLAY_CLASS
   // Get the channel name from the channel index
   const char *channel_name = "Unknown";
