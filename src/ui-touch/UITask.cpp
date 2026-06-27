@@ -4210,37 +4210,40 @@ static void composerAutoGrowCb(lv_event_t* e) {
 // the extras_* fallback fonts (Latin-1 + Latin-Extended-A), so they render in
 // the textarea and chat. Keys carry LV_BTNMATRIX_CTRL_NO_REPEAT (KeyboardLayouts
 // .cpp) so a hold doesn't auto-repeat — it cleanly long-presses instead.
-static const char* const kAccA[]   = {"à","á","â","ä","ã","å"};
-static const char* const kAccA_u[] = {"À","Á","Â","Ä","Ã","Å"};
-static const char* const kAccE[]   = {"è","é","ê","ë","ě"};
-static const char* const kAccE_u[] = {"È","É","Ê","Ë","Ě"};
+static const char* const kAccA[]   = {"à","á","â","ä","ã","å","ą"};
+static const char* const kAccA_u[] = {"À","Á","Â","Ä","Ã","Å","Ą"};
+static const char* const kAccE[]   = {"è","é","ê","ë","ě","ę"};
+static const char* const kAccE_u[] = {"È","É","Ê","Ë","Ě","Ę"};
 static const char* const kAccI[]   = {"ì","í","î","ï"};
 static const char* const kAccI_u[] = {"Ì","Í","Î","Ï"};
 static const char* const kAccO[]   = {"ò","ó","ô","ö","õ","ø"};
 static const char* const kAccO_u[] = {"Ò","Ó","Ô","Ö","Õ","Ø"};
 static const char* const kAccU[]   = {"ù","ú","û","ü","ů"};
 static const char* const kAccU_u[] = {"Ù","Ú","Û","Ü","Ů"};
-static const char* const kAccN[]   = {"ñ"};
-static const char* const kAccN_u[] = {"Ñ"};
-static const char* const kAccC[]   = {"ç","č"};
-static const char* const kAccC_u[] = {"Ç","Č"};
+static const char* const kAccN[]   = {"ñ","ń"};
+static const char* const kAccN_u[] = {"Ñ","Ń"};
+static const char* const kAccC[]   = {"ç","č","ć"};
+static const char* const kAccC_u[] = {"Ç","Č","Ć"};
 static const char* const kAccS[]   = {"ß","ś","š"};
 static const char* const kAccY[]   = {"ý","ÿ"};
 // Czech carons / ring — base letters that otherwise carry no Latin-1 accent.
 static const char* const kAccT[]   = {"ť"};
 static const char* const kAccT_u[] = {"Ť"};
-static const char* const kAccZ[]   = {"ž"};
-static const char* const kAccZ_u[] = {"Ž"};
+static const char* const kAccZ[]   = {"ž","ż","ź"};
+static const char* const kAccZ_u[] = {"Ž","Ż","Ź"};
 static const char* const kAccR[]   = {"ř"};
 static const char* const kAccR_u[] = {"Ř"};
+static const char* const kAccL[]   = {"ł"};
+static const char* const kAccL_u[] = {"Ł"};
+static const char* const kAccS_u[] = {"Ś","Š"};
 struct AccentSet { char key; const char* const* v; uint8_t n; };
 static const AccentSet kAccentSets[] = {
-  {'a',kAccA,6},{'A',kAccA_u,6},{'e',kAccE,5},{'E',kAccE_u,5},
+  {'a',kAccA,7},{'A',kAccA_u,7},{'e',kAccE,6},{'E',kAccE_u,6},
   {'i',kAccI,4},{'I',kAccI_u,4},{'o',kAccO,6},{'O',kAccO_u,6},
-  {'u',kAccU,5},{'U',kAccU_u,5},{'n',kAccN,1},{'N',kAccN_u,1},
-  {'c',kAccC,2},{'C',kAccC_u,2},{'s',kAccS,3},{'y',kAccY,2},
-  {'t',kAccT,1},{'T',kAccT_u,1},{'z',kAccZ,1},{'Z',kAccZ_u,1},
-  {'r',kAccR,1},{'R',kAccR_u,1},
+  {'u',kAccU,5},{'U',kAccU_u,5},{'n',kAccN,2},{'N',kAccN_u,2},
+  {'c',kAccC,3},{'C',kAccC_u,3},{'s',kAccS,3},{'S',kAccS_u,2},{'y',kAccY,2},
+  {'t',kAccT,1},{'T',kAccT_u,1},{'z',kAccZ,3},{'Z',kAccZ_u,3},
+  {'l',kAccL,1},{'L',kAccL_u,1},{'r',kAccR,1},{'R',kAccR_u,1},
 };
 static const AccentSet* accentLookup(const char* key) {
   if (!key || !key[0] || key[1]) return nullptr;   // single ASCII-char keys only
@@ -5132,6 +5135,8 @@ static const char* const k_special_items[] = {
   "\xC3\xA1","\xC3\xA9","\xC3\xAD","\xC3\xB3","\xC3\xBA","\xC3\xB1","\xC3\xBC","\xC3\xA7","\xC3\x9F",
   "\xC3\xA0","\xC3\xA8","\xC3\xAC","\xC3\xB2","\xC3\xB9","\xC3\xA2","\xC3\xAA","\xC3\xAE","\xC3\xB4","\xC3\xBB",
   "\xC3\xA4","\xC3\xAB","\xC3\xAF","\xC3\xB6","\xC3\xA3","\xC3\xB5","\xC3\xA5","\xC3\xB8","\xC3\xA6",
+  // Polish diacritics (Latin Extended-A; o-acute already listed above)
+  "\xC4\x85","\xC4\x87","\xC4\x99","\xC5\x82","\xC5\x84","\xC5\x9B","\xC5\xBA","\xC5\xBC",
 };
 static constexpr int k_special_count = (int)(sizeof(k_special_items) / sizeof(k_special_items[0]));
 
