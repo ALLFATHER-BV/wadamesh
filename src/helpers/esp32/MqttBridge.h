@@ -33,9 +33,11 @@ public:
 
     bool enabled() const { return _enabled; }
 
-    // Persist config and reconnect if needed (called from Settings UI save).
+    // Persist config (called from Settings UI save).
     static void saveConfig(const char* host, uint16_t port,
                            const char* user, const char* pwd, bool enable);
+    // Re-read config from Preferences and reconnect (call after saveConfig).
+    void reloadConfig();
 
 private:
     WiFiClient   _wc;

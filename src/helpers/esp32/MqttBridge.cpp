@@ -126,4 +126,21 @@ void MqttBridge::saveConfig(const char* host, uint16_t port,
     p.end();
 }
 
+void MqttBridge::reloadConfig() {
+    if (_mqtt.connected()) _mqtt.disconnect();
+    Preferences p;
+    if (p.begin("mqtt", true)) {
+        _enabled = p.getBool("en", false);
+        p.getString("host", _host, sizeof(_host));
+        _port = (uint16_t)p.getUInt("port", 1883);
+        p.getString("user", _user, sizeof(_user));
+        p.getString("pwd",  _pwd,  sizeof(_pwd));
+        p.end();
+    }
+    if (!_enabled || _host[0] == '\0') { _enabled = false; return; }
+    _mqtt.setServer(_host, _port);
+    _lastReconnectMs = 0;   // reconnect on next loop() tick
+    Serial.printf("[MQTT] config reloaded → %s:%u en=%d\n", _host, _port, (int)_enabled);
+}
+
 #endif // ESP32 && MULTI_TRANSPORT_COMPANION

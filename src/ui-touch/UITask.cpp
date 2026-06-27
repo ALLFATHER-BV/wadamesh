@@ -1490,6 +1490,7 @@ enum class SettingsModalKind : uint8_t {
   SystemInfo,   // Read-only system / firmware diagnostic page
   AddContact,   // Manual add-contact (pubkey + name) modal
   QuickReply,   // Edit the 6 quick-reply preset macros
+  Mqtt,         // MQTT bridge config
 };
 
 struct SettingsModalState {
@@ -1536,6 +1537,11 @@ struct SettingsModalState {
    *  the slot (so the picker shows "(empty)" and a save with text repopulates).
    *  Allocated only while the modal is open. */
   lv_obj_t* qr_tas[TOUCH_QUICK_REPLY_COUNT];
+  lv_obj_t* mqtt_en_sw;
+  lv_obj_t* mqtt_host_ta;
+  lv_obj_t* mqtt_port_ta;
+  lv_obj_t* mqtt_user_ta;
+  lv_obj_t* mqtt_pwd_ta;
 };
 static SettingsModalState g_set_modal = {};
 
@@ -3511,6 +3517,7 @@ enum {
   CAT_GENERAL,       // reboot, run setup, storage/SD, misc device prefs (was "System")
   CAT_BACKUPS,       // list/delete .json backups + factory reset
   CAT_LANGUAGE,      // UI language picker
+  CAT_MQTT,          // MQTT bridge — broker host/port/credentials
   CAT_ABOUT,         // firmware / update / system info / diagnostics
   CAT_COUNT
 };
@@ -3533,6 +3540,7 @@ static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "General",       LV_SYMBOL_SETTINGS },
   { "Backups",       LV_SYMBOL_SAVE },
   { "Language",      LV_SYMBOL_BARS },
+  { "MQTT bridge",   LV_SYMBOL_UPLOAD },
   { "About",         LV_SYMBOL_LIST },
 };
 // Which slice of the (formerly monolithic) Device settings a builder emits. One
@@ -10194,6 +10202,7 @@ static void doApplyWifi() {
 
 // Forward decl so wifiSlotSaveCb can refresh the modal after writing.
 static void buildWifiSettings();
+static void buildMqttSettings();
 
 // Saved Wi-Fi profile slot: tap to load. Fills the SSID/PWD textareas with
 // the stored creds — does NOT auto-apply, so the operator can still tweak
@@ -10881,6 +10890,186 @@ static void wifiRebuildNetworkList() {
   navMarkDirty();
 }
 #endif  // ESP32 && MULTI_TRANSPORT_COMPANION
+
+// ---- MQTT bridge settings callbacks ----------------------------------------
+
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+#include "helpers/esp32/MqttBridge.h"
+
+struct MqttBrokerPreset { const char* label; const char* host; uint16_t port; };
+static const MqttBrokerPreset kMqttPresets[] = {
+  { "Home Assistant",  "homeassistant.local",  1883 },
+  { "HiveMQ public",   "broker.hivemq.com",    1883 },
+  { "Mosquitto test",  "test.mosquitto.org",   1883 },
+  { "EMQX public",     "broker.emqx.io",       1883 },
+};
+
+static void mqttPresetCb(lv_event_t* e) {
+  const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  if (idx < 0 || idx >= (int)(sizeof(kMqttPresets)/sizeof(kMqttPresets[0]))) return;
+  if (!g_set_modal.mqtt_host_ta || !g_set_modal.mqtt_port_ta) return;
+  lv_textarea_set_text(g_set_modal.mqtt_host_ta, kMqttPresets[idx].host);
+  char portBuf[8]; snprintf(portBuf, sizeof(portBuf), "%u", kMqttPresets[idx].port);
+  lv_textarea_set_text(g_set_modal.mqtt_port_ta, portBuf);
+}
+
+static void mqttSaveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!g_set_modal.mqtt_host_ta) return;
+  const char* host = lv_textarea_get_text(g_set_modal.mqtt_host_ta);
+  const char* portStr = lv_textarea_get_text(g_set_modal.mqtt_port_ta);
+  const char* user = lv_textarea_get_text(g_set_modal.mqtt_user_ta);
+  const char* pwd  = lv_textarea_get_text(g_set_modal.mqtt_pwd_ta);
+  uint16_t port = portStr && portStr[0] ? (uint16_t)atoi(portStr) : 1883;
+  if (!port) port = 1883;
+  bool en = g_set_modal.mqtt_en_sw && lv_obj_has_state(g_set_modal.mqtt_en_sw, LV_STATE_CHECKED);
+  MqttBridge::saveConfig(host, port, user, pwd, en);
+  mqtt_bridge.reloadConfig();
+  closeSettingsModal();
+}
+#endif // ESP32 && MULTI_TRANSPORT_COMPANION
+
+static void buildMqttSettings() {
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  lv_obj_t* body = createSettingsModal("MQTT bridge", SettingsModalKind::Mqtt);
+  const lv_coord_t cw = s_settings_content_w;
+  int y = 0;
+
+  // ---- Enable toggle ----
+  lv_obj_t* en_lbl = lv_label_create(body);
+  lv_label_set_text(en_lbl, TR("Enable MQTT bridge"));
+  lv_obj_set_style_text_color(en_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(en_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(en_lbl, 2, y + 8);
+  g_set_modal.mqtt_en_sw = lv_switch_create(body);
+  lv_obj_align(g_set_modal.mqtt_en_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+  y += SC(38);
+
+  // ---- Preset broker buttons ----
+  lv_obj_t* pre_lbl = lv_label_create(body);
+  lv_label_set_text(pre_lbl, TR("Quick presets"));
+  lv_obj_set_style_text_color(pre_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(pre_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(pre_lbl, 2, y);
+  y += SC(16);
+  const int nPresets = (int)(sizeof(kMqttPresets)/sizeof(kMqttPresets[0]));
+  const lv_coord_t btn_w = (cw - (nPresets - 1) * 4) / nPresets;
+  for (int i = 0; i < nPresets; ++i) {
+    lv_obj_t* pb = lv_btn_create(body);
+    lv_obj_set_size(pb, btn_w, SC(28));
+    lv_obj_set_pos(pb, i * (btn_w + 4), y);
+    styleButton(pb);
+    lv_obj_set_style_bg_color(pb, lv_color_hex(0x1A3A5C), LV_PART_MAIN);
+    lv_obj_add_event_cb(pb, mqttPresetCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    lv_obj_t* pl = lv_label_create(pb);
+    lv_label_set_text(pl, kMqttPresets[i].label);
+    lv_obj_set_style_text_font(pl, &g_font_12, LV_PART_MAIN);
+    lv_label_set_long_mode(pl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(pl, btn_w - 4);
+    lv_obj_center(pl);
+  }
+  y += SC(34);
+
+  // ---- Broker host ----
+  lv_obj_t* host_lbl = lv_label_create(body);
+  lv_label_set_text(host_lbl, TR("Broker host / IP"));
+  lv_obj_set_style_text_color(host_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(host_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(host_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_host_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_host_ta, cw - 86, SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_host_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_host_ta, true);
+  lv_textarea_set_placeholder_text(g_set_modal.mqtt_host_ta, "192.168.1.x");
+  lv_textarea_set_max_length(g_set_modal.mqtt_host_ta, 63);
+  attachSettingsTaEvents(g_set_modal.mqtt_host_ta);
+  // Port field on the same row
+  lv_obj_t* port_lbl = lv_label_create(body);
+  lv_label_set_text(port_lbl, TR("Port"));
+  lv_obj_set_style_text_color(port_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(port_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(port_lbl, cw - 82, y - SC(16));
+  g_set_modal.mqtt_port_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_port_ta, 80, SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_port_ta, cw - 80, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_port_ta, true);
+  lv_textarea_set_placeholder_text(g_set_modal.mqtt_port_ta, "1883");
+  lv_textarea_set_max_length(g_set_modal.mqtt_port_ta, 5);
+  lv_textarea_set_accepted_chars(g_set_modal.mqtt_port_ta, "0123456789");
+  attachSettingsTaEvents(g_set_modal.mqtt_port_ta);
+  y += SC(36);
+
+  // ---- Username (optional) ----
+  lv_obj_t* user_lbl = lv_label_create(body);
+  lv_label_set_text(user_lbl, TR("Username (optional)"));
+  lv_obj_set_style_text_color(user_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(user_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(user_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_user_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_user_ta, lv_pct(100), SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_user_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_user_ta, true);
+  lv_textarea_set_placeholder_text(g_set_modal.mqtt_user_ta, TR("Leave empty if not required"));
+  lv_textarea_set_max_length(g_set_modal.mqtt_user_ta, 31);
+  attachSettingsTaEvents(g_set_modal.mqtt_user_ta);
+  y += SC(36);
+
+  // ---- Password (optional) ----
+  lv_obj_t* pwd_lbl = lv_label_create(body);
+  lv_label_set_text(pwd_lbl, TR("Password (optional)"));
+  lv_obj_set_style_text_color(pwd_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(pwd_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(pwd_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_pwd_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_pwd_ta, lv_pct(100), SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_pwd_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_pwd_ta, true);
+  lv_textarea_set_password_mode(g_set_modal.mqtt_pwd_ta, true);
+  lv_textarea_set_placeholder_text(g_set_modal.mqtt_pwd_ta, TR("Leave empty if not required"));
+  lv_textarea_set_max_length(g_set_modal.mqtt_pwd_ta, 31);
+  attachSettingsTaEvents(g_set_modal.mqtt_pwd_ta);
+  y += SC(36);
+
+  // ---- Load current config ----
+  {
+    Preferences p;
+    bool cur_en = false;
+    char cur_host[64] = {}, cur_port_s[8] = "1883", cur_user[32] = {}, cur_pwd[32] = {};
+    if (p.begin("mqtt", true)) {
+      cur_en = p.getBool("en", false);
+      p.getString("host", cur_host, sizeof(cur_host));
+      uint16_t port = (uint16_t)p.getUInt("port", 1883);
+      snprintf(cur_port_s, sizeof(cur_port_s), "%u", port);
+      p.getString("user", cur_user, sizeof(cur_user));
+      p.getString("pwd",  cur_pwd,  sizeof(cur_pwd));
+      p.end();
+    }
+    if (cur_en) lv_obj_add_state(g_set_modal.mqtt_en_sw, LV_STATE_CHECKED);
+    lv_textarea_set_text(g_set_modal.mqtt_host_ta, cur_host);
+    lv_textarea_set_text(g_set_modal.mqtt_port_ta, cur_port_s);
+    lv_textarea_set_text(g_set_modal.mqtt_user_ta, cur_user);
+    lv_textarea_set_text(g_set_modal.mqtt_pwd_ta,  cur_pwd);
+  }
+
+  // ---- Save button ----
+  lv_obj_t* b_save = lv_btn_create(body);
+  lv_obj_set_size(b_save, lv_pct(100), SC(36));
+  lv_obj_set_pos(b_save, 0, y);
+  styleButton(b_save);
+  lv_obj_add_event_cb(b_save, mqttSaveCb, LV_EVENT_CLICKED, nullptr);
+  { lv_obj_t* sl = lv_label_create(b_save);
+    lv_label_set_text(sl, LV_SYMBOL_SAVE "  Save");
+    lv_obj_center(sl); }
+  y += SC(44);
+
+  lv_obj_set_height(body, y + SC(8));
+#else
+  (void)0;   // MQTT bridge only active on ESP32 multi-transport builds
+#endif
+}
 
 static void buildWifiSettings() {
   lv_obj_t* body = createSettingsModal("", SettingsModalKind::Wifi);   // no group header — the top bar already says "Wi-Fi"
@@ -22994,6 +23183,7 @@ static void settingsCatBuild(int cat) {
     case CAT_GENERAL:      buildDeviceSettings(DSEC_GENERAL); break;
     case CAT_BACKUPS:      buildBackupsSettings(); break;
     case CAT_LANGUAGE:     buildLanguageSettings(); break;
+    case CAT_MQTT:         buildMqttSettings(); break;
     case CAT_ABOUT: {
       s_settings_inline_parent = nullptr;
       s_update_about_lbl = lv_label_create(page);   // update/firmware status (top)
