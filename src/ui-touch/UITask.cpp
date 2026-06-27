@@ -625,6 +625,7 @@ static bool tdeckPlayWavFile(const char* prefpath, int vol) {
 
 static volatile bool s_notify_playing = false;
 static volatile int  s_notify_slot    = TOUCH_SND_MSG;   // which per-event sound to play this round
+static char          s_notify_path[TOUCH_SOUND_PATH_MAXLEN] = {0};   // caller-resolved WAV path (avoid NVS in the task)
 static volatile int  s_notify_vol     = 9000;    // amplitude, scaled from the volume pref
 // The chime body: install I2S, play the notes, uninstall. ~300 ms of blocking
 // i2s_write + driver setup/teardown — run on its own throwaway task (below).
@@ -632,9 +633,9 @@ static void tdeckNotifyTaskFn(void* arg) {
   (void)arg;
   const int v = s_notify_vol;
   // Custom WAV for this slot (if set + valid) — installs/uninstalls I2S itself.
-  char path[TOUCH_SOUND_PATH_MAXLEN];
-  touchPrefsGetSoundFile(s_notify_slot, path, sizeof path);
-  bool played = (path[0] && tdeckPlayWavFile(path, v));
+  // Path was resolved on the caller thread (s_notify_path) to keep NVS access
+  // off this short-lived task.
+  bool played = (s_notify_path[0] && tdeckPlayWavFile(s_notify_path, v));
   if (!played && tdeckAudioInstall()) {         // built-in chime fallback (distinct per slot)
     if (s_notify_slot == TOUCH_SND_MEN) {        // @-mention: bright 3-note rising arpeggio
       tdeckPlayToneRaw(1318, 70,  v);            // E6
@@ -663,11 +664,23 @@ static void tdeckPlayNotifySlot(int slot) {
   if (s_notify_playing) return;           // already chiming — don't stack tasks/I2S
   s_notify_slot = slot;
   s_notify_vol = (int)touchPrefsGetSoundVolume() * 130;   // 0..100 -> 0..13000 amplitude
+  touchPrefsGetSoundFile(slot, s_notify_path, sizeof s_notify_path);   // resolve here, not in the task
   s_notify_playing = true;
   // bigger stack than the tone-only chime: WAV path uses a File handle + buffers.
   if (xTaskCreate(tdeckNotifyTaskFn, "notify", 8192, nullptr, 3, nullptr) != pdPASS) {
     s_notify_playing = false;             // couldn't spawn (low DRAM) — skip the chime
   }
+}
+// Preview an arbitrary WAV (not yet saved to a slot) on the notify task.
+static void tdeckPreviewWavFile(const char* prefpath) {
+  if (s_tile_fetch_pending > 0 || s_notify_playing) return;
+  strncpy(s_notify_path, prefpath, sizeof s_notify_path - 1);
+  s_notify_path[sizeof s_notify_path - 1] = '\0';
+  s_notify_slot = TOUCH_SND_MSG;          // if the file fails, the task plays the msg chime
+  s_notify_vol  = (int)touchPrefsGetSoundVolume() * 130;
+  s_notify_playing = true;
+  if (xTaskCreate(tdeckNotifyTaskFn, "notify", 8192, nullptr, 3, nullptr) != pdPASS)
+    s_notify_playing = false;
 }
 #endif  // HAS_TDECK_GT911
 
@@ -8658,6 +8671,13 @@ static void lockwallDisplayName(const char* path, char* out, int cap) {
   snprintf(out, cap, "%s%s", sd ? "SD: " : "", base);
 }
 static void openLockWallPickerCb(lv_event_t* e);   // defined with the picker, below
+#if defined(HAS_TDECK_GT911)
+// Per-event notification-sound picker (Settings -> Sound). Mirrors the wallpaper picker.
+static lv_obj_t* s_snd_btn_lbl[3] = { nullptr, nullptr, nullptr };
+static int  s_snd_pending_slot = TOUCH_SND_MSG;    // slot we're choosing a sound for
+static void soundDisplayName(const char* path, char* out, int cap);
+static void openSoundPickerCb(lv_event_t* e);      // defined with the chooser, below
+#endif
 static void lockColorChosenCb(lv_event_t* e);
 #endif
 
@@ -8785,6 +8805,33 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, toggleMentionSoundCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, rh + 12);
   }
+#if defined(HAS_TDECK_GT911)
+  // Per-event notification sound files. Each slot: built-in chime, or a 16-bit
+  // PCM WAV from /sounds/ (internal) or the SD card. Empty = built-in.
+  {
+    static const char* const kSndRowLbl[3] = { "Message sound", "Direct (DM) sound", "@ mention sound" };
+    for (int slot = 0; slot < 3; ++slot) {
+      y += settingsRowLabel(body, y, 0, kSndRowLbl[slot], COLOR_SUB, &g_font_12, 0) + 2;
+      lv_obj_t* b = lv_btn_create(body);
+      lv_obj_set_size(b, lv_pct(100), SC(34));
+      lv_obj_set_pos(b, 2, y);
+      styleButton(b);
+      lv_obj_add_event_cb(b, openSoundPickerCb, LV_EVENT_CLICKED, (void*)(intptr_t)slot);
+      s_snd_btn_lbl[slot] = lv_label_create(b);
+      {
+        char cur[TOUCH_SOUND_PATH_MAXLEN], disp[48];
+        touchPrefsGetSoundFile(slot, cur, sizeof cur);
+        soundDisplayName(cur, disp, sizeof disp);
+        lv_label_set_text(s_snd_btn_lbl[slot], disp);
+      }
+      lv_label_set_long_mode(s_snd_btn_lbl[slot], LV_LABEL_LONG_DOT);
+      lv_obj_set_width(s_snd_btn_lbl[slot], lv_pct(92));
+      lv_obj_set_style_text_align(s_snd_btn_lbl[slot], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+      lv_obj_center(s_snd_btn_lbl[slot]);
+      y += SC(40);
+    }
+  }
+#endif
 #if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
   // Volume with - / + step buttons (T-Deck I2S + Tanmatsu codec; the V4 piezo can't vary volume).
   {
@@ -15065,6 +15112,13 @@ static bool fmIsImage(const char* name) {
          !strcasecmp(dot, ".jpeg") || !strcasecmp(dot, ".sjpg") ||
          !strcasecmp(dot, ".bmp");
 }
+#if defined(HAS_TDECK_GT911)
+static bool fmIsAudio(const char* name) {
+  if (!name) return false;
+  const char* dot = strrchr(name, '.');
+  return dot && !strcasecmp(dot, ".wav");
+}
+#endif
 
 // Defined further down (with the map tile code); used here by the image viewer.
 static uint8_t* decodeJpegToRgb565(const uint8_t* jpeg, size_t jpeg_len,
@@ -15220,6 +15274,85 @@ static void fmSetWallpaperCb(lv_event_t* e) {
   fmImageClose();
   if (g_lv.task) g_lv.task->showAlert(TR("Lock wallpaper set"), 1300);
 }
+
+#if defined(HAS_TDECK_GT911)
+// ---- .wav -> notification-sound chooser (opened from the File Manager) ------
+static char      s_fm_snd_path[208] = {0};
+static bool      s_fm_snd_on_sd     = false;
+static lv_obj_t* s_fm_snd_root      = nullptr;
+static void fmSndClose() { if (s_fm_snd_root) { lv_obj_del(s_fm_snd_root); s_fm_snd_root = nullptr; } }
+static void fmSndCloseCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED) fmSndClose(); }
+static void fmSndBuildPref(char* pref, int cap) {
+  if (s_fm_snd_on_sd) snprintf(pref, cap, "sd:%s", s_fm_snd_path);
+  else                snprintf(pref, cap, "%s", s_fm_snd_path);
+}
+static void fmSndPlayCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_fm_snd_path[0]) return;
+  char pref[TOUCH_SOUND_PATH_MAXLEN]; fmSndBuildPref(pref, sizeof pref);
+  if (!wavIsSupported(pref)) { if (g_lv.task) g_lv.task->showAlert(TR("Unsupported WAV (need 16-bit PCM)"), 2200); return; }
+  tdeckPreviewWavFile(pref);
+}
+static void fmSndSetCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_fm_snd_path[0]) return;
+  char pref[TOUCH_SOUND_PATH_MAXLEN]; fmSndBuildPref(pref, sizeof pref);
+  if (!wavIsSupported(pref)) { if (g_lv.task) g_lv.task->showAlert(TR("Unsupported WAV (need 16-bit PCM)"), 2200); return; }
+  int slot = s_snd_pending_slot; if (slot < 0 || slot > 2) slot = TOUCH_SND_MSG;
+  touchPrefsSetSoundFile(slot, pref);
+  if (s_snd_btn_lbl[slot] && lv_obj_is_valid(s_snd_btn_lbl[slot])) {
+    char disp[48]; soundDisplayName(pref, disp, sizeof disp);
+    lv_label_set_text(s_snd_btn_lbl[slot], disp);
+  }
+  fmSndClose();
+  if (g_lv.task) g_lv.task->showAlert(TR("Notification sound set"), 1300);
+}
+static void fmOpenAudio(const char* name) {
+  if (!s_fm_fs || !name || !name[0]) return;
+  fmMarkSdIo();
+  char path[208]; fmFullPath(name, path, sizeof path);
+  strncpy(s_fm_snd_path, path, sizeof s_fm_snd_path - 1);
+  s_fm_snd_path[sizeof s_fm_snd_path - 1] = '\0';
+  s_fm_snd_on_sd = fmIsSd(s_fm_fs);
+  fmSndClose();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_fm_snd_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_fm_snd_root);
+  lv_obj_set_size(s_fm_snd_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_fm_snd_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_fm_snd_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_fm_snd_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_fm_snd_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* fn = lv_label_create(s_fm_snd_root);
+  lv_label_set_long_mode(fn, LV_LABEL_LONG_DOT);
+  lv_obj_set_pos(fn, 8, 10); lv_obj_set_width(fn, sw - 16);
+  lv_label_set_text(fn, name);
+  lv_obj_set_style_text_font(fn, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(fn, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  static const char* const kSlot[3] = { "Message", "Direct (DM)", "@ mention" };
+  lv_obj_t* sub = lv_label_create(s_fm_snd_root);
+  char subt[56]; snprintf(subt, sizeof subt, "Target: %s sound",
+                          kSlot[(s_snd_pending_slot >= 0 && s_snd_pending_slot < 3) ? s_snd_pending_slot : 0]);
+  lv_label_set_text(sub, subt);
+  lv_obj_set_pos(sub, 8, 40);
+  lv_obj_set_style_text_font(sub, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(sub, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_t* play = lv_btn_create(s_fm_snd_root);
+  lv_obj_set_size(play, sw - 16, 40); lv_obj_set_pos(play, 8, 76); styleButton(play);
+  lv_obj_add_event_cb(play, fmSndPlayCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* pl = lv_label_create(play); lv_label_set_text(pl, LV_SYMBOL_PLAY "  Play"); lv_obj_center(pl);
+  lv_obj_t* setb = lv_btn_create(s_fm_snd_root);
+  lv_obj_set_size(setb, sw - 16, 44); lv_obj_set_pos(setb, 8, 124); styleButton(setb);
+  lv_obj_set_style_bg_color(setb, lv_color_hex(0x35C9C9), LV_PART_MAIN);
+  lv_obj_add_event_cb(setb, fmSndSetCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* sl = lv_label_create(setb); lv_label_set_text(sl, LV_SYMBOL_OK "  Set as notification sound");
+  lv_obj_set_style_text_color(sl, lv_color_black(), LV_PART_MAIN); lv_obj_center(sl);
+  lv_obj_t* close = lv_btn_create(s_fm_snd_root);
+  lv_obj_set_size(close, 30, 26); lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 6); styleButton(close);
+  lv_obj_add_event_cb(close, fmSndCloseCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* cl = lv_label_create(close); lv_label_set_text(cl, LV_SYMBOL_CLOSE); tanCloseRed(cl);
+  lv_obj_set_style_text_font(cl, &g_font_12, LV_PART_MAIN); lv_obj_center(cl);
+}
+#endif  // HAS_TDECK_GT911 (.wav notification-sound chooser)
 
 static void fmOpenImage(const char* name) {
   if (!s_fm_fs || !name || !name[0]) return;
@@ -15377,6 +15510,9 @@ static void fmRowClickCb(lv_event_t* e) {
   FmRowData* rd = (FmRowData*)lv_obj_get_user_data(lv_event_get_target(e));
   if (!rd) return;
   if (rd->isdir)                fmEnterDir(rd->name);
+#if defined(HAS_TDECK_GT911)
+  else if (fmIsAudio(rd->name)) fmOpenAudio(rd->name);   // .wav -> notification-sound chooser
+#endif
   else if (fmIsImage(rd->name)) fmOpenImage(rd->name);   // images -> read-only viewer
   else                          fmOpenEditor(rd->name);  // text -> editor; long-press -> manage
 }
@@ -24333,6 +24469,78 @@ static void serviceLockscreen() {
 #if defined(HAS_TDECK_KEYBOARD)   // re-enter the keyboard block the lock screen was carved out of
 #if defined(HAS_TDECK_GT911)   // wallpaper picker is SD/SPIFFS-backed -> T-Deck only
 // ---- Lock-screen wallpaper picker (lists JPEGs in internal /lock/ + SD) ----
+// ---- Notification-sound chooser (Settings -> Sound) ------------------------
+// Tapping a slot button opens a small menu: "Choose .wav from files" (opens the
+// File Manager, exactly like the wallpaper picker; opening a .wav there offers
+// "Set as notification sound"), or "Built-in (default)" to reset to the chime.
+static void soundDisplayName(const char* path, char* out, int cap) {
+  if (!out || cap <= 0) return;
+  if (!path || !path[0]) { snprintf(out, cap, "Built-in"); return; }
+  const bool sd = !strncmp(path, "sd:", 3);
+  const char* p = sd ? path + 3 : path;
+  const char* base = strrchr(p, '/'); base = base ? base + 1 : p;
+  snprintf(out, cap, sd ? "SD: %s" : "%s", base);
+}
+static lv_obj_t* s_snd_menu = nullptr;
+static void sndMenuClose() { if (s_snd_menu) { lv_obj_del(s_snd_menu); s_snd_menu = nullptr; } }
+static void sndMenuCloseCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED) sndMenuClose(); }
+static void sndMenuBuiltinCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  int slot = s_snd_pending_slot; if (slot < 0 || slot > 2) slot = TOUCH_SND_MSG;
+  touchPrefsSetSoundFile(slot, "");
+  if (s_snd_btn_lbl[slot] && lv_obj_is_valid(s_snd_btn_lbl[slot]))
+    lv_label_set_text(s_snd_btn_lbl[slot], TR("Built-in"));
+  sndMenuClose();
+  tdeckPlayNotifySlot(slot);     // preview the built-in chime
+}
+static void sndMenuFilesCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  sndMenuClose();
+  lv_obj_t* body = openFullscreenView("Files");
+  buildFileManager(body);
+  if (g_lv.task) g_lv.task->showAlert(TR("Open a .wav, then tap 'Set as notification sound'"), 2800);
+}
+static void openSoundMenu(int slot) {
+  s_snd_pending_slot = slot;
+  sndMenuClose();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  const lv_coord_t pw = (sw * 82) / 100, ph = 168;
+  s_snd_menu = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_snd_menu);
+  lv_obj_set_size(s_snd_menu, pw, ph);
+  lv_obj_set_pos(s_snd_menu, (sw - pw) / 2, STATUSBAR_H + (sh - STATUSBAR_H - ph) / 2);
+  lv_obj_set_style_bg_color(s_snd_menu, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_snd_menu, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_snd_menu, 8, LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_snd_menu, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_snd_menu, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_clear_flag(s_snd_menu, LV_OBJ_FLAG_SCROLLABLE);
+  static const char* const kSlot[3] = { "Message", "Direct (DM)", "@ mention" };
+  lv_obj_t* title = lv_label_create(s_snd_menu);
+  char tt[40]; snprintf(tt, sizeof tt, "%s sound", kSlot[(slot >= 0 && slot < 3) ? slot : 0]);
+  lv_label_set_text(title, tt);
+  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(title, 12, 12);
+  lv_obj_t* bf = lv_btn_create(s_snd_menu);
+  lv_obj_set_size(bf, pw - 24, 40); lv_obj_set_pos(bf, 12, 44); styleButton(bf);
+  lv_obj_add_event_cb(bf, sndMenuFilesCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* lf = lv_label_create(bf); lv_label_set_text(lf, LV_SYMBOL_DIRECTORY "  Choose .wav from files"); lv_obj_center(lf);
+  lv_obj_t* bb = lv_btn_create(s_snd_menu);
+  lv_obj_set_size(bb, pw - 24, 40); lv_obj_set_pos(bb, 12, 92); styleButton(bb);
+  lv_obj_add_event_cb(bb, sndMenuBuiltinCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* lb = lv_label_create(bb); lv_label_set_text(lb, TR("Built-in (default)")); lv_obj_center(lb);
+  lv_obj_t* close = lv_btn_create(s_snd_menu);
+  lv_obj_set_size(close, 30, 26); lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 6); styleButton(close);
+  lv_obj_add_event_cb(close, sndMenuCloseCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* cl = lv_label_create(close); lv_label_set_text(cl, LV_SYMBOL_CLOSE); tanCloseRed(cl);
+  lv_obj_set_style_text_font(cl, &g_font_12, LV_PART_MAIN); lv_obj_center(cl);
+}
+static void openSoundPickerCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  openSoundMenu((int)(intptr_t)lv_event_get_user_data(e));
+}
 static lv_obj_t* s_lockwall_picker = nullptr;
 static char s_lockwall_paths[24][TOUCH_LOCK_WALLPAPER_MAXLEN];
 static int  s_lockwall_count = 0;
