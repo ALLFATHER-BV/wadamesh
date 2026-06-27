@@ -542,10 +542,12 @@ bool touchPrefsSetLockWallpaper(const char* path) {
 }
 
 static const char* soundFileKey(int slot) {
+  // Distinct from the on/off keys snd_msg/snd_dm/snd_men (those are uchar) —
+  // a uchar and a String must not share an NVS key.
   switch (slot) {
-    case TOUCH_SND_DM:  return "snd_dm";
-    case TOUCH_SND_MEN: return "snd_men";
-    default:            return "snd_msg";
+    case TOUCH_SND_DM:  return "sndf_dm";
+    case TOUCH_SND_MEN: return "sndf_men";
+    default:            return "sndf_msg";
   }
 }
 int touchPrefsGetSoundFile(int slot, char* out, int out_cap) {
@@ -1301,6 +1303,11 @@ bool touchPrefsGetSoundMentions() {
   return s_prefs.getUChar("snd_men", 1) != 0;
 }
 void touchPrefsSetSoundMentions(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_men", on ? 1 : 0); }
+bool touchPrefsGetSoundDirect() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUChar("snd_dm", 1) != 0;
+}
+void touchPrefsSetSoundDirect(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_dm", on ? 1 : 0); }
 bool touchPrefsGetDiscoveredAutoEvict() {
   if (!s_begun) touchPrefsBegin();
   return s_prefs.getUChar("dsc_evict", 1) != 0;

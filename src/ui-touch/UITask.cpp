@@ -5769,6 +5769,13 @@ static void toggleMessageSoundCb(lv_event_t* e) {
   touchPrefsSetSoundMessages(on);
   if (on) uiSoundPreview();
 }
+// Direct/DM-sound switch (own on/off + own slot sound).
+static void toggleDirectSoundCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetSoundDirect(on);
+  if (on) uiPlaySlot(TOUCH_SND_DM);
+}
 // @-mention-sound switch (distinct chime; lets you keep mentions on with messages off).
 static void toggleMentionSoundCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
@@ -8787,16 +8794,23 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, toggleBuzzerCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, rh + 12);
   }
-  // Message sounds switch (under the master).
+  // Per-event on/off switches: Message, DM, @-mention (under the master Sound).
   {
-    int rh = settingsRowLabel(body, y, 6, "Messages", COLOR_SUB, nullptr, 56);
+    int rh = settingsRowLabel(body, y, 6, "Message sound", COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (touchPrefsGetSoundMessages()) lv_obj_add_state(sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw, toggleMessageSoundCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, rh + 12);
   }
-  // @-mention sounds switch (distinct chime).
+  {
+    int rh = settingsRowLabel(body, y, 6, "DM sound", COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetSoundDirect()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, toggleDirectSoundCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, rh + 12);
+  }
   {
     int rh = settingsRowLabel(body, y, 6, "@ mention sound", COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -15280,7 +15294,7 @@ static void fmSetWallpaperCb(lv_event_t* e) {
 static char      s_fm_snd_path[208] = {0};
 static bool      s_fm_snd_on_sd     = false;
 static lv_obj_t* s_fm_snd_root      = nullptr;
-static void fmSndClose() { if (s_fm_snd_root) { lv_obj_del(s_fm_snd_root); s_fm_snd_root = nullptr; } }
+static void fmSndClose() { if (s_fm_snd_root) { lv_obj_del_async(s_fm_snd_root); s_fm_snd_root = nullptr; } }
 static void fmSndCloseCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED) fmSndClose(); }
 static void fmSndBuildPref(char* pref, int cap) {
   if (s_fm_snd_on_sd) snprintf(pref, cap, "sd:%s", s_fm_snd_path);
@@ -15298,11 +15312,9 @@ static void fmSndSetCb(lv_event_t* e) {
   if (!wavIsSupported(pref)) { if (g_lv.task) g_lv.task->showAlert(TR("Unsupported WAV (need 16-bit PCM)"), 2200); return; }
   int slot = s_snd_pending_slot; if (slot < 0 || slot > 2) slot = TOUCH_SND_MSG;
   touchPrefsSetSoundFile(slot, pref);
-  if (s_snd_btn_lbl[slot] && lv_obj_is_valid(s_snd_btn_lbl[slot])) {
-    char disp[48]; soundDisplayName(pref, disp, sizeof disp);
-    lv_label_set_text(s_snd_btn_lbl[slot], disp);
-  }
   fmSndClose();
+  closeFullscreenView();             // tear down the File Manager so closing Sound won't reveal it
+  openSettingsCategory(CAT_SOUND);   // back to Settings -> Sound, fresh (shows the new file)
   if (g_lv.task) g_lv.task->showAlert(TR("Notification sound set"), 1300);
 }
 static void fmOpenAudio(const char* name) {
@@ -33329,7 +33341,8 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     const uint8_t cmute = channel ? touchPrefsGetChannelMute(thread) : 0;
     if (!isBuzzerQuiet()) {   // master Sound switch: off = silent, overrules everything
       if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) uiPlaySlot(TOUCH_SND_MEN);
-      else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          uiPlaySlot(is_dm ? TOUCH_SND_DM : TOUCH_SND_MSG);
+      else if (is_dm) { if (touchPrefsGetSoundDirect()) uiPlaySlot(TOUCH_SND_DM); }
+      else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          uiPlaySlot(TOUCH_SND_MSG);
     }
   }
 #endif

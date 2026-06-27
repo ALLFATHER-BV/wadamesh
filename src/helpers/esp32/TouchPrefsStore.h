@@ -268,6 +268,8 @@ uint8_t touchPrefsGetDiscoveredMaxHops();      // auto-delete discovered nodes h
 void    touchPrefsSetDiscoveredMaxHops(uint8_t hops);
 bool    touchPrefsGetSoundMentions();          // default true
 void    touchPrefsSetSoundMentions(bool on);
+bool    touchPrefsGetSoundDirect();            // direct/DM chime on/off, default true
+void    touchPrefsSetSoundDirect(bool on);
 uint8_t touchPrefsGetSoundVolume();            // 0..100, default 70
 void    touchPrefsSetSoundVolume(uint8_t vol);
 
