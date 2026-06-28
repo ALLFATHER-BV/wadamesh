@@ -112,6 +112,7 @@
         #include <Update.h>   // Arduino OTA writer (native dual-OTA boards; Tanmatsu is IDF/AppFS, no OTA)
       #endif
       #include "../helpers/esp32/WifiRuntimeStore.h"   // QUOTED: this tree's copy (wifiScan*Active), not the lib's stale one
+      #include "helpers/esp32/MqttBridge.h"
     #endif
   #endif
   #if defined(HAS_TANMATSU)
@@ -9734,7 +9735,6 @@ static void buildDeviceSettings(int sec) {
   lv_label_set_text(l_reboot, TR("Reboot device"));
   lv_obj_center(l_reboot);
   y += SC(42);
-  }
 
   if (sec == DSEC_BATTERY) {   // --- Battery ---
   // ---- Battery ----
@@ -10894,8 +10894,6 @@ static void wifiRebuildNetworkList() {
 // ---- MQTT bridge settings callbacks ----------------------------------------
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-#include "helpers/esp32/MqttBridge.h"
-
 struct MqttBrokerPreset { const char* label; const char* host; uint16_t port; };
 static const MqttBrokerPreset kMqttPresets[] = {
   { "Home Assistant",  "homeassistant.local",  1883 },
