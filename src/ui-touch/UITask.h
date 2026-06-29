@@ -373,6 +373,9 @@ public:
   bool getGpsHadFix() const { return _gps_had_fix; }
   double getNodeLat() const { return _sensors ? _sensors->node_lat : 0.0; }
   double getNodeLon() const { return _sensors ? _sensors->node_lon : 0.0; }
+  /** RSSI (dBm) of the last inbound message received from the named sender.
+   *  Returns 0 if no inbound message from that sender is in the ring. */
+  int8_t getContactLastRssi(const char* name) const;
   const char* getNodeNameCstr() const { return (_node_prefs && _node_prefs->node_name[0]) ? _node_prefs->node_name : ""; }
 
   /** Settings: persist node display name (max 31 chars + NUL). */

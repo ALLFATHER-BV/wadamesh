@@ -13,11 +13,12 @@
 //   wadamesh/{node_hex}/status   — LWT: "online" on connect, "offline" on drop (retained)
 //
 // Config persisted in Preferences namespace "mqtt" (file-backed via SdNvsPrefs):
-//   en    bool    master enable (default false — opt-in)
-//   host  string  broker hostname or IP
-//   port  uint16  broker port (default 1883)
-//   user  string  username (optional)
-//   pwd   string  password (optional)
+//   en         bool    master enable (default false — opt-in)
+//   host       string  broker hostname or IP
+//   port       uint16  broker port (default 1883)
+//   user       string  username (optional)
+//   pwd        string  password (optional)
+//   topic_pfx  string  topic prefix (default "wadamesh")
 //
 // Call begin() once after the_mesh.begin() and SdNvsPrefs::useFile().
 // Call loop() every iteration of the Arduino loop().
@@ -35,18 +36,20 @@ public:
 
     // Persist config (called from Settings UI save).
     static void saveConfig(const char* host, uint16_t port,
-                           const char* user, const char* pwd, bool enable);
+                           const char* user, const char* pwd,
+                           const char* topic_prefix, bool enable);
     // Re-read config from Preferences and reconnect (call after saveConfig).
     void reloadConfig();
 
 private:
     WiFiClient   _wc;
     PubSubClient _mqtt{_wc};
-    char     _nodeHex[13] = {};   // 6-byte key → 12 hex chars + '\0'
-    bool     _enabled     = false;
-    char     _host[64]    = {};
-    char     _user[32]    = {};
-    char     _pwd[32]     = {};
+    char     _nodeHex[13]      = {};   // 6-byte key → 12 hex chars + '\0'
+    bool     _enabled          = false;
+    char     _host[64]         = {};
+    char     _user[32]         = {};
+    char     _pwd[32]          = {};
+    char     _topic_prefix[48] = {};   // MQTT topic prefix (default "wadamesh")
     uint16_t _port        = 1883;
     uint32_t _lastReconnectMs = 0;
 

@@ -101,6 +101,19 @@ bool touchPrefsSetMapShowContacts(bool on);
 bool touchPrefsGetMapShowLinks();
 bool touchPrefsSetMapShowLinks(bool on);
 
+/** Map contact type filter — bitmask: bit 0=chat/mobile, 1=repeater, 2=room, 3=sensor.
+ *  Default 0x0F (all types shown). */
+uint8_t touchPrefsGetMapTypeFilter();
+bool    touchPrefsSetMapTypeFilter(uint8_t mask);
+
+/** Show RSSI-based range rings around contact markers.  Default false. */
+bool touchPrefsGetMapShowRssiRings();
+bool touchPrefsSetMapShowRssiRings(bool on);
+
+/** Toast alert when a GPS-located contact appears or disappears.  Default false. */
+bool touchPrefsGetMapNodeAlerts();
+bool touchPrefsSetMapNodeAlerts(bool on);
+
 /** Map tile style: 0 = OpenStreetMap (default), 1 = OpenTopoMap (topographic, opt-in). */
 uint8_t touchPrefsGetMapStyle();
 bool    touchPrefsSetMapStyle(uint8_t style);

@@ -35,7 +35,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 25;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in)
+static const uint8_t  TOUCH_CFG_VER   = 26;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 map_type_filter/map_show_rssi_rings/map_node_alerts
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -95,6 +95,9 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  tb_nav;            // T-Deck trackball: 1=D-pad UI navigation (default), 0=soft cursor — v22 (trailing)
   uint8_t  scope_direct;      // 1=tag direct/login/admin floods with the default region scope (opt-in, default 0) — v23 (trailing)
   uint8_t  fem_lna;           // Heltec V4.3 high-gain FEM LNA (~17 dB): 1=on, 0=bypass (default) — v25 (trailing)
+  uint8_t  map_type_filter;   // contact type filter bitmask (0x0F = all shown): bit0=chat,1=rep,2=room,3=sensor — v26 (trailing)
+  uint8_t  map_show_rssi_rings; // show RSSI range rings on contact markers (bool) — v26 (trailing)
+  uint8_t  map_node_alerts;   // toast alert when a GPS contact appears/disappears (bool) — v26 (trailing)
 };
 
 static TouchCfg s_cfg;
@@ -178,6 +181,9 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.show_sensors_tab   = 1;     // default: show the V4 Expansion-Kit Sensors tab + Home env widget
   c.map_show_links     = 1;     // default: show self->contact link lines (PR #61)
   c.map_style          = 0;     // default: OpenStreetMap (OpenTopoMap is opt-in)
+  c.map_type_filter    = 0x0F;  // default: all contact types shown
+  c.map_show_rssi_rings = 0;    // default: rings off
+  c.map_node_alerts    = 0;     // default: alerts off
 }
 
 // Persist the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
@@ -886,6 +892,33 @@ bool touchPrefsGetMapShowLinks() {
 bool touchPrefsSetMapShowLinks(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.map_show_links = on ? 1 : 0;
+  return cfgFlush();
+}
+uint8_t touchPrefsGetMapTypeFilter() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.map_type_filter ? s_cfg.map_type_filter : 0x0F;  // 0 means unset — treat as all shown
+}
+bool touchPrefsSetMapTypeFilter(uint8_t mask) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.map_type_filter = mask ? mask : 0x0F;
+  return cfgFlush();
+}
+bool touchPrefsGetMapShowRssiRings() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.map_show_rssi_rings != 0;
+}
+bool touchPrefsSetMapShowRssiRings(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.map_show_rssi_rings = on ? 1 : 0;
+  return cfgFlush();
+}
+bool touchPrefsGetMapNodeAlerts() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.map_node_alerts != 0;
+}
+bool touchPrefsSetMapNodeAlerts(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.map_node_alerts = on ? 1 : 0;
   return cfgFlush();
 }
 uint8_t touchPrefsGetMapStyle() {

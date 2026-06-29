@@ -76,6 +76,7 @@
 #include <Utils.h>
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
+#include "TetrisGame.h"       // Apps → Tetris (self-contained game module)
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
@@ -1543,6 +1544,7 @@ struct SettingsModalState {
   lv_obj_t* mqtt_port_ta;
   lv_obj_t* mqtt_user_ta;
   lv_obj_t* mqtt_pwd_ta;
+  lv_obj_t* mqtt_topic_ta;
 };
 static SettingsModalState g_set_modal = {};
 
@@ -3932,9 +3934,14 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
   // cap-touch — so this, not SnakeGame's gestureCb, is what makes touch steering
   // actually work. swipe_x<0 == left, swipe_y<0 == up (see the control-center
   // note below for the sign convention).
-  if (SnakeGame::isOpen()) {
-    if (swipe_x != 0)      SnakeGame::steer(swipe_x < 0 ? -1 : 1, 0);
-    else if (swipe_y != 0) SnakeGame::steer(0, swipe_y < 0 ? -1 : 1);
+  if (SnakeGame::isOpen() || TetrisGame::isOpen()) {
+    if (swipe_x != 0) {
+      if (SnakeGame::isOpen()) SnakeGame::steer(swipe_x < 0 ? -1 : 1, 0);
+      else                     TetrisGame::steer(swipe_x < 0 ? -1 : 1, 0);
+    } else if (swipe_y != 0) {
+      if (SnakeGame::isOpen()) SnakeGame::steer(0, swipe_y < 0 ? -1 : 1);
+      else                     TetrisGame::steer(0, swipe_y < 0 ? -1 : 1);
+    }
     return;
   }
   // A slider was just being dragged — its horizontal drag must NOT be read as a
@@ -10919,10 +10926,11 @@ static void mqttSaveCb(lv_event_t* e) {
   const char* portStr = lv_textarea_get_text(g_set_modal.mqtt_port_ta);
   const char* user = lv_textarea_get_text(g_set_modal.mqtt_user_ta);
   const char* pwd  = lv_textarea_get_text(g_set_modal.mqtt_pwd_ta);
+  const char* pfx  = g_set_modal.mqtt_topic_ta ? lv_textarea_get_text(g_set_modal.mqtt_topic_ta) : nullptr;
   uint16_t port = portStr && portStr[0] ? (uint16_t)atoi(portStr) : 1883;
   if (!port) port = 1883;
   bool en = g_set_modal.mqtt_en_sw && lv_obj_has_state(g_set_modal.mqtt_en_sw, LV_STATE_CHECKED);
-  MqttBridge::saveConfig(host, port, user, pwd, en);
+  MqttBridge::saveConfig(host, port, user, pwd, pfx && pfx[0] ? pfx : "wadamesh", en);
   mqtt_bridge.reloadConfig();
   closeSettingsModal();
 }
@@ -11032,11 +11040,28 @@ static void buildMqttSettings() {
   attachSettingsTaEvents(g_set_modal.mqtt_pwd_ta);
   y += SC(36);
 
+  // ---- Topic prefix ----
+  lv_obj_t* topic_lbl = lv_label_create(body);
+  lv_label_set_text(topic_lbl, TR("Topic prefix"));
+  lv_obj_set_style_text_color(topic_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(topic_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(topic_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_topic_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_topic_ta, lv_pct(100), SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_topic_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_topic_ta, true);
+  lv_textarea_set_placeholder_text(g_set_modal.mqtt_topic_ta, "wadamesh");
+  lv_textarea_set_max_length(g_set_modal.mqtt_topic_ta, 47);
+  attachSettingsTaEvents(g_set_modal.mqtt_topic_ta);
+  y += SC(36);
+
   // ---- Load current config ----
   {
     Preferences p;
     bool cur_en = false;
     char cur_host[64] = {}, cur_port_s[8] = "1883", cur_user[32] = {}, cur_pwd[32] = {};
+    char cur_topic_pfx[48] = "wadamesh";
     if (p.begin("mqtt", true)) {
       cur_en = p.getBool("en", false);
       p.getString("host", cur_host, sizeof(cur_host));
@@ -11044,6 +11069,8 @@ static void buildMqttSettings() {
       snprintf(cur_port_s, sizeof(cur_port_s), "%u", port);
       p.getString("user", cur_user, sizeof(cur_user));
       p.getString("pwd",  cur_pwd,  sizeof(cur_pwd));
+      p.getString("topic_pfx", cur_topic_pfx, sizeof(cur_topic_pfx));
+      if (cur_topic_pfx[0] == '\0') strncpy(cur_topic_pfx, "wadamesh", sizeof(cur_topic_pfx) - 1);
       p.end();
     }
     if (cur_en) lv_obj_add_state(g_set_modal.mqtt_en_sw, LV_STATE_CHECKED);
@@ -11051,6 +11078,7 @@ static void buildMqttSettings() {
     lv_textarea_set_text(g_set_modal.mqtt_port_ta, cur_port_s);
     lv_textarea_set_text(g_set_modal.mqtt_user_ta, cur_user);
     lv_textarea_set_text(g_set_modal.mqtt_pwd_ta,  cur_pwd);
+    lv_textarea_set_text(g_set_modal.mqtt_topic_ta, cur_topic_pfx);
   }
 
   // ---- Save button ----
@@ -20556,6 +20584,23 @@ static bool s_map_show_tilexyz   = true;
 static bool s_map_show_contacts  = true;
 static bool s_map_direct_only    = false;  // when true, only 0-hop (directly-heard) contacts appear
 
+// Contact type filter bitmask: bit0=chat/mobile, 1=repeater, 2=room, 3=sensor (0x0F = all shown).
+static uint8_t s_map_type_filter     = 0x0F;
+// Show RSSI-estimated range rings around contact markers.
+static bool    s_map_show_rssi_rings = false;
+// Show RSSI ring objects — tracked separately so freeMapMarkers() can clean them up.
+static lv_obj_t* s_map_ring_objs[k_map_markers_max] = {};
+// Toast alert when a GPS-located contact appears or disappears.
+static bool    s_map_node_alerts     = false;
+
+// Node-alert state: contact IDs (4-byte pub_key prefix) seen on the last check.
+struct MapContactId { uint32_t hash; char name[32]; };
+static constexpr int k_map_alert_max = 64;
+static MapContactId  s_map_known_ids[k_map_alert_max];
+static int           s_map_known_n      = 0;
+static bool          s_map_known_inited = false;
+static uint32_t      s_map_alerts_last_ms = 0;
+
 // Apply the coords/tile-line visibility flags to the two corner labels. Safe to
 // call before the labels exist (null-guarded); invoked at map build + on toggle.
 static void applyMapTextVis() {
@@ -20604,6 +20649,9 @@ static void freeMapMarkers() {
   for (auto& ln : s_map_link_objs) {
     if (ln) { lv_obj_del(ln); ln = nullptr; }
   }
+  for (auto& r : s_map_ring_objs) {
+    if (r) { lv_obj_del(r); r = nullptr; }
+  }
   for (int i = 0; i < s_route_obj_n; ++i) {
     if (s_route_objs[i]) { lv_obj_del(s_route_objs[i]); s_route_objs[i] = nullptr; }
   }
@@ -20616,6 +20664,16 @@ static void openMapPicker(const int* idxs, int n);
 // (onMapMarkerClickedCb removed — marker taps are now dispatched centrally
 // from the canvas's RELEASED handler in mapCanvasEventCb. See the marker
 // scan in the tap branch below.)
+
+// Returns the type-filter bit index (0-3) for a given ADV_TYPE_* value.
+static uint8_t typeFilterBit(uint8_t adv_type) {
+  switch (adv_type) {
+    case ADV_TYPE_REPEATER: return 1;
+    case ADV_TYPE_ROOM:     return 2;
+    case ADV_TYPE_SENSOR:   return 3;
+    default:                return 0;  // ADV_TYPE_CHAT and anything unknown
+  }
+}
 
 // Plot self + contacts onto the canvas at their lat/lon. Called every time
 // tiles are re-rendered (pan, zoom, recenter, tab open) so markers stay
@@ -20661,6 +20719,7 @@ static void renderMapMarkers() {
       if (!the_mesh.getContactByIdx(i, c)) continue;
       if (c.gps_lat == 0 && c.gps_lon == 0) continue;
       if (s_map_direct_only && c.out_path_len != 0) continue;
+      if (!(s_map_type_filter & (1u << typeFilterBit(c.type)))) continue;
       double mwx, mwy;
       latLonToWorldPx((double)c.gps_lat / 1.0e6, (double)c.gps_lon / 1.0e6,
                       s_map_zoom, &mwx, &mwy);
@@ -20709,6 +20768,7 @@ static void renderMapMarkers() {
     if (!the_mesh.getContactByIdx(i, c)) continue;
     if (c.gps_lat == 0 && c.gps_lon == 0) continue;
     if (s_map_direct_only && c.out_path_len != 0) continue;
+    if (!(s_map_type_filter & (1u << typeFilterBit(c.type)))) continue;
 
     const double lat = (double)c.gps_lat / 1.0e6;
     const double lon = (double)c.gps_lon / 1.0e6;
@@ -20744,6 +20804,35 @@ static void renderMapMarkers() {
     // pan handler instead of being swallowed by the marker.
     lv_obj_clear_flag(m.obj, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(m.obj, LV_OBJ_FLAG_SCROLLABLE);
+
+    // RSSI range ring — drawn before the dot would be better, but since we use
+    // LVGL z-order (children rendered in creation order), we draw the ring here
+    // then move it behind the marker using lv_obj_move_to_index().
+    if (s_map_show_rssi_rings && g_lv.task) {
+      const int8_t rssi = g_lv.task->getContactLastRssi(c.name);
+      if (rssi < -20 && rssi > -130) {
+        // Rough free-space estimate: tx_power=20 dBm, FSPL at 1 m ≈ 31.7 dB at 915 MHz.
+        // range_m = 10^((tx - fspl_1m - rssi) / 20)
+        const double m_per_px = 156543.03 * cos(lat * M_PI / 180.0) / (double)(1u << s_map_zoom);
+        const double radius_m = pow(10.0, (20.0 - 31.7 - (double)rssi) / 20.0);
+        int rpx = (int)round(radius_m / m_per_px);
+        if (rpx < 4)   rpx = 4;
+        if (rpx > 120) rpx = 120;
+        lv_obj_t* ring = lv_obj_create(parent);
+        lv_obj_remove_style_all(ring);
+        lv_obj_set_size(ring, rpx * 2, rpx * 2);
+        lv_obj_set_pos(ring, sx - rpx, sy - rpx);
+        lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_color(ring, lv_color_hex(color), LV_PART_MAIN);
+        lv_obj_set_style_border_width(ring, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_opa(ring, LV_OPA_40, LV_PART_MAIN);
+        lv_obj_set_style_radius(ring, rpx, LV_PART_MAIN);
+        lv_obj_clear_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_move_to_index(ring, 0);   // push behind the dot
+        s_map_ring_objs[slot] = ring;
+      }
+    }
+
     ++slot;
   }
 
@@ -21166,6 +21255,41 @@ static void mapOptDirectOnlyCb(lv_event_t* e) {
   renderMapMarkers();
 }
 
+// Type filter: one callback handles all 4 bits — user_data = bit index (0-3).
+static void mapOptTypeFilterCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const uint8_t bit = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+  if (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED))
+    s_map_type_filter |=  (uint8_t)(1u << bit);
+  else
+    s_map_type_filter &= (uint8_t)~(1u << bit);
+  if (!s_map_type_filter) s_map_type_filter = 0x0F;   // guard: never hide everything
+#if defined(ESP32)
+  touchPrefsSetMapTypeFilter(s_map_type_filter);
+#endif
+  renderMapMarkers();
+}
+
+// RSSI range rings toggle.
+static void mapOptRssiRingsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_map_show_rssi_rings = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetMapShowRssiRings(s_map_show_rssi_rings);
+#endif
+  renderMapMarkers();
+}
+
+// Node appear/disappear alerts toggle.
+static void mapOptNodeAlertsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_map_node_alerts = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetMapNodeAlerts(s_map_node_alerts);
+#endif
+  if (!s_map_node_alerts) { s_map_known_inited = false; }   // reset tracking when disabled
+}
+
 static void mapZoomControlsApply();   // fwd (defined near the map build) — reposition zoom controls
 // Map zoom-control style toggle (map options popup): ON = +/- buttons, OFF = slider.
 static void mapOptZoomButtonsCb(lv_event_t* e) {
@@ -21459,6 +21583,96 @@ static void openMapOptions() {
       lv_obj_add_event_cb(sw, r.cb, LV_EVENT_VALUE_CHANGED, nullptr);
       y += 40;
     }
+  }
+
+  // Section: filter by contact type.
+  {
+    lv_obj_t* sep2 = lv_obj_create(card);
+    lv_obj_remove_style_all(sep2);
+    lv_obj_set_size(sep2, cardw - 24, 1);
+    lv_obj_set_pos(sep2, 0, y + 4);
+    lv_obj_set_style_bg_color(sep2, lv_color_hex(0x303438), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(sep2, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t* sl2 = lv_label_create(card);
+    lv_label_set_text(sl2, TR("Filter by type"));
+    lv_obj_set_style_text_color(sl2, lv_color_hex(0x8A929B), LV_PART_MAIN);
+    lv_obj_set_style_text_font(sl2, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(sl2, 2, y + 10);
+    y += 34;
+
+    struct { const char* label; uint8_t bit; } types[] = {
+      { "Mobile / chat",  0 },
+      { "Repeater",       1 },
+      { "Room",           2 },
+      { "Sensor",         3 },
+    };
+    for (auto& t : types) {
+      lv_obj_t* tl = lv_label_create(card);
+      lv_label_set_text(tl, TR(t.label));
+      lv_obj_set_style_text_color(tl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_set_style_text_font(tl, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_pos(tl, 2, y + 4);
+      lv_obj_t* tsw = lv_switch_create(card);
+      lv_obj_align(tsw, LV_ALIGN_TOP_RIGHT, 0, y);
+      if (s_map_type_filter & (1u << t.bit)) lv_obj_add_state(tsw, LV_STATE_CHECKED);
+      lv_obj_add_event_cb(tsw, mapOptTypeFilterCb, LV_EVENT_VALUE_CHANGED,
+                          (void*)(uintptr_t)t.bit);
+      y += 40;
+    }
+  }
+
+  // Section: overlays.
+  {
+    lv_obj_t* sep3 = lv_obj_create(card);
+    lv_obj_remove_style_all(sep3);
+    lv_obj_set_size(sep3, cardw - 24, 1);
+    lv_obj_set_pos(sep3, 0, y + 4);
+    lv_obj_set_style_bg_color(sep3, lv_color_hex(0x303438), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(sep3, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t* sl3 = lv_label_create(card);
+    lv_label_set_text(sl3, TR("Overlays"));
+    lv_obj_set_style_text_color(sl3, lv_color_hex(0x8A929B), LV_PART_MAIN);
+    lv_obj_set_style_text_font(sl3, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(sl3, 2, y + 10);
+    y += 34;
+
+    lv_obj_t* rl = lv_label_create(card);
+    lv_label_set_text(rl, TR("RSSI range rings"));
+    lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(rl, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_pos(rl, 2, y + 4);
+    lv_obj_t* rsw = lv_switch_create(card);
+    lv_obj_align(rsw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (s_map_show_rssi_rings) lv_obj_add_state(rsw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(rsw, mapOptRssiRingsCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += 40;
+  }
+
+  // Section: alerts.
+  {
+    lv_obj_t* sep4 = lv_obj_create(card);
+    lv_obj_remove_style_all(sep4);
+    lv_obj_set_size(sep4, cardw - 24, 1);
+    lv_obj_set_pos(sep4, 0, y + 4);
+    lv_obj_set_style_bg_color(sep4, lv_color_hex(0x303438), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(sep4, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t* sl4 = lv_label_create(card);
+    lv_label_set_text(sl4, TR("Alerts"));
+    lv_obj_set_style_text_color(sl4, lv_color_hex(0x8A929B), LV_PART_MAIN);
+    lv_obj_set_style_text_font(sl4, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(sl4, 2, y + 10);
+    y += 34;
+
+    lv_obj_t* al = lv_label_create(card);
+    lv_label_set_text(al, TR("Node appear / leave"));
+    lv_obj_set_style_text_color(al, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(al, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_pos(al, 2, y + 4);
+    lv_obj_t* asw = lv_switch_create(card);
+    lv_obj_align(asw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (s_map_node_alerts) lv_obj_add_state(asw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(asw, mapOptNodeAlertsCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += 40;
   }
 
   auto mk_row_btn = [&](const char* txt, lv_event_cb_t cb) {
@@ -22199,6 +22413,70 @@ static void mapRecenterCb(lv_event_t* e) {
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
+}
+
+// Alert tick: detect contacts appearing / disappearing. Throttled to once per 5 s.
+// Only watches contacts that have GPS coordinates — contacts without a position
+// would cause noisy false-positives whenever the contact list is rebuilt.
+static void mapAlertsTick() {
+  if (!s_map_node_alerts || !g_lv.task) return;
+  const uint32_t now_ms = millis();
+  if (s_map_known_inited && (uint32_t)(now_ms - s_map_alerts_last_ms) < 5000) return;
+  s_map_alerts_last_ms = now_ms;
+
+  // Build the current set of GPS-located contacts.
+  struct { uint32_t hash; char name[32]; } cur[k_map_alert_max];
+  int cur_n = 0;
+  const uint32_t total = the_mesh.getNumContacts();
+  for (uint32_t i = 0; i < total && cur_n < k_map_alert_max; ++i) {
+    ContactInfo c;
+    if (!the_mesh.getContactByIdx(i, c)) continue;
+    if (c.gps_lat == 0 && c.gps_lon == 0) continue;
+    uint32_t hash = 0; memcpy(&hash, c.id.pub_key, sizeof(hash));
+    cur[cur_n].hash = hash;
+    strncpy(cur[cur_n].name, c.name, 31); cur[cur_n].name[31] = '\0';
+    ++cur_n;
+  }
+
+  if (!s_map_known_inited) {
+    // Seed without alerting on the first run.
+    for (int i = 0; i < cur_n; ++i) {
+      s_map_known_ids[i].hash = cur[i].hash;
+      strncpy(s_map_known_ids[i].name, cur[i].name, 31);
+    }
+    s_map_known_n = cur_n;
+    s_map_known_inited = true;
+    return;
+  }
+
+  // New contacts (in cur but not in known).
+  for (int i = 0; i < cur_n; ++i) {
+    bool found = false;
+    for (int j = 0; j < s_map_known_n; ++j)
+      if (s_map_known_ids[j].hash == cur[i].hash) { found = true; break; }
+    if (!found) {
+      char msg[48]; snprintf(msg, sizeof(msg), "Online: %.28s", cur[i].name);
+      g_lv.task->showAlert(msg, 2500);
+    }
+  }
+  // Lost contacts (in known but not in cur).
+  for (int i = 0; i < s_map_known_n; ++i) {
+    bool found = false;
+    for (int j = 0; j < cur_n; ++j)
+      if (cur[j].hash == s_map_known_ids[i].hash) { found = true; break; }
+    if (!found) {
+      char msg[48]; snprintf(msg, sizeof(msg), "Offline: %.27s", s_map_known_ids[i].name);
+      g_lv.task->showAlert(msg, 2500);
+    }
+  }
+
+  // Update known set.
+  for (int i = 0; i < cur_n; ++i) {
+    s_map_known_ids[i].hash = cur[i].hash;
+    strncpy(s_map_known_ids[i].name, cur[i].name, 31);
+    s_map_known_ids[i].name[31] = '\0';
+  }
+  s_map_known_n = cur_n;
 }
 
 // Auto-follow: while enabled, recenter the map on self whenever the GPS position
@@ -25348,11 +25626,15 @@ static void updateTrackball(unsigned long now) {
 
   // ---- Snake game ----
   // While Snake is open the trackball steers it (no soft cursor on that page).
-  if (SnakeGame::isOpen()) {
+  if (SnakeGame::isOpen() || TetrisGame::isOpen()) {
     if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
       lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
     s_tb_click_press = false;
-    if (moved && (dx != 0 || dy != 0)) { SnakeGame::steer(dx, dy); if (g_lv.task) g_lv.task->noteUserInput(); }
+    if (moved && (dx != 0 || dy != 0)) {
+      if (SnakeGame::isOpen()) SnakeGame::steer(dx, dy);
+      else                     TetrisGame::steer(dx, dy);
+      if (g_lv.task) g_lv.task->noteUserInput();
+    }
     return;
   }
 
@@ -27945,6 +28227,7 @@ enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
   APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE,
+  APPACT_TETRIS,
 };
 
 static void closeAppDrawer() {
@@ -28192,6 +28475,7 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_ADVERT:    openAdvertModalCb(e);  return;
     case APPACT_POWER:     openPowerMenu();      return;
     case APPACT_SNAKE:     SnakeGame::launch();  return;
+    case APPACT_TETRIS:    TetrisGame::launch(); return;
 #if defined(HAS_TOUCH_UI)
     case APPACT_TERMINAL:  homeTerminalCb(e);    return;
 #endif
@@ -28286,6 +28570,24 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_set_style_bg_color(eye, lv_color_hex(0x0E1216), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(eye, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(eye, 1, LV_PART_MAIN);
+  } else if (act == APPACT_TETRIS) {
+    // Stylized tetromino icon so the tile does not depend on a missing glyph.
+    lv_obj_t* box = lv_obj_create(chip_o);
+    lv_obj_remove_style_all(box);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(box, 18, 18);
+    lv_obj_center(box);
+    static const struct { int8_t x, y; } seg[4] = { {0,6}, {6,6}, {12,6}, {6,0} };
+    for (int s = 0; s < 4; s++) {
+      lv_obj_t* cell = lv_obj_create(box);
+      lv_obj_remove_style_all(cell);
+      lv_obj_clear_flag(cell, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_size(cell, 6, 6);
+      lv_obj_set_pos(cell, seg[s].x, seg[s].y);
+      lv_obj_set_style_bg_color(cell, lv_color_hex(icon_col), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_radius(cell, 2, LV_PART_MAIN);
+    }
   } else if (icon) {
     lv_obj_t* ic = lv_label_create(chip_o);
     lv_label_set_text(ic, icon);
@@ -28499,6 +28801,7 @@ static void openAppDrawer() {
     { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
 #endif
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // snake game (icon drawn from APPACT_SNAKE, not a glyph)
+    { nullptr,             "Tetris",    APPACT_TETRIS,   0,         0x4AC7EA },      // tetris game (icon drawn from APPACT_TETRIS, not a glyph)
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
   const int n = (int)(sizeof(tiles) / sizeof(tiles[0]));
@@ -28584,7 +28887,7 @@ static void statusBarTapCb(lv_event_t* e) {
   // While Snake is up the bar is raised to the FRONT of lv_layer_top (see the
   // edge-trigger in updateGlobalStatusBar), so it stays tappable over the game.
   // Swallow the tap so it can't open the control centre over the game.
-  if (SnakeGame::isOpen()) return;
+  if (SnakeGame::isOpen() || TetrisGame::isOpen()) return;
   if (s_sb_shot_done) { s_sb_shot_done = false; return; }   // this press was a screenshot hold
   // A full-screen tool page (RF Monitor / Spectrum) is up: the bar carries its Back
   // chevron + title, so a tap goes back (closes the page) just like settings.
@@ -29085,7 +29388,7 @@ static void updateGlobalStatusBar() {
     // lv_layer_top and moved foreground, so without this the TALL bar's lower half (back
     // chevron + title) is covered by the page. Settings sheets sit on lv_scr_act so they
     // never need this.
-    const bool want_fg = SnakeGame::isOpen() || (s_apppage_title != nullptr);
+    const bool want_fg = SnakeGame::isOpen() || TetrisGame::isOpen() || (s_apppage_title != nullptr);
     if (want_fg != s_bar_fg) {
       s_bar_fg = want_fg;
       if (want_fg) lv_obj_move_foreground(g_statusbar.root);
@@ -29697,7 +30000,7 @@ static void refreshStatusLabels() {
   // Map tab: refresh the bottom info strip (self GPS + on-map count) only
   // when the tab is actually visible. Cheap, but no point doing it on every
   // tick if the user is somewhere else.
-  if (active_tab == MAP_TAB_INDEX) { mapAutoFollowTick(); refreshMapInfoLabel(); }
+  if (active_tab == MAP_TAB_INDEX) { mapAutoFollowTick(); mapAlertsTick(); refreshMapInfoLabel(); }
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   // Wi-Fi fetcher arrived a new tile — re-render the map so the freshly
   // downloaded tile appears. Only re-render if we're actually on the
@@ -33579,7 +33882,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_map_style         = touchPrefsGetMapStyle();          // 0=OpenStreetMap (default), 1=OpenTopoMap
   { const uint8_t pz = touchPrefsGetMapZoom();    // restore the last user-set map zoom
     if (pz >= k_map_zoom_min && pz <= k_map_zoom_max) s_map_zoom = pz; }
-  s_map_zoom_buttons = touchPrefsGetMapZoomButtons();   // map zoom control: slider (default) vs +/- buttons
+  s_map_zoom_buttons    = touchPrefsGetMapZoomButtons();    // map zoom control: slider (default) vs +/- buttons
+  s_map_type_filter     = touchPrefsGetMapTypeFilter();     // contact type filter (0x0F = all)
+  s_map_show_rssi_rings = touchPrefsGetMapShowRssiRings();  // RSSI range rings
+  s_map_node_alerts     = touchPrefsGetMapNodeAlerts();     // appear/disappear alerts
   s_home_is_drawer   = touchPrefsGetHomeIsDrawer();     // Home tab default: Commander (default) vs app drawer
   // Monitor RX/RAW log rings live in PSRAM (2×28×80 = 4.4 KB) so they don't sit
   // in scarce internal DRAM that Wi-Fi DMA needs. Zero-init; the push/collect
@@ -34627,6 +34933,20 @@ int UITask::getGpsSats() {
   return lp ? (int)lp->satellitesCount() : -1;
 }
 
+int8_t UITask::getContactLastRssi(const char* name) const {
+  if (!name || !name[0] || !_ui_msgs) return 0;
+  int8_t best_rssi = 0;
+  uint32_t best_ts  = 0;
+  for (int i = 0; i < _ui_msg_count; ++i) {
+    const UIMessage& m = _ui_msgs[i];
+    if (m.outgoing || m.rssi == 0) continue;
+    if (strncmp(m.sender, name, MAX_SENDER_NAME) == 0) {
+      if (m.ts > best_ts) { best_ts = m.ts; best_rssi = m.rssi; }
+    }
+  }
+  return best_rssi;
+}
+
 // Keep the node's advertised location synced to GPS once we have a fix, and
 // persist it occasionally so a fix survives reboot ("had a fix at least once").
 // Called every UITask::loop(). No-op on boards without GPS (provider == NULL).
@@ -35544,7 +35864,7 @@ void UITask::loop() {
     }
     // Also hard-lock the tab bar while Snake is open so a swipe/tap near the
     // bottom can't slip through to the app switcher (e.g. into the map).
-    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen();
+    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen() || TetrisGame::isOpen();
     if (want_lock != s_tabbar_locked && g_lv.tabview) {
       lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
       if (tab_btns) {

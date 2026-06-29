@@ -18,8 +18,10 @@ void MqttBridge::begin(const char* nodeHex) {
         _port = (uint16_t)p.getUInt("port", 1883);
         p.getString("user", _user, sizeof(_user));
         p.getString("pwd",  _pwd,  sizeof(_pwd));
+        p.getString("topic_pfx", _topic_prefix, sizeof(_topic_prefix));
         p.end();
     }
+    if (_topic_prefix[0] == '\0') strncpy(_topic_prefix, "wadamesh", sizeof(_topic_prefix) - 1);
     if (!_enabled || _host[0] == '\0') {
         _enabled = false;
         return;
@@ -36,7 +38,7 @@ bool MqttBridge::reconnect() {
 
     char clientId[32], lwtTopic[80];
     snprintf(clientId, sizeof(clientId), "wadamesh-%s", _nodeHex);
-    snprintf(lwtTopic, sizeof(lwtTopic), "wadamesh/%s/status", _nodeHex);
+    snprintf(lwtTopic, sizeof(lwtTopic), "%s/%s/status", _topic_prefix, _nodeHex);
 
     bool ok = _user[0]
         ? _mqtt.connect(clientId, _user, _pwd, lwtTopic, 0, true, "offline")
@@ -67,7 +69,7 @@ void MqttBridge::loop() {
 void MqttBridge::pub(const char* subtopic, const char* json) {
     if (!_enabled || !_mqtt.connected()) return;
     char topic[80];
-    snprintf(topic, sizeof(topic), "wadamesh/%s/%s", _nodeHex, subtopic);
+    snprintf(topic, sizeof(topic), "%s/%s/%s", _topic_prefix, _nodeHex, subtopic);
     _mqtt.publish(topic, json);
 }
 
@@ -115,7 +117,8 @@ void MqttBridge::publishChannel(int channelIdx, const char* channelName,
 }
 
 void MqttBridge::saveConfig(const char* host, uint16_t port,
-                             const char* user, const char* pwd, bool enable) {
+                             const char* user, const char* pwd,
+                             const char* topic_prefix, bool enable) {
     Preferences p;
     if (!p.begin("mqtt", false)) return;
     p.putBool("en",    enable);
@@ -123,6 +126,7 @@ void MqttBridge::saveConfig(const char* host, uint16_t port,
     p.putUInt("port",   port);
     p.putString("user", user);
     p.putString("pwd",  pwd);
+    p.putString("topic_pfx", (topic_prefix && topic_prefix[0]) ? topic_prefix : "wadamesh");
     p.end();
 }
 
@@ -135,8 +139,10 @@ void MqttBridge::reloadConfig() {
         _port = (uint16_t)p.getUInt("port", 1883);
         p.getString("user", _user, sizeof(_user));
         p.getString("pwd",  _pwd,  sizeof(_pwd));
+        p.getString("topic_pfx", _topic_prefix, sizeof(_topic_prefix));
         p.end();
     }
+    if (_topic_prefix[0] == '\0') strncpy(_topic_prefix, "wadamesh", sizeof(_topic_prefix) - 1);
     if (!_enabled || _host[0] == '\0') { _enabled = false; return; }
     _mqtt.setServer(_host, _port);
     _lastReconnectMs = 0;   // reconnect on next loop() tick
