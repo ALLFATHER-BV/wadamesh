@@ -9735,6 +9735,7 @@ static void buildDeviceSettings(int sec) {
   lv_label_set_text(l_reboot, TR("Reboot device"));
   lv_obj_center(l_reboot);
   y += SC(42);
+  }
 
   if (sec == DSEC_BATTERY) {   // --- Battery ---
   // ---- Battery ----
@@ -22057,6 +22058,12 @@ static bool mapZoomReachable(uint8_t z) {
   return false;
 }
 #endif
+// Sync the slider thumb + zoom label to s_map_zoom (called after any zoom step change).
+static void mapSyncSliderIfOpen() {
+  if (!s_map_zoom_slider || lv_obj_has_flag(s_map_zoom_slider, LV_OBJ_FLAG_HIDDEN)) return;
+  lv_slider_set_value(s_map_zoom_slider, s_map_zoom, LV_ANIM_OFF);
+  if (s_map_zoom_val) lv_label_set_text_fmt(s_map_zoom_val, "zoom %d", (int)s_map_zoom);
+}
 static void mapZoomInCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   if (s_map_zoom >= k_map_zoom_max) return;
@@ -22079,6 +22086,7 @@ static void mapZoomInCb(lv_event_t* e) {
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
+  mapSyncSliderIfOpen();
 }
 static void mapZoomOutCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -22103,6 +22111,7 @@ static void mapZoomOutCb(lv_event_t* e) {
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
+  mapSyncSliderIfOpen();
 }
 // Zoom slider overlay. The zoom button toggles it; dragging updates the live
 // readout, and releasing applies + persists the chosen level.
@@ -22137,9 +22146,18 @@ static void mapZoomToggleCb(lv_event_t* e) {
       lv_obj_clear_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
       lv_obj_move_foreground(s_map_zoom_val);
     }
+    // Show the step buttons that flank the zoom label (slider mode only)
+    if (!s_map_zoom_buttons) {
+      if (s_map_btn_zoomin)  { lv_obj_clear_flag(s_map_btn_zoomin,  LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(s_map_btn_zoomin); }
+      if (s_map_btn_zoomout) { lv_obj_clear_flag(s_map_btn_zoomout, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(s_map_btn_zoomout); }
+    }
   } else {
     lv_obj_add_flag(s_map_zoom_slider, LV_OBJ_FLAG_HIDDEN);
-    if (s_map_zoom_val) lv_obj_add_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
+    if (s_map_zoom_val)    lv_obj_add_flag(s_map_zoom_val,    LV_OBJ_FLAG_HIDDEN);
+    if (!s_map_zoom_buttons) {
+      if (s_map_btn_zoomin)  lv_obj_add_flag(s_map_btn_zoomin,  LV_OBJ_FLAG_HIDDEN);
+      if (s_map_btn_zoomout) lv_obj_add_flag(s_map_btn_zoomout, LV_OBJ_FLAG_HIDDEN);
+    }
   }
 }
 // Position + show/hide the map zoom controls per s_map_zoom_buttons. The right-edge
@@ -22160,8 +22178,14 @@ static void mapZoomControlsApply() {
     if (s_map_zoom_val)    lv_obj_add_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
   } else {
     show(s_map_btn_zoomtoggle, y); y += H;
+    // Step buttons: pre-positioned flanking the zoom label above the slider.
+    // Hidden here; mapZoomToggleCb shows/hides them with the slider overlay.
     hide(s_map_btn_zoomin);
     hide(s_map_btn_zoomout);
+    if (s_map_btn_zoomin && s_map_zoom_slider)
+      lv_obj_align_to(s_map_btn_zoomin,  s_map_zoom_slider, LV_ALIGN_OUT_TOP_MID,  55, -6);
+    if (s_map_btn_zoomout && s_map_zoom_slider)
+      lv_obj_align_to(s_map_btn_zoomout, s_map_zoom_slider, LV_ALIGN_OUT_TOP_MID, -55, -6);
   }
   show(s_map_btn_recenter, y); y += H;
   show(s_map_btn_contacts, y); y += H;
