@@ -66,6 +66,7 @@ static uint32_t _atoi(const char* sp) {
 #ifdef ESP32
   #ifdef MULTI_TRANSPORT_COMPANION
     #include <helpers/esp32/MultiTransportCompanionInterface.h>
+    #include "helpers/esp32/MqttBridge.h"
     MultiTransportCompanionInterface serial_interface;
     #ifndef TCP_PORT
       #define TCP_PORT 5000
@@ -410,6 +411,14 @@ void setup() {
   );
   Serial.println("[BOOT] mesh ok");
 
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  {
+    char nodeHex[13] = {};
+    for (int i = 0; i < 6; ++i) snprintf(nodeHex + i * 2, 3, "%02x", the_mesh.self_id.pub_key[i]);
+    mqtt_bridge.begin(nodeHex);
+  }
+#endif
+
 #if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
   wifiConfigBegin();
   Serial.println("[BOOT] wifiConfig ok");
@@ -688,6 +697,9 @@ void loop() {
   if (!spectrumOwnsRadio())
 #endif
   the_mesh.loop();
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  mqtt_bridge.loop();
+#endif
 #if defined(GPS_BUF_DEBUG)
   // Bench diagnostic (build with -DGPS_BUF_DEBUG only; absent in releases): peak GPS UART
   // backlog accumulated between sensors.loop() drains. A peak above the old 256-byte default

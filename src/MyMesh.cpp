@@ -22,6 +22,7 @@
 #endif
 #ifdef MULTI_TRANSPORT_COMPANION
 #include <helpers/esp32/MultiTransportCompanionInterface.h>
+#include "helpers/esp32/MqttBridge.h"
 #endif
 #endif
 
@@ -1365,22 +1366,32 @@ static inline bool isMsgFloodType(uint8_t t) {
 }
 
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
-  // Live signal for the top-bar icon: SNR of whatever we just heard, with a
-  // timestamp so the UI can dim the icon when the mesh has gone quiet.
-  _ui_sig_snr_q4 = (int8_t)(snr * 4.0f);
-  _ui_sig_rssi   = (int8_t)rssi;
-  _ui_sig_ms     = millis();
-  // Recent-RX ring for the Monitor app (see UiRxRec): parse the minimal header
-  // (type / route / hops) and push newest-first. Header byte layout is
+  const int8_t   snr_q4 = (int8_t)(snr * 4.0f);
+  const uint32_t now_ms = millis();
+  // Parse route + path length (hop count). Header byte layout is
   //   [version:2][payload_type:4][route_type:2]
   // with 4 transport-code bytes following iff route is a TRANSPORT_* one; the
-  // next byte's low 6 bits are the path length (hop count).
+  // next byte's low 6 bits are the path length. hops == 0 = heard DIRECTLY.
+  uint8_t rt = 0, hops = 0;
   if (len > 0) {
-    const uint8_t rt = raw[0] & 0x03;
-    const bool    xp = (rt == ROUTE_TYPE_TRANSPORT_FLOOD || rt == ROUTE_TYPE_TRANSPORT_DIRECT);
-    const int     ps = 1 + (xp ? 4 : 0);
-    const uint8_t hops = (ps < len) ? (uint8_t)(raw[ps] & 0x3F) : 0;
-    uiRxLogPush(_ui_sig_ms, (int8_t)rssi, _ui_sig_snr_q4,
+    rt = raw[0] & 0x03;
+    const bool xp = (rt == ROUTE_TYPE_TRANSPORT_FLOOD || rt == ROUTE_TYPE_TRANSPORT_DIRECT);
+    const int  ps = 1 + (xp ? 4 : 0);
+    hops = (ps < len) ? (uint8_t)(raw[ps] & 0x3F) : 0;
+  }
+  // Live signal for the top-bar icon: ONLY from packets heard DIRECTLY (0-hop), so
+  // the reading reflects a real direct-neighbour RF link, not the SNR of a repeater
+  // relaying multi-hop traffic. The signal probe sends a zero-hop advert (it never
+  // floods), so this is fed passively by directly-heard neighbours.
+  if (len > 0 && hops == 0) {
+    _ui_sig_snr_q4 = snr_q4;
+    _ui_sig_rssi   = (int8_t)rssi;
+    _ui_sig_ms     = now_ms;
+  }
+  // Recent-RX ring for the Monitor app (see UiRxRec): log THIS packet's actual
+  // SNR/RSSI regardless of hop count, newest-first.
+  if (len > 0) {
+    uiRxLogPush(now_ms, (int8_t)rssi, snr_q4,
                 (uint8_t)((raw[0] >> 2) & 0x0F), rt, hops,
                 (uint8_t)(len > 255 ? 255 : len));
   }
@@ -2015,6 +2026,9 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
                            const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  mqtt_bridge.publishDM(from.name, from.id.pub_key, pkt->getSNR(), pkt->path_len, sender_timestamp, text);
+#endif
 }
 
 void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
@@ -2029,6 +2043,9 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
   // from.sync_since change needs to be persisted
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
   queueMessage(from, TXT_TYPE_SIGNED_PLAIN, pkt, sender_timestamp, sender_prefix, 4, text);
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  mqtt_bridge.publishDM(from.name, from.id.pub_key, pkt->getSNR(), pkt->path_len, sender_timestamp, text);
+#endif
 }
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
@@ -2073,6 +2090,16 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     frame[0] = PUSH_CODE_MSG_WAITING; // send push 'tickle'
     _serial->writeFrameToAll(frame, 1);
   }
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  {
+    const char* _ch_name = "";
+    ChannelDetails _cd{};
+    if (getChannel(channel_idx, _cd)) _ch_name = _cd.name;
+    mqtt_bridge.publishChannel(channel_idx, _ch_name, pkt->getSNR(),
+                               pkt->isRouteFlood() ? pkt->path_len : 0,
+                               timestamp, text);
+  }
+#endif
 #ifdef DISPLAY_CLASS
   // Get the channel name from the channel index
   const char *channel_name = "Unknown";

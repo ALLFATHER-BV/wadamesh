@@ -143,6 +143,24 @@ bool    touchPrefsSetScopeDirect(bool on);
 bool    touchPrefsGetFemLna();
 bool    touchPrefsSetFemLna(bool on);
 
+/* New-message notify flash (T-Deck): briefly light the keyboard backlight + wake the screen when a
+ * message arrives, like the Tanmatsu envelope LED. Opt-in (default off). */
+bool    touchPrefsGetMsgFlash();
+bool    touchPrefsSetMsgFlash(bool on);
+
+/* Periodic self-advert intervals (the standard MeshCore flood/local advert, on a timer). 0 = off.
+ * Flood in hours; local zero-hop in minutes (0 or 60-240). Scheduled in UITask::loop via sendAdvert. */
+uint16_t touchPrefsGetFloodAdvHrs();
+bool     touchPrefsSetFloodAdvHrs(uint16_t hrs);
+uint16_t touchPrefsGetLocalAdvMin();
+bool     touchPrefsSetLocalAdvMin(uint16_t mins);
+
+/* OTA update channel: opt-in to test/beta firmware. When on, the on-device update
+ * check AND the Install-update download both point at the beta channel (releases/BETA)
+ * instead of the stable channel (releases/TOUCH). Default off (stable). */
+bool    touchPrefsGetBetaUpdates();
+bool    touchPrefsSetBetaUpdates(bool on);
+
 /* Keyboard-nav tab hotkeys: the ASCII key that jumps to each main tab while
  * keyboard navigation is on. `tab` is the tab index 0..4 = chat / contacts / home
  * / map / settings. Defaults E/R/T/U/I. Programmable in Settings → Keyboard. */

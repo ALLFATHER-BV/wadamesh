@@ -35,7 +35,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 25;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in)
+static const uint8_t  TOUCH_CFG_VER   = 28;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install)
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -95,6 +95,10 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  tb_nav;            // T-Deck trackball: 1=D-pad UI navigation (default), 0=soft cursor — v22 (trailing)
   uint8_t  scope_direct;      // 1=tag direct/login/admin floods with the default region scope (opt-in, default 0) — v23 (trailing)
   uint8_t  fem_lna;           // Heltec V4.3 high-gain FEM LNA (~17 dB): 1=on, 0=bypass (default) — v25 (trailing)
+  uint8_t  msg_flash;         // flash keyboard backlight + wake screen on a new message (bool) — v26 (trailing)
+  uint8_t  flood_adv_hrs;     // periodic flood self-advert interval in hours (0 = off) — v27 (trailing)
+  uint16_t local_adv_min;     // periodic zero-hop self-advert interval in minutes (0 = off) — v27 (trailing)
+  uint8_t  beta_updates;      // opt-in to test/beta firmware on the OTA check + install (bool) — v28 (trailing)
 };
 
 static TouchCfg s_cfg;
@@ -160,6 +164,10 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.tb_nav            = 0;      // T-Deck trackball: soft-cursor by default. D-pad UI nav is EXPERIMENTAL (opt-in)
   c.scope_direct      = 0;      // OFF: direct/login floods stay unscoped (cross-region safe). Opt-in per issue #64.
   c.fem_lna           = 0;      // OFF: V4.3 FEM LNA bypassed (matches the hardware default). Opt-in high-gain RX.
+  c.msg_flash         = 0;      // OFF: opt-in new-message keyboard/screen flash
+  c.flood_adv_hrs     = 0;      // OFF: no periodic flood self-advert (advertise manually)
+  c.local_adv_min     = 0;      // OFF: no periodic zero-hop self-advert
+  c.beta_updates      = 0;      // OFF: stable update channel (opt-in to beta/test firmware)
   c.sleep_idle        = 0;      // default: idle light-sleep OFF
   { const char* d = "ertui"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // default tab hotkeys E/R/T/U/I
   c.map_zoom_buttons  = 0;      // default: map zoom = slider
@@ -235,6 +243,9 @@ static void cfgLoadOrMigrate() {
         if (s_cfg.ver < 24) s_cfg.tb_nav = 0;
         // v25: new trailing field — V4.3 FEM LNA OFF on existing installs (matches hardware default).
         if (s_cfg.ver < 25) s_cfg.fem_lna = 0;
+        if (s_cfg.ver < 26) s_cfg.msg_flash = 0;
+        if (s_cfg.ver < 27) { s_cfg.flood_adv_hrs = 0; s_cfg.local_adv_min = 0; }
+        if (s_cfg.ver < 28) s_cfg.beta_updates = 0;
         s_cfg.ver = TOUCH_CFG_VER;
         s_cfg.magic = TOUCH_CFG_MAGIC;
         cfgFlush();                // rewrite with new fields defaulted-in
@@ -953,6 +964,48 @@ bool touchPrefsGetFemLna() {
 bool touchPrefsSetFemLna(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.fem_lna = on ? 1 : 0;
+  return cfgFlush();
+}
+
+bool touchPrefsGetMsgFlash() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.msg_flash != 0;
+}
+bool touchPrefsSetMsgFlash(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.msg_flash = on ? 1 : 0;
+  return cfgFlush();
+}
+
+// Periodic self-advert intervals (0 = off). Validation mirrors MeshCore: flood in hours (cap 168);
+// local zero-hop in minutes, 0 or 60-240 (MeshCore's MIN_LOCAL_ADVERT_INTERVAL is 60).
+uint16_t touchPrefsGetFloodAdvHrs() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.flood_adv_hrs;
+}
+bool touchPrefsSetFloodAdvHrs(uint16_t hrs) {
+  if (!s_begun) touchPrefsBegin();
+  if (hrs > 168) hrs = 168;
+  s_cfg.flood_adv_hrs = (uint8_t)hrs;
+  return cfgFlush();
+}
+uint16_t touchPrefsGetLocalAdvMin() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.local_adv_min;
+}
+bool touchPrefsSetLocalAdvMin(uint16_t mins) {
+  if (!s_begun) touchPrefsBegin();
+  if (mins != 0) { if (mins < 60) mins = 60; if (mins > 240) mins = 240; }
+  s_cfg.local_adv_min = mins;
+  return cfgFlush();
+}
+bool touchPrefsGetBetaUpdates() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.beta_updates != 0;
+}
+bool touchPrefsSetBetaUpdates(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.beta_updates = on ? 1 : 0;
   return cfgFlush();
 }
 

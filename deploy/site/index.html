@@ -225,9 +225,9 @@
   <a class="fab" href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener" aria-label="Report a bug on GitHub" title="Report a bug">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="14" x="8" y="6" rx="4"/><path d="m19 7-3 2"/><path d="m5 7 3 2"/><path d="m19 19-3-2"/><path d="m5 19 3-2"/><path d="M20 13h-4"/><path d="M4 13h4"/><path d="m10 4 1 2"/><path d="m14 4-1 2"/></svg>
   </a>
-  <button class="fab" id="docsBtn" type="button" aria-label="Documentation" title="Documentation">
+  <a class="fab" id="docsBtn" href="docs.html" aria-label="Documentation" title="Documentation">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
-  </button>
+  </a>
   <a class="fab" href="https://t413.com/p/projects/MapTileDl/" target="_blank" rel="noopener" aria-label="Map tile downloader" title="Map tile downloader">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>
   </a>
@@ -317,6 +317,11 @@
       <button class="back" data-back>← choose a different path</button>
       <div class="guide-head"><h3>Standalone install</h3></div>
       <p class="p">Plug the device in over USB and flash it right here. Works in <b>Chrome</b> or <b>Edge</b> on desktop.</p>
+      <div class="chtoggle" role="group" aria-label="Release channel" style="display:inline-flex;margin:14px 0 0;border:1px solid var(--line);border-radius:10px;overflow:hidden">
+        <button type="button" data-wm-ch="stable" style="font:inherit;font-size:.85rem;font-weight:600;padding:7px 16px;border:0;background:#fff;color:var(--mut);cursor:pointer">Stable</button>
+        <button type="button" data-wm-ch="beta" style="font:inherit;font-size:.85rem;font-weight:600;padding:7px 16px;border:0;border-left:1px solid var(--line);background:#fff;color:var(--mut);cursor:pointer">Beta · testing</button>
+      </div>
+      <p data-wm-betahint hidden style="margin:8px auto 0;font-size:.84rem;color:#b4631a;max-width:560px">Beta builds are newer and less tested — for trying things early and reporting bugs. On a T-Deck under Launcher you download the .bin and side-load it.</p>
       <div data-whatsnew hidden style="margin:18px auto 0;max-width:560px;background:rgba(21,182,166,.07);border:1px solid rgba(21,182,166,.28);border-radius:12px;padding:13px 16px;text-align:left">
         <div style="font-weight:600">What's new in <span data-wn-tag style="color:var(--teal)">the latest build</span></div>
         <ul data-wn-notes style="margin:7px 0 0;padding-left:18px;font-size:.9rem;color:var(--mut);line-height:1.55"></ul>
@@ -359,7 +364,7 @@
       </div>
       <div class="boards" style="grid-template-columns:1fr; max-width:380px">
         <div class="board"><h4>LilyGo T-Deck / Plus</h4><p>app image (no bootloader)</p>
-          <a class="dl" href="https://firmware.wadamesh.com/latest/wadamesh-tdeck.bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</a></div>
+          <a class="dl" id="dl-tdeck" href="https://firmware.wadamesh.com/latest/wadamesh-tdeck.bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</a></div>
       </div>
       <p class="hint">New to Launcher? It's the easiest way to try WADAMESH without giving up your other firmware — and you can fully switch to Standalone any time.</p>
     </div>
@@ -477,18 +482,44 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
   // Live release version + "what's new" — read from the firmware host so the
   // flasher always reflects the current build (the release pipeline updates
   // version.json; no site redeploy needed per release).
-  fetch('https://firmware.wadamesh.com/latest/version.json', {cache:'no-store'})
-    .then(r => r.ok ? r.json() : null)
-    .then(v => {
-      if (!v || !v.tag) return;
-      document.querySelectorAll('[data-wn-tag]').forEach(e => e.textContent = v.tag);
-      const notes = Array.isArray(v.notes) ? v.notes : [];
-      document.querySelectorAll('[data-wn-notes]').forEach(ul => {
-        ul.innerHTML = '';
-        notes.forEach(n => { const li = document.createElement('li'); li.textContent = n; ul.appendChild(li); });
-      });
-      if (notes.length) document.querySelectorAll('[data-whatsnew]').forEach(b => b.hidden = false);
-    }).catch(()=>{});
+  // Release channel (Stable default / Beta testing). The toggle swaps the feed dir
+  // on the firmware host — latest/ (stable) <-> latest-beta/ (beta) — and the install
+  // manifests, "what's new", the Launcher .bin link and the version picker follow.
+  const WM = (window.WM = { feed:'latest', arch:'TOUCH' });
+  const WM_MAN = { heltec:'manifest-heltec-v4-tft.json', tdeck:'manifest-tdeck.json' };
+  window.wmManifest = board => 'https://firmware.wadamesh.com/' + WM.feed + '/' + WM_MAN[board];
+  function wmWhatsNew(){
+    const wn = document.querySelectorAll('[data-whatsnew]');
+    fetch('https://firmware.wadamesh.com/' + WM.feed + '/version.json', {cache:'no-store'})
+      .then(r => r.ok ? r.json() : null)
+      .then(v => {
+        if (!v || !v.tag) { wn.forEach(b => b.hidden = true); return; }
+        document.querySelectorAll('[data-wn-tag]').forEach(e => e.textContent = v.tag);
+        const notes = Array.isArray(v.notes) ? v.notes : [];
+        document.querySelectorAll('[data-wn-notes]').forEach(ul => {
+          ul.innerHTML = '';
+          notes.forEach(n => { const li = document.createElement('li'); li.textContent = n; ul.appendChild(li); });
+        });
+        wn.forEach(b => b.hidden = !notes.length);
+      }).catch(() => { wn.forEach(b => b.hidden = true); });
+  }
+  window.wmSetChannel = function(ch){
+    WM.feed = ch === 'beta' ? 'latest-beta' : 'latest';
+    WM.arch = ch === 'beta' ? 'BETA' : 'TOUCH';
+    const bH = document.getElementById('inst-heltec'), bT = document.getElementById('inst-tdeck');
+    if (bH) bH.setAttribute('manifest', wmManifest('heltec'));
+    if (bT) bT.setAttribute('manifest', wmManifest('tdeck'));
+    const dl = document.getElementById('dl-tdeck');
+    if (dl) dl.href = 'https://firmware.wadamesh.com/' + WM.feed + '/wadamesh-tdeck.bin';
+    document.querySelectorAll('[data-wm-ch]').forEach(b => { const on = b.getAttribute('data-wm-ch') === ch;
+      b.style.background = on ? 'var(--teal)' : '#fff'; b.style.color = on ? '#fff' : 'var(--mut)'; });
+    document.querySelectorAll('[data-wm-betahint]').forEach(e => e.hidden = ch !== 'beta');
+    const vs = document.getElementById('verSel');
+    if (vs && vs.options.length) { vs.selectedIndex = 0; vs.dispatchEvent(new Event('change')); }
+    wmWhatsNew();
+  };
+  document.querySelectorAll('[data-wm-ch]').forEach(b => b.addEventListener('click', () => wmSetChannel(b.getAttribute('data-wm-ch'))));
+  wmSetChannel('stable');
 
   // ---- community videos — add an entry here to add a video ----
   const VIDEOS = [
@@ -521,8 +552,7 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
 
   // ---- toast + docs placeholder ----
   function toast(msg){ const t = document.getElementById('toast'); if (!t) return; t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2400); }
-  const docsBtn = document.getElementById('docsBtn');
-  if (docsBtn) docsBtn.addEventListener('click', () => toast('Documentation — coming soon!'));
+  // The documentation button is a plain link to docs.html (no handler needed).
 
   // ---- standalone: install a previous version (latest 4 betas + release notes) ----
   (function(){
@@ -530,7 +560,7 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
     const wrap = sel.closest('.verpick');
     const notesEl = document.getElementById('verNotes'), activeEl = document.getElementById('verActive');
     const btnH = document.getElementById('inst-heltec'), btnT = document.getElementById('inst-tdeck');
-    const latestH = btnH && btnH.getAttribute('manifest'), latestT = btnT && btnT.getAttribute('manifest');
+    const latestH = () => window.wmManifest('heltec'), latestT = () => window.wmManifest('tdeck');
     const num = t => parseInt((String(t).match(/beta_(\d+)/) || [])[1] || '-1', 10);
     let notes = {};
     const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -546,10 +576,10 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
     function showNotes(tag){ notesEl.innerHTML = notes[tag] ? md(notes[tag])
       : '<p>Release notes on <a href="https://github.com/ALLFATHER-BV/wadamesh/releases/tag/'+tag+'" target="_blank" rel="noopener">GitHub</a>.</p>'; }
     function blobManifest(tag, board){ const m = { name:'wadamesh '+tag, version:tag, new_install_prompt_erase:true,
-      builds:[{ chipFamily:'ESP32-S3', parts:[{ path:'https://firmware.wadamesh.com/releases/TOUCH/'+tag+'/wadamesh-'+board+'-merged.bin', offset:0 }] }] };
+      builds:[{ chipFamily:'ESP32-S3', parts:[{ path:'https://firmware.wadamesh.com/releases/'+((window.WM&&window.WM.arch)||'TOUCH')+'/'+tag+'/wadamesh-'+board+'-merged.bin', offset:0 }] }] };
       return URL.createObjectURL(new Blob([JSON.stringify(m)], {type:'application/json'})); }
     function apply(){ const tag = sel.value, isLatest = sel.selectedIndex === 0;
-      if (isLatest){ if(btnH&&latestH) btnH.setAttribute('manifest', latestH); if(btnT&&latestT) btnT.setAttribute('manifest', latestT); activeEl.hidden = true; }
+      if (isLatest){ if(btnH) btnH.setAttribute('manifest', latestH()); if(btnT) btnT.setAttribute('manifest', latestT()); activeEl.hidden = true; }
       else { if(btnH) btnH.setAttribute('manifest', blobManifest(tag,'heltec-v4-tft')); if(btnT) btnT.setAttribute('manifest', blobManifest(tag,'tdeck'));
         activeEl.hidden = false; activeEl.innerHTML = 'The <b>Install</b> buttons above now flash <b>'+tag+'</b>.'; }
       showNotes(tag); }

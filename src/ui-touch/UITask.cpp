@@ -112,6 +112,7 @@
         #include <Update.h>   // Arduino OTA writer (native dual-OTA boards; Tanmatsu is IDF/AppFS, no OTA)
       #endif
       #include "../helpers/esp32/WifiRuntimeStore.h"   // QUOTED: this tree's copy (wifiScan*Active), not the lib's stale one
+      #include "helpers/esp32/MqttBridge.h"
     #endif
   #endif
   #if defined(HAS_TANMATSU)
@@ -1490,6 +1491,7 @@ enum class SettingsModalKind : uint8_t {
   SystemInfo,   // Read-only system / firmware diagnostic page
   AddContact,   // Manual add-contact (pubkey + name) modal
   QuickReply,   // Edit the 6 quick-reply preset macros
+  Mqtt,         // MQTT bridge config
 };
 
 struct SettingsModalState {
@@ -1536,6 +1538,15 @@ struct SettingsModalState {
    *  the slot (so the picker shows "(empty)" and a save with text repopulates).
    *  Allocated only while the modal is open. */
   lv_obj_t* qr_tas[TOUCH_QUICK_REPLY_COUNT];
+  lv_obj_t* mqtt_en_sw;
+  lv_obj_t* mqtt_host_ta;
+  lv_obj_t* mqtt_port_ta;
+  lv_obj_t* mqtt_user_ta;
+  lv_obj_t* mqtt_pwd_ta;
+  lv_obj_t* mqtt_ch_sw;
+  lv_obj_t* mqtt_dm_sw;
+  lv_obj_t* mqtt_psk_ta;
+  lv_obj_t* mqtt_consent_cb;
 };
 static SettingsModalState g_set_modal = {};
 
@@ -1550,7 +1561,7 @@ struct MeshRadioPreset {
   uint8_t      airtime_limit_pct;  // web % → NodePrefs.airtime_factor = pct / 100
 };
 
-static constexpr size_t k_mesh_radio_preset_count = 19;
+static constexpr size_t k_mesh_radio_preset_count = 20;
 static const MeshRadioPreset k_mesh_radio_presets[k_mesh_radio_preset_count] = {
     {"Australia", 915.8f, 250.f, 10, 5, 22, 10},
     {"Australia (Narrow)", 916.575f, 62.5f, 7, 8, 22, 10},
@@ -1564,6 +1575,7 @@ static const MeshRadioPreset k_mesh_radio_presets[k_mesh_radio_preset_count] = {
     {"Switzerland (Narrow)", 869.618f, 62.5f, 8, 8, 22, 10},
     {"Czech Republic (Narrow)", 869.432f, 62.5f, 7, 5, 22, 10},
     {"Slovakia (Narrow)", 869.618f, 62.5f, 8, 8, 22, 10},
+    {"Portugal (Narrow)", 869.618f, 62.5f, 7, 6, 22, 10},   // community PT preset (issue #74)
     {"EU 433MHz (Long Range)", 433.65f, 250.f, 11, 5, 22, 10},
     {"US/Canada", 910.525f, 62.5f, 7, 5, 22, 10},
     {"USA: SoCal (Community)", 927.875f, 62.5f, 7, 5, 22, 10},
@@ -3511,6 +3523,7 @@ enum {
   CAT_GENERAL,       // reboot, run setup, storage/SD, misc device prefs (was "System")
   CAT_BACKUPS,       // list/delete .json backups + factory reset
   CAT_LANGUAGE,      // UI language picker
+  CAT_MQTT,          // MQTT bridge — broker host/port/credentials
   CAT_ABOUT,         // firmware / update / system info / diagnostics
   CAT_COUNT
 };
@@ -3533,6 +3546,7 @@ static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "General",       LV_SYMBOL_SETTINGS },
   { "Backups",       LV_SYMBOL_SAVE },
   { "Language",      LV_SYMBOL_BARS },
+  { "MQTT bridge",   LV_SYMBOL_UPLOAD },
   { "About",         LV_SYMBOL_LIST },
 };
 // Which slice of the (formerly monolithic) Device settings a builder emits. One
@@ -3570,6 +3584,7 @@ static bool      s_update_available = false;
 static bool      s_verchk_ran       = false;     // a check has completed (ok or failed)
 static volatile bool s_verchk_request  = false;  // UI -> core-0 worker: please check
 static volatile bool s_verchk_done     = false;  // worker -> UI: result ready
+static bool          s_verchk_recheck  = false;  // force a fresh check now (e.g. update channel changed)
 
 // microSD size/free for the About page. usedBytes() scans the FAT (slow, and contends
 // with the worker's own SD writes) — doing it on the UI thread froze the About sheet and
@@ -3898,8 +3913,9 @@ static void versionCheckService(unsigned long now) {
   static bool started = false;
   static unsigned long next_ms = 0;
   if (WiFi.status() == WL_CONNECTED && !s_verchk_request && !s_verchk_done &&
-      (!started || (long)(now - next_ms) >= 0)) {
+      (s_verchk_recheck || !started || (long)(now - next_ms) >= 0)) {
     started   = true;
+    s_verchk_recheck = false;                        // consume the forced-recheck request
     next_ms   = now + 6UL * 60UL * 60UL * 1000UL;   // re-check every 6 h
     ensureTileFetchTaskRunning();                   // worker idles out — make sure it's up
     s_verchk_request = true;
@@ -3914,6 +3930,23 @@ static void versionCheckService(unsigned long now) {
   (void)now;
 #endif
 }
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+// "Get test builds (beta)" toggle (About page) — switch the OTA update channel
+// between stable (releases/TOUCH) and the opt-in test/beta channel (releases/BETA).
+// Persists the choice, then forces a fresh version check so the About status line
+// AND the Install-update button reflect the newly-selected channel right away.
+static void betaUpdatesToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetBetaUpdates(on);
+  s_verchk_ran       = false;     // drop the cached result...
+  s_update_available = false;
+  s_verchk_latest_n  = -1;
+  s_verchk_recheck   = true;      // ...and re-query the newly-selected channel
+  versionCheckUpdateUi();         // status line falls back to "Checking…" (also greys the button)
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Test builds: on") : TR("Test builds: off"), 2000);
+}
+#endif
 static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
   // The Snake game owns the whole screen while it's open: steer with the swipe
   // and return, so it can never reach the tab switcher / map pan / control
@@ -6755,23 +6788,97 @@ static bool touchHasOtaUpdateSlot() {
 #endif
 
 // ---- Advert modal: pick flood (multi-hop) or zero-hop ----
+static lv_obj_t* s_advert_root = nullptr;   // Send-advert app page (tall topbar, like RF Monitor / Spectrum)
+static void closeAdvertPage();
 static void advertFloodCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   bool ok = g_lv.task->sendAdvertFlood();
   g_lv.task->showAlert(ok ? TR("Flood advert sent") : TR("Advert failed"), 1000);
-  closeSettingsModal();
+  closeAdvertPage();
 }
 
 static void advertZeroHopCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   bool ok = g_lv.task->sendAdvertZeroHop();
   g_lv.task->showAlert(ok ? TR("Zero-hop advert sent") : TR("Advert failed"), 1000);
-  closeSettingsModal();
+  closeAdvertPage();
+}
+
+// ---- Automatic self-advert (Advertise app). Drives the STANDARD MeshCore prefs the phone app
+// + CLI already use (advert_interval / flood_advert_interval); MyMesh::loop() schedules from them.
+static const uint16_t kAutoFloodHrs[] = {0, 24, 48, 72, 168};   // min 24h — flood adverts load the whole mesh
+static const uint16_t kAutoLocalMin[] = {0, 60, 90, 120, 180, 240};
+static uint16_t advertDdIdx(const uint16_t* arr, int n, uint16_t val) {
+  for (int i = 0; i < n; i++) if (arr[i] == val) return (uint16_t)i;
+  return 0;   // a non-preset value (e.g. set oddly over the CLI) shows as Off until re-picked
+}
+static void advertAutoFloodCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  uint16_t i = (uint16_t)lv_dropdown_get_selected(lv_event_get_target(e));
+  if (i < (sizeof(kAutoFloodHrs) / sizeof(kAutoFloodHrs[0]))) touchPrefsSetFloodAdvHrs(kAutoFloodHrs[i]);
+}
+static void advertAutoLocalCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  uint16_t i = (uint16_t)lv_dropdown_get_selected(lv_event_get_target(e));
+  if (i < (sizeof(kAutoLocalMin) / sizeof(kAutoLocalMin[0]))) touchPrefsSetLocalAdvMin(kAutoLocalMin[i]);
+}
+static void closeAdvertPage() {
+  if (s_advert_root) { lv_obj_del_async(s_advert_root); s_advert_root = nullptr; }
+  if (s_apppage_close == closeAdvertPage) {   // release the tall title bar back to normal
+    s_apppage_title = nullptr; s_apppage_close = nullptr;
+    statusBarSetTall(false); updateGlobalStatusBar();
+  }
+}
+static void advertDismissCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;  // only a backdrop tap closes
+  lv_indev_t* a = lv_indev_get_act(); if (a) lv_indev_wait_release(a);
+  closeAdvertPage();
 }
 
 static void openAdvertModalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_obj_t* body = createSettingsModal("Send advert", SettingsModalKind::Advert);
+  closeAdvertPage();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+
+  // Full-screen app page using the GLOBAL tall status bar ("‹ Send advert", tap = Back) — same
+  // chrome as RF Monitor / Spectrum, instead of a modal with its own header.
+  s_advert_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_advert_root);
+  lv_obj_set_size(s_advert_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_advert_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_advert_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_advert_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_advert_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_advert_root, advertDismissCb, LV_EVENT_CLICKED, nullptr);
+
+  s_apppage_title = "Send advert";
+  s_apppage_close = closeAdvertPage;
+  statusBarSetTall(true);
+  updateGlobalStatusBar();
+  const int top = STATUSBAR_H + 8;
+
+  // Scroll viewport below the tall bar + a single content child that grows to its contents
+  // (the modal used the same pattern to keep LVGL's scroll-bounds machinery happy).
+  lv_obj_t* scroll = lv_obj_create(s_advert_root);
+  lv_obj_remove_style_all(scroll);
+  lv_obj_set_pos(scroll, 4, top);
+  lv_obj_set_size(scroll, sw - 8, (sh - STATUSBAR_H) - top - 4);
+  lv_obj_set_style_pad_all(scroll, 0, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(scroll, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(scroll, LV_SCROLLBAR_MODE_ON);   // always show — remove_style_all stripped the default bar
+  lv_obj_set_style_width(scroll, 6, LV_PART_SCROLLBAR);
+  lv_obj_set_style_pad_right(scroll, 1, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(scroll, 3, LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_color(scroll, lv_color_hex(COLOR_ACCENT), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(scroll, LV_OPA_80, LV_PART_SCROLLBAR);
+  lv_obj_t* body = lv_obj_create(scroll);
+  lv_obj_remove_style_all(body);
+  lv_obj_set_width(body, sw - 8 - 14);   // leave a gutter on the right so content clears the scrollbar
+  lv_obj_set_height(body, LV_SIZE_CONTENT);
+  lv_obj_set_style_pad_all(body, 0, LV_PART_MAIN);
+
   int y = 4;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -6781,28 +6888,82 @@ static void openAdvertModalCb(lv_event_t* e) {
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(hint,
-    "Flood: relays will rebroadcast your advert across the mesh (multi-hop).\n"
-    "Zero-hop: only neighbours hear you (no relaying).");
-  y += SC(60);
+    "Flood: relayed across the mesh (multi-hop).\n"
+    "Zero-hop: neighbours only (no relaying).");
+  lv_obj_update_layout(hint);                 // measure the actual wrapped height (taller on the narrow V4)
+  int hint_h = lv_obj_get_height(hint);
+  y += (hint_h > 0 ? hint_h : SC(40)) + 10;
 
+  // ---- The two manual advert buttons share one row (flood left, zero-hop right). ----
+  const int gap   = 6;
+  const int bhalf = (sw - 8 - 14 - 4 - gap) / 2;   // content width (minus scrollbar gutter + margins) split in two
   lv_obj_t* b_flood = lv_btn_create(body);
-  lv_obj_set_size(b_flood, lv_pct(100),SC(40));
+  lv_obj_set_size(b_flood, bhalf, SC(40));
   lv_obj_set_pos(b_flood, 2, y);
   styleButton(b_flood);
   lv_obj_add_event_cb(b_flood, advertFloodCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lf = lv_label_create(b_flood);
-  lv_label_set_text(lf, LV_SYMBOL_UPLOAD "  Flood advert");
+  lv_label_set_text(lf, LV_SYMBOL_UPLOAD "  Flood");
   lv_obj_center(lf);
-  y += SC(46);
 
   lv_obj_t* b_zh = lv_btn_create(body);
-  lv_obj_set_size(b_zh, lv_pct(100),SC(40));
-  lv_obj_set_pos(b_zh, 2, y);
+  lv_obj_set_size(b_zh, bhalf, SC(40));
+  lv_obj_set_pos(b_zh, 2 + bhalf + gap, y);
   styleButton(b_zh);
   lv_obj_add_event_cb(b_zh, advertZeroHopCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lz = lv_label_create(b_zh);
-  lv_label_set_text(lz, LV_SYMBOL_WIFI "  Zero-hop advert");
+  lv_label_set_text(lz, LV_SYMBOL_WIFI "  Zero-hop");
   lv_obj_center(lz);
+  y += SC(54);
+
+  // ---- Automatic adverts: re-advertise on a timer so others keep seeing you. ----
+  lv_obj_t* asec = lv_label_create(body);
+  lv_label_set_text(asec, TR("AUTOMATIC ADVERTS"));
+  lv_obj_set_style_text_color(asec, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(asec, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(asec, 2, y);
+  y += SC(22);
+
+  lv_obj_t* flab = lv_label_create(body);
+  lv_label_set_text(flab, TR("Flood every"));
+  lv_obj_set_style_text_font(flab, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(flab, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(flab, 2, y + SC(8));
+  lv_obj_t* fdd = lv_dropdown_create(body);
+  lv_dropdown_set_options_static(fdd, "Off\n1 day\n2 days\n3 days\n7 days");
+  lv_obj_set_width(fdd, SC(120));
+  lv_obj_align(fdd, LV_ALIGN_TOP_RIGHT, -4, y);
+  lv_dropdown_set_selected(fdd, advertDdIdx(kAutoFloodHrs, (int)(sizeof(kAutoFloodHrs)/sizeof(kAutoFloodHrs[0])), touchPrefsGetFloodAdvHrs()));
+  lv_obj_add_event_cb(fdd, advertAutoFloodCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  y += SC(44);
+
+  lv_obj_t* llab = lv_label_create(body);
+  lv_label_set_text(llab, TR("Local every"));
+  lv_obj_set_style_text_font(llab, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(llab, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(llab, 2, y + SC(8));
+  lv_obj_t* ldd = lv_dropdown_create(body);
+  lv_dropdown_set_options_static(ldd, "Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours");
+  lv_obj_set_width(ldd, SC(120));
+  lv_obj_align(ldd, LV_ALIGN_TOP_RIGHT, -4, y);
+  lv_dropdown_set_selected(ldd, advertDdIdx(kAutoLocalMin, 6, touchPrefsGetLocalAdvMin()));
+  lv_obj_add_event_cb(ldd, advertAutoLocalCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  y += SC(46);
+
+  lv_obj_t* anote = lv_label_create(body);
+  lv_label_set_long_mode(anote, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(anote, lv_pct(100));
+  lv_obj_set_pos(anote, 2, y);
+  lv_obj_set_style_text_color(anote, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(anote, &g_font_12, LV_PART_MAIN);
+  lv_label_set_text(anote,
+    "Mesh health: a flood advert is rebroadcast by every repeater in range, so frequent floods add "
+    "airtime for the whole network. Keep them infrequent (a day or more). Your neighbours still see "
+    "you from zero-hop adverts and your message replies, so flood mainly when distant nodes need to "
+    "rediscover you. Leave both Off to advertise only when you tap the buttons above.");
+
+  lv_obj_move_foreground(s_advert_root);            // above the tabview
+  lv_obj_move_foreground(g_statusbar.root);         // keep the tall title bar above this page (back chevron fully visible)
 }
 
 // ---- Discovered list modal: shows adverts NOT yet in contacts[], with "Add" buttons ----
@@ -7588,22 +7749,25 @@ static void buildRadioSettings() {
   // the preset picker.
   mk_label("Community Preset");
   {
-    static char preset_opt_buf[1200];
-    size_t o = 0;
-    int nw = snprintf(preset_opt_buf + o, sizeof(preset_opt_buf) - o, "Custom (manual)");
-    if (nw > 0) o += static_cast<size_t>(nw);
-    for (size_t i = 0; i < k_mesh_radio_preset_count && o + 2 < sizeof(preset_opt_buf); ++i) {
-      preset_opt_buf[o++] = '\n';
-      nw = snprintf(preset_opt_buf + o, sizeof(preset_opt_buf) - o, "%s", k_mesh_radio_presets[i].label);
-      if (nw < 0) break;
-      o += static_cast<size_t>(nw);
+    static const size_t PRESET_OPT_SZ = 1200;
+    static char* preset_opt_buf = (char*)psAlloc(PRESET_OPT_SZ);   // lazy-PSRAM (frees 1.2 KB internal .bss)
+    if (preset_opt_buf) {
+      size_t o = 0;
+      int nw = snprintf(preset_opt_buf + o, PRESET_OPT_SZ - o, "Custom (manual)");
+      if (nw > 0) o += static_cast<size_t>(nw);
+      for (size_t i = 0; i < k_mesh_radio_preset_count && o + 2 < PRESET_OPT_SZ; ++i) {
+        preset_opt_buf[o++] = '\n';
+        nw = snprintf(preset_opt_buf + o, PRESET_OPT_SZ - o, "%s", k_mesh_radio_presets[i].label);
+        if (nw < 0) break;
+        o += static_cast<size_t>(nw);
+      }
+      preset_opt_buf[PRESET_OPT_SZ - 1] = '\0';
     }
-    preset_opt_buf[sizeof(preset_opt_buf) - 1] = '\0';
 
     g_set_modal.radio_preset_dd = lv_dropdown_create(body);
     lv_obj_set_size(g_set_modal.radio_preset_dd, lv_pct(100),SC(34));
     lv_obj_set_pos(g_set_modal.radio_preset_dd, 2, y);
-    lv_dropdown_set_options(g_set_modal.radio_preset_dd, preset_opt_buf);
+    lv_dropdown_set_options(g_set_modal.radio_preset_dd, preset_opt_buf ? preset_opt_buf : "Custom (manual)");
     lv_obj_set_style_text_font(g_set_modal.radio_preset_dd, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_bg_color(g_set_modal.radio_preset_dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(g_set_modal.radio_preset_dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -7807,6 +7971,23 @@ static void buildRadioSettings() {
     { char pb[8]; snprintf(pb, sizeof pb, "%u", (unsigned)touchPrefsGetSigPollMins());
       lv_textarea_set_text(s_radio_sig_poll_ta, pb); }
     y += SC(38);
+  }
+
+  // Auto advert — a shortcut to the Advertise app, where you send an advert now and set the
+  // periodic flood / local self-advert timers. Surfaced here so it's discoverable from Radio & Mesh.
+  mk_label("Auto advert");
+  {
+    lv_obj_t* b_adv = lv_btn_create(body);
+    lv_obj_set_size(b_adv, lv_pct(100), SC(34));
+    lv_obj_set_pos(b_adv, 2, y);
+    styleButton(b_adv);
+    lv_obj_add_event_cb(b_adv, openAdvertModalCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l_adv = lv_label_create(b_adv);
+    lv_label_set_text_fmt(l_adv, LV_SYMBOL_UPLOAD "  %s", TR("Open Advertise app"));
+    lv_obj_center(l_adv);
+    y += SC(42);
+    y += settingsRowLabel(body, y, 0, "Send an advert now, or set how often you re-advertise.",
+                          COLOR_SUB, &g_font_12, 0) + 2;
   }
 
   // No "Apply radio params" button — each field auto-applies on blur (saveRadioParamsCb
@@ -8353,6 +8534,18 @@ static void enterSendsToggleCb(lv_event_t* e) {
   touchPrefsSetEnterSends(on);
 #endif
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Enter sends messages") : TR("Enter adds a new line"), 1200);
+}
+
+// New-message notify flash (opt-in): the T-Deck analog of the Tanmatsu envelope LED. On a new
+// message we wake the screen and briefly pulse the keyboard backlight. The statics below are set
+// here / in notify() and consumed in the loop()'s keyboard-backlight tick.
+static volatile uint32_t s_msgflash_until = 0;     // keyboard-backlight pulse deadline (0 = idle)
+static volatile bool     s_msgflash_wake  = false; // one-shot screen-wake request (consumed in loop())
+static void msgFlashToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetMsgFlash(on);
+  if (on) { s_msgflash_until = millis() + 1600; s_msgflash_wake = true; }   // brief confirmation pulse
 }
 #endif
 
@@ -9407,6 +9600,21 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, "off = Enter adds a new line; tap Send to send",
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
+
+  /* Flash the keyboard backlight + briefly wake the screen when a message arrives — the T-Deck
+     analog of the Tanmatsu's envelope LED notifier. Opt-in (default off). */
+  {
+    int h = settingsRowLabel(body, y, 4, "Flash on new message", COLOR_TEXT, &g_font_12, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (touchPrefsGetMsgFlash()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(sw, msgFlashToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, h + 10);
+    y += settingsRowLabel(body, y, 0, "lights the keyboard + wakes the screen on an incoming message",
+                          COLOR_SUB, &g_font_12, 0) + 2;
+  }
 #endif
 
 #if defined(HAS_TANMATSU)
@@ -10194,6 +10402,7 @@ static void doApplyWifi() {
 
 // Forward decl so wifiSlotSaveCb can refresh the modal after writing.
 static void buildWifiSettings();
+static void buildMqttSettings();
 
 // Saved Wi-Fi profile slot: tap to load. Fills the SSID/PWD textareas with
 // the stored creds — does NOT auto-apply, so the operator can still tweak
@@ -10881,6 +11090,239 @@ static void wifiRebuildNetworkList() {
   navMarkDirty();
 }
 #endif  // ESP32 && MULTI_TRANSPORT_COMPANION
+
+// ---- MQTT bridge settings callbacks ----------------------------------------
+
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+// The consent checkbox gates the enable switch: the bridge cannot be turned on
+// until the user ticks acknowledgement of the privacy / experimental warning.
+static void mqttConsentCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  if (!g_set_modal.mqtt_consent_cb || !g_set_modal.mqtt_en_sw) return;
+  bool ok = lv_obj_has_state(g_set_modal.mqtt_consent_cb, LV_STATE_CHECKED);
+  if (ok) {
+    lv_obj_clear_state(g_set_modal.mqtt_en_sw, LV_STATE_DISABLED);
+  } else {
+    lv_obj_clear_state(g_set_modal.mqtt_en_sw, LV_STATE_CHECKED);   // force off if consent withdrawn
+    lv_obj_add_state(g_set_modal.mqtt_en_sw, LV_STATE_DISABLED);
+  }
+}
+
+static void mqttSaveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!g_set_modal.mqtt_host_ta) return;
+  const char* host = lv_textarea_get_text(g_set_modal.mqtt_host_ta);
+  const char* portStr = lv_textarea_get_text(g_set_modal.mqtt_port_ta);
+  const char* user = lv_textarea_get_text(g_set_modal.mqtt_user_ta);
+  const char* pwd  = lv_textarea_get_text(g_set_modal.mqtt_pwd_ta);
+  uint16_t port = portStr && portStr[0] ? (uint16_t)atoi(portStr) : 1883;
+  if (!port) port = 1883;
+  const char* psk = g_set_modal.mqtt_psk_ta ? lv_textarea_get_text(g_set_modal.mqtt_psk_ta) : "";
+  // Enable is only honoured when consent is ticked — belt-and-suspenders with the UI gating.
+  bool consent = g_set_modal.mqtt_consent_cb && lv_obj_has_state(g_set_modal.mqtt_consent_cb, LV_STATE_CHECKED);
+  bool en = consent && g_set_modal.mqtt_en_sw && lv_obj_has_state(g_set_modal.mqtt_en_sw, LV_STATE_CHECKED);
+  bool pub_ch = !g_set_modal.mqtt_ch_sw || lv_obj_has_state(g_set_modal.mqtt_ch_sw, LV_STATE_CHECKED);
+  bool pub_dm = g_set_modal.mqtt_dm_sw && lv_obj_has_state(g_set_modal.mqtt_dm_sw, LV_STATE_CHECKED);
+  MqttBridge::saveConfig(host, port, user, pwd, pub_dm, pub_ch, psk, en);
+  { Preferences p; if (p.begin("mqtt", false)) { p.putBool("consent", consent); p.end(); } }
+  mqtt_bridge.reloadConfig();
+  closeSettingsModal();
+}
+#endif // ESP32 && MULTI_TRANSPORT_COMPANION
+
+static void buildMqttSettings() {
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  lv_obj_t* body = createSettingsModal("MQTT bridge", SettingsModalKind::Mqtt);
+  const lv_coord_t cw = s_settings_content_w;
+  int y = 0;
+
+  // ---- Privacy warning (read before enabling) ----
+  lv_obj_t* warn = lv_label_create(body);
+  lv_label_set_text(warn, TR("Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker."));
+  lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(warn, cw);
+  lv_obj_set_style_text_color(warn, lv_color_hex(0xCC6A00), LV_PART_MAIN);
+  lv_obj_set_style_text_font(warn, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(warn, 2, y);
+  lv_obj_update_layout(warn);
+  y += lv_obj_get_height(warn) + SC(8);
+
+  // ---- Consent checkbox (must be ticked to unlock the enable switch) ----
+  g_set_modal.mqtt_consent_cb = lv_checkbox_create(body);
+  lv_checkbox_set_text(g_set_modal.mqtt_consent_cb, TR("I accept the privacy risk"));
+  lv_obj_set_width(g_set_modal.mqtt_consent_cb, cw);
+  // High-contrast label + a clearly outlined box. It was inheriting the dim default
+  // checkbox text colour (every other checkbox sets one), which made the consent
+  // line next to the box hard to read.
+  lv_obj_set_style_text_color(g_set_modal.mqtt_consent_cb, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_set_modal.mqtt_consent_cb, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_radius(g_set_modal.mqtt_consent_cb, 3, LV_PART_INDICATOR);
+  lv_obj_set_style_border_color(g_set_modal.mqtt_consent_cb, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+  lv_obj_set_style_border_width(g_set_modal.mqtt_consent_cb, 1, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(g_set_modal.mqtt_consent_cb, lv_color_hex(0x4F9DF7), LV_PART_INDICATOR | LV_STATE_CHECKED);
+  lv_obj_set_pos(g_set_modal.mqtt_consent_cb, 2, y);
+  lv_obj_add_event_cb(g_set_modal.mqtt_consent_cb, mqttConsentCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_update_layout(g_set_modal.mqtt_consent_cb);
+  y += lv_obj_get_height(g_set_modal.mqtt_consent_cb) + SC(10);
+
+  // ---- Enable toggle (disabled until consent is given) ----
+  lv_obj_t* en_lbl = lv_label_create(body);
+  lv_label_set_text(en_lbl, TR("Enable MQTT bridge"));
+  lv_obj_set_style_text_color(en_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(en_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(en_lbl, 2, y + 8);
+  g_set_modal.mqtt_en_sw = lv_switch_create(body);
+  lv_obj_align(g_set_modal.mqtt_en_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+  lv_obj_add_state(g_set_modal.mqtt_en_sw, LV_STATE_DISABLED);   // unlocked by the consent checkbox
+  y += SC(38);
+
+  // ---- Broker host ----
+  lv_obj_t* host_lbl = lv_label_create(body);
+  lv_label_set_text(host_lbl, TR("Broker host / IP"));
+  lv_obj_set_style_text_color(host_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(host_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(host_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_host_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_host_ta, cw - 86, SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_host_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_host_ta, true);
+  lv_textarea_set_placeholder_text(g_set_modal.mqtt_host_ta, "192.168.1.x");
+  lv_textarea_set_max_length(g_set_modal.mqtt_host_ta, 63);
+  attachSettingsTaEvents(g_set_modal.mqtt_host_ta);
+  // Port field on the same row
+  lv_obj_t* port_lbl = lv_label_create(body);
+  lv_label_set_text(port_lbl, TR("Port"));
+  lv_obj_set_style_text_color(port_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(port_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(port_lbl, cw - 82, y - SC(16));
+  g_set_modal.mqtt_port_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_port_ta, 80, SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_port_ta, cw - 80, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_port_ta, true);
+  lv_textarea_set_placeholder_text(g_set_modal.mqtt_port_ta, "1883");
+  lv_textarea_set_max_length(g_set_modal.mqtt_port_ta, 5);
+  lv_textarea_set_accepted_chars(g_set_modal.mqtt_port_ta, "0123456789");
+  attachSettingsTaEvents(g_set_modal.mqtt_port_ta);
+  y += SC(36);
+
+  // ---- Username (optional) ----
+  lv_obj_t* user_lbl = lv_label_create(body);
+  lv_label_set_text(user_lbl, TR("Username (optional)"));
+  lv_obj_set_style_text_color(user_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(user_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(user_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_user_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_user_ta, lv_pct(100), SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_user_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_user_ta, true);
+  lv_textarea_set_placeholder_text(g_set_modal.mqtt_user_ta, TR("Leave empty if not required"));
+  lv_textarea_set_max_length(g_set_modal.mqtt_user_ta, 31);
+  attachSettingsTaEvents(g_set_modal.mqtt_user_ta);
+  y += SC(36);
+
+  // ---- Password (optional) ----
+  lv_obj_t* pwd_lbl = lv_label_create(body);
+  lv_label_set_text(pwd_lbl, TR("Password (optional)"));
+  lv_obj_set_style_text_color(pwd_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(pwd_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(pwd_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_pwd_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_pwd_ta, lv_pct(100), SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_pwd_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_pwd_ta, true);
+  lv_textarea_set_password_mode(g_set_modal.mqtt_pwd_ta, true);
+  lv_textarea_set_placeholder_text(g_set_modal.mqtt_pwd_ta, TR("Leave empty if not required"));
+  lv_textarea_set_max_length(g_set_modal.mqtt_pwd_ta, 31);
+  attachSettingsTaEvents(g_set_modal.mqtt_pwd_ta);
+  y += SC(36);
+
+  // ---- Publish toggles: channel on by default, DMs opt-in ----
+  lv_obj_t* ch_lbl = lv_label_create(body);
+  lv_label_set_text(ch_lbl, TR("Publish channel messages"));
+  lv_obj_set_style_text_color(ch_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(ch_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(ch_lbl, 2, y + 8);
+  g_set_modal.mqtt_ch_sw = lv_switch_create(body);
+  lv_obj_align(g_set_modal.mqtt_ch_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+  y += SC(38);
+
+  lv_obj_t* dm_lbl = lv_label_create(body);
+  lv_label_set_text(dm_lbl, TR("Publish direct messages"));
+  lv_obj_set_style_text_color(dm_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(dm_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(dm_lbl, 2, y + 8);
+  g_set_modal.mqtt_dm_sw = lv_switch_create(body);
+  lv_obj_align(g_set_modal.mqtt_dm_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+  y += SC(38);
+
+  // ---- Encryption key (PSK): seals payloads with AES-GCM; empty = plaintext ----
+  lv_obj_t* psk_lbl = lv_label_create(body);
+  lv_label_set_text(psk_lbl, TR("Encryption key (optional)"));
+  lv_obj_set_style_text_color(psk_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(psk_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(psk_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_psk_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_psk_ta, lv_pct(100), SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_psk_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_psk_ta, true);
+  lv_textarea_set_password_mode(g_set_modal.mqtt_psk_ta, true);
+  lv_textarea_set_placeholder_text(g_set_modal.mqtt_psk_ta, TR("Empty = plaintext to a private broker"));
+  lv_textarea_set_max_length(g_set_modal.mqtt_psk_ta, 32);
+  attachSettingsTaEvents(g_set_modal.mqtt_psk_ta);
+  y += SC(36);
+
+  // ---- Load current config ----
+  {
+    Preferences p;
+    bool cur_en = false, cur_dm = false, cur_ch = true, cur_consent = false;
+    char cur_host[64] = {}, cur_port_s[8] = "1883", cur_user[32] = {}, cur_pwd[32] = {}, cur_psk[33] = {};
+    if (p.begin("mqtt", true)) {
+      cur_en = p.getBool("en", false);
+      cur_dm = p.getBool("dm", false);
+      cur_ch = p.getBool("ch", true);
+      cur_consent = p.getBool("consent", false);
+      uint16_t port = (uint16_t)p.getUInt("port", 1883);
+      snprintf(cur_port_s, sizeof(cur_port_s), "%u", port);
+      if (p.isKey("host")) p.getString("host", cur_host, sizeof(cur_host));
+      if (p.isKey("user")) p.getString("user", cur_user, sizeof(cur_user));
+      if (p.isKey("pwd"))  p.getString("pwd",  cur_pwd,  sizeof(cur_pwd));
+      if (p.isKey("psk"))  p.getString("psk",  cur_psk,  sizeof(cur_psk));
+      p.end();
+    }
+    if (cur_consent) {
+      lv_obj_add_state(g_set_modal.mqtt_consent_cb, LV_STATE_CHECKED);
+      lv_obj_clear_state(g_set_modal.mqtt_en_sw, LV_STATE_DISABLED);   // consent already given → unlock
+    }
+    if (cur_en && cur_consent) lv_obj_add_state(g_set_modal.mqtt_en_sw, LV_STATE_CHECKED);
+    if (cur_ch) lv_obj_add_state(g_set_modal.mqtt_ch_sw, LV_STATE_CHECKED);
+    if (cur_dm) lv_obj_add_state(g_set_modal.mqtt_dm_sw, LV_STATE_CHECKED);
+    lv_textarea_set_text(g_set_modal.mqtt_host_ta, cur_host);
+    lv_textarea_set_text(g_set_modal.mqtt_port_ta, cur_port_s);
+    lv_textarea_set_text(g_set_modal.mqtt_user_ta, cur_user);
+    lv_textarea_set_text(g_set_modal.mqtt_pwd_ta,  cur_pwd);
+    lv_textarea_set_text(g_set_modal.mqtt_psk_ta,  cur_psk);
+  }
+
+  // ---- Save button ----
+  lv_obj_t* b_save = lv_btn_create(body);
+  lv_obj_set_size(b_save, lv_pct(100), SC(36));
+  lv_obj_set_pos(b_save, 0, y);
+  styleButton(b_save);
+  lv_obj_add_event_cb(b_save, mqttSaveCb, LV_EVENT_CLICKED, nullptr);
+  { lv_obj_t* sl = lv_label_create(b_save);
+    lv_label_set_text(sl, LV_SYMBOL_SAVE "  Save");
+    lv_obj_center(sl); }
+  y += SC(44);
+
+  lv_obj_set_height(body, y + SC(8));
+#else
+  (void)0;   // MQTT bridge only active on ESP32 multi-transport builds
+#endif
+}
 
 static void buildWifiSettings() {
   lv_obj_t* body = createSettingsModal("", SettingsModalKind::Wifi);   // no group header — the top bar already says "Wi-Fi"
@@ -12094,10 +12536,12 @@ static int losFetchElevations(const double* lat, const double* lon, int n,
   touchPrefsGetTileServer(base, sizeof(base));
   size_t blen = strlen(base);
   while (blen > 0 && base[blen - 1] == '/') base[--blen] = '\0';
-  static char url[1100];
-  int o = snprintf(url, sizeof(url), "%s/elev?locations=", base);
-  for (int i = 0; i < n && o < (int)sizeof(url) - 24; ++i) {
-    o += snprintf(url + o, sizeof(url) - o, "%s%.5f,%.5f",
+  static const size_t URL_SZ = 1100;
+  static char* url = (char*)psAlloc(URL_SZ);   // lazy-PSRAM (frees 1.1 KB internal .bss)
+  if (!url) { s_los_dbg_code = -3; return 0; }  // OOM only: behaves like the other early-return failures
+  int o = snprintf(url, URL_SZ, "%s/elev?locations=", base);
+  for (int i = 0; i < n && o < (int)URL_SZ - 24; ++i) {
+    o += snprintf(url + o, URL_SZ - o, "%s%.5f,%.5f",
                   i ? "|" : "", lat[i], lon[i]);
   }
   WiFiClient client;
@@ -13909,11 +14353,12 @@ static void openBatteryChartWindow() {
   // to 24h on write, so reading from the start gives the right window. cpu is the
   // 5th column (absent in pre-upgrade lines -> 0, drawn as a gap).
   static const int k_max_pts = 288;   // 24h / 5min
-  static uint16_t mvs[k_max_pts];
-  static uint16_t cpus[k_max_pts];
-  static uint32_t eps[k_max_pts];
+  // Lazy-PSRAM (frees ~2.3 KB internal DRAM .bss; allocated once, only when the chart is opened).
+  static uint16_t* mvs  = (uint16_t*)psAlloc(sizeof(uint16_t) * k_max_pts);
+  static uint16_t* cpus = (uint16_t*)psAlloc(sizeof(uint16_t) * k_max_pts);
+  static uint32_t* eps  = (uint32_t*)psAlloc(sizeof(uint32_t) * k_max_pts);
   int n = 0;
-  {
+  if (mvs && cpus && eps) {   // null only under extreme OOM -> n stays 0 -> the empty-state below
     if (battLogOnSd()) markSdIo();
     File rf = battLogFs().open(battLogPath(), FILE_READ);
     if (rf) {
@@ -16591,8 +17036,8 @@ static void sigPollSaveCb(lv_event_t* e) {
 // Manual probe: send a flood advert now so nearby repeaters echo it back.
 static void sigProbeNowCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
-  g_lv.task->sendAdvertFlood();
-  g_lv.task->showAlert(TR("Probing\xE2\x80\xA6"), 900);   // "Probing…"
+  g_lv.task->sendAdvertZeroHop();   // zero-hop only — neighbours hear it; the mesh never re-floods it
+  g_lv.task->showAlert(TR("Probing neighbours\xE2\x80\xA6"), 900);
 }
 static void openSignalInfoPopup() {
   closeSigInfoPopup();
@@ -18060,7 +18505,9 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   lv_obj_add_event_cb(s_contacts_overflow_root, contactsOverflowDismissCb, LV_EVENT_CLICKED, nullptr);
 
   // Bigger on the 800-px Tanmatsu panel; unchanged on the smaller boards (PSC no-op).
-  const int card_w = PSC(200), btn_h = PSC(36), btn_gap = PSC(6), title_h = PSC(26), padding = PSC(8);
+  // Compact rows so all five buttons + title fit the T-Deck's short 240px landscape
+  // screen (the 5th "Blocked list" item pushed the old 36px rows off-screen). #72.
+  const int card_w = PSC(200), btn_h = PSC(30), btn_gap = PSC(4), title_h = PSC(22), padding = PSC(8);
   const int rows = 5;
   const int card_h = title_h + rows * (btn_h + btn_gap) + padding;
   lv_obj_t* card = lv_obj_create(s_contacts_overflow_root);
@@ -18081,6 +18528,16 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 0);
+
+  // Saved-contacts count — restored from the old system-info line (#72), shown
+  // right-aligned on the menu's title row.
+  lv_obj_t* cnt_lbl = lv_label_create(card);
+  char cnt_buf[24];
+  snprintf(cnt_buf, sizeof(cnt_buf), "%d / %d", the_mesh.getNumContacts(), (int)MAX_CONTACTS);
+  lv_label_set_text(cnt_lbl, cnt_buf);
+  lv_obj_set_style_text_color(cnt_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(cnt_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_align(cnt_lbl, LV_ALIGN_TOP_RIGHT, 0, 0);
 
   int y = title_h;
   auto mk = [&](const char* label, lv_event_cb_t cb, uint32_t bg) {
@@ -19237,9 +19694,18 @@ static void ensureTilesDirPath(uint8_t z, int32_t x, const char* root) {
 // (s_verchk_request / s_verchk_done / s_verchk_latest_n are declared globally
 // near the version-check UI helpers above.)
 
-// Stream the TOUCH releases listing and return the highest pre-alpha_<N> dir
-// number, or -1 on failure. Char-by-char scan (the body is a few KB) so we
-// never buffer the whole JSON; entries are alphabetical so the max isn't last.
+// Update channel selector: stable firmware lives under releases/TOUCH, the opt-in
+// test/beta channel under releases/BETA. The "Get test builds (beta)" toggle on the
+// About page flips this for BOTH the version check and the Install-update download,
+// so an opted-in device sees beta "update available" and installs beta bins. Both
+// archives use the same beta_<N> tag-dir naming, so only the archive root changes.
+static inline const char* updChannelArchive() {
+  return touchPrefsGetBetaUpdates() ? "BETA" : "TOUCH";
+}
+
+// Stream the releases listing for the active channel and return the highest
+// beta_<N> dir number, or -1 on failure. Char-by-char scan (the body is a few KB)
+// so we never buffer the whole JSON; entries are alphabetical so the max isn't last.
 // Reuses the worker's own WiFiClient/HTTPClient (passed in) rather than putting
 // a second pair on the ~8 KB worker stack — nesting them overflowed it.
 static int verchkFetchLatest(WiFiClient& client, HTTPClient& http) {
@@ -19247,7 +19713,9 @@ static int verchkFetchLatest(WiFiClient& client, HTTPClient& http) {
   http.setConnectTimeout(8000);
   http.setTimeout(12000);
   http.setUserAgent("wadamesh-touch");
-  if (!http.begin(client, "http://firmware.wadamesh.com/releases/TOUCH")) {
+  char listurl[72];
+  snprintf(listurl, sizeof listurl, "http://firmware.wadamesh.com/releases/%s", updChannelArchive());
+  if (!http.begin(client, listurl)) {
     return -1;
   }
   const int code = http.GET();
@@ -19353,8 +19821,8 @@ static const char* const OTA_BIN_NAME = "wadamesh-heltec-v4-tft";   // Heltec V4
 static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_ota_pct = 0;
   char url[176];
-  snprintf(url, sizeof url, "http://firmware.wadamesh.com/releases/TOUCH/beta_%d/%s.bin",
-           s_ota_target_n, OTA_BIN_NAME);
+  snprintf(url, sizeof url, "http://firmware.wadamesh.com/releases/%s/beta_%d/%s.bin",
+           updChannelArchive(), s_ota_target_n, OTA_BIN_NAME);
   http.setReuse(false);
   http.setConnectTimeout(8000);
   http.setTimeout(20000);
@@ -21125,8 +21593,10 @@ static void mapOptInfoCb(lv_event_t* e) {
     : "Map data \xC2\xA9 OpenStreetMap contributors.\n"
       "openstreetmap.org/copyright\n"
       "Licensed under the Open Database License (ODbL).\n\n";
-  static char credits[820];
-  snprintf(credits, sizeof(credits), "%s%s", attrib,
+  static const size_t CREDITS_SZ = 820;
+  static char* credits = (char*)psAlloc(CREDITS_SZ);   // lazy-PSRAM (frees 820 B internal .bss)
+  if (!credits) return;                                // OOM only: skip the credits text
+  snprintf(credits, CREDITS_SZ, "%s%s", attrib,
     "How tiles work:\n"
     "The map is built from 256\xC3\x97256 \"slippy\" tiles. Only the tiles for the "
     "area you're viewing are fetched \xE2\x80\x94 there is no bulk pre-download.\n\n"
@@ -22994,6 +23464,7 @@ static void settingsCatBuild(int cat) {
     case CAT_GENERAL:      buildDeviceSettings(DSEC_GENERAL); break;
     case CAT_BACKUPS:      buildBackupsSettings(); break;
     case CAT_LANGUAGE:     buildLanguageSettings(); break;
+    case CAT_MQTT:         buildMqttSettings(); break;
     case CAT_ABOUT: {
       s_settings_inline_parent = nullptr;
       s_update_about_lbl = lv_label_create(page);   // update/firmware status (top)
@@ -23049,6 +23520,37 @@ static void settingsCatBuild(int cat) {
         lv_obj_set_style_text_font(s_ota_status_lbl, &g_font_12, LV_PART_MAIN);
         lv_obj_set_style_text_color(s_ota_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
         lv_label_set_text(s_ota_status_lbl, TR(""));
+
+        // "Get test builds (beta)" — opt into the BETA update channel. Affects BOTH
+        // the on-device "update available" check AND the Install-update download, so
+        // an opted-in device tracks the test channel for notifications and flashing.
+        {
+          lv_obj_t* beta_row = lv_obj_create(page);
+          lv_obj_set_size(beta_row, lblw, LV_SIZE_CONTENT);
+          lv_obj_set_style_bg_opa(beta_row, LV_OPA_TRANSP, LV_PART_MAIN);
+          lv_obj_set_style_border_width(beta_row, 0, LV_PART_MAIN);
+          lv_obj_set_style_pad_all(beta_row, 0, LV_PART_MAIN);
+          lv_obj_set_style_pad_top(beta_row, SC(8), LV_PART_MAIN);
+          lv_obj_clear_flag(beta_row, LV_OBJ_FLAG_SCROLLABLE);
+          lv_obj_set_flex_flow(beta_row, LV_FLEX_FLOW_ROW);
+          lv_obj_set_flex_align(beta_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+          lv_obj_t* beta_lbl = lv_label_create(beta_row);
+          lv_label_set_text(beta_lbl, TR("Get test builds (beta)"));
+          lv_obj_set_style_text_font(beta_lbl, &g_font_14, LV_PART_MAIN);
+          lv_obj_set_style_text_color(beta_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+
+          lv_obj_t* beta_sw = lv_switch_create(beta_row);
+          if (touchPrefsGetBetaUpdates()) lv_obj_add_state(beta_sw, LV_STATE_CHECKED);
+          lv_obj_add_event_cb(beta_sw, betaUpdatesToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+          lv_obj_t* beta_note = lv_label_create(page);
+          lv_label_set_long_mode(beta_note, LV_LABEL_LONG_WRAP);
+          lv_obj_set_width(beta_note, lblw);
+          lv_label_set_text(beta_note, TR("Receive unreleased test firmware — newer features, but less tested. The update check and Install update both follow the beta channel."));
+          lv_obj_set_style_text_font(beta_note, &g_font_12, LV_PART_MAIN);
+          lv_obj_set_style_text_color(beta_note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+        }
       }
 #endif
 
@@ -24694,7 +25196,17 @@ static void refreshContactsList() {
     uint8_t  key6[6];   // pub_key prefix — stable identity for multi-select
     char     name[40];
   };
-  static Entry* s_entries = (Entry*)psAlloc(sizeof(Entry) * 128);
+  // Snapshot EVERY matching contact (not just the first 128) so the sort below
+  // decides which make the render cut. MAX_CONTACTS can be up to 2000, and the old
+  // 128-cap-in-storage-order silently dropped everything past the 128th — incl.
+  // active zero-hop neighbours that then "vanished" from the list (#73).
+  static const int CT_SNAP_MAX = (int)MAX_CONTACTS;
+  static Entry* s_entries = (Entry*)psAlloc(sizeof(Entry) * (size_t)CT_SNAP_MAX);
+  if (!s_entries) {
+    lv_obj_t* l = lv_list_add_text(g_lv.contacts_list, "Contacts unavailable (low memory)");
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    return;
+  }
   int n_entries = 0;
   // Snapshot the favorites blob once per refresh. touchPrefsIsFavorite
   // hits NVS on every call, and with N contacts the contact-list rebuild
@@ -24727,12 +25239,11 @@ static void refreshContactsList() {
     }
     search_lc[n] = '\0';
   }
-  // Two passes so a FAVORITED contact is never starved out of the 128-row render
-  // budget by hundreds of same-prefix contacts ahead of it in storage order (#17):
-  // pass 0 captures favorites, pass 1 fills the rest. The render cap stays (2000
-  // LVGL rows is infeasible) but favorites always make the cut now.
-  for (int pass = 0; pass < 2 && n_entries < 128; ++pass)
-  for (int i = 0; i < curr_count && n_entries < 128; ++i) {
+  // One pass over all contacts: the qsort (favourites first, then the active sort
+  // key) decides the 128-row render cut, so the rows shown are the most relevant
+  // rather than the first 128 in storage order. Favourites are guaranteed visible
+  // because the comparator floats them to the top (#17, #73).
+  for (int i = 0; i < curr_count && n_entries < CT_SNAP_MAX; ++i) {
     ContactInfo c;
     if (!the_mesh.getContactByIdx(static_cast<uint32_t>(i), c) || !c.name[0]) continue;
     const bool is_rep = (c.type == ADV_TYPE_REPEATER);
@@ -24745,7 +25256,6 @@ static void refreshContactsList() {
     const bool is_fav = false;
     const bool is_blocked = false;
 #endif
-    if ((pass == 0) != is_fav) continue;   // pass 0 = favorites only; pass 1 = everything else
     // Shared predicate (category filter incl. "has location" + name search) so
     // the rendered list and the multi-select "Select all" apply IDENTICAL rules.
     if (!ctPassesFilter(c, is_fav, fav_count, have_search ? search_lc : nullptr)) continue;
@@ -24811,6 +25321,7 @@ static void refreshContactsList() {
       }
     }
     if (prim == 0) prim = strcasecmp(ea->name, eb->name);   // A-Z natural order / tiebreak
+    if (prim == 0) prim = memcmp(ea->key6, eb->key6, 6);    // stable final tiebreak → deterministic 128-row cut (#73)
     return g_contacts_sort_desc ? -prim : prim;
   });
 
@@ -24953,6 +25464,21 @@ static void refreshContactsList() {
       lv_obj_set_style_text_font(star, &star_font_14, LV_PART_MAIN);
       lv_obj_set_style_text_color(star, lv_color_hex(0xC9A24A), LV_PART_MAIN);
       lv_obj_align(star, LV_ALIGN_LEFT_MID, star_x, 0);
+    }
+  }
+
+  // Overflow notice: more contacts matched than the 128-row render budget — surface
+  // it so the tail isn't silently hidden. Search narrows the list to any of them,
+  // and changing the sort floats different ones to the top. #73.
+  {
+    const int render_cap = (int)(sizeof(s_contacts_ctx) / sizeof(s_contacts_ctx[0]));
+    if (n_entries > render_cap) {
+      char more[56];
+      snprintf(more, sizeof(more), "+%d more — search to narrow the list", n_entries - render_cap);
+      lv_obj_t* lm = lv_list_add_text(g_lv.contacts_list, more);
+      lv_obj_set_style_text_color(lm, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_style_text_align(lm, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+      lv_obj_set_style_pad_all(lm, 8, LV_PART_MAIN);
     }
   }
 
@@ -25337,6 +25863,7 @@ static bool hwKeyDismissTopPopup() {
   if (s_meminfo_root)     { closeMemInfo();            return true; }   // topmost diagnostic popup
   if (s_monitor_root)     { closeMonitorPage();        return true; }   // RF monitor app page
   if (s_spec_root)        { closeSpectrumPage();        return true; }   // RF spectrum analyzer app page
+  if (s_advert_root)      { closeAdvertPage();          return true; }   // Send-advert app page
   if (s_siginfo_root)     { closeSigInfoPopup();       return true; }   // home "Signal & traffic" popup
 #if CAP_FILESYSTEM
   if (s_fm_img_root)      { fmImageClose();           return true; }   // image viewer (top FM overlay)
@@ -28469,6 +28996,78 @@ static void takeScreenshotToSd() {
 #endif
 }
 
+#if defined(DOC_CAPTURE)
+// ---- Documentation capture (one-off build: -DDOC_CAPTURE) ---------------------------------------
+// Streams the framebuffer over USB as a 16-bit BMP, then walks the screens automatically so the
+// host script (scripts/doc/capture.py) can save a PNG per screen. The tour blocks the main loop
+// while it runs, so the serial carries ONLY these frames (no companion push frames interleave).
+#include "esp_task_wdt.h"
+static void captureScreenToSerial(const char* name) {
+  const int W = lv_disp_get_hor_res(nullptr);
+  const int H = lv_disp_get_ver_res(nullptr);
+  lv_color_t* buf = (lv_color_t*)heap_caps_malloc((size_t)W * H * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+  if (!buf) buf = (lv_color_t*)malloc((size_t)W * H * sizeof(lv_color_t));
+  if (!buf) return;
+  g_shot_w = W; g_shot_h = H; g_shot_buf = buf;
+  lv_obj_invalidate(lv_scr_act());
+  lv_obj_invalidate(lv_layer_top());
+  lv_obj_invalidate(lv_layer_sys());
+  lv_refr_now(NULL);
+  g_shot_buf = nullptr;
+
+  const uint32_t row_bytes = (uint32_t)(((W * 16 + 31) / 32) * 4);   // 4-byte aligned rows
+  const uint32_t img_bytes = row_bytes * (uint32_t)H;
+  const uint32_t total     = 66u + img_bytes;                        // 14 + 40 + 12 headers + pixels
+  uint8_t hdr[66]; memset(hdr, 0, sizeof hdr);
+  auto p16 = [&](int o, uint16_t v){ hdr[o]=v&0xFF; hdr[o+1]=v>>8; };
+  auto p32 = [&](int o, uint32_t v){ hdr[o]=v&0xFF; hdr[o+1]=(v>>8)&0xFF; hdr[o+2]=(v>>16)&0xFF; hdr[o+3]=(v>>24)&0xFF; };
+  hdr[0]='B'; hdr[1]='M'; p32(2,total); p32(10,66); p32(14,40); p32(18,(uint32_t)W); p32(22,(uint32_t)H);
+  p16(26,1); p16(28,16); p32(30,3); p32(34,img_bytes); p32(38,2835); p32(42,2835);
+  p32(54,0x0000F800); p32(58,0x000007E0); p32(62,0x0000001F);   // RGB565 bit masks
+
+  Serial.printf("\n<<<WMSHOT name=%s w=%d h=%d bytes=%u>>>\n", name, W, H, (unsigned)total);
+  Serial.write(hdr, sizeof hdr);
+  static const uint8_t pad[4] = {0,0,0,0};
+  const uint32_t pad_n = row_bytes - (uint32_t)W * 2u;
+  for (int y = H - 1; y >= 0; --y) {                              // BMP rows are bottom-up
+    Serial.write((const uint8_t*)(buf + (size_t)y * W), (size_t)W * 2u);
+    if (pad_n) Serial.write(pad, pad_n);
+  }
+  Serial.print("\n<<<WMEND>>>\n");
+  Serial.flush();
+  free(buf);
+}
+static void docSettle(int frames) { for (int i = 0; i < frames; ++i) { lv_timer_handler(); delay(22); } esp_task_wdt_reset(); }
+static void docCaptureTour() {
+  delay(400); esp_task_wdt_reset();
+  Serial.print("\n<<<WMTOUR START>>>\n"); Serial.flush();
+
+  const char* tabs[] = {"chat","contacts","home","map","settings"};
+  const int   tabi[] = {CHAT_INBOX_TAB_INDEX, CONTACTS_TAB_INDEX, HOME_TAB_INDEX, MAP_TAB_INDEX, SETTINGS_TAB_INDEX};
+  for (int t = 0; t < 5; ++t) { navGoToMainTab(tabi[t]); docSettle(12); captureScreenToSerial(tabs[t]); }
+
+  for (int c = 0; c < CAT_COUNT; ++c) {
+    navGoToMainTab(SETTINGS_TAB_INDEX); docSettle(3);
+    openSettingsCategory(c); docSettle(12);
+    char nm[48]; int o = snprintf(nm, sizeof nm, "set_");
+    for (const char* L = kSettingsCats[c].label; *L && o < (int)sizeof(nm) - 1; ++L) {
+      char ch = *L;
+      nm[o++] = (ch >= 'A' && ch <= 'Z') ? (char)(ch + 32)
+              : ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) ? ch : '_';
+    }
+    nm[o] = 0;
+    captureScreenToSerial(nm);
+    closeSettingsCategory(); docSettle(6);
+  }
+
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(3);
+  openMonitorPage();  docSettle(14); captureScreenToSerial("app_rfmonitor"); closeMonitorPage();  docSettle(6);
+  openSpectrumPage(); docSettle(14); captureScreenToSerial("app_spectrum");  closeSpectrumPage(); docSettle(6);
+
+  Serial.print("\n<<<WMTOUR END>>>\n"); Serial.flush();
+}
+#endif
+
 // ---- Idle power-save hooks (see TouchSleep.h) ----
 // Called by touchSleep::gatePasses(); each hook probes the relevant subsystem.
 static bool tsScreenOff()  { return g_lv.task && g_lv.task->isScreenOff(); }
@@ -29004,8 +29603,11 @@ static void updateGlobalStatusBar() {
   // with the theme accent). Default it OFF so any other state — e.g. a chat title that
   // contains '#' — is never mis-parsed as a colour code.
   if (g_statusbar.left_label) lv_label_set_recolor(g_statusbar.left_label, false);
-  const char* app_page_title = (s_settings_open_cat >= 0) ? TR(kSettingsCats[s_settings_open_cat].label)
-                             : s_apppage_title;    // RF Monitor / Spectrum reuse the same title bar
+  // A full-screen tool page (RF Monitor / Spectrum / Send advert) wins the title + Back chevron,
+  // even when opened from inside a settings detail — matches statusBarTapCb routing (apppage first).
+  const char* app_page_title = s_apppage_title ? s_apppage_title
+                             : (s_settings_open_cat >= 0) ? TR(kSettingsCats[s_settings_open_cat].label)
+                             : nullptr;
   if (app_page_title) {
     // A settings detail sheet OR a tool page is open: the bar carries its Back chevron +
     // page title, CENTRED in the tall bar and a size up (tapping the bar goes Back). The
@@ -30341,7 +30943,13 @@ static void chanScopeSaveCb(lv_event_t* e) {
 static lv_obj_t* s_blocked_modal = nullptr;
 static uint8_t   s_blocked_snap[TOUCH_IGNORED_MAX * TOUCH_IGNORE_KEY_BYTES];
 static char      s_blocked_names_snap[TOUCH_IGNORED_NAMES_MAX * TOUCH_IGNORED_NAME_LEN];
-static void blockedModalClose() { if (s_blocked_modal) { lv_obj_del(s_blocked_modal); s_blocked_modal = nullptr; } }
+static void blockedModalClose() {
+  if (s_blocked_modal) { lv_obj_del_async(s_blocked_modal); s_blocked_modal = nullptr; }
+  if (s_apppage_close == blockedModalClose) {   // release the tall title bar back to normal
+    s_apppage_title = nullptr; s_apppage_close = nullptr;
+    statusBarSetTall(false); updateGlobalStatusBar();
+  }
+}
 static bool blockedModalIsOpen() { return s_blocked_modal != nullptr; }
 static void blockedUnblockCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -30361,8 +30969,10 @@ static void openBlockedUsersModal() {
   blockedModalClose();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  // Sits under the double-height status bar (same as the channel-settings sheet); the bar's
-  // own Back chevron closes it (statusBarTapCb → blockedModalClose), so no in-sheet X.
+  // Full-screen page under the GLOBAL tall status bar ("‹ Blocked users", tap = Back) —
+  // same chrome as RF Monitor / advert, so it works opened from anywhere. The bug from
+  // the Contacts overflow was that it never activated the tall bar AND the page (created
+  // on lv_layer_top after the bar) covered it; both are handled below.
   s_blocked_modal = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_blocked_modal);
   lv_obj_set_size(s_blocked_modal, sw, sh - chatBarH());
@@ -30371,11 +30981,12 @@ static void openBlockedUsersModal() {
   lv_obj_set_style_bg_opa(s_blocked_modal, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_blocked_modal, LV_OBJ_FLAG_SCROLLABLE);
 
-  lv_obj_t* title = lv_label_create(s_blocked_modal);
-  lv_label_set_text(title, TR("Blocked users"));
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_pos(title, 8, 8);
+  s_apppage_title = "Blocked users";
+  s_apppage_close = blockedModalClose;
+  statusBarSetTall(true);
+  updateGlobalStatusBar();
+  lv_obj_move_foreground(s_blocked_modal);
+  if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);   // keep the tall bar above the page
 
   const int n  = touchPrefsCopyIgnored(s_blocked_snap);
   const int nn = touchPrefsCopyIgnoredNames(s_blocked_names_snap);
@@ -30384,14 +30995,14 @@ static void openBlockedUsersModal() {
     lv_label_set_text(empty, TR("No blocked users.\n\nLong-press a message and tap\nBlock to add one."));
     lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_pos(empty, 8, 48);
+    lv_obj_set_pos(empty, 8, 8);
     return;
   }
 
   lv_obj_t* list = lv_obj_create(s_blocked_modal);
   lv_obj_remove_style_all(list);
-  lv_obj_set_size(list, sw - 12, sh - chatBarH() - 44);
-  lv_obj_set_pos(list, 6, 40);
+  lv_obj_set_size(list, sw - 12, sh - chatBarH() - 16);
+  lv_obj_set_pos(list, 6, 8);
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(list, 6, LV_PART_MAIN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
@@ -34907,6 +35518,14 @@ void UITask::notify(UIEventType t) {
   if (t == UIEventType::contactMessage || t == UIEventType::channelMessage || t == UIEventType::roomMessage)
     msgLedFlash();
 #endif
+#if defined(HAS_TDECK_KEYBOARD)
+  // Same idea on the T-Deck (no notification LED): wake the screen + briefly light the keyboard.
+  if (touchPrefsGetMsgFlash() &&
+      (t == UIEventType::contactMessage || t == UIEventType::channelMessage || t == UIEventType::roomMessage)) {
+    s_msgflash_until = millis() + 1600;
+    s_msgflash_wake  = true;
+  }
+#endif
   // Background traffic (also reflected in the tab badges): show a subtle, low-key
   // chip rather than the prominent centre alert toast, so it's less intrusive.
   // New-contact discovery can be spammy in a busy mesh, so its chip is opt-out in
@@ -34928,6 +35547,15 @@ void UITask::notify(UIEventType t) {
 // ============================================================
 void UITask::loop() {
   unsigned long now = millis();
+#if defined(DOC_CAPTURE)
+  // One-shot: once the boot splash is gone, wait for the host to send 'G' (scripts/doc/capture.py),
+  // then walk every screen and stream each framebuffer over USB. The 'G' handshake avoids a
+  // flash-vs-connect timing race — the host can attach whenever and trigger the tour.
+  { static bool s_doc_done = false;
+    if (!s_doc_done && s_splash_root == nullptr) {
+      while (Serial.available()) { if (Serial.read() == 'G') { s_doc_done = true; docCaptureTour(); break; } }
+    } }
+#endif
   // Safety net: the Spectrum app borrows the radio (s_spectrum_active pauses
   // the_mesh.loop() in main.cpp). Its close paths all restore + clear the flag,
   // but if the page ever vanished without that, the mesh would stay off the
@@ -35271,6 +35899,10 @@ void UITask::loop() {
   if (s_kb_bl_mode == 1) kb_bl = 0xFF;
   else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = 0xFF;
   if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keep the keyboard dark too
+  // New-message notify flash: wake the screen so the message is visible, then briefly force the
+  // keyboard lit for the pulse window (overrides the off/idle backlight mode).
+  if (s_msgflash_wake) { s_msgflash_wake = false; if (_screen_off) wakeScreen(); }
+  if (!_screen_off && !_manual_lock && s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = 0xFF;
   tdeckKeyboardSetBacklight(kb_bl);
   serviceLockscreen();            // refresh the lock-screen clock on minute roll-over
   serviceLockingCountdown(now);   // advance / fire the spacebar "Locking…" countdown
@@ -35282,13 +35914,13 @@ void UITask::loop() {
   tanKbBacklightTick(_screen_off || _manual_lock);
 #endif
   refreshLiveDiag(now);
-  // Keep the signal fresh with a "discover" probe: send a FLOOD advert whenever
-  // we have no recent signal, so nearby repeaters re-broadcast it and we measure
-  // their echo's SNR. Fires within seconds of boot (no signal yet) so the icon
-  // lights up fast; in a chatty mesh where we already hear traffic it stays
-  // quiet. (Zero-hop adverts can't be used here — they aren't re-broadcast, so
-  // they produce nothing for us to measure.) The user can turn the probe off or
-  // change its poll interval from the home-graph "Signal & traffic" popup.
+  // Keep the signal fresh with a "discover" probe: send a ZERO-HOP advert whenever
+  // we have no recent DIRECT signal. Zero-hop = neighbours only, never re-broadcast,
+  // so the probe injects NO repeated traffic into the mesh — it just announces us to
+  // whoever is in direct range. The reading itself comes passively from directly-heard
+  // (0-hop) neighbours (logRxRaw gates the signal to hops==0), so in a fully silent
+  // mesh the icon stays dark until a neighbour transmits — the honest answer (no direct
+  // neighbour = no direct signal). Off / poll-interval live in the "Signal & traffic" popup.
   {
     // s_sig_probe_at is file-scope (promoted for tsNextWakeForcingDueMs); no re-init here.
     (void)0;  // placeholder — variable declared at file scope above
@@ -35297,14 +35929,35 @@ void UITask::loop() {
         const uint32_t poll_ms = (uint32_t)touchPrefsGetSigPollMins() * 60000UL;  // minutes -> ms
         s_sig_probe_at = now + poll_ms;
         const uint32_t sms = the_mesh.uiSignalMs();
-        // Skip the flood when we've heard signal within the poll window (ambient
-        // traffic already gives us a reading); the small margin keeps our own
-        // echo from suppressing the next probe in an otherwise-silent mesh.
-        if (sms == 0 || (now - sms) >= poll_ms - 5000UL) sendAdvertFlood();
+        // Skip the announce when a direct neighbour was heard within the poll window.
+        if (sms == 0 || (now - sms) >= poll_ms - 5000UL) sendAdvertZeroHop();
       } else {
         s_sig_probe_at = now + 60000;   // probe off: just re-check the toggle each minute
       }
     }
+  }
+
+  // Periodic self-advert: the standard MeshCore flood / zero-hop advert on a timer (intervals set
+  // in the Advertise app, stored in TouchPrefsStore). Separate from the signal probe above, which
+  // only floods when the mesh has gone quiet. First fire lands one full interval after enable/boot.
+  {
+    static uint32_t s_next_flood_adv = 0, s_next_local_adv = 0;
+    const uint16_t fh = touchPrefsGetFloodAdvHrs();
+    if (fh) {
+      if (!s_next_flood_adv) s_next_flood_adv = (uint32_t)now + (uint32_t)fh * 3600000UL;
+      else if ((int32_t)((uint32_t)now - s_next_flood_adv) >= 0) {
+        the_mesh.sendAdvert(true);   // flood: relayed across the mesh (region-scoped like #68)
+        s_next_flood_adv = (uint32_t)now + (uint32_t)fh * 3600000UL;
+      }
+    } else s_next_flood_adv = 0;
+    const uint16_t lm = touchPrefsGetLocalAdvMin();
+    if (lm) {
+      if (!s_next_local_adv) s_next_local_adv = (uint32_t)now + (uint32_t)lm * 60000UL;
+      else if ((int32_t)((uint32_t)now - s_next_local_adv) >= 0) {
+        the_mesh.sendAdvert(false);  // zero-hop: only neighbours hear it
+        s_next_local_adv = (uint32_t)now + (uint32_t)lm * 60000UL;
+      }
+    } else s_next_local_adv = 0;
   }
 
   batteryLogTick((uint32_t)now);   // 5-min battery sample (SD on T-Deck, else SPIFFS)

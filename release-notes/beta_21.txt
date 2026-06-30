@@ -1,0 +1,16 @@
+# beta_21 (one user-facing note per non-blank, non-# line; # lines are section comments)
+
+# --- New ---
+Stable and test update channels. beta_21 is the first stable build. On devices that update over Wi-Fi there is now a "Get test builds (beta)" switch on the About screen: leave it off to stay on stable releases, or turn it on to receive test builds earlier — it switches both the "update available" check and the firmware you install to the test channel. You can go back to stable at any time.
+MQTT bridge (highly experimental, off by default). An opt-in bridge that forwards the messages your node receives to an MQTT broker of your choice, so you can log your mesh or wire it into other tools. It is gated behind a privacy consent you have to tick, direct messages are excluded unless you deliberately enable them, and the payload can be sealed with an encryption key so only you can read it. Use a broker you control, never a public one. This is experimental and may change.
+Portugal (Narrow) region preset, so Portuguese users can pick the local defaults in one tap. (Issue #74, requested by Salgueiron.)
+Saved-contacts counter. The Contacts overflow menu now shows how many contacts you have saved out of the maximum it can hold (for example 42 / 2000). (Issue #72, asked by Buko84.)
+
+# --- Fixed ---
+The signal probe never travels past the first node now. The "auto-discover" signal pulse, and the probe behind the Signal popup, are sent strictly zero-hop, so a repeater can no longer re-flood them across the mesh. The probe only measures the link to whatever hears it first, which is what it was always meant to do.
+Your most relevant contacts now show when you have a lot of them. The on-screen contact list is capped for performance, but it was trimming the list before sorting it, so some contacts could drop out of view. It now sorts first, shows the closest matches, and adds a "+N more — search to narrow the list" line at the bottom. (Issue #73, reported by 1nerdherder.)
+The blocked-users list opened from Contacts now shows the proper two-line title bar with a back button, instead of an unlabelled screen.
+The Contacts overflow popup fits the screen again after the saved-contacts counter was added.
+
+# --- Also ---
+Everything from beta_20 is included.
