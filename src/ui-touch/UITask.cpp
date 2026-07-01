@@ -32269,6 +32269,10 @@ static void telemetryPollSet(const uint8_t* key6, int interval_min) {
 }
 static void telemetryPollTick(uint32_t now_ms) {
   if (SD.cardType() == CARD_NONE) return;
+  // Hold auto-poll while a manual request is awaiting its reply — an auto-poll
+  // REQ would overwrite the manual request's pending tag and orphan its reply.
+  // It'll poll on the next interval (the manual pending window is short).
+  if (s_telem_manual_pending) return;
   telemetryPollLoad();
   for (auto& e : s_telem_poll) {
     if (!e.used || (int32_t)(now_ms - e.next_ms) < 0) continue;
@@ -32301,9 +32305,16 @@ static void telemWinApplyCb(lv_event_t* e) {
 // send, but drives the telemetry window's own pending/deadline state.
 static void telemetryRequestNow() {
   if (!g_lv.task) return;
+  // Single-flight: a manual request for this node is already awaiting its reply.
+  // Re-firing would send a fresh LOGIN+REQ and overwrite the in-flight pending
+  // tag, orphaning the first reply — just keep waiting on the one in progress.
+  if (s_telem_manual_pending) return;
   ContactInfo c;
   if (!telemetryFindContact(s_telem_node, &c)) { openTelemetryWindow(s_telem_node, s_telem_name, TELEM_FAILED); return; }
-  const int r = the_mesh.sendTelemetryRequestWithGuestLoginForUI(c);
+  // Send the guest LOGIN now and defer the telemetry REQ until the repeater
+  // acknowledges it (the REQ fires from onContactResponse on the LOGIN-OK, by
+  // which point we're ACL'd so it lands first try — no more "tap twice").
+  const int r = the_mesh.uiSendRequestAfterGuestLogin(c, MyMesh::UiReqKind::Telemetry);
   s_telem_reading[0] = '\0';
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
     s_telem_manual_pending = true;
@@ -35609,6 +35620,8 @@ void UITask::loop() {
   if (s_telem_manual_pending && s_telem_deadline_ms != 0 && now >= s_telem_deadline_ms) {
     s_telem_manual_pending = false;
     s_telem_deadline_ms = 0;
+    the_mesh.cancelUIDeferredLogin();   // drop a not-yet-acked LOGIN so a late OK can't fire a stale REQ
+    the_mesh.cancelUIPingPending();     // drop the pending reply tag if the REQ was already sent
     if (s_telemetry_root) openTelemetryWindow(s_telem_node, s_telem_name, TELEM_FAILED);
   }
 #endif
@@ -36035,7 +36048,9 @@ void UITask::loop() {
   // worker). Cheap — a blink toggle, no animation.
   if (g_statusbar.async_icon) {
     const bool active = (g_mesh_req_ms != 0 && (uint32_t)(now - g_mesh_req_ms) < 1500u)
-                        || (s_ui_ping_deadline_ms != 0) || s_los_busy;
+                        || (s_ui_ping_deadline_ms != 0)
+                        || (s_telem_manual_pending && s_telem_deadline_ms != 0)  // manual telemetry req stays lit for its whole pending window, like a ping
+                        || s_los_busy;
     static bool     s_async_shown = false;
     static uint32_t s_async_blink = 0;
     if (active) {
