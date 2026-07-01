@@ -333,6 +333,31 @@ public:
     return sendTelemetryRequestForUI(recipient);
   }
 
+  /** Touch-UI manual STATUS/TELEMETRY request that DEFERS the REQ until the
+   *  guest LOGIN is acknowledged. The chained helpers above fire LOGIN and REQ
+   *  back-to-back, but a repeater drops a PAYLOAD_TYPE_REQ from a sender it
+   *  hasn't ACL'd yet — and on first contact the ACL entry isn't committed by
+   *  the time the REQ is processed, so the first request usually gets no reply
+   *  (the user had to tap twice). This sends ONLY the blank-password LOGIN now
+   *  and arms _ui_login_then; onContactResponse issues the REQ once the
+   *  LOGIN-OK lands, by which point we're in the ACL and a direct out_path has
+   *  been learned, so the REQ decrypts on the first try.
+   *  Returns the LOGIN's MSG_SEND_* result — the UI shows "requesting…" on a
+   *  successful send and arms its own reply deadline. Manual paths only;
+   *  auto-poll keeps the immediate chained send above (a single arm slot can't
+   *  serve its multi-node loop, and a missed poll just retries next interval). */
+  int uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind) {
+    uint32_t login_est = 0;
+    int r = sendLogin(recipient, "", login_est);
+    if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
+      memcpy(&_ui_login_then, recipient.id.pub_key, 4);
+      _ui_login_then_kind = kind;
+    } else {
+      cancelUIDeferredLogin();
+    }
+    return r;
+  }
+
   /** Admin login for the touch UI repeater admin console.
    *  Sends a sendLogin with the given password (empty = guest), records
    *  pending_login so onContactResponse's existing login branch can route
@@ -370,6 +395,13 @@ public:
     _ui_pending_status = 0;
     _ui_pending_kind   = UiReqKind::None;
     _ui_pending_tag    = 0;
+  }
+  /** Disarm a deferred guest-login-then-request (see uiSendRequestAfterGuestLogin)
+   *  so a late LOGIN-OK can't fire a REQ after the UI gave up. Kept separate from
+   *  cancelUIPingPending() so a ping timeout never disarms a telemetry request. */
+  void cancelUIDeferredLogin() {
+    _ui_login_then      = 0;
+    _ui_login_then_kind = UiReqKind::None;
   }
   /** True if a UI ping is still waiting on a reply. */
   bool hasUIPingPending() const { return _ui_pending_status != 0; }
@@ -896,6 +928,12 @@ private:
    *  matching by pubkey alone misroutes the login OK as the REQ reply.
    *  Compare tag in onContactResponse to keep the two streams separate. */
   uint32_t _ui_pending_tag = 0;
+  /** Deferred guest-login-then-request arm: holds the first 4 bytes of the
+   *  recipient pub_key (0 = none) plus which REQ to send, set by
+   *  uiSendRequestAfterGuestLogin(). onContactResponse fires the REQ when the
+   *  matching LOGIN-OK arrives, removing the ACL-commit race on the first try. */
+  uint32_t _ui_login_then = 0;
+  UiReqKind _ui_login_then_kind = UiReqKind::None;
   BaseSerialInterface *_serial;
   AbstractUITask* _ui;
 

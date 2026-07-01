@@ -2200,6 +2200,26 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
     }
     return;
   }
+
+  // Deferred guest-login-then-request (uiSendRequestAfterGuestLogin): the touch
+  // UI sent only a blank-password LOGIN and is waiting on the LOGIN-OK before
+  // issuing the STATUS/TELEMETRY REQ. While armed we have sent no REQ to this
+  // contact, so any RESPONSE from it here is the login reply. On OK, fire the
+  // deferred REQ now — we're in the repeater's ACL and a direct path has been
+  // learned, so it lands first try. On a non-OK (fail) reply, just disarm and
+  // let the UI's reply deadline flip the window to "failed".
+  if (_ui_login_then && len > 4 && memcmp(&_ui_login_then, contact.id.pub_key, 4) == 0) {
+    const bool login_ok = (data[4] == RESP_SERVER_LOGIN_OK)
+                          || (len > 5 && memcmp(&data[4], "OK", 2) == 0);
+    const UiReqKind k = _ui_login_then_kind;
+    cancelUIDeferredLogin();
+    if (login_ok) {
+      ContactInfo& rc = const_cast<ContactInfo&>(contact);
+      if (k == UiReqKind::Telemetry) sendTelemetryRequestForUI(rc);
+      else                           sendStatusPingForUI(rc);
+    }
+    return;   // login frame consumed (OK fired the REQ; fail disarmed)
+  }
 #endif
 
   if (pending_login && memcmp(&pending_login, contact.id.pub_key, 4) == 0) { // check for login response
