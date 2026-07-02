@@ -198,6 +198,25 @@
         </div>
         <div class="shot"><div class="device"><img class="screen" src="docs-img/map.png" alt="Map"></div><div class="cap">Map</div></div>
       </div>
+      <div class="prose">
+        <h3>Bring your own tiles (offline maps)</h3>
+        <p>You don't need Wi-Fi to see the map. Copy a standard OpenStreetMap tile pack onto the T-Deck's microSD card and the map reads straight off the card, fully offline.</p>
+        <p><b>Where they go.</b> Use the usual slippy-map <code>z/x/y</code> folder layout, in either of these locations on the card:</p>
+        <ul>
+          <li><code>/maps/osm/&lt;z&gt;/&lt;x&gt;/&lt;y&gt;.png</code> &mdash; the Meshtastic / MeshCore standard layout (recommended, so packs are interchangeable between apps).</li>
+          <li><code>/tiles/&lt;z&gt;/&lt;x&gt;/&lt;y&gt;.png</code> &mdash; also read. This is the same folder the Wi-Fi download cache uses, so your own tiles and downloaded ones live side by side.</li>
+        </ul>
+        <p><b>Format.</b> 256&times;256 <code>.png</code> tiles (<code>.jpg</code> also works). <code>z</code> is the zoom level and <code>x</code>/<code>y</code> the tile column/row at that zoom &mdash; the same scheme OSM's own tile server and every XYZ tile downloader use, so most ready-made packs drop in unchanged.</p>
+        <p><b>Turn it on.</b> Open the map's options (the gear button on the map) and switch on <b>Tiles from SD card</b>; the status line confirms <code>Map tiles: microSD</code>. Turn it back off to fetch live tiles over Wi-Fi again.</p>
+        <p><b>Making a pack.</b> Any XYZ / slippy-map tile downloader works &mdash; point it at OpenStreetMap for your area and a sensible zoom range, then copy the resulting <code>z/x/y</code> folders onto the card. Each extra zoom level roughly quadruples the tile count, so grab only the levels you'll actually use.</p>
+        <div class="callout">
+          <span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>
+          <div>
+            <b>Board differences</b>
+            <p>The "Tiles from SD card" toggle is a T-Deck feature. The Heltec V4 has no microSD slot, so it caches downloaded tiles to a small internal partition (no offline packs there). On the Tanmatsu, tiles &mdash; your own or downloaded &mdash; live at <code>/tiles/&lt;z&gt;/&lt;x&gt;/&lt;y&gt;.jpg</code> on the microSD card; drop JPEG tiles there and they show alongside the downloaded ones.</p>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="doc" id="settings">
