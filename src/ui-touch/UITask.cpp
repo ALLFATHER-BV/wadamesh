@@ -76,6 +76,7 @@
 #include <Utils.h>
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
+#include "Mp3Player.h"        // Apps → Music (self-contained MP3 player, T-Deck)
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
@@ -498,6 +499,7 @@ extern volatile uint16_t s_tile_fetch_pending;
 // OOM-reboot. Transient install keeps steady-state internal RAM untouched.
 static bool fmSdTryMount();   // defined far below (microSD mount, T-Deck)
 static bool tdeckAudioInstallRate(int rate) {
+  if (mp3OwnsI2S()) return false;   // music player owns I2S0 — stay silent (music-priority), no driver fight
   // Heap pre-flight. i2s_driver_install ESP_ERROR_CHECKs its internal DMA + timer
   // allocations and abort()s the firmware on NO_MEM — this is the "esp_timer_create
   // ESP_ERR_NO_MEM" crash testers hit toggling sound while BLE + Wi-Fi are both up
@@ -779,6 +781,7 @@ struct GlobalStatusBar {
   lv_obj_t* sd_icon;         // microSD read/write activity LED (left of Wi-Fi)
   lv_obj_t* async_icon;      // async mesh-request spinner glyph (centre, transient)
   lv_obj_t* clock;
+  lv_obj_t* mp3_time;        // music player elapsed/total (tap = open the player)
   lv_obj_t* batt_pct;
   lv_obj_t* batt_icon;
   lv_obj_t* layout_label;   // EN / BG indicator, right side
@@ -2295,6 +2298,9 @@ static void navSwitchTab(int dir) {
 // lands on the bare page.
 static void navGoToMainTab(int tab) {
   for (int i = 0; i < 8 && anyPopupOpen(); i++) hwKeyDismissTopPopup();
+#if defined(HAS_TDECK_GT911)
+  if (Mp3Player::isOpen()) Mp3Player::closeActive();   // drop the music-player overlay (and free the keyboard nav group) before switching tabs
+#endif
   goToTab(tab);
 }
 
@@ -16183,6 +16189,12 @@ static void fmOpenEditor(const char* name) {
 // ---- Read-only image viewer (PNG / JPEG; decoders enabled in lv_conf.h) -----
 static const size_t FM_IMG_MAX = 4u * 1024 * 1024;   // encoded-file read cap
 
+static bool fmIsMp3(const char* name) {
+  if (!name) return false;
+  const char* dot = strrchr(name, '.');
+  return dot && !strcasecmp(dot, ".mp3");
+}
+
 static bool fmIsImage(const char* name) {
   if (!name) return false;
   const char* dot = strrchr(name, '.');
@@ -16591,6 +16603,14 @@ static void fmRowClickCb(lv_event_t* e) {
   else if (fmIsAudio(rd->name)) fmOpenAudio(rd->name);   // .wav -> notification-sound chooser
 #endif
   else if (fmIsImage(rd->name)) fmOpenImage(rd->name);   // images -> read-only viewer
+  else if (fmIsMp3(rd->name)) {                          // .mp3 -> load into the Music player
+    char path[160]; fmFullPath(rd->name, path, sizeof path);
+    char pref[168];
+    if (fmIsSd(s_fm_fs)) snprintf(pref, sizeof pref, "sd:%s", path);
+    else                 snprintf(pref, sizeof pref, "%s", path);
+    closeFullscreenView();
+    Mp3Player::onExternalPick(pref);
+  }
   else                          fmOpenEditor(rd->name);  // text -> editor; long-press -> manage
 }
 static void fmRowLongPressCb(lv_event_t* e) {
@@ -16911,6 +16931,16 @@ static void fmSearchBtnCb(lv_event_t* e) {
 // Write the bundled placeholder into SPIFFS /lock/ once, so the "lock" folder
 // exists for the (future) lockscreen and is viewable now. SPIFFS is flat, so
 // writing "/lock/placeholder.png" implicitly creates the folder.
+static void buildFileManager(lv_obj_t* body);   // defined just below; mp3OpenFilePicker needs it
+
+// Apps -> Music "Choose track": open the File Manager. Opening an .mp3 there
+// loads it into the player (see the .mp3 branch in the row dispatch above).
+void mp3OpenFilePicker() {
+  lv_obj_t* body = openFullscreenView("Files");
+  buildFileManager(body);
+  if (g_lv.task) g_lv.task->showAlert(TR("Open an .mp3 to load it into the player"), 2600);
+}
+
 static void fmSeedLockFolder() {
 #if defined(ESP32)
   static bool tried = false;
@@ -27135,8 +27165,15 @@ static void handleHwKey(int key) {
       if (njump >= 0 && !on_textfield) {
         // Home hotkey mirrors tapping the Home tab: on Home toggle Commander <-> app
         // drawer, else go Home. (homeKeyActivate is HAS_TANMATSU-only, so inline it.)
-        if (njump == HOME_TAB_INDEX && getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(!s_home_drawer_mode);
-        else                                                             navGoToMainTab(njump);
+        if (njump == HOME_TAB_INDEX && getActiveTab() == HOME_TAB_INDEX) {
+#if defined(HAS_TDECK_GT911)
+          if (Mp3Player::isOpen()) Mp3Player::closeActive();   // Home key over the music player: drop it (reveals Home), don't toggle the drawer
+          else
+#endif
+          setHomeDrawer(!s_home_drawer_mode);
+        } else {
+          navGoToMainTab(njump);
+        }
         if (g_lv.task) g_lv.task->noteUserInput();
         return;
       }
@@ -28319,7 +28356,7 @@ static void openControlCenter() {
 enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
-  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE,
+  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_MUSIC,
 };
 
 static void closeAppDrawer() {
@@ -28567,6 +28604,9 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_ADVERT:    openAdvertModalCb(e);  return;
     case APPACT_POWER:     openPowerMenu();      return;
     case APPACT_SNAKE:     SnakeGame::launch();  return;
+#if defined(HAS_TDECK_GT911)
+    case APPACT_MUSIC:     Mp3Player::launch();  return;
+#endif
 #if defined(HAS_TOUCH_UI)
     case APPACT_TERMINAL:  homeTerminalCb(e);    return;
 #endif
@@ -28874,6 +28914,9 @@ static void openAppDrawer() {
     { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
 #endif
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // snake game (icon drawn from APPACT_SNAKE, not a glyph)
+#if defined(HAS_TDECK_GT911)
+    { LV_SYMBOL_AUDIO,     "Music",     APPACT_MUSIC,    0,         0x9B59B6 },      // MP3 player (purple)
+#endif
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
   const int n = (int)(sizeof(tiles) / sizeof(tiles[0]));
@@ -29200,6 +29243,9 @@ static void uiInstallTouchSleepHooks() {
 #if defined(HAS_TDECK_GT911)
 // Tap on the sleep readiness icon: toast the current blocking reason so the
 // user knows WHY the device won't idle-sleep yet (mirrors batteryTapCb shape).
+#if defined(HAS_TDECK_GT911)
+static void mp3TimeTapCb(lv_event_t*) { Mp3Player::launch(); }   // tap the bar clock-time = (re)open the player
+#endif
 static void sleepIconTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   if (!g_lv.task) return;
@@ -29409,6 +29455,16 @@ static void buildGlobalStatusBar() {
   lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -SC(142), 0);   // extra slot for the sleep moon (T-Deck)
 #else
   lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -SC(126), 0);   // shifted left to free a slot for the SD LED
+#endif
+
+#if defined(HAS_TDECK_GT911)
+  g_statusbar.mp3_time = lv_label_create(g_statusbar.root);
+  lv_label_set_text(g_statusbar.mp3_time, "");
+  lv_obj_set_style_text_color(g_statusbar.mp3_time, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.mp3_time, &g_font_12, LV_PART_MAIN);
+  lv_obj_add_flag(g_statusbar.mp3_time, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_statusbar.mp3_time, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(g_statusbar.mp3_time, mp3TimeTapCb, LV_EVENT_CLICKED, nullptr);
 #endif
 
   // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars).
@@ -29947,6 +30003,30 @@ static void updateGlobalStatusBar() {
         lv_obj_align_to(g_statusbar.async_icon, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -4, 0);
     }
   }
+
+#if defined(HAS_TDECK_GT911)
+  // ---- Music player time (sits left of the clock; tap to (re)open the player) ----
+  if (g_statusbar.mp3_time) {
+    int mp;
+    if (mp3StatusTime(mp)) {
+      char mb[12];
+      snprintf(mb, sizeof(mb), "%d:%02d", mp / 60, mp % 60);
+      lv_label_set_text(g_statusbar.mp3_time, mb);
+      lv_obj_clear_flag(g_statusbar.mp3_time, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_update_layout(g_statusbar.root);                                                       // settle the clock geometry first
+      { lv_coord_t pw   = lv_obj_get_width(g_statusbar.root);
+        lv_coord_t clkL = lv_obj_get_x(g_statusbar.clock);                                          // clock's left edge (parent-relative)
+        // Give the time the SAME alignment family as the clock (..._MID) so it inherits the clock's
+        // exact vertical centring (relY=4 in both bar heights) instead of fighting align_to's stale
+        // anchor. The x offset parks its right edge just left of the clock.
+        lv_obj_align(g_statusbar.mp3_time, LV_ALIGN_RIGHT_MID, clkL - SC(6) - pw, 0); }
+      if (g_statusbar.async_icon)
+        lv_obj_align_to(g_statusbar.async_icon, g_statusbar.mp3_time, LV_ALIGN_OUT_LEFT_MID, -4, 0);
+    } else {
+      lv_obj_add_flag(g_statusbar.mp3_time, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+#endif
 
   // ---- Layout indicator ----
   if (g_statusbar.layout_label) {
@@ -34943,10 +35023,16 @@ void UITask::logRxFrame(float snr, float rssi, const uint8_t* raw, int len) {
 
 bool UITask::isButtonPressed() const { return false; }
 
+// Master "Sound" state for cross-module use (the MP3 player stays silent when sound is off).
+bool uiSoundMuted() { return g_lv.task ? g_lv.task->isBuzzerQuiet() : false; }
+
 void UITask::toggleBuzzer() {
   if (!_node_prefs) return;
   _node_prefs->buzzer_quiet = _node_prefs->buzzer_quiet ? 0 : 1;
   the_mesh.savePrefs();
+#if defined(HAS_TDECK_GT911)
+  if (_node_prefs->buzzer_quiet) Mp3Player::stopForLock();   // turning the master sound OFF also stops music
+#endif
 }
 
 bool UITask::getGPSState() {
@@ -35245,6 +35331,9 @@ static void setCpuForScreen(bool screen_on) {
   static int s_cur_mhz = 240;
   const int want = screen_on ? 240 : 80;
   if (want == s_cur_mhz) return;
+#if defined(HAS_TDECK_GT911)
+  if (!screen_on) Mp3Player::stopForLock();   // user choice: stop music entirely on lock (no garbled decode at 80 MHz)
+#endif
   setCpuFrequencyMhz(want);
   s_cur_mhz = want;
 }
