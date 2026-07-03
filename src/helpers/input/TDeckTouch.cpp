@@ -356,6 +356,7 @@ static void touchPollTask(void* arg) {
 #if defined(HAS_TDECK_KEYBOARD)
     // Poll the keyboard from THIS task too (same I2C bus) so the two devices
     // never get hit from two cores at once. ~every 4th tick (~32 ms) is plenty.
+    tdeckKeyboardFlushBacklight();   // backlight requests land within ~one tick (~8 ms); key scan stays /4
     if (++kb_div >= 4) { kb_div = 0; tdeckKeyboardPoll(); }
 #endif
     vTaskDelay(pdMS_TO_TICKS(s_period_ms));

@@ -1540,6 +1540,8 @@ struct SettingsModalState {
   uint8_t log_mode; // 0 = rx summary, 1 = raw
   /** Device modal: screen-timeout (seconds, 0=never) textarea. */
   lv_obj_t* screen_to_ta;
+  /** Device modal (Keyboard): backlight-brightness slider (issue #84). */
+  lv_obj_t* kbbl_slider;
   /** Device modal: live GPS fix-status line under the GPS toggle. */
   lv_obj_t* gps_status;
   /** Quick replies modal: 6 textareas, one per slot. Empty save clears
@@ -9185,6 +9187,57 @@ static void lockColorChosenCb(lv_event_t* e);
 #endif
 
 static void calibrateBatteryCb(lv_event_t* e);   // defined with the battery helpers below
+#if defined(HAS_TDECK_KEYBOARD)
+// Keyboard-backlight brightness (issue #84). The T-Keyboard's C3 firmware takes a
+// 2-byte I2C command [0x01, level 0-255]; the ON level was hardcoded 0xFF (100%).
+// This percent scales that level; the per-loop tick recomputes it and the I2C layer
+// only writes on change, so adjusting any control gives a live preview for free.
+static uint8_t s_tdeck_kb_bl_pct = 100;
+// Perceived LED brightness is roughly logarithmic in PWM duty, so a linear pct->duty
+// map feels coarse at the bottom (small pct steps = big visible jumps). A squared
+// (gamma-2) curve spends most of the percent range on the dim end, evening it out.
+static inline uint8_t tdeckKbBlLevel() {
+  if (s_tdeck_kb_bl_pct == 0) return 0;
+  uint32_t lvl = ((uint32_t)s_tdeck_kb_bl_pct * s_tdeck_kb_bl_pct * 255 + 5000) / 10000;
+  return (uint8_t)(lvl < 1 ? 1 : lvl);             // any nonzero pct stays visibly lit
+}
+// Apply a new percent: instant visual feedback (the loop tick + I2C layer pick it
+// up within ~2 keyboard polls). Turning the knob while the mode is off flips it to
+// on - mirroring the Tanmatsu control-centre behaviour.
+static void kbBlSetPct(int pct, bool sync_slider) {
+  if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+  s_tdeck_kb_bl_pct = (uint8_t)pct;
+  if (s_kb_bl_mode == 0) s_kb_bl_mode = 1;
+  noteKbActivity();                                // auto mode: light up now so the preview shows
+  tdeckKeyboardSetBacklight(tdeckKbBlLevel());     // request NOW; the touch-poll task flushes it over I2C within ~8 ms
+  if (sync_slider && g_set_modal.kbbl_slider)
+    lv_slider_set_value(g_set_modal.kbbl_slider, pct, LV_ANIM_OFF);
+}
+// Persisting rewrites the whole TouchCfg blob to NVS (cfgFlush), which can block the
+// UI thread for a good fraction of a second - far too slow to run on EVERY -/+ tap.
+// Defer it: one one-shot timer, re-armed on each change, writes ONCE after the user
+// stops clicking. Reads only statics, so it is safe even after the page is closed.
+static lv_timer_t* s_kbbl_save_timer = nullptr;
+static void kbBlSaveTimerCb(lv_timer_t*) {
+  s_kbbl_save_timer = nullptr;                     // repeat-count 1 -> LVGL deletes the timer after this
+  touchPrefsSetKbdBacklight(s_tdeck_kb_bl_pct);
+  touchPrefsSetKbBacklight(s_kb_bl_mode);          // persist the (possibly flipped) mode too
+}
+static void kbBlScheduleSave() {
+  if (s_kbbl_save_timer) { lv_timer_reset(s_kbbl_save_timer); return; }
+  s_kbbl_save_timer = lv_timer_create(kbBlSaveTimerCb, 1200, nullptr);
+  lv_timer_set_repeat_count(s_kbbl_save_timer, 1);
+}
+static void kbBlSliderCb(lv_event_t* e) {          // live while dragging
+  kbBlSetPct(lv_slider_get_value(lv_event_get_target(e)), false);
+}
+static void kbBlSliderReleaseCb(lv_event_t*)   { kbBlScheduleSave(); }
+static void kbBlPresetCb(lv_event_t* e) {          // Off / 25 / 50 / 75 / Max: user_data = the percent
+  kbBlSetPct((int)(intptr_t)lv_event_get_user_data(e), true);
+  kbBlScheduleSave();
+}
+#endif
+
 static void buildDeviceSettings(int sec) {
   // One detail page per section: each block below is gated to its DSEC_* section
   // (skipped blocks don't advance y, so every page lays out from the top).
@@ -9566,6 +9619,39 @@ static void buildDeviceSettings(int sec) {
   }
 
   if (sec == DSEC_KEYBOARD) {   // --- Keyboard ---
+#if defined(HAS_TDECK_KEYBOARD)
+  /* Keyboard backlight brightness (issue #84). A live slider (gamma-2 mapped so the
+     dim end is fine-grained) plus Off / 25 / 50 / 75 / Max one-tap presets; changes
+     apply within ~8 ms, the NVS save is debounced. 0 keeps the backlight dark even
+     in the on/auto modes. */
+  {
+    y += settingsRowLabel(body, y, 0, "Keyboard backlight", COLOR_SUB, &g_font_12, 0) + 4;
+    lv_obj_t* sl = lv_slider_create(body);
+    g_set_modal.kbbl_slider = sl;
+    lv_obj_set_size(sl, lv_pct(96), SC(8));
+    lv_obj_set_pos(sl, 2, y + SC(6));
+    lv_slider_set_range(sl, 0, 100);
+    lv_slider_set_value(sl, s_tdeck_kb_bl_pct, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(0x202428), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
+    lv_obj_set_style_pad_all(sl, 6, LV_PART_KNOB);
+    lv_obj_add_event_cb(sl, kbBlSliderCb,        LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(sl, kbBlSliderReleaseCb, LV_EVENT_RELEASED,      nullptr);
+    y += SC(26);
+
+    static const struct { const char* txt; int pct; } k_presets[] =
+      { { "Off", 0 }, { "25", 25 }, { "50", 50 }, { "75", 75 }, { "Max", 100 } };
+    for (int i = 0; i < 5; ++i) {                       // one-tap presets
+      lv_obj_t* b = lv_btn_create(body);
+      lv_obj_set_size(b, SC(48), SC(30));
+      lv_obj_set_pos(b, 2 + i * SC(54), y);
+      lv_obj_add_event_cb(b, kbBlPresetCb, LV_EVENT_CLICKED, (void*)(intptr_t)k_presets[i].pct);
+      lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, k_presets[i].txt); lv_obj_center(l);
+    }
+    y += SC(38);
+  }
+#endif
   /* Secondary keyboards (multi-select). Switch on any layouts you want in the
      rotation; a double-tap of SPACE on the physical keyboard cycles
      English -> each enabled layout -> back. The active layout is remembered
@@ -34446,6 +34532,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if CAP_KEYBOARD
     s_kb_bl_mode = touchPrefsGetKbBacklight();
 #endif
+#if defined(HAS_TDECK_KEYBOARD)
+    { uint8_t p = touchPrefsGetKbdBacklight(); s_tdeck_kb_bl_pct = (p > 100) ? 100 : p; }   // shared kbd_bl pref
+#endif
     // Accent-popup picker (both boards: on-screen + physical keyboard). Default on.
     s_accent_popups = touchPrefsGetAccentPopups();
     i18nSetLang(touchPrefsGetUiLang());   // active UI translation language (before the UI builds)
@@ -36021,8 +36110,8 @@ void UITask::loop() {
   }
   // Keyboard backlight: off / on / auto (lit after activity, off after idle).
   uint8_t kb_bl = 0;
-  if (s_kb_bl_mode == 1) kb_bl = 0xFF;
-  else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = 0xFF;
+  if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();
+  else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = tdeckKbBlLevel();
   if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keep the keyboard dark too
   // New-message notify flash: light the screen so the user sees a message arrived. When the
   // screen is hard-locked, REVEAL the lock screen (lights the wallpaper, keeps the lock) rather
@@ -36034,7 +36123,7 @@ void UITask::loop() {
     if (_manual_lock)     lockscreenReveal();   // locked: light wallpaper, keep the lock (unlock still works)
     else if (_screen_off) wakeScreen();         // idle-dimmed: normal wake
   }
-  if (!_screen_off && !_manual_lock && s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = 0xFF;
+  if (!_screen_off && !_manual_lock && s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = tdeckKbBlLevel();
   tdeckKeyboardSetBacklight(kb_bl);
   serviceLockscreen();            // refresh the lock-screen clock on minute roll-over
   serviceLockingCountdown(now);   // advance / fire the spacebar "Locking…" countdown

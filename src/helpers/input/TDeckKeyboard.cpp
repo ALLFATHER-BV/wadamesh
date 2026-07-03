@@ -34,9 +34,9 @@ void tdeckKeyboardSetBacklight(uint8_t level) {
   if (level != s_bl_desired || !forced) { s_bl_desired = level; s_bl_dirty = true; forced = true; }
 }
 
-void tdeckKeyboardPoll() {
-  if (!s_inited) return;
-  if (s_bl_dirty) {
+void tdeckKeyboardFlushBacklight() {
+  if (!s_inited || !s_bl_dirty) return;
+  {
     s_bl_dirty = false;
     // LilyGo T-Keyboard backlight: 2-byte command [0x01, brightness] (0 = off).
     Wire.beginTransmission(PIN_KB_ADDR);
@@ -44,6 +44,11 @@ void tdeckKeyboardPoll() {
     Wire.write(s_bl_desired);    // 0 = off, 1-255 = brightness
     Wire.endTransmission();
   }
+}
+
+void tdeckKeyboardPoll() {
+  if (!s_inited) return;
+  tdeckKeyboardFlushBacklight();
   if (Wire.requestFrom((int)PIN_KB_ADDR, 1) != 1) return;
   uint8_t key = Wire.read();
   if (key == 0) return;                       // no key this scan

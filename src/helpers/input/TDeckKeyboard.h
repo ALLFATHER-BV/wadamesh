@@ -28,4 +28,10 @@ int tdeckKeyboardReadKey();
  *  owns the bus. Only re-sent when the value changes. */
 void tdeckKeyboardSetBacklight(uint8_t level);
 
+/** Flush a pending backlight request over I2C NOW. CORE-0 ONLY (touch task).
+ *  Cheap when nothing is pending (one flag check); called every poll tick so a
+ *  brightness change lands within ~one touch-poll period (~8 ms) instead of
+ *  waiting for the next full keyboard scan (~32 ms). */
+void tdeckKeyboardFlushBacklight();
+
 #endif
