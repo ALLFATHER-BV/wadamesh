@@ -194,8 +194,9 @@ void halt() {
 
 void setup() {
   Serial.begin(115200);
-  delay(200);
-  Serial.println("[BOOT] setup start");
+  delay(1500);  // wait for USB-CDC enumeration so all boot logs are visible
+  Serial.println("[BOOT] setup start (debug-v2 with psram probe)");
+  Serial.flush();
 
   // Widen the task-watchdog grace period. The ~5 s default trips during a legitimate-but-slow flash
   // burst — a SPIFFS garbage-collect, or a bulk save (DataStore issues ~12 flash ops per contact,
@@ -238,6 +239,21 @@ void setup() {
 
   board.begin();
   Serial.println("[BOOT] board ok");
+
+  // Quick PSRAM sanity check — silent crash before SPIFFS could be bad PSRAM config
+  {
+    void* p = heap_caps_malloc(64, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    bool psram_ok = (p != NULL);
+    if (p) {
+      memset(p, 0x55, 64);
+      bool match = true;
+      for (int i = 0; i < 64; ++i) match &= (((uint8_t*)p)[i] == 0x55);
+      free(p);
+      psram_ok = match;
+    }
+    Serial.printf("[BOOT] psram probe: %s\n", psram_ok ? "OK" : "FAIL"); Serial.flush();
+    if (!psram_ok) { Serial.println("[BOOT] FATAL: PSRAM readback mismatch — halting"); halt(); }
+  }
 
 #ifdef DISPLAY_CLASS
   DisplayDriver* disp = NULL;
@@ -287,8 +303,11 @@ void setup() {
                     static_cast<unsigned long>(bn),
                     static_cast<unsigned>(esp_reset_reason()),
                     static_cast<unsigned>(nvs_free));
+      Serial.flush();
     }
+    Serial.println("[BOOT] about to call initTxtTxUniquenessFromRng..."); Serial.flush();
     the_mesh.initTxtTxUniquenessFromRng();
+    Serial.println("[BOOT] initTxtTxUniqueness done"); Serial.flush();
   }
 #endif
 
@@ -420,7 +439,7 @@ void setup() {
   }
 #endif
   if (!sd_storage && !spiffs_ok) SPIFFS.begin(true);   // last resort: format SPIFFS
-  Serial.printf("[BOOT] storage: %s\n", sd_storage ? "SD /meshcomod" : "SPIFFS");
+  Serial.printf("[BOOT] storage: %s\n", sd_storage ? "SD /meshcomod" : "SPIFFS"); Serial.flush();
 #if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
   // Route touch settings + Wi-Fi creds to the active filesystem (SD when that's
   // the data store, else SPIFFS) instead of NVS. Old NVS values still load and
@@ -430,14 +449,18 @@ void setup() {
                         sd_storage ? "/meshcomod" : "/prefs");
   #else
     SdNvsPrefs::useFile((fs::FS*)&SPIFFS, "/prefs");   // no SD on this board
+Serial.println("[BOOT] prefs_backend ok"); Serial.flush();
   #endif
   // The boot wordmark already read a pref (UI rotation) BEFORE useFile switched
   // the backend, caching the settings blob from legacy NVS. Re-read it now so
   // file-saved values (theme accent, brightness, language, …) take effect this
   // boot — otherwise a theme change "reverts" on every restart.
   touchPrefsReload();
+  Serial.println("[BOOT] touchPrefsReload ok"); Serial.flush();
 #endif
   store.begin();
+  Serial.println("[BOOT] store ok"); Serial.flush();
+  Serial.println("[BOOT] calling mesh.begin..."); Serial.flush();
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -445,7 +468,7 @@ void setup() {
         false
     #endif
   );
-  Serial.println("[BOOT] mesh ok");
+  Serial.println("[BOOT] mesh ok"); Serial.flush();
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   {
