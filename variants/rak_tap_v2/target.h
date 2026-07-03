@@ -12,7 +12,11 @@ extern "C" void set_boot_phase(int phase);
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/SensorManager.h>
-#ifdef DISPLAY_CLASS
+#if defined(RAK_WISMESH_TAP_V2)
+  #include "LGFXDisplay.h"
+  #define DISPLAY_CLASS LGFXDisplay
+  #include <helpers/ui/MomentaryButton.h>
+#elif defined(DISPLAY_CLASS)
   #include <helpers/ui/ST7789LCDDisplay.h>
   #include <helpers/ui/MomentaryButton.h>
 #endif

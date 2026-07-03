@@ -99,6 +99,8 @@
   #include "qr_icon.h"        // baked recolour-able QR glyph (qr_icon_dsc) for the Chats Share button
   #if defined(HAS_TANMATSU)
     #include <TanmatsuDisplay.h>             // badge-bsp-backed DisplayDriver (P4)
+  #elif defined(HAS_RAK_TAP_V2)
+    #include <LGFXDisplay.h>                 // LovyanGFX FSPI on RAK Tap V2
   #else
     #include <helpers/ui/ST7789LCDDisplay.h>
   #endif
@@ -127,6 +129,8 @@
   #endif
   #if defined(HAS_TANMATSU)
     extern TanmatsuDisplay display;
+  #elif defined(HAS_RAK_TAP_V2)
+    extern LGFXDisplay display;
   #else
     extern ST7789LCDDisplay display;
   #endif

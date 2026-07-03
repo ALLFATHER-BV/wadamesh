@@ -51,6 +51,11 @@ bool radio_init() {
   delay(50);
 #endif
 
+  // Start Arduino default SPI (FSPI=SPI2_HOST) on the TFT GPIOs so the
+  // display driver (LovyanGFX with bus_shared=true) finds an already-begun
+  // bus and skips spi_bus_initialize — avoiding a hang from double-init.
+  SPI.begin(PIN_TFT_SCL, 10, PIN_TFT_SDA, PIN_TFT_CS);
+
 #if defined(P_LORA_SCLK)
   return radio.std_init(&spi);
 #else
