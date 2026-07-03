@@ -7,7 +7,7 @@
 // driver outputs coordinates already in the 320x240 landscape screen space.
 // The raw->screen mapping is calibrated against the panel; flip the TDECK_TS_*
 // switches below if taps land mirrored/rotated.
-#if defined(HAS_TOUCH_UI) && !defined(HAS_HELTEC_V4_CAP_TOUCH) && defined(ESP32)
+#if defined(HAS_TOUCH_UI) && !defined(HAS_HELTEC_V4_CAP_TOUCH) && !defined(HAS_RAK_TAP_V2) && defined(ESP32)
 
 #include "HeltecV4CapTouch.h"
 #include "TDeckKeyboard.h"                 // shares this I2C bus; polled from the touch task

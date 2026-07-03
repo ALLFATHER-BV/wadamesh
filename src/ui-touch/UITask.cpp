@@ -1440,6 +1440,7 @@ static constexpr int LV_DRAW_BUF_LINES = 24;
 static lv_color_t* g_draw_buffer = nullptr;
 static uint32_t    g_draw_buf_px  = 240 * LV_DRAW_BUF_LINES;   // actual buffer size in px; shrinks if the full alloc fails at boot
 #if CAP_LARGE_SCREEN
+)
 // UI resolution scaling (Tanmatsu, no touchscreen). LVGL renders at s_lv_pw x s_lv_ph (PHYSICAL
 // portrait) and lvglFlush upscales each already-rotated band to the 480x800 panel. s_lv_pw == the
 // panel width (480) means 100% / native (no upscale). Set once at boot from touchPrefsGetUiScale().
@@ -19009,13 +19010,9 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
-  // Landscape (T-Deck / Tanmatsu): the right column holds Advert + Terminal + Files + Apps,
+  // Landscape: the right column holds Advert + Terminal + Files + Apps,
   // so the chart must stop short of that strip — else it draws over the buttons.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
-#else
-  const int chart_w = cw;
-#endif
   // Fit the chart in the remaining vertical space: content height minus the
   // tab padding, the chart's top offset, and the Send-advert button + gaps.
   // Portrait keeps the full 96 px; landscape (short screen) shrinks it so the
@@ -31480,11 +31477,7 @@ static void relayoutHomeCharts() {
   const int cw = tabContentW();
   const int BTNW = SC(100);
   const int RSTRIP = BTNW + 10;
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
-#else
-  const int chart_w = cw;
-#endif
 
   // The env summary line is hard-placed at SC(58) in the tree, which collides with
   // the (up to two-line, WRAP) stats line on the narrow V4 portrait — the stats line
@@ -36059,7 +36052,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
 #else
-      const size_t buf_bytes = sizeof(lv_color_t) * 240 * LV_DRAW_BUF_LINES;
+      const size_t buf_bytes = sizeof(lv_color_t) * 320 * LV_DRAW_BUF_LINES;
       // Internal DMA-capable DRAM — this is the hot loop's read source
       // during SPI flush. PSRAM (~80 MHz QSPI) is ~3× slower than
       // internal SRAM. INTERNAL|DMA also makes it eligible for SPI DMA
@@ -36077,7 +36070,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // requests strain the internal heap. A tiny buffer still renders instead of
       // leaving g_draw_buffer NULL -> NULL-deref in lvglFlush -> boot panic loop.
       if (!g_draw_buffer) {
-        g_draw_buf_px = 240 * 8;
+        g_draw_buf_px = 320 * 8;
         g_draw_buffer = (lv_color_t*)heap_caps_malloc(sizeof(lv_color_t) * g_draw_buf_px,
                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(sizeof(lv_color_t) * g_draw_buf_px);
@@ -36115,6 +36108,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // ROT_90 maps to panel rotation 1 in applyHardwarePanelRotation, so the
     // UI-init re-apply matches the boot splash orientation.
     s_ui_rotation = LV_DISP_ROT_90;
+#endif
+#if defined(HAS_RAK_TAP_V2)
+    // RAK Tap V2 panel is rotated 270° in hardware (DISPLAY_ROTATION=3); the UI
+    // must match so LVGL renders the full 320x240 landscape surface.
+    s_ui_rotation = LV_DISP_ROT_270;
 #endif
     // Apply the saved backlight brightness (takes the LEDA pin over from the
     // display's digitalWrite via LEDC PWM). Both touch boards have the LEDA pin.
