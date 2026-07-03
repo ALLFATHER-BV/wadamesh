@@ -9243,8 +9243,15 @@ static void kbBlSliderCb(lv_event_t* e) {          // live while dragging
   kbBlSetPct(lv_slider_get_value(lv_event_get_target(e)), false);
 }
 static void kbBlSliderReleaseCb(lv_event_t*)   { kbBlScheduleSave(); }
-static void kbBlPresetCb(lv_event_t* e) {          // Off / 25 / 50 / 75 / Max: user_data = the percent
-  kbBlSetPct((int)(intptr_t)lv_event_get_user_data(e), true);
+static void kbBlPresetCb(lv_event_t* e) {          // Off / 25 / 50 / 75 / Max: user_data = the percent (0 = Off)
+  int pct = (int)(intptr_t)lv_event_get_user_data(e);
+  if (pct == 0) {                                  // "Off" switches the MODE off (what the CC chip shows), instead of
+    s_kb_bl_mode = 0;                              // inventing a second dark state (brightness 0 with the mode still on)
+    tdeckKeyboardSetBacklight(0);                  // that left the CC chip saying "on" over a dark keyboard.
+    kbBlScheduleSave();                            // brightness pct is left untouched -> re-enabling restores it
+    return;
+  }
+  kbBlSetPct(pct, true);
   kbBlScheduleSave();
 }
 #endif
@@ -9633,15 +9640,16 @@ static void buildDeviceSettings(int sec) {
 #if defined(HAS_TDECK_KEYBOARD)
   /* Keyboard backlight brightness (issue #84). A live slider (gamma-2 mapped so the
      dim end is fine-grained) plus Off / 25 / 50 / 75 / Max one-tap presets; changes
-     apply within ~8 ms, the NVS save is debounced. 0 keeps the backlight dark even
-     in the on/auto modes. */
+     apply within ~8 ms, the NVS save is debounced. "Off" sets the backlight MODE
+     off (the same axis the control-center chip cycles), so the chip and this page
+     never disagree; the slider (1-100) only sets how bright on/auto glow. */
   {
     y += settingsRowLabel(body, y, 0, "Keyboard backlight", COLOR_SUB, &g_font_12, 0) + 4;
     lv_obj_t* sl = lv_slider_create(body);
     g_set_modal.kbbl_slider = sl;
     lv_obj_set_size(sl, lv_pct(96), SC(8));
     lv_obj_set_pos(sl, 2, y + SC(6));
-    lv_slider_set_range(sl, 0, 100);
+    lv_slider_set_range(sl, 1, 100);   // dark is the mode's job ("Off"); on/auto always visibly lit
     lv_slider_set_value(sl, s_tdeck_kb_bl_pct, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(sl, lv_color_hex(0x202428), LV_PART_MAIN);
     lv_obj_set_style_bg_color(sl, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
@@ -34544,7 +34552,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     s_kb_bl_mode = touchPrefsGetKbBacklight();
 #endif
 #if defined(HAS_TDECK_KEYBOARD)
-    { uint8_t p = touchPrefsGetKbdBacklight(); s_tdeck_kb_bl_pct = (p > 100) ? 100 : p; }   // shared kbd_bl pref
+    { uint8_t p = touchPrefsGetKbdBacklight(); s_tdeck_kb_bl_pct = (p < 1) ? 1 : (p > 100 ? 100 : p); }   // shared kbd_bl pref (dark = mode off, not pct 0)
 #endif
     // Accent-popup picker (both boards: on-screen + physical keyboard). Default on.
     s_accent_popups = touchPrefsGetAccentPopups();
