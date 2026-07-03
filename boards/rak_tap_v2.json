@@ -9,7 +9,7 @@
     "extra_flags": [
       "-DBOARD_HAS_PSRAM",
       "-DARDUINO_USB_CDC_ON_BOOT=1",
-      "-DARDUINO_USB_MODE=0",
+      "-DARDUINO_USB_MODE=1",
       "-DARDUINO_RUNNING_CORE=1",
       "-DARDUINO_EVENT_RUNNING_CORE=1"
     ],
@@ -36,7 +36,7 @@
     "use_1200bps_touch": false,
     "wait_for_upload_port": false,
     "require_upload_port": true,
-    "speed": 921600
+    "speed": 460800
   },
   "url": "https://store.rakwireless.com/products/wismesh-tap-v2",
   "vendor": "RAKwireless"

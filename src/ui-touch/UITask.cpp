@@ -29055,9 +29055,13 @@ static void openPowerMenu() {
 #if CAP_LARGE_SCREEN
   const int card_w = (sw - 80 > 420) ? 420 : (sw - 80);
   const int p_bh = 52, p_y0 = 46, p_step = 60, card_h = p_y0 + 4 * p_step + 8;   // bigger on the 800×480 panel
+#elif defined(HAS_RAK_TAP_V2)
+  // ROM force-download leaves a COM that esptool cannot open on HW CDC — hide the entry.
+  const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
+  const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
 #else
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
-  const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = 206;
+  const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 4 * p_step + 8;
 #endif
   lv_obj_t* card = lv_obj_create(s_power_menu);
   lv_obj_remove_style_all(card);
@@ -29094,8 +29098,12 @@ static void openPowerMenu() {
   };
   mk(LV_SYMBOL_POWER "  Power off",        powerOffCb,      0xC44B55, p_y0);
   mk(LV_SYMBOL_REFRESH "  Reboot",         powerRebootCb,   0,        p_y0 + p_step);
+#if !defined(HAS_RAK_TAP_V2)
   mk(LV_SYMBOL_DOWNLOAD "  Download mode", powerDownloadCb, 0,        p_y0 + 2 * p_step);
   mk("Cancel",                             powerCancelCb,   0,        p_y0 + 3 * p_step);
+#else
+  mk("Cancel",                             powerCancelCb,   0,        p_y0 + 2 * p_step);
+#endif
 }
 
 static void ccPowerCb(lv_event_t* e) {

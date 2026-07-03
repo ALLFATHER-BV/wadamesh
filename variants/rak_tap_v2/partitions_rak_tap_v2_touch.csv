@@ -1,15 +1,12 @@
 # RAK WisMesh Tap V2 TFT touch firmware - custom partition table.
 #
-# 16 MB layout with TWO EQUAL OTA app slots so the firmware can self-update
-# (HTTP OTA via the meshcomod proxy). The app region (app0+app1) is split
-# evenly at 3.875 MB each - the firmware is ~2.55 MB, leaving ~1.3 MB of growth
-# headroom per slot. The spiffs offsets are UNCHANGED from the previous
-# (single-big-app0) layout, so an OTA - or a one-time USB re-flash to install
-# this table - keeps user data (prefs / contacts / channels / chat history)
-# intact.
-#   - app0 3.875 MB (ota_0)   equal A/B slots; OTA ping-pongs between them
-#   - app1 3.875 MB (ota_1)
-#   - spiffs 7.875 MB for user data + map tiles
+# 16 MB layout with TWO EQUAL OTA app slots (same app region as T-Deck touch).
+# Data region aligned with lilygo_tdeck/partitions_tdeck_touch.csv so the map
+# tab's dedicated LittleFS "tiles" partition mounts and first-boot SPIFFS format
+# only touches 3.375 MB (not ~8 MB).
+#   - app0/app1 3.875 MB each (ota_0 / ota_1)
+#   - tiles 4.75 MB LittleFS (subtype 0x83) for map tile cache
+#   - spiffs 3.375 MB for prefs / contacts / chat history
 #
 # Layout (16 MB total):
 #   0x000000-0x009000  bootloader + partition table
@@ -17,13 +14,15 @@
 #   0x00E000-0x010000  otadata       (8 KB)
 #   0x010000-0x3F0000  app0          (3.875 MB, ota_0)
 #   0x3F0000-0x7D0000  app1          (3.875 MB, ota_1)
-#   0x7D0000-0xFB0000  spiffs        (7.875 MB)
-#   0xFB0000-0x1000000 coredump      (320 KB)
+#   0x7D0000-0xC90000  tiles         (4.75 MB, LittleFS, type 0x83)
+#   0xC90000-0xFF0000  spiffs        (3.375 MB)
+#   0xFF0000-0x1000000 coredump      (64 KB)
 
 # Name,   Type, SubType,  Offset,   Size,     Flags
 nvs,      data, nvs,      0x9000,   0x5000,
 otadata,  data, ota,      0xe000,   0x2000,
 app0,     app,  ota_0,    0x10000,  0x3E0000,
 app1,     app,  ota_1,    0x3F0000, 0x3E0000,
-spiffs,   data, spiffs,   0x7D0000, 0x7E0000,
-coredump, data, coredump, 0xFB0000, 0x50000,
+tiles,    data, 0x83,     0x7D0000, 0x4C0000,
+spiffs,   data, spiffs,   0xC90000, 0x360000,
+coredump, data, coredump, 0xFF0000, 0x10000,
