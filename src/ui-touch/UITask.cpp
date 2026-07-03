@@ -37598,16 +37598,42 @@ void UITask::loop() {
       s_tb_click_press = tb_pressed && !s_tb_wake_consume;
       if (s_tb_click_press) { s_tb_last_active_ms = now; noteUserInput(); }
     }
-#else
+#elif defined(HAS_RAK_TAP_V2)
+    // RAK Tap V2: single BOOT button (GPIO0), no trackball, no keyboard.
+    // Short press (<1s): toggle screen on/off (does NOT hard-lock -- touch
+    //   can still wake, since there is no second button for unlock).
+    // Long press (>=1s): open power menu (Power off / Reboot / Cancel).
+    static unsigned long s_rak_btn_down_ms = 0;
+    static bool s_rak_long_fired = false;
+    if (v == LOW && s_user_btn_prev == HIGH) {
+      s_rak_btn_down_ms = now;
+      s_rak_long_fired  = false;
+    } else if (v == LOW && s_user_btn_prev == LOW) {
+      if (now - s_rak_btn_down_ms >= 1000 && !s_rak_long_fired) {
+        s_rak_long_fired = true;
+        if (_screen_off) wakeScreen();
+        openPowerMenu();
+      }
+    } else if (v == HIGH && s_user_btn_prev == LOW) {
+      if (!s_rak_long_fired) {
+        if (_screen_off) { wakeScreen(); }
+        else {
+          touchScreenBacklight(false);
+          setCpuForScreen(false);
+          _screen_off = true;
+          // NO _manual_lock -- touch can still wake the screen.
+        }
+      }
+    }
+#else   // Generic: Heltec V4 -- short press toggles screen + lock
     if (v == LOW && s_user_btn_prev == HIGH) {
       if (_screen_off) {
-        /* wakeScreen() clears _manual_lock so subsequent touches work. */
         wakeScreen();
       } else {
         touchScreenBacklight(false);
         setCpuForScreen(false);
         _screen_off  = true;
-        _manual_lock = true;  // touch can't unlock until BOOT pressed again
+        _manual_lock = true;  // touch cannot unlock until BOOT pressed again
       }
     }
 #endif
