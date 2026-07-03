@@ -33,8 +33,8 @@
     "flash_size": "16MB",
     "maximum_ram_size": 8388608,
     "maximum_size": 16777216,
-    "use_1200bps_touch": true,
-    "wait_for_upload_port": true,
+    "use_1200bps_touch": false,
+    "wait_for_upload_port": false,
     "require_upload_port": true,
     "speed": 921600
   },
