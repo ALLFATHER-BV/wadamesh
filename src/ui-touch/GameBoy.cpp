@@ -11,6 +11,9 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <driver/i2s.h>       // MAX98357A speaker amp — streaming GB audio
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/stream_buffer.h>
 #include "../helpers/esp32/TouchPrefsStore.h"  // touchPrefsGetSoundVolume()
 
 // gnuboy is C. Its header re-defines IRAM_ATTR empty (non-RETRO_GO build); this
@@ -38,6 +41,7 @@ static constexpr size_t     ABUF_LEN   = 1024;    // int16 entries
 static constexpr int        MAX_ROMS   = 96;
 static constexpr size_t     MAX_ROM_BYTES = 4u * 1024 * 1024;  // sanity cap
 static constexpr uint32_t   PULSE_MS   = 130;     // trackball/keyboard pad-tap hold
+static constexpr size_t     AUDIO_SB_BYTES = 16384;  // ~370 ms @ 22050 Hz mono S16
 
 // I2S audio — same MAX98357A wiring as UITask's notification tones (mono amp).
 // GB owns I2S_NUM_0 only while unmuted; the notify path is gated off meanwhile.
@@ -53,6 +57,8 @@ static constexpr uint32_t   PULSE_MS   = 130;     // trackball/keyboard pad-tap 
 static constexpr i2s_port_t kGbI2sPort          = I2S_NUM_0;
 static constexpr int        AUDIO_WARMUP_FRAMES = 45;   // swallow startup garble
 
+enum ScaleMode { SCALE_1X, SCALE_FIT, SCALE_INT2X };
+
 // ---------------------------------------------------------------------------
 // State (single instance — one game at a time, like the app's other overlays)
 // ---------------------------------------------------------------------------
@@ -60,13 +66,15 @@ static lv_obj_t*   s_root      = nullptr;   // full-screen overlay
 static lv_obj_t*   s_picker    = nullptr;   // ROM list (phase 1)
 static lv_obj_t*   s_play      = nullptr;   // play-UI container (canvas + controls)
 static lv_obj_t*   s_canvas    = nullptr;   // scaled GB output
-static lv_obj_t*   s_mute_lbl  = nullptr;   // speaker icon (updated on toggle)
+static lv_obj_t*   s_menu      = nullptr;   // in-game pause menu (phase 2)
 static lv_color_t* s_fb        = nullptr;   // canvas buffer (scaled output)
 static lv_color_t* s_gbfb      = nullptr;   // gnuboy's fixed 160x144 framebuffer
 static lv_timer_t* s_timer     = nullptr;
 static uint8_t*    s_rom        = nullptr;  // full ROM in PSRAM (banks point into it)
 static bool        s_playing    = false;
-static bool        s_immersive  = false;    // hide controls, scale to full height
+static bool        s_rom_loaded = false;    // gnuboy_load_rom succeeded (own the banks)
+static bool        s_paused     = false;    // menu open -> emulation halted
+static ScaleMode   s_scale_mode = SCALE_1X;
 
 static int         s_out_w = GB_WIDTH, s_out_h = GB_HEIGHT;  // canvas size
 static uint8_t     s_sx_map[320];           // out col -> source col (0..159)
@@ -80,29 +88,34 @@ static uint32_t    s_pulse_until = 0;
 static uint32_t    s_next_us     = 0;       // deadline of the next frame
 static uint32_t    s_frame_count = 0;
 
-static int16_t     s_abuf[ABUF_LEN];        // gnuboy sound scratch (mono S16)
-static bool        s_audio_ok    = false;   // I2S installed (i.e. unmuted)
-static int         s_audio_warmup = 0;      // frames of audio to swallow at start
+// Audio: producer (audio_cb, UI thread) -> stream buffer -> consumer task (core 1)
+// -> blocking i2s_write. Decouples the amp from frame timing so a slow/bursty
+// frame can't underrun the DMA (the crackle in the per-frame-push version).
+static int16_t             s_abuf[ABUF_LEN];       // gnuboy sound scratch (mono S16)
+static bool                s_audio_ok    = false;  // I2S + task up (i.e. unmuted)
+static int                 s_audio_warmup = 0;
+static StreamBufferHandle_t s_audio_sb   = nullptr;
+static StaticStreamBuffer_t s_audio_sb_ctl;
+static uint8_t*            s_audio_store  = nullptr; // PSRAM backing for the stream
+static TaskHandle_t        s_audio_task   = nullptr;
+static volatile bool       s_audio_run    = false;
 
 // ROM catalogue (phase 1 -> phase 2 hand-off)
 static char        s_rom_paths[MAX_ROMS][128]; // SD path, e.g. /meshcomod/gb/x.gb
 static int         s_rom_count = 0;
 static char        s_sav_path[160];            // fopen path, /sd/... + .sav
+static char        s_sta_path[160];            // fopen path, /sd/... + .sta (save state)
 
-// Forward decls (a couple of cyclic references below).
+// Forward decls (cyclic references below).
 static void buildPlayUI(void);
 static void teardownPlayUI(void);
 static void audioStart(void);
 static void audioStop(void);
+static void closeMenu(void);
 
 // ---------------------------------------------------------------------------
 // Rendering: gnuboy renders into s_gbfb (160x144); we copy/scale into the canvas.
 // ---------------------------------------------------------------------------
-static void buildScaleMaps(int ow, int oh) {
-    for (int ox = 0; ox < ow; ox++) s_sx_map[ox] = (uint8_t)(ox * GB_WIDTH / ow);
-    for (int oy = 0; oy < oh; oy++) s_sy_map[oy] = (uint8_t)(oy * GB_HEIGHT / oh);
-}
-
 static void video_cb(void* /*buffer*/) {
     if (!s_canvas || !s_fb || !s_gbfb) return;
     if (s_out_w == GB_WIDTH && s_out_h == GB_HEIGHT) {
@@ -127,21 +140,36 @@ static void video_cb(void* /*buffer*/) {
 }
 
 static void audio_cb(void* buffer, size_t length) {
-    // gnuboy hands us `length` mono S16 samples. Scale by the user volume pref
-    // and stream to the amp. Short write timeout: the DMA cushion smooths jitter,
-    // and we must never stall the frame for long.
-    if (!s_audio_ok || s_audio_warmup > 0 || length == 0) return;
+    // Scale by the volume pref and hand off to the audio task via the stream
+    // buffer. Non-blocking (drop on full) so the frame is never stalled here.
+    if (!s_audio_ok || s_audio_warmup > 0 || length == 0 || !s_audio_sb) return;
     const int vol = (int)touchPrefsGetSoundVolume();   // 0..100
     if (vol <= 0) return;
     int16_t* s = (int16_t*)buffer;
     if (vol < 100)
         for (size_t i = 0; i < length; i++) s[i] = (int16_t)((int)s[i] * vol / 100);
-    size_t written = 0;
-    i2s_write(kGbI2sPort, s, length * sizeof(int16_t), &written, pdMS_TO_TICKS(4));
+    xStreamBufferSend(s_audio_sb, s, length * sizeof(int16_t), 0);
 }
 
 // ---------------------------------------------------------------------------
-// I2S lifecycle — installed only while unmuted (muted by default).
+// Audio consumer task — blocks on i2s_write so the DMA stays fed. Pinned to
+// core 1 so the core-0 LVGL flush can't starve it. Exits when s_audio_run clears.
+// ---------------------------------------------------------------------------
+static void audioTaskFn(void*) {
+    int16_t buf[256];
+    static const int16_t silence[64] = {0};
+    while (s_audio_run) {
+        size_t got = xStreamBufferReceive(s_audio_sb, buf, sizeof(buf), pdMS_TO_TICKS(20));
+        size_t w = 0;
+        if (got > 0) i2s_write(kGbI2sPort, buf, got, &w, pdMS_TO_TICKS(50));
+        else         i2s_write(kGbI2sPort, silence, sizeof(silence), &w, pdMS_TO_TICKS(10));
+    }
+    s_audio_task = nullptr;
+    vTaskDelete(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// I2S + audio task lifecycle — up only while unmuted (muted by default).
 // ---------------------------------------------------------------------------
 static void audioStart(void) {
     s_audio_ok = false;
@@ -149,6 +177,7 @@ static void audioStart(void) {
     // Skip audio if internal DMA RAM is too tight — mirrors UITask's
     // i2s_driver_install pre-flight so we don't trip its NO_MEM abort.
     if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 16 * 1024) return;
+
     i2s_config_t cfg = {};
     cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
     cfg.sample_rate = AUDIO_RATE;
@@ -156,7 +185,7 @@ static void audioStart(void) {
     cfg.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;   // MAX98357A is mono
     cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
     cfg.intr_alloc_flags = 0;
-    cfg.dma_buf_count = 6;      // ~70 ms cushion at 22050 Hz
+    cfg.dma_buf_count = 6;
     cfg.dma_buf_len = 256;
     cfg.use_apll = false;
     cfg.tx_desc_auto_clear = true;
@@ -168,13 +197,33 @@ static void audioStart(void) {
     pins.data_out_num = PIN_I2S_DOUT;
     pins.data_in_num  = I2S_PIN_NO_CHANGE;
     if (i2s_set_pin(kGbI2sPort, &pins) != ESP_OK) { i2s_driver_uninstall(kGbI2sPort); return; }
+
+    s_audio_store = (uint8_t*)ps_malloc(AUDIO_SB_BYTES + 1);
+    if (!s_audio_store) { i2s_driver_uninstall(kGbI2sPort); return; }
+    s_audio_sb = xStreamBufferCreateStatic(AUDIO_SB_BYTES, 1, s_audio_store, &s_audio_sb_ctl);
+    if (!s_audio_sb) { free(s_audio_store); s_audio_store = nullptr; i2s_driver_uninstall(kGbI2sPort); return; }
+
+    s_audio_run = true;
+    if (xTaskCreatePinnedToCore(audioTaskFn, "gbaudio", 4096, nullptr, 3, &s_audio_task, 1) != pdPASS) {
+        s_audio_run = false;
+        vStreamBufferDelete(s_audio_sb); s_audio_sb = nullptr;
+        free(s_audio_store); s_audio_store = nullptr;
+        i2s_driver_uninstall(kGbI2sPort);
+        return;
+    }
     s_audio_ok = true;
 }
+
 static void audioStop(void) {
     if (!s_audio_ok) return;
+    s_audio_ok = false;
+    s_audio_run = false;                          // ask the task to exit
+    for (int i = 0; i < 60 && s_audio_task; i++)  // wait for it (bounded ~300 ms)
+        vTaskDelay(pdMS_TO_TICKS(5));
     i2s_zero_dma_buffer(kGbI2sPort);
     i2s_driver_uninstall(kGbI2sPort);
-    s_audio_ok = false;
+    if (s_audio_sb)    { vStreamBufferDelete(s_audio_sb); s_audio_sb = nullptr; }
+    if (s_audio_store) { free(s_audio_store); s_audio_store = nullptr; }
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +231,7 @@ static void audioStop(void) {
 // ---------------------------------------------------------------------------
 static void frameCb(lv_timer_t* /*t*/) {
     if (!s_playing) return;
+    if (s_paused) { s_next_us = micros(); return; }   // menu open — hold, no drift
 
     const uint32_t now = micros();
     int32_t behind = (int32_t)(now - s_next_us);
@@ -210,7 +260,7 @@ static void frameCb(lv_timer_t* /*t*/) {
 }
 
 // ---------------------------------------------------------------------------
-// UI: on-screen pad + top-right cluster (close / mode / mute)
+// On-screen pad
 // ---------------------------------------------------------------------------
 static void padCb(lv_event_t* e) {
     const int bit  = (int)(intptr_t)lv_event_get_user_data(e);
@@ -238,33 +288,6 @@ static void makePadBtn(lv_obj_t* parent, lv_coord_t x, lv_coord_t y,
     lv_obj_center(l);
 }
 
-static void closeCb(lv_event_t*) { GameBoy::close(); }
-
-// Mode toggle deletes the play-UI (an ancestor of the button that fired), so do
-// it after the event settles via lv_async_call to avoid a use-after-free.
-static void doRebuild(void*) {
-    if (!s_playing) return;
-    teardownPlayUI();
-    buildPlayUI();
-}
-static void modeCb(lv_event_t*) { s_immersive = !s_immersive; lv_async_call(doRebuild, nullptr); }
-
-static void muteCb(lv_event_t*) {
-    if (s_audio_ok) audioStop(); else audioStart();
-    if (s_mute_lbl) lv_label_set_text(s_mute_lbl, s_audio_ok ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE);
-}
-
-static lv_obj_t* clusterBtn(const char* icon, lv_coord_t yoff, lv_event_cb_t cb) {
-    lv_obj_t* b = lv_btn_create(s_play);
-    lv_obj_set_size(b, 30, 24);
-    lv_obj_align(b, LV_ALIGN_TOP_RIGHT, -2, yoff);
-    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* l = lv_label_create(b);
-    lv_label_set_text(l, icon);
-    lv_obj_center(l);
-    return l;
-}
-
 static void buildControls(void) {
     // D-pad cross (upper right), A/B (lower right), Start/Select (under canvas).
     const uint32_t kDpad = 0x2B2F36, kAB = 0x8A3A46, kSS = 0x30343B;
@@ -278,9 +301,89 @@ static void buildControls(void) {
     makePadBtn(s_play, 86, 180, 68, 32, "SELECT", GB_PAD_SELECT, kSS);
 }
 
+// ---------------------------------------------------------------------------
+// In-game menu (pause). Actions that delete/rebuild the UI defer via lv_async
+// so we never free the widget tree from inside its own event callback.
+// ---------------------------------------------------------------------------
+enum PendAct { PEND_NONE, PEND_RESUME, PEND_DISPLAY, PEND_EXIT };
+static volatile int s_pend = PEND_NONE;
+
+static void pendDispatch(void*) {
+    const int a = s_pend; s_pend = PEND_NONE;
+    switch (a) {
+        case PEND_RESUME:  closeMenu(); break;
+        case PEND_DISPLAY: closeMenu(); teardownPlayUI(); buildPlayUI(); break;
+        case PEND_EXIT:    GameBoy::close(); break;
+        default: break;
+    }
+}
+static void pend(int a) { s_pend = a; lv_async_call(pendDispatch, nullptr); }
+
+static void miResumeCb(lv_event_t*) { pend(PEND_RESUME); }
+static void miSaveCb  (lv_event_t*) { gnuboy_save_state(s_sta_path); pend(PEND_RESUME); }
+static void miLoadCb  (lv_event_t*) { gnuboy_load_state(s_sta_path); pend(PEND_RESUME); }
+static void miResetCb (lv_event_t*) { gnuboy_reset(true); pend(PEND_RESUME); }
+static void miDispCb  (lv_event_t*) {
+    s_scale_mode = (ScaleMode)((s_scale_mode + 1) % 3);   // 1x -> Fit -> Int2x
+    pend(PEND_DISPLAY);
+}
+static void miSoundCb (lv_event_t*) { if (s_audio_ok) audioStop(); else audioStart(); pend(PEND_RESUME); }
+static void miExitCb  (lv_event_t*) { pend(PEND_EXIT); }
+
+static void menuRow(lv_obj_t* list, const char* icon, const char* text, lv_event_cb_t cb) {
+    lv_obj_t* b = lv_list_add_btn(list, icon, text);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+}
+
+static void buildMenu(void) {
+    if (s_menu) return;
+    s_menu = lv_obj_create(s_root);
+    lv_obj_remove_style_all(s_menu);
+    lv_obj_set_size(s_menu, 210, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(s_menu, lv_disp_get_ver_res(nullptr) - 20, LV_PART_MAIN);
+    lv_obj_center(s_menu);
+    lv_obj_set_style_bg_color(s_menu, lv_color_hex(0x14181C), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_menu, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_menu, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_menu, 6, LV_PART_MAIN);
+
+    lv_obj_t* list = lv_list_create(s_menu);
+    lv_obj_set_size(list, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(list, lv_disp_get_ver_res(nullptr) - 32, LV_PART_MAIN);
+
+    const char* disp = (s_scale_mode == SCALE_1X) ? "Display: 1x"
+                     : (s_scale_mode == SCALE_FIT) ? "Display: Fit"
+                                                   : "Display: 2x";
+    menuRow(list, LV_SYMBOL_PLAY,    "Resume",     miResumeCb);
+    menuRow(list, LV_SYMBOL_SAVE,    "Save state", miSaveCb);
+    menuRow(list, LV_SYMBOL_UPLOAD,  "Load state", miLoadCb);
+    menuRow(list, LV_SYMBOL_REFRESH, "Reset",      miResetCb);
+    menuRow(list, LV_SYMBOL_IMAGE,   disp,         miDispCb);
+    menuRow(list, s_audio_ok ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE,
+                  s_audio_ok ? "Sound: On" : "Sound: Off", miSoundCb);
+    menuRow(list, LV_SYMBOL_CLOSE,   "Exit",       miExitCb);
+}
+
+static void closeMenu(void) {
+    if (s_menu) { lv_obj_del(s_menu); s_menu = nullptr; }
+    s_paused = false;
+    s_next_us = micros();
+}
+
+static void openMenuCb(lv_event_t*) {
+    if (s_menu) return;
+    s_paused = true;
+    buildMenu();
+}
+
+// ---------------------------------------------------------------------------
+// Play-UI build / teardown (rebuilt on display-mode change)
+// ---------------------------------------------------------------------------
 static void teardownPlayUI(void) {
+    // Callers always closeMenu() first; s_menu (a child of s_root, not s_play)
+    // is managed by closeMenu()/close(), so we only drop the play container here.
     if (s_play) { lv_obj_del(s_play); s_play = nullptr; }
-    s_canvas = nullptr; s_mute_lbl = nullptr;
+    s_canvas = nullptr;
     if (s_fb) { lvglPsramFree(s_fb); s_fb = nullptr; }
 }
 
@@ -295,30 +398,40 @@ static void buildPlayUI(void) {
     lv_obj_set_pos(s_play, 0, 0);
     lv_obj_clear_flag(s_play, LV_OBJ_FLAG_SCROLLABLE);
 
-    if (s_immersive) {                          // aspect-scale to full height, centered
-        s_out_h = root_h;
+    if (s_scale_mode == SCALE_1X) {
+        s_out_w = GB_WIDTH;  s_out_h = GB_HEIGHT;         // native, room for the pad
+    } else if (s_scale_mode == SCALE_FIT) {
+        s_out_h = root_h;                                 // aspect-scale to full height
         s_out_w = GB_WIDTH * root_h / GB_HEIGHT;
         if (s_out_w > (int)sw) { s_out_w = (int)sw; s_out_h = GB_HEIGHT * (int)sw / GB_WIDTH; }
-    } else {                                    // 1x, room for the on-screen pad
-        s_out_w = GB_WIDTH;
-        s_out_h = GB_HEIGHT;
+        for (int ox = 0; ox < s_out_w; ox++) s_sx_map[ox] = (uint8_t)(ox * GB_WIDTH / s_out_w);
+        for (int oy = 0; oy < s_out_h; oy++) s_sy_map[oy] = (uint8_t)(oy * GB_HEIGHT / s_out_h);
+    } else {                                              // SCALE_INT2X: crisp 2x, center-cropped
+        s_out_w = GB_WIDTH * 2;                           // 320 — fits width exactly
+        if (s_out_w > (int)sw) s_out_w = (int)sw;
+        s_out_h = (GB_HEIGHT * 2 <= root_h) ? GB_HEIGHT * 2 : root_h;
+        const int voff = (GB_HEIGHT * 2 - s_out_h) / 2;   // rows cropped top/bottom
+        for (int ox = 0; ox < s_out_w; ox++) { int s = ox / 2; s_sx_map[ox] = (uint8_t)(s < GB_WIDTH ? s : GB_WIDTH - 1); }
+        for (int oy = 0; oy < s_out_h; oy++) { int s = (oy + voff) / 2; s_sy_map[oy] = (uint8_t)(s < GB_HEIGHT ? s : GB_HEIGHT - 1); }
     }
 
     s_fb = (lv_color_t*)lvglPsramAlloc((size_t)s_out_w * s_out_h * sizeof(lv_color_t));
     if (!s_fb) { GameBoy::close(); return; }
-    buildScaleMaps(s_out_w, s_out_h);
 
     s_canvas = lv_canvas_create(s_play);
     lv_canvas_set_buffer(s_canvas, s_fb, s_out_w, s_out_h, LV_IMG_CF_TRUE_COLOR);
     lv_canvas_fill_bg(s_canvas, lv_color_hex(0x000000), LV_OPA_COVER);
-    if (s_immersive) lv_obj_align(s_canvas, LV_ALIGN_CENTER, 0, 0);
-    else             lv_obj_set_pos(s_canvas, 2, 2);
+    if (s_scale_mode == SCALE_1X) lv_obj_set_pos(s_canvas, 2, 2);
+    else                          lv_obj_align(s_canvas, LV_ALIGN_CENTER, 0, 0);
 
-    if (!s_immersive) buildControls();
+    if (s_scale_mode == SCALE_1X) buildControls();
 
-    clusterBtn(LV_SYMBOL_CLOSE, 0,  closeCb);
-    clusterBtn(LV_SYMBOL_IMAGE, 28, modeCb);
-    s_mute_lbl = clusterBtn(s_audio_ok ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE, 56, muteCb);
+    // Single menu button (top-right) — everything else lives in the pause menu.
+    lv_obj_t* m = lv_btn_create(s_play);
+    lv_obj_set_size(m, 34, 24);
+    lv_obj_align(m, LV_ALIGN_TOP_RIGHT, -2, 0);
+    lv_obj_add_event_cb(m, openMenuCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* ml = lv_label_create(m); lv_label_set_text(ml, LV_SYMBOL_LIST); lv_obj_center(ml);
 }
 
 // ---------------------------------------------------------------------------
@@ -328,10 +441,13 @@ static void teardownEmu(void) {
     if (s_timer) { lv_timer_del(s_timer); s_timer = nullptr; }
     audioStop();                            // frameCb is gone -> no more audio_cb
     if (s_playing) {
-        gnuboy_save_sram(s_sav_path, false);   // no-op unless the cart has a battery
-        gnuboy_free_rom();
+        gnuboy_save_state(s_sta_path);          // auto-suspend: resume where we left off
+        gnuboy_save_sram(s_sav_path, false);    // battery save (no-op unless cart has one)
         s_playing = false;
     }
+    // Free the emulator's banks even if we never reached play (e.g. buildPlayUI
+    // OOM'd before s_playing was set) — otherwise gnuboy's rambanks/rombanks leak.
+    if (s_rom_loaded) { gnuboy_free_rom(); s_rom_loaded = false; }
 }
 
 static bool loadRomToPsram(const char* sd_path, uint8_t** out, size_t* out_size) {
@@ -353,14 +469,14 @@ static bool loadRomToPsram(const char* sd_path, uint8_t** out, size_t* out_size)
     return true;
 }
 
-static void makeSavPath(const char* sd_path) {
-    // /meshcomod/gb/x.gb -> /sd/meshcomod/gb/x.sav  (gnuboy's fopen VFS path)
+static void makeSidePath(const char* sd_path, const char* ext, char* out, size_t cap) {
+    // /meshcomod/gb/x.gb -> /sd/meshcomod/gb/x<ext>  (gnuboy's fopen VFS path)
     const char* dot = strrchr(sd_path, '.');
     size_t base = dot ? (size_t)(dot - sd_path) : strlen(sd_path);
-    if (base > sizeof(s_sav_path) - 8) base = sizeof(s_sav_path) - 8;
-    strcpy(s_sav_path, "/sd");
-    memcpy(s_sav_path + 3, sd_path, base);
-    strcpy(s_sav_path + 3 + base, ".sav");
+    if (base > cap - 8) base = cap - 8;
+    strcpy(out, "/sd");
+    memcpy(out + 3, sd_path, base);
+    strcpy(out + 3 + base, ext);
 }
 
 static void startRom(const char* sd_path) {
@@ -373,21 +489,30 @@ static void startRom(const char* sd_path) {
 
     size_t rom_sz = 0;
     if (!loadRomToPsram(sd_path, &s_rom, &rom_sz)) { GameBoy::close(); return; }
-    makeSavPath(sd_path);
+    makeSidePath(sd_path, ".sav", s_sav_path, sizeof(s_sav_path));
+    makeSidePath(sd_path, ".sta", s_sta_path, sizeof(s_sta_path));
 
     if (gnuboy_init(AUDIO_RATE, GB_AUDIO_MONO_S16, GB_PIXEL_565_LE,
                     video_cb, audio_cb) < 0) { GameBoy::close(); return; }
     gnuboy_set_framebuffer(s_gbfb);
     gnuboy_set_soundbuffer(s_abuf, ABUF_LEN);
     if (gnuboy_load_rom(s_rom, rom_sz) < 0) { gnuboy_free_rom(); GameBoy::close(); return; }
+    s_rom_loaded = true;
     gnuboy_reset(true);
-    gnuboy_load_sram(s_sav_path);
+    // Auto-resume the prior session; on a missing/corrupt/mismatched .sta, fall
+    // back to a clean reset + battery save. gnuboy_load_state mutates live RAM as
+    // it reads, so a failed/partial load must be discarded by re-resetting before
+    // we trust the state.
+    if (gnuboy_load_state(s_sta_path) < 0) {
+        gnuboy_reset(true);
+        gnuboy_load_sram(s_sav_path);
+    }
 
     buildPlayUI();                 // muted by default -> no audioStart here
     if (!s_play) return;           // buildPlayUI failed + already closed
 
     s_pad_touch = 0; s_click_a = false; s_pulse_mask = 0; s_pulse_until = 0;
-    s_frame_count = 0;
+    s_paused = false; s_frame_count = 0;
     s_next_us = micros();
     s_playing = true;
     s_timer = lv_timer_create(frameCb, 15, nullptr);
@@ -421,6 +546,8 @@ static void romPickCb(lv_event_t* e) {
     const int idx = (int)(intptr_t)lv_event_get_user_data(e);
     if (idx >= 0 && idx < s_rom_count) startRom(s_rom_paths[idx]);
 }
+
+static void closeCb(lv_event_t*) { GameBoy::close(); }
 
 static void buildPicker(void) {
     const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -482,7 +609,7 @@ void GameBoy::launch() {
 bool GameBoy::isOpen() { return s_root != nullptr; }
 
 void GameBoy::steer(int dx, int dy) {
-    if (!s_playing) return;
+    if (!s_playing || s_paused) return;
     if (dx == 0 && dy == 0) return;
     const int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
     if (adx >= ady) s_pulse_mask |= (dx > 0) ? GB_PAD_RIGHT : GB_PAD_LEFT;
@@ -490,10 +617,10 @@ void GameBoy::steer(int dx, int dy) {
     s_pulse_until = millis() + PULSE_MS;
 }
 
-void GameBoy::setA(bool down) { s_click_a = down; }
+void GameBoy::setA(bool down) { s_click_a = (down && !s_paused); }
 
 void GameBoy::keyChar(char c) {
-    if (!s_playing) return;
+    if (!s_playing || s_paused) return;
     int bit = 0;
     switch (c) {
         case 'w': case 'W': bit = GB_PAD_UP;    break;
@@ -512,12 +639,13 @@ void GameBoy::keyChar(char c) {
 
 void GameBoy::close() {
     teardownEmu();
+    if (s_menu) { lv_obj_del(s_menu); s_menu = nullptr; }
     if (s_root) { lv_obj_del(s_root); s_root = nullptr; }   // deletes play-UI + children
-    s_picker = nullptr; s_play = nullptr; s_canvas = nullptr; s_mute_lbl = nullptr;
+    s_picker = nullptr; s_play = nullptr; s_canvas = nullptr;
     if (s_fb)   { lvglPsramFree(s_fb);   s_fb = nullptr; }   // after the canvas is gone
     if (s_gbfb) { lvglPsramFree(s_gbfb); s_gbfb = nullptr; }
     if (s_rom)  { free(s_rom); s_rom = nullptr; }            // banks pointed into it; free_rom left it
-    s_pad_touch = 0; s_click_a = false; s_pulse_mask = 0;
+    s_pad_touch = 0; s_click_a = false; s_pulse_mask = 0; s_paused = false;
 }
 
 #else  // !HAS_TDECK_GT911 — no SD / input on the V4; stub the player.
