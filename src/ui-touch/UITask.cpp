@@ -27615,6 +27615,9 @@ static void serviceLockingCountdown(unsigned long now) {
 // — the on-screen keyboard's target, which is the chat composer directly or the
 // settings mirror textarea. No field open -> the key is ignored.
 static void handleHwKey(int key) {
+  // Game Boy owns the physical keyboard while open (this is the T-Deck key path;
+  // navPump's hook is Tanmatsu-only). Map the char onto the GB pad and swallow.
+  if (GameBoy::isOpen()) { GameBoy::keyChar((char)key); return; }
   if (!g_lv.keyboard) return;
   // Hard-locked: any key just reveals the lock screen (lights the panel). It
   // never types or switches tabs — only a trackball *hold* unlocks.

@@ -156,13 +156,19 @@ static void audio_cb(void* buffer, size_t length) {
 // core 1 so the core-0 LVGL flush can't starve it. Exits when s_audio_run clears.
 // ---------------------------------------------------------------------------
 static void audioTaskFn(void*) {
-    int16_t buf[256];
-    static const int16_t silence[64] = {0};
+    uint8_t buf[512];   // up to 256 mono S16 samples
     while (s_audio_run) {
         size_t got = xStreamBufferReceive(s_audio_sb, buf, sizeof(buf), pdMS_TO_TICKS(20));
-        size_t w = 0;
-        if (got > 0) i2s_write(kGbI2sPort, buf, got, &w, pdMS_TO_TICKS(50));
-        else         i2s_write(kGbI2sPort, silence, sizeof(silence), &w, pdMS_TO_TICKS(10));
+        // On empty (timeout) write nothing: tx_desc_auto_clear zeroes the DMA, so
+        // an underrun is clean silence. Feeding our own silence chunks mid-stream
+        // was itself a click source. Write ALL received bytes (portMAX) so a
+        // partial i2s_write can't drop the tail — the other click source.
+        size_t off = 0;
+        while (off < got && s_audio_run) {
+            size_t w = 0;
+            if (i2s_write(kGbI2sPort, buf + off, got - off, &w, portMAX_DELAY) != ESP_OK) break;
+            off += w;
+        }
     }
     s_audio_task = nullptr;
     vTaskDelete(nullptr);
@@ -187,9 +193,12 @@ static void audioStart(void) {
     cfg.intr_alloc_flags = 0;
     cfg.dma_buf_count = 6;
     cfg.dma_buf_len = 256;
-    cfg.use_apll = false;
     cfg.tx_desc_auto_clear = true;
-    if (i2s_driver_install(kGbI2sPort, &cfg, 0, nullptr) != ESP_OK) return;
+    cfg.use_apll = true;                        // accurate 22050 Hz -> less drift/crackle
+    if (i2s_driver_install(kGbI2sPort, &cfg, 0, nullptr) != ESP_OK) {
+        cfg.use_apll = false;                  // APLL unavailable on this clock -> fall back
+        if (i2s_driver_install(kGbI2sPort, &cfg, 0, nullptr) != ESP_OK) return;
+    }
     i2s_pin_config_t pins = {};
     pins.mck_io_num   = I2S_PIN_NO_CHANGE;
     pins.bck_io_num   = PIN_I2S_BCK;
@@ -289,16 +298,17 @@ static void makePadBtn(lv_obj_t* parent, lv_coord_t x, lv_coord_t y,
 }
 
 static void buildControls(void) {
-    // D-pad cross (upper right), A/B (lower right), Start/Select (under canvas).
+    // Game canvas is on the left (160x144). All controls sit to its right:
+    // D-pad cross top, A/B below it (raised), Start bottom-left, Select bottom-right.
     const uint32_t kDpad = 0x2B2F36, kAB = 0x8A3A46, kSS = 0x30343B;
-    makePadBtn(s_play, 210, 40,  46, 40, LV_SYMBOL_UP,    GB_PAD_UP,    kDpad);
-    makePadBtn(s_play, 210, 126, 46, 40, LV_SYMBOL_DOWN,  GB_PAD_DOWN,  kDpad);
-    makePadBtn(s_play, 176, 82,  42, 44, LV_SYMBOL_LEFT,  GB_PAD_LEFT,  kDpad);
-    makePadBtn(s_play, 258, 82,  42, 44, LV_SYMBOL_RIGHT, GB_PAD_RIGHT, kDpad);
-    makePadBtn(s_play, 272, 148, 46, 46, "A", GB_PAD_A, kAB);
-    makePadBtn(s_play, 216, 170, 46, 46, "B", GB_PAD_B, kAB);
-    makePadBtn(s_play, 8,  180, 68, 32, "START",  GB_PAD_START,  kSS);
-    makePadBtn(s_play, 86, 180, 68, 32, "SELECT", GB_PAD_SELECT, kSS);
+    makePadBtn(s_play, 204, 4,   46, 38, LV_SYMBOL_UP,    GB_PAD_UP,    kDpad);
+    makePadBtn(s_play, 168, 44,  42, 42, LV_SYMBOL_LEFT,  GB_PAD_LEFT,  kDpad);
+    makePadBtn(s_play, 250, 44,  42, 42, LV_SYMBOL_RIGHT, GB_PAD_RIGHT, kDpad);
+    makePadBtn(s_play, 204, 88,  46, 38, LV_SYMBOL_DOWN,  GB_PAD_DOWN,  kDpad);
+    makePadBtn(s_play, 266, 122, 50, 48, "A", GB_PAD_A, kAB);   // raised from y148
+    makePadBtn(s_play, 206, 140, 50, 48, "B", GB_PAD_B, kAB);   // raised from y170
+    makePadBtn(s_play, 8,   186, 70, 30, "START",  GB_PAD_START,  kSS);  // bottom-left
+    makePadBtn(s_play, 238, 186, 78, 30, "SELECT", GB_PAD_SELECT, kSS);  // moved to the right
 }
 
 // ---------------------------------------------------------------------------
