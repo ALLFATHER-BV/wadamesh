@@ -115,6 +115,7 @@ void gnuboy_set_pad(int);
 
 void gnuboy_set_framebuffer(void *buffer);
 void gnuboy_set_soundbuffer(void *buffer, size_t length);
+void gnuboy_set_mute(bool mute);   /* local mod: skip APU synthesis while muted */
 
 void gnuboy_get_time(int *day, int *hour, int *minute, int *second);
 void gnuboy_set_time(int day, int hour, int minute, int second);

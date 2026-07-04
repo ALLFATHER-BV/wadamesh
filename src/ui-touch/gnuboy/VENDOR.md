@@ -16,4 +16,11 @@ resolves to empty (defined in gnuboy.h under the non-RETRO_GO branch); the core
 Platform glue lives OUTSIDE this dir in `../GameBoy.{h,cpp}` (the wadamesh-native
 host, replacing meshpunk's ELF-loader `main_tdeck.c`).
 
-Local modifications: none. If any are made, list them here.
+Local modifications:
+- `sound.c` / `gnuboy.h`: added `gnuboy_set_mute(bool)` — when muted, `gb_sound_emulate`
+  drains accumulated cycles and emits no samples instead of synthesizing all four
+  channels (perf; audio is muted by default in the player). CPU/PPU timing unchanged.
+
+Build note: the gnuboy `.c` files are compiled at `-O2` with jump tables restored via
+`scripts/gnuboy_opt.py` (the Arduino-S3 default is `-Os -fno-jump-tables`, poor for the
+opcode-dispatch switch). No source change for that — it's a build-flag middleware.

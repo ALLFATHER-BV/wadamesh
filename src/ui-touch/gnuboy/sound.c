@@ -89,10 +89,24 @@ void gb_sound_reset(bool hard)
 	R_NR52 = 0xF1;
 }
 
+// Muting: skip all channel synthesis while the app has audio off (the default
+// state). We still drain the accumulated cycles so unmuting can't replay a huge
+// backlog, and emit no samples — CPU/PPU timing is unaffected. (Local mod; see
+// VENDOR.md.)
+static bool s_snd_muted = false;
+void gnuboy_set_mute(bool mute) { s_snd_muted = mute; }
+
 void gb_sound_emulate(void)
 {
 	if (!snd.rate || snd.cycles < snd.rate)
 		return;
+
+	if (s_snd_muted)
+	{
+		snd.cycles %= snd.rate;
+		host.audio.pos = 0;
+		return;
+	}
 
 	int16_t *output_buf = host.audio.buffer + host.audio.pos;
 	int16_t *output_end = host.audio.buffer + host.audio.len;

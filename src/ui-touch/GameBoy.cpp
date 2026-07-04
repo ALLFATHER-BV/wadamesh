@@ -221,11 +221,13 @@ static void audioStart(void) {
         return;
     }
     s_audio_ok = true;
+    gnuboy_set_mute(false);   // resume APU synthesis now that we're playing it out
 }
 
 static void audioStop(void) {
-    if (!s_audio_ok) return;
+    if (!s_audio_ok) { gnuboy_set_mute(true); return; }
     s_audio_ok = false;
+    gnuboy_set_mute(true);                         // stop synthesizing while silent
     s_audio_run = false;                          // ask the task to exit
     for (int i = 0; i < 60 && s_audio_task; i++)  // wait for it (bounded ~300 ms)
         vTaskDelay(pdMS_TO_TICKS(5));
@@ -517,6 +519,7 @@ static void startRom(const char* sd_path) {
         gnuboy_reset(true);
         gnuboy_load_sram(s_sav_path);
     }
+    gnuboy_set_mute(true);         // muted by default; the Sound menu item unmutes
 
     buildPlayUI();                 // muted by default -> no audioStart here
     if (!s_play) return;           // buildPlayUI failed + already closed
