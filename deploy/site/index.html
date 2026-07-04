@@ -42,7 +42,15 @@
     font-family:'JetBrains Mono',monospace; background:#fff; transition:border-color .15s, color .15s}
   .kicker:hover{border-color:var(--teal); color:var(--ink)}
   .freeline{margin:0 auto 24px; color:var(--mut); font-size:.92rem}
-  .fab-rail{position:fixed; top:16px; z-index:45; display:flex; flex-direction:column; gap:12px}
+  .fab-rail{position:fixed; top:var(--fab-top,16px); z-index:45; display:flex; flex-direction:column; gap:12px}
+  /* dismissible donate banner */
+  .donate-bar{position:sticky; top:0; z-index:50; display:flex; align-items:center; justify-content:center; gap:7px 16px; flex-wrap:wrap;
+    padding:9px 44px; background:var(--ink); color:#fff; font-size:.9rem; line-height:1.4; text-align:center}
+  .donate-bar a{color:#fff; text-decoration:underline; text-underline-offset:2px}
+  .donate-bar .donate-cta{background:var(--teal); color:#fff; text-decoration:none; padding:5px 14px; border-radius:100px; font-weight:650; white-space:nowrap}
+  .donate-bar .donate-cta:hover{background:var(--cyan)}
+  .donate-bar .x{position:absolute; right:12px; top:50%; transform:translateY(-50%); background:none; border:0; color:#fff; font-size:1.5rem; line-height:1; cursor:pointer; opacity:.75; padding:0 4px}
+  .donate-bar .x:hover{opacity:1}
   .fab-rail.left{left:16px} .fab-rail.right{right:16px}
   .fab{width:44px; height:44px; border-radius:50%; display:grid; place-items:center; cursor:pointer;
     background:#fff; border:1px solid var(--line); color:#46525c; box-shadow:0 10px 26px -14px rgba(21,24,30,.45);
@@ -210,6 +218,11 @@
 </style>
 </head>
 <body>
+<div class="donate-bar" id="donateBar">
+  <span>Like the project and want to donate? Help out the <b>MeshCore</b> founders instead. <a href="https://blog.meshcore.io/2026/07/04/help-us-save-meshcore" target="_blank" rel="noopener">Learn more</a></span>
+  <a class="donate-cta" href="https://givealittle.co.nz/cause/help-us-save-meshcore" target="_blank" rel="noopener">Donate</a>
+  <button class="x" id="donateX" type="button" aria-label="Dismiss">&times;</button>
+</div>
 <div id="vanta-bg"></div>
 
 <!-- floating quick links -->
@@ -479,6 +492,16 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
   const cbar = document.getElementById('cookiebar');
   try { if (!localStorage.getItem('wm-cookie-ack')) cbar.classList.add('show'); } catch(_) {}
   document.getElementById('cookieok').addEventListener('click', () => { cbar.classList.remove('show'); try { localStorage.setItem('wm-cookie-ack','1'); } catch(_) {} });
+
+  // ---- donate banner: dismissible; shifts the corner FABs down while shown ----
+  (function(){
+    const bar = document.getElementById('donateBar'); if (!bar) return;
+    function setFabTop(){ document.documentElement.style.setProperty('--fab-top', (getComputedStyle(bar).display === 'none' ? 16 : bar.offsetHeight + 12) + 'px'); }
+    try { if (localStorage.getItem('wm-donate-dismiss') === '1') bar.style.display = 'none'; } catch(_) {}
+    setFabTop();
+    addEventListener('resize', setFabTop);
+    document.getElementById('donateX').addEventListener('click', () => { bar.style.display = 'none'; setFabTop(); try { localStorage.setItem('wm-donate-dismiss','1'); } catch(_) {} });
+  })();
 
   // Live release version + "what's new" — read from the firmware host so the
   // flasher always reflects the current build (the release pipeline updates
