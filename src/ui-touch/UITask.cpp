@@ -79,6 +79,7 @@
 #include <Utils.h>
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
+#include "GameBoy.h"          // Apps → Game Boy (gnuboy core, self-contained)
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
@@ -4031,6 +4032,11 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
   if (SnakeGame::isOpen()) {
     if (swipe_x != 0)      SnakeGame::steer(swipe_x < 0 ? -1 : 1, 0);
     else if (swipe_y != 0) SnakeGame::steer(0, swipe_y < 0 ? -1 : 1);
+    return;
+  }
+  if (GameBoy::isOpen()) {
+    if (swipe_x != 0)      GameBoy::steer(swipe_x < 0 ? -1 : 1, 0);
+    else if (swipe_y != 0) GameBoy::steer(0, swipe_y < 0 ? -1 : 1);
     return;
   }
   // A slider was just being dragged — its horizontal drag must NOT be read as a
@@ -15861,6 +15867,9 @@ static bool fmSdTryMount() {
   s_sd_retry_after_ms = millis() + 10000;       // back off so we don't hammer the card
   return false;
 }
+// Bridge for the GameBoy player (separate TU): ensure the shared microSD is
+// mounted before it lists/reads ROMs. Same guard region as fmSdTryMount.
+extern "C" bool touchGbSdEnsureMounted() { return fmSdTryMount(); }
 static void fmSdUnmount() {
   if (s_sd_mounted) { SD.end(); s_sd_mounted = false; s_sd_size = 0; }
   s_sd_retry_after_ms = 0;   // a reinsert should be able to mount right away
@@ -26318,6 +26327,15 @@ static void updateTrackball(unsigned long now) {
     if (moved && (dx != 0 || dy != 0)) { SnakeGame::steer(dx, dy); if (g_lv.task) g_lv.task->noteUserInput(); }
     return;
   }
+  // ---- Game Boy ----
+  // Trackball nudges the D-pad (brief pulse); on-screen buttons are primary.
+  if (GameBoy::isOpen()) {
+    if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
+      lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
+    s_tb_click_press = false;
+    if (moved && (dx != 0 || dy != 0)) { GameBoy::steer(dx, dy); if (g_lv.task) g_lv.task->noteUserInput(); }
+    return;
+  }
 
   // ---- Emoji picker selector mode ----
   // While the emoji sheet is open the trackball drives a grid highlight instead
@@ -28873,6 +28891,7 @@ enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
   APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE,
+  APPACT_GAMEBOY,
 };
 
 static void closeAppDrawer() {
@@ -29120,6 +29139,7 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_ADVERT:    openAdvertModalCb(e);  return;
     case APPACT_POWER:     openPowerMenu();      return;
     case APPACT_SNAKE:     SnakeGame::launch();  return;
+    case APPACT_GAMEBOY:   GameBoy::launch();    return;
 #if defined(HAS_TOUCH_UI)
     case APPACT_TERMINAL:  homeTerminalCb(e);    return;
 #endif
@@ -29427,6 +29447,7 @@ static void openAppDrawer() {
     { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
 #endif
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // snake game (icon drawn from APPACT_SNAKE, not a glyph)
+    { "GB",                "Game Boy",  APPACT_GAMEBOY,  0,         0x9BBC0F },      // gnuboy Game Boy / GBC (DMG green)
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
   const int n = (int)(sizeof(tiles) / sizeof(tiles[0]));
@@ -29512,7 +29533,7 @@ static void statusBarTapCb(lv_event_t* e) {
   // While Snake is up the bar is raised to the FRONT of lv_layer_top (see the
   // edge-trigger in updateGlobalStatusBar), so it stays tappable over the game.
   // Swallow the tap so it can't open the control centre over the game.
-  if (SnakeGame::isOpen()) return;
+  if (SnakeGame::isOpen() || GameBoy::isOpen()) return;
   if (s_sb_shot_done) { s_sb_shot_done = false; return; }   // this press was a screenshot hold
   // A full-screen tool page (RF Monitor / Spectrum) is up: the bar carries its Back
   // chevron + title, so a tap goes back (closes the page) just like settings.
@@ -30085,7 +30106,7 @@ static void updateGlobalStatusBar() {
     // lv_layer_top and moved foreground, so without this the TALL bar's lower half (back
     // chevron + title) is covered by the page. Settings sheets sit on lv_scr_act so they
     // never need this.
-    const bool want_fg = SnakeGame::isOpen() || (s_apppage_title != nullptr);
+    const bool want_fg = SnakeGame::isOpen() || GameBoy::isOpen() || (s_apppage_title != nullptr);
     if (want_fg != s_bar_fg) {
       s_bar_fg = want_fg;
       if (want_fg) lv_obj_move_foreground(g_statusbar.root);
@@ -36896,7 +36917,7 @@ void UITask::loop() {
     }
     // Also hard-lock the tab bar while Snake is open so a swipe/tap near the
     // bottom can't slip through to the app switcher (e.g. into the map).
-    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen();
+    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen() || GameBoy::isOpen();
     if (want_lock != s_tabbar_locked && g_lv.tabview) {
       lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
       if (tab_btns) {

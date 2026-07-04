@@ -6,24 +6,19 @@
 // Native Game Boy / Game Boy Color player built on the gnuboy core vendored
 // under ui-touch/gnuboy/ (GPL-2.0-or-later; folds forward into wadamesh's GPL-3).
 //
-// SCAFFOLD — step 1 of the port. This is the class shell + build wiring only: it
-// pulls the gnuboy core into the firmware and exposes the SnakeGame-shaped
-// surface that UITask will later route trackball/keyboard input and the Apps
-// drawer into. No ROM is loaded and no frames run yet — launch() is a no-op.
-//
-// Design target (see feasibility write-up): a full-screen "game mode" takeover
-// on T-Deck — gnuboy_run() paced to ~59.73 Hz with the_mesh.loop() pumped in
-// each frame's slack (single-thread, no SPI-bus contention), the 160x144 RGB565
-// framebuffer nearest-scaled to 240x216 into an LVGL canvas, trackball + keyboard
-// mapped to the GB pad, and ROM + battery saves on microSD under /meshcomod/gb/.
-// T-Deck only (needs SD + gamepad-usable input); on the V4 the shell is a stub.
+// A full-screen overlay on lv_layer_top, single instance (one game at a time):
+//   1. ROM picker — lists *.gb / *.gbc from microSD (/meshcomod/gb, legacy /gb).
+//   2. Play — the 160x144 RGB565 frame renders 1x into an LVGL canvas; an
+//      lv_timer paces gnuboy_run() to ~59.73 Hz (the outer loop() keeps
+//      servicing the mesh between ticks, so the companion link stays up);
+//      on-screen touch buttons drive the GB pad (the T-Deck keyboard/trackball
+//      report no key-release, so they can't hold a D-pad direction). Battery
+//      saves live next to the ROM as <name>.sav. Audio is muted in this first
+//      cut. T-Deck only (needs SD + touch controls); the V4 build stubs it out.
 class GameBoy {
 public:
-  static void launch();               // open the player (SCAFFOLD: no-op)
-  static bool isOpen();               // UITask: gate trackball + tab bar
-  static void steer(int dx, int dy);  // UITask: trackball motion -> GB dpad
-  static void close();                // tear down + return to UI
-
-private:
-  static bool s_open;
+  static void launch();               // open the picker (no-op if already open)
+  static bool isOpen();               // UITask: gate tab bar + trackball nav
+  static void steer(int dx, int dy);  // UITask: trackball motion -> D-pad pulse
+  static void close();                // tear down, save, return to UI
 };
