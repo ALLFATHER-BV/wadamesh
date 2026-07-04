@@ -10,6 +10,8 @@
 #include <strings.h>          // strcasecmp
 #include <stdio.h>
 #include <stdint.h>
+#include <driver/i2s.h>       // MAX98357A speaker amp — streaming GB audio
+#include "../helpers/esp32/TouchPrefsStore.h"  // touchPrefsGetSoundVolume()
 
 // gnuboy is C. Its header re-defines IRAM_ATTR empty (non-RETRO_GO build); this
 // TU already saw esp_attr.h via Arduino/lvgl, so drop the macro first to avoid a
@@ -36,6 +38,20 @@ static constexpr size_t     ABUF_LEN   = 1024;   // int16 entries
 static constexpr int        MAX_ROMS   = 96;
 static constexpr size_t     MAX_ROM_BYTES = 4u * 1024 * 1024;  // sanity cap
 
+// I2S audio — same MAX98357A wiring as UITask's notification tones (mono amp).
+// GB owns I2S_NUM_0 for the whole session; the notify path is gated off meanwhile.
+#ifndef PIN_I2S_BCK
+  #define PIN_I2S_BCK  7
+#endif
+#ifndef PIN_I2S_WS
+  #define PIN_I2S_WS   5
+#endif
+#ifndef PIN_I2S_DOUT
+  #define PIN_I2S_DOUT 6
+#endif
+static constexpr i2s_port_t kGbI2sPort         = I2S_NUM_0;
+static constexpr int        AUDIO_WARMUP_FRAMES = 45;   // swallow startup garble
+
 // GB pad bit for a control button, carried as the button's user_data.
 // (Mirror of gb_padbtn_t; kept local so the .h needn't include gnuboy.)
 
@@ -57,7 +73,9 @@ static uint32_t    s_pulse_until = 0;
 static uint32_t    s_next_us     = 0;       // deadline of the next frame
 static uint32_t    s_frame_count = 0;
 
-static int16_t     s_abuf[ABUF_LEN];        // gnuboy sound scratch (muted v1)
+static int16_t     s_abuf[ABUF_LEN];        // gnuboy sound scratch (mono S16)
+static bool        s_audio_ok    = false;   // I2S installed for this session
+static int         s_audio_warmup = 0;      // frames of audio to swallow at start
 
 // ROM catalogue (phase 1 -> phase 2 hand-off)
 static char        s_rom_paths[MAX_ROMS][128]; // SD path, e.g. /meshcomod/gb/x.gb
@@ -71,8 +89,53 @@ static void video_cb(void* /*buffer*/) {
     // gnuboy rendered straight into s_fb (== the canvas buffer); just flush.
     if (s_canvas) lv_obj_invalidate(s_canvas);
 }
-static void audio_cb(void* /*buffer*/, size_t /*len*/) {
-    // Muted in this first cut. APU still runs (cheap); no output wired yet.
+static void audio_cb(void* buffer, size_t length) {
+    // gnuboy hands us `length` mono S16 samples. Scale by the user volume pref
+    // and stream to the amp. Short write timeout: the DMA cushion smooths jitter,
+    // and we must never stall the frame for long.
+    if (!s_audio_ok || s_audio_warmup > 0 || length == 0) return;
+    const int vol = (int)touchPrefsGetSoundVolume();   // 0..100
+    if (vol <= 0) return;                                // muted
+    int16_t* s = (int16_t*)buffer;
+    if (vol < 100)
+        for (size_t i = 0; i < length; i++) s[i] = (int16_t)((int)s[i] * vol / 100);
+    size_t written = 0;
+    i2s_write(kGbI2sPort, s, length * sizeof(int16_t), &written, pdMS_TO_TICKS(4));
+}
+
+// I2S lifecycle — installed for the whole play session, uninstalled on exit.
+static void audioStart(void) {
+    s_audio_ok = false;
+    s_audio_warmup = AUDIO_WARMUP_FRAMES;
+    // Skip audio (the game still runs) if internal DMA RAM is too tight — mirrors
+    // UITask's i2s_driver_install pre-flight so we don't trip its NO_MEM abort.
+    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 16 * 1024) return;
+    i2s_config_t cfg = {};
+    cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
+    cfg.sample_rate = AUDIO_RATE;
+    cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+    cfg.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;   // MAX98357A is mono
+    cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+    cfg.intr_alloc_flags = 0;
+    cfg.dma_buf_count = 6;      // ~70 ms cushion at 22050 Hz
+    cfg.dma_buf_len = 256;
+    cfg.use_apll = false;
+    cfg.tx_desc_auto_clear = true;
+    if (i2s_driver_install(kGbI2sPort, &cfg, 0, nullptr) != ESP_OK) return;
+    i2s_pin_config_t pins = {};
+    pins.mck_io_num   = I2S_PIN_NO_CHANGE;
+    pins.bck_io_num   = PIN_I2S_BCK;
+    pins.ws_io_num    = PIN_I2S_WS;
+    pins.data_out_num = PIN_I2S_DOUT;
+    pins.data_in_num  = I2S_PIN_NO_CHANGE;
+    if (i2s_set_pin(kGbI2sPort, &pins) != ESP_OK) { i2s_driver_uninstall(kGbI2sPort); return; }
+    s_audio_ok = true;
+}
+static void audioStop(void) {
+    if (!s_audio_ok) return;
+    i2s_zero_dma_buffer(kGbI2sPort);
+    i2s_driver_uninstall(kGbI2sPort);
+    s_audio_ok = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +173,8 @@ static void frameCb(lv_timer_t* /*t*/) {
         s_next_us += FRAME_US;
     }
 
+    if (s_audio_warmup > 0) s_audio_warmup--;
+
     if (++s_frame_count % AUTOSAVE_FRAMES == 0 && gnuboy_sram_dirty())
         gnuboy_save_sram(s_sav_path, false);
 }
@@ -143,6 +208,7 @@ static void closeCb(lv_event_t*) { GameBoy::close(); }
 // ---------------------------------------------------------------------------
 static void teardownEmu(void) {
     if (s_timer) { lv_timer_del(s_timer); s_timer = nullptr; }
+    audioStop();                            // frameCb is gone -> no more audio_cb
     if (s_playing) {
         gnuboy_save_sram(s_sav_path, false);   // no-op unless the cart has a battery
         gnuboy_free_rom();
@@ -226,6 +292,9 @@ static void startRom(const char* sd_path) {
     lv_obj_add_event_cb(x, closeCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* xl = lv_label_create(x); lv_label_set_text(xl, LV_SYMBOL_CLOSE); lv_obj_center(xl);
     (void)sw; (void)sh;
+
+    // --- Audio: install I2S for the session (game runs muted if it can't) ---
+    audioStart();
 
     // --- Start the frame pump ---
     s_pad_touch = 0; s_pulse_mask = 0; s_pulse_until = 0;

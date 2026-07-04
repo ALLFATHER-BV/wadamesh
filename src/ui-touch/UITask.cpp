@@ -670,6 +670,7 @@ static void tdeckNotifyTaskFn(void* arg) {
 // download (DMA-RAM contention → reboot) and won't stack itself. Caller checks the
 // sound pref.
 static void tdeckPlayNotifySlot(int slot) {
+  if (GameBoy::isOpen()) return;          // GB owns the I2S peripheral while playing
   if (s_tile_fetch_pending > 0) return;   // don't fight the Wi-Fi/tile DMA buffers
   if (s_notify_playing) return;           // already chiming — don't stack tasks/I2S
   s_notify_slot = slot;
