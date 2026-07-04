@@ -15878,6 +15878,13 @@ static bool fmSdTryMount() {
 // Bridge for the GameBoy player (separate TU): ensure the shared microSD is
 // mounted before it lists/reads ROMs. Same guard region as fmSdTryMount.
 extern "C" bool touchGbSdEnsureMounted() { return fmSdTryMount(); }
+
+// Bridge for the GameBoy player's experimental direct-panel path (GB_DIRECT_PANEL
+// build): push an RGB565 block straight to the ST7789, same call LVGL's own flush
+// uses. Compiled unconditionally (unused in the normal build -> linker drops it).
+extern "C" void touchGbBlit(int x, int y, int w, int h, const uint16_t* px) {
+  display.writePixelsRGB565(x, y, w, h, (uint16_t*)px);
+}
 static void fmSdUnmount() {
   if (s_sd_mounted) { SD.end(); s_sd_mounted = false; s_sd_size = 0; }
   s_sd_retry_after_ms = 0;   // a reinsert should be able to mount right away

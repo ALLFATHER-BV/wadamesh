@@ -66,6 +66,7 @@ static lv_obj_t*   s_root      = nullptr;   // full-screen overlay
 static lv_obj_t*   s_picker    = nullptr;   // ROM list (phase 1)
 static lv_obj_t*   s_play      = nullptr;   // play-UI container (canvas + controls)
 static lv_obj_t*   s_canvas    = nullptr;   // scaled GB output
+static lv_obj_t*   s_menu_btn  = nullptr;   // top-right menu button (repainted over the direct blit)
 static lv_obj_t*   s_menu      = nullptr;   // in-game pause menu (phase 2)
 static lv_color_t* s_fb        = nullptr;   // canvas buffer (scaled output)
 static lv_color_t* s_gbfb      = nullptr;   // gnuboy's fixed 160x144 framebuffer
@@ -114,30 +115,61 @@ static void audioStop(void);
 static void closeMenu(void);
 
 // ---------------------------------------------------------------------------
-// Rendering: gnuboy renders into s_gbfb (160x144); we copy/scale into the canvas.
+// Rendering: gnuboy renders into s_gbfb (160x144). Scale it into the canvas
+// buffer with nearest-neighbour (Fit/2x); 1x is a straight copy.
 // ---------------------------------------------------------------------------
+static void scaleGbfbInto(lv_color_t* dst) {
+    int prev_sy = -1;
+    const lv_color_t* prev = nullptr;
+    for (int oy = 0; oy < s_out_h; oy++) {
+        lv_color_t* row = &dst[oy * s_out_w];
+        const int sy = s_sy_map[oy];
+        if (sy == prev_sy && prev) {
+            memcpy(row, prev, (size_t)s_out_w * sizeof(lv_color_t));
+        } else {
+            const lv_color_t* srow = &s_gbfb[sy * GB_WIDTH];
+            for (int ox = 0; ox < s_out_w; ox++) row[ox] = srow[s_sx_map[ox]];
+            prev_sy = sy;
+        }
+        prev = row;
+    }
+}
+
+#if defined(GB_DIRECT_PANEL)
+// Experimental fast path: push the finished frame straight to the ST7789,
+// bypassing the LVGL canvas-flush pipeline (dirty tracking + blend + copy).
+// video_cb runs on the UI thread inside frameCb, so this is serialized with
+// LVGL's own flush and the mesh loop — no SPI-bus contention. The canvas is
+// never invalidated, so LVGL leaves the game region to us.
+extern "C" void touchGbBlit(int x, int y, int w, int h, const uint16_t* px);
+
+static void video_cb(void* /*buffer*/) {
+    if (!s_canvas || !s_gbfb) return;
+    const uint16_t* src;
+    if (s_out_w == GB_WIDTH && s_out_h == GB_HEIGHT) {
+        src = (const uint16_t*)s_gbfb;          // 1x: push the emulator fb directly (no copy)
+    } else {
+        if (!s_fb) return;
+        scaleGbfbInto(s_fb);
+        src = (const uint16_t*)s_fb;
+    }
+    lv_area_t a;
+    lv_obj_get_coords(s_canvas, &a);            // LVGL-space coords (what writePixelsRGB565 wants)
+    touchGbBlit(a.x1, a.y1, s_out_w, s_out_h, src);
+    // The blit rect can cover the top-right menu button (e.g. full-width 2x).
+    // Repaint it so LVGL composites it back on top of the frame.
+    if (s_menu_btn) lv_obj_invalidate(s_menu_btn);
+}
+#else
 static void video_cb(void* /*buffer*/) {
     if (!s_canvas || !s_fb || !s_gbfb) return;
-    if (s_out_w == GB_WIDTH && s_out_h == GB_HEIGHT) {
+    if (s_out_w == GB_WIDTH && s_out_h == GB_HEIGHT)
         memcpy(s_fb, s_gbfb, (size_t)GB_WIDTH * GB_HEIGHT * sizeof(lv_color_t));
-    } else {
-        int prev_sy = -1;
-        const lv_color_t* prev = nullptr;
-        for (int oy = 0; oy < s_out_h; oy++) {
-            lv_color_t* row = &s_fb[oy * s_out_w];
-            const int sy = s_sy_map[oy];
-            if (sy == prev_sy && prev) {
-                memcpy(row, prev, (size_t)s_out_w * sizeof(lv_color_t));
-            } else {
-                const lv_color_t* srow = &s_gbfb[sy * GB_WIDTH];
-                for (int ox = 0; ox < s_out_w; ox++) row[ox] = srow[s_sx_map[ox]];
-                prev_sy = sy;
-            }
-            prev = row;
-        }
-    }
+    else
+        scaleGbfbInto(s_fb);
     lv_obj_invalidate(s_canvas);
 }
+#endif
 
 static void audio_cb(void* buffer, size_t length) {
     // Scale by the volume pref and hand off to the audio task via the stream
@@ -395,7 +427,7 @@ static void teardownPlayUI(void) {
     // Callers always closeMenu() first; s_menu (a child of s_root, not s_play)
     // is managed by closeMenu()/close(), so we only drop the play container here.
     if (s_play) { lv_obj_del(s_play); s_play = nullptr; }
-    s_canvas = nullptr;
+    s_canvas = nullptr; s_menu_btn = nullptr;
     if (s_fb) { lvglPsramFree(s_fb); s_fb = nullptr; }
 }
 
@@ -439,11 +471,11 @@ static void buildPlayUI(void) {
     if (s_scale_mode == SCALE_1X) buildControls();
 
     // Single menu button (top-right) — everything else lives in the pause menu.
-    lv_obj_t* m = lv_btn_create(s_play);
-    lv_obj_set_size(m, 34, 24);
-    lv_obj_align(m, LV_ALIGN_TOP_RIGHT, -2, 0);
-    lv_obj_add_event_cb(m, openMenuCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* ml = lv_label_create(m); lv_label_set_text(ml, LV_SYMBOL_LIST); lv_obj_center(ml);
+    s_menu_btn = lv_btn_create(s_play);
+    lv_obj_set_size(s_menu_btn, 34, 24);
+    lv_obj_align(s_menu_btn, LV_ALIGN_TOP_RIGHT, -2, 0);
+    lv_obj_add_event_cb(s_menu_btn, openMenuCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* ml = lv_label_create(s_menu_btn); lv_label_set_text(ml, LV_SYMBOL_LIST); lv_obj_center(ml);
 }
 
 // ---------------------------------------------------------------------------
@@ -654,7 +686,7 @@ void GameBoy::close() {
     teardownEmu();
     if (s_menu) { lv_obj_del(s_menu); s_menu = nullptr; }
     if (s_root) { lv_obj_del(s_root); s_root = nullptr; }   // deletes play-UI + children
-    s_picker = nullptr; s_play = nullptr; s_canvas = nullptr;
+    s_picker = nullptr; s_play = nullptr; s_canvas = nullptr; s_menu_btn = nullptr;
     if (s_fb)   { lvglPsramFree(s_fb);   s_fb = nullptr; }   // after the canvas is gone
     if (s_gbfb) { lvglPsramFree(s_gbfb); s_gbfb = nullptr; }
     if (s_rom)  { free(s_rom); s_rom = nullptr; }            // banks pointed into it; free_rom left it
