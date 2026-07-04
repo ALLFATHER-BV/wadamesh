@@ -2814,6 +2814,13 @@ static void navPump() {
       noteKbActivity();   // physical keypress lights the "auto" keyboard backlight
       if (was_off) continue;
     }
+    // Game Boy owns physical input while open: map keyboard chars onto the GB
+    // pad and swallow the event so it can't drive UI nav behind the game.
+    // (Trackball D-pad + click=A are handled in the trackball reader above.)
+    if (GameBoy::isOpen()) {
+      if (ev.type == INPUT_EVENT_TYPE_KEYBOARD) GameBoy::keyChar(ev.args_keyboard.ascii);
+      continue;
+    }
 #if defined(HAS_TANMATSU)
     // Hard screen lock: the overlay absorbs everything else (Vol- was already handled above).
     if (g_lv.task && g_lv.task->isManualLocked()) continue;
@@ -26329,11 +26336,13 @@ static void updateTrackball(unsigned long now) {
     return;
   }
   // ---- Game Boy ----
-  // Trackball nudges the D-pad (brief pulse); on-screen buttons are primary.
+  // Trackball nudges the D-pad (brief pulse) and the click is the A button;
+  // on-screen buttons (when shown) are primary. No soft cursor on this page.
   if (GameBoy::isOpen()) {
     if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
       lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
-    s_tb_click_press = false;
+    GameBoy::setA(s_tb_click_press);   // click = A (held)
+    s_tb_click_press = false;          // consume so it isn't also delivered as a UI tap
     if (moved && (dx != 0 || dy != 0)) { GameBoy::steer(dx, dy); if (g_lv.task) g_lv.task->noteUserInput(); }
     return;
   }
