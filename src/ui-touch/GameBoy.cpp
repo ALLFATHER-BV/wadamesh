@@ -144,21 +144,21 @@ static void scaleGbfbInto(lv_color_t* dst) {
 extern "C" void touchGbBlit(int x, int y, int w, int h, const uint16_t* px);
 
 static void video_cb(void* /*buffer*/) {
-    if (!s_canvas || !s_gbfb) return;
-    const uint16_t* src;
-    if (s_out_w == GB_WIDTH && s_out_h == GB_HEIGHT) {
-        src = (const uint16_t*)s_gbfb;          // 1x: push the emulator fb directly (no copy)
-    } else {
-        if (!s_fb) return;
+    if (!s_canvas || !s_fb || !s_gbfb) return;
+    // Keep the canvas buffer current every frame even though we push directly:
+    // LVGL still COMPOSITES this region from s_fb whenever any overlapping widget
+    // is invalidated (the menu button, and the status bar left visible above the
+    // overlay, tick periodically). A stale s_fb there is exactly the ~2 Hz black
+    // flashing in the corners / lower band. With s_fb live, those redraws show
+    // the current frame instead. Then push s_fb straight to the panel.
+    if (s_out_w == GB_WIDTH && s_out_h == GB_HEIGHT)
+        memcpy(s_fb, s_gbfb, (size_t)GB_WIDTH * GB_HEIGHT * sizeof(lv_color_t));
+    else
         scaleGbfbInto(s_fb);
-        src = (const uint16_t*)s_fb;
-    }
     lv_area_t a;
     lv_obj_get_coords(s_canvas, &a);            // LVGL-space coords (what writePixelsRGB565 wants)
-    touchGbBlit(a.x1, a.y1, s_out_w, s_out_h, src);
-    // The blit rect can cover the top-right menu button (e.g. full-width 2x).
-    // Repaint it so LVGL composites it back on top of the frame.
-    if (s_menu_btn) lv_obj_invalidate(s_menu_btn);
+    touchGbBlit(a.x1, a.y1, s_out_w, s_out_h, (const uint16_t*)s_fb);
+    if (s_menu_btn) lv_obj_invalidate(s_menu_btn);   // 2x blit covers it -> keep it painted
 }
 #else
 static void video_cb(void* /*buffer*/) {
