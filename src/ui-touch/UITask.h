@@ -315,6 +315,16 @@ public:
     return _ui_threads[_active_thread_idx].mesh_channel_slot;
   }
   int  activeThreadIdx() const { return _active_thread_idx; }
+  /** DM thread's full contact pubkey (32 B) — for the chat sheet's "Reset path".
+   *  False for channels, unused slots, or a thread with no pubkey mapping yet. */
+  bool getThreadContactPub(int idx, uint8_t out[32]) const {
+    if (idx < 0 || idx >= MAX_UI_THREADS) return false;
+    if (!_ui_threads[idx].used || _ui_threads[idx].channel) return false;
+    const uint8_t* p = _ui_threads[idx].mesh_contact_pub;
+    uint8_t any = 0;
+    for (int i = 0; i < 32; i++) { out[i] = p[i]; any |= p[i]; }
+    return any != 0;
+  }
   int  threadScroll() const { return _thread_scroll; }
   void setThreadScroll(int v) { _thread_scroll = v; }
   bool hasDisplay() const { return _display != NULL; }

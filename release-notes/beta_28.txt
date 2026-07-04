@@ -1,0 +1,13 @@
+# beta_28 (TEST) — room-server session fix + the wyvern.red feedback batch, on top of stable beta_27.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Fixed ---
+Room servers no longer go one-way "frozen". The device now keeps its room login session alive in the background and automatically logs back in when the session drops, so posts keep being delivered and new room messages keep arriving. There is also a new "Log in again" option in the room chat's menu, and a clear warning when the room only granted you read-only access (posts would previously just vanish). Thanks to EricMW61 for the report (issue #89).
+The screen now truly switches off in standby. Before, only the backlight went dark while the panel kept displaying the last image - the actual cause of the LCD ghosting / burn-in some of you noticed. The panel itself now sleeps, and on wake your screen is back instantly. Also: a lit lock screen now always dims on every board, a screen woken by a message re-darkens after 10 seconds, and the lock-screen clock drifts a few pixels to avoid ghosting. Thanks to wyvern.red for pinning this down.
+The on-device "Install update" now also hides on mixed or older partition layouts where an update could crash the device halfway through (found via a user crash report - thanks!).
+
+# --- New ---
+Compact messages (IRC style): a new toggle in chat settings shows one dense line per message instead of bubbles, fitting two to three times more history on screen. Off by default. (wyvern.red's suggestion.)
+Clearer delivery ticks: an up-arrow means sent but not yet confirmed, a double check means the other side confirmed it, and a failed message now says "tap to resend" - one tap resends it. (wyvern.red)
+Keyboard navigation: the scroll keys (F/C) now zoom the map, and backspace in an empty message box exits typing mode so the navigation keys work again. (wyvern.red)
+"Reset path" is now also in the chat's own menu next to Blocked users, so you can force a fresh route without going through Contacts.

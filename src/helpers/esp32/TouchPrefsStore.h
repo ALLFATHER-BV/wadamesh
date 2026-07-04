@@ -153,6 +153,11 @@ bool    touchPrefsSetMsgFlash(bool on);
 bool    touchPrefsGetBootAdvert();
 bool    touchPrefsSetBootAdvert(bool on);
 
+/* Compact chat (IRC-style): one dense "HH:MM name: text" row per message instead of
+ * bubbles, so far more history fits on screen. Opt-in, default off (bubbles). */
+bool    touchPrefsGetCompactChat();
+bool    touchPrefsSetCompactChat(bool on);
+
 /* Periodic self-advert intervals (the standard MeshCore flood/local advert, on a timer). 0 = off.
  * Flood in hours; local zero-hop in minutes (0 or 60-240). Scheduled in UITask::loop via sendAdvert. */
 uint16_t touchPrefsGetFloodAdvHrs();

@@ -380,6 +380,29 @@ public:
     return r;
   }
 
+  /** Is a keep-alive session to this server currently armed and alive?
+   *  (Room chat UI: the core frees the slot 2.5x the interval after the last
+   *  ACK/activity, so false = the session needs a re-login.) */
+  bool uiHasConnectionTo(const uint8_t pub_key[32]) { return hasConnectionTo(pub_key); }
+
+  /** Re-login to a room server WITHOUT a password. For a client already in the
+   *  room's ACL a blank login replies LOGIN_OK with the stored permissions and
+   *  skips the login replay guard (simple_room_server onAnonDataRecv, blank-
+   *  password branch) — and when it arrives flooded the server also resets its
+   *  stale out_path to us. The blank login itself resets NOTHING else server-side
+   *  (not push_failures, not last_activity); the actual heal is the chain it
+   *  starts: LOGIN_OK -> onContactResponse arms the room keep-alive -> the first
+   *  REQ_TYPE_KEEP_ALIVE refreshes the server's last_activity and clears its
+   *  push-abandon counter, so pushes resume (issue #89: self-heal + the chat
+   *  sheet's "Log in again"). NOTE it cannot recover a server that REBOOTED
+   *  (non-admin ACL entries aren't persisted there) — that needs a passworded
+   *  Join from the Contacts sheet. */
+  int uiRoomRelogin(const uint8_t pub_key[32]) {
+    ContactInfo* c = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+    if (!c || c->type != ADV_TYPE_ROOM) return MSG_SEND_FAILED;
+    return uiSendAdminLogin(*c, "");
+  }
+
   /** Send a CLI command line to a previously-logged-in repeater / room
    *  server. The reply lands in AbstractUITask::onAdminCommandReply via
    *  queueMessage when the server returns a TXT_TYPE_CLI_DATA frame.

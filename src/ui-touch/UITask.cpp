@@ -33,6 +33,9 @@
   #include <esp_ota_ops.h>     // A/B slot info + reboot-to-recovery (esp_ota_get_running_partition)
   #include <esp_partition.h>   // find/erase otadata to fall back to the factory(recovery) slot
   #if !defined(HAS_TANMATSU)
+  #include <esp_spi_flash.h>   // spi_flash_cache2phys — verify the OTA "running" slot matches reality (beta_21 coredump)
+  #endif
+  #if !defined(HAS_TANMATSU)
   #include <esp_core_dump.h>   // detect/read/erase the panic coredump for the crash-report export
   #include <freertos/FreeRTOS.h>
   #include <freertos/task.h>   // xTaskGetCurrentTaskHandleForCPU / pcTaskGetName — Task-WDT crash self-record
@@ -2568,7 +2571,12 @@ static void navFindScrollableRec(lv_obj_t* o, bool up, lv_obj_t** best, long* be
 // Scroll the focused element's nearest scrollable ancestor; if nothing focusable can
 // scroll (or the focus isn't inside a scroll area), fall back to the biggest scrollable
 // page on the active screen — so the scroll keys ALWAYS move the page.
+static bool navMapZoomIfActive(bool zoom_in);   // defined with the map zoom code below
 static void navScrollFocused(bool up) {
+  // On the Map tab the scroll keys zoom instead (F/C on the T-Deck, F/V on the
+  // Tanmatsu — scroll-up = zoom in, like a mouse wheel on any map). The map has
+  // nothing to scroll, so the keys were dead weight there (wyvern.red feedback).
+  if (navMapZoomIfActive(up)) return;
   lv_obj_t* o = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
   for (lv_obj_t* p = o; p; p = lv_obj_get_parent(p)) {
     if (!lv_obj_has_flag(p, LV_OBJ_FLAG_SCROLLABLE)) continue;
@@ -2935,7 +2943,12 @@ static void navPump() {
       if (s_nav_debug) printf("[NAV] kbd ascii=%d '%c' ta=%d\n", (int)(uint8_t)c, (c >= 32 && c < 127) ? c : '?', ta ? 1 : 0);
       if (s_navkey_capture >= 0) { navKeyCaptureApply((uint8_t)c); continue; }   // Settings remap: this key is the new binding
       if (ta) {                               // type straight into the focused field
-        if (c == 8 || c == 127)          lv_textarea_del_char(ta);
+        if (c == 8 || c == 127) {
+          // Backspace in an EMPTY field = leave edit mode (matches Enter-on-empty below;
+          // consistent with backspace-as-back everywhere else on this board).
+          if (!lv_textarea_get_text(ta)[0]) s_nav_ta_editing = false;
+          else                              lv_textarea_del_char(ta);
+        }
         else if (c == '\r' || c == '\n') {
           // Enter on an EMPTY composer drops back to navigate mode (cursor off) so the letter-nav
           // keys work again; anywhere else it advances to the next widget.
@@ -5196,6 +5209,40 @@ static void channelLongSheetBlockedCb(lv_event_t* e) {
   openBlockedUsersModal();
 }
 
+// "Log in again" (room threads) — blank re-login to the room server. Passwordless
+// works for a client the room already knows (LOGIN_OK with stored permissions,
+// replay-guard-free; a flooded one also refreshes the server's path to us). The
+// LOGIN_OK re-arms our keep-alive, whose first REQ clears the server's
+// push-abandon counter — resuming a room that went one-way-dead (issue #89:
+// "no possibility to log in once it is done"). A REBOOTED server forgets
+// non-admin clients; that case needs the passworded Join from Contacts.
+static void threadSheetRoomLoginCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  const int idx = s_channel_long_idx;
+  closeChannelLongSheet();
+  uint8_t pub[32];
+  if (g_lv.task->getThreadContactPub(idx, pub) && the_mesh.uiRoomRelogin(pub) != MSG_SEND_FAILED)
+    g_lv.task->showAlert(TR("Logging in again..."), 1400);
+  else
+    g_lv.task->showAlert(TR("Couldn't send login"), 1400);
+}
+
+// "Reset path" (DM sheet) — wipes the cached return path for this chat's contact so
+// the next send re-floods, without the detour through the Contacts tab (wyvern.red
+// feedback; same action as the contact sheet's Reset path).
+static void threadSheetResetPathCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  const int idx = s_channel_long_idx;
+  closeChannelLongSheet();
+  uint8_t pub[32];
+  if (g_lv.task->getThreadContactPub(idx, pub) && the_mesh.uiResetContactPath(pub)) {
+    g_lv.task->showAlert(TR("Path reset"), 1000);
+    refreshContactsList();
+  } else {
+    g_lv.task->showAlert(TR("Path reset failed"), 1200);
+  }
+}
+
 // Per-thread settings sheet (DM or channel) — opened by long-press AND the per-row gear AND the
 // in-channel cog, so all are the SAME screen. Mark-as-read, mute messages / @ mentions, region &
 // scope, share secret, blocked users, remove/delete.
@@ -5228,7 +5275,16 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   const int btn_h = 42;
   const int pad = 10;
 #endif
-  const int rows = is_channel ? 7 : 3;   // mark-read + ch:{mute-msg,mute-men,region,share,blocked,remove} | dm:{blocked,delete}
+  // Room-server thread? Adds the "Log in again" row (issue #89 session recovery).
+  bool is_room_thread = false;
+  if (!is_channel && g_lv.task) {
+    uint8_t rpub[32];
+    if (g_lv.task->getThreadContactPub(thread_idx, rpub)) {
+      ContactInfo* rc = the_mesh.lookupContactByPubKey(rpub, PUB_KEY_SIZE);
+      is_room_thread = (rc && rc->type == ADV_TYPE_ROOM);
+    }
+  }
+  const int rows = is_channel ? 7 : (is_room_thread ? 5 : 4);   // mark-read + ch:{mute-msg,mute-men,region,share,blocked,remove} | dm:{[login-again,]reset-path,blocked,delete}
   int card_h = PSC(36) + rows * (btn_h + PSC(6)) + pad;
   const int max_h = lv_disp_get_ver_res(nullptr) - STATUSBAR_H - 12;
   const bool card_scroll = (card_h > max_h);
@@ -5294,6 +5350,9 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     mk(LV_SYMBOL_CLOSE    "  Blocked users",  channelLongSheetBlockedCb,  0);
     mk(LV_SYMBOL_TRASH    "  Remove channel", channelLongSheetDeleteCb,   0xB23A48);
   } else {
+    if (is_room_thread)
+      mk(LV_SYMBOL_REFRESH "  Log in again",  threadSheetRoomLoginCb,     0);
+    mk(LV_SYMBOL_LOOP     "  Reset path",     threadSheetResetPathCb,     0);
     mk(LV_SYMBOL_CLOSE    "  Blocked users",  channelLongSheetBlockedCb,  0);
     mk(LV_SYMBOL_TRASH    "  Delete chat",    threadSheetDeleteDmCb,      0xB23A48);
   }
@@ -6828,7 +6887,23 @@ static bool touchHasOtaUpdateSlot() {
   const esp_partition_t* nxt = esp_ota_get_next_update_partition(NULL);
   const esp_partition_t* run = esp_ota_get_running_partition();
   if (nxt == NULL || run == NULL) return false;
-  return nxt->size >= run->size;
+  if (nxt->size < run->size) return false;
+#if !defined(HAS_TANMATSU)
+  // Second guard, from a beta_21 field coredump: on a mixed/legacy layout (a
+  // Launcher-class table with a slot at 0x200000) the slot esp_ota calls "next"
+  // physically overlapped the region the firmware was EXECUTING from — the first
+  // OTA erase tripped IDF's dangerous-write abort() mid-update. esp_ota resolves
+  // "running" from the partition table + boot state, which can disagree with
+  // reality on such installs. Cross-check: this very function's physical flash
+  // address must fall inside the partition claimed as "running"; if it doesn't,
+  // the table doesn't describe the image we're running and an in-place OTA could
+  // erase live code — hide the update affordances (Launcher handles updates there).
+  const size_t phys = spi_flash_cache2phys(
+      reinterpret_cast<const void*>(reinterpret_cast<uintptr_t>(&touchHasOtaUpdateSlot)));
+  if (phys == SPI_FLASH_CACHE2PHYS_FAIL) return false;
+  if (phys < run->address || phys >= run->address + run->size) return false;
+#endif
+  return true;
 }
 #endif
 
@@ -8590,6 +8665,7 @@ static void enterSendsToggleCb(lv_event_t* e) {
 // here / in notify() and consumed in the loop()'s keyboard-backlight tick.
 static volatile uint32_t s_msgflash_until = 0;     // keyboard-backlight pulse deadline (0 = idle)
 static volatile bool     s_msgflash_wake  = false; // one-shot screen-wake request (consumed in loop())
+static uint32_t          s_notify_wake_ms = 0;     // screen lit BY a message (not input) at this ms — re-dims after a short window (burn-in)
 static void msgFlashToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -8758,6 +8834,19 @@ static void colorfulBubblesToggleCb(lv_event_t* e) {
 #endif
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Taste the rainbow!") : TR("Chat bubbles: plain"),
                                       on ? 1500 : 900);
+}
+
+// Compact chat toggle (wyvern.red): IRC-style dense rows instead of bubbles. An
+// open chat re-renders immediately so the switch gives instant feedback.
+static void compactChatToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetCompactChat(on);
+#endif
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Compact messages") : TR("Chat bubbles"), 1000);
+  if (g_lv.dm.detail_open) refreshChatDetail(g_lv.dm);
+  if (g_lv.ch.detail_open) refreshChatDetail(g_lv.ch);
 }
 
 #if defined(HAS_EXPANSION_KIT)
@@ -9552,6 +9641,19 @@ static void buildDeviceSettings(int sec) {
     if (touchPrefsGetColorfulBubbles()) lv_obj_add_state(sw, LV_STATE_CHECKED);
 #endif
     lv_obj_add_event_cb(sw, colorfulBubblesToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+  }
+
+  /* Compact messages (IRC-style): one dense "HH:MM name: text" row per message
+     instead of bubbles — far more history on screen. Opt-in (wyvern.red). */
+  {
+    int h = settingsRowLabel(body, y, 6, "Compact messages (IRC style)", COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (touchPrefsGetCompactChat()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(sw, compactChatToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
 
@@ -22496,20 +22598,29 @@ static bool mapZoomReachable(uint8_t z) {
   return false;
 }
 #endif
-static void mapZoomInCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  if (s_map_zoom >= k_map_zoom_max) return;
+// One zoom step, shared by the +/- buttons and the keyboard-nav scroll keys.
+// Skips levels the current tile source can't show (same walk the buttons did).
+static void mapZoomStep(bool zoom_in) {
+  if (zoom_in  && s_map_zoom >= k_map_zoom_max) return;
+  if (!zoom_in && s_map_zoom <= k_map_zoom_min) return;
 #if defined(ESP32)
   uint8_t want = 0;
-  for (uint8_t z = s_map_zoom + 1; z <= k_map_zoom_max; ++z) {
-    if (mapZoomReachable(z)) { want = z; break; }
+  if (zoom_in) {
+    for (uint8_t z = s_map_zoom + 1; z <= k_map_zoom_max; ++z) {
+      if (mapZoomReachable(z)) { want = z; break; }
+    }
+  } else {
+    for (uint8_t z = s_map_zoom - 1; z >= k_map_zoom_min; --z) {
+      if (mapZoomReachable(z)) { want = z; break; }
+      if (z == k_map_zoom_min) break;   // guard: z is unsigned, don't wrap below min
+    }
   }
   if (!want) {
-    if (g_lv.task) g_lv.task->showAlert(TR("Max zoom for this pack"), 1200);
+    if (g_lv.task) g_lv.task->showAlert(zoom_in ? TR("Max zoom for this pack") : TR("Min zoom for this pack"), 1200);
     return;
   }
 #else
-  const uint8_t want = s_map_zoom + 1;
+  const uint8_t want = zoom_in ? (uint8_t)(s_map_zoom + 1) : (uint8_t)(s_map_zoom - 1);
 #endif
   s_map_zoom = want;
 #if defined(ESP32)
@@ -22518,31 +22629,26 @@ static void mapZoomInCb(lv_event_t* e) {
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
+}
+static void mapZoomInCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  mapZoomStep(true);
 }
 static void mapZoomOutCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  if (s_map_zoom <= k_map_zoom_min) return;
-#if defined(ESP32)
-  uint8_t want = 0;
-  for (uint8_t z = s_map_zoom - 1; z >= k_map_zoom_min; --z) {
-    if (mapZoomReachable(z)) { want = z; break; }
-    if (z == k_map_zoom_min) break;   // guard: z is unsigned, don't wrap below min
-  }
-  if (!want) {
-    if (g_lv.task) g_lv.task->showAlert(TR("Min zoom for this pack"), 1200);
-    return;
-  }
-#else
-  const uint8_t want = s_map_zoom - 1;
-#endif
-  s_map_zoom = want;
-#if defined(ESP32)
-  touchPrefsSetMapZoom(s_map_zoom);   // persist like the slider does
-#endif
-  renderMapTiles();
-  renderMapMarkers();
-  refreshMapInfoLabel();
+  mapZoomStep(false);
 }
+#if CAP_KEYPAD_NAV
+// Keyboard-nav hook (called from navScrollFocused): with the Map tab front-most
+// and nothing modal on top, the scroll keys step the zoom. Returns true when the
+// key was consumed as a zoom.
+static bool navMapZoomIfActive(bool zoom_in) {
+  if (getActiveTab() != MAP_TAB_INDEX) return false;
+  if (anyPopupOpen()) return false;   // a sheet/popup over the map keeps normal scrolling
+  mapZoomStep(zoom_in);
+  return true;
+}
+#endif
 // Zoom slider overlay. The zoom button toggles it; dragging updates the live
 // readout, and releasing applies + persists the chosen level.
 static void mapZoomSliderCb(lv_event_t* e) {
@@ -24191,6 +24297,26 @@ static void msgMenuResendCb(lv_event_t* e) {
     g_lv.task->showAlert(TR("Resend failed"), 1400);
 }
 
+// One-tap retry (wyvern.red): a FAILED outgoing message is single-tappable — a quick
+// confirm, then the same resend engine as the long-press menu's Resend. The text is
+// snapshotted at tap (the ring may rotate before the confirm lands).
+static char s_retry_text[UITask::MAX_MSG_TEXT + 1] = "";
+static void retryConfirmedApply() {
+  if (!g_lv.task || !s_retry_text[0]) return;
+  if (!g_lv.task->composerSend(s_retry_text))
+    g_lv.task->showAlert(TR("Resend failed"), 1400);
+}
+static void bubbleRetryTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(idx, m) || !m.outgoing ||
+      m.deliv_state != UITask::DELIV_FAILED || !m.text[0]) return;
+  strncpy(s_retry_text, m.text, sizeof(s_retry_text) - 1);
+  s_retry_text[sizeof(s_retry_text) - 1] = '\0';
+  showConfirm(TR("Message didn't get through.\nResend it?"), TR("Resend"), retryConfirmedApply);
+}
+
 // Compose a one-tap "ack" for an incoming message: @mentions the sender (on a
 // channel) and reports the link quality + route of THAT message, so you can
 // confirm to them their (test) message arrived and how strong it came in. Built
@@ -24680,6 +24806,17 @@ static void usernameBubbleColors(const char* name, lv_color_t* bubble_bg, lv_col
   if (name_col)  *name_col  = lv_color_hsv_to_rgb(hue, 85, 95);  // vivid sender-name line
 }
 
+// Escape '#' for a recolor-enabled label — LVGL renders "##" as a literal '#', so
+// user text can't accidentally open/close a "#RRGGBB …#" colour run.
+static void recolorEscape(char* dst, size_t cap, const char* src) {
+  size_t o = 0;
+  for (const char* s = src; *s && o + 2 < cap; ++s) {
+    dst[o++] = *s;
+    if (*s == '#') dst[o++] = '#';
+  }
+  dst[o] = '\0';
+}
+
 static void refreshChatDetail(LvChatPanel& p) {
   if (!g_lv.task || !p.msgs) return;
   // Capture the pre-rebuild scroll position so a message arriving while the chat
@@ -24742,6 +24879,16 @@ static void refreshChatDetail(LvChatPanel& p) {
   constexpr lv_coord_t kRowGap     = 4;
 
   const bool colorful_bubbles = touchPrefsGetColorfulBubbles();
+  // Compact (IRC-style) rows: opt-in via Settings — one dense label per message
+  // instead of a bubble. Every line carries a name; a plain DM's incoming sender
+  // field is often empty/"rx", so pre-fetch the thread (contact) name as fallback.
+  const bool compact_chat = touchPrefsGetCompactChat();
+  char compact_thread_name[UITask::MAX_THREAD_NAME + 1] = "";
+  if (compact_chat) {
+    bool ch_; uint16_t un_; uint32_t ts_;
+    g_lv.task->getThreadInfo(g_lv.task->activeThreadIdx(), ch_, un_, ts_,
+                             compact_thread_name, sizeof(compact_thread_name));
+  }
 
   // Discord-style "new messages" divider: drawn just above the first unread
   // message (the last s_unread_at_open entries). If there are more unread than
@@ -24824,6 +24971,85 @@ static void refreshChatDetail(LvChatPanel& p) {
     copyUtf8ReplacingMissingGlyphs(&g_font_12, san_sender, sizeof(san_sender), show_sender);
     copyUtf8ReplacingMissingGlyphs(&g_font_12, san_text, sizeof(san_text), show_text);
 
+    if (compact_chat) {
+      // ---- Compact (IRC-style) row: "HH:MM name: text ✓" in ONE wrapping label ----
+      // No bubble chrome, so 2-3x more history fits per screen (wyvern.red). Recolor
+      // markup tints the time (muted), the sender (per-name colour when colourful
+      // bubbles is on) and the delivery/hops tail; recolorEscape doubles '#' so user
+      // text can't open a colour run. Long-press opens the same per-message menu.
+      const bool mentions_me = (p.channel_mode || thread_is_room) && !m.outgoing && textMentionsMe(show_text);
+      lv_color_t bg_ignored = lv_color_hex(COLOR_RECV_BG);
+      lv_color_t sender_col = lv_color_hex(COLOR_ACCENT);
+      const char* color_name = m.outgoing ? the_mesh.getNodePrefs()->node_name : show_sender;
+      if (colorful_bubbles && color_name && color_name[0])
+        usernameBubbleColors(color_name, &bg_ignored, &sender_col);
+      // Row name: own node name for outgoing; parsed sender for channels/rooms; the
+      // thread (contact) name for a plain DM whose sender field is empty / legacy "rx".
+      const char* row_name = m.outgoing ? the_mesh.getNodePrefs()->node_name
+          : (san_sender[0] && !(san_sender[0] == 'r' && san_sender[1] == 'x' && san_sender[2] == '\0'))
+              ? san_sender : compact_thread_name;
+      char name_san[48];
+      copyUtf8ReplacingMissingGlyphs(&g_font_12, name_san, sizeof(name_san), row_name);
+      char esc_name[100];
+      char esc_text[2 * sizeof(san_text)];
+      recolorEscape(esc_name, sizeof(esc_name), name_san);
+      recolorEscape(esc_text, sizeof(esc_text), san_text);
+
+      char ts_c[12];
+      formatBubbleHhMm(m.ts, ts_c, sizeof(ts_c));
+      const char* dglyph = ""; uint32_t dfg = COLOR_SUB;
+      if (m.outgoing && !p.channel_mode && m.deliv_state != UITask::DELIV_NONE) {
+        // Same semantics as the bubble footer: ↑ sent (unconfirmed), ✓✓ acked, ✕ failed.
+        switch (m.deliv_state) {
+          case UITask::DELIV_SENT:      dglyph = LV_SYMBOL_UPLOAD;          dfg = COLOR_SUB;    break;
+          case UITask::DELIV_DELIVERED: dglyph = LV_SYMBOL_OK LV_SYMBOL_OK; dfg = COLOR_ACCENT; break;
+          case UITask::DELIV_FAILED:    dglyph = LV_SYMBOL_CLOSE " tap to resend"; dfg = 0xE08080; break;
+        }
+      }
+      char reps[12] = "";
+      if (m.outgoing && m.sent_fp) {
+        const uint8_t r = the_mesh.uiRepeatsForFp(m.sent_fp);
+        if (r > 0) snprintf(reps, sizeof(reps), LV_SYMBOL_REFRESH "%u", (unsigned)r);
+      } else if (!m.outgoing && (m.meta_flags & UITask::MSG_META_HAS_RX)
+                             && (m.meta_flags & UITask::MSG_META_IS_FLOOD)) {
+        const uint8_t hops = (uint8_t)(m.path_len & 0x3F);
+        snprintf(reps, sizeof(reps), LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
+      }
+
+      const unsigned sc_hex = lv_color_to32(sender_col) & 0xFFFFFFu;
+      char line[640]; int off = 0;
+      if (ts_c[0])
+        off += snprintf(line + off, sizeof(line) - off, "#%06X %s# ",
+                        (unsigned)(COLOR_SUB & 0xFFFFFFu), ts_c);
+      off += snprintf(line + off, sizeof(line) - off, "#%06X %s:# %s", sc_hex, esc_name, esc_text);
+      if (off > (int)sizeof(line) - 1) off = (int)sizeof(line) - 1;
+      if ((dglyph[0] || reps[0]) && off < (int)sizeof(line) - 32)
+        snprintf(line + off, sizeof(line) - off, "  #%06X %s%s#", (unsigned)(dfg & 0xFFFFFFu), dglyph, reps);
+
+      lv_obj_t* row = lv_label_create(p.msgs);
+      lv_label_set_recolor(row, true);
+      lv_obj_set_style_text_font(row, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(row, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_label_set_long_mode(row, LV_LABEL_LONG_WRAP);
+      lv_obj_set_width(row, kContentW);
+      lv_label_set_text(row, line);
+      if (mentions_me) {   // keep the "you were tagged" cue without bubble chrome
+        lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_MENTION_BG), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+      }
+      lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_add_event_cb(row, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
+                          reinterpret_cast<void*>((intptr_t)msg_idx[i]));
+      if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)   // failed: single tap offers a resend
+        lv_obj_add_event_cb(row, bubbleRetryTapCb, LV_EVENT_CLICKED,
+                            reinterpret_cast<void*>((intptr_t)msg_idx[i]));
+      lv_obj_set_pos(row, 0, y_pos);
+      lv_obj_update_layout(row);
+      if (s_chat_jump_msg_idx >= 0 && msg_idx[i] == s_chat_jump_msg_idx) jump_y = y_pos;
+      y_pos += lv_obj_get_height(row) + 2;   // tight 2 px row gap
+      continue;
+    }
+
     lv_obj_t* bubble = lv_obj_create(p.msgs);
     lv_obj_remove_style_all(bubble);
     lv_obj_clear_flag(bubble, LV_OBJ_FLAG_SCROLLABLE);
@@ -24894,6 +25120,11 @@ static void refreshChatDetail(LvChatPanel& p) {
     lv_obj_add_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(bubble, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
                         reinterpret_cast<void*>((intptr_t)msg_idx[i]));
+    // Failed outgoing message: a single TAP offers a resend (long-press menu still works —
+    // its wait_release swallows the trailing click, so the two can't double-fire).
+    if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
+      lv_obj_add_event_cb(bubble, bubbleRetryTapCb, LV_EVENT_CLICKED,
+                          reinterpret_cast<void*>((intptr_t)msg_idx[i]));
 
     // Footer row: HH:MM timestamp + (for outgoing DMs) the delivery glyph.
     // Both sit in one label so they share the bottom-right anchor — keeps
@@ -24903,10 +25134,13 @@ static void refreshChatDetail(LvChatPanel& p) {
     const char* deliv_glyph = "";
     uint32_t deliv_fg = COLOR_SUB;
     if (m.outgoing && !p.channel_mode && m.deliv_state != UITask::DELIV_NONE) {
+      // Sent-but-unconfirmed is an UP arrow, not a checkmark — a grey ✓ read as
+      // "arrived" when it only meant "transmitted" (wyvern.red: "the first check
+      // is meaningless"). ✓✓ = the ack came back; failed says what a tap does.
       switch (m.deliv_state) {
-        case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_OK; deliv_fg = COLOR_SUB;    break;
+        case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_UPLOAD; deliv_fg = COLOR_SUB;    break;
         case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; deliv_fg = COLOR_ACCENT; break;
-        case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE; deliv_fg = 0xE08080;  break;
+        case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE " tap to resend"; deliv_fg = 0xE08080;  break;
       }
     }
     // Repeats-heard tag for outgoing floods (DM + channel): how many nearby
@@ -24924,7 +25158,7 @@ static void refreshChatDetail(LvChatPanel& p) {
       snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
     }
     if (ts_buf[0] || deliv_glyph[0] || rep_buf[0]) {
-      char footer[40];
+      char footer[64];   // fits "12:05 PM  ✕ tap to resend ↻9"
       snprintf(footer, sizeof(footer), "%s%s%s", ts_buf, deliv_glyph, rep_buf);
       lv_obj_t* foot = lv_label_create(bubble);
       lv_label_set_text(foot, footer);
@@ -26163,6 +26397,12 @@ static void lockscreenUpdateClock() {
   char b[12]; snprintf(b, sizeof b, "00:00");
   if (t > 0) { time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v); fmtClockHM(b, sizeof b, &v); mm = v.tm_min; }
   lv_label_set_text(s_lock_clock, b);
+  // Anti-burn-in drift: nudge the clock a few pixels per minute so its outline never
+  // parks on the same LCD cells — wyvern.red reported the lock layout retaining into
+  // the panel. Deterministic from the minute, so it also moves on every reveal.
+  const int dx = (mm % 5) * 3 - 6;         // -6 … +6 px
+  const int dy = ((mm / 5) % 3) * 4 - 4;   // -4 … +4 px
+  lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, dx, 30 + dy);
   s_lock_clock_min = mm;
 }
 
@@ -27263,6 +27503,19 @@ static void handleHwKey(int key) {
       taDeleteRange(ta, bs_s, bs_e);
       taClearSelection(ta);
     } else {
+#if CAP_TRACKBALL
+      // Keyboard nav: backspace in an EMPTY field drops back to navigate mode — the
+      // discoverable keyboard way OUT of the auto-focused chat composer (Enter on an
+      // empty composer already did this, silently). Reveal the focus highlight so the
+      // mode change is visible. (wyvern.red: "does not let me exit it with the keyboard")
+      if (s_kbd_nav && !lv_textarea_get_text(ta)[0]) {
+        s_nav_ta_editing = false;
+        s_nav_show = true;
+        accentBoxHide();
+        if (g_lv.task) g_lv.task->noteUserInput();
+        return;
+      }
+#endif
       lv_textarea_del_char(ta);
     }
     accentBoxHide();
@@ -27327,7 +27580,7 @@ static void handleHwKey(int key) {
           lv_keyboard_set_textarea(g_lv.keyboard, p->composer_ta);  // re-bind
         }
 #if CAP_TRACKBALL
-        else if (s_kbd_nav) s_nav_ta_editing = false;   // Enter on an EMPTY composer: drop to navigate mode (cursor off)
+        else if (s_kbd_nav) { s_nav_ta_editing = false; s_nav_show = true; }   // Enter on an EMPTY composer: drop to navigate mode, highlight visible
 #endif
       }
     } else {
@@ -33037,6 +33290,19 @@ done: {
 }
 
 void UITask::onAdminLoginResult(const ContactInfo& contact, bool success, uint8_t perms) {
+  // Room read-only downgrade warning (issue #89 hardening): LOGIN_OK with the
+  // zero-permission marker (server reply byte 6 == 2) means the room accepted us
+  // as a READ-ONLY guest — our posts will be silently discarded with no ACK, so
+  // sends would just spin forever with no clue. Surface it even for background
+  // re-logins, which skip the prompt guard below. Throttled to once a minute.
+  if (success && perms == 2 && contact.type == ADV_TYPE_ROOM) {
+    static uint32_t s_ro_warn_ms = 0;
+    const uint32_t nowms = millis();
+    if ((uint32_t)(nowms - s_ro_warn_ms) > 60000u) {
+      s_ro_warn_ms = nowms;
+      showAlert(TR("Room is read-only for you.\nJoin with the room password to post."), 2600);
+    }
+  }
   // Only react if the user opened a login prompt against THIS contact —
   // otherwise this could be a stale login from the companion-serial side
   // (the web app) bleeding into our touch flow.
@@ -35306,8 +35572,52 @@ void UITask::setDeviceTimeFromSystemClock() {
 #endif
 }
 
-/* Screen sleep = backlight off (not full panel reset). Keeps the LVGL frame
- * buffer + panel RAM intact, so wake is instant and the previous image is
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_TFT)
+// ---- ST7789 panel sleep (anti burn-in) -------------------------------------
+// Backlight-off alone is NOT screen-off: the ST7789 keeps refreshing the same
+// static image behind the dark backlight, continuously biasing the liquid
+// crystals — which is what actually sticks an image into the LCD (Kaj +
+// wyvern.red burn-in reports). The core driver's Adafruit object is private and
+// wraps no sleep API (and the T-Deck has no TFT reset line, PIN_TFT_RST=-1), so
+// send the one-byte ST7789 commands ourselves on the same HSPI bus + CS/DC pins
+// the driver uses. SLPIN stops the oscillator, booster and LC drive; panel RAM
+// is RETAINED, so wake = SLPOUT + DISPON and the old image is back with no
+// redraw. Safe alongside LVGL: flushes run on this same task (no concurrent
+// bus use), and the datasheet allows memory writes while asleep.
+static void touchPanelCmd(uint8_t cmd) {
+  static SPIClass* s_cmd_spi = nullptr;
+  if (!s_cmd_spi) {
+    s_cmd_spi = new SPIClass(HSPI);                       // same port as the driver's displaySPI
+    s_cmd_spi->begin(PIN_TFT_SCL, -1, PIN_TFT_SDA, -1);   // same pins; re-init is idempotent
+  }
+  s_cmd_spi->beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(PIN_TFT_DC, LOW);    // command
+  digitalWrite(PIN_TFT_CS, LOW);
+  s_cmd_spi->transfer(cmd);
+  digitalWrite(PIN_TFT_CS, HIGH);
+  digitalWrite(PIN_TFT_DC, HIGH);   // back to data (the driver's idle default)
+  s_cmd_spi->endTransaction();
+}
+static void touchPanelSleep(bool slp) {
+  static bool s_asleep = false;
+  if (slp == s_asleep) return;
+  s_asleep = slp;
+  if (slp) {
+    touchPanelCmd(0x28);   // DISPOFF — blank the output
+    touchPanelCmd(0x10);   // SLPIN — stop oscillator/booster/LC drive (RAM retained)
+    delay(5);              // t_SLPIN: bus must stay quiet 5 ms
+  } else {
+    touchPanelCmd(0x11);   // SLPOUT — RAM was retained through sleep
+    delay(6);              // datasheet: >=5 ms before the next command
+    touchPanelCmd(0x29);   // DISPON — the pre-sleep image reappears
+  }
+}
+#else
+static inline void touchPanelSleep(bool) {}
+#endif
+
+/* Screen sleep = backlight off + ST7789 sleep-in (not a full panel reset).
+ * Panel RAM survives SLPIN, so wake is near-instant and the previous image is
  * still on the glass when the LED lights back up — no partial re-render. */
 static inline void touchScreenBacklight(bool on) {
 #if defined(HAS_BACKLIGHT_PWM)
@@ -35316,7 +35626,9 @@ static inline void touchScreenBacklight(bool on) {
   // then be a no-op (on the V4, TFT_BL == PIN_TFT_LEDA_CTL == GPIO21), so drive
   // the PWM duty directly: 0 = off, saved brightness = on.
   if (!s_bl_pwm_ready) applyBrightness(s_brightness_pct);   // ensure LEDC is attached
+  if (on) touchPanelSleep(false);   // wake the panel BEFORE lighting it (old frame intact)
   ledcWrite(kBlPwmChannel, on ? ((uint32_t)s_brightness_pct * 255u / 100u) : 0u);
+  if (!on) touchPanelSleep(true);   // then stop the panel driving the crystals (anti burn-in)
 #elif defined(TFT_BL)
   pinMode(TFT_BL, OUTPUT);
   #ifdef TFT_BACKLIGHT_ON
@@ -35382,6 +35694,7 @@ void UITask::lockScreen() {
   setCpuForScreen(true);
   touchScreenBacklight(true);
   lockscreenShow();
+  _lock_lit_ms   = millis();   // arm the burn-in guard — a lit lock screen always dims, even at timeout "never"
   _last_input_ms = millis();
   return;
 #endif
@@ -35941,11 +36254,12 @@ void UITask::loop() {
     }
   }
 
-#if defined(HAS_TDECK_GT911)
   // Burn-in guard (#55): a LIT hard-locked panel ALWAYS dims after a bounded window — independent of
   // the screen-timeout setting (which may be "never") and of held / ghost touches that keep re-revealing
   // the lock screen. _lock_lit_ms is re-armed only on a real off->lit transition (lock / reveal), so it
   // can't be pushed out forever; a deliberate reveal re-lights it and it dims again shortly after.
+  // Was T-Deck-only; now every board — the Tanmatsu's lit lock screen otherwise never went dark at
+  // screen-timeout "never" (wyvern.red burn-in report). No-op where _lock_lit_ms is never armed (V4).
   if (_manual_lock && !_screen_off && _lock_lit_ms) {
     uint32_t lock_dim = (_screen_timeout_ms > 0 && _screen_timeout_ms < 20000u) ? _screen_timeout_ms : 20000u;
     if ((int32_t)(now - _lock_lit_ms) >= (int32_t)lock_dim) {
@@ -35954,7 +36268,25 @@ void UITask::loop() {
       _screen_off = true;
     }
   }
-#endif
+
+#if defined(HAS_TDECK_KEYBOARD)   // notify-flash (and so the notify wake) is a T-Deck feature
+  // Notify-wake re-dim: a screen lit by a MESSAGE (not user input) goes dark again after a
+  // short bounded window. On a busy channel the per-message wakes otherwise keep a static
+  // image lit for the full screen-timeout — or forever at "never" — which retains into the
+  // LCD (wyvern.red burn-in report). Any real input inside the window hands back to the
+  // normal timeout. Set in the msgflash consumer below AFTER wakeScreen()/lockscreenReveal()
+  // stamp _last_input_ms, so "input newer than the stamp" means the user, not the wake.
+  if (s_notify_wake_ms) {
+    if (_screen_off)                          s_notify_wake_ms = 0;   // already dark again
+    else if (_last_input_ms > s_notify_wake_ms) s_notify_wake_ms = 0; // user took over
+    else if ((int32_t)(now - s_notify_wake_ms) >= 10000) {
+      s_notify_wake_ms = 0;
+      touchScreenBacklight(false);
+      setCpuForScreen(false);
+      _screen_off = true;
+    }
+  }
+#endif  // HAS_TDECK_KEYBOARD (notify-wake re-dim)
 
 #if defined(HAS_TOUCH_UI)
   if (!g_lv.ready) return;
@@ -36131,8 +36463,10 @@ void UITask::loop() {
   // with space first" bug). Only an unlocked idle-dim gets the full wake + keyboard pulse.
   if (s_msgflash_wake) {
     s_msgflash_wake = false;
-    if (_manual_lock)     lockscreenReveal();   // locked: light wallpaper, keep the lock (unlock still works)
-    else if (_screen_off) wakeScreen();         // idle-dimmed: normal wake
+    if (_manual_lock)          { lockscreenReveal(); s_notify_wake_ms = millis(); }  // locked: light wallpaper, keep the lock
+    else if (_screen_off)      { wakeScreen();       s_notify_wake_ms = millis(); }  // idle-dimmed: normal wake
+    // Stamped AFTER the wake fns set _last_input_ms, so only LATER real input reads
+    // as "user took over" and cancels the short notify re-dim window (see loop above).
   }
   if (!_screen_off && !_manual_lock && s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = tdeckKbBlLevel();
   tdeckKeyboardSetBacklight(kb_bl);
@@ -36165,6 +36499,30 @@ void UITask::loop() {
         if (sms == 0 || (now - sms) >= poll_ms - 5000UL) sendSignalProbe();
       } else {
         s_sig_probe_at = now + 60000;   // probe off: just re-check the toggle each minute
+      }
+    }
+  }
+
+  // Room-session self-heal (issue #89): while a room-server chat is OPEN, make sure
+  // its login session is alive. The keep-alive only arms from a LOGIN_OK, so a
+  // session from before this build — or one the core expired (2.5x the interval
+  // with no ACK), or one the server dropped (reboot, LRU eviction, 3 failed
+  // pushes) — needs a fresh login to resume both directions. A blank login is
+  // enough for a client the room already knows (no password re-entry) and skips
+  // the server's replay guard. Throttled to one attempt a minute, chat open only.
+  {
+    static uint32_t s_room_relogin_ms = 0;
+    if (g_lv.dm.detail_open && g_lv.task && g_lv.task->hasActiveThread() &&
+        !g_lv.task->activeThreadIsChannel() &&
+        (uint32_t)(now - s_room_relogin_ms) >= 60000UL) {
+      uint8_t rpub[32];
+      if (g_lv.task->getThreadContactPub(g_lv.task->activeThreadIdx(), rpub) &&
+          !the_mesh.uiHasConnectionTo(rpub)) {
+        ContactInfo* rc = the_mesh.lookupContactByPubKey(rpub, PUB_KEY_SIZE);
+        if (rc && rc->type == ADV_TYPE_ROOM) {
+          s_room_relogin_ms = (uint32_t)now;
+          the_mesh.uiRoomRelogin(rpub);   // LOGIN_OK re-arms the keep-alive + resyncs
+        }
       }
     }
   }

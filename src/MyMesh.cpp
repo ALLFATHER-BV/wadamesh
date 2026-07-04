@@ -135,6 +135,15 @@ static int s_companion_ota_pinned_reply_target = -1;
 #define DIRECT_SEND_PERHOP_FACTOR       6.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
 #define LAZY_CONTACTS_WRITE_DELAY       5000
+// Our self-chosen room-session keep-alive interval (secs). Room servers zero the
+// legacy suggested-interval field in LOGIN_OK, so the client picks. 128 is the
+// value upstream itself recommended while the field was live (CLIENT_KEEP_ALIVE_SECS
+// 128, disabled 2025-06 rather than tuned) — matching it stays friendly to the
+// server's TODO'd "throttle keep-alives, evict fast pingers" heuristic. The core
+// expires the connection at 2.5x (320 s) without an ACK; every received room push
+// also counts as activity (markConnectionActive), so a busy room barely pings at
+// all. One 9-byte direct REQ + 5-byte ACK per interval — negligible airtime.
+#define ROOM_KEEPALIVE_SECS             128
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
 
@@ -2239,6 +2248,16 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
       uint16_t keep_alive_secs = ((uint16_t)data[5]) * 16;
       if (keep_alive_secs > 0) {
         startConnection(contact, keep_alive_secs);
+      } else if (contact.type == ADV_TYPE_ROOM) {
+        // Modern room servers zero the legacy keep-alive field (simple_room_server:
+        // `reply_data[5] = 0; // Legacy`), so no connection was ever armed and we
+        // never pinged. The server still NEEDS to hear from us: its push loop
+        // abandons a client after 3 unACKed pushes (`push_failures < 3`) and only a
+        // received transmission — a post, or exactly this REQ_TYPE_KEEP_ALIVE —
+        // resets the counter (issue #89: rooms went one-way-dead). Arm our own
+        // interval; checkConnections() in loop() does the rest (9-byte direct REQ,
+        // its ACK also refreshes the server's last_activity for us).
+        startConnection(contact, ROOM_KEEPALIVE_SECS);
       }
       out_frame[i++] = PUSH_CODE_LOGIN_SUCCESS;
       out_frame[i++] = data[6]; // permissions (eg. is_admin)
@@ -4367,6 +4386,17 @@ void MyMesh::checkSerialInterface() {
 
 void MyMesh::loop() {
   BaseChatMesh::loop();
+
+  // Session keep-alives for logged-in servers (rooms). The core pinger sends the
+  // 9-byte REQ_TYPE_KEEP_ALIVE (+ our sync_since) a room server expects; the ACK
+  // back refreshes the server's last_activity for us AND resets its push_failures
+  // counter — without it the server abandons a client after any 3 unacknowledged
+  // post pushes and never pushes again (simple_room_server: `push_failures < 3`
+  // gate in its round-robin push loop), which reads as a one-way-frozen room
+  // (issue #89). Upstream left this call commented out ("deprecate the
+  // Connections stuff"); the on-device room UI needs it. Cheap: scans 16 slots,
+  // transmits only when a connection is armed and due (see the room login branch).
+  checkConnections();
 
   if (_cli_rescue) {
     checkCLIRescueCmd();
