@@ -343,9 +343,10 @@ static void buildControls(void) {
     // A/B — under the game (B left, A right, as on real hardware).
     makePadBtn(s_play, 176, 150, 58, 58, "B", GB_PAD_B, kAB);
     makePadBtn(s_play, 250, 150, 58, 58, "A", GB_PAD_A, kAB);
-    // Start/Select — bottom-left, below the D-pad.
-    makePadBtn(s_play, 8,   176, 66, 30, "START",  GB_PAD_START,  kSS);
-    makePadBtn(s_play, 80,  176, 66, 30, "SELECT", GB_PAD_SELECT, kSS);
+    // Start/Select — bottom-left, dropped to the very bottom so a DOWN-arrow
+    // press (ends y166) can't clip the top of START.
+    makePadBtn(s_play, 8,   188, 66, 28, "START",  GB_PAD_START,  kSS);
+    makePadBtn(s_play, 80,  188, 66, 28, "SELECT", GB_PAD_SELECT, kSS);
 }
 
 // ---------------------------------------------------------------------------
