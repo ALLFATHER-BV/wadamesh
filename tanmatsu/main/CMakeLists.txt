@@ -54,11 +54,19 @@ foreach(_d ${WADA_DEFS})
   idf_build_set_property(COMPILE_OPTIONS "-D${_d}" APPEND)
 endforeach()
 
-# Firmware version shown on the About page. The Tanmatsu builds outside the S3 release.sh flow (which
-# injects these), so set them here or About shows only a generic "development build" with no version.
-# Quotes are escaped so the compiler sees string literals. TODO: have build.sh pass the real tag/date
-# per release (e.g. from git describe) instead of hardcoding; bump this each beta for now.
-idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_RELEASE_TAG=\"beta_25\"" APPEND)
-idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_BUILD_DATE=\"1 Jul 2026\"" APPEND)
+# Firmware version shown on the About page + parsed by the update check. build.sh passes
+# WADA_FW_TAG/-DATE from git describe + date, so dev builds show the real state
+# ("beta_28-14-gabc123") and a release build on the beta_N tag bakes exactly "beta_N" —
+# the old hardcoded define left every dev flash claiming the last hand-bumped beta.
+# firmwareReleaseN() parses the leading "beta_%d", so the -dev suffix keeps the update
+# check on the right baseline. Quotes escaped so the compiler sees string literals.
+if(NOT WADA_FW_TAG)
+  set(WADA_FW_TAG "dev")
+endif()
+if(NOT WADA_FW_DATE)
+  set(WADA_FW_DATE "")
+endif()
+idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_RELEASE_TAG=\"${WADA_FW_TAG}\"" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_BUILD_DATE=\"${WADA_FW_DATE}\"" APPEND)
 # (the adcAttachPin compat shim is force-included per-component in meshcore + wadamesh_app —
 #  NOT globally, which would feed the C++ header to FreeRTOS's .S assembly files and break them.)

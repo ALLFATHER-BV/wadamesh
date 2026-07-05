@@ -36,7 +36,16 @@ if [ -f "$BLEDEV_CPP" ] && grep -q 'int rc = ble_gap_read_local_irk(irk);' "$BLE
   echo "[build.sh] patched arduino BLEDevice.cpp (stub renamed ble_gap_read_local_irk)"
 fi
 
+# Firmware tag shown on About + used by the update check. Derived from git so dev
+# builds are honest ("beta_28-14-gabc123" = 14 commits past beta_28) and a release
+# build on a fresh beta_N tag bakes exactly "beta_N" — no more hand-bumping the
+# old hardcoded CMake define (which left every dev flash claiming the last beta).
+# Passed as a CMake cache var: idf.py reconfigures automatically when it changes.
+WADA_FW_TAG="$(git describe --tags --match 'beta_*' --always 2>/dev/null || echo dev)"
+WADA_FW_DATE="$(date '+%-d %b %Y')"
+
 exec idf.py -B build/tanmatsu \
   -DDEVICE=tanmatsu \
   -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/tanmatsu;sdkconfigs/wadamesh" \
+  -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
   -DIDF_TARGET=esp32p4 "$@"

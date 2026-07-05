@@ -10,6 +10,7 @@ extern "C" void set_boot_phase(int phase);
 #include <HeltecV4Board.h>
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/AutoDiscoverRTCClock.h>
+#include "../../src/helpers/ClockFloorRTC.h"   // monotonic send-timestamp floor (issue #89)
 #include <helpers/SensorManager.h>
 #include <helpers/sensors/EnvironmentSensorManager.h>
 #ifdef DISPLAY_CLASS
@@ -24,7 +25,7 @@ extern "C" void set_boot_phase(int phase);
 extern HeltecV4Board board;
 extern WRAPPER_CLASS radio_driver;
 extern RADIO_CLASS radio;   // raw SX1262 — driven directly by the Spectrum analyzer sweep
-extern AutoDiscoverRTCClock rtc_clock;
+extern ClockFloorRTC rtc_clock;
 extern EnvironmentSensorManager sensors;
 
 #ifdef DISPLAY_CLASS

@@ -4,8 +4,11 @@
 #include <string.h>
 
 // Companion push code for the per-packet RX log (matches MyMesh.cpp). It is kept OFF
-// the BLE transport in writeFrameToAll — see the note there (issues #46, #54).
+// the BLE transport in writeFrameToAll — see the note there (issues #46, #54) — EXCEPT
+// for one-shot passes armed via bleAllowNextRxLog() (echoes of our own sends, #94).
 #define PUSH_CODE_LOG_RX_DATA   0x88
+
+bool MultiTransportCompanionInterface::s_ble_rxlog_once = false;
 
 MultiTransportCompanionInterface::MultiTransportCompanionInterface()
   : _tcp_port(0), _ws_port(0), _tcp_started(false), _ws_started(false), _tcp_enabled(true), _isEnabled(false), _broadcast(false), _last_reply_target(REPLY_TARGET_USB), _ota_tcp_suspended(false), _ota_ws_suspended(false), _ota_ws_listen_paused(false)
@@ -334,10 +337,16 @@ size_t MultiTransportCompanionInterface::writeFrameToAll(const uint8_t src[], si
     all_ok = false;
 #ifdef BLE_PIN_CODE
   // The per-packet RX log floods BLE's ~16 frames/sec budget on a busy mesh, starving
-  // the frames that matter — chat messages + admin responses (issues #46, #54). The
-  // MeshCore app doesn't consume the RX log, so keep it OFF BLE; USB/TCP/WS (far more
-  // bandwidth) still receive it for the on-device Monitor app / diagnostics.
-  const bool skip_ble = (len > 0 && src[0] == PUSH_CODE_LOG_RX_DATA);
+  // the frames that matter — chat messages + admin responses (issues #46, #54). So it
+  // is kept OFF BLE (USB/TCP/WS have the bandwidth) — EXCEPT when MyMesh::logRxRaw
+  // armed a one-shot pass because this frame is an echo of OUR OWN flood send: the
+  // app's "Repeats heard" is computed exactly from those (it broke on BLE when the
+  // blanket skip landed in beta_23 — issue #94), and a few echoes per send are
+  // nowhere near the flood that caused #46/#54.
+  const bool rxlog    = (len > 0 && src[0] == PUSH_CODE_LOG_RX_DATA);
+  const bool ble_pass = rxlog && s_ble_rxlog_once;
+  if (rxlog) s_ble_rxlog_once = false;                // consume the one-shot either way
+  const bool skip_ble = rxlog && !ble_pass;
   if (!skip_ble && _ble_begun && _ble_enabled && _ble.isConnected() && _ble.writeFrame(src, len) != len)
     all_ok = false;
 #endif

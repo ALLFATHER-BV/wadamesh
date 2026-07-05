@@ -64,6 +64,13 @@ public:
   bool isWriteBusy() const override;
   size_t writeFrame(const uint8_t src[], size_t len) override;
   size_t writeFrameToAll(const uint8_t src[], size_t len) override;
+  /** One-shot: let the NEXT RX-log frame (PUSH_CODE_LOG_RX_DATA) through to BLE.
+   *  RX logs are normally kept OFF BLE (#46/#54 congestion), but the app's
+   *  "Repeats heard" is computed from them — MyMesh::logRxRaw calls this right
+   *  before writeFrameToAll when the frame is an echo of OUR OWN send, so BLE
+   *  gets exactly the few frames the app needs and none of the flood (#94).
+   *  Same-thread set-then-consume (both in the mesh loop), so no atomics. */
+  static void bleAllowNextRxLog() { s_ble_rxlog_once = true; }
   bool companionUnsolicitedPushesBroadcastToAll() const override { return _broadcast; }
   size_t checkRecvFrame(uint8_t dest[]) override;
 
@@ -72,6 +79,10 @@ public:
 
   int getReplyTarget() const override { return _last_reply_target; }
   void setReplyTarget(int target) override { _last_reply_target = target; }
+
+private:
+  static bool s_ble_rxlog_once;   // one-shot BLE pass for the next RX-log frame (#94)
+public:
 
 private:
   int _clientIdSlot() const;

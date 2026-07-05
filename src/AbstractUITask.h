@@ -136,6 +136,14 @@ public:
   virtual void onAdminLoginResult(const ContactInfo& contact, bool success, uint8_t perms) {
     (void)contact; (void)success; (void)perms;
   }
+  /** The server's own clock, from the timestamp prefix every server RESPONSE
+   *  carries (first 4 bytes). Fired on LOGIN_OK so the UI can warn when the
+   *  device clock and the server clock disagree — a skewed device clock makes
+   *  the server's replay guard silently drop our logins/posts/keep-alives
+   *  (issue #89). Default no-op. */
+  virtual void onServerClock(const ContactInfo& contact, uint32_t server_epoch) {
+    (void)contact; (void)server_epoch;
+  }
   /** A CLI command reply from a repeater / room server / sensor (the
    *  TXT_TYPE_CLI_DATA path). `text` is the decrypted command output text
    *  the server returned. Default no-op; the touch UI overrides to append

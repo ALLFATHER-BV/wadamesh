@@ -8,10 +8,11 @@
 #include <TanmatsuBoard.h>
 #include "TanmatsuLoraRadio.h"
 #include <helpers/AutoDiscoverRTCClock.h>
+#include "../../src/helpers/ClockFloorRTC.h"   // monotonic send-timestamp floor (issue #89)
 
 extern TanmatsuBoard        board;
 extern TanmatsuLoraRadio    radio_driver;
-extern AutoDiscoverRTCClock rtc_clock;
+extern ClockFloorRTC rtc_clock;
 
 #include <TanmatsuDisplay.h>
 #include <helpers/SensorManager.h>

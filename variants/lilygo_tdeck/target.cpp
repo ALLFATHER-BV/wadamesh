@@ -21,7 +21,7 @@ SPIClass* tdeckSharedSPI() {
 }
 
 ESP32RTCClock fallback_clock;
-AutoDiscoverRTCClock rtc_clock(fallback_clock);
+ClockFloorRTC        rtc_clock(fallback_clock);
 MicroNMEALocationProvider gps(Serial1, &rtc_clock);
 EnvironmentSensorManager sensors(gps);
 

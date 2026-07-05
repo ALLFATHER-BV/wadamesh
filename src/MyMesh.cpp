@@ -21,7 +21,9 @@
 #include <WiFi.h>
 #endif
 #ifdef MULTI_TRANSPORT_COMPANION
-#include <helpers/esp32/MultiTransportCompanionInterface.h>
+// QUOTED on purpose: the vendored core lib ships a STALE copy of this header in its
+// include path (no bleAllowNextRxLog); quotes force the local src/ copy we compile.
+#include "helpers/esp32/MultiTransportCompanionInterface.h"
 #include "helpers/esp32/MqttBridge.h"
 #endif
 #endif
@@ -1484,7 +1486,14 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
       if (poff < len) {
         // last path hop = the repeater whose re-flood our radio just heard
         const uint8_t* lasthop = (cnt_p >= 1) ? (raw + poff - hsz_p) : nullptr;
-        uiCountEcho(fnv1a32(raw + poff, len - poff), lasthop, lasthop ? hsz_p : 0);
+        if (uiCountEcho(fnv1a32(raw + poff, len - poff), lasthop, lasthop ? hsz_p : 0)) {
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+          // Echo of OUR OWN send: let this one RX-log frame through to BLE too.
+          // The app's "Repeats heard" is computed exactly from these (issue #94)
+          // and a few frames per send can't re-create the #46/#54 BLE flood.
+          MultiTransportCompanionInterface::bleAllowNextRxLog();
+#endif
+        }
       }
     }
   }
@@ -2285,6 +2294,10 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
     // Notify the touch UI so the admin console can flip from "logging in…"
     // to the prompt (success) or show "wrong password" (fail). Same data
     // the companion app sees via PUSH_CODE_LOGIN_SUCCESS/_FAIL.
+    // On LOGIN_OK also hand it the server's clock (`tag` = the timestamp prefix
+    // of every server response) so it can warn about device-vs-server skew —
+    // skew is what makes the server's replay guard silently eat us (#89).
+    if (_ui && ok) _ui->onServerClock(contact, tag);
     if (_ui) _ui->onAdminLoginResult(contact, ok, perms);
 #endif
   } else if (len > 4 && // check for status response
@@ -2975,12 +2988,13 @@ void MyMesh::handleCmdFrame(size_t len) {
       bool success = getChannel(channel_idx, channel);
       if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
         writeOKFrame();
-#if defined(HAS_TANMATSU)
         // Mirror the app-sent channel message into the on-device touch UI — the channel-send path
         // otherwise never shows companion-originated channel sends on screen (the DM path does, via
         // appSentMsgToContact). NUL-terminate the text in-place first, exactly as the DM path does.
+        // ALL boards — this sat behind HAS_TANMATSU from its beta_17 birth, so T-Deck/V4 users
+        // never saw their own app-sent channel posts on the device. Repeater echoes of our own
+        // flood can't double the bubble: the dispatcher's seen-packet table drops them pre-ingest.
         if (_ui) { cmd_frame[len] = 0; _ui->appSentMsgToChannel(channel.name, text); }
-#endif
         // Sent channel messages are not added to shared history / broadcast: channel_idx and
         // frame format are device-specific and clients (e.g. HA) without channel support can
         // misparse or show "text as sender"; also avoids failed-to-sync when versions differ.

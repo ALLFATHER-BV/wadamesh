@@ -1,0 +1,17 @@
+# beta_29 (TEST) — clock hardening for room servers, BLE repeats-heard fix, deeper SD chat history, one-screen popups. On top of beta_28.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Fixed ---
+Room logins can no longer be silently locked out by the device clock. Room servers quietly reject anything older than the newest timestamp they have seen from you, so a clock that stepped backwards (a reboot without GPS or phone around, or a sync correcting a fast clock) black-holed every Join with zero feedback. The device now remembers the newest timestamp it has used across reboots so it can never fall behind itself, a Join that gets no reply shows a clear error after 20 seconds (including what the device thinks the time is) instead of spinning forever, and the device warns you when its clock and the room server's clock disagree. Thanks to EricMW61 for the follow-up testing on issue #89.
+"Repeats heard" works again over Bluetooth. The companion app counts repeats from the per-packet RX log, which beta_23 stopped sending over BLE to fix congestion. The firmware now recognises packets that are repeats of your own messages and lets exactly those through to BLE, so the counter works and the congestion fix stays. Thanks to daryldakine for the clean bisect (issue #94).
+Messages sent from the phone app through the device now also appear on the device itself, as your own outgoing message in that channel. This worked for direct messages but never for channels.
+Deleting a chat or channel now sticks. Deleted messages could survive in storage and resurrect the chat later, and removing a channel could miss the underlying channel entry so the thread came right back.
+Settings pages no longer jump down when opened on keyboard-navigation devices, and the red update dot can no longer steal the selection from the About button.
+The update check no longer shows "couldn't reach the update server" for six hours after one failed attempt. It now waits for Wi-Fi to actually have an address and retries within a minute.
+The Tanmatsu About page now shows the real firmware version instead of a stale hardcoded one.
+
+# --- New ---
+Much deeper chat history on devices with an SD card: up to 5000 messages instead of 500, with date separators (Today, Yesterday, day names) between messages from different days. Note for testers: if you later downgrade below beta_29, the older build will not read the larger history file and will start with an empty history.
+Chat and channel rows in the messages tab now use the same compact style as the Contacts tab, fitting more conversations on screen.
+The chat or channel settings sheet (long-press or the gear) now fits on one screen, laid out like the contact menu, instead of scrolling.
+Compact chat mode is easier to read: messages alternate between two background tones.

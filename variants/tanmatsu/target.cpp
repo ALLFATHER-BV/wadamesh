@@ -10,7 +10,7 @@ DISPLAY_CLASS     display;          // global LVGL flush target + boot/shutdown 
 SensorManager     sensors;          // base (no telemetry yet); EnvironmentSensorManager later
 
 ESP32RTCClock        fallback_clock;
-AutoDiscoverRTCClock rtc_clock(fallback_clock);
+ClockFloorRTC        rtc_clock(fallback_clock);
 
 bool radio_init() {
   fallback_clock.begin();

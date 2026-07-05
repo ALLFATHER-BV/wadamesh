@@ -587,7 +587,10 @@ public:
   /** Count one echo of fingerprint `fp` (called from logRxRaw on a match). `hop`
    *  (optional) is the re-flooding repeater's hash — the echo's last path hop —
    *  recorded deduped + bounded so the sent-message Info can name the repeaters. */
-  void uiCountEcho(uint32_t fp, const uint8_t* hop = nullptr, uint8_t hop_sz = 0) {
+  /** Returns true when `fp` matched one of OUR recent sends (i.e. this RX is an
+   *  echo of our own flood) — logRxRaw uses that to let the frame through to BLE
+   *  for the app's "Repeats heard" (issue #94). */
+  bool uiCountEcho(uint32_t fp, const uint8_t* hop = nullptr, uint8_t hop_sz = 0) {
     for (int i = 0; i < UI_ECHO_SLOTS; i++)
       if (_echo_fp[i] == fp) {
         if (_echo_rep[i] < 255) _echo_rep[i]++;
@@ -602,8 +605,9 @@ public:
             _echo_hop_n[i]++;
           }
         }
-        return;
+        return true;
       }
+    return false;
   }
   /** True once if a repeat was counted since the last call — the UI uses this
    *  to refresh the chat so the bubble's repeat tag updates live. */
