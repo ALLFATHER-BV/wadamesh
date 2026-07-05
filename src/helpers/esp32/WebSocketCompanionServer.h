@@ -35,6 +35,7 @@ struct WSClientState {
   uint16_t comp_frame_len;
   uint16_t comp_rx_len;
   uint8_t comp_rx_buf[MAX_FRAME_SIZE];
+  uint32_t stall_ms;   // start of a continuous write-failure run; 0 = healthy
 };
 
 // WebSocket server for companion protocol. Same logical protocol as TCP; transport is RFC 6455 (plain WS).

@@ -2,12 +2,14 @@
 #include <Arduino.h>
 #include <mbedtls/sha1.h>
 #include <string.h>
+#include <lwip/sockets.h>
 
 #ifndef WS_FRAME_DEBUG
 #define WS_FRAME_DEBUG 0
 #endif
 
 #define TCP_WRITE_TIMEOUT_MS   120
+#define WS_WEDGED_DROP_MS      10000
 #define WS_MAGIC               "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 // Browser opens http://device:8765 — short info page (plain WebSocket endpoint).
@@ -47,15 +49,32 @@ static void base64Encode20(const uint8_t* in, char* out) {
   *out = '\0';
 }
 
+// True when lwIP can accept bytes for this socket right now — see the identical probe
+// in TCPCompanionServer.cpp. Without it, WiFiClient::write() against a peer that
+// stopped ACKing (half-open socket) blocks in 1 s select() waits on the loop thread.
+static bool socketWritableNow(WiFiClient& client) {
+  int fd = client.fd();
+  if (fd < 0) return false;
+  fd_set wset;
+  FD_ZERO(&wset);
+  FD_SET(fd, &wset);
+  struct timeval tv;
+  tv.tv_sec = 0;
+  tv.tv_usec = 0;
+  return select(fd + 1, NULL, &wset, NULL, &tv) > 0 && FD_ISSET(fd, &wset);
+}
+
 static bool writeAllBytes(WiFiClient& client, const uint8_t* buf, size_t len, uint32_t timeout_ms) {
   size_t sent = 0;
   uint32_t start = millis();
   while (sent < len) {
     if (!client.connected()) return false;
-    size_t n = client.write(buf + sent, len - sent);
-    if (n > 0) {
-      sent += n;
-      continue;
+    if (socketWritableNow(client)) {
+      size_t n = client.write(buf + sent, len - sent);
+      if (n > 0) {
+        sent += n;
+        continue;
+      }
     }
     if (millis() - start >= timeout_ms) return false;
     delay(1);
@@ -72,6 +91,7 @@ WebSocketCompanionServer::WebSocketCompanionServer()
     _clients[i].handshake_len = 0;
     _clients[i].ws_state = WS_STATE_HEADER_0;
     _clients[i].comp_state = COMP_STATE_IDLE;
+    _clients[i].stall_ms = 0;
   }
 }
 
@@ -142,6 +162,7 @@ void WebSocketCompanionServer::acceptNewClients() {
     _clients[slot].handshake_len = 0;
     _clients[slot].ws_state = WS_STATE_HEADER_0;
     _clients[slot].comp_state = COMP_STATE_IDLE;
+    _clients[slot].stall_ms = 0;
   }
 }
 
@@ -355,8 +376,18 @@ size_t WebSocketCompanionServer::writeToClient(int client_index, const uint8_t s
 #if WS_FRAME_DEBUG
     Serial.printf("WS frame client=%d code=%u len=%u written=0\n", client_index, (unsigned)(len ? src[0] : 0), (unsigned)len);
 #endif
+    // Same wedged-peer reaper as the TCP server: a client that stays unwritable for
+    // WS_WEDGED_DROP_MS straight is half-open (browser tab gone, phone asleep) and
+    // would otherwise eat the write-timeout budget on every pushed frame forever.
+    WSClientState* c = &_clients[client_index];
+    if (c->stall_ms == 0) {
+      c->stall_ms = millis() | 1;
+    } else if (millis() - c->stall_ms >= WS_WEDGED_DROP_MS) {
+      disconnectClient(client_index);
+    }
     return 0;
   }
+  _clients[client_index].stall_ms = 0;
 #if WS_FRAME_DEBUG
   Serial.printf("WS frame client=%d code=%u len=%u written=%u\n", client_index, (unsigned)(len ? src[0] : 0), (unsigned)len, (unsigned)len);
 #endif
@@ -396,5 +427,6 @@ void WebSocketCompanionServer::disconnectClient(int client_index) {
   if (client_index >= 0 && client_index < WS_COMPANION_MAX_CLIENTS && _clients[client_index].in_use) {
     _clients[client_index].client.stop();
     _clients[client_index].in_use = false;
+    _clients[client_index].stall_ms = 0;
   }
 }

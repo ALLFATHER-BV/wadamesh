@@ -15,6 +15,7 @@ struct TCPClientState {
   uint16_t rx_len;
   uint8_t rx_buf[MAX_FRAME_SIZE];
   bool in_use;
+  uint32_t stall_ms;   // start of a continuous write-failure run; 0 = healthy
 };
 
 // Multi-client TCP server for companion protocol. Same frame format as serial.

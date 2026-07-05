@@ -8553,6 +8553,11 @@ static void openMemoryDetailCb(lv_event_t* e) {
 // Render the System-info text into buf. Re-callable so live values (uptime,
 // free heap) update; the inline About page calls it once at build then
 // refreshSysInfo() re-runs it ~1 Hz while that tab is visible.
+// beta_31 field-freeze tracer record (ring + logger defined with UITask::loop below).
+struct StallRec { uint32_t at_s; uint16_t dur_ms; const char* tag; };
+extern StallRec g_stall_ring[16];
+extern uint8_t  g_stall_cnt, g_stall_w;
+
 static void sysInfoText(char* buf, size_t cap) {
   int p = 0;
 #if defined(ESP32)
@@ -8644,6 +8649,21 @@ static void sysInfoText(char* buf, size_t cap) {
   p += snprintf(buf + p, cap - p,
                 "Last reset\n  %s\n\n", resetReasonString(esp_reset_reason()));
 #endif
+  // beta_31 field-freeze tracer: recent loop stalls (>0.2 s), newest first — a
+  // field tester photographs this instead of needing a serial console.
+  p += snprintf(buf + p, cap - p, "Loop stalls (>0.2s)\n");
+  if (g_stall_cnt == 0) {
+    p += snprintf(buf + p, cap - p, "  none recorded\n\n");
+  } else {
+    const uint32_t nows = millis() / 1000u;
+    for (int i = 0; i < (int)g_stall_cnt && i < 6; ++i) {
+      const int idx = ((int)g_stall_w - 1 - i + 32) % 16;
+      const StallRec& r = g_stall_ring[idx];
+      p += snprintf(buf + p, cap - p, "  -%lus  %s  %ums\n",
+                    (unsigned long)(nows - r.at_s), r.tag, (unsigned)r.dur_ms);
+    }
+    p += snprintf(buf + p, cap - p, "\n");
+  }
   p += snprintf(buf + p, cap - p,
                 "Build\n  %s\n  %s\n  WADAMESH TOUCH\n",
                 FIRMWARE_VERSION, FIRMWARE_BUILD_DATE);
@@ -33818,16 +33838,20 @@ void UITask::markThreadsDirty(unsigned long delay_ms) {
 }
 
 void UITask::markMsgsDirty(unsigned long delay_ms) {
-  // Deep (SD) ring: a flush rewrites the whole ring file (~1.1 MB at 5000 slots),
-  // so space the writes out — at least 30 s apart instead of the 0.5-2 s cadence
-  // of the small internal-flash ring. persistHistoryNow() still forces a write on
-  // reboot/shutdown, so at most the last <30 s of messages ride on a hard crash.
-  if (_ui_msg_cap > MAX_UI_MESSAGES && delay_ms < 30000) delay_ms = 30000;
+  // Every flush rewrites the WHOLE ring file on the loop thread, so space the
+  // writes out: at least 30 s for the deep SD ring (~1.1 MB at 5000 slots) and at
+  // least 10 s for the small internal-flash ring (~115 KB) — a busy channel used
+  // to trigger a full rewrite (+ possible SPIFFS GC) ~2 s after EVERY message,
+  // which read as "the device freezes 1-2 s every ~10 s" on stable beta_31.
+  // persistHistoryNow() still forces a write on reboot/shutdown, so a hard crash
+  // costs at most the last few seconds of messages.
+  if (_ui_msg_cap > MAX_UI_MESSAGES) { if (delay_ms < 30000) delay_ms = 30000; }
+  else                               { if (delay_ms < 10000) delay_ms = 10000; }
   const unsigned long deadline = millis() + delay_ms;
   if (!_msgs_dirty || deadline < _next_msgs_flush_ms)
     _next_msgs_flush_ms = deadline;
   _msgs_dirty = true;
-  markThreadsDirty(200);  // thread state (last_ts, unread) also changed
+  markThreadsDirty(1500);  // thread state (last_ts, unread) changed too — coalesce a message burst into one write
 }
 
 void UITask::flushHistoryIfDue(unsigned long now) {
@@ -34203,10 +34227,14 @@ bool UITask::saveThreadsToStorage() {
 
 bool UITask::saveMsgsToStorage() {
 #if defined(ESP32)
-  // Write from internal-RAM stack structs (fast). NOTE: do NOT "optimize"
-  // this into a single big write from a PSRAM buffer — the flash driver has
-  // to bounce a PSRAM source through internal RAM chunk-by-chunk, which is
-  // SLOWER than these per-struct writes and was a real regression.
+  // Chunked writer (same pattern that fixed the contacts stall, #82): records are
+  // packed into an INTERNAL-RAM chunk and flushed in ~6 KB writes, so the ring
+  // costs ~20 FS calls (500 slots) / ~210 (5000 slots) instead of one small write
+  // per record — a full-ring rewrite froze the UI 1-2 s per incoming message on
+  // busy meshes. This is NOT the "one big write from PSRAM" that regressed before:
+  // the chunk lives in internal RAM (the flash driver never bounces a PSRAM
+  // source), and the per-record field copies are unchanged. Alloc failure falls
+  // back to the original per-record writes.
   WdtHeavyGuard _wg;   // a fragmenting write can trigger a multi-second SPIFFS GC
   File f = uiDataOpen(k_ui_msgs_path, "w");
   if (!f) return false;
@@ -34222,28 +34250,59 @@ bool UITask::saveMsgsToStorage() {
     f.close(); return false;
   }
 
-  UiHistoryMsg m{};
-  for (int i = 0; i < _ui_msg_cap; ++i) {
-    memset(&m, 0, sizeof(m));
-    m.ts          = _ui_msgs[i].ts;
-    m.channel     = _ui_msgs[i].channel ? 1u : 0u;
-    m.outgoing    = _ui_msgs[i].outgoing ? 1u : 0u;
-    m.meta_flags  = _ui_msgs[i].meta_flags;
-    m.path_len    = _ui_msgs[i].path_len;
-    m.snr_q4      = _ui_msgs[i].snr_q4;
-    m.rssi        = _ui_msgs[i].rssi;
-    strncpy(m.thread, _ui_msgs[i].thread, MAX_THREAD_NAME);
-    m.thread[MAX_THREAD_NAME] = '\0';
-    strncpy(m.sender, _ui_msgs[i].sender, MAX_SENDER_NAME);
-    m.sender[MAX_SENDER_NAME] = '\0';
-    strncpy(m.text, _ui_msgs[i].text, MAX_MSG_TEXT);
-    m.text[MAX_MSG_TEXT] = '\0';
-    if (f.write(reinterpret_cast<const uint8_t*>(&m), sizeof(m)) != sizeof(m)) {
-      f.close(); return false;
+  const size_t REC = sizeof(UiHistoryMsg);
+  size_t chunk_recs = 6144 / REC;
+  if (chunk_recs < 1) chunk_recs = 1;
+  uint8_t* buf = (uint8_t*)malloc(REC * chunk_recs);   // internal RAM by default
+  bool ok = true;
+  if (buf) {
+    size_t fill = 0;
+    for (int i = 0; ok && i < _ui_msg_cap; ++i) {
+      UiHistoryMsg* m = reinterpret_cast<UiHistoryMsg*>(buf + fill);
+      memset(m, 0, REC);
+      m->ts          = _ui_msgs[i].ts;
+      m->channel     = _ui_msgs[i].channel ? 1u : 0u;
+      m->outgoing    = _ui_msgs[i].outgoing ? 1u : 0u;
+      m->meta_flags  = _ui_msgs[i].meta_flags;
+      m->path_len    = _ui_msgs[i].path_len;
+      m->snr_q4      = _ui_msgs[i].snr_q4;
+      m->rssi        = _ui_msgs[i].rssi;
+      strncpy(m->thread, _ui_msgs[i].thread, MAX_THREAD_NAME);
+      m->thread[MAX_THREAD_NAME] = '\0';
+      strncpy(m->sender, _ui_msgs[i].sender, MAX_SENDER_NAME);
+      m->sender[MAX_SENDER_NAME] = '\0';
+      strncpy(m->text, _ui_msgs[i].text, MAX_MSG_TEXT);
+      m->text[MAX_MSG_TEXT] = '\0';
+      fill += REC;
+      if (fill == REC * chunk_recs) {
+        ok = (f.write(buf, fill) == fill);
+        fill = 0;
+      }
+    }
+    if (ok && fill > 0) ok = (f.write(buf, fill) == fill);
+    free(buf);
+  } else {
+    UiHistoryMsg m{};
+    for (int i = 0; ok && i < _ui_msg_cap; ++i) {
+      memset(&m, 0, sizeof(m));
+      m.ts          = _ui_msgs[i].ts;
+      m.channel     = _ui_msgs[i].channel ? 1u : 0u;
+      m.outgoing    = _ui_msgs[i].outgoing ? 1u : 0u;
+      m.meta_flags  = _ui_msgs[i].meta_flags;
+      m.path_len    = _ui_msgs[i].path_len;
+      m.snr_q4      = _ui_msgs[i].snr_q4;
+      m.rssi        = _ui_msgs[i].rssi;
+      strncpy(m.thread, _ui_msgs[i].thread, MAX_THREAD_NAME);
+      m.thread[MAX_THREAD_NAME] = '\0';
+      strncpy(m.sender, _ui_msgs[i].sender, MAX_SENDER_NAME);
+      m.sender[MAX_SENDER_NAME] = '\0';
+      strncpy(m.text, _ui_msgs[i].text, MAX_MSG_TEXT);
+      m.text[MAX_MSG_TEXT] = '\0';
+      ok = (f.write(reinterpret_cast<const uint8_t*>(&m), sizeof(m)) == sizeof(m));
     }
   }
   f.close();
-  return true;
+  return ok;
 #else
   return false;
 #endif
@@ -36573,8 +36632,35 @@ void UITask::notify(UIEventType t) {
 // ============================================================
 // UITask::loop
 // ============================================================
+// ---- beta_31 field-freeze tracer (diagnostics only, no behaviour change) ----
+// Any instrumented main-loop section that blocks >200 ms lands in this ring,
+// printed to Serial as [STALL] and listed at the bottom of Settings -> About so
+// a field tester can simply photograph the screen. uiCp() checkpoints attribute
+// a slow UITask::loop pass to the section that actually ate the time.
+StallRec g_stall_ring[16];   // struct defined above sysInfoText (About shows the ring)
+uint8_t  g_stall_cnt = 0, g_stall_w = 0;
+void stallLog(const char* tag, uint32_t dur_ms) {
+  if (dur_ms < 200) return;
+  g_stall_ring[g_stall_w] = { (uint32_t)(millis() / 1000u), (uint16_t)(dur_ms > 65535 ? 65535 : dur_ms), tag };
+  g_stall_w = (uint8_t)((g_stall_w + 1) % 16);
+  if (g_stall_cnt < 16) g_stall_cnt++;
+  Serial.printf("[STALL] %s %lums\n", tag, (unsigned long)dur_ms);
+}
+const char*   g_ui_stall_tag = "";     // slowest section of the current UITask::loop pass
+uint16_t      g_ui_stall_max = 0;
+static const char*  s_ui_cp_tag = "";
+static uint32_t     s_ui_cp_t0  = 0;
+static inline void uiCp(const char* next) {
+  const uint32_t nowms = millis();
+  const uint32_t dt = nowms - s_ui_cp_t0;
+  if (dt > g_ui_stall_max) { g_ui_stall_max = (uint16_t)(dt > 65535 ? 65535 : dt); g_ui_stall_tag = s_ui_cp_tag; }
+  s_ui_cp_tag = next;
+  s_ui_cp_t0  = nowms;
+}
+
 void UITask::loop() {
   unsigned long now = millis();
+  g_ui_stall_max = 0; g_ui_stall_tag = ""; s_ui_cp_tag = "ui:head"; s_ui_cp_t0 = now;
 #if defined(ESP32)
   // Persist the clock floor every 15 min (small prefs-blob write; SdNvsPrefs
   // rewrites a file on the Launcher-SD backend, so keep the cadence low). Power
@@ -36600,7 +36686,9 @@ void UITask::loop() {
   // but if the page ever vanished without that, the mesh would stay off the
   // radio forever — so re-apply the mesh params and release ownership here.
   if (s_spectrum_active && !s_spec_root) spectrumRestoreRadio();
+  uiCp("ui:hist");
   flushHistoryIfDue(now);
+  uiCp("ui:ctdirty");
   // A contact was discovered/updated via an advert — possibly while a companion app was connected
   // over BLE (issue #73). FORCE the rebuild: an advert can fill in a name, or refresh an existing
   // (or app-added) contact, WITHOUT changing getNumContacts() — which the count-cached
@@ -36634,7 +36722,9 @@ void UITask::loop() {
   if (s_msgled_flash_until) msgLedRefresh(getUnreadTotal() > 0);   // end the one-shot envelope-LED flash on time
 #endif
   { static bool s_disc_loaded = false; if (!s_disc_loaded) { s_disc_loaded = true; loadDiscovered(); } }
+  uiCp("ui:disc");
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
+  uiCp("ui:gps");
   updateGpsLocation(now);   // sync + persist node location from GPS once fixed
   ++s_live_diag_loops;
   if (_alert_expiry != 0 && now >= _alert_expiry) {
@@ -37100,7 +37190,9 @@ void UITask::loop() {
 #if CAP_SD
   telemetryPollTick((uint32_t)now); // auto-poll due nodes -> log (no window)
 #endif
+  uiCp("ui:verchk");
   versionCheckService(now);   // firmware update check (gear badge + About line)
+  uiCp("ui:sbar");
   refreshSysInfo(now);        // live uptime / heap on the About sub-tab
 #if defined(HAS_TDECK_GT911)
   refreshSleepDiag(now);     // live sleep counters on the Lock settings panel
@@ -37177,7 +37269,9 @@ void UITask::loop() {
   // (fed by handleHwKey) or the trackball D-pad nav (fed by updateTrackball -> navMoveDir).
   if (s_kbd_nav || s_tb_nav) navMaybeRebuild();
 #endif
+  uiCp("ui:lvgl");
   lv_timer_handler();
+  uiCp("ui:tail");
 #if defined(HAS_TANMATSU)
   if (s_nav_entered_obj) {
     lv_obj_t* ent = s_nav_entered_obj; s_nav_entered_obj = nullptr;

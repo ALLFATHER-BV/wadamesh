@@ -1,0 +1,9 @@
+# beta_32 (TEST) — the Wi-Fi freeze fix: a stale phone/web connection can no longer stall the device. On top of beta_31.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Fixed ---
+The 1-2 second freezes every ~10 seconds some users saw with Wi-Fi on are gone. When a phone app or web client was connected over Wi-Fi and that connection went stale (phone asleep, walked out of range), every received mesh packet made the device wait on the dead connection before the UI could continue. The device now only writes to a connection when it can accept data immediately, and a connection that stays unresponsive for 10 seconds straight is dropped so the client can reconnect cleanly.
+Saving chat history could briefly hitch the UI on busy meshes: the history file now writes in a few large chunks instead of thousands of tiny ones (the same treatment the contact list got in beta_30), and background saves are spaced further apart while messages stream in.
+
+# --- New ---
+The About page now shows recent loop stalls (anything over 0.2 seconds, newest first), so freeze reports can be confirmed or ruled out at a glance.

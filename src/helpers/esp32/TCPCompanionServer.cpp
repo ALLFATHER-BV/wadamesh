@@ -1,20 +1,44 @@
 #include "TCPCompanionServer.h"
 
+#include <lwip/sockets.h>
+
 #define RECV_STATE_IDLE        0
 #define RECV_STATE_HDR_FOUND   1
 #define RECV_STATE_LEN1_FOUND  2
 #define RECV_STATE_LEN2_FOUND  3
 #define TCP_WRITE_TIMEOUT_MS   120
+#define TCP_WEDGED_DROP_MS     10000
+
+// True when lwIP can accept bytes for this socket right now. select() only reports
+// writable once at least TCP_SNDLOWAT (~2.8 KB) of send buffer is free, which holds a
+// whole companion frame (MAX_FRAME_SIZE + header), so a write issued after this probe
+// completes without blocking. Without the probe, WiFiClient::write() sits in 1 s
+// select() waits (up to 10) against a peer that stopped ACKing — a phone asleep in a
+// pocket keeps its socket "connected" but unwritable, and every mesh-RX push then
+// stalls the loop thread (and the UI) for seconds.
+static bool socketWritableNow(WiFiClient& client) {
+  int fd = client.fd();
+  if (fd < 0) return false;
+  fd_set wset;
+  FD_ZERO(&wset);
+  FD_SET(fd, &wset);
+  struct timeval tv;
+  tv.tv_sec = 0;
+  tv.tv_usec = 0;
+  return select(fd + 1, NULL, &wset, NULL, &tv) > 0 && FD_ISSET(fd, &wset);
+}
 
 static bool writeAllBytes(WiFiClient& client, const uint8_t* buf, size_t len, uint32_t timeout_ms) {
   size_t sent = 0;
   uint32_t start = millis();
   while (sent < len) {
     if (!client.connected()) return false;
-    size_t n = client.write(buf + sent, len - sent);
-    if (n > 0) {
-      sent += n;
-      continue;
+    if (socketWritableNow(client)) {
+      size_t n = client.write(buf + sent, len - sent);
+      if (n > 0) {
+        sent += n;
+        continue;
+      }
     }
     if (millis() - start >= timeout_ms) return false;
     delay(1);
@@ -26,6 +50,7 @@ TCPCompanionServer::TCPCompanionServer() : _server(WiFiServer()), _port(0), _pol
   for (int i = 0; i < TCP_COMPANION_MAX_CLIENTS; i++) {
     _clients[i].state = RECV_STATE_IDLE;
     _clients[i].in_use = false;
+    _clients[i].stall_ms = 0;
   }
 }
 
@@ -60,6 +85,7 @@ void TCPCompanionServer::acceptNewClients() {
       _clients[slot].in_use = true;
       _clients[slot].state = RECV_STATE_IDLE;
       _clients[slot].rx_len = 0;
+      _clients[slot].stall_ms = 0;
     } else {
       incoming.stop();
     }
@@ -81,6 +107,7 @@ void TCPCompanionServer::disconnectClient(int client_index) {
     _clients[client_index].client.stop();
     _clients[client_index].in_use = false;
     _clients[client_index].state = RECV_STATE_IDLE;
+    _clients[client_index].stall_ms = 0;
   }
 }
 
@@ -160,10 +187,21 @@ size_t TCPCompanionServer::writeToClient(int client_index, const uint8_t src[], 
   WiFiClient* cl = &_clients[client_index].client;
   if (!writeAllBytes(*cl, hdr, 3, TCP_WRITE_TIMEOUT_MS) ||
       !writeAllBytes(*cl, src, len, TCP_WRITE_TIMEOUT_MS)) {
-    // Return 0 so caller can retry (e.g. contact list). Do not disconnect on transient
-    // buffer full; companion layer retries and will complete the sequence.
+    // Return 0 so caller can retry (e.g. contact list). A transient full buffer must
+    // not disconnect — the companion layer retries and completes the sequence. But a
+    // peer that stopped ACKing (phone asleep, walked out of range) keeps a half-open
+    // socket "connected" indefinitely while staying unwritable; drop it once the
+    // failure has been continuous for TCP_WEDGED_DROP_MS so it stops eating the
+    // write-timeout budget on every pushed frame.
+    TCPClientState* c = &_clients[client_index];
+    if (c->stall_ms == 0) {
+      c->stall_ms = millis() | 1;
+    } else if (millis() - c->stall_ms >= TCP_WEDGED_DROP_MS) {
+      disconnectClient(client_index);
+    }
     return 0;
   }
+  _clients[client_index].stall_ms = 0;
   return len;
 }
 

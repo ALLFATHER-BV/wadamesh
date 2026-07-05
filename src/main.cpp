@@ -573,9 +573,21 @@ void setup() {
 void loop() {
   // Run UI first every iteration so splash can dismiss at 3s even if mesh/serial blocks later (was stuck on version screen when the_mesh.loop() ran before ui_task.loop()).
 #ifdef DISPLAY_CLASS
-  ui_task.loop();
+  // ---- beta_31 field-freeze tracer (see UITask.cpp): time each loop section ----
+  extern void stallLog(const char* tag, uint32_t dur_ms);
+  extern const char* g_ui_stall_tag;
+  extern uint16_t    g_ui_stall_max;
+#define STALL_SCOPE(tag, call) { uint32_t _st0 = millis(); call; uint32_t _sdt = millis() - _st0; if (_sdt >= 200) stallLog(tag, _sdt); }
+  { uint32_t _ui0 = millis();
+    ui_task.loop();
+    uint32_t _uidt = millis() - _ui0;
+    if (_uidt >= 200) stallLog((g_ui_stall_max >= 150 && g_ui_stall_tag[0]) ? g_ui_stall_tag : "ui:other", _uidt);
+  }
 #endif
 #ifdef MULTI_TRANSPORT_COMPANION
+#ifdef DISPLAY_CLASS
+  uint32_t _wf0 = millis();   // beta_31 tracer: time the whole Wi-Fi state machine + SNTP span
+#endif
   static bool wifi_started = false;
   static uint32_t last_wifi_retry_ms = 0;
   static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
@@ -700,14 +712,22 @@ void loop() {
       if (sntp_kicked && !sntp_pushed) sntp_kicked = false;
     }
   }
+#ifdef DISPLAY_CLASS
+  { uint32_t _wfdt = millis() - _wf0; if (_wfdt >= 200) stallLog("wifi-sm", _wfdt); }
+#endif
   // Defer TCP and WebSocket until after splash dismisses so the_mesh.loop() never blocks on accept() before ui_task.loop() runs.
   static const uint32_t TCP_DEFER_MS = 5000;   // 5 s: don't start TCP/WS until version screen has dismissed
   /* Only start TCP / WS when WiFi was actually brought up. In BLE-only mode
    * (no saved creds) the lwIP stack is never initialized — calling
    * WiFiServer::begin() crashes with a tcpip_adapter assert. */
   if (millis() > TCP_DEFER_MS && wifi_started) {
+#ifdef DISPLAY_CLASS
+    STALL_SCOPE("tcp-server", serial_interface.startTcpServer(WiFi.status() == WL_CONNECTED));
+    STALL_SCOPE("ws-tick",    serial_interface.tickWebSocketHandshake());
+#else
     serial_interface.startTcpServer(WiFi.status() == WL_CONNECTED);
     serial_interface.tickWebSocketHandshake();
+#endif
   }
 #endif
 #if defined(HAS_TOUCH_UI)
@@ -718,9 +738,17 @@ void loop() {
   // and clears the flag, so the next the_mesh.loop() re-arms RX correctly.
   if (!spectrumOwnsRadio())
 #endif
+#ifdef DISPLAY_CLASS
+  STALL_SCOPE("mesh", the_mesh.loop());
+#else
   the_mesh.loop();
+#endif
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+#ifdef DISPLAY_CLASS
+  STALL_SCOPE("mqtt", mqtt_bridge.loop());
+#else
   mqtt_bridge.loop();
+#endif
 #endif
 #if defined(GPS_BUF_DEBUG)
   // Bench diagnostic (build with -DGPS_BUF_DEBUG only; absent in releases): peak GPS UART
@@ -738,7 +766,11 @@ void loop() {
     }
   }
 #endif
+#ifdef DISPLAY_CLASS
+  STALL_SCOPE("sensors", sensors.loop());
+#else
   sensors.loop();
+#endif
 #if defined(ESP32)
   // GPS time guard (Ricky Leong's "stuck at 1902"): MicroNMEALocationProvider
   // sets the mesh RTC from a GPS *position* fix even before the date fields are
@@ -795,6 +827,10 @@ void loop() {
   // Idle light-sleep gate: evaluated every loop tick. g_enabled is false by
   // default (Task 1 is inert); Task 2 sets it from the NVS pref and wires
   // the real predicates so the gate can actually pass and arm light sleep.
+#ifdef DISPLAY_CLASS
+  STALL_SCOPE("sleep-gate", touchSleep::loopEnd(millis()));
+#else
   touchSleep::loopEnd(millis());
+#endif
 #endif
 }
