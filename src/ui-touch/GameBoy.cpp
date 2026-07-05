@@ -332,17 +332,20 @@ static void makePadBtn(lv_obj_t* parent, lv_coord_t x, lv_coord_t y,
 }
 
 static void buildControls(void) {
-    // Game canvas is on the left (160x144). All controls sit to its right:
-    // D-pad cross top, A/B below it (raised), Start bottom-left, Select bottom-right.
+    // Game canvas is on the RIGHT (see buildPlayUI). D-pad on the left, A/B
+    // directly under the game, Start/Select bottom-left under the D-pad.
     const uint32_t kDpad = 0x2B2F36, kAB = 0x8A3A46, kSS = 0x30343B;
-    makePadBtn(s_play, 204, 4,   46, 38, LV_SYMBOL_UP,    GB_PAD_UP,    kDpad);
-    makePadBtn(s_play, 168, 44,  42, 42, LV_SYMBOL_LEFT,  GB_PAD_LEFT,  kDpad);
-    makePadBtn(s_play, 250, 44,  42, 42, LV_SYMBOL_RIGHT, GB_PAD_RIGHT, kDpad);
-    makePadBtn(s_play, 204, 88,  46, 38, LV_SYMBOL_DOWN,  GB_PAD_DOWN,  kDpad);
-    makePadBtn(s_play, 266, 122, 50, 48, "A", GB_PAD_A, kAB);   // raised from y148
-    makePadBtn(s_play, 206, 140, 50, 48, "B", GB_PAD_B, kAB);   // raised from y170
-    makePadBtn(s_play, 8,   186, 70, 30, "START",  GB_PAD_START,  kSS);  // bottom-left
-    makePadBtn(s_play, 238, 186, 78, 30, "SELECT", GB_PAD_SELECT, kSS);  // moved to the right
+    // D-pad cross — left side, mid.
+    makePadBtn(s_play, 48,  40,  46, 40, LV_SYMBOL_UP,    GB_PAD_UP,    kDpad);
+    makePadBtn(s_play, 10,  82,  46, 44, LV_SYMBOL_LEFT,  GB_PAD_LEFT,  kDpad);
+    makePadBtn(s_play, 92,  82,  46, 44, LV_SYMBOL_RIGHT, GB_PAD_RIGHT, kDpad);
+    makePadBtn(s_play, 48,  126, 46, 40, LV_SYMBOL_DOWN,  GB_PAD_DOWN,  kDpad);
+    // A/B — under the game (B left, A right, as on real hardware).
+    makePadBtn(s_play, 176, 150, 58, 58, "B", GB_PAD_B, kAB);
+    makePadBtn(s_play, 250, 150, 58, 58, "A", GB_PAD_A, kAB);
+    // Start/Select — bottom-left, below the D-pad.
+    makePadBtn(s_play, 8,   176, 66, 30, "START",  GB_PAD_START,  kSS);
+    makePadBtn(s_play, 80,  176, 66, 30, "SELECT", GB_PAD_SELECT, kSS);
 }
 
 // ---------------------------------------------------------------------------
@@ -465,7 +468,7 @@ static void buildPlayUI(void) {
     s_canvas = lv_canvas_create(s_play);
     lv_canvas_set_buffer(s_canvas, s_fb, s_out_w, s_out_h, LV_IMG_CF_TRUE_COLOR);
     lv_canvas_fill_bg(s_canvas, lv_color_hex(0x000000), LV_OPA_COVER);
-    if (s_scale_mode == SCALE_1X) lv_obj_set_pos(s_canvas, 2, 2);
+    if (s_scale_mode == SCALE_1X) lv_obj_set_pos(s_canvas, sw - GB_WIDTH - 2, 2);  // game on the right
     else                          lv_obj_align(s_canvas, LV_ALIGN_CENTER, 0, 0);
 
     if (s_scale_mode == SCALE_1X) buildControls();
@@ -473,7 +476,10 @@ static void buildPlayUI(void) {
     // Single menu button (top-right) — everything else lives in the pause menu.
     s_menu_btn = lv_btn_create(s_play);
     lv_obj_set_size(s_menu_btn, 34, 24);
-    lv_obj_align(s_menu_btn, LV_ALIGN_TOP_RIGHT, -2, 0);
+    // 1x puts the game top-right, so park the menu button top-LEFT there; the
+    // immersive modes center the game, so keep it top-right.
+    if (s_scale_mode == SCALE_1X) lv_obj_align(s_menu_btn, LV_ALIGN_TOP_LEFT,  2, 0);
+    else                          lv_obj_align(s_menu_btn, LV_ALIGN_TOP_RIGHT, -2, 0);
     lv_obj_add_event_cb(s_menu_btn, openMenuCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* ml = lv_label_create(s_menu_btn); lv_label_set_text(ml, LV_SYMBOL_LIST); lv_obj_center(ml);
 }
