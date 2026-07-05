@@ -1,0 +1,11 @@
+# beta_30 (TEST) — the big-mesh sluggishness fix + a much faster Spectrum analyzer. On top of beta_29.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Fixed ---
+The periodic multi-second freezes on busy meshes are gone. Saving the contact list to storage took up to 3 seconds at ~570 contacts and ran on the UI thread every couple of minutes, which is exactly the trackball and touch hesitation people felt since beta_25. The save now writes the same data in a few large chunks instead of thousands of tiny ones, cutting it to a fraction. Thanks to guinnessbear for the report and Yazutsu for the precise measurements that pinned this down (issue #82).
+The Contacts tab no longer rebuilds itself every 60 seconds just to refresh the "heard 2h ago" labels - they update in place now. That rebuild cost over a second on large contact lists and could yank the list while you were scrolling.
+A burst of adverts can no longer queue several back-to-back Contacts rebuilds; they are now coalesced.
+
+# --- Improved ---
+The Spectrum analyzer feels live now: the waterfall gets a new line about four times per second instead of once per sweep, the trace advances across the band as it sweeps (like a bench analyzer), and a full sweep is about 20 percent faster.
+The Spectrum trace also scales itself to the signal now: the chart tracks the live minimum and maximum, jumping out instantly for a strong signal (no more clipping flat at the top) and easing back once it is gone.

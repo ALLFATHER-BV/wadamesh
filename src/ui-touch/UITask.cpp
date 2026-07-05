@@ -978,6 +978,7 @@ struct LvContactButtonCtx {
   bool     is_repeater;
   bool     is_fav;       // favorites can't be multi-select-deleted (unfavorite first)
   uint8_t  key6[6];      // stable identity for the multi-select set (pub_key prefix)
+  lv_obj_t* age_lbl;     // the row's Heard label — updated in place on the 60s age tick (#82)
 };
 
 static LvContactButtonCtx s_contacts_ctx[128];
@@ -17868,14 +17869,16 @@ static void openMonitorPage() {
 // instantaneous channel RSSI register via getCurrentRSSI() (= getRSSI(false) =
 // GET_RSSI_INST, which is only meaningful in RX). To keep LVGL responsive we
 // sweep only a CHUNK of bins per timer tick (SPEC_CHUNK), spreading one full
-// sweep over several frames. A completed sweep pushes one waterfall row and
-// repaints the trace, then the next sweep begins. This is a single-task design:
+// sweep over several frames. The waterfall pushes a ROLLING row every quarter
+// sweep (the row is fresh up to the sweep cursor, the rest at most one sweep
+// old — the standard SDR-waterfall trade), so rows land every ~250 ms instead
+// of once per ~1 s sweep; a completed sweep additionally rescales + relabels. This is a single-task design:
 // ui_task.loop() (where this timer runs) and the_mesh.loop() never overlap, so
 // there is no SPI contention — and with the mesh paused, nothing else touches
 // the radio while we own it.
 static const int   SPEC_BINS      = 160;     // frequency bins across the span
 static const int   SPEC_WF_ROWS   = 48;      // waterfall height (rows of history; zoomed to fit width)
-static const int   SPEC_CHUNK     = 5;       // bins swept per timer tick (~4 ms/bin -> ~20 ms UI block)
+static const int   SPEC_CHUNK     = 8;       // bins swept per timer tick (~5 ms/bin -> ~42 ms UI block)
 static const float SPEC_RBW_KHZ   = 62.5f;   // resolution bandwidth used for each bin read
 static const float SPEC_SPAN_MHZ  = 24.0f;   // total swept span (center ±12 MHz)
 static const float SPEC_FMIN_MHZ  = 137.0f;  // SX126x physical tuning floor (region-agnostic)
@@ -17886,8 +17889,14 @@ static const int   SPEC_DWELL       = 6;     // RSSI reads per bin (peak-hold ov
 static const int   SPEC_SETTLE_US   = 1500;  // wait after startReceive before the first RSSI read
 static const int   SPEC_READ_GAP_US = 400;   // gap between the peak-hold reads (out to ~4 ms total)
 static const int   SPEC_WF_HEADROOM = 24;    // waterfall colour span above the live noise floor (dB)
-static const int   SPEC_Y_BELOW   = 8;       // chart Y range: dB shown below the live floor
-static const int   SPEC_Y_ABOVE   = 42;      // chart Y range: dB shown above the live floor
+// Dynamic trace Y range: track the live data min/max instead of a fixed window
+// above the noise floor (a strong signal used to clip flat at floor+42). The
+// range EXPANDS instantly (a new peak is never clipped, even mid-sweep) and
+// CONTRACTS a few dB per completed sweep, so the scale never pumps/jitters.
+static const int   SPEC_Y_PAD_LO   = 4;      // dB of margin below the weakest bin
+static const int   SPEC_Y_PAD_HI   = 6;      // dB of headroom above the strongest bin
+static const int   SPEC_Y_MIN_SPAN = 30;     // never zoom tighter than this (noise wiggle stays wiggle)
+static const int   SPEC_Y_DECAY    = 3;      // max dB the range may contract per completed sweep
 
 static lv_obj_t*          s_spec_root     = nullptr;
 static lv_obj_t*          s_spec_chart    = nullptr;   // live power-vs-freq trace
@@ -17908,6 +17917,8 @@ static uint8_t            s_spec_sf       = 7;          // mesh SF/CR reused for
 static uint8_t            s_spec_cr       = 5;
 static bool               s_spec_gain     = false;      // mesh rx_boosted_gain (for the readout)
 static int                s_spec_floor    = -120;       // smoothed noise-floor estimate (dBm) -> waterfall colour auto-scales to it
+static int                s_spec_ylo      = -130;       // dynamic trace Y range (dBm), tracks live min/max
+static int                s_spec_yhi      = -80;
 
 // The single source of truth the main loop reads to decide whether to skip
 // the_mesh.loop() (so the mesh stays off the radio while we sweep). Set true on
@@ -18010,20 +18021,59 @@ static void spectrumPushWaterfall() {
 // auto-scales to the live noise floor so the floor sits ~20% up the chart (its real
 // wiggle visible) and signals climb prominently — instead of a flat line crushed
 // against the bottom of a fixed -130..-50 window.
-static void spectrumDrawTrace() {
+// Cheap per-tick trace update: clamp the sweep buffer into the chart series and
+// invalidate. Bins ahead of the sweep cursor still hold the PREVIOUS sweep, so the
+// trace advances live across the span exactly like a bench analyzer — this is what
+// makes the app feel monitor-fast instead of repainting once per ~0.9 s sweep.
+// Range and legend stay on the completed-sweep path so nothing flaps mid-sweep.
+static void spectrumDrawTraceLive() {
   if (!s_spec_chart || !s_spec_ser) return;
-  int ylo = s_spec_floor - SPEC_Y_BELOW;
-  int yhi = s_spec_floor + SPEC_Y_ABOVE;
-  lv_chart_set_range(s_spec_chart, LV_CHART_AXIS_PRIMARY_Y, ylo, yhi);
-  int pk = -200, pki = 0;
+  // Expand the range IMMEDIATELY when the data outgrows it (never clip a fresh
+  // peak, even mid-sweep); contraction only happens in spectrumDrawTrace().
+  int mn = 999, mx = -999;
+  for (int i = 0; i < SPEC_BINS; i++) {
+    const int v = s_spec_rssi[i];
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+  }
+  bool grew = false;
+  if (mx + SPEC_Y_PAD_HI > s_spec_yhi) { s_spec_yhi = mx + SPEC_Y_PAD_HI; grew = true; }
+  if (mn - SPEC_Y_PAD_LO < s_spec_ylo) { s_spec_ylo = mn - SPEC_Y_PAD_LO; grew = true; }
+  if (grew) lv_chart_set_range(s_spec_chart, LV_CHART_AXIS_PRIMARY_Y, s_spec_ylo, s_spec_yhi);
   for (int i = 0; i < SPEC_BINS; i++) {
     int v = s_spec_rssi[i];
-    if (v > pk) { pk = v; pki = i; }
-    if (v < ylo) v = ylo;
-    if (v > yhi) v = yhi;
+    if (v < s_spec_ylo) v = s_spec_ylo;
+    if (v > s_spec_yhi) v = s_spec_yhi;
     s_spec_ser->y_points[i] = (lv_coord_t)v;
   }
   lv_chart_refresh(s_spec_chart);
+}
+
+static void spectrumDrawTrace() {
+  if (!s_spec_chart || !s_spec_ser) return;
+  int mn = 999, pk = -200, pki = 0;
+  for (int i = 0; i < SPEC_BINS; i++) {
+    const int v = s_spec_rssi[i];
+    if (v < mn) mn = v;
+    if (v > pk) { pk = v; pki = i; }
+  }
+  // Dynamic Y range from this sweep's min/max: jump out instantly, ease back in
+  // by at most SPEC_Y_DECAY dB per sweep, and never tighter than the min span.
+  int lo_t = mn - SPEC_Y_PAD_LO;
+  int hi_t = pk + SPEC_Y_PAD_HI;
+  if (hi_t - lo_t < SPEC_Y_MIN_SPAN) {
+    const int grow = SPEC_Y_MIN_SPAN - (hi_t - lo_t);
+    lo_t -= grow / 2;
+    hi_t += grow - grow / 2;
+  }
+  if (lo_t < s_spec_ylo)      s_spec_ylo = lo_t;   // expand down instantly
+  else if (lo_t - s_spec_ylo > SPEC_Y_DECAY) s_spec_ylo += SPEC_Y_DECAY;
+  else                        s_spec_ylo = lo_t;
+  if (hi_t > s_spec_yhi)      s_spec_yhi = hi_t;   // expand up instantly
+  else if (s_spec_yhi - hi_t > SPEC_Y_DECAY) s_spec_yhi -= SPEC_Y_DECAY;
+  else                        s_spec_yhi = hi_t;
+  lv_chart_set_range(s_spec_chart, LV_CHART_AXIS_PRIMARY_Y, s_spec_ylo, s_spec_yhi);
+  spectrumDrawTraceLive();
   // live legend: peak dBm @ its frequency, and the colour-ramp's current dBm endpoints
   if (s_spec_peak_lbl) {
     char pb[40];
@@ -18037,9 +18087,19 @@ static void spectrumDrawTrace() {
 static void spectrumTimerCb(lv_timer_t* t) {
   (void)t;
   if (!s_spec_root) return;
+  static int s_spec_last_row_pos = 0;   // sweep cursor at the last waterfall row push
   if (spectrumSweepChunk()) {     // a full sweep just finished
+    s_spec_last_row_pos = 0;
     spectrumPushWaterfall();
-    spectrumDrawTrace();
+    spectrumDrawTrace();          // full: floor rescale + legend + trace
+  } else if (s_spec_pos - s_spec_last_row_pos >= SPEC_BINS / 4) {
+    // Quarter-sweep rolling update: one new waterfall row + a live trace advance
+    // every ~250 ms — matches the Monitor app's felt refresh instead of waiting
+    // out the ~1 s full sweep. Row content: fresh bins up to the cursor, the
+    // remainder from the previous sweep (never older than one sweep).
+    s_spec_last_row_pos = s_spec_pos;
+    spectrumPushWaterfall();
+    spectrumDrawTraceLive();
   }
 }
 
@@ -18113,6 +18173,8 @@ static void openSpectrumPage() {
   s_spec_step  = (stop - start) / (float)SPEC_BINS;
   s_spec_pos   = 0;
   s_spec_floor = -120;        // reset the auto-scale floor for a fresh session
+  s_spec_ylo   = -130;        // reset the dynamic trace range too (expands to the live data)
+  s_spec_yhi   = -80;
   for (int i = 0; i < SPEC_BINS; i++) s_spec_rssi[i] = SPEC_DBM_MIN;
   s_spectrum_active = true;   // from here the mesh is OFF the radio (main loop skips the_mesh.loop())
 #if defined(RADIO_CLASS)
@@ -18256,7 +18318,7 @@ static void openSpectrumPage() {
   // Each bin needs ~4 ms (the SX1262 RSSI settle), so SPEC_CHUNK=5 caps the per-tick
   // radio work at ~20 ms (smooth UI blocks); a 28 ms tick keeps ~30% idle for LVGL.
   // A full 160-bin sweep takes ~32 ticks (~0.9 s) -> a fresh waterfall row ~every 0.9 s.
-  s_spec_timer = lv_timer_create(spectrumTimerCb, 28, nullptr);
+  s_spec_timer = lv_timer_create(spectrumTimerCb, 8, nullptr);    // ticks back-to-back with the sweep chunks; waterfall + trace repaint every quarter sweep (~250 ms)
   lv_obj_move_foreground(s_spec_root);
   lv_obj_move_foreground(g_statusbar.root);   // keep the tall title bar above this page
 }
@@ -25691,6 +25753,30 @@ static uint32_t s_ct_sort_now = 0;
 // Self GPS snapshot for the distance sort, captured before qsort (the comparator
 // is non-capturing). Degrees.
 static double   s_ct_sort_self_lat = 0.0, s_ct_sort_self_lon = 0.0;
+// #82 perf: the 60 s "2h -> 3h" age refresh used to tear the whole list down and
+// rebuild it (~1.3 s at ~570 contacts, measured on the loop thread) just to
+// re-render a handful of small labels. When NOTHING else changed, walk the
+// existing rows and set the Heard text in place instead. Returns false when a
+// stored label is stale (list mutated outside a build) so the caller falls back
+// to the full rebuild — never a wrong display, worst case the old cost.
+static int s_contacts_rows_built = 0;   // rows rendered by the last full build
+static bool ctRefreshAgeLabelsInPlace() {
+  if (!g_lv.contacts_list) return false;
+  const uint32_t now_secs = the_mesh.getRTCClock()->getCurrentTime();
+  for (int k = 0; k < s_contacts_rows_built; ++k) {
+    lv_obj_t* lbl = s_contacts_ctx[k].age_lbl;
+    if (!lbl || !lv_obj_is_valid(lbl)) return false;
+    ContactInfo* c = the_mesh.lookupContactByPubKey(s_contacts_ctx[k].key6, 6);
+    if (!c) continue;   // deleted mid-window — the count change triggers a full rebuild right after
+    char age_buf[12]; uint32_t age_secs = 0;
+    if (now_secs > c->last_advert_timestamp && c->last_advert_timestamp != 0)
+      age_secs = now_secs - c->last_advert_timestamp;
+    formatAgeBadge(age_buf, sizeof age_buf, age_secs);
+    lv_label_set_text(lbl, age_buf);
+  }
+  return true;
+}
+
 static void refreshContactsList() {
   if (!g_lv.contacts_list || !g_lv.task) return;
   if (s_ctd_active) return;   // mid bulk-delete: don't rebuild rows under the progress modal
@@ -25716,10 +25802,14 @@ static void refreshContactsList() {
   const bool age_refresh_due = (now_ms - s_last_age_refresh_ms) > 60000UL;
   const bool search_changed = strncmp(s_last_search, g_lv.contacts_search, sizeof(s_last_search)) != 0;
   if (curr_count == s_last_count && curr_filter == s_last_filter &&
-      g_contacts_sort == s_last_sort && !age_refresh_due && !search_changed &&
+      g_contacts_sort == s_last_sort && !search_changed &&
       curr_use_miles == s_last_use_miles && !s_ct_list_force &&
       lv_obj_get_child_cnt(g_lv.contacts_list) > 0) {
-    return;
+    if (!age_refresh_due) return;
+    // Only the age labels are stale — update them in place instead of the ~1.3s
+    // full teardown+rebuild (#82). Falls through to the rebuild if a row pointer
+    // went stale.
+    if (ctRefreshAgeLabelsInPlace()) { s_last_age_refresh_ms = now_ms; return; }
   }
   s_ct_list_force = false;
   s_last_count  = curr_count;
@@ -25731,6 +25821,7 @@ static void refreshContactsList() {
   s_last_age_refresh_ms = now_ms;
   lv_indev_reset(nullptr, nullptr);   // #27: abort any scroll-throw before freeing these rows (UAF on advert flood)
   lv_obj_clean(g_lv.contacts_list);
+  s_contacts_rows_built = 0;   // rows are gone; re-counted below (a 0-row build must not leave stale ctx)
   // Sync the search-active indicator chip with the current search state.
   if (g_lv.contacts_search_indicator) {
     if (g_lv.contacts_search[0]) lv_obj_clear_flag(g_lv.contacts_search_indicator, LV_OBJ_FLAG_HIDDEN);
@@ -26002,6 +26093,8 @@ static void refreshContactsList() {
     lv_obj_set_width(hl, hrd_w);
     lv_label_set_long_mode(hl, LV_LABEL_LONG_CLIP);
     lv_obj_align(hl, LV_ALIGN_LEFT_MID, heard_x, 0);
+    s_contacts_ctx[k].age_lbl = hl;        // in-place 60s age updates (#82)
+    s_contacts_rows_built = k + 1;
 
     // Location column — explicit width so "1.4km" / "390ft" fit and don't
     // overrun the favourite-star slot on the wide layout.
@@ -36292,7 +36385,10 @@ void UITask::loop() {
   // at most one rebuild per ~350 ms.
   if (s_ct_contacts_dirty && getActiveTab() == CONTACTS_TAB_INDEX) {
     static unsigned long s_ct_dirty_refresh_ms = 0;
-    if ((now - s_ct_dirty_refresh_ms) > 350) {
+    // 2.5 s coalescing (was 350 ms): a full rebuild costs ~1.3 s at ~570 contacts
+    // (#82), so an advert flood must not be able to queue them back to back. The
+    // flag stays set, so the last advert in a burst still lands within 2.5 s.
+    if ((now - s_ct_dirty_refresh_ms) > 2500) {
       s_ct_contacts_dirty   = false;
       s_ct_dirty_refresh_ms = now;
       contactsListForceRefresh();   // bypass the count-cache — a name-fill / re-advert doesn't change the count

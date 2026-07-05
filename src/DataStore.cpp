@@ -432,27 +432,67 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
     ContactInfo c;
     uint8_t unused = 0;
 
-    while (host->getContactForSave(idx, c)) {
-      if (filter && !filter(c)) {
+    // Field-by-field writes cost ~12 FS calls per contact — ~7000 tiny writes at
+    // ~570 contacts measured 2.6-3.0 s on SD, freezing the loop/UI for the whole
+    // save (issue #82). Pack the SAME 152-byte records into a heap chunk and
+    // flush in ~5 KB slabs instead: identical file bytes, ~20 large writes, tens
+    // of ms. Falls back to the original per-field path if the alloc fails.
+    static const size_t REC = 152;           // 32+32+1+1+1+4+1+4+64+4+4+4
+    static const size_t CHUNK_RECS = 32;
+    uint8_t* buf = (uint8_t*)malloc(REC * CHUNK_RECS);
+    if (buf) {
+      size_t fill = 0;
+      bool ok = true;
+      while (ok && host->getContactForSave(idx, c)) {
+        if (filter && !filter(c)) {
+          idx++;  // advance to next contact
+          continue;
+        }
+        uint8_t* p = buf + fill;
+        memcpy(p, c.id.pub_key, 32);                       p += 32;
+        memcpy(p, (uint8_t *)&c.name, 32);                 p += 32;
+        *p++ = c.type;
+        *p++ = c.flags;
+        *p++ = unused;
+        memcpy(p, (uint8_t *)&c.sync_since, 4);            p += 4;
+        memcpy(p, (uint8_t *)&c.out_path_len, 1);          p += 1;
+        memcpy(p, (uint8_t *)&c.last_advert_timestamp, 4); p += 4;
+        memcpy(p, c.out_path, 64);                         p += 64;
+        memcpy(p, (uint8_t *)&c.lastmod, 4);               p += 4;
+        memcpy(p, (uint8_t *)&c.gps_lat, 4);               p += 4;
+        memcpy(p, (uint8_t *)&c.gps_lon, 4);               p += 4;
+        fill += REC;
+        if (fill == REC * CHUNK_RECS) {
+          ok = (file.write(buf, fill) == fill);
+          fill = 0;
+        }
         idx++;  // advance to next contact
-        continue;
       }
-      bool success = (file.write(c.id.pub_key, 32) == 32);
-      success = success && (file.write((uint8_t *)&c.name, 32) == 32);
-      success = success && (file.write(&c.type, 1) == 1);
-      success = success && (file.write(&c.flags, 1) == 1);
-      success = success && (file.write(&unused, 1) == 1);
-      success = success && (file.write((uint8_t *)&c.sync_since, 4) == 4);
-      success = success && (file.write((uint8_t *)&c.out_path_len, 1) == 1);
-      success = success && (file.write((uint8_t *)&c.last_advert_timestamp, 4) == 4);
-      success = success && (file.write(c.out_path, 64) == 64);
-      success = success && (file.write((uint8_t *)&c.lastmod, 4) == 4);
-      success = success && (file.write((uint8_t *)&c.gps_lat, 4) == 4);
-      success = success && (file.write((uint8_t *)&c.gps_lon, 4) == 4);
+      if (ok && fill > 0) file.write(buf, fill);
+      free(buf);
+    } else {
+      while (host->getContactForSave(idx, c)) {
+        if (filter && !filter(c)) {
+          idx++;  // advance to next contact
+          continue;
+        }
+        bool success = (file.write(c.id.pub_key, 32) == 32);
+        success = success && (file.write((uint8_t *)&c.name, 32) == 32);
+        success = success && (file.write(&c.type, 1) == 1);
+        success = success && (file.write(&c.flags, 1) == 1);
+        success = success && (file.write(&unused, 1) == 1);
+        success = success && (file.write((uint8_t *)&c.sync_since, 4) == 4);
+        success = success && (file.write((uint8_t *)&c.out_path_len, 1) == 1);
+        success = success && (file.write((uint8_t *)&c.last_advert_timestamp, 4) == 4);
+        success = success && (file.write(c.out_path, 64) == 64);
+        success = success && (file.write((uint8_t *)&c.lastmod, 4) == 4);
+        success = success && (file.write((uint8_t *)&c.gps_lat, 4) == 4);
+        success = success && (file.write((uint8_t *)&c.gps_lon, 4) == 4);
 
-      if (!success) break; // write failed
+        if (!success) break; // write failed
 
-      idx++;  // advance to next contact
+        idx++;  // advance to next contact
+      }
     }
     file.close();
   }
