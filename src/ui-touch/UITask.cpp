@@ -28005,16 +28005,99 @@ static void serviceLockingCountdown(unsigned long now) {
 }
 #endif
 
+#if defined(HAS_M9_KEYBOARD)
+// ThinkNode M9 has no touchscreen and no navPump() (that's Tanmatsu-only) — the
+// d-pad through handleHwKey() is its ONLY input, including during first-boot
+// setup. T-Deck's handleHwKey() assumes touch drives the wizard and swallows
+// every non-editing key while s_setup_root is up (see the check just below
+// this function); M9 can't inherit that assumption, so its nav keys are
+// handled HERE, in their own function, called before that swallow — not
+// wedged into T-Deck's CAP_TRACKBALL chain as an #elif. Returns true if the
+// key was consumed.
+static bool m9HandleNavKey(int key) {
+  if (!s_kbd_nav) return false;
+  switch (key) {
+    case M9_KEY_ENTER:
+      if (navOnTabBar()) navSwitchTab(+1); else navPushTap(LV_KEY_ENTER);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_HW_BACK:
+      if (anyPopupOpen())                            hwKeyDismissTopPopup();
+      else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+      else                                           navPushTap(LV_KEY_ESC);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_HOME:
+      if (s_setup_root) return true;
+      // Close everything on top first (same idiom navGoToMainTab() already uses), THEN still
+      // check whether we need to jump tabs — dismissing a popup isn't a reason to stop early;
+      // Settings > Auto-add (reached via the Settings TAB, not the Home-tab drawer) needs both
+      // steps: close the overlay, then actually jump back to Home.
+      for (int i = 0; i < 8 && anyPopupOpen(); i++) hwKeyDismissTopPopup();
+      if (getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(!s_home_drawer_mode);
+      else                                  navGoToMainTab(HOME_TAB_INDEX);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+      if (getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(!s_home_drawer_mode);
+      else                                  navGoToMainTab(HOME_TAB_INDEX);
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_LEFT_MESSAGE:
+    case M9_KEY_SUB_MESSAGE:
+      if (s_setup_root) return true;
+      navGoToMainTab(CHAT_INBOX_TAB_INDEX);
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_MAP:
+    case M9_KEY_SUB_MAP:
+      if (s_setup_root) return true;
+      navGoToMainTab(MAP_TAB_INDEX);
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    default: return false;
+  }
+}
+#endif
+
+#if defined(HAS_M9_KEYBOARD)
+static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
+  if (!s_kbd_nav) return false;
+  switch (key) {
+    case M9_KEY_UP:
+      navMoveDir(NAV_UP);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    case M9_KEY_DOWN:
+      navMoveDir(NAV_DOWN);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    case M9_KEY_LEFT:
+      if (ta)                 lv_textarea_cursor_left(ta);
+      else if (navOnTabBar()) navSwitchTab(-1);
+      else                    navMoveDir(NAV_LEFT);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    case M9_KEY_RIGHT:
+      if (ta)                 lv_textarea_cursor_right(ta);
+      else if (navOnTabBar()) navSwitchTab(+1);
+      else                    navMoveDir(NAV_RIGHT);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    default: return false;
+  }
+}
+#endif
+
 // Route a physical-keyboard character into the textarea currently being edited
 // — the on-screen keyboard's target, which is the chat composer directly or the
 // settings mirror textarea. No field open -> the key is ignored.
 static void handleHwKey(int key) {
   if (!g_lv.keyboard) return;
-  // Hard-locked: any key just reveals the lock screen (lights the panel). It
-  // never types or switches tabs — only a trackball *hold* unlocks.
   if (g_lv.task && g_lv.task->isManualLock()) { g_lv.task->lockscreenReveal(); return; }
+#if defined(HAS_M9_KEYBOARD)
+  // M9 has no touch to wake the screen the way T-Deck/Heltec V4 do — mirror Tanmatsu's
+  // navPump() pattern: any key wakes it (noteUserInput() wakes internally when the screen
+  // is off), then THIS keypress is swallowed rather than also acted on, so waking doesn't
+  // also navigate or type.
+  if (g_lv.task && g_lv.task->isScreenOff()) { g_lv.task->noteUserInput(); return; }
+#else
   // Idle-dimmed (not hard-locked): ignore keys; a touch/click wakes into the UI.
   if (g_lv.task && g_lv.task->isScreenOff()) return;
+#endif
 #if CAP_TRACKBALL
   // Remapping a tab hotkey (Settings → Keyboard): capture the next key press.
   if (s_navkey_capture >= 0) { navKeyCaptureApply(key); return; }
@@ -28035,20 +28118,20 @@ static void handleHwKey(int key) {
 #else
   lv_obj_t* ta = ta_focused;
 #endif
+#if defined(HAS_M9_KEYBOARD)
+  if (m9HandleArrowKey(key, ta)) return;    // ← runs BEFORE the if(!ta) split
+#endif
   if (!ta) {
 #if CAP_KEYPAD_NAV
-    // A field is focused but we're in navigate mode: select/Enter starts editing it, so the
-    // nav keys keep navigating until you explicitly enter the field (matches navPump).
-    // M9_KEY_ENTER == '\r' (0x0D) — the M9 d-pad's centre/Enter byte already satisfies this
-    // check without any extra case.
-    if (ta_focused && s_kbd_nav && (key == '\r' || key == '\n' || navDirForKey(key) == 4)) {
+    if (navFocusedTextarea() && s_kbd_nav && (key == '\r' || key == '\n' || navDirForKey(key) == 4)) {
       s_nav_ta_editing = true;
       if (g_lv.task) g_lv.task->noteUserInput();
       return;
     }
 #endif
-    // First-boot setup owns the screen: with no field focused, swallow the key
-    // so it can't switch the (hidden) tabs behind the wizard or arm the lock.
+#if defined(HAS_M9_KEYBOARD)
+    if (m9HandleNavKey(key)) return;        // ← runs INSIDE the if(!ta) block only
+#endif
     if (s_setup_root) return;
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
     // Spacebar (while NOT editing a text field) locks the screen: backlight off
@@ -28106,56 +28189,6 @@ static void handleHwKey(int key) {
       }
       if (on_textfield) { if (g_lv.task) g_lv.task->noteUserInput(); return; }   // field focused: never tab-jump on a letter
     }
-#elif defined(HAS_M9_KEYBOARD)
-    // ThinkNode M9: the d-pad and dedicated function keys are FIXED hardware
-    // buttons (not remappable letters), so this drives navMoveDir/navSwitchTab
-    // directly off the raw keycodes (M9Keyboard.h) instead of going through
-    // navDirForKey's programmable letter table — same destination primitives
-    // the T-Deck's WASDZ block and Tanmatsu's navPump() use, just a different
-    // (fixed) source mapping. s_kbd_nav is always true on this board (no touch
-    // to fall back to — set at boot, see UITask.cpp's indev-registration block).
-    if (s_kbd_nav) {
-      switch (key) {
-        case M9_KEY_UP:    navMoveDir(NAV_UP);    s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_DOWN:  navMoveDir(NAV_DOWN);  s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_LEFT:
-          if (navOnTabBar()) navSwitchTab(-1); else navMoveDir(NAV_LEFT);
-          s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_RIGHT:
-          if (navOnTabBar()) navSwitchTab(+1); else navMoveDir(NAV_RIGHT);
-          s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        // M9_KEY_ENTER (0x0D) when a field is focused-but-not-editing is handled above
-        // (== '\r', starts editing). Reaching this switch means no field is focused —
-        // "select" on whatever's focused: tab bar -> next tab, else activate it.
-        case M9_KEY_ENTER:
-          if (navOnTabBar()) navSwitchTab(+1); else navPushTap(LV_KEY_ENTER);
-          s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_HW_BACK:                                                      // back: popup → chat → ESC
-          if (anyPopupOpen())                            hwKeyDismissTopPopup();
-          else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);       // close an open chat/channel first
-          else                                           navPushTap(LV_KEY_ESC);
-          s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        // Dedicated function keys jump straight to a main tab — mirrors the T-Deck's
-        // programmable hotkeys, just fixed to these specific physical buttons instead
-        // of remappable letters. HOME mirrors tapping the Home tab (toggles the app
-        // drawer when already there, like homeKeyActivate on Tanmatsu).
-        case M9_KEY_HOME:
-          if (getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(!s_home_drawer_mode);
-          else                                  navGoToMainTab(HOME_TAB_INDEX);
-          if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_LEFT_MESSAGE:
-        case M9_KEY_SUB_MESSAGE:
-          navGoToMainTab(CHAT_INBOX_TAB_INDEX);
-          if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_MAP:
-        case M9_KEY_SUB_MAP:
-          navGoToMainTab(MAP_TAB_INDEX);
-          if (g_lv.task) g_lv.task->noteUserInput(); return;
-        // M9_KEY_MIC / M9_KEY_CTRL: no action bound yet — fall through and get
-        // swallowed below (anyPopupOpen()/tabForKey() won't match these bytes either).
-        default: break;
-      }
-    }
 #endif
     // Not editing a field. If a popup is up, the dismiss keys close it; on a
     // bare tab, the navigation keys jump between the bottom tabs.
@@ -28174,6 +28207,22 @@ static void handleHwKey(int key) {
     return;
   }
   txtMenuHide();   // any keypress while editing dismisses an open edit menu
+#if defined(HAS_M9_KEYBOARD)
+  // M9 has a dedicated hardware Back key — unlike the CAP_TRACKBALL board's backspace-on-
+  // empty-field escape below, this doesn't require emptying the field first: Back always
+  // drops out of edit mode back to navigate mode, the same job HW_BACK does everywhere else
+  // on this board (m9HandleNavKey). Without this, M9's d-pad bytes (0xB4-0xB7, 0x86) don't
+  // match backspace/space/Enter/printable-ASCII below and are silently swallowed — there was
+  // no way out of edit mode at all except an empty-field backspace, which M9 doesn't get
+  // (that escape is CAP_TRACKBALL-gated).
+  if (key == M9_KEY_HW_BACK) {
+    s_nav_ta_editing = false;
+    s_nav_show = true;
+    accentBoxHide();
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+#endif
   if (key == 0x08 || key == 0x7F) {            // backspace / delete
     uint32_t bs_s, bs_e;
     if (taHasSelection(ta, &bs_s, &bs_e)) {    // highlighted text -> delete the whole selection
@@ -28261,6 +28310,24 @@ static void handleHwKey(int key) {
 #endif
       }
     } else {
+#if CAP_KEYPAD_NAV
+      // Keyboard/d-pad nav: Enter in a generic field ADVANCES rather than submits — with
+      // multiple fields on one page (e.g. the wizard's Wi-Fi step: SSID + password) there's
+      // no single "the field" to submit from, so Enter walks the focus group forward one
+      // step (next field, or the Next/Finish button once fields run out), exactly like
+      // Tanmatsu's navPump() already does elsewhere in this file
+      // (`navFifoPush(ta ? LV_KEY_NEXT : LV_KEY_ENTER, down)`). Landing on that button with
+      // s_nav_ta_editing now false means the NEXT Enter goes through the normal focused-
+      // button click path instead of back into this typing branch — that's what submits.
+      if (s_kbd_nav) {
+        hideKb();               // still confirm: sync the mirror into the real field
+        s_nav_ta_editing = false;
+        s_nav_show = true;
+        navPushTap(LV_KEY_NEXT);
+        if (g_lv.task) g_lv.task->noteUserInput();
+        return;
+      }
+#endif
       hideKb();   // settings/other field: confirm (syncs into the real field) + unfocus
     }
   } else if (key >= 0x20 && key < 0x7F) {      // printable ASCII
@@ -31683,9 +31750,15 @@ static void setupFillRegionList() {
 
 static void setupShowStep(int step) {
   if (!s_setup_root) return;
-#if defined(HAS_TANMATSU)
+  // Unconditional, like every other navMarkDirty() call site in this file — it's a real
+  // rebuild-flag on any CAP_KEYPAD_NAV board (Tanmatsu, M9) and a no-op stub otherwise
+  // (see the two definitions near navMaybeRebuild). Previously gated to HAS_TANMATSU only,
+  // which meant M9 skipped it: lv_obj_clean() below frees the step's buttons/textarea, and
+  // LVGL's allocator can hand the freshly-created replacements the SAME addresses — so
+  // navMaybeRebuild()'s address-based tree signature can come out unchanged and skip the
+  // rebuild, leaving s_nav_group holding stale objects. That's the "Back/Next does nothing,
+  // then navigation is dead" symptom.
   navMarkDirty();   // wizard step content swaps in place — force the keypad focus group to rebuild
-#endif
   hideKb();
   // The scan popup writes the chosen SSID through these borrowed pointers; drop
   // them before the Wi-Fi fields are freed by the clean below.
