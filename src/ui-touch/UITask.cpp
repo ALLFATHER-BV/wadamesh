@@ -18758,7 +18758,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_THINKNODE_M9)
   // Landscape (T-Deck / Tanmatsu): the right column holds Advert + Terminal + Files + Apps,
   // so the chart must stop short of that strip — else it draws over the buttons.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
@@ -18791,7 +18791,7 @@ static void makeHome(lv_obj_t* tab) {
   // evenly down the FULL content height so a 4th launcher ("Control panel") fits the
   // short 168-px T-Deck strip without overflowing. Slot count tracks the build:
   // GT911 (T-Deck) = Advert+Terminal+Files+Apps+Control = 5; otherwise 4.
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   const int td_btn_n = 5;
 #else
   const int td_btn_n = 4;
