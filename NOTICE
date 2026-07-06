@@ -51,14 +51,17 @@ ed25519 (bundled in lib/ed25519)
 AsyncElegantOTA (vendored in arch/esp32/AsyncElegantOTA)
     Copyright (c) Ayush Sharma — MIT License
 
-TFT_eSPI (Heltec V4 display backend)
+TFT_eSPI (T-LoRa Pager display backend)
     Copyright (c) Bodmer — MIT / FreeBSD License — https://github.com/Bodmer/TFT_eSPI
 
-Adafruit GFX / ST7735_ST7789 (T-Deck display backend)
+Adafruit GFX / ST7735_ST7789 (T-Deck / Heltec V4 display backend)
     Copyright (c) Adafruit Industries — BSD License
 
 chsc6x (Heltec V4 CHSC6x cap-touch driver)
     Quency-D — https://github.com/Quency-D/chsc6x
+
+SensorLib (T-LoRa Pager XL9555/BQ27220/AW9364 drivers)
+    Copyright (c) Lewis He — MIT License — https://github.com/lewisxhe/SensorLib
 
 This list is not exhaustive and is expanded as dependencies are vendored or
 added.
