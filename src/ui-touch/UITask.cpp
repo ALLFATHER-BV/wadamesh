@@ -9538,7 +9538,7 @@ static void openExpansionCardCb(lv_event_t* e) {
 }
 #endif  // HAS_EXPANSION_KIT
 
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
 // Lock-screen settings live in the Device modal but the picker implementation
 // needs the SD-mount state (declared further down), so split: the small bits
 // the modal body uses directly are here; the picker is defined below.
@@ -10316,7 +10316,7 @@ static void buildDeviceSettings(int sec) {
   }
 
   if (sec == DSEC_LOCK) {   // --- Lock screen ---
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   /* Lock screen: pick the wallpaper (internal /lock/ or SD) and the colour of
      the clock + lock text drawn over it. */
   {
@@ -10358,7 +10358,7 @@ static void buildDeviceSettings(int sec) {
     }
     y += swz + 10;
   }
-#endif
+#endif // HAS_TDECK_GT911 || HAS_THINKNODE_M9
 
   /* Auto-lock on screen-off: when the idle timeout dims the screen, also hard-
      lock so the touchscreen is inert (Tim: pocket-taps while dark). Both boards;
@@ -27270,6 +27270,9 @@ static void openSoundPickerCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   openSoundMenu((int)(intptr_t)lv_event_get_user_data(e));
 }
+#endif  // HAS_TDECK_GT911 (sound chooser — needs T-Deck's I2S amp)
+
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // wallpaper picker — SD/SPIFFS-backed, board-agnostic
 static lv_obj_t* s_lockwall_picker = nullptr;
 static char s_lockwall_paths[24][TOUCH_LOCK_WALLPAPER_MAXLEN];
 static int  s_lockwall_count = 0;
@@ -27431,7 +27434,7 @@ static void lockColorChosenCb(lv_event_t* e) {
   touchPrefsSetLockTextColor(rgb);
   if (g_lv.task) g_lv.task->showAlert(TR("Lock text colour set"), 1000);
 }
-#endif  // HAS_TDECK_GT911
+#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (wallpaper picker + lock text colour)
 // The settings-backup import picker below must link on BOTH touch boards (its
 // Import button is not keyboard-gated), so briefly close the enclosing
 // HAS_TDECK_KEYBOARD region here and reopen it right after openBackupPicker().
