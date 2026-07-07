@@ -1597,9 +1597,10 @@ struct MeshRadioPreset {
   uint8_t      airtime_limit_pct;  // web % → NodePrefs.airtime_factor = pct / 100
 };
 
-static constexpr size_t k_mesh_radio_preset_count = 20;
+static constexpr size_t k_mesh_radio_preset_count = 21;
 static const MeshRadioPreset k_mesh_radio_presets[k_mesh_radio_preset_count] = {
     {"Australia", 915.8f, 250.f, 10, 5, 22, 10},
+    {"Australia (Mid)", 915.075f, 125.f, 9, 5, 22, 10},   // NSW/Canberra migration target (issue #121)
     {"Australia (Narrow)", 916.575f, 62.5f, 7, 8, 22, 10},
     {"Australia: SA, WA", 923.125f, 62.5f, 8, 8, 22, 10},
     {"Australia: QLD", 923.125f, 62.5f, 8, 5, 22, 10},
@@ -3821,6 +3822,67 @@ static void otaButtonRefreshState() {
     else                        lv_obj_add_flag(s_ota_prev_btn, LV_OBJ_FLAG_HIDDEN);
   }
 }
+
+#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+// ---- Save-update-to-SD (Launcher installs) ---------------------------------
+// Launcher-managed T-Decks have no spare A/B slot (touchHasOtaUpdateSlot() is
+// false), so Wi-Fi OTA can't work there — but the Launcher itself can flash an
+// app-only bin straight from the SD card. This downloads the latest bin for
+// the ACTIVE update channel (stable, or beta when "Get test builds" is on)
+// into /BINS/wadamesh-beta_<N>-<stable|beta>.bin on the SD card. The download
+// streams on the tile worker; this UI side mirrors the OTA poll pattern.
+static volatile bool s_sdfw_request  = false;   // UI -> worker
+static volatile int  s_sdfw_state    = 0;       // 0 idle, 1 running, 2 ok, 3 error
+static volatile int  s_sdfw_pct      = 0;
+static int           s_sdfw_target_n = -1;
+static char          s_sdfw_msg[64];            // success: saved path / error text
+static lv_obj_t*     s_sdfw_status_lbl = nullptr;
+static lv_timer_t*   s_sdfw_poll_timer = nullptr;
+
+static void sdFwPollTimerCb(lv_timer_t* t) {
+  (void)t;
+  const int st = s_sdfw_state;
+  if (st == 1) {
+    if (s_sdfw_status_lbl) {
+      char b[48];
+      snprintf(b, sizeof b, TR("Saving to SD… %d%%"), s_sdfw_pct);
+      lv_label_set_text(s_sdfw_status_lbl, b);
+    }
+    return;
+  }
+  if (s_sdfw_poll_timer) { lv_timer_del(s_sdfw_poll_timer); s_sdfw_poll_timer = nullptr; }
+  if (st == 2) {
+    if (s_sdfw_status_lbl) {
+      char b[112];
+      snprintf(b, sizeof b, TR("Saved: %s\nFlash it from the Launcher."), s_sdfw_msg);
+      lv_label_set_text(s_sdfw_status_lbl, b);
+    }
+    if (g_lv.task) g_lv.task->showAlert(TR("Update bin saved to SD"), 3000);
+  } else if (st == 3) {
+    if (s_sdfw_status_lbl) {
+      char b[96];
+      snprintf(b, sizeof b, TR("SD download failed: %s"), s_sdfw_msg);
+      lv_label_set_text(s_sdfw_status_lbl, b);
+    }
+  }
+  s_sdfw_state = 0;
+}
+
+static void sdFwSaveToSdCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (s_sdfw_state == 1 || s_ota_state == 1) return;   // a download is already running
+  if (s_verchk_latest_n < 0) {
+    if (s_sdfw_status_lbl) lv_label_set_text(s_sdfw_status_lbl,
+        TR("No version known yet. Wi-Fi and a completed update check are needed first."));
+    return;
+  }
+  s_sdfw_msg[0] = 0; s_sdfw_pct = 0;
+  s_sdfw_target_n = s_verchk_latest_n;                 // latest of the ACTIVE channel
+  s_sdfw_state = 1; s_sdfw_request = true;             // hand off to the worker
+  if (s_sdfw_status_lbl) lv_label_set_text(s_sdfw_status_lbl, TR("Saving to SD… 0%"));
+  if (!s_sdfw_poll_timer) s_sdfw_poll_timer = lv_timer_create(sdFwPollTimerCb, 400, nullptr);
+}
+#endif
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 static lv_timer_t* s_ota_poll_timer = nullptr;
@@ -6416,20 +6478,6 @@ static void copyLabelLongPressCb(lv_event_t* e) {
   clipboardSet(clean, static_cast<const char*>(lv_event_get_user_data(e)));
 }
 
-// LV_EVENT_LONG_PRESSED handler on a textarea: pastes clipboard at cursor.
-// When the keyboard is bound to a mirror, the paste goes into the mirror so
-// the keyboard editor sees it and live-sync propagates it to the real ta.
-static void pasteTextareaLongPressCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
-  if (!s_clipboard[0]) return;
-  lv_obj_t* ta = lv_event_get_target(e);
-  if (!ta) return;
-  lv_obj_t* dest = (kbMirrorActive() && s_kb_bind_ta == ta && s_kb_mirror_ta) ? s_kb_mirror_ta : ta;
-  lv_textarea_add_text(dest, s_clipboard);
-  lv_indev_t* act = lv_indev_get_act();
-  if (act) lv_indev_wait_release(act);
-}
-
 // Touch-down on a text field = backlight activity. Hooked on PRESSED (which
 // fires reliably on every tap, including on an already-focused field — unlike
 // CLICKED/FOCUSED, which the swipe detector can drop via lv_indev_wait_release).
@@ -6445,13 +6493,22 @@ static void kbActivityPressCb(lv_event_t* e) {
 // The accent box + its variants are NAV_SKIP_FLAG (passive, never focus targets), so picking
 // a variant doesn't blur the field; only a real tap-away does, which is when we want it gone.
 static void settingsFieldDefocusCb(lv_event_t* /*e*/) { accentBoxHide(); }
+// The full text-edit gestures — defined further down with the edit-menu code.
+static void composerEditClickedCb(lv_event_t* e);
+static void composerEditLongPressCb(lv_event_t* e);
 static void attachSettingsTaEvents(lv_obj_t* ta) {
   lv_obj_add_event_cb(ta, settingsFieldFocusCb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(ta, settingsFieldFocusCb, LV_EVENT_CLICKED, nullptr);
   // PRESSED is used only for the keyboard backlight (see kbActivityPressCb),
   // never for focus — settingsFieldFocusCb still avoids it for the scroll case.
   lv_obj_add_event_cb(ta, kbActivityPressCb, LV_EVENT_PRESSED, nullptr);
-  lv_obj_add_event_cb(ta, pasteTextareaLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
+  // Full edit gestures, same as the chat composer: long-press opens the
+  // Cut / Copy / Paste / All / Sym menu (Sym = the special-character picker —
+  // the only way to type symbols missing from the on-screen layouts, e.g. in
+  // a Wi-Fi password; issue #122), double-tap selects the word under the tap.
+  // This replaces the old silent paste-on-long-press, which offered no UI.
+  lv_obj_add_event_cb(ta, composerEditClickedCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(ta, composerEditLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
   lv_obj_add_event_cb(ta, settingsFieldDefocusCb, LV_EVENT_DEFOCUSED, nullptr);
 }
 
@@ -6567,6 +6624,11 @@ static void txtMenuCellCb(lv_event_t* e) {
   intptr_t act = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
   lv_obj_t* ta = s_txtmenu_ta;
   if (!ta) { txtMenuHide(); return; }
+  // Mirror-bound field (settings fields while the on-screen keyboard is up):
+  // edit the mirror the user is looking at — live-sync propagates to the real
+  // field. Editing the real ta directly here would be clobbered by the mirror
+  // sync. Same routing the old silent long-press paste used.
+  if (kbMirrorActive() && s_kb_bind_ta == ta && s_kb_mirror_ta) ta = s_kb_mirror_ta;
   if (act == TXT_SYM) { txtMenuHide(); openSpecialPicker(ta); return; }   // dedicated special-character picker
   const char* txt = lv_textarea_get_text(ta);
   uint32_t s_cp = 0, e_cp = 0;
@@ -6652,9 +6714,10 @@ static void txtMenuShow(lv_obj_t* ta) {
   lv_obj_move_foreground(s_txtmenu);
 }
 
-// Composer gestures: double-tap (two clicks within 350 ms on the same field)
-// selects the word under the tap; long-press opens the edit menu. A single tap
-// dismisses an open menu.
+// Text-edit gestures (chat composer + every settings field via
+// attachSettingsTaEvents): double-tap (two clicks within 350 ms on the same
+// field) selects the word under the tap; long-press opens the edit menu. A
+// single tap dismisses an open menu.
 static void composerEditClickedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   lv_obj_t* ta = lv_event_get_target(e);
@@ -11281,19 +11344,68 @@ static int       s_wifi_sheet_net_idx  = -1;
 
 static void wifiRebuildNetworkList();
 
+static char s_wifi_sheet_title[40] = {0};   // backs s_apppage_title while a sheet is open
+
 static void wifiSheetClose() {
+  if (s_apppage_close == &wifiSheetClose) {   // release the status-bar title/back hook
+    s_apppage_title = nullptr;
+    s_apppage_close = nullptr;
+  }
   if (s_wifi_sheet) popupClose(&s_wifi_sheet);   // del_async + indev reset
   s_wifi_sheet_ssid_ta = nullptr;
   s_wifi_sheet_pwd_ta  = nullptr;
   s_wifi_sheet_aj_sw   = nullptr;
   s_wifi_sheet_net_idx = -1;
+  updateGlobalStatusBar();   // bar title falls back to the Wi-Fi category
   navMarkDirty();
 }
 static void wifiSheetCloseCb(lv_event_t* e)    { if (lv_event_get_code(e) == LV_EVENT_CLICKED) wifiSheetClose(); }
-static void wifiSheetBackdropCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;   // only the dimmed backdrop
-  wifiSheetClose();
+
+// Full-screen scaffold for the join / details / hidden sheets: an opaque page
+// styled exactly like a settings detail page — the SAME tall status bar carries
+// "‹ <sheet title>" (via the s_apppage_title hook, so tapping the bar closes
+// the sheet, then falls back to "‹ Wi-Fi" for the category), and the body below
+// scrolls. NO second header bar of its own. Replaces the old small floating
+// card on a dimmed backdrop, which was cramped, scrolled badly under the
+// on-screen keyboard and had no obvious close affordance.
+static lv_obj_t* wifiSheetOpenFullscreen(const char* title) {
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+
+  // On the BASE layer (lv_scr_act), NOT lv_layer_top: the status bar lives on
+  // lv_layer_top and its tall-mode glass lower row — which carries the bottom
+  // half of the "‹ <title>" text — must paint OVER this sheet. A page on
+  // lv_layer_top covers that row and clips the title in half (the recurring
+  // gotcha with every full-screen page that rides the tall bar; see
+  // openSettingsCategory's identical layering note).
+  s_wifi_sheet = lv_obj_create(lv_scr_act());
+  lv_obj_remove_style_all(s_wifi_sheet);
+  lv_obj_set_size(s_wifi_sheet, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_wifi_sheet, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_wifi_sheet, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_wifi_sheet, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_wifi_sheet, LV_OBJ_FLAG_SCROLLABLE);
+
+  // The sheet title rides in the tall status bar (already tall on the Wi-Fi
+  // settings page): "‹ <title>", tap = close this sheet.
+  strncpy(s_wifi_sheet_title, title ? title : "", sizeof(s_wifi_sheet_title) - 1);
+  s_wifi_sheet_title[sizeof(s_wifi_sheet_title) - 1] = '\0';
+  s_apppage_title = s_wifi_sheet_title;
+  s_apppage_close = &wifiSheetClose;
+  updateGlobalStatusBar();
+
+  lv_obj_t* body = lv_obj_create(s_wifi_sheet);
+  lv_obj_remove_style_all(body);
+  lv_obj_set_size(body, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(body, 0, 0);
+  lv_obj_set_style_pad_all(body, 12, LV_PART_MAIN);
+  // Clear the tall bar's glass lower row (it overlays the top of this sheet,
+  // same as prepSettingsPage's inset on the category pages).
+  lv_obj_set_style_pad_top(body, STATUSBAR_H + 8, LV_PART_MAIN);
+  // Generous bottom padding so the last field/button can scroll clear of the
+  // on-screen keyboard (attachSettingsTaEvents scrolls the focused field into view).
+  lv_obj_set_style_pad_bottom(body, SC(64), LV_PART_MAIN);
+  return body;
 }
 
 // Save the network (passphrase preserved if blank) + connect to it.
@@ -11316,44 +11428,23 @@ static void wifiJoinConfirmCb(lv_event_t* e) {
   wifiDoJoin(ssid, pwd, true);
 }
 
-// Build the dimmed-backdrop card shared by the join + hidden sheets. manual=true
-// adds an editable SSID field (hidden network); else the ssid is fixed.
+// Join / hidden-network sheet, full-screen (see wifiSheetOpenFullscreen).
+// manual=true adds an editable SSID field (hidden network); else the ssid is
+// fixed and shown in the title bar.
 static void openWifiJoinSheet(const char* ssid, bool manual) {
   wifiSheetClose();
   strlcpy(s_wifi_sheet_ssid, ssid ? ssid : "", sizeof s_wifi_sheet_ssid);
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  s_wifi_sheet = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_wifi_sheet);
-  lv_obj_set_size(s_wifi_sheet, sw, lv_disp_get_ver_res(nullptr) - STATUSBAR_H);
-  lv_obj_set_pos(s_wifi_sheet, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_wifi_sheet, lv_color_black(), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_wifi_sheet, LV_OPA_50, LV_PART_MAIN);
-  lv_obj_clear_flag(s_wifi_sheet, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_event_cb(s_wifi_sheet, wifiSheetBackdropCb, LV_EVENT_CLICKED, nullptr);
-
-  const lv_coord_t cardw = LV_MIN((lv_coord_t)(sw - 16), (lv_coord_t)PSC(300));
-  lv_obj_t* card = lv_obj_create(s_wifi_sheet);
-  lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, cardw, LV_SIZE_CONTENT);
-  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, SC(26));
-  styleSurface(card, COLOR_PANEL, 10);
-  lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  const int iw = cardw - 24;
-
-  lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, manual ? TR("Hidden network") : (ssid && ssid[0] ? ssid : TR("Join network")));
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_width(title, iw); lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  lv_obj_set_pos(title, 0, 0);
-  int yy = SC(28);
+  const char* title = manual ? TR("Hidden network")
+                             : (ssid && ssid[0] ? ssid : TR("Join network"));
+  lv_obj_t* body = wifiSheetOpenFullscreen(title);
+  const int iw = lv_disp_get_hor_res(nullptr) - 24;
+  int yy = 0;
 
   if (manual) {
-    lv_obj_t* sl = lv_label_create(card); lv_label_set_text(sl, TR("Network name (SSID)"));
+    lv_obj_t* sl = lv_label_create(body); lv_label_set_text(sl, TR("Network name (SSID)"));
     lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN); lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_pos(sl, 0, yy); yy += SC(16);
-    s_wifi_sheet_ssid_ta = lv_textarea_create(card);
+    s_wifi_sheet_ssid_ta = lv_textarea_create(body);
     lv_obj_set_size(s_wifi_sheet_ssid_ta, iw, SC(32)); lv_obj_set_pos(s_wifi_sheet_ssid_ta, 0, yy);
     lv_textarea_set_one_line(s_wifi_sheet_ssid_ta, true);
     lv_textarea_set_placeholder_text(s_wifi_sheet_ssid_ta, TR("Network name"));
@@ -11364,10 +11455,10 @@ static void openWifiJoinSheet(const char* ssid, bool manual) {
     s_wifi_sheet_ssid_ta = nullptr;
   }
 
-  lv_obj_t* pl = lv_label_create(card); lv_label_set_text(pl, TR("Password (empty = open)"));
+  lv_obj_t* pl = lv_label_create(body); lv_label_set_text(pl, TR("Password (empty = open)"));
   lv_obj_set_style_text_font(pl, &g_font_12, LV_PART_MAIN); lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(pl, 0, yy); yy += SC(16);
-  s_wifi_sheet_pwd_ta = lv_textarea_create(card);
+  s_wifi_sheet_pwd_ta = lv_textarea_create(body);
   lv_obj_set_size(s_wifi_sheet_pwd_ta, iw, SC(32)); lv_obj_set_pos(s_wifi_sheet_pwd_ta, 0, yy);
   lv_textarea_set_one_line(s_wifi_sheet_pwd_ta, true);
   lv_textarea_set_password_mode(s_wifi_sheet_pwd_ta, true);
@@ -11376,19 +11467,20 @@ static void openWifiJoinSheet(const char* ssid, bool manual) {
   attachSettingsTaEvents(s_wifi_sheet_pwd_ta);
   // Prefill the saved passphrase if we already know this network.
   if (ssid && ssid[0]) { int e = touchPrefsFindWifiNet(ssid); if (e >= 0) { TouchWifiNet n; if (touchPrefsGetWifiNet(e, n)) lv_textarea_set_text(s_wifi_sheet_pwd_ta, n.pwd); } }
-  yy += SC(42);
+  yy += SC(44);
 
-  const int bg = 8, bw = (iw - bg) / 2;
-  lv_obj_t* cancel = lv_btn_create(card);
-  lv_obj_set_size(cancel, bw, SC(36)); lv_obj_set_pos(cancel, 0, yy); styleButton(cancel);
-  lv_obj_add_event_cb(cancel, wifiSheetCloseCb, LV_EVENT_CLICKED, nullptr);
-  { lv_obj_t* l = lv_label_create(cancel); lv_label_set_text(l, TR("Cancel")); lv_obj_center(l); }
-  lv_obj_t* join = lv_btn_create(card);
-  lv_obj_set_size(join, bw, SC(36)); lv_obj_set_pos(join, bw + bg, yy); styleButton(join);
+  lv_obj_t* join = lv_btn_create(body);
+  lv_obj_set_size(join, iw, SC(38)); lv_obj_set_pos(join, 0, yy); styleButton(join);
   lv_obj_set_style_bg_color(join, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_add_event_cb(join, wifiJoinConfirmCb, LV_EVENT_CLICKED, nullptr);
   { lv_obj_t* l = lv_label_create(join); lv_label_set_text(l, TR("Join")); lv_obj_center(l); }
-  lv_obj_set_height(card, SC(28) + yy + SC(36) + 12);
+  yy += SC(46);
+
+  lv_obj_t* cancel = lv_btn_create(body);
+  lv_obj_set_size(cancel, iw, SC(34)); lv_obj_set_pos(cancel, 0, yy); styleButton(cancel);
+  lv_obj_add_event_cb(cancel, wifiSheetCloseCb, LV_EVENT_CLICKED, nullptr);
+  { lv_obj_t* l = lv_label_create(cancel); lv_label_set_text(l, TR("Cancel")); lv_obj_center(l); }
+
   lv_obj_move_foreground(s_wifi_sheet);
   navMarkDirty();
 }
@@ -11434,69 +11526,42 @@ static void openWifiDetailsSheet(int net_idx) {
   if (wifi_up) strlcpy(cur, WiFi.SSID().c_str(), sizeof cur);
   const bool is_active = wifi_up && strcmp(cur, n.ssid) == 0;
 
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  s_wifi_sheet = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_wifi_sheet);
-  lv_obj_set_size(s_wifi_sheet, sw, lv_disp_get_ver_res(nullptr) - STATUSBAR_H);
-  lv_obj_set_pos(s_wifi_sheet, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_wifi_sheet, lv_color_black(), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_wifi_sheet, LV_OPA_50, LV_PART_MAIN);
-  lv_obj_clear_flag(s_wifi_sheet, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_event_cb(s_wifi_sheet, wifiSheetBackdropCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* body = wifiSheetOpenFullscreen(n.ssid);
+  const int iw = lv_disp_get_hor_res(nullptr) - 24;
+  int yy = 0;
 
-  const lv_coord_t cardw = LV_MIN((lv_coord_t)(sw - 16), (lv_coord_t)PSC(300));
-  lv_obj_t* card = lv_obj_create(s_wifi_sheet);
-  lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, cardw, LV_SIZE_CONTENT);
-  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, SC(34));
-  styleSurface(card, COLOR_PANEL, 10);
-  lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  const int iw = cardw - 24;
-
-  lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, n.ssid);
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_width(title, iw); lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  lv_obj_set_pos(title, 0, 0);
-  lv_obj_t* st = lv_label_create(card);
+  lv_obj_t* st = lv_label_create(body);
   lv_label_set_text(st, is_active ? TR("Connected") : TR("Saved network"));
   lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(st, lv_color_hex(is_active ? COLOR_STATUS_OK : COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(st, 0, SC(22));
-  int yy = SC(44);
+  lv_obj_set_pos(st, 0, yy);
+  yy += SC(24);
 
   // Auto-Join row (label + switch)
-  lv_obj_t* ajl = lv_label_create(card); lv_label_set_text(ajl, TR("Auto-Join"));
+  lv_obj_t* ajl = lv_label_create(body); lv_label_set_text(ajl, TR("Auto-Join"));
   lv_obj_set_style_text_font(ajl, &g_font_14, LV_PART_MAIN); lv_obj_set_style_text_color(ajl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_pos(ajl, 0, yy + SC(4));
-  s_wifi_sheet_aj_sw = lv_switch_create(card);
-  lv_obj_align(s_wifi_sheet_aj_sw, LV_ALIGN_TOP_RIGHT, 0, yy);
+  s_wifi_sheet_aj_sw = lv_switch_create(body);
+  lv_obj_set_pos(s_wifi_sheet_aj_sw, iw - SC(52), yy);
   if (n.auto_join) lv_obj_add_state(s_wifi_sheet_aj_sw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(s_wifi_sheet_aj_sw, wifiDetailsAutoJoinCb, LV_EVENT_VALUE_CHANGED, nullptr);
-  yy += SC(40);
+  yy += SC(44);
 
   if (!is_active) {
-    lv_obj_t* con = lv_btn_create(card);
-    lv_obj_set_size(con, iw, SC(36)); lv_obj_set_pos(con, 0, yy); styleButton(con);
+    lv_obj_t* con = lv_btn_create(body);
+    lv_obj_set_size(con, iw, SC(38)); lv_obj_set_pos(con, 0, yy); styleButton(con);
     lv_obj_set_style_bg_color(con, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
     lv_obj_add_event_cb(con, wifiDetailsConnectCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* l = lv_label_create(con); lv_label_set_text(l, TR("Connect")); lv_obj_center(l); }
-    yy += SC(42);
+    yy += SC(46);
   }
-  lv_obj_t* forget = lv_btn_create(card);
-  lv_obj_set_size(forget, iw, SC(36)); lv_obj_set_pos(forget, 0, yy); styleButton(forget);
+  lv_obj_t* forget = lv_btn_create(body);
+  lv_obj_set_size(forget, iw, SC(38)); lv_obj_set_pos(forget, 0, yy); styleButton(forget);
   lv_obj_set_style_bg_color(forget, lv_color_hex(0xC44B55), LV_PART_MAIN);
   lv_obj_set_style_bg_color(forget, lv_color_hex(0xA13F47), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(forget, wifiDetailsForgetCb, LV_EVENT_CLICKED, nullptr);
   { lv_obj_t* l = lv_label_create(forget); lv_label_set_text(l, TR("Forget network")); lv_obj_center(l); }
-  yy += SC(42);
-  lv_obj_t* close = lv_btn_create(card);
-  lv_obj_set_size(close, iw, SC(34)); lv_obj_set_pos(close, 0, yy); styleButton(close);
-  lv_obj_add_event_cb(close, wifiSheetCloseCb, LV_EVENT_CLICKED, nullptr);
-  { lv_obj_t* l = lv_label_create(close); lv_label_set_text(l, TR("Close")); lv_obj_center(l); }
-  lv_obj_set_height(card, SC(44) + yy + SC(34) + 12);
+
   lv_obj_move_foreground(s_wifi_sheet);
   navMarkDirty();
 }
@@ -20508,6 +20573,78 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_ota_pct = 100;
   s_ota_state = 2;   // success -> the UI poll timer reboots into the new slot
 }
+
+#if defined(HAS_TDECK_GT911)
+// Stream the app-only bin for the active update channel onto the SD card
+// (/BINS/wadamesh-beta_<N>-<stable|beta>.bin) so the Launcher can flash it —
+// the no-A/B-slot counterpart to otaWorkerRun above. Same immutable versioned
+// URL, same worker, but the bytes go to SD instead of the spare OTA slot.
+static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
+  s_sdfw_pct = 0;
+  if (SD.cardType() == CARD_NONE) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "no SD card"); s_sdfw_state = 3; return; }
+  if (!SD.exists("/BINS") && !SD.mkdir("/BINS")) {
+    snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "can't create /BINS"); s_sdfw_state = 3; return;
+  }
+  char path[56];
+  snprintf(path, sizeof path, "/BINS/wadamesh-beta_%d-%s.bin",
+           s_sdfw_target_n, touchPrefsGetBetaUpdates() ? "beta" : "stable");
+  char url[176];
+  snprintf(url, sizeof url, "http://firmware.wadamesh.com/releases/%s/beta_%d/%s.bin",
+           updChannelArchive(), s_sdfw_target_n, OTA_BIN_NAME);
+  http.setReuse(false);
+  http.setConnectTimeout(8000);
+  http.setTimeout(20000);
+  http.setUserAgent("wadamesh-touch");
+  if (!http.begin(client, url)) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "connect failed"); s_sdfw_state = 3; return; }
+  const int code = http.GET();
+  if (code != 200) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "HTTP %d", code); http.end(); s_sdfw_state = 3; return; }
+  const int len = http.getSize();
+  if (len <= 0) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "bad length"); http.end(); s_sdfw_state = 3; return; }
+  SD.remove(path);                       // refresh any stale copy of the same tag
+  File f = SD.open(path, FILE_WRITE);
+  if (!f) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD open failed"); http.end(); s_sdfw_state = 3; return; }
+  // Copy buffer off the worker's ~8 KB stack: PSRAM preferred, small DRAM fallback.
+  size_t bufsz = 8192;
+  uint8_t* buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!buf) { bufsz = 2048; buf = (uint8_t*)malloc(bufsz); }
+  if (!buf) { f.close(); http.end(); snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "out of memory"); s_sdfw_state = 3; return; }
+  WiFiClient* st = http.getStreamPtr();
+  int received = 0;
+  unsigned long last_data = millis();
+  bool ok = true;
+  while (received < len) {
+    int avail = st ? st->available() : 0;
+    if (avail <= 0) {
+      if (!http.connected() || (millis() - last_data) > 15000) { ok = false; break; }
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+    int n = st->read(buf, ((size_t)avail > bufsz) ? bufsz : (size_t)avail);
+    if (n <= 0) {
+      if ((millis() - last_data) > 15000) { ok = false; break; }
+      vTaskDelay(pdMS_TO_TICKS(5));
+      continue;
+    }
+    last_data = millis();
+    if ((int)f.write(buf, (size_t)n) != n) {
+      snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD write failed"); ok = false; break;
+    }
+    received += n;
+    s_sdfw_pct = (int)((uint64_t)received * 100 / (uint64_t)len);
+  }
+  free(buf);
+  f.close();
+  http.end();
+  if (!ok || received != len) {
+    SD.remove(path);                     // never leave a truncated bin for the Launcher
+    if (!s_sdfw_msg[0]) snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "short read %d/%d", received, len);
+    s_sdfw_state = 3; return;
+  }
+  strncpy(s_sdfw_msg, path, sizeof s_sdfw_msg - 1); s_sdfw_msg[sizeof s_sdfw_msg - 1] = 0;
+  s_sdfw_pct = 100;
+  s_sdfw_state = 2;
+}
+#endif
 #endif
 
 static void tileFetchTaskFn(void* arg) {
@@ -20605,6 +20742,14 @@ static void tileFetchTaskFn(void* arg) {
       otaWorkerRun(client, http);
       continue;
     }
+#if defined(HAS_TDECK_GT911)
+    // SD firmware download for Launcher installs (user-initiated from About).
+    if (s_sdfw_request) {
+      s_sdfw_request = false;
+      sdFwWorkerRun(client, http);
+      continue;
+    }
+#endif
 #endif
     // Wi-Fi scan (user-initiated from the Network tab / setup wizard). Blocking
     // here on the Wi-Fi core, not the UI thread. Mirrors the CLI `wifi scan`.
@@ -24193,10 +24338,14 @@ static void settingsCatBuild(int cat) {
         lv_obj_set_style_text_font(s_ota_status_lbl, &g_font_12, LV_PART_MAIN);
         lv_obj_set_style_text_color(s_ota_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
         lv_label_set_text(s_ota_status_lbl, TR(""));
+      }
 
-        // "Get test builds (beta)" — opt into the BETA update channel. Affects BOTH
-        // the on-device "update available" check AND the Install-update download, so
-        // an opted-in device tracks the test channel for notifications and flashing.
+      // "Get test builds (beta)" — opt into the BETA update channel. Affects the
+      // "update available" check, the Install-update download AND the save-to-SD
+      // download below. Deliberately OUTSIDE the touchHasOtaUpdateSlot() gate:
+      // Launcher installs have no Install button but still need channel-aware
+      // update notifications and the SD download.
+      if (FIRMWARE_OTA_ENV[0] && firmwareReleaseN() >= 0) {
         {
           lv_obj_t* beta_row = lv_obj_create(page);
           lv_obj_set_size(beta_row, lblw, LV_SIZE_CONTENT);
@@ -24224,6 +24373,31 @@ static void settingsCatBuild(int cat) {
           lv_obj_set_style_text_font(beta_note, &g_font_12, LV_PART_MAIN);
           lv_obj_set_style_text_color(beta_note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
         }
+
+#if defined(HAS_TDECK_GT911) && CAP_OTA
+        // "Save update bin to SD" — the Launcher-install update path: downloads
+        // the app-only bin for the active channel into /BINS/ on the SD card,
+        // named wadamesh-beta_<N>-<stable|beta>.bin, ready for the Launcher to
+        // flash. Also handy on standard installs as an offline spare.
+        {
+          lv_obj_t* sd_btn = lv_btn_create(page);
+          lv_obj_set_size(sd_btn, lblw, 38);
+          styleButton(sd_btn);
+          lv_obj_add_event_cb(sd_btn, sdFwSaveToSdCb, LV_EVENT_CLICKED, nullptr);
+          lv_obj_t* sl = lv_label_create(sd_btn);
+          lv_label_set_text(sl, LV_SYMBOL_SD_CARD "  Save update bin to SD");
+          lv_obj_set_style_text_font(sl, &g_font_14, LV_PART_MAIN);
+          lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+          lv_obj_center(sl);
+
+          s_sdfw_status_lbl = lv_label_create(page);
+          lv_label_set_long_mode(s_sdfw_status_lbl, LV_LABEL_LONG_WRAP);
+          lv_obj_set_width(s_sdfw_status_lbl, lblw);
+          lv_obj_set_style_text_font(s_sdfw_status_lbl, &g_font_12, LV_PART_MAIN);
+          lv_obj_set_style_text_color(s_sdfw_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+          lv_label_set_text(s_sdfw_status_lbl, TR("For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder)."));
+        }
+#endif
       }
 #endif
 
@@ -24279,6 +24453,9 @@ static void closeSettingsCategory() {
   hideKb();
   if (s_settings_open_cat == CAT_ABOUT) {   // null the live-label ptrs (freed with the sheet)
     s_sysinfo_lbl = nullptr; s_sysinfo_rest_lbl = nullptr; s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
+#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+    s_sdfw_status_lbl = nullptr;
+#endif
     s_ota_btn = nullptr; s_ota_btn_lbl = nullptr;
     s_ota_prev_btn = nullptr;
     g_lv.settings_status = nullptr; g_lv.diag_id_label = nullptr; g_lv.diag_label = nullptr;
@@ -26965,6 +27142,9 @@ static lv_obj_t*    s_lock_clock     = nullptr;
 static uint8_t*     s_lock_wall      = nullptr;   // decoded RGB565 (lvglPsramAlloc)
 static lv_img_dsc_t s_lock_wall_dsc;
 static int          s_lock_clock_min = -1;        // last minute drawn (redraw guard)
+static lv_obj_t*    s_lock_unread    = nullptr;   // envelope + unread count under the clock (issue #93)
+static int          s_lock_unread_n  = -1;        // last count drawn (redraw guard)
+static unsigned long s_lock_unread_ms = 0;        // 1 Hz poll limiter
 
 // How long the trackball must be held to unlock, in ms.
 static const unsigned long kLockUnlockHoldMs = 1000;
@@ -27028,7 +27208,23 @@ static void lockscreenUpdateClock() {
   const int dx = (mm % 5) * 3 - 6;         // -6 … +6 px
   const int dy = ((mm / 5) % 3) * 4 - 4;   // -4 … +4 px
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, dx, 30 + dy);
+  // The unread badge rides along with the same drift so it never parks either.
+  if (s_lock_unread) lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, dx, 68 + dy);
   s_lock_clock_min = mm;
+}
+
+// Envelope + unread total under the clock (issue #93) — glanceable without
+// unlocking. Hidden entirely at zero so the lock screen stays calm.
+static void lockscreenUpdateUnread() {
+  if (!s_lock_unread || !g_lv.task) return;
+  const int n = g_lv.task->getUnreadTotal();
+  if (n == s_lock_unread_n) return;
+  s_lock_unread_n = n;
+  if (n <= 0) { lv_obj_add_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN); return; }
+  char b[24];
+  snprintf(b, sizeof b, LV_SYMBOL_ENVELOPE "  %d", n);
+  lv_label_set_text(s_lock_unread, b);
+  lv_obj_clear_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void lockscreenUnlockPopupHide() {
@@ -27138,7 +27334,15 @@ static void lockscreenShow() {
   lv_obj_set_style_text_color(s_lock_clock, col, LV_PART_MAIN);
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, 0, 30);   // below the 22 px status bar
   s_lock_clock_min = -1;
+
+  s_lock_unread = lv_label_create(s_lock_root);
+  lv_obj_set_style_text_font(s_lock_unread, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_lock_unread, col, LV_PART_MAIN);
+  lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, 0, 68);
+  lv_obj_add_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN);
+  s_lock_unread_n = -1;
   lockscreenUpdateClock();
+  lockscreenUpdateUnread();
 
   lv_obj_t* st = lv_label_create(s_lock_root);
   lv_label_set_text(st, TR("Screen locked"));
@@ -27160,9 +27364,10 @@ static void lockscreenShow() {
 
 static void lockscreenHide() {
   lockscreenUnlockPopupHide();
-  if (s_lock_root) { lv_obj_del(s_lock_root); s_lock_root = nullptr; s_lock_clock = nullptr; }
+  if (s_lock_root) { lv_obj_del(s_lock_root); s_lock_root = nullptr; s_lock_clock = nullptr; s_lock_unread = nullptr; }
   if (s_lock_wall) { lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
   s_lock_clock_min = -1;
+  s_lock_unread_n  = -1;
   // Restore the status bar's normal opaque background + accent border.
   if (g_statusbar.root) {
     lv_obj_set_style_bg_opa(g_statusbar.root, LV_OPA_COVER, LV_PART_MAIN);
@@ -27170,7 +27375,8 @@ static void lockscreenHide() {
   }
 }
 
-// Refresh the clock when the minute rolls over (called each loop tick).
+// Refresh the clock when the minute rolls over (called each loop tick), and
+// the unread badge at 1 Hz so a message arriving while locked shows up.
 static void serviceLockscreen() {
   if (!s_lock_root || !s_lock_clock) return;
   mesh::RTCClock* rtc = the_mesh.getRTCClock();
@@ -27178,6 +27384,8 @@ static void serviceLockscreen() {
   int mm = 0;
   if (t > 0) { time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v); mm = v.tm_min; }
   if (mm != s_lock_clock_min) lockscreenUpdateClock();
+  unsigned long now = millis();
+  if (now - s_lock_unread_ms >= 1000) { s_lock_unread_ms = now; lockscreenUpdateUnread(); }
 }
 #endif  // core lock screen (HAS_TDECK_GT911 || HAS_TANMATSU)
 

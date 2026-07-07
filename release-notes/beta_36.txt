@@ -1,0 +1,13 @@
+# beta_36 (TEST) - Launcher SD storage really works now, Wi-Fi settings redesign, symbol passwords, lock-screen unread count. On top of beta_35.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Fixed ---
+The "Store data on SD" toggle is now actually honored after a reboot (fix contributed by scratchdiver, PR #123). On Launcher installs the setting silently reverted to internal storage every boot, which also meant those devices kept the slow internal-flash writes. If you run wadamesh under the Launcher and your mesh is busy, this one is for you: flip the toggle once and contacts and settings really move to the SD card.
+Turning "Store data on SD" off works reliably now too, including on Launcher installs (follow-up to PR #123).
+Passwords with special characters can now be entered everywhere: long-press any settings field, including the Wi-Fi password, for the Cut / Copy / Paste / All / Sym menu. Sym opens a picker with the characters the on-screen keyboard does not have (issue #122). Double-tap selects a word.
+
+# --- New ---
+The Wi-Fi network screens (join a network, hidden network, saved-network details) are full-screen pages now instead of small popups: same style as the other settings pages, title in the top bar, tap the bar to go back, and everything scrolls properly with the keyboard open.
+The lock screen shows an envelope with the number of unread messages under the clock, so you can check for news without unlocking (idea from issue #93). It disappears when there is nothing unread.
+For Launcher installs: a "Save update bin to SD" button on the About page downloads the latest firmware of your selected channel into a BINS folder on the SD card, named with the version and channel, ready to flash from the Launcher. The test-builds toggle is now visible on Launcher installs as well.
+New region preset "Australia (Mid)": 915.075 MHz, 125 kHz, SF9, CR5 (requested in issue #121).
