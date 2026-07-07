@@ -358,12 +358,12 @@ void setup() {
 #if defined(HAS_TDECK_GT911)
   {
     extern SPIClass* tdeckSharedSPI();
-    bool use_sd_pref = false, setup_done = false;
+    bool setup_done = false;
     { Preferences _p; if (_p.begin("touch", true)) {
-        use_sd_pref = _p.getBool("use_sd", false);    // explicit user choice
-        setup_done  = _p.getBool("setup_ok", false);  // finished first-run setup
+        setup_done = _p.getBool("setup_ok", false);  // finished first-run setup
         _p.end();
     } }
+    const bool use_sd_pref = touchPrefsReadUseSdAtBoot();   // NVS + /prefs/touch.kv
 
     // First-run SD default: the very first time meshcomod boots on a brand-new
     // device — the user hasn't finished setup yet AND nothing is stored on

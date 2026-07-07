@@ -6,6 +6,8 @@
 
 #include "SdNvsPrefs.h"   // NVS, or SD /meshcomod fallback when NVS is unusable (Launcher)
 
+#include <Preferences.h>
+#include <SPIFFS.h>
 #include <stddef.h>   // offsetof
 #include <string.h>   // memcpy
 
@@ -24,8 +26,8 @@ static bool s_begun = false;
 // packed into ONE versioned blob keyed "cfg". Strings (tile_srv, rgn_scope,
 // lk_wall, channel-scopes, quick-replies), the byte blobs (fav / ign / rpw) and
 // the Wi-Fi slots keep their own keys — and "use_sd" / "setup_ok" stay standalone
-// keys too, because main.cpp reads (and for use_sd, writes) them directly via a
-// raw Preferences open at boot, BEFORE the touch prefs load.
+// keys too. "use_sd" is mirrored to NVS on every UI toggle (main.cpp reads it at
+// boot via touchPrefsReadUseSdAtBoot); "setup_ok" is still NVS-only.
 //
 // On first run with the blob absent we read every legacy per-key into s_cfg, write
 // "cfg" ONCE, and only after that durable write do we remove() the legacy keys to
@@ -1113,8 +1115,55 @@ bool touchPrefsSetHomeIsDrawer(bool on) {
 // Store ALL device data (identity, prefs, contacts, channels) on the SD card
 // under /meshcomod instead of internal SPIFFS. Read at boot (main.cpp) BEFORE
 // the data loads, so changing it needs a reboot. Key "use_sd" in the "touch"
-// namespace — main.cpp reads the same key directly.
+// namespace — main.cpp must see the same value the UI toggle writes.
 static const char* KEY_USE_SD_STORAGE = "use_sd";
+static const char* TOUCH_KV_BOOT_PATH = "/prefs/touch.kv";
+
+// SdNvsPrefs file mode writes touch.kv only — parse a bool for boot migration.
+static bool readBoolFromTouchKvFile(const char* want_key) {
+  if (!SPIFFS.exists(TOUCH_KV_BOOT_PATH)) return false;
+  File f = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_READ);
+  if (!f) return false;
+  while (f.available() > 0) {
+    int kl = f.read();
+    if (kl <= 0 || kl > 15) break;
+    char k[16] = {0};
+    if (f.read((uint8_t*)k, kl) != kl) break;
+    int lo = f.read(), hi = f.read();
+    if (lo < 0 || hi < 0) break;
+    size_t vl = (size_t)lo | ((size_t)hi << 8);
+    if (vl > 2048) break;
+    if (strncmp(k, want_key, sizeof k) == 0) {
+      const bool on = (vl >= 1) && (f.read() != 0);
+      f.close();
+      return on;
+    }
+    for (size_t i = 0; i < vl; ++i) {
+      if (f.read() < 0) { f.close(); return false; }
+    }
+  }
+  f.close();
+  return false;
+}
+
+bool touchPrefsReadUseSdAtBoot() {
+  bool nvs_val = false;
+  Preferences p;
+  if (p.begin(TOUCH_NS, true)) {
+    nvs_val = p.getBool(KEY_USE_SD_STORAGE, false);
+    p.end();
+  }
+  if (nvs_val) return true;
+  const bool file_val = readBoolFromTouchKvFile(KEY_USE_SD_STORAGE);
+  if (file_val) {
+    Serial.println("[BOOT] use_sd read from /prefs/touch.kv (syncing to NVS)");
+    if (p.begin(TOUCH_NS, false)) {
+      p.putBool(KEY_USE_SD_STORAGE, true);
+      p.end();
+    }
+  }
+  return file_val;
+}
 
 bool touchPrefsGetUseSdStorage() {
   if (!s_begun) touchPrefsBegin();
@@ -1128,6 +1177,15 @@ bool touchPrefsSetUseSdStorage(bool use_sd) {
   bool ok = s_prefs.putBool(KEY_USE_SD_STORAGE, use_sd);
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
+  // main.cpp reads use_sd from NVS before SdNvsPrefs::useFile() — mirror every
+  // UI toggle there so the boot storage decision matches the switch.
+  Preferences nvs;
+  if (nvs.begin(TOUCH_NS, false)) {
+    if (!nvs.putBool(KEY_USE_SD_STORAGE, use_sd)) ok = false;
+    nvs.end();
+  } else {
+    ok = false;
+  }
   return ok;
 }
 

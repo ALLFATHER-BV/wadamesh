@@ -223,6 +223,9 @@ bool touchPrefsSetShowSensorsTab(bool on);
  *  loads, so changing it requires a reboot. Default false (SPIFFS). */
 bool touchPrefsGetUseSdStorage();
 bool touchPrefsSetUseSdStorage(bool use_sd);
+/** Boot-time read for main.cpp's storage decision (before SdNvsPrefs::useFile).
+ *  Checks NVS, then SPIFFS /prefs/touch.kv for a file-only write. */
+bool touchPrefsReadUseSdAtBoot();
 
 /** Global UI orientation, applied at boot before the screens are built so the
  *  whole layout reflows to the rotated resolution. Stored as the raw LVGL
