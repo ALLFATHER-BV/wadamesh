@@ -30,6 +30,7 @@ CLAUDE.md
 .claude/
 TLORA_PAGER_PORT.md
 TLORA_PAGER_PORT_MILESTONES.md
+TLORA_PAGER_M7_HW_DEBUG_LOG.md
 
 # Custom timestamped build outputs
 /builds/
