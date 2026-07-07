@@ -29196,7 +29196,6 @@ static void openControlCenter() {
   lv_obj_remove_style_all(card);
 #if defined(HAS_TANMATSU)
   lv_obj_set_size(card, card_w, 384);   // bigger: header + 3 roomier sliders + toggle grid + sysinfo
-#elif defined(HAS_TDECK_GT911)
   lv_obj_set_size(card, card_w, 200);   // sysinfo + thin brightness slider + 2-row toggle grid (fits 240−22 screen)
 #else
   // Portrait has headroom on the 320-tall screen; make the card taller so the
@@ -29397,7 +29396,7 @@ static void openControlCenter() {
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_row(row, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_column(row, 10, LV_PART_MAIN);
-#elif defined(HAS_TDECK_GT911)
+#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   // 2-row grid: 4 chips per row, so chip 5 (Lock) wraps onto a 2nd row. Sits
   // ABOVE the bottom system-info line (-16 offset leaves room for it).
   lv_obj_set_size(row, card_w - 20, 80);
@@ -29422,7 +29421,7 @@ static void openControlCenter() {
   tw = (card_w - 20 - 20) / 3;   // 3 chips per row (Wi-Fi/BT/GPS/Theme/Keys/Sound → 2×3 grid)
   if (tw > 175) tw = 175;
   th = 80;
-#elif defined(HAS_TDECK_GT911)
+#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   tw = 58; th = 36;
 #else
   tw = (card_w - 20 - 4 * 5) / 5;   // 5 chips (Wi-Fi/BT/GPS/Theme/Sound) + 4 gaps
