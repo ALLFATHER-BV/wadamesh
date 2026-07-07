@@ -3114,6 +3114,24 @@ static bool navTopHasVisibleChild(lv_obj_t* top) {
   return false;
 }
 
+// Some fullscreen views (Terminal, File manager) build their OWN popups (command
+// picker, prompts, action sheets, …) as separate lv_layer_top() siblings rather
+// than nesting them inside the view — so with two visible top-layer children at
+// once, collecting the whole top layer pulled in BOTH the view underneath and the
+// popup on top of it, forcing nav to walk the entire hidden screen's controls
+// before ever reaching the popup (reported: opening the terminal's command picker
+// left focus on the terminal behind it). LVGL has no z-index — child order IS
+// stacking order — so the last visible, non-skip child is the one actually on top;
+// collect ONLY that subtree. Single-popup screens are unaffected (same one child).
+static lv_obj_t* navTopFrontmostChild(lv_obj_t* top) {
+  int32_t n = (int32_t)lv_obj_get_child_cnt(top);
+  for (int32_t i = n - 1; i >= 0; i--) {
+    lv_obj_t* c = lv_obj_get_child(top, (uint32_t)i);
+    if (c && !lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN) && !lv_obj_has_flag(c, NAV_SKIP_FLAG)) return c;
+  }
+  return top;   // shouldn't happen (caller only calls this when navTopHasVisibleChild(top) is true)
+}
+
 static LvChatPanel* s_nav_prev_chat = nullptr;   // last chat panel we focused (so we only auto-focus on open)
 
 // The global status bar has NAV_SKIP_FLAG so its passive glyphs (time / signal / battery)
@@ -3161,7 +3179,7 @@ static void navMaybeRebuild() {
   // collect ITS controls + NO tab bar, so arrows stay inside the chat (don't reach the bar and switch
   // screens) and the composer can be focused for typing.
   LvChatPanel* chat = (useTop || on_settings) ? nullptr : navOpenChatPanel();
-  lv_obj_t* root = useTop ? top : on_settings ? s_settings_sheet : (chat ? chat->overlay : scr);
+  lv_obj_t* root = useTop ? navTopFrontmostChild(top) : on_settings ? s_settings_sheet : (chat ? chat->overlay : scr);
   const bool on_page = !useTop && !on_settings && !chat;   // #45: true = main tab content (the list that scrolls)
   lv_obj_t* tabbar = nullptr;
   if (!useTop && !on_settings && !chat && g_lv.tabview) {
