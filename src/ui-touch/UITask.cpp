@@ -3743,6 +3743,7 @@ static int       s_setup_step      = 0;        // 0 welcome / 1 name / 2 region 
 static lv_obj_t* s_setup_name_ta   = nullptr;
 static lv_obj_t* s_setup_region_list = nullptr;
 static int       s_setup_region_sel  = -1;     // selected preset index, -1 = keep default
+static lv_obj_t* s_setup_region_next_btn = nullptr;  // so a keypad-nav region pick can jump focus straight to it
 static lv_obj_t* s_setup_ssid_ta   = nullptr;  // (legacy) Wi-Fi fields — the wizard's Wi-Fi step is now an info screen
 static lv_obj_t* s_setup_pwd_ta    = nullptr;
 static void setupWizardOpen();            // fwd: re-trigger the flow (Device settings button)
@@ -26921,13 +26922,19 @@ static void updatePagerEncoder(unsigned long now) {
 
   // No touch and no trackball on this board: the encoder (and the keyboard,
   // see the HAS_PAGER_KEYBOARD drain in loop()) are the ONLY way to wake an
-  // idle-dimmed screen. Turning/clicking it just wakes -- it's swallowed here
-  // rather than also acting as nav, matching the trackball's edge-triggered
+  // idle-dimmed screen. Turning it just wakes -- it's swallowed here rather
+  // than also acting as nav, matching the trackball's edge-triggered
   // wake+consume pattern (T-Deck/Tanmatsu always have touch or the trackball
   // as a separate wake path; this board doesn't, so the gap is fatal there
   // and had to be closed here instead of copied from either of them).
+  // Deliberately NOT waking on a bare click (held, no turn): BOOT already
+  // covers a dedicated wake button, and a click landed here right as the
+  // screen came on would fall straight into the click-release logic below
+  // as an ordinary short click on whatever was already focused -- reported
+  // bug: waking via the encoder button selected "Skip" on the setup
+  // wizard's welcome screen the instant the screen lit up.
   if (g_lv.task && g_lv.task->isScreenOff()) {
-    if (delta != 0 || held) g_lv.task->wakeScreen();
+    if (delta != 0) g_lv.task->wakeScreen();
     return;
   }
   // Screen already on: turning/clicking the encoder is real activity too, same as a
@@ -31644,6 +31651,7 @@ static void setupWizardClose() {
   if (s_setup_root) { popupClose(&s_setup_root); }
   s_setup_name_ta = nullptr;
   s_setup_region_list = nullptr;
+  s_setup_region_next_btn = nullptr;
   s_setup_ssid_ta = nullptr;
   s_setup_pwd_ta = nullptr;
   if (g_statusbar.root) lv_obj_clear_flag(g_statusbar.root, LV_OBJ_FLAG_HIDDEN);
@@ -31725,6 +31733,9 @@ static void setupFinishCb(lv_event_t* e) {
 static void setupRegionRowCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+#if CAP_KEYPAD_NAV
+  const bool was_already_sel = (idx == s_setup_region_sel);
+#endif
   s_setup_region_sel = idx;
   if (!s_setup_region_list) return;
   const uint32_t n = lv_obj_get_child_cnt(s_setup_region_list);
@@ -31733,6 +31744,21 @@ static void setupRegionRowCb(lv_event_t* e) {
     if (c) lv_obj_set_style_bg_color(
                c, lv_color_hex((int)i == idx ? COLOR_STATUS_OK : 0x1A1B1C), LV_PART_MAIN);
   }
+#if CAP_KEYPAD_NAV
+  // With 20 region presets in this list, walking NEXT one detent at a time past
+  // every remaining row just to reach Next/Back is impractical on a keypad/rotary
+  // -only board (reported: picking a region left no perceived way to advance).
+  // But auto-jumping to Next on the FIRST click (the original fix) moved focus
+  // off the list before the colour change was even visible to confirm which
+  // row got picked (reported: "I couldn't be certain I selected the correct
+  // one"). Two-step now: the first click on a row just selects/recolours it
+  // and focus stays put; only a SECOND click on the row that's ALREADY
+  // selected — an explicit confirm — jumps focus to Next.
+  if (was_already_sel && s_nav_group && s_setup_region_next_btn) {
+    lv_group_focus_obj(s_setup_region_next_btn);
+    s_nav_show = true;
+  }
+#endif
 }
 
 static void setupFillRegionList() {
@@ -31769,6 +31795,7 @@ static void setupShowStep(int step) {
   lv_obj_clean(s_setup_root);
   s_setup_name_ta = nullptr;
   s_setup_region_list = nullptr;
+  s_setup_region_next_btn = nullptr;
   s_setup_ssid_ta = nullptr;
   s_setup_pwd_ta = nullptr;
   s_setup_step = step;
@@ -31822,7 +31849,7 @@ static void setupShowStep(int step) {
     if (s_setup_region_sel < 0) s_setup_region_sel = findMatchingMeshRadioPreset(the_mesh.getNodePrefs());
     setupFillRegionList();
     setupBtn("Back", setupBackCb, false, 12, btn_y, 72);
-    setupBtn("Next", setupRegionNextCb, true, sw - 12 - 120, btn_y, 120);
+    s_setup_region_next_btn = setupBtn("Next", setupRegionNextCb, true, sw - 12 - 120, btn_y, 120);
   } else {
     int y = setupHeader("Wi-Fi & Bluetooth", nullptr, "Step 3 of 3");
     lv_obj_t* m = lv_label_create(s_setup_root);
