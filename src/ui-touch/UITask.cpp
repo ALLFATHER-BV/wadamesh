@@ -89,6 +89,12 @@
   #if defined(HAS_TDECK_KEYBOARD)
     #include <helpers/input/TDeckKeyboard.h>
   #endif
+  #if defined(HAS_PAGER_KEYBOARD)
+    #include <helpers/input/PagerKeyboard.h>
+  #endif
+  #if defined(HAS_PAGER_ENCODER)
+    #include <helpers/input/PagerEncoder.h>
+  #endif
   #include "KeyboardLayouts.h"
   #include "i18n.h"
   #include "emoji_data.h"     // baked Noto colour-emoji glyphs (emojiGlyphLookup)
@@ -2602,9 +2608,13 @@ static void navScrollFocused(bool up) {
 }
 // Small key hints over each menubar icon — shown only while keyboard nav is on.
 static void navMenubarKeysSync() {
-#if defined(HAS_TANMATSU)
-  return;   // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys — no hints
-#endif
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+  // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys. The
+  // pager has no such optional nav-mode toggle to hint at either (s_kbd_nav is
+  // T-Deck's trackball-nav-vs-touch concept, CAP_TRACKBALL-only, so it isn't
+  // even declared here) — no hints. A plain `return` isn't enough since the
+  // body below still needs s_kbd_nav to exist at compile time; exclude it.
+#else
   if (!g_lv.tabview) return;
   lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
   if (!bar) return;
@@ -2627,6 +2637,7 @@ static void navMenubarKeysSync() {
     lv_obj_clear_flag(s_navkey_hint[i], LV_OBJ_FLAG_HIDDEN);
     if (cw > 0) lv_obj_align(s_navkey_hint[i], LV_ALIGN_LEFT_MID, cw * i + cw / 2 - 15, 8);   // bottom-left of the icon
   }
+#endif
 }
 // Apply a captured key to the tab being remapped (Settings → Keyboard).
 static void navKeyCaptureApply(int key) {
@@ -26878,6 +26889,37 @@ static void updateTrackball(unsigned long now) {
 }
 #endif
 
+#if defined(HAS_PAGER_ENCODER)
+// T-LoRa Pager rotary encoder: a single linear nav axis (not 2D like the
+// trackball, so none of updateTrackball()'s game/emoji-grid/cursor special
+// cases apply) — each detent moves focus one step via the same navFifo the
+// KEYPAD indev already drains (tanmatsuKeypadRead), and a click is ENTER
+// (short) or ESC (long), exactly as specced. 1000 ms long-press threshold
+// matches the existing MomentaryButton convention used elsewhere (PIN_USER_BTN).
+static void updatePagerEncoder(unsigned long now) {
+  int delta = pagerEncoderReadDelta();
+  for (; delta > 0; delta--) navPushTap(LV_KEY_NEXT);
+  for (; delta < 0; delta++) navPushTap(LV_KEY_PREV);
+
+  static constexpr uint32_t kLongPressMs = 1000;
+  static bool     s_was_held    = false;
+  static uint32_t s_press_start = 0;
+  static bool     s_long_fired  = false;
+
+  const bool held = pagerEncoderClickHeld();
+  if (held && !s_was_held) {
+    s_press_start = now;
+    s_long_fired  = false;
+  } else if (held && !s_long_fired && (now - s_press_start) >= kLongPressMs) {
+    navPushTap(LV_KEY_ESC);
+    s_long_fired = true;
+  } else if (!held && s_was_held && !s_long_fired) {
+    navPushTap(LV_KEY_ENTER);   // released before the long-press threshold -> short click
+  }
+  s_was_held = held;
+}
+#endif
+
 // Specific popups that float OVER the app drawer / a tab. Used to swallow swipe
 // gestures so they don't leak to the drawer or switch tabs underneath them.
 // Defined OUTSIDE HAS_TDECK_KEYBOARD so the ungated gesture handlers can use it.
@@ -26906,10 +26948,12 @@ static bool anyPopupOpen() { return popupRegistryAny(); }
 static bool hwKeyDismissTopPopup() { return popupRegistryDismissTop(); }
 #endif  // HAS_TDECK_KEYBOARD || HAS_TANMATSU (hwKeyDismissTopPopup)
 
-#if defined(HAS_TDECK_KEYBOARD)
-// Keys that act as "close the popup" when no text field is focused. The user
-// picked the easy-to-find corner keys; there's no dedicated Esc on this keyboard.
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD)
+// Keys that act as "close the popup" when no text field is focused.
 static bool isDismissKey(int key) {
+#if defined(HAS_TDECK_KEYBOARD)
+  // The user picked the easy-to-find corner keys; there's no dedicated Esc on
+  // this keyboard.
   switch (key) {
     case 0x08:                       // backspace
     case 0x0D: case 0x0A:            // enter
@@ -26919,6 +26963,14 @@ static bool isDismissKey(int key) {
       return true;
     default: return false;
   }
+#else
+  // The pager's corner letters are real, constantly-typed QWERTY keys (unlike
+  // the T-Deck's sparser layout) -- treating them as "dismiss" would eat normal
+  // typing. Its dismiss key is the rotary encoder's long-press (-> LV_KEY_ESC
+  // via the nav FIFO, see updatePagerEncoder), not a keyboard key.
+  (void)key;
+  return false;
+#endif
 }
 
 // drawerPopupOpen() / anyPopupOpen() are defined just above the
@@ -26933,7 +26985,7 @@ static int tabForKey(int key) {
   (void)key;
   return -1;
 }
-#endif  // HAS_TDECK_KEYBOARD (keyboard helpers; the lock screen below is top-level)
+#endif  // HAS_TDECK_KEYBOARD || HAS_PAGER_KEYBOARD (keyboard helpers; the lock screen below is top-level)
 
 #if CAP_LOCK_SCREEN
 // ---- Lock screen -------------------------------------------------------------
@@ -27911,7 +27963,12 @@ static void buildBackupsSettings() {
 // Reopen the HAS_TDECK_KEYBOARD region paused above for the backup picker; it
 // closes at that region's original #endif further below. (The next #if is the
 // original spacebar-countdown guard, now nested one level deeper — harmless.)
-#if defined(HAS_TDECK_KEYBOARD)
+// Widened to HAS_PAGER_KEYBOARD too: handleHwKey() (defined in this region)
+// is exactly the routing function PagerKeyboard's char stream needs, and
+// every genuinely T-Deck-specific bit inside this range (the spacebar-lock
+// countdown, HAS_TDECK_GT911 touch bits) is already independently re-gated
+// on its own narrower macro, so it stays excluded for the pager regardless.
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD)
 
 #if defined(HAS_TDECK_KEYBOARD)
 // ---- Spacebar lock countdown -------------------------------------------------
@@ -28869,7 +28926,21 @@ static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
 // ---- Display backlight brightness (PWM on PIN_TFT_LEDA_CTL, active-high) ----
 // Both touch boards expose PIN_TFT_LEDA_CTL (T-Deck + Heltec V4 TFT), so the
 // brightness slider is available on both.
-#if defined(PIN_TFT_LEDA_CTL) && (PIN_TFT_LEDA_CTL >= 0)
+#if defined(TLORA_PAGER)
+// The pager ALSO defines PIN_TFT_LEDA_CTL (=42, for naming consistency across
+// boards — see platformio.ini), but that pin drives the AW9364's pulse-counted
+// stepped dimmer, not a PWM-capable pin — the #if below would drive nonsense
+// pulse timing into it via ledcAttachPin/ledcWrite. Must come before that
+// check. ST7796LCDDisplay already owns the real AW9364 protocol.
+#define HAS_CC_BRIGHTNESS 1
+static uint8_t s_brightness_pct = 100;
+static void applyBrightness(uint8_t pct) {
+  if (pct < 5)   pct = 5;
+  if (pct > 100) pct = 100;
+  s_brightness_pct = pct;
+  display.setBrightness(pct);
+}
+#elif defined(PIN_TFT_LEDA_CTL) && (PIN_TFT_LEDA_CTL >= 0)
 #define HAS_BACKLIGHT_PWM 1
 #define HAS_CC_BRIGHTNESS 1
 static uint8_t s_brightness_pct = 100;
@@ -35606,6 +35677,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // default rotation is 270 -> we run the UI landscape (logical 800x480) via LVGL sw-rotate.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
+#if defined(TLORA_PAGER)
+    // Panel is native 222x480 portrait; the pager has no touch to reorient with,
+    // so always run landscape via hardware MADCTL rotation (ROT_270 -> panel
+    // rotation 3, same mapping the boot wordmark already uses).
+    s_ui_rotation = LV_DISP_ROT_270;
+#endif
     // Apply the saved backlight brightness (takes the LEDA pin over from the
     // display's digitalWrite via LEDC PWM). Both touch boards have the LEDA pin.
 #if defined(HAS_CC_BRIGHTNESS)
@@ -35641,6 +35718,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // stays == the panel width, so it's never entered).
     g_lv.disp_drv.hor_res  = TAN_PANEL_PW;   // 480
     g_lv.disp_drv.ver_res  = TAN_PANEL_PH;   // 800
+#elif defined(TLORA_PAGER)
+    // Fixed landscape via hardware MADCTL rotation (like T-Deck/Heltec below),
+    // just a different native panel size — no ui_landscape ternary needed since
+    // this board is never portrait.
+    g_lv.disp_drv.hor_res  = 480;
+    g_lv.disp_drv.ver_res  = 222;
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
@@ -35699,6 +35782,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     tdeckTrackballBegin();
     tdeckTrackballSetRotation(s_ui_rotation);
 #endif
+#if defined(HAS_PAGER_KEYBOARD)
+    pagerKeyboardBegin();
+#endif
+#if defined(HAS_PAGER_ENCODER)
+    pagerEncoderBegin();
+#endif
     // (Audio: the I2S speaker amp is installed on demand per tone — see
     // tdeckPlayNotify — so nothing to set up at boot.)
 
@@ -35707,18 +35796,23 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // nullptr, and creating a child of nullptr was the boot-loop cause.
     buildGlobalStatusBar();
 
-#if defined(HAS_TANMATSU)
-    // No touchscreen: drive the UI with a KEYPAD indev fed by badge-bsp keys, with
-    // a focus group navMaybeRebuild() repopulates per screen.
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+    // No touchscreen: drive the UI with a KEYPAD indev, with a focus group
+    // navMaybeRebuild() repopulates per screen. Tanmatsu feeds it from badge-bsp
+    // keys (navPump, below); the pager feeds it from its own keyboard/encoder
+    // drain in the main loop (mirrors the T-Deck's handleHwKey() path for
+    // typing, plus a small updatePagerEncoder() for focus movement — see loop()).
     s_nav_group = lv_group_create();   // populated per-screen by navMaybeRebuild()/navCollect()
     lv_group_set_focus_cb(s_nav_group, navFocusCb);   // amber focus ring + scroll-into-view
     lv_indev_drv_init(&g_lv.indev_drv);
     g_lv.indev_drv.type    = LV_INDEV_TYPE_KEYPAD;
-    g_lv.indev_drv.read_cb = tanmatsuKeypadRead;
+    g_lv.indev_drv.read_cb = tanmatsuKeypadRead;   // device-neutral: just drains navFifo
     g_lv.indev_drv.disp    = lv_disp_get_default();
     if (lv_indev_t* kp = lv_indev_drv_register(&g_lv.indev_drv)) lv_indev_set_group(kp, s_nav_group);
     else pushDiagLine("LVGL keypad indev failed");
+#if defined(HAS_TANMATSU)
     bsp_input_get_queue(&s_nav_queue);
+#endif
 #else
     lv_indev_drv_init(&g_lv.indev_drv);
     g_lv.indev_drv.type    = LV_INDEV_TYPE_POINTER;
@@ -36435,7 +36529,17 @@ static inline void touchPanelSleep(bool) {}
  * Panel RAM survives SLPIN, so wake is near-instant and the previous image is
  * still on the glass when the LED lights back up — no partial re-render. */
 static inline void touchScreenBacklight(bool on) {
-#if defined(HAS_BACKLIGHT_PWM)
+#if defined(TLORA_PAGER)
+  // Also has TFT_BL defined (=-1, disabling TFT_eSPI's own backlight pin
+  // support), which would otherwise fall into the #elif defined(TFT_BL) branch
+  // below and digitalWrite a "-1" pin -- must come first. touchPanelSleep()
+  // has no ST7796-specific implementation (falls to the no-op default below,
+  // same as Tanmatsu), so screen-sleep here is backlight-off only, not a real
+  // panel sleep command -- a known, low-severity gap, not a regression (this
+  // board never had panel-sleep to begin with).
+  if (on) { touchPanelSleep(false); display.setBrightness(s_brightness_pct); }
+  else    { display.setBrightness(0); touchPanelSleep(true); }
+#elif defined(HAS_BACKLIGHT_PWM)
   // Both touch boards drive the backlight via LEDC PWM on PIN_TFT_LEDA_CTL once
   // applyBrightness() has claimed the pin at boot. A plain digitalWrite would
   // then be a no-op (on the V4, TFT_BL == PIN_TFT_LEDA_CTL == GPIO21), so drive
@@ -37320,6 +37424,8 @@ void UITask::loop() {
   }
 #if CAP_TRACKBALL
   updateTrackball(now);
+#elif defined(HAS_PAGER_ENCODER)
+  updatePagerEncoder(now);
 #endif
 #if defined(HAS_TDECK_KEYBOARD)
   // Drain physical-keyboard presses buffered by the touch task into the field.
@@ -37359,6 +37465,19 @@ void UITask::loop() {
   tdeckKeyboardSetBacklight(kb_bl);
   serviceLockscreen();            // refresh the lock-screen clock on minute roll-over
   serviceLockingCountdown(now);   // advance / fire the spacebar "Locking…" countdown
+#elif defined(HAS_PAGER_KEYBOARD)
+  // Simpler than the T-Deck's: no keyboard-backlight-mode timer or spacebar-lock
+  // countdown wiring yet (pagerKeyboardSetBacklight() exists but isn't hooked up
+  // here, and this board's lock trigger -- if any -- isn't the spacebar, which
+  // is a real typing key on a full QWERTY, unlike the T-Deck's sparse layout).
+  // No separate core-0 touch task to own the I2C bus either (no touch at all),
+  // so poll and drain right here, once per tick.
+  pagerKeyboardPoll();
+  for (int kbi = 0; kbi < 12; ++kbi) {
+    int key = pagerKeyboardReadKey();
+    if (key <= 0) break;
+    handleHwKey(key);
+  }
 #endif
 #if defined(HAS_TANMATSU)
   // Drive the keyboard backlight from off/on/auto + the Keys-slider brightness; keep it
@@ -37529,6 +37648,10 @@ void UITask::loop() {
 #if defined(HAS_TANMATSU)
   navMaybeRebuild();   // keep the keyboard-nav focus group in sync with the visible screen
   navPump();           // drain bsp keys: queue focus moves, type straight into focused fields
+#elif defined(TLORA_PAGER)
+  // No touch fallback here either (like Tanmatsu) -- nav is always on, just fed
+  // from the keyboard/encoder drain above instead of a bsp queue.
+  navMaybeRebuild();
 #elif CAP_TRACKBALL
   // Keep the focus group synced whenever EITHER nav mode is active: the keyboard ESDFX nav
   // (fed by handleHwKey) or the trackball D-pad nav (fed by updateTrackball -> navMoveDir).
