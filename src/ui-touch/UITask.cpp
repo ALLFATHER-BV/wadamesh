@@ -47,7 +47,7 @@
   static inline esp_err_t esp_core_dump_image_erase() { return ESP_FAIL; }
   #endif
 #endif
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   #include <SD.h>             // microSD (CS=39) on the shared LoRa SPI bus
   #include "sd_diskio.h"      // internal Arduino-SD drive helpers (sdcard_init / sd_*_raw)
   extern SPIClass* tdeckSharedSPI();
@@ -63,6 +63,7 @@
 #endif
 #if defined(HAS_THINKNODE_M9)
   extern void m9SetBacklight(bool on);
+  extern SPIClass* m9SharedSPI();
 #endif
 #if defined(HAS_TDECK_GT911)
   #include <driver/i2s.h>     // T-Deck MAX98357A speaker amp (notification tones)
@@ -15298,8 +15299,8 @@ static char      s_fm_path[160]  = {0};     // current dir within s_fm_fs (e.g. 
 // a generic fs::FS*; only &SD is real microSD I/O (Internal = SPIFFS). Browsing
 // (fmRefresh) and the file open/save paths call this; mutations re-list via
 // fmRefresh, so they blip the LED too.
-#if defined(HAS_TDECK_GT911)
-static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // Arduino SD on the shared LoRa SPI bus (both boards)
 #elif defined(HAS_TANMATSU)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD_MMC; }   // microSD on SDMMC slot 0
 #else
@@ -16037,13 +16038,17 @@ static void fmFmtSize64(uint64_t bytes, char* out, size_t outsz) {
   else                                     snprintf(out, outsz, "%.1f GB", bytes / (1024.0 * 1024 * 1024));
 }
 
-#if defined(HAS_TDECK_GT911)   // microSD mount/format helpers — Arduino SD on the shared LoRa SPI (T-Deck only)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)  // microSD mount/format helpers — Arduino SD on the shared LoRa SPI (T-Deck only)
 // Mount the microSD on the shared LoRa SPI bus. Safe to call repeatedly (no-op
 // once mounted). SD.begin's internal spi.begin() is a no-op because the bus is
 // already initialised by the radio, so the radio's pins are untouched.
 static bool fmSdTryMount() {
   if (s_sd_mounted) return true;
+#if defined(HAS_TDECK_GT911)
   SPIClass* spi = tdeckSharedSPI();
+#else
+  SPIClass* spi = m9SharedSPI();
+#endif
   if (!spi) return false;
   // Cold microSD cards — especially the first mount after boot — often fail
   // the initial SD.begin and historically only recovered after a physical
@@ -16109,7 +16114,7 @@ static void fmSdClickCb(lv_event_t* e) {
   if (s_sd_mounted) fmOpenStorage(&SD, "SD", "/");
 }
 
-#endif  // HAS_TDECK_GT911 (microSD mount helpers; the busy overlays below are generic LVGL)
+#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (microSD mount helpers; the busy overlays below are generic LVGL)
 
 // Full-screen "busy" notice (copy/move/format). Pure LVGL — used by the generic paste path too.
 static void fmShowBusyOverlay(const char* msg) {
@@ -16136,7 +16141,7 @@ static void fmHideFormatOverlay() {
   if (s_fm_fmt_overlay) { popupClose(&s_fm_fmt_overlay); }
 }
 
-#if defined(HAS_TDECK_GT911)   // SD format helpers resume (Arduino SD, T-Deck only)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // SD format helpers resume (Arduino SD, T-Deck + M9 only)
 // Confirm callback: paint the formatting notice, then defer the (blocking)
 // f_mkfs to UITask::loop so the notice is on-screen before the loop freezes.
 static void fmSdDoFormat() {
@@ -16242,7 +16247,7 @@ static void fmSdLongPressFormatCb(lv_event_t* e) {
               "Format", fmSdDoFormat);
 }
 
-#endif  // HAS_TDECK_GT911 (microSD mount/format helpers)
+#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (microSD mount/format helpers)
 
 // ---- File operations (Phase 4a: delete / rename / new folder) ----
 struct FmRowData { char name[64]; bool isdir; };
@@ -17352,7 +17357,7 @@ static void fmShowRoots() {
   fmStyleRow(b, COLOR_TEXT);
   lv_obj_add_event_cb(b, fmInternalClickCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911)   // microSD row (Arduino SD) — T-Deck only
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)  // microSD row (Arduino SD) — T-Deck + M9
   // Probe the SD only when not in a mount-backoff window, so a persistently
   // unmountable card doesn't re-grind the full retry ladder on every render of
   // this page. Tapping the row below (fmSdMountOrFormatCb) bypasses the gate.

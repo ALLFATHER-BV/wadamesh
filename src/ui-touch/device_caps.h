@@ -49,12 +49,12 @@
   #define CAP_TOUCH        0   // no touchscreen — QWERTY keyboard + d-pad only
   #define CAP_ROTATABLE    0   // fixed landscape panel
   #define CAP_LARGE_SCREEN 0   // 240x320, same panel size as the T-Deck
-  // microSD: DISABLED until ported to SD_MMC. The Meshtastic boot log shows the
-  // M9's card on SD_MMC (SDMMC peripheral), NOT the shared SPI bus — and the
-  // "CS=36" from the earlier schematic reading is an octal-PSRAM pin (GPIO35-37
-  // are reserved on the S3R8; driving 36 wedges PSRAM). Real SDMMC pins needed
-  // from the Meshtastic variant.h — see M9_PORT.md.
-  #define CAP_SD           0
+  // microSD: on the shared LoRa SPI bus, same as T-Deck (Arduino SD, not
+  // SD_MMC). CS is GPIO48 (schematic net SPICLK_N) — confirmed free on this
+  // board's plain ESP32-S3R8 (the GPIO47/48 SPICLK_P/N differential-clock
+  // reservation only applies to the R8V/R16V variants). See platformio.ini
+  // for PIN_SD_CS.
+  #define CAP_SD           1
   #define CAP_FILESYSTEM   1
   #define CAP_GPS          1   // CC1167Q on UART
   #define CAP_OTA          1   // 16 MB flash, dual A/B app slots (see partitions_tdeck_touch.csv)
