@@ -37551,7 +37551,6 @@ void UITask::loop() {
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = m9KeyboardReadKey();
     if (key <= 0) break;
-    Serial.printf("[M9KB] key=0x%02X\n", key);   // bring-up only: proves poll->ring->drain
     if (!_screen_off) s_kb_last_key_ms = now;
     handleHwKey(key);
   }
