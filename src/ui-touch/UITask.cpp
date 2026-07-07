@@ -2458,7 +2458,7 @@ static void navFocusCb(lv_group_t* g) {
     uint32_t nc = lv_obj_get_child_cnt(f);
     for (uint32_t i = 0; i < nc; i++) navInvertText(lv_obj_get_child(f, i));
   }
-  if (!s_nav_suppress_scroll) lv_obj_scroll_to_view(f, LV_ANIM_OFF);
+  if (!s_nav_suppress_scroll) lv_obj_scroll_to_view_recursive(f, LV_ANIM_OFF);
 }
 
 #if CAP_KEYPAD_NAV
