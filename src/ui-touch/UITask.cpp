@@ -6080,6 +6080,7 @@ static void openAppDrawer();    // fwd — app-drawer overlay (defined below ope
 static void closeAppDrawer();
 static void setHomeDrawer(bool show);
 static void closeMentionsScreen();           // fwd — @-mentions screen (defined with the drawer)
+static void openMentionsScreen();            // fwd — same
 static void closeAppDrawerSync();            // fwd — synchronous drawer close (safe outside the drawer's own event)
 static lv_obj_t* s_mentions_root = nullptr;  // @-mentions list overlay
 // The Home tab shows the command centre OR the app drawer; remember which so
@@ -7136,8 +7137,7 @@ static void advertDismissCb(lv_event_t* e) {
   closeAdvertPage();
 }
 
-static void openAdvertModalCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+static void openAdvertPage() {
   closeAdvertPage();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -7277,6 +7277,10 @@ static void openAdvertModalCb(lv_event_t* e) {
 
   lv_obj_move_foreground(s_advert_root);            // above the tabview
   lv_obj_move_foreground(g_statusbar.root);         // keep the tall title bar above this page (back chevron fully visible)
+}
+
+static void openAdvertModalCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) openAdvertPage();
 }
 
 // ---- Discovered list modal: shows adverts NOT yet in contacts[], with "Add" buttons ----
@@ -28043,14 +28047,20 @@ static bool m9HandleNavKey(int key) {
       else                                  navGoToMainTab(HOME_TAB_INDEX);
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_LEFT_MESSAGE:
-    case M9_KEY_SUB_MESSAGE:
       if (s_setup_root) return true;
       navGoToMainTab(CHAT_INBOX_TAB_INDEX);
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_SUB_MESSAGE:
+      if (s_setup_root) return true;
+      openMentionsScreen();
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_MAP:
-    case M9_KEY_SUB_MAP:
       if (s_setup_root) return true;
       navGoToMainTab(MAP_TAB_INDEX);
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_SUB_MAP:
+      if (s_setup_root) return true;
+      openAdvertPage();
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     default: return false;
   }
