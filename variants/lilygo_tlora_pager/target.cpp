@@ -4,8 +4,21 @@
 
 TLoraPagerBoard board;
 
-static SPIClass spi;
-RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, spi);
+// The radio and display share the SAME physical SCLK/MISO/MOSI pins (only CS
+// differs: LORA_NSS vs TFT_CS) -- genuine ESP32 bus sharing needs ONE SPIClass
+// object serializing access via its own begin/endTransaction + each device's
+// own CS, not two separate SPIClass hosts pointed at the same pins. Two hosts
+// (confirmed on hardware) means whichever calls spi.begin() LAST silently
+// steals the GPIO matrix's output routing for those pins away from the other
+// -- the display's writes keep "succeeding" in software (no error, isOn()
+// still true) but the electrical signal never reaches the glass again, since
+// radio_init() (which must run after display.begin() -- see main.cpp) was
+// that "last" caller. TFT_eSPI::getSPIinstance() is its public accessor for
+// the exact SPIClass object display.begin() already attached to these pins;
+// reusing it here (instead of our own separate SPIClass) is what makes this
+// a real shared bus. Depends on DISPLAY_CLASS always being defined for this
+// board today -- revisit if a headless pager env is ever added.
+RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, TFT_eSPI::getSPIinstance());
 
 WRAPPER_CLASS radio_driver(radio, board);
 
@@ -35,7 +48,12 @@ bool radio_init() {
   // I2C itself is already up: TLoraPagerBoard::begin() calls Wire.begin(SDA, SCL)
   // and runs before radio_init() in main.cpp's setup(), so no Wire.begin() here.
 
-  spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
+  // No spi.begin() here: the shared SPIClass (see the `radio` global above)
+  // was already attached to SCLK/MISO/MOSI by display.begin(), which runs
+  // earlier in main.cpp's setup(). Calling begin() again here would just be
+  // this same object re-doing its own attach -- harmless in isolation, but
+  // unnecessary, and it's one less thing to keep in sync if the boot order
+  // ever changes.
 
 #ifdef LORA_CR
   uint8_t cr = LORA_CR;

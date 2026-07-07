@@ -26898,6 +26898,20 @@ static void updateTrackball(unsigned long now) {
 // matches the existing MomentaryButton convention used elsewhere (PIN_USER_BTN).
 static void updatePagerEncoder(unsigned long now) {
   int delta = pagerEncoderReadDelta();
+  const bool held = pagerEncoderClickHeld();
+
+  // No touch and no trackball on this board: the encoder (and the keyboard,
+  // see the HAS_PAGER_KEYBOARD drain in loop()) are the ONLY way to wake an
+  // idle-dimmed screen. Turning/clicking it just wakes -- it's swallowed here
+  // rather than also acting as nav, matching the trackball's edge-triggered
+  // wake+consume pattern (T-Deck/Tanmatsu always have touch or the trackball
+  // as a separate wake path; this board doesn't, so the gap is fatal there
+  // and had to be closed here instead of copied from either of them).
+  if (g_lv.task && g_lv.task->isScreenOff()) {
+    if (delta != 0 || held) g_lv.task->wakeScreen();
+    return;
+  }
+
   for (; delta > 0; delta--) navPushTap(LV_KEY_NEXT);
   for (; delta < 0; delta++) navPushTap(LV_KEY_PREV);
 
@@ -26906,7 +26920,6 @@ static void updatePagerEncoder(unsigned long now) {
   static uint32_t s_press_start = 0;
   static bool     s_long_fired  = false;
 
-  const bool held = pagerEncoderClickHeld();
   if (held && !s_was_held) {
     s_press_start = now;
     s_long_fired  = false;
@@ -37473,10 +37486,26 @@ void UITask::loop() {
   // No separate core-0 touch task to own the I2C bus either (no touch at all),
   // so poll and drain right here, once per tick.
   pagerKeyboardPoll();
-  for (int kbi = 0; kbi < 12; ++kbi) {
-    int key = pagerKeyboardReadKey();
-    if (key <= 0) break;
-    handleHwKey(key);
+  if (g_lv.task && g_lv.task->isScreenOff()) {
+    // Same rationale as updatePagerEncoder(): no touch/trackball wake path on
+    // this board, so a keypress while idle-dimmed just wakes the screen
+    // instead of being silently swallowed (which is what handleHwKey()'s own
+    // isScreenOff() guard does on every other board -- fine there since they
+    // always have touch or the trackball to wake with instead). Drain the
+    // whole batch so nothing queued here leaks through as real input on the
+    // very next tick right after waking.
+    bool any = false;
+    for (int kbi = 0; kbi < 12; ++kbi) {
+      if (pagerKeyboardReadKey() <= 0) break;
+      any = true;
+    }
+    if (any) g_lv.task->wakeScreen();
+  } else {
+    for (int kbi = 0; kbi < 12; ++kbi) {
+      int key = pagerKeyboardReadKey();
+      if (key <= 0) break;
+      handleHwKey(key);
+    }
   }
 #endif
 #if defined(HAS_TANMATSU)

@@ -195,24 +195,47 @@ TX power (that class of bug cost the T-Deck ~16 dB once; see the
 
 **Deliverables**
 1. `src/helpers/ui/ST7796LCDDisplay.{h,cpp}` — implement the core's `DisplayDriver`
-   interface exactly as `ST7789LCDDisplay` does (find it in the core lib after a
-   build: `.pio/libdeps/<env>/MeshCore/src/helpers/ui/ST7789LCDDisplay.h`). The
-   LVGL path in `UITask.cpp` only calls: `begin()`, `width()`, `height()`,
-   `startFrame()`/`endFrame()`, `setDisplayRotation(int)`,
+   interface. **`ST7789LCDDisplay` is NOT built on TFT_eSPI** (re-verified while
+   executing this milestone) — it's Adafruit_GFX/Adafruit_ST7789-based for both
+   Heltec V4 and T-Deck (same class/file); the Heltec V4 env's TFT_eSPI lib_dep/
+   `-D` flags are vestigial, nothing else in the repo `#include`s `TFT_eSPI.h`.
+   Use `ST7789LCDDisplay` only for the `DisplayDriver`-satisfying shape, not for
+   any TFT_eSPI API calls — this is the first real TFT_eSPI consumer in the repo,
+   verify every method against the pinned `bodmer/TFT_eSPI @ ^2.5.43` source
+   directly. The LVGL path in `UITask.cpp` only calls: `begin()`, `width()`,
+   `height()`, `startFrame()`/`endFrame()`, `setDisplayRotation(int)`,
    `writePixelsRGB565(x, y, w, h, buf)` (flush at `UITask.cpp` ~2069), plus what
    `main.cpp:244+` uses for the boot screen. Build it on **TFT_eSPI**
-   (`ST7796_DRIVER`) the way the Heltec V4 wires TFT_eSPI via `USER_SETUP_LOADED`
-   `-D`s. Panel native is **222×480 portrait**; landscape 480×222 comes from
-   MADCTL rotation (`setRotation`), same approach as the existing boards.
-   Guard the whole TU with the pager's board macro so other envs don't compile it.
+   (`ST7796_DRIVER`). Panel native is **222×480 portrait**; landscape 480×222
+   comes from MADCTL rotation (`setRotation`), same approach as the existing
+   boards. Guard the whole TU with the pager's board macro (`TLORA_PAGER`) so
+   other envs don't compile it.
+   **Critical, verified from TFT_eSPI's actual `ST7796_Rotation.h`/`ST7796_Defines.h`**:
+   this panel's 222px glass is narrower than the ST7796 controller's 320px GRAM
+   (trail-mate's 49px offsets = `(320-222)/2`). TFT_eSPI already applies the fix
+   automatically in `setAddrWindow()`, but only when `-D CGRAM_OFFSET=1` is set
+   (unlike `ST7789_Defines.h`, `ST7796_Defines.h` doesn't self-define it) — **add
+   this flag to M4's build flags below**, or every frame renders shifted/cropped
+   by 49px with no build error. A `#error` guard in `ST7796LCDDisplay.cpp` catches
+   the omission at M4 compile time.
 2. Backlight: the AW9364 is a **stepped one-wire dimmer** (pulse-counted levels,
-   16 steps), not a PWM pin — small helper (crib the pulse timing from trail-mate),
-   either inside the display class or as `Aw9364Backlight.{h,cpp}` next to it.
-   Expose the same brightness hook `ST7789LCDDisplay` exposes so the existing
-   Settings brightness UI keeps working.
+   16 steps), not a PWM pin. Consume `lewisxhe/SensorLib`'s `AW9364LedDriver`
+   directly (header-only, MIT, already an M1-established dependency) rather than
+   hand-rolling the pulse timing — wrap it directly inside `ST7796LCDDisplay`
+   (no separate `Aw9364Backlight.{h,cpp}`; `ST7789LCDDisplay` turned out to have
+   no brightness hook at all to mirror — brightness on the other boards is a
+   `UITask.cpp`-owned free function doing raw LEDC PWM on `PIN_TFT_LEDA_CTL`,
+   which the AW9364 can't use). Expose `setBrightness(uint8_t pct)`/
+   `getBrightness()` (0-100, matching the Settings UI's existing convention) so
+   Milestone 6 can wire it in with one line — **M6 needs a new branch ahead of
+   `UITask.cpp`'s existing `PIN_TFT_LEDA_CTL` PWM branch**, since once M4 defines
+   that macro for the pager the existing LEDC-PWM code would also compile and
+   fight the AW9364's pulse protocol.
 
-**Gate:** both existing envs build. (The new TU is gated off for them; it first
-compiles for real in M4 — expect to iterate on it then.)
+**Gate:** both existing envs build. (The new TU is gated off for them — neither
+env's `build_src_filter` references `helpers/ui/*.cpp` yet — so it isn't even
+parsed by either compiler today; it first compiles for real in M4 — expect to
+iterate on it then.)
 
 ---
 
@@ -238,7 +261,11 @@ and fix M1–M3 files as needed (that's in-scope here).
      `P_LORA_MOSI=34`. Drop the SX126X-specific `-D`s (`SX126X_*`, `USE_SX1262`);
      optionally add `RADIOLIB_EXCLUDE_SX126X=1`.
    - Display: `-D DISPLAY_CLASS=ST7796LCDDisplay`, TFT_eSPI set:
-     `USER_SETUP_LOADED=1`, `ST7796_DRIVER=1`, `TFT_WIDTH=222`, `TFT_HEIGHT=480`,
+     `USER_SETUP_LOADED=1`, `ST7796_DRIVER=1`, **`CGRAM_OFFSET=1`** (REQUIRED —
+     see Milestone ③: without it this panel's 222px-vs-320px GRAM mismatch
+     goes uncorrected and every frame renders shifted/cropped by 49px with no
+     build error; `ST7796LCDDisplay.cpp` has a `#error` guard that fires if
+     this is missing), `TFT_WIDTH=222`, `TFT_HEIGHT=480`,
      `TFT_MOSI=34`, `TFT_SCLK=35`, `TFT_CS=38`, `TFT_DC=37`, `TFT_RST=-1`,
      `TFT_MISO=33`, `TFT_BL=-1` (AW9364 owns brightness), `SPI_FREQUENCY` per
      trail-mate's panel clock.
@@ -248,16 +275,50 @@ and fix M1–M3 files as needed (that's in-scope here).
      `PIN_GPS_TX=4` (swapped vs. trail-mate's raw values — see M2's deliverable
      ④ for why), `GPS_BAUD_RATE=38400`.
    - `FIRMWARE_OTA_ENV='"tlora_pager_lr1121_companion_radio_touch"'`.
-   - `build_src_filter`: T-Deck's list with `+<../variants/lilygo_tlora_pager/*.cpp>`.
+   - `build_src_filter`: T-Deck's list with `+<../variants/lilygo_tlora_pager/*.cpp>`
+     **and `+<helpers/ui/*.cpp>`** — the second line is required and easy to
+     miss: `ST7796LCDDisplay.cpp` lives in `src/helpers/ui/`, and neither
+     existing env's filter reaches that subdirectory (only `helpers/*.cpp`,
+     non-recursive). Added only to the pager's env, not retrofitted onto
+     Heltec V4/T-Deck.
    - `lib_deps`: T-Deck's list **plus** `bodmer/TFT_eSPI @ ^2.5.43`,
-     `adafruit/Adafruit TCA8418 @ ^1.0.2`, `lewisxhe/SensorLib` (pin the latest
-     release), and (only if M1 ended up needing it) `lewisxhe/XPowersLib`.
+     `adafruit/Adafruit TCA8418 @ ^1.0.2`, `lewisxhe/SensorLib @ 0.3.3` (the
+     exact version trail-mate's own `platformio.ini` pins — confirmed by
+     reading it directly, not guessed). **Also drop**
+     `adafruit/Adafruit ST7735 and ST7789 Library` from the cloned T-Deck
+     list — that's the Adafruit display backend `ST7789LCDDisplay` uses;
+     unneeded here since `ST7796LCDDisplay` is TFT_eSPI-only. No `XPowersLib`
+     (M1 left the BQ25896 charger out of scope).
    - Do NOT add the env to `default_envs` yet (keeps `pio run` = the two shipping
      boards until the port stabilizes).
-2. Whatever fixes M1–M3 files need to make it link.
+2. Whatever fixes M1–M3 files need to make it link. **Two were needed, both
+   found only by actually compiling — see `TLORA_PAGER_PORT.md` Decisions ②
+   and ⑧ for full detail:**
+   - `variants/lilygo_tlora_pager/pins_arduino.h` had to move to its own
+     `variants/lilygo_tlora_pager_pins/` folder (board JSON's `"variant"`
+     updated to match) — PlatformIO's arduino-esp32 build script
+     unconditionally compiles everything under
+     `board_build.variants_dir/<board.variant>/` as a separate
+     `FrameworkArduinoVariant` library with none of our `lib_deps`, and since
+     this board (unlike T-Deck/Heltec) has no framework-bundled variant, our
+     own `variants_dir` override was colliding with our own app-glue
+     directory.
+   - `CustomLR1121Wrapper.h`'s bare quoted `#include "RadioLibWrappers.h"`/
+     `"LR11x0Reset.h"` (copied from `CustomLR1110Wrapper.h`'s shape) don't
+     resolve outside the core lib's own directory — changed to angle-bracket
+     `<helpers/radiolib/...>`.
+   - **One small, forced addition to `src/ui-touch/UITask.cpp`** was also
+     unavoidable (not an M1–M3 file, but required for this milestone's own
+     hard gate): its display-class `#include`/`extern` block only recognized
+     `HAS_TANMATSU` vs. everything-else-is-`ST7789LCDDisplay` — added a single
+     `#elif defined(TLORA_PAGER)` arm to each of the two spots (~line 96-130),
+     nothing else touched. Full UITask wiring (indev, resolution, 222px
+     layout) remains Milestone ⑥'s job.
 
-**Gate (hard):** all **three** envs build green. Record flash/RAM usage of the
-pager build in the tracker.
+**Gate (hard):** all **three** envs build green — **verified**. Flash/RAM
+usage recorded in `TLORA_PAGER_PORT.md`'s status line (pager: RAM 22.6%,
+Flash 66.1%, both lower than the two shipping boards since the UI isn't wired
+up yet).
 
 ---
 
@@ -267,68 +328,132 @@ pager build in the tracker.
 (begin/poll/read API, ring buffers, **zero LVGL inside drivers**).
 
 **Deliverables**
-1. `src/helpers/input/PagerKeyboard.{h,cpp}` — TCA8418 over I²C (Adafruit lib),
-   INT pin 6 (prefer INT-driven drain; polled fallback fine). API mirrors
-   `TDeckKeyboard.h`: `pagerKeyboardBegin()`, `pagerKeyboardPoll()`,
-   `pagerKeyboardReadKey()` → **final ASCII/control codes** — i.e. the keymap +
-   shift/sym/alt state machine lives HERE, so the UI sees the same char stream the
-   T-Deck's C3 keyboard produces and `handleHwKey()` needs no changes. Crib the
-   matrix→ASCII layout tables from trail-mate's `LilyGoKeyboard` (find it under
-   `~/dev/trail-mate`; it's the working reference for this exact hardware).
-   Include keyboard backlight control (pin 46) mirroring
-   `tdeckKeyboardSetBacklight()` so the existing settings hook can drive it.
-2. `src/helpers/input/PagerEncoder.{h,cpp}` — quadrature on A=40/B=41 with ISR
-   edge-counting exactly like `TDeckTrackball.cpp:27-47`, press on GPIO 7 with
-   held-state API. Suggested API: `pagerEncoderBegin()`,
-   `pagerEncoderReadDelta()` (signed detents since last call),
-   `pagerEncoderClickHeld()`.
+1. `src/helpers/input/PagerKeyboard.{h,cpp}` — TCA8418 over I²C (Adafruit lib,
+   already an M4 dependency). **Note found executing this milestone**:
+   `TDeckKeyboard.h`'s API shape (begin/poll/readKey/setBacklight, SPSC ring,
+   threading-contract doc comment) is still the right thing to mirror, but
+   its *implementation* is not — the T-Deck's keyboard is a second MCU that
+   resolves ASCII itself before the I2C read, so `TDeckKeyboard.cpp` never
+   touches a keymap. The TCA8418 reports raw row/col events, so the keymap +
+   shift/sym/alt state machine has to live in `PagerKeyboard.cpp` itself, as
+   originally planned. Matrix→ASCII layout tables cribbed verbatim from
+   trail-mate's `LilyGoKeyboard` (same physical PCB) — `keymap[4][10]`/
+   `symbol_map[4][10]`, Alt-as-hold-symbol-layer, Caps-as-toggle, Backspace
+   special-cased. **Verify the TCA8418 press/release bit polarity against the
+   actual TI datasheet (SCPS215E), not the Adafruit library's own header
+   comment** — they disagree (datasheet: bit 7 = 1 is press; the Adafruit
+   comment claims the opposite), and trail-mate's code matches the datasheet.
+   Implemented keyboard backlight as direct LEDC PWM on GPIO 46 (not
+   `tdeckKeyboardSetBacklight()`'s I2C-deferred-flush design — that
+   complexity existed specifically for a shared-bus/second-MCU concern that
+   doesn't apply here); **check which LEDC API this repo's pinned
+   Arduino-ESP32 framework version actually has** (`ledcSetup`/
+   `ledcAttachPin`/`ledcWrite` by channel vs. the newer pin-based
+   `ledcAttach()`) before writing the call — trail-mate had to version-gate
+   between the two.
+2. `src/helpers/input/PagerEncoder.{h,cpp}` — quadrature on A=40/B=41, press
+   on GPIO 7. **Note found executing this milestone**: `TDeckTrackball.cpp`'s
+   4 direction pins are independent discrete pulses (no direction logic
+   needed — each pin already means one direction), not a true A/B quadrature
+   pair, so its exact ISR shape doesn't transfer to a signed-delta quadrature
+   decode. Use a standard Gray-code transition table instead (interrupt both
+   A and B on `CHANGE`, table lookup by `(prev_state<<2)|curr_state` yields
+   +1/-1/0 per edge) — same ISR-cheap-arithmetic-only / `noInterrupts()`-
+   snapshot-read shape as `TDeckTrackball.cpp`, correct decode logic for a
+   real quadrature signal. Convert raw transitions to detents via a
+   `STEPS_PER_DETENT` divisor (4 is the common EC11-style default) —
+   **unverified against this exact part, confirm on hardware in M7/M8**.
+   API: `pagerEncoderBegin()`, `pagerEncoderReadDelta()` (signed detents since
+   last call), `pagerEncoderClickHeld()`.
 3. Both TUs gated by their cap macros (`HAS_PAGER_KEYBOARD` / `HAS_PAGER_ENCODER`);
    already picked up by the M4 `build_src_filter` (`+<helpers/input/*.cpp>`).
+   Added the pin `-D`s (`KB_INT=6`, `KB_BACKLIGHT=46`, `ROTARY_A=40`,
+   `ROTARY_B=41`, `ROTARY_C=7`) to the pager env in `platformio.ini`,
+   matching the repo's explicit-flag-alongside-`.cpp`-fallback convention.
 
-**Gate:** all three envs build. Driver headers carry a short doc comment stating
-the contract (like `TDeckTrackball.h` does).
-
----
-
-## Milestone 6 — UITask wiring (caps, indev, resolution, 222-px layout)
-
-**Objective:** the pager becomes a first-class UI target. This is the largest
-milestone — work through it in the order below, keeping every change behind the
-pager gate. Line anchors are beta_35-era; search for the symbols.
-
-**Deliverables**
-1. `src/ui-touch/device_caps.h` — new pager block: no touch, hw keyboard, encoder,
-   480×222, SD, GPS. Follow the existing cap style; wire `HAS_PAGER_KEYBOARD`/
-   `HAS_PAGER_ENCODER`/`TLORA_PAGER` into the caps the UI actually branches on.
-2. **Indev registration** (`UITask.cpp` ~35706–35751): extend the Tanmatsu
-   keypad-only branch (KEYPAD indev + `s_nav_group`, read_cb `tanmatsuKeypadRead`)
-   to also cover the pager cap. Do NOT register the POINTER indev for the pager.
-3. **Input drain** (main loop, mirror the T-Deck drain at ~37320): pager branch —
-   `pagerKeyboardPoll()` + `while ((k = pagerKeyboardReadKey())) handleHwKey(k);`
-   encoder: `pagerEncoderReadDelta()` → `navFifoPush(LV_KEY_NEXT/PREV)` per detent,
-   click → ENTER via the FIFO, long-press → ESC. Respect `s_nav_ta_editing`
-   semantics already implemented in `handleHwKey()` (~27990) — no changes expected
-   there beyond verifying the nav-hotkey cluster doesn't collide with pager typing.
-4. **Resolution** (~35626): new branch — pager is fixed 480×222 landscape via
-   hardware MADCTL rotation (`hor_res=480, ver_res=222`, no `sw_rotate`, no
-   portrait mode). Draw buffer (~1399): width 480.
-5. **222-px vertical audit** — the real work. Budget: status bar + tab bar +
-   content in 222 px, no on-screen keyboard ever (reuse the T-Deck suppression,
-   ~1153/2691/28005). Review `STATUSBAR_H`, `TABBAR_H`, `CHAT_KB_H` (~913–944) and
-   the modal/chat height helpers (`tabContentW/H`, `modalAvailW/H`,
-   `chatScreenW/H`); introduce pager-gated slimmer values where 222 px overflows.
-   Screens to check compile-time/desk-level (full on-device pass is M8): Home,
-   chat thread + compose, contacts list, settings list, modals/toasts.
-6. Boot screen: `main.cpp:263-267` paints the wordmark via `writePixelsRGB565` —
-   make sure the centering math handles 480×222.
-
-**Gate:** all three envs build; T-Deck/V4 binaries behaviorally unchanged (every
-edit sits behind the pager gate — spot-check the diff for un-gated changes).
-Update the tracker's UI-inventory table with what was actually touched.
+**Gate:** all three envs build — verified. Driver headers carry a short doc
+comment stating the contract (like `TDeckTrackball.h` does).
 
 ---
 
-## Milestone 7 — Headless hardware bring-up (needs device + human)
+## Milestone 6 — UITask wiring (caps, indev, resolution, 222-px layout) — DONE
+
+**Objective:** the pager becomes a first-class UI target. Landed; see
+`TLORA_PAGER_PORT.md` worklist ⑥, the UI-changes inventory table, and risks
+1h/1i/1j/8/9 for full detail. Summary of what actually happened, including
+several corrections vs. this section's original plan:
+
+1. `device_caps.h` got its `TLORA_PAGER` block as planned, but **`CAP_SD`/
+   `CAP_FILESYSTEM` ended up 0, not 1** — the mount code they'd gate
+   (`fmSdTryMount()`, `#include <SD.h>`) is hardcoded to `HAS_TDECK_GT911`
+   specifically and was never actually migrated to be `CAP_SD`-generic, so
+   setting them to 1 just produced "not declared" errors, not real SD
+   support. `CAP_KEYBOARD`/`CAP_KEYPAD_NAV` widened as planned.
+2. **Indev registration** (~35706): widened the Tanmatsu branch's gate to
+   `defined(HAS_TANMATSU) || defined(TLORA_PAGER)` as planned. The pager does
+   NOT call `bsp_input_get_queue` (that stays Tanmatsu-only, correctly kept
+   under its own inner `#if`).
+3. **Input drain**: implemented as planned
+   (`pagerKeyboardPoll()`/`pagerKeyboardReadKey()`→`handleHwKey()`), plus a
+   new `updatePagerEncoder()` (delta→`navPushTap(NEXT/PREV)`, click→ENTER,
+   long-press ≥1000ms→ESC) placed in the main loop alongside the T-Deck
+   trackball update. **Found during implementation, not anticipated by this
+   plan**: `navMaybeRebuild()` — the function that actually populates the
+   focus group every screen — was unreachable for the pager's cap
+   combination (only called under the Tanmatsu/`CAP_TRACKBALL` branches);
+   without a fix the KEYPAD indev would have registered successfully but
+   never had anything to focus. Added a `#elif defined(TLORA_PAGER)` arm.
+   Also found: `handleHwKey()` and friends (`isDismissKey`, `tabForKey`,
+   `navMenubarKeysSync`) live inside several separately "paused and
+   reopened" `#if defined(HAS_TDECK_KEYBOARD)` regions scattered through the
+   file — each reopen's gate needed widening individually (traced real
+   nesting depth, not just grep hits), and the T-Deck-only p/q/a
+   dismiss-key mapping was deliberately kept under its own unwidened gate
+   since it would break normal QWERTY typing on the pager.
+4. **Resolution**: implemented as planned — forced `LV_DISP_ROT_270`,
+   `hor_res=480/ver_res=222`. Draw buffer needed no separate edit (already
+   sized off `hor_res`).
+5. **222-px vertical audit — deferred to M8, not done desk-side.** Decided
+   against guessing slimmer `STATUSBAR_H`/`TABBAR_H`/`CHAT_KB_H` constants
+   without hardware to verify against; the 480×222 branch compiles and the
+   boot wordmark centering is already generic, but real screen-by-screen
+   fit can only be judged on-device. Tracked as risk 8.
+6. Boot screen centering: verified `main.cpp`'s existing math
+   (`(display.width()-WADAMESH_MARK_W)/2` etc.) is already generic and needs
+   no pager-specific change — `154×98` fits comfortably in `480×222`.
+
+Also added, not in the original plan: pager-first branches in
+`applyBrightness()`/`touchScreenBacklight()` calling `display.setBrightness()`
+ahead of the existing `PIN_TFT_LEDA_CTL` PWM branch — closes risk 1f (the
+AW9364 needs discrete pulses, not a PWM duty cycle, so leaving that branch
+unguarded would have driven the backlight IC incorrectly the moment M4's
+`PIN_TFT_LEDA_CTL=42` definition made it compile for the pager too).
+
+**Gate:** all three envs build green. Pager: RAM 23.8% (78088/327680 B),
+Flash 66.4% (2696465/4063232 B). Heltec V4/T-Deck: unchanged, byte-identical
+to pre-M6 (25.3%/73.5%) — confirms every edit stayed behind the pager gate.
+
+---
+
+## Milestone 7 — Headless hardware bring-up (needs device + human) — UI PORTION DONE
+
+**Outcome (2026-07-07):** checklist items 1–2 done and beyond — flash/monitor
+recipes established (see `TLORA_PAGER_M7_HW_DEBUG_LOG.md`, which is the
+blow-by-blow record of both hardware sessions and their six fixed bugs), boot
+clean, rails up, SPIFFS mounts, and **the display/UI/keyboard/encoder are
+user-verified working on the glass**: boot logo renders, full LVGL UI is
+visible, keyboard navigation and rotary-encoder nav/select both drive the UI
+correctly (root cause of the session-1 black screen: the ST7796's hardware
+reset is XL9555 ch6 — absent from every pin table, found in LilyGoLib's own
+board source; `TLoraPagerBoard::begin()` now owns the reset pulse). This is
+the gate this milestone originally asked for on the UI side, and it's closed.
+
+Items 3 (radio gate vs live mesh) and 4 (HW-CDC device-profile frame) remain,
+plus SD — **split out to Milestone 7b below** rather than blocking the UI
+work in Milestone 8, since they need a second mesh node / companion-app
+session that's independent of the on-screen UI pass. Temporary `[DISP]`
+register-readback diagnostic in `ST7796LCDDisplay::begin()` stays until
+Milestone 7b's gates pass.
 
 **Objective:** prove radio, storage, and companion link on real hardware before
 polishing UI. The agent prepares, flashes, and reads logs; the human handles the
@@ -337,29 +462,54 @@ physical device and the second mesh node.
 **Checklist**
 1. Flash with the **4-component chain** (`0x0/0x8000/0xe000/0x10000`) — NEVER the
    merged image (wipes NVS). `pio run -t upload -e tlora_pager_lr1121_companion_radio_touch`
-   or esptool with the four artifacts.
+   or esptool with the four artifacts. — **done**
 2. Serial monitor (115200): clean boot, XL9555 rails up, gauge probe result,
-   SPIFFS mounts, SD detect (if card present), GPS NMEA flowing.
-3. **Radio gate**: against a known-good node (T-Deck/V4 on the same freq/bw/sf):
+   SPIFFS mounts, SD detect (if card present), GPS NMEA flowing. — **done**
+3. Radio gate — **moved to Milestone 7b**.
+4. HW-CDC gate — **moved to Milestone 7b**.
+5. RSSI/SNR/TX current/flash-RAM headroom — **moved to Milestone 7b**.
+
+**Gate (UI portion): met** — display, LVGL UI, keyboard nav, and encoder
+nav/select confirmed working on real hardware.
+
+---
+
+## Milestone 7b — Radio / USB companion / SD bring-up (deferred, needs device + human + second node)
+
+**Objective:** the three hardware-comms gates carried over from Milestone 7,
+picked up once available (not blocking Milestone 8's UI work).
+
+**Checklist**
+1. **Radio gate**: against a known-good node (T-Deck/V4 on the same freq/bw/sf):
    adverts seen BOTH directions; DM with ACK round-trip verified several times —
    this specifically probes upstream LR1121 ACK issue
    (meshcore-dev/MeshCore#1376, still open as of 2026-07-06). If ACKs fail,
    check whether upstream has since landed `CustomLR1121`/a pager target (it
    had not as of this writing — see TLORA_PAGER_PORT.md's Decision ② caveat)
    for post-issue fixes before debugging locally.
-4. **HW-CDC gate**: connect the companion app over USB; the large device-profile
+2. **HW-CDC gate**: connect the companion app over USB; the large device-profile
    frame (node name + keys) must arrive intact. If bytes drop (the Heltec V4
    regression), rebuild with the board JSON's `ARDUINO_USB_MODE` overridden back
    to TinyUSB CDC and record the decision in the tracker.
-5. Record RSSI/SNR sanity, TX current draw if measurable, and flash/RAM headroom.
+3. **SD gate**: card detect (expander ch10) and mount behavior — note `CAP_SD`/
+   `CAP_FILESYSTEM` are still 0 (risk 1h in `TLORA_PAGER_PORT.md`; the mount
+   code isn't actually `CAP_SD`-generic yet), so this is detect-only unless
+   that migration is picked up alongside.
+4. Record RSSI/SNR sanity, TX current draw if measurable, and flash/RAM headroom.
+5. Once all three gates pass, remove the temporary `[DISP]` register-readback
+   diagnostic in `ST7796LCDDisplay::begin()`.
 
-**Gate:** all four checklist gates pass, results logged in the tracker.
+**Gate:** all four checklist items pass, results logged in the tracker.
 
 ---
 
-## Milestone 8 — On-device UI pass
+## Milestone 8 — On-device UI pass — ACTIVE
 
-**Objective:** every screen usable with encoder + QWERTY only.
+**Objective:** every screen usable with encoder + QWERTY only. Now that the UI
+is confirmed alive on hardware, this milestone also covers fixing any weird
+behaviors the human finds while manually driving screens (nav gaps, layout
+clipping at 222px, key-mapping oddities) — human supplies photos/repro steps,
+agent finds the code path and fixes it behind the pager gate.
 
 **Checklist** (drive each screen on hardware; fix behind the pager gate):
 - Focus-nav coverage: every interactive control reachable in `s_nav_group`

@@ -15,17 +15,39 @@
 #include <ExtensionIOXL9555.hpp>
 #include <GaugeBQ27220.hpp>
 
-// XL9555 expander channels gating pager power rails (see pins_arduino.h and
-// the hardware table in TLORA_PAGER_PORT.md).
+// XL9555 expander channels, matching LilyGoLib's LilyGo_LoRa_Pager.cpp begin()
+// (the vendor's own bring-up — ground truth for this board). Channel 6 is the
+// ST7796 panel's HARDWARE RESET, not a power rail: it's absent from both the
+// LilyGoLib hardware doc's channel table and the canonical arduino-esp32
+// pins_arduino.h on master, which is why the first bring-up pass concluded
+// "TFT_RST isn't wired" (TFT_RST=-1) and left it floating — producing
+// intermittent, cold-boot-worse black screens with a perfectly clean boot log
+// (a panel held in hardware reset ignores all SPI, including TFT_eSPI's
+// software-reset fallback).
+#define PAGER_EXPAND_DRV_EN    0
+#define PAGER_EXPAND_AMP_EN    1
 #define PAGER_EXPAND_KB_RST    2
 #define PAGER_EXPAND_LORA_EN   3
 #define PAGER_EXPAND_GPS_EN    4
+#define PAGER_EXPAND_NFC_EN    5
+#define PAGER_EXPAND_DISP_RST  6
+#define PAGER_EXPAND_GPS_RST   7
 #define PAGER_EXPAND_KB_EN     8
+#define PAGER_EXPAND_GPIO_EN   9
 #define PAGER_EXPAND_SD_DET    10
 #define PAGER_EXPAND_SD_PULLEN 11
 #define PAGER_EXPAND_SD_EN     12
 
 #define PAGER_XL9555_ADDR 0x20
+
+// Shared-SPI chip selects/resets that are NOT otherwise claimed before first
+// bus traffic. The display's CS is TFT_eSPI's; the radio's NSS/RESET belong to
+// RadioLib — but only from radio.begin() onward, which runs AFTER the display
+// has already been painting. Until every one of these is parked OUTPUT-HIGH,
+// whichever chip's line floats low can sit half-selected on the live bus
+// (LilyGoLib parks this exact set before its display init — initShareSPIPins()).
+#define PAGER_PIN_SD_CS   21
+#define PAGER_PIN_NFC_CS  39
 
 // Gauge probe/refresh failed — never let the UI divide by zero.
 #define PAGER_BATT_MILLIVOLTS_FALLBACK 3700

@@ -29,6 +29,27 @@ ST7796_Rotation.h only applies the required 49px column/row offset when CGRAM_OF
 bool ST7796LCDDisplay::begin() {
   if (!_isOn) {
     display.init();   // reads TFT_WIDTH/HEIGHT/ST7796_DRIVER/TFT_* pins from build flags; brings up its own SPI bus
+    // REQUIRED on this panel: TFT_eSPI's generic ST7796_Init.h never sends an
+    // inversion command (0x20/0x21) at all, leaving colours at the glass's own
+    // power-on default -- which on this pager's specific ST7796 panel batch is
+    // inverted (confirmed on hardware: white background / black logo instead
+    // of the intended dark theme, everything else -- centering, timing,
+    // encoder/keyboard wake -- working correctly). trail-mate's own bespoke
+    // ST7796 init table explicitly sends INVON (0x21) for this exact part,
+    // which is why their build never showed the problem. TFT_eSPI's
+    // invertDisplay() sends the same command (doubled, per its own comment,
+    // "otherwise it does not always work").
+    display.invertDisplay(true);
+    // TEMPORARY M7 bring-up diagnostic (remove once the panel is confirmed
+    // solid): read the controller's own status registers back over SPI. A
+    // healthy post-init ST7796 reports RDDPM(0x0A)=0x9C (booster on, sleep
+    // out, display on) and RDDCOLMOD(0x0C)=0x55 (16bpp). All-0x00/0xFF here
+    // means the controller isn't responding at all (reset/power/SPI fault) —
+    // distinguishing "panel never initialized" from "panel fine, backlight
+    // dark", which look identical on the glass.
+    Serial.printf("[DISP] RDDPM=0x%02X MADCTL=0x%02X COLMOD=0x%02X RDDIM=0x%02X\n",
+                  display.readcommand8(0x0A), display.readcommand8(0x0B),
+                  display.readcommand8(0x0C), display.readcommand8(0x0D));
     display.setRotation(DISPLAY_ROTATION);
     setLogicalSize((int)(display.width() / DISPLAY_SCALE_X), (int)(display.height() / DISPLAY_SCALE_Y));
     display.setAttribute(CP437_SWITCH, true);
@@ -48,8 +69,10 @@ void ST7796LCDDisplay::turnOn() { ST7796LCDDisplay::begin(); }
 
 void ST7796LCDDisplay::turnOff() {
   if (_isOn) {
-    setBrightness(0);
-    display.writecommand(TFT_DISPOFF);   // TFT_RST=-1 on this board (not wired), so sleep via command, not reset pin
+    const uint8_t keep = _brightness_pct;
+    setBrightness(0);        // backlight chip actually off (single EN-low)...
+    _brightness_pct = keep;  // ...but turnOn()'s begin() must restore the pre-off level, not 0
+    display.writecommand(TFT_DISPOFF);   // TFT_RST is on the XL9555 (board class owns it), so sleep via command here
     _isOn = false;
   }
 }
