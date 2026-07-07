@@ -701,34 +701,35 @@ static void tdeckPreviewWavFile(const char* prefpath) {
 }
 #endif  // HAS_TDECK_GT911
 
-// ---- Unified UI notification sound (T-Deck I2S speaker OR Heltec V4 piezo) ----
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN)
+// ---- Unified UI notification sound (T-Deck I2S speaker OR Heltec V4, Elecrow M9 piezo) ----
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
   #define HAS_UI_SOUND 1
 #endif
 
+#if defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
 #if defined(HELTEC_V4_BUZZER_PIN)
-// Heltec V4 expansion-kit piezo buzzer on GPIO6 (PWM). Plays a short two-note
-// chime via LEDC on a throwaway task so the ~210 ms doesn't stall the UI thread.
-// LEDC ch 5 (the TFT backlight uses ch 0); the pin is detached + parked high-Z
-// afterwards so the piezo is silent at idle.
+  #define UI_BUZZER_PIN HELTEC_V4_BUZZER_PIN
+#else
+  #define UI_BUZZER_PIN THINKNODE_M9_BUZZER_PIN
+#endif
+// Simple piezo buzzer, GPIO-driven via Arduino tone()/noTone() (Heltec V4 expansion kit,
+// or the ThinkNode M9's onboard buzzer/BUZZER_EN). Plays a short two-note chime via LEDC
+// on a throwaway task so the ~210 ms doesn't stall the UI thread.
 static volatile bool s_v4_beep_playing = false;
 static volatile bool s_v4_mention = false;
 static void v4BeepTaskFn(void* arg) {
   (void)arg;
-  // Drive the GPIO6 piezo with Arduino tone() — the exact mechanism Meshtastic's
-  // RTTTL buzzer uses on this board (heltec-v4-tft). (tone() can't vary volume,
-  // so the volume pref only affects the T-Deck.) @-mention = a higher, faster trill.
   if (s_v4_mention) {
-    tone(HELTEC_V4_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(110));
-    tone(HELTEC_V4_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(110));
-    tone(HELTEC_V4_BUZZER_PIN, 2600);  vTaskDelay(pdMS_TO_TICKS(170));
+    tone(UI_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(110));
+    tone(UI_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(110));
+    tone(UI_BUZZER_PIN, 2600);  vTaskDelay(pdMS_TO_TICKS(170));
   } else {
-    tone(HELTEC_V4_BUZZER_PIN, 1000);  vTaskDelay(pdMS_TO_TICKS(160));
-    tone(HELTEC_V4_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(160));
-    tone(HELTEC_V4_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(200));
+    tone(UI_BUZZER_PIN, 1000);  vTaskDelay(pdMS_TO_TICKS(160));
+    tone(UI_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(160));
+    tone(UI_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(200));
   }
-  noTone(HELTEC_V4_BUZZER_PIN);
-  pinMode(HELTEC_V4_BUZZER_PIN, INPUT);   // high-Z → no idle current / no buzz
+  noTone(UI_BUZZER_PIN);
+  pinMode(UI_BUZZER_PIN, INPUT);   // high-Z → no idle current / no buzz
   s_v4_beep_playing = false;
   vTaskDelete(nullptr);
 }
@@ -748,7 +749,7 @@ static void tanBeep();   // I2S notification tick; defined far below (with the C
 static inline void uiPlaySlot(int slot) {
 #if defined(HAS_TDECK_GT911)
   tdeckPlayNotifySlot(slot);
-#elif defined(HELTEC_V4_BUZZER_PIN)
+#elif defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
   v4BuzzerBeep(slot == TOUCH_SND_MEN);   // mention = higher trill; msg/DM = the lower chime
 #elif defined(HAS_TANMATSU)
   tanBeep();   // single codec tick on these boards (no per-slot sounds)
