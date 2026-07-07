@@ -6039,6 +6039,23 @@ static void qrPickCb(lv_event_t* e) {
 #endif
 }
 
+// First picker row: insert the node's current GPS position (issue-free text, no
+// auto-send - same contract as the macro rows). Only clickable with a live fix.
+static void qrGpsPickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  LvChatPanel* p = s_qr_panel;
+  closeQuickReplySheet();
+  if (!p || !p->composer_ta) return;
+#if defined(ESP32)
+  if (!g_lv.task || !g_lv.task->getGpsFix()) return;   // disabled row should not fire; belt and braces
+  char buf[48];
+  snprintf(buf, sizeof buf, "%.5f, %.5f", g_lv.task->getNodeLat(), g_lv.task->getNodeLon());
+  taClearSelection(p->composer_ta);                    // same insert contract as qrPickCb
+  lv_textarea_add_text(p->composer_ta, buf);
+  lv_obj_add_state(p->composer_ta, LV_STATE_FOCUSED);
+#endif
+}
+
 static void qrSheetCloseCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeQuickReplySheet();
@@ -6084,7 +6101,7 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   const int hint_h  = 22;         // card that clipped behind the bar.
   const int row_gap = 4;
 #endif
-  int card_h = title_h + TOUCH_QUICK_REPLY_COUNT * (btn_h + row_gap) + hint_h + pad;
+  int card_h = title_h + (TOUCH_QUICK_REPLY_COUNT + 1) * (btn_h + row_gap) + hint_h + pad;   // +1: the GPS-position row
   if (card_h > sh - STATUSBAR_H - 8) card_h = sh - STATUSBAR_H - 8;   // never taller than the visible area
   lv_obj_t* card = lv_obj_create(s_qr_sheet);
   lv_obj_remove_style_all(card);
@@ -6107,6 +6124,27 @@ static void openQuickReplyPicker(LvChatPanel* p) {
 
   int y = title_h;
 #if defined(ESP32)
+  {  // --- My position (GPS) --- first row; greyed out without a live fix
+    const bool fix = g_lv.task && g_lv.task->getGpsFix();
+    char gbuf[64];
+    if (fix) snprintf(gbuf, sizeof gbuf, LV_SYMBOL_GPS " %.5f, %.5f", g_lv.task->getNodeLat(), g_lv.task->getNodeLon());
+    else     snprintf(gbuf, sizeof gbuf, LV_SYMBOL_GPS " %s", TR("My position (no GPS fix)"));
+    lv_obj_t* b = lv_btn_create(card);
+    lv_obj_set_size(b, card_w - 2 * pad, btn_h);
+    lv_obj_set_pos(b, 0, y);
+    styleButton(b);
+    lv_obj_set_style_bg_color(b, lv_color_hex(fix ? 0x1A1B1C : 0x0C0D0E), LV_PART_MAIN);
+    if (fix) lv_obj_add_event_cb(b, qrGpsPickCb, LV_EVENT_CLICKED, nullptr);
+    else     lv_obj_add_state(b, LV_STATE_DISABLED);   // disabled = LVGL swallows the click
+    lv_obj_t* lbl = lv_label_create(b);
+    lv_label_set_text(lbl, gbuf);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(lbl, card_w - 2 * pad - 16);
+    lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(fix ? COLOR_TEXT : COLOR_SUB), LV_PART_MAIN);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 8, 0);
+    y += btn_h + row_gap;
+  }
   for (int i = 0; i < TOUCH_QUICK_REPLY_COUNT; ++i) {
     char buf[TOUCH_QUICK_REPLY_MAXLEN];
     int n = touchPrefsGetQuickReply(i, buf, sizeof(buf));
