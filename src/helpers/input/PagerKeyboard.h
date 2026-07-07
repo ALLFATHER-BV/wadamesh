@@ -37,4 +37,11 @@ int pagerKeyboardReadKey();
  *  backlight, this is a plain GPIO and needs no deferred flush-on-next-poll. */
 void pagerKeyboardSetBacklight(uint8_t level);
 
+/** True while Alt is physically held (raw modifier state, tracked by
+ *  pagerKeyboardPoll() — not a ring event, since Alt alone drives the symbol
+ *  layer and is never itself pushed as a key). Lets other drivers build
+ *  Alt+<gesture> shortcuts (e.g. the rotary encoder's Alt+turn tab switch)
+ *  without a second, separate modifier concept. */
+bool pagerKeyboardAltHeld();
+
 #endif

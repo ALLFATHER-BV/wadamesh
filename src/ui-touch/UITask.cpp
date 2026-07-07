@@ -26936,8 +26936,21 @@ static void updatePagerEncoder(unsigned long now) {
   // matching TLORA_PAGER fix) and the screen dimmed mid-use.
   if ((delta != 0 || held) && g_lv.task) g_lv.task->noteUserInput();
 
-  for (; delta > 0; delta--) navPushTap(LV_KEY_NEXT);
-  for (; delta < 0; delta++) navPushTap(LV_KEY_PREV);
+  if (pagerKeyboardAltHeld()) {
+    // Alt (the bottom-left orange key, otherwise a hold-only modifier for the
+    // keyboard's symbol layer — free to reuse here since it types nothing on
+    // its own) + turn jumps directly between the 5 main tabs (Chats/Contacts/
+    // Home/Map/Settings). The bottom tab bar is deliberately not a nav-group
+    // focus target (same as T-Deck/Tanmatsu), and unlike those boards the
+    // pager has no separate dedicated hotkeys to reach it, so plain turning
+    // could otherwise only ever move focus WITHIN the current screen —
+    // reported: the tab bar icons were unreachable from Home.
+    for (; delta > 0; delta--) navSwitchTab(+1);
+    for (; delta < 0; delta++) navSwitchTab(-1);
+  } else {
+    for (; delta > 0; delta--) navPushTap(LV_KEY_NEXT);
+    for (; delta < 0; delta++) navPushTap(LV_KEY_PREV);
+  }
 
   static constexpr uint32_t kLongPressMs = 1000;
   static bool     s_was_held    = false;

@@ -122,4 +122,6 @@ void pagerKeyboardSetBacklight(uint8_t level) {
   ledcWrite(kKbBacklightPwmChannel, level);
 }
 
+bool pagerKeyboardAltHeld() { return s_alt; }
+
 #endif
