@@ -32,8 +32,11 @@ separate `HSPI`/local `SPIClass` the way the T-Deck/Heltec-TFT branch does).
 
 ## Verified pin map
 
-(Cross-referenced from the Meshtastic `thinknode_m9` boot log against the V1.0
-schematic during Specter (ESP-IDF) bring-up; carried over unchanged.)
+(Originally cross-referenced from a Meshtastic `thinknode_m9` boot log against
+the V1.0 schematic during early bring-up; several boot-log-derived entries
+later turned out wrong on direct schematic inspection — microSD interface type
+and the battery divider ratio both being corrected below are examples. Treat
+this table as schematic-verified, not Meshtastic-derived, going forward.)
 
 | Net                          | GPIO            | Notes                                                                                                                                                                                                                                                         |
 | ---------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -49,13 +52,13 @@ schematic during Specter (ESP-IDF) bring-up; carried over unchanged.)
 | LCD CS                       | 16              | repurposed XTAL_32K_N                                                                                                                                                                                                                                         |
 | Backlight (BL_EN)            | 17              | PNP transistor, **active-LOW**                                                                                                                                                                                                                                |
 | Peripheral power rail        | 18              | P-MOS, **active-LOW** (LCD/GPS/sensors)                                                                                                                                                                                                                       |
-| microSD                      | SD_MMC          | SDMMC peripheral per the Meshtastic boot log — NOT the shared SPI bus. The earlier "CS=36" reading is an octal-PSRAM pin (GPIO35-37 reserved on the S3R8; driving 36 wedges PSRAM — bring-up #3 hang). Real SDMMC pins pending from the Meshtastic variant.h. |
+| microSD                      | 48 (CS)         | Shared LoRa SPI bus (Arduino SD, same as T-Deck) — CS is GPIO48, schematic net `SPICLK_N`. NOT one of the GPIO33-37 octal-PSRAM lines; SPICLK_N/GPIO48 (and SPICLK_P/GPIO47) are only reserved on the R8V/R16V 1.8V-differential-clock variants — this board is a plain R8 (see Hardware summary), which uses the ordinary single-ended SPICLK instead, so GPIO48 is genuinely free. The earlier "CS=36 is octal-PSRAM-reserved" claim conflated physical package pin 36 with GPIO36 — they are not the same pin. Confirmed working on hardware. |
 | Peripheral I2C SDA/SCL       | 7 / 6           | RTC 0x51, IMU 0x6b, compass 0x7c                                                                                                                                                                                                                              |
 | Keyboard I2C SDA/SCL         | 20 / 21         | controller @ 0x6c, **own bus** (Wire1)                                                                                                                                                                                                                        |
 | Battery ADC                  | 13              | ADC1_CH2, **2:1 divider** (manufacturer-confirmed)                                                                                                                                                                                                            |
 | GPS RX/TX                    | 2 / 3           | CC1167Q, UART1                                                                                                                                                                                                                                                |
-| GPS EN / ON_OFF / RST / 1PPS | 11 / 10 / 5 / 4 | EN+RST wired; ON_OFF + 1PPS unused                                                                                                                                                                                                                            |
-| Buzzer                       | 9               | not yet wired into the firmware                                                                                                                                                                                                                               |
+| GPS EN / ON_OFF / RST / 1PPS | 11 / 10 / 5 / 4 | EN+RST wired, **both active-LOW** (confirmed on schematic: same P-MOS circuit as the peripheral power rail for EN; GPS_RST1 -> R46 -> NPN Q16 base, GPIO HIGH turns Q16 on and pulls the module's reset line to GND, so HIGH asserts reset / LOW releases it — inverted vs. the library defaults, both now overridden in platformio.ini). ON_OFF + 1PPS unused |
+| Buzzer                       | 9               | wired — simple GPIO piezo (`THINKNODE_M9_BUZZER_PIN`), Arduino `tone()`/`noTone()`, shares the Heltec V4 buzzer code path |
 | ESP_WAKEUP (from KB MCU)     | 12              | not wired; behaviour undocumented                                                                                                                                                                                                                             |
 | KEY_LED                      | 46              | not wired                                                                                                                                                                                                                                                     |
 | User button (BOOT)           | 0               | only direct button besides the keyboard                                                                                                                                                                                                                       |
@@ -74,6 +77,16 @@ This turn's corrections vs. the earlier (incorrect) attempt:
   voltage regardless of their absolute value; `getBattMilliVolts()`'s `2 *`
   multiplier was wrongly removed on the mistaken belief that "equal resistors"
   meant "no division." Restored.
+- GPS EN and RESET are both **active-LOW**, not the library's active-HIGH
+  defaults — confirmed on schematic (EN is the same P-MOS circuit as the
+  peripheral power rail; RESET is GPS_RST1 -> R46 -> NPN Q16, where GPIO HIGH
+  asserts reset). Both `PIN_GPS_EN_ACTIVE` and `PIN_GPS_RESET_ACTIVE` are now
+  overridden in `platformio.ini`. Fixed a total loss of GPS fix (module was
+  held disabled/in-reset on every boot).
+- microSD CS is **GPIO48**, not "deferred pending SDMMC pins" — this board
+  never needed SD_MMC at all; the original SPI-CS approach was correct, the
+  pin number was just wrong (see the pin table above and "Bonus schematic
+  finds" below). Confirmed working on hardware.
 
 ## Keyboard (confirmed on hardware — `M9Keyboard.h`)
 
@@ -118,15 +131,18 @@ focused — see "Deferred" below.
     plus its own poll/drain branch in the per-tick loop (polls `Wire1` directly
     from the UI thread — no core-0 hand-off needed, since this bus has no other
     device on it, unlike the T-Deck's touch+keyboard-shared bus).
-  - **microSD**, extended from the T-Deck's existing pattern rather than
-    rebuilt: the include block, `fmIsSd()`, the mount/format/click helpers
-    (`fmSdTryMount`/`fmSdDoFormat`/etc.), and the Files-manager settings row are
-    all now `#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)`,
-    swapping `tdeckSharedSPI()` for `m9SharedSPI()` where the bus accessor is
-    used. The Home-screen "Files" launcher button is shown for M9 too. NOT
-    extended: the wallpaper picker / notification-sound chooser block, which is
-    entangled with `tdeckPlayNotifySlot()` (T-Deck's I2S amp) and isn't pure SD
-    logic — left T-Deck-only.
+  - **microSD**, extended from the T-Deck's existing pattern: the include
+    block, `fmIsSd()`, the mount/format helpers (`fmSdTryMount`/`fmSdDoFormat`/
+    etc.), and the Files-manager settings row are all
+    `#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)`, swapping
+    `tdeckSharedSPI()` for `m9SharedSPI()` where the bus accessor is used.
+    `CAP_SD` is `1`. CS is GPIO48 (see pin table). Confirmed mounting,
+    browsing, and reading on hardware. NOT yet extended: the wallpaper picker
+    (in progress — its own implementation is fully board-agnostic already,
+    just needs its enclosing guard split from the genuinely-T-Deck-only
+    notification-sound chooser it currently shares a block with) and the
+    notification-sound chooser itself (needs `tdeckPlayNotifySlot()`, T-Deck's
+    I2S amp — M9 has a buzzer instead, real separate task).
   - **D-pad keypad navigation**, built on the SAME generic engine Tanmatsu and
     the T-Deck already share (navFifo, `navMoveDir`/`navSwitchTab`/
     `navPushTap`, the focus group, the secondary LVGL `KEYPAD` indev) —
@@ -149,7 +165,55 @@ focused — see "Deferred" below.
   UITask.cpp — see git history for specifics.
 - **Backlight control** (`touchScreenBacklight()`) had no M9 branch at all — the
   idle-off state tracked correctly but the physical backlight never dimmed.
-  Added `m9SetBacklight()` (target.h/.cpp) driving the ref-counted GPIO17 pin.
+  GPIO17 (`BL_EN`, PNP transistor) supports real PWM dimming despite being a
+  simple digital-looking enable line — confirmed on hardware via LEDC, with
+  **inverted duty** (PNP: lower duty on the base = more conduction = brighter).
+  5 kHz confirmed clean. An earlier, incorrect on/off-only implementation
+  (`m9SetBacklight()`, ref-counted `RefCountedDigitalPin`) was replaced with
+  `applyBrightness()`/LEDC, matching the existing `HAS_BACKLIGHT_PWM` pattern.
+- **Buzzer** (GPIO9) wired via the existing `HELTEC_V4_BUZZER_PIN` code path,
+  widened to also accept `THINKNODE_M9_BUZZER_PIN` (same mechanism — Arduino
+  `tone()`/`noTone()`, no separate enable line; `BUZZER_EN` is just GPIO9's
+  net name, not a second pin). Confirmed working via the Settings > Sound
+  toggle previews.
+- **Commander (Home tab) landscape layout** — the TX/RX chart width and the
+  5-button right-hand column's height-per-button math (Advert/Terminal/Files/
+  Apps/Control) both had sizing gates that didn't include `HAS_THINKNODE_M9`,
+  so the chart drew full-width over the buttons and the button-count math
+  assumed 4 slots when M9 (like T-Deck) actually renders 5 — pushing the last
+  button off the bottom of the screen. Both gates fixed.
+- **Home-tab drawer toggle self-conflict**: `M9_KEY_HOME`'s own "close
+  everything on top" dismiss loop was closing the drawer itself (once added to
+  the popup registry), then immediately re-reading the now-mutated
+  `s_home_drawer_mode` flag and reopening it in the same keypress. Fixed by
+  snapshotting the flag before the dismiss loop runs. Also fixed: HOME
+  stopping early after dismissing an overlay reached via the Settings tab
+  (rather than the Home-tab drawer) instead of still jumping to Home
+  afterward.
+- **Scroll-into-view during keypad nav** used `lv_obj_scroll_to_view()`
+  (checks only the immediate parent) instead of
+  `lv_obj_scroll_to_view_recursive()` (walks every ancestor) — settings pages
+  using the "grouped card" layout (`createSettingsModal`) nest controls 3+
+  levels below the actual scrollable container, so focus moving off-screen
+  there never scrolled. Fixed; shared code, benefits every board.
+- **Textarea focus highlight** used the plain reverse-video fill instead of
+  the bright outline+glow switches/sliders get, making it very hard to see
+  which field was focused before entering edit mode. Added `lv_textarea_class`
+  to that style branch. Shared code.
+- **Dropdown-list keypad navigation** (`navOpenDropdown()`) was never wired
+  into the arrow-key dispatch on any board (Tanmatsu's `navArrowAction`, T-Deck's
+  CAP_TRACKBALL block, or M9's `m9HandleArrowKey`/`m9HandleNavKey`) — UP/DOWN/
+  Enter/Back always fell through to page-level `navMoveDir`/popup-dismiss
+  instead of moving the dropdown's own highlighted option. Added the missing
+  checks to M9's handlers specifically (mirroring Tanmatsu's already-correct
+  pattern for Enter/Back, which Tanmatsu never actually needed for UP/DOWN
+  since it wasn't gapped there the same way). **Still not fully working on
+  hardware** — traced the entire mechanism (group-focus detection, FIFO push,
+  indev group assignment, LVGL's own dropdown `LV_EVENT_KEY` handler, loop
+  ordering relative to `lv_timer_handler()`) and confirmed our dispatch code
+  is correct up to and including the `navPushTap(LV_KEY_DOWN)` call itself —
+  the dropdown still closes and focus moves to the next page element. Root
+  cause not yet found; see Deferred list.
 
 ## Deferred — hardware-verify list
 
@@ -168,10 +232,11 @@ These are left intentionally unset/unwired rather than guessed:
    MeshCore LR1110 board uses, not read off a switch-IC datasheet. If TX/RX work
    but seem dead or swapped, that table's RX/TX_HP rows are the first thing to
    flip.
-2. **GPS EN polarity / ON_OFF pin / baud rate.** `PIN_GPS_EN_ACTIVE` is left at
-   the library default (`HIGH`); GPIO10 (ON_OFF) isn't wired into anything. Baud
-   defaults to the library's 9600 fallback (no `GPS_BAUD_RATE` override) —
-   confirm against the CC1167Q's actual NMEA baud.
+2. **GPS baud rate.** Left at the library's 9600 default — unconfirmed against
+   the CC1167Q's actual NMEA baud. (EN/RESET polarity, previously listed here,
+   is now resolved — see pin table / corrections above. `GPS_NMEA_DEBUG=1` is
+   available for raw-sentence passthrough logging; pull it back out once
+   fix behavior is confirmed, see the library's `MicroNMEALocationProvider.h`.)
 3. **Display rotation.** VERIFIED: `DISPLAY_ROTATION=1` (3 was 180 deg off on
    hardware, bring-up #6). Original note: `DISPLAY_ROTATION=3` was a starting
    guess (matches the T-Deck, same keyboard-below-screen form factor) using
@@ -181,19 +246,57 @@ These are left intentionally unset/unwired rather than guessed:
    carry over).
 4. **microSD mount-ladder timing.** The settle-delay/clock ladder in
    `fmSdTryMount()` was tuned against the T-Deck's shared SPI bus electrically.
-   M9 shares the same three signals (SCLK/MISO/MOSI) across radio+LCD+SD too,
-   but the timing margins haven't been confirmed on real M9 hardware — if SD
-   never mounts or mounts unreliably, start here.
-5. **Wallpaper picker / notification-sound chooser.** Not extended to M9 — it
-   calls `tdeckPlayNotifySlot()` (T-Deck's I2S amp) directly, and M9 has a
-   buzzer instead, so untangling sound-slot playback per board is a real (if
-   small) separate task, not a one-line guard change.
-6. **Buzzer (GPIO9), KEY_LED (GPIO46), ESP_WAKEUP (GPIO12), MIC/CTRL keys.**
-   Pins/keycodes exist; no driver/action references them yet.
-7. **Commander (Home tab) landscape layout** — the TX/RX chart and 5-button
-   right-hand column (Advert/Terminal/Files/Apps/Control) sizing gates in
-   makeHome() didn't include HAS_THINKNODE_M9, so the chart drew full-width over
-   the buttons and the last button overflowed off-screen. Fixed.
+   M9 shares the same three signals (SCLK/MISO/MOSI) across radio+LCD+SD too;
+   mounting/browsing/reading confirmed working on hardware, but the specific
+   timing margins on M9 haven't been separately characterized — if mounting
+   ever becomes flaky, start here.
+5. **Wallpaper picker.** Its own implementation (`lockwallScan`/
+   `openLockWallPicker`/etc.) is fully board-agnostic — plain SPIFFS/SD calls,
+   nothing T-Deck-specific. It's currently bundled inside the same
+   `#if defined(HAS_TDECK_GT911)` guard as the (genuinely T-Deck-only,
+   I2S-amp-dependent) notification-sound chooser purely for code organization.
+   Splitting the guard (settings row + forward declarations + the
+   implementation block) is a real but small, well-scoped task — in progress.
+   Note: setting a wallpaper via Files -> open a JPEG -> "Set as wallpaper"
+   already works today regardless, since that button/callback was never
+   gated at all; only the *dedicated* Settings > Lock browsing UI is missing.
+6. **KEY_LED (GPIO46), ESP_WAKEUP (GPIO12), MIC/CTRL keys.** Pins/keycodes
+   exist; no driver/action references them yet.
+7. **Commander (Home tab) landscape layout** — fixed (chart width, button
+   height math). See corrections above.
+8. **Keypad-nav quirks still open, all UI/UX not hardware:**
+   - Dropdown-list navigation doesn't work (see above) — root cause not found.
+   - Textarea fields specifically need 3-4 presses to move focus off them
+     (confirmed: buttons/toggles/icons/apps all traverse in one press, only
+     textareas affected). Ruled out the keyboard drain-loop/`lv_timer_handler()`
+     ordering as the cause (reducing the drain to one key per `loop()`
+     iteration didn't help). Root cause not found.
+   - Modal navigation occasionally "breaks out" to the screen behind and back
+     while navigating up through a modal's items. Likely candidate:
+     `createSettingsModal()`'s standalone-modal path (used for Device/About/
+     etc.) has no `navMarkDirty()` call after `closeSettingsModal()`, same
+     class of stale-focus-group bug the wizard and home-drawer fixes above
+     addressed — diagnosed, not yet applied/confirmed.
+   - Some apps/overlays don't close via the dedicated Home key — only some do
+     (inconsistent per-screen, not a HOME-key dispatch bug given other
+     overlays close correctly).
+   - Some modals close via Back, some don't — also inconsistent per-modal.
+   - The Snake game does not respond to d-pad input at all (confirmed the
+     hardware keys themselves work correctly elsewhere) — likely reads input
+     through its own loop rather than the shared `handleHwKey()`/nav-group
+     system; not yet traced.
+   - Lock-screen unlock and wake-from-poweroff/deep-sleep both currently
+     assume a trackball exists (comment: "only a trackball *hold* unlocks") —
+     M9 has no trackball; needs the same class of "give M9 an equivalent
+     input path" fix already applied for idle-wake and the wizard.
+   - No way to reach a chat message's per-message action menu (Copy/Info/etc)
+     on M9 — the mechanism already exists (`navEnterBubble()`, "Enter on a
+     focused chat bubble = the long-press menu," already used by Tanmatsu's
+     `navPump()`) but `m9HandleNavKey()`'s `M9_KEY_ENTER` case never calls it.
+     Small, well-scoped fix, not yet applied.
+   - The SD-card row's "hold: format" (`fmSdLongPressFormatCb`, bound to
+     `LV_EVENT_LONG_PRESSED`) doesn't respond to a held Enter/d-pad press on
+     M9 — likely the same fix as the chat-bubble long-press item above.
 
 ## Keyboard: register-addressed I2C slave (protocol build #8, USB-pad release build #9)
 
