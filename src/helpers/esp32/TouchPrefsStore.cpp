@@ -10,6 +10,7 @@
 #include <SPIFFS.h>
 #include <stddef.h>   // offsetof
 #include <string.h>   // memcpy
+#include <vector>     // writeUseSdToSpiffsKv record list
 
 static const char* TOUCH_NS = "touch";
 
@@ -1170,6 +1171,55 @@ bool touchPrefsGetUseSdStorage() {
   return s_prefs.getBool(KEY_USE_SD_STORAGE, false);   // default = SPIFFS
 }
 
+// Rewrite (or create) the SPIFFS copy of touch.kv with use_sd set, keeping every
+// other record. Needed because the boot storage decision can only read SPIFFS
+// (SD isn't mounted yet, see touchPrefsReadUseSdAtBoot): when prefs actively
+// live on the SD card, the toggle must land in BOTH file copies — otherwise
+// installs with unusable NVS (Launcher) could turn SD storage on but never OFF
+// again (the stale SPIFFS true would win every boot). PR #123 follow-up.
+static void writeUseSdToSpiffsKv(bool on) {
+  struct Rec { char k[16]; std::vector<uint8_t> v; };
+  std::vector<Rec> recs;
+  File f = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_READ);
+  if (f) {
+    while (f.available() > 0 && recs.size() < 256) {
+      int kl = f.read();
+      if (kl <= 0 || kl > 15) break;
+      Rec r{};
+      if (f.read((uint8_t*)r.k, kl) != kl) break;
+      int lo = f.read(), hi = f.read();
+      if (lo < 0 || hi < 0) break;
+      size_t vl = (size_t)lo | ((size_t)hi << 8);
+      if (vl > 2048) break;
+      r.v.resize(vl);
+      if (vl && f.read(r.v.data(), vl) != (int)vl) break;
+      recs.push_back(std::move(r));
+    }
+    f.close();
+  }
+  bool found = false;
+  for (auto& r : recs) {
+    if (strncmp(r.k, KEY_USE_SD_STORAGE, sizeof r.k) == 0) { r.v.assign(1, on ? 1 : 0); found = true; }
+  }
+  if (!found) {
+    Rec r{};
+    strncpy(r.k, KEY_USE_SD_STORAGE, sizeof r.k - 1);
+    r.v.assign(1, on ? 1 : 0);
+    recs.push_back(std::move(r));
+  }
+  File w = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_WRITE);   // truncate + rewrite
+  if (!w) return;
+  for (auto& r : recs) {
+    size_t kl = strnlen(r.k, sizeof r.k), vl = r.v.size();
+    w.write((uint8_t)kl);
+    w.write((const uint8_t*)r.k, kl);
+    w.write((uint8_t)(vl & 0xFF));
+    w.write((uint8_t)((vl >> 8) & 0xFF));
+    if (vl) w.write(r.v.data(), vl);
+  }
+  w.close();
+}
+
 bool touchPrefsSetUseSdStorage(bool use_sd) {
   if (!s_begun) touchPrefsBegin();
   s_prefs.end();
@@ -1177,15 +1227,18 @@ bool touchPrefsSetUseSdStorage(bool use_sd) {
   bool ok = s_prefs.putBool(KEY_USE_SD_STORAGE, use_sd);
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
-  // main.cpp reads use_sd from NVS before SdNvsPrefs::useFile() — mirror every
-  // UI toggle there so the boot storage decision matches the switch.
+  // Mirror to raw NVS for the boot read (PR #123). Best effort ONLY: on
+  // Launcher installs NVS is unusable and the file write above is the
+  // authoritative copy — a failed mirror must not fail the setter there.
   Preferences nvs;
   if (nvs.begin(TOUCH_NS, false)) {
-    if (!nvs.putBool(KEY_USE_SD_STORAGE, use_sd)) ok = false;
+    nvs.putBool(KEY_USE_SD_STORAGE, use_sd);
     nvs.end();
-  } else {
-    ok = false;
   }
+  // When prefs live on the SD card, boot's fallback still reads the SPIFFS
+  // copy — keep it in sync so the toggle works in BOTH directions there.
+  fs::FS* ffs = SdNvsPrefs::fileFs();
+  if (ffs && ffs != (fs::FS*)&SPIFFS) writeUseSdToSpiffsKv(use_sd);
   return ok;
 }
 

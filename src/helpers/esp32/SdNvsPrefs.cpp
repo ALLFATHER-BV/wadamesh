@@ -30,6 +30,8 @@ void SdNvsPrefs::useFile(fs::FS* fs, const char* dir) {
 static bool     fileMode()  { return s_file_mode && s_file_fs; }
 static fs::FS*  activeFs()  { return fileMode() ? s_file_fs : (fs::FS*)&SD; }
 
+fs::FS* SdNvsPrefs::fileFs() { return fileMode() ? s_file_fs : nullptr; }
+
 // Does NVS hold settings from an older (NVS) build worth migrating? Probed ONCE
 // (RO open of the main namespace) so fresh devices don't spam NOT_FOUND when the
 // per-namespace migration fallback opens.
