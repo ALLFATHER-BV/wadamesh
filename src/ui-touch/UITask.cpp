@@ -31044,6 +31044,11 @@ static void updateGlobalStatusBar() {
         else if (chat_open)           t = -up;  // chat thread name: lower row
       } else if (chat_open && (c == g_statusbar.chan_gear || c == g_statusbar.chat_back)) {
         t = 0;                                  // chat back + cog: centred across both rows
+      } else if (c == g_statusbar.layout_label) {
+        // The layout indicator is align_to'd against the CLOCK's final (already
+        // translated) coords every tick — shifting it here too double-applied the
+        // top-row offset and clipped its top half out of the bar in a chat.
+        t = 0;
       }
       lv_obj_set_style_translate_y(c, t, LV_PART_MAIN);
     }
