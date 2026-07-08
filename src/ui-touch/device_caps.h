@@ -60,6 +60,16 @@
   #define CAP_OTA          1   // 16 MB flash, dual A/B app slots (see partitions_tdeck_touch.csv)
   #define CAP_LOCK_SCREEN  1
 
+#elif defined(HAS_RAK_TAP_V2)         // ===== RAK WisMesh Tap V2 (ESP32-S3) =====
+  #define CAP_TOUCH        1   // FT5x06 capacitive touch
+  #define CAP_ROTATABLE    0   // fixed landscape 320x240
+  #define CAP_LARGE_SCREEN 0
+  #define CAP_SD           0
+  #define CAP_FILESYSTEM   1   // SPIFFS + tiles LittleFS
+  #define CAP_GPS          1
+  #define CAP_OTA          1
+  #define CAP_LOCK_SCREEN  1
+
 #else                                    // ===== Heltec V4 TFT (default) =====
   #define CAP_TOUCH        1   // capacitive touch panel
   #define CAP_ROTATABLE    1   // user can flip portrait/landscape
