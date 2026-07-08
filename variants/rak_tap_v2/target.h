@@ -11,6 +11,7 @@ extern "C" void set_boot_phase(int phase);
 #include <RakTapV2Board.h>
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/AutoDiscoverRTCClock.h>
+#include "../../src/helpers/ClockFloorRTC.h"   // monotonic send-timestamp floor (issue #89)
 #include <helpers/SensorManager.h>
 #if defined(RAK_WISMESH_TAP_V2)
   #include "LGFXDisplay.h"
@@ -25,7 +26,8 @@ extern "C" void set_boot_phase(int phase);
 
 extern RAKTapV2Board board;
 extern WRAPPER_CLASS radio_driver;
-extern AutoDiscoverRTCClock rtc_clock;
+extern RADIO_CLASS radio;   // raw SX1262 — driven directly by the Spectrum analyzer sweep
+extern ClockFloorRTC rtc_clock;
 extern EnvironmentSensorManager sensors;
 
 #ifdef DISPLAY_CLASS
