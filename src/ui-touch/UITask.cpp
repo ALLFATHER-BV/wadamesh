@@ -157,6 +157,7 @@ constexpr uint16_t k_ui_history_min_version = 6;   // v4/v5 used 96-char records
 // reducing flash write pressure when the ring is large.
 constexpr const char* k_ui_threads_path = "/ui_threads_v1.bin";
 constexpr const char* k_ui_msgs_path    = "/ui_msgs_v1.bin";
+constexpr const char* k_ui_msgs_tmp_path = "/ui_msgs_v1.bin.tmp";
 constexpr uint32_t k_ui_threads_magic   = 0x55495448;  // "UITH"
 constexpr uint32_t k_ui_msgs_magic      = 0x55494D53;  // "UIMS"
 
@@ -34326,6 +34327,10 @@ void UITask::flushHistoryIfDue(unsigned long now) {
   }
   if (_msgs_dirty && now >= _next_msgs_flush_ms) {
     if (s_hist_flush_busy || s_hist_flush_req) {
+      // The worker only exists while the tile-fetch task is spawned (map / Wi-Fi
+      // scan / LOS / …).  Without this kick a pending flush can sit armed forever
+      // while ui_threads_v1.bin keeps updating — messages live only in RAM.
+      ensureTileFetchTaskRunning();
       _next_msgs_flush_ms = now + 1000;   // one flush in flight; new messages ride the next one
       return;
     }
@@ -34344,6 +34349,14 @@ void UITask::flushHistoryIfDue(unsigned long now) {
       s_hist_snap_count    = (uint16_t)_ui_msg_count;
       s_hist_snap_head     = (uint16_t)_ui_msg_head;
       s_hist_snap_msgcount = (uint32_t)_msgcount;
+      if (!ensureTileFetchTaskRunning()) {
+        // No worker — fall back to a synchronous write instead of clearing dirty
+        // and losing the snapshot (the whole point of the worker is to stay off
+        // the loop thread; a rare spawn failure must not drop hours of chat).
+        if (saveMsgsToStorage()) _msgs_dirty = false;
+        else _next_msgs_flush_ms = now + 2000;
+        return;
+      }
       s_hist_flush_req = true;   // worker picks it up
       _msgs_dirty = false;
       return;
@@ -34432,6 +34445,16 @@ static void uiDataRemove(const char* name) {
   if (!uiDataFsReady()) return;
   char p[80]; snprintf(p, sizeof p, "%s%s", s_ui_data_root, name);
   s_ui_data_fs->remove(p);
+}
+// Atomically replace a ui-data file (write tmp, then rename) so a panic mid-write
+// cannot leave a truncated header that quarantines the whole chat on next boot.
+static bool uiDataReplaceFile(const char* final_name, const char* tmp_name) {
+  if (!uiDataFsReady()) return false;
+  char fin[80], tmp[80];
+  snprintf(fin, sizeof fin, "%s%s", s_ui_data_root, final_name);
+  snprintf(tmp, sizeof tmp, "%s%s", s_ui_data_root, tmp_name);
+  s_ui_data_fs->remove(fin);
+  return s_ui_data_fs->rename(tmp, fin);
 }
 
 // Shared helper: read one on-disk record into a zero-initialized current-layout
@@ -34725,7 +34748,7 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
                             uint16_t count, uint16_t head, uint32_t msgcount) {
 #if defined(ESP32)
   WdtHeavyGuard _wg;   // a fragmenting write can trigger a multi-second SPIFFS GC
-  File f = uiDataOpen(k_ui_msgs_path, "w");
+  File f = uiDataOpen(k_ui_msgs_tmp_path, "w");
   if (!f) return false;
 
   UiMsgFileHeader hdr{};
@@ -34791,7 +34814,8 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     }
   }
   f.close();
-  return ok;
+  if (!ok) { uiDataRemove(k_ui_msgs_tmp_path); return false; }
+  return uiDataReplaceFile(k_ui_msgs_path, k_ui_msgs_tmp_path);
 #else
   (void)msgs; (void)cap; (void)count; (void)head; (void)msgcount;
   return false;
@@ -34801,7 +34825,7 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
 // Worker-side entry: write the snapshot the loop thread armed (core-0 task; the
 // loop thread never waits on this, which is the whole point).
 static bool uiHistWorkerFlush() {
-  if (!s_hist_snap || s_hist_snap_cap <= 0) return true;   // nothing armed
+  if (!s_hist_snap || s_hist_snap_cap <= 0) return false;   // armed without a snapshot — retry
   return uiWriteMsgsFile(s_hist_snap, s_hist_snap_cap,
                          s_hist_snap_count, s_hist_snap_head, s_hist_snap_msgcount);
 }
