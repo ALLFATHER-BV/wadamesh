@@ -1,0 +1,15 @@
+# beta_37 (TEST) - Tanmatsu ALT accents + language switching, GPS quick reply, T-Deck touch self-heal, SD history reliability. On top of beta_36.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- New ---
+Tanmatsu: hold ALT and press a letter to open the accent picker (a with ALT gives an accent popup, just like long-press on the touch boards). Keep ALT held and press the letter again to cycle through the options; release ALT to insert the highlighted one. Requested by jochentj in issue #129.
+Tanmatsu: double-tap the space bar to switch between your enabled keyboard languages, same as on the T-Deck.
+Accented letters on the Tanmatsu now render at full size at the Large and Huge UI scales instead of noticeably smaller (issue #129). Made possible by moving all boards to compressed UI fonts, which also frees a chunk of firmware space.
+Your GPS position is now the first row in the quick-reply picker, so you can send your current coordinates with one tap (contributed by Yazutsu, PR #125).
+While in a chat or channel, the top bar shows the active keyboard language next to the clock (only when more than one layout is enabled), so you can see what double-tap-space switched to.
+
+# --- Fixed ---
+The keyboard-backlight "Off" preset now actually switches the backlight off and stays off, instead of leaving the previous mode running (contributed by Yazutsu, PR #88).
+Chat history saves to the SD card are more robust: files are written atomically and a fallback save path covers the background worker not being armed yet, so a badly timed reboot can no longer truncate your message history (contributed by scratchdiver, PR #135).
+T-Deck: if the touch controller glitches into a stuck "phantom finger" state (everything looked frozen, touch dead, trackball clicks eaten, and the screen never timed out), the driver now detects it and recovers within seconds. Previously only a full power cycle would clear it.
+T-Deck: touch initialisation at boot now retries for a few seconds instead of giving up after a single attempt. A slow-to-wake touch controller could previously cost you touch AND keyboard for the whole session.
