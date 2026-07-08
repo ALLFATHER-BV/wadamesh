@@ -72,6 +72,13 @@ void TLoraPagerBoard::begin() {
     delay(50); // let rails + panel settle before anything downstream probes them
   }
 
+  // ES8311 audio codec presence check (address only -- no register writes
+  // yet, that's the sound code's job on first use). Every power rail this
+  // chip depends on is driven above; a missing ack here means the sound
+  // path won't work and is worth knowing from the boot log alone.
+  Wire.beginTransmission(0x18);
+  Serial.printf("[BOOT] es8311 %s\n", Wire.endTransmission() == 0 ? "ok" : "PROBE FAILED");
+
   gauge.begin(Wire);
 
   esp_reset_reason_t reason = esp_reset_reason();

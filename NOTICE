@@ -63,5 +63,14 @@ chsc6x (Heltec V4 CHSC6x cap-touch driver)
 SensorLib (T-LoRa Pager XL9555/BQ27220/AW9364 drivers)
     Copyright (c) Lewis He — MIT License — https://github.com/lewisxhe/SensorLib
 
+ES8311 register sequence and clock-divider coefficients (T-LoRa Pager audio
+codec driver, variants/lilygo_tlora_pager/Es8311Codec.cpp)
+    Copyright (c) 2023 Espressif Systems (Shanghai) CO LTD
+    Apache License 2.0 — https://github.com/espressif/esp-adf-libs
+    wadamesh's driver is original code (not a copy of esp_codec_dev's
+    plugin/HAL architecture) but its ES8311 register addresses, startup/
+    power sequence, and MCLK clock-divider coefficients are derived from
+    Espressif's public es8311.c/es8311_reg.h.
+
 This list is not exhaustive and is expanded as dependencies are vendored or
 added.

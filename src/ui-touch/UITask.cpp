@@ -71,6 +71,9 @@
   #ifndef PIN_I2S_DOUT
     #define PIN_I2S_DOUT 6
   #endif
+#elif defined(TLORA_PAGER)
+  #include <driver/i2s.h>     // pager ES8311 codec (notification tones + WAV playback)
+  #include "Es8311Codec.h"    // PIN_I2S_MCLK/BCK/WS/DOUT/SDIN come from platformio.ini build flags
 #elif defined(HAS_TANMATSU)
   #include <FFat.h>            // the file browser + DataStore use the internal 'locfd' FAT partition
   #include <SD_MMC.h>          // microSD on the P4's SDMMC slot 0 (IOMUX 43/44/39-42); slot 1 = C6 radio
@@ -492,13 +495,15 @@ static void initTouchFontFallbacks() {
   g_font_14.fallback = &s_person_font14;
 }
 
-// ---- T-Deck notification tones (I2S → MAX98357A speaker amp) ----
-// Simple synthesized beeps for UI feedback (message arrived, etc). NOT file
-// playback — the T-Deck's amp is driven over I2S; we generate a short sine
-// burst on the fly. The legacy genericBuzzer (RTTTL on a digital pin) doesn't
-// apply here — that's for boards with a piezo on a GPIO, which the touch boards
-// don't have. Gated to the T-Deck; the V4 has no speaker at all.
-#if defined(HAS_TDECK_GT911)
+// ---- I2S notification sound (T-Deck MAX98357A amp / pager ES8311 codec) ----
+// Synthesized beeps and small WAV playback for UI feedback (message arrived,
+// etc), both driven over I2S. The legacy genericBuzzer (RTTTL on a digital
+// pin) doesn't apply here — that's for boards with a piezo on a GPIO (the
+// Heltec V4), not an I2S speaker. WAV parsing and per-slot dispatch state
+// below are shared; T-Deck and the pager each get their own I2S install/
+// tone/WAV functions, since the pager additionally drives an ES8311 codec
+// over I2C that the T-Deck's plain MAX98357A DAC doesn't have.
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
 static constexpr int kI2sSampleRate = 16000;
 static constexpr i2s_port_t kI2sPort = I2S_NUM_0;
 // The tile fetcher's in-flight counter (defined later in the file). We skip
@@ -507,6 +512,7 @@ static constexpr i2s_port_t kI2sPort = I2S_NUM_0;
 // already tight enough that tile downloads can OOM-reboot on their own.
 extern volatile uint16_t s_tile_fetch_pending;
 
+#if defined(HAS_TDECK_GT911)
 // I2S is installed ON DEMAND for the duration of a tone and uninstalled after.
 // Holding the driver resident permanently kept ~2 KB of internal DMA RAM, which
 // shrank the margin the tile-fetch worker relies on and made tile downloads
@@ -566,6 +572,84 @@ static void tdeckPlayToneRaw(int freq, int ms, int vol = 9000) {
   }
   i2s_zero_dma_buffer(kI2sPort);
 }
+#endif  // HAS_TDECK_GT911
+
+#if defined(TLORA_PAGER)
+// Same on-demand-install rationale as the T-Deck (above), plus this board's
+// ES8311 codec: I2S clocks (incl. MCLK) must already be toggling before the
+// codec's PLL will lock, so codec register writes happen after i2s_set_pin.
+// The codec chip itself stays powered across chimes (its own begin() runs
+// once, lazily, on first use) -- only the I2S driver and the codec's DAC
+// power/format state (start()/suspend()) are cycled per playback, matching
+// the amp's AMP_EN toggle in TLoraPagerBoard (see pagerNotifyTaskFn below).
+static Es8311Codec s_pager_codec;
+static bool        s_pager_codec_begun = false;
+
+static bool pagerAudioInstallRate(int rate) {
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 16 * 1024) return false;
+  i2s_config_t cfg = {};
+  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
+  cfg.sample_rate = rate;
+  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  cfg.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;   // mono synth/WAV buffer
+  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  cfg.intr_alloc_flags = 0;
+  cfg.dma_buf_count = 4;
+  cfg.dma_buf_len = 256;
+  cfg.use_apll = false;
+  cfg.tx_desc_auto_clear = true;
+  if (i2s_driver_install(kI2sPort, &cfg, 0, nullptr) != ESP_OK) return false;
+  i2s_pin_config_t pins = {};
+  pins.mck_io_num   = PIN_I2S_MCLK;
+  pins.bck_io_num   = PIN_I2S_BCK;
+  pins.ws_io_num    = PIN_I2S_WS;
+  pins.data_out_num = PIN_I2S_DOUT;
+  pins.data_in_num  = I2S_PIN_NO_CHANGE;
+  if (i2s_set_pin(kI2sPort, &pins) != ESP_OK) { i2s_driver_uninstall(kI2sPort); return false; }
+  if (!s_pager_codec_begun) {
+    s_pager_codec_begun = s_pager_codec.begin(Wire, 0x18);
+    if (!s_pager_codec_begun) { i2s_driver_uninstall(kI2sPort); return false; }
+  }
+  if (!s_pager_codec.start((uint32_t)rate)) { i2s_driver_uninstall(kI2sPort); return false; }
+  return true;
+}
+static bool pagerAudioInstall() { return pagerAudioInstallRate(kI2sSampleRate); }
+static void pagerAudioUninstall() {
+  s_pager_codec.setMute(true);
+  s_pager_codec.suspend();
+  i2s_zero_dma_buffer(kI2sPort);
+  i2s_driver_uninstall(kI2sPort);
+}
+
+// Render `freq` Hz for `ms` ms into the already-installed I2S as a 16-bit
+// sine with a short fade-in/out so it doesn't click. Unlike the T-Deck's
+// tdeckPlayToneRaw, loudness comes from the codec's hardware volume register
+// (set by the caller before this runs), not software sample scaling, so
+// there's no `vol` parameter here -- always render at a fixed safe level.
+static void pagerPlayToneRaw(int freq, int ms) {
+  const int total = (kI2sSampleRate * ms) / 1000;
+  const int fade = total / 8 > 0 ? total / 8 : 1;
+  int16_t buf[128];
+  int written_total = 0;
+  double phase = 0.0;
+  const double step = 2.0 * M_PI * (double)freq / (double)kI2sSampleRate;
+  const double amp0 = 22000.0;
+  while (written_total < total) {
+    int n = 0;
+    for (; n < 128 && written_total < total; ++n, ++written_total) {
+      double amp = amp0;
+      if (written_total < fade)            amp *= (double)written_total / fade;
+      else if (written_total > total-fade) amp *= (double)(total - written_total)/fade;
+      buf[n] = (int16_t)(sin(phase) * amp);
+      phase += step;
+      if (phase > 2.0 * M_PI) phase -= 2.0 * M_PI;
+    }
+    size_t bw = 0;
+    i2s_write(kI2sPort, buf, n * sizeof(int16_t), &bw, pdMS_TO_TICKS(200));
+  }
+  i2s_zero_dma_buffer(kI2sPort);
+}
+#endif  // TLORA_PAGER
 
 // ---- Custom WAV notification playback (T-Deck I2S) -------------------------
 // Stream a small PCM WAV (internal SPIFFS or "sd:"-prefixed SD) straight to the
@@ -598,7 +682,9 @@ static bool wavParse(File& f, uint16_t* pch, uint32_t* prate, uint32_t* pdata) {
 static bool wavOpen(const char* prefpath, File& f) {
   if (!prefpath || !prefpath[0]) return false;
   fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
+#if defined(HAS_TDECK_GT911)   // only the T-Deck's sound picker ever writes an "sd:"-prefixed pref
   if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; fmSdTryMount(); }
+#endif
   f = fsp->open(fp, FILE_READ);
   if (!f || f.isDirectory()) { if (f) f.close(); return false; }
   return true;
@@ -609,6 +695,14 @@ static bool wavIsSupported(const char* prefpath) {
   f.close();
   return ok;
 }
+
+// ---- Shared notification-task state (T-Deck + pager) -----------------------
+static volatile bool s_notify_playing = false;
+static volatile int  s_notify_slot    = TOUCH_SND_MSG;   // which per-event sound to play this round
+static char          s_notify_path[TOUCH_SOUND_PATH_MAXLEN] = {0};   // caller-resolved WAV path (avoid NVS in the task)
+static volatile int  s_notify_vol     = 9000;    // meaning is board-specific: T-Deck = software amplitude, pager = 0-100 hw volume pct
+
+#if defined(HAS_TDECK_GT911)
 static bool tdeckPlayWavFile(const char* prefpath, int vol) {
   File f; if (!wavOpen(prefpath, f)) return false;
   uint16_t ch=0; uint32_t rate=0, dlen=0;
@@ -642,10 +736,6 @@ static bool tdeckPlayWavFile(const char* prefpath, int vol) {
   return true;
 }
 
-static volatile bool s_notify_playing = false;
-static volatile int  s_notify_slot    = TOUCH_SND_MSG;   // which per-event sound to play this round
-static char          s_notify_path[TOUCH_SOUND_PATH_MAXLEN] = {0};   // caller-resolved WAV path (avoid NVS in the task)
-static volatile int  s_notify_vol     = 9000;    // amplitude, scaled from the volume pref
 // The chime body: install I2S, play the notes, uninstall. ~300 ms of blocking
 // i2s_write + driver setup/teardown — run on its own throwaway task (below).
 static void tdeckNotifyTaskFn(void* arg) {
@@ -703,8 +793,95 @@ static void tdeckPreviewWavFile(const char* prefpath) {
 }
 #endif  // HAS_TDECK_GT911
 
-// ---- Unified UI notification sound (T-Deck I2S speaker OR Heltec V4 piezo) ----
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN)
+#if defined(TLORA_PAGER)
+static bool pagerPlayWavFile(const char* prefpath, int volPct) {
+  File f; if (!wavOpen(prefpath, f)) return false;
+  uint16_t ch=0; uint32_t rate=0, dlen=0;
+  if (!wavParse(f, &ch, &rate, &dlen)) { f.close(); return false; }
+  const uint32_t frameBytes = (uint32_t)ch * 2u;
+  const uint32_t maxBytes = rate * frameBytes * 6u;   // ~6 s cap, matches the T-Deck path
+  if (dlen > maxBytes) dlen = maxBytes;
+  if (!pagerAudioInstallRate((int)rate)) { f.close(); return false; }
+  s_pager_codec.setVolumePercent((uint8_t)volPct);
+  s_pager_codec.setMute(false);
+  int16_t in[256], out[256];
+  uint32_t remaining = dlen;
+  while (remaining >= frameBytes) {
+    size_t want = sizeof(in);
+    if (want > remaining) want = remaining - (remaining % frameBytes);
+    int got = f.read((uint8_t*)in, want);
+    if (got <= 0) break;
+    int frames = got / (int)frameBytes;
+    for (int i = 0; i < frames; ++i) {
+      // Downmix to mono -- no software gain (unlike the T-Deck path): the
+      // codec's hardware volume register, already set above, is doing that.
+      out[i] = (ch == 2) ? (int16_t)(((int32_t)in[2*i] + in[2*i+1]) / 2) : in[i];
+    }
+    size_t bw = 0;
+    i2s_write(kI2sPort, out, (size_t)frames * sizeof(int16_t), &bw, pdMS_TO_TICKS(300));
+    remaining -= (uint32_t)got;
+  }
+  i2s_zero_dma_buffer(kI2sPort);
+  pagerAudioUninstall();
+  f.close();
+  return true;
+}
+
+// Mirrors tdeckNotifyTaskFn, bracketed with the amp's AMP_EN toggle (muted/
+// off at idle to save battery -- see TLoraPagerBoard::setAmpEnabled()).
+static void pagerNotifyTaskFn(void* arg) {
+  (void)arg;
+  const int volPct = s_notify_vol;
+  board.setAmpEnabled(true);
+  bool played = (s_notify_path[0] && pagerPlayWavFile(s_notify_path, volPct));
+  if (!played && pagerAudioInstall()) {
+    s_pager_codec.setVolumePercent((uint8_t)volPct);
+    s_pager_codec.setMute(false);
+    if (s_notify_slot == TOUCH_SND_MEN) {        // @-mention: bright 3-note rising arpeggio
+      pagerPlayToneRaw(1318, 70);                // E6
+      pagerPlayToneRaw(1760, 70);                // A6
+      pagerPlayToneRaw(2349, 130);               // D7
+    } else if (s_notify_slot == TOUCH_SND_DM) {  // direct message: distinct rising fifth
+      pagerPlayToneRaw(1047, 90);                // C6
+      pagerPlayToneRaw(1568, 120);               // G6
+    } else {                                     // message: the original two-note chime
+      pagerPlayToneRaw(880,  90);                // A5
+      pagerPlayToneRaw(1318, 110);               // E6
+    }
+    pagerAudioUninstall();
+  }
+  board.setAmpEnabled(false);
+  s_notify_playing = false;
+  vTaskDelete(nullptr);
+}
+
+static void pagerPlayNotifySlot(int slot) {
+  if (s_tile_fetch_pending > 0) return;
+  if (s_notify_playing) return;
+  s_notify_slot = slot;
+  s_notify_vol = (int)touchPrefsGetSoundVolume();   // 0..100 -> the codec's hw volume register
+  touchPrefsGetSoundFile(slot, s_notify_path, sizeof s_notify_path);
+  s_notify_playing = true;
+  if (xTaskCreate(pagerNotifyTaskFn, "notify", 8192, nullptr, 3, nullptr) != pdPASS) {
+    s_notify_playing = false;
+  }
+}
+static void pagerPreviewWavFile(const char* prefpath) {
+  if (s_tile_fetch_pending > 0 || s_notify_playing) return;
+  strncpy(s_notify_path, prefpath, sizeof s_notify_path - 1);
+  s_notify_path[sizeof s_notify_path - 1] = '\0';
+  s_notify_slot = TOUCH_SND_MSG;
+  s_notify_vol  = (int)touchPrefsGetSoundVolume();
+  s_notify_playing = true;
+  if (xTaskCreate(pagerNotifyTaskFn, "notify", 8192, nullptr, 3, nullptr) != pdPASS)
+    s_notify_playing = false;
+}
+#endif  // TLORA_PAGER
+
+#endif  // HAS_TDECK_GT911 || TLORA_PAGER
+
+// ---- Unified UI notification sound (T-Deck I2S / pager codec / Heltec V4 piezo) ----
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(TLORA_PAGER)
   #define HAS_UI_SOUND 1
 #endif
 
@@ -750,6 +927,8 @@ static void tanBeep();   // I2S notification tick; defined far below (with the C
 static inline void uiPlaySlot(int slot) {
 #if defined(HAS_TDECK_GT911)
   tdeckPlayNotifySlot(slot);
+#elif defined(TLORA_PAGER)
+  pagerPlayNotifySlot(slot);
 #elif defined(HELTEC_V4_BUZZER_PIN)
   v4BuzzerBeep(slot == TOUCH_SND_MEN);   // mention = higher trill; msg/DM = the lower chime
 #elif defined(HAS_TANMATSU)
@@ -760,6 +939,16 @@ static inline void uiPlaySlot(int slot) {
 // Notification chimes. uiPlayNotify = generic message slot; uiPlayMention = @-mention slot.
 static inline void uiPlayNotify()  { uiPlaySlot(TOUCH_SND_MSG); }
 static inline void uiPlayMention() { uiPlaySlot(TOUCH_SND_MEN); }
+// Preview an arbitrary WAV file (not yet saved to a slot) -- used by the
+// sound picker's "play" button before the user commits to a choice.
+static inline void uiPreviewWavFile(const char* path) {
+#if defined(HAS_TDECK_GT911)
+  tdeckPreviewWavFile(path);
+#elif defined(TLORA_PAGER)
+  pagerPreviewWavFile(path);
+#endif
+  (void)path;
+}
 
 #if defined(HAS_TANMATSU)
 // Defined in the HAS_TANMATSU apply block far below; forward-declared so the
@@ -6337,7 +6526,7 @@ static void toggleMentionSoundCb(lv_event_t* e) {
   if (on) uiPlayMention();
 #endif
 }
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER)
 // Volume +/- step buttons (user_data = step, e.g. +10 / -10). Clamps 0..100,
 // updates the readout, previews. Simpler + more reliable than a drag slider.
 static lv_obj_t* s_vol_val_lbl = nullptr;
@@ -9604,14 +9793,14 @@ static void lockwallDisplayName(const char* path, char* out, int cap) {
   snprintf(out, cap, "%s%s", sd ? "SD: " : "", base);
 }
 static void openLockWallPickerCb(lv_event_t* e);   // defined with the picker, below
-#if CAP_SD   // custom WAV notification sounds need an SD card (the File-Manager picker browses it)
+static void lockColorChosenCb(lv_event_t* e);
+#endif  // HAS_TDECK_GT911
+#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck (SD or SPIFFS) or pager (SPIFFS only)
 // Per-event notification-sound picker (Settings -> Sound). Mirrors the wallpaper picker.
 static lv_obj_t* s_snd_btn_lbl[3] = { nullptr, nullptr, nullptr };
 static int  s_snd_pending_slot = TOUCH_SND_MSG;    // slot we're choosing a sound for
 static void soundDisplayName(const char* path, char* out, int cap);
 static void openSoundPickerCb(lv_event_t* e);      // defined with the chooser, below
-#endif
-static void lockColorChosenCb(lv_event_t* e);
 #endif
 
 static void calibrateBatteryCb(lv_event_t* e);   // defined with the battery helpers below
@@ -9798,7 +9987,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, toggleMentionSoundCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, rh + 12);
   }
-#if CAP_SD   // WAV notification-sound rows (SD-card devices only)
+#if CAP_SOUND_FILES   // WAV notification-sound rows (file-browsing sound picker, SD or SPIFFS)
   // Per-event notification sound files. Each slot: built-in chime, or a 16-bit
   // PCM WAV from /sounds/ (internal) or the SD card. Empty = built-in.
   {
@@ -9825,8 +10014,8 @@ static void buildDeviceSettings(int sec) {
     }
   }
 #endif
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
-  // Volume with - / + step buttons (T-Deck I2S + Tanmatsu codec; the V4 piezo can't vary volume).
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+  // Volume with - / + step buttons (T-Deck I2S / Tanmatsu / pager codec; the V4 piezo can't vary volume).
   {
     lv_obj_t* vl = lv_label_create(body);
     lv_label_set_text(vl, TR("Volume"));
@@ -16957,7 +17146,7 @@ static void fmSndPlayCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_fm_snd_path[0]) return;
   char pref[TOUCH_SOUND_PATH_MAXLEN]; fmSndBuildPref(pref, sizeof pref);
   if (!wavIsSupported(pref)) { if (g_lv.task) g_lv.task->showAlert(TR("Unsupported WAV (need 16-bit PCM)"), 2200); return; }
-  tdeckPreviewWavFile(pref);
+  uiPreviewWavFile(pref);
 }
 static void fmSndSetCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_fm_snd_path[0]) return;
@@ -27391,9 +27580,7 @@ static void serviceLockscreen() {
 }
 #endif  // core lock screen (HAS_TDECK_GT911 || HAS_TANMATSU)
 
-#if defined(HAS_TDECK_KEYBOARD)   // re-enter the keyboard block the lock screen was carved out of
-#if defined(HAS_TDECK_GT911)   // wallpaper picker is SD/SPIFFS-backed -> T-Deck only
-// ---- Lock-screen wallpaper picker (lists JPEGs in internal /lock/ + SD) ----
+#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck (SD/SPIFFS) or pager (SPIFFS only)
 // ---- Notification-sound chooser (Settings -> Sound) ------------------------
 // Tapping a slot button opens a small menu: "Choose .wav from files" (opens the
 // File Manager, exactly like the wallpaper picker; opening a .wav there offers
@@ -27416,7 +27603,7 @@ static void sndMenuBuiltinCb(lv_event_t* e) {
   if (s_snd_btn_lbl[slot] && lv_obj_is_valid(s_snd_btn_lbl[slot]))
     lv_label_set_text(s_snd_btn_lbl[slot], TR("Built-in"));
   sndMenuClose();
-  tdeckPlayNotifySlot(slot);     // preview the built-in chime
+  uiPlaySlot(slot);     // preview the built-in chime
 }
 static void sndMenuFilesCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -27466,6 +27653,11 @@ static void openSoundPickerCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   openSoundMenu((int)(intptr_t)lv_event_get_user_data(e));
 }
+#endif  // CAP_SOUND_FILES
+
+#if defined(HAS_TDECK_KEYBOARD)   // re-enter the keyboard block the lock screen was carved out of
+#if defined(HAS_TDECK_GT911)   // wallpaper picker is SD/SPIFFS-backed -> T-Deck only
+// ---- Lock-screen wallpaper picker (lists JPEGs in internal /lock/ + SD) ----
 static lv_obj_t* s_lockwall_picker = nullptr;
 static char s_lockwall_paths[24][TOUCH_LOCK_WALLPAPER_MAXLEN];
 static int  s_lockwall_count = 0;

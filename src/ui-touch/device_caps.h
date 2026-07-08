@@ -134,3 +134,16 @@
 #else
   #define CAP_COMPANION 0
 #endif
+
+// Per-event WAV notification sounds + the file-browsing sound picker. This is
+// deliberately NOT the same thing as CAP_SD/CAP_FILESYSTEM: it only means
+// "can browse and play WAV files for notifications," which the T-Deck gets
+// from its SD card and the pager gets from internal SPIFFS alone (the
+// pager's CAP_SD/CAP_FILESYSTEM stay 0 -- see the comment on those above;
+// this flag does not reopen real SD support, it only gates the
+// SPIFFS-backed sound picker).
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+  #define CAP_SOUND_FILES 1
+#else
+  #define CAP_SOUND_FILES 0
+#endif

@@ -89,6 +89,15 @@ public:
     return "LilyGo T-LoRa Pager";
   }
 
+  // Mute/unmute the NS4150B amp via its XL9555 enable pin. Separate from the
+  // boot-time rail bring-up in begin() (which drives this HIGH permanently,
+  // for bus-integrity reasons unrelated to audio -- see begin()'s comment):
+  // this is the runtime toggle the sound code brackets each chime/WAV with,
+  // so the amp is only live while something is actually playing.
+  void setAmpEnabled(bool on) {
+    io_expander.digitalWrite(PAGER_EXPAND_AMP_EN, on ? HIGH : LOW);
+  }
+
   // TODO: BQ25896 charger (XPowersLib) bring-up is out of scope for now — the
   // BQ27220 gauge alone covers battery %/mV for the UI. Add charge-status/
   // current reporting once the charger is wired in.
