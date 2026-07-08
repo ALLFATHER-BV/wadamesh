@@ -219,84 +219,132 @@ focused — see "Deferred" below.
 
 These are left intentionally unset/unwired rather than guessed:
 
-1. **RF-switch DIO table — pin assignment confirmed, polarity not.** Cross-
-   checked directly against the V1.0 schematic (LR1110/U7 block): DIO5 (pin 20)
-   → R20 → net `RFSW0_V1`, DIO6 (pin 19) → R19 → net `RFSW1_V2`, both into the
-   switch IC (U8) feeding a single antenna (`RFC` → C74 → L12 → ANT1). DIO7/DIO8
-   are unconnected (dangling stubs, no net) — this is a plain 2-pin switch, the
-   same shape as `thinknode_m3`'s table, _not_ `t1000-e`/`me25ls01`'s 4-pin
-   DIO5-8 scheme. `RF_SWITCH_TABLE` is now **enabled** in `platformio.ini` with
-   that DIO5/DIO6 mapping. What's _not_ independently confirmed: U8's part
-   number isn't printed on the schematic, so the per-mode HIGH/LOW truth table
-   (STBY/RX/TX/TX_HP/…) is carried from the same convention every other 2-pin
-   MeshCore LR1110 board uses, not read off a switch-IC datasheet. If TX/RX work
-   but seem dead or swapped, that table's RX/TX_HP rows are the first thing to
-   flip.
-2. **GPS baud rate.** Left at the library's 9600 default — unconfirmed against
-   the CC1167Q's actual NMEA baud. (EN/RESET polarity, previously listed here,
-   is now resolved — see pin table / corrections above. `GPS_NMEA_DEBUG=1` is
-   available for raw-sentence passthrough logging; pull it back out once
-   fix behavior is confirmed, see the library's `MicroNMEALocationProvider.h`.)
+1. **RF-switch DIO table — confirmed working.** Pin assignment (DIO5/DIO6)
+   was schematic-confirmed; the per-mode HIGH/LOW truth table was carried
+   from convention rather than a switch-IC datasheet (part number not legible
+   on the schematic) — but bidirectional radio communication is now confirmed
+   working on real hardware, so the table is correct as-is. No longer open.
+2. **GPS pins + baud — confirmed and fixed.** RX/TX were swapped
+   (`PIN_GPS_RX=3`, `PIN_GPS_TX=2`, not 2/3) and the baud rate needed to be
+   `GPS_BAUD_RATE=115200`, not the library's 9600 default. Both confirmed via
+   hardware testing with `GPS_NMEA_DEBUG=1` (raw-sentence passthrough) —
+   remember to pull that debug flag back out for release builds. EN/RESET
+   polarity (both active states inverted from the library defaults) was
+   fixed earlier and is also confirmed.
 3. **Display rotation.** VERIFIED: `DISPLAY_ROTATION=1` (3 was 180 deg off on
-   hardware, bring-up #6). Original note: `DISPLAY_ROTATION=3` was a starting
-   guess (matches the T-Deck, same keyboard-below-screen form factor) using
-   Adafruit's rotation 0–3 numbering — **this is unrelated to** the raw-MADCTL
-   rotation constants found during the earlier ESP-IDF/Specter bring-up (that
-   was a different, hand-rolled display driver stack; the numbering doesn't
-   carry over).
-4. **microSD mount-ladder timing.** The settle-delay/clock ladder in
-   `fmSdTryMount()` was tuned against the T-Deck's shared SPI bus electrically.
-   M9 shares the same three signals (SCLK/MISO/MOSI) across radio+LCD+SD too;
-   mounting/browsing/reading confirmed working on hardware, but the specific
-   timing margins on M9 haven't been separately characterized — if mounting
-   ever becomes flaky, start here.
-5. **Wallpaper picker.** Its own implementation (`lockwallScan`/
-   `openLockWallPicker`/etc.) is fully board-agnostic — plain SPIFFS/SD calls,
-   nothing T-Deck-specific. It's currently bundled inside the same
-   `#if defined(HAS_TDECK_GT911)` guard as the (genuinely T-Deck-only,
-   I2S-amp-dependent) notification-sound chooser purely for code organization.
-   Splitting the guard (settings row + forward declarations + the
-   implementation block) is a real but small, well-scoped task — in progress.
-   Note: setting a wallpaper via Files -> open a JPEG -> "Set as wallpaper"
-   already works today regardless, since that button/callback was never
-   gated at all; only the *dedicated* Settings > Lock browsing UI is missing.
-6. **KEY_LED (GPIO46), ESP_WAKEUP (GPIO12), MIC/CTRL keys.** Pins/keycodes
-   exist; no driver/action references them yet.
-7. **Commander (Home tab) landscape layout** — fixed (chart width, button
-   height math). See corrections above.
-8. **Keypad-nav quirks still open, all UI/UX not hardware:**
-   - Dropdown-list navigation doesn't work (see above) — root cause not found.
-   - Textarea fields specifically need 3-4 presses to move focus off them
-     (confirmed: buttons/toggles/icons/apps all traverse in one press, only
-     textareas affected). Ruled out the keyboard drain-loop/`lv_timer_handler()`
-     ordering as the cause (reducing the drain to one key per `loop()`
-     iteration didn't help). Root cause not found.
-   - Modal navigation occasionally "breaks out" to the screen behind and back
-     while navigating up through a modal's items. Likely candidate:
-     `createSettingsModal()`'s standalone-modal path (used for Device/About/
-     etc.) has no `navMarkDirty()` call after `closeSettingsModal()`, same
-     class of stale-focus-group bug the wizard and home-drawer fixes above
-     addressed — diagnosed, not yet applied/confirmed.
-   - Some apps/overlays don't close via the dedicated Home key — only some do
-     (inconsistent per-screen, not a HOME-key dispatch bug given other
-     overlays close correctly).
-   - Some modals close via Back, some don't — also inconsistent per-modal.
-   - The Snake game does not respond to d-pad input at all (confirmed the
-     hardware keys themselves work correctly elsewhere) — likely reads input
-     through its own loop rather than the shared `handleHwKey()`/nav-group
-     system; not yet traced.
-   - Lock-screen unlock and wake-from-poweroff/deep-sleep both currently
-     assume a trackball exists (comment: "only a trackball *hold* unlocks") —
-     M9 has no trackball; needs the same class of "give M9 an equivalent
-     input path" fix already applied for idle-wake and the wizard.
-   - No way to reach a chat message's per-message action menu (Copy/Info/etc)
-     on M9 — the mechanism already exists (`navEnterBubble()`, "Enter on a
-     focused chat bubble = the long-press menu," already used by Tanmatsu's
-     `navPump()`) but `m9HandleNavKey()`'s `M9_KEY_ENTER` case never calls it.
-     Small, well-scoped fix, not yet applied.
-   - The SD-card row's "hold: format" (`fmSdLongPressFormatCb`, bound to
-     `LV_EVENT_LONG_PRESSED`) doesn't respond to a held Enter/d-pad press on
-     M9 — likely the same fix as the chat-bubble long-press item above.
+   hardware, bring-up #6).
+4. **microSD mount-ladder timing.** Mounting/browsing/reading confirmed
+   working on hardware; the specific timing margins on M9 (vs. the T-Deck
+   electrical characteristics the ladder was originally tuned against)
+   haven't been separately characterized — if mounting ever becomes flaky,
+   start here.
+5. **Wallpaper picker — done.** Guard split completed (settings row, forward
+   declarations, implementation block all extended to M9, separated cleanly
+   from the genuinely-T-Deck-only I2S notification-sound chooser). Confirmed
+   working on hardware, including the dedicated Settings > Lock browsing UI.
+6. **Deep-sleep wake source has NO real GPIO on M9 — confirmed broken, not
+   just unverified.** The "Power off" menu's `esp_sleep_enable_ext0_wakeup()`
+   call is written against `PIN_USER_BTN`, which does not correspond to any
+   real button on this board — M9 has no BOOT/user button at all (only a
+   physical power-cut slider and a reset button, neither of which are GPIOs
+   the firmware can wake from). Confirmed on schematic: M9 has no such button.
+   Practical effect: using "Power off" currently leaves the device requiring
+   a full manual power cycle (slider) to wake — not a graceful wake at all.
+   **Fix path, not yet implemented:** `ESP_WAKEUP` (GPIO12, from the keyboard
+   MCU) is a strong candidate — it's specifically documented as an unwired
+   wake-pulse line separate from the normal I2C keyboard bus, exactly the
+   kind of signal meant to wake the host chip while the main bus is powered
+   down. Its actual trigger behavior (edge vs. level, polarity, pulse width)
+   is undocumented and needs characterizing on real hardware before wiring
+   `esp_sleep_enable_ext0_wakeup()`/`ext1_wakeup()` to it. Separately,
+   `M9Board::enterDeepSleep()` (a different, scheduled/automatic sleep path
+   used by the mesh stack, not the user-facing Power-off menu) also has no
+   button/GPIO wake source — only LR1110 `DIO1` (radio activity) and a timer
+   — same open question applies there once GPIO12 is characterized.
+7. **KEY_LED (GPIO46), MIC/CTRL keys.** Pins/keycodes exist; no driver/action
+   references them yet.
+8. **Battery reading appears stuck at "charging" voltage after charger
+   disconnect, and battery-history logging shows no entries over hours of
+   runtime.** Traced the entire software chain (`getBattMilliVolts()` ->
+   `batteryMvSampled()` -> `batteryMvSmoothed()` -> status bar) — every layer
+   either re-samples fresh from the ADC or holds a value for at most 20
+   seconds; nothing in the code caches indefinitely. No software bug found in
+   this specific path via static reading. Two real possibilities, not yet
+   distinguished: (a) genuine hardware/battery-chemistry behavior (Li-ion
+   charge-termination voltage recovery can legitimately take longer than
+   expected to settle), or (b) a real bug not yet found. Needs a raw
+   millivolt diagnostic print directly in `getBattMilliVolts()` to tell which.
+   Separately, but likely related: `battLogAppend()`'s SD-vs-SPIFFS selection
+   (`battLogOnSd()`) should check `SD.exists("/meshcomod")` and return false
+   if it doesn't exist (respecting DataStore's opt-in "store on SD" setting
+   rather than assuming SD whenever a card happens to be mounted) — identified
+   but not yet applied.
+9. **Message data loss on power cycle (not on a clean reboot).** Confirmed
+   with channel messages specifically — points at something not being
+   flushed to persistent storage before a hard power-off that a clean reboot
+   flushes correctly. Not yet investigated.
+10. **Commander (Home tab) landscape layout** — fixed (chart width, 5-button
+    column height math). **Control-center overflow (6+ toggles not fitting)**
+    — also fixed (row/chip sizing extended to M9, matching T-Deck's existing
+    2-row wrap grid). Both confirmed working.
+11. **Keypad-nav quirks still open, all UI/UX not hardware:**
+    - Dropdown-list navigation doesn't work (dropdown closes and focus moves
+      to the next page element instead of moving the highlighted option).
+      Traced the entire mechanism — `navOpenDropdown()` detection, FIFO
+      push/pop, indev group assignment, LVGL's own dropdown `LV_EVENT_KEY`
+      handler, main-loop ordering relative to `lv_timer_handler()` — and
+      confirmed the M9 dispatch code is correct up to and including the
+      `navPushTap(LV_KEY_DOWN)` call itself (verified via an in-code Serial
+      print that the correct branch is taken). Root cause not found; likely
+      downstream in LVGL's own delivery/processing at runtime.
+    - Textarea fields specifically need 3-4 presses to move focus off them
+      (confirmed: buttons/toggles/icons/apps all traverse in one press, only
+      textareas affected). Ruled out the keyboard drain-loop/`lv_timer_handler()`
+      ordering as the cause (reducing the drain to one key per `loop()`
+      iteration didn't help). Root cause not found.
+    - Modal navigation occasionally "breaks out" to the screen behind and back
+      while navigating up through a modal's items. Likely candidate:
+      `createSettingsModal()`'s standalone-modal path (used for Device/About/
+      etc.) has no `navMarkDirty()` call after `closeSettingsModal()`, same
+      class of stale-focus-group bug the wizard and home-drawer fixes above
+      addressed — diagnosed, not yet applied/confirmed.
+    - Some apps/overlays don't close via the dedicated Home key — only some do
+      (inconsistent per-screen, not a HOME-key dispatch bug given other
+      overlays close correctly).
+    - Some modals close via Back, some don't — also inconsistent per-modal.
+    - The Snake game does not respond to d-pad input at all (confirmed the
+      hardware keys themselves work correctly elsewhere) — likely reads input
+      through its own loop rather than the shared `handleHwKey()`/nav-group
+      system; not yet traced.
+    - Map panning: currently no way to pan the map at all with the d-pad
+      (arrows only drive UI nav). Idea, not started: use `M9_KEY_ENTER_LONG`
+      (now wired and proven via the lock-screen/context-menu work below) to
+      toggle between UI-nav mode and map-pan mode.
+
+    **Resolved this pass:**
+    - Lock-screen unlock: fixed via `M9_KEY_ENTER_LONG` (the keyboard
+      controller's own hardware-level long-press detection, a distinct byte
+      from a normal Enter tap) standing in for "hold the trackball to
+      unlock." No progressive countdown UI is possible this way (only a
+      single discrete long-press event, not continuous press-state to poll),
+      but it's a confirmed-working equivalent. Also fixed: the lock screen
+      briefly showing the *previous* app screen before painting over it on
+      wake (`lockscreenReveal()` was turning the backlight on before the
+      lock overlay had actually been built/flushed — reordered + added
+      `lv_refr_now()`), and `lockscreenReveal()` itself being a complete
+      no-op for M9 (`#if defined(HAS_TDECK_GT911)` wrapped the whole
+      function body — widened to `#if CAP_LOCK_SCREEN`).
+    - Chat-message long-press context menu and the SD row's "hold: format":
+      both fixed by the same generic mechanism — `M9_KEY_ENTER_LONG` fires
+      `LV_EVENT_LONG_PRESSED` on whatever's currently group-focused, covering
+      any widget with a long-press handler anywhere in the app, not just
+      these two specific cases.
+    - Home-button self-conflict: `M9_KEY_HOME`'s "close everything on top"
+      dismiss loop was closing the app drawer itself (once registered as a
+      popup), then immediately reading the now-mutated `s_home_drawer_mode`
+      flag and reopening it in the same keypress. Fixed by snapshotting the
+      flag before the dismiss loop runs.
+
 
 ## Keyboard: register-addressed I2C slave (protocol build #8, USB-pad release build #9)
 
