@@ -31387,8 +31387,12 @@ static void updateGlobalStatusBar() {
   }
 
   // ---- Layout indicator ----
+  // Only while a chat/channel conversation is open (s_chat_title set): that is
+  // where typing happens and the active layout matters. Everywhere else it was
+  // permanent bar clutter (and sat next to the clock 24/7 once a secondary
+  // language was enabled).
   if (g_statusbar.layout_label) {
-    if (keyboardLayoutsAnySecondary()) {
+    if (keyboardLayoutsAnySecondary() && s_chat_title[0]) {
       const char* name = keyboardLayoutName(keyboardLayoutsGetCurrent());
       lv_label_set_text(g_statusbar.layout_label, name);
       // Park it just left of the clock on EVERY board, so it tracks wherever the
