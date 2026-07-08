@@ -31391,11 +31391,11 @@ static void updateGlobalStatusBar() {
     if (keyboardLayoutsAnySecondary()) {
       const char* name = keyboardLayoutName(keyboardLayoutsGetCurrent());
       lv_label_set_text(g_statusbar.layout_label, name);
-#if CAP_LARGE_SCREEN
-      // Park it just left of the clock so it tracks the SC()-scaled icon cluster at any UI size. Its
-      // fixed build offset was unscaled, so at Large/Huge the scaled BLE glyph marched into it.
+      // Park it just left of the clock on EVERY board, so it tracks wherever the
+      // clock lands (12/24-hour width, the charging slide, centred hide-name
+      // mode, SC() scaling). The old fixed -182 build offset overlapped the wide
+      // 12-hour clock on the T-Deck bar ("7:45 PM" reaches past -182).
       lv_obj_align_to(g_statusbar.layout_label, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -SC(8), 0);
-#endif
       lv_obj_clear_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN);
     } else {
       lv_obj_add_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN);
