@@ -28591,6 +28591,19 @@ static void handleHwKey(int key) {
   // keyboard-nav OFF there is no navigation to protect (and no nav group to set the edit
   // flag), so a focused field always types directly — otherwise typing breaks entirely.
   lv_obj_t* ta = (ta_focused && (!s_kbd_nav || s_nav_ta_editing)) ? ta_focused : nullptr;
+#elif defined(TLORA_PAGER)
+  // showKb() binds the composer to g_lv.keyboard as soon as a chat panel
+  // opens and leaves it bound even after nav focus moves to another widget
+  // in the same panel (e.g. the quick-reply/emoji icon) -- treating "a field
+  // is bound" as "we're editing a field" then routes Enter into the
+  // composer's submit/newline handling below instead of activating whatever
+  // is actually focused. Only count as editing when nav focus is really ON
+  // that field (mirrors CAP_TRACKBALL's s_kbd_nav/s_nav_ta_editing check
+  // above). Reported bug: the rotary encoder's short click opened the
+  // quick-reply/emoji picker (it bypasses this function entirely, sending
+  // LV_KEY_ENTER straight into the focus group via navPushTap()), but Enter
+  // on the keyboard did not.
+  lv_obj_t* ta = (ta_focused && s_nav_group && lv_group_get_focused(s_nav_group) == ta_focused) ? ta_focused : nullptr;
 #else
   lv_obj_t* ta = ta_focused;
 #endif
