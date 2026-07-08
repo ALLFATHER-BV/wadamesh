@@ -6254,22 +6254,40 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   lv_obj_add_event_cb(s_qr_sheet, qrSheetCloseCb, LV_EVENT_CLICKED, nullptr);
 
   // Bigger on the 800-px Tanmatsu panel; unchanged on the smaller boards.
+  // The pager's 480-wide landscape panel has plenty of spare width next to the
+  // old 220px single-column card (reported: half the screen sat empty) — give
+  // it 2 columns and a wider card instead of the shared 1-column sizing.
 #if CAP_LARGE_SCREEN
-  const int card_w = PSC(210);
-  const int btn_h  = SC(32);      // SC not PSC: the 1.7x PSC boost made this 6-row card taller than the screen
-  const int pad    = SC(8);
+  const int card_w  = PSC(210);
+  const int btn_h   = SC(32);      // SC not PSC: the 1.7x PSC boost made this 6-row card taller than the screen
+  const int pad     = SC(8);
   const int title_h = SC(26);
   const int hint_h  = SC(22);
   const int row_gap = SC(4);
-#else
-  const int card_w = 220;
-  const int btn_h  = 32;          // 34→32: 6 macro rows have to fit in the
-  const int pad    = 8;           // visible area (298 px) below the status
-  const int title_h = 26;         // bar — the old sizing produced a 302 px
-  const int hint_h  = 22;         // card that clipped behind the bar.
+  const int cols    = 1;
+  const int col_gap = 0;
+#elif defined(TLORA_PAGER)
+  const int card_w  = 360;
+  const int btn_h   = 32;
+  const int pad     = 8;
+  const int title_h = 26;
+  const int hint_h  = 22;
   const int row_gap = 4;
+  const int cols    = 2;
+  const int col_gap = 8;
+#else
+  const int card_w  = 220;
+  const int btn_h   = 32;          // 34→32: 6 macro rows have to fit in the
+  const int pad     = 8;           // visible area (298 px) below the status
+  const int title_h = 26;          // bar — the old sizing produced a 302 px
+  const int hint_h  = 22;          // card that clipped behind the bar.
+  const int row_gap = 4;
+  const int cols    = 1;
+  const int col_gap = 0;
 #endif
-  int card_h = title_h + TOUCH_QUICK_REPLY_COUNT * (btn_h + row_gap) + hint_h + pad;
+  const int col_w = (card_w - 2 * pad - (cols - 1) * col_gap) / cols;
+  const int rows  = (TOUCH_QUICK_REPLY_COUNT + cols - 1) / cols;   // ceil, in case the macro count ever changes
+  int card_h = title_h + rows * (btn_h + row_gap) + hint_h + pad;
   if (card_h > sh - STATUSBAR_H - 8) card_h = sh - STATUSBAR_H - 8;   // never taller than the visible area
   lv_obj_t* card = lv_obj_create(s_qr_sheet);
   lv_obj_remove_style_all(card);
@@ -6290,28 +6308,28 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 0);
 
-  int y = title_h;
 #if defined(ESP32)
   for (int i = 0; i < TOUCH_QUICK_REPLY_COUNT; ++i) {
     char buf[TOUCH_QUICK_REPLY_MAXLEN];
     int n = touchPrefsGetQuickReply(i, buf, sizeof(buf));
     if (n <= 0) { strncpy(buf, "(empty)", sizeof(buf) - 1); buf[sizeof(buf)-1] = '\0'; }
+    const int col = i % cols, row = i / cols;
     lv_obj_t* b = lv_btn_create(card);
-    lv_obj_set_size(b, card_w - 2 * pad, btn_h);
-    lv_obj_set_pos(b, 0, y);
+    lv_obj_set_size(b, col_w, btn_h);
+    lv_obj_set_pos(b, col * (col_w + col_gap), title_h + row * (btn_h + row_gap));
     styleButton(b);
     lv_obj_set_style_bg_color(b, lv_color_hex(n > 0 ? 0x1A1B1C : 0x0C0D0E), LV_PART_MAIN);
     lv_obj_add_event_cb(b, qrPickCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     lv_obj_t* lbl = lv_label_create(b);
     lv_label_set_text(lbl, buf);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(lbl, card_w - 2 * pad - 16);
+    lv_obj_set_width(lbl, col_w - 16);
     lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(lbl, lv_color_hex(n > 0 ? COLOR_TEXT : COLOR_SUB), LV_PART_MAIN);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 8, 0);
-    y += btn_h + row_gap;   // match the gap used in card_h calc above
   }
 #endif
+  const int y = title_h + rows * (btn_h + row_gap);   // hint sits below the last row
   lv_obj_t* hint = lv_label_create(card);
   lv_label_set_text(hint, TR("Edit in Settings \xe2\x86\x92 Quick replies"));
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
