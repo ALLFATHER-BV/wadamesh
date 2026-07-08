@@ -28,9 +28,8 @@ scripts/build/wifi_secrets.h
 # Local working notes + agent config (contain ops/infra details — never publish)
 CLAUDE.md
 .claude/
-TLORA_PAGER_PORT.md
-TLORA_PAGER_PORT_MILESTONES.md
-TLORA_PAGER_M7_HW_DEBUG_LOG.md
+/dev-docs/
+/crash-dumps/
 
 # Custom timestamped build outputs
 /builds/
