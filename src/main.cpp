@@ -192,6 +192,65 @@ void halt() {
 
 #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)
 
+#if defined(HAS_TDECK_GT911)
+// ---- SPIFFS -> SD migration (fixes the beta_36 "lost my profile" upgrades) ----
+// Users who flipped "Store data on SD" before beta_36 ran with the toggle IGNORED
+// (the flag never survived a reboot), so their identity/prefs/contacts kept living
+// on SPIFFS. When beta_36 made the flag finally take effect, useSdStorage() pointed
+// the store at an EMPTY card and the identity store generated a brand-new node:
+// "lost profile settings". The data was never gone — it was orphaned on SPIFFS.
+// Copies every SPIFFS file into SD:/meshcomod ("/prefs/<ns>.kv" flattens to
+// "/meshcomod/<ns>.kv", matching SdNvsPrefs's SD layout). Returns true only when
+// the identity file landed on the card — the caller must NOT adopt the card
+// otherwise. force=true (the Settings "Copy internal data to SD" recovery button)
+// overwrites whatever the card holds; the boot path never clobbers existing files.
+// Both filesystems must be mounted by the caller.
+bool meshcomodMigrateSpiffsToSd(bool force) {
+  if (!SPIFFS.exists("/identity/_main.id")) return false;   // nothing worth adopting
+  SD.mkdir("/meshcomod");
+  SD.mkdir("/meshcomod/identity");
+  SD.mkdir("/meshcomod/bl");
+  SD.mkdir("/meshcomod/lock");
+  bool identity_ok = false;
+  int copied = 0, failed = 0;
+  static uint8_t buf[4096];
+  File root = SPIFFS.open("/");
+  for (File f = root.openNextFile(); f; f = root.openNextFile()) {
+    if (f.isDirectory()) { f.close(); continue; }
+    // SPIFFS is flat: name() is the full path ("/identity/_main.id", "/prefs/touch.kv", ...)
+    const char* sp = f.name();
+    char src[96];
+    snprintf(src, sizeof src, "%s%s", sp[0] == '/' ? "" : "/", sp);
+    char dst[112];
+    if (strncmp(src, "/prefs/", 7) == 0)
+      snprintf(dst, sizeof dst, "/meshcomod/%s", src + 7);   // kv files sit flat on the card
+    else
+      snprintf(dst, sizeof dst, "/meshcomod%s", src);
+    if (!force && SD.exists(dst)) { f.close(); continue; }   // boot path: never clobber
+    File s = SPIFFS.open(src, FILE_READ);
+    File d = s ? SD.open(dst, FILE_WRITE) : File();          // FILE_WRITE truncates
+    bool ok = s && d;
+    while (ok && s.available()) {
+      const size_t n = s.read(buf, sizeof buf);
+      if (n == 0 || d.write(buf, n) != n) ok = false;
+    }
+    if (s) s.close();
+    if (d) d.close();
+    if (ok) { ++copied; if (strcmp(src, "/identity/_main.id") == 0) identity_ok = true; }
+    else    { ++failed; Serial.printf("[BOOT] SD migrate FAILED: %s\n", src); if (SD.exists(dst)) SD.remove(dst); }
+    f.close();
+    yield();
+  }
+  root.close();
+  // The boot path skips files the card already has — an identity already on the
+  // card counts as "landed" (nothing needed migrating).
+  if (!force && !identity_ok && SD.exists("/meshcomod/identity/_main.id")) identity_ok = true;
+  Serial.printf("[BOOT] SPIFFS -> SD migration: %d copied, %d failed, identity %s\n",
+                copied, failed, identity_ok ? "ok" : "MISSING");
+  return identity_ok;
+}
+#endif
+
 void setup() {
   Serial.begin(115200);
 #if defined(HAS_RAK_TAP_V2)
@@ -427,12 +486,28 @@ void setup() {
     }
     if (sd_mounted) {
       if (want_full_sd) {
-        sd_storage = store.useSdStorage();
-        // On a genuine first run, persist the auto-pick so the "Store data on SD"
-        // toggle reflects it and the choice sticks on every later boot.
-        if (fresh_install && sd_storage && !use_sd_pref) {
-          Preferences _p; if (_p.begin("touch", false)) { _p.putBool("use_sd", true); _p.end(); }
-          Serial.println("[BOOT] first run + SD card present -> data defaults to SD");
+        // beta_36 upgrade heal: adopting the card while the LIVE data still sits
+        // on SPIFFS (the pre-beta_36 "toggle ignored" state) must migrate FIRST,
+        // or the identity store mints a fresh node on the empty card and the user
+        // "loses" their profile. Only fires when SPIFFS holds an identity the
+        // card lacks; a failed migration keeps the device on SPIFFS this boot
+        // rather than adopting a card without the identity on it.
+        bool adopt = true;
+        if (SPIFFS.exists("/identity/_main.id") && !SD.exists("/meshcomod/identity/_main.id")) {
+          adopt = meshcomodMigrateSpiffsToSd(false);
+          if (!adopt) Serial.println("[BOOT] SD migration incomplete -> staying on SPIFFS this boot");
+        }
+        if (adopt) {
+          sd_storage = store.useSdStorage();
+          // On a genuine first run, persist the auto-pick so the "Store data on SD"
+          // toggle reflects it and the choice sticks on every later boot.
+          if (fresh_install && sd_storage && !use_sd_pref) {
+            Preferences _p; if (_p.begin("touch", false)) { _p.putBool("use_sd", true); _p.end(); }
+            Serial.println("[BOOT] first run + SD card present -> data defaults to SD");
+          }
+        } else {
+          store.setSecondaryFS(&SD);
+          Serial.println("[BOOT] contacts/channels -> SD card (identity/prefs stay on SPIFFS)");
         }
       } else {
         // Upgraded device: identity + prefs stay on SPIFFS (no node-identity

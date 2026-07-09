@@ -9157,6 +9157,32 @@ static void useSdStorageToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Data -> SD card on reboot\n(card must be inserted)")
                                          : TR("Data -> internal on reboot"), 1800);
 }
+
+#if defined(HAS_TDECK_GT911)
+// "Copy internal data to SD": recovery for the beta_36 upgrades where the live
+// profile was orphaned on internal flash while the honored SD toggle adopted an
+// empty card (which then minted a fresh identity). Overwrites the card's copies
+// with EVERYTHING from internal flash, forces the SD pref on, reboots.
+extern bool meshcomodMigrateSpiffsToSd(bool force);   // main.cpp
+static void sdRestoreApply() {
+  if (!g_lv.task) return;
+  if (!fmSdTryMount()) { g_lv.task->showAlert(TR("No SD card"), 1600); return; }
+  g_lv.task->showAlert(TR("Copying internal data to SD..."), 6000);
+  lv_refr_now(nullptr);                 // paint the notice before the blocking copy
+  disableLoopWDT();
+  const bool ok = meshcomodMigrateSpiffsToSd(true);
+  enableLoopWDT();
+  if (!ok) { g_lv.task->showAlert(TR("Copy failed (no internal identity)"), 2200); return; }
+  touchPrefsSetUseSdStorage(true);      // make sure the reboot adopts the card
+  delay(400);                           // let the alert render before the restart
+  board.reboot();
+}
+static void sdRestoreFromInternalCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  showConfirm(TR("Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?"),
+              TR("Copy"), sdRestoreApply);
+}
+#endif
 #endif
 
 static void useMilesToggleCb(lv_event_t* e) {
@@ -10261,6 +10287,26 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, useSdStorageToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
+  /* Recovery for the beta_36 "lost my profile" upgrades: the live data was
+     orphaned on internal flash when the honored SD toggle adopted an empty (or
+     fresh-identity) card. This copies EVERYTHING from internal flash over the
+     card's copies and reboots into the restored profile. T-Deck only: the
+     migration is SPIFFS->SD; the Tanmatsu's CAP_SD is SD_MMC with no SPIFFS. */
+#if defined(HAS_TDECK_GT911)
+  {
+    lv_obj_t* b = lv_btn_create(body);
+    lv_obj_set_size(b, lv_pct(96), SC(30));
+    lv_obj_set_pos(b, 0, y);
+    styleButton(b);
+    lv_obj_add_event_cb(b, sdRestoreFromInternalCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* lbl = lv_label_create(b);
+    lv_label_set_text(lbl, TR(LV_SYMBOL_DOWNLOAD "  Copy internal data to SD"));
+    lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_center(lbl);
+    y += SC(40);
+  }
+#endif  // HAS_TDECK_GT911 (SPIFFS->SD recovery copy)
 #endif
 
   }
