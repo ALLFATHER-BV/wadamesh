@@ -5547,9 +5547,12 @@ static void histClearApply() {
   const int idx = s_hist_clear_thread;
   s_hist_clear_thread = -1;
   const int cleared = g_lv.task->clearThreadHistory(idx);
-  refreshThreadLists();
+  refreshThreadLists();                                    // cleared history vanishes instantly
   if (g_lv.dm.detail_open) refreshChatDetailAsync(g_lv.dm);
   if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
+  // Persist synchronously so the cleared chat stays cleared across an immediate hard
+  // reset; the compact write keeps it fast enough not to hitch the UI.
+  if (cleared) g_lv.task->persistHistoryNow();
   char msg[40];
   snprintf(msg, sizeof msg, TR("Deleted %d messages"), cleared);
   g_lv.task->showAlert(msg, 1400);
@@ -25352,9 +25355,14 @@ static void msgMenuDeleteCb(lv_event_t* e) {
   const int idx = s_msg_menu_idx;
   closeMsgActionMenu();
   if (g_lv.task->deleteMessageBySlot(idx)) {
-    refreshThreadLists();
+    refreshThreadLists();                                   // message vanishes instantly
     if (g_lv.dm.detail_open) refreshChatDetailAsync(g_lv.dm);
     if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
+    // Persist synchronously so the delete survives an immediate hard reset (an async
+    // flush can't — the reset beats the worker). The write is now compact (only the
+    // used records), so this no longer hitches the UI. The 30 s lazy window was why a
+    // deleted message "came back" on beta_38.
+    g_lv.task->persistHistoryNow();
     g_lv.task->showAlert(TR("Message deleted"), 1100);
   }
 }
@@ -36463,8 +36471,17 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
   hdr.magic         = k_ui_msgs_magic;
   hdr.version       = k_ui_history_version;
   hdr.msg_rec_size  = static_cast<uint16_t>(sizeof(UiHistoryMsg));
-  hdr.ui_msg_count  = count;
-  hdr.ui_msg_head   = head;
+  // Compact write: emit only the `count` USED records, oldest-first, instead of one
+  // record per ring slot (cap). A user with 200 messages writes ~48 KB, not the full
+  // ~1.2 MB ring, so the delete/clear/reboot flush no longer hitches the UI (that
+  // full-ring rewrite was the "deleting a message is slow" cause). The reader derives
+  // its slot count from the file size and linearizes by (head,count), so an
+  // oldest-first file with head=0 loads byte-for-byte identically.
+  const int wcap = cap > 0 ? cap : 1;
+  const int used = (int)count > cap ? cap : (int)count;
+  const int oldst = (((int)head - used) % wcap + wcap) % wcap;
+  hdr.ui_msg_count  = static_cast<uint16_t>(used);
+  hdr.ui_msg_head   = 0;   // written oldest-first => the file's ring head sits at 0
   hdr.msgcount      = msgcount;
   if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
     f.close(); return false;
@@ -36477,7 +36494,8 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
   bool ok = true;
   if (buf) {
     size_t fill = 0;
-    for (int i = 0; ok && i < cap; ++i) {
+    for (int k = 0; ok && k < used; ++k) {
+      const int i = (oldst + k) % wcap;
       UiHistoryMsg* m = reinterpret_cast<UiHistoryMsg*>(buf + fill);
       memset(m, 0, REC);
       m->ts          = msgs[i].ts;
@@ -36503,7 +36521,8 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     free(buf);
   } else {
     UiHistoryMsg m{};
-    for (int i = 0; ok && i < cap; ++i) {
+    for (int k = 0; ok && k < used; ++k) {
+      const int i = (oldst + k) % wcap;
       memset(&m, 0, sizeof(m));
       m.ts          = msgs[i].ts;
       m.channel     = msgs[i].channel ? 1u : 0u;
