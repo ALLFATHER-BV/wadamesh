@@ -102,6 +102,12 @@ public:
   }
   virtual void notify(UIEventType t = UIEventType::none) = 0;
   virtual void appendDiag(const char* message) { (void)message; }
+  /** Flush any UI-side persistent state (chat history, thread table) to storage
+   *  NOW. Called before programmatic reboots (the companion app's reboot
+   *  command) — the touch UI's history writes are lazy (up to ~30 s apart on the
+   *  deep SD ring), so a reboot path that skips this drops the newest messages.
+   *  Default: no-op for UIs without lazy persistent state. */
+  virtual void persistHistoryNow() {}
   /** Notify UI of an advert reception. `is_new=true` means the contact is NOT in
    *  the persistent contacts[] table (filtered by auto-add rules or contacts
    *  full); `is_new=false` means the contact is in contacts[] and was just

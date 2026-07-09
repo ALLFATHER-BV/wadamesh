@@ -3421,6 +3421,11 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (dirty_contacts_expiry) { // is there are pending dirty contacts write needed?
       saveContacts();
     }
+    // The app's reboot button must not drop chat history: the touch UI's writes
+    // are lazy (up to ~30 s apart on the deep SD ring), so flush synchronously
+    // first — the same contract the on-device power menu honors. Skipping this
+    // was the "read and unread messages deleted after a manual reboot" report.
+    if (_ui) _ui->persistHistoryNow();
     board.reboot();
   } else if (cmd_frame[0] == CMD_GET_BATT_AND_STORAGE) {
     uint8_t reply[11];

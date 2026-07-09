@@ -481,8 +481,9 @@ public:
   void rebootDevice();
   // Synchronously persist chat history to flash. Call before any path that
   // restarts the device (Wi-Fi/BLE mode switch, etc.) so recent chat isn't
-  // lost — the periodic flush is off-thread and rate-capped.
-  void persistHistoryNow();
+  // lost — the periodic flush is off-thread and rate-capped. Overrides the
+  // AbstractUITask hook so the companion CMD_REBOOT path flushes too.
+  void persistHistoryNow() override;
 
   // from AbstractUITask
   void msgRead(int msgcount) override;
