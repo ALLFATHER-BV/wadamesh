@@ -350,6 +350,12 @@
           <esp-web-install-button id="inst-heltec" manifest="https://firmware.wadamesh.com/latest/manifest-heltec-v4-tft.json"></esp-web-install-button></div>
         <div class="board"><h4>LilyGo T-Deck / Plus</h4><p>ESP32-S3 keyboard handheld.</p>
           <esp-web-install-button id="inst-tdeck" manifest="https://firmware.wadamesh.com/latest/manifest-tdeck.json"></esp-web-install-button></div>
+        <div class="board"><h4>ThinkNode M9</h4><p>ESP32-S3 QWERTY handheld (LR1110).</p>
+          <esp-web-install-button id="inst-m9" manifest="https://firmware.wadamesh.com/latest-beta/manifest-thinknode-m9.json"></esp-web-install-button>
+          <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board: beta channel only until the next stable.</p></div>
+        <div class="board"><h4>RAK WisMesh Tap V2</h4><p>ESP32-S3 touch node.</p>
+          <esp-web-install-button id="inst-rak" manifest="https://firmware.wadamesh.com/latest-beta/manifest-rak-tap-v2.json"></esp-web-install-button>
+          <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board: beta channel only until the next stable.</p></div>
         <div class="board"><h4>Tanmatsu</h4><p>ESP32-P4 keyboard handheld.</p>
           <p style="color:var(--mut);font-size:.84rem;margin:0;line-height:1.5">Already have one? No USB flashing needed — install WADAMESH straight from the <b>Tanmatsu app store</b> on the device.</p>
           <a class="dl" href="https://shop.nicolaielectronics.nl/" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Get a Tanmatsu</a></div>
@@ -510,6 +516,10 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
   // on the firmware host — latest/ (stable) <-> latest-beta/ (beta) — and the install
   // manifests, "what's new", the Launcher .bin link and the version picker follow.
   const WM = (window.WM = { feed:'latest', arch:'TOUCH' });
+  // ThinkNode M9 + RAK Tap V2 exist on the BETA feed only until the first stable
+  // promote that includes them: their install buttons are pinned to latest-beta in
+  // the HTML and deliberately NOT switched by wmSetChannel. When a stable ships
+  // with their bins, add them here + to wmSetChannel and drop the pinned notes.
   const WM_MAN = { heltec:'manifest-heltec-v4-tft.json', tdeck:'manifest-tdeck.json' };
   window.wmManifest = board => 'https://firmware.wadamesh.com/' + WM.feed + '/' + WM_MAN[board];
   function wmWhatsNew(){
