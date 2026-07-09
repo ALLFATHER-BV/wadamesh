@@ -18828,9 +18828,13 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-  // Landscape: the right column holds Advert + Terminal + Files + Apps,
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2)
+  // Landscape (T-Deck / Tanmatsu / RAK Tap V2): the right column holds Advert + Terminal + Files + Apps,
   // so the chart must stop short of that strip — else it draws over the buttons.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
+#else
+  const int chart_w = cw;
+#endif
   // Fit the chart in the remaining vertical space: content height minus the
   // tab padding, the chart's top offset, and the Send-advert button + gaps.
   // Portrait keeps the full 96 px; landscape (short screen) shrinks it so the
@@ -31288,7 +31292,11 @@ static void relayoutHomeCharts() {
   const int cw = tabContentW();
   const int BTNW = SC(100);
   const int RSTRIP = BTNW + 10;
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2)
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
+#else
+  const int chart_w = cw;
+#endif
 
   // The env summary line is hard-placed at SC(58) in the tree, which collides with
   // the (up to two-line, WRAP) stats line on the narrow V4 portrait — the stats line
@@ -35840,7 +35848,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
 #else
-      const size_t buf_bytes = sizeof(lv_color_t) * 320 * LV_DRAW_BUF_LINES;
+#if defined(HAS_RAK_TAP_V2)
+      const int draw_band_w = 320;
+#else
+      const int draw_band_w = 240;
+#endif
+      const size_t buf_bytes = sizeof(lv_color_t) * draw_band_w * LV_DRAW_BUF_LINES;
       // Internal DMA-capable DRAM — this is the hot loop's read source
       // during SPI flush. PSRAM (~80 MHz QSPI) is ~3× slower than
       // internal SRAM. INTERNAL|DMA also makes it eligible for SPI DMA
@@ -35858,7 +35871,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // requests strain the internal heap. A tiny buffer still renders instead of
       // leaving g_draw_buffer NULL -> NULL-deref in lvglFlush -> boot panic loop.
       if (!g_draw_buffer) {
-        g_draw_buf_px = 320 * 8;
+        g_draw_buf_px = draw_band_w * 8;
         g_draw_buffer = (lv_color_t*)heap_caps_malloc(sizeof(lv_color_t) * g_draw_buf_px,
                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(sizeof(lv_color_t) * g_draw_buf_px);

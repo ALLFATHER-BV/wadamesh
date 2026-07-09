@@ -194,9 +194,12 @@ void halt() {
 
 void setup() {
   Serial.begin(115200);
-  delay(1500);  // wait for USB-CDC enumeration so all boot logs are visible
-  Serial.println("[BOOT] setup start (debug-v2 with psram probe)");
-  Serial.flush();
+#if defined(HAS_RAK_TAP_V2)
+  delay(1500);  // USB-CDC enumeration before boot logs
+#else
+  delay(200);
+#endif
+  Serial.println("[BOOT] setup start");
 
   // Widen the task-watchdog grace period. The ~5 s default trips during a legitimate-but-slow flash
   // burst — a SPIFFS garbage-collect, or a bulk save (DataStore issues ~12 flash ops per contact,
@@ -240,6 +243,7 @@ void setup() {
   board.begin();
   Serial.println("[BOOT] board ok");
 
+#if defined(HAS_RAK_TAP_V2)
   // Quick PSRAM sanity check — silent crash before SPIFFS could be bad PSRAM config
   {
     void* p = heap_caps_malloc(64, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -254,6 +258,7 @@ void setup() {
     Serial.printf("[BOOT] psram probe: %s\n", psram_ok ? "OK" : "FAIL"); Serial.flush();
     if (!psram_ok) { Serial.println("[BOOT] FATAL: PSRAM readback mismatch — halting"); halt(); }
   }
+#endif
 
 #ifdef DISPLAY_CLASS
   DisplayDriver* disp = NULL;
@@ -303,11 +308,16 @@ void setup() {
                     static_cast<unsigned long>(bn),
                     static_cast<unsigned>(esp_reset_reason()),
                     static_cast<unsigned>(nvs_free));
+#if defined(HAS_RAK_TAP_V2)
       Serial.flush();
     }
     Serial.println("[BOOT] about to call initTxtTxUniquenessFromRng..."); Serial.flush();
     the_mesh.initTxtTxUniquenessFromRng();
     Serial.println("[BOOT] initTxtTxUniqueness done"); Serial.flush();
+#else
+    }
+    the_mesh.initTxtTxUniquenessFromRng();
+#endif
   }
 #endif
 
@@ -439,7 +449,7 @@ void setup() {
   }
 #endif
   if (!sd_storage && !spiffs_ok) SPIFFS.begin(true);   // last resort: format SPIFFS
-  Serial.printf("[BOOT] storage: %s\n", sd_storage ? "SD /meshcomod" : "SPIFFS"); Serial.flush();
+  Serial.printf("[BOOT] storage: %s\n", sd_storage ? "SD /meshcomod" : "SPIFFS");
 #if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
   // Route touch settings + Wi-Fi creds to the active filesystem (SD when that's
   // the data store, else SPIFFS) instead of NVS. Old NVS values still load and
@@ -449,18 +459,22 @@ void setup() {
                         sd_storage ? "/meshcomod" : "/prefs");
   #else
     SdNvsPrefs::useFile((fs::FS*)&SPIFFS, "/prefs");   // no SD on this board
-Serial.println("[BOOT] prefs_backend ok"); Serial.flush();
   #endif
   // The boot wordmark already read a pref (UI rotation) BEFORE useFile switched
   // the backend, caching the settings blob from legacy NVS. Re-read it now so
   // file-saved values (theme accent, brightness, language, …) take effect this
   // boot — otherwise a theme change "reverts" on every restart.
   touchPrefsReload();
+#if defined(HAS_RAK_TAP_V2)
+  Serial.println("[BOOT] prefs_backend ok"); Serial.flush();
   Serial.println("[BOOT] touchPrefsReload ok"); Serial.flush();
 #endif
+#endif
   store.begin();
+#if defined(HAS_RAK_TAP_V2)
   Serial.println("[BOOT] store ok"); Serial.flush();
   Serial.println("[BOOT] calling mesh.begin..."); Serial.flush();
+#endif
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -468,7 +482,10 @@ Serial.println("[BOOT] prefs_backend ok"); Serial.flush();
         false
     #endif
   );
-  Serial.println("[BOOT] mesh ok"); Serial.flush();
+  Serial.println("[BOOT] mesh ok");
+#if defined(HAS_RAK_TAP_V2)
+  Serial.flush();
+#endif
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   {
