@@ -1,7 +1,7 @@
-#include <Arduino.h>
-#include <SPI.h>
 #include "M9Board.h"
 #include "soc/usb_serial_jtag_reg.h"
+#include <Arduino.h>
+#include <SPI.h>
 
 void ThinkNodeM9Board::begin() {
   // Release the S3's native USB pads. GPIO19/20 are USB D-/D+ and the ROM's
@@ -13,7 +13,8 @@ void ThinkNodeM9Board::begin() {
   // answers (bring-up #8: probe found nothing on a correctly-wired bus).
   REG_CLR_BIT(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_USB_PAD_ENABLE);
 
-  ESP32Board::begin();   // attaches PIN_VBAT_READ, brings up Wire on PIN_BOARD_SDA/SCL (7/6)
+  ESP32Board::begin(); // attaches PIN_VBAT_READ, brings up Wire on
+                       // PIN_BOARD_SDA/SCL (7/6)
 
   // The one place this board's init genuinely has to differ from T-Deck/
   // Heltec V4's pattern: their displays use ST7789LCDDisplay's dedicated-
@@ -55,13 +56,14 @@ void ThinkNodeM9Board::begin() {
   periph_power.claim();
   backlight.claim();
 
-  pinMode(PIN_USER_BTN, INPUT_PULLUP);   // BOOT button, GPIO0, active LOW
+  pinMode(PIN_USER_BTN, INPUT_PULLUP); // BOOT button, GPIO0, active LOW
 
   esp_reset_reason_t reason = esp_reset_reason();
   if (reason == ESP_RST_DEEPSLEEP) {
     uint64_t wakeup_source = esp_sleep_get_ext1_wakeup_status();
     if (wakeup_source & (1ULL << P_LORA_DIO_1)) {
-      startup_reason = BD_STARTUP_RX_PACKET;  // woke from an incoming LoRa packet
+      startup_reason =
+          BD_STARTUP_RX_PACKET; // woke from an incoming LoRa packet
     }
     rtc_gpio_hold_dis((gpio_num_t)P_LORA_NSS);
     rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
@@ -77,33 +79,32 @@ void ThinkNodeM9Board::enterDeepSleep(uint32_t secs, int pin_wake_btn) {
   rtc_gpio_hold_en((gpio_num_t)P_LORA_NSS);
 
   if (pin_wake_btn < 0) {
-    esp_sleep_enable_ext1_wakeup((1ULL << P_LORA_DIO_1), ESP_EXT1_WAKEUP_ANY_HIGH);
+    esp_sleep_enable_ext1_wakeup((1ULL << P_LORA_DIO_1),
+                                 ESP_EXT1_WAKEUP_ANY_HIGH);
   } else {
-    esp_sleep_enable_ext1_wakeup((1ULL << P_LORA_DIO_1) | (1ULL << pin_wake_btn), ESP_EXT1_WAKEUP_ANY_HIGH);
+    esp_sleep_enable_ext1_wakeup((1ULL << P_LORA_DIO_1) |
+                                     (1ULL << pin_wake_btn),
+                                 ESP_EXT1_WAKEUP_ANY_HIGH);
   }
 
   if (secs > 0) {
     esp_sleep_enable_timer_wakeup(secs * 1000000ULL);
   }
 
-  esp_deep_sleep_start();   // CPU halts here and never returns
+  esp_deep_sleep_start(); // CPU halts here and never returns
 }
 
-void ThinkNodeM9Board::powerOff() {
-  enterDeepSleep(0);
-}
+void ThinkNodeM9Board::powerOff() { enterDeepSleep(0); }
 
 uint16_t ThinkNodeM9Board::getBattMilliVolts() {
 #if defined(PIN_VBAT_READ)
-  // 1:1 divider (manufacturer-confirmed) — unlike the ESP32Board base class's
-  // hardcoded `2 * raw`, the pin voltage IS the battery voltage here.
   analogReadResolution(12);
   uint32_t sum = 0;
   const int kSamples = 8;
   for (int i = 0; i < kSamples; i++) {
     sum += analogReadMilliVolts(PIN_VBAT_READ);
   }
-  return (uint16_t)(sum / kSamples);
+  return (uint16_t)(2 * (sum / kSamples));
 #else
   return 0;
 #endif

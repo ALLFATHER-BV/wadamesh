@@ -1,5 +1,5 @@
-#include <Arduino.h>
 #include "target.h"
+#include <Arduino.h>
 
 ThinkNodeM9Board board;
 
@@ -18,35 +18,37 @@ ThinkNodeM9Board board;
 // radio_init()" exactly — their displays self-init on a separate dedicated
 // bus, M9's display is on ST7789LCDDisplay's "default" branch and needs the
 // global SPI already begun before display.begin() runs).
-RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, SPI);
+RADIO_CLASS radio =
+    new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, SPI);
 
 WRAPPER_CLASS radio_driver(radio, board);
 
 ESP32RTCClock fallback_clock;
-ClockFloorRTC rtc_clock(fallback_clock);   // wraps AutoDiscover: monotonic send-timestamp floor (#89)
+ClockFloorRTC rtc_clock(
+    fallback_clock); // wraps AutoDiscover: monotonic send-timestamp floor (#89)
 MicroNMEALocationProvider gps(Serial1, &rtc_clock);
 EnvironmentSensorManager sensors(gps);
 
 #ifdef DISPLAY_CLASS
-  // periph_power gates the LCD/GPS/sensor rail (GPIO18, active-low P-MOS).
-  // Passing &board.periph_power lets ST7789LCDDisplay::begin()/turnOff()
-  // claim/release it alongside the panel's own lifecycle. The backlight
-  // (GPIO17, PNP) is handled separately by ThinkNodeM9Board — see M9Board.h
-  // for why it's NOT routed through PIN_TFT_LEDA_CTL.
-  DISPLAY_CLASS display(&board.periph_power);
-  MomentaryButton user_btn(PIN_USER_BTN, 1000, true);
+// periph_power gates the LCD/GPS/sensor rail (GPIO18, active-low P-MOS).
+// Passing &board.periph_power lets ST7789LCDDisplay::begin()/turnOff()
+// claim/release it alongside the panel's own lifecycle. The backlight
+// (GPIO17, PNP) is handled separately by ThinkNodeM9Board — see M9Board.h
+// for why it's NOT routed through PIN_TFT_LEDA_CTL.
+DISPLAY_CLASS display(&board.periph_power);
+MomentaryButton user_btn(PIN_USER_BTN, 1000, true);
 #endif
 
 #ifndef LORA_CR
-  #define LORA_CR 5
+#define LORA_CR 5
 #endif
 
 bool radio_init() {
   fallback_clock.begin();
-  rtc_clock.begin(Wire);   // peripheral I2C bus (7/6) — RTC PCF8563 @ 0x51
+  rtc_clock.begin(Wire); // peripheral I2C bus (7/6) — RTC PCF8563 @ 0x51
 
 #if defined(HAS_M9_KEYBOARD)
-  m9KeyboardBegin();       // own bus, Wire1 (20/21) — no contention with Wire
+  m9KeyboardBegin(); // own bus, Wire1 (20/21) — no contention with Wire
 #endif
 
 #ifdef LR11X0_DIO3_TCXO_VOLTAGE
@@ -65,16 +67,16 @@ bool radio_init() {
   // equivalent of what CustomSX1262/SX1268's std_init() would otherwise do,
   // since CustomLR1110 has no std_init() helper.
   int status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR,
-                            RADIOLIB_LR11X0_LORA_SYNC_WORD_PRIVATE,
-                            LORA_TX_POWER, 16, tcxo);
+                           RADIOLIB_LR11X0_LORA_SYNC_WORD_PRIVATE,
+                           LORA_TX_POWER, 16, tcxo);
   if (status != RADIOLIB_ERR_NONE) {
     // One retry after a settle: the first begin() enables the TCXO supply, and
     // if Y1's startup outruns RadioLib's fixed internal wait the first
     // calibration can fail while the second attempt finds a stable clock.
     delay(150);
     status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR,
-                         RADIOLIB_LR11X0_LORA_SYNC_WORD_PRIVATE,
-                         LORA_TX_POWER, 16, tcxo);
+                         RADIOLIB_LR11X0_LORA_SYNC_WORD_PRIVATE, LORA_TX_POWER,
+                         16, tcxo);
   }
   // Print the chip's own identification in BOTH outcomes: device type,
   // transceiver FW revision and pending error flags. Preprod M9 units ship
@@ -87,10 +89,11 @@ bool radio_init() {
     uint16_t chip_errors = 0;
     if (radio.getVersionInfo(&vinfo) == RADIOLIB_ERR_NONE) {
       radio.getErrors(&chip_errors);
-      Serial.printf("LR1110: hw=0x%02X device=0x%02X fw=%u.%u wifi=%u.%u gnss=%u.%u errors=0x%04X\n",
+      Serial.printf("LR1110: hw=0x%02X device=0x%02X fw=%u.%u wifi=%u.%u "
+                    "gnss=%u.%u errors=0x%04X\n",
                     vinfo.hardware, vinfo.device, vinfo.fwMajor, vinfo.fwMinor,
-                    vinfo.fwMajorWiFi, vinfo.fwMinorWiFi, vinfo.fwGNSS, vinfo.almanacGNSS,
-                    chip_errors);
+                    vinfo.fwMajorWiFi, vinfo.fwMinorWiFi, vinfo.fwGNSS,
+                    vinfo.almanacGNSS, chip_errors);
     } else {
       Serial.println("LR1110: getVersionInfo failed (chip not answering)");
     }
@@ -105,33 +108,28 @@ bool radio_init() {
   radio.setCRC(2);
   radio.explicitHeader();
 
-  // RF-switch DIO table: pin assignment is SCHEMATIC-CONFIRMED (Think_Node_M9_V1_0.pdf,
-  // the LR1110/U7 block) — DIO5 (pin 20) -> R20 -> net RFSW0_V1 -> switch IC (U8) V1;
-  // DIO6 (pin 19) -> R19 -> net RFSW1_V2 -> U8 V2. DIO7/DIO8 are unconnected on this
-  // board (no net, dangling stubs) — unlike t1000-e/me25ls01's 4-pin DIO5-8 scheme,
-  // this is a plain 2-pin switch into a single antenna (U8 RFC -> C74 -> L12 -> ANT1),
-  // matching thinknode_m3's table shape exactly. What's NOT independently re-derived:
-  // the per-mode HIGH/LOW truth table below — U8's part number isn't printed on the
-  // schematic, so this reuses the conventional STBY/RX/TX/TX_HP polarity every other
-  // MeshCore LR1110 board's 2-pin table uses (thinknode_m3, same shape). If TX/RX work
-  // but seem swapped or dead, flip the RX/TX_HP rows here first.
+  // RF-switch DIO table: pin assignment is SCHEMATIC-CONFIRMED
+  // (Think_Node_M9_V1_0.pdf, the LR1110/U7 block) — DIO5 (pin 20) -> R20 -> net
+  // RFSW0_V1 -> switch IC (U8) V1; DIO6 (pin 19) -> R19 -> net RFSW1_V2 -> U8
+  // V2. DIO7/DIO8 are unconnected on this board (no net, dangling stubs) —
+  // unlike t1000-e/me25ls01's 4-pin DIO5-8 scheme, this is a plain 2-pin switch
+  // into a single antenna (U8 RFC -> C74 -> L12 -> ANT1), matching
+  // thinknode_m3's table shape exactly. What's NOT independently re-derived:
+  // the per-mode HIGH/LOW truth table below — U8's part number isn't printed on
+  // the schematic, so this reuses the conventional STBY/RX/TX/TX_HP polarity
+  // every other MeshCore LR1110 board's 2-pin table uses (thinknode_m3, same
+  // shape). If TX/RX work but seem swapped or dead, flip the RX/TX_HP rows here
+  // first.
 #ifdef RF_SWITCH_TABLE
   static const uint32_t rfswitch_dios[Module::RFSWITCH_MAX_PINS] = {
-    RADIOLIB_LR11X0_DIO5,   // -> RFSW0_V1 (U8 V1)
-    RADIOLIB_LR11X0_DIO6,   // -> RFSW1_V2 (U8 V2)
-    RADIOLIB_NC,
-    RADIOLIB_NC,
-    RADIOLIB_NC
-  };
+      RADIOLIB_LR11X0_DIO5, // -> RFSW0_V1 (U8 V1)
+      RADIOLIB_LR11X0_DIO6, // -> RFSW1_V2 (U8 V2)
+      RADIOLIB_NC, RADIOLIB_NC, RADIOLIB_NC};
   static const Module::RfSwitchMode_t rfswitch_table[] = {
-    { LR11x0::MODE_STBY,   {LOW , LOW  }},
-    { LR11x0::MODE_RX,     {HIGH, LOW  }},
-    { LR11x0::MODE_TX,     {HIGH, HIGH }},
-    { LR11x0::MODE_TX_HP,  {LOW , HIGH }},
-    { LR11x0::MODE_TX_HF,  {LOW , LOW  }},
-    { LR11x0::MODE_GNSS,   {LOW , LOW  }},
-    { LR11x0::MODE_WIFI,   {LOW , LOW  }},
-    END_OF_MODE_TABLE,
+      {LR11x0::MODE_STBY, {LOW, LOW}},  {LR11x0::MODE_RX, {HIGH, LOW}},
+      {LR11x0::MODE_TX, {HIGH, HIGH}},  {LR11x0::MODE_TX_HP, {LOW, HIGH}},
+      {LR11x0::MODE_TX_HF, {LOW, LOW}}, {LR11x0::MODE_GNSS, {LOW, LOW}},
+      {LR11x0::MODE_WIFI, {LOW, LOW}},  END_OF_MODE_TABLE,
   };
   radio.setRfSwitchTable(rfswitch_dios, rfswitch_table);
 #endif
@@ -147,6 +145,14 @@ mesh::LocalIdentity radio_new_identity() {
   return mesh::LocalIdentity(&rng);
 }
 
-SPIClass* m9SharedSPI() {
-  return &SPI;   // global instance, shared by radio + display + SD; begun once in M9Board::begin()
+SPIClass *m9SharedSPI() {
+  return &SPI; // global instance, shared by radio + display + SD; begun once in
+               // M9Board::begin()
+}
+
+void m9SetBacklight(bool on) {
+  if (on)
+    board.backlight.claim();
+  else
+    board.backlight.release();
 }

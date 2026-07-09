@@ -47,7 +47,7 @@
   static inline esp_err_t esp_core_dump_image_erase() { return ESP_FAIL; }
   #endif
 #endif
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   #include <SD.h>             // microSD (CS=39) on the shared LoRa SPI bus
   #include "sd_diskio.h"      // internal Arduino-SD drive helpers (sdcard_init / sd_*_raw)
   extern SPIClass* tdeckSharedSPI();
@@ -60,6 +60,10 @@
   #ifndef PIN_SD_CS
     #define PIN_SD_CS 39      // T-Deck microSD chip-select (M9 sets its own via build flags)
   #endif
+#endif
+#if defined(HAS_THINKNODE_M9)
+  extern void m9SetBacklight(bool on);
+  extern SPIClass* m9SharedSPI();
 #endif
 #if defined(HAS_TDECK_GT911)
   #include <driver/i2s.h>     // T-Deck MAX98357A speaker amp (notification tones)
@@ -727,34 +731,35 @@ static void tdeckPreviewWavFile(const char* prefpath) {
 }
 #endif  // HAS_TDECK_GT911
 
-// ---- Unified UI notification sound (T-Deck I2S speaker OR Heltec V4 piezo) ----
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN)
+// ---- Unified UI notification sound (T-Deck I2S speaker OR Heltec V4, Elecrow M9 piezo) ----
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
   #define HAS_UI_SOUND 1
 #endif
 
+#if defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
 #if defined(HELTEC_V4_BUZZER_PIN)
-// Heltec V4 expansion-kit piezo buzzer on GPIO6 (PWM). Plays a short two-note
-// chime via LEDC on a throwaway task so the ~210 ms doesn't stall the UI thread.
-// LEDC ch 5 (the TFT backlight uses ch 0); the pin is detached + parked high-Z
-// afterwards so the piezo is silent at idle.
+  #define UI_BUZZER_PIN HELTEC_V4_BUZZER_PIN
+#else
+  #define UI_BUZZER_PIN THINKNODE_M9_BUZZER_PIN
+#endif
+// Simple piezo buzzer, GPIO-driven via Arduino tone()/noTone() (Heltec V4 expansion kit,
+// or the ThinkNode M9's onboard buzzer/BUZZER_EN). Plays a short two-note chime via LEDC
+// on a throwaway task so the ~210 ms doesn't stall the UI thread.
 static volatile bool s_v4_beep_playing = false;
 static volatile bool s_v4_mention = false;
 static void v4BeepTaskFn(void* arg) {
   (void)arg;
-  // Drive the GPIO6 piezo with Arduino tone() — the exact mechanism Meshtastic's
-  // RTTTL buzzer uses on this board (heltec-v4-tft). (tone() can't vary volume,
-  // so the volume pref only affects the T-Deck.) @-mention = a higher, faster trill.
   if (s_v4_mention) {
-    tone(HELTEC_V4_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(110));
-    tone(HELTEC_V4_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(110));
-    tone(HELTEC_V4_BUZZER_PIN, 2600);  vTaskDelay(pdMS_TO_TICKS(170));
+    tone(UI_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(110));
+    tone(UI_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(110));
+    tone(UI_BUZZER_PIN, 2600);  vTaskDelay(pdMS_TO_TICKS(170));
   } else {
-    tone(HELTEC_V4_BUZZER_PIN, 1000);  vTaskDelay(pdMS_TO_TICKS(160));
-    tone(HELTEC_V4_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(160));
-    tone(HELTEC_V4_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(200));
+    tone(UI_BUZZER_PIN, 1000);  vTaskDelay(pdMS_TO_TICKS(160));
+    tone(UI_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(160));
+    tone(UI_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(200));
   }
-  noTone(HELTEC_V4_BUZZER_PIN);
-  pinMode(HELTEC_V4_BUZZER_PIN, INPUT);   // high-Z → no idle current / no buzz
+  noTone(UI_BUZZER_PIN);
+  pinMode(UI_BUZZER_PIN, INPUT);   // high-Z → no idle current / no buzz
   s_v4_beep_playing = false;
   vTaskDelete(nullptr);
 }
@@ -774,7 +779,7 @@ static void tanBeep();   // I2S notification tick; defined far below (with the C
 static inline void uiPlaySlot(int slot) {
 #if defined(HAS_TDECK_GT911)
   tdeckPlayNotifySlot(slot);
-#elif defined(HELTEC_V4_BUZZER_PIN)
+#elif defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
   v4BuzzerBeep(slot == TOUCH_SND_MEN);   // mention = higher trill; msg/DM = the lower chime
 #elif defined(HAS_TANMATSU)
   tanBeep();   // single codec tick on these boards (no per-slot sounds)
@@ -2457,7 +2462,8 @@ static void navFocusCb(lv_group_t* g) {
     lv_obj_set_style_bg_color(f, lv_color_hex(COLOR_TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_bg_opa(f, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_text_color(f, lv_color_hex(COLOR_BG), LV_PART_ITEMS | LV_STATE_CHECKED);
-  } else if (lv_obj_check_type(f, &lv_switch_class) || lv_obj_check_type(f, &lv_slider_class)) {
+  } else if (lv_obj_check_type(f, &lv_switch_class) || lv_obj_check_type(f, &lv_slider_class) 
+            || lv_obj_check_type(f, &lv_textarea_class)) {
     // A switch/slider's look is its knob/indicator, not the MAIN bg, so a reverse-video
     // fill doesn't read as focused — give it a bright outline PLUS an accent glow instead.
     s_nav_sv.bg_c = s_nav_sv.bg_o = s_nav_sv.txt = false;   // nothing to restore but the outline/shadow
@@ -2486,7 +2492,7 @@ static void navFocusCb(lv_group_t* g) {
     uint32_t nc = lv_obj_get_child_cnt(f);
     for (uint32_t i = 0; i < nc; i++) navInvertText(lv_obj_get_child(f, i));
   }
-  if (!s_nav_suppress_scroll) lv_obj_scroll_to_view(f, LV_ANIM_OFF);
+  if (!s_nav_suppress_scroll) lv_obj_scroll_to_view_recursive(f, LV_ANIM_OFF);
 }
 
 #if CAP_KEYPAD_NAV
@@ -6320,6 +6326,7 @@ static void openAppDrawer();    // fwd — app-drawer overlay (defined below ope
 static void closeAppDrawer();
 static void setHomeDrawer(bool show);
 static void closeMentionsScreen();           // fwd — @-mentions screen (defined with the drawer)
+static void openMentionsScreen();            // fwd — same
 static void closeAppDrawerSync();            // fwd — synchronous drawer close (safe outside the drawer's own event)
 static lv_obj_t* s_mentions_root = nullptr;  // @-mentions list overlay
 // The Home tab shows the command centre OR the app drawer; remember which so
@@ -7377,8 +7384,7 @@ static void advertDismissCb(lv_event_t* e) {
   closeAdvertPage();
 }
 
-static void openAdvertModalCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+static void openAdvertPage() {
   closeAdvertPage();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -7518,6 +7524,10 @@ static void openAdvertModalCb(lv_event_t* e) {
 
   lv_obj_move_foreground(s_advert_root);            // above the tabview
   lv_obj_move_foreground(g_statusbar.root);         // keep the tall title bar above this page (back chevron fully visible)
+}
+
+static void openAdvertModalCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) openAdvertPage();
 }
 
 // ---- Discovered list modal: shows adverts NOT yet in contacts[], with "Add" buttons ----
@@ -9237,6 +9247,8 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
   s_lock_on_screen_off = on;
 #if defined(HAS_TDECK_GT911)
   const char* unlock_hint = on ? TR("Locks when screen off\n(hold the trackball to unlock)") : TR("Screen-off just dims");
+#elif defined(HAS_THINKNODE_M9)
+  const char* unlock_hint = on ? TR("Locks when screen off\n(hold the d-pad to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_TANMATSU)
   const char* unlock_hint = on ? TR("Locks when screen off\n(press Volume Down to unlock)") : TR("Screen-off just dims");
 #else
@@ -9773,7 +9785,7 @@ static void openExpansionCardCb(lv_event_t* e) {
 }
 #endif  // HAS_EXPANSION_KIT
 
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
 // Lock-screen settings live in the Device modal but the picker implementation
 // needs the SD-mount state (declared further down), so split: the small bits
 // the modal body uses directly are here; the picker is defined below.
@@ -10559,7 +10571,7 @@ static void buildDeviceSettings(int sec) {
   }
 
   if (sec == DSEC_LOCK) {   // --- Lock screen ---
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   /* Lock screen: pick the wallpaper (internal /lock/ or SD) and the colour of
      the clock + lock text drawn over it. */
   {
@@ -10601,7 +10613,7 @@ static void buildDeviceSettings(int sec) {
     }
     y += swz + 10;
   }
-#endif
+#endif // HAS_TDECK_GT911 || HAS_THINKNODE_M9
 
   /* Auto-lock on screen-off: when the idle timeout dims the screen, also hard-
      lock so the touchscreen is inert (Tim: pocket-taps while dark). Both boards;
@@ -15023,13 +15035,13 @@ static void calibrateBatteryCb(lv_event_t* e) {
 // SPIFFS (flat) uses a top-level path.
 static fs::FS& battLogFs() {
 #if CAP_SD
-  if (SD.cardType() != CARD_NONE) return SD;
+  if (SD.cardType() != CARD_NONE && SD.exists("/meshcomod")) return SD;
 #endif
   return SPIFFS;
 }
 static bool battLogOnSd() {
 #if CAP_SD
-  return SD.cardType() != CARD_NONE;
+  return SD.cardType() != CARD_NONE && SD.exists("/meshcomod");
 #else
   return false;
 #endif
@@ -15545,8 +15557,8 @@ static char      s_fm_path[160]  = {0};     // current dir within s_fm_fs (e.g. 
 // a generic fs::FS*; only &SD is real microSD I/O (Internal = SPIFFS). Browsing
 // (fmRefresh) and the file open/save paths call this; mutations re-list via
 // fmRefresh, so they blip the LED too.
-#if defined(HAS_TDECK_GT911)
-static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // Arduino SD on the shared LoRa SPI bus (both boards)
 #elif defined(HAS_TANMATSU)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD_MMC; }   // microSD on SDMMC slot 0
 #else
@@ -16284,13 +16296,17 @@ static void fmFmtSize64(uint64_t bytes, char* out, size_t outsz) {
   else                                     snprintf(out, outsz, "%.1f GB", bytes / (1024.0 * 1024 * 1024));
 }
 
-#if defined(HAS_TDECK_GT911)   // microSD mount/format helpers — Arduino SD on the shared LoRa SPI (T-Deck only)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)  // microSD mount/format helpers — Arduino SD on the shared LoRa SPI (T-Deck only)
 // Mount the microSD on the shared LoRa SPI bus. Safe to call repeatedly (no-op
 // once mounted). SD.begin's internal spi.begin() is a no-op because the bus is
 // already initialised by the radio, so the radio's pins are untouched.
 static bool fmSdTryMount() {
   if (s_sd_mounted) return true;
+#if defined(HAS_TDECK_GT911)
   SPIClass* spi = tdeckSharedSPI();
+#else
+  SPIClass* spi = m9SharedSPI();
+#endif
   if (!spi) return false;
   // Cold microSD cards — especially the first mount after boot — often fail
   // the initial SD.begin and historically only recovered after a physical
@@ -16356,7 +16372,7 @@ static void fmSdClickCb(lv_event_t* e) {
   if (s_sd_mounted) fmOpenStorage(&SD, "SD", "/");
 }
 
-#endif  // HAS_TDECK_GT911 (microSD mount helpers; the busy overlays below are generic LVGL)
+#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (microSD mount helpers; the busy overlays below are generic LVGL)
 
 // Full-screen "busy" notice (copy/move/format). Pure LVGL — used by the generic paste path too.
 static void fmShowBusyOverlay(const char* msg) {
@@ -16383,7 +16399,7 @@ static void fmHideFormatOverlay() {
   if (s_fm_fmt_overlay) { popupClose(&s_fm_fmt_overlay); }
 }
 
-#if defined(HAS_TDECK_GT911)   // SD format helpers resume (Arduino SD, T-Deck only)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // SD format helpers resume (Arduino SD, T-Deck + M9 only)
 // Confirm callback: paint the formatting notice, then defer the (blocking)
 // f_mkfs to UITask::loop so the notice is on-screen before the loop freezes.
 static void fmSdDoFormat() {
@@ -16489,7 +16505,7 @@ static void fmSdLongPressFormatCb(lv_event_t* e) {
               "Format", fmSdDoFormat);
 }
 
-#endif  // HAS_TDECK_GT911 (microSD mount/format helpers)
+#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (microSD mount/format helpers)
 
 // ---- File operations (Phase 4a: delete / rename / new folder) ----
 struct FmRowData { char name[64]; bool isdir; };
@@ -17599,7 +17615,7 @@ static void fmShowRoots() {
   fmStyleRow(b, COLOR_TEXT);
   lv_obj_add_event_cb(b, fmInternalClickCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911)   // microSD row (Arduino SD) — T-Deck only
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)  // microSD row (Arduino SD) — T-Deck + M9
   // Probe the SD only when not in a mount-backoff window, so a persistently
   // unmountable card doesn't re-grind the full retry ladder on every render of
   // this page. Tapping the row below (fmSdMountOrFormatCb) bypasses the gate.
@@ -19013,8 +19029,8 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2)
-  // Landscape (T-Deck / Tanmatsu / RAK Tap V2): the right column holds Advert + Terminal + Files + Apps,
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9)
+  // Landscape (T-Deck / Tanmatsu / RAK Tap V2 / M9): the right column holds Advert + Terminal + Files + Apps,
   // so the chart must stop short of that strip — else it draws over the buttons.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 #else
@@ -19046,7 +19062,7 @@ static void makeHome(lv_obj_t* tab) {
   // evenly down the FULL content height so a 4th launcher ("Control panel") fits the
   // short 168-px T-Deck strip without overflowing. Slot count tracks the build:
   // GT911 (T-Deck) = Advert+Terminal+Files+Apps+Control = 5; otherwise 4.
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   const int td_btn_n = 5;
 #else
   const int td_btn_n = 4;
@@ -27543,6 +27559,8 @@ static void lockscreenShow() {
   lv_obj_t* hint = lv_label_create(s_lock_root);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hint, TR("press Volume Down to unlock"));
+#elif defined(HAS_THINKNODE_M9)
+  lv_label_set_text(hint, TR("hold the d-pad to unlock"));
 #else
   lv_label_set_text(hint, TR("hold the trackball to unlock"));
 #endif
@@ -27654,6 +27672,9 @@ static void openSoundPickerCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   openSoundMenu((int)(intptr_t)lv_event_get_user_data(e));
 }
+#endif  // HAS_TDECK_GT911 (sound chooser — needs T-Deck's I2S amp)
+
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // wallpaper picker — SD/SPIFFS-backed, board-agnostic
 static lv_obj_t* s_lockwall_picker = nullptr;
 static char s_lockwall_paths[24][TOUCH_LOCK_WALLPAPER_MAXLEN];
 static int  s_lockwall_count = 0;
@@ -27815,7 +27836,7 @@ static void lockColorChosenCb(lv_event_t* e) {
   touchPrefsSetLockTextColor(rgb);
   if (g_lv.task) g_lv.task->showAlert(TR("Lock text colour set"), 1000);
 }
-#endif  // HAS_TDECK_GT911
+#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (wallpaper picker + lock text colour)
 // The settings-backup import picker below must link on BOTH touch boards (its
 // Import button is not keyboard-gated), so briefly close the enclosing
 // HAS_TDECK_KEYBOARD region here and reopen it right after openBackupPicker().
@@ -28403,16 +28424,118 @@ static void serviceLockingCountdown(unsigned long now) {
 }
 #endif
 
+#if defined(HAS_M9_KEYBOARD)
+// ThinkNode M9 has no touchscreen and no navPump() (that's Tanmatsu-only) — the
+// d-pad through handleHwKey() is its ONLY input, including during first-boot
+// setup. T-Deck's handleHwKey() assumes touch drives the wizard and swallows
+// every non-editing key while s_setup_root is up (see the check just below
+// this function); M9 can't inherit that assumption, so its nav keys are
+// handled HERE, in their own function, called before that swallow — not
+// wedged into T-Deck's CAP_TRACKBALL chain as an #elif. Returns true if the
+// key was consumed.
+static bool m9HandleNavKey(int key) {
+  if (!s_kbd_nav) return false;
+  switch (key) {
+    case M9_KEY_ENTER:
+      if (navOnTabBar()) {
+        navSwitchTab(+1);
+      } else {
+        navMarkEntered(lv_group_get_focused(s_nav_group));
+        navPushTap(LV_KEY_ENTER);
+      }
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_ENTER_LONG: {
+      lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+      if (foc && lv_obj_is_valid(foc)) lv_event_send(foc, LV_EVENT_LONG_PRESSED, nullptr);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    }
+    case M9_KEY_HOME:
+      if (s_setup_root) return true;
+      if (getActiveTab() == HOME_TAB_INDEX) {
+        const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything
+        for (int i = 0; i < 8 && anyPopupOpen(); i++) hwKeyDismissTopPopup();   // still closes anything else on top (registry untouched, Back/etc. keep working)
+        setHomeDrawer(!was_open);                            // decide from the snapshot, not the now-mutated flag
+      } else {
+        navGoToMainTab(HOME_TAB_INDEX);
+      }
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_LEFT_MESSAGE:
+      if (s_setup_root) return true;
+      navGoToMainTab(CHAT_INBOX_TAB_INDEX);
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_SUB_MESSAGE:
+      if (s_setup_root) return true;
+      openMentionsScreen();
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_MAP:
+      if (s_setup_root) return true;
+      navGoToMainTab(MAP_TAB_INDEX);
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_SUB_MAP:
+      if (s_setup_root) return true;
+      openAdvertPage();
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    default: return false;
+  }
+}
+#endif
+
+#if defined(HAS_M9_KEYBOARD)
+static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
+  if (!s_kbd_nav) return false;
+  switch (key) {
+    case M9_KEY_UP:
+      navMoveDir(NAV_UP);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    case M9_KEY_DOWN:
+      navMoveDir(NAV_DOWN);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    case M9_KEY_LEFT:
+      if (ta)                 lv_textarea_cursor_left(ta);
+      else if (navOnTabBar()) navSwitchTab(-1);
+      else                    navMoveDir(NAV_LEFT);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    case M9_KEY_RIGHT:
+      if (ta)                 lv_textarea_cursor_right(ta);
+      else if (navOnTabBar()) navSwitchTab(+1);
+      else                    navMoveDir(NAV_RIGHT);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    default: return false;
+  }
+}
+#endif
+
 // Route a physical-keyboard character into the textarea currently being edited
 // — the on-screen keyboard's target, which is the chat composer directly or the
 // settings mirror textarea. No field open -> the key is ignored.
 static void handleHwKey(int key) {
   if (!g_lv.keyboard) return;
-  // Hard-locked: any key just reveals the lock screen (lights the panel). It
-  // never types or switches tabs — only a trackball *hold* unlocks.
-  if (g_lv.task && g_lv.task->isManualLock()) { g_lv.task->lockscreenReveal(); return; }
+if (g_lv.task && g_lv.task->isManualLock()) {
+#if defined(HAS_M9_KEYBOARD)
+    // M9 has no trackball to hold — the keyboard controller's own long-press
+    // detection (M9_KEY_ENTER_LONG, a distinct byte from a normal Enter tap)
+    // stands in for "hold to unlock." No progressive countdown UI is possible
+    // this way (we only get a single discrete "that was a long press" event,
+    // not continuous press-state to poll), but it's a working equivalent.
+    if (key == M9_KEY_ENTER_LONG) { g_lv.task->unlockScreen(); return; }
+#endif
+    g_lv.task->lockscreenReveal();
+    return;
+  }
+#if defined(HAS_M9_KEYBOARD)
+  // M9 has no touch to wake the screen the way T-Deck/Heltec V4 do — mirror Tanmatsu's
+  // navPump() pattern: any key wakes it (noteUserInput() wakes internally when the screen
+  // is off), then THIS keypress is swallowed rather than also acted on, so waking doesn't
+  // also navigate or type.
+  if (g_lv.task && g_lv.task->isScreenOff()) { g_lv.task->noteUserInput(); return; }
+#else
   // Idle-dimmed (not hard-locked): ignore keys; a touch/click wakes into the UI.
   if (g_lv.task && g_lv.task->isScreenOff()) return;
+#endif  // HAS_M9_KEYBOARD (wake-from-idle if/else)
 #if defined(HAS_TDECK_KEYBOARD) && defined(TDECK_KEYCODE_PROBE)
   // TEMP bring-up probe: toast the raw byte of every key so we can see what the
   // physical alt / mic / sym keys emit. Remove once the alt-accent key is wired.
@@ -28439,20 +28562,20 @@ static void handleHwKey(int key) {
 #else
   lv_obj_t* ta = ta_focused;
 #endif
+#if defined(HAS_M9_KEYBOARD)
+  if (m9HandleArrowKey(key, ta)) return;    // ← runs BEFORE the if(!ta) split
+#endif
   if (!ta) {
 #if CAP_KEYPAD_NAV
-    // A field is focused but we're in navigate mode: select/Enter starts editing it, so the
-    // nav keys keep navigating until you explicitly enter the field (matches navPump).
-    // M9_KEY_ENTER == '\r' (0x0D) — the M9 d-pad's centre/Enter byte already satisfies this
-    // check without any extra case.
-    if (ta_focused && s_kbd_nav && (key == '\r' || key == '\n' || navDirForKey(key) == 4)) {
+    if (navFocusedTextarea() && s_kbd_nav && (key == '\r' || key == '\n' || navDirForKey(key) == 4)) {
       s_nav_ta_editing = true;
       if (g_lv.task) g_lv.task->noteUserInput();
       return;
     }
 #endif
-    // First-boot setup owns the screen: with no field focused, swallow the key
-    // so it can't switch the (hidden) tabs behind the wizard or arm the lock.
+#if defined(HAS_M9_KEYBOARD)
+    if (m9HandleNavKey(key)) return;        // ← runs INSIDE the if(!ta) block only
+#endif
     if (s_setup_root) return;
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
     // Spacebar (while NOT editing a text field) locks the screen: backlight off
@@ -28510,56 +28633,6 @@ static void handleHwKey(int key) {
       }
       if (on_textfield) { if (g_lv.task) g_lv.task->noteUserInput(); return; }   // field focused: never tab-jump on a letter
     }
-#elif defined(HAS_M9_KEYBOARD)
-    // ThinkNode M9: the d-pad and dedicated function keys are FIXED hardware
-    // buttons (not remappable letters), so this drives navMoveDir/navSwitchTab
-    // directly off the raw keycodes (M9Keyboard.h) instead of going through
-    // navDirForKey's programmable letter table — same destination primitives
-    // the T-Deck's WASDZ block and Tanmatsu's navPump() use, just a different
-    // (fixed) source mapping. s_kbd_nav is always true on this board (no touch
-    // to fall back to — set at boot, see UITask.cpp's indev-registration block).
-    if (s_kbd_nav) {
-      switch (key) {
-        case M9_KEY_UP:    navMoveDir(NAV_UP);    s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_DOWN:  navMoveDir(NAV_DOWN);  s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_LEFT:
-          if (navOnTabBar()) navSwitchTab(-1); else navMoveDir(NAV_LEFT);
-          s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_RIGHT:
-          if (navOnTabBar()) navSwitchTab(+1); else navMoveDir(NAV_RIGHT);
-          s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        // M9_KEY_ENTER (0x0D) when a field is focused-but-not-editing is handled above
-        // (== '\r', starts editing). Reaching this switch means no field is focused —
-        // "select" on whatever's focused: tab bar -> next tab, else activate it.
-        case M9_KEY_ENTER:
-          if (navOnTabBar()) navSwitchTab(+1); else navPushTap(LV_KEY_ENTER);
-          s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_HW_BACK:                                                      // back: popup → chat → ESC
-          if (anyPopupOpen())                            hwKeyDismissTopPopup();
-          else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);       // close an open chat/channel first
-          else                                           navPushTap(LV_KEY_ESC);
-          s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return;
-        // Dedicated function keys jump straight to a main tab — mirrors the T-Deck's
-        // programmable hotkeys, just fixed to these specific physical buttons instead
-        // of remappable letters. HOME mirrors tapping the Home tab (toggles the app
-        // drawer when already there, like homeKeyActivate on Tanmatsu).
-        case M9_KEY_HOME:
-          if (getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(!s_home_drawer_mode);
-          else                                  navGoToMainTab(HOME_TAB_INDEX);
-          if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_LEFT_MESSAGE:
-        case M9_KEY_SUB_MESSAGE:
-          navGoToMainTab(CHAT_INBOX_TAB_INDEX);
-          if (g_lv.task) g_lv.task->noteUserInput(); return;
-        case M9_KEY_MAP:
-        case M9_KEY_SUB_MAP:
-          navGoToMainTab(MAP_TAB_INDEX);
-          if (g_lv.task) g_lv.task->noteUserInput(); return;
-        // M9_KEY_MIC / M9_KEY_CTRL: no action bound yet — fall through and get
-        // swallowed below (anyPopupOpen()/tabForKey() won't match these bytes either).
-        default: break;
-      }
-    }
 #endif
     // Not editing a field. If a popup is up, the dismiss keys close it; on a
     // bare tab, the navigation keys jump between the bottom tabs.
@@ -28578,6 +28651,22 @@ static void handleHwKey(int key) {
     return;
   }
   txtMenuHide();   // any keypress while editing dismisses an open edit menu
+#if defined(HAS_M9_KEYBOARD)
+  // M9 has a dedicated hardware Back key — unlike the CAP_TRACKBALL board's backspace-on-
+  // empty-field escape below, this doesn't require emptying the field first: Back always
+  // drops out of edit mode back to navigate mode, the same job HW_BACK does everywhere else
+  // on this board (m9HandleNavKey). Without this, M9's d-pad bytes (0xB4-0xB7, 0x86) don't
+  // match backspace/space/Enter/printable-ASCII below and are silently swallowed — there was
+  // no way out of edit mode at all except an empty-field backspace, which M9 doesn't get
+  // (that escape is CAP_TRACKBALL-gated).
+  if (key == M9_KEY_HW_BACK) {
+    s_nav_ta_editing = false;
+    s_nav_show = true;
+    accentBoxHide();
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+#endif
   if (key == 0x08 || key == 0x7F) {            // backspace / delete
     uint32_t bs_s, bs_e;
     if (taHasSelection(ta, &bs_s, &bs_e)) {    // highlighted text -> delete the whole selection
@@ -28665,6 +28754,24 @@ static void handleHwKey(int key) {
 #endif
       }
     } else {
+#if CAP_KEYPAD_NAV
+      // Keyboard/d-pad nav: Enter in a generic field ADVANCES rather than submits — with
+      // multiple fields on one page (e.g. the wizard's Wi-Fi step: SSID + password) there's
+      // no single "the field" to submit from, so Enter walks the focus group forward one
+      // step (next field, or the Next/Finish button once fields run out), exactly like
+      // Tanmatsu's navPump() already does elsewhere in this file
+      // (`navFifoPush(ta ? LV_KEY_NEXT : LV_KEY_ENTER, down)`). Landing on that button with
+      // s_nav_ta_editing now false means the NEXT Enter goes through the normal focused-
+      // button click path instead of back into this typing branch — that's what submits.
+      if (s_kbd_nav) {
+        hideKb();               // still confirm: sync the mirror into the real field
+        s_nav_ta_editing = false;
+        s_nav_show = true;
+        navPushTap(LV_KEY_NEXT);
+        if (g_lv.task) g_lv.task->noteUserInput();
+        return;
+      }
+#endif
       hideKb();   // settings/other field: confirm (syncs into the real field) + unfocus
     }
   } else if (key >= 0x20 && key < 0x7F) {      // printable ASCII
@@ -29446,6 +29553,25 @@ static void tanBeep() {
   size_t wr = 0;
   i2s_channel_write(h, buf, (size_t)n * 2 * sizeof(int16_t), &wr, 200 / portTICK_PERIOD_MS);
 }
+#elif defined(HAS_THINKNODE_M9)
+// M9: BL_EN (GPIO17) is a PNP transistor gate. LEDC PWM confirmed working on hardware
+// (Specter bring-up), but the duty is INVERTED — lower duty on the base = MORE conduction
+// = brighter. 5kHz confirmed clean; the transistor couldn't keep up at very low frequencies.
+#define HAS_CC_BRIGHTNESS 1
+static uint8_t s_brightness_pct = 100;
+static bool    s_bl_pwm_ready   = false;
+constexpr int  kM9BlPwmChannel  = 7;   // separate channel from the generic LEDA_CTL block above
+static void applyBrightness(uint8_t pct) {
+  if (pct < 5)   pct = 5;
+  if (pct > 100) pct = 100;
+  s_brightness_pct = pct;
+  if (!s_bl_pwm_ready) {
+    ledcSetup(kM9BlPwmChannel, 5000, 8);            // 5kHz, 8-bit — confirmed clean on the PNP
+    ledcAttachPin(PIN_TFT_BL_EN, kM9BlPwmChannel);  // takes the pin over from board.backlight's digitalWrite
+    s_bl_pwm_ready = true;
+  }
+  ledcWrite(kM9BlPwmChannel, (uint32_t)(100 - pct) * 255u / 100u);   // inverted duty
+}
 #endif
 
 #if defined(HAS_CC_BRIGHTNESS)
@@ -29502,7 +29628,7 @@ static void openControlCenter() {
   lv_obj_remove_style_all(card);
 #if defined(HAS_TANMATSU)
   lv_obj_set_size(card, card_w, 384);   // bigger: header + 3 roomier sliders + toggle grid + sysinfo
-#elif defined(HAS_TDECK_GT911)
+#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   lv_obj_set_size(card, card_w, 200);   // sysinfo + thin brightness slider + 2-row toggle grid (fits 240−22 screen)
 #else
   // Portrait has headroom on the 320-tall screen; make the card taller so the
@@ -29703,7 +29829,7 @@ static void openControlCenter() {
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_row(row, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_column(row, 10, LV_PART_MAIN);
-#elif defined(HAS_TDECK_GT911)
+#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   // 2-row grid: 4 chips per row, so chip 5 (Lock) wraps onto a 2nd row. Sits
   // ABOVE the bottom system-info line (-16 offset leaves room for it).
   lv_obj_set_size(row, card_w - 20, 80);
@@ -29728,7 +29854,7 @@ static void openControlCenter() {
   tw = (card_w - 20 - 20) / 3;   // 3 chips per row (Wi-Fi/BT/GPS/Theme/Keys/Sound → 2×3 grid)
   if (tw > 175) tw = 175;
   th = 80;
-#elif defined(HAS_TDECK_GT911)
+#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   tw = 58; th = 36;
 #else
   tw = (card_w - 20 - 4 * 5) / 5;   // 5 chips (Wi-Fi/BT/GPS/Theme/Sound) + 4 gaps
@@ -32104,9 +32230,15 @@ static void setupFillRegionList() {
 
 static void setupShowStep(int step) {
   if (!s_setup_root) return;
-#if defined(HAS_TANMATSU)
+  // Unconditional, like every other navMarkDirty() call site in this file — it's a real
+  // rebuild-flag on any CAP_KEYPAD_NAV board (Tanmatsu, M9) and a no-op stub otherwise
+  // (see the two definitions near navMaybeRebuild). Previously gated to HAS_TANMATSU only,
+  // which meant M9 skipped it: lv_obj_clean() below frees the step's buttons/textarea, and
+  // LVGL's allocator can hand the freshly-created replacements the SAME addresses — so
+  // navMaybeRebuild()'s address-based tree signature can come out unchanged and skip the
+  // rebuild, leaving s_nav_group holding stale objects. That's the "Back/Next does nothing,
+  // then navigation is dead" symptom.
   navMarkDirty();   // wizard step content swaps in place — force the keypad focus group to rebuild
-#endif
   hideKb();
   // The scan popup writes the chosen SSID through these borrowed pointers; drop
   // them before the Wi-Fi fields are freed by the clean below.
@@ -36991,6 +37123,12 @@ static inline void touchScreenBacklight(bool on) {
   // but the panel never actually went dark (this branch used to be the (void)on no-op).
   if (on) applyBrightness(s_brightness_pct);
   else    bsp_display_set_backlight_brightness(0);
+#elif defined(HAS_THINKNODE_M9)
+  // M9: BL_EN (GPIO17) drives a PNP transistor gate — LEDC PWM works (confirmed on hardware,
+  // Specter bring-up), but duty is INVERTED vs. a normal N-channel/NPN setup: lower duty on
+  // the base = MORE conduction = brighter. applyBrightness() below already accounts for this.
+  if (on) applyBrightness(s_brightness_pct);
+  else    ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
 #else
   (void)on;
 #endif
@@ -37060,14 +37198,17 @@ void UITask::lockScreen() {
 }
 
 void UITask::lockscreenReveal() {
-#if defined(HAS_TDECK_GT911)
-  if (!_manual_lock) return;                 // only meaningful while hard-locked
+#if CAP_LOCK_SCREEN
+  if (!_manual_lock) return;
   if (_screen_off) {
+    lockscreenShow();               // build + foreground FIRST
+    lv_refr_now(nullptr);           // force it to actually paint before the backlight comes on
     setCpuForScreen(true); touchScreenBacklight(true); _screen_off = false;
-    _lock_lit_ms = millis();                 // re-arm the burn-in timer ONLY on a real off->lit reveal,
-  }                                          // so a held / ghost touch can't keep the panel lit forever
-  lockscreenShow();                          // ensure built + on top
-  _last_input_ms = millis();                 // restart the re-dim timer
+    _lock_lit_ms = millis();
+  } else {
+    lockscreenShow();                // already lit: just re-foreground (idempotent, cheap)
+  }
+  _last_input_ms = millis();
 #endif
 }
 
@@ -37929,7 +38070,6 @@ void UITask::loop() {
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = m9KeyboardReadKey();
     if (key <= 0) break;
-    Serial.printf("[M9KB] key=0x%02X\n", key);   // bring-up only: proves poll->ring->drain
     if (!_screen_off) s_kb_last_key_ms = now;
     handleHwKey(key);
   }

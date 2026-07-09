@@ -1,9 +1,9 @@
 #pragma once
 
 #include <Arduino.h>
+#include <driver/rtc_io.h>
 #include <helpers/ESP32Board.h>
 #include <helpers/RefCountedDigitalPin.h>
-#include <driver/rtc_io.h>
 
 // ---------------------------------------------------------------------------
 // ThinkNode M9 — ESP32-S3R8 / LR1110 / 2.4" 240x320 ST7789 / QWERTY keyboard.
@@ -24,25 +24,20 @@
 
 class ThinkNodeM9Board : public ESP32Board {
 public:
-  RefCountedDigitalPin periph_power;   // GPIO18, active LOW — LCD/GPS/sensor rail
-  RefCountedDigitalPin backlight;      // GPIO17, active LOW — PNP backlight
+  RefCountedDigitalPin periph_power; // GPIO18, active LOW — LCD/GPS/sensor rail
+  RefCountedDigitalPin backlight;    // GPIO17, active LOW — PNP backlight
 
   ThinkNodeM9Board()
-    : periph_power(PIN_PERIPH_POWER, LOW),
-      backlight(PIN_TFT_BL_EN, LOW)
-  { }
+      : periph_power(PIN_PERIPH_POWER, LOW), backlight(PIN_TFT_BL_EN, LOW) {}
 
   void begin();
 
   void enterDeepSleep(uint32_t secs, int pin_wake_btn = -1);
   void powerOff() override;
 
-  // Battery: confirmed 1:1 divider (NOT the 2:1 the ESP32Board base class
-  // assumes) — so this overrides the base's getBattMilliVolts() rather than
-  // relying on its hardcoded `2 * raw`.
   uint16_t getBattMilliVolts() override;
 
-  const char* getManufacturerName() const override {
+  const char *getManufacturerName() const override {
     return "Elecrow ThinkNode M9";
   }
 };
