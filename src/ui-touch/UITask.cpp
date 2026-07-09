@@ -1418,7 +1418,6 @@ static constexpr int LV_DRAW_BUF_LINES = 24;
 static lv_color_t* g_draw_buffer = nullptr;
 static uint32_t    g_draw_buf_px  = 240 * LV_DRAW_BUF_LINES;   // actual buffer size in px; shrinks if the full alloc fails at boot
 #if CAP_LARGE_SCREEN
-)
 // UI resolution scaling (Tanmatsu, no touchscreen). LVGL renders at s_lv_pw x s_lv_ph (PHYSICAL
 // portrait) and lvglFlush upscales each already-rotated band to the 480x800 panel. s_lv_pw == the
 // panel width (480) means 100% / native (no upscale). Set once at boot from touchPrefsGetUiScale().
@@ -29065,7 +29064,7 @@ static void openPowerMenu() {
   const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
 #else
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
-  const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 4 * p_step + 8;
+  const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = 206;
 #endif
   lv_obj_t* card = lv_obj_create(s_power_menu);
   lv_obj_remove_style_all(card);
