@@ -103,6 +103,8 @@
   #include "qr_icon.h"        // baked recolour-able QR glyph (qr_icon_dsc) for the Chats Share button
   #if defined(HAS_TANMATSU)
     #include <TanmatsuDisplay.h>             // badge-bsp-backed DisplayDriver (P4)
+  #elif defined(HAS_RAK_TAP_V2)
+    #include <LGFXDisplay.h>                 // LovyanGFX FSPI on RAK Tap V2
   #else
     #include <helpers/ui/ST7789LCDDisplay.h>
   #endif
@@ -131,6 +133,8 @@
   #endif
   #if defined(HAS_TANMATSU)
     extern TanmatsuDisplay display;
+  #elif defined(HAS_RAK_TAP_V2)
+    extern LGFXDisplay display;
   #else
     extern ST7789LCDDisplay display;
   #endif
@@ -19025,8 +19029,8 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_THINKNODE_M9)
-  // Landscape (T-Deck / Tanmatsu): the right column holds Advert + Terminal + Files + Apps,
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9)
+  // Landscape (T-Deck / Tanmatsu / RAK Tap V2 / M9): the right column holds Advert + Terminal + Files + Apps,
   // so the chart must stop short of that strip — else it draws over the buttons.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 #else
@@ -29353,6 +29357,10 @@ static void openPowerMenu() {
 #if CAP_LARGE_SCREEN
   const int card_w = (sw - 80 > 420) ? 420 : (sw - 80);
   const int p_bh = 52, p_y0 = 46, p_step = 60, card_h = p_y0 + 4 * p_step + 8;   // bigger on the 800×480 panel
+#elif defined(HAS_RAK_TAP_V2)
+  // ROM force-download leaves a COM that esptool cannot open on HW CDC — hide the entry.
+  const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
+  const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
 #else
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
   const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = 206;
@@ -29392,8 +29400,12 @@ static void openPowerMenu() {
   };
   mk(LV_SYMBOL_POWER "  Power off",        powerOffCb,      0xC44B55, p_y0);
   mk(LV_SYMBOL_REFRESH "  Reboot",         powerRebootCb,   0,        p_y0 + p_step);
+#if !defined(HAS_RAK_TAP_V2)
   mk(LV_SYMBOL_DOWNLOAD "  Download mode", powerDownloadCb, 0,        p_y0 + 2 * p_step);
   mk("Cancel",                             powerCancelCb,   0,        p_y0 + 3 * p_step);
+#else
+  mk("Cancel",                             powerCancelCb,   0,        p_y0 + 2 * p_step);
+#endif
 }
 
 static void ccPowerCb(lv_event_t* e) {
@@ -31606,7 +31618,7 @@ static void relayoutHomeCharts() {
   const int cw = tabContentW();
   const int BTNW = SC(100);
   const int RSTRIP = BTNW + 10;
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2)
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 #else
   const int chart_w = cw;
@@ -36191,7 +36203,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
 #else
-      const size_t buf_bytes = sizeof(lv_color_t) * 240 * LV_DRAW_BUF_LINES;
+#if defined(HAS_RAK_TAP_V2)
+      const int draw_band_w = 320;
+#else
+      const int draw_band_w = 240;
+#endif
+      const size_t buf_bytes = sizeof(lv_color_t) * draw_band_w * LV_DRAW_BUF_LINES;
       // Internal DMA-capable DRAM — this is the hot loop's read source
       // during SPI flush. PSRAM (~80 MHz QSPI) is ~3× slower than
       // internal SRAM. INTERNAL|DMA also makes it eligible for SPI DMA
@@ -36209,7 +36226,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // requests strain the internal heap. A tiny buffer still renders instead of
       // leaving g_draw_buffer NULL -> NULL-deref in lvglFlush -> boot panic loop.
       if (!g_draw_buffer) {
-        g_draw_buf_px = 240 * 8;
+        g_draw_buf_px = draw_band_w * 8;
         g_draw_buffer = (lv_color_t*)heap_caps_malloc(sizeof(lv_color_t) * g_draw_buf_px,
                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(sizeof(lv_color_t) * g_draw_buf_px);
@@ -36247,6 +36264,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // ROT_90 maps to panel rotation 1 in applyHardwarePanelRotation, so the
     // UI-init re-apply matches the boot splash orientation.
     s_ui_rotation = LV_DISP_ROT_90;
+#endif
+#if defined(HAS_RAK_TAP_V2)
+    // RAK Tap V2 panel is rotated 270° in hardware (DISPLAY_ROTATION=3); the UI
+    // must match so LVGL renders the full 320x240 landscape surface.
+    s_ui_rotation = LV_DISP_ROT_270;
 #endif
     // Apply the saved backlight brightness (takes the LEDA pin over from the
     // display's digitalWrite via LEDC PWM). Both touch boards have the LEDA pin.
@@ -37737,16 +37759,42 @@ void UITask::loop() {
       s_tb_click_press = tb_pressed && !s_tb_wake_consume;
       if (s_tb_click_press) { s_tb_last_active_ms = now; noteUserInput(); }
     }
-#else
+#elif defined(HAS_RAK_TAP_V2)
+    // RAK Tap V2: single BOOT button (GPIO0), no trackball, no keyboard.
+    // Short press (<1s): toggle screen on/off (does NOT hard-lock -- touch
+    //   can still wake, since there is no second button for unlock).
+    // Long press (>=1s): open power menu (Power off / Reboot / Cancel).
+    static unsigned long s_rak_btn_down_ms = 0;
+    static bool s_rak_long_fired = false;
+    if (v == LOW && s_user_btn_prev == HIGH) {
+      s_rak_btn_down_ms = now;
+      s_rak_long_fired  = false;
+    } else if (v == LOW && s_user_btn_prev == LOW) {
+      if (now - s_rak_btn_down_ms >= 1000 && !s_rak_long_fired) {
+        s_rak_long_fired = true;
+        if (_screen_off) wakeScreen();
+        openPowerMenu();
+      }
+    } else if (v == HIGH && s_user_btn_prev == LOW) {
+      if (!s_rak_long_fired) {
+        if (_screen_off) { wakeScreen(); }
+        else {
+          touchScreenBacklight(false);
+          setCpuForScreen(false);
+          _screen_off = true;
+          // NO _manual_lock -- touch can still wake the screen.
+        }
+      }
+    }
+#else   // Generic: Heltec V4 -- short press toggles screen + lock
     if (v == LOW && s_user_btn_prev == HIGH) {
       if (_screen_off) {
-        /* wakeScreen() clears _manual_lock so subsequent touches work. */
         wakeScreen();
       } else {
         touchScreenBacklight(false);
         setCpuForScreen(false);
         _screen_off  = true;
-        _manual_lock = true;  // touch can't unlock until BOOT pressed again
+        _manual_lock = true;  // touch cannot unlock until BOOT pressed again
       }
     }
 #endif

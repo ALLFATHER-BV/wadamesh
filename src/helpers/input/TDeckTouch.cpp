@@ -7,7 +7,7 @@
 // driver outputs coordinates already in the 320x240 landscape screen space.
 // The raw->screen mapping is calibrated against the panel; flip the TDECK_TS_*
 // switches below if taps land mirrored/rotated.
-#if defined(HAS_TOUCH_UI) && !defined(HAS_HELTEC_V4_CAP_TOUCH) && defined(ESP32)
+#if defined(HAS_TOUCH_UI) && !defined(HAS_HELTEC_V4_CAP_TOUCH) && !defined(HAS_RAK_TAP_V2) && defined(ESP32)
 
 #include "HeltecV4CapTouch.h"
 #include "TDeckKeyboard.h"                 // shares this I2C bus; polled from the touch task
@@ -125,11 +125,46 @@ static void mapRaw(uint16_t rx, uint16_t ry, uint16_t* ox, uint16_t* oy) {
   *oy = (uint16_t)sy;
 }
 
+// Watchdog state for the phantom-press fail-safes in gt911Poll().
+static uint8_t       s_fail_streak = 0;              // consecutive status-read failures while pressed
+static unsigned long s_frame_ms = 0;                 // last time the GT911 delivered a frame
+static unsigned long s_press_ms = 0;                 // current press start
+static uint16_t      s_press_rx = 0, s_press_ry = 0; // raw point at press start
+static bool          s_press_jitter = false;         // point moved since press start
+static bool          s_phantom = false;              // frozen-frame point being ignored
+static uint16_t      s_phantom_rx = 0, s_phantom_ry = 0;
+
 // Poll the GT911 once, updating s_have_touch / s_cur_x/y from the latest frame.
+//
+// Fail-safes: a reset mid-I2C transaction (e.g. a reflash) can wedge the GT911
+// into repeating one stale "pressed" frame, or drop the lift frame outright.
+// The old "no new data — keep prev state" behaviour then latched an ETERNAL
+// PRESS: LVGL never saw a release, real fingers were ignored, the trackball
+// click could not inject (a live touch outranks it in lvglTouchRead) and the
+// idle timer never fired (constant "input") — a dead-looking device only a
+// power cycle fixed (warm reboots don't reset the GT911). Three watchdogs make
+// that state self-heal instead:
+//   - status reads failing while "pressed"    -> release (bus died mid-press)
+//   - no new frame for 250 ms while "pressed" -> release (missed lift; a real
+//     held finger produces a frame every GT911 scan cycle, ~10 ms)
+//   - the SAME bit-exact point pressed 10 s   -> phantom: release, then ignore
+//     that exact point until it changes or a real lift frame arrives (a human
+//     touch always jitters; a wedged controller repeats one frozen frame)
 static void gt911Poll() {
   uint8_t status;
-  if (!gt911ReadReg(0x814E, &status, 1)) return;
-  if (!(status & 0x80)) return;                 // no new data — keep prev state
+  const unsigned long now_ms = millis();
+  if (!gt911ReadReg(0x814E, &status, 1)) {
+    if (s_have_touch && ++s_fail_streak >= 8) s_have_touch = false;
+    return;
+  }
+  s_fail_streak = 0;
+  if (!(status & 0x80)) {                       // no new frame this tick
+    if (s_have_touch && (unsigned long)(now_ms - s_frame_ms) > 250) {
+      s_have_touch = false;                     // lift frame lost -> force release
+    }
+    return;
+  }
+  s_frame_ms = now_ms;
   uint8_t n = status & 0x0F;
   if (n > 0) {
     uint8_t p[8];
@@ -140,6 +175,28 @@ static void gt911Poll() {
       // byte and produced wildly out-of-range coordinates.)
       uint16_t rx = (uint16_t)(p[0] | (p[1] << 8));
       uint16_t ry = (uint16_t)(p[2] | (p[3] << 8));
+      if (s_phantom && rx == s_phantom_rx && ry == s_phantom_ry) {
+        gt911WriteReg(0x814E, 0);               // still the frozen frame: drop it
+        return;
+      }
+      s_phantom = false;                        // point changed -> controller is sane
+      if (!s_have_touch) {                      // fresh press: arm the phantom check
+        s_press_ms = now_ms;
+        s_press_rx = rx;
+        s_press_ry = ry;
+        s_press_jitter = false;
+      } else if (rx != s_press_rx || ry != s_press_ry) {
+        s_press_jitter = true;
+      }
+      if (s_have_touch && !s_press_jitter &&
+          (unsigned long)(now_ms - s_press_ms) > 10000) {
+        s_phantom = true;                       // 10 s frozen at one point = not a finger
+        s_phantom_rx = rx;
+        s_phantom_ry = ry;
+        s_have_touch = false;
+        gt911WriteReg(0x814E, 0);
+        return;
+      }
       s_dbg_rawx = rx;
       s_dbg_rawy = ry;
       mapRaw(rx, ry, &s_cur_x, &s_cur_y);
@@ -147,18 +204,27 @@ static void gt911Poll() {
     }
   } else {
     s_have_touch = false;                        // finger lifted
+    s_phantom = false;                           // real lift frame -> phantom cleared
   }
   gt911WriteReg(0x814E, 0);                       // ack the frame
 }
 
 bool heltecV4CapTouchBegin() {
-  // ONE-SHOT: the UI retries this every loop while touch isn't inited, so the
-  // I2C probe/scan must run only once — otherwise we re-scan the bus every
-  // frame and the whole device crawls. After the first attempt, return the
-  // cached result instantly with no bus traffic.
-  static bool s_attempted = false;
-  if (s_attempted) return s_init_ok;
-  s_attempted = true;
+  // BOUNDED RETRY: the UI calls this every loop while touch isn't inited. The
+  // old ONE-SHOT version cached the very first probe forever — a GT911 that was
+  // still resetting / strap-latching at that instant cost the whole session its
+  // touch AND keyboard (the kb poll task only starts once touch inits). Retry
+  // the probe every 500 ms for the first ~6 s instead, then cache the failure
+  // for good — still nothing like the every-frame rescan that made the device
+  // crawl, and a slow-to-wake controller is picked up a moment later.
+  static uint8_t       s_attempts = 0;
+  static unsigned long s_last_attempt_ms = 0;
+  if (s_init_ok) return true;
+  if (s_attempts >= 12) return false;                 // give up: cached failure
+  if (s_attempts &&
+      (unsigned long)(millis() - s_last_attempt_ms) < 500) return false;
+  ++s_attempts;
+  s_last_attempt_ms = millis();
 
   // --- Peripheral power: the keyboard / GT911 / I2C pull-ups all hang off the
   // BOARD_POWERON rail (GPIO10). It's driven HIGH in TDeckBoard::begin(), but
@@ -168,7 +234,7 @@ bool heltecV4CapTouchBegin() {
 #ifdef PIN_PERF_POWERON
   pinMode(PIN_PERF_POWERON, OUTPUT);
   digitalWrite(PIN_PERF_POWERON, HIGH);
-  delay(120);
+  if (s_attempts == 1) delay(120);   // settle once; retries find the rail already up
 #endif
 
   // Sample idle bus levels with the I2C peripheral detached (plain INPUT, no

@@ -19,6 +19,7 @@ MeshCore fork via PlatformIO `lib_deps`.
 
 - LilyGo T-Deck / T-Deck Plus — env `LilyGo_TDeck_companion_radio_touch`
 - Heltec V4 + TFT + CHSC6x touch — env `heltec_v4_tft_companion_radio_usb_tcp_touch`
+- RAK WisMesh Tap V2 (RAK3312) — env `rak_tap_v2_companion_radio_touch`
 
 ## Architecture
 

@@ -194,7 +194,11 @@ void halt() {
 
 void setup() {
   Serial.begin(115200);
+#if defined(HAS_RAK_TAP_V2)
+  delay(1500);  // USB-CDC enumeration before boot logs
+#else
   delay(200);
+#endif
   Serial.println("[BOOT] setup start");
 
   // Widen the task-watchdog grace period. The ~5 s default trips during a legitimate-but-slow flash
@@ -238,6 +242,23 @@ void setup() {
 
   board.begin();
   Serial.println("[BOOT] board ok");
+
+#if defined(HAS_RAK_TAP_V2)
+  // Quick PSRAM sanity check — silent crash before SPIFFS could be bad PSRAM config
+  {
+    void* p = heap_caps_malloc(64, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    bool psram_ok = (p != NULL);
+    if (p) {
+      memset(p, 0x55, 64);
+      bool match = true;
+      for (int i = 0; i < 64; ++i) match &= (((uint8_t*)p)[i] == 0x55);
+      free(p);
+      psram_ok = match;
+    }
+    Serial.printf("[BOOT] psram probe: %s\n", psram_ok ? "OK" : "FAIL"); Serial.flush();
+    if (!psram_ok) { Serial.println("[BOOT] FATAL: PSRAM readback mismatch — halting"); halt(); }
+  }
+#endif
 
 #ifdef DISPLAY_CLASS
   DisplayDriver* disp = NULL;
@@ -287,8 +308,16 @@ void setup() {
                     static_cast<unsigned long>(bn),
                     static_cast<unsigned>(esp_reset_reason()),
                     static_cast<unsigned>(nvs_free));
+#if defined(HAS_RAK_TAP_V2)
+      Serial.flush();
+    }
+    Serial.println("[BOOT] about to call initTxtTxUniquenessFromRng..."); Serial.flush();
+    the_mesh.initTxtTxUniquenessFromRng();
+    Serial.println("[BOOT] initTxtTxUniqueness done"); Serial.flush();
+#else
     }
     the_mesh.initTxtTxUniquenessFromRng();
+#endif
   }
 #endif
 
@@ -436,8 +465,16 @@ void setup() {
   // file-saved values (theme accent, brightness, language, …) take effect this
   // boot — otherwise a theme change "reverts" on every restart.
   touchPrefsReload();
+#if defined(HAS_RAK_TAP_V2)
+  Serial.println("[BOOT] prefs_backend ok"); Serial.flush();
+  Serial.println("[BOOT] touchPrefsReload ok"); Serial.flush();
+#endif
 #endif
   store.begin();
+#if defined(HAS_RAK_TAP_V2)
+  Serial.println("[BOOT] store ok"); Serial.flush();
+  Serial.println("[BOOT] calling mesh.begin..."); Serial.flush();
+#endif
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -446,6 +483,9 @@ void setup() {
     #endif
   );
   Serial.println("[BOOT] mesh ok");
+#if defined(HAS_RAK_TAP_V2)
+  Serial.flush();
+#endif
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   {
