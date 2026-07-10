@@ -689,7 +689,7 @@ static bool wavParse(File& f, uint16_t* pch, uint32_t* prate, uint32_t* pdata) {
 static bool wavOpen(const char* prefpath, File& f) {
   if (!prefpath || !prefpath[0]) return false;
   fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
-#if defined(HAS_TDECK_GT911)   // only the T-Deck's sound picker ever writes an "sd:"-prefixed pref
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)   // only the T-Deck/pager sound picker ever writes an "sd:"-prefixed pref
   if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; fmSdTryMount(); }
 #endif
   f = fsp->open(fp, FILE_READ);
@@ -17085,7 +17085,7 @@ static bool fmIsImage(const char* name) {
          !strcasecmp(dot, ".jpeg") || !strcasecmp(dot, ".sjpg") ||
          !strcasecmp(dot, ".bmp");
 }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 static bool fmIsAudio(const char* name) {
   if (!name) return false;
   const char* dot = strrchr(name, '.');
@@ -17248,7 +17248,7 @@ static void fmSetWallpaperCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(TR("Lock wallpaper set"), 1300);
 }
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // ---- .wav -> notification-sound chooser (opened from the File Manager) ------
 static char      s_fm_snd_path[208] = {0};
 static bool      s_fm_snd_on_sd     = false;
@@ -17323,7 +17323,7 @@ static void fmOpenAudio(const char* name) {
   lv_obj_t* cl = lv_label_create(close); lv_label_set_text(cl, LV_SYMBOL_CLOSE); tanCloseRed(cl);
   lv_obj_set_style_text_font(cl, &g_font_12, LV_PART_MAIN); lv_obj_center(cl);
 }
-#endif  // HAS_TDECK_GT911 (.wav notification-sound chooser)
+#endif  // HAS_TDECK_GT911 || TLORA_PAGER (.wav notification-sound chooser)
 
 static void fmOpenImage(const char* name) {
   if (!s_fm_fs || !name || !name[0]) return;
@@ -17481,7 +17481,7 @@ static void fmRowClickCb(lv_event_t* e) {
   FmRowData* rd = (FmRowData*)lv_obj_get_user_data(lv_event_get_target(e));
   if (!rd) return;
   if (rd->isdir)                fmEnterDir(rd->name);
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   else if (fmIsAudio(rd->name)) fmOpenAudio(rd->name);   // .wav -> notification-sound chooser
 #endif
   else if (fmIsImage(rd->name)) fmOpenImage(rd->name);   // images -> read-only viewer
@@ -38590,7 +38590,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_editor_root),           []{ fmEditorClose(); },              PF_COUNT },
   { P_OPEN(s_fm_prompt),             []{ fmPromptClose(); },              PF_COUNT },
   { P_OPEN(s_fm_actions),            []{ fmCloseActions(); },             PF_COUNT },
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   { P_OPEN(s_fm_snd_root),           []{ fmSndClose(); },                 PF_COUNT },   // was in no registry at all
 #endif
   { P_OPEN(s_fm_fmt_overlay),        nullptr,                             PF_COUNT },   // format progress: block keys, not dismissable

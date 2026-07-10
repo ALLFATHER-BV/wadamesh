@@ -137,11 +137,13 @@
 
 // Per-event WAV notification sounds + the file-browsing sound picker. This is
 // deliberately NOT the same thing as CAP_SD/CAP_FILESYSTEM: it only means
-// "can browse and play WAV files for notifications," which the T-Deck gets
-// from its SD card and the pager gets from internal SPIFFS alone (the
-// pager's CAP_SD/CAP_FILESYSTEM stay 0 -- see the comment on those above;
-// this flag does not reopen real SD support, it only gates the
-// SPIFFS-backed sound picker).
+// "can browse and play WAV files for notifications." Both the T-Deck and the
+// pager can now pick a WAV from a real SD card too (their sound pickers write
+// an "sd:"-prefixed pref, UITask.cpp's wavOpen()/fmOpenAudio()) -- but the
+// pager's CAP_SD/CAP_FILESYSTEM stay 0 (see the comment on those above): that
+// SD support was added by widening the specific file-manager/WAV-picker call
+// sites individually (`|| defined(TLORA_PAGER)`), not by flipping the macros,
+// since CAP_SD also gates ~30 unrelated, still-pager-deferred features.
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
   #define CAP_SOUND_FILES 1
 #else
