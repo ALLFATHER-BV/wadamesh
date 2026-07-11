@@ -119,6 +119,7 @@
     // its include path, so an angle include picks that up and misses accessors we
     // add here (e.g. the signal-probe prefs). Quotes force the local src/ copy.
     #include "../helpers/esp32/TouchPrefsStore.h"
+    #include "../helpers/esp32/WebMirror.h"   // web UI mirror (framebuffer + pointer bridge)
     #include "../helpers/ClockFloorRTC.h"
     extern ClockFloorRTC rtc_clock;   // the board clock (variants/*/target.cpp); its send-timestamp floor is seeded/persisted from here (#89)
     #if defined(MULTI_TRANSPORT_COMPANION)
@@ -2112,11 +2113,216 @@ static lv_color_t* g_shot_buf = nullptr;
 static int         g_shot_w   = 0;
 static int         g_shot_h   = 0;
 
+// REMOTE mode: render the UI to an off-screen 480x800 display for the web only (the
+// physical panel drops to a placeholder). Set from the pref at boot; drives lvglFlush
+// (skip the panel) + the display-init resolution. Ungated so non-mirror code reads it
+// (always false on Tanmatsu / when off).
+static bool s_remote_mode = false;
+static bool s_remote_landscape = false;   // remote orientation: true=800x480 landscape (desktop), false=480x800 portrait
+// Bootloop guard for remote mode: RTC memory persists across a soft reset (crash/reboot)
+// but is garbage on a cold power-on. Armed before entering remote mode, cleared a few
+// seconds into a healthy run; a still-armed flag on the next boot means the last remote
+// boot didn't complete -> auto-disable (see UITask::begin + loop). Never gets stuck.
+#define RMT_GUARD_MAGIC 0x52454D54u   // 'REMT'
+RTC_NOINIT_ATTR static uint32_t s_rmt_boot_guard;
+
+#if !defined(HAS_TANMATSU)
+#include "../wadamesh_mark_rgb.h"   // anti-aliased mesh mark (RGB565), same artwork as the boot splash
+// Physical-panel placeholder shown while remote mode renders the UI off-screen. Drawn
+// on the first loop pass (IP sentinel) then refreshed when the IP appears (Wi-Fi up).
+// Uses the DisplayDriver text API (same path as the boot splash), not LVGL.
+static uint32_t s_remote_ph_ip = 0xFFFFFFFFu;
+static uint32_t s_remote_exit_armed = 0;   // time of the first of two SPACE presses to exit
+static void drawRemotePlaceholder(bool exit_armed = false) {
+  const int W = display.width(), H = display.height();
+  const bool up = (WiFi.status() == WL_CONNECTED) && ((uint32_t)WiFi.localIP() != 0);
+  display.startFrame(DisplayDriver::DARK);
+  // wadamesh mesh mark up top (same white-on-black artwork as the boot splash). The
+  // touch DisplayDriver runs at scale 1.0, so writePixelsRGB565 shares text coords.
+  const int ly = (H >= 288) ? 44 : 8;   // portrait panels have room to breathe; landscape sits high
+  display.writePixelsRGB565((W - WADAMESH_MARK_W) / 2, ly,
+                            WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
+  int y = ly + WADAMESH_MARK_H + 16;
+  display.setColor(DisplayDriver::LIGHT);
+  display.setTextSize(2);
+  display.drawTextCentered(W / 2, y, "wadamesh");
+  y += 26;
+  display.setTextSize(1);
+  display.drawTextCentered(W / 2, y, "REMOTE MODE");
+  y += 26;
+  if (up) {
+    char u[48];
+    snprintf(u, sizeof u, "http://%s:8765/", WiFi.localIP().toString().c_str());
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawTextCentered(W / 2, y, "Open in a browser:");
+    display.setColor(DisplayDriver::GREEN);
+    display.drawTextCentered(W / 2, y + 18, u);
+  } else {
+    display.setColor(DisplayDriver::ORANGE);
+    display.drawTextCentered(W / 2, y, "Connecting to Wi-Fi...");
+  }
+  display.setColor(exit_armed ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
+  display.drawTextCentered(W / 2, H - 16, exit_armed ? "Press SPACE again to exit" : "Press SPACE twice to exit");
+  display.endFrame();
+  s_remote_ph_ip = up ? (uint32_t)WiFi.localIP() : 0;
+}
+
+// In remote mode the panel shows only the placeholder, so the physical keyboard is the
+// way out: two SPACE presses within 3 s exit remote mode (reboot back to normal).
+static void remotePhysicalKey(int key) {
+  if (key != ' ') return;
+  uint32_t nowm = millis();
+  if (s_remote_exit_armed && (nowm - s_remote_exit_armed) < 3000) {
+    touchPrefsSetRemoteMode(false);
+    if (g_lv.task) g_lv.task->rebootDevice();   // saves chat history, reboots to normal mode
+  } else {
+    s_remote_exit_armed = nowm;
+    drawRemotePlaceholder(true);
+  }
+}
+#endif
+
+#if !defined(HAS_TANMATSU)
+// ===== Web UI mirror: coalesced, rate-capped, backpressure-gated streaming =====
+// The flush hook copies each drawn band into a full-screen shadow buffer and grows
+// a dirty bounding box (cheap, no network). webMirrorTick() then RLE-encodes just
+// the dirty box and queues it — but ONLY after the previous frame has fully drained
+// (adaptive to the real Wi-Fi throughput) and no faster than a rate cap. So the link
+// never backs up (no lag pileup, no wedged-client disconnects), while the browser
+// still gets the *current* pixels of everything that changed since the last send.
+static uint8_t*  s_web_rle_buf  = nullptr;   // RLE output (<=32 KB band)
+static uint8_t*  s_web_band_buf = nullptr;   // contiguous band gathered from the shadow
+static uint16_t* s_web_fb       = nullptr;   // full-screen RGB565 shadow (PSRAM)
+static int  s_web_fb_w = 0, s_web_fb_h = 0;
+static bool s_web_dirty = false;
+static int  s_web_dx1 = 0, s_web_dy1 = 0, s_web_dx2 = 0, s_web_dy2 = 0;   // dirty bbox (inclusive)
+static uint32_t s_web_last_send_ms = 0;
+
+// RLE-encode RGB565 pixels as [count(1..255), lo, hi] runs. Returns bytes, or 0 if
+// it would not beat raw (bails at cap). UI is mostly flat -> ~5-15x; noisy content
+// (map tiles) bails to raw. cap must be <= the out[] buffer size.
+static size_t webMirrorRle(const uint16_t* src, int n, uint8_t* out, size_t cap) {
+  size_t o = 0; int i = 0;
+  while (i < n) {
+    uint16_t v = src[i];
+    int run = 1;
+    while (i + run < n && src[i + run] == v && run < 255) run++;
+    if (o + 3 > cap) return 0;
+    out[o++] = (uint8_t)run;
+    out[o++] = (uint8_t)(v & 0xFF);
+    out[o++] = (uint8_t)(v >> 8);
+    i += run;
+  }
+  return o;
+}
+
+static bool webMirrorEnsureBufs() {
+  if (s_web_fb && s_web_band_buf && s_web_rle_buf) return true;
+  if (s_web_fb_w <= 0 || s_web_fb_h <= 0) return false;
+  if (!s_web_fb)
+    s_web_fb = (uint16_t*)heap_caps_malloc((size_t)s_web_fb_w * s_web_fb_h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_web_band_buf)
+    s_web_band_buf = (uint8_t*)heap_caps_malloc(33000, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_web_rle_buf)
+    s_web_rle_buf = (uint8_t*)heap_caps_malloc(33000, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return s_web_fb && s_web_band_buf && s_web_rle_buf;
+}
+
+// Flush hook: copy a just-drawn band into the shadow buffer + grow the dirty bbox.
+// Runs on the LVGL thread only when a mirror client is connected.
+static void webMirrorOnFlush(int x, int y, int w, int h, const uint16_t* px) {
+  if (w <= 0 || h <= 0 || !webMirrorEnsureBufs()) return;
+  for (int row = 0; row < h; row++) {
+    int dy = y + row;
+    if (dy < 0 || dy >= s_web_fb_h) continue;
+    int x0 = x, cw = w, sxoff = 0;
+    if (x0 < 0) { cw += x0; sxoff = -x0; x0 = 0; }
+    if (x0 + cw > s_web_fb_w) cw = s_web_fb_w - x0;
+    if (cw > 0)
+      memcpy(s_web_fb + (size_t)dy * s_web_fb_w + x0,
+             px + (size_t)row * w + sxoff, (size_t)cw * 2);
+  }
+  int bx1 = x < 0 ? 0 : x, by1 = y < 0 ? 0 : y;
+  int bx2 = x + w - 1, by2 = y + h - 1;
+  if (bx2 >= s_web_fb_w) bx2 = s_web_fb_w - 1;
+  if (by2 >= s_web_fb_h) by2 = s_web_fb_h - 1;
+  if (bx2 < bx1 || by2 < by1) return;
+  if (!s_web_dirty) { s_web_dx1 = bx1; s_web_dy1 = by1; s_web_dx2 = bx2; s_web_dy2 = by2; s_web_dirty = true; }
+  else {
+    if (bx1 < s_web_dx1) s_web_dx1 = bx1;
+    if (by1 < s_web_dy1) s_web_dy1 = by1;
+    if (bx2 > s_web_dx2) s_web_dx2 = bx2;
+    if (by2 > s_web_dy2) s_web_dy2 = by2;
+  }
+}
+
+// Encode + queue a rect region from the shadow buffer at full resolution. Split into
+// SMALL (<=4 KB) bands so each WS frame fits the lwIP socket send buffer (~5.7 KB) and
+// flushes in ~one non-blocking pass, well within the write timeout even on congested
+// Wi-Fi. Bigger bands span several send-buffer refills over multiple RTTs and can stall
+// past the timeout mid-write -> a truncated WS frame -> the browser drops the socket
+// (the "disconnects often" bug, worst on the large 480x800 remote frames). Header
+// (10 B) = [0x01, flags(bit0=rle), x, y, w, h LE16]. RGB565 native little-endian.
+static void webMirrorQueueRegion(int rx, int ry, int rw, int rh) {
+  if (rw <= 0 || rh <= 0 || !s_web_fb || !s_web_band_buf) return;
+  int rows = 4096 / (rw * 2);
+  if (rows < 1) rows = 1;
+  uint16_t* band = (uint16_t*)s_web_band_buf;
+  for (int yy = 0; yy < rh; yy += rows) {
+    int bh = (yy + rows <= rh) ? rows : (rh - yy);
+    for (int r = 0; r < bh; r++)
+      memcpy(band + (size_t)r * rw,
+             s_web_fb + (size_t)(ry + yy + r) * s_web_fb_w + rx, (size_t)rw * 2);
+    const size_t raw_bytes = (size_t)rw * bh * 2;
+    uint8_t        flags    = 0;
+    const uint8_t* body     = s_web_band_buf;
+    size_t         body_len = raw_bytes;
+    if (s_web_rle_buf) {
+      size_t rl = webMirrorRle(band, rw * bh, s_web_rle_buf, raw_bytes);
+      if (rl > 0 && rl < raw_bytes) { flags = 0x01; body = s_web_rle_buf; body_len = rl; }
+    }
+    int by = ry + yy;
+    uint8_t hdr[10] = { 0x01, flags,
+      (uint8_t)(rx & 0xFF), (uint8_t)((rx >> 8) & 0xFF),
+      (uint8_t)(by & 0xFF), (uint8_t)((by >> 8) & 0xFF),
+      (uint8_t)(rw & 0xFF), (uint8_t)((rw >> 8) & 0xFF),
+      (uint8_t)(bh & 0xFF), (uint8_t)((bh >> 8) & 0xFF) };
+    g_web_mirror.pushFrame(hdr, 10, body, body_len);
+  }
+}
+
+// Rate-capped, backpressure-gated send of the accumulated dirty bbox at full res.
+// Called each UI loop AFTER lv_timer_handler (so this frame's flushes are already in
+// the shadow). Only sends once the previous frame fully drained, so it self-paces to
+// the link speed (never backs up -> no disconnects) while staying crisp.
+static void webMirrorTick() {
+  if (!g_web_mirror.active() || !s_web_dirty || !s_web_fb) return;
+  if (!g_web_mirror.empty()) return;             // previous frame still draining -> adapt to link speed
+  uint32_t now = millis();
+  if (now - s_web_last_send_ms < 50) return;     // cap the outgoing frame rate (~20 fps ceiling)
+  int rx = s_web_dx1, ry = s_web_dy1;
+  int rw = s_web_dx2 - s_web_dx1 + 1, rh = s_web_dy2 - s_web_dy1 + 1;
+  s_web_dirty = false;
+  s_web_last_send_ms = now;
+  webMirrorQueueRegion(rx, ry, rw, rh);
+}
+#endif
+
 static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* color_p) {
   (void)disp_drv;
   if (!color_p) { lv_disp_flush_ready(disp_drv); return; }   // never deref a NULL draw buffer (OOM at boot)
   int32_t w = area->x2 - area->x1 + 1;
   int32_t h = area->y2 - area->y1 + 1;
+#if !defined(HAS_TANMATSU)
+  // REMOTE mode: the UI renders to an off-screen web display — never write the
+  // physical panel (wrong resolution). Only capture + stream the band.
+  if (s_remote_mode) {
+    if (g_web_mirror.active())
+      webMirrorOnFlush(area->x1, area->y1, w, h, reinterpret_cast<const uint16_t*>(color_p));
+    lv_disp_flush_ready(disp_drv);
+    return;
+  }
+#endif
 #if CAP_LARGE_SCREEN
   // UI scaling: LVGL rendered at a smaller physical resolution; nearest-neighbour upscale this
   // (already sw-rotated) band to the panel before blitting. 100% (s_lv_pw==panel) skips this.
@@ -2160,6 +2366,11 @@ static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t
                (size_t)cw * sizeof(lv_color_t));
     }
   }
+#if !defined(HAS_TANMATSU)
+  // Web UI mirror: copy this flushed band into the shadow buffer (one bool when off).
+  if (g_web_mirror.active())
+    webMirrorOnFlush(area->x1, area->y1, w, h, reinterpret_cast<const uint16_t*>(color_p));
+#endif
   lv_disp_flush_ready(disp_drv);
 }
 
@@ -3467,6 +3678,25 @@ static inline void navMarkDirty() {}
 static unsigned long s_slider_touch_ms = 0;   // last time a slider (volume, etc.) was dragged
 static bool s_wake_swallow = false;           // swallow the whole touch that wakes the screen (issue #4)
 static bool s_lock_on_screen_off = false;     // idle screen-off also engages the manual lock (cached pref)
+
+#if !defined(HAS_TANMATSU)
+// Web UI mirror: a virtual pointer indev fed by a phone browser's taps over the
+// WebSocket server (WebMirror). Drives the SAME LVGL UI as the physical touch;
+// idle -> released so it never fights the real touchscreen.
+static lv_indev_drv_t s_web_indev_drv;
+static void webPointerRead(lv_indev_drv_t* drv, lv_indev_data_t* data) {
+  (void)drv;
+  int16_t x = 0, y = 0; bool pr = false;
+  if (g_web_mirror.readPointer(&x, &y, &pr)) {
+    data->point.x = x;
+    data->point.y = y;
+    data->state = pr ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+  } else {
+    data->state = LV_INDEV_STATE_RELEASED;
+  }
+}
+#endif
+
 static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   (void)indev;
   static lv_point_t p = {0, 0};
@@ -18792,6 +19022,286 @@ static void spectrumDismissCb(lv_event_t* e) {
   closeSpectrumPage();
 }
 
+#if !defined(HAS_TANMATSU)
+// ============================================================================
+// VNC app  (app-drawer tile -> APPACT_VNC): serve the live UI to a phone browser
+// over the WebSocket server (WebMirror) and inject taps back. This screen is the
+// explanation + on/off switch + the reachable URL + live connection status.
+// ============================================================================
+static lv_obj_t*   s_vnc_root       = nullptr;
+static lv_obj_t*   s_vnc_url_lbl    = nullptr;
+static lv_obj_t*   s_vnc_status_lbl = nullptr;
+static lv_timer_t* s_vnc_timer      = nullptr;
+
+static void vncRefresh() {
+  if (!s_vnc_root) return;
+  const bool on   = touchPrefsGetWebMirror();
+  const bool wifi = (WiFi.status() == WL_CONNECTED) && ((uint32_t)WiFi.localIP() != 0);
+  if (s_vnc_url_lbl) {
+    if (wifi) {
+      char u[64];
+      snprintf(u, sizeof u, "http://%s:8765/", WiFi.localIP().toString().c_str());
+      lv_label_set_text(s_vnc_url_lbl, u);
+      lv_obj_set_style_text_color(s_vnc_url_lbl, lv_color_hex(on ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
+    } else {
+      lv_label_set_text(s_vnc_url_lbl, TR("Connect to Wi-Fi to get a browser address."));
+      lv_obj_set_style_text_color(s_vnc_url_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    }
+  }
+  if (s_vnc_status_lbl) {
+    const char* st;
+    if (!on)                             st = TR("Off");
+    else if (!wifi)                      st = TR("Waiting for Wi-Fi...");
+    else if (g_web_mirror.clients() > 0) st = TR("Connected - a browser is viewing this screen.");
+    else                                 st = TR("On - open the address above in a phone browser.");
+    lv_label_set_text(s_vnc_status_lbl, st);
+  }
+}
+
+static void closeVncPage() {
+  if (s_vnc_timer) { lv_timer_del(s_vnc_timer); s_vnc_timer = nullptr; }
+  if (s_vnc_root)  { popupClose(&s_vnc_root); }
+  s_vnc_url_lbl = nullptr; s_vnc_status_lbl = nullptr;
+  if (s_apppage_close == closeVncPage) {   // release the tall title bar back to normal
+    s_apppage_title = nullptr; s_apppage_close = nullptr;
+    statusBarSetTall(false); updateGlobalStatusBar();
+  }
+}
+
+static void vncToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetWebMirror(on);
+  g_web_mirror.setEnabled(on);
+  vncRefresh();
+}
+
+static void vncTimerCb(lv_timer_t*) { vncRefresh(); }
+
+static void openVncPage() {
+  closeVncPage();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_vnc_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_vnc_root);
+  lv_obj_set_size(s_vnc_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_vnc_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_vnc_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_vnc_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(s_vnc_root, STATUSBAR_H + 10, LV_PART_MAIN);   // clear the tall title bar
+  lv_obj_set_style_pad_left(s_vnc_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(s_vnc_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(s_vnc_root, 14, LV_PART_MAIN);
+  lv_obj_set_flex_flow(s_vnc_root, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(s_vnc_root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(s_vnc_root, 10, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(s_vnc_root, LV_DIR_VER);
+  // Make it obvious the page scrolls: a prominent, always-visible accent scrollbar.
+  lv_obj_set_scrollbar_mode(s_vnc_root, LV_SCROLLBAR_MODE_ON);
+  lv_obj_set_style_bg_color(s_vnc_root, lv_color_hex(COLOR_ACCENT), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(s_vnc_root, LV_OPA_80, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(s_vnc_root, 6, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(s_vnc_root, 3, LV_PART_SCROLLBAR);
+
+  s_apppage_title = "VNC";
+  s_apppage_close = closeVncPage;
+  statusBarSetTall(true);
+  updateGlobalStatusBar();
+
+  const lv_coord_t cw = sw - 28;
+
+  lv_obj_t* head = lv_label_create(s_vnc_root);
+  lv_label_set_text(head, TR("Control this device from a browser"));
+  lv_obj_set_style_text_font(head, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(head, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(head, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(head, cw);
+
+  lv_obj_t* expl = lv_label_create(s_vnc_root);
+  lv_label_set_text(expl, TR("Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it."));
+  lv_obj_set_style_text_font(expl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(expl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(expl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(expl, cw);
+
+  lv_obj_t* row = lv_obj_create(s_vnc_root);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, cw, SC(42));
+  lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(row, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(row, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* rl = lv_label_create(row);
+  lv_label_set_text(rl, TR("Enable web access"));
+  lv_obj_set_style_text_font(rl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_align(rl, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* sw2 = lv_switch_create(row);
+  lv_obj_align(sw2, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (touchPrefsGetWebMirror()) lv_obj_add_state(sw2, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(sw2, vncToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  s_vnc_url_lbl = lv_label_create(s_vnc_root);
+  lv_obj_set_style_text_font(s_vnc_url_lbl, &g_font_16, LV_PART_MAIN);
+  lv_label_set_long_mode(s_vnc_url_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_vnc_url_lbl, cw);
+
+  s_vnc_status_lbl = lv_label_create(s_vnc_root);
+  lv_obj_set_style_text_font(s_vnc_status_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_vnc_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(s_vnc_status_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_vnc_status_lbl, cw);
+
+  lv_obj_t* warn = lv_label_create(s_vnc_root);
+  lv_label_set_text(warn, TR("While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only)."));
+  lv_obj_set_style_text_font(warn, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(warn, lv_color_hex(0x8A8F98), LV_PART_MAIN);
+  lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(warn, cw);
+
+  vncRefresh();
+  s_vnc_timer = lv_timer_create(vncTimerCb, 1000, nullptr);
+}
+
+// ============================================================================
+// REMOTE app (app-drawer tile -> APPACT_REMOTE): reboot into "remote mode" — the
+// full UI renders to an off-screen 480x800 display served to a browser, and the
+// physical panel drops to a placeholder. A boot mode (the UI is built once per
+// resolution), so toggling it reboots. This is the path to screenless devices.
+// ============================================================================
+static lv_obj_t* s_remote_root = nullptr;
+
+static void closeRemotePage() {
+  if (s_remote_root) { popupClose(&s_remote_root); }
+  if (s_apppage_close == closeRemotePage) {
+    s_apppage_title = nullptr; s_apppage_close = nullptr;
+    statusBarSetTall(false); updateGlobalStatusBar();
+  }
+}
+
+static void remoteToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetRemoteMode(on);
+  if (g_lv.task) {
+    g_lv.task->showAlert(on ? TR("Entering remote mode - rebooting...")
+                            : TR("Leaving remote mode - rebooting..."), 1600);
+    g_lv.task->rebootDevice();   // saves chat history, then reboots into the new mode
+  }
+}
+
+static void remoteLandscapeCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetRemoteLandscape(on);
+  if (!g_lv.task) return;
+  if (touchPrefsGetRemoteMode()) {   // already in remote mode -> reboot to apply the new resolution
+    g_lv.task->showAlert(TR("Changing orientation - rebooting..."), 1600);
+    g_lv.task->rebootDevice();
+  } else {
+    g_lv.task->showAlert(on ? TR("Landscape set - applies when remote mode starts.")
+                            : TR("Portrait set - applies when remote mode starts."), 2400);
+  }
+}
+
+static void openRemotePage() {
+  closeRemotePage();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_remote_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_remote_root);
+  lv_obj_set_size(s_remote_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_remote_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_remote_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_remote_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(s_remote_root, STATUSBAR_H + 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(s_remote_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(s_remote_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(s_remote_root, 14, LV_PART_MAIN);
+  lv_obj_set_flex_flow(s_remote_root, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(s_remote_root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(s_remote_root, 10, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(s_remote_root, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(s_remote_root, LV_SCROLLBAR_MODE_ON);
+  lv_obj_set_style_bg_color(s_remote_root, lv_color_hex(COLOR_ACCENT), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(s_remote_root, LV_OPA_80, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(s_remote_root, 6, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(s_remote_root, 3, LV_PART_SCROLLBAR);
+
+  s_apppage_title = "Remote";
+  s_apppage_close = closeRemotePage;
+  statusBarSetTall(true);
+  updateGlobalStatusBar();
+
+  const lv_coord_t cw = sw - 28;
+  const bool on = touchPrefsGetRemoteMode();
+
+  lv_obj_t* head = lv_label_create(s_remote_root);
+  lv_label_set_text(head, TR("Remote mode (headless UI)"));
+  lv_obj_set_style_text_font(head, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(head, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(head, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(head, cw);
+
+  lv_obj_t* expl = lv_label_create(s_remote_root);
+  lv_label_set_text(expl, TR("Runs the full wadamesh UI at a larger resolution built for a web browser instead of this small screen. The device screen becomes a placeholder and the whole UI is served over Wi-Fi. Turning this on or off reboots the device."));
+  lv_obj_set_style_text_font(expl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(expl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(expl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(expl, cw);
+
+  lv_obj_t* row = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, cw, SC(42));
+  lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(row, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(row, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* rl = lv_label_create(row);
+  lv_label_set_text(rl, on ? TR("Remote mode is ON") : TR("Enable remote mode"));
+  lv_obj_set_style_text_font(rl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_align(rl, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* sw2 = lv_switch_create(row);
+  lv_obj_align(sw2, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (on) lv_obj_add_state(sw2, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(sw2, remoteToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  lv_obj_t* lrow = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(lrow);
+  lv_obj_set_size(lrow, cw, SC(42));
+  lv_obj_set_style_bg_color(lrow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(lrow, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(lrow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(lrow, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(lrow, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(lrow, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* ll = lv_label_create(lrow);
+  lv_label_set_text(ll, TR("Landscape (for desktop)"));
+  lv_obj_set_style_text_font(ll, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(ll, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_align(ll, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* lsw = lv_switch_create(lrow);
+  lv_obj_align(lsw, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (touchPrefsGetRemoteLandscape()) lv_obj_add_state(lsw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(lsw, remoteLandscapeCb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  lv_obj_t* note = lv_label_create(s_remote_root);
+  if (WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
+    char u[80];
+    snprintf(u, sizeof u, "%s http://%s:8765/", TR("After reboot, open:"), WiFi.localIP().toString().c_str());
+    lv_label_set_text(note, u);
+  } else {
+    lv_label_set_text(note, TR("Connect to Wi-Fi so a browser can reach the device."));
+  }
+  lv_obj_set_style_text_font(note, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(note, cw);
+}
+#endif  // !HAS_TANMATSU
+
 static void openSpectrumPage() {
   closeSpectrumPage();
   // Park the buffered-receive drain task while this page drives the raw radio.
@@ -31301,7 +31811,7 @@ static void openControlCenter() {
 enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
-  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE,
+  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE,
 };
 
 static void closeAppDrawer() {
@@ -31546,6 +32056,10 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_SIGNAL:    openSignalInfoPopup(); return;   // signal/traffic + auto-discover settings
     case APPACT_MONITOR:   openMonitorPage();    return;   // RF activity graph + repeater-style radio stats
     case APPACT_SPECTRUM:  openSpectrumPage();   return;   // swept RF spectrum analyzer (borrows the radio)
+#if !defined(HAS_TANMATSU)
+    case APPACT_VNC:       openVncPage();        return;   // screen mirror + remote control from a browser
+    case APPACT_REMOTE:    openRemotePage();     return;   // reboot into the web-resolution headless UI
+#endif
     case APPACT_ADVERT:    openAdvertModalCb(e);  return;
     case APPACT_POWER:     openPowerMenu();      return;
     case APPACT_SNAKE:     SnakeGame::launch();  return;
@@ -31850,6 +32364,10 @@ static void openAppDrawer() {
     { LV_SYMBOL_GPS,       "Map",       APPACT_MAP,      0,         0x53C06B },      // location green
     { "@",                 "Mentions",  APPACT_MENTIONS, mentions,  0xF2A33C },      // mention amber
     { LV_SYMBOL_UPLOAD,    "Advertise", APPACT_ADVERT,   0,         0xE072B0 },      // broadcast magenta
+#if !defined(HAS_TANMATSU)
+    { LV_SYMBOL_IMAGE,     "VNC",       APPACT_VNC,      0,         0x6C7CF0 },      // browser screen-mirror indigo
+    { LV_SYMBOL_WIFI,      "Remote",    APPACT_REMOTE,   0,         0x15B6A6 },      // headless web-resolution UI (brand teal)
+#endif
     { nullptr,             "Signal",    APPACT_SIGNAL,   0,         COLOR_ACCENT },  // theme (drawn signal bars)
     { TOUCH_SYM_ANTENNA,   "Monitor",   APPACT_MONITOR,  0,         0x35C9C9 },      // RF monitor cyan
     { TOUCH_SYM_ANTENNA,   "Spectrum",  APPACT_SPECTRUM, 0,         0xE8A33D },      // RF spectrum analyzer amber
@@ -37692,6 +38210,29 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
+#if !defined(HAS_TANMATSU)
+    // REMOTE mode: render the UI to a virtual 480x800 PORTRAIT display for the web
+    // (headless/browser use). No physical-panel rotation — the panel is a placeholder.
+    s_remote_mode = touchPrefsGetRemoteMode();
+    s_remote_landscape = touchPrefsGetRemoteLandscape();
+    // Bootloop guard: arm an RTC flag before entering remote mode; it's cleared a few
+    // seconds into a successful run (see UITask::loop). If a remote boot ever fails to
+    // complete, the next boot sees the flag still set and auto-disables remote — so the
+    // device can never get stuck. (RTC memory survives a soft reset; a cold power-on
+    // resets it, so a fresh boot always honours the pref.)
+    if (s_remote_mode) {
+      esp_reset_reason_t rr = esp_reset_reason();
+      if (rr == ESP_RST_POWERON || rr == ESP_RST_BROWNOUT) s_rmt_boot_guard = 0;
+      if (s_rmt_boot_guard == RMT_GUARD_MAGIC) {          // previous remote boot didn't finish
+        touchPrefsSetRemoteMode(false);
+        s_remote_mode = false;
+        s_rmt_boot_guard = 0;
+      } else {
+        s_rmt_boot_guard = RMT_GUARD_MAGIC;               // arm; cleared after a good run
+      }
+    }
+    if (s_remote_mode) s_ui_rotation = s_remote_landscape ? LV_DISP_ROT_270 : LV_DISP_ROT_NONE;
+#endif
     // Apply the saved backlight brightness (takes the LEDA pin over from the
     // display's digitalWrite via LEDC PWM). Both touch boards have the LEDA pin.
 #if defined(HAS_CC_BRIGHTNESS)
@@ -37731,8 +38272,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
     // it render/flush natively in 320x240.
-    g_lv.disp_drv.hor_res  = ui_landscape ? 320 : 240;
-    g_lv.disp_drv.ver_res  = ui_landscape ? 240 : 320;
+    // Remote render = 480x288 (5:3): rendered SMALL on-device, upscaled to fill the browser
+    // window. Every streaming stage (LVGL rasterise, shadow memcpy, RLE encode, socket bytes)
+    // scales with pixel count, so fewer pixels = proportionally faster — ~44% less than
+    // 640x384. The browser bilinear-upscales the canvas (near-free on the GPU) at the cost of
+    // some softness. Orientation toggles live via the Rotate button ([0x04] + s_remote_landscape).
+    g_lv.disp_drv.hor_res  = s_remote_mode ? (s_remote_landscape ? 480 : 288) : (ui_landscape ? 320 : 240);
+    g_lv.disp_drv.ver_res  = s_remote_mode ? (s_remote_landscape ? 288 : 480) : (ui_landscape ? 240 : 320);
 #endif
     g_lv.disp_drv.flush_cb = lvglFlush;
     g_lv.disp_drv.draw_buf = &g_lv.draw_buf;
@@ -37806,11 +38352,29 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     else pushDiagLine("LVGL keypad indev failed");
     bsp_input_get_queue(&s_nav_queue);
 #else
-    lv_indev_drv_init(&g_lv.indev_drv);
-    g_lv.indev_drv.type    = LV_INDEV_TYPE_POINTER;
-    g_lv.indev_drv.read_cb = lvglTouchRead;
-    g_lv.indev_drv.disp    = lv_disp_get_default();
-    if (!lv_indev_drv_register(&g_lv.indev_drv)) pushDiagLine("LVGL indev failed");
+    // Physical touchscreen indev — skipped in remote mode (the panel is a placeholder;
+    // its 320x240 coords would map wrong onto the 480x800 web UI). The web pointer drives it.
+    if (!s_remote_mode) {
+      lv_indev_drv_init(&g_lv.indev_drv);
+      g_lv.indev_drv.type    = LV_INDEV_TYPE_POINTER;
+      g_lv.indev_drv.read_cb = lvglTouchRead;
+      g_lv.indev_drv.disp    = lv_disp_get_default();
+      if (!lv_indev_drv_register(&g_lv.indev_drv)) pushDiagLine("LVGL indev failed");
+    }
+    // Web UI mirror: stream this display + accept a phone browser's taps as a
+    // second pointer indev (opt-in via the VNC/REMOTE apps; see WebMirror / the WS
+    // server). Remote mode always streams + wants a bigger ring for the 480x800 frame.
+    g_web_mirror.begin(s_remote_mode ? (size_t)(1024 * 1024) : (size_t)0);
+    g_web_mirror.setScreenSize(lv_disp_get_hor_res(NULL), lv_disp_get_ver_res(NULL));
+    g_web_mirror.setEnabled(s_remote_mode ? true : touchPrefsGetWebMirror());
+    g_web_mirror.setRemote(s_remote_mode);    // browser shows the Rotate button only in remote mode
+    s_web_fb_w = lv_disp_get_hor_res(NULL);   // shadow-buffer dimensions for the mirror
+    s_web_fb_h = lv_disp_get_ver_res(NULL);
+    lv_indev_drv_init(&s_web_indev_drv);
+    s_web_indev_drv.type    = LV_INDEV_TYPE_POINTER;
+    s_web_indev_drv.read_cb = webPointerRead;
+    s_web_indev_drv.disp    = lv_disp_get_default();
+    lv_indev_drv_register(&s_web_indev_drv);
 #if CAP_KEYPAD_NAV
     // Second indev for the keyboard/d-pad nav: a KEYPAD indev + focus group.
     // On the T-Deck it's optional (touchPrefsGetKbdNav()) since touch is the
@@ -37855,6 +38419,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (touchPrefsGetRxQueue()) radio_driver.rxQueueEnable(true);
 
     buildUiTree();
+
+#if !defined(HAS_TANMATSU)
+    // Remote boot completed (display + full UI built without crashing) -> disarm the
+    // bootloop guard now, not 8s into the loop. A rotate/orientation reboot re-enters
+    // remote and completes begin() in a few seconds, so clearing here means back-to-back
+    // reboots never look like an "incomplete boot" and wrongly auto-disable remote mode.
+    if (s_remote_mode) s_rmt_boot_guard = 0;
+#endif
 
     // Force immediate full repaint to replace the TFT "Loading..." banner.
     lv_obj_invalidate(lv_scr_act());
@@ -39060,6 +39632,25 @@ static inline void uiCp(const char* next) {
 
 void UITask::loop() {
   unsigned long now = millis();
+#if !defined(HAS_TANMATSU)
+  // REMOTE mode: draw/refresh the physical-panel placeholder (first pass via the IP
+  // sentinel, then whenever the IP changes), and clear the bootloop guard once this
+  // boot has run a few seconds (proving it came up cleanly).
+  if (s_remote_mode) {
+    if (s_rmt_boot_guard && now > 8000) s_rmt_boot_guard = 0;
+    // Rotate button on the web page -> flip orientation by rebooting into the other axis.
+    if (uint8_t oreq = g_web_mirror.takeOrient()) {
+      const bool want_land = (oreq == 1);
+      if (want_land != s_remote_landscape) {
+        touchPrefsSetRemoteLandscape(want_land);
+        if (g_lv.task) { g_lv.task->showAlert(TR("Rotating - reconnecting..."), 1600); g_lv.task->rebootDevice(); }
+      }
+    }
+    if (s_remote_exit_armed && (now - s_remote_exit_armed) >= 3000) { s_remote_exit_armed = 0; drawRemotePlaceholder(false); }
+    uint32_t rip = (WiFi.status() == WL_CONNECTED) ? (uint32_t)WiFi.localIP() : 0;
+    if (rip != s_remote_ph_ip) drawRemotePlaceholder();
+  }
+#endif
   g_ui_stall_max = 0; g_ui_stall_tag = ""; s_ui_cp_tag = "ui:head"; s_ui_cp_t0 = now;
 #if defined(ESP32)
   // Persist the clock floor every 15 min (small prefs-blob write; SdNvsPrefs
@@ -39496,6 +40087,7 @@ void UITask::loop() {
     int key = tdeckKeyboardReadKey();
     if (key <= 0) break;
     if (!_screen_off) s_kb_last_key_ms = now;   // a keypress while locked must not light the kb
+    if (s_remote_mode) { remotePhysicalKey(key); continue; }   // remote mode: physical keys are the exit
     handleHwKey(key);
   }
   // Focusing a text field (cursor starts blinking — tapped or auto-focused)
@@ -39539,10 +40131,32 @@ void UITask::loop() {
     int key = m9KeyboardReadKey();
     if (key <= 0) break;
     if (!_screen_off) s_kb_last_key_ms = now;
+    if (s_remote_mode) { remotePhysicalKey(key); continue; }   // remote mode: physical keys are the exit
     handleHwKey(key);
   }
   serviceLockscreen();
   serviceLockingCountdown(now);
+#endif
+#if !defined(HAS_TANMATSU)
+  // While a web-mirror browser is connected, count it as activity so the device screen
+  // stays awake (otherwise the idle timer would dim it and swallow remote input).
+  if (g_web_mirror.active()) {
+    static uint32_t s_web_awake_ms = 0;
+    if (now - s_web_awake_ms > 3000) { noteUserInput(); s_web_awake_ms = now; }
+    // Tell the browser to summon/hide the phone soft keyboard when an editable field
+    // gains/loses focus (the browser can't see the pixels to know).
+    lv_obj_t* fta = g_lv.keyboard ? lv_keyboard_get_textarea(g_lv.keyboard) : nullptr;
+    g_web_mirror.setKbFocused(fta != nullptr);
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+    // Physical-keyboard boards hide the on-screen keyboard, so browser keystrokes are
+    // injected via the same path as the hardware keys (printable chars type in; 0x08 =
+    // backspace, 0x0D = enter/send). Boards with an on-screen keyboard (V4/RAK) type by
+    // tapping it through the web pointer instead, so no key injection is needed there.
+    uint16_t wk;
+    for (int i = 0; i < 16 && g_web_mirror.popKey(&wk); ++i)
+      handleHwKey((int)wk);
+#endif
+  }
 #endif
 #if defined(HAS_TANMATSU)
   // Drive the keyboard backlight from off/on/auto + the Keys-slider brightness; keep it
@@ -39719,9 +40333,18 @@ void UITask::loop() {
   // updateTrackball -> navMoveDir).
   if (s_kbd_nav || s_tb_nav) navMaybeRebuild();
 #endif
+#if !defined(HAS_TANMATSU)
+  // Web UI mirror: on a new connect / heal, invalidate the whole screen so LVGL
+  // redraws it into the shadow buffer (takeFullRepaint is armed by the WS server).
+  if (g_web_mirror.active() && g_web_mirror.takeFullRepaint())
+    lv_obj_invalidate(lv_scr_act());
+#endif
   uiCp("ui:lvgl");
   lv_timer_handler();
   uiCp("ui:tail");
+#if !defined(HAS_TANMATSU)
+  webMirrorTick();   // coalesced, rate-capped, backpressure-gated send of the dirty region
+#endif
 #if defined(HAS_TANMATSU)
   if (s_nav_entered_obj) {
     lv_obj_t* ent = s_nav_entered_obj; s_nav_entered_obj = nullptr;
@@ -39867,6 +40490,10 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_chanscope_modal),       []{ chanScopeClose(); },             PF_COUNT | PF_SWIPE },
   { P_OPEN(s_blocked_modal),         []{ blockedModalClose(); },          PF_COUNT | PF_SWIPE },
   { P_OPEN(s_wifi_scan_popup),       []{ wifiScanPopupClose(); },         PF_COUNT },
+#if !defined(HAS_TANMATSU)
+  { P_OPEN(s_vnc_root),              []{ closeVncPage(); },               PF_COUNT },
+  { P_OPEN(s_remote_root),           []{ closeRemotePage(); },            PF_COUNT },
+#endif
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   { P_OPEN(s_wifi_sheet),            []{ wifiSheetClose(); },             PF_COUNT },   // was in no registry at all
 #endif

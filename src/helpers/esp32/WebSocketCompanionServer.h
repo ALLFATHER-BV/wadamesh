@@ -2,6 +2,10 @@
 
 #include <helpers/BaseSerialInterface.h>
 #include <WiFi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
+class WebMirror;   // web-UI mirror bridge (WebMirror.h); included in the .cpp
 
 #ifndef WS_COMPANION_MAX_CLIENTS
 #define WS_COMPANION_MAX_CLIENTS  2
@@ -36,6 +40,16 @@ struct WSClientState {
   uint16_t comp_rx_len;
   uint8_t comp_rx_buf[MAX_FRAME_SIZE];
   uint32_t stall_ms;   // start of a continuous write-failure run; 0 = healthy
+
+  bool is_mirror;      // this client is a web-UI mirror (GET /mirror), not a companion peer
+  bool meta_sent;      // mirror: the one-time screen-size meta frame has been sent
+
+  // Mirror TX buffer: one WS frame (header + payload) queued for this client, drained
+  // NON-BLOCKING across loop iterations. The loop never spins on a socket write and a
+  // transient stall never drops the client — it just drains at the link's pace.
+  uint8_t* tx_buf;     // lazily-allocated PSRAM frame buffer (null until first mirror use)
+  uint16_t tx_len;     // bytes queued in tx_buf (0 = idle, ready for the next frame)
+  uint16_t tx_sent;    // bytes already pushed to the socket
 };
 
 // WebSocket server for companion protocol. Same logical protocol as TCP; transport is RFC 6455 (plain WS).
@@ -58,8 +72,18 @@ public:
   size_t writeToAllClients(const uint8_t src[], size_t len);
 
   bool isClientConnected(int client_index) const;
-  int connectedCount() const;
+  int connectedCount() const;                 // companion clients only (mirror excluded)
   void disconnectClient(int client_index);
+
+  // ---- Web UI mirror (see WebMirror) ----
+  int mirrorClientCount() const;              // handshaken GET /mirror clients
+  /** Drain remote pointer input + push queued framebuffer frames to mirror
+   *  clients. Non-blocking (socketWritableNow-gated); call each loop. */
+  void serviceMirror(WebMirror& m);
+  /** WebSocket binary frame with len up to 65535 (no MAX_FRAME_SIZE cap) — used
+   *  for mirror display bands. Same freeze-safe write + wedged reaper as the
+   *  companion path. */
+  size_t writeBinaryFrame(int client_index, const uint8_t src[], size_t len);
 
 private:
   WiFiServer _server;
@@ -71,4 +95,14 @@ private:
   void acceptNewClients();
   void pruneDisconnected();
   bool doHandshake(int idx);
+
+  uint8_t* _mirror_txbuf;              // lazily-allocated PSRAM buffer for popped mirror frames
+  void drainMirrorInput(int idx, WebMirror& m);
+  void drainClientTx(int idx);        // push a mirror client's pending tx_buf bytes, non-blocking
+
+  // The _clients array is now touched by TWO cores: the main loop (accept/handshake +
+  // companion RX/TX, core 1) and the dedicated mirror stream task (serviceMirror, core 0).
+  // A recursive mutex serialises every _clients access; held only for the quick,
+  // non-blocking work, so cross-core contention is negligible.
+  SemaphoreHandle_t _client_mtx;
 };

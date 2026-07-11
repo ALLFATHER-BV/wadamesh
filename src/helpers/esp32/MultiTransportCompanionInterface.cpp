@@ -1,6 +1,7 @@
 #include "MultiTransportCompanionInterface.h"
 #include <helpers/RepeaterTcpOtaEmit.h>
 #include "WifiRuntimeStore.h"   // persist BLE on/off (ble_en) across reboots
+#include "WebMirror.h"          // web UI mirror bridge (served over the WS server)
 #include <string.h>
 
 // Companion push code for the per-packet RX log (matches MyMesh.cpp). It is kept OFF
@@ -43,8 +44,27 @@ void MultiTransportCompanionInterface::startTcpServer(bool wifi_connected) {
   }
 }
 
+// Web-mirror streaming runs on CORE 0 (parallel to the UI on core 1) so the browser's
+// socket stays fed at full link speed even while core 1 is busy with a heavy LVGL render.
+// The WS client array is guarded by WebSocketCompanionServer's recursive mutex, so this
+// task and the main-loop companion/handshake code never corrupt each other. serviceMirror
+// is non-blocking, so the mutex is held only briefly and cross-core contention is tiny.
+static void wsMirrorStreamTask(void* arg) {
+  WebSocketCompanionServer* ws = static_cast<WebSocketCompanionServer*>(arg);
+  for (;;) {
+    ws->serviceMirror(g_web_mirror);
+    vTaskDelay(pdMS_TO_TICKS(g_web_mirror.clients() > 0 ? 2 : 25));  // fast when a browser is watching, idle otherwise
+  }
+}
+
 void MultiTransportCompanionInterface::tickWebSocketHandshake() {
-  if (_ws_started) _ws.tickHandshake();
+  if (_ws_started) {
+    _ws.tickHandshake();   // accept + WS handshake stay on core 1 (the main loop)
+    if (!_mirror_task) {   // spawn the core-0 streamer once, on first tick after the WS server is up
+      xTaskCreatePinnedToCore(wsMirrorStreamTask, "ws_mirror", 4096, &_ws, 2,
+                              reinterpret_cast<TaskHandle_t*>(&_mirror_task), 0);
+    }
+  }
 }
 
 void MultiTransportCompanionInterface::stopTcpServer() {

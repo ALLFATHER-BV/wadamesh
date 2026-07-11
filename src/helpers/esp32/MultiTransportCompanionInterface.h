@@ -95,6 +95,7 @@ private:
   uint16_t _ws_port;
   bool _tcp_started;
   bool _ws_started;
+  void* _mirror_task = nullptr;   // TaskHandle_t for the core-0 web-mirror stream task (created once)
   bool _tcp_enabled;   // if false, startTcpServer() no-ops until enableTcp()
   bool _isEnabled;
   bool _broadcast;           // if true, also send responses to all other clients

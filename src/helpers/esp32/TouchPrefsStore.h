@@ -49,6 +49,22 @@ bool     touchPrefsSetEnabledLayouts(uint16_t mask);
 bool touchPrefsGetAccentPopups();
 bool touchPrefsSetAccentPopups(bool on);
 
+/** Web control panel: serve the live UI to a phone browser over the WebSocket
+ *  server and inject taps back (remote control). Opt-in, default OFF. */
+bool touchPrefsGetWebMirror();
+bool touchPrefsSetWebMirror(bool on);
+
+/** Remote mode: on boot, render the UI to an off-screen web resolution (480x800)
+ *  instead of the physical panel, served to a browser (headless/remote use). It is
+ *  a boot mode (reboot to apply). Opt-in, default OFF. */
+bool touchPrefsGetRemoteMode();
+bool touchPrefsSetRemoteMode(bool on);
+
+/** Remote-mode orientation: landscape (800x480, for desktop) vs portrait (480x800, for
+ *  phones). Applied at boot (reboots to change). Default portrait. */
+bool touchPrefsGetRemoteLandscape();
+bool touchPrefsSetRemoteLandscape(bool on);
+
 /** UI language index (UiLang enum in i18n.h; 0 = English). Read at boot. */
 uint8_t touchPrefsGetUiLang();
 bool    touchPrefsSetUiLang(uint8_t lang);
