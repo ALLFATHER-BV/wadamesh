@@ -109,3 +109,129 @@ bool WebMirror::popKey(uint16_t* cp) {
   _ktail = (uint8_t)((_ktail + 1) % KEY_RING);
   return true;
 }
+
+// ============================ web mesh terminal ============================
+#ifndef WEB_TERM_REP_BYTES
+#define WEB_TERM_REP_BYTES  (16 * 1024)   // PSRAM reply-text ring
+#endif
+#ifndef WEB_TERM_DATA_BYTES
+#define WEB_TERM_DATA_BYTES (24 * 1024)   // PSRAM framed-JSON ring (Contacts/Chats data)
+#endif
+
+void WebMirror::termBegin() {
+  if (_term_rep && _term_data) return;
+  if (!_term_rep) {
+    _term_rep = (uint8_t*)heap_caps_malloc(WEB_TERM_REP_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!_term_rep) _term_rep = (uint8_t*)malloc(WEB_TERM_REP_BYTES);
+    _tr_cap  = _term_rep ? WEB_TERM_REP_BYTES : 0;
+    _tr_head = _tr_tail = 0;
+  }
+  if (!_term_data) {
+    _term_data = (uint8_t*)heap_caps_malloc(WEB_TERM_DATA_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!_term_data) _term_data = (uint8_t*)malloc(WEB_TERM_DATA_BYTES);
+    _td_cap  = _term_data ? WEB_TERM_DATA_BYTES : 0;
+    _td_head = _td_tail = 0;
+  }
+}
+
+void WebMirror::setTerminalOn(bool on) {
+  if (on) termBegin();
+  _term_on = on;
+  if (!on) { _tr_tail = _tr_head; _tc_tail = _tc_head; _td_tail = _td_head; }   // drain rings on disable
+}
+
+// command ring (browser -> device): [len_lo, len_hi, bytes...]
+bool WebMirror::pushTermCmd(const char* s, size_t len) {
+  if (!s || len == 0 || len > 250) return false;
+  size_t head = _tc_head;
+  const size_t tail = _tc_tail;
+  const size_t used  = (head + TERM_CMD_CAP - tail) % TERM_CMD_CAP;
+  const size_t freeb = TERM_CMD_CAP - used - 1;
+  if (freeb < len + 2) return false;
+  _term_cmd[head] = (uint8_t)(len & 0xFF); head = (head + 1) % TERM_CMD_CAP;
+  _term_cmd[head] = (uint8_t)(len >> 8);   head = (head + 1) % TERM_CMD_CAP;
+  for (size_t i = 0; i < len; i++) { _term_cmd[head] = (uint8_t)s[i]; head = (head + 1) % TERM_CMD_CAP; }
+  __sync_synchronize();
+  _tc_head = head;
+  return true;
+}
+
+size_t WebMirror::popTermCmd(char* dst, size_t max) {
+  const size_t head = _tc_head;
+  __sync_synchronize();
+  size_t tail = _tc_tail;
+  const size_t used = (head + TERM_CMD_CAP - tail) % TERM_CMD_CAP;
+  if (used < 2) return 0;
+  size_t l0 = _term_cmd[tail]; tail = (tail + 1) % TERM_CMD_CAP;
+  size_t l1 = _term_cmd[tail]; tail = (tail + 1) % TERM_CMD_CAP;
+  const size_t len = l0 | (l1 << 8);
+  if (len == 0 || len + 2 > used || len + 1 > max) { _tc_tail = head; return 0; }   // corrupt/too-big -> resync
+  for (size_t i = 0; i < len; i++) { dst[i] = (char)_term_cmd[tail]; tail = (tail + 1) % TERM_CMD_CAP; }
+  dst[len] = '\0';
+  _tc_tail = tail;
+  return len;
+}
+
+// reply ring (device -> browser): raw byte stream (browser just appends text)
+void WebMirror::pushTermReply(const char* s) {
+  if (!s || !_term_rep || _tr_cap == 0) return;
+  size_t head = _tr_head;
+  const size_t tail = _tr_tail;
+  size_t used  = (head + _tr_cap - tail) % _tr_cap;
+  size_t freeb = _tr_cap - used - 1;
+  for (const char* p = s; *p && freeb > 0; ++p) {
+    _term_rep[head] = (uint8_t)*p;
+    head = (head + 1) % _tr_cap;
+    freeb--;
+  }
+  __sync_synchronize();
+  _tr_head = head;
+}
+
+size_t WebMirror::popTermReply(uint8_t* dst, size_t max) {
+  if (!_term_rep || _tr_cap == 0) return 0;
+  const size_t head = _tr_head;
+  __sync_synchronize();
+  size_t tail = _tr_tail;
+  size_t n = 0;
+  while (tail != head && n < max) {
+    dst[n++] = _term_rep[tail];
+    tail = (tail + 1) % _tr_cap;
+  }
+  _tr_tail = tail;
+  return n;
+}
+
+// data ring (device -> browser): [len_lo, len_hi, json bytes...] framed messages
+bool WebMirror::pushTermData(const char* json) {
+  if (!json || !_term_data || _td_cap == 0) return false;
+  size_t len = strlen(json);
+  if (len == 0 || len > 0xFFFF) return false;
+  size_t head = _td_head;
+  const size_t tail = _td_tail;
+  const size_t used  = (head + _td_cap - tail) % _td_cap;
+  const size_t freeb = _td_cap - used - 1;
+  if (freeb < len + 2) return false;   // ring backed up -> drop this message (browser can re-request)
+  _term_data[head] = (uint8_t)(len & 0xFF); head = (head + 1) % _td_cap;
+  _term_data[head] = (uint8_t)(len >> 8);   head = (head + 1) % _td_cap;
+  for (size_t i = 0; i < len; i++) { _term_data[head] = (uint8_t)json[i]; head = (head + 1) % _td_cap; }
+  __sync_synchronize();
+  _td_head = head;
+  return true;
+}
+
+size_t WebMirror::popTermData(uint8_t* dst, size_t max) {
+  if (!_term_data || _td_cap == 0) return 0;
+  const size_t head = _td_head;
+  __sync_synchronize();
+  size_t tail = _td_tail;
+  const size_t used = (head + _td_cap - tail) % _td_cap;
+  if (used < 2) return 0;
+  size_t l0 = _term_data[tail]; tail = (tail + 1) % _td_cap;
+  size_t l1 = _term_data[tail]; tail = (tail + 1) % _td_cap;
+  const size_t len = l0 | (l1 << 8);
+  if (len == 0 || len + 2 > used || len > max) { _td_tail = head; return 0; }   // corrupt/too-big -> resync
+  for (size_t i = 0; i < len; i++) { dst[i] = _term_data[tail]; tail = (tail + 1) % _td_cap; }
+  _td_tail = tail;
+  return len;
+}

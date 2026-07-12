@@ -242,27 +242,26 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms) {
 #endif
 #endif
 static const char* kMeshcomodHelpMsg =
-  "help\n"
-  "status\n"
-  "ota start\n"
-  "ota url <https://...bin>\n"
-  "ota netdiag\n"
-  "ota status\n"
-  "wifi scan\n"
-  "wifi use <n>\n"
-  "wifi set ssid <v>\n"
-  "wifi set pwd <v>\n"
-  "wifi status\n"
-  "wifi on\n"
-  "wifi off\n"
-  "wifi apply\n"
-  "wifi clear\n"
-  "tcp on\n"
-  "tcp off\n"
-  "tcp status\n"
-  "ble on\n"
-  "ble off\n"
-  "ble status";
+  "help / ?            this command list\n"
+  "status              device status\n"
+  "ver                 firmware version\n"
+  "clock               RTC time (UTC)\n"
+  "get                 show radio params\n"
+  "advert              send a flood advert\n"
+  "advert.zerohop      send a 0-hop advert\n"
+  "set name <v>        set node name\n"
+  "set freq <MHz>      set frequency\n"
+  "set bw <kHz>        set bandwidth\n"
+  "set sf <7-12>       set spreading factor\n"
+  "set cr <5-8>        set coding rate\n"
+  "set tx <dBm>        set TX power\n"
+  "wifi status|on|off|scan\n"
+  "wifi use <n> | set ssid <v> | set pwd <v> | apply | clear\n"
+  "tcp status|on|off\n"
+  "ble status|on|off\n"
+  "ota status|start|netdiag | ota url <https://...bin>\n"
+  "reboot              restart the device\n"
+  "bootloader / dfu    reboot to download mode";
 
 #define MESHCOMOD_CMD_CACHE_SIZE 6
 struct MeshcomodCmdCacheEntry {

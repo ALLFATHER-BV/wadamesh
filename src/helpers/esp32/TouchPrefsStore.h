@@ -64,6 +64,8 @@ bool touchPrefsSetRemoteMode(bool on);
  *  phones). Applied at boot (reboots to change). Default portrait. */
 bool touchPrefsGetRemoteLandscape();
 bool touchPrefsSetRemoteLandscape(bool on);
+bool touchPrefsGetWebTerminal();
+bool touchPrefsSetWebTerminal(bool on);
 
 /** UI language index (UiLang enum in i18n.h; 0 = English). Read at boot. */
 uint8_t touchPrefsGetUiLang();
@@ -112,6 +114,8 @@ bool touchPrefsGetMapShowCoords();
 bool touchPrefsSetMapShowCoords(bool on);
 bool touchPrefsGetMapShowTileXYZ();
 bool touchPrefsSetMapShowTileXYZ(bool on);
+bool touchPrefsGetMapTileDebug();
+bool touchPrefsSetMapTileDebug(bool on);
 bool touchPrefsGetMapShowContacts();
 bool touchPrefsSetMapShowContacts(bool on);
 bool touchPrefsGetMapShowLinks();

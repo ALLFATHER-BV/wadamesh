@@ -78,6 +78,31 @@ public:
   void requestExit() { _exit_req = true; }
   bool takeExit() { bool v = _exit_req; _exit_req = false; return v; }
 
+  // ============ web mesh terminal (text CLI over WS; separate from the framebuffer) ============
+  // Lightweight text path: browser sends a command line, the device runs runLocalCli() and
+  // streams the CLI reply text back. No framebuffer, no reboot. Runtime toggle; the WS server
+  // serves the terminal page + a /term socket while on.
+  void     termBegin();                          // lazily alloc the reply ring (PSRAM); idempotent
+  void     setTerminalOn(bool on);               // runtime enable (Remote app "Remote terminal")
+  bool     terminalOn() const { return _term_on; }
+  void     noteTermClients(int n) { _term_clients = n; }
+  int      termClients() const { return _term_clients; }
+  bool     termActive() const { return _term_on && _term_rep && _term_clients > 0; }
+
+  // browser -> device: one command line. PRODUCER = WS server (net core), CONSUMER = UI/mesh loop.
+  bool     pushTermCmd(const char* s, size_t len);
+  size_t   popTermCmd(char* dst, size_t max);    // one command (0 if none)
+
+  // device -> browser: CLI reply text stream. PRODUCER = mesh loop (CLI sink), CONSUMER = WS server.
+  void     pushTermReply(const char* s);         // append text (drops if the ring is full)
+  size_t   popTermReply(uint8_t* dst, size_t max);   // drain up to max bytes (0 if empty)
+
+  // device -> browser: framed JSON data messages (contacts / threads / msgs / live push for the
+  // Contacts + Chats tabs). PRODUCER = UI loop, CONSUMER = WS server. Length-prefixed, so each
+  // pops as one complete message the browser can JSON.parse.
+  bool     pushTermData(const char* json);       // one complete JSON message (dropped if it doesn't fit)
+  size_t   popTermData(uint8_t* dst, size_t max);   // one complete message (0 if none)
+
 private:
   uint8_t* _ring = nullptr;
   size_t   _cap  = 0;
@@ -98,6 +123,19 @@ private:
   volatile bool _remote = false;          // remote mode -> browser shows the Rotate button
   volatile uint8_t _orient_req = 0;       // browser-requested orientation (1=landscape, 2=portrait, 0=none)
   volatile bool _exit_req = false;        // browser asked to leave remote mode
+
+  // ---- web terminal channels ----
+  volatile bool _term_on = false;
+  volatile int  _term_clients = 0;
+  static const int TERM_CMD_CAP = 512;    // command ring: length-prefixed lines (small; commands are short)
+  uint8_t  _term_cmd[TERM_CMD_CAP];
+  volatile size_t _tc_head = 0, _tc_tail = 0;
+  uint8_t* _term_rep = nullptr;           // reply ring: byte stream, PSRAM, lazily allocated
+  size_t   _tr_cap = 0;
+  volatile size_t _tr_head = 0, _tr_tail = 0;
+  uint8_t* _term_data = nullptr;          // data ring: length-prefixed JSON messages, PSRAM
+  size_t   _td_cap = 0;
+  volatile size_t _td_head = 0, _td_tail = 0;
 };
 
 extern WebMirror g_web_mirror;

@@ -1,0 +1,24 @@
+# beta_43 (TEST) - the browser control panel grows into a full remote app (Chats, Contacts, Discovered, Settings), plus a Heltec V4 map-tile fix.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- New: web control panel ---
+The browser control panel is now a full remote app - you can run the device from your phone or laptop without ever picking up the T-Deck. Proper Chats, Contacts, Terminal and Settings tabs.
+Contacts tab: search, sort and filter your contacts, see each one's distance, coordinates and last-heard age, and tap a contact for the same actions you get on the device (favourite, block, reset path, remove).
+Discovered nodes show up in the browser too, each with a one-tap "Add" to save it as a contact - so you can build your whole contact list from the web app.
+Chats tab: pop-up notifications (with an optional beep) when a message arrives, and the open chat refreshes on its own as replies come in - no manual reload.
+Acknowledgements and repeats-heard now show for messages you send from the web app, the same as on the device.
+A Settings page for the everyday options that make sense remotely, including live radio changes.
+A quick-command button in the Terminal that drops common commands straight into the input box.
+
+# --- New: device ---
+Map options has a "Tile debug overlay" toggle (off by default) that shows a live read-out of the map-tile pipeline, for diagnosing tile problems.
+
+# --- Fixed ---
+Heltec V4: map tiles downloaded but only the top of the map rendered and the rest stayed black. The 2 MB-PSRAM V4 was running out of contiguous memory for the tile grid; tiles now reuse a small fixed pool and only load what is on screen, so the whole map fills in smoothly again.
+Heltec V4 in remote/VNC mode: typing from a physical keyboard in the browser now works (it previously only worked on the T-Deck).
+The remote-access screen on the device is clearer: the IP address is shown at the top, the explanation is shorter and more accurate, the toggles sit above it, and the address box only appears once remote access is on.
+The Terminal "help" command now lists every command, on both the device and the web terminal (it was missing a lot).
+
+# --- Changed ---
+The web app header now shows the same signal, Wi-Fi, Bluetooth and battery icons as the device status bar, and the title reads WADAMESH.
+The contact and chat sort/filter controls open a menu to pick an option instead of cycling through them on each tap.

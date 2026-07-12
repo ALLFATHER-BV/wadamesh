@@ -42,6 +42,7 @@ struct WSClientState {
   uint32_t stall_ms;   // start of a continuous write-failure run; 0 = healthy
 
   bool is_mirror;      // this client is a web-UI mirror (GET /mirror), not a companion peer
+  bool is_term;        // this client is a web mesh terminal (GET /term)
   bool meta_sent;      // mirror: the one-time screen-size meta frame has been sent
 
   // Mirror TX buffer: one WS frame (header + payload) queued for this client, drained
@@ -99,6 +100,8 @@ private:
   uint8_t* _mirror_txbuf;              // lazily-allocated PSRAM buffer for popped mirror frames
   void drainMirrorInput(int idx, WebMirror& m);
   void drainClientTx(int idx);        // push a mirror client's pending tx_buf bytes, non-blocking
+  void serviceTerminalClients(WebMirror& m);   // web mesh terminal: reply text out + command text in
+  void drainTermInput(int idx, WebMirror& m);  // parse a term client's WS frames -> m.pushTermCmd
 
   // The _clients array is now touched by TWO cores: the main loop (accept/handshake +
   // companion RX/TX, core 1) and the dedicated mirror stream task (serviceMirror, core 0).

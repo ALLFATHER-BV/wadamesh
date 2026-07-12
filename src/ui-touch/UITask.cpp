@@ -2139,38 +2139,41 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
   display.startFrame(DisplayDriver::DARK);
   // wadamesh mesh mark up top (same white-on-black artwork as the boot splash). The
   // touch DisplayDriver runs at scale 1.0, so writePixelsRGB565 shares text coords.
-  const int ly = (H >= 288) ? 44 : 8;   // portrait panels have room to breathe; landscape sits high
+  const int ly = (H >= 288) ? 46 : 14;   // portrait panels have room to breathe; landscape sits high
   display.writePixelsRGB565((W - WADAMESH_MARK_W) / 2, ly,
                             WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
-  int y = ly + WADAMESH_MARK_H + 16;
+  int y = ly + WADAMESH_MARK_H + 18;
+  // Prominent title (the logo already carries the brand — no redundant "wadamesh" line).
   display.setColor(DisplayDriver::LIGHT);
   display.setTextSize(2);
-  display.drawTextCentered(W / 2, y, "wadamesh");
-  y += 26;
-  display.setTextSize(1);
   display.drawTextCentered(W / 2, y, "REMOTE MODE");
-  y += 26;
+  y += 34;
+  display.setTextSize(1);
   if (up) {
     char u[48];
-    snprintf(u, sizeof u, "http://%s:8765/", WiFi.localIP().toString().c_str());
+    snprintf(u, sizeof u, "http://%s:8765", WiFi.localIP().toString().c_str());
     display.setColor(DisplayDriver::LIGHT);
-    display.drawTextCentered(W / 2, y, "Open in a browser:");
+    display.drawTextCentered(W / 2, y, "Open this address in a browser");
     display.setColor(DisplayDriver::GREEN);
-    display.drawTextCentered(W / 2, y + 18, u);
+    display.drawTextCentered(W / 2, y + 20, u);
   } else {
     display.setColor(DisplayDriver::ORANGE);
     display.drawTextCentered(W / 2, y, "Connecting to Wi-Fi...");
   }
-  display.setColor(exit_armed ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
+  // Footer: how to leave remote mode — the physical method, plus the browser fallback.
 #if CAP_KEYBOARD
-  display.drawTextCentered(W / 2, H - 30, exit_armed ? "Press SPACE again to exit" : "Press SPACE twice to exit");
+  const char* how = exit_armed ? "Press SPACE again to exit" : "Press SPACE twice to exit";
 #elif CAP_TOUCH
-  display.drawTextCentered(W / 2, H - 30, exit_armed ? "Keep holding to exit..." : "Touch and hold to exit");
+  const char* how = exit_armed ? "Keep holding to exit..." : "Touch and hold 3s to exit";
 #else
-  display.drawTextCentered(W / 2, H - 30, "Open the web page to exit");
+  const char* how = "Tap Exit in the browser to leave";
 #endif
+  display.setColor(exit_armed ? DisplayDriver::GREEN : DisplayDriver::YELLOW);
+  display.drawTextCentered(W / 2, H - 30, how);
+#if CAP_KEYBOARD || CAP_TOUCH
   display.setColor(DisplayDriver::LIGHT);
   display.drawTextCentered(W / 2, H - 14, "or tap Exit in the browser");
+#endif
   display.endFrame();
   s_remote_ph_ip = up ? (uint32_t)WiFi.localIP() : 0;
 }
@@ -16053,14 +16056,20 @@ static const AdminCmdEntry k_term_cmds[] = {
   { "wifi on",                        "wifi on" },
   { "wifi off",                       "wifi off" },
   { "wifi scan",                      "wifi scan" },
+  { "wifi set ssid <v>",              "wifi set ssid " },
+  { "wifi set pwd <v>",               "wifi set pwd " },
+  { "wifi apply - connect now",       "wifi apply" },
+  { "wifi clear - forget creds",      "wifi clear" },
   { "tcp status",                     "tcp status" },
   { "tcp on",                         "tcp on" },
   { "tcp off",                        "tcp off" },
   { "ble status",                     "ble status" },
   { "ble on",                         "ble on" },
   { "ble off",                        "ble off" },
-  { "ota start",                      "ota start" },
   { "ota status",                     "ota status" },
+  { "ota start",                      "ota start" },
+  { "ota url <https://...bin>",       "ota url " },
+  { "ota netdiag - net check",        "ota netdiag" },
   { "[ SYSTEM ]", nullptr },
   { "reboot",                         "reboot" },
   { "bootloader - download mode",     "bootloader" },
@@ -16083,6 +16092,15 @@ static const uint32_t TERM_C_BANNER = 0x7f8c99;  // opening banner (dim)
 // loop task (see the s_term_log_box note above). Oldest lines prune past
 // TERM_MAX_LINES; the view always scrolls to the newest line.
 static void termLogAppendC(uint32_t color, const char* prefix, const char* text) {
+#if !defined(HAS_TANMATSU)
+  // Mirror every terminal line to the web mesh terminal too (before the on-device box
+  // null-check, so it works headless when the console isn't open). One funnel = full parity.
+  if (text && g_web_mirror.terminalOn()) {
+    if (prefix) g_web_mirror.pushTermReply(prefix);
+    g_web_mirror.pushTermReply(text);
+    g_web_mirror.pushTermReply("\n");
+  }
+#endif
   if (!s_term_log_box || !text) return;
   char buf[512];
   snprintf(buf, sizeof buf, "%s%s", prefix ? prefix : "", text);
@@ -16227,6 +16245,10 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
     }
     snprintf(r, sizeof r, "TX [%s] %s", disp, body);
     termLogAppendC(TERM_C_TX, nullptr, r);
+    // Mirror into the on-device chat ring so a terminal / web-chat send shows in the
+    // channel thread too (same as a companion-app send via appSentMsgToChannel). Pass the
+    // sent fingerprint so repeats-heard shows on the mirrored bubble like a composer send.
+    if (g_lv.task) g_lv.task->appSentMsgToChannel(cd.name, body, the_mesh.uiLastSentFp());
   } else {
     ContactInfo* by = the_mesh.lookupContactByPubKey((uint8_t*)pub, PUB_KEY_SIZE);
     if (!by) { termLogAppendC(TERM_C_ERR, nullptr, "contact missing"); return; }
@@ -16240,6 +16262,9 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
     the_mesh.uiRegisterExpectedAck(expected_ack, by->id.pub_key);
     snprintf(r, sizeof r, "TX -> %s: %s", disp, body);
     termLogAppendC(TERM_C_TX, nullptr, r);
+    // Mirror into the DM thread + map it to the contact pubkey (delivery state tracks the ack,
+    // sent_fp tracks repeats-heard) — same metadata a composer send records.
+    if (g_lv.task) g_lv.task->appSentMsgToContact(by->id.pub_key, disp, body, expected_ack, the_mesh.uiLastSentFp());
   }
 }
 
@@ -16379,6 +16404,18 @@ static bool terminalRunChatCommand(const char* cmd) {
     return false;
   };
   const char* rest = nullptr;
+  if (is(cmd, "help", &rest) || is(cmd, "?", &rest)) {   // prepend the messaging commands, then fall through to the config-CLI help
+    termLogAppendC(TERM_C_INFO, nullptr, "messaging:");
+    termLogAppend("  ", "list / contacts    - list your contacts");
+    termLogAppend("  ", "channels           - list channels");
+    termLogAppend("  ", "to <name>          - talk to a contact or channel");
+    termLogAppend("  ", "send <text>        - send to the current recipient");
+    termLogAppend("  ", "public <text>      - send on the public channel");
+    termLogAppend("  ", "exit / leave       - stop talking to that recipient");
+    termLogAppend("  ", "(after 'to', a bare line is sent as a message)");
+    termLogAppendC(TERM_C_INFO, nullptr, "node / config:");
+    return false;   // config-CLI help is appended by runLocalCli
+  }
   if (is(cmd, "list", &rest) || is(cmd, "contacts", &rest)) { termCmdList();     return true; }
   if (is(cmd, "channels", &rest))                           { termCmdChannels(); return true; }
   if (is(cmd, "to", &rest))                                 { termCmdTo(rest);   return true; }
@@ -16416,6 +16453,357 @@ static void terminalSubmit() {
   // Re-bind so the cleared mirror tracks the field and the next Enter submits.
   if (g_lv.keyboard) kbMirrorBind(s_term_input_ta);
 }
+
+// ============================================================================
+// Web Contacts + Chats data API — JSON over the /term WS (browser->device '@'
+// commands, device->browser framed JSON via g_web_mirror.pushTermData). Runs on
+// the UI loop, single-threaded, so a static PSRAM scratch buffer is safe.
+// ============================================================================
+#if !defined(HAS_TANMATSU)
+static char*          s_webdata_buf  = nullptr;
+static const size_t   WEBDATA_BUF    = 16000;
+static volatile bool  s_web_rx_nudge = false;   // set by onThreadsChanged (mesh ctx); the UI loop does the actual pushTermData (keeps it single-producer)
+
+static void jsonEsc(char*& p, const char* e, const char* s) {
+  for (; s && *s && p < e - 8; ++s) {
+    unsigned char c = (unsigned char)*s;
+    if (c == '"' || c == '\\') { *p++ = '\\'; *p++ = (char)c; }
+    else if (c == '\n')        { *p++ = '\\'; *p++ = 'n'; }
+    else if (c == '\r')        { *p++ = '\\'; *p++ = 'r'; }
+    else if (c == '\t')        { *p++ = '\\'; *p++ = 't'; }
+    else if (c < 0x20)         { p += snprintf(p, (size_t)(e - p), "\\u%04x", c); }
+    else                       { *p++ = (char)c; }
+  }
+}
+
+// UI thread index whose DM contact pubkey matches (-1 if none).
+static int webThreadForPub(const uint8_t pub[32]) {
+  if (!g_lv.task || !pub) return -1;
+  int idx[UITask::MAX_UI_THREADS];
+  int n = g_lv.task->getCombinedInboxCount(idx, UITask::MAX_UI_THREADS);
+  for (int k = 0; k < n; ++k) {
+    uint8_t tp[32];
+    if (g_lv.task->getThreadContactPub(idx[k], tp) && memcmp(tp, pub, 32) == 0) return idx[k];
+  }
+  return -1;
+}
+
+// UI thread index for a group-channel slot (-1 if that channel has no thread yet).
+static int webThreadForChannel(int slot) {
+  if (!g_lv.task) return -1;
+  int idx[UITask::MAX_UI_THREADS];
+  int n = g_lv.task->getCombinedInboxCount(idx, UITask::MAX_UI_THREADS);
+  for (int k = 0; k < n; ++k) {
+    bool ch = false; uint16_t u = 0; uint32_t ts = 0; char nm[48];
+    if (g_lv.task->getThreadInfo(idx[k], ch, u, ts, nm, sizeof nm) && ch
+        && g_lv.task->threadMeshChannelSlot(idx[k]) == slot) return idx[k];
+  }
+  return -1;
+}
+
+static void webPushMessages(int tidx) {
+  if (!g_lv.task || !s_webdata_buf || tidx < 0) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  bool ch = false; uint16_t unread = 0; uint32_t ts = 0; char name[48] = {0};
+  g_lv.task->getThreadInfo(tidx, ch, unread, ts, name, sizeof name);
+  p += snprintf(p, e - p, "{\"t\":\"m\",\"i\":%d,\"ch\":%d,\"n\":\"", tidx, ch ? 1 : 0);
+  jsonEsc(p, e, name);
+  p += snprintf(p, e - p, "\",\"msgs\":[");
+  int midx[60];
+  int n = g_lv.task->getThreadMessageIndexes(tidx, midx, 60, true);   // newest first
+  bool first = true;
+  // Emit newest-first so that if the JSON buffer fills, the guard drops the OLDEST
+  // (not the newest). The browser reverses for display (oldest at top, newest at bottom).
+  for (int k = 0; k < n && p < e - 340; ++k) {
+    UITask::UIMessage m;
+    if (!g_lv.task->getMessageByIndex(midx[k], m)) continue;
+    if (!first) *p++ = ','; first = false;
+    int reps = (m.outgoing && m.sent_fp) ? (int)the_mesh.uiRepeatsForFp(m.sent_fp) : 0;
+    p += snprintf(p, e - p, "{\"o\":%d,\"ts\":%u,\"ds\":%u,\"pl\":%d,\"sn\":%d,\"rs\":%d,\"rp\":%d,\"s\":\"",
+                  m.outgoing ? 1 : 0, (unsigned)m.ts, m.deliv_state, (int)m.path_len, (int)(m.snr_q4 / 4), (int)m.rssi, reps);
+    jsonEsc(p, e, m.sender);
+    p += snprintf(p, e - p, "\",\"x\":\"");
+    jsonEsc(p, e, m.text);
+    p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+  g_lv.task->markThreadRead(tidx);   // viewing a chat marks it read (matches the on-device UI)
+}
+
+// Membership test against a snapshot of 6-byte pubkey prefixes (favorites / ignore list).
+static bool webSnapContains(const uint8_t* snap, int count, const uint8_t* pub6) {
+  for (int i = 0; i < count; ++i)
+    if (memcmp(&snap[i * TOUCH_FAVORITE_KEY_BYTES], pub6, TOUCH_FAVORITE_KEY_BYTES) == 0) return true;
+  return false;
+}
+
+static void webPushContacts() {
+  if (!g_lv.task || !s_webdata_buf) return;
+  uint8_t fav[TOUCH_FAVORITES_MAX * TOUCH_FAVORITE_KEY_BYTES];   // snapshot once (not per-contact NVS reads)
+  int nfav = touchPrefsCopyFavorites(fav);
+  uint8_t ign[TOUCH_IGNORED_MAX * TOUCH_FAVORITE_KEY_BYTES];
+  int nign = touchPrefsCopyIgnored(ign);
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p, "{\"t\":\"c\",\"dc\":%d,\"contacts\":[", discoveredCount());
+  int nc = the_mesh.getNumContacts(); bool first = true;
+  for (int i = 0; i < nc && p < e - 300; ++i) {
+    ContactInfo c{};
+    if (!the_mesh.getContactByIdx((uint32_t)i, c) || !c.name[0]) continue;
+    int t = webThreadForPub(c.id.pub_key);
+    if (!first) *p++ = ','; first = false;
+    p += snprintf(p, e - p,
+                  "{\"i\":%d,\"t\":%d,\"rp\":%d,\"rm\":%d,\"fav\":%d,\"ign\":%d,\"dir\":%d,\"la\":%ld,\"lo\":%ld,\"adv\":%u,\"n\":\"",
+                  i, t, (c.type == ADV_TYPE_REPEATER) ? 1 : 0, (c.type == ADV_TYPE_ROOM) ? 1 : 0,
+                  webSnapContains(fav, nfav, c.id.pub_key) ? 1 : 0,
+                  webSnapContains(ign, nign, c.id.pub_key) ? 1 : 0,
+                  (c.out_path_len == 0) ? 1 : 0, (long)c.gps_lat, (long)c.gps_lon,
+                  (unsigned)c.last_advert_timestamp);
+    jsonEsc(p, e, c.name);
+    p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "],\"channels\":[");
+  first = true;
+  for (int s = 0; s < MAX_GROUP_CHANNELS && p < e - 160; ++s) {
+    ChannelDetails cd;
+    if (!the_mesh.getChannel(s, cd) || !cd.name[0]) continue;
+    int t = webThreadForChannel(s);
+    if (!first) *p++ = ','; first = false;
+    p += snprintf(p, e - p, "{\"i\":%d,\"t\":%d,\"n\":\"", s, t);
+    jsonEsc(p, e, cd.name);
+    p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webPushThreads() {
+  if (!g_lv.task || !s_webdata_buf) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p, "{\"t\":\"t\",\"threads\":[");
+  int idx[UITask::MAX_UI_THREADS];
+  int n = g_lv.task->getCombinedInboxCount(idx, UITask::MAX_UI_THREADS);
+  bool first = true;
+  for (int k = 0; k < n && p < e - 340; ++k) {
+    int ti = idx[k];
+    bool ch = false; uint16_t unread = 0; uint32_t ts = 0; char name[48] = {0};
+    if (!g_lv.task->getThreadInfo(ti, ch, unread, ts, name, sizeof name)) continue;
+    char sender[40] = {0}, text[180] = {0}; bool outgoing = false;
+    g_lv.task->getThreadLastMessage(ti, sender, sizeof sender, text, sizeof text, &outgoing);
+    if (!first) *p++ = ','; first = false;
+    p += snprintf(p, e - p, "{\"i\":%d,\"ch\":%d,\"u\":%u,\"ts\":%u,\"n\":\"", ti, ch ? 1 : 0, unread, (unsigned)ts);
+    jsonEsc(p, e, name);
+    p += snprintf(p, e - p, "\",\"last\":\"");
+    jsonEsc(p, e, text);
+    p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webSendToThread(int tidx, const char* text) {
+  if (!g_lv.task || tidx < 0 || !text || !*text) return;
+  bool ch = false; uint16_t unread = 0; uint32_t ts = 0; char name[48] = {0};
+  if (!g_lv.task->getThreadInfo(tidx, ch, unread, ts, name, sizeof name)) return;
+  if (ch) {
+    // Resolve the channel slot by NAME at TX time, not the thread's cached slot — a stale
+    // cached slot TXes on the wrong key (see [channel-send-stale-slot]).
+    int16_t slot = -1;
+    for (int s = 0; s < MAX_GROUP_CHANNELS; ++s) {
+      ChannelDetails cd;
+      if (the_mesh.getChannel(s, cd) && cd.name[0] && strcmp(cd.name, name) == 0) { slot = (int16_t)s; break; }
+    }
+    if (slot < 0) slot = g_lv.task->threadMeshChannelSlot(tidx);   // fall back to cached if name didn't resolve
+    termDoSend(true, nullptr, slot, name, text);
+  } else {
+    uint8_t pub[32]; if (g_lv.task->getThreadContactPub(tidx, pub)) termDoSend(false, pub, -1, name, text);
+  }
+  webPushMessages(tidx);
+}
+
+static void webSendToContact(int cidx, const char* text) {
+  ContactInfo c{};
+  if (!the_mesh.getContactByIdx((uint32_t)cidx, c) || !c.name[0] || !text || !*text) return;
+  termDoSend(false, c.id.pub_key, -1, c.name, text);
+  int t = webThreadForPub(c.id.pub_key);
+  if (t >= 0) webPushMessages(t);
+}
+
+static void webOpenContact(int cidx) {
+  ContactInfo c{};
+  if (!the_mesh.getContactByIdx((uint32_t)cidx, c)) return;
+  int t = webThreadForPub(c.id.pub_key);
+  if (t >= 0) { webPushMessages(t); return; }
+  if (!s_webdata_buf) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;   // empty chat keyed to the contact
+  p += snprintf(p, e - p, "{\"t\":\"m\",\"i\":-1,\"c\":%d,\"ch\":0,\"n\":\"", cidx);
+  jsonEsc(p, e, c.name);
+  p += snprintf(p, e - p, "\",\"msgs\":[]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webOpenChannel(int slot) {
+  ChannelDetails cd;
+  if (!the_mesh.getChannel(slot, cd) || !cd.name[0]) return;
+  int t = webThreadForChannel(slot);
+  if (t >= 0) { webPushMessages(t); return; }
+  if (!s_webdata_buf) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;   // empty chat keyed to the channel
+  p += snprintf(p, e - p, "{\"t\":\"m\",\"i\":-1,\"h\":%d,\"ch\":1,\"n\":\"", slot);
+  jsonEsc(p, e, cd.name);
+  p += snprintf(p, e - p, "\",\"msgs\":[]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webSendToChannel(int slot, const char* text) {
+  ChannelDetails cd;
+  if (!the_mesh.getChannel(slot, cd) || !cd.name[0] || !text || !*text) return;
+  termDoSend(true, nullptr, (int16_t)slot, cd.name, text);
+  int t = webThreadForChannel(slot);
+  if (t >= 0) webPushMessages(t);
+}
+
+// Status bar for the web header — node name, battery, wifi, ble, clock, mesh signal, unread.
+static void webPushStatus() {
+  if (!g_lv.task || !s_webdata_buf) return;
+  uint16_t mv  = batteryMvSmoothed();
+  int      pct = batteryPercentFromMv(mv);
+  bool     wc  = (WiFi.status() == WL_CONNECTED);
+  uint32_t clk = 0; auto* rtc = the_mesh.getRTCClock(); if (rtc) clk = rtc->getCurrentTime();
+  int snr = -128;   // "no signal"; else last-heard SNR (dB), stale after 60 s
+  if (the_mesh.uiSignalMs() != 0 && (millis() - the_mesh.uiSignalMs()) < 60000) snr = the_mesh.uiSignalSnrQ4() / 4;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p,
+                "{\"t\":\"st\",\"batt\":%d,\"chg\":%d,\"wifi\":%d,\"rssi\":%d,\"ble\":%d,\"clk\":%u,\"snr\":%d,\"unr\":%d,\"mi\":%d,\"sla\":%ld,\"slo\":%ld,\"nm\":\"",
+                pct, batteryIsCharging(mv) ? 1 : 0, wc ? 1 : 0, wc ? (int)WiFi.RSSI() : 0,
+                (g_lv.task->isBleEnabled() && g_lv.task->hasBleCapability()) ? 1 : 0,
+                (unsigned)clk, snr, g_lv.task->getUnreadTotal(), touchPrefsGetUseMiles() ? 1 : 0,
+                (long)(g_lv.task->getNodeLat() * 1e6), (long)(g_lv.task->getNodeLon() * 1e6));
+  jsonEsc(p, e, g_lv.task->getNodeNameCstr());
+  p += snprintf(p, e - p, "\"}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+// Contact detail popup (Info action).
+static void webPushContactInfo(int cidx) {
+  ContactInfo c{};
+  if (!the_mesh.getContactByIdx((uint32_t)cidx, c) || !s_webdata_buf) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p,
+                "{\"t\":\"ci\",\"i\":%d,\"rp\":%d,\"rm\":%d,\"fav\":%d,\"ign\":%d,\"pl\":%d,\"adv\":%u,\"la\":%ld,\"lo\":%ld,\"k\":\"",
+                cidx, (c.type == ADV_TYPE_REPEATER) ? 1 : 0, (c.type == ADV_TYPE_ROOM) ? 1 : 0,
+                touchPrefsIsFavorite(c.id.pub_key) ? 1 : 0, touchPrefsIsIgnored(c.id.pub_key) ? 1 : 0,
+                (c.out_path_len == OUT_PATH_UNKNOWN) ? -1 : (int)c.out_path_len,
+                (unsigned)c.last_advert_timestamp, (long)c.gps_lat, (long)c.gps_lon);
+  for (int b = 0; b < 6; ++b) p += snprintf(p, e - p, "%02x", c.id.pub_key[b]);   // short pubkey id
+  p += snprintf(p, e - p, "\",\"n\":\"");
+  jsonEsc(p, e, c.name);
+  p += snprintf(p, e - p, "\"}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+// Contact mutations from the web action sheet: (f)avorite, (b)lock, reset (p)ath, delete (x). Refresh after.
+static void webContactAction(int cidx, char op) {
+  ContactInfo c{};
+  if (!the_mesh.getContactByIdx((uint32_t)cidx, c)) return;
+  switch (op) {
+    case 'f': touchPrefsSetFavorite(c.id.pub_key, !touchPrefsIsFavorite(c.id.pub_key)); break;
+    case 'b': touchPrefsSetIgnored(c.id.pub_key, !touchPrefsIsIgnored(c.id.pub_key));   break;
+    case 'p': the_mesh.uiResetContactPath(c.id.pub_key); break;
+    case 'x': the_mesh.uiRemoveContact(c); break;
+    default:  return;
+  }
+  webPushContacts();
+}
+
+// Discovered (heard-but-not-added) nodes -> the "add contacts without touching the device" flow.
+static void webPushDiscovered() {
+  if (!s_discovered || !s_webdata_buf) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p, "{\"t\":\"dc\",\"nodes\":[");
+  bool first = true;
+  for (int i = 0; i < DISCOVERED_MAX && p < e - 240; ++i) {
+    if (!s_discovered[i].used || s_discovered[i].in_contacts) continue;
+    const ContactInfo& c = s_discovered[i].ci;
+    if (!first) *p++ = ','; first = false;
+    p += snprintf(p, e - p, "{\"i\":%d,\"rp\":%d,\"rm\":%d,\"pl\":%d,\"adv\":%u,\"la\":%ld,\"lo\":%ld,\"n\":\"",
+                  i, (c.type == ADV_TYPE_REPEATER) ? 1 : 0, (c.type == ADV_TYPE_ROOM) ? 1 : 0,
+                  (int)s_discovered[i].path_len, (unsigned)s_discovered[i].last_advert_ts,
+                  (long)c.gps_lat, (long)c.gps_lon);
+    jsonEsc(p, e, c.name[0] ? c.name : "(unnamed)");
+    p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webAddDiscovered(int i) {
+  if (!s_discovered || i < 0 || i >= DISCOVERED_MAX || !s_discovered[i].used || s_discovered[i].in_contacts) return;
+  if (the_mesh.addContact(s_discovered[i].ci)) {   // same path the on-device "Add" button uses
+    the_mesh.uiPersistContacts();
+    s_discovered[i].in_contacts = true;
+    markDiscoveredDirty();
+  }
+  webPushDiscovered();   // refresh (the added node drops off the list)
+}
+
+// Settings page — read current node/radio/connectivity state. Writes reuse the config CLI
+// (set name / wifi|ble|tcp on|off / advert / reboot) except radio, which uses setRadioParams (live).
+static void webPushSettings() {
+  if (!g_lv.task || !s_webdata_buf) return;
+  NodePrefs* pr = the_mesh.getNodePrefs();
+  const bool wc = (WiFi.status() == WL_CONNECTED);
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p,
+    "{\"t\":\"sg\",\"freq\":%.3f,\"bw\":%.0f,\"sf\":%d,\"cr\":%d,\"tx\":%d,\"wifi\":%d,\"ble\":%d,\"blecap\":%d,\"tcp\":%d,\"name\":\"",
+    pr ? pr->freq : 0.0f, pr ? pr->bw : 0.0f, pr ? pr->sf : 0, pr ? pr->cr : 0, pr ? (int)pr->tx_power_dbm : 0,
+    wc ? 1 : 0, g_lv.task->isBleEnabled() ? 1 : 0, g_lv.task->hasBleCapability() ? 1 : 0,
+    g_lv.task->isTcpEnabled() ? 1 : 0);
+  jsonEsc(p, e, pr ? pr->node_name : "");
+  p += snprintf(p, e - p, "\"}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webSetRadio(float freq, float bw, int sf, int cr, int tx) {
+  if (!g_lv.task || freq <= 0) return;
+  NodePrefs* pr = the_mesh.getNodePrefs();
+  g_lv.task->setRadioParams(freq, bw, (uint8_t)sf, (uint8_t)cr, (int8_t)tx, pr ? pr->airtime_factor : 1.0f);
+  webPushSettings();   // echo the applied values back
+}
+
+// Returns true if the line was a data-API command ('@...'); it is fully handled here.
+static bool handleWebDataCmd(const char* cmd) {
+  if (!cmd || cmd[0] != '@') return false;
+  if (!s_webdata_buf) {
+    s_webdata_buf = (char*)heap_caps_malloc(WEBDATA_BUF, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_webdata_buf) s_webdata_buf = (char*)malloc(WEBDATA_BUF);
+  }
+  const char* a = cmd + 1;
+  auto argAfter = [](const char* s) { while (*s && *s != ' ') ++s; if (*s == ' ') ++s; return s; };
+  if (a[0] == 'c' && (a[1] == 0 || a[1] == ' ')) { webPushContacts(); return true; }
+  if (a[0] == 't' && (a[1] == 0 || a[1] == ' ')) { webPushThreads();  return true; }
+  if (a[0] == 'd' && a[1] == 'c' && (a[2] == 0 || a[2] == ' ')) { webPushDiscovered(); return true; }
+  if (a[0] == 'a' && a[1] == 'd' && a[2] == ' ') { webAddDiscovered(atoi(a + 3)); return true; }   // add discovered node
+  if (a[0] == 's' && a[1] == 'g' && (a[2] == 0 || a[2] == ' ')) { webPushSettings(); return true; }
+  if (a[0] == 's' && a[1] == 'r' && a[2] == ' ') { float fq=0,bw=0; int sf=0,cr=0,tx=0; sscanf(a+3, "%f %f %d %d %d", &fq,&bw,&sf,&cr,&tx); webSetRadio(fq,bw,sf,cr,tx); return true; }
+  if (a[0] == 's' && a[1] == 't' && (a[2] == 0 || a[2] == ' ')) { webPushStatus(); return true; }
+  if (a[0] == 'm' && a[1] == ' ')                 { webPushMessages(atoi(a + 2)); return true; }
+  if (a[0] == 'o' && a[1] == 'c' && a[2] == ' ')  { webOpenContact(atoi(a + 3)); return true; }
+  if (a[0] == 'o' && a[1] == 'h' && a[2] == ' ')  { webOpenChannel(atoi(a + 3)); return true; }
+  if (a[0] == 's' && a[1] == 'c' && a[2] == ' ')  { const char* t = a + 3; webSendToContact(atoi(t), argAfter(t)); return true; }
+  if (a[0] == 's' && a[1] == 'h' && a[2] == ' ')  { const char* t = a + 3; webSendToChannel(atoi(t), argAfter(t)); return true; }
+  if (a[0] == 's' && a[1] == ' ')                 { const char* t = a + 2; webSendToThread(atoi(t), argAfter(t)); return true; }
+  if (a[0] == 'i' && a[1] == 'c' && a[2] == ' ')  { webPushContactInfo(atoi(a + 3)); return true; }
+  if (a[0] == 'f' && a[1] == 'v' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'f'); return true; }   // favorite toggle
+  if (a[0] == 'b' && a[1] == 'k' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'b'); return true; }   // block toggle
+  if (a[0] == 'p' && a[1] == 'r' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'p'); return true; }   // reset path
+  if (a[0] == 'x' && a[1] == 'c' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'x'); return true; }   // delete contact
+  if (a[0] == 'x' && a[1] == 't' && a[2] == ' ' && g_lv.task) { g_lv.task->removeThread(atoi(a + 3)); webPushThreads(); return true; }
+  if (a[0] == 'd' && a[1] == ' ' && g_lv.task)    { g_lv.task->clearThreadHistory(atoi(a + 2)); webPushThreads(); return true; }
+  if (a[0] == 'r' && a[1] == ' ' && g_lv.task)    { g_lv.task->markThreadRead(atoi(a + 2)); webPushThreads(); return true; }
+  return true;   // unknown '@' -> swallow (never run as a terminal command)
+}
+#endif  // !HAS_TANMATSU
 
 // Scrollable command picker, modelled on openAdminCmdPicker. Tapping a row
 // stuffs the template into the terminal input and keeps it focused so Enter
@@ -17413,10 +17801,17 @@ static uint8_t* decodeJpegToRgb565(const uint8_t* jpeg, size_t jpeg_len,
                                    int* out_w, int* out_h);
 // Same, but DOWNSCALES (tjpgd 1/2..1/8) so images larger than max_dim still
 // decode — into a small buffer — instead of being rejected. FM viewer + wallpaper.
+// dst_buf/dst_cap: optional caller-owned output buffer. When given and the decoded
+// RGB565 fits, decode straight into it (no PSRAM alloc) — the map tile pool passes
+// its persistent 128 KB slot buffer so tiles never malloc per-render (fragmentation
+// fix). If the image is bigger than dst_cap, returns nullptr. dst_buf==nullptr keeps
+// the old "alloc a fresh buffer" behaviour (FM viewer / wallpaper).
 static uint8_t* decodeJpegScaledToRgb565(const uint8_t* jpeg, size_t jpeg_len,
-                                         int* out_w, int* out_h, int max_dim);
+                                         int* out_w, int* out_h, int max_dim,
+                                         uint8_t* dst_buf = nullptr, size_t dst_cap = 0);
 static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len,
-                                  int* out_w, int* out_h);
+                                  int* out_w, int* out_h,
+                                  uint8_t* dst_buf = nullptr, size_t dst_cap = 0);
 
 // Minimal BMP -> RGB565 decoder for the image viewer. Handles the common
 // uncompressed layouts: 16-bpp 565 (what our screenshots write) and 24-bpp BGR,
@@ -19103,6 +19498,11 @@ static void vncToggleCb(lv_event_t* e) {
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetWebMirror(on);
   g_web_mirror.setEnabled(on);
+  if (on && touchPrefsGetWebTerminal()) {   // VNC and the web terminal both serve "/" -> mutually exclusive
+    touchPrefsSetWebTerminal(false);
+    g_web_mirror.setTerminalOn(false);
+    if (s_term_log_box == nullptr) MyMesh::setTerminalSink(nullptr);
+  }
   vncRefresh();
 }
 
@@ -19202,8 +19602,10 @@ static void openVncPage() {
 // resolution), so toggling it reboots. This is the path to screenless devices.
 // ============================================================================
 static lv_obj_t* s_remote_root = nullptr;
+static lv_obj_t* s_remote_ipcard = nullptr;   // the "open in a browser" address card; only shown while a mode is ON
 
 static void closeRemotePage() {
+  s_remote_ipcard = nullptr;
   if (s_remote_root) { popupClose(&s_remote_root); }
   if (s_apppage_close == closeRemotePage) {
     s_apppage_title = nullptr; s_apppage_close = nullptr;
@@ -19231,6 +19633,35 @@ static void remoteLandscapeCb(lv_event_t* e) {
   } else {
     g_lv.task->showAlert(on ? TR("Landscape set - applies when remote mode starts.")
                             : TR("Portrait set - applies when remote mode starts."), 2400);
+  }
+}
+
+// "Remote terminal": a runtime web mesh-CLI terminal on the device IP. No reboot; turning
+// it on disables VNC (they both serve the landing page). See WebMirror term* + the WS server.
+static void webTerminalToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetWebTerminal(on);
+  g_web_mirror.setTerminalOn(on);
+  if (on) {
+    if (touchPrefsGetWebMirror()) { touchPrefsSetWebMirror(false); g_web_mirror.setEnabled(false); }   // exclusive with VNC
+  } else if (s_term_log_box == nullptr) {
+    MyMesh::setTerminalSink(nullptr);   // release the CLI sink (on-device console isn't using it)
+  }
+  // Reveal / hide the "open in a browser" address card as a mode goes on/off (this page stays up).
+  if (s_remote_ipcard) {
+    if (on || touchPrefsGetRemoteMode()) lv_obj_clear_flag(s_remote_ipcard, LV_OBJ_FLAG_HIDDEN);
+    else                                 lv_obj_add_flag(s_remote_ipcard, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (!g_lv.task) return;
+  if (on) {
+    char msg[96];
+    if (WiFi.status() == WL_CONNECTED)
+      snprintf(msg, sizeof msg, "Terminal on: http://%s:8765/", WiFi.localIP().toString().c_str());
+    else
+      snprintf(msg, sizeof msg, "%s", "Terminal on (connect Wi-Fi to reach it)");
+    g_lv.task->showAlert(msg, 3200);
+  } else {
+    g_lv.task->showAlert(TR("Remote terminal off"), 1400);
   }
 }
 
@@ -19267,14 +19698,93 @@ static void openRemotePage() {
   const bool on = touchPrefsGetRemoteMode();
 
   lv_obj_t* head = lv_label_create(s_remote_root);
-  lv_label_set_text(head, TR("Remote mode (headless UI)"));
+  lv_label_set_text(head, TR("Remote access"));
   lv_obj_set_style_text_font(head, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(head, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_label_set_long_mode(head, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(head, cw);
 
+  // Connection address up top — the key info for BOTH modes.
+  lv_obj_t* ipcard = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(ipcard);
+  lv_obj_set_size(ipcard, cw, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_color(ipcard, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(ipcard, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(ipcard, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(ipcard, 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(ipcard, 2, LV_PART_MAIN);
+  lv_obj_clear_flag(ipcard, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(ipcard, LV_FLEX_FLOW_COLUMN);
+  lv_obj_t* ipcap = lv_label_create(ipcard);
+  lv_label_set_text(ipcap, TR("Open in a browser (same Wi-Fi):"));
+  lv_obj_set_style_text_font(ipcap, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(ipcap, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_t* ipval = lv_label_create(ipcard);
+  lv_label_set_long_mode(ipval, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(ipval, cw - 20);
+  lv_obj_set_style_text_font(ipval, &g_font_16, LV_PART_MAIN);
+  if (WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
+    char u[48]; snprintf(u, sizeof u, "http://%s:8765", WiFi.localIP().toString().c_str());
+    lv_label_set_text(ipval, u);
+    lv_obj_set_style_text_color(ipval, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  } else {
+    lv_label_set_text(ipval, TR("Connect to Wi-Fi first"));
+    lv_obj_set_style_text_color(ipval, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  }
+  s_remote_ipcard = ipcard;
+  // Only show the address once a mode is actually serving it — hide it while both are off.
+  if (!(touchPrefsGetWebTerminal() || on)) lv_obj_add_flag(ipcard, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_t* intro = lv_label_create(s_remote_root);
+  lv_label_set_text(intro, TR("Then pick a mode:"));
+  lv_obj_set_style_text_font(intro, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(intro, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_width(intro, cw);
+
+  // ---- 1. Remote terminal (recommended) ----
+  lv_obj_t* th = lv_label_create(s_remote_root);
+  lv_label_set_text(th, TR("Remote terminal (recommended)"));
+  lv_obj_set_style_text_font(th, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(th, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_width(th, cw);
+
+  lv_obj_t* texpl = lv_label_create(s_remote_root);
+  lv_label_set_text(texpl, TR("Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen."));
+  lv_obj_set_style_text_font(texpl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(texpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(texpl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(texpl, cw);
+
+  lv_obj_t* trow = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(trow);
+  lv_obj_set_size(trow, cw, SC(42));
+  lv_obj_set_style_bg_color(trow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(trow, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(trow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(trow, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(trow, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(trow, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* tl = lv_label_create(trow);
+  lv_label_set_text(tl, TR("Remote terminal"));
+  lv_obj_set_style_text_font(tl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(tl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(tl, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(tl, cw - 84);   // leave room for the switch (V4 240px: labels were overlapping)
+  lv_obj_align(tl, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* tsw = lv_switch_create(trow);
+  lv_obj_align(tsw, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (touchPrefsGetWebTerminal()) lv_obj_add_state(tsw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(tsw, webTerminalToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_move_to_index(trow, lv_obj_get_index(texpl));   // toggle sits ABOVE its explanation
+
+  // ---- 2. Remote UI (off-screen mirror; reboots) ----
+  lv_obj_t* uh = lv_label_create(s_remote_root);
+  lv_label_set_text(uh, TR("Remote UI"));
+  lv_obj_set_style_text_font(uh, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(uh, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_width(uh, cw);
+
   lv_obj_t* expl = lv_label_create(s_remote_root);
-  lv_label_set_text(expl, TR("Runs the full wadamesh UI at a larger resolution built for a web browser instead of this small screen. The device screen becomes a placeholder and the whole UI is served over Wi-Fi. Turning this on or off reboots the device."));
+  lv_label_set_text(expl, TR("Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device."));
   lv_obj_set_style_text_font(expl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(expl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_label_set_long_mode(expl, LV_LABEL_LONG_WRAP);
@@ -19290,14 +19800,17 @@ static void openRemotePage() {
   lv_obj_set_style_pad_right(row, 12, LV_PART_MAIN);
   lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_t* rl = lv_label_create(row);
-  lv_label_set_text(rl, on ? TR("Remote mode is ON") : TR("Enable remote mode"));
+  lv_label_set_text(rl, on ? TR("Remote UI (on)") : TR("Remote UI"));
   lv_obj_set_style_text_font(rl, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(rl, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(rl, cw - 84);
   lv_obj_align(rl, LV_ALIGN_LEFT_MID, 0, 0);
   lv_obj_t* sw2 = lv_switch_create(row);
   lv_obj_align(sw2, LV_ALIGN_RIGHT_MID, 0, 0);
   if (on) lv_obj_add_state(sw2, LV_STATE_CHECKED);
   lv_obj_add_event_cb(sw2, remoteToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_move_to_index(row, lv_obj_get_index(expl));   // toggle sits ABOVE its explanation
 
   lv_obj_t* lrow = lv_obj_create(s_remote_root);
   lv_obj_remove_style_all(lrow);
@@ -19309,27 +19822,17 @@ static void openRemotePage() {
   lv_obj_set_style_pad_right(lrow, 12, LV_PART_MAIN);
   lv_obj_clear_flag(lrow, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_t* ll = lv_label_create(lrow);
-  lv_label_set_text(ll, TR("Landscape (for desktop)"));
+  lv_label_set_text(ll, TR("Landscape (desktop)"));
   lv_obj_set_style_text_font(ll, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(ll, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(ll, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(ll, cw - 84);
   lv_obj_align(ll, LV_ALIGN_LEFT_MID, 0, 0);
   lv_obj_t* lsw = lv_switch_create(lrow);
   lv_obj_align(lsw, LV_ALIGN_RIGHT_MID, 0, 0);
   if (touchPrefsGetRemoteLandscape()) lv_obj_add_state(lsw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(lsw, remoteLandscapeCb, LV_EVENT_VALUE_CHANGED, nullptr);
 
-  lv_obj_t* note = lv_label_create(s_remote_root);
-  if (WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
-    char u[80];
-    snprintf(u, sizeof u, "%s http://%s:8765/", TR("After reboot, open:"), WiFi.localIP().toString().c_str());
-    lv_label_set_text(note, u);
-  } else {
-    lv_label_set_text(note, TR("Connect to Wi-Fi so a browser can reach the device."));
-  }
-  lv_obj_set_style_text_font(note, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(note, cw);
 }
 #endif  // !HAS_TANMATSU
 
@@ -20785,6 +21288,9 @@ static lv_obj_t* s_map_status_lbl  = nullptr;
 static lv_obj_t* s_map_zoom_lbl    = nullptr;   // zoom + tile path at center (top-left, under © OSM)
 static lv_obj_t* s_map_zoom_slider = nullptr;   // zoom slider overlay (toggled by the zoom button)
 static lv_obj_t* s_map_zoom_val    = nullptr;   // live "z<level>" readout centred above the slider
+// TEMP tile diagnostic: free KB in the tiles partition, refreshed ~5 s by
+// tilesFsLowSpace() and shown on the zoom label. 0xFFFF == not yet measured.
+static volatile uint16_t s_tiles_free_kb = 0xFFFF;
 
 #if defined(ESP32)
 // Dedicated LittleFS instance for the map tile pack — mounts the "tiles"
@@ -20895,6 +21401,7 @@ static bool tilesFsLowSpace() {
     const size_t tot = s_tiles_fs.totalBytes();
     const size_t use = s_tiles_fs.usedBytes();
     const size_t freeb = (tot > use) ? (tot - use) : 0;
+    s_tiles_free_kb = (uint16_t)((freeb / 1024 > 0xFFFE) ? 0xFFFE : freeb / 1024);   // for the on-screen readout
     // tot == 0 means the partition isn't actually mounted — don't read that as "full".
     low = (tot > 0) && (freeb < 320 * 1024);           // keep >= 320 KB headroom (tile + dir blocks + GC)
   }
@@ -21081,7 +21588,27 @@ static lv_obj_t* s_map_pan_layer = nullptr;
 // Last renderMapTiles() gap count (visible tiles that weren't on disk).
 // Drives the compact download/Wi-Fi hint in the bottom info bar.
 static int       s_map_last_missing = 0;
+// --- Render-side tile diagnostics (serial is unreadable on the companion build).
+// The MTC fetch counters cover DOWNLOAD; these cover READ-BACK + DECODE + PLACE,
+// so the always-visible zoom label can pinpoint where the pipeline breaks:
+//   fr  = free KB in the tiles partition (0 == cache full, no room to write)
+//   d   = tiles that ended up placed (kept or freshly decoded) / tiles wanted
+// Declared unconditionally so renderMapTiles/refreshMapInfoLabel reference them
+// on every board; only the DOWNLOAD counters are MTC-gated. (s_tiles_free_kb is
+// declared earlier, before tilesFsLowSpace which writes it.)
+static int       s_tile_dec_ok   = 0;                  // tiles placed in the last render pass
+static int       s_tile_dec_want = 0;                  // tiles wanted (grid size) in the last pass
 
+// Release a slot's WIDGET but KEEP its 128 KB PSRAM buffer for the next tile that
+// lands here. Per-render tile churn used to malloc/free 128 KB up to nine times a
+// frame, which fragmented the 2 MB-PSRAM V4 down to <128 KB blocks so fresh tiles
+// couldn't allocate (only the top rows rendered). Reusing the buffer in place = zero
+// churn = no fragmentation. Full teardown (freeMapTileSlot) still frees the buffer.
+static void releaseMapTileSlot(MapTile& t) {
+  if (t.img) { lv_obj_del(t.img); t.img = nullptr; }
+  lv_img_cache_invalidate_src(&t.dsc);   // this slot's dsc content is now stale
+  t.in_use = false;                       // t.rgb565 intentionally kept for reuse
+}
 static void freeMapTileSlot(MapTile& t) {
   if (t.img)    { lv_obj_del(t.img); t.img = nullptr; }
   // CRITICAL: invalidate LVGL's image cache entry for this dsc before
@@ -21196,7 +21723,8 @@ static int tjpgOutCb(JDEC* jd, void* bitmap, JRECT* r) {
 }
 }  // extern "C"
 static uint8_t* decodeJpegScaledToRgb565(const uint8_t* jpeg, size_t jpeg_len,
-                                         int* out_w, int* out_h, int max_dim) {
+                                         int* out_w, int* out_h, int max_dim,
+                                         uint8_t* dst_buf, size_t dst_cap) {
   s_jpgScaleErr[0] = '\0';
   // tjpgd work area (~3.1 KB used). Lazy PSRAM (internal fallback), cached — keeps
   // this ~4 KB out of scarce internal DRAM. JD_FASTDECODE=0; matches LVGL's TJPGD_WORKBUFF_SIZE.
@@ -21224,17 +21752,21 @@ static uint8_t* decodeJpegScaledToRgb565(const uint8_t* jpeg, size_t jpeg_len,
     snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "%ux%u too big", jd.width, jd.height);
     return nullptr;
   }
-  uint16_t* buf = (uint16_t*)lvglPsramAlloc((size_t)ow * oh * sizeof(uint16_t));
-  if (!buf) {
-    snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "no memory (%dx%d)", ow, oh);
-    return nullptr;
+  const size_t need = (size_t)ow * oh * sizeof(uint16_t);
+  uint16_t* buf; bool owns;
+  if (dst_buf) {                                  // caller-provided output (map tile pool)
+    if (need > dst_cap) { snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "%dx%d > buf", ow, oh); return nullptr; }
+    buf = (uint16_t*)dst_buf; owns = false;
+  } else {
+    buf = (uint16_t*)lvglPsramAlloc(need); owns = true;
+    if (!buf) { snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "no memory (%dx%d)", ow, oh); return nullptr; }
   }
   io.out = buf; io.ow = ow; io.oh = oh;
   JRESULT rd = jd_decomp(&jd, tjpgOutCb, (uint8_t)scale);
   if (rd != JDR_OK) {
     snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "decomp err %d", (int)rd);
     WIRE_DBG("[JPG] jd_decomp rc=%d\n", (int)rd);
-    lvglPsramFree(buf);
+    if (owns) lvglPsramFree(buf);
     return nullptr;
   }
   *out_w = ow; *out_h = oh;
@@ -22060,13 +22592,21 @@ static void queueZoomPackForCenter() {
 // standard /maps/osm/{z}/{x}/{y}.png tiles (the Meshtastic/MeshCore convention).
 extern "C" unsigned lodepng_decode32(unsigned char** out, unsigned* w, unsigned* h,
                                       const unsigned char* in, size_t insize);
-static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len, int* out_w, int* out_h) {
+static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len, int* out_w, int* out_h,
+                                  uint8_t* dst_buf, size_t dst_cap) {
   unsigned char* rgba = nullptr; unsigned w = 0, h = 0;
   if (lodepng_decode32(&rgba, &w, &h, png, png_len) != 0 || !rgba) { if (rgba) free(rgba); return nullptr; }
   if (w == 0 || h == 0 || w > 1024 || h > 1024) { free(rgba); return nullptr; }
   const size_t npx = (size_t)w * h;
-  uint16_t* rgb = (uint16_t*)lvglPsramAlloc(npx * sizeof(uint16_t));
-  if (!rgb) { free(rgba); return nullptr; }
+  uint16_t* rgb; bool owns;
+  if (dst_buf) {                                  // caller-provided output (map tile pool)
+    if (npx * sizeof(uint16_t) > dst_cap) { free(rgba); return nullptr; }
+    rgb = (uint16_t*)dst_buf; owns = false;
+  } else {
+    rgb = (uint16_t*)lvglPsramAlloc(npx * sizeof(uint16_t)); owns = true;
+    if (!rgb) { free(rgba); return nullptr; }
+  }
+  (void)owns;
   for (size_t i = 0; i < npx; i++) rgb[i] = lv_color_make(rgba[i*4+0], rgba[i*4+1], rgba[i*4+2]).full;
   free(rgba);   // lodepng allocates with the system malloc/free
   *out_w = (int)w; *out_h = (int)h;
@@ -22285,15 +22825,49 @@ static void renderMapTiles() {
   //   3. For each wanted coord not yet present in any slot, load into an
   //      empty slot.
   mapComputeGridRadius();   // size the grid to the current canvas (covers full width on the Tanmatsu)
-  struct Wanted { int32_t tx; int32_t ty; bool placed; };
+  // Viewport cull + pool cap: each held tile costs a 128 KB PSRAM buffer, and a
+  // full 3x3 grid (1.15 MB) can't coexist with contacts + LVGL + web buffers on
+  // the 2 MB V4. Only decode tiles whose 256 px square actually touches the
+  // viewport (+margin); then, if that still exceeds the pool cap, keep the ones
+  // NEAREST the screen centre (the most-visible; the dropped ones sit under the
+  // status/tab bars or off-screen). Drag-release re-centers + re-renders, so
+  // panned-in edges fill on release. >=4 MB boards keep the full grid + cushion.
+  static const size_t kPsramTotalB = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+  const bool  kLowPsram   = (kPsramTotalB && kPsramTotalB < 4u * 1024 * 1024);
+  const int   tile_margin = kLowPsram ? 0 : 256;
+  const int   pool_cap    = kLowPsram ? 4 : k_map_visible_tiles_max;
+  struct Wanted { int32_t tx; int32_t ty; bool placed; long d2; };
   Wanted wanted[k_map_visible_tiles_max];
   int n_wanted = 0;
   for (int dy = -s_map_grid_ry; dy <= s_map_grid_ry; ++dy) {
     for (int dx = -s_map_grid_rx; dx <= s_map_grid_rx; ++dx) {
       if (n_wanted >= k_map_visible_tiles_max) break;
-      wanted[n_wanted++] = { ctx + dx, cty + dy, false };
+      const int32_t tx = ctx + dx, ty = cty + dy;
+      const int sx = (int)((double)tx * 256.0 - cwx + k_map_canvas_w / 2);
+      const int sy = (int)((double)ty * 256.0 - cwy + k_map_canvas_h / 2);
+      if (sx + 256 <= -tile_margin || sx >= k_map_canvas_w + tile_margin ||
+          sy + 256 <= -tile_margin || sy >= k_map_canvas_h + tile_margin) continue;   // fully off-screen
+      // Squared distance from the tile centre to the screen centre — used to keep
+      // the most-visible tiles when culling to the pool cap.
+      const long ddx = (long)(sx + 128 - k_map_canvas_w / 2);
+      const long ddy = (long)(sy + 128 - k_map_canvas_h / 2);
+      wanted[n_wanted++] = { tx, ty, false, ddx * ddx + ddy * ddy };
     }
   }
+
+  // Cap to the pool: if more tiles touch the viewport than we can hold, keep the
+  // ones nearest the screen centre (selection sort front — n_wanted is tiny). The
+  // dropped tiles are the farthest out (under the bars / screen edge).
+  if (n_wanted > pool_cap) {
+    for (int a = 0; a < pool_cap; ++a) {
+      int best = a;
+      for (int b = a + 1; b < n_wanted; ++b) if (wanted[b].d2 < wanted[best].d2) best = b;
+      if (best != a) { Wanted tmp = wanted[a]; wanted[a] = wanted[best]; wanted[best] = tmp; }
+    }
+    n_wanted = pool_cap;
+  }
+
+  s_tile_dec_want = n_wanted;   // diagnostics: visible tiles this pass (see the zoom label)
 
   // Whenever we end up here, the pan layer must be reset to (0,0) — its
   // offset only exists during a live drag.
@@ -22309,10 +22883,12 @@ static void renderMapTiles() {
   // that trailing pass is now a cheap no-visual-change refresh.
   renderMapMarkers();
 
-  // Pass 1 — keep matching slots, free non-matching ones.
+  // Pass 1 — keep matching slots, RELEASE non-matching ones (keep their 128 KB
+  // buffer for reuse below — see releaseMapTileSlot; freeing per-render is what
+  // fragmented PSRAM).
   for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) { MapTile& t = s_map_tiles[_ti];
     if (!t.in_use) continue;
-    if (t.z != s_map_zoom) { freeMapTileSlot(t); continue; }
+    if (t.z != s_map_zoom) { releaseMapTileSlot(t); continue; }
     bool kept = false;
     for (int i = 0; i < n_wanted; ++i) {
       if (!wanted[i].placed && wanted[i].tx == t.x && wanted[i].ty == t.y) {
@@ -22325,23 +22901,50 @@ static void renderMapTiles() {
         break;
       }
     }
-    if (!kept) freeMapTileSlot(t);
+    if (!kept) releaseMapTileSlot(t);
   }
 
-  // Pass 2 — fill remaining wanted tiles into empty slots. For each new
-  // tile we read JPEG → decode to RGB565 → free JPEG → attach CF_TRUE_COLOR
-  // dsc to the widget. Subsequent draws are pure blits.
+  // Pass 2 — fill remaining wanted tiles into empty slots, decoding into each
+  // slot's PERSISTENT 128 KB buffer (allocated once, reused every render — the
+  // fragmentation fix). Cap the pool so the map's PSRAM stays bounded: the tiny
+  // 2 MB-PSRAM V4 can't spare more than ~4 buffers alongside contacts+LVGL+web.
+  static const size_t kTileBufBytes = 256u * 256u * sizeof(lv_color_t);   // 128 KB, fixed tile size
   lv_obj_t* parent = s_map_pan_layer ? s_map_pan_layer : s_map_canvas;
   bool any_loaded = false;
   int  n_missing  = 0;   // visible tiles we couldn't load from disk
   for (int i = 0; i < n_wanted; ++i) {
     if (wanted[i].placed) { any_loaded = true; continue; }
-    // Find an empty slot.
+    // Pick an empty slot, PREFERRING one that already owns a reusable 128 KB
+    // buffer (decode in place → no malloc → no fragmentation); else any empty slot.
     MapTile* dst = nullptr;
     for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) { MapTile& t = s_map_tiles[_ti];
+      if (!t.in_use && t.rgb565) { dst = &t; break; }
+    }
+    if (!dst) for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) { MapTile& t = s_map_tiles[_ti];
       if (!t.in_use) { dst = &t; break; }
     }
-    if (!dst) break;  // shouldn't happen — wanted count == slot count
+    if (!dst) break;  // shouldn't happen — wanted count <= slot count
+    // Ensure the slot has its persistent buffer. Allocate up to pool_cap buffers
+    // (bounds the map's PSRAM to pool_cap*128 KB); beyond that, steal a buffer from
+    // another released slot so the pool never grows past the cap. If neither works
+    // (fragmented/OOM on a cold cache) skip this tile — it retries next render, and
+    // once a buffer is grabbed it sticks (reused forever), so coverage heals.
+    if (!dst->rgb565) {
+      int bufs = 0;
+      for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) if (s_map_tiles[_ti].rgb565) ++bufs;
+      if (bufs < pool_cap) {
+        dst->rgb565 = (uint8_t*)lvglPsramAlloc(kTileBufBytes);
+      } else {
+        for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) { MapTile& s = s_map_tiles[_ti];
+          if (!s.in_use && s.rgb565 && &s != dst) {
+            lv_img_cache_invalidate_src(&s.dsc);
+            dst->rgb565 = s.rgb565; s.rgb565 = nullptr;
+            break;
+          }
+        }
+      }
+    }
+    if (!dst->rgb565) { ++n_missing; continue; }   // no buffer available this pass
     uint8_t* jpeg = nullptr;
     size_t   jlen = 0;
     if (!loadTileJpeg(s_map_zoom, wanted[i].tx, wanted[i].ty, &jpeg, &jlen)) {
@@ -22355,13 +22958,15 @@ static void renderMapTiles() {
       continue;
     }
     int dw = 0, dh = 0;
-    // Sniff the format: PNG (0x89 'P' 'N' 'G') -> direct-lodepng path (LVGL's
-    // lv_png is broken here); otherwise JPEG/SJPG.
+    // Decode straight INTO the slot's persistent 128 KB buffer (dst->rgb565) — no
+    // per-tile malloc, so PSRAM never fragments. PNG (0x89 'P' 'N' 'G') → lodepng
+    // (LVGL's lv_png is broken here); else the DIRECT tjpgd path (streams MCUs into
+    // the buffer through a shared 4 KB work pool). 256 px cap == native tile size.
     uint8_t* rgb = (jlen >= 4 && jpeg[0] == 0x89 && jpeg[1] == 'P' && jpeg[2] == 'N' && jpeg[3] == 'G')
-                     ? decodePngToRgb565(jpeg, jlen, &dw, &dh)
-                     : decodeJpegToRgb565(jpeg, jlen, &dw, &dh);
+                     ? decodePngToRgb565(jpeg, jlen, &dw, &dh, dst->rgb565, kTileBufBytes)
+                     : decodeJpegScaledToRgb565(jpeg, jlen, &dw, &dh, 256, dst->rgb565, kTileBufBytes);
     lvglPsramFree(jpeg);
-    if (!rgb) { ++n_missing; continue; }
+    if (!rgb) { ++n_missing; continue; }   // decode failed; buffer kept for reuse
     // Night mode: invert the decoded RGB565 in place (render-only — the on-disk
     // tile is untouched). ~p flips all three channels; light maps go dark.
     if (s_map_night) {
@@ -22370,7 +22975,7 @@ static void renderMapTiles() {
       for (int p = 0; p < cnt; ++p) px[p] = (uint16_t)~px[p];
     }
     dst->z = s_map_zoom; dst->x = wanted[i].tx; dst->y = wanted[i].ty;
-    dst->rgb565 = rgb;
+    dst->rgb565 = rgb;   // == the slot's persistent buffer (decoded in place)
     dst->w = dw; dst->h = dh;
     memset(&dst->dsc, 0, sizeof(dst->dsc));
     dst->dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
@@ -22378,6 +22983,9 @@ static void renderMapTiles() {
     dst->dsc.header.h  = (uint32_t)dh;
     dst->dsc.data      = rgb;
     dst->dsc.data_size = (uint32_t)((size_t)dw * dh * sizeof(lv_color_t));
+    // Reused buffer at a stable dsc address → drop any stale cached decode keyed
+    // to this dsc pointer before the new widget reads it.
+    lv_img_cache_invalidate_src(&dst->dsc);
     dst->img = lv_img_create(parent);
     lv_img_set_src(dst->img, &dst->dsc);
     const int sx = (int)((double)wanted[i].tx * 256.0 - cwx + k_map_canvas_w / 2);
@@ -22408,6 +23016,12 @@ static void renderMapTiles() {
     // download worker already does the same vTaskDelay(1) on its side).
     vTaskDelay(1);
   }
+
+  // Diagnostics: how many of the wanted tiles ended up with a live img widget
+  // (kept from a prior pass OR freshly decoded). placed == want but a blank
+  // screen ⇒ paint/z-order bug; placed < want ⇒ tiles missing from disk/decode.
+  { int placed = 0; for (int i = 0; i < n_wanted; ++i) if (wanted[i].placed) ++placed;
+    s_tile_dec_ok = placed; }
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   // Warm the min/max zoom cache for this location (overview + detail) in the
@@ -22542,6 +23156,7 @@ static lv_point_t s_map_link_pts[k_map_markers_max][2];
 static bool s_map_show_coords    = true;
 static bool s_map_show_tilexyz   = true;
 static bool s_map_show_contacts  = true;
+static bool s_map_tile_debug     = false;  // developer: tile-pipeline diagnostic overlay on the zoom line (off by default)
 static bool s_map_direct_only    = false;  // when true, only 0-hop (directly-heard) contacts appear
 
 // Apply the coords/tile-line visibility flags to the two corner labels. Safe to
@@ -23140,6 +23755,14 @@ static void mapOptTileXYZCb(lv_event_t* e) {
 #endif
   applyMapTextVis();
 }
+static void mapOptTileDebugCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_map_tile_debug = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetMapTileDebug(s_map_tile_debug);
+#endif
+  refreshMapInfoLabel();   // swap the zoom line to/from the diagnostic immediately
+}
 static void mapOptContactsCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   s_map_show_contacts = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -23436,6 +24059,7 @@ static void openMapOptions() {
       { "Show tile z/x/y",     s_map_show_tilexyz,  mapOptTileXYZCb    },
       { "Show contacts",       s_map_show_contacts, mapOptContactsCb   },
       { "Direct (0-hop) only", s_map_direct_only,   mapOptDirectOnlyCb },
+      { "Tile debug overlay",  s_map_tile_debug,    mapOptTileDebugCb  },
     };
     for (auto& r : rows) {
       lv_obj_t* l = lv_label_create(card);
@@ -24565,10 +25189,37 @@ static void refreshMapInfoLabel() {
       latLonToWorldPx(s_map_center_lat, s_map_center_lon, s_map_zoom, &cwx, &cwy);
       const long tx = (long)floor(cwx / 256.0);
       const long ty = (long)floor(cwy / 256.0);
-      char zbuf[40];
-      snprintf(zbuf, sizeof zbuf, "z%u  %u/%ld/%ld",
-               (unsigned)s_map_zoom, (unsigned)s_map_zoom, tx, ty);
+      char zbuf[120];
+      bool force_show = false;
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      if (s_map_tile_debug) {
+        // Developer tile-pipeline diagnostic (Map options → "Tile debug overlay").
+        // Serial is unreadable on the companion build, so this two-line overlay is
+        // the only window into the tile pipeline: d = tiles placed/wanted this pass,
+        // p = live 128 KB pool buffers, wr = last cache-write outcome (w=ok S=cache
+        // full H=heap O=open Z=len e=http J=notjpeg P=short), h = last HTTP code,
+        // ok/f = downloads ok/failed, ps = free PSRAM KB, blk = largest contiguous
+        // block KB (a tile needs 128 KB contiguous; blk<128 while ps high == frag).
+        const int psf = (int)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024);
+        const int psb = (int)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024);
+        int pbufs = 0; for (int _t = 0; _t < k_map_visible_tiles_max; ++_t) if (s_map_tiles[_t].rgb565) ++pbufs;
+        snprintf(zbuf, sizeof zbuf, "z%u d%d/%d p%d wr%c h%d ok%u f%u\nps%dk blk%dk",
+                 (unsigned)s_map_zoom, s_tile_dec_ok, s_tile_dec_want, pbufs,
+                 (char)s_tile_fetch_last_wr, (int)s_tile_fetch_last_code,
+                 (unsigned)s_tile_fetch_ok, (unsigned)s_tile_fetch_failed,
+                 psf, psb);
+        force_show = true;   // diagnostic overrides the "Show tile z/x/y" pref
+      } else
+#endif
+      {
+        snprintf(zbuf, sizeof zbuf, "z%u  %u/%ld/%ld",
+                 (unsigned)s_map_zoom, (unsigned)s_map_zoom, tx, ty);
+      }
       lv_label_set_text(s_map_zoom_lbl, zbuf);
+      // Visibility: the debug overlay forces it on; otherwise follow the
+      // "Show tile z/x/y" pref (so turning debug off restores normal behaviour).
+      if (force_show || s_map_show_tilexyz) lv_obj_clear_flag(s_map_zoom_lbl, LV_OBJ_FLAG_HIDDEN);
+      else                                  lv_obj_add_flag(s_map_zoom_lbl, LV_OBJ_FLAG_HIDDEN);
     }
   }
 }
@@ -27221,7 +27872,21 @@ static void chatVirtSyncBubblePositions(LvChatPanel* p) {
   const int32_t virt_top = chatVirtEffectiveVirtTop(p);
   for (int i = 0; i < cnt; ++i) {
     const lv_coord_t vp = chatVirtMsgViewportY(entries[i].logical_i, virt_top);
-    lv_obj_set_pos(entries[i].obj, lv_obj_get_x(entries[i].obj), vp);
+    // Re-assert the correct left/right x on every pass instead of preserving lv_obj_get_x():
+    // a bubble recreated mid-scroll (e.g. right after a send) can briefly carry a wrong x, and
+    // the old preserve-x logic then locked it in until the next full rebuild — that was the
+    // "just-sent outgoing bubble stuck on the LEFT" bug. Compact rows stay full-width.
+    lv_coord_t x = lv_obj_get_x(entries[i].obj);
+    if (!s_chat_virt.compact_chat && g_lv.task && s_chat_virt.msg_idx &&
+        entries[i].logical_i >= 0 && entries[i].logical_i < s_chat_virt.n) {
+      UITask::UIMessage mm;
+      if (g_lv.task->getMessageByIndex(s_chat_virt.msg_idx[entries[i].logical_i], mm)) {
+        lv_coord_t w = lv_obj_get_width(entries[i].obj);
+        if (w > s_chat_virt.bubble_max_w) w = s_chat_virt.bubble_max_w;
+        x = mm.outgoing ? (s_chat_virt.content_w - w - kChatSideGutter) : kChatSideGutter;
+      }
+    }
+    lv_obj_set_pos(entries[i].obj, x, vp);
   }
 
   if (s_chat_virt.divider && lv_obj_is_valid(s_chat_virt.divider) && s_chat_virt.divider_y >= 0) {
@@ -27467,6 +28132,7 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   lv_obj_set_size(bubble, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 
   int inner_y = 0;
+  lv_coord_t inner_w = 0;   // widest child (sender/text/footer) -> analytic bubble width for x-alignment
   if ((p->channel_mode || s_chat_virt.thread_is_room) && !m.outgoing && d.san_sender[0]) {
     lv_obj_t* slbl = lv_label_create(bubble);
     lv_label_set_text(slbl, d.san_sender);
@@ -27474,6 +28140,8 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     lv_obj_set_style_text_color(slbl, sender_col, LV_PART_MAIN);
     lv_obj_set_pos(slbl, 0, inner_y);
     inner_y += lv_font_get_line_height(&g_font_12);
+    lv_point_t ss; lv_txt_get_size(&ss, d.san_sender, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    if (ss.x > inner_w) inner_w = ss.x;
   }
 
   lv_obj_t* tlbl = lv_label_create(bubble);
@@ -27483,8 +28151,10 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   const lv_coord_t kInnerMaxW = kBubbleMaxW - 2 * kChatBubblePadH;
   lv_point_t txt_size;
   lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-  if (txt_size.x <= kInnerMaxW) lv_obj_set_width(tlbl, txt_size.x);
-  else { lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP); lv_obj_set_width(tlbl, kInnerMaxW); }
+  const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
+  if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(tlbl, txt_w_used);
+  if (txt_w_used > inner_w) inner_w = txt_w_used;
   lv_obj_set_pos(tlbl, 0, inner_y);
   lv_obj_add_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(bubble, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
@@ -27523,20 +28193,23 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     lv_label_set_text(foot, footer);
     lv_obj_set_style_text_font(foot, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(foot, lv_color_hex(deliv_glyph[0] ? deliv_fg : COLOR_SUB), LV_PART_MAIN);
-    const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
     lv_point_t wrapped_size;
     lv_txt_get_size(&wrapped_size, d.san_text, &g_font_12, 0, 0,
                     txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     lv_point_t foot_size;
     lv_txt_get_size(&foot_size, footer, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    if (foot_size.x > inner_w) inner_w = foot_size.x;
     const int foot_x = (txt_w_used > foot_size.x) ? (txt_w_used - foot_size.x) : 0;
     const int foot_y = inner_y + wrapped_size.y + 1;
     lv_obj_set_pos(foot, foot_x, foot_y);
   }
 
   lv_obj_update_layout(bubble);
-  lv_coord_t bw = lv_obj_get_width(bubble);
   lv_coord_t bh = lv_obj_get_height(bubble);
+  // Width for x-alignment is computed analytically from the widest child (text/sender/footer),
+  // NOT lv_obj_get_width(): right after a send the layout isn't settled and get_width reads wide,
+  // which put the (actually narrow) outgoing bubble on the LEFT until the next rebuild.
+  lv_coord_t bw = inner_w + 2 * kChatBubblePadH;
   if (bw > kBubbleMaxW) bw = kBubbleMaxW;
   const lv_coord_t x_pos = m.outgoing ? (kContentW - bw - kChatSideGutter) : kChatSideGutter;
   lv_obj_set_pos(bubble, x_pos, vp_y);
@@ -35724,6 +36397,12 @@ void UITask::onThreadsChanged() {
    * channels / contacts added via the companion-serial protocol show up
    * immediately instead of after the 4 s backstop. */
   _next_mesh_thread_refresh = 0;
+#if !defined(HAS_TANMATSU)
+  /* Nudge any Contacts/Chats web client to refetch (new/changed message). This runs
+   * in the mesh callback context; flag it and let the UI loop do the pushTermData so
+   * the data ring stays single-producer (the UI loop is the only other producer). */
+  s_web_rx_nudge = true;
+#endif
 }
 
 void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
@@ -37463,6 +38142,9 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   }
   ++_msgcount;
   markMsgsDirty();
+#if !defined(HAS_TANMATSU)
+  s_web_rx_nudge = true;   // any new/changed message -> nudge the Contacts/Chats web client to refetch
+#endif
   return t_idx;
 }
 
@@ -37482,6 +38164,9 @@ void UITask::onMessageAcked(uint32_t ack_hash) {
   if (any) g_lv.dirty_timeline = true;
 #else
   (void)any;
+#endif
+#if !defined(HAS_TANMATSU)
+  if (any) s_web_rx_nudge = true;   // delivery flipped to ✓✓ -> refresh the web chat
 #endif
 }
 
@@ -37829,6 +38514,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_map_night = touchPrefsGetMapNight();          // map night mode (render-time tile invert)
   s_map_show_coords   = touchPrefsGetMapShowCoords();     // per-element map text/marker visibility
   s_map_show_tilexyz  = touchPrefsGetMapShowTileXYZ();
+  s_map_tile_debug    = touchPrefsGetMapTileDebug();      // developer: tile-pipeline diagnostic overlay
   s_map_show_contacts = touchPrefsGetMapShowContacts();
   s_map_show_links    = touchPrefsGetMapShowLinks();      // dotted self->contact link lines (PR #61)
   s_map_style         = touchPrefsGetMapStyle();          // 0=OpenStreetMap (default), 1=OpenTopoMap
@@ -38411,6 +39097,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     g_web_mirror.setScreenSize(s_web_fb_w, s_web_fb_h);
     g_web_mirror.setEnabled(s_remote_mode ? true : touchPrefsGetWebMirror());
     g_web_mirror.setRemote(s_remote_mode);    // browser shows the Rotate button only in remote mode
+    g_web_mirror.setTerminalOn(!s_remote_mode && touchPrefsGetWebTerminal());   // web mesh terminal (runtime; not in the off-screen boot mode)
     if (s_remote_mode) webMirrorEnsureBufs();   // pre-allocate the mirror shadow/band buffers up front
     lv_indev_drv_init(&s_web_indev_drv);
     s_web_indev_drv.type    = LV_INDEV_TYPE_POINTER;
@@ -39563,14 +40250,15 @@ void UITask::newRoomMsgFromPubWithMeta(uint8_t path_len, bool is_flood,
 }
 
 void UITask::appSentMsgToContact(const uint8_t* to_pub, const char* to_name, const char* text,
-                                 uint32_t ack_hash) {
+                                 uint32_t ack_hash, uint32_t sent_fp) {
   if (!to_name || !to_name[0] || !text || !text[0]) return;
   const char* sender = (_node_prefs && _node_prefs->node_name[0]) ? _node_prefs->node_name : "me";
   // Mirror an app-originated DM as a local outgoing bubble in the recipient's thread (#46) — the
   // on-device UI is otherwise the only message consumer that never sees sends made from the
   // companion app. appendMessage creates the thread if it doesn't exist and refreshes the view.
+  // sent_fp links a locally-originated send (web/terminal) to the repeats-heard ring (0 = none).
   appendMessage(to_name, sender, text, false /*channel*/, true /*outgoing*/, false /*mark_unread*/,
-                ack_hash, DELIV_SENT);
+                ack_hash, DELIV_SENT, 0, 0, 0, 0, nullptr, 0, sent_fp);
   // Lock the thread to the contact's pubkey so a reply typed on-device resolves it (mirrors the
   // receive path above).
   const int t = findThreadByName(to_name, false);
@@ -39585,14 +40273,15 @@ void UITask::appSentMsgToContact(const uint8_t* to_pub, const char* to_name, con
   syncThreadMeshSlots(to_name, false);
 }
 
-void UITask::appSentMsgToChannel(const char* channel_name, const char* text) {
+void UITask::appSentMsgToChannel(const char* channel_name, const char* text, uint32_t sent_fp) {
   if (!channel_name || !channel_name[0] || !text || !text[0]) return;
   const char* sender = (_node_prefs && _node_prefs->node_name[0]) ? _node_prefs->node_name : "me";
   // Mirror an app-originated channel message as a local outgoing bubble in the channel thread — the
   // channel-send command otherwise never tells the on-device UI about companion sends (the DM path
   // does, via appSentMsgToContact above). appendMessage creates the thread + refreshes the view.
+  // sent_fp links a locally-originated send (web/terminal) to the repeats-heard ring (0 = none).
   appendMessage(channel_name, sender, text, true /*channel*/, true /*outgoing*/, false /*mark_unread*/,
-                0 /*ack_hash*/, DELIV_SENT);
+                0 /*ack_hash*/, DELIV_SENT, 0, 0, 0, 0, nullptr, 0, sent_fp);
 }
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
@@ -39697,6 +40386,24 @@ void UITask::loop() {
 #endif
     uint32_t rip = (WiFi.status() == WL_CONNECTED) ? (uint32_t)WiFi.localIP() : 0;
     if (rip != s_remote_ph_ip) drawRemotePlaceholder();
+  }
+  // Web mesh terminal: run any command the browser typed through the exact same dispatch
+  // as the on-device console (chat commands else the config CLI). Output streams back via
+  // the termLogAppendC hook. Own the CLI sink while active + the on-device console isn't open.
+  if (g_web_mirror.terminalOn() && s_term_log_box == nullptr) {
+    MyMesh::setTerminalSink(&terminalSink);   // idempotent; routes config-CLI/async replies to the web
+    char tcmd[256];
+    while (g_web_mirror.popTermCmd(tcmd, sizeof tcmd)) {
+      // '@'-prefixed lines are the Contacts/Chats data API (JSON back over the data channel);
+      // everything else is a terminal command (browser echoes it locally, so don't echo back).
+      if (handleWebDataCmd(tcmd)) continue;
+      if (!terminalRunChatCommand(tcmd)) the_mesh.runLocalCli(tcmd);
+    }
+    // Live receive: a mesh callback flagged new/changed messages -> nudge the web client (single-producer here).
+    if (s_web_rx_nudge) { s_web_rx_nudge = false; g_web_mirror.pushTermData("{\"t\":\"rx\"}"); }
+    // Periodic status bar refresh (battery / wifi / clock / signal / unread) for the web header.
+    static uint32_t s_web_status_next = 0;
+    if ((int32_t)(millis() - s_web_status_next) >= 0) { s_web_status_next = millis() + 3000; webPushStatus(); }
   }
 #endif
   g_ui_stall_max = 0; g_ui_stall_tag = ""; s_ui_cp_tag = "ui:head"; s_ui_cp_t0 = now;
@@ -40040,7 +40747,12 @@ void UITask::loop() {
 
   // A repeater echo of one of our sent floods was just counted — repaint the
   // open chat so the sent bubble's repeat tag ticks up live.
-  if (the_mesh.takeEchoDirty()) g_lv.dirty_timeline = true;
+  if (the_mesh.takeEchoDirty()) {
+    g_lv.dirty_timeline = true;
+#if !defined(HAS_TANMATSU)
+    s_web_rx_nudge = true;   // repeat-heard tag ticked up -> refresh the web chat too
+#endif
+  }
 
   bool heavy_ok = !g_lv.defer_heavy_refresh || now >= g_lv.heavy_refresh_at_ms;
   if (g_lv.defer_heavy_refresh && heavy_ok) g_lv.defer_heavy_refresh = false;
@@ -40198,11 +40910,23 @@ void UITask::loop() {
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
     // Physical-keyboard boards hide the on-screen keyboard, so browser keystrokes are
     // injected via the same path as the hardware keys (printable chars type in; 0x08 =
-    // backspace, 0x0D = enter/send). Boards with an on-screen keyboard (V4/RAK) type by
-    // tapping it through the web pointer instead, so no key injection is needed there.
+    // backspace, 0x0D = enter/send).
     uint16_t wk;
     for (int i = 0; i < 16 && g_web_mirror.popKey(&wk); ++i)
       handleHwKey((int)wk);
+#else
+    // On-screen-keyboard boards (V4/RAK): the browser's laptop keyboard should type too, not
+    // only pointer-taps on the on-screen keys. Inject into the focused field — which IS the
+    // keyboard's textarea (the mirror strip on these boards), so it behaves exactly like an
+    // on-screen key tap and syncs to the real field on Enter. Enter fires the keyboard's
+    // ready cb (send/next); backspace deletes; other printables type in.
+    uint16_t wk;
+    for (int i = 0; i < 16 && g_web_mirror.popKey(&wk); ++i) {
+      if (!fta) continue;   // no editable field focused -> drain + drop
+      if (wk == 0x0D || wk == 0x0A)      lv_event_send(g_lv.keyboard, LV_EVENT_READY, nullptr);
+      else if (wk == 0x08 || wk == 0x7F) lv_textarea_del_char(fta);
+      else if (wk >= 0x20)               lv_textarea_add_char(fta, (uint32_t)wk);
+    }
 #endif
   }
 #endif
