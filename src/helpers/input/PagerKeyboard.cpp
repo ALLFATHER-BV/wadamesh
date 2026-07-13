@@ -37,10 +37,16 @@ static constexpr char s_symbolMap[KB_ROWS][KB_COLS] = {
 
 // Modifier/special-key positions: 0-based (row*KB_COLS + col), matching the
 // TCA8418 raw event's (code & 0x7F) - 1. Alt is a hold (symbol layer while
-// held); Caps is a press-to-toggle letter-case lock — same UX trail-mate
-// already validated on this exact keyboard.
+// held); Shift is a hold too (momentary uppercase on the base layer, real
+// Shift-key semantics) — held Alt THEN a Shift press instead chords into a
+// toggle for persistent Caps Lock (s_caps). Note: Alt (row2,col0) and Shift
+// (row2,col8) share row2, and row0/row1 col8 are 'o'/'l' — holding
+// Alt+Shift+O or Alt+Shift+L all three at once will phantom-ghost a 'q'/'a'
+// at the row2/col0 intersection (classic diode-less-matrix 3-key rectangle,
+// no software fix possible); harmless in practice since the intended gesture
+// is hold-Alt-tap-Shift-release-both, not holding all three simultaneously.
 static constexpr uint8_t kAltPos       = 2 * KB_COLS + 0; // row2,col0 ('\0' in both layers)
-static constexpr uint8_t kCapsPos      = 2 * KB_COLS + 8; // row2,col8 ('\0' in both layers)
+static constexpr uint8_t kShiftPos     = 2 * KB_COLS + 8; // row2,col8 ('\0' in both layers)
 static constexpr uint8_t kBackspacePos = 2 * KB_COLS + 9; // row2,col9 ('\0' in both layers)
 static constexpr uint8_t kSpacePos     = 3 * KB_COLS + 0; // row3,col0 (' ' in both layers)
 
@@ -50,6 +56,7 @@ static bool s_alt = false;
 static bool s_alt_used = false;         // Alt consumed as a modifier since it was last pressed
 static bool s_alt_tap_pending = false;  // Alt pressed+released with nothing else happening meanwhile
 static bool s_caps = false;
+static bool s_shift_held = false;   // momentary Shift, mirrors s_backspace_held/s_space_held
 static bool s_backspace_held = false;
 static bool s_space_held = false;
 
@@ -106,7 +113,15 @@ void pagerKeyboardPoll() {
     // Any other key event while Alt is held means Alt is being used as a
     // modifier, not tapped solo — cancels the pending-tap interpretation.
     if (s_alt && pressed) s_alt_used = true;
-    if (code == kCapsPos) { if (pressed) s_caps = !s_caps; continue; }
+    if (code == kShiftPos) {
+      if (pressed) {
+        if (s_alt) s_caps = !s_caps;   // Alt (Fn) held + Shift press = toggle persistent Caps Lock
+        else       s_shift_held = true;
+      } else {
+        s_shift_held = false;
+      }
+      continue;
+    }
     if (code == kBackspacePos) { s_backspace_held = pressed; if (pressed) ringPush('\b'); continue; }
     if (code == kSpacePos) { s_space_held = pressed; if (pressed) ringPush(' '); continue; }
     if (!pressed) continue;   // base/symbol keys only emit on press
@@ -117,7 +132,8 @@ void pagerKeyboardPoll() {
 
     char c = s_alt ? s_symbolMap[row][col] : s_keymap[row][col];
     if (c == '\0') continue;
-    if (s_caps && !s_alt) c = (char)toupper((unsigned char)c);   // caps affects the base layer only, matching trail-mate
+    // Caps Lock and a held Shift both mean "uppercase," base layer only.
+    if ((s_caps || s_shift_held) && !s_alt) c = (char)toupper((unsigned char)c);
     ringPush((uint8_t)c);
   }
 }
