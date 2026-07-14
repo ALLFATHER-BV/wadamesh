@@ -154,9 +154,12 @@
     padding:9px 15px;font-weight:650;font-size:.9rem}
   .dl:hover{background:var(--teal-ink)}
   .dl svg{width:15px;height:15px}
-  .dl2{display:inline-flex;align-items:center;gap:6px;margin-top:10px;font-size:.82rem;color:var(--mut);text-decoration:none;font-weight:600}
-  .dl2:hover{color:var(--teal)}
-  .dl2 svg{width:14px;height:14px}
+  .dl2{display:inline-block;margin-top:-2px;text-decoration:none;line-height:1.3}
+  .dl2 .dl2-row{display:inline-flex;align-items:center;gap:6px;font-size:.85rem;color:var(--teal);font-weight:700;white-space:nowrap}
+  .dl2:hover .dl2-row{text-decoration:underline}
+  .dl2 svg{width:14px;height:14px;flex:none}
+  .dl2 .dlver{display:block;font-size:.72rem;color:var(--mut);font-weight:600;margin-top:2px;padding-left:20px;letter-spacing:.03em}
+  .dl2 .dlver:empty{display:none}
   .hint{max-width:760px;margin:18px auto 0;color:var(--mut);font-size:.86rem;text-align:center}
   /* "install a previous version" picker */
   .verpick{max-width:760px; margin:16px auto 0; border:1px solid var(--line); border-radius:12px; background:var(--bg2); text-align:left}
@@ -351,21 +354,21 @@
       <div class="boards">
         <div class="board"><h4>Heltec V4 + TFT</h4><p>ESP32-S3 with CHSC6x touch.</p>
           <esp-web-install-button id="inst-heltec" manifest="https://firmware.wadamesh.com/latest/manifest-heltec-v4-tft.json"></esp-web-install-button>
-          <a class="dl2" data-dl-board="heltec-v4-tft" download href="https://firmware.wadamesh.com/latest/wadamesh-heltec-v4-tft-merged.bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>or download the .bin<span data-dl-ver></span></a></div>
+          <a class="dl2" data-dl-board="heltec-v4-tft" download href="https://firmware.wadamesh.com/latest/wadamesh-heltec-v4-tft-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a></div>
         <div class="board"><h4>LilyGo T-Deck / Plus</h4><p>ESP32-S3 keyboard handheld.</p>
           <esp-web-install-button id="inst-tdeck" manifest="https://firmware.wadamesh.com/latest/manifest-tdeck.json"></esp-web-install-button>
-          <a class="dl2" data-dl-board="tdeck" download href="https://firmware.wadamesh.com/latest/wadamesh-tdeck-merged.bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>or download the .bin<span data-dl-ver></span></a></div>
+          <a class="dl2" data-dl-board="tdeck" download href="https://firmware.wadamesh.com/latest/wadamesh-tdeck-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a></div>
         <div class="board"><h4>ThinkNode M9</h4><p>ESP32-S3 QWERTY handheld (LR1110).</p>
           <esp-web-install-button id="inst-m9" manifest="https://firmware.wadamesh.com/latest-beta/manifest-thinknode-m9.json"></esp-web-install-button>
-          <a class="dl2" data-dl-board="thinknode-m9" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-thinknode-m9-merged.bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>or download the .bin<span data-dl-ver></span></a>
+          <a class="dl2" data-dl-board="thinknode-m9" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-thinknode-m9-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
           <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board: beta channel only until the next stable.</p></div>
         <div class="board"><h4>RAK WisMesh Tap V2</h4><p>ESP32-S3 touch node.</p>
           <esp-web-install-button id="inst-rak" manifest="https://firmware.wadamesh.com/latest-beta/manifest-rak-tap-v2.json"></esp-web-install-button>
-          <a class="dl2" data-dl-board="rak-tap-v2" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-rak-tap-v2-merged.bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>or download the .bin<span data-dl-ver></span></a>
+          <a class="dl2" data-dl-board="rak-tap-v2" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-rak-tap-v2-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
           <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board: beta channel only until the next stable.</p></div>
         <div class="board"><h4>Heltec V4-R8 <span style="font-weight:600;color:var(--mut)">(experimental)</span></h4><p>ESP32-S3 &middot; 8&nbsp;MB PSRAM &middot; SD card.</p>
           <esp-web-install-button id="inst-v4r8" manifest="https://firmware.wadamesh.com/latest-beta/manifest-heltec-v4-r8-tft.json"></esp-web-install-button>
-          <a class="dl2" data-dl-board="heltec-v4-r8-tft" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-heltec-v4-r8-tft-merged.bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>or download the .bin<span data-dl-ver></span></a>
+          <a class="dl2" data-dl-board="heltec-v4-r8-tft" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-heltec-v4-r8-tft-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
           <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board, not yet hardware-tested &mdash; beta only. Please flash with care and report back.</p></div>
         <div class="board"><h4>Tanmatsu</h4><p>ESP32-P4 keyboard handheld.</p>
           <p style="color:var(--mut);font-size:.84rem;margin:0;line-height:1.5">Already have one? No USB flashing needed — install WADAMESH straight from the <b>Tanmatsu app store</b> on the device.</p>
@@ -579,7 +582,7 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
     document.querySelectorAll('[data-dl-board]').forEach(a => {
       const feed = a.hasAttribute('data-dl-betaonly') ? 'latest-beta' : WM.feed;
       a.href = 'https://firmware.wadamesh.com/' + feed + '/wadamesh-' + a.getAttribute('data-dl-board') + '-merged.bin';
-      const v = a.querySelector('[data-dl-ver]'); if (v) v.textContent = WM_VER[feed] ? ' · ' + WM_VER[feed] : '';
+      const v = a.querySelector('[data-dl-ver]'); if (v) v.textContent = WM_VER[feed] || '';
     });
   };
   ['latest','latest-beta'].forEach(feed => fetch('https://firmware.wadamesh.com/' + feed + '/version.json', {cache:'no-store'})
