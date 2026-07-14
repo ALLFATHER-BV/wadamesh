@@ -1,0 +1,11 @@
+# beta_39 (TEST) - Translations, deletes that stick and are fast, emoji fixes. On top of beta_38.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- New ---
+Big translation pass: hundreds of previously-English strings across menus, settings, dialogs and the setup flow are now translated into all 11 non-English languages (Dutch, German, French, Spanish, Italian, Russian, Ukrainian, Bulgarian, Serbian, Greek, Brazilian Portuguese). Menu rows that carry an icon now translate too, instead of silently falling back to English. Switch language under Settings.
+ThinkNode M9 and RAK WisMesh Tap V2 can now be installed straight from the web flasher.
+
+# --- Fixed ---
+Deleting a message, or clearing a whole chat, now sticks: it survives a reboot or a hardware reset instead of coming back (reported by Leon P and MrWeavis). The delete used to sit in a save that was batched up to 30 seconds later, so a reset in that window undid it.
+Deleting is also much faster now. The chat history is written compactly - only the messages you actually have, instead of the full 5000-slot ring every time - so a delete, a history wipe, or a reboot no longer pauses the screen while it saves. Normal message saving is lighter too.
+Emoji picker: the food and object emoji that showed as empty boxes (umbrella, coffee, pizza, cake, rocket, camera, phone, laptop, calendar, antenna, e-mail, house, car, watch) now render properly - they were listed but never baked into the font.

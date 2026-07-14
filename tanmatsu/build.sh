@@ -41,7 +41,10 @@ fi
 # build on a fresh beta_N tag bakes exactly "beta_N" — no more hand-bumping the
 # old hardcoded CMake define (which left every dev flash claiming the last beta).
 # Passed as a CMake cache var: idf.py reconfigures automatically when it changes.
-WADA_FW_TAG="$(git describe --tags --match 'beta_*' --always 2>/dev/null || echo dev)"
+# A caller (the app-store publish) can pass the exact release tag via the env, since
+# the beta_N git tag may not be fetched locally when gh created it remotely. Fall back
+# to git describe for dev builds ("beta_28-14-gabc123" = 14 commits past the tag).
+WADA_FW_TAG="${WADA_FW_TAG:-$(git describe --tags --match 'beta_*' --always 2>/dev/null || echo dev)}"
 WADA_FW_DATE="$(date '+%-d %b %Y')"
 
 exec idf.py -B build/tanmatsu \

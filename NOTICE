@@ -72,5 +72,8 @@ codec driver, variants/lilygo_tlora_pager/Es8311Codec.cpp)
     power sequence, and MCLK clock-divider coefficients are derived from
     Espressif's public es8311.c/es8311_reg.h.
 
+LovyanGFX (RAK WisMesh Tap V2 display backend)
+    Copyright (c) lovyan03 — FreeBSD License — https://github.com/lovyan03/LovyanGFX
+
 This list is not exhaustive and is expanded as dependencies are vendored or
 added.

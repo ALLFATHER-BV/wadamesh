@@ -836,6 +836,10 @@ public:
    *  "Add to contacts" button — can persist; otherwise that contact is RAM-only
    *  and lost on reboot. */
   bool uiPersistContacts() { saveContacts(); return true; }
+  // Flush a pending (possibly coalesced) contacts write before a deliberate
+  // shutdown/reboot, so the on-device power paths don't lose the last refresh
+  // window on card-less devices (see MyMesh::loop). No-op when nothing is pending.
+  void flushContactsIfDirty() { if (dirty_contacts_expiry) { saveContacts(); dirty_contacts_expiry = 0; } }
 
   /** Remove a contact from a device-UI action and PERSIST it (mirrors the
    *  companion app's CMD_REMOVE_CONTACT). The base removeContact() only drops it
@@ -979,6 +983,13 @@ private:
   uint8_t *sign_data;
   uint32_t sign_data_len;
   unsigned long dirty_contacts_expiry;
+  // Advert-driven contacts-save coalescer (see MyMesh::loop). On card-less devices a
+  // full contacts rewrite can trigger a multi-second SPIFFS GC that freezes the loop;
+  // constant advert refreshes would churn it. A change in the contact SET saves
+  // promptly; pure refreshes coalesce to CONTACTS_REFRESH_SAVE_INTERVAL. -1 forces
+  // the first save. Kept in sync by every MyMesh::saveContacts() call.
+  int      _last_saved_contacts_n = -1;
+  uint32_t _next_contacts_refresh_save = 0;
 
   TransportKey send_scope;
   TransportKey _chan_scope_saved;             // push/popChannelScope stash

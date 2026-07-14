@@ -29,6 +29,7 @@ namespace fs { class FS; }   // forward decl only — keep this header's layout 
 class SdNvsPrefs {
 public:
   static void useFile(fs::FS* fs, const char* dir);   // route prefs to <dir>/<ns>.kv
+  static fs::FS* fileFs();   // the active file-mode fs, or nullptr when NVS-backed
 
   bool begin(const char* ns, bool readOnly = false);
   void end();

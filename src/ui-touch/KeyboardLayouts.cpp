@@ -227,28 +227,28 @@ static const lv_btnmatrix_ctrl_t kb_en_upper_ctrl[] = {
 static const char* const kb_fr_lower[] = {
     "1#", "a", "z", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
     "ABC", "q", "s", "d", "f", "g", "h", "j", "k", "l", "m", LV_SYMBOL_NEW_LINE, "\n",
-    "_", "-", "w", "x", "c", "v", "b", "n", ".", ",", ":", "", "\n",
+    "_", "-", "w", "x", "c", "v", "b", "n", ".", ",", ":", "\n",
     LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_fr_lower_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
-    LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_HIDDEN,
+    LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
     LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 static const char* const kb_fr_upper[] = {
     "1#", "A", "Z", "E", "R", "T", "Y", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
     "abc", "Q", "S", "D", "F", "G", "H", "J", "K", "L", "M", LV_SYMBOL_NEW_LINE, "\n",
-    "_", "-", "W", "X", "C", "V", "B", "N", ".", ",", ":", "", "\n",
+    "_", "-", "W", "X", "C", "V", "B", "N", ".", ",", ":", "\n",
     LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_fr_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
-    LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_HIDDEN,
+    LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
     LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
@@ -686,9 +686,13 @@ const char* keyboardLayoutName(KeyboardLayoutId id) {
 }
 
 void keyboardLayoutsApply(lv_obj_t* keyboard, KeyboardLayoutId id) {
-    if (!keyboard) return;
     if (static_cast<uint8_t>(id) >= KEYBOARD_LAYOUT_COUNT) id = KeyboardLayoutId::EN;
+    // Track the active layout even with NO on-screen keyboard to re-map — the
+    // Tanmatsu cycles layouts via double-space with keyboard == nullptr, and
+    // the early return here used to skip the state change, making the cycle a
+    // permanent no-op on that board.
     s_current_layout = id;
+    if (!keyboard) return;
 
   const OsKeyboardLayout& lo = k_os_layouts[static_cast<int>(id)];
   lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_LOWER, const_cast<const char**>(lo.lower_map), lo.lower_ctrl);   // maps now in flash; LVGL never writes them

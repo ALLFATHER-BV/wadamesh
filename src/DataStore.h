@@ -43,6 +43,12 @@ public:
   // if the dir can't be created. No-op on non-ESP32.
   bool useSdStorage();
 #endif
+#if defined(HAS_TANMATSU)
+  // Full-store adoption of the SD_MMC card (Tanmatsu): identity + prefs move off
+  // the broken-metadata internal FFat (its exists()/f_stat lie, which made the
+  // gated loads come up empty). Caller migrates FFat-resident files first.
+  bool useSdMmcStorage();
+#endif
   FILESYSTEM* getPrimaryFS() const { return _fs; }
   FILESYSTEM* getSecondaryFS() const { return _fsExtra; }
   // Route contacts + channels (see _getContactsChannelsFS) to a different FS than identity/prefs.
@@ -70,6 +76,14 @@ public:
   bool removeFile(FILESYSTEM* fs, const char* filename);
   uint32_t getStorageUsedKb() const;
   uint32_t getStorageTotalKb() const;
+#if defined(ESP32)
+  // True while contacts/channels live on the internal flash FS (SPIFFS/LittleFS),
+  // whose garbage collection makes a full rewrite expensive — a multi-second GC
+  // pass that freezes the loop. False once routed to an SD card (useSdStorage sets
+  // _root; setSecondaryFS sets _fsExtra) — FAT has no such GC. Lets callers coalesce
+  // the advert-driven contacts save on card-less devices without changing SD boards.
+  bool contactsOnInternalFlash() const { return _root[0] == '\0' && _fsExtra == nullptr; }
+#endif
 
 private:
   FILESYSTEM* _getContactsChannelsFS() const { if (_fsExtra) return _fsExtra; return _fs;};

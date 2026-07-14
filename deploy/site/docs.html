@@ -73,6 +73,11 @@
   .mini{background:#16191d; border-radius:12px; padding:7px; border:1px solid #e9ece7}
   .mini img{display:block; width:100%; height:auto; border-radius:6px}
   .mini .cap{margin-top:6px}
+  .webgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(178px,1fr)); gap:18px; margin-top:22px}
+  figure.phone{margin:0; background:#16191d; border-radius:20px; padding:8px; border:1px solid #e9ece7; box-shadow:0 18px 44px -26px rgba(21,24,30,.5)}
+  figure.phone img{display:block; width:100%; height:auto; border-radius:13px}
+  figure.phone figcaption{text-align:center; font-family:'JetBrains Mono',monospace; font-size:.66rem; color:var(--mut); margin-top:8px; letter-spacing:.04em}
+  .subh{font-size:1.06rem; font-weight:700; color:var(--ink); margin:30px 0 2px}
 
   /* Settings-page detail cards: real screenshot + what the page does + its controls */
   .sgrp{font-family:'JetBrains Mono',monospace; font-size:.7rem; letter-spacing:.14em; text-transform:uppercase; color:var(--mut); margin:30px 0 0; padding-top:4px}
@@ -126,6 +131,8 @@
     <a href="#settings">Settings</a>
     <div class="grp">With your phone</div>
     <a href="#companion">Companion mode</a>
+    <a href="#remote">Remote &amp; web app</a>
+    <a href="#web">Web browser</a>
     <div class="grp">Reference</div>
     <a href="#updates">Updates &amp; test builds</a>
     <a href="#settings-pages">Settings pages</a>
@@ -203,7 +210,7 @@
           <p>An OpenStreetMap / OpenTopoMap view with your position and your contacts plotted as markers, plus link lines from you to each node. Tiles are fetched over Wi-Fi through the wadamesh proxy and cached to flash (or microSD), so areas you've viewed work offline.</p>
           <p>It also has a line-of-sight analyzer: pick a contact and it uses SRTM elevation to show whether terrain blocks the path.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/map.png" alt="Map"></div><div class="cap">Map</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/map.png?v=2" alt="Map"></div><div class="cap">Map</div></div>
       </div>
       <div class="prose">
         <h3>Bring your own tiles (offline maps)</h3>
@@ -266,6 +273,60 @@
       </div>
     </section>
 
+    <section class="doc" id="remote">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg></span> Remote &amp; web app</h2>
+      <div class="row">
+        <div class="prose">
+          <p>Over Wi-Fi, a WADAMESH device can put its screen &mdash; or a whole browser app &mdash; on your phone or laptop. There is nothing to install: the device serves a web page you open in any browser on the same network. Turn it on from <b>Home &rarr; Remote</b> (or the Remote screen in Settings), pick a mode, and open the address it shows.</p>
+          <h3>Three ways to connect</h3>
+          <ul>
+            <li><b>Remote app</b> (recommended) &mdash; a full control panel, native to the browser: <b>Chats</b>, <b>Contacts</b>, a <b>Terminal</b> and <b>Settings</b>, with live message notifications. Run the device entirely from your phone.</li>
+            <li><b>Screen mirror (VNC)</b> &mdash; streams the device's live screen to the browser and sends your taps and key presses back, so you see and drive exactly what is on the device, in real time.</li>
+            <li><b>Remote UI</b> &mdash; renders the interface off-screen at desktop size (a wide landscape layout) and streams that instead of the small panel, for a roomier view on a big screen.</li>
+          </ul>
+          <p>Screen mirror and Remote UI both show the same interface you already know from the device &mdash; mirrored, or drawn larger. The <b>Remote app</b> is different: a browser-native panel built for a phone, shown below.</p>
+          <h3>Turning it on</h3>
+          <p>Connect the device to Wi-Fi first, then open <b>Home &rarr; Remote</b>. The screen shows the address to type into your browser (like <code>http://192.168.1.42</code>) and a switch for each mode. Only one streaming mode runs at a time, and the phone and the device must be on the same Wi-Fi network.</p>
+        </div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/app_remote.png" alt="Remote access screen on the device"></div><div class="cap">Remote &mdash; turn it on, then open the address</div></div>
+      </div>
+
+      <div class="subh">The remote app in a browser</div>
+      <div class="prose" style="max-width:70ch"><p>The remote app is phone-first. It carries the same status icons as the device (signal, Wi-Fi, Bluetooth, battery), pops up a notification when a message arrives, and refreshes an open chat on its own as replies come in &mdash; so you rarely need to touch the device itself.</p></div>
+      <div class="webgrid">
+        <figure class="phone"><img src="docs-img/web_chats.png" alt="Chats tab in the web app"><figcaption>Chats &mdash; DMs, channels, unread badges</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_chat.png" alt="A conversation in the web app"><figcaption>A conversation, with delivery ticks</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_contacts.png" alt="Contacts tab in the web app"><figcaption>Contacts &mdash; search, sort, filter</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_contact_sheet.png" alt="Contact actions in the web app"><figcaption>Tap a contact for actions</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_discovered.png" alt="Discovered nodes in the web app"><figcaption>Discovered nodes &mdash; add with a tap</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_settings.png" alt="Settings in the web app"><figcaption>Settings &mdash; including live radio</figcaption></figure>
+        <figure class="phone"><img src="docs-img/web_terminal.png" alt="Terminal in the web app"><figcaption>Terminal &mdash; the MeshCore CLI</figcaption></figure>
+      </div>
+    </section>
+
+    <section class="doc" id="web">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> Web browser</h2>
+      <div class="row">
+        <div class="prose">
+          <p>WADAMESH can read the web on its own screen. Open the <b>Web</b> app from the home launcher, type an address, and the device fetches the page and shows it as plain, readable text &mdash; articles, wikis, docs, simple sites. There is no proxy in the middle and nothing is tracked: it pulls the page straight from the site and strips it down to the words.</p>
+          <ul>
+            <li><b>Text only</b> &mdash; no JavaScript, no images, no ads. Pages load small and read clean.</li>
+            <li><b>Tappable links</b> &mdash; follow a link to the next page, with <b>back</b>, <b>forward</b> and <b>refresh</b> in the toolbar.</li>
+            <li><b>Direct &amp; private</b> &mdash; the device connects to the site itself over Wi-Fi (HTTPS); no server of ours sees what you read.</li>
+          </ul>
+          <p>Reading the web on-device takes more memory than the smallest board carries, so the Web app is on the <b>T-Deck</b> and <b>Tanmatsu</b>. On the 2&nbsp;MB Heltec&nbsp;V4 it is hidden &mdash; that board can't complete the secure handshake &mdash; but you can still bounce any link to your phone (below).</p>
+        </div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/app_web.png" alt="The on-device Web app"></div><div class="cap">Web &mdash; open an address, read it as text</div></div>
+      </div>
+
+      <div class="subh">Links in chat</div>
+      <div class="prose" style="max-width:70ch"><p>A link that arrives in a message is now tappable. Tap it for a small menu: <b>Open in web</b> loads the page in the on-device browser (T-Deck and Tanmatsu), and <b>Create QR</b> puts a scannable QR code on screen so you can open the link on your phone. Create QR works on <em>every</em> board, including the Heltec&nbsp;V4 &mdash; so even where the browser isn't available, a link is one tap from your phone.</p></div>
+      <div class="gallery">
+        <div class="mini"><img src="docs-img/app_web_links.png" alt="Tapping a link in chat opens a menu"><div class="cap">Tap a link &mdash; Open in web, or Create QR</div></div>
+        <div class="mini"><img src="docs-img/app_web_qr.png" alt="A QR code for a link from chat"><div class="cap">Create QR &mdash; scan to open on your phone</div></div>
+      </div>
+    </section>
+
     <section class="doc" id="updates">
       <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span> Updates &amp; test builds</h2>
       <div class="row">
@@ -286,7 +347,7 @@
 
     <section class="doc" id="settings-pages">
       <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg></span> Settings pages</h2>
-      <div class="prose" style="max-width:68ch"><p>WADAMESH splits its settings into eighteen pages. Here is what each one does and the controls you will find on it. Open any page from the Settings tab; a back chevron in the title bar returns you to the grid.</p></div>
+      <div class="prose" style="max-width:68ch"><p>WADAMESH splits its settings into nineteen pages. Here is what each one does and the controls you will find on it. Open any page from the Settings tab; a back chevron in the title bar returns you to the grid.</p></div>
 
       <div class="sgrp">Identity &amp; radio</div>
       <div class="scards">
@@ -355,6 +416,16 @@
             <li>On / off with a live <b>fix status</b> (acquiring, 2D/3D, age)</li>
             <li><b>Serial baud</b> rate (applies after a reboot)</li>
             <li>Reads "no GPS module" on devices without one</li>
+          </ul>
+        </div>
+        <div class="scard">
+          <div class="thumb"><img src="docs-img/set_mqtt_bridge.png" alt="MQTT bridge settings"></div>
+          <h3>MQTT bridge <span class="tag">experimental</span></h3>
+          <div class="lede">Forward received messages to your own MQTT broker.</div>
+          <ul>
+            <li>Publishes the <b>text, sender and time</b> of messages your node hears to an MQTT broker</li>
+            <li>Broker <b>host, port and topic</b>, plus an <b>encryption key</b></li>
+            <li>Stays off until you <b>accept the privacy note</b> &mdash; anyone who can read the broker sees the messages, so use one you control, never a public broker</li>
           </ul>
         </div>
       </div>

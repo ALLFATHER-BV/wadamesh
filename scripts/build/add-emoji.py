@@ -26,6 +26,23 @@ SINGLE = [
     (0x26BD,  "26bd"),    # soccer ball   âš½
     (0x1F3C8, "1f3c8"),   # american football  ðŸ
     (0x1F5FF, "1f5ff"),   # moai  ðŸ—¿
+    # objects/food listed in the picker (k_emoji_items) but never baked -> they
+    # rendered as the notdef box on-device (the beta_38 "emoji tofu"). Bake them.
+    (0x2614,  "2614"),    # umbrella with rain
+    (0x2615,  "2615"),    # hot beverage
+    (0x1F355, "1f355"),   # pizza
+    (0x1F382, "1f382"),   # birthday cake
+    (0x1F680, "1f680"),   # rocket
+    (0x1F4F7, "1f4f7"),   # camera
+    (0x1F4F1, "1f4f1"),   # mobile phone
+    (0x1F4BB, "1f4bb"),   # laptop
+    (0x1F310, "1f310"),   # globe with meridians (Web app icon)
+    (0x1F4C5, "1f4c5"),   # calendar
+    (0x1F4E1, "1f4e1"),   # satellite antenna
+    (0x1F4E7, "1f4e7"),   # e-mail
+    (0x1F3E0, "1f3e0"),   # house
+    (0x1F697, "1f697"),   # car
+    (0x231A,  "231a"),    # watch (sat between car + bulb in the picker, still tofu)
 ]
 # ZWJ sequences baked as ONE combined image, keyed on the lead codepoint, with the
 # trailing visible symbol(s) mapped to the zero-width glyph so the whole UTF-8

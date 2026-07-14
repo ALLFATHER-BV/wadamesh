@@ -137,6 +137,11 @@ static int s_companion_ota_pinned_reply_target = -1;
 #define DIRECT_SEND_PERHOP_FACTOR       6.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
 #define LAZY_CONTACTS_WRITE_DELAY       5000
+// On card-less (internal-flash) devices, coalesce advert-refresh contacts saves to
+// at most once per this window — a full rewrite can trigger a multi-second SPIFFS GC
+// that freezes the loop, and re-adverts (last-heard/path refreshes) otherwise churn
+// it constantly. A change in the contact SET still saves promptly (see MyMesh::loop).
+#define CONTACTS_REFRESH_SAVE_INTERVAL  300000
 // Our self-chosen room-session keep-alive interval (secs). Room servers zero the
 // legacy suggested-interval field in LOGIN_OK, so the client picks. 128 is the
 // value upstream itself recommended while the field was live (CLIENT_KEEP_ALIVE_SECS
@@ -237,27 +242,26 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms) {
 #endif
 #endif
 static const char* kMeshcomodHelpMsg =
-  "help\n"
-  "status\n"
-  "ota start\n"
-  "ota url <https://...bin>\n"
-  "ota netdiag\n"
-  "ota status\n"
-  "wifi scan\n"
-  "wifi use <n>\n"
-  "wifi set ssid <v>\n"
-  "wifi set pwd <v>\n"
-  "wifi status\n"
-  "wifi on\n"
-  "wifi off\n"
-  "wifi apply\n"
-  "wifi clear\n"
-  "tcp on\n"
-  "tcp off\n"
-  "tcp status\n"
-  "ble on\n"
-  "ble off\n"
-  "ble status";
+  "help / ?            this command list\n"
+  "status              device status\n"
+  "ver                 firmware version\n"
+  "clock               RTC time (UTC)\n"
+  "get                 show radio params\n"
+  "advert              send a flood advert\n"
+  "advert.zerohop      send a 0-hop advert\n"
+  "set name <v>        set node name\n"
+  "set freq <MHz>      set frequency\n"
+  "set bw <kHz>        set bandwidth\n"
+  "set sf <7-12>       set spreading factor\n"
+  "set cr <5-8>        set coding rate\n"
+  "set tx <dBm>        set TX power\n"
+  "wifi status|on|off|scan\n"
+  "wifi use <n> | set ssid <v> | set pwd <v> | apply | clear\n"
+  "tcp status|on|off\n"
+  "ble status|on|off\n"
+  "ota status|start|netdiag | ota url <https://...bin>\n"
+  "reboot              restart the device\n"
+  "bootloader / dfu    reboot to download mode";
 
 #define MESHCOMOD_CMD_CACHE_SIZE 6
 struct MeshcomodCmdCacheEntry {
@@ -3421,6 +3425,11 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (dirty_contacts_expiry) { // is there are pending dirty contacts write needed?
       saveContacts();
     }
+    // The app's reboot button must not drop chat history: the touch UI's writes
+    // are lazy (up to ~30 s apart on the deep SD ring), so flush synchronously
+    // first — the same contract the on-device power menu honors. Skipping this
+    // was the "read and unread messages deleted after a manual reboot" report.
+    if (_ui) _ui->persistHistoryNow();
     board.reboot();
   } else if (cmd_frame[0] == CMD_GET_BATT_AND_STORAGE) {
     uint8_t reply[11];
@@ -4010,6 +4019,11 @@ static bool save_filter(const ContactInfo& c) {
 
 void MyMesh::saveContacts() {
   _store->saveContacts(this, save_filter);
+  // Keep the advert-save coalescer (MyMesh::loop) in sync on EVERY save path —
+  // lazy flush, app command, reboot — so the next lazy check compares against the
+  // freshly-written contact set + resets the refresh window.
+  _last_saved_contacts_n = getNumContacts();
+  _next_contacts_refresh_save = futureMillis(CONTACTS_REFRESH_SAVE_INTERVAL);
 }
 
 void MyMesh::enterCLIRescue() {
@@ -4456,10 +4470,29 @@ void MyMesh::loop() {
     checkSerialInterface();
   }
 
-  // is there are pending dirty contacts write needed?
+  // Pending contacts write. On card-less devices the contacts file lives on internal
+  // flash (SPIFFS/LittleFS), where a full rewrite can trigger a multi-second GC pass
+  // that freezes the whole loop (About "Loop stalls" showed ~18 s on a V4). Adverts
+  // refresh existing contacts constantly, so persisting every refresh churns the
+  // flash. Save promptly when the contact SET changed (a new/removed node MUST
+  // survive a reboot), but coalesce pure refreshes (last-heard time, path, name/GPS
+  // of a known node — all self-healing, and a clean reboot flushes them via
+  // CMD_REBOOT) to CONTACTS_REFRESH_SAVE_INTERVAL. SD-routed boards (FAT, no GC) are
+  // unaffected — contactsOnInternalFlash() is false there, so they always save.
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
-    saveContacts();
-    dirty_contacts_expiry = 0;
+    bool defer = false;
+#if defined(ESP32)
+    if (getNumContacts() == _last_saved_contacts_n && _store->contactsOnInternalFlash()
+        && !millisHasNowPassed(_next_contacts_refresh_save)) {
+      defer = true;   // no add/remove + still inside the refresh window on GC-prone flash
+    }
+#endif
+    if (defer) {
+      dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);   // re-check soon; don't rewrite yet
+    } else {
+      saveContacts();                 // updates _last_saved_contacts_n + _next_contacts_refresh_save
+      dirty_contacts_expiry = 0;
+    }
   }
 
 #if defined(ENABLE_ADVERT_ON_BOOT) && ENABLE_ADVERT_ON_BOOT == 1

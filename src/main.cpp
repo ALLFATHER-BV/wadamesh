@@ -48,11 +48,11 @@ static uint32_t _atoi(const char* sp) {
   DataStore store(LittleFS, rtc_clock);
 #elif defined(ESP32)
   #include <SPIFFS.h>
-  #if defined(HAS_TDECK_GT911)
+  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
     #include <SD.h>
     #include <Preferences.h>
     #ifndef PIN_SD_CS
-      #define PIN_SD_CS 39      // T-Deck microSD chip-select
+      #define PIN_SD_CS 39      // T-Deck microSD chip-select (V4-R8 sets 3 in the env)
     #endif
   #endif
   extern "C" void set_boot_phase(int phase);
@@ -192,9 +192,72 @@ void halt() {
 
 #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)
 
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+// ---- SPIFFS -> SD migration (fixes the beta_36 "lost my profile" upgrades) ----
+// Users who flipped "Store data on SD" before beta_36 ran with the toggle IGNORED
+// (the flag never survived a reboot), so their identity/prefs/contacts kept living
+// on SPIFFS. When beta_36 made the flag finally take effect, useSdStorage() pointed
+// the store at an EMPTY card and the identity store generated a brand-new node:
+// "lost profile settings". The data was never gone — it was orphaned on SPIFFS.
+// Copies every SPIFFS file into SD:/meshcomod ("/prefs/<ns>.kv" flattens to
+// "/meshcomod/<ns>.kv", matching SdNvsPrefs's SD layout). Returns true only when
+// the identity file landed on the card — the caller must NOT adopt the card
+// otherwise. force=true (the Settings "Copy internal data to SD" recovery button)
+// overwrites whatever the card holds; the boot path never clobbers existing files.
+// Both filesystems must be mounted by the caller.
+bool meshcomodMigrateSpiffsToSd(bool force) {
+  if (!SPIFFS.exists("/identity/_main.id")) return false;   // nothing worth adopting
+  SD.mkdir("/meshcomod");
+  SD.mkdir("/meshcomod/identity");
+  SD.mkdir("/meshcomod/bl");
+  SD.mkdir("/meshcomod/lock");
+  bool identity_ok = false;
+  int copied = 0, failed = 0;
+  static uint8_t buf[4096];
+  File root = SPIFFS.open("/");
+  for (File f = root.openNextFile(); f; f = root.openNextFile()) {
+    if (f.isDirectory()) { f.close(); continue; }
+    // SPIFFS is flat: name() is the full path ("/identity/_main.id", "/prefs/touch.kv", ...)
+    const char* sp = f.name();
+    char src[96];
+    snprintf(src, sizeof src, "%s%s", sp[0] == '/' ? "" : "/", sp);
+    char dst[112];
+    if (strncmp(src, "/prefs/", 7) == 0)
+      snprintf(dst, sizeof dst, "/meshcomod/%s", src + 7);   // kv files sit flat on the card
+    else
+      snprintf(dst, sizeof dst, "/meshcomod%s", src);
+    if (!force && SD.exists(dst)) { f.close(); continue; }   // boot path: never clobber
+    File s = SPIFFS.open(src, FILE_READ);
+    File d = s ? SD.open(dst, FILE_WRITE) : File();          // FILE_WRITE truncates
+    bool ok = s && d;
+    while (ok && s.available()) {
+      const size_t n = s.read(buf, sizeof buf);
+      if (n == 0 || d.write(buf, n) != n) ok = false;
+    }
+    if (s) s.close();
+    if (d) d.close();
+    if (ok) { ++copied; if (strcmp(src, "/identity/_main.id") == 0) identity_ok = true; }
+    else    { ++failed; Serial.printf("[BOOT] SD migrate FAILED: %s\n", src); if (SD.exists(dst)) SD.remove(dst); }
+    f.close();
+    yield();
+  }
+  root.close();
+  // The boot path skips files the card already has — an identity already on the
+  // card counts as "landed" (nothing needed migrating).
+  if (!force && !identity_ok && SD.exists("/meshcomod/identity/_main.id")) identity_ok = true;
+  Serial.printf("[BOOT] SPIFFS -> SD migration: %d copied, %d failed, identity %s\n",
+                copied, failed, identity_ok ? "ok" : "MISSING");
+  return identity_ok;
+}
+#endif
+
 void setup() {
   Serial.begin(115200);
+#if defined(HAS_RAK_TAP_V2)
+  delay(1500);  // USB-CDC enumeration before boot logs
+#else
   delay(200);
+#endif
   Serial.println("[BOOT] setup start");
 
   // Widen the task-watchdog grace period. The ~5 s default trips during a legitimate-but-slow flash
@@ -238,6 +301,23 @@ void setup() {
 
   board.begin();
   Serial.println("[BOOT] board ok");
+
+#if defined(HAS_RAK_TAP_V2)
+  // Quick PSRAM sanity check — silent crash before SPIFFS could be bad PSRAM config
+  {
+    void* p = heap_caps_malloc(64, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    bool psram_ok = (p != NULL);
+    if (p) {
+      memset(p, 0x55, 64);
+      bool match = true;
+      for (int i = 0; i < 64; ++i) match &= (((uint8_t*)p)[i] == 0x55);
+      free(p);
+      psram_ok = match;
+    }
+    Serial.printf("[BOOT] psram probe: %s\n", psram_ok ? "OK" : "FAIL"); Serial.flush();
+    if (!psram_ok) { Serial.println("[BOOT] FATAL: PSRAM readback mismatch — halting"); halt(); }
+  }
+#endif
 
 #ifdef DISPLAY_CLASS
   DisplayDriver* disp = NULL;
@@ -287,8 +367,16 @@ void setup() {
                     static_cast<unsigned long>(bn),
                     static_cast<unsigned>(esp_reset_reason()),
                     static_cast<unsigned>(nvs_free));
+#if defined(HAS_RAK_TAP_V2)
+      Serial.flush();
+    }
+    Serial.println("[BOOT] about to call initTxtTxUniquenessFromRng..."); Serial.flush();
+    the_mesh.initTxtTxUniquenessFromRng();
+    Serial.println("[BOOT] initTxtTxUniqueness done"); Serial.flush();
+#else
     }
     the_mesh.initTxtTxUniquenessFromRng();
+#endif
   }
 #endif
 
@@ -355,15 +443,19 @@ void setup() {
   // failure falls back to SPIFFS so the device always boots.
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
   bool sd_storage = false;
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
   {
-    extern SPIClass* tdeckSharedSPI();
-    bool use_sd_pref = false, setup_done = false;
+   #if defined(HELTEC_LORA_V4_R8)
+    extern SPIClass* heltecV4R8SharedSPI();   // FSPI, shared with the TFT (CS=3)
+   #else
+    extern SPIClass* tdeckSharedSPI();        // LoRa SPI bus
+   #endif
+    bool setup_done = false;
     { Preferences _p; if (_p.begin("touch", true)) {
-        use_sd_pref = _p.getBool("use_sd", false);    // explicit user choice
-        setup_done  = _p.getBool("setup_ok", false);  // finished first-run setup
+        setup_done = _p.getBool("setup_ok", false);  // finished first-run setup
         _p.end();
     } }
+    const bool use_sd_pref = touchPrefsReadUseSdAtBoot();   // NVS + /prefs/touch.kv
 
     // First-run SD default: the very first time meshcomod boots on a brand-new
     // device — the user hasn't finished setup yet AND nothing is stored on
@@ -380,7 +472,11 @@ void setup() {
     // device has no usable SPIFFS, the user opted in, or it's a brand-new device.
     bool want_full_sd = !spiffs_ok || use_sd_pref || fresh_install;
 
+   #if defined(HELTEC_LORA_V4_R8)
+    SPIClass* _spi = heltecV4R8SharedSPI();
+   #else
     SPIClass* _spi = tdeckSharedSPI();
+   #endif
     bool sd_mounted = false;
     if (_spi) {
       // Try to mount the card on EVERY boot now (not just the full-adoption case):
@@ -398,12 +494,28 @@ void setup() {
     }
     if (sd_mounted) {
       if (want_full_sd) {
-        sd_storage = store.useSdStorage();
-        // On a genuine first run, persist the auto-pick so the "Store data on SD"
-        // toggle reflects it and the choice sticks on every later boot.
-        if (fresh_install && sd_storage && !use_sd_pref) {
-          Preferences _p; if (_p.begin("touch", false)) { _p.putBool("use_sd", true); _p.end(); }
-          Serial.println("[BOOT] first run + SD card present -> data defaults to SD");
+        // beta_36 upgrade heal: adopting the card while the LIVE data still sits
+        // on SPIFFS (the pre-beta_36 "toggle ignored" state) must migrate FIRST,
+        // or the identity store mints a fresh node on the empty card and the user
+        // "loses" their profile. Only fires when SPIFFS holds an identity the
+        // card lacks; a failed migration keeps the device on SPIFFS this boot
+        // rather than adopting a card without the identity on it.
+        bool adopt = true;
+        if (SPIFFS.exists("/identity/_main.id") && !SD.exists("/meshcomod/identity/_main.id")) {
+          adopt = meshcomodMigrateSpiffsToSd(false);
+          if (!adopt) Serial.println("[BOOT] SD migration incomplete -> staying on SPIFFS this boot");
+        }
+        if (adopt) {
+          sd_storage = store.useSdStorage();
+          // On a genuine first run, persist the auto-pick so the "Store data on SD"
+          // toggle reflects it and the choice sticks on every later boot.
+          if (fresh_install && sd_storage && !use_sd_pref) {
+            Preferences _p; if (_p.begin("touch", false)) { _p.putBool("use_sd", true); _p.end(); }
+            Serial.println("[BOOT] first run + SD card present -> data defaults to SD");
+          }
+        } else {
+          store.setSecondaryFS(&SD);
+          Serial.println("[BOOT] contacts/channels -> SD card (identity/prefs stay on SPIFFS)");
         }
       } else {
         // Upgraded device: identity + prefs stay on SPIFFS (no node-identity
@@ -425,7 +537,7 @@ void setup() {
   // Route touch settings + Wi-Fi creds to the active filesystem (SD when that's
   // the data store, else SPIFFS) instead of NVS. Old NVS values still load and
   // migrate on their next save, so this is a transparent in-place upgrade.
-  #if defined(HAS_TDECK_GT911)
+  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
   #else
@@ -436,8 +548,16 @@ void setup() {
   // file-saved values (theme accent, brightness, language, …) take effect this
   // boot — otherwise a theme change "reverts" on every restart.
   touchPrefsReload();
+#if defined(HAS_RAK_TAP_V2)
+  Serial.println("[BOOT] prefs_backend ok"); Serial.flush();
+  Serial.println("[BOOT] touchPrefsReload ok"); Serial.flush();
+#endif
 #endif
   store.begin();
+#if defined(HAS_RAK_TAP_V2)
+  Serial.println("[BOOT] store ok"); Serial.flush();
+  Serial.println("[BOOT] calling mesh.begin..."); Serial.flush();
+#endif
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -446,6 +566,9 @@ void setup() {
     #endif
   );
   Serial.println("[BOOT] mesh ok");
+#if defined(HAS_RAK_TAP_V2)
+  Serial.flush();
+#endif
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   {

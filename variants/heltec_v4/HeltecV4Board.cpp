@@ -4,8 +4,10 @@ void HeltecV4Board::begin() {
     ESP32Board::begin();
 
 
+#if defined(PIN_ADC_CTRL) && PIN_ADC_CTRL >= 0
     pinMode(PIN_ADC_CTRL, OUTPUT);
     digitalWrite(PIN_ADC_CTRL, LOW); // Initially inactive
+#endif  // V4-R8: no ADC-control MOSFET — the battery divider is read directly
 
     loRaFEMControl.init();
 
@@ -63,21 +65,25 @@ void HeltecV4Board::begin() {
 
   uint16_t HeltecV4Board::getBattMilliVolts()  {
     analogReadResolution(10);
-    digitalWrite(PIN_ADC_CTRL, HIGH);
+#if defined(PIN_ADC_CTRL) && PIN_ADC_CTRL >= 0
+    digitalWrite(PIN_ADC_CTRL, HIGH);   // enable the battery divider
     delay(10);
+#endif
     uint32_t raw = 0;
     for (int i = 0; i < 8; i++) {
       raw += analogRead(PIN_VBAT_READ);
     }
     raw = raw / 8;
-
+#if defined(PIN_ADC_CTRL) && PIN_ADC_CTRL >= 0
     digitalWrite(PIN_ADC_CTRL, LOW);
-
+#endif
     return (adc_mult * (3.3 / 1024.0) * raw) * 1000;
   }
 
   const char* HeltecV4Board::getManufacturerName() const {
-#ifdef HELTEC_LORA_V4_TFT
+#if defined(HELTEC_LORA_V4_R8)
+    return "Heltec V4-R8";
+#elif defined(HELTEC_LORA_V4_TFT)
     return loRaFEMControl.getFEMType() == KCT8103L_PA ? "Heltec V4.3 TFT" : "Heltec V4 TFT";
 #else
     return loRaFEMControl.getFEMType() == KCT8103L_PA ? "Heltec V4.3 OLED" : "Heltec V4 OLED";

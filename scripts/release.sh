@@ -27,7 +27,7 @@ OUT="$ROOT/out/firmware"                        # local mirror of the VPS firmwa
 DEST="${WADAMESH_VPS:-}"; DEST_PATH="${WADAMESH_VPS_PATH:-/srv/wadamesh/firmware}"
 
 # env:binname pairs — plain string form (works on macOS's bash 3.2; no associative arrays)
-ENVS="heltec_v4_tft_companion_radio_usb_tcp_touch:wadamesh-heltec-v4-tft LilyGo_TDeck_companion_radio_touch:wadamesh-tdeck"
+ENVS="heltec_v4_tft_companion_radio_usb_tcp_touch:wadamesh-heltec-v4-tft LilyGo_TDeck_companion_radio_touch:wadamesh-tdeck ThinkNode_M9_companion_radio_touch:wadamesh-thinknode-m9 rak_tap_v2_companion_radio_touch:wadamesh-rak-tap-v2 heltec_v4_r8_tft_companion_radio_usb_tcp_touch:wadamesh-heltec-v4-r8-tft"
 
 # Per-channel destination paths.
 if [ "$MODE" = "stable" ]; then

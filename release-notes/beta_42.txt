@@ -1,0 +1,9 @@
+# beta_42 (TEST) - fixes for the beta_41 REMOTE mode: it works on the Heltec V4 now, and keyboard-less boards can leave it.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Fixed ---
+REMOTE mode now works on the Heltec V4 TFT (and other 2 MB-PSRAM boards) instead of showing a black screen in the browser. Its off-screen renderer needed more free memory than those boards had, so nothing was streamed; the buffers are sized to fit now, and the render is a bit smaller and faster as a result. VNC was never affected and already worked.
+Keyboard-less touch boards (Heltec V4, RAK WisMesh Tap) can leave REMOTE mode again: touch and hold the device screen for about 3 seconds. Those boards have no SPACE key, which used to be the only way out on the device.
+
+# --- New ---
+The web page has an "Exit remote" button (with a confirmation) that leaves REMOTE mode from any browser, on any board.

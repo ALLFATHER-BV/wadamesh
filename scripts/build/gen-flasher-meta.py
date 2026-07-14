@@ -35,6 +35,9 @@ with open(os.path.join(outdir, "version.json"), "w") as f:
 BOARDS = {
     "manifest-tdeck.json":         ("wadamesh — LilyGo T-Deck", "wadamesh-tdeck-merged.bin"),
     "manifest-heltec-v4-tft.json": ("wadamesh — Heltec V4 TFT", "wadamesh-heltec-v4-tft-merged.bin"),
+    "manifest-thinknode-m9.json":  ("wadamesh — ThinkNode M9", "wadamesh-thinknode-m9-merged.bin"),
+    "manifest-rak-tap-v2.json":    ("wadamesh — RAK WisMesh Tap V2", "wadamesh-rak-tap-v2-merged.bin"),
+    "manifest-heltec-v4-r8-tft.json": ("wadamesh — Heltec V4-R8 (experimental)", "wadamesh-heltec-v4-r8-tft-merged.bin"),
 }
 for fn, (name, binf) in BOARDS.items():
     manifest = {
@@ -55,4 +58,4 @@ for fn, (name, binf) in BOARDS.items():
     with open(os.path.join(outdir, fn), "w") as f:
         json.dump(manifest, f, indent=2)
 
-print(f"wrote version.json + 2 manifests for {tag} ({channel}) -> {outdir}  (notes: {len(notes)})")
+print(f"wrote version.json + {len(BOARDS)} manifests for {tag} ({channel}) -> {outdir}  (notes: {len(notes)})")

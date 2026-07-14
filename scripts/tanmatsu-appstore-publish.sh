@@ -54,6 +54,10 @@ echo "==> WadaMesh app-store publish: version $VERSION, revision $REVISION"
 
 # ---- 1. build + verify the Tanmatsu app --------------------------------
 if [ "$SKIP_BUILD" -eq 0 ]; then
+  # Bake the EXACT release tag into the P4 binary (About page + update check). We know
+  # it here; git describe inside build.sh would read a "-N-g<sha>" suffix (or the prior
+  # beta) whenever the beta_N tag isn't fetched locally.
+  [[ "$ARG" =~ ^beta_([0-9]+)$ ]] && export WADA_FW_TAG="$ARG"
   echo "==> building Tanmatsu app (./build.sh build)..."
   LOG="$(mktemp)"
   ( cd "$WADAMESH/tanmatsu" && ./build.sh build ) >"$LOG" 2>&1 || true   # app_check_size exit!=0 is EXPECTED

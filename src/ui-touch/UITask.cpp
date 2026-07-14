@@ -47,8 +47,8 @@
   static inline esp_err_t esp_core_dump_image_erase() { return ESP_FAIL; }
   #endif
 #endif
-#if defined(HAS_TDECK_GT911)
-  #include <SD.h>             // microSD (CS=39) on the shared LoRa SPI bus
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+  #include <SD.h>             // microSD — T-Deck/M9 on the LoRa SPI, V4-R8 on the TFT SPI
   #include "sd_diskio.h"      // internal Arduino-SD drive helpers (sdcard_init / sd_*_raw)
   extern SPIClass* tdeckSharedSPI();
   // FatFs mkfs (the prebuilt ESP-IDF compiles f_setlabel OUT — FF_USE_LABEL=0 —
@@ -58,8 +58,14 @@
     #define MC_FM_FAT32 0x02  // FatFs f_mkfs option: force FAT32
   #endif
   #ifndef PIN_SD_CS
-    #define PIN_SD_CS 39      // T-Deck microSD chip-select
+    #define PIN_SD_CS 39      // T-Deck microSD chip-select (M9 sets its own via build flags)
   #endif
+#endif
+#if defined(HAS_THINKNODE_M9)
+  extern void m9SetBacklight(bool on);
+  extern SPIClass* m9SharedSPI();
+#endif
+#if defined(HAS_TDECK_GT911)
   #include <driver/i2s.h>     // T-Deck MAX98357A speaker amp (notification tones)
   // T-Deck I2S audio amp pins (MAX98357A, no MCLK). Overridable via build flags.
   #ifndef PIN_I2S_BCK
@@ -96,6 +102,8 @@
   #endif
   #if defined(HAS_TDECK_KEYBOARD)
     #include <helpers/input/TDeckKeyboard.h>
+  #elif defined(HAS_M9_KEYBOARD)
+    #include <M9Keyboard.h>
   #endif
   #if defined(HAS_PAGER_KEYBOARD)
     #include <helpers/input/PagerKeyboard.h>
@@ -111,6 +119,8 @@
     #include <TanmatsuDisplay.h>             // badge-bsp-backed DisplayDriver (P4)
   #elif defined(TLORA_PAGER)
     #include <helpers/ui/ST7796LCDDisplay.h>
+  #elif defined(HAS_RAK_TAP_V2)
+    #include <LGFXDisplay.h>                 // LovyanGFX FSPI on RAK Tap V2
   #else
     #include <helpers/ui/ST7789LCDDisplay.h>
   #endif
@@ -125,11 +135,13 @@
     // its include path, so an angle include picks that up and misses accessors we
     // add here (e.g. the signal-probe prefs). Quotes force the local src/ copy.
     #include "../helpers/esp32/TouchPrefsStore.h"
+    #include "../helpers/esp32/WebMirror.h"   // web UI mirror (framebuffer + pointer bridge)
     #include "../helpers/ClockFloorRTC.h"
     extern ClockFloorRTC rtc_clock;   // the board clock (variants/*/target.cpp); its send-timestamp floor is seeded/persisted from here (#89)
     #if defined(MULTI_TRANSPORT_COMPANION)
       #include <WiFi.h>
       #include <HTTPClient.h>
+      #include <WiFiClientSecure.h>   // on-device HTTPS for the Reader (text browser); setInsecure(), no cert store
       #if CAP_OTA
         #include <Update.h>   // Arduino OTA writer (native dual-OTA boards; Tanmatsu is IDF/AppFS, no OTA)
       #endif
@@ -141,6 +153,8 @@
     extern TanmatsuDisplay display;
   #elif defined(TLORA_PAGER)
     extern ST7796LCDDisplay display;
+  #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8)
+    extern LGFXDisplay display;
   #else
     extern ST7789LCDDisplay display;
   #endif
@@ -171,6 +185,7 @@ constexpr uint16_t k_ui_history_min_version = 6;   // v4/v5 used 96-char records
 // reducing flash write pressure when the ring is large.
 constexpr const char* k_ui_threads_path = "/ui_threads_v1.bin";
 constexpr const char* k_ui_msgs_path    = "/ui_msgs_v1.bin";
+constexpr const char* k_ui_msgs_tmp_path = "/ui_msgs_v1.bin.tmp";
 constexpr uint32_t k_ui_threads_magic   = 0x55495448;  // "UITH"
 constexpr uint32_t k_ui_msgs_magic      = 0x55494D53;  // "UIMS"
 
@@ -378,9 +393,45 @@ extern "C" const lv_font_t sleepicons_font;
 extern "C" const lv_font_t extras_12;
 extern "C" const lv_font_t extras_14;
 extern "C" const lv_font_t extras_16;
+#if defined(HAS_TANMATSU)
+// Compressed Latin-accent fonts at the scaled sizes so umlauts etc. match their
+// neighbours at Large/Huge UI scale (issue #129). Room for these was made by
+// storing the extras fonts compressed (LV_USE_FONT_COMPRESSED) — nothing lost,
+// net binary SMALLER, so the P4 app-load ceiling is respected.
+extern "C" const lv_font_t extras_lat_20;
+extern "C" const lv_font_t extras_lat_24;
+extern "C" const lv_font_t extras_lat_28;
+#endif
 static lv_font_t g_font_12;
 static lv_font_t g_font_14;
 static lv_font_t g_font_16;
+
+// Auto-shrink a single-line label's font one baked step (16 -> 14 -> 12) until its
+// text fits within max_w, so a longer translation (French/German/Russian/…) fits a
+// fixed-width button or cell instead of clipping. No-op if it already fits or is
+// already at 12 px. Cheap (one lv_txt_get_size per candidate) — call once, right
+// after setting the label's text + font. Fonts scale on the Tanmatsu, so the ladder
+// stays proportional there too. Wrapping/marquee is intentionally NOT used here —
+// this keeps one-line button labels one line.
+static void uiFitLabelWidth(lv_obj_t* lbl, lv_coord_t max_w) {
+  if (!lbl || max_w <= 6) return;
+  const char* txt = lv_label_get_text(lbl);
+  if (!txt || !txt[0]) return;
+  const lv_font_t* cur = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
+  lv_point_t sz;
+  // Already fits at the current font? Do nothing. Measuring the CURRENT font first
+  // (not assuming it's one of ours) means this never shrinks a label that fits — so
+  // it's safe to call on any label, whatever font it inherited.
+  lv_txt_get_size(&sz, txt, cur, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  if (sz.x <= max_w) return;
+  // Overflows: pick the LARGEST baked font (16 -> 14 -> 12) that fits.
+  const lv_font_t* ladder[3] = { &g_font_16, &g_font_14, &g_font_12 };
+  for (int i = 0; i < 3; ++i) {
+    lv_txt_get_size(&sz, txt, ladder[i], 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    if (sz.x <= max_w) { lv_obj_set_style_text_font(lbl, ladder[i], LV_PART_MAIN); return; }
+  }
+  lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);   // still wide: 12 px beats clipping a bigger font
+}
 #if LV_USE_IMGFONT
 // lv_imgfont path callback: hand back the baked colour image for an emoji
 // codepoint (copied into the imgfont's scratch buffer as an lv_img_dsc_t), or
@@ -443,6 +494,22 @@ static void initTouchFontFallbacks() {
   //   (Cyrillic/Greek/Arabic). The emoji font returns false for non-emoji
   //   codepoints, so they fall straight through to the size-matched extras.
   const lv_font_t* extras[3] = { &extras_12, &extras_14, &extras_16 };
+#if defined(HAS_TANMATSU)
+  // At Large/Huge scale the primaries become Montserrat 20/24/28 (ASCII-only),
+  // so accents dropped to the 16 px fallback and looked tiny. Splice the
+  // size-matched Latin-accent font per slot; tail is extras_16 so non-Latin
+  // still resolves. g_font sizes: Large(140) 16/20/24, Huge(170) 20/24/28.
+  static lv_font_t s_acc_scaled[3];
+  const lv_font_t* acc[3] = { nullptr, nullptr, nullptr };
+  if (s_ui_fscale == 140)      { acc[1] = &extras_lat_20; acc[2] = &extras_lat_24; }
+  else if (s_ui_fscale == 170) { acc[0] = &extras_lat_20; acc[1] = &extras_lat_24; acc[2] = &extras_lat_28; }
+  for (int i = 0; i < 3; ++i) {
+    if (!acc[i]) continue;
+    s_acc_scaled[i] = *acc[i];
+    s_acc_scaled[i].fallback = &extras_16;
+    extras[i] = &s_acc_scaled[i];
+  }
+#endif
   lv_font_t*       prim[3]   = { &g_font_12, &g_font_14, &g_font_16 };
   for (int i = 0; i < 3; ++i) {
     s_emoji_font[i] = lv_imgfont_create(16, emojiImgfontPathCb);   // 16 px baked glyphs (~15% larger; sit on the text baseline)
@@ -508,6 +575,9 @@ static void initTouchFontFallbacks() {
 // below are shared; T-Deck and the pager each get their own I2S install/
 // tone/WAV functions, since the pager additionally drives an ES8311 codec
 // over I2C that the T-Deck's plain MAX98357A DAC doesn't have.
+#if defined(HELTEC_LORA_V4_R8)
+static bool fmSdTryMount();   // V4-R8 microSD — fwd decl (defined in the mount-helper block below)
+#endif
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
 static constexpr int kI2sSampleRate = 16000;
 static constexpr i2s_port_t kI2sPort = I2S_NUM_0;
@@ -887,34 +957,35 @@ static void pagerPreviewWavFile(const char* prefpath) {
 
 #endif  // HAS_TDECK_GT911 || TLORA_PAGER
 
-// ---- Unified UI notification sound (T-Deck I2S / pager codec / Heltec V4 piezo) ----
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(TLORA_PAGER)
+// ---- Unified UI notification sound (T-Deck I2S / pager codec / Heltec V4 + Elecrow M9 piezo) ----
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(TLORA_PAGER) || defined(THINKNODE_M9_BUZZER_PIN)
   #define HAS_UI_SOUND 1
 #endif
 
+#if defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
 #if defined(HELTEC_V4_BUZZER_PIN)
-// Heltec V4 expansion-kit piezo buzzer on GPIO6 (PWM). Plays a short two-note
-// chime via LEDC on a throwaway task so the ~210 ms doesn't stall the UI thread.
-// LEDC ch 5 (the TFT backlight uses ch 0); the pin is detached + parked high-Z
-// afterwards so the piezo is silent at idle.
+  #define UI_BUZZER_PIN HELTEC_V4_BUZZER_PIN
+#else
+  #define UI_BUZZER_PIN THINKNODE_M9_BUZZER_PIN
+#endif
+// Simple piezo buzzer, GPIO-driven via Arduino tone()/noTone() (Heltec V4 expansion kit,
+// or the ThinkNode M9's onboard buzzer/BUZZER_EN). Plays a short two-note chime via LEDC
+// on a throwaway task so the ~210 ms doesn't stall the UI thread.
 static volatile bool s_v4_beep_playing = false;
 static volatile bool s_v4_mention = false;
 static void v4BeepTaskFn(void* arg) {
   (void)arg;
-  // Drive the GPIO6 piezo with Arduino tone() — the exact mechanism Meshtastic's
-  // RTTTL buzzer uses on this board (heltec-v4-tft). (tone() can't vary volume,
-  // so the volume pref only affects the T-Deck.) @-mention = a higher, faster trill.
   if (s_v4_mention) {
-    tone(HELTEC_V4_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(110));
-    tone(HELTEC_V4_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(110));
-    tone(HELTEC_V4_BUZZER_PIN, 2600);  vTaskDelay(pdMS_TO_TICKS(170));
+    tone(UI_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(110));
+    tone(UI_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(110));
+    tone(UI_BUZZER_PIN, 2600);  vTaskDelay(pdMS_TO_TICKS(170));
   } else {
-    tone(HELTEC_V4_BUZZER_PIN, 1000);  vTaskDelay(pdMS_TO_TICKS(160));
-    tone(HELTEC_V4_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(160));
-    tone(HELTEC_V4_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(200));
+    tone(UI_BUZZER_PIN, 1000);  vTaskDelay(pdMS_TO_TICKS(160));
+    tone(UI_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(160));
+    tone(UI_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(200));
   }
-  noTone(HELTEC_V4_BUZZER_PIN);
-  pinMode(HELTEC_V4_BUZZER_PIN, INPUT);   // high-Z → no idle current / no buzz
+  noTone(UI_BUZZER_PIN);
+  pinMode(UI_BUZZER_PIN, INPUT);   // high-Z → no idle current / no buzz
   s_v4_beep_playing = false;
   vTaskDelete(nullptr);
 }
@@ -936,7 +1007,7 @@ static inline void uiPlaySlot(int slot) {
   tdeckPlayNotifySlot(slot);
 #elif defined(TLORA_PAGER)
   pagerPlayNotifySlot(slot);
-#elif defined(HELTEC_V4_BUZZER_PIN)
+#elif defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
   v4BuzzerBeep(slot == TOUCH_SND_MEN);   // mention = higher trill; msg/DM = the lower chime
 #elif defined(HAS_TANMATSU)
   tanBeep();   // single codec tick on these boards (no per-slot sounds)
@@ -981,6 +1052,12 @@ constexpr int SWIPE_SCROLL_STEP  = 90;
 // Runtime (not constexpr) so the UI-scale can grow it to fit bigger status-bar text — set to SC(22)
 // once at boot in begin(), before the UI is built. Stays 22 on the non-scaled boards.
 static lv_coord_t STATUSBAR_H = 22;
+// True while the Reader/Web page is collapsed and showing its URL in the status bar's
+// title zone — updateGlobalStatusBar then hides the clock to make room for the URL.
+static bool s_reader_bar_url = false;
+// True whenever the Reader/Web page is open — suppresses the tall status-bar glass
+// fade so the address reads on a solid bar (no gradient behind it).
+static bool s_reader_page_open = false;
 struct GlobalStatusBar {
   lv_obj_t* root;
   lv_obj_t* left_label;
@@ -1180,6 +1257,7 @@ struct LvChatPanel {
   lv_obj_t* header_name;   // label: thread name in the overlay header
   lv_obj_t* msgs;          // read-only textarea: message history
   lv_obj_t* jump_btn;      // floating "jump to latest" button (Discord-style)
+  lv_obj_t* jump_oldest_btn; // floating "jump to oldest" button
   lv_obj_t* composer_row;  // container: input + send button
   lv_obj_t* composer_ta;   // textarea: user types here
   LvThreadButtonCtx ctx_store[UITask::MAX_UI_THREADS];
@@ -1358,6 +1436,18 @@ static bool tbFingerTouchOnTabBarBlocked(uint16_t y) {
 #if defined(HAS_TANMATSU)
 // Keyboard-only device: nav is always on. (The trackball #if above declares this for the T-Deck.)
 static bool s_kbd_nav = true;
+#endif
+
+#if defined(HAS_THINKNODE_M9)
+// Keyboard-only device (no touch, no trackball): nav is always on, same as Tanmatsu above.
+// Unlike Tanmatsu (which registers its KEYPAD indev as the PRIMARY one, driven by navPump()
+// reading bsp-input), the M9 takes the CAP_KEYPAD_NAV "secondary indev" path the T-Deck's
+// trackball block above uses — fed by handleHwKey() instead — so it needs the SAME three
+// symbols that block declares for the T-Deck (s_kbd_nav/s_tb_nav/s_nav_keypad_drv), just
+// without any of the actual trackball-cursor state above (no trackball on this board).
+static bool           s_kbd_nav        = true;
+static bool           s_tb_nav         = false;  // no trackball — read by the shared nav-rebuild gate, never set
+static lv_indev_drv_t s_nav_keypad_drv;
 #endif
 
 // ---- Panel currently linked to the keyboard (or nullptr) ----
@@ -1798,9 +1888,10 @@ struct MeshRadioPreset {
   uint8_t      airtime_limit_pct;  // web % → NodePrefs.airtime_factor = pct / 100
 };
 
-static constexpr size_t k_mesh_radio_preset_count = 20;
+static constexpr size_t k_mesh_radio_preset_count = 21;
 static const MeshRadioPreset k_mesh_radio_presets[k_mesh_radio_preset_count] = {
     {"Australia", 915.8f, 250.f, 10, 5, 22, 10},
+    {"Australia (Mid)", 915.075f, 125.f, 9, 5, 22, 10},   // NSW/Canberra migration target (issue #121)
     {"Australia (Narrow)", 916.575f, 62.5f, 7, 8, 22, 10},
     {"Australia: SA, WA", 923.125f, 62.5f, 8, 8, 22, 10},
     {"Australia: QLD", 923.125f, 62.5f, 8, 5, 22, 10},
@@ -2249,11 +2340,250 @@ static lv_color_t* g_shot_buf = nullptr;
 static int         g_shot_w   = 0;
 static int         g_shot_h   = 0;
 
+// REMOTE mode: render the UI to an off-screen 480x800 display for the web only (the
+// physical panel drops to a placeholder). Set from the pref at boot; drives lvglFlush
+// (skip the panel) + the display-init resolution. Ungated so non-mirror code reads it
+// (always false on Tanmatsu / when off).
+static bool s_remote_mode = false;
+static bool s_remote_landscape = false;   // remote orientation: true=800x480 landscape (desktop), false=480x800 portrait
+// Bootloop guard for remote mode: RTC memory persists across a soft reset (crash/reboot)
+// but is garbage on a cold power-on. Armed before entering remote mode, cleared a few
+// seconds into a healthy run; a still-armed flag on the next boot means the last remote
+// boot didn't complete -> auto-disable (see UITask::begin + loop). Never gets stuck.
+#define RMT_GUARD_MAGIC 0x52454D54u   // 'REMT'
+RTC_NOINIT_ATTR static uint32_t s_rmt_boot_guard;
+
+#if !defined(HAS_TANMATSU)
+#include "../wadamesh_mark_rgb.h"   // anti-aliased mesh mark (RGB565), same artwork as the boot splash
+// Physical-panel placeholder shown while remote mode renders the UI off-screen. Drawn
+// on the first loop pass (IP sentinel) then refreshed when the IP appears (Wi-Fi up).
+// Uses the DisplayDriver text API (same path as the boot splash), not LVGL.
+static uint32_t s_remote_ph_ip = 0xFFFFFFFFu;
+static uint32_t s_remote_exit_armed = 0;   // time of the first of two SPACE presses to exit
+static void drawRemotePlaceholder(bool exit_armed = false) {
+  const int W = display.width(), H = display.height();
+  const bool up = (WiFi.status() == WL_CONNECTED) && ((uint32_t)WiFi.localIP() != 0);
+  display.startFrame(DisplayDriver::DARK);
+  // wadamesh mesh mark up top (same white-on-black artwork as the boot splash). The
+  // touch DisplayDriver runs at scale 1.0, so writePixelsRGB565 shares text coords.
+  const int ly = (H >= 288) ? 46 : 14;   // portrait panels have room to breathe; landscape sits high
+  display.writePixelsRGB565((W - WADAMESH_MARK_W) / 2, ly,
+                            WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
+  int y = ly + WADAMESH_MARK_H + 18;
+  // Prominent title (the logo already carries the brand — no redundant "wadamesh" line).
+  display.setColor(DisplayDriver::LIGHT);
+  display.setTextSize(2);
+  display.drawTextCentered(W / 2, y, "REMOTE MODE");
+  y += 34;
+  display.setTextSize(1);
+  if (up) {
+    char u[48];
+    snprintf(u, sizeof u, "http://%s:8765", WiFi.localIP().toString().c_str());
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawTextCentered(W / 2, y, "Open this address in a browser");
+    display.setColor(DisplayDriver::GREEN);
+    display.drawTextCentered(W / 2, y + 20, u);
+  } else {
+    display.setColor(DisplayDriver::ORANGE);
+    display.drawTextCentered(W / 2, y, "Connecting to Wi-Fi...");
+  }
+  // Footer: how to leave remote mode — the physical method, plus the browser fallback.
+#if CAP_KEYBOARD
+  const char* how = exit_armed ? "Press SPACE again to exit" : "Press SPACE twice to exit";
+#elif CAP_TOUCH
+  const char* how = exit_armed ? "Keep holding to exit..." : "Touch and hold 3s to exit";
+#else
+  const char* how = "Tap Exit in the browser to leave";
+#endif
+  display.setColor(exit_armed ? DisplayDriver::GREEN : DisplayDriver::YELLOW);
+  display.drawTextCentered(W / 2, H - 30, how);
+#if CAP_KEYBOARD || CAP_TOUCH
+  display.setColor(DisplayDriver::LIGHT);
+  display.drawTextCentered(W / 2, H - 14, "or tap Exit in the browser");
+#endif
+  display.endFrame();
+  s_remote_ph_ip = up ? (uint32_t)WiFi.localIP() : 0;
+}
+
+// In remote mode the panel shows only the placeholder, so the physical keyboard is the
+// way out: two SPACE presses within 3 s exit remote mode (reboot back to normal).
+static void remotePhysicalKey(int key) {
+  if (key != ' ') return;
+  uint32_t nowm = millis();
+  if (s_remote_exit_armed && (nowm - s_remote_exit_armed) < 3000) {
+    touchPrefsSetRemoteMode(false);
+    if (g_lv.task) g_lv.task->rebootDevice();   // saves chat history, reboots to normal mode
+  } else {
+    s_remote_exit_armed = nowm;
+    drawRemotePlaceholder(true);
+  }
+}
+
+#if CAP_TOUCH
+// Keyboard-less touch boards (Heltec V4, RAK Tap) have no SPACE key to exit remote mode,
+// so a 3 s touch-and-hold on the physical panel leaves it. The touch poll runs even in
+// remote mode (the LVGL indev is skipped but the driver still polls), so the live-touch
+// state is available here. Called each loop from the remote block.
+static uint32_t s_remote_touch_start = 0;
+static void remoteTouchTick() {
+  uint16_t tx, ty;
+  const bool pressed = heltecV4CapTouchGetLive(&tx, &ty);
+  const uint32_t nowm = millis();
+  if (pressed) {
+    if (!s_remote_touch_start) { s_remote_touch_start = nowm; drawRemotePlaceholder(true); }   // "Keep holding..."
+    else if (nowm - s_remote_touch_start >= 3000) {                                            // held long enough -> leave
+      touchPrefsSetRemoteMode(false);
+      if (g_lv.task) g_lv.task->rebootDevice();
+    }
+  } else if (s_remote_touch_start) {
+    s_remote_touch_start = 0;
+    drawRemotePlaceholder(false);   // lifted before 3 s -> revert the hint
+  }
+}
+#endif
+#endif
+
+#if !defined(HAS_TANMATSU)
+// ===== Web UI mirror: coalesced, rate-capped, backpressure-gated streaming =====
+// The flush hook copies each drawn band into a full-screen shadow buffer and grows
+// a dirty bounding box (cheap, no network). webMirrorTick() then RLE-encodes just
+// the dirty box and queues it — but ONLY after the previous frame has fully drained
+// (adaptive to the real Wi-Fi throughput) and no faster than a rate cap. So the link
+// never backs up (no lag pileup, no wedged-client disconnects), while the browser
+// still gets the *current* pixels of everything that changed since the last send.
+static uint8_t*  s_web_rle_buf  = nullptr;   // RLE output (<=32 KB band)
+static uint8_t*  s_web_band_buf = nullptr;   // contiguous band gathered from the shadow
+static uint16_t* s_web_fb       = nullptr;   // full-screen RGB565 shadow (PSRAM)
+static int  s_web_fb_w = 0, s_web_fb_h = 0;
+static bool s_web_dirty = false;
+static int  s_web_dx1 = 0, s_web_dy1 = 0, s_web_dx2 = 0, s_web_dy2 = 0;   // dirty bbox (inclusive)
+static uint32_t s_web_last_send_ms = 0;
+
+// RLE-encode RGB565 pixels as [count(1..255), lo, hi] runs. Returns bytes, or 0 if
+// it would not beat raw (bails at cap). UI is mostly flat -> ~5-15x; noisy content
+// (map tiles) bails to raw. cap must be <= the out[] buffer size.
+static size_t webMirrorRle(const uint16_t* src, int n, uint8_t* out, size_t cap) {
+  size_t o = 0; int i = 0;
+  while (i < n) {
+    uint16_t v = src[i];
+    int run = 1;
+    while (i + run < n && src[i + run] == v && run < 255) run++;
+    if (o + 3 > cap) return 0;
+    out[o++] = (uint8_t)run;
+    out[o++] = (uint8_t)(v & 0xFF);
+    out[o++] = (uint8_t)(v >> 8);
+    i += run;
+  }
+  return o;
+}
+
+static bool webMirrorEnsureBufs() {
+  if (s_web_fb && s_web_band_buf && s_web_rle_buf) return true;
+  if (s_web_fb_w <= 0 || s_web_fb_h <= 0) return false;
+  if (!s_web_fb)
+    s_web_fb = (uint16_t*)heap_caps_malloc((size_t)s_web_fb_w * s_web_fb_h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_web_band_buf)
+    s_web_band_buf = (uint8_t*)heap_caps_malloc(33000, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_web_rle_buf)
+    s_web_rle_buf = (uint8_t*)heap_caps_malloc(33000, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return s_web_fb && s_web_band_buf && s_web_rle_buf;
+}
+
+// Flush hook: copy a just-drawn band into the shadow buffer + grow the dirty bbox.
+// Runs on the LVGL thread only when a mirror client is connected.
+static void webMirrorOnFlush(int x, int y, int w, int h, const uint16_t* px) {
+  if (w <= 0 || h <= 0 || !webMirrorEnsureBufs()) return;
+  for (int row = 0; row < h; row++) {
+    int dy = y + row;
+    if (dy < 0 || dy >= s_web_fb_h) continue;
+    int x0 = x, cw = w, sxoff = 0;
+    if (x0 < 0) { cw += x0; sxoff = -x0; x0 = 0; }
+    if (x0 + cw > s_web_fb_w) cw = s_web_fb_w - x0;
+    if (cw > 0)
+      memcpy(s_web_fb + (size_t)dy * s_web_fb_w + x0,
+             px + (size_t)row * w + sxoff, (size_t)cw * 2);
+  }
+  int bx1 = x < 0 ? 0 : x, by1 = y < 0 ? 0 : y;
+  int bx2 = x + w - 1, by2 = y + h - 1;
+  if (bx2 >= s_web_fb_w) bx2 = s_web_fb_w - 1;
+  if (by2 >= s_web_fb_h) by2 = s_web_fb_h - 1;
+  if (bx2 < bx1 || by2 < by1) return;
+  if (!s_web_dirty) { s_web_dx1 = bx1; s_web_dy1 = by1; s_web_dx2 = bx2; s_web_dy2 = by2; s_web_dirty = true; }
+  else {
+    if (bx1 < s_web_dx1) s_web_dx1 = bx1;
+    if (by1 < s_web_dy1) s_web_dy1 = by1;
+    if (bx2 > s_web_dx2) s_web_dx2 = bx2;
+    if (by2 > s_web_dy2) s_web_dy2 = by2;
+  }
+}
+
+// Encode + queue a rect region from the shadow buffer at full resolution. Split into
+// SMALL (<=4 KB) bands so each WS frame fits the lwIP socket send buffer (~5.7 KB) and
+// flushes in ~one non-blocking pass, well within the write timeout even on congested
+// Wi-Fi. Bigger bands span several send-buffer refills over multiple RTTs and can stall
+// past the timeout mid-write -> a truncated WS frame -> the browser drops the socket
+// (the "disconnects often" bug, worst on the large 480x800 remote frames). Header
+// (10 B) = [0x01, flags(bit0=rle), x, y, w, h LE16]. RGB565 native little-endian.
+static void webMirrorQueueRegion(int rx, int ry, int rw, int rh) {
+  if (rw <= 0 || rh <= 0 || !s_web_fb || !s_web_band_buf) return;
+  int rows = 4096 / (rw * 2);
+  if (rows < 1) rows = 1;
+  uint16_t* band = (uint16_t*)s_web_band_buf;
+  for (int yy = 0; yy < rh; yy += rows) {
+    int bh = (yy + rows <= rh) ? rows : (rh - yy);
+    for (int r = 0; r < bh; r++)
+      memcpy(band + (size_t)r * rw,
+             s_web_fb + (size_t)(ry + yy + r) * s_web_fb_w + rx, (size_t)rw * 2);
+    const size_t raw_bytes = (size_t)rw * bh * 2;
+    uint8_t        flags    = 0;
+    const uint8_t* body     = s_web_band_buf;
+    size_t         body_len = raw_bytes;
+    if (s_web_rle_buf) {
+      size_t rl = webMirrorRle(band, rw * bh, s_web_rle_buf, raw_bytes);
+      if (rl > 0 && rl < raw_bytes) { flags = 0x01; body = s_web_rle_buf; body_len = rl; }
+    }
+    int by = ry + yy;
+    uint8_t hdr[10] = { 0x01, flags,
+      (uint8_t)(rx & 0xFF), (uint8_t)((rx >> 8) & 0xFF),
+      (uint8_t)(by & 0xFF), (uint8_t)((by >> 8) & 0xFF),
+      (uint8_t)(rw & 0xFF), (uint8_t)((rw >> 8) & 0xFF),
+      (uint8_t)(bh & 0xFF), (uint8_t)((bh >> 8) & 0xFF) };
+    g_web_mirror.pushFrame(hdr, 10, body, body_len);
+  }
+}
+
+// Rate-capped, backpressure-gated send of the accumulated dirty bbox at full res.
+// Called each UI loop AFTER lv_timer_handler (so this frame's flushes are already in
+// the shadow). Only sends once the previous frame fully drained, so it self-paces to
+// the link speed (never backs up -> no disconnects) while staying crisp.
+static void webMirrorTick() {
+  if (!g_web_mirror.active() || !s_web_dirty || !s_web_fb) return;
+  if (!g_web_mirror.empty()) return;             // previous frame still draining -> adapt to link speed
+  uint32_t now = millis();
+  if (now - s_web_last_send_ms < 50) return;     // cap the outgoing frame rate (~20 fps ceiling)
+  int rx = s_web_dx1, ry = s_web_dy1;
+  int rw = s_web_dx2 - s_web_dx1 + 1, rh = s_web_dy2 - s_web_dy1 + 1;
+  s_web_dirty = false;
+  s_web_last_send_ms = now;
+  webMirrorQueueRegion(rx, ry, rw, rh);
+}
+#endif
+
 static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* color_p) {
   (void)disp_drv;
   if (!color_p) { lv_disp_flush_ready(disp_drv); return; }   // never deref a NULL draw buffer (OOM at boot)
   int32_t w = area->x2 - area->x1 + 1;
   int32_t h = area->y2 - area->y1 + 1;
+#if !defined(HAS_TANMATSU)
+  // REMOTE mode: the UI renders to an off-screen web display — never write the
+  // physical panel (wrong resolution). Only capture + stream the band.
+  if (s_remote_mode) {
+    if (g_web_mirror.active())
+      webMirrorOnFlush(area->x1, area->y1, w, h, reinterpret_cast<const uint16_t*>(color_p));
+    lv_disp_flush_ready(disp_drv);
+    return;
+  }
+#endif
 #if CAP_LARGE_SCREEN
   // UI scaling: LVGL rendered at a smaller physical resolution; nearest-neighbour upscale this
   // (already sw-rotated) band to the panel before blitting. 100% (s_lv_pw==panel) skips this.
@@ -2297,6 +2627,11 @@ static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t
                (size_t)cw * sizeof(lv_color_t));
     }
   }
+#if !defined(HAS_TANMATSU)
+  // Web UI mirror: copy this flushed band into the shadow buffer (one bool when off).
+  if (g_web_mirror.active())
+    webMirrorOnFlush(area->x1, area->y1, w, h, reinterpret_cast<const uint16_t*>(color_p));
+#endif
   lv_disp_flush_ready(disp_drv);
 }
 
@@ -2625,7 +2960,8 @@ static void navFocusCb(lv_group_t* g) {
     lv_obj_set_style_bg_color(f, lv_color_hex(COLOR_TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_bg_opa(f, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_text_color(f, lv_color_hex(COLOR_BG), LV_PART_ITEMS | LV_STATE_CHECKED);
-  } else if (lv_obj_check_type(f, &lv_switch_class) || lv_obj_check_type(f, &lv_slider_class)) {
+  } else if (lv_obj_check_type(f, &lv_switch_class) || lv_obj_check_type(f, &lv_slider_class) 
+            || lv_obj_check_type(f, &lv_textarea_class)) {
     // A switch/slider's look is its knob/indicator, not the MAIN bg, so a reverse-video
     // fill doesn't read as focused — give it a bright outline PLUS an accent glow instead.
     s_nav_sv.bg_c = s_nav_sv.bg_o = s_nav_sv.txt = false;   // nothing to restore but the outline/shadow
@@ -2663,7 +2999,7 @@ static void navFocusCb(lv_group_t* g) {
     uint32_t nc = lv_obj_get_child_cnt(f);
     for (uint32_t i = 0; i < nc; i++) navInvertText(lv_obj_get_child(f, i));
   }
-  if (!s_nav_suppress_scroll) lv_obj_scroll_to_view(f, LV_ANIM_OFF);
+  if (!s_nav_suppress_scroll) lv_obj_scroll_to_view_recursive(f, LV_ANIM_OFF);
 }
 
 #if CAP_KEYPAD_NAV
@@ -2699,7 +3035,15 @@ static void navMoveDir(int dir) {
   const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
   if (n <= 0) return;
   lv_obj_t* cur = lv_group_get_focused(s_nav_group);
-  if (!cur || !lv_obj_is_valid(cur)) { s_nav_show = true; lv_group_focus_obj(s_nav_objs[0]); return; }
+  if (!cur || !lv_obj_is_valid(cur)) {
+    // s_nav_objs is a raw mirror that only refreshes on the next navMaybeRebuild
+    // tick; with chat bubbles now recycled on every scroll-end reflow, slot 0 can
+    // be a just-deleted bubble for one tick — focusing it unguarded dereferences
+    // freed memory inside lv_group_focus_obj.
+    s_nav_show = true;
+    if (s_nav_objs[0] && lv_obj_is_valid(s_nav_objs[0])) lv_group_focus_obj(s_nav_objs[0]);
+    return;
+  }
   // A focused slider captures LEFT/RIGHT to adjust its VALUE instead of moving focus —
   // so horizontal tunes the slider and you leave it by going UP/DOWN. (Same idea as the
   // open-dropdown capture in navPump.) Fire VALUE_CHANGED (live preview) then RELEASED
@@ -2978,6 +3322,16 @@ static bool navEnterBubble() {
 #endif
 
 #if defined(HAS_TANMATSU)   // bsp-input driven; on the T-Deck navFifo is fed from the trackball instead
+// ALT-accent picker (issue #129) — functions defined with the accent machinery
+// further down (they reuse the accent popup + kAccentSets); called from navPump.
+// State lives HERE so navPump can consult it: while a pick is open the focused-
+// textarea lookup can come back null (focus wanders when overlays appear), so
+// the hook falls back to s_altacc_ta instead of dropping the cycle keypress.
+static bool      s_altacc_active = false;
+static char      s_altacc_key    = 0;         // letter driving the open picker
+static lv_obj_t* s_altacc_ta     = nullptr;   // field the pick inserts into
+static bool tanAltAccentHandleKey(char c, lv_obj_t* ta);
+static void tanAltAccentAltReleased();
 // The UP/DOWN/LEFT/RIGHT action, factored out so a HELD arrow can auto-repeat it (navPump's
 // per-frame tick re-fires this). Recomputes the focused field each call so repeat stays correct.
 static void navArrowAction(uint32_t key) {
@@ -3039,6 +3393,16 @@ static void navPump() {
     // button — alongside every real NAVIGATION/KEYBOARD key. The app only consumes navigation +
     // keyboard; the duplicate scancode was hitting noteUserInput() and re-waking the screen the
     // instant a Vol- press slept it. Drop everything that isn't navigation/keyboard.
+    // Scancode events are otherwise unused — the ONE we care about is the ALT
+    // key's own release, which commits an open ALT-accent pick (issue #129).
+    if (ev.type == INPUT_EVENT_TYPE_SCANCODE) {
+      const uint32_t sc   = (uint32_t)ev.args_scancode.scancode;
+      const uint32_t code = sc & ~(uint32_t)BSP_INPUT_SCANCODE_RELEASE_MODIFIER;
+      const bool released = (sc & BSP_INPUT_SCANCODE_RELEASE_MODIFIER) != 0;
+      if (released && (code == BSP_INPUT_SCANCODE_LEFTALT || code == BSP_INPUT_SCANCODE_ESCAPED_RALT))
+        tanAltAccentAltReleased();
+      continue;
+    }
     if (ev.type != INPUT_EVENT_TYPE_NAVIGATION && ev.type != INPUT_EVENT_TYPE_KEYBOARD) continue;
     if (ev.type == INPUT_EVENT_TYPE_NAVIGATION && ev.args_navigation.key == BSP_INPUT_NAVIGATION_KEY_VOLUME_DOWN) {
       // The button emits a noisy burst per press; act ONCE per burst — on a "fresh" event (>=450 ms
@@ -3211,6 +3575,14 @@ static void navPump() {
       char c = ev.args_keyboard.ascii;
       if (s_nav_debug) printf("[NAV] kbd ascii=%d '%c' ta=%d\n", (int)(uint8_t)c, (c >= 32 && c < 127) ? c : '?', ta ? 1 : 0);
       if (s_navkey_capture >= 0) { navKeyCaptureApply((uint8_t)c); continue; }   // Settings remap: this key is the new binding
+      // ALT + letter over a text field = accent picker (issue #129): opens the
+      // accent popup, the letter cycles the highlight while ALT stays down,
+      // releasing ALT (scancode handler above) inserts the highlighted variant.
+      if ((ev.args_keyboard.modifiers & BSP_INPUT_MODIFIER_ALT) && (uint8_t)c >= 32 &&
+          (ta || ta_focused || s_altacc_active)) {
+        if (!ta && ta_focused) { s_nav_ta_editing = true; ta = ta_focused; }   // start editing, like plain typing does
+        if (tanAltAccentHandleKey(c, ta ? ta : s_altacc_ta)) continue;         // fall back to the pick's own field
+      }
       if (ta) {                               // type straight into the focused field
         if (c == 8 || c == 127) {
           // Backspace in an EMPTY field = leave edit mode (matches Enter-on-empty below;
@@ -3225,7 +3597,25 @@ static void navPump() {
             s_nav_ta_editing = false;
           else navPushTap(LV_KEY_NEXT);
         }
-        else if ((uint8_t)c >= 32)       lv_textarea_add_char(ta, (uint32_t)(uint8_t)c);
+        else if ((uint8_t)c >= 32) {
+          // Double-tap SPACE within 250 ms switches to the configured secondary
+          // keyboard language — the same shortcut the T-Deck's physical keyboard
+          // has in handleHwKey, which Tanmatsu typing bypasses (it types here).
+          static unsigned long s_tan_space_ms = 0;
+          bool cycled = false;
+          if (c == ' ') {
+            unsigned long snow = millis();
+            if ((snow - s_tan_space_ms) < 250 && keyboardLayoutsAnySecondary()) {
+              lv_textarea_del_char(ta);                       // remove the first space
+              KeyboardLayoutId next = keyboardLayoutsCycle(g_lv.keyboard);
+              touchPrefsSetKeyboardLayout(static_cast<uint8_t>(next));
+              if (g_lv.task) g_lv.task->showAlert(keyboardLayoutName(next), 800);
+              cycled = true;
+            }
+            s_tan_space_ms = snow;
+          }
+          if (!cycled) lv_textarea_add_char(ta, (uint32_t)(uint8_t)c);
+        }
 #if defined(HAS_TANMATSU)
       } else if (ta_focused && (uint8_t)c >= 32) {
         // Tanmatsu: a printable keypress on a focused (not-yet-editing) field starts editing AND types
@@ -3623,6 +4013,25 @@ static inline void navMarkDirty() {}
 static unsigned long s_slider_touch_ms = 0;   // last time a slider (volume, etc.) was dragged
 static bool s_wake_swallow = false;           // swallow the whole touch that wakes the screen (issue #4)
 static bool s_lock_on_screen_off = false;     // idle screen-off also engages the manual lock (cached pref)
+
+#if !defined(HAS_TANMATSU)
+// Web UI mirror: a virtual pointer indev fed by a phone browser's taps over the
+// WebSocket server (WebMirror). Drives the SAME LVGL UI as the physical touch;
+// idle -> released so it never fights the real touchscreen.
+static lv_indev_drv_t s_web_indev_drv;
+static void webPointerRead(lv_indev_drv_t* drv, lv_indev_data_t* data) {
+  (void)drv;
+  int16_t x = 0, y = 0; bool pr = false;
+  if (g_web_mirror.readPointer(&x, &y, &pr)) {
+    data->point.x = x;
+    data->point.y = y;
+    data->state = pr ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+  } else {
+    data->state = LV_INDEV_STATE_RELEASED;
+  }
+}
+#endif
+
 static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   (void)indev;
   static lv_point_t p = {0, 0};
@@ -3732,6 +4141,12 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
 // Forward declarations
 // ============================================================
 static void refreshChatDetail(LvChatPanel& p);
+static void refreshChatDetailAsync(LvChatPanel& p);
+static void chatVirtReset(LvChatPanel* p);
+static void chatVirtJumpToOldest(LvChatPanel* p);
+static void chatVirtJumpToLatest(LvChatPanel* p);
+static void chatVirtScheduleRender(LvChatPanel* p);
+static void chatVirtApplyPendingScroll(LvChatPanel* p);
 static void refreshChatList(LvChatPanel& p);
 static void applyAccent(uint32_t rgb);            // theme accent (Settings -> Theme colour)
 static void openAccentPicker();
@@ -4098,6 +4513,67 @@ static void otaButtonRefreshState() {
   }
 }
 
+#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+// ---- Save-update-to-SD (Launcher installs) ---------------------------------
+// Launcher-managed T-Decks have no spare A/B slot (touchHasOtaUpdateSlot() is
+// false), so Wi-Fi OTA can't work there — but the Launcher itself can flash an
+// app-only bin straight from the SD card. This downloads the latest bin for
+// the ACTIVE update channel (stable, or beta when "Get test builds" is on)
+// into /BINS/wadamesh-beta_<N>-<stable|beta>.bin on the SD card. The download
+// streams on the tile worker; this UI side mirrors the OTA poll pattern.
+static volatile bool s_sdfw_request  = false;   // UI -> worker
+static volatile int  s_sdfw_state    = 0;       // 0 idle, 1 running, 2 ok, 3 error
+static volatile int  s_sdfw_pct      = 0;
+static int           s_sdfw_target_n = -1;
+static char          s_sdfw_msg[64];            // success: saved path / error text
+static lv_obj_t*     s_sdfw_status_lbl = nullptr;
+static lv_timer_t*   s_sdfw_poll_timer = nullptr;
+
+static void sdFwPollTimerCb(lv_timer_t* t) {
+  (void)t;
+  const int st = s_sdfw_state;
+  if (st == 1) {
+    if (s_sdfw_status_lbl) {
+      char b[48];
+      snprintf(b, sizeof b, TR("Saving to SD… %d%%"), s_sdfw_pct);
+      lv_label_set_text(s_sdfw_status_lbl, b);
+    }
+    return;
+  }
+  if (s_sdfw_poll_timer) { lv_timer_del(s_sdfw_poll_timer); s_sdfw_poll_timer = nullptr; }
+  if (st == 2) {
+    if (s_sdfw_status_lbl) {
+      char b[112];
+      snprintf(b, sizeof b, TR("Saved: %s\nFlash it from the Launcher."), s_sdfw_msg);
+      lv_label_set_text(s_sdfw_status_lbl, b);
+    }
+    if (g_lv.task) g_lv.task->showAlert(TR("Update bin saved to SD"), 3000);
+  } else if (st == 3) {
+    if (s_sdfw_status_lbl) {
+      char b[96];
+      snprintf(b, sizeof b, TR("SD download failed: %s"), s_sdfw_msg);
+      lv_label_set_text(s_sdfw_status_lbl, b);
+    }
+  }
+  s_sdfw_state = 0;
+}
+
+static void sdFwSaveToSdCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (s_sdfw_state == 1 || s_ota_state == 1) return;   // a download is already running
+  if (s_verchk_latest_n < 0) {
+    if (s_sdfw_status_lbl) lv_label_set_text(s_sdfw_status_lbl,
+        TR("No version known yet. Wi-Fi and a completed update check are needed first."));
+    return;
+  }
+  s_sdfw_msg[0] = 0; s_sdfw_pct = 0;
+  s_sdfw_target_n = s_verchk_latest_n;                 // latest of the ACTIVE channel
+  s_sdfw_state = 1; s_sdfw_request = true;             // hand off to the worker
+  if (s_sdfw_status_lbl) lv_label_set_text(s_sdfw_status_lbl, TR("Saving to SD… 0%"));
+  if (!s_sdfw_poll_timer) s_sdfw_poll_timer = lv_timer_create(sdFwPollTimerCb, 400, nullptr);
+}
+#endif
+
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 static lv_timer_t* s_ota_poll_timer = nullptr;
 // UI-thread poll of the worker's OTA progress (the download/flash runs on the tile worker).
@@ -4114,7 +4590,7 @@ static void otaPollTimerCb(lv_timer_t* t) {
   }
   if (s_ota_poll_timer) { lv_timer_del(s_ota_poll_timer); s_ota_poll_timer = nullptr; }
   if (st == 2) {   // success -> boot the freshly-written slot (rebootDevice saves chat history first)
-    if (s_ota_status_lbl) lv_label_set_text(s_ota_status_lbl, "Update complete.\nRebooting...");
+    if (s_ota_status_lbl) lv_label_set_text(s_ota_status_lbl, TR("Update complete.\nRebooting..."));
     lv_refr_now(NULL);
     if (g_lv.task) g_lv.task->rebootDevice();
   } else {         // error -> show why, leave the button armed to retry, fall back to manual
@@ -4139,7 +4615,7 @@ static void otaStartInstall(int target_n) {
   }
   if (WiFi.status() != WL_CONNECTED) {
     if (s_ota_status_lbl) {
-      lv_label_set_text(s_ota_status_lbl, "Connect to Wi-Fi first, then try again.");
+      lv_label_set_text(s_ota_status_lbl, TR("Connect to Wi-Fi first, then try again."));
       lv_obj_set_style_text_color(s_ota_status_lbl, lv_color_hex(0xE2A23A), LV_PART_MAIN);
     }
     if (g_lv.task) g_lv.task->showAlert(TR("Wi-Fi not connected"), 2000);
@@ -4263,7 +4739,7 @@ static void otaInstallLatestCb(lv_event_t* e) {
 #else
   // Launcher / Tanmatsu: no spare OTA slot to write into — update out-of-band.
   if (s_ota_status_lbl) {
-    lv_label_set_text(s_ota_status_lbl, "Update via the Launcher / flasher.wadamesh.com.");
+    lv_label_set_text(s_ota_status_lbl, TR("Update via the Launcher / flasher.wadamesh.com."));
     lv_obj_set_style_text_color(s_ota_status_lbl, lv_color_hex(0xE2A23A), LV_PART_MAIN);
   }
   if (g_lv.task) g_lv.task->showAlert(TR("Update via the Launcher"), 3000);
@@ -4395,6 +4871,22 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
   (void)swipe_y;
 }
 
+static lv_obj_t* s_chat_msgs_scroll_obj = nullptr;  // active virt chat scroll container
+
+#ifndef TRACE_MESSAGE_SCROLL_ACTIVITY
+#define TRACE_MESSAGE_SCROLL_ACTIVITY 0
+#endif
+
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+#define CHAT_SCROLL_TRACE_PRINTF(...) Serial.printf(__VA_ARGS__)
+#define CHAT_SCROLL_TRACE_DO(stmt) do { stmt; } while (0)
+static bool       s_chat_touch_on_msgs = false;
+static lv_coord_t s_chat_dbg_last_scroll_logged = -9999;
+#else
+#define CHAT_SCROLL_TRACE_PRINTF(...) do {} while (0)
+#define CHAT_SCROLL_TRACE_DO(stmt) do {} while (0)
+#endif
+
 /** After elastic/rubber-band overscroll, snap back to the furthest valid top or bottom. */
 static void scrollClampOnEndCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_SCROLL_END) return;
@@ -4408,8 +4900,12 @@ static void scrollClampOnEndCb(lv_event_t* e) {
   lv_coord_t sm = lv_obj_get_scroll_top(obj) + lv_obj_get_scroll_bottom(obj);
   if (sm < 0) sm = 0;
 
-  if (sy < 0) lv_obj_scroll_to_y(obj, 0, LV_ANIM_ON);
-  else if (sy > sm) lv_obj_scroll_to_y(obj, sm, LV_ANIM_ON);
+  // Chat virt: only spacer sets scroll extent; use instant snap (no ANIM_ON) so
+  // clamp doesn't fire a second SCROLL_END that races virt re-render.
+  const bool     is_chat_msgs = (s_chat_msgs_scroll_obj == obj);
+  const lv_anim_enable_t anim = is_chat_msgs ? LV_ANIM_OFF : LV_ANIM_ON;
+  if (sy < 0) lv_obj_scroll_to_y(obj, 0, anim);
+  else if (sy > sm) lv_obj_scroll_to_y(obj, sm, anim);
 }
 
 // ============================================================
@@ -4954,9 +5450,16 @@ static void accentCommitTimerCb(lv_timer_t* t) { (void)t; accentExit(); }
 
 static void accentPopupShow() {
   accentPopupHide();
-  const int cw = 30, ch = 30, gap = 4, pad = 6;
+  // SC() so the box matches the scaled UI on the Tanmatsu (no-op at scale 100).
+  const int cw = SC(30), ch = SC(30), gap = SC(4), pad = SC(6);
   s_acc_popup = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_acc_popup);
+  // Passive display only — never a keyboard-nav focus target and never
+  // clickable. Without this the nav collector steals focus onto the popup,
+  // the focused-textarea lookup goes null and the ALT-accent cycle key stops
+  // reaching its handler (issue #129 first test).
+  lv_obj_add_flag(s_acc_popup, NAV_SKIP_FLAG);
+  lv_obj_clear_flag(s_acc_popup, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_style_bg_color(s_acc_popup, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_acc_popup, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(s_acc_popup, 8, LV_PART_MAIN);
@@ -4970,6 +5473,8 @@ static void accentPopupShow() {
   for (int i = 0; i < s_acc_n; ++i) {
     lv_obj_t* c = lv_obj_create(s_acc_popup);
     lv_obj_remove_style_all(c);
+    lv_obj_add_flag(c, NAV_SKIP_FLAG);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(c, cw, ch);
     lv_obj_set_style_radius(c, 5, LV_PART_MAIN);
     lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
@@ -5043,6 +5548,65 @@ static void accentHandleValueChanged() {
   if (s_acc_timer) lv_timer_reset(s_acc_timer);
 }
 // ===========================================================================
+
+#if defined(HAS_TANMATSU)
+// ---- ALT-accent picker for the physical keyboard (issue #129) -------------
+// The Tanmatsu has no touch and no on-screen keyboard, so the tap-to-pick
+// accent box is unreachable — umlauts and accents had NO input path at all.
+// Flow: hold ALT and press a letter with accent variants -> the accent popup
+// opens over the field with the first VARIANT highlighted (ALT+letter means
+// "I want the accented one", so the plain letter is the LAST option, not the
+// first); pressing the letter again while ALT stays down cycles the highlight
+// (key auto-repeat cycles too, so holding the letter walks the options);
+// releasing ALT — its own scancode event, handled at the top of navPump —
+// inserts the highlighted choice and closes the popup. Works with shift for
+// uppercase variants, in every language (kAccentSets is per-letter).
+// (State variables live next to the forward declarations above navPump.)
+static bool tanAltAccentHandleKey(char c, lv_obj_t* ta) {
+  if (!ta || (uint8_t)c < 32) return false;
+  const char keystr[2] = { c, 0 };
+  const AccentSet* set = accentLookup(keystr);
+  if (!set) return s_altacc_active;   // no variants: swallow strays mid-pick, else let it type
+  if (s_altacc_active && s_altacc_key == c && s_acc_popup) {
+    s_acc_idx = (s_acc_idx + 1) % s_acc_n;     // same letter again: cycle the highlight
+    accentPopupHighlight();
+    return true;
+  }
+  // First ALT+letter (or the letter changed mid-hold): (re)build the options.
+  s_acc_n = 0;
+  for (uint8_t i = 0; i < set->n && s_acc_n < 11; ++i) s_acc_opts[s_acc_n++] = set->v[i];
+  strncpy(s_acc_base, keystr, sizeof(s_acc_base) - 1);
+  s_acc_base[sizeof(s_acc_base) - 1] = 0;
+  s_acc_opts[s_acc_n++] = s_acc_base;          // plain letter last (escape hatch)
+  s_acc_idx = 0;
+  s_altacc_active = true;
+  s_altacc_key    = c;
+  s_altacc_ta     = ta;
+  accentPopupShow();
+  // accentPopupShow anchors to the on-screen keyboard, which this board doesn't
+  // have — re-anchor just above the field being edited (below it if cramped),
+  // centred via align (manual x math misplaced it under the scaled UI).
+  if (s_acc_popup) {
+    lv_obj_update_layout(s_acc_popup);
+    lv_area_t a; lv_obj_get_coords(ta, &a);
+    lv_coord_t by = a.y1 - lv_obj_get_height(s_acc_popup) - SC(4);
+    if (by < STATUSBAR_H + 2) by = a.y2 + SC(4);
+    lv_obj_align(s_acc_popup, LV_ALIGN_TOP_MID, 0, by);
+  }
+  return true;
+}
+
+static void tanAltAccentAltReleased() {
+  if (!s_altacc_active) return;
+  lv_obj_t* ta = s_altacc_ta;
+  if (ta && lv_obj_is_valid(ta) && s_acc_idx >= 0 && s_acc_idx < s_acc_n)
+    lv_textarea_add_text(ta, s_acc_opts[s_acc_idx]);
+  accentPopupHide();
+  s_altacc_active = false;
+  s_altacc_key    = 0;
+  s_altacc_ta     = nullptr;
+}
+#endif  // HAS_TANMATSU ALT-accent picker
 
 // ---- "Alt" accent key (issue #22) ----------------------------------------
 // The touch keyboard can't do long-press (the cap-touch driver finalizes taps
@@ -5424,7 +5988,9 @@ static void closeChatPanel(LvChatPanel* p) {
   g_lv.dirty_threads = true;
   s_unread_at_open = 0;          // clear the unread divider when leaving the chat
   s_chat_just_opened = false;
+  chatVirtReset(p);
   if (p->jump_btn) lv_obj_add_flag(p->jump_btn, LV_OBJ_FLAG_HIDDEN);
+  if (p->jump_oldest_btn) lv_obj_add_flag(p->jump_oldest_btn, LV_OBJ_FLAG_HIDDEN);
   setChatStatusTitle(nullptr);   // drop the thread name from the status bar
 }
 
@@ -5662,6 +6228,34 @@ static void threadSheetRoomLoginCb(lv_event_t* e) {
 // "Reset path" (DM sheet) — wipes the cached return path for this chat's contact so
 // the next send re-floods, without the detour through the Contacts tab (wyvern.red
 // feedback; same action as the contact sheet's Reset path).
+// "Delete history" (chat/channel settings sheet): tombstone every message of the
+// thread after a confirm. The thread row itself stays (the channel stays joined,
+// the contact stays) — this only wipes the conversation content.
+static int s_hist_clear_thread = -1;
+static void histClearApply() {
+  if (!g_lv.task || s_hist_clear_thread < 0) return;
+  const int idx = s_hist_clear_thread;
+  s_hist_clear_thread = -1;
+  const int cleared = g_lv.task->clearThreadHistory(idx);
+  refreshThreadLists();                                    // cleared history vanishes instantly
+  if (g_lv.dm.detail_open) refreshChatDetailAsync(g_lv.dm);
+  if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
+  // Persist synchronously so the cleared chat stays cleared across an immediate hard
+  // reset; the compact write keeps it fast enough not to hitch the UI.
+  if (cleared) g_lv.task->persistHistoryNow();
+  char msg[40];
+  snprintf(msg, sizeof msg, TR("Deleted %d messages"), cleared);
+  g_lv.task->showAlert(msg, 1400);
+}
+static void threadSheetClearHistCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  const int idx = s_channel_long_idx;
+  closeChannelLongSheet();
+  s_hist_clear_thread = idx;
+  showConfirm(TR("Delete this chat's entire history?\nThe chat itself stays."),
+              TR("Delete"), histClearApply);
+}
+
 static void threadSheetResetPathCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   const int idx = s_channel_long_idx;
@@ -5776,7 +6370,7 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   lv_obj_t* title = lv_label_create(card);
   char nm[40];
   copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), name ? name : "");
-  lv_label_set_text_fmt(title, TR("%s  %s"), is_channel ? LV_SYMBOL_LOOP : LV_SYMBOL_ENVELOPE,
+  lv_label_set_text_fmt(title, "%s  %s", is_channel ? LV_SYMBOL_LOOP : LV_SYMBOL_ENVELOPE,
                         nm[0] ? nm : (is_channel ? "(channel)" : "(chat)"));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
@@ -5852,12 +6446,14 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     // Chat-list avatar emoji: tap = pick, long-press = back to the two-letter auto avatar.
     lv_obj_t* icb = mk(LV_SYMBOL_IMAGE "  Chat icon", threadSheetIconCb, 0);
     if (icb) lv_obj_add_event_cb(icb, threadSheetIconResetCb, LV_EVENT_LONG_PRESSED, nullptr);
+    mk(LV_SYMBOL_TRASH    "  Delete history", threadSheetClearHistCb,    0);
     mk_full(LV_SYMBOL_TRASH "  Remove channel", channelLongSheetDeleteCb, 0xB23A48);
   } else {
     if (is_room_thread)
       mk(LV_SYMBOL_REFRESH "  Log in again",  threadSheetRoomLoginCb,    0);
     mk(LV_SYMBOL_LOOP     "  Reset path",     threadSheetResetPathCb,    0);
     mk(LV_SYMBOL_CLOSE    "  Blocked users",  channelLongSheetBlockedCb, 0);
+    mk(LV_SYMBOL_TRASH    "  Delete history", threadSheetClearHistCb,    0);
     mk_full(LV_SYMBOL_TRASH "  Delete chat",   threadSheetDeleteDmCb,     0xB23A48);
   }
 }
@@ -5968,8 +6564,8 @@ static void threadSelectCb(lv_event_t* e) {
   // Build + scroll AFTER un-hiding: bubbles measured in a hidden tree get a wrong height,
   // which collapses the content so the open-scroll lands at the top. Visible first = correct
   // heights = the open-scroll reaches the newest message.
-  refreshChatDetail(p);
-#if defined(HAS_TDECK_KEYBOARD)
+  refreshChatDetailAsync(p);
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   // Physical keyboard: focus the composer on open so typing goes straight in.
   showKb(&p);
 #endif
@@ -5987,7 +6583,7 @@ static void sendFromPanelCb(lv_event_t* e) {
   for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
   if (g_lv.task->composerSend()) {
     lv_textarea_set_text(p->composer_ta, "");
-    refreshChatDetail(*p);
+    refreshChatDetailAsync(*p);
     g_lv.dirty_threads = true;
   }
 }
@@ -6350,6 +6946,23 @@ static void qrPickCb(lv_event_t* e) {
 #endif
 }
 
+// First picker row: insert the node's current GPS position (issue-free text, no
+// auto-send - same contract as the macro rows). Only clickable with a live fix.
+static void qrGpsPickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  LvChatPanel* p = s_qr_panel;
+  closeQuickReplySheet();
+  if (!p || !p->composer_ta) return;
+#if defined(ESP32)
+  if (!g_lv.task || !g_lv.task->getGpsFix()) return;   // disabled row should not fire; belt and braces
+  char buf[48];
+  snprintf(buf, sizeof buf, "%.5f, %.5f", g_lv.task->getNodeLat(), g_lv.task->getNodeLon());
+  taClearSelection(p->composer_ta);                    // same insert contract as qrPickCb
+  lv_textarea_add_text(p->composer_ta, buf);
+  lv_obj_add_state(p->composer_ta, LV_STATE_FOCUSED);
+#endif
+}
+
 static void qrSheetCloseCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeQuickReplySheet();
@@ -6411,9 +7024,10 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   const int cols    = 1;
   const int col_gap = 0;
 #endif
-  const int col_w = (card_w - 2 * pad - (cols - 1) * col_gap) / cols;
-  const int rows  = (TOUCH_QUICK_REPLY_COUNT + cols - 1) / cols;   // ceil, in case the macro count ever changes
-  int card_h = title_h + rows * (btn_h + row_gap) + hint_h + pad;
+  const int col_w    = (card_w - 2 * pad - (cols - 1) * col_gap) / cols;
+  const int rows     = (TOUCH_QUICK_REPLY_COUNT + cols - 1) / cols;   // ceil, in case the macro count ever changes
+  const int gps_row_h = btn_h + row_gap;   // GPS-position row: always full-width, sits above the macro grid
+  int card_h = title_h + gps_row_h + rows * (btn_h + row_gap) + hint_h + pad;
   if (card_h > sh - STATUSBAR_H - 8) card_h = sh - STATUSBAR_H - 8;   // never taller than the visible area
   lv_obj_t* card = lv_obj_create(s_qr_sheet);
   lv_obj_remove_style_all(card);
@@ -6435,6 +7049,26 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   lv_obj_set_pos(title, 0, 0);
 
 #if defined(ESP32)
+  {  // --- My position (GPS) --- first row; greyed out without a live fix
+    const bool fix = g_lv.task && g_lv.task->getGpsFix();
+    char gbuf[64];
+    if (fix) snprintf(gbuf, sizeof gbuf, LV_SYMBOL_GPS " %.5f, %.5f", g_lv.task->getNodeLat(), g_lv.task->getNodeLon());
+    else     snprintf(gbuf, sizeof gbuf, LV_SYMBOL_GPS " %s", TR("My position (no GPS fix)"));
+    lv_obj_t* b = lv_btn_create(card);
+    lv_obj_set_size(b, card_w - 2 * pad, btn_h);
+    lv_obj_set_pos(b, 0, title_h);
+    styleButton(b);
+    lv_obj_set_style_bg_color(b, lv_color_hex(fix ? 0x1A1B1C : 0x0C0D0E), LV_PART_MAIN);
+    if (fix) lv_obj_add_event_cb(b, qrGpsPickCb, LV_EVENT_CLICKED, nullptr);
+    else     lv_obj_add_state(b, LV_STATE_DISABLED);   // disabled = LVGL swallows the click
+    lv_obj_t* lbl = lv_label_create(b);
+    lv_label_set_text(lbl, gbuf);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(lbl, card_w - 2 * pad - 16);
+    lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(fix ? COLOR_TEXT : COLOR_SUB), LV_PART_MAIN);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 8, 0);
+  }
   for (int i = 0; i < TOUCH_QUICK_REPLY_COUNT; ++i) {
     char buf[TOUCH_QUICK_REPLY_MAXLEN];
     int n = touchPrefsGetQuickReply(i, buf, sizeof(buf));
@@ -6442,7 +7076,7 @@ static void openQuickReplyPicker(LvChatPanel* p) {
     const int col = i % cols, row = i / cols;
     lv_obj_t* b = lv_btn_create(card);
     lv_obj_set_size(b, col_w, btn_h);
-    lv_obj_set_pos(b, col * (col_w + col_gap), title_h + row * (btn_h + row_gap));
+    lv_obj_set_pos(b, col * (col_w + col_gap), title_h + gps_row_h + row * (btn_h + row_gap));
     styleButton(b);
     lv_obj_set_style_bg_color(b, lv_color_hex(n > 0 ? 0x1A1B1C : 0x0C0D0E), LV_PART_MAIN);
     lv_obj_add_event_cb(b, qrPickCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
@@ -6455,7 +7089,7 @@ static void openQuickReplyPicker(LvChatPanel* p) {
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 8, 0);
   }
 #endif
-  const int y = title_h + rows * (btn_h + row_gap);   // hint sits below the last row
+  const int y = title_h + gps_row_h + rows * (btn_h + row_gap);   // hint sits below the last row
   lv_obj_t* hint = lv_label_create(card);
   lv_label_set_text(hint, TR("Edit in Settings \xe2\x86\x92 Quick replies"));
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -6467,6 +7101,7 @@ static void openAppDrawer();    // fwd — app-drawer overlay (defined below ope
 static void closeAppDrawer();
 static void setHomeDrawer(bool show);
 static void closeMentionsScreen();           // fwd — @-mentions screen (defined with the drawer)
+static void openMentionsScreen();            // fwd — same
 static void closeAppDrawerSync();            // fwd — synchronous drawer close (safe outside the drawer's own event)
 static lv_obj_t* s_mentions_root = nullptr;  // @-mentions list overlay
 // The Home tab shows the command centre OR the app drawer; remember which so
@@ -6723,7 +7358,7 @@ static void settingsFieldFocusCb(lv_event_t* e) {
 #endif
 }
 
-#if defined(HAS_TDECK_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
 // Recursively find the first text field under `obj` (depth-first).
 static lv_obj_t* findFirstTextarea(lv_obj_t* obj) {
   if (!obj) return nullptr;
@@ -6807,20 +7442,6 @@ static void copyLabelLongPressCb(lv_event_t* e) {
   clipboardSet(clean, static_cast<const char*>(lv_event_get_user_data(e)));
 }
 
-// LV_EVENT_LONG_PRESSED handler on a textarea: pastes clipboard at cursor.
-// When the keyboard is bound to a mirror, the paste goes into the mirror so
-// the keyboard editor sees it and live-sync propagates it to the real ta.
-static void pasteTextareaLongPressCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
-  if (!s_clipboard[0]) return;
-  lv_obj_t* ta = lv_event_get_target(e);
-  if (!ta) return;
-  lv_obj_t* dest = (kbMirrorActive() && s_kb_bind_ta == ta && s_kb_mirror_ta) ? s_kb_mirror_ta : ta;
-  lv_textarea_add_text(dest, s_clipboard);
-  lv_indev_t* act = lv_indev_get_act();
-  if (act) lv_indev_wait_release(act);
-}
-
 // Touch-down on a text field = backlight activity. Hooked on PRESSED (which
 // fires reliably on every tap, including on an already-focused field — unlike
 // CLICKED/FOCUSED, which the swipe detector can drop via lv_indev_wait_release).
@@ -6836,13 +7457,22 @@ static void kbActivityPressCb(lv_event_t* e) {
 // The accent box + its variants are NAV_SKIP_FLAG (passive, never focus targets), so picking
 // a variant doesn't blur the field; only a real tap-away does, which is when we want it gone.
 static void settingsFieldDefocusCb(lv_event_t* /*e*/) { accentBoxHide(); }
+// The full text-edit gestures — defined further down with the edit-menu code.
+static void composerEditClickedCb(lv_event_t* e);
+static void composerEditLongPressCb(lv_event_t* e);
 static void attachSettingsTaEvents(lv_obj_t* ta) {
   lv_obj_add_event_cb(ta, settingsFieldFocusCb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(ta, settingsFieldFocusCb, LV_EVENT_CLICKED, nullptr);
   // PRESSED is used only for the keyboard backlight (see kbActivityPressCb),
   // never for focus — settingsFieldFocusCb still avoids it for the scroll case.
   lv_obj_add_event_cb(ta, kbActivityPressCb, LV_EVENT_PRESSED, nullptr);
-  lv_obj_add_event_cb(ta, pasteTextareaLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
+  // Full edit gestures, same as the chat composer: long-press opens the
+  // Cut / Copy / Paste / All / Sym menu (Sym = the special-character picker —
+  // the only way to type symbols missing from the on-screen layouts, e.g. in
+  // a Wi-Fi password; issue #122), double-tap selects the word under the tap.
+  // This replaces the old silent paste-on-long-press, which offered no UI.
+  lv_obj_add_event_cb(ta, composerEditClickedCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(ta, composerEditLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
   lv_obj_add_event_cb(ta, settingsFieldDefocusCb, LV_EVENT_DEFOCUSED, nullptr);
 }
 
@@ -6958,6 +7588,11 @@ static void txtMenuCellCb(lv_event_t* e) {
   intptr_t act = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
   lv_obj_t* ta = s_txtmenu_ta;
   if (!ta) { txtMenuHide(); return; }
+  // Mirror-bound field (settings fields while the on-screen keyboard is up):
+  // edit the mirror the user is looking at — live-sync propagates to the real
+  // field. Editing the real ta directly here would be clobbered by the mirror
+  // sync. Same routing the old silent long-press paste used.
+  if (kbMirrorActive() && s_kb_bind_ta == ta && s_kb_mirror_ta) ta = s_kb_mirror_ta;
   if (act == TXT_SYM) { txtMenuHide(); openSpecialPicker(ta); return; }   // dedicated special-character picker
   const char* txt = lv_textarea_get_text(ta);
   uint32_t s_cp = 0, e_cp = 0;
@@ -7043,9 +7678,10 @@ static void txtMenuShow(lv_obj_t* ta) {
   lv_obj_move_foreground(s_txtmenu);
 }
 
-// Composer gestures: double-tap (two clicks within 350 ms on the same field)
-// selects the word under the tap; long-press opens the edit menu. A single tap
-// dismisses an open menu.
+// Text-edit gestures (chat composer + every settings field via
+// attachSettingsTaEvents): double-tap (two clicks within 350 ms on the same
+// field) selects the word under the tap; long-press opens the edit menu. A
+// single tap dismisses an open menu.
 static void composerEditClickedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   lv_obj_t* ta = lv_event_get_target(e);
@@ -7266,7 +7902,7 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   g_set_modal.root = root;
   g_set_modal.kind = kind;
   s_settings_content_w = (sw - 8) - 12;   // modal body width minus its 6px padding each side
-#if defined(HAS_TDECK_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   // Physical keyboard: once the caller has finished adding this modal's fields
   // (deferred to the next frame), focus its first text field so the user can
   // type straight away. Popup modals only — the inline-settings path returns above.
@@ -7552,8 +8188,7 @@ static void advertDismissCb(lv_event_t* e) {
   closeAdvertPage();
 }
 
-static void openAdvertModalCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+static void openAdvertPage() {
   closeAdvertPage();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -7604,8 +8239,8 @@ static void openAdvertModalCb(lv_event_t* e) {
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(hint,
-    "Flood: relayed across the mesh (multi-hop).\n"
-    "Zero-hop: neighbours only (no relaying).");
+    TR("Flood: relayed across the mesh (multi-hop).\n"
+    "Zero-hop: neighbours only (no relaying)."));
   lv_obj_update_layout(hint);                 // measure the actual wrapped height (taller on the narrow V4)
   int hint_h = lv_obj_get_height(hint);
   y += (hint_h > 0 ? hint_h : SC(40)) + 10;
@@ -7686,13 +8321,17 @@ static void openAdvertModalCb(lv_event_t* e) {
   lv_obj_set_style_text_color(anote, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(anote, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(anote,
-    "Mesh health: a flood advert is rebroadcast by every repeater in range, so frequent floods add "
+    TR("Mesh health: a flood advert is rebroadcast by every repeater in range, so frequent floods add "
     "airtime for the whole network. Keep them infrequent (a day or more). Your neighbours still see "
     "you from zero-hop adverts and your message replies, so flood mainly when distant nodes need to "
-    "rediscover you. Leave both Off to advertise only when you tap the buttons above.");
+    "rediscover you. Leave both Off to advertise only when you tap the buttons above."));
 
   lv_obj_move_foreground(s_advert_root);            // above the tabview
   lv_obj_move_foreground(g_statusbar.root);         // keep the tall title bar above this page (back chevron fully visible)
+}
+
+static void openAdvertModalCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) openAdvertPage();
 }
 
 // ---- Discovered list modal: shows adverts NOT yet in contacts[], with "Add" buttons ----
@@ -8015,9 +8654,9 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
     lv_label_set_text(empty,
-      "No discovered nodes yet.\n\n"
+      TR("No discovered nodes yet.\n\n"
       "Anything heard over the air that isn't in your contacts will show up "
-      "here. When auto-add is off, you can manually add nodes to your contacts.");
+      "here. When auto-add is off, you can manually add nodes to your contacts."));
     return;
   }
 
@@ -8570,7 +9209,7 @@ static void buildRadioSettings() {
     // settingsRowLabel reserves the right 56 px for the switch; lv_obj_align
     // TOP_RIGHT then sits it flush to the body edge (the cw - SC(48) absolute pos
     // ran off-screen under the scrollbar).
-    int h = settingsRowLabel(body, y, 4, "Answer telemetry requests", COLOR_TEXT, nullptr, 56);
+    int h = settingsRowLabel(body, y, 4, TR("Answer telemetry requests"), COLOR_TEXT, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (prefs && prefs->telemetry_mode_base != 0) lv_obj_add_state(sw, LV_STATE_CHECKED);
@@ -8588,7 +9227,7 @@ static void buildRadioSettings() {
     lv_obj_t* dd = lv_dropdown_create(body);
     lv_obj_set_size(dd, lv_pct(100), SC(34));
     lv_obj_set_pos(dd, 2, y);
-    lv_dropdown_set_options(dd, "1 byte (legacy)\n2 bytes\n3 bytes");
+    lv_dropdown_set_options(dd, TR("1 byte (legacy)\n2 bytes\n3 bytes"));
     lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -8633,7 +9272,7 @@ static void buildRadioSettings() {
   // Opt-in: also scope DIRECT messages / logins / remote-management floods to the region
   // (not just channels). For networks where your only repeater re-floods a single region.
   {
-    int rh = settingsRowLabel(body, y, 6, "Scope direct msgs to region", COLOR_SUB, nullptr, 56);
+    int rh = settingsRowLabel(body, y, 6, TR("Scope direct msgs to region"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (touchPrefsGetScopeDirect()) lv_obj_add_state(sw, LV_STATE_CHECKED);
@@ -8658,26 +9297,26 @@ static void buildRadioSettings() {
   // default; a big win in quiet/remote sites, but can desensitize in noisy areas. This is
   // SEPARATE from the SX1262's tiny internal "boosted gain". Hidden on V4.2 (no switchable LNA).
   if (board.femLnaControllable()) {
-    int rh = settingsRowLabel(body, y, 4, "High-gain receiver (FEM LNA)", COLOR_TEXT, &g_font_12, 56);
+    int rh = settingsRowLabel(body, y, 4, TR("High-gain receiver (FEM LNA)"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (touchPrefsGetFemLna()) lv_obj_add_state(sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw, radioFemLnaToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, rh + 10);
-    y += settingsRowLabel(body, y, 0, "~17 dB amp for quiet/remote areas; turn off in noisy spots.",
+    y += settingsRowLabel(body, y, 0, TR("~17 dB amp for quiet/remote areas; turn off in noisy spots."),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
 #endif
 
   // Buffered receive (experimental): decouple packet pickup from the UI loop.
   {
-    int rh = settingsRowLabel(body, y, 4, "Buffered receive (experimental)", COLOR_TEXT, &g_font_12, 56);
+    int rh = settingsRowLabel(body, y, 4, TR("Buffered receive (experimental)"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (touchPrefsGetRxQueue()) lv_obj_add_state(sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw, radioRxQueueToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, rh + 10);
-    y += settingsRowLabel(body, y, 0, "Reads packets on a background task so a busy screen can't drop them.",
+    y += settingsRowLabel(body, y, 0, TR("Reads packets on a background task so a busy screen can't drop them."),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
 
@@ -8686,7 +9325,7 @@ static void buildRadioSettings() {
   // minutes (1..1440); the toggle saves immediately, the field on its Set button.
   mk_label("Signal probe");
   {
-    int rh = settingsRowLabel(body, y, 6, "Auto-discover", COLOR_SUB, nullptr, 56);
+    int rh = settingsRowLabel(body, y, 6, TR("Auto-discover"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (touchPrefsGetSigProbeEnabled()) lv_obj_add_state(sw, LV_STATE_CHECKED);
@@ -8722,7 +9361,7 @@ static void buildRadioSettings() {
     lv_label_set_text_fmt(l_adv, LV_SYMBOL_UPLOAD "  %s", TR("Open Advertise app"));
     lv_obj_center(l_adv);
     y += SC(42);
-    y += settingsRowLabel(body, y, 0, "Send an advert now, or set how often you re-advertise.",
+    y += settingsRowLabel(body, y, 0, TR("Send an advert now, or set how often you re-advertise."),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
 
@@ -8760,7 +9399,7 @@ static void buildAutoAddSettings() {
   // "Notify on new contact" — a UI pref (not a NodePrefs autoadd bit), so it gets
   // its own callback + persistence rather than mk_switch's autoAddSwitchCb.
   {
-    int h = settingsRowLabel(body, y, 6, "Notify on new contact", COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6, TR("Notify on new contact"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (touchPrefsGetNewContactToast()) lv_obj_add_state(sw, LV_STATE_CHECKED);
@@ -9322,6 +9961,32 @@ static void useSdStorageToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Data -> SD card on reboot\n(card must be inserted)")
                                          : TR("Data -> internal on reboot"), 1800);
 }
+
+#if defined(HAS_TDECK_GT911)
+// "Copy internal data to SD": recovery for the beta_36 upgrades where the live
+// profile was orphaned on internal flash while the honored SD toggle adopted an
+// empty card (which then minted a fresh identity). Overwrites the card's copies
+// with EVERYTHING from internal flash, forces the SD pref on, reboots.
+extern bool meshcomodMigrateSpiffsToSd(bool force);   // main.cpp
+static void sdRestoreApply() {
+  if (!g_lv.task) return;
+  if (!fmSdTryMount()) { g_lv.task->showAlert(TR("No SD card"), 1600); return; }
+  g_lv.task->showAlert(TR("Copying internal data to SD..."), 6000);
+  lv_refr_now(nullptr);                 // paint the notice before the blocking copy
+  disableLoopWDT();
+  const bool ok = meshcomodMigrateSpiffsToSd(true);
+  enableLoopWDT();
+  if (!ok) { g_lv.task->showAlert(TR("Copy failed (no internal identity)"), 2200); return; }
+  touchPrefsSetUseSdStorage(true);      // make sure the reboot adopts the card
+  delay(400);                           // let the alert render before the restart
+  board.reboot();
+}
+static void sdRestoreFromInternalCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  showConfirm(TR("Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?"),
+              TR("Copy"), sdRestoreApply);
+}
+#endif
 #endif
 
 static void useMilesToggleCb(lv_event_t* e) {
@@ -9340,7 +10005,7 @@ static void useMilesToggleCb(lv_event_t* e) {
 // only via the on-screen button — Tim kept firing messages on the public
 // channel by accident. Physical keyboard only (the on-screen keyboard's
 // checkmark never auto-sent).
-#if defined(HAS_TDECK_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
 static void enterSendsToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -9412,6 +10077,8 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
   s_lock_on_screen_off = on;
 #if defined(HAS_TDECK_GT911)
   const char* unlock_hint = on ? TR("Locks when screen off\n(hold the trackball to unlock)") : TR("Screen-off just dims");
+#elif defined(HAS_THINKNODE_M9)
+  const char* unlock_hint = on ? TR("Locks when screen off\n(hold the d-pad to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_TANMATSU)
   const char* unlock_hint = on ? TR("Locks when screen off\n(press Volume Down to unlock)") : TR("Screen-off just dims");
 #elif defined(TLORA_PAGER)
@@ -9537,8 +10204,8 @@ static void compactChatToggleCb(lv_event_t* e) {
   touchPrefsSetCompactChat(on);
 #endif
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Compact messages") : TR("Chat bubbles"), 1000);
-  if (g_lv.dm.detail_open) refreshChatDetail(g_lv.dm);
-  if (g_lv.ch.detail_open) refreshChatDetail(g_lv.ch);
+  if (g_lv.dm.detail_open) refreshChatDetailAsync(g_lv.dm);
+  if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
 }
 
 #if defined(HAS_EXPANSION_KIT)
@@ -9950,7 +10617,7 @@ static void openExpansionCardCb(lv_event_t* e) {
 }
 #endif  // HAS_EXPANSION_KIT
 
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
 // Lock-screen settings live in the Device modal but the picker implementation
 // needs the SD-mount state (declared further down), so split: the small bits
 // the modal body uses directly are here; the picker is defined below.
@@ -9969,7 +10636,7 @@ static void lockwallDisplayName(const char* path, char* out, int cap) {
 }
 static void openLockWallPickerCb(lv_event_t* e);   // defined with the picker, below
 static void lockColorChosenCb(lv_event_t* e);
-#endif  // HAS_TDECK_GT911
+#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9
 #if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck (SD or SPIFFS) or pager (SPIFFS only)
 // Per-event notification-sound picker (Settings -> Sound). Mirrors the wallpaper picker.
 static lv_obj_t* s_snd_btn_lbl[3] = { nullptr, nullptr, nullptr };
@@ -10024,8 +10691,15 @@ static void kbBlSliderCb(lv_event_t* e) {          // live while dragging
   kbBlSetPct(lv_slider_get_value(lv_event_get_target(e)), false);
 }
 static void kbBlSliderReleaseCb(lv_event_t*)   { kbBlScheduleSave(); }
-static void kbBlPresetCb(lv_event_t* e) {          // Off / 25 / 50 / 75 / Max: user_data = the percent
-  kbBlSetPct((int)(intptr_t)lv_event_get_user_data(e), true);
+static void kbBlPresetCb(lv_event_t* e) {          // Off / 25 / 50 / 75 / Max: user_data = the percent (0 = Off)
+  int pct = (int)(intptr_t)lv_event_get_user_data(e);
+  if (pct == 0) {                                  // "Off" switches the MODE off (what the CC chip shows), instead of
+    s_kb_bl_mode = 0;                              // inventing a second dark state (brightness 0 with the mode still on)
+    tdeckKeyboardSetBacklight(0);                  // that left the CC chip saying "on" over a dark keyboard.
+    kbBlScheduleSave();                            // brightness pct is left untouched -> re-enabling restores it
+    return;
+  }
+  kbBlSetPct(pct, true);
   kbBlScheduleSave();
 }
 #endif
@@ -10150,7 +10824,7 @@ static void buildDeviceSettings(int sec) {
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
   // Master Sound switch — off overrules everything (fully silent).
   {
-    int rh = settingsRowLabel(body, y, 6, "Sound", COLOR_SUB, nullptr, 56);
+    int rh = settingsRowLabel(body, y, 6, TR("Sound"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (g_lv.task && !g_lv.task->isBuzzerQuiet()) lv_obj_add_state(sw, LV_STATE_CHECKED);
@@ -10159,7 +10833,7 @@ static void buildDeviceSettings(int sec) {
   }
   // Per-event on/off switches: Message, DM, @-mention (under the master Sound).
   {
-    int rh = settingsRowLabel(body, y, 6, "Message sound", COLOR_SUB, nullptr, 56);
+    int rh = settingsRowLabel(body, y, 6, TR("Message sound"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (touchPrefsGetSoundMessages()) lv_obj_add_state(sw, LV_STATE_CHECKED);
@@ -10167,7 +10841,7 @@ static void buildDeviceSettings(int sec) {
     y += LV_MAX(34, rh + 12);
   }
   {
-    int rh = settingsRowLabel(body, y, 6, "DM sound", COLOR_SUB, nullptr, 56);
+    int rh = settingsRowLabel(body, y, 6, TR("DM sound"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (touchPrefsGetSoundDirect()) lv_obj_add_state(sw, LV_STATE_CHECKED);
@@ -10175,7 +10849,7 @@ static void buildDeviceSettings(int sec) {
     y += LV_MAX(34, rh + 12);
   }
   {
-    int rh = settingsRowLabel(body, y, 6, "@ mention sound", COLOR_SUB, nullptr, 56);
+    int rh = settingsRowLabel(body, y, 6, TR("@ mention sound"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (touchPrefsGetSoundMentions()) lv_obj_add_state(sw, LV_STATE_CHECKED);
@@ -10273,7 +10947,7 @@ static void buildDeviceSettings(int sec) {
   if (sec == DSEC_DISPLAY) {   // --- Display ---
   /* Screen timeout (seconds, 0 = never). Persists in NVS via TouchPrefsStore. */
   {
-    y += settingsRowLabel(body, y, 0, "Screen timeout (s, 0 = never, min 10)", COLOR_SUB, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, TR("Screen timeout (s, 0 = never, min 10)"), COLOR_SUB, &g_font_12, 0) + 2;
     g_set_modal.screen_to_ta = lv_textarea_create(body);
     lv_obj_set_size(g_set_modal.screen_to_ta, SC(100), SC(30));
     lv_obj_set_pos(g_set_modal.screen_to_ta, 2, y);
@@ -10293,9 +10967,9 @@ static void buildDeviceSettings(int sec) {
   /* UI size (resolution scale): Normal 100% / Large 150% / Huge 200%. Renders the whole UI at a
      lower resolution and upscales to the panel, so EVERYTHING grows. Applied at boot → restart. */
   {
-    y += settingsRowLabel(body, y, 0, "UI size (restart to apply)", COLOR_SUB, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, TR("UI size (restart to apply)"), COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* dd = lv_dropdown_create(body);
-    lv_dropdown_set_options(dd, "Normal (100%)\nLarge (150%)\nHuge (200%)");
+    lv_dropdown_set_options(dd, TR("Normal (100%)\nLarge (150%)\nHuge (200%)"));
     lv_dropdown_set_selected(dd, touchPrefsGetUiScale());
     lv_obj_set_width(dd, lv_pct(100));
     lv_obj_set_pos(dd, 2, y);
@@ -10306,7 +10980,7 @@ static void buildDeviceSettings(int sec) {
   /* Message LED: flash the envelope-icon LED on a new message and softly breathe it while there
      are unread messages. Turn off to keep that LED dark. (Tanmatsu only — the others have no such LED.) */
   {
-    int h = settingsRowLabel(body, y, 6, "Message LED", COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6, TR("Message LED"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
     if (touchPrefsGetMsgLed()) lv_obj_add_state(sw, LV_STATE_CHECKED);
@@ -10317,7 +10991,7 @@ static void buildDeviceSettings(int sec) {
 
   /* Distance units: OFF = km (default), ON = miles. Applies immediately. */
   {
-    int h = settingsRowLabel(body, y, 6, "Distance in miles", COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6, TR("Distance in miles"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);   // flush to the card's right edge
 #if defined(ESP32)
@@ -10331,7 +11005,7 @@ static void buildDeviceSettings(int sec) {
   if (sec == DSEC_CLOCK) {
   /* Clock format: OFF = 24-hour (default), ON = 12-hour AM/PM. Lives on the Clock & time tab. */
   {
-    int h = settingsRowLabel(body, y, 6, "12-hour clock", COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6, TR("12-hour clock"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10346,7 +11020,7 @@ static void buildDeviceSettings(int sec) {
   /* Colourful chat bubbles: colour every bubble + sender name by a hash of the
      sender's name (same name -> same colour). "Taste the rainbow" on enable. */
   {
-    int h = settingsRowLabel(body, y, 6, "Colourful chat bubbles", COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6, TR("Colourful chat bubbles"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10359,7 +11033,7 @@ static void buildDeviceSettings(int sec) {
   /* Compact messages (IRC-style): one dense "HH:MM name: text" row per message
      instead of bubbles — far more history on screen. Opt-in (wyvern.red). */
   {
-    int h = settingsRowLabel(body, y, 6, "Compact messages (IRC style)", COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6, TR("Compact messages (IRC style)"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10372,7 +11046,7 @@ static void buildDeviceSettings(int sec) {
   /* Hide device name: blank the scrolling profile name in the status bar and
      move the clock to the left where it sat. */
   {
-    int h = settingsRowLabel(body, y, 6, "Hide device name", COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6, TR("Hide device name"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10387,7 +11061,7 @@ static void buildDeviceSettings(int sec) {
      Home env widget. Also auto-hidden when no environment sensor is attached.
      The tab layout is decided at boot, so this applies after a restart. */
   {
-    int h = settingsRowLabel(body, y, 6, "Show Sensors tab", COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6, TR("Show Sensors tab"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10396,14 +11070,14 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, showSensorsTabToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
     // Subtitle: this only takes effect on the next boot (tabs are built once).
-    y += settingsRowLabel(body, y, 0, "Applies after restart.", COLOR_SUB, &g_font_12, 0) + 6;
+    y += settingsRowLabel(body, y, 0, TR("Applies after restart."), COLOR_SUB, &g_font_12, 0) + 6;
   }
 #endif
 
   /* Theme colour (UI accent): opens a colour-wheel + hex picker. The chosen
      colour is clamped dark enough that off-white button text stays readable. */
   {
-    y += settingsRowLabel(body, y, 0, "Theme colour", COLOR_SUB, &g_font_12, 0) + 4;
+    y += settingsRowLabel(body, y, 0, TR("Theme colour"), COLOR_SUB, &g_font_12, 0) + 4;
     lv_obj_t* b = lv_btn_create(body);
     lv_obj_set_size(b, SC(150), SC(32));
     lv_obj_set_pos(b, 2, y);
@@ -10430,7 +11104,7 @@ static void buildDeviceSettings(int sec) {
      /meshcomod instead of internal flash — for running under Launcher, or just
      to keep everything on a card. Read at boot, so it applies after a reboot. */
   {
-    int h = settingsRowLabel(body, y, 6, "Store data on SD (reboot)", COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6, TR("Store data on SD (reboot)"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10439,6 +11113,26 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, useSdStorageToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
+  /* Recovery for the beta_36 "lost my profile" upgrades: the live data was
+     orphaned on internal flash when the honored SD toggle adopted an empty (or
+     fresh-identity) card. This copies EVERYTHING from internal flash over the
+     card's copies and reboots into the restored profile. T-Deck only: the
+     migration is SPIFFS->SD; the Tanmatsu's CAP_SD is SD_MMC with no SPIFFS. */
+#if defined(HAS_TDECK_GT911)
+  {
+    lv_obj_t* b = lv_btn_create(body);
+    lv_obj_set_size(b, lv_pct(96), SC(30));
+    lv_obj_set_pos(b, 0, y);
+    styleButton(b);
+    lv_obj_add_event_cb(b, sdRestoreFromInternalCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* lbl = lv_label_create(b);
+    lv_label_set_text(lbl, TR(LV_SYMBOL_DOWNLOAD "  Copy internal data to SD"));
+    lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_center(lbl);
+    y += SC(40);
+  }
+#endif  // HAS_TDECK_GT911 (SPIFFS->SD recovery copy)
 #endif
 
   }
@@ -10447,15 +11141,16 @@ static void buildDeviceSettings(int sec) {
 #if defined(HAS_TDECK_KEYBOARD)
   /* Keyboard backlight brightness (issue #84). A live slider (gamma-2 mapped so the
      dim end is fine-grained) plus Off / 25 / 50 / 75 / Max one-tap presets; changes
-     apply within ~8 ms, the NVS save is debounced. 0 keeps the backlight dark even
-     in the on/auto modes. */
+     apply within ~8 ms, the NVS save is debounced. "Off" sets the backlight MODE
+     off (the same axis the control-center chip cycles), so the chip and this page
+     never disagree; the slider (1-100) only sets how bright on/auto glow. */
   {
-    y += settingsRowLabel(body, y, 0, "Keyboard backlight", COLOR_SUB, &g_font_12, 0) + 4;
+    y += settingsRowLabel(body, y, 0, TR("Keyboard backlight"), COLOR_SUB, &g_font_12, 0) + 4;
     lv_obj_t* sl = lv_slider_create(body);
     g_set_modal.kbbl_slider = sl;
     lv_obj_set_size(sl, lv_pct(96), SC(8));
     lv_obj_set_pos(sl, 2, y + SC(6));
-    lv_slider_set_range(sl, 0, 100);
+    lv_slider_set_range(sl, 1, 100);   // dark is the mode's job ("Off"); on/auto always visibly lit
     lv_slider_set_value(sl, s_tdeck_kb_bl_pct, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(sl, lv_color_hex(0x202428), LV_PART_MAIN);
     lv_obj_set_style_bg_color(sl, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
@@ -10499,9 +11194,9 @@ static void buildDeviceSettings(int sec) {
      English -> each enabled layout -> back. The active layout is remembered
      across reboots. */
   {
-    y += settingsRowLabel(body, y, 0, "Secondary keyboards", COLOR_SUB, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, TR("Secondary keyboards"), COLOR_SUB, &g_font_12, 0) + 2;
 
-#if defined(HAS_TDECK_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
     const char* kb_cycle_hint = "double-tap SPACE cycles through the ones you enable";
 #else
     const char* kb_cycle_hint = "tap the language key (e.g. EN) on the keyboard to cycle the ones you enable";
@@ -10534,7 +11229,7 @@ static void buildDeviceSettings(int sec) {
   /* Accent popups. Typing a Latin letter that has accented variants pops up a
      tap-to-pick box; turn this off for plain typing. Default on. */
   {
-    int h = settingsRowLabel(body, y, 4, "Accent popups", COLOR_TEXT, &g_font_12, 56);
+    int h = settingsRowLabel(body, y, 4, TR("Accent popups"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10545,15 +11240,15 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, accentPopupsToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, h + 10);
 
-    y += settingsRowLabel(body, y, 0, "pick accented letters as you type; off = plain typing",
+    y += settingsRowLabel(body, y, 0, TR("pick accented letters as you type; off = plain typing"),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
 
-#if defined(HAS_TDECK_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   /* Enter sends the message (default) vs. inserts a newline so you send only via
      the on-screen button — avoids accidental sends on the public channel. */
   {
-    int h = settingsRowLabel(body, y, 4, "Enter key sends message", COLOR_TEXT, &g_font_12, 56);
+    int h = settingsRowLabel(body, y, 4, TR("Enter key sends message"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10561,14 +11256,14 @@ static void buildDeviceSettings(int sec) {
 #endif
     lv_obj_add_event_cb(sw, enterSendsToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, h + 10);
-    y += settingsRowLabel(body, y, 0, "off = Enter adds a new line; tap Send to send",
+    y += settingsRowLabel(body, y, 0, TR("off = Enter adds a new line; tap Send to send"),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
 
   /* Flash the keyboard backlight + briefly wake the screen when a message arrives — the T-Deck
      analog of the Tanmatsu's envelope LED notifier. Opt-in (default off). */
   {
-    int h = settingsRowLabel(body, y, 4, "Flash on new message", COLOR_TEXT, &g_font_12, 56);
+    int h = settingsRowLabel(body, y, 4, TR("Flash on new message"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10576,7 +11271,7 @@ static void buildDeviceSettings(int sec) {
 #endif
     lv_obj_add_event_cb(sw, msgFlashToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, h + 10);
-    y += settingsRowLabel(body, y, 0, "lights the keyboard + wakes the screen on an incoming message",
+    y += settingsRowLabel(body, y, 0, TR("lights the keyboard + wakes the screen on an incoming message"),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
 #endif
@@ -10586,8 +11281,8 @@ static void buildDeviceSettings(int sec) {
      keys are programmable extras. The menu/tab keys use the coloured F-keys and aren't
      remappable here. Applied live. */
   {
-    y += settingsRowLabel(body, y, 4, "Navigation keys", COLOR_TEXT, &g_font_12, 0) + 2;
-    y += settingsRowLabel(body, y, 0, "Arrows + Enter always work. These letters are extra \xe2\x80\x94 tap a row, then press a key.",
+    y += settingsRowLabel(body, y, 4, TR("Navigation keys"), COLOR_TEXT, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, TR("Arrows + Enter always work. These letters are extra \xe2\x80\x94 tap a row, then press a key."),
                           COLOR_SUB, &g_font_12, 0) + 2;
     static const int kTanNavRows[7] = { 0, 2, 4, 1, 3, 6, 7 };  // Up, Left, Select, Down, Right, Scroll up, Scroll down (Back omitted)
     for (int r = 0; r < 7; r++) {
@@ -10616,13 +11311,13 @@ static void buildDeviceSettings(int sec) {
 #endif
 
 #if CAP_TRACKBALL
-#if defined(HAS_TDECK_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   /* Keyboard navigation: off (default) vs on. When no text field is focused, the
      WASDZ cluster moves focus so the whole UI is reachable from the keyboard (incl.
      Settings), and the tab hotkeys below jump straight to a tab. The trackball
      always stays a mouse cursor. Applied live. */
   {
-    int h = settingsRowLabel(body, y, 4, "Keyboard navigation", COLOR_TEXT, &g_font_12, 56);
+    int h = settingsRowLabel(body, y, 4, TR("Keyboard navigation"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10630,15 +11325,15 @@ static void buildDeviceSettings(int sec) {
 #endif
     lv_obj_add_event_cb(sw, kbdNavToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, h + 10);
-    y += settingsRowLabel(body, y, 0, "W up  \xc2\xb7  A left  \xc2\xb7  D right  \xc2\xb7  Z down  \xc2\xb7  S select  \xc2\xb7  Q back",
+    y += settingsRowLabel(body, y, 0, TR("W up  \xc2\xb7  A left  \xc2\xb7  D right  \xc2\xb7  Z down  \xc2\xb7  S select  \xc2\xb7  Q back"),
                           COLOR_SUB, &g_font_12, 0) + 2;
-    y += settingsRowLabel(body, y, 0, "drive the UI without the screen; keys still type in text fields",
+    y += settingsRowLabel(body, y, 0, TR("drive the UI without the screen; keys still type in text fields"),
                           COLOR_SUB, &g_font_12, 0) + 2;
 #if CAP_TRACKBALL
     // Trackball navigation (EXPERIMENTAL, default OFF) = the trackball moves the focus
     // selection (up/down/left/right) and a click selects; OFF = the trackball is a soft cursor.
     {
-      int h3 = settingsRowLabel(body, y, 4, "Trackball navigates UI", COLOR_TEXT, &g_font_12, 56);
+      int h3 = settingsRowLabel(body, y, 4, TR("Trackball navigates UI"), COLOR_TEXT, &g_font_12, 56);
       lv_obj_t* sw3 = lv_switch_create(body);
       lv_obj_align(sw3, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10646,14 +11341,14 @@ static void buildDeviceSettings(int sec) {
 #endif
       lv_obj_add_event_cb(sw3, tbNavToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
       y += LV_MAX(34, h3 + 10);
-      y += settingsRowLabel(body, y, 0, "Experimental - has known issues. Off = soft mouse cursor.",
+      y += settingsRowLabel(body, y, 0, TR("Experimental - has known issues. Off = soft mouse cursor."),
                             COLOR_SUB, &g_font_12, 0) + 2;
     }
 #endif
     // Show the per-tab hotkey letters over the menubar icons. Off by default — the letters
     // only appear when this is turned on.
     {
-      int h2 = settingsRowLabel(body, y, 4, "Show menu-bar letters", COLOR_TEXT, &g_font_12, 56);
+      int h2 = settingsRowLabel(body, y, 4, TR("Show menu-bar letters"), COLOR_TEXT, &g_font_12, 56);
       lv_obj_t* sw2 = lv_switch_create(body);
       lv_obj_align(sw2, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10663,7 +11358,7 @@ static void buildDeviceSettings(int sec) {
       y += LV_MAX(34, h2 + 10);
     }
     // Programmable tab hotkeys — tap a row, then press a key to reassign it.
-    y += settingsRowLabel(body, y, 0, "Tab hotkeys \xe2\x80\x94 tap a row, then press a key", COLOR_SUB, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, TR("Tab hotkeys \xe2\x80\x94 tap a row, then press a key"), COLOR_SUB, &g_font_12, 0) + 2;
     for (int t = 0; t < 5; t++) {
       lv_obj_t* row = lv_btn_create(body);
       lv_obj_set_size(row, lv_pct(100), SC(30));
@@ -10686,7 +11381,7 @@ static void buildDeviceSettings(int sec) {
       y += SC(36);
     }
     // Programmable control keys (move/select/back + scroll up/down) — tap a row, press a key.
-    y += settingsRowLabel(body, y, 0, "Navigation keys \xe2\x80\x94 tap a row, then press a key", COLOR_SUB, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, TR("Navigation keys \xe2\x80\x94 tap a row, then press a key"), COLOR_SUB, &g_font_12, 0) + 2;
     for (int d = 0; d < 8; d++) {
       const int bi = d + 5;   // binding index 5-12
       lv_obj_t* row = lv_btn_create(body);
@@ -10715,7 +11410,7 @@ static void buildDeviceSettings(int sec) {
   /* Reverse scrollball: invert trackball direction (cursor, map pan, emoji
      selector) for users who expect the opposite roll-to-move mapping. */
   {
-    int h = settingsRowLabel(body, y, 4, "Reverse scrollball", COLOR_TEXT, &g_font_12, 56);
+    int h = settingsRowLabel(body, y, 4, TR("Reverse scrollball"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10727,7 +11422,7 @@ static void buildDeviceSettings(int sec) {
 
   /* Edge scroll: push cursor past a screen edge to scroll the content beneath it. */
   {
-    int h = settingsRowLabel(body, y, 4, "Edge scroll", COLOR_TEXT, &g_font_12, 56);
+    int h = settingsRowLabel(body, y, 4, TR("Edge scroll"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10735,7 +11430,7 @@ static void buildDeviceSettings(int sec) {
 #endif
     lv_obj_add_event_cb(sw, edgeScrollToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, h + 10);
-    y += settingsRowLabel(body, y, 0, "push past a screen edge to scroll content",
+    y += settingsRowLabel(body, y, 0, TR("push past a screen edge to scroll content"),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
 #endif
@@ -10749,7 +11444,7 @@ static void buildDeviceSettings(int sec) {
      fixed-landscape device (physical keyboard along the bottom), so rotating it
      makes no sense. */
   {
-    y += settingsRowLabel(body, y, 0, "Orientation (tap to rotate, reboots)", COLOR_SUB, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, TR("Orientation (tap to rotate, reboots)"), COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* b_rot = lv_btn_create(body);
     lv_obj_set_size(b_rot, lv_pct(100),SC(34));
     lv_obj_set_pos(b_rot, 2, y);
@@ -10765,11 +11460,11 @@ static void buildDeviceSettings(int sec) {
   }
 
   if (sec == DSEC_LOCK) {   // --- Lock screen ---
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   /* Lock screen: pick the wallpaper (internal /lock/ or SD) and the colour of
      the clock + lock text drawn over it. */
   {
-    y += settingsRowLabel(body, y, 0, "Lock screen wallpaper", COLOR_SUB, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, TR("Lock screen wallpaper"), COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* b_wall = lv_btn_create(body);
     lv_obj_set_size(b_wall, lv_pct(100), SC(34));
     lv_obj_set_pos(b_wall, 2, y);
@@ -10788,7 +11483,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_center(s_lockwall_btn_lbl);
     y += SC(40);
 
-    y += settingsRowLabel(body, y, 0, "Lock text colour", COLOR_SUB, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, TR("Lock text colour"), COLOR_SUB, &g_font_12, 0) + 2;
     const int ncol = (int)(sizeof(kLockColors) / sizeof(kLockColors[0]));
     const uint32_t curcol = touchPrefsGetLockTextColor();
     const int swz = 22, gap = 3;
@@ -10807,13 +11502,13 @@ static void buildDeviceSettings(int sec) {
     }
     y += swz + 10;
   }
-#endif
+#endif // HAS_TDECK_GT911 || HAS_THINKNODE_M9
 
   /* Auto-lock on screen-off: when the idle timeout dims the screen, also hard-
      lock so the touchscreen is inert (Tim: pocket-taps while dark). Both boards;
      unlock with a trackball hold (T-Deck) or the button (V4). */
   {
-    int h = settingsRowLabel(body, y, 6, "Lock when screen off", COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6, TR("Lock when screen off"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -10830,7 +11525,7 @@ static void buildDeviceSettings(int sec) {
   /* Time zone: pick a region with the correct DST rules. Fixes non-EU users who
      were stuck on the CET base. Applies immediately. Both boards. */
   {
-    y += settingsRowLabel(body, y, 0, "Time zone", COLOR_SUB, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, TR("Time zone"), COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* b_tz = lv_btn_create(body);
     lv_obj_set_size(b_tz, lv_pct(100), SC(34));
     lv_obj_set_pos(b_tz, 2, y);
@@ -10847,14 +11542,14 @@ static void buildDeviceSettings(int sec) {
   /* Time offset: only used when Time zone = "Custom (UTC offset)"; otherwise the
      selected zone (with its own DST) is authoritative. Display-only. Both boards. */
   {
-    y += settingsRowLabel(body, y, 0, "Custom UTC offset (hours)", COLOR_SUB, &g_font_12, 0) + 2;
+    y += settingsRowLabel(body, y, 0, TR("Custom UTC offset (hours)"), COLOR_SUB, &g_font_12, 0) + 2;
 
     lv_obj_t* bminus = lv_btn_create(body);
     lv_obj_set_size(bminus, SC(50), SC(34));
     lv_obj_set_pos(bminus, 2, y);
     styleButton(bminus);
     lv_obj_add_event_cb(bminus, timeOffsetMinusCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* lm = lv_label_create(bminus); lv_label_set_text(lm, TR("-1 h")); lv_obj_center(lm);
+    lv_obj_t* lm = lv_label_create(bminus); lv_label_set_text(lm, "-1 h"); lv_obj_center(lm);
 
     s_time_offset_lbl = lv_label_create(body);
     lv_obj_set_width(s_time_offset_lbl, 100);
@@ -10869,7 +11564,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_set_pos(bplus, 168, y);
     styleButton(bplus);
     lv_obj_add_event_cb(bplus, timeOffsetPlusCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* lp = lv_label_create(bplus); lv_label_set_text(lp, TR("+1 h")); lv_obj_center(lp);
+    lv_obj_t* lp = lv_label_create(bplus); lv_label_set_text(lp, "+1 h"); lv_obj_center(lp);
     y += SC(42);
   }
   }
@@ -10904,7 +11599,7 @@ static void buildDeviceSettings(int sec) {
   // ---- Battery ----
   // Open the battery / power screen (same as tapping the battery icon in the top
   // bar). On the T-Deck this group also hosts the experimental battery saver.
-  y += settingsRowLabel(body, y, 0, "Battery", COLOR_SUB, &g_font_12, 0) + 2;
+  y += settingsRowLabel(body, y, 0, TR("Battery"), COLOR_SUB, &g_font_12, 0) + 2;
   {
     lv_obj_t* b_bat = lv_btn_create(body);
     lv_obj_set_size(b_bat, lv_pct(100), SC(34));
@@ -10922,7 +11617,7 @@ static void buildDeviceSettings(int sec) {
   // Settings -> Lock so it lives with the battery. T-Deck only (the gate never
   // passes on the V4).
   {
-    int h = settingsRowLabel(body, y, 6, "Battery saver (experimental)", COLOR_TEXT, &g_font_12, 56);
+    int h = settingsRowLabel(body, y, 6, TR("Battery saver (experimental)"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
@@ -11203,6 +11898,7 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_add_event_cb(b_cancel, confirmCancelEvt, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lc = lv_label_create(b_cancel);
   lv_label_set_text(lc, TR("Cancel"));
+  uiFitLabelWidth(lc, PSC(80) - 8);
   lv_obj_center(lc);
 
   lv_obj_t* b_ok = lv_btn_create(card);
@@ -11211,7 +11907,8 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   styleButton(b_ok);
   lv_obj_add_event_cb(b_ok, confirmOkEvt, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lo = lv_label_create(b_ok);
-  lv_label_set_text(lo, ok_label ? TR(ok_label) : TR("OK"));
+  lv_label_set_text(lo, ok_label ? TR(ok_label) : "OK");
+  uiFitLabelWidth(lo, SC(100) - 8);
   lv_obj_center(lo);
 }
 
@@ -11740,19 +12437,68 @@ static int       s_wifi_sheet_net_idx  = -1;
 
 static void wifiRebuildNetworkList();
 
+static char s_wifi_sheet_title[40] = {0};   // backs s_apppage_title while a sheet is open
+
 static void wifiSheetClose() {
+  if (s_apppage_close == &wifiSheetClose) {   // release the status-bar title/back hook
+    s_apppage_title = nullptr;
+    s_apppage_close = nullptr;
+  }
   if (s_wifi_sheet) popupClose(&s_wifi_sheet);   // del_async + indev reset
   s_wifi_sheet_ssid_ta = nullptr;
   s_wifi_sheet_pwd_ta  = nullptr;
   s_wifi_sheet_aj_sw   = nullptr;
   s_wifi_sheet_net_idx = -1;
+  updateGlobalStatusBar();   // bar title falls back to the Wi-Fi category
   navMarkDirty();
 }
 static void wifiSheetCloseCb(lv_event_t* e)    { if (lv_event_get_code(e) == LV_EVENT_CLICKED) wifiSheetClose(); }
-static void wifiSheetBackdropCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;   // only the dimmed backdrop
-  wifiSheetClose();
+
+// Full-screen scaffold for the join / details / hidden sheets: an opaque page
+// styled exactly like a settings detail page — the SAME tall status bar carries
+// "‹ <sheet title>" (via the s_apppage_title hook, so tapping the bar closes
+// the sheet, then falls back to "‹ Wi-Fi" for the category), and the body below
+// scrolls. NO second header bar of its own. Replaces the old small floating
+// card on a dimmed backdrop, which was cramped, scrolled badly under the
+// on-screen keyboard and had no obvious close affordance.
+static lv_obj_t* wifiSheetOpenFullscreen(const char* title) {
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+
+  // On the BASE layer (lv_scr_act), NOT lv_layer_top: the status bar lives on
+  // lv_layer_top and its tall-mode glass lower row — which carries the bottom
+  // half of the "‹ <title>" text — must paint OVER this sheet. A page on
+  // lv_layer_top covers that row and clips the title in half (the recurring
+  // gotcha with every full-screen page that rides the tall bar; see
+  // openSettingsCategory's identical layering note).
+  s_wifi_sheet = lv_obj_create(lv_scr_act());
+  lv_obj_remove_style_all(s_wifi_sheet);
+  lv_obj_set_size(s_wifi_sheet, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_wifi_sheet, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_wifi_sheet, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_wifi_sheet, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_wifi_sheet, LV_OBJ_FLAG_SCROLLABLE);
+
+  // The sheet title rides in the tall status bar (already tall on the Wi-Fi
+  // settings page): "‹ <title>", tap = close this sheet.
+  strncpy(s_wifi_sheet_title, title ? title : "", sizeof(s_wifi_sheet_title) - 1);
+  s_wifi_sheet_title[sizeof(s_wifi_sheet_title) - 1] = '\0';
+  s_apppage_title = s_wifi_sheet_title;
+  s_apppage_close = &wifiSheetClose;
+  updateGlobalStatusBar();
+
+  lv_obj_t* body = lv_obj_create(s_wifi_sheet);
+  lv_obj_remove_style_all(body);
+  lv_obj_set_size(body, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(body, 0, 0);
+  lv_obj_set_style_pad_all(body, 12, LV_PART_MAIN);
+  // Clear the tall bar's glass lower row (it overlays the top of this sheet,
+  // same as prepSettingsPage's inset on the category pages).
+  lv_obj_set_style_pad_top(body, STATUSBAR_H + 8, LV_PART_MAIN);
+  // Generous bottom padding so the last field/button can scroll clear of the
+  // on-screen keyboard (attachSettingsTaEvents scrolls the focused field into view).
+  lv_obj_set_style_pad_bottom(body, SC(64), LV_PART_MAIN);
+  return body;
 }
 
 // Save the network (passphrase preserved if blank) + connect to it.
@@ -11775,44 +12521,23 @@ static void wifiJoinConfirmCb(lv_event_t* e) {
   wifiDoJoin(ssid, pwd, true);
 }
 
-// Build the dimmed-backdrop card shared by the join + hidden sheets. manual=true
-// adds an editable SSID field (hidden network); else the ssid is fixed.
+// Join / hidden-network sheet, full-screen (see wifiSheetOpenFullscreen).
+// manual=true adds an editable SSID field (hidden network); else the ssid is
+// fixed and shown in the title bar.
 static void openWifiJoinSheet(const char* ssid, bool manual) {
   wifiSheetClose();
   strlcpy(s_wifi_sheet_ssid, ssid ? ssid : "", sizeof s_wifi_sheet_ssid);
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  s_wifi_sheet = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_wifi_sheet);
-  lv_obj_set_size(s_wifi_sheet, sw, lv_disp_get_ver_res(nullptr) - STATUSBAR_H);
-  lv_obj_set_pos(s_wifi_sheet, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_wifi_sheet, lv_color_black(), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_wifi_sheet, LV_OPA_50, LV_PART_MAIN);
-  lv_obj_clear_flag(s_wifi_sheet, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_event_cb(s_wifi_sheet, wifiSheetBackdropCb, LV_EVENT_CLICKED, nullptr);
-
-  const lv_coord_t cardw = LV_MIN((lv_coord_t)(sw - 16), (lv_coord_t)PSC(300));
-  lv_obj_t* card = lv_obj_create(s_wifi_sheet);
-  lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, cardw, LV_SIZE_CONTENT);
-  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, SC(26));
-  styleSurface(card, COLOR_PANEL, 10);
-  lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  const int iw = cardw - 24;
-
-  lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, manual ? TR("Hidden network") : (ssid && ssid[0] ? ssid : TR("Join network")));
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_width(title, iw); lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  lv_obj_set_pos(title, 0, 0);
-  int yy = SC(28);
+  const char* title = manual ? TR("Hidden network")
+                             : (ssid && ssid[0] ? ssid : TR("Join network"));
+  lv_obj_t* body = wifiSheetOpenFullscreen(title);
+  const int iw = lv_disp_get_hor_res(nullptr) - 24;
+  int yy = 0;
 
   if (manual) {
-    lv_obj_t* sl = lv_label_create(card); lv_label_set_text(sl, TR("Network name (SSID)"));
+    lv_obj_t* sl = lv_label_create(body); lv_label_set_text(sl, TR("Network name (SSID)"));
     lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN); lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_pos(sl, 0, yy); yy += SC(16);
-    s_wifi_sheet_ssid_ta = lv_textarea_create(card);
+    s_wifi_sheet_ssid_ta = lv_textarea_create(body);
     lv_obj_set_size(s_wifi_sheet_ssid_ta, iw, SC(32)); lv_obj_set_pos(s_wifi_sheet_ssid_ta, 0, yy);
     lv_textarea_set_one_line(s_wifi_sheet_ssid_ta, true);
     lv_textarea_set_placeholder_text(s_wifi_sheet_ssid_ta, TR("Network name"));
@@ -11823,31 +12548,32 @@ static void openWifiJoinSheet(const char* ssid, bool manual) {
     s_wifi_sheet_ssid_ta = nullptr;
   }
 
-  lv_obj_t* pl = lv_label_create(card); lv_label_set_text(pl, TR("Password (empty = open)"));
+  lv_obj_t* pl = lv_label_create(body); lv_label_set_text(pl, TR("Password (empty = open)"));
   lv_obj_set_style_text_font(pl, &g_font_12, LV_PART_MAIN); lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(pl, 0, yy); yy += SC(16);
-  s_wifi_sheet_pwd_ta = lv_textarea_create(card);
+  s_wifi_sheet_pwd_ta = lv_textarea_create(body);
   lv_obj_set_size(s_wifi_sheet_pwd_ta, iw, SC(32)); lv_obj_set_pos(s_wifi_sheet_pwd_ta, 0, yy);
   lv_textarea_set_one_line(s_wifi_sheet_pwd_ta, true);
   lv_textarea_set_password_mode(s_wifi_sheet_pwd_ta, true);
-  lv_textarea_set_placeholder_text(s_wifi_sheet_pwd_ta, TR("PSK"));
+  lv_textarea_set_placeholder_text(s_wifi_sheet_pwd_ta, "PSK");
   lv_textarea_set_max_length(s_wifi_sheet_pwd_ta, WIFI_CONFIG_PWD_MAX - 1);
   attachSettingsTaEvents(s_wifi_sheet_pwd_ta);
   // Prefill the saved passphrase if we already know this network.
   if (ssid && ssid[0]) { int e = touchPrefsFindWifiNet(ssid); if (e >= 0) { TouchWifiNet n; if (touchPrefsGetWifiNet(e, n)) lv_textarea_set_text(s_wifi_sheet_pwd_ta, n.pwd); } }
-  yy += SC(42);
+  yy += SC(44);
 
-  const int bg = 8, bw = (iw - bg) / 2;
-  lv_obj_t* cancel = lv_btn_create(card);
-  lv_obj_set_size(cancel, bw, SC(36)); lv_obj_set_pos(cancel, 0, yy); styleButton(cancel);
-  lv_obj_add_event_cb(cancel, wifiSheetCloseCb, LV_EVENT_CLICKED, nullptr);
-  { lv_obj_t* l = lv_label_create(cancel); lv_label_set_text(l, TR("Cancel")); lv_obj_center(l); }
-  lv_obj_t* join = lv_btn_create(card);
-  lv_obj_set_size(join, bw, SC(36)); lv_obj_set_pos(join, bw + bg, yy); styleButton(join);
+  lv_obj_t* join = lv_btn_create(body);
+  lv_obj_set_size(join, iw, SC(38)); lv_obj_set_pos(join, 0, yy); styleButton(join);
   lv_obj_set_style_bg_color(join, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_add_event_cb(join, wifiJoinConfirmCb, LV_EVENT_CLICKED, nullptr);
   { lv_obj_t* l = lv_label_create(join); lv_label_set_text(l, TR("Join")); lv_obj_center(l); }
-  lv_obj_set_height(card, SC(28) + yy + SC(36) + 12);
+  yy += SC(46);
+
+  lv_obj_t* cancel = lv_btn_create(body);
+  lv_obj_set_size(cancel, iw, SC(34)); lv_obj_set_pos(cancel, 0, yy); styleButton(cancel);
+  lv_obj_add_event_cb(cancel, wifiSheetCloseCb, LV_EVENT_CLICKED, nullptr);
+  { lv_obj_t* l = lv_label_create(cancel); lv_label_set_text(l, TR("Cancel")); lv_obj_center(l); }
+
   lv_obj_move_foreground(s_wifi_sheet);
   navMarkDirty();
 }
@@ -11893,69 +12619,42 @@ static void openWifiDetailsSheet(int net_idx) {
   if (wifi_up) strlcpy(cur, WiFi.SSID().c_str(), sizeof cur);
   const bool is_active = wifi_up && strcmp(cur, n.ssid) == 0;
 
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  s_wifi_sheet = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_wifi_sheet);
-  lv_obj_set_size(s_wifi_sheet, sw, lv_disp_get_ver_res(nullptr) - STATUSBAR_H);
-  lv_obj_set_pos(s_wifi_sheet, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_wifi_sheet, lv_color_black(), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_wifi_sheet, LV_OPA_50, LV_PART_MAIN);
-  lv_obj_clear_flag(s_wifi_sheet, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_event_cb(s_wifi_sheet, wifiSheetBackdropCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* body = wifiSheetOpenFullscreen(n.ssid);
+  const int iw = lv_disp_get_hor_res(nullptr) - 24;
+  int yy = 0;
 
-  const lv_coord_t cardw = LV_MIN((lv_coord_t)(sw - 16), (lv_coord_t)PSC(300));
-  lv_obj_t* card = lv_obj_create(s_wifi_sheet);
-  lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, cardw, LV_SIZE_CONTENT);
-  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, SC(34));
-  styleSurface(card, COLOR_PANEL, 10);
-  lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  const int iw = cardw - 24;
-
-  lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, n.ssid);
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_width(title, iw); lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  lv_obj_set_pos(title, 0, 0);
-  lv_obj_t* st = lv_label_create(card);
+  lv_obj_t* st = lv_label_create(body);
   lv_label_set_text(st, is_active ? TR("Connected") : TR("Saved network"));
   lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(st, lv_color_hex(is_active ? COLOR_STATUS_OK : COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(st, 0, SC(22));
-  int yy = SC(44);
+  lv_obj_set_pos(st, 0, yy);
+  yy += SC(24);
 
   // Auto-Join row (label + switch)
-  lv_obj_t* ajl = lv_label_create(card); lv_label_set_text(ajl, TR("Auto-Join"));
+  lv_obj_t* ajl = lv_label_create(body); lv_label_set_text(ajl, TR("Auto-Join"));
   lv_obj_set_style_text_font(ajl, &g_font_14, LV_PART_MAIN); lv_obj_set_style_text_color(ajl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_pos(ajl, 0, yy + SC(4));
-  s_wifi_sheet_aj_sw = lv_switch_create(card);
-  lv_obj_align(s_wifi_sheet_aj_sw, LV_ALIGN_TOP_RIGHT, 0, yy);
+  s_wifi_sheet_aj_sw = lv_switch_create(body);
+  lv_obj_set_pos(s_wifi_sheet_aj_sw, iw - SC(52), yy);
   if (n.auto_join) lv_obj_add_state(s_wifi_sheet_aj_sw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(s_wifi_sheet_aj_sw, wifiDetailsAutoJoinCb, LV_EVENT_VALUE_CHANGED, nullptr);
-  yy += SC(40);
+  yy += SC(44);
 
   if (!is_active) {
-    lv_obj_t* con = lv_btn_create(card);
-    lv_obj_set_size(con, iw, SC(36)); lv_obj_set_pos(con, 0, yy); styleButton(con);
+    lv_obj_t* con = lv_btn_create(body);
+    lv_obj_set_size(con, iw, SC(38)); lv_obj_set_pos(con, 0, yy); styleButton(con);
     lv_obj_set_style_bg_color(con, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
     lv_obj_add_event_cb(con, wifiDetailsConnectCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* l = lv_label_create(con); lv_label_set_text(l, TR("Connect")); lv_obj_center(l); }
-    yy += SC(42);
+    yy += SC(46);
   }
-  lv_obj_t* forget = lv_btn_create(card);
-  lv_obj_set_size(forget, iw, SC(36)); lv_obj_set_pos(forget, 0, yy); styleButton(forget);
+  lv_obj_t* forget = lv_btn_create(body);
+  lv_obj_set_size(forget, iw, SC(38)); lv_obj_set_pos(forget, 0, yy); styleButton(forget);
   lv_obj_set_style_bg_color(forget, lv_color_hex(0xC44B55), LV_PART_MAIN);
   lv_obj_set_style_bg_color(forget, lv_color_hex(0xA13F47), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(forget, wifiDetailsForgetCb, LV_EVENT_CLICKED, nullptr);
   { lv_obj_t* l = lv_label_create(forget); lv_label_set_text(l, TR("Forget network")); lv_obj_center(l); }
-  yy += SC(42);
-  lv_obj_t* close = lv_btn_create(card);
-  lv_obj_set_size(close, iw, SC(34)); lv_obj_set_pos(close, 0, yy); styleButton(close);
-  lv_obj_add_event_cb(close, wifiSheetCloseCb, LV_EVENT_CLICKED, nullptr);
-  { lv_obj_t* l = lv_label_create(close); lv_label_set_text(l, TR("Close")); lv_obj_center(l); }
-  lv_obj_set_height(card, SC(44) + yy + SC(34) + 12);
+
   lv_obj_move_foreground(s_wifi_sheet);
   navMarkDirty();
 }
@@ -13300,7 +13999,7 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   lv_textarea_set_one_line(s_admin_pw_ta, true);
   lv_textarea_set_password_mode(s_admin_pw_ta, true);
   lv_textarea_set_max_length(s_admin_pw_ta, 15);
-  lv_textarea_set_placeholder_text(s_admin_pw_ta, TR(""));
+  lv_textarea_set_placeholder_text(s_admin_pw_ta, "");
   lv_obj_set_style_text_color(s_admin_pw_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_admin_pw_ta, &g_font_14, LV_PART_MAIN);
   attachSettingsTaEvents(s_admin_pw_ta);
@@ -13335,7 +14034,7 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   // a successful login we read its state in onAdminLoginResult and save
   // (or clear) the NVS entry accordingly.
   s_admin_pw_remember = lv_checkbox_create(card);
-  lv_checkbox_set_text(s_admin_pw_remember, "Remember password");
+  lv_checkbox_set_text(s_admin_pw_remember, TR("Remember password"));
   lv_obj_set_style_text_color(s_admin_pw_remember, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_admin_pw_remember, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(s_admin_pw_remember, 0, PSC(82));
@@ -13773,8 +14472,8 @@ static void losDrawPlot() {
   }
 
   // ---- Height value labels ----
-  if (s_los_self_h_lbl) lv_label_set_text_fmt(s_los_self_h_lbl, TR("%dm"), (int)s_los_ant_self);
-  if (s_los_peer_h_lbl) lv_label_set_text_fmt(s_los_peer_h_lbl, TR("%dm"), (int)s_los_ant_peer);
+  if (s_los_self_h_lbl) lv_label_set_text_fmt(s_los_self_h_lbl, "%dm", (int)s_los_ant_self);
+  if (s_los_peer_h_lbl) lv_label_set_text_fmt(s_los_peer_h_lbl, "%dm", (int)s_los_ant_peer);
 
   // ---- Verdict text ----
   if (s_los_verdict) {
@@ -13850,8 +14549,8 @@ static void losRenderResult() {
   if (s_los_got < k_los_samples) {
     if (s_los_msg)
       lv_label_set_text(s_los_msg,
-          "Couldn't fetch terrain data.\nCheck the connection and the\n"
-          "elevation server, then\ntry again.");
+          TR("Couldn't fetch terrain data.\nCheck the connection and the\n"
+          "elevation server, then\ntry again."));
     return;
   }
   if (s_los_msg) lv_obj_add_flag(s_los_msg, LV_OBJ_FLAG_HIDDEN);
@@ -13882,7 +14581,7 @@ static void losRenderResult() {
     lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_label_set_text(l, TR("2m"));
+    lv_label_set_text(l, "2m");
     return l;
   };
   // Left cluster (you)
@@ -14151,7 +14850,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   lv_obj_t* title = lv_label_create(card);
   char nm[40];
   copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), name ? name : "");
-  lv_label_set_text_fmt(title, TR("%s%s"),
+  lv_label_set_text_fmt(title, "%s%s",
                         is_repeater ? TOUCH_SYM_ANTENNA "  " :
                         is_room     ? LV_SYMBOL_LOOP    "  " : TOUCH_SYM_PERSON "  ",
                         nm[0] ? nm : "(unnamed)");
@@ -14505,7 +15204,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_width(s_addct_error_l, lv_pct(100));
   lv_obj_set_style_text_color(s_addct_error_l, lv_color_hex(0xE08080), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_addct_error_l, &g_font_12, LV_PART_MAIN);
-  lv_label_set_text(s_addct_error_l, TR(""));
+  lv_label_set_text(s_addct_error_l, "");
   lv_obj_set_pos(s_addct_error_l, 2, y);
   y += 24;
 
@@ -14569,7 +15268,7 @@ static void openCreatePrivateChannelModal() {
   lv_obj_set_width(s_addch_error_l, lv_pct(100));
   lv_obj_set_style_text_color(s_addch_error_l, lv_color_hex(0xE08080), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_addch_error_l, &g_font_12, LV_PART_MAIN);
-  lv_label_set_text(s_addch_error_l, TR(""));
+  lv_label_set_text(s_addch_error_l, "");
   lv_obj_set_pos(s_addch_error_l, 2, y);
   y += 24;
 
@@ -14671,7 +15370,7 @@ static void openJoinPrivateChannelModal() {
   lv_obj_set_width(s_addch_error_l, lv_pct(100));
   lv_obj_set_style_text_color(s_addch_error_l, lv_color_hex(0xE08080), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_addch_error_l, &g_font_12, LV_PART_MAIN);
-  lv_label_set_text(s_addch_error_l, TR(""));
+  lv_label_set_text(s_addch_error_l, "");
   lv_obj_set_pos(s_addch_error_l, 2, y);
   y += 24;
 
@@ -14762,7 +15461,7 @@ static void openJoinHashtagChannelModal() {
   lv_obj_set_width(s_addch_error_l, lv_pct(100));
   lv_obj_set_style_text_color(s_addch_error_l, lv_color_hex(0xE08080), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_addch_error_l, &g_font_12, LV_PART_MAIN);
-  lv_label_set_text(s_addch_error_l, TR(""));
+  lv_label_set_text(s_addch_error_l, "");
   lv_obj_set_pos(s_addch_error_l, 2, y);
   y += 24;
 
@@ -14895,7 +15594,7 @@ static void markAllReadApply() {
 }
 static void chatsMarkAllReadBtnCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  showConfirm("Mark all chats and channels as read?", "Mark read", markAllReadApply);
+  showConfirm(TR("Mark all chats and channels as read?"), "Mark read", markAllReadApply);
 }
 
 // ---- Share-my-contact QR popup ------------------------------------------
@@ -15227,13 +15926,13 @@ static void calibrateBatteryCb(lv_event_t* e) {
 // SPIFFS (flat) uses a top-level path.
 static fs::FS& battLogFs() {
 #if CAP_SD
-  if (SD.cardType() != CARD_NONE) return SD;
+  if (SD.cardType() != CARD_NONE && SD.exists("/meshcomod")) return SD;
 #endif
   return SPIFFS;
 }
 static bool battLogOnSd() {
 #if CAP_SD
-  return SD.cardType() != CARD_NONE;
+  return SD.cardType() != CARD_NONE && SD.exists("/meshcomod");
 #else
   return false;
 #endif
@@ -15749,8 +16448,8 @@ static char      s_fm_path[160]  = {0};     // current dir within s_fm_fs (e.g. 
 // a generic fs::FS*; only &SD is real microSD I/O (Internal = SPIFFS). Browsing
 // (fmRefresh) and the file open/save paths call this; mutations re-list via
 // fmRefresh, so they blip the LED too.
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
-static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // Arduino SD (T-Deck/pager/M9 LoRa bus, V4-R8 TFT bus)
 #elif defined(HAS_TANMATSU)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD_MMC; }   // microSD on SDMMC slot 0
 #else
@@ -15842,14 +16541,20 @@ static const AdminCmdEntry k_term_cmds[] = {
   { "wifi on",                        "wifi on" },
   { "wifi off",                       "wifi off" },
   { "wifi scan",                      "wifi scan" },
+  { "wifi set ssid <v>",              "wifi set ssid " },
+  { "wifi set pwd <v>",               "wifi set pwd " },
+  { "wifi apply - connect now",       "wifi apply" },
+  { "wifi clear - forget creds",      "wifi clear" },
   { "tcp status",                     "tcp status" },
   { "tcp on",                         "tcp on" },
   { "tcp off",                        "tcp off" },
   { "ble status",                     "ble status" },
   { "ble on",                         "ble on" },
   { "ble off",                        "ble off" },
-  { "ota start",                      "ota start" },
   { "ota status",                     "ota status" },
+  { "ota start",                      "ota start" },
+  { "ota url <https://...bin>",       "ota url " },
+  { "ota netdiag - net check",        "ota netdiag" },
   { "[ SYSTEM ]", nullptr },
   { "reboot",                         "reboot" },
   { "bootloader - download mode",     "bootloader" },
@@ -15872,6 +16577,15 @@ static const uint32_t TERM_C_BANNER = 0x7f8c99;  // opening banner (dim)
 // loop task (see the s_term_log_box note above). Oldest lines prune past
 // TERM_MAX_LINES; the view always scrolls to the newest line.
 static void termLogAppendC(uint32_t color, const char* prefix, const char* text) {
+#if !defined(HAS_TANMATSU)
+  // Mirror every terminal line to the web mesh terminal too (before the on-device box
+  // null-check, so it works headless when the console isn't open). One funnel = full parity.
+  if (text && g_web_mirror.terminalOn()) {
+    if (prefix) g_web_mirror.pushTermReply(prefix);
+    g_web_mirror.pushTermReply(text);
+    g_web_mirror.pushTermReply("\n");
+  }
+#endif
   if (!s_term_log_box || !text) return;
   char buf[512];
   snprintf(buf, sizeof buf, "%s%s", prefix ? prefix : "", text);
@@ -16016,6 +16730,10 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
     }
     snprintf(r, sizeof r, "TX [%s] %s", disp, body);
     termLogAppendC(TERM_C_TX, nullptr, r);
+    // Mirror into the on-device chat ring so a terminal / web-chat send shows in the
+    // channel thread too (same as a companion-app send via appSentMsgToChannel). Pass the
+    // sent fingerprint so repeats-heard shows on the mirrored bubble like a composer send.
+    if (g_lv.task) g_lv.task->appSentMsgToChannel(cd.name, body, the_mesh.uiLastSentFp());
   } else {
     ContactInfo* by = the_mesh.lookupContactByPubKey((uint8_t*)pub, PUB_KEY_SIZE);
     if (!by) { termLogAppendC(TERM_C_ERR, nullptr, "contact missing"); return; }
@@ -16029,6 +16747,9 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
     the_mesh.uiRegisterExpectedAck(expected_ack, by->id.pub_key);
     snprintf(r, sizeof r, "TX -> %s: %s", disp, body);
     termLogAppendC(TERM_C_TX, nullptr, r);
+    // Mirror into the DM thread + map it to the contact pubkey (delivery state tracks the ack,
+    // sent_fp tracks repeats-heard) — same metadata a composer send records.
+    if (g_lv.task) g_lv.task->appSentMsgToContact(by->id.pub_key, disp, body, expected_ack, the_mesh.uiLastSentFp());
   }
 }
 
@@ -16168,6 +16889,18 @@ static bool terminalRunChatCommand(const char* cmd) {
     return false;
   };
   const char* rest = nullptr;
+  if (is(cmd, "help", &rest) || is(cmd, "?", &rest)) {   // prepend the messaging commands, then fall through to the config-CLI help
+    termLogAppendC(TERM_C_INFO, nullptr, "messaging:");
+    termLogAppend("  ", "list / contacts    - list your contacts");
+    termLogAppend("  ", "channels           - list channels");
+    termLogAppend("  ", "to <name>          - talk to a contact or channel");
+    termLogAppend("  ", "send <text>        - send to the current recipient");
+    termLogAppend("  ", "public <text>      - send on the public channel");
+    termLogAppend("  ", "exit / leave       - stop talking to that recipient");
+    termLogAppend("  ", "(after 'to', a bare line is sent as a message)");
+    termLogAppendC(TERM_C_INFO, nullptr, "node / config:");
+    return false;   // config-CLI help is appended by runLocalCli
+  }
   if (is(cmd, "list", &rest) || is(cmd, "contacts", &rest)) { termCmdList();     return true; }
   if (is(cmd, "channels", &rest))                           { termCmdChannels(); return true; }
   if (is(cmd, "to", &rest))                                 { termCmdTo(rest);   return true; }
@@ -16205,6 +16938,357 @@ static void terminalSubmit() {
   // Re-bind so the cleared mirror tracks the field and the next Enter submits.
   if (g_lv.keyboard) kbMirrorBind(s_term_input_ta);
 }
+
+// ============================================================================
+// Web Contacts + Chats data API — JSON over the /term WS (browser->device '@'
+// commands, device->browser framed JSON via g_web_mirror.pushTermData). Runs on
+// the UI loop, single-threaded, so a static PSRAM scratch buffer is safe.
+// ============================================================================
+#if !defined(HAS_TANMATSU)
+static char*          s_webdata_buf  = nullptr;
+static const size_t   WEBDATA_BUF    = 16000;
+static volatile bool  s_web_rx_nudge = false;   // set by onThreadsChanged (mesh ctx); the UI loop does the actual pushTermData (keeps it single-producer)
+
+static void jsonEsc(char*& p, const char* e, const char* s) {
+  for (; s && *s && p < e - 8; ++s) {
+    unsigned char c = (unsigned char)*s;
+    if (c == '"' || c == '\\') { *p++ = '\\'; *p++ = (char)c; }
+    else if (c == '\n')        { *p++ = '\\'; *p++ = 'n'; }
+    else if (c == '\r')        { *p++ = '\\'; *p++ = 'r'; }
+    else if (c == '\t')        { *p++ = '\\'; *p++ = 't'; }
+    else if (c < 0x20)         { p += snprintf(p, (size_t)(e - p), "\\u%04x", c); }
+    else                       { *p++ = (char)c; }
+  }
+}
+
+// UI thread index whose DM contact pubkey matches (-1 if none).
+static int webThreadForPub(const uint8_t pub[32]) {
+  if (!g_lv.task || !pub) return -1;
+  int idx[UITask::MAX_UI_THREADS];
+  int n = g_lv.task->getCombinedInboxCount(idx, UITask::MAX_UI_THREADS);
+  for (int k = 0; k < n; ++k) {
+    uint8_t tp[32];
+    if (g_lv.task->getThreadContactPub(idx[k], tp) && memcmp(tp, pub, 32) == 0) return idx[k];
+  }
+  return -1;
+}
+
+// UI thread index for a group-channel slot (-1 if that channel has no thread yet).
+static int webThreadForChannel(int slot) {
+  if (!g_lv.task) return -1;
+  int idx[UITask::MAX_UI_THREADS];
+  int n = g_lv.task->getCombinedInboxCount(idx, UITask::MAX_UI_THREADS);
+  for (int k = 0; k < n; ++k) {
+    bool ch = false; uint16_t u = 0; uint32_t ts = 0; char nm[48];
+    if (g_lv.task->getThreadInfo(idx[k], ch, u, ts, nm, sizeof nm) && ch
+        && g_lv.task->threadMeshChannelSlot(idx[k]) == slot) return idx[k];
+  }
+  return -1;
+}
+
+static void webPushMessages(int tidx) {
+  if (!g_lv.task || !s_webdata_buf || tidx < 0) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  bool ch = false; uint16_t unread = 0; uint32_t ts = 0; char name[48] = {0};
+  g_lv.task->getThreadInfo(tidx, ch, unread, ts, name, sizeof name);
+  p += snprintf(p, e - p, "{\"t\":\"m\",\"i\":%d,\"ch\":%d,\"n\":\"", tidx, ch ? 1 : 0);
+  jsonEsc(p, e, name);
+  p += snprintf(p, e - p, "\",\"msgs\":[");
+  int midx[60];
+  int n = g_lv.task->getThreadMessageIndexes(tidx, midx, 60, true);   // newest first
+  bool first = true;
+  // Emit newest-first so that if the JSON buffer fills, the guard drops the OLDEST
+  // (not the newest). The browser reverses for display (oldest at top, newest at bottom).
+  for (int k = 0; k < n && p < e - 340; ++k) {
+    UITask::UIMessage m;
+    if (!g_lv.task->getMessageByIndex(midx[k], m)) continue;
+    if (!first) *p++ = ','; first = false;
+    int reps = (m.outgoing && m.sent_fp) ? (int)the_mesh.uiRepeatsForFp(m.sent_fp) : 0;
+    p += snprintf(p, e - p, "{\"o\":%d,\"ts\":%u,\"ds\":%u,\"pl\":%d,\"sn\":%d,\"rs\":%d,\"rp\":%d,\"s\":\"",
+                  m.outgoing ? 1 : 0, (unsigned)m.ts, m.deliv_state, (int)m.path_len, (int)(m.snr_q4 / 4), (int)m.rssi, reps);
+    jsonEsc(p, e, m.sender);
+    p += snprintf(p, e - p, "\",\"x\":\"");
+    jsonEsc(p, e, m.text);
+    p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+  g_lv.task->markThreadRead(tidx);   // viewing a chat marks it read (matches the on-device UI)
+}
+
+// Membership test against a snapshot of 6-byte pubkey prefixes (favorites / ignore list).
+static bool webSnapContains(const uint8_t* snap, int count, const uint8_t* pub6) {
+  for (int i = 0; i < count; ++i)
+    if (memcmp(&snap[i * TOUCH_FAVORITE_KEY_BYTES], pub6, TOUCH_FAVORITE_KEY_BYTES) == 0) return true;
+  return false;
+}
+
+static void webPushContacts() {
+  if (!g_lv.task || !s_webdata_buf) return;
+  uint8_t fav[TOUCH_FAVORITES_MAX * TOUCH_FAVORITE_KEY_BYTES];   // snapshot once (not per-contact NVS reads)
+  int nfav = touchPrefsCopyFavorites(fav);
+  uint8_t ign[TOUCH_IGNORED_MAX * TOUCH_FAVORITE_KEY_BYTES];
+  int nign = touchPrefsCopyIgnored(ign);
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p, "{\"t\":\"c\",\"dc\":%d,\"contacts\":[", discoveredCount());
+  int nc = the_mesh.getNumContacts(); bool first = true;
+  for (int i = 0; i < nc && p < e - 300; ++i) {
+    ContactInfo c{};
+    if (!the_mesh.getContactByIdx((uint32_t)i, c) || !c.name[0]) continue;
+    int t = webThreadForPub(c.id.pub_key);
+    if (!first) *p++ = ','; first = false;
+    p += snprintf(p, e - p,
+                  "{\"i\":%d,\"t\":%d,\"rp\":%d,\"rm\":%d,\"fav\":%d,\"ign\":%d,\"dir\":%d,\"la\":%ld,\"lo\":%ld,\"adv\":%u,\"n\":\"",
+                  i, t, (c.type == ADV_TYPE_REPEATER) ? 1 : 0, (c.type == ADV_TYPE_ROOM) ? 1 : 0,
+                  webSnapContains(fav, nfav, c.id.pub_key) ? 1 : 0,
+                  webSnapContains(ign, nign, c.id.pub_key) ? 1 : 0,
+                  (c.out_path_len == 0) ? 1 : 0, (long)c.gps_lat, (long)c.gps_lon,
+                  (unsigned)c.last_advert_timestamp);
+    jsonEsc(p, e, c.name);
+    p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "],\"channels\":[");
+  first = true;
+  for (int s = 0; s < MAX_GROUP_CHANNELS && p < e - 160; ++s) {
+    ChannelDetails cd;
+    if (!the_mesh.getChannel(s, cd) || !cd.name[0]) continue;
+    int t = webThreadForChannel(s);
+    if (!first) *p++ = ','; first = false;
+    p += snprintf(p, e - p, "{\"i\":%d,\"t\":%d,\"n\":\"", s, t);
+    jsonEsc(p, e, cd.name);
+    p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webPushThreads() {
+  if (!g_lv.task || !s_webdata_buf) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p, "{\"t\":\"t\",\"threads\":[");
+  int idx[UITask::MAX_UI_THREADS];
+  int n = g_lv.task->getCombinedInboxCount(idx, UITask::MAX_UI_THREADS);
+  bool first = true;
+  for (int k = 0; k < n && p < e - 340; ++k) {
+    int ti = idx[k];
+    bool ch = false; uint16_t unread = 0; uint32_t ts = 0; char name[48] = {0};
+    if (!g_lv.task->getThreadInfo(ti, ch, unread, ts, name, sizeof name)) continue;
+    char sender[40] = {0}, text[180] = {0}; bool outgoing = false;
+    g_lv.task->getThreadLastMessage(ti, sender, sizeof sender, text, sizeof text, &outgoing);
+    if (!first) *p++ = ','; first = false;
+    p += snprintf(p, e - p, "{\"i\":%d,\"ch\":%d,\"u\":%u,\"ts\":%u,\"n\":\"", ti, ch ? 1 : 0, unread, (unsigned)ts);
+    jsonEsc(p, e, name);
+    p += snprintf(p, e - p, "\",\"last\":\"");
+    jsonEsc(p, e, text);
+    p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webSendToThread(int tidx, const char* text) {
+  if (!g_lv.task || tidx < 0 || !text || !*text) return;
+  bool ch = false; uint16_t unread = 0; uint32_t ts = 0; char name[48] = {0};
+  if (!g_lv.task->getThreadInfo(tidx, ch, unread, ts, name, sizeof name)) return;
+  if (ch) {
+    // Resolve the channel slot by NAME at TX time, not the thread's cached slot — a stale
+    // cached slot TXes on the wrong key (see [channel-send-stale-slot]).
+    int16_t slot = -1;
+    for (int s = 0; s < MAX_GROUP_CHANNELS; ++s) {
+      ChannelDetails cd;
+      if (the_mesh.getChannel(s, cd) && cd.name[0] && strcmp(cd.name, name) == 0) { slot = (int16_t)s; break; }
+    }
+    if (slot < 0) slot = g_lv.task->threadMeshChannelSlot(tidx);   // fall back to cached if name didn't resolve
+    termDoSend(true, nullptr, slot, name, text);
+  } else {
+    uint8_t pub[32]; if (g_lv.task->getThreadContactPub(tidx, pub)) termDoSend(false, pub, -1, name, text);
+  }
+  webPushMessages(tidx);
+}
+
+static void webSendToContact(int cidx, const char* text) {
+  ContactInfo c{};
+  if (!the_mesh.getContactByIdx((uint32_t)cidx, c) || !c.name[0] || !text || !*text) return;
+  termDoSend(false, c.id.pub_key, -1, c.name, text);
+  int t = webThreadForPub(c.id.pub_key);
+  if (t >= 0) webPushMessages(t);
+}
+
+static void webOpenContact(int cidx) {
+  ContactInfo c{};
+  if (!the_mesh.getContactByIdx((uint32_t)cidx, c)) return;
+  int t = webThreadForPub(c.id.pub_key);
+  if (t >= 0) { webPushMessages(t); return; }
+  if (!s_webdata_buf) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;   // empty chat keyed to the contact
+  p += snprintf(p, e - p, "{\"t\":\"m\",\"i\":-1,\"c\":%d,\"ch\":0,\"n\":\"", cidx);
+  jsonEsc(p, e, c.name);
+  p += snprintf(p, e - p, "\",\"msgs\":[]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webOpenChannel(int slot) {
+  ChannelDetails cd;
+  if (!the_mesh.getChannel(slot, cd) || !cd.name[0]) return;
+  int t = webThreadForChannel(slot);
+  if (t >= 0) { webPushMessages(t); return; }
+  if (!s_webdata_buf) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;   // empty chat keyed to the channel
+  p += snprintf(p, e - p, "{\"t\":\"m\",\"i\":-1,\"h\":%d,\"ch\":1,\"n\":\"", slot);
+  jsonEsc(p, e, cd.name);
+  p += snprintf(p, e - p, "\",\"msgs\":[]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webSendToChannel(int slot, const char* text) {
+  ChannelDetails cd;
+  if (!the_mesh.getChannel(slot, cd) || !cd.name[0] || !text || !*text) return;
+  termDoSend(true, nullptr, (int16_t)slot, cd.name, text);
+  int t = webThreadForChannel(slot);
+  if (t >= 0) webPushMessages(t);
+}
+
+// Status bar for the web header — node name, battery, wifi, ble, clock, mesh signal, unread.
+static void webPushStatus() {
+  if (!g_lv.task || !s_webdata_buf) return;
+  uint16_t mv  = batteryMvSmoothed();
+  int      pct = batteryPercentFromMv(mv);
+  bool     wc  = (WiFi.status() == WL_CONNECTED);
+  uint32_t clk = 0; auto* rtc = the_mesh.getRTCClock(); if (rtc) clk = rtc->getCurrentTime();
+  int snr = -128;   // "no signal"; else last-heard SNR (dB), stale after 60 s
+  if (the_mesh.uiSignalMs() != 0 && (millis() - the_mesh.uiSignalMs()) < 60000) snr = the_mesh.uiSignalSnrQ4() / 4;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p,
+                "{\"t\":\"st\",\"batt\":%d,\"chg\":%d,\"wifi\":%d,\"rssi\":%d,\"ble\":%d,\"clk\":%u,\"snr\":%d,\"unr\":%d,\"mi\":%d,\"sla\":%ld,\"slo\":%ld,\"nm\":\"",
+                pct, batteryIsCharging(mv) ? 1 : 0, wc ? 1 : 0, wc ? (int)WiFi.RSSI() : 0,
+                (g_lv.task->isBleEnabled() && g_lv.task->hasBleCapability()) ? 1 : 0,
+                (unsigned)clk, snr, g_lv.task->getUnreadTotal(), touchPrefsGetUseMiles() ? 1 : 0,
+                (long)(g_lv.task->getNodeLat() * 1e6), (long)(g_lv.task->getNodeLon() * 1e6));
+  jsonEsc(p, e, g_lv.task->getNodeNameCstr());
+  p += snprintf(p, e - p, "\"}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+// Contact detail popup (Info action).
+static void webPushContactInfo(int cidx) {
+  ContactInfo c{};
+  if (!the_mesh.getContactByIdx((uint32_t)cidx, c) || !s_webdata_buf) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p,
+                "{\"t\":\"ci\",\"i\":%d,\"rp\":%d,\"rm\":%d,\"fav\":%d,\"ign\":%d,\"pl\":%d,\"adv\":%u,\"la\":%ld,\"lo\":%ld,\"k\":\"",
+                cidx, (c.type == ADV_TYPE_REPEATER) ? 1 : 0, (c.type == ADV_TYPE_ROOM) ? 1 : 0,
+                touchPrefsIsFavorite(c.id.pub_key) ? 1 : 0, touchPrefsIsIgnored(c.id.pub_key) ? 1 : 0,
+                (c.out_path_len == OUT_PATH_UNKNOWN) ? -1 : (int)c.out_path_len,
+                (unsigned)c.last_advert_timestamp, (long)c.gps_lat, (long)c.gps_lon);
+  for (int b = 0; b < 6; ++b) p += snprintf(p, e - p, "%02x", c.id.pub_key[b]);   // short pubkey id
+  p += snprintf(p, e - p, "\",\"n\":\"");
+  jsonEsc(p, e, c.name);
+  p += snprintf(p, e - p, "\"}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+// Contact mutations from the web action sheet: (f)avorite, (b)lock, reset (p)ath, delete (x). Refresh after.
+static void webContactAction(int cidx, char op) {
+  ContactInfo c{};
+  if (!the_mesh.getContactByIdx((uint32_t)cidx, c)) return;
+  switch (op) {
+    case 'f': touchPrefsSetFavorite(c.id.pub_key, !touchPrefsIsFavorite(c.id.pub_key)); break;
+    case 'b': touchPrefsSetIgnored(c.id.pub_key, !touchPrefsIsIgnored(c.id.pub_key));   break;
+    case 'p': the_mesh.uiResetContactPath(c.id.pub_key); break;
+    case 'x': the_mesh.uiRemoveContact(c); break;
+    default:  return;
+  }
+  webPushContacts();
+}
+
+// Discovered (heard-but-not-added) nodes -> the "add contacts without touching the device" flow.
+static void webPushDiscovered() {
+  if (!s_discovered || !s_webdata_buf) return;
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p, "{\"t\":\"dc\",\"nodes\":[");
+  bool first = true;
+  for (int i = 0; i < DISCOVERED_MAX && p < e - 240; ++i) {
+    if (!s_discovered[i].used || s_discovered[i].in_contacts) continue;
+    const ContactInfo& c = s_discovered[i].ci;
+    if (!first) *p++ = ','; first = false;
+    p += snprintf(p, e - p, "{\"i\":%d,\"rp\":%d,\"rm\":%d,\"pl\":%d,\"adv\":%u,\"la\":%ld,\"lo\":%ld,\"n\":\"",
+                  i, (c.type == ADV_TYPE_REPEATER) ? 1 : 0, (c.type == ADV_TYPE_ROOM) ? 1 : 0,
+                  (int)s_discovered[i].path_len, (unsigned)s_discovered[i].last_advert_ts,
+                  (long)c.gps_lat, (long)c.gps_lon);
+    jsonEsc(p, e, c.name[0] ? c.name : "(unnamed)");
+    p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webAddDiscovered(int i) {
+  if (!s_discovered || i < 0 || i >= DISCOVERED_MAX || !s_discovered[i].used || s_discovered[i].in_contacts) return;
+  if (the_mesh.addContact(s_discovered[i].ci)) {   // same path the on-device "Add" button uses
+    the_mesh.uiPersistContacts();
+    s_discovered[i].in_contacts = true;
+    markDiscoveredDirty();
+  }
+  webPushDiscovered();   // refresh (the added node drops off the list)
+}
+
+// Settings page — read current node/radio/connectivity state. Writes reuse the config CLI
+// (set name / wifi|ble|tcp on|off / advert / reboot) except radio, which uses setRadioParams (live).
+static void webPushSettings() {
+  if (!g_lv.task || !s_webdata_buf) return;
+  NodePrefs* pr = the_mesh.getNodePrefs();
+  const bool wc = (WiFi.status() == WL_CONNECTED);
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p,
+    "{\"t\":\"sg\",\"freq\":%.3f,\"bw\":%.0f,\"sf\":%d,\"cr\":%d,\"tx\":%d,\"wifi\":%d,\"ble\":%d,\"blecap\":%d,\"tcp\":%d,\"name\":\"",
+    pr ? pr->freq : 0.0f, pr ? pr->bw : 0.0f, pr ? pr->sf : 0, pr ? pr->cr : 0, pr ? (int)pr->tx_power_dbm : 0,
+    wc ? 1 : 0, g_lv.task->isBleEnabled() ? 1 : 0, g_lv.task->hasBleCapability() ? 1 : 0,
+    g_lv.task->isTcpEnabled() ? 1 : 0);
+  jsonEsc(p, e, pr ? pr->node_name : "");
+  p += snprintf(p, e - p, "\"}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webSetRadio(float freq, float bw, int sf, int cr, int tx) {
+  if (!g_lv.task || freq <= 0) return;
+  NodePrefs* pr = the_mesh.getNodePrefs();
+  g_lv.task->setRadioParams(freq, bw, (uint8_t)sf, (uint8_t)cr, (int8_t)tx, pr ? pr->airtime_factor : 1.0f);
+  webPushSettings();   // echo the applied values back
+}
+
+// Returns true if the line was a data-API command ('@...'); it is fully handled here.
+static bool handleWebDataCmd(const char* cmd) {
+  if (!cmd || cmd[0] != '@') return false;
+  if (!s_webdata_buf) {
+    s_webdata_buf = (char*)heap_caps_malloc(WEBDATA_BUF, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_webdata_buf) s_webdata_buf = (char*)malloc(WEBDATA_BUF);
+  }
+  const char* a = cmd + 1;
+  auto argAfter = [](const char* s) { while (*s && *s != ' ') ++s; if (*s == ' ') ++s; return s; };
+  if (a[0] == 'c' && (a[1] == 0 || a[1] == ' ')) { webPushContacts(); return true; }
+  if (a[0] == 't' && (a[1] == 0 || a[1] == ' ')) { webPushThreads();  return true; }
+  if (a[0] == 'd' && a[1] == 'c' && (a[2] == 0 || a[2] == ' ')) { webPushDiscovered(); return true; }
+  if (a[0] == 'a' && a[1] == 'd' && a[2] == ' ') { webAddDiscovered(atoi(a + 3)); return true; }   // add discovered node
+  if (a[0] == 's' && a[1] == 'g' && (a[2] == 0 || a[2] == ' ')) { webPushSettings(); return true; }
+  if (a[0] == 's' && a[1] == 'r' && a[2] == ' ') { float fq=0,bw=0; int sf=0,cr=0,tx=0; sscanf(a+3, "%f %f %d %d %d", &fq,&bw,&sf,&cr,&tx); webSetRadio(fq,bw,sf,cr,tx); return true; }
+  if (a[0] == 's' && a[1] == 't' && (a[2] == 0 || a[2] == ' ')) { webPushStatus(); return true; }
+  if (a[0] == 'm' && a[1] == ' ')                 { webPushMessages(atoi(a + 2)); return true; }
+  if (a[0] == 'o' && a[1] == 'c' && a[2] == ' ')  { webOpenContact(atoi(a + 3)); return true; }
+  if (a[0] == 'o' && a[1] == 'h' && a[2] == ' ')  { webOpenChannel(atoi(a + 3)); return true; }
+  if (a[0] == 's' && a[1] == 'c' && a[2] == ' ')  { const char* t = a + 3; webSendToContact(atoi(t), argAfter(t)); return true; }
+  if (a[0] == 's' && a[1] == 'h' && a[2] == ' ')  { const char* t = a + 3; webSendToChannel(atoi(t), argAfter(t)); return true; }
+  if (a[0] == 's' && a[1] == ' ')                 { const char* t = a + 2; webSendToThread(atoi(t), argAfter(t)); return true; }
+  if (a[0] == 'i' && a[1] == 'c' && a[2] == ' ')  { webPushContactInfo(atoi(a + 3)); return true; }
+  if (a[0] == 'f' && a[1] == 'v' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'f'); return true; }   // favorite toggle
+  if (a[0] == 'b' && a[1] == 'k' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'b'); return true; }   // block toggle
+  if (a[0] == 'p' && a[1] == 'r' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'p'); return true; }   // reset path
+  if (a[0] == 'x' && a[1] == 'c' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'x'); return true; }   // delete contact
+  if (a[0] == 'x' && a[1] == 't' && a[2] == ' ' && g_lv.task) { g_lv.task->removeThread(atoi(a + 3)); webPushThreads(); return true; }
+  if (a[0] == 'd' && a[1] == ' ' && g_lv.task)    { g_lv.task->clearThreadHistory(atoi(a + 2)); webPushThreads(); return true; }
+  if (a[0] == 'r' && a[1] == ' ' && g_lv.task)    { g_lv.task->markThreadRead(atoi(a + 2)); webPushThreads(); return true; }
+  return true;   // unknown '@' -> swallow (never run as a terminal command)
+}
+#endif  // !HAS_TANMATSU
 
 // Scrollable command picker, modelled on openAdminCmdPicker. Tapping a row
 // stuffs the template into the terminal input and keeps it focused so Enter
@@ -16488,10 +17572,12 @@ static void fmFmtSize64(uint64_t bytes, char* out, size_t outsz) {
   else                                     snprintf(out, outsz, "%.1f GB", bytes / (1024.0 * 1024 * 1024));
 }
 
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)   // microSD mount/format helpers — Arduino SD on the shared radio SPI bus
-// One shared-SPI accessor per board: the T-Deck exposes its pre-begun SPIClass via
-// tdeckSharedSPI(); the pager's radio+display already share TFT_eSPI's own instance
-// directly (variants/lilygo_tlora_pager/target.cpp), so reuse that the same way.
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)   // microSD mount/format helpers — Arduino SD on the shared SPI bus
+// One shared-SPI accessor per board: the T-Deck/M9 expose their pre-begun SPIClass
+// via tdeckSharedSPI()/m9SharedSPI(); the V4-R8's microSD shares its TFT FSPI bus
+// (heltecV4R8SharedSPI()); the pager's radio+display already share TFT_eSPI's own
+// instance directly (variants/lilygo_tlora_pager/target.cpp), so reuse that the
+// same way.
 #if defined(TLORA_PAGER)
 static inline SPIClass* sdSharedSPI() { return &TFT_eSPI::getSPIinstance(); }
 // Card-detect via the XL9555 expander (PAGER_EXPAND_SD_DET). Polarity is INVERTED
@@ -16503,12 +17589,16 @@ static inline SPIClass* sdSharedSPI() { return &TFT_eSPI::getSPIinstance(); }
 static inline bool pagerSdCardPresent() {
   return board.io_expander.digitalRead(PAGER_EXPAND_SD_DET) == LOW;
 }
+#elif defined(HELTEC_LORA_V4_R8)
+static inline SPIClass* sdSharedSPI() { return heltecV4R8SharedSPI(); }   // V4-R8: micro-SD shares the TFT FSPI bus (CS=3)
+#elif defined(HAS_THINKNODE_M9)
+static inline SPIClass* sdSharedSPI() { return m9SharedSPI(); }
 #else
 static inline SPIClass* sdSharedSPI() { return tdeckSharedSPI(); }
 #endif
-// Mount the microSD on the shared radio SPI bus. Safe to call repeatedly (no-op
+// Mount the microSD on its shared SPI bus. Safe to call repeatedly (no-op
 // once mounted). SD.begin's internal spi.begin() is a no-op because the bus is
-// already initialised by the radio, so the radio's pins are untouched.
+// already initialised by the radio/display, so those pins are untouched.
 static bool fmSdTryMount() {
   if (s_sd_mounted) return true;
 #if defined(TLORA_PAGER)
@@ -16537,6 +17627,11 @@ static bool fmSdTryMount() {
   // one walks the whole ladder (~2.7 s worst case, loop WDT dropped below). The
   // clock that succeeds becomes the operating clock — slower is fine here (the
   // file list + a settings backup are small; map tiles live on internal flash).
+  // UNVERIFIED on the M9: this ladder was tuned against the T-Deck's shared
+  // bus electrically — the M9 shares the same three signals (SCLK/MISO/MOSI)
+  // across radio+LCD+SD too, but timing margins haven't been confirmed on
+  // real M9 hardware yet. If SD never mounts, or mounts unreliably, this is
+  // the first place to look.
   static const struct { uint16_t settle_ms; uint32_t hz; } kMountLadder[] = {
     {  40, 4000000 }, { 120, 4000000 }, { 200, 4000000 },
     { 300, 1000000 }, { 450, 1000000 }, { 650,  400000 }, { 900, 400000 },
@@ -16575,7 +17670,7 @@ static void fmSdClickCb(lv_event_t* e) {
   if (s_sd_mounted) fmOpenStorage(&SD, "SD", "/");
 }
 
-#endif  // HAS_TDECK_GT911 || TLORA_PAGER (microSD mount helpers; the busy overlays below are generic LVGL)
+#endif  // HAS_TDECK_GT911 || TLORA_PAGER || HAS_THINKNODE_M9 || HELTEC_LORA_V4_R8 (microSD mount helpers; the busy overlays below are generic LVGL)
 
 // Full-screen "busy" notice (copy/move/format). Pure LVGL — used by the generic paste path too.
 static void fmShowBusyOverlay(const char* msg) {
@@ -16602,7 +17697,7 @@ static void fmHideFormatOverlay() {
   if (s_fm_fmt_overlay) { popupClose(&s_fm_fmt_overlay); }
 }
 
-#if defined(HAS_TDECK_GT911)   // SD format helpers resume (Arduino SD, T-Deck only)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)   // SD format helpers resume (Arduino SD, T-Deck + M9 + V4-R8)
 // Confirm callback: paint the formatting notice, then defer the (blocking)
 // f_mkfs to UITask::loop so the notice is on-screen before the loop freezes.
 static void fmSdDoFormat() {
@@ -16617,7 +17712,7 @@ static void fmSdDoFormat() {
 static void fmSdMountOrFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   if (fmSdTryMount()) { fmShowRoots(); return; }
-  showConfirm("Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased.",
+  showConfirm(TR("Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased."),
               "Format", fmSdDoFormat);
 }
 
@@ -16704,11 +17799,11 @@ static void sdWriteFatLabel(uint8_t pdrv, const char* label) {
 // only mounts, or formats an already-unreadable card).
 static void fmSdLongPressFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
-  showConfirm("Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.",
+  showConfirm(TR("Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased."),
               "Format", fmSdDoFormat);
 }
 
-#endif  // HAS_TDECK_GT911 (microSD mount/format helpers)
+#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (microSD mount/format helpers)
 
 // ---- File operations (Phase 4a: delete / rename / new folder) ----
 struct FmRowData { char name[64]; bool isdir; };
@@ -16829,7 +17924,7 @@ static void fmTextPrompt(const char* title, const char* initial, void (*cb)(cons
   styleButton(bo);
   lv_obj_set_style_bg_color(bo, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_add_event_cb(bo, fmPromptOkCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* lo = lv_label_create(bo); lv_label_set_text(lo, TR("OK")); lv_obj_center(lo);
+  lv_obj_t* lo = lv_label_create(bo); lv_label_set_text(lo, "OK"); lv_obj_center(lo);
 
   if (g_lv.keyboard) kbMirrorBind(s_fm_prompt_ta);
 }
@@ -17213,10 +18308,17 @@ static uint8_t* decodeJpegToRgb565(const uint8_t* jpeg, size_t jpeg_len,
                                    int* out_w, int* out_h);
 // Same, but DOWNSCALES (tjpgd 1/2..1/8) so images larger than max_dim still
 // decode — into a small buffer — instead of being rejected. FM viewer + wallpaper.
+// dst_buf/dst_cap: optional caller-owned output buffer. When given and the decoded
+// RGB565 fits, decode straight into it (no PSRAM alloc) — the map tile pool passes
+// its persistent 128 KB slot buffer so tiles never malloc per-render (fragmentation
+// fix). If the image is bigger than dst_cap, returns nullptr. dst_buf==nullptr keeps
+// the old "alloc a fresh buffer" behaviour (FM viewer / wallpaper).
 static uint8_t* decodeJpegScaledToRgb565(const uint8_t* jpeg, size_t jpeg_len,
-                                         int* out_w, int* out_h, int max_dim);
+                                         int* out_w, int* out_h, int max_dim,
+                                         uint8_t* dst_buf = nullptr, size_t dst_cap = 0);
 static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len,
-                                  int* out_w, int* out_h);
+                                  int* out_w, int* out_h,
+                                  uint8_t* dst_buf = nullptr, size_t dst_cap = 0);
 
 // Minimal BMP -> RGB565 decoder for the image viewer. Handles the common
 // uncompressed layouts: 16-bpp 565 (what our screenshots write) and 24-bpp BGR,
@@ -17363,7 +18465,7 @@ static void fmSetWallpaperCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(TR("Lock wallpaper set"), 1300);
 }
 
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_SOUND_FILES
 // ---- .wav -> notification-sound chooser (opened from the File Manager) ------
 static char      s_fm_snd_path[208] = {0};
 static bool      s_fm_snd_on_sd     = false;
@@ -17596,7 +18698,7 @@ static void fmRowClickCb(lv_event_t* e) {
   FmRowData* rd = (FmRowData*)lv_obj_get_user_data(lv_event_get_target(e));
   if (!rd) return;
   if (rd->isdir)                fmEnterDir(rd->name);
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_SOUND_FILES
   else if (fmIsAudio(rd->name)) fmOpenAudio(rd->name);   // .wav -> notification-sound chooser
 #endif
   else if (fmIsImage(rd->name)) fmOpenImage(rd->name);   // images -> read-only viewer
@@ -17818,7 +18920,7 @@ static void fmShowRoots() {
   fmStyleRow(b, COLOR_TEXT);
   lv_obj_add_event_cb(b, fmInternalClickCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911)   // microSD row (Arduino SD) — T-Deck only
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)  // microSD row (Arduino SD) — T-Deck + M9 + V4-R8
   // Probe the SD only when not in a mount-backoff window, so a persistently
   // unmountable card doesn't re-grind the full retry ladder on every render of
   // this page. Tapping the row below (fmSdMountOrFormatCb) bypasses the gate.
@@ -18208,7 +19310,7 @@ static void openSignalInfoPopup() {
   { char b[8]; snprintf(b, sizeof b, "%u", (unsigned)touchPrefsGetSigPollMins());
     lv_textarea_set_text(s_sig_poll_ta, b); }
   lv_obj_t* ulbl = lv_label_create(card);
-  lv_label_set_text(ulbl, TR("min"));
+  lv_label_set_text(ulbl, "min");
   lv_obj_set_style_text_color(ulbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(ulbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(ulbl, 122, cy + 7);
@@ -18218,7 +19320,7 @@ static void openSignalInfoPopup() {
   styleButton(setb);
   lv_obj_add_event_cb(setb, sigPollSaveCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* setl = lv_label_create(setb);
-  lv_label_set_text(setl, TR("Set"));
+  lv_label_set_text(setl, "Set");
   lv_obj_center(setl);
   cy += 40;
 
@@ -18439,6 +19541,491 @@ static void monitorDismissCb(lv_event_t* e) {
   closeMonitorPage();
 }
 
+// ============================ Reader: on-device text browser =========================
+// A minimal browser that fetches a URL over HTTP/HTTPS ENTIRELY ON THE DEVICE (no
+// proxy), strips the HTML to plain text, and shows it scrollable. HTTPS uses
+// setInsecure() — no cert store, no validation: this is a text reader, not a secure
+// client (the ask: an "apocalyptic" browser — on-device only, nothing leaves the
+// device to a third party). No JS / CSS / images by design. All network + parse work
+// runs on a core-0 worker task so LVGL never blocks; the UI loop polls s_reader_dirty.
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+static const char    kReaderDefaultUrl[] = "wadamesh.com";
+static lv_obj_t*     s_reader_root   = nullptr;
+static lv_obj_t*     s_reader_url_ta = nullptr;
+static lv_obj_t*     s_reader_go     = nullptr;
+static lv_obj_t*     s_reader_editbtn= nullptr;    // floating "edit URL" button (shown while reading)
+static lv_obj_t*     s_reader_scroll = nullptr;    // flex-column body container (holds text + link labels)
+static lv_obj_t*     s_reader_status = nullptr;    // status / error line
+static char          s_reader_url[300] = "";       // the URL being (or last) fetched
+static char*         s_reader_text   = nullptr;    // PSRAM: extracted text (NUL-terminated)
+static volatile bool s_reader_dirty  = false;      // worker -> UI: text/status changed
+static volatile bool s_reader_busy   = false;      // a fetch is in flight
+static volatile bool s_reader_ok     = false;      // last fetch produced a page (worker -> UI)
+static char          s_reader_msg[110] = "";       // status text (worker writes, UI shows)
+static TaskHandle_t  s_reader_task    = nullptr;
+static bool          s_reader_pristine = false;    // URL field still holds the untouched default
+static const size_t  kReaderRawCap  = 192 * 1024;  // max raw HTML we buffer (PSRAM)
+static const size_t  kReaderTextCap =  60 * 1024;  // max extracted text we keep
+// Links found on the page: byte range in s_reader_text + resolved absolute href.
+struct ReaderLink { uint32_t start, end; char href[240]; };
+static const int     kReaderMaxLinks = 280;
+static ReaderLink*   s_reader_links   = nullptr;   // PSRAM array, lazily allocated
+static int           s_reader_nlinks  = 0;
+// Navigation history (back / forward). A simple bounded stack in PSRAM: s_reader_hist_pos
+// is the current entry; back/forward walk it, a new navigation truncates any forward tail.
+static const int     kReaderHistMax   = 24;
+static char        (*s_reader_hist)[300] = nullptr;   // PSRAM [kReaderHistMax][300]
+static int           s_reader_hist_n   = 0;           // entries in use
+static int           s_reader_hist_pos = -1;          // current index (-1 = none yet)
+static lv_obj_t*     s_reader_navbar   = nullptr;      // bottom toolbar
+static lv_obj_t*     s_reader_back     = nullptr;
+static lv_obj_t*     s_reader_fwd      = nullptr;
+
+static void closeReaderPage();
+static void readerNavigate(const char* in, bool push);
+static void readerUpdateNavButtons();
+static void readerRenderBody();
+static void readerSetAddrExpanded(bool exp);
+static void readerShowLoading();
+
+// case-insensitive prefix test
+static bool readerCiPrefix(const char* s, size_t n, const char* pfx) {
+  size_t ln = strlen(pfx); if (n < ln) return false;
+  for (size_t i = 0; i < ln; i++) { char a = s[i], b = pfx[i];
+    if (a >= 'A' && a <= 'Z') a += 32; if (b >= 'A' && b <= 'Z') b += 32; if (a != b) return false; }
+  return true;
+}
+// Decode one HTML entity at s[0]=='&'. Writes UTF-8 to out (>=4 bytes), sets *wrote,
+// returns consumed input length; 0 if unrecognised (caller emits '&' literally).
+static size_t readerEntity(const char* s, size_t n, char* out, int* wrote) {
+  static const struct { const char* name; const char* utf8; } named[] = {
+    {"amp;","&"},{"lt;","<"},{"gt;",">"},{"quot;","\""},{"apos;","'"},{"nbsp;"," "},
+    {"mdash;","\xe2\x80\x94"},{"ndash;","\xe2\x80\x93"},{"hellip;","\xe2\x80\xa6"},
+    {"lsquo;","\xe2\x80\x98"},{"rsquo;","\xe2\x80\x99"},{"ldquo;","\xe2\x80\x9c"},
+    {"rdquo;","\xe2\x80\x9d"},{"copy;","\xc2\xa9"},{"reg;","\xc2\xae"},{"euro;","\xe2\x82\xac"},
+    {"deg;","\xc2\xb0"},{"middot;","\xc2\xb7"},{"bull;","\xe2\x80\xa2"},{"trade;","\xe2\x84\xa2"},
+  };
+  for (auto& e : named) { size_t ln = strlen(e.name);
+    if (n > ln && strncmp(s + 1, e.name, ln) == 0) { int w = strlen(e.utf8); memcpy(out, e.utf8, w); *wrote = w; return ln + 1; } }
+  if (n > 3 && s[1] == '#') {                            // &#NNN; or &#xHH;
+    long cp = 0; bool hex = (s[2] == 'x' || s[2] == 'X'); size_t i = hex ? 3 : 2, start = i;
+    for (; i < n && s[i] != ';'; i++) { char c = s[i]; int d;
+      if (c >= '0' && c <= '9') d = c - '0';
+      else if (hex && c >= 'a' && c <= 'f') d = c - 'a' + 10;
+      else if (hex && c >= 'A' && c <= 'F') d = c - 'A' + 10; else { i = start; break; }
+      cp = cp * (hex ? 16 : 10) + d; }
+    if (i > start && i < n && s[i] == ';' && cp > 0 && cp <= 0x10FFFF) {
+      int w = 0;
+      if (cp < 0x80) out[w++] = (char)cp;
+      else if (cp < 0x800) { out[w++] = 0xC0 | (cp >> 6); out[w++] = 0x80 | (cp & 0x3F); }
+      else if (cp < 0x10000) { out[w++] = 0xE0 | (cp >> 12); out[w++] = 0x80 | ((cp >> 6) & 0x3F); out[w++] = 0x80 | (cp & 0x3F); }
+      else { out[w++] = 0xF0 | (cp >> 18); out[w++] = 0x80 | ((cp >> 12) & 0x3F); out[w++] = 0x80 | ((cp >> 6) & 0x3F); out[w++] = 0x80 | (cp & 0x3F); }
+      *wrote = w; return i + 1;
+    }
+  }
+  return 0;
+}
+// Extract attribute `attr` (e.g. "href") from a tag body h[0..len) into out. Handles
+// quoted ("..", '..') and unquoted values. Returns true if found.
+static bool readerTagAttr(const char* h, size_t len, const char* attr, char* out, size_t cap) {
+  size_t al = strlen(attr);
+  for (size_t i = 0; i + al + 1 < len; i++) {
+    if (!readerCiPrefix(h + i, len - i, attr)) continue;
+    size_t j = i + al; while (j < len && (h[j] == ' ' || h[j] == '\t')) j++;
+    if (j >= len || h[j] != '=') continue;
+    j++; while (j < len && (h[j] == ' ' || h[j] == '\t')) j++;
+    char q = 0; if (j < len && (h[j] == '"' || h[j] == '\'')) { q = h[j]; j++; }
+    size_t o = 0;
+    while (j < len && o + 1 < cap) { char c = h[j]; if (q ? (c == q) : (c == ' ' || c == '>' || c == '\t')) break; out[o++] = c; j++; }
+    out[o] = 0; return o > 0;
+  }
+  return false;
+}
+// Resolve href against base into out (absolute). Returns false for unusable schemes
+// (#fragment, javascript:, mailto:, tel:, data:).
+static bool readerResolveUrl(const char* base, const char* href, char* out, size_t cap) {
+  while (*href == ' ') href++;
+  size_t hl = strlen(href);
+  if (!hl || href[0] == '#') return false;
+  if (readerCiPrefix(href, hl, "javascript:") || readerCiPrefix(href, hl, "mailto:") ||
+      readerCiPrefix(href, hl, "tel:") || readerCiPrefix(href, hl, "data:")) return false;
+  if (readerCiPrefix(href, hl, "http://") || readerCiPrefix(href, hl, "https://")) { snprintf(out, cap, "%s", href); }
+  else {
+    const char* se = strstr(base, "://"); if (!se) return false;
+    int sl = (int)(se - base); const char* host = se + 3;
+    const char* he = strchr(host, '/'); int hlen = he ? (int)(he - host) : (int)strlen(host);
+    if (href[0] == '/' && href[1] == '/')      snprintf(out, cap, "%.*s:%s", sl, base, href);            // //host/path
+    else if (href[0] == '/')                   snprintf(out, cap, "%.*s://%.*s%s", sl, base, hlen, host, href);  // root-relative
+    else {                                                                                              // relative to base dir
+      const char* ls = strrchr(base, '/');
+      if (ls && ls > se + 2) snprintf(out, cap, "%.*s%s", (int)(ls - base + 1), base, href);
+      else                   snprintf(out, cap, "%.*s://%.*s/%s", sl, base, hlen, host, href);
+    }
+  }
+  char* frag = strchr(out, '#'); if (frag) *frag = 0;
+  return out[0] != 0;
+}
+// One-pass HTML -> text. Drops comments + <script>/<style> bodies, turns block tags
+// into newlines, decodes entities, collapses whitespace, and records <a href> ranges
+// (byte offsets into out + resolved absolute href) in s_reader_links. Returns text len.
+static size_t readerHtmlToText(const char* h, size_t n, char* out, size_t cap, const char* base) {
+  size_t o = 0; int pend_nl = 0; bool pend_sp = false, started = false;
+  s_reader_nlinks = 0;
+  bool in_a = false; uint32_t a_start = 0; char a_href[240] = "";
+  auto emit = [&](char c) { if (o + 1 < cap) out[o++] = c; };
+  auto flush = [&]() { if (!started) return; while (pend_nl > 0) { emit('\n'); pend_nl--; } if (pend_sp) { emit(' '); pend_sp = false; } };
+  static const char* blocks[] = { "p","div","br","li","ul","ol","tr","h1","h2","h3","h4","h5","h6",
+    "section","article","header","footer","table","blockquote","pre","hr","nav","title","body", nullptr };
+  size_t i = 0;
+  while (i < n && o + 5 < cap) {
+    char c = h[i];
+    if (c == '<') {
+      if (n - i >= 4 && h[i+1] == '!' && h[i+2] == '-' && h[i+3] == '-') {        // comment
+        size_t j = i + 4; while (j + 2 < n && !(h[j] == '-' && h[j+1] == '-' && h[j+2] == '>')) j++;
+        i = (j + 2 < n) ? j + 3 : n; continue;
+      }
+      bool scr = readerCiPrefix(h + i, n - i, "<script"), sty = !scr && readerCiPrefix(h + i, n - i, "<style");
+      if (scr || sty) {                                                          // skip body wholesale
+        const char* close = scr ? "</script" : "</style"; size_t j = i + 1;
+        while (j < n && !(h[j] == '<' && readerCiPrefix(h + j, n - j, close))) j++;
+        while (j < n && h[j] != '>') j++; i = (j < n) ? j + 1 : n;
+        if (pend_nl < 2) pend_nl++; continue;
+      }
+      size_t j = i + 1; bool closing = (j < n && h[j] == '/'); if (closing) j++;  // tag name
+      char name[12]; int ni = 0;
+      while (j < n && ni < 11) { char t = h[j]; if ((t>='a'&&t<='z')||(t>='A'&&t<='Z')||(t>='0'&&t<='9')) { name[ni++] = (t>='A'&&t<='Z')?t+32:t; j++; } else break; }
+      name[ni] = 0;
+      size_t k = i + 1; while (k < n && h[k] != '>') k++;                          // k = '>' position
+      // Links: record the anchor-text byte range + resolved href.
+      if (name[0] == 'a' && name[1] == 0) {
+        if (in_a) { if (o > a_start && s_reader_links && s_reader_nlinks < kReaderMaxLinks) {
+            s_reader_links[s_reader_nlinks].start = a_start; s_reader_links[s_reader_nlinks].end = (uint32_t)o;
+            snprintf(s_reader_links[s_reader_nlinks].href, sizeof s_reader_links[0].href, "%s", a_href); s_reader_nlinks++; }
+          in_a = false; }
+        if (!closing) { char raw[300];
+          if (base && s_reader_links && readerTagAttr(h + i, (k < n ? k : n) - i, "href", raw, sizeof raw) &&
+              readerResolveUrl(base, raw, a_href, sizeof a_href)) { in_a = true; a_start = (uint32_t)o; } }
+      }
+      i = (k < n) ? k + 1 : n;
+      for (int b = 0; blocks[b]; b++) if (strcmp(name, blocks[b]) == 0) { pend_sp = false; if (pend_nl < 2) pend_nl++; break; }
+      continue;
+    }
+    if (c == '&') {
+      char buf[8]; int w = 0; size_t used = readerEntity(h + i, n - i, buf, &w);
+      if (used) { for (int q = 0; q < w; q++) { char e = buf[q]; if (e == ' ') { if (started) pend_sp = true; } else { flush(); emit(e); started = true; } } i += used; continue; }
+      flush(); emit('&'); started = true; i++; continue;
+    }
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { if (started) pend_sp = true; i++; continue; }
+    flush(); emit(c); started = true; i++;
+  }
+  out[o < cap ? o : cap - 1] = 0; return o;
+}
+// Worker (core 0): fetch s_reader_url, strip to s_reader_text, publish via s_reader_dirty.
+static void readerFetchTaskFn(void*) {
+  char url[300]; strncpy(url, s_reader_url, sizeof url - 1); url[sizeof url - 1] = 0;
+  s_reader_ok = false;
+  const bool https = readerCiPrefix(url, strlen(url), "https://");
+  // Big contiguous PSRAM is scarce on the 2 MB V4 (a chat's message ring fragments it),
+  // so fall back to smaller buffers — a typical text page still fits in 48 KB.
+  size_t rawcap = kReaderRawCap;
+  uint8_t* raw = (uint8_t*)heap_caps_malloc(rawcap, MALLOC_CAP_SPIRAM);
+  if (!raw) { rawcap = 96 * 1024; raw = (uint8_t*)heap_caps_malloc(rawcap, MALLOC_CAP_SPIRAM); }
+  if (!raw) { rawcap = 48 * 1024; raw = (uint8_t*)heap_caps_malloc(rawcap, MALLOC_CAP_SPIRAM); }
+  if (!raw) { rawcap = 24 * 1024; raw = (uint8_t*)heap_caps_malloc(rawcap, MALLOC_CAP_SPIRAM); }
+  int code = -1; size_t total = 0;
+  if (raw) {
+    HTTPClient httpc;
+    httpc.setReuse(false); httpc.setConnectTimeout(9000); httpc.setTimeout(15000);
+    httpc.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS); httpc.setUserAgent("wadamesh-reader");
+    WiFiClientSecure scli; WiFiClient pcli; bool began;
+    if (https) { scli.setInsecure(); began = httpc.begin(scli, url); }
+    else       {                       began = httpc.begin(pcli, url); }
+    if (began) { httpc.addHeader("Accept-Encoding", "identity"); code = httpc.GET(); }
+    if (code == HTTP_CODE_OK) {
+      WiFiClient* st = httpc.getStreamPtr(); unsigned long t0 = millis();
+      while (st && total < rawcap - 1 && (millis() - t0) < 20000) {
+        int a = st->available();
+        if (a <= 0) { if (!httpc.connected()) break; vTaskDelay(pdMS_TO_TICKS(8)); continue; }
+        int r = st->read(raw + total, (rawcap - 1) - total);
+        if (r <= 0) { if (!httpc.connected()) break; vTaskDelay(pdMS_TO_TICKS(5)); continue; }
+        total += (size_t)r;
+        if ((total & 0x3FFF) == 0) { snprintf(s_reader_msg, sizeof s_reader_msg, "Loading\xe2\x80\xa6 %uk", (unsigned)(total / 1024)); s_reader_dirty = true; }
+        vTaskDelay(1);
+      }
+    }
+    httpc.end();
+  }
+  if (!raw) snprintf(s_reader_msg, sizeof s_reader_msg, "Out of memory");
+  else if (code == HTTP_CODE_OK && total >= 2 && raw[0] == 0x1f && (uint8_t)raw[1] == 0x8b)
+    snprintf(s_reader_msg, sizeof s_reader_msg, "Page is gzip-compressed \xe2\x80\x94 not supported yet");
+  else if (code == HTTP_CODE_OK && total > 0) {
+    if (!s_reader_text)  s_reader_text  = (char*)heap_caps_malloc(kReaderTextCap, MALLOC_CAP_SPIRAM);
+    if (!s_reader_links) s_reader_links = (ReaderLink*)heap_caps_malloc(sizeof(ReaderLink) * kReaderMaxLinks, MALLOC_CAP_SPIRAM);
+    if (s_reader_text) { size_t tl = readerHtmlToText((const char*)raw, total, s_reader_text, kReaderTextCap, s_reader_url);
+      if (tl == 0) { strcpy(s_reader_text, "(no readable text on this page)"); s_reader_nlinks = 0; }
+      snprintf(s_reader_msg, sizeof s_reader_msg, "%s", s_reader_url); s_reader_ok = true; }
+    else snprintf(s_reader_msg, sizeof s_reader_msg, "Out of memory");
+  }
+  else if (code > 0) { snprintf(s_reader_msg, sizeof s_reader_msg, "HTTP %d", code); }
+  else               { snprintf(s_reader_msg, sizeof s_reader_msg, "Couldn't load (offline, bad URL, or TLS failed)"); }
+  if (raw) heap_caps_free(raw);
+  s_reader_busy = false; s_reader_dirty = true; s_reader_task = nullptr;
+  vTaskDelete(nullptr);
+}
+// Navigate to a URL. push=true records it in history (a fresh navigation from Go / a
+// link / Enter); push=false is a back / forward / refresh replay that must NOT grow
+// history. readerStart() is the public "new navigation" entry point.
+static void readerNavigate(const char* in, bool push) {
+  if (s_reader_busy || !in) return;
+  while (*in == ' ') in++;
+  if (readerCiPrefix(in, strlen(in), "http://") || readerCiPrefix(in, strlen(in), "https://"))
+       snprintf(s_reader_url, sizeof s_reader_url, "%s", in);
+  else snprintf(s_reader_url, sizeof s_reader_url, "https://%s", in);   // default to https
+  // Keep the address field in sync with what we're actually loading, so a failed load
+  // shows the URL we tried (not the stale default that made it look like it "opened
+  // wadamesh.com").
+  if (s_reader_url_ta) { lv_textarea_set_text(s_reader_url_ta, s_reader_url); s_reader_pristine = false; }
+  if (!s_reader_url[0] || !strchr(s_reader_url, '.')) { snprintf(s_reader_msg, sizeof s_reader_msg, "Enter a valid URL"); s_reader_dirty = true; if (s_reader_root) readerSetAddrExpanded(true); return; }
+  if (WiFi.status() != WL_CONNECTED) { snprintf(s_reader_msg, sizeof s_reader_msg, "Wi-Fi not connected (Settings \xe2\x86\x92 Wi-Fi)"); s_reader_dirty = true; if (s_reader_root) readerSetAddrExpanded(true); return; }
+  if (push && s_reader_hist) {
+    // Drop any forward tail, then push (unless it repeats the current entry).
+    if (s_reader_hist_pos < 0 || strcmp(s_reader_hist[s_reader_hist_pos], s_reader_url) != 0) {
+      if (s_reader_hist_pos + 1 >= kReaderHistMax) {   // full: slide the window down one
+        memmove(s_reader_hist[0], s_reader_hist[1], sizeof(s_reader_hist[0]) * (kReaderHistMax - 1));
+        s_reader_hist_pos = kReaderHistMax - 2;
+      }
+      snprintf(s_reader_hist[++s_reader_hist_pos], 300, "%s", s_reader_url);
+    }
+    s_reader_hist_n = s_reader_hist_pos + 1;
+  }
+  s_reader_busy = true; snprintf(s_reader_msg, sizeof s_reader_msg, "Connecting\xe2\x80\xa6"); s_reader_dirty = true;
+  readerUpdateNavButtons();
+  // Immediate feedback (we're on the UI thread): collapse the URL into the topbar and
+  // show a Loading placeholder at once, so a tapped link visibly does something now.
+  if (s_reader_root) { readerSetAddrExpanded(false); readerShowLoading(); }
+  if (xTaskCreatePinnedToCore(readerFetchTaskFn, "reader", 16384, nullptr, 4, &s_reader_task, 0) != pdPASS) {
+    // Couldn't spawn the fetch worker (low internal RAM) — don't leave it stuck on
+    // "Loading…" forever; surface it and drop the busy flag so a retry works.
+    s_reader_task = nullptr; s_reader_busy = false;
+    snprintf(s_reader_msg, sizeof s_reader_msg, "Low memory \xe2\x80\x94 try again");
+    s_reader_ok = false; s_reader_dirty = true;
+  }
+}
+static void readerStart(const char* in) { readerNavigate(in, true); }
+static void readerBackCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_reader_busy) return;
+  if (s_reader_hist_pos > 0) readerNavigate(s_reader_hist[--s_reader_hist_pos], false);
+  else closeReaderPage();   // at the first page, the ◀ button exits the browser (reliable exit)
+}
+static void readerFwdCb(lv_event_t* e)     { if (lv_event_get_code(e) == LV_EVENT_CLICKED && !s_reader_busy && s_reader_hist && s_reader_hist_pos + 1 < s_reader_hist_n) readerNavigate(s_reader_hist[++s_reader_hist_pos], false); }
+static void readerRefreshCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED && !s_reader_busy && s_reader_url[0])                             readerNavigate(s_reader_url, false); }
+// Dim the back / forward arrows when there's nowhere to go that way.
+static void readerUpdateNavButtons() {
+  auto dim = [](lv_obj_t* b, bool on) { if (!b) return; lv_obj_t* l = lv_obj_get_child(b, 0); if (l) lv_obj_set_style_text_opa(l, on ? LV_OPA_COVER : LV_OPA_30, LV_PART_MAIN); };
+  dim(s_reader_back, true);   // always active: goes back in history, or exits at the first page
+  dim(s_reader_fwd,  s_reader_hist && s_reader_hist_pos + 1 < s_reader_hist_n);
+}
+static void readerGoCb(lv_event_t*) { if (s_reader_url_ta) readerStart(lv_textarea_get_text(s_reader_url_ta)); }
+static void readerUrlReadyCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_READY && s_reader_url_ta) readerStart(lv_textarea_get_text(s_reader_url_ta)); }
+// Tapping the pre-filled default clears it so you type over a blank field.
+static void readerUrlFocusCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_FOCUSED) return;
+  if (s_reader_pristine && s_reader_url_ta) { lv_textarea_set_text(s_reader_url_ta, ""); s_reader_pristine = false; }
+}
+static void readerUrlChangedCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) s_reader_pristine = false; }
+// Tap a link -> navigate to its resolved href.
+static void readerLinkClickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_reader_busy || !s_reader_links) return;
+  int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  if (idx >= 0 && idx < s_reader_nlinks) readerStart(s_reader_links[idx].href);
+}
+// Show/hide the address bar: expanded = URL field + Go (entry); collapsed = a thin
+// button showing the loaded URL (so the page text gets almost the whole screen).
+static const int kReaderNavH = 14;                     // bottom toolbar height (thin)
+static inline int readerEditTop() { return STATUSBAR_H + 4; }  // edit row sits BELOW the tall bar (live: STATUSBAR_H scales)
+static void readerSetAddrExpanded(bool exp) {
+  if (!s_reader_root) return;
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
+  const int H = sh - STATUSBAR_H;
+  auto vis = [](lv_obj_t* o, bool show) { if (!o) return; if (show) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); };
+  vis(s_reader_url_ta, exp); vis(s_reader_go, exp); vis(s_reader_status, exp);
+  // The topbar ALWAYS shows a plain "‹ Web" (like the RF Monitor page) — no URL in the
+  // bar (it was interfering with the back tap). The address only appears in the edit
+  // field, which opens from the ✎ pencil in the bottom toolbar. Reading (collapsed):
+  // fullscreen body. Editing (expanded): the field + Go sit clear of the tall bar.
+  s_apppage_title  = "Web";
+  s_reader_bar_url = false;
+  updateGlobalStatusBar();
+  const int body_y = exp ? (readerEditTop() + 72) : (STATUSBAR_H + 2);
+  if (s_reader_scroll) { lv_obj_set_pos(s_reader_scroll, 4, body_y);
+    lv_obj_set_size(s_reader_scroll, sw - 8, (H - kReaderNavH) - body_y - 4); }
+  readerUpdateNavButtons();
+}
+static void readerShowMessage(const char* msg, uint32_t color) {
+  if (!s_reader_scroll) return;
+  lv_obj_clean(s_reader_scroll);
+  lv_obj_set_flex_flow(s_reader_scroll, LV_FLEX_FLOW_COLUMN);
+  lv_obj_t* l = lv_label_create(s_reader_scroll);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(l, lv_disp_get_hor_res(nullptr) - 8 - 16);
+  lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
+  lv_label_set_text(l, msg);
+}
+static void readerShowLoading() { readerShowMessage(LV_SYMBOL_REFRESH "  Loading\xe2\x80\xa6", 0x6FB7FF); }
+// Rebuild the body: flowing text split into paragraph labels + tappable link labels.
+static void readerRenderBody() {
+  if (!s_reader_scroll) return;
+  lv_obj_clean(s_reader_scroll);
+  lv_obj_set_flex_flow(s_reader_scroll, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(s_reader_scroll, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(s_reader_scroll, 2, LV_PART_MAIN);
+  const int cw = lv_disp_get_hor_res(nullptr) - 8 - 16;
+  auto mkLabel = [&](const char* s, bool link, int idx) {
+    lv_obj_t* l = lv_label_create(s_reader_scroll);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(l, cw);
+    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(link ? 0x6FB7FF : COLOR_TEXT), LV_PART_MAIN);
+    if (link) {
+      lv_obj_set_style_text_decor(l, LV_TEXT_DECOR_UNDERLINE, LV_PART_MAIN);
+      lv_obj_add_flag(l, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_add_event_cb(l, readerLinkClickCb, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
+    }
+    lv_label_set_text(l, s);
+  };
+  if (!s_reader_text || !s_reader_text[0]) {
+    mkLabel("Type a URL above and tap Go.\n\nText-only: reads the words on a page (articles, wikis, docs, plain sites). No JavaScript, images or logins. Links are tappable.", false, -1);
+    return;
+  }
+  // Walk the text, emitting text[cursor..link.start] as paragraphs and each link
+  // range as a tappable label. NUL-swap in place so we never copy big runs.
+  const uint32_t tlen = (uint32_t)strlen(s_reader_text);
+  uint32_t cursor = 0; int blocks = 0;
+  for (int i = 0; i < s_reader_nlinks && blocks < 500; i++) {
+    ReaderLink& lk = s_reader_links[i];
+    if (lk.start < cursor || lk.end > tlen || lk.end <= lk.start) continue;
+    if (lk.start > cursor) { char sv = s_reader_text[lk.start]; s_reader_text[lk.start] = 0; mkLabel(s_reader_text + cursor, false, -1); s_reader_text[lk.start] = sv; blocks++; }
+    { char sv = s_reader_text[lk.end]; s_reader_text[lk.end] = 0; mkLabel(s_reader_text[lk.start] ? s_reader_text + lk.start : "(link)", true, i); s_reader_text[lk.end] = sv; blocks++; }
+    cursor = lk.end;
+  }
+  if (cursor < tlen) mkLabel(s_reader_text + cursor, false, -1);
+  lv_obj_scroll_to_y(s_reader_scroll, 0, LV_ANIM_OFF);
+}
+static void closeReaderPage() {
+  if (!s_reader_root) return;
+  s_apppage_title = nullptr; s_apppage_close = nullptr;
+  s_reader_bar_url = false;   // un-hide the status-bar clock
+  s_reader_page_open = false; // restore the tall-bar glass fade for other pages
+  s_reader_hist_n = 0; s_reader_hist_pos = -1;   // fresh history next open (buffer kept in PSRAM)
+  statusBarSetTall(false); updateGlobalStatusBar();
+  popupClose(&s_reader_root);
+  s_reader_url_ta = s_reader_go = s_reader_editbtn = s_reader_scroll = s_reader_status = nullptr;   // a running worker only touches s_reader_text/msg/flags/links — safe
+  s_reader_navbar = s_reader_back = s_reader_fwd = nullptr;
+}
+// The floating edit button (shown while reading) reopens the address field.
+static void readerEditBtnCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  readerSetAddrExpanded(true);
+  if (s_reader_url_ta) { lv_textarea_set_text(s_reader_url_ta, s_reader_url); s_reader_pristine = false; lv_group_focus_obj(s_reader_url_ta); }
+}
+static void openReaderPage() {
+  closeReaderPage();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  const int H = sh - STATUSBAR_H;
+  s_reader_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_reader_root);
+  lv_obj_set_size(s_reader_root, sw, H);
+  lv_obj_set_pos(s_reader_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_reader_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_reader_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_reader_root, LV_OBJ_FLAG_SCROLLABLE);
+  s_apppage_title = "Web"; s_apppage_close = closeReaderPage;   // ‹ / bar tap always closes the app
+  s_reader_page_open = true;   // solid tall bar on this page (no glass fade)
+  statusBarSetTall(true); updateGlobalStatusBar();
+  if (!s_reader_hist) s_reader_hist = (char(*)[300])psAlloc(sizeof(s_reader_hist[0]) * kReaderHistMax);
+  const int top = readerEditTop(), gow = 50;   // edit row sits clear of the tall bar
+  // --- Expanded address bar: URL field + Go ---
+  s_reader_url_ta = lv_textarea_create(s_reader_root);
+  lv_textarea_set_one_line(s_reader_url_ta, true);
+  lv_textarea_set_placeholder_text(s_reader_url_ta, "Type a URL, then Go");
+  if (s_reader_url[0]) { lv_textarea_set_text(s_reader_url_ta, s_reader_url); s_reader_pristine = false; }
+  else                 { lv_textarea_set_text(s_reader_url_ta, kReaderDefaultUrl); s_reader_pristine = true; }
+  lv_obj_set_pos(s_reader_url_ta, 6, top);
+  lv_obj_set_size(s_reader_url_ta, sw - 6 - gow - 14, 36);
+  lv_obj_set_style_text_font(s_reader_url_ta, &g_font_14, LV_PART_MAIN);
+  attachSettingsTaEvents(s_reader_url_ta);   // keyboard + edit; keeps backspace in the field
+  lv_obj_add_event_cb(s_reader_url_ta, readerUrlReadyCb,   LV_EVENT_READY,         nullptr);   // Enter = Go
+  lv_obj_add_event_cb(s_reader_url_ta, readerUrlFocusCb,   LV_EVENT_FOCUSED,       nullptr);   // clear the default on tap
+  lv_obj_add_event_cb(s_reader_url_ta, readerUrlChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  s_reader_go = lv_btn_create(s_reader_root);
+  lv_obj_set_size(s_reader_go, gow, 36);
+  lv_obj_align_to(s_reader_go, s_reader_url_ta, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+  styleButton(s_reader_go);
+  lv_obj_add_event_cb(s_reader_go, readerGoCb, LV_EVENT_CLICKED, nullptr);
+  { lv_obj_t* gl = lv_label_create(s_reader_go); lv_label_set_text(gl, "Go"); lv_obj_center(gl); }
+  s_reader_status = lv_label_create(s_reader_root);
+  lv_label_set_long_mode(s_reader_status, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(s_reader_status, sw - 12);
+  lv_obj_set_pos(s_reader_status, 6, top + 44);
+  lv_obj_set_style_text_font(s_reader_status, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_reader_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_text(s_reader_status, s_reader_msg[0] ? s_reader_msg : "On-device text browser \xc2\xb7 no proxy, no tracking");
+  // (Collapsed state shows the URL in the status-bar title zone — see readerSetAddrExpanded.)
+  // --- Body: a vertical scroll container we fill with paragraph + link labels ---
+  s_reader_scroll = lv_obj_create(s_reader_root);
+  lv_obj_remove_style_all(s_reader_scroll);
+  lv_obj_set_style_bg_color(s_reader_scroll, lv_color_hex(0x14161A), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_reader_scroll, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_reader_scroll, 6, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(s_reader_scroll, 8, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(s_reader_scroll, LV_DIR_VER);
+  // --- Bottom toolbar: back / forward / refresh / edit-URL (always visible) ---
+  s_reader_navbar = lv_obj_create(s_reader_root);
+  lv_obj_remove_style_all(s_reader_navbar);
+  lv_obj_set_size(s_reader_navbar, sw, kReaderNavH);
+  lv_obj_set_pos(s_reader_navbar, 0, H - kReaderNavH);
+  lv_obj_set_style_bg_color(s_reader_navbar, lv_color_hex(0x000000), LV_PART_MAIN);   // black bar
+  lv_obj_set_style_bg_opa(s_reader_navbar, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_reader_navbar, lv_color_hex(0x222222), LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_reader_navbar, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_side(s_reader_navbar, LV_BORDER_SIDE_TOP, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(s_reader_navbar, 0, LV_PART_MAIN);
+  lv_obj_clear_flag(s_reader_navbar, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(s_reader_navbar, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(s_reader_navbar, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  auto navBtn = [&](const char* sym, lv_event_cb_t cb) -> lv_obj_t* {
+    lv_obj_t* b = lv_btn_create(s_reader_navbar);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, 46, kReaderNavH - 2);
+    lv_obj_set_style_bg_opa(b, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_radius(b, 3, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x1E1E1E), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_ext_click_area(b, 8);   // thin bar, so pad the tap target
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, sym); lv_obj_center(l);
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(0x9FD8FF), LV_PART_MAIN);
+    return b;
+  };
+  s_reader_back    = navBtn(LV_SYMBOL_LEFT,    readerBackCb);
+  s_reader_fwd     = navBtn(LV_SYMBOL_RIGHT,   readerFwdCb);
+  navBtn(LV_SYMBOL_REFRESH, readerRefreshCb);
+  s_reader_editbtn = navBtn(LV_SYMBOL_EDIT,    readerEditBtnCb);
+  readerRenderBody();
+  // Reopen after a successful load -> collapsed (fullscreen reading); first open or
+  // after an error -> expanded so you can type a URL.
+  readerSetAddrExpanded(!(s_reader_ok && s_reader_text && s_reader_text[0]));
+  // Force the status bar ABOVE the reader so its "‹ title" back tap is hittable. The
+  // shared move-foreground in updateGlobalStatusBar is edge-triggered and can miss when
+  // this page opens over a chat, leaving the tall bar's lower row (the back tap) buried
+  // under the reader root.
+  if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
+}
+#endif  // Reader
+
 static void openMonitorPage() {
   closeMonitorPage();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -18537,7 +20124,7 @@ static void openMonitorPage() {
   // ---- "Recently heard" header ----
   const int hdr_y = met_y + (narrow ? 52 : 36);   // narrow shows 3 metric lines, landscape 2
   lv_obj_t* hdr = lv_label_create(s_monitor_root);
-  lv_label_set_text(hdr, "Recently heard");
+  lv_label_set_text(hdr, TR("Recently heard"));
   lv_obj_set_style_text_font(hdr, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(hdr, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(hdr, 10, hdr_y);
@@ -18865,6 +20452,394 @@ static void spectrumDismissCb(lv_event_t* e) {
   closeSpectrumPage();
 }
 
+#if !defined(HAS_TANMATSU)
+// ============================================================================
+// VNC app  (app-drawer tile -> APPACT_VNC): serve the live UI to a phone browser
+// over the WebSocket server (WebMirror) and inject taps back. This screen is the
+// explanation + on/off switch + the reachable URL + live connection status.
+// ============================================================================
+static lv_obj_t*   s_vnc_root       = nullptr;
+static lv_obj_t*   s_vnc_url_lbl    = nullptr;
+static lv_obj_t*   s_vnc_status_lbl = nullptr;
+static lv_timer_t* s_vnc_timer      = nullptr;
+
+static void vncRefresh() {
+  if (!s_vnc_root) return;
+  const bool on   = touchPrefsGetWebMirror();
+  const bool wifi = (WiFi.status() == WL_CONNECTED) && ((uint32_t)WiFi.localIP() != 0);
+  if (s_vnc_url_lbl) {
+    if (wifi) {
+      char u[64];
+      snprintf(u, sizeof u, "http://%s:8765/", WiFi.localIP().toString().c_str());
+      lv_label_set_text(s_vnc_url_lbl, u);
+      lv_obj_set_style_text_color(s_vnc_url_lbl, lv_color_hex(on ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
+    } else {
+      lv_label_set_text(s_vnc_url_lbl, TR("Connect to Wi-Fi to get a browser address."));
+      lv_obj_set_style_text_color(s_vnc_url_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    }
+  }
+  if (s_vnc_status_lbl) {
+    const char* st;
+    if (!on)                             st = TR("Off");
+    else if (!wifi)                      st = TR("Waiting for Wi-Fi...");
+    else if (g_web_mirror.clients() > 0) st = TR("Connected - a browser is viewing this screen.");
+    else                                 st = TR("On - open the address above in a phone browser.");
+    lv_label_set_text(s_vnc_status_lbl, st);
+  }
+}
+
+static void closeVncPage() {
+  if (s_vnc_timer) { lv_timer_del(s_vnc_timer); s_vnc_timer = nullptr; }
+  if (s_vnc_root)  { popupClose(&s_vnc_root); }
+  s_vnc_url_lbl = nullptr; s_vnc_status_lbl = nullptr;
+  if (s_apppage_close == closeVncPage) {   // release the tall title bar back to normal
+    s_apppage_title = nullptr; s_apppage_close = nullptr;
+    statusBarSetTall(false); updateGlobalStatusBar();
+  }
+}
+
+static void vncToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetWebMirror(on);
+  g_web_mirror.setEnabled(on);
+  if (on && touchPrefsGetWebTerminal()) {   // VNC and the web terminal both serve "/" -> mutually exclusive
+    touchPrefsSetWebTerminal(false);
+    g_web_mirror.setTerminalOn(false);
+    if (s_term_log_box == nullptr) MyMesh::setTerminalSink(nullptr);
+  }
+  vncRefresh();
+}
+
+static void vncTimerCb(lv_timer_t*) { vncRefresh(); }
+
+static void openVncPage() {
+  closeVncPage();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_vnc_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_vnc_root);
+  lv_obj_set_size(s_vnc_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_vnc_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_vnc_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_vnc_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(s_vnc_root, STATUSBAR_H + 10, LV_PART_MAIN);   // clear the tall title bar
+  lv_obj_set_style_pad_left(s_vnc_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(s_vnc_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(s_vnc_root, 14, LV_PART_MAIN);
+  lv_obj_set_flex_flow(s_vnc_root, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(s_vnc_root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(s_vnc_root, 10, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(s_vnc_root, LV_DIR_VER);
+  // Make it obvious the page scrolls: a prominent, always-visible accent scrollbar.
+  lv_obj_set_scrollbar_mode(s_vnc_root, LV_SCROLLBAR_MODE_ON);
+  lv_obj_set_style_bg_color(s_vnc_root, lv_color_hex(COLOR_ACCENT), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(s_vnc_root, LV_OPA_80, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(s_vnc_root, 6, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(s_vnc_root, 3, LV_PART_SCROLLBAR);
+
+  s_apppage_title = "VNC";
+  s_apppage_close = closeVncPage;
+  statusBarSetTall(true);
+  updateGlobalStatusBar();
+
+  const lv_coord_t cw = sw - 28;
+
+  lv_obj_t* head = lv_label_create(s_vnc_root);
+  lv_label_set_text(head, TR("Control this device from a browser"));
+  lv_obj_set_style_text_font(head, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(head, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(head, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(head, cw);
+
+  lv_obj_t* expl = lv_label_create(s_vnc_root);
+  lv_label_set_text(expl, TR("Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it."));
+  lv_obj_set_style_text_font(expl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(expl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(expl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(expl, cw);
+
+  lv_obj_t* row = lv_obj_create(s_vnc_root);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, cw, SC(42));
+  lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(row, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(row, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* rl = lv_label_create(row);
+  lv_label_set_text(rl, TR("Enable web access"));
+  lv_obj_set_style_text_font(rl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_align(rl, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* sw2 = lv_switch_create(row);
+  lv_obj_align(sw2, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (touchPrefsGetWebMirror()) lv_obj_add_state(sw2, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(sw2, vncToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  s_vnc_url_lbl = lv_label_create(s_vnc_root);
+  lv_obj_set_style_text_font(s_vnc_url_lbl, &g_font_16, LV_PART_MAIN);
+  lv_label_set_long_mode(s_vnc_url_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_vnc_url_lbl, cw);
+
+  s_vnc_status_lbl = lv_label_create(s_vnc_root);
+  lv_obj_set_style_text_font(s_vnc_status_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_vnc_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(s_vnc_status_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_vnc_status_lbl, cw);
+
+  lv_obj_t* warn = lv_label_create(s_vnc_root);
+  lv_label_set_text(warn, TR("While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only)."));
+  lv_obj_set_style_text_font(warn, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(warn, lv_color_hex(0x8A8F98), LV_PART_MAIN);
+  lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(warn, cw);
+
+  vncRefresh();
+  s_vnc_timer = lv_timer_create(vncTimerCb, 1000, nullptr);
+}
+
+// ============================================================================
+// REMOTE app (app-drawer tile -> APPACT_REMOTE): reboot into "remote mode" — the
+// full UI renders to an off-screen 480x800 display served to a browser, and the
+// physical panel drops to a placeholder. A boot mode (the UI is built once per
+// resolution), so toggling it reboots. This is the path to screenless devices.
+// ============================================================================
+static lv_obj_t* s_remote_root = nullptr;
+static lv_obj_t* s_remote_ipcard = nullptr;   // the "open in a browser" address card; only shown while a mode is ON
+
+static void closeRemotePage() {
+  s_remote_ipcard = nullptr;
+  if (s_remote_root) { popupClose(&s_remote_root); }
+  if (s_apppage_close == closeRemotePage) {
+    s_apppage_title = nullptr; s_apppage_close = nullptr;
+    statusBarSetTall(false); updateGlobalStatusBar();
+  }
+}
+
+static void remoteToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetRemoteMode(on);
+  if (g_lv.task) {
+    g_lv.task->showAlert(on ? TR("Entering remote mode - rebooting...")
+                            : TR("Leaving remote mode - rebooting..."), 1600);
+    g_lv.task->rebootDevice();   // saves chat history, then reboots into the new mode
+  }
+}
+
+static void remoteLandscapeCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetRemoteLandscape(on);
+  if (!g_lv.task) return;
+  if (touchPrefsGetRemoteMode()) {   // already in remote mode -> reboot to apply the new resolution
+    g_lv.task->showAlert(TR("Changing orientation - rebooting..."), 1600);
+    g_lv.task->rebootDevice();
+  } else {
+    g_lv.task->showAlert(on ? TR("Landscape set - applies when remote mode starts.")
+                            : TR("Portrait set - applies when remote mode starts."), 2400);
+  }
+}
+
+// "Remote terminal": a runtime web mesh-CLI terminal on the device IP. No reboot; turning
+// it on disables VNC (they both serve the landing page). See WebMirror term* + the WS server.
+static void webTerminalToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetWebTerminal(on);
+  g_web_mirror.setTerminalOn(on);
+  if (on) {
+    if (touchPrefsGetWebMirror()) { touchPrefsSetWebMirror(false); g_web_mirror.setEnabled(false); }   // exclusive with VNC
+  } else if (s_term_log_box == nullptr) {
+    MyMesh::setTerminalSink(nullptr);   // release the CLI sink (on-device console isn't using it)
+  }
+  // Reveal / hide the "open in a browser" address card as a mode goes on/off (this page stays up).
+  if (s_remote_ipcard) {
+    if (on || touchPrefsGetRemoteMode()) lv_obj_clear_flag(s_remote_ipcard, LV_OBJ_FLAG_HIDDEN);
+    else                                 lv_obj_add_flag(s_remote_ipcard, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (!g_lv.task) return;
+  if (on) {
+    char msg[96];
+    if (WiFi.status() == WL_CONNECTED)
+      snprintf(msg, sizeof msg, "Terminal on: http://%s:8765/", WiFi.localIP().toString().c_str());
+    else
+      snprintf(msg, sizeof msg, "%s", "Terminal on (connect Wi-Fi to reach it)");
+    g_lv.task->showAlert(msg, 3200);
+  } else {
+    g_lv.task->showAlert(TR("Remote terminal off"), 1400);
+  }
+}
+
+static void openRemotePage() {
+  closeRemotePage();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_remote_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_remote_root);
+  lv_obj_set_size(s_remote_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_remote_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_remote_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_remote_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(s_remote_root, STATUSBAR_H + 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(s_remote_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(s_remote_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(s_remote_root, 14, LV_PART_MAIN);
+  lv_obj_set_flex_flow(s_remote_root, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(s_remote_root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(s_remote_root, 10, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(s_remote_root, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(s_remote_root, LV_SCROLLBAR_MODE_ON);
+  lv_obj_set_style_bg_color(s_remote_root, lv_color_hex(COLOR_ACCENT), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(s_remote_root, LV_OPA_80, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(s_remote_root, 6, LV_PART_SCROLLBAR);
+  lv_obj_set_style_radius(s_remote_root, 3, LV_PART_SCROLLBAR);
+
+  s_apppage_title = "Remote";
+  s_apppage_close = closeRemotePage;
+  statusBarSetTall(true);
+  updateGlobalStatusBar();
+
+  const lv_coord_t cw = sw - 28;
+  const bool on = touchPrefsGetRemoteMode();
+
+  lv_obj_t* head = lv_label_create(s_remote_root);
+  lv_label_set_text(head, TR("Remote access"));
+  lv_obj_set_style_text_font(head, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(head, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(head, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(head, cw);
+
+  // Connection address up top — the key info for BOTH modes.
+  lv_obj_t* ipcard = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(ipcard);
+  lv_obj_set_size(ipcard, cw, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_color(ipcard, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(ipcard, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(ipcard, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(ipcard, 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(ipcard, 2, LV_PART_MAIN);
+  lv_obj_clear_flag(ipcard, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(ipcard, LV_FLEX_FLOW_COLUMN);
+  lv_obj_t* ipcap = lv_label_create(ipcard);
+  lv_label_set_text(ipcap, TR("Open in a browser (same Wi-Fi):"));
+  lv_obj_set_style_text_font(ipcap, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(ipcap, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_t* ipval = lv_label_create(ipcard);
+  lv_label_set_long_mode(ipval, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(ipval, cw - 20);
+  lv_obj_set_style_text_font(ipval, &g_font_16, LV_PART_MAIN);
+  if (WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
+    char u[48]; snprintf(u, sizeof u, "http://%s:8765", WiFi.localIP().toString().c_str());
+    lv_label_set_text(ipval, u);
+    lv_obj_set_style_text_color(ipval, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  } else {
+    lv_label_set_text(ipval, TR("Connect to Wi-Fi first"));
+    lv_obj_set_style_text_color(ipval, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  }
+  s_remote_ipcard = ipcard;
+  // Only show the address once a mode is actually serving it — hide it while both are off.
+  if (!(touchPrefsGetWebTerminal() || on)) lv_obj_add_flag(ipcard, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_t* intro = lv_label_create(s_remote_root);
+  lv_label_set_text(intro, TR("Then pick a mode:"));
+  lv_obj_set_style_text_font(intro, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(intro, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_width(intro, cw);
+
+  // ---- 1. Remote terminal (recommended) ----
+  lv_obj_t* th = lv_label_create(s_remote_root);
+  lv_label_set_text(th, TR("Remote terminal (recommended)"));
+  lv_obj_set_style_text_font(th, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(th, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_width(th, cw);
+
+  lv_obj_t* texpl = lv_label_create(s_remote_root);
+  lv_label_set_text(texpl, TR("Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen."));
+  lv_obj_set_style_text_font(texpl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(texpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(texpl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(texpl, cw);
+
+  lv_obj_t* trow = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(trow);
+  lv_obj_set_size(trow, cw, SC(42));
+  lv_obj_set_style_bg_color(trow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(trow, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(trow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(trow, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(trow, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(trow, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* tl = lv_label_create(trow);
+  lv_label_set_text(tl, TR("Remote terminal"));
+  lv_obj_set_style_text_font(tl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(tl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(tl, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(tl, cw - 84);   // leave room for the switch (V4 240px: labels were overlapping)
+  lv_obj_align(tl, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* tsw = lv_switch_create(trow);
+  lv_obj_align(tsw, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (touchPrefsGetWebTerminal()) lv_obj_add_state(tsw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(tsw, webTerminalToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_move_to_index(trow, lv_obj_get_index(texpl));   // toggle sits ABOVE its explanation
+
+  // ---- 2. Remote UI (off-screen mirror; reboots) ----
+  lv_obj_t* uh = lv_label_create(s_remote_root);
+  lv_label_set_text(uh, TR("Remote UI"));
+  lv_obj_set_style_text_font(uh, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(uh, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_width(uh, cw);
+
+  lv_obj_t* expl = lv_label_create(s_remote_root);
+  lv_label_set_text(expl, TR("Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device."));
+  lv_obj_set_style_text_font(expl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(expl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(expl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(expl, cw);
+
+  lv_obj_t* row = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, cw, SC(42));
+  lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(row, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(row, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* rl = lv_label_create(row);
+  lv_label_set_text(rl, on ? TR("Remote UI (on)") : TR("Remote UI"));
+  lv_obj_set_style_text_font(rl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(rl, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(rl, cw - 84);
+  lv_obj_align(rl, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* sw2 = lv_switch_create(row);
+  lv_obj_align(sw2, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (on) lv_obj_add_state(sw2, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(sw2, remoteToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_move_to_index(row, lv_obj_get_index(expl));   // toggle sits ABOVE its explanation
+
+  lv_obj_t* lrow = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(lrow);
+  lv_obj_set_size(lrow, cw, SC(42));
+  lv_obj_set_style_bg_color(lrow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(lrow, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(lrow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(lrow, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(lrow, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(lrow, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* ll = lv_label_create(lrow);
+  lv_label_set_text(ll, TR("Landscape (desktop)"));
+  lv_obj_set_style_text_font(ll, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(ll, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(ll, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(ll, cw - 84);
+  lv_obj_align(ll, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* lsw = lv_switch_create(lrow);
+  lv_obj_align(lsw, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (touchPrefsGetRemoteLandscape()) lv_obj_add_state(lsw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(lsw, remoteLandscapeCb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+}
+#endif  // !HAS_TANMATSU
+
 static void openSpectrumPage() {
   closeSpectrumPage();
   // Park the buffered-receive drain task while this page drives the raw radio.
@@ -18935,7 +20910,7 @@ static void openSpectrumPage() {
 
   // live peak readout (right-aligned on the same row; updated each sweep)
   s_spec_peak_lbl = lv_label_create(s_spec_root);
-  lv_label_set_text(s_spec_peak_lbl, "peak --");
+  lv_label_set_text(s_spec_peak_lbl, TR("peak --"));
   lv_obj_set_style_text_font(s_spec_peak_lbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_spec_peak_lbl, lv_color_hex(0xF0D020), LV_PART_MAIN);
   lv_obj_set_width(s_spec_peak_lbl, 150);
@@ -19141,7 +21116,7 @@ static void makeHome(lv_obj_t* tab) {
   // the Chats inbox. Kept separate from the memory line below so only the unread
   // text is the touch target.
   g_lv.home_unread = lv_label_create(tab);
-  lv_label_set_text(g_lv.home_unread, TR(""));
+  lv_label_set_text(g_lv.home_unread, "");
   lv_obj_set_style_text_color(g_lv.home_unread, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_lv.home_unread, &g_font_14, LV_PART_MAIN);
   lv_obj_set_width(g_lv.home_unread, home_land ? (cw - RSTRIP) : cw);
@@ -19151,7 +21126,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_add_event_cb(g_lv.home_unread, homeUnreadClickedCb, LV_EVENT_CLICKED, nullptr);
 
   g_lv.home_stats = lv_label_create(tab);
-  lv_label_set_text(g_lv.home_stats, TR(""));
+  lv_label_set_text(g_lv.home_stats, "");
   lv_obj_set_style_text_color(g_lv.home_stats, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   // Use the extras-fallback font so the "·" separator renders (the default font
   // lacks U+00B7 and drew it as a tofu box).
@@ -19174,7 +21149,7 @@ static void makeHome(lv_obj_t* tab) {
   // normal non-Expansion chart_y, so Home looks like a plain build.
   if (sensorsUiWanted()) {
   g_lv.home_env = lv_label_create(tab);
-  lv_label_set_text(g_lv.home_env, TR(""));
+  lv_label_set_text(g_lv.home_env, "");
   lv_obj_set_style_text_color(g_lv.home_env, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_lv.home_env, &g_font_12, LV_PART_MAIN);
   lv_obj_set_width(g_lv.home_env, home_land ? (cw - RSTRIP) : cw);
@@ -19236,7 +21211,7 @@ static void makeHome(lv_obj_t* tab) {
   const int chart_y = SC(60);
 #endif
   s_home_chart_legend = lv_label_create(tab);
-  lv_label_set_text(s_home_chart_legend, TR("TX 0  /  RX 0"));
+  lv_label_set_text(s_home_chart_legend, "TX 0  /  RX 0");
   lv_obj_set_style_text_color(s_home_chart_legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_home_chart_legend, &g_font_12, LV_PART_MAIN);
   lv_obj_align(s_home_chart_legend, LV_ALIGN_TOP_LEFT, 0, chart_y);
@@ -19244,10 +21219,10 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER)
-  // Landscape (T-Deck / Tanmatsu / pager): the right column holds Advert + Terminal +
-  // Files/Apps + Control, so the chart must stop short of that strip — else it draws
-  // over the buttons.
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9)
+  // Landscape (T-Deck / Tanmatsu / pager / RAK Tap V2 / M9): the right column holds
+  // Advert + Terminal + Files/Apps + Control, so the chart must stop short of that
+  // strip — else it draws over the buttons.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 #else
   const int chart_w = cw;
@@ -19278,7 +21253,7 @@ static void makeHome(lv_obj_t* tab) {
   // evenly down the FULL content height so a 4th launcher ("Control panel") fits the
   // short 168-px T-Deck strip without overflowing. Slot count tracks the build:
   // GT911 (T-Deck) = Advert+Terminal+Files+Apps+Control = 5; otherwise 4.
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   const int td_btn_n = 5;
 #else
   const int td_btn_n = 4;
@@ -19331,13 +21306,16 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_align(s_home_chart_sig, LV_ALIGN_TOP_LEFT, 2, 2);
 
     lv_obj_t* hint = lv_label_create(s_home_chart);
-    lv_label_set_text(hint, "tap for details");
+    lv_label_set_text(hint, TR("tap for details"));
     lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_color(hint, lv_color_hex(COLOR_BG), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(hint, LV_OPA_70, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(hint, 3, LV_PART_MAIN);
     lv_obj_set_style_radius(hint, 3, LV_PART_MAIN);
+    // Top-right (by request), opposite the top-left "Sig --" chip. On a longer
+    // translation it sits close to the Sig chip, but keeping the cue at the top of the
+    // box is preferred.
     lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -2, 2);
   }
 
@@ -19371,7 +21349,7 @@ static void makeHome(lv_obj_t* tab) {
     if (info_ls < 1) info_ls = 1;
     if (info_ls > 8) info_ls = 8;
     lv_obj_t* keys = lv_label_create(card);
-    lv_label_set_text(keys, "Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime");
+    lv_label_set_text(keys, TR("Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime"));
     lv_obj_set_style_text_color(keys, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_text_font(keys, info_font, LV_PART_MAIN);
     lv_obj_set_style_text_line_space(keys, info_ls, LV_PART_MAIN);
@@ -19481,7 +21459,7 @@ static void makeHome(lv_obj_t* tab) {
 #else
     // T-Deck (and any other non-Tanmatsu landscape board): evenly-spread slots.
     make_launcher(">_  Terminal", tdBtnY(1), homeTerminalCb, 0, td_btn_h);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
     make_launcher(LV_SYMBOL_DIRECTORY "  Files", tdBtnY(2), homeFilesCb, 0, td_btn_h);
     // "Apps" (opens the app drawer) pops with the negative / inverse of the theme accent.
     g_lv.home_apps = make_launcher(LV_SYMBOL_LIST "  Apps", tdBtnY(3), homeAppsBtnCb, inv_accent, td_btn_h);
@@ -19504,6 +21482,7 @@ static void makeChatList(lv_obj_t* tab, LvChatPanel& p, bool channel_mode, bool 
   p.header_name      = nullptr;
   p.msgs             = nullptr;
   p.jump_btn         = nullptr;
+  p.jump_oldest_btn  = nullptr;
   p.composer_row     = nullptr;
   p.composer_ta      = nullptr;
 
@@ -20314,6 +22293,9 @@ static lv_obj_t* s_map_status_lbl  = nullptr;
 static lv_obj_t* s_map_zoom_lbl    = nullptr;   // zoom + tile path at center (top-left, under © OSM)
 static lv_obj_t* s_map_zoom_slider = nullptr;   // zoom slider overlay (toggled by the zoom button)
 static lv_obj_t* s_map_zoom_val    = nullptr;   // live "z<level>" readout centred above the slider
+// TEMP tile diagnostic: free KB in the tiles partition, refreshed ~5 s by
+// tilesFsLowSpace() and shown on the zoom label. 0xFFFF == not yet measured.
+static volatile uint16_t s_tiles_free_kb = 0xFFFF;
 
 #if defined(ESP32)
 // Dedicated LittleFS instance for the map tile pack — mounts the "tiles"
@@ -20424,6 +22406,7 @@ static bool tilesFsLowSpace() {
     const size_t tot = s_tiles_fs.totalBytes();
     const size_t use = s_tiles_fs.usedBytes();
     const size_t freeb = (tot > use) ? (tot - use) : 0;
+    s_tiles_free_kb = (uint16_t)((freeb / 1024 > 0xFFFE) ? 0xFFFE : freeb / 1024);   // for the on-screen readout
     // tot == 0 means the partition isn't actually mounted — don't read that as "full".
     low = (tot > 0) && (freeb < 320 * 1024);           // keep >= 320 KB headroom (tile + dir blocks + GC)
   }
@@ -20610,7 +22593,27 @@ static lv_obj_t* s_map_pan_layer = nullptr;
 // Last renderMapTiles() gap count (visible tiles that weren't on disk).
 // Drives the compact download/Wi-Fi hint in the bottom info bar.
 static int       s_map_last_missing = 0;
+// --- Render-side tile diagnostics (serial is unreadable on the companion build).
+// The MTC fetch counters cover DOWNLOAD; these cover READ-BACK + DECODE + PLACE,
+// so the always-visible zoom label can pinpoint where the pipeline breaks:
+//   fr  = free KB in the tiles partition (0 == cache full, no room to write)
+//   d   = tiles that ended up placed (kept or freshly decoded) / tiles wanted
+// Declared unconditionally so renderMapTiles/refreshMapInfoLabel reference them
+// on every board; only the DOWNLOAD counters are MTC-gated. (s_tiles_free_kb is
+// declared earlier, before tilesFsLowSpace which writes it.)
+static int       s_tile_dec_ok   = 0;                  // tiles placed in the last render pass
+static int       s_tile_dec_want = 0;                  // tiles wanted (grid size) in the last pass
 
+// Release a slot's WIDGET but KEEP its 128 KB PSRAM buffer for the next tile that
+// lands here. Per-render tile churn used to malloc/free 128 KB up to nine times a
+// frame, which fragmented the 2 MB-PSRAM V4 down to <128 KB blocks so fresh tiles
+// couldn't allocate (only the top rows rendered). Reusing the buffer in place = zero
+// churn = no fragmentation. Full teardown (freeMapTileSlot) still frees the buffer.
+static void releaseMapTileSlot(MapTile& t) {
+  if (t.img) { lv_obj_del(t.img); t.img = nullptr; }
+  lv_img_cache_invalidate_src(&t.dsc);   // this slot's dsc content is now stale
+  t.in_use = false;                       // t.rgb565 intentionally kept for reuse
+}
 static void freeMapTileSlot(MapTile& t) {
   if (t.img)    { lv_obj_del(t.img); t.img = nullptr; }
   // CRITICAL: invalidate LVGL's image cache entry for this dsc before
@@ -20725,7 +22728,8 @@ static int tjpgOutCb(JDEC* jd, void* bitmap, JRECT* r) {
 }
 }  // extern "C"
 static uint8_t* decodeJpegScaledToRgb565(const uint8_t* jpeg, size_t jpeg_len,
-                                         int* out_w, int* out_h, int max_dim) {
+                                         int* out_w, int* out_h, int max_dim,
+                                         uint8_t* dst_buf, size_t dst_cap) {
   s_jpgScaleErr[0] = '\0';
   // tjpgd work area (~3.1 KB used). Lazy PSRAM (internal fallback), cached — keeps
   // this ~4 KB out of scarce internal DRAM. JD_FASTDECODE=0; matches LVGL's TJPGD_WORKBUFF_SIZE.
@@ -20753,17 +22757,21 @@ static uint8_t* decodeJpegScaledToRgb565(const uint8_t* jpeg, size_t jpeg_len,
     snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "%ux%u too big", jd.width, jd.height);
     return nullptr;
   }
-  uint16_t* buf = (uint16_t*)lvglPsramAlloc((size_t)ow * oh * sizeof(uint16_t));
-  if (!buf) {
-    snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "no memory (%dx%d)", ow, oh);
-    return nullptr;
+  const size_t need = (size_t)ow * oh * sizeof(uint16_t);
+  uint16_t* buf; bool owns;
+  if (dst_buf) {                                  // caller-provided output (map tile pool)
+    if (need > dst_cap) { snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "%dx%d > buf", ow, oh); return nullptr; }
+    buf = (uint16_t*)dst_buf; owns = false;
+  } else {
+    buf = (uint16_t*)lvglPsramAlloc(need); owns = true;
+    if (!buf) { snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "no memory (%dx%d)", ow, oh); return nullptr; }
   }
   io.out = buf; io.ow = ow; io.oh = oh;
   JRESULT rd = jd_decomp(&jd, tjpgOutCb, (uint8_t)scale);
   if (rd != JDR_OK) {
     snprintf(s_jpgScaleErr, sizeof s_jpgScaleErr, "decomp err %d", (int)rd);
     WIRE_DBG("[JPG] jd_decomp rc=%d\n", (int)rd);
-    lvglPsramFree(buf);
+    if (owns) lvglPsramFree(buf);
     return nullptr;
   }
   *out_w = ow; *out_h = oh;
@@ -20995,6 +23003,78 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_ota_pct = 100;
   s_ota_state = 2;   // success -> the UI poll timer reboots into the new slot
 }
+
+#if defined(HAS_TDECK_GT911)
+// Stream the app-only bin for the active update channel onto the SD card
+// (/BINS/wadamesh-beta_<N>-<stable|beta>.bin) so the Launcher can flash it —
+// the no-A/B-slot counterpart to otaWorkerRun above. Same immutable versioned
+// URL, same worker, but the bytes go to SD instead of the spare OTA slot.
+static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
+  s_sdfw_pct = 0;
+  if (SD.cardType() == CARD_NONE) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "no SD card"); s_sdfw_state = 3; return; }
+  if (!SD.exists("/BINS") && !SD.mkdir("/BINS")) {
+    snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "can't create /BINS"); s_sdfw_state = 3; return;
+  }
+  char path[56];
+  snprintf(path, sizeof path, "/BINS/wadamesh-beta_%d-%s.bin",
+           s_sdfw_target_n, touchPrefsGetBetaUpdates() ? "beta" : "stable");
+  char url[176];
+  snprintf(url, sizeof url, "http://firmware.wadamesh.com/releases/%s/beta_%d/%s.bin",
+           updChannelArchive(), s_sdfw_target_n, OTA_BIN_NAME);
+  http.setReuse(false);
+  http.setConnectTimeout(8000);
+  http.setTimeout(20000);
+  http.setUserAgent("wadamesh-touch");
+  if (!http.begin(client, url)) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "connect failed"); s_sdfw_state = 3; return; }
+  const int code = http.GET();
+  if (code != 200) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "HTTP %d", code); http.end(); s_sdfw_state = 3; return; }
+  const int len = http.getSize();
+  if (len <= 0) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "bad length"); http.end(); s_sdfw_state = 3; return; }
+  SD.remove(path);                       // refresh any stale copy of the same tag
+  File f = SD.open(path, FILE_WRITE);
+  if (!f) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD open failed"); http.end(); s_sdfw_state = 3; return; }
+  // Copy buffer off the worker's ~8 KB stack: PSRAM preferred, small DRAM fallback.
+  size_t bufsz = 8192;
+  uint8_t* buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!buf) { bufsz = 2048; buf = (uint8_t*)malloc(bufsz); }
+  if (!buf) { f.close(); http.end(); snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "out of memory"); s_sdfw_state = 3; return; }
+  WiFiClient* st = http.getStreamPtr();
+  int received = 0;
+  unsigned long last_data = millis();
+  bool ok = true;
+  while (received < len) {
+    int avail = st ? st->available() : 0;
+    if (avail <= 0) {
+      if (!http.connected() || (millis() - last_data) > 15000) { ok = false; break; }
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+    int n = st->read(buf, ((size_t)avail > bufsz) ? bufsz : (size_t)avail);
+    if (n <= 0) {
+      if ((millis() - last_data) > 15000) { ok = false; break; }
+      vTaskDelay(pdMS_TO_TICKS(5));
+      continue;
+    }
+    last_data = millis();
+    if ((int)f.write(buf, (size_t)n) != n) {
+      snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD write failed"); ok = false; break;
+    }
+    received += n;
+    s_sdfw_pct = (int)((uint64_t)received * 100 / (uint64_t)len);
+  }
+  free(buf);
+  f.close();
+  http.end();
+  if (!ok || received != len) {
+    SD.remove(path);                     // never leave a truncated bin for the Launcher
+    if (!s_sdfw_msg[0]) snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "short read %d/%d", received, len);
+    s_sdfw_state = 3; return;
+  }
+  strncpy(s_sdfw_msg, path, sizeof s_sdfw_msg - 1); s_sdfw_msg[sizeof s_sdfw_msg - 1] = 0;
+  s_sdfw_pct = 100;
+  s_sdfw_state = 2;
+}
+#endif
 #endif
 
 static void tileFetchTaskFn(void* arg) {
@@ -21092,6 +23172,14 @@ static void tileFetchTaskFn(void* arg) {
       otaWorkerRun(client, http);
       continue;
     }
+#if defined(HAS_TDECK_GT911)
+    // SD firmware download for Launcher installs (user-initiated from About).
+    if (s_sdfw_request) {
+      s_sdfw_request = false;
+      sdFwWorkerRun(client, http);
+      continue;
+    }
+#endif
 #endif
     // Wi-Fi scan (user-initiated from the Network tab / setup wizard). Blocking
     // here on the Wi-Fi core, not the UI thread. Mirrors the CLI `wifi scan`.
@@ -21509,13 +23597,21 @@ static void queueZoomPackForCenter() {
 // standard /maps/osm/{z}/{x}/{y}.png tiles (the Meshtastic/MeshCore convention).
 extern "C" unsigned lodepng_decode32(unsigned char** out, unsigned* w, unsigned* h,
                                       const unsigned char* in, size_t insize);
-static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len, int* out_w, int* out_h) {
+static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len, int* out_w, int* out_h,
+                                  uint8_t* dst_buf, size_t dst_cap) {
   unsigned char* rgba = nullptr; unsigned w = 0, h = 0;
   if (lodepng_decode32(&rgba, &w, &h, png, png_len) != 0 || !rgba) { if (rgba) free(rgba); return nullptr; }
   if (w == 0 || h == 0 || w > 1024 || h > 1024) { free(rgba); return nullptr; }
   const size_t npx = (size_t)w * h;
-  uint16_t* rgb = (uint16_t*)lvglPsramAlloc(npx * sizeof(uint16_t));
-  if (!rgb) { free(rgba); return nullptr; }
+  uint16_t* rgb; bool owns;
+  if (dst_buf) {                                  // caller-provided output (map tile pool)
+    if (npx * sizeof(uint16_t) > dst_cap) { free(rgba); return nullptr; }
+    rgb = (uint16_t*)dst_buf; owns = false;
+  } else {
+    rgb = (uint16_t*)lvglPsramAlloc(npx * sizeof(uint16_t)); owns = true;
+    if (!rgb) { free(rgba); return nullptr; }
+  }
+  (void)owns;
   for (size_t i = 0; i < npx; i++) rgb[i] = lv_color_make(rgba[i*4+0], rgba[i*4+1], rgba[i*4+2]).full;
   free(rgba);   // lodepng allocates with the system malloc/free
   *out_w = (int)w; *out_h = (int)h;
@@ -21734,15 +23830,49 @@ static void renderMapTiles() {
   //   3. For each wanted coord not yet present in any slot, load into an
   //      empty slot.
   mapComputeGridRadius();   // size the grid to the current canvas (covers full width on the Tanmatsu)
-  struct Wanted { int32_t tx; int32_t ty; bool placed; };
+  // Viewport cull + pool cap: each held tile costs a 128 KB PSRAM buffer, and a
+  // full 3x3 grid (1.15 MB) can't coexist with contacts + LVGL + web buffers on
+  // the 2 MB V4. Only decode tiles whose 256 px square actually touches the
+  // viewport (+margin); then, if that still exceeds the pool cap, keep the ones
+  // NEAREST the screen centre (the most-visible; the dropped ones sit under the
+  // status/tab bars or off-screen). Drag-release re-centers + re-renders, so
+  // panned-in edges fill on release. >=4 MB boards keep the full grid + cushion.
+  static const size_t kPsramTotalB = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+  const bool  kLowPsram   = (kPsramTotalB && kPsramTotalB < 4u * 1024 * 1024);
+  const int   tile_margin = kLowPsram ? 0 : 256;
+  const int   pool_cap    = kLowPsram ? 4 : k_map_visible_tiles_max;
+  struct Wanted { int32_t tx; int32_t ty; bool placed; long d2; };
   Wanted wanted[k_map_visible_tiles_max];
   int n_wanted = 0;
   for (int dy = -s_map_grid_ry; dy <= s_map_grid_ry; ++dy) {
     for (int dx = -s_map_grid_rx; dx <= s_map_grid_rx; ++dx) {
       if (n_wanted >= k_map_visible_tiles_max) break;
-      wanted[n_wanted++] = { ctx + dx, cty + dy, false };
+      const int32_t tx = ctx + dx, ty = cty + dy;
+      const int sx = (int)((double)tx * 256.0 - cwx + k_map_canvas_w / 2);
+      const int sy = (int)((double)ty * 256.0 - cwy + k_map_canvas_h / 2);
+      if (sx + 256 <= -tile_margin || sx >= k_map_canvas_w + tile_margin ||
+          sy + 256 <= -tile_margin || sy >= k_map_canvas_h + tile_margin) continue;   // fully off-screen
+      // Squared distance from the tile centre to the screen centre — used to keep
+      // the most-visible tiles when culling to the pool cap.
+      const long ddx = (long)(sx + 128 - k_map_canvas_w / 2);
+      const long ddy = (long)(sy + 128 - k_map_canvas_h / 2);
+      wanted[n_wanted++] = { tx, ty, false, ddx * ddx + ddy * ddy };
     }
   }
+
+  // Cap to the pool: if more tiles touch the viewport than we can hold, keep the
+  // ones nearest the screen centre (selection sort front — n_wanted is tiny). The
+  // dropped tiles are the farthest out (under the bars / screen edge).
+  if (n_wanted > pool_cap) {
+    for (int a = 0; a < pool_cap; ++a) {
+      int best = a;
+      for (int b = a + 1; b < n_wanted; ++b) if (wanted[b].d2 < wanted[best].d2) best = b;
+      if (best != a) { Wanted tmp = wanted[a]; wanted[a] = wanted[best]; wanted[best] = tmp; }
+    }
+    n_wanted = pool_cap;
+  }
+
+  s_tile_dec_want = n_wanted;   // diagnostics: visible tiles this pass (see the zoom label)
 
   // Whenever we end up here, the pan layer must be reset to (0,0) — its
   // offset only exists during a live drag.
@@ -21758,10 +23888,12 @@ static void renderMapTiles() {
   // that trailing pass is now a cheap no-visual-change refresh.
   renderMapMarkers();
 
-  // Pass 1 — keep matching slots, free non-matching ones.
+  // Pass 1 — keep matching slots, RELEASE non-matching ones (keep their 128 KB
+  // buffer for reuse below — see releaseMapTileSlot; freeing per-render is what
+  // fragmented PSRAM).
   for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) { MapTile& t = s_map_tiles[_ti];
     if (!t.in_use) continue;
-    if (t.z != s_map_zoom) { freeMapTileSlot(t); continue; }
+    if (t.z != s_map_zoom) { releaseMapTileSlot(t); continue; }
     bool kept = false;
     for (int i = 0; i < n_wanted; ++i) {
       if (!wanted[i].placed && wanted[i].tx == t.x && wanted[i].ty == t.y) {
@@ -21774,23 +23906,50 @@ static void renderMapTiles() {
         break;
       }
     }
-    if (!kept) freeMapTileSlot(t);
+    if (!kept) releaseMapTileSlot(t);
   }
 
-  // Pass 2 — fill remaining wanted tiles into empty slots. For each new
-  // tile we read JPEG → decode to RGB565 → free JPEG → attach CF_TRUE_COLOR
-  // dsc to the widget. Subsequent draws are pure blits.
+  // Pass 2 — fill remaining wanted tiles into empty slots, decoding into each
+  // slot's PERSISTENT 128 KB buffer (allocated once, reused every render — the
+  // fragmentation fix). Cap the pool so the map's PSRAM stays bounded: the tiny
+  // 2 MB-PSRAM V4 can't spare more than ~4 buffers alongside contacts+LVGL+web.
+  static const size_t kTileBufBytes = 256u * 256u * sizeof(lv_color_t);   // 128 KB, fixed tile size
   lv_obj_t* parent = s_map_pan_layer ? s_map_pan_layer : s_map_canvas;
   bool any_loaded = false;
   int  n_missing  = 0;   // visible tiles we couldn't load from disk
   for (int i = 0; i < n_wanted; ++i) {
     if (wanted[i].placed) { any_loaded = true; continue; }
-    // Find an empty slot.
+    // Pick an empty slot, PREFERRING one that already owns a reusable 128 KB
+    // buffer (decode in place → no malloc → no fragmentation); else any empty slot.
     MapTile* dst = nullptr;
     for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) { MapTile& t = s_map_tiles[_ti];
+      if (!t.in_use && t.rgb565) { dst = &t; break; }
+    }
+    if (!dst) for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) { MapTile& t = s_map_tiles[_ti];
       if (!t.in_use) { dst = &t; break; }
     }
-    if (!dst) break;  // shouldn't happen — wanted count == slot count
+    if (!dst) break;  // shouldn't happen — wanted count <= slot count
+    // Ensure the slot has its persistent buffer. Allocate up to pool_cap buffers
+    // (bounds the map's PSRAM to pool_cap*128 KB); beyond that, steal a buffer from
+    // another released slot so the pool never grows past the cap. If neither works
+    // (fragmented/OOM on a cold cache) skip this tile — it retries next render, and
+    // once a buffer is grabbed it sticks (reused forever), so coverage heals.
+    if (!dst->rgb565) {
+      int bufs = 0;
+      for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) if (s_map_tiles[_ti].rgb565) ++bufs;
+      if (bufs < pool_cap) {
+        dst->rgb565 = (uint8_t*)lvglPsramAlloc(kTileBufBytes);
+      } else {
+        for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) { MapTile& s = s_map_tiles[_ti];
+          if (!s.in_use && s.rgb565 && &s != dst) {
+            lv_img_cache_invalidate_src(&s.dsc);
+            dst->rgb565 = s.rgb565; s.rgb565 = nullptr;
+            break;
+          }
+        }
+      }
+    }
+    if (!dst->rgb565) { ++n_missing; continue; }   // no buffer available this pass
     uint8_t* jpeg = nullptr;
     size_t   jlen = 0;
     if (!loadTileJpeg(s_map_zoom, wanted[i].tx, wanted[i].ty, &jpeg, &jlen)) {
@@ -21804,13 +23963,15 @@ static void renderMapTiles() {
       continue;
     }
     int dw = 0, dh = 0;
-    // Sniff the format: PNG (0x89 'P' 'N' 'G') -> direct-lodepng path (LVGL's
-    // lv_png is broken here); otherwise JPEG/SJPG.
+    // Decode straight INTO the slot's persistent 128 KB buffer (dst->rgb565) — no
+    // per-tile malloc, so PSRAM never fragments. PNG (0x89 'P' 'N' 'G') → lodepng
+    // (LVGL's lv_png is broken here); else the DIRECT tjpgd path (streams MCUs into
+    // the buffer through a shared 4 KB work pool). 256 px cap == native tile size.
     uint8_t* rgb = (jlen >= 4 && jpeg[0] == 0x89 && jpeg[1] == 'P' && jpeg[2] == 'N' && jpeg[3] == 'G')
-                     ? decodePngToRgb565(jpeg, jlen, &dw, &dh)
-                     : decodeJpegToRgb565(jpeg, jlen, &dw, &dh);
+                     ? decodePngToRgb565(jpeg, jlen, &dw, &dh, dst->rgb565, kTileBufBytes)
+                     : decodeJpegScaledToRgb565(jpeg, jlen, &dw, &dh, 256, dst->rgb565, kTileBufBytes);
     lvglPsramFree(jpeg);
-    if (!rgb) { ++n_missing; continue; }
+    if (!rgb) { ++n_missing; continue; }   // decode failed; buffer kept for reuse
     // Night mode: invert the decoded RGB565 in place (render-only — the on-disk
     // tile is untouched). ~p flips all three channels; light maps go dark.
     if (s_map_night) {
@@ -21819,7 +23980,7 @@ static void renderMapTiles() {
       for (int p = 0; p < cnt; ++p) px[p] = (uint16_t)~px[p];
     }
     dst->z = s_map_zoom; dst->x = wanted[i].tx; dst->y = wanted[i].ty;
-    dst->rgb565 = rgb;
+    dst->rgb565 = rgb;   // == the slot's persistent buffer (decoded in place)
     dst->w = dw; dst->h = dh;
     memset(&dst->dsc, 0, sizeof(dst->dsc));
     dst->dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
@@ -21827,6 +23988,9 @@ static void renderMapTiles() {
     dst->dsc.header.h  = (uint32_t)dh;
     dst->dsc.data      = rgb;
     dst->dsc.data_size = (uint32_t)((size_t)dw * dh * sizeof(lv_color_t));
+    // Reused buffer at a stable dsc address → drop any stale cached decode keyed
+    // to this dsc pointer before the new widget reads it.
+    lv_img_cache_invalidate_src(&dst->dsc);
     dst->img = lv_img_create(parent);
     lv_img_set_src(dst->img, &dst->dsc);
     const int sx = (int)((double)wanted[i].tx * 256.0 - cwx + k_map_canvas_w / 2);
@@ -21857,6 +24021,12 @@ static void renderMapTiles() {
     // download worker already does the same vTaskDelay(1) on its side).
     vTaskDelay(1);
   }
+
+  // Diagnostics: how many of the wanted tiles ended up with a live img widget
+  // (kept from a prior pass OR freshly decoded). placed == want but a blank
+  // screen ⇒ paint/z-order bug; placed < want ⇒ tiles missing from disk/decode.
+  { int placed = 0; for (int i = 0; i < n_wanted; ++i) if (wanted[i].placed) ++placed;
+    s_tile_dec_ok = placed; }
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   // Warm the min/max zoom cache for this location (overview + detail) in the
@@ -21893,10 +24063,10 @@ static void renderMapTiles() {
 #if CAP_SD
   if (s_tiles_from_sd) {
     lv_label_set_text(s_map_status_lbl,
-        "Map tiles: microSD\n\n"
+        TR("Map tiles: microSD\n\n"
         "/maps/osm/z/x/y.png\n"
         "(or /tiles/z/x/y.jpg)\n\n"
-        "Map appears when a tile\nfor this area is found.");
+        "Map appears when a tile\nfor this area is found."));
   } else
 #endif
   if (!s_tiles_fs_ready) {
@@ -21948,17 +24118,17 @@ static void renderMapTiles() {
     lv_label_set_text(s_map_status_lbl, dl);
 #else
     lv_label_set_text(s_map_status_lbl,
-        "Downloading map tiles\xe2\x80\xa6\n\n"
+        TR("Downloading map tiles\xe2\x80\xa6\n\n"
         "Keep Wi-Fi connected.\nTiles appear as they arrive\n"
-        "and are saved for offline use.");
+        "and are saved for offline use."));
 #endif
   } else {
     // No Wi-Fi and no saved tiles here — be explicit about the fix.
     lv_label_set_text(s_map_status_lbl,
-        "No saved map tiles here.\n\n"
+        TR("No saved map tiles here.\n\n"
         "Connect to Wi-Fi (Settings \xe2\x86\x92 Wi-Fi)\n"
         "to download this area.\n"
-        "Saved tiles stay available offline.");
+        "Saved tiles stay available offline."));
   }
 #else
   lv_label_set_text(s_map_status_lbl, TR("No tiles (non-ESP32)"));
@@ -21991,6 +24161,7 @@ static lv_point_t s_map_link_pts[k_map_markers_max][2];
 static bool s_map_show_coords    = true;
 static bool s_map_show_tilexyz   = true;
 static bool s_map_show_contacts  = true;
+static bool s_map_tile_debug     = false;  // developer: tile-pipeline diagnostic overlay on the zoom line (off by default)
 static bool s_map_direct_only    = false;  // when true, only 0-hop (directly-heard) contacts appear
 
 // Apply the coords/tile-line visibility flags to the two corner labels. Safe to
@@ -22589,6 +24760,14 @@ static void mapOptTileXYZCb(lv_event_t* e) {
 #endif
   applyMapTextVis();
 }
+static void mapOptTileDebugCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_map_tile_debug = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetMapTileDebug(s_map_tile_debug);
+#endif
+  refreshMapInfoLabel();   // swap the zoom line to/from the diagnostic immediately
+}
 static void mapOptContactsCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   s_map_show_contacts = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -22885,6 +25064,7 @@ static void openMapOptions() {
       { "Show tile z/x/y",     s_map_show_tilexyz,  mapOptTileXYZCb    },
       { "Show contacts",       s_map_show_contacts, mapOptContactsCb   },
       { "Direct (0-hop) only", s_map_direct_only,   mapOptDirectOnlyCb },
+      { "Tile debug overlay",  s_map_tile_debug,    mapOptTileDebugCb  },
     };
     for (auto& r : rows) {
       lv_obj_t* l = lv_label_create(card);
@@ -23552,7 +25732,7 @@ static bool navMapZoomIfActive(bool zoom_in) {
 static void mapZoomSliderCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const int z = (int)lv_slider_get_value(lv_event_get_target(e));
-  if (s_map_zoom_val) lv_label_set_text_fmt(s_map_zoom_val, "zoom %d", z);   // live target level while dragging
+  if (s_map_zoom_val) lv_label_set_text_fmt(s_map_zoom_val, TR("zoom %d"), z);   // live target level while dragging
 }
 static void mapZoomSliderReleaseCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_RELEASED) return;
@@ -23576,7 +25756,7 @@ static void mapZoomToggleCb(lv_event_t* e) {
     lv_obj_clear_flag(s_map_zoom_slider, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_map_zoom_slider);
     if (s_map_zoom_val) {
-      lv_label_set_text_fmt(s_map_zoom_val, "zoom %d", (int)s_map_zoom);
+      lv_label_set_text_fmt(s_map_zoom_val, TR("zoom %d"), (int)s_map_zoom);
       lv_obj_clear_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
       lv_obj_move_foreground(s_map_zoom_val);
     }
@@ -23837,9 +26017,9 @@ static void makeMapTab(lv_obj_t* tab) {
   lv_obj_set_style_text_font(s_map_status_lbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_map_status_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(s_map_status_lbl,
-      "Map — no tile pack on SPIFFS yet.\n\n"
+      TR("Map — no tile pack on SPIFFS yet.\n\n"
       "Upload a tile pack to /tiles/<z>/<x>/<y>.jpg "
-      "with the host-side generator.");
+      "with the host-side generator."));
   lv_obj_center(s_map_status_lbl);
 
   // Bottom corner read-outs — transparent black text over the map, tucked into
@@ -23857,17 +26037,17 @@ static void makeMapTab(lv_obj_t* tab) {
   };
   s_map_info_lbl = lv_label_create(tab);   // coords (bottom-left)
   style_corner(s_map_info_lbl);
-  lv_label_set_text(s_map_info_lbl, TR("—"));
+  lv_label_set_text(s_map_info_lbl, "—");
   lv_obj_align(s_map_info_lbl, LV_ALIGN_BOTTOM_LEFT, 2, -2);
   s_map_count_lbl = lv_label_create(tab);  // marker / status count (bottom-right)
   style_corner(s_map_count_lbl);
-  lv_label_set_text(s_map_count_lbl, TR(""));
+  lv_label_set_text(s_map_count_lbl, "");
   lv_obj_align(s_map_count_lbl, LV_ALIGN_BOTTOM_RIGHT, -2, -2);
   // Zoom + tile path at the current center — a second line just under the
   // "© OpenStreetMap" status-bar attribution (top-left).
   s_map_zoom_lbl = lv_label_create(tab);
   style_corner(s_map_zoom_lbl);
-  lv_label_set_text(s_map_zoom_lbl, TR(""));
+  lv_label_set_text(s_map_zoom_lbl, "");
   lv_obj_align(s_map_zoom_lbl, LV_ALIGN_TOP_LEFT, 2, STATUSBAR_H + 2);
   applyMapTextVis();   // honour the coords / tile-line visibility toggles
   (void)kMapInfoH;
@@ -23946,7 +26126,7 @@ static void makeMapTab(lv_obj_t* tab) {
 
   // Live zoom-level readout, centred above the whole slider; shown with it.
   s_map_zoom_val = lv_label_create(tab);
-  lv_label_set_text(s_map_zoom_val, "zoom");
+  lv_label_set_text(s_map_zoom_val, TR("zoom"));
   lv_obj_set_style_text_font(s_map_zoom_val, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_map_zoom_val, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
   lv_obj_set_style_bg_color(s_map_zoom_val, lv_color_hex(0x000000), LV_PART_MAIN);
@@ -24014,10 +26194,37 @@ static void refreshMapInfoLabel() {
       latLonToWorldPx(s_map_center_lat, s_map_center_lon, s_map_zoom, &cwx, &cwy);
       const long tx = (long)floor(cwx / 256.0);
       const long ty = (long)floor(cwy / 256.0);
-      char zbuf[40];
-      snprintf(zbuf, sizeof zbuf, "z%u  %u/%ld/%ld",
-               (unsigned)s_map_zoom, (unsigned)s_map_zoom, tx, ty);
+      char zbuf[120];
+      bool force_show = false;
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      if (s_map_tile_debug) {
+        // Developer tile-pipeline diagnostic (Map options → "Tile debug overlay").
+        // Serial is unreadable on the companion build, so this two-line overlay is
+        // the only window into the tile pipeline: d = tiles placed/wanted this pass,
+        // p = live 128 KB pool buffers, wr = last cache-write outcome (w=ok S=cache
+        // full H=heap O=open Z=len e=http J=notjpeg P=short), h = last HTTP code,
+        // ok/f = downloads ok/failed, ps = free PSRAM KB, blk = largest contiguous
+        // block KB (a tile needs 128 KB contiguous; blk<128 while ps high == frag).
+        const int psf = (int)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024);
+        const int psb = (int)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024);
+        int pbufs = 0; for (int _t = 0; _t < k_map_visible_tiles_max; ++_t) if (s_map_tiles[_t].rgb565) ++pbufs;
+        snprintf(zbuf, sizeof zbuf, "z%u d%d/%d p%d wr%c h%d ok%u f%u\nps%dk blk%dk",
+                 (unsigned)s_map_zoom, s_tile_dec_ok, s_tile_dec_want, pbufs,
+                 (char)s_tile_fetch_last_wr, (int)s_tile_fetch_last_code,
+                 (unsigned)s_tile_fetch_ok, (unsigned)s_tile_fetch_failed,
+                 psf, psb);
+        force_show = true;   // diagnostic overrides the "Show tile z/x/y" pref
+      } else
+#endif
+      {
+        snprintf(zbuf, sizeof zbuf, "z%u  %u/%ld/%ld",
+                 (unsigned)s_map_zoom, (unsigned)s_map_zoom, tx, ty);
+      }
       lv_label_set_text(s_map_zoom_lbl, zbuf);
+      // Visibility: the debug overlay forces it on; otherwise follow the
+      // "Show tile z/x/y" pref (so turning debug off restores normal behaviour).
+      if (force_show || s_map_show_tilexyz) lv_obj_clear_flag(s_map_zoom_lbl, LV_OBJ_FLAG_HIDDEN);
+      else                                  lv_obj_add_flag(s_map_zoom_lbl, LV_OBJ_FLAG_HIDDEN);
     }
   }
 }
@@ -24028,18 +26235,95 @@ static void jumpToLatestCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
   if (!p || !p->msgs) return;
-  lv_obj_scroll_to_y(p->msgs, LV_COORD_MAX, LV_ANIM_ON);
-  if (p->jump_btn) lv_obj_add_flag(p->jump_btn, LV_OBJ_FLAG_HIDDEN);
+  chatVirtJumpToLatest(p);
+}
+static void jumpToOldestCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
+  if (!p || !p->msgs) return;
+  chatVirtJumpToOldest(p);
 }
 // Show the jump-to-latest button whenever the list is scrolled up away from the
 // newest message; hide it when at (or near) the bottom.
+static void chatVirtSyncBubblePositions(LvChatPanel* p);
+static void chatVirtOnScrollEnd(LvChatPanel* p);
+static void chatVirtRemap1To1Scroll(LvChatPanel* p);
+static bool chatVirtAwayFromBottom(LvChatPanel* p);
+// Jump-arrow fade: fully visible while the list is scrolling, 50% one second
+// after the last scroll activity (UITask::loop does the dimming; every
+// chatUpdateJumpButtons call — which msgsScrollCb fires per scroll tick —
+// re-brightens and re-arms the timer). They stay tappable either way.
+static uint32_t s_jump_active_ms = 0;
+static bool     s_jump_dimmed    = false;
+static void jumpBtnsSetDim(LvChatPanel* p, bool dim) {
+  const lv_opa_t o = dim ? LV_OPA_50 : LV_OPA_COVER;
+  if (p->jump_oldest_btn) lv_obj_set_style_opa(p->jump_oldest_btn, o, LV_PART_MAIN);
+  if (p->jump_btn)        lv_obj_set_style_opa(p->jump_btn,        o, LV_PART_MAIN);
+  s_jump_dimmed = dim;
+}
+static void chatUpdateJumpButtons(LvChatPanel* p) {
+  if (!p || !p->msgs) return;
+  s_jump_active_ms = millis();
+  if (s_jump_dimmed) jumpBtnsSetDim(p, false);
+  if (p->jump_oldest_btn) {
+    if (lv_obj_get_scroll_y(p->msgs) > 30) lv_obj_clear_flag(p->jump_oldest_btn, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(p->jump_oldest_btn, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (p->jump_btn) {
+    if (chatVirtAwayFromBottom(p)) lv_obj_clear_flag(p->jump_btn, LV_OBJ_FLAG_HIDDEN);
+    else                         lv_obj_add_flag(p->jump_btn, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+static void chatVirtLogTopAnchor(const char* tag, LvChatPanel* p, lv_coord_t scroll_y,
+                                 int touch_x = -1, int touch_y = -1);
+static void chatMsgsTouchDbgCb(lv_event_t* e) {
+  auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
+  if (!p || !p->msgs || s_chat_msgs_scroll_obj != p->msgs) return;
+  const lv_event_code_t code = lv_event_get_code(e);
+  if (code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING && code != LV_EVENT_RELEASED) return;
+
+  lv_indev_t* indev = lv_indev_get_act();
+  lv_point_t  pt    = {0, 0};
+  if (indev) lv_indev_get_point(indev, &pt);
+
+  const lv_coord_t scroll_y = lv_obj_get_scroll_y(p->msgs);
+  if (code == LV_EVENT_PRESSED) {
+    s_chat_touch_on_msgs        = true;
+    s_chat_dbg_last_scroll_logged = scroll_y;
+    chatVirtLogTopAnchor("touch_begin", p, scroll_y, pt.x, pt.y);
+  } else if (code == LV_EVENT_PRESSING) {
+    if (scroll_y != s_chat_dbg_last_scroll_logged) {
+      s_chat_dbg_last_scroll_logged = scroll_y;
+      chatVirtLogTopAnchor("touch_move", p, scroll_y, pt.x, pt.y);
+    }
+  } else {
+    s_chat_touch_on_msgs = false;
+    chatVirtLogTopAnchor("touch_end", p, scroll_y, pt.x, pt.y);
+    s_chat_dbg_last_scroll_logged = -9999;
+  }
+}
+#endif
+static void chatMsgsScrollEndCb(lv_event_t* e) {
+  scrollClampOnEndCb(e);
+  if (lv_event_get_code(e) != LV_EVENT_SCROLL_END) return;
+  chatVirtOnScrollEnd(static_cast<LvChatPanel*>(lv_event_get_user_data(e)));
+}
 static void msgsScrollCb(lv_event_t* e) {
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
-  if (!p || !p->msgs || !p->jump_btn) return;
-  if (lv_obj_get_scroll_bottom(p->msgs) > 30)
-    lv_obj_clear_flag(p->jump_btn, LV_OBJ_FLAG_HIDDEN);
-  else
-    lv_obj_add_flag(p->jump_btn, LV_OBJ_FLAG_HIDDEN);
+  if (!p || !p->msgs) return;
+  chatVirtRemap1To1Scroll(p);
+  chatUpdateJumpButtons(p);
+  chatVirtSyncBubblePositions(p);
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+  if (s_chat_touch_on_msgs && s_chat_msgs_scroll_obj == p->msgs) {
+    const lv_coord_t scroll_y = lv_obj_get_scroll_y(p->msgs);
+    if (scroll_y != s_chat_dbg_last_scroll_logged) {
+      s_chat_dbg_last_scroll_logged = scroll_y;
+      chatVirtLogTopAnchor("scroll_move", p, scroll_y);
+    }
+  }
+#endif
 }
 
 #if defined(HAS_TANMATSU)
@@ -24138,26 +26422,65 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_text_font(p.msgs, &g_font_12, LV_PART_MAIN);
   lv_obj_set_scrollbar_mode(p.msgs, LV_SCROLLBAR_MODE_AUTO);
   lv_obj_set_scroll_dir(p.msgs, LV_DIR_VER);
-  lv_obj_add_event_cb(p.msgs, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
+  lv_obj_set_layout(p.msgs, 0);   // no flex/grid — bubbles use absolute Y; spacer sets scroll height
+  lv_obj_add_event_cb(p.msgs, chatMsgsScrollEndCb, LV_EVENT_SCROLL_END, &p);
   lv_obj_add_event_cb(p.msgs, msgsScrollCb, LV_EVENT_SCROLL, &p);   // toggle jump-to-latest button
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+  lv_obj_add_event_cb(p.msgs, chatMsgsTouchDbgCb, LV_EVENT_PRESSED, &p);
+  lv_obj_add_event_cb(p.msgs, chatMsgsTouchDbgCb, LV_EVENT_PRESSING, &p);
+  lv_obj_add_event_cb(p.msgs, chatMsgsTouchDbgCb, LV_EVENT_RELEASED, &p);
+#endif
 
-  // ---- Jump-to-latest button (Discord-style): floating circle, bottom-right,
-  //      just above the composer. Hidden unless scrolled up from the newest msg.
+  // ---- Jump buttons (Discord-style): floating circles, right edge, symmetric
+  //      near the top/bottom of the message list. Hidden unless there is
+  //      history beyond the viewport.
+  // Bare arrows, flush against the right edge — no button chrome. The 28x36
+  // transparent button keeps a usable touch target (plus ext_click_area) while
+  // only the glyph is visible; UITask::loop dims them to 50% one second after
+  // the last scroll (jumpBtnsSetDim above).
+  p.jump_oldest_btn = lv_btn_create(p.overlay);
+  lv_obj_set_size(p.jump_oldest_btn, 28, 36);
+  lv_obj_set_style_bg_opa(p.jump_oldest_btn, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_shadow_width(p.jump_oldest_btn, 0, LV_PART_MAIN);
+  lv_obj_set_style_border_width(p.jump_oldest_btn, 0, LV_PART_MAIN);
+  lv_obj_set_style_outline_width(p.jump_oldest_btn, 0, LV_PART_MAIN);
+  lv_obj_set_ext_click_area(p.jump_oldest_btn, 6);
+  lv_obj_set_pos(p.jump_oldest_btn, chatScreenW() - 28, CHAT_HDR_H + STATUSBAR_H + 2);
+  lv_obj_t* jolbl = lv_label_create(p.jump_oldest_btn);
+  lv_label_set_text(jolbl, LV_SYMBOL_UP);
+  lv_obj_set_style_text_font(jolbl, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(jolbl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_center(jolbl);
+#if defined(HAS_TANMATSU)
+  // Purple F-key chip (matches the hardware key hints) — keep its own geometry.
+  lv_obj_set_size(p.jump_oldest_btn, 40, 40);
+  lv_obj_set_pos(p.jump_oldest_btn, chatScreenW() - 42, CHAT_HDR_H + STATUSBAR_H + 2);
+  styleChipAsFkey(p.jump_oldest_btn, jolbl, 4, 0xC724B1, 40, true);
+  lv_obj_set_style_bg_color(p.jump_oldest_btn, lv_color_hex(0x101113), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(p.jump_oldest_btn, LV_OPA_70, LV_PART_MAIN);
+  lv_obj_set_style_radius(p.jump_oldest_btn, 8, LV_PART_MAIN);
+#endif
+  lv_obj_add_event_cb(p.jump_oldest_btn, jumpToOldestCb, LV_EVENT_CLICKED, &p);
+  lv_obj_add_flag(p.jump_oldest_btn, LV_OBJ_FLAG_HIDDEN);
+
   p.jump_btn = lv_btn_create(p.overlay);
-  lv_obj_set_size(p.jump_btn, 40, 40);
-  lv_obj_set_style_radius(p.jump_btn, 20, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(p.jump_btn, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(p.jump_btn, LV_OPA_90, LV_PART_MAIN);
-  lv_obj_set_style_shadow_width(p.jump_btn, 6, LV_PART_MAIN);
-  lv_obj_set_style_shadow_opa(p.jump_btn, LV_OPA_40, LV_PART_MAIN);
-  lv_obj_set_pos(p.jump_btn, chatScreenW() - 50, chatCompYOpen() - 50);
+  lv_obj_set_size(p.jump_btn, 28, 36);
+  lv_obj_set_style_bg_opa(p.jump_btn, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_shadow_width(p.jump_btn, 0, LV_PART_MAIN);
+  lv_obj_set_style_border_width(p.jump_btn, 0, LV_PART_MAIN);
+  lv_obj_set_style_outline_width(p.jump_btn, 0, LV_PART_MAIN);
+  lv_obj_set_ext_click_area(p.jump_btn, 6);
+  lv_obj_set_pos(p.jump_btn, chatScreenW() - 28, chatCompYOpen() - 40);
   lv_obj_t* jlbl = lv_label_create(p.jump_btn);
   lv_label_set_text(jlbl, LV_SYMBOL_DOWN);
-  lv_obj_set_style_text_color(jlbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(jlbl, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(jlbl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_center(jlbl);
 #if defined(HAS_TANMATSU)
   // Purple ⏢ trapeze (matches the F6 hardware key). Keep a subtle dark backing so the
   // outline + arrow stay legible while it floats over the message bubbles.
+  lv_obj_set_size(p.jump_btn, 40, 40);
+  lv_obj_set_pos(p.jump_btn, chatScreenW() - 42, chatCompYOpen() - 50);
   styleChipAsFkey(p.jump_btn, jlbl, 4, 0xC724B1, 40, true);   // ◇ — same shape as the menubar's purple key
   lv_obj_set_style_bg_color(p.jump_btn, lv_color_hex(0x101113), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(p.jump_btn, LV_OPA_70, LV_PART_MAIN);
@@ -24351,7 +26674,7 @@ static int append_settings_section(lv_obj_t* tab, int y, const char* title, lv_e
   lv_obj_set_style_text_color(sub, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_anim_speed(sub, 28, LV_PART_MAIN);
   lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 14, 29);
-  lv_label_set_text(sub, TR("…"));
+  lv_label_set_text(sub, "…");
 
   lv_obj_t* chev = lv_label_create(row);
   lv_label_set_text(chev, LV_SYMBOL_RIGHT);
@@ -24561,7 +26884,7 @@ static void crashDumpExportCb(lv_event_t* e) {
     g_lv.task->showAlert(msg, 3500);
     lv_obj_add_flag((lv_obj_t*)lv_event_get_target(e), LV_OBJ_FLAG_HIDDEN);   // done — hide the button
   } else {
-    g_lv.task->showAlert("Crash export failed", 2000);
+    g_lv.task->showAlert(TR("Crash export failed"), 2000);
   }
 }
 
@@ -24578,7 +26901,7 @@ static void crashReportConfirmCb() {
              "(open a GitHub issue at ALLFATHER-BV/wadamesh)\nso the bug can be fixed. Thank you!", path);
     if (g_lv.task) g_lv.task->showAlert(msg, 6000);
   } else if (g_lv.task) {
-    g_lv.task->showAlert("Could not save the crash report", 2500);
+    g_lv.task->showAlert(TR("Could not save the crash report"), 2500);
   }
 }
 static void crashReportMaybePrompt() {
@@ -24632,7 +26955,7 @@ static void settingsCatBuild(int cat) {
       lv_obj_set_width(s_update_about_lbl, lblw);
       lv_obj_set_style_text_font(s_update_about_lbl, &g_font_12, LV_PART_MAIN);
       lv_obj_set_style_text_color(s_update_about_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-      lv_label_set_text(s_update_about_lbl, TR(""));
+      lv_label_set_text(s_update_about_lbl, "");
 
       // "Install update" button — over-the-air update to the latest release.
       // Only meaningful on a tagged build with OTA support; the callback
@@ -24679,11 +27002,15 @@ static void settingsCatBuild(int cat) {
         lv_obj_set_width(s_ota_status_lbl, lblw);
         lv_obj_set_style_text_font(s_ota_status_lbl, &g_font_12, LV_PART_MAIN);
         lv_obj_set_style_text_color(s_ota_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-        lv_label_set_text(s_ota_status_lbl, TR(""));
+        lv_label_set_text(s_ota_status_lbl, "");
+      }
 
-        // "Get test builds (beta)" — opt into the BETA update channel. Affects BOTH
-        // the on-device "update available" check AND the Install-update download, so
-        // an opted-in device tracks the test channel for notifications and flashing.
+      // "Get test builds (beta)" — opt into the BETA update channel. Affects the
+      // "update available" check, the Install-update download AND the save-to-SD
+      // download below. Deliberately OUTSIDE the touchHasOtaUpdateSlot() gate:
+      // Launcher installs have no Install button but still need channel-aware
+      // update notifications and the SD download.
+      if (FIRMWARE_OTA_ENV[0] && firmwareReleaseN() >= 0) {
         {
           lv_obj_t* beta_row = lv_obj_create(page);
           lv_obj_set_size(beta_row, lblw, LV_SIZE_CONTENT);
@@ -24711,6 +27038,31 @@ static void settingsCatBuild(int cat) {
           lv_obj_set_style_text_font(beta_note, &g_font_12, LV_PART_MAIN);
           lv_obj_set_style_text_color(beta_note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
         }
+
+#if defined(HAS_TDECK_GT911) && CAP_OTA
+        // "Save update bin to SD" — the Launcher-install update path: downloads
+        // the app-only bin for the active channel into /BINS/ on the SD card,
+        // named wadamesh-beta_<N>-<stable|beta>.bin, ready for the Launcher to
+        // flash. Also handy on standard installs as an offline spare.
+        {
+          lv_obj_t* sd_btn = lv_btn_create(page);
+          lv_obj_set_size(sd_btn, lblw, 38);
+          styleButton(sd_btn);
+          lv_obj_add_event_cb(sd_btn, sdFwSaveToSdCb, LV_EVENT_CLICKED, nullptr);
+          lv_obj_t* sl = lv_label_create(sd_btn);
+          lv_label_set_text(sl, LV_SYMBOL_SD_CARD "  Save update bin to SD");
+          lv_obj_set_style_text_font(sl, &g_font_14, LV_PART_MAIN);
+          lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+          lv_obj_center(sl);
+
+          s_sdfw_status_lbl = lv_label_create(page);
+          lv_label_set_long_mode(s_sdfw_status_lbl, LV_LABEL_LONG_WRAP);
+          lv_obj_set_width(s_sdfw_status_lbl, lblw);
+          lv_obj_set_style_text_font(s_sdfw_status_lbl, &g_font_12, LV_PART_MAIN);
+          lv_obj_set_style_text_color(s_sdfw_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+          lv_label_set_text(s_sdfw_status_lbl, TR("For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder)."));
+        }
+#endif
       }
 #endif
 
@@ -24739,7 +27091,7 @@ static void settingsCatBuild(int cat) {
       lv_obj_set_width(g_lv.settings_status, lblw);
       lv_obj_set_style_text_color(g_lv.settings_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
       lv_obj_set_style_text_font(g_lv.settings_status, &g_font_12, LV_PART_MAIN);
-      lv_label_set_text(g_lv.settings_status, TR(""));
+      lv_label_set_text(g_lv.settings_status, "");
       g_lv.diag_id_label = lv_label_create(page);
       lv_label_set_long_mode(g_lv.diag_id_label, LV_LABEL_LONG_WRAP);
       lv_obj_set_width(g_lv.diag_id_label, lblw);
@@ -24766,6 +27118,9 @@ static void closeSettingsCategory() {
   hideKb();
   if (s_settings_open_cat == CAT_ABOUT) {   // null the live-label ptrs (freed with the sheet)
     s_sysinfo_lbl = nullptr; s_sysinfo_rest_lbl = nullptr; s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
+#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+    s_sdfw_status_lbl = nullptr;
+#endif
     s_ota_btn = nullptr; s_ota_btn_lbl = nullptr;
     s_ota_prev_btn = nullptr;
     g_lv.settings_status = nullptr; g_lv.diag_id_label = nullptr; g_lv.diag_label = nullptr;
@@ -24988,6 +27343,31 @@ static void formatBubbleHhMm(uint32_t ts, char* out, int cap) {
   fmtClockHM(out, (size_t)cap, &tm_loc);   // honor the 12/24-hour pref
 }
 
+// Bubble footer: time-only today, short date + time on earlier days.
+static void formatBubbleTs(uint32_t ts, char* out, int cap) {
+  if (cap <= 0 || !out) return;
+  out[0] = '\0';
+  if (ts < k_ts_epoch_min) return;
+  time_t t = (time_t)ts;
+  time_t now = time(nullptr);
+  struct tm tmv{}, tmn{};
+  localtime_r(&t, &tmv);
+  localtime_r(&now, &tmn);
+  char time_part[12];
+  fmtClockHM(time_part, sizeof(time_part), &tmv);
+  if (tmv.tm_year == tmn.tm_year && tmv.tm_yday == tmn.tm_yday) {
+    snprintf(out, (size_t)cap, "%s", time_part);
+  } else if (tmv.tm_year == tmn.tm_year) {
+    char date_part[12];
+    strftime(date_part, sizeof(date_part), "%d %b", &tmv);
+    snprintf(out, (size_t)cap, "%s %s", date_part, time_part);
+  } else {
+    char date_part[12];
+    strftime(date_part, sizeof(date_part), "%d/%m/%y", &tmv);
+    snprintf(out, (size_t)cap, "%s %s", date_part, time_part);
+  }
+}
+
 static void formatFullTimestamp(uint32_t ts, char* out, int cap) {
   if (cap <= 0 || !out) return;
   if (ts < k_ts_epoch_min) {
@@ -25197,6 +27577,25 @@ static void msgMenuResendCb(lv_event_t* e) {
     g_lv.task->showAlert(TR("Resend failed"), 1400);
 }
 
+static void msgMenuDeleteCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  lv_indev_t* a = lv_indev_get_act();
+  if (a) lv_indev_wait_release(a);
+  const int idx = s_msg_menu_idx;
+  closeMsgActionMenu();
+  if (g_lv.task->deleteMessageBySlot(idx)) {
+    refreshThreadLists();                                   // message vanishes instantly
+    if (g_lv.dm.detail_open) refreshChatDetailAsync(g_lv.dm);
+    if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
+    // Persist synchronously so the delete survives an immediate hard reset (an async
+    // flush can't — the reset beats the worker). The write is now compact (only the
+    // used records), so this no longer hitches the UI. The 30 s lazy window was why a
+    // deleted message "came back" on beta_38.
+    g_lv.task->persistHistoryNow();
+    g_lv.task->showAlert(TR("Message deleted"), 1100);
+  }
+}
+
 // One-tap retry (wyvern.red): a FAILED outgoing message is single-tappable — a quick
 // confirm, then the same resend engine as the long-press menu's Resend. The text is
 // snapshotted at tap (the ring may rotate before the confirm lands).
@@ -25303,24 +27702,27 @@ static void openMessageActionMenu(int msg_idx) {
   lv_obj_clear_flag(s_msg_menu_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_msg_menu_root, msgMenuBackdropCb, LV_EVENT_CLICKED, nullptr);
 
-  // The 800×480 Tanmatsu dwarfs this 180-wide menu, so widen it and grow the
-  // rows; the smaller boards keep the historical integers (PSC is a no-op there).
+  // The 800×480 Tanmatsu dwarfs this menu, so widen it and grow the rows; the
+  // smaller boards keep plain integers (PSC is a no-op there). Buttons sit TWO
+  // per row — with Delete the menu carries up to 7 actions, and a single column
+  // no longer fit the 240-px screens without scrolling.
 #if CAP_LARGE_SCREEN
-  const int card_w = PSC(180);
+  const int card_w = PSC(220);
   const int btn_h  = PSC(30);
   const int gap    = PSC(4);
   const int pad    = PSC(10);
   const int hdr_h  = PSC(24);
 #else
-  const int card_w = 180;
-  const int btn_h  = 30;   // was 38 — the menu now carries up to 5 rows (Ack/Mention/Copy/Info/Block); shrink so they fit a 240-px screen
+  const int card_w = 200;
+  const int btn_h  = 30;
   const int gap    = 4;
   const int pad    = 10;
   // Header row reserves space for the close-X badge so it doesn't sit on a button.
   const int hdr_h  = 24;
 #endif
-  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) + 2 /*Copy+Info*/ + (can_block ? 1 : 0) + (can_resend ? 1 : 0);
-  int card_h = hdr_h + nbtn * btn_h + (nbtn - 1) * gap + 2 * pad;
+  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) + 3 /*Copy+Info+Delete*/ + (can_block ? 1 : 0) + (can_resend ? 1 : 0);
+  const int nrows  = (nbtn + 1) / 2;
+  int card_h = hdr_h + nrows * btn_h + (nrows - 1) * gap + 2 * pad;
   // Never exceed the visible area under the status bar; scroll if it ever would
   // (e.g. an even taller menu, or a shorter display). The close-X floats, so it
   // stays pinned while the buttons scroll.
@@ -25346,33 +27748,35 @@ static void openMessageActionMenu(int msg_idx) {
   }
   addCloseXBadge(card, msgMenuBackdropCb);
 
-  auto mk_btn = [&](const char* text, lv_event_cb_t cb, int y_off) {
+  // Two buttons per row, filled in reading order; an odd last button gets its
+  // own row (left cell). bi advances per button; the grid math places it.
+  const int bw = (card_w - 2 * pad - gap) / 2;
+  int bi = 0;
+  auto mk_btn = [&](const char* text, lv_event_cb_t cb) {
     lv_obj_t* b = lv_btn_create(card);
-    lv_obj_set_size(b, card_w - 2 * pad, btn_h);
-    lv_obj_set_pos(b, 0, y_off);
+    lv_obj_set_size(b, bw, btn_h);
+    lv_obj_set_pos(b, (bi % 2) * (bw + gap), hdr_h + (bi / 2) * (btn_h + gap));
     styleButton(b);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lbl = lv_label_create(b);
     lv_label_set_text(lbl, TR(text));
     lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    uiFitLabelWidth(lbl, bw - 8);   // shrink a long translation (e.g. FR "Supprimer") to fit the fixed-width button
     lv_obj_center(lbl);
+    ++bi;
   };
-  int by = hdr_h;
-  if (can_ack) {
-    mk_btn(LV_SYMBOL_OK "  Ack", msgMenuAckCb, by);
-    by += btn_h + gap;
-  }
+  if (can_ack) mk_btn(LV_SYMBOL_OK "  Ack", msgMenuAckCb);
   if (can_mention) {
     char ml[UITask::MAX_SENDER_NAME + 16];
-    snprintf(ml, sizeof ml, "@%.16s", m.sender);   // "Mention" is implied by the @
-    mk_btn(ml, msgMenuMentionCb, by);
-    by += btn_h + gap;
+    snprintf(ml, sizeof ml, "@%.10s", m.sender);   // "Mention" is implied by the @; half-width cell
+    mk_btn(ml, msgMenuMentionCb);
   }
-  mk_btn(LV_SYMBOL_COPY "  Copy", msgMenuCopyCb, by);  by += btn_h + gap;
-  mk_btn(LV_SYMBOL_LIST "  Info", msgMenuInfoCb, by);
-  if (can_block)  { by += btn_h + gap; mk_btn(LV_SYMBOL_CLOSE   "  Block",  msgMenuBlockCb,  by); }
-  if (can_resend) { by += btn_h + gap; mk_btn(LV_SYMBOL_REFRESH "  Resend", msgMenuResendCb, by); }
+  mk_btn(LV_SYMBOL_COPY "  Copy", msgMenuCopyCb);
+  mk_btn(LV_SYMBOL_LIST "  Info", msgMenuInfoCb);
+  if (can_block)  mk_btn(LV_SYMBOL_CLOSE   "  Block",  msgMenuBlockCb);
+  if (can_resend) mk_btn(LV_SYMBOL_REFRESH "  Resend", msgMenuResendCb);
+  mk_btn(LV_SYMBOL_TRASH "  Delete", msgMenuDeleteCb);
 }
 
 // "Trace route" from the message Info popup: run a full multi-hop trace to the
@@ -25706,8 +28110,6 @@ static void usernameBubbleColors(const char* name, lv_color_t* bubble_bg, lv_col
   if (name_col)  *name_col  = lv_color_hsv_to_rgb(hue, 85, 95);  // vivid sender-name line
 }
 
-// Day-separator label text: "Today" / "Yesterday", else "Fri 04 Jul" (with the
-// year when it isn't this year). Days compare in local calendar time.
 static void formatDaySeparator(char* buf, size_t cap, const struct tm* tv) {
   time_t nowt = time(nullptr);
   struct tm nowv; localtime_r(&nowt, &nowv);
@@ -25717,6 +28119,20 @@ static void formatDaySeparator(char* buf, size_t cap, const struct tm* tv) {
   else if (tv->tm_year == yv.tm_year && tv->tm_yday == yv.tm_yday)     snprintf(buf, cap, "%s", TR("Yesterday"));
   else if (tv->tm_year == nowv.tm_year)                                strftime(buf, cap, "%a %d %b", tv);
   else                                                                 strftime(buf, cap, "%d %b %Y", tv);
+}
+
+static lv_coord_t chatMeasureDaySepHeight() {
+  return lv_font_get_line_height(&g_font_12) + 6;
+}
+
+// Calendar day key for day separators; false if timestamp is unsynced (pre-2020).
+static bool chatMsgDayKey(const UITask::UIMessage& m, long* out_key) {
+  if (!out_key || m.ts < 1577836800UL) return false;
+  time_t tt = (time_t)m.ts;
+  struct tm tv;
+  localtime_r(&tt, &tv);
+  *out_key = (long)tv.tm_year * 512L + tv.tm_yday;
+  return true;
 }
 
 // Escape '#' for a recolor-enabled label — LVGL renders "##" as a literal '#', so
@@ -25730,447 +28146,1774 @@ static void recolorEscape(char* dst, size_t cap, const char* src) {
   dst[o] = '\0';
 }
 
+
+// ---- Virtualized chat bubbles ------------------------------------------------
+// Message data lives in the _ui_msgs ring (up to MAX_UI_MESSAGES). Only a small
+// window of LVGL bubble widgets is materialised for the visible scroll range.
+static constexpr int         kChatVirtOverscanPx = 120;
+static constexpr lv_coord_t  kChatBubblePadH     = 8;
+static constexpr lv_coord_t  kChatBubblePadV     = 5;
+static constexpr lv_coord_t  kChatSideGutter     = 2;
+static constexpr lv_coord_t  kChatRowGap         = 4;
+static constexpr lv_coord_t  kChatCompactRowGap = 2;
+static constexpr lv_coord_t  kChatDividerH       = 16;
+
+static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
+                                          bool thread_is_room, lv_coord_t bubble_max_w);
+static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChatPanel* p,
+                                              int logical_i);
+static lv_coord_t chatVirtCreateMessageRow(LvChatPanel* p, int logical_i, int ring_idx,
+                                           lv_coord_t vp_y, lv_coord_t* out_jump_y);
+static lv_coord_t chatVirtMsgContentY(int logical_i);
+static lv_coord_t chatVirtMsgContentBottom(int logical_i);
+static lv_coord_t chatVirtMsgViewportY(int logical_i, int32_t virt_top);
+
+static void chatVirtRefreshScrollArea(LvChatPanel* p);
+
+struct ChatBubbleDisplay {
+  const char* show_sender = nullptr;
+  const char* show_text   = nullptr;
+  char retro_sender[UITask::MAX_SENDER_NAME + 1];
+  char san_sender[UITask::MAX_SENDER_NAME + 8];
+  char san_text[UITask::MAX_MSG_TEXT + 8];
+};
+
+struct ChatVirtLayout {
+  LvChatPanel* panel         = nullptr;
+  int          n             = 0;
+  int          divider_i     = -1;
+  int32_t      divider_y     = -1;
+  int          last_i0       = -1;
+  int          last_i1       = -1;
+  bool         thread_is_room = false;
+  bool         compact_chat   = false;
+  char         compact_thread_name[UITask::MAX_THREAD_NAME + 1] = "";
+  lv_coord_t   content_w     = 0;
+  lv_coord_t   bubble_max_w  = 0;
+  int*         msg_idx       = nullptr;
+  int32_t*     offsets       = nullptr;   // virt Y per message; offsets[n] = virt total height
+  int32_t*     day_sep_y     = nullptr;   // virt Y of day label before message i, or -1
+  // Ring slots of the first/last laid-out message. Content-generation guard: the
+  // ring evicting or rotating (n unchanged at capacity) and thread switches both
+  // move these, so refreshChatDetail can tell "same count, different content"
+  // apart from "nothing changed" (two threads can never share a ring slot).
+  int          first_ring    = -1;
+  int          last_ring     = -1;
+  int32_t      virt_total_h  = 0;
+  lv_coord_t   lv_total_h    = 0;
+  lv_obj_t*    spacer        = nullptr;
+  lv_obj_t*    divider       = nullptr;
+  bool         pending_scroll = false;
+  bool         pending_scroll_bottom = false;
+  lv_coord_t   pending_scroll_y = 0;
+  // When LVGL scroll coords are compressed, finger drag still moves content 1:1 in
+  // layout (virt) pixels; scroll_y only tracks scrollbar thumb position.
+  int32_t      scroll_virt_top   = 0;
+  lv_coord_t   scroll_lv_anchor  = 0;
+  bool         scroll_virt_valid = false;
+};
+
+static ChatVirtLayout s_chat_virt;
+static int*           s_chat_msg_idx     = nullptr;
+static int            s_chat_msg_idx_cap = 0;
+static lv_timer_t*    s_chat_virt_render_timer = nullptr;
+static LvChatPanel*   s_chat_virt_render_panel = nullptr;
+
+// Layout offsets are int32; LVGL scroll coords are int16 (~8191 max). When virt
+// height exceeds the cap, scroll Y is compressed for the spacer/scrollbar but bubble
+// viewport positions use virt-space 1:1 (offsets[i] - virt_top). Finger drags also
+// advance virt_top 1:1 (see chatVirtRemap1To1Scroll) so scroll speed matches touch.
+static constexpr int32_t kChatVirtLvScrollMax = 7500;
+
+static bool chatVirtCompressCoords() {
+  return s_chat_virt.virt_total_h > kChatVirtLvScrollMax;
+}
+
+static lv_coord_t chatVirtMsgsViewH(LvChatPanel* p) {
+  if (!p || !p->msgs) return 0;
+  const lv_coord_t h     = lv_obj_get_height(p->msgs);
+  const lv_coord_t pad_t = lv_obj_get_style_pad_top(p->msgs, LV_PART_MAIN);
+  const lv_coord_t pad_b = lv_obj_get_style_pad_bottom(p->msgs, LV_PART_MAIN);
+  const lv_coord_t inner = h - pad_t - pad_b;
+  return inner > 0 ? inner : h;
+}
+
+// Max scroll Y from layout metadata — reliable before LVGL has recomputed
+// scroll_bottom after the virt spacer is first sized (open-to-bottom landed at 0).
+static lv_coord_t chatVirtMaxScrollY(LvChatPanel* p) {
+  if (!p || !p->msgs || s_chat_virt.lv_total_h <= 0) return 0;
+  chatVirtRefreshScrollArea(p);
+  const lv_coord_t view_h = chatVirtMsgsViewH(p);
+  lv_coord_t max_y = s_chat_virt.lv_total_h - view_h;
+  return max_y > 0 ? max_y : 0;
+}
+
+static bool chatVirtAwayFromBottom(LvChatPanel* p) {
+  if (!p || !p->msgs) return false;
+  if (lv_obj_get_scroll_bottom(p->msgs) > 30) return true;
+  const lv_coord_t max_y = chatVirtMaxScrollY(p);
+  return max_y > 30 && lv_obj_get_scroll_y(p->msgs) < max_y - 30;
+}
+
+static lv_coord_t chatVirtLastBubbleHeight(LvChatPanel* p, int n) {
+  if (!p || n <= 0 || !s_chat_msg_idx || !g_lv.task) return 40;
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(s_chat_msg_idx[n - 1], m)) return 40;
+  return chatMeasureMessageRowHeight(m, p, n - 1);
+}
+
+static void chatVirtUpdateLvScale(LvChatPanel* p, int n, int32_t virt_total) {
+  s_chat_virt.virt_total_h = virt_total;
+  if (!chatVirtCompressCoords()) {
+    s_chat_virt.lv_total_h = static_cast<lv_coord_t>(virt_total);
+    return;
+  }
+  (void)n;
+  // Make LVGL's max scroll map back to the real layout bottom. Bubble viewport
+  // positions are offsets[i] - lvToVirt(scroll_y), so the bottom state must be
+  // virt_total - view_h rather than a special bottom-pinned layout.
+  const lv_coord_t view_h = chatVirtMsgsViewH(p);
+  const int32_t max_virt_top =
+      (virt_total > view_h) ? (virt_total - static_cast<int32_t>(view_h)) : 0;
+  lv_coord_t need = static_cast<lv_coord_t>(
+      (static_cast<int64_t>(max_virt_top) * kChatVirtLvScrollMax) / virt_total) + view_h;
+  if (need > static_cast<lv_coord_t>(LV_COORD_MAX - 8))
+    need = static_cast<lv_coord_t>(LV_COORD_MAX - 8);
+  s_chat_virt.lv_total_h    = need;
+}
+
+static lv_coord_t chatVirtVirtToLv(int32_t virt_y) {
+  if (s_chat_virt.virt_total_h <= 0) return 0;
+  if (!chatVirtCompressCoords()) return static_cast<lv_coord_t>(virt_y);
+  return static_cast<lv_coord_t>(
+      (static_cast<int64_t>(virt_y) * kChatVirtLvScrollMax) / s_chat_virt.virt_total_h);
+}
+
+static int32_t chatVirtLvToVirt(lv_coord_t lv_y) {
+  if (s_chat_virt.virt_total_h <= 0) return 0;
+  if (!chatVirtCompressCoords()) return static_cast<int32_t>(lv_y);
+  return static_cast<int32_t>(
+      (static_cast<int64_t>(lv_y) * s_chat_virt.virt_total_h) / kChatVirtLvScrollMax);
+}
+
+static int32_t chatVirtLvViewToVirt(lv_coord_t lv_view_h) {
+  if (s_chat_virt.virt_total_h <= 0) return 0;
+  if (!chatVirtCompressCoords()) return static_cast<int32_t>(lv_view_h);
+  return static_cast<int32_t>(
+      (static_cast<int64_t>(lv_view_h) * s_chat_virt.virt_total_h) / kChatVirtLvScrollMax);
+}
+
+static int32_t chatVirtMaxVirtTop(LvChatPanel* p) {
+  if (s_chat_virt.virt_total_h <= 0) return 0;
+  const lv_coord_t view_h = p ? chatVirtMsgsViewH(p) : 0;
+  const int32_t    vh     = static_cast<int32_t>(view_h);
+  return (s_chat_virt.virt_total_h > vh) ? (s_chat_virt.virt_total_h - vh) : 0;
+}
+
+static int32_t chatVirtEffectiveVirtTop(LvChatPanel* p) {
+  if (!p || !p->msgs) return 0;
+  const lv_coord_t scroll_y = lv_obj_get_scroll_y(p->msgs);
+  if (!chatVirtCompressCoords()) return static_cast<int32_t>(scroll_y);
+  if (s_chat_virt.scroll_virt_valid) return s_chat_virt.scroll_virt_top;
+  return chatVirtLvToVirt(scroll_y);
+}
+
+static void chatVirtSyncScrollState(LvChatPanel* p, lv_coord_t lv_y, int32_t virt_override = -1) {
+  if (!p || !chatVirtCompressCoords()) {
+    s_chat_virt.scroll_virt_valid = false;
+    return;
+  }
+  s_chat_virt.scroll_virt_valid = true;
+  s_chat_virt.scroll_virt_top =
+      (virt_override >= 0) ? virt_override : chatVirtLvToVirt(lv_y);
+  const int32_t max_top = chatVirtMaxVirtTop(p);
+  if (s_chat_virt.scroll_virt_top < 0) s_chat_virt.scroll_virt_top = 0;
+  else if (s_chat_virt.scroll_virt_top > max_top) s_chat_virt.scroll_virt_top = max_top;
+  s_chat_virt.scroll_lv_anchor = chatVirtVirtToLv(s_chat_virt.scroll_virt_top);
+}
+
+// Remap LVGL's 1:1 finger→scroll_y delta into a 1:1 finger→virt_top delta when coords
+// are compressed (otherwise a small drag jumps through a huge history chunk).
+static void chatVirtRemap1To1Scroll(LvChatPanel* p) {
+  if (!p || !p->msgs || !chatVirtCompressCoords()) return;
+  const lv_coord_t lv_y = lv_obj_get_scroll_y(p->msgs);
+  if (!s_chat_virt.scroll_virt_valid) {
+    chatVirtSyncScrollState(p, lv_y);
+    return;
+  }
+  const lv_coord_t delta = lv_y - s_chat_virt.scroll_lv_anchor;
+  if (delta == 0) return;
+  s_chat_virt.scroll_virt_top += static_cast<int32_t>(delta);
+  const int32_t max_top = chatVirtMaxVirtTop(p);
+  if (s_chat_virt.scroll_virt_top < 0) s_chat_virt.scroll_virt_top = 0;
+  else if (s_chat_virt.scroll_virt_top > max_top) s_chat_virt.scroll_virt_top = max_top;
+  const lv_coord_t corrected = chatVirtVirtToLv(s_chat_virt.scroll_virt_top);
+  s_chat_virt.scroll_lv_anchor = corrected;
+  if (corrected != lv_y) lv_obj_scroll_to_y(p->msgs, corrected, LV_ANIM_OFF);
+}
+
+static bool chatVirtNearStoreBottom(LvChatPanel* p, lv_coord_t scroll_y) {
+  (void)scroll_y;
+  if (!p || !p->msgs || s_chat_virt.n <= 0) return false;
+  return lv_obj_get_scroll_bottom(p->msgs) <= 24;
+}
+
+// Message index whose virt extent contains virt_top (viewport top in layout space).
+static int chatVirtFindMsgAtVirtTop(int32_t virt_top) {
+  if (!s_chat_virt.offsets || s_chat_virt.n <= 0) return 0;
+  if (virt_top <= 0) return 0;
+  int i = 0;
+  for (int j = 1; j < s_chat_virt.n; ++j) {
+    if (s_chat_virt.offsets[j] <= virt_top) i = j;
+    else break;
+  }
+  return i;
+}
+
+static lv_coord_t chatVirtMeasuredHeightAt(LvChatPanel* p, int logical_i) {
+  if (!p || !g_lv.task || !s_chat_msg_idx || logical_i < 0 || logical_i >= s_chat_virt.n)
+    return 40;
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(s_chat_msg_idx[logical_i], m)) return 40;
+  return chatMeasureMessageRowHeight(m, p, logical_i);
+}
+
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+static void chatVirtLogTopAnchor(const char* tag, LvChatPanel* p, lv_coord_t scroll_y,
+                                 int touch_x, int touch_y) {
+  if (!tag || !p || s_chat_virt.n <= 0 || !s_chat_virt.offsets) return;
+  const int32_t virt_top = chatVirtLvToVirt(scroll_y);
+  const int     msg_i    = chatVirtFindMsgAtVirtTop(virt_top);
+  const int     virt_off = (int)(virt_top - s_chat_virt.offsets[msg_i]);
+  const int     vp_y     = (int)chatVirtMsgViewportY(msg_i, virt_top);
+  if (touch_x >= 0)
+    CHAT_SCROLL_TRACE_PRINTF("[CHAT] %s touch=(%d,%d) scroll_y=%d top=Msg#%d @Y%+d virt_off=%d\n",
+                             tag, touch_x, touch_y, (int)scroll_y, msg_i + 1, vp_y, virt_off);
+  else
+    CHAT_SCROLL_TRACE_PRINTF("[CHAT] %s scroll_y=%d top=Msg#%d @Y%+d virt_off=%d\n",
+                             tag, (int)scroll_y, msg_i + 1, vp_y, virt_off);
+}
+#endif
+
+// Only materialise new bubbles when the visible range extends past what we already have.
+static bool chatVirtNeedReflow(int new_i0, int new_i1) {
+  if (s_chat_virt.last_i0 < 0 || s_chat_virt.last_i1 < 0) return true;
+  return new_i0 < s_chat_virt.last_i0 || new_i1 > s_chat_virt.last_i1;
+}
+
+static void chatVirtCancelRenderTimer() {
+  if (s_chat_virt_render_timer) {
+    lv_timer_del(s_chat_virt_render_timer);
+    s_chat_virt_render_timer = nullptr;
+  }
+  s_chat_virt_render_panel = nullptr;
+}
+
+static void chatVirtResetInputForMsgs(LvChatPanel* p) {
+  lv_indev_t* act = lv_indev_get_act();
+  if (act) lv_indev_wait_release(act);
+  if (p && p->msgs) lv_indev_reset(nullptr, p->msgs);
+}
+
+static bool chatVirtIndevStillScrolling(LvChatPanel* p) {
+  if (!p || !p->msgs) return false;
+  for (lv_indev_t* in = lv_indev_get_next(nullptr); in; in = lv_indev_get_next(in)) {
+    if (lv_indev_get_scroll_dir(in) == LV_DIR_NONE) continue;
+    lv_obj_t* scr = lv_indev_get_scroll_obj(in);
+    for (lv_obj_t* o = scr; o; o = lv_obj_get_parent(o)) {
+      if (o == p->msgs) return true;
+    }
+  }
+  return false;
+}
+
+static void chatVirtFreeOffsets() {
+  if (s_chat_virt.offsets) { heap_caps_free(s_chat_virt.offsets); s_chat_virt.offsets = nullptr; }
+  if (s_chat_virt.day_sep_y) { heap_caps_free(s_chat_virt.day_sep_y); s_chat_virt.day_sep_y = nullptr; }
+}
+
+static void chatVirtReset(LvChatPanel* p) {
+  chatVirtCancelRenderTimer();
+  (void)p;
+  // Null the divider pointer WITHOUT queueing a delete. It is always a child of
+  // p->msgs, and every path that follows a reset (lv_obj_clean in the empty-thread
+  // branches, chatVirtPurgeMsgsChildrenSync, chatVirtClearBubbleWidgets) deletes
+  // the widget itself. Queueing lv_obj_del_async here handed LVGL a raw pointer
+  // that those synchronous cleans freed FIRST, so the deferred lv_obj_del then ran
+  // on freed memory (and with both panels open, on the OTHER panel's divider).
+  s_chat_virt.divider = nullptr;
+  s_chat_virt.spacer = nullptr;
+  s_chat_virt.panel  = nullptr;
+  s_chat_virt.n      = 0;
+  s_chat_virt.divider_i = -1;
+  s_chat_virt.divider_y = -1;
+  s_chat_virt.first_ring = -1;
+  s_chat_virt.last_ring  = -1;
+  s_chat_virt.compact_chat = false;
+  s_chat_virt.compact_thread_name[0] = '\0';
+  s_chat_virt.virt_total_h = 0;
+  s_chat_virt.lv_total_h   = 0;
+  s_chat_virt.last_i0   = -1;
+  s_chat_virt.last_i1   = -1;
+  s_chat_virt.pending_scroll = false;
+  s_chat_virt.pending_scroll_bottom = false;
+  s_chat_virt.pending_scroll_y = 0;
+  s_chat_virt.scroll_virt_top   = 0;
+  s_chat_virt.scroll_lv_anchor  = 0;
+  s_chat_virt.scroll_virt_valid = false;
+  s_chat_msgs_scroll_obj = nullptr;
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+  s_chat_touch_on_msgs = false;
+  s_chat_dbg_last_scroll_logged = -9999;
+#endif
+  chatVirtFreeOffsets();
+}
+
+static void chatVirtEnsureMsgIdx() {
+  const int need = (g_lv.task) ? g_lv.task->msgCap() : UITask::MAX_UI_MESSAGES;
+  if (need <= 0) return;
+  if (s_chat_msg_idx && s_chat_msg_idx_cap == need) return;
+  if (s_chat_msg_idx) { heap_caps_free(s_chat_msg_idx); s_chat_msg_idx = nullptr; }
+  s_chat_msg_idx_cap = 0;
+  s_chat_msg_idx = (int*)heap_caps_malloc(sizeof(int) * (size_t)need, MALLOC_CAP_SPIRAM);
+  if (!s_chat_msg_idx)
+    s_chat_msg_idx = (int*)heap_caps_malloc(sizeof(int) * (size_t)need, MALLOC_CAP_8BIT);
+  if (s_chat_msg_idx) s_chat_msg_idx_cap = need;
+}
+
+static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mode,
+                                    bool thread_is_room, ChatBubbleDisplay& d) {
+  d.show_sender = m.sender;
+  d.show_text   = m.text;
+  d.retro_sender[0] = '\0';
+  if (!m.outgoing &&
+      (thread_is_room ||
+       (channel_mode &&
+        (m.sender[0] == '\0' ||
+         (m.sender[0] == 'r' && m.sender[1] == 'x' && m.sender[2] == '\0'))))) {
+    const char* colon = strstr(m.text, ": ");
+    if (colon) {
+      const int slen = static_cast<int>(colon - m.text);
+      if (slen > 0 && slen <= UITask::MAX_SENDER_NAME) {
+        strncpy(d.retro_sender, m.text, slen);
+        d.retro_sender[slen] = '\0';
+        d.show_sender = d.retro_sender;
+        d.show_text   = colon + 2;
+      }
+    }
+  }
+  copyUtf8ReplacingMissingGlyphs(&g_font_12, d.san_sender, sizeof(d.san_sender), d.show_sender);
+  copyUtf8ReplacingMissingGlyphs(&g_font_12, d.san_text, sizeof(d.san_text), d.show_text);
+}
+
+// ---- Chat virt serial diagnostics -------------------------------------------
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+static bool s_chat_virt_at_store_top    = false;
+static bool s_chat_virt_at_store_bottom = false;
+
+static void chatVirtGetThreadName(char* name, size_t len) {
+  if (!name || len == 0) return;
+  name[0] = '\0';
+  if (!g_lv.task) return;
+  const int idx = g_lv.task->activeThreadIdx();
+  if (idx < 0) return;
+  bool ch = false;
+  uint16_t un = 0;
+  uint32_t ts = 0;
+  g_lv.task->getThreadInfo(idx, ch, un, ts, name, len);
+}
+
+static const char* chatVirtSenderLabel(const UITask::UIMessage& m, bool channel_mode,
+                                       ChatBubbleDisplay& d) {
+  chatParseMessageDisplay(m, channel_mode, s_chat_virt.thread_is_room, d);
+  if (d.show_sender && d.show_sender[0]) return d.show_sender;
+  if (m.outgoing) return "(me)";
+  return "?";
+}
+
+static void chatVirtLogMsg(const char* tag, int ordinal_1based, int ring_idx, bool channel_mode) {
+  if (!tag || ordinal_1based <= 0) return;
+  UITask::UIMessage m{};
+  if (!g_lv.task || !g_lv.task->getMessageByIndex(ring_idx, m)) {
+    CHAT_SCROLL_TRACE_PRINTF("[CHAT] %s #%d fetch_failed ring_idx=%d\n", tag, ordinal_1based, ring_idx);
+    return;
+  }
+  char ts[24];
+  formatBubbleTs(m.ts, ts, sizeof(ts));
+  ChatBubbleDisplay d{};
+  const char* sender = chatVirtSenderLabel(m, channel_mode, d);
+  CHAT_SCROLL_TRACE_PRINTF("[CHAT] %s #%d %s %s\n", tag, ordinal_1based,
+                           ts[0] ? ts : "--:--", sender);
+}
+
+static void chatVirtLogVisibleRange(LvChatPanel* p, int i0, int i1) {
+  if (!p) return;
+  CHAT_SCROLL_TRACE_PRINTF("[CHAT] on_screen [%d..%d] of %d\n", i0 + 1, i1 + 1, s_chat_virt.n);
+  for (int i = i0; i <= i1; ++i)
+    chatVirtLogMsg("visible", i + 1, s_chat_virt.msg_idx[i], p->channel_mode);
+}
+
+static void chatVirtLogScrollTransition(LvChatPanel* p, int old_i0, int old_i1, int new_i0, int new_i1) {
+  if (!p || old_i0 < 0 || old_i1 < 0) return;
+  if (old_i0 == new_i0 && old_i1 == new_i1) return;
+  if (new_i1 > old_i1 || new_i0 > old_i0)
+    CHAT_SCROLL_TRACE_PRINTF("[CHAT] vertical scroll up — newer messages coming on screen\n");
+  else if (new_i1 < old_i1 || new_i0 < old_i0)
+    CHAT_SCROLL_TRACE_PRINTF("[CHAT] vertical scroll down — older messages coming on screen\n");
+  CHAT_SCROLL_TRACE_PRINTF("[CHAT] prefetching messages [%d..%d]\n", new_i0 + 1, new_i1 + 1);
+  for (int i = old_i0; i <= old_i1; ++i) {
+    if (i < new_i0 || i > new_i1)
+      chatVirtLogMsg("leaving", i + 1, s_chat_virt.msg_idx[i], p->channel_mode);
+  }
+  for (int i = new_i0; i <= new_i1; ++i) {
+    if (i < old_i0 || i > old_i1)
+      chatVirtLogMsg("entering", i + 1, s_chat_virt.msg_idx[i], p->channel_mode);
+  }
+}
+
+static void chatVirtCheckStoreEdges(LvChatPanel* p) {
+  if (!p || !p->msgs || s_chat_virt.panel != p || s_chat_virt.n <= 0) return;
+  const lv_coord_t scroll_y = lv_obj_get_scroll_y(p->msgs);
+  const lv_coord_t sb      = lv_obj_get_scroll_bottom(p->msgs);
+  const bool at_top = (s_chat_virt.last_i0 == 0 && scroll_y < 16);
+  const bool at_bot = (s_chat_virt.last_i1 >= s_chat_virt.n - 1 && sb <= 24);
+  if (at_top && !s_chat_virt_at_store_top) {
+    s_chat_virt_at_store_top = true;
+    CHAT_SCROLL_TRACE_PRINTF("[CHAT] reached store top (oldest message #1)\n");
+  } else if (!at_top) {
+    s_chat_virt_at_store_top = false;
+  }
+  if (at_bot && !s_chat_virt_at_store_bottom) {
+    s_chat_virt_at_store_bottom = true;
+    CHAT_SCROLL_TRACE_PRINTF("[CHAT] reached store bottom (newest message #%d)\n", s_chat_virt.n);
+  } else if (!at_bot) {
+    s_chat_virt_at_store_bottom = false;
+  }
+}
+#endif
+
+static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
+                                          bool thread_is_room, lv_coord_t bubble_max_w) {
+  ChatBubbleDisplay d{};
+  chatParseMessageDisplay(m, channel_mode, thread_is_room, d);
+  const lv_coord_t inner_max_w = bubble_max_w - 2 * kChatBubblePadH;
+  lv_coord_t inner_y = 0;
+  if ((channel_mode || thread_is_room) && !m.outgoing && d.san_sender[0])
+    inner_y += lv_font_get_line_height(&g_font_12);
+
+  lv_point_t txt_size;
+  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  const lv_coord_t txt_w_used = (txt_size.x <= inner_max_w) ? txt_size.x : inner_max_w;
+  lv_point_t wrapped_size;
+  lv_txt_get_size(&wrapped_size, d.san_text, &g_font_12, 0, 0,
+                  txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+
+  char ts_buf[20];
+  formatBubbleTs(m.ts, ts_buf, sizeof(ts_buf));
+  const char* deliv_glyph = "";
+  if (m.outgoing && !channel_mode && m.deliv_state != UITask::DELIV_NONE) {
+    switch (m.deliv_state) {
+      case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_OK; break;
+      case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; break;
+      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE; break;
+      default: break;
+    }
+  }
+  char rep_buf[12] = "";
+  if (m.outgoing && m.sent_fp) {
+    const uint8_t reps = the_mesh.uiRepeatsForFp(m.sent_fp);
+    if (reps > 0) snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_REFRESH "%u", (unsigned)reps);
+  } else if (!m.outgoing && (m.meta_flags & UITask::MSG_META_HAS_RX)
+                         && (m.meta_flags & UITask::MSG_META_IS_FLOOD)) {
+    const uint8_t hops = static_cast<uint8_t>(m.path_len & 0x3F);
+    snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
+  }
+
+  lv_coord_t body_h = inner_y + wrapped_size.y;
+  if (ts_buf[0] || deliv_glyph[0] || rep_buf[0]) {
+    char footer[40];
+    snprintf(footer, sizeof(footer), "%s%s%s", ts_buf, deliv_glyph, rep_buf);
+    lv_point_t foot_size;
+    lv_txt_get_size(&foot_size, footer, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    body_h += 1 + foot_size.y;
+  }
+  return kChatBubblePadV * 2 + body_h;
+}
+
+static void chatBuildCompactLine(const UITask::UIMessage& m, LvChatPanel* p, int logical_i,
+                                 const ChatBubbleDisplay& d, char* line, size_t line_cap) {
+  if (!line || line_cap == 0) return;
+  line[0] = '\0';
+  const bool colorful_bubbles = touchPrefsGetColorfulBubbles();
+  lv_color_t bg_ignored = lv_color_hex(COLOR_RECV_BG);
+  lv_color_t sender_col = lv_color_hex(COLOR_ACCENT);
+  const char* color_name = m.outgoing ? the_mesh.getNodePrefs()->node_name : d.show_sender;
+  if (colorful_bubbles && color_name && color_name[0])
+    usernameBubbleColors(color_name, &bg_ignored, &sender_col);
+
+  const char* row_name = m.outgoing ? the_mesh.getNodePrefs()->node_name
+      : (d.san_sender[0] && !(d.san_sender[0] == 'r' && d.san_sender[1] == 'x' && d.san_sender[2] == '\0'))
+          ? d.san_sender : s_chat_virt.compact_thread_name;
+  char name_san[48];
+  copyUtf8ReplacingMissingGlyphs(&g_font_12, name_san, sizeof(name_san), row_name);
+  char esc_name[100];
+  char esc_text[2 * sizeof(d.san_text)];
+  recolorEscape(esc_name, sizeof(esc_name), name_san);
+  recolorEscape(esc_text, sizeof(esc_text), d.san_text);
+
+  char ts_c[12];
+  formatBubbleHhMm(m.ts, ts_c, sizeof(ts_c));
+  const char* dglyph = "";
+  uint32_t dfg = COLOR_SUB;
+  if (m.outgoing && !p->channel_mode && m.deliv_state != UITask::DELIV_NONE) {
+    switch (m.deliv_state) {
+      case UITask::DELIV_SENT:      dglyph = LV_SYMBOL_UPLOAD;          dfg = COLOR_SUB;    break;
+      case UITask::DELIV_DELIVERED: dglyph = LV_SYMBOL_OK LV_SYMBOL_OK; dfg = COLOR_ACCENT; break;
+      case UITask::DELIV_FAILED:    dglyph = LV_SYMBOL_CLOSE " tap to resend"; dfg = 0xE08080; break;
+    }
+  }
+  char reps[12] = "";
+  if (m.outgoing && m.sent_fp) {
+    const uint8_t r = the_mesh.uiRepeatsForFp(m.sent_fp);
+    if (r > 0) snprintf(reps, sizeof(reps), LV_SYMBOL_REFRESH "%u", (unsigned)r);
+  } else if (!m.outgoing && (m.meta_flags & UITask::MSG_META_HAS_RX)
+                         && (m.meta_flags & UITask::MSG_META_IS_FLOOD)) {
+    const uint8_t hops = (uint8_t)(m.path_len & 0x3F);
+    snprintf(reps, sizeof(reps), LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
+  }
+
+  const unsigned sc_hex = lv_color_to32(sender_col) & 0xFFFFFFu;
+  int off = 0;
+  if (ts_c[0])
+    off += snprintf(line + off, line_cap - off, "#%06X %s# ",
+                    (unsigned)(COLOR_SUB & 0xFFFFFFu), ts_c);
+  off += snprintf(line + off, line_cap - off, "#%06X %s:# %s", sc_hex, esc_name, esc_text);
+  if (off > (int)line_cap - 1) off = (int)line_cap - 1;
+  if ((dglyph[0] || reps[0]) && off < (int)line_cap - 32)
+    snprintf(line + off, line_cap - off, "  #%06X %s%s#", (unsigned)(dfg & 0xFFFFFFu), dglyph, reps);
+}
+
+// Plain-text line for height measurement — must match the glyphs/wrap of the recolor
+// label (lv_txt_get_size mishandles #RRGGBB markup and full widget width).
+static void chatBuildCompactPlainLine(const UITask::UIMessage& m, LvChatPanel* p,
+                                      const ChatBubbleDisplay& d, char* line, size_t line_cap) {
+  if (!line || line_cap == 0) return;
+  line[0] = '\0';
+
+  const char* row_name = m.outgoing ? the_mesh.getNodePrefs()->node_name
+      : (d.san_sender[0] && !(d.san_sender[0] == 'r' && d.san_sender[1] == 'x' && d.san_sender[2] == '\0'))
+          ? d.san_sender : s_chat_virt.compact_thread_name;
+  char name_san[48];
+  copyUtf8ReplacingMissingGlyphs(&g_font_12, name_san, sizeof(name_san), row_name);
+
+  char ts_c[12];
+  formatBubbleHhMm(m.ts, ts_c, sizeof(ts_c));
+  const char* dglyph = "";
+  if (m.outgoing && !p->channel_mode && m.deliv_state != UITask::DELIV_NONE) {
+    switch (m.deliv_state) {
+      case UITask::DELIV_SENT:      dglyph = LV_SYMBOL_UPLOAD; break;
+      case UITask::DELIV_DELIVERED: dglyph = LV_SYMBOL_OK LV_SYMBOL_OK; break;
+      case UITask::DELIV_FAILED:    dglyph = LV_SYMBOL_CLOSE " tap to resend"; break;
+      default: break;
+    }
+  }
+  char reps[12] = "";
+  if (m.outgoing && m.sent_fp) {
+    const uint8_t r = the_mesh.uiRepeatsForFp(m.sent_fp);
+    if (r > 0) snprintf(reps, sizeof(reps), LV_SYMBOL_REFRESH "%u", (unsigned)r);
+  } else if (!m.outgoing && (m.meta_flags & UITask::MSG_META_HAS_RX)
+                         && (m.meta_flags & UITask::MSG_META_IS_FLOOD)) {
+    const uint8_t hops = (uint8_t)(m.path_len & 0x3F);
+    snprintf(reps, sizeof(reps), LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
+  }
+
+  int off = 0;
+  if (ts_c[0])
+    off += snprintf(line + off, line_cap - off, "%s ", ts_c);
+  off += snprintf(line + off, line_cap - off, "%s: %s", name_san, d.san_text);
+  if (off > (int)line_cap - 1) off = (int)line_cap - 1;
+  if ((dglyph[0] || reps[0]) && off < (int)line_cap - 32)
+    snprintf(line + off, line_cap - off, "  %s%s", dglyph, reps);
+}
+
+static lv_coord_t chatMeasureCompactRowHeight(const UITask::UIMessage& m, LvChatPanel* p,
+                                              int logical_i, const ChatBubbleDisplay& d) {
+  (void)logical_i;
+  char line[640];
+  chatBuildCompactPlainLine(m, p, d, line, sizeof(line));
+  static constexpr lv_coord_t kPadH = 3;
+  static constexpr lv_coord_t kPadV = 1;
+  const lv_coord_t inner_w = (s_chat_virt.content_w > kPadH * 2)
+                                 ? s_chat_virt.content_w - kPadH * 2
+                                 : s_chat_virt.content_w;
+  lv_point_t wrapped;
+  lv_txt_get_size(&wrapped, line, &g_font_12, 0, 0,
+                  inner_w > 0 ? inner_w : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  return wrapped.y + kPadV * 2;
+}
+
+static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChatPanel* p,
+                                              int logical_i) {
+  if (s_chat_virt.compact_chat) {
+    ChatBubbleDisplay d{};
+    chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, d);
+    return chatMeasureCompactRowHeight(m, p, logical_i, d);
+  }
+  return chatMeasureBubbleHeight(m, p->channel_mode, s_chat_virt.thread_is_room,
+                                 s_chat_virt.bubble_max_w);
+}
+
+// Safe teardown for floating chat widgets — same pattern as popupClose: if the
+// msgs scroller is (or was) the active scroll object, synchronous lv_obj_del
+// during the indev/draw tick can leave LVGL drawing freed memory (heap assert in
+// lv_mem_buf_get / draw_shadow on open of a large channel).
+static void chatVirtBeforeMassDelete() {
+  lv_indev_t* act = lv_indev_get_act();
+  if (act) lv_indev_wait_release(act);
+}
+
+// Remove bubble/divider widgets only; keep the spacer so scroll height stays valid.
+// Deletes are SYNCHRONOUS: the only caller is chatVirtRenderWindow, which runs in
+// lv_async_call context (after the display refresh) — lv_obj_del_async here would
+// leave stale children in spec_attr until the next tick, and layout_update_core
+// then walks freed memory. Never call this from an indev/event handler.
+static void chatVirtClearBubbleWidgets(LvChatPanel* p) {
+  if (!p || !p->msgs) return;
+  if (!chatVirtIndevStillScrolling(p)) chatVirtResetInputForMsgs(p);
+  chatVirtBeforeMassDelete();
+  s_chat_virt.divider = nullptr;
+  for (int i = static_cast<int>(lv_obj_get_child_cnt(p->msgs)) - 1; i >= 0; --i) {
+    lv_obj_t* ch = lv_obj_get_child(p->msgs, i);
+    if (!ch) continue;
+    if (s_chat_virt.spacer && ch == s_chat_virt.spacer && lv_obj_is_valid(s_chat_virt.spacer))
+      continue;
+    lv_obj_del(ch);
+  }
+}
+
+// Sync purge — only call from lv_async_call / timer context, not indev handlers.
+static void chatVirtPurgeMsgsChildrenSync(LvChatPanel* p) {
+  if (!p || !p->msgs) return;
+  chatVirtCancelRenderTimer();
+  for (int i = static_cast<int>(lv_obj_get_child_cnt(p->msgs)) - 1; i >= 0; --i) {
+    lv_obj_t* ch = lv_obj_get_child(p->msgs, i);
+    if (ch) lv_obj_del(ch);
+  }
+  s_chat_virt.spacer  = nullptr;
+  s_chat_virt.divider = nullptr;
+}
+
+static void chatVirtEnsureSpacer(LvChatPanel* p, lv_coord_t total_h) {
+  if (!p || !p->msgs) return;
+  if (!s_chat_virt.spacer || !lv_obj_is_valid(s_chat_virt.spacer)) {
+    s_chat_virt.spacer = lv_obj_create(p->msgs);
+    lv_obj_remove_style_all(s_chat_virt.spacer);
+    lv_obj_clear_flag(s_chat_virt.spacer, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_width(s_chat_virt.spacer, s_chat_virt.content_w > 0 ? s_chat_virt.content_w : 1);
+    lv_obj_move_background(s_chat_virt.spacer);
+  }
+  lv_obj_set_size(s_chat_virt.spacer, s_chat_virt.content_w > 0 ? s_chat_virt.content_w : 1,
+                  total_h > 0 ? total_h : 1);
+  lv_obj_set_pos(s_chat_virt.spacer, 0, 0);
+}
+
+static void chatVirtRefreshScrollArea(LvChatPanel* p) {
+  if (!p || !p->msgs || !s_chat_virt.offsets || s_chat_virt.n <= 0) return;
+  chatVirtEnsureSpacer(p, s_chat_virt.lv_total_h);
+}
+
+// Reposition floating bubble/divider children in viewport coords (virt px 1:1).
+// LVGL scroll_y may be compressed; virt_top comes from chatVirtEffectiveVirtTop().
+// Only the spacer contributes to scroll extent; bubbles must not expand it.
+static void chatVirtSyncBubblePositions(LvChatPanel* p) {
+  if (!p || !p->msgs || s_chat_virt.panel != p || s_chat_virt.n <= 0 || !s_chat_virt.offsets) return;
+
+  struct BubbleEntry { lv_obj_t* obj; int logical_i; lv_coord_t h; };
+  BubbleEntry entries[64];
+  int cnt = 0;
+
+  for (uint32_t ci = 0; ci < lv_obj_get_child_cnt(p->msgs) && cnt < 64; ++ci) {
+    lv_obj_t* ch = lv_obj_get_child(p->msgs, ci);
+    if (!ch || ch == s_chat_virt.spacer) continue;
+    if (s_chat_virt.divider && ch == s_chat_virt.divider) continue;
+    const intptr_t ud = reinterpret_cast<intptr_t>(lv_obj_get_user_data(ch));
+    if (ud < 0) {
+      const int logical_i = static_cast<int>(-(ud + 1));
+      if (logical_i >= 0 && logical_i < s_chat_virt.n && s_chat_virt.day_sep_y &&
+          s_chat_virt.day_sep_y[logical_i] >= 0) {
+        const int32_t virt_top = chatVirtEffectiveVirtTop(p);
+        const lv_coord_t vp =
+            static_cast<lv_coord_t>(s_chat_virt.day_sep_y[logical_i] - virt_top);
+        lv_obj_set_pos(ch, 0, vp + 2);
+      }
+      continue;
+    }
+    if (ud >= s_chat_virt.n) continue;
+    entries[cnt].obj       = ch;
+    entries[cnt].logical_i = static_cast<int>(ud);
+    entries[cnt].h         = lv_obj_get_height(ch);
+    ++cnt;
+  }
+  if (cnt == 0) {
+    if (s_chat_virt.divider && lv_obj_is_valid(s_chat_virt.divider) && s_chat_virt.divider_y >= 0) {
+      const int32_t virt_top = chatVirtEffectiveVirtTop(p);
+      const lv_coord_t div_vp =
+          static_cast<lv_coord_t>(s_chat_virt.divider_y - virt_top);
+      lv_obj_set_pos(s_chat_virt.divider, 0, div_vp);
+    }
+    return;
+  }
+
+  for (int i = 1; i < cnt; ++i) {
+    BubbleEntry tmp = entries[i];
+    int j = i - 1;
+    while (j >= 0 && entries[j].logical_i > tmp.logical_i) {
+      entries[j + 1] = entries[j];
+      --j;
+    }
+    entries[j + 1] = tmp;
+  }
+
+  const int32_t virt_top = chatVirtEffectiveVirtTop(p);
+  for (int i = 0; i < cnt; ++i) {
+    const lv_coord_t vp = chatVirtMsgViewportY(entries[i].logical_i, virt_top);
+    // Re-assert the correct left/right x on every pass instead of preserving lv_obj_get_x():
+    // a bubble recreated mid-scroll (e.g. right after a send) can briefly carry a wrong x, and
+    // the old preserve-x logic then locked it in until the next full rebuild — that was the
+    // "just-sent outgoing bubble stuck on the LEFT" bug. Compact rows stay full-width.
+    lv_coord_t x = lv_obj_get_x(entries[i].obj);
+    if (!s_chat_virt.compact_chat && g_lv.task && s_chat_virt.msg_idx &&
+        entries[i].logical_i >= 0 && entries[i].logical_i < s_chat_virt.n) {
+      UITask::UIMessage mm;
+      if (g_lv.task->getMessageByIndex(s_chat_virt.msg_idx[entries[i].logical_i], mm)) {
+        lv_coord_t w = lv_obj_get_width(entries[i].obj);
+        if (w > s_chat_virt.bubble_max_w) w = s_chat_virt.bubble_max_w;
+        x = mm.outgoing ? (s_chat_virt.content_w - w - kChatSideGutter) : kChatSideGutter;
+      }
+    }
+    lv_obj_set_pos(entries[i].obj, x, vp);
+  }
+
+  if (s_chat_virt.divider && lv_obj_is_valid(s_chat_virt.divider) && s_chat_virt.divider_y >= 0) {
+    const lv_coord_t div_vp = static_cast<lv_coord_t>(s_chat_virt.divider_y - virt_top);
+    lv_obj_set_pos(s_chat_virt.divider, 0, div_vp);
+  }
+}
+
+// Fast path for the by-far most common relayout trigger: new messages appended to
+// the SAME thread with no divider in play. Extends offsets[]/day_sep_y[] for the
+// new tail only instead of re-measuring the whole thread — the full measure is
+// 2-3 lv_txt_get_size calls per message, which on the 5000-message SD ring costs
+// north of 100 ms of UI-thread stall PER RECEIVED MESSAGE with the chat open.
+// Endpoint ring slots prove "pure append": if the first n_old entries were evicted
+// or rotated, first_ring/last_ring moved and we fall back to the full rebuild.
+static bool chatVirtTryAppendLayout(LvChatPanel* p, int n, int divider_i) {
+  const int n_old = s_chat_virt.n;
+  if (s_chat_virt.panel != p || !s_chat_virt.offsets || !s_chat_virt.day_sep_y) return false;
+  if (n_old <= 0 || n <= n_old) return false;
+  if (divider_i >= 0 || s_chat_virt.divider_i >= 0) return false;   // divider math: full rebuild
+  if (s_chat_virt.compact_chat != touchPrefsGetCompactChat()) return false;
+  if (s_chat_msg_idx[0] != s_chat_virt.first_ring ||
+      s_chat_msg_idx[n_old - 1] != s_chat_virt.last_ring) return false;
+
+  int32_t* offs = (int32_t*)heap_caps_malloc(sizeof(int32_t) * (size_t)(n + 1), MALLOC_CAP_SPIRAM);
+  if (!offs) offs = (int32_t*)malloc(sizeof(int32_t) * (size_t)(n + 1));
+  int32_t* seps = (int32_t*)heap_caps_malloc(sizeof(int32_t) * (size_t)n, MALLOC_CAP_SPIRAM);
+  if (!seps) seps = (int32_t*)malloc(sizeof(int32_t) * (size_t)n);
+  if (!offs || !seps) { if (offs) free(offs); if (seps) free(seps); return false; }
+  memcpy(offs, s_chat_virt.offsets,   sizeof(int32_t) * (size_t)(n_old + 1));
+  memcpy(seps, s_chat_virt.day_sep_y, sizeof(int32_t) * (size_t)n_old);
+
+  // Day-key continuity: the appended range needs the day of the last old message.
+  long last_day_key = -1;
+  {
+    UITask::UIMessage m;
+    long dk = 0;
+    if (g_lv.task->getMessageByIndex(s_chat_msg_idx[n_old - 1], m) && chatMsgDayKey(m, &dk))
+      last_day_key = dk;
+  }
+
+  const lv_coord_t row_gap = s_chat_virt.compact_chat ? kChatCompactRowGap : kChatRowGap;
+  const lv_coord_t day_sep_h = chatMeasureDaySepHeight();
+  int32_t y = offs[n_old];                       // continue exactly where the old layout ended
+  for (int i = n_old; i < n; ++i) {
+    seps[i] = -1;
+    UITask::UIMessage m;
+    if (!g_lv.task->getMessageByIndex(s_chat_msg_idx[i], m)) {
+      offs[i] = y;
+      y += 20 + row_gap;
+      continue;
+    }
+    long dk = 0;
+    if (chatMsgDayKey(m, &dk) && dk != last_day_key) {
+      last_day_key = dk;
+      seps[i] = y;
+      y += day_sep_h;
+    }
+    offs[i] = y;
+    y += chatMeasureMessageRowHeight(m, p, i) + row_gap;
+  }
+  offs[n] = y;
+
+  int32_t* old_offs = s_chat_virt.offsets;
+  int32_t* old_seps = s_chat_virt.day_sep_y;
+  s_chat_virt.offsets   = offs;
+  s_chat_virt.day_sep_y = seps;
+  free(old_offs);
+  free(old_seps);
+  s_chat_virt.n          = n;
+  s_chat_virt.msg_idx    = s_chat_msg_idx;
+  s_chat_virt.first_ring = s_chat_msg_idx[0];
+  s_chat_virt.last_ring  = s_chat_msg_idx[n - 1];
+  chatVirtUpdateLvScale(p, n, y);                // total grew: recompute the compression
+  return true;
+}
+
+static bool chatVirtRebuildLayout(LvChatPanel* p, int n, int divider_i) {
+  if (!p || !g_lv.task || n <= 0 || !s_chat_msg_idx) return false;
+  if (chatVirtTryAppendLayout(p, n, divider_i)) return true;
+  chatVirtFreeOffsets();
+  s_chat_virt.offsets = (int32_t*)heap_caps_malloc(sizeof(int32_t) * (size_t)(n + 1),
+                                                    MALLOC_CAP_SPIRAM);
+  if (!s_chat_virt.offsets)
+    s_chat_virt.offsets = (int32_t*)malloc(sizeof(int32_t) * (size_t)(n + 1));
+  s_chat_virt.day_sep_y = (int32_t*)heap_caps_malloc(sizeof(int32_t) * (size_t)n,
+                                                      MALLOC_CAP_SPIRAM);
+  if (!s_chat_virt.day_sep_y)
+    s_chat_virt.day_sep_y = (int32_t*)malloc(sizeof(int32_t) * (size_t)n);
+  if (!s_chat_virt.offsets || !s_chat_virt.day_sep_y) {
+    chatVirtFreeOffsets();
+    return false;
+  }
+  for (int i = 0; i < n; ++i) s_chat_virt.day_sep_y[i] = -1;
+
+  s_chat_virt.panel         = p;
+  s_chat_virt.n             = n;
+  s_chat_virt.divider_i     = divider_i;
+  s_chat_virt.divider_y     = -1;
+  s_chat_virt.msg_idx       = s_chat_msg_idx;
+  s_chat_virt.first_ring    = s_chat_msg_idx[0];
+  s_chat_virt.last_ring     = s_chat_msg_idx[n - 1];
+  s_chat_virt.content_w     = chatScreenW() - 12;
+  s_chat_virt.bubble_max_w  = (s_chat_virt.content_w * 80) / 100;
+  s_chat_virt.thread_is_room = false;
+  if (!p->channel_mode) {
+    ContactInfo rc;
+    if (g_lv.task->lookupActiveContact(rc)) s_chat_virt.thread_is_room = (rc.type == ADV_TYPE_ROOM);
+  }
+  s_chat_virt.compact_chat = touchPrefsGetCompactChat();
+  s_chat_virt.compact_thread_name[0] = '\0';
+  if (s_chat_virt.compact_chat) {
+    bool ch_ = false; uint16_t un_ = 0; uint32_t ts_ = 0;
+    g_lv.task->getThreadInfo(g_lv.task->activeThreadIdx(), ch_, un_, ts_,
+                             s_chat_virt.compact_thread_name,
+                             sizeof(s_chat_virt.compact_thread_name));
+  }
+
+  const lv_coord_t row_gap = s_chat_virt.compact_chat ? kChatCompactRowGap : kChatRowGap;
+  const lv_coord_t day_sep_h = chatMeasureDaySepHeight();
+  int32_t y = 0;
+  long last_day_key = -1;
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+  int     measure_fail = 0;
+  CHAT_SCROLL_TRACE_PRINTF("[CHAT] measuring layout for %d messages\n", n);
+#endif
+  for (int i = 0; i < n; ++i) {
+    if (divider_i >= 0 && i == divider_i) {
+      s_chat_virt.divider_y = y;
+      y += kChatDividerH + row_gap;
+    }
+    UITask::UIMessage m;
+    if (!g_lv.task->getMessageByIndex(s_chat_msg_idx[i], m)) {
+      s_chat_virt.offsets[i] = y;
+      y += 20 + row_gap;
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+      ++measure_fail;
+#endif
+      continue;
+    }
+    long dk = 0;
+    if (chatMsgDayKey(m, &dk) && dk != last_day_key) {
+      last_day_key = dk;
+      s_chat_virt.day_sep_y[i] = y;
+      y += day_sep_h;
+    }
+    s_chat_virt.offsets[i] = y;
+    y += chatMeasureMessageRowHeight(m, p, i) + row_gap;
+  }
+  s_chat_virt.offsets[n] = y;
+  chatVirtUpdateLvScale(p, n, y);
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+  CHAT_SCROLL_TRACE_PRINTF("[CHAT] layout total_height=%d px lv_scroll_h=%d max_scroll~=%d%s\n",
+                           (int)y, (int)s_chat_virt.lv_total_h,
+                           (int)(s_chat_virt.lv_total_h > chatVirtMsgsViewH(p)
+                                     ? s_chat_virt.lv_total_h - chatVirtMsgsViewH(p) : 0),
+                           chatVirtCompressCoords() ? " (compressed)" : "");
+  if (measure_fail > 0)
+    CHAT_SCROLL_TRACE_PRINTF("[CHAT] layout measure failures=%d\n", measure_fail);
+#endif
+  s_chat_msgs_scroll_obj = p->msgs;
+  return true;
+}
+
+static void chatVirtCreateDivider(LvChatPanel* p, lv_coord_t vp_y) {
+  if (!p || !p->msgs) return;
+  if (s_chat_virt.divider && lv_obj_is_valid(s_chat_virt.divider)) return;
+  const lv_coord_t kContentW = s_chat_virt.content_w;
+  lv_obj_t* div = lv_obj_create(p->msgs);
+  lv_obj_remove_style_all(div);
+  lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(div, LV_OBJ_FLAG_FLOATING);
+  lv_obj_set_size(div, kContentW, kChatDividerH);
+  lv_obj_set_pos(div, 0, vp_y);
+  lv_obj_t* dline = lv_obj_create(div);
+  lv_obj_remove_style_all(dline);
+  lv_obj_set_size(dline, kContentW, 1);
+  lv_obj_set_pos(dline, 0, 8);
+  lv_obj_set_style_bg_color(dline, lv_color_hex(0xE0533D), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(dline, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_t* dlbl = lv_label_create(div);
+  lv_label_set_text(dlbl, TR("New"));
+  lv_obj_set_style_text_font(dlbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(dlbl, lv_color_hex(0xE0533D), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(dlbl, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(dlbl, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_pad_hor(dlbl, 4, LV_PART_MAIN);
+  lv_obj_align(dlbl, LV_ALIGN_TOP_LEFT, 0, 0);
+  s_chat_virt.divider = div;
+}
+
+static void chatVirtCreateDaySeparator(LvChatPanel* p, int logical_i, lv_coord_t vp_y) {
+  if (!p || !p->msgs || !g_lv.task || !s_chat_virt.msg_idx) return;
+  if (logical_i < 0 || logical_i >= s_chat_virt.n) return;
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(s_chat_virt.msg_idx[logical_i], m)) return;
+  if (m.ts < 1577836800UL) return;
+  time_t tt = (time_t)m.ts;
+  struct tm tv;
+  localtime_r(&tt, &tv);
+  char dbuf[32];
+  formatDaySeparator(dbuf, sizeof(dbuf), &tv);
+  lv_obj_t* dl = lv_label_create(p->msgs);
+  lv_label_set_text(dl, dbuf);
+  lv_obj_set_style_text_font(dl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(dl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_align(dl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_add_flag(dl, LV_OBJ_FLAG_FLOATING);
+  lv_obj_set_width(dl, s_chat_virt.content_w);
+  lv_obj_set_pos(dl, 0, vp_y + 2);
+  lv_obj_set_user_data(dl, reinterpret_cast<void*>(static_cast<intptr_t>(-(logical_i + 1))));
+}
+
+// ============================ Clickable URLs in chat ================================
+// Detect URLs in a message, tint them blue, and on a short tap offer "Open in web" (the
+// on-device reader) or "Create QR" (an on-screen QR so a phone can grab the link).
+// UNGATED (QR works on every board); the "Open in web" button compiles only where the
+// reader exists.
+static bool urlCiHas(const char* s, const char* pfx, int n) {
+  for (int i = 0; i < n; i++) { char a = s[i]; if (!a) return false; if (a >= 'A' && a <= 'Z') a += 32; if (a != pfx[i]) return false; }
+  return true;
+}
+// First URL span [*a,*b) at/after `from`. Recognises http(s):// and a bare www.<host>.
+static bool chatUrlSpan(const char* s, int from, int* a, int* b) {
+  for (int i = from; s[i]; i++) {
+    int len = 0;
+    if      (urlCiHas(s + i, "https://", 8)) len = 8;
+    else if (urlCiHas(s + i, "http://",  7)) len = 7;
+    else if (urlCiHas(s + i, "www.", 4) && (i == 0 || s[i-1] == ' ' || s[i-1] == '\n')) len = 4;
+    else continue;
+    int j = i + len;
+    while (s[j] && (unsigned char)s[j] > ' ') j++;                 // extend to whitespace
+    while (j > i + len) { char c = s[j-1];                          // trim trailing punctuation
+      if (c=='.'||c==','||c==')'||c==';'||c=='!'||c=='?'||c=='\''||c=='"'||c==':') j--; else break; }
+    if (j <= i + len) continue;                                    // scheme, no host
+    if (!memchr(s + i + len, '.', j - (i + len))) continue;        // host needs a dot
+    *a = i; *b = j; return true;
+  }
+  return false;
+}
+static bool chatFirstUrl(const char* s, char* out, int cap) {
+  int a, b; if (!s || !chatUrlSpan(s, 0, &a, &b)) return false;
+  int n = b - a; if (n > cap - 1) n = cap - 1;
+  memcpy(out, s + a, n); out[n] = 0; return true;
+}
+// Copy `in` -> `out`, wrapping each URL in a blue recolor tag. Bails (false) if `in`
+// already has a '#' (the recolor parser would choke on it) — caller then shows plain
+// text and the tap still works.
+static bool chatRecolorUrls(const char* in, char* out, int cap) {
+  if (!in || strchr(in, '#')) return false;
+  int a, b; if (!chatUrlSpan(in, 0, &a, &b)) return false;
+  int o = 0, i = 0;
+  while (in[i] && o < cap - 12) {
+    if (i == a) {
+      o += snprintf(out + o, cap - o, "#4EA1FF ");
+      while (i < b && o < cap - 2) out[o++] = in[i++];
+      if (o < cap - 1) out[o++] = '#';
+      if (!chatUrlSpan(in, i, &a, &b)) a = -1;
+    } else out[o++] = in[i++];
+  }
+  out[o] = 0; return true;
+}
+
+// ---- QR popup: a scannable QR of a URL ----
+static lv_obj_t* s_urlqr_root = nullptr;
+static void closeUrlQr() { if (s_urlqr_root) popupClose(&s_urlqr_root); }
+static void urlQrBackdropCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  lv_indev_t* a = lv_indev_get_act(); if (a) lv_indev_wait_release(a);
+  closeUrlQr();
+}
+static void openUrlQrPopup(const char* url) {
+  closeUrlQr();
+  lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
+  s_urlqr_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_urlqr_root);
+  lv_obj_set_size(s_urlqr_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_urlqr_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_urlqr_root, lv_color_hex(0x000000), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_urlqr_root, LV_OPA_60, LV_PART_MAIN);
+  lv_obj_clear_flag(s_urlqr_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_urlqr_root, urlQrBackdropCb, LV_EVENT_CLICKED, nullptr);
+  int card_w = PSC(230); if (card_w > modalAvailW()) card_w = modalAvailW();
+  int card_h = PSC(250); if (card_h > modalAvailH()) card_h = modalAvailH();
+  int qr_size = card_h - 34 - 34 - 20; if (qr_size > PSC(160)) qr_size = PSC(160);
+  if (qr_size > card_w - 20) qr_size = card_w - 20; if (qr_size < 96) qr_size = 96;
+  lv_obj_t* card = lv_obj_create(s_urlqr_root);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, card_w, card_h);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  addCloseXBadge(card, urlQrBackdropCb);
+  lv_obj_t* title = lv_label_create(card);
+  lv_label_set_text(title, TR("Scan to open on phone"));
+  lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(title, card_w - 20 - 32);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_pos(title, 0, 4);
+  char full[260];   // a bare www. host gets https:// so the phone opens it
+  if (!urlCiHas(url, "http", 4)) snprintf(full, sizeof full, "https://%s", url);
+  else                          snprintf(full, sizeof full, "%s", url);
+  lv_obj_t* qr = lv_qrcode_create(card, qr_size, lv_color_hex(0x000000), lv_color_hex(0xFFFFFF));
+  lv_qrcode_update(qr, full, strlen(full));
+  lv_obj_align(qr, LV_ALIGN_TOP_MID, 0, 32);
+  lv_obj_set_style_border_color(qr, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+  lv_obj_set_style_border_width(qr, 4, LV_PART_MAIN);
+  lv_obj_t* u = lv_label_create(card);
+  lv_label_set_long_mode(u, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(u, card_w - 20);
+  lv_label_set_text(u, url);
+  lv_obj_set_style_text_font(u, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(u, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_align(u, LV_ALIGN_BOTTOM_MID, 0, -2);
+}
+
+// ---- URL action menu (short tap on a chat URL) ----
+static lv_obj_t* s_urlmenu_root = nullptr;
+static char      s_urlmenu_url[240] = "";
+static void closeUrlMenu() { if (s_urlmenu_root) popupClose(&s_urlmenu_root); }
+static void urlMenuBackdropCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  lv_indev_t* a = lv_indev_get_act(); if (a) lv_indev_wait_release(a);
+  closeUrlMenu();
+}
+static void urlMenuQrCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  char u[240]; snprintf(u, sizeof u, "%s", s_urlmenu_url);
+  closeUrlMenu(); openUrlQrPopup(u);
+}
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
+static void urlMenuOpenWebCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  char u[240]; snprintf(u, sizeof u, "%s", s_urlmenu_url);
+  hideKb();
+  // Delete the URL menu with a PLAIN async delete — NOT closeUrlMenu(), which calls
+  // lv_indev_wait_release() (that wedges the fresh reader's first taps).
+  if (s_urlmenu_root) { lv_obj_del_async(s_urlmenu_root); s_urlmenu_root = nullptr; }
+  // Leave the chat so the reader opens from a CLEAN state — the exact same state as the
+  // app-drawer path, which loads pages and closes with the top ‹ correctly. It also
+  // frees the RAM the on-device HTTPS/TLS handshake needs on the 2 MB V4.
+  if (g_lv.dm.detail_open)      closeChatPanel(&g_lv.dm);
+  else if (g_lv.ch.detail_open) closeChatPanel(&g_lv.ch);
+  // Fresh navigation: drop any stale busy flag (with no worker running it would skip the
+  // new fetch) and the previous page so openReaderPage doesn't re-render the last URL.
+  if (!s_reader_task) s_reader_busy = false;
+  s_reader_ok = false;
+  openReaderPage(); readerStart(u);
+}
+#endif
+static void openUrlMenu(const char* url) {
+  if (!url || !url[0]) return;
+  closeUrlMenu();
+  snprintf(s_urlmenu_url, sizeof s_urlmenu_url, "%s", url);
+  lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
+  s_urlmenu_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_urlmenu_root);
+  lv_obj_set_size(s_urlmenu_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_urlmenu_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_urlmenu_root, lv_color_hex(0x000000), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_urlmenu_root, LV_OPA_60, LV_PART_MAIN);
+  lv_obj_clear_flag(s_urlmenu_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_urlmenu_root, urlMenuBackdropCb, LV_EVENT_CLICKED, nullptr);
+  const int card_w = PSC(230), btn_h = PSC(34), pad = PSC(12), gap = PSC(8), url_h = PSC(18);
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  const int nbtn = 2;
+#else
+  const int nbtn = 1;
+#endif
+  const int card_h = pad + url_h + gap + nbtn * btn_h + (nbtn - 1) * gap + pad;
+  lv_obj_t* card = lv_obj_create(s_urlmenu_root);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, card_w, card_h);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* u = lv_label_create(card);        // URL preview line at the top
+  lv_label_set_long_mode(u, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(u, card_w - 2 * pad);
+  lv_label_set_text(u, url);
+  lv_obj_set_style_text_font(u, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(u, lv_color_hex(0x6FB7FF), LV_PART_MAIN);
+  lv_obj_set_pos(u, 0, 0);
+  int by = url_h + gap;
+  auto mk = [&](const char* txt, lv_event_cb_t cb) {
+    lv_obj_t* b = lv_btn_create(card);
+    lv_obj_set_size(b, card_w - 2 * pad, btn_h);
+    lv_obj_set_pos(b, 0, by);
+    styleButton(b);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, TR(txt));
+    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_center(l);
+    by += btn_h + gap;
+  };
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
+  mk(LV_SYMBOL_WIFI "  Open in web", urlMenuOpenWebCb);
+#endif
+  mk(LV_SYMBOL_IMAGE "  Create QR", urlMenuQrCb);
+}
+// Short tap on a chat bubble that contains a URL -> the action menu (re-extract the URL
+// from the live message; the ring may have rotated since the bubble was built).
+static void bubbleUrlTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED || !g_lv.task) return;
+  const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(idx, m)) return;
+  char url[240];
+  if (chatFirstUrl(m.text, url, sizeof url)) openUrlMenu(url);
+}
+
+static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_idx,
+                                       lv_coord_t vp_y, lv_coord_t* out_jump_y) {
+  if (!p || !g_lv.task) return 0;
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(ring_idx, m)) return 0;
+
+  ChatBubbleDisplay d{};
+  chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, d);
+  const lv_coord_t kContentW    = s_chat_virt.content_w;
+  const lv_coord_t kBubbleMaxW  = s_chat_virt.bubble_max_w;
+  const bool colorful_bubbles   = touchPrefsGetColorfulBubbles();
+
+  lv_obj_t* bubble = lv_obj_create(p->msgs);
+  lv_obj_remove_style_all(bubble);
+  lv_obj_clear_flag(bubble, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(bubble, LV_OBJ_FLAG_FLOATING);
+  lv_obj_set_style_radius(bubble, 10, LV_PART_MAIN);
+  const bool mentions_me = (p->channel_mode || s_chat_virt.thread_is_room) &&
+                           !m.outgoing && textMentionsMe(d.show_text);
+  const char* color_name = m.outgoing ? the_mesh.getNodePrefs()->node_name : d.show_sender;
+  lv_color_t bubble_bg  = lv_color_hex(m.outgoing ? COLOR_SENT_BG : COLOR_RECV_BG);
+  lv_color_t sender_col = lv_color_hex(COLOR_ACCENT);
+  if (colorful_bubbles && color_name && color_name[0])
+    usernameBubbleColors(color_name, &bubble_bg, &sender_col);
+  if (mentions_me) bubble_bg = lv_color_hex(COLOR_MENTION_BG);
+  lv_obj_set_style_bg_color(bubble, bubble_bg, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_pad_hor(bubble, kChatBubblePadH, LV_PART_MAIN);
+  lv_obj_set_style_pad_ver(bubble, kChatBubblePadV, LV_PART_MAIN);
+  lv_obj_set_size(bubble, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+
+  int inner_y = 0;
+  lv_coord_t inner_w = 0;   // widest child (sender/text/footer) -> analytic bubble width for x-alignment
+  if ((p->channel_mode || s_chat_virt.thread_is_room) && !m.outgoing && d.san_sender[0]) {
+    lv_obj_t* slbl = lv_label_create(bubble);
+    lv_label_set_text(slbl, d.san_sender);
+    lv_obj_set_style_text_font(slbl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(slbl, sender_col, LV_PART_MAIN);
+    lv_obj_set_pos(slbl, 0, inner_y);
+    inner_y += lv_font_get_line_height(&g_font_12);
+    lv_point_t ss; lv_txt_get_size(&ss, d.san_sender, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    if (ss.x > inner_w) inner_w = ss.x;
+  }
+
+  lv_obj_t* tlbl = lv_label_create(bubble);
+  lv_obj_set_style_text_font(tlbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(tlbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_text(tlbl, d.san_text);
+  // Clickable URLs: tint any link blue (recolor tags are zero-width, so wrapping/height
+  // below still measure from the plain d.san_text and stay correct).
+  int _ua, _ub; const bool has_url = chatUrlSpan(d.san_text, 0, &_ua, &_ub);
+  if (has_url) {
+    char rc[UITask::MAX_MSG_TEXT + 40];
+    if (chatRecolorUrls(d.san_text, rc, sizeof rc)) { lv_label_set_recolor(tlbl, true); lv_label_set_text(tlbl, rc); }
+  }
+  const lv_coord_t kInnerMaxW = kBubbleMaxW - 2 * kChatBubblePadH;
+  lv_point_t txt_size;
+  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
+  if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(tlbl, txt_w_used);
+  if (txt_w_used > inner_w) inner_w = txt_w_used;
+  lv_obj_set_pos(tlbl, 0, inner_y);
+  lv_obj_add_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(bubble, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
+                      reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  // A short tap on a bubble that carries a URL opens the Open-in-web / Create-QR menu
+  // (SHORT_CLICKED so it never double-fires with the long-press action menu). Failed
+  // outgoing sends keep their tap-to-resend.
+  if (has_url && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
+    lv_obj_add_event_cb(bubble, bubbleUrlTapCb, LV_EVENT_SHORT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  // Failed sends keep the pre-virtualization one-tap resend (the compact path
+  // already has it); the footer below spells the affordance out.
+  if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
+    lv_obj_add_event_cb(bubble, bubbleRetryTapCb, LV_EVENT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+
+  char ts_buf[20];
+  formatBubbleTs(m.ts, ts_buf, sizeof(ts_buf));
+  const char* deliv_glyph = "";
+  uint32_t deliv_fg = COLOR_SUB;
+  if (m.outgoing && !p->channel_mode && m.deliv_state != UITask::DELIV_NONE) {
+    switch (m.deliv_state) {
+      case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_OK; deliv_fg = COLOR_SUB; break;
+      case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; deliv_fg = COLOR_ACCENT; break;
+      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE " tap to resend"; deliv_fg = 0xE08080; break;
+      default: break;
+    }
+  }
+  char rep_buf[12] = "";
+  if (m.outgoing && m.sent_fp) {
+    const uint8_t reps = the_mesh.uiRepeatsForFp(m.sent_fp);
+    if (reps > 0) snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_REFRESH "%u", (unsigned)reps);
+  } else if (!m.outgoing && (m.meta_flags & UITask::MSG_META_HAS_RX)
+                         && (m.meta_flags & UITask::MSG_META_IS_FLOOD)) {
+    const uint8_t hops = static_cast<uint8_t>(m.path_len & 0x3F);
+    snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
+  }
+  if (ts_buf[0] || deliv_glyph[0] || rep_buf[0]) {
+    char footer[40];
+    snprintf(footer, sizeof(footer), "%s%s%s", ts_buf, deliv_glyph, rep_buf);
+    lv_obj_t* foot = lv_label_create(bubble);
+    lv_label_set_text(foot, footer);
+    lv_obj_set_style_text_font(foot, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(foot, lv_color_hex(deliv_glyph[0] ? deliv_fg : COLOR_SUB), LV_PART_MAIN);
+    lv_point_t wrapped_size;
+    lv_txt_get_size(&wrapped_size, d.san_text, &g_font_12, 0, 0,
+                    txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_point_t foot_size;
+    lv_txt_get_size(&foot_size, footer, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    if (foot_size.x > inner_w) inner_w = foot_size.x;
+    const int foot_x = (txt_w_used > foot_size.x) ? (txt_w_used - foot_size.x) : 0;
+    const int foot_y = inner_y + wrapped_size.y + 1;
+    lv_obj_set_pos(foot, foot_x, foot_y);
+  }
+
+  lv_obj_update_layout(bubble);
+  lv_coord_t bh = lv_obj_get_height(bubble);
+  // Width for x-alignment is computed analytically from the widest child (text/sender/footer),
+  // NOT lv_obj_get_width(): right after a send the layout isn't settled and get_width reads wide,
+  // which put the (actually narrow) outgoing bubble on the LEFT until the next rebuild.
+  lv_coord_t bw = inner_w + 2 * kChatBubblePadH;
+  if (bw > kBubbleMaxW) bw = kBubbleMaxW;
+  const lv_coord_t x_pos = m.outgoing ? (kContentW - bw - kChatSideGutter) : kChatSideGutter;
+  lv_obj_set_pos(bubble, x_pos, vp_y);
+  if (out_jump_y && s_chat_jump_msg_idx >= 0 && ring_idx == s_chat_jump_msg_idx)
+    *out_jump_y = vp_y;
+  lv_obj_set_user_data(bubble, reinterpret_cast<void*>(static_cast<intptr_t>(logical_i)));
+  return bh;
+}
+
+static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ring_idx,
+                                           lv_coord_t vp_y, lv_coord_t* out_jump_y) {
+  if (!p || !g_lv.task) return 0;
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(ring_idx, m)) return 0;
+
+  ChatBubbleDisplay d{};
+  chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, d);
+  const bool mentions_me = (p->channel_mode || s_chat_virt.thread_is_room) &&
+                           !m.outgoing && textMentionsMe(d.show_text);
+  char line[640];
+  chatBuildCompactLine(m, p, logical_i, d, line, sizeof(line));
+
+  lv_obj_t* row = lv_label_create(p->msgs);
+  lv_label_set_recolor(row, true);
+  lv_obj_add_flag(row, LV_OBJ_FLAG_FLOATING);
+  lv_obj_set_style_text_font(row, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(row, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(row, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(row, s_chat_virt.content_w);
+  lv_label_set_text(row, line);
+  lv_obj_set_style_pad_hor(row, 3, LV_PART_MAIN);
+  lv_obj_set_style_pad_ver(row, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(row, 3, LV_PART_MAIN);
+  if (mentions_me) {
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_MENTION_BG), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+  } else if ((logical_i & 1) == 0) {
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_RECV_BG), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+  }
+  lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+  // The menu callback acts ONLY on LV_EVENT_LONG_PRESSED (its first line filters
+  // everything else) — registering it for PRESSED/RELEASED/PRESS_LOST/DELETE left
+  // the compact-row menu completely dead. Register the one event it handles,
+  // exactly like the bubble path.
+  lv_obj_add_event_cb(row, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
+                      reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
+    lv_obj_add_event_cb(row, bubbleRetryTapCb, LV_EVENT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  lv_obj_set_pos(row, 0, vp_y);
+  lv_obj_update_layout(row);
+  const lv_coord_t rh = lv_obj_get_height(row);
+  if (out_jump_y && s_chat_jump_msg_idx >= 0 && ring_idx == s_chat_jump_msg_idx)
+    *out_jump_y = vp_y;
+  lv_obj_set_user_data(row, reinterpret_cast<void*>(static_cast<intptr_t>(logical_i)));
+  return rh;
+}
+
+static lv_coord_t chatVirtCreateMessageRow(LvChatPanel* p, int logical_i, int ring_idx,
+                                           lv_coord_t vp_y, lv_coord_t* out_jump_y) {
+  if (s_chat_virt.compact_chat)
+    return chatVirtCreateCompactRow(p, logical_i, ring_idx, vp_y, out_jump_y);
+  return chatVirtCreateBubble(p, logical_i, ring_idx, vp_y, out_jump_y);
+}
+
+static lv_coord_t chatVirtMsgContentY(int logical_i) {
+  if (logical_i < 0 || logical_i >= s_chat_virt.n || !s_chat_virt.offsets) return 0;
+  if (chatVirtCompressCoords())
+    return chatVirtVirtToLv(s_chat_virt.offsets[logical_i]);
+  return static_cast<lv_coord_t>(s_chat_virt.offsets[logical_i]);
+}
+
+// Viewport Y for a message top: layout-space px relative to virt_top (1:1). Smooth
+// sub-message scroll even when LVGL scroll_y is compressed; spacing stays correct
+// because offsets[] use real measured bubble heights.
+static lv_coord_t chatVirtMsgViewportY(int logical_i, int32_t virt_top) {
+  if (logical_i < 0 || logical_i >= s_chat_virt.n || !s_chat_virt.offsets) return 0;
+  const int64_t vp = static_cast<int64_t>(s_chat_virt.offsets[logical_i]) - virt_top;
+  if (vp < -32768) return -32768;
+  if (vp > 32767) return 32767;
+  return static_cast<lv_coord_t>(vp);
+}
+
+static int32_t chatVirtMsgVirtBottom(int logical_i) {
+  if (logical_i < 0 || logical_i >= s_chat_virt.n || !s_chat_virt.offsets) return 0;
+  if (logical_i + 1 < s_chat_virt.n) return s_chat_virt.offsets[logical_i + 1];
+  return s_chat_virt.virt_total_h;
+}
+
+static lv_coord_t chatVirtMsgContentBottom(int logical_i) {
+  if (chatVirtCompressCoords())
+    return chatVirtVirtToLv(chatVirtMsgVirtBottom(logical_i));
+  return static_cast<lv_coord_t>(chatVirtMsgVirtBottom(logical_i));
+}
+
+static void chatVirtFindVisibleRange(LvChatPanel* p, lv_coord_t lv_scroll_y, lv_coord_t lv_view_h,
+                                     int& out_i0, int& out_i1) {
+  const int n = s_chat_virt.n;
+  if (n <= 0) { out_i0 = out_i1 = 0; return; }
+
+  if (!chatVirtCompressCoords()) {
+    const lv_coord_t y0 = (lv_scroll_y > kChatVirtOverscanPx) ? (lv_scroll_y - kChatVirtOverscanPx) : 0;
+    const lv_coord_t y1 = lv_scroll_y + lv_view_h + kChatVirtOverscanPx;
+    out_i0 = n - 1;
+    for (int i = 0; i < n; ++i) {
+      if (chatVirtMsgContentBottom(i) > y0) { out_i0 = i; break; }
+    }
+    out_i1 = out_i0;
+    for (int i = out_i0; i < n; ++i) {
+      if (chatVirtMsgContentY(i) < y1) out_i1 = i;
+      else break;
+    }
+    return;
+  }
+
+  // Compressed scroll coords pack message tops tightly (~15 px apart) but bubbles
+  // are stacked at full measured heights. Use virt offsets for visibility instead.
+  const int32_t overscan_virt = kChatVirtOverscanPx;
+  const int32_t virt_top      = chatVirtEffectiveVirtTop(p) - overscan_virt;
+  const int32_t virt_bot      = chatVirtEffectiveVirtTop(p) + lv_view_h + overscan_virt;
+
+  out_i0 = n - 1;
+  for (int i = 0; i < n; ++i) {
+    if (chatVirtMsgVirtBottom(i) > virt_top) { out_i0 = i; break; }
+  }
+  out_i1 = out_i0;
+  for (int i = out_i0; i < n; ++i) {
+    if (s_chat_virt.offsets[i] < virt_bot) out_i1 = i;
+    else break;
+  }
+}
+
+static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t* out_jump_y) {
+  if (!p || !p->msgs || s_chat_virt.panel != p || s_chat_virt.n <= 0 || !s_chat_virt.offsets) return;
+  if (out_jump_y) *out_jump_y = -1;
+
+  const lv_coord_t view_h = chatVirtMsgsViewH(p);
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+  const int old_i0 = s_chat_virt.last_i0;
+  const int old_i1 = s_chat_virt.last_i1;
+#endif
+  int i0 = 0, i1 = 0;
+  chatVirtFindVisibleRange(p, scroll_y, view_h, i0, i1);
+
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+  if (old_i0 >= 0 && (old_i0 != i0 || old_i1 != i1))
+    chatVirtLogScrollTransition(p, old_i0, old_i1, i0, i1);
+#endif
+
+  const lv_coord_t saved_scroll_y = scroll_y;
+  chatVirtClearBubbleWidgets(p);
+  chatVirtEnsureSpacer(p, s_chat_virt.lv_total_h);
+
+  if (s_chat_virt.divider_i >= 0 && s_chat_virt.divider_y >= 0 &&
+      s_chat_virt.divider_i >= i0 && s_chat_virt.divider_i <= i1) {
+    const int32_t virt_top = chatVirtEffectiveVirtTop(p);
+    const lv_coord_t div_vp = static_cast<lv_coord_t>(s_chat_virt.divider_y - virt_top);
+    chatVirtCreateDivider(p, div_vp);
+  }
+
+  const int32_t virt_top = chatVirtEffectiveVirtTop(p);
+  for (int i = i0; i <= i1; ++i) {
+    if (s_chat_virt.day_sep_y && s_chat_virt.day_sep_y[i] >= 0) {
+      const lv_coord_t sep_vp =
+          static_cast<lv_coord_t>(s_chat_virt.day_sep_y[i] - virt_top);
+      chatVirtCreateDaySeparator(p, i, sep_vp);
+    }
+    chatVirtCreateMessageRow(p, i, s_chat_virt.msg_idx[i], chatVirtMsgViewportY(i, virt_top),
+                             out_jump_y);
+  }
+
+  s_chat_virt.last_i0 = i0;
+  s_chat_virt.last_i1 = i1;
+  lv_obj_scroll_to_y(p->msgs, saved_scroll_y, LV_ANIM_OFF);
+  chatVirtSyncBubblePositions(p);
+  CHAT_SCROLL_TRACE_DO(chatVirtCheckStoreEdges(p));
+}
+
+static LvChatPanel* s_chat_virt_render_async_panel = nullptr;
+static bool         s_chat_virt_render_async_busy = false;
+
+// Scroll/reflow/materialise — must NOT run inside the LVGL render timer: that
+// tick is immediately followed by _lv_disp_refr_timer walking the same tree.
+// Deleting/recreating floating bubbles there (or even sync lv_obj_del) races
+// layout_update_core → LoadProhibited.  lv_async_call runs after the refresh.
+static void chatVirtRenderAsyncCb(void*) {
+  s_chat_virt_render_async_busy = false;
+  LvChatPanel* p = s_chat_virt_render_async_panel;
+  s_chat_virt_render_async_panel = nullptr;
+  if (!p || !p->detail_open || s_chat_virt.panel != p || s_chat_virt.n <= 0) return;
+  chatVirtApplyPendingScroll(p);
+  const lv_coord_t scroll_y = lv_obj_get_scroll_y(p->msgs);
+  const lv_coord_t view_h   = chatVirtMsgsViewH(p);
+  int i0 = 0, i1 = 0;
+  chatVirtFindVisibleRange(p, scroll_y, view_h, i0, i1);
+  if (!chatVirtNeedReflow(i0, i1)) {
+    chatVirtSyncBubblePositions(p);
+    chatUpdateJumpButtons(p);
+    return;
+  }
+  CHAT_SCROLL_TRACE_PRINTF("[CHAT] re_layout on scroll_end [%d..%d] was [%d..%d]\n",
+                           i0 + 1, i1 + 1, s_chat_virt.last_i0 + 1, s_chat_virt.last_i1 + 1);
+  CHAT_SCROLL_TRACE_DO(chatVirtLogTopAnchor("re_layout_before", p, scroll_y));
+  chatVirtRenderWindow(p, scroll_y, nullptr);
+  CHAT_SCROLL_TRACE_DO(chatVirtLogTopAnchor("re_layout_after", p, lv_obj_get_scroll_y(p->msgs)));
+  chatUpdateJumpButtons(p);
+}
+
+static void chatVirtRenderTimerCb(lv_timer_t* t) {
+  LvChatPanel* p = s_chat_virt_render_panel;
+  s_chat_virt_render_timer = nullptr;
+  s_chat_virt_render_panel = nullptr;
+  lv_timer_del(t);
+  if (!p || !p->detail_open || s_chat_virt.panel != p || s_chat_virt.n <= 0) return;
+  if (chatVirtIndevStillScrolling(p)) {
+    s_chat_virt_render_panel = p;
+    s_chat_virt_render_timer = lv_timer_create(chatVirtRenderTimerCb, 16, nullptr);
+    lv_timer_set_repeat_count(s_chat_virt_render_timer, 1);
+    return;
+  }
+  if (s_chat_virt_render_async_busy) return;
+  s_chat_virt_render_async_panel = p;
+  s_chat_virt_render_async_busy  = true;
+  if (lv_async_call(chatVirtRenderAsyncCb, nullptr) != LV_RES_OK) {
+    // OOM: the call never queued, so nothing will ever clear the busy flag —
+    // without this the chat would stop re-rendering until reboot.
+    s_chat_virt_render_async_busy  = false;
+    s_chat_virt_render_async_panel = nullptr;
+  }
+}
+
+static void chatVirtScheduleRender(LvChatPanel* p) {
+  if (!p || !p->detail_open || s_chat_virt.panel != p || s_chat_virt.n <= 0) return;
+  if (s_chat_virt_render_timer) {
+    lv_timer_reset(s_chat_virt_render_timer);
+    return;
+  }
+  s_chat_virt_render_panel = p;
+  s_chat_virt_render_timer = lv_timer_create(chatVirtRenderTimerCb, 1, nullptr);
+  lv_timer_set_repeat_count(s_chat_virt_render_timer, 1);
+}
+
+static void chatVirtOnScrollEnd(LvChatPanel* p) {
+  if (!p || !p->detail_open || s_chat_virt.panel != p || s_chat_virt.n <= 0) return;
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+  const lv_coord_t scroll_y = lv_obj_get_scroll_y(p->msgs);
+  chatVirtLogTopAnchor("scroll_end", p, scroll_y);
+#endif
+  if (chatVirtCompressCoords() && s_chat_virt.scroll_virt_valid) {
+    const lv_coord_t y = lv_obj_get_scroll_y(p->msgs);
+    if (y <= 0) s_chat_virt.scroll_virt_top = 0;
+    else if (lv_obj_get_scroll_bottom(p->msgs) <= 0)
+      s_chat_virt.scroll_virt_top = chatVirtMaxVirtTop(p);
+    const lv_coord_t anchored = chatVirtVirtToLv(s_chat_virt.scroll_virt_top);
+    s_chat_virt.scroll_lv_anchor = anchored;
+    if (anchored != y) lv_obj_scroll_to_y(p->msgs, anchored, LV_ANIM_OFF);
+  }
+  chatVirtSyncBubblePositions(p);
+  chatVirtScheduleRender(p);
+}
+
+static lv_coord_t chatVirtBottomScrollY(LvChatPanel* p) {
+  if (!p || !p->msgs) return 0;
+  lv_obj_update_layout(p->msgs);
+  return chatVirtMaxScrollY(p);
+}
+
+static void chatVirtApplyPendingScroll(LvChatPanel* p) {
+  if (!p || !p->msgs || !s_chat_virt.pending_scroll) return;
+  const bool to_bottom = s_chat_virt.pending_scroll_bottom;
+  s_chat_virt.pending_scroll = false;
+  s_chat_virt.pending_scroll_bottom = false;
+  lv_coord_t y = to_bottom ? chatVirtBottomScrollY(p) : s_chat_virt.pending_scroll_y;
+  if (y < 0) y = 0;
+  lv_obj_scroll_to_y(p->msgs, y, LV_ANIM_OFF);
+  lv_obj_update_layout(p->msgs);
+  chatVirtRefreshScrollArea(p);
+  if (to_bottom) chatVirtSyncScrollState(p, y, chatVirtMaxVirtTop(p));
+  else           chatVirtSyncScrollState(p, y);
+  s_chat_virt.last_i0 = -1;
+  s_chat_virt.last_i1 = -1;
+}
+
+static void chatVirtQueueScroll(LvChatPanel* p, lv_coord_t target) {
+  if (!p) return;
+  s_chat_virt.pending_scroll = true;
+  if (target == LV_COORD_MAX) {
+    s_chat_virt.pending_scroll_bottom = true;
+  } else {
+    s_chat_virt.pending_scroll_bottom = false;
+    s_chat_virt.pending_scroll_y = target;
+  }
+  chatVirtScheduleRender(p);
+}
+
+static void chatVirtJumpToOldest(LvChatPanel* p) {
+  if (!p || !p->msgs) return;
+  CHAT_SCROLL_TRACE_PRINTF("[CHAT] jump_to_oldest (n=%d virt_h=%d lv_h=%d)\n", s_chat_virt.n,
+                           (int)s_chat_virt.virt_total_h, (int)s_chat_virt.lv_total_h);
+  chatVirtResetInputForMsgs(p);
+  chatVirtCancelRenderTimer();
+  s_chat_virt.last_i0 = -1;
+  s_chat_virt.last_i1 = -1;
+  chatVirtQueueScroll(p, 0);
+  CHAT_SCROLL_TRACE_DO(chatVirtLogTopAnchor("jump_to_oldest_after", p, lv_obj_get_scroll_y(p->msgs)));
+  chatUpdateJumpButtons(p);
+}
+
+static void chatVirtJumpToLatest(LvChatPanel* p) {
+  if (!p || !p->msgs) return;
+  CHAT_SCROLL_TRACE_PRINTF("[CHAT] jump_to_latest (n=%d virt_h=%d lv_h=%d)\n", s_chat_virt.n,
+                           (int)s_chat_virt.virt_total_h, (int)s_chat_virt.lv_total_h);
+  chatVirtResetInputForMsgs(p);
+  chatVirtCancelRenderTimer();
+  CHAT_SCROLL_TRACE_PRINTF("[CHAT] jump_to_latest target scroll_y=%d scroll_bottom=%d\n",
+                           (int)lv_obj_get_scroll_y(p->msgs), (int)lv_obj_get_scroll_bottom(p->msgs));
+  s_chat_virt.last_i0 = -1;
+  s_chat_virt.last_i1 = -1;
+  chatVirtQueueScroll(p, LV_COORD_MAX);
+  chatUpdateJumpButtons(p);
+}
+
 static void refreshChatDetail(LvChatPanel& p) {
   if (!g_lv.task || !p.msgs) return;
-  // Capture the pre-rebuild scroll position so a message arriving while the chat
-  // is open doesn't yank the user away from what they're reading. If they were
-  // at the bottom we keep following new messages (standard chat); if they'd
-  // scrolled up we stay put (the jump-to-latest button returns them). lv_obj_clean
-  // below resets the scroll, so we restore it after the rebuild.
-  const lv_coord_t prev_scroll_y = lv_obj_get_scroll_y(p.msgs);
-  const bool       was_at_bottom = lv_obj_get_scroll_bottom(p.msgs) <= 8;
-  // #27: if the user is mid-flick (scroll-throw) when a message arrives and we
-  // free these bubbles, LVGL's next indev tick dereferences the freed object and
-  // panics — the message-flood amplifier. reset_query forces the indev to fully
-  // reset (clearing the throw target) before its next throw, so nothing dangles.
-  lv_indev_reset(nullptr, nullptr);
-  lv_obj_clean(p.msgs);
+  const bool       opening         = s_chat_just_opened;
+  const lv_coord_t prev_scroll_y   = lv_obj_get_scroll_y(p.msgs);
+  const bool       was_at_bottom   = lv_obj_get_scroll_bottom(p.msgs) <= 8;
 
   if (!g_lv.task->hasActiveThread() ||
       g_lv.task->activeThreadIsChannel() != p.channel_mode) {
+    lv_indev_reset(nullptr, nullptr);
+    chatVirtReset(&p);
+    lv_obj_clean(p.msgs);
     chatDetailShowPlaceholder(p, "No thread selected.\n\nTap a chat to open it.");
     return;
   }
-  // You're looking at this thread — keep its unread badge at zero even as new
-  // messages stream in (gated on detail_open so a stale active idx after the
-  // panel is closed can't wrongly clear an inbox badge).
   if (p.detail_open) g_lv.task->markActiveThreadRead();
-  // Index scratch in PSRAM, NOT on the 8 KB loop-task stack — 500 ints = 2 KB, and
-  // the LVGL render below is already deeply stack-hungry; this runs on every RX while
-  // a chat is open. Cached + never freed; only the single UI task reaches here.
-  static int* msg_idx = nullptr;
-  if (!msg_idx) { msg_idx = (int*)heap_caps_malloc(sizeof(int) * (size_t)g_lv.task->msgCap(), MALLOC_CAP_SPIRAM);
-                  if (!msg_idx) msg_idx = (int*)heap_caps_malloc(sizeof(int) * (size_t)g_lv.task->msgCap(), MALLOC_CAP_8BIT); }
-  if (!msg_idx) { chatDetailShowPlaceholder(p, "Low memory"); return; }
-  int n = g_lv.task->getActiveThreadMessageCount(msg_idx, g_lv.task->msgCap(), false);
+
+  chatVirtEnsureMsgIdx();
+  if (!s_chat_msg_idx || s_chat_msg_idx_cap <= 0) { chatDetailShowPlaceholder(p, "Low memory"); return; }
+
+  const int n = g_lv.task->getActiveThreadMessageCount(s_chat_msg_idx, s_chat_msg_idx_cap, false);
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+  if (opening) {
+    char tname[UITask::MAX_THREAD_NAME + 1];
+    chatVirtGetThreadName(tname, sizeof(tname));
+    CHAT_SCROLL_TRACE_PRINTF("[CHAT] open channel=\"%s\" stored_messages=%d\n",
+                             tname[0] ? tname : "?", n);
+    s_chat_virt_at_store_top    = false;
+    s_chat_virt_at_store_bottom = false;
+  }
+#endif
   if (n <= 0) {
+    lv_indev_reset(nullptr, nullptr);
+    chatVirtReset(&p);
+    lv_obj_clean(p.msgs);
     chatDetailShowPlaceholder(p, "No messages yet.\nSay hello!");
     return;
   }
-  // Compact (IRC-style) rows: opt-in via Settings — one dense label per message
-  // instead of a bubble. Read early: it also decides the render-window size.
-  const bool compact_chat = touchPrefsGetCompactChat();
-  // Only render the most recent messages. Each bubble is several LVGL objects,
-  // and small allocations fall back to scarce internal DRAM — rendering a full
-  // history exhausts it and aborts (OOM). Compact rows are ONE object each, so
-  // that mode affords a deeper scroll-back window (pairs with the deep SD ring).
-  // Newest-first is false, so the last kRenderCap entries are the most recent.
-  const int kRenderCap = compact_chat ? 60 : 30;
-  const int render_start = (n > kRenderCap) ? (n - kRenderCap) : 0;
 
-  // WhatsApp-style bubble layout:
-  // - Each bubble auto-sizes to its content.
-  // - Soft maximum width caps long messages around 75% of the screen so a
-  //   single-line "ok" doesn't take a full row and a paragraph still wraps.
-  // - Outgoing bubbles right-align (and use SENT color), incoming bubbles
-  //   left-align (and use RECV color).
-  // Size the bubble field to the actual message area (p.msgs is full width with
-  // 6-px padding each side) instead of a hardcoded 240-px value — otherwise on
-  // the wider T-Deck (320 px) bubbles bunch up in the middle and right-aligned
-  // bubbles never reach the right edge.
-  const lv_coord_t kContentW   = chatScreenW() - 12;
-  const lv_coord_t kBubbleMaxW = (kContentW * 80) / 100;   // ~80% width cap
-  constexpr lv_coord_t kBubblePadH = 8;
-  constexpr lv_coord_t kBubblePadV = 5;
-  constexpr lv_coord_t kSideGutter = 2;
-  constexpr lv_coord_t kRowGap     = 4;
-
-  const bool colorful_bubbles = touchPrefsGetColorfulBubbles();
-  // Compact rows name every line; a plain DM's incoming sender field is often
-  // empty/"rx", so pre-fetch the thread (contact) name as the fallback.
-  char compact_thread_name[UITask::MAX_THREAD_NAME + 1] = "";
-  if (compact_chat) {
-    bool ch_; uint16_t un_; uint32_t ts_;
-    g_lv.task->getThreadInfo(g_lv.task->activeThreadIdx(), ch_, un_, ts_,
-                             compact_thread_name, sizeof(compact_thread_name));
-  }
-
-  // Discord-style "new messages" divider: drawn just above the first unread
-  // message (the last s_unread_at_open entries). If there are more unread than
-  // we render, pin it to the top of the rendered window.
   int divider_i = -1;
   if (s_unread_at_open > 0) {
-    divider_i = n - (int)s_unread_at_open;
-    if (divider_i < render_start) divider_i = render_start;
+    divider_i = n - static_cast<int>(s_unread_at_open);
+    if (divider_i < 0) divider_i = 0;
     if (divider_i >= n) divider_i = -1;
   }
-  bool divider_done = false;
-  lv_coord_t divider_y = -1;
-  lv_coord_t jump_y    = -1;   // y of the tapped @mention message, if it's in the rendered window
 
-  // A room server is a DM-panel contact thread (channel_mode == false) but, like a
-  // channel, carries many senders as "<Name>: <body>" in the text. Detect it so the
-  // bubbles below show a per-message sender label + split the name out — WITHOUT
-  // flipping the thread to channel mode (that would break the room-reply send path).
-  bool thread_is_room = false;
-  if (!p.channel_mode) {
-    ContactInfo rc;
-    if (g_lv.task->lookupActiveContact(rc)) thread_is_room = (rc.type == ADV_TYPE_ROOM);
-  }
-  lv_coord_t y_pos = 0;
-  long last_day_key = -1;   // calendar day of the previous rendered message (year*512+yday)
-  for (int i = render_start; i < n; ++i) {
-    if (divider_i >= 0 && !divider_done && i == divider_i) {
-      lv_obj_t* div = lv_obj_create(p.msgs);
-      lv_obj_remove_style_all(div);
-      lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
-      lv_obj_set_size(div, kContentW, 16);
-      lv_obj_set_pos(div, 0, y_pos);
-      lv_obj_t* dline = lv_obj_create(div);
-      lv_obj_remove_style_all(dline);
-      lv_obj_set_size(dline, kContentW, 1);
-      lv_obj_set_pos(dline, 0, 8);
-      lv_obj_set_style_bg_color(dline, lv_color_hex(0xE0533D), LV_PART_MAIN);   // Discord-ish red
-      lv_obj_set_style_bg_opa(dline, LV_OPA_COVER, LV_PART_MAIN);
-      lv_obj_t* dlbl = lv_label_create(div);
-      lv_label_set_text(dlbl, TR("New"));
-      lv_obj_set_style_text_font(dlbl, &g_font_12, LV_PART_MAIN);
-      lv_obj_set_style_text_color(dlbl, lv_color_hex(0xE0533D), LV_PART_MAIN);
-      lv_obj_set_style_bg_color(dlbl, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-      lv_obj_set_style_bg_opa(dlbl, LV_OPA_COVER, LV_PART_MAIN);
-      lv_obj_set_style_pad_hor(dlbl, 4, LV_PART_MAIN);
-      lv_obj_align(dlbl, LV_ALIGN_TOP_LEFT, 0, 0);
-      divider_y = y_pos;
-      divider_done = true;
-      y_pos += 16 + kRowGap;
+  const bool compact_chat = touchPrefsGetCompactChat();
+  // Content-generation guard: at ring capacity a new message evicts the oldest,
+  // so n stays CONSTANT while every logical index shifts one slot — and a thread
+  // switch on an already-open panel can land on an equal count too. Comparing the
+  // endpoint ring slots catches both (the ring never reorders interior slots
+  // while the endpoints hold, and two threads cannot share a slot). Without this
+  // the old offsets kept describing the previous content and every row rendered
+  // the next message's text at the previous message's position.
+  const bool ring_changed = (s_chat_virt.n > 0) &&
+                            (s_chat_msg_idx[0] != s_chat_virt.first_ring ||
+                             s_chat_msg_idx[n - 1] != s_chat_virt.last_ring);
+  const bool need_layout = (s_chat_virt.panel != &p) || (s_chat_virt.n != n) ||
+                           !s_chat_virt.offsets || ring_changed ||
+                           s_chat_virt.compact_chat != compact_chat;
+  const bool divider_rebuild = !need_layout && divider_i >= 0 && s_chat_virt.divider_y < 0;
+  if (opening || need_layout || divider_rebuild)
+    chatVirtPurgeMsgsChildrenSync(&p);
+  if (opening || (need_layout && s_chat_virt.panel != &p))
+    s_chat_virt.scroll_virt_valid = false;
+  if (need_layout) {
+    lv_indev_reset(nullptr, nullptr);
+    s_chat_virt.last_i0 = -1;
+    s_chat_virt.last_i1 = -1;
+    if (!chatVirtRebuildLayout(&p, n, divider_i)) {
+      chatDetailShowPlaceholder(p, "Low memory");
+      return;
     }
-    UITask::UIMessage m;
-    if (!g_lv.task->getMessageByIndex(msg_idx[i], m)) continue;
-
-    // Day separator: a small centred date whenever the local calendar day changes
-    // between rendered messages — with the deep SD ring a chat spans many days.
-    // Same sane-timestamp guard the row times use (pre-2020 = unsynced clock: skip,
-    // and don't disturb last_day_key so one bad stamp can't double-print a date).
-    if (m.ts >= 1577836800UL) {
-      time_t tt = (time_t)m.ts;
-      struct tm tv; localtime_r(&tt, &tv);
-      const long dk = (long)tv.tm_year * 512 + tv.tm_yday;
-      if (dk != last_day_key) {
-        last_day_key = dk;
-        char dbuf[32];
-        formatDaySeparator(dbuf, sizeof(dbuf), &tv);
-        lv_obj_t* dl = lv_label_create(p.msgs);
-        lv_label_set_text(dl, dbuf);
-        lv_obj_set_style_text_font(dl, &g_font_12, LV_PART_MAIN);
-        lv_obj_set_style_text_color(dl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-        lv_obj_set_style_text_align(dl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_width(dl, kContentW);
-        lv_obj_set_pos(dl, 0, y_pos + 2);
-        y_pos += lv_font_get_line_height(&g_font_12) + 6;
-      }
-    }
-
-    // Backwards compat: messages saved before the sender-parser landed have
-    // sender="rx" with the actual "Name: body" still glued onto m.text. If
-    // we spot that shape, split it on the fly so old history shows nicely.
-    const char* show_sender = m.sender;
-    const char* show_text   = m.text;
-    char retro_sender[UITask::MAX_SENDER_NAME + 1] = "";
-    // Room: m.sender holds the ROOM name (the real sender is "<Name>: " in the text),
-    // so ALWAYS split. Channel retro-compat: only split when the sender wasn't parsed
-    // at receive (empty / legacy "rx").
-    if (!m.outgoing &&
-        (thread_is_room ||
-         (p.channel_mode &&
-          (m.sender[0] == '\0' || (m.sender[0] == 'r' && m.sender[1] == 'x' && m.sender[2] == '\0'))))) {
-      const char* colon = strstr(m.text, ": ");
-      if (colon) {
-        int slen = static_cast<int>(colon - m.text);
-        if (slen > 0 && slen <= UITask::MAX_SENDER_NAME) {
-          strncpy(retro_sender, m.text, slen);
-          retro_sender[slen] = '\0';
-          show_sender = retro_sender;
-          show_text   = colon + 2;
-        }
-      }
-    }
-
-    char san_sender[UITask::MAX_SENDER_NAME + 8];
-    char san_text[UITask::MAX_MSG_TEXT + 8];
-    copyUtf8ReplacingMissingGlyphs(&g_font_12, san_sender, sizeof(san_sender), show_sender);
-    copyUtf8ReplacingMissingGlyphs(&g_font_12, san_text, sizeof(san_text), show_text);
-
-    if (compact_chat) {
-      // ---- Compact (IRC-style) row: "HH:MM name: text ✓" in ONE wrapping label ----
-      // No bubble chrome, so 2-3x more history fits per screen (wyvern.red). Recolor
-      // markup tints the time (muted), the sender (per-name colour when colourful
-      // bubbles is on) and the delivery/hops tail; recolorEscape doubles '#' so user
-      // text can't open a colour run. Long-press opens the same per-message menu.
-      const bool mentions_me = (p.channel_mode || thread_is_room) && !m.outgoing && textMentionsMe(show_text);
-      lv_color_t bg_ignored = lv_color_hex(COLOR_RECV_BG);
-      lv_color_t sender_col = lv_color_hex(COLOR_ACCENT);
-      const char* color_name = m.outgoing ? the_mesh.getNodePrefs()->node_name : show_sender;
-      if (colorful_bubbles && color_name && color_name[0])
-        usernameBubbleColors(color_name, &bg_ignored, &sender_col);
-      // Row name: own node name for outgoing; parsed sender for channels/rooms; the
-      // thread (contact) name for a plain DM whose sender field is empty / legacy "rx".
-      const char* row_name = m.outgoing ? the_mesh.getNodePrefs()->node_name
-          : (san_sender[0] && !(san_sender[0] == 'r' && san_sender[1] == 'x' && san_sender[2] == '\0'))
-              ? san_sender : compact_thread_name;
-      char name_san[48];
-      copyUtf8ReplacingMissingGlyphs(&g_font_12, name_san, sizeof(name_san), row_name);
-      char esc_name[100];
-      char esc_text[2 * sizeof(san_text)];
-      recolorEscape(esc_name, sizeof(esc_name), name_san);
-      recolorEscape(esc_text, sizeof(esc_text), san_text);
-
-      char ts_c[12];
-      formatBubbleHhMm(m.ts, ts_c, sizeof(ts_c));
-      const char* dglyph = ""; uint32_t dfg = COLOR_SUB;
-      if (m.outgoing && !p.channel_mode && m.deliv_state != UITask::DELIV_NONE) {
-        // Same semantics as the bubble footer: ↑ sent (unconfirmed), ✓✓ acked, ✕ failed.
-        switch (m.deliv_state) {
-          case UITask::DELIV_SENT:      dglyph = LV_SYMBOL_UPLOAD;          dfg = COLOR_SUB;    break;
-          case UITask::DELIV_DELIVERED: dglyph = LV_SYMBOL_OK LV_SYMBOL_OK; dfg = COLOR_ACCENT; break;
-          case UITask::DELIV_FAILED:    dglyph = LV_SYMBOL_CLOSE " tap to resend"; dfg = 0xE08080; break;
-        }
-      }
-      char reps[12] = "";
-      if (m.outgoing && m.sent_fp) {
-        const uint8_t r = the_mesh.uiRepeatsForFp(m.sent_fp);
-        if (r > 0) snprintf(reps, sizeof(reps), LV_SYMBOL_REFRESH "%u", (unsigned)r);
-      } else if (!m.outgoing && (m.meta_flags & UITask::MSG_META_HAS_RX)
-                             && (m.meta_flags & UITask::MSG_META_IS_FLOOD)) {
-        const uint8_t hops = (uint8_t)(m.path_len & 0x3F);
-        snprintf(reps, sizeof(reps), LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
-      }
-
-      const unsigned sc_hex = lv_color_to32(sender_col) & 0xFFFFFFu;
-      char line[640]; int off = 0;
-      if (ts_c[0])
-        off += snprintf(line + off, sizeof(line) - off, "#%06X %s# ",
-                        (unsigned)(COLOR_SUB & 0xFFFFFFu), ts_c);
-      off += snprintf(line + off, sizeof(line) - off, "#%06X %s:# %s", sc_hex, esc_name, esc_text);
-      if (off > (int)sizeof(line) - 1) off = (int)sizeof(line) - 1;
-      if ((dglyph[0] || reps[0]) && off < (int)sizeof(line) - 32)
-        snprintf(line + off, sizeof(line) - off, "  #%06X %s%s#", (unsigned)(dfg & 0xFFFFFFu), dglyph, reps);
-
-      lv_obj_t* row = lv_label_create(p.msgs);
-      lv_label_set_recolor(row, true);
-      lv_obj_set_style_text_font(row, &g_font_12, LV_PART_MAIN);
-      lv_obj_set_style_text_color(row, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_label_set_long_mode(row, LV_LABEL_LONG_WRAP);
-      lv_obj_set_width(row, kContentW);
-      lv_label_set_text(row, line);
-      // A little breathing room so a tinted row doesn't hug its glyphs (costs 2 px/row).
-      lv_obj_set_style_pad_hor(row, 3, LV_PART_MAIN);
-      lv_obj_set_style_pad_ver(row, 1, LV_PART_MAIN);
-      lv_obj_set_style_radius(row, 3, LV_PART_MAIN);
-      if (mentions_me) {   // keep the "you were tagged" cue without bubble chrome
-        lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_MENTION_BG), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
-      } else if ((i & 1) == 0) {
-        // Alternating row tint for readability: every other row gets the bubble-gray
-        // tone (the rest stay page-black) so adjacent dense rows separate at a
-        // glance. Keyed on the ABSOLUTE message index, so a row keeps its shade as
-        // new messages append instead of the whole list flicker-swapping.
-        lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_RECV_BG), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
-      }
-      lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-      lv_obj_add_event_cb(row, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
-                          reinterpret_cast<void*>((intptr_t)msg_idx[i]));
-      if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)   // failed: single tap offers a resend
-        lv_obj_add_event_cb(row, bubbleRetryTapCb, LV_EVENT_CLICKED,
-                            reinterpret_cast<void*>((intptr_t)msg_idx[i]));
-      lv_obj_set_pos(row, 0, y_pos);
-      lv_obj_update_layout(row);
-      if (s_chat_jump_msg_idx >= 0 && msg_idx[i] == s_chat_jump_msg_idx) jump_y = y_pos;
-      y_pos += lv_obj_get_height(row) + 2;   // tight 2 px row gap
-      continue;
-    }
-
-    lv_obj_t* bubble = lv_obj_create(p.msgs);
-    lv_obj_remove_style_all(bubble);
-    lv_obj_clear_flag(bubble, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_radius(bubble, 10, LV_PART_MAIN);
-    const bool mentions_me = (p.channel_mode || thread_is_room) && !m.outgoing && textMentionsMe(show_text);
-    // Colourful-bubbles option: tint the bubble + sender name by a hash of the
-    // name (outgoing bubbles colour by our own node name). The @mention
-    // highlight still wins for the background — keeps the "you were tagged" cue.
-    const char* color_name = m.outgoing ? the_mesh.getNodePrefs()->node_name : show_sender;
-    lv_color_t bubble_bg  = lv_color_hex(m.outgoing ? COLOR_SENT_BG : COLOR_RECV_BG);
-    lv_color_t sender_col = lv_color_hex(COLOR_ACCENT);
-    if (colorful_bubbles && color_name && color_name[0])
-      usernameBubbleColors(color_name, &bubble_bg, &sender_col);
-    if (mentions_me) bubble_bg = lv_color_hex(COLOR_MENTION_BG);
-    lv_obj_set_style_bg_color(bubble, bubble_bg, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_pad_hor(bubble, kBubblePadH, LV_PART_MAIN);
-    lv_obj_set_style_pad_ver(bubble, kBubblePadV, LV_PART_MAIN);
-    // Content-driven width AND height. Inner label wrap below caps the
-    // effective width to kBubbleMaxW, so short messages shrink and long
-    // messages wrap inside the cap.
-    lv_obj_set_size(bubble, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-
-    int inner_y = 0;
-    // Group/channel rooms show the sender name as a small accent line above
-    // the message text (mirrors WhatsApp group chats). DMs skip it — you
-    // already know who you're talking to.
-    if ((p.channel_mode || thread_is_room) && !m.outgoing && san_sender[0]) {
-      lv_obj_t* slbl = lv_label_create(bubble);
-      lv_label_set_text(slbl, san_sender);
-      lv_obj_set_style_text_font(slbl, &g_font_12, LV_PART_MAIN);
-      lv_obj_set_style_text_color(slbl, sender_col, LV_PART_MAIN);
-      lv_obj_set_pos(slbl, 0, inner_y);
-      // Advance by the sender font's real line height (not a hardcoded 14) so the
-      // body doesn't overlap the name when g_font_12 is upscaled for a large screen
-      // (Tanmatsu UI-scale swaps it to montserrat_16/_20). Equals 14 on the normal
-      // 12-px boards, so touch spacing is unchanged.
-      inner_y += lv_font_get_line_height(&g_font_12);
-    }
-
-    lv_obj_t* tlbl = lv_label_create(bubble);
-    lv_obj_set_style_text_font(tlbl, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(tlbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_label_set_text(tlbl, san_text);
-    // WhatsApp-style auto-shrink: measure the natural width of the text
-    // first; if it fits within the soft cap, use that natural width so the
-    // bubble hugs short messages (e.g. "ok" → ~24 px). Otherwise clamp the
-    // label to the cap and turn on LONG_WRAP so long messages wrap. LVGL's
-    // LONG_WRAP mode requires an explicit width — it doesn't combine with
-    // LV_SIZE_CONTENT — hence the manual measure.
-    const lv_coord_t kInnerMaxW = kBubbleMaxW - 2 * kBubblePadH;
-    lv_point_t txt_size;
-    lv_txt_get_size(&txt_size, san_text,
-                    &g_font_12,
-                    0 /*letter_space*/, 0 /*line_space*/,
-                    LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    if (txt_size.x <= kInnerMaxW) {
-      lv_obj_set_width(tlbl, txt_size.x);
-    } else {
-      lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
-      lv_obj_set_width(tlbl, kInnerMaxW);
-    }
-    lv_obj_set_pos(tlbl, 0, inner_y);
-    // Long-press the bubble → the per-message action menu (Copy / Info). The absolute msg
-    // index is packed into user_data so the menu pulls the right entry from the ring. ONLY
-    // the bubble is the clickable (not the inner text label), so keyboard-nav focuses +
-    // highlights the WHOLE bubble instead of just the text; a tap on the text bubbles up.
-    lv_obj_add_flag(bubble, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(bubble, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
-                        reinterpret_cast<void*>((intptr_t)msg_idx[i]));
-    // Failed outgoing message: a single TAP offers a resend (long-press menu still works —
-    // its wait_release swallows the trailing click, so the two can't double-fire).
-    if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
-      lv_obj_add_event_cb(bubble, bubbleRetryTapCb, LV_EVENT_CLICKED,
-                          reinterpret_cast<void*>((intptr_t)msg_idx[i]));
-
-    // Footer row: HH:MM timestamp + (for outgoing DMs) the delivery glyph.
-    // Both sit in one label so they share the bottom-right anchor — keeps
-    // the bubble content-driven without an extra flex container.
-    char ts_buf[12];   // room for "12:05 PM"
-    formatBubbleHhMm(m.ts, ts_buf, sizeof(ts_buf));
-    const char* deliv_glyph = "";
-    uint32_t deliv_fg = COLOR_SUB;
-    if (m.outgoing && !p.channel_mode && m.deliv_state != UITask::DELIV_NONE) {
-      // Sent-but-unconfirmed is an UP arrow, not a checkmark — a grey ✓ read as
-      // "arrived" when it only meant "transmitted" (wyvern.red: "the first check
-      // is meaningless"). ✓✓ = the ack came back; failed says what a tap does.
-      switch (m.deliv_state) {
-        case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_UPLOAD; deliv_fg = COLOR_SUB;    break;
-        case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; deliv_fg = COLOR_ACCENT; break;
-        case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE " tap to resend"; deliv_fg = 0xE08080;  break;
-      }
-    }
-    // Repeats-heard tag for outgoing floods (DM + channel): how many nearby
-    // repeaters re-broadcast this message. Only shown once ≥1.
-    char rep_buf[12] = "";
-    if (m.outgoing && m.sent_fp) {
-      const uint8_t reps = the_mesh.uiRepeatsForFp(m.sent_fp);
-      if (reps > 0) snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_REFRESH "%u", (unsigned)reps);
-    } else if (!m.outgoing && (m.meta_flags & UITask::MSG_META_HAS_RX)
-                           && (m.meta_flags & UITask::MSG_META_IS_FLOOD)) {
-      // Incoming flood: show how many repeater hops it traversed, in the same
-      // spot the outgoing repeats count uses. Hop count is the low 6 bits of
-      // path_len (same field the message-info popup reads). 0 = heard direct.
-      const uint8_t hops = (uint8_t)(m.path_len & 0x3F);
-      snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
-    }
-    if (ts_buf[0] || deliv_glyph[0] || rep_buf[0]) {
-      char footer[64];   // fits "12:05 PM  ✕ tap to resend ↻9"
-      snprintf(footer, sizeof(footer), "%s%s%s", ts_buf, deliv_glyph, rep_buf);
-      lv_obj_t* foot = lv_label_create(bubble);
-      lv_label_set_text(foot, footer);
-      lv_obj_set_style_text_font(foot, &g_font_12, LV_PART_MAIN);
-      // Tint matches delivery state when there's a glyph; otherwise the
-      // timestamp uses the muted SUB color so it doesn't compete with text.
-      lv_obj_set_style_text_color(foot, lv_color_hex(deliv_glyph[0] ? deliv_fg : COLOR_SUB), LV_PART_MAIN);
-      // Manual placement under the text — LV_ALIGN_BOTTOM_RIGHT inside a
-      // LV_SIZE_CONTENT parent fights the auto-size pass and the footer
-      // ends up overlapping the last line. Measure the actual text + footer
-      // sizes and stack them.
-      const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
-      lv_point_t wrapped_size;
-      lv_txt_get_size(&wrapped_size, san_text, &g_font_12,
-                      0, 0, txt_w_used > 0 ? txt_w_used : LV_COORD_MAX,
-                      LV_TEXT_FLAG_NONE);
-      lv_point_t foot_size;
-      lv_txt_get_size(&foot_size, footer, &g_font_12, 0, 0,
-                      LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-      const int foot_x = (txt_w_used > foot_size.x) ? (txt_w_used - foot_size.x) : 0;
-      const int foot_y = inner_y + wrapped_size.y + 1;
-      lv_obj_set_pos(foot, foot_x, foot_y);
-    }
-
-    // Force layout so the bubble's content-driven size is final, then bias
-    // outgoing bubbles to the right gutter and incoming to the left.
-    lv_obj_update_layout(bubble);
-    lv_coord_t bw = lv_obj_get_width(bubble);
-    lv_coord_t bh = lv_obj_get_height(bubble);
-    if (bw > kBubbleMaxW) bw = kBubbleMaxW;
-    lv_coord_t x_pos = m.outgoing
-        ? (kContentW - bw - kSideGutter)
-        : kSideGutter;
-    lv_obj_set_pos(bubble, x_pos, y_pos);
-    if (s_chat_jump_msg_idx >= 0 && msg_idx[i] == s_chat_jump_msg_idx) jump_y = y_pos;
-    y_pos += bh + kRowGap;
-  }
-
-  // On open, land on the "new messages" divider (the red line just above the first unread) so you
-  // pick up where you left off; with nothing unread, show the newest message. On a refresh while
-  // already open, follow new messages ONLY if you were already at the bottom — if you'd scrolled
-  // up to read history, stay put (the jump-to-latest button returns you to the bottom).
-  lv_obj_update_layout(p.msgs);
-  if (s_chat_just_opened && jump_y >= 0) {
-    // Tapped an @mention: land on that exact message (a little context above it).
-    lv_coord_t target = (jump_y > 8) ? (jump_y - 8) : 0;
-    lv_obj_scroll_to_y(p.msgs, target, LV_ANIM_OFF);
-  } else if (s_chat_just_opened && divider_y >= 0) {
-    lv_coord_t target = (divider_y > 8) ? (divider_y - 8) : 0;
-    lv_obj_scroll_to_y(p.msgs, target, LV_ANIM_OFF);
-  } else if (s_chat_just_opened || was_at_bottom) {
-    lv_obj_scroll_to_y(p.msgs, LV_COORD_MAX, LV_ANIM_OFF);
   } else {
-    lv_obj_scroll_to_y(p.msgs, prev_scroll_y, LV_ANIM_OFF);   // preserve reading position
+    s_chat_virt.divider_i = divider_i;
+    if (divider_rebuild) {
+      lv_indev_reset(nullptr, nullptr);
+      s_chat_virt.last_i0 = -1;
+      s_chat_virt.last_i1 = -1;
+      if (!chatVirtRebuildLayout(&p, n, divider_i)) {
+        chatDetailShowPlaceholder(p, "Low memory");
+        return;
+      }
+    }
+    // (An `else if (g_lv.dirty_timeline)` rescue used to sit here — it was dead:
+    // UITask::loop clears the flag right after SCHEDULING the async refresh, so
+    // by the time this code ran it always read false. The ring_changed term in
+    // need_layout above covers the cases it was meant to catch.)
   }
+
+  lv_coord_t scroll_target = prev_scroll_y;
+  if (s_chat_virt.scroll_virt_valid && chatVirtCompressCoords() && !s_chat_just_opened &&
+      !was_at_bottom) {
+    scroll_target = chatVirtVirtToLv(s_chat_virt.scroll_virt_top);
+  }
+  if (s_chat_just_opened) {
+    if (s_chat_jump_msg_idx >= 0 && s_chat_virt.offsets) {
+      for (int i = 0; i < n; ++i) {
+        if (s_chat_msg_idx[i] == s_chat_jump_msg_idx) {
+          const int32_t virt = (s_chat_virt.offsets[i] > 8) ? (s_chat_virt.offsets[i] - 8) : 0;
+          scroll_target = chatVirtVirtToLv(virt);
+          break;
+        }
+      }
+    } else if (divider_i >= 0 && s_chat_virt.divider_y >= 0) {
+      const int32_t virt = (s_chat_virt.divider_y > 8) ? (s_chat_virt.divider_y - 8) : 0;
+      scroll_target = chatVirtVirtToLv(virt);
+    } else {
+      scroll_target = LV_COORD_MAX;
+    }
+  } else if (was_at_bottom) {
+    scroll_target = LV_COORD_MAX;
+  }
+
+  chatVirtResetInputForMsgs(&p);
+  chatVirtCancelRenderTimer();
+  chatVirtQueueScroll(&p, scroll_target);
+
+#if TRACE_MESSAGE_SCROLL_ACTIVITY
+  if (opening) {
+    const lv_coord_t vh = lv_obj_get_height(p.msgs);
+    const lv_coord_t sy = lv_obj_get_scroll_y(p.msgs);
+    const lv_coord_t sb = lv_obj_get_scroll_bottom(p.msgs);
+    const int32_t layout_h = s_chat_virt.virt_total_h;
+    CHAT_SCROLL_TRACE_PRINTF("[CHAT] open scroll_y=%d scroll_bottom=%d view_h=%d layout_h=%d\n",
+                             (int)sy, (int)sb, (int)vh, (int)layout_h);
+    chatVirtLogVisibleRange(&p, s_chat_virt.last_i0, s_chat_virt.last_i1);
+  }
+#endif
+
   s_chat_just_opened  = false;
-  s_chat_jump_msg_idx = -1;   // one-shot: consume the jump target so later refreshes go to the bottom
-  if (p.jump_btn) {
-    if (lv_obj_get_scroll_bottom(p.msgs) > 30) lv_obj_clear_flag(p.jump_btn, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(p.jump_btn, LV_OBJ_FLAG_HIDDEN);
-  }
+  s_chat_jump_msg_idx = -1;
+  chatUpdateJumpButtons(&p);
 }
+
+static uint8_t s_chat_detail_async_mask = 0;
+
+static void refreshChatDetailAsyncCb(void*) {
+  const uint8_t m = s_chat_detail_async_mask;
+  s_chat_detail_async_mask = 0;
+  if ((m & 1) && g_lv.dm.detail_open) refreshChatDetail(g_lv.dm);
+  if ((m & 2) && g_lv.ch.detail_open) refreshChatDetail(g_lv.ch);
+}
+
+static void refreshChatDetailAsync(LvChatPanel& p) {
+  if (&p == &g_lv.dm)      s_chat_detail_async_mask |= 1;
+  else if (&p == &g_lv.ch) s_chat_detail_async_mask |= 2;
+  else return;
+  lv_async_call(refreshChatDetailAsyncCb, nullptr);
+}
+
+// Format hour:minute honoring the 12/24-hour clock preference. 12h drops the
+// leading zero and appends AM/PM ("2:05 PM"); 24h is plain "%H:%M". Needs a
+// buffer of at least 9 bytes for the 12h form.
 
 // Format hour:minute honoring the 12/24-hour clock preference. 12h drops the
 // leading zero and appends AM/PM ("2:05 PM"); 24h is plain "%H:%M". Needs a
@@ -26371,7 +30114,7 @@ static void refreshChatList(LvChatPanel& p) {
     if (g_lv.task->threadHasMention(idxs[i])) {
       lv_obj_t* at = lv_label_create(btn);
       lv_obj_add_flag(at, LV_OBJ_FLAG_IGNORE_LAYOUT);
-      lv_label_set_text(at, TR("@"));
+      lv_label_set_text(at, "@");
       lv_obj_set_style_text_font(at, &g_font_14, LV_PART_MAIN);
       lv_obj_set_style_text_color(at, lv_color_hex(COLOR_MENTION), LV_PART_MAIN);
       lv_obj_align(at, LV_ALIGN_RIGHT_MID, (lv_coord_t)(unread > 0 ? r_edge - 38 : r_edge), 0);
@@ -26500,7 +30243,7 @@ static void refreshChatList(LvChatPanel& p) {
     if (g_lv.task->getThreadLastMessage(idxs[i], psender, sizeof psender, ptext, sizeof ptext, &pout)) {
       char raw[112];
       if (ch && psender[0] && !pout) snprintf(raw, sizeof raw, "%s: %s", psender, ptext);
-      else if (pout)                 snprintf(raw, sizeof raw, "%s: %s", TR("You"), ptext);
+      else if (pout)                 snprintf(raw, sizeof raw, "%s: %s", "You", ptext);
       else                           snprintf(raw, sizeof raw, "%s", ptext);
       // Previews render in a plain 12 px label: strip newlines, replace unbaked
       // glyphs, and let LONG_DOT ellipsize the rest.
@@ -26536,7 +30279,7 @@ static void refreshChatList(LvChatPanel& p) {
     if (g_lv.task->threadHasMention(idxs[i])) {
       lv_obj_t* at = lv_label_create(btn);
       lv_obj_add_flag(at, LV_OBJ_FLAG_IGNORE_LAYOUT);
-      lv_label_set_text(at, TR("@"));
+      lv_label_set_text(at, "@");
       lv_obj_set_style_text_font(at, &g_font_14, LV_PART_MAIN);
       lv_obj_set_style_text_color(at, lv_color_hex(COLOR_MENTION), LV_PART_MAIN);
       lv_obj_align(at, LV_ALIGN_BOTTOM_RIGHT, (lv_coord_t)(time_x - (unread > 0 ? 34 : 0)), -6);
@@ -27744,7 +31487,7 @@ static bool anyPopupOpen() { return popupRegistryAny(); }
 static bool hwKeyDismissTopPopup() { return popupRegistryDismissTop(); }
 #endif  // HAS_TDECK_KEYBOARD || HAS_TANMATSU (hwKeyDismissTopPopup)
 
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD) || defined(HAS_M9_KEYBOARD)
 // Keys that act as "close the popup" when no text field is focused.
 static bool isDismissKey(int key) {
 #if defined(HAS_TDECK_KEYBOARD)
@@ -27781,7 +31524,7 @@ static int tabForKey(int key) {
   (void)key;
   return -1;
 }
-#endif  // HAS_TDECK_KEYBOARD || HAS_PAGER_KEYBOARD (keyboard helpers; the lock screen below is top-level)
+#endif  // HAS_TDECK_KEYBOARD || HAS_PAGER_KEYBOARD || HAS_M9_KEYBOARD (keyboard helpers; the lock screen below is top-level)
 
 #if CAP_LOCK_SCREEN
 // ---- Lock screen -------------------------------------------------------------
@@ -27796,6 +31539,9 @@ static lv_obj_t*    s_lock_clock     = nullptr;
 static uint8_t*     s_lock_wall      = nullptr;   // decoded RGB565 (lvglPsramAlloc)
 static lv_img_dsc_t s_lock_wall_dsc;
 static int          s_lock_clock_min = -1;        // last minute drawn (redraw guard)
+static lv_obj_t*    s_lock_unread    = nullptr;   // envelope + unread count under the clock (issue #93)
+static int          s_lock_unread_n  = -1;        // last count drawn (redraw guard)
+static unsigned long s_lock_unread_ms = 0;        // 1 Hz poll limiter
 
 // How long the trackball must be held to unlock, in ms.
 static const unsigned long kLockUnlockHoldMs = 1000;
@@ -27859,7 +31605,23 @@ static void lockscreenUpdateClock() {
   const int dx = (mm % 5) * 3 - 6;         // -6 … +6 px
   const int dy = ((mm / 5) % 3) * 4 - 4;   // -4 … +4 px
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, dx, 30 + dy);
+  // The unread badge rides along with the same drift so it never parks either.
+  if (s_lock_unread) lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, dx, 68 + dy);
   s_lock_clock_min = mm;
+}
+
+// Envelope + unread total under the clock (issue #93) — glanceable without
+// unlocking. Hidden entirely at zero so the lock screen stays calm.
+static void lockscreenUpdateUnread() {
+  if (!s_lock_unread || !g_lv.task) return;
+  const int n = g_lv.task->getUnreadTotal();
+  if (n == s_lock_unread_n) return;
+  s_lock_unread_n = n;
+  if (n <= 0) { lv_obj_add_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN); return; }
+  char b[24];
+  snprintf(b, sizeof b, LV_SYMBOL_ENVELOPE "  %d", n);
+  lv_label_set_text(s_lock_unread, b);
+  lv_obj_clear_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void lockscreenUnlockPopupHide() {
@@ -27964,12 +31726,20 @@ static void lockscreenShow() {
   const lv_color_t col = lv_color_hex(touchPrefsGetLockTextColor());
 
   s_lock_clock = lv_label_create(s_lock_root);
-  lv_label_set_text(s_lock_clock, TR("--:--"));
+  lv_label_set_text(s_lock_clock, "--:--");
   lv_obj_set_style_text_font(s_lock_clock, &lv_font_montserrat_28, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_lock_clock, col, LV_PART_MAIN);
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, 0, 30);   // below the 22 px status bar
   s_lock_clock_min = -1;
+
+  s_lock_unread = lv_label_create(s_lock_root);
+  lv_obj_set_style_text_font(s_lock_unread, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_lock_unread, col, LV_PART_MAIN);
+  lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, 0, 68);
+  lv_obj_add_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN);
+  s_lock_unread_n = -1;
   lockscreenUpdateClock();
+  lockscreenUpdateUnread();
 
   lv_obj_t* st = lv_label_create(s_lock_root);
   lv_label_set_text(st, TR("Screen locked"));
@@ -27986,6 +31756,8 @@ static void lockscreenShow() {
   // uses the plain off+wake path with no overlay, per updatePagerSpaceHold()/
   // updatePagerBackspaceUnlockHold(). Kept correct in case that changes.
   lv_label_set_text(hint, TR("hold Backspace to unlock"));
+#elif defined(HAS_THINKNODE_M9)
+  lv_label_set_text(hint, TR("hold the d-pad to unlock"));
 #else
   lv_label_set_text(hint, TR("hold the trackball to unlock"));
 #endif
@@ -27997,9 +31769,10 @@ static void lockscreenShow() {
 
 static void lockscreenHide() {
   lockscreenUnlockPopupHide();
-  if (s_lock_root) { lv_obj_del(s_lock_root); s_lock_root = nullptr; s_lock_clock = nullptr; }
+  if (s_lock_root) { lv_obj_del(s_lock_root); s_lock_root = nullptr; s_lock_clock = nullptr; s_lock_unread = nullptr; }
   if (s_lock_wall) { lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
   s_lock_clock_min = -1;
+  s_lock_unread_n  = -1;
   // Restore the status bar's normal opaque background + accent border.
   if (g_statusbar.root) {
     lv_obj_set_style_bg_opa(g_statusbar.root, LV_OPA_COVER, LV_PART_MAIN);
@@ -28007,7 +31780,8 @@ static void lockscreenHide() {
   }
 }
 
-// Refresh the clock when the minute rolls over (called each loop tick).
+// Refresh the clock when the minute rolls over (called each loop tick), and
+// the unread badge at 1 Hz so a message arriving while locked shows up.
 static void serviceLockscreen() {
   if (!s_lock_root || !s_lock_clock) return;
   mesh::RTCClock* rtc = the_mesh.getRTCClock();
@@ -28015,6 +31789,8 @@ static void serviceLockscreen() {
   int mm = 0;
   if (t > 0) { time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v); mm = v.tm_min; }
   if (mm != s_lock_clock_min) lockscreenUpdateClock();
+  unsigned long now = millis();
+  if (now - s_lock_unread_ms >= 1000) { s_lock_unread_ms = now; lockscreenUpdateUnread(); }
 }
 #endif  // core lock screen (HAS_TDECK_GT911 || HAS_TANMATSU)
 
@@ -28093,9 +31869,8 @@ static void openSoundPickerCb(lv_event_t* e) {
 }
 #endif  // CAP_SOUND_FILES
 
-#if defined(HAS_TDECK_KEYBOARD)   // re-enter the keyboard block the lock screen was carved out of
-#if defined(HAS_TDECK_GT911)   // wallpaper picker is SD/SPIFFS-backed -> T-Deck only
 // ---- Lock-screen wallpaper picker (lists JPEGs in internal /lock/ + SD) ----
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // wallpaper picker — SD/SPIFFS-backed, board-agnostic
 static lv_obj_t* s_lockwall_picker = nullptr;
 static char s_lockwall_paths[24][TOUCH_LOCK_WALLPAPER_MAXLEN];
 static int  s_lockwall_count = 0;
@@ -28257,11 +32032,7 @@ static void lockColorChosenCb(lv_event_t* e) {
   touchPrefsSetLockTextColor(rgb);
   if (g_lv.task) g_lv.task->showAlert(TR("Lock text colour set"), 1000);
 }
-#endif  // HAS_TDECK_GT911
-// The settings-backup import picker below must link on BOTH touch boards (its
-// Import button is not keyboard-gated), so briefly close the enclosing
-// HAS_TDECK_KEYBOARD region here and reopen it right after openBackupPicker().
-#endif  // HAS_TDECK_KEYBOARD — paused for the board-agnostic backup picker
+#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (wallpaper picker + lock text colour)
 
 // ---- Settings backup: import file picker ------------------------------------
 // Mirrors the lock-wallpaper picker UX: a full-screen list of *.json files on
@@ -28439,7 +32210,7 @@ static void backupChosenCb(lv_event_t* e) {
   strncpy(s_backup_chosen, stored, sizeof(s_backup_chosen) - 1);
   s_backup_chosen[sizeof(s_backup_chosen) - 1] = '\0';
   backupPickerClose();
-  showConfirm("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.",
+  showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."),
               "Import", doBackupImportChosen);
 }
 static void openBackupPicker() {
@@ -28580,7 +32351,7 @@ static void backupDeleteCb(lv_event_t* e) {
   if (!path) return;
   strncpy(s_backup_del_path, path, sizeof s_backup_del_path - 1);
   s_backup_del_path[sizeof s_backup_del_path - 1] = '\0';
-  showConfirm("Delete this backup file?\nThis cannot be undone.", "Delete", doDeleteBackup);
+  showConfirm(TR("Delete this backup file?\nThis cannot be undone."), "Delete", doDeleteBackup);
 }
 
 #if CAP_SD
@@ -28648,7 +32419,7 @@ static void doFactoryReset() {
 }
 static void backupFactoryResetCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  showConfirm("Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.",
+  showConfirm(TR("Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone."),
               "Erase all", doFactoryReset);
 }
 
@@ -28704,12 +32475,12 @@ static void buildBackupsSettings() {
   }
 #endif
 
-  y += settingsRowLabel(body, y, 0, "Saved backups", COLOR_SUB, &g_font_12, 0) + 4;
+  y += settingsRowLabel(body, y, 0, TR("Saved backups"), COLOR_SUB, &g_font_12, 0) + 4;
 
   backupScan();
   if (s_backup_count == 0) {
     y += settingsRowLabel(body, y, 0,
-            "No backups yet. Tap Export new backup above to create one.",
+            TR("No backups yet. Tap Export new backup above to create one."),
             COLOR_SUB, &g_font_12, 0) + 6;
   }
   for (int i = 0; i < s_backup_count; ++i) {
@@ -28744,7 +32515,7 @@ static void buildBackupsSettings() {
   }
 
   y += SC(12);
-  y += settingsRowLabel(body, y, 0, "Danger zone", COLOR_SUB, &g_font_12, 0) + 2;
+  y += settingsRowLabel(body, y, 0, TR("Danger zone"), COLOR_SUB, &g_font_12, 0) + 2;
   lv_obj_t* fr = lv_btn_create(body);
   lv_obj_set_size(fr, cw, SC(40));
   lv_obj_set_pos(fr, 0, y);
@@ -28761,7 +32532,7 @@ static void buildBackupsSettings() {
   y += SC(46);
 
   y += settingsRowLabel(body, y, 0,
-          "Erases identity, contacts, channels, messages, Wi-Fi and all settings, then reboots.",
+          TR("Erases identity, contacts, channels, messages, Wi-Fi and all settings, then reboots."),
           COLOR_SUB, &g_font_12, 0) + 4;
 }
 
@@ -28773,9 +32544,9 @@ static void buildBackupsSettings() {
 // every genuinely T-Deck-specific bit inside this range (the spacebar-lock
 // countdown, HAS_TDECK_GT911 touch bits) is already independently re-gated
 // on its own narrower macro, so it stays excluded for the pager regardless.
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD) || defined(HAS_M9_KEYBOARD)
 
-#if defined(HAS_TDECK_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
 // ---- Spacebar lock countdown -------------------------------------------------
 // The spacebar locks the screen, but to avoid accidental locks it first runs a
 // 1 s "Locking…" countdown (tap anywhere, or press any other key, to cancel).
@@ -28823,7 +32594,7 @@ static void startLockingCountdown() {
   lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 8);
 
   s_locking_count = lv_label_create(card);
-  lv_label_set_text(s_locking_count, TR("1"));
+  lv_label_set_text(s_locking_count, "1");
   lv_obj_set_style_text_color(s_locking_count, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_locking_count, &g_font_16, LV_PART_MAIN);
   lv_obj_align(s_locking_count, LV_ALIGN_CENTER, 0, 6);
@@ -28850,14 +32621,115 @@ static void serviceLockingCountdown(unsigned long now) {
 }
 #endif
 
+#if defined(HAS_M9_KEYBOARD)
+// ThinkNode M9 has no touchscreen and no navPump() (that's Tanmatsu-only) — the
+// d-pad through handleHwKey() is its ONLY input, including during first-boot
+// setup. T-Deck's handleHwKey() assumes touch drives the wizard and swallows
+// every non-editing key while s_setup_root is up (see the check just below
+// this function); M9 can't inherit that assumption, so its nav keys are
+// handled HERE, in their own function, called before that swallow — not
+// wedged into T-Deck's CAP_TRACKBALL chain as an #elif. Returns true if the
+// key was consumed.
+static bool m9HandleNavKey(int key) {
+  if (!s_kbd_nav) return false;
+  switch (key) {
+    case M9_KEY_ENTER:
+      if (navOnTabBar()) {
+        navSwitchTab(+1);
+      } else {
+        navMarkEntered(lv_group_get_focused(s_nav_group));
+        navPushTap(LV_KEY_ENTER);
+      }
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_ENTER_LONG: {
+      lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+      if (foc && lv_obj_is_valid(foc)) lv_event_send(foc, LV_EVENT_LONG_PRESSED, nullptr);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    }
+    case M9_KEY_HOME:
+      if (s_setup_root) return true;
+      if (getActiveTab() == HOME_TAB_INDEX) {
+        const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything
+        for (int i = 0; i < 8 && anyPopupOpen(); i++) hwKeyDismissTopPopup();   // still closes anything else on top (registry untouched, Back/etc. keep working)
+        setHomeDrawer(!was_open);                            // decide from the snapshot, not the now-mutated flag
+      } else {
+        navGoToMainTab(HOME_TAB_INDEX);
+      }
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_LEFT_MESSAGE:
+      if (s_setup_root) return true;
+      navGoToMainTab(CHAT_INBOX_TAB_INDEX);
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_SUB_MESSAGE:
+      if (s_setup_root) return true;
+      openMentionsScreen();
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_MAP:
+      if (s_setup_root) return true;
+      navGoToMainTab(MAP_TAB_INDEX);
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_SUB_MAP:
+      if (s_setup_root) return true;
+      openAdvertPage();
+      if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    default: return false;
+  }
+}
+#endif
+
+#if defined(HAS_M9_KEYBOARD)
+static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
+  if (!s_kbd_nav) return false;
+  switch (key) {
+    case M9_KEY_UP:
+      navMoveDir(NAV_UP);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    case M9_KEY_DOWN:
+      navMoveDir(NAV_DOWN);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    case M9_KEY_LEFT:
+      if (ta)                 lv_textarea_cursor_left(ta);
+      else if (navOnTabBar()) navSwitchTab(-1);
+      else                    navMoveDir(NAV_LEFT);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    case M9_KEY_RIGHT:
+      if (ta)                 lv_textarea_cursor_right(ta);
+      else if (navOnTabBar()) navSwitchTab(+1);
+      else                    navMoveDir(NAV_RIGHT);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    default: return false;
+  }
+}
+#endif
+
 // Route a physical-keyboard character into the textarea currently being edited
 // — the on-screen keyboard's target, which is the chat composer directly or the
 // settings mirror textarea. No field open -> the key is ignored.
 static void handleHwKey(int key) {
   if (!g_lv.keyboard) return;
-  // Hard-locked: any key just reveals the lock screen (lights the panel). It
-  // never types or switches tabs — only a trackball *hold* unlocks.
-  if (g_lv.task && g_lv.task->isManualLock()) { g_lv.task->lockscreenReveal(); return; }
+if (g_lv.task && g_lv.task->isManualLock()) {
+#if defined(HAS_M9_KEYBOARD)
+    // M9 has no trackball to hold — the keyboard controller's own long-press
+    // detection (M9_KEY_ENTER_LONG, a distinct byte from a normal Enter tap)
+    // stands in for "hold to unlock." No progressive countdown UI is possible
+    // this way (we only get a single discrete "that was a long press" event,
+    // not continuous press-state to poll), but it's a working equivalent.
+    if (key == M9_KEY_ENTER_LONG) { g_lv.task->unlockScreen(); return; }
+#endif
+    g_lv.task->lockscreenReveal();
+    return;
+  }
+#if defined(HAS_M9_KEYBOARD)
+  // M9 has no touch to wake the screen the way T-Deck/Heltec V4 do — mirror Tanmatsu's
+  // navPump() pattern: any key wakes it (noteUserInput() wakes internally when the screen
+  // is off), then THIS keypress is swallowed rather than also acted on, so waking doesn't
+  // also navigate or type.
+  if (g_lv.task && g_lv.task->isScreenOff()) { g_lv.task->noteUserInput(); return; }
+#else
   // Idle-dimmed (not hard-locked): ignore keys; a touch/click wakes into the UI.
   if (g_lv.task && g_lv.task->isScreenOff()) return;
 #if defined(TLORA_PAGER)
@@ -28872,22 +32744,30 @@ static void handleHwKey(int key) {
   if (g_lv.task) g_lv.task->noteUserInput();
   noteKbActivity();   // any key counts as activity for the keyboard-backlight auto mode too
 #endif
+#endif  // HAS_M9_KEYBOARD (wake-from-idle if/else)
+#if defined(HAS_TDECK_KEYBOARD) && defined(TDECK_KEYCODE_PROBE)
+  // TEMP bring-up probe: toast the raw byte of every key so we can see what the
+  // physical alt / mic / sym keys emit. Remove once the alt-accent key is wired.
+  { char _pb[28]; snprintf(_pb, sizeof _pb, "key 0x%02X '%c'", key & 0xFF,
+      (key >= 32 && key < 127) ? (char)key : '.'); if (g_lv.task) g_lv.task->showAlert(_pb, 1400); }
+#endif
 #if CAP_TRACKBALL
   // Remapping a tab hotkey (Settings → Keyboard): capture the next key press.
   if (s_navkey_capture >= 0) { navKeyCaptureApply(key); return; }
 #endif
-#if defined(HAS_TDECK_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   // Any key other than the lock key (space) aborts a pending lock countdown.
   if (s_locking_deadline && key != ' ') cancelLockingCountdown();
 #endif
   // The on-screen keyboard is never shown on the T-Deck, but a textarea is still
   // bound to it on focus — that binding is our target.
   lv_obj_t* ta_focused = lv_keyboard_get_textarea(g_lv.keyboard);
-#if CAP_TRACKBALL
+#if CAP_KEYPAD_NAV && !defined(TLORA_PAGER)
   // Edit mode (keyboard-nav ON only): a focused field becomes the typing target after
-  // select/Enter (below) — until then `ta` is null so the letter-nav keys navigate. With
+  // select/Enter (below) — until then `ta` is null so the nav keys navigate. With
   // keyboard-nav OFF there is no navigation to protect (and no nav group to set the edit
   // flag), so a focused field always types directly — otherwise typing breaks entirely.
+  // (Excludes the pager: it has no s_kbd_nav concept — see its own arm below.)
   lv_obj_t* ta = (ta_focused && (!s_kbd_nav || s_nav_ta_editing)) ? ta_focused : nullptr;
 #elif defined(TLORA_PAGER)
   // showKb() binds the composer to g_lv.keyboard as soon as a chat panel
@@ -28904,6 +32784,9 @@ static void handleHwKey(int key) {
   lv_obj_t* ta = (ta_focused && s_nav_group && lv_group_get_focused(s_nav_group) == ta_focused) ? ta_focused : nullptr;
 #else
   lv_obj_t* ta = ta_focused;
+#endif
+#if defined(HAS_M9_KEYBOARD)
+  if (m9HandleArrowKey(key, ta)) return;    // ← runs BEFORE the if(!ta) split
 #endif
   if (!ta) {
 #if defined(TLORA_PAGER)
@@ -28975,19 +32858,22 @@ static void handleHwKey(int key) {
       return;
     }
 #endif
-#if CAP_TRACKBALL
+#if CAP_TRACKBALL || defined(HAS_THINKNODE_M9)
     // A field is focused but we're in navigate mode: select/Enter starts editing it, so the
     // letter-nav keys keep navigating until you explicitly enter the field (matches navPump).
-    if (ta_focused && s_kbd_nav && (key == '\r' || key == '\n' || navDirForKey(key) == 4)) {
+    // navFocusedTextarea() (nav-group focus), not the local ta_focused (kbd-bound field): the
+    // two can differ, and M9 needs the nav-group's own view of what's focused here.
+    if (navFocusedTextarea() && s_kbd_nav && (key == '\r' || key == '\n' || navDirForKey(key) == 4)) {
       s_nav_ta_editing = true;
       if (g_lv.task) g_lv.task->noteUserInput();
       return;
     }
 #endif
-    // First-boot setup owns the screen: with no field focused, swallow the key
-    // so it can't switch the (hidden) tabs behind the wizard or arm the lock.
+#if defined(HAS_M9_KEYBOARD)
+    if (m9HandleNavKey(key)) return;        // ← runs INSIDE the if(!ta) block only
+#endif
     if (s_setup_root) return;
-#if defined(HAS_TDECK_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
     // Spacebar (while NOT editing a text field) locks the screen: backlight off
     // + manual lock, so touch and trackball-scroll are ignored — only a
     // trackball CLICK unlocks it. The T-Deck's only side button is a hardware
@@ -29091,6 +32977,22 @@ static void handleHwKey(int key) {
     return;
   }
 #endif
+#if defined(HAS_M9_KEYBOARD)
+  // M9 has a dedicated hardware Back key — unlike the CAP_TRACKBALL board's backspace-on-
+  // empty-field escape below, this doesn't require emptying the field first: Back always
+  // drops out of edit mode back to navigate mode, the same job HW_BACK does everywhere else
+  // on this board (m9HandleNavKey). Without this, M9's d-pad bytes (0xB4-0xB7, 0x86) don't
+  // match backspace/space/Enter/printable-ASCII below and are silently swallowed — there was
+  // no way out of edit mode at all except an empty-field backspace, which M9 doesn't get
+  // (that escape is CAP_TRACKBALL-gated).
+  if (key == M9_KEY_HW_BACK) {
+    s_nav_ta_editing = false;
+    s_nav_show = true;
+    accentBoxHide();
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+#endif
   if (key == 0x08 || key == 0x7F) {            // backspace / delete
     uint32_t bs_s, bs_e;
     if (taHasSelection(ta, &bs_s, &bs_e)) {    // highlighted text -> delete the whole selection
@@ -29168,7 +33070,7 @@ static void handleHwKey(int key) {
           for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
           if (g_lv.task->composerSend()) {
             lv_textarea_set_text(p->composer_ta, "");
-            refreshChatDetail(*p);
+            refreshChatDetailAsync(*p);
             g_lv.dirty_threads = true;
           }
           lv_keyboard_set_textarea(g_lv.keyboard, p->composer_ta);  // re-bind
@@ -29178,6 +33080,24 @@ static void handleHwKey(int key) {
 #endif
       }
     } else {
+#if CAP_KEYPAD_NAV && !defined(TLORA_PAGER)
+      // Keyboard/d-pad nav: Enter in a generic field ADVANCES rather than submits — with
+      // multiple fields on one page (e.g. the wizard's Wi-Fi step: SSID + password) there's
+      // no single "the field" to submit from, so Enter walks the focus group forward one
+      // step (next field, or the Next/Finish button once fields run out), exactly like
+      // Tanmatsu's navPump() already does elsewhere in this file
+      // (`navFifoPush(ta ? LV_KEY_NEXT : LV_KEY_ENTER, down)`). Landing on that button with
+      // s_nav_ta_editing now false means the NEXT Enter goes through the normal focused-
+      // button click path instead of back into this typing branch — that's what submits.
+      if (s_kbd_nav) {
+        hideKb();               // still confirm: sync the mirror into the real field
+        s_nav_ta_editing = false;
+        s_nav_show = true;
+        navPushTap(LV_KEY_NEXT);
+        if (g_lv.task) g_lv.task->noteUserInput();
+        return;
+      }
+#endif
       hideKb();   // settings/other field: confirm (syncs into the real field) + unfocus
     }
   } else if (key >= 0x20 && key < 0x7F) {      // printable ASCII
@@ -29393,7 +33313,7 @@ static void refreshSettingsSectionSubtitles() {
                           static_cast<double>(prefs->freq), static_cast<unsigned>(prefs->sf),
                           static_cast<int>(prefs->tx_power_dbm));
   } else if (g_set_sec_sub[SEC_RADIO]) {
-    lv_label_set_text(g_set_sec_sub[SEC_RADIO], TR("—"));
+    lv_label_set_text(g_set_sec_sub[SEC_RADIO], "—");
   }
 
   if (g_set_sec_sub[SEC_AUTOADD] && prefs) {
@@ -29406,7 +33326,7 @@ static void refreshSettingsSectionSubtitles() {
                           bits, static_cast<unsigned>(prefs->autoadd_max_hops),
                           prefs->manual_add_contacts ? "on" : "off");
   } else if (g_set_sec_sub[SEC_AUTOADD]) {
-    lv_label_set_text(g_set_sec_sub[SEC_AUTOADD], TR("—"));
+    lv_label_set_text(g_set_sec_sub[SEC_AUTOADD], "—");
   }
 
   if (g_set_sec_sub[SEC_BLUETOOTH]) {
@@ -29434,10 +33354,10 @@ static void refreshSettingsSectionSubtitles() {
       lv_label_set_text(g_set_sec_sub[SEC_WIFI], TR("Radio off"));
     } else if (WiFi.status() == WL_CONNECTED) {
       IPAddress ip = WiFi.localIP();
-      lv_label_set_text_fmt(g_set_sec_sub[SEC_WIFI], TR("%s · %d.%d.%d.%d"),
+      lv_label_set_text_fmt(g_set_sec_sub[SEC_WIFI], "%s · %d.%d.%d.%d",
                             ssid[0] ? ssid : "(none)", ip[0], ip[1], ip[2], ip[3]);
     } else {
-      lv_label_set_text_fmt(g_set_sec_sub[SEC_WIFI], TR("%s · %s"),
+      lv_label_set_text_fmt(g_set_sec_sub[SEC_WIFI], "%s · %s",
                             ssid[0] ? ssid : "(none)",
                             wifiStaStatusBrief(static_cast<int>(WiFi.status())));
     }
@@ -29512,7 +33432,7 @@ static void refreshSettingsSectionSubtitles() {
                           onOff(prefs->multi_acks != 0), onOff(prefs->client_repeat != 0),
                           onOff(prefs->rx_boosted_gain != 0));
   } else if (g_set_sec_sub[SEC_EXPERIMENTAL]) {
-    lv_label_set_text(g_set_sec_sub[SEC_EXPERIMENTAL], TR("—"));
+    lv_label_set_text(g_set_sec_sub[SEC_EXPERIMENTAL], "—");
   }
 
   if (g_set_sec_sub[SEC_LOG]) {
@@ -29689,6 +33609,7 @@ static void powerOffCb(lv_event_t* e) {
   if (g_lv.task) {
     g_lv.task->persistHistoryNow();        // flush chat before we go down
     discoveredFlushNow();                  // and the Discovered ring
+    the_mesh.flushContactsIfDirty();       // and any coalesced contacts refresh
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 click trackball to wake"), 1500);
   }
   // Let the toast paint, then enter deep sleep.
@@ -29763,6 +33684,10 @@ static void openPowerMenu() {
 #if CAP_LARGE_SCREEN
   const int card_w = (sw - 80 > 420) ? 420 : (sw - 80);
   const int p_bh = 52, p_y0 = 46, p_step = 60, card_h = p_y0 + 4 * p_step + 8;   // bigger on the 800×480 panel
+#elif defined(HAS_RAK_TAP_V2)
+  // ROM force-download leaves a COM that esptool cannot open on HW CDC — hide the entry.
+  const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
+  const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
 #else
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
   const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = 206;
@@ -29802,8 +33727,12 @@ static void openPowerMenu() {
   };
   mk(LV_SYMBOL_POWER "  Power off",        powerOffCb,      0xC44B55, p_y0);
   mk(LV_SYMBOL_REFRESH "  Reboot",         powerRebootCb,   0,        p_y0 + p_step);
+#if !defined(HAS_RAK_TAP_V2)
   mk(LV_SYMBOL_DOWNLOAD "  Download mode", powerDownloadCb, 0,        p_y0 + 2 * p_step);
   mk("Cancel",                             powerCancelCb,   0,        p_y0 + 3 * p_step);
+#else
+  mk("Cancel",                             powerCancelCb,   0,        p_y0 + 2 * p_step);
+#endif
 }
 
 static void ccPowerCb(lv_event_t* e) {
@@ -29965,6 +33894,25 @@ static void tanBeep() {
   size_t wr = 0;
   i2s_channel_write(h, buf, (size_t)n * 2 * sizeof(int16_t), &wr, 200 / portTICK_PERIOD_MS);
 }
+#elif defined(HAS_THINKNODE_M9)
+// M9: BL_EN (GPIO17) is a PNP transistor gate. LEDC PWM confirmed working on hardware
+// (Specter bring-up), but the duty is INVERTED — lower duty on the base = MORE conduction
+// = brighter. 5kHz confirmed clean; the transistor couldn't keep up at very low frequencies.
+#define HAS_CC_BRIGHTNESS 1
+static uint8_t s_brightness_pct = 100;
+static bool    s_bl_pwm_ready   = false;
+constexpr int  kM9BlPwmChannel  = 7;   // separate channel from the generic LEDA_CTL block above
+static void applyBrightness(uint8_t pct) {
+  if (pct < 5)   pct = 5;
+  if (pct > 100) pct = 100;
+  s_brightness_pct = pct;
+  if (!s_bl_pwm_ready) {
+    ledcSetup(kM9BlPwmChannel, 5000, 8);            // 5kHz, 8-bit — confirmed clean on the PNP
+    ledcAttachPin(PIN_TFT_BL_EN, kM9BlPwmChannel);  // takes the pin over from board.backlight's digitalWrite
+    s_bl_pwm_ready = true;
+  }
+  ledcWrite(kM9BlPwmChannel, (uint32_t)(100 - pct) * 255u / 100u);   // inverted duty
+}
 #endif
 
 #if defined(HAS_CC_BRIGHTNESS)
@@ -30021,7 +33969,7 @@ static void openControlCenter() {
   lv_obj_remove_style_all(card);
 #if defined(HAS_TANMATSU)
   lv_obj_set_size(card, card_w, 384);   // bigger: header + 3 roomier sliders + toggle grid + sysinfo
-#elif defined(HAS_TDECK_GT911)
+#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   lv_obj_set_size(card, card_w, 200);   // sysinfo + thin brightness slider + 2-row toggle grid (fits 240−22 screen)
 #elif defined(TLORA_PAGER)
   // 222-px-tall screen: the shared V4/T-Deck-landscape 212px card below is
@@ -30230,7 +34178,7 @@ static void openControlCenter() {
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_row(row, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_column(row, 10, LV_PART_MAIN);
-#elif defined(HAS_TDECK_GT911)
+#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   // 2-row grid: 4 chips per row, so chip 5 (Lock) wraps onto a 2nd row. Sits
   // ABOVE the bottom system-info line (-16 offset leaves room for it).
   lv_obj_set_size(row, card_w - 20, 80);
@@ -30257,7 +34205,7 @@ static void openControlCenter() {
   tw = (card_w - 20 - 20) / 3;   // 3 chips per row (Wi-Fi/BT/GPS/Theme/Keys/Sound → 2×3 grid)
   if (tw > 175) tw = 175;
   th = 80;
-#elif defined(HAS_TDECK_GT911)
+#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   tw = 58; th = 36;
 #else
   // Count only the chips this board/session will actually add below, so the
@@ -30312,7 +34260,7 @@ static void openControlCenter() {
 enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
-  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE,
+  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
 };
 
 static void closeAppDrawer() {
@@ -30404,8 +34352,8 @@ static void openThreadDetailByIdx(int idx, bool channel) {
   p.detail_open = true;
   hideKb();
   if (p.overlay) { lv_obj_clear_flag(p.overlay, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(p.overlay); }
-  refreshChatDetail(p);   // AFTER un-hiding so bubbles measure correctly and the open-scroll reaches the newest message
-#if defined(HAS_TDECK_KEYBOARD)
+  refreshChatDetailAsync(p);   // AFTER un-hiding so bubbles measure correctly and the open-scroll reaches the newest message
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   showKb(&p);          // physical keyboard: auto-focus the composer so typing goes straight in
 #elif defined(HAS_TANMATSU)
   navMarkDirty();      // keypad nav: rebuild the focus group onto the chat overlay + focus the composer
@@ -30447,7 +34395,7 @@ static void openMentionsScreen() {
 
   // Header: "@ Mentions" + back-to-drawer button.
   lv_obj_t* title = lv_label_create(s_mentions_root);
-  lv_label_set_text(title, "@  Mentions");
+  lv_label_set_text(title, TR("@  Mentions"));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 9);
@@ -30557,6 +34505,13 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_SIGNAL:    openSignalInfoPopup(); return;   // signal/traffic + auto-discover settings
     case APPACT_MONITOR:   openMonitorPage();    return;   // RF activity graph + repeater-style radio stats
     case APPACT_SPECTRUM:  openSpectrumPage();   return;   // swept RF spectrum analyzer (borrows the radio)
+#if !defined(HAS_TANMATSU)
+    case APPACT_VNC:       openVncPage();        return;   // screen mirror + remote control from a browser
+    case APPACT_REMOTE:    openRemotePage();     return;   // reboot into the web-resolution headless UI
+#endif
+#if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
+    case APPACT_READER:    openReaderPage();     return;   // on-device text browser (no proxy)
+#endif
     case APPACT_ADVERT:    openAdvertModalCb(e);  return;
     case APPACT_POWER:     openPowerMenu();      return;
     case APPACT_SNAKE:     SnakeGame::launch();  return;
@@ -30655,6 +34610,43 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_set_style_bg_color(eye, lv_color_hex(0x0E1216), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(eye, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(eye, 1, LV_PART_MAIN);
+  } else if (act == APPACT_READER) {
+    // 🌐 globe: the ONLY colour-emoji tile, so it drops to a tofu box on the 2 MB V4
+    // (the imgfont fallback can't decode it under PSRAM pressure). Draw it from a
+    // circle + meridian/parallel lines instead — renders identically on every board,
+    // same approach as the Snake tile above.
+    lv_obj_t* box = lv_obj_create(chip_o);
+    lv_obj_remove_style_all(box);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(box, 22, 22);
+    lv_obj_center(box);
+    lv_obj_t* circ = lv_obj_create(box);        // outline sphere
+    lv_obj_remove_style_all(circ);
+    lv_obj_clear_flag(circ, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(circ, 22, 22);
+    lv_obj_set_pos(circ, 0, 0);
+    lv_obj_set_style_radius(circ, 11, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(circ, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_color(circ, lv_color_hex(icon_col), LV_PART_MAIN);
+    lv_obj_set_style_border_width(circ, 2, LV_PART_MAIN);
+    // meridians (longitude): straight centre + two curved sides; parallels (latitude):
+    // equator + one above + one below. Points are box-relative (0..22).
+    static const lv_point_t g_mc[] = {{11,0},{11,22}};
+    static const lv_point_t g_ml[] = {{11,1},{5,4},{2,11},{5,18},{11,21}};
+    static const lv_point_t g_mr[] = {{11,1},{17,4},{20,11},{17,18},{11,21}};
+    static const lv_point_t g_eq[] = {{0,11},{22,11}};
+    static const lv_point_t g_pt[] = {{4,6},{18,6}};
+    static const lv_point_t g_pb[] = {{4,16},{18,16}};
+    const struct { const lv_point_t* p; uint16_t n; } gl[] = {
+      {g_mc,2},{g_ml,5},{g_mr,5},{g_eq,2},{g_pt,2},{g_pb,2} };
+    for (auto& e : gl) {
+      lv_obj_t* l = lv_line_create(box);
+      lv_line_set_points(l, e.p, e.n);
+      lv_obj_set_pos(l, 0, 0);
+      lv_obj_set_style_line_color(l, lv_color_hex(icon_col), LV_PART_MAIN);
+      lv_obj_set_style_line_width(l, 1, LV_PART_MAIN);
+      lv_obj_set_style_line_rounded(l, true, LV_PART_MAIN);
+    }
   } else if (icon) {
     lv_obj_t* ic = lv_label_create(chip_o);
     lv_label_set_text(ic, icon);
@@ -30690,11 +34682,16 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   // Label UNDER the chip.
   lv_obj_t* lb = lv_label_create(t);
   lv_label_set_text(lb, TR(label));
-  lv_obj_set_width(lb, w);
-  lv_label_set_long_mode(lb, LV_LABEL_LONG_DOT);        // ellipsize if too wide
   lv_obj_set_style_text_align(lb, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_text_font(lb, big ? &g_font_14 : &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(lb, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  // A long app title (often longer once translated) shrinks to fit ONE line rather
+  // than wrapping to two: fit the font to the tile width, then pin the label to a
+  // single line height so LONG_DOT can only ellipsize on that one line, never wrap.
+  uiFitLabelWidth(lb, w - 2);
+  lv_obj_set_width(lb, w);
+  lv_label_set_long_mode(lb, LV_LABEL_LONG_DOT);
+  lv_obj_set_height(lb, lv_font_get_line_height(lv_obj_get_style_text_font(lb, LV_PART_MAIN)));
   lv_obj_align(lb, LV_ALIGN_BOTTOM_MID, 0, -2);
 
   // Notification badge: a small red count pill in the top-right corner.
@@ -30857,6 +34854,13 @@ static void openAppDrawer() {
     { LV_SYMBOL_GPS,       "Map",       APPACT_MAP,      0,         0x53C06B },      // location green
     { "@",                 "Mentions",  APPACT_MENTIONS, mentions,  0xF2A33C },      // mention amber
     { LV_SYMBOL_UPLOAD,    "Advertise", APPACT_ADVERT,   0,         0xE072B0 },      // broadcast magenta
+#if !defined(HAS_TANMATSU)
+    { LV_SYMBOL_IMAGE,     "VNC",       APPACT_VNC,      0,         0x6C7CF0 },      // browser screen-mirror indigo
+    { LV_SYMBOL_WIFI,      "Remote",    APPACT_REMOTE,   0,         0x15B6A6 },      // headless web-resolution UI (brand teal)
+#endif
+#if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
+    { "\xF0\x9F\x8C\x90",  "Web",       APPACT_READER,   0,         0x6FB7FF },      // on-device text browser (globe)
+#endif
     { nullptr,             "Signal",    APPACT_SIGNAL,   0,         COLOR_ACCENT },  // theme (drawn signal bars)
     { TOUCH_SYM_ANTENNA,   "Monitor",   APPACT_MONITOR,  0,         0x35C9C9 },      // RF monitor cyan
     { TOUCH_SYM_ANTENNA,   "Spectrum",  APPACT_SPECTRUM, 0,         0xE8A33D },      // RF spectrum analyzer amber
@@ -30977,6 +34981,15 @@ static void statusBarTapCb(lv_event_t* e) {
     return;
   }
   if (s_cc_root) closeControlCenter(); else openControlCenter();
+}
+
+// Reader/Web page back: fire on PRESSED (touch-DOWN), not CLICKED. The V4 cap-touch
+// swipe detector calls lv_indev_wait_release mid-tap and drops the bar's CLICKED (the
+// same reason the chat back uses PRESSED) — that's why the reader's "‹" tap "did
+// nothing". This closes the reader on touch-down whenever it's the open page.
+static void statusBarReaderBackCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_PRESSED) return;
+  if (s_reader_page_open && s_apppage_close) s_apppage_close();
 }
 
 // Capture the composited screen to a 16-bit BMP on the SD card. BMP (no
@@ -31117,6 +35130,19 @@ static void docCaptureTour() {
   navGoToMainTab(HOME_TAB_INDEX); docSettle(3);
   openMonitorPage();  docSettle(14); captureScreenToSerial("app_rfmonitor"); closeMonitorPage();  docSettle(6);
   openSpectrumPage(); docSettle(14); captureScreenToSerial("app_spectrum");  closeSpectrumPage(); docSettle(6);
+  openRemotePage();   docSettle(14); captureScreenToSerial("app_remote");    closeRemotePage();   docSettle(6);
+#if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
+  // On-device web browser (8 MB boards only) + the chat-link menu + the QR popup.
+  // The reader renders from the UI-update poll (which doesn't run while this tour
+  // blocks the loop), so drive the fetch-wait + render inline here.
+  openReaderPage(); readerStart("wadamesh.com");
+  { int _w = 0; while (s_reader_busy && _w < 700) { lv_timer_handler(); delay(22); ++_w; } esp_task_wdt_reset(); }
+  if (s_reader_ok) { readerRenderBody(); readerSetAddrExpanded(false); }
+  else             { readerShowMessage(s_reader_msg[0] ? s_reader_msg : "Couldn't load page", 0xE0A0A0); readerSetAddrExpanded(true); }
+  docSettle(8); captureScreenToSerial("app_web");       closeReaderPage(); docSettle(6);
+  openUrlMenu("https://wadamesh.com");            docSettle(10); captureScreenToSerial("app_web_links");  closeUrlMenu();    docSettle(6);
+  openUrlQrPopup("https://wadamesh.com");         docSettle(10); captureScreenToSerial("app_web_qr");     closeUrlQr();      docSettle(6);
+#endif
 
   Serial.print("\n<<<WMTOUR END>>>\n"); Serial.flush();
 }
@@ -31231,6 +35257,7 @@ static void buildGlobalStatusBar() {
   // keypad users open the control center via the dedicated key.)
   lv_obj_add_flag(g_statusbar.root, NAV_SKIP_FLAG);
   lv_obj_add_event_cb(g_statusbar.root, statusBarTapCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(g_statusbar.root, statusBarReaderBackCb, LV_EVENT_PRESSED, nullptr);  // reader "‹": PRESSED so cap-touch can't drop it
   // Hold the bar for 3 s to drop a screenshot to the SD card.
   lv_obj_add_event_cb(g_statusbar.root, statusBarHoldCb, LV_EVENT_PRESSED,    nullptr);
   lv_obj_add_event_cb(g_statusbar.root, statusBarHoldCb, LV_EVENT_PRESSING,   nullptr);
@@ -31373,7 +35400,7 @@ static void buildGlobalStatusBar() {
   lv_obj_align(g_statusbar.batt_icon, LV_ALIGN_RIGHT_MID, -2, 0);
 
   g_statusbar.batt_pct = lv_label_create(g_statusbar.root);
-  lv_label_set_text(g_statusbar.batt_pct, TR("?"));
+  lv_label_set_text(g_statusbar.batt_pct, "?");
   lv_obj_set_style_text_color(g_statusbar.batt_pct, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.batt_pct, &g_font_12, LV_PART_MAIN);
   lv_obj_align(g_statusbar.batt_pct, LV_ALIGN_RIGHT_MID, -SC(22), 0);
@@ -31396,7 +35423,7 @@ static void buildGlobalStatusBar() {
   lv_obj_add_flag(g_statusbar.batt_pct,  NAV_SKIP_FLAG);
 
   g_statusbar.clock = lv_label_create(g_statusbar.root);
-  lv_label_set_text(g_statusbar.clock, TR("--:--"));
+  lv_label_set_text(g_statusbar.clock, "--:--");
   lv_obj_set_style_text_color(g_statusbar.clock, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.clock, &g_font_12, LV_PART_MAIN);
 #if defined(HAS_TDECK_GT911)
@@ -31407,14 +35434,14 @@ static void buildGlobalStatusBar() {
 
   // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars).
   g_statusbar.conn_icon = lv_label_create(g_statusbar.root);
-  lv_label_set_text(g_statusbar.conn_icon, TR(""));
+  lv_label_set_text(g_statusbar.conn_icon, "");
   lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.conn_icon, &g_font_12, LV_PART_MAIN);
   lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID, -SC(73), 0);
 
   // Bluetooth glyph (left of the SD LED).
   g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
-  lv_label_set_text(g_statusbar.ble_icon, TR(""));
+  lv_label_set_text(g_statusbar.ble_icon, "");
   lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
 #if defined(HAS_TDECK_GT911)
@@ -31486,7 +35513,7 @@ static void buildGlobalStatusBar() {
 
   // Keyboard layout indicator — sits left of the clock (only shown while typing).
   g_statusbar.layout_label = lv_label_create(g_statusbar.root);
-  lv_label_set_text(g_statusbar.layout_label, TR(""));
+  lv_label_set_text(g_statusbar.layout_label, "");
   lv_obj_set_style_text_color(g_statusbar.layout_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.layout_label, &g_font_12, LV_PART_MAIN);
   lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -182, 0);   // follows the clock's shift
@@ -31527,11 +35554,18 @@ static void updateGlobalStatusBar() {
     // chevron + title) is covered by the page. Settings sheets sit on lv_scr_act so they
     // never need this.
     const bool want_fg = SnakeGame::isOpen() || (s_apppage_title != nullptr);
-    if (want_fg != s_bar_fg) {
-      s_bar_fg = want_fg;
-      if (want_fg) lv_obj_move_foreground(g_statusbar.root);
-      else         lv_obj_move_background(g_statusbar.root);
+    if (want_fg) {
+      // Keep the bar the TOPMOST lv_layer_top child so its back tap is always hittable —
+      // re-assert every tick (a page opened over a chat can otherwise let the chat's
+      // widgets sit above the bar's lower row). Only move when it isn't already on top,
+      // so this doesn't invalidate/redraw the bar each frame.
+      lv_obj_t* lt = lv_layer_top();
+      uint32_t n = lv_obj_get_child_cnt(lt);
+      if (n && lv_obj_get_child(lt, n - 1) != g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
+    } else if (s_bar_fg) {
+      lv_obj_move_background(g_statusbar.root);
     }
+    s_bar_fg = want_fg;
   }
 
   // ---- Modal scrim over the bar (edge-triggered) ----
@@ -31543,7 +35577,8 @@ static void updateGlobalStatusBar() {
   if (g_statusbar.dim) {
     static bool s_bar_dim = false;
     const bool want_dim = anyPopupOpen() && !s_cc_root && !s_settings_sheet &&
-                          !s_appdrawer_root && !chanScopeIsOpen() && !blockedModalIsOpen();
+                          !s_appdrawer_root && !chanScopeIsOpen() && !blockedModalIsOpen() &&
+                          !s_reader_page_open;   // the reader uses the bar for its ‹ back — don't dim/block it
     if (want_dim != s_bar_dim) {
       s_bar_dim = want_dim;
       if (want_dim) lv_obj_clear_flag(g_statusbar.dim, LV_OBJ_FLAG_HIDDEN);
@@ -31555,7 +35590,11 @@ static void updateGlobalStatusBar() {
   // The bar goes 2× tall for (a) settings detail pages, (b) the chat/channel OVERVIEW
   // (lower row = [+ ✓ QR] actions), and (c) an OPEN chat (lower row = thread name, cog
   // centred across both rows).
-  const bool chat_open      = (s_chat_title[0] != '\0');
+  // An open app/tool page (the reader, RF Monitor, …) takes over the bar even when a
+  // chat is still open underneath it, so suppress chat-mode chrome (the cog + back
+  // chevron + centred title) then — otherwise they sit over the page's "‹ title" and
+  // swallow its back tap.
+  const bool chat_open      = (s_chat_title[0] != '\0') && !s_apppage_title;
   const bool inbox_overview = (getActiveTab() == CHAT_INBOX_TAB_INDEX) && !chat_open && (s_settings_open_cat < 0) && !s_apppage_title;
   {
     const bool want_tall = (s_settings_open_cat >= 0) || s_apppage_title || inbox_overview || chat_open;
@@ -31567,7 +35606,7 @@ static void updateGlobalStatusBar() {
     // built state — opaque root + hidden fade — already matches the inactive case).
     // EXCEPT while the channel-settings / blocked-users sheets are open: those are a new
     // page over the chat, so the bar goes SOLID (no glass revealing the chat behind it).
-    const bool fade_active = want_tall && !chanScopeIsOpen() && !blockedModalIsOpen();
+    const bool fade_active = want_tall && !chanScopeIsOpen() && !blockedModalIsOpen() && !s_reader_page_open;
     static bool s_fade_active = false;
     if (fade_active != s_fade_active) {
       s_fade_active = fade_active;
@@ -31600,6 +35639,11 @@ static void updateGlobalStatusBar() {
         else if (chat_open)           t = -up;  // chat thread name: lower row
       } else if (chat_open && (c == g_statusbar.chan_gear || c == g_statusbar.chat_back)) {
         t = 0;                                  // chat back + cog: centred across both rows
+      } else if (c == g_statusbar.layout_label) {
+        // The layout indicator is align_to'd against the CLOCK's final (already
+        // translated) coords every tick — shifting it here too double-applied the
+        // top-row offset and clipped its top half out of the bar in a chat.
+        t = 0;
       }
       lv_obj_set_style_translate_y(c, t, LV_PART_MAIN);
     }
@@ -31607,7 +35651,7 @@ static void updateGlobalStatusBar() {
 
   // Settings gear sits just left of the thread name in ANY open chat (channel →
   // scope + blocked users; DM → blocked users).
-  const bool in_chan_chat = (s_chat_title[0] != '\0');
+  const bool in_chan_chat = chat_open;   // already excludes an open app/tool page (see above)
   // Back chevron + settings cog on the far left while in a chat; both centred in the
   // tall bar (see the shift loop above). The cog is clickable (channel settings); the
   // back chevron is just an affordance — the bar's tap closes the chat.
@@ -31662,6 +35706,19 @@ static void updateGlobalStatusBar() {
   const char* app_page_title = s_apppage_title ? s_apppage_title
                              : (s_settings_open_cat >= 0) ? TR(kSettingsCats[s_settings_open_cat].label)
                              : nullptr;
+  if (app_page_title && s_reader_bar_url) {
+    // Web app, reading: show the loaded URL small so a long address fits, on a solid
+    // bar. No recolor markup (a '#' fragment in the URL would corrupt the parser) and
+    // strip the scheme for width — "‹ example.com/page".
+    const char* disp = app_page_title;
+    if      (!strncmp(disp, "https://", 8)) disp += 8;
+    else if (!strncmp(disp, "http://",  7)) disp += 7;
+    lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_12, LV_PART_MAIN);
+    lv_label_set_recolor(g_statusbar.left_label, false);
+    char sbuf[96];
+    snprintf(sbuf, sizeof sbuf, "%s  %s", LV_SYMBOL_LEFT, disp);   // ‹ + address; tap the bar = back
+    lv_label_set_text(g_statusbar.left_label, sbuf);
+  } else
   if (app_page_title) {
     // A settings detail sheet OR a tool page is open: the bar carries its Back chevron +
     // page title, CENTRED in the tall bar and a size up (tapping the bar goes Back). The
@@ -31720,7 +35777,7 @@ static void updateGlobalStatusBar() {
     } else if (tab == HOME_TAB_INDEX && touchPrefsGetHideNodeName()) {
       // Display setting: hide the device name. Clear the left zone — the clock is
       // parked here instead (see the clock-placement block below).
-      lv_label_set_text(g_statusbar.left_label, TR(""));
+      lv_label_set_text(g_statusbar.left_label, "");
       s_left_home_name[0] = '\0';   // force marquee re-config if the name returns
       s_left_home_cfg = false;
     } else if (tab == HOME_TAB_INDEX) {
@@ -31762,7 +35819,7 @@ static void updateGlobalStatusBar() {
         // No unread → blank the left zone entirely. Operator complaint was
         // the envelope was always lit even with an empty inbox, which read
         // as "you have mail" 24/7.
-        lv_label_set_text(g_statusbar.left_label, TR(""));
+        lv_label_set_text(g_statusbar.left_label, "");
       }
     }
   }
@@ -31905,6 +35962,16 @@ static void updateGlobalStatusBar() {
   }
 #endif
 
+  // ---- Reader/Web page: hide the clock so the URL fits in the title zone ----
+  if (g_statusbar.clock) {
+    static bool s_clk_hidden = false;
+    if (s_reader_bar_url != s_clk_hidden) {
+      s_clk_hidden = s_reader_bar_url;
+      if (s_reader_bar_url) lv_obj_add_flag(g_statusbar.clock, LV_OBJ_FLAG_HIDDEN);
+      else                  lv_obj_clear_flag(g_statusbar.clock, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+
   // ---- Clock placement ----
   // With "hide device name" on, the clock sits CENTRED on every screen — clear of
   // both the left-zone title (chat / Files / map credit) and the right-side icon
@@ -31943,15 +36010,19 @@ static void updateGlobalStatusBar() {
   }
 
   // ---- Layout indicator ----
+  // Only while a chat/channel conversation is open (s_chat_title set): that is
+  // where typing happens and the active layout matters. Everywhere else it was
+  // permanent bar clutter (and sat next to the clock 24/7 once a secondary
+  // language was enabled).
   if (g_statusbar.layout_label) {
-    if (keyboardLayoutsAnySecondary()) {
+    if (keyboardLayoutsAnySecondary() && s_chat_title[0]) {
       const char* name = keyboardLayoutName(keyboardLayoutsGetCurrent());
       lv_label_set_text(g_statusbar.layout_label, name);
-#if CAP_LARGE_SCREEN
-      // Park it just left of the clock so it tracks the SC()-scaled icon cluster at any UI size. Its
-      // fixed build offset was unscaled, so at Large/Huge the scaled BLE glyph marched into it.
+      // Park it just left of the clock on EVERY board, so it tracks wherever the
+      // clock lands (12/24-hour width, the charging slide, centred hide-name
+      // mode, SC() scaling). The old fixed -182 build offset overlapped the wide
+      // 12-hour clock on the T-Deck bar ("7:45 PM" reaches past -182).
       lv_obj_align_to(g_statusbar.layout_label, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -SC(8), 0);
-#endif
       lv_obj_clear_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN);
     } else {
       lv_obj_add_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN);
@@ -32027,7 +36098,7 @@ static void relayoutHomeCharts() {
   const int cw = tabContentW();
   const int BTNW = SC(100);
   const int RSTRIP = BTNW + 10;
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2)
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 #else
   const int chart_w = cw;
@@ -32129,7 +36200,7 @@ static void refreshStatusLabels() {
       if (s_home_chart_sig) setLabelIfChanged(s_home_chart_sig, sigtxt);
       if (s_home_chart_legend) {
         char leg[28];
-        snprintf(leg, sizeof leg, TR("TX %u  /  RX %u"), (unsigned)cur_tx, (unsigned)cur_rx);
+        snprintf(leg, sizeof leg, "TX %u  /  RX %u", (unsigned)cur_tx, (unsigned)cur_rx);
         setLabelIfChanged(s_home_chart_legend, leg);
       }
     }
@@ -32143,6 +36214,21 @@ static void refreshStatusLabels() {
   // tick if the user is somewhere else.
   if (active_tab == MAP_TAB_INDEX) { mapAutoFollowTick(); refreshMapInfoLabel(); }
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  // Reader (text browser): the fetch worker publishes text/status via s_reader_dirty.
+  // The page is a full-screen overlay (any tab), so gate on the page being open.
+  if (s_reader_dirty && s_reader_root) {
+    s_reader_dirty = false;
+    if (s_reader_status) lv_label_set_text(s_reader_status, s_reader_msg);
+    if (!s_reader_busy) {                   // the fetch finished
+      if (s_reader_ok) {                    // …with a page
+        readerRenderBody();
+        readerSetAddrExpanded(false);       // collapse the address bar -> fullscreen reading
+      } else {                              // …with an error — SHOW it (don't sit on "Loading…")
+        readerShowMessage(s_reader_msg[0] ? s_reader_msg : "Couldn't load page", 0xE0A0A0);
+        readerSetAddrExpanded(true);        // expand so the address bar + retry are reachable
+      }
+    }
+  }
   // Wi-Fi fetcher arrived a new tile — re-render the map so the freshly
   // downloaded tile appears. Only re-render if we're actually on the
   // map tab; otherwise let the next tab activation pick it up.
@@ -32213,7 +36299,7 @@ static void refreshStatusLabels() {
     snprintf(mem, sizeof mem, TR("RAM %u%%  \xC2\xB7  PSRAM %u%%"), dram_pct, ps_pct);
     setLabelIfChanged(g_lv.home_stats, mem);
 #else
-    setLabelIfChanged(g_lv.home_stats, TR(""));
+    setLabelIfChanged(g_lv.home_stats, "");
 #endif
   }
 #if defined(HAS_EXPANSION_KIT)
@@ -32221,7 +36307,7 @@ static void refreshStatusLabels() {
     char env[192];
     buildHomeEnvSummary(env, sizeof env);
     if (env[0]) setLabelIfChanged(g_lv.home_env, env);
-    else setLabelIfChanged(g_lv.home_env, TR(""));
+    else setLabelIfChanged(g_lv.home_env, "");
     relayoutHomeCharts();
   }
 #endif
@@ -32380,7 +36466,7 @@ static void buildBootSplash() {
   // keeps the pixel/mono feel as a continuation of the early boot screen.
   lv_obj_t* wm = lv_label_create(s_splash_root);
   lv_label_set_recolor(wm, true);
-  lv_label_set_text(wm, "WADA#15B6A6 MESH#");
+  lv_label_set_text(wm, TR("WADA#15B6A6 MESH#"));
   lv_obj_set_style_text_font(wm, &lv_font_unscii_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(wm, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
   lv_obj_set_style_text_letter_space(wm, 3, LV_PART_MAIN);
@@ -32658,9 +36744,15 @@ static void setupFillRegionList() {
 
 static void setupShowStep(int step) {
   if (!s_setup_root) return;
-#if defined(HAS_TANMATSU)
+  // Unconditional, like every other navMarkDirty() call site in this file — it's a real
+  // rebuild-flag on any CAP_KEYPAD_NAV board (Tanmatsu, M9) and a no-op stub otherwise
+  // (see the two definitions near navMaybeRebuild). Previously gated to HAS_TANMATSU only,
+  // which meant M9 skipped it: lv_obj_clean() below frees the step's buttons/textarea, and
+  // LVGL's allocator can hand the freshly-created replacements the SAME addresses — so
+  // navMaybeRebuild()'s address-based tree signature can come out unchanged and skip the
+  // rebuild, leaving s_nav_group holding stale objects. That's the "Back/Next does nothing,
+  // then navigation is dead" symptom.
   navMarkDirty();   // wizard step content swaps in place — force the keypad focus group to rebuild
-#endif
   hideKb();
   // The scan popup writes the chosen SSID through these borrowed pointers; drop
   // them before the Wi-Fi fields are freed by the clean below.
@@ -32682,8 +36774,8 @@ static void setupShowStep(int step) {
     setupHeader("Welcome to WADAMESH", nullptr, nullptr);
     lv_obj_t* m = lv_label_create(s_setup_root);
     lv_label_set_text(m,
-        "Let's set up your device.\n\n"
-        "You'll pick a name and choose your LoRa region. Takes about a minute.");
+        TR("Let's set up your device.\n\n"
+        "You'll pick a name and choose your LoRa region. Takes about a minute."));
     lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(m, sw - 24);
     lv_obj_set_style_text_font(m, &g_font_14, LV_PART_MAIN);
@@ -32728,10 +36820,10 @@ static void setupShowStep(int step) {
     int y = setupHeader("Wi-Fi & Bluetooth", nullptr, "Step 3 of 3");
     lv_obj_t* m = lv_label_create(s_setup_root);
     lv_label_set_text(m,
-        "This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a "
+        TR("This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a "
         "phone companion (MeshCore app) together.\n\n"
         "Running both at the same time uses more RAM, so turn on only what you need.\n\n"
-        "Set them up anytime in Settings.");
+        "Set them up anytime in Settings."));
     lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(m, sw - 24);
     lv_obj_set_style_text_font(m, &g_font_12, LV_PART_MAIN);
@@ -32932,7 +37024,7 @@ static void openAccentPicker() {
   lv_obj_remove_style_all(hexrow);
   lv_obj_set_size(hexrow, 150, 30);
   lv_obj_t* hash = lv_label_create(hexrow);
-  lv_label_set_text(hash, TR("#"));
+  lv_label_set_text(hash, "#");
   lv_obj_set_style_text_color(hash, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_align(hash, LV_ALIGN_LEFT_MID, 2, 0);
   s_accent_hex_ta = lv_textarea_create(hexrow);
@@ -33874,7 +37966,7 @@ static void buildUiTree() {
   // the main tabs but is covered by full-screen overlays (chat detail, modals,
   // lock screen) that sit above it in the screen z-order.
   s_update_badge = lv_label_create(lv_scr_act());
-  lv_label_set_text(s_update_badge, TR("!"));
+  lv_label_set_text(s_update_badge, "!");
   lv_obj_set_size(s_update_badge, 15, 15);
   lv_obj_set_style_radius(s_update_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
   lv_obj_set_style_bg_color(s_update_badge, lv_color_hex(0xE2403A), LV_PART_MAIN);
@@ -34187,6 +38279,12 @@ void UITask::onThreadsChanged() {
    * channels / contacts added via the companion-serial protocol show up
    * immediately instead of after the 4 s backstop. */
   _next_mesh_thread_refresh = 0;
+#if !defined(HAS_TANMATSU)
+  /* Nudge any Contacts/Chats web client to refetch (new/changed message). This runs
+   * in the mesh callback context; flag it and let the UI loop do the pushTermData so
+   * the data ring stays single-producer (the UI loop is the only other producer). */
+  s_web_rx_nudge = true;
+#endif
 }
 
 void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
@@ -34657,7 +38755,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     char b1[8]; snprintf(b1, sizeof b1, "%d", s_telem_win_past_h); lv_textarea_set_text(s_telem_past_ta, b1);
 
     lv_obj_t* lt = lv_label_create(card);
-    lv_label_set_text(lt, TR("h  to"));
+    lv_label_set_text(lt, "h  to");
     lv_obj_set_style_text_font(lt, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(lt, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_pos(lt, 88, y + 8);
@@ -34670,7 +38768,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     char b0[8]; snprintf(b0, sizeof b0, "%d", s_telem_win_now_h); lv_textarea_set_text(s_telem_now_ta, b0);
 
     lv_obj_t* lh = lv_label_create(card);
-    lv_label_set_text(lh, TR("h"));
+    lv_label_set_text(lh, "h");
     lv_obj_set_style_text_font(lh, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(lh, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_pos(lh, 182, y + 8);
@@ -34763,7 +38861,7 @@ static void openTelemetryConfigWindow() {
   attachSettingsTaEvents(s_telem_poll_ta);
   { char pb[8]; snprintf(pb, sizeof pb, "%d", telemetryPollGet(s_telem_node)); lv_textarea_set_text(s_telem_poll_ta, pb); }
   lv_obj_t* mlab = lv_label_create(card);
-  lv_label_set_text(mlab, TR("min (0=off)"));
+  lv_label_set_text(mlab, "min (0=off)");
   lv_obj_set_style_text_font(mlab, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(mlab, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(mlab, 182, y + 8);
@@ -35094,6 +39192,10 @@ void UITask::flushHistoryIfDue(unsigned long now) {
   }
   if (_msgs_dirty && now >= _next_msgs_flush_ms) {
     if (s_hist_flush_busy || s_hist_flush_req) {
+      // The worker only exists while the tile-fetch task is spawned (map / Wi-Fi
+      // scan / LOS / …).  Without this kick a pending flush can sit armed forever
+      // while ui_threads_v1.bin keeps updating — messages live only in RAM.
+      ensureTileFetchTaskRunning();
       _next_msgs_flush_ms = now + 1000;   // one flush in flight; new messages ride the next one
       return;
     }
@@ -35112,6 +39214,14 @@ void UITask::flushHistoryIfDue(unsigned long now) {
       s_hist_snap_count    = (uint16_t)_ui_msg_count;
       s_hist_snap_head     = (uint16_t)_ui_msg_head;
       s_hist_snap_msgcount = (uint32_t)_msgcount;
+      if (!ensureTileFetchTaskRunning()) {
+        // No worker — fall back to a synchronous write instead of clearing dirty
+        // and losing the snapshot (the whole point of the worker is to stay off
+        // the loop thread; a rare spawn failure must not drop hours of chat).
+        if (saveMsgsToStorage()) _msgs_dirty = false;
+        else _next_msgs_flush_ms = now + 2000;
+        return;
+      }
       s_hist_flush_req = true;   // worker picks it up
       _msgs_dirty = false;
       return;
@@ -35200,6 +39310,16 @@ static void uiDataRemove(const char* name) {
   if (!uiDataFsReady()) return;
   char p[80]; snprintf(p, sizeof p, "%s%s", s_ui_data_root, name);
   s_ui_data_fs->remove(p);
+}
+// Atomically replace a ui-data file (write tmp, then rename) so a panic mid-write
+// cannot leave a truncated header that quarantines the whole chat on next boot.
+static bool uiDataReplaceFile(const char* final_name, const char* tmp_name) {
+  if (!uiDataFsReady()) return false;
+  char fin[80], tmp[80];
+  snprintf(fin, sizeof fin, "%s%s", s_ui_data_root, final_name);
+  snprintf(tmp, sizeof tmp, "%s%s", s_ui_data_root, tmp_name);
+  s_ui_data_fs->remove(fin);
+  return s_ui_data_fs->rename(tmp, fin);
 }
 
 // Shared helper: read one on-disk record into a zero-initialized current-layout
@@ -35493,15 +39613,24 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
                             uint16_t count, uint16_t head, uint32_t msgcount) {
 #if defined(ESP32)
   WdtHeavyGuard _wg;   // a fragmenting write can trigger a multi-second SPIFFS GC
-  File f = uiDataOpen(k_ui_msgs_path, "w");
+  File f = uiDataOpen(k_ui_msgs_tmp_path, "w");
   if (!f) return false;
 
   UiMsgFileHeader hdr{};
   hdr.magic         = k_ui_msgs_magic;
   hdr.version       = k_ui_history_version;
   hdr.msg_rec_size  = static_cast<uint16_t>(sizeof(UiHistoryMsg));
-  hdr.ui_msg_count  = count;
-  hdr.ui_msg_head   = head;
+  // Compact write: emit only the `count` USED records, oldest-first, instead of one
+  // record per ring slot (cap). A user with 200 messages writes ~48 KB, not the full
+  // ~1.2 MB ring, so the delete/clear/reboot flush no longer hitches the UI (that
+  // full-ring rewrite was the "deleting a message is slow" cause). The reader derives
+  // its slot count from the file size and linearizes by (head,count), so an
+  // oldest-first file with head=0 loads byte-for-byte identically.
+  const int wcap = cap > 0 ? cap : 1;
+  const int used = (int)count > cap ? cap : (int)count;
+  const int oldst = (((int)head - used) % wcap + wcap) % wcap;
+  hdr.ui_msg_count  = static_cast<uint16_t>(used);
+  hdr.ui_msg_head   = 0;   // written oldest-first => the file's ring head sits at 0
   hdr.msgcount      = msgcount;
   if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
     f.close(); return false;
@@ -35514,7 +39643,8 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
   bool ok = true;
   if (buf) {
     size_t fill = 0;
-    for (int i = 0; ok && i < cap; ++i) {
+    for (int k = 0; ok && k < used; ++k) {
+      const int i = (oldst + k) % wcap;
       UiHistoryMsg* m = reinterpret_cast<UiHistoryMsg*>(buf + fill);
       memset(m, 0, REC);
       m->ts          = msgs[i].ts;
@@ -35540,7 +39670,8 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     free(buf);
   } else {
     UiHistoryMsg m{};
-    for (int i = 0; ok && i < cap; ++i) {
+    for (int k = 0; ok && k < used; ++k) {
+      const int i = (oldst + k) % wcap;
       memset(&m, 0, sizeof(m));
       m.ts          = msgs[i].ts;
       m.channel     = msgs[i].channel ? 1u : 0u;
@@ -35559,7 +39690,8 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     }
   }
   f.close();
-  return ok;
+  if (!ok) { uiDataRemove(k_ui_msgs_tmp_path); return false; }
+  return uiDataReplaceFile(k_ui_msgs_path, k_ui_msgs_tmp_path);
 #else
   (void)msgs; (void)cap; (void)count; (void)head; (void)msgcount;
   return false;
@@ -35569,7 +39701,7 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
 // Worker-side entry: write the snapshot the loop thread armed (core-0 task; the
 // loop thread never waits on this, which is the whole point).
 static bool uiHistWorkerFlush() {
-  if (!s_hist_snap || s_hist_snap_cap <= 0) return true;   // nothing armed
+  if (!s_hist_snap || s_hist_snap_cap <= 0) return false;   // armed without a snapshot — retry
   return uiWriteMsgsFile(s_hist_snap, s_hist_snap_cap,
                          s_hist_snap_count, s_hist_snap_head, s_hist_snap_msgcount);
 }
@@ -35892,6 +40024,9 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   }
   ++_msgcount;
   markMsgsDirty();
+#if !defined(HAS_TANMATSU)
+  s_web_rx_nudge = true;   // any new/changed message -> nudge the Contacts/Chats web client to refetch
+#endif
   return t_idx;
 }
 
@@ -35911,6 +40046,9 @@ void UITask::onMessageAcked(uint32_t ack_hash) {
   if (any) g_lv.dirty_timeline = true;
 #else
   (void)any;
+#endif
+#if !defined(HAS_TANMATSU)
+  if (any) s_web_rx_nudge = true;   // delivery flipped to ✓✓ -> refresh the web chat
 #endif
 }
 
@@ -36258,6 +40396,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_map_night = touchPrefsGetMapNight();          // map night mode (render-time tile invert)
   s_map_show_coords   = touchPrefsGetMapShowCoords();     // per-element map text/marker visibility
   s_map_show_tilexyz  = touchPrefsGetMapShowTileXYZ();
+  s_map_tile_debug    = touchPrefsGetMapTileDebug();      // developer: tile-pipeline diagnostic overlay
   s_map_show_contacts = touchPrefsGetMapShowContacts();
   s_map_show_links    = touchPrefsGetMapShowLinks();      // dotted self->contact link lines (PR #61)
   s_map_style         = touchPrefsGetMapStyle();          // 0=OpenStreetMap (default), 1=OpenTopoMap
@@ -36603,7 +40742,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
 #else
-      const size_t buf_bytes = sizeof(lv_color_t) * 240 * LV_DRAW_BUF_LINES;
+#if defined(HAS_RAK_TAP_V2)
+      const int draw_band_w = 320;
+#else
+      const int draw_band_w = 240;
+#endif
+      const size_t buf_bytes = sizeof(lv_color_t) * draw_band_w * LV_DRAW_BUF_LINES;
       // Internal DMA-capable DRAM — this is the hot loop's read source
       // during SPI flush. PSRAM (~80 MHz QSPI) is ~3× slower than
       // internal SRAM. INTERNAL|DMA also makes it eligible for SPI DMA
@@ -36621,7 +40765,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // requests strain the internal heap. A tiny buffer still renders instead of
       // leaving g_draw_buffer NULL -> NULL-deref in lvglFlush -> boot panic loop.
       if (!g_draw_buffer) {
-        g_draw_buf_px = 240 * 8;
+        g_draw_buf_px = draw_band_w * 8;
         g_draw_buffer = (lv_color_t*)heap_caps_malloc(sizeof(lv_color_t) * g_draw_buf_px,
                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(sizeof(lv_color_t) * g_draw_buf_px);
@@ -36657,6 +40801,43 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // rotation 3, same mapping the boot wordmark already uses).
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
+#if defined(HAS_THINKNODE_M9)
+    // M9 is landscape in hardware: boot DISPLAY_ROTATION=1 verified upright on
+    // the tester's unit (bring-up #6). Without this override the portrait
+    // default rendered LVGL at 240x320 into the 320x240 panel window — content
+    // sat left with the bottom wrapped ("a bit left and down", bring-up #7).
+    // ROT_90 maps to panel rotation 1 in applyHardwarePanelRotation, so the
+    // UI-init re-apply matches the boot splash orientation.
+    s_ui_rotation = LV_DISP_ROT_90;
+#endif
+#if defined(HAS_RAK_TAP_V2)
+    // RAK Tap V2 panel is rotated 270° in hardware (DISPLAY_ROTATION=3); the UI
+    // must match so LVGL renders the full 320x240 landscape surface.
+    s_ui_rotation = LV_DISP_ROT_270;
+#endif
+#if !defined(HAS_TANMATSU)
+    // REMOTE mode: render the UI to a virtual 480x800 PORTRAIT display for the web
+    // (headless/browser use). No physical-panel rotation — the panel is a placeholder.
+    s_remote_mode = touchPrefsGetRemoteMode();
+    s_remote_landscape = touchPrefsGetRemoteLandscape();
+    // Bootloop guard: arm an RTC flag before entering remote mode; it's cleared a few
+    // seconds into a successful run (see UITask::loop). If a remote boot ever fails to
+    // complete, the next boot sees the flag still set and auto-disables remote — so the
+    // device can never get stuck. (RTC memory survives a soft reset; a cold power-on
+    // resets it, so a fresh boot always honours the pref.)
+    if (s_remote_mode) {
+      esp_reset_reason_t rr = esp_reset_reason();
+      if (rr == ESP_RST_POWERON || rr == ESP_RST_BROWNOUT) s_rmt_boot_guard = 0;
+      if (s_rmt_boot_guard == RMT_GUARD_MAGIC) {          // previous remote boot didn't finish
+        touchPrefsSetRemoteMode(false);
+        s_remote_mode = false;
+        s_rmt_boot_guard = 0;
+      } else {
+        s_rmt_boot_guard = RMT_GUARD_MAGIC;               // arm; cleared after a good run
+      }
+    }
+    if (s_remote_mode) s_ui_rotation = s_remote_landscape ? LV_DISP_ROT_270 : LV_DISP_ROT_NONE;
+#endif
     // Apply the saved backlight brightness (takes the LEDA pin over from the
     // display's digitalWrite via LEDC PWM). Both touch boards have the LEDA pin.
 #if defined(HAS_CC_BRIGHTNESS)
@@ -36672,7 +40853,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     s_kb_bl_mode = touchPrefsGetKbBacklight();
 #endif
 #if defined(HAS_TDECK_KEYBOARD)
-    { uint8_t p = touchPrefsGetKbdBacklight(); s_tdeck_kb_bl_pct = (p > 100) ? 100 : p; }   // shared kbd_bl pref
+    { uint8_t p = touchPrefsGetKbdBacklight(); s_tdeck_kb_bl_pct = (p < 1) ? 1 : (p > 100 ? 100 : p); }   // shared kbd_bl pref (dark = mode off, not pct 0)
 #endif
     // Accent-popup picker (both boards: on-screen + physical keyboard). Default on.
     s_accent_popups = touchPrefsGetAccentPopups();
@@ -36702,8 +40883,17 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
     // it render/flush natively in 320x240.
-    g_lv.disp_drv.hor_res  = ui_landscape ? 320 : 240;
-    g_lv.disp_drv.ver_res  = ui_landscape ? 240 : 320;
+    // Remote render = 480x288 (5:3): rendered SMALL on-device, upscaled to fill the browser
+    // window. Every streaming stage (LVGL rasterise, shadow memcpy, RLE encode, socket bytes)
+    // scales with pixel count, so fewer pixels = proportionally faster — ~44% less than
+    // 640x384. The browser bilinear-upscales the canvas (near-free on the GPU) at the cost of
+    // some softness. Orientation toggles live via the Rotate button ([0x04] + s_remote_landscape).
+    // 400x240 (was 480x288): keeps the whole mirror footprint (~514 KB) BELOW the VNC
+    // footprint that already allocates on the 2 MB-PSRAM Heltec V4 (~616 KB), so remote is
+    // guaranteed to fit anywhere VNC does instead of black-screening on a failed alloc. Also
+    // faster (fewer pixels). Upscaled in the browser.
+    g_lv.disp_drv.hor_res  = s_remote_mode ? (s_remote_landscape ? 400 : 240) : (ui_landscape ? 320 : 240);
+    g_lv.disp_drv.ver_res  = s_remote_mode ? (s_remote_landscape ? 240 : 400) : (ui_landscape ? 240 : 320);
 #endif
     g_lv.disp_drv.flush_cb = lvglFlush;
     g_lv.disp_drv.draw_buf = &g_lv.draw_buf;
@@ -36788,16 +40978,44 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     bsp_input_get_queue(&s_nav_queue);
 #endif
 #else
-    lv_indev_drv_init(&g_lv.indev_drv);
-    g_lv.indev_drv.type    = LV_INDEV_TYPE_POINTER;
-    g_lv.indev_drv.read_cb = lvglTouchRead;
-    g_lv.indev_drv.disp    = lv_disp_get_default();
-    if (!lv_indev_drv_register(&g_lv.indev_drv)) pushDiagLine("LVGL indev failed");
-#if CAP_TRACKBALL
-    // Second indev for the optional keyboard ESDFX nav: a KEYPAD indev + focus
-    // group, registered always (cheap) but only DRIVEN when touchPrefsGetKbdNav()
-    // is on (handleHwKey feeds navFifo; navMaybeRebuild runs in the loop). With it
-    // off the group stays empty, so it shows no focus ring and does nothing.
+    // Physical touchscreen indev — skipped in remote mode (the panel is a placeholder;
+    // its 320x240 coords would map wrong onto the 480x800 web UI). The web pointer drives it.
+    if (!s_remote_mode) {
+      lv_indev_drv_init(&g_lv.indev_drv);
+      g_lv.indev_drv.type    = LV_INDEV_TYPE_POINTER;
+      g_lv.indev_drv.read_cb = lvglTouchRead;
+      g_lv.indev_drv.disp    = lv_disp_get_default();
+      if (!lv_indev_drv_register(&g_lv.indev_drv)) pushDiagLine("LVGL indev failed");
+    }
+    // Web UI mirror: stream this display + accept a phone browser's taps as a second
+    // pointer indev (opt-in via the VNC/REMOTE apps; see WebMirror / the WS server).
+    // Size the remote ring to just above ONE frame (w*h*2 + 48 KB) instead of a fixed
+    // 1 MB: the old 1 MB ring failed to allocate on the 2 MB-PSRAM Heltec V4 (VNC's
+    // smaller default ring fit), leaving active()==false and a black browser. The ring
+    // only ever holds one dirty region at a time, so frame-sized is also functionally
+    // enough. begin() shrink-retries if even this is tight, so remote streams as long
+    // as one frame fits in PSRAM.
+    s_web_fb_w = lv_disp_get_hor_res(NULL);   // shadow-buffer dimensions for the mirror
+    s_web_fb_h = lv_disp_get_ver_res(NULL);
+    const size_t rmt_frame = (size_t)s_web_fb_w * s_web_fb_h * 2;
+    g_web_mirror.begin(s_remote_mode ? (rmt_frame + 48u * 1024u) : (size_t)0);
+    g_web_mirror.setScreenSize(s_web_fb_w, s_web_fb_h);
+    g_web_mirror.setEnabled(s_remote_mode ? true : touchPrefsGetWebMirror());
+    g_web_mirror.setRemote(s_remote_mode);    // browser shows the Rotate button only in remote mode
+    g_web_mirror.setTerminalOn(!s_remote_mode && touchPrefsGetWebTerminal());   // web mesh terminal (runtime; not in the off-screen boot mode)
+    if (s_remote_mode) webMirrorEnsureBufs();   // pre-allocate the mirror shadow/band buffers up front
+    lv_indev_drv_init(&s_web_indev_drv);
+    s_web_indev_drv.type    = LV_INDEV_TYPE_POINTER;
+    s_web_indev_drv.read_cb = webPointerRead;
+    s_web_indev_drv.disp    = lv_disp_get_default();
+    lv_indev_drv_register(&s_web_indev_drv);
+#if CAP_KEYPAD_NAV
+    // Second indev for the keyboard/d-pad nav: a KEYPAD indev + focus group.
+    // On the T-Deck it's optional (touchPrefsGetKbdNav()) since touch is the
+    // primary input; on the M9 (no touch at all) it's always driven — see
+    // s_kbd_nav below. (handleHwKey feeds navFifo; navMaybeRebuild runs in the
+    // loop.) With it off the group stays empty, so it shows no focus ring and
+    // does nothing.
     s_nav_group = lv_group_create();
     lv_group_set_focus_cb(s_nav_group, navFocusCb);   // amber focus ring + scroll-into-view
     lv_indev_drv_init(&s_nav_keypad_drv);
@@ -36807,7 +41025,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (lv_indev_t* kp = lv_indev_drv_register(&s_nav_keypad_drv)) lv_indev_set_group(kp, s_nav_group);
     else pushDiagLine("LVGL nav keypad indev failed");
 #if defined(ESP32)
-#if defined(HAS_TANMATSU)
+#if defined(HAS_TANMATSU) || defined(HAS_THINKNODE_M9)
     s_kbd_nav = true;   // keyboard-only device: nav is always on (no touch to fall back to)
 #else
     s_kbd_nav = touchPrefsGetKbdNav();
@@ -36835,6 +41053,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (touchPrefsGetRxQueue()) radio_driver.rxQueueEnable(true);
 
     buildUiTree();
+
+#if !defined(HAS_TANMATSU)
+    // Remote boot completed (display + full UI built without crashing) -> disarm the
+    // bootloop guard now, not 8s into the loop. A rotate/orientation reboot re-enters
+    // remote and completes begin() in a few seconds, so clearing here means back-to-back
+    // reboots never look like an "incomplete boot" and wrongly auto-disable remote mode.
+    if (s_remote_mode) s_rmt_boot_guard = 0;
+#endif
 
     // Force immediate full repaint to replace the TFT "Loading..." banner.
     lv_obj_invalidate(lv_scr_act());
@@ -37012,6 +41238,43 @@ bool UITask::getMessageByIndex(int msg_idx, UIMessage& out) const {
   return true;
 }
 
+// Delete = TOMBSTONE, not compaction: blanking the thread tag makes every walker
+// (getThreadMessageIndexes, previews, the virt layout) skip the slot, while the
+// physical ring indexes that live UI widgets and s_chat_msg_idx hold stay valid.
+// The slot ages out of the ring naturally.
+bool UITask::deleteMessageBySlot(int msg_idx) {
+  if (msg_idx < 0 || msg_idx >= _ui_msg_cap) return false;
+  UIMessage& m = _ui_msgs[msg_idx];
+  if (!m.thread[0]) return false;                // free or already tombstoned
+  m.thread[0] = '\0';
+  m.text[0]   = '\0';
+  m.sender[0] = '\0';
+  _msgs_dirty = true;
+  return true;
+}
+
+int UITask::clearThreadHistory(int thread_idx) {
+  if (thread_idx < 0 || thread_idx >= MAX_UI_THREADS || !_ui_threads[thread_idx].used) return 0;
+  int cleared = 0;
+  for (int i = 0; i < _ui_msg_count; ++i) {
+    const int idx = (_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap;
+    UIMessage& m = _ui_msgs[idx];
+    if (m.thread[0] &&
+        strncmp(m.thread, _ui_threads[thread_idx].name, MAX_THREAD_NAME) == 0 &&
+        m.channel == _ui_threads[thread_idx].channel) {
+      m.thread[0] = '\0';
+      m.text[0]   = '\0';
+      m.sender[0] = '\0';
+      ++cleared;
+    }
+  }
+  _ui_threads[thread_idx].unread      = 0;
+  _ui_threads[thread_idx].has_mention = false;
+  _threads_dirty = true;
+  if (cleared) _msgs_dirty = true;
+  return cleared;
+}
+
 int UITask::getUnreadMentionCount() const {
   int c = 0;
   for (int i = 0; i < MAX_UI_THREADS; i++)
@@ -37088,8 +41351,8 @@ void UITask::openMeshContactDm(uint32_t mesh_contact_index) {
     lv_obj_clear_flag(g_lv.dm.overlay, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(g_lv.dm.overlay);
   }
-  refreshChatDetail(g_lv.dm);   // AFTER un-hiding so bubbles measure correctly and the open-scroll reaches the newest message
-#if defined(HAS_TDECK_KEYBOARD)
+  refreshChatDetailAsync(g_lv.dm);   // AFTER un-hiding so bubbles measure correctly and the open-scroll reaches the newest message
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   // Physical keyboard: focus the composer on open so typing goes straight in.
   showKb(&g_lv.dm);
 #endif
@@ -37535,6 +41798,12 @@ static inline void touchScreenBacklight(bool on) {
   // but the panel never actually went dark (this branch used to be the (void)on no-op).
   if (on) applyBrightness(s_brightness_pct);
   else    bsp_display_set_backlight_brightness(0);
+#elif defined(HAS_THINKNODE_M9)
+  // M9: BL_EN (GPIO17) drives a PNP transistor gate — LEDC PWM works (confirmed on hardware,
+  // Specter bring-up), but duty is INVERTED vs. a normal N-channel/NPN setup: lower duty on
+  // the base = MORE conduction = brighter. applyBrightness() below already accounts for this.
+  if (on) applyBrightness(s_brightness_pct);
+  else    ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
 #else
   (void)on;
 #endif
@@ -37604,14 +41873,17 @@ void UITask::lockScreen() {
 }
 
 void UITask::lockscreenReveal() {
-#if defined(HAS_TDECK_GT911)
-  if (!_manual_lock) return;                 // only meaningful while hard-locked
+#if CAP_LOCK_SCREEN
+  if (!_manual_lock) return;
   if (_screen_off) {
+    lockscreenShow();               // build + foreground FIRST
+    lv_refr_now(nullptr);           // force it to actually paint before the backlight comes on
     setCpuForScreen(true); touchScreenBacklight(true); _screen_off = false;
-    _lock_lit_ms = millis();                 // re-arm the burn-in timer ONLY on a real off->lit reveal,
-  }                                          // so a held / ghost touch can't keep the panel lit forever
-  lockscreenShow();                          // ensure built + on top
-  _last_input_ms = millis();                 // restart the re-dim timer
+    _lock_lit_ms = millis();
+  } else {
+    lockscreenShow();                // already lit: just re-foreground (idempotent, cheap)
+  }
+  _last_input_ms = millis();
 #endif
 }
 
@@ -37709,6 +41981,7 @@ void UITask::rebootDevice() {
   if (_threads_dirty) saveThreadsToStorage();
   if (_msgs_dirty) saveMsgsToStorage();
   discoveredFlushNow();   // persist the Discovered ring before we go down
+  the_mesh.flushContactsIfDirty();   // and any coalesced contacts refresh (card-less devices)
   if (_board) _board->reboot();
 }
 
@@ -37892,14 +42165,15 @@ void UITask::newRoomMsgFromPubWithMeta(uint8_t path_len, bool is_flood,
 }
 
 void UITask::appSentMsgToContact(const uint8_t* to_pub, const char* to_name, const char* text,
-                                 uint32_t ack_hash) {
+                                 uint32_t ack_hash, uint32_t sent_fp) {
   if (!to_name || !to_name[0] || !text || !text[0]) return;
   const char* sender = (_node_prefs && _node_prefs->node_name[0]) ? _node_prefs->node_name : "me";
   // Mirror an app-originated DM as a local outgoing bubble in the recipient's thread (#46) — the
   // on-device UI is otherwise the only message consumer that never sees sends made from the
   // companion app. appendMessage creates the thread if it doesn't exist and refreshes the view.
+  // sent_fp links a locally-originated send (web/terminal) to the repeats-heard ring (0 = none).
   appendMessage(to_name, sender, text, false /*channel*/, true /*outgoing*/, false /*mark_unread*/,
-                ack_hash, DELIV_SENT);
+                ack_hash, DELIV_SENT, 0, 0, 0, 0, nullptr, 0, sent_fp);
   // Lock the thread to the contact's pubkey so a reply typed on-device resolves it (mirrors the
   // receive path above).
   const int t = findThreadByName(to_name, false);
@@ -37914,14 +42188,15 @@ void UITask::appSentMsgToContact(const uint8_t* to_pub, const char* to_name, con
   syncThreadMeshSlots(to_name, false);
 }
 
-void UITask::appSentMsgToChannel(const char* channel_name, const char* text) {
+void UITask::appSentMsgToChannel(const char* channel_name, const char* text, uint32_t sent_fp) {
   if (!channel_name || !channel_name[0] || !text || !text[0]) return;
   const char* sender = (_node_prefs && _node_prefs->node_name[0]) ? _node_prefs->node_name : "me";
   // Mirror an app-originated channel message as a local outgoing bubble in the channel thread — the
   // channel-send command otherwise never tells the on-device UI about companion sends (the DM path
   // does, via appSentMsgToContact above). appendMessage creates the thread + refreshes the view.
+  // sent_fp links a locally-originated send (web/terminal) to the repeats-heard ring (0 = none).
   appendMessage(channel_name, sender, text, true /*channel*/, true /*outgoing*/, false /*mark_unread*/,
-                0 /*ack_hash*/, DELIV_SENT);
+                0 /*ack_hash*/, DELIV_SENT, 0, 0, 0, 0, nullptr, 0, sent_fp);
 }
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
@@ -38003,6 +42278,49 @@ static inline void uiCp(const char* next) {
 
 void UITask::loop() {
   unsigned long now = millis();
+#if !defined(HAS_TANMATSU)
+  // REMOTE mode: draw/refresh the physical-panel placeholder (first pass via the IP
+  // sentinel, then whenever the IP changes), and clear the bootloop guard once this
+  // boot has run a few seconds (proving it came up cleanly).
+  if (s_remote_mode) {
+    if (s_rmt_boot_guard && now > 8000) s_rmt_boot_guard = 0;
+    // Rotate button on the web page -> flip orientation by rebooting into the other axis.
+    if (uint8_t oreq = g_web_mirror.takeOrient()) {
+      const bool want_land = (oreq == 1);
+      if (want_land != s_remote_landscape) {
+        touchPrefsSetRemoteLandscape(want_land);
+        if (g_lv.task) { g_lv.task->showAlert(TR("Rotating - reconnecting..."), 1600); g_lv.task->rebootDevice(); }
+      }
+    }
+    if (s_remote_exit_armed && (now - s_remote_exit_armed) >= 3000) { s_remote_exit_armed = 0; drawRemotePlaceholder(false); }
+    // Exit button on the web page -> leave remote mode (board-agnostic; the main way out
+    // for keyboard-less boards like the Heltec V4).
+    if (g_web_mirror.takeExit()) { touchPrefsSetRemoteMode(false); if (g_lv.task) g_lv.task->rebootDevice(); }
+#if CAP_TOUCH
+    remoteTouchTick();   // 3 s touch-and-hold on the panel also leaves remote (no SPACE key)
+#endif
+    uint32_t rip = (WiFi.status() == WL_CONNECTED) ? (uint32_t)WiFi.localIP() : 0;
+    if (rip != s_remote_ph_ip) drawRemotePlaceholder();
+  }
+  // Web mesh terminal: run any command the browser typed through the exact same dispatch
+  // as the on-device console (chat commands else the config CLI). Output streams back via
+  // the termLogAppendC hook. Own the CLI sink while active + the on-device console isn't open.
+  if (g_web_mirror.terminalOn() && s_term_log_box == nullptr) {
+    MyMesh::setTerminalSink(&terminalSink);   // idempotent; routes config-CLI/async replies to the web
+    char tcmd[256];
+    while (g_web_mirror.popTermCmd(tcmd, sizeof tcmd)) {
+      // '@'-prefixed lines are the Contacts/Chats data API (JSON back over the data channel);
+      // everything else is a terminal command (browser echoes it locally, so don't echo back).
+      if (handleWebDataCmd(tcmd)) continue;
+      if (!terminalRunChatCommand(tcmd)) the_mesh.runLocalCli(tcmd);
+    }
+    // Live receive: a mesh callback flagged new/changed messages -> nudge the web client (single-producer here).
+    if (s_web_rx_nudge) { s_web_rx_nudge = false; g_web_mirror.pushTermData("{\"t\":\"rx\"}"); }
+    // Periodic status bar refresh (battery / wifi / clock / signal / unread) for the web header.
+    static uint32_t s_web_status_next = 0;
+    if ((int32_t)(millis() - s_web_status_next) >= 0) { s_web_status_next = millis() + 3000; webPushStatus(); }
+  }
+#endif
   g_ui_stall_max = 0; g_ui_stall_tag = ""; s_ui_cp_tag = "ui:head"; s_ui_cp_t0 = now;
 #if defined(ESP32)
   // Persist the clock floor every 15 min (small prefs-blob write; SdNvsPrefs
@@ -38162,7 +42480,34 @@ void UITask::loop() {
       s_tb_click_press = tb_pressed && !s_tb_wake_consume;
       if (s_tb_click_press) { s_tb_last_active_ms = now; noteUserInput(); }
     }
-#else
+#elif defined(HAS_RAK_TAP_V2)
+    // RAK Tap V2: single BOOT button (GPIO0), no trackball, no keyboard.
+    // Short press (<1s): toggle screen on/off (does NOT hard-lock -- touch
+    //   can still wake, since there is no second button for unlock).
+    // Long press (>=1s): open power menu (Power off / Reboot / Cancel).
+    static unsigned long s_rak_btn_down_ms = 0;
+    static bool s_rak_long_fired = false;
+    if (v == LOW && s_user_btn_prev == HIGH) {
+      s_rak_btn_down_ms = now;
+      s_rak_long_fired  = false;
+    } else if (v == LOW && s_user_btn_prev == LOW) {
+      if (now - s_rak_btn_down_ms >= 1000 && !s_rak_long_fired) {
+        s_rak_long_fired = true;
+        if (_screen_off) wakeScreen();
+        openPowerMenu();
+      }
+    } else if (v == HIGH && s_user_btn_prev == LOW) {
+      if (!s_rak_long_fired) {
+        if (_screen_off) { wakeScreen(); }
+        else {
+          touchScreenBacklight(false);
+          setCpuForScreen(false);
+          _screen_off = true;
+          // NO _manual_lock -- touch can still wake the screen.
+        }
+      }
+    }
+#else   // Generic: Heltec V4 -- short press toggles screen + lock
     if (v == LOW && s_user_btn_prev == HIGH) {
       if (_screen_off) {
 #if defined(TLORA_PAGER)
@@ -38181,7 +42526,7 @@ void UITask::loop() {
         touchScreenBacklight(false);
         setCpuForScreen(false);
         _screen_off  = true;
-        _manual_lock = true;  // touch can't unlock until BOOT pressed again
+        _manual_lock = true;  // touch cannot unlock until BOOT pressed again
       }
     }
 #endif
@@ -38328,7 +42673,12 @@ void UITask::loop() {
 
   // A repeater echo of one of our sent floods was just counted — repaint the
   // open chat so the sent bubble's repeat tag ticks up live.
-  if (the_mesh.takeEchoDirty()) g_lv.dirty_timeline = true;
+  if (the_mesh.takeEchoDirty()) {
+    g_lv.dirty_timeline = true;
+#if !defined(HAS_TANMATSU)
+    s_web_rx_nudge = true;   // repeat-heard tag ticked up -> refresh the web chat too
+#endif
+  }
 
   bool heavy_ok = !g_lv.defer_heavy_refresh || now >= g_lv.heavy_refresh_at_ms;
   if (g_lv.defer_heavy_refresh && heavy_ok) g_lv.defer_heavy_refresh = false;
@@ -38339,9 +42689,17 @@ void UITask::loop() {
   }
   if (g_lv.dirty_timeline && heavy_ok) {
     // Only repaint the detail that is currently open.
-    if (g_lv.dm.detail_open) refreshChatDetail(g_lv.dm);
-    if (g_lv.ch.detail_open) refreshChatDetail(g_lv.ch);
+    if (g_lv.dm.detail_open) refreshChatDetailAsync(g_lv.dm);
+    if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
     g_lv.dirty_timeline = false;
+  }
+  // Jump arrows dim to 50% one second after the last scroll activity (every
+  // scroll tick re-brightens them via chatUpdateJumpButtons).
+  if (!s_jump_dimmed && s_jump_active_ms &&
+      (uint32_t)(millis() - s_jump_active_ms) > 1000) {
+    if (g_lv.dm.detail_open)      jumpBtnsSetDim(&g_lv.dm, true);
+    else if (g_lv.ch.detail_open) jumpBtnsSetDim(&g_lv.ch, true);
+    else                          s_jump_dimmed = true;   // nothing open: park the state
   }
 #if CAP_SD || defined(TLORA_PAGER)
   // microSD insert/remove detection — only while the file manager is open, so
@@ -38417,6 +42775,7 @@ void UITask::loop() {
     int key = tdeckKeyboardReadKey();
     if (key <= 0) break;
     if (!_screen_off) s_kb_last_key_ms = now;   // a keypress while locked must not light the kb
+    if (s_remote_mode) { remotePhysicalKey(key); continue; }   // remote mode: physical keys are the exit
     handleHwKey(key);
   }
   // Focusing a text field (cursor starts blinking — tapped or auto-focused)
@@ -38493,6 +42852,55 @@ void UITask::loop() {
     updatePagerAltShiftChord();
     updatePagerBackspaceHold(now);
     updatePagerSpaceHold(now);
+  }
+#elif defined(HAS_M9_KEYBOARD)
+  // M9's keyboard controller is on its OWN bus (Wire1) — no touch task shares
+  // it, so polling happens right here on the UI thread rather than from a
+  // separate core-0 task. No keyboard-backlight control exists on this
+  // controller (TODO — see M9_PORT.md if/when one is confirmed), so this is
+  // just poll + drain, no backlight tick.
+  m9KeyboardPoll();
+  for (int kbi = 0; kbi < 12; ++kbi) {
+    int key = m9KeyboardReadKey();
+    if (key <= 0) break;
+    if (!_screen_off) s_kb_last_key_ms = now;
+    if (s_remote_mode) { remotePhysicalKey(key); continue; }   // remote mode: physical keys are the exit
+    handleHwKey(key);
+  }
+  serviceLockscreen();
+  serviceLockingCountdown(now);
+#endif
+#if !defined(HAS_TANMATSU)
+  // While a web-mirror browser is connected, count it as activity so the device screen
+  // stays awake (otherwise the idle timer would dim it and swallow remote input).
+  if (g_web_mirror.active()) {
+    static uint32_t s_web_awake_ms = 0;
+    if (now - s_web_awake_ms > 3000) { noteUserInput(); s_web_awake_ms = now; }
+    // Tell the browser to summon/hide the phone soft keyboard when an editable field
+    // gains/loses focus (the browser can't see the pixels to know).
+    lv_obj_t* fta = g_lv.keyboard ? lv_keyboard_get_textarea(g_lv.keyboard) : nullptr;
+    g_web_mirror.setKbFocused(fta != nullptr);
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+    // Physical-keyboard boards hide the on-screen keyboard, so browser keystrokes are
+    // injected via the same path as the hardware keys (printable chars type in; 0x08 =
+    // backspace, 0x0D = enter/send).
+    uint16_t wk;
+    for (int i = 0; i < 16 && g_web_mirror.popKey(&wk); ++i)
+      handleHwKey((int)wk);
+#else
+    // On-screen-keyboard boards (V4/RAK): the browser's laptop keyboard should type too, not
+    // only pointer-taps on the on-screen keys. Inject into the focused field — which IS the
+    // keyboard's textarea (the mirror strip on these boards), so it behaves exactly like an
+    // on-screen key tap and syncs to the real field on Enter. Enter fires the keyboard's
+    // ready cb (send/next); backspace deletes; other printables type in.
+    uint16_t wk;
+    for (int i = 0; i < 16 && g_web_mirror.popKey(&wk); ++i) {
+      if (!fta) continue;   // no editable field focused -> drain + drop
+      if (wk == 0x0D || wk == 0x0A)      lv_event_send(g_lv.keyboard, LV_EVENT_READY, nullptr);
+      else if (wk == 0x08 || wk == 0x7F) lv_textarea_del_char(fta);
+      else if (wk >= 0x20)               lv_textarea_add_char(fta, (uint32_t)wk);
+    }
+#endif
   }
 #endif
 #if defined(HAS_TANMATSU)
@@ -38668,14 +43076,24 @@ void UITask::loop() {
   // No touch fallback here either (like Tanmatsu) -- nav is always on, just fed
   // from the keyboard/encoder drain above instead of a bsp queue.
   navMaybeRebuild();
-#elif CAP_TRACKBALL
+#elif CAP_KEYPAD_NAV
   // Keep the focus group synced whenever EITHER nav mode is active: the keyboard ESDFX nav
-  // (fed by handleHwKey) or the trackball D-pad nav (fed by updateTrackball -> navMoveDir).
+  // (T-Deck) / d-pad nav (M9) fed by handleHwKey, or the trackball D-pad nav (fed by
+  // updateTrackball -> navMoveDir).
   if (s_kbd_nav || s_tb_nav) navMaybeRebuild();
+#endif
+#if !defined(HAS_TANMATSU)
+  // Web UI mirror: on a new connect / heal, invalidate the whole screen so LVGL
+  // redraws it into the shadow buffer (takeFullRepaint is armed by the WS server).
+  if (g_web_mirror.active() && g_web_mirror.takeFullRepaint())
+    lv_obj_invalidate(lv_scr_act());
 #endif
   uiCp("ui:lvgl");
   lv_timer_handler();
   uiCp("ui:tail");
+#if !defined(HAS_TANMATSU)
+  webMirrorTick();   // coalesced, rate-capped, backpressure-gated send of the dirty region
+#endif
 #if defined(HAS_TANMATSU)
   if (s_nav_entered_obj) {
     lv_obj_t* ent = s_nav_entered_obj; s_nav_entered_obj = nullptr;
@@ -38784,6 +43202,8 @@ static constexpr uint8_t PF_COUNT = 1;
 static constexpr uint8_t PF_SWIPE = 2;
 #define P_OPEN(root) []{ return (root) != nullptr; }
 static const PopupEnt k_popup_registry[] = {
+  { P_OPEN(s_urlqr_root),            []{ closeUrlQr(); },                 PF_COUNT },   // chat URL -> QR
+  { P_OPEN(s_urlmenu_root),          []{ closeUrlMenu(); },               PF_COUNT },   // chat URL -> action menu
   { P_OPEN(s_meminfo_root),          []{ closeMemInfo(); },               PF_COUNT },
   { P_OPEN(s_monitor_root),          []{ closeMonitorPage(); },           PF_COUNT },
   { P_OPEN(s_spec_root),             []{ closeSpectrumPage(); },          PF_COUNT },
@@ -38821,8 +43241,13 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_chanscope_modal),       []{ chanScopeClose(); },             PF_COUNT | PF_SWIPE },
   { P_OPEN(s_blocked_modal),         []{ blockedModalClose(); },          PF_COUNT | PF_SWIPE },
   { P_OPEN(s_wifi_scan_popup),       []{ wifiScanPopupClose(); },         PF_COUNT },
+#if !defined(HAS_TANMATSU)
+  { P_OPEN(s_vnc_root),              []{ closeVncPage(); },               PF_COUNT },
+  { P_OPEN(s_remote_root),           []{ closeRemotePage(); },            PF_COUNT },
+#endif
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   { P_OPEN(s_wifi_sheet),            []{ wifiSheetClose(); },             PF_COUNT },   // was in no registry at all
+  { P_OPEN(s_reader_root),           []{ closeReaderPage(); },            PF_COUNT },   // on-device text browser
 #endif
 #if defined(HAS_TDECK_GT911)
   { P_OPEN(s_snd_menu),              []{ sndMenuClose(); },               PF_COUNT },   // was in no registry at all

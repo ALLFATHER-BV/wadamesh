@@ -1,0 +1,17 @@
+# beta_38 (TEST) - Full-history chat scrolling, message delete, two new boards, storage integrity fixes. On top of beta_37.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- New ---
+Chat scrolling is fully virtualized (contributed by scratchdiver, PR #130): a chat now scrolls through its ENTIRE stored history, up to 5000 messages on SD-card devices, smoothly in both bubble and compact mode, instead of only the most recent rows. Several LVGL crash fixes came along with it.
+Long-press any message for a new Delete option that removes just that message. The message menu now lays its buttons out two per row so it always fits on one screen.
+The chat and channel settings sheet gains "Delete history": wipes the whole conversation after a confirmation, while the channel membership or contact stays.
+The in-chat jump buttons are now slim arrows tucked against the right edge of the screen: fully visible while you scroll, fading to half opacity a second after you stop.
+ThinkNode M9 hardware support is complete (contributed by ded, PR #138): GPS, microSD, buzzer, backlight control, lock screen, long-press context menus, and a d-pad-driven setup wizard. His fixes for focus scrolling in nested pages and the lock-screen paint order benefit every keyboard-nav board.
+New board in the source tree: RAK WisMesh Tap V2 (contributed by Ethac.chen, PR #136), with a 30+ fps display driver. Prebuilt images follow once the web-flasher integration lands.
+Tanmatsu: the app now builds size-optimized, roughly 300 KB smaller, leaving real headroom under the launcher's app-size limit for future features.
+
+# --- Fixed ---
+Messages no longer vanish when you reboot the device from the phone app (reported by Leon P). The history writer batches saves up to 30 seconds apart, and the app's reboot command skipped the final save that every on-device reboot path does - so the newest messages, read or unread, were lost. The reboot command now saves first.
+T-Deck: turning on "Store data on SD" now migrates your existing profile, settings and identity to the card FIRST. Upgrading to beta_36/37 with the toggle already on could adopt an empty card and boot as a brand-new node while your real profile sat orphaned on internal flash.
+T-Deck: for anyone already hit by that: Set -> General -> "Copy internal data to SD" restores the profile from internal flash onto the card (confirmation, then automatic reboot). Until you run it, toggling "Store data on SD" OFF and rebooting also brings the old profile back.
+Tanmatsu: profile name, settings and the node identity now persist reliably across reboots. They lived on the internal flash partition whose metadata layer is unreliable on this board; they now live on the SD card with everything else, and existing data is rescued automatically on first boot.

@@ -3,6 +3,10 @@
 #define LV_COLOR_DEPTH 16
 #define LV_COLOR_16_SWAP 0
 
+// NOTE: LV_USE_LARGE_COORD is intentionally OFF — enabling it caused a boot-time
+// LoadProhibited in LVGL on the T-Deck. Chat scroll heights >8191 px are handled
+// in UITask via int32 layout offsets + compressed LVGL scroll coords.
+
 // Route LVGL's general allocator through PSRAM-preferred wrappers (defined in
 // LvglPsramAlloc.cpp). The board has 8 MB of PSRAM and the ~60 KB of widget
 // state LVGL grows during buildUiTree would otherwise come out of the 320 KB
@@ -108,6 +112,7 @@
  * render full-colour emoji inline with text. The emoji set is pre-baked to
  * RGB565+alpha lv_img_dsc_t C-arrays (emoji_data.c) and wired as the tail of the
  * font fallback chain in UITask (montserrat -> extras -> emoji). */
+#define LV_USE_FONT_COMPRESSED 1   /* decode RLE-compressed extras/accent fonts (Tanmatsu size budget) */
 #define LV_USE_IMGFONT 1
 
 /* Bi-directional text + Arabic/Persian contextual shaping. Lets Arabic (and

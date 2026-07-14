@@ -221,7 +221,6 @@ public:
   void onTracePingResult(uint32_t tag, int8_t their_snr, int8_t our_snr,
                          uint8_t extra_hops, const int8_t* extra_snrs) override;
 private:
-  int getThreadMessageIndexes(int thread_idx, int out_indexes[], int max_out, bool newest_first) const;
   void setActiveThread(int idx, bool channel_mode);
   void resetComposer();
   void appendComposerChar(char c);
@@ -287,6 +286,9 @@ public:
   bool getThreadInfo(int idx, bool& channel, uint16_t& unread, uint32_t& ts, char* name, size_t name_len) const;
   int  getActiveThreadMessageCount(int out_indexes[], int max_out, bool newest_first) const;
   bool getMessageByIndex(int msg_idx, UIMessage& out) const;
+  int  getThreadMessageIndexes(int thread_idx, int out_indexes[], int max_out, bool newest_first) const;   // read any thread's message ring slots (no active-thread side effect)
+  bool deleteMessageBySlot(int msg_idx);          // tombstone one ring slot (long-press Delete)
+  int  clearThreadHistory(int thread_idx);        // tombstone every message of a thread; returns count
   const char* getComposerBuffer() const { return _compose_buf; }
   bool isComposerMode() const { return _composer_mode; }
   int  getComposerCharIndex() const { return _composer_char_idx; }
@@ -481,8 +483,9 @@ public:
   void rebootDevice();
   // Synchronously persist chat history to flash. Call before any path that
   // restarts the device (Wi-Fi/BLE mode switch, etc.) so recent chat isn't
-  // lost — the periodic flush is off-thread and rate-capped.
-  void persistHistoryNow();
+  // lost — the periodic flush is off-thread and rate-capped. Overrides the
+  // AbstractUITask hook so the companion CMD_REBOOT path flushes too.
+  void persistHistoryNow() override;
 
   // from AbstractUITask
   void msgRead(int msgcount) override;
@@ -502,8 +505,8 @@ public:
                                  const char* text, int msgcount,
                                  int8_t snr_q4, int8_t rssi) override;
   void appSentMsgToContact(const uint8_t* to_pub, const char* to_name, const char* text,
-                           uint32_t ack_hash) override;
-  void appSentMsgToChannel(const char* channel_name, const char* text) override;
+                           uint32_t ack_hash, uint32_t sent_fp = 0) override;
+  void appSentMsgToChannel(const char* channel_name, const char* text, uint32_t sent_fp = 0) override;
   void notify(UIEventType t = UIEventType::none) override;
   void logRxFrame(float snr, float rssi, const uint8_t* raw, int len) override;
   void discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len) override;

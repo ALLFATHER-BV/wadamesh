@@ -1,0 +1,15 @@
+# beta_44 (TEST) - an on-device text web browser, tappable links in chat, and a French-keyboard spacebar fix.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- New: on-device web browser ---
+New "Web" app: open a URL and read the page as plain text - articles, wikis, docs, plain sites - right on the device. No proxy, no tracking, no JavaScript or images; just the words. Links are tappable, and there are back, forward and refresh buttons.
+The Web app needs the memory only the 8 MB boards have (T-Deck, Tanmatsu), so it is hidden on the 2 MB Heltec V4 - that board can't complete an on-device HTTPS handshake.
+
+# --- New: links in chat ---
+Links in a chat are now tappable. Tap one for a small menu: "Open in web" loads the page in the on-device browser, and "Create QR" shows a scannable QR code so you can open the link on your phone.
+Create QR works on every board, including the Heltec V4 - so even where the browser isn't available you can still bounce a link to your phone.
+
+# --- Fixed ---
+French (AZERTY) on-screen keyboard: the spacebar is back in the normal letter view (along with the OK and keyboard-switch keys). You no longer have to switch to the symbols page just to type a space.
+Heltec V4: web page fetching and map tiles are more resilient when memory is tight.
+Home signal & traffic box: the "tap for details" cue is back at the top of the box.

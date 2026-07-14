@@ -6,8 +6,11 @@
 
 #include "SdNvsPrefs.h"   // NVS, or SD /meshcomod fallback when NVS is unusable (Launcher)
 
+#include <Preferences.h>
+#include <SPIFFS.h>
 #include <stddef.h>   // offsetof
 #include <string.h>   // memcpy
+#include <vector>     // writeUseSdToSpiffsKv record list
 
 static const char* TOUCH_NS = "touch";
 
@@ -24,8 +27,8 @@ static bool s_begun = false;
 // packed into ONE versioned blob keyed "cfg". Strings (tile_srv, rgn_scope,
 // lk_wall, channel-scopes, quick-replies), the byte blobs (fav / ign / rpw) and
 // the Wi-Fi slots keep their own keys — and "use_sd" / "setup_ok" stay standalone
-// keys too, because main.cpp reads (and for use_sd, writes) them directly via a
-// raw Preferences open at boot, BEFORE the touch prefs load.
+// keys too. "use_sd" is mirrored to NVS on every UI toggle (main.cpp reads it at
+// boot via touchPrefsReadUseSdAtBoot); "setup_ok" is still NVS-only.
 //
 // On first run with the blob absent we read every legacy per-key into s_cfg, write
 // "cfg" ONCE, and only after that durable write do we remove() the legacy keys to
@@ -35,7 +38,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 33;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF)
+static const uint8_t  TOUCH_CFG_VER   = 39;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF)
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -103,6 +106,11 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  compact_chat;      // IRC-style dense chat rows instead of bubbles (bool, 0=off) — v31 (trailing)
   uint32_t clock_floor;       // highest epoch this device handed out (ClockFloorRTC persistence) — v32 (trailing)
   uint8_t  rx_queue;          // buffered LoRa receive: drain task + packet ring (bool, 0=off, experimental) — v33 (trailing)
+  uint8_t  web_mirror;        // web control panel: mirror the live UI to a phone browser + inject taps (bool, 0=off) — v34 (trailing)
+  uint8_t  remote_mode;       // render the UI off-screen at a web resolution instead of the panel (bool, 0=off) — v35 (trailing)
+  uint8_t  remote_landscape;  // remote mode orientation: 1=landscape 800x480 (desktop), 0=portrait 480x800 (phone) — v36 (trailing)
+  uint8_t  web_terminal;      // web mesh-CLI terminal served on the device IP (runtime; exclusive with VNC) — v38 (trailing)
+  uint8_t  map_tile_debug;    // show the map tile-pipeline diagnostic overlay (bool, 0=off) — v39 (trailing)
 };
 
 static TouchCfg s_cfg;
@@ -194,6 +202,11 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.show_sensors_tab   = 1;     // default: show the V4 Expansion-Kit Sensors tab + Home env widget
   c.map_show_links     = 1;     // default: show self->contact link lines (PR #61)
   c.map_style          = 0;     // default: OpenStreetMap (OpenTopoMap is opt-in)
+  c.web_mirror         = 0;     // OFF: web control panel is opt-in (remote control over the LAN)
+  c.remote_mode        = 0;     // OFF: render to the physical panel (remote mode is opt-in, reboots to apply)
+  c.remote_landscape   = 1;     // landscape 800x480 by default (remote mode = desktop/browser); portrait is a toggle
+  c.web_terminal       = 0;     // OFF: web mesh terminal is opt-in (runtime; mutually exclusive with VNC)
+  c.map_tile_debug     = 0;     // OFF: map tile-pipeline diagnostic overlay is opt-in (developer)
 }
 
 // Persist the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
@@ -259,6 +272,12 @@ static void cfgLoadOrMigrate() {
         if (s_cfg.ver < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
         if (s_cfg.ver < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (s_cfg.ver < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
+        if (s_cfg.ver < 34) s_cfg.web_mirror = 0;    // new trailing field: web control panel off by default (opt-in remote control)
+        if (s_cfg.ver < 35) s_cfg.remote_mode = 0;   // new trailing field: remote mode off by default (opt-in, reboots to apply)
+        if (s_cfg.ver < 36) s_cfg.remote_landscape = 0;
+        if (s_cfg.ver < 37) s_cfg.remote_landscape = 1;   // remote mode = landscape/desktop by default (one-time flip; portrait stays a toggle)
+        if (s_cfg.ver < 38) s_cfg.web_terminal = 0;       // new trailing field: web mesh terminal off by default (opt-in)
+        if (s_cfg.ver < 39) s_cfg.map_tile_debug = 0;     // new trailing field: tile diagnostic overlay off by default
         s_cfg.ver = TOUCH_CFG_VER;
         s_cfg.magic = TOUCH_CFG_MAGIC;
         cfgFlush();                // rewrite with new fields defaulted-in
@@ -728,6 +747,58 @@ bool touchPrefsSetAccentPopups(bool on) {
   return cfgFlush();
 }
 
+// Web control panel: mirror the live UI to a phone browser (Settings > Wi-Fi).
+bool touchPrefsGetWebMirror() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.web_mirror != 0;
+}
+bool touchPrefsSetWebMirror(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.web_mirror = on ? 1 : 0;
+  return cfgFlush();
+}
+
+// Remote mode: render the UI off-screen at a web resolution (boot mode; REMOTE app).
+bool touchPrefsGetRemoteMode() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.remote_mode != 0;
+}
+bool touchPrefsSetRemoteMode(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.remote_mode = on ? 1 : 0;
+  return cfgFlush();
+}
+
+bool touchPrefsGetRemoteLandscape() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.remote_landscape != 0;
+}
+bool touchPrefsSetRemoteLandscape(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.remote_landscape = on ? 1 : 0;
+  return cfgFlush();
+}
+
+bool touchPrefsGetWebTerminal() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.web_terminal != 0;
+}
+bool touchPrefsSetWebTerminal(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.web_terminal = on ? 1 : 0;
+  return cfgFlush();
+}
+
+bool touchPrefsGetMapTileDebug() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.map_tile_debug != 0;
+}
+bool touchPrefsSetMapTileDebug(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.map_tile_debug = on ? 1 : 0;
+  return cfgFlush();
+}
+
 // UI accent colour (buttons, active tab, keyboard, highlights) as 0xRRGGBB.
 // Default = the WADAMESH brand teal (the logo dots). The picker clamps it dark
 // enough that the off-white button text stays readable on any hue.
@@ -1113,12 +1184,108 @@ bool touchPrefsSetHomeIsDrawer(bool on) {
 // Store ALL device data (identity, prefs, contacts, channels) on the SD card
 // under /meshcomod instead of internal SPIFFS. Read at boot (main.cpp) BEFORE
 // the data loads, so changing it needs a reboot. Key "use_sd" in the "touch"
-// namespace — main.cpp reads the same key directly.
+// namespace — main.cpp must see the same value the UI toggle writes.
 static const char* KEY_USE_SD_STORAGE = "use_sd";
+static const char* TOUCH_KV_BOOT_PATH = "/prefs/touch.kv";
+
+// SdNvsPrefs file mode writes touch.kv only — parse a bool for boot migration.
+static bool readBoolFromTouchKvFile(const char* want_key) {
+  if (!SPIFFS.exists(TOUCH_KV_BOOT_PATH)) return false;
+  File f = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_READ);
+  if (!f) return false;
+  while (f.available() > 0) {
+    int kl = f.read();
+    if (kl <= 0 || kl > 15) break;
+    char k[16] = {0};
+    if (f.read((uint8_t*)k, kl) != kl) break;
+    int lo = f.read(), hi = f.read();
+    if (lo < 0 || hi < 0) break;
+    size_t vl = (size_t)lo | ((size_t)hi << 8);
+    if (vl > 2048) break;
+    if (strncmp(k, want_key, sizeof k) == 0) {
+      const bool on = (vl >= 1) && (f.read() != 0);
+      f.close();
+      return on;
+    }
+    for (size_t i = 0; i < vl; ++i) {
+      if (f.read() < 0) { f.close(); return false; }
+    }
+  }
+  f.close();
+  return false;
+}
+
+bool touchPrefsReadUseSdAtBoot() {
+  bool nvs_val = false;
+  Preferences p;
+  if (p.begin(TOUCH_NS, true)) {
+    nvs_val = p.getBool(KEY_USE_SD_STORAGE, false);
+    p.end();
+  }
+  if (nvs_val) return true;
+  const bool file_val = readBoolFromTouchKvFile(KEY_USE_SD_STORAGE);
+  if (file_val) {
+    Serial.println("[BOOT] use_sd read from /prefs/touch.kv (syncing to NVS)");
+    if (p.begin(TOUCH_NS, false)) {
+      p.putBool(KEY_USE_SD_STORAGE, true);
+      p.end();
+    }
+  }
+  return file_val;
+}
 
 bool touchPrefsGetUseSdStorage() {
   if (!s_begun) touchPrefsBegin();
   return s_prefs.getBool(KEY_USE_SD_STORAGE, false);   // default = SPIFFS
+}
+
+// Rewrite (or create) the SPIFFS copy of touch.kv with use_sd set, keeping every
+// other record. Needed because the boot storage decision can only read SPIFFS
+// (SD isn't mounted yet, see touchPrefsReadUseSdAtBoot): when prefs actively
+// live on the SD card, the toggle must land in BOTH file copies — otherwise
+// installs with unusable NVS (Launcher) could turn SD storage on but never OFF
+// again (the stale SPIFFS true would win every boot). PR #123 follow-up.
+static void writeUseSdToSpiffsKv(bool on) {
+  struct Rec { char k[16]; std::vector<uint8_t> v; };
+  std::vector<Rec> recs;
+  File f = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_READ);
+  if (f) {
+    while (f.available() > 0 && recs.size() < 256) {
+      int kl = f.read();
+      if (kl <= 0 || kl > 15) break;
+      Rec r{};
+      if (f.read((uint8_t*)r.k, kl) != kl) break;
+      int lo = f.read(), hi = f.read();
+      if (lo < 0 || hi < 0) break;
+      size_t vl = (size_t)lo | ((size_t)hi << 8);
+      if (vl > 2048) break;
+      r.v.resize(vl);
+      if (vl && f.read(r.v.data(), vl) != (int)vl) break;
+      recs.push_back(std::move(r));
+    }
+    f.close();
+  }
+  bool found = false;
+  for (auto& r : recs) {
+    if (strncmp(r.k, KEY_USE_SD_STORAGE, sizeof r.k) == 0) { r.v.assign(1, on ? 1 : 0); found = true; }
+  }
+  if (!found) {
+    Rec r{};
+    strncpy(r.k, KEY_USE_SD_STORAGE, sizeof r.k - 1);
+    r.v.assign(1, on ? 1 : 0);
+    recs.push_back(std::move(r));
+  }
+  File w = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_WRITE);   // truncate + rewrite
+  if (!w) return;
+  for (auto& r : recs) {
+    size_t kl = strnlen(r.k, sizeof r.k), vl = r.v.size();
+    w.write((uint8_t)kl);
+    w.write((const uint8_t*)r.k, kl);
+    w.write((uint8_t)(vl & 0xFF));
+    w.write((uint8_t)((vl >> 8) & 0xFF));
+    if (vl) w.write(r.v.data(), vl);
+  }
+  w.close();
 }
 
 bool touchPrefsSetUseSdStorage(bool use_sd) {
@@ -1128,6 +1295,18 @@ bool touchPrefsSetUseSdStorage(bool use_sd) {
   bool ok = s_prefs.putBool(KEY_USE_SD_STORAGE, use_sd);
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
+  // Mirror to raw NVS for the boot read (PR #123). Best effort ONLY: on
+  // Launcher installs NVS is unusable and the file write above is the
+  // authoritative copy — a failed mirror must not fail the setter there.
+  Preferences nvs;
+  if (nvs.begin(TOUCH_NS, false)) {
+    nvs.putBool(KEY_USE_SD_STORAGE, use_sd);
+    nvs.end();
+  }
+  // When prefs live on the SD card, boot's fallback still reads the SPIFFS
+  // copy — keep it in sync so the toggle works in BOTH directions there.
+  fs::FS* ffs = SdNvsPrefs::fileFs();
+  if (ffs && ffs != (fs::FS*)&SPIFFS) writeUseSdToSpiffsKv(use_sd);
   return ok;
 }
 

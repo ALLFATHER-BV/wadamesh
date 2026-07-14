@@ -375,12 +375,45 @@ static void wadameshSetup() {
     printf("[storage] persistence disabled this boot (DataStore opens fail gracefully)\n");
   }
   // The internal FFat 'locfd' on this P4 has a broken FAT metadata layer (see the tile-cache notes):
-  // it keeps rarely-written data (identity/prefs) but LOSES the frequently-rewritten contacts + chat on
-  // reboot. So route contacts/channels (and chat history, see uiDataFsReady) to the microSD card, which
-  // is reliable FAT. Identity/NodePrefs stay on FFat — they persist there and survive a card-less boot.
+  // open/read/write work but f_stat/exists()/size() return garbage — and WHICH garbage shifts with
+  // the build (-Og "worked by luck"; -Os made the exists()-gated identity + prefs loads come up
+  // empty: fresh node identity, default name, profile changes lost every reboot). The card's FAT
+  // metadata is truthful, so the WHOLE store lives there now; FFat remains only the no-card fallback.
   g_sd_ok = SD_MMC.begin("/sdcard", false /*1-bit*/) && SD_MMC.cardType() != CARD_NONE;
   printf("[storage] SD_MMC.begin = %s\n", g_sd_ok ? "OK" : "no card");
-  if (g_sd_ok) store.setSecondaryFS(&SD_MMC);   // contacts + channels -> SD; identity/prefs stay on FFat
+  if (g_sd_ok) {
+    SD_MMC.mkdir("/meshcomod");
+    SD_MMC.mkdir("/meshcomod/identity");
+    SD_MMC.mkdir("/meshcomod/bl");
+    if (g_fs_ok) {
+      // One-time rescue of identity + prefs off FFat: probe by OPEN + READ (never
+      // exists()/size() on this FS). Files the card already holds win — SD metadata
+      // is honest, so exists() is safe THERE.
+      static const char* k_mig[] = { "/new_prefs", "/new_prefs.tmp", "/node_prefs",
+                                     "/identity/_main.id" };
+      for (const char* nm : k_mig) {
+        char dst[48];
+        snprintf(dst, sizeof dst, "/meshcomod%s", nm);
+        if (SD_MMC.exists(dst)) continue;
+        File s = FFat.open(nm, FILE_READ);
+        if (!s) continue;
+        uint8_t buf[512];
+        size_t n = s.read(buf, sizeof buf);
+        if (n == 0) { s.close(); continue; }             // ghost/empty entry — nothing to keep
+        File d = SD_MMC.open(dst, FILE_WRITE);
+        if (!d) { s.close(); continue; }
+        size_t total = 0;
+        do { d.write(buf, n); total += n; n = s.read(buf, sizeof buf); } while (n > 0);
+        d.close();
+        s.close();
+        printf("[storage] migrated %s -> SD:/meshcomod (%u B)\n", nm, (unsigned)total);
+      }
+    }
+    store.useSdMmcStorage();   // identity/prefs/contacts/channels all on the card
+  }
+  // No card: FFat stays the store, as before — identity/prefs loads there depend
+  // on the broken metadata layer and may be unreliable, but it is the only
+  // persistent option on a card-less unit.
   store.begin();
 
   bootLog("Mesh stack");

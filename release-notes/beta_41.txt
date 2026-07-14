@@ -1,0 +1,10 @@
+# beta_41 (TEST) - experimental web control: view and drive the wadamesh UI from a phone or desktop browser over Wi-Fi. Two new apps, VNC and REMOTE.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- New ---
+New VNC app (in the app drawer, between Advertise and Signal): it mirrors the live device screen into a web browser over Wi-Fi and lets you drive it. Taps and typing in the browser control the device, and anything that changes on the device shows up in the browser. Turn it on, then open http://<device-ip>:8765/ from any browser on the same network. The app page itself is scrollable.
+New REMOTE app: a headless mode that renders the whole UI at a larger, browser-friendly resolution and serves it over Wi-Fi, while the device's own screen drops to a placeholder showing the address to open. Meant for driving a device as a web client, and as groundwork for screenless hardware. Turning it on or off reboots the device. On the web page a Rotate button flips between landscape (desktop) and portrait (phone); on the device, double-tap the space bar to leave remote mode.
+Both features are served by the device itself over plain Wi-Fi - no phone app, no account, no cloud, just a browser on the same network.
+
+# --- Note ---
+This is an experimental first cut, and an honest heads-up from Kaj: for me the remote UI still feels too slow, and I will most likely move toward a dedicated, lighter remote client instead of streaming the entire live UI. It is in this test build mainly because community feedback on it would be genuinely useful - if you try it, let us know how it runs for you and what you would actually want from a web or remote client.

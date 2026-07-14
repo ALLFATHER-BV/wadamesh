@@ -5,6 +5,9 @@
 #include <SD.h>
 #include "helpers/esp32/WdtHeavyGuard.h"   // suspend core-0 idle WDT during the (SPIFFS-GC-prone) contact write
 #endif
+#if defined(HAS_TANMATSU)
+#include <SD_MMC.h>
+#endif
 
 #if defined(EXTRAFS) || defined(QSPIFLASH)
   #define MAX_BLOBRECS 100
@@ -240,16 +243,29 @@ bool DataStore::saveMainIdentity(const mesh::LocalIdentity &identity) {
 }
 
 void DataStore::loadPrefs(NodePrefs& prefs, double& node_lat, double& node_lon) {
-  if (_fs->exists(_rp("/new_prefs"))) {
+  // Probe by OPENING, never exists(): on the Tanmatsu's internal FFat the FAT
+  // metadata layer lies (f_stat garbage — the tile cache hit the same thing),
+  // and WHICH lie you get shifts with the build (the -Og to -Os switch turned
+  // "loaded fine by luck" into "no prefs found -> default name every boot").
+  // open()+read is truthful there, and identical in behavior everywhere else.
+  auto probe = [this](const char* nm) -> bool {
+    File f = openRead(nm);
+    if (!f) return false;
+    uint8_t b;
+    const bool ok = f.read(&b, 1) == 1;   // size() lies on the P4's FFat too — actually read
+    f.close();
+    return ok;
+  };
+  if (probe("/new_prefs")) {
     loadPrefsInt("/new_prefs", prefs, node_lat, node_lon); // new filename
-  } else if (_fs->exists(_rp("/new_prefs.tmp"))) {
+  } else if (probe("/new_prefs.tmp")) {
     // Main file gone but a staged copy exists: a reboot landed between the temp
     // write and the swap (or the swap was torn). Recover from it — this is the
     // "device booted with the default name once" failure mode.
     MESH_DEBUG_PRINTLN("DataStore: /new_prefs missing, recovering from .tmp");
     loadPrefsInt("/new_prefs.tmp", prefs, node_lat, node_lon);
     savePrefs(prefs, node_lat, node_lon);                // re-establish the main file
-  } else if (_fs->exists(_rp("/node_prefs"))) {
+  } else if (probe("/node_prefs")) {
     loadPrefsInt("/node_prefs", prefs, node_lat, node_lon);
     savePrefs(prefs, node_lat, node_lon);                // save to new filename
     _fs->remove(_rp("/node_prefs")); // remove old
@@ -815,6 +831,36 @@ bool DataStore::useSdStorage() {
   _fs = &SD;
   _fsExtra = nullptr;
   identity_store.use(SD, "/meshcomod/identity");
+  return true;
+}
+#endif
+
+#if defined(HAS_TANMATSU)
+// Tanmatsu: same full-store adoption as useSdStorage(), but on the SD_MMC slot.
+// The internal FFat 'locfd' has a broken FAT metadata layer (f_stat/exists lie —
+// see the tile-cache notes), and the exists()-gated identity + prefs loads that
+// "worked" at -Og read different garbage at -Os and came up empty: fresh node
+// identity, default name, profile changes gone every reboot. The card's FAT
+// metadata is truthful, so identity/prefs move there with everything else.
+// The caller migrates any FFat-resident files first (open()-probed, never
+// exists() on FFat).
+bool DataStore::useSdMmcStorage() {
+  if (!SD_MMC.exists("/meshcomod"))          SD_MMC.mkdir("/meshcomod");
+  if (!SD_MMC.exists("/meshcomod/bl"))       SD_MMC.mkdir("/meshcomod/bl");
+  if (!SD_MMC.exists("/meshcomod/identity")) SD_MMC.mkdir("/meshcomod/identity");
+  // The old secondary-FS layout kept contacts/channels/blobs at the CARD ROOT;
+  // pull them under /meshcomod so the rooted store keeps reading them.
+  static const char* k_move[] = { "/contacts3", "/channels2", "/adv_blobs" };
+  for (const char* nm : k_move) {
+    char dst[40];
+    snprintf(dst, sizeof dst, "/meshcomod%s", nm);
+    if (SD_MMC.exists(nm) && !SD_MMC.exists(dst)) SD_MMC.rename(nm, dst);
+  }
+  strncpy(_root, "/meshcomod", sizeof(_root) - 1);
+  _root[sizeof(_root) - 1] = '\0';
+  _fs = &SD_MMC;
+  _fsExtra = nullptr;
+  identity_store.use(SD_MMC, "/meshcomod/identity");
   return true;
 }
 #endif

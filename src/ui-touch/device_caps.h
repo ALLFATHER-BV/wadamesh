@@ -63,6 +63,44 @@
   #define CAP_OTA          0   // AppFS app — updated via launcher, no spare slot
   #define CAP_LOCK_SCREEN  1
 
+#elif defined(HAS_THINKNODE_M9)         // ===== Heltec ThinkNode M9 (ESP32-S3) =====
+  #define CAP_TOUCH        0   // no touchscreen — QWERTY keyboard + d-pad only
+  #define CAP_ROTATABLE    0   // fixed landscape panel
+  #define CAP_LARGE_SCREEN 0   // 240x320, same panel size as the T-Deck
+  // microSD: on the shared LoRa SPI bus, same as T-Deck (Arduino SD, not
+  // SD_MMC). CS is GPIO48 (schematic net SPICLK_N) — confirmed free on this
+  // board's plain ESP32-S3R8 (the GPIO47/48 SPICLK_P/N differential-clock
+  // reservation only applies to the R8V/R16V variants). See platformio.ini
+  // for PIN_SD_CS.
+  #define CAP_SD           1
+  #define CAP_FILESYSTEM   1
+  #define CAP_GPS          1   // CC1167Q on UART
+  #define CAP_OTA          1   // 16 MB flash, dual A/B app slots (see partitions_tdeck_touch.csv)
+  #define CAP_LOCK_SCREEN  1
+
+#elif defined(HAS_RAK_TAP_V2)         // ===== RAK WisMesh Tap V2 (ESP32-S3) =====
+  #define CAP_TOUCH        1   // FT5x06 capacitive touch
+  #define CAP_ROTATABLE    0   // fixed landscape 320x240
+  #define CAP_LARGE_SCREEN 0
+  #define CAP_SD           0
+  #define CAP_FILESYSTEM   1   // SPIFFS + tiles LittleFS
+  #define CAP_GPS          1
+  #define CAP_OTA          1
+  #define CAP_LOCK_SCREEN  1
+
+#elif defined(HELTEC_LORA_V4_R8)      // ===== Heltec WiFi LoRa 32 V4-R8 (ESP32-S3R8, 8 MB PSRAM) =====
+  // Same board family + panel as the V4 TFT (the build also defines
+  // HELTEC_LORA_V4_TFT to reuse all its UI code); the deltas are 8 MB octal
+  // PSRAM (→ web browser) and a micro-SD slot on the Expansion Kit V2.
+  #define CAP_TOUCH        1   // CHSC6x capacitive touch (Expansion Kit V2)
+  #define CAP_ROTATABLE    1   // user can flip portrait/landscape
+  #define CAP_LARGE_SCREEN 0   // 240x320
+  #define CAP_SD           1   // micro-SD on Expansion Kit V2 (shared TFT SPI bus, CS=3)
+  #define CAP_FILESYSTEM   1   // browsable filesystem (the SD card)
+  #define CAP_GPS          1
+  #define CAP_OTA          1   // native dual-OTA slot
+  #define CAP_LOCK_SCREEN  0
+
 #else                                    // ===== Heltec V4 TFT (default) =====
   #define CAP_TOUCH        1   // capacitive touch panel
   #define CAP_ROTATABLE    1   // user can flip portrait/landscape
@@ -75,17 +113,24 @@
 #endif
 
 // ---- Derived input capabilities ---------------------------------------------
-// Physical keyboard: T-Deck matrix, Tanmatsu keypad, or the pager's TCA8418.
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_TANMATSU) || defined(HAS_PAGER_KEYBOARD)
+// Physical keyboard: T-Deck matrix, Tanmatsu keypad, the pager's TCA8418, or
+// the ThinkNode M9 keyboard.
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_TANMATSU) || defined(HAS_PAGER_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   #define CAP_KEYBOARD 1
 #else
   #define CAP_KEYBOARD 0
 #endif
 
 // Focus-group D-pad navigation (no pointer): Tanmatsu keypad, T-Deck trackball,
-// or the pager (no touch at all — the rotary encoder is its only nav input,
-// so like Tanmatsu this is always-on, not an optional toggle like the T-Deck's).
-#if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(TLORA_PAGER)
+// the pager (no touch at all — the rotary encoder is its only nav input, so
+// like Tanmatsu this is always-on, not an optional toggle like the T-Deck's),
+// or the ThinkNode M9's d-pad. The underlying machinery (navFifo, navMoveDir,
+// the focus group, the secondary KEYPAD indev) is generic — only the *pump*
+// that feeds it differs per board: Tanmatsu's navPump() reads bsp-input events;
+// T-Deck's WASDZ-letter nav and the M9's raw d-pad bytes are both fed straight
+// from handleHwKey() instead (see UITask.cpp's `#elif defined(HAS_M9_KEYBOARD)`
+// block, parallel to the T-Deck's `#if CAP_TRACKBALL` block).
+#if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0
@@ -148,4 +193,16 @@
   #define CAP_SOUND_FILES 1
 #else
   #define CAP_SOUND_FILES 0
+#endif
+
+// ---- On-device web browser (the "Web" reader app) ---------------------------
+// The reader fetches pages over on-device HTTPS, and a TLS handshake needs ~30 KB of
+// free INTERNAL heap. Only the 8 MB-PSRAM boards (T-Deck, Tanmatsu, ThinkNode M9, RAK
+// Tap) have that headroom; the 2 MB Heltec V4 TFT can't complete the handshake
+// (fetch returns -1), so the Web app is gated out there. Tapping a link in chat still
+// offers "Create QR" everywhere — only "Open in web" is gated to these boards.
+#if defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8)
+  #define CAP_WEB_BROWSER 0   // 2 MB V4: TLS handshake can't fit
+#else
+  #define CAP_WEB_BROWSER 1   // 8 MB boards incl. the V4-R8
 #endif

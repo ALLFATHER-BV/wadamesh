@@ -31,3 +31,4 @@ CONFIG_BT_NIMBLE_NVS_PERSIST=y
 # which IDF 5.5 only defines when the task watchdog is initialised. Enable it (5 s timeout).
 CONFIG_ESP_TASK_WDT_INIT=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y

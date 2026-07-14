@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "SnakeGame.h"
+#include "i18n.h"
 
 #include <Arduino.h>          // random()
 #include <string.h>           // memmove
@@ -72,10 +73,10 @@ void SnakeGame::render() {
 
 void SnakeGame::updateScoreLabel() {
   if (!score_) return;
-  if (over_)         lv_label_set_text_fmt(score_, "Game over  \xe2\x80\x94  score %d   (tap to restart)", score_val_);
-  else if (paused_)  lv_label_set_text_fmt(score_, "Paused  \xe2\x80\x94  score %d", score_val_);
-  else if (started_) lv_label_set_text_fmt(score_, "score %d", score_val_);
-  else               lv_label_set_text(score_, "Snake  \xe2\x80\x94  swipe or roll the trackball");
+  if (over_)         lv_label_set_text_fmt(score_, TR("Game over  \xe2\x80\x94  score %d   (tap to restart)"), score_val_);
+  else if (paused_)  lv_label_set_text_fmt(score_, TR("Paused  \xe2\x80\x94  score %d"), score_val_);
+  else if (started_) lv_label_set_text_fmt(score_, TR("score %d"), score_val_);
+  else               lv_label_set_text(score_, TR("Snake  \xe2\x80\x94  swipe or roll the trackball"));
 }
 
 void SnakeGame::step() {

@@ -91,17 +91,23 @@ public:
    *  the only consumer that never sees app-originated sends — this lets it mirror one as a local
    *  outgoing bubble so it shows on-device too (issue #46). Default no-op for non-touch UIs. */
   virtual void appSentMsgToContact(const uint8_t* to_pub, const char* to_name, const char* text,
-                                   uint32_t ack_hash) {
-    (void)to_pub; (void)to_name; (void)text; (void)ack_hash;
+                                   uint32_t ack_hash, uint32_t sent_fp = 0) {
+    (void)to_pub; (void)to_name; (void)text; (void)ack_hash; (void)sent_fp;
   }
   /** Mirror an app-originated CHANNEL message into the on-device UI — the channel-send path, like the
    *  DM path above, never shows companion-originated sends on screen otherwise. text is NUL-terminated
    *  by the caller. Default no-op for non-touch UIs. */
-  virtual void appSentMsgToChannel(const char* channel_name, const char* text) {
-    (void)channel_name; (void)text;
+  virtual void appSentMsgToChannel(const char* channel_name, const char* text, uint32_t sent_fp = 0) {
+    (void)channel_name; (void)text; (void)sent_fp;
   }
   virtual void notify(UIEventType t = UIEventType::none) = 0;
   virtual void appendDiag(const char* message) { (void)message; }
+  /** Flush any UI-side persistent state (chat history, thread table) to storage
+   *  NOW. Called before programmatic reboots (the companion app's reboot
+   *  command) — the touch UI's history writes are lazy (up to ~30 s apart on the
+   *  deep SD ring), so a reboot path that skips this drops the newest messages.
+   *  Default: no-op for UIs without lazy persistent state. */
+  virtual void persistHistoryNow() {}
   /** Notify UI of an advert reception. `is_new=true` means the contact is NOT in
    *  the persistent contacts[] table (filtered by auto-add rules or contacts
    *  full); `is_new=false` means the contact is in contacts[] and was just

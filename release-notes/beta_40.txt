@@ -1,0 +1,32 @@
+# beta_40 (STABLE) - the first stable since beta_35. Rolls up everything from beta_36 through beta_40: reliable SD storage, message delete + full-history scrolling, a big translation pass, two new boards, and a pile of storage/perf/stability fixes.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- New ---
+Big translation pass: hundreds of previously-English strings across menus, settings, dialogs and the setup flow are now translated into all 11 non-English languages (Dutch, German, French, Spanish, Italian, Russian, Ukrainian, Bulgarian, Serbian, Greek, Brazilian Portuguese). Menu rows that carry an icon translate too. Switch language under Settings.
+Chat scrolling is fully virtualized (contributed by scratchdiver, PR #130): a chat now scrolls through its ENTIRE stored history, up to 5000 messages on SD-card devices, smoothly in both bubble and compact mode, instead of only the most recent rows.
+Long-press any message for a Delete option that removes just that message; the message menu lays its buttons two per row so it fits on one screen.
+The chat and channel settings sheet gains "Delete history": wipes the whole conversation after a confirmation, while the channel membership or contact stays.
+The in-chat jump buttons are slim arrows tucked against the right edge: fully visible while you scroll, fading to half opacity a second after you stop.
+ThinkNode M9 hardware support is complete (contributed by ded, PR #138): GPS, microSD, buzzer, backlight control, lock screen, long-press context menus, and a d-pad-driven setup wizard. It can be installed straight from the web flasher.
+New board: RAK WisMesh Tap V2 (contributed by Ethac.chen, PR #136), with a 30+ fps display driver, also installable from the web flasher.
+The Wi-Fi network screens (join a network, hidden network, saved-network details) are full-screen pages now instead of small popups, matching the other settings pages and scrolling properly with the keyboard open.
+The lock screen shows an envelope with the number of unread messages under the clock, so you can check for news without unlocking (idea from issue #93).
+Passwords with special characters can be entered everywhere: long-press any settings field, including the Wi-Fi password, for a Cut / Copy / Paste / All / Sym menu. Sym opens a picker with the characters the on-screen keyboard lacks (issue #122). Double-tap selects a word.
+For Launcher installs: a "Save update bin to SD" button on the About page downloads the latest firmware of your selected channel into a BINS folder on the SD card, ready to flash from the Launcher. The test-builds toggle is visible on Launcher installs too.
+New region preset "Australia (Mid)": 915.075 MHz, 125 kHz, SF9, CR5 (requested in issue #121).
+Your GPS position is now the first row in the quick-reply picker, so you can send your current coordinates with one tap (contributed by Yazutsu, PR #125).
+Tanmatsu: hold ALT and press a letter to open the accent picker; keep ALT held and press again to cycle, release to insert (requested by jochentj, issue #129). Double-tap the space bar to switch between your enabled keyboard languages, same as the T-Deck.
+While in a chat, the top bar shows the active keyboard language next to the clock when more than one layout is enabled.
+
+# --- Fixed ---
+The "Store data on SD" toggle is now actually honored after a reboot (fix contributed by scratchdiver, PR #123). On Launcher installs it silently reverted to internal storage every boot, which also kept the slow internal-flash writes. Turning it off works reliably now too.
+Turning on "Store data on SD" migrates your existing profile, settings and identity to the card FIRST, so upgrading no longer risks adopting an empty card and booting as a brand-new node. If you were already hit by that, Settings -> General -> "Copy internal data to SD" restores the profile from internal flash.
+Card-less devices (Heltec V4, and any board without an SD card) no longer freeze for several seconds at a time. A busy mesh re-writes the whole contacts file to internal flash on every advert refresh, and that flash garbage-collection stalled the whole device; contact saves are now coalesced so only real changes (a new or removed node) are written promptly.
+Deleting a message, or clearing a whole chat, now sticks: it survives a reboot or a hardware reset instead of coming back (reported by Leon P and MrWeavis). Deleting is also much faster - chat history is written compactly, only the messages you actually have, so a delete, a history wipe, or a reboot no longer pauses the screen while it saves.
+Messages no longer vanish when you reboot the device from the phone app (reported by Leon P): the app's reboot command now saves chat history first, like every on-device reboot path already did.
+Chat history saves to the SD card are more robust: files are written atomically with a fallback save path, so a badly timed reboot can no longer truncate your message history (contributed by scratchdiver, PR #135).
+Longer translated labels (French, German, etc.) that used to clip or wrap now shrink to fit: the message action menu, confirmation dialogs, and the app-drawer tiles all keep their text on one line. The signal card's "tap for details" hint no longer overlaps in other languages.
+Emoji picker: the food and object emoji that showed as empty boxes (umbrella, coffee, pizza, cake, rocket, camera, phone, laptop, calendar, antenna, e-mail, house, car, watch) now render properly.
+Tanmatsu: profile name, settings and the node identity persist reliably across reboots (moved off the unreliable internal-flash partition onto the SD card, with existing data rescued on first boot). Accented letters render at full size at the Large and Huge UI scales. The About page shows the correct firmware version now.
+T-Deck: if the touch controller glitches into a stuck "phantom finger" state (touch dead, trackball clicks eaten, screen never timing out), the driver detects it and recovers within seconds instead of needing a full power cycle. Touch initialisation at boot also retries for a few seconds instead of giving up after one attempt.
+The keyboard-backlight "Off" preset now actually switches the backlight off and stays off (contributed by Yazutsu, PR #88).
