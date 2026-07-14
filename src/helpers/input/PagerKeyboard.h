@@ -69,4 +69,15 @@ bool pagerKeyboardBackspaceHeld();
  *  "lock screen" gesture). */
 bool pagerKeyboardSpaceHeld();
 
+/** One-shot: true exactly once after Alt(Fn)+Shift is chorded (Shift pressed
+ *  while Alt is held). The driver no longer decides what this chord DOES
+ *  (that depends on UI state — is a text field being edited? — which this
+ *  driver has no visibility into), it only reports that the chord happened;
+ *  consumes the pending flag on read. See pagerKeyboardToggleCaps(). */
+bool pagerKeyboardConsumeAltShiftChord();
+
+/** Toggle persistent Caps Lock. Callers gate this on the Alt+Shift chord
+ *  above only applying while a text field is actually being edited. */
+void pagerKeyboardToggleCaps();
+
 #endif

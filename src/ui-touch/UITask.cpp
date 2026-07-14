@@ -27360,6 +27360,22 @@ static void updatePagerAltTapNext() {
   if (g_lv.task) g_lv.task->noteUserInput();
 }
 
+// Alt(Fn)+Shift chord (PagerKeyboard.cpp only reports it, since the driver has
+// no UI visibility): while actually editing a text field, toggle Caps Lock
+// (the field is where "Caps Lock" means anything); everywhere else — no field
+// focused, or a field merely bound but nav focus has moved off it (same "ta"
+// derivation handleHwKey() uses) — jump straight Home instead, since Caps
+// Lock silently flipping with no field to see it in was reported as
+// surprising/purposeless outside of typing.
+static void updatePagerAltShiftChord() {
+  if (!pagerKeyboardConsumeAltShiftChord()) return;
+  lv_obj_t* ta_focused = lv_keyboard_get_textarea(g_lv.keyboard);
+  lv_obj_t* ta = (ta_focused && s_nav_group && lv_group_get_focused(s_nav_group) == ta_focused) ? ta_focused : nullptr;
+  if (ta) pagerKeyboardToggleCaps();
+  else    navGoToMainTab(HOME_TAB_INDEX);
+  if (g_lv.task) g_lv.task->noteUserInput();
+}
+
 // ---- Spacebar hold-to-lock (mirrors the T-Deck's spacebar lock) -------------
 // The T-Deck keyboard can't detect a real key-up, so it fakes a hold with a
 // press-then-1s-countdown; the TCA8418 here reports genuine press/release, so
@@ -38362,9 +38378,11 @@ void UITask::loop() {
       if (pagerKeyboardReadKey() <= 0) break;
       any = true;
     }
-    // Discard any Alt tap picked up while idle-dimmed -- it must not fire
-    // updatePagerAltTapNext()'s NEXT the instant the screen wakes.
+    // Discard any Alt tap / Alt+Shift chord picked up while idle-dimmed -- it
+    // must not fire updatePagerAltTapNext()'s NEXT / updatePagerAltShiftChord()'s
+    // toggle-or-Home the instant the screen wakes.
     pagerKeyboardConsumeAltTap();
+    pagerKeyboardConsumeAltShiftChord();
     // Hard-locked: an ordinary keypress must NOT wake/unlock -- only holding
     // Backspace does (updatePagerBackspaceUnlockHold, already polled above).
     if (any && !g_lv.task->isManualLock()) g_lv.task->wakeScreen();
@@ -38375,6 +38393,7 @@ void UITask::loop() {
       handleHwKey(key);
     }
     updatePagerAltTapNext();
+    updatePagerAltShiftChord();
     updatePagerBackspaceHold(now);
     updatePagerSpaceHold(now);
   }

@@ -62,8 +62,10 @@ Hold **Fn (Alt)** for numbers/symbols instead:
 - **Hold Shift + a letter**: that letter (or letters, for as long as you
   hold Shift) types uppercase — released, typing goes back to lowercase.
   Real momentary Shift, just like a normal keyboard.
-- **Hold Fn (Alt), then press Shift**: toggles **Caps Lock** on/off — stays
-  uppercase until you repeat the chord.
+- **Hold Fn (Alt), then press Shift**: while you're editing a text field,
+  toggles **Caps Lock** on/off — stays uppercase until you repeat the chord.
+  Anywhere else (not editing a field), the same chord instead jumps straight
+  to the **Home** screen.
 - Shift alone, tapped with nothing else, does nothing (as expected).
 
 ### Special keys
@@ -141,7 +143,8 @@ dimmable brightness curve.
 | Fn + turn (page/chat) | Scroll |
 | Fn tap alone | Next field |
 | Hold Shift + letter | Momentary uppercase |
-| Fn + Shift | Toggle Caps Lock |
+| Fn + Shift (editing a field) | Toggle Caps Lock |
+| Fn + Shift (not editing a field) | Jump to Home |
 | Fn + Space | Enter accent picker |
 | Enter | Select / send / message action menu |
 | Backspace (tap) | Delete / jump to latest message |

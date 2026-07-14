@@ -38,13 +38,18 @@ static constexpr char s_symbolMap[KB_ROWS][KB_COLS] = {
 // Modifier/special-key positions: 0-based (row*KB_COLS + col), matching the
 // TCA8418 raw event's (code & 0x7F) - 1. Alt is a hold (symbol layer while
 // held); Shift is a hold too (momentary uppercase on the base layer, real
-// Shift-key semantics) — held Alt THEN a Shift press instead chords into a
-// toggle for persistent Caps Lock (s_caps). Note: Alt (row2,col0) and Shift
-// (row2,col8) share row2, and row0/row1 col8 are 'o'/'l' — holding
-// Alt+Shift+O or Alt+Shift+L all three at once will phantom-ghost a 'q'/'a'
-// at the row2/col0 intersection (classic diode-less-matrix 3-key rectangle,
-// no software fix possible); harmless in practice since the intended gesture
-// is hold-Alt-tap-Shift-release-both, not holding all three simultaneously.
+// Shift-key semantics) — held Alt THEN a Shift press instead chords into
+// Alt+Shift, reported via s_alt_shift_chord_pending. What that chord DOES is
+// a UI-level decision (UITask.cpp): Caps Lock toggle while editing a text
+// field, or jump Home otherwise — this driver has no idea which field (if
+// any) is focused, so it only reports the chord, it doesn't act on it (see
+// pagerKeyboardConsumeAltShiftChord()/pagerKeyboardToggleCaps()). Note: Alt
+// (row2,col0) and Shift (row2,col8) share row2, and row0/row1 col8 are
+// 'o'/'l' — holding Alt+Shift+O or Alt+Shift+L all three at once will
+// phantom-ghost a 'q'/'a' at the row2/col0 intersection (classic
+// diode-less-matrix 3-key rectangle, no software fix possible); harmless in
+// practice since the intended gesture is hold-Alt-tap-Shift-release-both,
+// not holding all three simultaneously.
 static constexpr uint8_t kAltPos       = 2 * KB_COLS + 0; // row2,col0 ('\0' in both layers)
 static constexpr uint8_t kShiftPos     = 2 * KB_COLS + 8; // row2,col8 ('\0' in both layers)
 static constexpr uint8_t kBackspacePos = 2 * KB_COLS + 9; // row2,col9 ('\0' in both layers)
@@ -57,6 +62,7 @@ static bool s_alt_used = false;         // Alt consumed as a modifier since it w
 static bool s_alt_tap_pending = false;  // Alt pressed+released with nothing else happening meanwhile
 static bool s_caps = false;
 static bool s_shift_held = false;   // momentary Shift, mirrors s_backspace_held/s_space_held
+static bool s_alt_shift_chord_pending = false;   // one-shot, see pagerKeyboardConsumeAltShiftChord()
 static bool s_backspace_held = false;
 static bool s_space_held = false;
 
@@ -115,7 +121,7 @@ void pagerKeyboardPoll() {
     if (s_alt && pressed) s_alt_used = true;
     if (code == kShiftPos) {
       if (pressed) {
-        if (s_alt) s_caps = !s_caps;   // Alt (Fn) held + Shift press = toggle persistent Caps Lock
+        if (s_alt) s_alt_shift_chord_pending = true;   // Alt (Fn) held + Shift press = chord (UI decides the effect)
         else       s_shift_held = true;
       } else {
         s_shift_held = false;
@@ -167,5 +173,13 @@ bool pagerKeyboardConsumeAltTap() {
 bool pagerKeyboardBackspaceHeld() { return s_backspace_held; }
 
 bool pagerKeyboardSpaceHeld() { return s_space_held; }
+
+bool pagerKeyboardConsumeAltShiftChord() {
+  if (!s_alt_shift_chord_pending) return false;
+  s_alt_shift_chord_pending = false;
+  return true;
+}
+
+void pagerKeyboardToggleCaps() { s_caps = !s_caps; }
 
 #endif
