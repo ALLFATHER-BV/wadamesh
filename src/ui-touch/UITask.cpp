@@ -1101,6 +1101,17 @@ constexpr int TAB_LAST               = 4;
 // row, leaving the row un-focusable so keyboard users could only open thread-settings, never the chat.
 #define NAV_HMOVE_FLAG LV_OBJ_FLAG_USER_2
 
+// An object whose keyboard-nav focus highlight should be an ACCENT-coloured
+// tint (matching its own touch-press feedback) instead of navFocusCb's
+// default white reverse-video fill. Used by app-drawer tiles (addAppTile):
+// a solid white block over a small rounded icon chip reads as a glitch, not
+// a highlight — while on the pager (no touch, so this IS the only feedback
+// a user ever sees on these tiles) it needs to look intentional. Reuses the
+// exact same COLOR_ACCENT tint the tile's own LV_STATE_PRESSED style already
+// defines, so a keyboard/encoder-focused tile matches what a touch/trackball
+// press already looks like on every board.
+#define NAV_ACCENTFOCUS_FLAG LV_OBJ_FLAG_USER_3
+
 // ---- Chat overlay layout ----
 constexpr int CHAT_HDR_H       = 0;    // in-chat header bar removed; thread name shows in the status bar
 #if CAP_LARGE_SCREEN
@@ -2629,6 +2640,15 @@ static void navFocusCb(lv_group_t* g) {
     lv_obj_set_style_shadow_width(f, 16, LV_PART_MAIN);
     lv_obj_set_style_shadow_spread(f, 2, LV_PART_MAIN);
     lv_obj_set_style_shadow_opa(f, LV_OPA_COVER, LV_PART_MAIN);
+  } else if (lv_obj_has_flag(f, NAV_ACCENTFOCUS_FLAG)) {
+    // App-drawer tile: a solid white reverse-fill over a small rounded icon
+    // chip reads as a glitch, not a highlight — use the SAME accent tint the
+    // tile's own LV_STATE_PRESSED style already applies on a touch/trackball
+    // press, so keyboard/encoder focus looks identical on every board instead
+    // of white-on-pager vs. accent-on-touch.
+    s_nav_sv.bg_c = s_nav_sv.bg_o = s_nav_sv.txt = false;   // nothing to restore; navUnstyle just clears these
+    lv_obj_set_style_bg_color(f, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(f, LV_OPA_20, LV_PART_MAIN);
   } else {
     // Save the element's current local props, then apply the negative fill.
     s_nav_sv.bg_c = lv_obj_get_local_style_prop(f, LV_STYLE_BG_COLOR,   &s_nav_sv.v_bg_c, LV_PART_MAIN) == LV_STYLE_RES_FOUND;
@@ -30576,6 +30596,7 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_set_style_radius(t, 12, LV_PART_MAIN);
   lv_obj_set_style_bg_color(t, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(t, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_add_flag(t, NAV_ACCENTFOCUS_FLAG);   // keyboard/encoder focus = same accent tint as a touch press
   lv_obj_add_event_cb(t, appTileCb, LV_EVENT_CLICKED, (void*)(intptr_t)act);
 
   // Rounded-square chip (iOS-style squircle), tinted with the app's accent
