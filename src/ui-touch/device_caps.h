@@ -70,6 +70,19 @@
   #define CAP_OTA          1
   #define CAP_LOCK_SCREEN  1
 
+#elif defined(HELTEC_LORA_V4_R8)      // ===== Heltec WiFi LoRa 32 V4-R8 (ESP32-S3R8, 8 MB PSRAM) =====
+  // Same board family + panel as the V4 TFT (the build also defines
+  // HELTEC_LORA_V4_TFT to reuse all its UI code); the deltas are 8 MB octal
+  // PSRAM (→ web browser) and a micro-SD slot on the Expansion Kit V2.
+  #define CAP_TOUCH        1   // CHSC6x capacitive touch (Expansion Kit V2)
+  #define CAP_ROTATABLE    1   // user can flip portrait/landscape
+  #define CAP_LARGE_SCREEN 0   // 240x320
+  #define CAP_SD           1   // micro-SD on Expansion Kit V2 (shared TFT SPI bus, CS=3)
+  #define CAP_FILESYSTEM   1   // browsable filesystem (the SD card)
+  #define CAP_GPS          1
+  #define CAP_OTA          1   // native dual-OTA slot
+  #define CAP_LOCK_SCREEN  0
+
 #else                                    // ===== Heltec V4 TFT (default) =====
   #define CAP_TOUCH        1   // capacitive touch panel
   #define CAP_ROTATABLE    1   // user can flip portrait/landscape
@@ -152,8 +165,8 @@
 // Tap) have that headroom; the 2 MB Heltec V4 TFT can't complete the handshake
 // (fetch returns -1), so the Web app is gated out there. Tapping a link in chat still
 // offers "Create QR" everywhere — only "Open in web" is gated to these boards.
-#if defined(HELTEC_LORA_V4_TFT)
-  #define CAP_WEB_BROWSER 0
+#if defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8)
+  #define CAP_WEB_BROWSER 0   // 2 MB V4: TLS handshake can't fit
 #else
-  #define CAP_WEB_BROWSER 1
+  #define CAP_WEB_BROWSER 1   // 8 MB boards incl. the V4-R8
 #endif

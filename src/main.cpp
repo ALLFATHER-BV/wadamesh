@@ -48,11 +48,11 @@ static uint32_t _atoi(const char* sp) {
   DataStore store(LittleFS, rtc_clock);
 #elif defined(ESP32)
   #include <SPIFFS.h>
-  #if defined(HAS_TDECK_GT911)
+  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
     #include <SD.h>
     #include <Preferences.h>
     #ifndef PIN_SD_CS
-      #define PIN_SD_CS 39      // T-Deck microSD chip-select
+      #define PIN_SD_CS 39      // T-Deck microSD chip-select (V4-R8 sets 3 in the env)
     #endif
   #endif
   extern "C" void set_boot_phase(int phase);
@@ -192,7 +192,7 @@ void halt() {
 
 #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)
 
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
 // ---- SPIFFS -> SD migration (fixes the beta_36 "lost my profile" upgrades) ----
 // Users who flipped "Store data on SD" before beta_36 ran with the toggle IGNORED
 // (the flag never survived a reboot), so their identity/prefs/contacts kept living
@@ -443,9 +443,13 @@ void setup() {
   // failure falls back to SPIFFS so the device always boots.
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
   bool sd_storage = false;
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
   {
-    extern SPIClass* tdeckSharedSPI();
+   #if defined(HELTEC_LORA_V4_R8)
+    extern SPIClass* heltecV4R8SharedSPI();   // FSPI, shared with the TFT (CS=3)
+   #else
+    extern SPIClass* tdeckSharedSPI();        // LoRa SPI bus
+   #endif
     bool setup_done = false;
     { Preferences _p; if (_p.begin("touch", true)) {
         setup_done = _p.getBool("setup_ok", false);  // finished first-run setup
@@ -468,7 +472,11 @@ void setup() {
     // device has no usable SPIFFS, the user opted in, or it's a brand-new device.
     bool want_full_sd = !spiffs_ok || use_sd_pref || fresh_install;
 
+   #if defined(HELTEC_LORA_V4_R8)
+    SPIClass* _spi = heltecV4R8SharedSPI();
+   #else
     SPIClass* _spi = tdeckSharedSPI();
+   #endif
     bool sd_mounted = false;
     if (_spi) {
       // Try to mount the card on EVERY boot now (not just the full-adoption case):
@@ -529,7 +537,7 @@ void setup() {
   // Route touch settings + Wi-Fi creds to the active filesystem (SD when that's
   // the data store, else SPIFFS) instead of NVS. Old NVS values still load and
   // migrate on their next save, so this is a transparent in-place upgrade.
-  #if defined(HAS_TDECK_GT911)
+  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
   #else

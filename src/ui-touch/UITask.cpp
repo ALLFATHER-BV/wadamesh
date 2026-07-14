@@ -47,8 +47,8 @@
   static inline esp_err_t esp_core_dump_image_erase() { return ESP_FAIL; }
   #endif
 #endif
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
-  #include <SD.h>             // microSD (CS=39) on the shared LoRa SPI bus
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+  #include <SD.h>             // microSD — T-Deck/M9 on the LoRa SPI, V4-R8 on the TFT SPI
   #include "sd_diskio.h"      // internal Arduino-SD drive helpers (sdcard_init / sd_*_raw)
   extern SPIClass* tdeckSharedSPI();
   // FatFs mkfs (the prebuilt ESP-IDF compiles f_setlabel OUT — FF_USE_LABEL=0 —
@@ -135,7 +135,7 @@
   #endif
   #if defined(HAS_TANMATSU)
     extern TanmatsuDisplay display;
-  #elif defined(HAS_RAK_TAP_V2)
+  #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8)
     extern LGFXDisplay display;
   #else
     extern ST7789LCDDisplay display;
@@ -555,6 +555,9 @@ static void initTouchFontFallbacks() {
 // burst on the fly. The legacy genericBuzzer (RTTTL on a digital pin) doesn't
 // apply here — that's for boards with a piezo on a GPIO, which the touch boards
 // don't have. Gated to the T-Deck; the V4 has no speaker at all.
+#if defined(HELTEC_LORA_V4_R8)
+static bool fmSdTryMount();   // V4-R8 microSD — fwd decl (defined in the mount-helper block below)
+#endif
 #if defined(HAS_TDECK_GT911)
 static constexpr int kI2sSampleRate = 16000;
 static constexpr i2s_port_t kI2sPort = I2S_NUM_0;
@@ -15970,8 +15973,8 @@ static char      s_fm_path[160]  = {0};     // current dir within s_fm_fs (e.g. 
 // a generic fs::FS*; only &SD is real microSD I/O (Internal = SPIFFS). Browsing
 // (fmRefresh) and the file open/save paths call this; mutations re-list via
 // fmRefresh, so they blip the LED too.
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
-static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // Arduino SD on the shared LoRa SPI bus (both boards)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // Arduino SD (T-Deck/M9 LoRa bus, V4-R8 TFT bus)
 #elif defined(HAS_TANMATSU)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD_MMC; }   // microSD on SDMMC slot 0
 #else
@@ -17094,7 +17097,7 @@ static void fmFmtSize64(uint64_t bytes, char* out, size_t outsz) {
   else                                     snprintf(out, outsz, "%.1f GB", bytes / (1024.0 * 1024 * 1024));
 }
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)  // microSD mount/format helpers — Arduino SD on the shared LoRa SPI (T-Deck only)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)  // microSD mount/format helpers — Arduino SD (T-Deck/M9 LoRa bus, V4-R8 TFT bus)
 // Mount the microSD on the shared LoRa SPI bus. Safe to call repeatedly (no-op
 // once mounted). SD.begin's internal spi.begin() is a no-op because the bus is
 // already initialised by the radio, so the radio's pins are untouched.
@@ -17102,6 +17105,8 @@ static bool fmSdTryMount() {
   if (s_sd_mounted) return true;
 #if defined(HAS_TDECK_GT911)
   SPIClass* spi = tdeckSharedSPI();
+#elif defined(HELTEC_LORA_V4_R8)
+  SPIClass* spi = heltecV4R8SharedSPI();   // V4-R8: micro-SD shares the TFT FSPI bus (CS=3)
 #else
   SPIClass* spi = m9SharedSPI();
 #endif
@@ -17197,7 +17202,7 @@ static void fmHideFormatOverlay() {
   if (s_fm_fmt_overlay) { popupClose(&s_fm_fmt_overlay); }
 }
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // SD format helpers resume (Arduino SD, T-Deck + M9 only)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)   // SD format helpers resume (Arduino SD, T-Deck + M9 + V4-R8)
 // Confirm callback: paint the formatting notice, then defer the (blocking)
 // f_mkfs to UITask::loop so the notice is on-screen before the loop freezes.
 static void fmSdDoFormat() {
@@ -18420,7 +18425,7 @@ static void fmShowRoots() {
   fmStyleRow(b, COLOR_TEXT);
   lv_obj_add_event_cb(b, fmInternalClickCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)  // microSD row (Arduino SD) — T-Deck + M9
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)  // microSD row (Arduino SD) — T-Deck + M9 + V4-R8
   // Probe the SD only when not in a mount-backoff window, so a persistently
   // unmountable card doesn't re-grind the full retry ladder on every render of
   // this page. Tapping the row below (fmSdMountOrFormatCb) bypasses the gate.
