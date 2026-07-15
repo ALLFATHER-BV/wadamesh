@@ -2766,6 +2766,12 @@ static void openEmojiPickerForComposer(lv_obj_t* ta);   // □ emoji picker (Tan
 static lv_obj_t* s_settings_sheet    = nullptr;  // open detail sheet; null = on the landing
 static int       s_settings_open_cat = -1;       // which category is open (for About-label teardown)
 static bool      s_settings_from_cc  = false;    // settings sheet opened via a control-center long-press
+// The Wi-Fi join / details / hidden sheet floats on the BASE layer (lv_scr_act) ABOVE the
+// settings category page — SAME layering as s_settings_sheet, and SAME reason it's declared up
+// here: navMaybeRebuild must recognise it as the focus root, else keypad/trackball nav collects
+// the tab content behind it and its SSID/password fields can't be selected (Tanmatsu #). Defined
+// (with its ta/sw siblings) far below; only the container pointer is needed up here.
+static lv_obj_t* s_wifi_sheet        = nullptr;  // join / details / hidden overlay (one at a time)
 
 #if CAP_KEYPAD_NAV
 // ===========================================================================
@@ -3925,18 +3931,27 @@ static void navMaybeRebuild() {
   lv_obj_t* scr = lv_scr_act();
   lv_obj_t* top = lv_layer_top();
   bool useTop = navTopHasVisibleChild(top);
+  // The Wi-Fi join / details / hidden sheet floats on the BASE layer ABOVE the settings category
+  // page (itself above the tabview) — same base-layer trick as s_settings_sheet. It's created LAST,
+  // so when it's open it's the frontmost thing and must own the focus group; otherwise nav collects
+  // the settings page (or tab content) behind it and its SSID/password fields + Join button can't be
+  // selected at all on a no-touch board (Tanmatsu). Takes priority over the settings sheet below it.
+  bool on_wifi_sheet = (!useTop && s_wifi_sheet != nullptr && lv_obj_is_valid(s_wifi_sheet));
   // A settings detail sheet (openSettingsCategory) floats on the BASE layer ABOVE the tabview —
   // it's not a top-layer child nor a chat, so without this the tabview branch below would collect
   // the tab content BEHIND it and trackball nav couldn't reach any setting. Collect ITS controls.
-  bool on_settings = (!useTop && s_settings_sheet != nullptr && lv_obj_is_valid(s_settings_sheet));
+  bool on_settings = (!useTop && !on_wifi_sheet && s_settings_sheet != nullptr && lv_obj_is_valid(s_settings_sheet));
   // An open chat/channel detail overlay (above the tabview) takes focus priority over the tab content:
   // collect ITS controls + NO tab bar, so arrows stay inside the chat (don't reach the bar and switch
   // screens) and the composer can be focused for typing.
-  LvChatPanel* chat = (useTop || on_settings) ? nullptr : navOpenChatPanel();
-  lv_obj_t* root = useTop ? navTopFrontmostChild(top) : on_settings ? s_settings_sheet : (chat ? chat->overlay : scr);
-  const bool on_page = !useTop && !on_settings && !chat;   // #45: true = main tab content (the list that scrolls)
+  LvChatPanel* chat = (useTop || on_wifi_sheet || on_settings) ? nullptr : navOpenChatPanel();
+  lv_obj_t* root = useTop ? navTopFrontmostChild(top)
+                          : on_wifi_sheet ? s_wifi_sheet
+                          : on_settings ? s_settings_sheet
+                          : (chat ? chat->overlay : scr);
+  const bool on_page = !useTop && !on_wifi_sheet && !on_settings && !chat;   // #45: true = main tab content (the list that scrolls)
   lv_obj_t* tabbar = nullptr;
-  if (!useTop && !on_settings && !chat && g_lv.tabview) {
+  if (!useTop && !on_wifi_sheet && !on_settings && !chat && g_lv.tabview) {
     // Main app: collect ONLY the active tab's content (inactive tabs are scrolled off-screen, not
     // hidden, so the whole screen would focus off-screen widgets). The tab bar is added separately
     // as the LAST focus stop so you navigate content first, then reach the bar to switch screens.
@@ -3945,7 +3960,7 @@ static void navMaybeRebuild() {
     if (tvc && at < lv_obj_get_child_cnt(tvc)) root = lv_obj_get_child(tvc, at);
     tabbar = lv_tabview_get_tab_btns(g_lv.tabview);
   }
-  uint32_t sig = navTreeSig(root, 0) ^ (useTop ? 0xA5A5A5A5u : on_settings ? (0x5E771465u ^ ((uint32_t)(s_settings_open_cat + 1) * 2654435761u)) : chat ? 0xC4A7C4A7u : ((uint32_t)getActiveTab() + 1) * 2654435761u);
+  uint32_t sig = navTreeSig(root, 0) ^ (useTop ? 0xA5A5A5A5u : on_wifi_sheet ? 0x9F1CB0EDu : on_settings ? (0x5E771465u ^ ((uint32_t)(s_settings_open_cat + 1) * 2654435761u)) : chat ? 0xC4A7C4A7u : ((uint32_t)getActiveTab() + 1) * 2654435761u);
   // navTreeSig only walks the page `root`; the top-bar action buttons live in the
   // NAV_SKIP'd status bar (added separately by navAddStatusBarActions). Fold their
   // visibility into the sig so a rebuild fires when they appear/disappear — otherwise
@@ -12569,7 +12584,7 @@ static void wifiRadioToggleCb(lv_event_t* e) {
 // ============================================================================
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 static lv_obj_t* s_wifi_list_cont      = nullptr;   // network list (valid only while the Wi-Fi modal is open)
-static lv_obj_t* s_wifi_sheet          = nullptr;   // join / details / hidden overlay (one at a time)
+// s_wifi_sheet itself is declared up near s_settings_sheet (navMaybeRebuild needs it early).
 static lv_obj_t* s_wifi_sheet_ssid_ta  = nullptr;
 static lv_obj_t* s_wifi_sheet_pwd_ta   = nullptr;
 static lv_obj_t* s_wifi_sheet_aj_sw    = nullptr;

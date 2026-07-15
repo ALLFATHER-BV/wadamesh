@@ -21,6 +21,24 @@
   #define PIN_TOUCH_INT -1
 #endif
 
+// --- Which I2C controller the CHSC6x lives on -------------------------------
+// Plain V4: the touch has its OWN controller (Wire1) on dedicated pins 47/48,
+// physically separate from the board bus (Wire on 4/3) — two controllers on two
+// pad-pairs is fine, so it stays on Wire1.
+// V4-R8 (Expansion Kit V2): touch + RTC + env-sensors are all unified onto
+// GPIO17/18. Running the touch on a SECOND controller (Wire1) bound to the SAME
+// pads as the board's Wire let the core-0 touch-poll task and the core-1 RTC/
+// sensor reads collide on the wire — SDA stuck low = an unrecoverable I2C wedge,
+// i.e. the "random freezes that need a reset". Share the ONE board controller
+// (Wire) instead: arduino-esp32's per-instance TwoWire mutex then serialises
+// every transaction (repeated-starts included) across both cores — exactly the
+// proven T-Deck pattern (GT911 touch + keyboard + sensors all on one Wire).
+#if defined(HELTEC_LORA_V4_R8)
+  #define V4CAP_WIRE Wire
+#else
+  #define V4CAP_WIRE Wire1
+#endif
+
 #ifndef HELTEC_V4_TOUCH_LONG_MS
   #define HELTEC_V4_TOUCH_LONG_MS 1000
 #endif
@@ -155,8 +173,8 @@ static bool probeTouchControllerAddress() {
   // Known CHSC6x addresses seen across board variants/libraries.
   static const uint8_t kAddrCandidates[] = {0x2E, 0x15, 0x14};
   for (uint8_t i = 0; i < sizeof(kAddrCandidates); i++) {
-    Wire1.beginTransmission(kAddrCandidates[i]);
-    uint8_t rc = Wire1.endTransmission();
+    V4CAP_WIRE.beginTransmission(kAddrCandidates[i]);
+    uint8_t rc = V4CAP_WIRE.endTransmission();
     if (rc == 0) return true;
   }
   return false;
@@ -170,9 +188,9 @@ bool heltecV4CapTouchBegin() {
   s_last_init_try_ms = now;
 
   // Ensure bus is configured and bounded so failed probes never wedge boot/runtime.
-  Wire1.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL, 100000);
+  V4CAP_WIRE.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL, 100000);
 #if defined(ESP32)
-  Wire1.setTimeOut(20);  // milliseconds
+  V4CAP_WIRE.setTimeOut(20);  // milliseconds
 #endif
   if (PIN_TOUCH_INT >= 0) pinMode(PIN_TOUCH_INT, INPUT_PULLUP);
 
@@ -185,13 +203,13 @@ bool heltecV4CapTouchBegin() {
 
   // Use our own INT pin handling above; avoid library-level attachInterrupt side effects.
   // Keep reset pin support so controller can still be hard-reset.
-  static chsc6x instance_safe(&Wire1, PIN_TOUCH_SDA, PIN_TOUCH_SCL, -1, PIN_TOUCH_RST);
+  static chsc6x instance_safe(&V4CAP_WIRE, PIN_TOUCH_SDA, PIN_TOUCH_SCL, -1, PIN_TOUCH_RST);
   s_tp = &instance_safe;
   s_tp->chsc6x_init();
   // chsc6x_init() re-runs Wire begin internally, so re-apply bounded bus settings.
-  Wire1.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL, 100000);
+  V4CAP_WIRE.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL, 100000);
 #if defined(ESP32)
-  Wire1.setTimeOut(20);
+  V4CAP_WIRE.setTimeOut(20);
 #endif
   s_init_ok = true;
   return true;
