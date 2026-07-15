@@ -1,0 +1,22 @@
+# project-local ESP-IDF + tools (bootstrapped like the Tanmatsu's; see build.sh)
+esp-idf/
+esp-idf-tools/
+# build output + component manager cache
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+
+# local C6 recovery images (device-specific factory NVS backup + LilyGo's esp-hosted
+# slave bin — kept on-disk for emergencies, never published)
+*.bin
+
+# vendored dependency payloads (regenerate with fetch-deps.sh)
+components/ardlib_*/
+components/meshcore/core
+components/ardlibs/upstream/
+components/lvgl/upstream/
+components/RadioLib/src/
+components/RadioLib/library.properties
+components/RadioLib/license.txt

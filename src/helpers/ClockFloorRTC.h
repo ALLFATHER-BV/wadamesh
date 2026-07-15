@@ -35,21 +35,40 @@ public:
   static constexpr uint32_t MIN_VALID_EPOCH  = 1715770351UL;  // 15 May 2024 — the core's own unset-clock seed
   static constexpr uint32_t TRUSTED_BACK_CAP = 10UL * 60UL;
 
+  // High-side twin of MIN_VALID_EPOCH: an external RTC chip with corrupted/unset date
+  // registers can read as a *future* date (seen live: a T-Display P4's PCF8563 came back
+  // from a reboot asserting 2043). Future garbage is worse than past garbage — it passes
+  // the MIN check, latches the ratchet, and every timestamp sticks years ahead until a
+  // >10 min backward set arrives. Anything past ~(build year + 3) cannot be a real clock.
+  static constexpr uint32_t BUILD_YEAR =
+      (uint32_t)(__DATE__[7]-'0')*1000u + (uint32_t)(__DATE__[8]-'0')*100u +
+      (uint32_t)(__DATE__[9]-'0')*10u   + (uint32_t)(__DATE__[10]-'0');
+  static constexpr uint32_t MAX_PLAUSIBLE_EPOCH = (BUILD_YEAR + 3u - 1970u) * 31557600u;
+
   uint32_t getCurrentTime() override {
     uint32_t t = AutoDiscoverRTCClock::getCurrentTime();
+    if (t > MAX_PLAUSIBLE_EPOCH) {
+      // Hardware clock is asserting garbage-future: ignore the read entirely and hold at
+      // the last trusted point (or the core's unset seed) until a real source sets us.
+      return (_floor >= MIN_VALID_EPOCH) ? _floor : MIN_VALID_EPOCH;
+    }
     if (t < _floor) return _floor;
     _floor = t;
     return t;
   }
 
   void setCurrentTime(uint32_t time) override {
-    if (time < MIN_VALID_EPOCH) return;   // garbage set — ignore, whatever the source
+    if (time < MIN_VALID_EPOCH || time > MAX_PLAUSIBLE_EPOCH) return;   // garbage set — ignore, whatever the source
     AutoDiscoverRTCClock::setCurrentTime(time);
     if (_floor > time + TRUSTED_BACK_CAP) _floor = time;
   }
 
   // Boot-time seed from the persisted floor (only ever raises), and the getter
   // the persister reads back. Benign u32 races: both cores may touch _floor.
-  void seedFloor(uint32_t persisted) { if (persisted > _floor) _floor = persisted; }
+  // A poisoned persisted value (saved while the hw clock asserted garbage) is refused.
+  void seedFloor(uint32_t persisted) {
+    if (persisted > MAX_PLAUSIBLE_EPOCH) return;
+    if (persisted > _floor) _floor = persisted;
+  }
   uint32_t getFloor() const { return _floor; }
 };

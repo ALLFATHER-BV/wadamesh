@@ -5,7 +5,7 @@
 #include <SD.h>
 #include "helpers/esp32/WdtHeavyGuard.h"   // suspend core-0 idle WDT during the (SPIFFS-GC-prone) contact write
 #endif
-#if defined(HAS_TANMATSU)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
 #include <SD_MMC.h>
 #endif
 
@@ -835,8 +835,8 @@ bool DataStore::useSdStorage() {
 }
 #endif
 
-#if defined(HAS_TANMATSU)
-// Tanmatsu: same full-store adoption as useSdStorage(), but on the SD_MMC slot.
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+// P4 boards: same full-store adoption as useSdStorage(), but on the SD_MMC slot.
 // The internal FFat 'locfd' has a broken FAT metadata layer (f_stat/exists lie —
 // see the tile-cache notes), and the exists()-gated identity + prefs loads that
 // "worked" at -Og read different garbage at -Os and came up empty: fresh node

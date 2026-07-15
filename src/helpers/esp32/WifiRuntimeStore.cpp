@@ -5,6 +5,11 @@
 #include "SdNvsPrefs.h"   // NVS, or SD /meshcomod fallback when NVS is unusable (Launcher)
 #include <WiFi.h>
 #include <cstring>
+#if defined(HAS_TDISPLAY_P4)
+  // T-Display P4: rebind WiFi.* to the c6_at AT-over-SDIO facade — Arduino's real WiFi.mode()/begin()
+  // re-init esp_hosted (the C6 runs ESP-AT, not an esp-hosted slave) and panic the P4. P4-only header.
+  #include <C6WifiShim.h>
+#endif
 
 static const char *WIFI_CONFIG_NAMESPACE = "meshcomod";
 static const char *WIFI_CONFIG_SSID_KEY = "wifi_ssid";

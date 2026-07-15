@@ -5,7 +5,7 @@
 // makes MqttBridge a no-op stub on the Tanmatsu, and the real bridge below on all other boards.
 MqttBridge mqtt_bridge;
 
-#if !defined(HAS_TANMATSU)   // ---- real PubSubClient/WiFiClient implementation; NOT built on the P4 ----
+#if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)   // ---- real PubSubClient/WiFiClient implementation; NOT built on the P4 boards ----
 #include <Preferences.h>
 #include <WiFi.h>
 #include <stdio.h>

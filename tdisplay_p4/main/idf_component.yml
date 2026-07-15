@@ -1,0 +1,24 @@
+dependencies:
+  idf: ">=5.5.1"
+  # ── Wi-Fi/BLE over the C6 is NOT supported on this board (2026-07-14 investigation) ─────────────
+  # The T-Display P4's FACTORY C6 runs ESP-AT firmware (SDIO), NOT an esp-hosted slave — exactly what
+  # Meck-P4's real firmware talks to (Cpp_Bus_Driver::Esp_At, not esp_hosted_connect_to_slave). Our
+  # whole Wi-Fi/BLE stack is Arduino WiFi over esp-hosted/esp_wifi_remote, so the C6's SDIO stream is
+  # misframed ("len>max ... Drop") and the P4 reset-loops — this happens at BOTH esp_hosted 2.12.9 and
+  # 2.0.17 (verified), because it's a firmware-TYPE mismatch, not a version one. Making Wi-Fi work would
+  # need either (a) re-flashing the C6 with an esp-hosted slave image (the C6 is SDIO-only — no user
+  # flash path, unshippable) or (b) re-architecting Wi-Fi around the AT interface (large). So the C6 is
+  # left OFF and TDP4_C6_READY=0; the P4 ships LoRa + UI only. Keep arduino-esp32 at the standard 3.3.10.
+  badgeteam/badge-bsp: "^0.9.9"
+  nicolaielectronics/tanmatsu-wifi: "^1.1.2"
+  nicolaielectronics/tanmatsu-lora: "^0.3.0"   # SX1262 LoRa over the C6 — TanmatsuLoraRadio bridge
+  # NB: tanmatsu-wifi drags in the nicolaielectronics/esp-hosted-tanmatsu FORK (also pulled via
+  # badge-bsp), whose auto-init constructor grabs the C6 SDIO bus before app_main and blocks our AT
+  # driver. We can't just remove the dep (it's transitive), so build.sh neutralizes that fork's
+  # constructor too (alongside espressif/esp_hosted's). The P4's Wi-Fi is AT-over-SDIO via c6_at.
+  # arduino-esp32 as an IDF component so the shared wadamesh src/ (Arduino API) compiles.
+  espressif/arduino-esp32: "3.3.10"
+  # BLE companion over the C6: esp-nimble-cpp is the IDF-host NimBLE C++ wrapper (works with esp-hosted's
+  # remote BLE controller, unlike NimBLE-Arduino's bundled host). The Tanmatsu's vendored SerialBLEInterface
+  # copy is ported to this 2.x API. C6 controller comes up via hostedInitBLE().
+  h2zero/esp-nimble-cpp: "^2.3.0"

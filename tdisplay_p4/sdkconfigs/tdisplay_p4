@@ -1,0 +1,49 @@
+# LilyGo T-Display P4 (AMOLED) board sdkconfig fragment (first pass — validate at first build).
+# Modeled on sdkconfigs/tanmatsu but: NO badge-bsp, esp-hosted C6 on the T-Display P4's SDIO_2 pins,
+# our standalone partition table. See variants/tdisplay_p4/TDISPLAY_P4_PORT.md.
+CONFIG_IDF_TARGET="esp32p4"
+
+# 32 MB HEX (16-line) PSRAM at 200 MHz. On the ESP32-P4, HEX-PSRAM @ 200 MHz is gated behind
+# CONFIG_IDF_EXPERIMENTAL_FEATURES — without it Kconfig silently drops SPEED_200M to 20 MHz, which
+# starves the MIPI-DSI DPI (the panel underruns fetching the framebuffer). Matches the Tanmatsu.
+CONFIG_SPIRAM=y
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+
+# 16 MB flash + our standalone partition table
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partition_tables/tdisplay_p4_16M.csv"
+
+# MIPI-DSI (RM69A10 AMOLED)
+CONFIG_LCD_DSI_ISR_IRAM_SAFE=y
+
+# ESP32-C6 companion via esp-hosted over SDIO_2 (CLK18 / CMD19 / D0-3 = 14/15/16/17).
+# (Tanmatsu slot-1 used 16-21; the T-Display P4 wires the C6 to these instead.)
+CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CLK_SLOT_1=18
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CMD_SLOT_1=19
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D0_SLOT_1=14
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D1_4BIT_BUS_SLOT_1=15
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D2_4BIT_BUS_SLOT_1=16
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D3_4BIT_BUS_SLOT_1=17
+# C6 EN/reset is on the XL9535 expander (IO14): we reset+enable the C6 OURSELVES with a C6_EN
+# HIGH->LOW->HIGH pulse in Xl9535::powerOnSequence() (exactly like the working Meck-P4 app_main),
+# so esp-hosted must NOT try its own reset. Match Meck's setup: stock esp_hosted defaults (no reset
+# callback) + reset-only-if-necessary, so the host just connects to the already-booted C6 slave.
+CONFIG_ESP_HOSTED_SLAVE_RESET_ONLY_IF_NECESSARY=y
+CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
+# Do NOT reboot the P4 when the C6 doesn't answer (default esp-hosted behaviour). During bring-up the
+# C6 SDIO/power path isn't proven yet; without this the host reboots ~10 s after a failed C6 init,
+# preventing the UI (and LoRa) from ever coming up. Keep the device alive; Wi-Fi/BLE just stay down.
+CONFIG_ESP_HOSTED_HOST_RESTART_NO_COMMUNICATION_WITH_SLAVE=n
+
+# Panic coredump -> the dedicated 64K 'coredump' partition (see tdisplay_p4_16M.csv). Unlike the
+# Tanmatsu (whose table has no coredump partition, so UITask stubs the API), the P4 has one, so
+# enable the real esp_core_dump_image_check/_get/_erase the crash-report export calls. ELF format
+# so the coredump can be decoded against firmware.elf (see the tdeck-coredump-decode workflow).
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=64

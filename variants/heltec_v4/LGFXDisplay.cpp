@@ -74,13 +74,17 @@ bool LGFXDisplay::begin() {
 
   _lcd.init();
   _lcd.setSwapBytes(true);                         // LVGL pixels are LE; ST7789 needs BE
-  _lcd.setRotation(1);                             // landscape 320×240
+  // PORTRAIT as-inited (240x320) — the V4-shared UI contract: portrait never calls
+  // setDisplayRotation() ("portrait leaves the panel as inited"), landscape calls it with 1/3.
+  // The old hardcoded setRotation(1) here put the panel in landscape under portrait frames —
+  // the tester's "boot logo in the wrong orientation".
+  _lcd.setRotation(0);
   _lcd.setBrightness(255);
   _lcd.fillScreen(0x0000);
   setLogicalSize(_lcd.width(), _lcd.height());
 
   _isOn = true;
-  Serial.printf("[TFT] LGFXDisplay %dx%d rotation=1\n", _lcd.width(), _lcd.height());
+  Serial.printf("[TFT] LGFXDisplay %dx%d rotation=0 (portrait)\n", _lcd.width(), _lcd.height());
   return true;
 }
 
@@ -132,8 +136,10 @@ void LGFXDisplay::writePixelsRGB565(int x, int y, int w, int h, const uint16_t* 
   _lcd.endWrite();
 }
 
-void LGFXDisplay::setDisplayRotation(uint8_t) {
-  _lcd.setRotation(1);
+// UI contract (see UITask applyRotation): called with 1 for ROT_90, 3 for ROT_270; portrait
+// stays as-inited (rotation 0). Honor the argument — the old hardcoded 1 ignored it.
+void LGFXDisplay::setDisplayRotation(uint8_t r) {
+  _lcd.setRotation(r & 3);
   setLogicalSize(_lcd.width(), _lcd.height());
 }
 

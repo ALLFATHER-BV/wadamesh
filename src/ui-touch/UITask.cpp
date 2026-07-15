@@ -5,6 +5,15 @@
 
 #include "device_caps.h"   // CAP_* capability flags (replaces device-name #ifs)
 
+// Port the browser-facing web UI (VNC mirror / remote / terminal viewer page) listens on.
+// The T-Display P4's ESP-AT stack allows ONE listening port, so the web UI shares the
+// companion TCP port behind a first-byte router (MultiTransportCompanionInterface).
+#if defined(HAS_TDISPLAY_P4)
+  #define WEB_UI_PORT_STR "5000"
+#else
+  #define WEB_UI_PORT_STR "8765"
+#endif
+
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -77,10 +86,10 @@
   #ifndef PIN_I2S_DOUT
     #define PIN_I2S_DOUT 6
   #endif
-#elif defined(HAS_TANMATSU)
-  #include <FFat.h>            // the file browser + DataStore use the internal 'locfd' FAT partition
-  #include <SD_MMC.h>          // microSD on the P4's SDMMC slot 0 (IOMUX 43/44/39-42); slot 1 = C6 radio
-  extern bool g_fs_ok;         // set in main.cpp once FFat(locfd) is mounted
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  #include <FFat.h>            // internal FAT partition (Tanmatsu 'locfd' / P4 'storage')
+  #include <SD_MMC.h>          // microSD on the P4-class boards' SDMMC slot 0; slot 1 = C6 radio
+  extern bool g_fs_ok;         // set in main.cpp once the internal FAT is mounted
 #endif
 #include <Utils.h>
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
@@ -105,6 +114,8 @@
     #include <TanmatsuDisplay.h>             // badge-bsp-backed DisplayDriver (P4)
   #elif defined(HAS_RAK_TAP_V2)
     #include <LGFXDisplay.h>                 // LovyanGFX FSPI on RAK Tap V2
+  #elif defined(HAS_TDISPLAY_P4)
+    #include <RM69A10Display.h>              // RM69A10 MIPI-DSI on the T-Display P4
   #else
     #include <helpers/ui/ST7789LCDDisplay.h>
   #endif
@@ -131,12 +142,26 @@
       #endif
       #include "../helpers/esp32/WifiRuntimeStore.h"   // QUOTED: this tree's copy (wifiScan*Active), not the lib's stale one
       #include "helpers/esp32/MqttBridge.h"
+      #if defined(HAS_TDISPLAY_P4)
+        // T-Display P4: the C6 runs ESP-AT, so Arduino's real WiFi object must NEVER be driven (its
+        // mode()/begin() re-init esp_hosted and panic). These facades rebind every WiFi.* below to the
+        // c6_at AT-over-SDIO driver — scans/joins become real, status reads come from a cache — and
+        // every WiFiClient/WiFiClientSecure to AT+CIP sockets (HTTPClient dispatches virtually, so
+        // tiles/version-check/OTA/reader fetch through the C6; TLS runs ON the C6). MUST stay the
+        // LAST includes of this block. P4-only: the headers only exist in the P4 build.
+        #include <C6WifiShim.h>
+        #include <C6Socket.h>
+        #define WiFiClient       C6Client
+        #define WiFiClientSecure C6ClientSecure
+      #endif
     #endif
   #endif
   #if defined(HAS_TANMATSU)
     extern TanmatsuDisplay display;
   #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8)
     extern LGFXDisplay display;
+  #elif defined(HAS_TDISPLAY_P4)
+    extern RM69A10Display display;
   #else
     extern ST7789LCDDisplay display;
   #endif
@@ -443,11 +468,23 @@ static inline lv_coord_t SC(int px) { return (lv_coord_t)((px * s_ui_fscale + 50
 // Popup-card dimension scaler: the 800×480 Tanmatsu panel dwarfs dialogs sized for the
 // 320px T-Deck/V4 — scale their fixed card/menu W/H up so they don't look lost in the middle.
 // No-op (plain SC) on the smaller boards, so their popups stay byte-for-byte unchanged.
-#if CAP_LARGE_SCREEN
-static inline lv_coord_t PSC(int px) { return (lv_coord_t)((SC(px) * 17) / 10); }   // ~1.7×
+// EXCLUDES the round P4: it's CAP_LARGE_SCREEN (for font scaling) but only 284 px wide, so
+// the 1.7× would blow fixed-width cards (e.g. PSC(232)=394) far past the screen and clip the
+// controls off-side. Plain SC keeps those cards ≤232 px — a comfortable fit on the 284 px panel.
+#if CAP_LARGE_SCREEN && !CAP_ROUND_CORNERS
+static inline lv_coord_t PSC(int px) { return (lv_coord_t)((SC(px) * 17) / 10); }   // ~1.7× — wide Tanmatsu only
 #else
 static inline lv_coord_t PSC(int px) { return SC(px); }
 #endif
+// Popup CARD WIDTH — PSC-scaled but clamped so a fixed-width dialog can never exceed the screen.
+// On the narrow round P4 (284 px logical) a Large/Huge font scale pushes PSC(232) to ~325-394 px,
+// which clipped settings cards off BOTH edges. The clamp keeps a small margin either side; it's a
+// no-op on the wide boards (their PSC widths already fit). Height is unaffected (tall screen).
+static inline lv_coord_t PCW(int px) {
+  lv_coord_t w = PSC(px);
+  lv_coord_t cap = lv_disp_get_hor_res(nullptr) - SC(12);
+  return (cap > 0 && w > cap) ? cap : w;
+}
 #if CAP_LARGE_SCREEN
 static lv_font_t g_font_tab;     // fixed 16 px tab-bar icon font (montserrat_16 + person glyph)
 #endif
@@ -763,9 +800,48 @@ static void tdeckPreviewWavFile(const char* prefpath) {
 }
 #endif  // HAS_TDECK_GT911
 
-// ---- Unified UI notification sound (T-Deck I2S speaker OR Heltec V4, Elecrow M9 piezo) ----
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
+// ---- Unified UI notification sound (T-Deck I2S speaker, Heltec V4 / Elecrow M9 piezo,
+//      T-Display P4 ES8311 codec) ----
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN) || defined(HAS_TDISPLAY_P4)
   #define HAS_UI_SOUND 1
+#endif
+
+#if defined(HAS_TDISPLAY_P4)
+// T-Display P4: ES8311 codec + NS4150B speaker (P4Audio.cpp in the variant). Same three
+// chime patterns as the T-Deck, rendered on a throwaway task so the ~300 ms of blocking
+// I2S writes never stalls the UI/mesh loop. Loudness = amplitude from the volume pref
+// (the codec DAC volume stays fixed).
+#include <P4Audio.h>
+static volatile bool s_p4_snd_playing = false;
+static volatile int  s_p4_snd_slot    = TOUCH_SND_MSG;
+static volatile int  s_p4_snd_vol     = 9000;
+static void p4NotifyTaskFn(void*) {
+  const int v = s_p4_snd_vol;
+  if (s_p4_snd_slot == TOUCH_SND_MEN) {        // @-mention: bright 3-note rising arpeggio
+    p4AudioTone(1318, 70,  v);                 // E6
+    p4AudioTone(1760, 70,  v);                 // A6
+    p4AudioTone(2349, 130, v);                 // D7
+  } else if (s_p4_snd_slot == TOUCH_SND_DM) {  // direct message: distinct rising fifth
+    p4AudioTone(1047, 90,  v);                 // C6
+    p4AudioTone(1568, 120, v);                 // G6
+  } else {                                     // message: the original two-note chime
+    p4AudioTone(880,  90,  v);                 // A5
+    p4AudioTone(1318, 110, v);                 // E6
+  }
+  s_p4_snd_playing = false;
+  vTaskDelete(nullptr);
+}
+static void p4PlayNotifySlot(int slot) {
+  if (s_p4_snd_playing) return;                // already chiming — don't stack tasks
+  const int pct = (int)touchPrefsGetSoundVolume();
+  if (pct <= 0) return;
+  s_p4_snd_slot = slot;
+  s_p4_snd_vol  = pct * 130;                   // 0..100 -> 0..13000 amplitude
+  s_p4_snd_playing = true;
+  if (xTaskCreate(p4NotifyTaskFn, "notify", 4096, nullptr, 3, nullptr) != pdPASS) {
+    s_p4_snd_playing = false;                  // couldn't spawn — skip the chime
+  }
+}
 #endif
 
 #if defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
@@ -811,6 +887,8 @@ static void tanBeep();   // I2S notification tick; defined far below (with the C
 static inline void uiPlaySlot(int slot) {
 #if defined(HAS_TDECK_GT911)
   tdeckPlayNotifySlot(slot);
+#elif defined(HAS_TDISPLAY_P4)
+  p4PlayNotifySlot(slot);                // ES8311 codec chimes (same patterns as the T-Deck)
 #elif defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
   v4BuzzerBeep(slot == TOUCH_SND_MEN);   // mention = higher trill; msg/DM = the lower chime
 #elif defined(HAS_TANMATSU)
@@ -830,6 +908,10 @@ static void tanBeep();
 // declared so the Sound settings page (buildDeviceSettings, above it) can apply the
 // volume live as the user adjusts it.
 static void applyVolume(uint8_t pct);
+#elif defined(HAS_TDISPLAY_P4)
+// Same forward-declaration for the P4 (defined in its apply block far below): the
+// Sound settings volume buttons keep the CC slider state in sync through it.
+static void applyVolume(uint8_t pct);
 #endif
 
 // ---- misc UI constants ----
@@ -846,6 +928,20 @@ constexpr int SWIPE_SCROLL_STEP  = 90;
 // Runtime (not constexpr) so the UI-scale can grow it to fit bigger status-bar text — set to SC(22)
 // once at boot in begin(), before the UI is built. Stays 22 on the non-scaled boards.
 static lv_coord_t STATUSBAR_H = 22;
+#if CAP_ROUND_CORNERS
+// Two-row status bar for the round-cornered phone panel: row 1 (top) holds the app name +
+// clock, row 2 (bottom) holds the wifi/ble/sd/signal/battery cluster. A top pad clears the
+// corner arc; a horizontal inset keeps the end glyphs out of the left/right arcs. STATUSBAR_H
+// is set to (top pad + two rows) at boot so every page reserves the taller bar, and the bar
+// stays this fixed height in ALL states (no *2 doubling — the tall personalities reuse the
+// two rows). Text tops (ROW1_Y / ROW2_Y) are tuned so the small g_font glyphs sit centred.
+static constexpr lv_coord_t SB_ROW     = 22;                       // one status-bar row
+static constexpr lv_coord_t SB_TOP_PAD = 8;                        // clear the top corner arc
+static constexpr lv_coord_t SB_INSET_X = 16;                       // left/right corner safe-area
+static constexpr lv_coord_t SB_ROW1_Y  = SB_TOP_PAD + 2;           // ~10 text top, row 1 (clock)
+static constexpr lv_coord_t SB_ROW2_Y  = SB_TOP_PAD + SB_ROW + 3;  // ~33 text top, row 2 (name + status)
+static void statusBarLayoutTwoRow(int slide);   // defined just after buildGlobalStatusBar
+#endif
 // True while the Reader/Web page is collapsed and showing its URL in the status bar's
 // title zone — updateGlobalStatusBar then hides the clock to make room for the URL.
 static bool s_reader_bar_url = false;
@@ -890,7 +986,13 @@ static bool s_statusbar_tall = false;
 // centred in the bar; a tap on the bar calls s_apppage_close (see statusBarTapCb).
 static const char* s_apppage_title = nullptr;
 static void      (*s_apppage_close)() = nullptr;
+#if CAP_ROUND_CORNERS
+// The round-panel bar is already two rows tall in every state — the tall personalities
+// (settings title, inbox actions, open chat) reuse the two rows rather than doubling it.
+static inline lv_coord_t statusBarCurH() { return STATUSBAR_H; }
+#else
 static inline lv_coord_t statusBarCurH() { return s_statusbar_tall ? (lv_coord_t)(STATUSBAR_H * 2) : STATUSBAR_H; }
+#endif
 static void statusBarSetTall(bool tall) {
   s_statusbar_tall = tall;
   if (g_statusbar.root) lv_obj_set_height(g_statusbar.root, statusBarCurH());
@@ -1016,7 +1118,11 @@ static inline lv_coord_t chatScreenW()   { return lv_disp_get_hor_res(nullptr); 
 // bar's lower row is a translucent glass strip (see updateGlobalStatusBar) that the
 // bubbles scroll UNDER — p.msgs carries a top inset == that row so the newest content
 // still rests below the bar.
+#if CAP_ROUND_CORNERS
+static inline lv_coord_t chatBarH()      { return STATUSBAR_H; }   // fixed two-row bar, no doubling
+#else
 static inline lv_coord_t chatBarH()      { return (lv_coord_t)(STATUSBAR_H * 2); }
+#endif
 static inline lv_coord_t chatScreenH()   { return lv_disp_get_ver_res(nullptr) - STATUSBAR_H; }
 static inline lv_coord_t chatKbH()       { return chatLandscape() ? (lv_disp_get_ver_res(nullptr) / 2) : CHAT_KB_H; }
 // The message list spans the FULL height under the header down to the screen bottom
@@ -2161,7 +2267,7 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
   display.setTextSize(1);
   if (up) {
     char u[48];
-    snprintf(u, sizeof u, "http://%s:8765", WiFi.localIP().toString().c_str());
+    snprintf(u, sizeof u, "http://%s:" WEB_UI_PORT_STR, WiFi.localIP().toString().c_str());
     display.setColor(DisplayDriver::LIGHT);
     display.drawTextCentered(W / 2, y, "Open this address in a browser");
     display.setColor(DisplayDriver::GREEN);
@@ -4692,6 +4798,14 @@ static void kbApplyLayoutForRotation(uint8_t rot) {
 static void kbApplyRotation(uint8_t rot) {
   lv_disp_t* disp = lv_disp_get_default();
   if (!disp) return;
+  // This often runs MID-PRESS: the composer focuses on touch-DOWN, and rotating the display
+  // transforms the live pointer's coordinates — LVGL sees the still-held finger "teleport" by
+  // hundreds of px and treats it as a huge drag, scroll-throwing lv_scr_act() (the chat overlay
+  // slides out of the viewport and the tab list slides in; on the P4's 284x616 the jump is a
+  // full screen — hideKb's scroll_to(0,0) was this same artifact's band-aid). Swallow the rest
+  // of the gesture BEFORE rotating so the jump is never seen as movement.
+  lv_indev_t* act = lv_indev_get_act();
+  if (act) lv_indev_wait_release(act);
   // In hardware-landscape the panel is already rotated; applying LVGL software
   // rotation on top would double-rotate. Software rotation is used ONLY for the
   // transient keyboard-landscape trick when the base orientation is portrait.
@@ -4704,6 +4818,9 @@ static void kbApplyRotation(uint8_t rot) {
   // orientation so horizontal swipes are detected correctly in landscape.
   heltecV4CapTouchSetRotation(rot);
   kbApplyLayoutForRotation(rot);
+  // Pin the root scroll: any scroll the pre-rotation gesture already banked (or a
+  // scroll-throw in flight) would leave the viewport parked off the chat page.
+  lv_obj_scroll_to(lv_scr_act(), 0, 0, LV_ANIM_OFF);
   // Force a full redraw — without this the previous frame's contents linger
   // briefly at the new orientation's coordinates.
   lv_obj_invalidate(lv_scr_act());
@@ -5931,7 +6048,7 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   // Same metrics as the contact action sheet — the two sheets are siblings and
   // should read identically. (PSC is a no-op on the smaller boards.)
 #if CAP_LARGE_SCREEN
-  const int card_w  = PSC(232);
+  const int card_w  = PCW(232);
   const int btn_h   = PSC(30);
   const int btn_gap = PSC(6);
   const int title_h = PSC(28);
@@ -6605,7 +6722,7 @@ static void openQuickReplyPicker(LvChatPanel* p) {
 
   // Bigger on the 800-px Tanmatsu panel; unchanged on the smaller boards.
 #if CAP_LARGE_SCREEN
-  const int card_w = PSC(210);
+  const int card_w = PCW(210);
   const int btn_h  = SC(32);      // SC not PSC: the 1.7x PSC boost made this 6-row card taller than the screen
   const int pad    = SC(8);
   const int title_h = SC(26);
@@ -6898,7 +7015,7 @@ static void toggleMentionSoundCb(lv_event_t* e) {
   if (on) uiPlayMention();
 #endif
 }
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
 // Volume +/- step buttons (user_data = step, e.g. +10 / -10). Clamps 0..100,
 // updates the readout, previews. Simpler + more reliable than a drag slider.
 static lv_obj_t* s_vol_val_lbl = nullptr;
@@ -6911,6 +7028,9 @@ static void volumeStepCb(lv_event_t* e) {
 #if defined(HAS_TANMATSU)
   applyVolume((uint8_t)v);    // push the new level to the codec live, then preview it
   tanBeep();
+#elif defined(HAS_TDISPLAY_P4)
+  applyVolume((uint8_t)v);    // keep the CC slider position in sync, then preview
+  uiPlayNotify();
 #else
   uiPlayNotify();   // preview at the new volume
 #endif
@@ -8042,7 +8162,7 @@ static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
   lv_obj_add_event_cb(s_disc_settings_root, discSettingsDismissCb, LV_EVENT_CLICKED, nullptr);
 
 #if defined(HAS_TANMATSU)
-  const int card_w = PSC(220);
+  const int card_w = PCW(220);
 #else
   const int card_w = 220;
 #endif
@@ -10425,8 +10545,8 @@ static void buildDeviceSettings(int sec) {
     }
   }
 #endif
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
-  // Volume with - / + step buttons (T-Deck I2S + Tanmatsu codec; the V4 piezo can't vary volume).
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  // Volume with - / + step buttons (T-Deck I2S + Tanmatsu/P4 codec; the V4 piezo can't vary volume).
   {
     lv_obj_t* vl = lv_label_create(body);
     lv_label_set_text(vl, TR("Volume"));
@@ -10520,7 +10640,10 @@ static void buildDeviceSettings(int sec) {
     y += SC(44);
   }
   /* Message LED: flash the envelope-icon LED on a new message and softly breathe it while there
-     are unread messages. Turn off to keep that LED dark. (Tanmatsu only — the others have no such LED.) */
+     are unread messages. Turn off to keep that LED dark. (Tanmatsu only — the others have no such
+     LED. It lives under CAP_LARGE_SCREEN, so it must be gated to HAS_TANMATSU explicitly now that
+     the T-Display P4 is also a large-screen board.) */
+#if defined(HAS_TANMATSU)
   {
     int h = settingsRowLabel(body, y, 6, TR("Message LED"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -10529,6 +10652,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, msgLedToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
+#endif
 #endif
 
   /* Distance units: OFF = km (default), ON = miles. Applies immediately. */
@@ -11389,7 +11513,7 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   // Card
   lv_obj_t* card = lv_obj_create(s_confirm_modal);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, PSC(210), PSC(160));
+  lv_obj_set_size(card, PCW(210), PSC(160));
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 12);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
@@ -11481,6 +11605,23 @@ static void blePinSaveCb(lv_event_t* e) {
 static void buildBluetoothSettings() {
   lv_obj_t* body = createSettingsModal("Bluetooth", SettingsModalKind::Bluetooth);
   int y = 0;
+
+  if (!g_lv.task || !g_lv.task->hasBleCapability()) {
+    // No BLE on this board (T-Display P4: the C6 radio's factory firmware can't do BLE companion).
+    // An explanation beats a hidden row — users coming from other MeshCore devices WILL look here.
+    lv_obj_t* why = lv_label_create(body);
+    lv_label_set_text(why, TR("Bluetooth pairing isn't available on this device.\n\n"
+                              "The radio chip's factory firmware doesn't support it.\n\n"
+                              "Pair the phone app over Wi-Fi instead: connect this device to your "
+                              "network, then add it in the app by its IP address (TCP, port 5000) — "
+                              "shown under Settings > Network. USB works too."));
+    lv_label_set_long_mode(why, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(why, lv_pct(100));
+    lv_obj_set_style_text_color(why, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(why, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(why, 2, y);
+    return;
+  }
 
   // ---- Mode line ---- (Wi-Fi + BLE coexist now; show both radios' state)
   const bool ble_active = g_lv.task && g_lv.task->hasBleCapability() && g_lv.task->isBleEnabled();
@@ -12735,7 +12876,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   lv_obj_add_event_cb(s_contacts_search_sheet, contactsSearchSheetCloseCb, LV_EVENT_CLICKED, nullptr);
 
 #if CAP_LARGE_SCREEN
-  const int card_w = PSC(220);
+  const int card_w = PCW(220);
   const int card_h = PSC(130);
 #else
   const int card_w = 220;
@@ -13470,7 +13611,7 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   }, LV_EVENT_CLICKED, nullptr);
 
 #if CAP_LARGE_SCREEN
-  const int card_w = PSC(220);
+  const int card_w = PCW(220);
   const int card_h = PSC(180);
 #else
   const int card_w = 220;
@@ -13896,7 +14037,7 @@ static void losDrawPlot() {
   // the chart fills the 800×480 panel instead of looking lost. Width, graph
   // height and every stacked Y offset below all go through PSC() so the plot
   // stays aligned with its axis labels / sliders / verdict at any board+scale.
-  const int card_w = PSC(230);
+  const int card_w = PCW(230);
 
   const double self_lat = s_los_self_lat, self_lon = s_los_self_lon;
   const double peer_lat = s_los_peer_lat, peer_lon = s_los_peer_lon;
@@ -14068,7 +14209,7 @@ static void losPeerPlusCb(lv_event_t* e) {
 static void losRenderResult() {
   if (!s_los_card) return;
   lv_obj_t* card = s_los_card;
-  const int card_w = PSC(230);   // matches losDrawPlot()/builder — see PSC() note there
+  const int card_w = PCW(230);   // matches losDrawPlot()/builder — see PSC() note there
   const int gw = card_w - 16;
 
   if (s_los_got < k_los_samples) {
@@ -14189,7 +14330,7 @@ static void openLosModal(uint32_t mesh_idx) {
   // Cap the card to the usable height so it fits the shorter landscape screen
   // (the graph + controls shrink to match — see chatLandscape() in losDrawPlot
   // / losRenderResult).
-  const int card_w = PSC(230);   // matches losDrawPlot()/losRenderResult() — see PSC() note in losDrawPlot()
+  const int card_w = PCW(230);   // matches losDrawPlot()/losRenderResult() — see PSC() note in losDrawPlot()
   int card_h = PSC(248);
   if (card_h > modalAvailH()) card_h = modalAvailH();
   lv_obj_t* card = lv_obj_create(s_los_root);
@@ -14306,7 +14447,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // widen the card and grow the rows/gaps/title. The non-Tanmatsu values are the
   // historical integers, untouched (PSC is a no-op there).
 #if CAP_LARGE_SCREEN
-  const int card_w = PSC(232);
+  const int card_w = PCW(232);
   int btn_h = PSC(30);           // vertical metrics are mutable: the shrink-to-fit below trims them
   int btn_gap = PSC(6);          // when the big-screen 1.7x scale would push the sheet off-screen
   int title_h = PSC(28);
@@ -15065,7 +15206,7 @@ static void openAddChannelSheet() {
   if (hdr_h + rows * (btn_h + row_gap) + pad > modalAvailH())
     btn_h = ((modalAvailH() - hdr_h - pad) / rows) - row_gap;
   if (btn_h < PSC(26)) btn_h = PSC(26);
-  int card_w = PSC(220);
+  int card_w = PCW(220);
   if (card_w > modalAvailW()) card_w = modalAvailW();
   const int card_h = hdr_h + rows * (btn_h + row_gap) + pad;
   lv_obj_t* card = lv_obj_create(s_addch_sheet);
@@ -15208,7 +15349,7 @@ static void openShareMyContactPopup() {
   // the operator wants to dictate it over voice and there's no camera).
   // Clamp to the usable area and scale the QR to fit so the popup never runs
   // off the shorter landscape screen.
-  int card_w = PSC(220);
+  int card_w = PCW(220);
   if (card_w > modalAvailW()) card_w = modalAvailW();
   int card_h = PSC(270);
   if (card_h > modalAvailH()) card_h = modalAvailH();
@@ -15975,15 +16116,15 @@ static char      s_fm_path[160]  = {0};     // current dir within s_fm_fs (e.g. 
 // fmRefresh, so they blip the LED too.
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // Arduino SD (T-Deck/M9 LoRa bus, V4-R8 TFT bus)
-#elif defined(HAS_TANMATSU)
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD_MMC; }   // microSD on SDMMC slot 0
 #else
 static inline bool fmIsSd(fs::FS*) { return false; }       // Heltec: no Arduino SD global in this FM path
 #endif
 static inline void fmMarkSdIo() { if (fmIsSd(s_fm_fs)) markSdIo(); }
-#if defined(HAS_TANMATSU)
-// Arduino loop-task WDT shim: the Tanmatsu's IDF build doesn't expose feedLoopWDT (the long
-// file-copy loop calls it). The IDF task WDT isn't armed on our LVGL loop, so a no-op is safe.
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+// Arduino loop-task WDT shim: the P4 IDF builds (Tanmatsu + T-Display P4) don't expose feedLoopWDT
+// (the long file-copy loop calls it). The IDF task WDT isn't armed on our LVGL loop, so a no-op is safe.
 static inline void feedLoopWDT() {}
 #endif
 static char      s_fm_store[12]  = {0};     // storage label ("Internal" / "SD")
@@ -17083,8 +17224,8 @@ static void fmOpenStorage(fs::FS* fs, const char* store, const char* path) {
 }
 static void fmInternalClickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-#if defined(HAS_TANMATSU)
-  fmOpenStorage(&FFat, "Internal", "/");   // the internal 'locfd' FAT data partition
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  fmOpenStorage(&FFat, "Internal", "/");   // the internal FAT data partition (locfd / 'storage')
 #else
   fmOpenStorage(&SPIFFS, "Internal", "/");
 #endif
@@ -18373,20 +18514,26 @@ static void fmRefresh() {
 }
 
 // Roots screen: list the available storages.
-#if defined(HAS_TANMATSU)
-// ---- Tanmatsu microSD (SDMMC slot 0) -------------------------------------------------------------
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+// ---- Tanmatsu / T-Display P4 microSD (SDMMC slot 0) ----------------------------------------------
 // The card sits on the P4's SDMMC *slot 0* (IOMUX pins CLK43/CMD44/D0-3 39-42, selected by the
-// BOARD_SDMMC_SLOT=0 build define); slot 1 is the C6 radio (esp-hosted SDIO), which we never touch —
-// so mounting here can't disturb Wi-Fi/BLE. External-powered IO (no on-chip LDO), 4-bit, mounted
-// LAZILY on first browse so the radio is already up. SD_MMC is the fs::FS the file manager browses,
-// exactly like the T-Deck's &SD.
+// BOARD_SDMMC_SLOT=0 build define); slot 1 is the C6 radio (esp-hosted / ESP-AT SDIO), which we never
+// touch — so mounting here can't disturb Wi-Fi/BLE. 4-bit, mounted LAZILY on first browse (a no-op
+// on the T-Display P4, whose main.cpp already mounted the card at boot — SD_MMC.begin early-returns
+// when mounted). SD_MMC is the fs::FS the file manager browses, exactly like the T-Deck's &SD.
 static bool     s_tan_sd_mounted     = false;
 static uint64_t s_tan_sd_size        = 0;
 static uint32_t s_tan_sd_retry_after = 0;   // backoff so an absent/cold card isn't re-probed every render
 static bool tanSdTryMount() {
   if (s_tan_sd_mounted) return true;
   if (millis() < s_tan_sd_retry_after) return false;
+#if defined(HAS_TDISPLAY_P4)
+  // Hot-insert path (no-op when main.cpp already mounted at boot): 20 MHz like the boot ladder,
+  // not Arduino's 40 MHz HIGHSPEED default.
+  if (SD_MMC.begin("/sdcard", false /*4-bit*/, false, SDMMC_FREQ_DEFAULT) && SD_MMC.cardType() != CARD_NONE) {
+#else
   if (SD_MMC.begin("/sdcard", false /*4-bit*/) && SD_MMC.cardType() != CARD_NONE) {
+#endif
     s_tan_sd_mounted = true;
     s_tan_sd_size = SD_MMC.cardSize();
     return true;
@@ -18413,8 +18560,8 @@ static void fmShowRoots() {
   if (s_fm_path_lbl) lv_label_set_text(s_fm_path_lbl, TR("Storage"));
 
   char sub[48], us[16], ts[16];
-#if defined(HAS_TANMATSU)
-  fmFmtSize(FFat.usedBytes(),  us, sizeof us);   // Tanmatsu "Internal" = the locfd FAT partition
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  fmFmtSize(FFat.usedBytes(),  us, sizeof us);   // "Internal" = the FAT data partition (locfd / 'storage')
   fmFmtSize(FFat.totalBytes(), ts, sizeof ts);
 #else
   fmFmtSize(SPIFFS.usedBytes(),  us, sizeof us);
@@ -18443,7 +18590,7 @@ static void fmShowRoots() {
     lv_obj_add_event_cb(sd, fmSdMountOrFormatCb, LV_EVENT_CLICKED, nullptr);
   }
 #endif
-#if defined(HAS_TANMATSU)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   // microSD (SDMMC slot 0). Probe outside the mount-backoff window so an absent card doesn't grind
   // the bus on every render; tapping the row forces a fresh mount attempt (tanSdClickCb clears it).
   if ((s_tan_sd_mounted || millis() >= s_tan_sd_retry_after) && tanSdTryMount()) {
@@ -19235,7 +19382,8 @@ static void readerFetchTaskFn(void*) {
     else       {                       began = httpc.begin(pcli, url); }
     if (began) { httpc.addHeader("Accept-Encoding", "identity"); code = httpc.GET(); }
     if (code == HTTP_CODE_OK) {
-      WiFiClient* st = httpc.getStreamPtr(); unsigned long t0 = millis();
+      auto* st = httpc.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
+      unsigned long t0 = millis();
       while (st && total < rawcap - 1 && (millis() - t0) < 20000) {
         int a = st->available();
         if (a <= 0) { if (!httpc.connected()) break; vTaskDelay(pdMS_TO_TICKS(8)); continue; }
@@ -19963,7 +20111,7 @@ static void vncRefresh() {
   if (s_vnc_url_lbl) {
     if (wifi) {
       char u[64];
-      snprintf(u, sizeof u, "http://%s:8765/", WiFi.localIP().toString().c_str());
+      snprintf(u, sizeof u, "http://%s:" WEB_UI_PORT_STR "/", WiFi.localIP().toString().c_str());
       lv_label_set_text(s_vnc_url_lbl, u);
       lv_obj_set_style_text_color(s_vnc_url_lbl, lv_color_hex(on ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
     } else {
@@ -20153,7 +20301,7 @@ static void webTerminalToggleCb(lv_event_t* e) {
   if (on) {
     char msg[96];
     if (WiFi.status() == WL_CONNECTED)
-      snprintf(msg, sizeof msg, "Terminal on: http://%s:8765/", WiFi.localIP().toString().c_str());
+      snprintf(msg, sizeof msg, "Terminal on: http://%s:" WEB_UI_PORT_STR "/", WiFi.localIP().toString().c_str());
     else
       snprintf(msg, sizeof msg, "%s", "Terminal on (connect Wi-Fi to reach it)");
     g_lv.task->showAlert(msg, 3200);
@@ -20221,7 +20369,7 @@ static void openRemotePage() {
   lv_obj_set_width(ipval, cw - 20);
   lv_obj_set_style_text_font(ipval, &g_font_16, LV_PART_MAIN);
   if (WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
-    char u[48]; snprintf(u, sizeof u, "http://%s:8765", WiFi.localIP().toString().c_str());
+    char u[48]; snprintf(u, sizeof u, "http://%s:" WEB_UI_PORT_STR, WiFi.localIP().toString().c_str());
     lv_label_set_text(ipval, u);
     lv_obj_set_style_text_color(ipval, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   } else {
@@ -20737,8 +20885,28 @@ static void makeHome(lv_obj_t* tab) {
   auto tanBtnY = [&](int slot) { return slot * (tan_btn_h + tan_btn_gap); };
   // At Large/Huge there isn't room for both the TX/RX chart AND the 8-row info panel — drop the
   // chart (TX/RX totals still show in the legend above) so the info panel gets the freed height.
+#if defined(HAS_TDISPLAY_P4)
+  // P4: the tall portrait home has room for the chart at EVERY UI scale — and the fscale>100 skip
+  // was leaving an 84-px hole (chart_h stayed reserved below while the chart was never created;
+  // this unit inherited fscale>100 from the adopted T-Deck prefs, so home showed blank space).
+  const bool home_scaled = false;
+#else
   const bool home_scaled = (s_ui_fscale > 100);
+#endif
   if (home_scaled) chart_h = 0;
+#if defined(HAS_TDISPLAY_P4)
+  // T-Display P4: LARGE but PORTRAIT (284x616) — the Tanmatsu right-strip layout doesn't apply.
+  // Column flow instead: chart (taller, full width) → a 2-col launcher grid (Advert/Apps,
+  // Terminal/Files, Control full-width) → the info card fills the rest, full width. The old code
+  // put the half-width Advert row at chart-bottom AND the (needlessly RSTRIP-narrowed) info card
+  // 4 px below it — they overlapped, and portrait boards never got the launcher buttons at all.
+  chart_h = 84;   // was 110: with TX/RX idle the chart is near-invisible, and the freed height
+                  // lets the info card below fit all 8 rows (Battery/Uptime were clipping off)
+  const int p4_btn_h   = 40;
+  const int p4_btn_gap = 8;
+  const int p4_grid_y  = chart_y + 16 + chart_h + 10;
+  const int p4_grid_bottom = p4_grid_y + 3 * p4_btn_h + 2 * p4_btn_gap;
+#endif
 #else
   const bool home_scaled = false;
   // Non-Tanmatsu landscape (T-Deck) right-hand column: Advert + launchers spread
@@ -20815,11 +20983,36 @@ static void makeHome(lv_obj_t* tab) {
   // Commander info panel — fills the space below the chart on the big screen. Two columns:
   // static keys (left) + live values (right, s_home_info; refreshed in refreshStatusLabels).
   {
+#if defined(HAS_TDISPLAY_P4)
+    const int info_y = p4_grid_bottom + 12;      // below the portrait launcher grid
+    const int info_w = cw;                       // full width — no right button strip in portrait
+#else
     const int info_y = chart_y + 16 + chart_h + 12;
     const int info_w = cw - RSTRIP;              // left/centre column, clear of the right button strip
+#endif
     lv_obj_t* card = lv_obj_create(tab);
     lv_obj_remove_style_all(card);
+#if defined(HAS_TDISPLAY_P4)
+    // Content-fit height with tight spacing, CLAMPED to the space left above the tab bar — at
+    // Large/Huge UI scale the rows are taller and a fixed-spacing card ran past the bottom
+    // (Uptime clipped). Spacing adapts down (3 → 0) before the card ever exceeds the screen;
+    // if even 0-spacing overflows (extreme scale) the card's AUTO scrollbar takes over.
+    const int p4_info_fh = lv_font_get_line_height(&g_font_12);
+    // Clamp against the tab's MEASURED content height, not the derived home_avail — the
+    // round-corner status-bar pad stack makes the real space smaller than the formula
+    // (Uptime kept clipping under the tab bar at Large scale).
+    lv_obj_update_layout(tab);
+    const int p4_tab_h = lv_obj_get_content_height(tab);
+    const int p4_max_h = (p4_tab_h > 0 ? p4_tab_h : home_avail) - info_y - 4;
+    int p4_info_ls       = (p4_max_h - 16 - 8 * p4_info_fh) / 7;
+    if (p4_info_ls > 3) p4_info_ls = 3;      // tight, not airy
+    if (p4_info_ls < 0) p4_info_ls = 0;
+    int p4_card_h = 16 + 8 * p4_info_fh + 7 * p4_info_ls;
+    if (p4_card_h > p4_max_h) p4_card_h = p4_max_h;
+    lv_obj_set_size(card, info_w, p4_card_h);
+#else
     lv_obj_set_size(card, info_w, home_avail - info_y - SC(8));   // small bottom margin so the last row (Uptime) clears
+#endif
     lv_obj_align(card, LV_ALIGN_TOP_LEFT, 0, info_y);
     lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
@@ -20835,11 +21028,15 @@ static void makeHome(lv_obj_t* tab) {
     // (Battery/Uptime) were clipping off the bottom at Huge, and a no-touch device
     // can't reach the AUTO scrollbar. Spread the leftover over the 7 inter-row gaps.
     const lv_font_t* info_font = &g_font_12;
+#if defined(HAS_TDISPLAY_P4)
+    const int info_ls = p4_info_ls;                       // fixed tight spacing (card is content-fit)
+#else
     const int info_card_h = home_avail - info_y - SC(8);
     const int info_fh     = lv_font_get_line_height(info_font);
     int info_ls = (info_card_h - 16 - 8 * info_fh) / 7;   // pad_all=8 → -16
     if (info_ls < 1) info_ls = 1;
     if (info_ls > 8) info_ls = 8;
+#endif
     lv_obj_t* keys = lv_label_create(card);
     lv_label_set_text(keys, TR("Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime"));
     lv_obj_set_style_text_color(keys, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -20852,6 +21049,10 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_set_style_text_color(s_home_info, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_font(s_home_info, info_font, LV_PART_MAIN);
     lv_obj_set_style_text_line_space(s_home_info, info_ls, LV_PART_MAIN);
+    // Constrain + clip the values column at the card's padding edge — a long node name or
+    // radio string otherwise ran to the card border and was cut mid-glyph against it.
+    lv_obj_set_width(s_home_info, info_w - 16 - SC(100));
+    lv_label_set_long_mode(s_home_info, LV_LABEL_LONG_CLIP);
     lv_obj_align(s_home_info, LV_ALIGN_TOP_LEFT, SC(100), 0);   // values column clears the keys
   }
 #endif
@@ -20860,6 +21061,9 @@ static void makeHome(lv_obj_t* tab) {
   // a compact button parked in the top-right strip (next to the status text),
   // which is why the chart above was allowed to run full-height.
   const int adv_y = chart_y + 16 + chart_h + 8;
+#if defined(HAS_TDISPLAY_P4) && CAP_LARGE_SCREEN
+  (void)adv_y;   // P4 portrait-large uses the grid Ys (p4_grid_y); adv_y feeds the other layouts
+#endif
   lv_obj_t* adv = lv_btn_create(tab);
 #if defined(HAS_EXPANSION_KIT)
   s_home_adv_btn = adv;
@@ -20877,10 +21081,16 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_align(adv, LV_ALIGN_TOP_LEFT, cw - BTNW, tdBtnY(0));
 #endif
   } else {
+#if defined(HAS_TDISPLAY_P4) && CAP_LARGE_SCREEN
+    // Portrait-large (T-Display P4): Advert = grid slot row 0 left (grid laid out above).
+    lv_obj_set_size(adv, (cw - p4_btn_gap) / 2, p4_btn_h);
+    lv_obj_align(adv, LV_ALIGN_TOP_LEFT, 0, p4_grid_y);
+#else
     // Portrait (V4): share the row with an "Apps" button — Advert on the left half,
     // Apps on the right half. (Landscape boards get Apps in the launcher column below.)
     lv_obj_set_size(adv, (cw - 8) / 2, 36);
     lv_obj_align(adv, LV_ALIGN_TOP_LEFT, 0, adv_y);
+#endif
   }
   lv_obj_add_event_cb(adv, openAdvertModalCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* adv_l = lv_label_create(adv);
@@ -20893,11 +21103,21 @@ static void makeHome(lv_obj_t* tab) {
   // Portrait "Apps" launcher (right half of the advert row). Landscape boards build
   // Apps in the right-hand launcher column instead, so this is portrait-only.
   if (!home_land) {
-    const int half = (cw - 8) / 2;
+#if defined(HAS_TDISPLAY_P4) && CAP_LARGE_SCREEN
+    const int half   = (cw - p4_btn_gap) / 2;
+    const int btn_h  = p4_btn_h;
+    const int apps_x = half + p4_btn_gap;
+    const int apps_y = p4_grid_y;
+#else
+    const int half   = (cw - 8) / 2;
+    const int btn_h  = 36;
+    const int apps_x = half + 8;
+    const int apps_y = adv_y;
+#endif
     lv_obj_t* apb = lv_btn_create(tab);
     styleButton(apb);
-    lv_obj_set_size(apb, half, 36);
-    lv_obj_align(apb, LV_ALIGN_TOP_LEFT, half + 8, adv_y);
+    lv_obj_set_size(apb, half, btn_h);
+    lv_obj_align(apb, LV_ALIGN_TOP_LEFT, apps_x, apps_y);
     const uint32_t inv_accent = 0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu);
     lv_obj_set_style_bg_color(apb, lv_color_hex(inv_accent), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(apb, LV_OPA_COVER, LV_PART_MAIN);
@@ -20908,6 +21128,29 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_set_style_text_font(apl, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(apl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_center(apl);
+#if defined(HAS_TDISPLAY_P4) && CAP_LARGE_SCREEN
+    // Rows 1–2 of the portrait-large launcher grid: Terminal | Files, then Control full-width.
+    // (The tall screen has the room the other portrait board lacks; Files is live now that the
+    // file manager browses SD_MMC/FFat on this board.)
+    auto p4_launcher = [&](const char* label, int x, int y, int w, lv_event_cb_t cb) -> lv_obj_t* {
+      lv_obj_t* b = lv_btn_create(tab);
+      styleButton(b);
+      lv_obj_set_size(b, w, p4_btn_h);
+      lv_obj_align(b, LV_ALIGN_TOP_LEFT, x, y);
+      lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+      lv_obj_t* l = lv_label_create(b);
+      lv_label_set_text(l, TR(label));
+      lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_center(l);
+      return b;
+    };
+    const int row1 = p4_grid_y + p4_btn_h + p4_btn_gap;
+    const int row2 = row1 + p4_btn_h + p4_btn_gap;
+    p4_launcher(">_  Terminal",              0,      row1, half, homeTerminalCb);
+    p4_launcher(LV_SYMBOL_DIRECTORY "  Files", apps_x, row1, half, homeFilesCb);
+    p4_launcher(LV_SYMBOL_BARS "  Control",    0,      row2, cw,   homeControlPanelCb);
+#endif
   }
 #endif
 
@@ -21111,7 +21354,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   // Bigger on the 800-px Tanmatsu panel; unchanged on the smaller boards (PSC no-op).
   // Compact rows so all five buttons + title fit the T-Deck's short 240px landscape
   // screen (the 5th "Blocked list" item pushed the old 36px rows off-screen). #72.
-  const int card_w = PSC(200);
+  const int card_w = PCW(200);
   const int btn_h = SC(30), btn_gap = SC(4), title_h = SC(22), padding = SC(8);  // SC not PSC: the 1.7x boost clipped the lower rows (Auto-add / Blocked) off-screen at Large scale
   const int rows = 5;
   int card_h = 2 * padding + title_h + rows * btn_h + (rows - 1) * btn_gap;  // reserve BOTH pad_all paddings (top+bottom) or the last row clips
@@ -21632,6 +21875,10 @@ static void makeContactsTab(lv_obj_t* tab) {
     lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    // Reserve the right ~quarter of the chip for the count badge: LONG_DOT only ellipsizes a
+    // FIXED-width label, and the content-sized label ran under the badge on narrow chips
+    // ("Disc[48]er" — the pill painted mid-word on the 284-px P4).
+    lv_obj_set_width(l, lv_pct(76));
     lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
     s_ct_disc_badge = lv_label_create(b);   // red count pill, right side (updated by the loop)
     lv_obj_set_size(s_ct_disc_badge, LV_SIZE_CONTENT, 16);
@@ -22360,7 +22607,7 @@ static int verchkFetchLatest(WiFiClient& client, HTTPClient& http) {
   }
   const int code = http.GET();
   if (code != 200) { http.end(); return -1; }
-  WiFiClient* st = http.getStreamPtr();
+  auto* st = http.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
   static const char PAT[] = "beta_";
   const int patlen = (int)sizeof(PAT) - 1;
   int mp = 0, best = -1, curnum = -1;
@@ -22481,7 +22728,7 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   Update.onProgress([](size_t done, size_t total) {
     s_ota_pct = total ? (int)((uint64_t)done * 100 / total) : 0;
   });
-  WiFiClient* stream = http.getStreamPtr();
+  auto* stream = http.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
   const size_t written = stream ? Update.writeStream(*stream) : 0;
   http.end();
   if (written != (size_t)len) {
@@ -22530,7 +22777,7 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
   uint8_t* buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!buf) { bufsz = 2048; buf = (uint8_t*)malloc(bufsz); }
   if (!buf) { f.close(); http.end(); snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "out of memory"); s_sdfw_state = 3; return; }
-  WiFiClient* st = http.getStreamPtr();
+  auto* st = http.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
   int received = 0;
   unsigned long last_data = millis();
   bool ok = true;
@@ -22844,7 +23091,7 @@ static void tileFetchTaskFn(void* arg) {
       if (content_len > 0 && content_len <= 100 * 1024) {
         File f = tileCacheOpen(path_jpg, "w");
         if (f) {
-          WiFiClient* stream = http.getStreamPtr();
+          auto* stream = http.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
           uint8_t buf[1024];
           int    remaining     = content_len;
           size_t disk_written  = 0;                // bytes actually committed to the FS/card
@@ -24676,7 +24923,7 @@ static void openMapPicker(const int* idxs, int n) {
   lv_obj_add_event_cb(s_map_picker_root, mapPickerBackdropCb, LV_EVENT_CLICKED, nullptr);
 
   // Bigger on the 800-px Tanmatsu panel; unchanged on the smaller boards (PSC no-op).
-  const int card_w = PSC(220);
+  const int card_w = PCW(220);
   const int btn_h  = PSC(34);
   const int gap    = PSC(4);
   const int hdr_h  = PSC(30);
@@ -26330,8 +26577,14 @@ static bool crashDumpExport(char* out_path, size_t out_cap) {
   const char* path = "/wadamesh-crash.elf";
 #if CAP_SD
   if (fmSdTryMount()) { dst = &SD; used_sd = true; }
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  if (tanSdTryMount()) { dst = &SD_MMC; used_sd = true; }   // microSD on SDMMC slot 0
 #endif
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  if (!dst) dst = &FFat;              // no SPIFFS on these boards; internal = the FAT data partition
+#else
   if (!dst) { SPIFFS.begin(false); dst = &SPIFFS; }
+#endif
   File f = dst->open(path, "w");
   if (!f) return false;
 
@@ -26958,7 +27211,7 @@ static void openTraceResultPopup(const char* title, const char* body) {
   lv_obj_add_event_cb(s_trace_result_root, traceResultBackdropCb, LV_EVENT_CLICKED, nullptr);
 
 #if CAP_LARGE_SCREEN
-  const int card_w = PSC(220);
+  const int card_w = PCW(220);
   const int card_h = PSC(236);
 #else
   const int card_w = 220;
@@ -27199,7 +27452,7 @@ static void openMessageActionMenu(int msg_idx) {
   // per row — with Delete the menu carries up to 7 actions, and a single column
   // no longer fit the 240-px screens without scrolling.
 #if CAP_LARGE_SCREEN
-  const int card_w = PSC(220);
+  const int card_w = PCW(220);
   const int btn_h  = PSC(30);
   const int gap    = PSC(4);
   const int pad    = PSC(10);
@@ -27339,7 +27592,7 @@ static void openMessageInfoPopup(int msg_idx) {
   const int  route_pts  = buildRouteFromMessage(m);
   const bool show_route = (route_pts >= 2);
 #if CAP_LARGE_SCREEN
-  const int card_w = PSC(220);
+  const int card_w = PCW(220);
   int card_h = (show_trace || show_route) ? PSC(290) : PSC(250);
 #else
   const int card_w = 220;
@@ -28666,7 +28919,7 @@ static void openUrlQrPopup(const char* url) {
   lv_obj_set_style_bg_opa(s_urlqr_root, LV_OPA_60, LV_PART_MAIN);
   lv_obj_clear_flag(s_urlqr_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_urlqr_root, urlQrBackdropCb, LV_EVENT_CLICKED, nullptr);
-  int card_w = PSC(230); if (card_w > modalAvailW()) card_w = modalAvailW();
+  int card_w = PCW(230); if (card_w > modalAvailW()) card_w = modalAvailW();
   int card_h = PSC(250); if (card_h > modalAvailH()) card_h = modalAvailH();
   int qr_size = card_h - 34 - 34 - 20; if (qr_size > PSC(160)) qr_size = PSC(160);
   if (qr_size > card_w - 20) qr_size = card_w - 20; if (qr_size < 96) qr_size = 96;
@@ -28753,7 +29006,7 @@ static void openUrlMenu(const char* url) {
   lv_obj_set_style_bg_opa(s_urlmenu_root, LV_OPA_60, LV_PART_MAIN);
   lv_obj_clear_flag(s_urlmenu_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_urlmenu_root, urlMenuBackdropCb, LV_EVENT_CLICKED, nullptr);
-  const int card_w = PSC(230), btn_h = PSC(34), pad = PSC(12), gap = PSC(8), url_h = PSC(18);
+  const int card_w = PCW(230), btn_h = PSC(34), pad = PSC(12), gap = PSC(8), url_h = PSC(18);
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   const int nbtn = 2;
 #else
@@ -30127,7 +30380,6 @@ static void refreshContactsList() {
   // chain that bootlooped pre-alpha when siblings were added inside it.
   const int  row_w   = tabContentW();
   const bool sel_md  = s_ct_select_mode;
-  const int  ROW_H   = 34;
   const int  star_x  = row_w - 18;                       // ★ favorite marker (reserved on every row)
   // Heard (age) + Location (distance) columns. On the narrow 240/320 boards the
   // compact 32/46-px widths just fit; on the wide Tanmatsu (≥400 px) the values
@@ -30135,13 +30387,21 @@ static void refreshContactsList() {
   // both columns and add a gap there. Labels below also get an explicit width so
   // the text right-aligns within its column instead of bleeding into the next.
   const bool wide_cols = (row_w >= 400);
-  const int  loc_w   = wide_cols ? 80 : 46;
-  const int  hrd_w   = wide_cols ? 64 : 32;
-  const int  col_gap = wide_cols ? 10 : 2;               // gap between the two columns
-  const int  loc_x   = star_x - (wide_cols ? 8 : 4) - loc_w;   // Location column (pushed right)
+  const bool mid_cols  = (!wide_cols && row_w >= 280);   // T-Display P4 (284): two-line rows (below)
+  const int  loc_w   = wide_cols ? 80 : (mid_cols ? 70 : 46);
+  const int  hrd_w   = wide_cols ? 64 : (mid_cols ? 48 : 32);
+  const int  col_gap = wide_cols ? 10 : (mid_cols ? 8 : 2);    // narrow 2-px gap read as one glued value ("46m33km")
+  const int  loc_x   = star_x - (wide_cols ? 8 : (mid_cols ? 6 : 4)) - loc_w;   // Location column (pushed right)
   const int  heard_x = loc_x - col_gap - hrd_w;          // Heard column (left of Location)
   const int  icon_x  = sel_md ? 34 : 8;
-  const int  name_x  = icon_x + 20;
+  const int  name_x  = icon_x + (mid_cols ? 24 : 20);    // the font-16 type glyph grazed the name's first letter
+  // mid_cols (P4 284px): a single 34-px line can't hold name + age + distance without either
+  // scrolling the name (rejected) or gluing the value columns. TWO-LINE rows instead:
+  //   line 1: the full name (one line, dot-ellipsized — never scrolls)
+  //   line 2: heard-age and distance, small + dim under the name
+  const int  ROW_H   = mid_cols ? 46 : 34;
+  const int  name_line_h_row = lv_font_get_line_height(&g_font_14);
+  const int  row2_y  = 5 + name_line_h_row + 2;          // line 2 top (below the name line)
   int        name_w  = heard_x - name_x - 6;
   if (name_w < 50) name_w = 50;
   for (int k = 0; k < n_entries; ++k) {
@@ -30213,42 +30473,55 @@ static void refreshContactsList() {
 
     // Name: wrap up to 2 lines; if the name would need a 3rd line (which
     // overflows the fixed-height row), scroll it horizontally instead.
+    // (mid_cols/P4: exactly ONE line, full row width, dot-ellipsized — no scrolling.)
     char san[40];
     copyUtf8ReplacingMissingGlyphs(&g_font_14, san, sizeof(san), e.name);
     lv_obj_t* nm = lv_label_create(rb);
-    lv_point_t nsz;
-    lv_txt_get_size(&nsz, san, &g_font_14, 0, 0, name_w, LV_TEXT_FLAG_NONE);
-    const int name_line_h = lv_font_get_line_height(&g_font_14);
-    lv_label_set_long_mode(nm, (nsz.y > 2 * name_line_h) ? LV_LABEL_LONG_SCROLL_CIRCULAR
-                                                         : LV_LABEL_LONG_DOT);
-    lv_obj_set_width(nm, name_w);
+    if (mid_cols) {
+      lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+      // BOTH dimensions constrained: with free height LONG_DOT doesn't ellipsize — the name
+      // wrapped to a 2nd line and collided with the age/distance line below it.
+      lv_obj_set_size(nm, star_x - 6 - name_x, name_line_h_row);
+    } else {
+      lv_point_t nsz;
+      lv_txt_get_size(&nsz, san, &g_font_14, 0, 0, name_w, LV_TEXT_FLAG_NONE);
+      const int name_line_h = lv_font_get_line_height(&g_font_14);
+      lv_label_set_long_mode(nm, (nsz.y > 2 * name_line_h) ? LV_LABEL_LONG_SCROLL_CIRCULAR
+                                                           : LV_LABEL_LONG_DOT);
+      lv_obj_set_width(nm, name_w);
+    }
     lv_label_set_text(nm, san);
     lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_align(nm, LV_ALIGN_LEFT_MID, name_x, 0);
+    if (mid_cols) lv_obj_align(nm, LV_ALIGN_TOP_LEFT, name_x, 5);
+    else          lv_obj_align(nm, LV_ALIGN_LEFT_MID, name_x, 0);
 
     // Heard column (12 px — smaller than the 14 px name — and pushed right).
     // Explicit column width so a longer age never bleeds into the Location
     // column; left-aligned within it like the rest of the row.
+    // mid_cols: line 2, left-aligned under the name instead of a right column.
     lv_obj_t* hl = lv_label_create(rb);
     lv_label_set_text(hl, age_buf);
     lv_obj_set_style_text_font(hl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(hl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_width(hl, hrd_w);
     lv_label_set_long_mode(hl, LV_LABEL_LONG_CLIP);
-    lv_obj_align(hl, LV_ALIGN_LEFT_MID, heard_x, 0);
+    if (mid_cols) lv_obj_align(hl, LV_ALIGN_TOP_LEFT, name_x, row2_y);
+    else          lv_obj_align(hl, LV_ALIGN_LEFT_MID, heard_x, 0);
     s_contacts_ctx[k].age_lbl = hl;        // in-place 60s age updates (#82)
     s_contacts_rows_built = k + 1;
 
     // Location column — explicit width so "1.4km" / "390ft" fit and don't
     // overrun the favourite-star slot on the wide layout.
+    // mid_cols: line 2, right after the age.
     lv_obj_t* ll = lv_label_create(rb);
     lv_label_set_text(ll, loc_buf);
     lv_obj_set_style_text_font(ll, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(ll, lv_color_hex(e.has_gps ? COLOR_SUB : 0x4A4E54), LV_PART_MAIN);
     lv_obj_set_width(ll, loc_w);
     lv_label_set_long_mode(ll, LV_LABEL_LONG_CLIP);
-    lv_obj_align(ll, LV_ALIGN_LEFT_MID, loc_x, 0);
+    if (mid_cols) lv_obj_align(ll, LV_ALIGN_TOP_LEFT, name_x + hrd_w + col_gap, row2_y);
+    else          lv_obj_align(ll, LV_ALIGN_LEFT_MID, loc_x, 0);
 
     // Favorite star
     if (e.is_fav) {
@@ -31229,8 +31502,8 @@ static void backupAddPath(const char* stored, const char* disp) {
 // would fail on an already-mounted volume), plain SPIFFS on the T-Deck / V4. Mirrors the file
 // manager's "Internal" root so a backup lands where the user can actually see + restore it.
 static fs::FS* backupInternalFs() {
-#if defined(HAS_TANMATSU)
-  return &FFat;
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  return &FFat;      // FAT data partition (locfd / 'storage'), mounted at boot; no SPIFFS here
 #else
   SPIFFS.begin(false);
   return &SPIFFS;
@@ -31484,7 +31757,7 @@ static void doDeleteBackup() {
   if (!s_backup_del_path[0]) return;
   const char* path = s_backup_del_path;
   bool ok = false;
-  if (!strncmp(path, "int:", 4)) { SPIFFS.begin(false); ok = SPIFFS.remove(path + 4); }
+  if (!strncmp(path, "int:", 4)) { ok = backupInternalFs()->remove(path + 4); }   // FFat on Tanmatsu/P4, SPIFFS elsewhere
 #if CAP_SD
   else if (!strncmp(path, "sd:", 3)) { if (fmSdTryMount()) ok = SD.remove(path + 3); }
 #endif
@@ -32648,7 +32921,7 @@ static void powerOffCb(lv_event_t* e) {
 }
 
 #if defined(ESP32)
-#if !defined(HAS_TANMATSU)
+#if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
 #include "soc/rtc_cntl_reg.h"   // RTC_CNTL_FORCE_DOWNLOAD_BOOT (header-guarded)
 #endif
 // Force the ROM serial bootloader (USB download / flash mode) on the next reset,
@@ -32657,7 +32930,7 @@ static void powerOffCb(lv_event_t* e) {
 // esptool's post-flash reset — or a power cycle — clears it back to a normal boot.
 // (Tanmatsu/P4 has no RTC_CNTL_OPTION1_REG and the launcher manages flashing — plain restart.)
 static void rebootToDownloadMode() {
-#if !defined(HAS_TANMATSU)
+#if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
   REG_SET_BIT(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
 #endif
   ESP.restart();
@@ -32893,6 +33166,26 @@ static void tanBeep() {
   size_t wr = 0;
   i2s_channel_write(h, buf, (size_t)n * 2 * sizeof(int16_t), &wr, 200 / portTICK_PERIOD_MS);
 }
+#elif defined(HAS_TDISPLAY_P4)
+// T-Display P4: the RM69A10 AMOLED has no backlight — brightness is the panel's own DCS
+// 0x51 register (RM69A10Display::setBrightness). Volume is loudness only: the notify
+// chimes scale their amplitude from the pref (the ES8311 DAC volume stays fixed), so
+// applyVolume just tracks the slider for the CC.
+#define HAS_CC_BRIGHTNESS 1
+#define HAS_CC_VOLUME     1
+static uint8_t s_brightness_pct = 100;
+static void applyBrightness(uint8_t pct) {
+  if (pct < 5)   pct = 5;
+  if (pct > 100) pct = 100;
+  s_brightness_pct = pct;
+  // Linear map onto the panel's usable band: DCS 8 is still clearly lit, 255 = max.
+  display.setBrightness((uint8_t)(8 + (uint32_t)(pct - 5) * 247u / 95u));
+}
+static uint8_t s_volume_pct = 70;
+static void applyVolume(uint8_t pct) {
+  if (pct > 100) pct = 100;
+  s_volume_pct = pct;   // play paths read the persisted pref; this keeps the slider live
+}
 #elif defined(HAS_THINKNODE_M9)
 // M9: BL_EN (GPIO17) is a PNP transistor gate. LEDC PWM confirmed working on hardware
 // (Specter bring-up), but the duty is INVERTED — lower duty on the base = MORE conduction
@@ -32937,7 +33230,7 @@ static void ccKbdBlReleaseCb(lv_event_t* e) {
 static void ccVolumeCb(lv_event_t* e)        { applyVolume((uint8_t)lv_slider_get_value(lv_event_get_target(e))); }   // live codec volume
 static void ccVolumeReleaseCb(lv_event_t* e) {
   touchPrefsSetSoundVolume((uint8_t)lv_slider_get_value(lv_event_get_target(e)));   // persist
-  tanBeep();                                                                        // audible feedback at the chosen level
+  uiSoundPreview();                                                                 // audible feedback at the chosen level
 }
 #endif
 
@@ -33056,6 +33349,9 @@ static void openControlCenter() {
 #if defined(HAS_TANMATSU)
   const int bl_y  = row_y;             // three stacked sliders: Screen / Keys / Sound
   const int gps_y = row_y + SC(100);   // GPS line sits below all three (scaled so it clears taller sliders)
+#elif defined(HAS_TDISPLAY_P4)
+  const int bl_y  = row_y;             // two stacked sliders: Screen / Sound
+  const int gps_y = row_y + SC(66);    // GPS line clears both rows
 #elif defined(HAS_CC_BRIGHTNESS)
   const int bl_y  = row_y;
   const int gps_y = row_y + 12;
@@ -33105,6 +33401,33 @@ static void openControlCenter() {
       lv_obj_t* s = lv_slider_create(card);
       lv_obj_set_size(s, card_w - 20 - SC(70), 10);    // reserve SC()-scaled room for the label so a bigger
                                                        // UI-scale label can't overlap the bar
+      lv_obj_align(s, LV_ALIGN_TOP_RIGHT, 0, y);
+      lv_slider_set_range(s, sl[i].lo, 100);
+      lv_slider_set_value(s, sl[i].val, LV_ANIM_OFF);
+      lv_obj_set_style_bg_color(s, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+      lv_obj_set_style_bg_color(s, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
+      lv_obj_set_style_pad_all(s, 4, LV_PART_KNOB);
+      lv_obj_add_event_cb(s, sl[i].live, LV_EVENT_VALUE_CHANGED, nullptr);
+      lv_obj_add_event_cb(s, sl[i].done, LV_EVENT_RELEASED,      nullptr);
+    }
+  }
+#elif defined(HAS_TDISPLAY_P4)
+  // ---- Two stacked sliders: Screen brightness (AMOLED DCS 0x51) + Sound volume.
+  //      Same anchored-label pattern as the Tanmatsu block, minus its Keys row.
+  {
+    struct { const char* name; int val; int lo; lv_event_cb_t live; lv_event_cb_t done; } sl[2] = {
+      { "Screen", s_brightness_pct, 5, ccBrightnessCb, ccBrightnessReleaseCb },
+      { "Sound",  s_volume_pct,     0, ccVolumeCb,     ccVolumeReleaseCb },
+    };
+    for (int i = 0; i < 2; i++) {
+      const int y = bl_y + i * SC(30);
+      lv_obj_t* lab = lv_label_create(card);
+      lv_label_set_text(lab, TR(sl[i].name));
+      lv_obj_set_style_text_font(lab, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(lab, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_obj_align(lab, LV_ALIGN_TOP_LEFT, 0, y - 1);
+      lv_obj_t* s = lv_slider_create(card);
+      lv_obj_set_size(s, card_w - 20 - SC(70), 10);
       lv_obj_align(s, LV_ALIGN_TOP_RIGHT, 0, y);
       lv_slider_set_range(s, sl[i].lo, 100);
       lv_slider_set_value(s, sl[i].val, LV_ANIM_OFF);
@@ -34290,12 +34613,19 @@ static void buildGlobalStatusBar() {
   {
     // LEFT-aligned group. ~70% of the double-bar height so there's breathing room
     // above/below; soft rounded corners + a dimmer edge so they don't pop.
+#if CAP_ROUND_CORNERS
+    // Round panel: the bar is a fixed two rows (no doubling), so size these to sit on
+    // ROW 2's left, inside the corner inset — the status cluster occupies row-2 right.
+    const lv_coord_t BH = 18, BW = 30, GAP = 6, BX0 = SB_INSET_X;
+    const lv_coord_t BY = SB_TOP_PAD + SB_ROW + (SB_ROW - BH) / 2;
+#else
     const lv_coord_t BH = (lv_coord_t)((STATUSBAR_H * 2 - 4) * 7 / 10);
-    const lv_coord_t BW = 34, GAP = 4, BY = (lv_coord_t)(STATUSBAR_H * 2 - BH) / 2;
+    const lv_coord_t BW = 34, GAP = 4, BX0 = 6, BY = (lv_coord_t)(STATUSBAR_H * 2 - BH) / 2;
+#endif
     auto mk = [&](int slot_from_left) -> lv_obj_t* {
       lv_obj_t* b = lv_btn_create(g_statusbar.root);
       lv_obj_set_size(b, BW, BH);
-      lv_obj_set_pos(b, 6 + slot_from_left * (BW + GAP), BY);
+      lv_obj_set_pos(b, BX0 + slot_from_left * (BW + GAP), BY);
       styleButton(b);
       lv_obj_set_style_radius(b, 9, LV_PART_MAIN);        // softer corners
       lv_obj_set_style_border_opa(b, LV_OPA_20, LV_PART_MAIN);   // dim the edge so it blends
@@ -34508,7 +34838,44 @@ static void buildGlobalStatusBar() {
   lv_obj_clear_flag(g_statusbar.dim, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(g_statusbar.dim, LV_OBJ_FLAG_CLICKABLE);   // swallow bar taps behind a modal
   lv_obj_add_flag(g_statusbar.dim, LV_OBJ_FLAG_HIDDEN);
+
+#if CAP_ROUND_CORNERS
+  statusBarLayoutTwoRow(0);   // place the clock (row 1) + the status cluster (row 2)
+#endif
 }
+
+#if CAP_ROUND_CORNERS
+// Two-row status-bar layout for the round-cornered phone panel. Row 1 (top): the clock
+// at the right inset (+ keyboard-layout tag to its left, + chat back/cog on the left).
+// Row 2 (bottom): the battery pinned at the right inset, with the signal/wifi/sd/ble
+// cluster to its left — that cluster slides right by `slide` px when the %-column is
+// hidden while charging (mirrors the square-panel slide). The app-name / page-title /
+// chat thread-name (left_label) is placed by updateGlobalStatusBar. Per-item y nudges
+// centre the different glyph heights within their row. Base X offsets mirror the
+// single-row builder so the horizontal spacing is unchanged; +SB_INSET_X keeps the end
+// glyphs clear of the corner arcs.
+static void statusBarLayoutTwoRow(int slide) {
+  const int ins = SB_INSET_X;
+  // Row 2 — status cluster, right→left, evenly spaced. Battery pinned at the inset;
+  // the sub-battery cluster (signal/sd/wifi/ble) sits to its left and slides right by
+  // `slide` when the %-column hides while charging. y nudges centre each glyph in the
+  // row (montserrat_14 battery sits a touch higher than the 12px glyphs; sig/sd dots
+  // drop a few px). The scrolling profile name shares this row on the left (placed by
+  // updateGlobalStatusBar).
+  if (g_statusbar.batt_icon) lv_obj_align(g_statusbar.batt_icon, LV_ALIGN_TOP_RIGHT, -(2   + ins),         SB_ROW2_Y - 2);
+  if (g_statusbar.batt_pct)  lv_obj_align(g_statusbar.batt_pct,  LV_ALIGN_TOP_RIGHT, -(26  + ins),         SB_ROW2_Y);
+  if (g_statusbar.sig_box)   lv_obj_align(g_statusbar.sig_box,   LV_ALIGN_TOP_RIGHT, -(64  + ins - slide), SB_ROW2_Y + 2);
+  if (g_statusbar.sd_icon)   lv_obj_align(g_statusbar.sd_icon,   LV_ALIGN_TOP_RIGHT, -(86  + ins - slide), SB_ROW2_Y + 4);
+  if (g_statusbar.conn_icon) lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_TOP_RIGHT, -(102 + ins - slide), SB_ROW2_Y);
+  if (g_statusbar.ble_icon)  lv_obj_align(g_statusbar.ble_icon,  LV_ALIGN_TOP_RIGHT, -(126 + ins - slide), SB_ROW2_Y);
+  // Row 1 — clock at the right inset (+ keyboard-layout tag to its left when typing).
+  if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_TOP_RIGHT, -ins,        SB_ROW1_Y);
+  if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_TOP_RIGHT, -(48 + ins), SB_ROW1_Y);
+  // Row 1 — chat back chevron + channel-settings cog on the left (shown only in a chat).
+  if (g_statusbar.chat_back)  lv_obj_align(g_statusbar.chat_back,  LV_ALIGN_TOP_LEFT, ins,      SB_ROW1_Y);
+  if (g_statusbar.chan_gear)  lv_obj_align(g_statusbar.chan_gear,  LV_ALIGN_TOP_LEFT, ins + 24, SB_ROW1_Y);
+}
+#endif
 
 static void updateGlobalStatusBar() {
   if (!g_statusbar.root || !g_lv.task) return;
@@ -34580,7 +34947,9 @@ static void updateGlobalStatusBar() {
     // built state — opaque root + hidden fade — already matches the inactive case).
     // EXCEPT while the channel-settings / blocked-users sheets are open: those are a new
     // page over the chat, so the bar goes SOLID (no glass revealing the chat behind it).
-    const bool fade_active = want_tall && !chanScopeIsOpen() && !blockedModalIsOpen() && !s_reader_page_open;
+    // The round panel keeps a SOLID two-row bar (no glass fade — there's no doubled lower
+    // row to reveal content through), so fade never activates there.
+    const bool fade_active = want_tall && !chanScopeIsOpen() && !blockedModalIsOpen() && !s_reader_page_open && !CAP_ROUND_CORNERS;
     static bool s_fade_active = false;
     if (fade_active != s_fade_active) {
       s_fade_active = fade_active;
@@ -34601,7 +34970,9 @@ static void updateGlobalStatusBar() {
     // Per-element vertical placement in the tall bar. Default = TOP row (system content,
     // same place as the regular bar). Exceptions: the settings back+title stays CENTRED;
     // an open chat's thread name drops to the LOWER row and its cog centres across both.
-    const lv_coord_t up = s_statusbar_tall ? -(lv_coord_t)(STATUSBAR_H / 2) : 0;
+    // On the round panel the two rows come from each child's BASE align (set by
+    // statusBarLayoutTwoRow), not from a per-tick shift — so never translate there.
+    const lv_coord_t up = (s_statusbar_tall && !CAP_ROUND_CORNERS) ? -(lv_coord_t)(STATUSBAR_H / 2) : 0;
     const uint32_t nch = lv_obj_get_child_cnt(g_statusbar.root);
     for (uint32_t i = 0; i < nch; ++i) {
       lv_obj_t* c = lv_obj_get_child(g_statusbar.root, i);
@@ -34642,11 +35013,26 @@ static void updateGlobalStatusBar() {
   }
   // In a chat the thread name (+ unread prefix) is CENTRED on the lower row (the back +
   // cog sit at the far left); otherwise it's left-aligned per the usual layout.
+#if CAP_ROUND_CORNERS
+  // Round panel placement of the left zone:
+  //  - open chat: thread name centred on ROW 1 (back/cog on row-1 left, clock row-1 right).
+  //  - settings/tool page: "‹ Title" on ROW 1 left.
+  //  - home / other tabs: the scrolling profile name (or ✉ unread badge) sits on ROW 2,
+  //    the SAME line as the battery/status cluster (per request), left-aligned.
+  if (in_chan_chat) {
+    lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_MID, 0, SB_ROW1_Y);
+  } else if (s_settings_open_cat >= 0 || s_apppage_title) {
+    lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, SB_INSET_X, SB_ROW1_Y);
+  } else {
+    lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, SB_INSET_X, SB_ROW2_Y);
+  }
+#else
   if (in_chan_chat) {
     lv_obj_align(g_statusbar.left_label, LV_ALIGN_CENTER, 0, 0);
   } else {
     lv_obj_align(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 6, 0);
   }
+#endif
 
   // The home tab shows the user's profile name in a fixed ~11-char window that
   // marquee-scrolls when it's longer. These track that config so we (a) reset it
@@ -34774,8 +35160,15 @@ static void updateGlobalStatusBar() {
         const lv_coord_t sb_w = lv_disp_get_hor_res(nullptr);
         // Reserve = clock anchor SC(126) + its text width + margin, so the name window
         // ends just before the (now SC-scaled) right-side icon cluster at any UI scale.
+#if CAP_ROUND_CORNERS
+        // Round panel: the name sits on ROW 2 next to the status cluster, so the window
+        // runs from the left inset up to just before the leftmost icon (Bluetooth, whose
+        // right anchor is 126+inset from the right edge — reserve its glyph + a margin).
+        lv_obj_set_width(g_statusbar.left_label, sb_w - (SB_INSET_X + 126 + 44));
+#else
         lv_obj_set_width(g_statusbar.left_label,
                          (sb_w >= 600) ? (sb_w - SC(190)) : (sb_w >= 300) ? 100 : 66);   // #47a: narrower window on the 240px V4 bar so a long name can't run into the clock
+#endif
         lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
         lv_obj_set_style_anim_speed(g_statusbar.left_label, 14, LV_PART_MAIN);  // slow, readable marquee
         lv_label_set_text(g_statusbar.left_label, nm);
@@ -34877,7 +35270,11 @@ static void updateGlobalStatusBar() {
       // The % column disappears while charging (bolt only), so slide everything
       // left of the battery rightward to keep it snug against the bolt — else a
       // %-wide gap opens between the signal bars and the lightning glyph.
-#if CAP_LARGE_SCREEN
+#if CAP_ROUND_CORNERS
+      // Round panel: re-apply the two-row layout, sliding the row-2 sub-battery cluster
+      // right by the hidden %-column width so it stays snug against the bolt.
+      statusBarLayoutTwoRow(charging ? 32 : 0);
+#elif CAP_LARGE_SCREEN
       // Tanmatsu: the cluster is built with SC() UI-scaling, so this slide MUST scale too — the raw
       // offsets below marched the scaled glyphs (incl. the BLE icon) into each other at Large/Huge the
       // instant charging toggled. Bases match the SC() builder; the clock is re-placed (SC-scaled) by
@@ -34952,6 +35349,22 @@ static void updateGlobalStatusBar() {
   // cluster, so it never collides with e.g. the "Files" header. Otherwise it's
   // top-right; charging slides it +32 to hug the bolt once the % column hides.
   // Re-aligned only on a state change so it isn't laid out every tick.
+#if CAP_ROUND_CORNERS
+  // Round P4 two-row bar: centre the clock on ROW 1 for the home / normal screens — row-1
+  // centre is free there (the node name lives on row 2). In a chat the row-1 centre is the
+  // thread title, so the clock moves to row-1 right instead. Re-placed only when the chat
+  // state flips, so it isn't laid out every tick.
+  {
+    static int8_t s_clk_chat = -1;
+    if ((int8_t)chat_open != s_clk_chat) {
+      s_clk_chat = (int8_t)chat_open;
+      if (chat_open) lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_RIGHT, -SB_INSET_X, SB_ROW1_Y);
+      else           lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_MID,   0,           SB_ROW1_Y);
+      if (g_statusbar.async_icon)
+        lv_obj_align_to(g_statusbar.async_icon, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -4, 0);
+    }
+  }
+#else
   {
     static int8_t s_clk_center = -1;   // -1 = unset -> forces the first align
     static bool   s_clk_chg     = false;
@@ -34982,6 +35395,7 @@ static void updateGlobalStatusBar() {
         lv_obj_align_to(g_statusbar.async_icon, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -4, 0);
     }
   }
+#endif
 
   // ---- Layout indicator ----
   // Only while a chat/channel conversation is open (s_chat_title set): that is
@@ -36859,6 +37273,13 @@ static void buildUiTree() {
   lv_obj_set_style_text_color(tab_btns, lv_color_hex(COLOR_ACCENT),
                                LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_text_font(tab_btns, &g_font_14, LV_PART_MAIN);
+#if CAP_ROUND_CORNERS
+  // Round panel: inset the bottom tab row from the two bottom corner arcs (left/right)
+  // and lift the icons off the very bottom edge, so no tab glyph sits under a corner.
+  lv_obj_set_style_pad_left(tab_btns,   SB_INSET_X, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(tab_btns,  SB_INSET_X, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(tab_btns, SB_TOP_PAD, LV_PART_MAIN);
+#endif
   lv_obj_add_event_cb(tab_btns, homeTabClickedCb, LV_EVENT_CLICKED, nullptr);   // Home re-tap toggles the drawer
   lv_obj_add_event_cb(tab_btns, tabBarGestureCb, LV_EVENT_GESTURE, nullptr);    // swipe up from the bar opens the drawer
 #if CAP_TRACKBALL
@@ -38199,11 +38620,13 @@ static char    s_ui_data_root[16] = "";
 static bool    s_ui_data_resolved = false;
 static bool uiDataFsReady() {
   if (s_ui_data_fs != nullptr) return true;   // cache SUCCESS only — a failed resolve MUST stay retryable
-#if defined(HAS_TANMATSU)
-  // Tanmatsu: prefer the microSD card. The internal FFat 'locfd' loses frequently-rewritten data on
-  // this P4 (broken FAT metadata; see the tile-cache notes), so chat history vanished on reboot. SD is
-  // reliable FAT — mirror the T-Deck's /meshcomod root. Fall back to FFat only when no card is present.
-  // Both are mounted at boot in main.cpp (g_sd_ok / g_fs_ok).
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  // Tanmatsu + T-Display P4: prefer the microSD card. On the Tanmatsu the internal FFat 'locfd'
+  // loses frequently-rewritten data (broken FAT metadata; see the tile-cache notes); on the
+  // T-Display P4 SD-first keeps history on the same medium the DataStore adopts. Mirror the
+  // T-Deck's /meshcomod root; fall back to FFat only when no card is present. Both are mounted at
+  // boot in main.cpp (g_sd_ok / g_fs_ok). (The P4 used to fall into the #else SPIFFS branch below —
+  // no SPIFFS partition exists there, so history was never persisted and vanished on every reboot.)
   extern bool g_sd_ok;
   if (g_sd_ok) {
     SD_MMC.mkdir("/meshcomod");
@@ -38244,7 +38667,7 @@ static bool uiDataFsReady() {
 // message ring (MAX_UI_MESSAGES_SD) since the card has room for the bigger file.
 static bool uiDataFsIsSdCard() {
   if (!uiDataFsReady()) return false;
-#if defined(HAS_TANMATSU)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   return s_ui_data_fs == &SD_MMC;
 #elif defined(HAS_TDECK_GT911)
   return s_ui_data_fs == &SD;
@@ -39484,9 +39907,34 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     WIRE_DBG("[TILE] Tanmatsu: no SD card -> caching Wi-Fi tiles on FFat /tiles (best-effort)");
   }
 #endif
+#if defined(HAS_TDISPLAY_P4)
+  // T-Display P4: no dedicated "tiles" partition in its table. Prefer the microSD (SD_MMC slot 0,
+  // mounted by main.cpp at boot — XL9535 SD_EN must be LOW, it gates the slot's power); else the
+  // internal 8 MB FFat 'storage' partition — a standard FFat mount of OUR OWN partition, so none of
+  // the Tanmatsu locfd metadata quirks apply. Either way the map gets a working Wi-Fi tile cache.
+  else if (SD_MMC.cardType() != CARD_NONE) {
+    s_tile_fs        = &SD_MMC;
+    s_tile_root[0]   = '\0';
+    s_tiles_fs_ready = true;
+    printf("[TILE] T-Display P4: caching Wi-Fi tiles on microSD /tiles (SD_MMC)\n");
+  }
+  else {
+    if (g_fs_ok) {
+      s_tile_fs        = &FFat;
+      s_tile_root[0]   = '\0';
+      s_tiles_fs_ready = true;
+      printf("[TILE] T-Display P4: no SD card -> caching Wi-Fi tiles on FFat /tiles\n");
+    } else {
+      s_tile_fs = nullptr;
+      printf("[TILE] T-Display P4: NO tile backend (no SD, FFat down)\n");
+    }
+  }
+#endif
+#if !defined(HAS_TDISPLAY_P4)
   else {
     s_tile_fs = nullptr;   // no cache backend at all -> map shows the storage notice
   }
+#endif
 
   // Remember the non-microSD backend, then (microSD-tile mode) re-point the cache at
   // the SD card ROOT so Wi-Fi-fetched tiles land in /tiles/<z>/<x>/<y>.jpg right next
@@ -39682,7 +40130,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   if (!g_lv.ready) {
     lv_init();
     initTouchFontFallbacks();
+#if CAP_ROUND_CORNERS
+    STATUSBAR_H = SB_TOP_PAD + SB_ROW * 2;   // top safe-area + two rows (round phone panel)
+#else
     STATUSBAR_H = SC(22);   // grow the status bar to fit bigger text at Large/Huge (no-op at 100%)
+#endif
     // Allocate the draw buffer in PSRAM so the ~12 KB it costs comes out of
     // the 8 MB external RAM instead of the 320 KB internal DRAM that WiFi
     // DMA buffers also need. Falls back to DRAM if PSRAM allocation fails.
@@ -39692,6 +40144,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // so software rotation always has room for a full status-bar/list row. Lives in the
       // abundant 32MB PSRAM — internal DRAM is precious and the MIPI-DSI flush reads PSRAM fine.
       g_draw_buf_px = 800 * LV_DRAW_BUF_LINES;
+      const size_t buf_bytes = sizeof(lv_color_t) * g_draw_buf_px;
+      g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
+#elif defined(HAS_TDISPLAY_P4)
+      // RM69A10: LVGL renders at 284-wide (half res, upscaled 2x on flush) — full-width band in the abundant 32MB PSRAM.
+      g_draw_buf_px = 284 * LV_DRAW_BUF_LINES;
       const size_t buf_bytes = sizeof(lv_color_t) * g_draw_buf_px;
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
@@ -39821,6 +40279,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // stays == the panel width, so it's never entered).
     g_lv.disp_drv.hor_res  = TAN_PANEL_PW;   // 480
     g_lv.disp_drv.ver_res  = TAN_PANEL_PH;   // 800
+#elif defined(HAS_TDISPLAY_P4)
+    // Render at HALF the 568x1232 panel; RM69A10Display upscales RM_UI_SCALE(2)x on flush, so the whole
+    // UI is uniformly 2x bigger on the high-DPI AMOLED (simpler than per-element scaling). The GT9895
+    // touch reports in this same 284x616 logical space.
+    g_lv.disp_drv.hor_res  = 284;
+    g_lv.disp_drv.ver_res  = 616;
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
@@ -40737,11 +41201,17 @@ static inline void touchScreenBacklight(bool on) {
 // Restored to 240 MHz on wake so tile decode / rendering stays fast. Only
 // switches when the target changes (the call is a hard DFS switch).
 static void setCpuForScreen(bool screen_on) {
+#if defined(HAS_TDISPLAY_P4)
+  // The P4's Arduino HAL only accepts 360 MHz (240/80 log a "could not be set" error every screen
+  // toggle) — no DFS downclock available through this API on that chip, so skip entirely.
+  (void)screen_on;
+#else
   static int s_cur_mhz = 240;
   const int want = screen_on ? 240 : 80;
   if (want == s_cur_mhz) return;
   setCpuFrequencyMhz(want);
   s_cur_mhz = want;
+#endif
 }
 #else
 static inline void setCpuForScreen(bool) {}

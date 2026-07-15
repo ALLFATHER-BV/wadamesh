@@ -1,0 +1,12 @@
+# LilyGo T-Display P4 (AMOLED) — standalone 16 MB partition table.
+# NOT an AppFS/launcher app (that's the Tanmatsu) — this flashes bootloader+app directly.
+# Dual OTA app slots (4 MB each; the P4 wadamesh image is ~2.5-3 MB) + a big FAT for
+# identity/prefs/contacts/chat history + map tiles.
+# Name,     Type, SubType,  Offset,   Size,   Flags
+nvs,        data, nvs,      0x9000,   24K,
+otadata,    data, ota,      0xF000,   8K,
+phy_init,   data, phy,      0x11000,  4K,
+ota_0,      app,  ota_0,    0x20000,  4M,
+ota_1,      app,  ota_1,    0x420000, 4M,
+storage,    data, fat,      0x820000, 8000K,
+coredump,   data, coredump, 0xFF0000, 64K,

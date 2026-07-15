@@ -17,6 +17,12 @@
 // pocket keeps its socket "connected" but unwritable, and every mesh-RX push then
 // stalls the loop thread (and the UI) for seconds.
 static bool socketWritableNow(WiFiClient& client) {
+#if defined(HAS_TDISPLAY_P4)
+  // C6/AT transport: no lwIP fd to select() on (fd() is -1 by design). Writes go through the AT
+  // worker whose CIPSEND exchange is itself bounded (the C6 buffers TX), so liveness is the only
+  // cheap pre-check here.
+  return client.connected();
+#else
   int fd = client.fd();
   if (fd < 0) return false;
   fd_set wset;
@@ -26,6 +32,7 @@ static bool socketWritableNow(WiFiClient& client) {
   tv.tv_sec = 0;
   tv.tv_usec = 0;
   return select(fd + 1, NULL, &wset, NULL, &tv) > 0 && FD_ISSET(fd, &wset);
+#endif
 }
 
 static bool writeAllBytes(WiFiClient& client, const uint8_t* buf, size_t len, uint32_t timeout_ms) {
@@ -69,26 +76,32 @@ void TCPCompanionServer::stop() {
   }
 }
 
+void TCPCompanionServer::adoptClient(WiFiClient& incoming) {
+  // Slot-insert an already-accepted connection. Used by our own accept loop below AND by the
+  // T-Display P4's first-byte router (one shared AT listener dispatches companion vs web).
+  int slot = -1;
+  for (int i = 0; i < TCP_COMPANION_MAX_CLIENTS; i++) {
+    if (!_clients[i].in_use) {
+      slot = i;
+      break;
+    }
+  }
+  if (slot >= 0) {
+    _clients[slot].client = incoming;
+    _clients[slot].in_use = true;
+    _clients[slot].state = RECV_STATE_IDLE;
+    _clients[slot].rx_len = 0;
+    _clients[slot].stall_ms = 0;
+  } else {
+    incoming.stop();
+  }
+}
+
 void TCPCompanionServer::acceptNewClients() {
   while (_server.hasClient()) {
     WiFiClient incoming = _server.accept();
     if (!incoming) continue;
-    int slot = -1;
-    for (int i = 0; i < TCP_COMPANION_MAX_CLIENTS; i++) {
-      if (!_clients[i].in_use) {
-        slot = i;
-        break;
-      }
-    }
-    if (slot >= 0) {
-      _clients[slot].client = incoming;
-      _clients[slot].in_use = true;
-      _clients[slot].state = RECV_STATE_IDLE;
-      _clients[slot].rx_len = 0;
-      _clients[slot].stall_ms = 0;
-    } else {
-      incoming.stop();
-    }
+    adoptClient(incoming);
   }
 }
 

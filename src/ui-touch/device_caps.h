@@ -83,6 +83,23 @@
   #define CAP_OTA          1   // native dual-OTA slot
   #define CAP_LOCK_SCREEN  0
 
+#elif defined(HAS_TDISPLAY_P4)        // ===== LilyGo T-Display P4 (ESP32-P4 + C6) =====
+  // Phone-class AMOLED handheld: RM69A10 MIPI-DSI 568x1232 portrait, HI8561 cap touch, SX1262,
+  // C6 Wi-Fi/BLE (esp-hosted), SD_MMC. 32 MB PSRAM — web browser fits easily.
+  #define CAP_TOUCH        1
+  #define CAP_ROTATABLE    0   // fixed portrait panel (SW-rotate later if wanted)
+  #define CAP_LARGE_SCREEN 1   // 568x1232 -> UI upscaling like the Tanmatsu
+  // CAP_SD gates the *Arduino SD* (shared-SPI) path used by the T-Deck/M9/R8. The P4's
+  // card is SD_MMC (slot 0), mounted in main.cpp and used as the DataStore backend —
+  // exposed to the UI via CAP_FILESYSTEM, exactly like the Tanmatsu's FFat. So CAP_SD=0
+  // here keeps the Arduino-`SD` UI blocks (battery-log-on-SD, WAV sounds, fm SD mount)
+  // compiled out; SD_MMC file-manager browsing can be wired via the filesystem path later.
+  #define CAP_SD           0
+  #define CAP_FILESYSTEM   1   // SD_MMC + internal FFat 'storage'
+  #define CAP_GPS          1   // L76K
+  #define CAP_OTA          1   // standalone dual-OTA app
+  #define CAP_LOCK_SCREEN  1
+
 #else                                    // ===== Heltec V4 TFT (default) =====
   #define CAP_TOUCH        1   // capacitive touch panel
   #define CAP_ROTATABLE    1   // user can flip portrait/landscape
@@ -113,6 +130,17 @@
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0
+#endif
+
+// Round-cornered, tall/narrow phone-class panel (LilyGo T-Display P4, 568x1232). The
+// AMOLED corners are arcs, so content is inset from all four corners, and the very tall
+// aspect lets the status bar wrap to TWO rows (row 1 = name + clock, row 2 = the wifi/
+// ble/sd/signal/battery cluster) instead of cramming everything onto one narrow line.
+// Square-cornered panels leave this 0 and keep the single-row bar with no insets.
+#if defined(HAS_TDISPLAY_P4)
+  #define CAP_ROUND_CORNERS 1
+#else
+  #define CAP_ROUND_CORNERS 0
 #endif
 
 // ---- Capabilities aliased to existing device-neutral macros -----------------

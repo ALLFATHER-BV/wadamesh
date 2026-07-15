@@ -33,6 +33,19 @@ void MultiTransportCompanionInterface::begin(Stream& usb_serial, uint16_t tcp_po
 }
 
 void MultiTransportCompanionInterface::startTcpServer(bool wifi_connected) {
+#if defined(HAS_TDISPLAY_P4)
+  // ESP-AT allows ONE listening port, so the router server (_p4_srv) owns it and dispatches
+  // each inbound connection by first byte — see p4RouteClients(). _tcp/_ws never listen
+  // themselves here; started flags only mark them willing to adopt routed clients.
+  if (_tcp_enabled && !_tcp_started && _tcp_port != 0) {
+    _p4_srv.begin(_tcp_port);
+    _tcp_started = true;
+  }
+  if (_tcp_enabled && !_ws_started && _ws_port != 0 && wifi_connected) {
+    _ws_started = true;   // enables tickHandshake + the mirror stream task; _ws itself stays listen-less
+    printf("[WS] P4 router: web UI shares TCP:%u (first-byte dispatch)\n", (unsigned)_tcp_port);
+  }
+#else
   if (_tcp_enabled && !_tcp_started && _tcp_port != 0) {
     _tcp.begin(_tcp_port);
     _tcp_started = true;
@@ -42,7 +55,57 @@ void MultiTransportCompanionInterface::startTcpServer(bool wifi_connected) {
     _ws.begin(_ws_port);
     _ws_started = true;
   }
+#endif
 }
+
+#if defined(HAS_TDISPLAY_P4)
+// One AT listener serves BOTH protocols. Accept every inbound connection here, peek its first
+// byte, and hand the socket to the right server: HTTP requests start with an ASCII verb
+// (GET/HEAD/POST/PUT/OPTIONS/DELETE...) and cover the web viewer page, the mirror/terminal
+// WebSockets and the WS companion; companion frames from the phone app always start with '<'.
+// A peer that stays silent gets the legacy benefit of the doubt after 3 s: some companion
+// clients connect and only listen for pushes without ever sending.
+void MultiTransportCompanionInterface::p4RouteClients() {
+  if (!_tcp_started && !_ws_started) return;
+  const int NPEND = (int)(sizeof(_p4_pend) / sizeof(_p4_pend[0]));
+  while (_p4_srv.hasClient()) {
+    int slot = -1;
+    for (int i = 0; i < NPEND; i++) {
+      if (!_p4_pend[i].used) {
+        slot = i;
+        break;
+      }
+    }
+    if (slot < 0) break;                 // all pending slots mid-peek; the accept FIFO holds the rest
+    WiFiClient incoming = _p4_srv.accept();
+    if (!incoming) continue;
+    _p4_pend[slot].c = incoming;
+    _p4_pend[slot].ms = millis();
+    _p4_pend[slot].used = true;
+  }
+  for (int i = 0; i < NPEND; i++) {
+    if (!_p4_pend[i].used) continue;
+    WiFiClient& c = _p4_pend[i].c;
+    if (!c.connected()) {
+      c.stop();
+      _p4_pend[i].used = false;
+      continue;
+    }
+    int b = c.peek();
+    bool is_http = (b == 'G' || b == 'H' || b == 'P' || b == 'O' || b == 'D');
+    if (b < 0 && millis() - _p4_pend[i].ms < 3000) continue;   // no first byte yet
+    if (is_http && _ws_started) {
+      _ws.adoptClient(c);
+    } else if (!is_http && _tcp_started) {
+      _tcp.adoptClient(c);
+    } else {
+      c.stop();               // the matching server is suspended (OTA) — refuse politely
+    }
+    _p4_pend[i].used = false;
+    _p4_pend[i].c = WiFiClient();   // drop our shared link ref; the adopting server holds its own
+  }
+}
+#endif
 
 // Web-mirror streaming runs on CORE 0 (parallel to the UI on core 1) so the browser's
 // socket stays fed at full link speed even while core 1 is busy with a heavy LVGL render.
@@ -58,6 +121,9 @@ static void wsMirrorStreamTask(void* arg) {
 }
 
 void MultiTransportCompanionInterface::tickWebSocketHandshake() {
+#if defined(HAS_TDISPLAY_P4)
+  p4RouteClients();        // dispatch newly accepted AT-listener connections to _tcp / _ws
+#endif
   if (_ws_started) {
     _ws.tickHandshake();   // accept + WS handshake stay on core 1 (the main loop)
     if (!_mirror_task) {   // spawn the core-0 streamer once, on first tick after the WS server is up
@@ -76,6 +142,16 @@ void MultiTransportCompanionInterface::stopTcpServer() {
     _tcp.stop();
     _tcp_started = false;
   }
+#if defined(HAS_TDISPLAY_P4)
+  _p4_srv.stop();          // the router owns the AT listener (see startTcpServer)
+  for (size_t i = 0; i < sizeof(_p4_pend) / sizeof(_p4_pend[0]); i++) {
+    if (_p4_pend[i].used) {
+      _p4_pend[i].c.stop();
+      _p4_pend[i].c = WiFiClient();
+      _p4_pend[i].used = false;
+    }
+  }
+#endif
   _tcp_enabled = false;
 }
 
@@ -251,14 +327,22 @@ void MultiTransportCompanionInterface::restoreAfterHttpOta() {
   }
 #endif
   if (_ota_tcp_suspended) {
+#if defined(HAS_TDISPLAY_P4)
+    _tcp_started = true;   // the router still owns the AT listener; just resume adopting
+#else
     _tcp.begin(_tcp_port);
     _tcp_started = true;
+#endif
     _ota_tcp_suspended = false;
     meshcoreRepeaterTcpOtaEmitLine("OTA: restored companion TCP server");
   }
   if (_ota_ws_suspended) {
+#if defined(HAS_TDISPLAY_P4)
+    _ws_started = true;    // ditto — never begin a second AT listener on _ws_port
+#else
     _ws.begin(_ws_port);
     _ws_started = true;
+#endif
     _ota_ws_suspended = false;
     meshcoreRepeaterTcpOtaEmitLine("OTA: restored companion WebSocket server");
   }

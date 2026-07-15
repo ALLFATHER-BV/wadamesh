@@ -435,6 +435,12 @@ static void base64Encode20(const uint8_t* in, char* out) {
 // in TCPCompanionServer.cpp. Without it, WiFiClient::write() against a peer that
 // stopped ACKing (half-open socket) blocks in 1 s select() waits on the loop thread.
 static bool socketWritableNow(WiFiClient& client) {
+#if defined(HAS_TDISPLAY_P4)
+  // C6/AT transport: no lwIP fd to select() on (fd() is -1 by design). Writes go through the AT
+  // worker whose CIPSEND exchange is itself bounded (the C6 buffers TX), so liveness is the only
+  // cheap pre-check here.
+  return client.connected();
+#else
   int fd = client.fd();
   if (fd < 0) return false;
   fd_set wset;
@@ -444,6 +450,7 @@ static bool socketWritableNow(WiFiClient& client) {
   tv.tv_sec = 0;
   tv.tv_usec = 0;
   return select(fd + 1, NULL, &wset, NULL, &tv) > 0 && FD_ISSET(fd, &wset);
+#endif
 }
 
 static bool writeAllBytes(WiFiClient& client, const uint8_t* buf, size_t len, uint32_t timeout_ms) {
@@ -529,48 +536,55 @@ void WebSocketCompanionServer::resumeListen() {
   Serial.printf("[WS] listen resumed port=%u (plain)\n", (unsigned)_port);
 }
 
+void WebSocketCompanionServer::adoptClient(WiFiClient& incoming) {
+  // Slot-insert an already-accepted connection. Used by our own accept loop below AND by the
+  // T-Display P4's first-byte router (one shared AT listener dispatches companion vs web).
+  WsClientsLock _lk(_client_mtx);
+  int slot = -1;
+  for (int i = 0; i < WS_COMPANION_MAX_CLIENTS; i++) {
+    if (!_clients[i].in_use) {
+      slot = i;
+      break;
+    }
+  }
+  // No free slot: evict the oldest existing client so a fresh connect can
+  // recover from stuck slots (half-closed sockets where connected() still
+  // reports true). Without this, every new connect is accept()ed then
+  // immediately stop()ed, producing SYN/SYN+ACK/ACK/FIN-ACK with zero data.
+  if (slot < 0) {
+    uint32_t now = millis();
+    uint32_t oldest_age = 0;
+    for (int i = 0; i < WS_COMPANION_MAX_CLIENTS; i++) {
+      uint32_t age = now - _clients[i].accept_ms;
+      if (slot < 0 || age > oldest_age) {
+        slot = i;
+        oldest_age = age;
+      }
+    }
+    _clients[slot].client.stop();
+    _clients[slot].in_use = false;
+  }
+  _clients[slot].client = incoming;
+  _clients[slot].in_use = true;
+  _clients[slot].accept_ms = millis();
+  _clients[slot].handshake_done = false;
+  _clients[slot].handshake_len = 0;
+  _clients[slot].ws_state = WS_STATE_HEADER_0;
+  _clients[slot].comp_state = COMP_STATE_IDLE;
+  _clients[slot].stall_ms = 0;
+  _clients[slot].is_mirror = false;
+  _clients[slot].is_term = false;
+  _clients[slot].meta_sent = false;
+  _clients[slot].tx_len = 0;      // drop any stale pending frame from the previous occupant (tx_buf is reused)
+  _clients[slot].tx_sent = 0;
+}
+
 void WebSocketCompanionServer::acceptNewClients() {
   if (!_listening) return;
   while (_server.hasClient()) {
     WiFiClient incoming = _server.accept();
     if (!incoming) continue;
-    int slot = -1;
-    for (int i = 0; i < WS_COMPANION_MAX_CLIENTS; i++) {
-      if (!_clients[i].in_use) {
-        slot = i;
-        break;
-      }
-    }
-    // No free slot: evict the oldest existing client so a fresh connect can
-    // recover from stuck slots (half-closed sockets where connected() still
-    // reports true). Without this, every new connect is accept()ed then
-    // immediately stop()ed, producing SYN/SYN+ACK/ACK/FIN-ACK with zero data.
-    if (slot < 0) {
-      uint32_t now = millis();
-      uint32_t oldest_age = 0;
-      for (int i = 0; i < WS_COMPANION_MAX_CLIENTS; i++) {
-        uint32_t age = now - _clients[i].accept_ms;
-        if (slot < 0 || age > oldest_age) {
-          slot = i;
-          oldest_age = age;
-        }
-      }
-      _clients[slot].client.stop();
-      _clients[slot].in_use = false;
-    }
-    _clients[slot].client = incoming;
-    _clients[slot].in_use = true;
-    _clients[slot].accept_ms = millis();
-    _clients[slot].handshake_done = false;
-    _clients[slot].handshake_len = 0;
-    _clients[slot].ws_state = WS_STATE_HEADER_0;
-    _clients[slot].comp_state = COMP_STATE_IDLE;
-    _clients[slot].stall_ms = 0;
-    _clients[slot].is_mirror = false;
-    _clients[slot].is_term = false;
-    _clients[slot].meta_sent = false;
-    _clients[slot].tx_len = 0;      // drop any stale pending frame from the previous occupant (tx_buf is reused)
-    _clients[slot].tx_sent = 0;
+    adoptClient(incoming);
   }
 }
 
@@ -911,6 +925,22 @@ void WebSocketCompanionServer::drainClientTx(int idx) {
   WSClientState* c = &_clients[idx];
   if (!c->in_use || c->tx_len == 0) return;
   if (!c->client.connected()) { c->tx_len = c->tx_sent = 0; return; }
+#if defined(HAS_TDISPLAY_P4)
+  // AT transport: write() is a BLOCKING worker round-trip (there is no lwIP buffer to
+  // fill non-blockingly), and we run with _client_mtx held — draining a whole band here
+  // starved the main loop (tickHandshake / pollRecvFrame / mesh) and froze the device.
+  // Send ONE CIPSEND-sized chunk per call; tx_sent resumes next pass. serviceMirror's
+  // all-idle check then also self-limits to one in-flight band. A failed chunk means the
+  // worker already waited out its SEND-OK window (seconds) — retrying a sick browser tab
+  // would stall the whole AT link every pass, so drop the client immediately (the viewer
+  // page auto-reconnects).
+  size_t chunk = c->tx_len - c->tx_sent;
+  if (chunk > 1436) chunk = 1436;   // == c6_at SOCK_PULL_MAX: exactly one AT round-trip
+  size_t n = c->client.write(c->tx_buf + c->tx_sent, chunk);
+  if (n == 0) { disconnectClient(idx); return; }
+  c->tx_sent += (uint16_t)n;
+  if (c->tx_sent >= c->tx_len) { c->tx_len = 0; c->tx_sent = 0; c->stall_ms = 0; }
+#else
   while (c->tx_sent < c->tx_len && socketWritableNow(c->client)) {
     size_t n = c->client.write(c->tx_buf + c->tx_sent, c->tx_len - c->tx_sent);
     if (n == 0) break;
@@ -921,6 +951,7 @@ void WebSocketCompanionServer::drainClientTx(int idx) {
   // stays unwritable for the full drop window is treated as wedged.
   if (c->stall_ms == 0) c->stall_ms = millis() | 1;
   else if (millis() - c->stall_ms >= WS_WEDGED_DROP_MS) disconnectClient(idx);
+#endif
 }
 
 // Read masked WebSocket binary frames from a mirror client and dispatch pointer

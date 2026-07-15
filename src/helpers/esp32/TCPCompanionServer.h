@@ -3,6 +3,16 @@
 #include <helpers/BaseSerialInterface.h>
 #include <WiFi.h>
 
+#if defined(HAS_TDISPLAY_P4)
+  // T-Display P4: TCP/IP lives on the C6 (ESP-AT over SDIO) — rebind the server + client types to
+  // the c6_at facades BEFORE the class definitions below so every TU sees one consistent layout.
+  // Inbound listening = AT+CIPSERVER (single port; it's this companion server's).
+  #include <C6WifiShim.h>
+  #include <C6Socket.h>
+  #define WiFiClient C6Client
+  #define WiFiServer C6Server
+#endif
+
 #ifndef TCP_COMPANION_MAX_CLIENTS
 #define TCP_COMPANION_MAX_CLIENTS  3
 #endif
@@ -42,6 +52,10 @@ public:
   bool isClientConnected(int client_index) const;
   int connectedCount() const;
   void disconnectClient(int client_index);
+
+  // Slot-insert an already-accepted connection (stops it if no slot is free). Lets an
+  // external router (T-Display P4: one shared AT listener) hand us companion clients.
+  void adoptClient(WiFiClient& incoming);
 
 private:
   WiFiServer _server;

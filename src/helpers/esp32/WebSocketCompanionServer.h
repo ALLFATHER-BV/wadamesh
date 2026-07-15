@@ -5,6 +5,17 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
+#if defined(HAS_TDISPLAY_P4)
+  // Same type rebind as TCPCompanionServer.h (every TU must see one consistent class layout).
+  // NB: begin() is never called on the P4 — ESP-AT has a single listening port, so a first-byte
+  // router in MultiTransportCompanionInterface accepts everything on the companion port and
+  // hands HTTP/WS connections here via adoptClient() (_port stays 0; pause/resumeListen no-op).
+  #include <C6WifiShim.h>
+  #include <C6Socket.h>
+  #define WiFiClient C6Client
+  #define WiFiServer C6Server
+#endif
+
 class WebMirror;   // web-UI mirror bridge (WebMirror.h); included in the .cpp
 
 #ifndef WS_COMPANION_MAX_CLIENTS
@@ -68,6 +79,10 @@ public:
   size_t pollRecvFrame(uint8_t dest[], int* client_index_out);
   /** Accept new clients and prune disconnects; call from main loop for timely handshakes. */
   void tickHandshake();
+  /** Slot-insert an already-accepted connection (evicts the oldest handshaking client if
+   *  full). Lets an external router (T-Display P4: one shared AT listener) hand us
+   *  HTTP/WS clients that were accepted on the companion port. */
+  void adoptClient(WiFiClient& incoming);
 
   size_t writeToClient(int client_index, const uint8_t src[], size_t len);
   size_t writeToAllClients(const uint8_t src[], size_t len);

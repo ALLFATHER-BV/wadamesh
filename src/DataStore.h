@@ -43,9 +43,9 @@ public:
   // if the dir can't be created. No-op on non-ESP32.
   bool useSdStorage();
 #endif
-#if defined(HAS_TANMATSU)
-  // Full-store adoption of the SD_MMC card (Tanmatsu): identity + prefs move off
-  // the broken-metadata internal FFat (its exists()/f_stat lie, which made the
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  // Full-store adoption of the SD_MMC card (the P4 boards): identity + prefs move
+  // off the broken-metadata internal FFat (its exists()/f_stat lie, which made the
   // gated loads come up empty). Caller migrates FFat-resident files first.
   bool useSdMmcStorage();
 #endif

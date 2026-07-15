@@ -39,7 +39,16 @@ public:
   void enableBle() override;
   void disableBle() override;
   bool isBleEnabled() const override { return _ble_enabled; }
+#if defined(HAS_TDISPLAY_P4)
+  // T-Display P4: the factory C6 ESP-AT firmware has its BLE advertising commands stubbed
+  // (BLEADVDATA/ADVSTART all ERROR — Meck-P4 hit the same wall and ships Wi-Fi companion), and
+  // reflashing the C6 is ruled out for users. Phone pairing on this board = Wi-Fi (TCP:5000) or
+  // USB; the UI hides its Bluetooth toggles off this. The MeshCore GATT table stays pre-provisioned
+  // on the C6 (c6_at) so a future LilyGo AT firmware with working advertising lights up cheaply.
+  bool hasBleCapability() const override { return false; }
+#else
   bool hasBleCapability() const override { return true; }
+#endif
   bool getBlePeerAddress(char* buf, size_t len) const override;
 #endif
 
@@ -47,7 +56,13 @@ public:
   void disableTcp() override;
   bool isTcpEnabled() const override { return _tcp_enabled; }
   bool isWsStarted() const override { return _ws_started; }
+#if defined(HAS_TDISPLAY_P4)
+  // The web UI shares the companion TCP port (single AT listener + first-byte router),
+  // so that's the port to show/open — _ws_port is never listened on here.
+  uint16_t getWsPort() const override { return _tcp_port; }
+#else
   uint16_t getWsPort() const override { return _ws_port; }
+#endif
   int getWsConnectedCount() const override { return _ws.connectedCount(); }
   /** Accept WebSocket clients / handshakes; call from main loop. */
   void tickWebSocketHandshake() override;
@@ -95,6 +110,18 @@ private:
   uint16_t _ws_port;
   bool _tcp_started;
   bool _ws_started;
+#if defined(HAS_TDISPLAY_P4)
+  // ESP-AT allows ONE listening port, so this router server owns it: every inbound
+  // connection is accepted here, held briefly, and dispatched on its first byte —
+  // an HTTP verb ('G','H','P','O','D') goes to _ws (web mirror/VNC/remote/terminal +
+  // WS companion), everything else ('<' companion frames) to _tcp (phone app).
+  // _tcp/_ws never begin() their own listeners on this board (their C6Server stays
+  // inert); they receive clients via adoptClient().
+  WiFiServer _p4_srv;
+  struct P4PendingClient { WiFiClient c; uint32_t ms = 0; bool used = false; };
+  P4PendingClient _p4_pend[3];
+  void p4RouteClients();
+#endif
   void* _mirror_task = nullptr;   // TaskHandle_t for the core-0 web-mirror stream task (created once)
   bool _tcp_enabled;   // if false, startTcpServer() no-ops until enableTcp()
   bool _isEnabled;
