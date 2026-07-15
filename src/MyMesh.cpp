@@ -2541,7 +2541,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.gps_enabled = 0;       // GPS disabled by default
   _prefs.gps_interval = 0;      // No automatic GPS updates by default
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
-#if defined(USE_SX1262) || defined(USE_SX1268)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121)
 #ifdef SX126X_RX_BOOSTED_GAIN
   _prefs.rx_boosted_gain = SX126X_RX_BOOSTED_GAIN ? 1 : 0;
 #else
@@ -2557,7 +2557,7 @@ void MyMesh::applyRadioFromPrefs() {
   radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   radio_driver.radioRelease();
   radio_driver.setTxPower(_prefs.tx_power_dbm);
-#if defined(USE_SX1262) || defined(USE_SX1268)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121)
   _prefs.rx_boosted_gain = _prefs.rx_boosted_gain ? 1 : 0;
   radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain != 0);
   MESH_DEBUG_PRINTLN("RX Boosted Gain Mode: %s",
@@ -3356,7 +3356,7 @@ void MyMesh::handleCmdFrame(size_t len) {
 
       radio_driver.radioAcquire();   // hold off the RX drain task mid-sequence (no-op when off)
       radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(SX126X_RX_BOOSTED_GAIN)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(SX126X_RX_BOOSTED_GAIN)
       radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain != 0);
 #endif
       radio_driver.radioRelease();

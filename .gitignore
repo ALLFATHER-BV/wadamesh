@@ -28,6 +28,8 @@ scripts/build/wifi_secrets.h
 # Local working notes + agent config (contain ops/infra details — never publish)
 CLAUDE.md
 .claude/
+/dev-docs/
+/crash-dumps/
 
 # Custom timestamped build outputs
 /builds/

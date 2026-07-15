@@ -702,6 +702,7 @@ void setup() {
 
 #ifdef DISPLAY_CLASS
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());  // still want to pass this in as dependency, as prefs might be moved
+  Serial.println("[BOOT] ui ready");
 #endif
 
   board.onBootComplete();

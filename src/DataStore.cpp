@@ -277,7 +277,7 @@ void DataStore::loadPrefs(NodePrefs& prefs, double& node_lat, double& node_lon) 
 namespace {
 
 void default_rx_boosted_gain_pref(uint8_t& out) {
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(SX126X_RX_BOOSTED_GAIN)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(SX126X_RX_BOOSTED_GAIN)
   #ifdef SX126X_RX_BOOSTED_GAIN
   out = (SX126X_RX_BOOSTED_GAIN != 0) ? 1 : 0;
   #else

@@ -51,14 +51,26 @@ ed25519 (bundled in lib/ed25519)
 AsyncElegantOTA (vendored in arch/esp32/AsyncElegantOTA)
     Copyright (c) Ayush Sharma — MIT License
 
-TFT_eSPI (Heltec V4 display backend)
+TFT_eSPI (T-LoRa Pager display backend)
     Copyright (c) Bodmer — MIT / FreeBSD License — https://github.com/Bodmer/TFT_eSPI
 
-Adafruit GFX / ST7735_ST7789 (T-Deck display backend)
+Adafruit GFX / ST7735_ST7789 (T-Deck / Heltec V4 display backend)
     Copyright (c) Adafruit Industries — BSD License
 
 chsc6x (Heltec V4 CHSC6x cap-touch driver)
     Quency-D — https://github.com/Quency-D/chsc6x
+
+SensorLib (T-LoRa Pager XL9555/BQ27220/AW9364 drivers)
+    Copyright (c) Lewis He — MIT License — https://github.com/lewisxhe/SensorLib
+
+ES8311 register sequence and clock-divider coefficients (T-LoRa Pager audio
+codec driver, variants/lilygo_tlora_pager/Es8311Codec.cpp)
+    Copyright (c) 2023 Espressif Systems (Shanghai) CO LTD
+    Apache License 2.0 — https://github.com/espressif/esp-adf-libs
+    wadamesh's driver is original code (not a copy of esp_codec_dev's
+    plugin/HAL architecture) but its ES8311 register addresses, startup/
+    power sequence, and MCLK clock-divider coefficients are derived from
+    Espressif's public es8311.c/es8311_reg.h.
 
 LovyanGFX (RAK WisMesh Tap V2 display backend)
     Copyright (c) lovyan03 — FreeBSD License — https://github.com/lovyan03/LovyanGFX

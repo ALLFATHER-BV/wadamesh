@@ -1811,7 +1811,14 @@ bool touchPrefsSetBlob(const char* key, const uint8_t* data, size_t len) {
 }
 uint8_t touchPrefsGetSoundVolume() {
   if (!s_begun) touchPrefsBegin();
+#if defined(TLORA_PAGER)
+  // The pager's ES8311 codec + NS4150B amp run noticeably louder at a given
+  // percentage than the T-Deck's I2S amp/Tanmatsu's ES8156 — 70% clips into
+  // uncomfortable territory, so this board gets a quieter first-boot default.
+  uint8_t v = s_prefs.getUChar("snd_vol", 50);
+#else
   uint8_t v = s_prefs.getUChar("snd_vol", 70);
+#endif
   return v > 100 ? 100 : v;
 }
 void touchPrefsSetSoundVolume(uint8_t vol) { if (vol > 100) vol = 100; if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_vol", vol); }

@@ -86,6 +86,14 @@
   #ifndef PIN_I2S_DOUT
     #define PIN_I2S_DOUT 6
   #endif
+#elif defined(TLORA_PAGER)
+  #include <SD.h>             // microSD (CS=21) on the shared radio/display SPI bus --
+                               // file manager browse + WAV picker only; no format support
+                               // this pass (see fmSdTryMount()'s comment)
+  #define PIN_SD_CS PAGER_PIN_SD_CS   // from TLoraPagerBoard.h, already visible via
+                                      // MyMesh.h -> target.h -> TLoraPagerBoard.h above
+  #include <driver/i2s.h>     // pager ES8311 codec (notification tones + WAV playback)
+  #include "Es8311Codec.h"    // PIN_I2S_MCLK/BCK/WS/DOUT/SDIN come from platformio.ini build flags
 #elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   #include <FFat.h>            // internal FAT partition (Tanmatsu 'locfd' / P4 'storage')
   #include <SD_MMC.h>          // microSD on the P4-class boards' SDMMC slot 0; slot 1 = C6 radio
@@ -106,12 +114,20 @@
   #elif defined(HAS_M9_KEYBOARD)
     #include <M9Keyboard.h>
   #endif
+  #if defined(HAS_PAGER_KEYBOARD)
+    #include <helpers/input/PagerKeyboard.h>
+  #endif
+  #if defined(HAS_PAGER_ENCODER)
+    #include <helpers/input/PagerEncoder.h>
+  #endif
   #include "KeyboardLayouts.h"
   #include "i18n.h"
   #include "emoji_data.h"     // baked Noto colour-emoji glyphs (emojiGlyphLookup)
   #include "qr_icon.h"        // baked recolour-able QR glyph (qr_icon_dsc) for the Chats Share button
   #if defined(HAS_TANMATSU)
     #include <TanmatsuDisplay.h>             // badge-bsp-backed DisplayDriver (P4)
+  #elif defined(TLORA_PAGER)
+    #include <helpers/ui/ST7796LCDDisplay.h>
   #elif defined(HAS_RAK_TAP_V2)
     #include <LGFXDisplay.h>                 // LovyanGFX FSPI on RAK Tap V2
   #elif defined(HAS_TDISPLAY_P4)
@@ -158,6 +174,8 @@
   #endif
   #if defined(HAS_TANMATSU)
     extern TanmatsuDisplay display;
+  #elif defined(TLORA_PAGER)
+    extern ST7796LCDDisplay display;
   #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8)
     extern LGFXDisplay display;
   #elif defined(HAS_TDISPLAY_P4)
@@ -586,16 +604,18 @@ static void initTouchFontFallbacks() {
   g_font_14.fallback = &s_person_font14;
 }
 
-// ---- T-Deck notification tones (I2S → MAX98357A speaker amp) ----
-// Simple synthesized beeps for UI feedback (message arrived, etc). NOT file
-// playback — the T-Deck's amp is driven over I2S; we generate a short sine
-// burst on the fly. The legacy genericBuzzer (RTTTL on a digital pin) doesn't
-// apply here — that's for boards with a piezo on a GPIO, which the touch boards
-// don't have. Gated to the T-Deck; the V4 has no speaker at all.
+// ---- I2S notification sound (T-Deck MAX98357A amp / pager ES8311 codec) ----
+// Synthesized beeps and small WAV playback for UI feedback (message arrived,
+// etc), both driven over I2S. The legacy genericBuzzer (RTTTL on a digital
+// pin) doesn't apply here — that's for boards with a piezo on a GPIO (the
+// Heltec V4), not an I2S speaker. WAV parsing and per-slot dispatch state
+// below are shared; T-Deck and the pager each get their own I2S install/
+// tone/WAV functions, since the pager additionally drives an ES8311 codec
+// over I2C that the T-Deck's plain MAX98357A DAC doesn't have.
 #if defined(HELTEC_LORA_V4_R8)
 static bool fmSdTryMount();   // V4-R8 microSD — fwd decl (defined in the mount-helper block below)
 #endif
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
 static constexpr int kI2sSampleRate = 16000;
 static constexpr i2s_port_t kI2sPort = I2S_NUM_0;
 // The tile fetcher's in-flight counter (defined later in the file). We skip
@@ -604,11 +624,14 @@ static constexpr i2s_port_t kI2sPort = I2S_NUM_0;
 // already tight enough that tile downloads can OOM-reboot on their own.
 extern volatile uint16_t s_tile_fetch_pending;
 
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+static bool fmSdTryMount();   // defined far below (microSD mount)
+#endif
+#if defined(HAS_TDECK_GT911)
 // I2S is installed ON DEMAND for the duration of a tone and uninstalled after.
 // Holding the driver resident permanently kept ~2 KB of internal DMA RAM, which
 // shrank the margin the tile-fetch worker relies on and made tile downloads
 // OOM-reboot. Transient install keeps steady-state internal RAM untouched.
-static bool fmSdTryMount();   // defined far below (microSD mount, T-Deck)
 static bool tdeckAudioInstallRate(int rate) {
   // Heap pre-flight. i2s_driver_install ESP_ERROR_CHECKs its internal DMA + timer
   // allocations and abort()s the firmware on NO_MEM — this is the "esp_timer_create
@@ -663,6 +686,84 @@ static void tdeckPlayToneRaw(int freq, int ms, int vol = 9000) {
   }
   i2s_zero_dma_buffer(kI2sPort);
 }
+#endif  // HAS_TDECK_GT911
+
+#if defined(TLORA_PAGER)
+// Same on-demand-install rationale as the T-Deck (above), plus this board's
+// ES8311 codec: I2S clocks (incl. MCLK) must already be toggling before the
+// codec's PLL will lock, so codec register writes happen after i2s_set_pin.
+// The codec chip itself stays powered across chimes (its own begin() runs
+// once, lazily, on first use) -- only the I2S driver and the codec's DAC
+// power/format state (start()/suspend()) are cycled per playback, matching
+// the amp's AMP_EN toggle in TLoraPagerBoard (see pagerNotifyTaskFn below).
+static Es8311Codec s_pager_codec;
+static bool        s_pager_codec_begun = false;
+
+static bool pagerAudioInstallRate(int rate) {
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 16 * 1024) return false;
+  i2s_config_t cfg = {};
+  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
+  cfg.sample_rate = rate;
+  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  cfg.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;   // mono synth/WAV buffer
+  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  cfg.intr_alloc_flags = 0;
+  cfg.dma_buf_count = 4;
+  cfg.dma_buf_len = 256;
+  cfg.use_apll = false;
+  cfg.tx_desc_auto_clear = true;
+  if (i2s_driver_install(kI2sPort, &cfg, 0, nullptr) != ESP_OK) return false;
+  i2s_pin_config_t pins = {};
+  pins.mck_io_num   = PIN_I2S_MCLK;
+  pins.bck_io_num   = PIN_I2S_BCK;
+  pins.ws_io_num    = PIN_I2S_WS;
+  pins.data_out_num = PIN_I2S_DOUT;
+  pins.data_in_num  = I2S_PIN_NO_CHANGE;
+  if (i2s_set_pin(kI2sPort, &pins) != ESP_OK) { i2s_driver_uninstall(kI2sPort); return false; }
+  if (!s_pager_codec_begun) {
+    s_pager_codec_begun = s_pager_codec.begin(Wire, 0x18);
+    if (!s_pager_codec_begun) { i2s_driver_uninstall(kI2sPort); return false; }
+  }
+  if (!s_pager_codec.start((uint32_t)rate)) { i2s_driver_uninstall(kI2sPort); return false; }
+  return true;
+}
+static bool pagerAudioInstall() { return pagerAudioInstallRate(kI2sSampleRate); }
+static void pagerAudioUninstall() {
+  s_pager_codec.setMute(true);
+  s_pager_codec.suspend();
+  i2s_zero_dma_buffer(kI2sPort);
+  i2s_driver_uninstall(kI2sPort);
+}
+
+// Render `freq` Hz for `ms` ms into the already-installed I2S as a 16-bit
+// sine with a short fade-in/out so it doesn't click. Unlike the T-Deck's
+// tdeckPlayToneRaw, loudness comes from the codec's hardware volume register
+// (set by the caller before this runs), not software sample scaling, so
+// there's no `vol` parameter here -- always render at a fixed safe level.
+static void pagerPlayToneRaw(int freq, int ms) {
+  const int total = (kI2sSampleRate * ms) / 1000;
+  const int fade = total / 8 > 0 ? total / 8 : 1;
+  int16_t buf[128];
+  int written_total = 0;
+  double phase = 0.0;
+  const double step = 2.0 * M_PI * (double)freq / (double)kI2sSampleRate;
+  const double amp0 = 22000.0;
+  while (written_total < total) {
+    int n = 0;
+    for (; n < 128 && written_total < total; ++n, ++written_total) {
+      double amp = amp0;
+      if (written_total < fade)            amp *= (double)written_total / fade;
+      else if (written_total > total-fade) amp *= (double)(total - written_total)/fade;
+      buf[n] = (int16_t)(sin(phase) * amp);
+      phase += step;
+      if (phase > 2.0 * M_PI) phase -= 2.0 * M_PI;
+    }
+    size_t bw = 0;
+    i2s_write(kI2sPort, buf, n * sizeof(int16_t), &bw, pdMS_TO_TICKS(200));
+  }
+  i2s_zero_dma_buffer(kI2sPort);
+}
+#endif  // TLORA_PAGER
 
 // ---- Custom WAV notification playback (T-Deck I2S) -------------------------
 // Stream a small PCM WAV (internal SPIFFS or "sd:"-prefixed SD) straight to the
@@ -695,7 +796,9 @@ static bool wavParse(File& f, uint16_t* pch, uint32_t* prate, uint32_t* pdata) {
 static bool wavOpen(const char* prefpath, File& f) {
   if (!prefpath || !prefpath[0]) return false;
   fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)   // only the T-Deck/pager sound picker ever writes an "sd:"-prefixed pref
   if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; fmSdTryMount(); }
+#endif
   f = fsp->open(fp, FILE_READ);
   if (!f || f.isDirectory()) { if (f) f.close(); return false; }
   return true;
@@ -706,6 +809,14 @@ static bool wavIsSupported(const char* prefpath) {
   f.close();
   return ok;
 }
+
+// ---- Shared notification-task state (T-Deck + pager) -----------------------
+static volatile bool s_notify_playing = false;
+static volatile int  s_notify_slot    = TOUCH_SND_MSG;   // which per-event sound to play this round
+static char          s_notify_path[TOUCH_SOUND_PATH_MAXLEN] = {0};   // caller-resolved WAV path (avoid NVS in the task)
+static volatile int  s_notify_vol     = 9000;    // meaning is board-specific: T-Deck = software amplitude, pager = 0-100 hw volume pct
+
+#if defined(HAS_TDECK_GT911)
 static bool tdeckPlayWavFile(const char* prefpath, int vol) {
   File f; if (!wavOpen(prefpath, f)) return false;
   uint16_t ch=0; uint32_t rate=0, dlen=0;
@@ -739,10 +850,6 @@ static bool tdeckPlayWavFile(const char* prefpath, int vol) {
   return true;
 }
 
-static volatile bool s_notify_playing = false;
-static volatile int  s_notify_slot    = TOUCH_SND_MSG;   // which per-event sound to play this round
-static char          s_notify_path[TOUCH_SOUND_PATH_MAXLEN] = {0};   // caller-resolved WAV path (avoid NVS in the task)
-static volatile int  s_notify_vol     = 9000;    // amplitude, scaled from the volume pref
 // The chime body: install I2S, play the notes, uninstall. ~300 ms of blocking
 // i2s_write + driver setup/teardown — run on its own throwaway task (below).
 static void tdeckNotifyTaskFn(void* arg) {
@@ -800,9 +907,96 @@ static void tdeckPreviewWavFile(const char* prefpath) {
 }
 #endif  // HAS_TDECK_GT911
 
-// ---- Unified UI notification sound (T-Deck I2S speaker, Heltec V4 / Elecrow M9 piezo,
-//      T-Display P4 ES8311 codec) ----
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN) || defined(HAS_TDISPLAY_P4)
+#if defined(TLORA_PAGER)
+static bool pagerPlayWavFile(const char* prefpath, int volPct) {
+  File f; if (!wavOpen(prefpath, f)) return false;
+  uint16_t ch=0; uint32_t rate=0, dlen=0;
+  if (!wavParse(f, &ch, &rate, &dlen)) { f.close(); return false; }
+  const uint32_t frameBytes = (uint32_t)ch * 2u;
+  const uint32_t maxBytes = rate * frameBytes * 6u;   // ~6 s cap, matches the T-Deck path
+  if (dlen > maxBytes) dlen = maxBytes;
+  if (!pagerAudioInstallRate((int)rate)) { f.close(); return false; }
+  s_pager_codec.setVolumePercent((uint8_t)volPct);
+  s_pager_codec.setMute(false);
+  int16_t in[256], out[256];
+  uint32_t remaining = dlen;
+  while (remaining >= frameBytes) {
+    size_t want = sizeof(in);
+    if (want > remaining) want = remaining - (remaining % frameBytes);
+    int got = f.read((uint8_t*)in, want);
+    if (got <= 0) break;
+    int frames = got / (int)frameBytes;
+    for (int i = 0; i < frames; ++i) {
+      // Downmix to mono -- no software gain (unlike the T-Deck path): the
+      // codec's hardware volume register, already set above, is doing that.
+      out[i] = (ch == 2) ? (int16_t)(((int32_t)in[2*i] + in[2*i+1]) / 2) : in[i];
+    }
+    size_t bw = 0;
+    i2s_write(kI2sPort, out, (size_t)frames * sizeof(int16_t), &bw, pdMS_TO_TICKS(300));
+    remaining -= (uint32_t)got;
+  }
+  i2s_zero_dma_buffer(kI2sPort);
+  pagerAudioUninstall();
+  f.close();
+  return true;
+}
+
+// Mirrors tdeckNotifyTaskFn, bracketed with the amp's AMP_EN toggle (muted/
+// off at idle to save battery -- see TLoraPagerBoard::setAmpEnabled()).
+static void pagerNotifyTaskFn(void* arg) {
+  (void)arg;
+  const int volPct = s_notify_vol;
+  board.setAmpEnabled(true);
+  bool played = (s_notify_path[0] && pagerPlayWavFile(s_notify_path, volPct));
+  if (!played && pagerAudioInstall()) {
+    s_pager_codec.setVolumePercent((uint8_t)volPct);
+    s_pager_codec.setMute(false);
+    if (s_notify_slot == TOUCH_SND_MEN) {        // @-mention: bright 3-note rising arpeggio
+      pagerPlayToneRaw(1318, 70);                // E6
+      pagerPlayToneRaw(1760, 70);                // A6
+      pagerPlayToneRaw(2349, 130);               // D7
+    } else if (s_notify_slot == TOUCH_SND_DM) {  // direct message: distinct rising fifth
+      pagerPlayToneRaw(1047, 90);                // C6
+      pagerPlayToneRaw(1568, 120);               // G6
+    } else {                                     // message: the original two-note chime
+      pagerPlayToneRaw(880,  90);                // A5
+      pagerPlayToneRaw(1318, 110);               // E6
+    }
+    pagerAudioUninstall();
+  }
+  board.setAmpEnabled(false);
+  s_notify_playing = false;
+  vTaskDelete(nullptr);
+}
+
+static void pagerPlayNotifySlot(int slot) {
+  if (s_tile_fetch_pending > 0) return;
+  if (s_notify_playing) return;
+  s_notify_slot = slot;
+  s_notify_vol = (int)touchPrefsGetSoundVolume();   // 0..100 -> the codec's hw volume register
+  touchPrefsGetSoundFile(slot, s_notify_path, sizeof s_notify_path);
+  s_notify_playing = true;
+  if (xTaskCreate(pagerNotifyTaskFn, "notify", 8192, nullptr, 3, nullptr) != pdPASS) {
+    s_notify_playing = false;
+  }
+}
+static void pagerPreviewWavFile(const char* prefpath) {
+  if (s_tile_fetch_pending > 0 || s_notify_playing) return;
+  strncpy(s_notify_path, prefpath, sizeof s_notify_path - 1);
+  s_notify_path[sizeof s_notify_path - 1] = '\0';
+  s_notify_slot = TOUCH_SND_MSG;
+  s_notify_vol  = (int)touchPrefsGetSoundVolume();
+  s_notify_playing = true;
+  if (xTaskCreate(pagerNotifyTaskFn, "notify", 8192, nullptr, 3, nullptr) != pdPASS)
+    s_notify_playing = false;
+}
+#endif  // TLORA_PAGER
+
+#endif  // HAS_TDECK_GT911 || TLORA_PAGER
+
+// ---- Unified UI notification sound (T-Deck I2S / pager codec / Heltec V4 + Elecrow M9
+//      piezo / T-Display P4 ES8311 codec) ----
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(TLORA_PAGER) || defined(THINKNODE_M9_BUZZER_PIN) || defined(HAS_TDISPLAY_P4)
   #define HAS_UI_SOUND 1
 #endif
 
@@ -889,6 +1083,8 @@ static inline void uiPlaySlot(int slot) {
   tdeckPlayNotifySlot(slot);
 #elif defined(HAS_TDISPLAY_P4)
   p4PlayNotifySlot(slot);                // ES8311 codec chimes (same patterns as the T-Deck)
+#elif defined(TLORA_PAGER)
+  pagerPlayNotifySlot(slot);
 #elif defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
   v4BuzzerBeep(slot == TOUCH_SND_MEN);   // mention = higher trill; msg/DM = the lower chime
 #elif defined(HAS_TANMATSU)
@@ -899,6 +1095,16 @@ static inline void uiPlaySlot(int slot) {
 // Notification chimes. uiPlayNotify = generic message slot; uiPlayMention = @-mention slot.
 static inline void uiPlayNotify()  { uiPlaySlot(TOUCH_SND_MSG); }
 static inline void uiPlayMention() { uiPlaySlot(TOUCH_SND_MEN); }
+// Preview an arbitrary WAV file (not yet saved to a slot) -- used by the
+// sound picker's "play" button before the user commits to a choice.
+static inline void uiPreviewWavFile(const char* path) {
+#if defined(HAS_TDECK_GT911)
+  tdeckPreviewWavFile(path);
+#elif defined(TLORA_PAGER)
+  pagerPreviewWavFile(path);
+#endif
+  (void)path;
+}
 
 #if defined(HAS_TANMATSU)
 // Defined in the HAS_TANMATSU apply block far below; forward-declared so the
@@ -1073,6 +1279,17 @@ constexpr int TAB_LAST               = 4;
 // leaf rule (a clickable with a clickable child is treated as a container) picks the gear over the
 // row, leaving the row un-focusable so keyboard users could only open thread-settings, never the chat.
 #define NAV_HMOVE_FLAG LV_OBJ_FLAG_USER_2
+
+// An object whose keyboard-nav focus highlight should be an ACCENT-coloured
+// tint (matching its own touch-press feedback) instead of navFocusCb's
+// default white reverse-video fill. Used by app-drawer tiles (addAppTile):
+// a solid white block over a small rounded icon chip reads as a glitch, not
+// a highlight — while on the pager (no touch, so this IS the only feedback
+// a user ever sees on these tiles) it needs to look intentional. Reuses the
+// exact same COLOR_ACCENT tint the tile's own LV_STATE_PRESSED style already
+// defines, so a keyboard/encoder-focused tile matches what a touch/trackball
+// press already looks like on every board.
+#define NAV_ACCENTFOCUS_FLAG LV_OBJ_FLAG_USER_3
 
 // ---- Chat overlay layout ----
 constexpr int CHAT_HDR_H       = 0;    // in-chat header bar removed; thread name shows in the status bar
@@ -2630,7 +2847,7 @@ static lv_obj_t* s_nav_objs[kNavMax] = { nullptr };
 static lv_obj_t* s_nav_tabbar   = nullptr;     // the bottom tab bar (btnmatrix), added last to the group
 static bool      s_nav_want_tabbar = false;    // after switching tabs from the bar, refocus the bar
 static lv_obj_t* s_nav_styled   = nullptr;     // obj currently wearing the focus highlight
-#if defined(HAS_TANMATSU)
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
 static bool      s_nav_show     = true;        // keyboard-only device: focus highlight is always visible
 #else
 static bool      s_nav_show     = false;       // T-Deck: focus-visible — paint only while keyboard-navigating (hidden after a touch/click)
@@ -2644,9 +2861,7 @@ static bool      s_nav_suppress_scroll = false;
 static lv_obj_t* s_nav_focus_hint = nullptr;   // one-shot: focus this object on the next rebuild (#45)
 static void goToTab(int idx);                  // (defined far below) tab switch + refresh
 static int  getActiveTab();                    // (defined below) current tabview index
-#if defined(HAS_TANMATSU)
-static void mapNudge(int dir);                 // (defined far below) Ctrl+Arrow map pan — 0=up 1=down 2=left 3=right
-#endif
+static void mapNudge(int dir);                 // (defined far below) map pan — 0=up 1=down 2=left 3=right
 static bool hwKeyDismissTopPopup();            // (defined far below) close the topmost modal/sheet
 static bool anyPopupOpen();                    // (defined below) is any modal/sheet currently up
 static void closeChatPanel(LvChatPanel* p);    // (defined far below) close an open chat/channel detail
@@ -2867,6 +3082,15 @@ static void navFocusCb(lv_group_t* g) {
     lv_obj_set_style_shadow_width(f, 16, LV_PART_MAIN);
     lv_obj_set_style_shadow_spread(f, 2, LV_PART_MAIN);
     lv_obj_set_style_shadow_opa(f, LV_OPA_COVER, LV_PART_MAIN);
+  } else if (lv_obj_has_flag(f, NAV_ACCENTFOCUS_FLAG)) {
+    // App-drawer tile: a solid white reverse-fill over a small rounded icon
+    // chip reads as a glitch, not a highlight — use the SAME accent tint the
+    // tile's own LV_STATE_PRESSED style already applies on a touch/trackball
+    // press, so keyboard/encoder focus looks identical on every board instead
+    // of white-on-pager vs. accent-on-touch.
+    s_nav_sv.bg_c = s_nav_sv.bg_o = s_nav_sv.txt = false;   // nothing to restore; navUnstyle just clears these
+    lv_obj_set_style_bg_color(f, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(f, LV_OPA_20, LV_PART_MAIN);
   } else {
     // Save the element's current local props, then apply the negative fill.
     s_nav_sv.bg_c = lv_obj_get_local_style_prop(f, LV_STYLE_BG_COLOR,   &s_nav_sv.v_bg_c, LV_PART_MAIN) == LV_STYLE_RES_FOUND;
@@ -3029,28 +3253,61 @@ static void navFindScrollableRec(lv_obj_t* o, bool up, lv_obj_t** best, long* be
 // scroll (or the focus isn't inside a scroll area), fall back to the biggest scrollable
 // page on the active screen — so the scroll keys ALWAYS move the page.
 static bool navMapZoomIfActive(bool zoom_in);   // defined with the map zoom code below
-static void navScrollFocused(bool up) {
+// Returns the container it scrolled (or null if the map-zoom shortcut fired / nothing
+// scrollable was found) — callers that need to relocate focus afterward use this instead
+// of re-deriving the container themselves (see navRefocusFirstVisible()'s callers).
+static lv_obj_t* navScrollFocused(bool up) {
   // On the Map tab the scroll keys zoom instead (F/C on the T-Deck, F/V on the
   // Tanmatsu — scroll-up = zoom in, like a mouse wheel on any map). The map has
   // nothing to scroll, so the keys were dead weight there (wyvern.red feedback).
-  if (navMapZoomIfActive(up)) return;
+  if (navMapZoomIfActive(up)) return nullptr;
   lv_obj_t* o = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
   for (lv_obj_t* p = o; p; p = lv_obj_get_parent(p)) {
     if (!lv_obj_has_flag(p, LV_OBJ_FLAG_SCROLLABLE)) continue;
     const lv_coord_t room = up ? lv_obj_get_scroll_top(p) : lv_obj_get_scroll_bottom(p);
     if (room <= 0) continue;   // nothing to scroll that way here — try the next ancestor
     navScrollBy(p, up);
-    return;
+    return p;
   }
   lv_obj_t* best = nullptr; long bestArea = 0;   // fallback: scroll the page regardless of focus
   navFindScrollableRec(lv_scr_act(), up, &best, &bestArea);
   if (best) navScrollBy(best, up);
+  return best;
+}
+// Simple ancestor walk with no "room to scroll" gate — used only to relocate a container
+// for a post-scroll refocus, where direction no longer matters.
+static lv_obj_t* navNearestScrollableAncestor(lv_obj_t* start) {
+  for (lv_obj_t* p = start; p; p = lv_obj_get_parent(p))
+    if (lv_obj_has_flag(p, LV_OBJ_FLAG_SCROLLABLE)) return p;
+  return nullptr;
+}
+// After a free-scroll with no explicit focus target, snap focus to whatever's nearest the
+// top of the now-visible viewport — mirrors how a touch drag leaves focus alone until you
+// tap something, but this device has no touch fallback, so plain NEXT/PREV needs a sane
+// resume point instead of staying stuck on a focus that scrolled off-glass.
+static void navRefocusFirstVisible(lv_obj_t* p) {
+  if (!p || !s_nav_group) return;
+  lv_area_t pa; lv_obj_get_coords(p, &pa);
+  const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+  lv_obj_t* best = nullptr; int32_t bestY = 0x7FFFFFFF;   // lv_coord_t is 16-bit; would overflow this sentinel
+  for (int i = 0; i < n; i++) {
+    lv_obj_t* o = s_nav_objs[i];
+    if (!o || !lv_obj_is_valid(o) || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) continue;
+    lv_area_t oa; lv_obj_get_coords(o, &oa);
+    if (oa.y1 < pa.y1 || oa.y1 > pa.y2) continue;   // not at/below the container's own top edge
+    if (oa.y1 < bestY) { bestY = oa.y1; best = o; }
+  }
+  if (best) { s_nav_show = true; lv_group_focus_obj(best); }
 }
 // Small key hints over each menubar icon — shown only while keyboard nav is on.
 static void navMenubarKeysSync() {
-#if defined(HAS_TANMATSU)
-  return;   // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys — no hints
-#endif
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+  // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys. The
+  // pager has no such optional nav-mode toggle to hint at either (s_kbd_nav is
+  // T-Deck's trackball-nav-vs-touch concept, CAP_TRACKBALL-only, so it isn't
+  // even declared here) — no hints. A plain `return` isn't enough since the
+  // body below still needs s_kbd_nav to exist at compile time; exclude it.
+#else
   if (!g_lv.tabview) return;
   lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
   if (!bar) return;
@@ -3073,6 +3330,7 @@ static void navMenubarKeysSync() {
     lv_obj_clear_flag(s_navkey_hint[i], LV_OBJ_FLAG_HIDDEN);
     if (cw > 0) lv_obj_align(s_navkey_hint[i], LV_ALIGN_LEFT_MID, cw * i + cw / 2 - 15, 8);   // bottom-left of the icon
   }
+#endif
 }
 // Apply a captured key to the tab being remapped (Settings → Keyboard).
 static void navKeyCaptureApply(int key) {
@@ -3152,6 +3410,23 @@ static lv_obj_t* navOpenDropdown() {
   return nullptr;
 }
 
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+// Enter on a focused chat bubble = the same per-message action menu the T-Deck opens on a
+// long-press (Copy / Info / …). Bubbles are the focusable leaves inside the chat's msgs
+// container, so identify one by its parent. Returns true if it handled the Enter. Shared by
+// Tanmatsu's navPump() (below) and the pager's handleHwKey() Enter branch — board-agnostic,
+// only touches s_nav_group/navOpenChatPanel/plain lv_obj calls.
+static bool navEnterBubble() {
+  lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  LvChatPanel* cp = navOpenChatPanel();
+  if (cp && cp->msgs && foc && lv_obj_is_valid(foc) && lv_obj_get_parent(foc) == cp->msgs) {
+    lv_event_send(foc, LV_EVENT_LONG_PRESSED, nullptr);
+    return true;
+  }
+  return false;
+}
+#endif
+
 #if defined(HAS_TANMATSU)   // bsp-input driven; on the T-Deck navFifo is fed from the trackball instead
 // ALT-accent picker (issue #129) — functions defined with the accent machinery
 // further down (they reuse the accent popup + kAccentSets); called from navPump.
@@ -3183,19 +3458,6 @@ static void navArrowAction(uint32_t key) {
       break;
     default: break;
   }
-}
-
-// Enter on a focused chat bubble = the same per-message action menu the T-Deck opens on a
-// long-press (Copy / Info / …). Bubbles are the focusable leaves inside the chat's msgs
-// container, so identify one by its parent. Returns true if it handled the Enter.
-static bool navEnterBubble() {
-  lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
-  LvChatPanel* cp = navOpenChatPanel();
-  if (cp && cp->msgs && foc && lv_obj_is_valid(foc) && lv_obj_get_parent(foc) == cp->msgs) {
-    lv_event_send(foc, LV_EVENT_LONG_PRESSED, nullptr);
-    return true;
-  }
-  return false;
 }
 
 static void navPump() {
@@ -3595,6 +3857,35 @@ static bool navTopHasVisibleChild(lv_obj_t* top) {
   return false;
 }
 
+// True only at the top level — no modal/popup on lv_layer_top(), no settings detail
+// sheet, no open chat/channel. Scopes the pager's Alt+encoder gesture (updatePagerEncoder):
+// tab-switching only makes sense here; inside a nested scrollable screen the same
+// gesture instead free-scrolls the page.
+static bool navOnMainPage() {
+  if (navTopHasVisibleChild(lv_layer_top())) return false;
+  if (s_settings_sheet && lv_obj_is_valid(s_settings_sheet)) return false;
+  if (navOpenChatPanel()) return false;
+  return true;
+}
+
+// Some fullscreen views (Terminal, File manager) build their OWN popups (command
+// picker, prompts, action sheets, …) as separate lv_layer_top() siblings rather
+// than nesting them inside the view — so with two visible top-layer children at
+// once, collecting the whole top layer pulled in BOTH the view underneath and the
+// popup on top of it, forcing nav to walk the entire hidden screen's controls
+// before ever reaching the popup (reported: opening the terminal's command picker
+// left focus on the terminal behind it). LVGL has no z-index — child order IS
+// stacking order — so the last visible, non-skip child is the one actually on top;
+// collect ONLY that subtree. Single-popup screens are unaffected (same one child).
+static lv_obj_t* navTopFrontmostChild(lv_obj_t* top) {
+  int32_t n = (int32_t)lv_obj_get_child_cnt(top);
+  for (int32_t i = n - 1; i >= 0; i--) {
+    lv_obj_t* c = lv_obj_get_child(top, (uint32_t)i);
+    if (c && !lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN) && !lv_obj_has_flag(c, NAV_SKIP_FLAG)) return c;
+  }
+  return top;   // shouldn't happen (caller only calls this when navTopHasVisibleChild(top) is true)
+}
+
 static LvChatPanel* s_nav_prev_chat = nullptr;   // last chat panel we focused (so we only auto-focus on open)
 
 // The global status bar has NAV_SKIP_FLAG so its passive glyphs (time / signal / battery)
@@ -3642,7 +3933,7 @@ static void navMaybeRebuild() {
   // collect ITS controls + NO tab bar, so arrows stay inside the chat (don't reach the bar and switch
   // screens) and the composer can be focused for typing.
   LvChatPanel* chat = (useTop || on_settings) ? nullptr : navOpenChatPanel();
-  lv_obj_t* root = useTop ? top : on_settings ? s_settings_sheet : (chat ? chat->overlay : scr);
+  lv_obj_t* root = useTop ? navTopFrontmostChild(top) : on_settings ? s_settings_sheet : (chat ? chat->overlay : scr);
   const bool on_page = !useTop && !on_settings && !chat;   // #45: true = main tab content (the list that scrolls)
   lv_obj_t* tabbar = nullptr;
   if (!useTop && !on_settings && !chat && g_lv.tabview) {
@@ -4231,6 +4522,7 @@ static int       s_setup_step      = 0;        // 0 welcome / 1 name / 2 region 
 static lv_obj_t* s_setup_name_ta   = nullptr;
 static lv_obj_t* s_setup_region_list = nullptr;
 static int       s_setup_region_sel  = -1;     // selected preset index, -1 = keep default
+static lv_obj_t* s_setup_region_next_btn = nullptr;  // so a keypad-nav region pick can jump focus straight to it
 static lv_obj_t* s_setup_ssid_ta   = nullptr;  // (legacy) Wi-Fi fields — the wizard's Wi-Fi step is now an info screen
 static lv_obj_t* s_setup_pwd_ta    = nullptr;
 static void setupWizardOpen();            // fwd: re-trigger the flow (Device settings button)
@@ -5473,6 +5765,19 @@ static void accentAltCb(lv_event_t* e) {
 // keystroke / a pick / hiding the keyboard.
 static lv_obj_t* s_accbox    = nullptr;
 static lv_obj_t* s_accbox_ta = nullptr;   // the field the box edits
+#if defined(TLORA_PAGER)
+// No touch on this board, and the cells below are NAV_SKIP_FLAG (excluded from
+// the normal keyboard/encoder focus group by design, since touch boards pick
+// them by tap) -- without this, the box is completely unreachable here. Fn
+// (Alt)+Space jumps in (handleHwKey()); the rotary encoder then walks
+// s_accbox_cells (updatePagerEncoder()); Enter (the encoder's own click)
+// confirms via accentNavConfirm(); Backspace cancels.
+static constexpr int kAccentNavMax = 8;   // covers kAccentSets' largest set (7, 'a'/'A')
+static lv_obj_t* s_accbox_cells[kAccentNavMax];
+static uint8_t   s_accbox_cell_n    = 0;
+static bool      s_accentnav_active = false;
+static int       s_accentnav_idx    = 0;
+#endif
 static const AccentSet* accentSetFor(char c) {
   for (const auto& s : kAccentSets) if (s.key == c) return &s;
   return nullptr;
@@ -5480,7 +5785,30 @@ static const AccentSet* accentSetFor(char c) {
 static void accentBoxHide() {
   if (s_accbox) { lv_obj_del(s_accbox); s_accbox = nullptr; }
   s_accbox_ta = nullptr;
+#if defined(TLORA_PAGER)
+  s_accentnav_active = false;
+  s_accbox_cell_n = 0;
+#endif
 }
+#if defined(TLORA_PAGER)
+static void accentNavRestyle() {
+  for (uint8_t i = 0; i < s_accbox_cell_n; ++i) {
+    if (!s_accbox_cells[i]) continue;
+    lv_obj_set_style_bg_color(s_accbox_cells[i],
+      lv_color_hex((int)i == s_accentnav_idx ? COLOR_ACCENT : 0x1B2B3A), LV_PART_MAIN);
+  }
+}
+// Encoder's short-click while picking: fire the highlighted cell's own CLICKED
+// binding (accentBoxCellCb, below) rather than duplicating its delete-base-
+// letter + insert-variant + accentBoxHide() logic.
+static void accentNavConfirm() {
+  if (s_accentnav_idx >= 0 && (uint8_t)s_accentnav_idx < s_accbox_cell_n && s_accbox_cells[s_accentnav_idx]) {
+    lv_event_send(s_accbox_cells[s_accentnav_idx], LV_EVENT_CLICKED, nullptr);
+  } else {
+    accentBoxHide();
+  }
+}
+#endif
 static void accentBoxCellCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const char* variant = static_cast<const char*>(lv_event_get_user_data(e));
@@ -5503,6 +5831,11 @@ static void accentBoxMaybeShow() {
   const AccentSet* set = accentSetFor(last[0]);
   if (!set) return;
   s_accbox_ta = ta;
+#if defined(TLORA_PAGER)
+  s_accentnav_active = false;   // fresh box -> Fn+Space (re-)arms nav mode
+  s_accentnav_idx = 0;
+  s_accbox_cell_n = set->n < kAccentNavMax ? set->n : (uint8_t)kAccentNavMax;
+#endif
   const int cw = 34, ch = 40, gap = 4, pad = 6;
   s_accbox = lv_obj_create(lv_layer_top());
   lv_obj_add_flag(s_accbox, NAV_SKIP_FLAG);   // passive tap-only hint: never a keyboard-nav focus target (issue #22)
@@ -5525,6 +5858,9 @@ static void accentBoxMaybeShow() {
     lv_obj_set_style_bg_color(c, lv_color_hex(0x1B2B3A), LV_PART_MAIN);
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_add_event_cb(c, accentBoxCellCb, LV_EVENT_CLICKED, (void*)set->v[i]);
+#if defined(TLORA_PAGER)
+    if (i < kAccentNavMax) s_accbox_cells[i] = c;
+#endif
     lv_obj_t* l = lv_label_create(c);
     lv_label_set_text(l, set->v[i]);
     lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN);
@@ -5561,10 +5897,47 @@ static lv_obj_t* s_mentionbox    = nullptr;
 static lv_obj_t* s_mentionbox_ta = nullptr;
 static constexpr int k_mention_max = 6;
 static char s_mention_names[k_mention_max][32];   // kept alive for the cell callbacks
+#if defined(TLORA_PAGER)
+// No touch on this board, and the cells below are NAV_SKIP_FLAG (excluded from
+// the normal keyboard/encoder focus group by design, since touch boards pick
+// them by tap) -- without this, the box is completely unreachable here.
+// Unlike the accent box (armed explicitly via Fn+Space), this list grabs the
+// encoder the INSTANT it's shown (mentionBoxMaybeShow() sets
+// s_mentionnav_active=true directly) -- see that function for why. The rotary
+// encoder walks s_mentionbox_cells (updatePagerEncoder()); Enter (the
+// encoder's own click) confirms via mentionNavConfirm(); Backspace cancels.
+static lv_obj_t* s_mentionbox_cells[k_mention_max];
+static uint8_t   s_mentionbox_cell_n  = 0;
+static bool      s_mentionnav_active  = false;
+static int       s_mentionnav_idx     = 0;
+#endif
 static void mentionBoxHide() {
   if (s_mentionbox) { lv_obj_del(s_mentionbox); s_mentionbox = nullptr; }
   s_mentionbox_ta = nullptr;
+#if defined(TLORA_PAGER)
+  s_mentionnav_active = false;
+  s_mentionbox_cell_n = 0;
+#endif
 }
+#if defined(TLORA_PAGER)
+static void mentionNavRestyle() {
+  for (uint8_t i = 0; i < s_mentionbox_cell_n; ++i) {
+    if (!s_mentionbox_cells[i]) continue;
+    lv_obj_set_style_bg_color(s_mentionbox_cells[i],
+      lv_color_hex((int)i == s_mentionnav_idx ? COLOR_ACCENT : 0x1B2B3A), LV_PART_MAIN);
+  }
+}
+// Encoder's short-click while picking: fire the highlighted cell's own CLICKED
+// binding (mentionBoxCellCb, below) rather than duplicating its delete-partial
+// + insert-name + mentionBoxHide() logic.
+static void mentionNavConfirm() {
+  if (s_mentionnav_idx >= 0 && (uint8_t)s_mentionnav_idx < s_mentionbox_cell_n && s_mentionbox_cells[s_mentionnav_idx]) {
+    lv_event_send(s_mentionbox_cells[s_mentionnav_idx], LV_EVENT_CLICKED, nullptr);
+  } else {
+    mentionBoxHide();
+  }
+}
+#endif
 // Index of the active mention's '@' in `text`, or -1. The active mention is the
 // last '@' that begins a word (start of text or after whitespace) with no
 // whitespace between it and the end (where the caret is).
@@ -5619,6 +5992,16 @@ static bool mentionBoxMaybeShow() {
   }
   if (n == 0) return false;
   s_mentionbox_ta = ta;
+#if defined(TLORA_PAGER)
+  // Unlike the accent box (armed explicitly via Fn+Space, since it pops up
+  // after almost every letter typed and must not steal focus from ongoing
+  // typing), the mention list only appears when the user has deliberately
+  // typed "@partial" looking for someone to pick -- so it grabs the encoder
+  // immediately, no arming gesture needed.
+  s_mentionnav_active = true;
+  s_mentionnav_idx = 0;
+  s_mentionbox_cell_n = (uint8_t)n;
+#endif
   s_mentionbox = lv_obj_create(lv_layer_top());
   lv_obj_add_flag(s_mentionbox, NAV_SKIP_FLAG);   // passive, touch-only — never a keyboard-nav stop (issue #42)
   lv_obj_remove_style_all(s_mentionbox);
@@ -5640,6 +6023,9 @@ static bool mentionBoxMaybeShow() {
     lv_obj_set_style_bg_color(b, lv_color_hex(0x1B2B3A), LV_PART_MAIN);
     lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_add_event_cb(b, mentionBoxCellCb, LV_EVENT_CLICKED, (void*)s_mention_names[i]);
+#if defined(TLORA_PAGER)
+    if (i < k_mention_max) s_mentionbox_cells[i] = b;
+#endif
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text_fmt(l, "@%s", s_mention_names[i]);
     lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
@@ -5649,6 +6035,9 @@ static bool mentionBoxMaybeShow() {
     lv_obj_center(l);
   }
   lv_obj_set_size(s_mentionbox, boxw + 8, n * rowh + (n - 1) * 3 + 8);
+#if defined(TLORA_PAGER)
+  mentionNavRestyle();   // highlight entry 0 immediately -- see the auto-arm note above
+#endif
   // Place it above the composer, clamped above the keyboard (mirrors the accent box).
   lv_obj_update_layout(s_mentionbox);
   lv_area_t a; lv_obj_get_coords(ta, &a);
@@ -6721,6 +7110,9 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   lv_obj_add_event_cb(s_qr_sheet, qrSheetCloseCb, LV_EVENT_CLICKED, nullptr);
 
   // Bigger on the 800-px Tanmatsu panel; unchanged on the smaller boards.
+  // The pager's 480-wide landscape panel has plenty of spare width next to the
+  // old 220px single-column card (reported: half the screen sat empty) — give
+  // it 2 columns and a wider card instead of the shared 1-column sizing.
 #if CAP_LARGE_SCREEN
   const int card_w = PCW(210);
   const int btn_h  = SC(32);      // SC not PSC: the 1.7x PSC boost made this 6-row card taller than the screen
@@ -6728,15 +7120,31 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   const int title_h = SC(26);
   const int hint_h  = SC(22);
   const int row_gap = SC(4);
-#else
-  const int card_w = 220;
-  const int btn_h  = 32;          // 34→32: 6 macro rows have to fit in the
-  const int pad    = 8;           // visible area (298 px) below the status
-  const int title_h = 26;         // bar — the old sizing produced a 302 px
-  const int hint_h  = 22;         // card that clipped behind the bar.
+  const int cols    = 1;
+  const int col_gap = 0;
+#elif defined(TLORA_PAGER)
+  const int card_w  = 360;
+  const int btn_h   = 32;
+  const int pad     = 8;
+  const int title_h = 26;
+  const int hint_h  = 22;
   const int row_gap = 4;
+  const int cols    = 2;
+  const int col_gap = 8;
+#else
+  const int card_w  = 220;
+  const int btn_h   = 32;          // 34→32: 6 macro rows have to fit in the
+  const int pad     = 8;           // visible area (298 px) below the status
+  const int title_h = 26;          // bar — the old sizing produced a 302 px
+  const int hint_h  = 22;          // card that clipped behind the bar.
+  const int row_gap = 4;
+  const int cols    = 1;
+  const int col_gap = 0;
 #endif
-  int card_h = title_h + (TOUCH_QUICK_REPLY_COUNT + 1) * (btn_h + row_gap) + hint_h + pad;   // +1: the GPS-position row
+  const int col_w    = (card_w - 2 * pad - (cols - 1) * col_gap) / cols;
+  const int rows     = (TOUCH_QUICK_REPLY_COUNT + cols - 1) / cols;   // ceil, in case the macro count ever changes
+  const int gps_row_h = btn_h + row_gap;   // GPS-position row: always full-width, sits above the macro grid
+  int card_h = title_h + gps_row_h + rows * (btn_h + row_gap) + hint_h + pad;
   if (card_h > sh - STATUSBAR_H - 8) card_h = sh - STATUSBAR_H - 8;   // never taller than the visible area
   lv_obj_t* card = lv_obj_create(s_qr_sheet);
   lv_obj_remove_style_all(card);
@@ -6757,7 +7165,6 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 0);
 
-  int y = title_h;
 #if defined(ESP32)
   {  // --- My position (GPS) --- first row; greyed out without a live fix
     const bool fix = g_lv.task && g_lv.task->getGpsFix();
@@ -6766,7 +7173,7 @@ static void openQuickReplyPicker(LvChatPanel* p) {
     else     snprintf(gbuf, sizeof gbuf, LV_SYMBOL_GPS " %s", TR("My position (no GPS fix)"));
     lv_obj_t* b = lv_btn_create(card);
     lv_obj_set_size(b, card_w - 2 * pad, btn_h);
-    lv_obj_set_pos(b, 0, y);
+    lv_obj_set_pos(b, 0, title_h);
     styleButton(b);
     lv_obj_set_style_bg_color(b, lv_color_hex(fix ? 0x1A1B1C : 0x0C0D0E), LV_PART_MAIN);
     if (fix) lv_obj_add_event_cb(b, qrGpsPickCb, LV_EVENT_CLICKED, nullptr);
@@ -6778,28 +7185,28 @@ static void openQuickReplyPicker(LvChatPanel* p) {
     lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(lbl, lv_color_hex(fix ? COLOR_TEXT : COLOR_SUB), LV_PART_MAIN);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 8, 0);
-    y += btn_h + row_gap;
   }
   for (int i = 0; i < TOUCH_QUICK_REPLY_COUNT; ++i) {
     char buf[TOUCH_QUICK_REPLY_MAXLEN];
     int n = touchPrefsGetQuickReply(i, buf, sizeof(buf));
     if (n <= 0) { strncpy(buf, "(empty)", sizeof(buf) - 1); buf[sizeof(buf)-1] = '\0'; }
+    const int col = i % cols, row = i / cols;
     lv_obj_t* b = lv_btn_create(card);
-    lv_obj_set_size(b, card_w - 2 * pad, btn_h);
-    lv_obj_set_pos(b, 0, y);
+    lv_obj_set_size(b, col_w, btn_h);
+    lv_obj_set_pos(b, col * (col_w + col_gap), title_h + gps_row_h + row * (btn_h + row_gap));
     styleButton(b);
     lv_obj_set_style_bg_color(b, lv_color_hex(n > 0 ? 0x1A1B1C : 0x0C0D0E), LV_PART_MAIN);
     lv_obj_add_event_cb(b, qrPickCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     lv_obj_t* lbl = lv_label_create(b);
     lv_label_set_text(lbl, buf);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(lbl, card_w - 2 * pad - 16);
+    lv_obj_set_width(lbl, col_w - 16);
     lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(lbl, lv_color_hex(n > 0 ? COLOR_TEXT : COLOR_SUB), LV_PART_MAIN);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 8, 0);
-    y += btn_h + row_gap;   // match the gap used in card_h calc above
   }
 #endif
+  const int y = title_h + gps_row_h + rows * (btn_h + row_gap);   // hint sits below the last row
   lv_obj_t* hint = lv_label_create(card);
   lv_label_set_text(hint, TR("Edit in Settings \xe2\x86\x92 Quick replies"));
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -7015,7 +7422,7 @@ static void toggleMentionSoundCb(lv_event_t* e) {
   if (on) uiPlayMention();
 #endif
 }
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4)
 // Volume +/- step buttons (user_data = step, e.g. +10 / -10). Clamps 0..100,
 // updates the readout, previews. Simpler + more reliable than a drag slider.
 static lv_obj_t* s_vol_val_lbl = nullptr;
@@ -7672,22 +8079,51 @@ static void saveRadioParamsCb(lv_event_t* e) {
     if (!silent) g_lv.task->showAlert(m, 1500);
     if (g_set_modal.tx_ta) { char v[8]; snprintf(v, sizeof v, "%d", tx); lv_textarea_set_text(g_set_modal.tx_ta, v); }   // reflect the clamp in the field
   }
+  // Region scope — trimmed the same way it's persisted, so it can be compared below.
+  char region[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+  const bool has_region_ta = (g_set_modal.region_ta != nullptr);
+  if (has_region_ta) {
+    strncpy(region, lv_textarea_get_text(g_set_modal.region_ta), sizeof(region) - 1);
+    char* r = region;                                    // trim so the stored name matches the key
+    while (*r == ' ' || *r == '\t') r++;
+    size_t rl = strlen(r);
+    while (rl && (r[rl-1]==' '||r[rl-1]=='\t'||r[rl-1]=='\n'||r[rl-1]=='\r')) r[--rl] = '\0';
+    memmove(region, r, strlen(r) + 1);
+  }
+#if defined(TLORA_PAGER)
+  // Blur auto-save fires on EVERY field defocus, including pure keyboard/encoder nav that
+  // never edits anything (no touch fallback on the pager — moving focus off a field IS a
+  // defocus). Skip the flash write + live radio SPI reconfigure when nothing actually
+  // changed, so tabbing through this row doesn't retrigger a several-hundred-ms-to-
+  // multi-second radio reinit per field — observed on hardware as escalating
+  // [STALL] ui:lvgl entries while navigating this screen with no edits made. Touch boards
+  // don't hit this (a field only blurs on a deliberate tap-out after an edit), so they
+  // keep the original always-save-on-blur behavior.
+  if (silent) {
+    NodePrefs* prefs = the_mesh.getNodePrefs();
+    char cur_region[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    if (has_region_ta) touchPrefsGetRegionScope(cur_region, sizeof(cur_region));
+    const bool unchanged = prefs
+        && std::fabs(prefs->freq - freq) <= 0.002
+        && std::fabs(prefs->bw - bw) <= 0.02
+        && prefs->sf == (uint8_t)sf
+        && prefs->cr == (uint8_t)cr
+        && prefs->tx_power_dbm == (int8_t)tx
+        && std::fabs(static_cast<double>(prefs->airtime_factor) - af) <= 0.005
+        && (!has_region_ta || strcmp(cur_region, region) == 0);
+    if (unchanged) return;
+  }
+#endif
   bool ok = g_lv.task->setRadioParams(freq, bw, static_cast<uint8_t>(sf), static_cast<uint8_t>(cr),
                                       static_cast<int8_t>(tx), af);
   // Region scope — independent of the freq/SF values above. Derive + persist the
   // flood-scope key from the typed "#region" (blank clears it back to unscoped),
   // and remember the display name for next time the form is shown.
   bool has_region = false;
-  if (g_set_modal.region_ta) {
-    char region[TOUCH_REGION_SCOPE_MAXLEN] = {0};
-    strncpy(region, lv_textarea_get_text(g_set_modal.region_ta), sizeof(region) - 1);
-    char* r = region;                                    // trim so the stored name matches the key
-    while (*r == ' ' || *r == '\t') r++;
-    size_t rl = strlen(r);
-    while (rl && (r[rl-1]==' '||r[rl-1]=='\t'||r[rl-1]=='\n'||r[rl-1]=='\r')) r[--rl] = '\0';
-    the_mesh.setDefaultFloodScope(r);
-    touchPrefsSetRegionScope(r);
-    has_region = (r[0] != '\0');
+  if (has_region_ta) {
+    the_mesh.setDefaultFloodScope(region);
+    touchPrefsSetRegionScope(region);
+    has_region = (region[0] != '\0');
   }
   if (ok) {
     if (!silent) g_lv.task->showAlert(has_region ? TR("Radio + region set") : TR("Radio applied"), 1000);
@@ -8836,7 +9272,7 @@ static void buildRadioSettings() {
     g_set_modal.freq_ta = mk_ta(fw, 0,        "MHz", 15);
     g_set_modal.bw_ta   = mk_ta(fw, fw + g,   "kHz", 10);
   }
-  y += SC(36);
+  y += SC(44);   // was SC(36): only left a 6px gap below the 30px-tall boxes, crowding the label below
   mk_label("SF / CR / TX / AF");
   {
     const int g = 6, fw = (cw - 3 * g) / 4;       // four equal fields filling the row
@@ -9765,6 +10201,8 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
   const char* unlock_hint = on ? TR("Locks when screen off\n(hold the d-pad to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_TANMATSU)
   const char* unlock_hint = on ? TR("Locks when screen off\n(press Volume Down to unlock)") : TR("Screen-off just dims");
+#elif defined(TLORA_PAGER)
+  const char* unlock_hint = on ? TR("Locks when screen off\n(hold Backspace to unlock)") : TR("Screen-off just dims");
 #else
   const char* unlock_hint = on ? TR("Locks when screen off\n(press the button to unlock)") : TR("Screen-off just dims");
 #endif
@@ -10317,14 +10755,14 @@ static void lockwallDisplayName(const char* path, char* out, int cap) {
   snprintf(out, cap, "%s%s", sd ? "SD: " : "", base);
 }
 static void openLockWallPickerCb(lv_event_t* e);   // defined with the picker, below
-#if CAP_SD && defined(HAS_TDECK_GT911)   // custom WAV notification sounds need the T-Deck's I2S amp, not just SD
+static void lockColorChosenCb(lv_event_t* e);
+#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9
+#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck (SD or SPIFFS) or pager (SPIFFS only)
 // Per-event notification-sound picker (Settings -> Sound). Mirrors the wallpaper picker.
 static lv_obj_t* s_snd_btn_lbl[3] = { nullptr, nullptr, nullptr };
 static int  s_snd_pending_slot = TOUCH_SND_MSG;    // slot we're choosing a sound for
 static void soundDisplayName(const char* path, char* out, int cap);
 static void openSoundPickerCb(lv_event_t* e);      // defined with the chooser, below
-#endif
-static void lockColorChosenCb(lv_event_t* e);
 #endif
 
 static void calibrateBatteryCb(lv_event_t* e);   // defined with the battery helpers below
@@ -10383,6 +10821,26 @@ static void kbBlPresetCb(lv_event_t* e) {          // Off / 25 / 50 / 75 / Max: 
   }
   kbBlSetPct(pct, true);
   kbBlScheduleSave();
+}
+#endif
+
+#if defined(HAS_PAGER_KEYBOARD)
+static lv_obj_t* s_pager_kbbl_lbl = nullptr;   // Settings->Keyboard row caption (modal is a singleton)
+
+static const char* pagerKbBlModeText() {
+  return s_kb_bl_mode == 0 ? "Off" : (s_kb_bl_mode == 1 ? "On" : "Auto");
+}
+
+// Cycle off -> on -> auto -> off and persist -- same semantics as the Control
+// Center's ccKbBacklightCb, duplicated rather than shared since CC is
+// unreachable on this board (no touch launcher to open it) and the two update
+// their UI differently (CC rebuilds the whole popup; this just relabels one
+// button).
+static void pagerKbBlCycleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_kb_bl_mode = (uint8_t)((s_kb_bl_mode + 1) % 3);
+  touchPrefsSetKbBacklight(s_kb_bl_mode);
+  if (s_pager_kbbl_lbl) lv_label_set_text(s_pager_kbbl_lbl, pagerKbBlModeText());
 }
 #endif
 
@@ -10518,7 +10976,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, toggleMentionSoundCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, rh + 12);
   }
-#if CAP_SD && defined(HAS_TDECK_GT911)   // WAV notification-sound rows (T-Deck's I2S amp, not just SD)
+#if CAP_SOUND_FILES   // WAV notification-sound rows (file-browsing sound picker, SD or SPIFFS)
   // Per-event notification sound files. Each slot: built-in chime, or a 16-bit
   // PCM WAV from /sounds/ (internal) or the SD card. Empty = built-in.
   {
@@ -10545,8 +11003,8 @@ static void buildDeviceSettings(int sec) {
     }
   }
 #endif
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
-  // Volume with - / + step buttons (T-Deck I2S + Tanmatsu/P4 codec; the V4 piezo can't vary volume).
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4)
+  // Volume with - / + step buttons (T-Deck I2S / Tanmatsu / pager / P4 codec; the V4 piezo can't vary volume).
   {
     lv_obj_t* vl = lv_label_create(body);
     lv_label_set_text(vl, TR("Volume"));
@@ -10836,6 +11294,23 @@ static void buildDeviceSettings(int sec) {
       lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, k_presets[i].txt); lv_obj_center(l);
     }
     y += SC(38);
+  }
+#elif defined(HAS_PAGER_KEYBOARD)
+  /* Keyboard backlight: off / on / auto (lit while typing, dark after ~3 s idle).
+     No brightness slider here (unlike the T-Deck) -- this board's backlight is a
+     simple on/off strip, so there's nothing to dial in beyond the mode. */
+  {
+    y += settingsRowLabel(body, y, 0, "Keyboard backlight", COLOR_SUB, &g_font_12, 0) + 4;
+    lv_obj_t* b = lv_btn_create(body);
+    lv_obj_set_size(b, lv_pct(100), SC(34));
+    lv_obj_set_pos(b, 2, y);
+    styleButton(b);
+    lv_obj_add_event_cb(b, pagerKbBlCycleCb, LV_EVENT_CLICKED, nullptr);
+    s_pager_kbbl_lbl = lv_label_create(b);
+    lv_label_set_text(s_pager_kbbl_lbl, pagerKbBlModeText());
+    lv_obj_center(s_pager_kbbl_lbl);
+    y += SC(42);
+    y += settingsRowLabel(body, y, 0, "tap to cycle off / on / auto", COLOR_SUB, &g_font_12, 0) + 2;
   }
 #endif
   /* Secondary keyboards (multi-select). Switch on any layouts you want in the
@@ -16114,8 +16589,8 @@ static char      s_fm_path[160]  = {0};     // current dir within s_fm_fs (e.g. 
 // a generic fs::FS*; only &SD is real microSD I/O (Internal = SPIFFS). Browsing
 // (fmRefresh) and the file open/save paths call this; mutations re-list via
 // fmRefresh, so they blip the LED too.
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
-static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // Arduino SD (T-Deck/M9 LoRa bus, V4-R8 TFT bus)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // Arduino SD (T-Deck/pager/M9 LoRa bus, V4-R8 TFT bus)
 #elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD_MMC; }   // microSD on SDMMC slot 0
 #else
@@ -17238,19 +17713,39 @@ static void fmFmtSize64(uint64_t bytes, char* out, size_t outsz) {
   else                                     snprintf(out, outsz, "%.1f GB", bytes / (1024.0 * 1024 * 1024));
 }
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)  // microSD mount/format helpers — Arduino SD (T-Deck/M9 LoRa bus, V4-R8 TFT bus)
-// Mount the microSD on the shared LoRa SPI bus. Safe to call repeatedly (no-op
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)   // microSD mount/format helpers — Arduino SD on the shared SPI bus
+// One shared-SPI accessor per board: the T-Deck/M9 expose their pre-begun SPIClass
+// via tdeckSharedSPI()/m9SharedSPI(); the V4-R8's microSD shares its TFT FSPI bus
+// (heltecV4R8SharedSPI()); the pager's radio+display already share TFT_eSPI's own
+// instance directly (variants/lilygo_tlora_pager/target.cpp), so reuse that the
+// same way.
+#if defined(TLORA_PAGER)
+static inline SPIClass* sdSharedSPI() { return &TFT_eSPI::getSPIinstance(); }
+// Card-detect via the XL9555 expander (PAGER_EXPAND_SD_DET). Polarity is INVERTED
+// from what you'd guess — confirmed against LilyGoLib's own LilyGo_LoRa_Pager.cpp
+// installSD() (`if (io.digitalRead(EXPANDS_SD_DET)) return false;`): HIGH = no card
+// seated, LOW = card present. Skip the whole mount ladder when no card is seated,
+// so opening the File Manager / WAV picker on a bare pager doesn't grind through
+// the ladder's worst-case delay on every call.
+static inline bool pagerSdCardPresent() {
+  return board.io_expander.digitalRead(PAGER_EXPAND_SD_DET) == LOW;
+}
+#elif defined(HELTEC_LORA_V4_R8)
+static inline SPIClass* sdSharedSPI() { return heltecV4R8SharedSPI(); }   // V4-R8: micro-SD shares the TFT FSPI bus (CS=3)
+#elif defined(HAS_THINKNODE_M9)
+static inline SPIClass* sdSharedSPI() { return m9SharedSPI(); }
+#else
+static inline SPIClass* sdSharedSPI() { return tdeckSharedSPI(); }
+#endif
+// Mount the microSD on its shared SPI bus. Safe to call repeatedly (no-op
 // once mounted). SD.begin's internal spi.begin() is a no-op because the bus is
-// already initialised by the radio, so the radio's pins are untouched.
+// already initialised by the radio/display, so those pins are untouched.
 static bool fmSdTryMount() {
   if (s_sd_mounted) return true;
-#if defined(HAS_TDECK_GT911)
-  SPIClass* spi = tdeckSharedSPI();
-#elif defined(HELTEC_LORA_V4_R8)
-  SPIClass* spi = heltecV4R8SharedSPI();   // V4-R8: micro-SD shares the TFT FSPI bus (CS=3)
-#else
-  SPIClass* spi = m9SharedSPI();
+#if defined(TLORA_PAGER)
+  if (!pagerSdCardPresent()) return false;
 #endif
+  SPIClass* spi = sdSharedSPI();
   if (!spi) return false;
   // Cold microSD cards — especially the first mount after boot — often fail
   // the initial SD.begin and historically only recovered after a physical
@@ -17316,7 +17811,7 @@ static void fmSdClickCb(lv_event_t* e) {
   if (s_sd_mounted) fmOpenStorage(&SD, "SD", "/");
 }
 
-#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (microSD mount helpers; the busy overlays below are generic LVGL)
+#endif  // HAS_TDECK_GT911 || TLORA_PAGER || HAS_THINKNODE_M9 || HELTEC_LORA_V4_R8 (microSD mount helpers; the busy overlays below are generic LVGL)
 
 // Full-screen "busy" notice (copy/move/format). Pure LVGL — used by the generic paste path too.
 static void fmShowBusyOverlay(const char* msg) {
@@ -17941,7 +18436,7 @@ static bool fmIsImage(const char* name) {
          !strcasecmp(dot, ".jpeg") || !strcasecmp(dot, ".sjpg") ||
          !strcasecmp(dot, ".bmp");
 }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 static bool fmIsAudio(const char* name) {
   if (!name) return false;
   const char* dot = strrchr(name, '.');
@@ -18111,7 +18606,7 @@ static void fmSetWallpaperCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(TR("Lock wallpaper set"), 1300);
 }
 
-#if CAP_SD && defined(HAS_TDECK_GT911)
+#if CAP_SOUND_FILES
 // ---- .wav -> notification-sound chooser (opened from the File Manager) ------
 static char      s_fm_snd_path[208] = {0};
 static bool      s_fm_snd_on_sd     = false;
@@ -18126,7 +18621,7 @@ static void fmSndPlayCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_fm_snd_path[0]) return;
   char pref[TOUCH_SOUND_PATH_MAXLEN]; fmSndBuildPref(pref, sizeof pref);
   if (!wavIsSupported(pref)) { if (g_lv.task) g_lv.task->showAlert(TR("Unsupported WAV (need 16-bit PCM)"), 2200); return; }
-  tdeckPreviewWavFile(pref);
+  uiPreviewWavFile(pref);
 }
 static void fmSndSetCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_fm_snd_path[0]) return;
@@ -18186,7 +18681,7 @@ static void fmOpenAudio(const char* name) {
   lv_obj_t* cl = lv_label_create(close); lv_label_set_text(cl, LV_SYMBOL_CLOSE); tanCloseRed(cl);
   lv_obj_set_style_text_font(cl, &g_font_12, LV_PART_MAIN); lv_obj_center(cl);
 }
-#endif  // HAS_TDECK_GT911 (.wav notification-sound chooser)
+#endif  // HAS_TDECK_GT911 || TLORA_PAGER (.wav notification-sound chooser)
 
 static void fmOpenImage(const char* name) {
   if (!s_fm_fs || !name || !name[0]) return;
@@ -18344,7 +18839,7 @@ static void fmRowClickCb(lv_event_t* e) {
   FmRowData* rd = (FmRowData*)lv_obj_get_user_data(lv_event_get_target(e));
   if (!rd) return;
   if (rd->isdir)                fmEnterDir(rd->name);
-#if CAP_SD && defined(HAS_TDECK_GT911)
+#if CAP_SOUND_FILES
   else if (fmIsAudio(rd->name)) fmOpenAudio(rd->name);   // .wav -> notification-sound chooser
 #endif
   else if (fmIsImage(rd->name)) fmOpenImage(rd->name);   // images -> read-only viewer
@@ -18588,6 +19083,18 @@ static void fmShowRoots() {
     lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, "SD card   (tap to mount/format)");
     fmStyleRow(sd, COLOR_SUB);
     lv_obj_add_event_cb(sd, fmSdMountOrFormatCb, LV_EVENT_CLICKED, nullptr);
+  }
+#elif defined(TLORA_PAGER)   // microSD row — browse only this pass, no format (see fmSdTryMount())
+  // The card-detect line makes "not present" unambiguous, unlike the T-Deck (no detect
+  // pin at all) -- so unlike its always-shown "tap to mount/format" fallback row, a bare
+  // pager just shows no SD row at all rather than a row that can never succeed.
+  if (pagerSdCardPresent() && (s_sd_mounted || millis() >= s_sd_retry_after_ms) && fmSdTryMount()) {
+    char sdl[48], cs[16];
+    fmFmtSize64(s_sd_size, cs, sizeof cs);
+    snprintf(sdl, sizeof sdl, TR("SD card   %s"), cs);
+    lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, sdl);
+    fmStyleRow(sd, COLOR_TEXT);
+    lv_obj_add_event_cb(sd, fmSdClickCb, LV_EVENT_SHORT_CLICKED, nullptr);
   }
 #endif
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
@@ -20860,9 +21367,10 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9)
-  // Landscape (T-Deck / Tanmatsu / RAK Tap V2 / M9): the right column holds Advert + Terminal + Files + Apps,
-  // so the chart must stop short of that strip — else it draws over the buttons.
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9)
+  // Landscape (T-Deck / Tanmatsu / pager / RAK Tap V2 / M9): the right column holds
+  // Advert + Terminal + Files/Apps + Control, so the chart must stop short of that
+  // strip — else it draws over the buttons.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 #else
   const int chart_w = cw;
@@ -25361,13 +25869,13 @@ static void mapCanvasEventCb(lv_event_t* e) {
   refreshMapInfoLabel();
 }
 
-#if defined(HAS_TANMATSU)
-// Keyboard pan (Ctrl+Arrow on the Map tab). Mirrors the drag-release math in
-// mapCanvasEventCb: synthesize a pixel delta of ~1/4 the visible span in the
-// arrow direction, convert it through the same world-px ↔ lat/lon helpers (so
-// the lon step automatically scales with the current zoom's degrees-per-pixel)
-// and re-render. dir: 0=up(north,+lat) 1=down(south,−lat) 2=left(west,−lon)
-// 3=right(east,+lon).
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+// Keyboard pan (Ctrl+Arrow on Tanmatsu / WASD on the pager, both on the Map
+// tab). Mirrors the drag-release math in mapCanvasEventCb: synthesize a pixel
+// delta of ~1/4 the visible span in the arrow direction, convert it through
+// the same world-px ↔ lat/lon helpers (so the lon step automatically scales
+// with the current zoom's degrees-per-pixel) and re-render. dir: 0=up(north,
+// +lat) 1=down(south,−lat) 2=left(west,−lon) 3=right(east,+lon).
 static void mapNudge(int dir) {
   if (!s_map_canvas) return;
   // No center yet (no GPS / location) → nothing to pan around.
@@ -25390,7 +25898,7 @@ static void mapNudge(int dir) {
   renderMapMarkers();
   refreshMapInfoLabel();
 }
-#endif  // HAS_TANMATSU (mapNudge)
+#endif  // HAS_TANMATSU || TLORA_PAGER (mapNudge)
 
 // ----- Zoom + recenter -----
 //
@@ -30890,6 +31398,357 @@ static void updateTrackball(unsigned long now) {
 }
 #endif
 
+#if defined(HAS_PAGER_ENCODER) || defined(HAS_PAGER_KEYBOARD)
+// "Back", extending the T-Deck/Tanmatsu back-key ladder: a popup/sheet on top
+// closes first, then an open chat/channel detail, then Home (the pager has no
+// dedicated Home hotkey and the bottom tab bar isn't a nav-group target, so a
+// bare main tab otherwise had no way back to Home), else plain ESC. Shared by
+// the rotary encoder's long-press (updatePagerEncoder) and the keyboard's
+// Backspace-hold alternative (updatePagerBackspaceHold) so both agree exactly.
+static void pagerNavGoBack() {
+  if (anyPopupOpen())                            hwKeyDismissTopPopup();
+  else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+  else if (getActiveTab() != HOME_TAB_INDEX)     navGoToMainTab(HOME_TAB_INDEX);
+  else                                           navPushTap(LV_KEY_ESC);
+}
+#endif
+
+#if defined(HAS_PAGER_KEYBOARD)
+// Backspace press-and-hold = the same "back" as the encoder's long-press —
+// an alternative for users wary of wearing out the rotary encoder. Same
+// 1000 ms state machine as the encoder's click handling below; a short tap
+// still deletes a character as normal (PagerKeyboard ring-pushes '\b' on
+// press, unchanged).
+static void updatePagerBackspaceHold(unsigned long now) {
+  if (g_lv.task && g_lv.task->isScreenOff()) return;
+  const bool held = pagerKeyboardBackspaceHeld();
+  static constexpr uint32_t kLongPressMs = 1000;
+  static bool     s_was_held    = false;
+  static uint32_t s_press_start = 0;
+  static bool     s_long_fired  = false;
+
+  if (held && !s_was_held) {
+    s_press_start = now;
+    s_long_fired  = false;
+  } else if (held && !s_long_fired && (now - s_press_start) >= kLongPressMs) {
+    pagerNavGoBack();
+    if (g_lv.task) g_lv.task->noteUserInput();
+    s_long_fired = true;
+  }
+  s_was_held = held;
+}
+
+// Orange/Alt key, tapped alone (not held as a symbol-layer modifier or for the
+// encoder's Alt+turn) = the same "next field" as one rotary NEXT detent. Call
+// once per loop tick while the screen is on; screen-off handling discards any
+// pending tap instead (see loop()'s HAS_PAGER_KEYBOARD branch) so a stray tap
+// picked up while idle-dimmed can't fire the moment the screen wakes.
+static void updatePagerAltTapNext() {
+  if (!pagerKeyboardConsumeAltTap()) return;
+  navPushTap(LV_KEY_NEXT);
+  if (g_lv.task) g_lv.task->noteUserInput();
+}
+
+// Alt(Fn)+Shift chord (PagerKeyboard.cpp only reports it, since the driver has
+// no UI visibility): toggles Caps Lock while actually editing a text field
+// (the field is where "Caps Lock" means anything) and is a deliberate no-op
+// everywhere else (Home-jump duty moved to Alt+Backspace below, so there's no
+// longer a reason to make this chord do anything outside a field — Caps Lock
+// silently flipping with no field to see it in was reported as
+// surprising/purposeless before this split).
+static void updatePagerAltShiftChord() {
+  if (!pagerKeyboardConsumeAltShiftChord()) return;
+  lv_obj_t* ta_focused = lv_keyboard_get_textarea(g_lv.keyboard);
+  lv_obj_t* ta = (ta_focused && s_nav_group && lv_group_get_focused(s_nav_group) == ta_focused) ? ta_focused : nullptr;
+  if (!ta) return;
+  pagerKeyboardToggleCaps();
+  if (g_lv.task) g_lv.task->noteUserInput();
+}
+
+// Alt(Fn)+Backspace chord: jump straight Home, unconditionally -- unlike
+// Alt+Shift above, this one is NOT context-dependent (works whether or not a
+// field is being edited, per explicit request). Fires instead of a normal
+// Backspace press: PagerKeyboard.cpp suppresses the '\b' ring-push and the
+// hold-to-back/hold-to-unlock tracking entirely for an Alt-held Backspace
+// press, so there's no double-action to guard against here.
+static void updatePagerAltBackspaceChord() {
+  if (!pagerKeyboardConsumeAltBackspaceChord()) return;
+  // The accent/@-mention pickers live on lv_layer_top(), outside the tab
+  // content navGoToMainTab() switches away from -- close them explicitly
+  // first so a stray overlay doesn't keep floating over the Home screen.
+  accentBoxHide();
+  mentionBoxHide();
+  navGoToMainTab(HOME_TAB_INDEX);
+  if (g_lv.task) g_lv.task->noteUserInput();
+}
+
+// ---- Spacebar hold-to-lock (mirrors the T-Deck's spacebar lock) -------------
+// The T-Deck keyboard can't detect a real key-up, so it fakes a hold with a
+// press-then-1s-countdown; the TCA8418 here reports genuine press/release, so
+// this is an actual hold, timed the same as pagerNavGoBack()'s gestures, with
+// a live progress bar (T-Deck shows a 3-2-1 countdown instead since its lock
+// isn't a real hold).
+static lv_obj_t* s_pager_locking_popup = nullptr;
+static lv_obj_t* s_pager_locking_bar   = nullptr;
+
+static void pagerLockingPopupHide() {
+  if (s_pager_locking_popup) { popupClose(&s_pager_locking_popup); s_pager_locking_bar = nullptr; }
+}
+static void pagerLockingPopupShow() {
+  if (s_pager_locking_popup) return;
+  s_pager_locking_popup = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_pager_locking_popup);
+  lv_obj_set_size(s_pager_locking_popup, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr) - STATUSBAR_H);
+  lv_obj_set_pos(s_pager_locking_popup, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_pager_locking_popup, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_pager_locking_popup, LV_OPA_60, LV_PART_MAIN);
+  lv_obj_clear_flag(s_pager_locking_popup, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* card = lv_obj_create(s_pager_locking_popup);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, 180, 74);
+  lv_obj_center(card);
+  lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(card, 12, LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* t = lv_label_create(card);
+  lv_label_set_text(t, TR("Locking\xE2\x80\xA6"));   // Locking…
+  lv_obj_set_style_text_color(t, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(t, &g_font_16, LV_PART_MAIN);
+  lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 8);
+
+  s_pager_locking_bar = lv_bar_create(card);
+  lv_obj_set_size(s_pager_locking_bar, 140, 8);
+  lv_obj_align(s_pager_locking_bar, LV_ALIGN_BOTTOM_MID, 0, -14);
+  lv_obj_set_style_bg_color(s_pager_locking_bar, lv_color_hex(0x2A2D31), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_pager_locking_bar, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_pager_locking_bar, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(s_pager_locking_bar, LV_OPA_COVER, LV_PART_INDICATOR);
+  lv_bar_set_range(s_pager_locking_bar, 0, 1000);
+  lv_bar_set_value(s_pager_locking_bar, 0, LV_ANIM_OFF);
+}
+
+static void updatePagerSpaceHold(unsigned long now) {
+  // Never engage mid-typing (space just types normally there) or once already
+  // locked/off (nothing left to do -- updatePagerBackspaceUnlockHold owns the
+  // reverse direction).
+  if ((g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) || navFocusedTextarea()) {
+    pagerLockingPopupHide();
+    return;
+  }
+  const bool held = pagerKeyboardSpaceHeld();
+  static constexpr uint32_t kLongPressMs = 1000;
+  static bool     s_was_held    = false;
+  static uint32_t s_press_start = 0;
+  static bool     s_long_fired  = false;
+
+  if (held && !s_was_held) {
+    s_press_start = now;
+    s_long_fired  = false;
+  } else if (held && !s_long_fired) {
+    const uint32_t elapsed = now - s_press_start;
+    // A bare space tap is otherwise a total no-op here (unfocused, no field) --
+    // hold off showing the popup for a beat so an ordinary quick tap doesn't
+    // flash it on and off.
+    if (elapsed >= 150) {
+      pagerLockingPopupShow();
+      if (s_pager_locking_bar) lv_bar_set_value(s_pager_locking_bar, elapsed > kLongPressMs ? kLongPressMs : elapsed, LV_ANIM_OFF);
+    }
+    if (elapsed >= kLongPressMs) {
+      s_long_fired = true;
+      pagerLockingPopupHide();
+      if (g_lv.task) g_lv.task->lockScreen();
+    }
+  } else if (!held) {
+    pagerLockingPopupHide();
+  }
+  s_was_held = held;
+}
+
+// ---- Backspace hold-to-unlock (mirrors the T-Deck's trackball hold-to-
+// unlock) -- only meaningful while hard-locked, so it never conflicts with
+// updatePagerBackspaceHold()'s "back" gesture above (that one already exits
+// early whenever the screen is off, and lockScreen() never sets _manual_lock
+// without also turning the screen off, so the two are mutually exclusive).
+// Must NOT early-return on isScreenOff() -- unlike every other pager input
+// poller, this one has to keep working while the screen is dark, since that's
+// exactly the state it's meant to end.
+static void updatePagerBackspaceUnlockHold(unsigned long now) {
+  if (!g_lv.task || !g_lv.task->isManualLock()) return;
+  const bool held = pagerKeyboardBackspaceHeld();
+  static constexpr uint32_t kLongPressMs = 1000;
+  static bool     s_was_held    = false;
+  static uint32_t s_press_start = 0;
+
+  if (held && !s_was_held) {
+    s_press_start = now;
+  } else if (held && (now - s_press_start) >= kLongPressMs) {
+    g_lv.task->unlockScreen();
+    s_was_held = false;   // consume -- don't immediately re-trigger were this called again while still held
+    return;
+  }
+  s_was_held = held;
+}
+
+// Keyboard backlight: off/on/auto (s_kb_bl_mode, shared with every CAP_KEYBOARD
+// board) applied to the physical GPIO46 LEDC PWM. Unlike the T-Deck's slider,
+// this board has no brightness curve to honour -- the backlight is a simple
+// full-on/off strip under the keys, so "on" is just max PWM duty (255). Runs
+// UNCONDITIONALLY, even while the screen is off/locked -- forcing it dark in
+// that state is exactly its job here, so (unlike updatePagerBackspaceHold,
+// which must NOT act while off) it can't be skipped the same way.
+static void updatePagerKbBacklight(unsigned long now) {
+  uint8_t kb_bl = 0;
+  if (s_kb_bl_mode == 1) kb_bl = 255;
+  else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = 255;
+  if (g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) kb_bl = 0;
+  static uint8_t s_last = 0xFF;   // only hit the LEDC write when the value actually changes
+  if (kb_bl != s_last) { s_last = kb_bl; pagerKeyboardSetBacklight(kb_bl); }
+}
+#endif
+
+#if defined(HAS_PAGER_ENCODER)
+// T-LoRa Pager rotary encoder: a single linear nav axis (not 2D like the
+// trackball, so none of updateTrackball()'s game/emoji-grid/cursor special
+// cases apply) — each detent moves focus one step via the same navFifo the
+// KEYPAD indev already drains (tanmatsuKeypadRead), and a click is ENTER
+// (short) or ESC (long), exactly as specced. 1000 ms long-press threshold
+// matches the existing MomentaryButton convention used elsewhere (PIN_USER_BTN).
+static void updatePagerEncoder(unsigned long now) {
+  int delta = pagerEncoderReadDelta();
+  const bool held = pagerEncoderClickHeld();
+
+  // No touch and no trackball on this board: the encoder (and the keyboard,
+  // see the HAS_PAGER_KEYBOARD drain in loop()) are the ONLY way to wake an
+  // idle-dimmed screen. Turning it just wakes -- it's swallowed here rather
+  // than also acting as nav, matching the trackball's edge-triggered
+  // wake+consume pattern (T-Deck/Tanmatsu always have touch or the trackball
+  // as a separate wake path; this board doesn't, so the gap is fatal there
+  // and had to be closed here instead of copied from either of them).
+  // Deliberately NOT waking on a bare click (held, no turn): BOOT already
+  // covers a dedicated wake button, and a click landed here right as the
+  // screen came on would fall straight into the click-release logic below
+  // as an ordinary short click on whatever was already focused -- reported
+  // bug: waking via the encoder button selected "Skip" on the setup
+  // wizard's welcome screen the instant the screen lit up.
+  if (g_lv.task && g_lv.task->isScreenOff()) {
+    // Hard-locked: a plain turn must NOT wake/unlock -- only holding Backspace
+    // does (updatePagerBackspaceUnlockHold). Without this gate any idle turn
+    // of the knob bypassed the lock entirely.
+    if (delta != 0 && !g_lv.task->isManualLock()) g_lv.task->wakeScreen();
+    return;
+  }
+  // Screen already on: turning/clicking the encoder is real activity too, same as a
+  // keypress -- without this the idle timer kept counting down through continuous
+  // rotary navigation (nothing else on this board resets it; see handleHwKey()'s
+  // matching TLORA_PAGER fix) and the screen dimmed mid-use.
+  if ((delta != 0 || held) && g_lv.task) g_lv.task->noteUserInput();
+  if (delta != 0 || held) noteKbActivity();   // same activity counts for the keyboard-backlight auto mode
+
+  // Alt+turn is a modifier combo, not a solo Alt tap -- mark it used so a
+  // release right after this doesn't ALSO fire updatePagerAltTapNext()'s NEXT.
+  if (pagerKeyboardAltHeld() && delta != 0) pagerKeyboardMarkAltUsed();
+
+  if (s_mentionnav_active) {
+    // @-mention contact picker (handleHwKey()'s Fn+Space entry / mentionNavConfirm()):
+    // captures the encoder exclusively while active, same priority as the accent
+    // picker and an open dropdown below (mention and accent never show at once —
+    // composerSuggestRefresh() -- so there's no ordering conflict between them).
+    const bool turned = (delta != 0);
+    if (s_mentionbox_cell_n > 0) {
+      for (; delta > 0; delta--) s_mentionnav_idx = (s_mentionnav_idx + 1) % (int)s_mentionbox_cell_n;
+      for (; delta < 0; delta++) s_mentionnav_idx = (s_mentionnav_idx - 1 + (int)s_mentionbox_cell_n) % (int)s_mentionbox_cell_n;
+    }
+    if (turned) mentionNavRestyle();
+  } else if (s_accentnav_active) {
+    // Accent-variant picker (handleHwKey()'s Fn+Space entry / accentNavConfirm()):
+    // captures the encoder exclusively while active, same priority as an open
+    // dropdown below.
+    const bool turned = (delta != 0);
+    if (s_accbox_cell_n > 0) {
+      for (; delta > 0; delta--) s_accentnav_idx = (s_accentnav_idx + 1) % (int)s_accbox_cell_n;
+      for (; delta < 0; delta++) s_accentnav_idx = (s_accentnav_idx - 1 + (int)s_accbox_cell_n) % (int)s_accbox_cell_n;
+    }
+    if (turned) accentNavRestyle();
+  } else if (navOpenDropdown()) {
+    // An open dropdown captures the encoder: lv_dropdown's own key handling only
+    // understands LV_KEY_UP/DOWN to move the highlighted row (+ENTER to confirm,
+    // already wired below via the short-click path) — it ignores LV_KEY_NEXT/PREV,
+    // which is what a plain turn sends in the else branch below. Without this
+    // capture, turning the encoder while a dropdown list is open fell through to
+    // NEXT/PREV, which the focus group instead consumes to move focus OFF the
+    // dropdown — so the highlight never moved and the list was stuck showing
+    // whatever was already selected (reported: opens fine, but turning doesn't
+    // scroll to a choice). Mirrors Tanmatsu's identical navOpenDropdown() capture
+    // in navPump() — see that comment for the lv_dropdown behavior this relies on.
+    for (; delta > 0; delta--) navPushTap(LV_KEY_DOWN);
+    for (; delta < 0; delta++) navPushTap(LV_KEY_UP);
+  } else if (pagerKeyboardAltHeld() && navOnMainPage()) {
+    // Alt (the bottom-left orange key, otherwise a hold-only modifier for the
+    // keyboard's symbol layer — free to reuse here since it types nothing on
+    // its own) + turn jumps directly between the 5 main tabs (Chats/Contacts/
+    // Home/Map/Settings). The bottom tab bar is deliberately not a nav-group
+    // focus target (same as T-Deck/Tanmatsu), and unlike those boards the
+    // pager has no separate dedicated hotkeys to reach it, so plain turning
+    // could otherwise only ever move focus WITHIN the current screen —
+    // reported: the tab bar icons were unreachable from Home. Scoped to the
+    // main-tab level (navOnMainPage()) — reported bug: this used to fire even
+    // inside a settings sheet/chat, silently abandoning it to jump tabs.
+    for (; delta > 0; delta--) navSwitchTab(+1);
+    for (; delta < 0; delta++) navSwitchTab(-1);
+  } else if (pagerKeyboardAltHeld()) {
+    // Inside a nested scrollable screen (settings detail sheet, chat, modal): Alt+turn
+    // free-scrolls the page instead, like a touch drag. The keyboard-nav scroll-into-view
+    // path (navFocusCb's lv_obj_scroll_to_view with LV_ANIM_OFF) doesn't reliably repaint
+    // on this board — confirmed on hardware: focus and blur-to-save side effects reach
+    // fields far down a page, but the glass keeps showing the old scroll position.
+    // navScrollFocused()'s ANIMATED lv_obj_scroll_by should sidestep that: LVGL's anim
+    // timer re-invalidates every tick instead of relying on a single one-shot invalidate,
+    // the same reason touch-drag scrolling on the other boards never showed this bug.
+    // After the turn, snap focus to whatever's now nearest the top of the visible
+    // viewport so plain NEXT/PREV resumes from a sane, visible spot instead of a focus
+    // stuck off-glass.
+    const bool scrolled = (delta != 0);
+    lv_obj_t* container = nullptr;
+    for (; delta > 0; delta--) container = navScrollFocused(false);
+    for (; delta < 0; delta++) container = navScrollFocused(true);
+    if (scrolled) {
+      if (!container) container = navNearestScrollableAncestor(lv_group_get_focused(s_nav_group));
+      if (container) navRefocusFirstVisible(container);
+    }
+  } else {
+    for (; delta > 0; delta--) navPushTap(LV_KEY_NEXT);
+    for (; delta < 0; delta++) navPushTap(LV_KEY_PREV);
+  }
+
+  static constexpr uint32_t kLongPressMs = 1000;
+  static bool     s_was_held    = false;
+  static uint32_t s_press_start = 0;
+  static bool     s_long_fired  = false;
+
+  if (held && !s_was_held) {
+    s_press_start = now;
+    s_long_fired  = false;
+  } else if (held && !s_long_fired && (now - s_press_start) >= kLongPressMs) {
+    pagerNavGoBack();   // see pagerNavGoBack() above for the ladder + rationale
+    s_long_fired = true;
+  } else if (!held && s_was_held && !s_long_fired) {
+    // Released before the long-press threshold -> short click, same as a
+    // keyboard Enter: on a focused chat bubble that means the per-message
+    // action menu (navEnterBubble), not a plain ENTER keypress -- mirrors
+    // handleHwKey()'s Enter branch exactly so both inputs agree.
+    if (s_mentionnav_active)        mentionNavConfirm(); // picking a mention: confirm the highlighted one
+    else if (s_accentnav_active)    accentNavConfirm();  // picking an accent: confirm the highlighted one
+    else if (!navEnterBubble())     navPushTap(LV_KEY_ENTER);
+  }
+  s_was_held = held;
+}
+#endif
+
 // Specific popups that float OVER the app drawer / a tab. Used to swallow swipe
 // gestures so they don't leak to the drawer or switch tabs underneath them.
 // Defined OUTSIDE HAS_TDECK_KEYBOARD so the ungated gesture handlers can use it.
@@ -30918,10 +31777,12 @@ static bool anyPopupOpen() { return popupRegistryAny(); }
 static bool hwKeyDismissTopPopup() { return popupRegistryDismissTop(); }
 #endif  // HAS_TDECK_KEYBOARD || HAS_TANMATSU (hwKeyDismissTopPopup)
 
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
-// Keys that act as "close the popup" when no text field is focused. The user
-// picked the easy-to-find corner keys; there's no dedicated Esc on this keyboard.
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+// Keys that act as "close the popup" when no text field is focused.
 static bool isDismissKey(int key) {
+#if defined(HAS_TDECK_KEYBOARD)
+  // The user picked the easy-to-find corner keys; there's no dedicated Esc on
+  // this keyboard.
   switch (key) {
     case 0x08:                       // backspace
     case 0x0D: case 0x0A:            // enter
@@ -30931,6 +31792,14 @@ static bool isDismissKey(int key) {
       return true;
     default: return false;
   }
+#else
+  // The pager's corner letters are real, constantly-typed QWERTY keys (unlike
+  // the T-Deck's sparser layout) -- treating them as "dismiss" would eat normal
+  // typing. Its dismiss key is the rotary encoder's long-press (-> LV_KEY_ESC
+  // via the nav FIFO, see updatePagerEncoder), not a keyboard key.
+  (void)key;
+  return false;
+#endif
 }
 
 // drawerPopupOpen() / anyPopupOpen() are defined just above the
@@ -30945,7 +31814,7 @@ static int tabForKey(int key) {
   (void)key;
   return -1;
 }
-#endif  // HAS_TDECK_KEYBOARD (keyboard helpers; the lock screen below is top-level)
+#endif  // HAS_TDECK_KEYBOARD || HAS_PAGER_KEYBOARD || HAS_M9_KEYBOARD (keyboard helpers; the lock screen below is top-level)
 
 #if CAP_LOCK_SCREEN
 // ---- Lock screen -------------------------------------------------------------
@@ -31171,6 +32040,12 @@ static void lockscreenShow() {
   lv_obj_t* hint = lv_label_create(s_lock_root);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hint, TR("press Volume Down to unlock"));
+#elif defined(HAS_PAGER_KEYBOARD)
+  // Defensive only -- lockscreenShow() is never actually called on this board
+  // today (its callers are all HAS_TDECK_GT911-gated); the pager's own lock
+  // uses the plain off+wake path with no overlay, per updatePagerSpaceHold()/
+  // updatePagerBackspaceUnlockHold(). Kept correct in case that changes.
+  lv_label_set_text(hint, TR("hold Backspace to unlock"));
 #elif defined(HAS_THINKNODE_M9)
   lv_label_set_text(hint, TR("hold the d-pad to unlock"));
 #else
@@ -31209,9 +32084,7 @@ static void serviceLockscreen() {
 }
 #endif  // core lock screen (HAS_TDECK_GT911 || HAS_TANMATSU)
 
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)   // re-enter the keyboard block the lock screen was carved out of
-#if defined(HAS_TDECK_GT911)   // wallpaper picker is SD/SPIFFS-backed -> T-Deck only
-// ---- Lock-screen wallpaper picker (lists JPEGs in internal /lock/ + SD) ----
+#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck (SD/SPIFFS) or pager (SPIFFS only)
 // ---- Notification-sound chooser (Settings -> Sound) ------------------------
 // Tapping a slot button opens a small menu: "Choose .wav from files" (opens the
 // File Manager, exactly like the wallpaper picker; opening a .wav there offers
@@ -31234,7 +32107,7 @@ static void sndMenuBuiltinCb(lv_event_t* e) {
   if (s_snd_btn_lbl[slot] && lv_obj_is_valid(s_snd_btn_lbl[slot]))
     lv_label_set_text(s_snd_btn_lbl[slot], TR("Built-in"));
   sndMenuClose();
-  tdeckPlayNotifySlot(slot);     // preview the built-in chime
+  uiPlaySlot(slot);     // preview the built-in chime
 }
 static void sndMenuFilesCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -31284,8 +32157,9 @@ static void openSoundPickerCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   openSoundMenu((int)(intptr_t)lv_event_get_user_data(e));
 }
-#endif  // HAS_TDECK_GT911 (sound chooser — needs T-Deck's I2S amp)
+#endif  // CAP_SOUND_FILES
 
+// ---- Lock-screen wallpaper picker (lists JPEGs in internal /lock/ + SD) ----
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // wallpaper picker — SD/SPIFFS-backed, board-agnostic
 static lv_obj_t* s_lockwall_picker = nullptr;
 static char s_lockwall_paths[24][TOUCH_LOCK_WALLPAPER_MAXLEN];
@@ -31449,10 +32323,6 @@ static void lockColorChosenCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(TR("Lock text colour set"), 1000);
 }
 #endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (wallpaper picker + lock text colour)
-// The settings-backup import picker below must link on BOTH touch boards (its
-// Import button is not keyboard-gated), so briefly close the enclosing
-// HAS_TDECK_KEYBOARD region here and reopen it right after openBackupPicker().
-#endif  // HAS_TDECK_KEYBOARD — paused for the board-agnostic backup picker
 
 // ---- Settings backup: import file picker ------------------------------------
 // Mirrors the lock-wallpaper picker UX: a full-screen list of *.json files on
@@ -31959,7 +32829,12 @@ static void buildBackupsSettings() {
 // Reopen the HAS_TDECK_KEYBOARD region paused above for the backup picker; it
 // closes at that region's original #endif further below. (The next #if is the
 // original spacebar-countdown guard, now nested one level deeper — harmless.)
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+// Widened to HAS_PAGER_KEYBOARD too: handleHwKey() (defined in this region)
+// is exactly the routing function PagerKeyboard's char stream needs, and
+// every genuinely T-Deck-specific bit inside this range (the spacebar-lock
+// countdown, HAS_TDECK_GT911 touch bits) is already independently re-gated
+// on its own narrower macro, so it stays excluded for the pager regardless.
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD) || defined(HAS_M9_KEYBOARD)
 
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
 // ---- Spacebar lock countdown -------------------------------------------------
@@ -32147,6 +33022,18 @@ if (g_lv.task && g_lv.task->isManualLock()) {
 #else
   // Idle-dimmed (not hard-locked): ignore keys; a touch/click wakes into the UI.
   if (g_lv.task && g_lv.task->isScreenOff()) return;
+#if defined(TLORA_PAGER)
+  // No touch and no trackball on this board: every OTHER input path that resets the
+  // idle timer (touch taps, trackball moves) doesn't exist here, and below this point
+  // a keypress only calls noteUserInput() when it lands in a focused field, dismisses
+  // a popup, or matches a tab hotkey -- tabForKey() no longer maps any letters (tab
+  // jumps moved to the trackball-only programmable hotkeys) and isDismissKey() always
+  // returns false on this full QWERTY, so with no field focused EVERY key silently
+  // no-op'd here and the idle timer kept counting down while the user was actively
+  // pressing keys (reported bug: screen dims after ~30s despite keyboard input).
+  if (g_lv.task) g_lv.task->noteUserInput();
+  noteKbActivity();   // any key counts as activity for the keyboard-backlight auto mode too
+#endif
 #endif  // HAS_M9_KEYBOARD (wake-from-idle if/else)
 #if defined(HAS_TDECK_KEYBOARD) && defined(TDECK_KEYCODE_PROBE)
   // TEMP bring-up probe: toast the raw byte of every key so we can see what the
@@ -32165,12 +33052,26 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   // The on-screen keyboard is never shown on the T-Deck, but a textarea is still
   // bound to it on focus — that binding is our target.
   lv_obj_t* ta_focused = lv_keyboard_get_textarea(g_lv.keyboard);
-#if CAP_KEYPAD_NAV
+#if CAP_KEYPAD_NAV && !defined(TLORA_PAGER)
   // Edit mode (keyboard-nav ON only): a focused field becomes the typing target after
   // select/Enter (below) — until then `ta` is null so the nav keys navigate. With
   // keyboard-nav OFF there is no navigation to protect (and no nav group to set the edit
   // flag), so a focused field always types directly — otherwise typing breaks entirely.
+  // (Excludes the pager: it has no s_kbd_nav concept — see its own arm below.)
   lv_obj_t* ta = (ta_focused && (!s_kbd_nav || s_nav_ta_editing)) ? ta_focused : nullptr;
+#elif defined(TLORA_PAGER)
+  // showKb() binds the composer to g_lv.keyboard as soon as a chat panel
+  // opens and leaves it bound even after nav focus moves to another widget
+  // in the same panel (e.g. the quick-reply/emoji icon) -- treating "a field
+  // is bound" as "we're editing a field" then routes Enter into the
+  // composer's submit/newline handling below instead of activating whatever
+  // is actually focused. Only count as editing when nav focus is really ON
+  // that field (mirrors CAP_TRACKBALL's s_kbd_nav/s_nav_ta_editing check
+  // above). Reported bug: the rotary encoder's short click opened the
+  // quick-reply/emoji picker (it bypasses this function entirely, sending
+  // LV_KEY_ENTER straight into the focus group via navPushTap()), but Enter
+  // on the keyboard did not.
+  lv_obj_t* ta = (ta_focused && s_nav_group && lv_group_get_focused(s_nav_group) == ta_focused) ? ta_focused : nullptr;
 #else
   lv_obj_t* ta = ta_focused;
 #endif
@@ -32178,7 +33079,80 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   if (m9HandleArrowKey(key, ta)) return;    // ← runs BEFORE the if(!ta) split
 #endif
   if (!ta) {
-#if CAP_KEYPAD_NAV
+#if defined(TLORA_PAGER)
+    // No field is bound to the on-screen keyboard, so nav focus is on a plain
+    // widget (button/switch/list row). Enter = the same "submit/click" the
+    // encoder's short click also sends via navPushTap(LV_KEY_ENTER) --
+    // works during the setup wizard too, matching encoder parity (hence
+    // ahead of the s_setup_root check below). EXCEPT on a focused chat
+    // bubble, which has no touch/trackball to long-press here -- Enter opens
+    // the same Ack/Mention/Copy/Info/Block action menu instead (navEnterBubble,
+    // shared with Tanmatsu's identical Enter-on-bubble handling, and with the
+    // encoder's own short click in updatePagerEncoder() -- both inputs agree).
+    if (key == 0x0D) {
+      if (!navEnterBubble()) navPushTap(LV_KEY_ENTER);
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
+    }
+    // Jump to latest: this board has no touch to tap the floating "scroll to
+    // bottom" circle (LvChatPanel::jump_btn) that appears once you've
+    // scrolled up in a chat, so a plain Backspace tap does the same jump +
+    // hide the T-Deck's own jumpToLatestCb() does on click (mirrors the
+    // Tanmatsu F6 hardware-key handler above, plus the hide step that one is
+    // missing). Only intercepted while the button is actually showing, so a
+    // Backspace tap at the bottom of the chat (or outside a chat) still falls
+    // through to its normal no-op / hold-to-back behavior below. Also moves
+    // nav focus to the composer -- without touch, nav focus was left sitting
+    // on whichever message bubble was focused pre-jump, so typing a reply
+    // right after catching up meant first navigating there manually.
+    if (key == 0x08) {
+      LvChatPanel* cp = navOpenChatPanel();
+      if (cp && cp->msgs && cp->jump_btn && !lv_obj_has_flag(cp->jump_btn, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_scroll_to_y(cp->msgs, LV_COORD_MAX, LV_ANIM_ON);
+        lv_obj_add_flag(cp->jump_btn, LV_OBJ_FLAG_HIDDEN);
+        if (cp->composer_ta && lv_obj_is_valid(cp->composer_ta)) {
+          lv_group_focus_obj(cp->composer_ta);
+          s_nav_show = true;
+        }
+        if (g_lv.task) g_lv.task->noteUserInput();
+        return;
+      }
+    }
+    // Slider nudge: this board has no touch/trackball to drag a slider's
+    // knob, so a focused lv_slider (Control Center brightness, a Settings
+    // slider, the Map zoom bar, …) is otherwise stuck at whatever value it
+    // opened with. Q/E reuse navMoveDir()'s existing slider-capture branch
+    // (proportional ~20-presses-end-to-end step, live update + persist) —
+    // the same adjustment the T-Deck trackball's LEFT/RIGHT already does —
+    // rather than a fixed step that's wrong for every slider's range. (Was
+    // D/F; moved to Q/E to free up WASD for map panning below.)
+    if (key == 'q' || key == 'Q' || key == 'e' || key == 'E') {
+      lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+      if (focused && lv_obj_check_type(focused, &lv_slider_class)) {
+        navMoveDir((key == 'e' || key == 'E') ? NAV_RIGHT : NAV_LEFT);
+        return;
+      }
+    }
+    // Map pan: WASD moves the map around on the Map tab (no touch/trackball
+    // to drag it), reusing the same mapNudge() step/re-render Tanmatsu's
+    // Ctrl+Arrow already uses. W=north A=west S=south D=east.
+    if ((key == 'w' || key == 'W' || key == 'a' || key == 'A' ||
+         key == 's' || key == 'S' || key == 'd' || key == 'D') &&
+        getActiveTab() == MAP_TAB_INDEX) {
+      switch (key) {
+        case 'w': case 'W': mapNudge(0); break;
+        case 's': case 'S': mapNudge(1); break;
+        case 'a': case 'A': mapNudge(2); break;
+        case 'd': case 'D': mapNudge(3); break;
+      }
+      return;
+    }
+#endif
+#if CAP_TRACKBALL || defined(HAS_THINKNODE_M9)
+    // A field is focused but we're in navigate mode: select/Enter starts editing it, so the
+    // letter-nav keys keep navigating until you explicitly enter the field (matches navPump).
+    // navFocusedTextarea() (nav-group focus), not the local ta_focused (kbd-bound field): the
+    // two can differ, and M9 needs the nav-group's own view of what's focused here.
     if (navFocusedTextarea() && s_kbd_nav && (key == '\r' || key == '\n' || navDirForKey(key) == 4)) {
       s_nav_ta_editing = true;
       if (g_lv.task) g_lv.task->noteUserInput();
@@ -32263,6 +33237,36 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     return;
   }
   txtMenuHide();   // any keypress while editing dismisses an open edit menu
+#if defined(TLORA_PAGER)
+  // Accent-variant / @-mention popups (issues #22, #42) are otherwise
+  // unreachable here: no touch, and their cells are NAV_SKIP_FLAG by design
+  // (touch boards pick them by tap). The rotary encoder walks the highlighted
+  // cell (updatePagerEncoder()); Enter (the encoder's own click) confirms;
+  // Backspace cancels without touching the text that triggered it.
+  //
+  // The @-mention list grabs the encoder the INSTANT it appears (set in
+  // mentionBoxMaybeShow()) -- it only shows up after the user has deliberately
+  // typed "@partial" looking for someone, so there's no ongoing-typing to
+  // protect. The accent box is different: it pops up after almost every
+  // vowel/consonant typed, so stealing focus immediately would swallow normal
+  // typing -- it stays passive until explicitly armed with Fn(Alt)+Space.
+  if (s_mentionnav_active) {
+    if (key == 0x08 || key == 0x7F) { mentionBoxHide(); return; }
+    if (key == 0x0D)                { mentionNavConfirm(); return; }
+    return;   // swallow everything else while picking (typing, etc.)
+  }
+  if (s_accentnav_active) {
+    if (key == 0x08 || key == 0x7F) { accentBoxHide(); return; }
+    if (key == 0x0D)                { accentNavConfirm(); return; }
+    return;   // swallow everything else while picking (typing, etc.)
+  }
+  if (key == ' ' && pagerKeyboardAltHeld() && s_accbox) {
+    s_accentnav_active = true;
+    s_accentnav_idx = 0;
+    accentNavRestyle();
+    return;
+  }
+#endif
 #if defined(HAS_M9_KEYBOARD)
   // M9 has a dedicated hardware Back key — unlike the CAP_TRACKBALL board's backspace-on-
   // empty-field escape below, this doesn't require emptying the field first: Back always
@@ -32330,7 +33334,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // goes through hideKb(); this covers the physical-keyboard Enter.
     accentBoxHide();
     mentionBoxHide();
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
     if (s_editor_ta && ta == s_editor_ta) {
       lv_textarea_add_char(ta, '\n');   // multiline editor: Enter inserts a newline
     } else if (s_term_input_ta && s_kb_bind_ta == s_term_input_ta) {
@@ -32366,7 +33370,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
 #endif
       }
     } else {
-#if CAP_KEYPAD_NAV
+#if CAP_KEYPAD_NAV && !defined(TLORA_PAGER)
       // Keyboard/d-pad nav: Enter in a generic field ADVANCES rather than submits — with
       // multiple fields on one page (e.g. the wizard's Wi-Fi step: SSID + password) there's
       // no single "the field" to submit from, so Enter walks the focus group forward one
@@ -33070,7 +34074,21 @@ static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
 // ---- Display backlight brightness (PWM on PIN_TFT_LEDA_CTL, active-high) ----
 // Both touch boards expose PIN_TFT_LEDA_CTL (T-Deck + Heltec V4 TFT), so the
 // brightness slider is available on both.
-#if defined(PIN_TFT_LEDA_CTL) && (PIN_TFT_LEDA_CTL >= 0)
+#if defined(TLORA_PAGER)
+// The pager ALSO defines PIN_TFT_LEDA_CTL (=42, for naming consistency across
+// boards — see platformio.ini), but that pin drives the AW9364's pulse-counted
+// stepped dimmer, not a PWM-capable pin — the #if below would drive nonsense
+// pulse timing into it via ledcAttachPin/ledcWrite. Must come before that
+// check. ST7796LCDDisplay already owns the real AW9364 protocol.
+#define HAS_CC_BRIGHTNESS 1
+static uint8_t s_brightness_pct = 100;
+static void applyBrightness(uint8_t pct) {
+  if (pct < 5)   pct = 5;
+  if (pct > 100) pct = 100;
+  s_brightness_pct = pct;
+  display.setBrightness(pct);
+}
+#elif defined(PIN_TFT_LEDA_CTL) && (PIN_TFT_LEDA_CTL >= 0)
 #define HAS_BACKLIGHT_PWM 1
 #define HAS_CC_BRIGHTNESS 1
 static uint8_t s_brightness_pct = 100;
@@ -33263,6 +34281,14 @@ static void openControlCenter() {
   lv_obj_set_size(card, card_w, 384);   // bigger: header + 3 roomier sliders + toggle grid + sysinfo
 #elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   lv_obj_set_size(card, card_w, 200);   // sysinfo + thin brightness slider + 2-row toggle grid (fits 240−22 screen)
+#elif defined(TLORA_PAGER)
+  // 222-px-tall screen: the shared V4/T-Deck-landscape 212px card below is
+  // tuned for a 240px-tall screen (212 + the card's own 4px y-offset = 216,
+  // fits under a 218px root there) -- on the pager's shorter 222px screen that
+  // same card overflows the 200px root by 16px, pushing the toggle row/sysinfo
+  // text off the bottom of the physical display. Size from the actual
+  // available height instead of the shared constant, with a small margin.
+  lv_obj_set_size(card, card_w, sh - STATUSBAR_H - 4 - 6);
 #else
   // Portrait has headroom on the 320-tall screen; make the card taller so the
   // brightness slider + toggles + sysinfo all get their own rows.
@@ -33499,8 +34525,10 @@ static void openControlCenter() {
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_row(row, 4, LV_PART_MAIN);
 #else
-  // V4: up to 5 chips (Wi-Fi/BT/GPS/Theme/Sound) in one row, sized to fit width.
-  // WRAP as a safety net so they never overflow the (narrow, in portrait) card.
+  // V4/pager: up to 6 chips (Wi-Fi/BT/GPS/Theme/Keyboard/Sound) in one row,
+  // sized to fit width (chip width is computed from the actual count below,
+  // not hardcoded, since which chips appear varies per board). WRAP as a
+  // safety net so they never overflow the (narrow, in portrait) card.
   lv_obj_set_size(row, card_w - 20, 54);
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_column(row, 5, LV_PART_MAIN);
@@ -33510,8 +34538,8 @@ static void openControlCenter() {
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
   const bool gps_on = g_lv.task && g_lv.task->getGPSState();
-  // T-Deck: chips in a 2-row grid. V4: up to 5 chips sized to fit the card width
-  // with even gaps (5 chips + 4 gaps across the content width).
+  // T-Deck: chips in a 2-row grid. V4/pager: chips sized to fit the card width
+  // with even gaps, divisor derived from the actual chip count below.
   int tw = 66, th = 54;
 #if defined(HAS_TANMATSU)
   tw = (card_w - 20 - 20) / 3;   // 3 chips per row (Wi-Fi/BT/GPS/Theme/Keys/Sound → 2×3 grid)
@@ -33520,7 +34548,21 @@ static void openControlCenter() {
 #elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   tw = 58; th = 36;
 #else
-  tw = (card_w - 20 - 4 * 5) / 5;   // 5 chips (Wi-Fi/BT/GPS/Theme/Sound) + 4 gaps
+  // Count only the chips this board/session will actually add below, so the
+  // width doesn't assume a fixed chip count -- which chips appear varies per
+  // board (V4 has no Keyboard chip; only HAS_UI_SOUND boards get a Sound
+  // chip), so a hardcoded divisor silently overflows this row and wraps
+  // extra chips onto a clipped 2nd line under the fixed 54px height.
+  int chip_count = 2;   // Wi-Fi, Theme always shown
+  if (!g_lv.task || g_lv.task->hasBleCapability()) chip_count++;   // BT
+  chip_count++;   // GPS (toggle or info-only, always shown)
+#if CAP_KEYBOARD
+  chip_count++;
+#endif
+#if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
+  chip_count++;
+#endif
+  tw = (card_w - 20 - 5 * (chip_count - 1)) / chip_count;   // 5px gap, matches row's pad_column above
   if (tw > 76) tw = 76;
 #endif
   // Each chip: tap = toggle, long-press = jump to that feature's settings page
@@ -33816,7 +34858,7 @@ static void appTileCb(lv_event_t* e) {
 #if defined(HAS_TOUCH_UI)
     case APPACT_TERMINAL:  homeTerminalCb(e);    return;
 #endif
-#if CAP_FILESYSTEM
+#if CAP_FILESYSTEM || defined(TLORA_PAGER)
     case APPACT_FILES:     homeFilesCb(e);       return;
 #endif
     default: break;
@@ -33849,6 +34891,7 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_set_style_radius(t, 12, LV_PART_MAIN);
   lv_obj_set_style_bg_color(t, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(t, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_add_flag(t, NAV_ACCENTFOCUS_FLAG);   // keyboard/encoder focus = same accent tint as a touch press
   lv_obj_add_event_cb(t, appTileCb, LV_EVENT_CLICKED, (void*)(intptr_t)act);
 
   // Rounded-square chip (iOS-style squircle), tinted with the app's accent
@@ -34165,7 +35208,7 @@ static void openAppDrawer() {
 #if defined(HAS_TOUCH_UI)
     { ">_",                "Terminal",  APPACT_TERMINAL, 0,         0x3DD27A },      // console green
 #endif
-#if CAP_FILESYSTEM
+#if CAP_FILESYSTEM || defined(TLORA_PAGER)
     { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
 #endif
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // snake game (icon drawn from APPACT_SNAKE, not a glyph)
@@ -35999,6 +37042,7 @@ static void setupWizardClose() {
   if (s_setup_root) { popupClose(&s_setup_root); }
   s_setup_name_ta = nullptr;
   s_setup_region_list = nullptr;
+  s_setup_region_next_btn = nullptr;
   s_setup_ssid_ta = nullptr;
   s_setup_pwd_ta = nullptr;
   if (g_statusbar.root) lv_obj_clear_flag(g_statusbar.root, LV_OBJ_FLAG_HIDDEN);
@@ -36080,6 +37124,9 @@ static void setupFinishCb(lv_event_t* e) {
 static void setupRegionRowCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+#if CAP_KEYPAD_NAV
+  const bool was_already_sel = (idx == s_setup_region_sel);
+#endif
   s_setup_region_sel = idx;
   if (!s_setup_region_list) return;
   const uint32_t n = lv_obj_get_child_cnt(s_setup_region_list);
@@ -36088,6 +37135,21 @@ static void setupRegionRowCb(lv_event_t* e) {
     if (c) lv_obj_set_style_bg_color(
                c, lv_color_hex((int)i == idx ? COLOR_STATUS_OK : 0x1A1B1C), LV_PART_MAIN);
   }
+#if CAP_KEYPAD_NAV
+  // With 20 region presets in this list, walking NEXT one detent at a time past
+  // every remaining row just to reach Next/Back is impractical on a keypad/rotary
+  // -only board (reported: picking a region left no perceived way to advance).
+  // But auto-jumping to Next on the FIRST click (the original fix) moved focus
+  // off the list before the colour change was even visible to confirm which
+  // row got picked (reported: "I couldn't be certain I selected the correct
+  // one"). Two-step now: the first click on a row just selects/recolours it
+  // and focus stays put; only a SECOND click on the row that's ALREADY
+  // selected — an explicit confirm — jumps focus to Next.
+  if (was_already_sel && s_nav_group && s_setup_region_next_btn) {
+    lv_group_focus_obj(s_setup_region_next_btn);
+    s_nav_show = true;
+  }
+#endif
 }
 
 static void setupFillRegionList() {
@@ -36130,6 +37192,7 @@ static void setupShowStep(int step) {
   lv_obj_clean(s_setup_root);
   s_setup_name_ta = nullptr;
   s_setup_region_list = nullptr;
+  s_setup_region_next_btn = nullptr;
   s_setup_ssid_ta = nullptr;
   s_setup_pwd_ta = nullptr;
   s_setup_step = step;
@@ -36183,7 +37246,7 @@ static void setupShowStep(int step) {
     if (s_setup_region_sel < 0) s_setup_region_sel = findMatchingMeshRadioPreset(the_mesh.getNodePrefs());
     setupFillRegionList();
     setupBtn("Back", setupBackCb, false, 12, btn_y, 72);
-    setupBtn("Next", setupRegionNextCb, true, sw - 12 - 120, btn_y, 120);
+    s_setup_region_next_btn = setupBtn("Next", setupRegionNextCb, true, sw - 12 - 120, btn_y, 120);
   } else {
     int y = setupHeader("Wi-Fi & Bluetooth", nullptr, "Step 3 of 3");
     lv_obj_t* m = lv_label_create(s_setup_root);
@@ -40207,6 +41270,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // default rotation is 270 -> we run the UI landscape (logical 800x480) via LVGL sw-rotate.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
+#if defined(TLORA_PAGER)
+    // Panel is native 222x480 portrait; the pager has no touch to reorient with,
+    // so always run landscape via hardware MADCTL rotation (ROT_270 -> panel
+    // rotation 3, same mapping the boot wordmark already uses).
+    s_ui_rotation = LV_DISP_ROT_270;
+#endif
 #if defined(HAS_THINKNODE_M9)
     // M9 is landscape in hardware: boot DISPLAY_ROTATION=1 verified upright on
     // the tester's unit (bring-up #6). Without this override the portrait
@@ -40285,6 +41354,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // touch reports in this same 284x616 logical space.
     g_lv.disp_drv.hor_res  = 284;
     g_lv.disp_drv.ver_res  = 616;
+#elif defined(TLORA_PAGER)
+    // Fixed landscape via hardware MADCTL rotation (like T-Deck/Heltec below),
+    // just a different native panel size — no ui_landscape ternary needed since
+    // this board is never portrait.
+    g_lv.disp_drv.hor_res  = 480;
+    g_lv.disp_drv.ver_res  = 222;
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
@@ -40352,6 +41427,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     tdeckTrackballBegin();
     tdeckTrackballSetRotation(s_ui_rotation);
 #endif
+#if defined(HAS_PAGER_KEYBOARD)
+    pagerKeyboardBegin();
+#endif
+#if defined(HAS_PAGER_ENCODER)
+    pagerEncoderBegin();
+#endif
     // (Audio: the I2S speaker amp is installed on demand per tone — see
     // tdeckPlayNotify — so nothing to set up at boot.)
 
@@ -40360,18 +41441,23 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // nullptr, and creating a child of nullptr was the boot-loop cause.
     buildGlobalStatusBar();
 
-#if defined(HAS_TANMATSU)
-    // No touchscreen: drive the UI with a KEYPAD indev fed by badge-bsp keys, with
-    // a focus group navMaybeRebuild() repopulates per screen.
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+    // No touchscreen: drive the UI with a KEYPAD indev, with a focus group
+    // navMaybeRebuild() repopulates per screen. Tanmatsu feeds it from badge-bsp
+    // keys (navPump, below); the pager feeds it from its own keyboard/encoder
+    // drain in the main loop (mirrors the T-Deck's handleHwKey() path for
+    // typing, plus a small updatePagerEncoder() for focus movement — see loop()).
     s_nav_group = lv_group_create();   // populated per-screen by navMaybeRebuild()/navCollect()
     lv_group_set_focus_cb(s_nav_group, navFocusCb);   // amber focus ring + scroll-into-view
     lv_indev_drv_init(&g_lv.indev_drv);
     g_lv.indev_drv.type    = LV_INDEV_TYPE_KEYPAD;
-    g_lv.indev_drv.read_cb = tanmatsuKeypadRead;
+    g_lv.indev_drv.read_cb = tanmatsuKeypadRead;   // device-neutral: just drains navFifo
     g_lv.indev_drv.disp    = lv_disp_get_default();
     if (lv_indev_t* kp = lv_indev_drv_register(&g_lv.indev_drv)) lv_indev_set_group(kp, s_nav_group);
     else pushDiagLine("LVGL keypad indev failed");
+#if defined(HAS_TANMATSU)
     bsp_input_get_queue(&s_nav_queue);
+#endif
 #else
     // Physical touchscreen indev — skipped in remote mode (the panel is a placeholder;
     // its 320x240 coords would map wrong onto the 480x800 web UI). The web pointer drives it.
@@ -41161,7 +42247,17 @@ static inline void touchPanelSleep(bool) {}
  * Panel RAM survives SLPIN, so wake is near-instant and the previous image is
  * still on the glass when the LED lights back up — no partial re-render. */
 static inline void touchScreenBacklight(bool on) {
-#if defined(HAS_BACKLIGHT_PWM)
+#if defined(TLORA_PAGER)
+  // Also has TFT_BL defined (=-1, disabling TFT_eSPI's own backlight pin
+  // support), which would otherwise fall into the #elif defined(TFT_BL) branch
+  // below and digitalWrite a "-1" pin -- must come first. touchPanelSleep()
+  // has no ST7796-specific implementation (falls to the no-op default below,
+  // same as Tanmatsu), so screen-sleep here is backlight-off only, not a real
+  // panel sleep command -- a known, low-severity gap, not a regression (this
+  // board never had panel-sleep to begin with).
+  if (on) { touchPanelSleep(false); display.setBrightness(s_brightness_pct); }
+  else    { display.setBrightness(0); touchPanelSleep(true); }
+#elif defined(HAS_BACKLIGHT_PWM)
   // Both touch boards drive the backlight via LEDC PWM on PIN_TFT_LEDA_CTL once
   // applyBrightness() has claimed the pin at boot. A plain digitalWrite would
   // then be a no-op (on the V4, TFT_BL == PIN_TFT_LEDA_CTL == GPIO21), so drive
@@ -41901,7 +42997,18 @@ void UITask::loop() {
 #else   // Generic: Heltec V4 -- short press toggles screen + lock
     if (v == LOW && s_user_btn_prev == HIGH) {
       if (_screen_off) {
+#if defined(TLORA_PAGER)
+        /* Pager only: hard-locked means BOOT is a no-op -- holding Backspace
+         * is the deliberate unlock gesture (updatePagerBackspaceUnlockHold).
+         * A plain idle-dimmed (not manually locked) screen still wakes on
+         * BOOT exactly as before. NOT applied to the V4 below (#else of this
+         * #if), which has no keyboard -- BOOT is its only lock/unlock control
+         * and must keep instantly unlocking it. */
+        if (!_manual_lock) wakeScreen();
+#else
+        /* wakeScreen() clears _manual_lock so subsequent touches work. */
         wakeScreen();
+#endif
       } else {
         touchScreenBacklight(false);
         setCpuForScreen(false);
@@ -42081,7 +43188,7 @@ void UITask::loop() {
     else if (g_lv.ch.detail_open) jumpBtnsSetDim(&g_lv.ch, true);
     else                          s_jump_dimmed = true;   // nothing open: park the state
   }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // microSD insert/remove detection — only while the file manager is open, so
   // there's no idle SPI traffic. SD.begin runs on this loop task (never
   // concurrent with the radio's SPI), and reuses the radio's already-begun bus.
@@ -42146,6 +43253,8 @@ void UITask::loop() {
   }
 #if CAP_TRACKBALL
   updateTrackball(now);
+#elif defined(HAS_PAGER_ENCODER)
+  updatePagerEncoder(now);
 #endif
 #if defined(HAS_TDECK_KEYBOARD)
   // Drain physical-keyboard presses buffered by the touch task into the field.
@@ -42186,6 +43295,53 @@ void UITask::loop() {
   tdeckKeyboardSetBacklight(kb_bl);
   serviceLockscreen();            // refresh the lock-screen clock on minute roll-over
   serviceLockingCountdown(now);   // advance / fire the spacebar "Locking…" countdown
+#elif defined(HAS_PAGER_KEYBOARD)
+  // No separate core-0 touch task to own the I2C bus (no touch at all), so poll
+  // and drain right here, once per tick. Space press-and-hold locks the screen
+  // (updatePagerSpaceHold); Backspace press-and-hold unlocks it again
+  // (updatePagerBackspaceUnlockHold) -- the latter must run unconditionally,
+  // BEFORE the isScreenOff() split below, since it has to keep working while
+  // the screen is dark. updatePagerKbBacklight() is the same story -- it has
+  // to force the backlight dark the instant the screen goes off/locked, so it
+  // runs unconditionally too, rather than being skipped like the awake-only
+  // helpers in the else branch below.
+  pagerKeyboardPoll();
+  updatePagerBackspaceUnlockHold(now);
+  updatePagerKbBacklight(now);
+  if (g_lv.task && g_lv.task->isScreenOff()) {
+    // Same rationale as updatePagerEncoder(): no touch/trackball wake path on
+    // this board, so a keypress while idle-dimmed just wakes the screen
+    // instead of being silently swallowed (which is what handleHwKey()'s own
+    // isScreenOff() guard does on every other board -- fine there since they
+    // always have touch or the trackball to wake with instead). Drain the
+    // whole batch so nothing queued here leaks through as real input on the
+    // very next tick right after waking.
+    bool any = false;
+    for (int kbi = 0; kbi < 12; ++kbi) {
+      if (pagerKeyboardReadKey() <= 0) break;
+      any = true;
+    }
+    // Discard any Alt tap / Alt+Shift / Alt+Backspace chord picked up while
+    // idle-dimmed -- none of them may fire (NEXT / Caps toggle / jump Home)
+    // the instant the screen wakes.
+    pagerKeyboardConsumeAltTap();
+    pagerKeyboardConsumeAltShiftChord();
+    pagerKeyboardConsumeAltBackspaceChord();
+    // Hard-locked: an ordinary keypress must NOT wake/unlock -- only holding
+    // Backspace does (updatePagerBackspaceUnlockHold, already polled above).
+    if (any && !g_lv.task->isManualLock()) g_lv.task->wakeScreen();
+  } else {
+    for (int kbi = 0; kbi < 12; ++kbi) {
+      int key = pagerKeyboardReadKey();
+      if (key <= 0) break;
+      handleHwKey(key);
+    }
+    updatePagerAltTapNext();
+    updatePagerAltShiftChord();
+    updatePagerAltBackspaceChord();
+    updatePagerBackspaceHold(now);
+    updatePagerSpaceHold(now);
+  }
 #elif defined(HAS_M9_KEYBOARD)
   // M9's keyboard controller is on its OWN bus (Wire1) — no touch task shares
   // it, so polling happens right here on the UI thread rather than from a
@@ -42405,6 +43561,10 @@ void UITask::loop() {
 #if defined(HAS_TANMATSU)
   navMaybeRebuild();   // keep the keyboard-nav focus group in sync with the visible screen
   navPump();           // drain bsp keys: queue focus moves, type straight into focused fields
+#elif defined(TLORA_PAGER)
+  // No touch fallback here either (like Tanmatsu) -- nav is always on, just fed
+  // from the keyboard/encoder drain above instead of a bsp queue.
+  navMaybeRebuild();
 #elif CAP_KEYPAD_NAV
   // Keep the focus group synced whenever EITHER nav mode is active: the keyboard ESDFX nav
   // (T-Deck) / d-pad nav (M9) fed by handleHwKey, or the trackball D-pad nav (fed by
@@ -42542,12 +43702,12 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_local_sensors_root),    []{ closeLocalSensorsPage(); },      PF_COUNT },   // was in no registry at all
 #endif
   { P_OPEN(s_siginfo_root),          []{ closeSigInfoPopup(); },          PF_COUNT },
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER)
   { P_OPEN(s_fm_img_root),           []{ fmImageClose(); },               PF_COUNT },
   { P_OPEN(s_editor_root),           []{ fmEditorClose(); },              PF_COUNT },
   { P_OPEN(s_fm_prompt),             []{ fmPromptClose(); },              PF_COUNT },
   { P_OPEN(s_fm_actions),            []{ fmCloseActions(); },             PF_COUNT },
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   { P_OPEN(s_fm_snd_root),           []{ fmSndClose(); },                 PF_COUNT },   // was in no registry at all
 #endif
   { P_OPEN(s_fm_fmt_overlay),        nullptr,                             PF_COUNT },   // format progress: block keys, not dismissable
