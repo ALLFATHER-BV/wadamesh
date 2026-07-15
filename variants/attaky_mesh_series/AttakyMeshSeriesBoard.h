@@ -14,6 +14,11 @@ class AttakyMeshSeriesBoard : public ESP32Board {
 
 protected:
   float adc_mult = ADC_MULTIPLIER;
+  // MAX17048 fuel-gauge readout cache: getBattMilliVolts() is polled from the UI
+  // render / mesh-telemetry path, so the actual I2C read is throttled to ~2 s and
+  // the last value is served in between (0 = not yet read).
+  uint16_t batt_cache_mv = 0;
+  uint32_t batt_last_ms  = 0;
 
 public:
   AttakyMeshSeriesBoard() { }

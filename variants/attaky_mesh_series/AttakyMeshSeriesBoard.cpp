@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "AttakyMeshSeriesBoard.h"
+#include "AttakySharedI2C.h"
 #include <SPI.h>
+#include <Wire.h>
+
+#define MAX17048_ADDR        0x36
+#define MAX17048_REG_VCELL   0x02
 
 void AttakyMeshSeriesBoard::begin() {
     ESP32Board::begin();
+
+    attakyI2cInit();
 
     esp_reset_reason_t reason = esp_reset_reason();
     if (reason == ESP_RST_DEEPSLEEP) {
@@ -54,9 +61,25 @@ void AttakyMeshSeriesBoard::begin() {
     enterDeepSleep(0);
   }
 
-  // Replaced by the MAX17048 implementation in the peripheral commit.
+  // MAX17048 VCELL is 78.125 uV/LSB.
   uint16_t AttakyMeshSeriesBoard::getBattMilliVolts()  {
-    return 4000;
+    uint32_t now = millis();
+    if (batt_cache_mv != 0 && (uint32_t)(now - batt_last_ms) < 2000) return batt_cache_mv;
+    if (!attakyI2cLock(30)) return batt_cache_mv ? batt_cache_mv : 4000;
+    uint16_t raw = 0;
+    bool ok = false;
+    Wire.beginTransmission(MAX17048_ADDR);
+    Wire.write(MAX17048_REG_VCELL);
+    if (Wire.endTransmission(false) == 0 && Wire.requestFrom((int)MAX17048_ADDR, 2) == 2) {
+      raw = ((uint16_t)Wire.read() << 8) | Wire.read();
+      ok = true;
+    }
+    attakyI2cUnlock();
+    if (ok) {
+      batt_cache_mv = (uint16_t)(((uint32_t)raw * 5) / 64);
+      batt_last_ms  = now;
+    }
+    return batt_cache_mv ? batt_cache_mv : 4000;
   }
 
   const char* AttakyMeshSeriesBoard::getManufacturerName() const {

@@ -6,6 +6,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include "AttakySharedI2C.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <helpers/ui/MomentaryButton.h>
@@ -140,12 +141,14 @@ static void mapTouchToDisplay(uint16_t in_x, uint16_t in_y, uint16_t* out_x, uin
 }
 
 static bool i2c_read_reg(uint8_t addr, uint8_t reg, uint8_t* buf, uint8_t n) {
+  if (!attakyI2cLock(20)) return false;
   Wire.beginTransmission(addr);
   Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.endTransmission(false) != 0) { attakyI2cUnlock(); return false; }
   uint8_t got = Wire.requestFrom((int)addr, (int)n);
-  if (got != n) return false;
+  if (got != n) { attakyI2cUnlock(); return false; }
   for (uint8_t i = 0; i < n; i++) buf[i] = Wire.read();
+  attakyI2cUnlock();
   return true;
 }
 
@@ -154,10 +157,13 @@ static bool aw9523_read(uint8_t reg, uint8_t* val) {
 }
 
 static bool aw9523_write(uint8_t reg, uint8_t val) {
+  if (!attakyI2cLock(20)) return false;
   Wire.beginTransmission(AW9523_ADDR);
   Wire.write(reg);
   Wire.write(val);
-  return Wire.endTransmission() == 0;
+  bool ok = (Wire.endTransmission() == 0);
+  attakyI2cUnlock();
+  return ok;
 }
 
 static bool aw9523_set_bit(uint8_t reg, uint8_t bitmask, bool set) {
@@ -206,11 +212,7 @@ bool heltecV4CapTouchBegin() {
   s_init_attempted = true;
   s_last_init_try_ms = now;
 
-  // Bound the shared bus so a missing peripheral cannot stall startup.
-  Wire.begin(PIN_BOARD_SDA, PIN_BOARD_SCL, 400000);
-#if defined(ESP32)
-  Wire.setTimeOut(20);
-#endif
+  attakyI2cInit();
 
   ft6636_hw_reset();
 
@@ -225,10 +227,13 @@ bool heltecV4CapTouchBegin() {
   s_vendor_id = vid;
   s_present = true;
 
-  Wire.beginTransmission(FT6636_ADDR);
-  Wire.write(FT6636_REG_MODE);
-  Wire.write((uint8_t)0x00);
-  Wire.endTransmission();
+  if (attakyI2cLock(20)) {
+    Wire.beginTransmission(FT6636_ADDR);
+    Wire.write(FT6636_REG_MODE);
+    Wire.write((uint8_t)0x00);
+    Wire.endTransmission();
+    attakyI2cUnlock();
+  }
 
   snprintf(s_debug, sizeof(s_debug), "FT6636 ok (vid=0x%02X)", vid);
   s_init_ok = true;
