@@ -1,0 +1,24 @@
+# beta_45 (TEST) - three new boards (LilyGo T-LoRa Pager, LilyGo T-Display P4, Heltec V4-R8), plus fixes.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Community ---
+Big thanks to @codemonkeybr, who contributed the entire LilyGo T-LoRa Pager port this cycle.
+
+# --- New board: LilyGo T-LoRa Pager (by @codemonkeybr, PR #149) ---
+New board: the LilyGo T-LoRa Pager (ESP32-S3) - a QWERTY-keyboard handheld with a rotary encoder and no touchscreen. The whole UI is driven from the keyboard and the encoder, both radio variants are supported (LR1121 and SX1262), and everything was verified on real hardware against a live mesh.
+Pager controls: the rotary encoder scrolls and its click opens menus; a universal back gesture, screen lock, keyboard backlight modes, an accent-character picker and an @-mention picker are all keyboard/encoder driven. There is a full shortcut reference on the site.
+
+# --- New board: LilyGo T-Display P4 ---
+New board: the LilyGo T-Display P4 (ESP32-P4) - an AMOLED touchscreen handheld. Early port, marked "partially supported": LoRa mesh, chat, the map, GPS and the phone-app companion over Wi-Fi/USB all work. Bluetooth pairing is not available on this board (a limitation of its stock radio-coprocessor firmware); pair over Wi-Fi or USB instead.
+T-Display P4: screen brightness and notification sound now work and have Control-Center sliders, and the browser-based screen mirror / remote apps work over Wi-Fi.
+
+# --- New board: Heltec V4-R8 ---
+New board: the Heltec WiFi LoRa 32 V4-R8 (8 MB PSRAM) with the Expansion Kit V2 (microSD). Marked "partially supported" while it finishes hardware testing.
+
+# --- Fixed ---
+Heltec V4-R8: fixed random hard-freezes that needed a reset - the touch controller was sharing I2C pins with the clock and sensors in a way that could wedge the bus. It no longer does.
+Tanmatsu (and other keyboard-only boards): you can now select and edit the Wi-Fi network name and password fields in Wi-Fi settings - the join screen's fields were previously unreachable with the keyboard.
+T-Display P4: the clock now sets itself over Wi-Fi even where NTP is blocked, and won't get stuck on a bad date reported by the hardware clock.
+
+# --- Also ---
+The flasher site now shows a support badge on every board (fully vs partially supported); hover it for what works.

@@ -32,20 +32,25 @@ os.makedirs(outdir, exist_ok=True)
 with open(os.path.join(outdir, "version.json"), "w") as f:
     json.dump({"tag": tag, "channel": channel, "notes": notes}, f, indent=2)
 
+# manifest filename -> (display name, merged-bin filename, chipFamily).
+# chipFamily is ESP32-S3 for every board except the P4-class T-Display P4.
 BOARDS = {
-    "manifest-tdeck.json":         ("wadamesh — LilyGo T-Deck", "wadamesh-tdeck-merged.bin"),
-    "manifest-heltec-v4-tft.json": ("wadamesh — Heltec V4 TFT", "wadamesh-heltec-v4-tft-merged.bin"),
-    "manifest-thinknode-m9.json":  ("wadamesh — ThinkNode M9", "wadamesh-thinknode-m9-merged.bin"),
-    "manifest-rak-tap-v2.json":    ("wadamesh — RAK WisMesh Tap V2", "wadamesh-rak-tap-v2-merged.bin"),
-    "manifest-heltec-v4-r8-tft.json": ("wadamesh — Heltec V4-R8 (experimental)", "wadamesh-heltec-v4-r8-tft-merged.bin"),
+    "manifest-tdeck.json":            ("wadamesh — LilyGo T-Deck", "wadamesh-tdeck-merged.bin", "ESP32-S3"),
+    "manifest-heltec-v4-tft.json":    ("wadamesh — Heltec V4 TFT", "wadamesh-heltec-v4-tft-merged.bin", "ESP32-S3"),
+    "manifest-thinknode-m9.json":     ("wadamesh — ThinkNode M9", "wadamesh-thinknode-m9-merged.bin", "ESP32-S3"),
+    "manifest-rak-tap-v2.json":       ("wadamesh — RAK WisMesh Tap V2", "wadamesh-rak-tap-v2-merged.bin", "ESP32-S3"),
+    "manifest-heltec-v4-r8-tft.json": ("wadamesh — Heltec V4-R8 (experimental)", "wadamesh-heltec-v4-r8-tft-merged.bin", "ESP32-S3"),
+    "manifest-tlora-pager-lr1121.json": ("wadamesh — LilyGo T-LoRa Pager (LR1121)", "wadamesh-tlora-pager-lr1121-merged.bin", "ESP32-S3"),
+    "manifest-tlora-pager-sx1262.json": ("wadamesh — LilyGo T-LoRa Pager (SX1262)", "wadamesh-tlora-pager-sx1262-merged.bin", "ESP32-S3"),
+    "manifest-tdisplay-p4.json":      ("wadamesh — LilyGo T-Display P4", "wadamesh-tdisplay-p4-merged.bin", "ESP32-P4"),
 }
-for fn, (name, binf) in BOARDS.items():
+for fn, (name, binf, chip) in BOARDS.items():
     manifest = {
         "name": name + ("" if channel == "stable" else " (beta)"),
         "version": tag,
         "new_install_prompt_erase": True,
         "builds": [{
-            "chipFamily": "ESP32-S3",
+            "chipFamily": chip,
             # Point at the IMMUTABLE per-tag bin, NOT the rolling feed bin. The feed
             # *.bin URLs are stable filenames cached 4h and overwritten in place, so
             # for up to 4h after a release the flasher could hand out the PREVIOUS
