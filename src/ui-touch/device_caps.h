@@ -118,6 +118,16 @@
   #define CAP_OTA          1   // standalone dual-OTA app
   #define CAP_LOCK_SCREEN  1
 
+#elif defined(ATTAKY_MESH_SERIES)
+  #define CAP_TOUCH        1
+  #define CAP_ROTATABLE    0
+  #define CAP_LARGE_SCREEN 0
+  #define CAP_SD           0
+  #define CAP_FILESYSTEM   0
+  #define CAP_GPS          1
+  #define CAP_OTA          1
+  #define CAP_LOCK_SCREEN  0
+
 #else                                    // ===== Heltec V4 TFT (default) =====
   #define CAP_TOUCH        1   // capacitive touch panel
   #define CAP_ROTATABLE    1   // user can flip portrait/landscape

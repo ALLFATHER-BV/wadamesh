@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include "AttakyMeshSeriesBoard.h"
+#include <SPI.h>
+
+void AttakyMeshSeriesBoard::begin() {
+    ESP32Board::begin();
+
+    esp_reset_reason_t reason = esp_reset_reason();
+    if (reason == ESP_RST_DEEPSLEEP) {
+      long wakeup_source = esp_sleep_get_ext1_wakeup_status();
+      if (wakeup_source & (1 << P_LORA_DIO_1)) {
+        startup_reason = BD_STARTUP_RX_PACKET;
+      }
+
+      rtc_gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+      rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
+    }
+
+    // The global-SPI display path does not initialize the bus.
+#if defined(PIN_TFT_LEDA_CTL) && (PIN_TFT_LEDA_CTL >= 0)
+    pinMode(PIN_TFT_LEDA_CTL, OUTPUT);
+    digitalWrite(PIN_TFT_LEDA_CTL, HIGH);
+#endif
+    SPI.begin(PIN_TFT_SCL, -1, PIN_TFT_SDA, PIN_TFT_CS);
+  }
+
+  void AttakyMeshSeriesBoard::onBeforeTransmit(void) { }
+
+  void AttakyMeshSeriesBoard::onAfterTransmit(void) { }
+
+  void AttakyMeshSeriesBoard::enterDeepSleep(uint32_t secs, int pin_wake_btn) {
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+
+    rtc_gpio_set_direction((gpio_num_t)P_LORA_DIO_1, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pulldown_en((gpio_num_t)P_LORA_DIO_1);
+
+    rtc_gpio_hold_en((gpio_num_t)P_LORA_NSS);
+
+    if (pin_wake_btn < 0) {
+      esp_sleep_enable_ext1_wakeup( (1L << P_LORA_DIO_1), ESP_EXT1_WAKEUP_ANY_HIGH);
+    } else {
+      esp_sleep_enable_ext1_wakeup( (1L << P_LORA_DIO_1) | (1L << pin_wake_btn), ESP_EXT1_WAKEUP_ANY_HIGH);
+    }
+
+    if (secs > 0) {
+      esp_sleep_enable_timer_wakeup(secs * 1000000);
+    }
+
+    esp_deep_sleep_start();
+  }
+
+  void AttakyMeshSeriesBoard::powerOff()  {
+    enterDeepSleep(0);
+  }
+
+  // Replaced by the MAX17048 implementation in the peripheral commit.
+  uint16_t AttakyMeshSeriesBoard::getBattMilliVolts()  {
+    return 4000;
+  }
+
+  const char* AttakyMeshSeriesBoard::getManufacturerName() const {
+    return "Attaky Core";
+  }

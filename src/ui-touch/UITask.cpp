@@ -41305,6 +41305,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
+#if defined(ATTAKY_MESH_SERIES)
+    // Display and touch share this landscape transform.
+    s_ui_rotation = LV_DISP_ROT_90;
+#endif
 #if !defined(HAS_TANMATSU)
     // REMOTE mode: render the UI to a virtual 480x800 PORTRAIT display for the web
     // (headless/browser use). No physical-panel rotation — the panel is a placeholder.
