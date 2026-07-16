@@ -1160,6 +1160,7 @@ struct GlobalStatusBar {
   lv_obj_t* conn_icon;       // Wi-Fi glyph
   lv_obj_t* ble_icon;        // Bluetooth glyph (separate from Wi-Fi)
   lv_obj_t* sleep_icon;      // idle light-sleep readiness indicator (T-Deck only)
+  lv_obj_t* dnd_icon;        // Do Not Disturb active glyph (moon, all boards)
   lv_obj_t* sd_icon;         // microSD read/write activity LED (left of Wi-Fi)
   lv_obj_t* async_icon;      // async mesh-request spinner glyph (centre, transient)
   lv_obj_t* clock;
@@ -7390,6 +7391,64 @@ static void toggleGpsCb(lv_event_t* e) {   // GPS on/off switch (VALUE_CHANGED)
   refreshStatusLabels();
 }
 
+// Do Not Disturb: true while the current local time falls inside the configured
+// start/end window (30-min slots, may wrap past midnight). Unconditional (not
+// board-gated) so both the sound chokepoint and the status-bar icon code can call
+// it on every board. Silently inactive if the RTC hasn't been set yet.
+static bool dndActive() {
+  if (!touchPrefsGetDndEnabled()) return false;
+  time_t now_t = time(nullptr);
+  if (now_t <= 1700000000) return false;   // RTC not set yet -- clock is meaningless
+  struct tm tm_loc; localtime_r(&now_t, &tm_loc);
+  const int t     = tm_loc.tm_hour * 60 + tm_loc.tm_min;
+  const int start = (int)touchPrefsGetDndStartSlot() * 30;
+  const int end   = (int)touchPrefsGetDndEndSlot()   * 30;
+  // start == end -> zero-length window, always false here (never active).
+  return (start <= end) ? (t >= start && t < end) : (t >= start || t < end);
+}
+
+// Do Not Disturb master switch (under the Sound settings section). Stays silent
+// on toggle (no preview chime) since the whole point of DND is not making noise.
+static void toggleDndCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetDndEnabled(on);
+  refreshStatusLabels();
+}
+
+static lv_obj_t* s_dnd_start_lbl = nullptr;
+static lv_obj_t* s_dnd_end_lbl   = nullptr;
+
+static void dndFmtSlot(char* out, size_t out_sz, uint8_t slot) {
+  snprintf(out, out_sz, "%02u:%02u", slot / 2, (unsigned)(slot % 2) * 30);
+}
+static void dndStartLabelRefresh() {
+  if (!s_dnd_start_lbl) return;
+  char b[8]; dndFmtSlot(b, sizeof b, touchPrefsGetDndStartSlot());
+  lv_label_set_text(s_dnd_start_lbl, b);
+}
+static void dndEndLabelRefresh() {
+  if (!s_dnd_end_lbl) return;
+  char b[8]; dndFmtSlot(b, sizeof b, touchPrefsGetDndEndSlot());
+  lv_label_set_text(s_dnd_end_lbl, b);
+}
+static void dndStartStep(int delta) {
+  int s = ((int)touchPrefsGetDndStartSlot() + delta + 48) % 48;
+  touchPrefsSetDndStartSlot((uint8_t)s);
+  dndStartLabelRefresh();
+  refreshStatusLabels();
+}
+static void dndEndStep(int delta) {
+  int s = ((int)touchPrefsGetDndEndSlot() + delta + 48) % 48;
+  touchPrefsSetDndEndSlot((uint8_t)s);
+  dndEndLabelRefresh();
+  refreshStatusLabels();
+}
+static void dndStartMinusCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED) dndStartStep(-1); }
+static void dndStartPlusCb(lv_event_t* e)  { if (lv_event_get_code(e) == LV_EVENT_CLICKED) dndStartStep(+1); }
+static void dndEndMinusCb(lv_event_t* e)   { if (lv_event_get_code(e) == LV_EVENT_CLICKED) dndEndStep(-1); }
+static void dndEndPlusCb(lv_event_t* e)    { if (lv_event_get_code(e) == LV_EVENT_CLICKED) dndEndStep(+1); }
+
 static void toggleBuzzerCb(lv_event_t* e) {   // message-sound switch (VALUE_CHANGED)
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
   g_lv.task->toggleBuzzer();
@@ -10990,6 +11049,67 @@ static void buildDeviceSettings(int sec) {
     if (touchPrefsGetSoundMentions()) lv_obj_add_state(sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw, toggleMentionSoundCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, rh + 12);
+  }
+  // Do Not Disturb — silences the incoming-message chime during a configured
+  // daily window (wraps past midnight; see dndActive()). Doesn't affect chat
+  // bubbles/badges, and the per-event switches above still preview audibly.
+  {
+    int rh = settingsRowLabel(body, y, 6, TR("Do Not Disturb"), COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetDndEnabled()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, toggleDndCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, rh + 12);
+  }
+  {
+    y += settingsRowLabel(body, y, 0, TR("Start time"), COLOR_SUB, &g_font_12, 0) + 2;
+    lv_obj_t* bminus = lv_btn_create(body);
+    lv_obj_set_size(bminus, SC(50), SC(34));
+    lv_obj_set_pos(bminus, 2, y);
+    styleButton(bminus);
+    lv_obj_add_event_cb(bminus, dndStartMinusCb, LV_EVENT_CLICKED, nullptr);
+    { lv_obj_t* l = lv_label_create(bminus); lv_label_set_text(l, "-30m"); lv_obj_center(l); }
+
+    s_dnd_start_lbl = lv_label_create(body);
+    lv_obj_set_width(s_dnd_start_lbl, 100);
+    lv_obj_set_style_text_align(s_dnd_start_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_dnd_start_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_dnd_start_lbl, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_pos(s_dnd_start_lbl, 58, y + 9);
+    dndStartLabelRefresh();
+
+    lv_obj_t* bplus = lv_btn_create(body);
+    lv_obj_set_size(bplus, SC(50), SC(34));
+    lv_obj_set_pos(bplus, 168, y);
+    styleButton(bplus);
+    lv_obj_add_event_cb(bplus, dndStartPlusCb, LV_EVENT_CLICKED, nullptr);
+    { lv_obj_t* l = lv_label_create(bplus); lv_label_set_text(l, "+30m"); lv_obj_center(l); }
+    y += SC(42);
+  }
+  {
+    y += settingsRowLabel(body, y, 0, TR("End time"), COLOR_SUB, &g_font_12, 0) + 2;
+    lv_obj_t* bminus = lv_btn_create(body);
+    lv_obj_set_size(bminus, SC(50), SC(34));
+    lv_obj_set_pos(bminus, 2, y);
+    styleButton(bminus);
+    lv_obj_add_event_cb(bminus, dndEndMinusCb, LV_EVENT_CLICKED, nullptr);
+    { lv_obj_t* l = lv_label_create(bminus); lv_label_set_text(l, "-30m"); lv_obj_center(l); }
+
+    s_dnd_end_lbl = lv_label_create(body);
+    lv_obj_set_width(s_dnd_end_lbl, 100);
+    lv_obj_set_style_text_align(s_dnd_end_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_dnd_end_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_dnd_end_lbl, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_pos(s_dnd_end_lbl, 58, y + 9);
+    dndEndLabelRefresh();
+
+    lv_obj_t* bplus = lv_btn_create(body);
+    lv_obj_set_size(bplus, SC(50), SC(34));
+    lv_obj_set_pos(bplus, 168, y);
+    styleButton(bplus);
+    lv_obj_add_event_cb(bplus, dndEndPlusCb, LV_EVENT_CLICKED, nullptr);
+    { lv_obj_t* l = lv_label_create(bplus); lv_label_set_text(l, "+30m"); lv_obj_center(l); }
+    y += SC(42);
   }
 #if CAP_SOUND_FILES   // WAV notification-sound rows (file-browsing sound picker, SD or SPIFFS)
   // Per-event notification sound files. Each slot: built-in chime, or a 16-bit
@@ -35788,11 +35908,9 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.clock, "--:--");
   lv_obj_set_style_text_color(g_statusbar.clock, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.clock, &g_font_12, LV_PART_MAIN);
-#if defined(HAS_TDECK_GT911)
-  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -SC(142), 0);   // extra slot for the sleep moon (T-Deck)
-#else
-  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -SC(126), 0);   // shifted left to free a slot for the SD LED
-#endif
+  // Unified across all boards: extra slot reserved for the DND/sleep moon glyph
+  // (T-Deck's sleep_icon and the all-board dnd_icon below both live at -SC(105)).
+  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -SC(160), 0);
 
   // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars).
   g_statusbar.conn_icon = lv_label_create(g_statusbar.root);
@@ -35801,29 +35919,40 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_font(g_statusbar.conn_icon, &g_font_12, LV_PART_MAIN);
   lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID, -SC(73), 0);
 
-  // Bluetooth glyph (left of the SD LED).
+  // Bluetooth glyph (left of the SD LED). Unified offset across all boards (see clock above).
   g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.ble_icon, "");
   lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
-#if defined(HAS_TDECK_GT911)
   lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID, -SC(127), 0);
 
+#if defined(HAS_TDECK_GT911)
   // Idle power-save readiness indicator — moon glyph, left of the SD LED. T-Deck only,
   // visible only when the feature is enabled; accent colour = ready, grey = blocked.
   g_statusbar.sleep_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.sleep_icon, TOUCH_SYM_MOON);
   lv_obj_set_style_text_color(g_statusbar.sleep_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.sleep_icon, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -SC(105), 0);
+  lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -SC(144), 0);
   lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);     // hidden until feature is on
   lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(g_statusbar.sleep_icon, 8);
   lv_obj_add_event_cb(g_statusbar.sleep_icon, sleepIconTapCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_flag(g_statusbar.sleep_icon, NAV_SKIP_FLAG);   // status glyph, not a focus-nav target
-#else
-  lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID, -SC(111), 0);
 #endif
+
+  // Do Not Disturb glyph — same moon, same slot as the T-Deck sleep_icon above
+  // (sleep_icon is permanently force-hidden every tick, see updateGlobalStatusBar,
+  // since the idle-sleep indicator moved to tinting the battery glyph amber — so
+  // there's no visual collision there; on every other board this is simply a
+  // fresh, all-board indicator in a previously T-Deck-only slot).
+  g_statusbar.dnd_icon = lv_label_create(g_statusbar.root);
+  lv_label_set_text(g_statusbar.dnd_icon, TOUCH_SYM_MOON);
+  lv_obj_set_style_text_color(g_statusbar.dnd_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.dnd_icon, &g_font_12, LV_PART_MAIN);
+  lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -SC(144), 0);
+  lv_obj_add_flag(g_statusbar.dnd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only while DND is active
+  lv_obj_add_flag(g_statusbar.dnd_icon, NAV_SKIP_FLAG);        // passive status glyph, not a focus-nav target
 
   // microSD read/write activity LED — a small amber dot in the gap just left of
   // the Wi-Fi glyph. Hidden when idle; UITask::loop lights it for ~180 ms after
@@ -36288,6 +36417,47 @@ static void updateGlobalStatusBar() {
   if (g_statusbar.sleep_icon) lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);
 #endif
 
+  // ---- Do Not Disturb icon ---- (shown only while the configured silence
+  // window is active — see dndActive()). On cramped bars (T-Display P4's
+  // round-corner two-row layout, or Heltec V4 rotated to portrait, <300px wide)
+  // there's no room for a dedicated slot, so DND borrows the signal-bars slot
+  // instead while active; signal strength reclaims it the rest of the time.
+  {
+    const bool cramped     = CAP_ROUND_CORNERS || (lv_disp_get_hor_res(nullptr) < 300);
+    const bool active      = dndActive();
+    const bool swap_signal = cramped && active;
+
+    static int s_dnd_state = -1;   // (swap_signal<<1 | active) — only touch flags/realign on change
+    const int  state = (swap_signal ? 2 : 0) | (active ? 1 : 0);
+    if (state != s_dnd_state) {
+      s_dnd_state = state;
+      if (g_statusbar.sig_box) {
+        if (swap_signal) lv_obj_add_flag(g_statusbar.sig_box, LV_OBJ_FLAG_HIDDEN);
+        else              lv_obj_clear_flag(g_statusbar.sig_box, LV_OBJ_FLAG_HIDDEN);
+      }
+      if (g_statusbar.dnd_icon) {
+        if (!swap_signal) {
+          // Dedicated slot — re-assert on entry/return so a CAP_ROTATABLE board
+          // (V4) rotating out of portrait mid-DND self-heals from the borrowed
+          // signal-bars position instead of staying stranded there.
+          const int d = batteryIsCharging(batteryMvSmoothed()) ? 32 : 0;
+#if CAP_LARGE_SCREEN
+          lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -SC(144) + SC(d), 0);
+#else
+          lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -144 + d, 0);
+#endif
+        }
+        if (active) lv_obj_clear_flag(g_statusbar.dnd_icon, LV_OBJ_FLAG_HIDDEN);
+        else        lv_obj_add_flag(g_statusbar.dnd_icon, LV_OBJ_FLAG_HIDDEN);
+      }
+    }
+    // Track sig_box's live position every tick WHILE swapped (cheap; avoids
+    // staleness if a coincident charging-realign or P4 row-slide moves sig_box
+    // the same tick this block's own edge-trigger doesn't fire).
+    if (swap_signal && g_statusbar.sig_box && g_statusbar.dnd_icon)
+      lv_obj_set_pos(g_statusbar.dnd_icon, lv_obj_get_x(g_statusbar.sig_box), lv_obj_get_y(g_statusbar.sig_box));
+  }
+
   // ---- Mesh signal strength ---- (SNR of the last packet we heard; dims when
   // nothing's been heard for a while. The periodic zero-hop "discover" advert in
   // UITask::loop keeps it fresh by prompting nearby nodes/repeaters.)
@@ -36335,26 +36505,29 @@ static void updateGlobalStatusBar() {
 #elif CAP_LARGE_SCREEN
       // Tanmatsu: the cluster is built with SC() UI-scaling, so this slide MUST scale too — the raw
       // offsets below marched the scaled glyphs (incl. the BLE icon) into each other at Large/Huge the
-      // instant charging toggled. Bases match the SC() builder; the clock is re-placed (SC-scaled) by
-      // the clock-placement block just below, and sleep_icon is T-Deck-only, so both are omitted here.
+      // instant charging toggled. Bases match the SC() builder (now unified with the non-large-screen
+      // branch below); the clock is re-placed (SC-scaled) by the clock-placement block just below, and
+      // sleep_icon is T-Deck-only so it's omitted here — dnd_icon is NOT T-Deck-only, so it IS included.
       const int d = charging ? SC(32) : 0;
       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -SC(54)  + d, 0);
       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -SC(73)  + d, 0);
       if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -SC(91)  + d, 0);
-      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -SC(111) + d, 0);
+      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -SC(127) + d, 0);
+      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -SC(144) + d, 0);
       if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -SC(182) + d, 0);
 #else
       const int d = charging ? 32 : 0;
       // Base offsets MUST match the builder (which shifted for the SD LED): the
-      // SD dot is at -91, ble -111, clock -126, layout -166. The dot slides with
+      // SD dot is at -91, ble -127, clock -142, layout -166. The dot slides with
       // the cluster too so it stays between Wi-Fi and Bluetooth while charging.
       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -54  + d, 0);
       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -73  + d, 0);
       if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -91  + d, 0);
       if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -127 + d, 0);
-      if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_RIGHT_MID, -142 + d, 0);
+      if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_RIGHT_MID, -160 + d, 0);
       if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -182 + d, 0);
-      if (g_statusbar.sleep_icon)   lv_obj_align(g_statusbar.sleep_icon,   LV_ALIGN_RIGHT_MID, -105 + d, 0);
+      if (g_statusbar.sleep_icon)   lv_obj_align(g_statusbar.sleep_icon,   LV_ALIGN_RIGHT_MID, -144 + d, 0);
+      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -144 + d, 0);
 #endif
     }
     s_last_pct = pct;
@@ -36443,8 +36616,11 @@ static void updateGlobalStatusBar() {
         // every UI scale (identical to the old -142/-110 at 100%, no node-name regression). Narrow
         // bar keeps its raw values (it was tuned for the V4 portrait layout at 100% only).
         const bool narrow_bar = lv_disp_get_hor_res(nullptr) < 300;
+        // Wide bar shifted 18px further left of its old -142/-110 to open a clean
+        // ~16-17px gap for the DND moon icon (now at -SC(144)) on Bluetooth's left
+        // side, instead of the old cramped 15px gap that used to sit here.
         const int clk_x = narrow_bar ? (charging ? -94 : -126)
-                                     : (charging ? -SC(110) : -SC(142));
+                                     : (charging ? -SC(128) : -SC(160));
         lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, clk_x, 0);
       }
       // Park the async-request spinner just LEFT of the clock wherever it lands,
@@ -42545,7 +42721,7 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     const bool is_mention = channel && text && textMentionsMe(text);
     const bool is_dm = (g_last_event == UIEventType::contactMessage);   // private/direct message
     const uint8_t cmute = channel ? touchPrefsGetChannelMute(thread) : 0;
-    if (!isBuzzerQuiet()) {   // master Sound switch: off = silent, overrules everything
+    if (!isBuzzerQuiet() && !dndActive()) {   // master Sound switch / Do Not Disturb: either silences everything
       if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) uiPlaySlot(TOUCH_SND_MEN);
       else if (is_dm) { if (touchPrefsGetSoundDirect()) uiPlaySlot(TOUCH_SND_DM); }
       else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          uiPlaySlot(TOUCH_SND_MSG);

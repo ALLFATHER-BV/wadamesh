@@ -378,6 +378,20 @@ void    touchPrefsSetSoundDirect(bool on);
 uint8_t touchPrefsGetSoundVolume();            // 0..100, default 70
 void    touchPrefsSetSoundVolume(uint8_t vol);
 
+/** Do Not Disturb: silences the incoming-message chime during a daily time
+ *  window. Start/end are half-hour slots (0..47, slot = hour*2 + (min>=30)),
+ *  so the window can be set in 30-minute steps. The window may wrap past
+ *  midnight (start > end means "start..23:59 AND 00:00..end"); start == end
+ *  is a zero-length "never active" window. Only gates the sound chokepoint in
+ *  newMsgImpl() — chat bubbles/badges/unread counts are unaffected, and
+ *  Settings-page sound previews still play while DND is on. */
+bool    touchPrefsGetDndEnabled();             // default false
+void    touchPrefsSetDndEnabled(bool on);
+uint8_t touchPrefsGetDndStartSlot();           // 0..47, default 44 (22:00)
+void    touchPrefsSetDndStartSlot(uint8_t slot);
+uint8_t touchPrefsGetDndEndSlot();             // 0..47, default 12 (06:00)
+void    touchPrefsSetDndEndSlot(uint8_t slot);
+
 /** Per-event notification sound FILE (empty = built-in chime). Slot:
  *  0 = message, 1 = direct/DM, 2 = @-mention. Stored as a path pref like the
  *  lock wallpaper ("" | "/sounds/x.wav" | "sd:/x.wav"). T-Deck only. */

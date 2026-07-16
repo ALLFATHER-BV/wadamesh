@@ -1822,6 +1822,20 @@ uint8_t touchPrefsGetSoundVolume() {
   return v > 100 ? 100 : v;
 }
 void touchPrefsSetSoundVolume(uint8_t vol) { if (vol > 100) vol = 100; if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_vol", vol); }
+bool touchPrefsGetDndEnabled() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("dnd_en", 0) != 0; }
+void touchPrefsSetDndEnabled(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("dnd_en", on ? 1 : 0); }
+uint8_t touchPrefsGetDndStartSlot() {
+  if (!s_begun) touchPrefsBegin();
+  uint8_t s = s_prefs.getUChar("dnd_ss", 44);
+  return s > 47 ? 47 : s;
+}
+void touchPrefsSetDndStartSlot(uint8_t slot) { if (slot > 47) slot = 47; if (!s_begun) touchPrefsBegin(); prefsPutUChar("dnd_ss", slot); }
+uint8_t touchPrefsGetDndEndSlot() {
+  if (!s_begun) touchPrefsBegin();
+  uint8_t s = s_prefs.getUChar("dnd_es", 12);
+  return s > 47 ? 47 : s;
+}
+void touchPrefsSetDndEndSlot(uint8_t slot) { if (slot > 47) slot = 47; if (!s_begun) touchPrefsBegin(); prefsPutUChar("dnd_es", slot); }
 uint8_t touchPrefsGetKbdBacklight() {
   if (!s_begun) touchPrefsBegin();
   uint8_t v = s_prefs.getUChar("kbd_bl", 100);
