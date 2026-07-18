@@ -1,10 +1,10 @@
 # FriendMeshOS features for WadaMesh
 
-Status: optional feature-layer documentation; no firmware behavior changed  
-Documented: 2026-07-18  
-Repository snapshot: branch `friendmeshOS-proposal`, commit `3fbc3e3`  
-Primary implementation target: LilyGo T-Deck / T-Deck Plus  
-Compatibility target: Heltec WiFi LoRa 32 V4 + TFT, including deliberate awareness of V4-R8
+Status: T-Deck-only backend foundation implemented and build-verified; transmit disabled
+Documented: 2026-07-18
+Repository branch: `friendmeshOS-proposal`
+Primary implementation target: LilyGo T-Deck / T-Deck Plus
+Deferred hardware: Heltec targets are documented for later access but are not current build, implementation, or acceptance gates
 
 ## 1. Purpose and scope
 
@@ -13,15 +13,15 @@ This repository remains WadaMesh. FriendMeshOS is a set of optional features dev
 The feature direction is:
 
 - add selected FriendMeshOS identity, trust, security, recovery, and social features to WadaMesh's mature MeshCore companion-radio runtime and LVGL interface;
-- develop and validate those features on the LilyGo T-Deck first;
-- keep shared FriendMeshOS features accessible to the Heltec V4 family through capability-based code and board adapters;
+- develop and validate the current feature phase only on the LilyGo T-Deck;
+- avoid needless coupling that would obstruct later Heltec work, without treating Heltec as a current build or acceptance requirement;
 - preserve the useful FriendMesh security, identity, recovery, and verification work from the earlier implementation without importing its Meshtastic-specific architecture wholesale;
 - keep ordinary WadaMesh and MeshCore behavior working when FriendMeshOS features are disabled or unavailable;
-- treat this first pass as documentation only. Protocol work, security porting, feature code, and firmware builds come later.
+- begin with a dormant backend service boundary: no UI integration, storage provisioning, protocol transmission, or radio changes.
 
 WadaMesh remains the host project's name, user experience, repository structure, upstream relationship, distribution identity, and default behavior. FriendMeshOS features should live behind explicit service, UI, build, and runtime boundaries. They must not silently rename existing WadaMesh concepts or redirect WadaMesh users into a separate product flow.
 
-“T-Deck first” means the T-Deck is the reference experience and first hardware gate for FriendMeshOS features. It does **not** mean hard-coding those features to the T-Deck. New shared features should compile with the T-Deck and Heltec V4 environments, expose a safe reduced experience where hardware differs, and reserve direct board checks for real hardware quirks.
+The current scope is **T-Deck only**. Only `LilyGo_TDeck_companion_radio_touch` is built and accepted during this phase. Heltec support remains a future direction, so new shared code should avoid gratuitous T-Deck hardware assumptions where practical, but no Heltec source changes, builds, flashes, or physical tests are required until the scope is explicitly expanded.
 
 ### 1.1 Non-negotiable UI and branding boundary
 
@@ -263,7 +263,9 @@ The current application already provides a large part of the product shell Frien
 
 FriendMesh-specific trust, group, identity, verification, and safety semantics must be represented through minimal additions to these existing screens. The layout, navigation, visual language, and WadaMesh terminology remain authoritative. Existing MeshCore “contact,” “channel,” “identity,” and “delivered” concepts should not be relabeled as stronger FriendMesh guarantees unless the underlying protocol proves them.
 
-## 6. T-Deck-first, Heltec-aware hardware model
+## 6. T-Deck implementation model and deferred Heltec notes
+
+The comparison below is retained as planning context for possible later Heltec access. It does not expand the current T-Deck-only implementation or verification scope.
 
 ### 6.1 Comparison
 
@@ -290,15 +292,15 @@ FriendMesh-specific trust, group, identity, verification, and safety semantics m
 
 `src/ui-touch/device_caps.h` is the intended UI capability registry. Every `CAP_*` value is always defined to `0` or `1`, so call sites must use `#if CAP_NAME`, not `#if defined(CAP_NAME)`.
 
-For new FriendMesh work:
+For current T-Deck FriendMesh work:
 
 1. Gate reusable behavior on a capability or runtime service result.
 2. Use `LILYGO_TDECK`, `HAS_TDECK_*`, or `HELTEC_*` only for true board/controller quirks.
-3. Required FriendMesh operations must work with touch and an on-screen keyboard on Heltec.
-4. Keyboard shortcuts, trackball navigation, SD depth, WAV alerts, and lock-screen polish may enhance T-Deck without becoming protocol requirements.
+3. Design backend interfaces so a later hardware adapter is possible, but do not add speculative Heltec code during the T-Deck-only phase.
+4. Keyboard shortcuts, trackball navigation, SD depth, WAV alerts, and lock-screen polish may enhance T-Deck without becoming backend protocol requirements.
 5. Compile-time exclusion is acceptable for impossible hardware functions; degraded state must be visible and safe.
-6. The regular V4 is the tight-memory compatibility floor. PSRAM allocations do not remove Wi-Fi/BLE/DMA internal-heap constraints.
-7. V4-R8 is not interchangeable with regular V4. It has 8 MB octal PSRAM, different pins, LovyanGFX, shared TFT/SD SPI, and hardware validation items still called out in `platformio.ini`.
+6. If regular V4 support is later approved, re-evaluate its tight internal-memory constraints instead of assuming T-Deck allocations transfer safely.
+7. If Heltec enters scope later, re-establish its baseline then; do not claim compatibility from these planning notes.
 
 ### 6.3 T-Deck implementation anchors
 
@@ -313,6 +315,8 @@ For new FriendMesh work:
 - Partition table: `variants/lilygo_tdeck/partitions_tdeck_touch.csv`
 
 ### 6.4 Heltec implementation anchors
+
+Deferred reference only; do not build or modify these targets in the current phase.
 
 - Build environment: `heltec_v4_tft_companion_radio_usb_tcp_touch`
 - V4-R8 environment: `heltec_v4_r8_tft_companion_radio_usb_tcp_touch`
@@ -368,8 +372,8 @@ Keep the first implementation small and explicit:
 
 ```text
 src/friendmesh/
-  FriendMeshService.*          optional feature state and lifecycle
-  FriendMeshStatus.*           secret-free status snapshot
+  FriendMeshFeatureService.*   current feature state, lifecycle, and hard transmit gate
+  status/                      future secret-free diagnostics and reason model
   protocol/                    MeshCore-facing encode/decode and policy
   security/                    signing identity and verification
   storage/                     protected records, key lifecycle, recovery
@@ -379,6 +383,25 @@ src/friendmesh/
 `UITask` should consume status snapshots and invoke bounded actions through existing WadaMesh surfaces. Cryptographic KDFs, filesystem recovery, imports, and large writes must run outside LVGL callbacks. `MyMesh` should call a narrow protocol/service interface at reviewed receive/transmit points rather than becoming the storage/UI implementation.
 
 The subsystem should have an explicit disabled state. When disabled, it must not provision keys, mutate FriendMesh storage, change radio behavior, alter ordinary MeshCore messages, add required setup steps, or replace WadaMesh navigation and terminology.
+
+### 7.5 Current T-Deck foundation
+
+The first implementation slice is intentionally dormant:
+
+- `FRIENDMESH_FEATURES=1` and `src/friendmesh/*.cpp` are enabled only in `LilyGo_TDeck_companion_radio_touch`;
+- `FriendMeshFeatureService` starts after the ordinary MeshCore service and exposes a secret-free in-memory `StatusSnapshot`;
+- the initial lifecycle is `NotConfigured` and every readiness field is false;
+- `canTransmit()` is hard-coded false and there is no FriendMesh send/receive integration;
+- startup performs no FriendMesh filesystem, SD, SPIFFS, NVS, identity, protocol, radio, network, or UI work;
+- no WadaMesh UI, wording, navigation, theme, asset, or branding file changed.
+
+Build evidence from 2026-07-18:
+
+| T-Deck build | RAM | Flash | Result |
+|---|---:|---:|---|
+| Unmodified baseline at `95a9f05` | 89,372 bytes (27.3%) | 3,251,813 bytes (80.0%) | pass |
+| Backend foundation | 89,380 bytes (27.3%) | 3,251,845 bytes (80.0%) | pass |
+| Delta | +8 bytes | +32 bytes | no physical test performed |
 
 ## 8. Build and development workflow
 
@@ -395,7 +418,7 @@ The local PlatformIO binary may be outside `PATH`. A known installation on this 
 /Users/tylersmith/.platformio/penv/bin/pio
 ```
 
-### 8.2 Focused builds
+### 8.2 Focused build
 
 Build the T-Deck reference target:
 
@@ -403,19 +426,7 @@ Build the T-Deck reference target:
 pio run -e LilyGo_TDeck_companion_radio_touch
 ```
 
-Build the regular Heltec compatibility target:
-
-```bash
-pio run -e heltec_v4_tft_companion_radio_usb_tcp_touch
-```
-
-Build the V4-R8 variant when work touches the Heltec family, shared SPI/SD, display, or capability logic:
-
-```bash
-pio run -e heltec_v4_r8_tft_companion_radio_usb_tcp_touch
-```
-
-Use explicit environments during FriendMesh development. A plain `pio run` follows `default_envs`, which currently includes regular Heltec V4, T-Deck, and ThinkNode M9—not only the two FriendMesh focus boards.
+Do not run Heltec or other board environments in the current phase. Use the explicit T-Deck environment: a plain `pio run` follows `default_envs` and would expand the agreed scope.
 
 ### 8.3 Build outputs
 
@@ -431,17 +442,15 @@ No flash, erase, factory reset, reboot, storage migration, or hardware mutation 
 
 ### 8.4 Verification ladder
 
-Every FriendMeshOS feature milestone should report these separately:
+Every current T-Deck FriendMeshOS feature milestone should report these separately:
 
 1. Source review: source paths, capability gates, data flow, and threat boundary checked.
 2. Host/unit checks: deterministic parsers, crypto framing, storage recovery, and policy tests.
 3. T-Deck build: reference environment compiles and size is recorded.
-4. Heltec build: regular V4 compiles and memory impact is recorded.
-5. V4-R8 build where applicable.
-6. T-Deck physical gate: flash, input methods, storage mode, RF state, reboot/recovery, and UI evidence.
-7. Heltec physical gate: touch/on-screen keyboard, rotation, low-memory behavior, expansion absence/presence, USB companion frames, and RF/FEM behavior.
+4. T-Deck physical gate, only when explicitly approved: flash, input methods, storage mode, RF state, reboot/recovery, and UI evidence.
+5. Deferred hardware gate: establish separate Heltec baselines and acceptance criteria only after that hardware enters scope.
 
-“Build passes” is not “works on hardware.” A T-Deck physical pass is not a Heltec pass. A previous Meshtastic FriendMesh test is not a MeshCore FriendMesh pass.
+“Build passes” is not “works on hardware.” A T-Deck pass makes no claim about Heltec. A previous Meshtastic FriendMesh test is not a MeshCore FriendMesh pass.
 
 ### 8.5 Current automated support
 
@@ -475,7 +484,7 @@ FriendMeshOS features do not imply a WadaMesh rebrand. WadaMesh versioning, pack
 
 | Path | Role | FriendMesh relevance |
 |---|---|---|
-| `platformio.ini` | board environments, feature flags, dependencies | both focus builds and capability inputs |
+| `platformio.ini` | board environments, feature flags, dependencies | current T-Deck feature/build gate; deferred board definitions remain untouched |
 | `boards/` | PlatformIO board definitions | flash/PSRAM/USB facts |
 | `src/main.cpp` | application composition and cooperative loop | lifecycle and service wiring |
 | `src/MyMesh.*` | MeshCore app, messages, companion protocol | protocol integration boundary |
@@ -483,7 +492,7 @@ FriendMeshOS features do not imply a WadaMesh rebrand. WadaMesh versioning, pack
 | `src/DataStore.*` | MeshCore identity/prefs/contacts/channels | migration reference; not protected FriendMesh storage |
 | `src/NodePrefs.h` | node/radio preferences | avoid mixing FriendMesh secrets into it |
 | `src/ui-touch/UITask.*` | primary UI and most product behavior | minimal FriendMesh status/action hooks; no redesign |
-| `src/ui-touch/device_caps.h` | compile-time UI capabilities | T-Deck/Heltec portability policy |
+| `src/ui-touch/device_caps.h` | compile-time UI capabilities | future UI integration; no current FriendMesh UI changes |
 | `src/ui-touch/i18n.*` | translations | new user-visible FriendMesh copy |
 | `src/helpers/input/` | touch, keyboard, trackball, encoder adapters | multi-input acceptance |
 | `src/helpers/esp32/` | prefs, Wi-Fi, transports, web, MQTT | security and exposure review |
@@ -499,9 +508,9 @@ FriendMeshOS features do not imply a WadaMesh rebrand. WadaMesh versioning, pack
 
 ## 11. Development guardrails
 
-1. T-Deck is the reference hardware; regular Heltec V4 is the compatibility floor.
-2. Build both focus environments for shared source changes.
-3. Never require a physical keyboard, trackball, microSD, speaker, lock screen, large PSRAM, or on-device web browser for a required FriendMeshOS feature operation.
+1. T-Deck is the only current implementation, build, and acceptance target.
+2. Build only `LilyGo_TDeck_companion_radio_touch` until the user explicitly expands hardware scope.
+3. Do not edit, build, flash, or claim compatibility for Heltec during the current phase.
 4. Keep board quirks in variants or capability adapters.
 5. Keep FriendMesh secrets out of logs, status exports, backups, companion broadcasts, MQTT, QR codes, and screenshots by default.
 6. Do not equate MeshCore identity, BLE PIN, device lock, storage PIN, and FriendMesh signing identity.
@@ -510,9 +519,9 @@ FriendMeshOS features do not imply a WadaMesh rebrand. WadaMesh versioning, pack
 9. Storage-root changes require explicit migration, verification, rollback behavior, and identity continuity checks.
 10. Record build, host-test, and physical evidence independently.
 11. Preserve the companion frame stream: ordinary debug text on the same USB serial channel can corrupt binary protocol traffic.
-12. Preserve WadaMesh functionality while adding features. FriendMesh additions should not silently break or replace ordinary MeshCore chat, companion use, OTA, recovery, navigation, branding, or Heltec boot.
+12. Preserve WadaMesh functionality while adding features. FriendMesh additions should not silently break or replace ordinary MeshCore chat, companion use, OTA, recovery, navigation, or branding.
 13. Avoid broad refactors of `UITask.cpp`, `MyMesh`, or the external core during the first vertical slice. Create narrow seams where the slice needs them.
-14. Any change to the pinned external core must update the tag deliberately and rebuild both focus environments from a clean dependency resolution.
+14. Any change to the pinned external core must update the tag deliberately and rebuild the T-Deck from a clean dependency resolution; wider board validation is deferred.
 15. Do not introduce FriendMesh-specific navigation, a replacement home screen, a separate app shell, or a required visual skin. Optional WadaMesh themes are the maximum broad UI change.
 
 ## 12. Known risks and open decisions
@@ -531,27 +540,27 @@ FriendMeshOS features do not imply a WadaMesh rebrand. WadaMesh versioning, pack
 | Remote surfaces | USB/TCP/WS/BLE/web/MQTT coexist | define authorization and secret-redaction matrix |
 | Update channel | current public WadaMesh feeds are live product infrastructure | isolate experimental FriendMeshOS feature builds until approved for a WadaMesh test release |
 | Product identity | code, site, local command contact, assets, and feeds are WadaMesh/Meshcomod | preserve them; FriendMeshOS is a feature name, not a repo-wide rename |
-| Hardware access | T-Deck is available as the first target; Heltec access must remain possible | record which Heltec model(s) are physically available before claiming device proof |
+| Hardware access | only the T-Deck is in current scope | reassess exact Heltec model and baseline only if scope expands later |
 | Existing docs | some release/channel docs describe older completed state as future TODOs | reconcile separately; do not use stale checkboxes as live evidence |
 
 ## 13. Recommended first implementation sequence
 
-This is a starting sequence, not an authorization to implement it in this documentation pass.
+This is the active T-Deck-only sequence. Each phase retains WadaMesh's existing UI and branding; at most, later phases may add small hooks to existing surfaces or optional themes.
 
-### Phase A: freeze the baseline
+### Phase A: T-Deck backend foundation
 
-- build the unmodified T-Deck and regular Heltec V4 environments;
-- record firmware sizes and dependency resolution;
-- physically smoke-test the current T-Deck WadaMesh build if approved;
-- record available Heltec hardware and exact revision;
-- add a small FriendMesh status row or modal to an existing WadaMesh surface with transmit hard-disabled.
+- build the unmodified T-Deck environment and record firmware size;
+- add `src/friendmesh/` as a T-Deck-only, compile-gated service boundary;
+- expose only a secret-free in-memory status snapshot;
+- perform no storage reads/writes, identity provisioning, protocol handling, UI changes, or radio changes;
+- keep `canTransmit()` hard-coded false;
+- rebuild the T-Deck and record the size delta.
 
 ### Phase B: port protected storage without protocol transmission
 
 - move the previously reviewed storage primitives into a platform-neutral FriendMesh subsystem;
 - add host tests for framing, KDF/key slots, device binding, journal recovery, identity creation, tamper rejection, and secret scanning;
-- implement T-Deck UI actions through background workers;
-- ensure the same existing-screen actions work through Heltec's touch and on-screen keyboard;
+- keep long-running work outside the main/UI loop and add only the narrow T-Deck integration required for testing;
 - test internal storage first, then optional T-Deck SD provider/migration;
 - keep FriendMesh transmit disabled.
 
@@ -569,7 +578,6 @@ This is a starting sequence, not an authorization to implement it in this docume
 - one signed local object or loopback/test-vector operation;
 - status/diagnostics with no secrets;
 - T-Deck input matrix and reboot recovery;
-- regular Heltec build plus touch/on-screen-keyboard flow;
 - no general transmit until replay, migration, recovery, and consent gates pass.
 
 ### Phase E: controlled radio gate
@@ -577,7 +585,7 @@ This is a starting sequence, not an authorization to implement it in this docume
 - operator-approved test channel and peers;
 - bounded send rate and clear RF state;
 - durable replay/outbox behavior;
-- T-Deck physical evidence followed by Heltec physical evidence;
+- T-Deck physical evidence;
 - ordinary MeshCore regression tests;
 - release-channel isolation and rollback plan.
 
@@ -596,11 +604,8 @@ Behavior intentionally disabled:
 
 Host tests:
 T-Deck build result and size:
-Heltec V4 build result and size:
-V4-R8 build result if relevant:
 
 T-Deck physical result:
-Heltec physical result:
 Storage backend exercised:
 Companion/network surfaces exercised:
 
@@ -613,6 +618,6 @@ Next exact action:
 
 ## 15. Scope conclusion
 
-WadaMesh already supplies a strong MeshCore product shell: high-quality on-device chat and contacts, a map, mature settings, multi-input navigation, companion interoperability, remote/web features, persistence, OTA, board abstractions, and active T-Deck and Heltec targets. FriendMeshOS can add value as a bounded feature set without replacing that product.
+WadaMesh already supplies a strong MeshCore product shell: high-quality on-device chat and contacts, a map, mature settings, multi-input navigation, companion interoperability, remote/web features, persistence, OTA, and a capable T-Deck target. FriendMeshOS can add value as a bounded feature set without replacing that product.
 
-The main opportunity is reuse. The main danger is allowing an optional feature effort to redefine the host project or assuming the polished UI also solves FriendMesh's security and protocol requirements. The correct path is to preserve WadaMesh as the working MeshCore product, add FriendMeshOS behind explicit boundaries, make the T-Deck feature experience excellent, and continuously prove that required flows remain accessible and safe on the regular Heltec V4.
+The main opportunity is reuse. The main danger is allowing an optional feature effort to redefine the host project or assuming the polished UI also solves FriendMesh's security and protocol requirements. The current path is to preserve WadaMesh as the working MeshCore product, add FriendMeshOS behind explicit boundaries, and make the T-Deck implementation safe and excellent before considering another device family.

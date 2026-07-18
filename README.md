@@ -40,13 +40,24 @@ meshcomod firmware.
 
 ## FriendMeshOS features
 
-The plan for adding optional FriendMeshOS features to WadaMesh is
-**[FRIENDMESHOS_FEATURES.md](FRIENDMESHOS_FEATURES.md)**. It defines the
-T-Deck-first development model, Heltec V4 compatibility boundary, current
-architecture, feature guardrails, verification ladder, and initial implementation
-sequence. WadaMesh remains the host project and product; this plan does not rename
-the repository, redesign its UI, or mean FriendMesh protocol behavior is enabled
-in the firmware. FriendMeshOS work keeps WadaMesh's UI and branding; optional
+FriendMeshOS is the name of an optional friends, trust, private-group, navigation,
+recovery, and peer-assistance feature layer being developed inside WadaMesh. It
+does not rename the repository, replace WadaMesh's product identity, or redesign
+its UI. Current implementation and verification are limited to the LilyGo T-Deck;
+other hardware is deferred until the scope is explicitly expanded.
+
+- **[FRIENDMESHOS_FEATURES.md](FRIENDMESHOS_FEATURES.md)** surveys the current
+  WadaMesh architecture, inherited capabilities, boundaries, and integration
+  points.
+- **[FRIENDMESHOS_ROADMAP.md](FRIENDMESHOS_ROADMAP.md)** explains what the project
+  is, records the verified baseline, and orders implementation from easiest to
+  hardest.
+- **[FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md](FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md)**
+  defines the detailed feature, security, recovery, test, and release contracts.
+
+The current T-Deck build contains only a dormant FriendMesh backend service with
+transmission hard-disabled. It performs no FriendMesh storage, identity, protocol,
+radio, or UI work. WadaMesh's UI and branding remain authoritative; optional
 themes are the maximum broad visual addition in scope.
 
 ## Build
@@ -57,8 +68,11 @@ automatically:
 ```bash
 pio run -e heltec_v4_tft_companion_radio_usb_tcp_touch   # Heltec V4 TFT
 pio run -e LilyGo_TDeck_companion_radio_touch            # LilyGo T-Deck
-# or just `pio run` to build both
+# `pio run` builds every environment currently listed in `default_envs`
 ```
+
+FriendMesh development uses the explicit T-Deck command above; do not use the
+multi-environment default as its verification gate.
 
 Flash with the NVS-preserving 4-component chain (bootloader / partitions /
 boot_app0 / firmware at `0x0 / 0x8000 / 0xe000 / 0x10000`) so saved Wi-Fi

@@ -1,6 +1,9 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
 #include "MyMesh.h"
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+#include "friendmesh/FriendMeshFeatureService.h"
+#endif
 #if defined(ESP32_PLATFORM)
   #include <new>               // placement-new for the PSRAM-resident the_mesh
   #include "esp_heap_caps.h"   // heap_caps_malloc(MALLOC_CAP_SPIRAM)
@@ -582,6 +585,11 @@ void setup() {
     #endif
   );
   Serial.println("[BOOT] mesh ok");
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // Backend-only foundation: in-memory status, no provisioning, storage, UI,
+  // radio changes, or transmit path.
+  friendmesh::featureService.begin();
+#endif
 #if defined(HAS_RAK_TAP_V2)
   Serial.flush();
 #endif
