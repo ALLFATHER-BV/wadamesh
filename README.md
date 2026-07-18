@@ -38,6 +38,15 @@ the transports, …) are dropped from the lib via `-DMC_VENDORED_TOUCH_APP` so t
 aren't compiled twice. The build is byte-identical to the original in-tree
 meshcomod firmware.
 
+## FriendMeshOS features
+
+The plan for adding optional FriendMeshOS features to WadaMesh is
+**[FRIENDMESHOS_FEATURES.md](FRIENDMESHOS_FEATURES.md)**. It defines the
+T-Deck-first development model, Heltec V4 compatibility boundary, current
+architecture, feature guardrails, verification ladder, and initial implementation
+sequence. WadaMesh remains the host project and product; this plan does not rename
+the repository or mean FriendMesh protocol behavior is enabled in the firmware.
+
 ## Build
 
 [PlatformIO](https://platformio.org/) pulls the core fork and all libraries
