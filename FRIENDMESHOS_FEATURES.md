@@ -23,6 +23,19 @@ WadaMesh remains the host project's name, user experience, repository structure,
 
 “T-Deck first” means the T-Deck is the reference experience and first hardware gate for FriendMeshOS features. It does **not** mean hard-coding those features to the T-Deck. New shared features should compile with the T-Deck and Heltec V4 environments, expose a safe reduced experience where hardware differs, and reserve direct board checks for real hardware quirks.
 
+### 1.1 Non-negotiable UI and branding boundary
+
+FriendMeshOS feature work does not redesign WadaMesh. Preserve:
+
+- the WadaMesh name, wordmark, icons, terminology, boot experience, and release identity;
+- the existing main tabs, command center, app drawer, navigation model, settings structure, chat presentation, contacts, map, status bar, and control center;
+- the current touch, keyboard, trackball, and on-screen-keyboard behavior;
+- the established responsive layouts for T-Deck and Heltec.
+
+Expose FriendMeshOS behavior through the smallest appropriate additions to existing WadaMesh surfaces: a status line, badge, action, settings row, contact detail, chat metadata, confirmation modal, or map option. Do not create a replacement launcher, FriendMesh home screen, parallel navigation system, separate visual language, or repo-wide FriendMesh skin.
+
+Optional additional themes are the maximum broad visual change in scope. New themes must use WadaMesh's existing theme mechanism, retain WadaMesh branding and layout, and remain optional. FriendMeshOS features must work with the existing WadaMesh themes and cannot require a special FriendMesh theme.
+
 ## 2. What this repository is
 
 WadaMesh is an ESP32/ESP-IDF application layer around MeshCore. It provides a full on-device interface, MeshCore companion protocol support, persistence, radio/board glue, remote access, and release infrastructure.
@@ -47,7 +60,7 @@ https://github.com/ALLFATHER-BV/meshcomod.git#core-v1.16.5
 
 That tag is a source-only MeshCore/meshcomod core snapshot. `MC_VENDORED_TOUCH_APP` prevents app-owned touch helpers from also compiling out of the dependency.
 
-This dependency boundary is strategically important. FriendMeshOS UI and services can be added inside this repository, but any required changes below `BaseChatMesh`, transport primitives, identity storage hooks, radio behavior, or the companion protocol may require a coordinated update to the core tag. A green local app change is not proof that the external core remains replaceable or upstream-compatible.
+This dependency boundary is strategically important. FriendMeshOS backend services and minimal existing-UI integration can be added inside this repository, but any required changes below `BaseChatMesh`, transport primitives, identity storage hooks, radio behavior, or the companion protocol may require a coordinated update to the core tag. A green local app change is not proof that the external core remains replaceable or upstream-compatible.
 
 ## 3. Licensing boundary
 
@@ -140,7 +153,7 @@ The companion protocol reports `FIRMWARE_VER_CODE 27`, preserving the meshcomod 
 - file browser, backups, terminal, RF monitor, spectrum analyzer, remote UI, browser screen mirror, on-device text browser, and Snake;
 - history storage, map storage, background workers, diagnostics, and documentation screenshot capture.
 
-This file is the largest development-risk surface. New FriendMesh features should be introduced behind small service/state classes where practical, with the LVGL code acting as a view/controller. A large up-front rewrite is not required, but adding all FriendMesh state, cryptography, persistence, and transport logic directly to `UITask.cpp` would repeat the coupling problem.
+This file is the largest development-risk surface. New FriendMesh features should be introduced behind small service/state classes, with only minimal hooks added to the existing LVGL screens. A UI rewrite or redesign is out of scope, and adding FriendMesh state, cryptography, persistence, or transport logic directly to `UITask.cpp` would repeat the coupling problem.
 
 ### 4.4 Persistence
 
@@ -248,7 +261,7 @@ The current application already provides a large part of the product shell Frien
 - radio preset and manual LoRa configuration;
 - official MeshCore companion-app interoperability.
 
-FriendMesh-specific trust, group, identity, verification, and safety semantics must be layered deliberately onto these screens. Existing MeshCore “contact,” “channel,” “identity,” and “delivered” concepts should not be relabeled as stronger FriendMesh guarantees unless the underlying protocol proves them.
+FriendMesh-specific trust, group, identity, verification, and safety semantics must be represented through minimal additions to these existing screens. The layout, navigation, visual language, and WadaMesh terminology remain authoritative. Existing MeshCore “contact,” “channel,” “identity,” and “delivered” concepts should not be relabeled as stronger FriendMesh guarantees unless the underlying protocol proves them.
 
 ## 6. T-Deck-first, Heltec-aware hardware model
 
@@ -258,7 +271,7 @@ FriendMesh-specific trust, group, identity, verification, and safety semantics m
 |---|---|---|---|
 | MCU/radio | ESP32-S3, SX1262 | ESP32-S3, SX1262 + board FEM | shared mesh service; board radio hooks stay in variants |
 | Flash/PSRAM | 16 MB flash, 8 MB PSRAM | 16 MB flash, 2 MB PSRAM on regular V4 | budget shared features for Heltec internal RAM; use optional richer T-Deck presentation |
-| Display | 320x240 fixed landscape | 240x320, rotatable | responsive LVGL layout; no fixed T-Deck coordinates in shared features |
+| Display | 320x240 fixed landscape | 240x320, rotatable | reuse WadaMesh's responsive layouts; no new FriendMesh layout system |
 | Touch | GT911 | CHSC6x | use pointer capability, not touch-controller type |
 | Physical keyboard | yes | no | every required action needs an on-screen path |
 | Trackball/focus nav | yes | no | useful enhancement, never the sole route |
@@ -363,7 +376,7 @@ src/friendmesh/
   ui/                          small LVGL-facing presenter/controller helpers
 ```
 
-`UITask` should consume status snapshots and invoke bounded actions. Cryptographic KDFs, filesystem recovery, imports, and large writes must run outside LVGL callbacks. `MyMesh` should call a narrow protocol/service interface at reviewed receive/transmit points rather than becoming the storage/UI implementation.
+`UITask` should consume status snapshots and invoke bounded actions through existing WadaMesh surfaces. Cryptographic KDFs, filesystem recovery, imports, and large writes must run outside LVGL callbacks. `MyMesh` should call a narrow protocol/service interface at reviewed receive/transmit points rather than becoming the storage/UI implementation.
 
 The subsystem should have an explicit disabled state. When disabled, it must not provision keys, mutate FriendMesh storage, change radio behavior, alter ordinary MeshCore messages, add required setup steps, or replace WadaMesh navigation and terminology.
 
@@ -469,7 +482,7 @@ FriendMeshOS features do not imply a WadaMesh rebrand. WadaMesh versioning, pack
 | `src/AbstractUITask.h` | core-to-UI events | status/event seam |
 | `src/DataStore.*` | MeshCore identity/prefs/contacts/channels | migration reference; not protected FriendMesh storage |
 | `src/NodePrefs.h` | node/radio preferences | avoid mixing FriendMesh secrets into it |
-| `src/ui-touch/UITask.*` | primary UI and most product behavior | FriendMesh screens and actions |
+| `src/ui-touch/UITask.*` | primary UI and most product behavior | minimal FriendMesh status/action hooks; no redesign |
 | `src/ui-touch/device_caps.h` | compile-time UI capabilities | T-Deck/Heltec portability policy |
 | `src/ui-touch/i18n.*` | translations | new user-visible FriendMesh copy |
 | `src/helpers/input/` | touch, keyboard, trackball, encoder adapters | multi-input acceptance |
@@ -500,6 +513,7 @@ FriendMeshOS features do not imply a WadaMesh rebrand. WadaMesh versioning, pack
 12. Preserve WadaMesh functionality while adding features. FriendMesh additions should not silently break or replace ordinary MeshCore chat, companion use, OTA, recovery, navigation, branding, or Heltec boot.
 13. Avoid broad refactors of `UITask.cpp`, `MyMesh`, or the external core during the first vertical slice. Create narrow seams where the slice needs them.
 14. Any change to the pinned external core must update the tag deliberately and rebuild both focus environments from a clean dependency resolution.
+15. Do not introduce FriendMesh-specific navigation, a replacement home screen, a separate app shell, or a required visual skin. Optional WadaMesh themes are the maximum broad UI change.
 
 ## 12. Known risks and open decisions
 
@@ -530,14 +544,14 @@ This is a starting sequence, not an authorization to implement it in this docume
 - record firmware sizes and dependency resolution;
 - physically smoke-test the current T-Deck WadaMesh build if approved;
 - record available Heltec hardware and exact revision;
-- create a small FriendMesh status shell with transmit hard-disabled.
+- add a small FriendMesh status row or modal to an existing WadaMesh surface with transmit hard-disabled.
 
 ### Phase B: port protected storage without protocol transmission
 
 - move the previously reviewed storage primitives into a platform-neutral FriendMesh subsystem;
 - add host tests for framing, KDF/key slots, device binding, journal recovery, identity creation, tamper rejection, and secret scanning;
 - implement T-Deck UI actions through background workers;
-- provide an on-screen-only equivalent flow for Heltec;
+- ensure the same existing-screen actions work through Heltec's touch and on-screen keyboard;
 - test internal storage first, then optional T-Deck SD provider/migration;
 - keep FriendMesh transmit disabled.
 
@@ -551,7 +565,7 @@ This is a starting sequence, not an authorization to implement it in this docume
 ### Phase D: first vertical slice
 
 - explicit unlock and identity readiness;
-- one bounded FriendMesh contact/trust view;
+- one bounded FriendMesh status/action addition in the existing contact details flow;
 - one signed local object or loopback/test-vector operation;
 - status/diagnostics with no secrets;
 - T-Deck input matrix and reboot recovery;

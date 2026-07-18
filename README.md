@@ -45,7 +45,9 @@ The plan for adding optional FriendMeshOS features to WadaMesh is
 T-Deck-first development model, Heltec V4 compatibility boundary, current
 architecture, feature guardrails, verification ladder, and initial implementation
 sequence. WadaMesh remains the host project and product; this plan does not rename
-the repository or mean FriendMesh protocol behavior is enabled in the firmware.
+the repository, redesign its UI, or mean FriendMesh protocol behavior is enabled
+in the firmware. FriendMeshOS work keeps WadaMesh's UI and branding; optional
+themes are the maximum broad visual addition in scope.
 
 ## Build
 
