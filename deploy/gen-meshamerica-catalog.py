@@ -42,40 +42,54 @@ if os.path.exists(nf):
     notes = "\n".join(l.strip() for l in open(nf, encoding="utf-8")
                       if l.strip() and not l.strip().startswith("#"))
 
-# Both touch boards are ESP32-S3, single touch-UI ("gui") role. ota_0 sits at
-# 0x10000 on both (partitions_t*_touch.csv), so flash-update@0x10000 is correct.
+# Every wadamesh tile here is ESP32-S3, touch-UI ("gui") role. ota_0 sits at
+# 0x10000 on every touch env (partitions_t*_touch.csv), so flash-update@0x10000 is correct.
 # `name` MUST match the official MeshCore device name character-for-character, or Mesh America lists it
 # as a NEW device instead of folding our firmware into the existing tile (TJ Downes, 2026-06). Canonical
 # names verified from apps.meshamerica.com/proxy/flasher/config.json. The V4 entry is the Expansion Kit
 # (Touch) variant only, per Kaj. `slug` still maps to our bin filenames on firmware.wadamesh.com.
+#
+# A board may carry `variants` instead of a single `slug`: one "gui" firmware entry is emitted per
+# variant, all under the one tile. The T-Lora Pager ships with either radio, and Mesh America folds both
+# under a single "LilyGo T-Lora Pager" tile distinguished by a [RADIO] title prefix — matching how their
+# own stock pager entries are labelled ([SX1262]/[LR1121]), so ours sit naturally alongside them.
 BOARDS = [
     {"name": "Heltec v4 + Expansion Kit (Touch)", "slug": "heltec-v4-tft"},
     {"name": "LilyGo T-Deck", "slug": "tdeck"},
+    {"name": "LilyGo T-Lora Pager", "variants": [
+        {"title": "[LR1121] Touch UI", "slug": "tlora-pager-lr1121"},
+        {"title": "[SX1262] Touch UI", "slug": "tlora-pager-sx1262"},
+    ]},
 ]
 
+def _firmware(title, slug):
+    merged, appbin = "wadamesh-%s-merged.bin" % slug, "wadamesh-%s.bin" % slug
+    return {
+        "role": "gui",
+        "title": title,
+        "version": {TAG: {
+            "notes": notes,
+            "files": [
+                {"type": "flash-wipe",   "name": merged,
+                 "url": "%s/%s" % (BASE, merged),
+                 "title": "Full install (bootloader + firmware)"},
+                {"type": "flash-update", "name": appbin,
+                 "url": "%s/%s" % (BASE, appbin),
+                 "title": "Update (app only)"},
+            ],
+        }},
+    }
+
 def device(b):
-    merged, appbin = "wadamesh-%s-merged.bin" % b["slug"], "wadamesh-%s.bin" % b["slug"]
+    # `variants` (per-radio builds) fold under one tile; a plain board is the single default variant.
+    variants = b.get("variants") or [{"title": "Touch UI", "slug": b["slug"]}]
     return {
         "maker": "wadamesh",
         "class": "wadamesh",
         "name": b["name"],
         "type": "esp32",
         "tooltip": "<img class='device' src='%s'>" % ICON,
-        "firmware": [{
-            "role": "gui",
-            "title": "Touch UI",
-            "version": {TAG: {
-                "notes": notes,
-                "files": [
-                    {"type": "flash-wipe",   "name": merged,
-                     "url": "%s/%s" % (BASE, merged),
-                     "title": "Full install (bootloader + firmware)"},
-                    {"type": "flash-update", "name": appbin,
-                     "url": "%s/%s" % (BASE, appbin),
-                     "title": "Update (app only)"},
-                ],
-            }},
-        }],
+        "firmware": [_firmware(v["title"], v["slug"]) for v in variants],
     }
 
 # Optional "what's this?" blurb Mesh America shows on a hover tooltip next to our provider badge

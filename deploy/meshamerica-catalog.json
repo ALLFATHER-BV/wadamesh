@@ -69,6 +69,61 @@
           }
         }
       ]
+    },
+    {
+      "maker": "wadamesh",
+      "class": "wadamesh",
+      "name": "LilyGo T-Lora Pager",
+      "type": "esp32",
+      "tooltip": "<img class='device' src='https://wadamesh.com/wadamesh-icon-512.png'>",
+      "firmware": [
+        {
+          "role": "gui",
+          "title": "[LR1121] Touch UI",
+          "version": {
+            "beta_46": {
+              "notes": "Redesigned control center: round quick-toggle buttons that spread to fill the panel, a frosted-glass look, real lock/bell icons, and a confirmation popup on every toggle.\nDo Not Disturb: set quiet hours in Settings > Sound to silence the incoming-message chime during a daily window, with a bell in the status bar while it's active. (community contribution by Tesso Codemonkey)\nDo Not Disturb quick-toggle in the control center — a bell that gains a slash while quiet hours are on.\nContacts no longer go missing between reboots on microSD devices: saves are now atomic (written then swapped in) and the card is mounted far more reliably at boot.\nHeltec V4-R8: the microSD card now mounts, and the freeze when waking the device from sleep is fixed.\nLilyGo T-Pager: the map no longer shows a \"storage error\" under the launcher — it caches tiles to the microSD card, like the T-Deck.\nHeltec V4 in portrait: the Bluetooth icon no longer overlaps the clock in the status bar, and the control-center buttons no longer clip when tapped.",
+              "files": [
+                {
+                  "type": "flash-wipe",
+                  "name": "wadamesh-tlora-pager-lr1121-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-tlora-pager-lr1121-merged.bin",
+                  "title": "Full install (bootloader + firmware)"
+                },
+                {
+                  "type": "flash-update",
+                  "name": "wadamesh-tlora-pager-lr1121.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-tlora-pager-lr1121.bin",
+                  "title": "Update (app only)"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "role": "gui",
+          "title": "[SX1262] Touch UI",
+          "version": {
+            "beta_46": {
+              "notes": "Redesigned control center: round quick-toggle buttons that spread to fill the panel, a frosted-glass look, real lock/bell icons, and a confirmation popup on every toggle.\nDo Not Disturb: set quiet hours in Settings > Sound to silence the incoming-message chime during a daily window, with a bell in the status bar while it's active. (community contribution by Tesso Codemonkey)\nDo Not Disturb quick-toggle in the control center — a bell that gains a slash while quiet hours are on.\nContacts no longer go missing between reboots on microSD devices: saves are now atomic (written then swapped in) and the card is mounted far more reliably at boot.\nHeltec V4-R8: the microSD card now mounts, and the freeze when waking the device from sleep is fixed.\nLilyGo T-Pager: the map no longer shows a \"storage error\" under the launcher — it caches tiles to the microSD card, like the T-Deck.\nHeltec V4 in portrait: the Bluetooth icon no longer overlaps the clock in the status bar, and the control-center buttons no longer clip when tapped.",
+              "files": [
+                {
+                  "type": "flash-wipe",
+                  "name": "wadamesh-tlora-pager-sx1262-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-tlora-pager-sx1262-merged.bin",
+                  "title": "Full install (bootloader + firmware)"
+                },
+                {
+                  "type": "flash-update",
+                  "name": "wadamesh-tlora-pager-sx1262.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-tlora-pager-sx1262.bin",
+                  "title": "Update (app only)"
+                }
+              ]
+            }
+          }
+        }
+      ]
     }
   ]
 }
