@@ -161,6 +161,22 @@ public:
    *  via CMD_SET_CHANNEL). Default: no-op; touch UI overrides to bump the
    *  periodic thread-refresh deadline so the new entry shows up immediately. */
   virtual void onThreadsChanged() {}
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  /** A bounded FriendMesh channel invitation arrived inside an authenticated
+   *  MeshCore contact message whose route was verified as direct/zero-hop.
+   *  The UI must require explicit acceptance before saving the channel. */
+  virtual void onFriendMeshChannelInvite(const ContactInfo& from,
+                                         const char* channel_name,
+                                         const uint8_t secret16[16]) {
+    (void)from; (void)channel_name; (void)secret16;
+  }
+  /** Local channel-roster metadata changed after a join, leave, removal, or
+   *  invitation status update. Control envelopes are not exposed as chat. */
+  virtual void onFriendMeshChannelRosterChanged(const char* channel_name,
+                                                const char* status) {
+    (void)channel_name; (void)status;
+  }
+#endif
   /** ACK arrived for a previously-sent DM. `ack_hash` is the 4-byte
    *  expected-ack value the dispatcher returned from `sendMessage`. Touch
    *  UI flips the matching outgoing bubble to DELIVERED; default no-op for

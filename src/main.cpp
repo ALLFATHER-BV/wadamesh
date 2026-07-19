@@ -3,6 +3,8 @@
 #include "MyMesh.h"
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
 #include "friendmesh/FriendMeshFeatureService.h"
+#include "friendmesh/app/FriendMeshDevelopmentRuntime.h"
+#include "friendmesh/people/FriendMeshBlePresence.h"
 #endif
 #if defined(ESP32_PLATFORM)
   #include <new>               // placement-new for the PSRAM-resident the_mesh
@@ -586,9 +588,17 @@ void setup() {
   );
   Serial.println("[BOOT] mesh ok");
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-  // Backend-only foundation: in-memory status, no provisioning, storage, UI,
-  // radio changes, or transmit path.
+  // Development-only local runtime. It is intentionally PSRAM-only: falling
+  // back to scarce internal DRAM can destabilize the touch/Wi-Fi/BLE runtime.
   friendmesh::featureService.begin();
+  void* friendmeshRuntimeMemory = heap_caps_malloc(
+      sizeof(friendmesh::DevelopmentRuntime), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (friendmeshRuntimeMemory) {
+    friendmesh::setDevelopmentRuntime(
+        new (friendmeshRuntimeMemory) friendmesh::DevelopmentRuntime());
+  } else {
+    Serial.println("[FriendMesh] PSRAM allocation failed; features disabled");
+  }
 #endif
 #if defined(HAS_RAK_TAP_V2)
   Serial.flush();
@@ -649,6 +659,15 @@ void setup() {
   // and this bounds the read so the name is the first <=31 chars, not garbage.
   { NodePrefs* _np = the_mesh.getNodePrefs();
     _np->node_name[sizeof(_np->node_name) - 1] = '\0'; }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  {
+    char presence_name[48] = {};
+    snprintf(presence_name, sizeof(presence_name), "%s%s", BLE_NAME_PREFIX,
+             the_mesh.getNodePrefs()->node_name);
+    friendmesh::blePresenceSetLocalIdentity(the_mesh.getSelfPubKey(),
+                                             presence_name);
+  }
+#endif
   serial_interface.prepareBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
   if (wifiConfigGetBleEnabled()) {
     const size_t BLE_COEXIST_MIN_FREE  = 50 * 1024;   // free heap after Wi-Fi to also start BLE

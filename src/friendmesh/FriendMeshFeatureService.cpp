@@ -10,6 +10,7 @@ void FriendMeshFeatureService::begin() {
   status_ = {
       LifecycleState::NotConfigured,
       TransmitState::DisabledByFoundation,
+      StatusReason::FoundationOnly,
       false,
       false,
       false,
@@ -19,6 +20,10 @@ void FriendMeshFeatureService::begin() {
 
 StatusSnapshot FriendMeshFeatureService::status() const {
   return status_;
+}
+
+void FriendMeshFeatureService::setProviders(const FeatureProviders& providers) {
+  providers_ = providers;
 }
 
 }  // namespace friendmesh

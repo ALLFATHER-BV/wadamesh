@@ -1,391 +1,398 @@
 # FriendMeshOS features for WadaMesh — roadmap
 
-Status: active T-Deck-only development roadmap  
-Updated: 2026-07-18  
-Repository: `Atlessc/wadamesh`  
-Working branch: `friendmeshOS-proposal`  
-Current firmware base: WadaMesh with MeshCore/meshcomod `core-v1.16.5`  
-Current build target: `LilyGo_TDeck_companion_radio_touch`
+Status: active T-Deck-only, feature-complete-first roadmap
+Updated: 2026-07-18
+Repository: `Atlessc/wadamesh`
+Working branch: `friendmeshOS-proposal`
+Host/base: WadaMesh with MeshCore/meshcomod `core-v1.16.5`
+Build target: `LilyGo_TDeck_companion_radio_touch`
 
 ## What this project is
 
-This repository is **WadaMesh**. It is not being renamed, replaced, or taken over.
+This repository is **WadaMesh**. FriendMeshOS features are an optional friends, trusted-groups, navigation, recovery, and peer-assistance layer built inside WadaMesh. They do not replace the repository, firmware identity, UI, branding, navigation, releases, or ordinary MeshCore behavior.
 
-**FriendMeshOS features** is the name of an optional feature layer being added to WadaMesh for friends, trusted contacts, private groups, field coordination, recovery, and safety-oriented workflows. WadaMesh remains the firmware, user experience, visual identity, navigation system, release identity, and upstream base.
+WadaMesh supplies the mature product shell: LVGL interface, chat, contacts, history, maps, GPS, T-Deck touch/keyboard/trackball, companion transports, Wi-Fi/BLE/MQTT/web, OTA/recovery, SD/SPIFFS, screenshots, and field diagnostics. FriendMesh adds the missing social domain, shared events, coordination behavior, and later security implementation behind narrow services.
 
-The project starts from WadaMesh because WadaMesh already provides the hard product shell:
+## Non-negotiable boundaries
 
-- a mature on-device LVGL interface;
-- MeshCore companion-radio messaging and routing;
-- contacts, channels, chat history, maps, GPS, sensors, and radio controls;
-- touch, keyboard, and trackball input on the T-Deck;
-- USB, TCP, WebSocket, BLE, MQTT, web, update, and recovery infrastructure;
-- SPIFFS, optional SD storage, preference storage, and migration behavior;
-- an existing screenshot feature and other field/debug tooling.
+- [x] WadaMesh remains the host project, UI, branding, terminology, and release identity.
+- [x] Current implementation/build scope is T-Deck only.
+- [x] Heltec editing, builds, flashes, and compatibility claims are deferred.
+- [x] FriendMesh uses minimal additions to existing WadaMesh surfaces.
+- [x] Optional themes are the maximum broad visual addition; no special theme is required.
+- [x] Ordinary WadaMesh/MeshCore behavior remains unchanged when FriendMesh is disabled.
+- [x] General FriendMesh event transmission remains hard-disabled; the only
+  live exception is the explicit, bounded private-channel invite carried by
+  MeshCore's existing encrypted direct-message protocol.
+- [x] No development-only security provider or unprotected state may reach production radio paths.
+- [x] No automatic secret provisioning or silent plaintext fallback.
 
-FriendMesh work should add missing trust and coordination capabilities behind narrow service boundaries. It should not rebuild functionality WadaMesh already handles well.
+## Implementation strategy
 
-## Product boundary
+This is not an MVP roadmap. We are building the planned feature system, then performing the dedicated security and reliability pass across the complete system.
 
-The following rules are non-negotiable:
+Rules:
 
-- [x] Keep the WadaMesh name, branding, boot identity, terminology, layout, tabs, app drawer, settings structure, and navigation.
-- [x] Keep FriendMeshOS described as features for WadaMesh, not a replacement firmware or repository takeover.
-- [x] Develop and build only for the LilyGo T-Deck / T-Deck Plus during the current scope.
-- [x] Do not edit, build, flash, or claim Heltec compatibility until the hardware scope is explicitly expanded.
-- [x] Keep ordinary MeshCore/WadaMesh behavior unchanged when FriendMesh features are unavailable or disabled.
-- [x] Keep FriendMesh transmission disabled until identity, storage, protocol, replay, recovery, migration, and consent gates pass.
-- [x] Do not automatically provision secrets or mutate FriendMesh storage during a read-only boot probe.
-- [x] Never fall back to plaintext storage for protected FriendMesh material.
-- [x] Add only small hooks to existing WadaMesh screens when a feature needs UI.
-- [x] Optional additions to WadaMesh's existing theme system are the maximum broad visual change in scope.
-- [x] Do not require a FriendMesh theme; every feature must work with WadaMesh's existing themes.
+1. Build reusable feature/domain code once, not one isolated demo at a time.
+2. Implement features that depend on the same event, storage, location, notification, or UI code together.
+3. Implement security-dependent features against explicit provider interfaces and development/test identities first.
+4. Implement shared production security together: identity, verification, protected storage, signing, encryption, replay, key grants, rekey, and recovery.
+5. Keep real radio transmission disabled until that shared security pass and its gates succeed.
+6. Complete functional behavior in host/local simulation before security hardening and on-air qualification.
+7. Do not postpone structural security boundaries; postpone the production crypto/hardening implementation.
 
 ## Sources of truth
 
-Read these documents together:
+1. [`README.md`](README.md) — WadaMesh introduction/build entrypoint.
+2. [`FRIENDMESHOS_FEATURES.md`](FRIENDMESHOS_FEATURES.md) — repository survey and integration boundary.
+3. [`FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md`](FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md) — detailed product/security/test contracts.
+4. This roadmap — current order and completion state.
+5. Live source/build output — authority for current implementation facts.
 
-1. [`README.md`](README.md) — how to build and use WadaMesh.
-2. [`FRIENDMESHOS_FEATURES.md`](FRIENDMESHOS_FEATURES.md) — repository architecture, existing capabilities, hardware notes, and feature boundary.
-3. [`FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md`](FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md) — detailed FriendMesh behavior, security contracts, acceptance gates, and implementation rules.
-4. This roadmap — current order, status, completed baseline, and next work.
-5. Live source and build output — final authority for what is actually implemented and verified.
+## Verified baselines
 
-If a document conflicts with the live source, the source wins for current behavior and the documents must be corrected before further work.
-
-## Current verified baseline
-
-### WadaMesh baseline
-
-The clean reference build was recorded before the FriendMesh feature service was enabled:
+### Clean WadaMesh baseline
 
 | Evidence | Result |
 |---|---|
-| Git baseline | `95a9f05` on `friendmeshOS-proposal` |
-| PlatformIO environment | `LilyGo_TDeck_companion_radio_touch` |
-| Build result | pass |
+| Commit | `95a9f05` |
+| Environment | `LilyGo_TDeck_companion_radio_touch` |
+| Build | pass |
 | RAM | 89,372 / 327,680 bytes (27.3%) |
-| Application flash | 3,251,813 / 4,063,232 bytes (80.0%) |
-| Physical test for this baseline session | not run |
-| Heltec build/test | intentionally not run |
+| Flash | 3,251,813 / 4,063,232 bytes (80.0%) |
+| Physical/Heltec work | not run |
 
-### FriendMesh backend foundation
+### Dormant FriendMesh service baseline
 
-The new starting base is now present:
+Commit `fef6ff2` established the new starting base:
 
-- `src/friendmesh/FriendMeshFeatureService.*` owns the optional feature lifecycle boundary.
-- `FRIENDMESH_FEATURES=1` is defined only in the T-Deck PlatformIO environment.
-- `src/friendmesh/*.cpp` is compiled only into that T-Deck environment.
-- `src/main.cpp` starts the service after ordinary MeshCore initialization.
-- startup state is `NotConfigured`.
-- storage, identity, protocol, and consent readiness are false.
-- `canTransmit()` is hard-coded to return false.
-- the service performs no filesystem, NVS, SD, identity, protocol, network, radio, or UI work.
+- `src/friendmesh/FriendMeshFeatureService.*`;
+- T-Deck-only `FRIENDMESH_FEATURES=1` and source filter;
+- secret-free in-memory status;
+- every readiness gate false;
+- `canTransmit()` hard-coded false;
+- no FriendMesh UI, storage, identity, protocol, network, or radio work.
 
 | Evidence | Result |
 |---|---|
+| Build | pass |
+| RAM | 89,380 bytes |
+| Flash | 3,251,845 bytes |
+| Delta from clean baseline | +8 RAM, +32 flash |
+
+### Shared application-core baseline
+
+The current working tree adds the feature backbone used by every planned feature:
+
+- fixed-capacity IDs, result codes, identity references, friends, groups, and members;
+- one event vocabulary spanning identity/trust, membership, chat, sync, location, navigation, markers, meetups, SOS, Help, and control;
+- typed feature records for chat, reactions, sync cursors, position, navigation, markers, meetups, and incidents;
+- shared provider interfaces for storage, security, transport, clock, location, and notifications;
+- bounded event history and outbox state machine;
+- durability/priority/member/group policy for every event type;
+- explicit `RelayedOrObserved` versus `Delivered` states;
+- host tests across all feature families;
+- FriendMesh transmit still hard-disabled.
+
+| Evidence | Result |
+|---|---|
+| Host test | `scripts/test-friendmesh-core.sh` passes |
 | T-Deck build | pass |
-| RAM | 89,380 / 327,680 bytes (27.3%) |
-| Application flash | 3,251,845 / 4,063,232 bytes (80.0%) |
-| Delta from baseline | +8 bytes RAM, +32 bytes flash |
-| FriendMesh object compiled | yes |
-| FriendMesh transmission | disabled |
-| WadaMesh UI/branding changes | none |
-| Flash or physical test | not performed |
+| RAM | 89,404 bytes (27.3%) |
+| Flash | 3,252,277 bytes (80.0%) |
+| Delta from dormant service | +24 RAM, +432 flash |
+| UI/radio/storage behavior | unchanged |
 
-This service is the starting point for all new FriendMesh features. New work should extend or collaborate with this service rather than scattering FriendMesh state through `UITask`, `MyMesh`, preferences, and board code.
+### People/groups/membership baseline
 
-## Existing WadaMesh features we inherit
+Phase 2 adds the complete functional membership cluster behind development-only
+interfaces:
 
-These are baseline WadaMesh capabilities, not new FriendMesh accomplishments:
+- a trusted-contact repository that references an existing WadaMesh/MeshCore
+  contact directory without owning that directory;
+- local development identity create/replace/clear behavior;
+- bounded groups, member aliases, join order, roles, blocking, and verification;
+- invitation lookup, candidate requests, transcripts, approval, rejection,
+  cancellation, expiry, conflict handling, and capacity behavior;
+- secure-default direct-only invitation policy with fresh zero-hop,
+  forwarding-disabled transport observations; this is not treated as proximity
+  proof or encryption;
+- reversible leave/kick operations followed by an explicit rekey-required
+  boundary;
+- per-member development grant states for each membership epoch, including the
+  rule that excluded/removed identities never receive the new grant;
+- self/admin identity replacement with fresh approval, administration transfer,
+  recorded and deduplicated majority succession, and disbanding;
+- multi-group and fixed-capacity host simulations.
 
-- MeshCore public/private chat and contacts;
-- map and GPS-related presentation;
-- message history persistence;
-- touch, T-Deck keyboard, and trackball input;
-- multi-transport companion access;
-- Wi-Fi, BLE, MQTT, web mirror, OTA, and recovery support where configured;
-- SD and SPIFFS storage paths;
-- application drawer, command center, control center, settings, status bar, and existing themes;
-- status-bar long-hold screenshot capture to an SD-card BMP under `/screenshots`;
-- image viewing, spectrum and diagnostic utilities already present in WadaMesh.
+These are functional state transactions, not cryptographic security. The live
+`MyMesh` contact adapter, persistence, UI, production proofs/grants, and radio
+transport remain later integration work, and `canTransmit()` is still false.
 
-FriendMesh must reuse these surfaces where appropriate and explicitly review their privacy/security exposure before showing FriendMesh data.
+| Evidence | Result |
+|---|---|
+| Host test | `scripts/test-friendmesh-core.sh` passes with UBSan and warnings-as-errors |
+| T-Deck build | pass |
+| RAM | 89,404 bytes (27.3%) |
+| Flash | 3,253,533 bytes (80.1%) |
+| Delta from shared core | +0 RAM, +1,256 flash |
+| Physical/UI/storage/radio work | not performed |
+
+### Chat/history/synchronization baseline
+
+Phase 3 completes the functional chat, delivery, history, and synchronization
+cluster using bounded development-only providers:
+
+- message creation and receipt, durable reply references, reactions, authorized
+  deletion tombstones, unread state, mute state, delayed receipt metadata, and
+  untrusted-clock metadata;
+- fixed payload handles with internal and expansion/SD-like capacity behavior,
+  checksums, corruption/read-only/missing-media/write-failure simulation, and
+  incomplete-history reporting;
+- fixed 192-byte fragmentation with bounded, out-of-order reassembly and
+  conflicting-fragment detection;
+- a persisted development outbox with queued, transmitting,
+  relayed-or-observed, delivered, retry-waiting, cancelled, and expired states;
+- journal and outbox restoration across simulated reboot;
+- bounded sync inventories, sender high-water/gap tracking, missing ranges,
+  range and priority batches, receipts, deduplication, and quarantine for event,
+  sequence, epoch, authorization, and reorder-window conflicts;
+- host simulations for capacity pressure, storage failures, offline delay,
+  duplicates, reordering, cancellation, expiry, reboot, and incomplete history.
+
+This baseline does not use a production filesystem, SD driver, radio transport,
+cryptography, or WadaMesh UI. FriendMesh transmission remains hard-disabled.
+
+| Evidence | Result |
+|---|---|
+| Host test | `scripts/test-friendmesh-core.sh` passes with UBSan and warnings-as-errors |
+| T-Deck build | pass |
+| RAM | 89,404 bytes (27.3%) |
+| Flash | 3,254,685 bytes (80.1%) |
+| Delta from Phase 2 | +0 RAM, +1,152 flash |
+| Physical/UI/production storage/radio work | not performed |
 
 ## Status language
 
-Use these terms consistently:
+- `[x]`: implemented and verified to the level named.
+- `[ ]`: incomplete, partial, or missing evidence.
+- `Host verified`: deterministic host checks passed.
+- `Build verified`: named T-Deck environment compiled and size was recorded.
+- `Physically verified`: named behavior was exercised on identified hardware.
+- `Deferred`: deliberately outside current scope.
 
-- `[x]` — implemented and verified to the level named by the item.
-- `[ ]` — not complete; may be untouched, partial, or awaiting evidence.
-- `Implemented` — source exists.
-- `Host verified` — deterministic host checks passed.
-- `Build verified` — the named T-Deck environment compiled and size was recorded.
-- `Physically verified` — the named behavior was exercised on identified T-Deck hardware.
-- `Deferred` — deliberately outside the current phase, not accidentally forgotten.
-- `Blocked` — cannot progress without a named decision, permission, hardware item, or dependency.
+A build is not a physical pass. Old Meshtastic evidence is design history, not MeshCore proof.
 
-A build pass is not a physical pass. Old Meshtastic FriendMesh evidence is design history, not proof for this MeshCore implementation.
+## Roadmap: feature completeness first, security/hardening afterward
 
-## Roadmap ordered from easiest to hardest
+### Phase 0 — WadaMesh boundary and dormant service
 
-### Phase 0 — Project definition and T-Deck foundation
+- [x] Define FriendMeshOS as features for WadaMesh.
+- [x] Lock scope to T-Deck and preserve WadaMesh UI/branding.
+- [x] Record clean build baseline.
+- [x] Add T-Deck-only service and hard transmit gate.
+- [ ] Physical unchanged-WadaMesh smoke test, only with approval.
 
-Goal: establish a truthful base without changing the product experience.
+### Phase 1 — Shared application core
 
-- [x] Document WadaMesh as the host project and FriendMeshOS as an optional feature layer.
-- [x] Lock current implementation scope to the T-Deck.
-- [x] Preserve WadaMesh UI and branding.
-- [x] Record the clean T-Deck build baseline.
-- [x] Add the T-Deck-only `src/friendmesh/` service boundary.
-- [x] Add a secret-free status snapshot.
-- [x] Hard-disable FriendMesh transmission.
-- [x] Rebuild and record the size delta.
-- [ ] Physically smoke-test the unchanged WadaMesh behavior on the development T-Deck, only with explicit approval.
+Goal: one bounded code base for all features.
 
-Exit rule: complete for source/build work; physical evidence remains open.
+- [x] Define common IDs, bounds, results, roles, states, and feature families.
+- [x] Define friends, identity references, groups, and member records.
+- [x] Define chat, reaction, sync, position, navigation, marker, meetup, SOS, and Help models.
+- [x] Define one common event header and event policy table.
+- [x] Define provider interfaces for storage, security, transport, clock, location, and notifications.
+- [x] Add bounded history and outbox state machinery.
+- [x] Add host tests covering every feature family, policy, group/member behavior, history, outbox, and hard transmit gate.
+- [x] T-Deck build and size verification.
+- [x] Add deterministic service lifecycle/reason codes and explicit non-global coordinator composition.
 
-### Phase 1 — Status, diagnostics, and policy model
+### Phase 2 — People, groups, invitations, and membership behavior
 
-Goal: make future behavior observable without secrets or radio changes.
+Implement together because they share identity references, verification state, membership epochs, roles, and administrative events.
 
-- [ ] Define stable lifecycle states: unavailable, not configured, locked, ready, degraded, and recovery required.
-- [ ] Define reason codes without filenames, key bytes, PINs, message content, or sensitive identifiers.
-- [ ] Add a bounded in-memory event/status history.
-- [ ] Add host tests for state transitions and transmit policy.
-- [ ] Add one minimal status line or detail modal to an existing WadaMesh settings/about/diagnostic surface only after the backend contract is stable.
-- [ ] Verify screenshots and companion diagnostics do not expose secrets.
-- [ ] Keep transmit and receive integration disabled.
+- [x] Trusted-contact/friend repository over an existing-contact directory contract; live `MyMesh` binding remains integration work.
+- [x] Local identity-reference lifecycle using development/test providers.
+- [x] Group create/rename/disband and eight-group bounds.
+- [x] Member aliases, roles, join ordering, approval, replacement, blocking, leave, kick, transfer, and recorded majority succession behavior.
+- [x] Invitation sessions, code lookup, candidate requests, admin approval/rejection, verification transcript model, expiry, conflicts, and capacity errors.
+- [x] Nearby direct-join policy requiring fresh zero-hop observation, forwarding disabled, comparison verification, and admin approval; production handshake/grant cryptography remains Phase 7.
+- [x] Rekey-required states and per-member grants as functional domain transactions; production cryptography comes in the shared security phase.
+- [x] Host simulation for complete membership lifecycle, multiple groups, unauthorized actions, expiry, and all fixed-capacity failures.
 
-Exit rule: status is deterministic, secret-free, testable, and does not alter ordinary WadaMesh behavior.
+### Phase 3 — Chat, reactions, outbox, history, and synchronization
 
-### Phase 2 — Protected storage primitives
+Implement together because they are all event-store and delivery-state consumers.
 
-Goal: provide trustworthy T-Deck storage before creating an identity.
+- [x] Chat messages, reactions, deletion tombstones, unread state, mute, and details.
+- [x] Bounded payload storage handles and fragmentation/reassembly model.
+- [x] Durable-outbox adapter contract, retries, cancellation, expiry, queue pressure, and delayed timestamps.
+- [x] Bounded history, inventory/high-water cursors, gaps, batches, receipts, deduplication, and conflict quarantine.
+- [x] Priority rules so safety/control/live traffic outrank old history.
+- [x] Internal/SD capacity behavior and incomplete-history state using development storage providers.
+- [x] Loss, duplicate, reordering, reboot, and offline-peer simulation.
 
-- [ ] Define internal essential storage and optional SD expansion roles.
-- [ ] Define an independent FriendMesh storage PIN; do not reuse BLE or screen-lock PINs.
-- [ ] Select reviewed KDF, wrapping, AEAD, nonce, and device-binding designs.
-- [ ] Implement authenticated record framing and versioning.
-- [ ] Implement two-slot or journaled power-loss recovery.
-- [ ] Probe read-only at startup; require explicit user action for provisioning.
-- [ ] Fail closed on corruption, wrong PIN, wrong binding, missing storage, or unsupported schema.
-- [ ] Add deterministic host tests, mutation/truncation tests, and power-loss fault injection.
-- [ ] Keep transmit disabled.
+### Phase 4 — Positions, Friend Compass, maps, navigation, markers, and meetups
 
-Exit rule: protected storage is host/build verified and cannot silently create or downgrade secrets.
+Implement together because they use the same position freshness, distance/bearing, clock, and map data.
 
-### Phase 3 — FriendMesh signing identity
+- [x] Existing MeshCore contact-position adapter, joined-channel-member map filter, and native Friend Compass entry flow.
+- [x] Bounded one-at-a-time group-location refresh over existing encrypted MeshCore telemetry, authorized by local joined-roster membership without public adverts.
+- [x] Great-circle distance, absolute bearing, accuracy, freshness, and source model.
+- [x] `NORTH-UP`, moving `GPS`, and optional future `MAG` heading providers.
+- [x] Map and arrow-only navigation, arrival, closer/farther, target notifications, and bounded breadcrumbs.
+- [x] Marker lifecycle, expiry/reconfirmation, details, and navigation service behavior.
+- [x] Meetup proposals, votes, attendance, rally point, cancel/move, arrival, and expiry.
+- [x] Missing/stale GPS and bounded functional simulations; live MeshCore position and group-filter adapters remain open above.
 
-Goal: create one protected device identity with an explicit lifecycle.
+### Phase 5 — SOS, Help Requests, incidents, and notifications
 
-- [ ] Define the relationship between MeshCore identity and the separate FriendMesh signing identity.
-- [ ] Validate the selected signing implementation with published vectors.
-- [ ] Require explicit create/import/restore action.
-- [ ] Store the private identity only through Phase 2 protected storage.
-- [ ] Implement lock, unlock, wipe-from-RAM, reboot recovery, backup policy, and replacement semantics.
-- [ ] Expose only public fingerprint and secret-free status.
-- [ ] Physically verify create, lock, unlock, reboot, wrong PIN, corruption, and recovery on the T-Deck.
-- [ ] Keep general radio transmit disabled.
+Implement together because they share incident IDs, location policy, recipient states, notification priority, retries, and closure.
 
-Exit rule: identity continuity and failure behavior are proven without protocol transmission.
+- [x] Intentional hold, cancel/privacy countdown, deduplication, and incident state machine.
+- [x] SOS delivery/responding/unable/arrived/closure behavior.
+- [x] Help categories, responses, escalation/de-escalation, silent mode, and closure.
+- [x] Exact/last-known/missing location behavior.
+- [x] Notification center/in-device alerts and storage-failure behavior.
+- [x] Explicit public standard-MeshCore text fallback decision model.
+- [x] Loss, congestion, reboot, missing GPS, no-peer, and storage-failure simulation.
 
-### Phase 4 — Trusted contacts and local Friend Compass
+### Phase 6 — Complete minimal WadaMesh UI integration
 
-Goal: add useful local-only friend behavior before inventing a wire protocol.
+Integrate the completed functional feature set together so shared navigation/focus patterns are not repeatedly rewritten.
 
-- [ ] Define trusted-contact records that reference existing MeshCore contacts without overwriting them.
-- [ ] Add local favorite/trust labels and verification state.
-- [ ] Calculate distance and bearing from existing position data.
-- [ ] Support north-up as the guaranteed compass fallback.
-- [ ] Use GPS course only while moving and label the heading source honestly.
-- [ ] Mark stale/missing coordinates and hop observations clearly.
-- [ ] Add minimal actions to existing contact details and map surfaces.
-- [ ] Verify touch, keyboard, and trackball behavior.
-- [ ] Keep FriendMesh protocol transmit disabled.
+- [ ] Reuse existing contacts, chat, map, settings, alerts, status bar, and app drawer.
+- [ ] Add only necessary rows, badges, actions, filters, metadata, and confirmation modals.
+- [x] Add a simple `Channel` -> `Invite nearby` -> recipient `Join` flow inside existing WadaMesh chat/contact surfaces, reusing MeshCore private channels and encrypted direct messages.
+- [x] Add a bounded `Members` view with persisted invite/join/failure/leave/removal states, encrypted direct control notices, binary encrypted roster snapshots that cannot surface as chat, duplicate-member invite prevention, and explicit rekey-required status.
+- [ ] Upgrade the simple flow to `Private group` -> compare -> administrator approval -> `securing group` after shared production security exists.
+- [ ] No replacement home screen, launcher, visual identity, or required theme.
+- [ ] All functional states reachable by touch, keyboard, and trackball.
+- [ ] Sensitive entry masked from WadaMesh screenshots and remote surfaces.
+- [ ] Feature-complete local/development-provider walkthrough on T-Deck without production FriendMesh radio transmission.
 
-Exit rule: local friend organization and navigation work without new on-air traffic.
+Current Phase 6 slice: the existing app drawer opens a native WadaMesh-styled
+FriendMesh page with event-driven state refresh, local notes, meetup creation, a
+direct `View map` action, and local ride Help. FriendMesh meetup markers render
+as typed overlays in the existing map, participate in overlap selection, and
+show details when tapped. The same native channel action sheet now exposes
+`Invite nearby`; a bounded Bluetooth scan maps advertised public-key prefixes to
+saved chat contacts, with a fresh zero-hop LoRa observation as fallback. The
+channel key never travels over Bluetooth. The receiver must confirm before the
+existing WadaMesh channel is stored. This is the simple MeshCore channel bridge,
+not the future transcript-bound FriendMesh group protocol. The action sheet also
+opens a WadaMesh-native `Members` view whose bounded persistent roster tracks
+invited, joined, failed, left, and removed members. Cooperative removal marks
+the group as needing a rekey rather than claiming the old shared key was revoked.
+The remaining people/navigation and safety flows are not yet exposed. The
+channel action sheet also exposes `Group map`. It adapts joined roster members'
+existing MeshCore contact coordinates into the shared FriendMesh E7 position
+model, filters WadaMesh's existing map and positioned-contact list to that
+bounded roster, and exposes `Friend Compass` from a member's map action sheet.
+Opening Group Map now polls the bounded joined roster one contact at a time over
+the existing encrypted MeshCore telemetry exchange. The receiver authorizes a
+joined FriendMesh contact independently of the public advert-location switch;
+the queue stops when complete or when Map is closed.
+The compass refreshes only the selected contact, uses north-up absolute bearing
+on T-Deck, and labels missing or older-than-five-minute coordinates instead of
+presenting them as live. This slice is host/build verified but not yet
+physically tested.
 
-### Phase 5 — Group domain model
+### Phase 7 — Shared production security implementation
 
-Goal: define groups, roles, membership epochs, and security states locally.
+Implement all dependent security together across the completed features.
 
-- [ ] Confirm release-one limits after memory/airtime estimates; initial planning target is up to eight groups and eight tested members per group.
-- [ ] Define group IDs, aliases, roles, membership states, epochs, and admin-event ordering.
-- [ ] Define secure, locked, degraded, rekey-pending, and unsafe-configuration states.
-- [ ] Add bounded internal persistence using protected storage.
-- [ ] Define SD expansion without making SD mandatory for essential group access.
-- [ ] Add local create/delete simulations and recovery tests with no radio integration.
-- [ ] Add small group entries to existing WadaMesh surfaces only after the model passes tests.
+- [ ] Real FriendMesh signing identity and MeshCore binding.
+- [ ] Independent storage PIN, KDF/wrapping, device binding, AEAD records, subkeys, nonce discipline, and secret wiping.
+- [ ] Authenticated two-slot/journal storage and schema migration.
+- [ ] Canonical signing/encryption for every event family.
+- [ ] Verification proof, invitations, member-specific key grants, epochs, replay windows, and downgrade rejection.
+- [ ] Transcript-bound ephemeral pairwise session and authenticated member-specific epoch grant; identity private keys never leave their device.
+- [ ] Forward-only rekey, removal, replacement, succession, and disband recovery.
+- [ ] Protected internal essential state and optional SD expansion.
+- [ ] Published vectors, mutation/truncation tests, fault injection, secret scans, and power-loss simulation.
+- [ ] No security-dependent feature keeps a separate crypto/storage path.
 
-Exit rule: all local group transitions are deterministic, durable, bounded, and recoverable.
+### Phase 8 — MeshCore protocol and controlled radio integration
 
-### Phase 6 — MeshCore FriendMesh wire contract
+- [x] Derive the MeshCore encrypted-DM send seam and direct-route/path-hash receive fields needed by the simple private-channel invitation bridge.
+- [ ] Complete the actual MeshCore packet/routing/ACK contract for production FriendMesh events; copy no Meshtastic assumptions.
+- [x] Enforce an empty outbound route, bounded Bluetooth-or-zero-hop sender discovery, and direct/zero-path receive checks for simple channel invitations.
+- [x] Validate the simple LoRa direct-path channel invitation on two physical T-Decks.
+- [x] Add bounded join acknowledgement, leave/removal notices, and reserved encrypted MeshCore group-data roster snapshots; consume the obsolete text envelope before every user-message surface.
+- [x] Validate Bluetooth discovery on two physical T-Decks.
+- [ ] Complete forwarding/downgrade enforcement for the production protocol.
+- [ ] Canonical codec vectors, parser fuzzing, fragmentation, replay, expiry, and airtime bounds.
+- [ ] Narrow reviewed `MyMesh` receive/transmit seams.
+- [ ] Durable policy gates connected to transport.
+- [ ] Replace unconditional transmit false only after every shared security gate has tests.
+- [ ] Operator-approved direct and relayed T-Deck testing on a bounded test configuration.
 
-Goal: derive a protocol for MeshCore instead of copying Meshtastic assumptions.
+### Phase 9 — Security fixes, hardening, and recovery campaign
 
-- [ ] Identify reviewed `MyMesh` receive/transmit seams and external core implications.
-- [ ] Specify packet format, versioning, signature scope, encryption scope, group dispatch, fragmentation, expiration, and size limits.
-- [ ] Specify routing and relay behavior using actual MeshCore primitives.
-- [ ] Specify ACK meaning and avoid presenting relay/queue evidence as end-recipient proof.
-- [ ] Specify replay windows, sender sequences, event IDs, epoch checks, and downgrade rejection.
-- [ ] Specify stock MeshCore behavior when FriendMesh data is unsupported.
-- [ ] Add canonical byte vectors, parser rejection cases, fuzzing, and airtime budgets.
-- [ ] Review whether the pinned external core needs a deliberate versioned change.
-- [ ] Keep production transmit disabled; allow only host vectors or an explicitly approved loopback harness.
+- [ ] Fix findings across the complete feature set, prioritizing shared causes over per-screen patches.
+- [ ] Audit USB/TCP/WebSocket/BLE/web/MQTT, logs, backups, QR, screenshots, SD, and exports.
+- [ ] Fuzzing, storage fault injection, power cuts, endurance, queue bounds, memory/stack/PSRAM, airtime, and battery.
+- [ ] Corruption, wrong PIN/binding, missing/read-only/full/removed SD, migration, rollback, and last-known-good recovery.
+- [ ] Threat-model review and no unresolved critical/high issues before release.
 
-Exit rule: the protocol is documented, bounded, test-vector complete, and security reviewed before radio use.
+### Phase 10 — Physical feature qualification and release
 
-### Phase 7 — Nearby invitation and verification
-
-Goal: safely bind people/devices to approved group membership.
-
-- [ ] Define invitation lifetime and human-verifiable code/transcript.
-- [ ] Prove possession of MeshCore and FriendMesh identity material as required by the approved protocol.
-- [ ] Require in-person verification for trusted membership.
-- [ ] Handle alias conflicts, full groups, expired invitations, replay, spoofing, and changed identities.
-- [ ] Deliver initial group material only after approval.
-- [ ] Test with two T-Decks before expanding topology.
-
-Exit rule: an unverified device cannot acquire group secrets or become an approved member.
-
-### Phase 8 — Signed group chat and durable outbox
-
-Goal: deliver the first controlled end-to-end FriendMesh feature.
-
-- [ ] Persist ordinary outgoing events before transmission.
-- [ ] Implement bounded retry, expiration, queue pressure, and cancellation policy.
-- [ ] Add signed messages, delivery states, reactions, and deletion tombstones only as approved.
-- [ ] Add fragmentation only after measured packet/airtime limits require it.
-- [ ] Keep ordinary WadaMesh/MeshCore chat unchanged.
-- [ ] Use existing chat presentation with minimal FriendMesh metadata and security indicators.
-- [ ] Physically verify direct and relayed behavior on an approved test channel.
-
-Exit rule: messages survive reboot, never bypass storage policy, and do not overclaim delivery or privacy.
-
-### Phase 9 — Offline synchronization and lifecycle recovery
-
-Goal: recover bounded history and membership state after devices return.
-
-- [ ] Define inventory/high-water/gap exchange.
-- [ ] Prioritize control and safety events over old chat.
-- [ ] Throttle sync by channel utilization and duty-cycle requirements.
-- [ ] Quarantine conflicting IDs or broken administrative chains.
-- [ ] Enforce join/removal epochs on history access.
-- [ ] Display incomplete history honestly when no replica retained it.
-- [ ] Test packet loss, duplicates, reordering, long offline periods, and reboot during sync.
-
-Exit rule: sync is resumable, bounded, and cannot block live mesh/UI processing.
-
-### Phase 10 — Rekey, leave, kick, replacement, and succession
-
-Goal: make group membership changes cryptographically meaningful.
-
-- [ ] Implement reversible pending states before an irreversible boundary.
-- [ ] Implement forward-only rekey journaling.
-- [ ] Distribute new epoch material only to approved remaining identities.
-- [ ] Handle offline members, changed identities, replacement, admin transfer, succession, and disband.
-- [ ] Ensure removed devices cannot decrypt a new epoch.
-- [ ] Test power loss at every transaction boundary and network partitions.
-
-Exit rule: membership removal advances security state safely and recovery never returns to a compromised epoch.
-
-### Phase 11 — Group map, navigation, markers, and meetups
-
-Goal: layer field coordination onto proven identity/group behavior.
-
-- [ ] Add group filters to the existing map.
-- [ ] Add stale/hidden position policy and clear source/accuracy/age labels.
-- [ ] Add arrow-only navigation when map tiles are unavailable.
-- [ ] Add bounded breadcrumbs, markers, meetup proposals, votes, attendance, and rally points.
-- [ ] Reuse existing WadaMesh map/contact surfaces and semantic styling.
-- [ ] Test missing GPS, stale GPS, missing SD, missing tiles, and clock skew.
-
-Exit rule: navigation is useful without claiming device-relative heading or GPS accuracy the hardware cannot provide.
-
-### Phase 12 — SOS and Help Requests
-
-Goal: add best-effort peer-assistance workflows after the reliable foundation exists.
-
-- [ ] Define intentional hold/cancel activation and incident deduplication.
-- [ ] Define location privacy, stale/no-location behavior, retry limits, recipient states, and closure.
-- [ ] Allow an explicit standard MeshCore public-text fallback only after a clear privacy confirmation.
-- [ ] Ensure emergency sends do not silently depend on SD history success.
-- [ ] Use existing WadaMesh surfaces with fixed, unmistakable emergency semantics.
-- [ ] State clearly that this does not contact emergency services and cannot guarantee delivery.
-- [ ] Run physical multi-device drills under loss, congestion, reboot, and missing-GPS conditions.
-
-Exit rule: safety language, state recovery, radio behavior, and failure modes are physically evidenced.
-
-### Phase 13 — Exposure audit, hardening, and release
-
-Goal: qualify the whole feature layer without weakening WadaMesh.
-
-- [ ] Audit USB/TCP/WebSocket/BLE/web/MQTT, logs, backups, QR, screenshots, and exports for FriendMesh exposure.
-- [ ] Run secret scans, parser fuzzing, storage fault injection, endurance, memory, stack, airtime, and battery campaigns.
-- [ ] Verify ordinary WadaMesh chat, contacts, maps, companion use, update, recovery, and screenshots.
-- [ ] Verify every added UI state with touch, keyboard, and trackball using existing WadaMesh themes.
-- [ ] Verify optional themes independently if any are added.
-- [ ] Produce reproducible T-Deck artifacts, checksums, migration/recovery instructions, limitations, and changelog.
-- [ ] Require explicit release approval.
-
-Exit rule: there are no unresolved critical security/reliability findings and documentation matches the shipped binary.
+- [ ] Multi-device people/group/invitation/chat/sync/rekey tests.
+- [ ] Map/navigation/meetup/marker and SOS/Help drills.
+- [ ] Ordinary WadaMesh chat, contacts, maps, companion, OTA, recovery, and screenshot regression.
+- [ ] Every added state through touch, keyboard, trackball, and existing WadaMesh themes.
+- [ ] Reproducible artifact, checksums, migration/recovery guide, limitations, and changelog.
+- [ ] Explicit release approval.
 
 ## Deferred work
 
-The following are deliberately not part of current implementation:
-
-- Heltec source changes, builds, or physical qualification;
-- a FriendMesh replacement launcher, home screen, navigation system, or visual identity;
-- a new FriendMesh firmware/repository brand replacing WadaMesh;
-- Meshtastic module APIs, protobufs, Router/NodeDB assumptions, or `PRIVATE_APP` protocol copied into MeshCore;
-- active Wi-Fi attacks, impersonation, deauthentication, credential capture, or disruptive RF tooling;
-- guaranteed emergency dispatch, delivery, anonymity, remote deletion, or GPS accuracy;
-- automatic secret creation during boot;
-- general FriendMesh radio transmission before the required gates.
+- Heltec implementation or compatibility claims;
+- replacement UI, launcher, branding, or repo identity;
+- mandatory FriendMesh themes;
+- Meshtastic APIs/protobufs/NodeDB/Router/`PRIVATE_APP` assumptions;
+- active Wi-Fi attacks or disruptive RF tooling;
+- guaranteed anonymity, delivery, remote deletion, GPS accuracy, or emergency dispatch;
+- automatic secret provisioning or plaintext fallback.
 
 ## Immediate next work
 
-The next implementation phase is **Phase 1: status, diagnostics, and policy model**.
+Phases 1 through 3 are host/build complete. Phase 4 and Phase 5 functional
+services are now host/build verified, and a first local-only Phase 6 T-Deck
+workspace is physically installable through the existing WadaMesh app drawer.
+It exercises typed notes, current-position markers rendered in the real map,
+marker overlap/tap details, ride Help incidents, roster-filtered group maps,
+and a selected-member Friend Compass. The general development workspace still
+does not persist across reboot or communicate through its custom event path;
+the group map reuses WadaMesh/MeshCore contact positions and its encrypted
+telemetry request/reply mechanism rather than requiring location adverts.
 
-The first slice should:
-
-1. add deterministic lifecycle/reason states to `FriendMeshFeatureService`;
-2. keep all status output secret-free;
-3. add host-runnable state and transmit-policy tests;
-4. make no storage, radio, protocol, or UI changes;
-5. rebuild only `LilyGo_TDeck_companion_radio_touch` and record the delta.
-
-Protected storage begins only after that status/policy contract is stable.
+Next, complete the remaining native people/group/chat/navigation/safety flows
+and replace the development providers with protected persistence and identity.
+Only then connect the reviewed MeshCore transport behind the transmit gate,
+without changing WadaMesh's overall layout or branding.
 
 ## Session handoff template
 
 ```text
 Date:
 Branch / commit:
-Roadmap phase:
-Scope:
+Phase / feature cluster:
 Files changed:
-
 Implemented:
-Intentionally disabled or deferred:
+Intentionally disabled/deferred:
 
-Host/static checks:
+Host tests:
 T-Deck build result and size:
 T-Deck physical result:
-Storage backend exercised:
-Radio/protocol behavior exercised:
-Companion/network surfaces exercised:
-
+Storage/radio/remote surfaces exercised:
 Secrets/redaction review:
-Destructive or device-changing actions:
+Device-changing actions:
 
 Known issues:
 Next exact action:
 ```
 
-## Definition of project success
+## Definition of success
 
-FriendMeshOS features succeed when WadaMesh remains recognizably and operationally WadaMesh while gaining a trustworthy, optional set of friend, group, navigation, recovery, and peer-assistance capabilities on the T-Deck.
-
-Success is not a new skin or a demo screen. It is bounded behavior with protected state, explicit consent, honest radio/security semantics, recovery evidence, ordinary WadaMesh regression coverage, and documentation that distinguishes implemented, build verified, physically verified, and still unfinished work.
+FriendMeshOS features succeed when the planned feature system works coherently through shared code, then passes the shared security, recovery, radio, exposure, and physical campaigns—while WadaMesh remains recognizably and operationally WadaMesh.

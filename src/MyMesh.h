@@ -108,6 +108,11 @@
 
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+#include "friendmesh/people/FriendMeshChannelInvite.h"
+#include "friendmesh/people/FriendMeshChannelRoster.h"
+#include "friendmesh/navigation/FriendMeshMeshCorePositionAdapter.h"
+#endif
 
 /* -------------------------------------------------------------------------------------- */
 
@@ -120,8 +125,36 @@ struct AdvertPath {
   uint8_t path_len;
   char    name[32];
   uint32_t recv_timestamp;
+  uint32_t recv_millis;
   uint8_t path[MAX_PATH_SIZE];
 };
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+enum class FriendMeshInviteSendResult : uint8_t {
+  Sent = 0,
+  InvalidChannel,
+  InvalidContact,
+  AlreadyMember,
+  NotFreshDirect,
+  EncodeFailed,
+  SendFailed,
+};
+
+struct FriendMeshChannelMemberView {
+  uint8_t pubKey[PUB_KEY_SIZE];
+  char name[32];
+  friendmesh::ChannelRosterRole role;
+  friendmesh::ChannelRosterState state;
+  bool isSelf;
+  bool contactAvailable;
+};
+
+struct FriendMeshChannelPositionView {
+  uint32_t contactIndex;
+  friendmesh::PositionRecord position;
+  bool stale;
+};
+#endif
 
 class MyMesh : public BaseChatMesh, public DataStoreHost {
 public:
@@ -265,6 +298,9 @@ protected:
                            const uint8_t *sender_prefix, const char *text) override;
   void onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                             const char *text) override;
+  void onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt,
+                         uint16_t data_type, const uint8_t *data,
+                         size_t data_len) override;
 
   uint8_t onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                            uint8_t len, uint8_t *reply) override;
@@ -297,6 +333,7 @@ public:
    *  via AbstractUITask::onPingReply when the reply arrives.
    *  Returns the MSG_SEND_* result code. */
   int sendStatusPingForUI(ContactInfo& recipient) {
+    if (hasUIPingPending()) return MSG_SEND_FAILED;
     uint32_t tag = 0, est = 0;
     /* Clear any stale serial-side status pending so the legacy match doesn't
      * eat our reply before the UI hook sees it. */
@@ -320,6 +357,7 @@ public:
    *  No-op if the LOGIN packet pool is empty; falls through to send the
    *  STATUS REQ anyway so a repeater that already knows us still replies. */
   int sendStatusPingWithGuestLoginForUI(ContactInfo& recipient) {
+    if (hasUIPingPending()) return MSG_SEND_FAILED;
     uint32_t login_est = 0;
     sendLogin(recipient, "", login_est);
     return sendStatusPingForUI(recipient);
@@ -328,6 +366,7 @@ public:
   /** Same chained-login flavour for telemetry — repeaters and sensors also
    *  require ACL membership for REQ_TYPE_GET_TELEMETRY_DATA. */
   int sendTelemetryRequestWithGuestLoginForUI(ContactInfo& recipient) {
+    if (hasUIPingPending()) return MSG_SEND_FAILED;
     uint32_t login_est = 0;
     sendLogin(recipient, "", login_est);
     return sendTelemetryRequestForUI(recipient);
@@ -347,6 +386,7 @@ public:
    *  auto-poll keeps the immediate chained send above (a single arm slot can't
    *  serve its multi-node loop, and a missed poll just retries next interval). */
   int uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind) {
+    if (hasUIPingPending()) return MSG_SEND_FAILED;
     uint32_t login_est = 0;
     int r = sendLogin(recipient, "", login_est);
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
@@ -427,7 +467,9 @@ public:
     _ui_login_then_kind = UiReqKind::None;
   }
   /** True if a UI ping is still waiting on a reply. */
-  bool hasUIPingPending() const { return _ui_pending_status != 0; }
+  bool hasUIPingPending() const {
+    return _ui_pending_status != 0 || _ui_login_then != 0;
+  }
 
   /** Register an expected ACK hash that came out of a touch-UI sendMessage
    *  call, so MyMesh::processAck can match the inbound ACK and dispatch
@@ -717,6 +759,7 @@ public:
    *  override the telemetry hook.
    *  Returns the MSG_SEND_* result code. */
   int sendTelemetryRequestForUI(ContactInfo& recipient) {
+    if (hasUIPingPending()) return MSG_SEND_FAILED;
     uint32_t tag = 0, est = 0;
     pending_telemetry = 0;
     int r = sendRequest(recipient, REQ_TYPE_GET_TELEMETRY_DATA, tag, est);
@@ -783,6 +826,31 @@ public:
     if (_ui) _ui->onThreadsChanged();
     return true;
   }
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  /** Deliver an existing MeshCore private-channel key through the existing
+   *  encrypted contact-message protocol. The contact must have a fresh
+   *  zero-hop advert, and the packet is forced to a zero-length direct route. */
+  FriendMeshInviteSendResult uiSendFriendMeshChannelInvite(
+      int channel_idx, const uint8_t recipient_pub[PUB_KEY_SIZE]);
+  bool uiIsFriendMeshChannelMemberJoined(
+      int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE]);
+  size_t uiGetFriendMeshChannelPositions(
+      int channel_idx, FriendMeshChannelPositionView* destination,
+      size_t capacity, uint32_t stale_after_seconds =
+          friendmesh::kDefaultPositionStaleSeconds);
+  bool uiIsFreshZeroHopContact(const uint8_t pub_key[PUB_KEY_SIZE],
+                               uint32_t max_age_ms = 120000) const;
+  bool uiAcceptFriendMeshChannelInvite(
+      int channel_idx, const uint8_t inviter_pub[PUB_KEY_SIZE],
+      bool& notice_sent);
+  size_t uiGetFriendMeshChannelMembers(
+      int channel_idx, FriendMeshChannelMemberView* destination,
+      size_t capacity, bool& rekey_required);
+  bool uiRemoveFriendMeshChannelMember(
+      int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE]);
+  bool uiLeaveFriendMeshChannel(int channel_idx, bool& notice_sent);
+#endif
 
   /** Wipe the cached return path for a contact so the next outgoing message
    *  re-floods instead of routing through a stale hop list. Returns false
@@ -902,6 +970,31 @@ public:
   bool isRadioReceiving() const { return _radio && _radio->isReceiving(); }
 
 private:
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  bool friendmeshLoadChannelRoster(int channel_idx,
+                                   friendmesh::ChannelRoster& roster,
+                                   bool initialize_self_admin);
+  bool friendmeshSaveChannelRoster(int channel_idx,
+                                   const friendmesh::ChannelRoster& roster);
+  bool friendmeshDeleteChannelRoster(int channel_idx);
+  bool friendmeshChannelTag(int channel_idx,
+                            uint8_t tag[friendmesh::kChannelControlTagBytes],
+                            uint8_t blob_key[8] = nullptr);
+  int friendmeshFindChannelByTag(
+      const uint8_t tag[friendmesh::kChannelControlTagBytes]);
+  bool friendmeshSendChannelControl(
+      const ContactInfo& recipient, friendmesh::ChannelControlType type,
+      const uint8_t tag[friendmesh::kChannelControlTagBytes],
+      bool force_direct);
+  bool friendmeshBroadcastChannelRoster(
+      int channel_idx, const friendmesh::ChannelRoster& roster);
+  bool friendmeshApplyChannelRoster(
+      int channel_idx, const friendmesh::ChannelRoster& incoming);
+  /** True when this contact is locally recorded as Joined in at least one
+   *  FriendMesh channel. Used as the authorization boundary for responding
+   *  to an existing MeshCore telemetry request with our position. */
+  bool friendmeshIsJoinedGroupPeer(const uint8_t pub_key[PUB_KEY_SIZE]);
+#endif
   void writeOKFrame();
   void writeErrFrame(uint8_t err_code);
   void writeDisabledFrame();

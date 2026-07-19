@@ -54,11 +54,53 @@ other hardware is deferred until the scope is explicitly expanded.
   hardest.
 - **[FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md](FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md)**
   defines the detailed feature, security, recovery, test, and release contracts.
+- **[FRIENDMESH_NEARBY_JOIN_PROTOCOL.md](FRIENDMESH_NEARBY_JOIN_PROTOCOL.md)**
+  defines the nearby zero-hop invitation UX and encrypted member-specific grant
+  boundary without ever sharing identity private keys.
 
-The current T-Deck build contains only a dormant FriendMesh backend service with
-transmission hard-disabled. It performs no FriendMesh storage, identity, protocol,
-radio, or UI work. WadaMesh's UI and branding remain authoritative; optional
-themes are the maximum broad visual addition in scope.
+The current T-Deck build contains a platform-neutral FriendMesh application core
+and development-provider implementations of membership, chat/sync,
+position/navigation/markers/meetups, and safety/notification behavior. A single
+native WadaMesh app-drawer tile now exposes a local development workspace where
+the operator can initialize Friends state, save typed FriendMesh notes, add a
+meetup marker at the current position, jump to that marker on WadaMesh's map,
+tap it for FriendMesh details, and open a local ride Help request. The page uses
+small cached state labels instead of rebuilding its layout during refresh.
+WadaMesh private channels now also have an `Invite nearby` action. A bounded
+three-second Bluetooth scan discovers updated T-Decks belonging to saved chat
+contacts; a fresh direct zero-hop LoRa advert remains the fallback. Bluetooth
+advertises only a versioned public-key prefix and never carries the channel key.
+The sender passes the channel's existing 16-byte secret through MeshCore's
+encrypted direct-message path with an empty route, and the recipient must
+explicitly join. The receiver rejects forwarded invite envelopes. Identity
+private keys are never sent. Bluetooth RSSI and direct RF are convenience
+signals, not proof of physical proximity. Production FriendMesh identity,
+transcript, replay, protected-storage, and epoch/rekey security remain later
+shared work.
+
+Private-channel actions also expose a bounded `Members` view. It persists local
+roster metadata, shows `Invited`, `Joined`, `Invite failed`, `Left`, and
+`Removed` states, and synchronizes joined rosters through compact encrypted
+channel control records that never enter chat history. Guests can leave and
+owners can cooperatively remove updated T-Decks. Any departure or removal is
+visibly marked `rekey required`: until the later security phase rotates and
+redistributes the shared channel key, removal is not cryptographic revocation.
+
+Joined private channels also expose `Group map`. It filters the existing
+WadaMesh map to positioned joined members, and tapping one of those members
+offers `Friend Compass` with north-up distance, bearing, position age, and stale
+location warnings. Opening the map performs one bounded, single-flight pass over
+the joined roster using MeshCore's existing encrypted contact-telemetry request;
+each reply updates that member's saved map position without requiring a public
+location advert. A device authorizes its current position for contacts locally
+recorded as joined in a FriendMesh channel. The pass stops after the roster and
+does not become a background transmitter. It does not introduce a second map,
+a new wire protocol, or new UI branding.
+
+The separate FriendMesh development workspace is still volatile across reboot
+and its custom event transport remains disabled. WadaMesh's UI and branding
+remain authoritative; optional themes are the maximum broad visual addition in
+scope.
 
 ## Build
 
@@ -74,9 +116,19 @@ pio run -e LilyGo_TDeck_companion_radio_touch            # LilyGo T-Deck
 FriendMesh development uses the explicit T-Deck command above; do not use the
 multi-environment default as its verification gate.
 
-Flash with the NVS-preserving 4-component chain (bootloader / partitions /
-boot_app0 / firmware at `0x0 / 0x8000 / 0xe000 / 0x10000`) so saved Wi-Fi
-credentials survive — not a merged image, which 0xFF-pads and wipes NVS.
+For routine T-Deck development, use the guarded application-only uploader so a
+USB interruption cannot overwrite the bootloader or partition table:
+
+```bash
+./scripts/upload-tdeck-app-only.sh \
+  --port /dev/cu.usbmodem1101 \
+  --confirm-app-only
+```
+
+The four-component chain (bootloader / partitions / boot_app0 / firmware at
+`0x0 / 0x8000 / 0xe000 / 0x10000`) is reserved for deliberate provisioning or
+recovery. Do not use a merged image for routine updates; its padding can wipe
+NVS and other partition contents.
 
 ## Contributing
 

@@ -1,4 +1,11 @@
 #include "MyMesh.h"
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+#include "friendmesh/people/FriendMeshChannelInvite.h"
+#include "friendmesh/people/FriendMeshBlePresence.h"
+#include "friendmesh/people/FriendMeshChannelRoster.h"
+static_assert(friendmesh::kChannelRosterEncodedBytes <= MAX_GROUP_DATA_LENGTH,
+              "FriendMesh roster must fit one MeshCore group datagram");
+#endif
 
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
@@ -1812,6 +1819,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
     strncpy(p->name, contact.name, sizeof(p->name) - 1);
     p->name[sizeof(p->name) - 1] = '\0';
     p->recv_timestamp = getRTCClock()->getCurrentTime();
+    p->recv_millis = _ms->getMillis();
     p->path_len = path_len;
     memcpy(p->path, path, p->path_len);
   }
@@ -2057,11 +2065,517 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (friendmesh::isChannelControlText(text)) {
+    friendmesh::ChannelControlType type =
+        friendmesh::ChannelControlType::Joined;
+    uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+    if (friendmesh::decodeChannelControl(text, type, tag) !=
+        friendmesh::ResultCode::Ok) return;
+    const int channelIdx = friendmeshFindChannelByTag(tag);
+    if (channelIdx < 0) return;
+    ChannelDetails channel = {};
+    friendmesh::ChannelRoster roster = {};
+    if (!getChannel(channelIdx, channel) ||
+        !friendmeshLoadChannelRoster(channelIdx, roster, false)) return;
+    friendmesh::ChannelRosterMember* sender =
+        friendmesh::findChannelRosterMember(roster, from.id.pub_key);
+    const char* status = nullptr;
+    if (type == friendmesh::ChannelControlType::Joined) {
+      if (!sender || sender->role != friendmesh::ChannelRosterRole::Member ||
+          (sender->state != friendmesh::ChannelRosterState::Invited &&
+           sender->state != friendmesh::ChannelRosterState::InviteFailed)) return;
+      sender->state = friendmesh::ChannelRosterState::Joined;
+      status = "Member joined";
+    } else if (type == friendmesh::ChannelControlType::Left) {
+      if (!sender || sender->state != friendmesh::ChannelRosterState::Joined)
+        return;
+      sender->state = friendmesh::ChannelRosterState::Left;
+      roster.rekeyRequired = true;
+      status = "Member left - rekey required";
+    } else {
+      if (!sender || sender->role != friendmesh::ChannelRosterRole::Admin ||
+          sender->state != friendmesh::ChannelRosterState::Joined) return;
+      char channelName[sizeof(channel.name)] = {};
+      StrHelper::strncpy(channelName, channel.name, sizeof(channelName));
+      friendmeshDeleteChannelRoster(channelIdx);
+      if (!uiDeleteChannel(channelIdx)) return;
+      if (_ui) _ui->onFriendMeshChannelRosterChanged(
+          channelName, "Removed from private group");
+      return;
+    }
+    if (!friendmeshSaveChannelRoster(channelIdx, roster)) return;
+    friendmeshBroadcastChannelRoster(channelIdx, roster);
+    if (_ui) _ui->onFriendMeshChannelRosterChanged(channel.name, status);
+    return;
+  }
+  if (friendmesh::isDirectChannelInviteText(text)) {
+    // A direct route may still carry a repeater path. Accept only an actual
+    // zero-entry path; malformed/routed invite text is dropped, never exposed
+    // as a chat bubble containing the channel secret.
+    if (!pkt || !pkt->isRouteDirect() || pkt->getPathHashCount() != 0) return;
+    friendmesh::DirectChannelInvite invite = {};
+    if (friendmesh::decodeDirectChannelInvite(text, invite) !=
+        friendmesh::ResultCode::Ok) return;
+    if (_ui) _ui->onFriendMeshChannelInvite(
+        from, invite.channelName, invite.channelSecret);
+    memset(&invite, 0, sizeof(invite));
+    return;
+  }
+#endif
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   mqtt_bridge.publishDM(from.name, from.id.pub_key, pkt->getSNR(), pkt->path_len, sender_timestamp, text);
 #endif
 }
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+bool MyMesh::uiIsFreshZeroHopContact(
+    const uint8_t pub_key[PUB_KEY_SIZE], uint32_t max_age_ms) const {
+  if (!pub_key || max_age_ms == 0) return false;
+  const uint32_t now = _ms->getMillis();
+  for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; ++i) {
+    const AdvertPath& path = advert_paths[i];
+    if (path.recv_millis != 0 && path.path_len == 0 &&
+        memcmp(path.pubkey_prefix, pub_key, sizeof(path.pubkey_prefix)) == 0 &&
+        (uint32_t)(now - path.recv_millis) <= max_age_ms) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool MyMesh::friendmeshChannelTag(
+    int channel_idx, uint8_t tag[friendmesh::kChannelControlTagBytes],
+    uint8_t blob_key[8]) {
+  if (!tag) return false;
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) return false;
+  static const uint8_t kTagNamespace[] = {'F','M','C','T','1'};
+  mesh::Utils::sha256(tag, friendmesh::kChannelControlTagBytes,
+                      kTagNamespace, sizeof(kTagNamespace),
+                      channel.channel.secret, 16);
+  if (blob_key) {
+    static const uint8_t kRosterNamespace[] = {'F','M','R','S','1'};
+    mesh::Utils::sha256(blob_key, 8, kRosterNamespace,
+                        sizeof(kRosterNamespace), channel.channel.secret, 16);
+  }
+  memset(&channel, 0, sizeof(channel));
+  return true;
+}
+
+int MyMesh::friendmeshFindChannelByTag(
+    const uint8_t tag[friendmesh::kChannelControlTagBytes]) {
+  if (!tag) return -1;
+#ifdef MAX_GROUP_CHANNELS
+  for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+    uint8_t candidate[friendmesh::kChannelControlTagBytes] = {};
+    if (friendmeshChannelTag(i, candidate) &&
+        memcmp(candidate, tag, sizeof(candidate)) == 0) return i;
+  }
+#endif
+  return -1;
+}
+
+bool MyMesh::friendmeshLoadChannelRoster(
+    int channel_idx, friendmesh::ChannelRoster& roster,
+    bool initialize_self_admin) {
+  friendmesh::clearChannelRoster(roster);
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  uint8_t blobKey[8] = {};
+  if (!friendmeshChannelTag(channel_idx, tag, blobKey)) return false;
+  uint8_t encoded[friendmesh::kChannelRosterEncodedBytes] = {};
+  const uint8_t length = _store->getBlobByKey(
+      blobKey, sizeof(blobKey), encoded);
+  if (length > 0) {
+    return friendmesh::decodeChannelRoster(encoded, length, roster) ==
+           friendmesh::ResultCode::Ok;
+  }
+  if (!initialize_self_admin) return false;
+  return friendmesh::setChannelRosterMember(
+             roster, self_id.pub_key,
+             friendmesh::ChannelRosterRole::Admin,
+             friendmesh::ChannelRosterState::Joined) ==
+         friendmesh::ResultCode::Ok;
+}
+
+bool MyMesh::friendmeshSaveChannelRoster(
+    int channel_idx, const friendmesh::ChannelRoster& roster) {
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  uint8_t blobKey[8] = {};
+  if (!friendmeshChannelTag(channel_idx, tag, blobKey)) return false;
+  uint8_t encoded[friendmesh::kChannelRosterEncodedBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeChannelRoster(
+          roster, encoded, sizeof(encoded), written) !=
+          friendmesh::ResultCode::Ok || written > UINT8_MAX) return false;
+  return _store->putBlobByKey(blobKey, sizeof(blobKey), encoded,
+                              static_cast<uint8_t>(written));
+}
+
+bool MyMesh::friendmeshDeleteChannelRoster(int channel_idx) {
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  uint8_t blobKey[8] = {};
+  if (!friendmeshChannelTag(channel_idx, tag, blobKey)) return false;
+  return _store->deleteBlobByKey(blobKey, sizeof(blobKey));
+}
+
+bool MyMesh::friendmeshSendChannelControl(
+    const ContactInfo& recipient, friendmesh::ChannelControlType type,
+    const uint8_t tag[friendmesh::kChannelControlTagBytes],
+    bool force_direct) {
+  char text[friendmesh::kChannelControlMaxText + 1] = {};
+  size_t written = 0;
+  if (friendmesh::encodeChannelControl(type, tag, text, sizeof(text), written) !=
+          friendmesh::ResultCode::Ok || written == 0) return false;
+  ContactInfo destination = recipient;
+  if (force_direct) {
+    destination.out_path_len = 0;
+    memset(destination.out_path, 0, sizeof(destination.out_path));
+  }
+  uint32_t expectedAck = 0;
+  uint32_t timeout = 0;
+  const int result = sendMessage(
+      destination, getRTCClock()->getCurrentTimeUnique(), 0, text,
+      expectedAck, timeout);
+  memset(text, 0, sizeof(text));
+  return result != MSG_SEND_FAILED;
+}
+
+bool MyMesh::friendmeshBroadcastChannelRoster(
+    int channel_idx, const friendmesh::ChannelRoster& roster) {
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) return false;
+  uint8_t data[friendmesh::kChannelRosterEncodedBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeChannelRoster(
+          roster, data, sizeof(data), written) != friendmesh::ResultCode::Ok ||
+      written == 0 || written > MAX_GROUP_DATA_LENGTH) {
+    memset(&channel, 0, sizeof(channel));
+    return false;
+  }
+  const bool sent = sendGroupData(
+      channel.channel, nullptr, OUT_PATH_UNKNOWN,
+      friendmesh::kChannelRosterDataType, data, static_cast<int>(written));
+  memset(data, 0, sizeof(data));
+  memset(&channel, 0, sizeof(channel));
+  return sent;
+}
+
+bool MyMesh::friendmeshApplyChannelRoster(
+    int channelIdx, const friendmesh::ChannelRoster& incoming) {
+  if (channelIdx < 0) return false;
+  const friendmesh::ChannelRosterMember* incomingSelf =
+      friendmesh::findChannelRosterMember(incoming, self_id.pub_key);
+  const friendmesh::ChannelRosterMember* incomingAdmin = nullptr;
+  uint8_t adminCount = 0;
+  for (size_t i = 0; i < incoming.memberCount; ++i) {
+    if (incoming.members[i].role == friendmesh::ChannelRosterRole::Admin &&
+        incoming.members[i].state == friendmesh::ChannelRosterState::Joined) {
+      incomingAdmin = &incoming.members[i];
+      ++adminCount;
+    }
+  }
+  // A shared-channel roster is functional synchronization, not production
+  // authorization. Still require one admin and our own active membership,
+  // and pin later snapshots to the admin learned during direct joining.
+  if (!incomingSelf ||
+      incomingSelf->state != friendmesh::ChannelRosterState::Joined ||
+      !incomingAdmin || adminCount != 1) return false;
+  friendmesh::ChannelRoster current = {};
+  if (friendmeshLoadChannelRoster(channelIdx, current, false)) {
+    const friendmesh::ChannelRosterMember* currentAdmin = nullptr;
+    for (size_t i = 0; i < current.memberCount; ++i) {
+      if (current.members[i].role == friendmesh::ChannelRosterRole::Admin) {
+        currentAdmin = &current.members[i];
+        break;
+      }
+    }
+    if (!currentAdmin ||
+        memcmp(currentAdmin->pubKeyPrefix, incomingAdmin->pubKeyPrefix,
+               friendmesh::kChannelRosterPrefixBytes) != 0) return false;
+  }
+  if (!friendmeshSaveChannelRoster(channelIdx, incoming)) return false;
+  ChannelDetails details = {};
+  if (_ui && getChannel(channelIdx, details)) {
+    _ui->onFriendMeshChannelRosterChanged(
+        details.name, "Group member list updated");
+  }
+  return true;
+}
+
+FriendMeshInviteSendResult MyMesh::uiSendFriendMeshChannelInvite(
+    int channel_idx, const uint8_t recipient_pub[PUB_KEY_SIZE]) {
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::InvalidChannel;
+  }
+  ContactInfo* stored = recipient_pub
+      ? lookupContactByPubKey(recipient_pub, PUB_KEY_SIZE) : nullptr;
+  if (!stored || stored->type != ADV_TYPE_CHAT) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::InvalidContact;
+  }
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, true)) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::EncodeFailed;
+  }
+  const friendmesh::ChannelRosterMember* existing =
+      friendmesh::findChannelRosterMember(roster, stored->id.pub_key);
+  if (existing && existing->state == friendmesh::ChannelRosterState::Joined) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::AlreadyMember;
+  }
+  const bool directAdvert = uiIsFreshZeroHopContact(stored->id.pub_key);
+  const bool nearbyBle = friendmesh::blePresenceWasSeen(stored->id.pub_key);
+  if (!directAdvert && !nearbyBle) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::NotFreshDirect;
+  }
+
+  if (friendmesh::setChannelRosterMember(
+          roster, stored->id.pub_key,
+          friendmesh::ChannelRosterRole::Member,
+          friendmesh::ChannelRosterState::Invited) !=
+          friendmesh::ResultCode::Ok ||
+      !friendmeshSaveChannelRoster(channel_idx, roster)) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::EncodeFailed;
+  }
+
+  friendmesh::DirectChannelInvite invite = {};
+  StrHelper::strncpy(invite.channelName, channel.name,
+                     sizeof(invite.channelName));
+  memcpy(invite.channelSecret, channel.channel.secret,
+         sizeof(invite.channelSecret));
+  char text[friendmesh::kDirectChannelInviteMaxText + 1] = {};
+  size_t written = 0;
+  if (friendmesh::encodeDirectChannelInvite(
+          invite, text, sizeof(text), written) != friendmesh::ResultCode::Ok ||
+      written == 0 || written > MAX_TEXT_LEN) {
+    memset(&invite, 0, sizeof(invite));
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::EncodeFailed;
+  }
+
+  ContactInfo direct = *stored;
+  direct.out_path_len = 0;
+  memset(direct.out_path, 0, sizeof(direct.out_path));
+  uint32_t expectedAck = 0;
+  uint32_t timeout = 0;
+  const int result = sendMessage(direct, getRTCClock()->getCurrentTimeUnique(),
+                                 0, text, expectedAck, timeout);
+  memset(text, 0, sizeof(text));
+  memset(&invite, 0, sizeof(invite));
+  memset(&channel, 0, sizeof(channel));
+  if (result == MSG_SEND_FAILED) {
+    friendmesh::ChannelRoster failed = {};
+    if (friendmeshLoadChannelRoster(channel_idx, failed, false)) {
+      friendmesh::ChannelRosterMember* member =
+          friendmesh::findChannelRosterMember(failed, stored->id.pub_key);
+      if (member) member->state = friendmesh::ChannelRosterState::InviteFailed;
+      friendmeshSaveChannelRoster(channel_idx, failed);
+    }
+    return FriendMeshInviteSendResult::SendFailed;
+  }
+  friendmeshBroadcastChannelRoster(channel_idx, roster);
+  return FriendMeshInviteSendResult::Sent;
+}
+
+bool MyMesh::uiIsFriendMeshChannelMemberJoined(
+    int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE]) {
+  if (!member_pub) return false;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* member =
+      friendmesh::findChannelRosterMember(roster, member_pub);
+  return member && member->state == friendmesh::ChannelRosterState::Joined;
+}
+
+bool MyMesh::friendmeshIsJoinedGroupPeer(
+    const uint8_t pub_key[PUB_KEY_SIZE]) {
+  if (!pub_key) return false;
+#ifdef MAX_GROUP_CHANNELS
+  for (int channel_idx = 0; channel_idx < MAX_GROUP_CHANNELS; ++channel_idx) {
+    friendmesh::ChannelRoster roster = {};
+    if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) continue;
+    const friendmesh::ChannelRosterMember* member =
+        friendmesh::findChannelRosterMember(roster, pub_key);
+    if (member && member->state == friendmesh::ChannelRosterState::Joined)
+      return true;
+  }
+#endif
+  return false;
+}
+
+size_t MyMesh::uiGetFriendMeshChannelPositions(
+    int channel_idx, FriendMeshChannelPositionView* destination,
+    size_t capacity, uint32_t stale_after_seconds) {
+  if (!destination || capacity == 0) return 0;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return 0;
+  const uint32_t now = getRTCClock()->getCurrentTime();
+  size_t written = 0;
+  for (uint32_t contactIndex = 0;
+       contactIndex < getNumContacts() && written < capacity;
+       ++contactIndex) {
+    ContactInfo contact = {};
+    if (!getContactByIdx(contactIndex, contact) ||
+        contact.type != ADV_TYPE_CHAT ||
+        (contact.gps_lat == 0 && contact.gps_lon == 0)) continue;
+    const friendmesh::ChannelRosterMember* member =
+        friendmesh::findChannelRosterMember(roster, contact.id.pub_key);
+    if (!member ||
+        member->state != friendmesh::ChannelRosterState::Joined ||
+        memcmp(member->pubKeyPrefix, self_id.pub_key,
+               friendmesh::kChannelRosterPrefixBytes) == 0) continue;
+    friendmesh::MeshCorePositionInput input = {};
+    memcpy(input.publicKey, contact.id.pub_key, PUB_KEY_SIZE);
+    input.latitudeE6 = contact.gps_lat;
+    input.longitudeE6 = contact.gps_lon;
+    input.observedAt = contact.last_advert_timestamp > contact.lastmod
+        ? contact.last_advert_timestamp : contact.lastmod;
+    input.receivedAt = now;
+    FriendMeshChannelPositionView view = {};
+    if (friendmesh::adaptMeshCorePosition(input, view.position) !=
+        friendmesh::ResultCode::Ok) continue;
+    view.contactIndex = contactIndex;
+    view.stale = input.observedAt == 0 || now == 0 || now < input.observedAt ||
+        now - input.observedAt > stale_after_seconds;
+    destination[written++] = view;
+  }
+  return written;
+}
+
+bool MyMesh::uiAcceptFriendMeshChannelInvite(
+    int channel_idx, const uint8_t inviter_pub[PUB_KEY_SIZE],
+    bool& notice_sent) {
+  notice_sent = false;
+  if (!inviter_pub || channel_idx < 0) return false;
+  ContactInfo* inviter = lookupContactByPubKey(inviter_pub, PUB_KEY_SIZE);
+  if (!inviter || inviter->type != ADV_TYPE_CHAT) return false;
+  friendmesh::ChannelRoster roster = {};
+  if (friendmesh::setChannelRosterMember(
+          roster, inviter->id.pub_key,
+          friendmesh::ChannelRosterRole::Admin,
+          friendmesh::ChannelRosterState::Joined) != friendmesh::ResultCode::Ok ||
+      friendmesh::setChannelRosterMember(
+          roster, self_id.pub_key,
+          friendmesh::ChannelRosterRole::Member,
+          friendmesh::ChannelRosterState::Joined) != friendmesh::ResultCode::Ok ||
+      !friendmeshSaveChannelRoster(channel_idx, roster)) return false;
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  if (friendmeshChannelTag(channel_idx, tag)) {
+    notice_sent = friendmeshSendChannelControl(
+        *inviter, friendmesh::ChannelControlType::Joined, tag, true);
+  }
+  return true;
+}
+
+size_t MyMesh::uiGetFriendMeshChannelMembers(
+    int channel_idx, FriendMeshChannelMemberView* destination,
+    size_t capacity, bool& rekey_required) {
+  rekey_required = false;
+  if (!destination || capacity == 0) return 0;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, true)) return 0;
+  const size_t count = roster.memberCount < capacity
+      ? roster.memberCount : capacity;
+  for (size_t i = 0; i < count; ++i) {
+    FriendMeshChannelMemberView& view = destination[i];
+    memset(&view, 0, sizeof(view));
+    const friendmesh::ChannelRosterMember& member = roster.members[i];
+    view.role = member.role;
+    view.state = member.state;
+    view.isSelf = memcmp(member.pubKeyPrefix, self_id.pub_key,
+                         friendmesh::kChannelRosterPrefixBytes) == 0;
+    if (view.isSelf) {
+      memcpy(view.pubKey, self_id.pub_key, PUB_KEY_SIZE);
+      StrHelper::strncpy(view.name, _prefs.node_name, sizeof(view.name));
+      view.contactAvailable = true;
+    } else {
+      ContactInfo* contact = lookupContactByPubKey(
+          member.pubKeyPrefix, friendmesh::kChannelRosterPrefixBytes);
+      if (contact) {
+        memcpy(view.pubKey, contact->id.pub_key, PUB_KEY_SIZE);
+        StrHelper::strncpy(view.name, contact->name, sizeof(view.name));
+        view.contactAvailable = true;
+      } else {
+        memcpy(view.pubKey, member.pubKeyPrefix,
+               friendmesh::kChannelRosterPrefixBytes);
+        snprintf(view.name, sizeof(view.name), "Member %02X%02X%02X",
+                 member.pubKeyPrefix[0], member.pubKeyPrefix[1],
+                 member.pubKeyPrefix[2]);
+      }
+    }
+  }
+  rekey_required = roster.rekeyRequired;
+  return count;
+}
+
+bool MyMesh::uiRemoveFriendMeshChannelMember(
+    int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE]) {
+  if (!member_pub ||
+      memcmp(member_pub, self_id.pub_key, PUB_KEY_SIZE) == 0) return false;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  friendmesh::ChannelRosterMember* target =
+      friendmesh::findChannelRosterMember(roster, member_pub);
+  if (!self || self->role != friendmesh::ChannelRosterRole::Admin ||
+      self->state != friendmesh::ChannelRosterState::Joined || !target ||
+      target->role == friendmesh::ChannelRosterRole::Admin ||
+      target->state == friendmesh::ChannelRosterState::Removed ||
+      target->state == friendmesh::ChannelRosterState::Left) return false;
+  ContactInfo* contact = lookupContactByPubKey(member_pub, PUB_KEY_SIZE);
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  if (!contact || !friendmeshChannelTag(channel_idx, tag) ||
+      !friendmeshSendChannelControl(
+          *contact, friendmesh::ChannelControlType::Removed, tag, false)) {
+    return false;
+  }
+  const bool hadJoined = target->state == friendmesh::ChannelRosterState::Joined;
+  target->state = friendmesh::ChannelRosterState::Removed;
+  if (hadJoined) roster.rekeyRequired = true;
+  if (!friendmeshSaveChannelRoster(channel_idx, roster)) return false;
+  friendmeshBroadcastChannelRoster(channel_idx, roster);
+  return true;
+}
+
+bool MyMesh::uiLeaveFriendMeshChannel(int channel_idx, bool& notice_sent) {
+  notice_sent = false;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  if (!self || self->role == friendmesh::ChannelRosterRole::Admin) return false;
+  const friendmesh::ChannelRosterMember* admin = nullptr;
+  for (size_t i = 0; i < roster.memberCount; ++i) {
+    if (roster.members[i].role == friendmesh::ChannelRosterRole::Admin &&
+        roster.members[i].state == friendmesh::ChannelRosterState::Joined) {
+      admin = &roster.members[i];
+      break;
+    }
+  }
+  if (admin) {
+    ContactInfo* contact = lookupContactByPubKey(
+        admin->pubKeyPrefix, friendmesh::kChannelRosterPrefixBytes);
+    uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+    if (contact && friendmeshChannelTag(channel_idx, tag)) {
+      notice_sent = friendmeshSendChannelControl(
+          *contact, friendmesh::ChannelControlType::Left, tag, false);
+    }
+  }
+  friendmeshDeleteChannelRoster(channel_idx);
+  return uiDeleteChannel(channel_idx);
+}
+#endif
 
 void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                const char *text) {
@@ -2082,6 +2596,23 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // Compatibility firewall for the first roster build, which incorrectly
+  // emitted FMRS1 through group text. BaseChatMesh prefixes group text with
+  // "sender: ", so detect both forms before history, companion, MQTT, alerts,
+  // or the on-device UI can observe it. New builds never emit this format.
+  const char* legacyRoster = friendmesh::legacyChannelRosterTextPayload(text);
+  if (legacyRoster) {
+    const int channelIdx = findChannelIdx(channel);
+    friendmesh::ChannelRoster incoming = {};
+    if (channelIdx >= 0 &&
+        friendmesh::decodeChannelRosterText(legacyRoster, incoming) ==
+            friendmesh::ResultCode::Ok) {
+      friendmeshApplyChannelRoster(channelIdx, incoming);
+    }
+    return;
+  }
+#endif
   // Clock bootstrap from a channel peer's send-time (same sane-window + unset-only guard
   // as queueMessage above) so a Wi-Fi/GPS-off node can still get time off public channels.
   if (timestamp > 1700000000UL && timestamp < 2000000000UL &&
@@ -2155,6 +2686,28 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
 #endif
 }
 
+void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel,
+                               mesh::Packet *pkt, uint16_t data_type,
+                               const uint8_t *data, size_t data_len) {
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (data_type == friendmesh::kChannelRosterDataType) {
+    friendmesh::ChannelRoster incoming = {};
+    const int channelIdx = findChannelIdx(channel);
+    if (channelIdx >= 0 &&
+        friendmesh::decodeChannelRoster(data, data_len, incoming) ==
+            friendmesh::ResultCode::Ok) {
+      friendmeshApplyChannelRoster(channelIdx, incoming);
+    }
+    return;
+  }
+#endif
+  (void)channel;
+  (void)pkt;
+  (void)data_type;
+  (void)data;
+  (void)data_len;
+}
+
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
   if (data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {
@@ -2178,6 +2731,17 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
     } else if (_prefs.telemetry_mode_env == TELEM_MODE_ALLOW_FLAGS) {
       permissions |= cp & TELEM_PERM_ENVIRONMENT;
     }
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    // A joined FriendMesh peer may request our current position through the
+    // existing encrypted MeshCore contact-telemetry exchange. This is separate
+    // from advert_loc_policy: opening Group Map never forces a public advert.
+    // The request is authenticated as this contact by MeshCore, and removing or
+    // leaving the member locally removes this authorization on the next request.
+    if (friendmeshIsJoinedGroupPeer(contact.id.pub_key)) {
+      permissions |= TELEM_PERM_BASE | TELEM_PERM_LOCATION;
+    }
+#endif
 
     uint8_t perm_mask = ~(data[1]);    // NEW: first reserved byte (of 4), is now inverse mask to apply to permissions
     permissions &= perm_mask;

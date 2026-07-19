@@ -1,6 +1,6 @@
 # FriendMeshOS features for WadaMesh
 
-Status: T-Deck-only backend foundation implemented and build-verified; transmit disabled
+Status: T-Deck-only functional service clusters and first native WadaMesh integration implemented and build-verified; transmit disabled
 Documented: 2026-07-18
 Repository branch: `friendmeshOS-proposal`
 Primary implementation target: LilyGo T-Deck / T-Deck Plus
@@ -17,7 +17,7 @@ The feature direction is:
 - avoid needless coupling that would obstruct later Heltec work, without treating Heltec as a current build or acceptance requirement;
 - preserve the useful FriendMesh security, identity, recovery, and verification work from the earlier implementation without importing its Meshtastic-specific architecture wholesale;
 - keep ordinary WadaMesh and MeshCore behavior working when FriendMeshOS features are disabled or unavailable;
-- begin with a dormant backend service boundary: no UI integration, storage provisioning, protocol transmission, or radio changes.
+- keep UI integration narrow, do not provision production storage yet, and do not enable FriendMesh protocol transmission or radio changes.
 
 WadaMesh remains the host project's name, user experience, repository structure, upstream relationship, distribution identity, and default behavior. FriendMeshOS features should live behind explicit service, UI, build, and runtime boundaries. They must not silently rename existing WadaMesh concepts or redirect WadaMesh users into a separate product flow.
 
@@ -403,6 +403,183 @@ Build evidence from 2026-07-18:
 | Backend foundation | 89,380 bytes (27.3%) | 3,251,845 bytes (80.0%) | pass |
 | Delta | +8 bytes | +32 bytes | no physical test performed |
 
+### 7.6 Shared application-core foundation
+
+The next slice establishes common code for the complete planned feature set instead of a single MVP path:
+
+- bounded friends, identity references, groups, members, roles, aliases, and membership epochs;
+- one event vocabulary and policy table covering trust, membership, chat, sync, location, navigation, markers, meetups, SOS, Help, and control;
+- typed feature records for chat, reactions, sync, positions, navigation, markers, meetups, and incidents;
+- provider interfaces for storage, security, transport, clock, location, and notifications;
+- bounded event history and outbox states, including a deliberate distinction between `RelayedOrObserved` and `Delivered`;
+- host checks in `scripts/test-friendmesh-core.sh`;
+- no global maximum-sized domain/history/outbox allocation, UI changes, storage behavior, or radio integration.
+
+The T-Deck build passes at 89,404 bytes RAM and 3,252,277 bytes flash: +24 bytes RAM and +432 bytes flash over the dormant-service baseline. FriendMesh transmit remains hard-disabled.
+
+### 7.7 Functional people/groups/membership cluster
+
+The next implemented cluster completes the non-cryptographic behavior shared by
+friends and private groups:
+
+- `people/FriendMeshTrustedContacts.*` provides a bounded FriendMesh repository
+  over an existing-contact directory interface; it does not replace or copy
+  WadaMesh's MeshCore contact store;
+- `people/FriendMeshMembership.*` implements development identity lifecycle,
+  invitation codes and sessions, verification transcripts, candidate approval,
+  rejection/cancellation/expiry, and bounded capacity failures;
+- invitations default to a direct-only policy requiring a fresh zero-hop
+  observation with forwarding disabled; direct RF evidence is explicitly not
+  represented as physical-proximity, identity, or confidentiality proof;
+- group transactions cover aliases, roles, join order, blocking, leave/kick
+  countdowns, identity replacement, administration transfer, majority
+  succession with recorded/deduplicated approvals, and disbanding;
+- epoch transactions revoke the excluded identity and require a functional grant
+  for every remaining approved member before rekey completion;
+- host simulations cover multiple groups, unauthorized actors, conflicts,
+  expiry, all declared capacities, and the irreversible rekey boundary.
+
+The provider references and grants in this phase are deliberately development
+models, not proofs, keys, or production cryptography. Live `MyMesh` binding,
+persistence, UI, protocol/radio integration, and physical verification remain
+open. The T-Deck build passes at 89,404 bytes RAM and 3,253,533 bytes flash;
+FriendMesh transmission remains hard-disabled.
+
+The complete expected onboarding experience and production security boundary are
+specified in `FRIENDMESH_NEARBY_JOIN_PROTOCOL.md`. The important rule is that
+identity private keys never move between devices. Production onboarding delivers
+only a new group epoch key, inside a transcript-bound, authenticated encrypted
+grant addressed to the approved member.
+
+### 7.8 Functional chat/history/synchronization cluster
+
+Phase 3 implements the complete functional cluster behind development-only
+providers:
+
+- bounded chat messages, durable reply references, reactions, authorized
+  deletion tombstones, unread/mute state, delayed receipt metadata, and explicit
+  sender-clock trust;
+- fixed-capacity payload storage with internal and expansion/SD-like placement,
+  integrity checks, missing/read-only/corrupt/failing-media behavior, and
+  incomplete-history state;
+- fixed 192-byte fragmentation and bounded out-of-order reassembly;
+- a durable development outbox with retry timing, cancellation, expiry, queue
+  pressure, and distinct relayed-or-observed versus delivered states;
+- reboot reconstruction from event and outbox journals;
+- inventories, sender progress, missing ranges, bounded range/priority batches,
+  receipts, deduplication, and conflict quarantine;
+- host simulations for loss-shaped gaps, duplicates, reordering, offline delay,
+  reboot, capacity exhaustion, and storage failure.
+
+The host suite passes with UBSan and warnings-as-errors. The T-Deck build passes
+at 89,404 bytes RAM and 3,254,685 bytes flash. No UI, production persistence,
+cryptography, MeshCore radio integration, Heltec work, or physical test was
+performed, and FriendMesh transmission remains hard-disabled.
+
+### 7.9 First local T-Deck feature workspace
+
+The T-Deck now allocates the development runtime in PSRAM and exposes one
+`FriendMesh` tile in WadaMesh's existing app drawer. The page reuses WadaMesh
+controls and branding and can initialize a local Friends workspace, save typed
+notes through the real chat/outbox service, create a current-position meetup
+marker, and open a local ride Help incident with notification state.
+
+The meetup action is connected to WadaMesh's actual map renderer: active
+FriendMesh markers appear as typed teal overlays, coexist with self/contact
+markers, participate in the existing overlap picker, and show FriendMesh marker
+details when tapped. `View map` centers the current map on the latest marker.
+The page keeps fixed-height status fields and refreshes only when a local action
+changes state. It has no background FriendMesh polling, avoids the previous
+whole-label flex relayout, and defers map reconstruction until the map opens.
+
+This is deliberately labeled local development behavior: it is volatile across
+reboot, does not bind real MeshCore contacts, and cannot send FriendMesh traffic.
+The host suite passes, and the optimized T-Deck image builds at 89,556 bytes RAM
+and 3,267,661 bytes flash. The preceding workspace image was physically tested;
+this updated marker-rendering image still requires a completed recovery flash
+after the development T-Deck disconnected during upload.
+
+### 7.10 Simple WadaMesh private-channel nearby join
+
+The first live group-chat join flow reuses WadaMesh private channels and
+MeshCore encrypted direct messages. A channel's existing action sheet offers
+`Invite nearby` and performs a bounded three-second Bluetooth scan. Presence
+advertisements contain only a versioned six-byte public-key prefix and are
+matched only to existing saved chat contacts; results expire after 30 seconds.
+A zero-hop LoRa advert no older than two minutes remains the fallback. The
+sender forces an empty outbound route and sends a bounded `FMCH1`
+channel-name/secret envelope through the existing pairwise encrypted message
+path. A receiver processes the envelope only when the packet is direct with no
+path hashes, then shows an explicit `Join` confirmation before saving the
+channel. Invite payloads do not enter visible chat history.
+
+The same channel action sheet now exposes `Members`. A fixed eight-member roster
+is persisted through WadaMesh's existing bounded blob storage and represents
+`Invited`, `Joined`, `Invite failed`, `Left`, and `Removed` states. Join
+acknowledgements, leave notices, and cooperative removal notices reuse encrypted
+MeshCore contact messages. Compact roster snapshots use a reserved encrypted
+MeshCore group-data type and therefore never enter the channel-text pipeline;
+the obsolete `FMRS1` text form is consumed by a compatibility firewall before
+history, companion, MQTT, alerts, or UI delivery. Already-joined members are
+removed from the invite picker and rejected again by the send operation.
+
+This shares only the symmetric 16-byte channel secret required by MeshCore; it
+never shares an identity private key. It is a narrow compatibility bridge, not
+the planned FriendMesh membership protocol: there is not yet transcript
+comparison, administrator-signed membership, replay persistence, protected
+secret storage, per-member grants, or forward-only epoch rotation. Zero hops
+and Bluetooth RSSI do not prove that two people are physically close. The static
+public-key prefix is observable presence metadata, not authentication, and needs
+a rotating privacy-preserving replacement during shared security work.
+
+Member removal is cooperative functionality only. The updated recipient deletes
+the local channel, but anyone retaining the symmetric channel secret can still
+decrypt future traffic. Leave/removal therefore sets `rekey required`; production
+member-event authentication and forward-only key rotation remain Phase 7 work.
+
+The LoRa direct-join, Bluetooth discovery, roster synchronization, legacy
+`FMRS1` suppression, and duplicate-member invite prevention have now passed on
+the development T-Decks. The current source continues beyond that physically
+tested image, so later feature sections report their own verification boundary.
+
+### 7.11 Group map and Friend Compass
+
+An explicit `FriendMeshMeshCorePositionAdapter` converts WadaMesh/MeshCore
+contact coordinates from signed microdegrees into bounded FriendMesh E7
+position records. It rejects missing `0,0` sentinels, zero identities, and
+out-of-range coordinates. The temporary deterministic identity reference is a
+functional bridge only; it is not a production signing-identity binding.
+
+An existing private channel's action sheet now offers `Group map`. The map
+collects at most eight joined roster members with saved chat contacts and valid
+coordinates, then filters WadaMesh's existing map markers, links, and positioned
+contact list without creating another map. The map option can turn the
+group-only filter off. On open, a bounded queue requests each joined contact's
+position through the existing encrypted MeshCore telemetry request/reply path,
+strictly one request at a time with a 30-second per-contact ceiling. Replies are
+persisted through the existing WadaMesh contact-position store and markers are
+rebuilt only between contacts. The queue stops when the roster is exhausted or
+the user leaves Map, so it is neither an advert loop nor background tracking.
+Selecting a positioned member exposes `Friend Compass`,
+which shows distance, absolute bearing, cardinal direction, position age,
+source, and a prominent stale state after five minutes. T-Deck currently uses
+north-up because it has no reviewed stationary heading source; the selected
+contact alone is refreshed once per second.
+
+The response authorization is local FriendMesh roster membership: a MeshCore
+contact recorded as `Joined` in at least one channel can receive current GPS in
+telemetry even when public `Share location in advert` is off. Leaving/removal
+removes that authorization unless the same peer remains joined through another
+local channel. This is the functional group-location policy, not the later
+transcript-bound production identity/grant design.
+
+Host adapter checks and the offline T-Deck build pass at 90,876 bytes RAM
+(27.7%) and 3,291,257 bytes flash (81.0%). The bounded map-position cache is
+allocated in PSRAM, the refresh queue adds 272 bytes of static RAM over the
+previous map build, and the compass refresh reads only its selected contact. No
+device was flashed for this automatic group-location addition, so physical
+behavior remains open.
+
 ## 8. Build and development workflow
 
 ### 8.1 Prerequisites
@@ -543,51 +720,22 @@ FriendMeshOS features do not imply a WadaMesh rebrand. WadaMesh versioning, pack
 | Hardware access | only the T-Deck is in current scope | reassess exact Heltec model and baseline only if scope expands later |
 | Existing docs | some release/channel docs describe older completed state as future TODOs | reconcile separately; do not use stale checkboxes as live evidence |
 
-## 13. Recommended first implementation sequence
+## 13. Implementation sequence
 
-This is the active T-Deck-only sequence. Each phase retains WadaMesh's existing UI and branding; at most, later phases may add small hooks to existing surfaces or optional themes.
+This project follows feature-complete-first development rather than an MVP sequence:
 
-### Phase A: T-Deck backend foundation
+1. shared application core for every feature family;
+2. people, groups, invitations, and membership behavior together;
+3. chat, reactions, outbox, history, and sync together;
+4. positions, compass, map/navigation, markers, and meetups together;
+5. SOS, Help, incidents, and notifications together;
+6. complete minimal integration into existing WadaMesh surfaces;
+7. shared production security implementation across all dependent features;
+8. MeshCore radio integration, whole-system security fixes/hardening, and physical qualification.
 
-- build the unmodified T-Deck environment and record firmware size;
-- add `src/friendmesh/` as a T-Deck-only, compile-gated service boundary;
-- expose only a secret-free in-memory status snapshot;
-- perform no storage reads/writes, identity provisioning, protocol handling, UI changes, or radio changes;
-- keep `canTransmit()` hard-coded false;
-- rebuild the T-Deck and record the size delta.
+Production identity cryptography, protected storage, signing/encryption, replay, grants, rekey, and recovery are implemented as one shared security cluster after functional feature behavior exists. Their architectural interfaces and the hard transmit gate exist from the beginning so the security pass strengthens the same system rather than rewriting it.
 
-### Phase B: port protected storage without protocol transmission
-
-- move the previously reviewed storage primitives into a platform-neutral FriendMesh subsystem;
-- add host tests for framing, KDF/key slots, device binding, journal recovery, identity creation, tamper rejection, and secret scanning;
-- keep long-running work outside the main/UI loop and add only the narrow T-Deck integration required for testing;
-- test internal storage first, then optional T-Deck SD provider/migration;
-- keep FriendMesh transmit disabled.
-
-### Phase C: define the MeshCore FriendMesh wire contract
-
-- document the packet format, signature scope, encryption relationship, replay state, group semantics, routing behavior, ACK meaning, size/airtime bounds, and downgrade behavior;
-- add deterministic host vectors and parser fuzz/error cases;
-- review exact `MyMesh` send/receive hook points;
-- keep the implementation receive-disabled or test-vector-only until the contract is approved.
-
-### Phase D: first vertical slice
-
-- explicit unlock and identity readiness;
-- one bounded FriendMesh status/action addition in the existing contact details flow;
-- one signed local object or loopback/test-vector operation;
-- status/diagnostics with no secrets;
-- T-Deck input matrix and reboot recovery;
-- no general transmit until replay, migration, recovery, and consent gates pass.
-
-### Phase E: controlled radio gate
-
-- operator-approved test channel and peers;
-- bounded send rate and clear RF state;
-- durable replay/outbox behavior;
-- T-Deck physical evidence;
-- ordinary MeshCore regression tests;
-- release-channel isolation and rollback plan.
+The detailed live phase tracker and completion evidence are in `FRIENDMESHOS_ROADMAP.md`. General FriendMesh radio transmission remains disabled until the shared security and protocol gates pass.
 
 ## 14. Session handoff template
 

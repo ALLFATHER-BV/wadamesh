@@ -215,6 +215,13 @@ public:
    *  and flip their delivery state to DELIV_DELIVERED so the chat detail
    *  shows the double-check. No-op if no match. */
   void onMessageAcked(uint32_t ack_hash);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  void onFriendMeshChannelInvite(const ContactInfo& from,
+                                 const char* channel_name,
+                                 const uint8_t secret16[16]) override;
+  void onFriendMeshChannelRosterChanged(const char* channel_name,
+                                        const char* status) override;
+#endif
   /** Trace-ping reply landed: open a modal with the bidirectional SNR
    *  numbers. Called by MyMesh::onTraceRecv when the trace's tag matches
    *  the one we issued from the contact action sheet's Trace Ping button. */
