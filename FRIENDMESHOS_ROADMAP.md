@@ -1,7 +1,7 @@
 # FriendMeshOS features for WadaMesh — roadmap
 
 Status: active T-Deck-only, feature-complete-first roadmap
-Updated: 2026-07-18
+Updated: 2026-07-19
 Repository: `Atlessc/wadamesh`
 Working branch: `friendmeshOS-proposal`
 Host/base: WadaMesh with MeshCore/meshcomod `core-v1.16.5`
@@ -239,6 +239,9 @@ Implement together because they use the same position freshness, distance/bearin
 - [x] Existing MeshCore contact-position adapter, joined-channel-member map filter, and native Friend Compass entry flow.
 - [x] Bounded one-at-a-time group-location refresh over existing encrypted MeshCore telemetry, authorized by local joined-roster membership without public adverts.
 - [x] Great-circle distance, absolute bearing, accuracy, freshness, and source model.
+- [x] Conservative two-fix motion estimate with a distinct observed trail, 45-second lead point, fallback behavior, and bounded SD-only per-channel history.
+- [x] Two-page T-Deck compass: detailed spatial dial plus plain-language guidance/data, horizontal swipe, trackball paging, tappable dots, and current-position override.
+- [x] Targeted authenticated Compass-start notice showing the starter and current straight-line distance, consumed before chat and attempted once per valid Compass session.
 - [x] `NORTH-UP`, moving `GPS`, and optional future `MAG` heading providers.
 - [x] Map and arrow-only navigation, arrival, closer/farther, target notifications, and bounded breadcrumbs.
 - [x] Marker lifecycle, expiry/reconfirmation, details, and navigation service behavior.
@@ -265,6 +268,8 @@ Integrate the completed functional feature set together so shared navigation/foc
 - [ ] Add only necessary rows, badges, actions, filters, metadata, and confirmation modals.
 - [x] Add a simple `Channel` -> `Invite nearby` -> recipient `Join` flow inside existing WadaMesh chat/contact surfaces, reusing MeshCore private channels and encrypted direct messages.
 - [x] Add a bounded `Members` view with persisted invite/join/failure/leave/removal states, encrypted direct control notices, binary encrypted roster snapshots that cannot surface as chat, duplicate-member invite prevention, and explicit rekey-required status.
+- [x] Add bounded shared meetup/pickup, Help, response, closure, and three-second-hold SOS actions to the private-channel sheet, with encrypted binary control records and existing-map overlays.
+- [x] Keep ordinary MeshCore channels free of FriendMesh actions; add an explicit `Create a FriendMesh group` path and `[FM]` inbox/header/action-sheet identification derived from persisted roster metadata.
 - [ ] Upgrade the simple flow to `Private group` -> compare -> administrator approval -> `securing group` after shared production security exists.
 - [ ] No replacement home screen, launcher, visual identity, or required theme.
 - [ ] All functional states reachable by touch, keyboard, and trackball.
@@ -284,8 +289,7 @@ not the future transcript-bound FriendMesh group protocol. The action sheet also
 opens a WadaMesh-native `Members` view whose bounded persistent roster tracks
 invited, joined, failed, left, and removed members. Cooperative removal marks
 the group as needing a rekey rather than claiming the old shared key was revoked.
-The remaining people/navigation and safety flows are not yet exposed. The
-channel action sheet also exposes `Group map`. It adapts joined roster members'
+The channel action sheet also exposes `Group map`. It adapts joined roster members'
 existing MeshCore contact coordinates into the shared FriendMesh E7 position
 model, filters WadaMesh's existing map and positioned-contact list to that
 bounded roster, and exposes `Friend Compass` from a member's map action sheet.
@@ -295,8 +299,24 @@ joined FriendMesh contact independently of the public advert-location switch;
 the queue stops when complete or when Map is closed.
 The compass refreshes only the selected contact, uses north-up absolute bearing
 on T-Deck, and labels missing or older-than-five-minute coordinates instead of
-presenting them as live. This slice is host/build verified but not yet
-physically tested.
+presenting them as live. Two recent plausible fixes add an observed trail and a
+45-second predicted meeting point; the bounded two-fix-per-member history lives
+only on microSD and is not yet encrypted or authenticated. `Coordinate` now
+exposes the first shared navigation
+and safety flow: one bounded meetup/pickup and one Help/SOS incident per channel,
+member responses, cancellation/closure, typed markers on the same map, and a
+continuous three-second SOS hold. Reserved encrypted group-data type `0xFF02`
+is consumed before chat surfaces. The fixed state caps at 248 bytes and adds no
+background transmission. Ordinary MeshCore channels now retain only ordinary
+channel actions; FriendMesh controls require a persisted joined roster created
+through the explicit group path or accepted nearby invitation. Those groups are
+marked `[FM]` without renaming the channel. Page one's prediction readout now
+preformats its speed outside LVGL's float-disabled formatter, bounds the lead
+display to the intended 45 seconds, and uses labeled rings sharing the plotted
+position scale. The T-Deck build passes at 91,052 bytes RAM (27.8%) and
+3,316,085 bytes flash (81.6%); physical two-device testing
+of compass paging, motion prediction, SD retention, and the targeted start
+notification remains open.
 
 ### Phase 7 — Shared production security implementation
 
@@ -320,6 +340,7 @@ Implement all dependent security together across the completed features.
 - [x] Enforce an empty outbound route, bounded Bluetooth-or-zero-hop sender discovery, and direct/zero-path receive checks for simple channel invitations.
 - [x] Validate the simple LoRa direct-path channel invitation on two physical T-Decks.
 - [x] Add bounded join acknowledgement, leave/removal notices, and reserved encrypted MeshCore group-data roster snapshots; consume the obsolete text envelope before every user-message surface.
+- [x] Add a bounded encrypted MeshCore group-data compatibility codec for meetup/pickup and Help/SOS state, consumed before every user-message surface.
 - [x] Validate Bluetooth discovery on two physical T-Decks.
 - [ ] Complete forwarding/downgrade enforcement for the production protocol.
 - [ ] Canonical codec vectors, parser fuzzing, fragmentation, replay, expiry, and airtime bounds.
@@ -357,20 +378,19 @@ Implement all dependent security together across the completed features.
 
 ## Immediate next work
 
-Phases 1 through 3 are host/build complete. Phase 4 and Phase 5 functional
-services are now host/build verified, and a first local-only Phase 6 T-Deck
-workspace is physically installable through the existing WadaMesh app drawer.
-It exercises typed notes, current-position markers rendered in the real map,
-marker overlap/tap details, ride Help incidents, roster-filtered group maps,
-and a selected-member Friend Compass. The general development workspace still
-does not persist across reboot or communicate through its custom event path;
-the group map reuses WadaMesh/MeshCore contact positions and its encrypted
-telemetry request/reply mechanism rather than requiring location adverts.
+Phases 1 through 5 are host/build complete. Phase 6 now includes the physically
+validated nearby join/roster path, the build-verified automatic group map and
+Friend Compass, and build-verified shared meetup/pickup plus Help/SOS
+coordination over the existing encrypted MeshCore channel. The general
+development workspace still does not persist across reboot or communicate
+through its custom event path.
 
-Next, complete the remaining native people/group/chat/navigation/safety flows
-and replace the development providers with protected persistence and identity.
-Only then connect the reviewed MeshCore transport behind the transmit gate,
-without changing WadaMesh's overall layout or branding.
+Next, physically validate the new coordination flow on two T-Decks: meetup map
+appearance without adverts, responses on both devices, cancel/close propagation,
+Help alerts, three-second SOS hold, protocol records absent from chat, reboot
+persistence, and ordinary chat/map regression. After that, continue the
+remaining native people/group/chat flows before the shared Phase 7 protected
+identity, signing, replay, grant, and rekey implementation.
 
 ## Session handoff template
 

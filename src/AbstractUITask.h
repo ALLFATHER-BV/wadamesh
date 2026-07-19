@@ -176,6 +176,18 @@ public:
                                                 const char* status) {
     (void)channel_name; (void)status;
   }
+  virtual void onFriendMeshCoordinationChanged(const char* channel_name,
+                                               const char* status,
+                                               bool urgent) {
+    (void)channel_name; (void)status; (void)urgent;
+  }
+  /** A joined group member started Friend Compass toward this device. The
+   *  authenticated control envelope was consumed before normal DM delivery. */
+  virtual void onFriendMeshCompassStarted(const ContactInfo& starter,
+                                          const char* channel_name,
+                                          uint32_t distance_meters) {
+    (void)starter; (void)channel_name; (void)distance_meters;
+  }
 #endif
   /** ACK arrived for a previously-sent DM. `ack_hash` is the 4-byte
    *  expected-ack value the dispatcher returned from `sendMessage`. Touch

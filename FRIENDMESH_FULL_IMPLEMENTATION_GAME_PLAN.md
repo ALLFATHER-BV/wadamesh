@@ -1,11 +1,11 @@
 # FriendMeshOS features — full implementation game plan
 
-Status: canonical implementation contract; T-Deck backend foundation build-verified  
-Updated: 2026-07-18  
+Status: canonical implementation contract; T-Deck functional integration build-verified
+Updated: 2026-07-19
 Host project: WadaMesh  
 Current target: LilyGo T-Deck / T-Deck Plus through `LilyGo_TDeck_companion_radio_touch`  
 Protocol base: MeshCore/meshcomod `core-v1.16.5`  
-Current FriendMesh radio state: transmit disabled
+Current FriendMesh radio state: narrow channel compatibility traffic active; production FriendMesh event transport disabled
 
 ## 1. Purpose
 
@@ -157,6 +157,33 @@ The T-Deck build passes at 89,404 bytes RAM and 3,254,685 bytes flash. These are
 development models: no production filesystem/SD adapter, cryptography, UI,
 MeshCore radio path, Heltec work, or physical verification exists, and
 transmission remains hard-disabled.
+
+### 3.6 Native private-group compatibility integration
+
+The current T-Deck source also binds selected functional behavior to existing
+WadaMesh/MeshCore surfaces while the production FriendMesh transport gate stays
+disabled:
+
+- nearby private-channel key delivery uses encrypted zero-hop MeshCore direct
+  messages after bounded BLE discovery or a fresh direct advert;
+- an eight-member persisted roster synchronizes through reserved encrypted
+  group data and authorizes the bounded existing-telemetry location refresh;
+- `Group map` and `Friend Compass` reuse WadaMesh's map and contact positions;
+- `Coordinate` shares one meetup/pickup and one Help/SOS incident per channel,
+  including member responses and cancellation/closure;
+- FriendMesh actions require explicit persisted group metadata; ordinary
+  MeshCore channels do not inherit them, and the UI marks group rows/titles
+  `[FM]` without modifying the underlying channel name;
+- coordination events use fixed type `0xFF02`, are consumed before chat, and
+  persist in at most 248 bytes per channel;
+- SOS requires a continuous three-second hold.
+
+This compatibility integration uses the MeshCore channel key and local roster;
+it does not replace the production signing, replay, protected storage, grant,
+or rekey requirements below. A retained channel-key holder can spoof the claimed
+roster prefix. The host suite and focused T-Deck build pass at 90,908 bytes RAM
+(27.7%) and 3,301,141 bytes flash (81.2%). Physical verification of this newest
+coordination slice remains open; no device was flashed during its implementation.
 
 ## 4. Product and UI rules
 
@@ -532,7 +559,10 @@ Potential event families include:
 - marker and meetup events;
 - Help Request and SOS incidents.
 
-Exact wire types remain unapproved until Phase 6.
+Production FriendMesh wire types remain unapproved. The Phase 6 compatibility
+bridge reserves encrypted MeshCore group-data types `0xFF01` for roster state
+and `0xFF02` for bounded coordination records; neither is a production signing
+or membership protocol commitment.
 
 ### 12.1 Durable outbox
 
@@ -618,6 +648,25 @@ Current functional integration: an existing private channel exposes `Group
 map`, which uses its bounded joined roster to filter WadaMesh's existing map and
 positioned-contact list. A selected positioned member exposes `Friend Compass`
 with north-up bearing, distance, position age, and explicit stale/missing states.
+It retains only the previous and current plausible fix for each bounded group
+member on microSD, then shows the observed trail separately from a conservative
+45-second lead point. Noise, stale samples, and implausible movement fall back
+to the observed position. The versioned checksummed SD snapshot has no
+internal-flash fallback and is not yet encrypted or authenticated.
+The T-Deck exposes that calculation through two WadaMesh-native pages: a larger
+detailed spatial dial and a plain-language direction/data page. The first page
+uses labeled distance-scaled rings, compact movement/confidence/freshness
+status, and a defensively bounded 45-second lead readout. Horizontal
+swipe, trackball left/right, or two tappable dots switch pages. The second page
+can temporarily guide to the latest observed position instead of the predicted
+meeting point, while retaining movement, confidence, freshness, and direct-time
+context.
+Once both endpoints have valid positions, opening the Compass attempts one
+targeted authenticated MeshCore contact notice. The selected member is shown
+who started navigating and the current straight-line distance. Receivers verify
+the sender and themselves against the local joined roster, then consume the
+compact envelope before chat history; it is not a user message or group
+broadcast.
 The bridge reads existing MeshCore contact coordinates through a narrow E6-to-E7
 adapter. On map open it requests joined members sequentially through MeshCore's
 existing encrypted telemetry protocol, with one shared response slot, a bounded
@@ -627,6 +676,12 @@ FriendMesh channel, independent of public advert-location sharing. It does not
 transmit a parallel location event or run after Map closes. Production identity
 binding, transcript-bound grants, and finer location-sharing policy remain in
 the shared security/protocol phases.
+
+The shared-core motion checks and the combined T-Deck build pass at 91,052 bytes
+RAM (27.8%) and 3,316,085 bytes flash (81.6%). The first-page timing formatter
+regression is covered by a fixed-horizon assertion. Physical two-device motion,
+paging, layout, scroll, SD reboot-retention, and targeted start-notification
+checks remain open.
 
 ## 16. Markers and meetups
 
@@ -769,16 +824,14 @@ Only after approval and only for the named phase:
 - [ ] Phase 10 — Physical feature qualification and release.
 - [ ] Physical baseline gate — smoke-test unchanged WadaMesh behavior on the development T-Deck.
 
-Current implementation focus: **turn the installed local FriendMesh development
-workspace into a persistent, authenticated, multi-device feature path**. Phase 4
-and Phase 5 functional services and the native app-drawer workspace are in the
-T-Deck build. Meetup markers now render and open in WadaMesh's existing map.
-Joined channel members can be filtered on that map and selected for Friend
-Compass navigation. Opening the group map now refreshes those members through a
-bounded, single-flight MeshCore telemetry pass without requiring public location
-adverts, and the workspace refreshes cached state without rebuilding its layout.
-Remaining feature surfaces, production persistence/security, and
-the custom FriendMesh event transport remain disabled or incomplete.
+Current implementation focus: **physically validate and finish the minimal
+multi-device WadaMesh surfaces before shared production security**. Phase 4 and
+Phase 5 functional services are in the T-Deck build. Private channels now expose
+nearby join, members, Group map, Friend Compass, and bounded shared meetup,
+pickup, Help, and SOS coordination without changing WadaMesh's navigation or
+branding. The newest coordination slice is host/build verified but not yet
+flashed. Remaining feature surfaces, production persistence/security, and the
+custom production FriendMesh event transport remain disabled or incomplete.
 
 ## 21. Deferred and prohibited assumptions
 

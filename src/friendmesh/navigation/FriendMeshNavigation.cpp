@@ -9,6 +9,11 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kEarthRadiusMeters = 6371000.0;
+constexpr uint32_t kMotionMinSampleSeconds = 5;
+constexpr uint32_t kMotionMaxSampleSeconds = 180;
+constexpr uint32_t kMotionNoiseFloorMeters = 8;
+constexpr uint32_t kMotionGoodDisplacementMeters = 15;
+constexpr double kMotionMaxMetersPerSecond = 3.5;
 
 double radiansFromE7(int32_t value) {
   return (static_cast<double>(value) / 10000000.0) * kPi / 180.0;
@@ -76,6 +81,69 @@ uint16_t absoluteBearingDegrees(const PositionRecord& from,
   double degrees = atan2(y, x) * 180.0 / kPi;
   if (degrees < 0.0) degrees += 360.0;
   return static_cast<uint16_t>(degrees + 0.5) % 360;
+}
+
+MotionEstimate estimateTargetMotion(const PositionRecord& previous,
+                                    const PositionRecord& current,
+                                    uint32_t now,
+                                    uint32_t horizonSeconds) {
+  MotionEstimate estimate = {};
+  if (!positionUsable(previous) || !positionUsable(current) ||
+      !idsEqual(previous.subjectId, current.subjectId) ||
+      previous.capturedAt == 0 || current.capturedAt <= previous.capturedAt ||
+      now == 0 || now < current.capturedAt ||
+      now - current.capturedAt > kDefaultPositionStaleSeconds) {
+    return estimate;
+  }
+  const uint32_t sampleSeconds = current.capturedAt - previous.capturedAt;
+  if (sampleSeconds < kMotionMinSampleSeconds ||
+      sampleSeconds > kMotionMaxSampleSeconds) return estimate;
+
+  const uint32_t displacement = greatCircleDistanceMeters(previous, current);
+  if (displacement == UINT32_MAX) return estimate;
+  const double speed = static_cast<double>(displacement) /
+                       static_cast<double>(sampleSeconds);
+  if (speed > kMotionMaxMetersPerSecond) return estimate;
+
+  estimate.samplesUsable = true;
+  estimate.displacementMeters = displacement;
+  estimate.sampleSeconds = sampleSeconds;
+  estimate.horizonSeconds = horizonSeconds;
+  estimate.speedCentimetersPerSecond = static_cast<uint16_t>(
+      speed * 100.0 + 0.5);
+  estimate.predicted = current;
+  if (displacement < kMotionNoiseFloorMeters || horizonSeconds == 0) {
+    estimate.confidence = MotionConfidence::Limited;
+    return estimate;
+  }
+
+  estimate.moving = true;
+  estimate.bearingDegrees = absoluteBearingDegrees(previous, current);
+  estimate.confidence = displacement >= kMotionGoodDisplacementMeters
+      ? MotionConfidence::Good : MotionConfidence::Limited;
+
+  const double travelMeters = speed * static_cast<double>(horizonSeconds);
+  const double angularDistance = travelMeters / kEarthRadiusMeters;
+  const double bearing = static_cast<double>(estimate.bearingDegrees) *
+                         kPi / 180.0;
+  const double lat1 = radiansFromE7(current.latitudeE7);
+  const double lon1 = radiansFromE7(current.longitudeE7);
+  const double sinLat2 = sin(lat1) * cos(angularDistance) +
+      cos(lat1) * sin(angularDistance) * cos(bearing);
+  double lat2 = asin(sinLat2);
+  double lon2 = lon1 + atan2(
+      sin(bearing) * sin(angularDistance) * cos(lat1),
+      cos(angularDistance) - sin(lat1) * sin(lat2));
+  while (lon2 > kPi) lon2 -= 2.0 * kPi;
+  while (lon2 < -kPi) lon2 += 2.0 * kPi;
+  const double e7PerRadian = 180.0 * 10000000.0 / kPi;
+  estimate.predicted.latitudeE7 = static_cast<int32_t>(lat2 * e7PerRadian);
+  estimate.predicted.longitudeE7 = static_cast<int32_t>(lon2 * e7PerRadian);
+  if (!positionCoordinatesValid(estimate.predicted.latitudeE7,
+                                estimate.predicted.longitudeE7)) {
+    estimate = {};
+  }
+  return estimate;
 }
 
 PositionBook::PositionBook() : count_(0) {

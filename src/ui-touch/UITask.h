@@ -221,6 +221,12 @@ public:
                                  const uint8_t secret16[16]) override;
   void onFriendMeshChannelRosterChanged(const char* channel_name,
                                         const char* status) override;
+  void onFriendMeshCoordinationChanged(const char* channel_name,
+                                       const char* status,
+                                       bool urgent) override;
+  void onFriendMeshCompassStarted(const ContactInfo& starter,
+                                  const char* channel_name,
+                                  uint32_t distance_meters) override;
 #endif
   /** Trace-ping reply landed: open a modal with the bidirectional SNR
    *  numbers. Called by MyMesh::onTraceRecv when the trace's tag matches

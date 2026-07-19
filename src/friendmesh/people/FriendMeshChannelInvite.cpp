@@ -10,6 +10,7 @@ const char kPrefix[] = "FMCH1:";
 const char kJoinedPrefix[] = "FMCA1:";
 const char kLeftPrefix[] = "FMCL1:";
 const char kRemovedPrefix[] = "FMCR1:";
+const char kCompassStartedPrefix[] = "FMCP1:";
 
 char hexDigit(uint8_t value) {
   return value < 10 ? (char)('0' + value) : (char)('A' + value - 10);
@@ -60,6 +61,66 @@ bool isChannelControlText(const char* text) {
   return strncmp(text, kJoinedPrefix, sizeof(kJoinedPrefix) - 1) == 0 ||
          strncmp(text, kLeftPrefix, sizeof(kLeftPrefix) - 1) == 0 ||
          strncmp(text, kRemovedPrefix, sizeof(kRemovedPrefix) - 1) == 0;
+}
+
+bool isCompassStartedNoticeText(const char* text) {
+  return text && strncmp(text, kCompassStartedPrefix,
+                         sizeof(kCompassStartedPrefix) - 1) == 0;
+}
+
+ResultCode encodeCompassStartedNotice(const CompassStartedNotice& notice,
+                                      char* destination, size_t capacity,
+                                      size_t& written) {
+  written = 0;
+  if (!destination || notice.distanceMeters > kCompassStartedMaxDistanceMeters)
+    return ResultCode::InvalidArgument;
+  const size_t prefixLength = sizeof(kCompassStartedPrefix) - 1;
+  const size_t required = prefixLength +
+      (kChannelControlTagBytes + sizeof(notice.distanceMeters)) * 2;
+  if (capacity < required + 1 || required > kCompassStartedNoticeMaxText)
+    return ResultCode::CapacityReached;
+  memcpy(destination, kCompassStartedPrefix, prefixLength);
+  encodeHex(notice.channelTag, kChannelControlTagBytes,
+            destination + prefixLength);
+  const uint8_t distance[] = {
+      static_cast<uint8_t>(notice.distanceMeters >> 24),
+      static_cast<uint8_t>(notice.distanceMeters >> 16),
+      static_cast<uint8_t>(notice.distanceMeters >> 8),
+      static_cast<uint8_t>(notice.distanceMeters),
+  };
+  encodeHex(distance, sizeof(distance),
+            destination + prefixLength + kChannelControlTagBytes * 2);
+  destination[required] = '\0';
+  written = required;
+  return ResultCode::Ok;
+}
+
+ResultCode decodeCompassStartedNotice(const char* text,
+                                      CompassStartedNotice& notice) {
+  notice = {};
+  if (!isCompassStartedNoticeText(text)) return ResultCode::InvalidArgument;
+  const size_t prefixLength = sizeof(kCompassStartedPrefix) - 1;
+  const size_t required = prefixLength +
+      (kChannelControlTagBytes + sizeof(notice.distanceMeters)) * 2;
+  uint8_t distance[sizeof(notice.distanceMeters)] = {};
+  if (strlen(text) != required ||
+      !decodeHex(text + prefixLength, kChannelControlTagBytes * 2,
+                 notice.channelTag) ||
+      !decodeHex(text + prefixLength + kChannelControlTagBytes * 2,
+                 sizeof(distance) * 2, distance)) {
+    notice = {};
+    return ResultCode::InvalidText;
+  }
+  notice.distanceMeters =
+      (static_cast<uint32_t>(distance[0]) << 24) |
+      (static_cast<uint32_t>(distance[1]) << 16) |
+      (static_cast<uint32_t>(distance[2]) << 8) |
+      static_cast<uint32_t>(distance[3]);
+  if (notice.distanceMeters > kCompassStartedMaxDistanceMeters) {
+    notice = {};
+    return ResultCode::InvalidText;
+  }
+  return ResultCode::Ok;
 }
 
 ResultCode encodeChannelControl(ChannelControlType type,

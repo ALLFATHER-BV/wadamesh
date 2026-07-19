@@ -22,6 +22,7 @@ compiler="${CXX:-c++}"
   "$repo_root/src/friendmesh/chat/FriendMeshDevelopmentStorage.cpp" \
   "$repo_root/src/friendmesh/chat/FriendMeshSync.cpp" \
   "$repo_root/src/friendmesh/navigation/FriendMeshNavigation.cpp" \
+  "$repo_root/src/friendmesh/navigation/FriendMeshGroupCoordination.cpp" \
   "$repo_root/src/friendmesh/navigation/FriendMeshMeshCorePositionAdapter.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshBlePresence.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshChannelInvite.cpp" \

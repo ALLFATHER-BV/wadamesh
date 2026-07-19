@@ -13,6 +13,7 @@
 #include "friendmesh/core/FriendMeshFeatureModels.h"
 #include "friendmesh/core/FriendMeshOutbox.h"
 #include "friendmesh/navigation/FriendMeshNavigation.h"
+#include "friendmesh/navigation/FriendMeshGroupCoordination.h"
 #include "friendmesh/navigation/FriendMeshMeshCorePositionAdapter.h"
 #include "friendmesh/people/FriendMeshBlePresence.h"
 #include "friendmesh/people/FriendMeshChannelInvite.h"
@@ -1175,6 +1176,41 @@ void testPositionsAndNavigation() {
   CHECK(friendmesh::greatCircleDistanceMeters(alicePosition, bobPosition) <= 112);
   CHECK(friendmesh::absoluteBearingDegrees(alicePosition, bobPosition) == 90);
 
+  const friendmesh::PositionRecord bobPrevious =
+      makePosition(bob.id, 377749000, -1224194000, 100);
+  const friendmesh::PositionRecord bobCurrent =
+      makePosition(bob.id, 377749000, -1224191500, 120);
+  const friendmesh::MotionEstimate eastMotion =
+      friendmesh::estimateTargetMotion(bobPrevious, bobCurrent, 125);
+  CHECK(eastMotion.samplesUsable);
+  CHECK(eastMotion.moving);
+  CHECK(eastMotion.confidence == friendmesh::MotionConfidence::Good);
+  CHECK(eastMotion.bearingDegrees >= 89 && eastMotion.bearingDegrees <= 91);
+  CHECK(eastMotion.speedCentimetersPerSecond >= 100);
+  CHECK(eastMotion.speedCentimetersPerSecond <= 120);
+  CHECK(eastMotion.horizonSeconds == friendmesh::kMotionPredictionSeconds);
+  CHECK(eastMotion.predicted.longitudeE7 > bobCurrent.longitudeE7);
+  // A spherical projection can move a few E7 units in latitude even when the
+  // initial bearing is due east; assert that the drift remains negligible.
+  CHECK(eastMotion.predicted.latitudeE7 >= bobCurrent.latitudeE7 - 10);
+  CHECK(eastMotion.predicted.latitudeE7 <= bobCurrent.latitudeE7 + 10);
+
+  const friendmesh::PositionRecord bobStill =
+      makePosition(bob.id, bobCurrent.latitudeE7, bobCurrent.longitudeE7, 140);
+  const friendmesh::MotionEstimate stillMotion =
+      friendmesh::estimateTargetMotion(bobCurrent, bobStill, 145);
+  CHECK(stillMotion.samplesUsable);
+  CHECK(!stillMotion.moving);
+  CHECK(stillMotion.speedCentimetersPerSecond == 0);
+
+  friendmesh::PositionRecord impossibleJump = bobStill;
+  impossibleJump.capturedAt = 150;
+  impossibleJump.longitudeE7 += 100000;
+  CHECK(!friendmesh::estimateTargetMotion(
+      bobStill, impossibleJump, 151).samplesUsable);
+  CHECK(!friendmesh::estimateTargetMotion(
+      bobPrevious, bobCurrent, 1000).samplesUsable);
+
   friendmesh::PositionRecord hidden = bobPosition;
   hidden.hiddenByPolicy = true;
   CHECK(friendmesh::greatCircleDistanceMeters(alicePosition, hidden) == UINT32_MAX);
@@ -1579,6 +1615,28 @@ void testDirectChannelInviteEnvelope() {
       friendmesh::ChannelControlType::Joined;
   CHECK(friendmesh::decodeChannelControl("FMCA1:00", ignored, tag) ==
         friendmesh::ResultCode::InvalidText);
+
+  friendmesh::CompassStartedNotice compass = {};
+  memcpy(compass.channelTag, tag, sizeof(tag));
+  compass.distanceMeters = 1234;
+  char compassText[friendmesh::kCompassStartedNoticeMaxText + 1] = {};
+  CHECK(friendmesh::encodeCompassStartedNotice(
+            compass, compassText, sizeof(compassText), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(written == friendmesh::kCompassStartedNoticeMaxText);
+  CHECK(friendmesh::isCompassStartedNoticeText(compassText));
+  friendmesh::CompassStartedNotice decodedCompass = {};
+  CHECK(friendmesh::decodeCompassStartedNotice(
+            compassText, decodedCompass) == friendmesh::ResultCode::Ok);
+  CHECK(memcmp(decodedCompass.channelTag, tag, sizeof(tag)) == 0);
+  CHECK(decodedCompass.distanceMeters == 1234);
+  compassText[written - 1] = 'Z';
+  CHECK(friendmesh::decodeCompassStartedNotice(
+            compassText, decodedCompass) == friendmesh::ResultCode::InvalidText);
+  compass.distanceMeters = friendmesh::kCompassStartedMaxDistanceMeters + 1;
+  CHECK(friendmesh::encodeCompassStartedNotice(
+            compass, compassText, sizeof(compassText), written) ==
+        friendmesh::ResultCode::InvalidArgument);
 }
 
 void testChannelRoster() {
@@ -1656,6 +1714,134 @@ void testBlePresenceEnvelope() {
       payload, sizeof(payload), prefix));
 }
 
+void testGroupCoordinationCodecAndState() {
+  uint8_t alice[friendmesh::kChannelRosterPrefixBytes] = {1,2,3,4,5,6};
+  uint8_t bob[friendmesh::kChannelRosterPrefixBytes] = {7,8,9,10,11,12};
+  uint8_t outsider[friendmesh::kChannelRosterPrefixBytes] = {20,21,22,23,24,25};
+  friendmesh::ChannelRoster roster = {};
+  CHECK(friendmesh::setChannelRosterMember(
+            roster, alice, friendmesh::ChannelRosterRole::Admin,
+            friendmesh::ChannelRosterState::Joined) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(friendmesh::setChannelRosterMember(
+            roster, bob, friendmesh::ChannelRosterRole::Member,
+            friendmesh::ChannelRosterState::Joined) ==
+        friendmesh::ResultCode::Ok);
+
+  friendmesh::GroupCoordinationEvent meetup = {};
+  meetup.action = friendmesh::GroupCoordinationAction::SetMeetup;
+  meetup.item.objectId[0] = 44;
+  memcpy(meetup.item.ownerPrefix, alice, sizeof(alice));
+  meetup.item.kind = friendmesh::GroupCoordinationKind::Meetup;
+  meetup.item.status = friendmesh::GroupCoordinationStatus::Active;
+  meetup.item.createdAt = 100;
+  meetup.item.updatedAt = 100;
+  meetup.item.expiresAt = 1000;
+  meetup.item.latitudeE6 = 37774900;
+  meetup.item.longitudeE6 = -122419400;
+  meetup.item.hasLocation = true;
+  memcpy(meetup.item.note, "Trailhead", 10);
+
+  uint8_t wire[friendmesh::kGroupCoordinationEventMaxBytes] = {};
+  size_t written = 0;
+  CHECK(friendmesh::encodeGroupCoordinationEvent(
+            meetup, wire, sizeof(wire), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(written <= friendmesh::kGroupCoordinationEventMaxBytes);
+  friendmesh::GroupCoordinationEvent decoded = {};
+  CHECK(friendmesh::decodeGroupCoordinationEvent(wire, written, decoded) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(strcmp(decoded.item.note, "Trailhead") == 0);
+  const size_t eventWritten = written;
+
+  friendmesh::GroupCoordinationState state = {};
+  CHECK(friendmesh::applyGroupCoordinationEvent(
+            state, decoded, roster, 100) == friendmesh::ResultCode::Ok);
+  CHECK(friendmesh::groupCoordinationItemActive(state.meetup, 101));
+
+  friendmesh::GroupCoordinationEvent response = decoded;
+  response.action = friendmesh::GroupCoordinationAction::MeetupResponse;
+  response.response = friendmesh::GroupCoordinationResponse::Going;
+  memcpy(response.item.ownerPrefix, bob, sizeof(bob));
+  response.item.updatedAt = 110;
+  CHECK(friendmesh::applyGroupCoordinationEvent(
+            state, response, roster, 110) == friendmesh::ResultCode::Ok);
+  CHECK(state.meetupResponseCount == 1);
+  CHECK(state.meetupResponses[0].response ==
+        friendmesh::GroupCoordinationResponse::Going);
+  const uint32_t acceptedResponseTime = state.meetup.updatedAt;
+  CHECK(friendmesh::applyGroupCoordinationEvent(
+            state, response, roster, 110) == friendmesh::ResultCode::Duplicate);
+  CHECK(state.meetup.updatedAt == acceptedResponseTime);
+
+  friendmesh::GroupCoordinationEvent concurrent = meetup;
+  concurrent.item.objectId[0] = 45;
+  concurrent.item.updatedAt = 110;
+  friendmesh::GroupCoordinationState concurrentState = state;
+  CHECK(friendmesh::applyGroupCoordinationEvent(
+            concurrentState, concurrent, roster, 110) ==
+        friendmesh::ResultCode::Ok);
+  concurrent.item.objectId[0] = 43;
+  CHECK(friendmesh::applyGroupCoordinationEvent(
+            concurrentState, concurrent, roster, 110) ==
+        friendmesh::ResultCode::Conflict);
+  CHECK(concurrentState.meetup.objectId[0] == 45);
+
+  memcpy(response.item.ownerPrefix, outsider, sizeof(outsider));
+  response.item.updatedAt = 111;
+  CHECK(friendmesh::applyGroupCoordinationEvent(
+            state, response, roster, 111) ==
+        friendmesh::ResultCode::Unauthorized);
+
+  uint8_t saved[friendmesh::kGroupCoordinationStateMaxBytes] = {};
+  CHECK(friendmesh::encodeGroupCoordinationState(
+            state, saved, sizeof(saved), written) ==
+        friendmesh::ResultCode::Ok);
+  friendmesh::GroupCoordinationState restored = {};
+  CHECK(friendmesh::decodeGroupCoordinationState(saved, written, restored) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(restored.meetupResponseCount == 1);
+  CHECK(strcmp(restored.meetup.note, "Trailhead") == 0);
+  CHECK(friendmesh::expireGroupCoordinationState(restored, 1000) == 1);
+  CHECK(!friendmesh::groupCoordinationItemActive(restored.meetup, 1000));
+
+  wire[0] ^= 1;
+  CHECK(friendmesh::decodeGroupCoordinationEvent(
+            wire, eventWritten, decoded) ==
+        friendmesh::ResultCode::CorruptData);
+
+  // Exercise the exact persistent-state upper bound: two records and all
+  // response slots occupied. Prefixes stay nonzero and unique per list.
+  restored.incident = meetup.item;
+  restored.incident.objectId[0] = 55;
+  restored.incident.kind = friendmesh::GroupCoordinationKind::HelpRide;
+  restored.incident.status = friendmesh::GroupCoordinationStatus::Active;
+  restored.incident.updatedAt = 200;
+  restored.meetup.status = friendmesh::GroupCoordinationStatus::Active;
+  restored.meetup.updatedAt = 200;
+  restored.meetupResponseCount = friendmesh::kCoordinationMaxResponses;
+  restored.incidentResponseCount = friendmesh::kCoordinationMaxResponses;
+  for (size_t i = 0; i < friendmesh::kCoordinationMaxResponses; ++i) {
+    restored.meetupResponses[i].memberPrefix[0] =
+        static_cast<uint8_t>(i + 1);
+    restored.meetupResponses[i].response =
+        friendmesh::GroupCoordinationResponse::Going;
+    restored.incidentResponses[i].memberPrefix[0] =
+        static_cast<uint8_t>(i + 21);
+    restored.incidentResponses[i].response =
+        friendmesh::GroupCoordinationResponse::Arrived;
+  }
+  CHECK(friendmesh::encodeGroupCoordinationState(
+            restored, saved, sizeof(saved), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(written == 244);
+  CHECK(friendmesh::decodeGroupCoordinationState(saved, written, state) ==
+        friendmesh::ResultCode::Ok);
+  saved[244 - 7] = saved[244 - 14];
+  CHECK(friendmesh::decodeGroupCoordinationState(saved, written, state) ==
+        friendmesh::ResultCode::CorruptData);
+}
+
 void testMeshCorePositionAdapter() {
   friendmesh::MeshCorePositionInput input = {};
   for (size_t i = 0; i < sizeof(input.publicKey); ++i)
@@ -1711,6 +1897,7 @@ int main() {
   testDirectChannelInviteEnvelope();
   testChannelRoster();
   testBlePresenceEnvelope();
+  testGroupCoordinationCodecAndState();
   testMeshCorePositionAdapter();
 
   if (failures != 0) {

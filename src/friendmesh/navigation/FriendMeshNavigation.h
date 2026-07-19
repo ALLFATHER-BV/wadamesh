@@ -13,6 +13,29 @@ constexpr uint32_t kDefaultPositionStaleSeconds = 300;
 constexpr uint32_t kArrivalDistanceMeters = 20;
 constexpr uint32_t kProgressChangeMeters = 5;
 constexpr uint32_t kBreadcrumbSpacingMeters = 25;
+constexpr uint32_t kMotionPredictionSeconds = 45;
+
+enum class MotionConfidence : uint8_t {
+  None = 0,
+  Limited,
+  Good,
+};
+
+// A deliberately conservative two-sample motion estimate. `predicted` is a
+// short lead point, not a guaranteed intercept: callers must keep the current
+// observed position visually distinct and fall back to it when `moving` is
+// false. The bounds reject GPS jitter, implausible jumps, and stale samples.
+struct MotionEstimate {
+  PositionRecord predicted;
+  uint32_t displacementMeters;
+  uint32_t sampleSeconds;
+  uint32_t horizonSeconds;
+  uint16_t bearingDegrees;
+  uint16_t speedCentimetersPerSecond;
+  MotionConfidence confidence;
+  bool samplesUsable;
+  bool moving;
+};
 
 enum class NavigationProgress : uint8_t {
   Unknown = 0,
@@ -34,6 +57,9 @@ uint32_t greatCircleDistanceMeters(const PositionRecord& from,
                                    const PositionRecord& to);
 uint16_t absoluteBearingDegrees(const PositionRecord& from,
                                 const PositionRecord& to);
+MotionEstimate estimateTargetMotion(
+    const PositionRecord& previous, const PositionRecord& current,
+    uint32_t now, uint32_t horizonSeconds = kMotionPredictionSeconds);
 
 class PositionBook {
  public:

@@ -1,7 +1,7 @@
 # FriendMeshOS features for WadaMesh
 
-Status: T-Deck-only functional service clusters and first native WadaMesh integration implemented and build-verified; transmit disabled
-Documented: 2026-07-18
+Status: T-Deck-only functional service clusters and native WadaMesh integration build-verified; narrow MeshCore compatibility traffic active, production FriendMesh protocol disabled
+Documented: 2026-07-19
 Repository branch: `friendmeshOS-proposal`
 Primary implementation target: LilyGo T-Deck / T-Deck Plus
 Deferred hardware: Heltec targets are documented for later access but are not current build, implementation, or acceptance gates
@@ -566,6 +566,44 @@ source, and a prominent stale state after five minutes. T-Deck currently uses
 north-up because it has no reviewed stationary heading source; the selected
 contact alone is refreshed once per second.
 
+Friend Compass now keeps a bounded two-fix motion history for each positioned
+group member. Samples five to 180 seconds apart are checked for stale data, GPS
+noise, and implausible speed before a 45-second lead point is shown. The dial
+keeps the observed position visually separate from the predicted point and
+falls back to the current position whenever movement is not reliable. The
+history is stored only on microSD at
+`/friendmesh/motion_<channel-id>.bin`, with a secret-derived non-secret filename,
+versioned header, record-count
+bound, checksum, temporary-file replacement, coalesced writes, and a final
+flush when the map closes. No copy is written to internal flash. The file is a
+development persistence format and is not yet encrypted or authenticated;
+location-history protection remains explicit security-phase work.
+
+The T-Deck presentation is now split into two pages without replacing WadaMesh
+branding or navigation. The first page dedicates most of the viewport to a
+larger ringed compass with observed, previous, and predicted positions. Its
+rings share the same live distance scale as every plotted point and display
+compact range labels. The movement readout uses a bounded 45-second lead,
+compact speed/confidence/freshness lines, and clears stale scale values when a
+position becomes unavailable. The
+second page shows a large cardinal travel instruction, straight-line distance
+and walking-time estimate, friend motion, confidence, freshness, and a working
+current-position/prediction toggle. Users can change pages with a horizontal
+swipe, a dominant left/right trackball roll, or either bottom page dot. Vertical
+trackball movement and click activation remain available to focused controls;
+fullscreen compass input no longer pans the hidden Map underneath it.
+
+Starting Friend Compass now attempts one targeted notice after both the local
+and selected-member positions are valid. The recipient sees who started the
+Compass and the current straight-line distance, formatted using the existing
+metric/miles preference. The notice uses MeshCore's authenticated encrypted
+contact-message path rather than a group broadcast. Its compact `FMCP1` envelope
+contains only a secret-derived channel tag and distance, is accepted only when
+the authenticated sender and receiver are locally joined in that group, and is
+consumed before normal DM delivery. It therefore creates no chat bubble. On
+T-Deck it uses the existing direct-message sound preference and optional screen/
+keyboard wake flash. Ignored contacts are silent.
+
 The response authorization is local FriendMesh roster membership: a MeshCore
 contact recorded as `Joined` in at least one channel can receive current GPS in
 telemetry even when public `Share location in advert` is off. Leaving/removal
@@ -579,6 +617,71 @@ allocated in PSRAM, the refresh queue adds 272 bytes of static RAM over the
 previous map build, and the compass refresh reads only its selected contact. No
 device was flashed for this automatic group-location addition, so physical
 behavior remains open.
+
+The later two-page motion-prediction and SD-history addition passes the
+shared-core suite and the combined T-Deck build at 91,052 bytes RAM (27.8%) and
+3,316,085 bytes flash (81.6%). The first-page timing regression caused by
+LVGL's float-disabled formatter is removed by preformatting speed before label
+updates; a host check also locks the prediction horizon to 45 seconds. Its
+physical layout, gestures, SD retention, and
+two-moving-device behavior remain open until the new image is flashed and
+captured. Targeted Compass-start notification delivery also remains open for
+two-device physical verification.
+
+### 7.12 Shared meetup, Help, and SOS coordination
+
+FriendMesh group capability is now explicit rather than inferred from every
+MeshCore channel. `Create a private channel` creates an ordinary core channel;
+`Create a FriendMesh group` creates the same private MeshCore channel plus a
+persisted self-admin FriendMesh roster. Receiving and accepting a nearby group
+invitation creates that roster as before. Existing groups with valid joined
+rosters are recognized without migration. Ordinary channels do not expose or
+successfully invoke Invite nearby, Members, Group map, or Coordinate.
+
+FriendMesh groups display `[FM]` in the channel inbox, open-chat status title,
+and action-sheet title. This is display-only metadata derived from the roster;
+the real MeshCore channel name and secret remain unchanged. The distinction
+uses no name prefix heuristic and does not alter WadaMesh branding or layout.
+
+The FriendMesh group action sheet offers one WadaMesh-native `Coordinate` modal.
+It supports one active meetup or pickup and one active Help/SOS incident
+per channel, with a 24-byte optional note and at most eight member responses.
+Meetups require a valid current device position. Members can answer `going`,
+`unable`, or `arrived` as appropriate; the owner or current local roster
+administrator can cancel or close the active record. SOS requires a continuous
+three-second hold rather than an ordinary tap.
+
+`FriendMeshGroupCoordination.*` owns the fixed binary codec and state machine.
+Events use reserved encrypted MeshCore group-data type `0xFF02`, while roster
+snapshots continue to use `0xFF01`. The maximum event is 72 bytes and the
+complete persistent state is capped at 248 bytes; the actual worst case is 244
+bytes. Decoders reject malformed enums, coordinates, lengths, duplicate
+responders, non-roster actors, stale object updates, and unauthorized closure.
+The receive seam consumes coordination data before WadaMesh chat history,
+companion delivery, MQTT, and user-message notifications, so an `FMC1` record
+cannot become a chat bubble.
+
+Active meetup, Help, and SOS records appear as bounded typed overlays on the
+existing WadaMesh map. The implementation creates at most two group
+coordination markers and performs no new timer-based location broadcast,
+background poll, or unbounded allocation. Per-channel state uses WadaMesh's
+existing blob store and is removed before the channel secret is cleared.
+
+This is a functional MeshCore channel-key compatibility path, not the final
+FriendMesh security protocol. MeshCore group encryption proves possession of
+the shared channel key but does not authenticate the claimed six-byte roster
+prefix inside this development record. Anyone retaining that key can therefore
+read records and impersonate a current member until production event signing,
+durable replay protection, transcript-bound member grants, and forward-only
+rekey are implemented in Phase 7. Do not rely on Help/SOS delivery for personal
+safety or emergency response.
+
+Host checks cover event/state round trips, the 244-byte capacity edge,
+unauthorized actors, duplicate responders, expiry, and corrupt input. The
+focused T-Deck build passes at 90,908 / 327,680 bytes RAM (27.7%) and 3,301,141 /
+4,063,232 bytes flash (81.2%). This is +32 bytes RAM and +9,884 bytes flash over
+the preceding automatic group-location build. It has not been flashed or
+physically exercised on the two T-Decks yet.
 
 ## 8. Build and development workflow
 

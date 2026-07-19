@@ -97,6 +97,47 @@ recorded as joined in a FriendMesh channel. The pass stops after the roster and
 does not become a background transmitter. It does not introduce a second map,
 a new wire protocol, or new UI branding.
 
+Friend Compass retains only the previous and current fix for each bounded group
+member in `/friendmesh/motion_<channel-id>.bin` on the microSD card. Writes are
+checksummed, coalesced, and flushed when the map closes; there is deliberately no
+internal-flash fallback. This development cache is not yet encrypted or
+authenticated, so SD location-history hardening remains part of the later
+security phase.
+
+The compass itself is a two-page WadaMesh fullscreen tool. Page one is the
+detailed north-up spatial dial with distance-scaled rings, distinct current and
+predicted markers, a fixed 45-second lead readout, and compact movement/freshness
+status; page two turns the same live calculation into
+plain-language travel guidance, movement speed, confidence, freshness, and a
+working `Use current position` prediction override. Horizontal touch swipes,
+trackball left/right, and two tappable bottom dots switch pages. Vertical input
+remains available for focus/scroll behavior.
+
+When both positions are valid, opening Friend Compass sends the selected member
+one targeted system notice with the starter's authenticated contact identity and
+current straight-line distance. It uses MeshCore's existing encrypted contact
+message path, is validated against the local joined roster, and is consumed
+before DM/chat history. It is attempted once per Compass session rather than on
+every one-second refresh.
+
+Only explicitly created or joined FriendMesh private groups expose `Invite
+nearby`, `Members`, `Group map`, and `Coordinate`; ordinary MeshCore channels
+retain their normal channel actions. The add-channel menu provides separate
+`Create a private channel` and `Create a FriendMesh group` choices. FriendMesh
+groups are marked `[FM]` in the inbox, open-chat title, and action-sheet title
+without changing the underlying MeshCore channel name.
+
+In a FriendMesh private group, `Coordinate` lets joined members share one
+current-location meetup or pickup point, respond `going` or
+`arrived`, open bounded ride/lost/equipment/contact Help incidents, respond to
+them, and close or cancel them. SOS requires a continuous three-second hold.
+These records use compact encrypted MeshCore group data, are persisted per
+channel, appear on the existing WadaMesh map, and are consumed before the chat
+pipeline so protocol bytes cannot become visible messages. This compatibility
+path is functional but not production-secure FriendMesh identity: a holder of
+the shared channel key can spoof a roster prefix, and removed members retain
+access until Phase 7 signing and forward-only rekey are complete.
+
 The separate FriendMesh development workspace is still volatile across reboot
 and its custom event transport remains disabled. WadaMesh's UI and branding
 remain authoritative; optional themes are the maximum broad visual addition in

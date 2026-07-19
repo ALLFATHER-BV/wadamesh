@@ -112,6 +112,7 @@
 #include "friendmesh/people/FriendMeshChannelInvite.h"
 #include "friendmesh/people/FriendMeshChannelRoster.h"
 #include "friendmesh/navigation/FriendMeshMeshCorePositionAdapter.h"
+#include "friendmesh/navigation/FriendMeshGroupCoordination.h"
 #endif
 
 /* -------------------------------------------------------------------------------------- */
@@ -833,6 +834,12 @@ public:
    *  zero-hop advert, and the packet is forced to a zero-length direct route. */
   FriendMeshInviteSendResult uiSendFriendMeshChannelInvite(
       int channel_idx, const uint8_t recipient_pub[PUB_KEY_SIZE]);
+  /** True only when this ordinary MeshCore channel has explicit persisted
+   *  FriendMesh group metadata and the local identity is a joined member. */
+  bool uiIsFriendMeshPrivateGroup(int channel_idx);
+  /** Explicitly opt an existing private MeshCore channel into FriendMesh group
+   *  behavior by creating its initial self-admin roster. */
+  bool uiCreateFriendMeshPrivateGroup(int channel_idx);
   bool uiIsFriendMeshChannelMemberJoined(
       int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE]);
   size_t uiGetFriendMeshChannelPositions(
@@ -850,6 +857,20 @@ public:
   bool uiRemoveFriendMeshChannelMember(
       int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE]);
   bool uiLeaveFriendMeshChannel(int channel_idx, bool& notice_sent);
+  bool uiGetFriendMeshGroupCoordination(
+      int channel_idx, friendmesh::GroupCoordinationState& state);
+  bool uiSendFriendMeshGroupCoordination(
+      int channel_idx, friendmesh::GroupCoordinationAction action,
+      friendmesh::GroupCoordinationKind kind =
+          friendmesh::GroupCoordinationKind::Meetup,
+      friendmesh::GroupCoordinationResponse response =
+          friendmesh::GroupCoordinationResponse::None,
+      const char* note = nullptr, uint32_t expires_after_seconds = 3600);
+  /** Notify one joined member that this device opened Friend Compass toward
+   *  them. Uses the existing authenticated encrypted contact-message path and
+   *  reports straight-line distance to their latest observed position. */
+  bool uiSendFriendMeshCompassStarted(
+      int channel_idx, const uint8_t recipient_pub[PUB_KEY_SIZE]);
 #endif
 
   /** Wipe the cached return path for a contact so the next outgoing message
@@ -928,6 +949,13 @@ public:
   bool uiDeleteChannel(int idx) {
 #ifdef MAX_GROUP_CHANNELS
     if (idx < 0 || idx >= MAX_GROUP_CHANNELS) return false;
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    // Derive and remove feature blobs before clearing the channel secret that
+    // namespaces them. Deletion is deliberately idempotent for ordinary
+    // channels and callers that already removed the roster.
+    friendmeshDeleteChannelRoster(idx);
+    friendmeshDeleteGroupCoordination(idx);
+#endif
     ChannelDetails empty{};
     if (!setChannel(idx, empty)) return false;
     saveChannels();
@@ -990,6 +1018,12 @@ private:
       int channel_idx, const friendmesh::ChannelRoster& roster);
   bool friendmeshApplyChannelRoster(
       int channel_idx, const friendmesh::ChannelRoster& incoming);
+  bool friendmeshCoordinationBlobKey(int channel_idx, uint8_t blob_key[8]);
+  bool friendmeshLoadGroupCoordination(
+      int channel_idx, friendmesh::GroupCoordinationState& state);
+  bool friendmeshSaveGroupCoordination(
+      int channel_idx, const friendmesh::GroupCoordinationState& state);
+  bool friendmeshDeleteGroupCoordination(int channel_idx);
   /** True when this contact is locally recorded as Joined in at least one
    *  FriendMesh channel. Used as the authorization boundary for responding
    *  to an existing MeshCore telemetry request with our position. */

@@ -3,8 +3,12 @@
 #include "friendmesh/people/FriendMeshChannelInvite.h"
 #include "friendmesh/people/FriendMeshBlePresence.h"
 #include "friendmesh/people/FriendMeshChannelRoster.h"
+#include "friendmesh/navigation/FriendMeshGroupCoordination.h"
 static_assert(friendmesh::kChannelRosterEncodedBytes <= MAX_GROUP_DATA_LENGTH,
               "FriendMesh roster must fit one MeshCore group datagram");
+static_assert(friendmesh::kGroupCoordinationEventMaxBytes <=
+                  MAX_GROUP_DATA_LENGTH,
+              "FriendMesh coordination event must fit one group datagram");
 #endif
 
 #include <Arduino.h> // needed for PlatformIO
@@ -2066,6 +2070,25 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
                            const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (friendmesh::isCompassStartedNoticeText(text)) {
+    friendmesh::CompassStartedNotice notice = {};
+    if (friendmesh::decodeCompassStartedNotice(text, notice) !=
+        friendmesh::ResultCode::Ok) return;
+    const int channelIdx = friendmeshFindChannelByTag(notice.channelTag);
+    ChannelDetails channel = {};
+    friendmesh::ChannelRoster roster = {};
+    if (channelIdx < 0 || !getChannel(channelIdx, channel) ||
+        !friendmeshLoadChannelRoster(channelIdx, roster, false)) return;
+    const friendmesh::ChannelRosterMember* sender =
+        friendmesh::findChannelRosterMember(roster, from.id.pub_key);
+    const friendmesh::ChannelRosterMember* self =
+        friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+    if (!sender || sender->state != friendmesh::ChannelRosterState::Joined ||
+        !self || self->state != friendmesh::ChannelRosterState::Joined) return;
+    if (_ui) _ui->onFriendMeshCompassStarted(
+        from, channel.name, notice.distanceMeters);
+    return;
+  }
   if (friendmesh::isChannelControlText(text)) {
     friendmesh::ChannelControlType type =
         friendmesh::ChannelControlType::Joined;
@@ -2145,6 +2168,28 @@ bool MyMesh::uiIsFreshZeroHopContact(
   return false;
 }
 
+bool MyMesh::uiIsFriendMeshPrivateGroup(int channel_idx) {
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  return self && self->state == friendmesh::ChannelRosterState::Joined;
+}
+
+bool MyMesh::uiCreateFriendMeshPrivateGroup(int channel_idx) {
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) return false;
+  if (uiIsFriendMeshPrivateGroup(channel_idx)) return true;
+  friendmesh::ChannelRoster roster = {};
+  if (friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  if (friendmesh::setChannelRosterMember(
+          roster, self_id.pub_key, friendmesh::ChannelRosterRole::Admin,
+          friendmesh::ChannelRosterState::Joined) !=
+      friendmesh::ResultCode::Ok) return false;
+  return friendmeshSaveChannelRoster(channel_idx, roster);
+}
+
 bool MyMesh::friendmeshChannelTag(
     int channel_idx, uint8_t tag[friendmesh::kChannelControlTagBytes],
     uint8_t blob_key[8]) {
@@ -2221,6 +2266,51 @@ bool MyMesh::friendmeshDeleteChannelRoster(int channel_idx) {
   return _store->deleteBlobByKey(blobKey, sizeof(blobKey));
 }
 
+bool MyMesh::friendmeshCoordinationBlobKey(int channel_idx,
+                                           uint8_t blob_key[8]) {
+  if (!blob_key) return false;
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) return false;
+  static const uint8_t kNamespace[] = {'F','M','C','S','1'};
+  mesh::Utils::sha256(blob_key, 8, kNamespace, sizeof(kNamespace),
+                      channel.channel.secret, 16);
+  memset(&channel, 0, sizeof(channel));
+  return true;
+}
+
+bool MyMesh::friendmeshLoadGroupCoordination(
+    int channel_idx, friendmesh::GroupCoordinationState& state) {
+  friendmesh::clearGroupCoordinationState(state);
+  uint8_t blobKey[8] = {};
+  if (!friendmeshCoordinationBlobKey(channel_idx, blobKey)) return false;
+  uint8_t encoded[friendmesh::kGroupCoordinationStateMaxBytes] = {};
+  const uint8_t length = _store->getBlobByKey(blobKey, sizeof(blobKey), encoded);
+  if (length == 0) return true;
+  return friendmesh::decodeGroupCoordinationState(encoded, length, state) ==
+         friendmesh::ResultCode::Ok;
+}
+
+bool MyMesh::friendmeshSaveGroupCoordination(
+    int channel_idx, const friendmesh::GroupCoordinationState& state) {
+  uint8_t blobKey[8] = {};
+  if (!friendmeshCoordinationBlobKey(channel_idx, blobKey)) return false;
+  uint8_t encoded[friendmesh::kGroupCoordinationStateMaxBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeGroupCoordinationState(
+          state, encoded, sizeof(encoded), written) !=
+          friendmesh::ResultCode::Ok || written == 0 || written > UINT8_MAX)
+    return false;
+  return _store->putBlobByKey(blobKey, sizeof(blobKey), encoded,
+                              static_cast<uint8_t>(written));
+}
+
+bool MyMesh::friendmeshDeleteGroupCoordination(int channel_idx) {
+  uint8_t blobKey[8] = {};
+  if (!friendmeshCoordinationBlobKey(channel_idx, blobKey)) return false;
+  return _store->deleteBlobByKey(blobKey, sizeof(blobKey));
+}
+
 bool MyMesh::friendmeshSendChannelControl(
     const ContactInfo& recipient, friendmesh::ChannelControlType type,
     const uint8_t tag[friendmesh::kChannelControlTagBytes],
@@ -2238,6 +2328,71 @@ bool MyMesh::friendmeshSendChannelControl(
   uint32_t timeout = 0;
   const int result = sendMessage(
       destination, getRTCClock()->getCurrentTimeUnique(), 0, text,
+      expectedAck, timeout);
+  memset(text, 0, sizeof(text));
+  return result != MSG_SEND_FAILED;
+}
+
+bool MyMesh::uiSendFriendMeshCompassStarted(
+    int channel_idx, const uint8_t recipient_pub[PUB_KEY_SIZE]) {
+  if (channel_idx < 0 || !recipient_pub ||
+      memcmp(recipient_pub, self_id.pub_key, PUB_KEY_SIZE) == 0) return false;
+  ContactInfo* recipient = lookupContactByPubKey(recipient_pub, PUB_KEY_SIZE);
+  friendmesh::ChannelRoster roster = {};
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  if (!recipient || recipient->type != ADV_TYPE_CHAT ||
+      (recipient->gps_lat == 0 && recipient->gps_lon == 0) ||
+      !friendmeshLoadChannelRoster(channel_idx, roster, false) ||
+      !friendmeshChannelTag(channel_idx, tag)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  const friendmesh::ChannelRosterMember* target =
+      friendmesh::findChannelRosterMember(roster, recipient_pub);
+  if (!self || self->state != friendmesh::ChannelRosterState::Joined ||
+      !target || target->state != friendmesh::ChannelRosterState::Joined)
+    return false;
+
+  const double latitude = sensors.node_lat;
+  const double longitude = sensors.node_lon;
+  if ((latitude == 0.0 && longitude == 0.0) || latitude < -90.0 ||
+      latitude > 90.0 || longitude < -180.0 || longitude > 180.0)
+    return false;
+  const uint32_t now = getRTCClock()->getCurrentTime();
+  friendmesh::MeshCorePositionInput localInput = {};
+  memcpy(localInput.publicKey, self_id.pub_key, PUB_KEY_SIZE);
+  localInput.latitudeE6 = static_cast<int32_t>(latitude * 1000000.0);
+  localInput.longitudeE6 = static_cast<int32_t>(longitude * 1000000.0);
+  localInput.observedAt = now;
+  localInput.receivedAt = now;
+  friendmesh::MeshCorePositionInput targetInput = {};
+  memcpy(targetInput.publicKey, recipient->id.pub_key, PUB_KEY_SIZE);
+  targetInput.latitudeE6 = recipient->gps_lat;
+  targetInput.longitudeE6 = recipient->gps_lon;
+  targetInput.observedAt = recipient->last_advert_timestamp > recipient->lastmod
+      ? recipient->last_advert_timestamp : recipient->lastmod;
+  targetInput.receivedAt = now;
+  friendmesh::PositionRecord local = {};
+  friendmesh::PositionRecord remote = {};
+  if (friendmesh::adaptMeshCorePosition(localInput, local) !=
+          friendmesh::ResultCode::Ok ||
+      friendmesh::adaptMeshCorePosition(targetInput, remote) !=
+          friendmesh::ResultCode::Ok) return false;
+  const uint32_t distance = friendmesh::greatCircleDistanceMeters(local, remote);
+  if (distance == UINT32_MAX ||
+      distance > friendmesh::kCompassStartedMaxDistanceMeters) return false;
+
+  friendmesh::CompassStartedNotice notice = {};
+  memcpy(notice.channelTag, tag, sizeof(notice.channelTag));
+  notice.distanceMeters = distance;
+  char text[friendmesh::kCompassStartedNoticeMaxText + 1] = {};
+  size_t written = 0;
+  if (friendmesh::encodeCompassStartedNotice(
+          notice, text, sizeof(text), written) != friendmesh::ResultCode::Ok ||
+      written == 0) return false;
+  uint32_t expectedAck = 0;
+  uint32_t timeout = 0;
+  const int result = sendMessage(
+      *recipient, getRTCClock()->getCurrentTimeUnique(), 0, text,
       expectedAck, timeout);
   memset(text, 0, sizeof(text));
   return result != MSG_SEND_FAILED;
@@ -2306,6 +2461,99 @@ bool MyMesh::friendmeshApplyChannelRoster(
   return true;
 }
 
+bool MyMesh::uiGetFriendMeshGroupCoordination(
+    int channel_idx, friendmesh::GroupCoordinationState& state) {
+  if (!friendmeshLoadGroupCoordination(channel_idx, state)) return false;
+  if (friendmesh::expireGroupCoordinationState(
+          state, getRTCClock()->getCurrentTime()) > 0)
+    friendmeshSaveGroupCoordination(channel_idx, state);
+  return true;
+}
+
+bool MyMesh::uiSendFriendMeshGroupCoordination(
+    int channel_idx, friendmesh::GroupCoordinationAction action,
+    friendmesh::GroupCoordinationKind kind,
+    friendmesh::GroupCoordinationResponse response, const char* note,
+    uint32_t expires_after_seconds) {
+  ChannelDetails channel = {};
+  friendmesh::ChannelRoster roster = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0] ||
+      !friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  if (!self || self->state != friendmesh::ChannelRosterState::Joined)
+    return false;
+  friendmesh::GroupCoordinationState state = {};
+  if (!friendmeshLoadGroupCoordination(channel_idx, state)) return false;
+
+  const uint32_t now = getRTCClock()->getCurrentTimeUnique();
+  friendmesh::GroupCoordinationEvent event = {};
+  event.action = action;
+  event.response = response;
+  if (action == friendmesh::GroupCoordinationAction::SetMeetup ||
+      action == friendmesh::GroupCoordinationAction::OpenIncident) {
+    getRNG()->random(event.item.objectId,
+                     friendmesh::kCoordinationObjectIdBytes);
+    bool zero = true;
+    for (size_t i = 0; i < sizeof(event.item.objectId); ++i)
+      if (event.item.objectId[i] != 0) zero = false;
+    if (zero) event.item.objectId[0] = 1;
+    memcpy(event.item.ownerPrefix, self_id.pub_key,
+           friendmesh::kChannelRosterPrefixBytes);
+    event.item.kind = kind;
+    event.item.status = friendmesh::GroupCoordinationStatus::Active;
+    event.item.createdAt = now;
+    event.item.updatedAt = now;
+    event.item.expiresAt = expires_after_seconds
+        ? now + expires_after_seconds : 0;
+    const double latitude = sensors.node_lat;
+    const double longitude = sensors.node_lon;
+    if ((latitude != 0.0 || longitude != 0.0) && latitude >= -90.0 &&
+        latitude <= 90.0 && longitude >= -180.0 && longitude <= 180.0) {
+      event.item.latitudeE6 = static_cast<int32_t>(latitude * 1000000.0);
+      event.item.longitudeE6 = static_cast<int32_t>(longitude * 1000000.0);
+      event.item.hasLocation = true;
+    }
+    if (note) StrHelper::strncpy(event.item.note, note,
+                                 sizeof(event.item.note));
+  } else {
+    const bool meetupAction =
+        action == friendmesh::GroupCoordinationAction::CancelMeetup ||
+        action == friendmesh::GroupCoordinationAction::MeetupResponse;
+    const friendmesh::GroupCoordinationItem& current = meetupAction
+        ? state.meetup : state.incident;
+    if (!friendmesh::groupCoordinationItemActive(current, now)) return false;
+    event.item = current;
+    memcpy(event.item.ownerPrefix, self_id.pub_key,
+           friendmesh::kChannelRosterPrefixBytes);
+    event.item.updatedAt = now;
+  }
+
+  uint8_t encoded[friendmesh::kGroupCoordinationEventMaxBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeGroupCoordinationEvent(
+          event, encoded, sizeof(encoded), written) !=
+          friendmesh::ResultCode::Ok || written == 0 ||
+      written > MAX_GROUP_DATA_LENGTH) return false;
+  if (!sendGroupData(channel.channel, nullptr, OUT_PATH_UNKNOWN,
+                     friendmesh::kGroupCoordinationDataType, encoded,
+                     static_cast<int>(written))) return false;
+  if (friendmesh::applyGroupCoordinationEvent(state, event, roster, now) !=
+      friendmesh::ResultCode::Ok ||
+      !friendmeshSaveGroupCoordination(channel_idx, state)) return false;
+  if (_ui) _ui->onFriendMeshCoordinationChanged(
+      channel.name,
+      action == friendmesh::GroupCoordinationAction::SetMeetup
+          ? "Group meetup shared"
+          : action == friendmesh::GroupCoordinationAction::OpenIncident
+              ? (kind == friendmesh::GroupCoordinationKind::Sos
+                     ? "SOS sent to group" : "Help request sent")
+              : "Group coordination updated",
+      kind == friendmesh::GroupCoordinationKind::Sos);
+  return true;
+}
+
 FriendMeshInviteSendResult MyMesh::uiSendFriendMeshChannelInvite(
     int channel_idx, const uint8_t recipient_pub[PUB_KEY_SIZE]) {
   ChannelDetails channel = {};
@@ -2321,7 +2569,7 @@ FriendMeshInviteSendResult MyMesh::uiSendFriendMeshChannelInvite(
     return FriendMeshInviteSendResult::InvalidContact;
   }
   friendmesh::ChannelRoster roster = {};
-  if (!friendmeshLoadChannelRoster(channel_idx, roster, true)) {
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) {
     memset(&channel, 0, sizeof(channel));
     return FriendMeshInviteSendResult::EncodeFailed;
   }
@@ -2483,7 +2731,7 @@ size_t MyMesh::uiGetFriendMeshChannelMembers(
   rekey_required = false;
   if (!destination || capacity == 0) return 0;
   friendmesh::ChannelRoster roster = {};
-  if (!friendmeshLoadChannelRoster(channel_idx, roster, true)) return 0;
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return 0;
   const size_t count = roster.memberCount < capacity
       ? roster.memberCount : capacity;
   for (size_t i = 0; i < count; ++i) {
@@ -2697,6 +2945,35 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel,
         friendmesh::decodeChannelRoster(data, data_len, incoming) ==
             friendmesh::ResultCode::Ok) {
       friendmeshApplyChannelRoster(channelIdx, incoming);
+    }
+    return;
+  }
+  if (data_type == friendmesh::kGroupCoordinationDataType) {
+    const int channelIdx = findChannelIdx(channel);
+    friendmesh::ChannelRoster roster = {};
+    friendmesh::GroupCoordinationState state = {};
+    friendmesh::GroupCoordinationEvent event = {};
+    if (channelIdx < 0 ||
+        !friendmeshLoadChannelRoster(channelIdx, roster, false) ||
+        !friendmeshLoadGroupCoordination(channelIdx, state) ||
+        friendmesh::decodeGroupCoordinationEvent(data, data_len, event) !=
+            friendmesh::ResultCode::Ok ||
+        friendmesh::applyGroupCoordinationEvent(
+            state, event, roster, getRTCClock()->getCurrentTime()) !=
+            friendmesh::ResultCode::Ok ||
+        !friendmeshSaveGroupCoordination(channelIdx, state)) return;
+    ChannelDetails details = {};
+    if (_ui && getChannel(channelIdx, details)) {
+      const bool urgent = event.action ==
+              friendmesh::GroupCoordinationAction::OpenIncident &&
+          event.item.kind == friendmesh::GroupCoordinationKind::Sos;
+      const char* status = urgent ? "Group SOS received"
+          : event.action == friendmesh::GroupCoordinationAction::OpenIncident
+              ? "Group help request received"
+              : event.action == friendmesh::GroupCoordinationAction::SetMeetup
+                  ? "Group meetup received"
+                  : "Group coordination updated";
+      _ui->onFriendMeshCoordinationChanged(details.name, status, urgent);
     }
     return;
   }
