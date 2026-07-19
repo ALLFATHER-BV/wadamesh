@@ -134,7 +134,11 @@
   #elif defined(HAS_RAK_TAP_V2)
     #include <LGFXDisplay.h>                 // LovyanGFX FSPI on RAK Tap V2
   #elif defined(HAS_TDISPLAY_P4)
-    #include <RM69A10Display.h>              // RM69A10 MIPI-DSI on the T-Display P4
+    #if defined(HAS_TDP4_LCD)
+      #include <HI8561Display.h>             // HI8561 TFT-LCD (LCD SKU) on the T-Display P4
+    #else
+      #include <RM69A10Display.h>            // RM69A10 MIPI-DSI AMOLED (default SKU) on the T-Display P4
+    #endif
   #else
     #include <helpers/ui/ST7789LCDDisplay.h>
   #endif
@@ -182,7 +186,7 @@
   #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8)
     extern LGFXDisplay display;
   #elif defined(HAS_TDISPLAY_P4)
-    extern RM69A10Display display;
+    extern DISPLAY_CLASS display;            // RM69A10Display (AMOLED) or HI8561Display (LCD) — set in CMakeLists
   #else
     extern ST7789LCDDisplay display;
   #endif
@@ -20353,6 +20357,316 @@ static void openReaderPage() {
 }
 #endif  // Reader
 
+// ===== Discover app (active node-discovery + live signal-ranked list) =====================
+// Fires a zero-hop NODE_DISCOVER_REQ sweep (ALL node types) every few seconds while open and lists
+// every node that answers, ranked by signal. The engine (MyMesh::_discover[] + uiStartDiscoverScan
+// + discoverUpsert) collects the replies; this page renders them + drives the cadence, airtime-gated
+// so a repeating scan respects the duty-cycle budget. Rendered as ONE recolored label (like the RF
+// Monitor feed) — light + scroll-safe, no per-row object churn. Map + wardriving build on top later.
+static lv_obj_t*   s_discover_root    = nullptr;
+static lv_obj_t*   s_discover_feed    = nullptr;   // single recolored multi-line label
+static lv_obj_t*   s_discover_status  = nullptr;   // header: "Scanning… · N nearby"
+static lv_obj_t*   s_discover_btn_lbl = nullptr;   // Scan/Stop button label
+static lv_timer_t* s_discover_timer   = nullptr;
+static bool        s_discover_scanning = true;
+static uint32_t    s_discover_last_scan_ms = 0;
+
+static void closeDiscoverPage();
+static void discoverJumpToMapHere();   // "Show on map" — defined with the map code (uses map statics)
+
+// node_type -> row colour / short label (mirrors the map marker colours).
+static uint32_t discTypeColor(uint8_t t) {
+  switch (t) {
+    case ADV_TYPE_REPEATER: return 0x4DA8FF;   // blue
+    case ADV_TYPE_CHAT:     return 0x53C06B;   // green
+    case ADV_TYPE_ROOM:     return 0xF0A020;   // amber
+    case ADV_TYPE_SENSOR:   return 0x35C9C9;   // cyan
+    default:                return 0x9AA0A6;   // grey
+  }
+}
+static const char* discTypeName(uint8_t t) {
+  switch (t) {
+    case ADV_TYPE_REPEATER: return "repeater";
+    case ADV_TYPE_CHAT:     return "companion";
+    case ADV_TYPE_ROOM:     return "room";
+    case ADV_TYPE_SENSOR:   return "sensor";
+    default:                return "node";
+  }
+}
+
+// ---- Wardriving: log GPS-tagged sightings as we scan (a standalone, on-device MeshMapper) ----
+// While the Discover app scans, sample our GPS position; at each sample, log every currently-heard
+// node (our position + its type + signal) to an SD CSV, and keep an in-RAM coverage ring for the map
+// overlay. A 0-hop hit means "reachable from HERE", so the track of samples IS a personal RF-coverage
+// map. All UI-side (needs GPS, which the engine doesn't have). Map rendering reads s_disc_track[].
+struct DiscTrackPt { int32_t lat_e6, lon_e6; int8_t best_rssi; uint8_t node_count; };
+static const int k_disc_track_max = 160;
+static DiscTrackPt* s_disc_track = (DiscTrackPt*)psAlloc(sizeof(DiscTrackPt) * k_disc_track_max);  // PSRAM (~1KB off .bss)
+static int       s_disc_track_n = 0;       // total samples ever (ring slot = n % max)
+static int32_t   s_disc_last_lat = 0, s_disc_last_lon = 0;
+static uint32_t  s_disc_last_sample_ms = 0;
+static uint32_t  s_disc_log_count = 0;     // sightings written to SD this session
+static lv_obj_t* s_disc_footer = nullptr;  // bottom status line: GPS / wardrive state
+
+static void discoverLogSighting(int32_t lat_e6, int32_t lon_e6, const MyMesh::DiscoverHit& h) {
+#if CAP_SD
+  if (SD.cardType() == CARD_NONE) return;
+  markSdIo();
+  SD.mkdir("/meshcomod");
+  SD.mkdir("/meshcomod/discover");
+  File f = SD.open("/meshcomod/discover/wardrive.csv", FILE_APPEND);
+  if (!f) return;
+  if (f.size() == 0) f.print("epoch,lat,lon,type,pubkey,rssi,snr,hops\n");
+  uint32_t epoch = (uint32_t)rtc_clock.getCurrentTime();
+  f.printf("%lu,%.6f,%.6f,%s,%02X%02X%02X%02X,%d,%.1f,%u\n",
+    (unsigned long)epoch, (double)lat_e6 / 1e6, (double)lon_e6 / 1e6, discTypeName(h.node_type),
+    h.pubkey[0], h.pubkey[1], h.pubkey[2], h.pubkey[3],
+    (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, (unsigned)h.path_len);
+  f.close();
+  s_disc_log_count++;
+#else
+  (void)lat_e6; (void)lon_e6; (void)h;
+#endif
+}
+
+// Called every scan tick: refresh the footer + (once we've moved ~15 m) log a coverage sample.
+static void discoverWardriveTick() {
+  UITask* task = g_lv.task;
+  const bool fix = task && task->getGpsFix();
+  const double latd = fix ? task->getNodeLat() : 0.0, lond = fix ? task->getNodeLon() : 0.0;
+  if (fix && !(latd == 0.0 && lond == 0.0)) {
+    const int32_t lat_e6 = (int32_t)lround(latd * 1e6), lon_e6 = (int32_t)lround(lond * 1e6);
+    const uint32_t now = millis();
+    int32_t dlat = lat_e6 - s_disc_last_lat; if (dlat < 0) dlat = -dlat;
+    int32_t dlon = lon_e6 - s_disc_last_lon; if (dlon < 0) dlon = -dlon;
+    if (s_disc_last_sample_ms == 0 || dlat > 150 || dlon > 150 || (now - s_disc_last_sample_ms) > 20000) {
+      int nodes = 0; int8_t best = -128;
+      uint8_t n = the_mesh.discoverCount();
+      for (uint8_t i = 0; i < n; i++) {
+        MyMesh::DiscoverHit h;
+        if (!the_mesh.discoverGet(i, h) || (now - h.last_ms) > 8000) continue;   // only currently-heard
+        nodes++; if (h.our_rssi > best) best = h.our_rssi;
+        discoverLogSighting(lat_e6, lon_e6, h);
+      }
+      if (nodes > 0) {
+        DiscTrackPt& p = s_disc_track[s_disc_track_n % k_disc_track_max];
+        p.lat_e6 = lat_e6; p.lon_e6 = lon_e6; p.best_rssi = best;
+        p.node_count = (uint8_t)(nodes > 255 ? 255 : nodes);
+        s_disc_track_n++;
+      }
+      s_disc_last_lat = lat_e6; s_disc_last_lon = lon_e6; s_disc_last_sample_ms = now;
+    }
+  }
+  if (s_disc_footer) {
+    if (!fix) lv_label_set_text(s_disc_footer, "#7A7F87 Wardrive: waiting for GPS fix\xE2\x80\xA6#");
+    else lv_label_set_text_fmt(s_disc_footer,
+           "#7A7F87 Wardrive: %d coverage pts \xC2\xB7 %lu logged to SD#",
+           s_disc_track_n > k_disc_track_max ? k_disc_track_max : s_disc_track_n,
+           (unsigned long)s_disc_log_count);
+  }
+}
+
+// Per-row snapshot for tap-to-add (populated by discoverBuildFeed in the displayed sort order):
+// full pubkey + type + name, so a tap on the feed resolves to the exact node under it.
+static const int DISC_MAXROWS = 40;
+static uint8_t s_disc_row_key[DISC_MAXROWS][32];
+static uint8_t s_disc_row_type[DISC_MAXROWS];
+static char    s_disc_row_name[DISC_MAXROWS][26];
+static int     s_disc_row_n = 0;
+
+// Rebuild the feed label from the engine's _discover[] table, strongest-signal first.
+static void discoverBuildFeed() {
+  if (!s_discover_feed) return;
+  const uint32_t now = millis();
+  static MyMesh::DiscoverHit hits[MyMesh::DISCOVER_MAX];
+  static uint8_t idx[MyMesh::DISCOVER_MAX];
+  uint8_t m = 0;
+  uint8_t n = the_mesh.discoverCount();
+  for (uint8_t i = 0; i < n && m < MyMesh::DISCOVER_MAX; i++) {
+    if (the_mesh.discoverGet(i, hits[m])) { idx[m] = m; m++; }
+  }
+  for (uint8_t a = 0; a < m; a++)                          // insertion sort by our_rssi desc
+    for (uint8_t b = (uint8_t)(a + 1); b < m; b++)
+      if (hits[idx[b]].our_rssi > hits[idx[a]].our_rssi) { uint8_t t = idx[a]; idx[a] = idx[b]; idx[b] = t; }
+
+  static char buf[3200];
+  int q = 0, rpt = 0, comp = 0;
+  const int MAXROWS = DISC_MAXROWS;
+  s_disc_row_n = 0;
+  for (uint8_t k = 0; k < m && k < MAXROWS && q < (int)sizeof(buf) - 112; k++) {
+    const MyMesh::DiscoverHit& h = hits[idx[k]];
+    if (h.node_type == ADV_TYPE_REPEATER) rpt++;
+    else if (h.node_type == ADV_TYPE_CHAT) comp++;
+    char name[26];
+    ContactInfo* c = the_mesh.lookupContactByPubKey((uint8_t*)h.pubkey, 6);
+    if (c && c->name[0]) snprintf(name, sizeof name, "%s", c->name);
+    else                 snprintf(name, sizeof name, "Node \xC2\xB7%02X%02X", h.pubkey[0], h.pubkey[1]);
+    memcpy(s_disc_row_key[k], h.pubkey, 32);           // snapshot this row for tap-to-add
+    s_disc_row_type[k] = h.node_type;
+    snprintf(s_disc_row_name[k], sizeof s_disc_row_name[k], "%s", name);
+    s_disc_row_n = k + 1;
+    uint32_t age = (now - h.last_ms) / 1000;
+    char ago[10];
+    if (age < 60) snprintf(ago, sizeof ago, "%us", (unsigned)age);
+    else          snprintf(ago, sizeof ago, "%um", (unsigned)(age / 60));
+    const char* direct = (h.path_len == 0) ? "  #53C06B direct#" : "";
+    q += snprintf(buf + q, sizeof(buf) - q,
+      "#%06X %s#  %s  %ddBm %.1f%s  \xC2\xB7 %s\n",
+      (unsigned)discTypeColor(h.node_type), name, discTypeName(h.node_type),
+      (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, direct, ago);
+  }
+  if (q == 0) snprintf(buf, sizeof buf, "#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#");
+  else if (buf[q - 1] == '\n') buf[q - 1] = '\0';
+  lv_label_set_text(s_discover_feed, buf);
+  if (s_discover_status)
+    lv_label_set_text_fmt(s_discover_status, "%s \xC2\xB7 %d nearby (%d rpt, %d comp)",
+      s_discover_scanning ? "Scanning\xE2\x80\xA6" : "Paused", (int)m, rpt, comp);
+}
+
+static void discoverTimerCb(lv_timer_t* t) {
+  (void)t;
+  if (!s_discover_root) return;
+  const uint32_t now = millis();
+  if (s_discover_scanning && (s_discover_last_scan_ms == 0 || (now - s_discover_last_scan_ms) >= 4000)) {
+    if (the_mesh.getRemainingTxBudget() >= 300) {   // airtime gate: keep a duty-cycle cushion
+      the_mesh.uiStartDiscoverScan(0);              // 0 = all node types
+      s_discover_last_scan_ms = now;
+    }
+  }
+  discoverBuildFeed();
+  discoverWardriveTick();
+}
+
+static void discoverScanToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_discover_scanning = !s_discover_scanning;
+  if (s_discover_scanning) s_discover_last_scan_ms = 0;   // resume -> sweep immediately
+  if (s_discover_btn_lbl) lv_label_set_text(s_discover_btn_lbl, s_discover_scanning ? "Stop" : "Scan");
+  discoverBuildFeed();
+}
+
+static void discoverShowMapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  discoverJumpToMapHere();   // centre the map on us + open the Map tab (coverage overlay draws there)
+}
+
+// Tap a row in the feed -> add that node to contacts (using the full pubkey the discovery reply
+// carried). Resolves the row from the tap's Y (uniform one-line rows: LONG_CLIP + a fixed line_space).
+static void discoverFeedTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!s_discover_feed || s_disc_row_n == 0) return;
+  lv_indev_t* indev = lv_indev_get_act();
+  if (!indev) return;
+  lv_point_t p; lv_indev_get_point(indev, &p);
+  lv_area_t a; lv_obj_get_coords(s_discover_feed, &a);
+  const int local_y = (int)p.y - (int)a.y1;
+  if (local_y < 0) return;
+  const int row_h = (int)lv_font_get_line_height(&g_font_12) + 3;   // == the label's line_space
+  const int row = local_y / row_h;
+  if (row < 0 || row >= s_disc_row_n) return;                       // tapped empty space below the list
+  const uint8_t* pk = s_disc_row_key[row];
+  if (the_mesh.lookupContactByPubKey((uint8_t*)pk, PUB_KEY_SIZE) != nullptr) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Already in contacts"), 1100);
+    return;
+  }
+  if (the_mesh.uiAddDiscoveredContact(pk, s_disc_row_type[row], s_disc_row_name[row])) {
+    if (g_lv.task) { char msg[44]; snprintf(msg, sizeof msg, "%s %s", TR("Added"), s_disc_row_name[row]); g_lv.task->showAlert(msg, 1400); }
+  } else if (g_lv.task) {
+    g_lv.task->showAlert(TR("Could not add"), 1100);
+  }
+}
+
+static void closeDiscoverPage() {
+  if (s_discover_timer) { lv_timer_del(s_discover_timer); s_discover_timer = nullptr; }
+  if (s_discover_root)  { popupClose(&s_discover_root); }
+  s_discover_feed = s_discover_status = s_discover_btn_lbl = s_disc_footer = nullptr;
+  s_disc_row_n = 0;
+  s_discover_scanning = true;
+  if (s_apppage_close == closeDiscoverPage) {
+    s_apppage_title = nullptr; s_apppage_close = nullptr;
+    statusBarSetTall(false); updateGlobalStatusBar();
+  }
+}
+
+static void openDiscoverPage() {
+  closeDiscoverPage();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  const int H = sh - STATUSBAR_H;
+  s_discover_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_discover_root);
+  lv_obj_set_size(s_discover_root, sw, H);
+  lv_obj_set_pos(s_discover_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_discover_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_discover_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_discover_root, LV_OBJ_FLAG_SCROLLABLE);
+
+  s_apppage_title = "Discover";
+  s_apppage_close = closeDiscoverPage;
+  statusBarSetTall(true);
+  updateGlobalStatusBar();
+  const int top = STATUSBAR_H + 8;
+
+  s_discover_status = lv_label_create(s_discover_root);
+  lv_label_set_text(s_discover_status, "Scanning\xE2\x80\xA6");
+  lv_obj_set_style_text_font(s_discover_status, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_discover_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(s_discover_status, 10, top);
+  lv_obj_set_width(s_discover_status, sw - 130);            // keep clear of the two header buttons
+  lv_label_set_long_mode(s_discover_status, LV_LABEL_LONG_DOT);
+
+  lv_obj_t* btn = lv_btn_create(s_discover_root);           // Stop / Scan
+  lv_obj_set_size(btn, 56, 30);
+  lv_obj_set_pos(btn, sw - 62, top - 4);
+  styleButton(btn);
+  lv_obj_add_event_cb(btn, discoverScanToggleCb, LV_EVENT_CLICKED, nullptr);
+  s_discover_btn_lbl = lv_label_create(btn);
+  lv_label_set_text(s_discover_btn_lbl, "Stop");
+  lv_obj_center(s_discover_btn_lbl);
+
+  lv_obj_t* mbtn = lv_btn_create(s_discover_root);          // Show on map
+  lv_obj_set_size(mbtn, 56, 30);
+  lv_obj_set_pos(mbtn, sw - 122, top - 4);
+  styleButton(mbtn);
+  lv_obj_add_event_cb(mbtn, discoverShowMapCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* mlbl = lv_label_create(mbtn);
+  lv_label_set_text(mlbl, "Map");
+  lv_obj_center(mlbl);
+
+  lv_obj_t* sc = lv_obj_create(s_discover_root);
+  lv_obj_remove_style_all(sc);
+  lv_obj_set_size(sc, sw, H - (top - STATUSBAR_H) - 34 - 20);   // leave a row for the wardrive footer
+  lv_obj_set_pos(sc, 0, top + 30);
+  lv_obj_set_style_bg_opa(sc, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(sc, 8, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(sc, LV_DIR_VER);
+  s_discover_feed = lv_label_create(sc);
+  lv_label_set_recolor(s_discover_feed, true);
+  lv_obj_set_width(s_discover_feed, sw - 20);
+  lv_label_set_long_mode(s_discover_feed, LV_LABEL_LONG_CLIP);         // one line per row -> tap-to-add maps Y->row
+  lv_obj_set_style_text_line_space(s_discover_feed, 3, LV_PART_MAIN);  // fixed row pitch (font line-height + 3)
+  lv_obj_set_style_text_font(s_discover_feed, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_discover_feed, lv_color_hex(0xC8CDD2), LV_PART_MAIN);
+  lv_obj_add_flag(s_discover_feed, LV_OBJ_FLAG_CLICKABLE);             // tap a node row -> add to contacts
+  lv_obj_add_event_cb(s_discover_feed, discoverFeedTapCb, LV_EVENT_CLICKED, nullptr);
+  lv_label_set_text(s_discover_feed, "");
+
+  // wardriving footer (GPS + logged-count status), pinned at the bottom
+  s_disc_footer = lv_label_create(s_discover_root);
+  lv_label_set_recolor(s_disc_footer, true);
+  lv_obj_set_style_text_font(s_disc_footer, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(s_disc_footer, 10, STATUSBAR_H + H - 18);
+  lv_label_set_text(s_disc_footer, "#7A7F87 Wardrive: \xE2\x80\xA6#");
+
+  the_mesh.discoverClear();
+  s_discover_scanning = true;
+  s_discover_last_scan_ms = 0;                // fire the first sweep on the first tick
+  discoverBuildFeed();
+  s_discover_timer = lv_timer_create(discoverTimerCb, 1000, nullptr);
+
+  if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
+}
+
 static void openMonitorPage() {
   closeMonitorPage();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -24632,6 +24946,56 @@ static void routeHudUpdate();
 static void showRouteHud();
 static void hideRouteHud();
 
+// ---- Discover wardriving coverage overlay (drawn on the map pan layer) ----
+// Plots the Discover app's logged coverage samples (s_disc_track[], populated in discoverWardriveTick)
+// as signal-coloured dots — a personal RF-coverage map: a 0-hop hit means "reachable from that point",
+// so green = strong contact, red = weak. Object pool freed alongside the other map markers.
+static lv_obj_t* s_disc_map_objs[k_disc_track_max] = {nullptr};
+static int       s_disc_map_obj_n = 0;
+static void discoverFreeMapObjs() {
+  for (int i = 0; i < s_disc_map_obj_n; ++i)
+    if (s_disc_map_objs[i]) { lv_obj_del(s_disc_map_objs[i]); s_disc_map_objs[i] = nullptr; }
+  s_disc_map_obj_n = 0;
+}
+static void discoverDrawCoverage(lv_obj_t* parent, double cwx, double cwy) {
+  const int cap = (int)(sizeof(s_disc_map_objs) / sizeof(s_disc_map_objs[0]));
+  const int total = s_disc_track_n < k_disc_track_max ? s_disc_track_n : k_disc_track_max;
+  for (int k = 0; k < total && s_disc_map_obj_n < cap; ++k) {
+    const DiscTrackPt& p = s_disc_track[k];
+    double mwx, mwy;
+    latLonToWorldPx((double)p.lat_e6 / 1e6, (double)p.lon_e6 / 1e6, s_map_zoom, &mwx, &mwy);
+    const int sx = (int)(mwx - cwx + k_map_canvas_w / 2);
+    const int sy = (int)(mwy - cwy + k_map_canvas_h / 2);
+    if (sx < -4 || sx >= k_map_canvas_w + 4 || sy < -4 || sy >= k_map_canvas_h + 4) continue;
+    int r = p.best_rssi; if (r > -50) r = -50; if (r < -110) r = -110;   // clamp to the colour range
+    int g = (r + 110) * 255 / 60;                                        // 0 (weak) .. 255 (strong)
+    uint32_t col = ((uint32_t)(255 - g) << 16) | ((uint32_t)g << 8);     // red -> green
+    lv_obj_t* d = lv_obj_create(parent);
+    lv_obj_remove_style_all(d);
+    lv_obj_set_size(d, 8, 8);
+    lv_obj_set_pos(d, sx - 4, sy - 4);
+    lv_obj_set_style_bg_color(d, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(d, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_set_style_border_color(d, lv_color_hex(0x101010), LV_PART_MAIN);
+    lv_obj_set_style_border_width(d, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(d, 4, LV_PART_MAIN);
+    lv_obj_clear_flag(d, LV_OBJ_FLAG_CLICKABLE);
+    s_disc_map_objs[s_disc_map_obj_n++] = d;
+  }
+}
+// Discover page's "Show on map": centre the map on our current position + open the Map tab, where
+// the coverage overlay draws. Keeps the centre (s_map_view_inited) so onMapTabActivated won't snap back.
+static void discoverJumpToMapHere() {
+  UITask* task = g_lv.task;
+  if (task && task->getGpsFix()) {
+    s_map_center_lat = task->getNodeLat();
+    s_map_center_lon = task->getNodeLon();
+    s_map_view_inited = true;
+  }
+  closeDiscoverPage();
+  goToTab(MAP_TAB_INDEX);
+}
+
 static void freeMapMarkers() {
   for (auto& m : s_map_markers) {
     if (m.obj) { lv_obj_del(m.obj); m.obj = nullptr; }
@@ -24644,6 +25008,7 @@ static void freeMapMarkers() {
     if (s_route_objs[i]) { lv_obj_del(s_route_objs[i]); s_route_objs[i] = nullptr; }
   }
   s_route_obj_n = 0;
+  discoverFreeMapObjs();
 }
 
 static void openMarkerPopupForContact(int mesh_idx);
@@ -24782,6 +25147,9 @@ static void renderMapMarkers() {
     lv_obj_clear_flag(m.obj, LV_OBJ_FLAG_SCROLLABLE);
     ++slot;
   }
+
+  // Discover wardriving coverage dots (my logged signal samples), under the route overlay.
+  if (s_disc_track_n > 0) discoverDrawCoverage(parent, cwx, cwy);
 
   // Route-replay overlay — drawn last so the path + nodes sit above tiles,
   // link lines and contact markers.
@@ -35111,6 +35479,7 @@ enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
   APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
+  APPACT_DISCOVER,
 };
 
 static void closeAppDrawer() {
@@ -35355,6 +35724,7 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_SIGNAL:    openSignalInfoPopup(); return;   // signal/traffic + auto-discover settings
     case APPACT_MONITOR:   openMonitorPage();    return;   // RF activity graph + repeater-style radio stats
     case APPACT_SPECTRUM:  openSpectrumPage();   return;   // swept RF spectrum analyzer (borrows the radio)
+    case APPACT_DISCOVER:  openDiscoverPage();   return;   // active node-discovery sweep + nearby list
 #if !defined(HAS_TANMATSU)
     case APPACT_VNC:       openVncPage();        return;   // screen mirror + remote control from a browser
     case APPACT_REMOTE:    openRemotePage();     return;   // reboot into the web-resolution headless UI
@@ -35702,7 +36072,7 @@ static void openAppDrawer() {
     { LV_SYMBOL_ENVELOPE,  "Chats",     APPACT_CHATS,    unread,    0x4F9DF7 },      // messaging blue
     { TOUCH_SYM_PERSON,    "Contacts",  APPACT_CONTACTS, 0,         0xA784E0 },      // people violet
     { LV_SYMBOL_GPS,       "Map",       APPACT_MAP,      0,         0x53C06B },      // location green
-    { "@",                 "Mentions",  APPACT_MENTIONS, mentions,  0xF2A33C },      // mention amber
+    { LV_SYMBOL_REFRESH,   "Discover",  APPACT_DISCOVER, 0,         0x9B59FF },      // active node-discovery sweep (purple)
     { LV_SYMBOL_UPLOAD,    "Advertise", APPACT_ADVERT,   0,         0xE072B0 },      // broadcast magenta
 #if !defined(HAS_TANMATSU)
     { LV_SYMBOL_IMAGE,     "VNC",       APPACT_VNC,      0,         0x6C7CF0 },      // browser screen-mirror indigo
@@ -35714,6 +36084,7 @@ static void openAppDrawer() {
     { nullptr,             "Signal",    APPACT_SIGNAL,   0,         COLOR_ACCENT },  // theme (drawn signal bars)
     { TOUCH_SYM_ANTENNA,   "Monitor",   APPACT_MONITOR,  0,         0x35C9C9 },      // RF monitor cyan
     { TOUCH_SYM_ANTENNA,   "Spectrum",  APPACT_SPECTRUM, 0,         0xE8A33D },      // RF spectrum analyzer amber
+    { "@",                 "Mentions",  APPACT_MENTIONS, mentions,  0xF2A33C },      // mention amber
     { LV_SYMBOL_SETTINGS,  "Settings",  APPACT_SETTINGS, 0,         0x9AA3AD },      // neutral gear grey
 #if defined(HAS_TOUCH_UI)
     { ">_",                "Terminal",  APPACT_TERMINAL, 0,         0x3DD27A },      // console green
@@ -41794,8 +42165,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
 #elif defined(HAS_TDISPLAY_P4)
-      // RM69A10: LVGL renders at 284-wide (half res, upscaled 2x on flush) — full-width band in the abundant 32MB PSRAM.
+      // P4: LVGL renders at half res (upscaled 2x on flush) — full-width band in the abundant 32MB PSRAM.
+      // AMOLED (RM69A10) = 284-wide; TFT-LCD (HI8561) = 270-wide.
+    #if defined(HAS_TDP4_LCD)
+      g_draw_buf_px = 270 * LV_DRAW_BUF_LINES;
+    #else
       g_draw_buf_px = 284 * LV_DRAW_BUF_LINES;
+    #endif
       const size_t buf_bytes = sizeof(lv_color_t) * g_draw_buf_px;
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
@@ -41936,11 +42312,17 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     g_lv.disp_drv.hor_res  = TAN_PANEL_PW;   // 480
     g_lv.disp_drv.ver_res  = TAN_PANEL_PH;   // 800
 #elif defined(HAS_TDISPLAY_P4)
-    // Render at HALF the 568x1232 panel; RM69A10Display upscales RM_UI_SCALE(2)x on flush, so the whole
-    // UI is uniformly 2x bigger on the high-DPI AMOLED (simpler than per-element scaling). The GT9895
-    // touch reports in this same 284x616 logical space.
+    // Render at HALF the native panel; the P4 DisplayDriver upscales 2x on flush, so the whole UI is
+    // uniformly 2x bigger on the high-DPI panel (simpler than per-element scaling). The touch driver
+    // reports in this same logical space. Two SKUs (build-time): AMOLED 568x1232 -> 284x616 (GT9895
+    // touch); TFT-LCD 540x1168 -> 270x584 (HI8561 integrated touch).
+  #if defined(HAS_TDP4_LCD)
+    g_lv.disp_drv.hor_res  = 270;
+    g_lv.disp_drv.ver_res  = 584;
+  #else
     g_lv.disp_drv.hor_res  = 284;
     g_lv.disp_drv.ver_res  = 616;
+  #endif
 #elif defined(TLORA_PAGER)
     // Fixed landscape via hardware MADCTL rotation (like T-Deck/Heltec below),
     // just a different native panel size — no ui_landscape ternary needed since
@@ -44312,6 +44694,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_urlmenu_root),          []{ closeUrlMenu(); },               PF_COUNT },   // chat URL -> action menu
   { P_OPEN(s_meminfo_root),          []{ closeMemInfo(); },               PF_COUNT },
   { P_OPEN(s_monitor_root),          []{ closeMonitorPage(); },           PF_COUNT },
+  { P_OPEN(s_discover_root),         []{ closeDiscoverPage(); },          PF_COUNT },
   { P_OPEN(s_spec_root),             []{ closeSpectrumPage(); },          PF_COUNT },
   { P_OPEN(s_advert_root),           []{ closeAdvertPage(); },            PF_COUNT },   // was dismissable but never counted
 #if defined(HAS_EXPANSION_KIT)

@@ -6,7 +6,10 @@
 # drivers (the P4's touch is HI8561, in variants/tdisplay_p4/).
 set(REPO "${CMAKE_CURRENT_LIST_DIR}/../../..")
 set(APP "${REPO}/src")
-file(GLOB_RECURSE APP_SRCS "${APP}/*.cpp" "${APP}/*.c" "${REPO}/variants/tdisplay_p4/*.cpp")
+# Also glob variants/tdisplay_p4/*.c — the vendored esp_lcd_hi8561.c (Espressif Apache-2.0, verbatim)
+# is kept as C so it compiles without the C++ strictness patches esp_lcd_rm69a10.cpp needed; its header
+# has extern "C", so HI8561Display.cpp (C++, LCD SKU) links against it fine.
+file(GLOB_RECURSE APP_SRCS "${APP}/*.cpp" "${APP}/*.c" "${REPO}/variants/tdisplay_p4/*.cpp" "${REPO}/variants/tdisplay_p4/*.c")
 list(FILTER APP_SRCS EXCLUDE REGEX "/main\\.cpp$")
 list(FILTER APP_SRCS EXCLUDE REGEX "/helpers/input/(HeltecV4CapTouch|TDeckKeyboard|TDeckTouch|TDeckTrackball|RakTapV2Touch)\\.cpp$")
 

@@ -10,8 +10,10 @@ flashes over the right-side USB (USB-Serial-JTAG). LoRa region = EU 868.
 - **SX1262** SPI SCLK=2/MOSI=3/MISO=4, CS=24, BUSY=6 (raw GPIO); **RST=XL9535-IO16, DIO1=XL9535-IO17**
 - **XL9535 I2C expander** on I2C_1 (SDA=7/SCL=8, INT=GPIO5): power rails, C6-EN(IO14), SD-EN(IO15),
   SCREEN_RST(IO2), TOUCH_RST(IO3)/INT(IO4), SX1262 RST(IO16)/DIO1(IO17), RF-switch VCTL(IO1), GPS-WAKE
-- **Display** RM69A10 AMOLED MIPI-DSI 568×1232 (portrait); reset via XL9535
-- **Touch** HI8561 (or GT9895) on I2C_1 (7/8); RST/INT via XL9535
+- **Display** two SKUs (LilyGo branches [rm69a10]/[hi8561]): RM69A10 AMOLED MIPI-DSI 568×1232, or
+  HI8561 TFT-LCD MIPI-DSI 540×1168 — both portrait, reset via XL9535 IO2. Build-time select (below).
+- **Touch** per-SKU on I2C_1 (7/8), RST/INT via XL9535: AMOLED = Goodix GT9895 (0x5D); LCD = HI8561
+  integrated TDDI touch (0x68)
 - **C6** esp-hosted over SDIO_2 (CLK18/CMD19/D0-3=14-17); **SD** SD_MMC on SDIO_1 slot 0 (43/44/39-42)
 - **GPS** L76K UART: ESP RX=22 / TX=23. **RTC** PCF8563, **gauge** BQ27220 on I2C_1
 
@@ -110,3 +112,24 @@ rm69a10_driver.cpp,t_display_p4_driver.cpp}`.
 
 ## Build
 `cd tdisplay_p4 && ./build.sh build`  ·  flash: `./build.sh flash -p /dev/cu.usbmodem<P4>`
+
+## TFT-LCD SKU (HI8561) — second panel variant (DONE, needs on-device verify)
+The T-Display P4 ships in two panels; LilyGo branches its own firmware `[rm69a10]` (AMOLED) vs
+`[hi8561]` (TFT-LCD). We build a **separate bin per SKU** (vendor-style) so the proven AMOLED build
+is never touched. **Select the LCD at build time:** `WADA_P4_LCD=1 ./build.sh build`.
+- **Display** `HI8561Display.{h,cpp}` — mirrors `RM69A10Display` line-for-line; only the vendor panel
+  driver (`esp_lcd_new_panel_hi8561`), the resolution (**540×1168**) and the DPI timing (**48 MHz**,
+  `hbp40/hpw20/hfp20 · vbp12/vpw2/vfp200`) differ. Same P4 DSI bring-up, same **1.83 V** DSI-PHY LDO
+  (a deprecated LilyGo P4 bin notes "changed MIPI voltage domain to 1.8V"), same XL9535 IO2 reset.
+  Backlight is HI8561-internal (no GPIO) — brightness = DCS **0x51**, like the AMOLED.
+- **Touch** the HI8561 is a TDDI (touch+display in one): its **integrated touch at I2C 0x68** (NOT the
+  AMOLED's GT9895) — added as the `HAS_TDP4_LCD` path in `Hi8561Touch.cpp`. Indirect ERAM-pointer
+  protocol ported from LilyGo `cpp_bus_driver/hi8561_touch.cpp` (GPL-3.0): read the touch-info start
+  address out of ERAM once, then poll finger 1 (`{0xF3,addr(BE32),0x03}` → x/y big-endian).
+- **Vendored** `esp_lcd_hi8561.{h,cpp}` = Espressif's Apache-2.0 driver (from Waveshare-ESP32-components),
+  copied verbatim (`.c`→`.cpp` for our `variants/*.cpp` glob) — same provenance/pattern as `esp_lcd_rm69a10`.
+- **Wiring** `main/CMakeLists.txt` `WADA_P4_LCD` block sets `DISPLAY_CLASS=HI8561Display`,
+  `SCREEN_WIDTH/HEIGHT=540/1168`, `HAS_TDP4_LCD=1`; UITask picks the include/extern + LVGL res (270×584).
+- **On-device verify (no LCD device in-house):** (1) screen lights + renders; (2) touch registers and
+  is aligned — if offset, the HI8561 native touch grid ≠ 540×1168; read raw coords via the Map "Tile
+  debug"/touch-debug overlay (`heltecV4CapTouchGetRaw`) and adjust `HI8561_NATIVE_W/H` + the /2 scale.

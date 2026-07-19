@@ -1,0 +1,17 @@
+# beta_47 — Discover app (find + map nearby nodes, wardriving), a new Attaky board, pager + P4 additions
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# New
+New Discover app: actively sweep for nearby nodes and list everything that answers — repeaters, companions and room servers — ranked by signal, with live RSSI/SNR, a "direct" badge for anything in RF range, and a last-heard age. It's in the app drawer (the ⟳ tile, next to Map).
+Tap any node in Discover to add it straight to your contacts — it keeps the right type (repeater, companion or room).
+Wardriving: with a GPS fix, Discover logs every node it hears against your position to a CSV on the SD card as you move, and plots your RF coverage on the map as a signal-coloured track (green = strong, red = weak) — a standalone, on-device coverage mapper, no phone needed.
+
+# New boards
+Attaky Core (ESP32-S3, 16 MB flash / 8 MB PSRAM): a new board, contributed by @attakygit (#158). Experimental — on the beta channel while it finishes hardware verification.
+LilyGo T-Display P4 (TFT-LCD screen variant): early support for the LCD screen model (the AMOLED variant was already supported). Experimental — if you have the LCD screen, grab the wadamesh-tdisplay-p4-lcd build from the release assets.
+
+# Fixed
+LilyGo T-LoRa Pager: the rotary encoder now keeps its focus inside the chat message list, and the composer navigation keys are remapped so moving around and typing a message no longer fight each other. (community contribution by @codemonkeybr, #162)
+
+# Boards
+T-Deck · Heltec V4 TFT · Heltec V4-R8 · ThinkNode M9 · RAK TAP v2 · T-LoRa Pager (LR1121 / SX1262) · Attaky Core · T-Display P4.

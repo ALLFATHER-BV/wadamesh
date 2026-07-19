@@ -2401,6 +2401,22 @@ void MyMesh::onControlDataRecv(mesh::Packet *packet) {
       _ui_sig_ms     = millis();
     }
   }
+  // Discover scan (Discover app): collect EVERY NODE_DISCOVER_RESP matching the active discover
+  // sweep tag into _discover[], keyed by responder pubkey. Additive to the single-scalar probe
+  // capture above (they use different tags). RESP payload (MeshCore docs/payloads.md):
+  //   [0]=0x9<<4|node_type  [1]=their SNR*4 (reverse link)  [2..5]=tag  [6..]=pubkey (8 or 32 bytes).
+  if (packet->payload_len >= 6 + 8 && (packet->payload[0] & 0xF0) == CTL_TYPE_NODE_DISCOVER_RESP
+      && _discover_tag != 0) {
+    uint32_t rtag; memcpy(&rtag, &packet->payload[2], 4);
+    if (rtag == _discover_tag) {
+      uint8_t node_type    = packet->payload[0] & 0x0F;
+      int8_t  their_snr_q4 = (int8_t)packet->payload[1];
+      uint8_t pklen        = (packet->payload_len >= 6 + 32) ? 32 : 8;
+      int8_t  our_snr_q4   = (int8_t)(packet->getSNR() * 4.0f);
+      int8_t  our_rssi     = (int8_t)_radio->getLastRSSI();
+      discoverUpsert(&packet->payload[6], pklen, node_type, our_snr_q4, our_rssi, their_snr_q4, packet->path_len);
+    }
+  }
   if (packet->payload_len + 4 > sizeof(out_frame)) {
     MESH_DEBUG_PRINTLN("onControlDataRecv(), payload_len too long: %d", packet->payload_len);
     return;
@@ -2418,6 +2434,38 @@ void MyMesh::onControlDataRecv(mesh::Packet *packet) {
   } else {
     MESH_DEBUG_PRINTLN("onControlDataRecv(), data received while app offline");
   }
+}
+
+// Upsert a discover responder into _discover[] (keyed by the 8-byte pubkey prefix). New nodes
+// append; a full table evicts the least-recently-heard. Both link directions + hop count are
+// refreshed on every reply. See DiscoverHit / uiStartDiscoverScan in MyMesh.h.
+void MyMesh::discoverUpsert(const uint8_t* pk, uint8_t pklen, uint8_t node_type,
+                            int8_t our_snr_q4, int8_t our_rssi, int8_t their_snr_q4, uint8_t path_len) {
+  uint32_t now = millis();
+  int slot = -1;
+  for (uint8_t i = 0; i < _discover_cnt; i++) {
+    if (memcmp(_discover[i].pubkey, pk, 8) == 0) { slot = i; break; }
+  }
+  if (slot < 0) {
+    if (_discover_cnt < DISCOVER_MAX) {
+      slot = _discover_cnt++;
+    } else {                                    // table full -> evict the least-recently-heard
+      uint32_t oldest = 0xFFFFFFFFu; slot = 0;
+      for (uint8_t i = 0; i < _discover_cnt; i++)
+        if (_discover[i].last_ms < oldest) { oldest = _discover[i].last_ms; slot = i; }
+    }
+    memset(&_discover[slot], 0, sizeof(DiscoverHit));
+    memcpy(_discover[slot].pubkey, pk, pklen > 32 ? 32 : pklen);
+    _discover[slot].first_ms = now;
+  }
+  DiscoverHit& h = _discover[slot];
+  h.node_type    = node_type;
+  h.our_snr_q4   = our_snr_q4;
+  h.our_rssi     = our_rssi;
+  h.their_snr_q4 = their_snr_q4;
+  h.path_len     = path_len;
+  h.last_ms      = now;
+  if (h.heard < 0xFFFF) h.heard++;
 }
 
 void MyMesh::onRawDataRecv(mesh::Packet *packet) {

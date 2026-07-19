@@ -52,9 +52,8 @@ set(WADA_DEFS
   XL9535_SX1262_RST_IO=16 XL9535_SX1262_DIO1_IO=17    # SX1262 reset + IRQ behind the expander
   XL9535_RF_SWITCH_IO=1                               # SKY13453 VCTL (TX/RX path)
 
-  # --- Display: RM69A10 AMOLED, MIPI-DSI, 568x1232 portrait (self-emissive; no backlight pin) ---
-  DISPLAY_CLASS=RM69A10Display
-  SCREEN_WIDTH=568 SCREEN_HEIGHT=1232
+  # --- Display: panel SKU (DISPLAY_CLASS / SCREEN_WIDTH / SCREEN_HEIGHT) is selected in the
+  # WADA_P4_LCD block below — the RESET line (XL9535 IO2) is shared by both SKUs. ---
   XL9535_SCREEN_RST_IO=2
 
   # --- Touch: HI8561 (I2C_1); RST/INT on the expander ---
@@ -79,6 +78,22 @@ set(WADA_DEFS
   # battery via BQ27220 I2C gauge (not ADC); no raw VBAT pin
   PIN_VBAT_READ=-1)
 foreach(_d ${WADA_DEFS})
+  idf_build_set_property(COMPILE_OPTIONS "-D${_d}" APPEND)
+endforeach()
+
+# --- Panel SKU: the LilyGo T-Display P4 ships as AMOLED (RM69A10, self-emissive, default) or
+# TFT-LCD (HI8561 TDDI, 540x1168 + integrated touch + DCS-0x51 backlight). LilyGo themselves branch
+# per-panel ([rm69a10] vs [hi8561] firmware), so we build a SEPARATE bin per SKU — the proven AMOLED
+# build stays byte-for-byte untouched. Select the LCD with `WADA_P4_LCD=1 ./build.sh build`
+# (compiles HI8561Display + the HI8561 integrated-touch path in Hi8561Touch.cpp). ---
+if(DEFINED ENV{WADA_P4_LCD})
+  set(P4_DISPLAY_DEFS DISPLAY_CLASS=HI8561Display SCREEN_WIDTH=540 SCREEN_HEIGHT=1168 HAS_TDP4_LCD=1)
+  message(STATUS "wadamesh: T-Display P4 panel = HI8561 TFT-LCD (540x1168)")
+else()
+  set(P4_DISPLAY_DEFS DISPLAY_CLASS=RM69A10Display SCREEN_WIDTH=568 SCREEN_HEIGHT=1232)
+  message(STATUS "wadamesh: T-Display P4 panel = RM69A10 AMOLED (568x1232)")
+endif()
+foreach(_d ${P4_DISPLAY_DEFS})
   idf_build_set_property(COMPILE_OPTIONS "-D${_d}" APPEND)
 endforeach()
 # One-off C6-reflash helper: build with `C6_FLASH_HELPER=1 ./build.sh build` to boot a P4 image that

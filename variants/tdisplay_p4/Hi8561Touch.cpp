@@ -43,24 +43,49 @@
 // LVGL renders at 284x616 (half the 568x1232 panel; RM69A10Display upscales 2x on flush), so touch
 // coordinates must be reported in that SAME 284x616 logical space — the GT9895's native 1060x2400
 // grid is scaled straight to 284x616 here.
+// Logical (LVGL) space = native panel / UI-scale(2). The LilyGo T-Display P4 has TWO panel SKUs,
+// each with its OWN touch controller (a build-time choice — HAS_TDP4_LCD):
+//   AMOLED (RM69A10, 568x1232) -> 284x616 logical, touch = Goodix GT9895 (0x5D).
+//   TFT-LCD (HI8561, 540x1168) -> 270x584 logical, touch = HI8561 integrated TDDI touch (0x68).
+#if defined(HAS_TDP4_LCD)
+static const int SCR_W = 270;
+static const int SCR_H = 584;
+static const int RAW_W = 270;
+static const int RAW_H = 584;
+
+// The HI8561 is a TDDI (touch+display in one). Its integrated touch is at I2C 0x68 and reads via an
+// indirect ERAM-pointer protocol (ported from LilyGo cpp_bus_driver hi8561_touch.cpp, GPL-3.0):
+// once at init, read a touch-info start-address out of the ERAM section table (InitAddressInfo);
+// then each poll writes {0xF3, addr(BE32), 0x03} and reads the point back (x/y big-endian, 0xFFFF =
+// no finger). It reports in panel-native 540x1168; we scale /2 (SCR_W/HI8561_NATIVE_W) to logical.
+// TODO(device): confirm the native grid + axis orientation against on-screen taps (the touch-debug
+// overlay shows raw coords, via heltecV4CapTouchGetRaw).
+static const uint8_t  HI8561_ADDR = 0x68;
+static const uint32_t HI8561_ERAM_BASE = 0x20011000;
+static const uint16_t HI8561_ERAM_SIZE = 4096;
+// kEsramSectionInfoStartAddress = base + 4 + 25*8 + 4 = 0x200110D0 (see cpp_bus_driver hi8561_touch.h).
+static const uint32_t HI8561_ESRAM_SECTION_INFO = HI8561_ERAM_BASE + 4 + 25 * 8 + 4;
+static const uint8_t  HI8561_POINT_OFFSET = 3;   // kTouchPointAddressOffset
+static const int      HI8561_NATIVE_W = 540;
+static const int      HI8561_NATIVE_H = 1168;
+static uint32_t       s_hi8561_info_addr = 0;    // touch_info_start_address_ (learned at init)
+#else
 static const int SCR_W = 284;
 static const int SCR_H = 616;
 static const int RAW_W = 284;
 static const int RAW_H = 616;
 
-// NOTE: despite this file's name, the LilyGo T-Display P4 (RM69A10 variant) actually ships a Goodix
-// GT9895 touch controller at 0x5D — NOT the HI8561 (that's a different display variant). An I2C bus
-// scan on the real board found 0x5D. This driver talks to the GT9895. Ported from LilyGo
+// NOTE: despite this file's name, the LilyGo T-Display P4 AMOLED (RM69A10) SKU actually ships a
+// Goodix GT9895 touch controller at 0x5D — NOT the HI8561 (that's the LCD SKU, gated above). An I2C
+// bus scan on the real board found 0x5D. This path talks to the GT9895. Ported from LilyGo
 // cpp_bus_driver gt9895.cpp: the touch report is at register 0x00010308; each read = write that
-// 32-bit address big-endian (4 bytes), then read the report. Scale factors default to 1.0 (the
-// controller reports directly in panel coordinates), so no rescale is needed.
+// 32-bit address big-endian (4 bytes), then read the report.
 static const uint8_t GT9895_ADDR = 0x5D;
 static const uint8_t GT9895_TOUCH_CMD[4] = { 0x00, 0x01, 0x03, 0x08 };  // register 0x00010308, big-endian
-// The GT9895 reports in its native 1060x2400 digitiser grid; scale to the 568x1232 panel (LilyGo's
-// GT9895_MAX_X_SIZE/MAX_Y_SIZE + RM69A10_SCREEN_W/H scale factors). Without this the raw coords
-// over-run the panel (touch clamps past ~54% X / ~51% Y).
+// The GT9895 reports in its native 1060x2400 digitiser grid; scale to the 284x616 logical space.
 static const int GT9895_NATIVE_W = 1060;
 static const int GT9895_NATIVE_H = 2400;
+#endif
 
 static bool     s_init_ok  = false;
 static bool     s_given_up = false;
@@ -97,9 +122,21 @@ static uint8_t  s_point_rotation = 0;
   #define P4_TOUCH_LONG_MS 1000
 #endif
 
-// ---- GT9895 low-level access ----
+// ---- Touch-controller low-level access ----
 
-// Write an N-byte command (repeated start), then read M bytes.
+// Write an N-byte command (repeated start, no stop), then read M bytes. One helper per SKU (only
+// the compiled one is used); the transaction shape is identical, just the I2C address differs.
+#if defined(HAS_TDP4_LCD)
+static bool hi8561WriteRead(const uint8_t* cmd, uint8_t clen, uint8_t* out, uint8_t olen) {
+  Wire.beginTransmission(HI8561_ADDR);
+  Wire.write(cmd, clen);
+  if (Wire.endTransmission(false) != 0) return false;   // repeated start, no stop
+  uint8_t got = Wire.requestFrom((int)HI8561_ADDR, (int)olen);
+  if (got != olen) return false;
+  for (uint8_t i = 0; i < olen; i++) out[i] = Wire.read();
+  return true;
+}
+#else
 static bool gt9895WriteRead(const uint8_t* cmd, uint8_t clen, uint8_t* out, uint8_t olen) {
   Wire.beginTransmission(GT9895_ADDR);
   Wire.write(cmd, clen);
@@ -109,6 +146,7 @@ static bool gt9895WriteRead(const uint8_t* cmd, uint8_t clen, uint8_t* out, uint
   for (uint8_t i = 0; i < olen; i++) out[i] = Wire.read();
   return true;
 }
+#endif
 
 // ---- Init (called by UITask loop every tick until success or give-up) ----
 
@@ -140,6 +178,41 @@ bool heltecV4CapTouchBegin() {
     Serial.println(sc);
   }
 
+#if defined(HAS_TDP4_LCD)
+  // HI8561 integrated TDDI touch at 0x68 — probe, then learn the ERAM touch-info pointer once.
+  Wire.beginTransmission(HI8561_ADDR);
+  if (Wire.endTransmission() != 0) {
+    snprintf(s_scan_str, sizeof s_scan_str, "i2c7/8: no ACK at 0x%02X", HI8561_ADDR);
+    Serial.printf("[TOUCH] HI8561 not found (retry %d/3)\n", s_retries);
+    return false;
+  }
+  // InitAddressInfo: read touch_info_start_address_ out of the ERAM section table (offset 8).
+  {
+    const uint32_t sa = HI8561_ESRAM_SECTION_INFO;
+    uint8_t cmd[6] = { 0xF3, (uint8_t)(sa >> 24), (uint8_t)(sa >> 16),
+                       (uint8_t)(sa >> 8), (uint8_t)sa, 0x03 };
+    uint8_t buf[48] = {0};
+    if (!hi8561WriteRead(cmd, sizeof cmd, buf, sizeof buf)) {
+      snprintf(s_scan_str, sizeof s_scan_str, "0x%02X hi8561 info read fail", HI8561_ADDR);
+      Serial.printf("[TOUCH] %s (retry %d/3)\n", s_scan_str, s_retries);
+      return false;
+    }
+    uint32_t info = (uint32_t)buf[8] | ((uint32_t)buf[9] << 8) |
+                    ((uint32_t)buf[10] << 16) | ((uint32_t)buf[11] << 24);
+    if (info < HI8561_ERAM_BASE || info >= (HI8561_ERAM_BASE + HI8561_ERAM_SIZE)) {
+      snprintf(s_scan_str, sizeof s_scan_str, "0x%02X hi8561 info bad 0x%08lX",
+               HI8561_ADDR, (unsigned long)info);
+      Serial.printf("[TOUCH] %s (retry %d/3)\n", s_scan_str, s_retries);
+      return false;
+    }
+    s_hi8561_info_addr = info;
+  }
+  s_init_ok = true;
+  snprintf(s_scan_str, sizeof s_scan_str, "0x%02X hi8561 OK (info 0x%08lX)",
+           HI8561_ADDR, (unsigned long)s_hi8561_info_addr);
+  Serial.printf("[TOUCH] %s\n", s_scan_str);
+  return true;
+#else
   Wire.beginTransmission(GT9895_ADDR);
   if (Wire.endTransmission() != 0) {
     snprintf(s_scan_str, sizeof s_scan_str, "i2c7/8: no ACK at 0x%02X", GT9895_ADDR);
@@ -151,6 +224,7 @@ bool heltecV4CapTouchBegin() {
   snprintf(s_scan_str, sizeof s_scan_str, "0x%02X gt9895 OK (retry %d)", GT9895_ADDR, s_retries - 1);
   Serial.printf("[TOUCH] %s\n", s_scan_str);
   return true;
+#endif
 }
 
 // ---- Coordinate mapping (identity in portrait; rotation kept for parity) ----
@@ -169,12 +243,32 @@ static void mapRaw(uint16_t rx, uint16_t ry, uint16_t* ox, uint16_t* oy) {
 }
 
 // ---- Physical report read ------------------------------------------------
-// Returns 1 = finger down (rx/ry set to raw panel coords), 0 = no touch, -1 = I2C error.
-//
+// Returns 1 = finger down (rx/ry set to logical coords), 0 = no touch, -1 = I2C error.
+// TODO(device): verify X/Y axis orientation + origin against on-screen taps (may need flip/swap in mapRaw).
+#if defined(HAS_TDP4_LCD)
+// HI8561 integrated touch: read finger 1's point at (info_addr + kTouchPointAddressOffset). The
+// report is 5 bytes: [x_hi][x_lo][y_hi][y_lo][pressure] (x/y big-endian); 0xFFFF/0xFFFF = no touch.
+static int hi8561ReadPoint(uint16_t* rx, uint16_t* ry) {
+  if (!s_hi8561_info_addr) return -1;
+  const uint32_t addr = s_hi8561_info_addr + HI8561_POINT_OFFSET;   // finger 1 (stride handled at init)
+  uint8_t cmd[6] = { 0xF3, (uint8_t)(addr >> 24), (uint8_t)(addr >> 16),
+                     (uint8_t)(addr >> 8), (uint8_t)addr, 0x03 };
+  uint8_t buf[5] = {0};
+  if (!hi8561WriteRead(cmd, sizeof cmd, buf, sizeof buf)) return -1;
+  uint16_t x = ((uint16_t)buf[0] << 8) | buf[1];             // big-endian
+  uint16_t y = ((uint16_t)buf[2] << 8) | buf[3];
+  if (x == 0xFFFF && y == 0xFFFF) return 0;                  // no finger down
+  if (x >= HI8561_NATIVE_W) x = HI8561_NATIVE_W - 1;         // clamp a stray out-of-range report
+  if (y >= HI8561_NATIVE_H) y = HI8561_NATIVE_H - 1;
+  // Scale the native 540x1168 grid down to the 270x584 logical space.
+  *rx = (uint16_t)((uint32_t)x * SCR_W / HI8561_NATIVE_W);
+  *ry = (uint16_t)((uint32_t)y * SCR_H / HI8561_NATIVE_H);
+  return 1;
+}
+#else
 // GT9895 single-touch read: 16 bytes = TOUCH_POINT_ADDRESS_OFFSET(8) + 1*SINGLE_TOUCH_POINT_DATA_SIZE(8).
 //   buf[2] = finger count; point data at offset 8: [id/status][?][x_lo][x_hi][y_lo][y_hi][pressure][?]
-//   (x/y little-endian; scale factor 1.0 => already panel coords).
-// TODO(device): verify X/Y axis orientation + origin against on-screen taps (may need flip/swap in mapRaw).
+//   (x/y little-endian).
 static int hi8561ReadPoint(uint16_t* rx, uint16_t* ry) {
   uint8_t buf[16] = {0};
   if (!gt9895WriteRead(GT9895_TOUCH_CMD, 4, buf, sizeof buf)) return -1;
@@ -182,11 +276,12 @@ static int hi8561ReadPoint(uint16_t* rx, uint16_t* ry) {
   if (fingers < 1 || fingers > 10) return 0;                 // no finger down
   uint32_t x = (uint32_t)buf[10] | ((uint32_t)buf[11] << 8);
   uint32_t y = (uint32_t)buf[12] | ((uint32_t)buf[13] << 8);
-  // Scale the native 1060x2400 grid down to the 568x1232 panel.
+  // Scale the native 1060x2400 grid down to the 284x616 logical space.
   *rx = (uint16_t)(x * (uint32_t)SCR_W / GT9895_NATIVE_W);
   *ry = (uint16_t)(y * (uint32_t)SCR_H / GT9895_NATIVE_H);
   return 1;
 }
+#endif
 
 static void hi8561Poll() {
   uint16_t rx = 0, ry = 0;
