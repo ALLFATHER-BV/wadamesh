@@ -2871,7 +2871,10 @@ static int       s_nav_count    = 0;           // # focusable widgets collected 
 // Collected focusable widgets this rebuild, in tree order — used for 2D spatial
 // navigation (W/A/Z/D move to the nearest element in that physical direction, not
 // just the next/prev in the linear list).
-static const int kNavMax = 64;
+static const int kNavMax = 160;   // spatial-nav mirror capacity — MUST exceed the largest focusable
+                                  // grid or its tail is keypad-unreachable on the Tanmatsu: focusables
+                                  // past this cap land in the LVGL group but not s_nav_objs[], so
+                                  // navMoveDir() never reaches them (the 122-cell emoji picker — GH #141).
 static lv_obj_t* s_nav_objs[kNavMax] = { nullptr };
 static lv_obj_t* s_nav_tabbar   = nullptr;     // the bottom tab bar (btnmatrix), added last to the group
 static bool      s_nav_want_tabbar = false;    // after switching tabs from the bar, refocus the bar
@@ -7194,7 +7197,12 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  // The card is clamped to the visible height above, but its rows are absolutely
+  // positioned and can extend past that clamp (small screens + Large/Huge UI scale) —
+  // enable vertical scrolling so the lower quick-replies + hint stay reachable (GH #151).
+  lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(card, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
   addCloseXBadge(card, qrSheetCloseCb);
 
   lv_obj_t* title = lv_label_create(card);
@@ -7607,7 +7615,9 @@ static void tdeckModalAutoFocusAsync(void* root) {
 // Mirrors MCterm's in-RAM clipboard. Anything the user long-presses to copy
 // lands here; long-press on a textarea pastes the contents at the cursor.
 // One global buffer keeps the code simple and avoids heap churn.
-constexpr size_t CLIPBOARD_MAX = 192;
+constexpr size_t CLIPBOARD_MAX = 640;   // must cover the largest copyable text — a full composer draft
+                                        // plus the 600-byte label-staging buffer (clipboardSet's callers);
+                                        // 192 silently truncated long copy/pastes (GH #120).
 static char s_clipboard[CLIPBOARD_MAX] = {0};
 
 static void clipboardSet(const char* text, const char* tag) {
@@ -10184,6 +10194,7 @@ static void useSdStorageToggleCb(lv_event_t* e) {
 // empty card (which then minted a fresh identity). Overwrites the card's copies
 // with EVERYTHING from internal flash, forces the SD pref on, reboots.
 extern bool meshcomodMigrateSpiffsToSd(bool force);   // main.cpp
+extern void meshcomodClearSdMigLatch();               // main.cpp (GH #142/#148 boot safe-mode)
 static void sdRestoreApply() {
   if (!g_lv.task) return;
   if (!fmSdTryMount()) { g_lv.task->showAlert(TR("No SD card"), 1600); return; }
@@ -10193,6 +10204,7 @@ static void sdRestoreApply() {
   const bool ok = meshcomodMigrateSpiffsToSd(true);
   enableLoopWDT();
   if (!ok) { g_lv.task->showAlert(TR("Copy failed (no internal identity)"), 2200); return; }
+  meshcomodClearSdMigLatch();           // manual copy succeeded -> re-arm boot auto-adoption (GH #142/#148)
   touchPrefsSetUseSdStorage(true);      // make sure the reboot adopts the card
   delay(400);                           // let the alert render before the restart
   board.reboot();
@@ -13140,7 +13152,7 @@ static void mqttSaveCb(lv_event_t* e) {
   bool pub_ch = !g_set_modal.mqtt_ch_sw || lv_obj_has_state(g_set_modal.mqtt_ch_sw, LV_STATE_CHECKED);
   bool pub_dm = g_set_modal.mqtt_dm_sw && lv_obj_has_state(g_set_modal.mqtt_dm_sw, LV_STATE_CHECKED);
   MqttBridge::saveConfig(host, port, user, pwd, pub_dm, pub_ch, psk, en);
-  { Preferences p; if (p.begin("mqtt", false)) { p.putBool("consent", consent); p.end(); } }
+  { SdNvsPrefs p; if (p.begin("mqtt", false)) { p.putBool("consent", consent); p.end(); } }   // file-backed, not NVS (GH #128)
   mqtt_bridge.reloadConfig();
   closeSettingsModal();
 }
@@ -13293,7 +13305,7 @@ static void buildMqttSettings() {
 
   // ---- Load current config ----
   {
-    Preferences p;
+    SdNvsPrefs p;   // file-backed, matches MqttBridge (GH #128)
     bool cur_en = false, cur_dm = false, cur_ch = true, cur_consent = false;
     char cur_host[64] = {}, cur_port_s[8] = "1883", cur_user[32] = {}, cur_pwd[32] = {}, cur_psk[33] = {};
     if (p.begin("mqtt", true)) {
@@ -14298,8 +14310,13 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   });
 
   const bool is_room = (c.type == ADV_TYPE_ROOM);
+  // Sanitize like every other name-display path: copyUtf8ReplacingMissingGlyphs swaps an
+  // unrenderable codepoint for '*'. This Join title skipped it and drew tofu (▯) for a name's
+  // leading unsupported codepoint, while the contacts list/details showed '*' (GH #116).
+  char safe_name[24];
+  copyUtf8ReplacingMissingGlyphs(&g_font_14, safe_name, sizeof(safe_name), c.name);
   char hdr_buf[40];
-  snprintf(hdr_buf, sizeof(hdr_buf), "%s %.20s", is_room ? "Join:" : "Login:", c.name);
+  snprintf(hdr_buf, sizeof(hdr_buf), "%s %.20s", is_room ? "Join:" : "Login:", safe_name);
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text(title, hdr_buf);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -27422,6 +27439,11 @@ static void makeChatDetail(LvChatPanel& p) {
   // — the physical-keyboard CR and the on-screen OK are handled before any
   // newline can be inserted, so the composer never actually holds a '\n'.
   lv_textarea_set_one_line(p.composer_ta, false);
+  // Cap input at the LoRa text limit so the user can't type more than can be sent (GH #119).
+  // (LVGL caps by codepoint; for ASCII that's exactly MAX_MSG_TEXT bytes. The send buffer,
+  // _compose_buf, is sized MAX_MSG_TEXT+1 to match — it used to be 128, silently chopping
+  // messages at 127 bytes, shorter than this limit.)
+  lv_textarea_set_max_length(p.composer_ta, UITask::MAX_MSG_TEXT);
   lv_obj_set_scrollbar_mode(p.composer_ta, LV_SCROLLBAR_MODE_OFF);
   lv_textarea_set_placeholder_text(p.composer_ta, TR("Type a message..."));
   lv_obj_set_style_text_color(p.composer_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -33851,6 +33873,15 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   // The on-screen keyboard is never shown on the T-Deck, but a textarea is still
   // bound to it on focus — that binding is our target.
   lv_obj_t* ta_focused = lv_keyboard_get_textarea(g_lv.keyboard);
+  // Guard a STALE binding (crash #98, decoded coredump: NULL spec_attr in lv_event_send).
+  // lv_keyboard_get_textarea() returns the last-bound composer; if that textarea was deleted
+  // without the keyboard being re-pointed (a chat-panel teardown that bypassed hideKb()), it's
+  // a dangling pointer and typing into it dereferences freed memory. Validate + self-heal the
+  // binding before anything below can insert into it.
+  if (ta_focused && !lv_obj_is_valid(ta_focused)) {
+    if (g_lv.keyboard) lv_keyboard_set_textarea(g_lv.keyboard, nullptr);
+    ta_focused = nullptr;
+  }
 #if CAP_KEYPAD_NAV && !defined(TLORA_PAGER)
   // Edit mode (keyboard-nav ON only): a focused field becomes the typing target after
   // select/Enter (below) — until then `ta` is null so the nav keys navigate. With
@@ -41369,14 +41400,15 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   int t_idx = findOrCreateThread(thread, channel);
   if (t_idx < 0) return -1;
   UIMessage& m = _ui_msgs[_ui_msg_head];
-  // Prefer wall-clock (RTC) over uptime — bubble timestamps want HH:MM, and
-  // last_ts/sort comparisons still work since RTC epoch (~1.7e9) outranks
-  // any plausible uptime-seconds value. If RTC is unset, fall back to
-  // uptime; the Info popup shows "—" when the value isn't an epoch.
+  // Bubble timestamps must match the status-bar clock, which reads the NTP-synced ESP32
+  // system clock (time(nullptr)) — NOT the mesh RTC (getRTCClock()). On boards whose
+  // hardware RTC chip reads BCD/century garbage, getCurrentTime() returned wrong epochs
+  // that rendered as 1910-09-03 / 1994 (GH #100/#152). Use the system clock; the ~1.7e9
+  // epoch still outranks any uptime-seconds value for last_ts/sort, and we fall back to
+  // uptime when the clock is unset (the Info popup shows "—" for non-epoch values).
   {
-    auto* rtc = the_mesh.getRTCClock();
-    uint32_t now_epoch = rtc ? rtc->getCurrentTime() : 0;
-    m.ts = (now_epoch > 1700000000) ? now_epoch : (uint32_t)(millis() / 1000);
+    time_t sys = time(nullptr);
+    m.ts = (sys > 1700000000) ? (uint32_t)sys : (uint32_t)(millis() / 1000);
   }
   m.channel = channel;
   m.outgoing = outgoing;
@@ -43544,7 +43576,10 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // (embedded ts ≈ now) are unaffected. Consume-once so it never leaks to the next.
   {
     uint32_t emb_ts = the_mesh.uiConsumeLastSenderTs();
-    if (emb_ts > 1700000000) _ui_msgs[msg_slot].ts = emb_ts;
+    // Sanity WINDOW, not just a lower bound: a peer with a garbage-future clock sends e.g.
+    // ~2.42e9, which as a signed 32-bit time_t wraps to 1910-09-03 06:42:07 (GH #100/#152).
+    // Same window as MyMesh.cpp's advert-time guard (>1.7e9 && <2.0e9).
+    if (emb_ts > 1700000000 && emb_ts < 2000000000) _ui_msgs[msg_slot].ts = emb_ts;
   }
   syncThreadMeshSlots(thread, channel);
 #if defined(HAS_TDECK_GT911)

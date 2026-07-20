@@ -626,8 +626,9 @@ static const char* hw_de_upper[26] = {
 static const char* hw_de_digits[10]       = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
 static const char* hw_de_digits_shift[10] = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
 
-/* Dutch keeps the standard alpha matrix but exposes the common IJ digraph on a
- * digit slot so compact hardware still gets a language-specific shortcut. */
+/* Dutch keeps the standard alpha matrix. (The IJ digraph used to sit on a hardware
+ * digit slot, but slot 1 is the "1" key AND the back-mapped "!" key, so it broke both
+ * — GH #144/#164 — and the digraph now lives only on the on-screen keyboard's key.) */
 static const char* hw_nl_lower[26] = {
     "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
     "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
@@ -638,8 +639,8 @@ static const char* hw_nl_upper[26] = {
     "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
     "U", "V", "W", "X", "Y", "Z"
 };
-static const char* hw_nl_digits[10]       = { nullptr, "ij", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-static const char* hw_nl_digits_shift[10] = { nullptr, "IJ", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+static const char* hw_nl_digits[10]       = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+static const char* hw_nl_digits_shift[10] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 
 /* Spanish stays close to US QWERTY; use the number row to expose n-tilde on
  * compact hardware where the semicolon key is absent. */

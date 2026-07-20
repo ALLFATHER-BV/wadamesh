@@ -1,0 +1,14 @@
+# beta_48 - stability and fixes: crash, boot-stuck, MQTT, message times, keyboard and more
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# Fixed
+Fixed a crash that could reboot the device while you were typing in a chat.
+Fixed devices getting stuck on the boot screen after an update when a microSD card is fitted. The boot-time copy of your data to the card could hang on a slow or damaged card; it is now guarded and the device always boots.
+MQTT bridge settings now save and survive a reboot. They were being written to the wrong storage and getting lost.
+Message times now match the clock at the top of the screen, instead of showing 1910 or other wrong dates.
+Dutch keyboard: the "1" and "!" keys were typing "ij" and "IJ". Fixed.
+The message box now stops you at the real send limit instead of quietly dropping the end of a long message when you send.
+Copy and paste no longer cuts off long text.
+The quick messages list now scrolls when there are more entries than fit on screen.
+Room server names that start with an unusual character no longer show an empty box on the Join screen.
+Tanmatsu: you can now reach every emoji in the picker, not just the first half.

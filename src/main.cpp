@@ -234,15 +234,24 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
     File s = SPIFFS.open(src, FILE_READ);
     File d = s ? SD.open(dst, FILE_WRITE) : File();          // FILE_WRITE truncates
     bool ok = s && d;
+    size_t since_feed = 0;
     while (ok && s.available()) {
       const size_t n = s.read(buf, sizeof buf);
       if (n == 0 || d.write(buf, n) != n) ok = false;
+      // Feed the task-WDT mid-file: a large history file on a slow/cold SD card can take
+      // longer than the 20 s task-WDT to copy in 4 KB chunks, and this runs on loopTask
+      // during setup() — without the feed the dog panics and reboot-loops the boot (GH
+      // #142/#148). The copy still can't tolerate a genuinely wedged FAT layer; the
+      // NVS breadcrumb at the call site handles that.
+      since_feed += n;
+      if (since_feed >= 32768) { esp_task_wdt_reset(); since_feed = 0; }
     }
     if (s) s.close();
     if (d) d.close();
     if (ok) { ++copied; if (strcmp(src, "/identity/_main.id") == 0) identity_ok = true; }
     else    { ++failed; Serial.printf("[BOOT] SD migrate FAILED: %s\n", src); if (SD.exists(dst)) SD.remove(dst); }
     f.close();
+    esp_task_wdt_reset();
     yield();
   }
   root.close();
@@ -252,6 +261,14 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
   Serial.printf("[BOOT] SPIFFS -> SD migration: %d copied, %d failed, identity %s\n",
                 copied, failed, identity_ok ? "ok" : "MISSING");
   return identity_ok;
+}
+
+// Clear the boot safe-mode latch (see the SPIFFS->SD migration above): called after a
+// successful manual "Copy internal data to SD" so a deliberate retry re-arms boot-time
+// auto-adoption. The boot path re-latches on its own if a later migration wedges. GH #142/#148.
+void meshcomodClearSdMigLatch() {
+  Preferences _mp;
+  if (_mp.begin("touch", false)) { _mp.remove("sd_mig_busy"); _mp.end(); }
 }
 #endif
 
@@ -518,8 +535,26 @@ void setup() {
         // rather than adopting a card without the identity on it.
         bool adopt = true;
         if (SPIFFS.exists("/identity/_main.id") && !SD.exists("/meshcomod/identity/_main.id")) {
-          adopt = meshcomodMigrateSpiffsToSd(false);
-          if (!adopt) Serial.println("[BOOT] SD migration incomplete -> staying on SPIFFS this boot");
+          // Boot safe-mode (GH #142/#148): a wedged or corrupt SD card can hang / WDT-reboot the
+          // device mid-migration, stranding it on the boot screen EVERY boot (reset can't escape,
+          // only a downgrade could). Drop an NVS breadcrumb before migrating and clear it only if
+          // the copy RETURNS. If it's still set at the next boot, the last migration never finished
+          // -> skip it and boot from SPIFFS (the data is safe there); Settings > "Copy internal data
+          // to SD" re-arms a deliberate retry. A merely-slow (healthy) card completes thanks to the
+          // in-loop WDT feed, so it never latches here.
+          Preferences _mp;
+          const bool mp_ok = _mp.begin("touch", false);
+          const bool mig_busy = mp_ok && _mp.getBool("sd_mig_busy", false);
+          if (mig_busy) {
+            if (mp_ok) _mp.end();
+            adopt = false;
+            Serial.println("[BOOT] prior SD migration did not complete -> skipping (staying on SPIFFS); retry via Settings > Copy internal data to SD");
+          } else {
+            if (mp_ok) { _mp.putBool("sd_mig_busy", true); _mp.end(); }
+            adopt = meshcomodMigrateSpiffsToSd(false);
+            Preferences _mp2; if (_mp2.begin("touch", false)) { _mp2.remove("sd_mig_busy"); _mp2.end(); }
+            if (!adopt) Serial.println("[BOOT] SD migration incomplete -> staying on SPIFFS this boot");
+          }
         }
         if (adopt) {
           sd_storage = store.useSdStorage();

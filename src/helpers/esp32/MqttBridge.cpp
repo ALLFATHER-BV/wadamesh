@@ -6,7 +6,9 @@
 MqttBridge mqtt_bridge;
 
 #if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)   // ---- real PubSubClient/WiFiClient implementation; NOT built on the P4 boards ----
-#include <Preferences.h>
+#include "SdNvsPrefs.h"   // NOT raw NVS Preferences: the touch firmware abandoned NVS (tiny, shared,
+                         // doesn't survive Launcher) for a file-backed store. MQTT was the last setting
+                         // still on NVS, so its writes silently failed / didn't persist (GH #128).
 #include <WiFi.h>
 #include <stdio.h>
 #include <string.h>
@@ -42,7 +44,7 @@ void MqttBridge::loadConfig() {
     _host[0] = _user[0] = _pwd[0] = _psk[0] = '\0';
     _port = 1883;
 
-    Preferences p;
+    SdNvsPrefs p;
     if (p.begin("mqtt", true)) {
         _enabled    = p.getBool("en", false);
         _port       = (uint16_t)p.getUInt("port", 1883);
@@ -223,7 +225,7 @@ void MqttBridge::publishChannel(int channelIdx, const char* channelName,
 void MqttBridge::saveConfig(const char* host, uint16_t port,
                              const char* user, const char* pwd,
                              bool pubDm, bool pubChannel, const char* psk, bool enable) {
-    Preferences p;
+    SdNvsPrefs p;
     if (!p.begin("mqtt", false)) return;
     p.putBool("en",     enable);
     p.putString("host", host);

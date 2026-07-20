@@ -167,7 +167,7 @@ private:
   bool _composer_mode;
   int _composer_char_idx;
   int _composer_action_idx;
-  char _compose_buf[128];
+  char _compose_buf[MAX_MSG_TEXT + 1];   // full LoRa text length; was 128 -> silently chopped sends at 127 bytes (GH #119)
   unsigned long _next_mesh_thread_refresh;
   TouchUiScreen _touch_screen;
   bool _active_dm_contact_set;
