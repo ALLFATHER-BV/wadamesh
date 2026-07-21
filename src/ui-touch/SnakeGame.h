@@ -17,6 +17,7 @@ public:
   static void launch();                 // open (no-op if already open)
   static bool isOpen();                 // UITask: gate the trackball + tab bar
   static void steer(int dx, int dy);    // UITask: trackball motion -> direction
+  static void dismiss();                // close from outside (status-bar tap) — guaranteed exit
 
 private:
   // The playfield grid is sized to the screen at open() (cols_ x rows_), capped

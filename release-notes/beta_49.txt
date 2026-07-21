@@ -1,0 +1,13 @@
+# beta_49 - T-Display P4 only
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+This beta only has T-Display P4 fixes. If you run any other board there is nothing new for you here, stay on beta_48.
+
+# Fixed (T-Display P4)
+The Snake game no longer traps you. Tap the top bar to leave it. Before, the only way out was a reset.
+The full-screen tools (Monitor, Spectrum, Discover, Web mirror, Advert) can now be left by tapping the top bar, so they no longer trap you either.
+The screen timeout now works. The display turns off after your idle time and wakes on touch. This also fixes standby and burn-in dimming.
+Text no longer overflows its boxes. The interface is pinned to the 100% size that fits the panel.
+GPS: the L76K module is now found reliably and read at 9600 baud. You still need the GPS antenna connected and a clear view of the sky to get a fix.
+The control center dropdown is taller so the GPS status line sits below the buttons instead of behind them.
+P4 LCD model only: fixed the black screen. The backlight now turns on. Please test and report.

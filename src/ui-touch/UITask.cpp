@@ -528,7 +528,15 @@ static void initTouchFontFallbacks() {
   // upscaling a low-res frame). g_font_12/14/16 are what the whole UI draws with, so this scales
   // every screen at once. The colour-emoji + non-Latin fallbacks stay their baked sizes (they don't
   // grow), which is fine for Latin text. g_font_tab is pinned to 16 px so the bottom bar never grows.
+#if defined(HAS_TDISPLAY_P4)
+  // The P4 is a NARROW 284 px portrait: bigger fonts overflow the fixed-height/width chrome (the
+  // status bar, home grid, and list/settings rows all use unscaled dims), so 100% is the only size
+  // that fits. Ignore any Large/Huge pref (a unit can inherit one from adopted T-Deck prefs). The
+  // Tanmatsu is 800 px landscape and keeps the option. GH: P4 text overflow above 100%.
+  s_ui_fscale = 100;
+#else
   switch (touchPrefsGetUiScale()) { case 1: s_ui_fscale = 140; break; case 2: s_ui_fscale = 170; break; default: s_ui_fscale = 100; break; }
+#endif
   switch (s_ui_fscale) {
     case 140: g_font_12 = lv_font_montserrat_16; g_font_14 = lv_font_montserrat_20; g_font_16 = lv_font_montserrat_24; break;  // Large ~1.4x
     case 170: g_font_12 = lv_font_montserrat_20; g_font_14 = lv_font_montserrat_24; g_font_16 = lv_font_montserrat_28; break;  // Huge  ~1.7x
@@ -11823,9 +11831,11 @@ static void buildDeviceSettings(int sec) {
   }
 #endif // HAS_TDECK_GT911 || HAS_THINKNODE_M9
 
-  /* Auto-lock on screen-off: when the idle timeout dims the screen, also hard-
-     lock so the touchscreen is inert (Tim: pocket-taps while dark). Both boards;
-     unlock with a trackball hold (T-Deck) or the button (V4). */
+  // Auto-lock on screen-off: when the idle timeout dims the screen, also hard-lock so the
+  // touchscreen is inert (Tim: pocket-taps while dark). NOT on the P4 — it has no unlock path
+  // (no button/trackball and no touch-unlock overlay yet), so a hard lock there is a power-cycle
+  // trap. The P4 still dims on idle (screen-off wakes on touch); a proper P4 lock is a follow-up.
+#if !defined(HAS_TDISPLAY_P4)
   {
     int h = settingsRowLabel(body, y, 6, TR("Lock when screen off"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -11836,6 +11846,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, lockOnScreenOffToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
+#endif
 
 
   }
@@ -35159,9 +35170,9 @@ static void openControlCenter() {
   lv_obj_t* card = lv_obj_create(s_cc_root);
   lv_obj_remove_style_all(card);
 #if defined(HAS_TANMATSU)
-  lv_obj_set_size(card, card_w, 384);   // bigger: header + 3 roomier sliders + toggle grid + sysinfo
+  const int card_h = 384;   // bigger: header + 3 roomier sliders + toggle grid + sysinfo
 #elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
-  lv_obj_set_size(card, card_w, 200);   // sysinfo + thin brightness slider + 2-row toggle grid (fits 240−22 screen)
+  const int card_h = 200;   // sysinfo + thin brightness slider + 2-row toggle grid (fits 240−22 screen)
 #elif defined(TLORA_PAGER)
   // 222-px-tall screen: the shared V4/T-Deck-landscape 212px card below is
   // tuned for a 240px-tall screen (212 + the card's own 4px y-offset = 216,
@@ -35169,12 +35180,20 @@ static void openControlCenter() {
   // same card overflows the 200px root by 16px, pushing the toggle row/sysinfo
   // text off the bottom of the physical display. Size from the actual
   // available height instead of the shared constant, with a small margin.
-  lv_obj_set_size(card, card_w, sh - STATUSBAR_H - 4 - 6);
+  const int card_h = sh - STATUSBAR_H - 4 - 6;
+#elif defined(HAS_TDISPLAY_P4)
+  // Tall panel (1232 px): the shared V4 236px card is far too short here. The P4's
+  // GPS line sits lower (it clears two 30px sliders, so gps_y ~124 vs the V4's ~70),
+  // and the bottom-anchored 2-row chip grid then climbs up over the GPS text ("the
+  // acquiring text is under the buttons"). Make the dropdown taller so GPS + chips +
+  // sysinfo each get their own band — the chip-row math below derives off card_h.
+  const int card_h = 320;
 #else
   // Portrait has headroom on the 320-tall screen; make the card taller so the
   // brightness slider + toggles + sysinfo all get their own rows.
-  lv_obj_set_size(card, card_w, portrait ? 236 : 212);
+  const int card_h = portrait ? 236 : 212;
 #endif
+  lv_obj_set_size(card, card_w, card_h);
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 4);
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   // Frosted-glass panel: translucent fill so the (dimmed) screen behind shows through.
@@ -35454,7 +35473,7 @@ static void openControlCenter() {
     const int per_row = (chip_count + 1) / 2;                 // 6 -> 3 per row, 5 -> 3 then 2
     tw = (card_w - 20 - 5 * (per_row - 1)) / per_row;
     if (tw > 92) tw = 92;
-    int rowh = 196 - (gps_y + 38);                            // row bottom (216 content − 20) up to just below GPS/env
+    int rowh = (card_h - 40) - (gps_y + 38);                 // card bottom (minus margin) up to just below GPS/env (card_h-40 == the old 196 on the 236px V4 card)
     if (rowh > 116) rowh = 116;
     th = (rowh - 8) / 2;                                      // two rows + an 8px inter-row gap
     if (th > 52) th = 52;
@@ -36207,9 +36226,10 @@ static void statusBarHoldCb(lv_event_t* e) {
 static void statusBarTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   // While Snake is up the bar is raised to the FRONT of lv_layer_top (see the
-  // edge-trigger in updateGlobalStatusBar), so it stays tappable over the game.
-  // Swallow the tap so it can't open the control centre over the game.
-  if (SnakeGame::isOpen()) return;
+  // edge-trigger in updateGlobalStatusBar), so it stays tappable over the game. The
+  // game's own X can sit UNDER a taller status bar on big-screen boards (the P4),
+  // leaving no reachable exit — so a bar tap closes Snake here (the guaranteed way out).
+  if (SnakeGame::isOpen()) { SnakeGame::dismiss(); return; }
   if (s_sb_shot_done) { s_sb_shot_done = false; return; }   // this press was a screenshot hold
   // A full-screen tool page (RF Monitor / Spectrum) is up: the bar carries its Back
   // chevron + title, so a tap goes back (closes the page) just like settings.
@@ -36241,7 +36261,12 @@ static void statusBarTapCb(lv_event_t* e) {
 // nothing". This closes the reader on touch-down whenever it's the open page.
 static void statusBarReaderBackCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_PRESSED) return;
-  if (s_reader_page_open && s_apppage_close) s_apppage_close();
+  // Every full-screen tool page (Reader, Monitor, Spectrum, Discover, VNC, Remote, Advert, …) is
+  // exited only by the bar's CLICKED -> s_apppage_close. On cap-touch the swipe detector's
+  // click-abort (lvglTouchRead) can drop that lone CLICKED, trapping the user on a touch-only board
+  // (the P4). Close on PRESSED too — the proven Reader fallback, now generalised to every app page.
+  // close() clears s_apppage_close, so the later CLICKED in statusBarTapCb is then a no-op.
+  if (s_apppage_close) s_apppage_close();
 }
 
 // Capture the composited screen to a 16-bit BMP on the SD card. BMP (no
@@ -43302,6 +43327,13 @@ static inline void touchScreenBacklight(bool on) {
   // the base = MORE conduction = brighter. applyBrightness() below already accounts for this.
   if (on) applyBrightness(s_brightness_pct);
   else    ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
+#elif defined(HAS_TDISPLAY_P4)
+  // T-Display P4: the RM69A10 AMOLED has no backlight pin — "brightness" is the panel's own DCS
+  // 0x51 register. Off = 0 (blanks the AMOLED), on = restore the saved brightness. Without this
+  // branch touchScreenBacklight was the (void)on no-op, so screen-timeout, wake, lock, sleep and
+  // the burn-in guard all silently did nothing on the P4 (reported: "screen timeout not working").
+  if (on) applyBrightness(s_brightness_pct);
+  else    display.setBrightness(0);
 #else
   (void)on;
 #endif
@@ -44067,6 +44099,10 @@ void UITask::loop() {
   // every click. Signed keeps a slightly-ahead stamp negative (= "just had input").
   if (_screen_timeout_ms > 0 && !_screen_off &&
       (int32_t)(now - _last_input_ms) >= (int32_t)_screen_timeout_ms) {
+#if !defined(HAS_TDISPLAY_P4)
+    // The P4 has no unlock path (no button/overlay), so it must NEVER hard-lock, even if an old
+    // pref left the flag set — it always takes the plain screen-off branch below, which wakes on
+    // touch. (Guards the trap; the "Lock when screen off" toggle is also hidden on the P4.)
     if (s_lock_on_screen_off && !_manual_lock) {
       // "Lock when screen off": idle dim also hard-locks, so the touchscreen is
       // inert until a deliberate unlock (trackball hold on the T-Deck, BOOT
@@ -44074,7 +44110,9 @@ void UITask::loop() {
       // !_manual_lock guard stops the Tanmatsu's lit lock screen from re-firing
       // lockScreen() (and re-lighting) on every idle tick.
       lockScreen();
-    } else {
+    } else
+#endif
+    {
       touchScreenBacklight(false);
       setCpuForScreen(false);   // idle dim (no lock) -> drop to 80 MHz too
       _screen_off = true;

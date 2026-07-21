@@ -69,8 +69,12 @@ set(WADA_DEFS
   # PIN_GPS_TX = the GPIO wired to the MODULE'S TX pin; PIN_GPS_RX = wired to the module's RX.
   # Matches LilyGo's t_display_p4_config.h "GPS_TX 22 / GPS_RX 23" naming. The first cut had them
   # swapped (silent: UART opens fine, just never hears NMEA). Wake: XL9535 GPS_WAKE must be HIGH
-  # (powerOnSequence) or the L76K sleeps. Baud: L76K power-on default 9600 = the core default. ---
-  ENV_INCLUDE_GPS=1 PIN_GPS_TX=22 PIN_GPS_RX=23
+  # (powerOnSequence) or the L76K sleeps. Baud: L76K power-on default 9600 = the core default.
+  # ENV_SKIP_GPS_DETECT: like the T-Deck, force gps_detected=true — the P4's heavy boot can miss the
+  # 1 s "any NMEA byte" detect window, and a false result then HIDES the GPS toggle and no-ops the
+  # saved-pref resume, so GPS stays dead with no recovery until a lucky reboot. GPS_BAUD_RATE=9600
+  # pins the correct L76K baud (a stale 38400 NVS override will still need clearing on-device). ---
+  ENV_INCLUDE_GPS=1 PIN_GPS_TX=22 PIN_GPS_RX=23 ENV_SKIP_GPS_DETECT=1 GPS_BAUD_RATE=9600
 
   # --- microSD on SDMMC slot 0 (CLK43/CMD44/D0-3=39-42); C6 esp-hosted is slot 1 ---
   BOARD_HAS_SDMMC=1 BOARD_SDMMC_SLOT=0

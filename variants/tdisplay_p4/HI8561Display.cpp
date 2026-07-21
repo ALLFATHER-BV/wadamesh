@@ -19,8 +19,18 @@
 #include "esp_lcd_panel_io.h"       // esp_lcd_panel_io_tx_param (runtime brightness 0x51)
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_hi8561.h"
+#include "driver/ledc.h"           // GPIO 51 PWM backlight — the TFT-LCD has a real LED backlight
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+
+// The HI8561 TFT-LCD backlight is a hardware LED driven by PWM on GPIO 51 (LilyGo's
+// hi8561::kScreenBacklight). Unlike the AMOLED (RM69A10, self-emissive, brightness via DCS 0x51),
+// the LCD panel renders but stays dark until this PWM is driven — the "no backlight, works under a
+// flashlight" report on the P4 LCD. Set up LEDC and drive it from setBrightness().
+static constexpr int      kBacklightGpio = 51;
+static constexpr ledc_timer_t   kBlTimer = LEDC_TIMER_0;
+static constexpr ledc_channel_t kBlChan  = LEDC_CHANNEL_0;
+static bool s_hi8561_bl_ready = false;
 
 // The DPI panel copies each draw_bitmap band into the internal frame buffer ASYNCHRONOUSLY
 // (DMA2D) and fires on_color_trans_done when the copy is complete. writePixelsRGB565 reuses a
@@ -119,9 +129,28 @@ bool HI8561Display::begin() {
   if (esp_lcd_panel_init(_panel) != ESP_OK) { Serial.println("[HI8561] panel_init fail"); return false; }
   esp_lcd_panel_disp_on_off(_panel, true);
 
-  // Brightness: the HI8561's default init does SLPOUT/DISPON but leaves brightness unset; drive it at
-  // runtime via DCS 0x51 (the TDDI's integrated backlight — no GPIO). Keep the DBI IO handle so
-  // setBrightness() can drive it live (CC slider); start at max so the LCD actually lights.
+  // Backlight: bring up the LEDC PWM on GPIO 51 (the LCD's real LED backlight). Without this the
+  // panel renders but is dark. 20 kHz avoids audible/visible flicker; 8-bit duty maps 0..255 directly.
+  {
+    ledc_timer_config_t bl_tmr = {};
+    bl_tmr.speed_mode      = LEDC_LOW_SPEED_MODE;
+    bl_tmr.timer_num       = kBlTimer;
+    bl_tmr.duty_resolution = LEDC_TIMER_8_BIT;
+    bl_tmr.freq_hz         = 20000;
+    bl_tmr.clk_cfg         = LEDC_AUTO_CLK;
+    ledc_channel_config_t bl_ch = {};
+    bl_ch.gpio_num   = kBacklightGpio;
+    bl_ch.speed_mode = LEDC_LOW_SPEED_MODE;
+    bl_ch.channel    = kBlChan;
+    bl_ch.timer_sel  = kBlTimer;
+    bl_ch.duty       = 0;
+    bl_ch.hpoint     = 0;
+    s_hi8561_bl_ready = (ledc_timer_config(&bl_tmr) == ESP_OK) &&
+                        (ledc_channel_config(&bl_ch) == ESP_OK);
+    if (!s_hi8561_bl_ready) Serial.println("[HI8561] backlight PWM init FAILED");
+  }
+  // Keep the DBI IO handle so setBrightness() can also send DCS 0x51 (harmless if the panel
+  // ignores it); the real light is the PWM above. Start at max so the LCD actually lights.
   _dbi_io = dbi_io;
   setBrightness(255);
   _on = true;
@@ -182,8 +211,13 @@ void HI8561Display::writePixelsRGB565(int x, int y, int w, int h, const uint16_t
 }
 
 void HI8561Display::setBrightness(uint8_t b) {
-  if (!_dbi_io) return;
-  esp_lcd_panel_io_tx_param(_dbi_io, 0x51, &b, 1);   // DCS SET_DISPLAY_BRIGHTNESS
+  // The real backlight is the LEDC PWM on GPIO 51 (drives the LCD's LED); the DCS 0x51 is a
+  // best-effort no-op the AMOLED path used. Drive both so the CC slider dims the LCD.
+  if (s_hi8561_bl_ready) {
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, kBlChan, b);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, kBlChan);
+  }
+  if (_dbi_io) esp_lcd_panel_io_tx_param(_dbi_io, 0x51, &b, 1);   // DCS SET_DISPLAY_BRIGHTNESS
 }
 
 void HI8561Display::turnOn()  { if (_panel) esp_lcd_panel_disp_on_off(_panel, true);  _on = true;  }

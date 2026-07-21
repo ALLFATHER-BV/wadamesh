@@ -37,6 +37,18 @@ void SnakeGame::launch() {
   if (!g->open()) { s_active = nullptr; delete g; }
 }
 
+void SnakeGame::dismiss() {
+  // Close from outside the game (a status-bar tap). The in-game X can sit UNDER a taller status
+  // bar on big-screen boards (the P4's bar is set taller at boot + raised over the game), leaving
+  // no reachable exit — this is the guaranteed way out. Mirrors closeCb's teardown. Safe to del
+  // synchronously here: the triggering event target is the status bar, not a Snake object.
+  if (!s_active) return;
+  SnakeGame* g = s_active;
+  s_active = nullptr;
+  g->close();
+  delete g;
+}
+
 void SnakeGame::placeFood() {
   const int cells = cols_ * rows_;
   for (int tries = 0; tries < 4 * cells + 16; ++tries) {
