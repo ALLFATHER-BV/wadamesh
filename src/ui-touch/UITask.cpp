@@ -42340,7 +42340,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
         s_rmt_boot_guard = RMT_GUARD_MAGIC;               // arm; cleared after a good run
       }
     }
+#if defined(ATTAKY_MESH_SERIES)
+    // Remote landscape must follow the board's own rotation: this panel is ROT_90-
+    // native, so a hardcoded 270 would leave remote mode upside down.
+    if (s_remote_mode) s_ui_rotation = s_remote_landscape ? LV_DISP_ROT_90 : LV_DISP_ROT_NONE;
+#else
     if (s_remote_mode) s_ui_rotation = s_remote_landscape ? LV_DISP_ROT_270 : LV_DISP_ROT_NONE;
+#endif
 #endif
     // Apply the saved backlight brightness (takes the LEDA pin over from the
     // display's digitalWrite via LEDC PWM). Both touch boards have the LEDA pin.
