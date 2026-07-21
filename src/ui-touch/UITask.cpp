@@ -34,6 +34,9 @@
   #include "assets/lockscreen_placeholder_jpg.h"   // seeded to SPIFFS /lock/placeholder.jpg on first boot (PNG decode is broken on this board)
   #if CAP_LOCK_SCREEN
     #include "assets/lockscreen_wallpaper_rgb565.h"   // crisp pre-dithered default lock-screen wallpaper (no JPEG banding)
+    #if defined(TLORA_PAGER)
+      #include "assets/lockscreen_wallpaper_pager_rgb565.h"   // native 480x222 crop/layout for this board's wide/short panel
+    #endif
   #endif
   #include <esp_timer.h>
   #include <esp_chip_info.h>
@@ -32664,6 +32667,10 @@ static int          s_lock_clock_min = -1;        // last minute drawn (redraw g
 static lv_obj_t*    s_lock_unread    = nullptr;   // envelope + unread count under the clock (issue #93)
 static int          s_lock_unread_n  = -1;        // last count drawn (redraw guard)
 static unsigned long s_lock_unread_ms = 0;        // 1 Hz poll limiter
+#if defined(TLORA_PAGER)
+static lv_obj_t*    s_lock_status    = nullptr;   // "Screen locked" -- tracked for lockscreenHide() cleanup
+static lv_obj_t*    s_lock_hint      = nullptr;   // unlock hint -- tracked for lockscreenHide() cleanup
+#endif
 
 // How long the trackball must be held to unlock, in ms.
 static const unsigned long kLockUnlockHoldMs = 1000;
@@ -32726,9 +32733,20 @@ static void lockscreenUpdateClock() {
   // the panel. Deterministic from the minute, so it also moves on every reveal.
   const int dx = (mm % 5) * 3 - 6;         // -6 … +6 px
   const int dy = ((mm / 5) % 3) * 4 - 4;   // -4 … +4 px
+#if defined(TLORA_PAGER)
+  // Same anti-burn-in drift, but around this board's top-LEFT clock position
+  // (lockscreenShow()'s TOP_LEFT/6,30) instead of T-Deck's TOP_MID -- without
+  // this override every periodic clock update (this function runs on every
+  // minute rollover) silently snapped the clock back to horizontally
+  // centered, undoing the top-left placement the moment it first ticked.
+  // The unread badge stays in its own right-column spot (300,70) -- it
+  // doesn't ride with the clock on this layout, so no drift needed there.
+  lv_obj_align(s_lock_clock, LV_ALIGN_TOP_LEFT, 6 + dx, 30 + dy);
+#else
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, dx, 30 + dy);
   // The unread badge rides along with the same drift so it never parks either.
   if (s_lock_unread) lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, dx, 68 + dy);
+#endif
   s_lock_clock_min = mm;
 }
 
@@ -32808,6 +32826,19 @@ static void lockscreenShow() {
   lv_obj_set_style_bg_opa(s_lock_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_lock_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(s_lock_root, LV_OBJ_FLAG_CLICKABLE);   // absorb taps (no UI leak)
+#if defined(TLORA_PAGER)
+  // Keep the lock overlay OUT of the keyboard/encoder nav focus group. The root
+  // is CLICKABLE (to absorb taps) and it lives on lv_layer_top, so on this
+  // no-touch board navMaybeRebuild() would otherwise collect it as the only
+  // focusable element in the overlay and focus it -- at which point navFocusCb's
+  // keyboard-focus highlight reverse-videos it: light bg (hidden behind the
+  // wallpaper) + navInvertText() flipping every child label's text to COLOR_BG
+  // (dark). That's the reported "lock text renders white then flips to black a
+  // split second after every reveal, wallpaper stays fine" bug -- the focus
+  // lands a tick after the reveal paint. NAV_SKIP_FLAG makes navCollect/
+  // navTreeSig skip the whole subtree, so it's never focused and never inverted.
+  lv_obj_add_flag(s_lock_root, NAV_SKIP_FLAG);
+#endif
 
   // Wallpaper, scaled to cover the screen (crop overflow, never letterbox).
   int ww = 0, wh = 0;
@@ -32818,9 +32849,21 @@ static void lockscreenShow() {
   if (!strcmp(wpath, "/lock/placeholder.jpg")) {
     // Default: the pre-dithered RGB565 embed, drawn straight from flash — crisp,
     // with no JPEG round-trip to re-introduce gradient banding.
+#if defined(TLORA_PAGER)
+    // Native 480x222 crop of the same icon+wordmark, repositioned to the left
+    // (see lockscreen_wallpaper_pager_rgb565.h) -- the shared 320x240 art's
+    // cover-fill on this much wider/shorter panel zoomed it ~1.5x and center-
+    // cropped ~70px off top+bottom, shoving it into the fixed-position text
+    // labels below (reported/photographed). Being screen-native, this needs
+    // no crop math at all: the cover-zoom below naturally computes ~1:1.
+    wall_data = (const uint8_t*)lockscreen_wallpaper_pager_rgb565;
+    ww = LOCKSCREEN_WALLPAPER_PAGER_W;
+    wh = LOCKSCREEN_WALLPAPER_PAGER_H;
+#else
     wall_data = (const uint8_t*)lockscreen_wallpaper_rgb565;
     ww = LOCKSCREEN_WALLPAPER_W;
     wh = LOCKSCREEN_WALLPAPER_H;
+#endif
   } else {
     s_lock_wall = lockscreenDecodeWallpaper(&ww, &wh);   // custom wallpaper (JPEG)
     wall_data = s_lock_wall;
@@ -32837,6 +32880,10 @@ static void lockscreenShow() {
     lv_img_set_antialias(img, true);
     lv_img_set_pivot(img, ww / 2, wh / 2);
     lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
+    // Background wallpaper: same cover-fill-and-center treatment on every
+    // board, pager included -- only the text labels below get a pager-
+    // specific layout (they're what was actually unreadable/colliding; the
+    // wallpaper crop itself is unchanged from how it's always looked).
     uint32_t zx = (uint32_t)sw * 256u / (uint32_t)ww;
     uint32_t zy = (uint32_t)sh * 256u / (uint32_t)wh;
     uint32_t zoom = (zx > zy) ? zx : zy;             // cover
@@ -32845,19 +32892,48 @@ static void lockscreenShow() {
     lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
   }
 
+#if defined(TLORA_PAGER)
+  // Force a guaranteed-visible white here rather than the shared, user-
+  // customizable touchPrefsGetLockTextColor() -- on this board that pref was
+  // rendering noticeably dim/dark (reported/photographed against this panel's
+  // background) even at the shared soft-white default (0xE6F2FF), so this
+  // board gets pure white instead of chasing a per-device pref/storage
+  // question for a cosmetic lock screen.
+  const lv_color_t col = lv_color_hex(0xFFFFFFu);
+#else
   const lv_color_t col = lv_color_hex(touchPrefsGetLockTextColor());
+#endif
 
   s_lock_clock = lv_label_create(s_lock_root);
   lv_label_set_text(s_lock_clock, "--:--");
   lv_obj_set_style_text_font(s_lock_clock, &lv_font_montserrat_28, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_lock_clock, col, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  // Fixed-width box spanning the same 192px the composited icon occupies
+  // (lockscreen_wallpaper_pager_rgb565.h, pasted at x=6 width=192) with
+  // centered text, instead of just left-anchoring the label -- "10:37" and
+  // "8:05" are different pixel widths, so anchoring by the label's own LEFT
+  // edge left the clock's actual visual center drifting with the text
+  // instead of lining up with the icon below it. Centering within a box of
+  // the icon's own width keeps the two centers matched regardless of what
+  // the clock displays.
+  lv_obj_set_width(s_lock_clock, 192);
+  lv_obj_set_style_text_align(s_lock_clock, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_align(s_lock_clock, LV_ALIGN_TOP_LEFT, 6, 30);   // top-left corner, below the 22 px status bar
+#else
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, 0, 30);   // below the 22 px status bar
+#endif
   s_lock_clock_min = -1;
 
   s_lock_unread = lv_label_create(s_lock_root);
   lv_obj_set_style_text_font(s_lock_unread, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_lock_unread, col, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  // Positioned once the hint label exists below -- see the bottom-right stack
+  // built after `hint` is created.
+#else
   lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, 0, 68);
+#endif
   lv_obj_add_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN);
   s_lock_unread_n = -1;
   lockscreenUpdateClock();
@@ -32867,16 +32943,20 @@ static void lockscreenShow() {
   lv_label_set_text(st, TR("Screen locked"));
   lv_obj_set_style_text_font(st, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(st, col, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  s_lock_status = st;   // positioned once the hint label exists below -- see the bottom-right stack
+#else
   lv_obj_align(st, LV_ALIGN_TOP_MID, 0, 190);
+#endif
 
   lv_obj_t* hint = lv_label_create(s_lock_root);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hint, TR("press Volume Down to unlock"));
 #elif defined(HAS_PAGER_KEYBOARD)
-  // Defensive only -- lockscreenShow() is never actually called on this board
-  // today (its callers are all HAS_TDECK_GT911-gated); the pager's own lock
-  // uses the plain off+wake path with no overlay, per updatePagerSpaceHold()/
-  // updatePagerBackspaceUnlockHold(). Kept correct in case that changes.
+  // lockscreenShow() DOES run on this board -- lockscreenReveal() (peek on a
+  // Backspace tap, or the new-message notify flash while locked) is gated on
+  // CAP_LOCK_SCREEN, which is 1 for the pager, not HAS_TDECK_GT911. (An
+  // earlier version of this comment claimed otherwise; it was wrong.)
   lv_label_set_text(hint, TR("hold Backspace to unlock"));
 #elif defined(HAS_THINKNODE_M9)
   lv_label_set_text(hint, TR("hold the d-pad to unlock"));
@@ -32886,12 +32966,27 @@ static void lockscreenShow() {
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(hint, col, LV_PART_MAIN);
   lv_obj_set_style_text_opa(hint, LV_OPA_70, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  lv_obj_align(hint, LV_ALIGN_BOTTOM_RIGHT, -6, -8);   // bottom-right corner, clear of the icon/clock column above
+  s_lock_hint = hint;
+  // Message count + "Screen locked" stack right-aligned directly above the hint,
+  // each anchored to the one below it (not a fixed y) so the group holds
+  // together and stays right-aligned regardless of label width or whether the
+  // unread badge is visible.
+  lv_obj_align_to(st, hint, LV_ALIGN_OUT_TOP_RIGHT, 0, -4);
+  lv_obj_align_to(s_lock_unread, st, LV_ALIGN_OUT_TOP_RIGHT, 0, -4);
+#else
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+#endif
 }
 
 static void lockscreenHide() {
   lockscreenUnlockPopupHide();
-  if (s_lock_root) { lv_obj_del(s_lock_root); s_lock_root = nullptr; s_lock_clock = nullptr; s_lock_unread = nullptr; }
+  if (s_lock_root) { lv_obj_del(s_lock_root); s_lock_root = nullptr; s_lock_clock = nullptr; s_lock_unread = nullptr;
+#if defined(TLORA_PAGER)
+    s_lock_status = nullptr; s_lock_hint = nullptr;
+#endif
+  }
   if (s_lock_wall) { lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
   s_lock_clock_min = -1;
   s_lock_unread_n  = -1;
@@ -44375,9 +44470,12 @@ void UITask::loop() {
     // whole batch so nothing queued here leaks through as real input on the
     // very next tick right after waking.
     bool any = false;
+    bool saw_backspace = false;
     for (int kbi = 0; kbi < 12; ++kbi) {
-      if (pagerKeyboardReadKey() <= 0) break;
+      int k = pagerKeyboardReadKey();
+      if (k <= 0) break;
       any = true;
+      if (k == 0x08) saw_backspace = true;
     }
     // Discard any Alt tap / Alt+Shift / Alt+Backspace chord picked up while
     // idle-dimmed -- none of them may fire (NEXT / Caps toggle / jump Home)
@@ -44386,8 +44484,21 @@ void UITask::loop() {
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
     // Hard-locked: an ordinary keypress must NOT wake/unlock -- only holding
-    // Backspace does (updatePagerBackspaceUnlockHold, already polled above).
-    if (any && !g_lv.task->isManualLock()) g_lv.task->wakeScreen();
+    // Backspace does (updatePagerBackspaceUnlockHold, polled unconditionally
+    // above off the raw held-state, so it's unaffected by this drain either
+    // way). A Backspace TAP, though, should PEEK the lock screen -- light the
+    // wallpaper, stay locked -- the keyboard-only equivalent of the T-Deck's
+    // trackball click while locked (lockscreenReveal() is the exact same call
+    // that path, and the new-message notify flash, already use). Without this
+    // the ring byte a Backspace press pushes immediately on press was just
+    // getting silently drained above with everything else, so tapping it
+    // while the screen was actually dark did nothing (reported bug) even
+    // though holding it through to unlockScreen worked fine.
+    if (g_lv.task->isManualLock()) {
+      if (saw_backspace) g_lv.task->lockscreenReveal();
+    } else if (any) {
+      g_lv.task->wakeScreen();
+    }
   } else {
     for (int kbi = 0; kbi < 12; ++kbi) {
       int key = pagerKeyboardReadKey();
@@ -44399,6 +44510,11 @@ void UITask::loop() {
     updatePagerAltBackspaceChord();
     updatePagerBackspaceHold(now);
     updatePagerSpaceHold(now);
+    // Missing on this board until now (T-Deck/M9 both already call it in their
+    // own equivalent branch): without this the lock-screen clock/unread badge
+    // never refreshed again after the first reveal -- correct at the moment
+    // you peek, then frozen there for as long as the screen stays lit.
+    serviceLockscreen();
   }
 #elif defined(HAS_M9_KEYBOARD)
   // M9's keyboard controller is on its OWN bus (Wire1) — no touch task shares
