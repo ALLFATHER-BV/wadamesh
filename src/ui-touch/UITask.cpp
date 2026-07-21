@@ -123,6 +123,9 @@
   #if defined(HAS_ATTAKY_MESH_KEYBOARD)
     #include <AttakyMeshSeriesKeyboard.h>
   #endif
+  #if defined(ATTAKY_MESH_SERIES)
+    #include <AttakyMeshSeriesKeys.h>
+  #endif
   #include "KeyboardLayouts.h"
   #include "i18n.h"
   #include "emoji_data.h"     // baked Noto colour-emoji glyphs (emojiGlyphLookup)
@@ -43304,6 +43307,11 @@ void UITask::noteUserInput() {
    * release that. Idle-timeout locks still unlock on touch. */
   if (_screen_off && _manual_lock) return;
   _last_input_ms = millis();
+#if defined(ATTAKY_MESH_SERIES)
+  // This board wakes on POWER_BTN only (polled in the UI loop). A touch on a dark
+  // panel is already absorbed by the indev read, and must not light it either.
+  if (_screen_off) return;
+#endif
   if (_screen_off) wakeScreen();
 }
 
@@ -44343,6 +44351,15 @@ void UITask::loop() {
   }
   serviceLockscreen();
   serviceLockingCountdown(now);
+#endif
+#if defined(ATTAKY_MESH_SERIES)
+  // POWER_BTN (AW9523 @0x59 P07) toggles the panel. Polled before the screen-off
+  // early-outs so it works with the backlight down; it is this board's only wake.
+  attakyKeysPoll();
+  if (attakyPowerKeyPressed()) {
+    if (_screen_off) wakeScreen();
+    else             sleepScreen();
+  }
 #endif
 #if defined(HAS_ATTAKY_MESH_KEYBOARD)
   {
