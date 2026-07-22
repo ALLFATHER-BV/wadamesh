@@ -745,8 +745,14 @@ void setup() {
   // hit the overflow) still get the big ring; default GPS-off keeps the stock 256 B. A user
   // who enables GPS mid-session picks it up on the next reboot (gps_enabled is persisted).
   {
+#if defined(ATTAKY_MESH_SERIES)
+    // This fixed stack always carries the GPS, so take the larger RX ring
+    // unconditionally; the default 256 B ring gives the slowest first fix.
+    Serial1.setRxBufferSize(4096);
+#else
     auto* np = the_mesh.getNodePrefs();
     if (np && np->gps_enabled) Serial1.setRxBufferSize(4096);
+#endif
   }
 #endif
   sensors.begin();
