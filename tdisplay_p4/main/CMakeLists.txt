@@ -118,3 +118,12 @@ endif()
 idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_RELEASE_TAG=\"${WADA_FW_TAG}\"" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_BUILD_DATE=\"${WADA_FW_DATE}\"" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_VERSION=\"wadamesh ${WADA_FW_TAG}\"" APPEND)
+
+# On-device OTA / update-channel UI (the "Get test builds (beta)" toggle + the Install-update button
+# in UITask.cpp) is gated on a NON-EMPTY FIRMWARE_OTA_ENV. The 8 S3 boards set this per-env in
+# platformio.ini; the P4 is an IDF build and must set it here, or the whole update UI stays hidden
+# (the symptom testers hit on beta_49: no beta toggle, stuck reading the stable channel). The value is
+# only a presence marker — the OTA download URL is built from OTA_BIN_NAME (set per-SKU in UITask.cpp),
+# not from this. The P4 partition table has dual ota_0/ota_1 slots and the C6 WiFi shim routes the
+# HTTPClient + Update.h writer, so the OTA path itself is wired; this just unhides the UI.
+idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_OTA_ENV=\"tdisplay_p4\"" APPEND)

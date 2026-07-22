@@ -23793,6 +23793,12 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 #if defined(HAS_TDECK_GT911)
 static const char* const OTA_BIN_NAME = "wadamesh-tdeck";
+#elif defined(HAS_TDISPLAY_P4)
+  #if defined(HAS_TDP4_LCD)
+static const char* const OTA_BIN_NAME = "wadamesh-tdisplay-p4-lcd";   // T-Display P4 TFT-LCD SKU
+  #else
+static const char* const OTA_BIN_NAME = "wadamesh-tdisplay-p4";       // T-Display P4 AMOLED SKU
+  #endif
 #else
 static const char* const OTA_BIN_NAME = "wadamesh-heltec-v4-tft";   // Heltec V4 TFT (Tanmatsu excluded above)
 #endif
