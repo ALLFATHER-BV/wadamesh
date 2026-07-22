@@ -23791,6 +23791,10 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 }
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+// Per-board OTA download bin name (the app-only <name>.bin under releases/<ch>/beta_<N>/).
+// MUST match the release artifact names exactly, or the self-update 404s. Every touch board is
+// dual-slot OTA-capable (CAP_OTA=1 + app0/app1 partitions + FIRMWARE_OTA_ENV) EXCEPT the Tanmatsu
+// (AppFS/launcher, CAP_OTA=0, never reaches this file). Keep this chain in sync when adding a board.
 #if defined(HAS_TDECK_GT911)
 static const char* const OTA_BIN_NAME = "wadamesh-tdeck";
 #elif defined(HAS_TDISPLAY_P4)
@@ -23799,6 +23803,20 @@ static const char* const OTA_BIN_NAME = "wadamesh-tdisplay-p4-lcd";   // T-Displ
   #else
 static const char* const OTA_BIN_NAME = "wadamesh-tdisplay-p4";       // T-Display P4 AMOLED SKU
   #endif
+#elif defined(HELTEC_LORA_V4_R8)
+static const char* const OTA_BIN_NAME = "wadamesh-heltec-v4-r8-tft";   // must precede the V4-TFT fallback
+#elif defined(HAS_THINKNODE_M9)
+static const char* const OTA_BIN_NAME = "wadamesh-thinknode-m9";
+#elif defined(HAS_RAK_TAP_V2)
+static const char* const OTA_BIN_NAME = "wadamesh-rak-tap-v2";
+#elif defined(TLORA_PAGER)
+  #if defined(USE_LR1121)
+static const char* const OTA_BIN_NAME = "wadamesh-tlora-pager-lr1121";
+  #else
+static const char* const OTA_BIN_NAME = "wadamesh-tlora-pager-sx1262";
+  #endif
+#elif defined(ATTAKY_MESH_SERIES)
+static const char* const OTA_BIN_NAME = "wadamesh-attaky";
 #else
 static const char* const OTA_BIN_NAME = "wadamesh-heltec-v4-tft";   // Heltec V4 TFT (Tanmatsu excluded above)
 #endif
