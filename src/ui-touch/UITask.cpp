@@ -16335,6 +16335,21 @@ static void calibrateBatteryCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(b, 3000);
 }
 
+// ----- SD wedge detection (flag side; the probe/remount lives in sdHealthTick) -----
+// A runtime SD failure is a one-way door in arduino-esp32: one timed-out command
+// latches STA_NOINIT (or a data-phase error leaves FR_DISK_ERR everywhere), while
+// SD.cardType() keeps returning the type CACHED at mount — so every
+// `cardType() != CARD_NONE` gate still passes, writes fail silently, and nothing
+// ever re-runs the mount ladder until a reboot power-cycles the card. Any writer
+// (loop task, core-0 worker, notify task) that sees an SD write fail while the
+// card is supposedly mounted stamps this; UITask::loop verifies with real I/O
+// and remounts if the card wedged. Volatile store only — safe from any task.
+static volatile uint32_t s_sd_fail_note_ms = 0;
+static inline void sdNoteWriteFailure() {
+  const uint32_t m = (uint32_t)millis();
+  s_sd_fail_note_ms = m ? m : 1;
+}
+
 // ----- Battery history: 5-minute log to SD + a 24h chart popup (T-Deck only) -----
 // Logging piggybacks the always-on UITask::loop (no extra wakeup): every
 // k_batt_log_period_ms a line is appended to /meshcomod/battery.log and the file
@@ -16374,7 +16389,7 @@ static void batteryLogAppend(uint32_t epoch, uint16_t mv, int pct, uint16_t cpu_
   if (epoch > 1700000000 && localtime_r(&t, &tmv)) strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
   File rf = fs.open(battLogPath(), FILE_READ);
   File wf = fs.open(battLogTmp(), FILE_WRITE);     // truncate/create
-  if (!wf) { if (rf) rf.close(); return; }
+  if (!wf) { if (rf) rf.close(); if (battLogOnSd()) sdNoteWriteFailure(); return; }
   if (rf) {
     while (rf.available()) {
       String ln = rf.readStringUntil('\n');
@@ -16734,7 +16749,7 @@ static void telemetryLogAppend(const uint8_t* key, uint32_t epoch, int mv, int t
   if (epoch > 1700000000 && localtime_r(&t, &tmv)) strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
   File rf = SD.open(path, FILE_READ);
   File wf = SD.open(tmp, FILE_WRITE);
-  if (!wf) { if (rf) rf.close(); return; }
+  if (!wf) { if (rf) rf.close(); sdNoteWriteFailure(); return; }
   if (rf) {
     while (rf.available()) {
       String ln = rf.readStringUntil('\n');
@@ -18083,6 +18098,22 @@ static bool fmSdTryMount() {
 static void fmSdUnmount() {
   if (s_sd_mounted) { SD.end(); s_sd_mounted = false; s_sd_size = 0; }
   s_sd_retry_after_ms = 0;   // a reinsert should be able to mount right away
+}
+// True when the card still answers real I/O. SD.cardType() is useless for this:
+// arduino-esp32 caches the type at mount and only an explicit SD.end() ever
+// returns CARD_NONE again — a wedged (or even physically removed) card keeps
+// reporting its mount-time type forever. Opening the root dir DOES hit the card:
+// the root `stat` is answered from RAM (vfs_fat special-cases "/"), but the
+// opendir behind it runs f_opendir -> disk_status = a real SEND_STATUS
+// transaction, and a NOINIT'd card then gets one full re-init handshake — so a
+// recoverable card self-heals right here, a dead one returns an invalid File
+// (opendir fails -> operator bool false). Healthy-card cost is sub-ms; a dead
+// card rides out the SPI timeouts once, so callers rate-limit the probe.
+static bool sdProbeAlive() {
+  File d = SD.open("/");
+  const bool ok = d && d.isDirectory();
+  if (d) d.close();
+  return ok;
 }
 static void fmSdClickCb(lv_event_t* e) {
   // SHORT_CLICKED (not CLICKED) so a long-press — which formats the card — does
@@ -20512,7 +20543,7 @@ static void discoverLogSighting(int32_t lat_e6, int32_t lon_e6, const MyMesh::Di
   SD.mkdir("/meshcomod");
   SD.mkdir("/meshcomod/discover");
   File f = SD.open("/meshcomod/discover/wardrive.csv", FILE_APPEND);
-  if (!f) return;
+  if (!f) { sdNoteWriteFailure(); return; }
   if (f.size() == 0) f.print("epoch,lat,lon,type,pubkey,rssi,snr,hops\n");
   uint32_t epoch = (uint32_t)rtc_clock.getCurrentTime();
   f.printf("%lu,%.6f,%.6f,%s,%02X%02X%02X%02X,%d,%.1f,%u\n",
@@ -24255,11 +24286,17 @@ static void tileFetchTaskFn(void* arg) {
             } else {
               ++s_tile_fetch_short_wr;
               s_tile_fetch_last_wr = 'P';            // short/failed disk write (card full or SD error)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+              if (s_tile_fs == &SD) sdNoteWriteFailure();   // wedge tell (worker task — stamp only)
+#endif
             }
           }
         } else {
           ++s_tile_fetch_open_fail;
           s_tile_fetch_last_wr = 'O';                // open("w") failed: dir missing / write-protect / SD bus
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+          if (s_tile_fs == &SD) sdNoteWriteFailure();       // wedge tell (worker task — stamp only)
+#endif
         }
       } else {
         s_tile_fetch_last_wr = 'Z';                  // bad / oversized content-length
@@ -40921,7 +40958,14 @@ static bool uiDataFsIsSdCard() {
 static File uiDataOpen(const char* name, const char* mode) {
   if (!uiDataFsReady()) return File();
   char p[80]; snprintf(p, sizeof p, "%s%s", s_ui_data_root, name);
-  return s_ui_data_fs->open(p, mode);
+  File f = s_ui_data_fs->open(p, mode);
+#if defined(HAS_TDECK_GT911)
+  // A failed WRITE open on the SD-backed history store is the wedge tell (reads
+  // fail legitimately on first boot). Called from the loop task AND the core-0
+  // history worker — sdNoteWriteFailure is a volatile stamp, safe from both.
+  if (!f && mode && mode[0] == 'w' && s_ui_data_fs == &SD) sdNoteWriteFailure();
+#endif
+  return f;
 }
 // Delete a ui-data file — used to quarantine a blob that fails to load so a
 // corrupt/truncated file (interrupted SD/FAT write, brownout) can't wedge the
@@ -44009,6 +44053,44 @@ static inline void uiCp(const char* next) {
   s_ui_cp_t0  = nowms;
 }
 
+#if CAP_SD || defined(TLORA_PAGER)
+// Runtime SD wedge detect + recover. Some writer saw an SD write fail while the
+// card was supposedly mounted (sdNoteWriteFailure) — verify with real I/O and,
+// if the card stopped answering, drop the mount and re-run the full mount
+// ladder (SD.end() + staged SD.begin): exactly what the next reboot would do,
+// minus the reboot. Without this the firmware is blind to a wedged card:
+// SD.cardType() keeps returning its cached mount-time type, s_sd_mounted stays
+// true so fmSdTryMount() no-ops, and every SD feature fails silently until the
+// user power-cycles (the "SD stops working until reboot" report).
+static void sdHealthTick() {
+  if (!s_sd_fail_note_ms) return;
+  if (!s_sd_mounted) { s_sd_fail_note_ms = 0; return; }   // unmounted: the existing FM poll / user-tap remount paths own recovery
+  if (s_sd_format_pending) return;                        // format owns the card right now
+  // Hold off while the core-0 worker is (or may be about to be) on the card —
+  // SD.end() under an open worker file handle is the crash we must not add.
+  // On a truly wedged card the worker's own ops fail fast, so this clears.
+  if (s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request) return;
+#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
+#endif
+  static uint32_t s_next_probe_ms = 0;
+  const uint32_t now = (uint32_t)millis();
+  if (s_next_probe_ms && (int32_t)(now - s_next_probe_ms) < 0) return;
+  s_next_probe_ms = now + 5000;   // rate-limit: probing a dead card rides out SPI timeouts
+  s_sd_fail_note_ms = 0;
+  if (sdProbeAlive()) return;     // transient failure (card full, bad path, ...) — not a wedge
+  fmSdUnmount();                  // SD.end() so a fresh begin re-runs the full card handshake
+  if (fmSdTryMount()) {
+    if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
+  } else {
+    // Ladder failed — card needs a real power cycle (reinsert). s_sd_mounted is
+    // now false and SD.cardType() reads CARD_NONE, so features degrade honestly
+    // instead of silently failing, and the usual remount paths keep retrying.
+    if (g_lv.task) g_lv.task->showAlert(TR("SD card lost - reinsert to recover"), 2600);
+  }
+}
+#endif
+
 void UITask::loop() {
   unsigned long now = millis();
 #if !defined(HAS_TANMATSU)
@@ -44441,6 +44523,7 @@ void UITask::loop() {
     else                          s_jump_dimmed = true;   // nothing open: park the state
   }
 #if CAP_SD || defined(TLORA_PAGER)
+  sdHealthTick();   // wedge detect + remount, driven by writer-flagged failures (any task)
   // microSD insert/remove detection — only while the file manager is open, so
   // there's no idle SPI traffic. SD.begin runs on this loop task (never
   // concurrent with the radio's SPI), and reuses the radio's already-begun bus.
@@ -44455,7 +44538,10 @@ void UITask::loop() {
           showAlert(TR("SD card inserted"), 1500);
           if (!s_fm_fs) fmShowRoots();          // refresh roots so it appears
         }
-      } else if (SD.cardType() == CARD_NONE) {
+      } else if (!sdProbeAlive()) {
+        // Real-I/O probe, NOT `SD.cardType() == CARD_NONE`: cardType() is cached
+        // at mount and only SD.end() ever resets it, so the old check could never
+        // fire — neither a yanked card nor a wedged one was ever detected here.
         fmSdUnmount();
         showAlert(TR("SD card removed"), 1500);
         if (s_fm_fs == &SD || !s_fm_fs) fmShowRoots();
