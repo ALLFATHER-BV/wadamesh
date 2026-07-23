@@ -44116,12 +44116,19 @@ static void sdHealthTick() {
   // writing (idle home screen) would otherwise never be noticed at all, since
   // detection is failure-driven and reads fall back silently. A healthy-card
   // probe is one SEND_STATUS transaction (sub-ms), so the idle cost is nil.
+  // The background probe pauses in the sleep regime (screen off, loop
+  // throttled): nobody sees the toast, an SD poke keeps the card out of its
+  // own power-down, and a yank-while-asleep is caught by the first probe
+  // after wake. The FAILURE-driven probe stays active asleep on purpose —
+  // scheduled telemetry keeps logging to SD during sleep, and a wedge there
+  // must still recover.
   static uint32_t s_next_probe_ms    = 0;
   static uint32_t s_next_bg_probe_ms = 0;
   const uint32_t now = (uint32_t)millis();
   if (s_sd_fail_note_ms) {
     if (s_next_probe_ms && (int32_t)(now - s_next_probe_ms) < 0) return;
   } else {
+    if (touchSleep::isSleeping()) return;
     if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
   }
   s_next_probe_ms    = now + 5000;
