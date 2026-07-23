@@ -16339,13 +16339,13 @@ static void calibrateBatteryCb(lv_event_t* e) {
 // A runtime SD failure is a one-way door in arduino-esp32: one timed-out command
 // latches STA_NOINIT (or a data-phase error leaves FR_DISK_ERR everywhere), while
 // SD.cardType() keeps returning the type CACHED at mount — so every
-// `cardType() != CARD_NONE` gate still passes, writes fail silently, and nothing
-// ever re-runs the mount ladder until a reboot power-cycles the card. Any writer
-// (loop task, core-0 worker, notify task) that sees an SD write fail while the
+// `cardType() != CARD_NONE` gate still passes, I/O fails silently, and nothing
+// ever re-runs the mount ladder until a reboot power-cycles the card. Any SD
+// user (loop task, core-0 worker, notify task) that sees SD I/O fail while the
 // card is supposedly mounted stamps this; UITask::loop verifies with real I/O
 // and remounts if the card wedged. Volatile store only — safe from any task.
 static volatile uint32_t s_sd_fail_note_ms = 0;
-static inline void sdNoteWriteFailure() {
+static inline void sdNoteIoFailure() {
   const uint32_t m = (uint32_t)millis();
   s_sd_fail_note_ms = m ? m : 1;
 }
@@ -16362,7 +16362,12 @@ static inline void sdNoteWriteFailure() {
 // SPIFFS (flat) uses a top-level path.
 static fs::FS& battLogFs() {
 #if CAP_SD
-  if (SD.cardType() != CARD_NONE && SD.exists("/meshcomod")) return SD;
+  if (SD.cardType() != CARD_NONE) {
+    if (SD.exists("/meshcomod")) return SD;
+    // cardType() says present (cached) but real I/O failed — wedge/removal tell.
+    // (Or just a card without /meshcomod; sdHealthTick's probe arbitrates cheaply.)
+    sdNoteIoFailure();
+  }
 #endif
   return SPIFFS;
 }
@@ -16389,7 +16394,7 @@ static void batteryLogAppend(uint32_t epoch, uint16_t mv, int pct, uint16_t cpu_
   if (epoch > 1700000000 && localtime_r(&t, &tmv)) strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
   File rf = fs.open(battLogPath(), FILE_READ);
   File wf = fs.open(battLogTmp(), FILE_WRITE);     // truncate/create
-  if (!wf) { if (rf) rf.close(); if (battLogOnSd()) sdNoteWriteFailure(); return; }
+  if (!wf) { if (rf) rf.close(); if (battLogOnSd()) sdNoteIoFailure(); return; }
   if (rf) {
     while (rf.available()) {
       String ln = rf.readStringUntil('\n');
@@ -16749,7 +16754,7 @@ static void telemetryLogAppend(const uint8_t* key, uint32_t epoch, int mv, int t
   if (epoch > 1700000000 && localtime_r(&t, &tmv)) strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
   File rf = SD.open(path, FILE_READ);
   File wf = SD.open(tmp, FILE_WRITE);
-  if (!wf) { if (rf) rf.close(); sdNoteWriteFailure(); return; }
+  if (!wf) { if (rf) rf.close(); sdNoteIoFailure(); return; }
   if (rf) {
     while (rf.available()) {
       String ln = rf.readStringUntil('\n');
@@ -18037,6 +18042,12 @@ static inline SPIClass* sdSharedSPI() { return tdeckSharedSPI(); }
 // already initialised by the radio/display, so those pins are untouched.
 static bool fmSdTryMount() {
   if (s_sd_mounted) return true;
+  // Fast-fail inside the post-failure backoff window. Hot paths call this
+  // directly (map tile lookups on the loop task, history writes via
+  // uiDataFsReady, WAV chimes) — without this gate every such call re-walks
+  // the multi-second mount ladder while the card is out, freezing the UI.
+  // Explicit user retries clear the backoff first (fmSdMountOrFormatCb).
+  if (s_sd_retry_after_ms && millis() < s_sd_retry_after_ms) return false;
 #if defined(TLORA_PAGER)
   if (!pagerSdCardPresent()) return false;
 #endif
@@ -18115,6 +18126,19 @@ static bool sdProbeAlive() {
   if (d) d.close();
   return ok;
 }
+// Discriminator for hot READ paths (map tile lookups run up to five SD opens
+// per tile on the loop task): a missing FILE on a healthy card must stay cheap
+// and silent, while a dead card must stamp the failure AND let the caller
+// short-circuit — otherwise one render pass serializes behind sd_diskio's
+// per-op timeout/re-init and the whole UI freezes while a card is out. Call
+// after a failed SD read/open; returns true when the card itself is dead
+// (bail out of the whole SD pass), false when it was just a missing file.
+static bool sdReadFailedCardDead() {
+  if (s_sd_fail_note_ms) return true;   // already suspected — sdHealthTick arbitrates within ~5 s
+  if (sdProbeAlive()) return false;     // card fine: genuinely missing file
+  sdNoteIoFailure();
+  return true;
+}
 static void fmSdClickCb(lv_event_t* e) {
   // SHORT_CLICKED (not CLICKED) so a long-press — which formats the card — does
   // not also fall through and open it.
@@ -18163,6 +18187,7 @@ static void fmSdDoFormat() {
 // (e.g. exFAT, which this build can't read — only FAT16/FAT32) offer to format.
 static void fmSdMountOrFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_sd_retry_after_ms = 0;   // explicit user retry — bypass the mount backoff
   if (fmSdTryMount()) { fmShowRoots(); return; }
   showConfirm(TR("Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased."),
               "Format", fmSdDoFormat);
@@ -20543,7 +20568,7 @@ static void discoverLogSighting(int32_t lat_e6, int32_t lon_e6, const MyMesh::Di
   SD.mkdir("/meshcomod");
   SD.mkdir("/meshcomod/discover");
   File f = SD.open("/meshcomod/discover/wardrive.csv", FILE_APPEND);
-  if (!f) { sdNoteWriteFailure(); return; }
+  if (!f) { sdNoteIoFailure(); return; }
   if (f.size() == 0) f.print("epoch,lat,lon,type,pubkey,rssi,snr,hops\n");
   uint32_t epoch = (uint32_t)rtc_clock.getCurrentTime();
   f.printf("%lu,%.6f,%.6f,%s,%02X%02X%02X%02X,%d,%.1f,%u\n",
@@ -24287,7 +24312,7 @@ static void tileFetchTaskFn(void* arg) {
               ++s_tile_fetch_short_wr;
               s_tile_fetch_last_wr = 'P';            // short/failed disk write (card full or SD error)
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
-              if (s_tile_fs == &SD) sdNoteWriteFailure();   // wedge tell (worker task — stamp only)
+              if (s_tile_fs == &SD) sdNoteIoFailure();   // wedge tell (worker task — stamp only)
 #endif
             }
           }
@@ -24295,7 +24320,7 @@ static void tileFetchTaskFn(void* arg) {
           ++s_tile_fetch_open_fail;
           s_tile_fetch_last_wr = 'O';                // open("w") failed: dir missing / write-protect / SD bus
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
-          if (s_tile_fs == &SD) sdNoteWriteFailure();       // wedge tell (worker task — stamp only)
+          if (s_tile_fs == &SD) sdNoteIoFailure();       // wedge tell (worker task — stamp only)
 #endif
         }
       } else {
@@ -24543,6 +24568,7 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
 #if CAP_SD
   if (s_tiles_from_sd && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
     // Tile source = microSD: read straight off the card (fully offline, no server fetch).
+    if (s_sd_fail_note_ms) return false;   // card suspected dead — don't stack per-tile SPI timeouts (sdHealthTick arbitrates)
     if (!fmSdTryMount()) return false;
     markSdIo();                          // SD read activity -> status-bar LED
     // Prefer the Meshtastic/MeshCore standard layout /maps/osm/{z}/{x}/{y}.png
@@ -24566,14 +24592,14 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
       fsd = SD.open(ppath, FILE_READ);
     }
     if (!fsd) fsd = SD.open(path, FILE_READ);   // legacy /tiles/<z>/<x>/<y>.jpg
-    if (!fsd) return false;
+    if (!fsd) { sdReadFailedCardDead(); return false; }   // missing tile (cheap, silent) vs dead card (stamp + short-circuit)
     const size_t szsd = fsd.size();
     if (szsd == 0 || szsd > 256 * 1024) { fsd.close(); return false; }   // PNG tiles run larger than JPEG
     uint8_t* bufsd = (uint8_t*)lvglPsramAlloc(szsd);
     if (!bufsd) { fsd.close(); return false; }
     const size_t nsd = fsd.read(bufsd, szsd);
     fsd.close();
-    if (nsd != szsd) { lvglPsramFree(bufsd); return false; }
+    if (nsd != szsd) { lvglPsramFree(bufsd); sdReadFailedCardDead(); return false; }   // short read mid-tile = card died under us
     *out_data = bufsd; *out_len = szsd;
     return true;
   }
@@ -24585,8 +24611,18 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   // re-downloaded forever and rendered nothing (#tiles). open() is the real existence test; read up to
   // the 100 KB writer cap and use the ACTUAL bytes read. (S3 boards: f.size() works there, but this is
   // equally correct — a transient 100 KB PSRAM buffer per tile, freed right after decode.)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+  // Launcher installs cache tiles on the raw SD (s_tile_fs == &SD) — same
+  // dead-card short-circuit as the SD-pack path above.
+  if (s_tile_fs == &SD && s_sd_fail_note_ms) return false;
+#endif
   File f = tileCacheOpen(path, "r");
-  if (!f) return false;
+  if (!f) {
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+    if (s_tile_fs == &SD) sdReadFailedCardDead();
+#endif
+    return false;
+  }
   const size_t CAP = 100 * 1024;
   uint8_t* buf = (uint8_t*)lvglPsramAlloc(CAP);
   if (!buf) { f.close(); return false; }
@@ -24635,6 +24671,7 @@ static bool mapTileSourceReady() {
 static bool tileExistsAt(uint8_t z, long x, long y) {
 #if CAP_SD
   if (s_tiles_from_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
+    if (s_sd_fail_note_ms) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
     if (!fmSdTryMount()) return false;
     char p[56];
     snprintf(p, sizeof p, "/maps/osm/%u/%ld/%ld.png", (unsigned)z, x, y);
@@ -24646,7 +24683,9 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.PNG", (unsigned)z, x, y);
     if (SD.exists(p)) return true;
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.jpg", (unsigned)z, x, y);
-    return SD.exists(p);
+    if (SD.exists(p)) return true;
+    sdReadFailedCardDead();   // all five missing: either past the pack edge (cheap, silent) or the card died
+    return false;
   }
 #endif
   if (!s_tiles_fs_ready) return false;
@@ -40962,8 +41001,8 @@ static File uiDataOpen(const char* name, const char* mode) {
 #if defined(HAS_TDECK_GT911)
   // A failed WRITE open on the SD-backed history store is the wedge tell (reads
   // fail legitimately on first boot). Called from the loop task AND the core-0
-  // history worker — sdNoteWriteFailure is a volatile stamp, safe from both.
-  if (!f && mode && mode[0] == 'w' && s_ui_data_fs == &SD) sdNoteWriteFailure();
+  // history worker — sdNoteIoFailure is a volatile stamp, safe from both.
+  if (!f && mode && mode[0] == 'w' && s_ui_data_fs == &SD) sdNoteIoFailure();
 #endif
   return f;
 }
@@ -44055,7 +44094,7 @@ static inline void uiCp(const char* next) {
 
 #if CAP_SD || defined(TLORA_PAGER)
 // Runtime SD wedge detect + recover. Some writer saw an SD write fail while the
-// card was supposedly mounted (sdNoteWriteFailure) — verify with real I/O and,
+// card was supposedly mounted (sdNoteIoFailure) — verify with real I/O and,
 // if the card stopped answering, drop the mount and re-run the full mount
 // ladder (SD.end() + staged SD.begin): exactly what the next reboot would do,
 // minus the reboot. Without this the firmware is blind to a wedged card:
@@ -44063,7 +44102,6 @@ static inline void uiCp(const char* next) {
 // true so fmSdTryMount() no-ops, and every SD feature fails silently until the
 // user power-cycles (the "SD stops working until reboot" report).
 static void sdHealthTick() {
-  if (!s_sd_fail_note_ms) return;
   if (!s_sd_mounted) { s_sd_fail_note_ms = 0; return; }   // unmounted: the existing FM poll / user-tap remount paths own recovery
   if (s_sd_format_pending) return;                        // format owns the card right now
   // Hold off while the core-0 worker is (or may be about to be) on the card —
@@ -44073,10 +44111,21 @@ static void sdHealthTick() {
 #if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
   if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
 #endif
-  static uint32_t s_next_probe_ms = 0;
+  // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
+  // also on a slow 30 s background cadence — a card yanked while nothing is
+  // writing (idle home screen) would otherwise never be noticed at all, since
+  // detection is failure-driven and reads fall back silently. A healthy-card
+  // probe is one SEND_STATUS transaction (sub-ms), so the idle cost is nil.
+  static uint32_t s_next_probe_ms    = 0;
+  static uint32_t s_next_bg_probe_ms = 0;
   const uint32_t now = (uint32_t)millis();
-  if (s_next_probe_ms && (int32_t)(now - s_next_probe_ms) < 0) return;
-  s_next_probe_ms = now + 5000;   // rate-limit: probing a dead card rides out SPI timeouts
+  if (s_sd_fail_note_ms) {
+    if (s_next_probe_ms && (int32_t)(now - s_next_probe_ms) < 0) return;
+  } else {
+    if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
+  }
+  s_next_probe_ms    = now + 5000;
+  s_next_bg_probe_ms = now + 30000;
   s_sd_fail_note_ms = 0;
   if (sdProbeAlive()) return;     // transient failure (card full, bad path, ...) — not a wedge
   fmSdUnmount();                  // SD.end() so a fresh begin re-runs the full card handshake
