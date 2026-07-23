@@ -105,6 +105,7 @@
 #include <Utils.h>
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
+#include "ChannelUtil.h"      // Apps → Airtime (self-contained channel-utilization tool)
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
@@ -35711,7 +35712,7 @@ static void openControlCenter() {
 enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
-  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
+  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_AIRTIME, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
   APPACT_DISCOVER,
 };
 
@@ -35957,6 +35958,7 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_SIGNAL:    openSignalInfoPopup(); return;   // signal/traffic + auto-discover settings
     case APPACT_MONITOR:   openMonitorPage();    return;   // RF activity graph + repeater-style radio stats
     case APPACT_SPECTRUM:  openSpectrumPage();   return;   // swept RF spectrum analyzer (borrows the radio)
+    case APPACT_AIRTIME:   ChannelUtil::launch(); return;  // channel-utilization / congestion proof tool
     case APPACT_DISCOVER:  openDiscoverPage();   return;   // active node-discovery sweep + nearby list
 #if !defined(HAS_TANMATSU)
     case APPACT_VNC:       openVncPage();        return;   // screen mirror + remote control from a browser
@@ -36317,6 +36319,7 @@ static void openAppDrawer() {
     { nullptr,             "Signal",    APPACT_SIGNAL,   0,         COLOR_ACCENT },  // theme (drawn signal bars)
     { TOUCH_SYM_ANTENNA,   "Monitor",   APPACT_MONITOR,  0,         0x35C9C9 },      // RF monitor cyan
     { TOUCH_SYM_ANTENNA,   "Spectrum",  APPACT_SPECTRUM, 0,         0xE8A33D },      // RF spectrum analyzer amber
+    { "%",                 "Airtime",   APPACT_AIRTIME,  0,         0xF2793C },      // channel-utilization / congestion proof (orange)
     { "@",                 "Mentions",  APPACT_MENTIONS, mentions,  0xF2A33C },      // mention amber
     { LV_SYMBOL_SETTINGS,  "Settings",  APPACT_SETTINGS, 0,         0x9AA3AD },      // neutral gear grey
 #if defined(HAS_TOUCH_UI)
@@ -36413,6 +36416,7 @@ static void statusBarTapCb(lv_event_t* e) {
   // game's own X can sit UNDER a taller status bar on big-screen boards (the P4),
   // leaving no reachable exit — so a bar tap closes Snake here (the guaranteed way out).
   if (SnakeGame::isOpen()) { SnakeGame::dismiss(); return; }
+  if (ChannelUtil::isOpen()) { ChannelUtil::dismiss(); return; }   // guaranteed exit if the X sits under a tall bar
   if (s_sb_shot_done) { s_sb_shot_done = false; return; }   // this press was a screenshot hold
   // A full-screen tool page (RF Monitor / Spectrum) is up: the bar carries its Back
   // chevron + title, so a tap goes back (closes the page) just like settings.
@@ -37068,7 +37072,7 @@ static void updateGlobalStatusBar() {
     // lv_layer_top and moved foreground, so without this the TALL bar's lower half (back
     // chevron + title) is covered by the page. Settings sheets sit on lv_scr_act so they
     // never need this.
-    const bool want_fg = SnakeGame::isOpen() || (s_apppage_title != nullptr);
+    const bool want_fg = SnakeGame::isOpen() || ChannelUtil::isOpen() || (s_apppage_title != nullptr);
     if (want_fg) {
       // Keep the bar the TOPMOST lv_layer_top child so its back tap is always hittable —
       // re-assert every tick (a page opened over a chat can otherwise let the chat's
@@ -44829,7 +44833,7 @@ void UITask::loop() {
     }
     // Also hard-lock the tab bar while Snake is open so a swipe/tap near the
     // bottom can't slip through to the app switcher (e.g. into the map).
-    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen();
+    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen() || ChannelUtil::isOpen();
     if (want_lock != s_tabbar_locked && g_lv.tabview) {
       lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
       if (tab_btns) {
