@@ -4562,6 +4562,34 @@ static volatile uint32_t s_msgs_write_fail_ms = 0;  // millis() of last failed r
 static volatile uint16_t s_msgs_write_fails   = 0;  // consecutive failures since the last success
 static volatile uint8_t  s_msgs_write_stage   = 0;  // where the last failure hit: 'o' open, 'h' header, 'b' body, 'r' rename
 static volatile int      s_msgs_write_errno   = 0;  // errno at that failure (ENFILE/EMFILE = VFS file table full, ENOSPC = card full, EIO = card error)
+// Human-readable diagnosis of the last chat-store write failure — shown on the
+// About panel and in the failure alerts, so a tester doesn't need an errno
+// table. Diagnostic vocabulary stays English on purpose (it's what ends up in
+// bug reports verbatim).
+static void chatSaveFailText(char* out, size_t cap) {
+  const char* stage;
+  switch ((char)s_msgs_write_stage) {
+    case 'o': stage = "open";        break;
+    case 'h': stage = "header";      break;
+    case 'b': stage = "write";       break;
+    case 'r': stage = "rename";      break;
+    default:  stage = "save";        break;
+  }
+  const int e = s_msgs_write_errno;
+  const char* why;
+  switch (e) {
+    case ENFILE:
+    case EMFILE: why = "too many open files"; break;
+    case ENOSPC: why = "card full";           break;
+    case EIO:    why = "card I/O error";      break;
+    case ENOENT: why = "folder missing";      break;
+    case EROFS:  why = "write-protected";     break;
+    case EACCES: why = "access denied";       break;
+    case 0:      why = "no errno";            break;
+    default:     why = strerror(e);           break;   // newlib carries the full table
+  }
+  snprintf(out, cap, "%s failed: %s (e%d)", stage, why, e);
+}
 static bool uiDataFsIsSdCard();                  // fwd (storage code below) — About page shows the resolved backend
 static File uiDataOpen(const char* name, const char* mode);   // fwd — About page reads the msgs file size
 static volatile bool s_sdinfo_done     = false;  // worker -> UI: a result exists
@@ -10069,15 +10097,15 @@ static void sysInfoTextLive(char* buf, size_t cap) {
       File f = uiDataOpen(k_ui_msgs_path, "r");
       if (f) { s_chat_fsz_cached = f.size(); f.close(); }
     }
-    char stat[48];
-    if (s_msgs_write_fails)
-      // @stage: o=open h=header b=body r=rename; errno: 23/24=file table full,
-      // 28=card full, 5=I/O error (card) — the triage key for save failures.
-      snprintf(stat, sizeof stat, "FAIL x%u @%c e%d (%lus ago)",
+    char stat[112];
+    if (s_msgs_write_fails) {
+      char why[64];
+      chatSaveFailText(why, sizeof why);
+      snprintf(stat, sizeof stat, "FAIL x%u (%lus ago)\n  %s",
                (unsigned)s_msgs_write_fails,
-               s_msgs_write_stage ? (char)s_msgs_write_stage : '?',
-               (int)s_msgs_write_errno,
-               (unsigned long)((nowms - s_msgs_write_fail_ms) / 1000u));
+               (unsigned long)((nowms - s_msgs_write_fail_ms) / 1000u),
+               why);
+    }
     else if (s_msgs_write_ok_ms)
       snprintf(stat, sizeof stat, "OK %lus ago",
                (unsigned long)((nowms - s_msgs_write_ok_ms) / 1000u));
@@ -40972,8 +41000,12 @@ void UITask::flushHistoryIfDue(unsigned long now) {
     // retry every 5 min instead of every 30 s — the RAM ring keeps
     // everything meanwhile, and a successful write resets the counter.
     markMsgsDirty(s_msgs_write_fails >= 5 ? 300000 : 5000);
-    if (s_msgs_write_fails >= 3 && (s_msgs_write_fails % 3) == 0)
-      showAlert(TR("Chat history is NOT saving (storage error)"), 2600);
+    if (s_msgs_write_fails >= 3 && (s_msgs_write_fails % 3) == 0) {
+      char why[64]; chatSaveFailText(why, sizeof why);
+      char msg[128];
+      snprintf(msg, sizeof msg, "%s\n%s", TR("Chat history is NOT saving"), why);
+      showAlert(msg, 3200);
+    }
   }
   // Thread metadata (~4 KB) flushes on a short delay; the message ring
   // (scales with MAX_UI_MESSAGES) flushes lazily to reduce flash write pressure.
@@ -43959,10 +43991,14 @@ void UITask::rebootDevice() {
   if (uiHistWaitWorkerIdle() || s_hist_flush_busy) _msgs_dirty = true;
   if (_threads_dirty) saveThreadsToStorage();
   if (_msgs_dirty && !saveMsgsToStorage()) {
-    // Last-chance save failed — say so instead of rebooting into silent loss.
-    showAlert(TR("Chat history save FAILED"), 1500);
+    // Last-chance save failed — say so (with the diagnosis) instead of
+    // rebooting into silent loss.
+    char why[64]; chatSaveFailText(why, sizeof why);
+    char msg[128];
+    snprintf(msg, sizeof msg, "%s\n%s", TR("Chat history save FAILED"), why);
+    showAlert(msg, 1800);
     lv_refr_now(NULL);
-    delay(1200);   // let the warning actually paint before the reset
+    delay(1500);   // let the warning actually paint before the reset
   }
   discoveredFlushNow();   // persist the Discovered ring before we go down
   the_mesh.flushContactsIfDirty();   // and any coalesced contacts refresh (card-less devices)
