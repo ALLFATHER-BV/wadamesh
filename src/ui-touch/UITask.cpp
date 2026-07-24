@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <cerrno>   // chat-store write diagnostics surface errno (ENFILE vs ENOSPC vs EIO)
 #if defined(ESP32)
   #include <time.h>
   #include <SPIFFS.h>
@@ -4559,6 +4560,8 @@ static bool uiHistWorkerFlush();                 // defined with the storage cod
 static volatile uint32_t s_msgs_write_ok_ms   = 0;  // millis() of last successful ring write (0 = none yet)
 static volatile uint32_t s_msgs_write_fail_ms = 0;  // millis() of last failed ring write
 static volatile uint16_t s_msgs_write_fails   = 0;  // consecutive failures since the last success
+static volatile uint8_t  s_msgs_write_stage   = 0;  // where the last failure hit: 'o' open, 'h' header, 'b' body, 'r' rename
+static volatile int      s_msgs_write_errno   = 0;  // errno at that failure (ENFILE/EMFILE = VFS file table full, ENOSPC = card full, EIO = card error)
 static bool uiDataFsIsSdCard();                  // fwd (storage code below) — About page shows the resolved backend
 static File uiDataOpen(const char* name, const char* mode);   // fwd — About page reads the msgs file size
 static volatile bool s_sdinfo_done     = false;  // worker -> UI: a result exists
@@ -10068,8 +10071,12 @@ static void sysInfoTextLive(char* buf, size_t cap) {
     }
     char stat[48];
     if (s_msgs_write_fails)
-      snprintf(stat, sizeof stat, "FAILING x%u (%lus ago)",
+      // @stage: o=open h=header b=body r=rename; errno: 23/24=file table full,
+      // 28=card full, 5=I/O error (card) — the triage key for save failures.
+      snprintf(stat, sizeof stat, "FAIL x%u @%c e%d (%lus ago)",
                (unsigned)s_msgs_write_fails,
+               s_msgs_write_stage ? (char)s_msgs_write_stage : '?',
+               (int)s_msgs_write_errno,
                (unsigned long)((nowms - s_msgs_write_fail_ms) / 1000u));
     else if (s_msgs_write_ok_ms)
       snprintf(stat, sizeof stat, "OK %lus ago",
@@ -18124,8 +18131,11 @@ static bool fmSdTryMount() {
   // mounts on the first attempt and returns immediately; only a flaky/cold card
   // walks the whole ladder (~1.1 s worst case). The cumulative delay can
   // approach the loop watchdog window, so drop the WDT around the loop. 4 MHz
-  // is reliable on the shared LoRa bus; max_files=3 keeps the VFS footprint
-  // small (dir + at most 2 files).
+  // is reliable on the shared LoRa bus. max_files=6 (was 3): the card now
+  // serves telemetry log rewrites (2 handles), battery log rewrites (2),
+  // the history flush, tile reads/writes, WAV chimes and the About readout
+  // CONCURRENTLY — with only 3 VFS slots the history flush's open("w") lost
+  // that race and chat saves failed with ENFILE while the card was fine.
   // Ladder of (settle, clock) attempts. The first three use the fast 4 MHz the
   // shared LoRa bus handles well; a cold / cheap card that won't wake at 4 MHz
   // then gets progressively longer settles AND a lower clock (1 MHz, then
@@ -18150,7 +18160,7 @@ static bool fmSdTryMount() {
   for (int attempt = 0; attempt < kAttempts; ++attempt) {
     SD.end();
     delay(kMountLadder[attempt].settle_ms);
-    if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 3) && SD.cardType() != CARD_NONE) {
+    if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
       mounted = true;
       break;
     }
@@ -41435,14 +41445,24 @@ static bool uiMsgsWriteResult(bool ok) {
   }
   return ok;
 }
+// Failure wrapper: record WHERE the write died and the errno — 'open failed
+// with ENFILE' (VFS file-handle table full) needs a completely different fix
+// than 'body write failed with EIO' (card), and without this they were
+// indistinguishable on a device with no readable serial.
+static bool uiMsgsWriteFail(char stage) {
+  s_msgs_write_stage = (uint8_t)stage;
+  s_msgs_write_errno = errno;
+  return uiMsgsWriteResult(false);
+}
 
 static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
                             uint16_t count, uint16_t head, uint32_t msgcount,
                             const char* tmp_path) {
 #if defined(ESP32)
   WdtHeavyGuard _wg;   // a fragmenting write can trigger a multi-second SPIFFS GC
+  errno = 0;
   File f = uiDataOpen(tmp_path, "w");
-  if (!f) return uiMsgsWriteResult(false);
+  if (!f) return uiMsgsWriteFail('o');
 
   UiMsgFileHeader hdr{};
   hdr.magic         = k_ui_msgs_magic;
@@ -41471,7 +41491,8 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
   hdr.ui_msg_head   = 0;   // written oldest-first => the file's ring head sits at 0
   hdr.msgcount      = msgcount;
   if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
-    f.close(); return false;
+    f.close(); uiDataRemove(tmp_path);
+    return uiMsgsWriteFail('h');   // was silently un-counted before
   }
 
   const size_t REC = sizeof(UiHistoryMsg);
@@ -41530,8 +41551,10 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     }
   }
   f.close();
-  if (!ok) { uiDataRemove(tmp_path); return uiMsgsWriteResult(false); }
-  return uiMsgsWriteResult(uiDataReplaceFile(k_ui_msgs_path, tmp_path));
+  if (!ok) { uiDataRemove(tmp_path); return uiMsgsWriteFail('b'); }
+  errno = 0;
+  if (!uiDataReplaceFile(k_ui_msgs_path, tmp_path)) return uiMsgsWriteFail('r');
+  return uiMsgsWriteResult(true);
 #else
   (void)msgs; (void)cap; (void)count; (void)head; (void)msgcount; (void)tmp_path;
   return false;
@@ -44273,7 +44296,7 @@ static void sdHealthTick() {
     SPIClass* spi = sdSharedSPI();
     if (!spi) return;
     SD.end();
-    if (SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 3) && SD.cardType() != CARD_NONE) {
+    if (SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
       s_sd_mounted        = true;
       s_sd_size           = SD.cardSize();
       s_sd_retry_after_ms = 0;
@@ -45281,7 +45304,7 @@ void UITask::loop() {
         }
         sdcard_uninit(pdrv);
       }
-      if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 3);
+      if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
     }
     enableLoopWDT();
     fmHideFormatOverlay();
