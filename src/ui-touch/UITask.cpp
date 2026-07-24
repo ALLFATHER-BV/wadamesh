@@ -833,7 +833,12 @@ static bool wavOpen(const char* prefpath, File& f) {
   if (!prefpath || !prefpath[0]) return false;
   fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)   // only the T-Deck/pager sound picker ever writes an "sd:"-prefixed pref
-  if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; fmSdTryMount(); }
+  // No fmSdTryMount() here: this runs on the throwaway notify task, and walking
+  // the SD.end()+SD.begin() mount ladder from a second task races the loop
+  // task's own SD use (the one documented single-task assumption). If the card
+  // isn't mounted the open below fails fast and the chime falls back; mounting
+  // is owned by boot adoption / sdHealthTick's reinsert watch / the FM paths.
+  if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; }
 #endif
   f = fsp->open(fp, FILE_READ);
   if (!f || f.isDirectory()) { if (f) f.close(); return false; }
@@ -24569,7 +24574,11 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   if (s_tiles_from_sd && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
     // Tile source = microSD: read straight off the card (fully offline, no server fetch).
     if (s_sd_fail_note_ms) return false;   // card suspected dead — don't stack per-tile SPI timeouts (sdHealthTick arbitrates)
-    if (!fmSdTryMount()) return false;
+    // Mounted check only — a render loop must never walk the multi-second
+    // mount ladder per tile (with the card out that read as recurring UI
+    // freezes). Mounting is owned by boot adoption, sdHealthTick's reinsert
+    // watch, the FM poll, and the SD-tiles toggle (mapOptTilesSdCb mounts).
+    if (!s_sd_mounted) return false;
     markSdIo();                          // SD read activity -> status-bar LED
     // Prefer the Meshtastic/MeshCore standard layout /maps/osm/{z}/{x}/{y}.png
     // (decoded via lodepng); fall back to the legacy /tiles/{z}/{x}/{y}.jpg.
@@ -24672,7 +24681,7 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
 #if CAP_SD
   if (s_tiles_from_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
     if (s_sd_fail_note_ms) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
-    if (!fmSdTryMount()) return false;
+    if (!s_sd_mounted) return false;       // never ladder from the zoom guard (see loadTileJpeg)
     char p[56];
     snprintf(p, sizeof p, "/maps/osm/%u/%ld/%ld.png", (unsigned)z, x, y);
     if (SD.exists(p)) return true;
@@ -44102,7 +44111,40 @@ static inline void uiCp(const char* next) {
 // true so fmSdTryMount() no-ops, and every SD feature fails silently until the
 // user power-cycles (the "SD stops working until reboot" report).
 static void sdHealthTick() {
-  if (!s_sd_mounted) { s_sd_fail_note_ms = 0; return; }   // unmounted: the existing FM poll / user-tap remount paths own recovery
+  static uint32_t s_next_probe_ms    = 0;
+  static uint32_t s_next_bg_probe_ms = 0;
+  const uint32_t now = (uint32_t)millis();
+  if (!s_sd_mounted) {
+    s_sd_fail_note_ms = 0;
+    // Reinsert watch. After a failed remount ("SD card lost") the SD VFS is
+    // unregistered and NOTHING outside the file manager ever re-runs a mount
+    // — a reinserted card then LOOKED recovered (battery quietly falls back
+    // to SPIFFS) while chat-history writes kept failing silently and new
+    // messages were never persisted. One light single-attempt mount (no
+    // ladder; an empty slot fails in well under a second) every 30 s while
+    // awake — a healthy warm card mounts on the first 4 MHz attempt. The FM
+    // poll / SD-row tap still provide the full ladder for stubborn cards.
+    if (touchSleep::isSleeping()) return;
+    if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
+    s_next_bg_probe_ms = now + 30000;
+#if defined(TLORA_PAGER)
+    if (!pagerSdCardPresent()) return;   // card-detect says the slot is empty
+#endif
+    if (s_fm_list) return;               // FM open: its 2 s poll owns remounting (full ladder)
+    SPIClass* spi = sdSharedSPI();
+    if (!spi) return;
+    SD.end();
+    if (SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 3) && SD.cardType() != CARD_NONE) {
+      s_sd_mounted        = true;
+      s_sd_size           = SD.cardSize();
+      s_sd_retry_after_ms = 0;
+      markSdIo();
+      if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
+    } else {
+      SD.end();                          // leave cardType() honestly CARD_NONE
+    }
+    return;
+  }
   if (s_sd_format_pending) return;                        // format owns the card right now
   // Hold off while the core-0 worker is (or may be about to be) on the card —
   // SD.end() under an open worker file handle is the crash we must not add.
@@ -44122,9 +44164,6 @@ static void sdHealthTick() {
   // after wake. The FAILURE-driven probe stays active asleep on purpose —
   // scheduled telemetry keeps logging to SD during sleep, and a wedge there
   // must still recover.
-  static uint32_t s_next_probe_ms    = 0;
-  static uint32_t s_next_bg_probe_ms = 0;
-  const uint32_t now = (uint32_t)millis();
   if (s_sd_fail_note_ms) {
     if (s_next_probe_ms && (int32_t)(now - s_next_probe_ms) < 0) return;
   } else {
