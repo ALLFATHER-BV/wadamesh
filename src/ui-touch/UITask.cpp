@@ -224,6 +224,13 @@ constexpr uint16_t k_ui_history_min_version = 6;   // v4/v5 used 96-char records
 constexpr const char* k_ui_threads_path = "/ui_threads_v1.bin";
 constexpr const char* k_ui_msgs_path    = "/ui_msgs_v1.bin";
 constexpr const char* k_ui_msgs_tmp_path = "/ui_msgs_v1.bin.tmp";
+// Separate temp for the SYNCHRONOUS (shutdown/reboot/no-PSRAM) writer. The
+// core-0 worker and the loop task can overlap when a stalled worker outlives
+// uiHistWaitWorkerIdle's 9 s cap — two truncating opens of ONE tmp interleave
+// into garbage, and whichever rename lands last installs a corrupt file that
+// the next boot quarantines (total history loss). Distinct tmp names make the
+// overlap last-rename-wins with each candidate internally consistent.
+constexpr const char* k_ui_msgs_tmp2_path = "/ui_msgs_v1.bin.tm2";
 constexpr uint32_t k_ui_threads_magic   = 0x55495448;  // "UITH"
 constexpr uint32_t k_ui_msgs_magic      = 0x55494D53;  // "UIMS"
 
@@ -4543,6 +4550,17 @@ static volatile bool s_hist_flush_req  = false;  // snapshot armed, waiting for 
 static volatile bool s_hist_flush_busy = false;  // worker owns the snapshot + the history file
 static volatile bool s_hist_flush_ok   = true;   // last worker write result (retry on false)
 static bool uiHistWorkerFlush();                 // defined with the storage code below
+// Message-ring write health. A failing ui_msgs write used to be 100% silent —
+// the user only found out on the next reboot as "messages from the last N
+// minutes vanished" (the thread list still showed fresh times because the
+// small threads file kept writing while the big ring write failed). Updated
+// inside uiWriteMsgsFile from EITHER task (volatile stores only); read by the
+// About page + the repeated-failure toast in flushHistoryIfDue.
+static volatile uint32_t s_msgs_write_ok_ms   = 0;  // millis() of last successful ring write (0 = none yet)
+static volatile uint32_t s_msgs_write_fail_ms = 0;  // millis() of last failed ring write
+static volatile uint16_t s_msgs_write_fails   = 0;  // consecutive failures since the last success
+static bool uiDataFsIsSdCard();                  // fwd (storage code below) — About page shows the resolved backend
+static File uiDataOpen(const char* name, const char* mode);   // fwd — About page reads the msgs file size
 static volatile bool s_sdinfo_done     = false;  // worker -> UI: a result exists
 static volatile bool s_sdinfo_ok       = false;  // card present + sizes valid
 static uint64_t      s_sdinfo_tot      = 0;
@@ -10025,6 +10043,33 @@ static void sysInfoTextLive(char* buf, size_t cap) {
                 (unsigned long)rx_evt, (unsigned long)rx_ok, (unsigned long)rx_err,
                 (unsigned long)rx_lost, (unsigned long)radio_driver.getRxQueueDrops(),
                 radio_driver.rxQueueEnabled() ? "on" : "off");
+
+  // Chat-history store health. Two failure modes this exposes that are
+  // otherwise invisible: (a) the "wrong backend" trap — a boot whose SD mount
+  // failed resolves the store to internal SPIFFS and every message written
+  // that session is invisible on the next carded boot; (b) persistent ring
+  // write failures (full card / damaged FAT) — the small threads file keeps
+  // succeeding, so the thread list looks fresh while messages silently stop
+  // persisting.
+  {
+    size_t fsz = 0;
+    { File f = uiDataOpen(k_ui_msgs_path, "r"); if (f) { fsz = f.size(); f.close(); } }
+    char stat[48];
+    const uint32_t nowms = (uint32_t)millis();
+    if (s_msgs_write_fails)
+      snprintf(stat, sizeof stat, "FAILING x%u (%lus ago)",
+               (unsigned)s_msgs_write_fails,
+               (unsigned long)((nowms - s_msgs_write_fail_ms) / 1000u));
+    else if (s_msgs_write_ok_ms)
+      snprintf(stat, sizeof stat, "OK %lus ago",
+               (unsigned long)((nowms - s_msgs_write_ok_ms) / 1000u));
+    else
+      snprintf(stat, sizeof stat, "none this session");
+    p += snprintf(buf + p, cap - p,
+                  "Chat store\n  %s   file: %u KB\n  last save: %s\n\n",
+                  uiDataFsIsSdCard() ? "SD /meshcomod" : "Internal flash",
+                  (unsigned)(fsz / 1024), stat);
+  }
 #endif
   (void)p; (void)cap;
 }
@@ -40881,8 +40926,17 @@ static uint16_t      s_hist_snap_head     = 0;
 static uint32_t      s_hist_snap_msgcount = 0;
 
 void UITask::flushHistoryIfDue(unsigned long now) {
-  // A worker write failed (storage hiccup): re-arm and try again.
-  if (!s_hist_flush_ok) { s_hist_flush_ok = true; markMsgsDirty(5000); }
+  // A worker write failed (storage hiccup): re-arm and try again. Surface
+  // repeated failures — a persistently failing ring write was previously
+  // 100% silent and read as "messages from the last N minutes vanished" on
+  // the next reboot (the small threads file kept writing, so the thread
+  // list still showed fresh last-message times).
+  if (!s_hist_flush_ok) {
+    s_hist_flush_ok = true;
+    markMsgsDirty(5000);
+    if (s_msgs_write_fails >= 3 && (s_msgs_write_fails % 3) == 0)
+      showAlert(TR("Chat history is NOT saving (storage error)"), 2600);
+  }
   // Thread metadata (~4 KB) flushes on a short delay; the message ring
   // (scales with MAX_UI_MESSAGES) flushes lazily to reduce flash write pressure.
   if (_threads_dirty && now >= _next_threads_flush_ms) {
@@ -41245,6 +41299,10 @@ bool UITask::loadLegacyHistoryFromStorage() {
 
 bool UITask::loadHistoryFromStorage() {
 #if defined(ESP32)
+  // Hygiene: a crash/power-cut mid-flush can orphan a temp file; they're never
+  // read (the loader only opens the final path), just reclaim the space.
+  uiDataRemove(k_ui_msgs_tmp_path);
+  uiDataRemove(k_ui_msgs_tmp2_path);
   const bool have_threads = loadThreadsFromStorage();
   const bool have_msgs    = loadMsgsFromStorage();
   if (!have_threads && !have_msgs) {
@@ -41321,12 +41379,31 @@ bool UITask::saveThreadsToStorage() {
 // write from PSRAM" that regressed before: the chunk lives in internal RAM (the
 // flash driver never bounces a PSRAM source). Alloc failure falls back to the
 // original per-record writes.
+// Record a ring-write outcome (runs on the loop task OR the core-0 worker —
+// volatile stores only, LVGL-free) and stamp the SD health probe on failure so
+// a wedged card gets arbitrated instead of the write failing silently forever.
+static bool uiMsgsWriteResult(bool ok) {
+  const uint32_t m = (uint32_t)millis();
+  if (ok) {
+    s_msgs_write_ok_ms = m ? m : 1;
+    s_msgs_write_fails = 0;
+  } else {
+    s_msgs_write_fail_ms = m ? m : 1;
+    if (s_msgs_write_fails < 0xFFFFu) s_msgs_write_fails = s_msgs_write_fails + 1;
+#if defined(HAS_TDECK_GT911)
+    if (s_ui_data_fs == &SD) sdNoteIoFailure();
+#endif
+  }
+  return ok;
+}
+
 static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
-                            uint16_t count, uint16_t head, uint32_t msgcount) {
+                            uint16_t count, uint16_t head, uint32_t msgcount,
+                            const char* tmp_path) {
 #if defined(ESP32)
   WdtHeavyGuard _wg;   // a fragmenting write can trigger a multi-second SPIFFS GC
-  File f = uiDataOpen(k_ui_msgs_tmp_path, "w");
-  if (!f) return false;
+  File f = uiDataOpen(tmp_path, "w");
+  if (!f) return uiMsgsWriteResult(false);
 
   UiMsgFileHeader hdr{};
   hdr.magic         = k_ui_msgs_magic;
@@ -41402,10 +41479,10 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     }
   }
   f.close();
-  if (!ok) { uiDataRemove(k_ui_msgs_tmp_path); return false; }
-  return uiDataReplaceFile(k_ui_msgs_path, k_ui_msgs_tmp_path);
+  if (!ok) { uiDataRemove(tmp_path); return uiMsgsWriteResult(false); }
+  return uiMsgsWriteResult(uiDataReplaceFile(k_ui_msgs_path, tmp_path));
 #else
-  (void)msgs; (void)cap; (void)count; (void)head; (void)msgcount;
+  (void)msgs; (void)cap; (void)count; (void)head; (void)msgcount; (void)tmp_path;
   return false;
 #endif
 }
@@ -41415,7 +41492,8 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
 static bool uiHistWorkerFlush() {
   if (!s_hist_snap || s_hist_snap_cap <= 0) return false;   // armed without a snapshot — retry
   return uiWriteMsgsFile(s_hist_snap, s_hist_snap_cap,
-                         s_hist_snap_count, s_hist_snap_head, s_hist_snap_msgcount);
+                         s_hist_snap_count, s_hist_snap_head, s_hist_snap_msgcount,
+                         k_ui_msgs_tmp_path);
 }
 
 bool UITask::saveMsgsToStorage() {
@@ -41425,7 +41503,8 @@ bool UITask::saveMsgsToStorage() {
   return uiWriteMsgsFile(_ui_msgs, _ui_msg_cap,
                          static_cast<uint16_t>(_ui_msg_count),
                          static_cast<uint16_t>(_ui_msg_head),
-                         static_cast<uint32_t>(_msgcount));
+                         static_cast<uint32_t>(_msgcount),
+                         k_ui_msgs_tmp2_path);   // own tmp — never collide with a stalled worker write
 #else
   return false;
 #endif
@@ -43799,9 +43878,18 @@ void UITask::rebootDevice() {
   // Persist chat history synchronously before we reboot — the periodic
   // flush is rate-capped, so without this a reboot could drop the most
   // recent chat history.
-  if (uiHistWaitWorkerIdle()) _msgs_dirty = true;   // cancelled snapshot = unwritten data
+  // A worker still busy after the 9 s wait cap counts as unwritten data too:
+  // its write may never land (stalled on a dying card), and _msgs_dirty was
+  // already cleared when its snapshot was armed — skipping the sync save here
+  // silently dropped everything since the last successful flush.
+  if (uiHistWaitWorkerIdle() || s_hist_flush_busy) _msgs_dirty = true;
   if (_threads_dirty) saveThreadsToStorage();
-  if (_msgs_dirty) saveMsgsToStorage();
+  if (_msgs_dirty && !saveMsgsToStorage()) {
+    // Last-chance save failed — say so instead of rebooting into silent loss.
+    showAlert(TR("Chat history save FAILED"), 1500);
+    lv_refr_now(NULL);
+    delay(1200);   // let the warning actually paint before the reset
+  }
   discoveredFlushNow();   // persist the Discovered ring before we go down
   the_mesh.flushContactsIfDirty();   // and any coalesced contacts refresh (card-less devices)
   if (_board) _board->reboot();
