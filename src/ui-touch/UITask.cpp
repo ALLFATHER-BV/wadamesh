@@ -44140,6 +44140,15 @@ static void sdHealthTick() {
       s_sd_retry_after_ms = 0;
       markSdIo();
       if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
+#if defined(HAS_TDECK_GT911)
+      // Land the RAM ring on the card NOW, not up to 30+ s later: every message
+      // received while the card was out is only in RAM, and a hard power cut
+      // (power switch, reset, reflash) before the next lazy flush would drop
+      // the whole outage backlog. mkdir first — a fresh replacement card has no
+      // /meshcomod yet, and without it every history flush fails silently.
+      SD.mkdir("/meshcomod");
+      if (g_lv.task) g_lv.task->persistHistoryNow();
+#endif
     } else {
       SD.end();                          // leave cardType() honestly CARD_NONE
     }
@@ -44177,6 +44186,10 @@ static void sdHealthTick() {
   fmSdUnmount();                  // SD.end() so a fresh begin re-runs the full card handshake
   if (fmSdTryMount()) {
     if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
+#if defined(HAS_TDECK_GT911)
+    SD.mkdir("/meshcomod");                            // fresh replacement card: recreate the data root
+    if (g_lv.task) g_lv.task->persistHistoryNow();     // land the RAM ring before any hard power cut
+#endif
   } else {
     // Ladder failed — card needs a real power cycle (reinsert). s_sd_mounted is
     // now false and SD.cardType() reads CARD_NONE, so features degrade honestly
@@ -44631,6 +44644,10 @@ void UITask::loop() {
         // unmountable card spikes current / churns the bus and can reset the board.
         if (now >= s_sd_retry_after_ms && fmSdTryMount()) {
           showAlert(TR("SD card inserted"), 1500);
+#if defined(HAS_TDECK_GT911)
+          SD.mkdir("/meshcomod");   // fresh replacement card: recreate the data root
+          persistHistoryNow();      // land the RAM ring (outage backlog) before any hard power cut
+#endif
           if (!s_fm_fs) fmShowRoots();          // refresh roots so it appears
         }
       } else if (!sdProbeAlive()) {
