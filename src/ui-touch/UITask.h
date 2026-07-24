@@ -486,6 +486,7 @@ public:
   // lost — the periodic flush is off-thread and rate-capped. Overrides the
   // AbstractUITask hook so the companion CMD_REBOOT path flushes too.
   void persistHistoryNow() override;
+  void flushHistorySoon();   // arm an immediate OFF-THREAD flush (worker) — no min-delay clamp, no UI stall
 
   // from AbstractUITask
   void msgRead(int msgcount) override;

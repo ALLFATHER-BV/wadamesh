@@ -10052,10 +10052,21 @@ static void sysInfoTextLive(char* buf, size_t cap) {
   // succeeding, so the thread list looks fresh while messages silently stop
   // persisting.
   {
-    size_t fsz = 0;
-    { File f = uiDataOpen(k_ui_msgs_path, "r"); if (f) { fsz = f.size(); f.close(); } }
-    char stat[48];
+    // File size is CACHED and refreshed at most every 30 s, never while the
+    // worker is mid-flush: this label rebuilds at 1 Hz on the UI task, and an
+    // open() here blocks on the FatFs volume lock behind a slow/failing ring
+    // write — that was a UI freeze you could trigger just by WATCHING this
+    // page while the store was sick.
+    static size_t   s_chat_fsz_cached = 0;
+    static uint32_t s_chat_fsz_ms     = 0;
     const uint32_t nowms = (uint32_t)millis();
+    if (!s_hist_flush_busy &&
+        (s_chat_fsz_ms == 0 || (uint32_t)(nowms - s_chat_fsz_ms) > 30000u)) {
+      s_chat_fsz_ms = nowms ? nowms : 1;
+      File f = uiDataOpen(k_ui_msgs_path, "r");
+      if (f) { s_chat_fsz_cached = f.size(); f.close(); }
+    }
+    char stat[48];
     if (s_msgs_write_fails)
       snprintf(stat, sizeof stat, "FAILING x%u (%lus ago)",
                (unsigned)s_msgs_write_fails,
@@ -10068,7 +10079,7 @@ static void sysInfoTextLive(char* buf, size_t cap) {
     p += snprintf(buf + p, cap - p,
                   "Chat store\n  %s   file: %u KB\n  last save: %s\n\n",
                   uiDataFsIsSdCard() ? "SD /meshcomod" : "Internal flash",
-                  (unsigned)(fsz / 1024), stat);
+                  (unsigned)(s_chat_fsz_cached / 1024), stat);
   }
 #endif
   (void)p; (void)cap;
@@ -40925,6 +40936,18 @@ static uint16_t      s_hist_snap_count    = 0;
 static uint16_t      s_hist_snap_head     = 0;
 static uint32_t      s_hist_snap_msgcount = 0;
 
+// Arm an immediate flush of both history files WITHOUT the min-delay clamp and
+// WITHOUT blocking this task: the actual write still happens on the core-0
+// worker (or the sync fallback inside flushHistoryIfDue). Used right after an
+// SD remount — a synchronous persistHistoryNow() there froze the UI for >30 s
+// on a card that mounts fine but times out on large writes.
+void UITask::flushHistorySoon() {
+  _msgs_dirty            = true;
+  _next_msgs_flush_ms    = millis();
+  _threads_dirty         = true;
+  _next_threads_flush_ms = millis();
+}
+
 void UITask::flushHistoryIfDue(unsigned long now) {
   // A worker write failed (storage hiccup): re-arm and try again. Surface
   // repeated failures — a persistently failing ring write was previously
@@ -40933,7 +40956,12 @@ void UITask::flushHistoryIfDue(unsigned long now) {
   // list still showed fresh last-message times).
   if (!s_hist_flush_ok) {
     s_hist_flush_ok = true;
-    markMsgsDirty(5000);
+    // Back off a hopelessly failing store: each retry against a card that
+    // times out on large writes costs seconds of bus stalls (felt as UI
+    // freezes through the FatFs volume lock). After 5 straight failures
+    // retry every 5 min instead of every 30 s — the RAM ring keeps
+    // everything meanwhile, and a successful write resets the counter.
+    markMsgsDirty(s_msgs_write_fails >= 5 ? 300000 : 5000);
     if (s_msgs_write_fails >= 3 && (s_msgs_write_fails % 3) == 0)
       showAlert(TR("Chat history is NOT saving (storage error)"), 2600);
   }
@@ -44229,13 +44257,14 @@ static void sdHealthTick() {
       markSdIo();
       if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
 #if defined(HAS_TDECK_GT911)
-      // Land the RAM ring on the card NOW, not up to 30+ s later: every message
-      // received while the card was out is only in RAM, and a hard power cut
-      // (power switch, reset, reflash) before the next lazy flush would drop
-      // the whole outage backlog. mkdir first — a fresh replacement card has no
-      // /meshcomod yet, and without it every history flush fails silently.
+      // Land the RAM ring on the card promptly, not up to 30+ s later: every
+      // message received while the card was out is only in RAM. Armed as an
+      // OFF-THREAD flush — a synchronous write here froze the UI for >30 s on
+      // a card that mounts fine but times out on large writes. mkdir first —
+      // a fresh replacement card has no /meshcomod yet, and without it every
+      // history flush fails silently.
       SD.mkdir("/meshcomod");
-      if (g_lv.task) g_lv.task->persistHistoryNow();
+      if (g_lv.task) g_lv.task->flushHistorySoon();
 #endif
     } else {
       SD.end();                          // leave cardType() honestly CARD_NONE
@@ -44276,7 +44305,7 @@ static void sdHealthTick() {
     if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
 #if defined(HAS_TDECK_GT911)
     SD.mkdir("/meshcomod");                            // fresh replacement card: recreate the data root
-    if (g_lv.task) g_lv.task->persistHistoryNow();     // land the RAM ring before any hard power cut
+    if (g_lv.task) g_lv.task->flushHistorySoon();      // land the RAM ring promptly (off-thread — no UI stall)
 #endif
   } else {
     // Ladder failed — card needs a real power cycle (reinsert). s_sd_mounted is
@@ -44734,7 +44763,7 @@ void UITask::loop() {
           showAlert(TR("SD card inserted"), 1500);
 #if defined(HAS_TDECK_GT911)
           SD.mkdir("/meshcomod");   // fresh replacement card: recreate the data root
-          persistHistoryNow();      // land the RAM ring (outage backlog) before any hard power cut
+          flushHistorySoon();       // land the RAM ring promptly (off-thread — no UI stall)
 #endif
           if (!s_fm_fs) fmShowRoots();          // refresh roots so it appears
         }
