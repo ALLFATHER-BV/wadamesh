@@ -24148,16 +24148,11 @@ static void tileFetchTaskFn(void* arg) {
       s_los_result_ready = true;
       continue;
     }
-    // Chat-history flush: write the loop thread's snapshot. busy is raised BEFORE
-    // req is cleared so the loop-side gate (busy || req) never sees a gap in which
-    // it could overwrite the snapshot mid-write.
-    if (s_hist_flush_req) {
-      s_hist_flush_busy = true;
-      s_hist_flush_req  = false;
-      s_hist_flush_ok   = uiHistWorkerFlush();
-      s_hist_flush_busy = false;
-      continue;
-    }
+    // (Chat-history flush moved to its own core-1 task — histFlushTaskFn. On
+    // THIS worker it shared core 0 with the Wi-Fi driver, whose prio-23 tasks
+    // starve a prio-1 task for hundreds of ms; sd_diskio's busy-waits measure
+    // wall time, so healthy SD writes surfaced as timeouts/EIO here while the
+    // identical write from core 1 succeeded.)
     // Firmware update check (one-shot, infrequent). Reuses this worker's stack.
     if (s_verchk_request) {
       s_verchk_request = false;
@@ -24522,6 +24517,54 @@ static bool ensureTileFetchTaskRunning() {
                 s_tile_fetch_task, (unsigned)ESP.getFreeHeap(),
                 (unsigned)ESP.getFreePsram());
   return s_tile_fetch_task != nullptr;
+}
+
+// ---- Chat-history flush worker (core 1) --------------------------------------
+// The flush used to ride the core-0 tile_fetch worker — the Wi-Fi core. Under
+// Wi-Fi load its prio-23 driver tasks starve a prio-1 task for hundreds of ms
+// at a time, and sd_diskio's busy-waits measure WALL time: the timeout expires
+// while the task simply wasn't scheduled, so perfectly good SD writes surface
+// as EIO ("card I/O error") — while the identical write from the core-1 loop
+// task (the reboot-time persist) succeeds every time. Chat persistence has no
+// Wi-Fi affinity, so it gets its own tiny task pinned to core 1 at the loop
+// task's priority (equal-priority time-slicing keeps the UI serviced during a
+// write). The task is persistent; the 100 ms poll of the volatile req flag
+// costs nothing measurable and mirrors the old worker's pickup latency.
+static TaskHandle_t s_hist_flush_task        = nullptr;
+static StaticTask_t s_hist_flush_tcb;
+static StackType_t* s_hist_flush_stack       = nullptr;
+static size_t       s_hist_flush_stack_bytes = 0;
+static void histFlushTaskFn(void*) {
+  for (;;) {
+    // busy is raised BEFORE req is cleared so the loop-side gate (busy || req)
+    // never sees a gap in which it could overwrite the snapshot mid-write.
+    if (s_hist_flush_req) {
+      s_hist_flush_busy = true;
+      s_hist_flush_req  = false;
+      s_hist_flush_ok   = uiHistWorkerFlush();
+      s_hist_flush_busy = false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+static bool ensureHistFlushTaskRunning() {
+  if (s_hist_flush_task != nullptr) return true;
+  if (!s_hist_flush_stack) {
+    // uiWriteMsgsFile keeps its bulk buffer on the heap; stack use is File
+    // objects + FatFs path work. 6 KB leaves ample headroom (the tile worker's
+    // overflow-into-globals history earned the caution).
+    static const size_t k_sz = 6 * 1024;
+    s_hist_flush_stack = (StackType_t*)heap_caps_malloc(k_sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!s_hist_flush_stack) return false;
+    s_hist_flush_stack_bytes = k_sz;
+  }
+  s_hist_flush_task = xTaskCreateStaticPinnedToCore(
+      histFlushTaskFn, "hist_flush",
+      s_hist_flush_stack_bytes / sizeof(StackType_t),
+      nullptr, 1,
+      s_hist_flush_stack, &s_hist_flush_tcb,
+      1 /*core 1 — NOT the Wi-Fi core; see block comment*/);
+  return s_hist_flush_task != nullptr;
 }
 
 // Queue a missing tile for download. No-op when Wi-Fi is down or the
@@ -41019,16 +41062,16 @@ void UITask::flushHistoryIfDue(unsigned long now) {
   }
   if (_msgs_dirty && now >= _next_msgs_flush_ms) {
     if (s_hist_flush_busy || s_hist_flush_req) {
-      // The worker only exists while the tile-fetch task is spawned (map / Wi-Fi
-      // scan / LOS / …).  Without this kick a pending flush can sit armed forever
-      // while ui_threads_v1.bin keeps updating — messages live only in RAM.
-      ensureTileFetchTaskRunning();
+      // A request is armed but the flush task may not be up yet — kick it so a
+      // pending flush can't sit armed forever while messages live only in RAM.
+      ensureHistFlushTaskRunning();
       _next_msgs_flush_ms = now + 1000;   // one flush in flight; new messages ride the next one
       return;
     }
 #if defined(ESP32)
     // Snapshot the ring (a few ms of PSRAM memcpy) and hand the write to the
-    // core-0 worker. Messages arriving while the worker writes stay in the live
+    // core-1 hist_flush task (NOT the core-0/Wi-Fi tile worker — see
+    // histFlushTaskFn). Messages arriving while it writes stay in the live
     // ring and re-arm the dirty flag, so they land in the next flush.
     if (!s_hist_snap || s_hist_snap_cap != _ui_msg_cap) {
       if (s_hist_snap) { heap_caps_free(s_hist_snap); s_hist_snap = nullptr; }
@@ -41041,7 +41084,7 @@ void UITask::flushHistoryIfDue(unsigned long now) {
       s_hist_snap_count    = (uint16_t)_ui_msg_count;
       s_hist_snap_head     = (uint16_t)_ui_msg_head;
       s_hist_snap_msgcount = (uint32_t)_msgcount;
-      if (!ensureTileFetchTaskRunning()) {
+      if (!ensureHistFlushTaskRunning()) {
         // No worker — fall back to a synchronous write instead of clearing dirty
         // and losing the snapshot (the whole point of the worker is to stay off
         // the loop thread; a rare spawn failure must not drop hours of chat).
@@ -41049,7 +41092,7 @@ void UITask::flushHistoryIfDue(unsigned long now) {
         else _next_msgs_flush_ms = now + 2000;
         return;
       }
-      s_hist_flush_req = true;   // worker picks it up
+      s_hist_flush_req = true;   // the flush task picks it up
       _msgs_dirty = false;
       return;
     }
@@ -44849,10 +44892,14 @@ void UITask::loop() {
 #endif
           if (!s_fm_fs) fmShowRoots();          // refresh roots so it appears
         }
-      } else if (!sdProbeAlive()) {
+      } else if (!s_hist_flush_busy && !s_hist_flush_req && !sdProbeAlive()) {
         // Real-I/O probe, NOT `SD.cardType() == CARD_NONE`: cardType() is cached
         // at mount and only SD.end() ever resets it, so the old check could never
         // fire — neither a yanked card nor a wedged one was ever detected here.
+        // Never probe/unmount under an in-flight history flush: SD.end() while
+        // the flush holds its open temp file leaves a stale FIL, and every
+        // later write on it fails FR_INVALID_OBJECT -> EBADF ("bad file
+        // number") — recovery must not sabotage the very write it protects.
         fmSdUnmount();
         showAlert(TR("SD card removed"), 1500);
         if (s_fm_fs == &SD || !s_fm_fs) fmShowRoots();
