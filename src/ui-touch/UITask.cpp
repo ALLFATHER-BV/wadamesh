@@ -41190,6 +41190,17 @@ bool UITask::loadMsgsFromStorage() {
   // lets a 500-slot file load into a 5000 ring (SD upgrade) and a 5000-slot file
   // shrink into a 500 ring (card pulled), instead of quarantining real history.
   const int file_slots = (int)(((size_t)f.size() - sizeof(hdr)) / disk_sz);
+  if (file_slots == 0 && hdr.ui_msg_count == 0) {
+    // Legitimately empty (every message was deleted, so the compacting writer
+    // emitted a header-only file) — NOT corruption. Load the empty ring; the
+    // old quarantine here deleted the file and made the boot fall through to
+    // stale fallbacks.
+    f.close();
+    _ui_msg_count = 0;
+    _ui_msg_head  = 0;
+    _msgcount     = static_cast<int>(hdr.msgcount);
+    return true;
+  }
   if (file_slots <= 0 ||
       hdr.ui_msg_count > file_slots || hdr.ui_msg_head >= file_slots) {
     f.close(); uiDataRemove(k_ui_msgs_path); return false;   // header disagrees with the file body
@@ -41446,7 +41457,17 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
   const int wcap = cap > 0 ? cap : 1;
   const int used = (int)count > cap ? cap : (int)count;
   const int oldst = (((int)head - used) % wcap + wcap) % wcap;
-  hdr.ui_msg_count  = static_cast<uint16_t>(used);
+  // Deleted messages are tombstones IN RAM (thread[0] == '\0'; the ring can't
+  // compact in place — slot indexes are live UI handles), but writing them out
+  // kept the file at its high-water size forever: delete 1000 messages and
+  // every flush still rewrote them all as full blank records. Skip them here —
+  // the file compacts to the LIVE records on the next flush, shrinking both
+  // the write time and the flash wear. Geometry is unaffected: records stay
+  // oldest-first with head=0 and count = live records actually emitted.
+  int live = 0;
+  for (int k = 0; k < used; ++k)
+    if (msgs[(oldst + k) % wcap].thread[0]) ++live;
+  hdr.ui_msg_count  = static_cast<uint16_t>(live);
   hdr.ui_msg_head   = 0;   // written oldest-first => the file's ring head sits at 0
   hdr.msgcount      = msgcount;
   if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
@@ -41462,6 +41483,7 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     size_t fill = 0;
     for (int k = 0; ok && k < used; ++k) {
       const int i = (oldst + k) % wcap;
+      if (!msgs[i].thread[0]) continue;   // tombstone (deleted) — never hits the file
       UiHistoryMsg* m = reinterpret_cast<UiHistoryMsg*>(buf + fill);
       memset(m, 0, REC);
       m->ts          = msgs[i].ts;
@@ -41489,6 +41511,7 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     UiHistoryMsg m{};
     for (int k = 0; ok && k < used; ++k) {
       const int i = (oldst + k) % wcap;
+      if (!msgs[i].thread[0]) continue;   // tombstone (deleted) — never hits the file
       memset(&m, 0, sizeof(m));
       m.ts          = msgs[i].ts;
       m.channel     = msgs[i].channel ? 1u : 0u;
