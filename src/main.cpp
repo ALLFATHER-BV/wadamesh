@@ -520,7 +520,7 @@ void setup() {
       for (int a = 0; a < tries && !sd_mounted; ++a) {
         SD.end();
         delay(kBootMount[a].settle_ms);
-        if (SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 3) && SD.cardType() != CARD_NONE)
+        if (SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 6) && SD.cardType() != CARD_NONE)
           sd_mounted = true;
       }
     }

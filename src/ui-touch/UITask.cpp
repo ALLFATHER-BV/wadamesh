@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <cerrno>   // chat-store write diagnostics surface errno (ENFILE vs ENOSPC vs EIO)
 #if defined(ESP32)
   #include <time.h>
   #include <SPIFFS.h>
@@ -224,6 +225,13 @@ constexpr uint16_t k_ui_history_min_version = 6;   // v4/v5 used 96-char records
 constexpr const char* k_ui_threads_path = "/ui_threads_v1.bin";
 constexpr const char* k_ui_msgs_path    = "/ui_msgs_v1.bin";
 constexpr const char* k_ui_msgs_tmp_path = "/ui_msgs_v1.bin.tmp";
+// Separate temp for the SYNCHRONOUS (shutdown/reboot/no-PSRAM) writer. The
+// core-0 worker and the loop task can overlap when a stalled worker outlives
+// uiHistWaitWorkerIdle's 9 s cap — two truncating opens of ONE tmp interleave
+// into garbage, and whichever rename lands last installs a corrupt file that
+// the next boot quarantines (total history loss). Distinct tmp names make the
+// overlap last-rename-wins with each candidate internally consistent.
+constexpr const char* k_ui_msgs_tmp2_path = "/ui_msgs_v1.bin.tm2";
 constexpr uint32_t k_ui_threads_magic   = 0x55495448;  // "UITH"
 constexpr uint32_t k_ui_msgs_magic      = 0x55494D53;  // "UIMS"
 
@@ -833,7 +841,12 @@ static bool wavOpen(const char* prefpath, File& f) {
   if (!prefpath || !prefpath[0]) return false;
   fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)   // only the T-Deck/pager sound picker ever writes an "sd:"-prefixed pref
-  if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; fmSdTryMount(); }
+  // No fmSdTryMount() here: this runs on the throwaway notify task, and walking
+  // the SD.end()+SD.begin() mount ladder from a second task races the loop
+  // task's own SD use (the one documented single-task assumption). If the card
+  // isn't mounted the open below fails fast and the chime falls back; mounting
+  // is owned by boot adoption / sdHealthTick's reinsert watch / the FM paths.
+  if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; }
 #endif
   f = fsp->open(fp, FILE_READ);
   if (!f || f.isDirectory()) { if (f) f.close(); return false; }
@@ -4538,6 +4551,47 @@ static volatile bool s_hist_flush_req  = false;  // snapshot armed, waiting for 
 static volatile bool s_hist_flush_busy = false;  // worker owns the snapshot + the history file
 static volatile bool s_hist_flush_ok   = true;   // last worker write result (retry on false)
 static bool uiHistWorkerFlush();                 // defined with the storage code below
+// Message-ring write health. A failing ui_msgs write used to be 100% silent —
+// the user only found out on the next reboot as "messages from the last N
+// minutes vanished" (the thread list still showed fresh times because the
+// small threads file kept writing while the big ring write failed). Updated
+// inside uiWriteMsgsFile from EITHER task (volatile stores only); read by the
+// About page + the repeated-failure toast in flushHistoryIfDue.
+static volatile uint32_t s_msgs_write_ok_ms   = 0;  // millis() of last successful ring write (0 = none yet)
+static volatile uint32_t s_msgs_write_fail_ms = 0;  // millis() of last failed ring write
+static volatile uint16_t s_msgs_write_fails   = 0;  // consecutive failures since the last success
+static volatile uint8_t  s_msgs_write_stage   = 0;  // where the last failure hit: 'o' open, 'h' header, 'b' body, 'r' rename
+static volatile int      s_msgs_write_errno   = 0;  // errno at that failure (ENFILE/EMFILE = VFS file table full, ENOSPC = card full, EIO = card error)
+// Human-readable diagnosis of the last chat-store write failure — shown on the
+// About panel and in the failure alerts, so a tester doesn't need an errno
+// table. Diagnostic vocabulary stays English on purpose (it's what ends up in
+// bug reports verbatim).
+static void chatSaveFailText(char* out, size_t cap) {
+  const char* stage;
+  switch ((char)s_msgs_write_stage) {
+    case 'o': stage = "open";        break;
+    case 'h': stage = "header";      break;
+    case 'b': stage = "write";       break;
+    case 'r': stage = "rename";      break;
+    default:  stage = "save";        break;
+  }
+  const int e = s_msgs_write_errno;
+  const char* why;
+  switch (e) {
+    case ENFILE:
+    case EMFILE: why = "too many open files"; break;
+    case ENOSPC: why = "card full";           break;
+    case EIO:    why = "card I/O error";      break;
+    case ENOENT: why = "folder missing";      break;
+    case EROFS:  why = "write-protected";     break;
+    case EACCES: why = "access denied";       break;
+    case 0:      why = "no errno";            break;
+    default:     why = strerror(e);           break;   // newlib carries the full table
+  }
+  snprintf(out, cap, "%s failed: %s (e%d)", stage, why, e);
+}
+static bool uiDataFsIsSdCard();                  // fwd (storage code below) — About page shows the resolved backend
+static File uiDataOpen(const char* name, const char* mode);   // fwd — About page reads the msgs file size
 static volatile bool s_sdinfo_done     = false;  // worker -> UI: a result exists
 static volatile bool s_sdinfo_ok       = false;  // card present + sizes valid
 static uint64_t      s_sdinfo_tot      = 0;
@@ -10020,6 +10074,48 @@ static void sysInfoTextLive(char* buf, size_t cap) {
                 (unsigned long)rx_evt, (unsigned long)rx_ok, (unsigned long)rx_err,
                 (unsigned long)rx_lost, (unsigned long)radio_driver.getRxQueueDrops(),
                 radio_driver.rxQueueEnabled() ? "on" : "off");
+
+  // Chat-history store health. Two failure modes this exposes that are
+  // otherwise invisible: (a) the "wrong backend" trap — a boot whose SD mount
+  // failed resolves the store to internal SPIFFS and every message written
+  // that session is invisible on the next carded boot; (b) persistent ring
+  // write failures (full card / damaged FAT) — the small threads file keeps
+  // succeeding, so the thread list looks fresh while messages silently stop
+  // persisting.
+  {
+    // File size is CACHED and refreshed at most every 30 s, never while the
+    // worker is mid-flush: this label rebuilds at 1 Hz on the UI task, and an
+    // open() here blocks on the FatFs volume lock behind a slow/failing ring
+    // write — that was a UI freeze you could trigger just by WATCHING this
+    // page while the store was sick.
+    static size_t   s_chat_fsz_cached = 0;
+    static uint32_t s_chat_fsz_ms     = 0;
+    const uint32_t nowms = (uint32_t)millis();
+    if (!s_hist_flush_busy &&
+        (s_chat_fsz_ms == 0 || (uint32_t)(nowms - s_chat_fsz_ms) > 30000u)) {
+      s_chat_fsz_ms = nowms ? nowms : 1;
+      File f = uiDataOpen(k_ui_msgs_path, "r");
+      if (f) { s_chat_fsz_cached = f.size(); f.close(); }
+    }
+    char stat[112];
+    if (s_msgs_write_fails) {
+      char why[64];
+      chatSaveFailText(why, sizeof why);
+      snprintf(stat, sizeof stat, "FAIL x%u (%lus ago)\n  %s",
+               (unsigned)s_msgs_write_fails,
+               (unsigned long)((nowms - s_msgs_write_fail_ms) / 1000u),
+               why);
+    }
+    else if (s_msgs_write_ok_ms)
+      snprintf(stat, sizeof stat, "OK %lus ago",
+               (unsigned long)((nowms - s_msgs_write_ok_ms) / 1000u));
+    else
+      snprintf(stat, sizeof stat, "none this session");
+    p += snprintf(buf + p, cap - p,
+                  "Chat store\n  %s   file: %u KB\n  last save: %s\n\n",
+                  uiDataFsIsSdCard() ? "SD /meshcomod" : "Internal flash",
+                  (unsigned)(s_chat_fsz_cached / 1024), stat);
+  }
 #endif
   (void)p; (void)cap;
 }
@@ -16335,6 +16431,21 @@ static void calibrateBatteryCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(b, 3000);
 }
 
+// ----- SD wedge detection (flag side; the probe/remount lives in sdHealthTick) -----
+// A runtime SD failure is a one-way door in arduino-esp32: one timed-out command
+// latches STA_NOINIT (or a data-phase error leaves FR_DISK_ERR everywhere), while
+// SD.cardType() keeps returning the type CACHED at mount — so every
+// `cardType() != CARD_NONE` gate still passes, I/O fails silently, and nothing
+// ever re-runs the mount ladder until a reboot power-cycles the card. Any SD
+// user (loop task, core-0 worker, notify task) that sees SD I/O fail while the
+// card is supposedly mounted stamps this; UITask::loop verifies with real I/O
+// and remounts if the card wedged. Volatile store only — safe from any task.
+static volatile uint32_t s_sd_fail_note_ms = 0;
+static inline void sdNoteIoFailure() {
+  const uint32_t m = (uint32_t)millis();
+  s_sd_fail_note_ms = m ? m : 1;
+}
+
 // ----- Battery history: 5-minute log to SD + a 24h chart popup (T-Deck only) -----
 // Logging piggybacks the always-on UITask::loop (no extra wakeup): every
 // k_batt_log_period_ms a line is appended to /meshcomod/battery.log and the file
@@ -16347,7 +16458,12 @@ static void calibrateBatteryCb(lv_event_t* e) {
 // SPIFFS (flat) uses a top-level path.
 static fs::FS& battLogFs() {
 #if CAP_SD
-  if (SD.cardType() != CARD_NONE && SD.exists("/meshcomod")) return SD;
+  if (SD.cardType() != CARD_NONE) {
+    if (SD.exists("/meshcomod")) return SD;
+    // cardType() says present (cached) but real I/O failed — wedge/removal tell.
+    // (Or just a card without /meshcomod; sdHealthTick's probe arbitrates cheaply.)
+    sdNoteIoFailure();
+  }
 #endif
   return SPIFFS;
 }
@@ -16374,7 +16490,7 @@ static void batteryLogAppend(uint32_t epoch, uint16_t mv, int pct, uint16_t cpu_
   if (epoch > 1700000000 && localtime_r(&t, &tmv)) strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
   File rf = fs.open(battLogPath(), FILE_READ);
   File wf = fs.open(battLogTmp(), FILE_WRITE);     // truncate/create
-  if (!wf) { if (rf) rf.close(); return; }
+  if (!wf) { if (rf) rf.close(); if (battLogOnSd()) sdNoteIoFailure(); return; }
   if (rf) {
     while (rf.available()) {
       String ln = rf.readStringUntil('\n');
@@ -16734,7 +16850,7 @@ static void telemetryLogAppend(const uint8_t* key, uint32_t epoch, int mv, int t
   if (epoch > 1700000000 && localtime_r(&t, &tmv)) strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
   File rf = SD.open(path, FILE_READ);
   File wf = SD.open(tmp, FILE_WRITE);
-  if (!wf) { if (rf) rf.close(); return; }
+  if (!wf) { if (rf) rf.close(); sdNoteIoFailure(); return; }
   if (rf) {
     while (rf.available()) {
       String ln = rf.readStringUntil('\n');
@@ -18022,6 +18138,12 @@ static inline SPIClass* sdSharedSPI() { return tdeckSharedSPI(); }
 // already initialised by the radio/display, so those pins are untouched.
 static bool fmSdTryMount() {
   if (s_sd_mounted) return true;
+  // Fast-fail inside the post-failure backoff window. Hot paths call this
+  // directly (map tile lookups on the loop task, history writes via
+  // uiDataFsReady, WAV chimes) — without this gate every such call re-walks
+  // the multi-second mount ladder while the card is out, freezing the UI.
+  // Explicit user retries clear the backoff first (fmSdMountOrFormatCb).
+  if (s_sd_retry_after_ms && millis() < s_sd_retry_after_ms) return false;
 #if defined(TLORA_PAGER)
   if (!pagerSdCardPresent()) return false;
 #endif
@@ -18037,8 +18159,11 @@ static bool fmSdTryMount() {
   // mounts on the first attempt and returns immediately; only a flaky/cold card
   // walks the whole ladder (~1.1 s worst case). The cumulative delay can
   // approach the loop watchdog window, so drop the WDT around the loop. 4 MHz
-  // is reliable on the shared LoRa bus; max_files=3 keeps the VFS footprint
-  // small (dir + at most 2 files).
+  // is reliable on the shared LoRa bus. max_files=6 (was 3): the card now
+  // serves telemetry log rewrites (2 handles), battery log rewrites (2),
+  // the history flush, tile reads/writes, WAV chimes and the About readout
+  // CONCURRENTLY — with only 3 VFS slots the history flush's open("w") lost
+  // that race and chat saves failed with ENFILE while the card was fine.
   // Ladder of (settle, clock) attempts. The first three use the fast 4 MHz the
   // shared LoRa bus handles well; a cold / cheap card that won't wake at 4 MHz
   // then gets progressively longer settles AND a lower clock (1 MHz, then
@@ -18063,7 +18188,7 @@ static bool fmSdTryMount() {
   for (int attempt = 0; attempt < kAttempts; ++attempt) {
     SD.end();
     delay(kMountLadder[attempt].settle_ms);
-    if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 3) && SD.cardType() != CARD_NONE) {
+    if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
       mounted = true;
       break;
     }
@@ -18083,6 +18208,35 @@ static bool fmSdTryMount() {
 static void fmSdUnmount() {
   if (s_sd_mounted) { SD.end(); s_sd_mounted = false; s_sd_size = 0; }
   s_sd_retry_after_ms = 0;   // a reinsert should be able to mount right away
+}
+// True when the card still answers real I/O. SD.cardType() is useless for this:
+// arduino-esp32 caches the type at mount and only an explicit SD.end() ever
+// returns CARD_NONE again — a wedged (or even physically removed) card keeps
+// reporting its mount-time type forever. Opening the root dir DOES hit the card:
+// the root `stat` is answered from RAM (vfs_fat special-cases "/"), but the
+// opendir behind it runs f_opendir -> disk_status = a real SEND_STATUS
+// transaction, and a NOINIT'd card then gets one full re-init handshake — so a
+// recoverable card self-heals right here, a dead one returns an invalid File
+// (opendir fails -> operator bool false). Healthy-card cost is sub-ms; a dead
+// card rides out the SPI timeouts once, so callers rate-limit the probe.
+static bool sdProbeAlive() {
+  File d = SD.open("/");
+  const bool ok = d && d.isDirectory();
+  if (d) d.close();
+  return ok;
+}
+// Discriminator for hot READ paths (map tile lookups run up to five SD opens
+// per tile on the loop task): a missing FILE on a healthy card must stay cheap
+// and silent, while a dead card must stamp the failure AND let the caller
+// short-circuit — otherwise one render pass serializes behind sd_diskio's
+// per-op timeout/re-init and the whole UI freezes while a card is out. Call
+// after a failed SD read/open; returns true when the card itself is dead
+// (bail out of the whole SD pass), false when it was just a missing file.
+static bool sdReadFailedCardDead() {
+  if (s_sd_fail_note_ms) return true;   // already suspected — sdHealthTick arbitrates within ~5 s
+  if (sdProbeAlive()) return false;     // card fine: genuinely missing file
+  sdNoteIoFailure();
+  return true;
 }
 static void fmSdClickCb(lv_event_t* e) {
   // SHORT_CLICKED (not CLICKED) so a long-press — which formats the card — does
@@ -18132,6 +18286,7 @@ static void fmSdDoFormat() {
 // (e.g. exFAT, which this build can't read — only FAT16/FAT32) offer to format.
 static void fmSdMountOrFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_sd_retry_after_ms = 0;   // explicit user retry — bypass the mount backoff
   if (fmSdTryMount()) { fmShowRoots(); return; }
   showConfirm(TR("Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased."),
               "Format", fmSdDoFormat);
@@ -20512,7 +20667,7 @@ static void discoverLogSighting(int32_t lat_e6, int32_t lon_e6, const MyMesh::Di
   SD.mkdir("/meshcomod");
   SD.mkdir("/meshcomod/discover");
   File f = SD.open("/meshcomod/discover/wardrive.csv", FILE_APPEND);
-  if (!f) return;
+  if (!f) { sdNoteIoFailure(); return; }
   if (f.size() == 0) f.print("epoch,lat,lon,type,pubkey,rssi,snr,hops\n");
   uint32_t epoch = (uint32_t)rtc_clock.getCurrentTime();
   f.printf("%lu,%.6f,%.6f,%s,%02X%02X%02X%02X,%d,%.1f,%u\n",
@@ -23993,16 +24148,11 @@ static void tileFetchTaskFn(void* arg) {
       s_los_result_ready = true;
       continue;
     }
-    // Chat-history flush: write the loop thread's snapshot. busy is raised BEFORE
-    // req is cleared so the loop-side gate (busy || req) never sees a gap in which
-    // it could overwrite the snapshot mid-write.
-    if (s_hist_flush_req) {
-      s_hist_flush_busy = true;
-      s_hist_flush_req  = false;
-      s_hist_flush_ok   = uiHistWorkerFlush();
-      s_hist_flush_busy = false;
-      continue;
-    }
+    // (Chat-history flush moved to its own core-1 task — histFlushTaskFn. On
+    // THIS worker it shared core 0 with the Wi-Fi driver, whose prio-23 tasks
+    // starve a prio-1 task for hundreds of ms; sd_diskio's busy-waits measure
+    // wall time, so healthy SD writes surfaced as timeouts/EIO here while the
+    // identical write from core 1 succeeded.)
     // Firmware update check (one-shot, infrequent). Reuses this worker's stack.
     if (s_verchk_request) {
       s_verchk_request = false;
@@ -24255,11 +24405,17 @@ static void tileFetchTaskFn(void* arg) {
             } else {
               ++s_tile_fetch_short_wr;
               s_tile_fetch_last_wr = 'P';            // short/failed disk write (card full or SD error)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+              if (s_tile_fs == &SD) sdNoteIoFailure();   // wedge tell (worker task — stamp only)
+#endif
             }
           }
         } else {
           ++s_tile_fetch_open_fail;
           s_tile_fetch_last_wr = 'O';                // open("w") failed: dir missing / write-protect / SD bus
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+          if (s_tile_fs == &SD) sdNoteIoFailure();       // wedge tell (worker task — stamp only)
+#endif
         }
       } else {
         s_tile_fetch_last_wr = 'Z';                  // bad / oversized content-length
@@ -24361,6 +24517,54 @@ static bool ensureTileFetchTaskRunning() {
                 s_tile_fetch_task, (unsigned)ESP.getFreeHeap(),
                 (unsigned)ESP.getFreePsram());
   return s_tile_fetch_task != nullptr;
+}
+
+// ---- Chat-history flush worker (core 1) --------------------------------------
+// The flush used to ride the core-0 tile_fetch worker — the Wi-Fi core. Under
+// Wi-Fi load its prio-23 driver tasks starve a prio-1 task for hundreds of ms
+// at a time, and sd_diskio's busy-waits measure WALL time: the timeout expires
+// while the task simply wasn't scheduled, so perfectly good SD writes surface
+// as EIO ("card I/O error") — while the identical write from the core-1 loop
+// task (the reboot-time persist) succeeds every time. Chat persistence has no
+// Wi-Fi affinity, so it gets its own tiny task pinned to core 1 at the loop
+// task's priority (equal-priority time-slicing keeps the UI serviced during a
+// write). The task is persistent; the 100 ms poll of the volatile req flag
+// costs nothing measurable and mirrors the old worker's pickup latency.
+static TaskHandle_t s_hist_flush_task        = nullptr;
+static StaticTask_t s_hist_flush_tcb;
+static StackType_t* s_hist_flush_stack       = nullptr;
+static size_t       s_hist_flush_stack_bytes = 0;
+static void histFlushTaskFn(void*) {
+  for (;;) {
+    // busy is raised BEFORE req is cleared so the loop-side gate (busy || req)
+    // never sees a gap in which it could overwrite the snapshot mid-write.
+    if (s_hist_flush_req) {
+      s_hist_flush_busy = true;
+      s_hist_flush_req  = false;
+      s_hist_flush_ok   = uiHistWorkerFlush();
+      s_hist_flush_busy = false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+static bool ensureHistFlushTaskRunning() {
+  if (s_hist_flush_task != nullptr) return true;
+  if (!s_hist_flush_stack) {
+    // uiWriteMsgsFile keeps its bulk buffer on the heap; stack use is File
+    // objects + FatFs path work. 6 KB leaves ample headroom (the tile worker's
+    // overflow-into-globals history earned the caution).
+    static const size_t k_sz = 6 * 1024;
+    s_hist_flush_stack = (StackType_t*)heap_caps_malloc(k_sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!s_hist_flush_stack) return false;
+    s_hist_flush_stack_bytes = k_sz;
+  }
+  s_hist_flush_task = xTaskCreateStaticPinnedToCore(
+      histFlushTaskFn, "hist_flush",
+      s_hist_flush_stack_bytes / sizeof(StackType_t),
+      nullptr, 1,
+      s_hist_flush_stack, &s_hist_flush_tcb,
+      1 /*core 1 — NOT the Wi-Fi core; see block comment*/);
+  return s_hist_flush_task != nullptr;
 }
 
 // Queue a missing tile for download. No-op when Wi-Fi is down or the
@@ -24506,7 +24710,12 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
 #if CAP_SD
   if (s_tiles_from_sd && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
     // Tile source = microSD: read straight off the card (fully offline, no server fetch).
-    if (!fmSdTryMount()) return false;
+    if (s_sd_fail_note_ms) return false;   // card suspected dead — don't stack per-tile SPI timeouts (sdHealthTick arbitrates)
+    // Mounted check only — a render loop must never walk the multi-second
+    // mount ladder per tile (with the card out that read as recurring UI
+    // freezes). Mounting is owned by boot adoption, sdHealthTick's reinsert
+    // watch, the FM poll, and the SD-tiles toggle (mapOptTilesSdCb mounts).
+    if (!s_sd_mounted) return false;
     markSdIo();                          // SD read activity -> status-bar LED
     // Prefer the Meshtastic/MeshCore standard layout /maps/osm/{z}/{x}/{y}.png
     // (decoded via lodepng); fall back to the legacy /tiles/{z}/{x}/{y}.jpg.
@@ -24529,14 +24738,14 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
       fsd = SD.open(ppath, FILE_READ);
     }
     if (!fsd) fsd = SD.open(path, FILE_READ);   // legacy /tiles/<z>/<x>/<y>.jpg
-    if (!fsd) return false;
+    if (!fsd) { sdReadFailedCardDead(); return false; }   // missing tile (cheap, silent) vs dead card (stamp + short-circuit)
     const size_t szsd = fsd.size();
     if (szsd == 0 || szsd > 256 * 1024) { fsd.close(); return false; }   // PNG tiles run larger than JPEG
     uint8_t* bufsd = (uint8_t*)lvglPsramAlloc(szsd);
     if (!bufsd) { fsd.close(); return false; }
     const size_t nsd = fsd.read(bufsd, szsd);
     fsd.close();
-    if (nsd != szsd) { lvglPsramFree(bufsd); return false; }
+    if (nsd != szsd) { lvglPsramFree(bufsd); sdReadFailedCardDead(); return false; }   // short read mid-tile = card died under us
     *out_data = bufsd; *out_len = szsd;
     return true;
   }
@@ -24548,8 +24757,18 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   // re-downloaded forever and rendered nothing (#tiles). open() is the real existence test; read up to
   // the 100 KB writer cap and use the ACTUAL bytes read. (S3 boards: f.size() works there, but this is
   // equally correct — a transient 100 KB PSRAM buffer per tile, freed right after decode.)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+  // Launcher installs cache tiles on the raw SD (s_tile_fs == &SD) — same
+  // dead-card short-circuit as the SD-pack path above.
+  if (s_tile_fs == &SD && s_sd_fail_note_ms) return false;
+#endif
   File f = tileCacheOpen(path, "r");
-  if (!f) return false;
+  if (!f) {
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+    if (s_tile_fs == &SD) sdReadFailedCardDead();
+#endif
+    return false;
+  }
   const size_t CAP = 100 * 1024;
   uint8_t* buf = (uint8_t*)lvglPsramAlloc(CAP);
   if (!buf) { f.close(); return false; }
@@ -24598,7 +24817,8 @@ static bool mapTileSourceReady() {
 static bool tileExistsAt(uint8_t z, long x, long y) {
 #if CAP_SD
   if (s_tiles_from_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
-    if (!fmSdTryMount()) return false;
+    if (s_sd_fail_note_ms) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
+    if (!s_sd_mounted) return false;       // never ladder from the zoom guard (see loadTileJpeg)
     char p[56];
     snprintf(p, sizeof p, "/maps/osm/%u/%ld/%ld.png", (unsigned)z, x, y);
     if (SD.exists(p)) return true;
@@ -24609,7 +24829,9 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.PNG", (unsigned)z, x, y);
     if (SD.exists(p)) return true;
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.jpg", (unsigned)z, x, y);
-    return SD.exists(p);
+    if (SD.exists(p)) return true;
+    sdReadFailedCardDead();   // all five missing: either past the pack edge (cheap, silent) or the card died
+    return false;
   }
 #endif
   if (!s_tiles_fs_ready) return false;
@@ -40795,9 +41017,39 @@ static uint16_t      s_hist_snap_count    = 0;
 static uint16_t      s_hist_snap_head     = 0;
 static uint32_t      s_hist_snap_msgcount = 0;
 
+// Arm an immediate flush of both history files WITHOUT the min-delay clamp and
+// WITHOUT blocking this task: the actual write still happens on the core-0
+// worker (or the sync fallback inside flushHistoryIfDue). Used right after an
+// SD remount — a synchronous persistHistoryNow() there froze the UI for >30 s
+// on a card that mounts fine but times out on large writes.
+void UITask::flushHistorySoon() {
+  _msgs_dirty            = true;
+  _next_msgs_flush_ms    = millis();
+  _threads_dirty         = true;
+  _next_threads_flush_ms = millis();
+}
+
 void UITask::flushHistoryIfDue(unsigned long now) {
-  // A worker write failed (storage hiccup): re-arm and try again.
-  if (!s_hist_flush_ok) { s_hist_flush_ok = true; markMsgsDirty(5000); }
+  // A worker write failed (storage hiccup): re-arm and try again. Surface
+  // repeated failures — a persistently failing ring write was previously
+  // 100% silent and read as "messages from the last N minutes vanished" on
+  // the next reboot (the small threads file kept writing, so the thread
+  // list still showed fresh last-message times).
+  if (!s_hist_flush_ok) {
+    s_hist_flush_ok = true;
+    // Back off a hopelessly failing store: each retry against a card that
+    // times out on large writes costs seconds of bus stalls (felt as UI
+    // freezes through the FatFs volume lock). After 5 straight failures
+    // retry every 5 min instead of every 30 s — the RAM ring keeps
+    // everything meanwhile, and a successful write resets the counter.
+    markMsgsDirty(s_msgs_write_fails >= 5 ? 300000 : 5000);
+    if (s_msgs_write_fails >= 3 && (s_msgs_write_fails % 3) == 0) {
+      char why[64]; chatSaveFailText(why, sizeof why);
+      char msg[128];
+      snprintf(msg, sizeof msg, "%s\n%s", TR("Chat history is NOT saving"), why);
+      showAlert(msg, 3200);
+    }
+  }
   // Thread metadata (~4 KB) flushes on a short delay; the message ring
   // (scales with MAX_UI_MESSAGES) flushes lazily to reduce flash write pressure.
   if (_threads_dirty && now >= _next_threads_flush_ms) {
@@ -40810,16 +41062,16 @@ void UITask::flushHistoryIfDue(unsigned long now) {
   }
   if (_msgs_dirty && now >= _next_msgs_flush_ms) {
     if (s_hist_flush_busy || s_hist_flush_req) {
-      // The worker only exists while the tile-fetch task is spawned (map / Wi-Fi
-      // scan / LOS / …).  Without this kick a pending flush can sit armed forever
-      // while ui_threads_v1.bin keeps updating — messages live only in RAM.
-      ensureTileFetchTaskRunning();
+      // A request is armed but the flush task may not be up yet — kick it so a
+      // pending flush can't sit armed forever while messages live only in RAM.
+      ensureHistFlushTaskRunning();
       _next_msgs_flush_ms = now + 1000;   // one flush in flight; new messages ride the next one
       return;
     }
 #if defined(ESP32)
     // Snapshot the ring (a few ms of PSRAM memcpy) and hand the write to the
-    // core-0 worker. Messages arriving while the worker writes stay in the live
+    // core-1 hist_flush task (NOT the core-0/Wi-Fi tile worker — see
+    // histFlushTaskFn). Messages arriving while it writes stay in the live
     // ring and re-arm the dirty flag, so they land in the next flush.
     if (!s_hist_snap || s_hist_snap_cap != _ui_msg_cap) {
       if (s_hist_snap) { heap_caps_free(s_hist_snap); s_hist_snap = nullptr; }
@@ -40832,7 +41084,7 @@ void UITask::flushHistoryIfDue(unsigned long now) {
       s_hist_snap_count    = (uint16_t)_ui_msg_count;
       s_hist_snap_head     = (uint16_t)_ui_msg_head;
       s_hist_snap_msgcount = (uint32_t)_msgcount;
-      if (!ensureTileFetchTaskRunning()) {
+      if (!ensureHistFlushTaskRunning()) {
         // No worker — fall back to a synchronous write instead of clearing dirty
         // and losing the snapshot (the whole point of the worker is to stay off
         // the loop thread; a rare spawn failure must not drop hours of chat).
@@ -40840,7 +41092,7 @@ void UITask::flushHistoryIfDue(unsigned long now) {
         else _next_msgs_flush_ms = now + 2000;
         return;
       }
-      s_hist_flush_req = true;   // worker picks it up
+      s_hist_flush_req = true;   // the flush task picks it up
       _msgs_dirty = false;
       return;
     }
@@ -40921,7 +41173,14 @@ static bool uiDataFsIsSdCard() {
 static File uiDataOpen(const char* name, const char* mode) {
   if (!uiDataFsReady()) return File();
   char p[80]; snprintf(p, sizeof p, "%s%s", s_ui_data_root, name);
-  return s_ui_data_fs->open(p, mode);
+  File f = s_ui_data_fs->open(p, mode);
+#if defined(HAS_TDECK_GT911)
+  // A failed WRITE open on the SD-backed history store is the wedge tell (reads
+  // fail legitimately on first boot). Called from the loop task AND the core-0
+  // history worker — sdNoteIoFailure is a volatile stamp, safe from both.
+  if (!f && mode && mode[0] == 'w' && s_ui_data_fs == &SD) sdNoteIoFailure();
+#endif
+  return f;
 }
 // Delete a ui-data file — used to quarantine a blob that fails to load so a
 // corrupt/truncated file (interrupted SD/FAT write, brownout) can't wedge the
@@ -41016,6 +41275,17 @@ bool UITask::loadMsgsFromStorage() {
   // lets a 500-slot file load into a 5000 ring (SD upgrade) and a 5000-slot file
   // shrink into a 500 ring (card pulled), instead of quarantining real history.
   const int file_slots = (int)(((size_t)f.size() - sizeof(hdr)) / disk_sz);
+  if (file_slots == 0 && hdr.ui_msg_count == 0) {
+    // Legitimately empty (every message was deleted, so the compacting writer
+    // emitted a header-only file) — NOT corruption. Load the empty ring; the
+    // old quarantine here deleted the file and made the boot fall through to
+    // stale fallbacks.
+    f.close();
+    _ui_msg_count = 0;
+    _ui_msg_head  = 0;
+    _msgcount     = static_cast<int>(hdr.msgcount);
+    return true;
+  }
   if (file_slots <= 0 ||
       hdr.ui_msg_count > file_slots || hdr.ui_msg_head >= file_slots) {
     f.close(); uiDataRemove(k_ui_msgs_path); return false;   // header disagrees with the file body
@@ -41153,6 +41423,10 @@ bool UITask::loadLegacyHistoryFromStorage() {
 
 bool UITask::loadHistoryFromStorage() {
 #if defined(ESP32)
+  // Hygiene: a crash/power-cut mid-flush can orphan a temp file; they're never
+  // read (the loader only opens the final path), just reclaim the space.
+  uiDataRemove(k_ui_msgs_tmp_path);
+  uiDataRemove(k_ui_msgs_tmp2_path);
   const bool have_threads = loadThreadsFromStorage();
   const bool have_msgs    = loadMsgsFromStorage();
   if (!have_threads && !have_msgs) {
@@ -41229,12 +41503,41 @@ bool UITask::saveThreadsToStorage() {
 // write from PSRAM" that regressed before: the chunk lives in internal RAM (the
 // flash driver never bounces a PSRAM source). Alloc failure falls back to the
 // original per-record writes.
+// Record a ring-write outcome (runs on the loop task OR the core-0 worker —
+// volatile stores only, LVGL-free) and stamp the SD health probe on failure so
+// a wedged card gets arbitrated instead of the write failing silently forever.
+static bool uiMsgsWriteResult(bool ok) {
+  const uint32_t m = (uint32_t)millis();
+  if (ok) {
+    s_msgs_write_ok_ms = m ? m : 1;
+    s_msgs_write_fails = 0;
+  } else {
+    s_msgs_write_fail_ms = m ? m : 1;
+    if (s_msgs_write_fails < 0xFFFFu) s_msgs_write_fails = s_msgs_write_fails + 1;
+#if defined(HAS_TDECK_GT911)
+    if (s_ui_data_fs == &SD) sdNoteIoFailure();
+#endif
+  }
+  return ok;
+}
+// Failure wrapper: record WHERE the write died and the errno — 'open failed
+// with ENFILE' (VFS file-handle table full) needs a completely different fix
+// than 'body write failed with EIO' (card), and without this they were
+// indistinguishable on a device with no readable serial.
+static bool uiMsgsWriteFail(char stage) {
+  s_msgs_write_stage = (uint8_t)stage;
+  s_msgs_write_errno = errno;
+  return uiMsgsWriteResult(false);
+}
+
 static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
-                            uint16_t count, uint16_t head, uint32_t msgcount) {
+                            uint16_t count, uint16_t head, uint32_t msgcount,
+                            const char* tmp_path) {
 #if defined(ESP32)
   WdtHeavyGuard _wg;   // a fragmenting write can trigger a multi-second SPIFFS GC
-  File f = uiDataOpen(k_ui_msgs_tmp_path, "w");
-  if (!f) return false;
+  errno = 0;
+  File f = uiDataOpen(tmp_path, "w");
+  if (!f) return uiMsgsWriteFail('o');
 
   UiMsgFileHeader hdr{};
   hdr.magic         = k_ui_msgs_magic;
@@ -41249,11 +41552,22 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
   const int wcap = cap > 0 ? cap : 1;
   const int used = (int)count > cap ? cap : (int)count;
   const int oldst = (((int)head - used) % wcap + wcap) % wcap;
-  hdr.ui_msg_count  = static_cast<uint16_t>(used);
+  // Deleted messages are tombstones IN RAM (thread[0] == '\0'; the ring can't
+  // compact in place — slot indexes are live UI handles), but writing them out
+  // kept the file at its high-water size forever: delete 1000 messages and
+  // every flush still rewrote them all as full blank records. Skip them here —
+  // the file compacts to the LIVE records on the next flush, shrinking both
+  // the write time and the flash wear. Geometry is unaffected: records stay
+  // oldest-first with head=0 and count = live records actually emitted.
+  int live = 0;
+  for (int k = 0; k < used; ++k)
+    if (msgs[(oldst + k) % wcap].thread[0]) ++live;
+  hdr.ui_msg_count  = static_cast<uint16_t>(live);
   hdr.ui_msg_head   = 0;   // written oldest-first => the file's ring head sits at 0
   hdr.msgcount      = msgcount;
   if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
-    f.close(); return false;
+    f.close(); uiDataRemove(tmp_path);
+    return uiMsgsWriteFail('h');   // was silently un-counted before
   }
 
   const size_t REC = sizeof(UiHistoryMsg);
@@ -41265,6 +41579,7 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     size_t fill = 0;
     for (int k = 0; ok && k < used; ++k) {
       const int i = (oldst + k) % wcap;
+      if (!msgs[i].thread[0]) continue;   // tombstone (deleted) — never hits the file
       UiHistoryMsg* m = reinterpret_cast<UiHistoryMsg*>(buf + fill);
       memset(m, 0, REC);
       m->ts          = msgs[i].ts;
@@ -41292,6 +41607,7 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     UiHistoryMsg m{};
     for (int k = 0; ok && k < used; ++k) {
       const int i = (oldst + k) % wcap;
+      if (!msgs[i].thread[0]) continue;   // tombstone (deleted) — never hits the file
       memset(&m, 0, sizeof(m));
       m.ts          = msgs[i].ts;
       m.channel     = msgs[i].channel ? 1u : 0u;
@@ -41310,10 +41626,12 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     }
   }
   f.close();
-  if (!ok) { uiDataRemove(k_ui_msgs_tmp_path); return false; }
-  return uiDataReplaceFile(k_ui_msgs_path, k_ui_msgs_tmp_path);
+  if (!ok) { uiDataRemove(tmp_path); return uiMsgsWriteFail('b'); }
+  errno = 0;
+  if (!uiDataReplaceFile(k_ui_msgs_path, tmp_path)) return uiMsgsWriteFail('r');
+  return uiMsgsWriteResult(true);
 #else
-  (void)msgs; (void)cap; (void)count; (void)head; (void)msgcount;
+  (void)msgs; (void)cap; (void)count; (void)head; (void)msgcount; (void)tmp_path;
   return false;
 #endif
 }
@@ -41323,7 +41641,8 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
 static bool uiHistWorkerFlush() {
   if (!s_hist_snap || s_hist_snap_cap <= 0) return false;   // armed without a snapshot — retry
   return uiWriteMsgsFile(s_hist_snap, s_hist_snap_cap,
-                         s_hist_snap_count, s_hist_snap_head, s_hist_snap_msgcount);
+                         s_hist_snap_count, s_hist_snap_head, s_hist_snap_msgcount,
+                         k_ui_msgs_tmp_path);
 }
 
 bool UITask::saveMsgsToStorage() {
@@ -41333,7 +41652,8 @@ bool UITask::saveMsgsToStorage() {
   return uiWriteMsgsFile(_ui_msgs, _ui_msg_cap,
                          static_cast<uint16_t>(_ui_msg_count),
                          static_cast<uint16_t>(_ui_msg_head),
-                         static_cast<uint32_t>(_msgcount));
+                         static_cast<uint32_t>(_msgcount),
+                         k_ui_msgs_tmp2_path);   // own tmp — never collide with a stalled worker write
 #else
   return false;
 #endif
@@ -43707,9 +44027,22 @@ void UITask::rebootDevice() {
   // Persist chat history synchronously before we reboot — the periodic
   // flush is rate-capped, so without this a reboot could drop the most
   // recent chat history.
-  if (uiHistWaitWorkerIdle()) _msgs_dirty = true;   // cancelled snapshot = unwritten data
+  // A worker still busy after the 9 s wait cap counts as unwritten data too:
+  // its write may never land (stalled on a dying card), and _msgs_dirty was
+  // already cleared when its snapshot was armed — skipping the sync save here
+  // silently dropped everything since the last successful flush.
+  if (uiHistWaitWorkerIdle() || s_hist_flush_busy) _msgs_dirty = true;
   if (_threads_dirty) saveThreadsToStorage();
-  if (_msgs_dirty) saveMsgsToStorage();
+  if (_msgs_dirty && !saveMsgsToStorage()) {
+    // Last-chance save failed — say so (with the diagnosis) instead of
+    // rebooting into silent loss.
+    char why[64]; chatSaveFailText(why, sizeof why);
+    char msg[128];
+    snprintf(msg, sizeof msg, "%s\n%s", TR("Chat history save FAILED"), why);
+    showAlert(msg, 1800);
+    lv_refr_now(NULL);
+    delay(1500);   // let the warning actually paint before the reset
+  }
   discoveredFlushNow();   // persist the Discovered ring before we go down
   the_mesh.flushContactsIfDirty();   // and any coalesced contacts refresh (card-less devices)
   if (_board) _board->reboot();
@@ -44008,6 +44341,105 @@ static inline void uiCp(const char* next) {
   s_ui_cp_tag = next;
   s_ui_cp_t0  = nowms;
 }
+
+#if CAP_SD || defined(TLORA_PAGER)
+// Runtime SD wedge detect + recover. Some writer saw an SD write fail while the
+// card was supposedly mounted (sdNoteIoFailure) — verify with real I/O and,
+// if the card stopped answering, drop the mount and re-run the full mount
+// ladder (SD.end() + staged SD.begin): exactly what the next reboot would do,
+// minus the reboot. Without this the firmware is blind to a wedged card:
+// SD.cardType() keeps returning its cached mount-time type, s_sd_mounted stays
+// true so fmSdTryMount() no-ops, and every SD feature fails silently until the
+// user power-cycles (the "SD stops working until reboot" report).
+static void sdHealthTick() {
+  static uint32_t s_next_probe_ms    = 0;
+  static uint32_t s_next_bg_probe_ms = 0;
+  const uint32_t now = (uint32_t)millis();
+  if (!s_sd_mounted) {
+    s_sd_fail_note_ms = 0;
+    // Reinsert watch. After a failed remount ("SD card lost") the SD VFS is
+    // unregistered and NOTHING outside the file manager ever re-runs a mount
+    // — a reinserted card then LOOKED recovered (battery quietly falls back
+    // to SPIFFS) while chat-history writes kept failing silently and new
+    // messages were never persisted. One light single-attempt mount (no
+    // ladder; an empty slot fails in well under a second) every 30 s while
+    // awake — a healthy warm card mounts on the first 4 MHz attempt. The FM
+    // poll / SD-row tap still provide the full ladder for stubborn cards.
+    if (touchSleep::isSleeping()) return;
+    if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
+    s_next_bg_probe_ms = now + 30000;
+#if defined(TLORA_PAGER)
+    if (!pagerSdCardPresent()) return;   // card-detect says the slot is empty
+#endif
+    if (s_fm_list) return;               // FM open: its 2 s poll owns remounting (full ladder)
+    SPIClass* spi = sdSharedSPI();
+    if (!spi) return;
+    SD.end();
+    if (SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
+      s_sd_mounted        = true;
+      s_sd_size           = SD.cardSize();
+      s_sd_retry_after_ms = 0;
+      markSdIo();
+      if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
+#if defined(HAS_TDECK_GT911)
+      // Land the RAM ring on the card promptly, not up to 30+ s later: every
+      // message received while the card was out is only in RAM. Armed as an
+      // OFF-THREAD flush — a synchronous write here froze the UI for >30 s on
+      // a card that mounts fine but times out on large writes. mkdir first —
+      // a fresh replacement card has no /meshcomod yet, and without it every
+      // history flush fails silently.
+      SD.mkdir("/meshcomod");
+      if (g_lv.task) g_lv.task->flushHistorySoon();
+#endif
+    } else {
+      SD.end();                          // leave cardType() honestly CARD_NONE
+    }
+    return;
+  }
+  if (s_sd_format_pending) return;                        // format owns the card right now
+  // Hold off while the core-0 worker is (or may be about to be) on the card —
+  // SD.end() under an open worker file handle is the crash we must not add.
+  // On a truly wedged card the worker's own ops fail fast, so this clears.
+  if (s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request) return;
+#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
+#endif
+  // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
+  // also on a slow 30 s background cadence — a card yanked while nothing is
+  // writing (idle home screen) would otherwise never be noticed at all, since
+  // detection is failure-driven and reads fall back silently. A healthy-card
+  // probe is one SEND_STATUS transaction (sub-ms), so the idle cost is nil.
+  // The background probe pauses in the sleep regime (screen off, loop
+  // throttled): nobody sees the toast, an SD poke keeps the card out of its
+  // own power-down, and a yank-while-asleep is caught by the first probe
+  // after wake. The FAILURE-driven probe stays active asleep on purpose —
+  // scheduled telemetry keeps logging to SD during sleep, and a wedge there
+  // must still recover.
+  if (s_sd_fail_note_ms) {
+    if (s_next_probe_ms && (int32_t)(now - s_next_probe_ms) < 0) return;
+  } else {
+    if (touchSleep::isSleeping()) return;
+    if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
+  }
+  s_next_probe_ms    = now + 5000;
+  s_next_bg_probe_ms = now + 30000;
+  s_sd_fail_note_ms = 0;
+  if (sdProbeAlive()) return;     // transient failure (card full, bad path, ...) — not a wedge
+  fmSdUnmount();                  // SD.end() so a fresh begin re-runs the full card handshake
+  if (fmSdTryMount()) {
+    if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
+#if defined(HAS_TDECK_GT911)
+    SD.mkdir("/meshcomod");                            // fresh replacement card: recreate the data root
+    if (g_lv.task) g_lv.task->flushHistorySoon();      // land the RAM ring promptly (off-thread — no UI stall)
+#endif
+  } else {
+    // Ladder failed — card needs a real power cycle (reinsert). s_sd_mounted is
+    // now false and SD.cardType() reads CARD_NONE, so features degrade honestly
+    // instead of silently failing, and the usual remount paths keep retrying.
+    if (g_lv.task) g_lv.task->showAlert(TR("SD card lost - reinsert to recover"), 2600);
+  }
+}
+#endif
 
 void UITask::loop() {
   unsigned long now = millis();
@@ -44441,6 +44873,7 @@ void UITask::loop() {
     else                          s_jump_dimmed = true;   // nothing open: park the state
   }
 #if CAP_SD || defined(TLORA_PAGER)
+  sdHealthTick();   // wedge detect + remount, driven by writer-flagged failures (any task)
   // microSD insert/remove detection — only while the file manager is open, so
   // there's no idle SPI traffic. SD.begin runs on this loop task (never
   // concurrent with the radio's SPI), and reuses the radio's already-begun bus.
@@ -44453,9 +44886,20 @@ void UITask::loop() {
         // unmountable card spikes current / churns the bus and can reset the board.
         if (now >= s_sd_retry_after_ms && fmSdTryMount()) {
           showAlert(TR("SD card inserted"), 1500);
+#if defined(HAS_TDECK_GT911)
+          SD.mkdir("/meshcomod");   // fresh replacement card: recreate the data root
+          flushHistorySoon();       // land the RAM ring promptly (off-thread — no UI stall)
+#endif
           if (!s_fm_fs) fmShowRoots();          // refresh roots so it appears
         }
-      } else if (SD.cardType() == CARD_NONE) {
+      } else if (!s_hist_flush_busy && !s_hist_flush_req && !sdProbeAlive()) {
+        // Real-I/O probe, NOT `SD.cardType() == CARD_NONE`: cardType() is cached
+        // at mount and only SD.end() ever resets it, so the old check could never
+        // fire — neither a yanked card nor a wedged one was ever detected here.
+        // Never probe/unmount under an in-flight history flush: SD.end() while
+        // the flush holds its open temp file leaves a stale FIL, and every
+        // later write on it fails FR_INVALID_OBJECT -> EBADF ("bad file
+        // number") — recovery must not sabotage the very write it protects.
         fmSdUnmount();
         showAlert(TR("SD card removed"), 1500);
         if (s_fm_fs == &SD || !s_fm_fs) fmShowRoots();
@@ -44943,7 +45387,7 @@ void UITask::loop() {
         }
         sdcard_uninit(pdrv);
       }
-      if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 3);
+      if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
     }
     enableLoopWDT();
     fmHideFormatOverlay();
