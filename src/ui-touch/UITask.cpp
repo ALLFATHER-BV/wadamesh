@@ -10513,6 +10513,18 @@ static void compactChatToggleCb(lv_event_t* e) {
   if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
 }
 
+// Channel bubble timestamp placement: top (sender row) vs classic footer.
+static void timestampOnTopToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetTimestampOnTop(on);
+#endif
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Timestamp on top") : TR("Timestamp at bottom"), 1000);
+  if (g_lv.dm.detail_open) refreshChatDetailAsync(g_lv.dm);
+  if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
+}
+
 #if defined(HAS_EXPANSION_KIT)
 // V4 Expansion Kit: show/hide the Sensors tab + Home env widget. The tab layout
 // is decided in buildUiTree, so this only persists the pref and prompts for a
@@ -11397,6 +11409,18 @@ static void buildDeviceSettings(int sec) {
     if (touchPrefsGetColorfulBubbles()) lv_obj_add_state(sw, LV_STATE_CHECKED);
 #endif
     lv_obj_add_event_cb(sw, colorfulBubblesToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+  }
+
+  /* Channel bubbles: put the timestamp on the sender row (shorter) vs footer. */
+  {
+    int h = settingsRowLabel(body, y, 6, TR("Timestamp on top"), COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (touchPrefsGetTimestampOnTop()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(sw, timestampOnTopToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
 
@@ -29638,10 +29662,15 @@ static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool chann
   lv_coord_t inner_y = 0;
   char meta_buf[48];
   chatBuildBubbleMeta(m, channel_mode, meta_buf, sizeof(meta_buf), nullptr);
-  if (channel_mode) {
+#if defined(ESP32)
+  const bool meta_on_top = channel_mode && touchPrefsGetTimestampOnTop();
+#else
+  const bool meta_on_top = channel_mode;
+#endif
+  if (meta_on_top) {
     if ((!m.outgoing && d.san_sender[0]) || meta_buf[0])
       inner_y += lv_font_get_line_height(&g_font_12);
-  } else if (thread_is_room && !m.outgoing && d.san_sender[0]) {
+  } else if ((channel_mode || thread_is_room) && !m.outgoing && d.san_sender[0]) {
     inner_y += lv_font_get_line_height(&g_font_12);
   }
 
@@ -29653,7 +29682,7 @@ static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool chann
                   txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
 
   lv_coord_t body_h = inner_y + wrapped_size.y;
-  if (!channel_mode && meta_buf[0]) {
+  if (!meta_on_top && meta_buf[0]) {
     body_h += 1 + lv_font_get_line_height(&g_font_12);
   }
   return kChatBubblePadV * 2 + body_h;
@@ -30373,7 +30402,11 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   char meta_buf[48];
   uint32_t meta_fg = COLOR_SUB;
   chatBuildBubbleMeta(m, p->channel_mode, meta_buf, sizeof(meta_buf), &meta_fg);
+#if defined(ESP32)
+  const bool meta_on_top = p->channel_mode && touchPrefsGetTimestampOnTop();
+#else
   const bool meta_on_top = p->channel_mode;
+#endif
   const bool show_sender_line = (p->channel_mode || s_chat_virt.thread_is_room) &&
                                 !m.outgoing && d.san_sender[0];
 

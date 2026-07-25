@@ -178,6 +178,11 @@ bool    touchPrefsSetBootAdvert(bool on);
 bool    touchPrefsGetCompactChat();
 bool    touchPrefsSetCompactChat(bool on);
 
+/* Channel bubble timestamp placement: true = timestamp on the sender row (shorter
+ * bubbles); false = classic footer under the body. Default true. */
+bool    touchPrefsGetTimestampOnTop();
+bool    touchPrefsSetTimestampOnTop(bool on);
+
 /* Buffered LoRa receive (experimental): a high-priority drain task lifts each packet
  * out of the radio within ~1 ms so UI-thread stalls can't overwrite unread packets
  * (the missed-messages class). Opt-in, default off = stock receive path. */
