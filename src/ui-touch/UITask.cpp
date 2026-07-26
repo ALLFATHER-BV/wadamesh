@@ -4591,8 +4591,8 @@ static volatile bool s_hist_flush_ok   = true;   // last worker write result (re
 // the user only found out on the next reboot as "messages from the last N
 // minutes vanished" (the thread list still showed fresh times because the
 // small threads file kept writing while the big ring write failed). Updated
-// inside uiWriteMsgsFile from EITHER task (volatile stores only); read by the
-// About page + the repeated-failure toast in flushHistoryIfDue.
+// inside the segment writers from EITHER task (volatile stores only); read by
+// the About page + the repeated-failure toast in flushHistoryIfDue.
 static volatile uint32_t s_msgs_write_ok_ms   = 0;  // millis() of last successful ring write (0 = none yet)
 static volatile uint32_t s_msgs_write_fail_ms = 0;  // millis() of last failed ring write
 static volatile uint16_t s_msgs_write_fails   = 0;  // consecutive failures since the last success
@@ -10189,20 +10189,11 @@ static void sysInfoTextLive(char* buf, size_t cap) {
   // succeeding, so the thread list looks fresh while messages silently stop
   // persisting.
   {
-    // File size is CACHED and refreshed at most every 30 s, never while the
-    // worker is mid-flush: this label rebuilds at 1 Hz on the UI task, and an
-    // open() here blocks on the FatFs volume lock behind a slow/failing ring
-    // write — that was a UI freeze you could trigger just by WATCHING this
-    // page while the store was sick.
-    static size_t   s_chat_fsz_cached = 0;
-    static uint32_t s_chat_fsz_ms     = 0;
+    // Segmented store: the byte total is writer-maintained (volatile), so this
+    // 1 Hz label costs ZERO file I/O — the old single-file size probe blocked
+    // on the FatFs volume lock behind a sick write and froze the UI just by
+    // WATCHING this page.
     const uint32_t nowms = (uint32_t)millis();
-    if (!s_hist_flush_busy &&
-        (s_chat_fsz_ms == 0 || (uint32_t)(nowms - s_chat_fsz_ms) > 30000u)) {
-      s_chat_fsz_ms = nowms ? nowms : 1;
-      File f = uiDataOpen(k_ui_msgs_path, "r");
-      if (f) { s_chat_fsz_cached = f.size(); f.close(); }
-    }
     char stat[112];
     if (s_msgs_write_fails) {
       char why[64];
@@ -10218,9 +10209,11 @@ static void sysInfoTextLive(char* buf, size_t cap) {
     else
       snprintf(stat, sizeof stat, "none this session");
     p += snprintf(buf + p, cap - p,
-                  "Chat store\n  %s   file: %u KB\n  last save: %s\n\n",
+                  "Chat store\n  %s   %d seg / %u KB%s\n  last save: %s\n\n",
                   uiDataFsIsSdCard() ? "SD /meshcomod" : "Internal flash",
-                  (unsigned)(s_chat_fsz_cached / 1024), stat);
+                  s_seg_count, (unsigned)(s_seg_total_bytes / 1024u),
+                  s_seg_store_ready ? "" : "  (migration pending!)",
+                  stat);
   }
 #endif
   (void)p; (void)cap;
@@ -10479,6 +10472,9 @@ static void sdRestoreApply() {
   if (!fmSdTryMount()) { g_lv.task->showAlert(TR("No SD card"), 1600); return; }
   g_lv.task->showAlert(TR("Copying internal data to SD..."), 6000);
   lv_refr_now(nullptr);                 // paint the notice before the blocking copy
+  // Land everything in RAM first — this path used to reboot WITHOUT persisting,
+  // silently dropping every message since the last lazy flush.
+  g_lv.task->persistHistoryNow();
   disableLoopWDT();
   const bool ok = meshcomodMigrateSpiffsToSd(true);
   enableLoopWDT();
@@ -18424,7 +18420,11 @@ static void fmSdMountOrFormatCb(lv_event_t* e) {
 // SETTINGS (exported config), plus MAPS/LOGS. Idempotent (mkdir-if-absent), so
 // it's also safe to re-run on an already-set-up card.
 static void sdEnsureMeshcomodFolders() {
-  static const char* const folders[] = { "/BINS", "/UPDATES", "/RECBCK", "/SETTINGS", "/MAPS", "/LOGS" };
+  // /meshcomod + the chat-segment dir were MISSING here for years: after an
+  // in-session FAT32 format every chat/telemetry write failed at open (ENOENT)
+  // until a remount or reboot recreated the data root.
+  static const char* const folders[] = { "/BINS", "/UPDATES", "/RECBCK", "/SETTINGS", "/MAPS", "/LOGS",
+                                         "/meshcomod", "/meshcomod/msgs" };
   for (unsigned i = 0; i < sizeof(folders) / sizeof(folders[0]); ++i)
     if (!SD.exists(folders[i])) SD.mkdir(folders[i]);
   if (!SD.exists("/README.TXT")) {
@@ -24677,9 +24677,9 @@ static void histFlushTaskFn(void*) {
 static bool ensureHistFlushTaskRunning() {
   if (s_hist_flush_task != nullptr) return true;
   if (!s_hist_flush_stack) {
-    // uiWriteMsgsFile keeps its bulk buffer on the heap; stack use is File
-    // objects + FatFs path work. 6 KB leaves ample headroom (the tile worker's
-    // overflow-into-globals history earned the caution).
+    // The segment writers keep their bulk buffers on the heap; stack use is
+    // File objects + FatFs path work. 6 KB leaves ample headroom (the tile
+    // worker's overflow-into-globals history earned the caution).
     static const size_t k_sz = 6 * 1024;
     s_hist_flush_stack = (StackType_t*)heap_caps_malloc(k_sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!s_hist_flush_stack) return false;
@@ -41264,7 +41264,6 @@ void UITask::flushHistoryIfDue(unsigned long now) {
 // the chat to the SD card.
 static fs::FS* s_ui_data_fs       = nullptr;
 static char    s_ui_data_root[16] = "";
-static bool    s_ui_data_resolved = false;
 static bool uiDataFsReady() {
   if (s_ui_data_fs != nullptr) return true;   // cache SUCCESS only — a failed resolve MUST stay retryable
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
@@ -43432,6 +43431,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // linearizes a history file written under either capacity.
 #if defined(ESP32)
   _ui_msg_cap = uiDataFsIsSdCard() ? MAX_UI_MESSAGES_SD : MAX_UI_MESSAGES;
+  uiDataEnsureDirs();   // segment dir exists before the loader scans / the first append
 #endif
   size_t msgs_bytes          = sizeof(UIMessage) * (size_t)_ui_msg_cap;
   const size_t threads_bytes = sizeof(UIThread)  * MAX_UI_THREADS;
@@ -45164,6 +45164,7 @@ static void sdHealthTick() {
       // a fresh replacement card has no /meshcomod yet, and without it every
       // history flush fails silently.
       SD.mkdir("/meshcomod");
+      uiDataEnsureDirs();   // segment dir too — a fresh replacement card has neither
       if (g_lv.task) g_lv.task->flushHistorySoon();
 #endif
     } else {
@@ -45205,6 +45206,7 @@ static void sdHealthTick() {
     if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
 #if defined(HAS_TDECK_GT911)
     SD.mkdir("/meshcomod");                            // fresh replacement card: recreate the data root
+    uiDataEnsureDirs();                                // segment dir too
     if (g_lv.task) g_lv.task->flushHistorySoon();      // land the RAM ring promptly (off-thread — no UI stall)
 #endif
   } else {
@@ -45663,6 +45665,7 @@ void UITask::loop() {
           showAlert(TR("SD card inserted"), 1500);
 #if defined(HAS_TDECK_GT911)
           SD.mkdir("/meshcomod");   // fresh replacement card: recreate the data root
+          uiDataEnsureDirs();        // segment dir too
           flushHistorySoon();       // land the RAM ring promptly (off-thread — no UI stall)
 #endif
           if (!s_fm_fs) fmShowRoots();          // refresh roots so it appears

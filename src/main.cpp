@@ -215,6 +215,8 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
   SD.mkdir("/meshcomod/identity");
   SD.mkdir("/meshcomod/bl");
   SD.mkdir("/meshcomod/lock");
+  SD.mkdir("/meshcomod/msgs");   // chat segments: SPIFFS names them flat ("/msgs/seg_*.bin"),
+                                 // but the FAT card needs the real parent dir or every copy fails
   bool identity_ok = false;
   int copied = 0, failed = 0;
   static uint8_t buf[4096];
