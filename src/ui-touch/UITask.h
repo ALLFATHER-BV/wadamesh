@@ -75,6 +75,7 @@ public:
     uint16_t in_scope;       // transport scope (transport_codes[0]); valid iff MSG_META_HAS_SCOPE
     uint8_t  in_path_n;
     uint8_t  in_path[MAX_UI_PATH];
+    uint8_t  packet_hash[8]; // RAM-only exact MeshCore hash for Friend Request targeting
     char thread[MAX_THREAD_NAME + 1];
     char sender[MAX_SENDER_NAME + 1];
     char text[MAX_MSG_TEXT + 1];
@@ -216,6 +217,22 @@ public:
    *  shows the double-check. No-op if no match. */
   void onMessageAcked(uint32_t ack_hash);
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  bool friendMeshRequestsEnabled() const override;
+  bool friendMeshRequesterBlocked(
+      const uint8_t requester_pub[32]) const override;
+  void onFriendMeshFriendRequest(const uint8_t request_id[8],
+                                 const uint8_t requester_pub[32],
+                                 const char* requester_name,
+                                 uint32_t created_at,
+                                 uint32_t expires_at,
+                                 const uint8_t* return_path,
+                                 uint8_t return_path_length) override;
+  void onFriendMeshFriendAccepted(const uint8_t request_id[8],
+                                  const uint8_t responder_pub[32],
+                                  const char* responder_name) override;
+  void onFriendMeshFriendRemoved(
+      const uint8_t remover_pub[32]) override;
+  bool sendFriendRequestForMessage(int msg_idx);
   void onFriendMeshChannelInvite(const ContactInfo& from,
                                  const char* channel_name,
                                  const uint8_t secret16[16]) override;

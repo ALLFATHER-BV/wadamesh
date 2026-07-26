@@ -162,6 +162,30 @@ public:
    *  periodic thread-refresh deadline so the new entry shows up immediately. */
   virtual void onThreadsChanged() {}
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  virtual bool friendMeshRequestsEnabled() const { return false; }
+  virtual bool friendMeshRequesterBlocked(
+      const uint8_t requester_pub[32]) const {
+    (void)requester_pub; return false;
+  }
+  virtual void onFriendMeshFriendRequest(const uint8_t request_id[8],
+                                         const uint8_t requester_pub[32],
+                                         const char* requester_name,
+                                         uint32_t created_at,
+                                         uint32_t expires_at,
+                                         const uint8_t* return_path,
+                                         uint8_t return_path_length) {
+    (void)request_id; (void)requester_pub; (void)requester_name;
+    (void)created_at; (void)expires_at; (void)return_path;
+    (void)return_path_length;
+  }
+  virtual void onFriendMeshFriendAccepted(const uint8_t request_id[8],
+                                          const uint8_t responder_pub[32],
+                                          const char* responder_name) {
+    (void)request_id; (void)responder_pub; (void)responder_name;
+  }
+  virtual void onFriendMeshFriendRemoved(const uint8_t remover_pub[32]) {
+    (void)remover_pub;
+  }
   /** A bounded FriendMesh channel invitation arrived inside an authenticated
    *  MeshCore contact message whose route was verified as direct/zero-hop.
    *  The UI must require explicit acceptance before saving the channel. */

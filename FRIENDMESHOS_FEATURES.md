@@ -177,6 +177,105 @@ For the T-Deck FriendMesh build, the microSD card is the required long-term data
 
 This is an explicit SD-bound product mode. It reduces internal-flash churn and prevents large or growing user datasets from silently returning to SPIFFS, but it also makes card availability and integrity part of the device's operating contract. The card should be inserted before boot and must not be removed during a write.
 
+The Friends directory has one deliberately tiny exception for card-loss use:
+when SD writes are unavailable, internal NVS may hold at most four accepted
+Friend cards, each containing only a full 32-byte public key and a 15-byte local
+alias. Pending Friend Requests are limited to four RAM-only records for that
+boot, receiving requests resets to off after reboot, and no request path,
+message hash, chat history, location, motion, or other growing FriendMesh data
+is written internally. When SD returns, the emergency cards are merged into the
+normal SD-backed Friends view and cleared from NVS after the next successful
+Friend mutation.
+
+Friend and network-node removal intentionally share the full-width danger slot
+in the contact action sheet while remaining different operations. Tapping a
+Friend shows `Remove friend`, requires confirmation, and removes the local
+Friend card while preserving the underlying MeshCore contact. It also sends an
+authenticated silent relationship-removal control to the other device; a
+FriendMesh-aware receiver removes the sender's Friend card without showing a
+negative notification or chat message. Blocking an existing Friend performs
+the same reciprocal removal before storing the local block. Tapping a
+non-friend shows `Remove node`, requires confirmation, and removes the MeshCore
+contact plus any matching cached Discovered entry; a later advert may make that
+node discoverable again. Bulk contact deletion excludes Friends so it cannot
+bypass this distinction.
+
+### 4.4.1 Public-channel Friend Requests
+
+The T-Deck can turn a currently received public-channel message into an explicit
+Friend Request without requiring a nearby advert or changing MeshCore's packet
+format:
+
+1. The requester long-presses the incoming message and selects `Friend`.
+2. WadaMesh sends application group-data type `0xFF03` on the same channel,
+   through the received packet's reversed repeater path (or zero-hop when the
+   original was heard directly).
+3. The fixed 165-byte request contains a random request ID, the exact eight-byte
+   target message hash, timestamps, requester name, requester MeshCore public
+   key, a bounded signed return path copied from the referenced public message,
+   and a signature by that key. Version-one 150-byte requests remain decodable;
+   they use flood fallback for acceptance.
+4. A FriendMesh recipient accepts the request only if receiving is explicitly
+   enabled and its RAM ledger proves it originated that exact channel packet.
+   Other channel members may relay/decrypt the group-data carrier but cannot
+   make it enter their inbox without the matching sent-message hash.
+5. Contacts -> overflow -> Friend requests presents an opt-in toggle and an
+   Accept/Deny list. Accept adds the full-key Friend card and returns an
+   authenticated/encrypted acceptance over the signed path when available; the
+   requester alone gets a positive notification and automatically adds the
+   accepter. Denial sends nothing and asks whether the recipient also wants to
+   block that full identity. A block drops future requests before inbox storage.
+
+Only one live request per public key can occupy the inbox. Replays and newly
+generated request IDs from that same key do not rewrite storage or retrigger an
+alert until the existing request expires or is resolved. Receiving requests is
+still off by default. Public-key rotation can intentionally create a new
+identity; names are never used as the blocking authority.
+
+This proves who signed the request and targets a device that recently originated
+the referenced packet. The reversed route is an operational return path, not a
+cryptographic proof that a public-channel display name authored the original
+text. Stock MeshCore nodes can relay the carrier but do not implement the inbox
+or acceptance, so both endpoints require FriendMesh-aware firmware. Request
+receiving is off by default.
+
+### 4.4.2 Nearby BLE Friend Requests
+
+Nearby discovery follows the same consent rule as public-channel requests:
+seeing a device never adds either person as a Friend. `Contacts` -> overflow ->
+`Find nearby friends` performs a bounded active BLE scan and lists FriendMesh
+devices by signal strength. The `Request` action on a discovered person and the
+`Send friend request` action on a saved contact or map person open the same
+targeted scan. Manual public-key entry is deliberately named `Save contact by
+key`; it creates only a local MeshCore contact.
+
+After the user selects a BLE peer, the requester reads its full 32-byte public
+identity from the FriendMesh GATT service and requires it to match the six-byte
+prefix in the BLE advertisement. The requester then sends the existing fixed
+165-byte Friend Request envelope over a dedicated GATT characteristic. A nearby
+flag and eight-byte target identity prefix are covered by the requester's
+Ed25519 signature, binding the request to that selected device. Only public
+identity metadata crosses this BLE request path; no channel key, identity
+private key, or friendship state is transferred.
+
+The BLE callback only copies one bounded request into RAM. The UI task verifies
+the complete signature, target, timestamp, receive toggle, block state,
+duplicate identity, and inbox capacity before persistence or notification.
+Disabled and blocked recipients silently discard the request; the transport ACK
+does not reveal that policy to the requester. Accept/Deny/Block then reuse the
+same inbox and behavior as public-channel requests. Acceptance alone adds both
+Friends and notifies the requester. Denial remains silent. A zero-hop MeshCore
+authenticated control carries acceptance because a successful BLE exchange
+establishes immediate radio proximity; physical two-device validation remains
+required.
+
+The combined T-Deck image is host-build-verified at 89,300 bytes static RAM
+(27.3%) and 3,331,613 bytes flash (82.0%). BLE RSSI and a public-key prefix are
+not proof of human identity or distance; the signed full-key exchange prevents
+an ordinary name spoof from becoming a friendship, while the later shared
+security phase still owns stronger privacy-preserving presence and durable
+delivery work.
+
 The T-Deck partition table provides:
 
 | Region | Size | Purpose |
@@ -514,19 +613,35 @@ and 3,267,661 bytes flash. The preceding workspace image was physically tested;
 this updated marker-rendering image still requires a completed recovery flash
 after the development T-Deck disconnected during upload.
 
-### 7.10 Simple WadaMesh private-channel nearby join
+### 7.10 BLE FriendMesh private-channel join
 
-The first live group-chat join flow reuses WadaMesh private channels and
-MeshCore encrypted direct messages. A channel's existing action sheet offers
-`Invite nearby` and performs a bounded three-second Bluetooth scan. Presence
-advertisements contain only a versioned six-byte public-key prefix and are
-matched only to existing saved chat contacts; results expire after 30 seconds.
-A zero-hop LoRa advert no older than two minutes remains the fallback. The
-sender forces an empty outbound route and sends a bounded `FMCH1`
-channel-name/secret envelope through the existing pairwise encrypted message
-path. A receiver processes the envelope only when the packet is direct with no
-path hashes, then shows an explicit `Join` confirmation before saving the
-channel. Invite payloads do not enter visible chat history.
+The primary live group-chat join flow keeps MeshCore's existing private-channel
+format but no longer depends on a MeshCore advert, saved contact, or LoRa path.
+`Add channel` -> `FriendMesh channels` opens a secondary `Create` / `Join` menu.
+Create saves the private channel and self-admin roster, then displays a
+six-digit code while a RAM-only BLE host session is advertised for two minutes.
+Join performs a bounded active scan; the scan request is the joiner's ping and
+the host-only scan response is the administrator's ACK. The joiner selects the
+nearby administrator and only then sees the six-digit entry screen.
+
+The final exchange uses a dedicated small GATT service alongside the existing
+Nordic UART companion service. AES-256-GCM protects the channel name, 16-byte
+MeshCore channel secret, and both 32-byte public identities. Its key is derived
+from the six-digit code, random host session ID, and fresh join nonce. The code
+is never advertised or stored, five failed attempts close the session, the
+administrator screen must remain open, and existing joined public-key prefixes
+are rejected before provisioning. Successful devices install the ordinary
+MeshCore channel and fixed FriendMesh roster locally; no identity private key is
+transferred. The six-digit code is deliberately only short-range onboarding
+authentication and is not claimed to replace the planned signed membership and
+epoch protocol.
+
+The older `FMCH1` zero-hop encrypted MeshCore direct-message decoder remains a
+compatibility path for already-deployed builds, and its payload is still
+consumed before visible chat history. It is no longer the primary on-device UI.
+The combined T-Deck image is host-build-verified at 88,420 bytes static RAM
+(27.0%) and 3,322,857 bytes flash (81.8%); the two-device BLE handshake still
+requires physical validation.
 
 The same channel action sheet now exposes `Members`. A fixed eight-member roster
 is persisted through WadaMesh's existing bounded blob storage and represents
@@ -668,9 +783,10 @@ testing on both current T-Decks.
 
 FriendMesh group capability is now explicit rather than inferred from every
 MeshCore channel. `Create a private channel` creates an ordinary core channel;
-`Create a FriendMesh group` creates the same private MeshCore channel plus a
-persisted self-admin FriendMesh roster. Receiving and accepting a nearby group
-invitation creates that roster as before. Existing groups with valid joined
+`FriendMesh channels` -> `Create` creates the same private MeshCore channel plus
+a persisted self-admin FriendMesh roster and immediately opens its BLE invite
+code. A successful `Join` creates the member/admin roster on both devices.
+Existing groups with valid joined
 rosters are recognized without migration. Ordinary channels do not expose or
 successfully invoke Invite nearby, Members, Group map, or Coordinate.
 

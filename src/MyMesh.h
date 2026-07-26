@@ -109,8 +109,10 @@
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+#include "friendmesh/people/FriendMeshBlePresence.h"
 #include "friendmesh/people/FriendMeshChannelInvite.h"
 #include "friendmesh/people/FriendMeshChannelRoster.h"
+#include "friendmesh/people/FriendMeshFriendRequest.h"
 #include "friendmesh/navigation/FriendMeshMeshCorePositionAdapter.h"
 #include "friendmesh/navigation/FriendMeshGroupCoordination.h"
 #endif
@@ -302,6 +304,9 @@ protected:
   void onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt,
                          uint16_t data_type, const uint8_t *data,
                          size_t data_len) override;
+  void onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret,
+                      const mesh::Identity& sender, uint8_t* data,
+                      size_t len) override;
 
   uint8_t onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                            uint8_t len, uint8_t *reply) override;
@@ -507,6 +512,8 @@ public:
   uint8_t  _echo_hop_n[UI_ECHO_SLOTS]  = {0};                 // count, 0..ECHO_MAX_HOPS
   uint8_t  _echo_idx = 0;
   uint32_t _last_sent_fp = 0;
+  uint8_t  _last_sent_packet_hash[8] = {0};
+  uint8_t  _last_rx_packet_hash[8] = {0};
   uint8_t  _last_rx_path[32] = {0};
   uint8_t  _last_rx_path_n  = 0;
   uint16_t _last_rx_scope     = 0;     // transport_codes[0] of the last RX flood ("scope")
@@ -561,6 +568,12 @@ public:
 
   /** Fingerprint of the most-recently originated flood TXT payload (0 if none). */
   uint32_t uiLastSentFp() const { return _last_sent_fp; }
+  void uiLastSentPacketHash(uint8_t out[8]) const {
+    if (out) memcpy(out, _last_sent_packet_hash, 8);
+  }
+  void lastRxPacketHash(uint8_t out[8]) const {
+    if (out) memcpy(out, _last_rx_packet_hash, 8);
+  }
 
   /** Echoes (repeater re-broadcasts) heard of the flood TXT with this payload
    *  fingerprint. 0 if unknown / evicted from the ring. */
@@ -608,6 +621,12 @@ public:
    *  synchronously right before the newMsg* notification. */
   void uiStashRxMeta(mesh::Packet* pkt) {
     _last_rx_path_n = 0;
+    memset(_last_rx_packet_hash, 0, sizeof(_last_rx_packet_hash));
+    if (pkt) {
+      uint8_t hash[MAX_HASH_SIZE] = {};
+      pkt->calculatePacketHash(hash);
+      memcpy(_last_rx_packet_hash, hash, sizeof(_last_rx_packet_hash));
+    }
     if (pkt && pkt->isRouteFlood()) {
       int nb = (int)pkt->getPathHashCount() * (int)pkt->getPathHashSize();
       if (nb > (int)sizeof(_last_rx_path)) nb = (int)sizeof(_last_rx_path);
@@ -851,6 +870,13 @@ public:
   bool uiAcceptFriendMeshChannelInvite(
       int channel_idx, const uint8_t inviter_pub[PUB_KEY_SIZE],
       bool& notice_sent);
+  bool uiFinalizeFriendMeshBleAdminJoin(
+      int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE],
+      const char* member_name);
+  bool uiInstallFriendMeshBleGroup(
+      const char* channel_name, const uint8_t channel_secret[16],
+      const uint8_t admin_pub[PUB_KEY_SIZE], const char* admin_name,
+      int& channel_idx);
   size_t uiGetFriendMeshChannelMembers(
       int channel_idx, FriendMeshChannelMemberView* destination,
       size_t capacity, bool& rekey_required);
@@ -903,6 +929,24 @@ public:
     saveContacts();
     return true;
   }
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  bool uiSendFriendRequest(int channel_idx,
+                           const uint8_t target_message_hash[8],
+                           const uint8_t* incoming_path,
+                           uint8_t encoded_path_len);
+  friendmesh::BleFriendRequestResult uiSendNearbyFriendRequest(
+      const friendmesh::BlePresencePeer& peer,
+      const friendmesh::BleFriendIdentity& target);
+  bool uiHandleNearbyFriendRequest(const uint8_t* encoded, size_t length);
+  bool uiAcceptFriendRequest(const uint8_t requester_pub[32],
+                             const uint8_t request_id[8],
+                             const char* requester_name,
+                             const uint8_t* return_path,
+                             uint8_t return_path_length);
+  bool uiRemoveFriendRelationship(const uint8_t friend_pub[32],
+                                  const char* friend_name);
+#endif
 
   /** Manually add a chat-type peer to contacts[] from a raw 32-byte pubkey
    *  + display name. Used by the Contacts tab "+" → "Add by pubkey" flow
@@ -1193,6 +1237,36 @@ private:
   // last one resolves or times out.
   uint32_t _ui_trace_ping_tag = 0;
   uint32_t _ui_sig_probe_tag  = 0;   // in-flight silent signal probe (updates _ui_sig_* only, no popup)
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  static constexpr uint8_t FRIEND_REQUEST_SENT_MESSAGE_SLOTS = 16;
+  struct FriendRequestSentMessage {
+    uint8_t messageHash[8];
+    uint8_t channelHash;
+    uint32_t sentMillis;
+  };
+  FriendRequestSentMessage _friend_request_sent_messages[
+      FRIEND_REQUEST_SENT_MESSAGE_SLOTS] = {};
+  uint8_t _friend_request_sent_message_head = 0;
+  static constexpr uint8_t FRIEND_REQUEST_OUTGOING_SLOTS = 8;
+  struct FriendRequestOutgoing {
+    uint8_t requestId[8];
+    uint8_t targetMessageHash[8];
+    uint32_t sentMillis;
+  };
+  FriendRequestOutgoing _friend_request_outgoing[
+      FRIEND_REQUEST_OUTGOING_SLOTS] = {};
+  uint8_t _friend_request_outgoing_head = 0;
+  void friendmeshRememberSentChannelMessage(
+      const mesh::GroupChannel& channel, mesh::Packet* packet);
+  bool friendmeshSentChannelMessageMatches(
+      const mesh::GroupChannel& channel, const uint8_t message_hash[8]) const;
+  bool friendmeshRememberOutgoingRequest(const uint8_t request_id[8],
+                                         const uint8_t target_hash[8]);
+  bool friendmeshConsumeOutgoingRequest(const uint8_t request_id[8]);
+  bool friendmeshSendLinkControl(
+      const ContactInfo& recipient, friendmesh::FriendLinkAction action,
+      const uint8_t request_id[8]);
+#endif
 };
 
 #if defined(ESP32_PLATFORM)

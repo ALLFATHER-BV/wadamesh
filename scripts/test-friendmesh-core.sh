@@ -26,6 +26,7 @@ compiler="${CXX:-c++}"
   "$repo_root/src/friendmesh/navigation/FriendMeshMeshCorePositionAdapter.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshBlePresence.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshChannelInvite.cpp" \
+  "$repo_root/src/friendmesh/people/FriendMeshFriendRequest.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshChannelRoster.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshMembership.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshTrustedContacts.cpp" \

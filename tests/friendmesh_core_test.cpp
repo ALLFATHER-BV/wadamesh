@@ -17,6 +17,7 @@
 #include "friendmesh/navigation/FriendMeshMeshCorePositionAdapter.h"
 #include "friendmesh/people/FriendMeshBlePresence.h"
 #include "friendmesh/people/FriendMeshChannelInvite.h"
+#include "friendmesh/people/FriendMeshFriendRequest.h"
 #include "friendmesh/people/FriendMeshChannelRoster.h"
 #include "friendmesh/people/FriendMeshMembership.h"
 #include "friendmesh/people/FriendMeshTrustedContacts.h"
@@ -1907,6 +1908,116 @@ void testMeshCorePositionAdapter() {
         friendmesh::ResultCode::InvalidArgument);
 }
 
+void testFriendRequestEnvelopeAndPath() {
+  friendmesh::FriendRequestEnvelope request = {};
+  for (size_t i = 0; i < sizeof(request.requestId); ++i)
+    request.requestId[i] = static_cast<uint8_t>(i + 1);
+  for (size_t i = 0; i < sizeof(request.targetMessageHash); ++i)
+    request.targetMessageHash[i] = static_cast<uint8_t>(i + 21);
+  for (size_t i = 0; i < sizeof(request.requesterPublicKey); ++i)
+    request.requesterPublicKey[i] = static_cast<uint8_t>(i + 41);
+  request.createdAt = 1800000000UL;
+  request.expiresAt = request.createdAt + 3600;
+  strcpy(request.requesterName, "Tyler");
+  request.returnPathLength = static_cast<uint8_t>(0x40 | 3);
+  const uint8_t requestReturnPath[] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  memcpy(request.returnPath, requestReturnPath, sizeof(requestReturnPath));
+  for (size_t i = 0; i < sizeof(request.signature); ++i)
+    request.signature[i] = static_cast<uint8_t>(i + 81);
+
+  uint8_t wire[friendmesh::kFriendRequestEncodedBytes] = {};
+  size_t written = 0;
+  CHECK(friendmesh::encodeFriendRequest(request, wire, sizeof(wire), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(written == friendmesh::kFriendRequestEncodedBytes);
+  CHECK(written <= 165);
+  friendmesh::FriendRequestEnvelope decoded = {};
+  CHECK(friendmesh::decodeFriendRequest(wire, written, decoded) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(memcmp(decoded.requestId, request.requestId,
+               sizeof(request.requestId)) == 0);
+  CHECK(memcmp(decoded.targetMessageHash, request.targetMessageHash,
+               sizeof(request.targetMessageHash)) == 0);
+  CHECK(strcmp(decoded.requesterName, "Tyler") == 0);
+  CHECK(decoded.returnPathLength == request.returnPathLength);
+  CHECK(memcmp(decoded.returnPath, requestReturnPath,
+               sizeof(requestReturnPath)) == 0);
+  uint8_t targetPub[friendmesh::kFriendRequestPublicKeyBytes] = {};
+  for (size_t i = 0; i < sizeof(targetPub); ++i)
+    targetPub[i] = static_cast<uint8_t>(0xA0 + i);
+  request.flags = friendmesh::kFriendRequestFlagNearbyBle;
+  friendmesh::makeNearbyFriendTargetHash(
+      targetPub, request.targetMessageHash);
+  request.returnPathLength = 0;
+  memset(request.returnPath, 0, sizeof(request.returnPath));
+  CHECK(friendmesh::encodeFriendRequest(request, wire, sizeof(wire), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(friendmesh::decodeFriendRequest(wire, written, decoded) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(decoded.flags == friendmesh::kFriendRequestFlagNearbyBle);
+  CHECK(memcmp(decoded.targetMessageHash, targetPub,
+               friendmesh::kFriendRequestTargetHashBytes) == 0);
+  request.flags = 0x80;
+  CHECK(friendmesh::encodeFriendRequest(request, wire, sizeof(wire), written) ==
+        friendmesh::ResultCode::InvalidArgument);
+  request.flags = friendmesh::kFriendRequestFlagNearbyBle;
+  CHECK(friendmesh::encodeFriendRequest(request, wire, sizeof(wire), written) ==
+        friendmesh::ResultCode::Ok);
+  wire[0] ^= 1;
+  CHECK(friendmesh::decodeFriendRequest(wire, written, decoded) ==
+        friendmesh::ResultCode::CorruptData);
+
+  friendmesh::FriendAcceptEnvelope accepted = {};
+  memcpy(accepted.requestId, request.requestId, sizeof(accepted.requestId));
+  strcpy(accepted.responderName, "Friend");
+  uint8_t acceptWire[friendmesh::kFriendAcceptEncodedBytes] = {};
+  CHECK(friendmesh::encodeFriendAccept(accepted, acceptWire,
+                                      sizeof(acceptWire), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(written == friendmesh::kFriendAcceptEncodedBytes);
+  friendmesh::FriendAcceptEnvelope acceptedDecoded = {};
+  CHECK(friendmesh::decodeFriendAccept(acceptWire, written, acceptedDecoded) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(strcmp(acceptedDecoded.responderName, "Friend") == 0);
+
+  friendmesh::FriendLinkEnvelope link = {};
+  link.action = friendmesh::FriendLinkAction::Accepted;
+  memcpy(link.requestId, request.requestId, sizeof(link.requestId));
+  strcpy(link.peerName, "Friend");
+  uint8_t linkWire[friendmesh::kFriendLinkEncodedBytes] = {};
+  CHECK(friendmesh::encodeFriendLink(link, linkWire, sizeof(linkWire), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(written == friendmesh::kFriendLinkEncodedBytes);
+  friendmesh::FriendLinkEnvelope decodedLink = {};
+  CHECK(friendmesh::decodeFriendLink(linkWire, written, decodedLink) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(decodedLink.action == friendmesh::FriendLinkAction::Accepted);
+  CHECK(memcmp(decodedLink.requestId, request.requestId,
+               sizeof(request.requestId)) == 0);
+
+  link = {};
+  link.action = friendmesh::FriendLinkAction::Removed;
+  strcpy(link.peerName, "Former friend");
+  CHECK(friendmesh::encodeFriendLink(link, linkWire, sizeof(linkWire), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(friendmesh::decodeFriendLink(linkWire, written, decodedLink) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(decodedLink.action == friendmesh::FriendLinkAction::Removed);
+  link.requestId[0] = 1;
+  CHECK(friendmesh::encodeFriendLink(link, linkWire, sizeof(linkWire), written) ==
+        friendmesh::ResultCode::InvalidArgument);
+
+  // Three 2-byte repeater hashes: AABB, CCDD, EEFF -> reverse order.
+  const uint8_t sourcePath[] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  uint8_t reversed[sizeof(sourcePath)] = {};
+  const uint8_t encodedPathLength = static_cast<uint8_t>(0x40 | 3);
+  CHECK(friendmesh::reverseMeshPath(sourcePath, encodedPathLength, reversed,
+                                    sizeof(reversed)) == sizeof(reversed));
+  const uint8_t expected[] = {0xEE, 0xFF, 0xCC, 0xDD, 0xAA, 0xBB};
+  CHECK(memcmp(reversed, expected, sizeof(expected)) == 0);
+  CHECK(friendmesh::reverseMeshPath(sourcePath, encodedPathLength, reversed, 5) == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -1936,6 +2047,7 @@ int main() {
   testBlePresenceEnvelope();
   testGroupCoordinationCodecAndState();
   testMeshCorePositionAdapter();
+  testFriendRequestEnvelopeAndPath();
 
   if (failures != 0) {
     fprintf(stderr, "%d FriendMesh core check(s) failed\n", failures);

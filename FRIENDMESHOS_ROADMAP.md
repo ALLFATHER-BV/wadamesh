@@ -1,7 +1,7 @@
 # FriendMeshOS features for WadaMesh — roadmap
 
 Status: active T-Deck-only, feature-complete-first roadmap
-Updated: 2026-07-19
+Updated: 2026-07-26
 Repository: `Atlessc/wadamesh`
 Working branch: `friendmeshOS-proposal`
 Host/base: WadaMesh with MeshCore/meshcomod `core-v1.16.5`
@@ -20,12 +20,14 @@ WadaMesh supplies the mature product shell: LVGL interface, chat, contacts, hist
 - [x] Heltec editing, builds, flashes, and compatibility claims are deferred.
 - [x] FriendMesh uses minimal additions to existing WadaMesh surfaces.
 - [x] Optional themes are the maximum broad visual addition; no special theme is required.
-- [x] T-Deck FriendMesh long-term data is SD-bound; missing-card recovery is readable but persistent writes fail closed.
+- [x] T-Deck FriendMesh long-term data is SD-bound. The only intentional
+  no-SD social fallback is four compact accepted Friend cards; pending requests,
+  histories, routes, locations, and other growing records do not persist internally.
 - [x] Non-destructive SPIFFS-to-SD repair explicitly migrates and verifies identity, recursively preserves additional data, and retains the internal recovery source.
 - [x] Ordinary WadaMesh/MeshCore behavior remains unchanged when FriendMesh is disabled.
-- [x] General FriendMesh event transmission remains hard-disabled; the only
-  live exception is the explicit, bounded private-channel invite carried by
-  MeshCore's existing encrypted direct-message protocol.
+- [x] General FriendMesh event transmission remains hard-disabled. Reviewed
+  compatibility exceptions use existing MeshCore carriers: private-channel
+  invites, roster/coordination records, and the bounded Friend Request exchange.
 - [x] No development-only security provider or unprotected state may reach production radio paths.
 - [x] No automatic secret provisioning or silent plaintext fallback.
 
@@ -220,6 +222,27 @@ Implement together because they share identity references, verification state, m
   map markers, or a complete public key. Host/build verified; physical-device
   persistence and interaction regression remain open. This does not yet claim
   Phase 7 trust verification.
+- [x] Explicit public-channel Friend Request flow: long-press a currently
+  received message, return a signed requester identity through that message's
+  reversed MeshCore path, match the exact packet hash on the intended device,
+  review it in an opt-in Accept/Deny inbox, and return acceptance through
+  MeshCore's authenticated/encrypted anonymous-request carrier using the
+  request's bounded signed return path. Acceptance alone notifies and
+  auto-adds on the requester; denial is silent and offers an identity block.
+  This adds an
+  application group-data type (`0xFF03`) without changing MeshCore's packet
+  format; both endpoints need FriendMesh-aware firmware.
+- [x] Bound Friend Request state: 16 recent locally-sent message hashes and
+  eight outgoing request IDs in RAM; at most 12 pending records on SD or four
+  session-only pending records without SD; at most four compact accepted Friend
+  cards in internal NVS when SD is unavailable. No request route/hash history is
+  written internally.
+- [x] Contextual confirmed removal in the main contact action sheet: Friends
+  expose `Remove friend`, send an authenticated quiet reciprocal removal, and
+  retain the MeshCore contact; blocking a Friend removes the relationship first
+  and blocks future requests from that key. Non-friends
+  expose `Remove node` and clear the network contact plus matching Discovered
+  cache entry. Bulk contact deletion excludes Friends.
 - [x] Local identity-reference lifecycle using development/test providers.
 - [x] Group create/rename/disband and eight-group bounds.
 - [x] Member aliases, roles, join ordering, approval, replacement, blocking, leave, kick, transfer, and recorded majority succession behavior.
@@ -275,12 +298,13 @@ Integrate the completed functional feature set together so shared navigation/foc
 
 - [ ] Reuse existing contacts, chat, map, settings, alerts, status bar, and app drawer.
 - [ ] Add only necessary rows, badges, actions, filters, metadata, and confirmation modals.
-- [x] Add a simple `Channel` -> `Invite nearby` -> recipient `Join` flow inside existing WadaMesh chat/contact surfaces, reusing MeshCore private channels and encrypted direct messages.
+- [x] Add `Add channel` -> `FriendMesh channels` -> `Create` / `Join`; Create opens a two-minute six-digit BLE host session and Join discovers it without a MeshCore advert, verifies the code, and provisions the existing MeshCore private channel over an encrypted direct BLE exchange.
+- [x] Replace immediate nearby Friend writes with a consent-based BLE request flow: discovery-only scan, full-key/prefix match, signed target-bound request, shared Accept/Deny/Block inbox, acceptance-only reciprocal add/notification, and local-only `Save contact by key` semantics.
 - [x] Add a bounded `Members` view with persisted invite/join/failure/leave/removal states, encrypted direct control notices, binary encrypted roster snapshots that cannot surface as chat, duplicate-member invite prevention, and explicit rekey-required status.
 - [x] Add bounded shared meetup/pickup, Help, response, closure, and three-second-hold SOS actions to the private-channel sheet, with encrypted binary control records and existing-map overlays.
 - [x] Keep ordinary MeshCore channels free of FriendMesh actions; add an explicit `Create a FriendMesh group` path and `[FM]` inbox/header/action-sheet identification derived from persisted roster metadata.
 - [x] Add confirmed administrator disband to the native Members view, with best-effort encrypted member notices, chat suppression, local deletion, and explicit unreachable-recipient reporting.
-- [ ] Upgrade the simple flow to `Private group` -> compare -> administrator approval -> `securing group` after shared production security exists.
+- [ ] Upgrade the six-digit BLE compatibility handshake to transcript-bound signed membership epochs and explicit administrator approval after shared production security exists.
 - [ ] No replacement home screen, launcher, visual identity, or required theme.
 - [ ] All functional states reachable by touch, keyboard, and trackball.
 - [ ] Sensitive entry masked from WadaMesh screenshots and remote surfaces.
@@ -290,12 +314,17 @@ Current Phase 6 slice: the existing app drawer opens a native WadaMesh-styled
 FriendMesh page with event-driven state refresh, local notes, meetup creation, a
 direct `View map` action, and local ride Help. FriendMesh meetup markers render
 as typed overlays in the existing map, participate in overlap selection, and
-show details when tapped. The same native channel action sheet now exposes
-`Invite nearby`; a bounded Bluetooth scan maps advertised public-key prefixes to
-saved chat contacts, with a fresh zero-hop LoRa observation as fallback. The
-channel key never travels over Bluetooth. The receiver must confirm before the
-existing WadaMesh channel is stored. This is the simple MeshCore channel bridge,
-not the future transcript-bound FriendMesh group protocol. The action sheet also
+show details when tapped. `Add channel` now exposes one `FriendMesh channels`
+entry with a secondary `Create` / `Join` choice. Create initializes the normal
+MeshCore private channel and opens a RAM-only two-minute host screen displaying
+a six-digit code. Join performs an active BLE scan; the host's scan response is
+the direct ACK, so neither device needs a MeshCore advert, saved contact, or LoRa
+route. After code entry, a bounded AES-GCM GATT exchange transfers the existing
+channel name/secret plus both public identities and installs the normal roster
+locally on both devices. The code is never advertised; five failed attempts end
+the session, and existing joined public-key prefixes are rejected. This is a
+short-range compatibility handshake, not the future transcript-bound signed
+FriendMesh membership protocol. The action sheet also
 opens a WadaMesh-native `Members` view whose bounded persistent roster tracks
 invited, joined, failed, left, and removed members. Cooperative removal marks
 the group as needing a rekey rather than claiming the old shared key was revoked.

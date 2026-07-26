@@ -131,9 +131,11 @@ security claim.
 `scripts/test-friendmesh-core.sh` covers multi-group behavior, authorization,
 duplicates, expiry, reversible and irreversible boundaries, replacement,
 succession votes, disbanding, and every declared capacity. The T-Deck build
-passes at 89,404 bytes RAM and 3,253,533 bytes flash. There is still no live
-contact binding, persistence, UI, production security, FriendMesh radio path, or
-physical verification, and transmission remains hard-disabled.
+passes at 89,404 bytes RAM and 3,253,533 bytes flash. The development membership
+model remains separate from the later production security protocol. Live T-Deck
+integration now includes the curated Friends directory and the narrow Friend
+Request compatibility exchange described below; physical verification of that
+new exchange remains open.
 
 ### 3.5 Functional chat/history/synchronization cluster
 
@@ -365,7 +367,13 @@ Diagnostics must not expose:
 
 ### 8.1 Storage roles
 
-The FriendMesh T-Deck explicitly supports an SD-bound mode and now makes it the required operating policy. The authoritative identity, group access, settings, contacts, channels, FriendMesh state, history, maps, motion records, backups, and other growing datasets live on microSD. Internal storage may retain a readable migration/recovery source and small boot-control values, but it must not silently become a writable long-term fallback when the card is absent. Production protected storage must therefore bind, authenticate, recover, and clearly report the removable medium; missing, corrupt, replaced, or partially migrated cards must fail closed before FriendMesh transmission or protected-state mutation.
+The FriendMesh T-Deck explicitly supports an SD-bound mode and now makes it the required operating policy. The authoritative identity, group access, settings, contacts, channels, FriendMesh state, history, maps, motion records, backups, and other growing datasets live on microSD. Internal storage may retain a readable migration/recovery source, small boot-control values, and at most four deliberately compact accepted Friend cards for card-loss operation; it must not silently become a writable fallback for pending requests or any growing dataset. Production protected storage must therefore bind, authenticate, recover, and clearly report the removable medium; missing, corrupt, replaced, or partially migrated cards must fail closed before other FriendMesh transmission or protected-state mutation.
+
+The four-card fallback stores only a full MeshCore public key plus a 15-byte
+private alias per Friend in a sub-256-byte versioned NVS blob. Pending requests
+are RAM-only without SD (maximum four), and the receive toggle resets off on
+reboot. Routes, target message hashes, histories, locations, motion samples,
+request archives, and trust/security claims are never part of this fallback.
 
 The current functional migration copies critical identity/profile paths explicitly, recursively scans additional SPIFFS paths using their full names, never overwrites existing non-empty SD files during automatic boot repair, verifies the SD identity before adoption, and leaves the internal recovery source intact. This repairs the observed `0 copied, identity MISSING` failure caused by relying on a root-only SPIFFS directory walk.
 
@@ -498,19 +506,27 @@ Membership and security changes require:
 
 ### 10.4 Nearby direct joining
 
-Nearby direct joining is the default onboarding experience. The expected flow is
-`Private group` -> `Invite nearby` -> direct device observed -> compare short
-number -> administrator approval -> `securing group` -> ready.
+Nearby direct joining is the default onboarding experience. The implemented
+T-Deck flow is `Add channel` -> `FriendMesh channels` -> `Create` / `Join`.
+Create opens a two-minute administrator screen with a six-digit code. Join sends
+an active BLE scan request; the administrator's temporary scan response is the
+ACK and identifies an open session without requiring a MeshCore advert, saved
+contact, or LoRa route. The joiner selects the administrator, enters the code,
+and both devices finalize the existing MeshCore channel and FriendMesh roster.
 
-The current implementation is an earlier compatibility bridge: an existing
-WadaMesh private channel can discover an updated saved contact with a bounded
-Bluetooth scan, with a recent zero-hop LoRa advert as fallback, then send the
-channel's symmetric secret through MeshCore's existing encrypted direct-message
-path. Bluetooth carries only a public-key prefix, never the secret. The outbound
-LoRa route is empty, relayed invite packets are rejected, and the recipient
-explicitly confirms before saving the channel. This provides usable group chat
-without introducing a parallel key transport, but it does not satisfy the
-stronger production flow below.
+The final exchange uses a dedicated bounded GATT service that coexists with the
+Nordic UART companion service. AES-256-GCM seals both public identities, channel
+name, and symmetric channel secret under a key derived from the six-digit code,
+random session ID, and fresh join nonce. Sessions and codes are RAM-only, the
+code is not advertised, five failed attempts terminate hosting, and already
+joined public-key prefixes are rejected. The legacy zero-hop `FMCH1` MeshCore
+direct-message receiver remains only for compatibility with deployed builds.
+
+This provides usable group chat while preserving MeshCore channel semantics,
+but it does not yet satisfy the stronger production flow below: the six-digit
+secret has limited entropy, there is no signed transcript or membership epoch,
+and administrator approval is represented by deliberately opening the host
+screen rather than approving each named request.
 
 The bridge now also attaches a fixed eight-member roster to the existing
 channel. The WadaMesh channel action sheet shows invite/join/failure/leave/remove
@@ -569,10 +585,20 @@ Potential event families include:
 - marker and meetup events;
 - Help Request and SOS incidents.
 
-Production FriendMesh wire types remain unapproved. The Phase 6 compatibility
-bridge reserves encrypted MeshCore group-data types `0xFF01` for roster state
-and `0xFF02` for bounded coordination records; neither is a production signing
-or membership protocol commitment.
+Production FriendMesh wire types remain unapproved. The compatibility bridge
+reserves encrypted MeshCore group-data types `0xFF01` for roster state, `0xFF02`
+for bounded coordination records, and `0xFF03` for the signed, packet-hash-
+targeted Friend Request envelope. These reuse existing MeshCore carriers and do
+not change the MeshCore packet format or constitute the final production
+membership/security protocol.
+
+The Friend Request flow is deliberately narrow: an incoming public-channel
+message supplies an exact packet hash and return path; the requester signs its
+own name and full public key; the recipient must opt in and must retain the
+matching locally-originated message hash in a bounded RAM ledger; and Accept
+returns over MeshCore's authenticated/encrypted anonymous-request carrier. The
+route targets delivery but does not cryptographically prove authorship of the
+original public message. Both endpoints require FriendMesh-aware firmware.
 
 ### 12.1 Durable outbox
 

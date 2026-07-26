@@ -3,12 +3,15 @@
 #include "friendmesh/people/FriendMeshChannelInvite.h"
 #include "friendmesh/people/FriendMeshBlePresence.h"
 #include "friendmesh/people/FriendMeshChannelRoster.h"
+#include "friendmesh/people/FriendMeshFriendRequest.h"
 #include "friendmesh/navigation/FriendMeshGroupCoordination.h"
 static_assert(friendmesh::kChannelRosterEncodedBytes <= MAX_GROUP_DATA_LENGTH,
               "FriendMesh roster must fit one MeshCore group datagram");
 static_assert(friendmesh::kGroupCoordinationEventMaxBytes <=
                   MAX_GROUP_DATA_LENGTH,
               "FriendMesh coordination event must fit one group datagram");
+static_assert(friendmesh::kFriendRequestEncodedBytes <= MAX_GROUP_DATA_LENGTH,
+              "FriendMesh request must fit one MeshCore group datagram");
 #endif
 
 #include <Arduino.h> // needed for PlatformIO
@@ -2054,6 +2057,9 @@ void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, ui
 }
 void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
   uiTrackSentFp(txtFloodFp(pkt));
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  friendmeshRememberSentChannelMessage(channel, pkt);
+#endif
   // TODO: have per-channel send_scope
   if (send_unscoped) {
     sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);  // app has explicitly requested un-scoped
@@ -2725,6 +2731,70 @@ bool MyMesh::uiAcceptFriendMeshChannelInvite(
   return true;
 }
 
+bool MyMesh::uiFinalizeFriendMeshBleAdminJoin(
+    int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE],
+    const char* member_name) {
+  if (!member_pub || !member_name || !member_name[0] || channel_idx < 0 ||
+      memcmp(member_pub, self_id.pub_key, PUB_KEY_SIZE) == 0) return false;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  if (!self || self->role != friendmesh::ChannelRosterRole::Admin ||
+      self->state != friendmesh::ChannelRosterState::Joined) return false;
+  const friendmesh::ChannelRosterMember* existing =
+      friendmesh::findChannelRosterMember(roster, member_pub);
+  if (existing && existing->state == friendmesh::ChannelRosterState::Joined)
+    return true;
+  if (friendmesh::setChannelRosterMember(
+          roster, member_pub, friendmesh::ChannelRosterRole::Member,
+          friendmesh::ChannelRosterState::Joined) !=
+      friendmesh::ResultCode::Ok) return false;
+  if (!lookupContactByPubKey(member_pub, PUB_KEY_SIZE) &&
+      !uiAddManualContact(member_pub, member_name)) return false;
+  if (!friendmeshSaveChannelRoster(channel_idx, roster)) return false;
+  friendmeshBroadcastChannelRoster(channel_idx, roster);
+  ChannelDetails channel = {};
+  if (_ui && getChannel(channel_idx, channel))
+    _ui->onFriendMeshChannelRosterChanged(channel.name, "Member joined by Bluetooth");
+  return true;
+}
+
+bool MyMesh::uiInstallFriendMeshBleGroup(
+    const char* channel_name, const uint8_t channel_secret[16],
+    const uint8_t admin_pub[PUB_KEY_SIZE], const char* admin_name,
+    int& channel_idx) {
+  channel_idx = -1;
+  if (!channel_name || !channel_name[0] || !channel_secret || !admin_pub ||
+      !admin_name || !admin_name[0]) return false;
+  const int slot = findFirstEmptyChannelSlot();
+  if (slot < 0 || !uiAddOrUpdateChannel(slot, channel_name, channel_secret))
+    return false;
+  friendmesh::ChannelRoster roster = {};
+  const bool rosterOk =
+      friendmesh::setChannelRosterMember(
+          roster, admin_pub, friendmesh::ChannelRosterRole::Admin,
+          friendmesh::ChannelRosterState::Joined) ==
+          friendmesh::ResultCode::Ok &&
+      friendmesh::setChannelRosterMember(
+          roster, self_id.pub_key, friendmesh::ChannelRosterRole::Member,
+          friendmesh::ChannelRosterState::Joined) ==
+          friendmesh::ResultCode::Ok &&
+      friendmeshSaveChannelRoster(slot, roster);
+  if (!rosterOk) {
+    uiDeleteChannel(slot);
+    return false;
+  }
+  if (!lookupContactByPubKey(admin_pub, PUB_KEY_SIZE) &&
+      !uiAddManualContact(admin_pub, admin_name)) {
+    friendmeshDeleteChannelRoster(slot);
+    uiDeleteChannel(slot);
+    return false;
+  }
+  channel_idx = slot;
+  return true;
+}
+
 size_t MyMesh::uiGetFriendMeshChannelMembers(
     int channel_idx, FriendMeshChannelMemberView* destination,
     size_t capacity, bool& rekey_required) {
@@ -2974,6 +3044,28 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel,
                                mesh::Packet *pkt, uint16_t data_type,
                                const uint8_t *data, size_t data_len) {
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (data_type == friendmesh::kFriendRequestDataType) {
+    if (!_ui || !_ui->friendMeshRequestsEnabled()) return;
+    friendmesh::FriendRequestEnvelope request = {};
+    if (friendmesh::decodeFriendRequest(data, data_len, request) !=
+            friendmesh::ResultCode::Ok ||
+        request.flags != 0 ||
+        !friendmeshSentChannelMessageMatches(
+            channel, request.targetMessageHash)) return;
+    const uint32_t now = getRTCClock()->getCurrentTime();
+    if (request.expiresAt >= 1700000000UL && now >= 1700000000UL &&
+        now > request.expiresAt) return;
+    mesh::Identity requester(request.requesterPublicKey);
+    const size_t signedBytes = data_len -
+        friendmesh::kFriendRequestSignatureBytes;
+    if (!requester.verify(request.signature, data, signedBytes)) return;
+    if (_ui->friendMeshRequesterBlocked(request.requesterPublicKey)) return;
+    _ui->onFriendMeshFriendRequest(
+        request.requestId, request.requesterPublicKey,
+        request.requesterName, request.createdAt, request.expiresAt,
+        request.returnPath, request.returnPathLength);
+    return;
+  }
   if (data_type == friendmesh::kChannelRosterDataType) {
     friendmesh::ChannelRoster incoming = {};
     const int channelIdx = findChannelIdx(channel);
@@ -3020,6 +3112,313 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel,
   (void)data;
   (void)data_len;
 }
+
+void MyMesh::onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret,
+                            const mesh::Identity& sender, uint8_t* data,
+                            size_t len) {
+  (void)packet;
+  (void)secret;
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (!data) return;
+  // sendAnonReq prefixes a four-byte correlation tag. Accept an unprefixed
+  // payload too so a future MeshCore carrier that strips the tag does not
+  // silently break social controls again.
+  const uint8_t* appData = len >= 4 ? data + 4 : data;
+  const size_t appLen = len >= 4 ? len - 4 : len;
+  friendmesh::FriendLinkEnvelope link = {};
+  friendmesh::ResultCode linkResult =
+      friendmesh::decodeFriendLink(appData, appLen, link);
+  if (linkResult != friendmesh::ResultCode::Ok && appData != data)
+    linkResult = friendmesh::decodeFriendLink(data, len, link);
+  if (linkResult == friendmesh::ResultCode::Ok) {
+    if (link.action == friendmesh::FriendLinkAction::Accepted) {
+      if (_ui && !_ui->friendMeshRequesterBlocked(sender.pub_key) &&
+          friendmeshConsumeOutgoingRequest(link.requestId))
+        _ui->onFriendMeshFriendAccepted(
+            link.requestId, sender.pub_key, link.peerName);
+    } else if (link.action == friendmesh::FriendLinkAction::Removed) {
+      if (_ui) _ui->onFriendMeshFriendRemoved(sender.pub_key);
+    }
+    return;
+  }
+  // Compatibility with FMA1 acceptances sent by the first implementation.
+  if (appLen == friendmesh::kFriendAcceptEncodedBytes ||
+      len == friendmesh::kFriendAcceptEncodedBytes) {
+    friendmesh::FriendAcceptEnvelope accepted = {};
+    friendmesh::ResultCode acceptedResult =
+        friendmesh::decodeFriendAccept(appData, appLen, accepted);
+    if (acceptedResult != friendmesh::ResultCode::Ok && appData != data)
+      acceptedResult = friendmesh::decodeFriendAccept(data, len, accepted);
+    if (acceptedResult == friendmesh::ResultCode::Ok &&
+        _ui && !_ui->friendMeshRequesterBlocked(sender.pub_key) &&
+        friendmeshConsumeOutgoingRequest(accepted.requestId)) {
+      if (_ui) _ui->onFriendMeshFriendAccepted(
+          accepted.requestId, sender.pub_key, accepted.responderName);
+    }
+  }
+#else
+  (void)sender; (void)data; (void)len;
+#endif
+}
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+void MyMesh::friendmeshRememberSentChannelMessage(
+    const mesh::GroupChannel& channel, mesh::Packet* packet) {
+  if (!packet || packet->getPayloadType() != PAYLOAD_TYPE_GRP_TXT) return;
+  uint8_t hash[MAX_HASH_SIZE] = {};
+  packet->calculatePacketHash(hash);
+  memcpy(_last_sent_packet_hash, hash, sizeof(_last_sent_packet_hash));
+  FriendRequestSentMessage& slot = _friend_request_sent_messages[
+      _friend_request_sent_message_head];
+  memcpy(slot.messageHash, hash, sizeof(slot.messageHash));
+  slot.channelHash = channel.hash[0];
+  slot.sentMillis = _ms->getMillis() ? _ms->getMillis() : 1;
+  _friend_request_sent_message_head = static_cast<uint8_t>(
+      (_friend_request_sent_message_head + 1) %
+      FRIEND_REQUEST_SENT_MESSAGE_SLOTS);
+}
+
+bool MyMesh::friendmeshSentChannelMessageMatches(
+    const mesh::GroupChannel& channel, const uint8_t message_hash[8]) const {
+  if (!message_hash) return false;
+  const uint32_t now = _ms->getMillis();
+  for (uint8_t i = 0; i < FRIEND_REQUEST_SENT_MESSAGE_SLOTS; ++i) {
+    const FriendRequestSentMessage& slot = _friend_request_sent_messages[i];
+    if (slot.sentMillis != 0 && now - slot.sentMillis <= 86400000UL &&
+        slot.channelHash == channel.hash[0] &&
+        memcmp(slot.messageHash, message_hash, 8) == 0) return true;
+  }
+  return false;
+}
+
+bool MyMesh::friendmeshRememberOutgoingRequest(
+    const uint8_t request_id[8], const uint8_t target_hash[8]) {
+  if (!request_id || !target_hash) return false;
+  const uint32_t now = _ms->getMillis();
+  for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
+    FriendRequestOutgoing& slot = _friend_request_outgoing[i];
+    if (slot.sentMillis != 0 && now - slot.sentMillis <= 86400000UL &&
+        memcmp(slot.targetMessageHash, target_hash, 8) == 0) return false;
+  }
+  FriendRequestOutgoing& slot = _friend_request_outgoing[
+      _friend_request_outgoing_head];
+  memcpy(slot.requestId, request_id, 8);
+  memcpy(slot.targetMessageHash, target_hash, 8);
+  slot.sentMillis = now ? now : 1;
+  _friend_request_outgoing_head = static_cast<uint8_t>(
+      (_friend_request_outgoing_head + 1) % FRIEND_REQUEST_OUTGOING_SLOTS);
+  return true;
+}
+
+bool MyMesh::friendmeshConsumeOutgoingRequest(const uint8_t request_id[8]) {
+  if (!request_id) return false;
+  for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
+    FriendRequestOutgoing& slot = _friend_request_outgoing[i];
+    if (slot.sentMillis != 0 && memcmp(slot.requestId, request_id, 8) == 0) {
+      memset(&slot, 0, sizeof(slot));
+      return true;
+    }
+  }
+  return false;
+}
+
+bool MyMesh::friendmeshSendLinkControl(
+    const ContactInfo& recipient, friendmesh::FriendLinkAction action,
+    const uint8_t request_id[8]) {
+  friendmesh::FriendLinkEnvelope link = {};
+  link.action = action;
+  if (request_id) memcpy(link.requestId, request_id, sizeof(link.requestId));
+  strncpy(link.peerName, _prefs.node_name, sizeof(link.peerName) - 1);
+  if (!link.peerName[0]) strncpy(link.peerName, "Friend", sizeof(link.peerName) - 1);
+  uint8_t encoded[friendmesh::kFriendLinkEncodedBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeFriendLink(link, encoded, sizeof(encoded), written) !=
+      friendmesh::ResultCode::Ok) return false;
+  uint32_t tag = 0, timeout = 0;
+  return sendAnonReq(recipient, encoded, static_cast<uint8_t>(written),
+                     tag, timeout) != MSG_SEND_FAILED;
+}
+
+bool MyMesh::uiSendFriendRequest(int channel_idx,
+                                 const uint8_t target_message_hash[8],
+                                 const uint8_t* incoming_path,
+                                 uint8_t encoded_path_len) {
+  if (!target_message_hash || channel_idx < 0 ||
+      channel_idx >= MAX_GROUP_CHANNELS ||
+      !mesh::Packet::isValidPathLen(encoded_path_len)) return false;
+  ChannelDetails details = {};
+  if (!getChannel(channel_idx, details) || !details.name[0]) return false;
+  const size_t pathBytes = static_cast<size_t>(encoded_path_len & 0x3F) *
+      static_cast<size_t>((encoded_path_len >> 6) + 1);
+  if (pathBytes > MAX_PATH_SIZE || (pathBytes && !incoming_path)) return false;
+
+  friendmesh::FriendRequestEnvelope request = {};
+  request.returnPathLength = friendmesh::kFriendRequestReturnPathUnknown;
+  getRNG()->random(request.requestId, sizeof(request.requestId));
+  if (request.requestId[0] == 0 && request.requestId[1] == 0)
+    request.requestId[0] = 1;
+  if (!friendmeshRememberOutgoingRequest(request.requestId,
+                                         target_message_hash)) return false;
+  memcpy(request.targetMessageHash, target_message_hash,
+         sizeof(request.targetMessageHash));
+  request.createdAt = getRTCClock()->getCurrentTime();
+  request.expiresAt = request.createdAt >= 1700000000UL
+      ? request.createdAt + friendmesh::kFriendRequestLifetimeSeconds : 0;
+  memcpy(request.requesterPublicKey, self_id.pub_key,
+         sizeof(request.requesterPublicKey));
+  strncpy(request.requesterName, _prefs.node_name,
+          sizeof(request.requesterName) - 1);
+  // The public message's observed path runs from the request recipient back to
+  // us, so it is already the correct route for their acceptance. Keep it
+  // inside the signed request when it fits; longer routes fall back to flood.
+  if (pathBytes <= friendmesh::kFriendRequestReturnPathMaxBytes) {
+    request.returnPathLength = encoded_path_len;
+    if (pathBytes) memcpy(request.returnPath, incoming_path, pathBytes);
+  }
+  uint8_t encoded[friendmesh::kFriendRequestEncodedBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeFriendRequest(
+          request, encoded, sizeof(encoded), written) !=
+      friendmesh::ResultCode::Ok) {
+    friendmeshConsumeOutgoingRequest(request.requestId); return false;
+  }
+  self_id.sign(encoded + friendmesh::kFriendRequestSignedBytes,
+               encoded, friendmesh::kFriendRequestSignedBytes);
+  uint8_t reversePath[MAX_PATH_SIZE] = {};
+  if (pathBytes && friendmesh::reverseMeshPath(
+          incoming_path, encoded_path_len, reversePath,
+          sizeof(reversePath)) != pathBytes) {
+    friendmeshConsumeOutgoingRequest(request.requestId); return false;
+  }
+  if (!sendGroupData(details.channel, reversePath, encoded_path_len,
+                     friendmesh::kFriendRequestDataType,
+                     encoded, static_cast<int>(written))) {
+    friendmeshConsumeOutgoingRequest(request.requestId); return false;
+  }
+  return true;
+}
+
+friendmesh::BleFriendRequestResult MyMesh::uiSendNearbyFriendRequest(
+    const friendmesh::BlePresencePeer& peer,
+    const friendmesh::BleFriendIdentity& target) {
+  if (!target.name[0] ||
+      memcmp(peer.pubKeyPrefix, target.pubKey,
+             friendmesh::kBlePresencePrefixBytes) != 0 ||
+      memcmp(target.pubKey, self_id.pub_key, PUB_KEY_SIZE) == 0)
+    return friendmesh::BleFriendRequestResult::IdentityMismatch;
+
+  friendmesh::FriendRequestEnvelope request = {};
+  request.flags = friendmesh::kFriendRequestFlagNearbyBle;
+  request.returnPathLength = 0;  // BLE proximity permits a zero-hop reply.
+  getRNG()->random(request.requestId, sizeof(request.requestId));
+  if (request.requestId[0] == 0 && request.requestId[1] == 0)
+    request.requestId[0] = 1;
+  friendmesh::makeNearbyFriendTargetHash(
+      target.pubKey, request.targetMessageHash);
+  if (!friendmeshRememberOutgoingRequest(request.requestId,
+                                         request.targetMessageHash))
+    return friendmesh::BleFriendRequestResult::Busy;
+  request.createdAt = getRTCClock()->getCurrentTime();
+  request.expiresAt = request.createdAt >= 1700000000UL
+      ? request.createdAt + friendmesh::kFriendRequestLifetimeSeconds : 0;
+  memcpy(request.requesterPublicKey, self_id.pub_key,
+         sizeof(request.requesterPublicKey));
+  strncpy(request.requesterName, _prefs.node_name,
+          sizeof(request.requesterName) - 1);
+  if (!request.requesterName[0])
+    strncpy(request.requesterName, "FriendMesh user",
+            sizeof(request.requesterName) - 1);
+
+  uint8_t encoded[friendmesh::kFriendRequestEncodedBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeFriendRequest(
+          request, encoded, sizeof(encoded), written) !=
+      friendmesh::ResultCode::Ok) {
+    friendmeshConsumeOutgoingRequest(request.requestId);
+    return friendmesh::BleFriendRequestResult::ProtocolError;
+  }
+  self_id.sign(encoded + friendmesh::kFriendRequestSignedBytes,
+               encoded, friendmesh::kFriendRequestSignedBytes);
+  const friendmesh::BleFriendRequestResult result =
+      friendmesh::bleFriendSendRequest(peer, encoded, written);
+  memset(encoded, 0, sizeof(encoded));
+  if (result != friendmesh::BleFriendRequestResult::Ok)
+    friendmeshConsumeOutgoingRequest(request.requestId);
+  return result;
+}
+
+bool MyMesh::uiHandleNearbyFriendRequest(const uint8_t* encoded,
+                                         size_t length) {
+  if (!encoded || !_ui || !_ui->friendMeshRequestsEnabled()) return false;
+  friendmesh::FriendRequestEnvelope request = {};
+  uint8_t expectedTarget[friendmesh::kFriendRequestTargetHashBytes] = {};
+  friendmesh::makeNearbyFriendTargetHash(self_id.pub_key, expectedTarget);
+  if (friendmesh::decodeFriendRequest(encoded, length, request) !=
+          friendmesh::ResultCode::Ok ||
+      request.flags != friendmesh::kFriendRequestFlagNearbyBle ||
+      memcmp(request.targetMessageHash, expectedTarget,
+             sizeof(expectedTarget)) != 0) return false;
+  const uint32_t now = getRTCClock()->getCurrentTime();
+  if (request.expiresAt >= 1700000000UL && now >= 1700000000UL &&
+      now > request.expiresAt) return false;
+  mesh::Identity requester(request.requesterPublicKey);
+  const size_t signedBytes = length -
+      friendmesh::kFriendRequestSignatureBytes;
+  if (!requester.verify(request.signature, encoded, signedBytes) ||
+      _ui->friendMeshRequesterBlocked(request.requesterPublicKey)) return false;
+  _ui->onFriendMeshFriendRequest(
+      request.requestId, request.requesterPublicKey,
+      request.requesterName, request.createdAt, request.expiresAt,
+      nullptr, 0);
+  return true;
+}
+
+bool MyMesh::uiAcceptFriendRequest(const uint8_t requester_pub[32],
+                                   const uint8_t request_id[8],
+                                   const char* requester_name,
+                                   const uint8_t* return_path,
+                                   uint8_t return_path_length) {
+  if (!requester_pub || !request_id) return false;
+  ContactInfo recipient = {};
+  memcpy(recipient.id.pub_key, requester_pub, PUB_KEY_SIZE);
+  strncpy(recipient.name, requester_name ? requester_name : "Friend",
+          sizeof(recipient.name) - 1);
+  recipient.type = ADV_TYPE_CHAT;
+  recipient.out_path_len = OUT_PATH_UNKNOWN;
+  if (return_path_length != friendmesh::kFriendRequestReturnPathUnknown &&
+      mesh::Packet::isValidPathLen(return_path_length)) {
+    const size_t pathBytes =
+        static_cast<size_t>(return_path_length & 0x3F) *
+        static_cast<size_t>((return_path_length >> 6) + 1);
+    if (pathBytes <= friendmesh::kFriendRequestReturnPathMaxBytes &&
+        (pathBytes == 0 || return_path)) {
+      recipient.out_path_len = return_path_length;
+      if (pathBytes) memcpy(recipient.out_path, return_path, pathBytes);
+    }
+  }
+  return friendmeshSendLinkControl(
+      recipient, friendmesh::FriendLinkAction::Accepted, request_id);
+}
+
+bool MyMesh::uiRemoveFriendRelationship(const uint8_t friend_pub[32],
+                                        const char* friend_name) {
+  if (!friend_pub) return false;
+  ContactInfo recipient = {};
+  ContactInfo* stored = lookupContactByPubKey(friend_pub, PUB_KEY_SIZE);
+  if (stored) {
+    recipient = *stored;
+  } else {
+    memcpy(recipient.id.pub_key, friend_pub, PUB_KEY_SIZE);
+    strncpy(recipient.name,
+            friend_name && friend_name[0] ? friend_name : "Friend",
+            sizeof(recipient.name) - 1);
+    recipient.type = ADV_TYPE_CHAT;
+    recipient.out_path_len = OUT_PATH_UNKNOWN;
+  }
+  return friendmeshSendLinkControl(
+      recipient, friendmesh::FriendLinkAction::Removed, nullptr);
+}
+#endif
 
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
