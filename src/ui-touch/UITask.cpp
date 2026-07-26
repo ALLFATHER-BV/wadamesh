@@ -311,6 +311,43 @@ struct __attribute__((packed)) UiMsgFileHeader {
   uint16_t msg_rec_size;
   uint8_t  _pad[2];
 };
+
+// ---- Segmented message store (generation 3) ------------------------------
+// The ring is persisted as fixed-capacity SEGMENT files under <data root>/msgs:
+// seg_<first_seq>.bin, k_ui_seg_records records each. New messages APPEND one
+// record to the newest ("active") segment — a ~240 B write instead of the old
+// full-ring rewrite (515 KB+ at 2300 messages), which shrinks the hard-cut
+// loss window, the SPI bus-collision window, and flash wear all at once.
+// Deletes tombstone in RAM and mark the owning segment dirty; compaction
+// rewrites JUST that segment from the RAM ring (disk holds exactly the ring's
+// record set, so no read pass is ever needed). Corruption quarantines one
+// segment instead of the whole history. On FAT backends /msgs is a real
+// subdirectory (single child under /meshcomod — stays inside the factory
+// wipe's 24-entry cap); on SPIFFS the same name is a legal FLAT file name
+// (31-char limit: "/msgs/seg_4294967295.bin" = 24 chars), so the layout is
+// identical everywhere and no mkdir is required there.
+constexpr const char* k_ui_seg_dir     = "/msgs";
+constexpr uint32_t    k_ui_seg_magic   = 0x55495347;   // "UISG"
+constexpr uint16_t    k_ui_seg_version = 1;
+constexpr int         k_ui_seg_records = 256;          // records per segment (~60 KB at v1 size)
+constexpr int         k_ui_seg_max     = 24;           // table cap: 5000/256 = 20 live segments + slack
+
+struct __attribute__((packed)) UiSegHeader {
+  uint32_t magic;          // k_ui_seg_magic
+  uint16_t version;        // k_ui_seg_version
+  uint16_t msg_rec_size;   // sizeof(UiSegMsg) at write time — self-describing so
+                           // future fields append at the END (same rule as v5+)
+  uint32_t first_seq;      // seq of this segment's first-ever record (== filename key)
+  uint8_t  _pad[4];
+};
+
+// On-disk segment record: the v6 record layout + the monotonic seq appended
+// (append-at-end evolution — a reader of either size copies min(rec_size) and
+// zero-fills the rest, so seq reads 0 from a hypothetical older record).
+struct __attribute__((packed)) UiSegMsg {
+  UiHistoryMsg m;
+  uint32_t     seq;
+};
 } // namespace
 #endif
 
@@ -4573,6 +4610,10 @@ static void chatSaveFailText(char* out, size_t cap) {
     case 'h': stage = "header";      break;
     case 'b': stage = "write";       break;
     case 'r': stage = "rename";      break;
+    case 'a': stage = "append";      break;   // segmented store: active-segment append
+    case 'c': stage = "compact";     break;   // segmented store: one-segment rewrite
+    case 'd': stage = "mkdir";       break;   // segmented store: data-dir create
+    case 's': stage = "scan";        break;   // segmented store: segment discovery
     default:  stage = "save";        break;
   }
   const int e = s_msgs_write_errno;
@@ -41582,6 +41623,276 @@ static bool uiMsgsWriteFail(char stage) {
   s_msgs_write_stage = (uint8_t)stage;
   s_msgs_write_errno = errno;
   return uiMsgsWriteResult(false);
+}
+
+// ---- Segmented store: low-level file ops --------------------------------
+// Pure file-layer primitives (no scheduling, no table state — that lives with
+// the flush scheduler). All take explicit record arrays (snapshots or the
+// ring under the loop task's ownership) and report through the same
+// uiMsgsWriteResult/uiMsgsWriteFail health machinery as the old writer, so
+// the About diagnostics, failure toasts, sync-fallback and SD-wedge
+// arbitration keep working unchanged. Stage codes: 'a' append, 'c' compact,
+// 'd' data-dir create, 's' segment scan (plus errno).
+
+// Root-relative segment file name: "/msgs/seg_<first_seq>.bin<suffix>".
+// Worst case "/msgs/seg_4294967295.bin.tm2" = 28 chars — fits uiDataOpen's
+// 80-byte path buffer and SPIFFS' 31-char flat-name limit.
+static void uiSegName(uint32_t first_seq, const char* suffix, char* out, size_t cap) {
+  snprintf(out, cap, "%s/seg_%lu.bin%s", k_ui_seg_dir, (unsigned long)first_seq, suffix ? suffix : "");
+}
+
+// Ensure the data root + segment dir exist. FAT backends (SD /meshcomod,
+// SD_MMC /meshcomod, FFat) need real directories; SPIFFS has a flat namespace
+// where mkdir fails harmlessly and slash-in-name files just work — so this is
+// best-effort by design. Called at backend resolve and from every remount
+// path (a fresh replacement card has neither directory).
+static void uiDataEnsureDirs() {
+  if (!uiDataFsReady()) return;
+  char p[80];
+  if (s_ui_data_root[0]) s_ui_data_fs->mkdir(s_ui_data_root);
+  snprintf(p, sizeof p, "%s%s", s_ui_data_root, k_ui_seg_dir);
+  s_ui_data_fs->mkdir(p);   // no-op/failure on SPIFFS is fine (flat names)
+}
+
+// Marshal one RAM record into the on-disk segment record (drops the RAM-only
+// fields, carries seq). Mirrors the old writer's field list exactly.
+static void uiSegMarshal(const UITask::UIMessage& s, UiSegMsg* d) {
+  memset(d, 0, sizeof(*d));
+  d->m.ts         = s.ts;
+  d->m.channel    = s.channel ? 1u : 0u;
+  d->m.outgoing   = s.outgoing ? 1u : 0u;
+  d->m.meta_flags = s.meta_flags;
+  d->m.path_len   = s.path_len;
+  d->m.snr_q4     = s.snr_q4;
+  d->m.rssi       = s.rssi;
+  strncpy(d->m.thread, s.thread, sizeof(d->m.thread) - 1);
+  d->m.thread[sizeof(d->m.thread) - 1] = '\0';
+  strncpy(d->m.sender, s.sender, sizeof(d->m.sender) - 1);
+  d->m.sender[sizeof(d->m.sender) - 1] = '\0';
+  strncpy(d->m.text, s.text, sizeof(d->m.text) - 1);
+  d->m.text[sizeof(d->m.text) - 1] = '\0';
+  d->seq = s.seq;
+}
+
+// Chunked record writer shared by append + compact: marshals through a small
+// INTERNAL-RAM buffer (the flash/SD drivers must never see a PSRAM source
+// pointer), per-record fallback when the heap is tight. Returns false on any
+// short write (errno left for the caller's stage report).
+static bool uiSegWriteRecords(File& f, const UITask::UIMessage* recs, int n) {
+  const size_t REC = sizeof(UiSegMsg);
+  size_t chunk_recs = 6144 / REC;
+  if (chunk_recs < 1) chunk_recs = 1;
+  uint8_t* buf = (uint8_t*)malloc(REC * chunk_recs);   // internal RAM by default
+  bool ok = true;
+  if (buf) {
+    size_t fill = 0;
+    for (int k = 0; ok && k < n; ++k) {
+      uiSegMarshal(recs[k], reinterpret_cast<UiSegMsg*>(buf + fill));
+      fill += REC;
+      if (fill == REC * chunk_recs) {
+        ok = (f.write(buf, fill) == fill);
+        fill = 0;
+      }
+    }
+    if (ok && fill > 0) ok = (f.write(buf, fill) == fill);
+    free(buf);
+  } else {
+    UiSegMsg rec;
+    for (int k = 0; ok && k < n; ++k) {
+      uiSegMarshal(recs[k], &rec);
+      ok = (f.write(reinterpret_cast<const uint8_t*>(&rec), sizeof(rec)) == sizeof(rec));
+    }
+  }
+  return ok;
+}
+
+// Append records to a segment file. `create` = the file does not exist yet
+// (write the header first). Driven by table state, NOT by File::size() — the
+// Tanmatsu FFat metadata layer lies about sizes. A crash mid-append leaves a
+// ragged tail the loader truncates to the record boundary; nothing else is at
+// risk (the previous records and every other segment are untouched — this is
+// the whole point of the segmented layout).
+static bool uiSegAppendRecords(uint32_t first_seq, bool create,
+                               const UITask::UIMessage* recs, int n) {
+  WdtHeavyGuard _wg;
+  errno = 0;
+  char name[48];
+  uiSegName(first_seq, "", name, sizeof name);
+  File f = uiDataOpen(name, FILE_APPEND);
+  if (!f) {
+    // First failure on a fresh card/dir is usually a missing parent dir —
+    // create it and retry once before reporting.
+    uiDataEnsureDirs();
+    errno = 0;
+    f = uiDataOpen(name, FILE_APPEND);
+    if (!f) return uiMsgsWriteFail('a');
+  }
+  bool ok = true;
+  if (create) {
+    UiSegHeader hdr{};
+    hdr.magic        = k_ui_seg_magic;
+    hdr.version      = k_ui_seg_version;
+    hdr.msg_rec_size = (uint16_t)sizeof(UiSegMsg);
+    hdr.first_seq    = first_seq;
+    ok = (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) == sizeof(hdr));
+  }
+  if (ok) ok = uiSegWriteRecords(f, recs, n);
+  f.close();
+  if (!ok) return uiMsgsWriteFail('a');
+  return uiMsgsWriteResult(true);
+}
+
+// Rewrite one segment from the given (live, tombstone-free) records — tmp +
+// rename, same crash discipline as the old writer but with a one-segment
+// blast radius. n == 0 removes the segment file outright (everything in it
+// was deleted). `sync_writer` picks the tmp namespace: the loop-task sync
+// writer must never share a tmp with a possibly-stalled worker write (two
+// truncating opens of one path interleave into garbage — the .tmp/.tm2
+// lesson from the single-file store).
+static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs, int n,
+                              bool sync_writer) {
+  WdtHeavyGuard _wg;
+  errno = 0;
+  char fin[48], tmp[48];
+  uiSegName(first_seq, "", fin, sizeof fin);
+  if (n <= 0) {
+    uiDataRemove(fin);
+    return uiMsgsWriteResult(true);
+  }
+  uiSegName(first_seq, sync_writer ? ".tm2" : ".tmp", tmp, sizeof tmp);
+  File f = uiDataOpen(tmp, "w");
+  if (!f) {
+    uiDataEnsureDirs();
+    errno = 0;
+    f = uiDataOpen(tmp, "w");
+    if (!f) return uiMsgsWriteFail('c');
+  }
+  UiSegHeader hdr{};
+  hdr.magic        = k_ui_seg_magic;
+  hdr.version      = k_ui_seg_version;
+  hdr.msg_rec_size = (uint16_t)sizeof(UiSegMsg);
+  hdr.first_seq    = first_seq;
+  bool ok = (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) == sizeof(hdr));
+  if (ok) ok = uiSegWriteRecords(f, recs, n);
+  f.close();
+  if (!ok) { uiDataRemove(tmp); return uiMsgsWriteFail('c'); }
+  errno = 0;
+  if (!uiDataReplaceFile(fin, tmp)) return uiMsgsWriteFail('c');
+  return uiMsgsWriteResult(true);
+}
+
+// Remove a retired segment (ring grew past retention; its records are gone
+// from RAM too).
+static void uiSegRemoveFile(uint32_t first_seq) {
+  char name[48];
+  uiSegName(first_seq, "", name, sizeof name);
+  uiDataRemove(name);
+}
+
+// Open + validate a segment for reading. Returns the on-disk record size via
+// *rec_size_out (self-describing header) and leaves the File positioned at
+// the first record. Returns false on a corrupt header — the caller
+// quarantines THAT segment only.
+static bool uiSegOpenValidated(uint32_t first_seq, File& f, uint16_t* rec_size_out) {
+  char name[48];
+  uiSegName(first_seq, "", name, sizeof name);
+  f = uiDataOpen(name, FILE_READ);
+  if (!f) return false;
+  UiSegHeader hdr{};
+  if (f.readBytes(reinterpret_cast<char*>(&hdr), sizeof(hdr)) != (int)sizeof(hdr) ||
+      hdr.magic != k_ui_seg_magic ||
+      hdr.version == 0 || hdr.version > k_ui_seg_version ||
+      hdr.msg_rec_size == 0 || hdr.msg_rec_size > 4096 ||
+      hdr.first_seq != first_seq) {
+    f.close();
+    return false;
+  }
+  *rec_size_out = hdr.msg_rec_size;
+  return true;
+}
+
+// Read ONE record from an open segment into a RAM record. Returns false at a
+// clean EOF or a ragged (crash-truncated) tail — the caller just stops there;
+// records already read are valid. Size-agnostic via readHistoryRec (older
+// shorter records zero-fill their tail, so a missing seq field reads 0 and
+// the loader backfills it).
+static bool uiSegReadRec(File& f, uint16_t disk_sz, UITask::UIMessage* out, uint32_t* seq_out) {
+  UiSegMsg rec{};
+  if (!readHistoryRec(f, &rec, sizeof(rec), disk_sz)) return false;
+  memset(out, 0, sizeof(*out));
+  out->ts         = rec.m.ts;
+  out->channel    = rec.m.channel != 0;
+  out->outgoing   = rec.m.outgoing != 0;
+  out->meta_flags = rec.m.meta_flags;
+  out->path_len   = rec.m.path_len;
+  out->snr_q4     = rec.m.snr_q4;
+  out->rssi       = rec.m.rssi;
+  strncpy(out->thread, rec.m.thread, UITask::MAX_THREAD_NAME);
+  out->thread[UITask::MAX_THREAD_NAME] = '\0';
+  strncpy(out->sender, rec.m.sender, UITask::MAX_SENDER_NAME);
+  out->sender[UITask::MAX_SENDER_NAME] = '\0';
+  strncpy(out->text, rec.m.text, UITask::MAX_MSG_TEXT);
+  out->text[UITask::MAX_MSG_TEXT] = '\0';
+  out->seq = rec.seq;
+  *seq_out = rec.seq;
+  return true;
+}
+
+// Discover segment files: fills out_first_seqs sorted ascending, returns the
+// count (or -1 when even the scan location can't be opened — distinct from
+// "no segments yet"). Handles both directory layouts: a real <root>/msgs dir
+// (FAT backends) and SPIFFS' flat namespace (scan "/" and prefix-match the
+// name). When sweep_tmps is set, orphaned .tmp/.tm2 leftovers from a crash
+// mid-compact are deleted along the way (boot hygiene).
+static int uiSegScan(uint32_t* out_first_seqs, int max_out, bool sweep_tmps) {
+  if (!uiDataFsReady()) return -1;
+  char dirpath[80];
+  snprintf(dirpath, sizeof dirpath, "%s%s", s_ui_data_root, k_ui_seg_dir);
+  File dir = s_ui_data_fs->open(dirpath);
+  bool flat = false;
+  if (!dir || !dir.isDirectory()) {
+    // SPIFFS (flat namespace): enumerate the root and match the name prefix.
+    if (dir) dir.close();
+    flat = true;
+    dir = s_ui_data_fs->open(s_ui_data_root[0] ? s_ui_data_root : "/");
+    if (!dir || !dir.isDirectory()) {
+      if (dir) dir.close();
+      return -1;
+    }
+  }
+  const size_t root_len = strlen(s_ui_data_root);
+  int n = 0;
+  for (;;) {
+    String path = dir.getNextFileName();
+    if (path.length() == 0) break;
+    // Normalize to a root-relative name so uiDataRemove/uiDataOpen accept it.
+    const char* rel = path.c_str();
+    if (root_len && strncmp(rel, s_ui_data_root, root_len) == 0) rel += root_len;
+    const char* base = strrchr(rel, '/');
+    base = base ? base + 1 : rel;
+    if (flat) {
+      // Flat scan sees every file — keep only "/msgs/seg_*" names.
+      if (strncmp(rel, k_ui_seg_dir, strlen(k_ui_seg_dir)) != 0) continue;
+    }
+    if (strncmp(base, "seg_", 4) != 0) continue;
+    char* end = nullptr;
+    const unsigned long fs_val = strtoul(base + 4, &end, 10);
+    if (!end || end == base + 4) continue;
+    if (strcmp(end, ".bin") == 0) {
+      if (n < max_out) out_first_seqs[n++] = (uint32_t)fs_val;
+    } else if (sweep_tmps && (strcmp(end, ".bin.tmp") == 0 || strcmp(end, ".bin.tm2") == 0)) {
+      uiDataRemove(rel);
+    }
+  }
+  dir.close();
+  // Insertion sort ascending — n is tiny (<= k_ui_seg_max).
+  for (int i = 1; i < n; ++i) {
+    const uint32_t v = out_first_seqs[i];
+    int j = i - 1;
+    while (j >= 0 && out_first_seqs[j] > v) { out_first_seqs[j + 1] = out_first_seqs[j]; --j; }
+    out_first_seqs[j + 1] = v;
+  }
+  return n;
 }
 
 static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
