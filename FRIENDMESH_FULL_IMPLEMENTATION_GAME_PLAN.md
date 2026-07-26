@@ -448,6 +448,14 @@ A FriendMesh trusted contact references, rather than overwrites, an existing Mes
 
 Local blocking, favorites, or labels do not change remote group membership or cryptographic access.
 
+The first live T-Deck integration implements the local curation subset without
+claiming trust: complete MeshCore public key, private local alias, and explicit
+friend membership are stored through the SD-bound touch preferences backend.
+It leaves the MeshCore contact table untouched as the routing, shared-secret,
+advert, and companion-protocol directory. Verification state, signing identity,
+replacement history, authenticated activity, and emergency consent still belong
+to the shared security implementation and must not be inferred from “Friend.”
+
 ## 10. Group domain contract
 
 Initial planning assumes up to eight configured groups and eight physically tested members per group. These are targets, not promises, until memory and airtime measurements confirm them.

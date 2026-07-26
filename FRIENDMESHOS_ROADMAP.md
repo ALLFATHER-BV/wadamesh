@@ -214,6 +214,12 @@ Goal: one bounded code base for all features.
 Implement together because they share identity references, verification state, membership epochs, roles, and administrative events.
 
 - [x] Trusted-contact/friend repository over an existing-contact directory contract; live `MyMesh` binding remains integration work.
+- [x] T-Deck curated Friends surface over the live MeshCore directory: full-key
+  SD-backed records, private aliases, Friends-first filtering, local name search
+  with duplicate-name fingerprints, and add flows from Discovered, contacts,
+  map markers, or a complete public key. Host/build verified; physical-device
+  persistence and interaction regression remain open. This does not yet claim
+  Phase 7 trust verification.
 - [x] Local identity-reference lifecycle using development/test providers.
 - [x] Group create/rename/disband and eight-group bounds.
 - [x] Member aliases, roles, join ordering, approval, replacement, blocking, leave, kick, transfer, and recorded majority succession behavior.

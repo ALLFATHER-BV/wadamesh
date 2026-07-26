@@ -8,6 +8,7 @@
 
 #include <Preferences.h>
 #include <SPIFFS.h>
+#include <esp_heap_caps.h>
 #include <stddef.h>   // offsetof
 #include <string.h>   // memcpy
 #include <vector>     // writeUseSdToSpiffsKv record list
@@ -16,6 +17,185 @@ static const char* TOUCH_NS = "touch";
 
 static SdNvsPrefs s_prefs;
 static bool s_begun = false;
+
+// Curated friends are deliberately separate from MeshCore contacts. Three
+// chunks keep every SdNvsPrefs value below its 2048-byte file-backend limit.
+// Chunk zero carries the authoritative total, so stale trailing chunks from an
+// interrupted shrink are never surfaced.
+static constexpr uint16_t FRIENDS_MAGIC = 0x5246;  // "FR"
+static constexpr uint8_t FRIENDS_VERSION = 1;
+static constexpr int FRIENDS_PER_CHUNK = 24;
+static constexpr int FRIENDS_CHUNKS =
+    (TOUCH_FRIENDS_MAX + FRIENDS_PER_CHUNK - 1) / FRIENDS_PER_CHUNK;
+struct __attribute__((packed)) FriendsChunk {
+  uint16_t magic;
+  uint8_t version;
+  uint8_t chunk;
+  uint8_t total;
+  uint8_t count;
+  TouchFriendRecord records[FRIENDS_PER_CHUNK];
+};
+static_assert(sizeof(FriendsChunk) <= 2048,
+              "Friend chunk must fit the SdNvsPrefs value limit");
+
+static void friendsKey(int chunk, char out[8]) {
+  snprintf(out, 8, "frnd%d", chunk);
+}
+
+static void* friendsScratch(size_t bytes) {
+  void* p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+  if (!p) p = heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
+  return p;
+}
+
+static int friendsReadAll(TouchFriendRecord* out, int capacity) {
+  if (!out || capacity <= 0) return 0;
+  if (!s_begun) touchPrefsBegin();
+  FriendsChunk* data = static_cast<FriendsChunk*>(friendsScratch(sizeof(FriendsChunk)));
+  if (!data) return 0;
+  memset(data, 0, sizeof(*data));
+  char key[8];
+  friendsKey(0, key);
+  if (!s_prefs.isKey(key)) { heap_caps_free(data); return 0; }
+  const size_t first_n = s_prefs.getBytes(key, data, sizeof(*data));
+  if (first_n < offsetof(FriendsChunk, records) ||
+      data->magic != FRIENDS_MAGIC || data->version != FRIENDS_VERSION ||
+      data->chunk != 0 || data->total > TOUCH_FRIENDS_MAX ||
+      data->count > FRIENDS_PER_CHUNK) {
+    heap_caps_free(data); return 0;
+  }
+  const uint8_t authoritative_total = data->total;
+  const int wanted = authoritative_total < capacity ? authoritative_total : capacity;
+  int copied = 0;
+  for (int chunk = 0; chunk < FRIENDS_CHUNKS && copied < wanted; ++chunk) {
+    if (chunk != 0) {
+      memset(data, 0, sizeof(*data));
+      friendsKey(chunk, key);
+      if (!s_prefs.isKey(key)) break;
+      const size_t n = s_prefs.getBytes(key, data, sizeof(*data));
+      if (n < offsetof(FriendsChunk, records)) break;
+    }
+    if (data->magic != FRIENDS_MAGIC || data->version != FRIENDS_VERSION ||
+        data->chunk != chunk || data->total != authoritative_total ||
+        data->count > FRIENDS_PER_CHUNK) break;
+    for (int i = 0; i < data->count && copied < wanted; ++i) {
+      out[copied] = data->records[i];
+      out[copied].alias[sizeof(out[copied].alias) - 1] = '\0';
+      ++copied;
+    }
+  }
+  heap_caps_free(data);
+  return copied;
+}
+
+static bool friendsWriteAll(const TouchFriendRecord* records, int count) {
+  if (count < 0 || count > TOUCH_FRIENDS_MAX) return false;
+  if (!SdNvsPrefs::fileWritesEnabled()) return false;
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) {
+    s_begun = s_prefs.begin(TOUCH_NS, true);
+    return false;
+  }
+  FriendsChunk* data = static_cast<FriendsChunk*>(friendsScratch(sizeof(FriendsChunk)));
+  if (!data) {
+    s_prefs.end();
+    s_begun = s_prefs.begin(TOUCH_NS, true);
+    return false;
+  }
+  bool ok = true;
+  // Write trailing chunks first and chunk zero last: chunk zero's total is the
+  // commit marker used by readers.
+  for (int chunk = FRIENDS_CHUNKS - 1; chunk >= 0; --chunk) {
+    char key[8]; friendsKey(chunk, key);
+    const int start = chunk * FRIENDS_PER_CHUNK;
+    const int remaining = count - start;
+    const int nrec = remaining <= 0 ? 0
+        : (remaining > FRIENDS_PER_CHUNK ? FRIENDS_PER_CHUNK : remaining);
+    if (nrec == 0 && chunk != 0) {
+      s_prefs.remove(key);
+      continue;
+    }
+    memset(data, 0, sizeof(*data));
+    data->magic = FRIENDS_MAGIC;
+    data->version = FRIENDS_VERSION;
+    data->chunk = static_cast<uint8_t>(chunk);
+    data->total = static_cast<uint8_t>(count);
+    data->count = static_cast<uint8_t>(nrec);
+    for (int i = 0; i < nrec; ++i) data->records[i] = records[start + i];
+    const size_t bytes = offsetof(FriendsChunk, records) +
+                         static_cast<size_t>(nrec) * sizeof(TouchFriendRecord);
+    if (s_prefs.putBytes(key, data, bytes) != bytes) ok = false;
+  }
+  heap_caps_free(data);
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
+
+int touchPrefsCopyFriends(TouchFriendRecord* out, int capacity) {
+  return friendsReadAll(out, capacity);
+}
+
+bool touchPrefsGetFriend(const uint8_t pub_key[32], TouchFriendRecord* out) {
+  if (!pub_key) return false;
+  TouchFriendRecord* all = static_cast<TouchFriendRecord*>(
+      friendsScratch(sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX));
+  if (!all) return false;
+  const int count = friendsReadAll(all, TOUCH_FRIENDS_MAX);
+  bool found = false;
+  for (int i = 0; i < count; ++i) {
+    if (memcmp(all[i].pub_key, pub_key, 32) == 0) {
+      if (out) *out = all[i];
+      found = true;
+      break;
+    }
+  }
+  heap_caps_free(all);
+  return found;
+}
+
+bool touchPrefsSetFriend(const uint8_t pub_key[32], const char* alias) {
+  if (!pub_key) return false;
+  TouchFriendRecord* all = static_cast<TouchFriendRecord*>(
+      friendsScratch(sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX));
+  if (!all) return false;
+  memset(all, 0, sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX);
+  int count = friendsReadAll(all, TOUCH_FRIENDS_MAX);
+  int found = -1;
+  for (int i = 0; i < count; ++i) {
+    if (memcmp(all[i].pub_key, pub_key, 32) == 0) { found = i; break; }
+  }
+  if (found < 0) {
+    if (count >= TOUCH_FRIENDS_MAX) { heap_caps_free(all); return false; }
+    found = count++;
+    memcpy(all[found].pub_key, pub_key, 32);
+  }
+  const char* value = alias ? alias : "";
+  strncpy(all[found].alias, value, sizeof(all[found].alias) - 1);
+  all[found].alias[sizeof(all[found].alias) - 1] = '\0';
+  const bool ok = friendsWriteAll(all, count);
+  heap_caps_free(all);
+  return ok;
+}
+
+bool touchPrefsRemoveFriend(const uint8_t pub_key[32]) {
+  if (!pub_key) return false;
+  TouchFriendRecord* all = static_cast<TouchFriendRecord*>(
+      friendsScratch(sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX));
+  if (!all) return false;
+  memset(all, 0, sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX);
+  int count = friendsReadAll(all, TOUCH_FRIENDS_MAX);
+  int found = -1;
+  for (int i = 0; i < count; ++i) {
+    if (memcmp(all[i].pub_key, pub_key, 32) == 0) { found = i; break; }
+  }
+  if (found < 0) { heap_caps_free(all); return false; }
+  for (int i = found; i + 1 < count; ++i) all[i] = all[i + 1];
+  const bool ok = friendsWriteAll(all, count - 1);
+  heap_caps_free(all);
+  return ok;
+}
 
 // ---------------------------------------------------------------------------
 // Packed scalar config blob ("cfg")

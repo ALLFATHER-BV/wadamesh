@@ -30,6 +30,7 @@ class SdNvsPrefs {
 public:
   static void useFile(fs::FS* fs, const char* dir);   // route prefs to <dir>/<ns>.kv
   static void setFileWritesEnabled(bool enabled);    // keep a recovery file backend read-only
+  static bool fileWritesEnabled();                   // false when SD-required recovery is read-only
   static fs::FS* fileFs();   // the active file-mode fs, or nullptr when NVS-backed
 
   bool begin(const char* ns, bool readOnly = false);

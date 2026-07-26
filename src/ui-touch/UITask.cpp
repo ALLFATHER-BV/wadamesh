@@ -1609,6 +1609,7 @@ static bool      s_addch_friendmesh_group = false;
 static lv_obj_t* s_addct_pub_ta  = nullptr;
 static lv_obj_t* s_addct_name_ta = nullptr;
 static lv_obj_t* s_addct_error_l = nullptr;
+static lv_obj_t* s_friend_alias_ta = nullptr;
 
 // ---- Keyboard rotation (landscape typing) ----
 // Stored as the lv_disp_rot_t value: 0 = portrait, 1 = ROT_90, 3 = ROT_270.
@@ -1668,6 +1669,34 @@ static void* psAlloc(size_t n) {
     // entries look "used" and the Found list shows corrupt contacts.
     if (p) memset(p, 0, n);
     return p;
+}
+
+// Local-only Friends view. MeshCore contacts remain the operational directory;
+// this full-key index controls curation and private display aliases only.
+static TouchFriendRecord* s_friends =
+    (TouchFriendRecord*)psAlloc(sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX);
+static int s_friends_count = 0;
+static bool s_friends_loaded = false;
+static uint32_t s_friends_revision = 0;
+
+static void friendsReload() {
+  if (!s_friends) { s_friends_count = 0; s_friends_loaded = true; return; }
+  s_friends_count = touchPrefsCopyFriends(s_friends, TOUCH_FRIENDS_MAX);
+  s_friends_loaded = true;
+  ++s_friends_revision;
+}
+
+static const TouchFriendRecord* friendByKey(const uint8_t pub_key[32]) {
+  if (!pub_key) return nullptr;
+  if (!s_friends_loaded) friendsReload();
+  for (int i = 0; i < s_friends_count; ++i)
+    if (memcmp(s_friends[i].pub_key, pub_key, 32) == 0) return &s_friends[i];
+  return nullptr;
+}
+
+static const char* friendDisplayName(const ContactInfo& contact) {
+  const TouchFriendRecord* f = friendByKey(contact.id.pub_key);
+  return (f && f->alias[0]) ? f->alias : contact.name;
 }
 static LvDiscoveredEntry* s_discovered = (LvDiscoveredEntry*)psAlloc(sizeof(LvDiscoveredEntry) * DISCOVERED_MAX);
 static uint32_t s_discovered_seq = 0;
@@ -4303,6 +4332,7 @@ static void openBlockedUsersModal();                            // ignore-list m
 static bool overlayBlocksTabSwipe();   // theme/channel-scope pickers swallow tab swipes
 static bool drawerPopupOpen();         // popups floating over the app drawer (signal/mentions/power/files)
 static void refreshContactsList();
+static void setContactsFilterUi(uint8_t filter);
 static void contactsListForceRefresh();   // refresh past the no-change cache (e.g. fav toggle, where the count is unchanged)
 static void refreshThreadLists();
 static void refreshStatusLabels();
@@ -8878,6 +8908,7 @@ static void closeSettingsModal() {
   s_addct_pub_ta     = nullptr;
   s_addct_name_ta    = nullptr;
   s_addct_error_l    = nullptr;
+  s_friend_alias_ta  = nullptr;
   resetSettingsModalState();
 }
 
@@ -9530,14 +9561,24 @@ static void discoveredAddCb(lv_event_t* e) {
   LvDiscoveredEntry& e_disc = s_discovered[idx];
   if (!e_disc.used) return;
 
-  // Add the captured ContactInfo straight to the_mesh.
-  if (the_mesh.addContact(e_disc.ci)) {
-    the_mesh.uiPersistContacts();   // write /contacts3 so the add survives reboot
+  // Add to MeshCore when needed, then independently curate it as a local
+  // friend. Neither action emits a mesh packet.
+  ContactInfo* existing = the_mesh.lookupContactByPubKey(
+      e_disc.ci.id.pub_key, PUB_KEY_SIZE);
+  const bool contact_ok = existing || the_mesh.addContact(e_disc.ci);
+  if (contact_ok) {
+    if (!existing) the_mesh.uiPersistContacts();   // make the protocol contact durable
+    const bool is_person = e_disc.ci.type == ADV_TYPE_CHAT;
+    if (is_person && !touchPrefsSetFriend(e_disc.ci.id.pub_key, e_disc.ci.name)) {
+      g_lv.task->showAlert(TR("Friend list full or SD unavailable"), 1600);
+      return;
+    }
+    if (is_person) friendsReload();
     e_disc.in_contacts = true;
     markDiscoveredDirty();
     refreshContactsList();          // rebuild the Contacts tab now (count changed) so the
                                     // new contact shows without needing a tab reload
-    g_lv.task->showAlert(TR("Added to contacts"), 1000);
+    g_lv.task->showAlert(TR(is_person ? "Friend added" : "Network node added"), 1000);
     // Re-open the Discovered modal so the list updates immediately.
     closeSettingsModal();
     lv_event_t synth{};
@@ -9850,7 +9891,8 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     lv_obj_set_width(meta, text_w);
     lv_obj_set_pos(meta, 2, 3 + name_h + 2);
 
-    // "Add" button on the right, vertically centred
+    // Chat peers become friends; infrastructure is added only to the network
+    // directory and never pollutes the Friends view.
     lv_obj_t* add_btn = lv_btn_create(card);
     lv_obj_set_size(add_btn, add_w, card_h - 2 * pad - 2);
     lv_obj_align(add_btn, LV_ALIGN_RIGHT_MID, 0, 0);
@@ -9858,7 +9900,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     s_disc_add_ctx[idx].slot_idx = idx;
     lv_obj_add_event_cb(add_btn, discoveredAddCb, LV_EVENT_CLICKED, &s_disc_add_ctx[idx]);
     lv_obj_t* add_lbl = lv_label_create(add_btn);
-    lv_label_set_text(add_lbl, TR("Add"));
+    lv_label_set_text(add_lbl, TR(e_disc.ci.type == ADV_TYPE_CHAT ? "Friend" : "Add"));
     lv_obj_center(add_lbl);
 
     y += card_h + 6;
@@ -14441,6 +14483,10 @@ static void contactsSearchApplyCb(lv_event_t* e) {
             sizeof(g_lv.contacts_search) - 1);
     g_lv.contacts_search[sizeof(g_lv.contacts_search) - 1] = '\0';
   }
+  // Name lookup is a local search across the already-known MeshCore directory,
+  // not an over-the-air query. Show Network results so a non-friend can be
+  // selected and curated from the normal contact action sheet.
+  setContactsFilterUi(0);
   closeContactsSearchSheet();
   refreshContactsList();
   if (g_lv.contacts_list) lv_obj_scroll_to(g_lv.contacts_list, 0, 0, LV_ANIM_OFF);
@@ -14499,7 +14545,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   addCloseXBadge(card, contactsSearchSheetCloseCb);
 
   lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, LV_SYMBOL_EYE_OPEN "  Search contacts");
+  lv_label_set_text(title, LV_SYMBOL_EYE_OPEN "  Search people");
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 0);
@@ -14636,6 +14682,110 @@ static void actionSheetDeleteCb(lv_event_t* e) {
   } else {
     g_lv.task->showAlert(TR("Delete failed"), 1200);
   }
+}
+
+static uint8_t s_friend_alias_pub[32] = {0};
+
+static void friendAliasSaveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_friend_alias_ta) return;
+  kbMirrorSyncToReal();
+  char alias[32] = {0};
+  strncpy(alias, lv_textarea_get_text(s_friend_alias_ta), sizeof(alias) - 1);
+  for (int i = (int)strlen(alias) - 1;
+       i >= 0 && (alias[i] == ' ' || alias[i] == '\t'); --i) alias[i] = '\0';
+  if (!alias[0]) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Friend name can't be empty"), 1400);
+    return;
+  }
+  if (!touchPrefsSetFriend(s_friend_alias_pub, alias)) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Friend update failed; check SD"), 1600);
+    return;
+  }
+  friendsReload();
+  s_friend_alias_ta = nullptr;
+  closeSettingsModal();
+  refreshContactsList();
+  if (g_lv.task) g_lv.task->showAlert(TR("Private friend name saved"), 1200);
+}
+
+static void friendAliasRemoveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!touchPrefsRemoveFriend(s_friend_alias_pub)) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Friend update failed; check SD"), 1600);
+    return;
+  }
+  friendsReload();
+  s_friend_alias_ta = nullptr;
+  closeSettingsModal();
+  refreshContactsList();
+  if (g_lv.task) g_lv.task->showAlert(TR("Removed from Friends"), 1200);
+}
+
+static void openFriendAliasModal(const ContactInfo& contact) {
+  memcpy(s_friend_alias_pub, contact.id.pub_key, sizeof(s_friend_alias_pub));
+  const TouchFriendRecord* record = friendByKey(contact.id.pub_key);
+  lv_obj_t* body = createSettingsModal("Friend name", SettingsModalKind::AddContact);
+  int y = 0;
+  lv_obj_t* hint = lv_label_create(body);
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(hint, lv_pct(100));
+  lv_label_set_text(hint, TR("This private name stays on this device and is never placed in MeshCore adverts."));
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(hint, 2, y); y += 44;
+
+  s_friend_alias_ta = lv_textarea_create(body);
+  lv_obj_set_size(s_friend_alias_ta, lv_pct(100), 34);
+  lv_obj_set_pos(s_friend_alias_ta, 2, y);
+  lv_textarea_set_one_line(s_friend_alias_ta, true);
+  lv_textarea_set_max_length(s_friend_alias_ta, 31);
+  lv_textarea_set_text(s_friend_alias_ta,
+                       (record && record->alias[0]) ? record->alias : contact.name);
+  attachSettingsTaEvents(s_friend_alias_ta);
+  y += 42;
+
+  lv_obj_t* save = lv_btn_create(body);
+  lv_obj_set_size(save, lv_pct(100), 36);
+  lv_obj_set_pos(save, 2, y);
+  styleButton(save);
+  lv_obj_set_style_bg_color(save, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
+  lv_obj_add_event_cb(save, friendAliasSaveCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* save_l = lv_label_create(save);
+  lv_label_set_text(save_l, TR("Save private name"));
+  lv_obj_center(save_l);
+  y += 44;
+
+  lv_obj_t* remove = lv_btn_create(body);
+  lv_obj_set_size(remove, lv_pct(100), 36);
+  lv_obj_set_pos(remove, 2, y);
+  styleButton(remove);
+  lv_obj_set_style_bg_color(remove, lv_color_hex(0xB23A48), LV_PART_MAIN);
+  lv_obj_add_event_cb(remove, friendAliasRemoveCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* remove_l = lv_label_create(remove);
+  lv_label_set_text(remove_l, TR("Remove from Friends"));
+  lv_obj_center(remove_l);
+}
+
+static void actionSheetFriendToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  ContactInfo c;
+  const bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
+  closeActionSheet();
+  if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  const bool was_friend = friendByKey(c.id.pub_key) != nullptr;
+  if (was_friend) {
+    openFriendAliasModal(c);
+    return;
+  }
+  const bool saved = touchPrefsSetFriend(c.id.pub_key, c.name);
+  if (!saved) {
+    g_lv.task->showAlert(TR("Friend update failed; check SD"), 1600);
+    return;
+  }
+  friendsReload();
+  setContactsFilterUi(6);
+  refreshContactsList();
+  g_lv.task->showAlert(TR("Friend added"), 1200);
 }
 
 // "Reset path" — wipes the cached return path so the next send will re-flood
@@ -16081,9 +16231,13 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // both this contact and our node have a GPS fix.
   bool has_los = false;
   bool is_room = false;
+  bool is_chat = false;
   {
     ContactInfo _tc;
-    if (the_mesh.getContactByIdx(mesh_idx, _tc)) is_room = (_tc.type == ADV_TYPE_ROOM);
+    if (the_mesh.getContactByIdx(mesh_idx, _tc)) {
+      is_room = (_tc.type == ADV_TYPE_ROOM);
+      is_chat = (_tc.type == ADV_TYPE_CHAT);
+    }
   }
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   {
@@ -16117,7 +16271,8 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // bottom row. Grid items = msg/ping + telemetry + range + favorite + reset +
   // block (6), + trace/admin for repeaters (2), + Join for rooms (1), +
   // line-of-sight (1), + Show on map (1 when contact has GPS and !from_map).
-  const int grid_items = (from_map ? 5 : 6) + (is_repeater ? 2 : 0) +
+  const int grid_items = (from_map ? 5 : 6) + (is_chat ? 1 : 0) +
+      (is_repeater ? 2 : 0) +
       (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0) +
       (has_friend_compass ? 1 : 0);
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
@@ -16230,6 +16385,15 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
     mk_btn(LV_SYMBOL_ENVELOPE "  Message", actionSheetSendMsgCb, 0);
   }
   mk_btn(LV_SYMBOL_BATTERY_3 "  Telemetry", actionSheetTelemetryCb, 0);
+  if (is_chat) {
+    ContactInfo _friend_contact;
+    const bool _is_friend = the_mesh.getContactByIdx(
+        s_action_sheet_mesh_idx, _friend_contact) &&
+        friendByKey(_friend_contact.id.pub_key);
+    mk_btn(_is_friend ? TOUCH_SYM_PERSON "  Friend name"
+                      : TOUCH_SYM_PERSON "  Add friend",
+           actionSheetFriendToggleCb, _is_friend ? 0 : COLOR_STATUS_OK);
+  }
   if (has_map_btn)
     mk_btn(LV_SYMBOL_GPS "  Show on map", actionSheetShowOnMapCb, 0);
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
@@ -16300,7 +16464,7 @@ static void contactSelectCb(lv_event_t* e) {
     g_lv.task->showAlert(TR("Contact gone"), 1200);
     return;
   }
-  openContactActionSheet(ctx->mesh_idx, ctx->is_repeater, c.name);
+  openContactActionSheet(ctx->mesh_idx, ctx->is_repeater, friendDisplayName(c));
 }
 
 // ============================================================
@@ -16456,18 +16620,26 @@ static void addContactSubmitCb(lv_event_t* e) {
     if (s_addct_error_l) lv_label_set_text(s_addct_error_l, TR("Name can't be empty."));
     return;
   }
-  if (!the_mesh.uiAddManualContact(pub, name)) {
-    if (s_addct_error_l) lv_label_set_text(s_addct_error_l, TR("Already exists or table full."));
+  ContactInfo* existing = the_mesh.lookupContactByPubKey(pub, PUB_KEY_SIZE);
+  if (!existing && !the_mesh.uiAddManualContact(pub, name)) {
+    if (s_addct_error_l) lv_label_set_text(s_addct_error_l, TR("Contact table full."));
     return;
   }
+  if (!touchPrefsSetFriend(pub, name)) {
+    if (s_addct_error_l) lv_label_set_text(s_addct_error_l,
+        TR("Friend list full or SD unavailable."));
+    return;
+  }
+  friendsReload();
+  setContactsFilterUi(6);
   closeSettingsModal();
-  if (g_lv.task) g_lv.task->showAlert(TR("Contact added"), 1200);
+  if (g_lv.task) g_lv.task->showAlert(TR("Friend added"), 1200);
   refreshContactsList();
 }
 
 static void openAddContactModalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_obj_t* body = createSettingsModal("Add contact", SettingsModalKind::AddContact);
+  lv_obj_t* body = createSettingsModal("Add friend", SettingsModalKind::AddContact);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -16475,7 +16647,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_width(hint, lv_pct(100));
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
-  lv_label_set_text(hint, TR("Paste the 64-hex public key and a name. Useful when you want to DM someone before their advert has arrived."));
+  lv_label_set_text(hint, TR("Paste the 64-hex public key and choose a private name. The alias stays on this device."));
   lv_obj_set_pos(hint, 2, y);
   y += 48;
 
@@ -16495,7 +16667,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   y += 60;
 
   lv_obj_t* name_l = lv_label_create(body);
-  lv_label_set_text(name_l, TR("Name"));
+  lv_label_set_text(name_l, TR("Private friend name"));
   lv_obj_set_style_text_color(name_l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(name_l, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(name_l, 2, y);
@@ -16526,7 +16698,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, addContactSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
-  lv_label_set_text(bl, TR("Add contact"));
+  lv_label_set_text(bl, TR("Add friend"));
   lv_obj_center(bl);
 }
 
@@ -23181,7 +23353,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   };
   mk(LV_SYMBOL_EYE_OPEN "  Search", contactsOverflowSearchCb, 0);
   mk(LV_SYMBOL_LIST     "  Discovered", contactsOverflowFoundCb, 0);
-  mk(LV_SYMBOL_PLUS     "  Add contact", contactsOverflowAddCb, 0);
+  mk(LV_SYMBOL_PLUS     "  Add friend by key", contactsOverflowAddCb, 0);
   mk(LV_SYMBOL_DOWNLOAD "  Auto-add settings", contactsOverflowAutoAddCb, 0);
   mk(LV_SYMBOL_CLOSE    "  Blocked list", contactsOverflowBlockedCb, 0);
 }
@@ -23200,14 +23372,22 @@ static lv_obj_t* s_ct_normal_bar  = nullptr; // header toolbar shown in normal m
 static lv_obj_t* s_ct_select_bar  = nullptr; // header toolbar shown in select mode
 static lv_obj_t* s_ct_del_btn     = nullptr; // "Delete (N)" button in the select bar
 static lv_obj_t* s_ct_sort_btns[CONTACTS_SORT_COUNT] = { nullptr, nullptr, nullptr, nullptr };
-static lv_obj_t* s_ct_filter_btns[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+static lv_obj_t* s_ct_filter_btns[7] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 static lv_obj_t* s_ct_filter_btn_lbl = nullptr;   // header Filter button label (shows the active filter)
 static lv_obj_t* s_ct_disc_badge     = nullptr;   // count badge on the header Discovered button
 static const char* contactsFilterShortLabel() {
   switch (g_lv.contacts_filter) {
     case 1u: return "RPT";  case 2u: return "Peer"; case 3u: return "Fav"; case 4u: return "Loc"; case 5u: return "Dir";
-    default: return "All";
+    case 6u: return "Friends";
+    default: return "Network";
   }
+}
+static void setContactsFilterUi(uint8_t filter) {
+  g_lv.contacts_filter = filter;
+  updateContactsFilterSegments();
+  if (s_ct_filter_btn_lbl)
+    lv_label_set_text_fmt(s_ct_filter_btn_lbl, "%s %s", LV_SYMBOL_DOWN,
+                          contactsFilterShortLabel());
 }
 // Bulk-delete runs chunked across loop ticks (each uiRemoveContact rewrites the
 // contacts file to flash; doing 100+ synchronously froze the UI / tripped the WDT).
@@ -23233,19 +23413,27 @@ static bool ctSearchNeedle(char* out, int outsz){
 // Shared predicate so the rendered list and Select-all use IDENTICAL rules.
 static bool ctPassesFilter(const ContactInfo& c, bool is_fav, int fav_count, const char* needle){
   const bool is_rep = (c.type == ADV_TYPE_REPEATER);
+  const TouchFriendRecord* friend_record = friendByKey(c.id.pub_key);
   switch(g_lv.contacts_filter){
     case 1u: if(!is_rep) return false; break;                              // repeaters
     case 2u: if(is_rep)  return false; break;                              // peers
     case 3u: if(fav_count>0 && !is_fav) return false; break;               // favorites
     case 4u: if(!(c.gps_lat!=0 || c.gps_lon!=0)) return false; break;      // has location
     case 5u: if(c.out_path_len != 0) return false; break;                  // 0-hop / direct neighbors only
+    case 6u: if(!friend_record) return false; break;                       // explicitly curated local friends
     default: break;                                                        // 0 = all
   }
   if(needle && needle[0]){
     char nl[40]; int nn=(int)strlen(c.name); if(nn>(int)sizeof(nl)-1) nn=(int)sizeof(nl)-1;
     for(int j=0;j<nn;++j){ char ch=c.name[j]; if(ch>='A'&&ch<='Z') ch=(char)(ch-'A'+'a'); nl[j]=ch; }
     nl[nn]='\0';
-    if(!strstr(nl,needle)) return false;
+    bool matched = strstr(nl,needle) != nullptr;
+    if(!matched && friend_record && friend_record->alias[0]) {
+      char al[40]; int an=(int)strlen(friend_record->alias); if(an>(int)sizeof(al)-1) an=(int)sizeof(al)-1;
+      for(int j=0;j<an;++j){ char ch=friend_record->alias[j]; if(ch>='A'&&ch<='Z') ch=(char)(ch-'A'+'a'); al[j]=ch; }
+      al[an]='\0'; matched = strstr(al,needle) != nullptr;
+    }
+    if(!matched) return false;
   }
   return true;
 }
@@ -23446,7 +23634,7 @@ static void ctPaintOpt(lv_obj_t* b, bool active){
 }
 static void ctSheetRepaint(){
   for(int i=0;i<CONTACTS_SORT_COUNT;++i) ctPaintOpt(s_ct_sort_btns[i], g_contacts_sort==(uint8_t)i);
-  for(int i=0;i<6;++i) ctPaintOpt(s_ct_filter_btns[i], g_lv.contacts_filter==(uint8_t)i);
+  for(int i=0;i<7;++i) ctPaintOpt(s_ct_filter_btns[i], g_lv.contacts_filter==(uint8_t)i);
 }
 // Repaint the Sort sheet rows: highlight the active mode and show its direction
 // arrow (▼ = the mode's natural order, ▲ = reversed). Labels are pulled from
@@ -23541,7 +23729,7 @@ static lv_obj_t* ctOpenOptionSheet(const char* title){
   return card;
 }
 static void openContactsSortSheet(){
-  for(int i=0;i<6;++i) s_ct_filter_btns[i]=nullptr;   // the filter sheet's buttons are gone now
+  for(int i=0;i<7;++i) s_ct_filter_btns[i]=nullptr;   // the filter sheet's buttons are gone now
   lv_obj_t* card = ctOpenOptionSheet("Sort by");
   // active=false here; ctSortRowsRepaint() below sets the real highlight + arrow.
   s_ct_sort_btns[0] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_AZ),         ctSortOptCb, CONTACTS_SORT_AZ,         false);
@@ -23583,7 +23771,8 @@ static void openDiscSortSheetCb(lv_event_t* e){ if(lv_event_get_code(e)==LV_EVEN
 static void openContactsFilterSheet(){
   for(int i=0;i<CONTACTS_SORT_COUNT;++i) s_ct_sort_btns[i]=nullptr;     // the sort sheet's buttons are gone now
   lv_obj_t* card = ctOpenOptionSheet("Filter");
-  s_ct_filter_btns[0] = ctSheetOption(card, "All",            ctFilterOptCb, 0, g_lv.contacts_filter==0);
+  s_ct_filter_btns[6] = ctSheetOption(card, "Friends",        ctFilterOptCb, 6, g_lv.contacts_filter==6);
+  s_ct_filter_btns[0] = ctSheetOption(card, "All network nodes", ctFilterOptCb, 0, g_lv.contacts_filter==0);
   s_ct_filter_btns[1] = ctSheetOption(card, "Repeaters",      ctFilterOptCb, 1, g_lv.contacts_filter==1);
   s_ct_filter_btns[2] = ctSheetOption(card, "Peers",          ctFilterOptCb, 2, g_lv.contacts_filter==2);
   s_ct_filter_btns[3] = ctSheetOption(card, "Favorites",      ctFilterOptCb, 3, g_lv.contacts_filter==3);
@@ -23594,10 +23783,9 @@ static void openContactsFilterSheetCb(lv_event_t* e){ if(lv_event_get_code(e)==L
 
 static void makeContactsTab(lv_obj_t* tab) {
   g_lv.contacts_list   = nullptr;
-  // Default to the "All" segment — show every contact, ordered by most
-  // recently heard (favorites still pin to the top via the sort
-  // comparator). The ★ segment is one tap away for the favorites-only view.
-  g_lv.contacts_filter = 0;
+  // Human address book first. The noisy MeshCore operational directory remains
+  // available as "All network nodes" without changing routing or auto-add.
+  g_lv.contacts_filter = 6;
   g_lv.contacts_search[0] = '\0';
   g_lv.contacts_search_indicator = nullptr;
   for (int i = 0; i < 4; ++i) s_contacts_seg_btns[i] = nullptr;
@@ -27326,7 +27514,8 @@ static void openMapMarker(MapMarkerKind kind, int source_idx) {
   ContactInfo c;
   if (!the_mesh.getContactByIdx((uint32_t)source_idx, c)) return;
   const bool is_repeater = (c.type == ADV_TYPE_REPEATER);
-  openContactActionSheet((uint32_t)source_idx, is_repeater, c.name, /*from_map=*/true);
+  openContactActionSheet((uint32_t)source_idx, is_repeater,
+                         friendDisplayName(c), /*from_map=*/true);
 }
 
 // ----- Overlapping-markers picker -----
@@ -33708,6 +33897,7 @@ static void refreshContactsList() {
   static int     s_last_count  = -1;
   static uint8_t s_last_filter = 0xFF;
   static uint8_t s_last_sort   = 0xFF;
+  static uint32_t s_last_friends_revision = UINT32_MAX;
   static char    s_last_search[24] = {0};
   static unsigned long s_last_age_refresh_ms = 0;
   static bool    s_last_use_miles = false;
@@ -33726,6 +33916,7 @@ static void refreshContactsList() {
   const bool search_changed = strncmp(s_last_search, g_lv.contacts_search, sizeof(s_last_search)) != 0;
   if (curr_count == s_last_count && curr_filter == s_last_filter &&
       g_contacts_sort == s_last_sort && !search_changed &&
+      s_friends_revision == s_last_friends_revision &&
       curr_use_miles == s_last_use_miles && !s_ct_list_force &&
       lv_obj_get_child_cnt(g_lv.contacts_list) > 0) {
     if (!age_refresh_due) return;
@@ -33738,6 +33929,7 @@ static void refreshContactsList() {
   s_last_count  = curr_count;
   s_last_filter = curr_filter;
   s_last_sort   = g_contacts_sort;
+  s_last_friends_revision = s_friends_revision;
   s_last_use_miles = curr_use_miles;
   strncpy(s_last_search, g_lv.contacts_search, sizeof(s_last_search) - 1);
   s_last_search[sizeof(s_last_search) - 1] = '\0';
@@ -33843,8 +34035,17 @@ static void refreshContactsList() {
     e.is_blocked = is_blocked;
     e.last_heard = c.last_advert_timestamp;
     memcpy(e.key6, c.id.pub_key, 6);
-    strncpy(e.name, c.name, sizeof(e.name) - 1);
-    e.name[sizeof(e.name) - 1] = '\0';
+    const char* display_name = friendDisplayName(c);
+    if (have_search) {
+      // Search results need a human-visible discriminator for duplicate names.
+      // Selection still uses the complete key; this is display-only.
+      snprintf(e.name, sizeof(e.name), "%s · %02X%02X%02X%02X",
+               display_name, c.id.pub_key[0], c.id.pub_key[1],
+               c.id.pub_key[2], c.id.pub_key[3]);
+    } else {
+      strncpy(e.name, display_name, sizeof(e.name) - 1);
+      e.name[sizeof(e.name) - 1] = '\0';
+    }
   }
 
   // Capture the clock + self GPS before sorting (the qsort comparator is non-capturing).
@@ -34075,7 +34276,11 @@ static void refreshContactsList() {
   }
 
   if (n_entries == 0) {
-    lv_obj_t* l = lv_list_add_text(g_lv.contacts_list, "No matching contacts");
+    lv_obj_t* l = lv_list_add_text(
+        g_lv.contacts_list,
+        g_lv.contacts_filter == 6
+            ? "No friends yet — add from Discovered, the map, or Network"
+            : "No matching contacts");
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_pad_all(l, 20, LV_PART_MAIN);
   }

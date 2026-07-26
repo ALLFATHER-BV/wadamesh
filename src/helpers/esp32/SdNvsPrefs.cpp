@@ -33,6 +33,8 @@ void SdNvsPrefs::setFileWritesEnabled(bool enabled) {
   if (!enabled) Serial.println("[PREFS] recovery backend is read-only");
 }
 
+bool SdNvsPrefs::fileWritesEnabled() { return s_file_writes_enabled; }
+
 static bool     fileMode()  { return s_file_mode && s_file_fs; }
 static fs::FS*  activeFs()  { return fileMode() ? s_file_fs : (fs::FS*)&SD; }
 

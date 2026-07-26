@@ -265,6 +265,19 @@ The current application already provides a large part of the product shell Frien
 
 FriendMesh-specific trust, group, identity, verification, and safety semantics must be represented through minimal additions to these existing screens. The layout, navigation, visual language, and WadaMesh terminology remain authoritative. Existing MeshCore “contact,” “channel,” “identity,” and “delivered” concepts should not be relabeled as stronger FriendMesh guarantees unless the underlying protocol proves them.
 
+The T-Deck build now separates the human-facing **Friends** view from
+MeshCore's operational contact directory. Friends are explicitly curated local
+records keyed by the complete 32-byte MeshCore public key, with a private alias
+stored in the SD-routed `/meshcomod/touch.kv` preferences file. Advertised names,
+duplicate names, auto-added peers, repeaters, rooms, sensors, routes, and shared
+secrets remain owned by MeshCore. Search is local: entering a name searches the
+already-known network directory and displays a short fingerprint to distinguish
+same-name candidates; it does not send a lookup packet. People can be added from
+Discovered, an existing contact or map marker, or by full public key. The action
+does not transmit a friendship event or alias. This is curation, not security
+verification; protected trust and at-rest protection remain in the later shared
+security phase.
+
 ## 6. T-Deck implementation model and deferred Heltec notes
 
 The comparison below is retained as planning context for possible later Heltec access. It does not expand the current T-Deck-only implementation or verification scope.

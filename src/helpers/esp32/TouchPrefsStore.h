@@ -14,6 +14,21 @@ void touchPrefsBegin();
 // boot: an earlier pref read may have cached the blob from the legacy backend.
 void touchPrefsReload();
 
+/** Local-only curated friend directory. MeshCore's contact table remains the
+ *  protocol/routing directory; these records only decide who appears in the
+ *  Friends view and which private alias is rendered. Full public keys are used
+ *  so duplicate advertised names and short-prefix collisions stay distinct.
+ *  The active prefs backend is SD /meshcomod on T-Deck FriendMesh builds. */
+constexpr int TOUCH_FRIENDS_MAX = 64;
+struct TouchFriendRecord {
+  uint8_t pub_key[32];
+  char alias[32];
+};
+int  touchPrefsCopyFriends(TouchFriendRecord* out, int capacity);
+bool touchPrefsGetFriend(const uint8_t pub_key[32], TouchFriendRecord* out);
+bool touchPrefsSetFriend(const uint8_t pub_key[32], const char* alias);
+bool touchPrefsRemoveFriend(const uint8_t pub_key[32]);
+
 /** Screen timeout in seconds; 0 = never sleep. Default 20. */
 uint16_t touchPrefsGetScreenTimeoutSecs();
 bool touchPrefsSetScreenTimeoutSecs(uint16_t seconds);
