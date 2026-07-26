@@ -173,7 +173,9 @@ Important current files include:
 - `/prefs/<namespace>.kv` on internal storage;
 - `/meshcomod/...` on SD when the full store is redirected.
 
-On the T-Deck, SPIFFS is the safe fallback and the microSD card can hold the full store under `/meshcomod`. Startup contains migration and adoption rules designed to avoid silently creating a new identity when a storage root changes. Contacts/channels can also be routed to SD to avoid long SPIFFS garbage-collection stalls.
+For the T-Deck FriendMesh build, the microSD card is the required long-term data medium. The full `DataStore` lives under `/meshcomod`, including MeshCore identity/preferences, contacts, channels, and FriendMesh opaque state. UI settings and chat history, discovery state, motion and battery history, backups, crash exports, and the online map cache are also routed to SD. Startup migrates an existing internal store before adoption and rejects the whole adoption if any requested file copy fails. The migration repair explicitly copies identity and other critical paths before recursively scanning full paths, preserves existing non-empty SD files during automatic boot migration, repairs a zero-byte interrupted identity, verifies the resulting SD identity, and never removes internal recovery data. When the card does not mount or verification fails, an existing SPIFFS store may be read for recovery, but `DataStore` and file-backed settings writes fail closed, UI history remains only in RAM, battery logging pauses, and durable exports fail cleanly. The UI warns that the card is required. Small NVS values used to select the boot storage policy are an intentional exception, not a second long-term FriendMesh store.
+
+This is an explicit SD-bound product mode. It reduces internal-flash churn and prevents large or growing user datasets from silently returning to SPIFFS, but it also makes card availability and integrity part of the device's operating contract. The card should be inserted before boot and must not be removed during a write.
 
 The T-Deck partition table provides:
 
@@ -521,7 +523,12 @@ MeshCore contact messages. Compact roster snapshots use a reserved encrypted
 MeshCore group-data type and therefore never enter the channel-text pipeline;
 the obsolete `FMRS1` text form is consumed by a compatibility firewall before
 history, companion, MQTT, alerts, or UI delivery. Already-joined members are
-removed from the invite picker and rejected again by the send operation.
+removed from the invite picker and rejected again by the send operation. The
+joined administrator also gets a confirmed `Disband group` action in this same
+Members view. It attempts the existing encrypted `Removed` control for each
+joined member, deletes the administrator's local channel, and reports how many
+recipients were unreachable. Receivers authenticate the sender as their joined
+administrator and consume the record before chat display.
 
 This shares only the symmetric 16-byte channel secret required by MeshCore; it
 never shares an identity private key. It is a narrow compatibility bridge, not
@@ -564,10 +571,13 @@ Selecting a positioned member exposes `Friend Compass`,
 which shows distance, absolute bearing, cardinal direction, position age,
 source, and a prominent stale state after five minutes. T-Deck currently uses
 north-up because it has no reviewed stationary heading source; the selected
-contact alone is refreshed once per second.
+contact alone is refreshed once per second. A dial button switches between true
+north-up and headway-up. Headway-up becomes available after two reliable local
+GPS fixes and rotates the destination pointer, movement plot, cardinal labels,
+and guidance arrow around the user's calculated course.
 
 Friend Compass now keeps a bounded two-fix motion history for each positioned
-group member. Samples five to 180 seconds apart are checked for stale data, GPS
+group member plus one local-user record. Samples five to 180 seconds apart are checked for stale data, GPS
 noise, and implausible speed before a 45-second lead point is shown. The dial
 keeps the observed position visually separate from the predicted point and
 falls back to the current position whenever movement is not reliable. The
@@ -582,13 +592,21 @@ location-history protection remains explicit security-phase work.
 The T-Deck presentation is now split into two pages without replacing WadaMesh
 branding or navigation. The first page dedicates most of the viewport to a
 larger ringed compass with observed, previous, and predicted positions. Its
+orientation button toggles absolute north-up and GPS-course headway-up without
+claiming that the T-Deck has a magnetometer. Its
 rings share the same live distance scale as every plotted point and display
 compact range labels. The movement readout uses a bounded 45-second lead,
 compact speed/confidence/freshness lines, and clears stale scale values when a
 position becomes unavailable. The
-second page shows a large cardinal travel instruction, straight-line distance
-and walking-time estimate, friend motion, confidence, freshness, and a working
-current-position/prediction toggle. Users can change pages with a horizontal
+second page shows a large plain-language maneuver, straight-line distance,
+friend motion, confidence, freshness, and a working current-position/prediction
+toggle. Slight, standard, sharp, and turn-around corrections use visibly
+different curved, angled, or U-turn arrow shapes; a separate `SHOW NORTH`
+control restores an absolute north-relative arrow. Once the local T-Deck has moved at least eight meters across two recent
+fixes, that page derives course over ground, speed, signed left/right correction,
+closing/opening speed, closer/farther/steady state, and ETA while closing. The
+calculation is local-only, stops on stale targets, and never claims a stationary
+magnetic heading. Users can change pages with a horizontal
 swipe, a dominant left/right trackball roll, or either bottom page dot. Vertical
 trackball movement and click activation remain available to focused controls;
 fullscreen compass input no longer pans the hidden Map underneath it.
@@ -618,15 +636,20 @@ previous map build, and the compass refresh reads only its selected contact. No
 device was flashed for this automatic group-location addition, so physical
 behavior remains open.
 
-The later two-page motion-prediction and SD-history addition passes the
-shared-core suite and the combined T-Deck build at 91,052 bytes RAM (27.8%) and
-3,316,085 bytes flash (81.6%). The first-page timing regression caused by
+The later two-page motion-prediction and SD-history addition, followed by the
+SD-required storage and binary deduplication pass, passes the shared-core suite
+and the combined T-Deck build at 87,020 bytes RAM (26.6%) and 3,293,117 bytes
+flash (81.0%). That optimization removed a persistent 4 KiB boot-copy buffer
+and one duplicate 30,184-byte WadaMesh logo without changing the UI. The
+first-page timing regression caused by
 LVGL's float-disabled formatter is removed by preformatting speed before label
 updates; a host check also locks the prediction horizon to 45 seconds. Its
-physical layout, gestures, SD retention, and
-two-moving-device behavior remain open until the new image is flashed and
-captured. Targeted Compass-start notification delivery also remains open for
-two-device physical verification.
+physical orientation and maneuver interaction has now been exercised on the
+T-Deck. Existing map tiles were reported retained through the SD transition.
+Targeted Compass-start delivery and two-moving-device prediction/headway remain
+hardware-blocked until additional GPS-capable devices and a node are available.
+Administrator disband is build-verified but still awaits installation and
+testing on both current T-Decks.
 
 ### 7.12 Shared meetup, Help, and SOS coordination
 

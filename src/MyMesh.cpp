@@ -2796,6 +2796,42 @@ bool MyMesh::uiRemoveFriendMeshChannelMember(
   return true;
 }
 
+bool MyMesh::uiDisbandFriendMeshChannel(int channel_idx,
+                                        uint8_t& notices_sent,
+                                        uint8_t& notices_failed) {
+  notices_sent = 0;
+  notices_failed = 0;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  if (!self || self->role != friendmesh::ChannelRosterRole::Admin ||
+      self->state != friendmesh::ChannelRosterState::Joined) return false;
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  if (!friendmeshChannelTag(channel_idx, tag)) return false;
+
+  // Reuse the existing encrypted Removed envelope: receivers already require
+  // its authenticated sender to be the joined roster admin and consume it
+  // before normal DM/chat delivery. Offline or missing contacts are counted so
+  // the UI never implies reliable revocation before Phase 7 exists.
+  for (size_t i = 0; i < roster.memberCount; ++i) {
+    const friendmesh::ChannelRosterMember& member = roster.members[i];
+    if (member.state != friendmesh::ChannelRosterState::Joined ||
+        memcmp(member.pubKeyPrefix, self_id.pub_key,
+               friendmesh::kChannelRosterPrefixBytes) == 0) continue;
+    ContactInfo* contact = lookupContactByPubKey(
+        member.pubKeyPrefix, friendmesh::kChannelRosterPrefixBytes);
+    if (contact && friendmeshSendChannelControl(
+            *contact, friendmesh::ChannelControlType::Removed, tag, false)) {
+      ++notices_sent;
+    } else {
+      ++notices_failed;
+    }
+  }
+  memset(tag, 0, sizeof(tag));
+  return uiDeleteChannel(channel_idx);
+}
+
 bool MyMesh::uiLeaveFriendMeshChannel(int channel_idx, bool& notice_sent) {
   notice_sent = false;
   friendmesh::ChannelRoster roster = {};

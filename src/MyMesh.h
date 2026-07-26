@@ -856,6 +856,11 @@ public:
       size_t capacity, bool& rekey_required);
   bool uiRemoveFriendMeshChannelMember(
       int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE]);
+  /** Admin-only cooperative disband. Each joined member is sent the existing
+   *  encrypted Removed control before this device deletes its local channel.
+   *  Delivery is best-effort until the Phase 7 durable signed protocol. */
+  bool uiDisbandFriendMeshChannel(int channel_idx, uint8_t& notices_sent,
+                                  uint8_t& notices_failed);
   bool uiLeaveFriendMeshChannel(int channel_idx, bool& notice_sent);
   bool uiGetFriendMeshGroupCoordination(
       int channel_idx, friendmesh::GroupCoordinationState& state);

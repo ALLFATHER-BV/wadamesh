@@ -186,6 +186,10 @@ extern "C" void set_boot_phase(int phase) { g_boot_phase = phase; }
 // "Store data on SD" toggle is only a stored intent — if the card didn't mount at boot, contacts
 // silently stay on internal flash. The Storage settings page reads this to show the REAL location.
 bool g_contacts_on_sd = false;
+// FriendMesh T-Deck policy status. Internal storage remains readable as a
+// recovery source when the card is missing, but DataStore writes fail closed.
+bool g_long_term_storage_on_sd = false;
+bool g_long_term_storage_sd_missing = false;
 #endif
 
 
@@ -208,55 +212,187 @@ void halt() {
 // on SPIFFS. When beta_36 made the flag finally take effect, useSdStorage() pointed
 // the store at an EMPTY card and the identity store generated a brand-new node:
 // "lost profile settings". The data was never gone — it was orphaned on SPIFFS.
-// Copies every SPIFFS file into SD:/meshcomod ("/prefs/<ns>.kv" flattens to
-// "/meshcomod/<ns>.kv", matching SdNvsPrefs's SD layout). Returns true only when
-// the identity file landed on the card — the caller must NOT adopt the card
-// otherwise. force=true (the Settings "Copy internal data to SD" recovery button)
-// overwrites whatever the card holds; the boot path never clobbers existing files.
-// Both filesystems must be mounted by the caller.
-bool meshcomodMigrateSpiffsToSd(bool force) {
-  if (!SPIFFS.exists("/identity/_main.id")) return false;   // nothing worth adopting
-  SD.mkdir("/meshcomod");
-  SD.mkdir("/meshcomod/identity");
-  SD.mkdir("/meshcomod/bl");
-  SD.mkdir("/meshcomod/lock");
-  bool identity_ok = false;
-  int copied = 0, failed = 0;
-  static uint8_t buf[4096];
-  File root = SPIFFS.open("/");
-  for (File f = root.openNextFile(); f; f = root.openNextFile()) {
-    if (f.isDirectory()) { f.close(); continue; }
-    // SPIFFS is flat: name() is the full path ("/identity/_main.id", "/prefs/touch.kv", ...)
-    const char* sp = f.name();
-    char src[96];
-    snprintf(src, sizeof src, "%s%s", sp[0] == '/' ? "" : "/", sp);
-    char dst[112];
-    if (strncmp(src, "/prefs/", 7) == 0)
-      snprintf(dst, sizeof dst, "/meshcomod/%s", src + 7);   // kv files sit flat on the card
-    else
-      snprintf(dst, sizeof dst, "/meshcomod%s", src);
-    if (!force && SD.exists(dst)) { f.close(); continue; }   // boot path: never clobber
-    File s = SPIFFS.open(src, FILE_READ);
-    File d = s ? SD.open(dst, FILE_WRITE) : File();          // FILE_WRITE truncates
-    bool ok = s && d;
-    while (ok && s.available()) {
-      const size_t n = s.read(buf, sizeof buf);
-      if (n == 0 || d.write(buf, n) != n) ok = false;
-    }
-    if (s) s.close();
-    if (d) d.close();
-    if (ok) { ++copied; if (strcmp(src, "/identity/_main.id") == 0) identity_ok = true; }
-    else    { ++failed; Serial.printf("[BOOT] SD migrate FAILED: %s\n", src); if (SD.exists(dst)) SD.remove(dst); }
-    f.close();
-    yield();
+// Convert an internal path to the rooted SD layout. SdNvsPrefs historically
+// stores /prefs/<namespace>.kv flat at /meshcomod/<namespace>.kv.
+static bool meshcomodMigrationDestination(const char* src, char* dst,
+                                           size_t capacity) {
+  if (!src || src[0] != '/' || !dst || capacity == 0) return false;
+  const int n = strncmp(src, "/prefs/", 7) == 0
+      ? snprintf(dst, capacity, "/meshcomod/%s", src + 7)
+      : snprintf(dst, capacity, "/meshcomod%s", src);
+  return n > 0 && static_cast<size_t>(n) < capacity;
+}
+
+static bool meshcomodEnsureSdParents(const char* path) {
+  char parent[112];
+  const size_t length = strnlen(path, sizeof(parent));
+  if (length == 0 || length >= sizeof(parent)) return false;
+  memcpy(parent, path, length + 1);
+  for (char* p = parent + 1; *p; ++p) {
+    if (*p != '/') continue;
+    *p = '\0';
+    if (!SD.exists(parent) && !SD.mkdir(parent)) return false;
+    *p = '/';
   }
-  root.close();
-  // The boot path skips files the card already has — an identity already on the
-  // card counts as "landed" (nothing needed migrating).
-  if (!force && !identity_ok && SD.exists("/meshcomod/identity/_main.id")) identity_ok = true;
-  Serial.printf("[BOOT] SPIFFS -> SD migration: %d copied, %d failed, identity %s\n",
-                copied, failed, identity_ok ? "ok" : "MISSING");
-  return identity_ok;
+  return true;
+}
+
+static bool meshcomodExplicitMigrationPath(const char* path) {
+  static const char* const kExplicit[] = {
+    "/identity/_main.id", "/new_prefs", "/new_prefs.tmp", "/node_prefs",
+    "/contacts3", "/contacts3.tmp", "/channels2", "/adv_blobs",
+    "/ui_chat_history_v1.bin", "/ui_threads_v1.bin", "/ui_msgs_v1.bin",
+    "/ui_msgs_v1.bin.tmp", "/battery.log", "/battery.tmp",
+    "/prefs/touch.kv", "/prefs/meshcomod.kv", "/prefs/meshTouch.kv",
+  };
+  for (const char* candidate : kExplicit)
+    if (strcmp(path, candidate) == 0) return true;
+  return false;
+}
+
+static bool meshcomodSdIdentityValid() {
+  File identity = SD.open("/meshcomod/identity/_main.id", FILE_READ);
+  const bool valid = identity && identity.size() > 0;
+  if (identity) identity.close();
+  return valid;
+}
+
+static bool meshcomodCopyMigrationFile(const char* src, bool force,
+                                       uint8_t* buffer, size_t bufferSize,
+                                       int& copied, int& skipped, int& failed) {
+  if (!SPIFFS.exists(src)) return true;
+  char dst[112];
+  if (!meshcomodMigrationDestination(src, dst, sizeof(dst)) ||
+      !meshcomodEnsureSdParents(dst)) {
+    ++failed;
+    Serial.printf("[BOOT] SD migrate FAILED path: %s\n", src);
+    return false;
+  }
+  if (!force && SD.exists(dst)) {
+    // A zero-byte identity is an interrupted/invalid migration artifact, not a
+    // profile that deserves the boot path's no-clobber protection.
+    if (strcmp(src, "/identity/_main.id") != 0 ||
+        meshcomodSdIdentityValid()) {
+      ++skipped;
+      return true;
+    }
+    SD.remove(dst);
+  }
+  File source = SPIFFS.open(src, FILE_READ);
+  const size_t expected = source ? source.size() : 0;
+  File destination = source ? SD.open(dst, FILE_WRITE) : File();
+  bool ok = source && destination;
+  size_t written = 0;
+  while (ok && source.available()) {
+    const size_t n = source.read(buffer, bufferSize);
+    if (n == 0 || destination.write(buffer, n) != n) ok = false;
+    else written += n;
+  }
+  if (source) source.close();
+  if (destination) { destination.flush(); destination.close(); }
+  if (ok) {
+    File verify = SD.open(dst, FILE_READ);
+    ok = verify && verify.size() == expected && written == expected;
+    if (verify) verify.close();
+  }
+  if (ok) {
+    ++copied;
+  } else {
+    ++failed;
+    Serial.printf("[BOOT] SD migrate FAILED copy: %s -> %s\n", src, dst);
+    if (SD.exists(dst)) SD.remove(dst);
+  }
+  yield();
+  return ok;
+}
+
+static void meshcomodScanMigrationDirectory(
+    const char* path, bool force, uint8_t* buffer, size_t bufferSize,
+    int& copied, int& skipped, int& failed, int& scanned, uint8_t depth) {
+  if (depth > 5) {
+    ++failed;
+    Serial.printf("[BOOT] SD migrate FAILED depth: %s\n", path);
+    return;
+  }
+  File directory = SPIFFS.open(path, FILE_READ);
+  if (!directory || !directory.isDirectory()) {
+    if (directory) directory.close();
+    return;
+  }
+  for (File entry = directory.openNextFile(); entry;
+       entry = directory.openNextFile()) {
+    char sourcePath[96] = {};
+    const char* full = entry.path();
+    if (!full || !full[0]) full = entry.name();
+    int n = 0;
+    if (full && full[0] == '/')
+      n = snprintf(sourcePath, sizeof(sourcePath), "%s", full);
+    else if (strcmp(path, "/") == 0)
+      n = snprintf(sourcePath, sizeof(sourcePath), "/%s", full ? full : "");
+    else
+      n = snprintf(sourcePath, sizeof(sourcePath), "%s/%s",
+                   path, full ? full : "");
+    const bool isDirectory = entry.isDirectory();
+    entry.close();
+    if (n <= 0 || static_cast<size_t>(n) >= sizeof(sourcePath)) {
+      ++failed;
+      Serial.println("[BOOT] SD migrate FAILED: source path too long");
+      continue;
+    }
+    ++scanned;
+    if (isDirectory) {
+      meshcomodScanMigrationDirectory(sourcePath, force, buffer, bufferSize,
+                                      copied, skipped, failed, scanned,
+                                      depth + 1);
+    } else if (!meshcomodExplicitMigrationPath(sourcePath)) {
+      meshcomodCopyMigrationFile(sourcePath, force, buffer, bufferSize,
+                                 copied, skipped, failed);
+    }
+  }
+  directory.close();
+}
+
+// Copies SPIFFS into SD:/meshcomod without deleting or overwriting existing SD
+// files during automatic boot migration. Critical files are copied explicitly
+// because ESP32 SPIFFS may expose synthetic directories whose contents are not
+// returned by a root-only openNextFile() walk. The recursive scan preserves
+// additional blobs/assets. force=true is the explicit Settings recovery action
+// and may overwrite the SD copies. Internal recovery data is never removed.
+bool meshcomodMigrateSpiffsToSd(bool force) {
+  if (!SPIFFS.exists("/identity/_main.id")) return false;
+  uint8_t* buffer = static_cast<uint8_t*>(malloc(1024));
+  if (!buffer) {
+    Serial.println("[BOOT] SD migrate FAILED: no copy buffer");
+    return false;
+  }
+  int copied = 0, skipped = 0, failed = 0, scanned = 0;
+  static const char* const kCritical[] = {
+    "/identity/_main.id", "/new_prefs", "/new_prefs.tmp", "/node_prefs",
+    "/contacts3", "/contacts3.tmp", "/channels2", "/adv_blobs",
+    "/ui_chat_history_v1.bin", "/ui_threads_v1.bin", "/ui_msgs_v1.bin",
+    "/ui_msgs_v1.bin.tmp", "/battery.log", "/battery.tmp",
+    "/prefs/touch.kv", "/prefs/meshcomod.kv", "/prefs/meshTouch.kv",
+  };
+  for (const char* path : kCritical)
+    meshcomodCopyMigrationFile(path, force, buffer, 1024,
+                               copied, skipped, failed);
+  meshcomodScanMigrationDirectory("/", force, buffer, 1024,
+                                  copied, skipped, failed, scanned, 0);
+  // Some SPIFFS versions expose no children at root even though nested paths
+  // exist. Probe the known variable-content directories directly in that case.
+  if (scanned == 0) {
+    static const char* const kNested[] = { "/prefs", "/bl", "/lock" };
+    for (const char* path : kNested)
+      meshcomodScanMigrationDirectory(path, force, buffer, 1024,
+                                      copied, skipped, failed, scanned, 1);
+  }
+  free(buffer);
+
+  const bool identityOk = meshcomodSdIdentityValid();
+  Serial.printf("[BOOT] SPIFFS -> SD migration: %d copied, %d kept, %d scanned, %d failed, identity %s\n",
+                copied, skipped, scanned, failed,
+                identityOk ? "ok" : "MISSING");
+  return identityOk && failed == 0;
 }
 #endif
 
@@ -449,7 +585,10 @@ void setup() {
   // SPIFFS is unavailable (e.g. installed under Launcher) OR the user opted in
   // ("Store data on SD"). The SD shares the LoRa SPI bus, already brought up by
   // radio_init() above, so SD.begin's spi.begin is a no-op. Graceful: any SD
-  // failure falls back to SPIFFS so the device always boots.
+  // failure normally falls back to SPIFFS so the device always boots. A
+  // FriendMesh T-Deck is the deliberate exception: it may read an existing
+  // internal recovery profile, but long-term writes remain disabled until the
+  // required SD card mounts and the complete store is safely adopted.
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
   bool sd_storage = false;
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
@@ -479,7 +618,14 @@ void setup() {
 
     // Move the WHOLE store (identity/prefs/contacts) to SD:/meshcomod when the
     // device has no usable SPIFFS, the user opted in, or it's a brand-new device.
-    bool want_full_sd = !spiffs_ok || use_sd_pref || fresh_install;
+    const bool force_friendmesh_sd =
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+        true;
+#else
+        false;
+#endif
+    bool want_full_sd = !spiffs_ok || use_sd_pref || fresh_install ||
+        force_friendmesh_sd;
 
    #if defined(HELTEC_LORA_V4_R8)
     SPIClass* _spi = heltecV4R8SharedSPI();
@@ -522,17 +668,18 @@ void setup() {
         // card lacks; a failed migration keeps the device on SPIFFS this boot
         // rather than adopting a card without the identity on it.
         bool adopt = true;
-        if (SPIFFS.exists("/identity/_main.id") && !SD.exists("/meshcomod/identity/_main.id")) {
+        if (SPIFFS.exists("/identity/_main.id") && !meshcomodSdIdentityValid()) {
           adopt = meshcomodMigrateSpiffsToSd(false);
           if (!adopt) Serial.println("[BOOT] SD migration incomplete -> staying on SPIFFS this boot");
         }
         if (adopt) {
           sd_storage = store.useSdStorage();
-          // On a genuine first run, persist the auto-pick so the "Store data on SD"
-          // toggle reflects it and the choice sticks on every later boot.
-          if (fresh_install && sd_storage && !use_sd_pref) {
+          // FriendMesh T-Decks always keep the complete long-term store on SD.
+          // Persist that effective policy so early-boot reads and recovery UI
+          // agree with the active backend on subsequent boots.
+          if (sd_storage && !use_sd_pref) {
             Preferences _p; if (_p.begin("touch", false)) { _p.putBool("use_sd", true); _p.end(); }
-            Serial.println("[BOOT] first run + SD card present -> data defaults to SD");
+            Serial.println("[BOOT] complete long-term store pinned to SD");
           }
         } else {
           store.setSecondaryFS(&SD);
@@ -550,6 +697,15 @@ void setup() {
         Serial.println("[BOOT] contacts/channels -> SD card (identity/prefs stay on SPIFFS)");
       }
     }
+    g_long_term_storage_on_sd = sd_storage;
+    g_long_term_storage_sd_missing = force_friendmesh_sd && !sd_storage;
+    if (g_long_term_storage_sd_missing) {
+      // Read an existing internal recovery profile so the UI can explain the
+      // problem, but never create or update long-lived MeshCore/FriendMesh data
+      // on internal flash while the required card is absent.
+      store.setWritesEnabled(false);
+      Serial.println("[BOOT] SD REQUIRED: internal recovery store is read-only");
+    }
   }
 #endif
   if (!sd_storage && !spiffs_ok) SPIFFS.begin(true);   // last resort: format SPIFFS
@@ -561,6 +717,7 @@ void setup() {
   #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
+    SdNvsPrefs::setFileWritesEnabled(!g_long_term_storage_sd_missing);
   #else
     SdNvsPrefs::useFile((fs::FS*)&SPIFFS, "/prefs");   // no SD on this board
   #endif

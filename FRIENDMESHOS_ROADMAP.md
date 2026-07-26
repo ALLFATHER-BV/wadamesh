@@ -20,6 +20,8 @@ WadaMesh supplies the mature product shell: LVGL interface, chat, contacts, hist
 - [x] Heltec editing, builds, flashes, and compatibility claims are deferred.
 - [x] FriendMesh uses minimal additions to existing WadaMesh surfaces.
 - [x] Optional themes are the maximum broad visual addition; no special theme is required.
+- [x] T-Deck FriendMesh long-term data is SD-bound; missing-card recovery is readable but persistent writes fail closed.
+- [x] Non-destructive SPIFFS-to-SD repair explicitly migrates and verifies identity, recursively preserves additional data, and retains the internal recovery source.
 - [x] Ordinary WadaMesh/MeshCore behavior remains unchanged when FriendMesh is disabled.
 - [x] General FriendMesh event transmission remains hard-disabled; the only
   live exception is the explicit, bounded private-channel invite carried by
@@ -241,6 +243,7 @@ Implement together because they use the same position freshness, distance/bearin
 - [x] Great-circle distance, absolute bearing, accuracy, freshness, and source model.
 - [x] Conservative two-fix motion estimate with a distinct observed trail, 45-second lead point, fallback behavior, and bounded SD-only per-channel history.
 - [x] Two-page T-Deck compass: detailed spatial dial plus plain-language guidance/data, horizontal swipe, trackball paging, tappable dots, and current-position override.
+- [x] Local GPS course/headway: bounded SD-backed user fixes, qualitative maneuver instructions and shaped arrows with a north-arrow override, closer/farther/steady state, signed closing speed, and ETA only while approaching.
 - [x] Targeted authenticated Compass-start notice showing the starter and current straight-line distance, consumed before chat and attempted once per valid Compass session.
 - [x] `NORTH-UP`, moving `GPS`, and optional future `MAG` heading providers.
 - [x] Map and arrow-only navigation, arrival, closer/farther, target notifications, and bounded breadcrumbs.
@@ -270,6 +273,7 @@ Integrate the completed functional feature set together so shared navigation/foc
 - [x] Add a bounded `Members` view with persisted invite/join/failure/leave/removal states, encrypted direct control notices, binary encrypted roster snapshots that cannot surface as chat, duplicate-member invite prevention, and explicit rekey-required status.
 - [x] Add bounded shared meetup/pickup, Help, response, closure, and three-second-hold SOS actions to the private-channel sheet, with encrypted binary control records and existing-map overlays.
 - [x] Keep ordinary MeshCore channels free of FriendMesh actions; add an explicit `Create a FriendMesh group` path and `[FM]` inbox/header/action-sheet identification derived from persisted roster metadata.
+- [x] Add confirmed administrator disband to the native Members view, with best-effort encrypted member notices, chat suppression, local deletion, and explicit unreachable-recipient reporting.
 - [ ] Upgrade the simple flow to `Private group` -> compare -> administrator approval -> `securing group` after shared production security exists.
 - [ ] No replacement home screen, launcher, visual identity, or required theme.
 - [ ] All functional states reachable by touch, keyboard, and trackball.
@@ -297,8 +301,9 @@ Opening Group Map now polls the bounded joined roster one contact at a time over
 the existing encrypted MeshCore telemetry exchange. The receiver authorizes a
 joined FriendMesh contact independently of the public advert-location switch;
 the queue stops when complete or when Map is closed.
-The compass refreshes only the selected contact, uses north-up absolute bearing
-on T-Deck, and labels missing or older-than-five-minute coordinates instead of
+The compass refreshes only the selected contact, offers absolute north-up or a
+two-local-fix GPS-course headway-up dial on T-Deck, and labels missing or
+older-than-five-minute coordinates instead of
 presenting them as live. Two recent plausible fixes add an observed trail and a
 45-second predicted meeting point; the bounded two-fix-per-member history lives
 only on microSD and is not yet encrypted or authenticated. `Coordinate` now
@@ -313,10 +318,30 @@ through the explicit group path or accepted nearby invitation. Those groups are
 marked `[FM]` without renaming the channel. Page one's prediction readout now
 preformats its speed outside LVGL's float-disabled formatter, bounds the lead
 display to the intended 45 seconds, and uses labeled rings sharing the plotted
-position scale. The T-Deck build passes at 91,052 bytes RAM (27.8%) and
-3,316,085 bytes flash (81.6%); physical two-device testing
-of compass paging, motion prediction, SD retention, and the targeted start
-notification remains open.
+position scale. The SD-required persistence and duplicate-asset cleanup pass
+puts the T-Deck build at 87,020 bytes RAM (26.6%) and 3,293,117 bytes flash
+(81.0%), saving 4,096 bytes of static internal RAM and 26,272 bytes of flash
+without changing WadaMesh's UI. Long-term `DataStore`, history, FriendMesh
+motion and battery data, backups, crash exports, discovery state, and online map caches are routed to SD;
+missing-card recovery is read-only. The compass orientation and maneuver-arrow
+interaction is physically validated on T-Deck. Physical two-device testing of
+the targeted Compass-start notification and two-moving-device prediction is
+hardware-blocked until additional GPS-capable devices and a node are available.
+The administrator disband change is build-verified but has not yet been
+installed; it remains queued for testing on both available T-Decks. The reported
+settings-migration diagnosis/recovery checks and map-tile retention check are
+complete.
+
+Current physical follow-up status:
+
+- [x] Diagnose the observed SD-backed settings transition.
+- [x] Complete the safe settings recovery/selection check.
+- [x] Confirm existing SD map tiles remain intact.
+- [ ] Install and test administrator disband on both current T-Decks.
+- [ ] Test the targeted Compass-start notification; hardware-blocked pending additional GPS-capable devices and a node.
+- [ ] Test two-moving-device prediction/headway; hardware-blocked pending additional GPS-capable devices and a node.
+- [ ] Confirm FriendMesh group, motion, and coordination state across reboot.
+- [ ] Exercise missing, removed, read-only, and full-SD behavior.
 
 ### Phase 7 — Shared production security implementation
 
@@ -379,16 +404,18 @@ Implement all dependent security together across the completed features.
 ## Immediate next work
 
 Phases 1 through 5 are host/build complete. Phase 6 now includes the physically
-validated nearby join/roster path, the build-verified automatic group map and
-Friend Compass, and build-verified shared meetup/pickup plus Help/SOS
+validated nearby join/roster path and compass interaction, the build-verified
+automatic group map and administrator disband flow, and build-verified shared meetup/pickup plus Help/SOS
 coordination over the existing encrypted MeshCore channel. The general
 development workspace still does not persist across reboot or communicate
 through its custom event path.
 
-Next, physically validate the new coordination flow on two T-Decks: meetup map
+Next, install and validate administrator disband on both current T-Decks, then
+physically validate the new coordination flow on two T-Decks: meetup map
 appearance without adverts, responses on both devices, cancel/close propagation,
 Help alerts, three-second SOS hold, protocol records absent from chat, reboot
-persistence, and ordinary chat/map regression. After that, continue the
+persistence, and ordinary chat/map regression. Compass-start and two-moving-GPS
+tests remain hardware-blocked as recorded above. After that, continue the
 remaining native people/group/chat flows before the shared Phase 7 protected
 identity, signing, replay, grant, and rekey implementation.
 

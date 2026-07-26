@@ -1211,6 +1211,43 @@ void testPositionsAndNavigation() {
   CHECK(!friendmesh::estimateTargetMotion(
       bobPrevious, bobCurrent, 1000).samplesUsable);
 
+  // Course-over-ground for the local user is distinct from device heading.
+  // Moving east toward an eastward target needs no turn and has positive
+  // closing speed.
+  const friendmesh::PositionRecord alicePrevious =
+      makePosition(alice.id, 0, 0, 100);
+  const friendmesh::PositionRecord aliceCurrent =
+      makePosition(alice.id, 0, 2500, 120);
+  const friendmesh::PositionRecord eastTarget =
+      makePosition(bob.id, 0, 10000, 120);
+  friendmesh::CourseToTargetEstimate course =
+      friendmesh::estimateCourseToTarget(
+          alicePrevious, aliceCurrent, eastTarget, 125);
+  CHECK(course.targetUsable);
+  CHECK(course.courseUsable);
+  CHECK(course.motion.bearingDegrees >= 89 &&
+        course.motion.bearingDegrees <= 91);
+  CHECK(course.turnDegrees >= -1 && course.turnDegrees <= 1);
+  CHECK(course.progress == friendmesh::NavigationProgress::Closer);
+  CHECK(course.closingSpeedCentimetersPerSecond > 100);
+
+  // The same eastbound course needs a left turn for a target due north.
+  const friendmesh::PositionRecord northTarget =
+      makePosition(bob.id, 10000, 2500, 120);
+  course = friendmesh::estimateCourseToTarget(
+      alicePrevious, aliceCurrent, northTarget, 125);
+  CHECK(course.courseUsable);
+  CHECK(course.turnDegrees >= -91 && course.turnDegrees <= -89);
+
+  // Westbound travel away from the east target produces negative headway.
+  const friendmesh::PositionRecord aliceWest =
+      makePosition(alice.id, 0, -2500, 120);
+  course = friendmesh::estimateCourseToTarget(
+      alicePrevious, aliceWest, eastTarget, 125);
+  CHECK(course.courseUsable);
+  CHECK(course.progress == friendmesh::NavigationProgress::Farther);
+  CHECK(course.closingSpeedCentimetersPerSecond < 0);
+
   friendmesh::PositionRecord hidden = bobPosition;
   hidden.hiddenByPolicy = true;
   CHECK(friendmesh::greatCircleDistanceMeters(alicePosition, hidden) == UINT32_MAX);

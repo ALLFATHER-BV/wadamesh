@@ -365,7 +365,9 @@ Diagnostics must not expose:
 
 ### 8.1 Storage roles
 
-Internal storage must hold the minimum required protected state for identity, group access, replay, transactions, and safe recovery. SD may expand history, drafts, maps, breadcrumbs, diagnostics, and explicit exports but cannot be the only copy of essential live security state unless the product explicitly supports an SD-bound mode.
+The FriendMesh T-Deck explicitly supports an SD-bound mode and now makes it the required operating policy. The authoritative identity, group access, settings, contacts, channels, FriendMesh state, history, maps, motion records, backups, and other growing datasets live on microSD. Internal storage may retain a readable migration/recovery source and small boot-control values, but it must not silently become a writable long-term fallback when the card is absent. Production protected storage must therefore bind, authenticate, recover, and clearly report the removable medium; missing, corrupt, replaced, or partially migrated cards must fail closed before FriendMesh transmission or protected-state mutation.
+
+The current functional migration copies critical identity/profile paths explicitly, recursively scans additional SPIFFS paths using their full names, never overwrites existing non-empty SD files during automatic boot repair, verifies the SD identity before adoption, and leaves the internal recovery source intact. This repairs the observed `0 copied, identity MISSING` failure caused by relying on a root-only SPIFFS directory walk.
 
 ### 8.2 PIN and key rules
 
@@ -606,7 +608,10 @@ Original sender time, local receive time, sync time, and clock quality should re
 
 ## 14. Rekey and membership lifecycle
 
-Planned lifecycle operations include join, leave, kick, device replacement, admin transfer, succession, expiration, and disband.
+Lifecycle operations include the native development bridge's join, leave,
+cooperative removal, and administrator disband flow. Device replacement, admin
+transfer, succession, expiration, and cryptographic disband recovery remain in
+the shared production protocol.
 
 Security rules:
 
@@ -623,7 +628,7 @@ Security rules:
 
 Friend Compass uses positions already available to WadaMesh/MeshCore. It does not claim Totem protocol compatibility.
 
-### 15.1 Local MVP
+### 15.1 Local functional baseline
 
 - select a trusted existing contact;
 - read local and remote coordinates from reviewed WadaMesh state;
@@ -648,8 +653,12 @@ Current functional integration: an existing private channel exposes `Group
 map`, which uses its bounded joined roster to filter WadaMesh's existing map and
 positioned-contact list. A selected positioned member exposes `Friend Compass`
 with north-up bearing, distance, position age, and explicit stale/missing states.
+The detailed dial can toggle to headway-up after two reliable local GPS fixes;
+that mode rotates its pointer, plot, cardinal labels, and guidance arrow around
+the user's calculated course while retaining north-up as the stationary-safe
+fallback.
 It retains only the previous and current plausible fix for each bounded group
-member on microSD, then shows the observed trail separately from a conservative
+member plus the local user on microSD, then shows the observed trail separately from a conservative
 45-second lead point. Noise, stale samples, and implausible movement fall back
 to the observed position. The versioned checksummed SD snapshot has no
 internal-flash fallback and is not yet encrypted or authenticated.
@@ -659,8 +668,14 @@ uses labeled distance-scaled rings, compact movement/confidence/freshness
 status, and a defensively bounded 45-second lead readout. Horizontal
 swipe, trackball left/right, or two tappable dots switch pages. The second page
 can temporarily guide to the latest observed position instead of the predicted
-meeting point, while retaining movement, confidence, freshness, and direct-time
-context.
+meeting point. With two recent local fixes separated by at least eight meters,
+it reports the user's GPS course over ground, turn-left/turn-right correction,
+closing or opening speed, progress state, and an ETA only while closing. The
+guidance page translates correction angles into slight, standard, sharp, and
+turn-around language with a matching maneuver-shaped arrow, plus an explicit
+absolute north-arrow mode. Stale
+targets pause headway, and the UI never presents GPS course as a stationary
+magnetic heading.
 Once both endpoints have valid positions, opening the Compass attempts one
 targeted authenticated MeshCore contact notice. The selected member is shown
 who started navigating and the current straight-line distance. Receivers verify
@@ -677,9 +692,10 @@ transmit a parallel location event or run after Map closes. Production identity
 binding, transcript-bound grants, and finer location-sharing policy remain in
 the shared security/protocol phases.
 
-The shared-core motion checks and the combined T-Deck build pass at 91,052 bytes
-RAM (27.8%) and 3,316,085 bytes flash (81.6%). The first-page timing formatter
-regression is covered by a fixed-horizon assertion. Physical two-device motion,
+The shared-core motion/course checks and the combined T-Deck build pass at 87,020 bytes
+RAM (26.6%) and 3,293,117 bytes flash (81.0%) after the SD-required persistence
+and duplicate-asset cleanup pass. The first-page timing formatter
+regression is covered by a fixed-horizon assertion. Physical two-device motion and local headway,
 paging, layout, scroll, SD reboot-retention, and targeted start-notification
 checks remain open.
 

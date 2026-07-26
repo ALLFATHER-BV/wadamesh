@@ -6296,7 +6296,13 @@ static lv_obj_t* s_friendmesh_compass_visual_page = nullptr;
 static lv_obj_t* s_friendmesh_compass_guidance_page = nullptr;
 static lv_obj_t* s_friendmesh_compass_page_dots[2] = {};
 static lv_obj_t* s_friendmesh_compass_scale_labels[3] = {};
+static lv_obj_t* s_friendmesh_compass_cardinal_labels[4] = {};
+static lv_obj_t* s_friendmesh_compass_orientation_button = nullptr;
+static lv_obj_t* s_friendmesh_compass_orientation_label = nullptr;
 static lv_obj_t* s_friendmesh_guidance_arrow = nullptr;
+static lv_obj_t* s_friendmesh_guidance_orientation = nullptr;
+static lv_obj_t* s_friendmesh_guidance_mode_button = nullptr;
+static lv_obj_t* s_friendmesh_guidance_mode_label = nullptr;
 static lv_obj_t* s_friendmesh_guidance_title = nullptr;
 static lv_obj_t* s_friendmesh_guidance_distance = nullptr;
 static lv_obj_t* s_friendmesh_guidance_motion = nullptr;
@@ -6308,16 +6314,22 @@ static int       s_friendmesh_compass_contact_idx = -1;
 static bool      s_friendmesh_compass_notice_attempted = false;
 static uint8_t   s_friendmesh_compass_page = 0;
 static bool      s_friendmesh_compass_use_current = false;
+static bool      s_friendmesh_compass_headway_up = false;
+static bool      s_friendmesh_guidance_north_mode = false;
 static lv_point_t s_friendmesh_compass_line_points[2] = {};
 static lv_point_t s_friendmesh_compass_motion_points[2] = {};
 static lv_point_t s_friendmesh_compass_prediction_points[2] = {};
-static lv_point_t s_friendmesh_guidance_arrow_points[5] = {};
+static lv_point_t s_friendmesh_guidance_arrow_points[10] = {};
 
 struct FriendMeshMotionTrack {
   friendmesh::PositionRecord previous;
   friendmesh::PositionRecord current;
   uint8_t samples;
 };
+// One slot for each bounded roster member plus the local T-Deck user. The
+// array lives in PSRAM and the same bounded records are persisted on SD.
+static constexpr size_t kFriendMeshMotionTrackCapacity =
+    friendmesh::kChannelRosterMaxMembers + 1;
 static FriendMeshMotionTrack* s_friendmesh_motion_tracks = nullptr;
 static size_t s_friendmesh_motion_track_count = 0;
 static int s_friendmesh_motion_channel_slot = -2;
@@ -6890,6 +6902,41 @@ static void friendmeshLeaveGroupCb(lv_event_t* e) {
       "Leave", friendmeshLeaveGroupApply);
 }
 
+static void friendmeshDisbandGroupApply() {
+  if (s_friendmesh_members_channel_slot < 0) return;
+  uint8_t noticesSent = 0;
+  uint8_t noticesFailed = 0;
+  const bool disbanded = the_mesh.uiDisbandFriendMeshChannel(
+      s_friendmesh_members_channel_slot, noticesSent, noticesFailed);
+  if (!disbanded) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Only the joined group administrator can disband"), 2200);
+    return;
+  }
+  closeSettingsModal();
+  s_friendmesh_members_channel_slot = -1;
+  if (!g_lv.task) return;
+  if (noticesSent == 0 && noticesFailed == 0) {
+    g_lv.task->showAlert(TR("Group disbanded"), 1600);
+  } else if (noticesFailed == 0) {
+    g_lv.task->showAlert(TR("Group disbanded - members notified"), 1800);
+  } else {
+    char result[96] = {};
+    snprintf(result, sizeof(result),
+             "Group removed locally\n%u notified, %u unreachable",
+             static_cast<unsigned>(noticesSent),
+             static_cast<unsigned>(noticesFailed));
+    g_lv.task->showAlert(result, 2600);
+  }
+}
+
+static void friendmeshDisbandGroupCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  showConfirm(
+      "Disband this FriendMesh group?\n\nJoined members will be notified, then this channel is permanently removed from this T-Deck.",
+      "Disband", friendmeshDisbandGroupApply);
+}
+
 static void openFriendMeshMembers(int channelSlot) {
   s_friendmesh_members_channel_slot = channelSlot;
   bool rekeyRequired = false;
@@ -6973,7 +7020,18 @@ static void openFriendMeshMembers(int channelSlot) {
     y += 34;
   }
 
-  if (!selfIsAdmin) {
+  if (selfIsAdmin) {
+    lv_obj_t* disband = lv_btn_create(body);
+    lv_obj_set_size(disband, lv_pct(100), 38);
+    lv_obj_set_pos(disband, 2, y + 4);
+    styleButton(disband);
+    lv_obj_set_style_bg_color(disband, lv_color_hex(0xB23A48), LV_PART_MAIN);
+    lv_obj_add_event_cb(disband, friendmeshDisbandGroupCb,
+                        LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* label = lv_label_create(disband);
+    lv_label_set_text(label, TR("Disband group"));
+    lv_obj_center(label);
+  } else {
     lv_obj_t* leave = lv_btn_create(body);
     lv_obj_set_size(leave, lv_pct(100), 38);
     lv_obj_set_pos(leave, 2, y + 4);
@@ -11031,6 +11089,12 @@ static inline const char* mapTileUrlPath() { return s_map_style == 1 ? "/opentop
 // the next reboot.
 static void useSdStorageToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  lv_obj_add_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  if (g_lv.task)
+    g_lv.task->showAlert(TR("FriendMesh long-term data requires SD"), 1800);
+  return;
+#endif
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
 #if defined(ESP32)
   touchPrefsSetUseSdStorage(on);
@@ -12246,11 +12310,21 @@ static void buildDeviceSettings(int sec) {
      /meshcomod instead of internal flash — for running under Launcher, or just
      to keep everything on a card. Read at boot, so it applies after a reboot. */
   {
-    int h = settingsRowLabel(body, y, 6, TR("Store data on SD (reboot)"), COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6,
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+                             TR("Long-term data on SD (required)"),
+#else
+                             TR("Store data on SD (reboot)"),
+#endif
+                             COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    lv_obj_add_state(sw, LV_STATE_CHECKED | LV_STATE_DISABLED);
+#else
     if (touchPrefsGetUseSdStorage()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
 #endif
     lv_obj_add_event_cb(sw, useSdStorageToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
@@ -12261,18 +12335,23 @@ static void buildDeviceSettings(int sec) {
      even with it ON. This line shows the truth and flags that mismatch. */
   {
     extern bool g_contacts_on_sd;
+    extern bool g_long_term_storage_on_sd;
+    extern bool g_long_term_storage_sd_missing;
     const bool want_sd = touchPrefsGetUseSdStorage();
     lv_obj_t* st = lv_label_create(body);
     lv_label_set_long_mode(st, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(st, lv_pct(96));
     lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
     lv_obj_set_pos(st, 0, y);
-    if (g_contacts_on_sd) {
+    if (g_long_term_storage_on_sd) {
+      lv_label_set_text(st, TR("Identity, settings, contacts, channels, FriendMesh state, history, and caches are saved to SD."));
+      lv_obj_set_style_text_color(st, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
+    } else if (g_long_term_storage_sd_missing || want_sd) {
+      lv_label_set_text(st, TR("SD did not mount. Internal recovery data is read-only and long-term history is not being saved. Re-seat the card and reboot."));
+      lv_obj_set_style_text_color(st, lv_color_hex(0xE3A127), LV_PART_MAIN);  // amber warning
+    } else if (g_contacts_on_sd) {
       lv_label_set_text(st, TR("Contacts are saved to the SD card."));
       lv_obj_set_style_text_color(st, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
-    } else if (want_sd) {
-      lv_label_set_text(st, TR("Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot."));
-      lv_obj_set_style_text_color(st, lv_color_hex(0xE3A127), LV_PART_MAIN);  // amber warning
     } else {
       lv_label_set_text(st, TR("Contacts are on internal flash."));
       lv_obj_set_style_text_color(st, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -17175,10 +17254,9 @@ static void calibrateBatteryCb(lv_event_t* e) {
 // is trimmed to the last 24h. The rewrite streams line-by-line via a temp file,
 // so memory cost is one short String at a time. Tapping the battery in the status
 // bar opens a voltage chart built from that file.
-// Battery log prefers the SD card when present (T-Deck); on boards with no SD
-// slot — or a T-Deck with no card inserted — it falls back to internal SPIFFS so
-// the 24h chart still works. SD path lives under /meshcomod with the other files;
-// SPIFFS (flat) uses a top-level path.
+// Battery log prefers the SD card when present. FriendMesh T-Deck builds never
+// fall back to internal SPIFFS; logging pauses until the required card returns.
+// Other boards retain the legacy internal fallback.
 static fs::FS& battLogFs() {
 #if CAP_SD
   if (SD.cardType() != CARD_NONE && SD.exists("/meshcomod")) return SD;
@@ -17192,6 +17270,13 @@ static bool battLogOnSd() {
   return false;
 #endif
 }
+static bool battLogStorageReady() {
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  return battLogOnSd();
+#else
+  return true;
+#endif
+}
 static const char* battLogPath() { return battLogOnSd() ? "/meshcomod/battery.log" : "/battery.log"; }
 static const char* battLogTmp()  { return battLogOnSd() ? "/meshcomod/battery.tmp" : "/battery.tmp"; }
 static const uint32_t k_batt_log_period_ms = 5u * 60u * 1000u;   // 5 min
@@ -17201,6 +17286,7 @@ static lv_obj_t*      s_batt_chart_root    = nullptr;
 // Append one sample + drop anything older than 24h. Line columns (tab-separated,
 // human-readable): <epoch>\t<YYYY-MM-DD HH:MM>\t<millivolts>\t<percent>\t<cpuMHz>
 static void batteryLogAppend(uint32_t epoch, uint16_t mv, int pct, uint16_t cpu_mhz) {
+  if (!battLogStorageReady()) return;
   fs::FS& fs = battLogFs();
   if (battLogOnSd()) markSdIo();
   char when[20] = "----------------";
@@ -17247,6 +17333,10 @@ static void batteryChartDismissCb(lv_event_t* e) {
 static void batteryChartCloseCb(lv_event_t* e) { (void)e; batteryChartClose(); }  // the X badge
 static void openBatteryChartWindow();   // fwd (clear reopens to show the empty chart)
 static void batteryLogClearConfirmed() {
+  if (!battLogStorageReady()) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Battery history needs an SD card"), 1800);
+    return;
+  }
   if (battLogOnSd()) markSdIo();
   battLogFs().remove(battLogPath());
   batteryChartClose();
@@ -17351,7 +17441,7 @@ static void openBatteryChartWindow() {
   int n = 0;
   if (mvs && cpus && eps) {   // null only under extreme OOM -> n stays 0 -> the empty-state below
     if (battLogOnSd()) markSdIo();
-    File rf = battLogFs().open(battLogPath(), FILE_READ);
+    File rf = battLogStorageReady() ? battLogFs().open(battLogPath(), FILE_READ) : File();
     if (rf) {
       while (rf.available() && n < k_max_pts) {
         String ln = rf.readStringUntil('\n');
@@ -25773,7 +25863,7 @@ static void friendmeshMotionLoadFromSd(int channelSlot) {
   ok = ok && header.magic == kFriendMeshMotionDiskMagic &&
        header.version == kFriendMeshMotionDiskVersion &&
        header.recordSize == sizeof(FriendMeshMotionDiskRecord) &&
-       header.recordCount <= friendmesh::kChannelRosterMaxMembers &&
+       header.recordCount <= kFriendMeshMotionTrackCapacity &&
        file.size() == static_cast<size_t>(sizeof(header)) +
            static_cast<size_t>(header.recordCount) * sizeof(FriendMeshMotionDiskRecord);
   uint32_t checksum = 2166136261u;
@@ -25821,7 +25911,7 @@ static void friendmeshMotionLoadFromSd(int channelSlot) {
   if (!ok || checksum != header.checksum) {
     memset(s_friendmesh_motion_tracks, 0,
            sizeof(FriendMeshMotionTrack) *
-               friendmesh::kChannelRosterMaxMembers);
+               kFriendMeshMotionTrackCapacity);
     s_friendmesh_motion_track_count = 0;
     return;
   }
@@ -25832,7 +25922,7 @@ static void friendmeshMotionLoadFromSd(int channelSlot) {
 #endif
 }
 
-static void friendmeshObserveMotionSamples() {
+static bool friendmeshMotionPrepare() {
   if (s_friendmesh_motion_channel_slot != s_friendmesh_map_channel_slot) {
     friendmeshMotionFlush(true);
     s_friendmesh_motion_channel_slot = s_friendmesh_map_channel_slot;
@@ -25843,50 +25933,90 @@ static void friendmeshObserveMotionSamples() {
     if (s_friendmesh_motion_tracks)
       memset(s_friendmesh_motion_tracks, 0,
              sizeof(FriendMeshMotionTrack) *
-                 friendmesh::kChannelRosterMaxMembers);
+                 kFriendMeshMotionTrackCapacity);
   }
   if (!s_friendmesh_motion_tracks) {
     s_friendmesh_motion_tracks = static_cast<FriendMeshMotionTrack*>(
         psAlloc(sizeof(FriendMeshMotionTrack) *
-                friendmesh::kChannelRosterMaxMembers));
-    if (!s_friendmesh_motion_tracks) return;
+                kFriendMeshMotionTrackCapacity));
+    if (!s_friendmesh_motion_tracks) return false;
     memset(s_friendmesh_motion_tracks, 0,
            sizeof(FriendMeshMotionTrack) *
-               friendmesh::kChannelRosterMaxMembers);
+               kFriendMeshMotionTrackCapacity);
   }
   if (!s_friendmesh_motion_loaded)
     friendmeshMotionLoadFromSd(s_friendmesh_map_channel_slot);
+  return true;
+}
+
+static FriendMeshMotionTrack* friendmeshMotionTrackForUpdate(
+    const friendmesh::Id128& subject) {
+  for (size_t i = 0; i < s_friendmesh_motion_track_count; ++i) {
+    if (friendmesh::idsEqual(
+            s_friendmesh_motion_tracks[i].current.subjectId, subject))
+      return &s_friendmesh_motion_tracks[i];
+  }
+  if (s_friendmesh_motion_track_count >= kFriendMeshMotionTrackCapacity)
+    return nullptr;
+  FriendMeshMotionTrack* track =
+      &s_friendmesh_motion_tracks[s_friendmesh_motion_track_count++];
+  *track = {};
+  return track;
+}
+
+static bool friendmeshRecordMotionSample(
+    const friendmesh::PositionRecord& sample, bool requireSignificantMovement) {
+  FriendMeshMotionTrack* track =
+      friendmeshMotionTrackForUpdate(sample.subjectId);
+  if (!track) return false;
+  if (track->samples == 0) {
+    track->current = sample;
+    track->samples = 1;
+    return true;
+  }
+  if (sample.capturedAt <= track->current.capturedAt) return false;
+  if (requireSignificantMovement) {
+    const uint32_t elapsed = sample.capturedAt - track->current.capturedAt;
+    if (elapsed < friendmesh::kMotionMinSampleSeconds) return false;
+    if (elapsed > friendmesh::kMotionMaxSampleSeconds) {
+      // Do not pair a fresh fix with an old session and then display a bogus
+      // near-zero speed. Start a new two-fix window instead.
+      track->previous = {};
+      track->current = sample;
+      track->samples = 1;
+      return true;
+    }
+    const uint32_t displacement = friendmesh::greatCircleDistanceMeters(
+        track->current, sample);
+    if (displacement == UINT32_MAX ||
+        displacement < friendmesh::kMotionObservationSpacingMeters)
+      return false;
+  }
+  track->previous = track->current;
+  track->current = sample;
+  track->samples = 2;
+  return true;
+}
+
+static void friendmeshObserveMotionSamples() {
+  if (!friendmeshMotionPrepare()) return;
   bool changed = false;
   for (size_t i = 0; i < s_friendmesh_map_position_count; ++i) {
     const friendmesh::PositionRecord& sample =
         s_friendmesh_map_positions[i].position;
-    FriendMeshMotionTrack* track = nullptr;
-    for (size_t j = 0; j < s_friendmesh_motion_track_count; ++j) {
-      if (friendmesh::idsEqual(
-              s_friendmesh_motion_tracks[j].current.subjectId,
-              sample.subjectId)) {
-        track = &s_friendmesh_motion_tracks[j];
-        break;
-      }
-    }
-    if (!track && s_friendmesh_motion_track_count <
-                      friendmesh::kChannelRosterMaxMembers) {
-      track = &s_friendmesh_motion_tracks[s_friendmesh_motion_track_count++];
-      *track = {};
-    }
-    if (!track) continue;
-    if (track->samples == 0) {
-      track->current = sample;
-      track->samples = 1;
-      changed = true;
-    } else if (sample.capturedAt > track->current.capturedAt) {
-      track->previous = track->current;
-      track->current = sample;
-      track->samples = 2;
-      changed = true;
-    }
+    changed = friendmeshRecordMotionSample(sample, false) || changed;
   }
   if (changed) {
+    s_friendmesh_motion_dirty = true;
+    s_friendmesh_motion_save_after_ms = millis() + 1500UL;
+  }
+  friendmeshMotionFlush(false);
+}
+
+static void friendmeshObserveLocalMotionSample(
+    const friendmesh::PositionRecord& sample) {
+  if (!friendmeshMotionPrepare()) return;
+  if (friendmeshRecordMotionSample(sample, true)) {
     s_friendmesh_motion_dirty = true;
     s_friendmesh_motion_save_after_ms = millis() + 1500UL;
   }
@@ -27654,6 +27784,54 @@ static void friendmeshGuidanceArrowSetBearing(uint16_t degrees) {
   lv_obj_invalidate(s_friendmesh_guidance_arrow);
 }
 
+static lv_coord_t friendmeshGuidanceMirrorX(lv_coord_t x, int direction) {
+  return direction < 0 ? static_cast<lv_coord_t>(106 - x) : x;
+}
+
+// Draw a road-sign-like maneuver instead of making the user translate a
+// numeric angle while walking. Positive corrections turn right, negative turn
+// left. The sharp category deliberately uses a visible right-angle elbow.
+static void friendmeshGuidanceArrowSetTurn(int turnDegrees) {
+  if (!s_friendmesh_guidance_arrow) return;
+  const int magnitude = turnDegrees < 0 ? -turnDegrees : turnDegrees;
+  const int direction = turnDegrees < 0 ? -1 : 1;
+  uint8_t count = 0;
+  auto point = [&](lv_coord_t x, lv_coord_t y) {
+    s_friendmesh_guidance_arrow_points[count++] = {
+        friendmeshGuidanceMirrorX(x, direction), y};
+  };
+  if (magnitude <= 15) {
+    point(53, 94); point(53, 27); point(41, 42); point(53, 27); point(65, 42);
+  } else if (magnitude <= 45) {
+    point(43, 94); point(44, 72); point(51, 55); point(63, 40); point(78, 27);
+    point(61, 31); point(78, 27); point(74, 44);
+  } else if (magnitude <= 75) {
+    point(39, 94); point(39, 65); point(46, 52); point(60, 44); point(81, 44);
+    point(66, 33); point(81, 44); point(66, 55);
+  } else if (magnitude <= 135) {
+    point(37, 94); point(37, 49); point(81, 49); point(66, 38); point(81, 49);
+    point(66, 60);
+  } else {
+    point(37, 94); point(37, 50); point(43, 37); point(55, 31); point(67, 37);
+    point(73, 49); point(73, 70); point(62, 56); point(73, 70); point(84, 56);
+  }
+  lv_line_set_points(s_friendmesh_guidance_arrow,
+                     s_friendmesh_guidance_arrow_points, count);
+  lv_obj_invalidate(s_friendmesh_guidance_arrow);
+}
+
+static const char* friendmeshGuidanceTurnInstruction(int turnDegrees) {
+  const int magnitude = turnDegrees < 0 ? -turnDegrees : turnDegrees;
+  if (magnitude <= 15) return "Continue straight";
+  if (magnitude <= 45)
+    return turnDegrees < 0 ? "Turn slight left" : "Turn slight right";
+  if (magnitude <= 75)
+    return turnDegrees < 0 ? "Turn left" : "Turn right";
+  if (magnitude <= 135)
+    return turnDegrees < 0 ? "Turn sharp left" : "Turn sharp right";
+  return "Turn around";
+}
+
 static void friendmeshCompassSetMotionVisible(bool visible) {
   lv_obj_t* objects[] = {
       s_friendmesh_compass_observed_dot,
@@ -27688,6 +27866,31 @@ static lv_point_t friendmeshCompassPoint(
   point.y = static_cast<lv_coord_t>(
       kFriendMeshCompassCenter - cos(radians) * radius);
   return point;
+}
+
+static double friendmeshCompassRelativeBearing(double absoluteDegrees,
+                                               double headingDegrees) {
+  double relative = absoluteDegrees - headingDegrees;
+  while (relative < 0.0) relative += 360.0;
+  while (relative >= 360.0) relative -= 360.0;
+  return relative;
+}
+
+static void friendmeshCompassUpdateCardinals(double headingDegrees) {
+  static const double kCardinalBearings[4] = {0.0, 90.0, 180.0, 270.0};
+  constexpr double kLabelRadius = 70.0;
+  for (uint8_t i = 0; i < 4; ++i) {
+    lv_obj_t* label = s_friendmesh_compass_cardinal_labels[i];
+    if (!label) continue;
+    const double shown = friendmeshCompassRelativeBearing(
+        kCardinalBearings[i], headingDegrees);
+    const double radians = shown * 3.14159265358979323846 / 180.0;
+    const lv_coord_t x = static_cast<lv_coord_t>(
+        kFriendMeshCompassCenter + sin(radians) * kLabelRadius - 8.0);
+    const lv_coord_t y = static_cast<lv_coord_t>(
+        kFriendMeshCompassCenter - cos(radians) * kLabelRadius - 8.0);
+    lv_obj_set_pos(label, x, y);
+  }
 }
 
 static void friendmeshGuidanceSetUnavailable(const char* primary,
@@ -27792,6 +27995,8 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
         "Your GPS is invalid", "A valid local fix is required");
     return;
   }
+  local.source = friendmesh::PositionSource::OnDeviceGps;
+  friendmeshObserveLocalMotionSample(local);
   if (!s_friendmesh_compass_notice_attempted) {
     s_friendmesh_compass_notice_attempted = true;
     the_mesh.uiSendFriendMeshCompassStarted(
@@ -27806,14 +28011,55 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
       !s_friendmesh_compass_use_current;
   const friendmesh::PositionRecord& guidanceTarget =
       usePrediction ? motion.predicted : target;
+  friendmesh::CourseToTargetEstimate course = {};
+  const FriendMeshMotionTrack* localTrack =
+      friendmeshMotionTrackFor(local.subjectId);
+  if (!targetStale && localTrack && localTrack->samples >= 2) {
+    course = friendmesh::estimateCourseToTarget(
+        localTrack->previous, localTrack->current, guidanceTarget, now);
+  }
   const uint32_t distance = friendmesh::greatCircleDistanceMeters(
       local, guidanceTarget);
   const uint16_t absolute = friendmesh::absoluteBearingDegrees(
       local, guidanceTarget);
-  double currentHeading = 0.0;
-#if defined(HAS_EXPANSION_KIT)
-  if (s_gps_course_deg >= 0.0f) currentHeading = s_gps_course_deg;
-#endif
+  // T-Deck has no magnetometer. North-up therefore uses an absolute map
+  // bearing, while headway-up rotates the entire dial by the course calculated
+  // from the user's two most recent reliable GPS fixes.
+  const bool headwayAvailable = course.courseUsable;
+  const double currentHeading =
+      s_friendmesh_compass_headway_up && headwayAvailable
+          ? static_cast<double>(course.motion.bearingDegrees) : 0.0;
+  friendmeshCompassUpdateCardinals(currentHeading);
+  if (s_friendmesh_compass_orientation_label) {
+    if (!s_friendmesh_compass_headway_up)
+      lv_label_set_text(s_friendmesh_compass_orientation_label, "NORTH-UP");
+    else if (headwayAvailable)
+      lv_label_set_text_fmt(s_friendmesh_compass_orientation_label,
+                            "HEADWAY %s-UP",
+                            friendmeshBearingCardinal(
+                                course.motion.bearingDegrees));
+    else
+      lv_label_set_text(s_friendmesh_compass_orientation_label,
+                        "HEADWAY WAIT");
+  }
+  if (s_friendmesh_guidance_orientation) {
+    if (s_friendmesh_guidance_north_mode)
+      lv_label_set_text(s_friendmesh_guidance_orientation,
+                        "NORTH ARROW - ALIGN TOP N");
+    else if (headwayAvailable)
+      lv_label_set_text_fmt(s_friendmesh_guidance_orientation,
+                            "TURN GUIDE - COURSE %s",
+                            friendmeshBearingCardinal(
+                                course.motion.bearingDegrees));
+    else
+      lv_label_set_text(s_friendmesh_guidance_orientation,
+                        "TURN GUIDE WAIT - NORTH FALLBACK");
+  }
+  if (s_friendmesh_guidance_mode_label) {
+    lv_label_set_text(s_friendmesh_guidance_mode_label,
+                      s_friendmesh_guidance_north_mode
+                          ? "SHOW TURN" : "SHOW NORTH");
+  }
   lv_obj_clear_flag(s_friendmesh_compass_line, LV_OBJ_FLAG_HIDDEN);
   lv_obj_clear_flag(s_friendmesh_compass_dot, LV_OBJ_FLAG_HIDDEN);
   const uint32_t guidanceDistance = distance == UINT32_MAX ? 1 : distance;
@@ -27937,13 +28183,21 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
   }
   lv_label_set_text(s_friendmesh_compass_meta, visualMeta);
 
-  friendmeshGuidanceArrowSetBearing(absolute);
-  lv_obj_clear_flag(s_friendmesh_guidance_arrow, LV_OBJ_FLAG_HIDDEN);
-  if (targetStale)
-    lv_label_set_text(s_friendmesh_guidance_title, "Verify position");
+  if (course.courseUsable && !s_friendmesh_guidance_north_mode)
+    friendmeshGuidanceArrowSetTurn(static_cast<int>(course.turnDegrees));
   else
+    friendmeshGuidanceArrowSetBearing(absolute);
+  lv_obj_clear_flag(s_friendmesh_guidance_arrow, LV_OBJ_FLAG_HIDDEN);
+  if (targetStale) {
+    lv_label_set_text(s_friendmesh_guidance_title, "Verify position");
+  } else if (course.courseUsable && !s_friendmesh_guidance_north_mode) {
+    lv_label_set_text(s_friendmesh_guidance_title,
+                      friendmeshGuidanceTurnInstruction(
+                          static_cast<int>(course.turnDegrees)));
+  } else {
     lv_label_set_text_fmt(s_friendmesh_guidance_title, "Walk %s",
                           friendmeshBearingCardinal(absolute));
+  }
   if (distance == UINT32_MAX) {
     lv_label_set_text(s_friendmesh_guidance_distance,
                       "Distance unavailable");
@@ -27954,27 +28208,84 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
                           distanceText,
                           static_cast<unsigned long>(walkMinutes));
   }
-  if (motion.moving) {
+  if (targetStale) {
+    lv_label_set_text(s_friendmesh_guidance_motion,
+                      "Friend position is stale");
+    lv_label_set_text(s_friendmesh_guidance_confidence,
+                      "Headway paused - refresh the position");
+  } else if (course.courseUsable) {
+    char localSpeedText[20] = {};
+    snprintf(localSpeedText, sizeof(localSpeedText), "%.1f m/s",
+             static_cast<double>(course.motion.speedCentimetersPerSecond) /
+                 100.0);
+    if (motion.moving) {
+      lv_label_set_text_fmt(s_friendmesh_guidance_motion,
+                            "You %s %s | Friend %s %s",
+                            friendmeshBearingCardinal(
+                                course.motion.bearingDegrees),
+                            localSpeedText,
+                            friendmeshBearingCardinal(motion.bearingDegrees),
+                            speedText);
+    } else {
+      lv_label_set_text_fmt(s_friendmesh_guidance_motion,
+                            "Your course %s  %s",
+                            friendmeshBearingCardinal(
+                                course.motion.bearingDegrees),
+                            localSpeedText);
+    }
+    const int32_t closing = course.closingSpeedCentimetersPerSecond;
+    const uint32_t closingMagnitude = static_cast<uint32_t>(
+        closing < 0 ? -static_cast<int64_t>(closing) : closing);
+    char closingSpeedText[20] = {};
+    snprintf(closingSpeedText, sizeof(closingSpeedText), "%.1f m/s",
+             static_cast<double>(closingMagnitude) / 100.0);
+    if (course.progress == friendmesh::NavigationProgress::Arrived) {
+      lv_label_set_text(s_friendmesh_guidance_confidence,
+                        "Headway: arrived - within 20 m");
+    } else if (closing > 0 && distance != UINT32_MAX) {
+      const uint32_t etaSeconds = static_cast<uint32_t>(
+          (static_cast<uint64_t>(distance) * 100u) /
+          static_cast<uint32_t>(closing));
+      if (etaSeconds <= 24u * 60u * 60u) {
+        const uint32_t etaMinutes = etaSeconds == 0 ? 0 :
+            (etaSeconds + 59u) / 60u;
+        lv_label_set_text_fmt(s_friendmesh_guidance_confidence,
+                              "Headway: closing %s - ~%lu min",
+                              closingSpeedText,
+                              static_cast<unsigned long>(etaMinutes));
+      } else {
+        lv_label_set_text_fmt(s_friendmesh_guidance_confidence,
+                              "Headway: closing %s", closingSpeedText);
+      }
+    } else if (closing < 0) {
+      lv_label_set_text_fmt(s_friendmesh_guidance_confidence,
+                            "Headway: opening %s", closingSpeedText);
+    } else {
+      lv_label_set_text(s_friendmesh_guidance_confidence,
+                        "Headway: distance steady");
+    }
+  } else if (motion.moving) {
     lv_label_set_text_fmt(s_friendmesh_guidance_motion,
                           "%s walking %s  %s",
                           contact.name[0] ? contact.name : "Friend",
                           friendmeshBearingCardinal(motion.bearingDegrees),
                           speedText);
-    lv_label_set_text_fmt(s_friendmesh_guidance_confidence,
-                          "%s estimate - 2 recent positions",
-                          motion.confidence == friendmesh::MotionConfidence::Good
-                              ? "Good" : "Limited");
+    lv_label_set_text(s_friendmesh_guidance_confidence,
+                      "Headway needs 2 user GPS fixes");
+  } else {
+    lv_label_set_text(s_friendmesh_guidance_motion,
+                      "Friend movement not reliable yet");
+    lv_label_set_text(s_friendmesh_guidance_confidence,
+                      localTrack && localTrack->samples >= 2
+                          ? "Waiting for reliable user movement"
+                          : "Headway needs 2 user GPS fixes");
+  }
+  if (motion.moving) {
     lv_obj_clear_flag(s_friendmesh_guidance_toggle, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_friendmesh_guidance_toggle_label,
                       s_friendmesh_compass_use_current
                           ? "Use prediction" : "Use current position");
   } else {
-    lv_label_set_text(s_friendmesh_guidance_motion,
-                      "Friend movement not reliable yet");
-    lv_label_set_text(s_friendmesh_guidance_confidence,
-                      track && track->samples >= 2
-                          ? "Using current position"
-                          : "Need 2 recent positions");
     lv_obj_add_flag(s_friendmesh_guidance_toggle, LV_OBJ_FLAG_HIDDEN);
   }
   lv_label_set_text_fmt(s_friendmesh_guidance_age, "Updated %s%s",
@@ -27984,6 +28295,18 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
 static void friendmeshGuidanceToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   s_friendmesh_compass_use_current = !s_friendmesh_compass_use_current;
+  friendmeshCompassRefresh(nullptr);
+}
+
+static void friendmeshCompassOrientationToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_friendmesh_compass_headway_up = !s_friendmesh_compass_headway_up;
+  friendmeshCompassRefresh(nullptr);
+}
+
+static void friendmeshGuidanceModeToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_friendmesh_guidance_north_mode = !s_friendmesh_guidance_north_mode;
   friendmeshCompassRefresh(nullptr);
 }
 
@@ -28016,10 +28339,23 @@ static void friendmeshCompassHelpCb(lv_event_t* e) {
       "NORTH-UP ON T-DECK\n"
       "The top of the dial is north. The T-Deck does not sense which way you "
       "are holding it. Face the top of the device north, then the pointer shows "
-      "the direction to travel.\n\n"
+      "the direction to travel. Tap NORTH-UP to switch to HEADWAY-UP. In "
+      "HEADWAY-UP, the top is your recent GPS course and the arrow shows the "
+      "turn toward your friend. This needs two reliable local GPS fixes. Tap "
+      "again to return to NORTH-UP.\n\n"
       "THE READOUT\n"
       "Distance is straight-line distance. The degree and letters (for example, "
       "135 deg SE) are the absolute bearing from your position.\n\n"
+      "YOUR COURSE AND HEADWAY\n"
+      "After you move at least 8 meters across two recent GPS fixes, page two "
+      "shows your course over ground, speed, an immediate plain-language turn "
+      "such as slight right or sharp left, and "
+      "whether the distance is closing, opening, or steady. ETA appears only "
+      "while you are closing on the selected current or predicted target. This "
+      "is calculated locally and is not a magnetic device heading. The page-two "
+      "arrow changes shape to match the maneuver. SHOW NORTH replaces it with "
+      "an absolute north-relative arrow; align the top of the T-Deck with north "
+      "in that mode.\n\n"
       "POSITION AGE\n"
       "The age says when the friend's position was last received. STALE means "
       "it is more than 5 minutes old; confirm before relying on it.\n\n"
@@ -28057,6 +28393,8 @@ static void openFriendMeshCompass(int contactIndex) {
   s_friendmesh_compass_contact_idx = contactIndex;
   s_friendmesh_compass_notice_attempted = false;
   s_friendmesh_compass_use_current = false;
+  s_friendmesh_compass_headway_up = false;
+  s_friendmesh_guidance_north_mode = false;
   s_friendmesh_compass_page = 0;
   s_friendmesh_compass_root = body;
   lv_obj_set_style_pad_all(body, 0, LV_PART_MAIN);
@@ -28118,20 +28456,18 @@ static void openFriendMeshCompass(int contactIndex) {
     s_friendmesh_compass_scale_labels[i] = scale;
   }
 
-  struct CardinalLabel { const char* text; lv_align_t align; int x; int y; };
-  const CardinalLabel cardinals[] = {
-      {"N", LV_ALIGN_TOP_MID, 0, 3},
-      {"E", LV_ALIGN_RIGHT_MID, -4, 0},
-      {"S", LV_ALIGN_BOTTOM_MID, 0, -3},
-      {"W", LV_ALIGN_LEFT_MID, 4, 0},
-  };
-  for (const CardinalLabel& cardinal : cardinals) {
+  static const char* const cardinals[4] = {"N", "E", "S", "W"};
+  for (uint8_t i = 0; i < 4; ++i) {
     lv_obj_t* label = lv_label_create(dial);
-    lv_label_set_text(label, cardinal.text);
+    lv_obj_set_size(label, 16, 16);
+    lv_label_set_text(label, cardinals[i]);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_font(label, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_align(label, cardinal.align, cardinal.x, cardinal.y);
+    lv_obj_clear_flag(label, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    s_friendmesh_compass_cardinal_labels[i] = label;
   }
+  friendmeshCompassUpdateCardinals(0.0);
 
   s_friendmesh_compass_motion_line = lv_line_create(dial);
   s_friendmesh_compass_motion_points[0] = {42, 116};
@@ -28220,17 +28556,24 @@ static void openFriendMeshCompass(int contactIndex) {
   lv_obj_add_flag(s_friendmesh_compass_dot, LV_OBJ_FLAG_HIDDEN);
   friendmeshCompassSetMotionVisible(false);
 
-  lv_obj_t* northUp = lv_label_create(s_friendmesh_compass_visual_page);
-  lv_obj_set_width(northUp, 132);
-  lv_obj_set_pos(northUp, 178, 10);
-  lv_label_set_text(northUp, "NORTH-UP");
-  lv_obj_set_style_text_align(northUp, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-  lv_obj_set_style_text_font(northUp, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(northUp, lv_color_hex(0x58BFA5), LV_PART_MAIN);
+  s_friendmesh_compass_orientation_button = lv_btn_create(
+      s_friendmesh_compass_visual_page);
+  lv_obj_set_size(s_friendmesh_compass_orientation_button, 94, 28);
+  lv_obj_set_pos(s_friendmesh_compass_orientation_button, 178, 6);
+  styleButton(s_friendmesh_compass_orientation_button);
+  lv_obj_add_event_cb(s_friendmesh_compass_orientation_button,
+                      friendmeshCompassOrientationToggleCb,
+                      LV_EVENT_CLICKED, nullptr);
+  s_friendmesh_compass_orientation_label = lv_label_create(
+      s_friendmesh_compass_orientation_button);
+  lv_label_set_text(s_friendmesh_compass_orientation_label, "NORTH-UP");
+  lv_obj_set_style_text_font(s_friendmesh_compass_orientation_label,
+                             &g_font_12, LV_PART_MAIN);
+  lv_obj_center(s_friendmesh_compass_orientation_label);
   s_friendmesh_compass_status = lv_label_create(
       s_friendmesh_compass_visual_page);
   lv_obj_set_size(s_friendmesh_compass_status, 132, 52);
-  lv_obj_set_pos(s_friendmesh_compass_status, 178, 34);
+  lv_obj_set_pos(s_friendmesh_compass_status, 178, 40);
   lv_label_set_long_mode(s_friendmesh_compass_status, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(s_friendmesh_compass_status,
                              &g_font_14, LV_PART_MAIN);
@@ -28239,7 +28582,7 @@ static void openFriendMeshCompass(int contactIndex) {
   s_friendmesh_compass_meta = lv_label_create(
       s_friendmesh_compass_visual_page);
   lv_obj_set_size(s_friendmesh_compass_meta, 132, 88);
-  lv_obj_set_pos(s_friendmesh_compass_meta, 178, 88);
+  lv_obj_set_pos(s_friendmesh_compass_meta, 178, 94);
   lv_label_set_long_mode(s_friendmesh_compass_meta, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_font(s_friendmesh_compass_meta,
                              &g_font_12, LV_PART_MAIN);
@@ -28249,11 +28592,31 @@ static void openFriendMeshCompass(int contactIndex) {
                                    LV_PART_MAIN);
 
   // Page two: a plain-language travel instruction with the same live target.
-  lv_obj_t* guideNorth = lv_label_create(s_friendmesh_compass_guidance_page);
-  lv_obj_set_pos(guideNorth, 8, 8);
-  lv_label_set_text(guideNorth, "N  Align top with NORTH");
-  lv_obj_set_style_text_font(guideNorth, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(guideNorth, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  s_friendmesh_guidance_orientation = lv_label_create(
+      s_friendmesh_compass_guidance_page);
+  lv_obj_set_size(s_friendmesh_guidance_orientation, 160, 22);
+  lv_obj_set_pos(s_friendmesh_guidance_orientation, 8, 8);
+  lv_label_set_long_mode(s_friendmesh_guidance_orientation, LV_LABEL_LONG_DOT);
+  lv_label_set_text(s_friendmesh_guidance_orientation,
+                    "N  Align top with NORTH");
+  lv_obj_set_style_text_font(s_friendmesh_guidance_orientation,
+                             &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_friendmesh_guidance_orientation,
+                              lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  s_friendmesh_guidance_mode_button = lv_btn_create(
+      s_friendmesh_compass_guidance_page);
+  lv_obj_set_size(s_friendmesh_guidance_mode_button, 96, 28);
+  lv_obj_set_pos(s_friendmesh_guidance_mode_button, 174, 4);
+  styleButton(s_friendmesh_guidance_mode_button);
+  lv_obj_add_event_cb(s_friendmesh_guidance_mode_button,
+                      friendmeshGuidanceModeToggleCb,
+                      LV_EVENT_CLICKED, nullptr);
+  s_friendmesh_guidance_mode_label = lv_label_create(
+      s_friendmesh_guidance_mode_button);
+  lv_label_set_text(s_friendmesh_guidance_mode_label, "SHOW NORTH");
+  lv_obj_set_style_text_font(s_friendmesh_guidance_mode_label,
+                             &g_font_12, LV_PART_MAIN);
+  lv_obj_center(s_friendmesh_guidance_mode_label);
   s_friendmesh_guidance_arrow = lv_line_create(
       s_friendmesh_compass_guidance_page);
   lv_obj_set_pos(s_friendmesh_guidance_arrow, 4, 0);
@@ -28329,7 +28692,7 @@ static void openFriendMeshCompass(int contactIndex) {
 
   lv_obj_t* help = lv_btn_create(body);
   lv_obj_set_size(help, 32, 28);
-  lv_obj_set_pos(help, 236, 4);
+  lv_obj_set_pos(help, 278, 4);
   styleButton(help);
   lv_obj_add_event_cb(help, friendmeshCompassHelpCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* helpLabel = lv_label_create(help);
@@ -29720,7 +30083,11 @@ static bool crashDumpExport(char* out_path, size_t out_cap) {
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   if (!dst) dst = &FFat;              // no SPIFFS on these boards; internal = the FAT data partition
 #else
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (!dst) return false;              // never turn an export into long-term internal data
+#else
   if (!dst) { SPIFFS.begin(false); dst = &SPIFFS; }
+#endif
 #endif
   File f = dst->open(path, "w");
   if (!f) return false;
@@ -35287,7 +35654,15 @@ static void doExportBackupFile(const char* fname) {
   // mounts it) so a backup truly lands on — and lists from — the SD card.
   if (fmSdTryMount()) { f = SD.open(path, FILE_WRITE); if (f) where = "SD"; }
 #endif
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (!f) {
+    lv_obj_del(ov);
+    g_lv.task->showAlert(TR("Export failed - SD card required"), 2200);
+    return;
+  }
+#else
   if (!f) { f = backupInternalFs()->open(path, FILE_WRITE); }
+#endif
   if (!f) { lv_obj_del(ov); g_lv.task->showAlert(TR("Export failed (can't open file)"), 1800); return; }
   { WdtHeavyGuard _wg;   // a 60 KB backup write to internal flash can trigger a SPIFFS GC
     { FileBufWriter bw(f);
@@ -42763,7 +43138,13 @@ static bool uiDataFsReady() {
     strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
     return true;
   }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // FriendMesh T-Deck long-term data is SD-bound. Keep history in RAM while
+  // the card is unavailable; never create a second internal history branch.
+  return false;
+#else
   if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
+#endif
 #else
   // V4 (no SD): internal SPIFFS. Format-on-fail so a fresh / never-formatted
   // partition becomes usable — that's the V4 history-loss fix. Safe: only formats
@@ -44071,11 +44452,24 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_tile_fs_default = s_tile_fs;
   strncpy(s_tile_root_default, s_tile_root, sizeof s_tile_root_default - 1);
 #if CAP_SD
-  if (s_tiles_from_sd && (SD.cardType() != CARD_NONE || fmSdTryMount())) {
+  const bool friendmeshSdCache =
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+      true;
+#else
+      false;
+#endif
+  if ((s_tiles_from_sd || friendmeshSdCache) &&
+      (SD.cardType() != CARD_NONE || fmSdTryMount())) {
     s_sd_mounted = true;
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';
-    WIRE_DBG("[TILE] microSD-tile mode -> caching Wi-Fi tiles on SD /tiles (merges with library)");
+    WIRE_DBG("[TILE] SD policy -> caching Wi-Fi tiles on SD /tiles (merges with library)");
+  } else if (friendmeshSdCache) {
+    // Do not silently resume a growing cache on the internal tiles partition
+    // while the FriendMesh T-Deck's required long-term medium is unavailable.
+    s_tile_fs = nullptr;
+    s_tile_root[0] = '\0';
+    WIRE_DBG("[TILE] SD REQUIRED -> Wi-Fi tile cache disabled");
   }
 #endif
 #endif
@@ -44641,6 +45035,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   uiInstallTouchSleepHooks();
   // Restore the persisted on/off state (default OFF until the user enables it).
   touchSleep::setEnabled(touchPrefsGetSleepIdle());
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  extern bool g_long_term_storage_sd_missing;
+  if (g_long_term_storage_sd_missing) {
+    showAlert(TR("SD card required\nRecovery data is read-only\nHistory is not being saved"),
+              8000);
+  }
+#endif
 #endif
 }
 

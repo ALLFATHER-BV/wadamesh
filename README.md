@@ -85,10 +85,13 @@ channel control records that never enter chat history. Guests can leave and
 owners can cooperatively remove updated T-Decks. Any departure or removal is
 visibly marked `rekey required`: until the later security phase rotates and
 redistributes the shared channel key, removal is not cryptographic revocation.
+The administrator can also disband from the existing Members view. The device
+attempts the same encrypted, chat-suppressed removal notice to every joined
+member before deleting its local channel and reports unreachable recipients.
 
 Joined private channels also expose `Group map`. It filters the existing
 WadaMesh map to positioned joined members, and tapping one of those members
-offers `Friend Compass` with north-up distance, bearing, position age, and stale
+offers `Friend Compass` with selectable north-up/headway-up distance, bearing, position age, and stale
 location warnings. Opening the map performs one bounded, single-flight pass over
 the joined roster using MeshCore's existing encrypted contact-telemetry request;
 each reply updates that member's saved map position without requiring a public
@@ -98,18 +101,40 @@ does not become a background transmitter. It does not introduce a second map,
 a new wire protocol, or new UI branding.
 
 Friend Compass retains only the previous and current fix for each bounded group
-member in `/friendmesh/motion_<channel-id>.bin` on the microSD card. Writes are
+member plus the local user in `/friendmesh/motion_<channel-id>.bin` on the microSD card. Writes are
 checksummed, coalesced, and flushed when the map closes; there is deliberately no
 internal-flash fallback. This development cache is not yet encrypted or
 authenticated, so SD location-history hardening remains part of the later
 security phase.
 
+FriendMesh T-Deck builds now require a mounted microSD card for long-term data.
+The complete MeshCore/FriendMesh store lives under `/meshcomod`, and chat
+history, discovery state, motion history, backups, and online map cache files
+also stay on the card; battery history pauses and crash exports fail cleanly
+without one. An existing internal store is retained only as a readable
+recovery source: if SD mounting or complete migration fails, persistent
+DataStore writes are disabled and the UI reports that history is not being
+saved. Small NVS boot-selection values remain an intentional control-plane
+exception. Insert the card before boot and keep it installed during operation.
+Migration copies the identity and other critical files explicitly before a
+recursive full-path scan, preserves existing non-empty SD files during automatic
+boot repair, verifies the copied identity, and never deletes the internal
+recovery source.
+
 The compass itself is a two-page WadaMesh fullscreen tool. Page one is the
-detailed north-up spatial dial with distance-scaled rings, distinct current and
+detailed spatial dial with a `NORTH-UP` / `HEADWAY-UP` toggle, distance-scaled rings, distinct current and
 predicted markers, a fixed 45-second lead readout, and compact movement/freshness
-status; page two turns the same live calculation into
+status. North-up is absolute; headway-up consistently rotates the pointer,
+cardinal labels, trails, and guidance arrow around the user's reliable two-fix
+GPS course. Page two turns the same live calculation into
 plain-language travel guidance, movement speed, confidence, freshness, and a
-working `Use current position` prediction override. Horizontal touch swipes,
+working `Use current position` prediction override. Its default maneuver view
+uses qualitative instructions (`slight`, standard, `sharp`, or `turn around`)
+and a matching straight, curved, right-angle, or U-turn arrow; `SHOW NORTH`
+switches to an absolute north-relative bearing arrow. After the local user moves
+at least eight meters across two recent fixes, page two also shows GPS course,
+left/right turn correction, closing or opening speed, and a bounded ETA while
+approaching the selected current or predicted target. Horizontal touch swipes,
 trackball left/right, and two tappable bottom dots switch pages. Vertical input
 remains available for focus/scroll behavior.
 

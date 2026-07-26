@@ -9,9 +9,6 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kEarthRadiusMeters = 6371000.0;
-constexpr uint32_t kMotionMinSampleSeconds = 5;
-constexpr uint32_t kMotionMaxSampleSeconds = 180;
-constexpr uint32_t kMotionNoiseFloorMeters = 8;
 constexpr uint32_t kMotionGoodDisplacementMeters = 15;
 constexpr double kMotionMaxMetersPerSecond = 3.5;
 
@@ -112,7 +109,7 @@ MotionEstimate estimateTargetMotion(const PositionRecord& previous,
   estimate.speedCentimetersPerSecond = static_cast<uint16_t>(
       speed * 100.0 + 0.5);
   estimate.predicted = current;
-  if (displacement < kMotionNoiseFloorMeters || horizonSeconds == 0) {
+  if (displacement < kMotionObservationSpacingMeters || horizonSeconds == 0) {
     estimate.confidence = MotionConfidence::Limited;
     return estimate;
   }
@@ -143,6 +140,60 @@ MotionEstimate estimateTargetMotion(const PositionRecord& previous,
                                 estimate.predicted.longitudeE7)) {
     estimate = {};
   }
+  return estimate;
+}
+
+CourseToTargetEstimate estimateCourseToTarget(
+    const PositionRecord& previousLocal, const PositionRecord& currentLocal,
+    const PositionRecord& target, uint32_t now) {
+  CourseToTargetEstimate estimate = {};
+  estimate.progress = NavigationProgress::Unknown;
+  estimate.motion = estimateTargetMotion(previousLocal, currentLocal, now);
+  const uint32_t previousDistance =
+      greatCircleDistanceMeters(previousLocal, target);
+  const uint32_t currentDistance =
+      greatCircleDistanceMeters(currentLocal, target);
+  if (previousDistance == UINT32_MAX || currentDistance == UINT32_MAX) {
+    estimate.distanceMeters = UINT32_MAX;
+    return estimate;
+  }
+  estimate.targetUsable = true;
+  estimate.distanceMeters = currentDistance;
+  if (!estimate.motion.samplesUsable || estimate.motion.sampleSeconds == 0)
+    return estimate;
+
+  const int64_t closedMeters = static_cast<int64_t>(previousDistance) -
+      static_cast<int64_t>(currentDistance);
+  const int64_t closingCentimetersPerSecond =
+      (closedMeters * 100) /
+      static_cast<int64_t>(estimate.motion.sampleSeconds);
+  if (closingCentimetersPerSecond > INT32_MAX)
+    estimate.closingSpeedCentimetersPerSecond = INT32_MAX;
+  else if (closingCentimetersPerSecond < INT32_MIN)
+    estimate.closingSpeedCentimetersPerSecond = INT32_MIN;
+  else
+    estimate.closingSpeedCentimetersPerSecond =
+        static_cast<int32_t>(closingCentimetersPerSecond);
+
+  if (currentDistance <= kArrivalDistanceMeters) {
+    estimate.progress = NavigationProgress::Arrived;
+  } else if (closedMeters > static_cast<int64_t>(kProgressChangeMeters)) {
+    estimate.progress = NavigationProgress::Closer;
+  } else if (closedMeters < -static_cast<int64_t>(kProgressChangeMeters)) {
+    estimate.progress = NavigationProgress::Farther;
+  } else {
+    estimate.progress = NavigationProgress::Steady;
+  }
+
+  if (!estimate.motion.moving) return estimate;
+  const uint16_t targetBearing =
+      absoluteBearingDegrees(currentLocal, target);
+  int turn = static_cast<int>(targetBearing) -
+      static_cast<int>(estimate.motion.bearingDegrees);
+  while (turn > 180) turn -= 360;
+  while (turn < -180) turn += 360;
+  estimate.turnDegrees = static_cast<int16_t>(turn);
+  estimate.courseUsable = true;
   return estimate;
 }
 

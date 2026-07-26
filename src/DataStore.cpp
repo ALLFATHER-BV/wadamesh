@@ -46,6 +46,7 @@ const char* DataStore::_rp(const char* name) {
 }
 
 File DataStore::openWrite(FILESYSTEM* fs, const char* filename) {
+  if (!_writesEnabled) return File();
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   fs->remove(_rp(filename));
   return fs->open(_rp(filename), FILE_O_WRITE);
@@ -73,7 +74,7 @@ void DataStore::begin() {
   #endif
 #else
   // init 'blob store' support
-  _fs->mkdir("/bl");
+  if (_writesEnabled) _fs->mkdir("/bl");
   #if defined(ESP32)
   // One-time migration: when a secondary FS is active (an SD card is present)
   // but contacts/channels still live on the primary FS from an earlier build,
@@ -202,10 +203,12 @@ File DataStore::openRead(FILESYSTEM* fs, const char* filename) {
 }
 
 bool DataStore::removeFile(const char* filename) {
+  if (!_writesEnabled) return false;
   return _fs->remove(_rp(filename));
 }
 
 bool DataStore::removeFile(FILESYSTEM* fs, const char* filename) {
+  if (!_writesEnabled) return false;
   return fs->remove(filename);
 }
 
@@ -239,6 +242,7 @@ bool DataStore::loadMainIdentity(mesh::LocalIdentity &identity) {
 }
 
 bool DataStore::saveMainIdentity(const mesh::LocalIdentity &identity) {
+  if (!_writesEnabled) return false;
   return identity_store.save("_main", identity);
 }
 
@@ -267,8 +271,10 @@ void DataStore::loadPrefs(NodePrefs& prefs, double& node_lat, double& node_lon) 
     savePrefs(prefs, node_lat, node_lon);                // re-establish the main file
   } else if (probe("/node_prefs")) {
     loadPrefsInt("/node_prefs", prefs, node_lat, node_lon);
-    savePrefs(prefs, node_lat, node_lon);                // save to new filename
-    _fs->remove(_rp("/node_prefs")); // remove old
+    // Remove the legacy source only after the replacement was actually saved.
+    // In SD-required recovery mode writes are disabled, so the source must stay.
+    if (savePrefs(prefs, node_lat, node_lon))
+      _fs->remove(_rp("/node_prefs"));
   } else {
     MESH_DEBUG_PRINTLN("DataStore: no prefs file found — using defaults");
   }
@@ -424,7 +430,7 @@ void DataStore::loadContacts(DataStoreHost* host) {
   // Recover an atomic-save swap interrupted by power loss: if the live file is gone but the
   // fully-written temp survives, adopt it. A temp alongside an intact live file is a stale
   // leftover (save crashed after writing temp but before the swap) — keep live, drop temp.
-  {
+  if (_writesEnabled) {
     FILESYSTEM* cfs = _getContactsChannelsFS();
     char live[80], tmp[80];
     if (_root[0]) { snprintf(live, sizeof live, "%s/contacts3", _root);
@@ -468,6 +474,7 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
 }
 
 void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
+  if (!_writesEnabled) return;
 #if defined(ESP32)
   // A full/fragmenting contacts write on SPIFFS can trigger a multi-second GC
   // pass that disables the flash cache and starves core 0's idle task, tripping
@@ -608,6 +615,7 @@ void DataStore::loadChannels(DataStoreHost* host) {
 }
 
 void DataStore::saveChannels(DataStoreHost* host) {
+  if (!_writesEnabled) return;
   File file = openWrite(_getContactsChannelsFS(), "/channels2");
   if (file) {
     uint8_t channel_idx = 0;
@@ -778,6 +786,7 @@ uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_b
 }
 
 bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
+  if (!_writesEnabled) return false;
   if (len < PUB_KEY_SIZE+4+SIGNATURE_SIZE || len > MAX_ADVERT_PKT_LEN) return false;
   checkAdvBlobFile();
   File file = _getContactsChannelsFS()->open("/adv_blobs", FILE_O_WRITE);
@@ -856,6 +865,7 @@ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src
 }
 
 bool DataStore::deleteBlobByKey(const uint8_t key[], int key_len) {
+  if (!_writesEnabled) return false;
   char path[64];
   makeBlobPath(key, key_len, path, sizeof(path));
 

@@ -15,6 +15,7 @@
 static fs::FS* s_file_fs   = nullptr;
 static char    s_file_dir[24] = {0};
 static bool    s_file_mode = false;
+static bool    s_file_writes_enabled = true;
 static int     s_legacy    = -1;   // legacy probe cache: -1 undecided, 0 SD, 1 NVS
 static int     s_migrate   = -1;   // -1 undecided, 0 = no NVS legacy data, 1 = yes
 
@@ -25,6 +26,11 @@ void SdNvsPrefs::useFile(fs::FS* fs, const char* dir) {
   s_file_dir[sizeof(s_file_dir) - 1] = '\0';
   s_file_mode = true;
   Serial.printf("[PREFS] backend = FILE %s\n", s_file_dir);
+}
+
+void SdNvsPrefs::setFileWritesEnabled(bool enabled) {
+  s_file_writes_enabled = enabled;
+  if (!enabled) Serial.println("[PREFS] recovery backend is read-only");
 }
 
 static bool     fileMode()  { return s_file_mode && s_file_fs; }
@@ -127,7 +133,7 @@ void SdNvsPrefs::sdLoad() {
 }
 
 void SdNvsPrefs::sdSave() {
-  if (_read_only) return;
+  if (_read_only || !s_file_writes_enabled) return;
   fs::FS* fs = activeFs();
   if (!fs) return;
   // Create the parent dir (SD needs it; SPIFFS is flat and treats the whole path

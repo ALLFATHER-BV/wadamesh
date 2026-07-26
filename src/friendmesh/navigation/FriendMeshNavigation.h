@@ -14,6 +14,9 @@ constexpr uint32_t kArrivalDistanceMeters = 20;
 constexpr uint32_t kProgressChangeMeters = 5;
 constexpr uint32_t kBreadcrumbSpacingMeters = 25;
 constexpr uint32_t kMotionPredictionSeconds = 45;
+constexpr uint32_t kMotionMinSampleSeconds = 5;
+constexpr uint32_t kMotionMaxSampleSeconds = 180;
+constexpr uint32_t kMotionObservationSpacingMeters = 8;
 
 enum class MotionConfidence : uint8_t {
   None = 0,
@@ -45,6 +48,21 @@ enum class NavigationProgress : uint8_t {
   Arrived,
 };
 
+// Local course-over-ground relative to one fixed target point. Positive
+// turnDegrees means turn right/clockwise; negative means left. A positive
+// closing speed means the user is approaching the target, while a negative
+// value means the gap is opening. This is GPS-derived course, not a magnetic
+// device heading.
+struct CourseToTargetEstimate {
+  MotionEstimate motion;
+  uint32_t distanceMeters;
+  int32_t closingSpeedCentimetersPerSecond;
+  int16_t turnDegrees;
+  NavigationProgress progress;
+  bool targetUsable;
+  bool courseUsable;
+};
+
 struct NavigationUpdate {
   NavigationState state;
   NavigationProgress progress;
@@ -60,6 +78,9 @@ uint16_t absoluteBearingDegrees(const PositionRecord& from,
 MotionEstimate estimateTargetMotion(
     const PositionRecord& previous, const PositionRecord& current,
     uint32_t now, uint32_t horizonSeconds = kMotionPredictionSeconds);
+CourseToTargetEstimate estimateCourseToTarget(
+    const PositionRecord& previousLocal, const PositionRecord& currentLocal,
+    const PositionRecord& target, uint32_t now);
 
 class PositionBook {
  public:
