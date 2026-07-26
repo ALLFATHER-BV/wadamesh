@@ -8442,6 +8442,15 @@ static void syncClockCb(lv_event_t* e) {
   g_lv.task->showAlert(TR("Clock synced"), 900);
 }
 
+// Chat-save fallback dropdown (Settings -> General): selection index -> number
+// of consecutive failed background history writes before the flush retries
+// synchronously on the UI task (0 = background retries only, never hitch).
+static const uint8_t k_hist_sync_opts[] = { 0, 1, 2, 3, 5, 8 };
+static void histSyncSelectCb(lv_event_t* e) {
+  const uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+  if (sel < sizeof(k_hist_sync_opts)) touchPrefsSetHistSyncAfter(k_hist_sync_opts[sel]);
+}
+
 static void advertNowCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   g_lv.task->showAlert(g_lv.task->sendAdvertNow() ? TR("Advert sent") : TR("Advert failed"), 900);
@@ -11404,6 +11413,27 @@ static void buildDeviceSettings(int sec) {
   lv_label_set_text(l_adv, TR("Send advert now"));
   lv_obj_center(l_adv);
   y += SC(40);
+
+  /* Chat-save fallback: after how many consecutive failed BACKGROUND history
+     writes the flush retries synchronously on the UI task. The sync write is
+     the empirically reliable path on the shared SPI bus, but the screen
+     hitches for its duration — users who prefer a never-hitching UI pick Off
+     (background retries only; the RAM ring keeps everything meanwhile). */
+  {
+    y += settingsRowLabel(body, y, 0, TR("Chat save fallback (failed tries)"), COLOR_SUB, &g_font_12, 0) + 2;
+    lv_obj_t* dd = lv_dropdown_create(body);
+    lv_dropdown_set_options(dd, TR("Off\n1\n2\n3\n5\n8"));
+    const uint8_t cur = touchPrefsGetHistSyncAfter();
+    uint16_t sel = 2;   // index of "2" — the default when the stored value isn't a listed option
+    for (uint16_t i = 0; i < sizeof(k_hist_sync_opts); ++i)
+      if (k_hist_sync_opts[i] == cur) { sel = i; break; }
+    lv_dropdown_set_selected(dd, sel);
+    lv_obj_set_width(dd, lv_pct(100));
+    lv_obj_set_pos(dd, 2, y);
+    lv_obj_add_event_cb(dd, histSyncSelectCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);   // open list on top of the bar
+    y += SC(44);
+  }
   }
 
   if (sec == DSEC_DISPLAY) {   // --- Display ---
@@ -41069,6 +41099,19 @@ void UITask::flushHistoryIfDue(unsigned long now) {
       return;
     }
 #if defined(ESP32)
+    // Off-thread writes keep failing? Fall back to the LOOP-TASK write — the
+    // empirically reliable path (the reboot-time persist always succeeds):
+    // when this task writes, nothing else interleaves radio/display traffic
+    // on the shared SPI bus between the SD transactions. Costs one UI hitch
+    // per flush while degraded; a single success resets the counter and the
+    // next flush goes back to the async task. The threshold is a setting
+    // (Settings -> General; default 2, 0 = never fall back).
+    const uint8_t sync_after = touchPrefsGetHistSyncAfter();
+    if (sync_after && s_msgs_write_fails >= sync_after) {
+      if (saveMsgsToStorage()) { _msgs_dirty = false; return; }
+      _next_msgs_flush_ms = now + (s_msgs_write_fails >= 5 ? 300000 : 5000);
+      return;
+    }
     // Snapshot the ring (a few ms of PSRAM memcpy) and hand the write to the
     // core-1 hist_flush task (NOT the core-0/Wi-Fi tile worker — see
     // histFlushTaskFn). Messages arriving while it writes stay in the live
