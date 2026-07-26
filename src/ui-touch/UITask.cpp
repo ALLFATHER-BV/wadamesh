@@ -4584,10 +4584,9 @@ static volatile bool s_sdinfo_request  = false;  // UI -> worker: rescan SD usag
 // (Heltec V4); on the loop thread that froze the whole UI, incl. touch wake
 // (the "ui:hist 6140ms" field stall). The loop thread snapshots the ring, the
 // worker writes the snapshot; shutdown/reboot still write synchronously.
-static volatile bool s_hist_flush_req  = false;  // snapshot armed, waiting for the worker
-static volatile bool s_hist_flush_busy = false;  // worker owns the snapshot + the history file
+static volatile bool s_hist_flush_req  = false;  // job armed, waiting for the worker
+static volatile bool s_hist_flush_busy = false;  // worker owns the job snapshot + its segment file
 static volatile bool s_hist_flush_ok   = true;   // last worker write result (retry on false)
-static bool uiHistWorkerFlush();                 // defined with the storage code below
 // Message-ring write health. A failing ui_msgs write used to be 100% silent —
 // the user only found out on the next reboot as "messages from the last N
 // minutes vanished" (the thread list still showed fresh times because the
@@ -4655,6 +4654,33 @@ static volatile bool     s_seg_resync = false;   // card swapped/remounted: rewr
 // the still-authoritative old-format file on the next boot) — it retries the
 // migration instead.
 static bool s_seg_store_ready = false;
+// Durability watermark: highest seq that has landed in a segment file. Ring
+// records with seq above it are the pending-append backlog. Loop-task-owned;
+// advanced only when a write is COMMITTED (worker job observed ok, or a sync
+// write returned true).
+static uint32_t s_seg_flushed_seq = 0;
+
+// One flush job in flight at a time (the existing busy/req protocol). Built
+// and committed on the loop task; the hist_flush worker (or the sync path)
+// only executes it. The snapshot buffer holds at most one segment's records
+// (~80 KB PSRAM) — it replaces the old whole-ring snapshot (1.3 MB).
+enum : uint8_t { SEGJOB_NONE = 0, SEGJOB_APPEND, SEGJOB_COMPACT };
+static uint8_t  s_segjob_kind      = SEGJOB_NONE;
+static uint32_t s_segjob_first_seq = 0;      // target segment (filename key)
+static uint32_t s_segjob_last_seq  = 0;      // newest seq in the job's records
+static bool     s_segjob_create    = false;  // APPEND: file doesn't exist yet (write header)
+static int      s_segjob_n         = 0;
+static UITask::UIMessage* s_segjob_buf = nullptr;
+// fwd decls — scheduler helpers live with the storage code below.
+static int  segBuildAndArmJob(const UITask::UIMessage* ring, int cap, int count, int head);
+static void segCommitJob();
+static bool segMoreWorkPending(uint32_t newest_seq);
+static bool uiSegRunArmedJob();
+static void segMarkSeqDirty(uint32_t seq);
+static void segNoteEvicted(uint32_t seq);
+static void segRetableFromRing(const UITask::UIMessage* ring, int cap, int count, int head, uint32_t newest_seq);
+static int  segGatherRange(const UITask::UIMessage* ring, int cap, int count, int head,
+                           uint32_t lo, uint32_t hi, UITask::UIMessage* out, int max_out);
 // fwd decls — the ops live with the storage code far below.
 static void uiDataEnsureDirs();
 static int  uiSegScan(uint32_t* out_first_seqs, int max_out, bool sweep_tmps);
@@ -24642,7 +24668,7 @@ static void histFlushTaskFn(void*) {
     if (s_hist_flush_req) {
       s_hist_flush_busy = true;
       s_hist_flush_req  = false;
-      s_hist_flush_ok   = uiHistWorkerFlush();
+      s_hist_flush_ok   = uiSegRunArmedJob();   // segmented store: one append/compact per job
       s_hist_flush_busy = false;
     }
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -41093,15 +41119,12 @@ void UITask::markThreadsDirty(unsigned long delay_ms) {
 }
 
 void UITask::markMsgsDirty(unsigned long delay_ms) {
-  // Every flush rewrites the WHOLE ring file on the loop thread, so space the
-  // writes out: at least 30 s for the deep SD ring (~1.1 MB at 5000 slots) and at
-  // least 10 s for the small internal-flash ring (~115 KB) — a busy channel used
-  // to trigger a full rewrite (+ possible SPIFFS GC) ~2 s after EVERY message,
-  // which read as "the device freezes 1-2 s every ~10 s" on stable beta_31.
-  // persistHistoryNow() still forces a write on reboot/shutdown, so a hard crash
-  // costs at most the last few seconds of messages.
-  if (_ui_msg_cap > MAX_UI_MESSAGES) { if (delay_ms < 30000) delay_ms = 30000; }
-  else                               { if (delay_ms < 10000) delay_ms = 10000; }
+  // Segmented store: a flush is now a small APPEND to the active segment
+  // (~240 B per message, off-thread), so the old 10/30 s whole-ring-rewrite
+  // clamps are gone — the hard-cut loss window shrinks to this coalesce.
+  // SPIFFS keeps a slightly higher floor purely as flash-wear pacing.
+  if (uiDataFsIsSdCard()) { if (delay_ms < 2000) delay_ms = 2000; }
+  else                    { if (delay_ms < 5000) delay_ms = 5000; }
   const unsigned long deadline = millis() + delay_ms;
   if (!_msgs_dirty || deadline < _next_msgs_flush_ms)
     _next_msgs_flush_ms = deadline;
@@ -41109,21 +41132,14 @@ void UITask::markMsgsDirty(unsigned long delay_ms) {
   markThreadsDirty(1500);  // thread state (last_ts, unread) changed too — coalesce a message burst into one write
 }
 
-// Snapshot of the message ring handed to the core-0 worker for the off-thread
-// write. Allocated once in PSRAM (ring-sized: ~115 KB SPIFFS ring / ~1.1 MB SD
-// ring); the worker only ever touches the snapshot, never the live ring.
-static UITask::UIMessage* s_hist_snap     = nullptr;
-static int           s_hist_snap_cap      = 0;
-static uint16_t      s_hist_snap_count    = 0;
-static uint16_t      s_hist_snap_head     = 0;
-static uint32_t      s_hist_snap_msgcount = 0;
-
 // Arm an immediate flush of both history files WITHOUT the min-delay clamp and
-// WITHOUT blocking this task: the actual write still happens on the core-0
-// worker (or the sync fallback inside flushHistoryIfDue). Used right after an
-// SD remount — a synchronous persistHistoryNow() there froze the UI for >30 s
-// on a card that mounts fine but times out on large writes.
+// WITHOUT blocking this task: the actual writes happen on the hist_flush
+// worker (or the sync fallback inside flushHistoryIfDue). Called only from the
+// SD remount paths — the card may be a DIFFERENT one now, so the segment
+// table is rebuilt from the ring (s_seg_resync) and the full history re-lands
+// one bounded segment at a time.
 void UITask::flushHistorySoon() {
+  s_seg_resync           = true;
   _msgs_dirty            = true;
   _next_msgs_flush_ms    = millis();
   _threads_dirty         = true;
@@ -41161,12 +41177,20 @@ void UITask::flushHistoryIfDue(unsigned long now) {
     } else if (saveThreadsToStorage()) _threads_dirty = false;
     else _next_threads_flush_ms = now + 2000;
   }
+  // Observe a finished worker job before anything else: the worker only
+  // executes and reports; its table effects (segment sizes, the durability
+  // watermark) are committed HERE on the loop task, so the table has exactly
+  // one writer.
+  if (s_segjob_kind != SEGJOB_NONE && !s_hist_flush_busy && !s_hist_flush_req) {
+    if (s_hist_flush_ok) segCommitJob();
+    s_segjob_kind = SEGJOB_NONE;   // on failure the !ok branch above already re-armed the retry
+  }
   if (_msgs_dirty && now >= _next_msgs_flush_ms) {
     if (s_hist_flush_busy || s_hist_flush_req) {
       // A request is armed but the flush task may not be up yet — kick it so a
       // pending flush can't sit armed forever while messages live only in RAM.
       ensureHistFlushTaskRunning();
-      _next_msgs_flush_ms = now + 1000;   // one flush in flight; new messages ride the next one
+      _next_msgs_flush_ms = now + 1000;   // one job in flight; new messages ride the next one
       return;
     }
 #if defined(ESP32)
@@ -41183,37 +41207,51 @@ void UITask::flushHistoryIfDue(unsigned long now) {
       _next_msgs_flush_ms = now + (s_msgs_write_fails >= 5 ? 300000 : 5000);
       return;
     }
-    // Snapshot the ring (a few ms of PSRAM memcpy) and hand the write to the
-    // core-1 hist_flush task (NOT the core-0/Wi-Fi tile worker — see
-    // histFlushTaskFn). Messages arriving while it writes stay in the live
-    // ring and re-arm the dirty flag, so they land in the next flush.
-    if (!s_hist_snap || s_hist_snap_cap != _ui_msg_cap) {
-      if (s_hist_snap) { heap_caps_free(s_hist_snap); s_hist_snap = nullptr; }
-      s_hist_snap = (UITask::UIMessage*)heap_caps_malloc(sizeof(UITask::UIMessage) * (size_t)_ui_msg_cap,
-                                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-      s_hist_snap_cap = s_hist_snap ? _ui_msg_cap : 0;
-    }
-    if (s_hist_snap) {
-      memcpy(s_hist_snap, _ui_msgs, sizeof(UITask::UIMessage) * (size_t)_ui_msg_cap);
-      s_hist_snap_count    = (uint16_t)_ui_msg_count;
-      s_hist_snap_head     = (uint16_t)_ui_msg_head;
-      s_hist_snap_msgcount = (uint32_t)_msgcount;
-      if (!ensureHistFlushTaskRunning()) {
-        // No worker — fall back to a synchronous write instead of clearing dirty
-        // and losing the snapshot (the whole point of the worker is to stay off
-        // the loop thread; a rare spawn failure must not drop hours of chat).
-        if (saveMsgsToStorage()) _msgs_dirty = false;
-        else _next_msgs_flush_ms = now + 2000;
-        return;
-      }
-      s_hist_flush_req = true;   // the flush task picks it up
-      _msgs_dirty = false;
+    // A failed boot migration means the old-format file is still the on-disk
+    // truth — segments must not be written until it converts (they would
+    // shadow it in the loader's precedence order). The sync drain retries
+    // the migration.
+    if (!s_seg_store_ready) {
+      if (saveMsgsToStorage()) { _msgs_dirty = false; return; }
+      _next_msgs_flush_ms = now + 60000;   // store is sick; don't thrash the bus
       return;
     }
-#endif
-    // No PSRAM for a snapshot: fall back to the old synchronous write.
+    // Card remounted (possibly a different/blank card): rebuild the segment
+    // table from the ring — stale on-disk segments are removed and every
+    // chunk is marked compact-dirty, so the normal job flow below re-lands
+    // the whole history one bounded segment at a time, off-thread.
+    if (s_seg_resync) {
+      segRetableFromRing(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
+                         _ui_seq_next ? _ui_seq_next - 1 : 0);
+      s_seg_resync = false;
+    }
+    // Build the next off-thread job: pending-append batch first, else the
+    // oldest compact-dirty segment. The snapshot is at most ONE segment's
+    // records (~80 KB) — not the old 1.3 MB whole-ring copy.
+    const int armed = segBuildAndArmJob(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head);
+    if (armed == 0) { _msgs_dirty = false; return; }   // everything already durable
+    if (armed < 0 || !ensureHistFlushTaskRunning()) {
+      // No snapshot buffer / no worker — synchronous drain instead of losing
+      // the flush (a rare spawn failure must not drop hours of chat).
+      s_hist_flush_req = false;
+      s_segjob_kind = SEGJOB_NONE;
+      if (saveMsgsToStorage()) { _msgs_dirty = false; return; }
+      _next_msgs_flush_ms = now + 2000;
+      return;
+    }
+    // One job armed for the worker. A multi-segment backlog (burst bigger
+    // than one segment, or several dirty segments) keeps _msgs_dirty set and
+    // reschedules shortly; each cycle moves one segment.
+    if (segMoreWorkPending(_ui_seq_next ? _ui_seq_next - 1 : 0)) {
+      _next_msgs_flush_ms = now + 1500;
+      return;
+    }
+    _msgs_dirty = false;
+    return;
+#else
     if (saveMsgsToStorage()) _msgs_dirty = false;
     else _next_msgs_flush_ms = now + 2000;
+#endif
   }
 }
 
@@ -41540,6 +41578,7 @@ bool UITask::loadMsgsFromSegments() {
   _ui_msg_count = n_keep;
   _ui_msg_head  = n_keep % _ui_msg_cap;
   _ui_seq_next  = max_seq + 1;
+  s_seg_flushed_seq = max_seq;   // everything loaded IS on disk by definition
   // _msgcount isn't stored in segments; the threads-file header carries it and
   // the mesh layer re-asserts it with every message. Keep it monotonic vs seq.
   if ((int)max_seq > _msgcount) _msgcount = (int)max_seq;
@@ -41610,6 +41649,8 @@ bool UITask::migrateRingToSegments() {
   uiDataRemove(k_ui_msgs_path);
   uiDataRemove(k_ui_msgs_tmp_path);
   uiDataRemove(k_ui_msgs_tmp2_path);
+  s_seg_flushed_seq = s_seg_count ? s_seg[s_seg_count - 1].last_seq : 0;
+  s_seg_resync      = false;   // a full write IS the resync
   s_seg_store_ready = true;
   return true;
 #else
@@ -42114,130 +42155,272 @@ static int uiSegScan(uint32_t* out_first_seqs, int max_out, bool sweep_tmps) {
   return n;
 }
 
-static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
-                            uint16_t count, uint16_t head, uint32_t msgcount,
-                            const char* tmp_path) {
-#if defined(ESP32)
-  WdtHeavyGuard _wg;   // a fragmenting write can trigger a multi-second SPIFFS GC
-  errno = 0;
-  File f = uiDataOpen(tmp_path, "w");
-  if (!f) return uiMsgsWriteFail('o');
+// ---- Segmented store: flush scheduling ------------------------------------
+// All of this state is LOOP-TASK-owned; the hist_flush worker only runs
+// uiSegRunArmedJob() and reports through s_hist_flush_ok.
 
-  UiMsgFileHeader hdr{};
-  hdr.magic         = k_ui_msgs_magic;
-  hdr.version       = k_ui_history_version;
-  hdr.msg_rec_size  = static_cast<uint16_t>(sizeof(UiHistoryMsg));
-  // Compact write: emit only the `count` USED records, oldest-first, instead of one
-  // record per ring slot (cap). A user with 200 messages writes ~48 KB, not the full
-  // ~1.2 MB ring, so the delete/clear/reboot flush no longer hitches the UI (that
-  // full-ring rewrite was the "deleting a message is slow" cause). The reader derives
-  // its slot count from the file size and linearizes by (head,count), so an
-  // oldest-first file with head=0 loads byte-for-byte identically.
-  const int wcap = cap > 0 ? cap : 1;
-  const int used = (int)count > cap ? cap : (int)count;
-  const int oldst = (((int)head - used) % wcap + wcap) % wcap;
-  // Deleted messages are tombstones IN RAM (thread[0] == '\0'; the ring can't
-  // compact in place — slot indexes are live UI handles), but writing them out
-  // kept the file at its high-water size forever: delete 1000 messages and
-  // every flush still rewrote them all as full blank records. Skip them here —
-  // the file compacts to the LIVE records on the next flush, shrinking both
-  // the write time and the flash wear. Geometry is unaffected: records stay
-  // oldest-first with head=0 and count = live records actually emitted.
-  int live = 0;
-  for (int k = 0; k < used; ++k)
-    if (msgs[(oldst + k) % wcap].thread[0]) ++live;
-  hdr.ui_msg_count  = static_cast<uint16_t>(live);
-  hdr.ui_msg_head   = 0;   // written oldest-first => the file's ring head sits at 0
-  hdr.msgcount      = msgcount;
-  if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
-    f.close(); uiDataRemove(tmp_path);
-    return uiMsgsWriteFail('h');   // was silently un-counted before
+// Snapshot buffer for one job (<= one segment of records). Lazy, kept for the
+// session — it replaces the old whole-ring snapshot at ~6% of the size.
+static UITask::UIMessage* segEnsureJobBuf() {
+  if (!s_segjob_buf) {
+    const size_t sz = sizeof(UITask::UIMessage) * (size_t)k_ui_seg_records;
+    s_segjob_buf = (UITask::UIMessage*)heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_segjob_buf) s_segjob_buf = (UITask::UIMessage*)heap_caps_malloc(sz, MALLOC_CAP_8BIT);
   }
-
-  const size_t REC = sizeof(UiHistoryMsg);
-  size_t chunk_recs = 6144 / REC;
-  if (chunk_recs < 1) chunk_recs = 1;
-  uint8_t* buf = (uint8_t*)malloc(REC * chunk_recs);   // internal RAM by default
-  bool ok = true;
-  if (buf) {
-    size_t fill = 0;
-    for (int k = 0; ok && k < used; ++k) {
-      const int i = (oldst + k) % wcap;
-      if (!msgs[i].thread[0]) continue;   // tombstone (deleted) — never hits the file
-      UiHistoryMsg* m = reinterpret_cast<UiHistoryMsg*>(buf + fill);
-      memset(m, 0, REC);
-      m->ts          = msgs[i].ts;
-      m->channel     = msgs[i].channel ? 1u : 0u;
-      m->outgoing    = msgs[i].outgoing ? 1u : 0u;
-      m->meta_flags  = msgs[i].meta_flags;
-      m->path_len    = msgs[i].path_len;
-      m->snr_q4      = msgs[i].snr_q4;
-      m->rssi        = msgs[i].rssi;
-      strncpy(m->thread, msgs[i].thread, sizeof(m->thread) - 1);
-      m->thread[sizeof(m->thread) - 1] = '\0';
-      strncpy(m->sender, msgs[i].sender, sizeof(m->sender) - 1);
-      m->sender[sizeof(m->sender) - 1] = '\0';
-      strncpy(m->text, msgs[i].text, sizeof(m->text) - 1);
-      m->text[sizeof(m->text) - 1] = '\0';
-      fill += REC;
-      if (fill == REC * chunk_recs) {
-        ok = (f.write(buf, fill) == fill);
-        fill = 0;
-      }
-    }
-    if (ok && fill > 0) ok = (f.write(buf, fill) == fill);
-    free(buf);
-  } else {
-    UiHistoryMsg m{};
-    for (int k = 0; ok && k < used; ++k) {
-      const int i = (oldst + k) % wcap;
-      if (!msgs[i].thread[0]) continue;   // tombstone (deleted) — never hits the file
-      memset(&m, 0, sizeof(m));
-      m.ts          = msgs[i].ts;
-      m.channel     = msgs[i].channel ? 1u : 0u;
-      m.outgoing    = msgs[i].outgoing ? 1u : 0u;
-      m.meta_flags  = msgs[i].meta_flags;
-      m.path_len    = msgs[i].path_len;
-      m.snr_q4      = msgs[i].snr_q4;
-      m.rssi        = msgs[i].rssi;
-      strncpy(m.thread, msgs[i].thread, sizeof(m.thread) - 1);
-      m.thread[sizeof(m.thread) - 1] = '\0';
-      strncpy(m.sender, msgs[i].sender, sizeof(m.sender) - 1);
-      m.sender[sizeof(m.sender) - 1] = '\0';
-      strncpy(m.text, msgs[i].text, sizeof(m.text) - 1);
-      m.text[sizeof(m.text) - 1] = '\0';
-      ok = (f.write(reinterpret_cast<const uint8_t*>(&m), sizeof(m)) == sizeof(m));
-    }
-  }
-  f.close();
-  if (!ok) { uiDataRemove(tmp_path); return uiMsgsWriteFail('b'); }
-  errno = 0;
-  if (!uiDataReplaceFile(k_ui_msgs_path, tmp_path)) return uiMsgsWriteFail('r');
-  return uiMsgsWriteResult(true);
-#else
-  (void)msgs; (void)cap; (void)count; (void)head; (void)msgcount; (void)tmp_path;
-  return false;
-#endif
+  return s_segjob_buf;
 }
 
-// Worker-side entry: write the snapshot the loop thread armed (core-0 task; the
-// loop thread never waits on this, which is the whole point).
-static bool uiHistWorkerFlush() {
-  if (!s_hist_snap || s_hist_snap_cap <= 0) return false;   // armed without a snapshot — retry
-  return uiWriteMsgsFile(s_hist_snap, s_hist_snap_cap,
-                         s_hist_snap_count, s_hist_snap_head, s_hist_snap_msgcount,
-                         k_ui_msgs_tmp_path);
+// Live records with seq in [lo, hi], chronological, from the ring.
+static int segGatherRange(const UITask::UIMessage* ring, int cap, int count, int head,
+                          uint32_t lo, uint32_t hi, UITask::UIMessage* out, int max_out) {
+  int n = 0;
+  for (int i = 0; i < count && n < max_out; ++i) {
+    const int slot = (head - count + i + cap) % cap;
+    const UITask::UIMessage& m = ring[slot];
+    if (!m.thread[0]) continue;               // tombstone
+    if (m.seq < lo || m.seq > hi) continue;
+    out[n++] = m;
+  }
+  return n;
+}
+
+// Build the next job into the descriptor + snapshot buffer and raise req.
+// Returns 1 = job armed, 0 = nothing pending (all durable), -1 = no buffer.
+static int segBuildAndArmJob(const UITask::UIMessage* ring, int cap, int count, int head) {
+  if (!segEnsureJobBuf()) return -1;
+  // 1) Pending appends: live records newer than the durability watermark,
+  //    chronological, capped to the room left in the active segment.
+  bool create = true;
+  uint32_t target = 0;
+  int room = k_ui_seg_records;
+  if (s_seg_count > 0 && s_seg[s_seg_count - 1].disk_recs < k_ui_seg_records) {
+    create = false;
+    target = s_seg[s_seg_count - 1].first_seq;
+    room   = k_ui_seg_records - (int)s_seg[s_seg_count - 1].disk_recs;
+  }
+  int n = 0;
+  uint32_t last = s_seg_flushed_seq;
+  for (int i = 0; i < count; ++i) {
+    const int slot = (head - count + i + cap) % cap;
+    const UITask::UIMessage& m = ring[slot];
+    if (m.seq <= s_seg_flushed_seq) continue;
+    if (m.thread[0]) {
+      if (n >= room) break;                   // segment full — the rest rides the next cycle
+      s_segjob_buf[n++] = m;
+    }
+    if (m.seq > last) last = m.seq;           // deleted-before-flush records advance the
+                                              // watermark with no write (never hit disk)
+  }
+  if (n > 0) {
+    s_segjob_kind      = SEGJOB_APPEND;
+    s_segjob_first_seq = create ? s_segjob_buf[0].seq : target;
+    s_segjob_last_seq  = last;
+    s_segjob_create    = create;
+    s_segjob_n         = n;
+    s_hist_flush_req   = true;
+    return 1;
+  }
+  if (last > s_seg_flushed_seq) s_seg_flushed_seq = last;   // pure-tombstone tail
+  // 2) Oldest compact-dirty segment: rewrite it from the ring's live records.
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (!s_seg[i].compact_dirty) continue;
+    const int cn = segGatherRange(ring, cap, count, head,
+                                  s_seg[i].first_seq, s_seg[i].last_seq,
+                                  s_segjob_buf, k_ui_seg_records);
+    s_segjob_kind      = SEGJOB_COMPACT;
+    s_segjob_first_seq = s_seg[i].first_seq;
+    s_segjob_last_seq  = cn > 0 ? s_segjob_buf[cn - 1].seq : 0;
+    s_segjob_create    = false;
+    s_segjob_n         = cn;                  // 0 = every record gone -> unlink the file
+    s_hist_flush_req   = true;
+    return 1;
+  }
+  return 0;
+}
+
+// Apply a successfully-executed job to the table (loop task only).
+static void segCommitJob() {
+  if (s_segjob_kind == SEGJOB_APPEND) {
+    if (s_segjob_create && s_seg_count < k_ui_seg_max) {
+      UiSegInfo info{};
+      info.first_seq = s_segjob_first_seq;
+      info.bytes     = (uint32_t)sizeof(UiSegHeader);
+      s_seg[s_seg_count++] = info;
+      s_seg_total_bytes = s_seg_total_bytes + (uint32_t)sizeof(UiSegHeader);
+    }
+    if (s_seg_count > 0) {
+      UiSegInfo& a = s_seg[s_seg_count - 1];
+      a.disk_recs = (uint16_t)(a.disk_recs + s_segjob_n);
+      a.live_recs = (uint16_t)(a.live_recs + s_segjob_n);
+      if (s_segjob_last_seq > a.last_seq) a.last_seq = s_segjob_last_seq;
+      const uint32_t add = (uint32_t)s_segjob_n * (uint32_t)sizeof(UiSegMsg);
+      a.bytes += add;
+      s_seg_total_bytes = s_seg_total_bytes + add;
+    }
+    if (s_segjob_last_seq > s_seg_flushed_seq) s_seg_flushed_seq = s_segjob_last_seq;
+  } else if (s_segjob_kind == SEGJOB_COMPACT) {
+    for (int i = 0; i < s_seg_count; ++i) {
+      if (s_seg[i].first_seq != s_segjob_first_seq) continue;
+      s_seg_total_bytes = (s_seg_total_bytes >= s_seg[i].bytes)
+                              ? s_seg_total_bytes - s_seg[i].bytes : 0;
+      if (s_segjob_n == 0) {
+        for (int k = i; k + 1 < s_seg_count; ++k) s_seg[k] = s_seg[k + 1];
+        --s_seg_count;
+      } else {
+        s_seg[i].disk_recs = s_seg[i].live_recs = (uint16_t)s_segjob_n;
+        s_seg[i].last_seq  = s_segjob_last_seq;
+        s_seg[i].bytes     = (uint32_t)sizeof(UiSegHeader)
+                             + (uint32_t)s_segjob_n * (uint32_t)sizeof(UiSegMsg);
+        s_seg[i].compact_dirty = 0;
+        s_seg_total_bytes  = s_seg_total_bytes + s_seg[i].bytes;
+      }
+      break;
+    }
+  }
+}
+
+static bool segMoreWorkPending(uint32_t newest_seq) {
+  if (newest_seq > s_seg_flushed_seq) return true;
+  for (int i = 0; i < s_seg_count; ++i)
+    if (s_seg[i].compact_dirty) return true;
+  return false;
+}
+
+// Executed by the hist_flush worker (or inline by the sync drain's caller).
+static bool uiSegRunArmedJob() {
+  switch (s_segjob_kind) {
+    case SEGJOB_APPEND:
+      return uiSegAppendRecords(s_segjob_first_seq, s_segjob_create, s_segjob_buf, s_segjob_n);
+    case SEGJOB_COMPACT:
+      return uiSegCompactWrite(s_segjob_first_seq, s_segjob_buf, s_segjob_n, false);
+    default:
+      return true;
+  }
+}
+
+// A record with this seq was tombstoned (deleted) — mark its segment for
+// compaction. Unflushed records (seq above the watermark) need nothing: the
+// append builder skips tombstones, so they simply never reach disk.
+static void segMarkSeqDirty(uint32_t seq) {
+  if (seq == 0 || seq > s_seg_flushed_seq) return;
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (seq >= s_seg[i].first_seq && seq <= s_seg[i].last_seq) {
+      s_seg[i].compact_dirty = 1;
+      return;
+    }
+  }
+}
+
+// The ring overwrote its oldest record (capacity eviction). Deliberately does
+// NOT trigger a rewrite per eviction (that would be write-amplification per
+// message all over again): the segment file only gets unlinked once ALL its
+// records have aged out; a partially-evicted boundary segment keeps its stale
+// tail on disk until the next boot's loader trims it (bounded: one segment).
+static void segNoteEvicted(uint32_t seq) {
+  if (seq == 0) return;
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (seq < s_seg[i].first_seq || seq > s_seg[i].last_seq) continue;
+    if (s_seg[i].live_recs > 0) --s_seg[i].live_recs;
+    if (s_seg[i].live_recs == 0) s_seg[i].compact_dirty = 1;   // job -> unlink (n gathers to 0)
+    return;
+  }
+}
+
+// Card remounted (wedge recovery / reinsert / FM insert): the on-disk segment
+// set may belong to a different card entirely. Start clean: remove whatever
+// segments are found, rebuild the table from the ring's live records with
+// every chunk marked compact-dirty — the normal job flow then re-lands the
+// full history one bounded segment at a time, and the watermark parks at
+// newest_seq so nothing double-appends meanwhile.
+static void segRetableFromRing(const UITask::UIMessage* ring, int cap, int count, int head,
+                               uint32_t newest_seq) {
+  uint32_t seqs[k_ui_seg_max];
+  const int nseg = uiSegScan(seqs, k_ui_seg_max, true);
+  for (int i = 0; i < nseg; ++i) uiSegRemoveFile(seqs[i]);
+  s_seg_count = 0;
+  s_seg_total_bytes = 0;
+  UiSegInfo cur{};
+  int in_chunk = 0;
+  for (int i = 0; i < count; ++i) {
+    const int slot = (head - count + i + cap) % cap;
+    const UITask::UIMessage& m = ring[slot];
+    if (!m.thread[0]) continue;
+    if (in_chunk == 0) {
+      cur = UiSegInfo{};
+      cur.first_seq     = m.seq;
+      cur.compact_dirty = 1;      // "needs writing" — disk_recs stays 0 until the job lands
+    }
+    cur.last_seq = m.seq;
+    ++in_chunk;
+    if (in_chunk == k_ui_seg_records) {
+      cur.live_recs = (uint16_t)in_chunk;
+      if (s_seg_count < k_ui_seg_max) s_seg[s_seg_count++] = cur;
+      in_chunk = 0;
+    }
+  }
+  if (in_chunk > 0 && s_seg_count < k_ui_seg_max) {
+    cur.live_recs = (uint16_t)in_chunk;
+    s_seg[s_seg_count++] = cur;
+  }
+  s_seg_flushed_seq = newest_seq;
 }
 
 bool UITask::saveMsgsToStorage() {
 #if defined(ESP32)
-  // Synchronous write of the LIVE ring — shutdown/reboot and the no-PSRAM
-  // fallback only; the periodic flush goes through the worker snapshot.
-  return uiWriteMsgsFile(_ui_msgs, _ui_msg_cap,
-                         static_cast<uint16_t>(_ui_msg_count),
-                         static_cast<uint16_t>(_ui_msg_head),
-                         static_cast<uint32_t>(_msgcount),
-                         k_ui_msgs_tmp2_path);   // own tmp — never collide with a stalled worker write
+  // Synchronous drain of ALL outstanding message-store work on the LOOP task —
+  // shutdown/reboot, the delete flows (persistHistoryNow), the sync-fallback
+  // and the no-worker fallback all land here. Loop-task writes are the
+  // empirically reliable path on the shared SPI bus. Returns true only when
+  // everything is durable.
+  if (!uiDataFsReady()) return false;
+  if (!s_seg_store_ready) {
+    // A failed boot migration left the old-format file authoritative —
+    // converting it IS the flush (verify-then-delete inside).
+    return migrateRingToSegments();
+  }
+  if (s_seg_resync) {
+    segRetableFromRing(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
+                       _ui_seq_next ? _ui_seq_next - 1 : 0);
+    s_seg_resync = false;
+  }
+  // Drain job by job, executing each here. Appends are NEVER FILE_APPEND on
+  // this path: a worker stalled past uiHistWaitWorkerIdle's 9 s cap could
+  // still hold an append handle on the same file, and two appenders
+  // interleave records — instead the whole (bounded, <= ~60 KB) active
+  // segment is rewritten from the ring via the sync tmp namespace, where
+  // rename-over is last-writer-wins with each candidate internally
+  // consistent.
+  for (int guard = 0; guard < k_ui_seg_max + 4; ++guard) {
+    const int armed = segBuildAndArmJob(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head);
+    if (armed == 0) return true;
+    if (armed < 0) return false;               // no snapshot buffer
+    s_hist_flush_req = false;                  // executed here, not by the worker
+    bool ok;
+    if (s_segjob_kind == SEGJOB_APPEND) {
+      if (s_segjob_create && s_seg_count < k_ui_seg_max) {
+        UiSegInfo info{};
+        info.first_seq = s_segjob_first_seq;
+        s_seg[s_seg_count++] = info;
+      }
+      const int n2 = segGatherRange(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
+                                    s_segjob_first_seq, s_segjob_last_seq,
+                                    s_segjob_buf, k_ui_seg_records);
+      ok = uiSegCompactWrite(s_segjob_first_seq, s_segjob_buf, n2, true);
+      if (ok) {
+        const uint32_t newest = s_segjob_last_seq;
+        s_segjob_kind = SEGJOB_COMPACT;        // commit with absolute-value semantics
+        s_segjob_n    = n2;
+        segCommitJob();
+        if (newest > s_seg_flushed_seq) s_seg_flushed_seq = newest;
+      }
+    } else {
+      ok = uiSegCompactWrite(s_segjob_first_seq, s_segjob_buf, s_segjob_n, true);
+      if (ok) segCommitJob();
+    }
+    s_segjob_kind = SEGJOB_NONE;
+    if (!ok) return false;
+  }
+  return !segMoreWorkPending(_ui_seq_next ? _ui_seq_next - 1 : 0);
 #else
   return false;
 #endif
@@ -42290,6 +42473,7 @@ bool UITask::removeThread(int idx) {
     _ui_msgs[i].thread[0] = '\0';
     _ui_msgs[i].text[0]   = '\0';
     _ui_msgs[i].sender[0] = '\0';
+    segMarkSeqDirty(_ui_msgs[i].seq);
     purged_any = true;
   }
   // Persist the purge — without this the deleted thread's messages survive in
@@ -42512,6 +42696,9 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   int t_idx = findOrCreateThread(thread, channel);
   if (t_idx < 0) return -1;
   UIMessage& m = _ui_msgs[_ui_msg_head];
+  // Full ring: this append overwrites the oldest record — tell the segment
+  // table so a fully-aged-out segment file gets unlinked.
+  if (_ui_msg_count == _ui_msg_cap) segNoteEvicted(m.seq);
   // Bubble timestamps must match the status-bar clock, which reads the NTP-synced ESP32
   // system clock (time(nullptr)) — NOT the mesh RTC (getRTCClock()). On boards whose
   // hardware RTC chip reads BCD/century garbage, getCurrentTime() returned wrong epochs
@@ -43850,6 +44037,7 @@ bool UITask::deleteMessageBySlot(int msg_idx) {
   m.thread[0] = '\0';
   m.text[0]   = '\0';
   m.sender[0] = '\0';
+  segMarkSeqDirty(m.seq);   // the owning segment needs a compaction pass
   _msgs_dirty = true;
   return true;
 }
@@ -43866,6 +44054,7 @@ int UITask::clearThreadHistory(int thread_idx) {
       m.thread[0] = '\0';
       m.text[0]   = '\0';
       m.sender[0] = '\0';
+      segMarkSeqDirty(m.seq);
       ++cleared;
     }
   }
@@ -44584,6 +44773,7 @@ bool UITask::sendSignalProbe() {
 static bool uiHistWaitWorkerIdle() {
   const bool cancelled = s_hist_flush_req;
   s_hist_flush_req = false;
+  if (cancelled) s_segjob_kind = SEGJOB_NONE;   // job never ran — its data stays pending in the ring
   const uint32_t t0 = millis();
   while (s_hist_flush_busy && (uint32_t)(millis() - t0) < 9000) delay(10);
   return cancelled;
