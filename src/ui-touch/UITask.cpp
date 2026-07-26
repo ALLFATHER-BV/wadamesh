@@ -6300,7 +6300,6 @@ static lv_obj_t* s_friendmesh_compass_cardinal_labels[4] = {};
 static lv_obj_t* s_friendmesh_compass_orientation_button = nullptr;
 static lv_obj_t* s_friendmesh_compass_orientation_label = nullptr;
 static lv_obj_t* s_friendmesh_guidance_arrow = nullptr;
-static lv_obj_t* s_friendmesh_guidance_orientation = nullptr;
 static lv_obj_t* s_friendmesh_guidance_mode_button = nullptr;
 static lv_obj_t* s_friendmesh_guidance_mode_label = nullptr;
 static lv_obj_t* s_friendmesh_guidance_title = nullptr;
@@ -18004,13 +18003,17 @@ static void closeFullscreenView() {
   updateGlobalStatusBar();  // restore MESHCOMOD / unread in the status bar
 }
 
-static void fullscreenHomeCb(lv_event_t* e) {
+static void fullscreenExitCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int return_tab = static_cast<int>(reinterpret_cast<intptr_t>(
+      lv_event_get_user_data(e)));
   closeFullscreenView();
-  if (g_lv.tabview) lv_tabview_set_act(g_lv.tabview, HOME_TAB_INDEX, LV_ANIM_OFF);   // back to Home
+  if (g_lv.tabview)
+    lv_tabview_set_act(g_lv.tabview, return_tab, LV_ANIM_OFF);
 }
 
-static lv_obj_t* openFullscreenView(const char* title) {
+static lv_obj_t* openFullscreenView(
+    const char* title, int return_tab = HOME_TAB_INDEX) {
   closeFullscreenView();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -18036,21 +18039,28 @@ static lv_obj_t* openFullscreenView(const char* title) {
   lv_obj_set_pos(body, 0, 0);
   lv_obj_set_style_pad_all(body, 6, LV_PART_MAIN);
 
-  // Home button floats as a small overlay over the top-right of the body.
-  lv_obj_t* home = lv_btn_create(s_fullscreen_view);
-  lv_obj_set_size(home, 40, 28);
-  lv_obj_align(home, LV_ALIGN_TOP_RIGHT, -6, 4);
-  styleButton(home);
-  lv_obj_add_event_cb(home, fullscreenHomeCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* hl = lv_label_create(home);
+  // Most tools retain their Home control at top-right. Views launched from a
+  // specific tab use a conventional Back control at top-left.
+  lv_obj_t* exit = lv_btn_create(s_fullscreen_view);
+  lv_obj_set_size(exit, 40, 28);
+  if (return_tab == HOME_TAB_INDEX)
+    lv_obj_align(exit, LV_ALIGN_TOP_RIGHT, -6, 4);
+  else
+    lv_obj_align(exit, LV_ALIGN_TOP_LEFT, 6, 4);
+  styleButton(exit);
+  lv_obj_add_event_cb(
+      exit, fullscreenExitCb, LV_EVENT_CLICKED,
+      reinterpret_cast<void*>(static_cast<intptr_t>(return_tab)));
+  lv_obj_t* hl = lv_label_create(exit);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hl, LV_SYMBOL_CLOSE);   // red ✕ close
   lv_obj_set_style_text_color(hl, lv_color_hex(0xE05544), LV_PART_MAIN);
 #else
-  lv_label_set_text(hl, LV_SYMBOL_HOME);
+  lv_label_set_text(hl, return_tab == HOME_TAB_INDEX
+                            ? LV_SYMBOL_HOME : LV_SYMBOL_LEFT);
 #endif
   lv_obj_center(hl);
-  lv_obj_move_foreground(home);
+  lv_obj_move_foreground(exit);
   return body;
 }
 
@@ -18957,11 +18967,41 @@ static inline SPIClass* sdSharedSPI() { return tdeckSharedSPI(); }
 // already initialised by the radio/display, so those pins are untouched.
 static bool fmSdTryMount() {
   if (s_sd_mounted) return true;
+  // Honour the backoff here, not only at selected UI call sites. Chat history,
+  // tiles, backups, and the file manager all share this helper; without a
+  // central guard an absent card made history walk the full 6-8 second mount
+  // ladder every few seconds.
+  const uint32_t mountNow = millis();
+  if (s_sd_retry_after_ms &&
+      static_cast<int32_t>(mountNow - s_sd_retry_after_ms) < 0) return false;
 #if defined(TLORA_PAGER)
   if (!pagerSdCardPresent()) return false;
 #endif
+#if defined(HAS_TDECK_GT911)
+  // Arduino-ESP32's SDFS failure path is not re-entrant: two cores can both
+  // enter SD.end()/SD.begin(), one clears s_cards[pdrv], and the other then
+  // dereferences that null slot in sdSelectCard(). The UI and tile/history
+  // worker can reach this helper concurrently, so allow only one mount ladder.
+  static portMUX_TYPE s_mount_mux = portMUX_INITIALIZER_UNLOCKED;
+  static bool s_mount_in_progress = false;
+  bool mountOwner = false;
+  portENTER_CRITICAL(&s_mount_mux);
+  if (!s_mount_in_progress) {
+    s_mount_in_progress = true;
+    mountOwner = true;
+  }
+  portEXIT_CRITICAL(&s_mount_mux);
+  if (!mountOwner) return false;
+#endif
   SPIClass* spi = sdSharedSPI();
-  if (!spi) return false;
+  if (!spi) {
+#if defined(HAS_TDECK_GT911)
+    portENTER_CRITICAL(&s_mount_mux);
+    s_mount_in_progress = false;
+    portEXIT_CRITICAL(&s_mount_mux);
+#endif
+    return false;
+  }
   // Cold microSD cards — especially the first mount after boot — often fail
   // the initial SD.begin and historically only recovered after a physical
   // reinsert (which power-cycles the card). The T-Deck shares ONE power rail
@@ -19009,10 +19049,20 @@ static bool fmSdTryMount() {
     s_sd_size = SD.cardSize();
     s_sd_retry_after_ms = 0;                    // clear any prior backoff
     markSdIo();                                 // mount touched the card -> blip the LED
+#if defined(HAS_TDECK_GT911)
+    portENTER_CRITICAL(&s_mount_mux);
+    s_mount_in_progress = false;
+    portEXIT_CRITICAL(&s_mount_mux);
+#endif
     return true;
   }
   SD.end();                                     // clean up on failure
   s_sd_retry_after_ms = millis() + 10000;       // back off so we don't hammer the card
+#if defined(HAS_TDECK_GT911)
+  portENTER_CRITICAL(&s_mount_mux);
+  s_mount_in_progress = false;
+  portEXIT_CRITICAL(&s_mount_mux);
+#endif
   return false;
 }
 static void fmSdUnmount() {
@@ -27959,9 +28009,6 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
         "Position unavailable", "Member position is invalid");
     return;
   }
-  const bool targetStale = targetInput.observedAt == 0 || now == 0 ||
-      now < targetInput.observedAt ||
-      now - targetInput.observedAt > friendmesh::kDefaultPositionStaleSeconds;
   const double localLat = g_lv.task->getNodeLat();
   const double localLon = g_lv.task->getNodeLon();
   if (localLat == 0.0 && localLon == 0.0) {
@@ -28014,7 +28061,11 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
   friendmesh::CourseToTargetEstimate course = {};
   const FriendMeshMotionTrack* localTrack =
       friendmeshMotionTrackFor(local.subjectId);
-  if (!targetStale && localTrack && localTrack->samples >= 2) {
+  // A saved coordinate is still a valid navigation target even when it came
+  // from a fixed, non-GPS device and has not changed recently. Target age may
+  // make motion prediction unavailable, but it must not disable the user's
+  // local course-over-ground or the turn arrow toward that fixed point.
+  if (localTrack && localTrack->samples >= 2) {
     course = friendmesh::estimateCourseToTarget(
         localTrack->previous, localTrack->current, guidanceTarget, now);
   }
@@ -28041,19 +28092,6 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
     else
       lv_label_set_text(s_friendmesh_compass_orientation_label,
                         "HEADWAY WAIT");
-  }
-  if (s_friendmesh_guidance_orientation) {
-    if (s_friendmesh_guidance_north_mode)
-      lv_label_set_text(s_friendmesh_guidance_orientation,
-                        "NORTH ARROW - ALIGN TOP N");
-    else if (headwayAvailable)
-      lv_label_set_text_fmt(s_friendmesh_guidance_orientation,
-                            "TURN GUIDE - COURSE %s",
-                            friendmeshBearingCardinal(
-                                course.motion.bearingDegrees));
-    else
-      lv_label_set_text(s_friendmesh_guidance_orientation,
-                        "TURN GUIDE WAIT - NORTH FALLBACK");
   }
   if (s_friendmesh_guidance_mode_label) {
     lv_label_set_text(s_friendmesh_guidance_mode_label,
@@ -28130,12 +28168,11 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
              static_cast<double>(distance) / 1000.0);
   char visualStatus[96] = {};
   snprintf(visualStatus, sizeof(visualStatus),
-           "%s%s\n%s  %u\xC2\xB0 %s%s",
+           "%s%s\n%s  %u\xC2\xB0 %s",
            usePrediction ? "Meet " : "",
            contact.name[0] ? contact.name : "Group member",
            distanceText, static_cast<unsigned>(absolute),
-           friendmeshBearingCardinal(absolute),
-           targetStale ? "  STALE" : "");
+           friendmeshBearingCardinal(absolute));
   lv_label_set_text(s_friendmesh_compass_status, visualStatus);
   char ageText[24] = "time unknown";
   if (now && target.capturedAt && now >= target.capturedAt)
@@ -28171,15 +28208,11 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
     }
   } else {
     snprintf(visualMeta, sizeof(visualMeta),
-             "%s\n"
-             "CURRENT POSITION\n"
-             "Seen %s\n"
+             "Last received %s\n"
              "%s",
-             targetStale ? "Position stale"
-                         : "No reliable movement",
              ageText,
              track && track->samples >= 2
-                 ? "Waiting for movement" : "Need 2 recent fixes");
+                 ? "No recent movement" : "No movement history");
   }
   lv_label_set_text(s_friendmesh_compass_meta, visualMeta);
 
@@ -28188,9 +28221,7 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
   else
     friendmeshGuidanceArrowSetBearing(absolute);
   lv_obj_clear_flag(s_friendmesh_guidance_arrow, LV_OBJ_FLAG_HIDDEN);
-  if (targetStale) {
-    lv_label_set_text(s_friendmesh_guidance_title, "Verify position");
-  } else if (course.courseUsable && !s_friendmesh_guidance_north_mode) {
+  if (course.courseUsable && !s_friendmesh_guidance_north_mode) {
     lv_label_set_text(s_friendmesh_guidance_title,
                       friendmeshGuidanceTurnInstruction(
                           static_cast<int>(course.turnDegrees)));
@@ -28208,12 +28239,7 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
                           distanceText,
                           static_cast<unsigned long>(walkMinutes));
   }
-  if (targetStale) {
-    lv_label_set_text(s_friendmesh_guidance_motion,
-                      "Friend position is stale");
-    lv_label_set_text(s_friendmesh_guidance_confidence,
-                      "Headway paused - refresh the position");
-  } else if (course.courseUsable) {
+  if (course.courseUsable) {
     char localSpeedText[20] = {};
     snprintf(localSpeedText, sizeof(localSpeedText), "%.1f m/s",
              static_cast<double>(course.motion.speedCentimetersPerSecond) /
@@ -28288,8 +28314,7 @@ static void friendmeshCompassRefresh(lv_timer_t*) {
   } else {
     lv_obj_add_flag(s_friendmesh_guidance_toggle, LV_OBJ_FLAG_HIDDEN);
   }
-  lv_label_set_text_fmt(s_friendmesh_guidance_age, "Updated %s%s",
-                        ageText, targetStale ? " - STALE" : "");
+  lv_label_set_text_fmt(s_friendmesh_guidance_age, "Updated %s", ageText);
 }
 
 static void friendmeshGuidanceToggleCb(lv_event_t* e) {
@@ -28335,7 +28360,7 @@ static void friendmeshCompassHelpCb(lv_event_t* e) {
       "OBSERVED AND PREDICTED\n"
       "The blue dot is the latest observed position. The gray trail shows the "
       "previous position. The dashed green segment leads to the 45-second "
-      "prediction. Predictions stop when data is stale, noisy, or implausible.\n\n"
+      "prediction. Predictions stop when data is old, noisy, or implausible.\n\n"
       "NORTH-UP ON T-DECK\n"
       "The top of the dial is north. The T-Deck does not sense which way you "
       "are holding it. Face the top of the device north, then the pointer shows "
@@ -28357,8 +28382,9 @@ static void friendmeshCompassHelpCb(lv_event_t* e) {
       "an absolute north-relative arrow; align the top of the T-Deck with north "
       "in that mode.\n\n"
       "POSITION AGE\n"
-      "The age says when the friend's position was last received. STALE means "
-      "it is more than 5 minutes old; confirm before relying on it.\n\n"
+      "The age says when the friend's position was last received. A saved "
+      "coordinate remains usable as a fixed destination; only live movement "
+      "prediction expires when updates stop.\n\n"
       "PREDICTION QUALITY\n"
       "Good means the two saved samples are recent and far enough apart to rise above "
       "normal GPS drift. It is still an estimate, not a guaranteed intercept.\n\n"
@@ -28389,7 +28415,7 @@ static void openFriendMeshCompass(int contactIndex) {
   if (s_friendmesh_map_channel_name[0])
     snprintf(title, sizeof(title), "Compass - %.27s",
              s_friendmesh_map_channel_name);
-  lv_obj_t* body = openFullscreenView(title);
+  lv_obj_t* body = openFullscreenView(title, MAP_TAB_INDEX);
   s_friendmesh_compass_contact_idx = contactIndex;
   s_friendmesh_compass_notice_attempted = false;
   s_friendmesh_compass_use_current = false;
@@ -28424,7 +28450,8 @@ static void openFriendMeshCompass(int contactIndex) {
   lv_obj_remove_style_all(dial);
   lv_obj_set_size(dial, kFriendMeshCompassDialSize,
                   kFriendMeshCompassDialSize);
-  lv_obj_set_pos(dial, 4, 8);
+  // Leave the upper-left corner clear for the Back-to-Map control.
+  lv_obj_set_pos(dial, 4, 32);
   lv_obj_set_style_border_width(dial, 2, LV_PART_MAIN);
   lv_obj_set_style_border_color(dial, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_radius(dial, kFriendMeshCompassDialSize / 2, LV_PART_MAIN);
@@ -28592,17 +28619,8 @@ static void openFriendMeshCompass(int contactIndex) {
                                    LV_PART_MAIN);
 
   // Page two: a plain-language travel instruction with the same live target.
-  s_friendmesh_guidance_orientation = lv_label_create(
-      s_friendmesh_compass_guidance_page);
-  lv_obj_set_size(s_friendmesh_guidance_orientation, 160, 22);
-  lv_obj_set_pos(s_friendmesh_guidance_orientation, 8, 8);
-  lv_label_set_long_mode(s_friendmesh_guidance_orientation, LV_LABEL_LONG_DOT);
-  lv_label_set_text(s_friendmesh_guidance_orientation,
-                    "N  Align top with NORTH");
-  lv_obj_set_style_text_font(s_friendmesh_guidance_orientation,
-                             &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(s_friendmesh_guidance_orientation,
-                              lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  // The mode button already communicates TURN versus NORTH, so the former
+  // top title was redundant.
   s_friendmesh_guidance_mode_button = lv_btn_create(
       s_friendmesh_compass_guidance_page);
   lv_obj_set_size(s_friendmesh_guidance_mode_button, 96, 28);
@@ -28619,7 +28637,7 @@ static void openFriendMeshCompass(int contactIndex) {
   lv_obj_center(s_friendmesh_guidance_mode_label);
   s_friendmesh_guidance_arrow = lv_line_create(
       s_friendmesh_compass_guidance_page);
-  lv_obj_set_pos(s_friendmesh_guidance_arrow, 4, 0);
+  lv_obj_set_pos(s_friendmesh_guidance_arrow, 4, 8);
   lv_obj_set_style_line_width(s_friendmesh_guidance_arrow, 9, LV_PART_MAIN);
   lv_obj_set_style_line_color(s_friendmesh_guidance_arrow,
                               lv_color_hex(0x58BFA5), LV_PART_MAIN);
@@ -43043,6 +43061,13 @@ static uint16_t      s_hist_snap_head     = 0;
 static uint32_t      s_hist_snap_msgcount = 0;
 
 void UITask::flushHistoryIfDue(unsigned long now) {
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // The required SD failed during boot. Preserve the dirty in-RAM history, but
+  // do no filesystem or worker work until the user re-seats the card and
+  // reboots; uiDataFsReady() enforces the same boundary for forced saves.
+  extern bool g_long_term_storage_sd_missing;
+  if (g_long_term_storage_sd_missing) return;
+#endif
   // A worker write failed (storage hiccup): re-arm and try again.
   if (!s_hist_flush_ok) { s_hist_flush_ok = true; markMsgsDirty(5000); }
   // Thread metadata (~4 KB) flushes on a short delay; the message ring
@@ -43131,6 +43156,14 @@ static bool uiDataFsReady() {
   // survives a reflash) and is where chat history already lives. Prefer it; only
   // fall back to internal SPIFFS if no card is present. (Do NOT format/prefer
   // SPIFFS here — doing so orphaned the on-SD history.)
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // Boot already exhausted the mount ladder and deliberately placed the
+  // internal recovery store in read-only mode. Periodic history flushing must
+  // remain RAM-only for this boot; retrying SD.begin() here freezes the UI and
+  // can race the background worker inside Arduino's non-reentrant SD driver.
+  extern bool g_long_term_storage_sd_missing;
+  if (g_long_term_storage_sd_missing) return false;
+#endif
   if (SD.cardType() != CARD_NONE || fmSdTryMount()) {
     s_sd_mounted = true;
     SD.mkdir("/meshcomod");
