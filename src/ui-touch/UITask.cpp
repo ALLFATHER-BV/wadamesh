@@ -41492,6 +41492,17 @@ bool UITask::loadHistoryFromStorage() {
       _ui_threads[i].has_mention = false;
     }
   }
+  // Backfill per-record sequence numbers for records loaded from the pre-segment
+  // formats (the single-file/legacy records carry no seq on disk): stamp them in
+  // chronological order and seed the generator past them. The segmented loader
+  // will restore REAL seqs from disk and skip this backfill.
+  {
+    for (int i = 0; i < _ui_msg_count; ++i) {
+      const int slot = (_ui_msg_head - _ui_msg_count + i + _ui_msg_cap) % _ui_msg_cap;
+      _ui_msgs[slot].seq = (uint32_t)(i + 1);
+    }
+    _ui_seq_next = (uint32_t)_ui_msg_count + 1;
+  }
   return true;
 #else
   return false;
@@ -41981,6 +41992,7 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
     time_t sys = time(nullptr);
     m.ts = (sys > 1700000000) ? (uint32_t)sys : (uint32_t)(millis() / 1000);
   }
+  m.seq = _ui_seq_next++;   // monotonic record id — the segment store keys on it
   m.channel = channel;
   m.outgoing = outgoing;
   m.ack_hash    = ack_hash;

@@ -60,6 +60,12 @@ public:
 
   struct UIMessage {
     uint32_t ts;
+    // Monotonic per-record sequence number, assigned at append and persisted by
+    // the segmented store (its record-to-segment mapping keys on seq ranges).
+    // NEVER reset mid-session; the boot loader seeds the generator from
+    // max(loaded seq)+1. Distinct from _msgcount, which the companion protocol
+    // may overwrite (msgRead) and therefore cannot be a unique key.
+    uint32_t seq;
     bool channel;
     bool outgoing;
     uint32_t ack_hash;       // expected-ack for outgoing DMs (0 if none / channel / incoming)
@@ -132,6 +138,9 @@ private:
   char _alert[80];
   unsigned long _alert_expiry;
   int _msgcount;
+  /** Next UIMessage::seq to hand out. Seeded by the loader (max loaded seq + 1),
+   *  strictly monotonic for the session. See UIMessage::seq. */
+  uint32_t _ui_seq_next = 1;
   int _ui_msg_count;
   int _ui_msg_head;
   /** Runtime ring capacity: MAX_UI_MESSAGES_SD when history lives on an SD card,
