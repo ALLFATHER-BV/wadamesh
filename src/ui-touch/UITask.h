@@ -243,6 +243,8 @@ private:
   bool loadThreadsFromStorage();
   bool loadMsgsFromStorage();
   bool loadLegacyHistoryFromStorage();
+  bool loadMsgsFromSegments();     // segmented store (generation 3) loader
+  bool migrateRingToSegments();    // one-time old-format -> segments migration (verify-then-delete)
   bool saveThreadsToStorage();
   bool saveMsgsToStorage();
 

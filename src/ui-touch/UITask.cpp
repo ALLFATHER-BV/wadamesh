@@ -4633,6 +4633,36 @@ static void chatSaveFailText(char* out, size_t cap) {
 }
 static bool uiDataFsIsSdCard();                  // fwd (storage code below) — About page shows the resolved backend
 static File uiDataOpen(const char* name, const char* mode);   // fwd — About page reads the msgs file size
+
+// ---- Segmented store: runtime segment table (loop-task-owned) --------------
+// Oldest-first view of the on-disk segment set. Rebuilt by the boot loader,
+// consulted and updated by the flush scheduler. The hist_flush worker never
+// touches it — it only executes fully-described jobs and reports ok/fail.
+struct UiSegInfo {
+  uint32_t first_seq;      // filename key + first record's seq
+  uint32_t last_seq;       // newest seq physically in the FILE
+  uint32_t bytes;          // file size (header + records) — arithmetic, never stat()
+  uint16_t disk_recs;      // records physically in the file
+  uint16_t live_recs;      // of those, how many are still live in the RAM ring
+  uint8_t  compact_dirty;  // RAM tombstones/drops within this segment -> rewrite due
+};
+static UiSegInfo s_seg[k_ui_seg_max];
+static int       s_seg_count = 0;
+static volatile uint32_t s_seg_total_bytes = 0;  // writer-maintained; About page reads it
+static volatile bool     s_seg_resync = false;   // card swapped/remounted: rewrite everything from RAM
+// False until the boot loader read segments OR the one-time migration landed.
+// While false the flush scheduler must not append segments (they would shadow
+// the still-authoritative old-format file on the next boot) — it retries the
+// migration instead.
+static bool s_seg_store_ready = false;
+// fwd decls — the ops live with the storage code far below.
+static void uiDataEnsureDirs();
+static int  uiSegScan(uint32_t* out_first_seqs, int max_out, bool sweep_tmps);
+static bool uiSegOpenValidated(uint32_t first_seq, File& f, uint16_t* rec_size_out);
+static bool uiSegReadRec(File& f, uint16_t disk_sz, UITask::UIMessage* out, uint32_t* seq_out);
+static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs, int n, bool sync_writer);
+static bool uiSegAppendRecords(uint32_t first_seq, bool create, const UITask::UIMessage* recs, int n);
+static void uiSegRemoveFile(uint32_t first_seq);
 static volatile bool s_sdinfo_done     = false;  // worker -> UI: a result exists
 static volatile bool s_sdinfo_ok       = false;  // card present + sizes valid
 static uint64_t      s_sdinfo_tot      = 0;
@@ -41309,6 +41339,10 @@ bool UITask::loadThreadsFromStorage() {
   const size_t disk_sz =
       (hdr.version >= 5 && hdr.thread_rec_size) ? hdr.thread_rec_size : sizeof(UiHistoryThread);
   if (disk_sz == 0 || disk_sz > 4096) { f.close(); uiDataRemove(k_ui_threads_path); return false; }
+  // Restore the companion message counter carried here for the segmented msgs
+  // store (older writers left it 0; the msgs-file loaders overwrite it anyway
+  // when they run, and the mesh re-asserts it with every message).
+  if (hdr.msgcount) _msgcount = static_cast<int>(hdr.msgcount);
 
   UiHistoryThread t{};
   for (int i = 0; i < MAX_UI_THREADS; ++i) {
@@ -41414,6 +41448,175 @@ bool UITask::loadMsgsFromStorage() {
 #endif
 }
 
+// Segmented-store loader (generation 3). Reads every discovered segment
+// oldest-first into the ring, quarantining corrupt segments INDIVIDUALLY (the
+// single-file store threw the entire history away on one bad record), keeping
+// the newest <= cap records when the on-disk set is larger than this boot's
+// ring (card written under the deep cap, loaded under the small one), and
+// leaving the ring LINEAR (slot 0 = oldest, head = n) — the same post-load
+// invariant every ring consumer relies on. Returns false when no segment
+// files exist at all, so the caller can fall back to the older formats.
+bool UITask::loadMsgsFromSegments() {
+#if defined(ESP32)
+  uint32_t seqs[k_ui_seg_max];
+  const int nseg = uiSegScan(seqs, k_ui_seg_max, true /*sweep orphaned tmps*/);
+  s_seg_count = 0;
+  s_seg_total_bytes = 0;
+  if (nseg <= 0) return false;
+
+  WdtHeavyGuard _wg;   // ~20 segment reads on a cold card can take a while
+  int w = 0;           // running chronological index; ring slot = w % cap
+  uint32_t max_seq = 0;
+  for (int si = 0; si < nseg; ++si) {
+    File f;
+    uint16_t rec_sz = 0;
+    if (!uiSegOpenValidated(seqs[si], f, &rec_sz)) {
+      uiSegRemoveFile(seqs[si]);   // quarantine THIS segment only
+      continue;
+    }
+    UiSegInfo info{};
+    info.first_seq = seqs[si];
+    UIMessage rec;
+    uint32_t seq = 0;
+    uint16_t nrec = 0;
+    while (uiSegReadRec(f, rec_sz, &rec, &seq)) {   // stops at EOF or a crash-ragged tail
+      if (rec.seq == 0) rec.seq = max_seq + 1;      // defensive backfill (pre-seq record)
+      if (rec.seq > max_seq) max_seq = rec.seq;
+      info.last_seq = rec.seq;
+      _ui_msgs[w % _ui_msg_cap] = rec;
+      ++w;
+      ++nrec;
+    }
+    f.close();
+    info.disk_recs = nrec;
+    info.live_recs = nrec;
+    info.bytes     = (uint32_t)sizeof(UiSegHeader) + (uint32_t)nrec * (uint32_t)rec_sz;
+    if (nrec == 0) { uiSegRemoveFile(seqs[si]); continue; }   // header-only husk — reclaim
+    if (s_seg_count < k_ui_seg_max) s_seg[s_seg_count++] = info;
+  }
+
+  const int total  = w;
+  const int n_keep = total > _ui_msg_cap ? _ui_msg_cap : total;
+  if (total > _ui_msg_cap) {
+    // The ring wrapped while loading: the oldest KEPT record sits at slot
+    // total % cap. Rotate left by that amount so the ring is linear again.
+    // Three-reversal rotation: O(cap) record swaps, no large temp buffer.
+    const int cap = _ui_msg_cap;
+    const int k = total % cap;
+    if (k > 0) {
+      auto rev = [this](int a, int b) {
+        while (a < b) {
+          UIMessage t = _ui_msgs[a];
+          _ui_msgs[a] = _ui_msgs[b];
+          _ui_msgs[b] = t;
+          ++a; --b;
+        }
+      };
+      rev(0, k - 1);
+      rev(k, cap - 1);
+      rev(0, cap - 1);
+    }
+  }
+
+  // Reconcile the table with any dropped-oldest records: fully-dropped
+  // segments violate the disk == ring invariant and are deleted outright; the
+  // boundary segment keeps its file but is marked compact-dirty so the next
+  // compaction (rewritten from the RAM ring) trims it to the kept records.
+  const uint32_t min_kept_seq = n_keep > 0 ? _ui_msgs[0].seq : 0;
+  int out = 0;
+  uint32_t total_bytes = 0;
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (n_keep == 0 || s_seg[i].last_seq < min_kept_seq) {
+      uiSegRemoveFile(s_seg[i].first_seq);
+      continue;
+    }
+    if (s_seg[i].first_seq < min_kept_seq) s_seg[i].compact_dirty = 1;
+    total_bytes += s_seg[i].bytes;
+    s_seg[out++] = s_seg[i];
+  }
+  s_seg_count = out;
+  s_seg_total_bytes = total_bytes;
+
+  _ui_msg_count = n_keep;
+  _ui_msg_head  = n_keep % _ui_msg_cap;
+  _ui_seq_next  = max_seq + 1;
+  // _msgcount isn't stored in segments; the threads-file header carries it and
+  // the mesh layer re-asserts it with every message. Keep it monotonic vs seq.
+  if ((int)max_seq > _msgcount) _msgcount = (int)max_seq;
+  s_seg_store_ready = true;
+  return true;
+#else
+  return false;
+#endif
+}
+
+// One-time migration: the ring was just loaded from an OLD format (split v6
+// single file or the legacy combined file) — write it out as segments, read
+// every segment back and verify counts + seq bounds, and only then delete the
+// old msgs file. Any failure rolls the segment set back completely so the
+// intact old file stays authoritative on the next boot (a partial segment set
+// would otherwise shadow it in the loader's precedence order).
+bool UITask::migrateRingToSegments() {
+#if defined(ESP32)
+  uiDataEnsureDirs();
+  s_seg_count = 0;
+  s_seg_total_bytes = 0;
+  const int n = _ui_msg_count;   // ring is linear post-load: slots 0..n-1, oldest first
+  bool ok = true;
+  for (int base = 0; base < n && ok; base += k_ui_seg_records) {
+    int cnt = n - base;
+    if (cnt > k_ui_seg_records) cnt = k_ui_seg_records;
+    const uint32_t fseq = _ui_msgs[base].seq;
+    ok = uiSegCompactWrite(fseq, &_ui_msgs[base], cnt, true /*sync-writer tmp*/);
+    if (ok && s_seg_count < k_ui_seg_max) {
+      UiSegInfo info{};
+      info.first_seq = fseq;
+      info.last_seq  = _ui_msgs[base + cnt - 1].seq;
+      info.disk_recs = info.live_recs = (uint16_t)cnt;
+      info.bytes     = (uint32_t)sizeof(UiSegHeader) + (uint32_t)cnt * (uint32_t)sizeof(UiSegMsg);
+      s_seg[s_seg_count++] = info;
+    }
+  }
+  if (ok) {
+    // Read-back verification: every segment must reproduce its exact record
+    // count and seq bounds before the old file may be deleted.
+    for (int i = 0; ok && i < s_seg_count; ++i) {
+      File f;
+      uint16_t rec_sz = 0;
+      if (!uiSegOpenValidated(s_seg[i].first_seq, f, &rec_sz)) { ok = false; break; }
+      UIMessage r;
+      uint32_t seq = 0, first = 0, last = 0;
+      uint16_t cnt = 0;
+      while (uiSegReadRec(f, rec_sz, &r, &seq)) {
+        if (cnt == 0) first = seq;
+        last = seq;
+        ++cnt;
+      }
+      f.close();
+      ok = (cnt == s_seg[i].disk_recs &&
+            first == s_seg[i].first_seq &&
+            last == s_seg[i].last_seq);
+    }
+  }
+  if (!ok) {
+    for (int i = 0; i < s_seg_count; ++i) uiSegRemoveFile(s_seg[i].first_seq);
+    s_seg_count = 0;
+    s_seg_total_bytes = 0;
+    return false;   // old file untouched; the scheduler retries the migration later
+  }
+  uint32_t total_bytes = 0;
+  for (int i = 0; i < s_seg_count; ++i) total_bytes += s_seg[i].bytes;
+  s_seg_total_bytes = total_bytes;
+  uiDataRemove(k_ui_msgs_path);
+  uiDataRemove(k_ui_msgs_tmp_path);
+  uiDataRemove(k_ui_msgs_tmp2_path);
+  s_seg_store_ready = true;
+  return true;
+#else
+  return false;
+#endif
+}
+
 bool UITask::loadLegacyHistoryFromStorage() {
 #if defined(ESP32)
   File f = uiDataOpen(k_ui_history_path, "r");
@@ -41507,18 +41710,28 @@ bool UITask::loadLegacyHistoryFromStorage() {
 
 bool UITask::loadHistoryFromStorage() {
 #if defined(ESP32)
-  // Hygiene: a crash/power-cut mid-flush can orphan a temp file; they're never
-  // read (the loader only opens the final path), just reclaim the space.
-  uiDataRemove(k_ui_msgs_tmp_path);
-  uiDataRemove(k_ui_msgs_tmp2_path);
   const bool have_threads = loadThreadsFromStorage();
-  const bool have_msgs    = loadMsgsFromStorage();
-  if (!have_threads && !have_msgs) {
-    // Neither split file found — try the legacy combined format for migration.
-    if (!loadLegacyHistoryFromStorage()) return false;
-    // Schedule writes of the new split files; old file is left in place.
-    markThreadsDirty(500);
-    markMsgsDirty(500);
+  // Format precedence: segments (generation 3) > split v6 single file >
+  // legacy combined file. The older loaders are retained as migration
+  // readers; whenever one of them supplies the ring, migrateRingToSegments()
+  // below converts it (verify-then-delete, rollback on any failure).
+  const bool from_segments = loadMsgsFromSegments();
+  bool have_msgs = from_segments;
+  if (!from_segments) {
+    // Single-file-era hygiene: a crash mid-flush can orphan a temp file;
+    // they're never read, just reclaim the space. (Segment tmps are swept by
+    // the scan inside loadMsgsFromSegments.)
+    uiDataRemove(k_ui_msgs_tmp_path);
+    uiDataRemove(k_ui_msgs_tmp2_path);
+    have_msgs = loadMsgsFromStorage();
+    if (!have_threads && !have_msgs) {
+      // Neither split file found — try the legacy combined format.
+      if (!loadLegacyHistoryFromStorage()) return false;
+      // Schedule the split threads-file write; messages land in segments via
+      // the migration below (the legacy combined file is left in place, as
+      // the split migration always did).
+      markThreadsDirty(500);
+    }
   }
   // Clear persisted unread counts for threads whose messages are no longer in
   // the ring. The display ring is a fixed-size cache independent of the unread
@@ -41533,16 +41746,19 @@ bool UITask::loadHistoryFromStorage() {
       _ui_threads[i].has_mention = false;
     }
   }
-  // Backfill per-record sequence numbers for records loaded from the pre-segment
-  // formats (the single-file/legacy records carry no seq on disk): stamp them in
-  // chronological order and seed the generator past them. The segmented loader
-  // will restore REAL seqs from disk and skip this backfill.
-  {
+  if (!from_segments) {
+    // Backfill per-record sequence numbers for records loaded from the
+    // pre-segment formats (their records carry no seq on disk): stamp them in
+    // chronological order, seed the generator past them, then convert the
+    // ring to segments. A failed migration leaves the old file authoritative
+    // and s_seg_store_ready false — the flush scheduler retries it before it
+    // will write any segment.
     for (int i = 0; i < _ui_msg_count; ++i) {
       const int slot = (_ui_msg_head - _ui_msg_count + i + _ui_msg_cap) % _ui_msg_cap;
       _ui_msgs[slot].seq = (uint32_t)(i + 1);
     }
     _ui_seq_next = (uint32_t)_ui_msg_count + 1;
+    migrateRingToSegments();
   }
   return true;
 #else
@@ -41562,6 +41778,9 @@ bool UITask::saveThreadsToStorage() {
   hdr.thread_rec_size       = static_cast<uint16_t>(sizeof(UiHistoryThread));
   hdr.active_thread_idx     = static_cast<int16_t>(_active_thread_idx);
   hdr.active_thread_is_channel = _active_thread_is_channel ? 1u : 0u;
+  // The segmented msgs store doesn't carry the companion message counter —
+  // this (frequently-rewritten, small) file does instead.
+  hdr.msgcount              = static_cast<uint32_t>(_msgcount);
   if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
     f.close(); return false;
   }
