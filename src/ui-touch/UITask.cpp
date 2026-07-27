@@ -327,6 +327,13 @@ struct __attribute__((packed)) UiMsgFileHeader {
 // (31-char limit: "/msgs/seg_4294967295.bin" = 24 chars), so the layout is
 // identical everywhere and no mkdir is required there.
 constexpr const char* k_ui_seg_dir     = "/msgs";
+// Commit marker. Written (last) only once a migration has been fully verified,
+// so its ABSENCE means "the segment set on disk is a partial migration" — the
+// loader then wipes those segments and falls back to the still-intact
+// old-format file. Without it, a power cut between chunk writes left a valid
+// oldest-first PREFIX that shadowed the old file forever: the UI came up
+// showing only the oldest few hundred messages, permanently.
+constexpr const char* k_ui_seg_ok      = "/msgs/store.ok";
 constexpr uint32_t    k_ui_seg_magic   = 0x55495347;   // "UISG"
 constexpr uint16_t    k_ui_seg_version = 1;
 constexpr int         k_ui_seg_records = 256;          // records per segment (~60 KB at v1 size)
@@ -4613,6 +4620,7 @@ static void chatSaveFailText(char* out, size_t cap) {
     case 'c': stage = "compact";     break;   // segmented store: one-segment rewrite
     case 'd': stage = "mkdir";       break;   // segmented store: data-dir create
     case 's': stage = "scan";        break;   // segmented store: segment discovery
+    case 'm': stage = "commit";      break;   // segmented store: migration commit marker
     default:  stage = "save";        break;
   }
   const int e = s_msgs_write_errno;
@@ -4644,11 +4652,22 @@ struct UiSegInfo {
   uint16_t disk_recs;      // records physically in the file
   uint16_t live_recs;      // of those, how many are still live in the RAM ring
   uint8_t  compact_dirty;  // RAM tombstones/drops within this segment -> rewrite due
+  // The FILE's content is untrusted: it may be missing, partially written (a
+  // failed append), or stale (post-resync). Repair = a full rewrite from the
+  // ring that also ABSORBS the unflushed tail, so no append may target it
+  // until that lands. Set on append failure and by segRetableFromRing.
+  uint8_t  rewrite_open;
 };
 static UiSegInfo s_seg[k_ui_seg_max];
 static int       s_seg_count = 0;
 static volatile uint32_t s_seg_total_bytes = 0;  // writer-maintained; About page reads it
 static volatile bool     s_seg_resync = false;   // card swapped/remounted: rewrite everything from RAM
+// Set by segRetableFromRing: on-disk segment files that are NOT part of the
+// rebuilt table must be unlinked — but only once the re-land has landed, so a
+// same-card recovery keeps its durable history readable the whole time
+// (deleting up front turned a recovery into a multi-minute window where a
+// power cut lost everything that had been safe on disk).
+static bool s_seg_stale_purge = false;
 // False until the boot loader read segments OR the one-time migration landed.
 // While false the flush scheduler must not append segments (they would shadow
 // the still-authoritative old-format file on the next boot) — it retries the
@@ -4670,6 +4689,7 @@ struct SegJob {
   uint32_t first_seq = 0;      // target segment (filename key)
   uint32_t last_seq  = 0;      // newest seq covered by the job
   bool     create    = false;  // APPEND: file doesn't exist yet (write header)
+  bool     repair    = false;  // COMPACT of an untrusted file: also absorbs the unflushed tail
   int      n         = 0;
 };
 // The WORKER's armed job. Written only while !(busy || req); the sync drain
@@ -4695,6 +4715,8 @@ static bool uiSegRunArmedJob();
 static void segMarkSeqDirty(uint32_t seq);
 static void segNoteEvicted(uint32_t seq);
 static void segRetableFromRing(const UITask::UIMessage* ring, int cap, int count, int head, uint32_t newest_seq);
+static void segPurgeStaleFiles();
+static bool uiMsgsWriteFail(char stage);   // fwd — failure stage/errno bookkeeping (writer block below)
 static int  segGatherRange(const UITask::UIMessage* ring, int cap, int count, int head,
                            uint32_t lo, uint32_t hi, UITask::UIMessage* out, int max_out);
 static UITask::UIMessage* segEnsureBuf(UITask::UIMessage** slot);
@@ -41332,7 +41354,13 @@ void UITask::flushHistoryIfDue(unsigned long now) {
     SegJob job{};
     const int armed = segBuildJob(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
                                   segEnsureBuf(&s_segjob_buf), &job);
-    if (armed == 0) { _msgs_dirty = false; return; }   // everything already durable
+    if (armed == 0) {
+      // Everything durable. A resync's leftover files can go now that every
+      // table entry has a real, current file on disk.
+      if (s_seg_stale_purge) segPurgeStaleFiles();
+      _msgs_dirty = false;
+      return;
+    }
     if (armed < 0 || !ensureHistFlushTaskRunning()) {
       // No snapshot buffer / no worker — synchronous drain instead of losing
       // the flush (a rare spawn failure must not drop hours of chat).
@@ -41610,6 +41638,19 @@ bool UITask::loadMsgsFromSegments() {
   s_seg_count = 0;
   s_seg_total_bytes = 0;
   if (nseg <= 0) return false;
+  // Commit marker missing => this segment set is an unfinished migration (a
+  // power cut between chunk writes). Wipe it and let the caller fall back to
+  // the old-format file, which migrateRingToSegments only deletes after full
+  // verification.
+  {
+    File okf = uiDataOpen(k_ui_seg_ok, FILE_READ);
+    const bool have_marker = (bool)okf;
+    if (okf) okf.close();
+    if (!have_marker) {
+      for (int i = 0; i < nseg; ++i) uiSegRemoveFile(seqs[i]);
+      return false;
+    }
+  }
 
   WdtHeavyGuard _wg;   // ~20 segment reads on a cold card can take a while
   int w = 0;           // running chronological index; ring slot = w % cap
@@ -41626,9 +41667,16 @@ bool UITask::loadMsgsFromSegments() {
     UIMessage rec;
     uint32_t seq = 0;
     uint16_t nrec = 0;
+    bool     skipped = false;   // duplicates dropped -> file != table -> rewrite it
     while (uiSegReadRec(f, rec_sz, &rec, &seq)) {   // stops at EOF or a crash-ragged tail
+      // Strictly monotonic seq filter. Segments are read in ascending
+      // first_seq order, so a record that does not advance the sequence is a
+      // duplicate or an out-of-order leftover (an interrupted repair, a stale
+      // file a crash left behind, a re-appended batch) — dropping it keeps the
+      // ring chronological and idempotent no matter what the disk holds.
+      if (rec.seq != 0 && rec.seq <= max_seq) { skipped = true; continue; }
       if (rec.seq == 0) rec.seq = max_seq + 1;      // defensive backfill (pre-seq record)
-      if (rec.seq > max_seq) max_seq = rec.seq;
+      max_seq = rec.seq;
       info.last_seq = rec.seq;
       _ui_msgs[w % _ui_msg_cap] = rec;
       ++w;
@@ -41638,6 +41686,9 @@ bool UITask::loadMsgsFromSegments() {
     info.disk_recs = nrec;
     info.live_recs = nrec;
     info.bytes     = (uint32_t)sizeof(UiSegHeader) + (uint32_t)nrec * (uint32_t)rec_sz;
+    // The file holds records the table doesn't account for — rewrite it so disk
+    // and table agree again (also drops the dead weight for good).
+    if (skipped) info.rewrite_open = 1;
     if (nrec == 0) { uiSegRemoveFile(seqs[si]); continue; }   // header-only husk — reclaim
     if (s_seg_count < k_ui_seg_max) s_seg[s_seg_count++] = info;
   }
@@ -41707,23 +41758,48 @@ bool UITask::loadMsgsFromSegments() {
 bool UITask::migrateRingToSegments() {
 #if defined(ESP32)
   uiDataEnsureDirs();
+  // The marker goes away FIRST: from here until the verified end of this
+  // migration the on-disk segment set is provisional, and a boot that finds it
+  // without the marker wipes it and re-reads the (still intact) old file.
+  uiDataRemove(k_ui_seg_ok);
+  {   // clear any earlier/partial set so leftovers can't survive as extra segments
+    uint32_t old_seqs[k_ui_seg_max];
+    const int old_n = uiSegScan(old_seqs, k_ui_seg_max, true);
+    for (int i = 0; i < old_n; ++i) uiSegRemoveFile(old_seqs[i]);
+  }
   s_seg_count = 0;
   s_seg_total_bytes = 0;
-  const int n = _ui_msg_count;   // ring is linear post-load: slots 0..n-1, oldest first
+  UITask::UIMessage* buf = segEnsureBuf(&s_segsync_buf);
+  if (!buf) return false;
+
+  // Walk the ring CHRONOLOGICALLY and skip tombstones. Both matter: this runs
+  // not only at boot (ring linear) but also as a retry after a failed boot
+  // migration, by which time appendMessage may have WRAPPED the ring and the
+  // user may have deleted messages. Slicing raw slots there produced segments
+  // in slot order (first_seq > last_seq, scrambled history that read-back
+  // verification cannot detect) and persisted tombstones as ghost records.
   bool ok = true;
-  for (int base = 0; base < n && ok; base += k_ui_seg_records) {
-    int cnt = n - base;
-    if (cnt > k_ui_seg_records) cnt = k_ui_seg_records;
-    const uint32_t fseq = _ui_msgs[base].seq;
-    ok = uiSegCompactWrite(fseq, &_ui_msgs[base], cnt, true /*sync-writer tmp*/);
-    if (ok && s_seg_count < k_ui_seg_max) {
-      UiSegInfo info{};
-      info.first_seq = fseq;
-      info.last_seq  = _ui_msgs[base + cnt - 1].seq;
-      info.disk_recs = info.live_recs = (uint16_t)cnt;
-      info.bytes     = (uint32_t)sizeof(UiSegHeader) + (uint32_t)cnt * (uint32_t)sizeof(UiSegMsg);
-      s_seg[s_seg_count++] = info;
+  int in_chunk = 0;
+  for (int i = 0; i <= _ui_msg_count && ok; ++i) {
+    const bool flush_chunk = (i == _ui_msg_count) || (in_chunk == k_ui_seg_records);
+    if (flush_chunk && in_chunk > 0) {
+      const uint32_t fseq = buf[0].seq;
+      ok = uiSegCompactWrite(fseq, buf, in_chunk, true /*sync-writer tmp*/);
+      if (ok && s_seg_count < k_ui_seg_max) {
+        UiSegInfo info{};
+        info.first_seq = fseq;
+        info.last_seq  = buf[in_chunk - 1].seq;
+        info.disk_recs = info.live_recs = (uint16_t)in_chunk;
+        info.bytes     = (uint32_t)sizeof(UiSegHeader)
+                         + (uint32_t)in_chunk * (uint32_t)sizeof(UiSegMsg);
+        s_seg[s_seg_count++] = info;
+      }
+      in_chunk = 0;
     }
+    if (i == _ui_msg_count) break;
+    const int slot = (_ui_msg_head - _ui_msg_count + i + _ui_msg_cap) % _ui_msg_cap;
+    if (!_ui_msgs[slot].thread[0]) continue;              // tombstone — never persisted
+    buf[in_chunk++] = _ui_msgs[slot];
   }
   if (ok) {
     // Read-back verification: every segment must reproduce its exact record
@@ -41735,22 +41811,39 @@ bool UITask::migrateRingToSegments() {
       UIMessage r;
       uint32_t seq = 0, first = 0, last = 0;
       uint16_t cnt = 0;
+      bool ordered = true;
       while (uiSegReadRec(f, rec_sz, &r, &seq)) {
         if (cnt == 0) first = seq;
+        else if (seq <= last) ordered = false;   // seqs must strictly increase within a segment
         last = seq;
         ++cnt;
       }
       f.close();
-      ok = (cnt == s_seg[i].disk_recs &&
+      ok = (ordered && cnt == s_seg[i].disk_recs &&
             first == s_seg[i].first_seq &&
             last == s_seg[i].last_seq);
     }
+    // Segments must also be ordered relative to each other.
+    for (int i = 1; ok && i < s_seg_count; ++i)
+      ok = (s_seg[i].first_seq > s_seg[i - 1].last_seq);
   }
   if (!ok) {
     for (int i = 0; i < s_seg_count; ++i) uiSegRemoveFile(s_seg[i].first_seq);
     s_seg_count = 0;
     s_seg_total_bytes = 0;
     return false;   // old file untouched; the scheduler retries the migration later
+  }
+  // Verified. Commit: marker, then drop the old-format files.
+  {
+    File okf = uiDataOpen(k_ui_seg_ok, "w");
+    if (!okf) {   // can't commit -> leave the old file authoritative and retry later
+      for (int i = 0; i < s_seg_count; ++i) uiSegRemoveFile(s_seg[i].first_seq);
+      s_seg_count = 0;
+      s_seg_total_bytes = 0;
+      return uiMsgsWriteFail('m');
+    }
+    okf.print("segstore v1\n");
+    okf.close();
   }
   uint32_t total_bytes = 0;
   for (int i = 0; i < s_seg_count; ++i) total_bytes += s_seg[i].bytes;
@@ -41760,6 +41853,7 @@ bool UITask::migrateRingToSegments() {
   uiDataRemove(k_ui_msgs_tmp2_path);
   s_seg_flushed_seq = s_seg_count ? s_seg[s_seg_count - 1].last_seq : 0;
   s_seg_resync      = false;   // a full write IS the resync
+  s_seg_stale_purge = false;
   s_seg_store_ready = true;
   return true;
 #else
@@ -42110,7 +42204,19 @@ static bool uiSegAppendRecords(uint32_t first_seq, bool create,
   }
   if (ok) ok = uiSegWriteRecords(f, recs, n);
   f.close();
-  if (!ok) return uiMsgsWriteFail('a');
+  if (!ok) {
+    // A short write can have landed whole records already. The file content is
+    // now untrusted: appending the retry after that tail would duplicate (or,
+    // if the failure split a record, MISALIGN) records the loader accepts as
+    // history. Flag the segment so the scheduler repairs it with a full
+    // rewrite before any further append. Volatile-only work — safe from the
+    // worker task; the entry lookup runs on the loop task's table but only
+    // writes a byte the loop task re-reads.
+    for (int i = 0; i < s_seg_count; ++i)
+      if (s_seg[i].first_seq == first_seq) { s_seg[i].rewrite_open = 1; break; }
+    if (create) uiSegRemoveFile(first_seq);   // nothing valid in it yet
+    return uiMsgsWriteFail('a');
+  }
   return uiMsgsWriteResult(true);
 }
 
@@ -42304,6 +42410,27 @@ static int segGatherRange(const UITask::UIMessage* ring, int cap, int count, int
 static int segBuildJob(const UITask::UIMessage* ring, int cap, int count, int head,
                        UITask::UIMessage* buf, SegJob* out) {
   if (!buf) return -1;
+  // 0) REPAIR FIRST. A segment whose file content is untrusted (failed append
+  //    left a partial tail, or a resync left it stale/absent) must be fully
+  //    rewritten before anything appends to it — otherwise a retry appends the
+  //    same batch after the partial tail (duplicate or misaligned records the
+  //    loader would ingest as history) or creates a HEADERLESS file. The
+  //    rewrite absorbs the unflushed tail too, bounded by the segment size;
+  //    whatever doesn't fit stays above the watermark and lands as a normal
+  //    append into the NEXT segment afterwards.
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (!s_seg[i].rewrite_open) continue;
+    const uint32_t hi = (i + 1 < s_seg_count) ? (s_seg[i + 1].first_seq - 1) : 0xFFFFFFFFu;
+    const int rn = segGatherRange(ring, cap, count, head, s_seg[i].first_seq, hi,
+                                  buf, k_ui_seg_records);
+    out->kind      = SEGJOB_COMPACT;   // a compact IS the repair (tmp + rename, header written)
+    out->first_seq = s_seg[i].first_seq;
+    out->last_seq  = rn > 0 ? buf[rn - 1].seq : 0;
+    out->create    = false;
+    out->n         = rn;               // 0 -> unlink (every record in the range is gone)
+    out->repair    = true;             // commit also clears rewrite_open + advances the watermark
+    return 1;
+  }
   // 1) Pending appends: live records newer than the durability watermark,
   //    chronological, capped to the room left in the active segment.
   bool create = true;
@@ -42362,16 +42489,20 @@ static void segCommitJob(const SegJob& job) {
       s_seg[s_seg_count++] = info;
       s_seg_total_bytes = s_seg_total_bytes + (uint32_t)sizeof(UiSegHeader);
     }
-    if (s_seg_count > 0) {
-      UiSegInfo& a = s_seg[s_seg_count - 1];
+    // Credit the job to ITS OWN segment (looked up by key), never blindly to
+    // the last table entry — the table can have changed between arm and commit.
+    for (int i = 0; i < s_seg_count; ++i) {
+      if (s_seg[i].first_seq != job.first_seq) continue;
+      UiSegInfo& a = s_seg[i];
       a.disk_recs = (uint16_t)(a.disk_recs + job.n);
       a.live_recs = (uint16_t)(a.live_recs + job.n);
       if (job.last_seq > a.last_seq) a.last_seq = job.last_seq;
       const uint32_t add = (uint32_t)job.n * (uint32_t)sizeof(UiSegMsg);
       a.bytes += add;
       s_seg_total_bytes = s_seg_total_bytes + add;
+      if (job.last_seq > s_seg_flushed_seq) s_seg_flushed_seq = job.last_seq;
+      break;
     }
-    if (job.last_seq > s_seg_flushed_seq) s_seg_flushed_seq = job.last_seq;
   } else if (job.kind == SEGJOB_COMPACT) {
     for (int i = 0; i < s_seg_count; ++i) {
       if (s_seg[i].first_seq != job.first_seq) continue;
@@ -42390,6 +42521,12 @@ static void segCommitJob(const SegJob& job) {
         // in the file — keep the segment dirty for a follow-up pass.
         s_seg[i].compact_dirty = s_segjob_redirty ? 1 : 0;
         s_seg_total_bytes  = s_seg_total_bytes + s_seg[i].bytes;
+        if (job.repair) {
+          // The file now matches the table exactly, so it is trustworthy again
+          // and the records it absorbed from the unflushed tail are durable.
+          s_seg[i].rewrite_open = 0;
+          if (job.last_seq > s_seg_flushed_seq) s_seg_flushed_seq = job.last_seq;
+        }
       }
       break;
     }
@@ -42399,7 +42536,7 @@ static void segCommitJob(const SegJob& job) {
 static bool segMoreWorkPending(uint32_t newest_seq) {
   if (newest_seq > s_seg_flushed_seq) return true;
   for (int i = 0; i < s_seg_count; ++i)
-    if (s_seg[i].compact_dirty) return true;
+    if (s_seg[i].compact_dirty || s_seg[i].rewrite_open) return true;
   return false;
 }
 
@@ -42448,17 +42585,22 @@ static void segNoteEvicted(uint32_t seq) {
   }
 }
 
-// Card remounted (wedge recovery / reinsert / FM insert): the on-disk segment
-// set may belong to a different card entirely. Start clean: remove whatever
-// segments are found, rebuild the table from the ring's live records with
-// every chunk marked compact-dirty — the normal job flow then re-lands the
-// full history one bounded segment at a time, and the watermark parks at
-// newest_seq so nothing double-appends meanwhile.
+// Card remounted (wedge recovery / reinsert / FM insert / post-format): the
+// on-disk segment set may be stale, foreign, or gone. Rebuild the table from
+// the ring's live records with every chunk marked UNTRUSTED, so the normal job
+// flow rewrites each one (header + records, tmp + rename) one bounded segment
+// at a time.
+//
+// Deliberately does NOT delete anything up front: on a same-card recovery the
+// existing files still hold the very history we are re-landing, and unlinking
+// them first turned recovery into a multi-minute window where a power cut lost
+// data that had been perfectly durable. Same-key files are simply replaced by
+// each repair's rename; anything left over (different chunk boundaries, or a
+// genuinely foreign card) is swept once the re-land is complete — and the
+// loader's seq-monotonic filter makes a leftover harmless even if we crash
+// before that sweep.
 static void segRetableFromRing(const UITask::UIMessage* ring, int cap, int count, int head,
                                uint32_t newest_seq) {
-  uint32_t seqs[k_ui_seg_max];
-  const int nseg = uiSegScan(seqs, k_ui_seg_max, true);
-  for (int i = 0; i < nseg; ++i) uiSegRemoveFile(seqs[i]);
   s_seg_count = 0;
   s_seg_total_bytes = 0;
   UiSegInfo cur{};
@@ -42469,8 +42611,8 @@ static void segRetableFromRing(const UITask::UIMessage* ring, int cap, int count
     if (!m.thread[0]) continue;
     if (in_chunk == 0) {
       cur = UiSegInfo{};
-      cur.first_seq     = m.seq;
-      cur.compact_dirty = 1;      // "needs writing" — disk_recs stays 0 until the job lands
+      cur.first_seq    = m.seq;
+      cur.rewrite_open = 1;       // file content untrusted -> repair rewrites it
     }
     cur.last_seq = m.seq;
     ++in_chunk;
@@ -42485,6 +42627,23 @@ static void segRetableFromRing(const UITask::UIMessage* ring, int cap, int count
     s_seg[s_seg_count++] = cur;
   }
   s_seg_flushed_seq = newest_seq;
+  s_seg_stale_purge = true;   // sweep leftovers once every chunk has landed
+}
+
+// Unlink segment files that are not part of the table. Runs only when no work
+// is pending (so every table entry has a real, current file) — see the purge
+// rationale on segRetableFromRing.
+static void segPurgeStaleFiles() {
+  uint32_t seqs[k_ui_seg_max];
+  const int nseg = uiSegScan(seqs, k_ui_seg_max, true);
+  if (nseg < 0) return;                       // scan location unreadable — try again later
+  for (int i = 0; i < nseg; ++i) {
+    bool keep = false;
+    for (int k = 0; k < s_seg_count; ++k)
+      if (s_seg[k].first_seq == seqs[i]) { keep = true; break; }
+    if (!keep) uiSegRemoveFile(seqs[i]);
+  }
+  s_seg_stale_purge = false;
 }
 
 bool UITask::saveMsgsToStorage() {
@@ -42495,6 +42654,14 @@ bool UITask::saveMsgsToStorage() {
   // empirically reliable path on the shared SPI bus. Returns true only when
   // everything is durable.
   if (!uiDataFsReady()) return false;
+  // A worker that outlived uiHistWaitWorkerIdle's 9 s cap still holds a segment
+  // file OPEN. Writing here would remove/rename a path under that open handle:
+  // with FF_FS_LOCK=0 the stalled handle keeps writing into clusters the FS has
+  // freed and may re-allocate, cross-linking chains and corrupting the volume.
+  // Report failure instead (the caller surfaces "Chat history save FAILED");
+  // the data stays in the RAM ring and the segment is already flagged for a
+  // repair rewrite by uiHistWaitWorkerIdle.
+  if (s_hist_flush_busy) return false;
   if (!s_seg_store_ready) {
     // A failed boot migration left the old-format file authoritative —
     // converting it IS the flush (verify-then-delete inside).
@@ -42517,7 +42684,10 @@ bool UITask::saveMsgsToStorage() {
   for (int guard = 0; guard < k_ui_seg_max + 4; ++guard) {
     SegJob job{};
     const int armed = segBuildJob(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head, buf, &job);
-    if (armed == 0) return true;
+    if (armed == 0) {
+      if (s_seg_stale_purge) segPurgeStaleFiles();   // everything landed — drop leftovers
+      return true;
+    }
     if (armed < 0) return false;               // no snapshot buffer
     bool ok;
     if (job.kind == SEGJOB_APPEND) {
@@ -44896,10 +45066,25 @@ bool UITask::sendSignalProbe() {
 // was never written, so the caller must treat the ring as dirty and write it.
 static bool uiHistWaitWorkerIdle() {
   const bool cancelled = s_hist_flush_req;
+  const uint8_t  had_kind = s_segjob_kind;
+  const uint32_t had_seq  = s_segjob_first_seq;
   s_hist_flush_req = false;
-  if (cancelled) s_segjob_kind = SEGJOB_NONE;   // job never ran — its data stays pending in the ring
   const uint32_t t0 = millis();
   while (s_hist_flush_busy && (uint32_t)(millis() - t0) < 9000) delay(10);
+  // Drop the worker descriptor UNCONDITIONALLY: the caller is about to write
+  // synchronously from the ring, and leaving it armed let the next
+  // flushHistoryIfDue observe a stale job and commit it a SECOND time
+  // (double-counted record/byte totals, or a duplicate table entry).
+  s_segjob_kind    = SEGJOB_NONE;
+  s_segjob_redirty = false;
+  // If the job was already in the worker's hands its fate is now unknown — it
+  // may have written some or all of its records without being credited. Flag
+  // the target segment untrusted so the synchronous drain REWRITES it from the
+  // ring instead of appending on top (which would duplicate whatever landed).
+  if (had_kind != SEGJOB_NONE && !cancelled) {
+    for (int i = 0; i < s_seg_count; ++i)
+      if (s_seg[i].first_seq == had_seq) { s_seg[i].rewrite_open = 1; break; }
+  }
   return cancelled;
 }
 
