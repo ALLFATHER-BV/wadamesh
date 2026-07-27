@@ -4419,6 +4419,7 @@ static void refreshMapInfoLabel();
 static void renderMapTiles();
 static void renderMapMarkers();
 static void freeMapTiles();
+static void mapNoteStorageChanged();   // tile storage appeared/vanished: adopt, invalidate, re-render
 // Single entry point used by tabChangedCb. Recenters on self GPS and
 // rebuilds the tile grid. Defined alongside the map state below.
 static void onMapTabActivated();
@@ -25036,6 +25037,35 @@ static void freeMapTiles() {
   for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) freeMapTileSlot(s_map_tiles[_ti]);
 }
 
+// The tile storage changed underneath us: a card was remounted (wedge recovery,
+// reinsert watch, file-manager insert poll, post-format) or lost. The map keeps
+// decoded tiles in s_map_tiles across renders and only renders on pan / zoom /
+// tab-open, so without this a card that came back showed a permanently blank
+// map — the chat store re-landed (flushHistorySoon) while the map was never
+// told anything had happened.
+//
+//   * adopts the card as the tile cache when this boot had no backend at all
+//     (booted card-less, or the "tiles" partition is absent — Launcher installs)
+//   * drops the decoded tiles, since a swapped card holds different content
+//   * clears the fetch dedup ring so tiles whose download failed during the
+//     outage are retried instead of being remembered as in-flight forever
+//   * re-renders immediately when the map is the visible tab
+static void mapNoteStorageChanged() {
+#if CAP_SD
+  if (s_sd_mounted && !s_tiles_fs_ready) {
+    // No tile backend was resolved at boot; the card can serve as one now
+    // (same layout the boot fallback uses: SD ROOT /tiles/<z>/<x>/<y>).
+    s_tile_fs        = &SD;
+    s_tile_root[0]   = '\0';
+    s_tiles_fs_ready = true;
+  }
+#endif
+  for (int i = 0; i < k_tile_fetch_dedup_size; ++i) s_tile_fetch_dedup[i] = 0;
+  s_tile_fetch_dedup_head = 0;
+  freeMapTiles();
+  if (g_lv.tabview && lv_tabview_get_tab_act(g_lv.tabview) == MAP_TAB_INDEX) renderMapTiles();
+}
+
 #if defined(ESP32)
 // Is *some* tile source available to probe at all? (SD pack or LittleFS /tiles.)
 static bool mapTileSourceReady() {
@@ -45506,6 +45536,7 @@ static void sdHealthTick() {
       uiDataEnsureDirs();   // segment dir too — a fresh replacement card has neither
       if (g_lv.task) g_lv.task->flushHistorySoon();
 #endif
+      mapNoteStorageChanged();   // the map layer has to be told too, or it stays blank
     } else {
       SD.end();                          // leave cardType() honestly CARD_NONE
     }
@@ -45548,11 +45579,13 @@ static void sdHealthTick() {
     uiDataEnsureDirs();                                // segment dir too
     if (g_lv.task) g_lv.task->flushHistorySoon();      // land the RAM ring promptly (off-thread — no UI stall)
 #endif
+    mapNoteStorageChanged();
   } else {
     // Ladder failed — card needs a real power cycle (reinsert). s_sd_mounted is
     // now false and SD.cardType() reads CARD_NONE, so features degrade honestly
     // instead of silently failing, and the usual remount paths keep retrying.
     if (g_lv.task) g_lv.task->showAlert(TR("SD card lost - reinsert to recover"), 2600);
+    mapNoteStorageChanged();   // drop tiles read off the card that just went away
   }
 }
 #endif
@@ -46007,6 +46040,7 @@ void UITask::loop() {
           uiDataEnsureDirs();        // segment dir too
           flushHistorySoon();       // land the RAM ring promptly (off-thread — no UI stall)
 #endif
+          mapNoteStorageChanged();
           if (!s_fm_fs) fmShowRoots();          // refresh roots so it appears
         }
       } else if (!s_hist_flush_busy && !s_hist_flush_req && !sdProbeAlive()) {
@@ -46018,6 +46052,7 @@ void UITask::loop() {
         // later write on it fails FR_INVALID_OBJECT -> EBADF ("bad file
         // number") — recovery must not sabotage the very write it protects.
         fmSdUnmount();
+        mapNoteStorageChanged();
         showAlert(TR("SD card removed"), 1500);
         if (s_fm_fs == &SD || !s_fm_fs) fmShowRoots();
       }
@@ -46518,6 +46553,7 @@ void UITask::loop() {
       // next append targets a segment file that is gone. Rebuild + re-land.
       uiDataEnsureDirs();
       flushHistorySoon();
+      mapNoteStorageChanged();
       char done[56], cs[16];
       fmFmtSize64(s_sd_size, cs, sizeof cs);
       snprintf(done, sizeof done, TR("SD formatted - %s (MESHCOMOD)"), cs);
