@@ -4602,6 +4602,11 @@ static volatile bool s_hist_flush_ok   = true;   // last worker write result (re
 // the About page + the repeated-failure toast in flushHistoryIfDue.
 static volatile uint32_t s_msgs_write_ok_ms   = 0;  // millis() of last successful ring write (0 = none yet)
 static volatile uint32_t s_msgs_write_fail_ms = 0;  // millis() of last failed ring write
+// Wall-clock epochs for the same two events, so the readouts can show WHEN a
+// save happened instead of how long ago. 0 = never, or the system clock wasn't
+// set yet at the time (a relative age would be meaningless anyway).
+static volatile uint32_t s_msgs_write_ok_epoch   = 0;
+static volatile uint32_t s_msgs_write_fail_epoch = 0;
 static volatile uint16_t s_msgs_write_fails   = 0;  // consecutive failures since the last success
 static volatile uint8_t  s_msgs_write_stage   = 0;  // where the last failure hit: 'o' open, 'h' header, 'b' body, 'r' rename
 static volatile int      s_msgs_write_errno   = 0;  // errno at that failure (ENFILE/EMFILE = VFS file table full, ENOSPC = card full, EIO = card error)
@@ -4637,6 +4642,24 @@ static void chatSaveFailText(char* out, size_t cap) {
     default:     why = strerror(e);           break;   // newlib carries the full table
   }
   snprintf(out, cap, "%s failed: %s (e%d)", stage, why, e);
+}
+static void fmtClockHM(char* buf, size_t cap, const struct tm* t);   // fwd: 12/24h-aware HH:MM
+// "When did the chat store last save" as a CLOCK TIME rather than an age:
+// HH:MM (honouring the 12/24h pref), with a "-<N>D" suffix once it is a day or
+// more old, so a stale save is obvious at a glance instead of having to read a
+// growing seconds counter. "--:--" when the event never happened, or happened
+// before the system clock was set (no meaningful timestamp exists).
+static void chatSaveStamp(char* out, size_t cap, uint32_t epoch) {
+  if (!epoch) { snprintf(out, cap, "--:--"); return; }
+  const time_t t = (time_t)epoch;
+  struct tm tmv;
+  if (!localtime_r(&t, &tmv)) { snprintf(out, cap, "--:--"); return; }
+  char hm[12];
+  fmtClockHM(hm, sizeof hm, &tmv);
+  const time_t now_t = time(nullptr);
+  const uint32_t days = (now_t > (time_t)epoch) ? (uint32_t)((now_t - (time_t)epoch) / 86400) : 0;
+  if (days) snprintf(out, cap, "%s-%uD", hm, (unsigned)days);
+  else      snprintf(out, cap, "%s", hm);
 }
 static bool uiDataFsIsSdCard();                  // fwd (storage code below) — About page shows the resolved backend
 static File uiDataOpen(const char* name, const char* mode);   // fwd — About page reads the msgs file size
@@ -10234,17 +10257,18 @@ static void sysInfoTextLive(char* buf, size_t cap) {
     // WATCHING this page.
     const uint32_t nowms = (uint32_t)millis();
     char stat[112];
+    char when[16];
     if (s_msgs_write_fails) {
       char why[64];
       chatSaveFailText(why, sizeof why);
-      snprintf(stat, sizeof stat, "FAIL x%u (%lus ago)\n  %s",
-               (unsigned)s_msgs_write_fails,
-               (unsigned long)((nowms - s_msgs_write_fail_ms) / 1000u),
-               why);
+      chatSaveStamp(when, sizeof when, s_msgs_write_fail_epoch);
+      snprintf(stat, sizeof stat, "FAIL x%u (%s)\n  %s",
+               (unsigned)s_msgs_write_fails, when, why);
     }
-    else if (s_msgs_write_ok_ms)
-      snprintf(stat, sizeof stat, "OK %lus ago",
-               (unsigned long)((nowms - s_msgs_write_ok_ms) / 1000u));
+    else if (s_msgs_write_ok_ms) {
+      chatSaveStamp(when, sizeof when, s_msgs_write_ok_epoch);
+      snprintf(stat, sizeof stat, "OK %s", when);
+    }
     else
       snprintf(stat, sizeof stat, "none this session");
     p += snprintf(buf + p, cap - p,
@@ -22137,12 +22161,14 @@ static uint32_t homeStoreChipText(char* out, size_t cap) {
     snprintf(out, cap, LV_SYMBOL_SAVE " migrating");
     return 0xF5A623;                              // amber
   }
-  const uint32_t b = s_seg_total_bytes;
-  if (b >= 1024u * 1024u)   // 1 MB+ (deep SD ring): one decimal keeps it narrow
-    snprintf(out, cap, LV_SYMBOL_SAVE " %ds %u.%uM", s_seg_count,
-             (unsigned)(b / (1024u * 1024u)), (unsigned)((b / 104858u) % 10u));
-  else
-    snprintf(out, cap, LV_SYMBOL_SAVE " %ds %uK", s_seg_count, (unsigned)(b / 1024u));
+  // Healthy: WHEN the store last saved. A clock time answers "is my history
+  // safe right now?" directly, where a size doesn't — and the segment count /
+  // byte total (plus the failure stage + errno) stay one tap away on the About
+  // page. Older than a day carries a "-<N>D" suffix so a store that quietly
+  // stopped saving yesterday can't read as fresh.
+  char when[16];
+  chatSaveStamp(when, sizeof when, s_msgs_write_ok_epoch);
+  snprintf(out, cap, LV_SYMBOL_SAVE " %s", when);
   return COLOR_SUB;
 }
 
@@ -42066,11 +42092,15 @@ bool UITask::saveThreadsToStorage() {
 // a wedged card gets arbitrated instead of the write failing silently forever.
 static bool uiMsgsWriteResult(bool ok) {
   const uint32_t m = (uint32_t)millis();
+  const time_t   now_t = time(nullptr);
+  const uint32_t ep = (now_t > 1700000000) ? (uint32_t)now_t : 0;   // 0 when the clock is unset
   if (ok) {
     s_msgs_write_ok_ms = m ? m : 1;
+    s_msgs_write_ok_epoch = ep;
     s_msgs_write_fails = 0;
   } else {
     s_msgs_write_fail_ms = m ? m : 1;
+    s_msgs_write_fail_epoch = ep;
     if (s_msgs_write_fails < 0xFFFFu) s_msgs_write_fails = s_msgs_write_fails + 1;
 #if defined(HAS_TDECK_GT911)
     if (s_ui_data_fs == &SD) sdNoteIoFailure();
