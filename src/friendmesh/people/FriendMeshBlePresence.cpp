@@ -199,6 +199,8 @@ class FriendRequestCallbacks : public NimBLECharacteristicCallbacks {
     if (!encoded || length != kFriendRequestEncodedBytes ||
         decodeFriendRequest(encoded, length, request) != ResultCode::Ok ||
         !(request.flags & kFriendRequestFlagNearbyBle)) {
+      Serial.printf("[FM-FRIEND] BLE GATT RX invalid len=%u\n",
+                    (unsigned)length);
       setFriendResponse(nullptr, 2);
       return;
     }
@@ -211,6 +213,14 @@ class FriendRequestCallbacks : public NimBLECharacteristicCallbacks {
       queued = true;
     }
     portEXIT_CRITICAL(&s_presenceMux);
+    Serial.printf("[FM-FRIEND] BLE GATT RX %s id=%02X%02X%02X%02X from=%02X%02X%02X%02X\n",
+                  queued ? "queued" : "busy",
+                  request.requestId[0], request.requestId[1],
+                  request.requestId[2], request.requestId[3],
+                  request.requesterPublicKey[0],
+                  request.requesterPublicKey[1],
+                  request.requesterPublicKey[2],
+                  request.requesterPublicKey[3]);
     setFriendResponse(request.requestId, queued ? 0 : 1);
   }
 };

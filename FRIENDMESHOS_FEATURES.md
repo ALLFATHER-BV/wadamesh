@@ -200,6 +200,26 @@ contact plus any matching cached Discovered entry; a later advert may make that
 node discoverable again. Bulk contact deletion excludes Friends so it cannot
 bypass this distinction.
 
+Friend acceptance and reciprocal removal are idempotent relationship controls,
+not chat messages. The sender keeps at most four controls in RAM, retries each
+on a bounded schedule spaced beyond slow-preset LoRa airtime, and stops after
+an authenticated acknowledgement from the exact peer. Acceptance uses a
+two-phase relationship transition rather than an optimistic local write. The
+recipient keeps the inbox request pending after tapping Accept. The requester
+adds the recipient only after it has received the authenticated acceptance and
+successfully queued the matching authenticated acknowledgement. The recipient
+adds the requester and removes the inbox request only after receiving that
+acknowledgement. If either transmit queue or final Friend storage operation
+fails, the corresponding correlation or pending control remains available for
+retry. The requester keeps eight bounded, RAM-only recently completed request
+IDs bound to the authenticated accepter key. A pending acceptance is ACKed and
+promoted, a completed retry is ACKed without adding or notifying twice, and an
+unknown or stale request ID is not ACKed and cannot change either Friends list.
+Duplicate removals remain quiet. These controls are not persisted across reboot.
+Every completed local or remote Friend mutation explicitly invalidates
+the Contacts/Friends list cache, so a relationship change appears without a
+reboot even when the underlying MeshCore contact count is unchanged.
+
 ### 4.4.1 Public-channel Friend Requests
 
 The T-Deck can turn a currently received public-channel message into an explicit
@@ -220,17 +240,24 @@ format:
    Other channel members may relay/decrypt the group-data carrier but cannot
    make it enter their inbox without the matching sent-message hash.
 5. Contacts -> overflow -> Friend requests presents an opt-in toggle and an
-   Accept/Deny list. Accept adds the full-key Friend card and returns an
-   authenticated/encrypted acceptance over the signed path when available; the
-   requester alone gets a positive notification and automatically adds the
-   accepter. Denial sends nothing and asks whether the recipient also wants to
-   block that full identity. A block drops future requests before inbox storage.
+   Accept/Deny list. Accept keeps the request pending and returns an
+   authenticated/encrypted acceptance over the signed path when available. The
+   requester validates and correlates the acceptance, successfully queues an
+   authenticated acknowledgement, then adds the accepter and shows the sole
+   positive notification. The accepter adds the requester and resolves the
+   inbox entry only after receiving that exact acknowledgement. Acceptance and
+   acknowledgement are retried as the bounded relationship control described
+   above; the recipient does not need to send a second Friend Request. Denial
+   sends nothing and asks whether the recipient also wants to block that full
+   identity. A block drops future requests before inbox storage.
 
-Only one live request per public key can occupy the inbox. Replays and newly
-generated request IDs from that same key do not rewrite storage or retrigger an
-alert until the existing request expires or is resolved. Receiving requests is
-still off by default. Public-key rotation can intentionally create a new
-identity; names are never used as the blocking authority.
+Only one live request per public key can occupy the inbox. An exact replay does
+not rewrite storage or retrigger an alert. A newly verified request ID from that
+same key atomically replaces the older transaction without a second alert, and
+an open inbox is rebuilt immediately so Accept cannot target the superseded ID.
+Receiving requests is still off by default. Public-key rotation can
+intentionally create a new identity; names are never used as the blocking
+authority.
 
 This proves who signed the request and targets a device that recently originated
 the referenced packet. The reversed route is an operational return path, not a
@@ -263,14 +290,33 @@ the complete signature, target, timestamp, receive toggle, block state,
 duplicate identity, and inbox capacity before persistence or notification.
 Disabled and blocked recipients silently discard the request; the transport ACK
 does not reveal that policy to the requester. Accept/Deny/Block then reuse the
-same inbox and behavior as public-channel requests. Acceptance alone adds both
-Friends and notifies the requester. Denial remains silent. A zero-hop MeshCore
-authenticated control carries acceptance because a successful BLE exchange
-establishes immediate radio proximity; physical two-device validation remains
-required.
+same inbox and two-phase behavior as public-channel requests. The requestee
+keeps the inbox item while acceptance is in flight; the requester queues the
+authenticated acknowledgement before adding the requestee, and the requestee
+adds the requester only after that acknowledgement arrives. Denial remains
+silent. A zero-hop MeshCore authenticated control carries acceptance because a
+successful BLE exchange establishes immediate radio proximity; physical
+two-device validation remains required.
 
-The combined T-Deck image is host-build-verified at 89,300 bytes static RAM
-(27.3%) and 3,331,613 bytes flash (82.0%). BLE RSSI and a public-key prefix are
+The diagnostic T-Deck image is host-build-verified at 89,300 bytes static RAM
+(27.3%) and 3,342,637 bytes flash (82.3%). It emits bounded `[FM-FRIEND]`
+serial traces at 115200 baud for public/BLE request receipt, sent-message and
+outgoing-request correlation, inbox persistence, acceptance/removal controls,
+pending-table eviction, retries, acknowledgement queuing/matching, deferred and
+completed Friend storage, and raw anonymous-request radio transmit completion,
+failure, receive route/hops/destination, decrypt length, and envelope magic.
+The receive gate trace also records packet-pool availability, outbound-queue
+depth, parse/dispatcher entry, a short packet hash, callback entry, and
+dispatcher exit. It delegates to MeshCore's normal dispatcher exactly once and
+never calls or mutates the duplicate table. The raw receive probe is read-only
+and logs no private key or shared secret.
+MeshCore's authenticated AES carrier returns whole 16-byte plaintext blocks.
+The FriendMesh fixed-record decoders therefore permit only the exact record
+followed by at most 15 zero bytes; nonzero or excessive trailing bytes remain
+corrupt. This normalizes carrier padding without weakening envelope bounds or
+changing MeshCore.
+Traces expose only short public-key/request fingerprints and must be removed or
+compile-gated after physical diagnosis. BLE RSSI and a public-key prefix are
 not proof of human identity or distance; the signed full-key exchange prevents
 an ordinary name spoof from becoming a friendship, while the later shared
 security phase still owns stronger privacy-preserving presence and durable

@@ -79,6 +79,7 @@ ResultCode decodeFriendAccept(const uint8_t* source, size_t length,
 enum class FriendLinkAction : uint8_t {
   Accepted = 1,
   Removed = 2,
+  Acknowledged = 3,
 };
 constexpr size_t kFriendLinkEncodedBytes =
     4 + 1 + 1 + kFriendRequestIdBytes + kFriendRequestNameBytes;

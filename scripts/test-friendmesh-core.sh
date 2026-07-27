@@ -34,3 +34,19 @@ compiler="${CXX:-c++}"
   -o "$test_tmp/friendmesh-core-test"
 
 "$test_tmp/friendmesh-core-test"
+
+# Keep the device integration's non-optimistic acceptance contract visible to
+# host CI even though UITask/MyMesh depend on Arduino and cannot join this host
+# executable. These checks catch accidental removal of either ACK-gated half.
+grep -q 'onFriendMeshFriendAcceptanceAcknowledged' "$repo_root/src/AbstractUITask.h"
+grep -q 'friend-save=deferred' "$repo_root/src/ui-touch/UITask.cpp"
+grep -q 'REQUESTEE ACK confirmed' "$repo_root/src/ui-touch/UITask.cpp"
+grep -q 'ACK send id=' "$repo_root/src/MyMesh.cpp"
+grep -q 'ANR RAW RX' "$repo_root/src/MyMesh.cpp"
+grep -q 'ANR DISPATCH enter' "$repo_root/src/MyMesh.cpp"
+grep -q 'ANR DISPATCH exit' "$repo_root/src/MyMesh.cpp"
+grep -q 'ANR CALLBACK enter' "$repo_root/src/MyMesh.cpp"
+grep -q 'ANR RADIO TX complete' "$repo_root/src/MyMesh.cpp"
+grep -q 'INBOX replace old=' "$repo_root/src/ui-touch/UITask.cpp"
+grep -q 'ACCEPT reject=unknown' "$repo_root/src/MyMesh.cpp"
+grep -q 'OUTGOING completed' "$repo_root/src/MyMesh.cpp"

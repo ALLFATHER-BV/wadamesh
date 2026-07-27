@@ -36,6 +36,19 @@ bool validName(const char* name) {
   return strnlen(name, kFriendRequestNameBytes) < kFriendRequestNameBytes;
 }
 
+// MeshCore's AES carrier zero-fills the final 16-byte block and returns the
+// padded plaintext length. FriendMesh envelopes remain fixed-size, so accept
+// only an exact envelope followed by at most one block minus one of zeros.
+// This is deliberately stricter than silently truncating arbitrary data.
+bool validZeroPadding(const uint8_t* source, size_t length,
+                      size_t expectedLength) {
+  if (!source || length < expectedLength ||
+      length - expectedLength > 15) return false;
+  for (size_t i = expectedLength; i < length; ++i)
+    if (source[i] != 0) return false;
+  return true;
+}
+
 bool validReturnPath(uint8_t encodedLength) {
   const size_t count = encodedLength & 0x3Fu;
   const size_t hashSize = (encodedLength >> 6) + 1u;
@@ -179,7 +192,7 @@ ResultCode encodeFriendAccept(const FriendAcceptEnvelope& response,
 ResultCode decodeFriendAccept(const uint8_t* source, size_t length,
                               FriendAcceptEnvelope& response) {
   response = {};
-  if (!source || length != kFriendAcceptEncodedBytes ||
+  if (!validZeroPadding(source, length, kFriendAcceptEncodedBytes) ||
       memcmp(source, kAcceptMagic, sizeof(kAcceptMagic)) != 0 ||
       source[4] != kVersion) return ResultCode::CorruptData;
   size_t offset = 5;
@@ -198,10 +211,12 @@ ResultCode encodeFriendLink(const FriendLinkEnvelope& link,
   written = 0;
   const bool accepted = link.action == FriendLinkAction::Accepted;
   const bool removed = link.action == FriendLinkAction::Removed;
+  const bool acknowledged =
+      link.action == FriendLinkAction::Acknowledged;
   if (!destination || capacity < kFriendLinkEncodedBytes ||
-      (!accepted && !removed) || !validName(link.peerName) ||
-      (accepted && allZero(link.requestId, sizeof(link.requestId))) ||
-      (removed && !allZero(link.requestId, sizeof(link.requestId))))
+      (!accepted && !removed && !acknowledged) || !validName(link.peerName) ||
+      ((accepted || acknowledged) &&
+       allZero(link.requestId, sizeof(link.requestId))))
     return ResultCode::InvalidArgument;
   size_t offset = 0;
   memcpy(destination + offset, kLinkMagic, sizeof(kLinkMagic));
@@ -222,7 +237,7 @@ ResultCode encodeFriendLink(const FriendLinkEnvelope& link,
 ResultCode decodeFriendLink(const uint8_t* source, size_t length,
                             FriendLinkEnvelope& link) {
   link = {};
-  if (!source || length != kFriendLinkEncodedBytes ||
+  if (!validZeroPadding(source, length, kFriendLinkEncodedBytes) ||
       memcmp(source, kLinkMagic, sizeof(kLinkMagic)) != 0 ||
       source[4] != kVersion) return ResultCode::CorruptData;
   link.action = static_cast<FriendLinkAction>(source[5]);
@@ -232,9 +247,13 @@ ResultCode decodeFriendLink(const uint8_t* source, size_t length,
   link.peerName[kFriendRequestNameBytes - 1] = '\0';
   const bool accepted = link.action == FriendLinkAction::Accepted;
   const bool removed = link.action == FriendLinkAction::Removed;
+  const bool acknowledged =
+      link.action == FriendLinkAction::Acknowledged;
   return (validName(link.peerName) &&
           ((accepted && !allZero(link.requestId, sizeof(link.requestId))) ||
-           (removed && allZero(link.requestId, sizeof(link.requestId)))))
+           removed ||
+           (acknowledged &&
+            !allZero(link.requestId, sizeof(link.requestId)))))
       ? ResultCode::Ok : ResultCode::CorruptData;
 }
 

@@ -1979,6 +1979,19 @@ void testFriendRequestEnvelopeAndPath() {
   CHECK(friendmesh::decodeFriendAccept(acceptWire, written, acceptedDecoded) ==
         friendmesh::ResultCode::Ok);
   CHECK(strcmp(acceptedDecoded.responderName, "Friend") == 0);
+  uint8_t paddedAccept[friendmesh::kFriendAcceptEncodedBytes + 16] = {};
+  memcpy(paddedAccept, acceptWire, friendmesh::kFriendAcceptEncodedBytes);
+  CHECK(friendmesh::decodeFriendAccept(
+            paddedAccept, friendmesh::kFriendAcceptEncodedBytes + 7,
+            acceptedDecoded) == friendmesh::ResultCode::Ok);
+  paddedAccept[friendmesh::kFriendAcceptEncodedBytes + 2] = 1;
+  CHECK(friendmesh::decodeFriendAccept(
+            paddedAccept, friendmesh::kFriendAcceptEncodedBytes + 7,
+            acceptedDecoded) == friendmesh::ResultCode::CorruptData);
+  paddedAccept[friendmesh::kFriendAcceptEncodedBytes + 2] = 0;
+  CHECK(friendmesh::decodeFriendAccept(
+            paddedAccept, friendmesh::kFriendAcceptEncodedBytes + 16,
+            acceptedDecoded) == friendmesh::ResultCode::CorruptData);
 
   friendmesh::FriendLinkEnvelope link = {};
   link.action = friendmesh::FriendLinkAction::Accepted;
@@ -1994,6 +2007,19 @@ void testFriendRequestEnvelopeAndPath() {
   CHECK(decodedLink.action == friendmesh::FriendLinkAction::Accepted);
   CHECK(memcmp(decodedLink.requestId, request.requestId,
                sizeof(request.requestId)) == 0);
+  uint8_t paddedLink[friendmesh::kFriendLinkEncodedBytes + 16] = {};
+  memcpy(paddedLink, linkWire, friendmesh::kFriendLinkEncodedBytes);
+  CHECK(friendmesh::decodeFriendLink(
+            paddedLink, friendmesh::kFriendLinkEncodedBytes + 6,
+            decodedLink) == friendmesh::ResultCode::Ok);
+  paddedLink[friendmesh::kFriendLinkEncodedBytes] = 1;
+  CHECK(friendmesh::decodeFriendLink(
+            paddedLink, friendmesh::kFriendLinkEncodedBytes + 6,
+            decodedLink) == friendmesh::ResultCode::CorruptData);
+  paddedLink[friendmesh::kFriendLinkEncodedBytes] = 0;
+  CHECK(friendmesh::decodeFriendLink(
+            paddedLink, friendmesh::kFriendLinkEncodedBytes + 16,
+            decodedLink) == friendmesh::ResultCode::CorruptData);
 
   link = {};
   link.action = friendmesh::FriendLinkAction::Removed;
@@ -2004,6 +2030,19 @@ void testFriendRequestEnvelopeAndPath() {
         friendmesh::ResultCode::Ok);
   CHECK(decodedLink.action == friendmesh::FriendLinkAction::Removed);
   link.requestId[0] = 1;
+  CHECK(friendmesh::encodeFriendLink(link, linkWire, sizeof(linkWire), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(friendmesh::decodeFriendLink(linkWire, written, decodedLink) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(decodedLink.requestId[0] == 1);
+
+  link.action = friendmesh::FriendLinkAction::Acknowledged;
+  CHECK(friendmesh::encodeFriendLink(link, linkWire, sizeof(linkWire), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(friendmesh::decodeFriendLink(linkWire, written, decodedLink) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(decodedLink.action == friendmesh::FriendLinkAction::Acknowledged);
+  memset(link.requestId, 0, sizeof(link.requestId));
   CHECK(friendmesh::encodeFriendLink(link, linkWire, sizeof(linkWire), written) ==
         friendmesh::ResultCode::InvalidArgument);
 

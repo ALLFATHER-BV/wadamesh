@@ -261,6 +261,10 @@ public:
 #endif
 
 protected:
+  // FriendMesh receive diagnostics wrap the normal MeshCore dispatcher without
+  // reimplementing it. The override only records entry/exit state, then calls
+  // BaseChatMesh::onRecvPacket exactly once.
+  mesh::DispatcherAction onRecvPacket(mesh::Packet* packet) override;
   float getAirtimeBudgetFactor() const override;
   int getInterferenceThreshold() const override;
   int calcRxDelay(float score, uint32_t air_time) const override;
@@ -281,6 +285,8 @@ protected:
   void sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis=0) override;
 
   void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override;
+  void logTx(mesh::Packet* packet, int len) override;
+  void logTxFail(mesh::Packet* packet, int len) override;
   bool isAutoAddEnabled() const override;
   bool shouldAutoAddContactType(uint8_t type) const override;
   bool shouldOverwriteWhenFull() const override;
@@ -1256,6 +1262,30 @@ private:
   FriendRequestOutgoing _friend_request_outgoing[
       FRIEND_REQUEST_OUTGOING_SLOTS] = {};
   uint8_t _friend_request_outgoing_head = 0;
+  static constexpr uint8_t FRIEND_REQUEST_COMPLETED_SLOTS = 8;
+  struct FriendRequestCompleted {
+    uint8_t requestId[friendmesh::kFriendRequestIdBytes];
+    uint8_t peerPub[PUB_KEY_SIZE];
+    uint32_t completedMillis;
+  };
+  FriendRequestCompleted _friend_request_completed[
+      FRIEND_REQUEST_COMPLETED_SLOTS] = {};
+  uint8_t _friend_request_completed_head = 0;
+  static constexpr uint8_t FRIEND_LINK_PENDING_SLOTS = 4;
+  struct FriendLinkPending {
+    bool active;
+    friendmesh::FriendLinkAction action;
+    uint8_t requestId[friendmesh::kFriendRequestIdBytes];
+    uint8_t recipientPub[PUB_KEY_SIZE];
+    char recipientName[friendmesh::kFriendRequestNameBytes];
+    uint8_t pathLength;
+    uint8_t path[MAX_PATH_SIZE];
+    uint8_t attempts;
+    uint32_t nextAttemptMillis;
+  };
+  FriendLinkPending _friend_link_pending[FRIEND_LINK_PENDING_SLOTS] = {};
+  uint8_t _friend_link_pending_head = 0;
+  uint32_t _friendmesh_anon_callback_count = 0;
   void friendmeshRememberSentChannelMessage(
       const mesh::GroupChannel& channel, mesh::Packet* packet);
   bool friendmeshSentChannelMessageMatches(
@@ -1263,6 +1293,25 @@ private:
   bool friendmeshRememberOutgoingRequest(const uint8_t request_id[8],
                                          const uint8_t target_hash[8]);
   bool friendmeshConsumeOutgoingRequest(const uint8_t request_id[8]);
+  bool friendmeshOutgoingRequestMatches(const uint8_t request_id[8]) const;
+  bool friendmeshCompletedRequestMatches(
+      const uint8_t request_id[8], const uint8_t peer_pub[PUB_KEY_SIZE]) const;
+  void friendmeshRememberCompletedRequest(
+      const uint8_t request_id[8], const uint8_t peer_pub[PUB_KEY_SIZE]);
+  void friendmeshHandleAcceptedControl(
+      const mesh::Identity& sender, const uint8_t request_id[8],
+      const char* peer_name, bool legacy);
+  bool friendmeshTransmitLinkControl(
+      const ContactInfo& recipient, friendmesh::FriendLinkAction action,
+      const uint8_t request_id[8]);
+  bool friendmeshQueueLinkControl(
+      const ContactInfo& recipient, friendmesh::FriendLinkAction action,
+      const uint8_t request_id[8]);
+  bool friendmeshAcknowledgeLinkControl(
+      const mesh::Identity& sender, const uint8_t request_id[8]);
+  void friendmeshConsumeLinkAcknowledgement(
+      const uint8_t sender_pub[PUB_KEY_SIZE], const uint8_t request_id[8]);
+  void friendmeshTickLinkControls();
   bool friendmeshSendLinkControl(
       const ContactInfo& recipient, friendmesh::FriendLinkAction action,
       const uint8_t request_id[8]);

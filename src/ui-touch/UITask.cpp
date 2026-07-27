@@ -15094,14 +15094,21 @@ static void actionSheetRemoveFriendApply() {
   if (!g_lv.task || !s_contact_danger_target_valid) return;
   const ContactInfo target = s_contact_danger_target;
   s_contact_danger_target_valid = false;
+  Serial.printf("[FM-FRIEND] UI REMOVE tap target=%02X%02X%02X%02X\n",
+                target.id.pub_key[0], target.id.pub_key[1],
+                target.id.pub_key[2], target.id.pub_key[3]);
   const bool reciprocalSent = the_mesh.uiRemoveFriendRelationship(
       target.id.pub_key, target.name);
   if (!touchPrefsRemoveFriend(target.id.pub_key)) {
+    Serial.printf("[FM-FRIEND] UI REMOVE local-save=failed remote-queued=%d\n",
+                  reciprocalSent ? 1 : 0);
     g_lv.task->showAlert(TR("Friend update failed; check SD"), 1800);
     return;
   }
+  Serial.printf("[FM-FRIEND] UI REMOVE local-save=ok remote-queued=%d\n",
+                reciprocalSent ? 1 : 0);
   friendsReload();
-  refreshContactsList();
+  contactsListForceRefresh();
   g_lv.task->showAlert(
       reciprocalSent ? TR("Removed from Friends")
                      : TR("Removed locally; remote update failed"),
@@ -15146,7 +15153,7 @@ static void friendAliasSaveCb(lv_event_t* e) {
   friendsReload();
   s_friend_alias_ta = nullptr;
   closeSettingsModal();
-  refreshContactsList();
+  contactsListForceRefresh();
   if (g_lv.task) g_lv.task->showAlert(TR("Private friend name saved"), 1200);
 }
 
@@ -24039,6 +24046,11 @@ static void friendRequestAcceptCb(lv_event_t* e) {
       lv_event_get_user_data(e)));
   if (!s_friend_requests || idx < 0 || idx >= s_friend_request_count) return;
   const TouchFriendRequestRecord request = s_friend_requests[idx];
+  Serial.printf("[FM-FRIEND] UI ACCEPT tap id=%02X%02X%02X%02X from=%02X%02X%02X%02X\n",
+                request.request_id[0], request.request_id[1],
+                request.request_id[2], request.request_id[3],
+                request.requester_pub_key[0], request.requester_pub_key[1],
+                request.requester_pub_key[2], request.requester_pub_key[3]);
   const bool already_friend = friendByKey(request.requester_pub_key) != nullptr;
   if (!already_friend && s_friends_count >= touchPrefsFriendCapacity()) {
     g_lv.task->showAlert(touchPrefsFriendsUsingInternalFallback()
@@ -24052,24 +24064,21 @@ static void friendRequestAcceptCb(lv_event_t* e) {
     g_lv.task->showAlert(TR("Contacts full"), 1800);
     return;
   }
-  if (!already_friend && !touchPrefsSetFriend(request.requester_pub_key,
-                                               request.requester_name)) {
-    g_lv.task->showAlert(touchPrefsFriendsUsingInternalFallback()
-        ? TR("Friend limit reached (4 without SD)")
-        : TR("Friend update failed; check SD"), 2400);
-    return;
-  }
   const bool reply_sent = the_mesh.uiAcceptFriendRequest(
       request.requester_pub_key, request.request_id, request.requester_name,
       request.return_path, request.return_path_length);
-  touchPrefsRemoveFriendRequest(request.request_id);
-  clearDiscoveredByPubKey(request.requester_pub_key);
-  friendsReload();
-  refreshContactsList();
+  Serial.printf("[FM-FRIEND] UI ACCEPT friend-save=deferred already=%d acceptance-queued=%d id=%02X%02X%02X%02X\n",
+                already_friend ? 1 : 0, reply_sent ? 1 : 0,
+                request.request_id[0], request.request_id[1],
+                request.request_id[2], request.request_id[3]);
+  // Keep the inbox record until the requester authenticates and ACKs this
+  // acceptance. That record is the recoverable user decision if transmission
+  // fails; only the ACK callback promotes the requester to Friend and removes
+  // the pending request.
   closeFriendRequestsModal();
   g_lv.task->showAlert(reply_sent
-      ? TR("Friend added; acceptance sent")
-      : TR("Friend saved; acceptance send failed"), reply_sent ? 2000 : 2800);
+      ? TR("Acceptance sent; waiting for confirmation")
+      : TR("Acceptance failed; request kept"), reply_sent ? 2400 : 2800);
 }
 
 static void openFriendRequestsModal() {
@@ -47347,19 +47356,41 @@ void UITask::onFriendMeshFriendRequest(const uint8_t request_id[8],
                                        uint8_t return_path_length) {
   if (!request_id || !requester_pub || !requester_name ||
       !requester_name[0] || friendByKey(requester_pub) ||
-      touchPrefsIsIgnored(requester_pub)) return;
+      touchPrefsIsIgnored(requester_pub)) {
+    Serial.printf("[FM-FRIEND] INBOX drop=invalid-already-friend-or-blocked\n");
+    return;
+  }
   // One live request per identity. Repeated packets and newly-generated IDs
   // from the same sender must not retrigger alerts or churn SD writes.
   const int pendingCount = s_friend_requests
       ? touchPrefsCopyFriendRequests(s_friend_requests,
                                     TOUCH_FRIEND_REQUESTS_MAX) : 0;
   const uint32_t now = the_mesh.getRTCClock()->getCurrentTime();
+  bool replacingRequest = false;
   for (int i = 0; i < pendingCount; ++i) {
     if (memcmp(s_friend_requests[i].requester_pub_key,
                requester_pub, PUB_KEY_SIZE) != 0) continue;
     const bool expired = s_friend_requests[i].expires_at >= 1700000000UL &&
         now >= 1700000000UL && now > s_friend_requests[i].expires_at;
-    if (!expired) return;
+    if (!expired) {
+      if (memcmp(s_friend_requests[i].request_id, request_id,
+                 sizeof(s_friend_requests[i].request_id)) != 0) {
+        replacingRequest = true;
+        Serial.printf("[FM-FRIEND] INBOX replace old=%02X%02X%02X%02X new=%02X%02X%02X%02X from=%02X%02X%02X%02X\n",
+                      s_friend_requests[i].request_id[0],
+                      s_friend_requests[i].request_id[1],
+                      s_friend_requests[i].request_id[2],
+                      s_friend_requests[i].request_id[3],
+                      request_id[0], request_id[1], request_id[2],
+                      request_id[3], requester_pub[0], requester_pub[1],
+                      requester_pub[2], requester_pub[3]);
+        break;
+      }
+      Serial.printf("[FM-FRIEND] INBOX duplicate from=%02X%02X%02X%02X\n",
+                    requester_pub[0], requester_pub[1],
+                    requester_pub[2], requester_pub[3]);
+      return;
+    }
     touchPrefsRemoveFriendRequest(s_friend_requests[i].request_id);
     break;
   }
@@ -47384,44 +47415,126 @@ void UITask::onFriendMeshFriendRequest(const uint8_t request_id[8],
     }
   }
   if (!touchPrefsSetFriendRequest(request)) {
+    Serial.printf("[FM-FRIEND] INBOX save=failed id=%02X%02X%02X%02X\n",
+                  request_id[0], request_id[1],
+                  request_id[2], request_id[3]);
     showAlert(TR("Friend request inbox full"), 2200);
     return;
   }
-  showAlert(TR("Friend request received"), 2400);
+  Serial.printf("[FM-FRIEND] INBOX save=ok id=%02X%02X%02X%02X from=%02X%02X%02X%02X path=%u\n",
+                request_id[0], request_id[1], request_id[2], request_id[3],
+                requester_pub[0], requester_pub[1],
+                requester_pub[2], requester_pub[3], return_path_length);
+  if (replacingRequest) {
+    // If the inbox is already visible, rebuild it immediately so an Accept tap
+    // cannot target the superseded request ID held by the old row.
+    if (s_friend_requests_root) openFriendRequestsModal();
+  } else {
+    showAlert(TR("Friend request received"), 2400);
+  }
 }
 
-void UITask::onFriendMeshFriendAccepted(const uint8_t request_id[8],
+bool UITask::onFriendMeshFriendAccepted(const uint8_t request_id[8],
                                         const uint8_t responder_pub[32],
                                         const char* responder_name) {
   (void)request_id;
-  if (!responder_pub) return;
+  if (!responder_pub) return false;
   const char* name = (responder_name && responder_name[0])
       ? responder_name : "Friend";
   if (!the_mesh.lookupContactByPubKey(responder_pub, PUB_KEY_SIZE))
     the_mesh.uiAddManualContact(responder_pub, name);
   if (!touchPrefsSetFriend(responder_pub, name)) {
+    Serial.printf("[FM-FRIEND] REQUESTER friend-save=failed id=%02X%02X%02X%02X from=%02X%02X%02X%02X\n",
+                  request_id ? request_id[0] : 0,
+                  request_id ? request_id[1] : 0,
+                  request_id ? request_id[2] : 0,
+                  request_id ? request_id[3] : 0,
+                  responder_pub[0], responder_pub[1],
+                  responder_pub[2], responder_pub[3]);
     showAlert(touchPrefsFriendsUsingInternalFallback()
         ? TR("Friend limit reached (4 without SD)")
         : TR("Friend update failed; check SD"), 2600);
-    return;
+    return false;
   }
+  Serial.printf("[FM-FRIEND] REQUESTER friend-save=ok id=%02X%02X%02X%02X from=%02X%02X%02X%02X\n",
+                request_id ? request_id[0] : 0,
+                request_id ? request_id[1] : 0,
+                request_id ? request_id[2] : 0,
+                request_id ? request_id[3] : 0,
+                responder_pub[0], responder_pub[1],
+                responder_pub[2], responder_pub[3]);
   clearDiscoveredByPubKey(responder_pub);
   friendsReload();
-  refreshContactsList();
+  contactsListForceRefresh();
   char message[96];
   snprintf(message, sizeof(message), "%s accepted your friend request",
            name);
   showAlert(TR(message), 2600);
+  return true;
+}
+
+bool UITask::onFriendMeshFriendAcceptanceAcknowledged(
+    const uint8_t request_id[8], const uint8_t requester_pub[32],
+    const char* requester_name) {
+  if (!request_id || !requester_pub) {
+    Serial.printf("[FM-FRIEND] REQUESTEE finalize=invalid-args\n");
+    return false;
+  }
+  const char* name = requester_name && requester_name[0]
+      ? requester_name : "Friend";
+  Serial.printf("[FM-FRIEND] REQUESTEE ACK confirmed id=%02X%02X%02X%02X from=%02X%02X%02X%02X; friend-save=begin\n",
+                request_id[0], request_id[1],
+                request_id[2], request_id[3],
+                requester_pub[0], requester_pub[1],
+                requester_pub[2], requester_pub[3]);
+  if (!the_mesh.lookupContactByPubKey(requester_pub, PUB_KEY_SIZE) &&
+      !the_mesh.uiAddManualContact(requester_pub, name)) {
+    Serial.printf("[FM-FRIEND] REQUESTEE friend-save=failed reason=contacts-full id=%02X%02X%02X%02X\n",
+                  request_id[0], request_id[1],
+                  request_id[2], request_id[3]);
+    showAlert(TR("Contacts full; acceptance remains pending"), 2600);
+    return false;
+  }
+  if (!touchPrefsSetFriend(requester_pub, name)) {
+    Serial.printf("[FM-FRIEND] REQUESTEE friend-save=failed reason=storage-or-capacity id=%02X%02X%02X%02X\n",
+                  request_id[0], request_id[1],
+                  request_id[2], request_id[3]);
+    showAlert(touchPrefsFriendsUsingInternalFallback()
+        ? TR("Friend limit reached; acceptance remains pending")
+        : TR("Friend update failed; acceptance remains pending"), 2800);
+    return false;
+  }
+  const bool requestRemoved = touchPrefsRemoveFriendRequest(request_id);
+  clearDiscoveredByPubKey(requester_pub);
+  friendsReload();
+  contactsListForceRefresh();
+  Serial.printf("[FM-FRIEND] REQUESTEE friend-save=ok inbox-remove=%d id=%02X%02X%02X%02X\n",
+                requestRemoved ? 1 : 0,
+                request_id[0], request_id[1],
+                request_id[2], request_id[3]);
+  showAlert(TR("Friend added; acceptance confirmed"), 2400);
+  return true;
 }
 
 void UITask::onFriendMeshFriendRemoved(
     const uint8_t remover_pub[32]) {
-  if (!remover_pub || !friendByKey(remover_pub)) return;
+  if (!remover_pub || !friendByKey(remover_pub)) {
+    Serial.printf("[FM-FRIEND] REMOVE RX local=no-match\n");
+    return;
+  }
   // Reciprocal removal is intentionally quiet: no alert, chat bubble, or
   // negative social notification. Keep the MeshCore contact for routing.
-  if (!touchPrefsRemoveFriend(remover_pub)) return;
+  if (!touchPrefsRemoveFriend(remover_pub)) {
+    Serial.printf("[FM-FRIEND] REMOVE RX local-save=failed from=%02X%02X%02X%02X\n",
+                  remover_pub[0], remover_pub[1],
+                  remover_pub[2], remover_pub[3]);
+    return;
+  }
+  Serial.printf("[FM-FRIEND] REMOVE RX local-save=ok from=%02X%02X%02X%02X\n",
+                remover_pub[0], remover_pub[1],
+                remover_pub[2], remover_pub[3]);
   friendsReload();
-  refreshContactsList();
+  contactsListForceRefresh();
 }
 
 bool UITask::sendFriendRequestForMessage(int msg_idx) {

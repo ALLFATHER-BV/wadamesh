@@ -227,9 +227,12 @@ public:
                                  uint32_t expires_at,
                                  const uint8_t* return_path,
                                  uint8_t return_path_length) override;
-  void onFriendMeshFriendAccepted(const uint8_t request_id[8],
+  bool onFriendMeshFriendAccepted(const uint8_t request_id[8],
                                   const uint8_t responder_pub[32],
                                   const char* responder_name) override;
+  bool onFriendMeshFriendAcceptanceAcknowledged(
+      const uint8_t request_id[8], const uint8_t requester_pub[32],
+      const char* requester_name) override;
   void onFriendMeshFriendRemoved(
       const uint8_t remover_pub[32]) override;
   bool sendFriendRequestForMessage(int msg_idx);

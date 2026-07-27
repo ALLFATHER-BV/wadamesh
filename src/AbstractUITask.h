@@ -178,10 +178,20 @@ public:
     (void)created_at; (void)expires_at; (void)return_path;
     (void)return_path_length;
   }
-  virtual void onFriendMeshFriendAccepted(const uint8_t request_id[8],
+  virtual bool onFriendMeshFriendAccepted(const uint8_t request_id[8],
                                           const uint8_t responder_pub[32],
                                           const char* responder_name) {
     (void)request_id; (void)responder_pub; (void)responder_name;
+    return false;
+  }
+  /** The requester authenticated and acknowledged our acceptance. Return true
+   *  only after the requester has been durably promoted from pending request
+   *  to Friend; a false result leaves the acceptance retry active. */
+  virtual bool onFriendMeshFriendAcceptanceAcknowledged(
+      const uint8_t request_id[8], const uint8_t requester_pub[32],
+      const char* requester_name) {
+    (void)request_id; (void)requester_pub; (void)requester_name;
+    return false;
   }
   virtual void onFriendMeshFriendRemoved(const uint8_t remover_pub[32]) {
     (void)remover_pub;
