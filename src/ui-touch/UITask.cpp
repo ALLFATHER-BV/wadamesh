@@ -16428,6 +16428,7 @@ static lv_obj_t*       s_home_adv_btn     = nullptr;
 #endif
 // Compact legend label above the chart showing live TX/RX totals.
 static lv_obj_t* s_home_chart_legend = nullptr;
+static lv_obj_t* s_home_store        = nullptr;   // chat-store chip, right half of the legend row
 static lv_obj_t* s_home_chart_sig    = nullptr;   // live signal chip drawn inside the graph box
 #if CAP_LARGE_SCREEN
 static lv_obj_t* s_home_info         = nullptr;   // Commander info-panel values column (big screen) — refreshed live
@@ -22099,6 +22100,30 @@ static void homeControlPanelCb(lv_event_t* e) {   // "Control panel" launcher ->
   if (lv_event_get_code(e) == LV_EVENT_CLICKED) toggleControlCenter();
 }
 
+// Chat-store chip for the Commander legend row (right of the TX/RX totals).
+// Deliberately terse — it shares one line with the traffic counts and must fit
+// half the chart width at g_font_12. The full story (backend, failure stage +
+// errno) stays on the About page's "Chat store" panel; this chip only has to
+// make a sick store impossible to miss from the home screen. Returns the text
+// colour to use.
+static uint32_t homeStoreChipText(char* out, size_t cap) {
+  if (s_msgs_write_fails) {                       // saves are failing right now
+    snprintf(out, cap, LV_SYMBOL_SAVE " FAIL x%u", (unsigned)s_msgs_write_fails);
+    return 0xE05252;                              // red — history is NOT landing
+  }
+  if (!s_seg_store_ready) {                       // old-format file not converted yet
+    snprintf(out, cap, LV_SYMBOL_SAVE " migrating");
+    return 0xF5A623;                              // amber
+  }
+  const uint32_t b = s_seg_total_bytes;
+  if (b >= 1024u * 1024u)   // 1 MB+ (deep SD ring): one decimal keeps it narrow
+    snprintf(out, cap, LV_SYMBOL_SAVE " %ds %u.%uM", s_seg_count,
+             (unsigned)(b / (1024u * 1024u)), (unsigned)((b / 104858u) % 10u));
+  else
+    snprintf(out, cap, LV_SYMBOL_SAVE " %ds %uK", s_seg_count, (unsigned)(b / 1024u));
+  return COLOR_SUB;
+}
+
 static void makeHome(lv_obj_t* tab) {
   // Layout (240 wide × 282 tall): title + heartbeat + battery at top, status
   // lines, TX/RX chart in the middle, Send Advert button at the bottom.
@@ -22132,6 +22157,7 @@ static void makeHome(lv_obj_t* tab) {
   s_home_batt_pct   = nullptr;
   s_home_batt_icon  = nullptr;
   s_home_chart_sig  = nullptr;
+  s_home_store      = nullptr;   // created with the legend row below
   g_lv.home_apps    = nullptr;   // set below iff the right-hand launcher column is built (landscape)
 #if defined(HAS_EXPANSION_KIT)
   s_home_env_chart  = nullptr;
@@ -22262,6 +22288,23 @@ static void makeHome(lv_obj_t* tab) {
 #else
   const int chart_w = cw;
 #endif
+  // Chat-store chip: shares the legend row with the TX/RX totals, parked on the
+  // RIGHT HALF of the chart width (fixed width + right-aligned + CLIP, so it can
+  // never grow into the traffic counts on the left, at any UI scale). Not
+  // clickable — the legend owns this row's taps (signal/traffic popup).
+  s_home_store = lv_label_create(tab);
+  lv_label_set_long_mode(s_home_store, LV_LABEL_LONG_CLIP);
+  lv_obj_set_width(s_home_store, chart_w / 2);
+  lv_obj_set_style_text_align(s_home_store, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_home_store, &g_font_12, LV_PART_MAIN);
+  {
+    char chip[24];
+    const uint32_t col = homeStoreChipText(chip, sizeof chip);
+    lv_label_set_text(s_home_store, chip);
+    lv_obj_set_style_text_color(s_home_store, lv_color_hex(col), LV_PART_MAIN);
+  }
+  lv_obj_align(s_home_store, LV_ALIGN_TOP_LEFT, chart_w - chart_w / 2, chart_y);
+
   // Fit the chart in the remaining vertical space: content height minus the
   // tab padding, the chart's top offset, and the Send-advert button + gaps.
   // Portrait keeps the full 96 px; landscape (short screen) shrinks it so the
@@ -38099,6 +38142,10 @@ static void relayoutHomeCharts() {
 
   const int legend_y = env_chart_y + SC(34) + SC(12);
   lv_obj_set_pos(s_home_chart_legend, 0, legend_y);
+  if (s_home_store) {                      // chat-store chip rides the same row
+    lv_obj_set_width(s_home_store, chart_w / 2);
+    lv_obj_set_pos(s_home_store, chart_w - chart_w / 2, legend_y);
+  }
 
   const int home_avail = tabContentH() - 20;
   int chart_h = home_avail - (legend_y + 16) - 4 - (home_land ? 0 : (8 + 36));
@@ -38148,6 +38195,19 @@ static void refreshStatusLabels() {
   if (g_lv.tabview) active_tab = lv_tabview_get_tab_act(g_lv.tabview);
   const bool home_active = (active_tab == HOME_TAB_INDEX);
   if (home_active) refreshHomeBattery();
+  // Chat-store chip (legend row). Updated independently of the TX/RX chart —
+  // the big-screen scaled layout drops the chart entirely, and the store state
+  // still has to be visible there.
+  if (home_active && s_home_store) {
+    char chip[24];
+    const uint32_t col = homeStoreChipText(chip, sizeof chip);
+    setLabelIfChanged(s_home_store, chip);
+    static uint32_t s_home_store_col = 0;   // avoid re-styling (and invalidating) every tick
+    if (col != s_home_store_col) {
+      s_home_store_col = col;
+      lv_obj_set_style_text_color(s_home_store, lv_color_hex(col), LV_PART_MAIN);
+    }
+  }
   // Push a TX/RX sample onto the home chart: delta packets since last tick.
   if (home_active && s_home_chart && s_home_chart_tx && s_home_chart_rx) {
     static uint32_t last_tx = 0;
