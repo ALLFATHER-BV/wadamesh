@@ -8,7 +8,7 @@
 //
 // Keep this enum in sync with kUiLangNames + the table column order in i18n.cpp.
 enum UiLang : uint8_t {
-  LANG_EN = 0, LANG_NL, LANG_DE, LANG_FR, LANG_ES, LANG_IT,
+  LANG_EN = 0, LANG_HU, LANG_NL, LANG_DE, LANG_FR, LANG_ES, LANG_IT,
   LANG_RU, LANG_UK, LANG_BG, LANG_SR, LANG_EL, LANG_PT_BR, LANG_COUNT
 };
 
