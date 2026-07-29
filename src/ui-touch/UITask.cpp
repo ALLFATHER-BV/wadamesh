@@ -534,15 +534,12 @@ static void initTouchFontFallbacks() {
   // upscaling a low-res frame). g_font_12/14/16 are what the whole UI draws with, so this scales
   // every screen at once. The colour-emoji + non-Latin fallbacks stay their baked sizes (they don't
   // grow), which is fine for Latin text. g_font_tab is pinned to 16 px so the bottom bar never grows.
-#if defined(HAS_TDISPLAY_P4)
-  // The P4 is a NARROW 284 px portrait: bigger fonts overflow the fixed-height/width chrome (the
-  // status bar, home grid, and list/settings rows all use unscaled dims), so 100% is the only size
-  // that fits. Ignore any Large/Huge pref (a unit can inherit one from adopted T-Deck prefs). The
-  // Tanmatsu is 800 px landscape and keeps the option. GH: P4 text overflow above 100%.
-  s_ui_fscale = 100;
-#else
+  // UI scale from the saved pref (Normal/Large/Huge -> 100/140/170%). The P4 honours it like the
+  // Tanmatsu — its "UI size" dropdown is shown (CAP_LARGE_SCREEN), so pinning 100% here made that
+  // setting a dead no-op (reported: "changing text size doesn't work"). At Large/Huge some P4 chrome
+  // that still uses unscaled dims (status bar, home grid, list rows) can be tight; that is the lesser
+  // problem and a per-screen SC() follow-up, not a reason to disable scaling outright.
   switch (touchPrefsGetUiScale()) { case 1: s_ui_fscale = 140; break; case 2: s_ui_fscale = 170; break; default: s_ui_fscale = 100; break; }
-#endif
   switch (s_ui_fscale) {
     case 140: g_font_12 = lv_font_montserrat_16; g_font_14 = lv_font_montserrat_20; g_font_16 = lv_font_montserrat_24; break;  // Large ~1.4x
     case 170: g_font_12 = lv_font_montserrat_20; g_font_14 = lv_font_montserrat_24; g_font_16 = lv_font_montserrat_28; break;  // Huge  ~1.7x
