@@ -103,6 +103,12 @@ bool touchPrefsSetTilesFromSd(bool from_sd);
 bool touchPrefsGetMapNight();
 bool touchPrefsSetMapNight(bool on);
 
+// Chat-history flush: consecutive failed off-thread (background) writes before
+// the flush falls back to the blocking loop-task write (reliable, but the UI
+// hitches for the write's duration). 0 = never fall back. Default 2.
+uint8_t touchPrefsGetHistSyncAfter();
+bool    touchPrefsSetHistSyncAfter(uint8_t n);
+
 /** Last map zoom level, persisted so the map reopens where the user left it.
  *  0 = unset (let the auto-snap pick a level for the available tile pack). */
 uint8_t touchPrefsGetMapZoom();

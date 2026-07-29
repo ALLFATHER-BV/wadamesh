@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <cerrno>   // chat-store write diagnostics surface errno (ENFILE vs ENOSPC vs EIO)
 #if defined(ESP32)
   #include <time.h>
   #include <SPIFFS.h>
@@ -225,6 +226,13 @@ constexpr uint16_t k_ui_history_min_version = 6;   // v4/v5 used 96-char records
 constexpr const char* k_ui_threads_path = "/ui_threads_v1.bin";
 constexpr const char* k_ui_msgs_path    = "/ui_msgs_v1.bin";
 constexpr const char* k_ui_msgs_tmp_path = "/ui_msgs_v1.bin.tmp";
+// Separate temp for the SYNCHRONOUS (shutdown/reboot/no-PSRAM) writer. The
+// core-0 worker and the loop task can overlap when a stalled worker outlives
+// uiHistWaitWorkerIdle's 9 s cap — two truncating opens of ONE tmp interleave
+// into garbage, and whichever rename lands last installs a corrupt file that
+// the next boot quarantines (total history loss). Distinct tmp names make the
+// overlap last-rename-wins with each candidate internally consistent.
+constexpr const char* k_ui_msgs_tmp2_path = "/ui_msgs_v1.bin.tm2";
 constexpr uint32_t k_ui_threads_magic   = 0x55495448;  // "UITH"
 constexpr uint32_t k_ui_msgs_magic      = 0x55494D53;  // "UIMS"
 
@@ -303,6 +311,50 @@ struct __attribute__((packed)) UiMsgFileHeader {
   uint32_t msgcount;
   uint16_t msg_rec_size;
   uint8_t  _pad[2];
+};
+
+// ---- Segmented message store (generation 3) ------------------------------
+// The ring is persisted as fixed-capacity SEGMENT files under <data root>/msgs:
+// seg_<first_seq>.bin, k_ui_seg_records records each. New messages APPEND one
+// record to the newest ("active") segment — a ~240 B write instead of the old
+// full-ring rewrite (515 KB+ at 2300 messages), which shrinks the hard-cut
+// loss window, the SPI bus-collision window, and flash wear all at once.
+// Deletes tombstone in RAM and mark the owning segment dirty; compaction
+// rewrites JUST that segment from the RAM ring (disk holds exactly the ring's
+// record set, so no read pass is ever needed). Corruption quarantines one
+// segment instead of the whole history. On FAT backends /msgs is a real
+// subdirectory (single child under /meshcomod — stays inside the factory
+// wipe's 24-entry cap); on SPIFFS the same name is a legal FLAT file name
+// (31-char limit: "/msgs/seg_4294967295.bin" = 24 chars), so the layout is
+// identical everywhere and no mkdir is required there.
+constexpr const char* k_ui_seg_dir     = "/msgs";
+// Commit marker. Written (last) only once a migration has been fully verified,
+// so its ABSENCE means "the segment set on disk is a partial migration" — the
+// loader then wipes those segments and falls back to the still-intact
+// old-format file. Without it, a power cut between chunk writes left a valid
+// oldest-first PREFIX that shadowed the old file forever: the UI came up
+// showing only the oldest few hundred messages, permanently.
+constexpr const char* k_ui_seg_ok      = "/msgs/store.ok";
+constexpr uint32_t    k_ui_seg_magic   = 0x55495347;   // "UISG"
+constexpr uint16_t    k_ui_seg_version = 1;
+constexpr int         k_ui_seg_records = 256;          // records per segment (~60 KB at v1 size)
+constexpr int         k_ui_seg_max     = 24;           // table cap: 5000/256 = 20 live segments + slack
+
+struct __attribute__((packed)) UiSegHeader {
+  uint32_t magic;          // k_ui_seg_magic
+  uint16_t version;        // k_ui_seg_version
+  uint16_t msg_rec_size;   // sizeof(UiSegMsg) at write time — self-describing so
+                           // future fields append at the END (same rule as v5+)
+  uint32_t first_seq;      // seq of this segment's first-ever record (== filename key)
+  uint8_t  _pad[4];
+};
+
+// On-disk segment record: the v6 record layout + the monotonic seq appended
+// (append-at-end evolution — a reader of either size copies min(rec_size) and
+// zero-fills the rest, so seq reads 0 from a hypothetical older record).
+struct __attribute__((packed)) UiSegMsg {
+  UiHistoryMsg m;
+  uint32_t     seq;
 };
 } // namespace
 #endif
@@ -831,7 +883,12 @@ static bool wavOpen(const char* prefpath, File& f) {
   if (!prefpath || !prefpath[0]) return false;
   fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)   // only the T-Deck/pager sound picker ever writes an "sd:"-prefixed pref
-  if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; fmSdTryMount(); }
+  // No fmSdTryMount() here: this runs on the throwaway notify task, and walking
+  // the SD.end()+SD.begin() mount ladder from a second task races the loop
+  // task's own SD use (the one documented single-task assumption). If the card
+  // isn't mounted the open below fails fast and the chime falls back; mounting
+  // is owned by boot adoption / sdHealthTick's reinsert watch / the FM paths.
+  if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; }
 #endif
   f = fsp->open(fp, FILE_READ);
   if (!f || f.isDirectory()) { if (f) f.close(); return false; }
@@ -4360,6 +4417,7 @@ static void refreshMapInfoLabel();
 static void renderMapTiles();
 static void renderMapMarkers();
 static void freeMapTiles();
+static void mapNoteStorageChanged();   // tile storage appeared/vanished: adopt, invalidate, re-render
 // Single entry point used by tabChangedCb. Recenters on self GPS and
 // rebuilds the tile grid. Defined alongside the map state below.
 static void onMapTabActivated();
@@ -4532,10 +4590,166 @@ static volatile bool s_sdinfo_request  = false;  // UI -> worker: rescan SD usag
 // (Heltec V4); on the loop thread that froze the whole UI, incl. touch wake
 // (the "ui:hist 6140ms" field stall). The loop thread snapshots the ring, the
 // worker writes the snapshot; shutdown/reboot still write synchronously.
-static volatile bool s_hist_flush_req  = false;  // snapshot armed, waiting for the worker
-static volatile bool s_hist_flush_busy = false;  // worker owns the snapshot + the history file
+static volatile bool s_hist_flush_req  = false;  // job armed, waiting for the worker
+static volatile bool s_hist_flush_busy = false;  // worker owns the job snapshot + its segment file
 static volatile bool s_hist_flush_ok   = true;   // last worker write result (retry on false)
-static bool uiHistWorkerFlush();                 // defined with the storage code below
+// Message-ring write health. A failing ui_msgs write used to be 100% silent —
+// the user only found out on the next reboot as "messages from the last N
+// minutes vanished" (the thread list still showed fresh times because the
+// small threads file kept writing while the big ring write failed). Updated
+// inside the segment writers from EITHER task (volatile stores only); read by
+// the About page + the repeated-failure toast in flushHistoryIfDue.
+static volatile uint32_t s_msgs_write_ok_ms   = 0;  // millis() of last successful ring write (0 = none yet)
+static volatile uint32_t s_msgs_write_fail_ms = 0;  // millis() of last failed ring write
+// Wall-clock epochs for the same two events, so the readouts can show WHEN a
+// save happened instead of how long ago. 0 = never, or the system clock wasn't
+// set yet at the time (a relative age would be meaningless anyway).
+static volatile uint32_t s_msgs_write_ok_epoch   = 0;
+static volatile uint32_t s_msgs_write_fail_epoch = 0;
+static volatile uint16_t s_msgs_write_fails   = 0;  // consecutive failures since the last success
+static volatile uint8_t  s_msgs_write_stage   = 0;  // where the last failure hit: 'o' open, 'h' header, 'b' body, 'r' rename
+static volatile int      s_msgs_write_errno   = 0;  // errno at that failure (ENFILE/EMFILE = VFS file table full, ENOSPC = card full, EIO = card error)
+// Human-readable diagnosis of the last chat-store write failure — shown on the
+// About panel and in the failure alerts, so a tester doesn't need an errno
+// table. Diagnostic vocabulary stays English on purpose (it's what ends up in
+// bug reports verbatim).
+static void chatSaveFailText(char* out, size_t cap) {
+  const char* stage;
+  switch ((char)s_msgs_write_stage) {
+    case 'o': stage = "open";        break;
+    case 'h': stage = "header";      break;
+    case 'b': stage = "write";       break;
+    case 'r': stage = "rename";      break;
+    case 'a': stage = "append";      break;   // segmented store: active-segment append
+    case 'c': stage = "compact";     break;   // segmented store: one-segment rewrite
+    case 'd': stage = "mkdir";       break;   // segmented store: data-dir create
+    case 's': stage = "scan";        break;   // segmented store: segment discovery
+    case 'm': stage = "commit";      break;   // segmented store: migration commit marker
+    default:  stage = "save";        break;
+  }
+  const int e = s_msgs_write_errno;
+  const char* why;
+  switch (e) {
+    case ENFILE:
+    case EMFILE: why = "too many open files"; break;
+    case ENOSPC: why = "card full";           break;
+    case EIO:    why = "card I/O error";      break;
+    case ENOENT: why = "folder missing";      break;
+    case EROFS:  why = "write-protected";     break;
+    case EACCES: why = "access denied";       break;
+    case 0:      why = "no errno";            break;
+    default:     why = strerror(e);           break;   // newlib carries the full table
+  }
+  snprintf(out, cap, "%s failed: %s (e%d)", stage, why, e);
+}
+static void fmtClockHM(char* buf, size_t cap, const struct tm* t);   // fwd: 12/24h-aware HH:MM
+// "When did the chat store last save" as a CLOCK TIME rather than an age:
+// HH:MM (honouring the 12/24h pref), with a "-<N>D" suffix once it is a day or
+// more old, so a stale save is obvious at a glance instead of having to read a
+// growing seconds counter. "--:--" when the event never happened, or happened
+// before the system clock was set (no meaningful timestamp exists).
+static void chatSaveStamp(char* out, size_t cap, uint32_t epoch) {
+  if (!epoch) { snprintf(out, cap, "--:--"); return; }
+  const time_t t = (time_t)epoch;
+  struct tm tmv;
+  if (!localtime_r(&t, &tmv)) { snprintf(out, cap, "--:--"); return; }
+  char hm[12];
+  fmtClockHM(hm, sizeof hm, &tmv);
+  const time_t now_t = time(nullptr);
+  const uint32_t days = (now_t > (time_t)epoch) ? (uint32_t)((now_t - (time_t)epoch) / 86400) : 0;
+  if (days) snprintf(out, cap, "%s-%uD", hm, (unsigned)days);
+  else      snprintf(out, cap, "%s", hm);
+}
+static bool uiDataFsIsSdCard();                  // fwd (storage code below) — About page shows the resolved backend
+static File uiDataOpen(const char* name, const char* mode);   // fwd — About page reads the msgs file size
+
+// ---- Segmented store: runtime segment table (loop-task-owned) --------------
+// Oldest-first view of the on-disk segment set. Rebuilt by the boot loader,
+// consulted and updated by the flush scheduler. The hist_flush worker never
+// touches it — it only executes fully-described jobs and reports ok/fail.
+struct UiSegInfo {
+  uint32_t first_seq;      // filename key + first record's seq
+  uint32_t last_seq;       // newest seq physically in the FILE
+  uint32_t bytes;          // file size (header + records) — arithmetic, never stat()
+  uint16_t disk_recs;      // records physically in the file
+  uint16_t live_recs;      // of those, how many are still live in the RAM ring
+  uint8_t  compact_dirty;  // RAM tombstones/drops within this segment -> rewrite due
+  // The FILE's content is untrusted: it may be missing, partially written (a
+  // failed append), or stale (post-resync). Repair = a full rewrite from the
+  // ring that also ABSORBS the unflushed tail, so no append may target it
+  // until that lands. Set on append failure and by segRetableFromRing.
+  uint8_t  rewrite_open;
+};
+static UiSegInfo s_seg[k_ui_seg_max];
+static int       s_seg_count = 0;
+static volatile uint32_t s_seg_total_bytes = 0;  // writer-maintained; About page reads it
+static volatile bool     s_seg_resync = false;   // card swapped/remounted: rewrite everything from RAM
+// Set by segRetableFromRing: on-disk segment files that are NOT part of the
+// rebuilt table must be unlinked — but only once the re-land has landed, so a
+// same-card recovery keeps its durable history readable the whole time
+// (deleting up front turned a recovery into a multi-minute window where a
+// power cut lost everything that had been safe on disk).
+static bool s_seg_stale_purge = false;
+// False until the boot loader read segments OR the one-time migration landed.
+// While false the flush scheduler must not append segments (they would shadow
+// the still-authoritative old-format file on the next boot) — it retries the
+// migration instead.
+static bool s_seg_store_ready = false;
+// Durability watermark: highest seq that has landed in a segment file. Ring
+// records with seq above it are the pending-append backlog. Loop-task-owned;
+// advanced only when a write is COMMITTED (worker job observed ok, or a sync
+// write returned true).
+static uint32_t s_seg_flushed_seq = 0;
+
+// One flush job in flight at a time (the existing busy/req protocol). Built
+// and committed on the loop task; the hist_flush worker (or the sync path)
+// only executes it. The snapshot buffer holds at most one segment's records
+// (~80 KB PSRAM) — it replaces the old whole-ring snapshot (1.3 MB).
+enum : uint8_t { SEGJOB_NONE = 0, SEGJOB_APPEND, SEGJOB_COMPACT };
+struct SegJob {
+  uint8_t  kind      = SEGJOB_NONE;
+  uint32_t first_seq = 0;      // target segment (filename key)
+  uint32_t last_seq  = 0;      // newest seq covered by the job
+  bool     create    = false;  // APPEND: file doesn't exist yet (write header)
+  bool     repair    = false;  // COMPACT of an untrusted file: also absorbs the unflushed tail
+  int      n         = 0;
+};
+// The WORKER's armed job. Written only while !(busy || req); the sync drain
+// uses its own local SegJob + its own buffer so a worker stalled past the 9 s
+// idle-wait cap can never observe a rebuilt descriptor or a reused buffer.
+static uint8_t  s_segjob_kind      = SEGJOB_NONE;
+static uint32_t s_segjob_first_seq = 0;
+static uint32_t s_segjob_last_seq  = 0;
+static bool     s_segjob_create    = false;
+static int      s_segjob_n         = 0;
+static UITask::UIMessage* s_segjob_buf = nullptr;   // worker jobs only
+static UITask::UIMessage* s_segsync_buf = nullptr;  // sync-drain jobs only
+// A delete landed inside the segment a COMPACT job is currently rewriting —
+// its snapshot predates the tombstone, so the segment must stay dirty when
+// the job commits (a second compaction picks the deletion up).
+static bool s_segjob_redirty = false;
+// fwd decls — scheduler helpers live with the storage code below.
+static int  segBuildJob(const UITask::UIMessage* ring, int cap, int count, int head,
+                        UITask::UIMessage* buf, SegJob* out);
+static void segCommitJob(const SegJob& job);
+static bool segMoreWorkPending(uint32_t newest_seq);
+static bool uiSegRunArmedJob();
+static void segMarkSeqDirty(uint32_t seq);
+static void segNoteEvicted(uint32_t seq);
+static void segRetableFromRing(const UITask::UIMessage* ring, int cap, int count, int head, uint32_t newest_seq);
+static void segPurgeStaleFiles();
+static bool uiMsgsWriteFail(char stage);   // fwd — failure stage/errno bookkeeping (writer block below)
+static int  segGatherRange(const UITask::UIMessage* ring, int cap, int count, int head,
+                           uint32_t lo, uint32_t hi, UITask::UIMessage* out, int max_out);
+static UITask::UIMessage* segEnsureBuf(UITask::UIMessage** slot);
+// fwd decls — the ops live with the storage code far below.
+static void uiDataEnsureDirs();
+static int  uiSegScan(uint32_t* out_first_seqs, int max_out, bool sweep_tmps);
+static bool uiSegOpenValidated(uint32_t first_seq, File& f, uint16_t* rec_size_out);
+static bool uiSegReadRec(File& f, uint16_t disk_sz, UITask::UIMessage* out, uint32_t* seq_out);
+static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs, int n, bool sync_writer);
+static bool uiSegAppendRecords(uint32_t first_seq, bool create, const UITask::UIMessage* recs, int n);
+static void uiSegRemoveFile(uint32_t first_seq);
 static volatile bool s_sdinfo_done     = false;  // worker -> UI: a result exists
 static volatile bool s_sdinfo_ok       = false;  // card present + sizes valid
 static uint64_t      s_sdinfo_tot      = 0;
@@ -8386,6 +8600,15 @@ static void syncClockCb(lv_event_t* e) {
   g_lv.task->showAlert(TR("Clock synced"), 900);
 }
 
+// Chat-save fallback dropdown (Settings -> General): selection index -> number
+// of consecutive failed background history writes before the flush retries
+// synchronously on the UI task (0 = background retries only, never hitch).
+static const uint8_t k_hist_sync_opts[] = { 0, 1, 2, 3, 5, 8 };
+static void histSyncSelectCb(lv_event_t* e) {
+  const uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+  if (sel < sizeof(k_hist_sync_opts)) touchPrefsSetHistSyncAfter(k_hist_sync_opts[sel]);
+}
+
 static void advertNowCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   g_lv.task->showAlert(g_lv.task->sendAdvertNow() ? TR("Advert sent") : TR("Advert failed"), 900);
@@ -10018,6 +10241,42 @@ static void sysInfoTextLive(char* buf, size_t cap) {
                 (unsigned long)rx_evt, (unsigned long)rx_ok, (unsigned long)rx_err,
                 (unsigned long)rx_lost, (unsigned long)radio_driver.getRxQueueDrops(),
                 radio_driver.rxQueueEnabled() ? "on" : "off");
+
+  // Chat-history store health. Two failure modes this exposes that are
+  // otherwise invisible: (a) the "wrong backend" trap — a boot whose SD mount
+  // failed resolves the store to internal SPIFFS and every message written
+  // that session is invisible on the next carded boot; (b) persistent ring
+  // write failures (full card / damaged FAT) — the small threads file keeps
+  // succeeding, so the thread list looks fresh while messages silently stop
+  // persisting.
+  {
+    // Segmented store: the byte total is writer-maintained (volatile), so this
+    // 1 Hz label costs ZERO file I/O — the old single-file size probe blocked
+    // on the FatFs volume lock behind a sick write and froze the UI just by
+    // WATCHING this page.
+    const uint32_t nowms = (uint32_t)millis();
+    char stat[112];
+    char when[16];
+    if (s_msgs_write_fails) {
+      char why[64];
+      chatSaveFailText(why, sizeof why);
+      chatSaveStamp(when, sizeof when, s_msgs_write_fail_epoch);
+      snprintf(stat, sizeof stat, "FAIL x%u (%s)\n  %s",
+               (unsigned)s_msgs_write_fails, when, why);
+    }
+    else if (s_msgs_write_ok_ms) {
+      chatSaveStamp(when, sizeof when, s_msgs_write_ok_epoch);
+      snprintf(stat, sizeof stat, "OK %s", when);
+    }
+    else
+      snprintf(stat, sizeof stat, "none this session");
+    p += snprintf(buf + p, cap - p,
+                  "Chat store\n  %s   %d seg / %u KB%s\n  last save: %s\n\n",
+                  uiDataFsIsSdCard() ? "SD /meshcomod" : "Internal flash",
+                  s_seg_count, (unsigned)(s_seg_total_bytes / 1024u),
+                  s_seg_store_ready ? "" : "  (migration pending!)",
+                  stat);
+  }
 #endif
   (void)p; (void)cap;
 }
@@ -10275,6 +10534,9 @@ static void sdRestoreApply() {
   if (!fmSdTryMount()) { g_lv.task->showAlert(TR("No SD card"), 1600); return; }
   g_lv.task->showAlert(TR("Copying internal data to SD..."), 6000);
   lv_refr_now(nullptr);                 // paint the notice before the blocking copy
+  // Land everything in RAM first — this path used to reboot WITHOUT persisting,
+  // silently dropping every message since the last lazy flush.
+  g_lv.task->persistHistoryNow();
   disableLoopWDT();
   const bool ok = meshcomodMigrateSpiffsToSd(true);
   enableLoopWDT();
@@ -11306,6 +11568,27 @@ static void buildDeviceSettings(int sec) {
   lv_label_set_text(l_adv, TR("Send advert now"));
   lv_obj_center(l_adv);
   y += SC(40);
+
+  /* Chat-save fallback: after how many consecutive failed BACKGROUND history
+     writes the flush retries synchronously on the UI task. The sync write is
+     the empirically reliable path on the shared SPI bus, but the screen
+     hitches for its duration — users who prefer a never-hitching UI pick Off
+     (background retries only; the RAM ring keeps everything meanwhile). */
+  {
+    y += settingsRowLabel(body, y, 0, TR("Chat save fallback (failed tries)"), COLOR_SUB, &g_font_12, 0) + 2;
+    lv_obj_t* dd = lv_dropdown_create(body);
+    lv_dropdown_set_options(dd, TR("Off\n1\n2\n3\n5\n8"));
+    const uint8_t cur = touchPrefsGetHistSyncAfter();
+    uint16_t sel = 2;   // index of "2" — the default when the stored value isn't a listed option
+    for (uint16_t i = 0; i < sizeof(k_hist_sync_opts); ++i)
+      if (k_hist_sync_opts[i] == cur) { sel = i; break; }
+    lv_dropdown_set_selected(dd, sel);
+    lv_obj_set_width(dd, lv_pct(100));
+    lv_obj_set_pos(dd, 2, y);
+    lv_obj_add_event_cb(dd, histSyncSelectCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);   // open list on top of the bar
+    y += SC(44);
+  }
   }
 
   if (sec == DSEC_DISPLAY) {   // --- Display ---
@@ -16190,6 +16473,7 @@ static lv_obj_t*       s_home_adv_btn     = nullptr;
 #endif
 // Compact legend label above the chart showing live TX/RX totals.
 static lv_obj_t* s_home_chart_legend = nullptr;
+static lv_obj_t* s_home_store        = nullptr;   // chat-store chip, right half of the legend row
 static lv_obj_t* s_home_chart_sig    = nullptr;   // live signal chip drawn inside the graph box
 #if CAP_LARGE_SCREEN
 static lv_obj_t* s_home_info         = nullptr;   // Commander info-panel values column (big screen) — refreshed live
@@ -16333,6 +16617,21 @@ static void calibrateBatteryCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(b, 3000);
 }
 
+// ----- SD wedge detection (flag side; the probe/remount lives in sdHealthTick) -----
+// A runtime SD failure is a one-way door in arduino-esp32: one timed-out command
+// latches STA_NOINIT (or a data-phase error leaves FR_DISK_ERR everywhere), while
+// SD.cardType() keeps returning the type CACHED at mount — so every
+// `cardType() != CARD_NONE` gate still passes, I/O fails silently, and nothing
+// ever re-runs the mount ladder until a reboot power-cycles the card. Any SD
+// user (loop task, core-0 worker, notify task) that sees SD I/O fail while the
+// card is supposedly mounted stamps this; UITask::loop verifies with real I/O
+// and remounts if the card wedged. Volatile store only — safe from any task.
+static volatile uint32_t s_sd_fail_note_ms = 0;
+static inline void sdNoteIoFailure() {
+  const uint32_t m = (uint32_t)millis();
+  s_sd_fail_note_ms = m ? m : 1;
+}
+
 // ----- Battery history: 5-minute log to SD + a 24h chart popup (T-Deck only) -----
 // Logging piggybacks the always-on UITask::loop (no extra wakeup): every
 // k_batt_log_period_ms a line is appended to /meshcomod/battery.log and the file
@@ -16345,7 +16644,12 @@ static void calibrateBatteryCb(lv_event_t* e) {
 // SPIFFS (flat) uses a top-level path.
 static fs::FS& battLogFs() {
 #if CAP_SD
-  if (SD.cardType() != CARD_NONE && SD.exists("/meshcomod")) return SD;
+  if (SD.cardType() != CARD_NONE) {
+    if (SD.exists("/meshcomod")) return SD;
+    // cardType() says present (cached) but real I/O failed — wedge/removal tell.
+    // (Or just a card without /meshcomod; sdHealthTick's probe arbitrates cheaply.)
+    sdNoteIoFailure();
+  }
 #endif
   return SPIFFS;
 }
@@ -16372,7 +16676,7 @@ static void batteryLogAppend(uint32_t epoch, uint16_t mv, int pct, uint16_t cpu_
   if (epoch > 1700000000 && localtime_r(&t, &tmv)) strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
   File rf = fs.open(battLogPath(), FILE_READ);
   File wf = fs.open(battLogTmp(), FILE_WRITE);     // truncate/create
-  if (!wf) { if (rf) rf.close(); return; }
+  if (!wf) { if (rf) rf.close(); if (battLogOnSd()) sdNoteIoFailure(); return; }
   if (rf) {
     while (rf.available()) {
       String ln = rf.readStringUntil('\n');
@@ -16732,7 +17036,7 @@ static void telemetryLogAppend(const uint8_t* key, uint32_t epoch, int mv, int t
   if (epoch > 1700000000 && localtime_r(&t, &tmv)) strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
   File rf = SD.open(path, FILE_READ);
   File wf = SD.open(tmp, FILE_WRITE);
-  if (!wf) { if (rf) rf.close(); return; }
+  if (!wf) { if (rf) rf.close(); sdNoteIoFailure(); return; }
   if (rf) {
     while (rf.available()) {
       String ln = rf.readStringUntil('\n');
@@ -18020,6 +18324,12 @@ static inline SPIClass* sdSharedSPI() { return tdeckSharedSPI(); }
 // already initialised by the radio/display, so those pins are untouched.
 static bool fmSdTryMount() {
   if (s_sd_mounted) return true;
+  // Fast-fail inside the post-failure backoff window. Hot paths call this
+  // directly (map tile lookups on the loop task, history writes via
+  // uiDataFsReady, WAV chimes) — without this gate every such call re-walks
+  // the multi-second mount ladder while the card is out, freezing the UI.
+  // Explicit user retries clear the backoff first (fmSdMountOrFormatCb).
+  if (s_sd_retry_after_ms && millis() < s_sd_retry_after_ms) return false;
 #if defined(TLORA_PAGER)
   if (!pagerSdCardPresent()) return false;
 #endif
@@ -18035,8 +18345,11 @@ static bool fmSdTryMount() {
   // mounts on the first attempt and returns immediately; only a flaky/cold card
   // walks the whole ladder (~1.1 s worst case). The cumulative delay can
   // approach the loop watchdog window, so drop the WDT around the loop. 4 MHz
-  // is reliable on the shared LoRa bus; max_files=3 keeps the VFS footprint
-  // small (dir + at most 2 files).
+  // is reliable on the shared LoRa bus. max_files=6 (was 3): the card now
+  // serves telemetry log rewrites (2 handles), battery log rewrites (2),
+  // the history flush, tile reads/writes, WAV chimes and the About readout
+  // CONCURRENTLY — with only 3 VFS slots the history flush's open("w") lost
+  // that race and chat saves failed with ENFILE while the card was fine.
   // Ladder of (settle, clock) attempts. The first three use the fast 4 MHz the
   // shared LoRa bus handles well; a cold / cheap card that won't wake at 4 MHz
   // then gets progressively longer settles AND a lower clock (1 MHz, then
@@ -18061,7 +18374,7 @@ static bool fmSdTryMount() {
   for (int attempt = 0; attempt < kAttempts; ++attempt) {
     SD.end();
     delay(kMountLadder[attempt].settle_ms);
-    if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 3) && SD.cardType() != CARD_NONE) {
+    if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
       mounted = true;
       break;
     }
@@ -18081,6 +18394,35 @@ static bool fmSdTryMount() {
 static void fmSdUnmount() {
   if (s_sd_mounted) { SD.end(); s_sd_mounted = false; s_sd_size = 0; }
   s_sd_retry_after_ms = 0;   // a reinsert should be able to mount right away
+}
+// True when the card still answers real I/O. SD.cardType() is useless for this:
+// arduino-esp32 caches the type at mount and only an explicit SD.end() ever
+// returns CARD_NONE again — a wedged (or even physically removed) card keeps
+// reporting its mount-time type forever. Opening the root dir DOES hit the card:
+// the root `stat` is answered from RAM (vfs_fat special-cases "/"), but the
+// opendir behind it runs f_opendir -> disk_status = a real SEND_STATUS
+// transaction, and a NOINIT'd card then gets one full re-init handshake — so a
+// recoverable card self-heals right here, a dead one returns an invalid File
+// (opendir fails -> operator bool false). Healthy-card cost is sub-ms; a dead
+// card rides out the SPI timeouts once, so callers rate-limit the probe.
+static bool sdProbeAlive() {
+  File d = SD.open("/");
+  const bool ok = d && d.isDirectory();
+  if (d) d.close();
+  return ok;
+}
+// Discriminator for hot READ paths (map tile lookups run up to five SD opens
+// per tile on the loop task): a missing FILE on a healthy card must stay cheap
+// and silent, while a dead card must stamp the failure AND let the caller
+// short-circuit — otherwise one render pass serializes behind sd_diskio's
+// per-op timeout/re-init and the whole UI freezes while a card is out. Call
+// after a failed SD read/open; returns true when the card itself is dead
+// (bail out of the whole SD pass), false when it was just a missing file.
+static bool sdReadFailedCardDead() {
+  if (s_sd_fail_note_ms) return true;   // already suspected — sdHealthTick arbitrates within ~5 s
+  if (sdProbeAlive()) return false;     // card fine: genuinely missing file
+  sdNoteIoFailure();
+  return true;
 }
 static void fmSdClickCb(lv_event_t* e) {
   // SHORT_CLICKED (not CLICKED) so a long-press — which formats the card — does
@@ -18130,6 +18472,7 @@ static void fmSdDoFormat() {
 // (e.g. exFAT, which this build can't read — only FAT16/FAT32) offer to format.
 static void fmSdMountOrFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_sd_retry_after_ms = 0;   // explicit user retry — bypass the mount backoff
   if (fmSdTryMount()) { fmShowRoots(); return; }
   showConfirm(TR("Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased."),
               "Format", fmSdDoFormat);
@@ -18140,7 +18483,11 @@ static void fmSdMountOrFormatCb(lv_event_t* e) {
 // SETTINGS (exported config), plus MAPS/LOGS. Idempotent (mkdir-if-absent), so
 // it's also safe to re-run on an already-set-up card.
 static void sdEnsureMeshcomodFolders() {
-  static const char* const folders[] = { "/BINS", "/UPDATES", "/RECBCK", "/SETTINGS", "/MAPS", "/LOGS" };
+  // /meshcomod + the chat-segment dir were MISSING here for years: after an
+  // in-session FAT32 format every chat/telemetry write failed at open (ENOENT)
+  // until a remount or reboot recreated the data root.
+  static const char* const folders[] = { "/BINS", "/UPDATES", "/RECBCK", "/SETTINGS", "/MAPS", "/LOGS",
+                                         "/meshcomod", "/meshcomod/msgs" };
   for (unsigned i = 0; i < sizeof(folders) / sizeof(folders[0]); ++i)
     if (!SD.exists(folders[i])) SD.mkdir(folders[i]);
   if (!SD.exists("/README.TXT")) {
@@ -20510,7 +20857,7 @@ static void discoverLogSighting(int32_t lat_e6, int32_t lon_e6, const MyMesh::Di
   SD.mkdir("/meshcomod");
   SD.mkdir("/meshcomod/discover");
   File f = SD.open("/meshcomod/discover/wardrive.csv", FILE_APPEND);
-  if (!f) return;
+  if (!f) { sdNoteIoFailure(); return; }
   if (f.size() == 0) f.print("epoch,lat,lon,type,pubkey,rssi,snr,hops\n");
   uint32_t epoch = (uint32_t)rtc_clock.getCurrentTime();
   f.printf("%lu,%.6f,%.6f,%s,%02X%02X%02X%02X,%d,%.1f,%u\n",
@@ -21798,6 +22145,32 @@ static void homeControlPanelCb(lv_event_t* e) {   // "Control panel" launcher ->
   if (lv_event_get_code(e) == LV_EVENT_CLICKED) toggleControlCenter();
 }
 
+// Chat-store chip for the Commander legend row (right of the TX/RX totals).
+// Deliberately terse — it shares one line with the traffic counts and must fit
+// half the chart width at g_font_12. The full story (backend, failure stage +
+// errno) stays on the About page's "Chat store" panel; this chip only has to
+// make a sick store impossible to miss from the home screen. Returns the text
+// colour to use.
+static uint32_t homeStoreChipText(char* out, size_t cap) {
+  if (s_msgs_write_fails) {                       // saves are failing right now
+    snprintf(out, cap, LV_SYMBOL_SAVE " FAIL x%u", (unsigned)s_msgs_write_fails);
+    return 0xE05252;                              // red — history is NOT landing
+  }
+  if (!s_seg_store_ready) {                       // old-format file not converted yet
+    snprintf(out, cap, LV_SYMBOL_SAVE " migrating");
+    return 0xF5A623;                              // amber
+  }
+  // Healthy: WHEN the store last saved. A clock time answers "is my history
+  // safe right now?" directly, where a size doesn't — and the segment count /
+  // byte total (plus the failure stage + errno) stay one tap away on the About
+  // page. Older than a day carries a "-<N>D" suffix so a store that quietly
+  // stopped saving yesterday can't read as fresh.
+  char when[16];
+  chatSaveStamp(when, sizeof when, s_msgs_write_ok_epoch);
+  snprintf(out, cap, LV_SYMBOL_SAVE " %s", when);
+  return COLOR_SUB;
+}
+
 static void makeHome(lv_obj_t* tab) {
   // Layout (240 wide × 282 tall): title + heartbeat + battery at top, status
   // lines, TX/RX chart in the middle, Send Advert button at the bottom.
@@ -21831,6 +22204,7 @@ static void makeHome(lv_obj_t* tab) {
   s_home_batt_pct   = nullptr;
   s_home_batt_icon  = nullptr;
   s_home_chart_sig  = nullptr;
+  s_home_store      = nullptr;   // created with the legend row below
   g_lv.home_apps    = nullptr;   // set below iff the right-hand launcher column is built (landscape)
 #if defined(HAS_EXPANSION_KIT)
   s_home_env_chart  = nullptr;
@@ -21961,6 +22335,23 @@ static void makeHome(lv_obj_t* tab) {
 #else
   const int chart_w = cw;
 #endif
+  // Chat-store chip: shares the legend row with the TX/RX totals, parked on the
+  // RIGHT HALF of the chart width (fixed width + right-aligned + CLIP, so it can
+  // never grow into the traffic counts on the left, at any UI scale). Not
+  // clickable — the legend owns this row's taps (signal/traffic popup).
+  s_home_store = lv_label_create(tab);
+  lv_label_set_long_mode(s_home_store, LV_LABEL_LONG_CLIP);
+  lv_obj_set_width(s_home_store, chart_w / 2);
+  lv_obj_set_style_text_align(s_home_store, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_home_store, &g_font_12, LV_PART_MAIN);
+  {
+    char chip[24];
+    const uint32_t col = homeStoreChipText(chip, sizeof chip);
+    lv_label_set_text(s_home_store, chip);
+    lv_obj_set_style_text_color(s_home_store, lv_color_hex(col), LV_PART_MAIN);
+  }
+  lv_obj_align(s_home_store, LV_ALIGN_TOP_LEFT, chart_w - chart_w / 2, chart_y);
+
   // Fit the chart in the remaining vertical space: content height minus the
   // tab padding, the chart's top offset, and the Send-advert button + gaps.
   // Portrait keeps the full 96 px; landscape (short screen) shrinks it so the
@@ -23991,16 +24382,11 @@ static void tileFetchTaskFn(void* arg) {
       s_los_result_ready = true;
       continue;
     }
-    // Chat-history flush: write the loop thread's snapshot. busy is raised BEFORE
-    // req is cleared so the loop-side gate (busy || req) never sees a gap in which
-    // it could overwrite the snapshot mid-write.
-    if (s_hist_flush_req) {
-      s_hist_flush_busy = true;
-      s_hist_flush_req  = false;
-      s_hist_flush_ok   = uiHistWorkerFlush();
-      s_hist_flush_busy = false;
-      continue;
-    }
+    // (Chat-history flush moved to its own core-1 task — histFlushTaskFn. On
+    // THIS worker it shared core 0 with the Wi-Fi driver, whose prio-23 tasks
+    // starve a prio-1 task for hundreds of ms; sd_diskio's busy-waits measure
+    // wall time, so healthy SD writes surfaced as timeouts/EIO here while the
+    // identical write from core 1 succeeded.)
     // Firmware update check (one-shot, infrequent). Reuses this worker's stack.
     if (s_verchk_request) {
       s_verchk_request = false;
@@ -24253,11 +24639,17 @@ static void tileFetchTaskFn(void* arg) {
             } else {
               ++s_tile_fetch_short_wr;
               s_tile_fetch_last_wr = 'P';            // short/failed disk write (card full or SD error)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+              if (s_tile_fs == &SD) sdNoteIoFailure();   // wedge tell (worker task — stamp only)
+#endif
             }
           }
         } else {
           ++s_tile_fetch_open_fail;
           s_tile_fetch_last_wr = 'O';                // open("w") failed: dir missing / write-protect / SD bus
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+          if (s_tile_fs == &SD) sdNoteIoFailure();       // wedge tell (worker task — stamp only)
+#endif
         }
       } else {
         s_tile_fetch_last_wr = 'Z';                  // bad / oversized content-length
@@ -24359,6 +24751,54 @@ static bool ensureTileFetchTaskRunning() {
                 s_tile_fetch_task, (unsigned)ESP.getFreeHeap(),
                 (unsigned)ESP.getFreePsram());
   return s_tile_fetch_task != nullptr;
+}
+
+// ---- Chat-history flush worker (core 1) --------------------------------------
+// The flush used to ride the core-0 tile_fetch worker — the Wi-Fi core. Under
+// Wi-Fi load its prio-23 driver tasks starve a prio-1 task for hundreds of ms
+// at a time, and sd_diskio's busy-waits measure WALL time: the timeout expires
+// while the task simply wasn't scheduled, so perfectly good SD writes surface
+// as EIO ("card I/O error") — while the identical write from the core-1 loop
+// task (the reboot-time persist) succeeds every time. Chat persistence has no
+// Wi-Fi affinity, so it gets its own tiny task pinned to core 1 at the loop
+// task's priority (equal-priority time-slicing keeps the UI serviced during a
+// write). The task is persistent; the 100 ms poll of the volatile req flag
+// costs nothing measurable and mirrors the old worker's pickup latency.
+static TaskHandle_t s_hist_flush_task        = nullptr;
+static StaticTask_t s_hist_flush_tcb;
+static StackType_t* s_hist_flush_stack       = nullptr;
+static size_t       s_hist_flush_stack_bytes = 0;
+static void histFlushTaskFn(void*) {
+  for (;;) {
+    // busy is raised BEFORE req is cleared so the loop-side gate (busy || req)
+    // never sees a gap in which it could overwrite the snapshot mid-write.
+    if (s_hist_flush_req) {
+      s_hist_flush_busy = true;
+      s_hist_flush_req  = false;
+      s_hist_flush_ok   = uiSegRunArmedJob();   // segmented store: one append/compact per job
+      s_hist_flush_busy = false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+static bool ensureHistFlushTaskRunning() {
+  if (s_hist_flush_task != nullptr) return true;
+  if (!s_hist_flush_stack) {
+    // The segment writers keep their bulk buffers on the heap; stack use is
+    // File objects + FatFs path work. 6 KB leaves ample headroom (the tile
+    // worker's overflow-into-globals history earned the caution).
+    static const size_t k_sz = 6 * 1024;
+    s_hist_flush_stack = (StackType_t*)heap_caps_malloc(k_sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!s_hist_flush_stack) return false;
+    s_hist_flush_stack_bytes = k_sz;
+  }
+  s_hist_flush_task = xTaskCreateStaticPinnedToCore(
+      histFlushTaskFn, "hist_flush",
+      s_hist_flush_stack_bytes / sizeof(StackType_t),
+      nullptr, 1,
+      s_hist_flush_stack, &s_hist_flush_tcb,
+      1 /*core 1 — NOT the Wi-Fi core; see block comment*/);
+  return s_hist_flush_task != nullptr;
 }
 
 // Queue a missing tile for download. No-op when Wi-Fi is down or the
@@ -24504,7 +24944,12 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
 #if CAP_SD
   if (s_tiles_from_sd && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
     // Tile source = microSD: read straight off the card (fully offline, no server fetch).
-    if (!fmSdTryMount()) return false;
+    if (s_sd_fail_note_ms) return false;   // card suspected dead — don't stack per-tile SPI timeouts (sdHealthTick arbitrates)
+    // Mounted check only — a render loop must never walk the multi-second
+    // mount ladder per tile (with the card out that read as recurring UI
+    // freezes). Mounting is owned by boot adoption, sdHealthTick's reinsert
+    // watch, the FM poll, and the SD-tiles toggle (mapOptTilesSdCb mounts).
+    if (!s_sd_mounted) return false;
     markSdIo();                          // SD read activity -> status-bar LED
     // Prefer the Meshtastic/MeshCore standard layout /maps/osm/{z}/{x}/{y}.png
     // (decoded via lodepng); fall back to the legacy /tiles/{z}/{x}/{y}.jpg.
@@ -24527,14 +24972,14 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
       fsd = SD.open(ppath, FILE_READ);
     }
     if (!fsd) fsd = SD.open(path, FILE_READ);   // legacy /tiles/<z>/<x>/<y>.jpg
-    if (!fsd) return false;
+    if (!fsd) { sdReadFailedCardDead(); return false; }   // missing tile (cheap, silent) vs dead card (stamp + short-circuit)
     const size_t szsd = fsd.size();
     if (szsd == 0 || szsd > 256 * 1024) { fsd.close(); return false; }   // PNG tiles run larger than JPEG
     uint8_t* bufsd = (uint8_t*)lvglPsramAlloc(szsd);
     if (!bufsd) { fsd.close(); return false; }
     const size_t nsd = fsd.read(bufsd, szsd);
     fsd.close();
-    if (nsd != szsd) { lvglPsramFree(bufsd); return false; }
+    if (nsd != szsd) { lvglPsramFree(bufsd); sdReadFailedCardDead(); return false; }   // short read mid-tile = card died under us
     *out_data = bufsd; *out_len = szsd;
     return true;
   }
@@ -24546,8 +24991,18 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   // re-downloaded forever and rendered nothing (#tiles). open() is the real existence test; read up to
   // the 100 KB writer cap and use the ACTUAL bytes read. (S3 boards: f.size() works there, but this is
   // equally correct — a transient 100 KB PSRAM buffer per tile, freed right after decode.)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+  // Launcher installs cache tiles on the raw SD (s_tile_fs == &SD) — same
+  // dead-card short-circuit as the SD-pack path above.
+  if (s_tile_fs == &SD && s_sd_fail_note_ms) return false;
+#endif
   File f = tileCacheOpen(path, "r");
-  if (!f) return false;
+  if (!f) {
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+    if (s_tile_fs == &SD) sdReadFailedCardDead();
+#endif
+    return false;
+  }
   const size_t CAP = 100 * 1024;
   uint8_t* buf = (uint8_t*)lvglPsramAlloc(CAP);
   if (!buf) { f.close(); return false; }
@@ -24580,6 +25035,35 @@ static void freeMapTiles() {
   for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) freeMapTileSlot(s_map_tiles[_ti]);
 }
 
+// The tile storage changed underneath us: a card was remounted (wedge recovery,
+// reinsert watch, file-manager insert poll, post-format) or lost. The map keeps
+// decoded tiles in s_map_tiles across renders and only renders on pan / zoom /
+// tab-open, so without this a card that came back showed a permanently blank
+// map — the chat store re-landed (flushHistorySoon) while the map was never
+// told anything had happened.
+//
+//   * adopts the card as the tile cache when this boot had no backend at all
+//     (booted card-less, or the "tiles" partition is absent — Launcher installs)
+//   * drops the decoded tiles, since a swapped card holds different content
+//   * clears the fetch dedup ring so tiles whose download failed during the
+//     outage are retried instead of being remembered as in-flight forever
+//   * re-renders immediately when the map is the visible tab
+static void mapNoteStorageChanged() {
+#if CAP_SD
+  if (s_sd_mounted && !s_tiles_fs_ready) {
+    // No tile backend was resolved at boot; the card can serve as one now
+    // (same layout the boot fallback uses: SD ROOT /tiles/<z>/<x>/<y>).
+    s_tile_fs        = &SD;
+    s_tile_root[0]   = '\0';
+    s_tiles_fs_ready = true;
+  }
+#endif
+  for (int i = 0; i < k_tile_fetch_dedup_size; ++i) s_tile_fetch_dedup[i] = 0;
+  s_tile_fetch_dedup_head = 0;
+  freeMapTiles();
+  if (g_lv.tabview && lv_tabview_get_tab_act(g_lv.tabview) == MAP_TAB_INDEX) renderMapTiles();
+}
+
 #if defined(ESP32)
 // Is *some* tile source available to probe at all? (SD pack or LittleFS /tiles.)
 static bool mapTileSourceReady() {
@@ -24596,7 +25080,8 @@ static bool mapTileSourceReady() {
 static bool tileExistsAt(uint8_t z, long x, long y) {
 #if CAP_SD
   if (s_tiles_from_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
-    if (!fmSdTryMount()) return false;
+    if (s_sd_fail_note_ms) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
+    if (!s_sd_mounted) return false;       // never ladder from the zoom guard (see loadTileJpeg)
     char p[56];
     snprintf(p, sizeof p, "/maps/osm/%u/%ld/%ld.png", (unsigned)z, x, y);
     if (SD.exists(p)) return true;
@@ -24607,7 +25092,9 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.PNG", (unsigned)z, x, y);
     if (SD.exists(p)) return true;
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.jpg", (unsigned)z, x, y);
-    return SD.exists(p);
+    if (SD.exists(p)) return true;
+    sdReadFailedCardDead();   // all five missing: either past the pack edge (cheap, silent) or the card died
+    return false;
   }
 #endif
   if (!s_tiles_fs_ready) return false;
@@ -37797,6 +38284,10 @@ static void relayoutHomeCharts() {
 
   const int legend_y = env_chart_y + SC(34) + SC(12);
   lv_obj_set_pos(s_home_chart_legend, 0, legend_y);
+  if (s_home_store) {                      // chat-store chip rides the same row
+    lv_obj_set_width(s_home_store, chart_w / 2);
+    lv_obj_set_pos(s_home_store, chart_w - chart_w / 2, legend_y);
+  }
 
   const int home_avail = tabContentH() - 20;
   int chart_h = home_avail - (legend_y + 16) - 4 - (home_land ? 0 : (8 + 36));
@@ -37846,6 +38337,19 @@ static void refreshStatusLabels() {
   if (g_lv.tabview) active_tab = lv_tabview_get_tab_act(g_lv.tabview);
   const bool home_active = (active_tab == HOME_TAB_INDEX);
   if (home_active) refreshHomeBattery();
+  // Chat-store chip (legend row). Updated independently of the TX/RX chart —
+  // the big-screen scaled layout drops the chart entirely, and the store state
+  // still has to be visible there.
+  if (home_active && s_home_store) {
+    char chip[24];
+    const uint32_t col = homeStoreChipText(chip, sizeof chip);
+    setLabelIfChanged(s_home_store, chip);
+    static uint32_t s_home_store_col = 0;   // avoid re-styling (and invalidating) every tick
+    if (col != s_home_store_col) {
+      s_home_store_col = col;
+      lv_obj_set_style_text_color(s_home_store, lv_color_hex(col), LV_PART_MAIN);
+    }
+  }
   // Push a TX/RX sample onto the home chart: delta packets since last tick.
   if (home_active && s_home_chart && s_home_chart_tx && s_home_chart_rx) {
     static uint32_t last_tx = 0;
@@ -40834,15 +41338,12 @@ void UITask::markThreadsDirty(unsigned long delay_ms) {
 }
 
 void UITask::markMsgsDirty(unsigned long delay_ms) {
-  // Every flush rewrites the WHOLE ring file on the loop thread, so space the
-  // writes out: at least 30 s for the deep SD ring (~1.1 MB at 5000 slots) and at
-  // least 10 s for the small internal-flash ring (~115 KB) — a busy channel used
-  // to trigger a full rewrite (+ possible SPIFFS GC) ~2 s after EVERY message,
-  // which read as "the device freezes 1-2 s every ~10 s" on stable beta_31.
-  // persistHistoryNow() still forces a write on reboot/shutdown, so a hard crash
-  // costs at most the last few seconds of messages.
-  if (_ui_msg_cap > MAX_UI_MESSAGES) { if (delay_ms < 30000) delay_ms = 30000; }
-  else                               { if (delay_ms < 10000) delay_ms = 10000; }
+  // Segmented store: a flush is now a small APPEND to the active segment
+  // (~240 B per message, off-thread), so the old 10/30 s whole-ring-rewrite
+  // clamps are gone — the hard-cut loss window shrinks to this coalesce.
+  // SPIFFS keeps a slightly higher floor purely as flash-wear pacing.
+  if (uiDataFsIsSdCard()) { if (delay_ms < 2000) delay_ms = 2000; }
+  else                    { if (delay_ms < 5000) delay_ms = 5000; }
   const unsigned long deadline = millis() + delay_ms;
   if (!_msgs_dirty || deadline < _next_msgs_flush_ms)
     _next_msgs_flush_ms = deadline;
@@ -40850,18 +41351,73 @@ void UITask::markMsgsDirty(unsigned long delay_ms) {
   markThreadsDirty(1500);  // thread state (last_ts, unread) changed too — coalesce a message burst into one write
 }
 
-// Snapshot of the message ring handed to the core-0 worker for the off-thread
-// write. Allocated once in PSRAM (ring-sized: ~115 KB SPIFFS ring / ~1.1 MB SD
-// ring); the worker only ever touches the snapshot, never the live ring.
-static UITask::UIMessage* s_hist_snap     = nullptr;
-static int           s_hist_snap_cap      = 0;
-static uint16_t      s_hist_snap_count    = 0;
-static uint16_t      s_hist_snap_head     = 0;
-static uint32_t      s_hist_snap_msgcount = 0;
+// Arm an immediate flush of both history files WITHOUT the min-delay clamp and
+// WITHOUT blocking this task: the actual writes happen on the hist_flush
+// worker (or the sync fallback inside flushHistoryIfDue). Called only from the
+// SD remount paths — the card may be a DIFFERENT one now, so the segment
+// table is rebuilt from the ring (s_seg_resync) and the full history re-lands
+// one bounded segment at a time.
+void UITask::flushHistorySoon() {
+  s_seg_resync           = true;
+  _msgs_dirty            = true;
+  _next_msgs_flush_ms    = millis();
+  _threads_dirty         = true;
+  _next_threads_flush_ms = millis();
+}
 
 void UITask::flushHistoryIfDue(unsigned long now) {
-  // A worker write failed (storage hiccup): re-arm and try again.
-  if (!s_hist_flush_ok) { s_hist_flush_ok = true; markMsgsDirty(5000); }
+  // Observe a finished worker job FIRST — and strictly BEFORE the failure
+  // branch below resets s_hist_flush_ok, or a FAILED job would read as ok
+  // here and get committed, advancing the durability watermark over records
+  // that never reached disk (silent permanent loss).
+  if (s_segjob_kind != SEGJOB_NONE && !s_hist_flush_busy && !s_hist_flush_req) {
+    if (s_hist_flush_ok) {
+      SegJob done{};
+      done.kind      = s_segjob_kind;
+      done.first_seq = s_segjob_first_seq;
+      done.last_seq  = s_segjob_last_seq;
+      done.create    = s_segjob_create;
+      done.n         = s_segjob_n;
+      const uint32_t pre_wm = s_seg_flushed_seq;
+      segCommitJob(done);
+      // Deletes that raced the in-flight APPEND: segMarkSeqDirty skipped them
+      // while their seq was above the watermark ("never reaches disk") — but
+      // this job just put them on disk. Give their segments the compaction
+      // mark now.
+      if (s_seg_flushed_seq > pre_wm) {
+        for (int i = 0; i < _ui_msg_count; ++i) {
+          const int slot = (_ui_msg_head - _ui_msg_count + i + _ui_msg_cap) % _ui_msg_cap;
+          const UIMessage& m = _ui_msgs[slot];
+          if (!m.thread[0] && m.seq > pre_wm && m.seq <= s_seg_flushed_seq) {
+            segMarkSeqDirty(m.seq);
+            _msgs_dirty = true;   // schedule the follow-up compaction
+          }
+        }
+      }
+    }
+    s_segjob_kind = SEGJOB_NONE;   // failed job: data stays pending below the watermark
+    s_segjob_redirty = false;
+  }
+  // A worker write failed (storage hiccup): re-arm and try again. Surface
+  // repeated failures — a persistently failing ring write was previously
+  // 100% silent and read as "messages from the last N minutes vanished" on
+  // the next reboot (the small threads file kept writing, so the thread
+  // list still showed fresh last-message times).
+  if (!s_hist_flush_ok) {
+    s_hist_flush_ok = true;
+    // Back off a hopelessly failing store: each retry against a card that
+    // times out on large writes costs seconds of bus stalls (felt as UI
+    // freezes through the FatFs volume lock). After 5 straight failures
+    // retry every 5 min instead of every 30 s — the RAM ring keeps
+    // everything meanwhile, and a successful write resets the counter.
+    markMsgsDirty(s_msgs_write_fails >= 5 ? 300000 : 5000);
+    if (s_msgs_write_fails >= 3 && (s_msgs_write_fails % 3) == 0) {
+      char why[64]; chatSaveFailText(why, sizeof why);
+      char msg[128];
+      snprintf(msg, sizeof msg, "%s\n%s", TR("Chat history is NOT saving"), why);
+      showAlert(msg, 3200);
+    }
+  }
   // Thread metadata (~4 KB) flushes on a short delay; the message ring
   // (scales with MAX_UI_MESSAGES) flushes lazily to reduce flash write pressure.
   if (_threads_dirty && now >= _next_threads_flush_ms) {
@@ -40874,44 +41430,86 @@ void UITask::flushHistoryIfDue(unsigned long now) {
   }
   if (_msgs_dirty && now >= _next_msgs_flush_ms) {
     if (s_hist_flush_busy || s_hist_flush_req) {
-      // The worker only exists while the tile-fetch task is spawned (map / Wi-Fi
-      // scan / LOS / …).  Without this kick a pending flush can sit armed forever
-      // while ui_threads_v1.bin keeps updating — messages live only in RAM.
-      ensureTileFetchTaskRunning();
-      _next_msgs_flush_ms = now + 1000;   // one flush in flight; new messages ride the next one
+      // A request is armed but the flush task may not be up yet — kick it so a
+      // pending flush can't sit armed forever while messages live only in RAM.
+      ensureHistFlushTaskRunning();
+      _next_msgs_flush_ms = now + 1000;   // one job in flight; new messages ride the next one
       return;
     }
 #if defined(ESP32)
-    // Snapshot the ring (a few ms of PSRAM memcpy) and hand the write to the
-    // core-0 worker. Messages arriving while the worker writes stay in the live
-    // ring and re-arm the dirty flag, so they land in the next flush.
-    if (!s_hist_snap || s_hist_snap_cap != _ui_msg_cap) {
-      if (s_hist_snap) { heap_caps_free(s_hist_snap); s_hist_snap = nullptr; }
-      s_hist_snap = (UITask::UIMessage*)heap_caps_malloc(sizeof(UITask::UIMessage) * (size_t)_ui_msg_cap,
-                                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-      s_hist_snap_cap = s_hist_snap ? _ui_msg_cap : 0;
+    // Off-thread writes keep failing? Fall back to the LOOP-TASK write — the
+    // empirically reliable path (the reboot-time persist always succeeds):
+    // when this task writes, nothing else interleaves radio/display traffic
+    // on the shared SPI bus between the SD transactions. Costs one UI hitch
+    // per flush while degraded; a single success resets the counter and the
+    // next flush goes back to the async task. The threshold is a setting
+    // (Settings -> General; default 2, 0 = never fall back).
+    const uint8_t sync_after = touchPrefsGetHistSyncAfter();
+    if (sync_after && s_msgs_write_fails >= sync_after) {
+      if (saveMsgsToStorage()) { _msgs_dirty = false; return; }
+      _next_msgs_flush_ms = now + (s_msgs_write_fails >= 5 ? 300000 : 5000);
+      return;
     }
-    if (s_hist_snap) {
-      memcpy(s_hist_snap, _ui_msgs, sizeof(UITask::UIMessage) * (size_t)_ui_msg_cap);
-      s_hist_snap_count    = (uint16_t)_ui_msg_count;
-      s_hist_snap_head     = (uint16_t)_ui_msg_head;
-      s_hist_snap_msgcount = (uint32_t)_msgcount;
-      if (!ensureTileFetchTaskRunning()) {
-        // No worker — fall back to a synchronous write instead of clearing dirty
-        // and losing the snapshot (the whole point of the worker is to stay off
-        // the loop thread; a rare spawn failure must not drop hours of chat).
-        if (saveMsgsToStorage()) _msgs_dirty = false;
-        else _next_msgs_flush_ms = now + 2000;
-        return;
-      }
-      s_hist_flush_req = true;   // worker picks it up
+    // A failed boot migration means the old-format file is still the on-disk
+    // truth — segments must not be written until it converts (they would
+    // shadow it in the loader's precedence order). The sync drain retries
+    // the migration.
+    if (!s_seg_store_ready) {
+      if (saveMsgsToStorage()) { _msgs_dirty = false; return; }
+      _next_msgs_flush_ms = now + 60000;   // store is sick; don't thrash the bus
+      return;
+    }
+    // Card remounted (possibly a different/blank card): rebuild the segment
+    // table from the ring — stale on-disk segments are removed and every
+    // chunk is marked compact-dirty, so the normal job flow below re-lands
+    // the whole history one bounded segment at a time, off-thread.
+    if (s_seg_resync) {
+      segRetableFromRing(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
+                         _ui_seq_next ? _ui_seq_next - 1 : 0);
+      s_seg_resync = false;
+    }
+    // Build the next off-thread job: pending-append batch first, else the
+    // oldest compact-dirty segment. The snapshot is at most ONE segment's
+    // records (~80 KB) — not the old 1.3 MB whole-ring copy.
+    SegJob job{};
+    const int armed = segBuildJob(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
+                                  segEnsureBuf(&s_segjob_buf), &job);
+    if (armed == 0) {
+      // Everything durable. A resync's leftover files can go now that every
+      // table entry has a real, current file on disk.
+      if (s_seg_stale_purge) segPurgeStaleFiles();
       _msgs_dirty = false;
       return;
     }
-#endif
-    // No PSRAM for a snapshot: fall back to the old synchronous write.
+    if (armed < 0 || !ensureHistFlushTaskRunning()) {
+      // No snapshot buffer / no worker — synchronous drain instead of losing
+      // the flush (a rare spawn failure must not drop hours of chat).
+      if (saveMsgsToStorage()) { _msgs_dirty = false; return; }
+      _next_msgs_flush_ms = now + 2000;
+      return;
+    }
+    // Arm the worker: descriptor written strictly before req (the worker
+    // reads it only after seeing req).
+    s_segjob_kind      = job.kind;
+    s_segjob_first_seq = job.first_seq;
+    s_segjob_last_seq  = job.last_seq;
+    s_segjob_create    = job.create;
+    s_segjob_n         = job.n;
+    s_segjob_redirty   = false;
+    s_hist_flush_req   = true;
+    // One job armed for the worker. A multi-segment backlog (burst bigger
+    // than one segment, or several dirty segments) keeps _msgs_dirty set and
+    // reschedules shortly; each cycle moves one segment.
+    if (segMoreWorkPending(_ui_seq_next ? _ui_seq_next - 1 : 0)) {
+      _next_msgs_flush_ms = now + 1500;
+      return;
+    }
+    _msgs_dirty = false;
+    return;
+#else
     if (saveMsgsToStorage()) _msgs_dirty = false;
     else _next_msgs_flush_ms = now + 2000;
+#endif
   }
 }
 
@@ -40924,7 +41522,6 @@ void UITask::flushHistoryIfDue(unsigned long now) {
 // the chat to the SD card.
 static fs::FS* s_ui_data_fs       = nullptr;
 static char    s_ui_data_root[16] = "";
-static bool    s_ui_data_resolved = false;
 static bool uiDataFsReady() {
   if (s_ui_data_fs != nullptr) return true;   // cache SUCCESS only — a failed resolve MUST stay retryable
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
@@ -40985,7 +41582,14 @@ static bool uiDataFsIsSdCard() {
 static File uiDataOpen(const char* name, const char* mode) {
   if (!uiDataFsReady()) return File();
   char p[80]; snprintf(p, sizeof p, "%s%s", s_ui_data_root, name);
-  return s_ui_data_fs->open(p, mode);
+  File f = s_ui_data_fs->open(p, mode);
+#if defined(HAS_TDECK_GT911)
+  // A failed WRITE open on the SD-backed history store is the wedge tell (reads
+  // fail legitimately on first boot). Called from the loop task AND the core-0
+  // history worker — sdNoteIoFailure is a volatile stamp, safe from both.
+  if (!f && mode && mode[0] == 'w' && s_ui_data_fs == &SD) sdNoteIoFailure();
+#endif
+  return f;
 }
 // Delete a ui-data file — used to quarantine a blob that fails to load so a
 // corrupt/truncated file (interrupted SD/FAT write, brownout) can't wedge the
@@ -41030,6 +41634,10 @@ bool UITask::loadThreadsFromStorage() {
   const size_t disk_sz =
       (hdr.version >= 5 && hdr.thread_rec_size) ? hdr.thread_rec_size : sizeof(UiHistoryThread);
   if (disk_sz == 0 || disk_sz > 4096) { f.close(); uiDataRemove(k_ui_threads_path); return false; }
+  // Restore the companion message counter carried here for the segmented msgs
+  // store (older writers left it 0; the msgs-file loaders overwrite it anyway
+  // when they run, and the mesh re-asserts it with every message).
+  if (hdr.msgcount) _msgcount = static_cast<int>(hdr.msgcount);
 
   UiHistoryThread t{};
   for (int i = 0; i < MAX_UI_THREADS; ++i) {
@@ -41080,6 +41688,17 @@ bool UITask::loadMsgsFromStorage() {
   // lets a 500-slot file load into a 5000 ring (SD upgrade) and a 5000-slot file
   // shrink into a 500 ring (card pulled), instead of quarantining real history.
   const int file_slots = (int)(((size_t)f.size() - sizeof(hdr)) / disk_sz);
+  if (file_slots == 0 && hdr.ui_msg_count == 0) {
+    // Legitimately empty (every message was deleted, so the compacting writer
+    // emitted a header-only file) — NOT corruption. Load the empty ring; the
+    // old quarantine here deleted the file and made the boot fall through to
+    // stale fallbacks.
+    f.close();
+    _ui_msg_count = 0;
+    _ui_msg_head  = 0;
+    _msgcount     = static_cast<int>(hdr.msgcount);
+    return true;
+  }
   if (file_slots <= 0 ||
       hdr.ui_msg_count > file_slots || hdr.ui_msg_head >= file_slots) {
     f.close(); uiDataRemove(k_ui_msgs_path); return false;   // header disagrees with the file body
@@ -41118,6 +41737,244 @@ bool UITask::loadMsgsFromStorage() {
   _ui_msg_count = n_keep;                     // ring is now linear: slots 0..n_keep-1, oldest first
   _ui_msg_head  = n_keep % _ui_msg_cap;
   _msgcount     = static_cast<int>(hdr.msgcount);
+  return true;
+#else
+  return false;
+#endif
+}
+
+// Segmented-store loader (generation 3). Reads every discovered segment
+// oldest-first into the ring, quarantining corrupt segments INDIVIDUALLY (the
+// single-file store threw the entire history away on one bad record), keeping
+// the newest <= cap records when the on-disk set is larger than this boot's
+// ring (card written under the deep cap, loaded under the small one), and
+// leaving the ring LINEAR (slot 0 = oldest, head = n) — the same post-load
+// invariant every ring consumer relies on. Returns false when no segment
+// files exist at all, so the caller can fall back to the older formats.
+bool UITask::loadMsgsFromSegments() {
+#if defined(ESP32)
+  uint32_t seqs[k_ui_seg_max];
+  const int nseg = uiSegScan(seqs, k_ui_seg_max, true /*sweep orphaned tmps*/);
+  s_seg_count = 0;
+  s_seg_total_bytes = 0;
+  if (nseg <= 0) return false;
+  // Commit marker missing => this segment set is an unfinished migration (a
+  // power cut between chunk writes). Wipe it and let the caller fall back to
+  // the old-format file, which migrateRingToSegments only deletes after full
+  // verification.
+  {
+    File okf = uiDataOpen(k_ui_seg_ok, FILE_READ);
+    const bool have_marker = (bool)okf;
+    if (okf) okf.close();
+    if (!have_marker) {
+      for (int i = 0; i < nseg; ++i) uiSegRemoveFile(seqs[i]);
+      return false;
+    }
+  }
+
+  WdtHeavyGuard _wg;   // ~20 segment reads on a cold card can take a while
+  int w = 0;           // running chronological index; ring slot = w % cap
+  uint32_t max_seq = 0;
+  for (int si = 0; si < nseg; ++si) {
+    File f;
+    uint16_t rec_sz = 0;
+    if (!uiSegOpenValidated(seqs[si], f, &rec_sz)) {
+      uiSegRemoveFile(seqs[si]);   // quarantine THIS segment only
+      continue;
+    }
+    UiSegInfo info{};
+    info.first_seq = seqs[si];
+    UIMessage rec;
+    uint32_t seq = 0;
+    uint16_t nrec = 0;
+    bool     skipped = false;   // duplicates dropped -> file != table -> rewrite it
+    while (uiSegReadRec(f, rec_sz, &rec, &seq)) {   // stops at EOF or a crash-ragged tail
+      // Strictly monotonic seq filter. Segments are read in ascending
+      // first_seq order, so a record that does not advance the sequence is a
+      // duplicate or an out-of-order leftover (an interrupted repair, a stale
+      // file a crash left behind, a re-appended batch) — dropping it keeps the
+      // ring chronological and idempotent no matter what the disk holds.
+      if (rec.seq != 0 && rec.seq <= max_seq) { skipped = true; continue; }
+      if (rec.seq == 0) rec.seq = max_seq + 1;      // defensive backfill (pre-seq record)
+      max_seq = rec.seq;
+      info.last_seq = rec.seq;
+      _ui_msgs[w % _ui_msg_cap] = rec;
+      ++w;
+      ++nrec;
+    }
+    f.close();
+    info.disk_recs = nrec;
+    info.live_recs = nrec;
+    info.bytes     = (uint32_t)sizeof(UiSegHeader) + (uint32_t)nrec * (uint32_t)rec_sz;
+    // The file holds records the table doesn't account for — rewrite it so disk
+    // and table agree again (also drops the dead weight for good).
+    if (skipped) info.rewrite_open = 1;
+    if (nrec == 0) { uiSegRemoveFile(seqs[si]); continue; }   // header-only husk — reclaim
+    if (s_seg_count < k_ui_seg_max) s_seg[s_seg_count++] = info;
+  }
+
+  const int total  = w;
+  const int n_keep = total > _ui_msg_cap ? _ui_msg_cap : total;
+  if (total > _ui_msg_cap) {
+    // The ring wrapped while loading: the oldest KEPT record sits at slot
+    // total % cap. Rotate left by that amount so the ring is linear again.
+    // Three-reversal rotation: O(cap) record swaps, no large temp buffer.
+    const int cap = _ui_msg_cap;
+    const int k = total % cap;
+    if (k > 0) {
+      auto rev = [this](int a, int b) {
+        while (a < b) {
+          UIMessage t = _ui_msgs[a];
+          _ui_msgs[a] = _ui_msgs[b];
+          _ui_msgs[b] = t;
+          ++a; --b;
+        }
+      };
+      rev(0, k - 1);
+      rev(k, cap - 1);
+      rev(0, cap - 1);
+    }
+  }
+
+  // Reconcile the table with any dropped-oldest records: fully-dropped
+  // segments violate the disk == ring invariant and are deleted outright; the
+  // boundary segment keeps its file but is marked compact-dirty so the next
+  // compaction (rewritten from the RAM ring) trims it to the kept records.
+  const uint32_t min_kept_seq = n_keep > 0 ? _ui_msgs[0].seq : 0;
+  int out = 0;
+  uint32_t total_bytes = 0;
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (n_keep == 0 || s_seg[i].last_seq < min_kept_seq) {
+      uiSegRemoveFile(s_seg[i].first_seq);
+      continue;
+    }
+    if (s_seg[i].first_seq < min_kept_seq) s_seg[i].compact_dirty = 1;
+    total_bytes += s_seg[i].bytes;
+    s_seg[out++] = s_seg[i];
+  }
+  s_seg_count = out;
+  s_seg_total_bytes = total_bytes;
+
+  _ui_msg_count = n_keep;
+  _ui_msg_head  = n_keep % _ui_msg_cap;
+  _ui_seq_next  = max_seq + 1;
+  s_seg_flushed_seq = max_seq;   // everything loaded IS on disk by definition
+  // _msgcount isn't stored in segments; the threads-file header carries it and
+  // the mesh layer re-asserts it with every message. Keep it monotonic vs seq.
+  if ((int)max_seq > _msgcount) _msgcount = (int)max_seq;
+  s_seg_store_ready = true;
+  return true;
+#else
+  return false;
+#endif
+}
+
+// One-time migration: the ring was just loaded from an OLD format (split v6
+// single file or the legacy combined file) — write it out as segments, read
+// every segment back and verify counts + seq bounds, and only then delete the
+// old msgs file. Any failure rolls the segment set back completely so the
+// intact old file stays authoritative on the next boot (a partial segment set
+// would otherwise shadow it in the loader's precedence order).
+bool UITask::migrateRingToSegments() {
+#if defined(ESP32)
+  uiDataEnsureDirs();
+  // The marker goes away FIRST: from here until the verified end of this
+  // migration the on-disk segment set is provisional, and a boot that finds it
+  // without the marker wipes it and re-reads the (still intact) old file.
+  uiDataRemove(k_ui_seg_ok);
+  {   // clear any earlier/partial set so leftovers can't survive as extra segments
+    uint32_t old_seqs[k_ui_seg_max];
+    const int old_n = uiSegScan(old_seqs, k_ui_seg_max, true);
+    for (int i = 0; i < old_n; ++i) uiSegRemoveFile(old_seqs[i]);
+  }
+  s_seg_count = 0;
+  s_seg_total_bytes = 0;
+  UITask::UIMessage* buf = segEnsureBuf(&s_segsync_buf);
+  if (!buf) return false;
+
+  // Walk the ring CHRONOLOGICALLY and skip tombstones. Both matter: this runs
+  // not only at boot (ring linear) but also as a retry after a failed boot
+  // migration, by which time appendMessage may have WRAPPED the ring and the
+  // user may have deleted messages. Slicing raw slots there produced segments
+  // in slot order (first_seq > last_seq, scrambled history that read-back
+  // verification cannot detect) and persisted tombstones as ghost records.
+  bool ok = true;
+  int in_chunk = 0;
+  for (int i = 0; i <= _ui_msg_count && ok; ++i) {
+    const bool flush_chunk = (i == _ui_msg_count) || (in_chunk == k_ui_seg_records);
+    if (flush_chunk && in_chunk > 0) {
+      const uint32_t fseq = buf[0].seq;
+      ok = uiSegCompactWrite(fseq, buf, in_chunk, true /*sync-writer tmp*/);
+      if (ok && s_seg_count < k_ui_seg_max) {
+        UiSegInfo info{};
+        info.first_seq = fseq;
+        info.last_seq  = buf[in_chunk - 1].seq;
+        info.disk_recs = info.live_recs = (uint16_t)in_chunk;
+        info.bytes     = (uint32_t)sizeof(UiSegHeader)
+                         + (uint32_t)in_chunk * (uint32_t)sizeof(UiSegMsg);
+        s_seg[s_seg_count++] = info;
+      }
+      in_chunk = 0;
+    }
+    if (i == _ui_msg_count) break;
+    const int slot = (_ui_msg_head - _ui_msg_count + i + _ui_msg_cap) % _ui_msg_cap;
+    if (!_ui_msgs[slot].thread[0]) continue;              // tombstone — never persisted
+    buf[in_chunk++] = _ui_msgs[slot];
+  }
+  if (ok) {
+    // Read-back verification: every segment must reproduce its exact record
+    // count and seq bounds before the old file may be deleted.
+    for (int i = 0; ok && i < s_seg_count; ++i) {
+      File f;
+      uint16_t rec_sz = 0;
+      if (!uiSegOpenValidated(s_seg[i].first_seq, f, &rec_sz)) { ok = false; break; }
+      UIMessage r;
+      uint32_t seq = 0, first = 0, last = 0;
+      uint16_t cnt = 0;
+      bool ordered = true;
+      while (uiSegReadRec(f, rec_sz, &r, &seq)) {
+        if (cnt == 0) first = seq;
+        else if (seq <= last) ordered = false;   // seqs must strictly increase within a segment
+        last = seq;
+        ++cnt;
+      }
+      f.close();
+      ok = (ordered && cnt == s_seg[i].disk_recs &&
+            first == s_seg[i].first_seq &&
+            last == s_seg[i].last_seq);
+    }
+    // Segments must also be ordered relative to each other.
+    for (int i = 1; ok && i < s_seg_count; ++i)
+      ok = (s_seg[i].first_seq > s_seg[i - 1].last_seq);
+  }
+  if (!ok) {
+    for (int i = 0; i < s_seg_count; ++i) uiSegRemoveFile(s_seg[i].first_seq);
+    s_seg_count = 0;
+    s_seg_total_bytes = 0;
+    return false;   // old file untouched; the scheduler retries the migration later
+  }
+  // Verified. Commit: marker, then drop the old-format files.
+  {
+    File okf = uiDataOpen(k_ui_seg_ok, "w");
+    if (!okf) {   // can't commit -> leave the old file authoritative and retry later
+      for (int i = 0; i < s_seg_count; ++i) uiSegRemoveFile(s_seg[i].first_seq);
+      s_seg_count = 0;
+      s_seg_total_bytes = 0;
+      return uiMsgsWriteFail('m');
+    }
+    okf.print("segstore v1\n");
+    okf.close();
+  }
+  uint32_t total_bytes = 0;
+  for (int i = 0; i < s_seg_count; ++i) total_bytes += s_seg[i].bytes;
+  s_seg_total_bytes = total_bytes;
+  uiDataRemove(k_ui_msgs_path);
+  uiDataRemove(k_ui_msgs_tmp_path);
+  uiDataRemove(k_ui_msgs_tmp2_path);
+  s_seg_flushed_seq = s_seg_count ? s_seg[s_seg_count - 1].last_seq : 0;
+  s_seg_resync      = false;   // a full write IS the resync
+  s_seg_stale_purge = false;
+  s_seg_store_ready = true;
   return true;
 #else
   return false;
@@ -41218,13 +42075,27 @@ bool UITask::loadLegacyHistoryFromStorage() {
 bool UITask::loadHistoryFromStorage() {
 #if defined(ESP32)
   const bool have_threads = loadThreadsFromStorage();
-  const bool have_msgs    = loadMsgsFromStorage();
-  if (!have_threads && !have_msgs) {
-    // Neither split file found — try the legacy combined format for migration.
-    if (!loadLegacyHistoryFromStorage()) return false;
-    // Schedule writes of the new split files; old file is left in place.
-    markThreadsDirty(500);
-    markMsgsDirty(500);
+  // Format precedence: segments (generation 3) > split v6 single file >
+  // legacy combined file. The older loaders are retained as migration
+  // readers; whenever one of them supplies the ring, migrateRingToSegments()
+  // below converts it (verify-then-delete, rollback on any failure).
+  const bool from_segments = loadMsgsFromSegments();
+  bool have_msgs = from_segments;
+  if (!from_segments) {
+    // Single-file-era hygiene: a crash mid-flush can orphan a temp file;
+    // they're never read, just reclaim the space. (Segment tmps are swept by
+    // the scan inside loadMsgsFromSegments.)
+    uiDataRemove(k_ui_msgs_tmp_path);
+    uiDataRemove(k_ui_msgs_tmp2_path);
+    have_msgs = loadMsgsFromStorage();
+    if (!have_threads && !have_msgs) {
+      // Neither split file found — try the legacy combined format.
+      if (!loadLegacyHistoryFromStorage()) return false;
+      // Schedule the split threads-file write; messages land in segments via
+      // the migration below (the legacy combined file is left in place, as
+      // the split migration always did).
+      markThreadsDirty(500);
+    }
   }
   // Clear persisted unread counts for threads whose messages are no longer in
   // the ring. The display ring is a fixed-size cache independent of the unread
@@ -41238,6 +42109,20 @@ bool UITask::loadHistoryFromStorage() {
       _ui_threads[i].unread = 0;
       _ui_threads[i].has_mention = false;
     }
+  }
+  if (!from_segments) {
+    // Backfill per-record sequence numbers for records loaded from the
+    // pre-segment formats (their records carry no seq on disk): stamp them in
+    // chronological order, seed the generator past them, then convert the
+    // ring to segments. A failed migration leaves the old file authoritative
+    // and s_seg_store_ready false — the flush scheduler retries it before it
+    // will write any segment.
+    for (int i = 0; i < _ui_msg_count; ++i) {
+      const int slot = (_ui_msg_head - _ui_msg_count + i + _ui_msg_cap) % _ui_msg_cap;
+      _ui_msgs[slot].seq = (uint32_t)(i + 1);
+    }
+    _ui_seq_next = (uint32_t)_ui_msg_count + 1;
+    migrateRingToSegments();
   }
   return true;
 #else
@@ -41257,6 +42142,9 @@ bool UITask::saveThreadsToStorage() {
   hdr.thread_rec_size       = static_cast<uint16_t>(sizeof(UiHistoryThread));
   hdr.active_thread_idx     = static_cast<int16_t>(_active_thread_idx);
   hdr.active_thread_is_channel = _active_thread_is_channel ? 1u : 0u;
+  // The segmented msgs store doesn't carry the companion message counter —
+  // this (frequently-rewritten, small) file does instead.
+  hdr.msgcount              = static_cast<uint32_t>(_msgcount);
   if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
     f.close(); return false;
   }
@@ -41293,57 +42181,100 @@ bool UITask::saveThreadsToStorage() {
 // write from PSRAM" that regressed before: the chunk lives in internal RAM (the
 // flash driver never bounces a PSRAM source). Alloc failure falls back to the
 // original per-record writes.
-static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
-                            uint16_t count, uint16_t head, uint32_t msgcount) {
-#if defined(ESP32)
-  WdtHeavyGuard _wg;   // a fragmenting write can trigger a multi-second SPIFFS GC
-  File f = uiDataOpen(k_ui_msgs_tmp_path, "w");
-  if (!f) return false;
-
-  UiMsgFileHeader hdr{};
-  hdr.magic         = k_ui_msgs_magic;
-  hdr.version       = k_ui_history_version;
-  hdr.msg_rec_size  = static_cast<uint16_t>(sizeof(UiHistoryMsg));
-  // Compact write: emit only the `count` USED records, oldest-first, instead of one
-  // record per ring slot (cap). A user with 200 messages writes ~48 KB, not the full
-  // ~1.2 MB ring, so the delete/clear/reboot flush no longer hitches the UI (that
-  // full-ring rewrite was the "deleting a message is slow" cause). The reader derives
-  // its slot count from the file size and linearizes by (head,count), so an
-  // oldest-first file with head=0 loads byte-for-byte identically.
-  const int wcap = cap > 0 ? cap : 1;
-  const int used = (int)count > cap ? cap : (int)count;
-  const int oldst = (((int)head - used) % wcap + wcap) % wcap;
-  hdr.ui_msg_count  = static_cast<uint16_t>(used);
-  hdr.ui_msg_head   = 0;   // written oldest-first => the file's ring head sits at 0
-  hdr.msgcount      = msgcount;
-  if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
-    f.close(); return false;
+// Record a ring-write outcome (runs on the loop task OR the core-0 worker —
+// volatile stores only, LVGL-free) and stamp the SD health probe on failure so
+// a wedged card gets arbitrated instead of the write failing silently forever.
+static bool uiMsgsWriteResult(bool ok) {
+  const uint32_t m = (uint32_t)millis();
+  const time_t   now_t = time(nullptr);
+  const uint32_t ep = (now_t > 1700000000) ? (uint32_t)now_t : 0;   // 0 when the clock is unset
+  if (ok) {
+    s_msgs_write_ok_ms = m ? m : 1;
+    s_msgs_write_ok_epoch = ep;
+    s_msgs_write_fails = 0;
+  } else {
+    s_msgs_write_fail_ms = m ? m : 1;
+    s_msgs_write_fail_epoch = ep;
+    if (s_msgs_write_fails < 0xFFFFu) s_msgs_write_fails = s_msgs_write_fails + 1;
+#if defined(HAS_TDECK_GT911)
+    if (s_ui_data_fs == &SD) sdNoteIoFailure();
+#endif
   }
+  return ok;
+}
+// Failure wrapper: record WHERE the write died and the errno — 'open failed
+// with ENFILE' (VFS file-handle table full) needs a completely different fix
+// than 'body write failed with EIO' (card), and without this they were
+// indistinguishable on a device with no readable serial.
+static bool uiMsgsWriteFail(char stage) {
+  s_msgs_write_stage = (uint8_t)stage;
+  s_msgs_write_errno = errno;
+  return uiMsgsWriteResult(false);
+}
 
-  const size_t REC = sizeof(UiHistoryMsg);
+// ---- Segmented store: low-level file ops --------------------------------
+// Pure file-layer primitives (no scheduling, no table state — that lives with
+// the flush scheduler). All take explicit record arrays (snapshots or the
+// ring under the loop task's ownership) and report through the same
+// uiMsgsWriteResult/uiMsgsWriteFail health machinery as the old writer, so
+// the About diagnostics, failure toasts, sync-fallback and SD-wedge
+// arbitration keep working unchanged. Stage codes: 'a' append, 'c' compact,
+// 'd' data-dir create, 's' segment scan (plus errno).
+
+// Root-relative segment file name: "/msgs/seg_<first_seq>.bin<suffix>".
+// Worst case "/msgs/seg_4294967295.bin.tm2" = 28 chars — fits uiDataOpen's
+// 80-byte path buffer and SPIFFS' 31-char flat-name limit.
+static void uiSegName(uint32_t first_seq, const char* suffix, char* out, size_t cap) {
+  snprintf(out, cap, "%s/seg_%lu.bin%s", k_ui_seg_dir, (unsigned long)first_seq, suffix ? suffix : "");
+}
+
+// Ensure the data root + segment dir exist. FAT backends (SD /meshcomod,
+// SD_MMC /meshcomod, FFat) need real directories; SPIFFS has a flat namespace
+// where mkdir fails harmlessly and slash-in-name files just work — so this is
+// best-effort by design. Called at backend resolve and from every remount
+// path (a fresh replacement card has neither directory).
+static void uiDataEnsureDirs() {
+  if (!uiDataFsReady()) return;
+  char p[80];
+  if (s_ui_data_root[0]) s_ui_data_fs->mkdir(s_ui_data_root);
+  snprintf(p, sizeof p, "%s%s", s_ui_data_root, k_ui_seg_dir);
+  s_ui_data_fs->mkdir(p);   // no-op/failure on SPIFFS is fine (flat names)
+}
+
+// Marshal one RAM record into the on-disk segment record (drops the RAM-only
+// fields, carries seq). Mirrors the old writer's field list exactly.
+static void uiSegMarshal(const UITask::UIMessage& s, UiSegMsg* d) {
+  memset(d, 0, sizeof(*d));
+  d->m.ts         = s.ts;
+  d->m.channel    = s.channel ? 1u : 0u;
+  d->m.outgoing   = s.outgoing ? 1u : 0u;
+  d->m.meta_flags = s.meta_flags;
+  d->m.path_len   = s.path_len;
+  d->m.snr_q4     = s.snr_q4;
+  d->m.rssi       = s.rssi;
+  strncpy(d->m.thread, s.thread, sizeof(d->m.thread) - 1);
+  d->m.thread[sizeof(d->m.thread) - 1] = '\0';
+  strncpy(d->m.sender, s.sender, sizeof(d->m.sender) - 1);
+  d->m.sender[sizeof(d->m.sender) - 1] = '\0';
+  strncpy(d->m.text, s.text, sizeof(d->m.text) - 1);
+  d->m.text[sizeof(d->m.text) - 1] = '\0';
+  d->seq = s.seq;
+}
+
+// Chunked record writer shared by append + compact: marshals through a small
+// INTERNAL-RAM buffer (the flash/SD drivers must never see a PSRAM source
+// pointer), per-record fallback when the heap is tight. Returns false on any
+// short write (errno left for the caller's stage report).
+static bool uiSegWriteRecords(File& f, const UITask::UIMessage* recs, int n) {
+  const size_t REC = sizeof(UiSegMsg);
   size_t chunk_recs = 6144 / REC;
   if (chunk_recs < 1) chunk_recs = 1;
   uint8_t* buf = (uint8_t*)malloc(REC * chunk_recs);   // internal RAM by default
   bool ok = true;
   if (buf) {
     size_t fill = 0;
-    for (int k = 0; ok && k < used; ++k) {
-      const int i = (oldst + k) % wcap;
-      UiHistoryMsg* m = reinterpret_cast<UiHistoryMsg*>(buf + fill);
-      memset(m, 0, REC);
-      m->ts          = msgs[i].ts;
-      m->channel     = msgs[i].channel ? 1u : 0u;
-      m->outgoing    = msgs[i].outgoing ? 1u : 0u;
-      m->meta_flags  = msgs[i].meta_flags;
-      m->path_len    = msgs[i].path_len;
-      m->snr_q4      = msgs[i].snr_q4;
-      m->rssi        = msgs[i].rssi;
-      strncpy(m->thread, msgs[i].thread, sizeof(m->thread) - 1);
-      m->thread[sizeof(m->thread) - 1] = '\0';
-      strncpy(m->sender, msgs[i].sender, sizeof(m->sender) - 1);
-      m->sender[sizeof(m->sender) - 1] = '\0';
-      strncpy(m->text, msgs[i].text, sizeof(m->text) - 1);
-      m->text[sizeof(m->text) - 1] = '\0';
+    for (int k = 0; ok && k < n; ++k) {
+      uiSegMarshal(recs[k], reinterpret_cast<UiSegMsg*>(buf + fill));
       fill += REC;
       if (fill == REC * chunk_recs) {
         ok = (f.write(buf, fill) == fill);
@@ -41353,51 +42284,584 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     if (ok && fill > 0) ok = (f.write(buf, fill) == fill);
     free(buf);
   } else {
-    UiHistoryMsg m{};
-    for (int k = 0; ok && k < used; ++k) {
-      const int i = (oldst + k) % wcap;
-      memset(&m, 0, sizeof(m));
-      m.ts          = msgs[i].ts;
-      m.channel     = msgs[i].channel ? 1u : 0u;
-      m.outgoing    = msgs[i].outgoing ? 1u : 0u;
-      m.meta_flags  = msgs[i].meta_flags;
-      m.path_len    = msgs[i].path_len;
-      m.snr_q4      = msgs[i].snr_q4;
-      m.rssi        = msgs[i].rssi;
-      strncpy(m.thread, msgs[i].thread, sizeof(m.thread) - 1);
-      m.thread[sizeof(m.thread) - 1] = '\0';
-      strncpy(m.sender, msgs[i].sender, sizeof(m.sender) - 1);
-      m.sender[sizeof(m.sender) - 1] = '\0';
-      strncpy(m.text, msgs[i].text, sizeof(m.text) - 1);
-      m.text[sizeof(m.text) - 1] = '\0';
-      ok = (f.write(reinterpret_cast<const uint8_t*>(&m), sizeof(m)) == sizeof(m));
+    UiSegMsg rec;
+    for (int k = 0; ok && k < n; ++k) {
+      uiSegMarshal(recs[k], &rec);
+      ok = (f.write(reinterpret_cast<const uint8_t*>(&rec), sizeof(rec)) == sizeof(rec));
     }
   }
-  f.close();
-  if (!ok) { uiDataRemove(k_ui_msgs_tmp_path); return false; }
-  return uiDataReplaceFile(k_ui_msgs_path, k_ui_msgs_tmp_path);
-#else
-  (void)msgs; (void)cap; (void)count; (void)head; (void)msgcount;
-  return false;
-#endif
+  return ok;
 }
 
-// Worker-side entry: write the snapshot the loop thread armed (core-0 task; the
-// loop thread never waits on this, which is the whole point).
-static bool uiHistWorkerFlush() {
-  if (!s_hist_snap || s_hist_snap_cap <= 0) return false;   // armed without a snapshot — retry
-  return uiWriteMsgsFile(s_hist_snap, s_hist_snap_cap,
-                         s_hist_snap_count, s_hist_snap_head, s_hist_snap_msgcount);
+// Append records to a segment file. `create` = the file does not exist yet
+// (write the header first). Driven by table state, NOT by File::size() — the
+// Tanmatsu FFat metadata layer lies about sizes. A crash mid-append leaves a
+// ragged tail the loader truncates to the record boundary; nothing else is at
+// risk (the previous records and every other segment are untouched — this is
+// the whole point of the segmented layout).
+static bool uiSegAppendRecords(uint32_t first_seq, bool create,
+                               const UITask::UIMessage* recs, int n) {
+  WdtHeavyGuard _wg;
+  errno = 0;
+  char name[48];
+  uiSegName(first_seq, "", name, sizeof name);
+  // create: open truncating — a stale file under the same key (crash residue)
+  // must not end up with a second header appended mid-file.
+  const char* mode = create ? "w" : FILE_APPEND;
+  File f = uiDataOpen(name, mode);
+  if (!f) {
+    // First failure on a fresh card/dir is usually a missing parent dir —
+    // create it and retry once before reporting.
+    uiDataEnsureDirs();
+    errno = 0;
+    f = uiDataOpen(name, mode);
+    if (!f) return uiMsgsWriteFail('a');
+  }
+  bool ok = true;
+  if (create) {
+    UiSegHeader hdr{};
+    hdr.magic        = k_ui_seg_magic;
+    hdr.version      = k_ui_seg_version;
+    hdr.msg_rec_size = (uint16_t)sizeof(UiSegMsg);
+    hdr.first_seq    = first_seq;
+    ok = (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) == sizeof(hdr));
+  }
+  if (ok) ok = uiSegWriteRecords(f, recs, n);
+  f.close();
+  if (!ok) {
+    // A short write can have landed whole records already. The file content is
+    // now untrusted: appending the retry after that tail would duplicate (or,
+    // if the failure split a record, MISALIGN) records the loader accepts as
+    // history. Flag the segment so the scheduler repairs it with a full
+    // rewrite before any further append. Volatile-only work — safe from the
+    // worker task; the entry lookup runs on the loop task's table but only
+    // writes a byte the loop task re-reads.
+    for (int i = 0; i < s_seg_count; ++i)
+      if (s_seg[i].first_seq == first_seq) { s_seg[i].rewrite_open = 1; break; }
+    if (create) uiSegRemoveFile(first_seq);   // nothing valid in it yet
+    return uiMsgsWriteFail('a');
+  }
+  return uiMsgsWriteResult(true);
+}
+
+// Rewrite one segment from the given (live, tombstone-free) records — tmp +
+// rename, same crash discipline as the old writer but with a one-segment
+// blast radius. n == 0 removes the segment file outright (everything in it
+// was deleted). `sync_writer` picks the tmp namespace: the loop-task sync
+// writer must never share a tmp with a possibly-stalled worker write (two
+// truncating opens of one path interleave into garbage — the .tmp/.tm2
+// lesson from the single-file store).
+static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs, int n,
+                              bool sync_writer) {
+  WdtHeavyGuard _wg;
+  errno = 0;
+  char fin[48], tmp[48];
+  uiSegName(first_seq, "", fin, sizeof fin);
+  if (n <= 0) {
+    uiDataRemove(fin);
+    return uiMsgsWriteResult(true);
+  }
+  uiSegName(first_seq, sync_writer ? ".tm2" : ".tmp", tmp, sizeof tmp);
+  File f = uiDataOpen(tmp, "w");
+  if (!f) {
+    uiDataEnsureDirs();
+    errno = 0;
+    f = uiDataOpen(tmp, "w");
+    if (!f) return uiMsgsWriteFail('c');
+  }
+  UiSegHeader hdr{};
+  hdr.magic        = k_ui_seg_magic;
+  hdr.version      = k_ui_seg_version;
+  hdr.msg_rec_size = (uint16_t)sizeof(UiSegMsg);
+  hdr.first_seq    = first_seq;
+  bool ok = (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) == sizeof(hdr));
+  if (ok) ok = uiSegWriteRecords(f, recs, n);
+  f.close();
+  if (!ok) { uiDataRemove(tmp); return uiMsgsWriteFail('c'); }
+  errno = 0;
+  if (!uiDataReplaceFile(fin, tmp)) return uiMsgsWriteFail('c');
+  return uiMsgsWriteResult(true);
+}
+
+// Remove a retired segment (ring grew past retention; its records are gone
+// from RAM too).
+static void uiSegRemoveFile(uint32_t first_seq) {
+  char name[48];
+  uiSegName(first_seq, "", name, sizeof name);
+  uiDataRemove(name);
+}
+
+// Open + validate a segment for reading. Returns the on-disk record size via
+// *rec_size_out (self-describing header) and leaves the File positioned at
+// the first record. Returns false on a corrupt header — the caller
+// quarantines THAT segment only.
+static bool uiSegOpenValidated(uint32_t first_seq, File& f, uint16_t* rec_size_out) {
+  char name[48];
+  uiSegName(first_seq, "", name, sizeof name);
+  f = uiDataOpen(name, FILE_READ);
+  if (!f) return false;
+  UiSegHeader hdr{};
+  if (f.readBytes(reinterpret_cast<char*>(&hdr), sizeof(hdr)) != (int)sizeof(hdr) ||
+      hdr.magic != k_ui_seg_magic ||
+      hdr.version == 0 || hdr.version > k_ui_seg_version ||
+      hdr.msg_rec_size == 0 || hdr.msg_rec_size > 4096 ||
+      hdr.first_seq != first_seq) {
+    f.close();
+    return false;
+  }
+  *rec_size_out = hdr.msg_rec_size;
+  return true;
+}
+
+// Read ONE record from an open segment into a RAM record. Returns false at a
+// clean EOF or a ragged (crash-truncated) tail — the caller just stops there;
+// records already read are valid. Size-agnostic via readHistoryRec (older
+// shorter records zero-fill their tail, so a missing seq field reads 0 and
+// the loader backfills it).
+static bool uiSegReadRec(File& f, uint16_t disk_sz, UITask::UIMessage* out, uint32_t* seq_out) {
+  UiSegMsg rec{};
+  if (!readHistoryRec(f, &rec, sizeof(rec), disk_sz)) return false;
+  memset(out, 0, sizeof(*out));
+  out->ts         = rec.m.ts;
+  out->channel    = rec.m.channel != 0;
+  out->outgoing   = rec.m.outgoing != 0;
+  out->meta_flags = rec.m.meta_flags;
+  out->path_len   = rec.m.path_len;
+  out->snr_q4     = rec.m.snr_q4;
+  out->rssi       = rec.m.rssi;
+  strncpy(out->thread, rec.m.thread, UITask::MAX_THREAD_NAME);
+  out->thread[UITask::MAX_THREAD_NAME] = '\0';
+  strncpy(out->sender, rec.m.sender, UITask::MAX_SENDER_NAME);
+  out->sender[UITask::MAX_SENDER_NAME] = '\0';
+  strncpy(out->text, rec.m.text, UITask::MAX_MSG_TEXT);
+  out->text[UITask::MAX_MSG_TEXT] = '\0';
+  out->seq = rec.seq;
+  *seq_out = rec.seq;
+  return true;
+}
+
+// Discover segment files: fills out_first_seqs sorted ascending, returns the
+// count (or -1 when even the scan location can't be opened — distinct from
+// "no segments yet"). Handles both directory layouts: a real <root>/msgs dir
+// (FAT backends) and SPIFFS' flat namespace (scan "/" and prefix-match the
+// name). When sweep_tmps is set, orphaned .tmp/.tm2 leftovers from a crash
+// mid-compact are deleted along the way (boot hygiene).
+static int uiSegScan(uint32_t* out_first_seqs, int max_out, bool sweep_tmps) {
+  if (!uiDataFsReady()) return -1;
+  char dirpath[80];
+  snprintf(dirpath, sizeof dirpath, "%s%s", s_ui_data_root, k_ui_seg_dir);
+  File dir = s_ui_data_fs->open(dirpath);
+  bool flat = false;
+  if (!dir || !dir.isDirectory()) {
+    // SPIFFS (flat namespace): enumerate the root and match the name prefix.
+    if (dir) dir.close();
+    flat = true;
+    dir = s_ui_data_fs->open(s_ui_data_root[0] ? s_ui_data_root : "/");
+    if (!dir || !dir.isDirectory()) {
+      if (dir) dir.close();
+      return -1;
+    }
+  }
+  const size_t root_len = strlen(s_ui_data_root);
+  int n = 0;
+  for (;;) {
+    String path = dir.getNextFileName();
+    if (path.length() == 0) break;
+    // Normalize to a root-relative name so uiDataRemove/uiDataOpen accept it.
+    const char* rel = path.c_str();
+    if (root_len && strncmp(rel, s_ui_data_root, root_len) == 0) rel += root_len;
+    const char* base = strrchr(rel, '/');
+    base = base ? base + 1 : rel;
+    if (flat) {
+      // Flat scan sees every file — keep only "/msgs/seg_*" names.
+      if (strncmp(rel, k_ui_seg_dir, strlen(k_ui_seg_dir)) != 0) continue;
+    }
+    if (strncmp(base, "seg_", 4) != 0) continue;
+    char* end = nullptr;
+    const unsigned long fs_val = strtoul(base + 4, &end, 10);
+    if (!end || end == base + 4) continue;
+    if (strcmp(end, ".bin") == 0) {
+      if (n < max_out) out_first_seqs[n++] = (uint32_t)fs_val;
+    } else if (sweep_tmps && (strcmp(end, ".bin.tmp") == 0 || strcmp(end, ".bin.tm2") == 0)) {
+      uiDataRemove(rel);
+    }
+  }
+  dir.close();
+  // Insertion sort ascending — n is tiny (<= k_ui_seg_max).
+  for (int i = 1; i < n; ++i) {
+    const uint32_t v = out_first_seqs[i];
+    int j = i - 1;
+    while (j >= 0 && out_first_seqs[j] > v) { out_first_seqs[j + 1] = out_first_seqs[j]; --j; }
+    out_first_seqs[j + 1] = v;
+  }
+  return n;
+}
+
+// ---- Segmented store: flush scheduling ------------------------------------
+// All of this state is LOOP-TASK-owned; the hist_flush worker only runs
+// uiSegRunArmedJob() and reports through s_hist_flush_ok.
+
+// Snapshot buffer for one job (<= one segment of records). Lazy, kept for the
+// session — two exist (worker vs sync drain) so the writers can never share.
+static UITask::UIMessage* segEnsureBuf(UITask::UIMessage** slot) {
+  if (!*slot) {
+    const size_t sz = sizeof(UITask::UIMessage) * (size_t)k_ui_seg_records;
+    *slot = (UITask::UIMessage*)heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!*slot) *slot = (UITask::UIMessage*)heap_caps_malloc(sz, MALLOC_CAP_8BIT);
+  }
+  return *slot;
+}
+
+// Live records with seq in [lo, hi], chronological, from the ring.
+static int segGatherRange(const UITask::UIMessage* ring, int cap, int count, int head,
+                          uint32_t lo, uint32_t hi, UITask::UIMessage* out, int max_out) {
+  int n = 0;
+  for (int i = 0; i < count && n < max_out; ++i) {
+    const int slot = (head - count + i + cap) % cap;
+    const UITask::UIMessage& m = ring[slot];
+    if (!m.thread[0]) continue;               // tombstone
+    if (m.seq < lo || m.seq > hi) continue;
+    out[n++] = m;
+  }
+  return n;
+}
+
+// Build the next job into `buf` + `out`. PURE with respect to the worker
+// descriptor — arming (copying into the statics + raising req) is the async
+// caller's step, so the sync drain can use this with its own buffer and a
+// local job without the worker ever seeing it. Returns 1 = job built,
+// 0 = nothing pending (all durable), -1 = no buffer.
+static int segBuildJob(const UITask::UIMessage* ring, int cap, int count, int head,
+                       UITask::UIMessage* buf, SegJob* out) {
+  if (!buf) return -1;
+  // 0) REPAIR FIRST. A segment whose file content is untrusted (failed append
+  //    left a partial tail, or a resync left it stale/absent) must be fully
+  //    rewritten before anything appends to it — otherwise a retry appends the
+  //    same batch after the partial tail (duplicate or misaligned records the
+  //    loader would ingest as history) or creates a HEADERLESS file. The
+  //    rewrite absorbs the unflushed tail too, bounded by the segment size;
+  //    whatever doesn't fit stays above the watermark and lands as a normal
+  //    append into the NEXT segment afterwards.
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (!s_seg[i].rewrite_open) continue;
+    const uint32_t hi = (i + 1 < s_seg_count) ? (s_seg[i + 1].first_seq - 1) : 0xFFFFFFFFu;
+    const int rn = segGatherRange(ring, cap, count, head, s_seg[i].first_seq, hi,
+                                  buf, k_ui_seg_records);
+    out->kind      = SEGJOB_COMPACT;   // a compact IS the repair (tmp + rename, header written)
+    out->first_seq = s_seg[i].first_seq;
+    out->last_seq  = rn > 0 ? buf[rn - 1].seq : 0;
+    out->create    = false;
+    out->n         = rn;               // 0 -> unlink (every record in the range is gone)
+    out->repair    = true;             // commit also clears rewrite_open + advances the watermark
+    return 1;
+  }
+  // 1) Pending appends: live records newer than the durability watermark,
+  //    chronological, capped to the room left in the active segment.
+  bool create = true;
+  uint32_t target = 0;
+  int room = k_ui_seg_records;
+  if (s_seg_count > 0 && s_seg[s_seg_count - 1].disk_recs < k_ui_seg_records) {
+    create = false;
+    target = s_seg[s_seg_count - 1].first_seq;
+    room   = k_ui_seg_records - (int)s_seg[s_seg_count - 1].disk_recs;
+  }
+  // At the table cap (s_seg_count == k_ui_seg_max) a CREATE-append cannot be
+  // recorded: segCommitJob only tables a create while s_seg_count < the cap, so
+  // the file it writes becomes an untabled orphan AND the durability watermark
+  // never advances -> the same append re-arms every cycle (permanent write-spin),
+  // orphaned seg_*.bin pile up as the ring shifts the target first_seq, and the
+  // card eventually fills ("SD I/O fails after a few hours"). DEFER the append:
+  // skip step 1 entirely (crucially, do NOT run the gather/watermark advance
+  // below on un-written records) and fall through to step 2, which retires the
+  // oldest segment first. At the cap the oldest 256 records have aged out of the
+  // 5000-record ring (24*256 disk slots > ring), so that segment is fully
+  // evicted -> compact_dirty (segNoteEvicted) -> step 2 unlinks it and frees a
+  // slot with NO live-record loss. The deferred records are the NEWEST (above
+  // the watermark, so the ring evicts them last); they wait safely in RAM and
+  // land next cycle once a slot is free. Below the cap this is a no-op.
+  if (!(create && s_seg_count >= k_ui_seg_max)) {
+    int n = 0;
+    uint32_t last = s_seg_flushed_seq;
+    for (int i = 0; i < count; ++i) {
+      const int slot = (head - count + i + cap) % cap;
+      const UITask::UIMessage& m = ring[slot];
+      if (m.seq <= s_seg_flushed_seq) continue;
+      if (m.thread[0]) {
+        if (n >= room) break;                   // segment full — the rest rides the next cycle
+        buf[n++] = m;
+      }
+      if (m.seq > last) last = m.seq;           // deleted-before-flush records advance the
+                                                // watermark with no write (never hit disk)
+    }
+    if (n > 0) {
+      out->kind      = SEGJOB_APPEND;
+      out->first_seq = create ? buf[0].seq : target;
+      out->last_seq  = last;
+      out->create    = create;
+      out->n         = n;
+      return 1;
+    }
+    if (last > s_seg_flushed_seq) s_seg_flushed_seq = last;   // pure-tombstone tail
+  }
+  // 2) Oldest compact-dirty segment: rewrite it from the ring's live records.
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (!s_seg[i].compact_dirty) continue;
+    const int cn = segGatherRange(ring, cap, count, head,
+                                  s_seg[i].first_seq, s_seg[i].last_seq,
+                                  buf, k_ui_seg_records);
+    out->kind      = SEGJOB_COMPACT;
+    out->first_seq = s_seg[i].first_seq;
+    out->last_seq  = cn > 0 ? buf[cn - 1].seq : 0;
+    out->create    = false;
+    out->n         = cn;                      // 0 = every record gone -> unlink the file
+    return 1;
+  }
+  return 0;
+}
+
+// Apply a successfully-executed job to the table (loop task only).
+static void segCommitJob(const SegJob& job) {
+  if (job.kind == SEGJOB_APPEND) {
+    if (job.create && s_seg_count < k_ui_seg_max) {
+      UiSegInfo info{};
+      info.first_seq = job.first_seq;
+      info.bytes     = (uint32_t)sizeof(UiSegHeader);
+      s_seg[s_seg_count++] = info;
+      s_seg_total_bytes = s_seg_total_bytes + (uint32_t)sizeof(UiSegHeader);
+    }
+    // Credit the job to ITS OWN segment (looked up by key), never blindly to
+    // the last table entry — the table can have changed between arm and commit.
+    for (int i = 0; i < s_seg_count; ++i) {
+      if (s_seg[i].first_seq != job.first_seq) continue;
+      UiSegInfo& a = s_seg[i];
+      a.disk_recs = (uint16_t)(a.disk_recs + job.n);
+      a.live_recs = (uint16_t)(a.live_recs + job.n);
+      if (job.last_seq > a.last_seq) a.last_seq = job.last_seq;
+      const uint32_t add = (uint32_t)job.n * (uint32_t)sizeof(UiSegMsg);
+      a.bytes += add;
+      s_seg_total_bytes = s_seg_total_bytes + add;
+      if (job.last_seq > s_seg_flushed_seq) s_seg_flushed_seq = job.last_seq;
+      break;
+    }
+  } else if (job.kind == SEGJOB_COMPACT) {
+    for (int i = 0; i < s_seg_count; ++i) {
+      if (s_seg[i].first_seq != job.first_seq) continue;
+      s_seg_total_bytes = (s_seg_total_bytes >= s_seg[i].bytes)
+                              ? s_seg_total_bytes - s_seg[i].bytes : 0;
+      if (job.n == 0) {
+        for (int k = i; k + 1 < s_seg_count; ++k) s_seg[k] = s_seg[k + 1];
+        --s_seg_count;
+      } else {
+        s_seg[i].disk_recs = s_seg[i].live_recs = (uint16_t)job.n;
+        s_seg[i].last_seq  = job.last_seq;
+        s_seg[i].bytes     = (uint32_t)sizeof(UiSegHeader)
+                             + (uint32_t)job.n * (uint32_t)sizeof(UiSegMsg);
+        // A delete that landed while this compact was writing predates
+        // nothing: the snapshot was taken BEFORE it, so the record is still
+        // in the file — keep the segment dirty for a follow-up pass.
+        s_seg[i].compact_dirty = s_segjob_redirty ? 1 : 0;
+        s_seg_total_bytes  = s_seg_total_bytes + s_seg[i].bytes;
+        if (job.repair) {
+          // The file now matches the table exactly, so it is trustworthy again
+          // and the records it absorbed from the unflushed tail are durable.
+          s_seg[i].rewrite_open = 0;
+          if (job.last_seq > s_seg_flushed_seq) s_seg_flushed_seq = job.last_seq;
+        }
+      }
+      break;
+    }
+  }
+}
+
+static bool segMoreWorkPending(uint32_t newest_seq) {
+  if (newest_seq > s_seg_flushed_seq) return true;
+  for (int i = 0; i < s_seg_count; ++i)
+    if (s_seg[i].compact_dirty || s_seg[i].rewrite_open) return true;
+  return false;
+}
+
+// Executed by the hist_flush worker (or inline by the sync drain's caller).
+static bool uiSegRunArmedJob() {
+  switch (s_segjob_kind) {
+    case SEGJOB_APPEND:
+      return uiSegAppendRecords(s_segjob_first_seq, s_segjob_create, s_segjob_buf, s_segjob_n);
+    case SEGJOB_COMPACT:
+      return uiSegCompactWrite(s_segjob_first_seq, s_segjob_buf, s_segjob_n, false);
+    default:
+      return true;
+  }
+}
+
+// A record with this seq was tombstoned (deleted) — mark its segment for
+// compaction. Unflushed records (seq above the watermark) need nothing: the
+// append builder skips tombstones, so they simply never reach disk.
+static void segMarkSeqDirty(uint32_t seq) {
+  if (seq == 0 || seq > s_seg_flushed_seq) return;
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (seq >= s_seg[i].first_seq && seq <= s_seg[i].last_seq) {
+      s_seg[i].compact_dirty = 1;
+      // Racing an in-flight compact of this very segment: its snapshot was
+      // taken before this delete, so the commit must not clear the flag.
+      if (s_segjob_kind == SEGJOB_COMPACT && s_segjob_first_seq == s_seg[i].first_seq &&
+          (s_hist_flush_busy || s_hist_flush_req))
+        s_segjob_redirty = true;
+      return;
+    }
+  }
+}
+
+// The ring overwrote its oldest record (capacity eviction). Deliberately does
+// NOT trigger a rewrite per eviction (that would be write-amplification per
+// message all over again): the segment file only gets unlinked once ALL its
+// records have aged out; a partially-evicted boundary segment keeps its stale
+// tail on disk until the next boot's loader trims it (bounded: one segment).
+static void segNoteEvicted(uint32_t seq) {
+  if (seq == 0) return;
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (seq < s_seg[i].first_seq || seq > s_seg[i].last_seq) continue;
+    if (s_seg[i].live_recs > 0) --s_seg[i].live_recs;
+    if (s_seg[i].live_recs == 0) s_seg[i].compact_dirty = 1;   // job -> unlink (n gathers to 0)
+    return;
+  }
+}
+
+// Card remounted (wedge recovery / reinsert / FM insert / post-format): the
+// on-disk segment set may be stale, foreign, or gone. Rebuild the table from
+// the ring's live records with every chunk marked UNTRUSTED, so the normal job
+// flow rewrites each one (header + records, tmp + rename) one bounded segment
+// at a time.
+//
+// Deliberately does NOT delete anything up front: on a same-card recovery the
+// existing files still hold the very history we are re-landing, and unlinking
+// them first turned recovery into a multi-minute window where a power cut lost
+// data that had been perfectly durable. Same-key files are simply replaced by
+// each repair's rename; anything left over (different chunk boundaries, or a
+// genuinely foreign card) is swept once the re-land is complete — and the
+// loader's seq-monotonic filter makes a leftover harmless even if we crash
+// before that sweep.
+static void segRetableFromRing(const UITask::UIMessage* ring, int cap, int count, int head,
+                               uint32_t newest_seq) {
+  s_seg_count = 0;
+  s_seg_total_bytes = 0;
+  UiSegInfo cur{};
+  int in_chunk = 0;
+  for (int i = 0; i < count; ++i) {
+    const int slot = (head - count + i + cap) % cap;
+    const UITask::UIMessage& m = ring[slot];
+    if (!m.thread[0]) continue;
+    if (in_chunk == 0) {
+      cur = UiSegInfo{};
+      cur.first_seq    = m.seq;
+      cur.rewrite_open = 1;       // file content untrusted -> repair rewrites it
+    }
+    cur.last_seq = m.seq;
+    ++in_chunk;
+    if (in_chunk == k_ui_seg_records) {
+      cur.live_recs = (uint16_t)in_chunk;
+      if (s_seg_count < k_ui_seg_max) s_seg[s_seg_count++] = cur;
+      in_chunk = 0;
+    }
+  }
+  if (in_chunk > 0 && s_seg_count < k_ui_seg_max) {
+    cur.live_recs = (uint16_t)in_chunk;
+    s_seg[s_seg_count++] = cur;
+  }
+  s_seg_flushed_seq = newest_seq;
+  s_seg_stale_purge = true;   // sweep leftovers once every chunk has landed
+}
+
+// Unlink segment files that are not part of the table. Runs only when no work
+// is pending (so every table entry has a real, current file) — see the purge
+// rationale on segRetableFromRing.
+static void segPurgeStaleFiles() {
+  uint32_t seqs[k_ui_seg_max];
+  const int nseg = uiSegScan(seqs, k_ui_seg_max, true);
+  if (nseg < 0) return;                       // scan location unreadable — try again later
+  for (int i = 0; i < nseg; ++i) {
+    bool keep = false;
+    for (int k = 0; k < s_seg_count; ++k)
+      if (s_seg[k].first_seq == seqs[i]) { keep = true; break; }
+    if (!keep) uiSegRemoveFile(seqs[i]);
+  }
+  s_seg_stale_purge = false;
 }
 
 bool UITask::saveMsgsToStorage() {
 #if defined(ESP32)
-  // Synchronous write of the LIVE ring — shutdown/reboot and the no-PSRAM
-  // fallback only; the periodic flush goes through the worker snapshot.
-  return uiWriteMsgsFile(_ui_msgs, _ui_msg_cap,
-                         static_cast<uint16_t>(_ui_msg_count),
-                         static_cast<uint16_t>(_ui_msg_head),
-                         static_cast<uint32_t>(_msgcount));
+  // Synchronous drain of ALL outstanding message-store work on the LOOP task —
+  // shutdown/reboot, the delete flows (persistHistoryNow), the sync-fallback
+  // and the no-worker fallback all land here. Loop-task writes are the
+  // empirically reliable path on the shared SPI bus. Returns true only when
+  // everything is durable.
+  if (!uiDataFsReady()) return false;
+  // A worker that outlived uiHistWaitWorkerIdle's 9 s cap still holds a segment
+  // file OPEN. Writing here would remove/rename a path under that open handle:
+  // with FF_FS_LOCK=0 the stalled handle keeps writing into clusters the FS has
+  // freed and may re-allocate, cross-linking chains and corrupting the volume.
+  // Report failure instead (the caller surfaces "Chat history save FAILED");
+  // the data stays in the RAM ring and the segment is already flagged for a
+  // repair rewrite by uiHistWaitWorkerIdle.
+  if (s_hist_flush_busy) return false;
+  if (!s_seg_store_ready) {
+    // A failed boot migration left the old-format file authoritative —
+    // converting it IS the flush (verify-then-delete inside).
+    return migrateRingToSegments();
+  }
+  if (s_seg_resync) {
+    segRetableFromRing(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
+                       _ui_seq_next ? _ui_seq_next - 1 : 0);
+    s_seg_resync = false;
+  }
+  // Drain job by job, executing each here. Appends are NEVER FILE_APPEND on
+  // this path: a worker stalled past uiHistWaitWorkerIdle's 9 s cap could
+  // still hold an append handle on the same file, and two appenders
+  // interleave records — instead the whole (bounded, <= ~60 KB) active
+  // segment is rewritten from the ring via the sync tmp namespace, where
+  // rename-over is last-writer-wins with each candidate internally
+  // consistent.
+  UITask::UIMessage* buf = segEnsureBuf(&s_segsync_buf);   // NEVER the worker's buffer:
+  // a worker stalled past the 9 s idle-wait cap may still be reading its own.
+  for (int guard = 0; guard < k_ui_seg_max + 4; ++guard) {
+    SegJob job{};
+    const int armed = segBuildJob(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head, buf, &job);
+    if (armed == 0) {
+      // segBuildJob returns 0 for "all durable" AND for a create-append it had to
+      // DEFER at the segment cap with no slot freeable this pass (rare
+      // fragmentation edge — the common at-cap path retires the oldest evicted
+      // segment inside this loop and resolves). Only the former is saved; report
+      // the latter as a failure so the caller surfaces it and retries, instead of
+      // dropping the newest records on a false success. Normal case:
+      // segMoreWorkPending is false here, so this is a no-op.
+      if (segMoreWorkPending(_ui_seq_next ? _ui_seq_next - 1 : 0)) return false;
+      if (s_seg_stale_purge) segPurgeStaleFiles();   // everything landed — drop leftovers
+      return true;
+    }
+    if (armed < 0) return false;               // no snapshot buffer
+    bool ok;
+    if (job.kind == SEGJOB_APPEND) {
+      if (job.create && s_seg_count < k_ui_seg_max) {
+        UiSegInfo info{};
+        info.first_seq = job.first_seq;
+        s_seg[s_seg_count++] = info;
+      }
+      const int n2 = segGatherRange(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
+                                    job.first_seq, job.last_seq,
+                                    buf, k_ui_seg_records);
+      ok = uiSegCompactWrite(job.first_seq, buf, n2, true);
+      if (ok) {
+        const uint32_t newest = job.last_seq;
+        job.kind = SEGJOB_COMPACT;             // commit with absolute-value semantics
+        job.n    = n2;
+        segCommitJob(job);
+        if (newest > s_seg_flushed_seq) s_seg_flushed_seq = newest;
+      }
+    } else {
+      ok = uiSegCompactWrite(job.first_seq, buf, job.n, true);
+      if (ok) segCommitJob(job);
+    }
+    if (!ok) return false;
+  }
+  return !segMoreWorkPending(_ui_seq_next ? _ui_seq_next - 1 : 0);
 #else
   return false;
 #endif
@@ -41450,6 +42914,7 @@ bool UITask::removeThread(int idx) {
     _ui_msgs[i].thread[0] = '\0';
     _ui_msgs[i].text[0]   = '\0';
     _ui_msgs[i].sender[0] = '\0';
+    segMarkSeqDirty(_ui_msgs[i].seq);
     purged_any = true;
   }
   // Persist the purge — without this the deleted thread's messages survive in
@@ -41672,6 +43137,9 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   int t_idx = findOrCreateThread(thread, channel);
   if (t_idx < 0) return -1;
   UIMessage& m = _ui_msgs[_ui_msg_head];
+  // Full ring: this append overwrites the oldest record — tell the segment
+  // table so a fully-aged-out segment file gets unlinked.
+  if (_ui_msg_count == _ui_msg_cap) segNoteEvicted(m.seq);
   // Bubble timestamps must match the status-bar clock, which reads the NTP-synced ESP32
   // system clock (time(nullptr)) — NOT the mesh RTC (getRTCClock()). On boards whose
   // hardware RTC chip reads BCD/century garbage, getCurrentTime() returned wrong epochs
@@ -41682,6 +43150,7 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
     time_t sys = time(nullptr);
     m.ts = (sys > 1700000000) ? (uint32_t)sys : (uint32_t)(millis() / 1000);
   }
+  m.seq = _ui_seq_next++;   // monotonic record id — the segment store keys on it
   m.channel = channel;
   m.outgoing = outgoing;
   m.ack_hash    = ack_hash;
@@ -42404,6 +43873,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // linearizes a history file written under either capacity.
 #if defined(ESP32)
   _ui_msg_cap = uiDataFsIsSdCard() ? MAX_UI_MESSAGES_SD : MAX_UI_MESSAGES;
+  uiDataEnsureDirs();   // segment dir exists before the loader scans / the first append
 #endif
   size_t msgs_bytes          = sizeof(UIMessage) * (size_t)_ui_msg_cap;
   const size_t threads_bytes = sizeof(UIThread)  * MAX_UI_THREADS;
@@ -43009,6 +44479,7 @@ bool UITask::deleteMessageBySlot(int msg_idx) {
   m.thread[0] = '\0';
   m.text[0]   = '\0';
   m.sender[0] = '\0';
+  segMarkSeqDirty(m.seq);   // the owning segment needs a compaction pass
   _msgs_dirty = true;
   return true;
 }
@@ -43025,6 +44496,7 @@ int UITask::clearThreadHistory(int thread_idx) {
       m.thread[0] = '\0';
       m.text[0]   = '\0';
       m.sender[0] = '\0';
+      segMarkSeqDirty(m.seq);
       ++cleared;
     }
   }
@@ -43742,9 +45214,25 @@ bool UITask::sendSignalProbe() {
 // was never written, so the caller must treat the ring as dirty and write it.
 static bool uiHistWaitWorkerIdle() {
   const bool cancelled = s_hist_flush_req;
+  const uint8_t  had_kind = s_segjob_kind;
+  const uint32_t had_seq  = s_segjob_first_seq;
   s_hist_flush_req = false;
   const uint32_t t0 = millis();
   while (s_hist_flush_busy && (uint32_t)(millis() - t0) < 9000) delay(10);
+  // Drop the worker descriptor UNCONDITIONALLY: the caller is about to write
+  // synchronously from the ring, and leaving it armed let the next
+  // flushHistoryIfDue observe a stale job and commit it a SECOND time
+  // (double-counted record/byte totals, or a duplicate table entry).
+  s_segjob_kind    = SEGJOB_NONE;
+  s_segjob_redirty = false;
+  // If the job was already in the worker's hands its fate is now unknown — it
+  // may have written some or all of its records without being credited. Flag
+  // the target segment untrusted so the synchronous drain REWRITES it from the
+  // ring instead of appending on top (which would duplicate whatever landed).
+  if (had_kind != SEGJOB_NONE && !cancelled) {
+    for (int i = 0; i < s_seg_count; ++i)
+      if (s_seg[i].first_seq == had_seq) { s_seg[i].rewrite_open = 1; break; }
+  }
   return cancelled;
 }
 
@@ -43771,9 +45259,22 @@ void UITask::rebootDevice() {
   // Persist chat history synchronously before we reboot — the periodic
   // flush is rate-capped, so without this a reboot could drop the most
   // recent chat history.
-  if (uiHistWaitWorkerIdle()) _msgs_dirty = true;   // cancelled snapshot = unwritten data
+  // A worker still busy after the 9 s wait cap counts as unwritten data too:
+  // its write may never land (stalled on a dying card), and _msgs_dirty was
+  // already cleared when its snapshot was armed — skipping the sync save here
+  // silently dropped everything since the last successful flush.
+  if (uiHistWaitWorkerIdle() || s_hist_flush_busy) _msgs_dirty = true;
   if (_threads_dirty) saveThreadsToStorage();
-  if (_msgs_dirty) saveMsgsToStorage();
+  if (_msgs_dirty && !saveMsgsToStorage()) {
+    // Last-chance save failed — say so (with the diagnosis) instead of
+    // rebooting into silent loss.
+    char why[64]; chatSaveFailText(why, sizeof why);
+    char msg[128];
+    snprintf(msg, sizeof msg, "%s\n%s", TR("Chat history save FAILED"), why);
+    showAlert(msg, 1800);
+    lv_refr_now(NULL);
+    delay(1500);   // let the warning actually paint before the reset
+  }
   discoveredFlushNow();   // persist the Discovered ring before we go down
   the_mesh.flushContactsIfDirty();   // and any coalesced contacts refresh (card-less devices)
   if (_board) _board->reboot();
@@ -44072,6 +45573,110 @@ static inline void uiCp(const char* next) {
   s_ui_cp_tag = next;
   s_ui_cp_t0  = nowms;
 }
+
+#if CAP_SD || defined(TLORA_PAGER)
+// Runtime SD wedge detect + recover. Some writer saw an SD write fail while the
+// card was supposedly mounted (sdNoteIoFailure) — verify with real I/O and,
+// if the card stopped answering, drop the mount and re-run the full mount
+// ladder (SD.end() + staged SD.begin): exactly what the next reboot would do,
+// minus the reboot. Without this the firmware is blind to a wedged card:
+// SD.cardType() keeps returning its cached mount-time type, s_sd_mounted stays
+// true so fmSdTryMount() no-ops, and every SD feature fails silently until the
+// user power-cycles (the "SD stops working until reboot" report).
+static void sdHealthTick() {
+  static uint32_t s_next_probe_ms    = 0;
+  static uint32_t s_next_bg_probe_ms = 0;
+  const uint32_t now = (uint32_t)millis();
+  if (!s_sd_mounted) {
+    s_sd_fail_note_ms = 0;
+    // Reinsert watch. After a failed remount ("SD card lost") the SD VFS is
+    // unregistered and NOTHING outside the file manager ever re-runs a mount
+    // — a reinserted card then LOOKED recovered (battery quietly falls back
+    // to SPIFFS) while chat-history writes kept failing silently and new
+    // messages were never persisted. One light single-attempt mount (no
+    // ladder; an empty slot fails in well under a second) every 30 s while
+    // awake — a healthy warm card mounts on the first 4 MHz attempt. The FM
+    // poll / SD-row tap still provide the full ladder for stubborn cards.
+    if (touchSleep::isSleeping()) return;
+    if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
+    s_next_bg_probe_ms = now + 30000;
+#if defined(TLORA_PAGER)
+    if (!pagerSdCardPresent()) return;   // card-detect says the slot is empty
+#endif
+    if (s_fm_list) return;               // FM open: its 2 s poll owns remounting (full ladder)
+    SPIClass* spi = sdSharedSPI();
+    if (!spi) return;
+    SD.end();
+    if (SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
+      s_sd_mounted        = true;
+      s_sd_size           = SD.cardSize();
+      s_sd_retry_after_ms = 0;
+      markSdIo();
+      if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
+#if defined(HAS_TDECK_GT911)
+      // Land the RAM ring on the card promptly, not up to 30+ s later: every
+      // message received while the card was out is only in RAM. Armed as an
+      // OFF-THREAD flush — a synchronous write here froze the UI for >30 s on
+      // a card that mounts fine but times out on large writes. mkdir first —
+      // a fresh replacement card has no /meshcomod yet, and without it every
+      // history flush fails silently.
+      SD.mkdir("/meshcomod");
+      uiDataEnsureDirs();   // segment dir too — a fresh replacement card has neither
+      if (g_lv.task) g_lv.task->flushHistorySoon();
+#endif
+      mapNoteStorageChanged();   // the map layer has to be told too, or it stays blank
+    } else {
+      SD.end();                          // leave cardType() honestly CARD_NONE
+    }
+    return;
+  }
+  if (s_sd_format_pending) return;                        // format owns the card right now
+  // Hold off while the core-0 worker is (or may be about to be) on the card —
+  // SD.end() under an open worker file handle is the crash we must not add.
+  // On a truly wedged card the worker's own ops fail fast, so this clears.
+  if (s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request) return;
+#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
+#endif
+  // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
+  // also on a slow 30 s background cadence — a card yanked while nothing is
+  // writing (idle home screen) would otherwise never be noticed at all, since
+  // detection is failure-driven and reads fall back silently. A healthy-card
+  // probe is one SEND_STATUS transaction (sub-ms), so the idle cost is nil.
+  // The background probe pauses in the sleep regime (screen off, loop
+  // throttled): nobody sees the toast, an SD poke keeps the card out of its
+  // own power-down, and a yank-while-asleep is caught by the first probe
+  // after wake. The FAILURE-driven probe stays active asleep on purpose —
+  // scheduled telemetry keeps logging to SD during sleep, and a wedge there
+  // must still recover.
+  if (s_sd_fail_note_ms) {
+    if (s_next_probe_ms && (int32_t)(now - s_next_probe_ms) < 0) return;
+  } else {
+    if (touchSleep::isSleeping()) return;
+    if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
+  }
+  s_next_probe_ms    = now + 5000;
+  s_next_bg_probe_ms = now + 30000;
+  s_sd_fail_note_ms = 0;
+  if (sdProbeAlive()) return;     // transient failure (card full, bad path, ...) — not a wedge
+  fmSdUnmount();                  // SD.end() so a fresh begin re-runs the full card handshake
+  if (fmSdTryMount()) {
+    if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
+#if defined(HAS_TDECK_GT911)
+    SD.mkdir("/meshcomod");                            // fresh replacement card: recreate the data root
+    uiDataEnsureDirs();                                // segment dir too
+    if (g_lv.task) g_lv.task->flushHistorySoon();      // land the RAM ring promptly (off-thread — no UI stall)
+#endif
+    mapNoteStorageChanged();
+  } else {
+    // Ladder failed — card needs a real power cycle (reinsert). s_sd_mounted is
+    // now false and SD.cardType() reads CARD_NONE, so features degrade honestly
+    // instead of silently failing, and the usual remount paths keep retrying.
+    if (g_lv.task) g_lv.task->showAlert(TR("SD card lost - reinsert to recover"), 2600);
+    mapNoteStorageChanged();   // drop tiles read off the card that just went away
+  }
+}
+#endif
 
 void UITask::loop() {
   unsigned long now = millis();
@@ -44505,6 +46110,7 @@ void UITask::loop() {
     else                          s_jump_dimmed = true;   // nothing open: park the state
   }
 #if CAP_SD || defined(TLORA_PAGER)
+  sdHealthTick();   // wedge detect + remount, driven by writer-flagged failures (any task)
   // microSD insert/remove detection — only while the file manager is open, so
   // there's no idle SPI traffic. SD.begin runs on this loop task (never
   // concurrent with the radio's SPI), and reuses the radio's already-begun bus.
@@ -44517,10 +46123,24 @@ void UITask::loop() {
         // unmountable card spikes current / churns the bus and can reset the board.
         if (now >= s_sd_retry_after_ms && fmSdTryMount()) {
           showAlert(TR("SD card inserted"), 1500);
+#if defined(HAS_TDECK_GT911)
+          SD.mkdir("/meshcomod");   // fresh replacement card: recreate the data root
+          uiDataEnsureDirs();        // segment dir too
+          flushHistorySoon();       // land the RAM ring promptly (off-thread — no UI stall)
+#endif
+          mapNoteStorageChanged();
           if (!s_fm_fs) fmShowRoots();          // refresh roots so it appears
         }
-      } else if (SD.cardType() == CARD_NONE) {
+      } else if (!s_hist_flush_busy && !s_hist_flush_req && !sdProbeAlive()) {
+        // Real-I/O probe, NOT `SD.cardType() == CARD_NONE`: cardType() is cached
+        // at mount and only SD.end() ever resets it, so the old check could never
+        // fire — neither a yanked card nor a wedged one was ever detected here.
+        // Never probe/unmount under an in-flight history flush: SD.end() while
+        // the flush holds its open temp file leaves a stale FIL, and every
+        // later write on it fails FR_INVALID_OBJECT -> EBADF ("bad file
+        // number") — recovery must not sabotage the very write it protects.
         fmSdUnmount();
+        mapNoteStorageChanged();
         showAlert(TR("SD card removed"), 1500);
         if (s_fm_fs == &SD || !s_fm_fs) fmShowRoots();
       }
@@ -45007,14 +46627,21 @@ void UITask::loop() {
         }
         sdcard_uninit(pdrv);
       }
-      if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 3);
+      if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
     }
     enableLoopWDT();
     fmHideFormatOverlay();
     if (ok && SD.cardType() != CARD_NONE) {
       s_sd_mounted = true;
       s_sd_size = SD.cardSize();
-      sdEnsureMeshcomodFolders();                        // BINS / RECBCK / SETTINGS / MAPS / LOGS
+      sdEnsureMeshcomodFolders();                        // BINS / RECBCK / SETTINGS / MAPS / LOGS / meshcomod(+msgs)
+      // The format just erased every chat segment while the table still
+      // claims they exist — without a resync the durability watermark keeps
+      // pretending the old records are on disk (permanently lost) and the
+      // next append targets a segment file that is gone. Rebuild + re-land.
+      uiDataEnsureDirs();
+      flushHistorySoon();
+      mapNoteStorageChanged();
       char done[56], cs[16];
       fmFmtSize64(s_sd_size, cs, sizeof cs);
       snprintf(done, sizeof done, TR("SD formatted - %s (MESHCOMOD)"), cs);

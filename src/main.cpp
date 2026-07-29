@@ -215,6 +215,8 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
   SD.mkdir("/meshcomod/identity");
   SD.mkdir("/meshcomod/bl");
   SD.mkdir("/meshcomod/lock");
+  SD.mkdir("/meshcomod/msgs");   // chat segments: SPIFFS names them flat ("/msgs/seg_*.bin"),
+                                 // but the FAT card needs the real parent dir or every copy fails
   bool identity_ok = false;
   int copied = 0, failed = 0;
   static uint8_t buf[4096];
@@ -520,7 +522,7 @@ void setup() {
       for (int a = 0; a < tries && !sd_mounted; ++a) {
         SD.end();
         delay(kBootMount[a].settle_ms);
-        if (SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 3) && SD.cardType() != CARD_NONE)
+        if (SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 6) && SD.cardType() != CARD_NONE)
           sd_mounted = true;
       }
     }
