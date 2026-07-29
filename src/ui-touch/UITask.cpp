@@ -32928,7 +32928,18 @@ static void lockscreenShow() {
   // Wallpaper, scaled to cover the screen (crop overflow, never letterbox).
   int ww = 0, wh = 0;
   const uint8_t* wall_data = nullptr;
-  if (s_lock_wall) { lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
+  if (s_lock_wall) {
+    // Invalidate LVGL's image cache entry for s_lock_wall_dsc BEFORE freeing the
+    // buffer it points at. s_lock_wall_dsc is a static var (stable address), and
+    // LVGL's img cache is keyed by that src pointer -- without this, the next
+    // lockscreenShow() can hit a stale cache entry pointing at freed PSRAM that
+    // has since been reused elsewhere (e.g. the map's 128 KB tile buffers),
+    // rendering as RGB565 noise on wake. Same bug class already fixed for map
+    // tiles in freeMapTileSlot() -- see the comment there (issue #127).
+    lv_img_cache_invalidate_src(&s_lock_wall_dsc);
+    lvglPsramFree(s_lock_wall);
+    s_lock_wall = nullptr;
+  }
   char wpath[TOUCH_LOCK_WALLPAPER_MAXLEN];
   touchPrefsGetLockWallpaper(wpath, sizeof wpath);
   if (!strcmp(wpath, "/lock/placeholder.jpg")) {
@@ -33072,7 +33083,7 @@ static void lockscreenHide() {
     s_lock_status = nullptr; s_lock_hint = nullptr;
 #endif
   }
-  if (s_lock_wall) { lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
+  if (s_lock_wall) { lv_img_cache_invalidate_src(&s_lock_wall_dsc); lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
   s_lock_clock_min = -1;
   s_lock_unread_n  = -1;
   // Restore the status bar's normal opaque background + accent border.
