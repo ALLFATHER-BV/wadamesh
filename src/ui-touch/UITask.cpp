@@ -42501,28 +42501,44 @@ static int segBuildJob(const UITask::UIMessage* ring, int cap, int count, int he
     target = s_seg[s_seg_count - 1].first_seq;
     room   = k_ui_seg_records - (int)s_seg[s_seg_count - 1].disk_recs;
   }
-  int n = 0;
-  uint32_t last = s_seg_flushed_seq;
-  for (int i = 0; i < count; ++i) {
-    const int slot = (head - count + i + cap) % cap;
-    const UITask::UIMessage& m = ring[slot];
-    if (m.seq <= s_seg_flushed_seq) continue;
-    if (m.thread[0]) {
-      if (n >= room) break;                   // segment full — the rest rides the next cycle
-      buf[n++] = m;
+  // At the table cap (s_seg_count == k_ui_seg_max) a CREATE-append cannot be
+  // recorded: segCommitJob only tables a create while s_seg_count < the cap, so
+  // the file it writes becomes an untabled orphan AND the durability watermark
+  // never advances -> the same append re-arms every cycle (permanent write-spin),
+  // orphaned seg_*.bin pile up as the ring shifts the target first_seq, and the
+  // card eventually fills ("SD I/O fails after a few hours"). DEFER the append:
+  // skip step 1 entirely (crucially, do NOT run the gather/watermark advance
+  // below on un-written records) and fall through to step 2, which retires the
+  // oldest segment first. At the cap the oldest 256 records have aged out of the
+  // 5000-record ring (24*256 disk slots > ring), so that segment is fully
+  // evicted -> compact_dirty (segNoteEvicted) -> step 2 unlinks it and frees a
+  // slot with NO live-record loss. The deferred records are the NEWEST (above
+  // the watermark, so the ring evicts them last); they wait safely in RAM and
+  // land next cycle once a slot is free. Below the cap this is a no-op.
+  if (!(create && s_seg_count >= k_ui_seg_max)) {
+    int n = 0;
+    uint32_t last = s_seg_flushed_seq;
+    for (int i = 0; i < count; ++i) {
+      const int slot = (head - count + i + cap) % cap;
+      const UITask::UIMessage& m = ring[slot];
+      if (m.seq <= s_seg_flushed_seq) continue;
+      if (m.thread[0]) {
+        if (n >= room) break;                   // segment full — the rest rides the next cycle
+        buf[n++] = m;
+      }
+      if (m.seq > last) last = m.seq;           // deleted-before-flush records advance the
+                                                // watermark with no write (never hit disk)
     }
-    if (m.seq > last) last = m.seq;           // deleted-before-flush records advance the
-                                              // watermark with no write (never hit disk)
+    if (n > 0) {
+      out->kind      = SEGJOB_APPEND;
+      out->first_seq = create ? buf[0].seq : target;
+      out->last_seq  = last;
+      out->create    = create;
+      out->n         = n;
+      return 1;
+    }
+    if (last > s_seg_flushed_seq) s_seg_flushed_seq = last;   // pure-tombstone tail
   }
-  if (n > 0) {
-    out->kind      = SEGJOB_APPEND;
-    out->first_seq = create ? buf[0].seq : target;
-    out->last_seq  = last;
-    out->create    = create;
-    out->n         = n;
-    return 1;
-  }
-  if (last > s_seg_flushed_seq) s_seg_flushed_seq = last;   // pure-tombstone tail
   // 2) Oldest compact-dirty segment: rewrite it from the ring's live records.
   for (int i = 0; i < s_seg_count; ++i) {
     if (!s_seg[i].compact_dirty) continue;
@@ -42745,6 +42761,14 @@ bool UITask::saveMsgsToStorage() {
     SegJob job{};
     const int armed = segBuildJob(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head, buf, &job);
     if (armed == 0) {
+      // segBuildJob returns 0 for "all durable" AND for a create-append it had to
+      // DEFER at the segment cap with no slot freeable this pass (rare
+      // fragmentation edge — the common at-cap path retires the oldest evicted
+      // segment inside this loop and resolves). Only the former is saved; report
+      // the latter as a failure so the caller surfaces it and retries, instead of
+      // dropping the newest records on a false success. Normal case:
+      // segMoreWorkPending is false here, so this is a no-op.
+      if (segMoreWorkPending(_ui_seq_next ? _ui_seq_next - 1 : 0)) return false;
       if (s_seg_stale_purge) segPurgeStaleFiles();   // everything landed — drop leftovers
       return true;
     }
