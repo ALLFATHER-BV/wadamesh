@@ -29557,33 +29557,26 @@ static void chatVirtCheckStoreEdges(LvChatPanel* p) {
 }
 #endif
 
-static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
-                                          bool thread_is_room, lv_coord_t bubble_max_w) {
-  ChatBubbleDisplay d{};
-  chatParseMessageDisplay(m, channel_mode, thread_is_room, d);
-  const lv_coord_t inner_max_w = bubble_max_w - 2 * kChatBubblePadH;
-  lv_coord_t inner_y = 0;
-  if ((channel_mode || thread_is_room) && !m.outgoing && d.san_sender[0])
-    inner_y += lv_font_get_line_height(&g_font_12);
-
-  lv_point_t txt_size;
-  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-  const lv_coord_t txt_w_used = (txt_size.x <= inner_max_w) ? txt_size.x : inner_max_w;
-  lv_point_t wrapped_size;
-  lv_txt_get_size(&wrapped_size, d.san_text, &g_font_12, 0, 0,
-                  txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+static void chatBuildBubbleMeta(const UITask::UIMessage& m, bool channel_mode,
+                                char* out, size_t out_len, uint32_t* out_fg) {
+  if (out && out_len > 0) out[0] = '\0';
+  if (out_fg) *out_fg = COLOR_SUB;
+  if (!out || out_len == 0) return;
 
   char ts_buf[20];
   formatBubbleTs(m.ts, ts_buf, sizeof(ts_buf));
+
   const char* deliv_glyph = "";
+  uint32_t deliv_fg = COLOR_SUB;
   if (m.outgoing && !channel_mode && m.deliv_state != UITask::DELIV_NONE) {
     switch (m.deliv_state) {
-      case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_OK; break;
-      case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; break;
-      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE; break;
+      case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_OK; deliv_fg = COLOR_SUB; break;
+      case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; deliv_fg = COLOR_ACCENT; break;
+      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE " tap to resend"; deliv_fg = 0xE08080; break;
       default: break;
     }
   }
+
   char rep_buf[12] = "";
   if (m.outgoing && m.sent_fp) {
     const uint8_t reps = the_mesh.uiRepeatsForFp(m.sent_fp);
@@ -29594,15 +29587,67 @@ static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool chann
     snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
   }
 
-  lv_coord_t body_h = inner_y + wrapped_size.y;
-  if (ts_buf[0] || deliv_glyph[0] || rep_buf[0]) {
-    char footer[40];
-    snprintf(footer, sizeof(footer), "%s%s%s", ts_buf, deliv_glyph, rep_buf);
-    lv_point_t foot_size;
-    lv_txt_get_size(&foot_size, footer, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    body_h += 1 + foot_size.y;
+  snprintf(out, out_len, "%s%s%s", ts_buf, deliv_glyph, rep_buf);
+  if (out_fg) *out_fg = deliv_glyph[0] ? deliv_fg : COLOR_SUB;
+}
+
+static lv_coord_t chatTextWidth(const char* s) {
+  if (!s || !s[0]) return 0;
+  lv_point_t size;
+  lv_txt_get_size(&size, s, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  return size.x;
+}
+
+static bool chatUtf8Continuation(char c) {
+  return (static_cast<uint8_t>(c) & 0xC0) == 0x80;
+}
+
+static void chatFitLeadingEllipsis(const char* src, lv_coord_t max_w, char* out, size_t out_len) {
+  if (!out || out_len == 0) return;
+  out[0] = '\0';
+  if (!src || !src[0] || max_w <= 0) return;
+  if (chatTextWidth(src) <= max_w) {
+    snprintf(out, out_len, "%s", src);
+    return;
   }
-  return kChatBubblePadV * 2 + body_h;
+
+  const char* ell = "...";
+  if (chatTextWidth(ell) > max_w) return;
+
+  const size_t len = strlen(src);
+  for (size_t i = 0; i < len; ++i) {
+    if (chatUtf8Continuation(src[i])) continue;
+    char cand[48];
+    snprintf(cand, sizeof(cand), "%s%s", ell, src + i);
+    if (chatTextWidth(cand) <= max_w) {
+      snprintf(out, out_len, "%s", cand);
+      return;
+    }
+  }
+  snprintf(out, out_len, "%s", ell);
+}
+
+static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
+                                          bool thread_is_room, lv_coord_t bubble_max_w) {
+  ChatBubbleDisplay d{};
+  chatParseMessageDisplay(m, channel_mode, thread_is_room, d);
+  const lv_coord_t inner_max_w = bubble_max_w - 2 * kChatBubblePadH;
+  lv_coord_t inner_y = 0;
+  char meta_buf[48];
+  chatBuildBubbleMeta(m, channel_mode, meta_buf, sizeof(meta_buf), nullptr);
+  // Bubble layout: timestamp/meta always share the top row (channels, DMs, rooms).
+  const bool show_sender = (channel_mode || thread_is_room) && !m.outgoing && d.san_sender[0];
+  if (show_sender || meta_buf[0])
+    inner_y += lv_font_get_line_height(&g_font_12);
+
+  lv_point_t txt_size;
+  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  const lv_coord_t txt_w_used = (txt_size.x <= inner_max_w) ? txt_size.x : inner_max_w;
+  lv_point_t wrapped_size;
+  lv_txt_get_size(&wrapped_size, d.san_text, &g_font_12, 0, 0,
+                  txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+
+  return kChatBubblePadV * 2 + inner_y + wrapped_size.y;
 }
 
 static void chatBuildCompactLine(const UITask::UIMessage& m, LvChatPanel* p, int logical_i,
@@ -30311,17 +30356,67 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   lv_obj_set_style_pad_ver(bubble, kChatBubblePadV, LV_PART_MAIN);
   lv_obj_set_size(bubble, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 
+  const lv_coord_t kInnerMaxW = kBubbleMaxW - 2 * kChatBubblePadH;
+  lv_point_t txt_size;
+  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
+
+  char meta_buf[48];
+  uint32_t meta_fg = COLOR_SUB;
+  chatBuildBubbleMeta(m, p->channel_mode, meta_buf, sizeof(meta_buf), &meta_fg);
+  // All bubble-style threads (channel / DM / room): timestamp + delivery meta on the top row.
+  const bool show_sender_line = (p->channel_mode || s_chat_virt.thread_is_room) &&
+                                !m.outgoing && d.san_sender[0];
+
+  const lv_coord_t sender_w = show_sender_line ? chatTextWidth(d.san_sender) : 0;
+  const lv_coord_t meta_w   = meta_buf[0] ? chatTextWidth(meta_buf) : 0;
+  lv_coord_t inner_w = txt_w_used > 0 ? txt_w_used : 1;
+  {
+    lv_coord_t header_w = (show_sender_line ? sender_w : 0) + meta_w;
+    if (show_sender_line && meta_w) header_w += 6;
+    if (header_w > kInnerMaxW) header_w = kInnerMaxW;
+    if (header_w > inner_w) inner_w = header_w;
+  }
+
   int inner_y = 0;
-  lv_coord_t inner_w = 0;   // widest child (sender/text/footer) -> analytic bubble width for x-alignment
-  if ((p->channel_mode || s_chat_virt.thread_is_room) && !m.outgoing && d.san_sender[0]) {
-    lv_obj_t* slbl = lv_label_create(bubble);
-    lv_label_set_text(slbl, d.san_sender);
-    lv_obj_set_style_text_font(slbl, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(slbl, sender_col, LV_PART_MAIN);
-    lv_obj_set_pos(slbl, 0, inner_y);
-    inner_y += lv_font_get_line_height(&g_font_12);
-    lv_point_t ss; lv_txt_get_size(&ss, d.san_sender, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    if (ss.x > inner_w) inner_w = ss.x;
+  // Analytic bubble width for x-alignment (widest of sender/text/meta) — do not use
+  // lv_obj_get_width() right after create; unsettled layout can mis-place outgoing bubbles.
+  if (show_sender_line || meta_buf[0]) {
+    const lv_coord_t line_h = lv_font_get_line_height(&g_font_12);
+    char meta_fit[48] = "";
+    lv_coord_t meta_fit_w = 0;
+    lv_coord_t sender_label_w = sender_w;
+
+    if (meta_buf[0]) {
+      lv_coord_t available_meta_w = inner_w - (show_sender_line ? (sender_w + 6) : 0);
+      const lv_coord_t ell_w = chatTextWidth("...");
+      if (show_sender_line && available_meta_w < ell_w && inner_w > ell_w + 6) {
+        sender_label_w = inner_w - ell_w - 6;
+        available_meta_w = ell_w;
+      }
+      chatFitLeadingEllipsis(meta_buf, available_meta_w, meta_fit, sizeof(meta_fit));
+      meta_fit_w = chatTextWidth(meta_fit);
+    }
+
+    if (show_sender_line && sender_label_w > 0) {
+      lv_obj_t* slbl = lv_label_create(bubble);
+      lv_label_set_text(slbl, d.san_sender);
+      lv_obj_set_style_text_font(slbl, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(slbl, sender_col, LV_PART_MAIN);
+      if (sender_label_w < sender_w) {
+        lv_label_set_long_mode(slbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(slbl, sender_label_w);
+      }
+      lv_obj_set_pos(slbl, 0, inner_y);
+    }
+    if (meta_fit[0]) {
+      lv_obj_t* mlbl = lv_label_create(bubble);
+      lv_label_set_text(mlbl, meta_fit);
+      lv_obj_set_style_text_font(mlbl, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(mlbl, lv_color_hex(meta_fg), LV_PART_MAIN);
+      lv_obj_set_pos(mlbl, inner_w - meta_fit_w, inner_y);
+    }
+    inner_y += line_h;
   }
 
   lv_obj_t* tlbl = lv_label_create(bubble);
@@ -30335,10 +30430,6 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     char rc[UITask::MAX_MSG_TEXT + 40];
     if (chatRecolorUrls(d.san_text, rc, sizeof rc)) { lv_label_set_recolor(tlbl, true); lv_label_set_text(tlbl, rc); }
   }
-  const lv_coord_t kInnerMaxW = kBubbleMaxW - 2 * kChatBubblePadH;
-  lv_point_t txt_size;
-  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-  const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
   if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(tlbl, txt_w_used);
   if (txt_w_used > inner_w) inner_w = txt_w_used;
@@ -30353,53 +30444,14 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     lv_obj_add_event_cb(bubble, bubbleUrlTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   // Failed sends keep the pre-virtualization one-tap resend (the compact path
-  // already has it); the footer below spells the affordance out.
+  // already has it); delivery status on the top meta row spells the affordance out.
   if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
     lv_obj_add_event_cb(bubble, bubbleRetryTapCb, LV_EVENT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
 
-  char ts_buf[20];
-  formatBubbleTs(m.ts, ts_buf, sizeof(ts_buf));
-  const char* deliv_glyph = "";
-  uint32_t deliv_fg = COLOR_SUB;
-  if (m.outgoing && !p->channel_mode && m.deliv_state != UITask::DELIV_NONE) {
-    switch (m.deliv_state) {
-      case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_OK; deliv_fg = COLOR_SUB; break;
-      case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; deliv_fg = COLOR_ACCENT; break;
-      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE " tap to resend"; deliv_fg = 0xE08080; break;
-      default: break;
-    }
-  }
-  char rep_buf[12] = "";
-  if (m.outgoing && m.sent_fp) {
-    const uint8_t reps = the_mesh.uiRepeatsForFp(m.sent_fp);
-    if (reps > 0) snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_REFRESH "%u", (unsigned)reps);
-  } else if (!m.outgoing && (m.meta_flags & UITask::MSG_META_HAS_RX)
-                         && (m.meta_flags & UITask::MSG_META_IS_FLOOD)) {
-    const uint8_t hops = static_cast<uint8_t>(m.path_len & 0x3F);
-    snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
-  }
-  if (ts_buf[0] || deliv_glyph[0] || rep_buf[0]) {
-    char footer[40];
-    snprintf(footer, sizeof(footer), "%s%s%s", ts_buf, deliv_glyph, rep_buf);
-    lv_obj_t* foot = lv_label_create(bubble);
-    lv_label_set_text(foot, footer);
-    lv_obj_set_style_text_font(foot, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(foot, lv_color_hex(deliv_glyph[0] ? deliv_fg : COLOR_SUB), LV_PART_MAIN);
-    lv_point_t wrapped_size;
-    lv_txt_get_size(&wrapped_size, d.san_text, &g_font_12, 0, 0,
-                    txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    lv_point_t foot_size;
-    lv_txt_get_size(&foot_size, footer, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    if (foot_size.x > inner_w) inner_w = foot_size.x;
-    const int foot_x = (txt_w_used > foot_size.x) ? (txt_w_used - foot_size.x) : 0;
-    const int foot_y = inner_y + wrapped_size.y + 1;
-    lv_obj_set_pos(foot, foot_x, foot_y);
-  }
-
   lv_obj_update_layout(bubble);
   lv_coord_t bh = lv_obj_get_height(bubble);
-  // Width for x-alignment is computed analytically from the widest child (text/sender/footer),
+  // Width for x-alignment is computed analytically from the widest child (text/sender/meta),
   // NOT lv_obj_get_width(): right after a send the layout isn't settled and get_width reads wide,
   // which put the (actually narrow) outgoing bubble on the LEFT until the next rebuild.
   lv_coord_t bw = inner_w + 2 * kChatBubblePadH;
