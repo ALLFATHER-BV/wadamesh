@@ -1,0 +1,13 @@
+# beta_52 - major SD chat-history storage rework (community) - RISKY, NEEDS TESTING
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+WARNING - RISKY TEST BUILD. This beta reworks how chat history is stored on the SD card. It has NOT been tested over long uptime yet and may have data-loss bugs.
+WARNING - The chat-history format CHANGES and the change is ONE-WAY. If you flash an older firmware after running this, your saved chat history is lost. Back it up first if it matters to you.
+WARNING - Do not run this as your only or daily device unless you are OK risking your chat history. We specifically need people to run it for hours or days and report any SD errors or history-not-saving problems.
+
+# What changed
+Major SD storage rework, contributed by the community (Vybo): the device now recovers from an SD card that wedges or is pulled at runtime instead of needing a reboot; the About page shows chat-store health (backend, save time, failures); and chat history is now written as small append-friendly segment files instead of rewriting the whole file on every save.
+Fixed the follow-on bug where SD writes started failing after a few hours of uptime once the segment store's table filled up.
+
+# Everything from beta_51 is also included
+Chat bubbles show the time on the top row, the new Airtime channel-utilization tool, the lockscreen wallpaper corruption fix, and the T-Display P4 text-size fix.
