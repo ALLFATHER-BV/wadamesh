@@ -17,19 +17,19 @@
           "role": "gui",
           "title": "Touch UI",
           "version": {
-            "beta_46": {
-              "notes": "Redesigned control center: round quick-toggle buttons that spread to fill the panel, a frosted-glass look, real lock/bell icons, and a confirmation popup on every toggle.\nDo Not Disturb: set quiet hours in Settings > Sound to silence the incoming-message chime during a daily window, with a bell in the status bar while it's active. (community contribution by Tesso Codemonkey)\nDo Not Disturb quick-toggle in the control center — a bell that gains a slash while quiet hours are on.\nContacts no longer go missing between reboots on microSD devices: saves are now atomic (written then swapped in) and the card is mounted far more reliably at boot.\nHeltec V4-R8: the microSD card now mounts, and the freeze when waking the device from sleep is fixed.\nLilyGo T-Pager: the map no longer shows a \"storage error\" under the launcher — it caches tiles to the microSD card, like the T-Deck.\nHeltec V4 in portrait: the Bluetooth icon no longer overlaps the clock in the status bar, and the control-center buttons no longer clip when tapped.",
+            "beta_50": {
+              "notes": "Fixed the on-device updater downloading the wrong firmware on several boards. The V4-R8, ThinkNode M9, RAK Tap V2, T-LoRa Pager and Attaky now each pull their own build instead of the Heltec V4 TFT one.\nT-Display P4: the \"Get test builds (beta)\" toggle and the on-device update now appear. They were hidden before, so the P4 could only be updated over USB. Newly enabled, please test and report.\nLock screen fixed: tap Backspace to peek the screen without unlocking, hold Backspace to unlock. The clock and text are repositioned to fit the wide screen and stay readable.\nOn-screen keyboard now works with the detachable keyboard module: the keys stay down while the module is attached, and the module's # key brings them back up for symbols. The POWER button toggles the screen and wakes the board.\nBoard fixes: correct LoRa clock (no false TCXO), GPS baud, and sensor probing that was colliding with the touch and keyboard chips.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-heltec-v4-tft-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-heltec-v4-tft-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-heltec-v4-tft-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-heltec-v4-tft.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-heltec-v4-tft.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-heltec-v4-tft.bin",
                   "title": "Update (app only)"
                 }
               ]
@@ -49,19 +49,19 @@
           "role": "gui",
           "title": "Touch UI",
           "version": {
-            "beta_46": {
-              "notes": "Redesigned control center: round quick-toggle buttons that spread to fill the panel, a frosted-glass look, real lock/bell icons, and a confirmation popup on every toggle.\nDo Not Disturb: set quiet hours in Settings > Sound to silence the incoming-message chime during a daily window, with a bell in the status bar while it's active. (community contribution by Tesso Codemonkey)\nDo Not Disturb quick-toggle in the control center — a bell that gains a slash while quiet hours are on.\nContacts no longer go missing between reboots on microSD devices: saves are now atomic (written then swapped in) and the card is mounted far more reliably at boot.\nHeltec V4-R8: the microSD card now mounts, and the freeze when waking the device from sleep is fixed.\nLilyGo T-Pager: the map no longer shows a \"storage error\" under the launcher — it caches tiles to the microSD card, like the T-Deck.\nHeltec V4 in portrait: the Bluetooth icon no longer overlaps the clock in the status bar, and the control-center buttons no longer clip when tapped.",
+            "beta_50": {
+              "notes": "Fixed the on-device updater downloading the wrong firmware on several boards. The V4-R8, ThinkNode M9, RAK Tap V2, T-LoRa Pager and Attaky now each pull their own build instead of the Heltec V4 TFT one.\nT-Display P4: the \"Get test builds (beta)\" toggle and the on-device update now appear. They were hidden before, so the P4 could only be updated over USB. Newly enabled, please test and report.\nLock screen fixed: tap Backspace to peek the screen without unlocking, hold Backspace to unlock. The clock and text are repositioned to fit the wide screen and stay readable.\nOn-screen keyboard now works with the detachable keyboard module: the keys stay down while the module is attached, and the module's # key brings them back up for symbols. The POWER button toggles the screen and wakes the board.\nBoard fixes: correct LoRa clock (no false TCXO), GPS baud, and sensor probing that was colliding with the touch and keyboard chips.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-tdeck-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-tdeck-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tdeck-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-tdeck.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-tdeck.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tdeck.bin",
                   "title": "Update (app only)"
                 }
               ]
@@ -81,19 +81,19 @@
           "role": "gui",
           "title": "[LR1121] Touch UI",
           "version": {
-            "beta_46": {
-              "notes": "Redesigned control center: round quick-toggle buttons that spread to fill the panel, a frosted-glass look, real lock/bell icons, and a confirmation popup on every toggle.\nDo Not Disturb: set quiet hours in Settings > Sound to silence the incoming-message chime during a daily window, with a bell in the status bar while it's active. (community contribution by Tesso Codemonkey)\nDo Not Disturb quick-toggle in the control center — a bell that gains a slash while quiet hours are on.\nContacts no longer go missing between reboots on microSD devices: saves are now atomic (written then swapped in) and the card is mounted far more reliably at boot.\nHeltec V4-R8: the microSD card now mounts, and the freeze when waking the device from sleep is fixed.\nLilyGo T-Pager: the map no longer shows a \"storage error\" under the launcher — it caches tiles to the microSD card, like the T-Deck.\nHeltec V4 in portrait: the Bluetooth icon no longer overlaps the clock in the status bar, and the control-center buttons no longer clip when tapped.",
+            "beta_50": {
+              "notes": "Fixed the on-device updater downloading the wrong firmware on several boards. The V4-R8, ThinkNode M9, RAK Tap V2, T-LoRa Pager and Attaky now each pull their own build instead of the Heltec V4 TFT one.\nT-Display P4: the \"Get test builds (beta)\" toggle and the on-device update now appear. They were hidden before, so the P4 could only be updated over USB. Newly enabled, please test and report.\nLock screen fixed: tap Backspace to peek the screen without unlocking, hold Backspace to unlock. The clock and text are repositioned to fit the wide screen and stay readable.\nOn-screen keyboard now works with the detachable keyboard module: the keys stay down while the module is attached, and the module's # key brings them back up for symbols. The POWER button toggles the screen and wakes the board.\nBoard fixes: correct LoRa clock (no false TCXO), GPS baud, and sensor probing that was colliding with the touch and keyboard chips.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-tlora-pager-lr1121-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-tlora-pager-lr1121-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tlora-pager-lr1121-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-tlora-pager-lr1121.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-tlora-pager-lr1121.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tlora-pager-lr1121.bin",
                   "title": "Update (app only)"
                 }
               ]
@@ -104,19 +104,19 @@
           "role": "gui",
           "title": "[SX1262] Touch UI",
           "version": {
-            "beta_46": {
-              "notes": "Redesigned control center: round quick-toggle buttons that spread to fill the panel, a frosted-glass look, real lock/bell icons, and a confirmation popup on every toggle.\nDo Not Disturb: set quiet hours in Settings > Sound to silence the incoming-message chime during a daily window, with a bell in the status bar while it's active. (community contribution by Tesso Codemonkey)\nDo Not Disturb quick-toggle in the control center — a bell that gains a slash while quiet hours are on.\nContacts no longer go missing between reboots on microSD devices: saves are now atomic (written then swapped in) and the card is mounted far more reliably at boot.\nHeltec V4-R8: the microSD card now mounts, and the freeze when waking the device from sleep is fixed.\nLilyGo T-Pager: the map no longer shows a \"storage error\" under the launcher — it caches tiles to the microSD card, like the T-Deck.\nHeltec V4 in portrait: the Bluetooth icon no longer overlaps the clock in the status bar, and the control-center buttons no longer clip when tapped.",
+            "beta_50": {
+              "notes": "Fixed the on-device updater downloading the wrong firmware on several boards. The V4-R8, ThinkNode M9, RAK Tap V2, T-LoRa Pager and Attaky now each pull their own build instead of the Heltec V4 TFT one.\nT-Display P4: the \"Get test builds (beta)\" toggle and the on-device update now appear. They were hidden before, so the P4 could only be updated over USB. Newly enabled, please test and report.\nLock screen fixed: tap Backspace to peek the screen without unlocking, hold Backspace to unlock. The clock and text are repositioned to fit the wide screen and stay readable.\nOn-screen keyboard now works with the detachable keyboard module: the keys stay down while the module is attached, and the module's # key brings them back up for symbols. The POWER button toggles the screen and wakes the board.\nBoard fixes: correct LoRa clock (no false TCXO), GPS baud, and sensor probing that was colliding with the touch and keyboard chips.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-tlora-pager-sx1262-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-tlora-pager-sx1262-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tlora-pager-sx1262-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-tlora-pager-sx1262.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_46/wadamesh-tlora-pager-sx1262.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tlora-pager-sx1262.bin",
                   "title": "Update (app only)"
                 }
               ]
