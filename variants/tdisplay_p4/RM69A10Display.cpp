@@ -145,6 +145,36 @@ bool RM69A10Display::begin() {
 
 void RM69A10Display::writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels) {
   if (!_panel || !pixels || w <= 0 || h <= 0) return;
+#if defined(TDP4_FLUSH_TRACE)
+  // Opt-in flush tracer for whole-screen colour-flash reports (#167). OFF unless the build adds
+  // -DTDP4_FLUSH_TRACE, so it costs nothing normally. Logs any large, mostly-single-colour band
+  // with its RGB565 value: if the flash is LVGL painting something you see a burst carrying that
+  // colour (brand teal 0x15B6A6 -> 0x15B4); if the screen visibly flashes and nothing logs, the
+  // cause is below LVGL (panel/DSI) and hunting in the UI is wasted effort. Note when using it
+  // that the per-band uniformity scan slows the flush path, which can mask a timing-sensitive
+  // bug — always confirm a fix on a build WITHOUT this enabled.
+  {
+    const long px = (long)w * h;
+    if (px > 1500) {                       // one full LVGL band is 284*24 = 6816 px
+      const uint16_t c0 = pixels[0];
+      long same = 0;
+      for (long i = 0; i < px; i += 37) { if (pixels[i] == c0) ++same; }   // sparse uniformity probe
+      const long probes = (px + 36) / 37;
+      // Log the colour whenever a large band is mostly ONE colour. A whole-screen flash shows
+      // up as a burst of these in the same millisecond range, all carrying the flash colour
+      // (brand teal 0x15B6A6 -> rgb565 0x15B4). Rate-limited so a normal repaint storm can't
+      // flood the console and perturb what we are measuring.
+      static uint32_t s_last_log = 0; static int s_burst = 0;
+      const uint32_t now_ms = (uint32_t)millis();
+      if (now_ms - s_last_log > 500) { s_burst = 0; s_last_log = now_ms; }
+      if (same * 10 >= probes * 9 && s_burst < 12) {
+        ++s_burst;
+        Serial.printf("[FLUSHTRACE] %lu x=%d y=%d w=%d h=%d rgb565=0x%04X\n",
+                      (unsigned long)now_ms, x, y, w, h, (unsigned)c0);
+      }
+    }
+  }
+#endif
 #if RM_UI_SCALE > 1
   // Nearest-neighbour upscale the (half-res) LVGL band to the native panel: each source pixel becomes
   // an RM_UI_SCALE x RM_UI_SCALE block. One expanded band -> one draw_bitmap (exclusive end coords).
