@@ -46493,7 +46493,10 @@ void UITask::loop() {
     // injected via the same path as the hardware keys (printable chars type in; 0x08 =
     // backspace, 0x0D = enter/send).
     uint16_t wk;
-    for (int i = 0; i < 16 && g_web_mirror.popKey(&wk); ++i)
+    // Drain generously: a paste or a phone autocomplete arrives as one burst, and a low cap
+    // left the rest sitting in the ring until the next iteration (where it could be pushed
+    // out by newer keys and silently lost). Each key here is cheap.
+    for (int i = 0; i < 64 && g_web_mirror.popKey(&wk); ++i)
       handleHwKey((int)wk);
 #else
     // On-screen-keyboard boards (V4/RAK): the browser's laptop keyboard should type too, not
@@ -46502,7 +46505,8 @@ void UITask::loop() {
     // on-screen key tap and syncs to the real field on Enter. Enter fires the keyboard's
     // ready cb (send/next); backspace deletes; other printables type in.
     uint16_t wk;
-    for (int i = 0; i < 16 && g_web_mirror.popKey(&wk); ++i) {
+    // Same generous drain as the physical-keyboard branch above (burst paste / autocomplete).
+    for (int i = 0; i < 64 && g_web_mirror.popKey(&wk); ++i) {
       if (!fta) continue;   // no editable field focused -> drain + drop
       if (wk == 0x0D || wk == 0x0A)      lv_event_send(g_lv.keyboard, LV_EVENT_READY, nullptr);
       else if (wk == 0x08 || wk == 0x7F) lv_textarea_del_char(fta);
