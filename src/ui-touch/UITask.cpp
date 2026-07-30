@@ -44614,9 +44614,21 @@ bool UITask::ignoreSenderInActiveThread(const char* sender_name) {
   uint8_t pub[32];
   bool have = false;
   if (!_active_thread_is_channel) {
-    // DM: the active thread's contact IS the sender.
-    if (hasContactPub(_ui_threads[_active_thread_idx].mesh_contact_pub)) {
-      memcpy(pub, _ui_threads[_active_thread_idx].mesh_contact_pub, sizeof(pub));
+    // DM *or* ROOM — both are contact threads. For a ROOM the thread's contact is the
+    // SERVER, not the person who posted, so blocking its pubkey silenced the ENTIRE room
+    // (newRoomMsgFromPubWithMeta drops on the room pubkey). Blocking one loudmouth should
+    // never cost you the whole room. Room posts carry only an author display name (passed
+    // as the sender override), so block the AUTHOR by name and leave the room intact. If
+    // the tapped sender IS the room's own name, fall through to the old pubkey block so
+    // muting a whole room from inside it still works.
+    const uint8_t* tpub = _ui_threads[_active_thread_idx].mesh_contact_pub;
+    if (sender_name && sender_name[0] && hasContactPub(tpub)) {
+      ContactInfo* rc = the_mesh.lookupContactByPubKey(tpub, PUB_KEY_SIZE);
+      if (rc && rc->type == ADV_TYPE_ROOM && strcmp(rc->name, sender_name) != 0)
+        return touchPrefsSetNameIgnored(sender_name, true);
+    }
+    if (hasContactPub(tpub)) {
+      memcpy(pub, tpub, sizeof(pub));
       have = true;
     }
   } else if (sender_name && sender_name[0]) {
@@ -45425,7 +45437,13 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // entirely — no bubble, no notification, no chime. Set from the message
   // long-press "Block" when the sender isn't a saved contact (gubbinsgalore's
   // self-advertising room bot).
-  if (channel && touchPrefsIsNameIgnored(sender)) return;
+  // Also applies to ROOM posts: those arrive with channel == false but WITH a sender
+  // override (the resolved author), and a room author can only ever be blocked by name
+  // since the post carries no per-author pubkey. Without have_sender_override here, a
+  // room name-block was stored but never enforced. A plain DM has neither flag set, so it
+  // keeps using the pubkey filter and is unaffected — important, because a DM contact
+  // sharing a display name with a blocked room bot must not vanish.
+  if ((channel || have_sender_override) && touchPrefsIsNameIgnored(sender)) return;
 #endif
 
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
