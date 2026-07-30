@@ -553,10 +553,8 @@ bool     touchPrefsGetSigProbeEnabled();
 bool     touchPrefsSetSigProbeEnabled(bool on);
 uint16_t touchPrefsGetSigPollMins();
 
-/** T-Display P4 LoRa antenna / RF-switch mode: 0 = auto (legacy per-TX toggle of XL9535 IO1),
- *  1 = pin the line LOW, 2 = pin it HIGH. See the notes in the .cpp. */
-uint8_t  touchPrefsGetP4Antenna();
-bool     touchPrefsSetP4Antenna(uint8_t mode);
+/* NB: there is deliberately no touchPrefsGet/SetP4Antenna(). The T-Display P4 antenna choice is
+ * session-only so that every boot comes up on the on-board antenna — see the note in the .cpp. */
 bool     touchPrefsSetSigPollMins(uint16_t mins);
 
 #endif

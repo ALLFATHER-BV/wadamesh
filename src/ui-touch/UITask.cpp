@@ -9550,12 +9550,35 @@ static void radioScopeDirectToggleCb(lv_event_t* e) {
   the_mesh.setScopeDirectFloods(on);
 }
 #if defined(HAS_TDISPLAY_P4)
-// T-Display P4 LoRa antenna / RF-switch mode. Persists + applies live (no reboot).
+// T-Display P4 LoRa antenna select. Applies live (no reboot) but is deliberately SESSION-ONLY:
+// every boot re-forces the on-board antenna (see the boot-apply in begin() and the park in
+// Xl9535::powerOnSequence). Transmitting into an external connector with no antenna fitted is
+// what kills a PA, so the safe state has to be the one you get for free after a power cycle,
+// and picking the external antenna has to be a fresh, explicit decision each time.
+static lv_obj_t* s_p4_ant_dd = nullptr;   // showConfirm takes a bare callback, so stash the widget
+
+static void radioP4AntennaExternalApply() {
+  xl9535.setAntennaMode(Xl9535::ANT_EXTERNAL);   // takes effect on the very next transmit
+  if (s_p4_ant_dd) lv_dropdown_set_selected(s_p4_ant_dd, Xl9535::ANT_EXTERNAL);
+  if (g_lv.task) g_lv.task->showAlert(TR("External antenna selected"), 1200);
+}
+
 static void radioP4AntennaSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  const uint8_t m = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
-  touchPrefsSetP4Antenna(m);
-  xl9535.setAntennaMode(m);   // takes effect on the very next transmit
+  lv_obj_t* dd = lv_event_get_target(e);
+  const uint8_t m = (uint8_t)lv_dropdown_get_selected(dd);
+  if (m == Xl9535::ANT_EXTERNAL) {
+    // Revert the widget FIRST and only re-select it from the confirm handler: showConfirm has no
+    // cancel callback, so a dismissed dialog must leave both the UI and the hardware on internal.
+    s_p4_ant_dd = dd;
+    lv_dropdown_set_selected(dd, xl9535.antennaMode());
+    showConfirm(TR("Switch to the external antenna?\n\nMake sure an antenna is actually connected "
+                   "to the MMCX socket first. Transmitting with nothing attached can damage the "
+                   "radio.\n\nResets to the on-board antenna on every reboot."),
+                TR("Switch"), radioP4AntennaExternalApply);
+    return;
+  }
+  xl9535.setAntennaMode(m);
 }
 #endif
 #if defined(HELTEC_LORA_V4_TFT)
@@ -9836,19 +9859,18 @@ static void buildRadioSettings() {
   mk_section("SIGNAL");
 
 #if defined(HAS_TDISPLAY_P4)
-  // T-Display P4: the SKY13453 on XL9535 IO1. The firmware assumes it is a TX/RX path switch and
-  // flips it around every transmit, but that was never confirmed on hardware and this board has no
-  // other antenna-select line — while other P4 firmware offers an internal/external choice. If IO1
-  // IS the antenna select, toggling it per transmit means sending on one antenna and listening on
-  // the other, which matches reports of a ~20 dB outbound deficit with a healthy inbound signal.
-  // Pinning the line makes both directions use ONE antenna. Try each and keep whichever gives
-  // roughly equal SNR in both directions (Trace SNR to a nearby repeater).
+  // T-Display P4 antenna select: the SKY13453 on XL9535 IO1 (see the long note on Xl9535.h for why
+  // this is an antenna switch and not the TX/RX path). Internal is the default and is re-forced at
+  // every boot; external is session-only and gated behind a confirmation, because keying the PA
+  // into an empty MMCX is how you destroy one. "Auto" keeps the old per-transmit toggle purely so
+  // the two can be compared — Trace SNR to a nearby repeater should read roughly equal in both
+  // directions on the correct setting, and lopsided on the wrong one.
   mk_label("LoRa antenna (P4)");
   {
     lv_obj_t* dd = lv_dropdown_create(body);
     lv_obj_set_size(dd, lv_pct(100), SC(34));
     lv_obj_set_pos(dd, 2, y);
-    lv_dropdown_set_options(dd, TR("Auto (switch per transmit)\nPinned A\nPinned B"));
+    lv_dropdown_set_options(dd, TR("Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)"));
     lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -9857,12 +9879,13 @@ static void buildRadioSettings() {
     lv_obj_set_style_bg_color(antlist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(antlist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_font(antlist, &g_font_12, LV_PART_MAIN);
-    lv_dropdown_set_selected(dd, touchPrefsGetP4Antenna());
+    lv_dropdown_set_selected(dd, xl9535.antennaMode());   // live state, not a stored pref
     lv_obj_add_event_cb(dd, radioP4AntennaSelectCb, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
     y += SC(44);
     y += settingsRowLabel(body, y, 0,
-                          TR("If sending is much weaker than receiving, try Pinned A / B and compare Trace SNR both ways."),
+                          TR("Always starts on the on-board antenna after a reboot. Only pick External "
+                             "with an antenna fitted to the MMCX socket."),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
 #endif
@@ -44419,9 +44442,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (board.femLnaControllable()) board.setFemLnaEnable(touchPrefsGetFemLna());
 #endif
 #if defined(HAS_TDISPLAY_P4)
-    // T-Display P4 LoRa antenna / RF-switch: apply the saved mode at boot. Default 0 = auto,
-    // which is the original per-transmit toggle, so an untouched device behaves exactly as before.
-    xl9535.setAntennaMode(touchPrefsGetP4Antenna());
+    // T-Display P4 antenna select: force the on-board antenna on EVERY boot, deliberately
+    // ignoring whatever was chosen last session. The external MMCX may have nothing screwed
+    // onto it, and transmitting into an open connector is what damages the PA — so the state
+    // you get for free after any power cycle, crash or OTA has to be the safe one. Choosing
+    // external is a per-session, confirmed action (radioP4AntennaSelectCb). This re-asserts
+    // what powerOnSequence() already parked, in case anything touched IO1 in between.
+    xl9535.setAntennaMode(Xl9535::ANT_INTERNAL);
 #endif
 
     // Buffered LoRa receive (experimental, default OFF): apply the saved opt-in.

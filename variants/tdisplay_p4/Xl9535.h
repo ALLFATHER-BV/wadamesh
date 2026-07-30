@@ -53,28 +53,38 @@ public:
   // Convenience for the SX1262 glue (RESET + DIO1 live here).
   void sx1262Reset();            // active-low pulse on IO_SX1262_RST
   bool sx1262Dio1() { return read(IO_SX1262_DIO1); }
-  // IO1 drives the board's SKY13453. We ASSUME it is a TX/RX path switch and flip it around every
-  // transmit, but that was never validated on hardware, and this expander has NO separate
-  // internal/external antenna line — while other P4 firmware DOES offer an internal/external
-  // choice. If IO1 is really the ANTENNA select, toggling it per TX means transmitting on one
-  // antenna and receiving on the other, which is exactly what a field report of -10 dB outbound
-  // against +12 dB inbound looks like on a unit with an external antenna fitted (and symmetric on
-  // that same hardware under other firmware). Until it is confirmed on a device, let the user PIN
-  // the line instead of toggling it:
-  //   0 = auto  -> legacy behaviour, toggle per TX (default; nothing changes)
-  //   1 = LOW   -> hold low  for both TX and RX
-  //   2 = HIGH  -> hold high for both TX and RX
-  // Whichever pinned setting gives symmetric SNR in both directions is the right antenna — and
-  // that answer also tells us what IO1 actually is.
+  // IO1 drives the board's SKY13453 SP2T. It is almost certainly the ANTENNA select (on-board vs
+  // the external MMCX), NOT a TX/RX path switch: a per-transmit switch has to settle within
+  // microseconds of the PA ramping, and an I2C expander write takes hundreds of microseconds on a
+  // bus shared with the touch panel, the RTC and the fuel gauge — it physically cannot keep up.
+  // The SX1262 has DIO2 for exactly that job. So the original per-TX toggle transmitted on one
+  // antenna while listening on the other, which is what a field report of -10 dB outbound against
+  // +12 dB inbound looks like (and symmetric on the same hardware under other firmware).
+  //
+  // Which LEVEL is which antenna is still not confirmed against LilyGo's schematic. But the SAFE
+  // level IS known, from the field rather than the datasheet: in the legacy per-TX mode the line
+  // sits LOW to receive, and every P4 receives perfectly well at +12 dB, so LOW is demonstrably a
+  // path that radiates into something connected. HIGH was only ever used for transmit and is the
+  // suspect one. That fits LOW = the on-board antenna (permanently attached, always safe to
+  // transmit into) and HIGH = the external MMCX (an open circuit when nothing is fitted, which is
+  // what you must never key a PA into). If the schematic ever says otherwise, flip this ONE line.
+  static constexpr bool INTERNAL_LEVEL = false;
+
+  enum AntMode : uint8_t {
+    ANT_INTERNAL = 0,   // pinned to the on-board antenna — the safe default, re-forced at every boot
+    ANT_EXTERNAL = 1,   // pinned to the external MMCX — needs an antenna fitted, never persisted
+    ANT_AUTO     = 2,   // legacy per-TX toggle — diagnostic only, kept for A/B comparison
+  };
+
   void setAntennaMode(uint8_t mode) {
-    _ant_mode = (mode > 2) ? 0 : mode;
-    if (_ant_mode) write(IO_RF_SWITCH, _ant_mode == 2);   // pinned: set once, never toggled again
-    else           write(IO_RF_SWITCH, false);            // auto: back to the idle state
+    _ant_mode = (mode > ANT_AUTO) ? ANT_INTERNAL : mode;
+    if (_ant_mode == ANT_EXTERNAL) write(IO_RF_SWITCH, !INTERNAL_LEVEL);
+    else                           write(IO_RF_SWITCH, INTERNAL_LEVEL);   // internal, and auto's idle/RX state
   }
   uint8_t antennaMode() const { return _ant_mode; }
   void rfSwitchTx(bool tx) {
-    if (_ant_mode) return;      // pinned — the path must NOT differ between TX and RX
-    write(IO_RF_SWITCH, tx);    // auto (legacy): assumes a TX/RX switch; polarity unverified
+    if (_ant_mode != ANT_AUTO) return;   // pinned — the path must NOT differ between TX and RX
+    write(IO_RF_SWITCH, tx);             // legacy only: assumes a TX/RX switch, polarity unverified
   }
 
 private:
