@@ -38,7 +38,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 41;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF); v40 hist_sync_after (chat-history flush: consecutive off-thread write failures before the blocking loop-task fallback, 0 = never); v41 p4_antenna (T-Display P4 antenna select; now RESERVED/unused - the choice is session-only so every boot comes up on the on-board antenna)
+static const uint8_t  TOUCH_CFG_VER   = 42;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF); v40 hist_sync_after (chat-history flush: consecutive off-thread write failures before the blocking loop-task fallback, 0 = never); v41 p4_antenna (T-Display P4 antenna select; now RESERVED/unused - the choice is session-only so every boot comes up on the on-board antenna); v42 hist_per_chat (max stored messages PER chat, default 250 - a busy public channel used to be able to fill the whole shared ring and drag the UI down)
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -112,6 +112,7 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  web_terminal;      // web mesh-CLI terminal served on the device IP (runtime; exclusive with VNC) — v38 (trailing)
   uint8_t  map_tile_debug;    // show the map tile-pipeline diagnostic overlay (bool, 0=off) — v39 (trailing)
   uint8_t  hist_sync_after;   // chat-history flush: consecutive off-thread write failures before falling back to the blocking loop-task write; 0 = never — v40 (trailing)
+  uint16_t hist_per_chat;     // max stored messages per chat/thread; 0 = no per-chat cap (ring only) - v42 (trailing)
   uint8_t  p4_antenna;        // RESERVED (was: T-Display P4 antenna select). The antenna choice is session-only by design and is never stored — see the note further down — v41 (trailing)
 };
 
@@ -159,6 +160,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.lock_color    = DEFAULT_LOCK_COLOR;
   c.accent        = DEFAULT_ACCENT;
   c.gps_baud      = 0;          // 0 sentinel -> getter returns caller fallback
+  c.hist_per_chat = 250;        // keep the newest 250 per chat: enough to scroll back, small enough to stay quick
   c.p4_antenna    = 0;          // reserved, unused: the P4 antenna choice is never persisted
   c.sig_probe_en  = DEFAULT_SIG_PROBE_EN;
   c.sig_poll_min  = DEFAULT_SIG_POLL_MIN;
@@ -419,6 +421,21 @@ static const uint16_t SIG_POLL_MAX_MINS = 1440;
 // safety property only holds if a power cycle cannot restore "external", which means the
 // choice must never reach flash. p4_antenna stays as a reserved trailing byte: dropping it
 // would rewind TOUCH_CFG_VER on devices already carrying a v41 blob, for no gain.
+
+// --- Per-chat history cap -----------------------------------------------------
+// A single busy channel could previously fill the entire shared message ring, which both
+// starved every other chat of history and made the inbox slow (see the thread-history cache
+// in UITask). This bounds each chat independently. 0 = no per-chat cap, i.e. the old
+// behaviour, which the settings UI warns about rather than hiding.
+uint16_t touchPrefsGetHistPerChat() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.hist_per_chat;
+}
+bool touchPrefsSetHistPerChat(uint16_t n) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.hist_per_chat = n;
+  return cfgFlush();
+}
 
 bool touchPrefsGetSigProbeEnabled() {
   if (!s_begun) touchPrefsBegin();

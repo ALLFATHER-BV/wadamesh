@@ -8653,6 +8653,42 @@ static void syncClockCb(lv_event_t* e) {
 // Chat-save fallback dropdown (Settings -> General): selection index -> number
 // of consecutive failed background history writes before the flush retries
 // synchronously on the UI task (0 = background retries only, never hitch).
+// Per-chat history cap (Settings -> Chats). "No limit" is last and warns, because an
+// uncapped busy channel is exactly what fills the shared ring and slows the UI down.
+static const uint16_t k_hist_cap_opts[] = { 100, 250, 500, 1000, 2000, 0 };
+static lv_obj_t*      s_hist_cap_dd     = nullptr;
+static uint16_t       s_hist_cap_pending = 0;
+
+static void histCapApplyUncapped() {
+  touchPrefsSetHistPerChat(0);
+  if (s_hist_cap_dd) lv_dropdown_set_selected(s_hist_cap_dd, sizeof(k_hist_cap_opts) / sizeof(k_hist_cap_opts[0]) - 1);
+  if (g_lv.task) g_lv.task->showAlert(TR("History limit off"), 1200);
+}
+
+static void histCapSelectCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* dd = lv_event_get_target(e);
+  const uint16_t sel = lv_dropdown_get_selected(dd);
+  if (sel >= sizeof(k_hist_cap_opts) / sizeof(k_hist_cap_opts[0])) return;
+  const uint16_t v = k_hist_cap_opts[sel];
+  if (v == 0) {
+    // Revert first and only commit from the confirm handler: showConfirm has no cancel
+    // callback, so a dismissed dialog must leave the old limit in place.
+    s_hist_cap_dd = dd;
+    uint16_t cur = touchPrefsGetHistPerChat();
+    uint16_t cur_sel = 1;
+    for (uint16_t i = 0; i < sizeof(k_hist_cap_opts) / sizeof(k_hist_cap_opts[0]); ++i)
+      if (k_hist_cap_opts[i] == cur) { cur_sel = i; break; }
+    lv_dropdown_set_selected(dd, cur_sel);
+    showConfirm(TR("Turn the history limit off?\n\nA busy channel can then fill the whole message "
+                   "store, which uses more space and makes the chat list and app noticeably slower. "
+                   "Only do this if you really need the full backlog."),
+                TR("Turn off"), histCapApplyUncapped);
+    return;
+  }
+  touchPrefsSetHistPerChat(v);
+}
+
 static const uint8_t k_hist_sync_opts[] = { 0, 1, 2, 3, 5, 8 };
 static void histSyncSelectCb(lv_event_t* e) {
   const uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
@@ -11711,6 +11747,29 @@ static void buildDeviceSettings(int sec) {
      hitches for its duration — users who prefer a never-hitching UI pick Off
      (background retries only; the RAM ring keeps everything meanwhile). */
   {
+    // Per-chat history limit. Sits above the save-fallback control because it is the one
+    // people actually need: without it a single busy channel fills the shared message store,
+    // which is what makes the chat list crawl.
+    y += settingsRowLabel(body, y, 0, TR("Keep per chat (messages)"), COLOR_SUB, &g_font_12, 0) + 2;
+    {
+      lv_obj_t* cd = lv_dropdown_create(body);
+      lv_dropdown_set_options(cd, TR("100\n250\n500\n1000\n2000\nNo limit"));
+      const uint16_t cur_cap = touchPrefsGetHistPerChat();
+      uint16_t cap_sel = 1;   // index of 250 — the default when the stored value isn't listed
+      for (uint16_t i = 0; i < sizeof(k_hist_cap_opts) / sizeof(k_hist_cap_opts[0]); ++i)
+        if (k_hist_cap_opts[i] == cur_cap) { cap_sel = i; break; }
+      lv_dropdown_set_selected(cd, cap_sel);
+      lv_obj_set_width(cd, lv_pct(100));
+      lv_obj_set_pos(cd, 2, y);
+      lv_obj_add_event_cb(cd, histCapSelectCb, LV_EVENT_VALUE_CHANGED, nullptr);
+      lv_obj_add_event_cb(cd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+      y += SC(44);
+      y += settingsRowLabel(body, y, 0,
+                            TR("Older messages in a chat are dropped past this. A very large or "
+                               "unlimited history makes the chat list slower."),
+                            COLOR_SUB, &g_font_12, 0) + 6;
+    }
+
     y += settingsRowLabel(body, y, 0, TR("Chat save fallback (failed tries)"), COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* dd = lv_dropdown_create(body);
     lv_dropdown_set_options(dd, TR("Off\n1\n2\n3\n5\n8"));
@@ -43395,10 +43454,11 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   // history. A full ring also EVICTED the oldest record above, which may have been some other
   // thread's last message, so the cached flags have to be rebuilt before they are trusted again.
   if (_ui_msg_count == _ui_msg_cap) _thread_hist_dirty = true;
-  _thread_hist[t_idx] = true;
+  if (!_thread_hist_dirty && _thread_msgs[t_idx] < 0xFFFF) ++_thread_msgs[t_idx];
   if (_ui_msg_count < _ui_msg_cap) ++_ui_msg_count;
   _ui_msg_head = (_ui_msg_head + 1) % _ui_msg_cap;
   _ui_threads[t_idx].last_ts = m.ts;
+  enforceHistoryCap(t_idx);   // keep this chat within the per-chat cap (Settings -> Chats)
   if (mark_unread) _ui_threads[t_idx].unread++;
   if (mark_unread && channel && !outgoing && textMentionsMe(text)) {
     _ui_threads[t_idx].has_mention = true;   // blue @ on the inbox row
@@ -44664,18 +44724,16 @@ int UITask::getThreadCount(bool channel_mode, int out_indexes[], int max_out) co
 // _thread_hist). Stops as soon as every live thread is accounted for, so a device whose
 // threads all have recent traffic barely reads the ring at all.
 void UITask::rebuildThreadHistoryFlags() const {
-  for (int i = 0; i < MAX_UI_THREADS; ++i) _thread_hist[i] = false;
-  int unresolved = 0;
-  for (int i = 0; i < MAX_UI_THREADS; ++i) if (_ui_threads[i].used) ++unresolved;
-  for (int i = 0; i < _ui_msg_count && unresolved > 0; ++i) {
+  for (int i = 0; i < MAX_UI_THREADS; ++i) _thread_msgs[i] = 0;
+  for (int i = 0; i < _ui_msg_count; ++i) {
     const int idx = (_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap;
     const UIMessage& m = _ui_msgs[idx];
+    if (!m.thread[0]) continue;                      // blanked by a clear / cap trim
     for (int t = 0; t < MAX_UI_THREADS; ++t) {
-      if (!_ui_threads[t].used || _thread_hist[t]) continue;
+      if (!_ui_threads[t].used) continue;
       if (m.channel == _ui_threads[t].channel &&
           strncmp(m.thread, _ui_threads[t].name, MAX_THREAD_NAME) == 0) {
-        _thread_hist[t] = true;
-        --unresolved;
+        if (_thread_msgs[t] < 0xFFFF) ++_thread_msgs[t];
         break;
       }
     }
@@ -44683,10 +44741,36 @@ void UITask::rebuildThreadHistoryFlags() const {
   _thread_hist_dirty = false;
 }
 
+// Trim this thread back to the per-chat cap by blanking its OLDEST records. Walking from the
+// oldest end finds them immediately for the chat that is actually over the cap (it is the one
+// filling the ring), so the common case is a couple of steps, not a full scan.
+void UITask::enforceHistoryCap(int thread_idx) {
+  const uint16_t cap = touchPrefsGetHistPerChat();
+  if (!cap || thread_idx < 0 || thread_idx >= MAX_UI_THREADS || !_ui_threads[thread_idx].used) return;
+  if (_thread_hist_dirty) rebuildThreadHistoryFlags();
+  if (_thread_msgs[thread_idx] <= cap) return;
+  const bool  ch = _ui_threads[thread_idx].channel;
+  const char* nm = _ui_threads[thread_idx].name;
+  int trimmed = 0;
+  for (int i = _ui_msg_count - 1; i >= 0 && _thread_msgs[thread_idx] > cap; --i) {
+    const int idx = (_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap;   // i = oldest .. 0 = newest
+    UIMessage& m = _ui_msgs[idx];
+    if (!m.thread[0] || m.channel != ch) continue;
+    if (strncmp(m.thread, nm, MAX_THREAD_NAME) != 0) continue;
+    m.thread[0] = '\0';
+    m.text[0]   = '\0';
+    m.sender[0] = '\0';
+    segMarkSeqDirty(m.seq);
+    --_thread_msgs[thread_idx];
+    ++trimmed;
+  }
+  if (trimmed) _msgs_dirty = true;
+}
+
 bool UITask::threadHasMessageHistory(int thread_idx) const {
   if (thread_idx < 0 || thread_idx >= MAX_UI_THREADS || !_ui_threads[thread_idx].used) return false;
   if (_thread_hist_dirty) rebuildThreadHistoryFlags();
-  return _thread_hist[thread_idx];
+  return _thread_msgs[thread_idx] > 0;
 }
 
 int UITask::getCombinedInboxCount(int out_indexes[], int max_out) const {
@@ -44768,7 +44852,7 @@ int UITask::clearThreadHistory(int thread_idx) {
   }
   _ui_threads[thread_idx].unread      = 0;
   _ui_threads[thread_idx].has_mention = false;
-  _thread_hist[thread_idx] = false;   // emptied, and no other thread was touched
+  _thread_msgs[thread_idx] = 0;   // emptied, and no other thread was touched
   _threads_dirty = true;
   if (cleared) _msgs_dirty = true;
   return cleared;

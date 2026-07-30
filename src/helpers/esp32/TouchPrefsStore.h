@@ -109,6 +109,12 @@ bool touchPrefsSetMapNight(bool on);
 uint8_t touchPrefsGetHistSyncAfter();
 bool    touchPrefsSetHistSyncAfter(uint8_t n);
 
+/** Max stored messages kept per chat; 0 = no per-chat cap. Default 250.
+ *  Without a cap one busy channel can fill the whole shared ring, starving every other
+ *  chat of history and slowing the UI down as the ring fills. */
+uint16_t touchPrefsGetHistPerChat();
+bool     touchPrefsSetHistPerChat(uint16_t n);
+
 /** Last map zoom level, persisted so the map reopens where the user left it.
  *  0 = unset (let the auto-snap pick a level for the available tile pack). */
 uint8_t touchPrefsGetMapZoom();

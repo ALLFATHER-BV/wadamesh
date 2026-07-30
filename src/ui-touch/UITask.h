@@ -161,9 +161,12 @@ private:
    *  that REMOVES messages (ring eviction, delete, clear, a fresh load) can only invalidate
    *  the flags, so it just marks them dirty and the next reader rebuilds all threads in ONE
    *  ring pass instead of one pass per thread. */
-  mutable bool _thread_hist[MAX_UI_THREADS] = { false };
-  mutable bool _thread_hist_dirty = true;
+  mutable uint16_t _thread_msgs[MAX_UI_THREADS] = { 0 };
+  mutable bool     _thread_hist_dirty = true;
   void rebuildThreadHistoryFlags() const;
+  /** Drop this thread's oldest stored messages until it is back within the per-chat cap
+   *  (touchPrefsGetHistPerChat; 0 = uncapped). Called after an append. */
+  void enforceHistoryCap(int thread_idx);
   unsigned long _next_thread_seed;
   UIMessage* _ui_msgs   = nullptr;   // ring of recent messages — PSRAM-allocated in begin()
   UIThread*  _ui_threads = nullptr;  // thread table — PSRAM-allocated in begin()
