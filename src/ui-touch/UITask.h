@@ -381,18 +381,26 @@ public:
     if (idx < 0 || idx >= MAX_UI_THREADS || !_ui_threads[idx].used || !_ui_msgs) return false;
     const bool ch  = _ui_threads[idx].channel;
     const char* nm = _ui_threads[idx].name;
-    int best = -1; uint32_t best_ts = 0;
-    for (int i = 0; i < _ui_msg_cap; ++i) {
-      const UIMessage& m = _ui_msgs[i];
+    // Newest by RING ORDER, not by timestamp. m.ts is taken from the ESP32 system clock,
+    // which is not monotonic across reboots: it restarts from ESP32RTCClock::begin()'s
+    // power-on seed every boot and only climbs with uptime until a real time source lands.
+    // Picking max(ts) therefore let a message received hours into an EARLIER boot outrank
+    // every message from this one, so the chat-list preview stuck on an old message and
+    // never updated (reported on the T-Display P4, whose system clock stayed on that seed
+    // because it has an RTC chip — see the mirror in ClockFloorRTC). Ring order is the
+    // actual arrival order and cannot be wrong, so walk back from the head and take the
+    // first match; that also exits immediately instead of scanning the whole ring.
+    for (int i = 0; i < _ui_msg_count; ++i) {
+      const int slot = (_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap;
+      const UIMessage& m = _ui_msgs[slot];
       if (!m.text[0] || m.channel != ch) continue;
       if (strncmp(m.thread, nm, MAX_THREAD_NAME) != 0) continue;
-      if (best < 0 || m.ts >= best_ts) { best = i; best_ts = m.ts; }   // >= : a later slot wins ts ties (newer in the ring)
+      if (sender && sender_cap) { strncpy(sender, m.sender, sender_cap - 1); sender[sender_cap - 1] = '\0'; }
+      if (text && text_cap)     { strncpy(text,   m.text,   text_cap - 1);   text[text_cap - 1] = '\0'; }
+      if (outgoing) *outgoing = m.outgoing;
+      return true;
     }
-    if (best < 0) return false;
-    if (sender && sender_cap) { strncpy(sender, _ui_msgs[best].sender, sender_cap - 1); sender[sender_cap - 1] = '\0'; }
-    if (text && text_cap)     { strncpy(text,   _ui_msgs[best].text,   text_cap - 1);   text[text_cap - 1] = '\0'; }
-    if (outgoing) *outgoing = _ui_msgs[best].outgoing;
-    return true;
+    return false;
   }
   int  threadScroll() const { return _thread_scroll; }
   void setThreadScroll(int v) { _thread_scroll = v; }
