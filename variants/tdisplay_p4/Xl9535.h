@@ -53,38 +53,50 @@ public:
   // Convenience for the SX1262 glue (RESET + DIO1 live here).
   void sx1262Reset();            // active-low pulse on IO_SX1262_RST
   bool sx1262Dio1() { return read(IO_SX1262_DIO1); }
-  // IO1 drives the board's SKY13453 SP2T. It is almost certainly the ANTENNA select (on-board vs
-  // the external MMCX), NOT a TX/RX path switch: a per-transmit switch has to settle within
-  // microseconds of the PA ramping, and an I2C expander write takes hundreds of microseconds on a
-  // bus shared with the touch panel, the RTC and the fuel gauge — it physically cannot keep up.
-  // The SX1262 has DIO2 for exactly that job. So the original per-TX toggle transmitted on one
-  // antenna while listening on the other, which is what a field report of -10 dB outbound against
-  // +12 dB inbound looks like (and symmetric on the same hardware under other firmware).
+  // IO1 drives the board's SKY13453 SP2T. It is the LoRa ANTENNA select — on-board antenna vs the
+  // external socket — and NOT a TX/RX path switch. CONFIRMED against LilyGo's own sources (the
+  // vendor names this exact pin kSky13453Vctl on IO1):
+  //   lilygo_device_driver  src/device/t_display_p4/t_display_p4_config.h
+  //   lilygobox-espidf      main/hal/device/t_display_p4/t_display_p4_device.cpp
+  // In ActivateRadio() they set it once per radio bring-up from an AntennaType enum:
+  //   const uint8_t antenna_level = config.antenna == radio::AntennaType::kExternal ? 0 : 1;
+  //   ... GpioWrite(gpio::xl9535::kSky13453Vctl, antenna_level);
+  // and log it as   kExternal ? "RF2" : "RF1".   So:
   //
-  // Which LEVEL is which antenna is still not confirmed against LilyGo's schematic. But the SAFE
-  // level IS known, from the field rather than the datasheet: in the legacy per-TX mode the line
-  // sits LOW to receive, and every P4 receives perfectly well at +12 dB, so LOW is demonstrably a
-  // path that radiates into something connected. HIGH was only ever used for transmit and is the
-  // suspect one. That fits LOW = the on-board antenna (permanently attached, always safe to
-  // transmit into) and HIGH = the external MMCX (an open circuit when nothing is fitted, which is
-  // what you must never key a PA into). If the schematic ever says otherwise, flip this ONE line.
-  static constexpr bool INTERNAL_LEVEL = false;
+  //   HIGH (1) = RF1 = INTERNAL / on-board antenna
+  //   LOW  (0) = RF2 = EXTERNAL socket
+  //
+  // LilyGo also preloads VCTL = 1 in their XL9535 init as the deliberate safe state, i.e. the
+  // vendor boots on the internal antenna too. Their driver NEVER toggles this line per transmit —
+  // it cannot be a TX/RX switch anyway, since such a switch must settle within microseconds of the
+  // PA ramping and an I2C expander write takes hundreds of microseconds on a bus shared with the
+  // touch panel, the RTC and the fuel gauge (the SX1262 has DIO2 for that job).
+  //
+  // This also explains the field report of -10 dB outbound against +12 dB inbound exactly: our old
+  // per-TX toggle idled LOW to receive (= EXTERNAL, where the user's antenna is fitted, hence the
+  // healthy +12 dB in) and drove HIGH to transmit (= the tiny on-board antenna, hence ~22 dB down
+  // at the repeater). It was sending on the internal antenna and listening on the external one.
+  static constexpr bool INTERNAL_LEVEL = true;
 
   enum AntMode : uint8_t {
-    ANT_INTERNAL = 0,   // pinned to the on-board antenna — the safe default, re-forced at every boot
-    ANT_EXTERNAL = 1,   // pinned to the external MMCX — needs an antenna fitted, never persisted
-    ANT_AUTO     = 2,   // legacy per-TX toggle — diagnostic only, kept for A/B comparison
+    ANT_INTERNAL = 0,   // RF1, on-board antenna — always attached, the safe default, forced every boot
+    ANT_EXTERNAL = 1,   // RF2, external socket — needs an antenna fitted; session-only, never persisted
+    ANT_AUTO     = 2,   // legacy per-TX toggle: transmits internal, receives external. Diagnostic only.
   };
 
   void setAntennaMode(uint8_t mode) {
     _ant_mode = (mode > ANT_AUTO) ? ANT_INTERNAL : mode;
     if (_ant_mode == ANT_EXTERNAL) write(IO_RF_SWITCH, !INTERNAL_LEVEL);
-    else                           write(IO_RF_SWITCH, INTERNAL_LEVEL);   // internal, and auto's idle/RX state
+    else                           write(IO_RF_SWITCH, INTERNAL_LEVEL);   // internal, and auto's idle state
   }
   uint8_t antennaMode() const { return _ant_mode; }
   void rfSwitchTx(bool tx) {
-    if (_ant_mode != ANT_AUTO) return;   // pinned — the path must NOT differ between TX and RX
-    write(IO_RF_SWITCH, tx);             // legacy only: assumes a TX/RX switch, polarity unverified
+    if (_ant_mode != ANT_AUTO) return;   // pinned — the antenna must NOT differ between TX and RX
+    // Legacy behaviour, preserved verbatim for comparison: HIGH on transmit, LOW at rest. Now that
+    // the mapping is known that reads as "send on the on-board antenna, listen on the external one",
+    // which is the bug, not a feature. Not a PA hazard (transmit lands on the attached on-board
+    // antenna) but it guarantees a weak outbound signal whenever an external antenna is fitted.
+    write(IO_RF_SWITCH, tx);
   }
 
 private:

@@ -9573,23 +9573,23 @@ static void radioP4AntennaSelectCb(lv_event_t* e) {
   const uint8_t m = (uint8_t)lv_dropdown_get_selected(dd);
   if (m == Xl9535::ANT_INTERNAL) { xl9535.setAntennaMode(m); return; }   // always safe, no prompt
 
-  // BOTH other modes put the transmitter on the external MMCX: external pins it there, and auto
-  // (the legacy per-TX toggle) switches to it for every single send — so auto is if anything the
-  // worse of the two, since it keys the PA into that connector on every transmit rather than only
-  // while deliberately selected. Neither may be entered without an explicit confirmation.
-  // Revert the widget FIRST and only re-select from the confirm handler: showConfirm has no cancel
-  // callback, so a dismissed dialog must leave both the UI and the hardware where they were.
+  // External moves BOTH directions onto the external socket, so it needs an antenna actually fitted
+  // there — that is the one real hardware risk and it gets the damage warning. Auto (the legacy
+  // per-TX toggle) transmits on the on-board antenna and only listens on the external socket, so it
+  // is not a PA hazard, just permanently lopsided; it gets an accurate performance warning instead
+  // of a scary one. Revert the widget FIRST and only re-select from the confirm handler: showConfirm
+  // has no cancel callback, so a dismissed dialog must leave UI and hardware where they were.
   s_p4_ant_dd = dd;
   s_p4_ant_pending = m;
   lv_dropdown_set_selected(dd, xl9535.antennaMode());
   showConfirm(m == Xl9535::ANT_EXTERNAL
                 ? TR("Switch to the external antenna?\n\nMake sure an antenna is actually connected "
-                     "to the MMCX socket first. Transmitting with nothing attached can damage the "
-                     "radio.\n\nResets to the on-board antenna on every reboot.")
-                : TR("Turn on legacy per-transmit switching?\n\nThis is a diagnostic mode. It sends "
-                     "on the external MMCX socket and listens on the on-board antenna, so it needs "
-                     "an antenna fitted and it will report a weak outbound signal.\n\nResets to the "
-                     "on-board antenna on every reboot."),
+                     "to the external antenna socket first. Transmitting with nothing attached can "
+                     "damage the radio.\n\nResets to the on-board antenna on every reboot.")
+                : TR("Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison "
+                     "only. It transmits on the on-board antenna and listens on the external one, "
+                     "so your outbound signal will be much weaker than your inbound.\n\nResets to "
+                     "the on-board antenna on every reboot."),
               TR("Switch"), radioP4AntennaConfirmApply);
 }
 #endif
@@ -9871,12 +9871,12 @@ static void buildRadioSettings() {
   mk_section("SIGNAL");
 
 #if defined(HAS_TDISPLAY_P4)
-  // T-Display P4 antenna select: the SKY13453 on XL9535 IO1 (see the long note on Xl9535.h for why
-  // this is an antenna switch and not the TX/RX path). Internal is the default and is re-forced at
-  // every boot; external is session-only and gated behind a confirmation, because keying the PA
-  // into an empty MMCX is how you destroy one. "Auto" keeps the old per-transmit toggle purely so
-  // the two can be compared — Trace SNR to a nearby repeater should read roughly equal in both
-  // directions on the correct setting, and lopsided on the wrong one.
+  // T-Display P4 antenna select: the SKY13453 on XL9535 IO1. Confirmed against LilyGo's own driver
+  // (HIGH = RF1 = on-board, LOW = RF2 = external socket) — see the note on Xl9535.h. Internal is the
+  // default and is re-forced at every boot; external is session-only and gated behind a confirmation,
+  // because keying the PA into an empty socket is how you destroy one. "Auto" keeps the old
+  // per-transmit toggle purely for comparison: it sends internal and listens external, so Trace SNR
+  // reads lopsided on it and roughly equal on a correctly pinned antenna.
   mk_label("LoRa antenna (P4)");
   {
     lv_obj_t* dd = lv_dropdown_create(body);
@@ -9897,7 +9897,7 @@ static void buildRadioSettings() {
     y += SC(44);
     y += settingsRowLabel(body, y, 0,
                           TR("Always starts on the on-board antenna after a reboot. Only pick External "
-                             "with an antenna fitted to the MMCX socket."),
+                             "with an antenna fitted to the external socket."),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
 #endif
@@ -44454,12 +44454,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (board.femLnaControllable()) board.setFemLnaEnable(touchPrefsGetFemLna());
 #endif
 #if defined(HAS_TDISPLAY_P4)
-    // T-Display P4 antenna select: force the on-board antenna on EVERY boot, deliberately
-    // ignoring whatever was chosen last session. The external MMCX may have nothing screwed
-    // onto it, and transmitting into an open connector is what damages the PA — so the state
-    // you get for free after any power cycle, crash or OTA has to be the safe one. Choosing
-    // external is a per-session, confirmed action (radioP4AntennaSelectCb). This re-asserts
-    // what powerOnSequence() already parked, in case anything touched IO1 in between.
+    // T-Display P4 antenna select: force the on-board antenna (RF1 / IO1 HIGH) on EVERY boot,
+    // deliberately ignoring whatever was chosen last session. The external socket may have
+    // nothing screwed onto it, and transmitting into an open connector is what damages the PA —
+    // so the state you get for free after any power cycle, crash or OTA has to be the safe one.
+    // LilyGo's own driver preloads the same level for the same reason. Choosing external is a
+    // per-session confirmed action; this re-asserts powerOnSequence()'s park in case anything
+    // touched IO1 in between.
     xl9535.setAntennaMode(Xl9535::ANT_INTERNAL);
 #endif
 

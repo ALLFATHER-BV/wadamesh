@@ -99,9 +99,10 @@ void Xl9535::powerOnSequence() {
   // OFF and made every mount fail (0x107 OCR timeout / 0x109 CRC). Drive it LOW, always.
   write(IO_SD_EN, false);              // SD slot power ON (active-low)
   write(IO_SX1262_RST, true);          // park high; radio_init pulses it
-  // Antenna select: park on the on-board antenna before the radio exists, so the first transmit
-  // after any boot cannot key the PA into a possibly-empty external MMCX. Choosing the external
-  // antenna is a deliberate, confirmed, session-only action from Settings -> Radio.
+  // Antenna select: park on the on-board antenna (RF1) before the radio exists, so the first
+  // transmit after any boot cannot key the PA into a possibly-empty external socket. LilyGo's own
+  // XL9535 init preloads this same level as its safe state. Choosing the external antenna is a
+  // deliberate, confirmed, session-only action from Settings -> Radio.
   write(IO_RF_SWITCH, INTERNAL_LEVEL);
   write(IO_TOUCH_RST, true);           // release touch (HI8561 driver probes it)
   // NB: SCREEN_RST is intentionally NOT touched here — RM69A10Display::begin() sequences it with
