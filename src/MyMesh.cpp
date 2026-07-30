@@ -2241,14 +2241,30 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
   if (_ui_login_then && len > 4 && memcmp(&_ui_login_then, contact.id.pub_key, 4) == 0) {
     const bool login_ok = (data[4] == RESP_SERVER_LOGIN_OK)
                           || (len > 5 && memcmp(&data[4], "OK", 2) == 0);
-    const UiReqKind k = _ui_login_then_kind;
-    cancelUIDeferredLogin();
-    if (login_ok) {
-      ContactInfo& rc = const_cast<ContactInfo&>(contact);
-      if (k == UiReqKind::Telemetry) sendTelemetryRequestForUI(rc);
-      else                           sendStatusPingForUI(rc);
+    // The comment above assumes ANY response arriving while armed must be our login reply.
+    // That holds for the UI, but the COMPANION APP can have its own STATUS / TELEMETRY /
+    // BINARY request in flight to this same node, and there is no distinct "login failed"
+    // code on the wire (a failure is merely "not RESP_SERVER_LOGIN_OK"), so a non-OK frame
+    // is indistinguishable from the app's reply. Swallowing it here ate the app's response
+    // and returned, leaving the phone waiting forever — a contributor to the "no ping or
+    // telemetry response, from the device AND the app" reports (#124).
+    // A LOGIN_OK is unambiguously ours, so always take it. Otherwise, if the app is waiting
+    // on this same contact, fall through and let its matcher have the frame; our own reply
+    // deadline still disarms us, which is all the early disarm here ever bought.
+    const bool app_waiting =
+        (pending_status    && memcmp(&pending_status,    contact.id.pub_key, 4) == 0) ||
+        (pending_telemetry && memcmp(&pending_telemetry, contact.id.pub_key, 4) == 0) ||
+        (pending_req       && memcmp(&pending_req,       contact.id.pub_key, 4) == 0);
+    if (login_ok || !app_waiting) {
+      const UiReqKind k = _ui_login_then_kind;
+      cancelUIDeferredLogin();
+      if (login_ok) {
+        ContactInfo& rc = const_cast<ContactInfo&>(contact);
+        if (k == UiReqKind::Telemetry) sendTelemetryRequestForUI(rc);
+        else                           sendStatusPingForUI(rc);
+      }
+      return;   // login frame consumed (OK fired the REQ; fail disarmed)
     }
-    return;   // login frame consumed (OK fired the REQ; fail disarmed)
   }
 #endif
 
