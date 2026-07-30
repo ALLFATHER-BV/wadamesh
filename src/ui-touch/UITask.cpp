@@ -9556,29 +9556,41 @@ static void radioScopeDirectToggleCb(lv_event_t* e) {
 // what kills a PA, so the safe state has to be the one you get for free after a power cycle,
 // and picking the external antenna has to be a fresh, explicit decision each time.
 static lv_obj_t* s_p4_ant_dd = nullptr;   // showConfirm takes a bare callback, so stash the widget
+static uint8_t   s_p4_ant_pending = Xl9535::ANT_INTERNAL;
 
-static void radioP4AntennaExternalApply() {
-  xl9535.setAntennaMode(Xl9535::ANT_EXTERNAL);   // takes effect on the very next transmit
-  if (s_p4_ant_dd) lv_dropdown_set_selected(s_p4_ant_dd, Xl9535::ANT_EXTERNAL);
-  if (g_lv.task) g_lv.task->showAlert(TR("External antenna selected"), 1200);
+static void radioP4AntennaConfirmApply() {
+  xl9535.setAntennaMode(s_p4_ant_pending);   // takes effect on the very next transmit
+  if (s_p4_ant_dd) lv_dropdown_set_selected(s_p4_ant_dd, s_p4_ant_pending);
+  if (g_lv.task) {
+    g_lv.task->showAlert(s_p4_ant_pending == Xl9535::ANT_EXTERNAL ? TR("External antenna selected")
+                                                                  : TR("Per-transmit switching on"), 1200);
+  }
 }
 
 static void radioP4AntennaSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   lv_obj_t* dd = lv_event_get_target(e);
   const uint8_t m = (uint8_t)lv_dropdown_get_selected(dd);
-  if (m == Xl9535::ANT_EXTERNAL) {
-    // Revert the widget FIRST and only re-select it from the confirm handler: showConfirm has no
-    // cancel callback, so a dismissed dialog must leave both the UI and the hardware on internal.
-    s_p4_ant_dd = dd;
-    lv_dropdown_set_selected(dd, xl9535.antennaMode());
-    showConfirm(TR("Switch to the external antenna?\n\nMake sure an antenna is actually connected "
-                   "to the MMCX socket first. Transmitting with nothing attached can damage the "
-                   "radio.\n\nResets to the on-board antenna on every reboot."),
-                TR("Switch"), radioP4AntennaExternalApply);
-    return;
-  }
-  xl9535.setAntennaMode(m);
+  if (m == Xl9535::ANT_INTERNAL) { xl9535.setAntennaMode(m); return; }   // always safe, no prompt
+
+  // BOTH other modes put the transmitter on the external MMCX: external pins it there, and auto
+  // (the legacy per-TX toggle) switches to it for every single send — so auto is if anything the
+  // worse of the two, since it keys the PA into that connector on every transmit rather than only
+  // while deliberately selected. Neither may be entered without an explicit confirmation.
+  // Revert the widget FIRST and only re-select from the confirm handler: showConfirm has no cancel
+  // callback, so a dismissed dialog must leave both the UI and the hardware where they were.
+  s_p4_ant_dd = dd;
+  s_p4_ant_pending = m;
+  lv_dropdown_set_selected(dd, xl9535.antennaMode());
+  showConfirm(m == Xl9535::ANT_EXTERNAL
+                ? TR("Switch to the external antenna?\n\nMake sure an antenna is actually connected "
+                     "to the MMCX socket first. Transmitting with nothing attached can damage the "
+                     "radio.\n\nResets to the on-board antenna on every reboot.")
+                : TR("Turn on legacy per-transmit switching?\n\nThis is a diagnostic mode. It sends "
+                     "on the external MMCX socket and listens on the on-board antenna, so it needs "
+                     "an antenna fitted and it will report a weak outbound signal.\n\nResets to the "
+                     "on-board antenna on every reboot."),
+              TR("Switch"), radioP4AntennaConfirmApply);
 }
 #endif
 #if defined(HELTEC_LORA_V4_TFT)
