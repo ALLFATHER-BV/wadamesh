@@ -145,15 +145,60 @@ bool RM69A10Display::begin() {
 
 void RM69A10Display::writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels) {
   if (!_panel || !pixels || w <= 0 || h <= 0) return;
+#if defined(TDP4_FLUSH_TRACE)
+  // Opt-in flush tracer for whole-screen colour-flash reports (#167). OFF unless the build adds
+  // -DTDP4_FLUSH_TRACE, so it costs nothing normally. Logs any large, mostly-single-colour band
+  // with its RGB565 value: if the flash is LVGL painting something you see a burst carrying that
+  // colour (brand teal 0x15B6A6 -> 0x15B4); if the screen visibly flashes and nothing logs, the
+  // cause is below LVGL (panel/DSI) and hunting in the UI is wasted effort. Note when using it
+  // that the per-band uniformity scan slows the flush path, which can mask a timing-sensitive
+  // bug — always confirm a fix on a build WITHOUT this enabled.
+  {
+    const long px = (long)w * h;
+    if (px > 1500) {                       // one full LVGL band is 284*24 = 6816 px
+      const uint16_t c0 = pixels[0];
+      long same = 0;
+      for (long i = 0; i < px; i += 37) { if (pixels[i] == c0) ++same; }   // sparse uniformity probe
+      const long probes = (px + 36) / 37;
+      // Log the colour whenever a large band is mostly ONE colour. A whole-screen flash shows
+      // up as a burst of these in the same millisecond range, all carrying the flash colour
+      // (brand teal 0x15B6A6 -> rgb565 0x15B4). Rate-limited so a normal repaint storm can't
+      // flood the console and perturb what we are measuring.
+      static uint32_t s_last_log = 0; static int s_burst = 0;
+      const uint32_t now_ms = (uint32_t)millis();
+      if (now_ms - s_last_log > 500) { s_burst = 0; s_last_log = now_ms; }
+      if (same * 10 >= probes * 9 && s_burst < 12) {
+        ++s_burst;
+        Serial.printf("[FLUSHTRACE] %lu x=%d y=%d w=%d h=%d rgb565=0x%04X\n",
+                      (unsigned long)now_ms, x, y, w, h, (unsigned)c0);
+      }
+    }
+  }
+#endif
 #if RM_UI_SCALE > 1
   // Nearest-neighbour upscale the (half-res) LVGL band to the native panel: each source pixel becomes
   // an RM_UI_SCALE x RM_UI_SCALE block. One expanded band -> one draw_bitmap (exclusive end coords).
   const int S = RM_UI_SCALE, dw = w * S, dh = h * S;
+  // The scratch band lives in INTERNAL DMA RAM, not PSRAM. This panel is a DPI/DSI one with a
+  // single ~1.4 MB framebuffer that can only live in PSRAM, and the DSI DMA streams that
+  // framebuffer out to the glass CONTINUOUSLY. Every draw_bitmap below is a copy INTO that
+  // framebuffer, so with the scratch also in PSRAM a flush put three streams on the same bus at
+  // once: the scratch read, the framebuffer write, and the DSI's own read. Anything else that
+  // wants PSRAM at that moment — notably the priority-10 "lora_rx" drain task, which wakes on
+  // every received packet — can then starve the DSI read, and a DPI underrun shows up as a
+  // whole-screen colour flash for one frame. That is the P4 "flicker on every RX" report
+  // (issue #167): it appears on any screen, because it is a display-bus problem and nothing to
+  // do with what is being drawn. Internal RAM removes the scratch read from the PSRAM bus.
+  // Cost is bounded and small: one LVGL band is 284x24 (LV_DRAW_BUF_LINES), so upscaled 2x this
+  // is 568*48*2 = ~53 KB out of the P4's 768 KB SRAM. PSRAM stays as the fallback so a
+  // fragmented heap degrades to the old behaviour instead of dropping to the unscaled path.
   static uint16_t* s_up = nullptr; static size_t s_up_px = 0;
   size_t need = (size_t)dw * dh;
   if (need > s_up_px) {
     if (s_up) heap_caps_free(s_up);
-    s_up = (uint16_t*)heap_caps_malloc(need * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    s_up = (uint16_t*)heap_caps_malloc(need * sizeof(uint16_t),
+                                       MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!s_up) s_up = (uint16_t*)heap_caps_malloc(need * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     s_up_px = s_up ? need : 0;
   }
   if (s_up) {

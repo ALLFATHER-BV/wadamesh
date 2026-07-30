@@ -17,9 +17,14 @@ public:
   static void launch();                 // open (no-op if already open)
   static bool isOpen();                 // UITask: gate the trackball + tab bar
   static void steer(int dx, int dy);    // UITask: trackball motion -> direction
-  static void dismiss();                // close from outside (status-bar tap) — guaranteed exit
+  // THE close path. Installed as the AppPage back hook (see appPageBegin), so the tall
+  // "< Snake" bar closes the game. Plain void() on purpose — that is what appPageBegin
+  // takes. Safe from an event callback: root and instance are torn down asynchronously.
+  static void dismiss();
 
 private:
+  ~SnakeGame();   // frees the canvas buffer, after the queued root delete released the canvas
+
   // The playfield grid is sized to the screen at open() (cols_ x rows_), capped
   // by these maxima so the body arrays are fixed-size.
   static constexpr int kCellPx   = 14;  // px per cell
@@ -62,7 +67,7 @@ private:
   static void timerCb(lv_timer_t* t);
   static void gestureCb(lv_event_t* e);
   static void tapCb(lv_event_t* e);
-  static void closeCb(lv_event_t* e);
   static void startCb(lv_event_t* e);
   static void pauseCb(lv_event_t* e);
+  static void destroyAsync(void* p);    // lv_async_call target: delete the instance
 };

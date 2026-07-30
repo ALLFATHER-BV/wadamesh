@@ -1001,7 +1001,29 @@ private:
   int getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) override { 
     return _store->getBlobByKey(key, key_len, dest_buf);
   }
+  // The core calls this on EVERY received advert (BaseChatMesh::onAdvertRecv, outside the
+  // auto-add block, so for known contacts too) and each call is a full create+truncate+write
+  // of a small file. On a card-less board that file lives on SPIFFS, so ~200 known nodes
+  // re-advertising means a flash write every few seconds forever — churn that keeps the
+  // partition permanently GC-prone and feeds the multi-second "mesh" loop stalls.
+  //
+  // The blob is the raw advert packet and its ONLY consumer is Share/export contact
+  // (BaseChatMesh::shareContact via getBlobByKey). Its content for a given node is
+  // effectively static — name, type, location. So persist it ONCE PER KEY PER BOOT and skip
+  // the redundant rewrites: after the first advert from each node the packet path does no
+  // flash I/O at all. Reads are unaffected because getBlobByKey above still reads the file we
+  // already wrote, so there is no cache to keep coherent. A node that RENAMES itself keeps its
+  // old shared blob until the next reboot, which is a fair price for removing the churn.
+  // Cost: kBlobSeenSlots * 4 bytes of DRAM. Move to PSRAM if static DRAM ever gets tight.
   bool putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], int len) override {
+    if (key_len >= 4) {
+      uint32_t pfx;
+      memcpy(&pfx, key, 4);
+      if (pfx == 0) pfx = 1;   // 0 is the empty-slot marker
+      const uint16_t slot = (uint16_t)((pfx ^ (pfx >> 13) ^ (pfx >> 23)) & (kBlobSeenSlots - 1));
+      if (_blob_seen[slot] == pfx) return true;   // already on flash this boot — skip the write
+      _blob_seen[slot] = pfx;                    // collision just costs one extra write later
+    }
     return _store->putBlobByKey(key, key_len, src_buf, len);
   }
 
@@ -1064,6 +1086,14 @@ private:
   // the first save. Kept in sync by every MyMesh::saveContacts() call.
   int      _last_saved_contacts_n = -1;
   uint32_t _next_contacts_refresh_save = 0;
+  // Separate, much SHORTER floor for saves caused by an add/remove. Those used to bypass the
+  // refresh window completely, so on a growing mesh every newly-heard node forced its own full
+  // rewrite. See CONTACTS_ADD_SAVE_MIN_INTERVAL.
+  uint32_t _next_contacts_add_save = 0;
+  // Pubkey prefixes whose advert blob has already been persisted this boot — see
+  // putBlobByKey. Sized above a full contact list so the common case never thrashes.
+  static const uint16_t kBlobSeenSlots = 512;   // power of two (mask), 2 KB total
+  uint32_t _blob_seen[kBlobSeenSlots] = {0};
 
   TransportKey send_scope;
   TransportKey _chan_scope_saved;             // push/popChannelScope stash

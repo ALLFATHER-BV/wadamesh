@@ -185,11 +185,21 @@ void HI8561Display::writePixelsRGB565(int x, int y, int w, int h, const uint16_t
   // Nearest-neighbour upscale the (half-res) LVGL band to the native panel: each source pixel becomes
   // an HI_UI_SCALE x HI_UI_SCALE block. One expanded band -> one draw_bitmap (exclusive end coords).
   const int S = HI_UI_SCALE, dw = w * S, dh = h * S;
+  // INTERNAL DMA RAM, not PSRAM — same reasoning as the AMOLED SKU (long note in
+  // RM69A10Display::writePixelsRGB565). This is a DPI/DSI panel whose single framebuffer must
+  // live in PSRAM and is streamed to the glass continuously, so keeping the upscale scratch in
+  // PSRAM too put three streams on one bus: the scratch read, the framebuffer write, and the
+  // DSI's own read. Any other PSRAM consumer — the priority-10 "lora_rx" drain task fires on
+  // every received packet — could then starve the DSI, and a DPI underrun shows as a
+  // whole-screen colour flash for one frame (#167). One band is 270x24 upscaled 2x =
+  // 540*48*2 = ~51 KB out of 768 KB SRAM. PSRAM stays the fallback.
   static uint16_t* s_up = nullptr; static size_t s_up_px = 0;
   size_t need = (size_t)dw * dh;
   if (need > s_up_px) {
     if (s_up) heap_caps_free(s_up);
-    s_up = (uint16_t*)heap_caps_malloc(need * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    s_up = (uint16_t*)heap_caps_malloc(need * sizeof(uint16_t),
+                                       MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!s_up) s_up = (uint16_t*)heap_caps_malloc(need * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     s_up_px = s_up ? need : 0;
   }
   if (s_up) {

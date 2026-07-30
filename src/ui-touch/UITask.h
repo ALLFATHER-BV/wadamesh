@@ -60,6 +60,12 @@ public:
 
   struct UIMessage {
     uint32_t ts;
+    // Monotonic per-record sequence number, assigned at append and persisted by
+    // the segmented store (its record-to-segment mapping keys on seq ranges).
+    // NEVER reset mid-session; the boot loader seeds the generator from
+    // max(loaded seq)+1. Distinct from _msgcount, which the companion protocol
+    // may overwrite (msgRead) and therefore cannot be a unique key.
+    uint32_t seq;
     bool channel;
     bool outgoing;
     uint32_t ack_hash;       // expected-ack for outgoing DMs (0 if none / channel / incoming)
@@ -132,12 +138,35 @@ private:
   char _alert[80];
   unsigned long _alert_expiry;
   int _msgcount;
+  /** Next UIMessage::seq to hand out. Seeded by the loader (max loaded seq + 1),
+   *  strictly monotonic for the session. See UIMessage::seq. */
+  uint32_t _ui_seq_next = 1;
   int _ui_msg_count;
   int _ui_msg_head;
   /** Runtime ring capacity: MAX_UI_MESSAGES_SD when history lives on an SD card,
    *  else MAX_UI_MESSAGES. Fixed for the whole boot (chosen before the PSRAM
    *  alloc in begin()); the loader linearizes files written under another cap. */
   int _ui_msg_cap = MAX_UI_MESSAGES;
+  /** "Does this thread have any stored message?", answered in O(1).
+   *
+   *  threadHasMessageHistory() used to answer it by walking the message ring looking for a
+   *  match, and the inbox/unread paths call it once PER THREAD. A thread that HAS recent
+   *  messages exits that scan early; a thread with none scans every record in the ring doing
+   *  a strncmp each — and "no history" is exactly what those callers are testing for. With a
+   *  busy public channel filling the ring (a field report: 3800 messages) each inbox refresh
+   *  became tens of thousands of string compares, which is the reported "interface slows down
+   *  drastically", and why it was still felt at only ~300 messages.
+   *
+   *  Appends set the owning thread's flag directly, so the common path never scans. Anything
+   *  that REMOVES messages (ring eviction, delete, clear, a fresh load) can only invalidate
+   *  the flags, so it just marks them dirty and the next reader rebuilds all threads in ONE
+   *  ring pass instead of one pass per thread. */
+  mutable uint16_t _thread_msgs[MAX_UI_THREADS] = { 0 };
+  mutable bool     _thread_hist_dirty = true;
+  void rebuildThreadHistoryFlags() const;
+  /** Drop this thread's oldest stored messages until it is back within the per-chat cap
+   *  (touchPrefsGetHistPerChat; 0 = uncapped). Called after an append. */
+  void enforceHistoryCap(int thread_idx);
   unsigned long _next_thread_seed;
   UIMessage* _ui_msgs   = nullptr;   // ring of recent messages — PSRAM-allocated in begin()
   UIThread*  _ui_threads = nullptr;  // thread table — PSRAM-allocated in begin()
@@ -234,6 +263,8 @@ private:
   bool loadThreadsFromStorage();
   bool loadMsgsFromStorage();
   bool loadLegacyHistoryFromStorage();
+  bool loadMsgsFromSegments();     // segmented store (generation 3) loader
+  bool migrateRingToSegments();    // one-time old-format -> segments migration (verify-then-delete)
   bool saveThreadsToStorage();
   bool saveMsgsToStorage();
 
@@ -353,18 +384,26 @@ public:
     if (idx < 0 || idx >= MAX_UI_THREADS || !_ui_threads[idx].used || !_ui_msgs) return false;
     const bool ch  = _ui_threads[idx].channel;
     const char* nm = _ui_threads[idx].name;
-    int best = -1; uint32_t best_ts = 0;
-    for (int i = 0; i < _ui_msg_cap; ++i) {
-      const UIMessage& m = _ui_msgs[i];
+    // Newest by RING ORDER, not by timestamp. m.ts is taken from the ESP32 system clock,
+    // which is not monotonic across reboots: it restarts from ESP32RTCClock::begin()'s
+    // power-on seed every boot and only climbs with uptime until a real time source lands.
+    // Picking max(ts) therefore let a message received hours into an EARLIER boot outrank
+    // every message from this one, so the chat-list preview stuck on an old message and
+    // never updated (reported on the T-Display P4, whose system clock stayed on that seed
+    // because it has an RTC chip — see the mirror in ClockFloorRTC). Ring order is the
+    // actual arrival order and cannot be wrong, so walk back from the head and take the
+    // first match; that also exits immediately instead of scanning the whole ring.
+    for (int i = 0; i < _ui_msg_count; ++i) {
+      const int slot = (_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap;
+      const UIMessage& m = _ui_msgs[slot];
       if (!m.text[0] || m.channel != ch) continue;
       if (strncmp(m.thread, nm, MAX_THREAD_NAME) != 0) continue;
-      if (best < 0 || m.ts >= best_ts) { best = i; best_ts = m.ts; }   // >= : a later slot wins ts ties (newer in the ring)
+      if (sender && sender_cap) { strncpy(sender, m.sender, sender_cap - 1); sender[sender_cap - 1] = '\0'; }
+      if (text && text_cap)     { strncpy(text,   m.text,   text_cap - 1);   text[text_cap - 1] = '\0'; }
+      if (outgoing) *outgoing = m.outgoing;
+      return true;
     }
-    if (best < 0) return false;
-    if (sender && sender_cap) { strncpy(sender, _ui_msgs[best].sender, sender_cap - 1); sender[sender_cap - 1] = '\0'; }
-    if (text && text_cap)     { strncpy(text,   _ui_msgs[best].text,   text_cap - 1);   text[text_cap - 1] = '\0'; }
-    if (outgoing) *outgoing = _ui_msgs[best].outgoing;
-    return true;
+    return false;
   }
   int  threadScroll() const { return _thread_scroll; }
   void setThreadScroll(int v) { _thread_scroll = v; }
@@ -453,7 +492,8 @@ public:
   bool enableBle();
   void disableBle() { if (_serial) _serial->disableBle(); }
   int getWsConnectedCount() const { return _serial ? _serial->getWsConnectedCount() : 0; }
-  void setDeviceTimeFromSystemClock();
+  /** Push the ESP32 system clock into the mesh RTC. false = never synced, mesh clock untouched. */
+  bool setDeviceTimeFromSystemClock();
   /** Mark recent user input — call when touch / hw button is detected. */
   void noteUserInput();
   /** Get / set the screen-off-after-idle timeout (0 = never). Persists in NVS. */
@@ -486,6 +526,7 @@ public:
   // lost — the periodic flush is off-thread and rate-capped. Overrides the
   // AbstractUITask hook so the companion CMD_REBOOT path flushes too.
   void persistHistoryNow() override;
+  void flushHistorySoon();   // arm an immediate OFF-THREAD flush (worker) — no min-delay clamp, no UI stall
 
   // from AbstractUITask
   void msgRead(int msgcount) override;

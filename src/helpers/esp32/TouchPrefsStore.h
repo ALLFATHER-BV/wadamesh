@@ -103,6 +103,18 @@ bool touchPrefsSetTilesFromSd(bool from_sd);
 bool touchPrefsGetMapNight();
 bool touchPrefsSetMapNight(bool on);
 
+// Chat-history flush: consecutive failed off-thread (background) writes before
+// the flush falls back to the blocking loop-task write (reliable, but the UI
+// hitches for the write's duration). 0 = never fall back. Default 2.
+uint8_t touchPrefsGetHistSyncAfter();
+bool    touchPrefsSetHistSyncAfter(uint8_t n);
+
+/** Max stored messages kept per chat; 0 = no per-chat cap. Default 250.
+ *  Without a cap one busy channel can fill the whole shared ring, starving every other
+ *  chat of history and slowing the UI down as the ring fills. */
+uint16_t touchPrefsGetHistPerChat();
+bool     touchPrefsSetHistPerChat(uint16_t n);
+
 /** Last map zoom level, persisted so the map reopens where the user left it.
  *  0 = unset (let the auto-snap pick a level for the available tile pack). */
 uint8_t touchPrefsGetMapZoom();
@@ -548,6 +560,9 @@ bool     touchPrefsSetGpsBaud(uint32_t baud);
 bool     touchPrefsGetSigProbeEnabled();
 bool     touchPrefsSetSigProbeEnabled(bool on);
 uint16_t touchPrefsGetSigPollMins();
+
+/* NB: there is deliberately no touchPrefsGet/SetP4Antenna(). The T-Display P4 antenna choice is
+ * session-only so that every boot comes up on the on-board antenna — see the note in the .cpp. */
 bool     touchPrefsSetSigPollMins(uint16_t mins);
 
 #endif

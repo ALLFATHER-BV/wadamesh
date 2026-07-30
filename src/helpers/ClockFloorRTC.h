@@ -1,6 +1,7 @@
 #pragma once
 
 #include <helpers/AutoDiscoverRTCClock.h>
+#include <sys/time.h>
 
 // Monotonic clock floor for outgoing protocol timestamps (issue #89 follow-up).
 //
@@ -60,7 +61,41 @@ public:
   void setCurrentTime(uint32_t time) override {
     if (time < MIN_VALID_EPOCH || time > MAX_PLAUSIBLE_EPOCH) return;   // garbage set — ignore, whatever the source
     AutoDiscoverRTCClock::setCurrentTime(time);
+    pushSystemClock(time);
     if (_floor > time + TRUSTED_BACK_CAP) _floor = time;
+  }
+
+  // The UI reads the ESP32 *system* clock for every displayed time (status bar, chat
+  // bubbles, logs — see the note at addMessage()), while protocol timestamps come from
+  // this class. On a board with NO RTC chip they are the same clock: AutoDiscoverRTCClock
+  // falls through to ESP32RTCClock, whose set IS settimeofday(), so the two can never
+  // disagree. With a chip present (the T-Display P4 and the ThinkNode M9 both carry a
+  // PCF8563 at 0x51 and call rtc_clock.begin(); the T-LoRa Pager has one too but
+  // deliberately skips begin(), since its PCF85063A is register-incompatible with the
+  // core's 8563 driver) the base class writes ONLY the chip, so the system clock keeps
+  // ESP32RTCClock::begin()'s power-on seed forever. That seed is
+  // exactly MIN_VALID_EPOCH, which is why the P4 showed 15 May 2024 in the UI while sent
+  // messages carried the correct time — and why "Sync clock from system" then poisoned
+  // the good clock: it fed that seed back in as a real set, clearing the MIN check by
+  // being precisely equal to it.
+  //
+  // So mirror every ACCEPTED value into the system clock. The validation above has
+  // already run, so 1902/2043-class garbage never reaches the display either.
+  static void pushSystemClock(uint32_t t) {
+    struct timeval tv;
+    tv.tv_sec  = (time_t)t;
+    tv.tv_usec = 0;
+    settimeofday(&tv, nullptr);
+  }
+
+  // Boot seed. An RTC chip is battery-backed, so it already knows the time while the
+  // system clock is still on the power-on seed — pull it across once so the UI reads
+  // correctly with no network and no GPS fix. Goes through getCurrentTime(), so the
+  // garbage-future hatch and the persisted floor both apply. No-op on the chipless
+  // boards (it reads the system clock and writes the same value back).
+  void seedSystemClock() {
+    const uint32_t t = getCurrentTime();
+    if (t >= MIN_VALID_EPOCH && t <= MAX_PLAUSIBLE_EPOCH) pushSystemClock(t);
   }
 
   // Boot-time seed from the persisted floor (only ever raises), and the getter

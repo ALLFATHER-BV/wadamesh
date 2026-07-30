@@ -1,0 +1,36 @@
+# beta_53 - speed with a big chat history, blocking that actually works, T-Display P4 fixes
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Read this first -------------------------------------------------------------------
+HEADS UP - chats now keep the newest 250 messages each by default. If you have a chat with more than that, the older ones are dropped the next time it receives a message. Change it or turn it off under Settings > Chats > "Keep per chat (messages)" BEFORE you let a busy channel run, if you want to keep a deep backlog.
+
+# --- Speed ----------------------------------------------------------------------------
+Fixed the big one: a large chat history no longer slows the whole interface down. With a busy channel the chat list was re-scanning the entire message store once for every chat, every time it refreshed - so the more history you had, the slower everything got. A device with 3800 messages in one channel was crawling. That work is now done once instead of once per chat.
+New setting: "Keep per chat (messages)" under Settings > Chats. Choose 100, 250, 500, 1000, 2000 or No limit. The default is 250. Older messages in a chat are dropped past the limit, which stops one busy channel filling the whole message store and starving your other chats of history.
+Turning the limit off asks you to confirm first, because an unlimited history is exactly what made things slow.
+
+# --- Blocking -------------------------------------------------------------------------
+Blocking someone now actually works. Three separate bugs: blocking a sender in a channel never saved properly so it did not stick, blocking a person inside a room server silenced the ENTIRE room instead of that one person, and blocked names were only filtered in channels so room posts still came through. Thanks to D-Melhede for reporting.
+Unblocking now fully clears a block. Blocks were stored in two places and only one was being removed, so someone could stay silently blocked after you unblocked them.
+
+# --- Chats ----------------------------------------------------------------------------
+Fixed the chat list preview showing an old message and never updating. It picked the "newest" message by timestamp, which goes wrong on a device whose clock restarts at boot - so a message from an earlier session could outrank everything new forever. It now uses the actual arrival order. Mostly seen on the T-Display P4.
+Notification sound works again. A failed map-tile fetch could leave an internal counter stuck, and that counter was silently muting every chime. Thanks to ropafiro for reporting (#184).
+
+# --- Stability + connection ------------------------------------------------------------
+Fixed multi-second freezes on Heltec V4 units in a busy mesh. Every advert heard was triggering a redundant write to internal flash, and contact saves were not rate-limited, so the interface could lock up for seconds at a time with nothing obviously happening. Thanks to Raph for the detailed report and video.
+Wi-Fi scanning no longer gets stuck off. If the connection dropped at the wrong moment the scan gate stayed shut for good; it now clears itself and re-enables auto-reconnect (#171).
+The phone app gets its replies again. Ping and telemetry responses could be swallowed before reaching the app (#124).
+Typing into the web control panel no longer drops characters. Thanks to VE2CCK for reporting.
+
+# --- Apps -----------------------------------------------------------------------------
+The Airtime and Snake apps now work like the Spectrum app: a proper "< back" title bar, and you can no longer accidentally tap or swipe through to the screen behind them. They also no longer risk a crash when closing.
+Swiping inside any full-screen app (Airtime, Spectrum, RF Monitor, Discover, Web, VNC, Remote) no longer jumps you to another tab.
+Fixed three older reports from dreirund: the crash-restart dialog text overlapping its buttons (#97), the settings sheet opened from "Discovered" being cut off (#109), and room servers now showing their own icon in the contacts list (#106).
+
+# --- T-Display P4 ----------------------------------------------------------------------
+The clock is fixed. The P4 showed the wrong time on screen while sent messages carried the correct one, and using "Sync clock from system" then broke the good clock too. Its real-time-clock chip was being set but the system clock never was.
+New: LoRa antenna setting under Settings > Radio. The on-board antenna is selected on every boot, and switching to the external socket asks you to confirm an antenna is actually connected first - transmitting into an empty connector can damage the radio.
+If sending has been much weaker than receiving on your P4, this is why: the firmware was transmitting on the on-board antenna while listening on the external one. Pick the antenna you actually have fitted.
+Reduced a source of the whole-screen flicker (#167) by keeping the display's working buffer off the shared memory bus. Please report whether you still see it.
+Text size and the control-centre layout fixes from earlier betas also apply.
