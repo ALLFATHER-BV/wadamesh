@@ -41914,6 +41914,7 @@ bool UITask::loadMsgsFromStorage() {
     f.close();
     _ui_msg_count = 0;
     _ui_msg_head  = 0;
+    _thread_hist_dirty = true;   // ring replaced — recompute "has history" on next read
     _msgcount     = static_cast<int>(hdr.msgcount);
     return true;
   }
@@ -41954,6 +41955,7 @@ bool UITask::loadMsgsFromStorage() {
 
   _ui_msg_count = n_keep;                     // ring is now linear: slots 0..n_keep-1, oldest first
   _ui_msg_head  = n_keep % _ui_msg_cap;
+  _thread_hist_dirty = true;                  // ring replaced — recompute "has history" on next read
   _msgcount     = static_cast<int>(hdr.msgcount);
   return true;
 #else
@@ -42075,6 +42077,7 @@ bool UITask::loadMsgsFromSegments() {
 
   _ui_msg_count = n_keep;
   _ui_msg_head  = n_keep % _ui_msg_cap;
+  _thread_hist_dirty = true;   // ring replaced — recompute "has history" on next read
   _ui_seq_next  = max_seq + 1;
   s_seg_flushed_seq = max_seq;   // everything loaded IS on disk by definition
   // _msgcount isn't stored in segments; the threads-file header carries it and
@@ -43115,6 +43118,7 @@ int UITask::findOrCreateThread(const char* name, bool channel) {
 bool UITask::removeThread(int idx) {
   if (idx < 0 || idx >= MAX_UI_THREADS) return false;
   if (!_ui_threads[idx].used) return false;
+  _thread_hist_dirty = true;   // slot is being freed + its ring records dropped
   // Match the thread by stored name (channel/DM) before wiping the slot so
   // we can drop any ring messages that belonged to it. Without this the
   // entries would still occupy the bounded _ui_msgs ring and confuse a
@@ -43387,6 +43391,11 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   m.sender[MAX_SENDER_NAME] = '\0';
   strncpy(m.text, text ? text : "", MAX_MSG_TEXT);
   m.text[MAX_MSG_TEXT] = '\0';
+  // An append is the ONLY mutation that needs no scan: this thread now demonstrably has
+  // history. A full ring also EVICTED the oldest record above, which may have been some other
+  // thread's last message, so the cached flags have to be rebuilt before they are trusted again.
+  if (_ui_msg_count == _ui_msg_cap) _thread_hist_dirty = true;
+  _thread_hist[t_idx] = true;
   if (_ui_msg_count < _ui_msg_cap) ++_ui_msg_count;
   _ui_msg_head = (_ui_msg_head + 1) % _ui_msg_cap;
   _ui_threads[t_idx].last_ts = m.ts;
@@ -44651,10 +44660,33 @@ int UITask::getThreadCount(bool channel_mode, int out_indexes[], int max_out) co
   return copy_n;
 }
 
+// One ring pass that answers "has any message?" for EVERY thread at once (see the note on
+// _thread_hist). Stops as soon as every live thread is accounted for, so a device whose
+// threads all have recent traffic barely reads the ring at all.
+void UITask::rebuildThreadHistoryFlags() const {
+  for (int i = 0; i < MAX_UI_THREADS; ++i) _thread_hist[i] = false;
+  int unresolved = 0;
+  for (int i = 0; i < MAX_UI_THREADS; ++i) if (_ui_threads[i].used) ++unresolved;
+  for (int i = 0; i < _ui_msg_count && unresolved > 0; ++i) {
+    const int idx = (_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap;
+    const UIMessage& m = _ui_msgs[idx];
+    for (int t = 0; t < MAX_UI_THREADS; ++t) {
+      if (!_ui_threads[t].used || _thread_hist[t]) continue;
+      if (m.channel == _ui_threads[t].channel &&
+          strncmp(m.thread, _ui_threads[t].name, MAX_THREAD_NAME) == 0) {
+        _thread_hist[t] = true;
+        --unresolved;
+        break;
+      }
+    }
+  }
+  _thread_hist_dirty = false;
+}
+
 bool UITask::threadHasMessageHistory(int thread_idx) const {
   if (thread_idx < 0 || thread_idx >= MAX_UI_THREADS || !_ui_threads[thread_idx].used) return false;
-  int tmp[8];
-  return getThreadMessageIndexes(thread_idx, tmp, 8, false) > 0;
+  if (_thread_hist_dirty) rebuildThreadHistoryFlags();
+  return _thread_hist[thread_idx];
 }
 
 int UITask::getCombinedInboxCount(int out_indexes[], int max_out) const {
@@ -44736,6 +44768,7 @@ int UITask::clearThreadHistory(int thread_idx) {
   }
   _ui_threads[thread_idx].unread      = 0;
   _ui_threads[thread_idx].has_mention = false;
+  _thread_hist[thread_idx] = false;   // emptied, and no other thread was touched
   _threads_dirty = true;
   if (cleared) _msgs_dirty = true;
   return cleared;

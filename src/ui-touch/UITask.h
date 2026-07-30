@@ -147,6 +147,23 @@ private:
    *  else MAX_UI_MESSAGES. Fixed for the whole boot (chosen before the PSRAM
    *  alloc in begin()); the loader linearizes files written under another cap. */
   int _ui_msg_cap = MAX_UI_MESSAGES;
+  /** "Does this thread have any stored message?", answered in O(1).
+   *
+   *  threadHasMessageHistory() used to answer it by walking the message ring looking for a
+   *  match, and the inbox/unread paths call it once PER THREAD. A thread that HAS recent
+   *  messages exits that scan early; a thread with none scans every record in the ring doing
+   *  a strncmp each — and "no history" is exactly what those callers are testing for. With a
+   *  busy public channel filling the ring (a field report: 3800 messages) each inbox refresh
+   *  became tens of thousands of string compares, which is the reported "interface slows down
+   *  drastically", and why it was still felt at only ~300 messages.
+   *
+   *  Appends set the owning thread's flag directly, so the common path never scans. Anything
+   *  that REMOVES messages (ring eviction, delete, clear, a fresh load) can only invalidate
+   *  the flags, so it just marks them dirty and the next reader rebuilds all threads in ONE
+   *  ring pass instead of one pass per thread. */
+  mutable bool _thread_hist[MAX_UI_THREADS] = { false };
+  mutable bool _thread_hist_dirty = true;
+  void rebuildThreadHistoryFlags() const;
   unsigned long _next_thread_seed;
   UIMessage* _ui_msgs   = nullptr;   // ring of recent messages — PSRAM-allocated in begin()
   UIThread*  _ui_threads = nullptr;  // thread table — PSRAM-allocated in begin()
