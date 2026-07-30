@@ -9008,8 +9008,18 @@ static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
 #endif
   lv_obj_t* card = lv_obj_create(s_disc_settings_root);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, card_w, PSC(188));
-  lv_obj_align(card, LV_ALIGN_CENTER, 0, -46);   // shifted up so the keyboard clears the hop field
+  // #109: centring the card and then lifting it a fixed -46 pushed its TOP off-screen on
+  // the 240px-tall T-Deck (only 218px visible under the bar), so the sheet looked truncated
+  // and could not be scrolled to reach the rest. Clamp the height to what the screen
+  // actually has, and clamp the lift to the leftover slack so the top can never go negative.
+  const lv_coord_t dsc_avail = lv_disp_get_ver_res(nullptr) - STATUSBAR_H;
+  lv_coord_t dsc_h = PSC(188);
+  if (dsc_h > dsc_avail - 8) dsc_h = dsc_avail - 8;
+  lv_coord_t dsc_lift = -46;
+  const lv_coord_t dsc_slack = (dsc_avail - dsc_h) / 2;
+  if (-dsc_lift > dsc_slack) dsc_lift = (lv_coord_t)-dsc_slack;
+  lv_obj_set_size(card, card_w, dsc_h);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, dsc_lift);   // lift (clamped) so the keyboard clears the hop field
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
@@ -12541,10 +12551,28 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_add_flag(s_confirm_modal, LV_OBJ_FLAG_FLOATING);
   lv_obj_move_foreground(s_confirm_modal);
 
-  // Card
+  // Card — the height FOLLOWS the wrapped message. It used to be a fixed PSC(160) with a
+  // freely-wrapping label, so a long message (the crash-report prompt is the worst case)
+  // simply ran down over the Cancel/OK buttons (#97). Grow to fit the text, keep the old
+  // 160 as a floor so every short dialog looks exactly as before, and cap to the screen so
+  // the card can never overflow; the message area below scrolls if the cap bit.
   lv_obj_t* card = lv_obj_create(s_confirm_modal);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, PCW(210), PSC(160));
+#if CAP_LARGE_SCREEN
+  const lv_coord_t cf_lblw = PSC(186 - 32);
+#else
+  const lv_coord_t cf_lblw = 186 - 32;
+#endif
+  lv_point_t cf_tsz;
+  lv_txt_get_size(&cf_tsz, TR(msg), &g_font_14, 0, 2, cf_lblw, LV_TEXT_FLAG_NONE);
+  const lv_coord_t cf_chrome = (lv_coord_t)(PSC(12) * 2 + PSC(14) + PSC(34));  // pads + gap + buttons
+  lv_coord_t cf_h = (lv_coord_t)(cf_tsz.y + cf_chrome);
+  if (cf_h < PSC(160)) cf_h = PSC(160);
+  const lv_coord_t cf_max = lv_disp_get_ver_res(nullptr) - STATUSBAR_H - 12;
+  if (cf_h > cf_max) cf_h = cf_max;
+  lv_coord_t cf_msgh = (lv_coord_t)(cf_h - cf_chrome);
+  if (cf_msgh < PSC(20)) cf_msgh = PSC(20);   // never let a tall UI scale invert this
+  lv_obj_set_size(card, PCW(210), cf_h);
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 12);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
@@ -12553,16 +12581,17 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   addCloseXBadge(card, confirmCancelEvt);   // X behaves like Cancel
 
-  lv_obj_t* lbl = lv_label_create(card);
+  // Message area: its own box occupying exactly the space ABOVE the buttons, so the text
+  // physically cannot reach them; scrolls vertically when the card hit the screen cap.
+  // Width is still shortened (cf_lblw) so the first line doesn't slide under the X badge.
+  lv_obj_t* msg_box = lv_obj_create(card);
+  lv_obj_remove_style_all(msg_box);
+  lv_obj_set_size(msg_box, cf_lblw, cf_msgh);
+  lv_obj_align(msg_box, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_set_scroll_dir(msg_box, LV_DIR_VER);
+  lv_obj_t* lbl = lv_label_create(msg_box);
   lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
-  // Shrink width so the first line doesn't slide under the top-right X.
-  // Push the label down 4 px so the X glyph and the start of the text
-  // baseline don't touch optically.
-#if CAP_LARGE_SCREEN
-  lv_obj_set_width(lbl, PSC(186 - 32));
-#else
-  lv_obj_set_width(lbl, 186 - 32);
-#endif
+  lv_obj_set_width(lbl, cf_lblw);
   lv_label_set_text(lbl, TR(msg));
   lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
@@ -32310,7 +32339,9 @@ static void refreshContactsList() {
     // must render in g_font_16 for the PUA codepoints to resolve. Blocked
     // contacts get a RED person icon so they stand out at a glance.
     lv_obj_t* ic = lv_label_create(rb);
-    lv_label_set_text(ic, e.is_blocked ? TOUCH_SYM_PERSON : (is_rep ? TOUCH_SYM_ANTENNA : TOUCH_SYM_PERSON));
+    lv_label_set_text(ic, e.is_blocked ? TOUCH_SYM_PERSON
+                        : (is_rep ? TOUCH_SYM_ANTENNA
+                        : (e.type == ADV_TYPE_ROOM ? LV_SYMBOL_LOOP : TOUCH_SYM_PERSON)));   // rooms discernible at a glance (#106)
     lv_obj_set_style_text_font(ic, &g_font_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(ic, lv_color_hex(e.is_blocked ? 0xD7574E : COLOR_SUB), LV_PART_MAIN);
     lv_obj_align(ic, LV_ALIGN_LEFT_MID, icon_x, 0);
