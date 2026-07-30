@@ -30,8 +30,12 @@
 class ChannelUtil {
 public:
   static void launch();     // open (no-op if already open)
-  static bool isOpen();     // UITask: gate the tab bar + raise the status bar
-  static void dismiss();    // close from outside (status-bar tap) — guaranteed exit
+  static bool isOpen();     // UITask: is this page up?
+  // THE close path. Installed as the AppPage back hook (see appPageBegin), so the tall
+  // "< Airtime" bar closes the page; also used by the backdrop tap. Signature is a plain
+  // void() on purpose — that is what appPageBegin takes. Safe from an event callback:
+  // both the root and the instance are torn down asynchronously.
+  static void dismiss();
 
 private:
   static constexpr int kPoints = 60;   // chart history (~60 s at 1 Hz)
@@ -70,6 +74,7 @@ private:
 
   static ChannelUtil* s_active;   // the one live instance (or nullptr)
   static void timerCb(lv_timer_t* t);
-  static void closeCb(lv_event_t* e);
+  static void backdropCb(lv_event_t* e);   // tap the page background = back
   static void resetCb(lv_event_t* e);
+  static void destroyAsync(void* p);       // lv_async_call target: delete the instance
 };

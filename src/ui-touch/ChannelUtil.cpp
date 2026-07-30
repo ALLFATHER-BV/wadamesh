@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ChannelUtil.h"
+#include "AppPage.h"   // shared app-page chrome: root, tall "< Airtime" bar, async teardown
 #include "i18n.h"
 
 #include <Arduino.h>   // millis()
@@ -13,10 +14,11 @@ extern MyMesh& the_mesh;
 // radio_driver is declared `extern WRAPPER_CLASS radio_driver;` in the board's
 // target.h, reached transitively through MyMesh.h above.
 
-// Mirrors the app's status-bar height; the overlay starts below it so the bar
-// stays visible (and can dismiss us on the big-screen boards). Local so this
-// module needs nothing from UITask.
-static constexpr lv_coord_t kTopBar = 22;
+// The page geometry + the tall "< Airtime" bar come from AppPage (shared with Spectrum
+// and every other tool page). This module used to mirror the bar height with a local
+// `kTopBar = 22`, which is wrong on any board where STATUSBAR_H isn't 22 — the P4's
+// two-row bar, or any UI scale above 100% — and left this page's own title and X
+// underneath the real bar with no way out.
 static constexpr uint32_t   kTickMs  = 1000;   // 1 Hz sample
 static constexpr int        kBusyPct = 40;     // congestion threshold line / verdict pivot
 
@@ -41,15 +43,22 @@ void ChannelUtil::launch() {
   if (!c->open()) { s_active = nullptr; delete c; }
 }
 
+void ChannelUtil::destroyAsync(void* p) { delete static_cast<ChannelUtil*>(p); }
+
 void ChannelUtil::dismiss() {
-  // Guaranteed exit from outside (a status-bar tap): the in-page X can sit under
-  // a taller status bar on big-screen boards. Mirrors closeCb's teardown; safe
-  // to delete synchronously here (the triggering target is the status bar).
+  // THE single close path — the status bar's back hook, the backdrop tap and any future
+  // caller all land here, so teardown happens exactly once and in one order.
+  //
+  // Both halves are deferred on purpose. close() queues the root with lv_obj_del_async,
+  // and the instance itself is freed from an lv_async_call: dismiss() runs from inside an
+  // LVGL event callback, and the old code deleted both the root AND `this` synchronously
+  // from a child button's own handler — freeing the object LVGL was still dispatching to.
+  // Async calls run FIFO after the event completes, so the root dies first, then us.
   if (!s_active) return;
   ChannelUtil* c = s_active;
-  s_active = nullptr;
+  s_active = nullptr;                 // isOpen() reads false from here on
   c->close();
-  delete c;
+  lv_async_call(destroyAsync, c);
 }
 
 static uint32_t utilColor(int pct) {
@@ -180,35 +189,29 @@ void ChannelUtil::tick() {
 
 bool ChannelUtil::open() {
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   const bool narrow = sw < 280;
 
-  root_ = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(root_);
-  lv_obj_set_size(root_, sw, sh - kTopBar);
-  lv_obj_set_pos(root_, 0, kTopBar);
-  lv_obj_set_style_bg_color(root_, lv_color_hex(kColBg), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(root_, LV_OBJ_FLAG_CLICKABLE);
+  // Page root + chrome, identical to the Spectrum page: opaque and CLICKABLE so nothing
+  // under it can be touched, sized/positioned from the LIVE status-bar height, and the
+  // global bar carries "< Airtime" as the one and only way back.
+  root_ = appPageCreateRoot(kColBg);
   lv_obj_set_style_pad_all(root_, 6, LV_PART_MAIN);
+  lv_obj_add_event_cb(root_, backdropCb, LV_EVENT_CLICKED, this);
+// The bar title is stored by POINTER for as long as the page is up, so it must own its
+// storage. TR() hands back the table cell for a plain key (static, fine) but a recycled
+// 4-slot ring for an icon-prefixed one — copy it out so adding a glyph to this string
+// later can't turn the status-bar title into a dangling read.
+  static char s_bar_title[24];
+  snprintf(s_bar_title, sizeof s_bar_title, "%s", TR("Airtime"));
+  appPageBegin(s_bar_title, &ChannelUtil::dismiss);
 
-  // Title.
-  lv_obj_t* title = lv_label_create(root_);
-  lv_label_set_text(title, TR("Channel Utilization"));
-  lv_obj_set_style_text_color(title, lv_color_hex(kColDim), LV_PART_MAIN);
-  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 2, 2);
+  // No in-page title or X any more — the tall bar provides both. That chrome was the bug:
+  // it was laid out against a 22 px bar assumption and disappeared under the real one.
 
-  // Close (X) + Reset buttons, top-right.
-  lv_obj_t* x = lv_btn_create(root_);
-  lv_obj_set_size(x, 30, 24);
-  lv_obj_align(x, LV_ALIGN_TOP_RIGHT, 0, -2);
-  lv_obj_add_event_cb(x, closeCb, LV_EVENT_CLICKED, this);
-  lv_obj_t* xl = lv_label_create(x); lv_label_set_text(xl, LV_SYMBOL_CLOSE); lv_obj_center(xl);
-
+  // Reset button, top-right of the content area.
   lv_obj_t* rst = lv_btn_create(root_);
   lv_obj_set_size(rst, 30, 24);
-  lv_obj_align(rst, LV_ALIGN_TOP_RIGHT, -36, -2);
+  lv_obj_align(rst, LV_ALIGN_TOP_RIGHT, 0, 0);
   lv_obj_add_event_cb(rst, resetCb, LV_EVENT_CLICKED, this);
   lv_obj_t* rl = lv_label_create(rst); lv_label_set_text(rl, LV_SYMBOL_REFRESH); lv_obj_center(rl);
 
@@ -263,8 +266,10 @@ bool ChannelUtil::open() {
 }
 
 void ChannelUtil::close() {
-  if (timer_) { lv_timer_del(timer_); timer_ = nullptr; }
-  if (root_)  { lv_obj_del(root_);    root_  = nullptr; }   // deletes all children
+  if (timer_) { lv_timer_del(timer_); timer_ = nullptr; }   // stop sampling before the UI goes
+  appPageEnd(&ChannelUtil::dismiss);                        // hand the status bar back
+  appPageDeleteRootAsync(root_);                            // never a sync del from a callback
+  root_ = nullptr;
   headline_ = nullptr; chart_ = nullptr; ser_util_ = nullptr; ser_thresh_ = nullptr;
   metrics_ = nullptr; verdict_ = nullptr;
 }
@@ -280,10 +285,12 @@ void ChannelUtil::resetCb(lv_event_t* e) {
   self->snapshotBaseline();
   if (self->chart_ && self->ser_util_) lv_chart_set_all_value(self->chart_, self->ser_util_, 0);
 }
-void ChannelUtil::closeCb(lv_event_t* e) {
-  auto* self = static_cast<ChannelUtil*>(lv_event_get_user_data(e));
-  if (!self) return;
-  self->close();
-  if (s_active == self) s_active = nullptr;
-  delete self;
+// Backdrop tap = back, exactly as on the Spectrum page. Only a press on the root itself
+// closes; taps on children (Reset) are theirs. wait_release swallows the rest of the
+// gesture so the press can't land on whatever the page was covering.
+void ChannelUtil::backdropCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;
+  lv_indev_t* a = lv_indev_get_act(); if (a) lv_indev_wait_release(a);
+  dismiss();
 }

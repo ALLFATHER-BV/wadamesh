@@ -107,6 +107,7 @@
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
 #include "ChannelUtil.h"      // Apps → Airtime (self-contained channel-utilization tool)
+#include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
@@ -1296,6 +1297,46 @@ static void statusBarSetTall(bool tall) {
   if (g_statusbar.root) lv_obj_set_height(g_statusbar.root, statusBarCurH());
   // (updateGlobalStatusBar drives this every tick + refreshes the left zone; it must
   // NOT be called from here — it calls back into statusBarSetTall = recursion.)
+}
+
+// ---- AppPage: the shared full-screen app-page chrome (see AppPage.h) --------------
+// Thin wrappers over the machinery just above, exported so the self-contained app
+// modules (ChannelUtil = Airtime, SnakeGame) build the same page as the in-file tool
+// pages instead of hand-rolling it against a hardcoded bar height.
+lv_coord_t appPageContentTop() { return STATUSBAR_H; }
+lv_coord_t appPageContentH()   { return (lv_coord_t)(lv_disp_get_ver_res(nullptr) - STATUSBAR_H); }
+
+lv_obj_t* appPageCreateRoot(uint32_t bg_color) {
+  lv_obj_t* root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(root);
+  lv_obj_set_size(root, lv_disp_get_hor_res(nullptr), appPageContentH());
+  lv_obj_set_pos(root, 0, appPageContentTop());
+  lv_obj_set_style_bg_color(root, lv_color_hex(bg_color), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+  // CLICKABLE is what makes the page modal: every press lands here instead of falling
+  // through to the tab bar / list underneath.
+  lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);
+  return root;
+}
+
+void appPageBegin(const char* title, void (*close_fn)()) {
+  s_apppage_title = title;
+  s_apppage_close = close_fn;
+  statusBarSetTall(true);
+  updateGlobalStatusBar();
+}
+
+void appPageEnd(void (*close_fn)()) {
+  if (s_apppage_close != close_fn) return;   // a different page owns the bar now — leave it
+  s_apppage_title = nullptr;
+  s_apppage_close = nullptr;
+  statusBarSetTall(false);
+  updateGlobalStatusBar();
+}
+
+void appPageDeleteRootAsync(lv_obj_t* root) {
+  if (root) lv_obj_del_async(root);
 }
 static const char* tsBlockReason();    // fwd decl (defined near idle-sleep hooks)
 static const char* tsWakeReasonStr(touchSleep::WakeReason r);  // fwd decl (defined near idle-sleep hooks)
@@ -5198,6 +5239,15 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
     else if (swipe_y != 0) SnakeGame::steer(0, swipe_y < 0 ? -1 : 1);
     return;
   }
+  // Every OTHER full-screen app page (Airtime, Spectrum, RF Monitor, Discover, VNC, Remote,
+  // Reader) also owns the screen, so swallow the swipe instead of letting it reach the tab
+  // switcher behind the page. Making the page root opaque + CLICKABLE only stops CLICKS:
+  // this detector reads the per-board touch hardware directly and never consults LVGL
+  // hit-testing, which is why a swipe inside Airtime still jumped to the Map tab. Settings
+  // sub-sheets borrow s_apppage_title for their back chevron too, but they always open from
+  // inside a category and have their own rightward swipe-back further down, so exclude them.
+  // (Vertical swipes are a no-op at the end of this function, so this only kills tab swipes.)
+  if (s_apppage_title && s_settings_open_cat < 0) return;
   // A slider was just being dragged — its horizontal drag must NOT be read as a
   // tab/back swipe (e.g. raising the volume slider rightward kept triggering the
   // settings "swipe right = back"). Ignore swipes briefly after any slider touch.
@@ -37098,12 +37148,11 @@ static void statusBarHoldCb(lv_event_t* e) {
 
 static void statusBarTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  // While Snake is up the bar is raised to the FRONT of lv_layer_top (see the
-  // edge-trigger in updateGlobalStatusBar), so it stays tappable over the game. The
-  // game's own X can sit UNDER a taller status bar on big-screen boards (the P4),
-  // leaving no reachable exit — so a bar tap closes Snake here (the guaranteed way out).
-  if (SnakeGame::isOpen()) { SnakeGame::dismiss(); return; }
-  if (ChannelUtil::isOpen()) { ChannelUtil::dismiss(); return; }   // guaranteed exit if the X sits under a tall bar
+  // Snake and Airtime used to need their own cases here because they hand-rolled their
+  // chrome; they now install s_apppage_close via appPageBegin like every other app page,
+  // so the generic hook below covers them — including the PRESSED fallback in
+  // statusBarReaderBackCb, which they never got and which is the only reliable exit on a
+  // cap-touch board that drops the lone CLICKED.
   if (s_sb_shot_done) { s_sb_shot_done = false; return; }   // this press was a screenshot hold
   // A full-screen tool page (RF Monitor / Spectrum) is up: the bar carries its Back
   // chevron + title, so a tap goes back (closes the page) just like settings.
@@ -37754,12 +37803,12 @@ static void updateGlobalStatusBar() {
   // is the Snake overlay — the bar swallows taps over the game.
   {
     static bool s_bar_fg = false;
-    // Raise the bar to the FRONT of lv_layer_top for (a) Snake (it swallows taps over the
-    // game) and (b) a tool page (RF Monitor / Spectrum) — those roots are also on
-    // lv_layer_top and moved foreground, so without this the TALL bar's lower half (back
-    // chevron + title) is covered by the page. Settings sheets sit on lv_scr_act so they
-    // never need this.
-    const bool want_fg = SnakeGame::isOpen() || ChannelUtil::isOpen() || (s_apppage_title != nullptr);
+    // Raise the bar to the FRONT of lv_layer_top for any app page (Spectrum, RF Monitor,
+    // Snake, Airtime, ...): those roots are also on lv_layer_top and moved foreground, so
+    // without this the TALL bar's lower half (back chevron + title) is covered by the page.
+    // Settings sheets sit on lv_scr_act so they never need this. One condition covers every
+    // page now that Snake and Airtime set s_apppage_title too.
+    const bool want_fg = (s_apppage_title != nullptr);
     if (want_fg) {
       // Keep the bar the TOPMOST lv_layer_top child so its back tap is always hittable —
       // re-assert every tick (a page opened over a chat can otherwise let the chat's
