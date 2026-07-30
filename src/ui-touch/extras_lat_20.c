@@ -1,5 +1,9 @@
 #include "device_caps.h"
-#if defined(HAS_TANMATSU)
+// Was HAS_TANMATSU-only (Large/Huge UI-scale accented-Latin fallback); the T-Deck
+// now also builds this for the "at a glance" notification's 20 px message body
+// (see atGlanceEnsureFont() in UITask.cpp) -- an experiment to see whether a
+// smaller-than-28px glance body is still legible on that panel.
+#if defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911)
 /*******************************************************************************
  * Size: 20 px
  * Bpp: 4

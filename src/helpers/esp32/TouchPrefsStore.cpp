@@ -1785,6 +1785,8 @@ bool touchPrefsGetEdgeScroll()      { if (!s_begun) touchPrefsBegin(); return s_
 void touchPrefsSetEdgeScroll(bool on)      { if (!s_begun) touchPrefsBegin(); prefsPutUChar("tb_edgesc", on ? 1 : 0); }
 bool touchPrefsGetLockOnScreenOff() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("lock_off", 0) != 0; }
 void touchPrefsSetLockOnScreenOff(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("lock_off", on ? 1 : 0); }
+bool touchPrefsGetGlanceWhenLocked() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_lck", 0) != 0; }
+void touchPrefsSetGlanceWhenLocked(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glance_lck", on ? 1 : 0); }
 
 #if defined(HAS_TANMATSU)   // only the Tanmatsu has the message LED — keep S3 (T-Deck/V4) bins unchanged
 bool touchPrefsGetMsgLed() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("msg_led", 1) != 0; }   // default ON

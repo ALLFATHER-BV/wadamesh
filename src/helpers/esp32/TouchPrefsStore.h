@@ -416,6 +416,8 @@ bool    touchPrefsGetEdgeScroll();             // push cursor past edge to scrol
 void    touchPrefsSetEdgeScroll(bool on);
 bool    touchPrefsGetLockOnScreenOff();        // idle screen-off auto-locks; only a deliberate hold wakes (default false)
 void    touchPrefsSetLockOnScreenOff(bool on);
+bool    touchPrefsGetGlanceWhenLocked();       // "at a glance" also fires while manually/idle locked, not just unlocked+dimmed (default false)
+void    touchPrefsSetGlanceWhenLocked(bool on);
 
 /** Per-channel mute, keyed by channel name. Bit 0 = mute messages, bit 1 =
  *  mute @-mentions. Suppresses the notification SOUND for that channel (the
