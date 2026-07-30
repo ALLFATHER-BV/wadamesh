@@ -13059,6 +13059,9 @@ static void wifiKickScan() {
 // here (sequential with main.cpp's wifi loop on the same task — no worker race, and
 // never eraseap, which wedges this radio). Drop the link, let the disassoc settle,
 // then kick the worker; wifiScanService rejoins once results land.
+// Wall-clock deadline for the scan gate below (0 = not armed). See the recovery
+// branch in wifiScanMainService for why this exists.
+static uint32_t s_wifiscan_guard_ms = 0;
 static void wifiScanMainService() {
   if (s_wifiscan_drop_req) {
     s_wifiscan_drop_req = false;
@@ -13067,6 +13070,7 @@ static void wifiScanMainService() {
       WiFi.setAutoReconnect(false);       // don't auto-rejoin mid-sweep
       WiFi.disconnect(false, false);      // leave the BSS (keep cred + stored AP; NO eraseap)
       s_wifiscan_drop_ms = millis();
+      s_wifiscan_guard_ms = millis();     // arm the stuck-gate deadline (recovery below)
       s_wifiscan_reconnect_after = true;
     } else {
       s_wifiscan_request = true;          // already disconnected — scan now
@@ -13074,6 +13078,26 @@ static void wifiScanMainService() {
   } else if (s_wifiscan_drop_ms && (uint32_t)(millis() - s_wifiscan_drop_ms) >= 400) {
     s_wifiscan_drop_ms = 0;
     s_wifiscan_request = true;            // disassoc settled -> run the sweep
+  }
+  // RECOVERY: opening the Wi-Fi page drops the link and raises the scan gate, which is
+  // normally lowered in wifiScanService() once the worker reports s_wifiscan_done. But
+  // that flag is set ONLY by the tile-fetch worker, and that worker can fail to start at
+  // all (its 8 KB contiguous-DRAM stack allocation is best-effort) or sit blocked in a
+  // long tile/LOS/OTA job. If it never reports, the gate LATCHES: autoreconnect is off
+  // and main.cpp's 10 s reconnect retry stays suppressed (main.cpp gates it on
+  // !wifiScanIsActive()), so Wi-Fi never comes back until a reboot — a plausible source
+  // of "connects on a fresh flash, never reconnects after a reboot" (issue #171). The
+  // deadline is deliberately far longer than any legitimate sweep (the worker's own scan
+  // path allows several seconds plus retries) so this can only fire when the normal
+  // completion path is genuinely lost, never mid-scan.
+  if (s_wifiscan_guard_ms && wifiScanIsActive() &&
+      (uint32_t)(millis() - s_wifiscan_guard_ms) >= 30000UL) {
+    s_wifiscan_guard_ms = 0;
+    s_wifiscan_reconnect_after = false;
+    s_wifiscan_drop_ms = 0;
+    wifiScanSetActive(false);             // un-gate main.cpp's reconnect retry
+    WiFi.setAutoReconnect(true);
+    wifiConfigRequestApply();             // re-begin with the stored cred (main task)
   }
 }
 #endif
@@ -13091,6 +13115,7 @@ static void wifiScanService() {
 #if !defined(HAS_TANMATSU)
   if (s_wifiscan_reconnect_after) {       // we dropped the link for this sweep — rejoin now
     s_wifiscan_reconnect_after = false;
+    s_wifiscan_guard_ms = 0;              // normal completion — disarm the stuck-gate deadline
     wifiScanSetActive(false);
     WiFi.setAutoReconnect(true);
     wifiConfigRequestApply();             // main.cpp re-begins with the stored cred (main task)
@@ -24819,7 +24844,15 @@ static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
 #endif
   if (WiFi.status() != WL_CONNECTED) return;
   if (tileFetchSeen(z, x, y)) return;
-  ensureTileFetchTaskRunning();
+  // HONOR the result: ensureTileFetchTaskRunning() creates the QUEUE first and can
+  // still fail afterwards on the worker's 8 KB contiguous-DRAM stack. Ignoring it left
+  // a queue with no consumer, so every send below incremented s_tile_fetch_pending with
+  // nothing to ever drain it. That counter is only ever ++/--, never reset, and it gates
+  // ALL notification sounds (tdeckPlayNotifySlot and friends bail while it is > 0), so a
+  // single failed spawn silently killed the chime for the rest of the boot — the "lost
+  // sound until I restart" report (issue #184). No tile is lost by returning here: with
+  // no worker the fetch could never have happened anyway.
+  if (!ensureTileFetchTaskRunning()) return;
   if (!s_tile_fetch_queue) return;
   TileFetchReq req = {z, x, y};
   if (xQueueSend(s_tile_fetch_queue, &req, 0) == pdTRUE) {
@@ -39296,18 +39329,47 @@ static void blockedModalClose() {
   }
 }
 static bool blockedModalIsOpen() { return s_blocked_modal != nullptr; }
+// Unblock is PAIRED with the block: blocking a channel sender who is also a saved
+// contact writes BOTH a name entry (what the channel RX path matches) and a pubkey
+// entry (what the DM path matches), so clearing only one would leave the sender
+// still silenced on the other path — an "I unblocked them and they are still gone"
+// bug. Each callback therefore clears its own entry and its twin.
 static void blockedUnblockCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
   if (idx < 0 || idx >= TOUCH_IGNORED_MAX) return;
-  touchPrefsSetIgnored(&s_blocked_snap[idx * TOUCH_IGNORE_KEY_BYTES], false);
+  uint8_t pub6[TOUCH_IGNORE_KEY_BYTES];
+  memcpy(pub6, &s_blocked_snap[idx * TOUCH_IGNORE_KEY_BYTES], sizeof pub6);
+  touchPrefsSetIgnored(pub6, false);
+  // Twin: this pubkey's contact name may also hold a name entry (same prefix match
+  // the modal uses to label the row).
+  ContactInfo c;
+  const int nc = the_mesh.getNumContacts();
+  for (int j = 0; j < nc; ++j) {
+    if (the_mesh.getContactByIdx((uint32_t)j, c) &&
+        memcmp(c.id.pub_key, pub6, TOUCH_IGNORE_KEY_BYTES) == 0) {
+      if (c.name[0]) touchPrefsSetNameIgnored(c.name, false);
+      break;
+    }
+  }
   openBlockedUsersModal();   // rebuild the list
 }
 static void blockedUnblockNameCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
   if (idx < 0 || idx >= TOUCH_IGNORED_NAMES_MAX) return;
-  touchPrefsSetNameIgnored(&s_blocked_names_snap[idx * TOUCH_IGNORED_NAME_LEN], false);
+  char nm[TOUCH_IGNORED_NAME_LEN];
+  snprintf(nm, sizeof nm, "%s", &s_blocked_names_snap[idx * TOUCH_IGNORED_NAME_LEN]);
+  touchPrefsSetNameIgnored(nm, false);
+  // Twin: a saved contact with this name may also hold a pubkey entry.
+  ContactInfo c;
+  const int nc = the_mesh.getNumContacts();
+  for (int j = 0; j < nc; ++j) {
+    if (the_mesh.getContactByIdx((uint32_t)j, c) && strcmp(c.name, nm) == 0) {
+      touchPrefsSetIgnored(c.id.pub_key, false);
+      break;
+    }
+  }
   openBlockedUsersModal();   // rebuild the list
 }
 static void openBlockedUsersModal() {
@@ -44527,7 +44589,14 @@ bool UITask::ignoreSenderInActiveThread(const char* sender_name) {
       have = true;
     }
   } else if (sender_name && sender_name[0]) {
-    // Channel / room: resolve the sender display name -> a contact pubkey.
+    // Channel: block by NAME, ALWAYS — this is the only thing the channel RX path
+    // can actually match. A group packet carries no per-sender pubkey (MyMesh's
+    // channel branch calls newMsgFromPubWithMeta with from_pub = nullptr), so the
+    // prefix ignore-list is never consulted for channel traffic and a pubkey-only
+    // block is a SILENT NO-OP. That was issue #177: the sender showed up in the
+    // blocked list, yet their posts kept arriving, because a sender who happened to
+    // be a saved contact took the pubkey path below and never got a name entry.
+    const bool name_ok = touchPrefsSetNameIgnored(sender_name, true);
     ContactInfo c;
     const int n = the_mesh.getNumContacts();
     for (int i = 0; i < n; ++i) {
@@ -44537,13 +44606,11 @@ bool UITask::ignoreSenderInActiveThread(const char* sender_name) {
         break;
       }
     }
-    if (!have) {
-      // Not a saved contact — e.g. a bot posting inside a joined room, whose
-      // post carries only a display name (no pubkey to put in the prefix
-      // ignore-list). Block by NAME instead so it can actually be silenced;
-      // newMsgImpl drops future posts whose parsed sender matches.
-      return touchPrefsSetNameIgnored(sender_name, true);
-    }
+    // Not a saved contact (e.g. a bot posting in a joined room): the name entry is
+    // the whole block. A saved contact ALSO gets the pubkey entry below, so their
+    // DMs stay blocked exactly as before — the name entry is purely additive and is
+    // what silences their channel posts.
+    if (!have) return name_ok;
   }
   if (!have) return false;
   touchPrefsSetIgnored(pub, true);

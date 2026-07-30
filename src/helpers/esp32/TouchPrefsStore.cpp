@@ -394,9 +394,17 @@ bool touchPrefsSetScreenTimeoutSecs(uint16_t seconds) {
 }
 
 // --- Mesh signal auto-discover probe (toggle + poll interval) ---------------
-// The interval is entered in whole minutes; clamp >1 min (one flood a minute is
-// already aggressive on shared airtime) .. 1 day so a bad/blank entry can't make
-// the probe hammer the mesh or effectively never run.
+// The interval is entered in whole minutes; clamp 1 min .. 1 day so a bad or blank entry
+// can't make the probe run hot or effectively never run.
+//
+// NOT A FLOOD. This comment used to describe the probe as a flood, which is where the
+// "wadamesh spams the mesh every 5 minutes" worry came from (issue #80). It is a ZERO-HOP
+// CTL_TYPE_NODE_DISCOVER_REQ (MyMesh::uiSendSignalProbe) — the same node-discovery packet
+// the other MeshCore GUIs use. Repeaters answer it DIRECTLY and never re-broadcast it, so
+// nothing propagates beyond our immediate neighbours; the fallback when no repeater path is
+// known is sendAdvert(false), also zero-hop. The caller additionally SKIPS the probe
+// whenever a direct neighbour was heard inside the poll window, so the busier the mesh, the
+// less this transmits.
 static const uint16_t SIG_POLL_MIN_MINS = 1;   // 1 min = 60 s (the old fixed cadence)
 static const uint16_t SIG_POLL_MAX_MINS = 1440;
 
