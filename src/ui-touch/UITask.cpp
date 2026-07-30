@@ -8596,8 +8596,8 @@ static void saveExperimentalCb(lv_event_t* e) {
 
 static void syncClockCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
-  g_lv.task->setDeviceTimeFromSystemClock();
-  g_lv.task->showAlert(TR("Clock synced"), 900);
+  const bool ok = g_lv.task->setDeviceTimeFromSystemClock();
+  g_lv.task->showAlert(ok ? TR("Clock synced") : TR("No system time yet"), 900);
 }
 
 // Chat-save fallback dropdown (Settings -> General): selection index -> number
@@ -43667,6 +43667,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // backwards (server replay guards silently drop those). Seed before the UI
   // generates traffic; written back rate-capped in loop() + on shutdown().
   rtc_clock.seedFloor(touchPrefsGetClockFloor());
+  // ...then push the resulting time into the ESP32 system clock, which is what every
+  // displayed timestamp reads. On a board with a battery-backed RTC chip (P4) the chip
+  // knows the time but the system clock is still on its power-on seed, so the UI would
+  // otherwise show 15 May 2024 until a network/GPS sync landed. Order matters: after
+  // seedFloor(), so a dead chip still yields the persisted floor instead of the seed.
+  rtc_clock.seedSystemClock();
 #endif
 
   // GPS resume: initBasicGPS() always leaves the module stopped at boot, so a
@@ -45096,13 +45102,21 @@ bool UITask::setWifiRadio(bool on) {
   return false;
 }
 
-void UITask::setDeviceTimeFromSystemClock() {
+bool UITask::setDeviceTimeFromSystemClock() {
 #if defined(ESP32)
-  time_t t = time(nullptr);
-  if (t < 100000) return;
-  the_mesh.getRTCClock()->setCurrentTime((uint32_t)t);
+  const uint32_t t = (uint32_t)time(nullptr);
+  // ESP32RTCClock::begin() seeds the system clock to exactly MIN_VALID_EPOCH on power-on,
+  // so "still at the seed" means never synced. Pushing that into the mesh clock is a
+  // two-year step backwards that setCurrentTime()'s own MIN check cannot catch, because
+  // the value IS the constant it compares against — that is how a P4 (whose RTC chip left
+  // the system clock on the seed) could sync 2024 over a perfectly good clock. The old
+  // `t < 100000` guard only caught a clock counting up from zero, which never happens here.
+  if (t <= ClockFloorRTC::MIN_VALID_EPOCH) return false;
+  the_mesh.getRTCClock()->setCurrentTime(t);
+  return true;
 #else
   the_mesh.getRTCClock()->setCurrentTime((uint32_t)(millis() / 1000));
+  return true;
 #endif
 }
 

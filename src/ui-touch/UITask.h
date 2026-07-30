@@ -464,7 +464,8 @@ public:
   bool enableBle();
   void disableBle() { if (_serial) _serial->disableBle(); }
   int getWsConnectedCount() const { return _serial ? _serial->getWsConnectedCount() : 0; }
-  void setDeviceTimeFromSystemClock();
+  /** Push the ESP32 system clock into the mesh RTC. false = never synced, mesh clock untouched. */
+  bool setDeviceTimeFromSystemClock();
   /** Mark recent user input — call when touch / hw button is detected. */
   void noteUserInput();
   /** Get / set the screen-off-after-idle timeout (0 = never). Persists in NVS. */
