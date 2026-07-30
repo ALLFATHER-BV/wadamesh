@@ -9549,6 +9549,15 @@ static void radioScopeDirectToggleCb(lv_event_t* e) {
   touchPrefsSetScopeDirect(on);
   the_mesh.setScopeDirectFloods(on);
 }
+#if defined(HAS_TDISPLAY_P4)
+// T-Display P4 LoRa antenna / RF-switch mode. Persists + applies live (no reboot).
+static void radioP4AntennaSelectCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const uint8_t m = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
+  touchPrefsSetP4Antenna(m);
+  xl9535.setAntennaMode(m);   // takes effect on the very next transmit
+}
+#endif
 #if defined(HELTEC_LORA_V4_TFT)
 // Heltec V4.3 high-gain FEM LNA (~17 dB external receive amp). Persists + applies live.
 static void radioFemLnaToggleCb(lv_event_t* e) {
@@ -9825,6 +9834,38 @@ static void buildRadioSettings() {
   }
 
   mk_section("SIGNAL");
+
+#if defined(HAS_TDISPLAY_P4)
+  // T-Display P4: the SKY13453 on XL9535 IO1. The firmware assumes it is a TX/RX path switch and
+  // flips it around every transmit, but that was never confirmed on hardware and this board has no
+  // other antenna-select line — while other P4 firmware offers an internal/external choice. If IO1
+  // IS the antenna select, toggling it per transmit means sending on one antenna and listening on
+  // the other, which matches reports of a ~20 dB outbound deficit with a healthy inbound signal.
+  // Pinning the line makes both directions use ONE antenna. Try each and keep whichever gives
+  // roughly equal SNR in both directions (Trace SNR to a nearby repeater).
+  mk_label("LoRa antenna (P4)");
+  {
+    lv_obj_t* dd = lv_dropdown_create(body);
+    lv_obj_set_size(dd, lv_pct(100), SC(34));
+    lv_obj_set_pos(dd, 2, y);
+    lv_dropdown_set_options(dd, TR("Auto (switch per transmit)\nPinned A\nPinned B"));
+    lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_border_color(dd, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_t* antlist = lv_dropdown_get_list(dd);
+    lv_obj_set_style_bg_color(antlist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_text_color(antlist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(antlist, &g_font_12, LV_PART_MAIN);
+    lv_dropdown_set_selected(dd, touchPrefsGetP4Antenna());
+    lv_obj_add_event_cb(dd, radioP4AntennaSelectCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+    y += SC(44);
+    y += settingsRowLabel(body, y, 0,
+                          TR("If sending is much weaker than receiving, try Pinned A / B and compare Trace SNR both ways."),
+                          COLOR_SUB, &g_font_12, 0) + 2;
+  }
+#endif
 
 #if defined(HELTEC_LORA_V4_TFT)
   // Heltec V4.3 only: the external FEM's high-gain receive amplifier (~17 dB). Bypassed by
@@ -44370,6 +44411,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Heltec V4.3 high-gain FEM LNA: apply the saved state at boot (default OFF / bypassed,
     // matching the hardware). No-op on a V4.2 board (femLnaControllable() == false).
     if (board.femLnaControllable()) board.setFemLnaEnable(touchPrefsGetFemLna());
+#endif
+#if defined(HAS_TDISPLAY_P4)
+    // T-Display P4 LoRa antenna / RF-switch: apply the saved mode at boot. Default 0 = auto,
+    // which is the original per-transmit toggle, so an untouched device behaves exactly as before.
+    xl9535.setAntennaMode(touchPrefsGetP4Antenna());
 #endif
 
     // Buffered LoRa receive (experimental, default OFF): apply the saved opt-in.

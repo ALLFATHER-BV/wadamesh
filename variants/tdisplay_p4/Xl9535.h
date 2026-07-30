@@ -53,11 +53,34 @@ public:
   // Convenience for the SX1262 glue (RESET + DIO1 live here).
   void sx1262Reset();            // active-low pulse on IO_SX1262_RST
   bool sx1262Dio1() { return read(IO_SX1262_DIO1); }
-  void rfSwitchTx(bool tx) { write(IO_RF_SWITCH, tx); }   // polarity TBD on-device
+  // IO1 drives the board's SKY13453. We ASSUME it is a TX/RX path switch and flip it around every
+  // transmit, but that was never validated on hardware, and this expander has NO separate
+  // internal/external antenna line — while other P4 firmware DOES offer an internal/external
+  // choice. If IO1 is really the ANTENNA select, toggling it per TX means transmitting on one
+  // antenna and receiving on the other, which is exactly what a field report of -10 dB outbound
+  // against +12 dB inbound looks like on a unit with an external antenna fitted (and symmetric on
+  // that same hardware under other firmware). Until it is confirmed on a device, let the user PIN
+  // the line instead of toggling it:
+  //   0 = auto  -> legacy behaviour, toggle per TX (default; nothing changes)
+  //   1 = LOW   -> hold low  for both TX and RX
+  //   2 = HIGH  -> hold high for both TX and RX
+  // Whichever pinned setting gives symmetric SNR in both directions is the right antenna — and
+  // that answer also tells us what IO1 actually is.
+  void setAntennaMode(uint8_t mode) {
+    _ant_mode = (mode > 2) ? 0 : mode;
+    if (_ant_mode) write(IO_RF_SWITCH, _ant_mode == 2);   // pinned: set once, never toggled again
+    else           write(IO_RF_SWITCH, false);            // auto: back to the idle state
+  }
+  uint8_t antennaMode() const { return _ant_mode; }
+  void rfSwitchTx(bool tx) {
+    if (_ant_mode) return;      // pinned — the path must NOT differ between TX and RX
+    write(IO_RF_SWITCH, tx);    // auto (legacy): assumes a TX/RX switch; polarity unverified
+  }
 
 private:
   uint8_t _addr = 0x20;
   bool _ok = false;
+  uint8_t _ant_mode = 0;   // 0 = auto/legacy per-TX toggle, 1 = pinned LOW, 2 = pinned HIGH
   uint8_t _out[2]  = {0xFF, 0xFF};   // shadow of output regs (port0, port1)
   uint8_t _cfg[2]  = {0xFF, 0xFF};   // shadow of config  regs (1=input)
   void writeReg(uint8_t reg, uint8_t val);

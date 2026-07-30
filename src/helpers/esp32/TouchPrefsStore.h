@@ -552,6 +552,11 @@ bool     touchPrefsSetGpsBaud(uint32_t baud);
 bool     touchPrefsGetSigProbeEnabled();
 bool     touchPrefsSetSigProbeEnabled(bool on);
 uint16_t touchPrefsGetSigPollMins();
+
+/** T-Display P4 LoRa antenna / RF-switch mode: 0 = auto (legacy per-TX toggle of XL9535 IO1),
+ *  1 = pin the line LOW, 2 = pin it HIGH. See the notes in the .cpp. */
+uint8_t  touchPrefsGetP4Antenna();
+bool     touchPrefsSetP4Antenna(uint8_t mode);
 bool     touchPrefsSetSigPollMins(uint16_t mins);
 
 #endif
