@@ -237,11 +237,46 @@ static void wadameshSetup() {
   // here — the P4 has RAM to spare, and GPS detection itself needs an intact first second.
   Serial1.setRxBufferSize(4096);
   sensors.begin();
-  {   // GPS detect visibility (the "gps" setting is only registered when NMEA was heard)
-    bool has_gps = false;
+  {   // ---- GPS reality check -------------------------------------------------------------
+    // The line that used to be here reported whether the "gps" SETTING got registered, which on
+    // this board is FORCED true by ENV_SKIP_GPS_DETECT (we set that because the P4's heavy boot
+    // misses the core's 1 s detect window, and a false negative hides the GPS toggle entirely).
+    // So it printed DETECTED unconditionally and proved nothing, including across several rounds
+    // of "GPS still isn't working". Read the UART directly instead and report what arrives.
+    bool has_setting = false;
     for (int i = 0; i < sensors.getNumSettings(); i++)
-      if (strcmp(sensors.getSettingName(i), "gps") == 0) has_gps = true;
-    printf("[GPS] L76K %s\n", has_gps ? "DETECTED (NMEA on GPIO22)" : "NOT detected (no NMEA in the 1s window)");
+      if (strcmp(sensors.getSettingName(i), "gps") == 0) has_setting = true;
+
+    // Drain up to 3 s of NMEA. Bytes at all => pins, rails, wake and baud are ALL correct and a
+    // stuck "acquiring" is a FIX problem (antenna / sky view). Zero bytes => the link is dead.
+    uint32_t bytes = 0, lines = 0;
+    char first[96]; first[0] = '\0';
+    char cur[96];   size_t cl = 0;
+    const uint32_t until = millis() + 3000;
+    while ((int32_t)(millis() - until) < 0) {
+      while (Serial1.available() > 0) {
+        const int c = Serial1.read();
+        if (c < 0) break;
+        ++bytes;
+        if (c == '\n' || c == '\r') {
+          if (cl) {
+            cur[cl] = '\0';
+            ++lines;
+            if (!first[0] && cur[0] == '$') { strncpy(first, cur, sizeof first - 1); first[sizeof first - 1] = '\0'; }
+            cl = 0;
+          }
+        } else if (cl < sizeof(cur) - 1) {
+          cur[cl++] = (char)c;
+        }
+      }
+      delay(5);
+    }
+    printf("[GPS] setting_registered=%d (forced by ENV_SKIP_GPS_DETECT, proves nothing)\n", (int)has_setting);
+    printf("[GPS] UART probe: %lu bytes, %lu lines in 3s @ %d baud, module TX -> GPIO%d\n",
+           (unsigned long)bytes, (unsigned long)lines, (int)GPS_BAUD_RATE, (int)PIN_GPS_TX);
+    if (first[0])        printf("[GPS] first sentence: %s\n", first);
+    else if (bytes)      printf("[GPS] bytes but no complete '$' sentence -> wrong baud or line noise\n");
+    else                 printf("[GPS] NOTHING on the UART -> check wake (XL9535 IO11 HIGH), rails, RX pin\n");
   }
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());
   board.onBootComplete();
