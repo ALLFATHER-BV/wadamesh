@@ -2241,47 +2241,50 @@ static bool settingsModalIsOpen() { return g_set_modal.root != nullptr; }
 // receiver is then obvious from the elapsed time alone. Cleared on fix and when GPS is off.
 static uint32_t s_gps_acq_since = 0;
 
-static const char* gpsStatusStr() {
+// compact = the top-bar dropdown, which must stay ONE line (it shares this string with the GPS
+// settings page, and a two-line version pushed the whole dropdown taller). The settings page asks
+// for the full text, where there is room to explain what is happening.
+static const char* gpsStatusStr(bool compact = false) {
   static char s[200];
   if (!g_lv.task || !g_lv.task->getGPSState()) {
     s_gps_acq_since = 0;
     snprintf(s, sizeof s, TR("GPS: off"));
     return s;
   }
-  // satellitesCount() is satellites USED IN THE FIX, so it stays 0 through a cold acquisition and
-  // a bare "0 sats" would read as broken. The old line therefore said only "acquiring...", which
-  // is just as unhelpful: it cannot distinguish a receiver happily tracking satellites that needs
-  // another minute from one that is not talking at all. Both looked identical to the user, and
-  // that ambiguity is exactly what cost a long P4 investigation.
+  // satellitesCount() is satellites USED IN THE FIX, so it reads 0 for the whole cold acquisition
+  // and a bare "0 sats" looks like a fault. All the other reachable fields (lat/lon/alt/valid) are
+  // likewise empty until a fix lands, so from up here a receiver that is happily tracking
+  // satellites and one that is not powered look EXACTLY the same.
   //
-  // The tell is TIME. A receiver decodes satellite time/date well before it has enough satellites
-  // to solve a position, so "no fix but valid GPS time" is positive proof that the antenna and the
-  // link are fine and it is genuinely mid-acquisition.
+  // That is a real limitation, not an oversight: the core's MicroNMEALocationProvider keeps its
+  // MicroNMEA object private and LocationProvider exposes no satellites-in-view, no SNR and no
+  // HDOP. Deducing "is it alive" from the decoded GPS time does NOT work either — MicroNMEA parses
+  // RMC left to right and bails out at the EMPTY latitude field of an unfixed sentence, so it
+  // never reaches parseDate and the time stays unset until there is already a fix. So do not claim
+  // to know whether data is arriving; report the honest thing (how long it has been trying) and
+  // point at the actual remedy. The serial boot probe prints the real sky view meanwhile.
   if (!g_lv.task->getGpsFix()) {
     const uint32_t now = millis();
     if (!s_gps_acq_since) s_gps_acq_since = now;
     const uint32_t secs = (now - s_gps_acq_since) / 1000u;
-    const bool has_time = g_lv.task->getGpsTime() != 0;
     int n = snprintf(s, sizeof s, TR("GPS: searching"));
     if (n < (int)sizeof s) {
       if (secs < 600) n += snprintf(s + n, sizeof s - n, " %lum%02lus", (unsigned long)(secs / 60), (unsigned long)(secs % 60));
       else            n += snprintf(s + n, sizeof s - n, " %lum", (unsigned long)(secs / 60));
     }
-    if (n < (int)sizeof s) {
-      snprintf(s + n, sizeof s - n, "\n%s", has_time
-        ? TR("Receiver OK, satellite time decoded. Waiting for enough satellites - needs a clear view of the sky.")
-        : TR("No satellite data yet. Outdoors with a clear view of the sky it should appear within a few minutes."));
-    }
+    if (!compact && n < (int)sizeof s)
+      snprintf(s + n, sizeof s - n, "\n%s",
+               TR("No position yet. A cold start needs a clear view of the sky and can take several minutes."));
     return s;
   }
   s_gps_acq_since = 0;
   const int sats = g_lv.task->getGpsSats();
   const int alt  = g_lv.task->getGpsAltitude();
   int n = snprintf(s, sizeof s, TR("GPS: fix"));
-  if (sats > 0 && n < (int)sizeof s) n += snprintf(s + n, sizeof s - n, " · %d sats", sats);
-  if (alt      && n < (int)sizeof s) n += snprintf(s + n, sizeof s - n, " · %d m", alt);
+  if (sats > 0 && n < (int)sizeof s)        n += snprintf(s + n, sizeof s - n, " \xc2\xb7 %d sats", sats);
+  if (!compact && alt && n < (int)sizeof s) n += snprintf(s + n, sizeof s - n, " \xc2\xb7 %d m", alt);
   if (n < (int)sizeof s)
-    snprintf(s + n, sizeof s - n, "\n%.5f, %.5f",
+    snprintf(s + n, sizeof s - n, "%s%.5f, %.5f", compact ? "  " : "\n",
              g_lv.task->getNodeLat(), g_lv.task->getNodeLon());
   return s;
 }
@@ -36307,7 +36310,7 @@ static void openControlCenter() {
   s_cc_gps_label = lv_label_create(card);
   lv_label_set_long_mode(s_cc_gps_label, LV_LABEL_LONG_DOT);
   lv_obj_set_width(s_cc_gps_label, card_w - 20);
-  lv_label_set_text(s_cc_gps_label, gpsStatusStr());
+  lv_label_set_text(s_cc_gps_label, gpsStatusStr(true));   // one line — keeps the dropdown short
   lv_obj_set_style_text_font(s_cc_gps_label, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_cc_gps_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_align(s_cc_gps_label, LV_ALIGN_TOP_LEFT, 0, gps_y);
@@ -38605,7 +38608,7 @@ static void refreshStatusLabels() {
   // CPU/RAM/PSRAM/IP line current — e.g. the IP appears/clears as Wi-Fi
   // connects/drops, without having to close and reopen the panel.
   if (s_cc_root) {
-    if (s_cc_gps_label) setLabelIfChanged(s_cc_gps_label, gpsStatusStr());
+    if (s_cc_gps_label) setLabelIfChanged(s_cc_gps_label, gpsStatusStr(true));
 #if defined(HAS_EXPANSION_KIT)
     if (s_cc_env_label) setLabelIfChanged(s_cc_env_label, localEnvStatusStr());
 #endif
