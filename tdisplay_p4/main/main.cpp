@@ -247,12 +247,18 @@ static void wadameshSetup() {
     for (int i = 0; i < sensors.getNumSettings(); i++)
       if (strcmp(sensors.getSettingName(i), "gps") == 0) has_setting = true;
 
-    // Drain up to 3 s of NMEA. Bytes at all => pins, rails, wake and baud are ALL correct and a
-    // stuck "acquiring" is a FIX problem (antenna / sky view). Zero bytes => the link is dead.
+    // Drain a SHORT window of NMEA. Bytes at all => pins, rails, wake and baud are ALL correct and
+    // a stuck "acquiring" is a FIX problem (antenna / sky view). Zero bytes => the link is dead.
+    // 1.2 s, not longer: this runs on every boot and it CONSUMES bytes the NMEA parser would
+    // otherwise see, so it is deliberately just long enough to catch one of each sentence type
+    // (the L76K repeats the full set about once a second).
     uint32_t bytes = 0, lines = 0;
     char first[96]; first[0] = '\0';
     char cur[96];   size_t cl = 0;
-    const uint32_t until = millis() + 3000;
+    // Keep one example of each distinct GSV/GGA/RMC talker so every constellation is represented
+    // without dumping the whole stream (the same 5 sentence types repeat every second).
+    char kept[10][96]; int kept_n = 0;
+    const uint32_t until = millis() + 1200;
     while ((int32_t)(millis() - until) < 0) {
       while (Serial1.available() > 0) {
         const int c = Serial1.read();
@@ -263,6 +269,12 @@ static void wadameshSetup() {
             cur[cl] = '\0';
             ++lines;
             if (!first[0] && cur[0] == '$') { strncpy(first, cur, sizeof first - 1); first[sizeof first - 1] = '\0'; }
+            // Keep the first of each sentence TYPE (talker + type, e.g. "$GPGSV", "$GNGGA").
+            if (cur[0] == '$' && cl >= 6 && kept_n < 10) {
+              bool seen = false;
+              for (int k = 0; k < kept_n; ++k) if (strncmp(kept[k], cur, 6) == 0) { seen = true; break; }
+              if (!seen) { strncpy(kept[kept_n], cur, sizeof kept[0] - 1); kept[kept_n][sizeof kept[0] - 1] = '\0'; ++kept_n; }
+            }
             cl = 0;
           }
         } else if (cl < sizeof(cur) - 1) {
@@ -272,11 +284,20 @@ static void wadameshSetup() {
       delay(5);
     }
     printf("[GPS] setting_registered=%d (forced by ENV_SKIP_GPS_DETECT, proves nothing)\n", (int)has_setting);
-    printf("[GPS] UART probe: %lu bytes, %lu lines in 3s @ %d baud, module TX -> GPIO%d\n",
+    printf("[GPS] UART probe: %lu bytes, %lu lines in 1.2s @ %d baud, module TX -> GPIO%d\n",
            (unsigned long)bytes, (unsigned long)lines, (int)GPS_BAUD_RATE, (int)PIN_GPS_TX);
     if (first[0])        printf("[GPS] first sentence: %s\n", first);
     else if (bytes)      printf("[GPS] bytes but no complete '$' sentence -> wrong baud or line noise\n");
     else                 printf("[GPS] NOTHING on the UART -> check wake (XL9535 IO11 HIGH), rails, RX pin\n");
+    // Satellite visibility across ALL constellations, plus the fix line. One GxGSV is not enough:
+    // GLGSV is GLONASS only, so "00" there says nothing about GPS/Galileo/BeiDou. GSV field 3 is
+    // sats-in-view for that constellation; GGA field 6 is fix quality (0 = no fix) and field 7 the
+    // sats used. Non-zero in-view with quality 0 means it IS hearing satellites and just needs
+    // time or better sky. All-zero in-view points at the antenna or shielding.
+    if (kept_n) {
+      printf("[GPS] --- satellite view (%d sentences) ---\n", kept_n);
+      for (int i = 0; i < kept_n; ++i) printf("[GPS]   %s\n", kept[i]);
+    }
   }
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());
   board.onBootComplete();
