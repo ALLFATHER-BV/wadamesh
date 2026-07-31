@@ -2237,18 +2237,51 @@ static bool settingsModalIsOpen() { return g_set_modal.root != nullptr; }
 
 // Compact one-line GPS status for the Device settings panel + control center.
 // TR("GPS: off") / "GPS: searching · N sats" / "GPS: fix · N sats  <lat>, <lon>".
+// Stamped when acquisition starts so the page can show how long it has been searching; a stuck
+// receiver is then obvious from the elapsed time alone. Cleared on fix and when GPS is off.
+static uint32_t s_gps_acq_since = 0;
+
 static const char* gpsStatusStr() {
-  static char s[72];
-  if (!g_lv.task || !g_lv.task->getGPSState()) { snprintf(s, sizeof s, TR("GPS: off")); return s; }
-  // satellitesCount() is satellites USED IN THE FIX (0 until a lock), so during
-  // cold acquisition it stays 0 — show "acquiring…" rather than a misleading
-  // "0 sats". On lock, show the sat count + the (auto-populated) coordinates.
-  if (!g_lv.task->getGpsFix()) { snprintf(s, sizeof s, TR("GPS: acquiring...")); return s; }
+  static char s[200];
+  if (!g_lv.task || !g_lv.task->getGPSState()) {
+    s_gps_acq_since = 0;
+    snprintf(s, sizeof s, TR("GPS: off"));
+    return s;
+  }
+  // satellitesCount() is satellites USED IN THE FIX, so it stays 0 through a cold acquisition and
+  // a bare "0 sats" would read as broken. The old line therefore said only "acquiring...", which
+  // is just as unhelpful: it cannot distinguish a receiver happily tracking satellites that needs
+  // another minute from one that is not talking at all. Both looked identical to the user, and
+  // that ambiguity is exactly what cost a long P4 investigation.
+  //
+  // The tell is TIME. A receiver decodes satellite time/date well before it has enough satellites
+  // to solve a position, so "no fix but valid GPS time" is positive proof that the antenna and the
+  // link are fine and it is genuinely mid-acquisition.
+  if (!g_lv.task->getGpsFix()) {
+    const uint32_t now = millis();
+    if (!s_gps_acq_since) s_gps_acq_since = now;
+    const uint32_t secs = (now - s_gps_acq_since) / 1000u;
+    const bool has_time = g_lv.task->getGpsTime() != 0;
+    int n = snprintf(s, sizeof s, TR("GPS: searching"));
+    if (n < (int)sizeof s) {
+      if (secs < 600) n += snprintf(s + n, sizeof s - n, " %lum%02lus", (unsigned long)(secs / 60), (unsigned long)(secs % 60));
+      else            n += snprintf(s + n, sizeof s - n, " %lum", (unsigned long)(secs / 60));
+    }
+    if (n < (int)sizeof s) {
+      snprintf(s + n, sizeof s - n, "\n%s", has_time
+        ? TR("Receiver OK, satellite time decoded. Waiting for enough satellites - needs a clear view of the sky.")
+        : TR("No satellite data yet. Outdoors with a clear view of the sky it should appear within a few minutes."));
+    }
+    return s;
+  }
+  s_gps_acq_since = 0;
   const int sats = g_lv.task->getGpsSats();
+  const int alt  = g_lv.task->getGpsAltitude();
   int n = snprintf(s, sizeof s, TR("GPS: fix"));
-  if (sats >= 0 && n < (int)sizeof s) n += snprintf(s + n, sizeof s - n, " · %d sats", sats);
+  if (sats > 0 && n < (int)sizeof s) n += snprintf(s + n, sizeof s - n, " · %d sats", sats);
+  if (alt      && n < (int)sizeof s) n += snprintf(s + n, sizeof s - n, " · %d m", alt);
   if (n < (int)sizeof s)
-    snprintf(s + n, sizeof s - n, "  %.5f, %.5f",
+    snprintf(s + n, sizeof s - n, "\n%.5f, %.5f",
              g_lv.task->getNodeLat(), g_lv.task->getNodeLon());
   return s;
 }
@@ -11498,7 +11531,8 @@ static void buildDeviceSettings(int sec) {
   lv_obj_set_style_text_font(g_set_modal.gps_status, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(g_set_modal.gps_status, 4, y);
   lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
-  y += SC(22);
+  lv_obj_update_layout(g_set_modal.gps_status);
+  y += LV_MAX(SC(22), lv_obj_get_height(g_set_modal.gps_status) + SC(6));   // status is 2 lines now
 
   // (Expansion Kit moved to the Sensors page — see the DSEC_SENSORS block below.)
 
@@ -45221,6 +45255,24 @@ int UITask::getGpsSats() {
   if (!_sensors) return -1;
   LocationProvider* lp = _sensors->getLocationProvider();
   return lp ? (int)lp->satellitesCount() : -1;
+}
+
+uint32_t UITask::getGpsTime() {
+  if (!_sensors) return 0;
+  LocationProvider* lp = _sensors->getLocationProvider();
+  if (!lp) return 0;
+  const long t = lp->getTimestamp();
+  // The provider builds this from the NMEA date/time fields, which read as year 0 (epoch far in
+  // the past) until the receiver has actually decoded them off the air. Anything plausibly recent
+  // means real satellite time.
+  return (t > 1700000000L) ? (uint32_t)t : 0;
+}
+
+int UITask::getGpsAltitude() {
+  if (!_sensors) return 0;
+  LocationProvider* lp = _sensors->getLocationProvider();
+  if (!lp || !lp->isValid()) return 0;
+  return (int)(lp->getAltitude() / 1000);   // provider reports millimetres
 }
 
 // Keep the node's advertised location synced to GPS once we have a fix, and

@@ -459,6 +459,13 @@ public:
   bool getGpsFix();
   /** Satellites currently in view, or -1 if unknown / no GPS hardware. */
   int  getGpsSats();
+  /** UTC epoch the GPS itself has decoded, or 0 if it has none yet. A receiver decodes TIME from
+   *  the satellite stream well before it can solve a POSITION, so a valid time with no fix is
+   *  positive proof the module is alive and tracking, not dead. That is the distinction the GPS
+   *  page could not previously show, and it is what "acquiring..." was hiding. */
+  uint32_t getGpsTime();
+  /** Altitude in metres from the last fix (0 when there is no fix). */
+  int  getGpsAltitude();
   /** True once a valid fix has been seen this session. */
   bool getGpsHadFix() const { return _gps_had_fix; }
   double getNodeLat() const { return _sensors ? _sensors->node_lat : 0.0; }
