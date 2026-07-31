@@ -21,7 +21,6 @@
 #include <helpers/esp32/MultiTransportCompanionInterface.h>
 #include <helpers/esp32/WifiRuntimeStore.h>   // wifiConfig* (runtime Wi-Fi state the loop drives)
 #include <helpers/esp32/TouchPrefsStore.h>    // touchPrefsBuildLocalTz + WIFI_CONFIG_* sizes
-#include <helpers/esp32/SdNvsPrefs.h>        // route prefs off internal-flash NVS onto the SD card
 #include "esp_hosted.h"
 #include "esp_netif.h"
 #include "esp_event.h"
@@ -213,30 +212,6 @@ static void wadameshSetup() {
     }
     store.useSdMmcStorage();
   }
-
-  // Route the touch settings + Wi-Fi creds off internal-flash NVS onto the SD card, the same way
-  // every S3 board does (src/main.cpp). This board never did it, so although contacts and chat
-  // history correctly moved to SD above, EVERY pref write still hit NVS in internal flash.
-  //
-  // That matters here beyond wear: this panel is a DSI video one whose framebuffer is streamed
-  // continuously out of PSRAM, and an internal-flash write visibly disturbs it -- a whole-screen
-  // flash, reported as #167. The trigger list is exactly the pref/thread-state writes: a message
-  // arriving, opening a chat that has unread messages, and deleting a contact (which writes
-  // repeatedly and so flickers for the whole operation). Writes that go to the SD card instead
-  // never do it -- panning the map downloads and writes tiles continuously with no flicker at all,
-  // which is what pinned this down.
-  //
-  // Only when a card is actually mounted: with no card there is nowhere better to put prefs, and
-  // moving them from NVS to the internal FAT partition would trade one flash write for another
-  // while needlessly changing where existing users' settings live. Old NVS values still load and
-  // migrate on their next save, so this is transparent. touchPrefsReload() is required because
-  // boot already read prefs (UI rotation) through the old backend and cached the blob.
-  if (g_sd_ok) {
-    SdNvsPrefs::useFile((fs::FS*)&SD_MMC, "/meshcomod");
-    touchPrefsReload();
-    printf("[storage] prefs -> SD /meshcomod (off internal-flash NVS)\n");
-  }
-
   store.begin();
 
   the_mesh.begin(disp != NULL);
