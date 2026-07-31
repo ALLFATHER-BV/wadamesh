@@ -44372,6 +44372,19 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // is the single point where orientation is established for the session.
 #if defined(ESP32)
     s_ui_rotation = touchPrefsGetUiRotation();
+#if defined(HELTEC_LORA_V4_R8)
+    // V4-R8: force PORTRAIT at every boot. A tester who switched to landscape got stuck: the
+    // shared cap-touch landscape transform was tuned on the V4's ST7789 driver, whose portrait
+    // baseline is panel rotation 2 (+180) -- the R8's LovyanGFX panel runs baseline 0, so the
+    // same map landed every touch point-mirrored and the setting could not be reached to undo
+    // it. The R8-specific map in HeltecV4CapTouch.cpp is the candidate fix (tester-verify);
+    // until a tester confirms it, booting always returns to the known-good portrait, so the
+    // worst case of trying landscape is a reboot.
+    if (s_ui_rotation != LV_DISP_ROT_NONE) {
+      s_ui_rotation = LV_DISP_ROT_NONE;
+      touchPrefsSetUiRotation(LV_DISP_ROT_NONE);
+    }
+#endif
 #if defined(HAS_TDECK_GT911)
     // The T-Deck panel is landscape-native (320x240) — the early boot wordmark
     // already renders upright at panel rotation 3. Always run the UI in
