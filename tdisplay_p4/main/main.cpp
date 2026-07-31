@@ -440,6 +440,17 @@ extern "C" void app_main(void) {
     }
     serial_interface.tickWebSocketHandshake();
 
+    // Service the sensor manager. This was MISSING on this board: sensors.begin() ran at boot and
+    // then nothing ever pumped it again, while every S3 board calls this each iteration (see
+    // src/main.cpp, which is excluded from this build — that is how the call got lost in the port).
+    //
+    // sensors.loop() is what drains the GPS UART into MicroNMEA. Without it the parser never sees a
+    // byte, so isValid() stays false forever and the UI sits on "searching" no matter how good the
+    // sky is — while the module itself is perfectly happy and does acquire a fix (proven with a raw
+    // UART probe: a valid 3D fix at HDOP 2.2 that the firmware never knew about). It also starves
+    // everything else the manager provides: telemetry sensors and the GPS->RTC time sync.
+    sensors.loop();
+
     the_mesh.loop();
     vTaskDelay(1);
   }
