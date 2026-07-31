@@ -25,6 +25,14 @@ idf_component_register(
 # -Wno-error does not cancel it, so strip it outright (warnings stay visible, non-fatal).
 idf_build_set_property(COMPILE_OPTIONS "-Wno-error=unused-variable" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-Wno-error=unused-const-variable" APPEND)
+# -O2 (the #167 underrun fix stack) enables deeper flow analysis that trips new warnings in
+# VENDORED code (esp-modbus and friends) which builds clean at -Os. Same policy as above:
+# keep the warnings visible, never fatal, for code we consume as a library.
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=stringop-truncation" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=stringop-overflow" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=array-bounds" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=restrict" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=maybe-uninitialized" APPEND)
 idf_build_get_property(_co COMPILE_OPTIONS)
 list(REMOVE_ITEM _co "-Werror=all")
 idf_build_set_property(COMPILE_OPTIONS "${_co}")

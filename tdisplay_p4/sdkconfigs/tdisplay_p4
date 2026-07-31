@@ -80,3 +80,20 @@ CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 # inherit a bogus GPIO reset.
 CONFIG_ESP_HOSTED_RESET_SLAVE_USING_CALLBACK=y
 CONFIG_ESP_HOSTED_SDIO_RESET_SLAVE_USING_CALLBACK=y
+
+# --- #167 whole-screen blue flash: Espressif's documented DPI-underrun mitigations. -------------
+# The esp_lcd DSI driver's own ISR comment says an underrun turns the display blue, and the
+# esp-iot-solution MIPI-DSI guide prescribes exactly these three for "can't fetch data from
+# external memory fast enough": a 256 KB L2 cache with 128 B lines (fewer, larger PSRAM
+# transactions -> more headroom for the continuous ~120 MB/s DSI fetch), and perf optimization.
+# The shared 'wadamesh' fragment sets -Os for the Tanmatsu's AppFS size ceiling; this board is a
+# plain 4 MB OTA slot with ~1.1 MB free, so it can afford -O2 (build.sh orders this fragment last
+# so board overrides win). SPIRAM_SPEED_200M + XIP_FROM_PSRAM, the other two recommendations,
+# were already set.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=n
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_CACHE_L2_CACHE_128KB=n
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_64B=n
+CONFIG_CACHE_L2_CACHE_LINE_128B=y
+
