@@ -1950,7 +1950,19 @@ static bool g_cap_touch_hw_started = false;
 // build). 24 × 240 × 2 B = 11.5 KB. Flush time is bound by SPI clock
 // (80 MHz), not memcpy speed, so the throughput delta is small —
 // LVGL just calls flush_cb more often.
+#if defined(HAS_TDISPLAY_P4)
+// DIAGNOSTIC (#167): the T-Display P4 is a DSI video-mode panel with a SINGLE framebuffer, so every
+// LVGL band is copied into the buffer the panel is actively scanning out. At 24 lines a full-screen
+// repaint is ~26 back-to-back DMA transfers into that live buffer -- and the events testers report
+// (a message arriving, opening a chat with unread, adding/deleting a contact) are exactly the ones
+// that rebuild the whole screen, while panning the map only repaints its own region and never
+// flashes. Wider bands make the same repaint ~10 transfers instead of ~26. Kept just small enough
+// that the 2x upscale scratch still fits internal SRAM (568*128*2 = ~145 KB), so this changes ONLY
+// the burst count and not where the scratch lives.
+static constexpr int LV_DRAW_BUF_LINES = 64;
+#else
 static constexpr int LV_DRAW_BUF_LINES = 24;
+#endif
 static lv_color_t* g_draw_buffer = nullptr;
 static uint32_t    g_draw_buf_px  = 240 * LV_DRAW_BUF_LINES;   // actual buffer size in px; shrinks if the full alloc fails at boot
 #if CAP_LARGE_SCREEN

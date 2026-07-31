@@ -3,6 +3,7 @@
 #include "RM69A10Display.h"
 #include <Arduino.h>
 #include "esp_heap_caps.h"
+#include "esp_cache.h"   // esp_cache_msync — flush the memset framebuffer out to the DSI DMA
 #include "esp_ldo_regulator.h"
 #include "Xl9535.h"                 // SCREEN_RST lives on the expander (reset_gpio_num = -1)
 #include "esp_lcd_mipi_dsi.h"
@@ -109,6 +110,19 @@ bool RM69A10Display::begin() {
 
   esp_lcd_panel_reset(_panel);
   if (esp_lcd_panel_init(_panel) != ESP_OK) { Serial.println("[RM69A10] panel_init fail"); return false; }
+
+  // Blank the framebuffer BEFORE switching the panel on. It is freshly allocated PSRAM, so it holds
+  // garbage; turning the panel on first meant the DSI streamed that garbage to the screen until the
+  // clear below finished -- the colour flash testers see before the boot splash (#167). Write the
+  // buffer directly (memset + a cache flush to make it visible to the DSI's DMA) instead of pushing
+  // strips through draw_bitmap: it is one pass with the panel still dark, and it avoids a burst of
+  // 39 back-to-back DMA transfers into a buffer the panel is scanning out.
+  void* fb = nullptr;
+  if (esp_lcd_dpi_panel_get_frame_buffer(_panel, 1, &fb) == ESP_OK && fb) {
+    const size_t fb_bytes = (size_t)RM_W * RM_H * 2;
+    memset(fb, 0, fb_bytes);
+    esp_cache_msync(fb, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  }
   esp_lcd_panel_disp_on_off(_panel, true);
 
   // Brightness: the init array ships 0x51=0 (placeholder), and RM69A10 brightness is driven at
@@ -124,20 +138,6 @@ bool RM69A10Display::begin() {
   esp_lcd_dpi_panel_event_callbacks_t cbs = {};
   cbs.on_color_trans_done = rm69a10TransDone;
   esp_lcd_dpi_panel_register_event_callbacks(_panel, &cbs, nullptr);
-
-  // Clear the panel framebuffer to black once, so nothing stale shows before LVGL's first flush.
-  {
-    const int SH = 32;
-    uint16_t* strip = (uint16_t*)heap_caps_calloc((size_t)RM_W * SH, 2, MALLOC_CAP_SPIRAM);
-    if (strip) {
-      for (int y0 = 0; y0 < RM_H; y0 += SH) {
-        int hh = (y0 + SH <= RM_H) ? SH : (RM_H - y0);
-        esp_lcd_panel_draw_bitmap(_panel, 0, y0, RM_W, y0 + hh, strip);
-        if (s_flush_sem) xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(100));   // let the copy finish before reusing/freeing strip
-      }
-      free(strip);
-    }
-  }
 
   Serial.printf("[RM69A10] up %dx%d\n", RM_W, RM_H);
   return true;
