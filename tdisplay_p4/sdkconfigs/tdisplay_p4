@@ -80,3 +80,15 @@ CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 # inherit a bogus GPIO reset.
 CONFIG_ESP_HOSTED_RESET_SLAVE_USING_CALLBACK=y
 CONFIG_ESP_HOSTED_SDIO_RESET_SLAVE_USING_CALLBACK=y
+
+# --- #167 whole-screen colour flash: keep code/rodata OFF the PSRAM bus. ------------------------
+# The flush tracer proved LVGL never paints the flash colour (every large band it pushes is 0x0000
+# black), so the panel is displaying something that was never in the framebuffer -- i.e. the DSI is
+# starving, not the UI misdrawing. This panel streams 568*1232*2 bytes ~60x/s = ~84 MB/s out of
+# PSRAM continuously, and with XIP every instruction fetch and rodata read competes for that same
+# bus. The reported triggers are all bursts of code + data churn (rebuilding the contact/chat list),
+# while panning the map reuses a warm tile cache and never flashes. Turning XIP off leaves the PSRAM
+# bus essentially to the display alone; code runs from flash through the cache as usual.
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=n
+CONFIG_SPIRAM_RODATA=n
+CONFIG_SPIRAM_XIP_FROM_PSRAM=n

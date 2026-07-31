@@ -111,6 +111,14 @@ endforeach()
 # One-off C6-reflash helper: build with `C6_FLASH_HELPER=1 ./build.sh build` to boot a P4 image that
 # never touches the C6 (no C6_EN reset pulse, no AT worker), so the C6 can be held in ROM download mode
 # and reflashed over its own USB. Harmless when the env var is unset (normal builds are unaffected).
+# Diagnostic build for the whole-screen colour flash (#167): `WADA_P4_FLUSH_TRACE=1 ./build.sh build`
+# logs every large, mostly-single-colour band pushed to the panel, with its RGB565 value. If the
+# screen flashes and nothing logs, the cause is below LVGL and the UI is the wrong place to look.
+if(DEFINED ENV{WADA_P4_FLUSH_TRACE})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_FLUSH_TRACE=1" APPEND)
+  message(STATUS "wadamesh: FLUSH TRACE enabled (diagnostic build, do not ship)")
+endif()
+
 if(DEFINED ENV{C6_FLASH_HELPER})
   idf_build_set_property(COMPILE_OPTIONS "-DTDP4_C6_FLASH_HELPER=1" APPEND)
   message(STATUS "wadamesh: BUILDING C6-FLASH HELPER (P4 leaves the C6 free)")
