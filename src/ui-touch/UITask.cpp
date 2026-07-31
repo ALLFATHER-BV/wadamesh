@@ -35574,11 +35574,19 @@ static void refreshSettingsSectionSubtitles() {
     }
   }
 
-  // Live GPS fix status on the Device-settings line while it's open. (The
-  // control-center drop-down's GPS + system line are refreshed from the periodic
-  // refreshStatusLabels tick instead — this function only runs while Settings is.)
-  if (g_set_modal.root && g_set_modal.gps_status &&
-      g_set_modal.kind == SettingsModalKind::Device) {
+  // Live GPS status while the GPS page (or the legacy Device modal) is open. (The control-center
+  // drop-down's GPS + system line are refreshed from the periodic refreshStatusLabels tick
+  // instead — this function only runs while Settings is.)
+  //
+  // This used to require kind == SettingsModalKind::Device, which stopped being true when the
+  // settings reorg moved the GPS block into its own PAGE (CAT_GPS -> buildDeviceSettings(DSEC_GPS)).
+  // The condition then never matched, so the label was written once at build time and never again:
+  // the page looked frozen and only "updated" when you closed and reopened it — including the
+  // elapsed-search timer, which made a working receiver look stuck. Accept either host, and guard
+  // with lv_obj_is_valid so a stale pointer from a closed page can never be written.
+  if (g_set_modal.gps_status && lv_obj_is_valid(g_set_modal.gps_status) &&
+      (s_settings_open_cat == CAT_GPS ||
+       (g_set_modal.root && g_set_modal.kind == SettingsModalKind::Device))) {
     lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
   }
 
