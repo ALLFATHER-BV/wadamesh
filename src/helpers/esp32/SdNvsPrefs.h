@@ -71,9 +71,9 @@ private:
 
   bool   useNvs();              // legacy probe (NVS vs SD), cached globally
   Kv*    sdFind(const char* key);
-  void   sdSet(const char* key, const uint8_t* data, size_t len);
-  void   sdLoad();
-  void   sdSave();
+  bool   sdSet(const char* key, const uint8_t* data, size_t len);
+  bool   sdLoad();
+  bool   sdSave();
   uint64_t sdGetInt(const char* key, uint64_t def, int width);
   size_t sdPutInt(const char* key, uint64_t v, int width);
 };

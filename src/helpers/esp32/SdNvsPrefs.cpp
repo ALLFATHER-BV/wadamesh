@@ -4,6 +4,7 @@
 #include <FS.h>
 #include <SD.h>
 #include <SPIFFS.h>
+#include <errno.h>
 #include <string.h>
 
 // ----------------------------- backend selection -----------------------------
@@ -59,23 +60,45 @@ bool SdNvsPrefs::useNvs() {
 // ----------------------------- begin / end -----------------------------
 bool SdNvsPrefs::begin(const char* ns, bool readOnly) {
   _read_only = readOnly;
-  _sd.clear();
-  _sd_loaded = false;
   if (_nvs_open) { _nvs.end(); _nvs_open = false; }
 
   if (fileMode()) {
-    snprintf(_path, sizeof(_path), "%s/%s.kv", s_file_dir, ns);
-    sdLoad();
-    _sd_loaded = true;
+    char path[sizeof(_path)];
+    snprintf(path, sizeof(path), "%s/%s.kv", s_file_dir, ns);
+    if (strncmp(_path, path, sizeof(_path)) != 0) {
+      strncpy(_path, path, sizeof(_path) - 1);
+      _path[sizeof(_path) - 1] = '\0';
+      _sd.clear();
+      _sd_loaded = false;
+    }
+    const bool had_cache = _sd_loaded;
+    const bool loaded = sdLoad();
+    if (loaded) _sd_loaded = true;
     if (nvsHasLegacyData()) _nvs_open = _nvs.begin(ns, true);   // RO migration source
-    return true;
+    // A transient storage outage must not turn a previously-loaded namespace
+    // into an empty one. Readers can keep using the last-known-good mirror;
+    // writers fail so callers do not report a save that never reached disk.
+    return loaded || (readOnly && had_cache);
   }
 
-  if (useNvs()) { _nvs_open = _nvs.begin(ns, readOnly); return _nvs_open; }
-  snprintf(_path, sizeof(_path), "/meshcomod/%s.kv", ns);
-  sdLoad();
-  _sd_loaded = true;
-  return true;
+  if (useNvs()) {
+    _sd.clear();
+    _sd_loaded = false;
+    _nvs_open = _nvs.begin(ns, readOnly);
+    return _nvs_open;
+  }
+  char path[sizeof(_path)];
+  snprintf(path, sizeof(path), "/meshcomod/%s.kv", ns);
+  if (strncmp(_path, path, sizeof(_path)) != 0) {
+    strncpy(_path, path, sizeof(_path) - 1);
+    _path[sizeof(_path) - 1] = '\0';
+    _sd.clear();
+    _sd_loaded = false;
+  }
+  const bool had_cache = _sd_loaded;
+  const bool loaded = sdLoad();
+  if (loaded) _sd_loaded = true;
+  return loaded || (readOnly && had_cache);
 }
 
 void SdNvsPrefs::end() {
@@ -88,48 +111,114 @@ SdNvsPrefs::Kv* SdNvsPrefs::sdFind(const char* key) {
   return nullptr;
 }
 
-void SdNvsPrefs::sdSet(const char* key, const uint8_t* data, size_t len) {
+bool SdNvsPrefs::sdSet(const char* key, const uint8_t* data, size_t len) {
+  if (!key || (len > 0 && !data)) return false;
   Kv* e = sdFind(key);
+  bool added = false;
+  std::vector<uint8_t> old;
   if (!e) {
     _sd.push_back(Kv{});
     e = &_sd.back();
+    added = true;
     strncpy(e->key, key, sizeof(e->key) - 1);
     e->key[sizeof(e->key) - 1] = '\0';
+  } else {
+    old = e->val;
   }
-  e->val.assign(data, data + len);
-  sdSave();
+  if (len == 0) e->val.clear();
+  else          e->val.assign(data, data + len);
+  if (sdSave()) return true;
+  if (added) _sd.pop_back();
+  else       e->val = std::move(old);
+  return false;
 }
 
-void SdNvsPrefs::sdLoad() {
+bool SdNvsPrefs::sdLoad() {
+  fs::FS* fs = activeFs();
+  if (!fs) return false;
+
+  char tmp[sizeof(_path) + 5], bak[sizeof(_path) + 5];
+  if (snprintf(tmp, sizeof(tmp), "%s.tmp", _path) >= (int)sizeof(tmp) ||
+      snprintf(bak, sizeof(bak), "%s.bak", _path) >= (int)sizeof(bak)) return false;
+
+  // No file on the first load is a valid, empty namespace. Once a namespace
+  // has been loaded, however, a missing file means the backing FS disappeared;
+  // retain the RAM mirror instead of silently replacing every key with defaults.
+  const bool have_live = fs->exists(_path);
+  const bool have_tmp  = fs->exists(tmp);
+  const bool have_bak  = fs->exists(bak);
+  if (!have_live && !have_tmp && !have_bak) {
+    if (_sd_loaded) return false;
+    _sd.clear();
+    return true;
+  }
+
+  auto parse = [fs](const char* path, std::vector<Kv>& out) {
+    File f = fs->open(path, FILE_READ);
+    if (!f) return false;
+    bool ok = true;
+    // record = [keylen u8][key bytes][vallen u16 LE][val bytes]. Parse into a
+    // temporary vector so a short/corrupt file cannot destroy the RAM mirror.
+    while (f.available() > 0) {
+      if (out.size() >= 256) { ok = false; break; }
+      int kl = f.read();
+      if (kl <= 0 || kl > 15) { ok = false; break; }
+      char k[16] = {0};
+      if (f.read((uint8_t*)k, kl) != kl) { ok = false; break; }
+      int lo = f.read(), hi = f.read();
+      if (lo < 0 || hi < 0) { ok = false; break; }
+      size_t vl = (size_t)lo | ((size_t)hi << 8);
+      if (vl > 2048) { ok = false; break; }
+      std::vector<uint8_t> v(vl);
+      if (vl && f.read(v.data(), vl) != (int)vl) { ok = false; break; }
+      Kv e; strncpy(e.key, k, sizeof(e.key) - 1); e.key[sizeof(e.key) - 1] = '\0';
+      e.val = std::move(v);
+      out.push_back(std::move(e));
+    }
+    f.close();
+    return ok;
+  };
+
+  // Prefer the live file. If a reset landed between the two renames, validate
+  // the verified temp next, then fall back to the previous complete backup.
+  std::vector<Kv> loaded;
+  if (have_live && parse(_path, loaded)) {
+    if (have_tmp) fs->remove(tmp);
+    if (have_bak) fs->remove(bak);
+    _sd = std::move(loaded);
+    return true;
+  }
+  loaded.clear();
+  if (have_tmp && parse(tmp, loaded)) {
+    if (have_live && !fs->remove(_path)) return false;
+    if (!fs->rename(tmp, _path)) return false;
+    if (have_bak) fs->remove(bak);
+    _sd = std::move(loaded);
+    return true;
+  }
+  loaded.clear();
+  if (have_bak && parse(bak, loaded)) {
+    if (have_live && !fs->remove(_path)) return false;
+    if (have_tmp) fs->remove(tmp);
+    if (!fs->rename(bak, _path)) return false;
+    _sd = std::move(loaded);
+    return true;
+  }
+
+  Serial.printf("[PREFS] refusing partial/corrupt file %s\n", _path);
+  if (_sd_loaded) {
+    // Keep the last-known-good mirror when a mounted filesystem becomes
+    // temporarily unreadable or exposes an incomplete file.
+    return false;
+  }
   _sd.clear();
-  fs::FS* fs = activeFs();
-  if (!fs) return;
-  File f = fs->open(_path, FILE_READ);
-  if (!f) return;
-  // record = [keylen u8][key bytes][vallen u16 LE][val bytes]. Sanity caps stop a
-  // corrupt file from a huge alloc; on any bad record we stop and keep what loaded.
-  while (f.available() > 0 && _sd.size() < 256) {
-    int kl = f.read();
-    if (kl <= 0 || kl > 15) break;
-    char k[16] = {0};
-    if (f.read((uint8_t*)k, kl) != kl) break;
-    int lo = f.read(), hi = f.read();
-    if (lo < 0 || hi < 0) break;
-    size_t vl = (size_t)lo | ((size_t)hi << 8);
-    if (vl > 2048) break;
-    std::vector<uint8_t> v(vl);
-    if (vl && f.read(v.data(), vl) != (int)vl) break;
-    Kv e; strncpy(e.key, k, sizeof(e.key) - 1); e.key[sizeof(e.key) - 1] = '\0';
-    e.val = std::move(v);
-    _sd.push_back(std::move(e));
-  }
-  f.close();
+  return false;
 }
 
-void SdNvsPrefs::sdSave() {
-  if (_read_only) return;
+bool SdNvsPrefs::sdSave() {
+  if (_read_only) return false;
   fs::FS* fs = activeFs();
-  if (!fs) return;
+  if (!fs) return false;
   // Create the parent dir (SD needs it; SPIFFS is flat and treats the whole path
   // as a filename, so mkdir is a harmless no-op there).
   char dir[40];
@@ -139,18 +228,63 @@ void SdNvsPrefs::sdSave() {
 #if defined(TDP4_POKE_TRACE)
   printf("[SDW] %lu core%d kv w %s\n", (unsigned long)millis(), (int)xPortGetCoreID(), _path);
 #endif
-  File f = fs->open(_path, FILE_WRITE);   // truncate + rewrite the whole file
-  if (!f) return;
+
+  char tmp[sizeof(_path) + 5], bak[sizeof(_path) + 5];
+  if (snprintf(tmp, sizeof(tmp), "%s.tmp", _path) >= (int)sizeof(tmp) ||
+      snprintf(bak, sizeof(bak), "%s.bak", _path) >= (int)sizeof(bak)) return false;
+  fs->remove(tmp);   // stale pre-swap temp; the intact live file remains authoritative
+
+  errno = 0;
+  File f = fs->open(tmp, FILE_WRITE);
+  if (!f) {
+    Serial.printf("[PREFS] save open failed %s (e%d)\n", tmp, errno);
+    return false;
+  }
+  bool ok = true;
+  size_t expected = 0;
   for (auto& e : _sd) {
     size_t kl = strnlen(e.key, sizeof(e.key));
     size_t vl = e.val.size();
-    f.write((uint8_t)kl);
-    f.write((const uint8_t*)e.key, kl);
-    f.write((uint8_t)(vl & 0xFF));
-    f.write((uint8_t)((vl >> 8) & 0xFF));
-    if (vl) f.write(e.val.data(), vl);
+    expected += 1 + kl + 2 + vl;
+    ok = ok && (f.write((uint8_t)kl) == 1);
+    ok = ok && (f.write((const uint8_t*)e.key, kl) == kl);
+    ok = ok && (f.write((uint8_t)(vl & 0xFF)) == 1);
+    ok = ok && (f.write((uint8_t)((vl >> 8) & 0xFF)) == 1);
+    if (vl) ok = ok && (f.write(e.val.data(), vl) == vl);
+    if (!ok) break;
   }
   f.close();
+
+  // A short write leaves only the temp damaged. Verify the closed file size too
+  // before touching the live copy (catches buffered close/flush failures).
+  if (ok) {
+    File verify = fs->open(tmp, FILE_READ);
+    ok = verify && verify.size() == expected;
+    if (verify) verify.close();
+  }
+  if (!ok) {
+    Serial.printf("[PREFS] save write failed %s (e%d)\n", tmp, errno);
+    fs->remove(tmp);
+    return false;
+  }
+
+  // Two-step swap with recovery breadcrumbs. At every point either the old
+  // live file, the verified temp, or the backup is complete; sdLoad() resolves
+  // leftovers after a reset between renames.
+  const bool had_live = fs->exists(_path);
+  if (fs->exists(bak)) fs->remove(bak);
+  if (had_live && !fs->rename(_path, bak)) {
+    Serial.printf("[PREFS] save backup rename failed %s (e%d)\n", _path, errno);
+    fs->remove(tmp);
+    return false;
+  }
+  if (!fs->rename(tmp, _path)) {
+    Serial.printf("[PREFS] save commit rename failed %s (e%d)\n", _path, errno);
+    if (had_live) fs->rename(bak, _path);   // best-effort live rollback
+    return false;
+  }
+  if (had_live) fs->remove(bak);
+  return true;
 }
 
 uint64_t SdNvsPrefs::sdGetInt(const char* key, uint64_t def, int width) {
@@ -165,8 +299,7 @@ uint64_t SdNvsPrefs::sdGetInt(const char* key, uint64_t def, int width) {
 size_t SdNvsPrefs::sdPutInt(const char* key, uint64_t v, int width) {
   uint8_t b[8];
   for (int i = 0; i < width; i++) b[i] = (uint8_t)(v >> (8 * i));
-  sdSet(key, b, width);
-  return width;
+  return sdSet(key, b, width) ? width : 0;
 }
 
 // ----------------------------- API -----------------------------
@@ -181,15 +314,22 @@ bool SdNvsPrefs::isKey(const char* key) {
 
 bool SdNvsPrefs::remove(const char* key) {
   if (!fileMode() && useNvs()) return _nvs_open && _nvs.remove(key);
-  for (size_t i = 0; i < _sd.size(); i++)
-    if (strncmp(_sd[i].key, key, sizeof(_sd[i].key)) == 0) { _sd.erase(_sd.begin() + i); sdSave(); return true; }
+  for (size_t i = 0; i < _sd.size(); i++) {
+    if (strncmp(_sd[i].key, key, sizeof(_sd[i].key)) != 0) continue;
+    Kv old = _sd[i];
+    _sd.erase(_sd.begin() + i);
+    if (sdSave()) return true;
+    _sd.insert(_sd.begin() + i, std::move(old));
+    return false;
+  }
   return false;
 }
 
 bool SdNvsPrefs::clear() {
   if (fileMode()) {
+    std::vector<Kv> old = _sd;
     _sd.clear();
-    sdSave();
+    if (!sdSave()) { _sd = std::move(old); return false; }
     // Wipe any legacy NVS copy too, so a factory reset is permanent. Derive the
     // namespace from "<dir>/<ns>.kv".
     if (nvsHasLegacyData()) {
@@ -204,7 +344,11 @@ bool SdNvsPrefs::clear() {
     return true;
   }
   if (useNvs()) return _nvs_open && _nvs.clear();
-  _sd.clear(); sdSave(); return true;
+  std::vector<Kv> old = _sd;
+  _sd.clear();
+  if (sdSave()) return true;
+  _sd = std::move(old);
+  return false;
 }
 
 uint8_t SdNvsPrefs::getUChar(const char* k, uint8_t def) {
@@ -299,9 +443,9 @@ size_t SdNvsPrefs::getString(const char* k, char* buf, size_t maxLen) {
   return n;
 }
 size_t SdNvsPrefs::putString(const char* k, const char* v) {
-  if (fileMode()) { size_t n = v ? strlen(v) : 0; sdSet(k, (const uint8_t*)v, n); return n; }
+  if (fileMode()) { size_t n = v ? strlen(v) : 0; return sdSet(k, (const uint8_t*)v, n) ? n : 0; }
   if (useNvs()) return _nvs.putString(k, v);
-  size_t n = v ? strlen(v) : 0; sdSet(k, (const uint8_t*)v, n); return n;
+  size_t n = v ? strlen(v) : 0; return sdSet(k, (const uint8_t*)v, n) ? n : 0;
 }
 
 size_t SdNvsPrefs::getBytes(const char* k, void* buf, size_t maxLen) {
@@ -319,9 +463,9 @@ size_t SdNvsPrefs::getBytes(const char* k, void* buf, size_t maxLen) {
   return n;
 }
 size_t SdNvsPrefs::putBytes(const char* k, const void* buf, size_t len) {
-  if (fileMode()) { sdSet(k, (const uint8_t*)buf, len); return len; }
+  if (fileMode()) return sdSet(k, (const uint8_t*)buf, len) ? len : 0;
   if (useNvs()) return _nvs.putBytes(k, buf, len);
-  sdSet(k, (const uint8_t*)buf, len); return len;
+  return sdSet(k, (const uint8_t*)buf, len) ? len : 0;
 }
 
 #endif  // ESP32
