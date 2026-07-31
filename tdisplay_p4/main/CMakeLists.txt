@@ -19,6 +19,14 @@ idf_component_register(
 		c6_at              # AT-over-SDIO Wi-Fi/BLE driver for the on-board ESP32-C6 (P4-only)
 	INCLUDE_DIRS
 		"."
+		# The repo's own src/ MUST come before the meshcore component's include dir. The vendored
+		# core publishes core/src publicly and still carries OLD copies of the headers whose .cpp
+		# files it deliberately excludes (SdNvsPrefs, TouchPrefsStore, ...) because our src/ ships
+		# them. Without this line an angle include here resolves to the stale core header while the
+		# linker binds the new object -- so anything added to those headers since the core tag looks
+		# like it does not exist (SdNvsPrefs::useFile, touchPrefsReload). Same headers the app
+		# component compiles against, so main.cpp and the app layer now agree.
+		"${CMAKE_CURRENT_LIST_DIR}/../../src"
 )
 
 # The vendored MeshCore core + Arduino libs trip IDF's blanket -Werror=all. A bare
