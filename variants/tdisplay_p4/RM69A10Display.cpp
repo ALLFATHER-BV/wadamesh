@@ -10,6 +10,10 @@
 #include "esp_lcd_panel_io.h"       // esp_lcd_panel_io_tx_param (runtime brightness 0x51)
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_rm69a10.h"
+#if defined(TDP4_POKE_TRACE)
+#include "soc/mipi_dsi_host_struct.h"   // MIPI_DSI_HOST — raw host error status (poke-trace poller)
+#include "freertos/task.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -20,6 +24,22 @@
 // the frame buffer as horizontal black/garbage bands, worst during transitions (many rapid
 // flushes). This binary semaphore makes each flush synchronous: draw_bitmap → wait for done.
 static SemaphoreHandle_t s_flush_sem = nullptr;
+#if defined(TDP4_POKE_TRACE)
+// #167 hunt, round 3: the esp_lcd driver watches ONLY the bridge-FIFO underrun (proven silent
+// during visible flashes). The DSI HOST has its own never-read error latches: int_st0 = the
+// panel acking packets WITH ERRORS, int_st1 = ECC/CRC/timeout/payload-write errors INCLUDING
+// dpi_buff_pld_under (the host payload buffer underflowing -- a different FIFO than the bridge).
+// Both are read-clear, so a 25 ms poll gives per-event capture. If these latch when the screen
+// flashes, we have a hardware flash-detector and can bisect subsystems without eyes on the panel.
+static void dsiErrPollTask(void*) {
+  for (;;) {
+    const uint32_t st0 = MIPI_DSI_HOST.int_st0.val;   // RC
+    const uint32_t st1 = MIPI_DSI_HOST.int_st1.val;   // RC
+    if (st0 || st1) printf("[DSIERR] %lu st0=%08X st1=%08X\n", (unsigned long)millis(), (unsigned)st0, (unsigned)st1);
+    vTaskDelay(pdMS_TO_TICKS(25));
+  }
+}
+#endif
 static bool IRAM_ATTR rm69a10TransDone(esp_lcd_panel_handle_t, esp_lcd_dpi_panel_event_data_t*, void*) {
   BaseType_t hpw = pdFALSE;
   if (s_flush_sem) xSemaphoreGiveFromISR(s_flush_sem, &hpw);
@@ -38,7 +58,19 @@ static bool IRAM_ATTR rm69a10TransDone(esp_lcd_panel_handle_t, esp_lcd_dpi_panel
 #endif
 #define RM_DPI_MHZ  60
 #define RM_LANES    2
-#define RM_BITRATE  1000            // Mbps per lane — TODO(device): confirm vs LilyGo RM69A10 define
+// Lane bit rate. LilyGo/Meck ship 1000 Mbps (confirmed against both sources 2026-07-31), and the
+// panel needs only ~550 Mbps of it at DPI 60 MHz / RGB565 / 2 lanes -- the rest is eye margin.
+// #167 made that margin matter: SD-card write bursts load the P4's on-chip LDO4 and disturb the
+// sibling LDO3 that powers the DSI PHY, and at a 1 ns unit interval that wobble was enough to
+// glitch the link -- the panel loses a frame to a whole-screen blue flash (proven by elimination:
+// no flash with the card out or unwritten; framebuffer/underrun/host-error/DCS all measured clean;
+// identical timings+init to the flash-free Meck build). A 750 Mbps derate was tried against #167 and changed nothing
+// (the disturbance reaches the panel around the link, not through it), so this stays at the
+// vendor value. Overridable per build: -DRM_BITRATE_MBPS=<n>.
+#ifndef RM_BITRATE_MBPS
+#define RM_BITRATE_MBPS 1000
+#endif
+#define RM_BITRATE  RM_BITRATE_MBPS
 #define RM_HSYNC    50
 #define RM_HBP      150
 #define RM_HFP      50
@@ -139,6 +171,9 @@ bool RM69A10Display::begin() {
   cbs.on_color_trans_done = rm69a10TransDone;
   esp_lcd_dpi_panel_register_event_callbacks(_panel, &cbs, nullptr);
 
+  #if defined(TDP4_POKE_TRACE)
+  xTaskCreatePinnedToCore(dsiErrPollTask, "dsierr", 3072, nullptr, 3, nullptr, 1);
+#endif
   Serial.printf("[RM69A10] up %dx%d\n", RM_W, RM_H);
   return true;
 }
@@ -221,10 +256,20 @@ void RM69A10Display::writePixelsRGB565(int x, int y, int w, int h, const uint16_
 
 void RM69A10Display::setBrightness(uint8_t b) {
   if (!_dbi_io) return;
+#if defined(TDP4_POKE_TRACE)
+  // #167 hunt: DCS 0x51 is a low-power command injected into the LIVE video stream -- if the
+  // panel glitches a frame per command, these lines will pace the visible flashes exactly.
+  printf("[BRI] %lu val=%u\n", (unsigned long)millis(), b);
+#endif
   esp_lcd_panel_io_tx_param(_dbi_io, 0x51, &b, 1);   // DCS SET_DISPLAY_BRIGHTNESS
 }
 
+#if defined(TDP4_POKE_TRACE)
+void RM69A10Display::turnOn()  { printf("[DSP] %lu on\n",  (unsigned long)millis()); if (_panel) esp_lcd_panel_disp_on_off(_panel, true);  _on = true;  }
+void RM69A10Display::turnOff() { printf("[DSP] %lu off\n", (unsigned long)millis()); if (_panel) esp_lcd_panel_disp_on_off(_panel, false); _on = false; }
+#else
 void RM69A10Display::turnOn()  { if (_panel) esp_lcd_panel_disp_on_off(_panel, true);  _on = true;  }
 void RM69A10Display::turnOff() { if (_panel) esp_lcd_panel_disp_on_off(_panel, false); _on = false; }
+#endif
 
 #endif  // HAS_TDISPLAY_P4

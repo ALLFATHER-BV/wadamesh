@@ -51,6 +51,11 @@ void Xl9535::write(uint8_t io, bool high) {
   uint8_t port, bit; split(io, port, bit);
   if (high) _out[port] |=  (1 << bit);
   else      _out[port] &= ~(1 << bit);
+#if defined(TDP4_POKE_TRACE)
+  // #167 hunt: any expander write while the panel streams is a glitch suspect (this is an
+  // UNLOCKED shadow RMW -- a cross-task race can transiently drop SCREEN_RST or a rail bit).
+  printf("[XLW] %lu io=%u v=%d out=%02X%02X\n", (unsigned long)millis(), io, (int)high, _out[1], _out[0]);
+#endif
   writeReg(REG_OUT0 + port, _out[port]);
 }
 

@@ -41853,6 +41853,12 @@ static bool uiDataFsReady() {
   // T-Deck's /meshcomod root; fall back to FFat only when no card is present. Both are mounted at
   // boot in main.cpp (g_sd_ok / g_fs_ok). (The P4 used to fall into the #else SPIFFS branch below —
   // no SPIFFS partition exists there, so history was never persisted and vanished on every reboot.)
+  // #167: hot UI data (chat history) lives on the INTERNAL LittleFS -- SD write bursts
+  // electrically disturb this board's AMOLED, and the P4's internal FAT layer is broken
+  // (see the storage note in tdisplay_p4/main/main.cpp). SD = degraded fallback only;
+  // tiles keep using the SD via their own selector.
+  extern bool g_fs_ok;
+  if (g_fs_ok) { s_ui_data_fs = &LittleFS; s_ui_data_root[0] = '\0'; return true; }
   extern bool g_sd_ok;
   if (g_sd_ok) {
     SD_MMC.mkdir("/meshcomod");
@@ -41860,8 +41866,6 @@ static bool uiDataFsReady() {
     strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
     return true;
   }
-  extern bool g_fs_ok;
-  if (g_fs_ok) { s_ui_data_fs = &FFat; s_ui_data_root[0] = '\0'; return true; }
 #elif defined(HAS_TDECK_GT911)
   // T-Deck: the SD card is the persistent user-data store (large, removable,
   // survives a reflash) and is where chat history already lives. Prefer it; only
