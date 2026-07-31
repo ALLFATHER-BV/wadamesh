@@ -41906,6 +41906,11 @@ static bool uiDataFsIsSdCard() {
 #endif
 }
 static File uiDataOpen(const char* name, const char* mode) {
+#if defined(TDP4_POKE_TRACE)
+  // #167 hunt: every ui-data open, with the issuing core -- a 'w'/'a' open from core 1 during a
+  // manual add/delete IS the un-hopped writer we're looking for.
+  if (mode && mode[0] != 'r') printf("[SDW] %lu core%d uiData %s %s\n", (unsigned long)millis(), xPortGetCoreID(), mode, name);
+#endif
   if (!uiDataFsReady()) return File();
   char p[80]; snprintf(p, sizeof p, "%s%s", s_ui_data_root, name);
   File f = s_ui_data_fs->open(p, mode);
@@ -42461,6 +42466,15 @@ bool UITask::loadHistoryFromStorage() {
 
 bool UITask::saveThreadsToStorage() {
 #if defined(ESP32)
+#if defined(HAS_TDISPLAY_P4)
+  // #167: the threads file is rewritten on every contact add/delete and chat-state change --
+  // hop the write to the core-0 storage task like every other hot writer (see p4StorageCall).
+  if (xPortGetCoreID() != 0) {
+    struct A { UITask* t; bool ok; } a{ this, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->ok = a->t->saveThreadsToStorage(); }, &a);
+    return a.ok;
+  }
+#endif
   WdtHeavyGuard _wg;
   File f = uiDataOpen(k_ui_threads_path, "w");
   if (!f) return false;
@@ -42630,6 +42644,15 @@ static bool uiSegWriteRecords(File& f, const UITask::UIMessage* recs, int n) {
 // the whole point of the segmented layout).
 static bool uiSegAppendRecords(uint32_t first_seq, bool create,
                                const UITask::UIMessage* recs, int n) {
+#if defined(HAS_TDISPLAY_P4)
+  // #167: history writes hop to the core-0 storage task (see p4StorageCall in DataStore.cpp) --
+  // a core-1 SD write can mask the DSI frame-restart ISR long enough to drop a display frame.
+  if (xPortGetCoreID() != 0) {
+    struct A { uint32_t fs; bool c; const UITask::UIMessage* r; int n; bool ok; } a{ first_seq, create, recs, n, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->ok = uiSegAppendRecords(a->fs, a->c, a->r, a->n); }, &a);
+    return a.ok;
+  }
+#endif
   WdtHeavyGuard _wg;
   errno = 0;
   char name[48];
@@ -42682,6 +42705,13 @@ static bool uiSegAppendRecords(uint32_t first_seq, bool create,
 // lesson from the single-file store).
 static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs, int n,
                               bool sync_writer) {
+#if defined(HAS_TDISPLAY_P4)
+  if (xPortGetCoreID() != 0) {   // #167: hop to core 0 (see uiSegAppendRecords)
+    struct A { uint32_t fs; const UITask::UIMessage* r; int n; bool sw; bool ok; } a{ first_seq, recs, n, sync_writer, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->ok = uiSegCompactWrite(a->fs, a->r, a->n, a->sw); }, &a);
+    return a.ok;
+  }
+#endif
   WdtHeavyGuard _wg;
   errno = 0;
   char fin[48], tmp[48];
@@ -42715,6 +42745,12 @@ static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs,
 // Remove a retired segment (ring grew past retention; its records are gone
 // from RAM too).
 static void uiSegRemoveFile(uint32_t first_seq) {
+#if defined(HAS_TDISPLAY_P4)
+  if (xPortGetCoreID() != 0) {   // #167: hop to core 0 (see uiSegAppendRecords)
+    p4StorageCall([](void* p){ uiSegRemoveFile((uint32_t)(uintptr_t)p); }, (void*)(uintptr_t)first_seq);
+    return;
+  }
+#endif
   char name[48];
   uiSegName(first_seq, "", name, sizeof name);
   uiDataRemove(name);

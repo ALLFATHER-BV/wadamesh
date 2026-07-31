@@ -286,7 +286,15 @@ static void wadameshSetup() {
         if (w) { w.write((const uint8_t*)"1", 1); w.close(); }
       }
     }
-    // Deliberately NOT calling store.useSdMmcStorage(): FFat stays the DataStore root.
+#if defined(TDP4_SD_STORE_TEST)
+    // #167 EXPERIMENT: store back on the SD card with all hot writes hopped to core 0 (the tile
+    // task's core, which has never flashed). One variable vs the known-flashing config: the
+    // executing core. Uses the card's existing (slightly stale) store; migration skipped.
+    printf("[storage] TDP4_SD_STORE_TEST: store on SD, writes on core 0\n");
+    store.useSdMmcStorage();
+#else
+    // Deliberately NOT calling store.useSdMmcStorage(): the internal store stays the DataStore root.
+#endif
   }
   store.begin();
 

@@ -88,3 +88,8 @@ public:
 private:
   FILESYSTEM* _getContactsChannelsFS() const { if (_fsExtra) return _fsExtra; return _fs;};
 };
+
+#if defined(HAS_TDISPLAY_P4)
+// #167: run fn(arg) on a dedicated core-0 storage task, blocking the caller. See DataStore.cpp.
+void p4StorageCall(void (*fn)(void*), void* arg);
+#endif

@@ -129,6 +129,12 @@ if(DEFINED ENV{WADA_DSI_MBPS})
   message(STATUS "wadamesh: DSI lane rate = $ENV{WADA_DSI_MBPS} Mbps")
 endif()
 
+# #167: WADA_SD_STORE_TEST=1 puts the store back on the SD card (writes hop to core 0).
+if(DEFINED ENV{WADA_SD_STORE_TEST})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_SD_STORE_TEST=1" APPEND)
+  message(STATUS "wadamesh: SD-STORE-ON-CORE-0 experiment build")
+endif()
+
 # Companion diagnostic (#167): `WADA_P4_POKE_TRACE=1 ./build.sh build` logs every runtime poke at
 # the panel or the XL9535 expander (DCS brightness writes, disp on/off, expander bit writes) so
 # visible flashes can be correlated against them on the console.

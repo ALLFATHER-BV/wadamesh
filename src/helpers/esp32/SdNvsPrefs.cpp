@@ -136,6 +136,9 @@ void SdNvsPrefs::sdSave() {
   strncpy(dir, _path, sizeof(dir) - 1); dir[sizeof(dir) - 1] = '\0';
   char* slash = strrchr(dir, '/');
   if (slash && slash != dir) { *slash = '\0'; fs->mkdir(dir); }
+#if defined(TDP4_POKE_TRACE)
+  printf("[SDW] %lu core%d kv w %s\n", (unsigned long)millis(), (int)xPortGetCoreID(), _path);
+#endif
   File f = fs->open(_path, FILE_WRITE);   // truncate + rewrite the whole file
   if (!f) return;
   for (auto& e : _sd) {
