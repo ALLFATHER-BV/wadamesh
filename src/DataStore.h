@@ -90,6 +90,7 @@ private:
 };
 
 #if defined(HAS_TDISPLAY_P4)
-// #167: run fn(arg) on a dedicated core-0 storage task, blocking the caller. See DataStore.cpp.
+// #167: run fn(arg) on the dedicated CORE-1 storage task, blocking the caller. See DataStore.cpp.
 void p4StorageCall(void (*fn)(void*), void* arg);
+bool p4OnStorageTask();   // true when the current task IS the storage task (wrapper re-entry guard)
 #endif
