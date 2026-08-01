@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <cerrno>   // chat-store write diagnostics surface errno (ENFILE vs ENOSPC vs EIO)
 #if defined(ESP32)
   #include <time.h>
   #include <SPIFFS.h>
@@ -34,6 +35,9 @@
   #include "assets/lockscreen_placeholder_jpg.h"   // seeded to SPIFFS /lock/placeholder.jpg on first boot (PNG decode is broken on this board)
   #if CAP_LOCK_SCREEN
     #include "assets/lockscreen_wallpaper_rgb565.h"   // crisp pre-dithered default lock-screen wallpaper (no JPEG banding)
+    #if defined(TLORA_PAGER)
+      #include "assets/lockscreen_wallpaper_pager_rgb565.h"   // native 480x222 crop/layout for this board's wide/short panel
+    #endif
   #endif
   #include <esp_timer.h>
   #include <esp_chip_info.h>
@@ -105,6 +109,8 @@
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
   #include "friendmesh/people/FriendMeshBlePresence.h"
 #endif
+#include "ChannelUtil.h"      // Apps → Airtime (self-contained channel-utilization tool)
+#include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
@@ -123,6 +129,12 @@
   #if defined(HAS_PAGER_ENCODER)
     #include <helpers/input/PagerEncoder.h>
   #endif
+  #if defined(HAS_ATTAKY_MESH_KEYBOARD)
+    #include <AttakyMeshSeriesKeyboard.h>
+  #endif
+  #if defined(ATTAKY_MESH_SERIES)
+    #include <AttakyMeshSeriesKeys.h>
+  #endif
   #include "KeyboardLayouts.h"
   #include "i18n.h"
   #include "emoji_data.h"     // baked Noto colour-emoji glyphs (emojiGlyphLookup)
@@ -134,7 +146,11 @@
   #elif defined(HAS_RAK_TAP_V2)
     #include <LGFXDisplay.h>                 // LovyanGFX FSPI on RAK Tap V2
   #elif defined(HAS_TDISPLAY_P4)
-    #include <RM69A10Display.h>              // RM69A10 MIPI-DSI on the T-Display P4
+    #if defined(HAS_TDP4_LCD)
+      #include <HI8561Display.h>             // HI8561 TFT-LCD (LCD SKU) on the T-Display P4
+    #else
+      #include <RM69A10Display.h>            // RM69A10 MIPI-DSI AMOLED (default SKU) on the T-Display P4
+    #endif
   #else
     #include <helpers/ui/ST7789LCDDisplay.h>
   #endif
@@ -182,7 +198,7 @@
   #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8)
     extern LGFXDisplay display;
   #elif defined(HAS_TDISPLAY_P4)
-    extern RM69A10Display display;
+    extern DISPLAY_CLASS display;            // RM69A10Display (AMOLED) or HI8561Display (LCD) — set in CMakeLists
   #else
     extern ST7789LCDDisplay display;
   #endif
@@ -214,6 +230,13 @@ constexpr uint16_t k_ui_history_min_version = 6;   // v4/v5 used 96-char records
 constexpr const char* k_ui_threads_path = "/ui_threads_v1.bin";
 constexpr const char* k_ui_msgs_path    = "/ui_msgs_v1.bin";
 constexpr const char* k_ui_msgs_tmp_path = "/ui_msgs_v1.bin.tmp";
+// Separate temp for the SYNCHRONOUS (shutdown/reboot/no-PSRAM) writer. The
+// core-0 worker and the loop task can overlap when a stalled worker outlives
+// uiHistWaitWorkerIdle's 9 s cap — two truncating opens of ONE tmp interleave
+// into garbage, and whichever rename lands last installs a corrupt file that
+// the next boot quarantines (total history loss). Distinct tmp names make the
+// overlap last-rename-wins with each candidate internally consistent.
+constexpr const char* k_ui_msgs_tmp2_path = "/ui_msgs_v1.bin.tm2";
 constexpr uint32_t k_ui_threads_magic   = 0x55495448;  // "UITH"
 constexpr uint32_t k_ui_msgs_magic      = 0x55494D53;  // "UIMS"
 
@@ -292,6 +315,50 @@ struct __attribute__((packed)) UiMsgFileHeader {
   uint32_t msgcount;
   uint16_t msg_rec_size;
   uint8_t  _pad[2];
+};
+
+// ---- Segmented message store (generation 3) ------------------------------
+// The ring is persisted as fixed-capacity SEGMENT files under <data root>/msgs:
+// seg_<first_seq>.bin, k_ui_seg_records records each. New messages APPEND one
+// record to the newest ("active") segment — a ~240 B write instead of the old
+// full-ring rewrite (515 KB+ at 2300 messages), which shrinks the hard-cut
+// loss window, the SPI bus-collision window, and flash wear all at once.
+// Deletes tombstone in RAM and mark the owning segment dirty; compaction
+// rewrites JUST that segment from the RAM ring (disk holds exactly the ring's
+// record set, so no read pass is ever needed). Corruption quarantines one
+// segment instead of the whole history. On FAT backends /msgs is a real
+// subdirectory (single child under /meshcomod — stays inside the factory
+// wipe's 24-entry cap); on SPIFFS the same name is a legal FLAT file name
+// (31-char limit: "/msgs/seg_4294967295.bin" = 24 chars), so the layout is
+// identical everywhere and no mkdir is required there.
+constexpr const char* k_ui_seg_dir     = "/msgs";
+// Commit marker. Written (last) only once a migration has been fully verified,
+// so its ABSENCE means "the segment set on disk is a partial migration" — the
+// loader then wipes those segments and falls back to the still-intact
+// old-format file. Without it, a power cut between chunk writes left a valid
+// oldest-first PREFIX that shadowed the old file forever: the UI came up
+// showing only the oldest few hundred messages, permanently.
+constexpr const char* k_ui_seg_ok      = "/msgs/store.ok";
+constexpr uint32_t    k_ui_seg_magic   = 0x55495347;   // "UISG"
+constexpr uint16_t    k_ui_seg_version = 1;
+constexpr int         k_ui_seg_records = 256;          // records per segment (~60 KB at v1 size)
+constexpr int         k_ui_seg_max     = 24;           // table cap: 5000/256 = 20 live segments + slack
+
+struct __attribute__((packed)) UiSegHeader {
+  uint32_t magic;          // k_ui_seg_magic
+  uint16_t version;        // k_ui_seg_version
+  uint16_t msg_rec_size;   // sizeof(UiSegMsg) at write time — self-describing so
+                           // future fields append at the END (same rule as v5+)
+  uint32_t first_seq;      // seq of this segment's first-ever record (== filename key)
+  uint8_t  _pad[4];
+};
+
+// On-disk segment record: the v6 record layout + the monotonic seq appended
+// (append-at-end evolution — a reader of either size copies min(rec_size) and
+// zero-fills the rest, so seq reads 0 from a hypothetical older record).
+struct __attribute__((packed)) UiSegMsg {
+  UiHistoryMsg m;
+  uint32_t     seq;
 };
 } // namespace
 #endif
@@ -488,8 +555,8 @@ static bool emojiImgfontPathCb(const lv_font_t* /*font*/, void* img_src, uint16_
 static lv_font_t* s_emoji_font[3] = { nullptr, nullptr, nullptr };  // one per text size
 #endif
 
-// UI scale (font-based, at NATIVE resolution so it stays crisp). 100 / 130 / 160 percent — set in
-// initTouchFontFallbacks() from the saved pref. SC() scales a layout dimension to match. The bottom
+// UI size (font-based, at native resolution so it stays crisp) is set in
+// initTouchFontFallbacks() from the saved preset. SC() scales geometry where a board supports it. The bottom
 // tab bar is deliberately NOT scaled (g_font_tab stays 16 px + TABBAR_H is fixed) — by request it
 // stays the Normal size at every level.
 static int s_ui_fscale = 100;
@@ -514,16 +581,44 @@ static inline lv_coord_t PCW(int px) {
   lv_coord_t cap = lv_disp_get_hor_res(nullptr) - SC(12);
   return (cap > 0 && w > cap) ? cap : w;
 }
-#if CAP_LARGE_SCREEN
+#if CAP_UI_SIZE
 static lv_font_t g_font_tab;     // fixed 16 px tab-bar icon font (montserrat_16 + person glyph)
 #endif
 
 static void initTouchFontFallbacks() {
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  // The Pager is wide but only 222 px tall. Grow the semantic text roles while
+  // leaving SC() at 100%; globally scaling every row/card made content
+  // unreachable. Layouts that need more room are bounded individually below.
+  s_ui_fscale = 100;
+  switch (touchPrefsGetUiScale()) {
+    case 1:
+      g_font_12 = lv_font_montserrat_16;
+      g_font_14 = lv_font_montserrat_18;
+      g_font_16 = lv_font_montserrat_20;
+      break;
+    case 2:
+      g_font_12 = lv_font_montserrat_18;
+      g_font_14 = lv_font_montserrat_20;
+      g_font_16 = lv_font_montserrat_24;
+      break;
+    default:
+      g_font_12 = lv_font_montserrat_12;
+      g_font_14 = lv_font_montserrat_14;
+      g_font_16 = lv_font_montserrat_16;
+      break;
+  }
+  g_font_tab = lv_font_montserrat_16;
+#elif CAP_LARGE_SCREEN
   // Crisp "UI size": render bigger by swapping in larger built-in Montserrat fonts (NOT by
   // upscaling a low-res frame). g_font_12/14/16 are what the whole UI draws with, so this scales
   // every screen at once. The colour-emoji + non-Latin fallbacks stay their baked sizes (they don't
   // grow), which is fine for Latin text. g_font_tab is pinned to 16 px so the bottom bar never grows.
+  // UI scale from the saved pref (Normal/Large/Huge -> 100/140/170%). The P4 honours it like the
+  // Tanmatsu — its "UI size" dropdown is shown (CAP_LARGE_SCREEN), so pinning 100% here made that
+  // setting a dead no-op (reported: "changing text size doesn't work"). At Large/Huge some P4 chrome
+  // that still uses unscaled dims (status bar, home grid, list rows) can be tight; that is the lesser
+  // problem and a per-screen SC() follow-up, not a reason to disable scaling outright.
   switch (touchPrefsGetUiScale()) { case 1: s_ui_fscale = 140; break; case 2: s_ui_fscale = 170; break; default: s_ui_fscale = 100; break; }
   switch (s_ui_fscale) {
     case 140: g_font_12 = lv_font_montserrat_16; g_font_14 = lv_font_montserrat_20; g_font_16 = lv_font_montserrat_24; break;  // Large ~1.4x
@@ -584,7 +679,7 @@ static void initTouchFontFallbacks() {
   s_cc_icons_font = cc_icons_16;
   s_cc_icons_font.fallback = g_font_16.fallback;
   g_font_16.fallback = &s_cc_icons_font;
-#if CAP_LARGE_SCREEN
+#if CAP_UI_SIZE
   // The fixed-size tab bar font needs the person glyph too (Contacts tab icon, U+F007) at 16 px.
   static lv_font_t s_tab_person; s_tab_person = person_font; s_tab_person.fallback = nullptr;
   g_font_tab.fallback = &s_tab_person;
@@ -815,7 +910,12 @@ static bool wavOpen(const char* prefpath, File& f) {
   if (!prefpath || !prefpath[0]) return false;
   fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)   // only the T-Deck/pager sound picker ever writes an "sd:"-prefixed pref
-  if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; fmSdTryMount(); }
+  // No fmSdTryMount() here: this runs on the throwaway notify task, and walking
+  // the SD.end()+SD.begin() mount ladder from a second task races the loop
+  // task's own SD use (the one documented single-task assumption). If the card
+  // isn't mounted the open below fails fast and the chime falls back; mounting
+  // is owned by boot adoption / sdHealthTick's reinsert watch / the FM paths.
+  if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; }
 #endif
   f = fsp->open(fp, FILE_READ);
   if (!f || f.isDirectory()) { if (f) f.close(); return false; }
@@ -1224,6 +1324,46 @@ static void statusBarSetTall(bool tall) {
   // (updateGlobalStatusBar drives this every tick + refreshes the left zone; it must
   // NOT be called from here — it calls back into statusBarSetTall = recursion.)
 }
+
+// ---- AppPage: the shared full-screen app-page chrome (see AppPage.h) --------------
+// Thin wrappers over the machinery just above, exported so the self-contained app
+// modules (ChannelUtil = Airtime, SnakeGame) build the same page as the in-file tool
+// pages instead of hand-rolling it against a hardcoded bar height.
+lv_coord_t appPageContentTop() { return STATUSBAR_H; }
+lv_coord_t appPageContentH()   { return (lv_coord_t)(lv_disp_get_ver_res(nullptr) - STATUSBAR_H); }
+
+lv_obj_t* appPageCreateRoot(uint32_t bg_color) {
+  lv_obj_t* root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(root);
+  lv_obj_set_size(root, lv_disp_get_hor_res(nullptr), appPageContentH());
+  lv_obj_set_pos(root, 0, appPageContentTop());
+  lv_obj_set_style_bg_color(root, lv_color_hex(bg_color), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+  // CLICKABLE is what makes the page modal: every press lands here instead of falling
+  // through to the tab bar / list underneath.
+  lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);
+  return root;
+}
+
+void appPageBegin(const char* title, void (*close_fn)()) {
+  s_apppage_title = title;
+  s_apppage_close = close_fn;
+  statusBarSetTall(true);
+  updateGlobalStatusBar();
+}
+
+void appPageEnd(void (*close_fn)()) {
+  if (s_apppage_close != close_fn) return;   // a different page owns the bar now — leave it
+  s_apppage_title = nullptr;
+  s_apppage_close = nullptr;
+  statusBarSetTall(false);
+  updateGlobalStatusBar();
+}
+
+void appPageDeleteRootAsync(lv_obj_t* root) {
+  if (root) lv_obj_del_async(root);
+}
 static const char* tsBlockReason();    // fwd decl (defined near idle-sleep hooks)
 static const char* tsWakeReasonStr(touchSleep::WakeReason r);  // fwd decl (defined near idle-sleep hooks)
 static void batteryTapCb(lv_event_t* e);   // fwd decl (defined near the battery chart) — Settings "Battery" button reuses it
@@ -1589,9 +1729,19 @@ static lv_obj_t* s_kb_bind_ta = nullptr;
 // end-cursor, so backspace deleted the last character no matter where the caret
 // was. When this returns false, kbMirrorBind binds the field directly and the
 // mirror sync / redirects below are skipped.
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+// Set while the module's '#' has summoned the OSK for this editing session; hideKb clears it.
+static bool s_osk_forced = false;
+#endif
+
 static inline bool kbMirrorActive() {
 #if CAP_KEYBOARD
   return false;   // physical keyboard: bind keys straight to the field, never show the on-screen kb
+#elif defined(HAS_ATTAKY_MESH_KEYBOARD)
+  // Keyboard is a detachable module, so decide at runtime, not via CAP_KEYBOARD:
+  // suppress the on-screen keys while the module answers on I2C, unless '#' has
+  // summoned them back for this field. No module: behave like stock upstream.
+  return !(attakyKeyboardPresent() && !s_osk_forced);
 #else
   return true;
 #endif
@@ -1722,13 +1872,16 @@ static void purgeDiscovered() {
   for (int i = 0; i < DISCOVERED_MAX; ++i) s_discovered[i].used = false;
 }
 
-// ---- Persist the discovered ring across reboots (NVS blob "disc") ----
+// ---- Persist the discovered ring across reboots ---------------------------
+// High-churn discovery data has its own namespace so an advert burst never
+// rewrites the critical touch settings snapshot.
 static const char*   KDISC = "disc";   // chunk 0 (older firmware wrote ≤24 records here)
+static const char*   DISC_NS = "discovered";
+static const char*   DISC_MARKER = "ver";
 static bool          s_disc_dirty   = false;
 static unsigned long s_disc_save_at = 0;
-// Compact on-disk record (84 B/entry). SdNvsPrefs's SD .kv backend (used under
-// Launcher) silently DROPS any single value > 2048 B on load (sdLoad bails on
-// the oversize record), so we cap each stored blob at DISC_PER_CHUNK records
+// Compact on-disk record (84 B/entry). SdNvsPrefs caps one value at 2048 B, so
+// we cap each stored blob at DISC_PER_CHUNK records
 // (2 + 24*84 = 2018 B) and split the ring across as many chunk keys ("disc",
 // "disc1", …) as DISCOVERED_MAX needs. We persist only what the Discovered list
 // redraws — the bulky parts of ContactInfo (out_path[64], shared_secret, …) are
@@ -1752,6 +1905,9 @@ static void discChunkKey(int chunk, char* out, size_t cap) {
 }
 static void saveDiscovered() {
   if (!s_discovered || !discBlob()) return;
+  SdNvsPrefs prefs;
+  if (!prefs.begin(DISC_NS, false)) return;
+  prefs.putUChar(DISC_MARKER, DISC_BLOB_VER);
   int src = 0;   // walk the ring once, emitting used entries into successive chunk blobs
   for (int chunk = 0; chunk < DISC_CHUNKS; ++chunk) {
     uint8_t* p = s_disc_blob;
@@ -1775,18 +1931,23 @@ static void saveDiscovered() {
     }
     *pcount = count;
     char key[8]; discChunkKey(chunk, key, sizeof key);
-    if (count > 0) touchPrefsSetBlob(key, s_disc_blob, (size_t)(p - s_disc_blob));
-    else           touchPrefsSetBlob(key, nullptr, 0);   // clear an empty trailing chunk
+    if (count > 0) prefs.putBytes(key, s_disc_blob, (size_t)(p - s_disc_blob));
+    else           prefs.remove(key);   // clear an empty trailing chunk
   }
+  prefs.end();
   s_disc_dirty = false;
 }
 static void loadDiscovered() {
   if (!s_discovered || !discBlob()) return;
   memset(s_discovered, 0, sizeof(LvDiscoveredEntry) * DISCOVERED_MAX);
+  SdNvsPrefs prefs;
+  const bool prefs_open = prefs.begin(DISC_NS, true);
+  const bool have_new = prefs_open && prefs.isKey(DISC_MARKER);
   int dst = 0;
   for (int chunk = 0; chunk < DISC_CHUNKS && dst < DISCOVERED_MAX; ++chunk) {
     char key[8]; discChunkKey(chunk, key, sizeof key);
-    size_t got = touchPrefsGetBlob(key, s_disc_blob, DISC_BLOB_SZ);
+    size_t got = have_new ? prefs.getBytes(key, s_disc_blob, DISC_BLOB_SZ)
+                          : touchPrefsGetBlob(key, s_disc_blob, DISC_BLOB_SZ);
     if (got < 2 || s_disc_blob[0] != DISC_BLOB_VER) continue;   // missing / garbage chunk -> skip
     uint8_t count = s_disc_blob[1];
     const uint8_t* p   = s_disc_blob + 2;
@@ -1807,6 +1968,20 @@ static void loadDiscovered() {
       e.ci.gps_lat      = (int32_t)discGetU32(p);
       e.ci.gps_lon      = (int32_t)discGetU32(p);
       e.ci.shared_secret_valid = false;   // force secret recompute on first use
+    }
+  }
+  prefs.end();
+  if (!have_new) {
+    // First boot after the split: queue the new namespace but leave legacy
+    // chunks intact until a later boot proves the new snapshot is durable.
+    saveDiscovered();
+  } else {
+    // The separate snapshot survived a reboot, so the old copies are now safe
+    // to retire from the critical touch namespace.
+    for (int chunk = 0; chunk < DISC_CHUNKS; ++chunk) {
+      char key[8]; discChunkKey(chunk, key, sizeof key);
+      if (touchPrefsGetBlob(key, s_disc_blob, DISC_BLOB_SZ) > 0)
+        touchPrefsSetBlob(key, nullptr, 0);
     }
   }
 }
@@ -2081,6 +2256,14 @@ static bool g_radio_preset_cb_silent = false;
 
 static void kbMirrorSyncToReal();  // keyboard mirror strip; defined below
 
+// #161: duty% -> the core's airtime_factor (Dispatcher: duty = 1/(1+af)), clamped to the
+// core's 0..9 range (af 9 = 10% duty, the regulatory floor the UI offers).
+static float meshPresetAirtimeFactor(uint8_t pct) {
+  if (pct == 0 || pct >= 100) return 0.0f;                 // unlimited
+  float af = (100.0f / (float)pct) - 1.0f;
+  return af > 9.0f ? 9.0f : af;
+}
+
 static int findMatchingMeshRadioPreset(const NodePrefs* prefs) {
   if (!prefs) return -1;
   for (size_t i = 0; i < k_mesh_radio_preset_count; ++i) {
@@ -2090,11 +2273,32 @@ static int findMatchingMeshRadioPreset(const NodePrefs* prefs) {
     if (prefs->sf != p.sf) continue;
     if (prefs->cr != p.cr) continue;
     if (prefs->tx_power_dbm != p.tx_dbm) continue;
-    const double exp_af = static_cast<double>(p.airtime_limit_pct) / 100.0;
-    if (std::fabs(static_cast<double>(prefs->airtime_factor) - exp_af) > 0.05) continue;
+    const double exp_af = (double)meshPresetAirtimeFactor(p.airtime_limit_pct);
+    const double old_af = static_cast<double>(p.airtime_limit_pct) / 100.0;   // pre-#161 buggy write
+    const double cur    = static_cast<double>(prefs->airtime_factor);
+    if (std::fabs(cur - exp_af) > 0.05 && std::fabs(cur - old_af) > 0.05) continue;
     return static_cast<int>(i);
   }
   return -1;
+}
+
+// #161 boot heal: devices configured by the OLD preset code carry af = pct/100 (~91% duty on a
+// 10% preset). If the radio params match a preset exactly and the stored factor matches the OLD
+// buggy value (and NOT a deliberate user choice near it -- the exact-preset match is the guard),
+// rewrite it to the correct factor once and persist.
+static void healPresetAirtimeFactor() {
+  NodePrefs* prefs = the_mesh.getNodePrefs();
+  if (!prefs) return;
+  const int m = findMatchingMeshRadioPreset(prefs);
+  if (m < 0) return;
+  const MeshRadioPreset& p = k_mesh_radio_presets[m];
+  const float good = meshPresetAirtimeFactor(p.airtime_limit_pct);
+  const float bad  = (float)p.airtime_limit_pct / 100.0f;
+  if (std::fabs(prefs->airtime_factor - bad) <= 0.05f &&
+      std::fabs(prefs->airtime_factor - good) > 0.05f) {
+    prefs->airtime_factor = good;
+    the_mesh.savePrefs();
+  }
 }
 
 static void applyMeshRadioPresetFields(unsigned preset_idx) {
@@ -2112,7 +2316,10 @@ static void applyMeshRadioPresetFields(unsigned preset_idx) {
   lv_textarea_set_text(g_set_modal.cr_ta, buf);
   snprintf(buf, sizeof(buf), "%d", static_cast<int>(p.tx_dbm));
   lv_textarea_set_text(g_set_modal.tx_ta, buf);
-  const float af = static_cast<float>(p.airtime_limit_pct) / 100.0f;
+  // #161: MeshCore's airtime_factor is a TX pacing multiplier -- the core's Dispatcher runs at
+  // duty = 1/(1+af). A 10% duty limit therefore needs af = 9, NOT 0.10: the old pct/100 write
+  // configured every preset user's radio to ~91% duty (and the Home meter honestly said so).
+  const float af = meshPresetAirtimeFactor(p.airtime_limit_pct);
   snprintf(buf, sizeof(buf), "%.2f", static_cast<double>(af));
   lv_textarea_set_text(g_set_modal.airtime_ta, buf);
 }
@@ -2152,18 +2359,54 @@ static bool settingsModalIsOpen() { return g_set_modal.root != nullptr; }
 
 // Compact one-line GPS status for the Device settings panel + control center.
 // TR("GPS: off") / "GPS: searching · N sats" / "GPS: fix · N sats  <lat>, <lon>".
-static const char* gpsStatusStr() {
-  static char s[72];
-  if (!g_lv.task || !g_lv.task->getGPSState()) { snprintf(s, sizeof s, TR("GPS: off")); return s; }
-  // satellitesCount() is satellites USED IN THE FIX (0 until a lock), so during
-  // cold acquisition it stays 0 — show "acquiring…" rather than a misleading
-  // "0 sats". On lock, show the sat count + the (auto-populated) coordinates.
-  if (!g_lv.task->getGpsFix()) { snprintf(s, sizeof s, TR("GPS: acquiring...")); return s; }
+// Stamped when acquisition starts so the page can show how long it has been searching; a stuck
+// receiver is then obvious from the elapsed time alone. Cleared on fix and when GPS is off.
+static uint32_t s_gps_acq_since = 0;
+
+// compact = the top-bar dropdown, which must stay ONE line (it shares this string with the GPS
+// settings page, and a two-line version pushed the whole dropdown taller). The settings page asks
+// for the full text, where there is room to explain what is happening.
+static const char* gpsStatusStr(bool compact = false) {
+  static char s[200];
+  if (!g_lv.task || !g_lv.task->getGPSState()) {
+    s_gps_acq_since = 0;
+    snprintf(s, sizeof s, TR("GPS: off"));
+    return s;
+  }
+  // satellitesCount() is satellites USED IN THE FIX, so it reads 0 for the whole cold acquisition
+  // and a bare "0 sats" looks like a fault. All the other reachable fields (lat/lon/alt/valid) are
+  // likewise empty until a fix lands, so from up here a receiver that is happily tracking
+  // satellites and one that is not powered look EXACTLY the same.
+  //
+  // That is a real limitation, not an oversight: the core's MicroNMEALocationProvider keeps its
+  // MicroNMEA object private and LocationProvider exposes no satellites-in-view, no SNR and no
+  // HDOP. Deducing "is it alive" from the decoded GPS time does NOT work either — MicroNMEA parses
+  // RMC left to right and bails out at the EMPTY latitude field of an unfixed sentence, so it
+  // never reaches parseDate and the time stays unset until there is already a fix. So do not claim
+  // to know whether data is arriving; report the honest thing (how long it has been trying) and
+  // point at the actual remedy. The serial boot probe prints the real sky view meanwhile.
+  if (!g_lv.task->getGpsFix()) {
+    const uint32_t now = millis();
+    if (!s_gps_acq_since) s_gps_acq_since = now;
+    const uint32_t secs = (now - s_gps_acq_since) / 1000u;
+    int n = snprintf(s, sizeof s, TR("GPS: searching"));
+    if (n < (int)sizeof s) {
+      if (secs < 600) n += snprintf(s + n, sizeof s - n, " %lum%02lus", (unsigned long)(secs / 60), (unsigned long)(secs % 60));
+      else            n += snprintf(s + n, sizeof s - n, " %lum", (unsigned long)(secs / 60));
+    }
+    if (!compact && n < (int)sizeof s)
+      snprintf(s + n, sizeof s - n, "\n%s",
+               TR("No position yet. A cold start needs a clear view of the sky and can take several minutes."));
+    return s;
+  }
+  s_gps_acq_since = 0;
   const int sats = g_lv.task->getGpsSats();
+  const int alt  = g_lv.task->getGpsAltitude();
   int n = snprintf(s, sizeof s, TR("GPS: fix"));
-  if (sats >= 0 && n < (int)sizeof s) n += snprintf(s + n, sizeof s - n, " · %d sats", sats);
+  if (sats > 0 && n < (int)sizeof s)        n += snprintf(s + n, sizeof s - n, " \xc2\xb7 %d sats", sats);
+  if (!compact && alt && n < (int)sizeof s) n += snprintf(s + n, sizeof s - n, " \xc2\xb7 %d m", alt);
   if (n < (int)sizeof s)
-    snprintf(s + n, sizeof s - n, "  %.5f, %.5f",
+    snprintf(s + n, sizeof s - n, "%s%.5f, %.5f", compact ? "  " : "\n",
              g_lv.task->getNodeLat(), g_lv.task->getNodeLon());
   return s;
 }
@@ -2906,7 +3149,10 @@ static int       s_nav_count    = 0;           // # focusable widgets collected 
 // Collected focusable widgets this rebuild, in tree order — used for 2D spatial
 // navigation (W/A/Z/D move to the nearest element in that physical direction, not
 // just the next/prev in the linear list).
-static const int kNavMax = 64;
+static const int kNavMax = 160;   // spatial-nav mirror capacity — MUST exceed the largest focusable
+                                  // grid or its tail is keypad-unreachable on the Tanmatsu: focusables
+                                  // past this cap land in the LVGL group but not s_nav_objs[], so
+                                  // navMoveDir() never reaches them (the 122-cell emoji picker — GH #141).
 static lv_obj_t* s_nav_objs[kNavMax] = { nullptr };
 static lv_obj_t* s_nav_tabbar   = nullptr;     // the bottom tab bar (btnmatrix), added last to the group
 static bool      s_nav_want_tabbar = false;    // after switching tabs from the bar, refocus the bar
@@ -4374,6 +4620,7 @@ static void refreshMapInfoLabel();
 static void renderMapTiles();
 static void renderMapMarkers();
 static void freeMapTiles();
+static void mapNoteStorageChanged();   // tile storage appeared/vanished: adopt, invalidate, re-render
 // Single entry point used by tabChangedCb. Recenters on self GPS and
 // rebuilds the tile grid. Defined alongside the map state below.
 static void onMapTabActivated();
@@ -4549,10 +4796,166 @@ static volatile bool s_sdinfo_request  = false;  // UI -> worker: rescan SD usag
 // (Heltec V4); on the loop thread that froze the whole UI, incl. touch wake
 // (the "ui:hist 6140ms" field stall). The loop thread snapshots the ring, the
 // worker writes the snapshot; shutdown/reboot still write synchronously.
-static volatile bool s_hist_flush_req  = false;  // snapshot armed, waiting for the worker
-static volatile bool s_hist_flush_busy = false;  // worker owns the snapshot + the history file
+static volatile bool s_hist_flush_req  = false;  // job armed, waiting for the worker
+static volatile bool s_hist_flush_busy = false;  // worker owns the job snapshot + its segment file
 static volatile bool s_hist_flush_ok   = true;   // last worker write result (retry on false)
-static bool uiHistWorkerFlush();                 // defined with the storage code below
+// Message-ring write health. A failing ui_msgs write used to be 100% silent —
+// the user only found out on the next reboot as "messages from the last N
+// minutes vanished" (the thread list still showed fresh times because the
+// small threads file kept writing while the big ring write failed). Updated
+// inside the segment writers from EITHER task (volatile stores only); read by
+// the About page + the repeated-failure toast in flushHistoryIfDue.
+static volatile uint32_t s_msgs_write_ok_ms   = 0;  // millis() of last successful ring write (0 = none yet)
+static volatile uint32_t s_msgs_write_fail_ms = 0;  // millis() of last failed ring write
+// Wall-clock epochs for the same two events, so the readouts can show WHEN a
+// save happened instead of how long ago. 0 = never, or the system clock wasn't
+// set yet at the time (a relative age would be meaningless anyway).
+static volatile uint32_t s_msgs_write_ok_epoch   = 0;
+static volatile uint32_t s_msgs_write_fail_epoch = 0;
+static volatile uint16_t s_msgs_write_fails   = 0;  // consecutive failures since the last success
+static volatile uint8_t  s_msgs_write_stage   = 0;  // where the last failure hit: 'o' open, 'h' header, 'b' body, 'r' rename
+static volatile int      s_msgs_write_errno   = 0;  // errno at that failure (ENFILE/EMFILE = VFS file table full, ENOSPC = card full, EIO = card error)
+// Human-readable diagnosis of the last chat-store write failure — shown on the
+// About panel and in the failure alerts, so a tester doesn't need an errno
+// table. Diagnostic vocabulary stays English on purpose (it's what ends up in
+// bug reports verbatim).
+static void chatSaveFailText(char* out, size_t cap) {
+  const char* stage;
+  switch ((char)s_msgs_write_stage) {
+    case 'o': stage = "open";        break;
+    case 'h': stage = "header";      break;
+    case 'b': stage = "write";       break;
+    case 'r': stage = "rename";      break;
+    case 'a': stage = "append";      break;   // segmented store: active-segment append
+    case 'c': stage = "compact";     break;   // segmented store: one-segment rewrite
+    case 'd': stage = "mkdir";       break;   // segmented store: data-dir create
+    case 's': stage = "scan";        break;   // segmented store: segment discovery
+    case 'm': stage = "commit";      break;   // segmented store: migration commit marker
+    default:  stage = "save";        break;
+  }
+  const int e = s_msgs_write_errno;
+  const char* why;
+  switch (e) {
+    case ENFILE:
+    case EMFILE: why = "too many open files"; break;
+    case ENOSPC: why = "card full";           break;
+    case EIO:    why = "card I/O error";      break;
+    case ENOENT: why = "folder missing";      break;
+    case EROFS:  why = "write-protected";     break;
+    case EACCES: why = "access denied";       break;
+    case 0:      why = "no errno";            break;
+    default:     why = strerror(e);           break;   // newlib carries the full table
+  }
+  snprintf(out, cap, "%s failed: %s (e%d)", stage, why, e);
+}
+static void fmtClockHM(char* buf, size_t cap, const struct tm* t);   // fwd: 12/24h-aware HH:MM
+// "When did the chat store last save" as a CLOCK TIME rather than an age:
+// HH:MM (honouring the 12/24h pref), with a "-<N>D" suffix once it is a day or
+// more old, so a stale save is obvious at a glance instead of having to read a
+// growing seconds counter. "--:--" when the event never happened, or happened
+// before the system clock was set (no meaningful timestamp exists).
+static void chatSaveStamp(char* out, size_t cap, uint32_t epoch) {
+  if (!epoch) { snprintf(out, cap, "--:--"); return; }
+  const time_t t = (time_t)epoch;
+  struct tm tmv;
+  if (!localtime_r(&t, &tmv)) { snprintf(out, cap, "--:--"); return; }
+  char hm[12];
+  fmtClockHM(hm, sizeof hm, &tmv);
+  const time_t now_t = time(nullptr);
+  const uint32_t days = (now_t > (time_t)epoch) ? (uint32_t)((now_t - (time_t)epoch) / 86400) : 0;
+  if (days) snprintf(out, cap, "%s-%uD", hm, (unsigned)days);
+  else      snprintf(out, cap, "%s", hm);
+}
+static bool uiDataFsIsSdCard();                  // fwd (storage code below) — About page shows the resolved backend
+static File uiDataOpen(const char* name, const char* mode);   // fwd — About page reads the msgs file size
+
+// ---- Segmented store: runtime segment table (loop-task-owned) --------------
+// Oldest-first view of the on-disk segment set. Rebuilt by the boot loader,
+// consulted and updated by the flush scheduler. The hist_flush worker never
+// touches it — it only executes fully-described jobs and reports ok/fail.
+struct UiSegInfo {
+  uint32_t first_seq;      // filename key + first record's seq
+  uint32_t last_seq;       // newest seq physically in the FILE
+  uint32_t bytes;          // file size (header + records) — arithmetic, never stat()
+  uint16_t disk_recs;      // records physically in the file
+  uint16_t live_recs;      // of those, how many are still live in the RAM ring
+  uint8_t  compact_dirty;  // RAM tombstones/drops within this segment -> rewrite due
+  // The FILE's content is untrusted: it may be missing, partially written (a
+  // failed append), or stale (post-resync). Repair = a full rewrite from the
+  // ring that also ABSORBS the unflushed tail, so no append may target it
+  // until that lands. Set on append failure and by segRetableFromRing.
+  uint8_t  rewrite_open;
+};
+static UiSegInfo s_seg[k_ui_seg_max];
+static int       s_seg_count = 0;
+static volatile uint32_t s_seg_total_bytes = 0;  // writer-maintained; About page reads it
+static volatile bool     s_seg_resync = false;   // card swapped/remounted: rewrite everything from RAM
+// Set by segRetableFromRing: on-disk segment files that are NOT part of the
+// rebuilt table must be unlinked — but only once the re-land has landed, so a
+// same-card recovery keeps its durable history readable the whole time
+// (deleting up front turned a recovery into a multi-minute window where a
+// power cut lost everything that had been safe on disk).
+static bool s_seg_stale_purge = false;
+// False until the boot loader read segments OR the one-time migration landed.
+// While false the flush scheduler must not append segments (they would shadow
+// the still-authoritative old-format file on the next boot) — it retries the
+// migration instead.
+static bool s_seg_store_ready = false;
+// Durability watermark: highest seq that has landed in a segment file. Ring
+// records with seq above it are the pending-append backlog. Loop-task-owned;
+// advanced only when a write is COMMITTED (worker job observed ok, or a sync
+// write returned true).
+static uint32_t s_seg_flushed_seq = 0;
+
+// One flush job in flight at a time (the existing busy/req protocol). Built
+// and committed on the loop task; the hist_flush worker (or the sync path)
+// only executes it. The snapshot buffer holds at most one segment's records
+// (~80 KB PSRAM) — it replaces the old whole-ring snapshot (1.3 MB).
+enum : uint8_t { SEGJOB_NONE = 0, SEGJOB_APPEND, SEGJOB_COMPACT };
+struct SegJob {
+  uint8_t  kind      = SEGJOB_NONE;
+  uint32_t first_seq = 0;      // target segment (filename key)
+  uint32_t last_seq  = 0;      // newest seq covered by the job
+  bool     create    = false;  // APPEND: file doesn't exist yet (write header)
+  bool     repair    = false;  // COMPACT of an untrusted file: also absorbs the unflushed tail
+  int      n         = 0;
+};
+// The WORKER's armed job. Written only while !(busy || req); the sync drain
+// uses its own local SegJob + its own buffer so a worker stalled past the 9 s
+// idle-wait cap can never observe a rebuilt descriptor or a reused buffer.
+static uint8_t  s_segjob_kind      = SEGJOB_NONE;
+static uint32_t s_segjob_first_seq = 0;
+static uint32_t s_segjob_last_seq  = 0;
+static bool     s_segjob_create    = false;
+static int      s_segjob_n         = 0;
+static UITask::UIMessage* s_segjob_buf = nullptr;   // worker jobs only
+static UITask::UIMessage* s_segsync_buf = nullptr;  // sync-drain jobs only
+// A delete landed inside the segment a COMPACT job is currently rewriting —
+// its snapshot predates the tombstone, so the segment must stay dirty when
+// the job commits (a second compaction picks the deletion up).
+static bool s_segjob_redirty = false;
+// fwd decls — scheduler helpers live with the storage code below.
+static int  segBuildJob(const UITask::UIMessage* ring, int cap, int count, int head,
+                        UITask::UIMessage* buf, SegJob* out);
+static void segCommitJob(const SegJob& job);
+static bool segMoreWorkPending(uint32_t newest_seq);
+static bool uiSegRunArmedJob();
+static void segMarkSeqDirty(uint32_t seq);
+static void segNoteEvicted(uint32_t seq);
+static void segRetableFromRing(const UITask::UIMessage* ring, int cap, int count, int head, uint32_t newest_seq);
+static void segPurgeStaleFiles();
+static bool uiMsgsWriteFail(char stage);   // fwd — failure stage/errno bookkeeping (writer block below)
+static int  segGatherRange(const UITask::UIMessage* ring, int cap, int count, int head,
+                           uint32_t lo, uint32_t hi, UITask::UIMessage* out, int max_out);
+static UITask::UIMessage* segEnsureBuf(UITask::UIMessage** slot);
+// fwd decls — the ops live with the storage code far below.
+static void uiDataEnsureDirs();
+static int  uiSegScan(uint32_t* out_first_seqs, int max_out, bool sweep_tmps);
+static bool uiSegOpenValidated(uint32_t first_seq, File& f, uint16_t* rec_size_out);
+static bool uiSegReadRec(File& f, uint16_t disk_sz, UITask::UIMessage* out, uint32_t* seq_out);
+static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs, int n, bool sync_writer);
+static bool uiSegAppendRecords(uint32_t first_seq, bool create, const UITask::UIMessage* recs, int n);
+static void uiSegRemoveFile(uint32_t first_seq);
 static volatile bool s_sdinfo_done     = false;  // worker -> UI: a result exists
 static volatile bool s_sdinfo_ok       = false;  // card present + sizes valid
 static uint64_t      s_sdinfo_tot      = 0;
@@ -5005,6 +5408,15 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
     else if (swipe_y != 0) SnakeGame::steer(0, swipe_y < 0 ? -1 : 1);
     return;
   }
+  // Every OTHER full-screen app page (Airtime, Spectrum, RF Monitor, Discover, VNC, Remote,
+  // Reader) also owns the screen, so swallow the swipe instead of letting it reach the tab
+  // switcher behind the page. Making the page root opaque + CLICKABLE only stops CLICKS:
+  // this detector reads the per-board touch hardware directly and never consults LVGL
+  // hit-testing, which is why a swipe inside Airtime still jumped to the Map tab. Settings
+  // sub-sheets borrow s_apppage_title for their back chevron too, but they always open from
+  // inside a category and have their own rightward swipe-back further down, so exclude them.
+  // (Vertical swipes are a no-op at the end of this function, so this only kills tab swipes.)
+  if (s_apppage_title && s_settings_open_cat < 0) return;
   // A slider was just being dragged — its horizontal drag must NOT be read as a
   // tab/back swipe (e.g. raising the volume slider rightward kept triggering the
   // settings "swipe right = back"). Ignore swipes briefly after any slider touch.
@@ -5262,6 +5674,7 @@ static KeyboardLayoutId kbDefaultLayoutForUiLang(uint8_t lang) {
     case LANG_SR: return KeyboardLayoutId::SR;
     case LANG_EL: return KeyboardLayoutId::EL;
     case LANG_FR: return KeyboardLayoutId::FR;
+    case LANG_RO: return KeyboardLayoutId::RO;
     default:      return KeyboardLayoutId::EN;
   }
 }
@@ -5456,6 +5869,12 @@ static void hideKb() {
   txtMenuHide();   // tear down any open edit menu
   kbMirrorSyncToReal();
   s_kb_bind_ta = nullptr;
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+  // The summon lasts one editing session. Reset the panel to letters so a later
+  // reveal does not inherit the symbol mode the summon opened.
+  if (s_osk_forced && g_lv.keyboard) lv_keyboard_set_mode(g_lv.keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
+  s_osk_forced = false;
+#endif
   if (s_kb_mirror_root) lv_obj_add_flag(s_kb_mirror_root, LV_OBJ_FLAG_HIDDEN);
   if (g_lv.keyboard) {
     lv_keyboard_set_textarea(g_lv.keyboard, nullptr);
@@ -5523,6 +5942,11 @@ static void showKb(LvChatPanel* p) {
 #if !CAP_KEYBOARD
   // No on-screen keyboard on the T-Deck — the physical keyboard types straight
   // into the composer (already visible), so skip showing the keys + the lift.
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+  // Same while the module is attached, until '#' summons the keys. kbMirrorActive()
+  // guards the settings path; the chat composer comes through here and needs its own.
+  if (attakyKeyboardPresent() && !s_osk_forced) return;
+#endif
   lv_obj_clear_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(g_lv.keyboard);
   // Shrink message area to keep composer visible above keyboard.
@@ -5582,8 +6006,8 @@ static void composerAutoGrowCb(lv_event_t* e) {
 // the extras_* fallback fonts (Latin-1 + Latin-Extended-A), so they render in
 // the textarea and chat. Keys carry LV_BTNMATRIX_CTRL_NO_REPEAT (KeyboardLayouts
 // .cpp) so a hold doesn't auto-repeat — it cleanly long-presses instead.
-static const char* const kAccA[]   = {"à","á","â","ä","ã","å","ą"};
-static const char* const kAccA_u[] = {"À","Á","Â","Ä","Ã","Å","Ą"};
+static const char* const kAccA[]   = {"à","á","â","ă","ä","ã","å","ą"};
+static const char* const kAccA_u[] = {"À","Á","Â","Ă","Ä","Ã","Å","Ą"};
 static const char* const kAccE[]   = {"è","é","ê","ë","ě","ę"};
 static const char* const kAccE_u[] = {"È","É","Ê","Ë","Ě","Ę"};
 static const char* const kAccI[]   = {"ì","í","î","ï"};
@@ -5596,25 +6020,25 @@ static const char* const kAccN[]   = {"ñ","ń"};
 static const char* const kAccN_u[] = {"Ñ","Ń"};
 static const char* const kAccC[]   = {"ç","č","ć"};
 static const char* const kAccC_u[] = {"Ç","Č","Ć"};
-static const char* const kAccS[]   = {"ß","ś","š"};
+static const char* const kAccS[]   = {"ß","ś","š","ş"};
 static const char* const kAccY[]   = {"ý","ÿ"};
 // Czech carons / ring — base letters that otherwise carry no Latin-1 accent.
-static const char* const kAccT[]   = {"ť"};
-static const char* const kAccT_u[] = {"Ť"};
+static const char* const kAccT[]   = {"ť","ţ"};
+static const char* const kAccT_u[] = {"Ť","Ţ"};
 static const char* const kAccZ[]   = {"ž","ż","ź"};
 static const char* const kAccZ_u[] = {"Ž","Ż","Ź"};
 static const char* const kAccR[]   = {"ř"};
 static const char* const kAccR_u[] = {"Ř"};
 static const char* const kAccL[]   = {"ł"};
 static const char* const kAccL_u[] = {"Ł"};
-static const char* const kAccS_u[] = {"Ś","Š"};
+static const char* const kAccS_u[] = {"Ś","Š","Ş"};
 struct AccentSet { char key; const char* const* v; uint8_t n; };
 static const AccentSet kAccentSets[] = {
-  {'a',kAccA,7},{'A',kAccA_u,7},{'e',kAccE,6},{'E',kAccE_u,6},
+  {'a',kAccA,8},{'A',kAccA_u,8},{'e',kAccE,6},{'E',kAccE_u,6},
   {'i',kAccI,4},{'I',kAccI_u,4},{'o',kAccO,6},{'O',kAccO_u,6},
   {'u',kAccU,5},{'U',kAccU_u,5},{'n',kAccN,2},{'N',kAccN_u,2},
-  {'c',kAccC,3},{'C',kAccC_u,3},{'s',kAccS,3},{'S',kAccS_u,2},{'y',kAccY,2},
-  {'t',kAccT,1},{'T',kAccT_u,1},{'z',kAccZ,3},{'Z',kAccZ_u,3},
+  {'c',kAccC,3},{'C',kAccC_u,3},{'s',kAccS,4},{'S',kAccS_u,3},{'y',kAccY,2},
+  {'t',kAccT,2},{'T',kAccT_u,2},{'z',kAccZ,3},{'Z',kAccZ_u,3},
   {'l',kAccL,1},{'L',kAccL_u,1},{'r',kAccR,1},{'R',kAccR_u,1},
 };
 static const AccentSet* accentLookup(const char* key) {
@@ -5862,7 +6286,7 @@ static lv_obj_t* s_accbox_ta = nullptr;   // the field the box edits
 // (Alt)+Space jumps in (handleHwKey()); the rotary encoder then walks
 // s_accbox_cells (updatePagerEncoder()); Enter (the encoder's own click)
 // confirms via accentNavConfirm(); Backspace cancels.
-static constexpr int kAccentNavMax = 8;   // covers kAccentSets' largest set (7, 'a'/'A')
+static constexpr int kAccentNavMax = 8;   // covers kAccentSets' largest set (8, 'a'/'A')
 static lv_obj_t* s_accbox_cells[kAccentNavMax];
 static uint8_t   s_accbox_cell_n    = 0;
 static bool      s_accentnav_active = false;
@@ -6154,7 +6578,25 @@ static void composerSuggestRefresh() {
 
 static void keyboardCb(lv_event_t* e) {
   lv_event_code_t code = lv_event_get_code(e);
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+  if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
+    accentExit(); accentBoxHide();
+    // Dismissing the keys must not kill the module: hideKb() unbinds the textarea
+    // the module's scan is gated on. Re-bind after hiding so the keys go down but
+    // the module keeps typing, the state a suppressed field starts in.
+    LvChatPanel* const kb_panel = s_kb_panel;
+    lv_obj_t* const    kb_field = s_kb_bind_ta;
+    hideKb();
+    if (attakyKeyboardPresent()) {
+      if (kb_panel && kb_panel->composer_ta && lv_obj_is_valid(kb_panel->composer_ta))
+        showKb(kb_panel);            // chat: rebind + refocus the composer, keys stay down
+      else if (kb_field && lv_obj_is_valid(kb_field))
+        kbMirrorBind(kb_field);      // settings-style field: straight back to the direct bind
+    }
+  }
+#else
   if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) { accentExit(); accentBoxHide(); hideKb(); }
+#endif
   // VALUE_CHANGED fires for any keypress (incl. backspace). Fade the rotate
   // arrows down to ~20% so they don't compete visually with the text the
   // user is typing. Reset to full opacity on the next showKb / kbMirrorBind.
@@ -8010,6 +8452,29 @@ static void threadSelectCb(lv_event_t* e) {
 #endif
 }
 
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+// Send the panel composer's text and clear it. Split from the send button's
+// callback so the module's Enter can reach the same path.
+static void composerSendFromPanel(LvChatPanel* p) {
+  if (!g_lv.task || !p || !p->composer_ta) return;
+  const char* text = lv_textarea_get_text(p->composer_ta);
+  if (!text || !text[0]) return;
+  hideKb();
+  g_lv.task->setComposerMode(true);
+  g_lv.task->composerReset();
+  for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
+  if (g_lv.task->composerSend()) {
+    lv_textarea_set_text(p->composer_ta, "");
+    refreshChatDetailAsync(*p);
+    g_lv.dirty_threads = true;
+  }
+}
+
+static void sendFromPanelCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  composerSendFromPanel(static_cast<LvChatPanel*>(lv_event_get_user_data(e)));
+}
+#else
 static void sendFromPanelCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
@@ -8026,6 +8491,7 @@ static void sendFromPanelCb(lv_event_t* e) {
     g_lv.dirty_threads = true;
   }
 }
+#endif
 
 // ---- Quick-reply macro picker (composer bar → list icon) ----
 // One sheet at a time; we cache the active panel pointer so the tap handler
@@ -8478,7 +8944,12 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  // The card is clamped to the visible height above, but its rows are absolutely
+  // positioned and can extend past that clamp (small screens + Large/Huge UI scale) —
+  // enable vertical scrolling so the lower quick-replies + hint stay reachable (GH #151).
+  lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(card, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
   addCloseXBadge(card, qrSheetCloseCb);
 
   lv_obj_t* title = lv_label_create(card);
@@ -8896,7 +9367,9 @@ static void tdeckModalAutoFocusAsync(void* root) {
 // Mirrors MCterm's in-RAM clipboard. Anything the user long-presses to copy
 // lands here; long-press on a textarea pastes the contents at the cursor.
 // One global buffer keeps the code simple and avoids heap churn.
-constexpr size_t CLIPBOARD_MAX = 192;
+constexpr size_t CLIPBOARD_MAX = 640;   // must cover the largest copyable text — a full composer draft
+                                        // plus the 600-byte label-staging buffer (clipboardSet's callers);
+                                        // 192 silently truncated long copy/pastes (GH #120).
 static char s_clipboard[CLIPBOARD_MAX] = {0};
 
 static void clipboardSet(const char* text, const char* tag) {
@@ -9601,8 +10074,53 @@ static void saveExperimentalCb(lv_event_t* e) {
 
 static void syncClockCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
-  g_lv.task->setDeviceTimeFromSystemClock();
-  g_lv.task->showAlert(TR("Clock synced"), 900);
+  const bool ok = g_lv.task->setDeviceTimeFromSystemClock();
+  g_lv.task->showAlert(ok ? TR("Clock synced") : TR("No system time yet"), 900);
+}
+
+// Chat-save fallback dropdown (Settings -> General): selection index -> number
+// of consecutive failed background history writes before the flush retries
+// synchronously on the UI task (0 = background retries only, never hitch).
+// Per-chat history cap (Settings -> Chats). "No limit" is last and warns, because an
+// uncapped busy channel is exactly what fills the shared ring and slows the UI down.
+static const uint16_t k_hist_cap_opts[] = { 100, 250, 500, 1000, 2000, 0 };
+static lv_obj_t*      s_hist_cap_dd     = nullptr;
+static uint16_t       s_hist_cap_pending = 0;
+
+static void histCapApplyUncapped() {
+  touchPrefsSetHistPerChat(0);
+  if (s_hist_cap_dd) lv_dropdown_set_selected(s_hist_cap_dd, sizeof(k_hist_cap_opts) / sizeof(k_hist_cap_opts[0]) - 1);
+  if (g_lv.task) g_lv.task->showAlert(TR("History limit off"), 1200);
+}
+
+static void histCapSelectCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* dd = lv_event_get_target(e);
+  const uint16_t sel = lv_dropdown_get_selected(dd);
+  if (sel >= sizeof(k_hist_cap_opts) / sizeof(k_hist_cap_opts[0])) return;
+  const uint16_t v = k_hist_cap_opts[sel];
+  if (v == 0) {
+    // Revert first and only commit from the confirm handler: showConfirm has no cancel
+    // callback, so a dismissed dialog must leave the old limit in place.
+    s_hist_cap_dd = dd;
+    uint16_t cur = touchPrefsGetHistPerChat();
+    uint16_t cur_sel = 1;
+    for (uint16_t i = 0; i < sizeof(k_hist_cap_opts) / sizeof(k_hist_cap_opts[0]); ++i)
+      if (k_hist_cap_opts[i] == cur) { cur_sel = i; break; }
+    lv_dropdown_set_selected(dd, cur_sel);
+    showConfirm(TR("Turn the history limit off?\n\nA busy channel can then fill the whole message "
+                   "store, which uses more space and makes the chat list and app noticeably slower. "
+                   "Only do this if you really need the full backlog."),
+                TR("Turn off"), histCapApplyUncapped);
+    return;
+  }
+  touchPrefsSetHistPerChat(v);
+}
+
+static const uint8_t k_hist_sync_opts[] = { 0, 1, 2, 3, 5, 8 };
+static void histSyncSelectCb(lv_event_t* e) {
+  const uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+  if (sel < sizeof(k_hist_sync_opts)) touchPrefsSetHistSyncAfter(k_hist_sync_opts[sel]);
 }
 
 static void advertNowCb(lv_event_t* e) {
@@ -10022,8 +10540,18 @@ static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
 #endif
   lv_obj_t* card = lv_obj_create(s_disc_settings_root);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, card_w, PSC(188));
-  lv_obj_align(card, LV_ALIGN_CENTER, 0, -46);   // shifted up so the keyboard clears the hop field
+  // #109: centring the card and then lifting it a fixed -46 pushed its TOP off-screen on
+  // the 240px-tall T-Deck (only 218px visible under the bar), so the sheet looked truncated
+  // and could not be scrolled to reach the rest. Clamp the height to what the screen
+  // actually has, and clamp the lift to the leftover slack so the top can never go negative.
+  const lv_coord_t dsc_avail = lv_disp_get_ver_res(nullptr) - STATUSBAR_H;
+  lv_coord_t dsc_h = PSC(188);
+  if (dsc_h > dsc_avail - 8) dsc_h = dsc_avail - 8;
+  lv_coord_t dsc_lift = -46;
+  const lv_coord_t dsc_slack = (dsc_avail - dsc_h) / 2;
+  if (-dsc_lift > dsc_slack) dsc_lift = (lv_coord_t)-dsc_slack;
+  lv_obj_set_size(card, card_w, dsc_h);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, dsc_lift);   // lift (clamped) so the keyboard clears the hop field
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
@@ -10560,6 +11088,50 @@ static void radioScopeDirectToggleCb(lv_event_t* e) {
   touchPrefsSetScopeDirect(on);
   the_mesh.setScopeDirectFloods(on);
 }
+#if defined(HAS_TDISPLAY_P4)
+// T-Display P4 LoRa antenna select. Applies live (no reboot) but is deliberately SESSION-ONLY:
+// every boot re-forces the on-board antenna (see the boot-apply in begin() and the park in
+// Xl9535::powerOnSequence). Transmitting into an external connector with no antenna fitted is
+// what kills a PA, so the safe state has to be the one you get for free after a power cycle,
+// and picking the external antenna has to be a fresh, explicit decision each time.
+static lv_obj_t* s_p4_ant_dd = nullptr;   // showConfirm takes a bare callback, so stash the widget
+static uint8_t   s_p4_ant_pending = Xl9535::ANT_INTERNAL;
+
+static void radioP4AntennaConfirmApply() {
+  xl9535.setAntennaMode(s_p4_ant_pending);   // takes effect on the very next transmit
+  if (s_p4_ant_dd) lv_dropdown_set_selected(s_p4_ant_dd, s_p4_ant_pending);
+  if (g_lv.task) {
+    g_lv.task->showAlert(s_p4_ant_pending == Xl9535::ANT_EXTERNAL ? TR("External antenna selected")
+                                                                  : TR("Per-transmit switching on"), 1200);
+  }
+}
+
+static void radioP4AntennaSelectCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* dd = lv_event_get_target(e);
+  const uint8_t m = (uint8_t)lv_dropdown_get_selected(dd);
+  if (m == Xl9535::ANT_INTERNAL) { xl9535.setAntennaMode(m); return; }   // always safe, no prompt
+
+  // External moves BOTH directions onto the external socket, so it needs an antenna actually fitted
+  // there — that is the one real hardware risk and it gets the damage warning. Auto (the legacy
+  // per-TX toggle) transmits on the on-board antenna and only listens on the external socket, so it
+  // is not a PA hazard, just permanently lopsided; it gets an accurate performance warning instead
+  // of a scary one. Revert the widget FIRST and only re-select from the confirm handler: showConfirm
+  // has no cancel callback, so a dismissed dialog must leave UI and hardware where they were.
+  s_p4_ant_dd = dd;
+  s_p4_ant_pending = m;
+  lv_dropdown_set_selected(dd, xl9535.antennaMode());
+  showConfirm(m == Xl9535::ANT_EXTERNAL
+                ? TR("Switch to the external antenna?\n\nMake sure an antenna is actually connected "
+                     "to the external antenna socket first. Transmitting with nothing attached can "
+                     "damage the radio.\n\nResets to the on-board antenna on every reboot.")
+                : TR("Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison "
+                     "only. It transmits on the on-board antenna and listens on the external one, "
+                     "so your outbound signal will be much weaker than your inbound.\n\nResets to "
+                     "the on-board antenna on every reboot."),
+              TR("Switch"), radioP4AntennaConfirmApply);
+}
+#endif
 #if defined(HELTEC_LORA_V4_TFT)
 // Heltec V4.3 high-gain FEM LNA (~17 dB external receive amp). Persists + applies live.
 static void radioFemLnaToggleCb(lv_event_t* e) {
@@ -10836,6 +11408,38 @@ static void buildRadioSettings() {
   }
 
   mk_section("SIGNAL");
+
+#if defined(HAS_TDISPLAY_P4)
+  // T-Display P4 antenna select: the SKY13453 on XL9535 IO1. Confirmed against LilyGo's own driver
+  // (HIGH = RF1 = on-board, LOW = RF2 = external socket) — see the note on Xl9535.h. Internal is the
+  // default and is re-forced at every boot; external is session-only and gated behind a confirmation,
+  // because keying the PA into an empty socket is how you destroy one. "Auto" keeps the old
+  // per-transmit toggle purely for comparison: it sends internal and listens external, so Trace SNR
+  // reads lopsided on it and roughly equal on a correctly pinned antenna.
+  mk_label("LoRa antenna (P4)");
+  {
+    lv_obj_t* dd = lv_dropdown_create(body);
+    lv_obj_set_size(dd, lv_pct(100), SC(34));
+    lv_obj_set_pos(dd, 2, y);
+    lv_dropdown_set_options(dd, TR("Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)"));
+    lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_border_color(dd, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_t* antlist = lv_dropdown_get_list(dd);
+    lv_obj_set_style_bg_color(antlist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_text_color(antlist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(antlist, &g_font_12, LV_PART_MAIN);
+    lv_dropdown_set_selected(dd, xl9535.antennaMode());   // live state, not a stored pref
+    lv_obj_add_event_cb(dd, radioP4AntennaSelectCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+    y += SC(44);
+    y += settingsRowLabel(body, y, 0,
+                          TR("Always starts on the on-board antenna after a reboot. Only pick External "
+                             "with an antenna fitted to the external socket."),
+                          COLOR_SUB, &g_font_12, 0) + 2;
+  }
+#endif
 
 #if defined(HELTEC_LORA_V4_TFT)
   // Heltec V4.3 only: the external FEM's high-gain receive amplifier (~17 dB). Bypassed by
@@ -11262,6 +11866,42 @@ static void sysInfoTextLive(char* buf, size_t cap) {
                 (unsigned long)rx_evt, (unsigned long)rx_ok, (unsigned long)rx_err,
                 (unsigned long)rx_lost, (unsigned long)radio_driver.getRxQueueDrops(),
                 radio_driver.rxQueueEnabled() ? "on" : "off");
+
+  // Chat-history store health. Two failure modes this exposes that are
+  // otherwise invisible: (a) the "wrong backend" trap — a boot whose SD mount
+  // failed resolves the store to internal SPIFFS and every message written
+  // that session is invisible on the next carded boot; (b) persistent ring
+  // write failures (full card / damaged FAT) — the small threads file keeps
+  // succeeding, so the thread list looks fresh while messages silently stop
+  // persisting.
+  {
+    // Segmented store: the byte total is writer-maintained (volatile), so this
+    // 1 Hz label costs ZERO file I/O — the old single-file size probe blocked
+    // on the FatFs volume lock behind a sick write and froze the UI just by
+    // WATCHING this page.
+    const uint32_t nowms = (uint32_t)millis();
+    char stat[112];
+    char when[16];
+    if (s_msgs_write_fails) {
+      char why[64];
+      chatSaveFailText(why, sizeof why);
+      chatSaveStamp(when, sizeof when, s_msgs_write_fail_epoch);
+      snprintf(stat, sizeof stat, "FAIL x%u (%s)\n  %s",
+               (unsigned)s_msgs_write_fails, when, why);
+    }
+    else if (s_msgs_write_ok_ms) {
+      chatSaveStamp(when, sizeof when, s_msgs_write_ok_epoch);
+      snprintf(stat, sizeof stat, "OK %s", when);
+    }
+    else
+      snprintf(stat, sizeof stat, "none this session");
+    p += snprintf(buf + p, cap - p,
+                  "Chat store\n  %s   %d seg / %u KB%s\n  last save: %s\n\n",
+                  uiDataFsIsSdCard() ? "SD /meshcomod" : "Internal flash",
+                  s_seg_count, (unsigned)(s_seg_total_bytes / 1024u),
+                  s_seg_store_ready ? "" : "  (migration pending!)",
+                  stat);
+  }
 #endif
   (void)p; (void)cap;
 }
@@ -11519,15 +12159,20 @@ static void useSdStorageToggleCb(lv_event_t* e) {
 // empty card (which then minted a fresh identity). Overwrites the card's copies
 // with EVERYTHING from internal flash, forces the SD pref on, reboots.
 extern bool meshcomodMigrateSpiffsToSd(bool force);   // main.cpp
+extern void meshcomodClearSdMigLatch();               // main.cpp (GH #142/#148 boot safe-mode)
 static void sdRestoreApply() {
   if (!g_lv.task) return;
   if (!fmSdTryMount()) { g_lv.task->showAlert(TR("No SD card"), 1600); return; }
   g_lv.task->showAlert(TR("Copying internal data to SD..."), 6000);
   lv_refr_now(nullptr);                 // paint the notice before the blocking copy
+  // Land everything in RAM first — this path used to reboot WITHOUT persisting,
+  // silently dropping every message since the last lazy flush.
+  g_lv.task->persistHistoryNow();
   disableLoopWDT();
   const bool ok = meshcomodMigrateSpiffsToSd(true);
   enableLoopWDT();
   if (!ok) { g_lv.task->showAlert(TR("Copy failed (no internal identity)"), 2200); return; }
+  meshcomodClearSdMigLatch();           // manual copy succeeded -> re-arm boot auto-adoption (GH #142/#148)
   touchPrefsSetUseSdStorage(true);      // make sure the reboot adopts the card
   delay(400);                           // let the alert render before the restart
   board.reboot();
@@ -11591,9 +12236,9 @@ static void clock12hToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Clock: 12-hour") : TR("Clock: 24-hour"), 900);
 }
 
-#if CAP_LARGE_SCREEN
-// UI size (resolution scale) selector — saves the pref; applied at the next boot (the LVGL
-// resolution + flush upscaler are set up in begin()), so prompt for a restart.
+#if CAP_UI_SIZE
+// UI-size selector — saves the board-specific preset. Fonts and any matching
+// geometry are selected while the UI tree is built, so prompt for a restart.
 static void uiScaleSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   touchPrefsSetUiScale((uint8_t)lv_dropdown_get_selected(lv_event_get_target(e)));
@@ -12312,7 +12957,8 @@ static void buildDeviceSettings(int sec) {
   lv_obj_set_style_text_font(g_set_modal.gps_status, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(g_set_modal.gps_status, 4, y);
   lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
-  y += SC(22);
+  lv_obj_update_layout(g_set_modal.gps_status);
+  y += LV_MAX(SC(22), lv_obj_get_height(g_set_modal.gps_status) + SC(6));   // status is 2 lines now
 
   // (Expansion Kit moved to the Sensors page — see the DSEC_SENSORS block below.)
 
@@ -12554,6 +13200,50 @@ static void buildDeviceSettings(int sec) {
   lv_label_set_text(l_adv, TR("Send advert now"));
   lv_obj_center(l_adv);
   y += SC(40);
+
+  /* Chat-save fallback: after how many consecutive failed BACKGROUND history
+     writes the flush retries synchronously on the UI task. The sync write is
+     the empirically reliable path on the shared SPI bus, but the screen
+     hitches for its duration — users who prefer a never-hitching UI pick Off
+     (background retries only; the RAM ring keeps everything meanwhile). */
+  {
+    // Per-chat history limit. Sits above the save-fallback control because it is the one
+    // people actually need: without it a single busy channel fills the shared message store,
+    // which is what makes the chat list crawl.
+    y += settingsRowLabel(body, y, 0, TR("Keep per chat (messages)"), COLOR_SUB, &g_font_12, 0) + 2;
+    {
+      lv_obj_t* cd = lv_dropdown_create(body);
+      lv_dropdown_set_options(cd, TR("100\n250\n500\n1000\n2000\nNo limit"));
+      const uint16_t cur_cap = touchPrefsGetHistPerChat();
+      uint16_t cap_sel = 1;   // index of 250 — the default when the stored value isn't listed
+      for (uint16_t i = 0; i < sizeof(k_hist_cap_opts) / sizeof(k_hist_cap_opts[0]); ++i)
+        if (k_hist_cap_opts[i] == cur_cap) { cap_sel = i; break; }
+      lv_dropdown_set_selected(cd, cap_sel);
+      lv_obj_set_width(cd, lv_pct(100));
+      lv_obj_set_pos(cd, 2, y);
+      lv_obj_add_event_cb(cd, histCapSelectCb, LV_EVENT_VALUE_CHANGED, nullptr);
+      lv_obj_add_event_cb(cd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+      y += SC(44);
+      y += settingsRowLabel(body, y, 0,
+                            TR("Older messages in a chat are dropped past this. A very large or "
+                               "unlimited history makes the chat list slower."),
+                            COLOR_SUB, &g_font_12, 0) + 6;
+    }
+
+    y += settingsRowLabel(body, y, 0, TR("Chat save fallback (failed tries)"), COLOR_SUB, &g_font_12, 0) + 2;
+    lv_obj_t* dd = lv_dropdown_create(body);
+    lv_dropdown_set_options(dd, TR("Off\n1\n2\n3\n5\n8"));
+    const uint8_t cur = touchPrefsGetHistSyncAfter();
+    uint16_t sel = 2;   // index of "2" — the default when the stored value isn't a listed option
+    for (uint16_t i = 0; i < sizeof(k_hist_sync_opts); ++i)
+      if (k_hist_sync_opts[i] == cur) { sel = i; break; }
+    lv_dropdown_set_selected(dd, sel);
+    lv_obj_set_width(dd, lv_pct(100));
+    lv_obj_set_pos(dd, 2, y);
+    lv_obj_add_event_cb(dd, histSyncSelectCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);   // open list on top of the bar
+    y += SC(44);
+  }
   }
 
   if (sec == DSEC_DISPLAY) {   // --- Display ---
@@ -12575,13 +13265,16 @@ static void buildDeviceSettings(int sec) {
     y += SC(38);
   }
 
-#if CAP_LARGE_SCREEN
-  /* UI size (resolution scale): Normal 100% / Large 150% / Huge 200%. Renders the whole UI at a
-     lower resolution and upscales to the panel, so EVERYTHING grows. Applied at boot → restart. */
+#if CAP_UI_SIZE
+  /* Board-specific UI-size presets. Applied while the UI tree is built, so a restart is required. */
   {
     y += settingsRowLabel(body, y, 0, TR("UI size (restart to apply)"), COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* dd = lv_dropdown_create(body);
+#if defined(TLORA_PAGER)
+    lv_dropdown_set_options(dd, "Small\nMedium\nLarge");
+#else
     lv_dropdown_set_options(dd, TR("Normal (100%)\nLarge (150%)\nHuge (200%)"));
+#endif
     lv_dropdown_set_selected(dd, touchPrefsGetUiScale());
     lv_obj_set_width(dd, lv_pct(100));
     lv_obj_set_pos(dd, 2, y);
@@ -12739,7 +13432,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, useSdStorageToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
   /* Where contacts ACTUALLY live this boot. The toggle above is only an intent — if the
      card failed to mount at boot (cold/slow card), contacts silently stay on internal flash
      even with it ON. This line shows the truth and flags that mismatch. */
@@ -12870,7 +13563,7 @@ static void buildDeviceSettings(int sec) {
        non-EN layout or the loop below reads past the end. */
     static const char* k_kb_disp[] = {
       "Bulgarian", "Russian", "Ukrainian", "Serbian", "Greek", "Arabic (experimental)",
-      "French", "Dutch", "German", "Spanish", "Italian"
+      "French", "Dutch", "German", "Spanish", "Italian", "Romanian"
     };
     for (int id = 1; id < KEYBOARD_LAYOUT_COUNT; ++id) {
       int h = settingsRowLabel(body, y, 4, k_kb_disp[id - 1], COLOR_TEXT, &g_font_12, 56);
@@ -13161,9 +13854,11 @@ static void buildDeviceSettings(int sec) {
   }
 #endif // HAS_TDECK_GT911 || HAS_THINKNODE_M9
 
-  /* Auto-lock on screen-off: when the idle timeout dims the screen, also hard-
-     lock so the touchscreen is inert (Tim: pocket-taps while dark). Both boards;
-     unlock with a trackball hold (T-Deck) or the button (V4). */
+  // Auto-lock on screen-off: when the idle timeout dims the screen, also hard-lock so the
+  // touchscreen is inert (Tim: pocket-taps while dark). NOT on the P4 — it has no unlock path
+  // (no button/trackball and no touch-unlock overlay yet), so a hard lock there is a power-cycle
+  // trap. The P4 still dims on idle (screen-off wakes on touch); a proper P4 lock is a follow-up.
+#if !defined(HAS_TDISPLAY_P4)
   {
     int h = settingsRowLabel(body, y, 6, TR("Lock when screen off"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -13174,6 +13869,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, lockOnScreenOffToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
+#endif
 
 
   }
@@ -13534,10 +14230,28 @@ static void showConfirm(const char* msg, const char* ok_label,
   lv_obj_add_flag(s_confirm_modal, LV_OBJ_FLAG_FLOATING);
   lv_obj_move_foreground(s_confirm_modal);
 
-  // Card
+  // Card — the height FOLLOWS the wrapped message. It used to be a fixed PSC(160) with a
+  // freely-wrapping label, so a long message (the crash-report prompt is the worst case)
+  // simply ran down over the Cancel/OK buttons (#97). Grow to fit the text, keep the old
+  // 160 as a floor so every short dialog looks exactly as before, and cap to the screen so
+  // the card can never overflow; the message area below scrolls if the cap bit.
   lv_obj_t* card = lv_obj_create(s_confirm_modal);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, PCW(210), PSC(160));
+#if CAP_LARGE_SCREEN
+  const lv_coord_t cf_lblw = PSC(186 - 32);
+#else
+  const lv_coord_t cf_lblw = 186 - 32;
+#endif
+  lv_point_t cf_tsz;
+  lv_txt_get_size(&cf_tsz, TR(msg), &g_font_14, 0, 2, cf_lblw, LV_TEXT_FLAG_NONE);
+  const lv_coord_t cf_chrome = (lv_coord_t)(PSC(12) * 2 + PSC(14) + PSC(34));  // pads + gap + buttons
+  lv_coord_t cf_h = (lv_coord_t)(cf_tsz.y + cf_chrome);
+  if (cf_h < PSC(160)) cf_h = PSC(160);
+  const lv_coord_t cf_max = lv_disp_get_ver_res(nullptr) - STATUSBAR_H - 12;
+  if (cf_h > cf_max) cf_h = cf_max;
+  lv_coord_t cf_msgh = (lv_coord_t)(cf_h - cf_chrome);
+  if (cf_msgh < PSC(20)) cf_msgh = PSC(20);   // never let a tall UI scale invert this
+  lv_obj_set_size(card, PCW(210), cf_h);
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 12);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
@@ -13546,16 +14260,17 @@ static void showConfirm(const char* msg, const char* ok_label,
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   addCloseXBadge(card, confirmCloseEvt);
 
-  lv_obj_t* lbl = lv_label_create(card);
+  // Message area: its own box occupying exactly the space ABOVE the buttons, so the text
+  // physically cannot reach them; scrolls vertically when the card hit the screen cap.
+  // Width is still shortened (cf_lblw) so the first line doesn't slide under the X badge.
+  lv_obj_t* msg_box = lv_obj_create(card);
+  lv_obj_remove_style_all(msg_box);
+  lv_obj_set_size(msg_box, cf_lblw, cf_msgh);
+  lv_obj_align(msg_box, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_set_scroll_dir(msg_box, LV_DIR_VER);
+  lv_obj_t* lbl = lv_label_create(msg_box);
   lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
-  // Shrink width so the first line doesn't slide under the top-right X.
-  // Push the label down 4 px so the X glyph and the start of the text
-  // baseline don't touch optically.
-#if CAP_LARGE_SCREEN
-  lv_obj_set_width(lbl, PSC(186 - 32));
-#else
-  lv_obj_set_width(lbl, 186 - 32);
-#endif
+  lv_obj_set_width(lbl, cf_lblw);
   lv_label_set_text(lbl, TR(msg));
   lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
@@ -14052,6 +14767,9 @@ static void wifiKickScan() {
 // here (sequential with main.cpp's wifi loop on the same task — no worker race, and
 // never eraseap, which wedges this radio). Drop the link, let the disassoc settle,
 // then kick the worker; wifiScanService rejoins once results land.
+// Wall-clock deadline for the scan gate below (0 = not armed). See the recovery
+// branch in wifiScanMainService for why this exists.
+static uint32_t s_wifiscan_guard_ms = 0;
 static void wifiScanMainService() {
   if (s_wifiscan_drop_req) {
     s_wifiscan_drop_req = false;
@@ -14060,6 +14778,7 @@ static void wifiScanMainService() {
       WiFi.setAutoReconnect(false);       // don't auto-rejoin mid-sweep
       WiFi.disconnect(false, false);      // leave the BSS (keep cred + stored AP; NO eraseap)
       s_wifiscan_drop_ms = millis();
+      s_wifiscan_guard_ms = millis();     // arm the stuck-gate deadline (recovery below)
       s_wifiscan_reconnect_after = true;
     } else {
       s_wifiscan_request = true;          // already disconnected — scan now
@@ -14067,6 +14786,26 @@ static void wifiScanMainService() {
   } else if (s_wifiscan_drop_ms && (uint32_t)(millis() - s_wifiscan_drop_ms) >= 400) {
     s_wifiscan_drop_ms = 0;
     s_wifiscan_request = true;            // disassoc settled -> run the sweep
+  }
+  // RECOVERY: opening the Wi-Fi page drops the link and raises the scan gate, which is
+  // normally lowered in wifiScanService() once the worker reports s_wifiscan_done. But
+  // that flag is set ONLY by the tile-fetch worker, and that worker can fail to start at
+  // all (its 8 KB contiguous-DRAM stack allocation is best-effort) or sit blocked in a
+  // long tile/LOS/OTA job. If it never reports, the gate LATCHES: autoreconnect is off
+  // and main.cpp's 10 s reconnect retry stays suppressed (main.cpp gates it on
+  // !wifiScanIsActive()), so Wi-Fi never comes back until a reboot — a plausible source
+  // of "connects on a fresh flash, never reconnects after a reboot" (issue #171). The
+  // deadline is deliberately far longer than any legitimate sweep (the worker's own scan
+  // path allows several seconds plus retries) so this can only fire when the normal
+  // completion path is genuinely lost, never mid-scan.
+  if (s_wifiscan_guard_ms && wifiScanIsActive() &&
+      (uint32_t)(millis() - s_wifiscan_guard_ms) >= 30000UL) {
+    s_wifiscan_guard_ms = 0;
+    s_wifiscan_reconnect_after = false;
+    s_wifiscan_drop_ms = 0;
+    wifiScanSetActive(false);             // un-gate main.cpp's reconnect retry
+    WiFi.setAutoReconnect(true);
+    wifiConfigRequestApply();             // re-begin with the stored cred (main task)
   }
 }
 #endif
@@ -14084,6 +14823,7 @@ static void wifiScanService() {
 #if !defined(HAS_TANMATSU)
   if (s_wifiscan_reconnect_after) {       // we dropped the link for this sweep — rejoin now
     s_wifiscan_reconnect_after = false;
+    s_wifiscan_guard_ms = 0;              // normal completion — disarm the stuck-gate deadline
     wifiScanSetActive(false);
     WiFi.setAutoReconnect(true);
     wifiConfigRequestApply();             // main.cpp re-begins with the stored cred (main task)
@@ -14506,7 +15246,7 @@ static void mqttSaveCb(lv_event_t* e) {
   bool pub_ch = !g_set_modal.mqtt_ch_sw || lv_obj_has_state(g_set_modal.mqtt_ch_sw, LV_STATE_CHECKED);
   bool pub_dm = g_set_modal.mqtt_dm_sw && lv_obj_has_state(g_set_modal.mqtt_dm_sw, LV_STATE_CHECKED);
   MqttBridge::saveConfig(host, port, user, pwd, pub_dm, pub_ch, psk, en);
-  { Preferences p; if (p.begin("mqtt", false)) { p.putBool("consent", consent); p.end(); } }
+  { SdNvsPrefs p; if (p.begin("mqtt", false)) { p.putBool("consent", consent); p.end(); } }   // file-backed, not NVS (GH #128)
   mqtt_bridge.reloadConfig();
   closeSettingsModal();
 }
@@ -14659,7 +15399,7 @@ static void buildMqttSettings() {
 
   // ---- Load current config ----
   {
-    Preferences p;
+    SdNvsPrefs p;   // file-backed, matches MqttBridge (GH #128)
     bool cur_en = false, cur_dm = false, cur_ch = true, cur_consent = false;
     char cur_host[64] = {}, cur_port_s[8] = "1883", cur_user[32] = {}, cur_pwd[32] = {}, cur_psk[33] = {};
     if (p.begin("mqtt", true)) {
@@ -15836,8 +16576,13 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   });
 
   const bool is_room = (c.type == ADV_TYPE_ROOM);
+  // Sanitize like every other name-display path: copyUtf8ReplacingMissingGlyphs swaps an
+  // unrenderable codepoint for '*'. This Join title skipped it and drew tofu (▯) for a name's
+  // leading unsupported codepoint, while the contacts list/details showed '*' (GH #116).
+  char safe_name[24];
+  copyUtf8ReplacingMissingGlyphs(&g_font_14, safe_name, sizeof(safe_name), c.name);
   char hdr_buf[40];
-  snprintf(hdr_buf, sizeof(hdr_buf), "%s %.20s", is_room ? "Join:" : "Login:", c.name);
+  snprintf(hdr_buf, sizeof(hdr_buf), "%s %.20s", is_room ? "Join:" : "Login:", safe_name);
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text(title, hdr_buf);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -17971,6 +18716,7 @@ static lv_obj_t*       s_home_adv_btn     = nullptr;
 #endif
 // Compact legend label above the chart showing live TX/RX totals.
 static lv_obj_t* s_home_chart_legend = nullptr;
+static lv_obj_t* s_home_store        = nullptr;   // chat-store chip, right half of the legend row
 static lv_obj_t* s_home_chart_sig    = nullptr;   // live signal chip drawn inside the graph box
 #if CAP_LARGE_SCREEN
 static lv_obj_t* s_home_info         = nullptr;   // Commander info-panel values column (big screen) — refreshed live
@@ -18114,6 +18860,21 @@ static void calibrateBatteryCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(b, 3000);
 }
 
+// ----- SD wedge detection (flag side; the probe/remount lives in sdHealthTick) -----
+// A runtime SD failure is a one-way door in arduino-esp32: one timed-out command
+// latches STA_NOINIT (or a data-phase error leaves FR_DISK_ERR everywhere), while
+// SD.cardType() keeps returning the type CACHED at mount — so every
+// `cardType() != CARD_NONE` gate still passes, I/O fails silently, and nothing
+// ever re-runs the mount ladder until a reboot power-cycles the card. Any SD
+// user (loop task, core-0 worker, notify task) that sees SD I/O fail while the
+// card is supposedly mounted stamps this; UITask::loop verifies with real I/O
+// and remounts if the card wedged. Volatile store only — safe from any task.
+static volatile uint32_t s_sd_fail_note_ms = 0;
+static inline void sdNoteIoFailure() {
+  const uint32_t m = (uint32_t)millis();
+  s_sd_fail_note_ms = m ? m : 1;
+}
+
 // ----- Battery history: 5-minute log to SD + a 24h chart popup (T-Deck only) -----
 // Logging piggybacks the always-on UITask::loop (no extra wakeup): every
 // k_batt_log_period_ms a line is appended to /meshcomod/battery.log and the file
@@ -18125,7 +18886,12 @@ static void calibrateBatteryCb(lv_event_t* e) {
 // Other boards retain the legacy internal fallback.
 static fs::FS& battLogFs() {
 #if CAP_SD
-  if (SD.cardType() != CARD_NONE && SD.exists("/meshcomod")) return SD;
+  if (SD.cardType() != CARD_NONE) {
+    if (SD.exists("/meshcomod")) return SD;
+    // cardType() says present (cached) but real I/O failed — wedge/removal tell.
+    // (Or just a card without /meshcomod; sdHealthTick's probe arbitrates cheaply.)
+    sdNoteIoFailure();
+  }
 #endif
   return SPIFFS;
 }
@@ -18160,7 +18926,7 @@ static void batteryLogAppend(uint32_t epoch, uint16_t mv, int pct, uint16_t cpu_
   if (epoch > 1700000000 && localtime_r(&t, &tmv)) strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
   File rf = fs.open(battLogPath(), FILE_READ);
   File wf = fs.open(battLogTmp(), FILE_WRITE);     // truncate/create
-  if (!wf) { if (rf) rf.close(); return; }
+  if (!wf) { if (rf) rf.close(); if (battLogOnSd()) sdNoteIoFailure(); return; }
   if (rf) {
     while (rf.available()) {
       String ln = rf.readStringUntil('\n');
@@ -18524,7 +19290,7 @@ static void telemetryLogAppend(const uint8_t* key, uint32_t epoch, int mv, int t
   if (epoch > 1700000000 && localtime_r(&t, &tmv)) strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tmv);
   File rf = SD.open(path, FILE_READ);
   File wf = SD.open(tmp, FILE_WRITE);
-  if (!wf) { if (rf) rf.close(); return; }
+  if (!wf) { if (rf) rf.close(); sdNoteIoFailure(); return; }
   if (rf) {
     while (rf.available()) {
       String ln = rf.readStringUntil('\n');
@@ -19829,10 +20595,12 @@ static inline SPIClass* sdSharedSPI() { return tdeckSharedSPI(); }
 // already initialised by the radio/display, so those pins are untouched.
 static bool fmSdTryMount() {
   if (s_sd_mounted) return true;
-  // Honour the backoff here, not only at selected UI call sites. Chat history,
-  // tiles, backups, and the file manager all share this helper; without a
-  // central guard an absent card made history walk the full 6-8 second mount
-  // ladder every few seconds.
+  // Fast-fail inside the post-failure backoff window. Chat history, map tiles,
+  // backups, WAV chimes, and the file manager all call this shared helper; an
+  // absent card must not make those hot paths repeat the multi-second ladder.
+  // Explicit user retries clear the backoff first (fmSdMountOrFormatCb).
+  // Use signed subtraction so the comparison remains correct across millis()
+  // wraparound.
   const uint32_t mountNow = millis();
   if (s_sd_retry_after_ms &&
       static_cast<int32_t>(mountNow - s_sd_retry_after_ms) < 0) return false;
@@ -19874,8 +20642,11 @@ static bool fmSdTryMount() {
   // mounts on the first attempt and returns immediately; only a flaky/cold card
   // walks the whole ladder (~1.1 s worst case). The cumulative delay can
   // approach the loop watchdog window, so drop the WDT around the loop. 4 MHz
-  // is reliable on the shared LoRa bus; max_files=3 keeps the VFS footprint
-  // small (dir + at most 2 files).
+  // is reliable on the shared LoRa bus. max_files=6 (was 3): the card now
+  // serves telemetry log rewrites (2 handles), battery log rewrites (2),
+  // the history flush, tile reads/writes, WAV chimes and the About readout
+  // CONCURRENTLY — with only 3 VFS slots the history flush's open("w") lost
+  // that race and chat saves failed with ENFILE while the card was fine.
   // Ladder of (settle, clock) attempts. The first three use the fast 4 MHz the
   // shared LoRa bus handles well; a cold / cheap card that won't wake at 4 MHz
   // then gets progressively longer settles AND a lower clock (1 MHz, then
@@ -19896,13 +20667,28 @@ static bool fmSdTryMount() {
   };
   const int kAttempts = (int)(sizeof(kMountLadder) / sizeof(kMountLadder[0]));
   bool mounted = false;
+  uint32_t mounted_hz = 0;
   disableLoopWDT();
   for (int attempt = 0; attempt < kAttempts; ++attempt) {
     SD.end();
     delay(kMountLadder[attempt].settle_ms);
-    if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 3) && SD.cardType() != CARD_NONE) {
+    if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
       mounted = true;
+      mounted_hz = kMountLadder[attempt].hz;
       break;
+    }
+  }
+  // Renegotiate upward after a slow-rung success (GH #194): the succeeding rung's clock used
+  // to become the SESSION clock, so a card whose wake-up needed 400 kHz served contacts,
+  // history and tiles at ~25 KB/s forever after ("slower is fine" above predates the SD being
+  // the primary store). Init slow, then raise — fall back to the proven clock if 4 MHz fails.
+  if (mounted && mounted_hz < 4000000) {
+    SD.end();
+    delay(60);
+    if (!(SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE)) {
+      SD.end();
+      delay(120);
+      mounted = SD.begin(PIN_SD_CS, *spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
     }
   }
   enableLoopWDT();
@@ -19930,6 +20716,35 @@ static bool fmSdTryMount() {
 static void fmSdUnmount() {
   if (s_sd_mounted) { SD.end(); s_sd_mounted = false; s_sd_size = 0; }
   s_sd_retry_after_ms = 0;   // a reinsert should be able to mount right away
+}
+// True when the card still answers real I/O. SD.cardType() is useless for this:
+// arduino-esp32 caches the type at mount and only an explicit SD.end() ever
+// returns CARD_NONE again — a wedged (or even physically removed) card keeps
+// reporting its mount-time type forever. Opening the root dir DOES hit the card:
+// the root `stat` is answered from RAM (vfs_fat special-cases "/"), but the
+// opendir behind it runs f_opendir -> disk_status = a real SEND_STATUS
+// transaction, and a NOINIT'd card then gets one full re-init handshake — so a
+// recoverable card self-heals right here, a dead one returns an invalid File
+// (opendir fails -> operator bool false). Healthy-card cost is sub-ms; a dead
+// card rides out the SPI timeouts once, so callers rate-limit the probe.
+static bool sdProbeAlive() {
+  File d = SD.open("/");
+  const bool ok = d && d.isDirectory();
+  if (d) d.close();
+  return ok;
+}
+// Discriminator for hot READ paths (map tile lookups run up to five SD opens
+// per tile on the loop task): a missing FILE on a healthy card must stay cheap
+// and silent, while a dead card must stamp the failure AND let the caller
+// short-circuit — otherwise one render pass serializes behind sd_diskio's
+// per-op timeout/re-init and the whole UI freezes while a card is out. Call
+// after a failed SD read/open; returns true when the card itself is dead
+// (bail out of the whole SD pass), false when it was just a missing file.
+static bool sdReadFailedCardDead() {
+  if (s_sd_fail_note_ms) return true;   // already suspected — sdHealthTick arbitrates within ~5 s
+  if (sdProbeAlive()) return false;     // card fine: genuinely missing file
+  sdNoteIoFailure();
+  return true;
 }
 static void fmSdClickCb(lv_event_t* e) {
   // SHORT_CLICKED (not CLICKED) so a long-press — which formats the card — does
@@ -19979,6 +20794,7 @@ static void fmSdDoFormat() {
 // (e.g. exFAT, which this build can't read — only FAT16/FAT32) offer to format.
 static void fmSdMountOrFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_sd_retry_after_ms = 0;   // explicit user retry — bypass the mount backoff
   if (fmSdTryMount()) { fmShowRoots(); return; }
   showConfirm(TR("Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased."),
               "Format", fmSdDoFormat);
@@ -19989,7 +20805,11 @@ static void fmSdMountOrFormatCb(lv_event_t* e) {
 // SETTINGS (exported config), plus MAPS/LOGS. Idempotent (mkdir-if-absent), so
 // it's also safe to re-run on an already-set-up card.
 static void sdEnsureMeshcomodFolders() {
-  static const char* const folders[] = { "/BINS", "/UPDATES", "/RECBCK", "/SETTINGS", "/MAPS", "/LOGS" };
+  // /meshcomod + the chat-segment dir were MISSING here for years: after an
+  // in-session FAT32 format every chat/telemetry write failed at open (ENOENT)
+  // until a remount or reboot recreated the data root.
+  static const char* const folders[] = { "/BINS", "/UPDATES", "/RECBCK", "/SETTINGS", "/MAPS", "/LOGS",
+                                         "/meshcomod", "/meshcomod/msgs" };
   for (unsigned i = 0; i < sizeof(folders) / sizeof(folders[0]); ++i)
     if (!SD.exists(folders[i])) SD.mkdir(folders[i]);
   if (!SD.exists("/README.TXT")) {
@@ -22301,6 +23121,328 @@ static void openReaderPage() {
 }
 #endif  // Reader
 
+// ===== Discover app (active node-discovery + live signal-ranked list) =====================
+// Fires a zero-hop NODE_DISCOVER_REQ sweep (ALL node types) every few seconds while open and lists
+// every node that answers, ranked by signal. The engine (MyMesh::_discover[] + uiStartDiscoverScan
+// + discoverUpsert) collects the replies; this page renders them + drives the cadence, airtime-gated
+// so a repeating scan respects the duty-cycle budget. Rendered as ONE recolored label (like the RF
+// Monitor feed) — light + scroll-safe, no per-row object churn. Map + wardriving build on top later.
+static lv_obj_t*   s_discover_root    = nullptr;
+static lv_obj_t*   s_discover_feed    = nullptr;   // single recolored multi-line label
+static lv_obj_t*   s_discover_status  = nullptr;   // header: "Scanning… · N nearby"
+static lv_obj_t*   s_discover_btn_lbl = nullptr;   // Scan/Stop button label
+static lv_timer_t* s_discover_timer   = nullptr;
+static bool        s_discover_scanning = true;
+static uint32_t    s_discover_last_scan_ms = 0;
+
+static void closeDiscoverPage();
+static void discoverJumpToMapHere();   // "Show on map" — defined with the map code (uses map statics)
+
+// node_type -> row colour / short label (mirrors the map marker colours).
+static uint32_t discTypeColor(uint8_t t) {
+  switch (t) {
+    case ADV_TYPE_REPEATER: return 0x4DA8FF;   // blue
+    case ADV_TYPE_CHAT:     return 0x53C06B;   // green
+    case ADV_TYPE_ROOM:     return 0xF0A020;   // amber
+    case ADV_TYPE_SENSOR:   return 0x35C9C9;   // cyan
+    default:                return 0x9AA0A6;   // grey
+  }
+}
+static const char* discTypeName(uint8_t t) {
+  switch (t) {
+    case ADV_TYPE_REPEATER: return "repeater";
+    case ADV_TYPE_CHAT:     return "companion";
+    case ADV_TYPE_ROOM:     return "room";
+    case ADV_TYPE_SENSOR:   return "sensor";
+    default:                return "node";
+  }
+}
+// Single-letter type for the LIST rows (#191): the full word plus a long node name pushed the
+// trailing last-heard age off the 320px line. The summary header keeps the full words.
+static const char* discTypeShort(uint8_t t) {
+  switch (t) {
+    case ADV_TYPE_REPEATER: return "R";
+    case ADV_TYPE_CHAT:     return "C";
+    case ADV_TYPE_ROOM:     return "Rm";
+    case ADV_TYPE_SENSOR:   return "S";
+    default:                return "?";
+  }
+}
+
+// ---- Wardriving: log GPS-tagged sightings as we scan (a standalone, on-device MeshMapper) ----
+// While the Discover app scans, sample our GPS position; at each sample, log every currently-heard
+// node (our position + its type + signal) to an SD CSV, and keep an in-RAM coverage ring for the map
+// overlay. A 0-hop hit means "reachable from HERE", so the track of samples IS a personal RF-coverage
+// map. All UI-side (needs GPS, which the engine doesn't have). Map rendering reads s_disc_track[].
+struct DiscTrackPt { int32_t lat_e6, lon_e6; int8_t best_rssi; uint8_t node_count; };
+static const int k_disc_track_max = 160;
+static DiscTrackPt* s_disc_track = (DiscTrackPt*)psAlloc(sizeof(DiscTrackPt) * k_disc_track_max);  // PSRAM (~1KB off .bss)
+static int       s_disc_track_n = 0;       // total samples ever (ring slot = n % max)
+static int32_t   s_disc_last_lat = 0, s_disc_last_lon = 0;
+static uint32_t  s_disc_last_sample_ms = 0;
+static uint32_t  s_disc_log_count = 0;     // sightings written to SD this session
+static lv_obj_t* s_disc_footer = nullptr;  // bottom status line: GPS / wardrive state
+
+static void discoverLogSighting(int32_t lat_e6, int32_t lon_e6, const MyMesh::DiscoverHit& h) {
+#if CAP_SD
+  if (SD.cardType() == CARD_NONE) return;
+  markSdIo();
+  SD.mkdir("/meshcomod");
+  SD.mkdir("/meshcomod/discover");
+  File f = SD.open("/meshcomod/discover/wardrive.csv", FILE_APPEND);
+  if (!f) { sdNoteIoFailure(); return; }
+  if (f.size() == 0) f.print("epoch,lat,lon,type,pubkey,rssi,snr,hops\n");
+  uint32_t epoch = (uint32_t)rtc_clock.getCurrentTime();
+  f.printf("%lu,%.6f,%.6f,%s,%02X%02X%02X%02X,%d,%.1f,%u\n",
+    (unsigned long)epoch, (double)lat_e6 / 1e6, (double)lon_e6 / 1e6, discTypeName(h.node_type),
+    h.pubkey[0], h.pubkey[1], h.pubkey[2], h.pubkey[3],
+    (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, (unsigned)h.path_len);
+  f.close();
+  s_disc_log_count++;
+#else
+  (void)lat_e6; (void)lon_e6; (void)h;
+#endif
+}
+
+// Called every scan tick: refresh the footer + (once we've moved ~15 m) log a coverage sample.
+static void discoverWardriveTick() {
+  UITask* task = g_lv.task;
+  const bool fix = task && task->getGpsFix();
+  const double latd = fix ? task->getNodeLat() : 0.0, lond = fix ? task->getNodeLon() : 0.0;
+  if (fix && !(latd == 0.0 && lond == 0.0)) {
+    const int32_t lat_e6 = (int32_t)lround(latd * 1e6), lon_e6 = (int32_t)lround(lond * 1e6);
+    const uint32_t now = millis();
+    int32_t dlat = lat_e6 - s_disc_last_lat; if (dlat < 0) dlat = -dlat;
+    int32_t dlon = lon_e6 - s_disc_last_lon; if (dlon < 0) dlon = -dlon;
+    if (s_disc_last_sample_ms == 0 || dlat > 150 || dlon > 150 || (now - s_disc_last_sample_ms) > 20000) {
+      int nodes = 0; int8_t best = -128;
+      uint8_t n = the_mesh.discoverCount();
+      for (uint8_t i = 0; i < n; i++) {
+        MyMesh::DiscoverHit h;
+        if (!the_mesh.discoverGet(i, h) || (now - h.last_ms) > 8000) continue;   // only currently-heard
+        nodes++; if (h.our_rssi > best) best = h.our_rssi;
+        discoverLogSighting(lat_e6, lon_e6, h);
+      }
+      if (nodes > 0) {
+        DiscTrackPt& p = s_disc_track[s_disc_track_n % k_disc_track_max];
+        p.lat_e6 = lat_e6; p.lon_e6 = lon_e6; p.best_rssi = best;
+        p.node_count = (uint8_t)(nodes > 255 ? 255 : nodes);
+        s_disc_track_n++;
+      }
+      s_disc_last_lat = lat_e6; s_disc_last_lon = lon_e6; s_disc_last_sample_ms = now;
+    }
+  }
+  if (s_disc_footer) {
+    if (!fix) lv_label_set_text(s_disc_footer, "#7A7F87 Wardrive: waiting for GPS fix\xE2\x80\xA6#");
+    else lv_label_set_text_fmt(s_disc_footer,
+           "#7A7F87 Wardrive: %d coverage pts \xC2\xB7 %lu logged to SD#",
+           s_disc_track_n > k_disc_track_max ? k_disc_track_max : s_disc_track_n,
+           (unsigned long)s_disc_log_count);
+  }
+}
+
+// Per-row snapshot for tap-to-add (populated by discoverBuildFeed in the displayed sort order):
+// full pubkey + type + name, so a tap on the feed resolves to the exact node under it.
+static const int DISC_MAXROWS = 40;
+static uint8_t s_disc_row_key[DISC_MAXROWS][32];
+static uint8_t s_disc_row_type[DISC_MAXROWS];
+static char    s_disc_row_name[DISC_MAXROWS][26];
+static int     s_disc_row_n = 0;
+
+// Rebuild the feed label from the engine's _discover[] table, strongest-signal first.
+static void discoverBuildFeed() {
+  if (!s_discover_feed) return;
+  const uint32_t now = millis();
+  static MyMesh::DiscoverHit hits[MyMesh::DISCOVER_MAX];
+  static uint8_t idx[MyMesh::DISCOVER_MAX];
+  uint8_t m = 0;
+  uint8_t n = the_mesh.discoverCount();
+  for (uint8_t i = 0; i < n && m < MyMesh::DISCOVER_MAX; i++) {
+    if (the_mesh.discoverGet(i, hits[m])) { idx[m] = m; m++; }
+  }
+  for (uint8_t a = 0; a < m; a++)                          // insertion sort by our_rssi desc
+    for (uint8_t b = (uint8_t)(a + 1); b < m; b++)
+      if (hits[idx[b]].our_rssi > hits[idx[a]].our_rssi) { uint8_t t = idx[a]; idx[a] = idx[b]; idx[b] = t; }
+
+  static char buf[3200];
+  int q = 0, rpt = 0, comp = 0;
+  const int MAXROWS = DISC_MAXROWS;
+  s_disc_row_n = 0;
+  for (uint8_t k = 0; k < m && k < MAXROWS && q < (int)sizeof(buf) - 112; k++) {
+    const MyMesh::DiscoverHit& h = hits[idx[k]];
+    if (h.node_type == ADV_TYPE_REPEATER) rpt++;
+    else if (h.node_type == ADV_TYPE_CHAT) comp++;
+    char name[26];
+    ContactInfo* c = the_mesh.lookupContactByPubKey((uint8_t*)h.pubkey, 6);
+    if (c && c->name[0]) snprintf(name, sizeof name, "%s", c->name);
+    else                 snprintf(name, sizeof name, "Node \xC2\xB7%02X%02X", h.pubkey[0], h.pubkey[1]);
+    memcpy(s_disc_row_key[k], h.pubkey, 32);           // snapshot this row for tap-to-add
+    s_disc_row_type[k] = h.node_type;
+    snprintf(s_disc_row_name[k], sizeof s_disc_row_name[k], "%s", name);
+    s_disc_row_n = k + 1;
+    uint32_t age = (now - h.last_ms) / 1000;
+    char ago[10];
+    if (age < 60) snprintf(ago, sizeof ago, "%us", (unsigned)age);
+    else          snprintf(ago, sizeof ago, "%um", (unsigned)(age / 60));
+    const char* direct = (h.path_len == 0) ? "  #53C06B direct#" : "";
+    // #191: cap the name (%.14s) + single-letter type so the trailing age ALWAYS fits the line.
+    q += snprintf(buf + q, sizeof(buf) - q,
+      "#%06X %.14s#  %s  %ddBm %.1f%s  \xC2\xB7 %s\n",
+      (unsigned)discTypeColor(h.node_type), name, discTypeShort(h.node_type),
+      (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, direct, ago);
+  }
+  if (q == 0) snprintf(buf, sizeof buf, "#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#");
+  else if (buf[q - 1] == '\n') buf[q - 1] = '\0';
+  lv_label_set_text(s_discover_feed, buf);
+  if (s_discover_status)
+    lv_label_set_text_fmt(s_discover_status, "%s \xC2\xB7 %d nearby (%d rpt, %d comp)",
+      s_discover_scanning ? "Scanning\xE2\x80\xA6" : "Paused", (int)m, rpt, comp);
+}
+
+static void discoverTimerCb(lv_timer_t* t) {
+  (void)t;
+  if (!s_discover_root) return;
+  const uint32_t now = millis();
+  if (s_discover_scanning && (s_discover_last_scan_ms == 0 || (now - s_discover_last_scan_ms) >= 4000)) {
+    if (the_mesh.getRemainingTxBudget() >= 300) {   // airtime gate: keep a duty-cycle cushion
+      the_mesh.uiStartDiscoverScan(0);              // 0 = all node types
+      s_discover_last_scan_ms = now;
+    }
+  }
+  discoverBuildFeed();
+  discoverWardriveTick();
+}
+
+static void discoverScanToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_discover_scanning = !s_discover_scanning;
+  if (s_discover_scanning) s_discover_last_scan_ms = 0;   // resume -> sweep immediately
+  if (s_discover_btn_lbl) lv_label_set_text(s_discover_btn_lbl, s_discover_scanning ? "Stop" : "Scan");
+  discoverBuildFeed();
+}
+
+static void discoverShowMapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  discoverJumpToMapHere();   // centre the map on us + open the Map tab (coverage overlay draws there)
+}
+
+// Tap a row in the feed -> add that node to contacts (using the full pubkey the discovery reply
+// carried). Resolves the row from the tap's Y (uniform one-line rows: LONG_CLIP + a fixed line_space).
+static void discoverFeedTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!s_discover_feed || s_disc_row_n == 0) return;
+  lv_indev_t* indev = lv_indev_get_act();
+  if (!indev) return;
+  lv_point_t p; lv_indev_get_point(indev, &p);
+  lv_area_t a; lv_obj_get_coords(s_discover_feed, &a);
+  const int local_y = (int)p.y - (int)a.y1;
+  if (local_y < 0) return;
+  const int row_h = (int)lv_font_get_line_height(&g_font_12) + 3;   // == the label's line_space
+  const int row = local_y / row_h;
+  if (row < 0 || row >= s_disc_row_n) return;                       // tapped empty space below the list
+  const uint8_t* pk = s_disc_row_key[row];
+  if (the_mesh.lookupContactByPubKey((uint8_t*)pk, PUB_KEY_SIZE) != nullptr) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Already in contacts"), 1100);
+    return;
+  }
+  if (the_mesh.uiAddDiscoveredContact(pk, s_disc_row_type[row], s_disc_row_name[row])) {
+    if (g_lv.task) { char msg[44]; snprintf(msg, sizeof msg, "%s %s", TR("Added"), s_disc_row_name[row]); g_lv.task->showAlert(msg, 1400); }
+  } else if (g_lv.task) {
+    g_lv.task->showAlert(TR("Could not add"), 1100);
+  }
+}
+
+static void closeDiscoverPage() {
+  if (s_discover_timer) { lv_timer_del(s_discover_timer); s_discover_timer = nullptr; }
+  if (s_discover_root)  { popupClose(&s_discover_root); }
+  s_discover_feed = s_discover_status = s_discover_btn_lbl = s_disc_footer = nullptr;
+  s_disc_row_n = 0;
+  s_discover_scanning = true;
+  if (s_apppage_close == closeDiscoverPage) {
+    s_apppage_title = nullptr; s_apppage_close = nullptr;
+    statusBarSetTall(false); updateGlobalStatusBar();
+  }
+}
+
+static void openDiscoverPage() {
+  closeDiscoverPage();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  const int H = sh - STATUSBAR_H;
+  s_discover_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_discover_root);
+  lv_obj_set_size(s_discover_root, sw, H);
+  lv_obj_set_pos(s_discover_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_discover_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_discover_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_discover_root, LV_OBJ_FLAG_SCROLLABLE);
+
+  s_apppage_title = "Discover";
+  s_apppage_close = closeDiscoverPage;
+  statusBarSetTall(true);
+  updateGlobalStatusBar();
+  const int top = STATUSBAR_H + 8;
+
+  s_discover_status = lv_label_create(s_discover_root);
+  lv_label_set_text(s_discover_status, "Scanning\xE2\x80\xA6");
+  lv_obj_set_style_text_font(s_discover_status, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_discover_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(s_discover_status, 10, top);
+  lv_obj_set_width(s_discover_status, sw - 130);            // keep clear of the two header buttons
+  lv_label_set_long_mode(s_discover_status, LV_LABEL_LONG_DOT);
+
+  lv_obj_t* btn = lv_btn_create(s_discover_root);           // Stop / Scan
+  lv_obj_set_size(btn, 56, 30);
+  lv_obj_set_pos(btn, sw - 62, top - 4);
+  styleButton(btn);
+  lv_obj_add_event_cb(btn, discoverScanToggleCb, LV_EVENT_CLICKED, nullptr);
+  s_discover_btn_lbl = lv_label_create(btn);
+  lv_label_set_text(s_discover_btn_lbl, "Stop");
+  lv_obj_center(s_discover_btn_lbl);
+
+  lv_obj_t* mbtn = lv_btn_create(s_discover_root);          // Show on map
+  lv_obj_set_size(mbtn, 56, 30);
+  lv_obj_set_pos(mbtn, sw - 122, top - 4);
+  styleButton(mbtn);
+  lv_obj_add_event_cb(mbtn, discoverShowMapCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* mlbl = lv_label_create(mbtn);
+  lv_label_set_text(mlbl, "Map");
+  lv_obj_center(mlbl);
+
+  lv_obj_t* sc = lv_obj_create(s_discover_root);
+  lv_obj_remove_style_all(sc);
+  lv_obj_set_size(sc, sw, H - (top - STATUSBAR_H) - 34 - 20);   // leave a row for the wardrive footer
+  lv_obj_set_pos(sc, 0, top + 30);
+  lv_obj_set_style_bg_opa(sc, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(sc, 8, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(sc, LV_DIR_VER);
+  s_discover_feed = lv_label_create(sc);
+  lv_label_set_recolor(s_discover_feed, true);
+  lv_obj_set_width(s_discover_feed, sw - 20);
+  lv_label_set_long_mode(s_discover_feed, LV_LABEL_LONG_CLIP);         // one line per row -> tap-to-add maps Y->row
+  lv_obj_set_style_text_line_space(s_discover_feed, 3, LV_PART_MAIN);  // fixed row pitch (font line-height + 3)
+  lv_obj_set_style_text_font(s_discover_feed, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_discover_feed, lv_color_hex(0xC8CDD2), LV_PART_MAIN);
+  lv_obj_add_flag(s_discover_feed, LV_OBJ_FLAG_CLICKABLE);             // tap a node row -> add to contacts
+  lv_obj_add_event_cb(s_discover_feed, discoverFeedTapCb, LV_EVENT_CLICKED, nullptr);
+  lv_label_set_text(s_discover_feed, "");
+
+  // wardriving footer (GPS + logged-count status), pinned at the bottom
+  s_disc_footer = lv_label_create(s_discover_root);
+  lv_label_set_recolor(s_disc_footer, true);
+  lv_obj_set_style_text_font(s_disc_footer, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(s_disc_footer, 10, STATUSBAR_H + H - 18);
+  lv_label_set_text(s_disc_footer, "#7A7F87 Wardrive: \xE2\x80\xA6#");
+
+  the_mesh.discoverClear();
+  s_discover_scanning = true;
+  s_discover_last_scan_ms = 0;                // fire the first sweep on the first tick
+  discoverBuildFeed();
+  s_discover_timer = lv_timer_create(discoverTimerCb, 1000, nullptr);
+
+  if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
+}
+
 static void openMonitorPage() {
   closeMonitorPage();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -23337,6 +24479,32 @@ static void homeControlPanelCb(lv_event_t* e) {   // "Control panel" launcher ->
   if (lv_event_get_code(e) == LV_EVENT_CLICKED) toggleControlCenter();
 }
 
+// Chat-store chip for the Commander legend row (right of the TX/RX totals).
+// Deliberately terse — it shares one line with the traffic counts and must fit
+// half the chart width at g_font_12. The full story (backend, failure stage +
+// errno) stays on the About page's "Chat store" panel; this chip only has to
+// make a sick store impossible to miss from the home screen. Returns the text
+// colour to use.
+static uint32_t homeStoreChipText(char* out, size_t cap) {
+  if (s_msgs_write_fails) {                       // saves are failing right now
+    snprintf(out, cap, LV_SYMBOL_SAVE " FAIL x%u", (unsigned)s_msgs_write_fails);
+    return 0xE05252;                              // red — history is NOT landing
+  }
+  if (!s_seg_store_ready) {                       // old-format file not converted yet
+    snprintf(out, cap, LV_SYMBOL_SAVE " migrating");
+    return 0xF5A623;                              // amber
+  }
+  // Healthy: WHEN the store last saved. A clock time answers "is my history
+  // safe right now?" directly, where a size doesn't — and the segment count /
+  // byte total (plus the failure stage + errno) stay one tap away on the About
+  // page. Older than a day carries a "-<N>D" suffix so a store that quietly
+  // stopped saving yesterday can't read as fresh.
+  char when[16];
+  chatSaveStamp(when, sizeof when, s_msgs_write_ok_epoch);
+  snprintf(out, cap, LV_SYMBOL_SAVE " %s", when);
+  return COLOR_SUB;
+}
+
 static void makeHome(lv_obj_t* tab) {
   // Layout (240 wide × 282 tall): title + heartbeat + battery at top, status
   // lines, TX/RX chart in the middle, Send Advert button at the bottom.
@@ -23370,6 +24538,7 @@ static void makeHome(lv_obj_t* tab) {
   s_home_batt_pct   = nullptr;
   s_home_batt_icon  = nullptr;
   s_home_chart_sig  = nullptr;
+  s_home_store      = nullptr;   // created with the legend row below
   g_lv.home_apps    = nullptr;   // set below iff the right-hand launcher column is built (landscape)
 #if defined(HAS_EXPANSION_KIT)
   s_home_env_chart  = nullptr;
@@ -23494,14 +24663,29 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9)
-  // Landscape (T-Deck / Tanmatsu / pager / RAK Tap V2 / M9): the right column holds
-  // Advert + Terminal + Files/Apps + Control, so the chart must stop short of that
-  // strip — else it draws over the buttons.
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES)
+  // Landscape boards keep the chart clear of the right-hand button strip.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 #else
   const int chart_w = cw;
 #endif
+  // Chat-store chip: shares the legend row with the TX/RX totals, parked on the
+  // RIGHT HALF of the chart width (fixed width + right-aligned + CLIP, so it can
+  // never grow into the traffic counts on the left, at any UI scale). Not
+  // clickable — the legend owns this row's taps (signal/traffic popup).
+  s_home_store = lv_label_create(tab);
+  lv_label_set_long_mode(s_home_store, LV_LABEL_LONG_CLIP);
+  lv_obj_set_width(s_home_store, chart_w / 2);
+  lv_obj_set_style_text_align(s_home_store, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_home_store, &g_font_12, LV_PART_MAIN);
+  {
+    char chip[24];
+    const uint32_t col = homeStoreChipText(chip, sizeof chip);
+    lv_label_set_text(s_home_store, chip);
+    lv_obj_set_style_text_color(s_home_store, lv_color_hex(col), LV_PART_MAIN);
+  }
+  lv_obj_align(s_home_store, LV_ALIGN_TOP_LEFT, chart_w - chart_w / 2, chart_y);
+
   // Fit the chart in the remaining vertical space: content height minus the
   // tab padding, the chart's top offset, and the Send-advert button + gaps.
   // Portrait keeps the full 96 px; landscape (short screen) shrinks it so the
@@ -25827,8 +27011,32 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 }
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+// Per-board OTA download bin name (the app-only <name>.bin under releases/<ch>/beta_<N>/).
+// MUST match the release artifact names exactly, or the self-update 404s. Every touch board is
+// dual-slot OTA-capable (CAP_OTA=1 + app0/app1 partitions + FIRMWARE_OTA_ENV) EXCEPT the Tanmatsu
+// (AppFS/launcher, CAP_OTA=0, never reaches this file). Keep this chain in sync when adding a board.
 #if defined(HAS_TDECK_GT911)
 static const char* const OTA_BIN_NAME = "wadamesh-tdeck";
+#elif defined(HAS_TDISPLAY_P4)
+  #if defined(HAS_TDP4_LCD)
+static const char* const OTA_BIN_NAME = "wadamesh-tdisplay-p4-lcd";   // T-Display P4 TFT-LCD SKU
+  #else
+static const char* const OTA_BIN_NAME = "wadamesh-tdisplay-p4";       // T-Display P4 AMOLED SKU
+  #endif
+#elif defined(HELTEC_LORA_V4_R8)
+static const char* const OTA_BIN_NAME = "wadamesh-heltec-v4-r8-tft";   // must precede the V4-TFT fallback
+#elif defined(HAS_THINKNODE_M9)
+static const char* const OTA_BIN_NAME = "wadamesh-thinknode-m9";
+#elif defined(HAS_RAK_TAP_V2)
+static const char* const OTA_BIN_NAME = "wadamesh-rak-tap-v2";
+#elif defined(TLORA_PAGER)
+  #if defined(USE_LR1121)
+static const char* const OTA_BIN_NAME = "wadamesh-tlora-pager-lr1121";
+  #else
+static const char* const OTA_BIN_NAME = "wadamesh-tlora-pager-sx1262";
+  #endif
+#elif defined(ATTAKY_MESH_SERIES)
+static const char* const OTA_BIN_NAME = "wadamesh-attaky";
 #else
 static const char* const OTA_BIN_NAME = "wadamesh-heltec-v4-tft";   // Heltec V4 TFT (Tanmatsu excluded above)
 #endif
@@ -26005,16 +27213,11 @@ static void tileFetchTaskFn(void* arg) {
       s_los_result_ready = true;
       continue;
     }
-    // Chat-history flush: write the loop thread's snapshot. busy is raised BEFORE
-    // req is cleared so the loop-side gate (busy || req) never sees a gap in which
-    // it could overwrite the snapshot mid-write.
-    if (s_hist_flush_req) {
-      s_hist_flush_busy = true;
-      s_hist_flush_req  = false;
-      s_hist_flush_ok   = uiHistWorkerFlush();
-      s_hist_flush_busy = false;
-      continue;
-    }
+    // (Chat-history flush moved to its own core-1 task — histFlushTaskFn. On
+    // THIS worker it shared core 0 with the Wi-Fi driver, whose prio-23 tasks
+    // starve a prio-1 task for hundreds of ms; sd_diskio's busy-waits measure
+    // wall time, so healthy SD writes surfaced as timeouts/EIO here while the
+    // identical write from core 1 succeeded.)
     // Firmware update check (one-shot, infrequent). Reuses this worker's stack.
     if (s_verchk_request) {
       s_verchk_request = false;
@@ -26267,11 +27470,17 @@ static void tileFetchTaskFn(void* arg) {
             } else {
               ++s_tile_fetch_short_wr;
               s_tile_fetch_last_wr = 'P';            // short/failed disk write (card full or SD error)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+              if (s_tile_fs == &SD) sdNoteIoFailure();   // wedge tell (worker task — stamp only)
+#endif
             }
           }
         } else {
           ++s_tile_fetch_open_fail;
           s_tile_fetch_last_wr = 'O';                // open("w") failed: dir missing / write-protect / SD bus
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+          if (s_tile_fs == &SD) sdNoteIoFailure();       // wedge tell (worker task — stamp only)
+#endif
         }
       } else {
         s_tile_fetch_last_wr = 'Z';                  // bad / oversized content-length
@@ -26375,6 +27584,54 @@ static bool ensureTileFetchTaskRunning() {
   return s_tile_fetch_task != nullptr;
 }
 
+// ---- Chat-history flush worker (core 1) --------------------------------------
+// The flush used to ride the core-0 tile_fetch worker — the Wi-Fi core. Under
+// Wi-Fi load its prio-23 driver tasks starve a prio-1 task for hundreds of ms
+// at a time, and sd_diskio's busy-waits measure WALL time: the timeout expires
+// while the task simply wasn't scheduled, so perfectly good SD writes surface
+// as EIO ("card I/O error") — while the identical write from the core-1 loop
+// task (the reboot-time persist) succeeds every time. Chat persistence has no
+// Wi-Fi affinity, so it gets its own tiny task pinned to core 1 at the loop
+// task's priority (equal-priority time-slicing keeps the UI serviced during a
+// write). The task is persistent; the 100 ms poll of the volatile req flag
+// costs nothing measurable and mirrors the old worker's pickup latency.
+static TaskHandle_t s_hist_flush_task        = nullptr;
+static StaticTask_t s_hist_flush_tcb;
+static StackType_t* s_hist_flush_stack       = nullptr;
+static size_t       s_hist_flush_stack_bytes = 0;
+static void histFlushTaskFn(void*) {
+  for (;;) {
+    // busy is raised BEFORE req is cleared so the loop-side gate (busy || req)
+    // never sees a gap in which it could overwrite the snapshot mid-write.
+    if (s_hist_flush_req) {
+      s_hist_flush_busy = true;
+      s_hist_flush_req  = false;
+      s_hist_flush_ok   = uiSegRunArmedJob();   // segmented store: one append/compact per job
+      s_hist_flush_busy = false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+static bool ensureHistFlushTaskRunning() {
+  if (s_hist_flush_task != nullptr) return true;
+  if (!s_hist_flush_stack) {
+    // The segment writers keep their bulk buffers on the heap; stack use is
+    // File objects + FatFs path work. 6 KB leaves ample headroom (the tile
+    // worker's overflow-into-globals history earned the caution).
+    static const size_t k_sz = 6 * 1024;
+    s_hist_flush_stack = (StackType_t*)heap_caps_malloc(k_sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!s_hist_flush_stack) return false;
+    s_hist_flush_stack_bytes = k_sz;
+  }
+  s_hist_flush_task = xTaskCreateStaticPinnedToCore(
+      histFlushTaskFn, "hist_flush",
+      s_hist_flush_stack_bytes / sizeof(StackType_t),
+      nullptr, 1,
+      s_hist_flush_stack, &s_hist_flush_tcb,
+      1 /*core 1 — NOT the Wi-Fi core; see block comment*/);
+  return s_hist_flush_task != nullptr;
+}
+
 // Queue a missing tile for download. No-op when Wi-Fi is down or the
 // tile was queued recently. Called from renderMapTiles after a SPIFFS
 // miss; the actual fetch happens off-thread.
@@ -26393,7 +27650,15 @@ static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
 #endif
   if (WiFi.status() != WL_CONNECTED) return;
   if (tileFetchSeen(z, x, y)) return;
-  ensureTileFetchTaskRunning();
+  // HONOR the result: ensureTileFetchTaskRunning() creates the QUEUE first and can
+  // still fail afterwards on the worker's 8 KB contiguous-DRAM stack. Ignoring it left
+  // a queue with no consumer, so every send below incremented s_tile_fetch_pending with
+  // nothing to ever drain it. That counter is only ever ++/--, never reset, and it gates
+  // ALL notification sounds (tdeckPlayNotifySlot and friends bail while it is > 0), so a
+  // single failed spawn silently killed the chime for the rest of the boot — the "lost
+  // sound until I restart" report (issue #184). No tile is lost by returning here: with
+  // no worker the fetch could never have happened anyway.
+  if (!ensureTileFetchTaskRunning()) return;
   if (!s_tile_fetch_queue) return;
   TileFetchReq req = {z, x, y};
   if (xQueueSend(s_tile_fetch_queue, &req, 0) == pdTRUE) {
@@ -26518,7 +27783,12 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
 #if CAP_SD
   if (s_tiles_from_sd && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
     // Tile source = microSD: read straight off the card (fully offline, no server fetch).
-    if (!fmSdTryMount()) return false;
+    if (s_sd_fail_note_ms) return false;   // card suspected dead — don't stack per-tile SPI timeouts (sdHealthTick arbitrates)
+    // Mounted check only — a render loop must never walk the multi-second
+    // mount ladder per tile (with the card out that read as recurring UI
+    // freezes). Mounting is owned by boot adoption, sdHealthTick's reinsert
+    // watch, the FM poll, and the SD-tiles toggle (mapOptTilesSdCb mounts).
+    if (!s_sd_mounted) return false;
     markSdIo();                          // SD read activity -> status-bar LED
     // Prefer the Meshtastic/MeshCore standard layout /maps/osm/{z}/{x}/{y}.png
     // (decoded via lodepng); fall back to the legacy /tiles/{z}/{x}/{y}.jpg.
@@ -26541,14 +27811,14 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
       fsd = SD.open(ppath, FILE_READ);
     }
     if (!fsd) fsd = SD.open(path, FILE_READ);   // legacy /tiles/<z>/<x>/<y>.jpg
-    if (!fsd) return false;
+    if (!fsd) { sdReadFailedCardDead(); return false; }   // missing tile (cheap, silent) vs dead card (stamp + short-circuit)
     const size_t szsd = fsd.size();
     if (szsd == 0 || szsd > 256 * 1024) { fsd.close(); return false; }   // PNG tiles run larger than JPEG
     uint8_t* bufsd = (uint8_t*)lvglPsramAlloc(szsd);
     if (!bufsd) { fsd.close(); return false; }
     const size_t nsd = fsd.read(bufsd, szsd);
     fsd.close();
-    if (nsd != szsd) { lvglPsramFree(bufsd); return false; }
+    if (nsd != szsd) { lvglPsramFree(bufsd); sdReadFailedCardDead(); return false; }   // short read mid-tile = card died under us
     *out_data = bufsd; *out_len = szsd;
     return true;
   }
@@ -26560,8 +27830,18 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   // re-downloaded forever and rendered nothing (#tiles). open() is the real existence test; read up to
   // the 100 KB writer cap and use the ACTUAL bytes read. (S3 boards: f.size() works there, but this is
   // equally correct — a transient 100 KB PSRAM buffer per tile, freed right after decode.)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+  // Launcher installs cache tiles on the raw SD (s_tile_fs == &SD) — same
+  // dead-card short-circuit as the SD-pack path above.
+  if (s_tile_fs == &SD && s_sd_fail_note_ms) return false;
+#endif
   File f = tileCacheOpen(path, "r");
-  if (!f) return false;
+  if (!f) {
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+    if (s_tile_fs == &SD) sdReadFailedCardDead();
+#endif
+    return false;
+  }
   const size_t CAP = 100 * 1024;
   uint8_t* buf = (uint8_t*)lvglPsramAlloc(CAP);
   if (!buf) { f.close(); return false; }
@@ -26594,6 +27874,35 @@ static void freeMapTiles() {
   for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) freeMapTileSlot(s_map_tiles[_ti]);
 }
 
+// The tile storage changed underneath us: a card was remounted (wedge recovery,
+// reinsert watch, file-manager insert poll, post-format) or lost. The map keeps
+// decoded tiles in s_map_tiles across renders and only renders on pan / zoom /
+// tab-open, so without this a card that came back showed a permanently blank
+// map — the chat store re-landed (flushHistorySoon) while the map was never
+// told anything had happened.
+//
+//   * adopts the card as the tile cache when this boot had no backend at all
+//     (booted card-less, or the "tiles" partition is absent — Launcher installs)
+//   * drops the decoded tiles, since a swapped card holds different content
+//   * clears the fetch dedup ring so tiles whose download failed during the
+//     outage are retried instead of being remembered as in-flight forever
+//   * re-renders immediately when the map is the visible tab
+static void mapNoteStorageChanged() {
+#if CAP_SD
+  if (s_sd_mounted && !s_tiles_fs_ready) {
+    // No tile backend was resolved at boot; the card can serve as one now
+    // (same layout the boot fallback uses: SD ROOT /tiles/<z>/<x>/<y>).
+    s_tile_fs        = &SD;
+    s_tile_root[0]   = '\0';
+    s_tiles_fs_ready = true;
+  }
+#endif
+  for (int i = 0; i < k_tile_fetch_dedup_size; ++i) s_tile_fetch_dedup[i] = 0;
+  s_tile_fetch_dedup_head = 0;
+  freeMapTiles();
+  if (g_lv.tabview && lv_tabview_get_tab_act(g_lv.tabview) == MAP_TAB_INDEX) renderMapTiles();
+}
+
 #if defined(ESP32)
 // Is *some* tile source available to probe at all? (SD pack or LittleFS /tiles.)
 static bool mapTileSourceReady() {
@@ -26610,7 +27919,8 @@ static bool mapTileSourceReady() {
 static bool tileExistsAt(uint8_t z, long x, long y) {
 #if CAP_SD
   if (s_tiles_from_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
-    if (!fmSdTryMount()) return false;
+    if (s_sd_fail_note_ms) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
+    if (!s_sd_mounted) return false;       // never ladder from the zoom guard (see loadTileJpeg)
     char p[56];
     snprintf(p, sizeof p, "/maps/osm/%u/%ld/%ld.png", (unsigned)z, x, y);
     if (SD.exists(p)) return true;
@@ -26621,7 +27931,9 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.PNG", (unsigned)z, x, y);
     if (SD.exists(p)) return true;
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.jpg", (unsigned)z, x, y);
-    return SD.exists(p);
+    if (SD.exists(p)) return true;
+    sdReadFailedCardDead();   // all five missing: either past the pack edge (cheap, silent) or the card died
+    return false;
   }
 #endif
   if (!s_tiles_fs_ready) return false;
@@ -27089,6 +28401,56 @@ static void routeHudUpdate();
 static void showRouteHud();
 static void hideRouteHud();
 
+// ---- Discover wardriving coverage overlay (drawn on the map pan layer) ----
+// Plots the Discover app's logged coverage samples (s_disc_track[], populated in discoverWardriveTick)
+// as signal-coloured dots — a personal RF-coverage map: a 0-hop hit means "reachable from that point",
+// so green = strong contact, red = weak. Object pool freed alongside the other map markers.
+static lv_obj_t* s_disc_map_objs[k_disc_track_max] = {nullptr};
+static int       s_disc_map_obj_n = 0;
+static void discoverFreeMapObjs() {
+  for (int i = 0; i < s_disc_map_obj_n; ++i)
+    if (s_disc_map_objs[i]) { lv_obj_del(s_disc_map_objs[i]); s_disc_map_objs[i] = nullptr; }
+  s_disc_map_obj_n = 0;
+}
+static void discoverDrawCoverage(lv_obj_t* parent, double cwx, double cwy) {
+  const int cap = (int)(sizeof(s_disc_map_objs) / sizeof(s_disc_map_objs[0]));
+  const int total = s_disc_track_n < k_disc_track_max ? s_disc_track_n : k_disc_track_max;
+  for (int k = 0; k < total && s_disc_map_obj_n < cap; ++k) {
+    const DiscTrackPt& p = s_disc_track[k];
+    double mwx, mwy;
+    latLonToWorldPx((double)p.lat_e6 / 1e6, (double)p.lon_e6 / 1e6, s_map_zoom, &mwx, &mwy);
+    const int sx = (int)(mwx - cwx + k_map_canvas_w / 2);
+    const int sy = (int)(mwy - cwy + k_map_canvas_h / 2);
+    if (sx < -4 || sx >= k_map_canvas_w + 4 || sy < -4 || sy >= k_map_canvas_h + 4) continue;
+    int r = p.best_rssi; if (r > -50) r = -50; if (r < -110) r = -110;   // clamp to the colour range
+    int g = (r + 110) * 255 / 60;                                        // 0 (weak) .. 255 (strong)
+    uint32_t col = ((uint32_t)(255 - g) << 16) | ((uint32_t)g << 8);     // red -> green
+    lv_obj_t* d = lv_obj_create(parent);
+    lv_obj_remove_style_all(d);
+    lv_obj_set_size(d, 8, 8);
+    lv_obj_set_pos(d, sx - 4, sy - 4);
+    lv_obj_set_style_bg_color(d, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(d, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_set_style_border_color(d, lv_color_hex(0x101010), LV_PART_MAIN);
+    lv_obj_set_style_border_width(d, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(d, 4, LV_PART_MAIN);
+    lv_obj_clear_flag(d, LV_OBJ_FLAG_CLICKABLE);
+    s_disc_map_objs[s_disc_map_obj_n++] = d;
+  }
+}
+// Discover page's "Show on map": centre the map on our current position + open the Map tab, where
+// the coverage overlay draws. Keeps the centre (s_map_view_inited) so onMapTabActivated won't snap back.
+static void discoverJumpToMapHere() {
+  UITask* task = g_lv.task;
+  if (task && task->getGpsFix()) {
+    s_map_center_lat = task->getNodeLat();
+    s_map_center_lon = task->getNodeLon();
+    s_map_view_inited = true;
+  }
+  closeDiscoverPage();
+  goToTab(MAP_TAB_INDEX);
+}
+
 static void freeMapMarkers() {
   for (auto& m : s_map_markers) {
     if (m.obj) { lv_obj_del(m.obj); m.obj = nullptr; }
@@ -27102,6 +28464,7 @@ static void freeMapMarkers() {
     if (s_route_objs[i]) { lv_obj_del(s_route_objs[i]); s_route_objs[i] = nullptr; }
   }
   s_route_obj_n = 0;
+  discoverFreeMapObjs();
 }
 
 static void openMapMarker(MapMarkerKind kind, int source_idx);
@@ -27763,6 +29126,9 @@ static void renderMapMarkers() {
   }
 
 #endif
+
+  // Discover wardriving coverage dots (my logged signal samples), under the route overlay.
+  if (s_disc_track_n > 0) discoverDrawCoverage(parent, cwx, cwy);
 
   // Route-replay overlay — drawn last so the path + nodes sit above tiles,
   // link lines and contact markers.
@@ -30507,6 +31873,15 @@ static void applyMapChrome(bool on) {
 }
 
 static void makeMapTab(lv_obj_t* tab) {
+#if defined(TLORA_PAGER)
+  // Diagnostic/map chrome stays compact at every Pager UI-size preset so the
+  // overlays do not hide the map itself.
+  const lv_font_t* map_info_font = &lv_font_montserrat_14;
+  const lv_font_t* map_control_font = &lv_font_montserrat_20;
+#else
+  const lv_font_t* map_info_font = &g_font_12;
+  const lv_font_t* map_control_font = &g_font_16;
+#endif
   lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
   lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
   lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
@@ -30554,7 +31929,7 @@ static void makeMapTab(lv_obj_t* tab) {
   lv_label_set_long_mode(s_map_status_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_map_status_lbl, k_map_canvas_w - 20);
   lv_obj_set_style_text_color(s_map_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_style_text_font(s_map_status_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_map_status_lbl, map_info_font, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_map_status_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(s_map_status_lbl,
       TR("Map — no tile pack on SPIFFS yet.\n\n"
@@ -30568,7 +31943,7 @@ static void makeMapTab(lv_obj_t* tab) {
   // dark map patches.
   auto style_corner = [&](lv_obj_t* l) {
     lv_obj_set_style_text_color(l, lv_color_hex(0x000000), LV_PART_MAIN);
-    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(l, map_info_font, LV_PART_MAIN);
     lv_obj_set_style_bg_color(l, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(l, LV_OPA_40, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(l, 4, LV_PART_MAIN);
@@ -30626,7 +32001,7 @@ static void makeMapTab(lv_obj_t* tab) {
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, sym);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(l, map_control_font, LV_PART_MAIN);
     lv_obj_center(l);
     return b;
   };
@@ -30805,13 +32180,22 @@ static void chatUpdateJumpButtons(LvChatPanel* p) {
   if (!p || !p->msgs) return;
   s_jump_active_ms = millis();
   if (s_jump_dimmed) jumpBtnsSetDim(p, false);
+  // Always evaluated, even with no jump buttons to toggle (the pager builds
+  // neither): chatVirtAwayFromBottom -> chatVirtMaxScrollY has the LOAD-BEARING
+  // side effect of sizing the virt spacer (chatVirtRefreshScrollArea), and the
+  // opening refreshChatDetail relies on this call to establish the scroll
+  // extent BEFORE the async render applies the queued open-to-divider/bottom
+  // scroll. With the call skipped behind the (pager-null) jump_btn guard, that
+  // scroll_to_y clamped against a ~0-height content area and every chat opened
+  // pinned to the TOP (oldest) instead of the NEW divider / newest message.
+  const bool away = chatVirtAwayFromBottom(p);
   if (p->jump_oldest_btn) {
     if (lv_obj_get_scroll_y(p->msgs) > 30) lv_obj_clear_flag(p->jump_oldest_btn, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(p->jump_oldest_btn, LV_OBJ_FLAG_HIDDEN);
   }
   if (p->jump_btn) {
-    if (chatVirtAwayFromBottom(p)) lv_obj_clear_flag(p->jump_btn, LV_OBJ_FLAG_HIDDEN);
-    else                         lv_obj_add_flag(p->jump_btn, LV_OBJ_FLAG_HIDDEN);
+    if (away) lv_obj_clear_flag(p->jump_btn, LV_OBJ_FLAG_HIDDEN);
+    else      lv_obj_add_flag(p->jump_btn, LV_OBJ_FLAG_HIDDEN);
   }
 }
 #if TRACE_MESSAGE_SCROLL_ACTIVITY
@@ -30978,6 +32362,15 @@ static void makeChatDetail(LvChatPanel& p) {
   // transparent button keeps a usable touch target (plus ext_click_area) while
   // only the glyph is visible; UITask::loop dims them to 50% one second after
   // the last scroll (jumpBtnsSetDim above).
+  // Both floating jump arrows are touch-only affordances with no purpose on
+  // the T-LoRa Pager (no touchscreen), so skip creating them on that board
+  // and leave the pointers null like every consumer already handles safely
+  // (chatUpdateJumpButtons, jumpBtnsSetDim, the LvChatPanel reset — all
+  // null-guarded). The pager's own Backspace-tap "jump to latest" shortcut
+  // below no longer depends on jump_btn's existence; it checks
+  // chatVirtAwayFromBottom() directly and calls chatVirtJumpToLatest(), the
+  // same virtualization-aware jump this button's own click handler uses.
+#if !defined(TLORA_PAGER)
   p.jump_oldest_btn = lv_btn_create(p.overlay);
   lv_obj_set_size(p.jump_oldest_btn, 28, 36);
   lv_obj_set_style_bg_opa(p.jump_oldest_btn, LV_OPA_TRANSP, LV_PART_MAIN);
@@ -31002,7 +32395,9 @@ static void makeChatDetail(LvChatPanel& p) {
 #endif
   lv_obj_add_event_cb(p.jump_oldest_btn, jumpToOldestCb, LV_EVENT_CLICKED, &p);
   lv_obj_add_flag(p.jump_oldest_btn, LV_OBJ_FLAG_HIDDEN);
+#endif  // !TLORA_PAGER (jump_oldest_btn)
 
+#if !defined(TLORA_PAGER)
   p.jump_btn = lv_btn_create(p.overlay);
   lv_obj_set_size(p.jump_btn, 28, 36);
   lv_obj_set_style_bg_opa(p.jump_btn, LV_OPA_TRANSP, LV_PART_MAIN);
@@ -31028,6 +32423,7 @@ static void makeChatDetail(LvChatPanel& p) {
 #endif
   lv_obj_add_event_cb(p.jump_btn, jumpToLatestCb, LV_EVENT_CLICKED, &p);
   lv_obj_add_flag(p.jump_btn, LV_OBJ_FLAG_HIDDEN);
+#endif  // !TLORA_PAGER (jump_btn)
 
   // ---- Composer row ----
   p.composer_row = lv_obj_create(p.overlay);
@@ -31145,6 +32541,11 @@ static void makeChatDetail(LvChatPanel& p) {
   // — the physical-keyboard CR and the on-screen OK are handled before any
   // newline can be inserted, so the composer never actually holds a '\n'.
   lv_textarea_set_one_line(p.composer_ta, false);
+  // Cap input at the LoRa text limit so the user can't type more than can be sent (GH #119).
+  // (LVGL caps by codepoint; for ASCII that's exactly MAX_MSG_TEXT bytes. The send buffer,
+  // _compose_buf, is sized MAX_MSG_TEXT+1 to match — it used to be 128, silently chopping
+  // messages at 127 bytes, shorter than this limit.)
+  lv_textarea_set_max_length(p.composer_ta, UITask::MAX_MSG_TEXT);
   lv_obj_set_scrollbar_mode(p.composer_ta, LV_SCROLLBAR_MODE_OFF);
   lv_textarea_set_placeholder_text(p.composer_ta, TR("Type a message..."));
   lv_obj_set_style_text_color(p.composer_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -32288,7 +33689,14 @@ static void openMessageActionMenu(int msg_idx) {
   // smaller boards keep plain integers (PSC is a no-op there). Buttons sit TWO
   // per row — with Delete the menu carries up to 7 actions, and a single column
   // no longer fit the 240-px screens without scrolling.
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  // Spend the Pager's horizontal room instead of its scarce vertical room.
+  const int card_w = sw - 80;
+  const int btn_h  = 30;
+  const int gap    = 6;
+  const int pad    = 10;
+  const int hdr_h  = 24;
+#elif CAP_LARGE_SCREEN
   const int card_w = PCW(220);
   const int btn_h  = PSC(30);
   const int gap    = PSC(4);
@@ -32355,7 +33763,11 @@ static void openMessageActionMenu(int msg_idx) {
   if (can_ack) mk_btn(LV_SYMBOL_OK "  Ack", msgMenuAckCb);
   if (can_mention) {
     char ml[UITask::MAX_SENDER_NAME + 16];
+#if defined(TLORA_PAGER)
+    snprintf(ml, sizeof ml, "@%.16s", m.sender);   // wide Pager cells can keep more of the name
+#else
     snprintf(ml, sizeof ml, "@%.10s", m.sender);   // "Mention" is implied by the @; half-width cell
+#endif
     mk_btn(ml, msgMenuMentionCb);
   }
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
@@ -32436,7 +33848,12 @@ static void openMessageInfoPopup(int msg_idx) {
   const bool show_trace = !m.channel;
   const int  route_pts  = buildRouteFromMessage(m);
   const bool show_route = (route_pts >= 2);
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  // Reduce wrapping across the wide, short Pager. The independently scrollable
+  // body handles routes and ACK details that exceed the available height.
+  const int card_w = sw - 28;
+  int card_h = sh - STATUSBAR_H - 8;
+#elif CAP_LARGE_SCREEN
   const int card_w = PCW(220);
   int card_h = (show_trace || show_route) ? PSC(290) : PSC(250);
 #else
@@ -32641,7 +34058,14 @@ static void openMessageInfoPopup(int msg_idx) {
   lv_obj_set_pos(bodywrap, 0, body_top);
   lv_obj_set_style_bg_opa(bodywrap, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_scroll_dir(bodywrap, LV_DIR_VER);
-  lv_obj_set_scrollbar_mode(bodywrap, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_set_scrollbar_mode(bodywrap,
+#if defined(TLORA_PAGER)
+                            LV_SCROLLBAR_MODE_ON
+#else
+                            LV_SCROLLBAR_MODE_AUTO
+#endif
+  );
+  lv_obj_add_event_cb(bodywrap, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
   // Thin visible scrollbar (remove_style_all wiped the theme's).
   lv_obj_set_style_width(bodywrap, 4, LV_PART_SCROLLBAR);
   lv_obj_set_style_bg_color(bodywrap, lv_color_hex(0x6FA8DA), LV_PART_SCROLLBAR);
@@ -33022,9 +34446,30 @@ static void chatVirtFreeOffsets() {
   if (s_chat_virt.day_sep_y) { heap_caps_free(s_chat_virt.day_sep_y); s_chat_virt.day_sep_y = nullptr; }
 }
 
+#if defined(TLORA_PAGER)
+// Encoder-nav focus survival across the virtualized re-render. The render
+// deletes and recreates every bubble row — LVGL hands focus of a deleted
+// object to the next surviving group entry (the chat header/composer once
+// every bubble is gone), which is how focus "fell out" of the message list
+// mid-history on this no-touch board. The pending logical index below is the
+// message the encoder is steering toward: chatVirtRenderWindow re-aims focus
+// at the matching recreated row via the existing one-shot s_nav_focus_hint
+// rebuild mechanism, and pagerEncoderChatEdgeScroll both sets it (edge detent
+// = neighbor index) and folds further detents into it while a render is in
+// flight — fast turning otherwise stepped focus out from the transiently
+// wrong focus position before the load landed. -1 = idle. The timestamp
+// expires a stale pending target (see the clamp) so a render that never
+// fires can't wedge encoder nav.
+static int      s_pager_chat_focus_i  = -1;
+static uint32_t s_pager_chat_focus_ms = 0;
+#endif
+
 static void chatVirtReset(LvChatPanel* p) {
   chatVirtCancelRenderTimer();
   (void)p;
+#if defined(TLORA_PAGER)
+  s_pager_chat_focus_i = -1;
+#endif
   // Null the divider pointer WITHOUT queueing a delete. It is always a child of
   // p->msgs, and every path that follows a reset (lv_obj_clean in the empty-thread
   // branches, chatVirtPurgeMsgsChildrenSync, chatVirtClearBubbleWidgets) deletes
@@ -33182,33 +34627,26 @@ static void chatVirtCheckStoreEdges(LvChatPanel* p) {
 }
 #endif
 
-static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
-                                          bool thread_is_room, lv_coord_t bubble_max_w) {
-  ChatBubbleDisplay d{};
-  chatParseMessageDisplay(m, channel_mode, thread_is_room, d);
-  const lv_coord_t inner_max_w = bubble_max_w - 2 * kChatBubblePadH;
-  lv_coord_t inner_y = 0;
-  if ((channel_mode || thread_is_room) && !m.outgoing && d.san_sender[0])
-    inner_y += lv_font_get_line_height(&g_font_12);
-
-  lv_point_t txt_size;
-  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-  const lv_coord_t txt_w_used = (txt_size.x <= inner_max_w) ? txt_size.x : inner_max_w;
-  lv_point_t wrapped_size;
-  lv_txt_get_size(&wrapped_size, d.san_text, &g_font_12, 0, 0,
-                  txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+static void chatBuildBubbleMeta(const UITask::UIMessage& m, bool channel_mode,
+                                char* out, size_t out_len, uint32_t* out_fg) {
+  if (out && out_len > 0) out[0] = '\0';
+  if (out_fg) *out_fg = COLOR_SUB;
+  if (!out || out_len == 0) return;
 
   char ts_buf[20];
   formatBubbleTs(m.ts, ts_buf, sizeof(ts_buf));
+
   const char* deliv_glyph = "";
+  uint32_t deliv_fg = COLOR_SUB;
   if (m.outgoing && !channel_mode && m.deliv_state != UITask::DELIV_NONE) {
     switch (m.deliv_state) {
-      case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_OK; break;
-      case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; break;
-      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE; break;
+      case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_OK; deliv_fg = COLOR_SUB; break;
+      case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; deliv_fg = COLOR_ACCENT; break;
+      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE " tap to resend"; deliv_fg = 0xE08080; break;
       default: break;
     }
   }
+
   char rep_buf[12] = "";
   if (m.outgoing && m.sent_fp) {
     const uint8_t reps = the_mesh.uiRepeatsForFp(m.sent_fp);
@@ -33219,15 +34657,67 @@ static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool chann
     snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
   }
 
-  lv_coord_t body_h = inner_y + wrapped_size.y;
-  if (ts_buf[0] || deliv_glyph[0] || rep_buf[0]) {
-    char footer[40];
-    snprintf(footer, sizeof(footer), "%s%s%s", ts_buf, deliv_glyph, rep_buf);
-    lv_point_t foot_size;
-    lv_txt_get_size(&foot_size, footer, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    body_h += 1 + foot_size.y;
+  snprintf(out, out_len, "%s%s%s", ts_buf, deliv_glyph, rep_buf);
+  if (out_fg) *out_fg = deliv_glyph[0] ? deliv_fg : COLOR_SUB;
+}
+
+static lv_coord_t chatTextWidth(const char* s) {
+  if (!s || !s[0]) return 0;
+  lv_point_t size;
+  lv_txt_get_size(&size, s, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  return size.x;
+}
+
+static bool chatUtf8Continuation(char c) {
+  return (static_cast<uint8_t>(c) & 0xC0) == 0x80;
+}
+
+static void chatFitLeadingEllipsis(const char* src, lv_coord_t max_w, char* out, size_t out_len) {
+  if (!out || out_len == 0) return;
+  out[0] = '\0';
+  if (!src || !src[0] || max_w <= 0) return;
+  if (chatTextWidth(src) <= max_w) {
+    snprintf(out, out_len, "%s", src);
+    return;
   }
-  return kChatBubblePadV * 2 + body_h;
+
+  const char* ell = "...";
+  if (chatTextWidth(ell) > max_w) return;
+
+  const size_t len = strlen(src);
+  for (size_t i = 0; i < len; ++i) {
+    if (chatUtf8Continuation(src[i])) continue;
+    char cand[48];
+    snprintf(cand, sizeof(cand), "%s%s", ell, src + i);
+    if (chatTextWidth(cand) <= max_w) {
+      snprintf(out, out_len, "%s", cand);
+      return;
+    }
+  }
+  snprintf(out, out_len, "%s", ell);
+}
+
+static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
+                                          bool thread_is_room, lv_coord_t bubble_max_w) {
+  ChatBubbleDisplay d{};
+  chatParseMessageDisplay(m, channel_mode, thread_is_room, d);
+  const lv_coord_t inner_max_w = bubble_max_w - 2 * kChatBubblePadH;
+  lv_coord_t inner_y = 0;
+  char meta_buf[48];
+  chatBuildBubbleMeta(m, channel_mode, meta_buf, sizeof(meta_buf), nullptr);
+  // Bubble layout: timestamp/meta always share the top row (channels, DMs, rooms).
+  const bool show_sender = (channel_mode || thread_is_room) && !m.outgoing && d.san_sender[0];
+  if (show_sender || meta_buf[0])
+    inner_y += lv_font_get_line_height(&g_font_12);
+
+  lv_point_t txt_size;
+  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  const lv_coord_t txt_w_used = (txt_size.x <= inner_max_w) ? txt_size.x : inner_max_w;
+  lv_point_t wrapped_size;
+  lv_txt_get_size(&wrapped_size, d.san_text, &g_font_12, 0, 0,
+                  txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+
+  return kChatBubblePadV * 2 + inner_y + wrapped_size.y;
 }
 
 static void chatBuildCompactLine(const UITask::UIMessage& m, LvChatPanel* p, int logical_i,
@@ -33936,17 +35426,67 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   lv_obj_set_style_pad_ver(bubble, kChatBubblePadV, LV_PART_MAIN);
   lv_obj_set_size(bubble, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 
+  const lv_coord_t kInnerMaxW = kBubbleMaxW - 2 * kChatBubblePadH;
+  lv_point_t txt_size;
+  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
+
+  char meta_buf[48];
+  uint32_t meta_fg = COLOR_SUB;
+  chatBuildBubbleMeta(m, p->channel_mode, meta_buf, sizeof(meta_buf), &meta_fg);
+  // All bubble-style threads (channel / DM / room): timestamp + delivery meta on the top row.
+  const bool show_sender_line = (p->channel_mode || s_chat_virt.thread_is_room) &&
+                                !m.outgoing && d.san_sender[0];
+
+  const lv_coord_t sender_w = show_sender_line ? chatTextWidth(d.san_sender) : 0;
+  const lv_coord_t meta_w   = meta_buf[0] ? chatTextWidth(meta_buf) : 0;
+  lv_coord_t inner_w = txt_w_used > 0 ? txt_w_used : 1;
+  {
+    lv_coord_t header_w = (show_sender_line ? sender_w : 0) + meta_w;
+    if (show_sender_line && meta_w) header_w += 6;
+    if (header_w > kInnerMaxW) header_w = kInnerMaxW;
+    if (header_w > inner_w) inner_w = header_w;
+  }
+
   int inner_y = 0;
-  lv_coord_t inner_w = 0;   // widest child (sender/text/footer) -> analytic bubble width for x-alignment
-  if ((p->channel_mode || s_chat_virt.thread_is_room) && !m.outgoing && d.san_sender[0]) {
-    lv_obj_t* slbl = lv_label_create(bubble);
-    lv_label_set_text(slbl, d.san_sender);
-    lv_obj_set_style_text_font(slbl, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(slbl, sender_col, LV_PART_MAIN);
-    lv_obj_set_pos(slbl, 0, inner_y);
-    inner_y += lv_font_get_line_height(&g_font_12);
-    lv_point_t ss; lv_txt_get_size(&ss, d.san_sender, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    if (ss.x > inner_w) inner_w = ss.x;
+  // Analytic bubble width for x-alignment (widest of sender/text/meta) — do not use
+  // lv_obj_get_width() right after create; unsettled layout can mis-place outgoing bubbles.
+  if (show_sender_line || meta_buf[0]) {
+    const lv_coord_t line_h = lv_font_get_line_height(&g_font_12);
+    char meta_fit[48] = "";
+    lv_coord_t meta_fit_w = 0;
+    lv_coord_t sender_label_w = sender_w;
+
+    if (meta_buf[0]) {
+      lv_coord_t available_meta_w = inner_w - (show_sender_line ? (sender_w + 6) : 0);
+      const lv_coord_t ell_w = chatTextWidth("...");
+      if (show_sender_line && available_meta_w < ell_w && inner_w > ell_w + 6) {
+        sender_label_w = inner_w - ell_w - 6;
+        available_meta_w = ell_w;
+      }
+      chatFitLeadingEllipsis(meta_buf, available_meta_w, meta_fit, sizeof(meta_fit));
+      meta_fit_w = chatTextWidth(meta_fit);
+    }
+
+    if (show_sender_line && sender_label_w > 0) {
+      lv_obj_t* slbl = lv_label_create(bubble);
+      lv_label_set_text(slbl, d.san_sender);
+      lv_obj_set_style_text_font(slbl, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(slbl, sender_col, LV_PART_MAIN);
+      if (sender_label_w < sender_w) {
+        lv_label_set_long_mode(slbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(slbl, sender_label_w);
+      }
+      lv_obj_set_pos(slbl, 0, inner_y);
+    }
+    if (meta_fit[0]) {
+      lv_obj_t* mlbl = lv_label_create(bubble);
+      lv_label_set_text(mlbl, meta_fit);
+      lv_obj_set_style_text_font(mlbl, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(mlbl, lv_color_hex(meta_fg), LV_PART_MAIN);
+      lv_obj_set_pos(mlbl, inner_w - meta_fit_w, inner_y);
+    }
+    inner_y += line_h;
   }
 
   lv_obj_t* tlbl = lv_label_create(bubble);
@@ -33960,10 +35500,6 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     char rc[UITask::MAX_MSG_TEXT + 40];
     if (chatRecolorUrls(d.san_text, rc, sizeof rc)) { lv_label_set_recolor(tlbl, true); lv_label_set_text(tlbl, rc); }
   }
-  const lv_coord_t kInnerMaxW = kBubbleMaxW - 2 * kChatBubblePadH;
-  lv_point_t txt_size;
-  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-  const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
   if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(tlbl, txt_w_used);
   if (txt_w_used > inner_w) inner_w = txt_w_used;
@@ -33978,53 +35514,14 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     lv_obj_add_event_cb(bubble, bubbleUrlTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   // Failed sends keep the pre-virtualization one-tap resend (the compact path
-  // already has it); the footer below spells the affordance out.
+  // already has it); delivery status on the top meta row spells the affordance out.
   if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
     lv_obj_add_event_cb(bubble, bubbleRetryTapCb, LV_EVENT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
 
-  char ts_buf[20];
-  formatBubbleTs(m.ts, ts_buf, sizeof(ts_buf));
-  const char* deliv_glyph = "";
-  uint32_t deliv_fg = COLOR_SUB;
-  if (m.outgoing && !p->channel_mode && m.deliv_state != UITask::DELIV_NONE) {
-    switch (m.deliv_state) {
-      case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_OK; deliv_fg = COLOR_SUB; break;
-      case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; deliv_fg = COLOR_ACCENT; break;
-      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE " tap to resend"; deliv_fg = 0xE08080; break;
-      default: break;
-    }
-  }
-  char rep_buf[12] = "";
-  if (m.outgoing && m.sent_fp) {
-    const uint8_t reps = the_mesh.uiRepeatsForFp(m.sent_fp);
-    if (reps > 0) snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_REFRESH "%u", (unsigned)reps);
-  } else if (!m.outgoing && (m.meta_flags & UITask::MSG_META_HAS_RX)
-                         && (m.meta_flags & UITask::MSG_META_IS_FLOOD)) {
-    const uint8_t hops = static_cast<uint8_t>(m.path_len & 0x3F);
-    snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
-  }
-  if (ts_buf[0] || deliv_glyph[0] || rep_buf[0]) {
-    char footer[40];
-    snprintf(footer, sizeof(footer), "%s%s%s", ts_buf, deliv_glyph, rep_buf);
-    lv_obj_t* foot = lv_label_create(bubble);
-    lv_label_set_text(foot, footer);
-    lv_obj_set_style_text_font(foot, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(foot, lv_color_hex(deliv_glyph[0] ? deliv_fg : COLOR_SUB), LV_PART_MAIN);
-    lv_point_t wrapped_size;
-    lv_txt_get_size(&wrapped_size, d.san_text, &g_font_12, 0, 0,
-                    txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    lv_point_t foot_size;
-    lv_txt_get_size(&foot_size, footer, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    if (foot_size.x > inner_w) inner_w = foot_size.x;
-    const int foot_x = (txt_w_used > foot_size.x) ? (txt_w_used - foot_size.x) : 0;
-    const int foot_y = inner_y + wrapped_size.y + 1;
-    lv_obj_set_pos(foot, foot_x, foot_y);
-  }
-
   lv_obj_update_layout(bubble);
   lv_coord_t bh = lv_obj_get_height(bubble);
-  // Width for x-alignment is computed analytically from the widest child (text/sender/footer),
+  // Width for x-alignment is computed analytically from the widest child (text/sender/meta),
   // NOT lv_obj_get_width(): right after a send the layout isn't settled and get_width reads wide,
   // which put the (actually narrow) outgoing bubble on the LEFT until the next rebuild.
   lv_coord_t bw = inner_w + 2 * kChatBubblePadH;
@@ -34178,6 +35675,22 @@ static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t
     chatVirtLogScrollTransition(p, old_i0, old_i1, i0, i1);
 #endif
 
+#if defined(TLORA_PAGER)
+  // Capture where encoder focus should land after the rebuild BEFORE the clear
+  // deletes the focused row (see s_pager_chat_focus_i above). An explicit
+  // pending target from the encoder clamp wins; otherwise preserve the row
+  // that has focus right now (covers renders the encoder didn't cause, e.g. an
+  // incoming message re-render yanking focus off the list mid-read).
+  int refocus_i = s_pager_chat_focus_i;
+  if (refocus_i < 0 && s_nav_group) {
+    lv_obj_t* foc = lv_group_get_focused(s_nav_group);
+    if (foc && lv_obj_get_parent(foc) == p->msgs) {
+      const intptr_t ud = reinterpret_cast<intptr_t>(lv_obj_get_user_data(foc));
+      if (ud >= 0) refocus_i = (int)ud;   // rows carry their logical index; dividers are negative
+    }
+  }
+#endif
+
   const lv_coord_t saved_scroll_y = scroll_y;
   chatVirtClearBubbleWidgets(p);
   chatVirtEnsureSpacer(p, s_chat_virt.lv_total_h);
@@ -34205,6 +35718,41 @@ static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t
   lv_obj_scroll_to_y(p->msgs, saved_scroll_y, LV_ANIM_OFF);
   chatVirtSyncBubblePositions(p);
   CHAT_SCROLL_TRACE_DO(chatVirtCheckStoreEdges(p));
+
+#if defined(TLORA_PAGER)
+  // Re-aim focus at the recreated row for the captured/pending logical index
+  // (clamped into the freshly materialized window — a fast multi-detent target
+  // can briefly run past it; landing on the window edge keeps the traversal
+  // moving and the next render catches up). Uses the one-shot
+  // s_nav_focus_hint: the recreated rows change the nav tree signature, so
+  // navMaybeRebuild fires on the next pump and consumes the hint — same
+  // mechanism settings toggles use to hold focus across their own rebuilds.
+  if (refocus_i >= 0) {
+    if (refocus_i < i0) refocus_i = i0;
+    if (refocus_i > i1) refocus_i = i1;
+    const uint32_t nch2 = lv_obj_get_child_cnt(p->msgs);
+    for (uint32_t c = 0; c < nch2; c++) {
+      lv_obj_t* row = lv_obj_get_child(p->msgs, c);
+      if (!row || !lv_obj_has_flag(row, LV_OBJ_FLAG_CLICKABLE)) continue;
+      if (reinterpret_cast<intptr_t>(lv_obj_get_user_data(row)) == (intptr_t)refocus_i) {
+        s_nav_focus_hint = row;
+        break;
+      }
+    }
+    s_pager_chat_focus_i = -1;   // consumed (whether or not the row was found)
+    // Land the re-aim NOW, not on the next loop-tick nav pump: deleting the
+    // focused row above already made LVGL auto-focus a survivor (the header
+    // gear / a bottom element), and this function runs in an lv_async_call —
+    // LVGL paints right after it returns, so waiting for the pump let that
+    // wrong focus reach the glass for a frame or two (reported: focus visibly
+    // hops out of the list and back on every edge load). A forced synchronous
+    // rebuild consumes the hint before the next paint, so the hop never shows.
+    if (s_nav_focus_hint) {
+      navMarkDirty();
+      navMaybeRebuild();
+    }
+  }
+#endif
 }
 
 static LvChatPanel* s_chat_virt_render_async_panel = nullptr;
@@ -34727,8 +36275,15 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
     lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_min_height(btn, 56, LV_PART_MAIN);
-    lv_obj_set_height(btn, 56);
+#if defined(TLORA_PAGER)
+    static constexpr lv_coord_t kThreadRowH = 48;
+    static constexpr lv_coord_t kThreadAvatar = 34;
+#else
+    static constexpr lv_coord_t kThreadRowH = 56;
+    static constexpr lv_coord_t kThreadAvatar = 40;
+#endif
+    lv_obj_set_style_min_height(btn, kThreadRowH, LV_PART_MAIN);
+    lv_obj_set_height(btn, kThreadRowH);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
     // Avatar: same FNV-1a hue family as the chat-bubble colours (see
@@ -34739,7 +36294,7 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_remove_style_all(av);
     lv_obj_add_flag(av, LV_OBJ_FLAG_IGNORE_LAYOUT);
     lv_obj_clear_flag(av, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);   // taps fall through to the row
-    lv_obj_set_size(av, 40, 40);
+    lv_obj_set_size(av, kThreadAvatar, kThreadAvatar);
     lv_obj_set_style_radius(av, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(av, lv_color_hsv_to_rgb((uint16_t)(hh % 360u), 55, 42), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(av, LV_OPA_COVER, LV_PART_MAIN);
@@ -34788,7 +36343,7 @@ static void refreshChatList(LvChatPanel& p) {
       lv_obj_remove_style_all(gear);
       lv_obj_add_flag(gear, LV_OBJ_FLAG_IGNORE_LAYOUT);
       lv_obj_add_flag(gear, NAV_HMOVE_FLAG);
-      lv_obj_set_size(gear, gear_w, 40);
+      lv_obj_set_size(gear, gear_w, kThreadRowH - 8);
       lv_obj_align(gear, LV_ALIGN_RIGHT_MID, -2, 0);
       lv_obj_add_event_cb(gear, threadGearCb, LV_EVENT_CLICKED, &p.ctx_store[i]);
       lv_obj_t* gl = lv_label_create(gear);
@@ -34816,7 +36371,7 @@ static void refreshChatList(LvChatPanel& p) {
     }
 
     // Name (top line) + last-message preview (bottom line), right of the avatar.
-    const lv_coord_t text_x = 8 + 40 + 8;
+    const lv_coord_t text_x = 8 + kThreadAvatar + 8;
     const lv_coord_t name_w = (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - time_w - 24);
     lv_obj_t* nm2 = lv_label_create(btn);
     lv_obj_add_flag(nm2, LV_OBJ_FLAG_IGNORE_LAYOUT);
@@ -34826,8 +36381,20 @@ static void refreshChatList(LvChatPanel& p) {
     lv_label_set_long_mode(nm2, LV_LABEL_LONG_DOT);
     // Fixed ONE-LINE height: with only a width, LONG_DOT lets a long name wrap to
     // a second line (never truncating) and it overlapped the preview underneath.
-    lv_obj_set_size(nm2, name_w, 18);
-    lv_obj_align(nm2, LV_ALIGN_TOP_LEFT, text_x, 9);
+    lv_obj_set_size(nm2, name_w,
+#if defined(TLORA_PAGER)
+                    lv_font_get_line_height(&g_font_14)
+#else
+                    18
+#endif
+    );
+    lv_obj_align(nm2, LV_ALIGN_TOP_LEFT, text_x,
+#if defined(TLORA_PAGER)
+                 3
+#else
+                 9
+#endif
+    );
 
     // Preview: "sender: text" for channels, "You: text" for own DMs, plain text otherwise.
     char psender[UITask::MAX_SENDER_NAME + 1] = "";
@@ -34850,8 +36417,20 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_text_font(pv, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(pv, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_label_set_long_mode(pv, LV_LABEL_LONG_DOT);
-    lv_obj_set_size(pv, (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - 60), 16);   // one line, ellipsized
-    lv_obj_align(pv, LV_ALIGN_BOTTOM_LEFT, text_x, -8);
+    lv_obj_set_size(pv, (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - 60),
+#if defined(TLORA_PAGER)
+                    lv_font_get_line_height(&g_font_12)
+#else
+                    16
+#endif
+    );   // one line, ellipsized
+    lv_obj_align(pv, LV_ALIGN_BOTTOM_LEFT, text_x,
+#if defined(TLORA_PAGER)
+                 -3
+#else
+                 -8
+#endif
+    );
 
     // Unread pill bottom-right (under the time), @ to its left on a mention.
     if (unread > 0) {
@@ -35260,8 +36839,12 @@ static void refreshContactsList() {
   // scrolling the name (rejected) or gluing the value columns. TWO-LINE rows instead:
   //   line 1: the full name (one line, dot-ellipsized — never scrolls)
   //   line 2: heard-age and distance, small + dim under the name
-  const int  ROW_H   = mid_cols ? 46 : 34;
   const int  name_line_h_row = lv_font_get_line_height(&g_font_14);
+#if defined(TLORA_PAGER)
+  const int  ROW_H   = 5 + name_line_h_row + 2 + lv_font_get_line_height(&g_font_12) + 5;
+#else
+  const int  ROW_H   = mid_cols ? 46 : 34;
+#endif
   const int  row2_y  = 5 + name_line_h_row + 2;          // line 2 top (below the name line)
   int        name_w  = heard_x - name_x - 6;
   if (name_w < 50) name_w = 50;
@@ -35327,7 +36910,9 @@ static void refreshContactsList() {
     // must render in g_font_16 for the PUA codepoints to resolve. Blocked
     // contacts get a RED person icon so they stand out at a glance.
     lv_obj_t* ic = lv_label_create(rb);
-    lv_label_set_text(ic, e.is_blocked ? TOUCH_SYM_PERSON : (is_rep ? TOUCH_SYM_ANTENNA : TOUCH_SYM_PERSON));
+    lv_label_set_text(ic, e.is_blocked ? TOUCH_SYM_PERSON
+                        : (is_rep ? TOUCH_SYM_ANTENNA
+                        : (e.type == ADV_TYPE_ROOM ? LV_SYMBOL_LOOP : TOUCH_SYM_PERSON)));   // rooms discernible at a glance (#106)
     lv_obj_set_style_text_font(ic, &g_font_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(ic, lv_color_hex(e.is_blocked ? 0xD7574E : COLOR_SUB), LV_PART_MAIN);
     lv_obj_align(ic, LV_ALIGN_LEFT_MID, icon_x, 0);
@@ -35839,12 +37424,25 @@ static void updatePagerBackspaceHold(unsigned long now) {
 }
 
 // Orange/Alt key, tapped alone (not held as a symbol-layer modifier or for the
-// encoder's Alt+turn) = the same "next field" as one rotary NEXT detent. Call
-// once per loop tick while the screen is on; screen-off handling discards any
-// pending tap instead (see loop()'s HAS_PAGER_KEYBOARD branch) so a stray tap
-// picked up while idle-dimmed can't fire the moment the screen wakes.
+// encoder's Alt+turn). In an open chat it takes over the old Backspace role:
+// jump to the latest message (when scrolled up in history) and drop focus in
+// the composer, ready to type — the natural "done reading, reply now" motion,
+// and the deliberate way OUT of the message list now that plain encoder turns
+// hold focus inside it while history loads (pagerEncoderChatEdgeScroll).
+// Everywhere else it stays the same "next field" as one rotary NEXT detent.
+// Call once per loop tick while the screen is on; screen-off handling discards
+// any pending tap instead (see loop()'s HAS_PAGER_KEYBOARD branch) so a stray
+// tap picked up while idle-dimmed can't fire the moment the screen wakes.
 static void updatePagerAltTapNext() {
   if (!pagerKeyboardConsumeAltTap()) return;
+  LvChatPanel* cp = navOpenChatPanel();
+  if (cp && cp->msgs && cp->composer_ta && lv_obj_is_valid(cp->composer_ta)) {
+    if (chatVirtAwayFromBottom(cp)) chatVirtJumpToLatest(cp);
+    lv_group_focus_obj(cp->composer_ta);
+    s_nav_show = true;
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
   navPushTap(LV_KEY_NEXT);
   if (g_lv.task) g_lv.task->noteUserInput();
 }
@@ -36012,12 +37610,187 @@ static void updatePagerKbBacklight(unsigned long now) {
 #endif
 
 #if defined(HAS_PAGER_ENCODER)
+// A focus step normally asks LVGL to reveal the next object. On the Pager that
+// makes a message or popup body taller than the viewport impossible to read:
+// the next detent abandons it and reveals the following object. Consume detents
+// as page-scrolls until the focused oversized object reaches its edge.
+static bool pagerEncoderScrollOversizedFocused(bool up) {
+  lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if (!focused || !lv_obj_is_valid(focused)) return false;
+
+  for (lv_obj_t* scroller = lv_obj_get_parent(focused); scroller;
+       scroller = lv_obj_get_parent(scroller)) {
+    if (!lv_obj_has_flag(scroller, LV_OBJ_FLAG_SCROLLABLE)) continue;
+
+    lv_area_t viewport;
+    lv_area_t item;
+    lv_obj_get_coords(scroller, &viewport);
+    lv_obj_get_coords(focused, &item);
+    viewport.y1 += lv_obj_get_style_pad_top(scroller, LV_PART_MAIN);
+    viewport.y2 -= lv_obj_get_style_pad_bottom(scroller, LV_PART_MAIN);
+    const lv_coord_t view_h = viewport.y2 - viewport.y1 + 1;
+    const lv_coord_t item_h = item.y2 - item.y1 + 1;
+    if (view_h <= 0 || item_h <= view_h) return false;
+
+    const bool unread_edge = up ? (item.y1 < viewport.y1) : (item.y2 > viewport.y2);
+    const lv_coord_t room = up ? lv_obj_get_scroll_top(scroller)
+                               : lv_obj_get_scroll_bottom(scroller);
+    if (!unread_edge || room <= 0) return false;
+
+    lv_coord_t step = view_h * 2 / 3;
+    if (step < 24) step = 24;
+    if (step > room) step = room;
+    lv_obj_scroll_by(scroller, 0, up ? step : -step, LV_ANIM_ON);
+    return true;
+  }
+  return false;
+}
+
 // T-LoRa Pager rotary encoder: a single linear nav axis (not 2D like the
 // trackball, so none of updateTrackball()'s game/emoji-grid/cursor special
 // cases apply) — each detent moves focus one step via the same navFifo the
 // KEYPAD indev already drains (tanmatsuKeypadRead), and a click is ENTER
 // (short) or ESC (long), exactly as specced. 1000 ms long-press threshold
 // matches the existing MomentaryButton convention used elsewhere (PIN_USER_BTN).
+// Plain-turn clamp for the open chat's virtualized message list. The focus
+// group only ever mirrors the MATERIALIZED bubbles (navMaybeRebuild re-collects
+// on every window change), and materializing more history is scroll-driven —
+// so a turn on the edge bubble stepped focus clean out of the list (header
+// actions above, composer below) even with plenty of un-loaded history in that
+// direction. When that's about to happen and more messages exist, free-scroll
+// the list instead (same navScrollFocused the Alt+turn branch uses): the
+// scroll fires the virtualization render, the neighbor bubble joins the nav
+// group via the tree-signature rebuild, and the next detent walks onto it.
+// Focus only leaves the list at the TRUE oldest/newest message. The orange-key
+// solo tap (updatePagerAltTapNext) pushes LV_KEY_NEXT directly and never comes
+// through here, so it stays the deliberate "leave the messages now" exit.
+// Returns true when the detent was consumed as a scroll.
+static bool pagerEncoderChatEdgeScroll(bool up) {
+  LvChatPanel* cp = navOpenChatPanel();
+  if (!cp || !cp->msgs || s_chat_virt.panel != cp || s_chat_virt.n <= 0) return false;
+  // A scroll-load from a previous detent is still in flight (render + focus
+  // re-aim haven't landed yet). Focus may transiently sit OFF the list — the
+  // clear deletes the focused row and LVGL hands focus to a survivor — so a
+  // group step now is exactly the escape this clamp exists to prevent. Fold
+  // the detent into the pending target instead: fast turning accumulates
+  // steps, and the render's re-aim lands focus on the accumulated message.
+  // The timestamp expires a stale target so a render that never fires (e.g.
+  // the scroll had no room) can't permanently swallow encoder nav.
+  if (s_pager_chat_focus_i >= 0) {
+    if (millis() - s_pager_chat_focus_ms > 600) {
+      s_pager_chat_focus_i = -1;   // stale — fall through to normal handling
+    } else {
+      int t = s_pager_chat_focus_i + (up ? -1 : +1);
+      if (t < 0) t = 0;
+      if (t > s_chat_virt.n - 1) t = s_chat_virt.n - 1;
+      s_pager_chat_focus_i  = t;
+      s_pager_chat_focus_ms = millis();
+      navScrollFocused(up);   // keep driving the load toward the target
+      return true;
+    }
+  }
+  lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if (!foc || lv_obj_get_parent(foc) != cp->msgs) return false;   // focus isn't on a bubble
+  // Edge test: any other nav-collectable sibling (clickable, visible, not
+  // NAV_SKIP — navCollect's own harvest rule) on the turn side? Then the
+  // normal focus step stays inside the list and no clamp is needed. The virt
+  // spacer is non-clickable, so it never counts.
+  const uint32_t nch = lv_obj_get_child_cnt(cp->msgs);
+  const uint32_t fi  = lv_obj_get_index(foc);
+  const uint32_t lo  = up ? 0 : fi + 1;
+  const uint32_t hi  = up ? fi : nch;
+  for (uint32_t i = lo; i < hi; i++) {
+    lv_obj_t* c = lv_obj_get_child(cp->msgs, i);
+    if (c && lv_obj_has_flag(c, LV_OBJ_FLAG_CLICKABLE) &&
+        !lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN) && !lv_obj_has_flag(c, NAV_SKIP_FLAG))
+      return false;
+  }
+  // On the edge bubble — anything more to load that way? Window-edge indices
+  // catch un-materialized history; the scroll-room checks catch a viewport
+  // that still has materialized-but-off-glass content.
+  const bool more = up
+      ? (s_chat_virt.last_i0 > 0 || lv_obj_get_scroll_y(cp->msgs) > 0)
+      : (s_chat_virt.last_i1 < s_chat_virt.n - 1 || chatVirtAwayFromBottom(cp));
+  if (!more) return false;   // true end of history — let focus leave the list
+  // Aim the post-render focus at the NEIGHBOR the user is turning toward (the
+  // row objects are about to be deleted/recreated, so an object pointer would
+  // dangle — the logical index survives the rebuild).
+  {
+    const intptr_t ud = reinterpret_cast<intptr_t>(lv_obj_get_user_data(foc));
+    int t = (ud >= 0 ? (int)ud : (up ? s_chat_virt.last_i0 : s_chat_virt.last_i1)) + (up ? -1 : +1);
+    if (t < 0) t = 0;
+    if (t > s_chat_virt.n - 1) t = s_chat_virt.n - 1;
+    s_pager_chat_focus_i  = t;
+    s_pager_chat_focus_ms = millis();
+  }
+  navScrollFocused(up);      // animated scroll → virtualization materializes the neighbor
+  return true;
+}
+
+// Bottom-most (newest) materialized bubble row — the natural "re-enter the
+// message list" landing spot for the composer-boundary overrides below.
+static lv_obj_t* pagerChatBottomBubble(LvChatPanel* cp) {
+  lv_obj_t* best = nullptr; intptr_t best_i = -1;
+  const uint32_t n = lv_obj_get_child_cnt(cp->msgs);
+  for (uint32_t i = 0; i < n; i++) {
+    lv_obj_t* c = lv_obj_get_child(cp->msgs, i);
+    if (!c || !lv_obj_has_flag(c, LV_OBJ_FLAG_CLICKABLE) || lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) continue;
+    const intptr_t ud = reinterpret_cast<intptr_t>(lv_obj_get_user_data(c));
+    if (ud >= 0 && ud > best_i) { best_i = ud; best = c; }   // rows carry their logical index
+  }
+  return best;
+}
+
+// Composer-cluster boundary overrides for the plain encoder turn. The chat's
+// focus ring should read: bubbles → quick-reply △ → emoji → textarea → send →
+// top-bar items — LVGL's group order already walks the interior of the
+// cluster correctly (creation order: △, emoji, textarea, send), so only the
+// two EDGES are overridden: NEXT off the send button (which otherwise WRAPS
+// to the top-most loaded bubble, yanking the view to the top of the window)
+// hops to the top-bar items, and PREV off the △ chip lands on the NEWEST
+// bubble explicitly. "Edge" is detected structurally — no other collectable
+// (clickable/visible/non-NAV_SKIP) composer_row sibling beyond the focused
+// one in the turn direction — NOT by index-vs-textarea, which lumped the
+// emoji chip in with the △ and skipped it entirely on the way out (reported:
+// emoji → PREV jumped straight into the bubbles instead of the △).
+// The chips/send are makeChatDetail() locals, hence the structural detection.
+// Returns true when the detent was consumed by an explicit focus.
+static bool pagerChatComposerNav(bool up) {
+  LvChatPanel* cp = navOpenChatPanel();
+  if (!cp || !cp->composer_row || !cp->composer_ta || !cp->msgs) return false;
+  lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if (!foc || lv_obj_get_parent(foc) != cp->composer_row) return false;
+  // Edge test: any other collectable sibling on the turn side keeps the step
+  // inside the cluster (the natural group order handles it).
+  const uint32_t nch = lv_obj_get_child_cnt(cp->composer_row);
+  const uint32_t fi  = lv_obj_get_index(foc);
+  const uint32_t lo  = up ? 0 : fi + 1;
+  const uint32_t hi  = up ? fi : nch;
+  for (uint32_t i = lo; i < hi; i++) {
+    lv_obj_t* c = lv_obj_get_child(cp->composer_row, i);
+    if (c && lv_obj_has_flag(c, LV_OBJ_FLAG_CLICKABLE) &&
+        !lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN) && !lv_obj_has_flag(c, NAV_SKIP_FLAG))
+      return false;
+  }
+  if (!up) {
+    // Send (→, the cluster's right edge) + NEXT: hop to the top-bar items
+    // (the channel-settings gear). DM chats collect no bar items, so settle
+    // on the newest bubble instead of the default wrap-to-top.
+    if (g_statusbar.chan_gear && lv_obj_is_valid(g_statusbar.chan_gear) &&
+        !lv_obj_has_flag(g_statusbar.chan_gear, LV_OBJ_FLAG_HIDDEN)) {
+      s_nav_show = true;
+      lv_group_focus_obj(g_statusbar.chan_gear);
+      return true;
+    }
+    if (lv_obj_t* b = pagerChatBottomBubble(cp)) { s_nav_show = true; lv_group_focus_obj(b); return true; }
+    return false;
+  }
+  // Quick-reply △ (the cluster's left edge) + PREV: straight into the message
+  // list at its newest visible bubble.
+  if (lv_obj_t* b = pagerChatBottomBubble(cp)) { s_nav_show = true; lv_group_focus_obj(b); return true; }
+  return false;
+}
+
 static void updatePagerEncoder(unsigned long now) {
   int delta = pagerEncoderReadDelta();
   const bool held = pagerEncoderClickHeld();
@@ -36121,8 +37894,21 @@ static void updatePagerEncoder(unsigned long now) {
       if (container) navRefocusFirstVisible(container);
     }
   } else {
-    for (; delta > 0; delta--) navPushTap(LV_KEY_NEXT);
-    for (; delta < 0; delta++) navPushTap(LV_KEY_PREV);
+    // Plain turn: one focus step per detent — except in a chat, where two
+    // overrides shape the ring: the composer-cluster boundaries hop to the
+    // top-bar items / back into the bubbles (pagerChatComposerNav), and the
+    // edge bubble of a still-loading history scrolls the list instead of
+    // stepping focus out (pagerEncoderChatEdgeScroll).
+    for (; delta > 0; delta--) {
+      if (!pagerEncoderScrollOversizedFocused(false) &&
+          !pagerChatComposerNav(false) && !pagerEncoderChatEdgeScroll(false))
+        navPushTap(LV_KEY_NEXT);
+    }
+    for (; delta < 0; delta++) {
+      if (!pagerEncoderScrollOversizedFocused(true) &&
+          !pagerChatComposerNav(true) && !pagerEncoderChatEdgeScroll(true))
+        navPushTap(LV_KEY_PREV);
+    }
   }
 
   static constexpr uint32_t kLongPressMs = 1000;
@@ -36232,6 +38018,10 @@ static int          s_lock_clock_min = -1;        // last minute drawn (redraw g
 static lv_obj_t*    s_lock_unread    = nullptr;   // envelope + unread count under the clock (issue #93)
 static int          s_lock_unread_n  = -1;        // last count drawn (redraw guard)
 static unsigned long s_lock_unread_ms = 0;        // 1 Hz poll limiter
+#if defined(TLORA_PAGER)
+static lv_obj_t*    s_lock_status    = nullptr;   // "Screen locked" -- tracked for lockscreenHide() cleanup
+static lv_obj_t*    s_lock_hint      = nullptr;   // unlock hint -- tracked for lockscreenHide() cleanup
+#endif
 
 // How long the trackball must be held to unlock, in ms.
 static const unsigned long kLockUnlockHoldMs = 1000;
@@ -36294,9 +38084,20 @@ static void lockscreenUpdateClock() {
   // the panel. Deterministic from the minute, so it also moves on every reveal.
   const int dx = (mm % 5) * 3 - 6;         // -6 … +6 px
   const int dy = ((mm / 5) % 3) * 4 - 4;   // -4 … +4 px
+#if defined(TLORA_PAGER)
+  // Same anti-burn-in drift, but around this board's top-LEFT clock position
+  // (lockscreenShow()'s TOP_LEFT/6,30) instead of T-Deck's TOP_MID -- without
+  // this override every periodic clock update (this function runs on every
+  // minute rollover) silently snapped the clock back to horizontally
+  // centered, undoing the top-left placement the moment it first ticked.
+  // The unread badge stays in its own right-column spot (300,70) -- it
+  // doesn't ride with the clock on this layout, so no drift needed there.
+  lv_obj_align(s_lock_clock, LV_ALIGN_TOP_LEFT, 6 + dx, 30 + dy);
+#else
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, dx, 30 + dy);
   // The unread badge rides along with the same drift so it never parks either.
   if (s_lock_unread) lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, dx, 68 + dy);
+#endif
   s_lock_clock_min = mm;
 }
 
@@ -36376,19 +38177,55 @@ static void lockscreenShow() {
   lv_obj_set_style_bg_opa(s_lock_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_lock_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(s_lock_root, LV_OBJ_FLAG_CLICKABLE);   // absorb taps (no UI leak)
+#if defined(TLORA_PAGER)
+  // Keep the lock overlay OUT of the keyboard/encoder nav focus group. The root
+  // is CLICKABLE (to absorb taps) and it lives on lv_layer_top, so on this
+  // no-touch board navMaybeRebuild() would otherwise collect it as the only
+  // focusable element in the overlay and focus it -- at which point navFocusCb's
+  // keyboard-focus highlight reverse-videos it: light bg (hidden behind the
+  // wallpaper) + navInvertText() flipping every child label's text to COLOR_BG
+  // (dark). That's the reported "lock text renders white then flips to black a
+  // split second after every reveal, wallpaper stays fine" bug -- the focus
+  // lands a tick after the reveal paint. NAV_SKIP_FLAG makes navCollect/
+  // navTreeSig skip the whole subtree, so it's never focused and never inverted.
+  lv_obj_add_flag(s_lock_root, NAV_SKIP_FLAG);
+#endif
 
   // Wallpaper, scaled to cover the screen (crop overflow, never letterbox).
   int ww = 0, wh = 0;
   const uint8_t* wall_data = nullptr;
-  if (s_lock_wall) { lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
+  if (s_lock_wall) {
+    // Invalidate LVGL's image cache entry for s_lock_wall_dsc BEFORE freeing the
+    // buffer it points at. s_lock_wall_dsc is a static var (stable address), and
+    // LVGL's img cache is keyed by that src pointer -- without this, the next
+    // lockscreenShow() can hit a stale cache entry pointing at freed PSRAM that
+    // has since been reused elsewhere (e.g. the map's 128 KB tile buffers),
+    // rendering as RGB565 noise on wake. Same bug class already fixed for map
+    // tiles in freeMapTileSlot() -- see the comment there (issue #127).
+    lv_img_cache_invalidate_src(&s_lock_wall_dsc);
+    lvglPsramFree(s_lock_wall);
+    s_lock_wall = nullptr;
+  }
   char wpath[TOUCH_LOCK_WALLPAPER_MAXLEN];
   touchPrefsGetLockWallpaper(wpath, sizeof wpath);
   if (!strcmp(wpath, "/lock/placeholder.jpg")) {
     // Default: the pre-dithered RGB565 embed, drawn straight from flash — crisp,
     // with no JPEG round-trip to re-introduce gradient banding.
+#if defined(TLORA_PAGER)
+    // Native 480x222 crop of the same icon+wordmark, repositioned to the left
+    // (see lockscreen_wallpaper_pager_rgb565.h) -- the shared 320x240 art's
+    // cover-fill on this much wider/shorter panel zoomed it ~1.5x and center-
+    // cropped ~70px off top+bottom, shoving it into the fixed-position text
+    // labels below (reported/photographed). Being screen-native, this needs
+    // no crop math at all: the cover-zoom below naturally computes ~1:1.
+    wall_data = (const uint8_t*)lockscreen_wallpaper_pager_rgb565;
+    ww = LOCKSCREEN_WALLPAPER_PAGER_W;
+    wh = LOCKSCREEN_WALLPAPER_PAGER_H;
+#else
     wall_data = (const uint8_t*)lockscreen_wallpaper_rgb565;
     ww = LOCKSCREEN_WALLPAPER_W;
     wh = LOCKSCREEN_WALLPAPER_H;
+#endif
   } else {
     s_lock_wall = lockscreenDecodeWallpaper(&ww, &wh);   // custom wallpaper (JPEG)
     wall_data = s_lock_wall;
@@ -36405,6 +38242,10 @@ static void lockscreenShow() {
     lv_img_set_antialias(img, true);
     lv_img_set_pivot(img, ww / 2, wh / 2);
     lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
+    // Background wallpaper: same cover-fill-and-center treatment on every
+    // board, pager included -- only the text labels below get a pager-
+    // specific layout (they're what was actually unreadable/colliding; the
+    // wallpaper crop itself is unchanged from how it's always looked).
     uint32_t zx = (uint32_t)sw * 256u / (uint32_t)ww;
     uint32_t zy = (uint32_t)sh * 256u / (uint32_t)wh;
     uint32_t zoom = (zx > zy) ? zx : zy;             // cover
@@ -36413,19 +38254,48 @@ static void lockscreenShow() {
     lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
   }
 
+#if defined(TLORA_PAGER)
+  // Force a guaranteed-visible white here rather than the shared, user-
+  // customizable touchPrefsGetLockTextColor() -- on this board that pref was
+  // rendering noticeably dim/dark (reported/photographed against this panel's
+  // background) even at the shared soft-white default (0xE6F2FF), so this
+  // board gets pure white instead of chasing a per-device pref/storage
+  // question for a cosmetic lock screen.
+  const lv_color_t col = lv_color_hex(0xFFFFFFu);
+#else
   const lv_color_t col = lv_color_hex(touchPrefsGetLockTextColor());
+#endif
 
   s_lock_clock = lv_label_create(s_lock_root);
   lv_label_set_text(s_lock_clock, "--:--");
   lv_obj_set_style_text_font(s_lock_clock, &lv_font_montserrat_28, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_lock_clock, col, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  // Fixed-width box spanning the same 192px the composited icon occupies
+  // (lockscreen_wallpaper_pager_rgb565.h, pasted at x=6 width=192) with
+  // centered text, instead of just left-anchoring the label -- "10:37" and
+  // "8:05" are different pixel widths, so anchoring by the label's own LEFT
+  // edge left the clock's actual visual center drifting with the text
+  // instead of lining up with the icon below it. Centering within a box of
+  // the icon's own width keeps the two centers matched regardless of what
+  // the clock displays.
+  lv_obj_set_width(s_lock_clock, 192);
+  lv_obj_set_style_text_align(s_lock_clock, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_align(s_lock_clock, LV_ALIGN_TOP_LEFT, 6, 30);   // top-left corner, below the 22 px status bar
+#else
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, 0, 30);   // below the 22 px status bar
+#endif
   s_lock_clock_min = -1;
 
   s_lock_unread = lv_label_create(s_lock_root);
   lv_obj_set_style_text_font(s_lock_unread, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_lock_unread, col, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  // Positioned once the hint label exists below -- see the bottom-right stack
+  // built after `hint` is created.
+#else
   lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, 0, 68);
+#endif
   lv_obj_add_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN);
   s_lock_unread_n = -1;
   lockscreenUpdateClock();
@@ -36435,16 +38305,20 @@ static void lockscreenShow() {
   lv_label_set_text(st, TR("Screen locked"));
   lv_obj_set_style_text_font(st, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(st, col, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  s_lock_status = st;   // positioned once the hint label exists below -- see the bottom-right stack
+#else
   lv_obj_align(st, LV_ALIGN_TOP_MID, 0, 190);
+#endif
 
   lv_obj_t* hint = lv_label_create(s_lock_root);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hint, TR("press Volume Down to unlock"));
 #elif defined(HAS_PAGER_KEYBOARD)
-  // Defensive only -- lockscreenShow() is never actually called on this board
-  // today (its callers are all HAS_TDECK_GT911-gated); the pager's own lock
-  // uses the plain off+wake path with no overlay, per updatePagerSpaceHold()/
-  // updatePagerBackspaceUnlockHold(). Kept correct in case that changes.
+  // lockscreenShow() DOES run on this board -- lockscreenReveal() (peek on a
+  // Backspace tap, or the new-message notify flash while locked) is gated on
+  // CAP_LOCK_SCREEN, which is 1 for the pager, not HAS_TDECK_GT911. (An
+  // earlier version of this comment claimed otherwise; it was wrong.)
   lv_label_set_text(hint, TR("hold Backspace to unlock"));
 #elif defined(HAS_THINKNODE_M9)
   lv_label_set_text(hint, TR("hold the d-pad to unlock"));
@@ -36454,13 +38328,28 @@ static void lockscreenShow() {
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(hint, col, LV_PART_MAIN);
   lv_obj_set_style_text_opa(hint, LV_OPA_70, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  lv_obj_align(hint, LV_ALIGN_BOTTOM_RIGHT, -6, -8);   // bottom-right corner, clear of the icon/clock column above
+  s_lock_hint = hint;
+  // Message count + "Screen locked" stack right-aligned directly above the hint,
+  // each anchored to the one below it (not a fixed y) so the group holds
+  // together and stays right-aligned regardless of label width or whether the
+  // unread badge is visible.
+  lv_obj_align_to(st, hint, LV_ALIGN_OUT_TOP_RIGHT, 0, -4);
+  lv_obj_align_to(s_lock_unread, st, LV_ALIGN_OUT_TOP_RIGHT, 0, -4);
+#else
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+#endif
 }
 
 static void lockscreenHide() {
   lockscreenUnlockPopupHide();
-  if (s_lock_root) { lv_obj_del(s_lock_root); s_lock_root = nullptr; s_lock_clock = nullptr; s_lock_unread = nullptr; }
-  if (s_lock_wall) { lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
+  if (s_lock_root) { lv_obj_del(s_lock_root); s_lock_root = nullptr; s_lock_clock = nullptr; s_lock_unread = nullptr;
+#if defined(TLORA_PAGER)
+    s_lock_status = nullptr; s_lock_hint = nullptr;
+#endif
+  }
+  if (s_lock_wall) { lv_img_cache_invalidate_src(&s_lock_wall_dsc); lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
   s_lock_clock_min = -1;
   s_lock_unread_n  = -1;
   // Restore the status bar's normal opaque background + accent border.
@@ -37108,6 +38997,7 @@ static void doFactoryReset() {
   lv_refr_now(nullptr);
   delay(150);                      // let the overlay actually hit the panel
   wdtHeavyBegin();                 // SPIFFS format is a long flash burst
+  touchPrefsFlush();               // do not format under an open prefs worker handle
 #if CAP_SD
   factoryWipeSdData();             // SD /meshcomod data (tiles at /tiles root are kept)
 #endif
@@ -37460,6 +39350,15 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   // The on-screen keyboard is never shown on the T-Deck, but a textarea is still
   // bound to it on focus — that binding is our target.
   lv_obj_t* ta_focused = lv_keyboard_get_textarea(g_lv.keyboard);
+  // Guard a STALE binding (crash #98, decoded coredump: NULL spec_attr in lv_event_send).
+  // lv_keyboard_get_textarea() returns the last-bound composer; if that textarea was deleted
+  // without the keyboard being re-pointed (a chat-panel teardown that bypassed hideKb()), it's
+  // a dangling pointer and typing into it dereferences freed memory. Validate + self-heal the
+  // binding before anything below can insert into it.
+  if (ta_focused && !lv_obj_is_valid(ta_focused)) {
+    if (g_lv.keyboard) lv_keyboard_set_textarea(g_lv.keyboard, nullptr);
+    ta_focused = nullptr;
+  }
 #if CAP_KEYPAD_NAV && !defined(TLORA_PAGER)
   // Edit mode (keyboard-nav ON only): a focused field becomes the typing target after
   // select/Enter (below) — until then `ta` is null so the nav keys navigate. With
@@ -37502,26 +39401,34 @@ if (g_lv.task && g_lv.task->isManualLock()) {
       if (g_lv.task) g_lv.task->noteUserInput();
       return;
     }
-    // Jump to latest: this board has no touch to tap the floating "scroll to
-    // bottom" circle (LvChatPanel::jump_btn) that appears once you've
-    // scrolled up in a chat, so a plain Backspace tap does the same jump +
-    // hide the T-Deck's own jumpToLatestCb() does on click (mirrors the
-    // Tanmatsu F6 hardware-key handler above, plus the hide step that one is
-    // missing). Only intercepted while the button is actually showing, so a
-    // Backspace tap at the bottom of the chat (or outside a chat) still falls
-    // through to its normal no-op / hold-to-back behavior below. Also moves
-    // nav focus to the composer -- without touch, nav focus was left sitting
-    // on whichever message bubble was focused pre-jump, so typing a reply
-    // right after catching up meant first navigating there manually.
+    // Backspace tap in a chat = jump to the first NEW message (the one right
+    // below the "NEW ----" unread divider) and focus it, so the user reads the
+    // new messages chronologically with plain encoder turns from there; with
+    // no divider (nothing unread) it jumps to the NEWEST message instead.
+    // (The old Backspace role -- jump to latest + focus the composer -- moved
+    // to the solo orange/Alt tap, see updatePagerAltTapNext().) The divider
+    // jump reuses the exact scroll recipe refreshChatDetail's open-to-divider
+    // path uses; both cases use the pending-focus re-aim so the recreated row
+    // for the target message ends up focused after the virtualization render.
+    // Outside a chat, Backspace keeps its normal no-op / hold-to-back
+    // behavior below.
     if (key == 0x08) {
       LvChatPanel* cp = navOpenChatPanel();
-      if (cp && cp->msgs && cp->jump_btn && !lv_obj_has_flag(cp->jump_btn, LV_OBJ_FLAG_HIDDEN)) {
-        lv_obj_scroll_to_y(cp->msgs, LV_COORD_MAX, LV_ANIM_ON);
-        lv_obj_add_flag(cp->jump_btn, LV_OBJ_FLAG_HIDDEN);
-        if (cp->composer_ta && lv_obj_is_valid(cp->composer_ta)) {
-          lv_group_focus_obj(cp->composer_ta);
-          s_nav_show = true;
+      if (cp && cp->msgs && s_chat_virt.panel == cp && s_chat_virt.n > 0) {
+        if (s_chat_virt.divider_i >= 0 && s_chat_virt.divider_y >= 0) {
+          const int32_t virt = (s_chat_virt.divider_y > 8) ? (s_chat_virt.divider_y - 8) : 0;
+          chatVirtResetInputForMsgs(cp);
+          chatVirtCancelRenderTimer();
+          s_chat_virt.last_i0 = -1;   // force the reflow, same as chatVirtJumpToLatest
+          s_chat_virt.last_i1 = -1;
+          chatVirtQueueScroll(cp, chatVirtVirtToLv(virt));
+          chatUpdateJumpButtons(cp);
+          s_pager_chat_focus_i = s_chat_virt.divider_i;   // land focus on the first NEW message
+        } else {
+          chatVirtJumpToLatest(cp);                       // nothing unread -> newest message
+          s_pager_chat_focus_i = s_chat_virt.n - 1;
         }
+        s_pager_chat_focus_ms = millis();
         if (g_lv.task) g_lv.task->noteUserInput();
         return;
       }
@@ -38116,11 +40023,19 @@ static void refreshSettingsSectionSubtitles() {
     }
   }
 
-  // Live GPS fix status on the Device-settings line while it's open. (The
-  // control-center drop-down's GPS + system line are refreshed from the periodic
-  // refreshStatusLabels tick instead — this function only runs while Settings is.)
-  if (g_set_modal.root && g_set_modal.gps_status &&
-      g_set_modal.kind == SettingsModalKind::Device) {
+  // Live GPS status while the GPS page (or the legacy Device modal) is open. (The control-center
+  // drop-down's GPS + system line are refreshed from the periodic refreshStatusLabels tick
+  // instead — this function only runs while Settings is.)
+  //
+  // This used to require kind == SettingsModalKind::Device, which stopped being true when the
+  // settings reorg moved the GPS block into its own PAGE (CAT_GPS -> buildDeviceSettings(DSEC_GPS)).
+  // The condition then never matched, so the label was written once at build time and never again:
+  // the page looked frozen and only "updated" when you closed and reopened it — including the
+  // elapsed-search timer, which made a working receiver look stuck. Accept either host, and guard
+  // with lv_obj_is_valid so a stale pointer from a closed page can never be written.
+  if (g_set_modal.gps_status && lv_obj_is_valid(g_set_modal.gps_status) &&
+      (s_settings_open_cat == CAT_GPS ||
+       (g_set_modal.root && g_set_modal.kind == SettingsModalKind::Device))) {
     lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
   }
 
@@ -38312,6 +40227,7 @@ static void powerOffCb(lv_event_t* e) {
     g_lv.task->persistHistoryNow();        // flush chat before we go down
     discoveredFlushNow();                  // and the Discovered ring
     the_mesh.flushContactsIfDirty();       // and any coalesced contacts refresh
+    touchPrefsFlush();                     // and all queued A/B preference snapshots
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 click trackball to wake"), 1500);
   }
   // Let the toast paint, then enter deep sleep.
@@ -38360,6 +40276,7 @@ static void powerDownloadCb(lv_event_t* e) {
   if (g_lv.task) {
     g_lv.task->persistHistoryNow();   // flush chat before we go down
     discoveredFlushNow();             // and the Discovered ring
+    touchPrefsFlush();                 // and all queued A/B preference snapshots
     g_lv.task->showAlert(TR("Download mode\xE2\x80\xA6 reflash over USB"), 1500);
   }
   lv_refr_now(NULL);
@@ -38729,9 +40646,9 @@ static void openControlCenter() {
   lv_obj_t* card = lv_obj_create(s_cc_root);
   lv_obj_remove_style_all(card);
 #if defined(HAS_TANMATSU)
-  lv_obj_set_size(card, card_w, 384);   // bigger: header + 3 roomier sliders + toggle grid + sysinfo
+  const int card_h = 384;   // bigger: header + 3 roomier sliders + toggle grid + sysinfo
 #elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
-  lv_obj_set_size(card, card_w, 200);   // sysinfo + thin brightness slider + 2-row toggle grid (fits 240−22 screen)
+  const int card_h = 200;   // sysinfo + thin brightness slider + 2-row toggle grid (fits 240−22 screen)
 #elif defined(TLORA_PAGER)
   // 222-px-tall screen: the shared V4/T-Deck-landscape 212px card below is
   // tuned for a 240px-tall screen (212 + the card's own 4px y-offset = 216,
@@ -38739,12 +40656,20 @@ static void openControlCenter() {
   // same card overflows the 200px root by 16px, pushing the toggle row/sysinfo
   // text off the bottom of the physical display. Size from the actual
   // available height instead of the shared constant, with a small margin.
-  lv_obj_set_size(card, card_w, sh - STATUSBAR_H - 4 - 6);
+  const int card_h = sh - STATUSBAR_H - 4 - 6;
+#elif defined(HAS_TDISPLAY_P4)
+  // Tall panel (1232 px): the shared V4 236px card is far too short here. The P4's
+  // GPS line sits lower (it clears two 30px sliders, so gps_y ~124 vs the V4's ~70),
+  // and the bottom-anchored 2-row chip grid then climbs up over the GPS text ("the
+  // acquiring text is under the buttons"). Make the dropdown taller so GPS + chips +
+  // sysinfo each get their own band — the chip-row math below derives off card_h.
+  const int card_h = 320;
 #else
   // Portrait has headroom on the 320-tall screen; make the card taller so the
   // brightness slider + toggles + sysinfo all get their own rows.
-  lv_obj_set_size(card, card_w, portrait ? 236 : 212);
+  const int card_h = portrait ? 236 : 212;
 #endif
+  lv_obj_set_size(card, card_w, card_h);
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 4);
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   // Frosted-glass panel: translucent fill so the (dimmed) screen behind shows through.
@@ -38844,7 +40769,7 @@ static void openControlCenter() {
   s_cc_gps_label = lv_label_create(card);
   lv_label_set_long_mode(s_cc_gps_label, LV_LABEL_LONG_DOT);
   lv_obj_set_width(s_cc_gps_label, card_w - 20);
-  lv_label_set_text(s_cc_gps_label, gpsStatusStr());
+  lv_label_set_text(s_cc_gps_label, gpsStatusStr(true));   // one line — keeps the dropdown short
   lv_obj_set_style_text_font(s_cc_gps_label, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_cc_gps_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_align(s_cc_gps_label, LV_ALIGN_TOP_LEFT, 0, gps_y);
@@ -39024,7 +40949,7 @@ static void openControlCenter() {
     const int per_row = (chip_count + 1) / 2;                 // 6 -> 3 per row, 5 -> 3 then 2
     tw = (card_w - 20 - 5 * (per_row - 1)) / per_row;
     if (tw > 92) tw = 92;
-    int rowh = 196 - (gps_y + 38);                            // row bottom (216 content − 20) up to just below GPS/env
+    int rowh = (card_h - 40) - (gps_y + 38);                 // card bottom (minus margin) up to just below GPS/env (card_h-40 == the old 196 on the 236px V4 card)
     if (rowh > 116) rowh = 116;
     th = (rowh - 8) / 2;                                      // two rows + an 8px inter-row gap
     if (th > 52) th = 52;
@@ -39045,7 +40970,9 @@ static void openControlCenter() {
 #if !CAP_GPS
   ccToggle(row, LV_SYMBOL_GPS, "GPS", false, ccGpsNoneCb, tw, th, -1);   // no onboard GPS — info-only, untoggable
 #else
-  ccToggle(row, LV_SYMBOL_GPS, "GPS", gps_on, ccGpsCb, tw, th, CAT_RADIO);
+  // Long-press opens the GPS settings PAGE. CAT_RADIO here was a leftover from before the
+  // settings reorg gave GPS its own category (the GPS block used to live under radio/device).
+  ccToggle(row, LV_SYMBOL_GPS, "GPS", gps_on, ccGpsCb, tw, th, CAT_GPS);
 #endif
   ccToggle(row, LV_SYMBOL_TINT, "Theme", false, ccThemeCb, tw, th, CAT_DISPLAY);
 #if CAP_KEYBOARD
@@ -39079,7 +41006,8 @@ static void openControlCenter() {
 enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
-  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
+  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_AIRTIME, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
+  APPACT_DISCOVER,
 };
 
 static void closeAppDrawer() {
@@ -39360,6 +41288,8 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_SIGNAL:    openSignalInfoPopup(); return;   // signal/traffic + auto-discover settings
     case APPACT_MONITOR:   openMonitorPage();    return;   // RF activity graph + repeater-style radio stats
     case APPACT_SPECTRUM:  openSpectrumPage();   return;   // swept RF spectrum analyzer (borrows the radio)
+    case APPACT_AIRTIME:   ChannelUtil::launch(); return;  // channel-utilization / congestion proof tool
+    case APPACT_DISCOVER:  openDiscoverPage();   return;   // active node-discovery sweep + nearby list
 #if !defined(HAS_TANMATSU)
     case APPACT_VNC:       openVncPage();        return;   // screen mirror + remote control from a browser
     case APPACT_REMOTE:    openRemotePage();     return;   // reboot into the web-resolution headless UI
@@ -39412,7 +41342,7 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   // Rounded-square chip (iOS-style squircle), tinted with the app's accent
   // colour, centred up top. Bigger + a small proportional corner radius so it
   // reads as a SQUARE app icon, not a circle.
-#if CAP_LARGE_SCREEN
+#if CAP_UI_SIZE
   // Reserve the ACTUAL label line height (it grows with the UI-scale font) so the
   // name never overlaps the icon chip on the big panel.
   int chip = h - (lv_font_get_line_height(big ? &g_font_14 : &g_font_12) + 10);
@@ -39707,7 +41637,7 @@ static void openAppDrawer() {
     { LV_SYMBOL_ENVELOPE,  "Chats",     APPACT_CHATS,    unread,    0x4F9DF7 },      // messaging blue
     { TOUCH_SYM_PERSON,    "Contacts",  APPACT_CONTACTS, 0,         0xA784E0 },      // people violet
     { LV_SYMBOL_GPS,       "Map",       APPACT_MAP,      0,         0x53C06B },      // location green
-    { "@",                 "Mentions",  APPACT_MENTIONS, mentions,  0xF2A33C },      // mention amber
+    { LV_SYMBOL_REFRESH,   "Discover",  APPACT_DISCOVER, 0,         0x9B59FF },      // active node-discovery sweep (purple)
     { LV_SYMBOL_UPLOAD,    "Advertise", APPACT_ADVERT,   0,         0xE072B0 },      // broadcast magenta
 #if !defined(HAS_TANMATSU)
     { LV_SYMBOL_IMAGE,     "VNC",       APPACT_VNC,      0,         0x6C7CF0 },      // browser screen-mirror indigo
@@ -39719,6 +41649,8 @@ static void openAppDrawer() {
     { nullptr,             "Signal",    APPACT_SIGNAL,   0,         COLOR_ACCENT },  // theme (drawn signal bars)
     { TOUCH_SYM_ANTENNA,   "Monitor",   APPACT_MONITOR,  0,         0x35C9C9 },      // RF monitor cyan
     { TOUCH_SYM_ANTENNA,   "Spectrum",  APPACT_SPECTRUM, 0,         0xE8A33D },      // RF spectrum analyzer amber
+    { "%",                 "Airtime",   APPACT_AIRTIME,  0,         0xF2793C },      // channel-utilization / congestion proof (orange)
+    { "@",                 "Mentions",  APPACT_MENTIONS, mentions,  0xF2A33C },      // mention amber
     { LV_SYMBOL_SETTINGS,  "Settings",  APPACT_SETTINGS, 0,         0x9AA3AD },      // neutral gear grey
 #if defined(HAS_TOUCH_UI)
     { ">_",                "Terminal",  APPACT_TERMINAL, 0,         0x3DD27A },      // console green
@@ -39809,10 +41741,11 @@ static void statusBarHoldCb(lv_event_t* e) {
 
 static void statusBarTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  // While Snake is up the bar is raised to the FRONT of lv_layer_top (see the
-  // edge-trigger in updateGlobalStatusBar), so it stays tappable over the game.
-  // Swallow the tap so it can't open the control centre over the game.
-  if (SnakeGame::isOpen()) return;
+  // Snake and Airtime used to need their own cases here because they hand-rolled their
+  // chrome; they now install s_apppage_close via appPageBegin like every other app page,
+  // so the generic hook below covers them — including the PRESSED fallback in
+  // statusBarReaderBackCb, which they never got and which is the only reliable exit on a
+  // cap-touch board that drops the lone CLICKED.
   if (s_sb_shot_done) { s_sb_shot_done = false; return; }   // this press was a screenshot hold
   // A full-screen tool page (RF Monitor / Spectrum) is up: the bar carries its Back
   // chevron + title, so a tap goes back (closes the page) just like settings.
@@ -39844,7 +41777,12 @@ static void statusBarTapCb(lv_event_t* e) {
 // nothing". This closes the reader on touch-down whenever it's the open page.
 static void statusBarReaderBackCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_PRESSED) return;
-  if (s_reader_page_open && s_apppage_close) s_apppage_close();
+  // Every full-screen tool page (Reader, Monitor, Spectrum, Discover, VNC, Remote, Advert, …) is
+  // exited only by the bar's CLICKED -> s_apppage_close. On cap-touch the swipe detector's
+  // click-abort (lvglTouchRead) can drop that lone CLICKED, trapping the user on a touch-only board
+  // (the P4). Close on PRESSED too — the proven Reader fallback, now generalised to every app page.
+  // close() clears s_apppage_close, so the later CLICKED in statusBarTapCb is then a no-op.
+  if (s_apppage_close) s_apppage_close();
 }
 
 // Capture the composited screen to a 16-bit BMP on the SD card. BMP (no
@@ -40216,6 +42154,12 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_color(g_statusbar.left_label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_14, LV_PART_MAIN);
   lv_obj_align(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 6, 0);
+#if defined(TLORA_PAGER)
+  // Keep the large-text title out of the clock/status cluster. Individual home
+  // names may opt into a marquee; other titles truncate inside this window.
+  lv_obj_set_width(g_statusbar.left_label, 200);
+  lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+#endif
   // Tapping the unread badge (✉ N) jumps to the Chats inbox. The CLICKABLE flag is
   // toggled per-tick in updateGlobalStatusBar so only the badge state intercepts the
   // tap; every other left-zone state falls through to the bar's control-center tap.
@@ -40265,7 +42209,13 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.batt_pct, "?");
   lv_obj_set_style_text_color(g_statusbar.batt_pct, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.batt_pct, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.batt_pct, LV_ALIGN_RIGHT_MID, -SC(22), 0);
+  lv_obj_align(g_statusbar.batt_pct, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -32,
+#else
+               -SC(22),
+#endif
+               0);
 
   // Tapping the battery (icon or %) opens the 24h battery-history chart (logged to
   // SD on T-Deck, else internal SPIFFS — works on both builds). Generous ext-click
@@ -40290,14 +42240,26 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_font(g_statusbar.clock, &g_font_12, LV_PART_MAIN);
   // Unified across all boards: extra slot reserved for the DND/sleep moon glyph
   // (T-Deck's sleep_icon and the all-board dnd_icon below both live at -SC(105)).
-  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -SC(160), 0);
+  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -210,
+#else
+               -SC(160),
+#endif
+               0);
 
   // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars).
   g_statusbar.conn_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.conn_icon, "");
   lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.conn_icon, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID, -SC(73), 0);
+  lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -104,
+#else
+               -SC(73),
+#endif
+               0);
 
   // Bluetooth glyph (left of the SD LED). Unified offset across all boards (see clock above).
   g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
@@ -40306,7 +42268,13 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
   // Narrow bars (V4 portrait) have no DND slot beside BLE and their clock sits at -126, so BLE
   // stays at -111 there; wide bars keep -SC(127) (tight to the DND moon at -144).
-  lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID, (lv_disp_get_hor_res(nullptr) < 300) ? -111 : -SC(127), 0);
+  lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -142,
+#else
+               (lv_disp_get_hor_res(nullptr) < 300) ? -111 : -SC(127),
+#endif
+               0);
 
 #if defined(HAS_TDECK_GT911)
   // Idle power-save readiness indicator — moon glyph, left of the SD LED. T-Deck only,
@@ -40332,7 +42300,13 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.dnd_icon, TOUCH_SYM_MOON);
   lv_obj_set_style_text_color(g_statusbar.dnd_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.dnd_icon, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -SC(144), 0);
+  lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -164,
+#else
+               -SC(144),
+#endif
+               0);
   lv_obj_add_flag(g_statusbar.dnd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only while DND is active
   lv_obj_add_flag(g_statusbar.dnd_icon, NAV_SKIP_FLAG);        // passive status glyph, not a focus-nav target
 
@@ -40347,7 +42321,13 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_bg_color(g_statusbar.sd_icon, lv_color_hex(0xF5A623), LV_PART_MAIN);  // amber = SD activity
   lv_obj_set_style_bg_opa(g_statusbar.sd_icon, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_align(g_statusbar.sd_icon, LV_ALIGN_RIGHT_MID, -SC(91), 0);
+  lv_obj_align(g_statusbar.sd_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -124,
+#else
+               -SC(91),
+#endif
+               0);
   lv_obj_add_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only during SD I/O
 
   // Async mesh-request spinner — a refresh glyph centred in the bar, blinking
@@ -40367,7 +42347,13 @@ static void buildGlobalStatusBar() {
     lv_obj_t* sb = lv_obj_create(g_statusbar.root);
     lv_obj_remove_style_all(sb);
     lv_obj_set_size(sb, 15, 12);
-    lv_obj_align(sb, LV_ALIGN_RIGHT_MID, -SC(54), 0);
+    lv_obj_align(sb, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+                 -82,
+#else
+                 -SC(54),
+#endif
+                 0);
     lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
     g_statusbar.sig_box = sb;
     const int bw = 3, gap = 1;
@@ -40458,12 +42444,12 @@ static void updateGlobalStatusBar() {
   // is the Snake overlay — the bar swallows taps over the game.
   {
     static bool s_bar_fg = false;
-    // Raise the bar to the FRONT of lv_layer_top for (a) Snake (it swallows taps over the
-    // game) and (b) a tool page (RF Monitor / Spectrum) — those roots are also on
-    // lv_layer_top and moved foreground, so without this the TALL bar's lower half (back
-    // chevron + title) is covered by the page. Settings sheets sit on lv_scr_act so they
-    // never need this.
-    const bool want_fg = SnakeGame::isOpen() || (s_apppage_title != nullptr);
+    // Raise the bar to the FRONT of lv_layer_top for any app page (Spectrum, RF Monitor,
+    // Snake, Airtime, ...): those roots are also on lv_layer_top and moved foreground, so
+    // without this the TALL bar's lower half (back chevron + title) is covered by the page.
+    // Settings sheets sit on lv_scr_act so they never need this. One condition covers every
+    // page now that Snake and Airtime set s_apppage_title too.
+    const bool want_fg = (s_apppage_title != nullptr);
     if (want_fg) {
       // Keep the bar the TOPMOST lv_layer_top child so its back tap is always hittable —
       // re-assert every tick (a page opened over a chat can otherwise let the chat's
@@ -40617,8 +42603,13 @@ static void updateGlobalStatusBar() {
     if (s_fullscreen_view && s_fullscreen_title[0]) home_zone = false;
 #endif
     if (!home_zone && s_left_home_cfg) {
+#if defined(TLORA_PAGER)
+      lv_obj_set_width(g_statusbar.left_label, 200);
+      lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+#else
       lv_obj_set_width(g_statusbar.left_label, LV_SIZE_CONTENT);
       lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_WRAP);
+#endif
       s_left_home_cfg = false;
       s_left_home_name[0] = '\0';   // force re-config on the next home entry
     }
@@ -40697,7 +42688,12 @@ static void updateGlobalStatusBar() {
     // smaller font — otherwise on the narrow V4 portrait bar its end ("…Map")
     // runs into the Wi-Fi icon. Restore the normal font on other tabs.
     lv_obj_set_style_text_font(g_statusbar.left_label,
-                               tab == MAP_TAB_INDEX ? &g_font_12 : &g_font_14, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+                               tab == MAP_TAB_INDEX ? &lv_font_montserrat_14 : &g_font_14,
+#else
+                               tab == MAP_TAB_INDEX ? &g_font_12 : &g_font_14,
+#endif
+                               LV_PART_MAIN);
     if (tab == MAP_TAB_INDEX) {
       // On the immersive map the left zone carries the required OSM attribution.
       lv_label_set_text(g_statusbar.left_label, s_map_style == 1
@@ -40734,6 +42730,8 @@ static void updateGlobalStatusBar() {
         // runs from the left inset up to just before the leftmost icon (Bluetooth, whose
         // right anchor is 126+inset from the right edge — reserve its glyph + a margin).
         lv_obj_set_width(g_statusbar.left_label, sb_w - (SB_INSET_X + 126 + 44));
+#elif defined(TLORA_PAGER)
+        lv_obj_set_width(g_statusbar.left_label, 200);
 #else
         lv_obj_set_width(g_statusbar.left_label,
                          (sb_w >= 600) ? (sb_w - SC(190)) : (sb_w >= 300) ? 100 : 66);   // #47a: narrower window on the 240px V4 bar so a long name can't run into the clock
@@ -40822,8 +42820,16 @@ static void updateGlobalStatusBar() {
           // Dedicated slot — re-assert on entry/return so a CAP_ROTATABLE board
           // (V4) rotating out of portrait mid-DND self-heals from the borrowed
           // signal-bars position instead of staying stranded there.
-          const int d = batteryIsCharging(batteryMvSmoothed()) ? 32 : 0;
-#if CAP_LARGE_SCREEN
+          const int d = batteryIsCharging(batteryMvSmoothed()) ?
+#if defined(TLORA_PAGER)
+                        45
+#else
+                        32
+#endif
+                        : 0;
+#if defined(TLORA_PAGER)
+          lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -164 + d, 0);
+#elif CAP_LARGE_SCREEN
           lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -SC(144) + SC(d), 0);
 #else
           lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -144 + d, 0);
@@ -40884,6 +42890,14 @@ static void updateGlobalStatusBar() {
       // Round panel: re-apply the two-row layout, sliding the row-2 sub-battery cluster
       // right by the hidden %-column width so it stays snug against the bolt.
       statusBarLayoutTwoRow(charging ? 32 : 0);
+#elif defined(TLORA_PAGER)
+      const int d = charging ? 45 : 0;
+      if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -82  + d, 0);
+      if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -104 + d, 0);
+      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -124 + d, 0);
+      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -142 + d, 0);
+      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -164 + d, 0);
+      if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -232 + d, 0);
 #elif CAP_LARGE_SCREEN
       // Tanmatsu: the cluster is built with SC() UI-scaling, so this slide MUST scale too — the raw
       // offsets below marched the scaled glyphs (incl. the BLE icon) into each other at Large/Huge the
@@ -41003,8 +43017,13 @@ static void updateGlobalStatusBar() {
         // Wide bar shifted 18px further left of its old -142/-110 to open a clean
         // ~16-17px gap for the DND moon icon (now at -SC(144)) on Bluetooth's left
         // side, instead of the old cramped 15px gap that used to sit here.
-        const int clk_x = narrow_bar ? (charging ? -94 : -126)
+        const int clk_x =
+#if defined(TLORA_PAGER)
+                          charging ? -165 : -210;
+#else
+                          narrow_bar ? (charging ? -94 : -126)
                                      : (charging ? -SC(128) : -SC(160));
+#endif
         lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, clk_x, 0);
       }
       // Park the async-request spinner just LEFT of the clock wherever it lands,
@@ -41104,7 +43123,7 @@ static void relayoutHomeCharts() {
   const int cw = tabContentW();
   const int BTNW = SC(100);
   const int RSTRIP = BTNW + 10;
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2) || defined(ATTAKY_MESH_SERIES)
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 #else
   const int chart_w = cw;
@@ -41128,6 +43147,10 @@ static void relayoutHomeCharts() {
 
   const int legend_y = env_chart_y + SC(34) + SC(12);
   lv_obj_set_pos(s_home_chart_legend, 0, legend_y);
+  if (s_home_store) {                      // chat-store chip rides the same row
+    lv_obj_set_width(s_home_store, chart_w / 2);
+    lv_obj_set_pos(s_home_store, chart_w - chart_w / 2, legend_y);
+  }
 
   const int home_avail = tabContentH() - 20;
   int chart_h = home_avail - (legend_y + 16) - 4 - (home_land ? 0 : (8 + 36));
@@ -41163,7 +43186,7 @@ static void refreshStatusLabels() {
   // CPU/RAM/PSRAM/IP line current — e.g. the IP appears/clears as Wi-Fi
   // connects/drops, without having to close and reopen the panel.
   if (s_cc_root) {
-    if (s_cc_gps_label) setLabelIfChanged(s_cc_gps_label, gpsStatusStr());
+    if (s_cc_gps_label) setLabelIfChanged(s_cc_gps_label, gpsStatusStr(true));
 #if defined(HAS_EXPANSION_KIT)
     if (s_cc_env_label) setLabelIfChanged(s_cc_env_label, localEnvStatusStr());
 #endif
@@ -41177,6 +43200,19 @@ static void refreshStatusLabels() {
   if (g_lv.tabview) active_tab = lv_tabview_get_tab_act(g_lv.tabview);
   const bool home_active = (active_tab == HOME_TAB_INDEX);
   if (home_active) refreshHomeBattery();
+  // Chat-store chip (legend row). Updated independently of the TX/RX chart —
+  // the big-screen scaled layout drops the chart entirely, and the store state
+  // still has to be visible there.
+  if (home_active && s_home_store) {
+    char chip[24];
+    const uint32_t col = homeStoreChipText(chip, sizeof chip);
+    setLabelIfChanged(s_home_store, chip);
+    static uint32_t s_home_store_col = 0;   // avoid re-styling (and invalidating) every tick
+    if (col != s_home_store_col) {
+      s_home_store_col = col;
+      lv_obj_set_style_text_color(s_home_store, lv_color_hex(col), LV_PART_MAIN);
+    }
+  }
   // Push a TX/RX sample onto the home chart: delta packets since last tick.
   if (home_active && s_home_chart && s_home_chart_tx && s_home_chart_rx) {
     static uint32_t last_tx = 0;
@@ -41482,7 +43518,7 @@ static void buildBootSplash() {
   // ---- Product line: MESHCOMOD (small, same size as the channel line, between
   //      the WADAMESH wordmark and TOUCH BETA) ----
   lv_obj_t* mc = lv_label_create(s_splash_root);
-  lv_label_set_text(mc, "MESHCOMOD");
+  lv_label_set_text(mc, "WADAMESH");   // #165: the unlock overlay still said MESHCOMOD after the rebrand
   lv_obj_set_style_text_font(mc, &lv_font_unscii_8, LV_PART_MAIN);
   lv_obj_set_style_text_color(mc, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_letter_space(mc, 4, LV_PART_MAIN);
@@ -42123,18 +44159,47 @@ static void blockedModalClose() {
   }
 }
 static bool blockedModalIsOpen() { return s_blocked_modal != nullptr; }
+// Unblock is PAIRED with the block: blocking a channel sender who is also a saved
+// contact writes BOTH a name entry (what the channel RX path matches) and a pubkey
+// entry (what the DM path matches), so clearing only one would leave the sender
+// still silenced on the other path — an "I unblocked them and they are still gone"
+// bug. Each callback therefore clears its own entry and its twin.
 static void blockedUnblockCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
   if (idx < 0 || idx >= TOUCH_IGNORED_MAX) return;
-  touchPrefsSetIgnored(&s_blocked_snap[idx * TOUCH_IGNORE_KEY_BYTES], false);
+  uint8_t pub6[TOUCH_IGNORE_KEY_BYTES];
+  memcpy(pub6, &s_blocked_snap[idx * TOUCH_IGNORE_KEY_BYTES], sizeof pub6);
+  touchPrefsSetIgnored(pub6, false);
+  // Twin: this pubkey's contact name may also hold a name entry (same prefix match
+  // the modal uses to label the row).
+  ContactInfo c;
+  const int nc = the_mesh.getNumContacts();
+  for (int j = 0; j < nc; ++j) {
+    if (the_mesh.getContactByIdx((uint32_t)j, c) &&
+        memcmp(c.id.pub_key, pub6, TOUCH_IGNORE_KEY_BYTES) == 0) {
+      if (c.name[0]) touchPrefsSetNameIgnored(c.name, false);
+      break;
+    }
+  }
   openBlockedUsersModal();   // rebuild the list
 }
 static void blockedUnblockNameCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
   if (idx < 0 || idx >= TOUCH_IGNORED_NAMES_MAX) return;
-  touchPrefsSetNameIgnored(&s_blocked_names_snap[idx * TOUCH_IGNORED_NAME_LEN], false);
+  char nm[TOUCH_IGNORED_NAME_LEN];
+  snprintf(nm, sizeof nm, "%s", &s_blocked_names_snap[idx * TOUCH_IGNORED_NAME_LEN]);
+  touchPrefsSetNameIgnored(nm, false);
+  // Twin: a saved contact with this name may also hold a pubkey entry.
+  ContactInfo c;
+  const int nc = the_mesh.getNumContacts();
+  for (int j = 0; j < nc; ++j) {
+    if (the_mesh.getContactByIdx((uint32_t)j, c) && strcmp(c.name, nm) == 0) {
+      touchPrefsSetIgnored(c.id.pub_key, false);
+      break;
+    }
+  }
   openBlockedUsersModal();   // rebuild the list
 }
 static void openBlockedUsersModal() {
@@ -42951,7 +45016,11 @@ static void buildUiTree() {
 #endif
   lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS);
   // Slightly larger font for icons so they're easy to tap.
+#if CAP_UI_SIZE
+  lv_obj_set_style_text_font(tab_btns, &g_font_tab, LV_PART_MAIN);
+#else
   lv_obj_set_style_text_font(tab_btns, &g_font_16, LV_PART_MAIN);
+#endif
 
   // Home and Set tabs scroll vertically at the tab page level
   for (lv_obj_t* t : {tab_home, tab_settings}) {
@@ -44166,15 +46235,12 @@ void UITask::markThreadsDirty(unsigned long delay_ms) {
 }
 
 void UITask::markMsgsDirty(unsigned long delay_ms) {
-  // Every flush rewrites the WHOLE ring file on the loop thread, so space the
-  // writes out: at least 30 s for the deep SD ring (~1.1 MB at 5000 slots) and at
-  // least 10 s for the small internal-flash ring (~115 KB) — a busy channel used
-  // to trigger a full rewrite (+ possible SPIFFS GC) ~2 s after EVERY message,
-  // which read as "the device freezes 1-2 s every ~10 s" on stable beta_31.
-  // persistHistoryNow() still forces a write on reboot/shutdown, so a hard crash
-  // costs at most the last few seconds of messages.
-  if (_ui_msg_cap > MAX_UI_MESSAGES) { if (delay_ms < 30000) delay_ms = 30000; }
-  else                               { if (delay_ms < 10000) delay_ms = 10000; }
+  // Segmented store: a flush is now a small APPEND to the active segment
+  // (~240 B per message, off-thread), so the old 10/30 s whole-ring-rewrite
+  // clamps are gone — the hard-cut loss window shrinks to this coalesce.
+  // SPIFFS keeps a slightly higher floor purely as flash-wear pacing.
+  if (uiDataFsIsSdCard()) { if (delay_ms < 2000) delay_ms = 2000; }
+  else                    { if (delay_ms < 5000) delay_ms = 5000; }
   const unsigned long deadline = millis() + delay_ms;
   if (!_msgs_dirty || deadline < _next_msgs_flush_ms)
     _next_msgs_flush_ms = deadline;
@@ -44182,14 +46248,19 @@ void UITask::markMsgsDirty(unsigned long delay_ms) {
   markThreadsDirty(1500);  // thread state (last_ts, unread) changed too — coalesce a message burst into one write
 }
 
-// Snapshot of the message ring handed to the core-0 worker for the off-thread
-// write. Allocated once in PSRAM (ring-sized: ~115 KB SPIFFS ring / ~1.1 MB SD
-// ring); the worker only ever touches the snapshot, never the live ring.
-static UITask::UIMessage* s_hist_snap     = nullptr;
-static int           s_hist_snap_cap      = 0;
-static uint16_t      s_hist_snap_count    = 0;
-static uint16_t      s_hist_snap_head     = 0;
-static uint32_t      s_hist_snap_msgcount = 0;
+// Arm an immediate flush of both history files WITHOUT the min-delay clamp and
+// WITHOUT blocking this task: the actual writes happen on the hist_flush
+// worker (or the sync fallback inside flushHistoryIfDue). Called only from the
+// SD remount paths — the card may be a DIFFERENT one now, so the segment
+// table is rebuilt from the ring (s_seg_resync) and the full history re-lands
+// one bounded segment at a time.
+void UITask::flushHistorySoon() {
+  s_seg_resync           = true;
+  _msgs_dirty            = true;
+  _next_msgs_flush_ms    = millis();
+  _threads_dirty         = true;
+  _next_threads_flush_ms = millis();
+}
 
 void UITask::flushHistoryIfDue(unsigned long now) {
 #if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
@@ -44199,8 +46270,58 @@ void UITask::flushHistoryIfDue(unsigned long now) {
   extern bool g_long_term_storage_sd_missing;
   if (g_long_term_storage_sd_missing) return;
 #endif
-  // A worker write failed (storage hiccup): re-arm and try again.
-  if (!s_hist_flush_ok) { s_hist_flush_ok = true; markMsgsDirty(5000); }
+  // Observe a finished worker job FIRST — and strictly BEFORE the failure
+  // branch below resets s_hist_flush_ok, or a FAILED job would read as ok
+  // here and get committed, advancing the durability watermark over records
+  // that never reached disk (silent permanent loss).
+  if (s_segjob_kind != SEGJOB_NONE && !s_hist_flush_busy && !s_hist_flush_req) {
+    if (s_hist_flush_ok) {
+      SegJob done{};
+      done.kind      = s_segjob_kind;
+      done.first_seq = s_segjob_first_seq;
+      done.last_seq  = s_segjob_last_seq;
+      done.create    = s_segjob_create;
+      done.n         = s_segjob_n;
+      const uint32_t pre_wm = s_seg_flushed_seq;
+      segCommitJob(done);
+      // Deletes that raced the in-flight APPEND: segMarkSeqDirty skipped them
+      // while their seq was above the watermark ("never reaches disk") — but
+      // this job just put them on disk. Give their segments the compaction
+      // mark now.
+      if (s_seg_flushed_seq > pre_wm) {
+        for (int i = 0; i < _ui_msg_count; ++i) {
+          const int slot = (_ui_msg_head - _ui_msg_count + i + _ui_msg_cap) % _ui_msg_cap;
+          const UIMessage& m = _ui_msgs[slot];
+          if (!m.thread[0] && m.seq > pre_wm && m.seq <= s_seg_flushed_seq) {
+            segMarkSeqDirty(m.seq);
+            _msgs_dirty = true;   // schedule the follow-up compaction
+          }
+        }
+      }
+    }
+    s_segjob_kind = SEGJOB_NONE;   // failed job: data stays pending below the watermark
+    s_segjob_redirty = false;
+  }
+  // A worker write failed (storage hiccup): re-arm and try again. Surface
+  // repeated failures — a persistently failing ring write was previously
+  // 100% silent and read as "messages from the last N minutes vanished" on
+  // the next reboot (the small threads file kept writing, so the thread
+  // list still showed fresh last-message times).
+  if (!s_hist_flush_ok) {
+    s_hist_flush_ok = true;
+    // Back off a hopelessly failing store: each retry against a card that
+    // times out on large writes costs seconds of bus stalls (felt as UI
+    // freezes through the FatFs volume lock). After 5 straight failures
+    // retry every 5 min instead of every 30 s — the RAM ring keeps
+    // everything meanwhile, and a successful write resets the counter.
+    markMsgsDirty(s_msgs_write_fails >= 5 ? 300000 : 5000);
+    if (s_msgs_write_fails >= 3 && (s_msgs_write_fails % 3) == 0) {
+      char why[64]; chatSaveFailText(why, sizeof why);
+      char msg[128];
+      snprintf(msg, sizeof msg, "%s\n%s", TR("Chat history is NOT saving"), why);
+      showAlert(msg, 3200);
+    }
+  }
   // Thread metadata (~4 KB) flushes on a short delay; the message ring
   // (scales with MAX_UI_MESSAGES) flushes lazily to reduce flash write pressure.
   if (_threads_dirty && now >= _next_threads_flush_ms) {
@@ -44213,44 +46334,86 @@ void UITask::flushHistoryIfDue(unsigned long now) {
   }
   if (_msgs_dirty && now >= _next_msgs_flush_ms) {
     if (s_hist_flush_busy || s_hist_flush_req) {
-      // The worker only exists while the tile-fetch task is spawned (map / Wi-Fi
-      // scan / LOS / …).  Without this kick a pending flush can sit armed forever
-      // while ui_threads_v1.bin keeps updating — messages live only in RAM.
-      ensureTileFetchTaskRunning();
-      _next_msgs_flush_ms = now + 1000;   // one flush in flight; new messages ride the next one
+      // A request is armed but the flush task may not be up yet — kick it so a
+      // pending flush can't sit armed forever while messages live only in RAM.
+      ensureHistFlushTaskRunning();
+      _next_msgs_flush_ms = now + 1000;   // one job in flight; new messages ride the next one
       return;
     }
 #if defined(ESP32)
-    // Snapshot the ring (a few ms of PSRAM memcpy) and hand the write to the
-    // core-0 worker. Messages arriving while the worker writes stay in the live
-    // ring and re-arm the dirty flag, so they land in the next flush.
-    if (!s_hist_snap || s_hist_snap_cap != _ui_msg_cap) {
-      if (s_hist_snap) { heap_caps_free(s_hist_snap); s_hist_snap = nullptr; }
-      s_hist_snap = (UITask::UIMessage*)heap_caps_malloc(sizeof(UITask::UIMessage) * (size_t)_ui_msg_cap,
-                                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-      s_hist_snap_cap = s_hist_snap ? _ui_msg_cap : 0;
+    // Off-thread writes keep failing? Fall back to the LOOP-TASK write — the
+    // empirically reliable path (the reboot-time persist always succeeds):
+    // when this task writes, nothing else interleaves radio/display traffic
+    // on the shared SPI bus between the SD transactions. Costs one UI hitch
+    // per flush while degraded; a single success resets the counter and the
+    // next flush goes back to the async task. The threshold is a setting
+    // (Settings -> General; default 2, 0 = never fall back).
+    const uint8_t sync_after = touchPrefsGetHistSyncAfter();
+    if (sync_after && s_msgs_write_fails >= sync_after) {
+      if (saveMsgsToStorage()) { _msgs_dirty = false; return; }
+      _next_msgs_flush_ms = now + (s_msgs_write_fails >= 5 ? 300000 : 5000);
+      return;
     }
-    if (s_hist_snap) {
-      memcpy(s_hist_snap, _ui_msgs, sizeof(UITask::UIMessage) * (size_t)_ui_msg_cap);
-      s_hist_snap_count    = (uint16_t)_ui_msg_count;
-      s_hist_snap_head     = (uint16_t)_ui_msg_head;
-      s_hist_snap_msgcount = (uint32_t)_msgcount;
-      if (!ensureTileFetchTaskRunning()) {
-        // No worker — fall back to a synchronous write instead of clearing dirty
-        // and losing the snapshot (the whole point of the worker is to stay off
-        // the loop thread; a rare spawn failure must not drop hours of chat).
-        if (saveMsgsToStorage()) _msgs_dirty = false;
-        else _next_msgs_flush_ms = now + 2000;
-        return;
-      }
-      s_hist_flush_req = true;   // worker picks it up
+    // A failed boot migration means the old-format file is still the on-disk
+    // truth — segments must not be written until it converts (they would
+    // shadow it in the loader's precedence order). The sync drain retries
+    // the migration.
+    if (!s_seg_store_ready) {
+      if (saveMsgsToStorage()) { _msgs_dirty = false; return; }
+      _next_msgs_flush_ms = now + 60000;   // store is sick; don't thrash the bus
+      return;
+    }
+    // Card remounted (possibly a different/blank card): rebuild the segment
+    // table from the ring — stale on-disk segments are removed and every
+    // chunk is marked compact-dirty, so the normal job flow below re-lands
+    // the whole history one bounded segment at a time, off-thread.
+    if (s_seg_resync) {
+      segRetableFromRing(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
+                         _ui_seq_next ? _ui_seq_next - 1 : 0);
+      s_seg_resync = false;
+    }
+    // Build the next off-thread job: pending-append batch first, else the
+    // oldest compact-dirty segment. The snapshot is at most ONE segment's
+    // records (~80 KB) — not the old 1.3 MB whole-ring copy.
+    SegJob job{};
+    const int armed = segBuildJob(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
+                                  segEnsureBuf(&s_segjob_buf), &job);
+    if (armed == 0) {
+      // Everything durable. A resync's leftover files can go now that every
+      // table entry has a real, current file on disk.
+      if (s_seg_stale_purge) segPurgeStaleFiles();
       _msgs_dirty = false;
       return;
     }
-#endif
-    // No PSRAM for a snapshot: fall back to the old synchronous write.
+    if (armed < 0 || !ensureHistFlushTaskRunning()) {
+      // No snapshot buffer / no worker — synchronous drain instead of losing
+      // the flush (a rare spawn failure must not drop hours of chat).
+      if (saveMsgsToStorage()) { _msgs_dirty = false; return; }
+      _next_msgs_flush_ms = now + 2000;
+      return;
+    }
+    // Arm the worker: descriptor written strictly before req (the worker
+    // reads it only after seeing req).
+    s_segjob_kind      = job.kind;
+    s_segjob_first_seq = job.first_seq;
+    s_segjob_last_seq  = job.last_seq;
+    s_segjob_create    = job.create;
+    s_segjob_n         = job.n;
+    s_segjob_redirty   = false;
+    s_hist_flush_req   = true;
+    // One job armed for the worker. A multi-segment backlog (burst bigger
+    // than one segment, or several dirty segments) keeps _msgs_dirty set and
+    // reschedules shortly; each cycle moves one segment.
+    if (segMoreWorkPending(_ui_seq_next ? _ui_seq_next - 1 : 0)) {
+      _next_msgs_flush_ms = now + 1500;
+      return;
+    }
+    _msgs_dirty = false;
+    return;
+#else
     if (saveMsgsToStorage()) _msgs_dirty = false;
     else _next_msgs_flush_ms = now + 2000;
+#endif
   }
 }
 
@@ -44263,7 +46426,6 @@ void UITask::flushHistoryIfDue(unsigned long now) {
 // the chat to the SD card.
 static fs::FS* s_ui_data_fs       = nullptr;
 static char    s_ui_data_root[16] = "";
-static bool    s_ui_data_resolved = false;
 static bool uiDataFsReady() {
   if (s_ui_data_fs != nullptr) return true;   // cache SUCCESS only — a failed resolve MUST stay retryable
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
@@ -44273,6 +46435,12 @@ static bool uiDataFsReady() {
   // T-Deck's /meshcomod root; fall back to FFat only when no card is present. Both are mounted at
   // boot in main.cpp (g_sd_ok / g_fs_ok). (The P4 used to fall into the #else SPIFFS branch below —
   // no SPIFFS partition exists there, so history was never persisted and vanished on every reboot.)
+  // #167: hot UI data (chat history) lives on the INTERNAL LittleFS -- SD write bursts
+  // electrically disturb this board's AMOLED, and the P4's internal FAT layer is broken
+  // (see the storage note in tdisplay_p4/main/main.cpp). SD = degraded fallback only;
+  // tiles keep using the SD via their own selector.
+  extern bool g_fs_ok;
+  if (g_fs_ok) { s_ui_data_fs = &LittleFS; s_ui_data_root[0] = '\0'; return true; }
   extern bool g_sd_ok;
   if (g_sd_ok) {
     SD_MMC.mkdir("/meshcomod");
@@ -44280,8 +46448,6 @@ static bool uiDataFsReady() {
     strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
     return true;
   }
-  extern bool g_fs_ok;
-  if (g_fs_ok) { s_ui_data_fs = &FFat; s_ui_data_root[0] = '\0'; return true; }
 #elif defined(HAS_TDECK_GT911)
   // T-Deck: the SD card is the persistent user-data store (large, removable,
   // survives a reflash) and is where chat history already lives. Prefer it; only
@@ -44336,9 +46502,23 @@ static bool uiDataFsIsSdCard() {
 #endif
 }
 static File uiDataOpen(const char* name, const char* mode) {
+#if defined(TDP4_POKE_TRACE)
+  // #167 hunt: every ui-data open with its issuing core. Writes ([SDW]) were all correctly on
+  // core 0 during a flashing manual flow -- so now READS are traced too ([SDR]): a read is the
+  // same FATFS/SDMMC critical-section machinery, and UI flows read constantly from core 1.
+  if (mode && mode[0] != 'r') printf("[SDW] %lu core%d uiData %s %s\n", (unsigned long)millis(), xPortGetCoreID(), mode, name);
+  else                        printf("[SDR] %lu core%d uiData r %s\n", (unsigned long)millis(), xPortGetCoreID(), name);
+#endif
   if (!uiDataFsReady()) return File();
   char p[80]; snprintf(p, sizeof p, "%s%s", s_ui_data_root, name);
-  return s_ui_data_fs->open(p, mode);
+  File f = s_ui_data_fs->open(p, mode);
+#if defined(HAS_TDECK_GT911)
+  // A failed WRITE open on the SD-backed history store is the wedge tell (reads
+  // fail legitimately on first boot). Called from the loop task AND the core-0
+  // history worker — sdNoteIoFailure is a volatile stamp, safe from both.
+  if (!f && mode && mode[0] == 'w' && s_ui_data_fs == &SD) sdNoteIoFailure();
+#endif
+  return f;
 }
 // Delete a ui-data file — used to quarantine a blob that fails to load so a
 // corrupt/truncated file (interrupted SD/FAT write, brownout) can't wedge the
@@ -44383,6 +46563,10 @@ bool UITask::loadThreadsFromStorage() {
   const size_t disk_sz =
       (hdr.version >= 5 && hdr.thread_rec_size) ? hdr.thread_rec_size : sizeof(UiHistoryThread);
   if (disk_sz == 0 || disk_sz > 4096) { f.close(); uiDataRemove(k_ui_threads_path); return false; }
+  // Restore the companion message counter carried here for the segmented msgs
+  // store (older writers left it 0; the msgs-file loaders overwrite it anyway
+  // when they run, and the mesh re-asserts it with every message).
+  if (hdr.msgcount) _msgcount = static_cast<int>(hdr.msgcount);
 
   UiHistoryThread t{};
   for (int i = 0; i < MAX_UI_THREADS; ++i) {
@@ -44433,6 +46617,18 @@ bool UITask::loadMsgsFromStorage() {
   // lets a 500-slot file load into a 5000 ring (SD upgrade) and a 5000-slot file
   // shrink into a 500 ring (card pulled), instead of quarantining real history.
   const int file_slots = (int)(((size_t)f.size() - sizeof(hdr)) / disk_sz);
+  if (file_slots == 0 && hdr.ui_msg_count == 0) {
+    // Legitimately empty (every message was deleted, so the compacting writer
+    // emitted a header-only file) — NOT corruption. Load the empty ring; the
+    // old quarantine here deleted the file and made the boot fall through to
+    // stale fallbacks.
+    f.close();
+    _ui_msg_count = 0;
+    _ui_msg_head  = 0;
+    _thread_hist_dirty = true;   // ring replaced — recompute "has history" on next read
+    _msgcount     = static_cast<int>(hdr.msgcount);
+    return true;
+  }
   if (file_slots <= 0 ||
       hdr.ui_msg_count > file_slots || hdr.ui_msg_head >= file_slots) {
     f.close(); uiDataRemove(k_ui_msgs_path); return false;   // header disagrees with the file body
@@ -44470,7 +46666,247 @@ bool UITask::loadMsgsFromStorage() {
 
   _ui_msg_count = n_keep;                     // ring is now linear: slots 0..n_keep-1, oldest first
   _ui_msg_head  = n_keep % _ui_msg_cap;
+  _thread_hist_dirty = true;                  // ring replaced — recompute "has history" on next read
   _msgcount     = static_cast<int>(hdr.msgcount);
+  return true;
+#else
+  return false;
+#endif
+}
+
+// Segmented-store loader (generation 3). Reads every discovered segment
+// oldest-first into the ring, quarantining corrupt segments INDIVIDUALLY (the
+// single-file store threw the entire history away on one bad record), keeping
+// the newest <= cap records when the on-disk set is larger than this boot's
+// ring (card written under the deep cap, loaded under the small one), and
+// leaving the ring LINEAR (slot 0 = oldest, head = n) — the same post-load
+// invariant every ring consumer relies on. Returns false when no segment
+// files exist at all, so the caller can fall back to the older formats.
+bool UITask::loadMsgsFromSegments() {
+#if defined(ESP32)
+  uint32_t seqs[k_ui_seg_max];
+  const int nseg = uiSegScan(seqs, k_ui_seg_max, true /*sweep orphaned tmps*/);
+  s_seg_count = 0;
+  s_seg_total_bytes = 0;
+  if (nseg <= 0) return false;
+  // Commit marker missing => this segment set is an unfinished migration (a
+  // power cut between chunk writes). Wipe it and let the caller fall back to
+  // the old-format file, which migrateRingToSegments only deletes after full
+  // verification.
+  {
+    File okf = uiDataOpen(k_ui_seg_ok, FILE_READ);
+    const bool have_marker = (bool)okf;
+    if (okf) okf.close();
+    if (!have_marker) {
+      for (int i = 0; i < nseg; ++i) uiSegRemoveFile(seqs[i]);
+      return false;
+    }
+  }
+
+  WdtHeavyGuard _wg;   // ~20 segment reads on a cold card can take a while
+  int w = 0;           // running chronological index; ring slot = w % cap
+  uint32_t max_seq = 0;
+  for (int si = 0; si < nseg; ++si) {
+    File f;
+    uint16_t rec_sz = 0;
+    if (!uiSegOpenValidated(seqs[si], f, &rec_sz)) {
+      uiSegRemoveFile(seqs[si]);   // quarantine THIS segment only
+      continue;
+    }
+    UiSegInfo info{};
+    info.first_seq = seqs[si];
+    UIMessage rec;
+    uint32_t seq = 0;
+    uint16_t nrec = 0;
+    bool     skipped = false;   // duplicates dropped -> file != table -> rewrite it
+    while (uiSegReadRec(f, rec_sz, &rec, &seq)) {   // stops at EOF or a crash-ragged tail
+      // Strictly monotonic seq filter. Segments are read in ascending
+      // first_seq order, so a record that does not advance the sequence is a
+      // duplicate or an out-of-order leftover (an interrupted repair, a stale
+      // file a crash left behind, a re-appended batch) — dropping it keeps the
+      // ring chronological and idempotent no matter what the disk holds.
+      if (rec.seq != 0 && rec.seq <= max_seq) { skipped = true; continue; }
+      if (rec.seq == 0) rec.seq = max_seq + 1;      // defensive backfill (pre-seq record)
+      max_seq = rec.seq;
+      info.last_seq = rec.seq;
+      _ui_msgs[w % _ui_msg_cap] = rec;
+      ++w;
+      ++nrec;
+    }
+    f.close();
+    info.disk_recs = nrec;
+    info.live_recs = nrec;
+    info.bytes     = (uint32_t)sizeof(UiSegHeader) + (uint32_t)nrec * (uint32_t)rec_sz;
+    // The file holds records the table doesn't account for — rewrite it so disk
+    // and table agree again (also drops the dead weight for good).
+    if (skipped) info.rewrite_open = 1;
+    if (nrec == 0) { uiSegRemoveFile(seqs[si]); continue; }   // header-only husk — reclaim
+    if (s_seg_count < k_ui_seg_max) s_seg[s_seg_count++] = info;
+  }
+
+  const int total  = w;
+  const int n_keep = total > _ui_msg_cap ? _ui_msg_cap : total;
+  if (total > _ui_msg_cap) {
+    // The ring wrapped while loading: the oldest KEPT record sits at slot
+    // total % cap. Rotate left by that amount so the ring is linear again.
+    // Three-reversal rotation: O(cap) record swaps, no large temp buffer.
+    const int cap = _ui_msg_cap;
+    const int k = total % cap;
+    if (k > 0) {
+      auto rev = [this](int a, int b) {
+        while (a < b) {
+          UIMessage t = _ui_msgs[a];
+          _ui_msgs[a] = _ui_msgs[b];
+          _ui_msgs[b] = t;
+          ++a; --b;
+        }
+      };
+      rev(0, k - 1);
+      rev(k, cap - 1);
+      rev(0, cap - 1);
+    }
+  }
+
+  // Reconcile the table with any dropped-oldest records: fully-dropped
+  // segments violate the disk == ring invariant and are deleted outright; the
+  // boundary segment keeps its file but is marked compact-dirty so the next
+  // compaction (rewritten from the RAM ring) trims it to the kept records.
+  const uint32_t min_kept_seq = n_keep > 0 ? _ui_msgs[0].seq : 0;
+  int out = 0;
+  uint32_t total_bytes = 0;
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (n_keep == 0 || s_seg[i].last_seq < min_kept_seq) {
+      uiSegRemoveFile(s_seg[i].first_seq);
+      continue;
+    }
+    if (s_seg[i].first_seq < min_kept_seq) s_seg[i].compact_dirty = 1;
+    total_bytes += s_seg[i].bytes;
+    s_seg[out++] = s_seg[i];
+  }
+  s_seg_count = out;
+  s_seg_total_bytes = total_bytes;
+
+  _ui_msg_count = n_keep;
+  _ui_msg_head  = n_keep % _ui_msg_cap;
+  _thread_hist_dirty = true;   // ring replaced — recompute "has history" on next read
+  _ui_seq_next  = max_seq + 1;
+  s_seg_flushed_seq = max_seq;   // everything loaded IS on disk by definition
+  // _msgcount isn't stored in segments; the threads-file header carries it and
+  // the mesh layer re-asserts it with every message. Keep it monotonic vs seq.
+  if ((int)max_seq > _msgcount) _msgcount = (int)max_seq;
+  s_seg_store_ready = true;
+  return true;
+#else
+  return false;
+#endif
+}
+
+// One-time migration: the ring was just loaded from an OLD format (split v6
+// single file or the legacy combined file) — write it out as segments, read
+// every segment back and verify counts + seq bounds, and only then delete the
+// old msgs file. Any failure rolls the segment set back completely so the
+// intact old file stays authoritative on the next boot (a partial segment set
+// would otherwise shadow it in the loader's precedence order).
+bool UITask::migrateRingToSegments() {
+#if defined(ESP32)
+  uiDataEnsureDirs();
+  // The marker goes away FIRST: from here until the verified end of this
+  // migration the on-disk segment set is provisional, and a boot that finds it
+  // without the marker wipes it and re-reads the (still intact) old file.
+  uiDataRemove(k_ui_seg_ok);
+  {   // clear any earlier/partial set so leftovers can't survive as extra segments
+    uint32_t old_seqs[k_ui_seg_max];
+    const int old_n = uiSegScan(old_seqs, k_ui_seg_max, true);
+    for (int i = 0; i < old_n; ++i) uiSegRemoveFile(old_seqs[i]);
+  }
+  s_seg_count = 0;
+  s_seg_total_bytes = 0;
+  UITask::UIMessage* buf = segEnsureBuf(&s_segsync_buf);
+  if (!buf) return false;
+
+  // Walk the ring CHRONOLOGICALLY and skip tombstones. Both matter: this runs
+  // not only at boot (ring linear) but also as a retry after a failed boot
+  // migration, by which time appendMessage may have WRAPPED the ring and the
+  // user may have deleted messages. Slicing raw slots there produced segments
+  // in slot order (first_seq > last_seq, scrambled history that read-back
+  // verification cannot detect) and persisted tombstones as ghost records.
+  bool ok = true;
+  int in_chunk = 0;
+  for (int i = 0; i <= _ui_msg_count && ok; ++i) {
+    const bool flush_chunk = (i == _ui_msg_count) || (in_chunk == k_ui_seg_records);
+    if (flush_chunk && in_chunk > 0) {
+      const uint32_t fseq = buf[0].seq;
+      ok = uiSegCompactWrite(fseq, buf, in_chunk, true /*sync-writer tmp*/);
+      if (ok && s_seg_count < k_ui_seg_max) {
+        UiSegInfo info{};
+        info.first_seq = fseq;
+        info.last_seq  = buf[in_chunk - 1].seq;
+        info.disk_recs = info.live_recs = (uint16_t)in_chunk;
+        info.bytes     = (uint32_t)sizeof(UiSegHeader)
+                         + (uint32_t)in_chunk * (uint32_t)sizeof(UiSegMsg);
+        s_seg[s_seg_count++] = info;
+      }
+      in_chunk = 0;
+    }
+    if (i == _ui_msg_count) break;
+    const int slot = (_ui_msg_head - _ui_msg_count + i + _ui_msg_cap) % _ui_msg_cap;
+    if (!_ui_msgs[slot].thread[0]) continue;              // tombstone — never persisted
+    buf[in_chunk++] = _ui_msgs[slot];
+  }
+  if (ok) {
+    // Read-back verification: every segment must reproduce its exact record
+    // count and seq bounds before the old file may be deleted.
+    for (int i = 0; ok && i < s_seg_count; ++i) {
+      File f;
+      uint16_t rec_sz = 0;
+      if (!uiSegOpenValidated(s_seg[i].first_seq, f, &rec_sz)) { ok = false; break; }
+      UIMessage r;
+      uint32_t seq = 0, first = 0, last = 0;
+      uint16_t cnt = 0;
+      bool ordered = true;
+      while (uiSegReadRec(f, rec_sz, &r, &seq)) {
+        if (cnt == 0) first = seq;
+        else if (seq <= last) ordered = false;   // seqs must strictly increase within a segment
+        last = seq;
+        ++cnt;
+      }
+      f.close();
+      ok = (ordered && cnt == s_seg[i].disk_recs &&
+            first == s_seg[i].first_seq &&
+            last == s_seg[i].last_seq);
+    }
+    // Segments must also be ordered relative to each other.
+    for (int i = 1; ok && i < s_seg_count; ++i)
+      ok = (s_seg[i].first_seq > s_seg[i - 1].last_seq);
+  }
+  if (!ok) {
+    for (int i = 0; i < s_seg_count; ++i) uiSegRemoveFile(s_seg[i].first_seq);
+    s_seg_count = 0;
+    s_seg_total_bytes = 0;
+    return false;   // old file untouched; the scheduler retries the migration later
+  }
+  // Verified. Commit: marker, then drop the old-format files.
+  {
+    File okf = uiDataOpen(k_ui_seg_ok, "w");
+    if (!okf) {   // can't commit -> leave the old file authoritative and retry later
+      for (int i = 0; i < s_seg_count; ++i) uiSegRemoveFile(s_seg[i].first_seq);
+      s_seg_count = 0;
+      s_seg_total_bytes = 0;
+      return uiMsgsWriteFail('m');
+    }
+    okf.print("segstore v1\n");
+    okf.close();
+  }
+  uint32_t total_bytes = 0;
+  for (int i = 0; i < s_seg_count; ++i) total_bytes += s_seg[i].bytes;
+  s_seg_total_bytes = total_bytes;
+  uiDataRemove(k_ui_msgs_path);
+  uiDataRemove(k_ui_msgs_tmp_path);
+  uiDataRemove(k_ui_msgs_tmp2_path);
+  s_seg_flushed_seq = s_seg_count ? s_seg[s_seg_count - 1].last_seq : 0;
+  s_seg_resync      = false;   // a full write IS the resync
+  s_seg_stale_purge = false;
+  s_seg_store_ready = true;
   return true;
 #else
   return false;
@@ -44571,13 +47007,27 @@ bool UITask::loadLegacyHistoryFromStorage() {
 bool UITask::loadHistoryFromStorage() {
 #if defined(ESP32)
   const bool have_threads = loadThreadsFromStorage();
-  const bool have_msgs    = loadMsgsFromStorage();
-  if (!have_threads && !have_msgs) {
-    // Neither split file found — try the legacy combined format for migration.
-    if (!loadLegacyHistoryFromStorage()) return false;
-    // Schedule writes of the new split files; old file is left in place.
-    markThreadsDirty(500);
-    markMsgsDirty(500);
+  // Format precedence: segments (generation 3) > split v6 single file >
+  // legacy combined file. The older loaders are retained as migration
+  // readers; whenever one of them supplies the ring, migrateRingToSegments()
+  // below converts it (verify-then-delete, rollback on any failure).
+  const bool from_segments = loadMsgsFromSegments();
+  bool have_msgs = from_segments;
+  if (!from_segments) {
+    // Single-file-era hygiene: a crash mid-flush can orphan a temp file;
+    // they're never read, just reclaim the space. (Segment tmps are swept by
+    // the scan inside loadMsgsFromSegments.)
+    uiDataRemove(k_ui_msgs_tmp_path);
+    uiDataRemove(k_ui_msgs_tmp2_path);
+    have_msgs = loadMsgsFromStorage();
+    if (!have_threads && !have_msgs) {
+      // Neither split file found — try the legacy combined format.
+      if (!loadLegacyHistoryFromStorage()) return false;
+      // Schedule the split threads-file write; messages land in segments via
+      // the migration below (the legacy combined file is left in place, as
+      // the split migration always did).
+      markThreadsDirty(500);
+    }
   }
   // Clear persisted unread counts for threads whose messages are no longer in
   // the ring. The display ring is a fixed-size cache independent of the unread
@@ -44592,6 +47042,20 @@ bool UITask::loadHistoryFromStorage() {
       _ui_threads[i].has_mention = false;
     }
   }
+  if (!from_segments) {
+    // Backfill per-record sequence numbers for records loaded from the
+    // pre-segment formats (their records carry no seq on disk): stamp them in
+    // chronological order, seed the generator past them, then convert the
+    // ring to segments. A failed migration leaves the old file authoritative
+    // and s_seg_store_ready false — the flush scheduler retries it before it
+    // will write any segment.
+    for (int i = 0; i < _ui_msg_count; ++i) {
+      const int slot = (_ui_msg_head - _ui_msg_count + i + _ui_msg_cap) % _ui_msg_cap;
+      _ui_msgs[slot].seq = (uint32_t)(i + 1);
+    }
+    _ui_seq_next = (uint32_t)_ui_msg_count + 1;
+    migrateRingToSegments();
+  }
   return true;
 #else
   return false;
@@ -44600,6 +47064,15 @@ bool UITask::loadHistoryFromStorage() {
 
 bool UITask::saveThreadsToStorage() {
 #if defined(ESP32)
+#if defined(HAS_TDISPLAY_P4)
+  // #167: the threads file is rewritten on every contact add/delete and chat-state change --
+  // hop the write to the core-0 storage task like every other hot writer (see p4StorageCall).
+  if (!p4OnStorageTask()) {
+    struct A { UITask* t; bool ok; } a{ this, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->ok = a->t->saveThreadsToStorage(); }, &a);
+    return a.ok;
+  }
+#endif
   WdtHeavyGuard _wg;
   File f = uiDataOpen(k_ui_threads_path, "w");
   if (!f) return false;
@@ -44610,6 +47083,9 @@ bool UITask::saveThreadsToStorage() {
   hdr.thread_rec_size       = static_cast<uint16_t>(sizeof(UiHistoryThread));
   hdr.active_thread_idx     = static_cast<int16_t>(_active_thread_idx);
   hdr.active_thread_is_channel = _active_thread_is_channel ? 1u : 0u;
+  // The segmented msgs store doesn't carry the companion message counter —
+  // this (frequently-rewritten, small) file does instead.
+  hdr.msgcount              = static_cast<uint32_t>(_msgcount);
   if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
     f.close(); return false;
   }
@@ -44646,57 +47122,100 @@ bool UITask::saveThreadsToStorage() {
 // write from PSRAM" that regressed before: the chunk lives in internal RAM (the
 // flash driver never bounces a PSRAM source). Alloc failure falls back to the
 // original per-record writes.
-static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
-                            uint16_t count, uint16_t head, uint32_t msgcount) {
-#if defined(ESP32)
-  WdtHeavyGuard _wg;   // a fragmenting write can trigger a multi-second SPIFFS GC
-  File f = uiDataOpen(k_ui_msgs_tmp_path, "w");
-  if (!f) return false;
-
-  UiMsgFileHeader hdr{};
-  hdr.magic         = k_ui_msgs_magic;
-  hdr.version       = k_ui_history_version;
-  hdr.msg_rec_size  = static_cast<uint16_t>(sizeof(UiHistoryMsg));
-  // Compact write: emit only the `count` USED records, oldest-first, instead of one
-  // record per ring slot (cap). A user with 200 messages writes ~48 KB, not the full
-  // ~1.2 MB ring, so the delete/clear/reboot flush no longer hitches the UI (that
-  // full-ring rewrite was the "deleting a message is slow" cause). The reader derives
-  // its slot count from the file size and linearizes by (head,count), so an
-  // oldest-first file with head=0 loads byte-for-byte identically.
-  const int wcap = cap > 0 ? cap : 1;
-  const int used = (int)count > cap ? cap : (int)count;
-  const int oldst = (((int)head - used) % wcap + wcap) % wcap;
-  hdr.ui_msg_count  = static_cast<uint16_t>(used);
-  hdr.ui_msg_head   = 0;   // written oldest-first => the file's ring head sits at 0
-  hdr.msgcount      = msgcount;
-  if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
-    f.close(); return false;
+// Record a ring-write outcome (runs on the loop task OR the core-0 worker —
+// volatile stores only, LVGL-free) and stamp the SD health probe on failure so
+// a wedged card gets arbitrated instead of the write failing silently forever.
+static bool uiMsgsWriteResult(bool ok) {
+  const uint32_t m = (uint32_t)millis();
+  const time_t   now_t = time(nullptr);
+  const uint32_t ep = (now_t > 1700000000) ? (uint32_t)now_t : 0;   // 0 when the clock is unset
+  if (ok) {
+    s_msgs_write_ok_ms = m ? m : 1;
+    s_msgs_write_ok_epoch = ep;
+    s_msgs_write_fails = 0;
+  } else {
+    s_msgs_write_fail_ms = m ? m : 1;
+    s_msgs_write_fail_epoch = ep;
+    if (s_msgs_write_fails < 0xFFFFu) s_msgs_write_fails = s_msgs_write_fails + 1;
+#if defined(HAS_TDECK_GT911)
+    if (s_ui_data_fs == &SD) sdNoteIoFailure();
+#endif
   }
+  return ok;
+}
+// Failure wrapper: record WHERE the write died and the errno — 'open failed
+// with ENFILE' (VFS file-handle table full) needs a completely different fix
+// than 'body write failed with EIO' (card), and without this they were
+// indistinguishable on a device with no readable serial.
+static bool uiMsgsWriteFail(char stage) {
+  s_msgs_write_stage = (uint8_t)stage;
+  s_msgs_write_errno = errno;
+  return uiMsgsWriteResult(false);
+}
 
-  const size_t REC = sizeof(UiHistoryMsg);
+// ---- Segmented store: low-level file ops --------------------------------
+// Pure file-layer primitives (no scheduling, no table state — that lives with
+// the flush scheduler). All take explicit record arrays (snapshots or the
+// ring under the loop task's ownership) and report through the same
+// uiMsgsWriteResult/uiMsgsWriteFail health machinery as the old writer, so
+// the About diagnostics, failure toasts, sync-fallback and SD-wedge
+// arbitration keep working unchanged. Stage codes: 'a' append, 'c' compact,
+// 'd' data-dir create, 's' segment scan (plus errno).
+
+// Root-relative segment file name: "/msgs/seg_<first_seq>.bin<suffix>".
+// Worst case "/msgs/seg_4294967295.bin.tm2" = 28 chars — fits uiDataOpen's
+// 80-byte path buffer and SPIFFS' 31-char flat-name limit.
+static void uiSegName(uint32_t first_seq, const char* suffix, char* out, size_t cap) {
+  snprintf(out, cap, "%s/seg_%lu.bin%s", k_ui_seg_dir, (unsigned long)first_seq, suffix ? suffix : "");
+}
+
+// Ensure the data root + segment dir exist. FAT backends (SD /meshcomod,
+// SD_MMC /meshcomod, FFat) need real directories; SPIFFS has a flat namespace
+// where mkdir fails harmlessly and slash-in-name files just work — so this is
+// best-effort by design. Called at backend resolve and from every remount
+// path (a fresh replacement card has neither directory).
+static void uiDataEnsureDirs() {
+  if (!uiDataFsReady()) return;
+  char p[80];
+  if (s_ui_data_root[0]) s_ui_data_fs->mkdir(s_ui_data_root);
+  snprintf(p, sizeof p, "%s%s", s_ui_data_root, k_ui_seg_dir);
+  s_ui_data_fs->mkdir(p);   // no-op/failure on SPIFFS is fine (flat names)
+}
+
+// Marshal one RAM record into the on-disk segment record (drops the RAM-only
+// fields, carries seq). Mirrors the old writer's field list exactly.
+static void uiSegMarshal(const UITask::UIMessage& s, UiSegMsg* d) {
+  memset(d, 0, sizeof(*d));
+  d->m.ts         = s.ts;
+  d->m.channel    = s.channel ? 1u : 0u;
+  d->m.outgoing   = s.outgoing ? 1u : 0u;
+  d->m.meta_flags = s.meta_flags;
+  d->m.path_len   = s.path_len;
+  d->m.snr_q4     = s.snr_q4;
+  d->m.rssi       = s.rssi;
+  strncpy(d->m.thread, s.thread, sizeof(d->m.thread) - 1);
+  d->m.thread[sizeof(d->m.thread) - 1] = '\0';
+  strncpy(d->m.sender, s.sender, sizeof(d->m.sender) - 1);
+  d->m.sender[sizeof(d->m.sender) - 1] = '\0';
+  strncpy(d->m.text, s.text, sizeof(d->m.text) - 1);
+  d->m.text[sizeof(d->m.text) - 1] = '\0';
+  d->seq = s.seq;
+}
+
+// Chunked record writer shared by append + compact: marshals through a small
+// INTERNAL-RAM buffer (the flash/SD drivers must never see a PSRAM source
+// pointer), per-record fallback when the heap is tight. Returns false on any
+// short write (errno left for the caller's stage report).
+static bool uiSegWriteRecords(File& f, const UITask::UIMessage* recs, int n) {
+  const size_t REC = sizeof(UiSegMsg);
   size_t chunk_recs = 6144 / REC;
   if (chunk_recs < 1) chunk_recs = 1;
   uint8_t* buf = (uint8_t*)malloc(REC * chunk_recs);   // internal RAM by default
   bool ok = true;
   if (buf) {
     size_t fill = 0;
-    for (int k = 0; ok && k < used; ++k) {
-      const int i = (oldst + k) % wcap;
-      UiHistoryMsg* m = reinterpret_cast<UiHistoryMsg*>(buf + fill);
-      memset(m, 0, REC);
-      m->ts          = msgs[i].ts;
-      m->channel     = msgs[i].channel ? 1u : 0u;
-      m->outgoing    = msgs[i].outgoing ? 1u : 0u;
-      m->meta_flags  = msgs[i].meta_flags;
-      m->path_len    = msgs[i].path_len;
-      m->snr_q4      = msgs[i].snr_q4;
-      m->rssi        = msgs[i].rssi;
-      strncpy(m->thread, msgs[i].thread, sizeof(m->thread) - 1);
-      m->thread[sizeof(m->thread) - 1] = '\0';
-      strncpy(m->sender, msgs[i].sender, sizeof(m->sender) - 1);
-      m->sender[sizeof(m->sender) - 1] = '\0';
-      strncpy(m->text, msgs[i].text, sizeof(m->text) - 1);
-      m->text[sizeof(m->text) - 1] = '\0';
+    for (int k = 0; ok && k < n; ++k) {
+      uiSegMarshal(recs[k], reinterpret_cast<UiSegMsg*>(buf + fill));
       fill += REC;
       if (fill == REC * chunk_recs) {
         ok = (f.write(buf, fill) == fill);
@@ -44706,51 +47225,606 @@ static bool uiWriteMsgsFile(const UITask::UIMessage* msgs, int cap,
     if (ok && fill > 0) ok = (f.write(buf, fill) == fill);
     free(buf);
   } else {
-    UiHistoryMsg m{};
-    for (int k = 0; ok && k < used; ++k) {
-      const int i = (oldst + k) % wcap;
-      memset(&m, 0, sizeof(m));
-      m.ts          = msgs[i].ts;
-      m.channel     = msgs[i].channel ? 1u : 0u;
-      m.outgoing    = msgs[i].outgoing ? 1u : 0u;
-      m.meta_flags  = msgs[i].meta_flags;
-      m.path_len    = msgs[i].path_len;
-      m.snr_q4      = msgs[i].snr_q4;
-      m.rssi        = msgs[i].rssi;
-      strncpy(m.thread, msgs[i].thread, sizeof(m.thread) - 1);
-      m.thread[sizeof(m.thread) - 1] = '\0';
-      strncpy(m.sender, msgs[i].sender, sizeof(m.sender) - 1);
-      m.sender[sizeof(m.sender) - 1] = '\0';
-      strncpy(m.text, msgs[i].text, sizeof(m.text) - 1);
-      m.text[sizeof(m.text) - 1] = '\0';
-      ok = (f.write(reinterpret_cast<const uint8_t*>(&m), sizeof(m)) == sizeof(m));
+    UiSegMsg rec;
+    for (int k = 0; ok && k < n; ++k) {
+      uiSegMarshal(recs[k], &rec);
+      ok = (f.write(reinterpret_cast<const uint8_t*>(&rec), sizeof(rec)) == sizeof(rec));
     }
   }
-  f.close();
-  if (!ok) { uiDataRemove(k_ui_msgs_tmp_path); return false; }
-  return uiDataReplaceFile(k_ui_msgs_path, k_ui_msgs_tmp_path);
-#else
-  (void)msgs; (void)cap; (void)count; (void)head; (void)msgcount;
-  return false;
-#endif
+  return ok;
 }
 
-// Worker-side entry: write the snapshot the loop thread armed (core-0 task; the
-// loop thread never waits on this, which is the whole point).
-static bool uiHistWorkerFlush() {
-  if (!s_hist_snap || s_hist_snap_cap <= 0) return false;   // armed without a snapshot — retry
-  return uiWriteMsgsFile(s_hist_snap, s_hist_snap_cap,
-                         s_hist_snap_count, s_hist_snap_head, s_hist_snap_msgcount);
+// Append records to a segment file. `create` = the file does not exist yet
+// (write the header first). Driven by table state, NOT by File::size() — the
+// Tanmatsu FFat metadata layer lies about sizes. A crash mid-append leaves a
+// ragged tail the loader truncates to the record boundary; nothing else is at
+// risk (the previous records and every other segment are untouched — this is
+// the whole point of the segmented layout).
+static bool uiSegAppendRecords(uint32_t first_seq, bool create,
+                               const UITask::UIMessage* recs, int n) {
+#if defined(HAS_TDISPLAY_P4)
+  // #167: history writes hop to the core-0 storage task (see p4StorageCall in DataStore.cpp) --
+  // a core-1 SD write can mask the DSI frame-restart ISR long enough to drop a display frame.
+  if (!p4OnStorageTask()) {
+    struct A { uint32_t fs; bool c; const UITask::UIMessage* r; int n; bool ok; } a{ first_seq, create, recs, n, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->ok = uiSegAppendRecords(a->fs, a->c, a->r, a->n); }, &a);
+    return a.ok;
+  }
+#endif
+  WdtHeavyGuard _wg;
+  errno = 0;
+  char name[48];
+  uiSegName(first_seq, "", name, sizeof name);
+  // create: open truncating — a stale file under the same key (crash residue)
+  // must not end up with a second header appended mid-file.
+  const char* mode = create ? "w" : FILE_APPEND;
+  File f = uiDataOpen(name, mode);
+  if (!f) {
+    // First failure on a fresh card/dir is usually a missing parent dir —
+    // create it and retry once before reporting.
+    uiDataEnsureDirs();
+    errno = 0;
+    f = uiDataOpen(name, mode);
+    if (!f) return uiMsgsWriteFail('a');
+  }
+  bool ok = true;
+  if (create) {
+    UiSegHeader hdr{};
+    hdr.magic        = k_ui_seg_magic;
+    hdr.version      = k_ui_seg_version;
+    hdr.msg_rec_size = (uint16_t)sizeof(UiSegMsg);
+    hdr.first_seq    = first_seq;
+    ok = (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) == sizeof(hdr));
+  }
+  if (ok) ok = uiSegWriteRecords(f, recs, n);
+  f.close();
+  if (!ok) {
+    // A short write can have landed whole records already. The file content is
+    // now untrusted: appending the retry after that tail would duplicate (or,
+    // if the failure split a record, MISALIGN) records the loader accepts as
+    // history. Flag the segment so the scheduler repairs it with a full
+    // rewrite before any further append. Volatile-only work — safe from the
+    // worker task; the entry lookup runs on the loop task's table but only
+    // writes a byte the loop task re-reads.
+    for (int i = 0; i < s_seg_count; ++i)
+      if (s_seg[i].first_seq == first_seq) { s_seg[i].rewrite_open = 1; break; }
+    if (create) uiSegRemoveFile(first_seq);   // nothing valid in it yet
+    return uiMsgsWriteFail('a');
+  }
+  return uiMsgsWriteResult(true);
+}
+
+// Rewrite one segment from the given (live, tombstone-free) records — tmp +
+// rename, same crash discipline as the old writer but with a one-segment
+// blast radius. n == 0 removes the segment file outright (everything in it
+// was deleted). `sync_writer` picks the tmp namespace: the loop-task sync
+// writer must never share a tmp with a possibly-stalled worker write (two
+// truncating opens of one path interleave into garbage — the .tmp/.tm2
+// lesson from the single-file store).
+static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs, int n,
+                              bool sync_writer) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {   // #167: hop to core 0 (see uiSegAppendRecords)
+    struct A { uint32_t fs; const UITask::UIMessage* r; int n; bool sw; bool ok; } a{ first_seq, recs, n, sync_writer, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->ok = uiSegCompactWrite(a->fs, a->r, a->n, a->sw); }, &a);
+    return a.ok;
+  }
+#endif
+  WdtHeavyGuard _wg;
+  errno = 0;
+  char fin[48], tmp[48];
+  uiSegName(first_seq, "", fin, sizeof fin);
+  if (n <= 0) {
+    uiDataRemove(fin);
+    return uiMsgsWriteResult(true);
+  }
+  uiSegName(first_seq, sync_writer ? ".tm2" : ".tmp", tmp, sizeof tmp);
+  File f = uiDataOpen(tmp, "w");
+  if (!f) {
+    uiDataEnsureDirs();
+    errno = 0;
+    f = uiDataOpen(tmp, "w");
+    if (!f) return uiMsgsWriteFail('c');
+  }
+  UiSegHeader hdr{};
+  hdr.magic        = k_ui_seg_magic;
+  hdr.version      = k_ui_seg_version;
+  hdr.msg_rec_size = (uint16_t)sizeof(UiSegMsg);
+  hdr.first_seq    = first_seq;
+  bool ok = (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) == sizeof(hdr));
+  if (ok) ok = uiSegWriteRecords(f, recs, n);
+  f.close();
+  if (!ok) { uiDataRemove(tmp); return uiMsgsWriteFail('c'); }
+  errno = 0;
+  if (!uiDataReplaceFile(fin, tmp)) return uiMsgsWriteFail('c');
+  return uiMsgsWriteResult(true);
+}
+
+// Remove a retired segment (ring grew past retention; its records are gone
+// from RAM too).
+static void uiSegRemoveFile(uint32_t first_seq) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {   // #167: hop to core 0 (see uiSegAppendRecords)
+    p4StorageCall([](void* p){ uiSegRemoveFile((uint32_t)(uintptr_t)p); }, (void*)(uintptr_t)first_seq);
+    return;
+  }
+#endif
+  char name[48];
+  uiSegName(first_seq, "", name, sizeof name);
+  uiDataRemove(name);
+}
+
+// Open + validate a segment for reading. Returns the on-disk record size via
+// *rec_size_out (self-describing header) and leaves the File positioned at
+// the first record. Returns false on a corrupt header — the caller
+// quarantines THAT segment only.
+static bool uiSegOpenValidated(uint32_t first_seq, File& f, uint16_t* rec_size_out) {
+  char name[48];
+  uiSegName(first_seq, "", name, sizeof name);
+  f = uiDataOpen(name, FILE_READ);
+  if (!f) return false;
+  UiSegHeader hdr{};
+  if (f.readBytes(reinterpret_cast<char*>(&hdr), sizeof(hdr)) != (int)sizeof(hdr) ||
+      hdr.magic != k_ui_seg_magic ||
+      hdr.version == 0 || hdr.version > k_ui_seg_version ||
+      hdr.msg_rec_size == 0 || hdr.msg_rec_size > 4096 ||
+      hdr.first_seq != first_seq) {
+    f.close();
+    return false;
+  }
+  *rec_size_out = hdr.msg_rec_size;
+  return true;
+}
+
+// Read ONE record from an open segment into a RAM record. Returns false at a
+// clean EOF or a ragged (crash-truncated) tail — the caller just stops there;
+// records already read are valid. Size-agnostic via readHistoryRec (older
+// shorter records zero-fill their tail, so a missing seq field reads 0 and
+// the loader backfills it).
+static bool uiSegReadRec(File& f, uint16_t disk_sz, UITask::UIMessage* out, uint32_t* seq_out) {
+  UiSegMsg rec{};
+  if (!readHistoryRec(f, &rec, sizeof(rec), disk_sz)) return false;
+  memset(out, 0, sizeof(*out));
+  out->ts         = rec.m.ts;
+  out->channel    = rec.m.channel != 0;
+  out->outgoing   = rec.m.outgoing != 0;
+  out->meta_flags = rec.m.meta_flags;
+  out->path_len   = rec.m.path_len;
+  out->snr_q4     = rec.m.snr_q4;
+  out->rssi       = rec.m.rssi;
+  strncpy(out->thread, rec.m.thread, UITask::MAX_THREAD_NAME);
+  out->thread[UITask::MAX_THREAD_NAME] = '\0';
+  strncpy(out->sender, rec.m.sender, UITask::MAX_SENDER_NAME);
+  out->sender[UITask::MAX_SENDER_NAME] = '\0';
+  strncpy(out->text, rec.m.text, UITask::MAX_MSG_TEXT);
+  out->text[UITask::MAX_MSG_TEXT] = '\0';
+  out->seq = rec.seq;
+  *seq_out = rec.seq;
+  return true;
+}
+
+// Discover segment files: fills out_first_seqs sorted ascending, returns the
+// count (or -1 when even the scan location can't be opened — distinct from
+// "no segments yet"). Handles both directory layouts: a real <root>/msgs dir
+// (FAT backends) and SPIFFS' flat namespace (scan "/" and prefix-match the
+// name). When sweep_tmps is set, orphaned .tmp/.tm2 leftovers from a crash
+// mid-compact are deleted along the way (boot hygiene).
+static int uiSegScan(uint32_t* out_first_seqs, int max_out, bool sweep_tmps) {
+  if (!uiDataFsReady()) return -1;
+  char dirpath[80];
+  snprintf(dirpath, sizeof dirpath, "%s%s", s_ui_data_root, k_ui_seg_dir);
+  File dir = s_ui_data_fs->open(dirpath);
+  bool flat = false;
+  if (!dir || !dir.isDirectory()) {
+    // SPIFFS (flat namespace): enumerate the root and match the name prefix.
+    if (dir) dir.close();
+    flat = true;
+    dir = s_ui_data_fs->open(s_ui_data_root[0] ? s_ui_data_root : "/");
+    if (!dir || !dir.isDirectory()) {
+      if (dir) dir.close();
+      return -1;
+    }
+  }
+  const size_t root_len = strlen(s_ui_data_root);
+  int n = 0;
+  for (;;) {
+    String path = dir.getNextFileName();
+    if (path.length() == 0) break;
+    // Normalize to a root-relative name so uiDataRemove/uiDataOpen accept it.
+    const char* rel = path.c_str();
+    if (root_len && strncmp(rel, s_ui_data_root, root_len) == 0) rel += root_len;
+    const char* base = strrchr(rel, '/');
+    base = base ? base + 1 : rel;
+    if (flat) {
+      // Flat scan sees every file — keep only "/msgs/seg_*" names.
+      if (strncmp(rel, k_ui_seg_dir, strlen(k_ui_seg_dir)) != 0) continue;
+    }
+    if (strncmp(base, "seg_", 4) != 0) continue;
+    char* end = nullptr;
+    const unsigned long fs_val = strtoul(base + 4, &end, 10);
+    if (!end || end == base + 4) continue;
+    if (strcmp(end, ".bin") == 0) {
+      if (n < max_out) out_first_seqs[n++] = (uint32_t)fs_val;
+    } else if (sweep_tmps && (strcmp(end, ".bin.tmp") == 0 || strcmp(end, ".bin.tm2") == 0)) {
+      uiDataRemove(rel);
+    }
+  }
+  dir.close();
+  // Insertion sort ascending — n is tiny (<= k_ui_seg_max).
+  for (int i = 1; i < n; ++i) {
+    const uint32_t v = out_first_seqs[i];
+    int j = i - 1;
+    while (j >= 0 && out_first_seqs[j] > v) { out_first_seqs[j + 1] = out_first_seqs[j]; --j; }
+    out_first_seqs[j + 1] = v;
+  }
+  return n;
+}
+
+// ---- Segmented store: flush scheduling ------------------------------------
+// All of this state is LOOP-TASK-owned; the hist_flush worker only runs
+// uiSegRunArmedJob() and reports through s_hist_flush_ok.
+
+// Snapshot buffer for one job (<= one segment of records). Lazy, kept for the
+// session — two exist (worker vs sync drain) so the writers can never share.
+static UITask::UIMessage* segEnsureBuf(UITask::UIMessage** slot) {
+  if (!*slot) {
+    const size_t sz = sizeof(UITask::UIMessage) * (size_t)k_ui_seg_records;
+    *slot = (UITask::UIMessage*)heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!*slot) *slot = (UITask::UIMessage*)heap_caps_malloc(sz, MALLOC_CAP_8BIT);
+  }
+  return *slot;
+}
+
+// Live records with seq in [lo, hi], chronological, from the ring.
+static int segGatherRange(const UITask::UIMessage* ring, int cap, int count, int head,
+                          uint32_t lo, uint32_t hi, UITask::UIMessage* out, int max_out) {
+  int n = 0;
+  for (int i = 0; i < count && n < max_out; ++i) {
+    const int slot = (head - count + i + cap) % cap;
+    const UITask::UIMessage& m = ring[slot];
+    if (!m.thread[0]) continue;               // tombstone
+    if (m.seq < lo || m.seq > hi) continue;
+    out[n++] = m;
+  }
+  return n;
+}
+
+// Build the next job into `buf` + `out`. PURE with respect to the worker
+// descriptor — arming (copying into the statics + raising req) is the async
+// caller's step, so the sync drain can use this with its own buffer and a
+// local job without the worker ever seeing it. Returns 1 = job built,
+// 0 = nothing pending (all durable), -1 = no buffer.
+static int segBuildJob(const UITask::UIMessage* ring, int cap, int count, int head,
+                       UITask::UIMessage* buf, SegJob* out) {
+  if (!buf) return -1;
+  // 0) REPAIR FIRST. A segment whose file content is untrusted (failed append
+  //    left a partial tail, or a resync left it stale/absent) must be fully
+  //    rewritten before anything appends to it — otherwise a retry appends the
+  //    same batch after the partial tail (duplicate or misaligned records the
+  //    loader would ingest as history) or creates a HEADERLESS file. The
+  //    rewrite absorbs the unflushed tail too, bounded by the segment size;
+  //    whatever doesn't fit stays above the watermark and lands as a normal
+  //    append into the NEXT segment afterwards.
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (!s_seg[i].rewrite_open) continue;
+    const uint32_t hi = (i + 1 < s_seg_count) ? (s_seg[i + 1].first_seq - 1) : 0xFFFFFFFFu;
+    const int rn = segGatherRange(ring, cap, count, head, s_seg[i].first_seq, hi,
+                                  buf, k_ui_seg_records);
+    out->kind      = SEGJOB_COMPACT;   // a compact IS the repair (tmp + rename, header written)
+    out->first_seq = s_seg[i].first_seq;
+    out->last_seq  = rn > 0 ? buf[rn - 1].seq : 0;
+    out->create    = false;
+    out->n         = rn;               // 0 -> unlink (every record in the range is gone)
+    out->repair    = true;             // commit also clears rewrite_open + advances the watermark
+    return 1;
+  }
+  // 1) Pending appends: live records newer than the durability watermark,
+  //    chronological, capped to the room left in the active segment.
+  bool create = true;
+  uint32_t target = 0;
+  int room = k_ui_seg_records;
+  if (s_seg_count > 0 && s_seg[s_seg_count - 1].disk_recs < k_ui_seg_records) {
+    create = false;
+    target = s_seg[s_seg_count - 1].first_seq;
+    room   = k_ui_seg_records - (int)s_seg[s_seg_count - 1].disk_recs;
+  }
+  // At the table cap (s_seg_count == k_ui_seg_max) a CREATE-append cannot be
+  // recorded: segCommitJob only tables a create while s_seg_count < the cap, so
+  // the file it writes becomes an untabled orphan AND the durability watermark
+  // never advances -> the same append re-arms every cycle (permanent write-spin),
+  // orphaned seg_*.bin pile up as the ring shifts the target first_seq, and the
+  // card eventually fills ("SD I/O fails after a few hours"). DEFER the append:
+  // skip step 1 entirely (crucially, do NOT run the gather/watermark advance
+  // below on un-written records) and fall through to step 2, which retires the
+  // oldest segment first. At the cap the oldest 256 records have aged out of the
+  // 5000-record ring (24*256 disk slots > ring), so that segment is fully
+  // evicted -> compact_dirty (segNoteEvicted) -> step 2 unlinks it and frees a
+  // slot with NO live-record loss. The deferred records are the NEWEST (above
+  // the watermark, so the ring evicts them last); they wait safely in RAM and
+  // land next cycle once a slot is free. Below the cap this is a no-op.
+  if (!(create && s_seg_count >= k_ui_seg_max)) {
+    int n = 0;
+    uint32_t last = s_seg_flushed_seq;
+    for (int i = 0; i < count; ++i) {
+      const int slot = (head - count + i + cap) % cap;
+      const UITask::UIMessage& m = ring[slot];
+      if (m.seq <= s_seg_flushed_seq) continue;
+      if (m.thread[0]) {
+        if (n >= room) break;                   // segment full — the rest rides the next cycle
+        buf[n++] = m;
+      }
+      if (m.seq > last) last = m.seq;           // deleted-before-flush records advance the
+                                                // watermark with no write (never hit disk)
+    }
+    if (n > 0) {
+      out->kind      = SEGJOB_APPEND;
+      out->first_seq = create ? buf[0].seq : target;
+      out->last_seq  = last;
+      out->create    = create;
+      out->n         = n;
+      return 1;
+    }
+    if (last > s_seg_flushed_seq) s_seg_flushed_seq = last;   // pure-tombstone tail
+  }
+  // 2) Oldest compact-dirty segment: rewrite it from the ring's live records.
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (!s_seg[i].compact_dirty) continue;
+    const int cn = segGatherRange(ring, cap, count, head,
+                                  s_seg[i].first_seq, s_seg[i].last_seq,
+                                  buf, k_ui_seg_records);
+    out->kind      = SEGJOB_COMPACT;
+    out->first_seq = s_seg[i].first_seq;
+    out->last_seq  = cn > 0 ? buf[cn - 1].seq : 0;
+    out->create    = false;
+    out->n         = cn;                      // 0 = every record gone -> unlink the file
+    return 1;
+  }
+  return 0;
+}
+
+// Apply a successfully-executed job to the table (loop task only).
+static void segCommitJob(const SegJob& job) {
+  if (job.kind == SEGJOB_APPEND) {
+    if (job.create && s_seg_count < k_ui_seg_max) {
+      UiSegInfo info{};
+      info.first_seq = job.first_seq;
+      info.bytes     = (uint32_t)sizeof(UiSegHeader);
+      s_seg[s_seg_count++] = info;
+      s_seg_total_bytes = s_seg_total_bytes + (uint32_t)sizeof(UiSegHeader);
+    }
+    // Credit the job to ITS OWN segment (looked up by key), never blindly to
+    // the last table entry — the table can have changed between arm and commit.
+    for (int i = 0; i < s_seg_count; ++i) {
+      if (s_seg[i].first_seq != job.first_seq) continue;
+      UiSegInfo& a = s_seg[i];
+      a.disk_recs = (uint16_t)(a.disk_recs + job.n);
+      a.live_recs = (uint16_t)(a.live_recs + job.n);
+      if (job.last_seq > a.last_seq) a.last_seq = job.last_seq;
+      const uint32_t add = (uint32_t)job.n * (uint32_t)sizeof(UiSegMsg);
+      a.bytes += add;
+      s_seg_total_bytes = s_seg_total_bytes + add;
+      if (job.last_seq > s_seg_flushed_seq) s_seg_flushed_seq = job.last_seq;
+      break;
+    }
+  } else if (job.kind == SEGJOB_COMPACT) {
+    for (int i = 0; i < s_seg_count; ++i) {
+      if (s_seg[i].first_seq != job.first_seq) continue;
+      s_seg_total_bytes = (s_seg_total_bytes >= s_seg[i].bytes)
+                              ? s_seg_total_bytes - s_seg[i].bytes : 0;
+      if (job.n == 0) {
+        for (int k = i; k + 1 < s_seg_count; ++k) s_seg[k] = s_seg[k + 1];
+        --s_seg_count;
+      } else {
+        s_seg[i].disk_recs = s_seg[i].live_recs = (uint16_t)job.n;
+        s_seg[i].last_seq  = job.last_seq;
+        s_seg[i].bytes     = (uint32_t)sizeof(UiSegHeader)
+                             + (uint32_t)job.n * (uint32_t)sizeof(UiSegMsg);
+        // A delete that landed while this compact was writing predates
+        // nothing: the snapshot was taken BEFORE it, so the record is still
+        // in the file — keep the segment dirty for a follow-up pass.
+        s_seg[i].compact_dirty = s_segjob_redirty ? 1 : 0;
+        s_seg_total_bytes  = s_seg_total_bytes + s_seg[i].bytes;
+        if (job.repair) {
+          // The file now matches the table exactly, so it is trustworthy again
+          // and the records it absorbed from the unflushed tail are durable.
+          s_seg[i].rewrite_open = 0;
+          if (job.last_seq > s_seg_flushed_seq) s_seg_flushed_seq = job.last_seq;
+        }
+      }
+      break;
+    }
+  }
+}
+
+static bool segMoreWorkPending(uint32_t newest_seq) {
+  if (newest_seq > s_seg_flushed_seq) return true;
+  for (int i = 0; i < s_seg_count; ++i)
+    if (s_seg[i].compact_dirty || s_seg[i].rewrite_open) return true;
+  return false;
+}
+
+// Executed by the hist_flush worker (or inline by the sync drain's caller).
+static bool uiSegRunArmedJob() {
+  switch (s_segjob_kind) {
+    case SEGJOB_APPEND:
+      return uiSegAppendRecords(s_segjob_first_seq, s_segjob_create, s_segjob_buf, s_segjob_n);
+    case SEGJOB_COMPACT:
+      return uiSegCompactWrite(s_segjob_first_seq, s_segjob_buf, s_segjob_n, false);
+    default:
+      return true;
+  }
+}
+
+// A record with this seq was tombstoned (deleted) — mark its segment for
+// compaction. Unflushed records (seq above the watermark) need nothing: the
+// append builder skips tombstones, so they simply never reach disk.
+static void segMarkSeqDirty(uint32_t seq) {
+  if (seq == 0 || seq > s_seg_flushed_seq) return;
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (seq >= s_seg[i].first_seq && seq <= s_seg[i].last_seq) {
+      s_seg[i].compact_dirty = 1;
+      // Racing an in-flight compact of this very segment: its snapshot was
+      // taken before this delete, so the commit must not clear the flag.
+      if (s_segjob_kind == SEGJOB_COMPACT && s_segjob_first_seq == s_seg[i].first_seq &&
+          (s_hist_flush_busy || s_hist_flush_req))
+        s_segjob_redirty = true;
+      return;
+    }
+  }
+}
+
+// The ring overwrote its oldest record (capacity eviction). Deliberately does
+// NOT trigger a rewrite per eviction (that would be write-amplification per
+// message all over again): the segment file only gets unlinked once ALL its
+// records have aged out; a partially-evicted boundary segment keeps its stale
+// tail on disk until the next boot's loader trims it (bounded: one segment).
+static void segNoteEvicted(uint32_t seq) {
+  if (seq == 0) return;
+  for (int i = 0; i < s_seg_count; ++i) {
+    if (seq < s_seg[i].first_seq || seq > s_seg[i].last_seq) continue;
+    if (s_seg[i].live_recs > 0) --s_seg[i].live_recs;
+    if (s_seg[i].live_recs == 0) s_seg[i].compact_dirty = 1;   // job -> unlink (n gathers to 0)
+    return;
+  }
+}
+
+// Card remounted (wedge recovery / reinsert / FM insert / post-format): the
+// on-disk segment set may be stale, foreign, or gone. Rebuild the table from
+// the ring's live records with every chunk marked UNTRUSTED, so the normal job
+// flow rewrites each one (header + records, tmp + rename) one bounded segment
+// at a time.
+//
+// Deliberately does NOT delete anything up front: on a same-card recovery the
+// existing files still hold the very history we are re-landing, and unlinking
+// them first turned recovery into a multi-minute window where a power cut lost
+// data that had been perfectly durable. Same-key files are simply replaced by
+// each repair's rename; anything left over (different chunk boundaries, or a
+// genuinely foreign card) is swept once the re-land is complete — and the
+// loader's seq-monotonic filter makes a leftover harmless even if we crash
+// before that sweep.
+static void segRetableFromRing(const UITask::UIMessage* ring, int cap, int count, int head,
+                               uint32_t newest_seq) {
+  s_seg_count = 0;
+  s_seg_total_bytes = 0;
+  UiSegInfo cur{};
+  int in_chunk = 0;
+  for (int i = 0; i < count; ++i) {
+    const int slot = (head - count + i + cap) % cap;
+    const UITask::UIMessage& m = ring[slot];
+    if (!m.thread[0]) continue;
+    if (in_chunk == 0) {
+      cur = UiSegInfo{};
+      cur.first_seq    = m.seq;
+      cur.rewrite_open = 1;       // file content untrusted -> repair rewrites it
+    }
+    cur.last_seq = m.seq;
+    ++in_chunk;
+    if (in_chunk == k_ui_seg_records) {
+      cur.live_recs = (uint16_t)in_chunk;
+      if (s_seg_count < k_ui_seg_max) s_seg[s_seg_count++] = cur;
+      in_chunk = 0;
+    }
+  }
+  if (in_chunk > 0 && s_seg_count < k_ui_seg_max) {
+    cur.live_recs = (uint16_t)in_chunk;
+    s_seg[s_seg_count++] = cur;
+  }
+  s_seg_flushed_seq = newest_seq;
+  s_seg_stale_purge = true;   // sweep leftovers once every chunk has landed
+}
+
+// Unlink segment files that are not part of the table. Runs only when no work
+// is pending (so every table entry has a real, current file) — see the purge
+// rationale on segRetableFromRing.
+static void segPurgeStaleFiles() {
+  uint32_t seqs[k_ui_seg_max];
+  const int nseg = uiSegScan(seqs, k_ui_seg_max, true);
+  if (nseg < 0) return;                       // scan location unreadable — try again later
+  for (int i = 0; i < nseg; ++i) {
+    bool keep = false;
+    for (int k = 0; k < s_seg_count; ++k)
+      if (s_seg[k].first_seq == seqs[i]) { keep = true; break; }
+    if (!keep) uiSegRemoveFile(seqs[i]);
+  }
+  s_seg_stale_purge = false;
 }
 
 bool UITask::saveMsgsToStorage() {
 #if defined(ESP32)
-  // Synchronous write of the LIVE ring — shutdown/reboot and the no-PSRAM
-  // fallback only; the periodic flush goes through the worker snapshot.
-  return uiWriteMsgsFile(_ui_msgs, _ui_msg_cap,
-                         static_cast<uint16_t>(_ui_msg_count),
-                         static_cast<uint16_t>(_ui_msg_head),
-                         static_cast<uint32_t>(_msgcount));
+  // Synchronous drain of ALL outstanding message-store work on the LOOP task —
+  // shutdown/reboot, the delete flows (persistHistoryNow), the sync-fallback
+  // and the no-worker fallback all land here. Loop-task writes are the
+  // empirically reliable path on the shared SPI bus. Returns true only when
+  // everything is durable.
+  if (!uiDataFsReady()) return false;
+  // A worker that outlived uiHistWaitWorkerIdle's 9 s cap still holds a segment
+  // file OPEN. Writing here would remove/rename a path under that open handle:
+  // with FF_FS_LOCK=0 the stalled handle keeps writing into clusters the FS has
+  // freed and may re-allocate, cross-linking chains and corrupting the volume.
+  // Report failure instead (the caller surfaces "Chat history save FAILED");
+  // the data stays in the RAM ring and the segment is already flagged for a
+  // repair rewrite by uiHistWaitWorkerIdle.
+  if (s_hist_flush_busy) return false;
+  if (!s_seg_store_ready) {
+    // A failed boot migration left the old-format file authoritative —
+    // converting it IS the flush (verify-then-delete inside).
+    return migrateRingToSegments();
+  }
+  if (s_seg_resync) {
+    segRetableFromRing(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
+                       _ui_seq_next ? _ui_seq_next - 1 : 0);
+    s_seg_resync = false;
+  }
+  // Drain job by job, executing each here. Appends are NEVER FILE_APPEND on
+  // this path: a worker stalled past uiHistWaitWorkerIdle's 9 s cap could
+  // still hold an append handle on the same file, and two appenders
+  // interleave records — instead the whole (bounded, <= ~60 KB) active
+  // segment is rewritten from the ring via the sync tmp namespace, where
+  // rename-over is last-writer-wins with each candidate internally
+  // consistent.
+  UITask::UIMessage* buf = segEnsureBuf(&s_segsync_buf);   // NEVER the worker's buffer:
+  // a worker stalled past the 9 s idle-wait cap may still be reading its own.
+  for (int guard = 0; guard < k_ui_seg_max + 4; ++guard) {
+    SegJob job{};
+    const int armed = segBuildJob(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head, buf, &job);
+    if (armed == 0) {
+      // segBuildJob returns 0 for "all durable" AND for a create-append it had to
+      // DEFER at the segment cap with no slot freeable this pass (rare
+      // fragmentation edge — the common at-cap path retires the oldest evicted
+      // segment inside this loop and resolves). Only the former is saved; report
+      // the latter as a failure so the caller surfaces it and retries, instead of
+      // dropping the newest records on a false success. Normal case:
+      // segMoreWorkPending is false here, so this is a no-op.
+      if (segMoreWorkPending(_ui_seq_next ? _ui_seq_next - 1 : 0)) return false;
+      if (s_seg_stale_purge) segPurgeStaleFiles();   // everything landed — drop leftovers
+      return true;
+    }
+    if (armed < 0) return false;               // no snapshot buffer
+    bool ok;
+    if (job.kind == SEGJOB_APPEND) {
+      if (job.create && s_seg_count < k_ui_seg_max) {
+        UiSegInfo info{};
+        info.first_seq = job.first_seq;
+        s_seg[s_seg_count++] = info;
+      }
+      const int n2 = segGatherRange(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
+                                    job.first_seq, job.last_seq,
+                                    buf, k_ui_seg_records);
+      ok = uiSegCompactWrite(job.first_seq, buf, n2, true);
+      if (ok) {
+        const uint32_t newest = job.last_seq;
+        job.kind = SEGJOB_COMPACT;             // commit with absolute-value semantics
+        job.n    = n2;
+        segCommitJob(job);
+        if (newest > s_seg_flushed_seq) s_seg_flushed_seq = newest;
+      }
+    } else {
+      ok = uiSegCompactWrite(job.first_seq, buf, job.n, true);
+      if (ok) segCommitJob(job);
+    }
+    if (!ok) return false;
+  }
+  return !segMoreWorkPending(_ui_seq_next ? _ui_seq_next - 1 : 0);
 #else
   return false;
 #endif
@@ -44786,6 +47860,7 @@ int UITask::findOrCreateThread(const char* name, bool channel) {
 bool UITask::removeThread(int idx) {
   if (idx < 0 || idx >= MAX_UI_THREADS) return false;
   if (!_ui_threads[idx].used) return false;
+  _thread_hist_dirty = true;   // slot is being freed + its ring records dropped
   // Match the thread by stored name (channel/DM) before wiping the slot so
   // we can drop any ring messages that belonged to it. Without this the
   // entries would still occupy the bounded _ui_msgs ring and confuse a
@@ -44803,6 +47878,7 @@ bool UITask::removeThread(int idx) {
     _ui_msgs[i].thread[0] = '\0';
     _ui_msgs[i].text[0]   = '\0';
     _ui_msgs[i].sender[0] = '\0';
+    segMarkSeqDirty(_ui_msgs[i].seq);
     purged_any = true;
   }
   // Persist the purge — without this the deleted thread's messages survive in
@@ -45025,15 +48101,20 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   int t_idx = findOrCreateThread(thread, channel);
   if (t_idx < 0) return -1;
   UIMessage& m = _ui_msgs[_ui_msg_head];
-  // Prefer wall-clock (RTC) over uptime — bubble timestamps want HH:MM, and
-  // last_ts/sort comparisons still work since RTC epoch (~1.7e9) outranks
-  // any plausible uptime-seconds value. If RTC is unset, fall back to
-  // uptime; the Info popup shows "—" when the value isn't an epoch.
+  // Full ring: this append overwrites the oldest record — tell the segment
+  // table so a fully-aged-out segment file gets unlinked.
+  if (_ui_msg_count == _ui_msg_cap) segNoteEvicted(m.seq);
+  // Bubble timestamps must match the status-bar clock, which reads the NTP-synced ESP32
+  // system clock (time(nullptr)) — NOT the mesh RTC (getRTCClock()). On boards whose
+  // hardware RTC chip reads BCD/century garbage, getCurrentTime() returned wrong epochs
+  // that rendered as 1910-09-03 / 1994 (GH #100/#152). Use the system clock; the ~1.7e9
+  // epoch still outranks any uptime-seconds value for last_ts/sort, and we fall back to
+  // uptime when the clock is unset (the Info popup shows "—" for non-epoch values).
   {
-    auto* rtc = the_mesh.getRTCClock();
-    uint32_t now_epoch = rtc ? rtc->getCurrentTime() : 0;
-    m.ts = (now_epoch > 1700000000) ? now_epoch : (uint32_t)(millis() / 1000);
+    time_t sys = time(nullptr);
+    m.ts = (sys > 1700000000) ? (uint32_t)sys : (uint32_t)(millis() / 1000);
   }
+  m.seq = _ui_seq_next++;   // monotonic record id — the segment store keys on it
   m.channel = channel;
   m.outgoing = outgoing;
   m.ack_hash    = ack_hash;
@@ -45056,9 +48137,15 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   m.sender[MAX_SENDER_NAME] = '\0';
   strncpy(m.text, text ? text : "", MAX_MSG_TEXT);
   m.text[MAX_MSG_TEXT] = '\0';
+  // An append is the ONLY mutation that needs no scan: this thread now demonstrably has
+  // history. A full ring also EVICTED the oldest record above, which may have been some other
+  // thread's last message, so the cached flags have to be rebuilt before they are trusted again.
+  if (_ui_msg_count == _ui_msg_cap) _thread_hist_dirty = true;
+  if (!_thread_hist_dirty && _thread_msgs[t_idx] < 0xFFFF) ++_thread_msgs[t_idx];
   if (_ui_msg_count < _ui_msg_cap) ++_ui_msg_count;
   _ui_msg_head = (_ui_msg_head + 1) % _ui_msg_cap;
   _ui_threads[t_idx].last_ts = m.ts;
+  enforceHistoryCap(t_idx);   // keep this chat within the per-chat cap (Settings -> Chats)
   if (mark_unread) _ui_threads[t_idx].unread++;
   if (mark_unread && channel && !outgoing && textMentionsMe(text)) {
     _ui_threads[t_idx].has_mention = true;   // blue @ on the inbox row
@@ -45416,12 +48503,23 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _sensors    = sensors;
   _node_prefs = node_prefs;
 
+  // #161 one-time heal: presets used to write airtime_factor = pct/100 (a 10% preset
+  // configured ~91% duty). Exact-preset matches with the old value get the correct
+  // factor rewritten + persisted; see healPresetAirtimeFactor for the guard.
+  healPresetAirtimeFactor();
+
 #if defined(ESP32)
   // Clock floor (#89): restore the highest epoch this device ever handed out so
   // a power cycle without a time source cannot step protocol timestamps
   // backwards (server replay guards silently drop those). Seed before the UI
   // generates traffic; written back rate-capped in loop() + on shutdown().
   rtc_clock.seedFloor(touchPrefsGetClockFloor());
+  // ...then push the resulting time into the ESP32 system clock, which is what every
+  // displayed timestamp reads. On a board with a battery-backed RTC chip (P4) the chip
+  // knows the time but the system clock is still on its power-on seed, so the UI would
+  // otherwise show 15 May 2024 until a network/GPS sync landed. Order matters: after
+  // seedFloor(), so a dead chip still yields the persisted floor instead of the seed.
+  rtc_clock.seedSystemClock();
 #endif
 
   // GPS resume: initBasicGPS() always leaves the module stopped at boot, so a
@@ -45775,6 +48873,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // linearizes a history file written under either capacity.
 #if defined(ESP32)
   _ui_msg_cap = uiDataFsIsSdCard() ? MAX_UI_MESSAGES_SD : MAX_UI_MESSAGES;
+  uiDataEnsureDirs();   // segment dir exists before the loader scans / the first append
 #endif
   size_t msgs_bytes          = sizeof(UIMessage) * (size_t)_ui_msg_cap;
   const size_t threads_bytes = sizeof(UIThread)  * MAX_UI_THREADS;
@@ -45840,8 +48939,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
 #elif defined(HAS_TDISPLAY_P4)
-      // RM69A10: LVGL renders at 284-wide (half res, upscaled 2x on flush) — full-width band in the abundant 32MB PSRAM.
+      // P4: LVGL renders at half res (upscaled 2x on flush) — full-width band in the abundant 32MB PSRAM.
+      // AMOLED (RM69A10) = 284-wide; TFT-LCD (HI8561) = 270-wide.
+    #if defined(HAS_TDP4_LCD)
+      g_draw_buf_px = 270 * LV_DRAW_BUF_LINES;
+    #else
       g_draw_buf_px = 284 * LV_DRAW_BUF_LINES;
+    #endif
       const size_t buf_bytes = sizeof(lv_color_t) * g_draw_buf_px;
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
@@ -45887,6 +48991,19 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // is the single point where orientation is established for the session.
 #if defined(ESP32)
     s_ui_rotation = touchPrefsGetUiRotation();
+#if defined(HELTEC_LORA_V4_R8)
+    // V4-R8: force PORTRAIT at every boot. A tester who switched to landscape got stuck: the
+    // shared cap-touch landscape transform was tuned on the V4's ST7789 driver, whose portrait
+    // baseline is panel rotation 2 (+180) -- the R8's LovyanGFX panel runs baseline 0, so the
+    // same map landed every touch point-mirrored and the setting could not be reached to undo
+    // it. The R8-specific map in HeltecV4CapTouch.cpp is the candidate fix (tester-verify);
+    // until a tester confirms it, booting always returns to the known-good portrait, so the
+    // worst case of trying landscape is a reboot.
+    if (s_ui_rotation != LV_DISP_ROT_NONE) {
+      s_ui_rotation = LV_DISP_ROT_NONE;
+      touchPrefsSetUiRotation(LV_DISP_ROT_NONE);
+    }
+#endif
 #if defined(HAS_TDECK_GT911)
     // The T-Deck panel is landscape-native (320x240) — the early boot wordmark
     // already renders upright at panel rotation 3. Always run the UI in
@@ -45919,6 +49036,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
+#if defined(ATTAKY_MESH_SERIES)
+    // Display and touch share this landscape transform.
+    s_ui_rotation = LV_DISP_ROT_90;
+#endif
 #if !defined(HAS_TANMATSU)
     // REMOTE mode: render the UI to a virtual 480x800 PORTRAIT display for the web
     // (headless/browser use). No physical-panel rotation — the panel is a placeholder.
@@ -45940,7 +49061,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
         s_rmt_boot_guard = RMT_GUARD_MAGIC;               // arm; cleared after a good run
       }
     }
+#if defined(ATTAKY_MESH_SERIES)
+    // Remote landscape must follow the board's own rotation: this panel is ROT_90-
+    // native, so a hardcoded 270 would leave remote mode upside down.
+    if (s_remote_mode) s_ui_rotation = s_remote_landscape ? LV_DISP_ROT_90 : LV_DISP_ROT_NONE;
+#else
     if (s_remote_mode) s_ui_rotation = s_remote_landscape ? LV_DISP_ROT_270 : LV_DISP_ROT_NONE;
+#endif
 #endif
     // Apply the saved backlight brightness (takes the LEDA pin over from the
     // display's digitalWrite via LEDC PWM). Both touch boards have the LEDA pin.
@@ -45978,11 +49105,17 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     g_lv.disp_drv.hor_res  = TAN_PANEL_PW;   // 480
     g_lv.disp_drv.ver_res  = TAN_PANEL_PH;   // 800
 #elif defined(HAS_TDISPLAY_P4)
-    // Render at HALF the 568x1232 panel; RM69A10Display upscales RM_UI_SCALE(2)x on flush, so the whole
-    // UI is uniformly 2x bigger on the high-DPI AMOLED (simpler than per-element scaling). The GT9895
-    // touch reports in this same 284x616 logical space.
+    // Render at HALF the native panel; the P4 DisplayDriver upscales 2x on flush, so the whole UI is
+    // uniformly 2x bigger on the high-DPI panel (simpler than per-element scaling). The touch driver
+    // reports in this same logical space. Two SKUs (build-time): AMOLED 568x1232 -> 284x616 (GT9895
+    // touch); TFT-LCD 540x1168 -> 270x584 (HI8561 integrated touch).
+  #if defined(HAS_TDP4_LCD)
+    g_lv.disp_drv.hor_res  = 270;
+    g_lv.disp_drv.ver_res  = 584;
+  #else
     g_lv.disp_drv.hor_res  = 284;
     g_lv.disp_drv.ver_res  = 616;
+  #endif
 #elif defined(TLORA_PAGER)
     // Fixed landscape via hardware MADCTL rotation (like T-Deck/Heltec below),
     // just a different native panel size — no ui_landscape ternary needed since
@@ -46158,6 +49291,16 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // matching the hardware). No-op on a V4.2 board (femLnaControllable() == false).
     if (board.femLnaControllable()) board.setFemLnaEnable(touchPrefsGetFemLna());
 #endif
+#if defined(HAS_TDISPLAY_P4)
+    // T-Display P4 antenna select: force the on-board antenna (RF1 / IO1 HIGH) on EVERY boot,
+    // deliberately ignoring whatever was chosen last session. The external socket may have
+    // nothing screwed onto it, and transmitting into an open connector is what damages the PA —
+    // so the state you get for free after any power cycle, crash or OTA has to be the safe one.
+    // LilyGo's own driver preloads the same level for the same reason. Choosing external is a
+    // per-session confirmed action; this re-asserts powerOnSequence()'s park in case anything
+    // touched IO1 in between.
+    xl9535.setAntennaMode(Xl9535::ANT_INTERNAL);
+#endif
 
     // Buffered LoRa receive (experimental, default OFF): apply the saved opt-in.
     if (touchPrefsGetRxQueue()) radio_driver.rxQueueEnable(true);
@@ -46304,10 +49447,57 @@ int UITask::getThreadCount(bool channel_mode, int out_indexes[], int max_out) co
   return copy_n;
 }
 
+// One ring pass that answers "has any message?" for EVERY thread at once (see the note on
+// _thread_hist). Stops as soon as every live thread is accounted for, so a device whose
+// threads all have recent traffic barely reads the ring at all.
+void UITask::rebuildThreadHistoryFlags() const {
+  for (int i = 0; i < MAX_UI_THREADS; ++i) _thread_msgs[i] = 0;
+  for (int i = 0; i < _ui_msg_count; ++i) {
+    const int idx = (_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap;
+    const UIMessage& m = _ui_msgs[idx];
+    if (!m.thread[0]) continue;                      // blanked by a clear / cap trim
+    for (int t = 0; t < MAX_UI_THREADS; ++t) {
+      if (!_ui_threads[t].used) continue;
+      if (m.channel == _ui_threads[t].channel &&
+          strncmp(m.thread, _ui_threads[t].name, MAX_THREAD_NAME) == 0) {
+        if (_thread_msgs[t] < 0xFFFF) ++_thread_msgs[t];
+        break;
+      }
+    }
+  }
+  _thread_hist_dirty = false;
+}
+
+// Trim this thread back to the per-chat cap by blanking its OLDEST records. Walking from the
+// oldest end finds them immediately for the chat that is actually over the cap (it is the one
+// filling the ring), so the common case is a couple of steps, not a full scan.
+void UITask::enforceHistoryCap(int thread_idx) {
+  const uint16_t cap = touchPrefsGetHistPerChat();
+  if (!cap || thread_idx < 0 || thread_idx >= MAX_UI_THREADS || !_ui_threads[thread_idx].used) return;
+  if (_thread_hist_dirty) rebuildThreadHistoryFlags();
+  if (_thread_msgs[thread_idx] <= cap) return;
+  const bool  ch = _ui_threads[thread_idx].channel;
+  const char* nm = _ui_threads[thread_idx].name;
+  int trimmed = 0;
+  for (int i = _ui_msg_count - 1; i >= 0 && _thread_msgs[thread_idx] > cap; --i) {
+    const int idx = (_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap;   // i = oldest .. 0 = newest
+    UIMessage& m = _ui_msgs[idx];
+    if (!m.thread[0] || m.channel != ch) continue;
+    if (strncmp(m.thread, nm, MAX_THREAD_NAME) != 0) continue;
+    m.thread[0] = '\0';
+    m.text[0]   = '\0';
+    m.sender[0] = '\0';
+    segMarkSeqDirty(m.seq);
+    --_thread_msgs[thread_idx];
+    ++trimmed;
+  }
+  if (trimmed) _msgs_dirty = true;
+}
+
 bool UITask::threadHasMessageHistory(int thread_idx) const {
   if (thread_idx < 0 || thread_idx >= MAX_UI_THREADS || !_ui_threads[thread_idx].used) return false;
-  int tmp[8];
-  return getThreadMessageIndexes(thread_idx, tmp, 8, false) > 0;
+  if (_thread_hist_dirty) rebuildThreadHistoryFlags();
+  return _thread_msgs[thread_idx] > 0;
 }
 
 int UITask::getCombinedInboxCount(int out_indexes[], int max_out) const {
@@ -46366,6 +49556,7 @@ bool UITask::deleteMessageBySlot(int msg_idx) {
   m.thread[0] = '\0';
   m.text[0]   = '\0';
   m.sender[0] = '\0';
+  segMarkSeqDirty(m.seq);   // the owning segment needs a compaction pass
   _msgs_dirty = true;
   return true;
 }
@@ -46382,11 +49573,13 @@ int UITask::clearThreadHistory(int thread_idx) {
       m.thread[0] = '\0';
       m.text[0]   = '\0';
       m.sender[0] = '\0';
+      segMarkSeqDirty(m.seq);
       ++cleared;
     }
   }
   _ui_threads[thread_idx].unread      = 0;
   _ui_threads[thread_idx].has_mention = false;
+  _thread_msgs[thread_idx] = 0;   // emptied, and no other thread was touched
   _threads_dirty = true;
   if (cleared) _msgs_dirty = true;
   return cleared;
@@ -46406,13 +49599,32 @@ bool UITask::ignoreSenderInActiveThread(const char* sender_name) {
   uint8_t pub[32];
   bool have = false;
   if (!_active_thread_is_channel) {
-    // DM: the active thread's contact IS the sender.
-    if (hasContactPub(_ui_threads[_active_thread_idx].mesh_contact_pub)) {
-      memcpy(pub, _ui_threads[_active_thread_idx].mesh_contact_pub, sizeof(pub));
+    // DM *or* ROOM — both are contact threads. For a ROOM the thread's contact is the
+    // SERVER, not the person who posted, so blocking its pubkey silenced the ENTIRE room
+    // (newRoomMsgFromPubWithMeta drops on the room pubkey). Blocking one loudmouth should
+    // never cost you the whole room. Room posts carry only an author display name (passed
+    // as the sender override), so block the AUTHOR by name and leave the room intact. If
+    // the tapped sender IS the room's own name, fall through to the old pubkey block so
+    // muting a whole room from inside it still works.
+    const uint8_t* tpub = _ui_threads[_active_thread_idx].mesh_contact_pub;
+    if (sender_name && sender_name[0] && hasContactPub(tpub)) {
+      ContactInfo* rc = the_mesh.lookupContactByPubKey(tpub, PUB_KEY_SIZE);
+      if (rc && rc->type == ADV_TYPE_ROOM && strcmp(rc->name, sender_name) != 0)
+        return touchPrefsSetNameIgnored(sender_name, true);
+    }
+    if (hasContactPub(tpub)) {
+      memcpy(pub, tpub, sizeof(pub));
       have = true;
     }
   } else if (sender_name && sender_name[0]) {
-    // Channel / room: resolve the sender display name -> a contact pubkey.
+    // Channel: block by NAME, ALWAYS — this is the only thing the channel RX path
+    // can actually match. A group packet carries no per-sender pubkey (MyMesh's
+    // channel branch calls newMsgFromPubWithMeta with from_pub = nullptr), so the
+    // prefix ignore-list is never consulted for channel traffic and a pubkey-only
+    // block is a SILENT NO-OP. That was issue #177: the sender showed up in the
+    // blocked list, yet their posts kept arriving, because a sender who happened to
+    // be a saved contact took the pubkey path below and never got a name entry.
+    const bool name_ok = touchPrefsSetNameIgnored(sender_name, true);
     ContactInfo c;
     const int n = the_mesh.getNumContacts();
     for (int i = 0; i < n; ++i) {
@@ -46422,13 +49634,11 @@ bool UITask::ignoreSenderInActiveThread(const char* sender_name) {
         break;
       }
     }
-    if (!have) {
-      // Not a saved contact — e.g. a bot posting inside a joined room, whose
-      // post carries only a display name (no pubkey to put in the prefix
-      // ignore-list). Block by NAME instead so it can actually be silenced;
-      // newMsgImpl drops future posts whose parsed sender matches.
-      return touchPrefsSetNameIgnored(sender_name, true);
-    }
+    // Not a saved contact (e.g. a bot posting in a joined room): the name entry is
+    // the whole block. A saved contact ALSO gets the pubkey entry below, so their
+    // DMs stay blocked exactly as before — the name entry is purely additive and is
+    // what silences their channel posts.
+    if (!have) return name_ok;
   }
   if (!have) return false;
   touchPrefsSetIgnored(pub, true);
@@ -46509,13 +49719,6 @@ void UITask::onLvTabChanged(int tab_index) {
     if (tab_index > k_last) tab_index = k_last;
   }
   _touch_screen = static_cast<TouchUiScreen>(static_cast<uint8_t>(tab_index));
-#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
-  SdNvsPrefs prefs;
-  if (prefs.begin("meshTouch", false)) {
-    prefs.putUChar("tab", static_cast<uint8_t>(tab_index));
-    prefs.end();
-  }
-#endif
 }
 
 void UITask::appendDiag(const char* message) {
@@ -46740,6 +49943,24 @@ int UITask::getGpsSats() {
   return lp ? (int)lp->satellitesCount() : -1;
 }
 
+uint32_t UITask::getGpsTime() {
+  if (!_sensors) return 0;
+  LocationProvider* lp = _sensors->getLocationProvider();
+  if (!lp) return 0;
+  const long t = lp->getTimestamp();
+  // The provider builds this from the NMEA date/time fields, which read as year 0 (epoch far in
+  // the past) until the receiver has actually decoded them off the air. Anything plausibly recent
+  // means real satellite time.
+  return (t > 1700000000L) ? (uint32_t)t : 0;
+}
+
+int UITask::getGpsAltitude() {
+  if (!_sensors) return 0;
+  LocationProvider* lp = _sensors->getLocationProvider();
+  if (!lp || !lp->isValid()) return 0;
+  return (int)(lp->getAltitude() / 1000);   // provider reports millimetres
+}
+
 // Keep the node's advertised location synced to GPS once we have a fix, and
 // persist it occasionally so a fix survives reboot ("had a fix at least once").
 // Called every UITask::loop(). No-op on boards without GPS (provider == NULL).
@@ -46825,13 +50046,21 @@ bool UITask::setWifiRadio(bool on) {
   return false;
 }
 
-void UITask::setDeviceTimeFromSystemClock() {
+bool UITask::setDeviceTimeFromSystemClock() {
 #if defined(ESP32)
-  time_t t = time(nullptr);
-  if (t < 100000) return;
-  the_mesh.getRTCClock()->setCurrentTime((uint32_t)t);
+  const uint32_t t = (uint32_t)time(nullptr);
+  // ESP32RTCClock::begin() seeds the system clock to exactly MIN_VALID_EPOCH on power-on,
+  // so "still at the seed" means never synced. Pushing that into the mesh clock is a
+  // two-year step backwards that setCurrentTime()'s own MIN check cannot catch, because
+  // the value IS the constant it compares against — that is how a P4 (whose RTC chip left
+  // the system clock on the seed) could sync 2024 over a perfectly good clock. The old
+  // `t < 100000` guard only caught a clock counting up from zero, which never happens here.
+  if (t <= ClockFloorRTC::MIN_VALID_EPOCH) return false;
+  the_mesh.getRTCClock()->setCurrentTime(t);
+  return true;
 #else
   the_mesh.getRTCClock()->setCurrentTime((uint32_t)(millis() / 1000));
+  return true;
 #endif
 }
 
@@ -46937,6 +50166,13 @@ static inline void touchScreenBacklight(bool on) {
   // the base = MORE conduction = brighter. applyBrightness() below already accounts for this.
   if (on) applyBrightness(s_brightness_pct);
   else    ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
+#elif defined(HAS_TDISPLAY_P4)
+  // T-Display P4: the RM69A10 AMOLED has no backlight pin — "brightness" is the panel's own DCS
+  // 0x51 register. Off = 0 (blanks the AMOLED), on = restore the saved brightness. Without this
+  // branch touchScreenBacklight was the (void)on no-op, so screen-timeout, wake, lock, sleep and
+  // the burn-in guard all silently did nothing on the P4 (reported: "screen timeout not working").
+  if (on) applyBrightness(s_brightness_pct);
+  else    display.setBrightness(0);
 #else
   (void)on;
 #endif
@@ -46971,6 +50207,11 @@ void UITask::noteUserInput() {
    * release that. Idle-timeout locks still unlock on touch. */
   if (_screen_off && _manual_lock) return;
   _last_input_ms = millis();
+#if defined(ATTAKY_MESH_SERIES)
+  // This board wakes on POWER_BTN only (polled in the UI loop). A touch on a dark
+  // panel is already absorbed by the indev read, and must not light it either.
+  if (_screen_off) return;
+#endif
   if (_screen_off) wakeScreen();
 }
 
@@ -47087,9 +50328,25 @@ bool UITask::sendSignalProbe() {
 // was never written, so the caller must treat the ring as dirty and write it.
 static bool uiHistWaitWorkerIdle() {
   const bool cancelled = s_hist_flush_req;
+  const uint8_t  had_kind = s_segjob_kind;
+  const uint32_t had_seq  = s_segjob_first_seq;
   s_hist_flush_req = false;
   const uint32_t t0 = millis();
   while (s_hist_flush_busy && (uint32_t)(millis() - t0) < 9000) delay(10);
+  // Drop the worker descriptor UNCONDITIONALLY: the caller is about to write
+  // synchronously from the ring, and leaving it armed let the next
+  // flushHistoryIfDue observe a stale job and commit it a SECOND time
+  // (double-counted record/byte totals, or a duplicate table entry).
+  s_segjob_kind    = SEGJOB_NONE;
+  s_segjob_redirty = false;
+  // If the job was already in the worker's hands its fate is now unknown — it
+  // may have written some or all of its records without being credited. Flag
+  // the target segment untrusted so the synchronous drain REWRITES it from the
+  // ring instead of appending on top (which would duplicate whatever landed).
+  if (had_kind != SEGJOB_NONE && !cancelled) {
+    for (int i = 0; i < s_seg_count; ++i)
+      if (s_seg[i].first_seq == had_seq) { s_seg[i].rewrite_open = 1; break; }
+  }
   return cancelled;
 }
 
@@ -47116,11 +50373,25 @@ void UITask::rebootDevice() {
   // Persist chat history synchronously before we reboot — the periodic
   // flush is rate-capped, so without this a reboot could drop the most
   // recent chat history.
-  if (uiHistWaitWorkerIdle()) _msgs_dirty = true;   // cancelled snapshot = unwritten data
+  // A worker still busy after the 9 s wait cap counts as unwritten data too:
+  // its write may never land (stalled on a dying card), and _msgs_dirty was
+  // already cleared when its snapshot was armed — skipping the sync save here
+  // silently dropped everything since the last successful flush.
+  if (uiHistWaitWorkerIdle() || s_hist_flush_busy) _msgs_dirty = true;
   if (_threads_dirty) saveThreadsToStorage();
-  if (_msgs_dirty) saveMsgsToStorage();
+  if (_msgs_dirty && !saveMsgsToStorage()) {
+    // Last-chance save failed — say so (with the diagnosis) instead of
+    // rebooting into silent loss.
+    char why[64]; chatSaveFailText(why, sizeof why);
+    char msg[128];
+    snprintf(msg, sizeof msg, "%s\n%s", TR("Chat history save FAILED"), why);
+    showAlert(msg, 1800);
+    lv_refr_now(NULL);
+    delay(1500);   // let the warning actually paint before the reset
+  }
   discoveredFlushNow();   // persist the Discovered ring before we go down
   the_mesh.flushContactsIfDirty();   // and any coalesced contacts refresh (card-less devices)
+  touchPrefsFlush();       // finish queued A/B snapshots before reset
   if (_board) _board->reboot();
 }
 
@@ -47171,7 +50442,13 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // entirely — no bubble, no notification, no chime. Set from the message
   // long-press "Block" when the sender isn't a saved contact (gubbinsgalore's
   // self-advertising room bot).
-  if (channel && touchPrefsIsNameIgnored(sender)) return;
+  // Also applies to ROOM posts: those arrive with channel == false but WITH a sender
+  // override (the resolved author), and a room author can only ever be blocked by name
+  // since the post carries no per-author pubkey. Without have_sender_override here, a
+  // room name-block was stored but never enforced. A plain DM has neither flag set, so it
+  // keeps using the pubkey filter and is unaffected — important, because a DM contact
+  // sharing a display name with a blocked room bot must not vanish.
+  if ((channel || have_sender_override) && touchPrefsIsNameIgnored(sender)) return;
 #endif
 
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
@@ -47194,8 +50471,12 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   uint8_t in_path[MAX_UI_PATH];
   uint8_t in_path_n = 0;
   uint16_t in_scope = 0;
-  if ((meta_flags & MSG_META_HAS_RX) && (meta_flags & MSG_META_IS_FLOOD)) {
-    in_path_n = the_mesh.lastRxPath(in_path, sizeof(in_path));
+  if (meta_flags & MSG_META_HAS_RX) {
+    // Route hashes only exist on floods, but the transport SCOPE also rides scoped DIRECT
+    // messages (the "Scope direct msgs to region" feature) -- reading it only under IS_FLOOD
+    // meant a scoped DM's Info popup showed no scope at all (#157).
+    if (meta_flags & MSG_META_IS_FLOOD)
+      in_path_n = the_mesh.lastRxPath(in_path, sizeof(in_path));
     bool has_scope = false;
     in_scope = the_mesh.lastRxScope(&has_scope);
     if (has_scope) meta_flags |= MSG_META_HAS_SCOPE;
@@ -47212,7 +50493,10 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // (embedded ts ≈ now) are unaffected. Consume-once so it never leaks to the next.
   {
     uint32_t emb_ts = the_mesh.uiConsumeLastSenderTs();
-    if (emb_ts > 1700000000) _ui_msgs[msg_slot].ts = emb_ts;
+    // Sanity WINDOW, not just a lower bound: a peer with a garbage-future clock sends e.g.
+    // ~2.42e9, which as a signed 32-bit time_t wraps to 1910-09-03 06:42:07 (GH #100/#152).
+    // Same window as MyMesh.cpp's advert-time guard (>1.7e9 && <2.0e9).
+    if (emb_ts > 1700000000 && emb_ts < 2000000000) _ui_msgs[msg_slot].ts = emb_ts;
   }
   syncThreadMeshSlots(thread, channel);
 #if defined(HAS_TDECK_GT911)
@@ -47772,8 +51056,116 @@ static inline void uiCp(const char* next) {
   s_ui_cp_t0  = nowms;
 }
 
+#if CAP_SD || defined(TLORA_PAGER)
+// Runtime SD wedge detect + recover. Some writer saw an SD write fail while the
+// card was supposedly mounted (sdNoteIoFailure) — verify with real I/O and,
+// if the card stopped answering, drop the mount and re-run the full mount
+// ladder (SD.end() + staged SD.begin): exactly what the next reboot would do,
+// minus the reboot. Without this the firmware is blind to a wedged card:
+// SD.cardType() keeps returning its cached mount-time type, s_sd_mounted stays
+// true so fmSdTryMount() no-ops, and every SD feature fails silently until the
+// user power-cycles (the "SD stops working until reboot" report).
+static void sdHealthTick() {
+  static uint32_t s_next_probe_ms    = 0;
+  static uint32_t s_next_bg_probe_ms = 0;
+  const uint32_t now = (uint32_t)millis();
+  if (!s_sd_mounted) {
+    s_sd_fail_note_ms = 0;
+    // Reinsert watch. After a failed remount ("SD card lost") the SD VFS is
+    // unregistered and NOTHING outside the file manager ever re-runs a mount
+    // — a reinserted card then LOOKED recovered (battery quietly falls back
+    // to SPIFFS) while chat-history writes kept failing silently and new
+    // messages were never persisted. One light single-attempt mount (no
+    // ladder; an empty slot fails in well under a second) every 30 s while
+    // awake — a healthy warm card mounts on the first 4 MHz attempt. The FM
+    // poll / SD-row tap still provide the full ladder for stubborn cards.
+    if (touchSleep::isSleeping()) return;
+    if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
+    s_next_bg_probe_ms = now + 30000;
+#if defined(TLORA_PAGER)
+    if (!pagerSdCardPresent()) return;   // card-detect says the slot is empty
+#endif
+    if (s_fm_list) return;               // FM open: its 2 s poll owns remounting (full ladder)
+    SPIClass* spi = sdSharedSPI();
+    if (!spi) return;
+    SD.end();
+    if (SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
+      s_sd_mounted        = true;
+      s_sd_size           = SD.cardSize();
+      s_sd_retry_after_ms = 0;
+      markSdIo();
+      if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
+#if defined(HAS_TDECK_GT911)
+      // Land the RAM ring on the card promptly, not up to 30+ s later: every
+      // message received while the card was out is only in RAM. Armed as an
+      // OFF-THREAD flush — a synchronous write here froze the UI for >30 s on
+      // a card that mounts fine but times out on large writes. mkdir first —
+      // a fresh replacement card has no /meshcomod yet, and without it every
+      // history flush fails silently.
+      SD.mkdir("/meshcomod");
+      uiDataEnsureDirs();   // segment dir too — a fresh replacement card has neither
+      if (g_lv.task) g_lv.task->flushHistorySoon();
+#endif
+      mapNoteStorageChanged();   // the map layer has to be told too, or it stays blank
+    } else {
+      SD.end();                          // leave cardType() honestly CARD_NONE
+    }
+    return;
+  }
+  if (s_sd_format_pending) return;                        // format owns the card right now
+  // Hold off while the core-0 worker is (or may be about to be) on the card —
+  // SD.end() under an open worker file handle is the crash we must not add.
+  // On a truly wedged card the worker's own ops fail fast, so this clears.
+  if (s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request || touchPrefsIoBusy()) return;
+#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
+#endif
+  // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
+  // also on a slow 30 s background cadence — a card yanked while nothing is
+  // writing (idle home screen) would otherwise never be noticed at all, since
+  // detection is failure-driven and reads fall back silently. A healthy-card
+  // probe is one SEND_STATUS transaction (sub-ms), so the idle cost is nil.
+  // The background probe pauses in the sleep regime (screen off, loop
+  // throttled): nobody sees the toast, an SD poke keeps the card out of its
+  // own power-down, and a yank-while-asleep is caught by the first probe
+  // after wake. The FAILURE-driven probe stays active asleep on purpose —
+  // scheduled telemetry keeps logging to SD during sleep, and a wedge there
+  // must still recover.
+  if (s_sd_fail_note_ms) {
+    if (s_next_probe_ms && (int32_t)(now - s_next_probe_ms) < 0) return;
+  } else {
+    if (touchSleep::isSleeping()) return;
+    if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
+  }
+  s_next_probe_ms    = now + 5000;
+  s_next_bg_probe_ms = now + 30000;
+  s_sd_fail_note_ms = 0;
+  if (sdProbeAlive()) return;     // transient failure (card full, bad path, ...) — not a wedge
+  fmSdUnmount();                  // SD.end() so a fresh begin re-runs the full card handshake
+  if (fmSdTryMount()) {
+    if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
+#if defined(HAS_TDECK_GT911)
+    SD.mkdir("/meshcomod");                            // fresh replacement card: recreate the data root
+    uiDataEnsureDirs();                                // segment dir too
+    if (g_lv.task) g_lv.task->flushHistorySoon();      // land the RAM ring promptly (off-thread — no UI stall)
+#endif
+    mapNoteStorageChanged();
+  } else {
+    // Ladder failed — card needs a real power cycle (reinsert). s_sd_mounted is
+    // now false and SD.cardType() reads CARD_NONE, so features degrade honestly
+    // instead of silently failing, and the usual remount paths keep retrying.
+    if (g_lv.task) g_lv.task->showAlert(TR("SD card lost - reinsert to recover"), 2600);
+    mapNoteStorageChanged();   // drop tiles read off the card that just went away
+  }
+}
+#endif
+
 void UITask::loop() {
   unsigned long now = millis();
+#if defined(ESP32)
+  // Snapshot copying is quick; all filesystem I/O runs on the core-0 worker.
+  touchPrefsTick(now);
+#endif
 #if !defined(HAS_TANMATSU)
   // REMOTE mode: draw/refresh the physical-panel placeholder (first pass via the IP
   // sentinel, then whenever the IP changes), and clear the bootloop guard once this
@@ -47819,9 +51211,8 @@ void UITask::loop() {
 #endif
   g_ui_stall_max = 0; g_ui_stall_tag = ""; s_ui_cp_tag = "ui:head"; s_ui_cp_t0 = now;
 #if defined(ESP32)
-  // Persist the clock floor every 15 min (small prefs-blob write; SdNvsPrefs
-  // rewrites a file on the Launcher-SD backend, so keep the cadence low). Power
-  // loss costs at most this window of floor progress — a soft reset keeps the
+  // Persist the clock floor every 15 min (coalesced into the next prefs snapshot).
+  // Power loss costs at most this window of floor progress — a soft reset keeps the
   // ESP32 RTC domain ticking, so only true power-off needs the persisted copy.
   { static unsigned long s_floor_due = 0;
     if (now >= s_floor_due) {
@@ -48068,6 +51459,10 @@ void UITask::loop() {
   // every click. Signed keeps a slightly-ahead stamp negative (= "just had input").
   if (_screen_timeout_ms > 0 && !_screen_off &&
       (int32_t)(now - _last_input_ms) >= (int32_t)_screen_timeout_ms) {
+#if !defined(HAS_TDISPLAY_P4)
+    // The P4 has no unlock path (no button/overlay), so it must NEVER hard-lock, even if an old
+    // pref left the flag set — it always takes the plain screen-off branch below, which wakes on
+    // touch. (Guards the trap; the "Lock when screen off" toggle is also hidden on the P4.)
     if (s_lock_on_screen_off && !_manual_lock) {
       // "Lock when screen off": idle dim also hard-locks, so the touchscreen is
       // inert until a deliberate unlock (trackball hold on the T-Deck, BOOT
@@ -48075,7 +51470,9 @@ void UITask::loop() {
       // !_manual_lock guard stops the Tanmatsu's lit lock screen from re-firing
       // lockScreen() (and re-lighting) on every idle tick.
       lockScreen();
-    } else {
+    } else
+#endif
+    {
       touchScreenBacklight(false);
       setCpuForScreen(false);   // idle dim (no lock) -> drop to 80 MHz too
       _screen_off = true;
@@ -48210,6 +51607,7 @@ void UITask::loop() {
     else                          s_jump_dimmed = true;   // nothing open: park the state
   }
 #if CAP_SD || defined(TLORA_PAGER)
+  sdHealthTick();   // wedge detect + remount, driven by writer-flagged failures (any task)
   // microSD insert/remove detection — only while the file manager is open, so
   // there's no idle SPI traffic. SD.begin runs on this loop task (never
   // concurrent with the radio's SPI), and reuses the radio's already-begun bus.
@@ -48222,10 +51620,24 @@ void UITask::loop() {
         // unmountable card spikes current / churns the bus and can reset the board.
         if (now >= s_sd_retry_after_ms && fmSdTryMount()) {
           showAlert(TR("SD card inserted"), 1500);
+#if defined(HAS_TDECK_GT911)
+          SD.mkdir("/meshcomod");   // fresh replacement card: recreate the data root
+          uiDataEnsureDirs();        // segment dir too
+          flushHistorySoon();       // land the RAM ring promptly (off-thread — no UI stall)
+#endif
+          mapNoteStorageChanged();
           if (!s_fm_fs) fmShowRoots();          // refresh roots so it appears
         }
-      } else if (SD.cardType() == CARD_NONE) {
+      } else if (!s_hist_flush_busy && !s_hist_flush_req && !sdProbeAlive()) {
+        // Real-I/O probe, NOT `SD.cardType() == CARD_NONE`: cardType() is cached
+        // at mount and only SD.end() ever resets it, so the old check could never
+        // fire — neither a yanked card nor a wedged one was ever detected here.
+        // Never probe/unmount under an in-flight history flush: SD.end() while
+        // the flush holds its open temp file leaves a stale FIL, and every
+        // later write on it fails FR_INVALID_OBJECT -> EBADF ("bad file
+        // number") — recovery must not sabotage the very write it protects.
         fmSdUnmount();
+        mapNoteStorageChanged();
         showAlert(TR("SD card removed"), 1500);
         if (s_fm_fs == &SD || !s_fm_fs) fmShowRoots();
       }
@@ -48338,9 +51750,12 @@ void UITask::loop() {
     // whole batch so nothing queued here leaks through as real input on the
     // very next tick right after waking.
     bool any = false;
+    bool saw_backspace = false;
     for (int kbi = 0; kbi < 12; ++kbi) {
-      if (pagerKeyboardReadKey() <= 0) break;
+      int k = pagerKeyboardReadKey();
+      if (k <= 0) break;
       any = true;
+      if (k == 0x08) saw_backspace = true;
     }
     // Discard any Alt tap / Alt+Shift / Alt+Backspace chord picked up while
     // idle-dimmed -- none of them may fire (NEXT / Caps toggle / jump Home)
@@ -48349,8 +51764,21 @@ void UITask::loop() {
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
     // Hard-locked: an ordinary keypress must NOT wake/unlock -- only holding
-    // Backspace does (updatePagerBackspaceUnlockHold, already polled above).
-    if (any && !g_lv.task->isManualLock()) g_lv.task->wakeScreen();
+    // Backspace does (updatePagerBackspaceUnlockHold, polled unconditionally
+    // above off the raw held-state, so it's unaffected by this drain either
+    // way). A Backspace TAP, though, should PEEK the lock screen -- light the
+    // wallpaper, stay locked -- the keyboard-only equivalent of the T-Deck's
+    // trackball click while locked (lockscreenReveal() is the exact same call
+    // that path, and the new-message notify flash, already use). Without this
+    // the ring byte a Backspace press pushes immediately on press was just
+    // getting silently drained above with everything else, so tapping it
+    // while the screen was actually dark did nothing (reported bug) even
+    // though holding it through to unlockScreen worked fine.
+    if (g_lv.task->isManualLock()) {
+      if (saw_backspace) g_lv.task->lockscreenReveal();
+    } else if (any) {
+      g_lv.task->wakeScreen();
+    }
   } else {
     for (int kbi = 0; kbi < 12; ++kbi) {
       int key = pagerKeyboardReadKey();
@@ -48362,6 +51790,11 @@ void UITask::loop() {
     updatePagerAltBackspaceChord();
     updatePagerBackspaceHold(now);
     updatePagerSpaceHold(now);
+    // Missing on this board until now (T-Deck/M9 both already call it in their
+    // own equivalent branch): without this the lock-screen clock/unread badge
+    // never refreshed again after the first reveal -- correct at the moment
+    // you peek, then frozen there for as long as the screen stays lit.
+    serviceLockscreen();
   }
 #elif defined(HAS_M9_KEYBOARD)
   // M9's keyboard controller is on its OWN bus (Wire1) — no touch task shares
@@ -48380,6 +51813,52 @@ void UITask::loop() {
   serviceLockscreen();
   serviceLockingCountdown(now);
 #endif
+#if defined(ATTAKY_MESH_SERIES)
+  // POWER_BTN (AW9523 @0x59 P07) toggles the panel. Polled before the screen-off
+  // early-outs so it works with the backlight down; it is this board's only wake.
+  attakyKeysPoll();
+  if (attakyPowerKeyPressed()) {
+    if (_screen_off) wakeScreen();
+    else             sleepScreen();
+  }
+#endif
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+  {
+    lv_obj_t* akb_ta = g_lv.keyboard ? lv_keyboard_get_textarea(g_lv.keyboard) : nullptr;
+    attakyKeyboardPoll(akb_ta != nullptr);
+    for (int kbi = 0; akb_ta && kbi < 16; ++kbi) {
+      int key = attakyKeyboardReadKey();
+      if (key <= 0) break;
+      if (!_screen_off) noteUserInput();
+      // Enter in the chat composer sends (upstream does this in handleHwKey(), which
+      // this board does not compile; READY only dismisses the keys). Honour the
+      // enter-sends pref and rebind after, so the module can type the next message.
+      if (key == 0x0D || key == 0x0A) {
+        if (s_kb_panel && touchPrefsGetEnterSends()) {
+          LvChatPanel* const p = s_kb_panel;   // the send path clears s_kb_panel
+          composerSendFromPanel(p);
+          if (p->composer_ta && lv_obj_is_valid(p->composer_ta)) showKb(p);
+          break;   // keyboard rebound above; akb_ta is stale from here
+        }
+        else if (s_kb_panel) lv_textarea_add_char(akb_ta, '\n');   // enter-sends off: compose multi-line
+        else                 lv_event_send(g_lv.keyboard, LV_EVENT_READY, nullptr);  // settings field: confirm
+      }
+      else if (key == 0x08 || key == 0x7F) lv_textarea_del_char(akb_ta);
+      // '#' summons the on-screen keys for this editing session (hideKb clears it),
+      // opening straight on the symbol panel: the module already types letters and
+      // digits, so the keys are only for symbols its 5x5 matrix cannot reach.
+      else if (key == '#' && attakyKeyboardPresent() && !s_osk_forced) {
+        s_osk_forced = true;
+        if (s_kb_panel) showKb(s_kb_panel);
+        else            kbMirrorBind(akb_ta);
+        // Set the mode after the reveal (it redraws the map). 'abc' still returns to letters.
+        if (g_lv.keyboard) lv_keyboard_set_mode(g_lv.keyboard, LV_KEYBOARD_MODE_SPECIAL);
+        break;   // both rebind the keyboard's textarea; akb_ta is stale from here
+      }
+      else if (key >= 0x20)                lv_textarea_add_char(akb_ta, (uint32_t)key);
+    }
+  }
+#endif
 #if !defined(HAS_TANMATSU)
   // While a web-mirror browser is connected, count it as activity so the device screen
   // stays awake (otherwise the idle timer would dim it and swallow remote input).
@@ -48395,7 +51874,10 @@ void UITask::loop() {
     // injected via the same path as the hardware keys (printable chars type in; 0x08 =
     // backspace, 0x0D = enter/send).
     uint16_t wk;
-    for (int i = 0; i < 16 && g_web_mirror.popKey(&wk); ++i)
+    // Drain generously: a paste or a phone autocomplete arrives as one burst, and a low cap
+    // left the rest sitting in the ring until the next iteration (where it could be pushed
+    // out by newer keys and silently lost). Each key here is cheap.
+    for (int i = 0; i < 64 && g_web_mirror.popKey(&wk); ++i)
       handleHwKey((int)wk);
 #else
     // On-screen-keyboard boards (V4/RAK): the browser's laptop keyboard should type too, not
@@ -48404,7 +51886,8 @@ void UITask::loop() {
     // on-screen key tap and syncs to the real field on Enter. Enter fires the keyboard's
     // ready cb (send/next); backspace deletes; other printables type in.
     uint16_t wk;
-    for (int i = 0; i < 16 && g_web_mirror.popKey(&wk); ++i) {
+    // Same generous drain as the physical-keyboard branch above (burst paste / autocomplete).
+    for (int i = 0; i < 64 && g_web_mirror.popKey(&wk); ++i) {
       if (!fta) continue;   // no editable field focused -> drain + drop
       if (wk == 0x0D || wk == 0x0A)      lv_event_send(g_lv.keyboard, LV_EVENT_READY, nullptr);
       else if (wk == 0x08 || wk == 0x7F) lv_textarea_del_char(fta);
@@ -48531,7 +52014,7 @@ void UITask::loop() {
     }
     // Also hard-lock the tab bar while Snake is open so a swipe/tap near the
     // bottom can't slip through to the app switcher (e.g. into the map).
-    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen();
+    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen() || ChannelUtil::isOpen();
     if (want_lock != s_tabbar_locked && g_lv.tabview) {
       lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
       if (tab_btns) {
@@ -48645,14 +52128,21 @@ void UITask::loop() {
         }
         sdcard_uninit(pdrv);
       }
-      if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 3);
+      if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
     }
     enableLoopWDT();
     fmHideFormatOverlay();
     if (ok && SD.cardType() != CARD_NONE) {
       s_sd_mounted = true;
       s_sd_size = SD.cardSize();
-      sdEnsureMeshcomodFolders();                        // BINS / RECBCK / SETTINGS / MAPS / LOGS
+      sdEnsureMeshcomodFolders();                        // BINS / RECBCK / SETTINGS / MAPS / LOGS / meshcomod(+msgs)
+      // The format just erased every chat segment while the table still
+      // claims they exist — without a resync the durability watermark keeps
+      // pretending the old records are on disk (permanently lost) and the
+      // next append targets a segment file that is gone. Rebuild + re-land.
+      uiDataEnsureDirs();
+      flushHistorySoon();
+      mapNoteStorageChanged();
       char done[56], cs[16];
       fmFmtSize64(s_sd_size, cs, sizeof cs);
       snprintf(done, sizeof done, TR("SD formatted - %s (MESHCOMOD)"), cs);
@@ -48686,7 +52176,8 @@ void UITask::shutdown(bool restart) {
   if (_threads_dirty) saveThreadsToStorage();
   if (_msgs_dirty) saveMsgsToStorage();
 #if defined(ESP32)
-  touchPrefsSetClockFloor(rtc_clock.getFloor());   // clock floor: final synchronous save (#89)
+  touchPrefsSetClockFloor(rtc_clock.getFloor());   // queue final clock-floor update (#89)
+  touchPrefsFlush();                                // finish queued A/B snapshots
 #endif
   if (_display) {
     _display->startFrame();
@@ -48716,6 +52207,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_urlmenu_root),          []{ closeUrlMenu(); },               PF_COUNT },   // chat URL -> action menu
   { P_OPEN(s_meminfo_root),          []{ closeMemInfo(); },               PF_COUNT },
   { P_OPEN(s_monitor_root),          []{ closeMonitorPage(); },           PF_COUNT },
+  { P_OPEN(s_discover_root),         []{ closeDiscoverPage(); },          PF_COUNT },
   { P_OPEN(s_spec_root),             []{ closeSpectrumPage(); },          PF_COUNT },
   { P_OPEN(s_advert_root),           []{ closeAdvertPage(); },            PF_COUNT },   // was dismissable but never counted
 #if defined(HAS_EXPANSION_KIT)

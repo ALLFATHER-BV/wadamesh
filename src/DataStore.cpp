@@ -47,6 +47,9 @@ const char* DataStore::_rp(const char* name) {
 
 File DataStore::openWrite(FILESYSTEM* fs, const char* filename) {
   if (!_writesEnabled) return File();
+#if defined(TDP4_POKE_TRACE)
+  printf("[SDW] %lu core%d store w %s\n", (unsigned long)millis(), xPortGetCoreID(), filename);
+#endif
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   fs->remove(_rp(filename));
   return fs->open(_rp(filename), FILE_O_WRITE);
@@ -193,6 +196,9 @@ File DataStore::openRead(const char* filename) {
 }
 
 File DataStore::openRead(FILESYSTEM* fs, const char* filename) {
+#if defined(TDP4_POKE_TRACE)
+  printf("[SDR] %lu core%d store r %s\n", (unsigned long)millis(), (int)xPortGetCoreID(), filename);
+#endif
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   return fs->open(_rp(filename), FILE_O_READ);
 #elif defined(RP2040_PLATFORM)
@@ -371,6 +377,13 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
 }
 
 bool DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_lon) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; const NodePrefs* p; double la, lo; bool r; } a{ this, &_prefs, node_lat, node_lon, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->savePrefs(*a->p, a->la, a->lo); }, &a);
+    return a.r;
+  }
+#endif
   // Write to a temp file first and swap it in afterwards: a reboot / power cut
   // mid-write can then never destroy the only copy (the loader recovers from
   // whichever file survived). SPIFFS has no atomic rename-over, so the swap is
@@ -475,6 +488,13 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
 
 void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
   if (!_writesEnabled) return;
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; DataStoreHost* h; bool (*f)(const ContactInfo&); } a{ this, host, filter };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->d->saveContacts(a->h, a->f); }, &a);
+    return;
+  }
+#endif
 #if defined(ESP32)
   // A full/fragmenting contacts write on SPIFFS can trigger a multi-second GC
   // pass that disables the flash cache and starves core 0's idle task, tripping
@@ -616,6 +636,13 @@ void DataStore::loadChannels(DataStoreHost* host) {
 
 void DataStore::saveChannels(DataStoreHost* host) {
   if (!_writesEnabled) return;
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; DataStoreHost* h; } a{ this, host };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->d->saveChannels(a->h); }, &a);
+    return;
+  }
+#endif
   File file = openWrite(_getContactsChannelsFS(), "/channels2");
   if (file) {
     uint8_t channel_idx = 0;
@@ -805,6 +832,13 @@ int DataStore::getBlobByKeyBounded(const uint8_t key[], int key_len,
 
 bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
   if (!_writesEnabled) return false;
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; const uint8_t* k; int kl; const uint8_t* b; uint8_t l; bool r; } a{ this, key, key_len, src_buf, len, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->putBlobByKey(a->k, a->kl, a->b, a->l); }, &a);
+    return a.r;
+  }
+#endif
   if (len < PUB_KEY_SIZE+4+SIGNATURE_SIZE || len > MAX_ADVERT_PKT_LEN) return false;
   checkAdvBlobFile();
   File file = _getContactsChannelsFS()->open("/adv_blobs", FILE_O_WRITE);
@@ -842,6 +876,13 @@ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src
   return false; // error
 }
 bool DataStore::deleteBlobByKey(const uint8_t key[], int key_len) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; const uint8_t* k; int kl; bool r; } a{ this, key, key_len, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->deleteBlobByKey(a->k, a->kl); }, &a);
+    return a.r;
+  }
+#endif
   return true; // this is just a stub on NRF52/STM32 platforms
 }
 #else
@@ -892,6 +933,13 @@ int DataStore::getBlobByKeyBounded(const uint8_t key[], int key_len,
 }
 
 bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; const uint8_t* k; int kl; const uint8_t* b; uint8_t l; bool r; } a{ this, key, key_len, src_buf, len, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->putBlobByKey(a->k, a->kl, a->b, a->l); }, &a);
+    return a.r;
+  }
+#endif
   char path[64];
   makeBlobPath(key, key_len, path, sizeof(path));
 
@@ -908,6 +956,13 @@ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src
 
 bool DataStore::deleteBlobByKey(const uint8_t key[], int key_len) {
   if (!_writesEnabled) return false;
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; const uint8_t* k; int kl; bool r; } a{ this, key, key_len, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->deleteBlobByKey(a->k, a->kl); }, &a);
+    return a.r;
+  }
+#endif
   char path[64];
   makeBlobPath(key, key_len, path, sizeof(path));
 
@@ -962,5 +1017,59 @@ bool DataStore::useSdMmcStorage() {
   _fsExtra = nullptr;
   identity_store.use(SD_MMC, "/meshcomod/identity");
   return true;
+}
+#endif
+
+#if defined(HAS_TDISPLAY_P4)
+// #167: core-0 storage dispatcher. The DSI panel's frame-restart ISR lives on core 1 (where
+// Arduino's loop task also runs); SDMMC/FATFS write paths entered FROM core 1 mask that core's
+// interrupts inside their critical sections long enough to drop a display frame -- the
+// whole-screen flash. Tiles write the same card from the core-0 tile task without ever
+// flashing; this moves every hot store write onto the same quiet core. The caller BLOCKS until
+// the write completes, so call-site semantics are exactly as before.
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+
+struct P4StoreJob { void (*fn)(void*); void* arg; SemaphoreHandle_t done; };
+static QueueHandle_t s_p4store_q = nullptr;
+
+static void p4StoreTaskFn(void*) {
+  P4StoreJob j;
+  for (;;) {
+    if (xQueueReceive(s_p4store_q, &j, portMAX_DELAY) == pdTRUE) {
+      j.fn(j.arg);
+      xSemaphoreGive(j.done);
+    }
+  }
+}
+
+static TaskHandle_t s_p4store_task = nullptr;
+
+bool p4OnStorageTask() { return xTaskGetCurrentTaskHandle() == s_p4store_task && s_p4store_task != nullptr; }
+
+void p4StorageCall(void (*fn)(void*), void* arg) {
+  // Guard on TASK IDENTITY, not core. The original core guard was written believing the main
+  // task ran on core 1; it runs on core 0 (ESP_MAIN_TASK_AFFINITY_CPU0), so the guard
+  // short-circuited and every "hopped" write actually ran inline on the main task -- proven by
+  // the sector-level trace (all SDIO on task 'main'). The storage task is pinned to CORE 1,
+  // which is essentially empty on this board: the DSI frame-restart ISR, the main (UI+mesh)
+  // task, the SDMMC ISR and the tile task all live on core 0, so SD critical sections executed
+  // on core 1 can never mask the display's interrupt regardless of what the UI is rendering.
+  if (p4OnStorageTask()) { fn(arg); return; }   // re-entry on the storage task
+  static SemaphoreHandle_t s_mtx = nullptr;
+  if (!s_mtx) s_mtx = xSemaphoreCreateMutex();      // races only at first-ever call during boot (single-threaded)
+  xSemaphoreTake(s_mtx, portMAX_DELAY);
+  if (!s_p4store_q) {
+    s_p4store_q = xQueueCreate(1, sizeof(P4StoreJob));
+    xTaskCreatePinnedToCore(p4StoreTaskFn, "store1", 8192, nullptr, 3, &s_p4store_task, 0);   // core 0: the SDMMC completion ISR lives there; core-1 I/O crawls on cross-core wakeups
+  }
+  static SemaphoreHandle_t s_done = nullptr;        // one in flight (serialized by s_mtx)
+  if (!s_done) s_done = xSemaphoreCreateBinary();
+  P4StoreJob j{ fn, arg, s_done };
+  xQueueSend(s_p4store_q, &j, portMAX_DELAY);
+  xSemaphoreTake(s_done, portMAX_DELAY);
+  xSemaphoreGive(s_mtx);
 }
 #endif

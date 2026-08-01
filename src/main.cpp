@@ -52,7 +52,7 @@ static uint32_t _atoi(const char* sp) {
   DataStore store(LittleFS, rtc_clock);
 #elif defined(ESP32)
   #include <SPIFFS.h>
-  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
     #include <SD.h>
     #include <Preferences.h>
     #ifndef PIN_SD_CS
@@ -204,7 +204,7 @@ void halt() {
 
 #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)
 
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
 // ---- SPIFFS -> SD migration (fixes the beta_36 "lost my profile" upgrades) ----
 // Users who flipped "Store data on SD" before beta_36 ran with the toggle IGNORED
 // (the flag never survived a reboot), so their identity/prefs/contacts kept living
@@ -282,10 +282,18 @@ static bool meshcomodCopyMigrationFile(const char* src, bool force,
   File destination = source ? SD.open(dst, FILE_WRITE) : File();
   bool ok = source && destination;
   size_t written = 0;
+  size_t sinceWdtFeed = 0;
   while (ok && source.available()) {
     const size_t n = source.read(buffer, bufferSize);
     if (n == 0 || destination.write(buffer, n) != n) ok = false;
-    else written += n;
+    else {
+      written += n;
+      sinceWdtFeed += n;
+      if (sinceWdtFeed >= 32768) {
+        esp_task_wdt_reset();
+        sinceWdtFeed = 0;
+      }
+    }
   }
   if (source) source.close();
   if (destination) { destination.flush(); destination.close(); }
@@ -301,6 +309,7 @@ static bool meshcomodCopyMigrationFile(const char* src, bool force,
     Serial.printf("[BOOT] SD migrate FAILED copy: %s -> %s\n", src, dst);
     if (SD.exists(dst)) SD.remove(dst);
   }
+  esp_task_wdt_reset();
   yield();
   return ok;
 }
@@ -392,6 +401,14 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
                 copied, skipped, scanned, failed,
                 identityOk ? "ok" : "MISSING");
   return identityOk && failed == 0;
+}
+
+// Clear the boot safe-mode latch (see the SPIFFS->SD migration above): called after a
+// successful manual "Copy internal data to SD" so a deliberate retry re-arms boot-time
+// auto-adoption. The boot path re-latches on its own if a later migration wedges. GH #142/#148.
+void meshcomodClearSdMigLatch() {
+  Preferences _mp;
+  if (_mp.begin("touch", false)) { _mp.remove("sd_mig_busy"); _mp.end(); }
 }
 #endif
 
@@ -590,10 +607,12 @@ void setup() {
   // required SD card mounts and the complete store is safely adopted.
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
   bool sd_storage = false;
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
   {
    #if defined(HELTEC_LORA_V4_R8)
     extern SPIClass* heltecV4R8SharedSPI();   // FSPI, shared with the TFT (CS=3)
+   #elif defined(TLORA_PAGER)
+    extern SPIClass* tloraPagerSharedSPI();   // the display/radio's shared SPIClass (#193)
    #else
     extern SPIClass* tdeckSharedSPI();        // LoRa SPI bus
    #endif
@@ -628,6 +647,8 @@ void setup() {
 
    #if defined(HELTEC_LORA_V4_R8)
     SPIClass* _spi = heltecV4R8SharedSPI();
+   #elif defined(TLORA_PAGER)
+    SPIClass* _spi = tloraPagerSharedSPI();
    #else
     SPIClass* _spi = tdeckSharedSPI();
    #endif
@@ -650,11 +671,34 @@ void setup() {
         { 300, 1000000 }, { 450, 1000000 }, { 650,  400000 }, { 900, 400000 },
       };
       int tries = want_full_sd ? 7 : 3;
+      uint32_t mounted_hz = 0;
       for (int a = 0; a < tries && !sd_mounted; ++a) {
         SD.end();
         delay(kBootMount[a].settle_ms);
-        if (SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 3) && SD.cardType() != CARD_NONE)
+        if (SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
           sd_mounted = true;
+          mounted_hz = kBootMount[a].hz;
+        }
+      }
+      // RENEGOTIATE UPWARD after a slow-rung success (GH #194). Standard SD bring-up is
+      // "initialise at a conservative clock, then raise it" — but SD.begin's clock is the
+      // operating clock for the whole session, so a card that only WOKE at 400 kHz then ran
+      // its entire life at 400 kHz (~25 KB/s). With the card as the primary store that was a
+      // ~3-minute boot (contacts + history at modem speed), runtime f_getfree timeouts (the
+      // file manager showing an inserted card as 0 KB/empty), and wedged backups. An
+      // initialised card almost always sustains 4 MHz even when its power-up handshake needed
+      // 400 kHz; if the fast re-begin fails, fall back to the clock that just worked.
+      if (sd_mounted && mounted_hz < 4000000) {
+        SD.end();
+        delay(60);
+        if (SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
+          Serial.printf("[BOOT] SD renegotiated %lu -> 4000000 Hz\n", (unsigned long)mounted_hz);
+        } else {
+          SD.end();
+          delay(120);
+          sd_mounted = SD.begin(PIN_SD_CS, *_spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
+          if (sd_mounted) Serial.printf("[BOOT] SD stays at %lu Hz (4 MHz renegotiation failed)\n", (unsigned long)mounted_hz);
+        }
       }
     }
     if (sd_mounted) {
@@ -668,8 +712,26 @@ void setup() {
         // rather than adopting a card without the identity on it.
         bool adopt = true;
         if (SPIFFS.exists("/identity/_main.id") && !meshcomodSdIdentityValid()) {
-          adopt = meshcomodMigrateSpiffsToSd(false);
-          if (!adopt) Serial.println("[BOOT] SD migration incomplete -> staying on SPIFFS this boot");
+          // Boot safe-mode (GH #142/#148): a wedged or corrupt SD card can hang / WDT-reboot the
+          // device mid-migration, stranding it on the boot screen EVERY boot (reset can't escape,
+          // only a downgrade could). Drop an NVS breadcrumb before migrating and clear it only if
+          // the copy RETURNS. If it's still set at the next boot, the last migration never finished
+          // -> skip it and boot from SPIFFS (the data is safe there); Settings > "Copy internal data
+          // to SD" re-arms a deliberate retry. A merely-slow (healthy) card completes thanks to the
+          // in-loop WDT feed, so it never latches here.
+          Preferences _mp;
+          const bool mp_ok = _mp.begin("touch", false);
+          const bool mig_busy = mp_ok && _mp.getBool("sd_mig_busy", false);
+          if (mig_busy) {
+            if (mp_ok) _mp.end();
+            adopt = false;
+            Serial.println("[BOOT] prior SD migration did not complete -> skipping (staying on SPIFFS); retry via Settings > Copy internal data to SD");
+          } else {
+            if (mp_ok) { _mp.putBool("sd_mig_busy", true); _mp.end(); }
+            adopt = meshcomodMigrateSpiffsToSd(false);
+            Preferences _mp2; if (_mp2.begin("touch", false)) { _mp2.remove("sd_mig_busy"); _mp2.end(); }
+            if (!adopt) Serial.println("[BOOT] SD migration incomplete -> staying on SPIFFS this boot");
+          }
         }
         if (adopt) {
           sd_storage = store.useSdStorage();
@@ -713,7 +775,7 @@ void setup() {
   // Route touch settings + Wi-Fi creds to the active filesystem (SD when that's
   // the data store, else SPIFFS) instead of NVS. Old NVS values still load and
   // migrate on their next save, so this is a transparent in-place upgrade.
-  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
     SdNvsPrefs::setFileWritesEnabled(!g_long_term_storage_sd_missing);
@@ -883,8 +945,14 @@ void setup() {
   // hit the overflow) still get the big ring; default GPS-off keeps the stock 256 B. A user
   // who enables GPS mid-session picks it up on the next reboot (gps_enabled is persisted).
   {
+#if defined(ATTAKY_MESH_SERIES)
+    // This fixed stack always carries the GPS, so take the larger RX ring
+    // unconditionally; the default 256 B ring gives the slowest first fix.
+    Serial1.setRxBufferSize(4096);
+#else
     auto* np = the_mesh.getNodePrefs();
     if (np && np->gps_enabled) Serial1.setRxBufferSize(4096);
+#endif
   }
 #endif
   sensors.begin();

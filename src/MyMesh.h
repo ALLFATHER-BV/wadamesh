@@ -538,6 +538,36 @@ public:
   int8_t   uiSignalRssi()  const { return _ui_sig_rssi; }
   uint32_t uiSignalMs()    const { return _ui_sig_ms; }
 
+  // ---- Discover scan (the Discover app: active node-discovery, ALL node types) ----
+  // uiStartDiscoverScan() broadcasts a zero-hop NODE_DISCOVER_REQ with a type filter + a fresh
+  // random tag; EVERY neighbour that answers with a NODE_DISCOVER_RESP is upserted here (keyed by
+  // pubkey prefix) from onControlDataRecv. Unlike the single-scalar signal probe, every responder
+  // is kept, with BOTH link directions (our RX of them + their RX of us, from RESP payload[1]).
+  struct DiscoverHit {
+    uint8_t  pubkey[32];    // responder identity (full key — the REQ sets prefix_only=0)
+    uint8_t  node_type;     // ADV_TYPE_* (RESP payload[0] low nibble): repeater/chat/room/sensor
+    int8_t   our_snr_q4;    // our RX SNR*4 of their reply (forward link)
+    int8_t   our_rssi;      // our RX RSSI dBm of their reply
+    int8_t   their_snr_q4;  // their RX SNR*4 of our request (reverse link — RESP payload[1])
+    uint8_t  path_len;      // hops the reply travelled (0 = heard directly, i.e. in RF range)
+    uint32_t first_ms;      // millis() first heard this session
+    uint32_t last_ms;       // millis() last heard
+    uint16_t heard;         // reply count
+  };
+  static const int DISCOVER_MAX = 64;
+  DiscoverHit _discover[DISCOVER_MAX];
+  uint8_t     _discover_cnt = 0;
+  uint32_t    _discover_tag = 0;      // active scan tag (matches RESPs; 0 = no scan yet)
+  uint32_t    _discover_scan_ms = 0;  // millis() the current scan sweep was fired
+  uint8_t  discoverCount() const { return _discover_cnt; }
+  bool     discoverGet(uint8_t i, DiscoverHit& out) const {
+    if (i >= _discover_cnt) return false; out = _discover[i]; return true;
+  }
+  void     discoverClear() { _discover_cnt = 0; }
+  uint32_t discoverScanMs() const { return _discover_scan_ms; }
+  void     discoverUpsert(const uint8_t* pk, uint8_t pklen, uint8_t node_type,
+                          int8_t our_snr_q4, int8_t our_rssi, int8_t their_snr_q4, uint8_t path_len);
+
   // ---- Recent-RX ring (RF Monitor app) ----
   // One record per received frame, captured in logRxRaw(): payload type / route
   // / hop count / length + signal, so the Monitor page can show a live "what am
@@ -641,7 +671,12 @@ public:
     }
     const uint8_t rt = pkt ? pkt->getRouteType() : 0xFF;
     _last_rx_has_scope = (rt == ROUTE_TYPE_TRANSPORT_FLOOD || rt == ROUTE_TYPE_TRANSPORT_DIRECT);
-    _last_rx_scope = (_last_rx_has_scope && pkt) ? pkt->transport_codes[0] : 0;
+    // #157: some senders carry the region in transport_codes[1] (reply-region hint) with
+    // codes[0] zero -- the Info popup then showed "Scope 0000" for a genuinely scoped message.
+    // Show whichever code is set; [0] (the scope proper) wins when both are.
+    _last_rx_scope = 0;
+    if (_last_rx_has_scope && pkt)
+      _last_rx_scope = pkt->transport_codes[0] ? pkt->transport_codes[0] : pkt->transport_codes[1];
   }
 
   /** Track a freshly-sent flood TXT fingerprint (called from sendFloodScoped). */
@@ -778,6 +813,29 @@ public:
     if (!pkt) { _ui_sig_probe_tag = 0; return 0; }
     sendZeroHop(pkt);                                // repeaters reply directly; never floods
     return _ui_sig_probe_tag;
+  }
+
+  /** DISCOVER SCAN (Discover app): like uiSendSignalProbe, but asks ALL node types and KEEPS
+   *  every responder (see _discover[] + discoverUpsert, populated in onControlDataRecv). Broadcasts
+   *  one zero-hop NODE_DISCOVER_REQ; neighbours reply DIRECTLY (never floods). type_filter = OR of
+   *  (1<<ADV_TYPE_*); pass 0 for "all types". Returns the scan tag (0 = failed). The caller should
+   *  airtime-gate repeated sweeps (Dispatcher::getRemainingTxBudget). */
+  uint32_t uiStartDiscoverScan(uint8_t type_filter = 0) {
+    uint8_t data[10];
+    data[0] = CTL_TYPE_NODE_DISCOVER_REQ;            // 0x80; low bit prefix_only=0 -> full 32-byte pubkeys
+    data[1] = type_filter ? type_filter
+              : (uint8_t)((1 << ADV_TYPE_CHAT) | (1 << ADV_TYPE_REPEATER) |
+                          (1 << ADV_TYPE_ROOM) | (1 << ADV_TYPE_SENSOR));   // all types
+    getRNG()->random(&data[2], 4);                   // fresh random tag to match this sweep's replies
+    memcpy(&_discover_tag, &data[2], 4);
+    if (_discover_tag == 0) { _discover_tag = 1; memcpy(&data[2], &_discover_tag, 4); }
+    uint32_t since = 0;                               // 0 = answer regardless of freshness
+    memcpy(&data[6], &since, 4);
+    mesh::Packet* pkt = createControlData(data, sizeof(data));
+    if (!pkt) { _discover_tag = 0; return 0; }
+    sendZeroHop(pkt);
+    _discover_scan_ms = millis();
+    return _discover_tag;
   }
 
   /** Request CayenneLPP telemetry from a remote contact. Reply is delivered
@@ -986,6 +1044,27 @@ public:
     return true;
   }
 
+  /** Add a node found by the Discover app (active NODE_DISCOVER sweep) to contacts, from its full
+   *  32-byte pubkey + node TYPE + a display name. Like uiAddManualContact but preserves the type
+   *  (repeater/room/sensor/chat) so the contact lands with the right role/icon — the discovery
+   *  response carries the type + full pubkey but no advert, so name is a placeholder until one
+   *  arrives. Returns false if it's already a contact, the name is empty, or the table is full. */
+  bool uiAddDiscoveredContact(const uint8_t pub_key[32], uint8_t type, const char* name) {
+    if (!name || !name[0]) return false;
+    if (lookupContactByPubKey(pub_key, PUB_KEY_SIZE) != nullptr) return false;
+    ContactInfo ci{};
+    memcpy(ci.id.pub_key, pub_key, PUB_KEY_SIZE);
+    ci.type         = type;
+    ci.out_path_len = OUT_PATH_UNKNOWN;
+    ci.last_advert_timestamp = 0;          // unknown — we only heard a discovery reply
+    ci.lastmod      = getRTCClock()->getCurrentTime();
+    StrHelper::strncpy(ci.name, name, sizeof(ci.name));
+    if (!addContact(ci)) return false;
+    saveContacts();
+    if (_ui) _ui->onThreadsChanged();
+    return true;
+  }
+
   /** Persist the in-RAM contact table to flash (/contacts3). Public wrapper so
    *  UI paths that insert via the base addContact() — e.g. the Discovered-list
    *  "Add to contacts" button — can persist; otherwise that contact is RAM-only
@@ -1133,7 +1212,29 @@ private:
   int getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) override { 
     return _store->getBlobByKey(key, key_len, dest_buf);
   }
+  // The core calls this on EVERY received advert (BaseChatMesh::onAdvertRecv, outside the
+  // auto-add block, so for known contacts too) and each call is a full create+truncate+write
+  // of a small file. On a card-less board that file lives on SPIFFS, so ~200 known nodes
+  // re-advertising means a flash write every few seconds forever — churn that keeps the
+  // partition permanently GC-prone and feeds the multi-second "mesh" loop stalls.
+  //
+  // The blob is the raw advert packet and its ONLY consumer is Share/export contact
+  // (BaseChatMesh::shareContact via getBlobByKey). Its content for a given node is
+  // effectively static — name, type, location. So persist it ONCE PER KEY PER BOOT and skip
+  // the redundant rewrites: after the first advert from each node the packet path does no
+  // flash I/O at all. Reads are unaffected because getBlobByKey above still reads the file we
+  // already wrote, so there is no cache to keep coherent. A node that RENAMES itself keeps its
+  // old shared blob until the next reboot, which is a fair price for removing the churn.
+  // Cost: kBlobSeenSlots * 4 bytes of DRAM. Move to PSRAM if static DRAM ever gets tight.
   bool putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], int len) override {
+    if (key_len >= 4) {
+      uint32_t pfx;
+      memcpy(&pfx, key, 4);
+      if (pfx == 0) pfx = 1;   // 0 is the empty-slot marker
+      const uint16_t slot = (uint16_t)((pfx ^ (pfx >> 13) ^ (pfx >> 23)) & (kBlobSeenSlots - 1));
+      if (_blob_seen[slot] == pfx) return true;   // already on flash this boot — skip the write
+      _blob_seen[slot] = pfx;                    // collision just costs one extra write later
+    }
     return _store->putBlobByKey(key, key_len, src_buf, len);
   }
 
@@ -1196,6 +1297,14 @@ private:
   // the first save. Kept in sync by every MyMesh::saveContacts() call.
   int      _last_saved_contacts_n = -1;
   uint32_t _next_contacts_refresh_save = 0;
+  // Separate, much SHORTER floor for saves caused by an add/remove. Those used to bypass the
+  // refresh window completely, so on a growing mesh every newly-heard node forced its own full
+  // rewrite. See CONTACTS_ADD_SAVE_MIN_INTERVAL.
+  uint32_t _next_contacts_add_save = 0;
+  // Pubkey prefixes whose advert blob has already been persisted this boot — see
+  // putBlobByKey. Sized above a full contact list so the common case never thrashes.
+  static const uint16_t kBlobSeenSlots = 512;   // power of two (mask), 2 KB total
+  uint32_t _blob_seen[kBlobSeenSlots] = {0};
 
   TransportKey send_scope;
   TransportKey _chan_scope_saved;             // push/popChannelScope stash
