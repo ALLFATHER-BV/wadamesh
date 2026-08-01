@@ -32427,11 +32427,18 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(btn, 0, LV_PART_MAIN);
 #if defined(TLORA_PAGER)
-    static constexpr lv_coord_t kThreadRowH = 48;
+    // Small stays at 48 px. Medium/Large gain only the pixels their two live
+    // line boxes require, so name + preview cannot overlap without returning
+    // to the oversized rows that made the short Pager list cumbersome.
+    const lv_coord_t threadTextH = lv_font_get_line_height(&g_font_14) +
+                                   lv_font_get_line_height(&g_font_12);
+    const lv_coord_t kThreadRowH = LV_MAX((lv_coord_t)48, (lv_coord_t)(threadTextH + 2));
     static constexpr lv_coord_t kThreadAvatar = 34;
+    const lv_font_t* rowMetaFont = &lv_font_montserrat_14;
 #else
     static constexpr lv_coord_t kThreadRowH = 56;
     static constexpr lv_coord_t kThreadAvatar = 40;
+    const lv_font_t* rowMetaFont = &g_font_12;
 #endif
     lv_obj_set_style_min_height(btn, kThreadRowH, LV_PART_MAIN);
     lv_obj_set_height(btn, kThreadRowH);
@@ -32511,12 +32518,12 @@ static void refreshChatList(LvChatPanel& p) {
     lv_coord_t time_w = 0;
     if (tbuf[0]) {
       lv_point_t tsz;
-      lv_txt_get_size(&tsz, tbuf, &g_font_12, 0, 0, LV_COORD_MAX, 0);
+      lv_txt_get_size(&tsz, tbuf, rowMetaFont, 0, 0, LV_COORD_MAX, 0);
       time_w = tsz.x;
       lv_obj_t* tlbl = lv_label_create(btn);
       lv_obj_add_flag(tlbl, LV_OBJ_FLAG_IGNORE_LAYOUT);
       lv_label_set_text(tlbl, tbuf);
-      lv_obj_set_style_text_font(tlbl, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_font(tlbl, rowMetaFont, LV_PART_MAIN);
       lv_obj_set_style_text_color(tlbl, lv_color_hex(unread > 0 ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
       lv_obj_align(tlbl, LV_ALIGN_TOP_RIGHT, time_x, 8);
     }
@@ -32541,7 +32548,7 @@ static void refreshChatList(LvChatPanel& p) {
     );
     lv_obj_align(nm2, LV_ALIGN_TOP_LEFT, text_x,
 #if defined(TLORA_PAGER)
-                 3
+                 kThreadRowH == 48 ? 3 : 1
 #else
                  9
 #endif
@@ -32577,7 +32584,7 @@ static void refreshChatList(LvChatPanel& p) {
     );   // one line, ellipsized
     lv_obj_align(pv, LV_ALIGN_BOTTOM_LEFT, text_x,
 #if defined(TLORA_PAGER)
-                 -3
+                 kThreadRowH == 48 ? -3 : -1
 #else
                  -8
 #endif
@@ -32591,7 +32598,7 @@ static void refreshChatList(LvChatPanel& p) {
       if (unread > 99) snprintf(cnt, sizeof cnt, "99+");
       else             snprintf(cnt, sizeof cnt, "%u", (unsigned)unread);
       lv_label_set_text(badge, cnt);
-      lv_obj_set_style_text_font(badge, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_font(badge, rowMetaFont, LV_PART_MAIN);
       lv_obj_set_style_text_color(badge, lv_color_hex(0x0A0B0C), LV_PART_MAIN);
       lv_obj_set_style_bg_color(badge, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
       lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, LV_PART_MAIN);
