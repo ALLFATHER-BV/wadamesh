@@ -209,13 +209,22 @@ void halt() {
 // "lost profile settings". The data was never gone — it was orphaned on SPIFFS.
 // Copies every SPIFFS file into SD:/meshcomod ("/prefs/<ns>.kv" flattens to
 // "/meshcomod/<ns>.kv", matching SdNvsPrefs's SD layout). Returns true only when
-// the identity file landed on the card — the caller must NOT adopt the card
-// otherwise. force=true (the Settings "Copy internal data to SD" recovery button)
+// every file and a last-written completion marker landed on the card — the caller
+// must NOT adopt the card otherwise. force=true (the Settings "Copy internal data to SD" recovery button)
 // overwrites whatever the card holds; the boot path never clobbers existing files.
 // Both filesystems must be mounted by the caller.
+static constexpr const char* kSdMigrationComplete = "/meshcomod/.spiffs-migration-v1";
+static constexpr const char* kSdMigrationCompleteTmp = "/meshcomod/.spiffs-migration-v1.tmp";
+
 bool meshcomodMigrateSpiffsToSd(bool force) {
   if (!SPIFFS.exists("/identity/_main.id")) return false;   // nothing worth adopting
   const bool sd_identity_preexisting = SD.exists("/meshcomod/identity/_main.id");
+  // The marker is the commit record. Remove it before an explicit overwrite so
+  // a reset halfway through cannot leave the old marker blessing mixed data.
+  if (force) {
+    SD.remove(kSdMigrationComplete);
+    SD.remove(kSdMigrationCompleteTmp);
+  }
   SD.mkdir("/meshcomod");
   SD.mkdir("/meshcomod/identity");
   SD.mkdir("/meshcomod/bl");
@@ -238,8 +247,11 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
     else
       snprintf(dst, sizeof dst, "/meshcomod%s", src);
     if (!force && SD.exists(dst)) { f.close(); continue; }   // boot path: never clobber
+    char tmp[120];
+    snprintf(tmp, sizeof tmp, "%s.mig", dst);
+    SD.remove(tmp);
     File s = SPIFFS.open(src, FILE_READ);
-    File d = s ? SD.open(dst, FILE_WRITE) : File();          // FILE_WRITE truncates
+    File d = s ? SD.open(tmp, FILE_WRITE) : File();
     bool ok = s && d;
     size_t since_feed = 0;
     while (ok && s.available()) {
@@ -255,8 +267,21 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
     }
     if (s) s.close();
     if (d) d.close();
-    if (ok) { ++copied; if (strcmp(src, "/identity/_main.id") == 0) identity_ok = true; }
-    else    { ++failed; Serial.printf("[BOOT] SD migrate FAILED: %s\n", src); if (SD.exists(dst)) SD.remove(dst); }
+    // Commit each destination only after its temporary file is complete. This
+    // prevents a power cut from leaving an existing-looking truncated file that
+    // a later non-clobbering retry would skip.
+    if (ok) {
+      if (force && SD.exists(dst) && !SD.remove(dst)) ok = false;
+      if (ok && !SD.rename(tmp, dst)) ok = false;
+    }
+    if (ok) {
+      ++copied;
+      if (strcmp(src, "/identity/_main.id") == 0) identity_ok = true;
+    } else {
+      ++failed;
+      Serial.printf("[BOOT] SD migrate FAILED: %s\n", src);
+      SD.remove(tmp);
+    }
     f.close();
     esp_task_wdt_reset();
     yield();
@@ -269,7 +294,22 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
   if (!force && !identity_ok && SD.exists("/meshcomod/identity/_main.id")) identity_ok = true;
   Serial.printf("[BOOT] SPIFFS -> SD migration: %d copied, %d failed, identity %s\n",
                 copied, failed, identity_ok ? "ok" : "MISSING");
-  const bool complete = identity_ok && failed == 0;
+  bool complete = identity_ok && failed == 0;
+  if (complete) {
+    SD.remove(kSdMigrationCompleteTmp);
+    File marker = SD.open(kSdMigrationCompleteTmp, FILE_WRITE);
+    bool marker_ok = marker && marker.print("complete v1\n") == 12;
+    if (marker) marker.close();
+    if (marker_ok) {
+      SD.remove(kSdMigrationComplete);
+      marker_ok = SD.rename(kSdMigrationCompleteTmp, kSdMigrationComplete);
+    }
+    if (!marker_ok) {
+      SD.remove(kSdMigrationCompleteTmp);
+      Serial.println("[BOOT] SD migrate FAILED: completion marker");
+      complete = false;
+    }
+  }
   if (!complete && !sd_identity_preexisting &&
       SD.exists("/meshcomod/identity/_main.id")) {
     // This attempt introduced the adoption key. Roll it back so a missing NVS
@@ -619,13 +659,28 @@ void setup() {
           Preferences _mp;
           const bool mp_ok = _mp.begin("touch", false);
           const bool mig_busy = mp_ok && _mp.getBool("sd_mig_busy", false);
+#if defined(TLORA_PAGER)
+          // #193 predates the completion marker. Re-walk an unmarked Pager tree
+          // without clobbering existing files, filling any missing files from
+          // SPIFFS and committing the marker last before it can be adopted.
+          const bool needs_migration =
+              !SD.exists("/meshcomod/identity/_main.id") ||
+              !SD.exists(kSdMigrationComplete);
+#else
+          const bool needs_migration =
+              !SD.exists("/meshcomod/identity/_main.id");
+#endif
           if (mig_busy) {
             if (mp_ok) _mp.end();
             adopt = false;
             Serial.println("[BOOT] prior SD migration did not complete -> skipping (staying on SPIFFS); retry via Settings > Copy internal data to SD");
-          } else if (!SD.exists("/meshcomod/identity/_main.id")) {
-            if (mp_ok) { _mp.putBool("sd_mig_busy", true); _mp.end(); }
-            adopt = meshcomodMigrateSpiffsToSd(false);
+          } else if (needs_migration) {
+            // Do not start without a durable rollback breadcrumb. If NVS is
+            // unavailable, a reset after identity lands would otherwise leave
+            // no evidence that the SD tree is only partially migrated.
+            const bool armed = mp_ok && _mp.putBool("sd_mig_busy", true) == 1;
+            if (mp_ok) _mp.end();
+            adopt = armed && meshcomodMigrateSpiffsToSd(false);
             // Keep the breadcrumb latched after a returned-but-incomplete copy.
             // That matters when identity landed before a larger history file
             // failed: the next boot must not adopt the partial SD tree merely
@@ -634,7 +689,9 @@ void setup() {
             if (adopt) {
               Preferences _mp2; if (_mp2.begin("touch", false)) { _mp2.remove("sd_mig_busy"); _mp2.end(); }
             }
-            if (!adopt) Serial.println("[BOOT] SD migration incomplete -> staying on SPIFFS this boot");
+            if (!adopt) Serial.println(armed
+                ? "[BOOT] SD migration incomplete -> staying on SPIFFS this boot"
+                : "[BOOT] SD migration breadcrumb unavailable -> staying on SPIFFS this boot");
           } else {
             if (mp_ok) _mp.end();
           }
