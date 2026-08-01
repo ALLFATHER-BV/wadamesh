@@ -16,7 +16,9 @@ constexpr uint32_t kBreadcrumbSpacingMeters = 25;
 constexpr uint32_t kMotionPredictionSeconds = 45;
 constexpr uint32_t kMotionMinSampleSeconds = 5;
 constexpr uint32_t kMotionMaxSampleSeconds = 180;
-constexpr uint32_t kMotionObservationSpacingMeters = 8;
+// Five metres is large enough to reject ordinary stationary GPS wander while
+// still letting a slow walker establish a course without an excessive wait.
+constexpr uint32_t kMotionObservationSpacingMeters = 5;
 
 enum class MotionConfidence : uint8_t {
   None = 0,

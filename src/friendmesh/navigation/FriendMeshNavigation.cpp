@@ -10,7 +10,11 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kEarthRadiusMeters = 6371000.0;
 constexpr uint32_t kMotionGoodDisplacementMeters = 15;
-constexpr double kMotionMaxMetersPerSecond = 3.5;
+// Friend prediction is intentionally walking-only. The local course is also
+// used in a car or on other fast transport, so it needs a separate plausibility
+// ceiling; sharing the walking limit made HEADWAY wait above 12.6 km/h.
+constexpr double kTargetMotionMaxMetersPerSecond = 3.5;
+constexpr double kLocalCourseMaxMetersPerSecond = 70.0;
 
 double radiansFromE7(int32_t value) {
   return (static_cast<double>(value) / 10000000.0) * kPi / 180.0;
@@ -80,10 +84,11 @@ uint16_t absoluteBearingDegrees(const PositionRecord& from,
   return static_cast<uint16_t>(degrees + 0.5) % 360;
 }
 
-MotionEstimate estimateTargetMotion(const PositionRecord& previous,
-                                    const PositionRecord& current,
-                                    uint32_t now,
-                                    uint32_t horizonSeconds) {
+static MotionEstimate estimateMotion(const PositionRecord& previous,
+                                     const PositionRecord& current,
+                                     uint32_t now,
+                                     uint32_t horizonSeconds,
+                                     double maxMetersPerSecond) {
   MotionEstimate estimate = {};
   if (!positionUsable(previous) || !positionUsable(current) ||
       !idsEqual(previous.subjectId, current.subjectId) ||
@@ -100,7 +105,7 @@ MotionEstimate estimateTargetMotion(const PositionRecord& previous,
   if (displacement == UINT32_MAX) return estimate;
   const double speed = static_cast<double>(displacement) /
                        static_cast<double>(sampleSeconds);
-  if (speed > kMotionMaxMetersPerSecond) return estimate;
+  if (speed > maxMetersPerSecond) return estimate;
 
   estimate.samplesUsable = true;
   estimate.displacementMeters = displacement;
@@ -143,12 +148,22 @@ MotionEstimate estimateTargetMotion(const PositionRecord& previous,
   return estimate;
 }
 
+MotionEstimate estimateTargetMotion(const PositionRecord& previous,
+                                    const PositionRecord& current,
+                                    uint32_t now,
+                                    uint32_t horizonSeconds) {
+  return estimateMotion(previous, current, now, horizonSeconds,
+                        kTargetMotionMaxMetersPerSecond);
+}
+
 CourseToTargetEstimate estimateCourseToTarget(
     const PositionRecord& previousLocal, const PositionRecord& currentLocal,
     const PositionRecord& target, uint32_t now) {
   CourseToTargetEstimate estimate = {};
   estimate.progress = NavigationProgress::Unknown;
-  estimate.motion = estimateTargetMotion(previousLocal, currentLocal, now);
+  estimate.motion = estimateMotion(previousLocal, currentLocal, now,
+                                   kMotionPredictionSeconds,
+                                   kLocalCourseMaxMetersPerSecond);
   const uint32_t previousDistance =
       greatCircleDistanceMeters(previousLocal, target);
   const uint32_t currentDistance =

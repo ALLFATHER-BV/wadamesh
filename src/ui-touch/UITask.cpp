@@ -29507,7 +29507,7 @@ static void friendmeshCompassHelpCb(lv_event_t* e) {
       "Distance is straight-line distance. The degree and letters (for example, "
       "135 deg SE) are the absolute bearing from your position.\n\n"
       "YOUR COURSE AND HEADWAY\n"
-      "After you move at least 8 meters across two recent GPS fixes, page two "
+      "After you move at least 5 meters across two recent GPS fixes, page two "
       "shows your course over ground, speed, an immediate plain-language turn "
       "such as slight right or sharp left, and "
       "whether the distance is closing, opening, or steady. ETA appears only "

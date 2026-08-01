@@ -1232,6 +1232,37 @@ void testPositionsAndNavigation() {
   CHECK(course.progress == friendmesh::NavigationProgress::Closer);
   CHECK(course.closingSpeedCentimetersPerSecond > 100);
 
+  // Local headway remains usable above the walking-only prediction ceiling.
+  // Roughly 600 m east in 20 s is about 30 m/s (highway speed).
+  const friendmesh::PositionRecord aliceFast =
+      makePosition(alice.id, 0, 53900, 120);
+  const friendmesh::PositionRecord fartherEastTarget =
+      makePosition(bob.id, 0, 200000, 120);
+  course = friendmesh::estimateCourseToTarget(
+      alicePrevious, aliceFast, fartherEastTarget, 125);
+  CHECK(course.courseUsable);
+  CHECK(course.motion.speedCentimetersPerSecond >= 2900);
+  CHECK(course.motion.speedCentimetersPerSecond <= 3100);
+  CHECK(course.motion.bearingDegrees >= 89 &&
+        course.motion.bearingDegrees <= 91);
+
+  // About five metres over 20 seconds is slow movement, not stationary jitter,
+  // and should eventually establish a course.
+  const friendmesh::PositionRecord aliceSlow =
+      makePosition(alice.id, 0, 450, 120);
+  course = friendmesh::estimateCourseToTarget(
+      alicePrevious, aliceSlow, eastTarget, 125);
+  CHECK(course.courseUsable);
+  CHECK(course.motion.speedCentimetersPerSecond >= 20);
+  CHECK(course.motion.speedCentimetersPerSecond <= 30);
+
+  // Retain a high ceiling for rejecting a genuine GPS teleport.
+  const friendmesh::PositionRecord aliceImplausible =
+      makePosition(alice.id, 0, 200000, 120);
+  course = friendmesh::estimateCourseToTarget(
+      alicePrevious, aliceImplausible, fartherEastTarget, 125);
+  CHECK(!course.courseUsable);
+
   // The same eastbound course needs a left turn for a target due north.
   const friendmesh::PositionRecord northTarget =
       makePosition(bob.id, 10000, 2500, 120);
