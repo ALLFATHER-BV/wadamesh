@@ -1557,6 +1557,26 @@ static inline lv_coord_t modalAvailH() { return lv_disp_get_ver_res(nullptr) - S
 // kbApplyLayoutForRotation), full CHAT_KB_H in portrait.
 static inline bool       chatLandscape() { return lv_disp_get_hor_res(nullptr) > lv_disp_get_ver_res(nullptr); }
 static inline lv_coord_t chatScreenW()   { return lv_disp_get_hor_res(nullptr); }
+static inline lv_coord_t chatComposerChipSz() {
+#if CAP_LARGE_SCREEN
+  return 56;
+#elif defined(TLORA_PAGER)
+  return chatComposerBaseH() - 4;
+#else
+  return 30;
+#endif
+}
+static inline lv_coord_t chatComposerSendSz() {
+#if defined(TLORA_PAGER)
+  return chatComposerChipSz();
+#else
+  return 34;
+#endif
+}
+static inline lv_coord_t chatComposerTaW() {
+  const lv_coord_t chip = chatComposerChipSz();
+  return chatScreenW() - (2 * chip + 12) - chatComposerSendSz() - 14;
+}
 // The status bar is DOUBLE height in a chat (thread name on the lower row + a centred
 // cog). chatBarH() is that full visual height (used by the channel/blocked sheets). The
 // conversation itself, though, starts just under the SOLID top row (STATUSBAR_H): the
@@ -5601,7 +5621,7 @@ static void kbApplyLayoutForRotation(uint8_t rot) {
       lv_obj_set_y(s_kb_panel->composer_row, chatCompYKb());
     }
     if (s_kb_panel->composer_ta)
-      lv_obj_set_width(s_kb_panel->composer_ta, chatScreenW() - 120);
+      lv_obj_set_width(s_kb_panel->composer_ta, chatComposerTaW());
   }
   // Rotation arrows. Default: just above the keyboard's top edge. In the
   // chat panel that area is occupied by the composer row (QR + textarea +
@@ -22907,7 +22927,7 @@ static void makeHome(lv_obj_t* tab) {
   const int chart_y = SC(60);
 #endif
 #if defined(TLORA_PAGER)
-  const int chart_head_h = lv_font_get_line_height(&g_font_12) + 2;
+  const int chart_head_h = pager_size ? lv_font_get_line_height(&g_font_12) + 2 : 16;
 #else
   const int chart_head_h = 16;
 #endif
@@ -29220,13 +29240,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // Composer chip size: ~2x on the large screen (Tanmatsu) so the QR/emoji chips
   // aren't tiny on the 800-px panel. The 64-px composer row (CHAT_COMP_H on
   // CAP_LARGE_SCREEN) has room; 30 px elsewhere keeps the small boards unchanged.
-#if CAP_LARGE_SCREEN
-  const lv_coord_t chip_sz = 56;
-#elif defined(TLORA_PAGER)
-  const lv_coord_t chip_sz = composer_h - 4;
-#else
-  const lv_coord_t chip_sz = 30;
-#endif
+  const lv_coord_t chip_sz = chatComposerChipSz();
   const lv_coord_t chip_gap = 6;
 
   // Macro picker button: a compact chip taps to a popup grid of user-
@@ -29295,13 +29309,8 @@ static void makeChatDetail(LvChatPanel& p) {
   // Channel settings lives on the TOP status-bar gear (styled as the green ○ key), not a
   // composer chip — so the left chip row stays QR + emoji and the textarea geometry is fixed.
   const lv_coord_t comp_ta_x = 2 * chip_sz + 2 * chip_gap;       // start past both left chips + gaps
-  const lv_coord_t send_sz =
-#if defined(TLORA_PAGER)
-      chip_sz;
-#else
-      34;
-#endif
-  const lv_coord_t comp_ta_w = chatScreenW() - comp_ta_x - send_sz - 14;
+  const lv_coord_t send_sz = chatComposerSendSz();
+  const lv_coord_t comp_ta_w = chatComposerTaW();
 
   p.composer_ta = lv_textarea_create(p.composer_row);
   // Fill the row between the two left chips and Send (right): content width is
@@ -33074,7 +33083,7 @@ static void refreshChatList(LvChatPanel& p) {
                                    lv_font_get_line_height(&g_font_12);
     const lv_coord_t kThreadRowH = LV_MAX((lv_coord_t)48, (lv_coord_t)(threadTextH + 2));
     static constexpr lv_coord_t kThreadAvatar = 34;
-    const lv_font_t* rowMetaFont = &lv_font_montserrat_14;
+    const lv_font_t* rowMetaFont = touchPrefsGetUiScale() ? &lv_font_montserrat_14 : &g_font_12;
 #else
     static constexpr lv_coord_t kThreadRowH = 56;
     static constexpr lv_coord_t kThreadAvatar = 40;
@@ -33188,7 +33197,7 @@ static void refreshChatList(LvChatPanel& p) {
     );
     lv_obj_align(nm2, LV_ALIGN_TOP_LEFT, text_x,
 #if defined(TLORA_PAGER)
-                 kThreadRowH == 48 ? 3 : 1
+                 touchPrefsGetUiScale() == 0 ? 3 : 1
 #else
                  9
 #endif
@@ -33224,7 +33233,7 @@ static void refreshChatList(LvChatPanel& p) {
     );   // one line, ellipsized
     lv_obj_align(pv, LV_ALIGN_BOTTOM_LEFT, text_x,
 #if defined(TLORA_PAGER)
-                 kThreadRowH == 48 ? -3 : -1
+                 touchPrefsGetUiScale() == 0 ? -3 : -1
 #else
                  -8
 #endif
