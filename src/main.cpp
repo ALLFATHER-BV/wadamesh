@@ -519,11 +519,34 @@ void setup() {
         { 300, 1000000 }, { 450, 1000000 }, { 650,  400000 }, { 900, 400000 },
       };
       int tries = want_full_sd ? 7 : 3;
+      uint32_t mounted_hz = 0;
       for (int a = 0; a < tries && !sd_mounted; ++a) {
         SD.end();
         delay(kBootMount[a].settle_ms);
-        if (SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 6) && SD.cardType() != CARD_NONE)
+        if (SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
           sd_mounted = true;
+          mounted_hz = kBootMount[a].hz;
+        }
+      }
+      // RENEGOTIATE UPWARD after a slow-rung success (GH #194). Standard SD bring-up is
+      // "initialise at a conservative clock, then raise it" — but SD.begin's clock is the
+      // operating clock for the whole session, so a card that only WOKE at 400 kHz then ran
+      // its entire life at 400 kHz (~25 KB/s). With the card as the primary store that was a
+      // ~3-minute boot (contacts + history at modem speed), runtime f_getfree timeouts (the
+      // file manager showing an inserted card as 0 KB/empty), and wedged backups. An
+      // initialised card almost always sustains 4 MHz even when its power-up handshake needed
+      // 400 kHz; if the fast re-begin fails, fall back to the clock that just worked.
+      if (sd_mounted && mounted_hz < 4000000) {
+        SD.end();
+        delay(60);
+        if (SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
+          Serial.printf("[BOOT] SD renegotiated %lu -> 4000000 Hz\n", (unsigned long)mounted_hz);
+        } else {
+          SD.end();
+          delay(120);
+          sd_mounted = SD.begin(PIN_SD_CS, *_spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
+          if (sd_mounted) Serial.printf("[BOOT] SD stays at %lu Hz (4 MHz renegotiation failed)\n", (unsigned long)mounted_hz);
+        }
       }
     }
     if (sd_mounted) {

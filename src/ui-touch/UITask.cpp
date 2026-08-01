@@ -18698,13 +18698,28 @@ static bool fmSdTryMount() {
   };
   const int kAttempts = (int)(sizeof(kMountLadder) / sizeof(kMountLadder[0]));
   bool mounted = false;
+  uint32_t mounted_hz = 0;
   disableLoopWDT();
   for (int attempt = 0; attempt < kAttempts; ++attempt) {
     SD.end();
     delay(kMountLadder[attempt].settle_ms);
     if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
       mounted = true;
+      mounted_hz = kMountLadder[attempt].hz;
       break;
+    }
+  }
+  // Renegotiate upward after a slow-rung success (GH #194): the succeeding rung's clock used
+  // to become the SESSION clock, so a card whose wake-up needed 400 kHz served contacts,
+  // history and tiles at ~25 KB/s forever after ("slower is fine" above predates the SD being
+  // the primary store). Init slow, then raise — fall back to the proven clock if 4 MHz fails.
+  if (mounted && mounted_hz < 4000000) {
+    SD.end();
+    delay(60);
+    if (!(SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE)) {
+      SD.end();
+      delay(120);
+      mounted = SD.begin(PIN_SD_CS, *spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
     }
   }
   enableLoopWDT();
