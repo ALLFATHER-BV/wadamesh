@@ -666,6 +666,21 @@ static void initTouchFontFallbacks() {
   }
 #endif
   lv_font_t*       prim[3]   = { &g_font_12, &g_font_14, &g_font_16 };
+#if defined(TLORA_PAGER)
+  // LVGL lays out every glyph in a fallback chain using the primary font's
+  // line box. Arial Unicode needs a taller box than Montserrat at the Pager's
+  // accessible sizes, so carry those metrics onto the primary copies. Without
+  // this, non-Latin and accented glyphs can clip and multiline input grows by
+  // too little even though the fallback bitmap itself is the requested size.
+  if (touchPrefsGetUiScale() != 0) {
+    for (int i = 0; i < 3; ++i) {
+      if (extras[i]->line_height > prim[i]->line_height) {
+        prim[i]->line_height = extras[i]->line_height;
+        prim[i]->base_line = extras[i]->base_line;
+      }
+    }
+  }
+#endif
   for (int i = 0; i < 3; ++i) {
     s_emoji_font[i] = lv_imgfont_create(16, emojiImgfontPathCb);   // 16 px baked glyphs (~15% larger; sit on the text baseline)
     if (s_emoji_font[i]) { s_emoji_font[i]->fallback = extras[i]; prim[i]->fallback = s_emoji_font[i]; }
