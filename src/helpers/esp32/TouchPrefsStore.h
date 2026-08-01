@@ -13,6 +13,11 @@ void touchPrefsBegin();
 // Force a fresh load of the settings blob. Call after SdNvsPrefs::useFile() at
 // boot: an earlier pref read may have cached the blob from the legacy backend.
 void touchPrefsReload();
+// Drive/force the deferred file-backed snapshot writer without exposing the
+// vendored core's stale SdNvsPrefs header to UI translation units.
+void touchPrefsTick(uint32_t now_ms);
+bool touchPrefsFlush(uint32_t timeout_ms = 12000);
+bool touchPrefsIoBusy();
 
 /** Screen timeout in seconds; 0 = never sleep. Default 20. */
 uint16_t touchPrefsGetScreenTimeoutSecs();
