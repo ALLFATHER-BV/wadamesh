@@ -146,8 +146,8 @@ bool touchPrefsSetAppGridLarge(bool on);
 bool touchPrefsGetSleepIdle();
 bool touchPrefsSetSleepIdle(bool on);
 
-/* UI resolution scale (Tanmatsu): 0=100% (native 800x480), 1=150%, 2=200%. Applied at boot —
- * LVGL renders at a lower resolution and the flush upscales to the panel. Reboot to apply. */
+/* UI-size preset, 0..2. Large-screen boards retain their percentage mapping;
+ * the T-Pager exposes Small/Medium/Large font presets. Reboot to apply. */
 uint8_t touchPrefsGetUiScale();
 bool    touchPrefsSetUiScale(uint8_t scale);
 

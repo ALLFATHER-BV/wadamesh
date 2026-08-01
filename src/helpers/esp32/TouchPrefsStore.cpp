@@ -38,7 +38,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 42;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF); v40 hist_sync_after (chat-history flush: consecutive off-thread write failures before the blocking loop-task fallback, 0 = never); v41 p4_antenna (T-Display P4 antenna select; now RESERVED/unused - the choice is session-only so every boot comes up on the on-board antenna); v42 hist_per_chat (max stored messages PER chat, default 250 - a busy public channel used to be able to fill the whole shared ring and drag the UI down)
+static const uint8_t  TOUCH_CFG_VER   = 43;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF); v40 hist_sync_after (chat-history flush: consecutive off-thread write failures before the blocking loop-task fallback, 0 = never); v41 p4_antenna (T-Display P4 antenna select; now RESERVED/unused - the choice is session-only so every boot comes up on the on-board antenna); v42 hist_per_chat (max stored messages PER chat, default 250 - a busy public channel used to be able to fill the whole shared ring and drag the UI down); v43 Pager UI-size presets (reset the previously ignored large-screen default to Small once)
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -83,7 +83,7 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  map_show_tilexyz; // show the zoom + tile z/x/y line on the map (bool) — v6
   uint8_t  map_show_contacts;// show contact markers on the map (bool) — v6
   uint8_t  app_grid_large;   // app drawer: large grid (one fewer column, bigger icons) — v7
-  uint8_t  ui_scale;         // UI resolution scale: 0=100% 1=150% 2=200% (Tanmatsu, applied at boot) — v8
+  uint8_t  ui_scale;         // UI-size preset 0..2 (board-specific font/geometry mapping, applied at boot) — v8
   uint8_t  kbd_nav;          // T-Deck keyboard ESDFX nav: 0=off (default), 1=on (E/X/S/F move focus, D select, Q back) — v9 (was tb_keypad)
   uint8_t  sleep_idle;       // idle light-sleep feature on/off (bool) — v10 (trailing so existing blobs default it OFF)
   uint8_t  nav_keys[5];      // keyboard-nav tab hotkeys (ASCII), one per main tab [chat,contacts,home,map,settings] — v11 (trailing)
@@ -172,7 +172,11 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.map_show_tilexyz  = 1;
   c.map_show_contacts = 1;
   c.app_grid_large    = 0;      // default: compact app grid (T-Deck 4 cols / V4 3 cols)
-  c.ui_scale          = 1;      // default: 150% "Large" UI scale (Tanmatsu; S3 boards ignore this)
+#if defined(TLORA_PAGER)
+  c.ui_scale          = 0;      // Pager: Small/current typography by default
+#else
+  c.ui_scale          = 1;      // large-screen boards keep their existing 150% default
+#endif
 #if defined(HAS_TANMATSU)
   c.kbd_nav           = 1;      // Tanmatsu: no touchscreen — keyboard nav is the only input, always on
 #else
@@ -284,6 +288,12 @@ static void cfgLoadOrMigrate() {
         if (s_cfg.ver < 37) s_cfg.remote_landscape = 1;   // remote mode = landscape/desktop by default (one-time flip; portrait stays a toggle)
         if (s_cfg.ver < 38) s_cfg.web_terminal = 0;       // new trailing field: web mesh terminal off by default (opt-in)
         if (s_cfg.ver < 39) s_cfg.map_tile_debug = 0;     // new trailing field: tile diagnostic overlay off by default
+#if defined(TLORA_PAGER)
+        // ui_scale existed before the Pager exposed the selector, so every old
+        // Pager inherited the unrelated large-screen default (1) while ignoring
+        // it. Reset it once so upgrading cannot enlarge the UI without consent.
+        if (s_cfg.ver < 43) s_cfg.ui_scale = 0;
+#endif
         s_cfg.ver = TOUCH_CFG_VER;
         s_cfg.magic = TOUCH_CFG_MAGIC;
         cfgFlush();                // rewrite with new fields defaulted-in
@@ -1052,7 +1062,7 @@ bool touchPrefsSetAppGridLarge(bool on) {
 
 uint8_t touchPrefsGetUiScale() {
   if (!s_begun) touchPrefsBegin();
-  return s_cfg.ui_scale > 2 ? 0 : s_cfg.ui_scale;   // 0=100% 1=150% 2=200%
+  return s_cfg.ui_scale > 2 ? 0 : s_cfg.ui_scale;
 }
 bool touchPrefsSetUiScale(uint8_t scale) {
   if (!s_begun) touchPrefsBegin();
