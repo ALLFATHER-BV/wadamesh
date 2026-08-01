@@ -133,6 +133,7 @@ enum class FriendLinkAction : uint8_t {
   Accepted = 1,
   Removed = 2,
   Acknowledged = 3,
+  Declined = 4,
 };
 
 struct FriendLinkEnvelope {
@@ -511,6 +512,18 @@ REQUEST → ACCEPT → ACK
 
 The requester saves the recipient after receiving ACCEPT and successfully queuing ACK. The recipient saves the requester only after receiving that ACK.
 
+The live transaction policy is direct-first. Only the initiator may fall back
+to flooding, with a hard maximum of two floods for the transaction; ACKs never
+flood. A decline is one authenticated direct control with no ACK. A dismissible
+modal displays each persisted stage and the flood count.
+
+A fixed 16-record journal alternates between two checksummed internal NVS slots.
+It contains only public correlation metadata and budgets. It does not contain
+private keys, channel secrets, messages, location, or route/hash history. After
+a reboot it can correlate a late response and retain the flood limit, but the
+RAM-only encoded retry packet and route are not yet reconstructed for automatic
+resend. If both existing slots fail validation, FriendMesh sending fails closed.
+
 ## BLE group creation and joining
 
 ![BLE group joining](docs/images/friendmesh/ble-group-join-flow.png)
@@ -571,12 +584,15 @@ Good for:
 
 ## 4. Accept, deny, block, and reciprocal removal
 
-Acceptance is ACK-gated. Denial is silent. Blocking prevents future requests from the same full identity. Removal quietly attempts to remove the relationship on both devices.
+Acceptance is ACK-gated. Denial sends one authenticated direct notice and does
+not request an ACK. Blocking prevents future requests from the same full
+identity. Removal quietly attempts to remove the relationship on both devices,
+using direct delivery when possible and no more than two initiator-owned floods.
 
 Good for:
 
 1. Preventing one-sided friendship caused by an acceptance packet the requester never received.
-2. Denying an unwanted request without sending the requester a negative notification.
+2. Giving the requester a bounded final decline state without an ACK loop.
 3. Removing a former Friend while preserving their ordinary MeshCore contact and route information.
 
 ## 5. FriendMesh private groups

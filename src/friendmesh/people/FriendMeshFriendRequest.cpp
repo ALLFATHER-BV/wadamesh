@@ -10,6 +10,7 @@ constexpr uint8_t kAcceptMagic[] = {'F', 'M', 'A', '1'};
 constexpr uint8_t kLinkMagic[] = {'F', 'M', 'L', '1'};
 constexpr uint8_t kVersion = 1;
 constexpr uint8_t kRequestVersion = 2;
+constexpr uint8_t kLinkVersion = 2;
 
 bool allZero(const uint8_t* value, size_t length) {
   if (!value) return true;
@@ -213,15 +214,19 @@ ResultCode encodeFriendLink(const FriendLinkEnvelope& link,
   const bool removed = link.action == FriendLinkAction::Removed;
   const bool acknowledged =
       link.action == FriendLinkAction::Acknowledged;
+  const bool declined = link.action == FriendLinkAction::Declined;
   if (!destination || capacity < kFriendLinkEncodedBytes ||
-      (!accepted && !removed && !acknowledged) || !validName(link.peerName) ||
-      ((accepted || acknowledged) &&
-       allZero(link.requestId, sizeof(link.requestId))))
+      (!accepted && !removed && !acknowledged && !declined) ||
+      !validName(link.peerName) ||
+      ((accepted || acknowledged || declined) &&
+       allZero(link.requestId, sizeof(link.requestId))) ||
+      (link.returnPathLength != kFriendRequestReturnPathUnknown &&
+       !validReturnPath(link.returnPathLength)))
     return ResultCode::InvalidArgument;
   size_t offset = 0;
   memcpy(destination + offset, kLinkMagic, sizeof(kLinkMagic));
   offset += sizeof(kLinkMagic);
-  destination[offset++] = kVersion;
+  destination[offset++] = kLinkVersion;
   destination[offset++] = static_cast<uint8_t>(link.action);
   memcpy(destination + offset, link.requestId, sizeof(link.requestId));
   offset += sizeof(link.requestId);
@@ -230,6 +235,15 @@ ResultCode encodeFriendLink(const FriendLinkEnvelope& link,
                                     kFriendRequestNameBytes - 1);
   memcpy(destination + offset, link.peerName, nameLength);
   offset += kFriendRequestNameBytes;
+  destination[offset++] = link.returnPathLength;
+  memset(destination + offset, 0, kFriendRequestReturnPathMaxBytes);
+  if (link.returnPathLength != kFriendRequestReturnPathUnknown) {
+    const size_t pathBytes =
+        static_cast<size_t>(link.returnPathLength & 0x3F) *
+        static_cast<size_t>((link.returnPathLength >> 6) + 1);
+    if (pathBytes) memcpy(destination + offset, link.returnPath, pathBytes);
+  }
+  offset += kFriendRequestReturnPathMaxBytes;
   written = offset;
   return ResultCode::Ok;
 }
@@ -237,21 +251,42 @@ ResultCode encodeFriendLink(const FriendLinkEnvelope& link,
 ResultCode decodeFriendLink(const uint8_t* source, size_t length,
                             FriendLinkEnvelope& link) {
   link = {};
-  if (!validZeroPadding(source, length, kFriendLinkEncodedBytes) ||
-      memcmp(source, kLinkMagic, sizeof(kLinkMagic)) != 0 ||
-      source[4] != kVersion) return ResultCode::CorruptData;
+  if (!source || length < kFriendLinkV1EncodedBytes ||
+      memcmp(source, kLinkMagic, sizeof(kLinkMagic)) != 0) {
+    return ResultCode::CorruptData;
+  }
+  const bool legacy = source[4] == kVersion;
+  const bool current = source[4] == kLinkVersion;
+  const size_t expectedLength = legacy
+      ? kFriendLinkV1EncodedBytes : kFriendLinkEncodedBytes;
+  if ((!legacy && !current) ||
+      !validZeroPadding(source, length, expectedLength))
+    return ResultCode::CorruptData;
   link.action = static_cast<FriendLinkAction>(source[5]);
   memcpy(link.requestId, source + 6, sizeof(link.requestId));
   memcpy(link.peerName, source + 6 + sizeof(link.requestId),
          kFriendRequestNameBytes);
   link.peerName[kFriendRequestNameBytes - 1] = '\0';
+  if (current) {
+    size_t offset = kFriendLinkV1EncodedBytes;
+    link.returnPathLength = source[offset++];
+    memcpy(link.returnPath, source + offset,
+           kFriendRequestReturnPathMaxBytes);
+    if (link.returnPathLength != kFriendRequestReturnPathUnknown &&
+        !validReturnPath(link.returnPathLength))
+      return ResultCode::CorruptData;
+  } else {
+    link.returnPathLength = kFriendRequestReturnPathUnknown;
+  }
   const bool accepted = link.action == FriendLinkAction::Accepted;
   const bool removed = link.action == FriendLinkAction::Removed;
   const bool acknowledged =
       link.action == FriendLinkAction::Acknowledged;
+  const bool declined = link.action == FriendLinkAction::Declined;
   return (validName(link.peerName) &&
           ((accepted && !allZero(link.requestId, sizeof(link.requestId))) ||
            removed ||
+           (declined && !allZero(link.requestId, sizeof(link.requestId))) ||
            (acknowledged &&
             !allZero(link.requestId, sizeof(link.requestId)))))
       ? ResultCode::Ok : ResultCode::CorruptData;

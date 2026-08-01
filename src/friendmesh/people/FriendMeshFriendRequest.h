@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "friendmesh/core/FriendMeshCoreTypes.h"
+#include "friendmesh/core/FriendMeshTransaction.h"
 
 namespace friendmesh {
 
@@ -74,19 +75,25 @@ ResultCode decodeFriendAccept(const uint8_t* source, size_t length,
 
 // Authenticated relationship controls ride in the same MeshCore ANON_REQ
 // carrier. Acceptance is user-visible and must correlate to an outgoing
-// request. Removal is deliberately silent and idempotent; the authenticated
-// carrier identity is the relationship being removed. Denial is never sent.
+// request. Removal is deliberately quiet and idempotent; the authenticated
+// carrier identity is the relationship being removed. Decline is explicit but
+// creates no relationship state and therefore needs no ACK-of-the-decline.
 enum class FriendLinkAction : uint8_t {
   Accepted = 1,
   Removed = 2,
   Acknowledged = 3,
+  Declined = 4,
 };
-constexpr size_t kFriendLinkEncodedBytes =
+constexpr size_t kFriendLinkV1EncodedBytes =
     4 + 1 + 1 + kFriendRequestIdBytes + kFriendRequestNameBytes;
+constexpr size_t kFriendLinkEncodedBytes =
+    kFriendLinkV1EncodedBytes + 1 + kFriendRequestReturnPathMaxBytes;
 struct FriendLinkEnvelope {
   FriendLinkAction action;
   uint8_t requestId[kFriendRequestIdBytes];
   char peerName[kFriendRequestNameBytes];
+  uint8_t returnPathLength;
+  uint8_t returnPath[kFriendRequestReturnPathMaxBytes];
 };
 ResultCode encodeFriendLink(const FriendLinkEnvelope& link,
                             uint8_t* destination, size_t capacity,
@@ -94,6 +101,8 @@ ResultCode encodeFriendLink(const FriendLinkEnvelope& link,
 ResultCode decodeFriendLink(const uint8_t* source, size_t length,
                             FriendLinkEnvelope& link);
 
+// User-visible transaction progress. Radio/domain code reports these states;
+// the UI renders them without inferring delivery from a successful queue call.
 // Reverse a MeshCore encoded direct path entry-by-entry. encodedPathLength is
 // the normal MeshCore byte: upper bits select hash size and lower 6 bits hold
 // the number of repeaters. Returns zero on malformed/capacity failure.

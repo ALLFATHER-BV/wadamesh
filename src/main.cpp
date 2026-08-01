@@ -3,7 +3,6 @@
 #include "MyMesh.h"
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
 #include "friendmesh/FriendMeshFeatureService.h"
-#include "friendmesh/app/FriendMeshDevelopmentRuntime.h"
 #include "friendmesh/people/FriendMeshBlePresence.h"
 #endif
 #if defined(ESP32_PLATFORM)
@@ -745,17 +744,7 @@ void setup() {
   );
   Serial.println("[BOOT] mesh ok");
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-  // Development-only local runtime. It is intentionally PSRAM-only: falling
-  // back to scarce internal DRAM can destabilize the touch/Wi-Fi/BLE runtime.
   friendmesh::featureService.begin();
-  void* friendmeshRuntimeMemory = heap_caps_malloc(
-      sizeof(friendmesh::DevelopmentRuntime), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (friendmeshRuntimeMemory) {
-    friendmesh::setDevelopmentRuntime(
-        new (friendmeshRuntimeMemory) friendmesh::DevelopmentRuntime());
-  } else {
-    Serial.println("[FriendMesh] PSRAM allocation failed; features disabled");
-  }
 #endif
 #if defined(HAS_RAK_TAP_V2)
   Serial.flush();

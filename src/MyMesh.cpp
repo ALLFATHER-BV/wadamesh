@@ -5,6 +5,9 @@
 #include "friendmesh/people/FriendMeshChannelRoster.h"
 #include "friendmesh/people/FriendMeshFriendRequest.h"
 #include "friendmesh/navigation/FriendMeshGroupCoordination.h"
+#if defined(ESP32)
+#include "helpers/esp32/FriendMeshTransactionNvs.h"
+#endif
 static_assert(friendmesh::kChannelRosterEncodedBytes <= MAX_GROUP_DATA_LENGTH,
               "FriendMesh roster must fit one MeshCore group datagram");
 static_assert(friendmesh::kGroupCoordinationEventMaxBytes <=
@@ -17,6 +20,7 @@ static_assert(friendmesh::kFriendRequestEncodedBytes <= MAX_GROUP_DATA_LENGTH,
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
 #include <ArduinoJson.h>   // settings backup import (uiImportBackup)
+#include <stdlib.h>
 #include <string.h>
 #include <SHA256.h>   // derive a region's flood-scope key from its #hashtag name
 #include <time.h>     // gmtime_r for the "clock" CLI command
@@ -52,6 +56,7 @@ static const char* fmFriendLinkActionName(
     case friendmesh::FriendLinkAction::Accepted: return "ACCEPT";
     case friendmesh::FriendLinkAction::Removed: return "REMOVE";
     case friendmesh::FriendLinkAction::Acknowledged: return "ACK";
+    case friendmesh::FriendLinkAction::Declined: return "DECLINE";
     default: return "UNKNOWN";
   }
 }
@@ -3225,10 +3230,59 @@ void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel,
                   request.requestId[0], request.requestId[1],
                   request.requestId[2], request.requestId[3],
                   request.returnPathLength);
+    uint8_t observedReturnPath[MAX_PATH_SIZE] = {};
+    const uint8_t* acceptancePath = request.returnPath;
+    uint8_t acceptancePathLength = request.returnPathLength;
+    // A fallback flood may have found a newer route than the signed request's
+    // original path. Use the freshly observed flood path in reverse for the
+    // direct ACCEPT/DECLINE response; the request signature still authenticates
+    // the social payload and transaction ID.
+    if (pkt && pkt->isRouteFlood() &&
+        mesh::Packet::isValidPathLen(pkt->path_len) &&
+        pkt->getPathByteLen() <= sizeof(observedReturnPath) &&
+        friendmesh::reverseMeshPath(
+            pkt->path, pkt->path_len, observedReturnPath,
+            sizeof(observedReturnPath)) == pkt->getPathByteLen()) {
+      acceptancePath = observedReturnPath;
+      acceptancePathLength = (pkt->path_len & 0x3F) == 0
+          ? 0 : pkt->path_len;
+      FM_FRIEND_LOG("PUBLIC RX route=fresh-flood-reverse path=%u",
+                    acceptancePathLength);
+    }
+    if (friendmeshDeclinedRequestMatches(
+            request.requestId, request.requesterPublicKey)) {
+      ContactInfo requesterContact = {};
+      memcpy(requesterContact.id.pub_key, request.requesterPublicKey,
+             PUB_KEY_SIZE);
+      strncpy(requesterContact.name, request.requesterName,
+              sizeof(requesterContact.name) - 1);
+      requesterContact.type = ADV_TYPE_CHAT;
+      requesterContact.out_path_len = acceptancePathLength;
+      const size_t acceptancePathBytes =
+          acceptancePathLength == friendmesh::kFriendRequestReturnPathUnknown
+              ? 0
+              : static_cast<size_t>(acceptancePathLength & 0x3F) *
+                static_cast<size_t>((acceptancePathLength >> 6) + 1);
+      if (acceptancePathLength == friendmesh::kFriendRequestReturnPathUnknown ||
+          acceptancePathBytes > sizeof(requesterContact.out_path)) {
+        requesterContact.out_path_len = OUT_PATH_UNKNOWN;
+      } else if (acceptancePathBytes) {
+        memcpy(requesterContact.out_path, acceptancePath,
+               acceptancePathBytes);
+      }
+      const bool resent = friendmeshTransmitLinkControl(
+          requesterContact, friendmesh::FriendLinkAction::Declined,
+          request.requestId, false);
+      FM_FRIEND_LOG("PUBLIC RX duplicate-declined id=%02X%02X%02X%02X resent=%d",
+                    request.requestId[0], request.requestId[1],
+                    request.requestId[2], request.requestId[3],
+                    resent ? 1 : 0);
+      return;
+    }
     _ui->onFriendMeshFriendRequest(
         request.requestId, request.requesterPublicKey,
         request.requesterName, request.createdAt, request.expiresAt,
-        request.returnPath, request.returnPathLength);
+        acceptancePath, acceptancePathLength);
     return;
   }
   if (data_type == friendmesh::kChannelRosterDataType) {
@@ -3308,14 +3362,18 @@ void MyMesh::onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret,
                   sender.pub_key[2], sender.pub_key[3], (unsigned)len);
     if (link.action == friendmesh::FriendLinkAction::Accepted) {
       friendmeshHandleAcceptedControl(
-          sender, link.requestId, link.peerName, false);
+          sender, link.requestId, link.peerName, false, packet,
+          link.returnPath, link.returnPathLength);
     } else if (link.action == friendmesh::FriendLinkAction::Removed) {
       if (_ui) _ui->onFriendMeshFriendRemoved(sender.pub_key);
-      friendmeshAcknowledgeLinkControl(sender, link.requestId);
+      friendmeshAcknowledgeLinkControl(sender, link.requestId, packet);
     } else if (link.action ==
                friendmesh::FriendLinkAction::Acknowledged) {
       friendmeshConsumeLinkAcknowledgement(
           sender.pub_key, link.requestId);
+    } else if (link.action == friendmesh::FriendLinkAction::Declined) {
+      friendmeshHandleDeclinedControl(
+          sender, link.requestId, link.peerName);
     }
     return;
   }
@@ -3332,7 +3390,7 @@ void MyMesh::onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret,
     if (acceptedResult == friendmesh::ResultCode::Ok &&
         _ui && !_ui->friendMeshRequesterBlocked(sender.pub_key)) {
       friendmeshHandleAcceptedControl(
-          sender, accepted.requestId, accepted.responderName, true);
+          sender, accepted.requestId, accepted.responderName, true, packet);
     }
   }
 #else
@@ -3341,6 +3399,168 @@ void MyMesh::onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret,
 }
 
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+bool MyMesh::friendmeshLoadTransactionJournal() {
+  _friend_transaction_ledger.clear();
+  _friend_transaction_generation = 0;
+  _friend_transaction_slot = 0;
+#if defined(ESP32)
+  uint8_t* encoded = static_cast<uint8_t*>(
+      malloc(friendmesh::kFriendTransactionJournalMaxBytes));
+  if (!encoded) {
+    _friend_transaction_journal_ready = false;
+    FM_FRIEND_LOG("JOURNAL load=oom");
+    return false;
+  }
+  bool anyPresent = false;
+  bool found = false;
+  for (uint8_t slot = 0; slot < 2; ++slot) {
+    anyPresent = anyPresent || friendmeshTransactionNvsPresent(slot);
+    memset(encoded, 0, friendmesh::kFriendTransactionJournalMaxBytes);
+    size_t length = 0;
+    if (!friendmeshTransactionNvsLoad(
+            slot, encoded, friendmesh::kFriendTransactionJournalMaxBytes,
+            length)) continue;
+    friendmesh::FriendTransactionLedger candidate;
+    uint32_t generation = 0;
+    if (candidate.decode(encoded, length, generation) !=
+        friendmesh::ResultCode::Ok) {
+      FM_FRIEND_LOG("JOURNAL slot=%u invalid", slot);
+      continue;
+    }
+    if (!found || static_cast<int32_t>(generation -
+                                       _friend_transaction_generation) > 0) {
+      _friend_transaction_ledger = candidate;
+      _friend_transaction_generation = generation;
+      _friend_transaction_slot = slot;
+      found = true;
+    }
+  }
+  memset(encoded, 0, friendmesh::kFriendTransactionJournalMaxBytes);
+  free(encoded);
+  _friend_transaction_journal_ready = found || !anyPresent;
+  if (_friend_transaction_journal_ready && found) {
+    const uint32_t now = getRTCClock()->getCurrentTime();
+    if (_friend_transaction_ledger.expire(
+            now, now >= 1700000000UL) > 0 &&
+        !friendmeshCommitTransactionJournal())
+      _friend_transaction_journal_ready = false;
+  }
+  FM_FRIEND_LOG("JOURNAL load=%s generation=%lu records=%u",
+                _friend_transaction_journal_ready ? (found ? "restored" : "new")
+                                                  : "recovery-required",
+                (unsigned long)_friend_transaction_generation,
+                (unsigned)_friend_transaction_ledger.size());
+  return _friend_transaction_journal_ready;
+#else
+  _friend_transaction_journal_ready = true;
+  return true;
+#endif
+}
+
+bool MyMesh::friendmeshCommitTransactionJournal() {
+  if (!_friend_transaction_journal_ready) return false;
+#if defined(ESP32)
+  uint8_t* encoded = static_cast<uint8_t*>(
+      malloc(friendmesh::kFriendTransactionJournalMaxBytes));
+  if (!encoded) return false;
+  memset(encoded, 0, friendmesh::kFriendTransactionJournalMaxBytes);
+  size_t written = 0;
+  const uint32_t nextGeneration = _friend_transaction_generation + 1;
+  const bool encodedOk = _friend_transaction_ledger.encode(
+      nextGeneration, encoded, friendmesh::kFriendTransactionJournalMaxBytes,
+      written) == friendmesh::ResultCode::Ok;
+  const uint8_t nextSlot = static_cast<uint8_t>(_friend_transaction_slot ^ 1U);
+  const bool saved = encodedOk &&
+      friendmeshTransactionNvsSave(nextSlot, encoded, written);
+  memset(encoded, 0, friendmesh::kFriendTransactionJournalMaxBytes);
+  free(encoded);
+  if (!saved) {
+    FM_FRIEND_LOG("JOURNAL commit=failed generation=%lu records=%u",
+                  (unsigned long)nextGeneration,
+                  (unsigned)_friend_transaction_ledger.size());
+    _friend_transaction_journal_ready = false;
+    return false;
+  }
+  _friend_transaction_generation = nextGeneration;
+  _friend_transaction_slot = nextSlot;
+  FM_FRIEND_LOG("JOURNAL commit=ok slot=%u generation=%lu records=%u",
+                nextSlot, (unsigned long)nextGeneration,
+                (unsigned)_friend_transaction_ledger.size());
+#endif
+  return true;
+}
+
+bool MyMesh::friendmeshBeginTransaction(
+    const uint8_t transaction_id[8],
+    friendmesh::FriendTransactionKind kind, const uint8_t* peer_pub,
+    const char* peer_name, uint8_t flags, uint32_t expires_at) {
+  if (!_friend_transaction_journal_ready || !transaction_id) return false;
+  const uint32_t now = getRTCClock()->getCurrentTime();
+  const bool timeTrusted = now >= 1700000000UL;
+  if (_friend_transaction_ledger.pruneTerminal(
+          now, timeTrusted, 86400UL) > 0 &&
+      !friendmeshCommitTransactionJournal()) return false;
+  const friendmesh::FriendTransactionRecord* existing =
+      _friend_transaction_ledger.find(transaction_id);
+  if (existing) {
+    if (existing->kind != kind ||
+        (peer_pub && memcmp(existing->peerPublicKey, peer_pub,
+                            PUB_KEY_SIZE) != 0)) return false;
+    return true;
+  }
+  const friendmesh::ResultCode begun = _friend_transaction_ledger.begin(
+      transaction_id, kind, peer_pub, peer_name, flags, now, expires_at);
+  if (begun != friendmesh::ResultCode::Ok) return false;
+  if (friendmeshCommitTransactionJournal()) return true;
+  _friend_transaction_ledger.remove(transaction_id);
+  return false;
+}
+
+bool MyMesh::friendmeshReserveDirectAttempt(
+    const uint8_t transaction_id[8]) {
+  if (!_friend_transaction_journal_ready || !transaction_id) return false;
+  if (_friend_transaction_ledger.recordDirectAttempt(
+          transaction_id, getRTCClock()->getCurrentTime()) !=
+      friendmesh::ResultCode::Ok) return false;
+  if (friendmeshCommitTransactionJournal()) return true;
+  _friend_transaction_journal_ready = false;
+  return false;
+}
+
+bool MyMesh::friendmeshReserveFlood(const uint8_t transaction_id[8]) {
+  if (!_friend_transaction_journal_ready || !transaction_id) return false;
+  if (_friend_transaction_ledger.recordFlood(
+          transaction_id, getRTCClock()->getCurrentTime()) !=
+      friendmesh::ResultCode::Ok) return false;
+  if (friendmeshCommitTransactionJournal()) return true;
+  _friend_transaction_journal_ready = false;
+  return false;
+}
+
+void MyMesh::friendmeshRestoreTransactionUi() {
+  if (_friend_transaction_restore_notified || !_ui) return;
+  _friend_transaction_restore_notified = true;
+  if (!_friend_transaction_journal_ready) {
+    _ui->onFriendMeshTransactionRecoveryRequired();
+    return;
+  }
+  const friendmesh::FriendTransactionRecord* newest = nullptr;
+  for (size_t i = 0; i < _friend_transaction_ledger.size(); ++i) {
+    const friendmesh::FriendTransactionRecord* candidate =
+        _friend_transaction_ledger.at(i);
+    if (!candidate || friendmesh::friendTransactionStageTerminal(
+                          candidate->stage)) continue;
+    if (!newest || candidate->updatedAt >= newest->updatedAt)
+      newest = candidate;
+  }
+  if (newest) {
+    _ui->onFriendMeshTransactionProgress(
+        newest->transactionId, newest->kind,
+        newest->peerName[0] ? newest->peerName : "Friend", newest->stage,
+        newest->floodsUsed, friendmesh::kFriendTransactionFloodLimit);
+  }
+}
+
 void MyMesh::friendmeshRememberSentChannelMessage(
     const mesh::GroupChannel& channel, mesh::Packet* packet) {
   if (!packet || packet->getPayloadType() != PAYLOAD_TYPE_GRP_TXT) return;
@@ -3374,8 +3594,15 @@ bool MyMesh::friendmeshSentChannelMessageMatches(
 }
 
 bool MyMesh::friendmeshRememberOutgoingRequest(
-    const uint8_t request_id[8], const uint8_t target_hash[8]) {
-  if (!request_id || !target_hash) return false;
+    const uint8_t request_id[8], const uint8_t target_hash[8],
+    int channel_idx, const char* peer_name, const uint8_t* direct_path,
+    uint8_t direct_path_length, const uint8_t* encoded_request) {
+  if (!request_id || !target_hash || !encoded_request ||
+      !mesh::Packet::isValidPathLen(direct_path_length)) return false;
+  const size_t pathBytes =
+      static_cast<size_t>(direct_path_length & 0x3F) *
+      static_cast<size_t>((direct_path_length >> 6) + 1);
+  if (pathBytes > MAX_PATH_SIZE || (pathBytes && !direct_path)) return false;
   const uint32_t now = _ms->getMillis();
   for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
     FriendRequestOutgoing& slot = _friend_request_outgoing[i];
@@ -3385,16 +3612,65 @@ bool MyMesh::friendmeshRememberOutgoingRequest(
       return false;
     }
   }
+  const uint32_t wallNow = getRTCClock()->getCurrentTime();
+  const uint32_t expiresAt = wallNow >= 1700000000UL
+      ? wallNow + friendmesh::kFriendRequestLifetimeSeconds : 0;
+  if (!friendmeshBeginTransaction(
+          request_id, friendmesh::FriendTransactionKind::Request, nullptr,
+          peer_name, friendmesh::FriendTransactionInitiator |
+                         friendmesh::FriendTransactionAllowFlood |
+                         friendmesh::FriendTransactionDurable,
+          expiresAt)) {
+    FM_FRIEND_LOG("OUTGOING reject=journal");
+    return false;
+  }
   FriendRequestOutgoing& slot = _friend_request_outgoing[
       _friend_request_outgoing_head];
+  memset(&slot, 0, sizeof(slot));
   memcpy(slot.requestId, request_id, 8);
   memcpy(slot.targetMessageHash, target_hash, 8);
+  slot.channelIndex = static_cast<int8_t>(channel_idx);
+  strncpy(slot.peerName, peer_name && peer_name[0] ? peer_name : "Friend",
+          sizeof(slot.peerName) - 1);
+  slot.directPathLength = (direct_path_length & 0x3F) == 0
+      ? 0 : direct_path_length;
+  if (pathBytes) memcpy(slot.directPath, direct_path, pathBytes);
+  memcpy(slot.encodedRequest, encoded_request,
+         sizeof(slot.encodedRequest));
   slot.sentMillis = now ? now : 1;
+  // A delivered request may wait hours for a human response. Automatic rapid
+  // flooding would confuse "not answered yet" with "not delivered". The two
+  // fallback opportunities are deliberately spaced and bounded.
+  slot.nextFallbackMillis = now + 120000UL;
   _friend_request_outgoing_head = static_cast<uint8_t>(
       (_friend_request_outgoing_head + 1) % FRIEND_REQUEST_OUTGOING_SLOTS);
   FM_FRIEND_LOG("OUTGOING remember id=%02X%02X%02X%02X",
                 request_id[0], request_id[1], request_id[2], request_id[3]);
   return true;
+}
+
+MyMesh::FriendRequestOutgoing* MyMesh::friendmeshFindOutgoingRequest(
+    const uint8_t request_id[8]) {
+  if (!request_id) return nullptr;
+  for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
+    FriendRequestOutgoing& slot = _friend_request_outgoing[i];
+    if (slot.sentMillis != 0 &&
+        memcmp(slot.requestId, request_id, sizeof(slot.requestId)) == 0)
+      return &slot;
+  }
+  return nullptr;
+}
+
+const MyMesh::FriendRequestOutgoing* MyMesh::friendmeshFindOutgoingRequest(
+    const uint8_t request_id[8]) const {
+  if (!request_id) return nullptr;
+  for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
+    const FriendRequestOutgoing& slot = _friend_request_outgoing[i];
+    if (slot.sentMillis != 0 &&
+        memcmp(slot.requestId, request_id, sizeof(slot.requestId)) == 0)
+      return &slot;
+  }
+  return nullptr;
 }
 
 bool MyMesh::friendmeshConsumeOutgoingRequest(const uint8_t request_id[8]) {
@@ -3417,14 +3693,11 @@ bool MyMesh::friendmeshConsumeOutgoingRequest(const uint8_t request_id[8]) {
 
 bool MyMesh::friendmeshOutgoingRequestMatches(
     const uint8_t request_id[8]) const {
-  if (!request_id) return false;
-  for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
-    const FriendRequestOutgoing& slot = _friend_request_outgoing[i];
-    if (slot.sentMillis != 0 &&
-        memcmp(slot.requestId, request_id, sizeof(slot.requestId)) == 0)
-      return true;
-  }
-  return false;
+  if (friendmeshFindOutgoingRequest(request_id)) return true;
+  const friendmesh::FriendTransactionRecord* record =
+      _friend_transaction_ledger.find(request_id);
+  return record && record->kind == friendmesh::FriendTransactionKind::Request &&
+      !friendmesh::friendTransactionStageTerminal(record->stage);
 }
 
 bool MyMesh::friendmeshCompletedRequestMatches(
@@ -3439,17 +3712,39 @@ bool MyMesh::friendmeshCompletedRequestMatches(
         memcmp(slot.requestId, request_id, sizeof(slot.requestId)) == 0 &&
         memcmp(slot.peerPub, peer_pub, PUB_KEY_SIZE) == 0) return true;
   }
-  return false;
+  const friendmesh::FriendTransactionRecord* record =
+      _friend_transaction_ledger.find(request_id);
+  return record && record->kind == friendmesh::FriendTransactionKind::Request &&
+      record->stage == friendmesh::FriendTransactionStage::Complete &&
+      memcmp(record->peerPublicKey, peer_pub, PUB_KEY_SIZE) == 0;
 }
 
 void MyMesh::friendmeshRememberCompletedRequest(
     const uint8_t request_id[8],
-    const uint8_t peer_pub[PUB_KEY_SIZE]) {
+    const uint8_t peer_pub[PUB_KEY_SIZE], const uint8_t* direct_path,
+    uint8_t direct_path_length) {
   if (!request_id || !peer_pub) return;
+  if (_friend_transaction_ledger.bindPeer(
+          request_id, peer_pub, nullptr,
+          getRTCClock()->getCurrentTime()) == friendmesh::ResultCode::Ok)
+    friendmeshCommitTransactionJournal();
   FriendRequestCompleted& slot = _friend_request_completed[
       _friend_request_completed_head];
+  memset(&slot, 0, sizeof(slot));
+  slot.directPathLength = OUT_PATH_UNKNOWN;
   memcpy(slot.requestId, request_id, sizeof(slot.requestId));
   memcpy(slot.peerPub, peer_pub, sizeof(slot.peerPub));
+  if (mesh::Packet::isValidPathLen(direct_path_length)) {
+    const size_t pathBytes =
+        static_cast<size_t>(direct_path_length & 0x3F) *
+        static_cast<size_t>((direct_path_length >> 6) + 1);
+    if (pathBytes <= sizeof(slot.directPath) &&
+        (pathBytes == 0 || direct_path)) {
+      slot.directPathLength = (direct_path_length & 0x3F) == 0
+          ? 0 : direct_path_length;
+      if (pathBytes) memcpy(slot.directPath, direct_path, pathBytes);
+    }
+  }
   slot.completedMillis = _ms->getMillis() ? _ms->getMillis() : 1;
   FM_FRIEND_LOG("OUTGOING completed id=%02X%02X%02X%02X peer=%02X%02X%02X%02X slot=%u",
                 request_id[0], request_id[1], request_id[2], request_id[3],
@@ -3460,9 +3755,59 @@ void MyMesh::friendmeshRememberCompletedRequest(
       FRIEND_REQUEST_COMPLETED_SLOTS);
 }
 
+bool MyMesh::friendmeshDeclinedRequestMatches(
+    const uint8_t request_id[8],
+    const uint8_t requester_pub[PUB_KEY_SIZE]) const {
+  if (!request_id || !requester_pub) return false;
+  const uint32_t now = _ms->getMillis();
+  for (uint8_t i = 0; i < FRIEND_REQUEST_DECLINED_SLOTS; ++i) {
+    const FriendRequestDeclined& declined = _friend_request_declined[i];
+    if (declined.declinedMillis != 0 &&
+        now - declined.declinedMillis <= 86400000UL &&
+        memcmp(declined.requestId, request_id,
+               sizeof(declined.requestId)) == 0 &&
+        memcmp(declined.requesterPub, requester_pub, PUB_KEY_SIZE) == 0)
+      return true;
+  }
+  const friendmesh::FriendTransactionRecord* record =
+      _friend_transaction_ledger.find(request_id);
+  return record && record->kind == friendmesh::FriendTransactionKind::Decline &&
+      record->stage == friendmesh::FriendTransactionStage::Complete &&
+      memcmp(record->peerPublicKey, requester_pub, PUB_KEY_SIZE) == 0;
+}
+
+void MyMesh::friendmeshRememberDeclinedRequest(
+    const uint8_t request_id[8],
+    const uint8_t requester_pub[PUB_KEY_SIZE]) {
+  if (!request_id || !requester_pub) return;
+  const friendmesh::FriendTransactionRecord* existing =
+      _friend_transaction_ledger.find(request_id);
+  if (!existing) {
+    const uint32_t now = getRTCClock()->getCurrentTime();
+    const uint32_t expiresAt = now >= 1700000000UL ? now + 86400UL : 0;
+    friendmeshBeginTransaction(
+        request_id, friendmesh::FriendTransactionKind::Decline,
+        requester_pub, "Friend", friendmesh::FriendTransactionDurable,
+        expiresAt);
+    friendmeshNotifyTransaction(
+        request_id, friendmesh::FriendTransactionKind::Decline, "Friend",
+        friendmesh::FriendTransactionStage::Complete, 0);
+  }
+  FriendRequestDeclined& declined = _friend_request_declined[
+      _friend_request_declined_head];
+  memset(&declined, 0, sizeof(declined));
+  memcpy(declined.requestId, request_id, sizeof(declined.requestId));
+  memcpy(declined.requesterPub, requester_pub,
+         sizeof(declined.requesterPub));
+  declined.declinedMillis = _ms->getMillis() ? _ms->getMillis() : 1;
+  _friend_request_declined_head = static_cast<uint8_t>(
+      (_friend_request_declined_head + 1) % FRIEND_REQUEST_DECLINED_SLOTS);
+}
+
 void MyMesh::friendmeshHandleAcceptedControl(
     const mesh::Identity& sender, const uint8_t request_id[8],
-    const char* peer_name, bool legacy) {
+    const char* peer_name, bool legacy, mesh::Packet* packet,
+    const uint8_t* ack_path, uint8_t ack_path_length) {
   if (!request_id || !_ui ||
       _ui->friendMeshRequesterBlocked(sender.pub_key)) return;
   const bool pending = friendmeshOutgoingRequestMatches(request_id);
@@ -3475,14 +3820,63 @@ void MyMesh::friendmeshHandleAcceptedControl(
                   sender.pub_key[1], sender.pub_key[2], sender.pub_key[3]);
     return;
   }
+  if (pending) {
+    const friendmesh::ResultCode bound = _friend_transaction_ledger.bindPeer(
+        request_id, sender.pub_key, peer_name,
+        getRTCClock()->getCurrentTime());
+    if (bound != friendmesh::ResultCode::Ok ||
+        !friendmeshCommitTransactionJournal()) {
+      FM_FRIEND_LOG("ACCEPT reject=peer-bind id=%02X%02X%02X%02X result=%u",
+                    request_id[0], request_id[1], request_id[2], request_id[3],
+                    (unsigned)bound);
+      return;
+    }
+  }
 
+  FriendRequestOutgoing* outgoing =
+      friendmeshFindOutgoingRequest(request_id);
+  if (outgoing && ack_path_length != friendmesh::kFriendRequestReturnPathUnknown &&
+      mesh::Packet::isValidPathLen(ack_path_length)) {
+    const size_t ackPathBytes =
+        static_cast<size_t>(ack_path_length & 0x3F) *
+        static_cast<size_t>((ack_path_length >> 6) + 1);
+    if (ackPathBytes <= sizeof(outgoing->directPath) &&
+        (ackPathBytes == 0 || ack_path)) {
+      memset(outgoing->directPath, 0, sizeof(outgoing->directPath));
+      if (ackPathBytes)
+        memcpy(outgoing->directPath, ack_path, ackPathBytes);
+      outgoing->directPathLength = (ack_path_length & 0x3F) == 0
+          ? 0 : ack_path_length;
+      FM_FRIEND_LOG("ACCEPT route=authenticated-return path=%u",
+                    outgoing->directPathLength);
+    }
+  }
+  uint8_t savedPath[MAX_PATH_SIZE] = {};
+  uint8_t savedPathLength = OUT_PATH_UNKNOWN;
+  char savedPeerName[friendmesh::kFriendRequestNameBytes] = {};
+  if (outgoing) {
+    savedPathLength = outgoing->directPathLength;
+    memcpy(savedPath, outgoing->directPath, sizeof(savedPath));
+    strncpy(savedPeerName, outgoing->peerName, sizeof(savedPeerName) - 1);
+  }
+  const uint8_t floodsUsed = outgoing ? outgoing->floodAttempts : 0;
+  friendmeshNotifyTransaction(
+      request_id, friendmesh::FriendTransactionKind::Request,
+      peer_name && peer_name[0] ? peer_name : savedPeerName,
+      friendmesh::FriendTransactionStage::ResponseReceived,
+      floodsUsed);
   const bool ackQueued =
-      friendmeshAcknowledgeLinkControl(sender, request_id);
+      friendmeshAcknowledgeLinkControl(sender, request_id, packet);
   FM_FRIEND_LOG("%sACCEPT correlate id=%02X%02X%02X%02X state=%s ack-queued=%d",
                 legacy ? "LEGACY " : "", request_id[0], request_id[1],
                 request_id[2], request_id[3],
                 pending ? "pending" : "completed", ackQueued ? 1 : 0);
   if (!ackQueued || completed) return;
+  friendmeshNotifyTransaction(
+      request_id, friendmesh::FriendTransactionKind::Request,
+      peer_name && peer_name[0] ? peer_name : savedPeerName,
+      friendmesh::FriendTransactionStage::ConfirmationSent,
+      floodsUsed);
 
   // The ACK is queued first as required by the two-phase UX. Only a successful
   // local Friend write advances this request to the completed retry ledger.
@@ -3493,18 +3887,91 @@ void MyMesh::friendmeshHandleAcceptedControl(
                   request_id[0], request_id[1], request_id[2], request_id[3]);
     return;
   }
-  if (friendmeshConsumeOutgoingRequest(request_id))
-    friendmeshRememberCompletedRequest(request_id, sender.pub_key);
+  if (friendmeshConsumeOutgoingRequest(request_id)) {
+    friendmeshRememberCompletedRequest(
+        request_id, sender.pub_key, savedPath, savedPathLength);
+    friendmeshNotifyTransaction(
+        request_id, friendmesh::FriendTransactionKind::Request,
+        peer_name && peer_name[0] ? peer_name : savedPeerName,
+        friendmesh::FriendTransactionStage::Complete,
+        floodsUsed);
+  }
+}
+
+void MyMesh::friendmeshHandleDeclinedControl(
+    const mesh::Identity& sender, const uint8_t request_id[8],
+    const char* peer_name) {
+  FriendRequestOutgoing* outgoing =
+      friendmeshFindOutgoingRequest(request_id);
+  const friendmesh::FriendTransactionRecord* transaction =
+      _friend_transaction_ledger.find(request_id);
+  if ((!outgoing && (!transaction ||
+                     transaction->kind !=
+                         friendmesh::FriendTransactionKind::Request ||
+                     friendmesh::friendTransactionStageTerminal(
+                         transaction->stage))) || !_ui ||
+      _ui->friendMeshRequesterBlocked(sender.pub_key)) {
+    FM_FRIEND_LOG("DECLINE reject=unknown-or-blocked id=%02X%02X%02X%02X",
+                  request_id ? request_id[0] : 0,
+                  request_id ? request_id[1] : 0,
+                  request_id ? request_id[2] : 0,
+                  request_id ? request_id[3] : 0);
+    return;
+  }
+  const friendmesh::ResultCode bound = _friend_transaction_ledger.bindPeer(
+      request_id, sender.pub_key, peer_name, getRTCClock()->getCurrentTime());
+  if (bound != friendmesh::ResultCode::Ok ||
+      !friendmeshCommitTransactionJournal()) return;
+  transaction = _friend_transaction_ledger.find(request_id);
+  const uint8_t floodsUsed = transaction ? transaction->floodsUsed
+                                         : outgoing->floodAttempts;
+  char name[friendmesh::kFriendRequestNameBytes] = {};
+  const char* fallbackName = outgoing ? outgoing->peerName
+      : transaction && transaction->peerName[0] ? transaction->peerName
+                                                : "Friend";
+  strncpy(name, peer_name && peer_name[0] ? peer_name : fallbackName,
+          sizeof(name) - 1);
+  _ui->onFriendMeshFriendDeclined(
+      request_id, sender.pub_key, name);
+  friendmeshConsumeOutgoingRequest(request_id);
+  friendmeshNotifyTransaction(
+      request_id, friendmesh::FriendTransactionKind::Request, name,
+      friendmesh::FriendTransactionStage::Declined, floodsUsed);
 }
 
 bool MyMesh::friendmeshTransmitLinkControl(
     const ContactInfo& recipient, friendmesh::FriendLinkAction action,
-    const uint8_t request_id[8]) {
+    const uint8_t request_id[8], bool allow_flood) {
+  if (recipient.out_path_len == OUT_PATH_UNKNOWN && !allow_flood) {
+    FM_FRIEND_LOG("LINK TX blocked=flood action=%s id=%02X%02X%02X%02X",
+                  fmFriendLinkActionName(action),
+                  request_id ? request_id[0] : 0,
+                  request_id ? request_id[1] : 0,
+                  request_id ? request_id[2] : 0,
+                  request_id ? request_id[3] : 0);
+    return false;
+  }
   friendmesh::FriendLinkEnvelope link = {};
   link.action = action;
+  link.returnPathLength = friendmesh::kFriendRequestReturnPathUnknown;
   if (request_id) memcpy(link.requestId, request_id, sizeof(link.requestId));
   strncpy(link.peerName, _prefs.node_name, sizeof(link.peerName) - 1);
   if (!link.peerName[0]) strncpy(link.peerName, "Friend", sizeof(link.peerName) - 1);
+  if ((action == friendmesh::FriendLinkAction::Accepted ||
+       action == friendmesh::FriendLinkAction::Declined) &&
+      recipient.out_path_len != OUT_PATH_UNKNOWN &&
+      mesh::Packet::isValidPathLen(recipient.out_path_len)) {
+    const size_t pathBytes =
+        static_cast<size_t>(recipient.out_path_len & 0x3F) *
+        static_cast<size_t>((recipient.out_path_len >> 6) + 1);
+    if (pathBytes <= sizeof(link.returnPath) &&
+        friendmesh::reverseMeshPath(
+            recipient.out_path, recipient.out_path_len, link.returnPath,
+            sizeof(link.returnPath)) == pathBytes) {
+      link.returnPathLength = (recipient.out_path_len & 0x3F) == 0
+          ? 0 : recipient.out_path_len;
+    }
+  }
   uint8_t encoded[friendmesh::kFriendLinkEncodedBytes] = {};
   size_t written = 0;
   if (friendmesh::encodeFriendLink(link, encoded, sizeof(encoded), written) !=
@@ -3530,7 +3997,26 @@ bool MyMesh::friendmeshQueueLinkControl(
     const uint8_t request_id[8]) {
   if (!request_id ||
       (action != friendmesh::FriendLinkAction::Accepted &&
-       action != friendmesh::FriendLinkAction::Removed)) return false;
+       action != friendmesh::FriendLinkAction::Removed &&
+       action != friendmesh::FriendLinkAction::Declined)) return false;
+  const bool allowFloodFallback =
+      action == friendmesh::FriendLinkAction::Removed;
+  const size_t routeBytes = recipient.out_path_len == OUT_PATH_UNKNOWN
+      ? 0
+      : static_cast<size_t>(recipient.out_path_len & 0x3F) *
+            static_cast<size_t>((recipient.out_path_len >> 6) + 1);
+  const bool routeKnown = recipient.out_path_len != OUT_PATH_UNKNOWN &&
+      mesh::Packet::isValidPathLen(recipient.out_path_len) &&
+      routeBytes <= MAX_PATH_SIZE;
+  if (!routeKnown && !allowFloodFallback) {
+    friendmeshNotifyTransaction(
+        request_id,
+        action == friendmesh::FriendLinkAction::Accepted
+            ? friendmesh::FriendTransactionKind::Accept
+            : friendmesh::FriendTransactionKind::Decline,
+        recipient.name, friendmesh::FriendTransactionStage::Failed, 0);
+    return false;
+  }
   FriendLinkPending* pending = nullptr;
   for (uint8_t i = 0; i < FRIEND_LINK_PENDING_SLOTS; ++i) {
     FriendLinkPending& candidate = _friend_link_pending[i];
@@ -3548,15 +4034,27 @@ bool MyMesh::friendmeshQueueLinkControl(
     if (!pending && !candidate.active) pending = &candidate;
   }
   if (!pending) {
-    pending = &_friend_link_pending[_friend_link_pending_head];
-    FM_FRIEND_LOG("LINK pending-table-full evict-slot=%u old-action=%s old-id=%02X%02X%02X%02X",
-                  (unsigned)_friend_link_pending_head,
-                  fmFriendLinkActionName(pending->action),
-                  pending->requestId[0], pending->requestId[1],
-                  pending->requestId[2], pending->requestId[3]);
-    _friend_link_pending_head = static_cast<uint8_t>(
-        (_friend_link_pending_head + 1) % FRIEND_LINK_PENDING_SLOTS);
+    FM_FRIEND_LOG("LINK reject=pending-table-full action=%s id=%02X%02X%02X%02X",
+                  fmFriendLinkActionName(action), request_id[0], request_id[1],
+                  request_id[2], request_id[3]);
+    return false;
   }
+  const friendmesh::FriendTransactionKind kind =
+      action == friendmesh::FriendLinkAction::Accepted
+          ? friendmesh::FriendTransactionKind::Accept
+          : action == friendmesh::FriendLinkAction::Declined
+              ? friendmesh::FriendTransactionKind::Decline
+              : friendmesh::FriendTransactionKind::Remove;
+  const uint32_t wallNow = getRTCClock()->getCurrentTime();
+  const uint32_t expiresAt = wallNow >= 1700000000UL
+      ? wallNow + friendmesh::kFriendRequestLifetimeSeconds : 0;
+  uint8_t flags = friendmesh::FriendTransactionDurable;
+  if (action == friendmesh::FriendLinkAction::Removed)
+    flags |= friendmesh::FriendTransactionInitiator |
+             friendmesh::FriendTransactionAllowFlood;
+  if (!friendmeshBeginTransaction(
+          request_id, kind, recipient.id.pub_key, recipient.name, flags,
+          expiresAt)) return false;
   memset(pending, 0, sizeof(*pending));
   pending->active = true;
   pending->action = action;
@@ -3564,55 +4062,128 @@ bool MyMesh::friendmeshQueueLinkControl(
   memcpy(pending->recipientPub, recipient.id.pub_key, PUB_KEY_SIZE);
   strncpy(pending->recipientName, recipient.name,
           sizeof(pending->recipientName) - 1);
-  pending->pathLength = recipient.out_path_len;
-  if (recipient.out_path_len != OUT_PATH_UNKNOWN &&
-      mesh::Packet::isValidPathLen(recipient.out_path_len)) {
-    const size_t pathBytes =
-        static_cast<size_t>(recipient.out_path_len & 0x3F) *
-        static_cast<size_t>((recipient.out_path_len >> 6) + 1);
-    if (pathBytes <= sizeof(pending->path))
-      memcpy(pending->path, recipient.out_path, pathBytes);
-    else
-      pending->pathLength = OUT_PATH_UNKNOWN;
+  pending->pathLength = routeKnown ? recipient.out_path_len
+                                   : OUT_PATH_UNKNOWN;
+  pending->allowFloodFallback = allowFloodFallback;
+  if (routeKnown && routeBytes)
+    memcpy(pending->path, recipient.out_path, routeBytes);
+  const bool initialFlood = pending->pathLength == OUT_PATH_UNKNOWN;
+  const bool budgetReserved = initialFlood
+      ? friendmeshReserveFlood(request_id)
+      : friendmeshReserveDirectAttempt(request_id);
+  if (!budgetReserved) {
+    friendmeshNotifyTransaction(
+        request_id, kind, recipient.name,
+        friendmesh::FriendTransactionStage::Failed, 0);
+    memset(pending, 0, sizeof(*pending));
+    return false;
   }
+  ContactInfo transmitRecipient = recipient;
+  if (initialFlood) transmitRecipient.out_path_len = OUT_PATH_UNKNOWN;
   const bool sent = friendmeshTransmitLinkControl(
-      recipient, action, request_id);
-  pending->attempts = 1;
+      transmitRecipient, action, request_id, initialFlood);
+  pending->attempts = initialFlood ? 2 : 1;
+  const friendmesh::FriendTransactionRecord* transaction =
+      _friend_transaction_ledger.find(request_id);
+  pending->floodAttempts = transaction ? transaction->floodsUsed : 0;
   // Even a zero-hop Friend control can occupy the LoRa radio for multiple
   // seconds at slow presets. Do not enqueue a retry while the first packet is
   // still transmitting.
-  pending->nextAttemptMillis = _ms->getMillis() + 4000;
+  pending->nextAttemptMillis = _ms->getMillis() +
+      (initialFlood ? 24000UL : 4000UL);
   FM_FRIEND_LOG("LINK queued action=%s id=%02X%02X%02X%02X immediate=%d",
                 fmFriendLinkActionName(action),
                 request_id[0], request_id[1], request_id[2], request_id[3],
                 sent ? 1 : 0);
+  friendmeshNotifyTransaction(
+      request_id, kind, recipient.name,
+      !sent ? (allowFloodFallback
+                   ? friendmesh::FriendTransactionStage::RetryingDirect
+                   : friendmesh::FriendTransactionStage::Failed)
+            : initialFlood ? friendmesh::FriendTransactionStage::FloodFallback
+                           : friendmesh::FriendTransactionStage::DirectSent,
+      pending->floodAttempts);
+  if (!sent && !allowFloodFallback) {
+    memset(pending, 0, sizeof(*pending));
+    return false;
+  }
+  if (sent && action == friendmesh::FriendLinkAction::Declined) {
+    friendmeshNotifyTransaction(
+        request_id, kind, recipient.name,
+        friendmesh::FriendTransactionStage::Complete, 0);
+    memset(pending, 0, sizeof(*pending));
+  } else if (sent) {
+    friendmeshNotifyTransaction(
+        request_id, kind, recipient.name,
+        friendmesh::FriendTransactionStage::AwaitingResponse,
+        pending->floodAttempts);
+  }
   return sent;
 }
 
 bool MyMesh::friendmeshAcknowledgeLinkControl(
-    const mesh::Identity& sender, const uint8_t request_id[8]) {
+    const mesh::Identity& sender, const uint8_t request_id[8],
+    mesh::Packet* received_packet) {
   if (!request_id) return false;
   ContactInfo recipient = {};
-  ContactInfo* stored = lookupContactByPubKey(sender.pub_key, PUB_KEY_SIZE);
-  if (stored) {
-    recipient = *stored;
+  recipient.id = sender;
+  strncpy(recipient.name, "Friend", sizeof(recipient.name) - 1);
+  recipient.type = ADV_TYPE_CHAT;
+  recipient.out_path_len = OUT_PATH_UNKNOWN;
+
+  // A requester's saved route is the exact requester->recipient direction
+  // needed by the final ACK. Keep using it after completion so duplicate
+  // ACCEPT packets remain idempotent and receive another direct ACK.
+  const FriendRequestOutgoing* outgoing =
+      friendmeshFindOutgoingRequest(request_id);
+  if (outgoing) {
+    recipient.out_path_len = outgoing->directPathLength;
+    memcpy(recipient.out_path, outgoing->directPath,
+           sizeof(recipient.out_path));
   } else {
-    recipient.id = sender;
-    strncpy(recipient.name, "Friend", sizeof(recipient.name) - 1);
-    recipient.type = ADV_TYPE_CHAT;
-    // A relationship control can arrive over a consumed multi-hop direct path.
-    // Flooding this tiny ACK is the only route-safe response when no contact
-    // path is known; zero-hop recipients still hear its initial transmission.
-    recipient.out_path_len = OUT_PATH_UNKNOWN;
+    for (uint8_t i = 0; i < FRIEND_REQUEST_COMPLETED_SLOTS; ++i) {
+      const FriendRequestCompleted& completed = _friend_request_completed[i];
+      if (completed.completedMillis != 0 &&
+          memcmp(completed.requestId, request_id,
+                 sizeof(completed.requestId)) == 0 &&
+          memcmp(completed.peerPub, sender.pub_key, PUB_KEY_SIZE) == 0) {
+        recipient.out_path_len = completed.directPathLength;
+        memcpy(recipient.out_path, completed.directPath,
+               sizeof(recipient.out_path));
+        break;
+      }
+    }
+  }
+
+  // A flooded REMOVE supplies a fresh observed route. Reverse it for the
+  // direct REMOVE_ACK; never answer a flood with another flood.
+  if (recipient.out_path_len == OUT_PATH_UNKNOWN && received_packet &&
+      received_packet->isRouteFlood() &&
+      mesh::Packet::isValidPathLen(received_packet->path_len)) {
+    const size_t pathBytes = received_packet->getPathByteLen();
+    if (pathBytes <= sizeof(recipient.out_path) &&
+        friendmesh::reverseMeshPath(
+            received_packet->path, received_packet->path_len,
+            recipient.out_path, sizeof(recipient.out_path)) == pathBytes) {
+      recipient.out_path_len = (received_packet->path_len & 0x3F) == 0
+          ? 0 : received_packet->path_len;
+    }
+  }
+
+  if (recipient.out_path_len == OUT_PATH_UNKNOWN) {
+    ContactInfo* stored = lookupContactByPubKey(sender.pub_key, PUB_KEY_SIZE);
+    if (stored && stored->out_path_len != OUT_PATH_UNKNOWN)
+      recipient = *stored;
   }
   const bool queued = friendmeshTransmitLinkControl(
-      recipient, friendmesh::FriendLinkAction::Acknowledged, request_id);
+      recipient, friendmesh::FriendLinkAction::Acknowledged, request_id,
+      false);
   FM_FRIEND_LOG("ACK send id=%02X%02X%02X%02X to=%02X%02X%02X%02X route=%s queued=%d",
                 request_id[0], request_id[1],
                 request_id[2], request_id[3],
                 sender.pub_key[0], sender.pub_key[1],
                 sender.pub_key[2], sender.pub_key[3],
-                recipient.out_path_len == OUT_PATH_UNKNOWN ? "flood" : "direct",
+                recipient.out_path_len == OUT_PATH_UNKNOWN ? "unavailable" : "direct",
                 queued ? 1 : 0);
   return queued;
 }
@@ -3638,6 +4209,14 @@ void MyMesh::friendmeshConsumeLinkAcknowledgement(
             _ui->onFriendMeshFriendAcceptanceAcknowledged(
                 request_id, recipientPub, recipientName);
       }
+      const friendmesh::FriendTransactionKind kind =
+          action == friendmesh::FriendLinkAction::Accepted
+              ? friendmesh::FriendTransactionKind::Accept
+              : friendmesh::FriendTransactionKind::Remove;
+      if (finalized) friendmeshNotifyTransaction(
+          request_id, kind, recipientName,
+          friendmesh::FriendTransactionStage::Complete,
+          pending.floodAttempts);
       FM_FRIEND_LOG("ACK matched id=%02X%02X%02X%02X slot=%u action=%s finalized=%d",
                     request_id[0], request_id[1],
                     request_id[2], request_id[3], (unsigned)i,
@@ -3659,12 +4238,29 @@ void MyMesh::friendmeshTickLinkControls() {
     FriendLinkPending& pending = _friend_link_pending[i];
     if (!pending.active ||
         (int32_t)(now - pending.nextAttemptMillis) < 0) continue;
-    if (pending.attempts >= 4) {
+    const friendmesh::FriendTransactionRecord* transaction =
+        _friend_transaction_ledger.find(pending.requestId);
+    const bool directExhausted = pending.pathLength == OUT_PATH_UNKNOWN ||
+                                 !transaction ||
+                                 transaction->directAttempts >=
+                                     friendmesh::friendTransactionDirectAttemptLimit(
+                                         transaction->kind);
+    const bool floodsExhausted = !transaction ||
+        !friendmesh::friendTransactionMayFlood(*transaction);
+    if (directExhausted && floodsExhausted) {
       FM_FRIEND_LOG("LINK give-up action=%s id=%02X%02X%02X%02X attempts=%u",
                     fmFriendLinkActionName(pending.action),
                     pending.requestId[0], pending.requestId[1],
                     pending.requestId[2], pending.requestId[3],
                     pending.attempts);
+      const friendmesh::FriendTransactionKind kind =
+          pending.action == friendmesh::FriendLinkAction::Accepted
+              ? friendmesh::FriendTransactionKind::Accept
+              : friendmesh::FriendTransactionKind::Remove;
+      friendmeshNotifyTransaction(
+          pending.requestId, kind, pending.recipientName,
+          friendmesh::FriendTransactionStage::Failed,
+          pending.floodAttempts);
       memset(&pending, 0, sizeof(pending));
       continue;
     }
@@ -3673,7 +4269,8 @@ void MyMesh::friendmeshTickLinkControls() {
     strncpy(recipient.name, pending.recipientName,
             sizeof(recipient.name) - 1);
     recipient.type = ADV_TYPE_CHAT;
-    recipient.out_path_len = pending.pathLength;
+    const bool useFlood = directExhausted && pending.allowFloodFallback;
+    recipient.out_path_len = useFlood ? OUT_PATH_UNKNOWN : pending.pathLength;
     if (pending.pathLength != OUT_PATH_UNKNOWN &&
         mesh::Packet::isValidPathLen(pending.pathLength)) {
       const size_t pathBytes =
@@ -3684,16 +4281,143 @@ void MyMesh::friendmeshTickLinkControls() {
       else
         recipient.out_path_len = OUT_PATH_UNKNOWN;
     }
-    FM_FRIEND_LOG("LINK retry action=%s id=%02X%02X%02X%02X attempt=%u",
+    FM_FRIEND_LOG("LINK retry action=%s id=%02X%02X%02X%02X direct=%u flood=%u mode=%s",
                   fmFriendLinkActionName(pending.action),
                   pending.requestId[0], pending.requestId[1],
                   pending.requestId[2], pending.requestId[3],
-                  (unsigned)(pending.attempts + 1));
-    friendmeshTransmitLinkControl(
-        recipient, pending.action, pending.requestId);
-    ++pending.attempts;
+                  (unsigned)(pending.attempts + (useFlood ? 0 : 1)),
+                  (unsigned)(pending.floodAttempts + (useFlood ? 1 : 0)),
+                  useFlood ? "flood" : "direct");
+    const bool budgetReserved = useFlood
+        ? friendmeshReserveFlood(pending.requestId)
+        : friendmeshReserveDirectAttempt(pending.requestId);
+    if (!budgetReserved) {
+      friendmeshNotifyTransaction(
+          pending.requestId,
+          pending.action == friendmesh::FriendLinkAction::Accepted
+              ? friendmesh::FriendTransactionKind::Accept
+              : friendmesh::FriendTransactionKind::Remove,
+          pending.recipientName, friendmesh::FriendTransactionStage::Failed,
+          pending.floodAttempts);
+      memset(&pending, 0, sizeof(pending));
+      continue;
+    }
+    const bool sent = friendmeshTransmitLinkControl(
+        recipient, pending.action, pending.requestId, useFlood);
+    transaction = _friend_transaction_ledger.find(pending.requestId);
+    pending.floodAttempts = transaction ? transaction->floodsUsed : 0;
+    pending.attempts = transaction ? transaction->directAttempts
+                                   : pending.attempts;
+    friendmeshNotifyTransaction(
+        pending.requestId,
+        pending.action == friendmesh::FriendLinkAction::Accepted
+            ? friendmesh::FriendTransactionKind::Accept
+            : friendmesh::FriendTransactionKind::Remove,
+        pending.recipientName,
+        useFlood ? friendmesh::FriendTransactionStage::FloodFallback
+                 : friendmesh::FriendTransactionStage::RetryingDirect,
+        pending.floodAttempts);
     pending.nextAttemptMillis = now +
-        (2000UL << pending.attempts);  // 8 s, then 16 s after first 4 s retry
+        (useFlood ? (12000UL << pending.floodAttempts)
+                  : (4000UL << pending.attempts));
+  }
+}
+
+void MyMesh::friendmeshNotifyTransaction(
+    const uint8_t transaction_id[8],
+    friendmesh::FriendTransactionKind kind, const char* peer_name,
+    friendmesh::FriendTransactionStage stage, uint8_t floods_used) {
+  if (!transaction_id) return;
+  friendmesh::FriendTransactionRecord* record =
+      _friend_transaction_ledger.mutableFind(transaction_id);
+  if (record && record->kind == kind) {
+    const friendmesh::FriendTransactionStage previous = record->stage;
+    const friendmesh::ResultCode transitioned =
+        _friend_transaction_ledger.transition(
+            transaction_id, stage, getRTCClock()->getCurrentTime());
+    if (transitioned == friendmesh::ResultCode::Ok) {
+      if (previous != stage && !friendmeshCommitTransactionJournal()) {
+        FM_FRIEND_LOG("JOURNAL state=recovery-required transition=%u",
+                      (unsigned)stage);
+      }
+    } else {
+      stage = record->stage;
+    }
+    floods_used = record->floodsUsed;
+  }
+  if (_ui) _ui->onFriendMeshTransactionProgress(
+      transaction_id, kind,
+      peer_name && peer_name[0] ? peer_name : "Friend", stage,
+      floods_used, friendmesh::kFriendTransactionFloodLimit);
+}
+
+void MyMesh::friendmeshTickOutgoingRequests() {
+  const uint32_t now = _ms->getMillis();
+  for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
+    FriendRequestOutgoing& outgoing = _friend_request_outgoing[i];
+    if (outgoing.sentMillis == 0) continue;
+    const uint32_t age = now - outgoing.sentMillis;
+    if (age >= friendmesh::kFriendRequestLifetimeSeconds * 1000UL) {
+      friendmeshNotifyTransaction(
+          outgoing.requestId, friendmesh::FriendTransactionKind::Request,
+          outgoing.peerName, friendmesh::FriendTransactionStage::Expired,
+          outgoing.floodAttempts);
+      memset(&outgoing, 0, sizeof(outgoing));
+      continue;
+    }
+    const friendmesh::FriendTransactionRecord* transaction =
+        _friend_transaction_ledger.find(outgoing.requestId);
+    if (outgoing.channelIndex < 0 || !transaction ||
+        !friendmesh::friendTransactionMayFlood(*transaction) ||
+        (int32_t)(now - outgoing.nextFallbackMillis) < 0) continue;
+    ChannelDetails details = {};
+    if (!getChannel(outgoing.channelIndex, details) || !details.name[0]) {
+      friendmeshNotifyTransaction(
+          outgoing.requestId, friendmesh::FriendTransactionKind::Request,
+          outgoing.peerName, friendmesh::FriendTransactionStage::Failed,
+          outgoing.floodAttempts);
+      continue;
+    }
+    // Reserve and persist the flood before queueing it. A power cut can waste
+    // one allowance, but can never reset the budget and create a third flood.
+    if (!friendmeshReserveFlood(outgoing.requestId)) {
+      friendmeshNotifyTransaction(
+          outgoing.requestId, friendmesh::FriendTransactionKind::Request,
+          outgoing.peerName, friendmesh::FriendTransactionStage::Failed,
+          outgoing.floodAttempts);
+      memset(&outgoing, 0, sizeof(outgoing));
+      continue;
+    }
+    transaction = _friend_transaction_ledger.find(outgoing.requestId);
+    outgoing.floodAttempts = transaction ? transaction->floodsUsed
+                                         : outgoing.floodAttempts;
+    const bool sent = sendGroupData(
+        details.channel, nullptr, OUT_PATH_UNKNOWN,
+        friendmesh::kFriendRequestDataType, outgoing.encodedRequest,
+        static_cast<int>(friendmesh::kFriendRequestEncodedBytes));
+    if (!sent) {
+      // The durable reservation is intentionally retained after a queue
+      // failure; reboot or ambiguity must never create a third flood.
+      outgoing.nextFallbackMillis = now + 30000UL;
+      continue;
+    }
+    FM_FRIEND_LOG("PUBLIC fallback id=%02X%02X%02X%02X flood=%u/%u",
+                  outgoing.requestId[0], outgoing.requestId[1],
+                  outgoing.requestId[2], outgoing.requestId[3],
+                  outgoing.floodAttempts,
+                  friendmesh::kFriendTransactionFloodLimit);
+    friendmeshNotifyTransaction(
+        outgoing.requestId, friendmesh::FriendTransactionKind::Request,
+        outgoing.peerName, friendmesh::FriendTransactionStage::FloodFallback,
+        outgoing.floodAttempts);
+    friendmeshNotifyTransaction(
+        outgoing.requestId, friendmesh::FriendTransactionKind::Request,
+        outgoing.peerName,
+        friendmesh::FriendTransactionStage::AwaitingResponse,
+        outgoing.floodAttempts);
+    // Give the first network-wide retry ample time and airtime before the
+    // final allowed flood. No third flood is representable.
+    outgoing.nextFallbackMillis = now + 600000UL;
   }
 }
 
@@ -3714,7 +4438,8 @@ bool MyMesh::friendmeshSendLinkControl(
 bool MyMesh::uiSendFriendRequest(int channel_idx,
                                  const uint8_t target_message_hash[8],
                                  const uint8_t* incoming_path,
-                                 uint8_t encoded_path_len) {
+                                 uint8_t encoded_path_len,
+                                 const char* target_name) {
   if (!target_message_hash || channel_idx < 0 ||
       channel_idx >= MAX_GROUP_CHANNELS ||
       !mesh::Packet::isValidPathLen(encoded_path_len)) return false;
@@ -3729,8 +4454,6 @@ bool MyMesh::uiSendFriendRequest(int channel_idx,
   getRNG()->random(request.requestId, sizeof(request.requestId));
   if (request.requestId[0] == 0 && request.requestId[1] == 0)
     request.requestId[0] = 1;
-  if (!friendmeshRememberOutgoingRequest(request.requestId,
-                                         target_message_hash)) return false;
   memcpy(request.targetMessageHash, target_message_hash,
          sizeof(request.targetMessageHash));
   request.createdAt = getRTCClock()->getCurrentTime();
@@ -3757,7 +4480,7 @@ bool MyMesh::uiSendFriendRequest(int channel_idx,
   if (friendmesh::encodeFriendRequest(
           request, encoded, sizeof(encoded), written) !=
       friendmesh::ResultCode::Ok) {
-    friendmeshConsumeOutgoingRequest(request.requestId); return false;
+    return false;
   }
   self_id.sign(encoded + friendmesh::kFriendRequestSignedBytes,
                encoded, friendmesh::kFriendRequestSignedBytes);
@@ -3765,13 +4488,41 @@ bool MyMesh::uiSendFriendRequest(int channel_idx,
   if (pathBytes && friendmesh::reverseMeshPath(
           incoming_path, encoded_path_len, reversePath,
           sizeof(reversePath)) != pathBytes) {
-    friendmeshConsumeOutgoingRequest(request.requestId); return false;
+    return false;
+  }
+  if (!friendmeshRememberOutgoingRequest(
+          request.requestId, target_message_hash, channel_idx, target_name,
+          reversePath, encoded_path_len, encoded)) return false;
+  friendmeshNotifyTransaction(
+      request.requestId, friendmesh::FriendTransactionKind::Request,
+      target_name && target_name[0] ? target_name : "Friend",
+      friendmesh::FriendTransactionStage::Prepared, 0);
+  if (!friendmeshReserveDirectAttempt(request.requestId)) {
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target_name && target_name[0] ? target_name : "Friend",
+        friendmesh::FriendTransactionStage::Failed, 0);
+    friendmeshConsumeOutgoingRequest(request.requestId);
+    return false;
   }
   if (!sendGroupData(details.channel, reversePath, encoded_path_len,
                      friendmesh::kFriendRequestDataType,
                      encoded, static_cast<int>(written))) {
-    friendmeshConsumeOutgoingRequest(request.requestId); return false;
+    friendmeshConsumeOutgoingRequest(request.requestId);
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target_name && target_name[0] ? target_name : "Friend",
+        friendmesh::FriendTransactionStage::Failed, 0);
+    return false;
   }
+  friendmeshNotifyTransaction(
+      request.requestId, friendmesh::FriendTransactionKind::Request,
+      target_name && target_name[0] ? target_name : "Friend",
+      friendmesh::FriendTransactionStage::DirectSent, 0);
+  friendmeshNotifyTransaction(
+      request.requestId, friendmesh::FriendTransactionKind::Request,
+      target_name && target_name[0] ? target_name : "Friend",
+      friendmesh::FriendTransactionStage::AwaitingResponse, 0);
   FM_FRIEND_LOG("PUBLIC TX id=%02X%02X%02X%02X target_msg=%02X%02X%02X%02X path=%u channel=%d",
                 request.requestId[0], request.requestId[1],
                 request.requestId[2], request.requestId[3],
@@ -3798,9 +4549,6 @@ friendmesh::BleFriendRequestResult MyMesh::uiSendNearbyFriendRequest(
     request.requestId[0] = 1;
   friendmesh::makeNearbyFriendTargetHash(
       target.pubKey, request.targetMessageHash);
-  if (!friendmeshRememberOutgoingRequest(request.requestId,
-                                         request.targetMessageHash))
-    return friendmesh::BleFriendRequestResult::Busy;
   request.createdAt = getRTCClock()->getCurrentTime();
   request.expiresAt = request.createdAt >= 1700000000UL
       ? request.createdAt + friendmesh::kFriendRequestLifetimeSeconds : 0;
@@ -3822,6 +4570,21 @@ friendmesh::BleFriendRequestResult MyMesh::uiSendNearbyFriendRequest(
   }
   self_id.sign(encoded + friendmesh::kFriendRequestSignedBytes,
                encoded, friendmesh::kFriendRequestSignedBytes);
+  if (!friendmeshRememberOutgoingRequest(
+          request.requestId, request.targetMessageHash, -1, target.name,
+          nullptr, 0, encoded))
+    return friendmesh::BleFriendRequestResult::Busy;
+  friendmeshNotifyTransaction(
+      request.requestId, friendmesh::FriendTransactionKind::Request,
+      target.name, friendmesh::FriendTransactionStage::Prepared, 0);
+  if (!friendmeshReserveDirectAttempt(request.requestId)) {
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target.name, friendmesh::FriendTransactionStage::Failed, 0);
+    friendmeshConsumeOutgoingRequest(request.requestId);
+    memset(encoded, 0, sizeof(encoded));
+    return friendmesh::BleFriendRequestResult::Busy;
+  }
   const friendmesh::BleFriendRequestResult result =
       friendmesh::bleFriendSendRequest(peer, encoded, written);
   FM_FRIEND_LOG("BLE TX id=%02X%02X%02X%02X to=%02X%02X%02X%02X result=%u",
@@ -3831,8 +4594,19 @@ friendmesh::BleFriendRequestResult MyMesh::uiSendNearbyFriendRequest(
                 target.pubKey[2], target.pubKey[3],
                 (unsigned)result);
   memset(encoded, 0, sizeof(encoded));
-  if (result != friendmesh::BleFriendRequestResult::Ok)
+  if (result != friendmesh::BleFriendRequestResult::Ok) {
     friendmeshConsumeOutgoingRequest(request.requestId);
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target.name, friendmesh::FriendTransactionStage::Failed, 0);
+  } else {
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target.name, friendmesh::FriendTransactionStage::DirectSent, 0);
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target.name, friendmesh::FriendTransactionStage::AwaitingResponse, 0);
+  }
   return result;
 }
 
@@ -3917,6 +4691,41 @@ bool MyMesh::uiAcceptFriendRequest(const uint8_t requester_pub[32],
                 requester_pub[2], requester_pub[3], recipient.out_path_len);
   return friendmeshSendLinkControl(
       recipient, friendmesh::FriendLinkAction::Accepted, request_id);
+}
+
+bool MyMesh::uiDenyFriendRequest(const uint8_t requester_pub[32],
+                                 const uint8_t request_id[8],
+                                 const char* requester_name,
+                                 const uint8_t* return_path,
+                                 uint8_t return_path_length) {
+  if (!requester_pub || !request_id) return false;
+  ContactInfo recipient = {};
+  memcpy(recipient.id.pub_key, requester_pub, PUB_KEY_SIZE);
+  strncpy(recipient.name,
+          requester_name && requester_name[0] ? requester_name : "Friend",
+          sizeof(recipient.name) - 1);
+  recipient.type = ADV_TYPE_CHAT;
+  recipient.out_path_len = OUT_PATH_UNKNOWN;
+  if (return_path_length != friendmesh::kFriendRequestReturnPathUnknown &&
+      mesh::Packet::isValidPathLen(return_path_length)) {
+    const size_t pathBytes =
+        static_cast<size_t>(return_path_length & 0x3F) *
+        static_cast<size_t>((return_path_length >> 6) + 1);
+    if (pathBytes <= friendmesh::kFriendRequestReturnPathMaxBytes &&
+        (pathBytes == 0 || return_path)) {
+      recipient.out_path_len = (return_path_length & 0x3F) == 0
+          ? 0 : return_path_length;
+      if (pathBytes) memcpy(recipient.out_path, return_path, pathBytes);
+    }
+  }
+  FM_FRIEND_LOG("DECLINE UI send id=%02X%02X%02X%02X to=%02X%02X%02X%02X path=%u",
+                request_id[0], request_id[1], request_id[2], request_id[3],
+                requester_pub[0], requester_pub[1],
+                requester_pub[2], requester_pub[3], recipient.out_path_len);
+  const bool sent = friendmeshSendLinkControl(
+      recipient, friendmesh::FriendLinkAction::Declined, request_id);
+  if (sent) friendmeshRememberDeclinedRequest(request_id, requester_pub);
+  return sent;
 }
 
 bool MyMesh::uiRemoveFriendRelationship(const uint8_t friend_pub[32],
@@ -4443,6 +5252,9 @@ void MyMesh::begin(bool has_display) {
 
   // load persisted prefs
   _store->loadPrefs(_prefs, sensors.node_lat, sensors.node_lon);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  friendmeshLoadTransactionJournal();
+#endif
 
   // sanitise bad pref values
   _prefs.rx_delay_base = constrain(_prefs.rx_delay_base, 0, 20.0f);
@@ -6224,7 +7036,9 @@ void MyMesh::checkSerialInterface() {
 void MyMesh::loop() {
   BaseChatMesh::loop();
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  friendmeshRestoreTransactionUi();
   friendmeshTickLinkControls();
+  friendmeshTickOutgoingRequests();
 #endif
 
   // Session keep-alives for logged-in servers (rooms). The core pinger sends the

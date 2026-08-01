@@ -12,6 +12,9 @@
 #endif
 
 #include "NodePrefs.h"
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+#include "friendmesh/people/FriendMeshFriendRequest.h"
+#endif
 
 // Forward decl — defined in helpers/ContactInfo.h, included by MyMesh.h users.
 struct ContactInfo;
@@ -193,9 +196,23 @@ public:
     (void)request_id; (void)requester_pub; (void)requester_name;
     return false;
   }
+  virtual void onFriendMeshFriendDeclined(const uint8_t request_id[8],
+                                          const uint8_t responder_pub[32],
+                                          const char* responder_name) {
+    (void)request_id; (void)responder_pub; (void)responder_name;
+  }
   virtual void onFriendMeshFriendRemoved(const uint8_t remover_pub[32]) {
     (void)remover_pub;
   }
+  virtual void onFriendMeshTransactionProgress(
+      const uint8_t transaction_id[8],
+      friendmesh::FriendTransactionKind kind, const char* peer_name,
+      friendmesh::FriendTransactionStage stage, uint8_t floods_used,
+      uint8_t flood_limit) {
+    (void)transaction_id; (void)kind; (void)peer_name; (void)stage;
+    (void)floods_used; (void)flood_limit;
+  }
+  virtual void onFriendMeshTransactionRecoveryRequired() {}
   /** A bounded FriendMesh channel invitation arrived inside an authenticated
    *  MeshCore contact message whose route was verified as direct/zero-hop.
    *  The UI must require explicit acceptance before saving the channel. */

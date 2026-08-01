@@ -233,34 +233,42 @@ Implement together because they share identity references, verification state, m
   its authenticated acknowledgement; the accepter adds the requester and
   resolves the inbox only after receiving that acknowledgement. Acceptance is
   idempotently acknowledged and retried, so the accepter never needs to send a
-  reciprocal request. Denial is silent and offers an identity block.
+  reciprocal request. Denial sends one authenticated direct control without an
+  ACK and offers an identity block.
   This adds an
   application group-data type (`0xFF03`) without changing MeshCore's packet
   format; both endpoints need FriendMesh-aware firmware.
-- [x] Bound Friend Request state: 16 recent locally-sent message hashes and
-  eight outgoing request IDs plus eight authenticated-peer-bound completed IDs
-  in RAM; at most 12 pending records on SD or four session-only pending records
-  without SD; at most four compact accepted Friend cards in internal NVS when SD
-  is unavailable. Exact inbox replays are ignored; a newly verified ID from the
-  same identity replaces the stale transaction without another alert. No
-  request route/hash history is written internally.
+- [x] Bound Friend Request state: 16 recent locally-sent message hashes; at
+  most 12 pending records on SD or four session-only pending records without
+  SD; at most four compact accepted Friend cards when SD is unavailable; and a
+  shared 16-record, two-slot checksummed NVS transaction journal containing
+  only public correlation metadata and attempt budgets. Exact inbox replays are
+  ignored; a newly verified ID from the same identity replaces the stale
+  transaction without another alert. No request route/hash history, private
+  keys, channel secrets, message content, or location is written to the journal.
 - [x] Contextual confirmed removal in the main contact action sheet: Friends
   expose `Remove friend`, send an authenticated quiet reciprocal removal, and
   retain the MeshCore contact; blocking a Friend removes the relationship first
   and blocks future requests from that key. Non-friends
   expose `Remove node` and clear the network contact plus matching Discovered
   cache entry. Bulk contact deletion excludes Friends.
-- [x] Make acceptance and reciprocal-removal delivery bounded and idempotent:
-  at most four RAM-only pending controls, authenticated peer acknowledgements,
-  short retries, duplicate suppression, ACK-gated two-phase Friend promotion,
+- [x] Make request, acceptance, decline, and reciprocal-removal delivery use a
+  shared bounded transaction policy: direct first, at most two initiator-owned
+  floods, no flooded ACK, one direct decline without an ACK, at most four
+  RAM-only live control payloads, authenticated peer acknowledgements, short
+  retries, duplicate suppression, ACK-gated two-phase Friend promotion,
   strict MeshCore AES zero-padding normalization, pending/completed/unknown
   acceptance correlation, deferred requestee inbox resolution, and forced Friends-list cache
   invalidation so both endpoints update without reboot. Add WadaMesh-side
   diagnostics for request correlation, control queuing/retries, radio-driver
   transmit completion/failure, raw anonymous-request routing/decrypt probes,
   acknowledgement matching, and storage finalization without modifying
-  MeshCore. Host tests and the T-Deck build pass; physical two-T-Deck validation
-  of the revised exchange remains open.
+  MeshCore. A dismissible progress modal reports completed/current stages and
+  the flood count. The journal restores correlation, terminal tombstones, and budgets
+  after reboot, but does not yet reconstruct the RAM-only encoded payload and
+  route for autonomous resend. Both invalid journal slots disable new sends and
+  raise a recovery-required UI state. Host tests and the T-Deck build pass;
+  physical multi-hop/two-T-Deck validation of the revised exchange remains open.
 - [x] Local identity-reference lifecycle using development/test providers.
 - [x] Group create/rename/disband and eight-group bounds.
 - [x] Member aliases, roles, join ordering, approval, replacement, blocking, leave, kick, transfer, and recorded majority succession behavior.

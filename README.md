@@ -60,13 +60,12 @@ other hardware is deferred until the scope is explicitly expanded.
 
 The current T-Deck build contains a platform-neutral FriendMesh application core
 and development-provider implementations of membership, chat/sync,
-position/navigation/markers/meetups, and safety/notification behavior. A single
-native WadaMesh app-drawer tile now exposes a local development workspace where
-the operator can initialize Friends state, save typed FriendMesh notes, add a
-meetup marker at the current position, jump to that marker on WadaMesh's map,
-tap it for FriendMesh details, and open a local ride Help request. The page uses
-small cached state labels instead of rebuilding its layout during refresh.
-WadaMesh private channels now also have an `Invite nearby` action. A bounded
+position/navigation/markers/meetups, and safety/notification behavior. The old
+volatile FriendMesh development app and its local-only marker/runtime state have
+been removed; FriendMesh behavior is exposed only through the relevant existing
+WadaMesh contact, channel, request, and map surfaces.
+
+WadaMesh private channels have an `Invite nearby` action. A bounded
 three-second Bluetooth scan discovers updated T-Decks belonging to saved chat
 contacts; a fresh direct zero-hop LoRa advert remains the fallback. Bluetooth
 advertises only a versioned public-key prefix and never carries the channel key.
@@ -163,10 +162,9 @@ path is functional but not production-secure FriendMesh identity: a holder of
 the shared channel key can spoof a roster prefix, and removed members retain
 access until Phase 7 signing and forward-only rekey are complete.
 
-The separate FriendMesh development workspace is still volatile across reboot
-and its custom event transport remains disabled. WadaMesh's UI and branding
-remain authoritative; optional themes are the maximum broad visual addition in
-scope.
+The separate FriendMesh development workspace is no longer included. WadaMesh's
+UI and branding remain authoritative; optional themes are the maximum broad
+visual addition in scope.
 
 ## Build
 

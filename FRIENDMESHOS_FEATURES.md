@@ -180,12 +180,15 @@ This is an explicit SD-bound product mode. It reduces internal-flash churn and p
 The Friends directory has one deliberately tiny exception for card-loss use:
 when SD writes are unavailable, internal NVS may hold at most four accepted
 Friend cards, each containing only a full 32-byte public key and a 15-byte local
-alias. Pending Friend Requests are limited to four RAM-only records for that
-boot, receiving requests resets to off after reboot, and no request path,
-message hash, chat history, location, motion, or other growing FriendMesh data
-is written internally. When SD returns, the emergency cards are merged into the
-normal SD-backed Friends view and cleared from NVS after the next successful
-Friend mutation.
+alias. A separate fixed-capacity transaction journal may hold at most 16 compact
+public-metadata records in two checksummed NVS slots. It stores transaction IDs,
+peer public keys/names, type, stage, attempt counters, and timestamps so reboot
+cannot reset the two-flood allowance or erase acceptance/decline correlation.
+It never stores private keys, channel secrets, message content, location, or
+request route/hash history. Pending inbox requests remain limited to four
+RAM-only records without SD, and receiving requests resets to off after reboot.
+When SD returns, emergency Friend cards are merged into the normal SD-backed
+Friends view and cleared from NVS after the next successful Friend mutation.
 
 Friend and network-node removal intentionally share the full-width danger slot
 in the contact action sheet while remaining different operations. Tapping a
@@ -201,9 +204,12 @@ node discoverable again. Bulk contact deletion excludes Friends so it cannot
 bypass this distinction.
 
 Friend acceptance and reciprocal removal are idempotent relationship controls,
-not chat messages. The sender keeps at most four controls in RAM, retries each
-on a bounded schedule spaced beyond slow-preset LoRa airtime, and stops after
-an authenticated acknowledgement from the exact peer. Acceptance uses a
+not chat messages. The sender keeps at most four live control payloads in RAM,
+while the shared durable ledger preserves their public correlation and attempt
+budgets. Retries are spaced beyond slow-preset LoRa airtime. Direct delivery is
+preferred; only the operation initiator may use flood fallback, with at most two
+floods for one transaction. Acknowledgements are direct-only and never create a
+new flood. Acceptance uses a
 two-phase relationship transition rather than an optimistic local write. The
 recipient keeps the inbox request pending after tapping Accept. The requester
 adds the recipient only after it has received the authenticated acceptance and
@@ -211,11 +217,16 @@ successfully queued the matching authenticated acknowledgement. The recipient
 adds the requester and removes the inbox request only after receiving that
 acknowledgement. If either transmit queue or final Friend storage operation
 fails, the corresponding correlation or pending control remains available for
-retry. The requester keeps eight bounded, RAM-only recently completed request
-IDs bound to the authenticated accepter key. A pending acceptance is ACKed and
+retry. A pending acceptance is ACKed and
 promoted, a completed retry is ACKed without adding or notifying twice, and an
 unknown or stale request ID is not ACKed and cannot change either Friends list.
-Duplicate removals remain quiet. These controls are not persisted across reboot.
+Decline sends one authenticated direct control and expects no acknowledgement.
+Duplicate removals remain quiet. Transaction correlation, stages, and budgets
+survive reboot, but the encoded retry payload and route remain RAM-only: a
+rebooted device can recognize a later response and cannot exceed its flood
+budget, but it does not yet autonomously reconstruct and resend the interrupted
+packet. If both NVS journal slots are present but invalid, new FriendMesh
+transactions fail closed and the UI reports that recovery is required.
 Every completed local or remote Friend mutation explicitly invalidates
 the Contacts/Friends list cache, so a relationship change appears without a
 reboot even when the underlying MeshCore contact count is unchanged.
@@ -248,8 +259,14 @@ format:
    inbox entry only after receiving that exact acknowledgement. Acceptance and
    acknowledgement are retried as the bounded relationship control described
    above; the recipient does not need to send a second Friend Request. Denial
-   sends nothing and asks whether the recipient also wants to block that full
-   identity. A block drops future requests before inbox storage.
+   sends one authenticated direct `Declined` control, expects no ACK, and asks
+   whether the recipient also wants to block that full identity. A block drops
+   future requests before inbox storage.
+
+The transaction modal shows the completed/current stages and flood count and
+remains dismissible while the operation continues. Request, accept,
+decline, and removal use the same state policy; broader FriendMesh operations
+will migrate to it as their live radio paths are enabled.
 
 Only one live request per public key can occupy the inbox. An exact replay does
 not rewrite storage or retrigger an alert. A newly verified request ID from that
@@ -636,28 +653,15 @@ at 89,404 bytes RAM and 3,254,685 bytes flash. No UI, production persistence,
 cryptography, MeshCore radio integration, Heltec work, or physical test was
 performed, and FriendMesh transmission remains hard-disabled.
 
-### 7.9 First local T-Deck feature workspace
+### 7.9 Removed local T-Deck feature workspace
 
-The T-Deck now allocates the development runtime in PSRAM and exposes one
-`FriendMesh` tile in WadaMesh's existing app drawer. The page reuses WadaMesh
-controls and branding and can initialize a local Friends workspace, save typed
-notes through the real chat/outbox service, create a current-position meetup
-marker, and open a local ride Help incident with notification state.
-
-The meetup action is connected to WadaMesh's actual map renderer: active
-FriendMesh markers appear as typed teal overlays, coexist with self/contact
-markers, participate in the existing overlap picker, and show FriendMesh marker
-details when tapped. `View map` centers the current map on the latest marker.
-The page keeps fixed-height status fields and refreshes only when a local action
-changes state. It has no background FriendMesh polling, avoids the previous
-whole-label flex relayout, and defers map reconstruction until the map opens.
-
-This is deliberately labeled local development behavior: it is volatile across
-reboot, does not bind real MeshCore contacts, and cannot send FriendMesh traffic.
-The host suite passes, and the optimized T-Deck image builds at 89,556 bytes RAM
-and 3,267,661 bytes flash. The preceding workspace image was physically tested;
-this updated marker-rendering image still requires a completed recovery flash
-after the development T-Deck disconnected during upload.
+The volatile FriendMesh development app was removed on 2026-08-01. The app
+drawer no longer contains a `FriendMesh` tile, startup no longer allocates its
+PSRAM-only development runtime, and its private local notes, markers, and Help
+demonstration are no longer compiled. This removal does not affect the live
+Friends directory, Friend Requests, reciprocal removal, BLE channel joining,
+group coordination, Friend Compass, or group-map overlays integrated into
+existing WadaMesh surfaces.
 
 ### 7.10 BLE FriendMesh private-channel join
 

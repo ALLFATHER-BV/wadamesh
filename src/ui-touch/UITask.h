@@ -233,8 +233,17 @@ public:
   bool onFriendMeshFriendAcceptanceAcknowledged(
       const uint8_t request_id[8], const uint8_t requester_pub[32],
       const char* requester_name) override;
+  void onFriendMeshFriendDeclined(const uint8_t request_id[8],
+                                  const uint8_t responder_pub[32],
+                                  const char* responder_name) override;
   void onFriendMeshFriendRemoved(
       const uint8_t remover_pub[32]) override;
+  void onFriendMeshTransactionProgress(
+      const uint8_t transaction_id[8],
+      friendmesh::FriendTransactionKind kind, const char* peer_name,
+      friendmesh::FriendTransactionStage stage, uint8_t floods_used,
+      uint8_t flood_limit) override;
+  void onFriendMeshTransactionRecoveryRequired() override;
   bool sendFriendRequestForMessage(int msg_idx);
   void onFriendMeshChannelInvite(const ContactInfo& from,
                                  const char* channel_name,

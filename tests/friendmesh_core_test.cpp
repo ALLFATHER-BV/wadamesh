@@ -2,7 +2,6 @@
 #include <string.h>
 
 #include "friendmesh/FriendMeshFeatureService.h"
-#include "friendmesh/app/FriendMeshDevelopmentRuntime.h"
 #include "friendmesh/chat/FriendMeshChat.h"
 #include "friendmesh/chat/FriendMeshDevelopmentStorage.h"
 #include "friendmesh/chat/FriendMeshFragmentation.h"
@@ -1506,29 +1505,6 @@ void testSafetyIncidentsAndNotifications() {
   CHECK(notifications.unacknowledgedCount() == 1);
 }
 
-void testDevelopmentRuntimeWalkthrough() {
-  friendmesh::DevelopmentRuntime runtime;
-  CHECK(runtime.addLocalMessage("before setup", 1) ==
-        friendmesh::ResultCode::InvalidState);
-  CHECK(runtime.initialize("T-Deck owner", 10) == friendmesh::ResultCode::Ok);
-  CHECK(runtime.initialize("again", 11) == friendmesh::ResultCode::Duplicate);
-  CHECK(runtime.addLocalMessage("First FriendMesh note", 12) ==
-        friendmesh::ResultCode::Ok);
-  CHECK(runtime.addLocalMarker(340000000, -1180000000,
-                               friendmesh::MarkerType::Meetup, 13) ==
-        friendmesh::ResultCode::Ok);
-  CHECK(runtime.openLocalHelp(friendmesh::IncidentKind::HelpRide, 340000000,
-                              -1180000000, true, 14) ==
-        friendmesh::ResultCode::Ok);
-  const friendmesh::DevelopmentRuntimeSnapshot snapshot = runtime.snapshot();
-  CHECK(snapshot.initialized);
-  CHECK(snapshot.messages == 1);
-  CHECK(snapshot.markers == 1);
-  CHECK(snapshot.incidents == 1);
-  CHECK(snapshot.notifications == 1);
-  CHECK(runtime.chat().outbox().size() == 1);
-}
-
 void testEventHistory() {
   friendmesh::EventHistory<3> history;
   const friendmesh::EventHeader first =
@@ -1940,6 +1916,11 @@ void testMeshCorePositionAdapter() {
 }
 
 void testFriendRequestEnvelopeAndPath() {
+  CHECK(friendmesh::kFriendTransactionFloodLimit == 2);
+  CHECK(friendmesh::friendTransactionCanFlood(0));
+  CHECK(friendmesh::friendTransactionCanFlood(1));
+  CHECK(!friendmesh::friendTransactionCanFlood(2));
+  CHECK(!friendmesh::friendTransactionCanFlood(255));
   friendmesh::FriendRequestEnvelope request = {};
   for (size_t i = 0; i < sizeof(request.requestId); ++i)
     request.requestId[i] = static_cast<uint8_t>(i + 1);
@@ -2028,6 +2009,9 @@ void testFriendRequestEnvelopeAndPath() {
   link.action = friendmesh::FriendLinkAction::Accepted;
   memcpy(link.requestId, request.requestId, sizeof(link.requestId));
   strcpy(link.peerName, "Friend");
+  link.returnPathLength = 2;
+  link.returnPath[0] = 0xA1;
+  link.returnPath[1] = 0xB2;
   uint8_t linkWire[friendmesh::kFriendLinkEncodedBytes] = {};
   CHECK(friendmesh::encodeFriendLink(link, linkWire, sizeof(linkWire), written) ==
         friendmesh::ResultCode::Ok);
@@ -2038,6 +2022,9 @@ void testFriendRequestEnvelopeAndPath() {
   CHECK(decodedLink.action == friendmesh::FriendLinkAction::Accepted);
   CHECK(memcmp(decodedLink.requestId, request.requestId,
                sizeof(request.requestId)) == 0);
+  CHECK(decodedLink.returnPathLength == 2);
+  CHECK(decodedLink.returnPath[0] == 0xA1);
+  CHECK(decodedLink.returnPath[1] == 0xB2);
   uint8_t paddedLink[friendmesh::kFriendLinkEncodedBytes + 16] = {};
   memcpy(paddedLink, linkWire, friendmesh::kFriendLinkEncodedBytes);
   CHECK(friendmesh::decodeFriendLink(
@@ -2073,6 +2060,27 @@ void testFriendRequestEnvelopeAndPath() {
   CHECK(friendmesh::decodeFriendLink(linkWire, written, decodedLink) ==
         friendmesh::ResultCode::Ok);
   CHECK(decodedLink.action == friendmesh::FriendLinkAction::Acknowledged);
+
+  link.action = friendmesh::FriendLinkAction::Declined;
+  CHECK(friendmesh::encodeFriendLink(link, linkWire, sizeof(linkWire), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(friendmesh::decodeFriendLink(linkWire, written, decodedLink) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(decodedLink.action == friendmesh::FriendLinkAction::Declined);
+
+  uint8_t legacyLink[friendmesh::kFriendLinkV1EncodedBytes] = {};
+  memcpy(legacyLink, linkWire, sizeof(legacyLink));
+  legacyLink[4] = 1;
+  CHECK(friendmesh::decodeFriendLink(
+            legacyLink, sizeof(legacyLink), decodedLink) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(decodedLink.action == friendmesh::FriendLinkAction::Declined);
+  CHECK(decodedLink.returnPathLength ==
+        friendmesh::kFriendRequestReturnPathUnknown);
+
+  link.returnPathLength = 0x3F;
+  CHECK(friendmesh::encodeFriendLink(link, linkWire, sizeof(linkWire), written) ==
+        friendmesh::ResultCode::InvalidArgument);
   memset(link.requestId, 0, sizeof(link.requestId));
   CHECK(friendmesh::encodeFriendLink(link, linkWire, sizeof(linkWire), written) ==
         friendmesh::ResultCode::InvalidArgument);
@@ -2086,6 +2094,113 @@ void testFriendRequestEnvelopeAndPath() {
   const uint8_t expected[] = {0xEE, 0xFF, 0xCC, 0xDD, 0xAA, 0xBB};
   CHECK(memcmp(reversed, expected, sizeof(expected)) == 0);
   CHECK(friendmesh::reverseMeshPath(sourcePath, encodedPathLength, reversed, 5) == 0);
+}
+
+void testFriendTransactionLedgerAndJournal() {
+  friendmesh::FriendTransactionLedger ledger;
+  uint8_t requestId[friendmesh::kFriendTransactionIdBytes] = {};
+  uint8_t peer[friendmesh::kFriendTransactionPeerKeyBytes] = {};
+  requestId[0] = 0x51;
+  peer[0] = 0xA1;
+  CHECK(ledger.begin(
+            requestId, friendmesh::FriendTransactionKind::Request, nullptr,
+            "Trail friend", friendmesh::FriendTransactionInitiator |
+                                friendmesh::FriendTransactionAllowFlood |
+                                friendmesh::FriendTransactionDurable,
+            1000, 1100) == friendmesh::ResultCode::Ok);
+  CHECK(ledger.begin(
+            requestId, friendmesh::FriendTransactionKind::Request, nullptr,
+            "duplicate", 0, 1000, 1100) ==
+        friendmesh::ResultCode::Duplicate);
+  const friendmesh::FriendTransactionRecord* record = ledger.find(requestId);
+  CHECK(record != nullptr);
+  CHECK(friendmesh::friendTransactionMayFlood(*record));
+  CHECK(ledger.recordDirectAttempt(requestId, 1001) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(ledger.transition(requestId,
+                          friendmesh::FriendTransactionStage::DirectSent,
+                          1001) == friendmesh::ResultCode::Ok);
+  CHECK(ledger.transition(requestId,
+                          friendmesh::FriendTransactionStage::AwaitingResponse,
+                          1002) == friendmesh::ResultCode::Ok);
+  CHECK(ledger.recordFlood(requestId, 1003) == friendmesh::ResultCode::Ok);
+  CHECK(ledger.recordFlood(requestId, 1004) == friendmesh::ResultCode::Ok);
+  CHECK(ledger.recordFlood(requestId, 1005) ==
+        friendmesh::ResultCode::Unauthorized);
+  CHECK(ledger.bindPeer(requestId, peer, "Verified peer", 1006) ==
+        friendmesh::ResultCode::Ok);
+  uint8_t wrongPeer[friendmesh::kFriendTransactionPeerKeyBytes] = {};
+  wrongPeer[0] = 0xB2;
+  CHECK(ledger.bindPeer(requestId, wrongPeer, "wrong", 1007) ==
+        friendmesh::ResultCode::Conflict);
+  CHECK(ledger.transition(requestId,
+                          friendmesh::FriendTransactionStage::ResponseReceived,
+                          1008) == friendmesh::ResultCode::Ok);
+  CHECK(ledger.transition(requestId,
+                          friendmesh::FriendTransactionStage::ConfirmationSent,
+                          1009) == friendmesh::ResultCode::Ok);
+  CHECK(ledger.transition(requestId,
+                          friendmesh::FriendTransactionStage::Complete,
+                          1010) == friendmesh::ResultCode::Ok);
+  CHECK(ledger.transition(requestId,
+                          friendmesh::FriendTransactionStage::Failed,
+                          1011) == friendmesh::ResultCode::InvalidState);
+
+  uint8_t journal[friendmesh::kFriendTransactionJournalMaxBytes] = {};
+  size_t written = 0;
+  CHECK(ledger.encode(41, journal, sizeof(journal), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(written > 16 && written < sizeof(journal));
+  friendmesh::FriendTransactionLedger restored;
+  uint32_t generation = 0;
+  CHECK(restored.decode(journal, written, generation) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(generation == 41);
+  record = restored.find(requestId);
+  CHECK(record != nullptr);
+  CHECK(record->stage == friendmesh::FriendTransactionStage::Complete);
+  CHECK(record->floodsUsed == 2);
+  CHECK(record->directAttempts == 1);
+  CHECK(memcmp(record->peerPublicKey, peer, sizeof(peer)) == 0);
+  CHECK(strcmp(record->peerName, "Verified peer") == 0);
+
+  journal[written - 1] ^= 0x01;
+  friendmesh::FriendTransactionLedger corruptTarget;
+  CHECK(corruptTarget.decode(journal, written, generation) ==
+        friendmesh::ResultCode::CorruptData);
+  journal[written - 1] ^= 0x01;
+  CHECK(corruptTarget.decode(journal, written - 1, generation) ==
+        friendmesh::ResultCode::CorruptData);
+
+  friendmesh::FriendTransactionLedger expiry;
+  uint8_t expiryId[friendmesh::kFriendTransactionIdBytes] = {};
+  expiryId[0] = 0x61;
+  CHECK(expiry.begin(expiryId, friendmesh::FriendTransactionKind::Remove,
+                     peer, "Old peer",
+                     friendmesh::FriendTransactionInitiator |
+                         friendmesh::FriendTransactionAllowFlood,
+                     2000, 2010) == friendmesh::ResultCode::Ok);
+  CHECK(expiry.expire(2009, true) == 0);
+  CHECK(expiry.expire(2010, false) == 0);
+  CHECK(expiry.expire(2010, true) == 1);
+  CHECK(expiry.find(expiryId)->stage ==
+        friendmesh::FriendTransactionStage::Expired);
+  CHECK(expiry.pruneTerminal(2109, true, 100) == 0);
+  CHECK(expiry.pruneTerminal(2110, true, 100) == 1);
+  CHECK(expiry.size() == 0);
+
+  friendmesh::FriendTransactionLedger capacity;
+  for (size_t i = 0; i < friendmesh::kFriendTransactionCapacity; ++i) {
+    uint8_t id[friendmesh::kFriendTransactionIdBytes] = {};
+    id[0] = static_cast<uint8_t>(i + 1);
+    CHECK(capacity.begin(id, friendmesh::FriendTransactionKind::Sync, nullptr,
+                         "sync", 0, 0, 0) == friendmesh::ResultCode::Ok);
+  }
+  uint8_t overflow[friendmesh::kFriendTransactionIdBytes] = {};
+  overflow[0] = 0xFE;
+  CHECK(capacity.begin(overflow, friendmesh::FriendTransactionKind::Sync,
+                       nullptr, "overflow", 0, 0, 0) ==
+        friendmesh::ResultCode::CapacityReached);
 }
 
 }  // namespace
@@ -2107,7 +2222,6 @@ int main() {
   testPositionsAndNavigation();
   testMarkersAndMeetups();
   testSafetyIncidentsAndNotifications();
-  testDevelopmentRuntimeWalkthrough();
   testEventHistory();
   testOutbox();
   testFeatureServiceSafetyGate();
@@ -2118,6 +2232,7 @@ int main() {
   testGroupCoordinationCodecAndState();
   testMeshCorePositionAdapter();
   testFriendRequestEnvelopeAndPath();
+  testFriendTransactionLedgerAndJournal();
 
   if (failures != 0) {
     fprintf(stderr, "%d FriendMesh core check(s) failed\n", failures);

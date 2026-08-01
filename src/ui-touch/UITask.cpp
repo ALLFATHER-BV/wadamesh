@@ -103,7 +103,6 @@
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-  #include "friendmesh/app/FriendMeshDevelopmentRuntime.h"
   #include "friendmesh/people/FriendMeshBlePresence.h"
 #endif
 
@@ -18815,8 +18814,7 @@ static void closeTermCmdPicker() {
 
 static void fmImageClose();   // fwd — defined in the file-manager section
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-static bool friendmeshPageHasKeyboard();
-static void closeFriendMeshPageState();
+static void closeFriendMeshTransientState();
 #endif
 
 static void closeFullscreenView() {
@@ -18824,11 +18822,7 @@ static void closeFullscreenView() {
   // Detach the sink + null the widgets BEFORE the async delete so a late reply
   // (or the loop renderer) can't write into a freed label/box.
   MyMesh::setTerminalSink(nullptr);
-  const bool had_kb = (s_term_input_ta || s_fm_search_ta || s_fm_prompt_ta
-#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-                       || friendmeshPageHasKeyboard()
-#endif
-  );
+  const bool had_kb = s_term_input_ta || s_fm_search_ta || s_fm_prompt_ta;
   if (s_editor_root) {
     if (g_lv.keyboard) lv_keyboard_set_textarea(g_lv.keyboard, nullptr);
     popupClose(&s_editor_root); s_editor_ta = nullptr;
@@ -18844,7 +18838,7 @@ static void closeFullscreenView() {
   s_fm_sort_lbl    = nullptr;
   s_fm_prompt_ta   = nullptr;
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-  closeFriendMeshPageState();
+  closeFriendMeshTransientState();
 #endif
   s_fm_fs          = nullptr;
   s_fm_filter[0]   = '\0';
@@ -23999,8 +23993,221 @@ static void friendRequestsToggleCb(lv_event_t* e) {
 static TouchFriendRequestRecord s_friend_request_deny_target = {};
 static bool s_friend_request_deny_target_valid = false;
 
+struct FriendTransactionUiState {
+  bool valid;
+  bool dismissed;
+  uint8_t id[friendmesh::kFriendRequestIdBytes];
+  friendmesh::FriendTransactionKind kind;
+  friendmesh::FriendTransactionStage stage;
+  char peerName[friendmesh::kFriendRequestNameBytes];
+  uint8_t floodsUsed;
+  uint8_t floodLimit;
+};
+static FriendTransactionUiState s_friend_txn_ui = {};
+static lv_obj_t* s_friend_txn_overlay = nullptr;
+static lv_obj_t* s_friend_txn_title = nullptr;
+static lv_obj_t* s_friend_txn_steps = nullptr;
+static lv_obj_t* s_friend_txn_floods = nullptr;
+
+static void closeFriendTransactionModal(bool dismissed) {
+  if (dismissed) s_friend_txn_ui.dismissed = true;
+  if (s_friend_txn_overlay) lv_obj_del(s_friend_txn_overlay);
+  s_friend_txn_overlay = nullptr;
+  s_friend_txn_title = nullptr;
+  s_friend_txn_steps = nullptr;
+  s_friend_txn_floods = nullptr;
+}
+
+static void friendTransactionDismissCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED)
+    closeFriendTransactionModal(true);
+}
+
+static bool friendStageAtLeastResponse(
+    friendmesh::FriendTransactionStage stage) {
+  return stage == friendmesh::FriendTransactionStage::ResponseReceived ||
+      stage == friendmesh::FriendTransactionStage::ConfirmationSent ||
+      stage == friendmesh::FriendTransactionStage::Complete ||
+      stage == friendmesh::FriendTransactionStage::Declined;
+}
+
+static void renderFriendTransactionModal() {
+  if (!s_friend_txn_ui.valid || s_friend_txn_ui.dismissed) return;
+  if (!s_friend_txn_overlay) {
+    const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+    const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+    s_friend_txn_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_friend_txn_overlay);
+    lv_obj_set_size(s_friend_txn_overlay, sw, sh);
+    lv_obj_set_style_bg_color(
+        s_friend_txn_overlay, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(
+        s_friend_txn_overlay, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_clear_flag(s_friend_txn_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_friend_txn_overlay, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* card = lv_obj_create(s_friend_txn_overlay);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, sw - SC(34), sh - SC(34));
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(
+        card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, SC(10), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, SC(14), LV_PART_MAIN);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_friend_txn_title = lv_label_create(card);
+    lv_obj_set_style_text_color(
+        s_friend_txn_title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(
+        s_friend_txn_title, &g_font_14, LV_PART_MAIN);
+    lv_obj_align(s_friend_txn_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    lv_obj_t* close = lv_btn_create(card);
+    lv_obj_set_size(close, SC(70), SC(28));
+    lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, -SC(5));
+    lv_obj_set_style_bg_color(
+        close, lv_color_hex(0x343840), LV_PART_MAIN);
+    lv_obj_add_event_cb(
+        close, friendTransactionDismissCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* closeLabel = lv_label_create(close);
+    lv_label_set_text(closeLabel, TR("Dismiss"));
+    lv_obj_center(closeLabel);
+
+    s_friend_txn_steps = lv_label_create(card);
+    lv_obj_set_width(s_friend_txn_steps, sw - SC(70));
+    lv_obj_set_style_text_color(
+        s_friend_txn_steps, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(
+        s_friend_txn_steps, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_line_space(
+        s_friend_txn_steps, SC(4), LV_PART_MAIN);
+    lv_obj_align(s_friend_txn_steps, LV_ALIGN_TOP_LEFT, 0, SC(36));
+
+    s_friend_txn_floods = lv_label_create(card);
+    lv_obj_set_style_text_color(
+        s_friend_txn_floods, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(
+        s_friend_txn_floods, &g_font_12, LV_PART_MAIN);
+    lv_obj_align(s_friend_txn_floods, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  }
+
+  const char* verb = s_friend_txn_ui.kind ==
+          friendmesh::FriendTransactionKind::Remove
+      ? "Removing"
+      : s_friend_txn_ui.kind == friendmesh::FriendTransactionKind::Decline
+          ? "Declining"
+          : "Adding";
+  char title[64];
+  snprintf(title, sizeof(title), "%s %s", verb,
+           s_friend_txn_ui.peerName[0] ? s_friend_txn_ui.peerName : "Friend");
+  lv_label_set_text(s_friend_txn_title, TR(title));
+
+  const auto stage = s_friend_txn_ui.stage;
+  char steps[360] = {};
+  if (s_friend_txn_ui.kind == friendmesh::FriendTransactionKind::Request) {
+    const bool direct = stage != friendmesh::FriendTransactionStage::Prepared;
+    const bool response = friendStageAtLeastResponse(stage);
+    const bool confirmation =
+        stage == friendmesh::FriendTransactionStage::ConfirmationSent ||
+        stage == friendmesh::FriendTransactionStage::Complete;
+    const bool complete =
+        stage == friendmesh::FriendTransactionStage::Complete;
+    const bool declined =
+        stage == friendmesh::FriendTransactionStage::Declined;
+    snprintf(steps, sizeof(steps),
+             "[x] Request prepared\n%s Direct request sent\n%s %s\n%s %s\n%s",
+             direct ? "[x]" : "[ ]", response ? "[x]" : "[>]",
+             response ? (declined ? "Decline received" : "Acceptance received")
+                      : "Awaiting response",
+             declined ? "[x]" : confirmation ? "[x]" : "[ ]",
+             declined ? "No confirmation required" : "Confirmation sent",
+             declined ? "[x] Request declined"
+                      : complete ? "[x] Friendship confirmed"
+                                 : "[ ] Friendship confirmed");
+  } else if (s_friend_txn_ui.kind ==
+             friendmesh::FriendTransactionKind::Accept) {
+    const bool sent = stage != friendmesh::FriendTransactionStage::Prepared &&
+        stage != friendmesh::FriendTransactionStage::Failed;
+    const bool complete = stage == friendmesh::FriendTransactionStage::Complete;
+    snprintf(steps, sizeof(steps),
+             "[x] Acceptance prepared\n%s Direct acceptance sent\n%s Waiting for confirmation\n%s Friendship confirmed",
+             sent ? "[x]" : "[ ]", complete ? "[x]" : "[>]",
+             complete ? "[x]" : "[ ]");
+  } else if (s_friend_txn_ui.kind ==
+             friendmesh::FriendTransactionKind::Decline) {
+    const bool complete = stage == friendmesh::FriendTransactionStage::Complete;
+    snprintf(steps, sizeof(steps),
+             "[x] Decline prepared\n%s Direct decline sent\n%s Request closed",
+             complete ? "[x]" : "[>]", complete ? "[x]" : "[ ]");
+  } else {
+    const bool complete = stage == friendmesh::FriendTransactionStage::Complete;
+    const bool failed = stage == friendmesh::FriendTransactionStage::Failed;
+    snprintf(steps, sizeof(steps),
+             "[x] Removed on this device\n[x] Removal control prepared\n%s Waiting for remote confirmation\n%s",
+             complete ? "[x]" : failed ? "[!]" : "[>]",
+             complete ? "[x] Remote removal confirmed"
+                      : failed ? "[!] Remote confirmation pending"
+                               : "[ ] Remote removal confirmed");
+  }
+  if (stage == friendmesh::FriendTransactionStage::Failed &&
+      s_friend_txn_ui.kind != friendmesh::FriendTransactionKind::Remove)
+    strncat(steps, "\n[!] Transaction stopped", sizeof(steps) - strlen(steps) - 1);
+  if (stage == friendmesh::FriendTransactionStage::Expired)
+    strncat(steps, "\n[!] No response; request expired",
+            sizeof(steps) - strlen(steps) - 1);
+  if (stage == friendmesh::FriendTransactionStage::Interrupted)
+    strncat(steps, "\n[!] Interrupted; waiting for a safe retry",
+            sizeof(steps) - strlen(steps) - 1);
+  lv_label_set_text(s_friend_txn_steps, TR(steps));
+
+  char fallback[80];
+  snprintf(fallback, sizeof(fallback), "Network fallback: %u of %u floods used",
+           s_friend_txn_ui.floodsUsed, s_friend_txn_ui.floodLimit);
+  lv_label_set_text(s_friend_txn_floods, TR(fallback));
+}
+
+static void updateFriendTransactionProgress(
+    const uint8_t transactionId[8],
+    friendmesh::FriendTransactionKind kind, const char* peerName,
+    friendmesh::FriendTransactionStage stage, uint8_t floodsUsed,
+    uint8_t floodLimit) {
+  if (!transactionId) return;
+  const bool newTransaction = !s_friend_txn_ui.valid ||
+      memcmp(s_friend_txn_ui.id, transactionId,
+             sizeof(s_friend_txn_ui.id)) != 0;
+  if (newTransaction) {
+    closeFriendTransactionModal(false);
+    memset(&s_friend_txn_ui, 0, sizeof(s_friend_txn_ui));
+    s_friend_txn_ui.valid = true;
+    memcpy(s_friend_txn_ui.id, transactionId, sizeof(s_friend_txn_ui.id));
+  }
+  s_friend_txn_ui.kind = kind;
+  s_friend_txn_ui.stage = stage;
+  strncpy(s_friend_txn_ui.peerName,
+          peerName && peerName[0] ? peerName : "Friend",
+          sizeof(s_friend_txn_ui.peerName) - 1);
+  s_friend_txn_ui.floodsUsed = floodsUsed;
+  s_friend_txn_ui.floodLimit = floodLimit;
+  renderFriendTransactionModal();
+}
+
+static bool friendRequestSendDecline(
+    const TouchFriendRequestRecord& request) {
+  return the_mesh.uiDenyFriendRequest(
+      request.requester_pub_key, request.request_id,
+      request.requester_name, request.return_path,
+      request.return_path_length);
+}
+
 static void friendRequestDenyOnlyApply() {
   if (!s_friend_request_deny_target_valid) return;
+  if (!friendRequestSendDecline(s_friend_request_deny_target)) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Decline not sent; request kept"), 2400);
+    return;
+  }
   touchPrefsRemoveFriendRequest(s_friend_request_deny_target.request_id);
   memset(&s_friend_request_deny_target, 0,
          sizeof(s_friend_request_deny_target));
@@ -24010,6 +24217,8 @@ static void friendRequestDenyOnlyApply() {
 
 static void friendRequestDenyAndBlockApply() {
   if (!s_friend_request_deny_target_valid) return;
+  const bool declineSent =
+      friendRequestSendDecline(s_friend_request_deny_target);
   const bool blocked = touchPrefsSetIgnored(
       s_friend_request_deny_target.requester_pub_key, true);
   touchPrefsRemoveFriendRequest(s_friend_request_deny_target.request_id);
@@ -24018,7 +24227,8 @@ static void friendRequestDenyAndBlockApply() {
   s_friend_request_deny_target_valid = false;
   contactsListForceRefresh();
   if (g_lv.task) g_lv.task->showAlert(
-      blocked ? TR("Request denied; sender blocked")
+      blocked && declineSent ? TR("Request declined; sender blocked")
+              : blocked ? TR("Blocked locally; decline not sent")
               : TR("Request denied; couldn't save block"),
       blocked ? 1800 : 2400);
 }
@@ -26794,7 +27004,6 @@ enum class MapMarkerKind : uint8_t {
   Empty = 0,
   Self,
   MeshContact,
-  FriendMesh,
   FriendMeshGroup,
 };
 
@@ -27536,43 +27745,6 @@ static void renderMapMarkers() {
     }
   }
 
-  // FriendMesh markers are real map overlays, not contact stand-ins. Keep the
-  // existing WadaMesh map and marker styling, with a compact teal diamond to
-  // distinguish shared intent (meetup/resource/help) from mesh identities.
-  friendmesh::DevelopmentRuntime* runtime = friendmesh::developmentRuntime();
-  if (runtime) {
-    const friendmesh::MarkerService& markers = runtime->markers();
-    for (size_t i = 0; i < markers.size() && slot < k_map_markers_max; ++i) {
-      const friendmesh::MarkerRecord* marker = markers.at(i);
-      if (!marker || !marker->position.valid) continue;
-      if (marker->state != friendmesh::MarkerState::Active &&
-          marker->state != friendmesh::MarkerState::NeedsReconfirmation) continue;
-      const double lat = (double)marker->position.latitudeE7 / 1.0e7;
-      const double lon = (double)marker->position.longitudeE7 / 1.0e7;
-      double mwx, mwy;
-      latLonToWorldPx(lat, lon, s_map_zoom, &mwx, &mwy);
-      const int sx = (int)(mwx - cwx + k_map_canvas_w / 2);
-      const int sy = (int)(mwy - cwy + k_map_canvas_h / 2);
-      if (sx < -10 || sx >= k_map_canvas_w + 10 ||
-          sy < -10 || sy >= k_map_canvas_h + 10) continue;
-
-      MapMarker& m = s_map_markers[slot];
-      m.kind = MapMarkerKind::FriendMesh;
-      m.source_idx = (int)i;
-      m.obj = lv_obj_create(parent);
-      lv_obj_remove_style_all(m.obj);
-      lv_obj_set_size(m.obj, 16, 16);
-      lv_obj_set_pos(m.obj, sx - 8, sy - 8);
-      lv_obj_set_style_bg_color(m.obj, lv_color_hex(0x58BFA5), LV_PART_MAIN);
-      lv_obj_set_style_bg_opa(m.obj, LV_OPA_COVER, LV_PART_MAIN);
-      lv_obj_set_style_border_color(m.obj, lv_color_hex(0x0B3028), LV_PART_MAIN);
-      lv_obj_set_style_border_width(m.obj, 2, LV_PART_MAIN);
-      lv_obj_set_style_radius(m.obj, 3, LV_PART_MAIN);
-      lv_obj_clear_flag(m.obj, LV_OBJ_FLAG_CLICKABLE);
-      lv_obj_clear_flag(m.obj, LV_OBJ_FLAG_SCROLLABLE);
-      ++slot;
-    }
-  }
 #endif
 
   // Route-replay overlay — drawn last so the path + nodes sit above tiles,
@@ -28383,37 +28555,6 @@ static int mapMarkerTokenSource(int token) {
 }
 
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-static const char* friendmeshMarkerTypeLabel(friendmesh::MarkerType type) {
-  switch (type) {
-    case friendmesh::MarkerType::Meetup: return "Meetup";
-    case friendmesh::MarkerType::Danger: return "Danger";
-    case friendmesh::MarkerType::Avoid: return "Avoid";
-    case friendmesh::MarkerType::Resource: return "Resource";
-    case friendmesh::MarkerType::Vehicle: return "Vehicle";
-    case friendmesh::MarkerType::Camp: return "Camp";
-    case friendmesh::MarkerType::LastSeen: return "Last seen";
-    case friendmesh::MarkerType::Pickup: return "Pickup";
-    case friendmesh::MarkerType::Help: return "Help";
-    case friendmesh::MarkerType::Sos: return "SOS";
-  }
-  return "Marker";
-}
-
-static void openFriendMeshMarker(int source_idx) {
-  friendmesh::DevelopmentRuntime* runtime = friendmesh::developmentRuntime();
-  const friendmesh::MarkerRecord* marker =
-      (runtime && source_idx >= 0) ? runtime->markers().at((size_t)source_idx) : nullptr;
-  if (!marker || !g_lv.task) return;
-  const char* state = marker->state == friendmesh::MarkerState::NeedsReconfirmation
-                          ? "needs confirmation" : "active";
-  char text[112];
-  snprintf(text, sizeof(text), "FriendMesh %s\n%.5f, %.5f\n%s",
-           friendmeshMarkerTypeLabel(marker->type),
-           (double)marker->position.latitudeE7 / 1.0e7,
-           (double)marker->position.longitudeE7 / 1.0e7, state);
-  g_lv.task->showAlert(text, 2600);
-}
-
 static void openFriendMeshGroupMarker(int source_idx) {
   if (source_idx < 0 || source_idx > 1 ||
       s_friendmesh_map_channel_slot < 0 || !g_lv.task) return;
@@ -28447,10 +28588,6 @@ static void openMapMarker(MapMarkerKind kind, int source_idx) {
     return;
   }
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-  if (kind == MapMarkerKind::FriendMesh) {
-    openFriendMeshMarker(source_idx);
-    return;
-  }
   if (kind == MapMarkerKind::FriendMeshGroup) {
     openFriendMeshGroupMarker(source_idx);
     return;
@@ -28547,12 +28684,6 @@ static void openMapPicker(const int* tokens, int n) {
     if (kind == MapMarkerKind::Self) {
       snprintf(row_label, sizeof(row_label), LV_SYMBOL_GPS "  (you)");
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-    } else if (kind == MapMarkerKind::FriendMesh) {
-      friendmesh::DevelopmentRuntime* runtime = friendmesh::developmentRuntime();
-      const friendmesh::MarkerRecord* marker =
-          (runtime && source_idx >= 0) ? runtime->markers().at((size_t)source_idx) : nullptr;
-      snprintf(row_label, sizeof(row_label), LV_SYMBOL_GPS "  %s",
-               marker ? friendmeshMarkerTypeLabel(marker->type) : "FriendMesh marker");
     } else if (kind == MapMarkerKind::FriendMeshGroup) {
       friendmesh::GroupCoordinationState state = {};
       const friendmesh::GroupCoordinationItem* item = nullptr;
@@ -38932,7 +39063,6 @@ enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
   APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
-  APPACT_FRIENDMESH,
 };
 
 static void closeAppDrawer() {
@@ -39165,14 +39295,7 @@ static void openMentionsScreen() {
 }
 
 #if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-static lv_obj_t* s_friendmesh_status = nullptr;
-static lv_obj_t* s_friendmesh_stats = nullptr;
-static lv_obj_t* s_friendmesh_activity = nullptr;
-static lv_obj_t* s_friendmesh_note = nullptr;
-
-static bool friendmeshPageHasKeyboard() { return s_friendmesh_note != nullptr; }
-
-static void closeFriendMeshPageState() {
+static void closeFriendMeshTransientState() {
   friendmeshMotionFlush(true);
   if (s_friendmesh_compass_timer) {
     lv_timer_del(s_friendmesh_compass_timer);
@@ -39206,200 +39329,6 @@ static void closeFriendMeshPageState() {
   s_friendmesh_compass_notice_attempted = false;
   s_friendmesh_compass_page = 0;
   s_friendmesh_compass_use_current = false;
-  s_friendmesh_status = nullptr;
-  s_friendmesh_stats = nullptr;
-  s_friendmesh_activity = nullptr;
-  s_friendmesh_note = nullptr;
-}
-
-static uint32_t friendmeshNow() {
-  const uint32_t rtc = the_mesh.getRTCClock()->getCurrentTime();
-  return rtc ? rtc : millis() / 1000;
-}
-
-static const char* friendmeshResult(friendmesh::ResultCode result) {
-  switch (result) {
-    case friendmesh::ResultCode::Ok: return "Saved";
-    case friendmesh::ResultCode::Duplicate: return "Already done";
-    case friendmesh::ResultCode::InvalidState: return "Initialize first";
-    case friendmesh::ResultCode::InvalidText: return "Enter a valid note";
-    case friendmesh::ResultCode::CapacityReached: return "Development storage full";
-    default: return "Action unavailable";
-  }
-}
-
-static void refreshFriendMeshPage(const char* result = nullptr) {
-  if (!s_friendmesh_status || !lv_obj_is_valid(s_friendmesh_status)) return;
-  friendmesh::DevelopmentRuntime* runtime = friendmesh::developmentRuntime();
-  if (!runtime) {
-    lv_label_set_text(s_friendmesh_status, "Runtime unavailable");
-    return;
-  }
-  const friendmesh::DevelopmentRuntimeSnapshot snapshot = runtime->snapshot();
-  lv_label_set_text(s_friendmesh_status,
-      snapshot.initialized ? "Friends workspace ready" : "Set up Friends workspace");
-  char stats[112];
-  snprintf(stats, sizeof stats,
-           "Notes %u   Markers %u   Help %u   Alerts %u\n"
-           "On-device workspace  |  Radio sharing off",
-           (unsigned)snapshot.messages, (unsigned)snapshot.markers,
-           (unsigned)snapshot.incidents, (unsigned)snapshot.notifications);
-  if (s_friendmesh_stats) lv_label_set_text(s_friendmesh_stats, stats);
-  if (result && s_friendmesh_activity)
-    lv_label_set_text(s_friendmesh_activity, result);
-}
-
-static void friendmeshInitializeCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  friendmesh::DevelopmentRuntime* runtime = friendmesh::developmentRuntime();
-  if (!runtime) return;
-  const char* name = the_mesh.getNodePrefs()->node_name;
-  const friendmesh::ResultCode result = runtime->initialize(
-      (name && name[0]) ? name : "T-Deck owner", friendmeshNow());
-  refreshFriendMeshPage(friendmeshResult(result));
-}
-
-static void friendmeshAddNoteCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  friendmesh::DevelopmentRuntime* runtime = friendmesh::developmentRuntime();
-  if (!runtime || !s_friendmesh_note) return;
-  const char* note = lv_textarea_get_text(s_friendmesh_note);
-  const friendmesh::ResultCode result = runtime->addLocalMessage(note, friendmeshNow());
-  if (result == friendmesh::ResultCode::Ok) lv_textarea_set_text(s_friendmesh_note, "");
-  refreshFriendMeshPage(friendmeshResult(result));
-}
-
-static void friendmeshAddMarkerCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  friendmesh::DevelopmentRuntime* runtime = friendmesh::developmentRuntime();
-  if (!runtime || !g_lv.task) return;
-  const double lat = g_lv.task->getNodeLat();
-  const double lon = g_lv.task->getNodeLon();
-  if (lat == 0.0 && lon == 0.0) {
-    refreshFriendMeshPage("Set or acquire a position first");
-    return;
-  }
-  const friendmesh::ResultCode result = runtime->addLocalMarker(
-      (int32_t)(lat * 10000000.0), (int32_t)(lon * 10000000.0),
-      friendmesh::MarkerType::Meetup, friendmeshNow());
-  if (result == friendmesh::ResultCode::Ok) {
-    refreshFriendMeshPage("Meetup marker added - open Map to view");
-  } else {
-    refreshFriendMeshPage(friendmeshResult(result));
-  }
-}
-
-static void friendmeshViewMapCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  friendmesh::DevelopmentRuntime* runtime = friendmesh::developmentRuntime();
-  if (!runtime || runtime->markers().size() == 0) {
-    refreshFriendMeshPage("Add a meetup marker first");
-    return;
-  }
-  const friendmesh::MarkerRecord* marker =
-      runtime->markers().at(runtime->markers().size() - 1);
-  if (!marker || !marker->position.valid) {
-    refreshFriendMeshPage("Latest marker has no position");
-    return;
-  }
-  s_map_center_lat = (double)marker->position.latitudeE7 / 1.0e7;
-  s_map_center_lon = (double)marker->position.longitudeE7 / 1.0e7;
-  s_map_view_inited = true;
-  closeFullscreenView();
-  goToTab(MAP_TAB_INDEX);
-}
-
-static void friendmeshHelpCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  friendmesh::DevelopmentRuntime* runtime = friendmesh::developmentRuntime();
-  if (!runtime || !g_lv.task) return;
-  const double lat = g_lv.task->getNodeLat();
-  const double lon = g_lv.task->getNodeLon();
-  const bool valid = lat != 0.0 || lon != 0.0;
-  const friendmesh::ResultCode result = runtime->openLocalHelp(
-      friendmesh::IncidentKind::HelpRide, (int32_t)(lat * 10000000.0),
-      (int32_t)(lon * 10000000.0), valid, friendmeshNow());
-  refreshFriendMeshPage(friendmeshResult(result));
-}
-
-static lv_obj_t* friendmeshPageButton(lv_obj_t* parent, const char* label,
-                                      lv_event_cb_t callback) {
-  lv_obj_t* button = lv_btn_create(parent);
-  lv_obj_set_width(button, lv_pct(100));
-  lv_obj_set_height(button, 38);
-  styleButton(button);
-  lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* text = lv_label_create(button);
-  lv_label_set_text(text, label);
-  lv_obj_set_style_text_font(text, &g_font_12, LV_PART_MAIN);
-  lv_obj_center(text);
-  return button;
-}
-
-static lv_obj_t* friendmeshButtonRow(lv_obj_t* parent) {
-  lv_obj_t* row = lv_obj_create(parent);
-  lv_obj_remove_style_all(row);
-  lv_obj_set_width(row, lv_pct(100));
-  lv_obj_set_height(row, 38);
-  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-  lv_obj_set_style_pad_column(row, 6, LV_PART_MAIN);
-  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-  return row;
-}
-
-static void friendmeshAddRowButton(lv_obj_t* row, const char* label,
-                                   lv_event_cb_t callback) {
-  lv_obj_t* button = friendmeshPageButton(row, label, callback);
-  lv_obj_set_width(button, 0);
-  lv_obj_set_flex_grow(button, 1);
-}
-
-static void openFriendMeshPage() {
-  lv_obj_t* body = openFullscreenView("FriendMesh features");
-  lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(body, 6, LV_PART_MAIN);
-  lv_obj_set_style_pad_top(body, 38, LV_PART_MAIN);
-  lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_scroll_dir(body, LV_DIR_VER);
-  s_friendmesh_status = lv_label_create(body);
-  lv_obj_set_width(s_friendmesh_status, lv_pct(100));
-  lv_obj_set_height(s_friendmesh_status, 18);
-  lv_label_set_long_mode(s_friendmesh_status, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(s_friendmesh_status, &g_font_14, LV_PART_MAIN);
-  lv_obj_set_style_text_color(s_friendmesh_status, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-
-  s_friendmesh_stats = lv_label_create(body);
-  lv_obj_set_width(s_friendmesh_stats, lv_pct(100));
-  lv_obj_set_height(s_friendmesh_stats, 34);
-  lv_label_set_long_mode(s_friendmesh_stats, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_font(s_friendmesh_stats, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(s_friendmesh_stats, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-
-  s_friendmesh_activity = lv_label_create(body);
-  lv_obj_set_width(s_friendmesh_activity, lv_pct(100));
-  lv_obj_set_height(s_friendmesh_activity, 18);
-  lv_label_set_long_mode(s_friendmesh_activity, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(s_friendmesh_activity, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(s_friendmesh_activity, lv_color_hex(0x58BFA5), LV_PART_MAIN);
-  lv_label_set_text(s_friendmesh_activity, "Ready");
-
-  s_friendmesh_note = lv_textarea_create(body);
-  lv_obj_set_width(s_friendmesh_note, lv_pct(100));
-  lv_obj_set_height(s_friendmesh_note, 42);
-  lv_textarea_set_one_line(s_friendmesh_note, true);
-  lv_textarea_set_placeholder_text(s_friendmesh_note, "Local FriendMesh note");
-  attachSettingsTaEvents(s_friendmesh_note);
-
-  lv_obj_t* workspace_row = friendmeshButtonRow(body);
-  friendmeshAddRowButton(workspace_row, "Set up", friendmeshInitializeCb);
-  friendmeshAddRowButton(workspace_row, "Save note", friendmeshAddNoteCb);
-
-  lv_obj_t* marker_row = friendmeshButtonRow(body);
-  friendmeshAddRowButton(marker_row, "Add meetup", friendmeshAddMarkerCb);
-  friendmeshAddRowButton(marker_row, "View map", friendmeshViewMapCb);
-
-  friendmeshPageButton(body, "Open local ride Help request", friendmeshHelpCb);
-  refreshFriendMeshPage();
 }
 #endif
 
@@ -39424,9 +39353,6 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_ADVERT:    openAdvertModalCb(e);  return;
     case APPACT_POWER:     openPowerMenu();      return;
     case APPACT_SNAKE:     SnakeGame::launch();  return;
-#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-    case APPACT_FRIENDMESH: openFriendMeshPage(); return;
-#endif
 #if defined(HAS_TOUCH_UI)
     case APPACT_TERMINAL:  homeTerminalCb(e);    return;
 #endif
@@ -39764,9 +39690,6 @@ static void openAppDrawer() {
     { LV_SYMBOL_ENVELOPE,  "Chats",     APPACT_CHATS,    unread,    0x4F9DF7 },      // messaging blue
     { TOUCH_SYM_PERSON,    "Contacts",  APPACT_CONTACTS, 0,         0xA784E0 },      // people violet
     { LV_SYMBOL_GPS,       "Map",       APPACT_MAP,      0,         0x53C06B },      // location green
-#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
-    { TOUCH_SYM_PERSON,    "FriendMesh", APPACT_FRIENDMESH, 0,      0x58BFA5 },      // optional FriendMesh feature workspace
-#endif
     { "@",                 "Mentions",  APPACT_MENTIONS, mentions,  0xF2A33C },      // mention amber
     { LV_SYMBOL_UPLOAD,    "Advertise", APPACT_ADVERT,   0,         0xE072B0 },      // broadcast magenta
 #if !defined(HAS_TANMATSU)
@@ -47516,6 +47439,40 @@ bool UITask::onFriendMeshFriendAcceptanceAcknowledged(
   return true;
 }
 
+void UITask::onFriendMeshFriendDeclined(
+    const uint8_t request_id[8], const uint8_t responder_pub[32],
+    const char* responder_name) {
+  (void)responder_pub;
+  const char* name = responder_name && responder_name[0]
+      ? responder_name : "Friend";
+  Serial.printf("[FM-FRIEND] REQUESTER decline id=%02X%02X%02X%02X from=%02X%02X%02X%02X\n",
+                request_id ? request_id[0] : 0,
+                request_id ? request_id[1] : 0,
+                request_id ? request_id[2] : 0,
+                request_id ? request_id[3] : 0,
+                responder_pub ? responder_pub[0] : 0,
+                responder_pub ? responder_pub[1] : 0,
+                responder_pub ? responder_pub[2] : 0,
+                responder_pub ? responder_pub[3] : 0);
+  char message[96];
+  snprintf(message, sizeof(message), "%s declined your friend request", name);
+  showAlert(TR(message), 2600);
+}
+
+void UITask::onFriendMeshTransactionProgress(
+    const uint8_t transaction_id[8],
+    friendmesh::FriendTransactionKind kind, const char* peer_name,
+    friendmesh::FriendTransactionStage stage, uint8_t floods_used,
+    uint8_t flood_limit) {
+  updateFriendTransactionProgress(
+      transaction_id, kind, peer_name, stage, floods_used, flood_limit);
+}
+
+void UITask::onFriendMeshTransactionRecoveryRequired() {
+  showAlert(TR("FriendMesh transaction recovery required; sending disabled"),
+            4200);
+}
+
 void UITask::onFriendMeshFriendRemoved(
     const uint8_t remover_pub[32]) {
   if (!remover_pub || !friendByKey(remover_pub)) {
@@ -47565,7 +47522,7 @@ bool UITask::sendFriendRequestForMessage(int msg_idx) {
     path = path_bytes ? message.in_path : nullptr;
   }
   return the_mesh.uiSendFriendRequest(channel_idx, message.packet_hash,
-                                      path, encoded_path);
+                                      path, encoded_path, message.sender);
 }
 
 void UITask::onFriendMeshChannelInvite(const ContactInfo& from,

@@ -14,10 +14,10 @@ compiler="${CXX:-c++}"
   -I"$repo_root/src" \
   "$repo_root/tests/friendmesh_core_test.cpp" \
   "$repo_root/src/friendmesh/FriendMeshFeatureService.cpp" \
-  "$repo_root/src/friendmesh/app/FriendMeshDevelopmentRuntime.cpp" \
   "$repo_root/src/friendmesh/core/FriendMeshCoreTypes.cpp" \
   "$repo_root/src/friendmesh/core/FriendMeshDomain.cpp" \
   "$repo_root/src/friendmesh/core/FriendMeshEvent.cpp" \
+  "$repo_root/src/friendmesh/core/FriendMeshTransaction.cpp" \
   "$repo_root/src/friendmesh/chat/FriendMeshChat.cpp" \
   "$repo_root/src/friendmesh/chat/FriendMeshDevelopmentStorage.cpp" \
   "$repo_root/src/friendmesh/chat/FriendMeshSync.cpp" \

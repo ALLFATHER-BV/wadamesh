@@ -940,7 +940,8 @@ public:
   bool uiSendFriendRequest(int channel_idx,
                            const uint8_t target_message_hash[8],
                            const uint8_t* incoming_path,
-                           uint8_t encoded_path_len);
+                           uint8_t encoded_path_len,
+                           const char* target_name = nullptr);
   friendmesh::BleFriendRequestResult uiSendNearbyFriendRequest(
       const friendmesh::BlePresencePeer& peer,
       const friendmesh::BleFriendIdentity& target);
@@ -950,6 +951,11 @@ public:
                              const char* requester_name,
                              const uint8_t* return_path,
                              uint8_t return_path_length);
+  bool uiDenyFriendRequest(const uint8_t requester_pub[32],
+                           const uint8_t request_id[8],
+                           const char* requester_name,
+                           const uint8_t* return_path,
+                           uint8_t return_path_length);
   bool uiRemoveFriendRelationship(const uint8_t friend_pub[32],
                                   const char* friend_name);
 #endif
@@ -1258,6 +1264,13 @@ private:
     uint8_t requestId[8];
     uint8_t targetMessageHash[8];
     uint32_t sentMillis;
+    int8_t channelIndex;
+    char peerName[friendmesh::kFriendRequestNameBytes];
+    uint8_t directPathLength;
+    uint8_t directPath[MAX_PATH_SIZE];
+    uint8_t encodedRequest[friendmesh::kFriendRequestEncodedBytes];
+    uint8_t floodAttempts;
+    uint32_t nextFallbackMillis;
   };
   FriendRequestOutgoing _friend_request_outgoing[
       FRIEND_REQUEST_OUTGOING_SLOTS] = {};
@@ -1266,11 +1279,22 @@ private:
   struct FriendRequestCompleted {
     uint8_t requestId[friendmesh::kFriendRequestIdBytes];
     uint8_t peerPub[PUB_KEY_SIZE];
+    uint8_t directPathLength;
+    uint8_t directPath[MAX_PATH_SIZE];
     uint32_t completedMillis;
   };
   FriendRequestCompleted _friend_request_completed[
       FRIEND_REQUEST_COMPLETED_SLOTS] = {};
   uint8_t _friend_request_completed_head = 0;
+  static constexpr uint8_t FRIEND_REQUEST_DECLINED_SLOTS = 8;
+  struct FriendRequestDeclined {
+    uint8_t requestId[friendmesh::kFriendRequestIdBytes];
+    uint8_t requesterPub[PUB_KEY_SIZE];
+    uint32_t declinedMillis;
+  };
+  FriendRequestDeclined _friend_request_declined[
+      FRIEND_REQUEST_DECLINED_SLOTS] = {};
+  uint8_t _friend_request_declined_head = 0;
   static constexpr uint8_t FRIEND_LINK_PENDING_SLOTS = 4;
   struct FriendLinkPending {
     bool active;
@@ -1281,37 +1305,77 @@ private:
     uint8_t pathLength;
     uint8_t path[MAX_PATH_SIZE];
     uint8_t attempts;
+    uint8_t floodAttempts;
+    bool allowFloodFallback;
     uint32_t nextAttemptMillis;
   };
   FriendLinkPending _friend_link_pending[FRIEND_LINK_PENDING_SLOTS] = {};
   uint8_t _friend_link_pending_head = 0;
+  friendmesh::FriendTransactionLedger _friend_transaction_ledger;
+  uint32_t _friend_transaction_generation = 0;
+  uint8_t _friend_transaction_slot = 0;
+  bool _friend_transaction_journal_ready = false;
+  bool _friend_transaction_restore_notified = false;
   uint32_t _friendmesh_anon_callback_count = 0;
+  bool friendmeshLoadTransactionJournal();
+  bool friendmeshCommitTransactionJournal();
+  bool friendmeshBeginTransaction(
+      const uint8_t transaction_id[8],
+      friendmesh::FriendTransactionKind kind, const uint8_t* peer_pub,
+      const char* peer_name, uint8_t flags, uint32_t expires_at);
+  bool friendmeshReserveDirectAttempt(const uint8_t transaction_id[8]);
+  bool friendmeshReserveFlood(const uint8_t transaction_id[8]);
+  void friendmeshRestoreTransactionUi();
   void friendmeshRememberSentChannelMessage(
       const mesh::GroupChannel& channel, mesh::Packet* packet);
   bool friendmeshSentChannelMessageMatches(
       const mesh::GroupChannel& channel, const uint8_t message_hash[8]) const;
-  bool friendmeshRememberOutgoingRequest(const uint8_t request_id[8],
-                                         const uint8_t target_hash[8]);
+  bool friendmeshRememberOutgoingRequest(
+      const uint8_t request_id[8], const uint8_t target_hash[8],
+      int channel_idx, const char* peer_name, const uint8_t* direct_path,
+      uint8_t direct_path_length, const uint8_t* encoded_request);
+  FriendRequestOutgoing* friendmeshFindOutgoingRequest(
+      const uint8_t request_id[8]);
+  const FriendRequestOutgoing* friendmeshFindOutgoingRequest(
+      const uint8_t request_id[8]) const;
   bool friendmeshConsumeOutgoingRequest(const uint8_t request_id[8]);
   bool friendmeshOutgoingRequestMatches(const uint8_t request_id[8]) const;
   bool friendmeshCompletedRequestMatches(
       const uint8_t request_id[8], const uint8_t peer_pub[PUB_KEY_SIZE]) const;
   void friendmeshRememberCompletedRequest(
-      const uint8_t request_id[8], const uint8_t peer_pub[PUB_KEY_SIZE]);
+      const uint8_t request_id[8], const uint8_t peer_pub[PUB_KEY_SIZE],
+      const uint8_t* direct_path, uint8_t direct_path_length);
+  bool friendmeshDeclinedRequestMatches(
+      const uint8_t request_id[8],
+      const uint8_t requester_pub[PUB_KEY_SIZE]) const;
+  void friendmeshRememberDeclinedRequest(
+      const uint8_t request_id[8],
+      const uint8_t requester_pub[PUB_KEY_SIZE]);
   void friendmeshHandleAcceptedControl(
       const mesh::Identity& sender, const uint8_t request_id[8],
-      const char* peer_name, bool legacy);
+      const char* peer_name, bool legacy, mesh::Packet* packet,
+      const uint8_t* ack_path = nullptr,
+      uint8_t ack_path_length = friendmesh::kFriendRequestReturnPathUnknown);
+  void friendmeshHandleDeclinedControl(
+      const mesh::Identity& sender, const uint8_t request_id[8],
+      const char* peer_name);
   bool friendmeshTransmitLinkControl(
       const ContactInfo& recipient, friendmesh::FriendLinkAction action,
-      const uint8_t request_id[8]);
+      const uint8_t request_id[8], bool allow_flood);
   bool friendmeshQueueLinkControl(
       const ContactInfo& recipient, friendmesh::FriendLinkAction action,
       const uint8_t request_id[8]);
   bool friendmeshAcknowledgeLinkControl(
-      const mesh::Identity& sender, const uint8_t request_id[8]);
+      const mesh::Identity& sender, const uint8_t request_id[8],
+      mesh::Packet* received_packet);
   void friendmeshConsumeLinkAcknowledgement(
       const uint8_t sender_pub[PUB_KEY_SIZE], const uint8_t request_id[8]);
   void friendmeshTickLinkControls();
+  void friendmeshTickOutgoingRequests();
+  void friendmeshNotifyTransaction(
+      const uint8_t transaction_id[8],
+      friendmesh::FriendTransactionKind kind, const char* peer_name,
+      friendmesh::FriendTransactionStage stage, uint8_t floods_used = 0);
   bool friendmeshSendLinkControl(
       const ContactInfo& recipient, friendmesh::FriendLinkAction action,
       const uint8_t request_id[8]);
