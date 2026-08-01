@@ -21178,6 +21178,17 @@ static const char* discTypeName(uint8_t t) {
     default:                return "node";
   }
 }
+// Single-letter type for the LIST rows (#191): the full word plus a long node name pushed the
+// trailing last-heard age off the 320px line. The summary header keeps the full words.
+static const char* discTypeShort(uint8_t t) {
+  switch (t) {
+    case ADV_TYPE_REPEATER: return "R";
+    case ADV_TYPE_CHAT:     return "C";
+    case ADV_TYPE_ROOM:     return "Rm";
+    case ADV_TYPE_SENSOR:   return "S";
+    default:                return "?";
+  }
+}
 
 // ---- Wardriving: log GPS-tagged sightings as we scan (a standalone, on-device MeshMapper) ----
 // While the Discover app scans, sample our GPS position; at each sample, log every currently-heard
@@ -21295,9 +21306,10 @@ static void discoverBuildFeed() {
     if (age < 60) snprintf(ago, sizeof ago, "%us", (unsigned)age);
     else          snprintf(ago, sizeof ago, "%um", (unsigned)(age / 60));
     const char* direct = (h.path_len == 0) ? "  #53C06B direct#" : "";
+    // #191: cap the name (%.14s) + single-letter type so the trailing age ALWAYS fits the line.
     q += snprintf(buf + q, sizeof(buf) - q,
-      "#%06X %s#  %s  %ddBm %.1f%s  \xC2\xB7 %s\n",
-      (unsigned)discTypeColor(h.node_type), name, discTypeName(h.node_type),
+      "#%06X %.14s#  %s  %ddBm %.1f%s  \xC2\xB7 %s\n",
+      (unsigned)discTypeColor(h.node_type), name, discTypeShort(h.node_type),
       (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, direct, ago);
   }
   if (q == 0) snprintf(buf, sizeof buf, "#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#");
@@ -39212,7 +39224,7 @@ static void buildBootSplash() {
   // ---- Product line: MESHCOMOD (small, same size as the channel line, between
   //      the WADAMESH wordmark and TOUCH BETA) ----
   lv_obj_t* mc = lv_label_create(s_splash_root);
-  lv_label_set_text(mc, "MESHCOMOD");
+  lv_label_set_text(mc, "WADAMESH");   // #165: the unlock overlay still said MESHCOMOD after the rebrand
   lv_obj_set_style_text_font(mc, &lv_font_unscii_8, LV_PART_MAIN);
   lv_obj_set_style_text_color(mc, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_letter_space(mc, 4, LV_PART_MAIN);
@@ -46112,8 +46124,12 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   uint8_t in_path[MAX_UI_PATH];
   uint8_t in_path_n = 0;
   uint16_t in_scope = 0;
-  if ((meta_flags & MSG_META_HAS_RX) && (meta_flags & MSG_META_IS_FLOOD)) {
-    in_path_n = the_mesh.lastRxPath(in_path, sizeof(in_path));
+  if (meta_flags & MSG_META_HAS_RX) {
+    // Route hashes only exist on floods, but the transport SCOPE also rides scoped DIRECT
+    // messages (the "Scope direct msgs to region" feature) -- reading it only under IS_FLOOD
+    // meant a scoped DM's Info popup showed no scope at all (#157).
+    if (meta_flags & MSG_META_IS_FLOOD)
+      in_path_n = the_mesh.lastRxPath(in_path, sizeof(in_path));
     bool has_scope = false;
     in_scope = the_mesh.lastRxScope(&has_scope);
     if (has_scope) meta_flags |= MSG_META_HAS_SCOPE;

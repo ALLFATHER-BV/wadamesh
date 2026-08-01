@@ -602,7 +602,12 @@ public:
     }
     const uint8_t rt = pkt ? pkt->getRouteType() : 0xFF;
     _last_rx_has_scope = (rt == ROUTE_TYPE_TRANSPORT_FLOOD || rt == ROUTE_TYPE_TRANSPORT_DIRECT);
-    _last_rx_scope = (_last_rx_has_scope && pkt) ? pkt->transport_codes[0] : 0;
+    // #157: some senders carry the region in transport_codes[1] (reply-region hint) with
+    // codes[0] zero -- the Info popup then showed "Scope 0000" for a genuinely scoped message.
+    // Show whichever code is set; [0] (the scope proper) wins when both are.
+    _last_rx_scope = 0;
+    if (_last_rx_has_scope && pkt)
+      _last_rx_scope = pkt->transport_codes[0] ? pkt->transport_codes[0] : pkt->transport_codes[1];
   }
 
   /** Track a freshly-sent flood TXT fingerprint (called from sendFloodScoped). */
