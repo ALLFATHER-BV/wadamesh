@@ -3,6 +3,9 @@
 #include "WifiRuntimeStore.h"   // persist BLE on/off (ble_en) across reboots
 #include "WebMirror.h"          // web UI mirror bridge (served over the WS server)
 #include <string.h>
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+#include "friendmesh/people/FriendMeshBlePresence.h"
+#endif
 
 // Companion push code for the per-packet RX log (matches MyMesh.cpp). It is kept OFF
 // the BLE transport in writeFrameToAll — see the note there (issues #46, #54) — EXCEPT
@@ -186,6 +189,9 @@ void MultiTransportCompanionInterface::prepareBle(const char* prefix, char* name
 void MultiTransportCompanionInterface::beginBle(const char* prefix, char* name, uint32_t pin_code) {
   prepareBle(prefix, name, pin_code);
   _ble.begin(prefix, name, pin_code);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  friendmesh::blePresenceApplyAdvertising();
+#endif
   _ble_begun = true;
   _ble_enabled = true;
   _ota_ble_released = false;
@@ -201,6 +207,9 @@ void MultiTransportCompanionInterface::enableBle() {
     strncpy(name, _ble_name, sizeof(name) - 1);
     name[sizeof(name) - 1] = '\0';
     _ble.begin(_ble_prefix, name, _ble_pin_code);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    friendmesh::blePresenceApplyAdvertising();
+#endif
     _ble_begun = true;
   }
   _ble_enabled = true;
@@ -319,6 +328,9 @@ void MultiTransportCompanionInterface::restoreAfterHttpOta() {
     strncpy(ble_name, _ble_name, sizeof(ble_name) - 1);
     ble_name[sizeof(ble_name) - 1] = '\0';
     _ble.begin(_ble_prefix, ble_name, _ble_pin_code);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    friendmesh::blePresenceApplyAdvertising();
+#endif
     _ble_begun = true;
     _ble_enabled = true;
     _ble.enable();

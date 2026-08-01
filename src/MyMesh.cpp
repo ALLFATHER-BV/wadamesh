@@ -1,8 +1,27 @@
 #include "MyMesh.h"
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+#include "friendmesh/people/FriendMeshChannelInvite.h"
+#include "friendmesh/people/FriendMeshBlePresence.h"
+#include "friendmesh/people/FriendMeshChannelRoster.h"
+#include "friendmesh/people/FriendMeshGroupStorage.h"
+#include "friendmesh/people/FriendMeshFriendRequest.h"
+#include "friendmesh/navigation/FriendMeshGroupCoordination.h"
+#if defined(ESP32)
+#include "helpers/esp32/FriendMeshTransactionNvs.h"
+#endif
+static_assert(friendmesh::kChannelRosterEncodedBytes <= MAX_GROUP_DATA_LENGTH,
+              "FriendMesh roster must fit one MeshCore group datagram");
+static_assert(friendmesh::kGroupCoordinationEventMaxBytes <=
+                  MAX_GROUP_DATA_LENGTH,
+              "FriendMesh coordination event must fit one group datagram");
+static_assert(friendmesh::kFriendRequestEncodedBytes <= MAX_GROUP_DATA_LENGTH,
+              "FriendMesh request must fit one MeshCore group datagram");
+#endif
 
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
 #include <ArduinoJson.h>   // settings backup import (uiImportBackup)
+#include <stdlib.h>
 #include <string.h>
 #include <SHA256.h>   // derive a region's flood-scope key from its #hashtag name
 #include <time.h>     // gmtime_r for the "clock" CLI command
@@ -20,12 +39,56 @@
 #if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
 #include <WiFi.h>
 #endif
+
 #ifdef MULTI_TRANSPORT_COMPANION
 // QUOTED on purpose: the vendored core lib ships a STALE copy of this header in its
 // include path (no bleAllowNextRxLog); quotes force the local src/ copy we compile.
 #include "helpers/esp32/MultiTransportCompanionInterface.h"
 #include "helpers/esp32/MqttBridge.h"
 #endif
+#endif
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+#define FM_FRIEND_LOG(F, ...) \
+  Serial.printf("[FM-FRIEND] " F "\n", ##__VA_ARGS__)
+static const char* fmFriendLinkActionName(
+    friendmesh::FriendLinkAction action) {
+  switch (action) {
+    case friendmesh::FriendLinkAction::Accepted: return "ACCEPT";
+    case friendmesh::FriendLinkAction::Removed: return "REMOVE";
+    case friendmesh::FriendLinkAction::Acknowledged: return "ACK";
+    case friendmesh::FriendLinkAction::Declined: return "DECLINE";
+    default: return "UNKNOWN";
+  }
+}
+
+template <typename T>
+class FmScopedHeapArray {
+ public:
+  explicit FmScopedHeapArray(size_t count = 1)
+      : count_(count), values_(static_cast<T*>(malloc(sizeof(T) * count))) {
+    if (values_) memset(values_, 0, sizeof(T) * count_);
+  }
+
+  ~FmScopedHeapArray() {
+    if (!values_) return;
+    memset(values_, 0, sizeof(T) * count_);
+    free(values_);
+  }
+
+  FmScopedHeapArray(const FmScopedHeapArray&) = delete;
+  FmScopedHeapArray& operator=(const FmScopedHeapArray&) = delete;
+
+  explicit operator bool() const { return values_ != nullptr; }
+  T* get() { return values_; }
+  T& operator*() { return *values_; }
+  T* operator->() { return values_; }
+  T& operator[](size_t index) { return values_[index]; }
+
+ private:
+  size_t count_;
+  T* values_;
+};
 #endif
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
@@ -1402,6 +1465,52 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
     const int  ps = 1 + (xp ? 4 : 0);
     hops = (ps < len) ? (uint8_t)(raw[ps] & 0x3F) : 0;
   }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // Friend relationship controls use MeshCore's existing ANON_REQ carrier.
+  // Diagnose it before the dispatcher destination/decryption gates so a radio
+  // miss can be distinguished from a crypto/address rejection without
+  // changing MeshCore itself.
+  if (len > 0 && ((raw[0] >> 2) & 0x0F) == PAYLOAD_TYPE_ANON_REQ) {
+    const bool hasTransport = rt == ROUTE_TYPE_TRANSPORT_FLOOD ||
+        rt == ROUTE_TYPE_TRANSPORT_DIRECT;
+    const int pathOffset = 1 + (hasTransport ? 4 : 0);
+    int payloadOffset = len;
+    if (pathOffset < len) {
+      const uint8_t pathEncoding = raw[pathOffset];
+      const int pathBytes = (pathEncoding & 0x3F) *
+          (((pathEncoding >> 6) & 0x03) + 1);
+      payloadOffset = pathOffset + 1 + pathBytes;
+    }
+    if (payloadOffset + 1 + PUB_KEY_SIZE < len) {
+      const uint8_t destinationHash = raw[payloadOffset];
+      const uint8_t* senderPub = raw + payloadOffset + 1;
+      const uint8_t* cipher = senderPub + PUB_KEY_SIZE;
+      const int cipherLength = len - (payloadOffset + 1 + PUB_KEY_SIZE);
+      uint8_t clear[MAX_PACKET_PAYLOAD] = {};
+      uint8_t shared[PUB_KEY_SIZE] = {};
+      mesh::Identity sender(senderPub);
+      self_id.calcSharedSecret(shared, sender);
+      const int clearLength = mesh::Utils::MACThenDecrypt(
+          shared, clear, cipher, cipherLength);
+      FM_FRIEND_LOG("ANR RAW RX ver=%u route=%u hops=%u dst=%02X me=%02X from=%02X%02X%02X%02X len=%d rssi=%d snr4=%d free=%d outq=%d decrypt=%d magic=%02X%02X%02X%02X",
+                    (raw[0] >> 6) & 0x03,
+                    rt, hops, destinationHash, self_id.pub_key[0],
+                    senderPub[0], senderPub[1], senderPub[2], senderPub[3],
+                    len, (int)rssi, (int)snr_q4,
+                    _mgr ? _mgr->getFreeCount() : -1,
+                    _mgr ? _mgr->getOutboundTotal() : -1, clearLength,
+                    clearLength >= 8 ? clear[4] : 0,
+                    clearLength >= 8 ? clear[5] : 0,
+                    clearLength >= 8 ? clear[6] : 0,
+                    clearLength >= 8 ? clear[7] : 0);
+      memset(shared, 0, sizeof(shared));
+      memset(clear, 0, sizeof(clear));
+    } else {
+      FM_FRIEND_LOG("ANR RAW RX malformed route=%u hops=%u len=%d",
+                    rt, hops, len);
+    }
+  }
+#endif
   // Live signal for the top-bar icon: ONLY from packets heard DIRECTLY (0-hop), so
   // the reading reflects a real direct-neighbour RF link, not the SNR of a repeater
   // relaying multi-hop traffic. The signal probe sends a zero-hop advert (it never
@@ -1524,6 +1633,71 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
       _serial->writeFrameToAll(out_frame, i);
     }
   }
+}
+
+mesh::DispatcherAction MyMesh::onRecvPacket(mesh::Packet* packet) {
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  const bool diagnoseAnon = packet &&
+      packet->getPayloadType() == PAYLOAD_TYPE_ANON_REQ;
+  uint32_t callbackCountBefore = _friendmesh_anon_callback_count;
+  uint8_t packetHash[MAX_HASH_SIZE] = {};
+  if (diagnoseAnon) {
+    packet->calculatePacketHash(packetHash);
+    FM_FRIEND_LOG("ANR DISPATCH enter ver=%u route=%u hops=%u payload=%u free=%d outq=%d hash=%02X%02X%02X%02X",
+                  packet->getPayloadVer(), packet->getRouteType(),
+                  packet->getPathHashCount(), (unsigned)packet->payload_len,
+                  _mgr ? _mgr->getFreeCount() : -1,
+                  _mgr ? _mgr->getOutboundTotal() : -1,
+                  packetHash[0], packetHash[1], packetHash[2], packetHash[3]);
+  }
+#endif
+
+  const mesh::DispatcherAction action =
+      BaseChatMesh::onRecvPacket(packet);
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (diagnoseAnon) {
+    const bool callbackReached =
+        _friendmesh_anon_callback_count != callbackCountBefore;
+    FM_FRIEND_LOG("ANR DISPATCH exit hash=%02X%02X%02X%02X callback=%d action=%08lX marked=%d free=%d outq=%d",
+                  packetHash[0], packetHash[1], packetHash[2], packetHash[3],
+                  callbackReached ? 1 : 0, (unsigned long)action,
+                  packet->isMarkedDoNotRetransmit() ? 1 : 0,
+                  _mgr ? _mgr->getFreeCount() : -1,
+                  _mgr ? _mgr->getOutboundTotal() : -1);
+  }
+#endif
+  return action;
+}
+
+void MyMesh::logTx(mesh::Packet* packet, int len) {
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (packet && packet->getPayloadType() == PAYLOAD_TYPE_ANON_REQ) {
+    const uint8_t* senderPub = packet->payload_len >= 1 + PUB_KEY_SIZE
+        ? packet->payload + 1 : nullptr;
+    FM_FRIEND_LOG("ANR RADIO TX complete route=%u hops=%u dst=%02X from=%02X%02X%02X%02X len=%d",
+                  packet->getRouteType(), packet->getPathHashCount(),
+                  packet->payload_len ? packet->payload[0] : 0,
+                  senderPub ? senderPub[0] : 0,
+                  senderPub ? senderPub[1] : 0,
+                  senderPub ? senderPub[2] : 0,
+                  senderPub ? senderPub[3] : 0, len);
+  }
+#else
+  (void)packet; (void)len;
+#endif
+}
+
+void MyMesh::logTxFail(mesh::Packet* packet, int len) {
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (packet && packet->getPayloadType() == PAYLOAD_TYPE_ANON_REQ) {
+    FM_FRIEND_LOG("ANR RADIO TX failed route=%u hops=%u dst=%02X len=%d",
+                  packet->getRouteType(), packet->getPathHashCount(),
+                  packet->payload_len ? packet->payload[0] : 0, len);
+  }
+#else
+  (void)packet; (void)len;
+#endif
 }
 
 void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
@@ -1812,6 +1986,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
     strncpy(p->name, contact.name, sizeof(p->name) - 1);
     p->name[sizeof(p->name) - 1] = '\0';
     p->recv_timestamp = getRTCClock()->getCurrentTime();
+    p->recv_millis = _ms->getMillis();
     p->path_len = path_len;
     memcpy(p->path, path, p->path_len);
   }
@@ -2042,6 +2217,9 @@ void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, ui
 }
 void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
   uiTrackSentFp(txtFloodFp(pkt));
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  friendmeshRememberSentChannelMessage(channel, pkt);
+#endif
   // TODO: have per-channel send_scope
   if (send_unscoped) {
     sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);  // app has explicitly requested un-scoped
@@ -2057,11 +2235,1300 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (friendmesh::isCompassStartedNoticeText(text)) {
+    friendmesh::CompassStartedNotice notice = {};
+    if (friendmesh::decodeCompassStartedNotice(text, notice) !=
+        friendmesh::ResultCode::Ok) return;
+    const int channelIdx = friendmeshFindChannelByTag(notice.channelTag);
+    ChannelDetails channel = {};
+    friendmesh::ChannelRoster roster = {};
+    if (channelIdx < 0 || !getChannel(channelIdx, channel) ||
+        !friendmeshLoadChannelRoster(channelIdx, roster, false)) return;
+    const friendmesh::ChannelRosterMember* sender =
+        friendmesh::findChannelRosterMember(roster, from.id.pub_key);
+    const friendmesh::ChannelRosterMember* self =
+        friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+    if (!sender || sender->state != friendmesh::ChannelRosterState::Joined ||
+        !self || self->state != friendmesh::ChannelRosterState::Joined) return;
+    if (_ui) _ui->onFriendMeshCompassStarted(
+        from, channel.name, notice.distanceMeters);
+    return;
+  }
+  if (friendmesh::isChannelControlText(text)) {
+    friendmesh::ChannelControlType type =
+        friendmesh::ChannelControlType::Joined;
+    uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+    if (friendmesh::decodeChannelControl(text, type, tag) !=
+        friendmesh::ResultCode::Ok) return;
+    const int channelIdx = friendmeshFindChannelByTag(tag);
+    if (channelIdx < 0) return;
+    ChannelDetails channel = {};
+    friendmesh::ChannelRoster roster = {};
+    if (!getChannel(channelIdx, channel) ||
+        !friendmeshLoadChannelRoster(channelIdx, roster, false)) return;
+    friendmesh::ChannelRosterMember* sender =
+        friendmesh::findChannelRosterMember(roster, from.id.pub_key);
+    const char* status = nullptr;
+    if (type == friendmesh::ChannelControlType::Joined) {
+      if (!sender || sender->role != friendmesh::ChannelRosterRole::Member ||
+          (sender->state != friendmesh::ChannelRosterState::Invited &&
+           sender->state != friendmesh::ChannelRosterState::InviteFailed)) return;
+      sender->state = friendmesh::ChannelRosterState::Joined;
+      status = "Member joined";
+    } else if (type == friendmesh::ChannelControlType::Left) {
+      if (!sender || sender->state != friendmesh::ChannelRosterState::Joined)
+        return;
+      sender->state = friendmesh::ChannelRosterState::Left;
+      roster.rekeyRequired = true;
+      status = "Member left - rekey required";
+    } else {
+      if (!sender || sender->role != friendmesh::ChannelRosterRole::Admin ||
+          sender->state != friendmesh::ChannelRosterState::Joined) return;
+      char channelName[sizeof(channel.name)] = {};
+      StrHelper::strncpy(channelName, channel.name, sizeof(channelName));
+      friendmeshDeleteChannelRoster(channelIdx);
+      if (!uiDeleteChannel(channelIdx)) return;
+      if (_ui) _ui->onFriendMeshChannelRosterChanged(
+          channelName, "Removed from private group");
+      return;
+    }
+    if (!friendmeshSaveChannelRoster(channelIdx, roster)) return;
+    friendmeshBroadcastChannelRoster(channelIdx, roster);
+    if (_ui) _ui->onFriendMeshChannelRosterChanged(channel.name, status);
+    return;
+  }
+  if (friendmesh::isDirectChannelInviteText(text)) {
+    // A direct route may still carry a repeater path. Accept only an actual
+    // zero-entry path; malformed/routed invite text is dropped, never exposed
+    // as a chat bubble containing the channel secret.
+    if (!pkt || !pkt->isRouteDirect() || pkt->getPathHashCount() != 0) return;
+    friendmesh::DirectChannelInvite invite = {};
+    if (friendmesh::decodeDirectChannelInvite(text, invite) !=
+        friendmesh::ResultCode::Ok) return;
+    if (_ui) _ui->onFriendMeshChannelInvite(
+        from, invite.channelName, invite.channelSecret);
+    memset(&invite, 0, sizeof(invite));
+    return;
+  }
+#endif
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   mqtt_bridge.publishDM(from.name, from.id.pub_key, pkt->getSNR(), pkt->path_len, sender_timestamp, text);
 #endif
 }
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+bool MyMesh::uiIsFreshZeroHopContact(
+    const uint8_t pub_key[PUB_KEY_SIZE], uint32_t max_age_ms) const {
+  if (!pub_key || max_age_ms == 0) return false;
+  const uint32_t now = _ms->getMillis();
+  for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; ++i) {
+    const AdvertPath& path = advert_paths[i];
+    if (path.recv_millis != 0 && path.path_len == 0 &&
+        memcmp(path.pubkey_prefix, pub_key, sizeof(path.pubkey_prefix)) == 0 &&
+        (uint32_t)(now - path.recv_millis) <= max_age_ms) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool MyMesh::uiIsFriendMeshPrivateGroup(int channel_idx) {
+  friendmesh::ChannelRoster roster = {};
+  if (friendmeshLoadChannelRoster(channel_idx, roster, false)) {
+    const friendmesh::ChannelRosterMember* self =
+        friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+    return self && self->state == friendmesh::ChannelRosterState::Joined;
+  }
+  // Preserve FriendMesh classification when its durable metadata exists but
+  // needs recovery. Otherwise a corrupt group would silently look like an
+  // ordinary channel and hide the recovery-relevant controls/status.
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) return false;
+  bool anySlotPresent = false;
+  friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (anySlotPresent) return true;
+  if (!_store) return false;
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  uint8_t legacyKey[8] = {};
+  uint8_t legacy[friendmesh::kChannelRosterEncodedBytes] = {};
+  return friendmeshChannelTag(channel_idx, tag, legacyKey) &&
+      _store->getBlobByKeyBounded(legacyKey, sizeof(legacyKey), legacy,
+                                  sizeof(legacy)) != 0;
+}
+
+bool MyMesh::uiFriendMeshGroupStorageReadable(int channel_idx) {
+  friendmesh::ChannelRoster roster = {};
+  return friendmeshLoadChannelRoster(channel_idx, roster, false);
+}
+
+bool MyMesh::uiCreateFriendMeshPrivateGroup(int channel_idx) {
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) return false;
+  if (uiIsFriendMeshPrivateGroup(channel_idx)) return true;
+  friendmesh::ChannelRoster roster = {};
+  if (friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  if (friendmesh::setChannelRosterMember(
+          roster, self_id.pub_key, friendmesh::ChannelRosterRole::Admin,
+          friendmesh::ChannelRosterState::Joined) !=
+      friendmesh::ResultCode::Ok) return false;
+  return friendmeshSaveChannelRoster(channel_idx, roster);
+}
+
+bool MyMesh::friendmeshChannelTag(
+    int channel_idx, uint8_t tag[friendmesh::kChannelControlTagBytes],
+    uint8_t blob_key[8]) {
+  if (!tag) return false;
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) return false;
+  static const uint8_t kTagNamespace[] = {'F','M','C','T','1'};
+  mesh::Utils::sha256(tag, friendmesh::kChannelControlTagBytes,
+                      kTagNamespace, sizeof(kTagNamespace),
+                      channel.channel.secret, 16);
+  if (blob_key) {
+    static const uint8_t kRosterNamespace[] = {'F','M','R','S','1'};
+    mesh::Utils::sha256(blob_key, 8, kRosterNamespace,
+                        sizeof(kRosterNamespace), channel.channel.secret, 16);
+  }
+  memset(&channel, 0, sizeof(channel));
+  return true;
+}
+
+int MyMesh::friendmeshFindChannelByTag(
+    const uint8_t tag[friendmesh::kChannelControlTagBytes]) {
+  if (!tag) return -1;
+#ifdef MAX_GROUP_CHANNELS
+  for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+    uint8_t candidate[friendmesh::kChannelControlTagBytes] = {};
+    if (friendmeshChannelTag(i, candidate) &&
+        memcmp(candidate, tag, sizeof(candidate)) == 0) return i;
+  }
+#endif
+  return -1;
+}
+
+namespace {
+
+void fmGroupStorageSlotPath(
+    const uint8_t binding[friendmesh::kGroupStorageBindingBytes],
+    uint8_t slot, char* destination, size_t capacity) {
+  char hex[friendmesh::kGroupStorageBindingBytes * 2 + 1] = {};
+  mesh::Utils::toHex(hex, binding, friendmesh::kGroupStorageBindingBytes);
+  snprintf(destination, capacity, "/fm_group_%s.%u", hex,
+           static_cast<unsigned>(slot));
+}
+
+bool fmReadBoundedFile(DataStore* store, const char* path, uint8_t* destination,
+                       size_t capacity, size_t& length, bool& present) {
+  length = 0;
+  present = false;
+  if (!store || !path || !destination || capacity == 0) return false;
+  File file = store->openRead(path);
+  if (!file) return true;
+  present = true;
+  while (length < capacity) {
+    const int read = file.read(destination + length, capacity - length);
+    if (read <= 0) break;
+    length += static_cast<size_t>(read);
+  }
+  const bool overflow = file.read() >= 0;
+  file.close();
+  if (overflow || length == 0) {
+    memset(destination, 0, capacity);
+    length = 0;
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
+bool MyMesh::friendmeshGroupStorageBinding(
+    int channel_idx,
+    uint8_t binding[friendmesh::kGroupStorageBindingBytes]) {
+  if (!binding) return false;
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) return false;
+  static const uint8_t kNamespace[] = {'F', 'M', 'G', 'S', '2'};
+  mesh::Utils::sha256(binding, friendmesh::kGroupStorageBindingBytes,
+                      kNamespace, sizeof(kNamespace),
+                      channel.channel.secret, sizeof(channel.channel.secret));
+  memset(&channel, 0, sizeof(channel));
+  return true;
+}
+
+friendmesh::ResultCode MyMesh::friendmeshLoadGroupStorageRecord(
+    int channel_idx, friendmesh::GroupStorageRecord& record,
+    uint8_t* active_slot, bool* any_slot_present) {
+  friendmesh::clearGroupStorageRecord(record);
+  if (active_slot) *active_slot = 0;
+  if (any_slot_present) *any_slot_present = false;
+  if (!_store) return friendmesh::ResultCode::StorageUnavailable;
+  uint8_t binding[friendmesh::kGroupStorageBindingBytes] = {};
+  if (!friendmeshGroupStorageBinding(channel_idx, binding))
+    return friendmesh::ResultCode::InvalidArgument;
+  FmScopedHeapArray<uint8_t> encoded(
+      friendmesh::kGroupStorageRecordMaxBytes * 2);
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> candidates(2);
+  if (!encoded || !candidates) {
+    FM_FRIEND_LOG("GROUP STORE load workspace allocation failed");
+    return friendmesh::ResultCode::StorageUnavailable;
+  }
+  bool present[2] = {};
+  bool valid[2] = {};
+  size_t lengths[2] = {};
+  for (uint8_t slot = 0; slot < 2; ++slot) {
+    char path[64] = {};
+    fmGroupStorageSlotPath(binding, slot, path, sizeof(path));
+    uint8_t* slotBytes = encoded.get() +
+        slot * friendmesh::kGroupStorageRecordMaxBytes;
+    if (!fmReadBoundedFile(_store, path, slotBytes,
+                           friendmesh::kGroupStorageRecordMaxBytes,
+                           lengths[slot], present[slot])) {
+      FM_FRIEND_LOG("GROUP STORE slot=%u invalid-length", slot);
+      continue;
+    }
+    if (!present[slot]) continue;
+    valid[slot] = friendmesh::decodeGroupStorageRecord(
+        slotBytes, lengths[slot], candidates[slot]) ==
+        friendmesh::ResultCode::Ok &&
+        memcmp(candidates[slot].channelBinding, binding,
+               sizeof(binding)) == 0;
+    if (!valid[slot]) FM_FRIEND_LOG("GROUP STORE slot=%u corrupt", slot);
+  }
+  if (any_slot_present) *any_slot_present = present[0] || present[1];
+  const bool equalBytes = valid[0] && valid[1] &&
+      lengths[0] == lengths[1] &&
+      memcmp(encoded.get(),
+             encoded.get() + friendmesh::kGroupStorageRecordMaxBytes,
+             lengths[0]) == 0;
+  uint8_t selected = 0;
+  const friendmesh::ResultCode selectedResult =
+      friendmesh::selectGroupStorageSlot(
+          valid[0], candidates[0].generation,
+          valid[1], candidates[1].generation, equalBytes, selected);
+  if (selectedResult == friendmesh::ResultCode::Ok) {
+    record = candidates[selected];
+    if (active_slot) *active_slot = selected;
+    if (present[selected ^ 1U] && !valid[selected ^ 1U])
+      FM_FRIEND_LOG("GROUP STORE recovered slot=%u generation=%lu", selected,
+                    (unsigned long)record.generation);
+  } else if ((present[0] || present[1]) &&
+             selectedResult == friendmesh::ResultCode::NotFound) {
+    return friendmesh::ResultCode::CorruptData;
+  }
+  return selectedResult;
+}
+
+bool MyMesh::friendmeshPopulateStoredRoster(
+    const friendmesh::ChannelRoster& roster,
+    friendmesh::GroupStorageRecord& record) {
+  FmScopedHeapArray<friendmesh::GroupStorageMember> previous(
+      friendmesh::kChannelRosterMaxMembers);
+  if (!previous) {
+    FM_FRIEND_LOG("GROUP STORE roster workspace allocation failed");
+    return false;
+  }
+  const uint8_t previousCount = record.memberCount;
+  memcpy(previous.get(), record.members, sizeof(record.members));
+  memset(record.members, 0, sizeof(record.members));
+  record.memberCount = 0;
+  for (size_t i = 0; i < roster.memberCount; ++i) {
+    const friendmesh::ChannelRosterMember& source = roster.members[i];
+    const uint8_t* identity = source.pubKeyPrefix;
+    uint8_t identityBytes = friendmesh::kChannelRosterPrefixBytes;
+    uint8_t resolved[PUB_KEY_SIZE] = {};
+    uint8_t matches = 0;
+    if (memcmp(source.pubKeyPrefix, self_id.pub_key,
+               friendmesh::kChannelRosterPrefixBytes) == 0) {
+      memcpy(resolved, self_id.pub_key, sizeof(resolved));
+      matches = 1;
+    }
+    const uint32_t contacts = getNumContacts();
+    for (uint32_t contactIndex = 0; contactIndex < contacts; ++contactIndex) {
+      ContactInfo contact = {};
+      if (!getContactByIdx(contactIndex, contact) ||
+          memcmp(source.pubKeyPrefix, contact.id.pub_key,
+                 friendmesh::kChannelRosterPrefixBytes) != 0) continue;
+      if (matches && memcmp(resolved, contact.id.pub_key,
+                            sizeof(resolved)) != 0) {
+        FM_FRIEND_LOG("GROUP STORE identity-prefix-conflict=%02X%02X%02X",
+                      source.pubKeyPrefix[0], source.pubKeyPrefix[1],
+                      source.pubKeyPrefix[2]);
+        return false;
+      }
+      memcpy(resolved, contact.id.pub_key, sizeof(resolved));
+      matches = 1;
+    }
+    if (matches == 1) {
+      identity = resolved;
+      identityBytes = sizeof(resolved);
+    } else {
+      for (uint8_t oldIndex = 0; oldIndex < previousCount; ++oldIndex) {
+        if (memcmp(previous[oldIndex].publicKey, source.pubKeyPrefix,
+                   friendmesh::kChannelRosterPrefixBytes) != 0) continue;
+        identity = previous[oldIndex].publicKey;
+        identityBytes = previous[oldIndex].publicKeyBytes;
+        break;
+      }
+    }
+    if (friendmesh::setGroupStorageMember(
+            record, identity, identityBytes, source.role, source.state) !=
+        friendmesh::ResultCode::Ok) return false;
+  }
+  record.rekeyRequired = roster.rekeyRequired;
+  return true;
+}
+
+bool MyMesh::friendmeshSaveGroupStorageRecord(
+    int channel_idx, friendmesh::GroupStorageRecord& record) {
+  if (!_store || !_store->writesEnabled()) return false;
+  uint8_t binding[friendmesh::kGroupStorageBindingBytes] = {};
+  if (!friendmeshGroupStorageBinding(channel_idx, binding)) return false;
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> records(2);
+  if (!records) {
+    FM_FRIEND_LOG("GROUP STORE save workspace allocation failed");
+    return false;
+  }
+  friendmesh::GroupStorageRecord& current = records[0];
+  friendmesh::GroupStorageRecord& verified = records[1];
+  uint8_t currentSlot = 0;
+  bool anyPresent = false;
+  const friendmesh::ResultCode loaded = friendmeshLoadGroupStorageRecord(
+      channel_idx, current, &currentSlot, &anyPresent);
+  if (loaded != friendmesh::ResultCode::Ok &&
+      loaded != friendmesh::ResultCode::NotFound) return false;
+  if (loaded == friendmesh::ResultCode::NotFound && anyPresent) return false;
+  memcpy(record.channelBinding, binding, sizeof(binding));
+  record.generation = loaded == friendmesh::ResultCode::Ok
+      ? current.generation + 1 : 1;
+  const uint8_t targetSlot = loaded == friendmesh::ResultCode::Ok
+      ? static_cast<uint8_t>(currentSlot ^ 1U) : 0;
+  FmScopedHeapArray<uint8_t> buffers(
+      friendmesh::kGroupStorageRecordMaxBytes * 2);
+  if (!buffers) {
+    FM_FRIEND_LOG("GROUP STORE encode workspace allocation failed");
+    return false;
+  }
+  uint8_t* encoded = buffers.get();
+  uint8_t* verify = buffers.get() + friendmesh::kGroupStorageRecordMaxBytes;
+  size_t written = 0;
+  if (friendmesh::encodeGroupStorageRecord(
+          record, encoded, friendmesh::kGroupStorageRecordMaxBytes, written) !=
+      friendmesh::ResultCode::Ok) {
+    return false;
+  }
+  char path[64] = {};
+  fmGroupStorageSlotPath(binding, targetSlot, path, sizeof(path));
+  File file = _store->openWrite(_store->getPrimaryFS(), path);
+  const bool wrote = file && file.write(encoded, written) == written;
+  if (file) file.close();
+  size_t verifyLength = 0;
+  bool present = false;
+  const bool verifiedOk = wrote &&
+      fmReadBoundedFile(_store, path, verify,
+                        friendmesh::kGroupStorageRecordMaxBytes,
+                        verifyLength, present) && present &&
+      verifyLength == written &&
+      memcmp(encoded, verify, written) == 0 &&
+      friendmesh::decodeGroupStorageRecord(
+          verify, verifyLength, verified) == friendmesh::ResultCode::Ok &&
+      verified.generation == record.generation;
+  if (!verifiedOk) {
+    _store->removeFile(path);
+    FM_FRIEND_LOG("GROUP STORE commit=failed slot=%u", targetSlot);
+    return false;
+  }
+  FM_FRIEND_LOG("GROUP STORE commit=ok slot=%u generation=%lu members=%u",
+                targetSlot, (unsigned long)record.generation,
+                (unsigned)record.memberCount);
+  return true;
+}
+
+bool MyMesh::friendmeshDeleteGroupStorageRecord(int channel_idx) {
+  uint8_t binding[friendmesh::kGroupStorageBindingBytes] = {};
+  if (!friendmeshGroupStorageBinding(channel_idx, binding)) return false;
+  if (!_store || !_store->writesEnabled()) return false;
+  bool ok = true;
+  for (uint8_t slot = 0; slot < 2; ++slot) {
+    char path[64] = {};
+    fmGroupStorageSlotPath(binding, slot, path, sizeof(path));
+    File existing = _store->openRead(path);
+    const bool present = static_cast<bool>(existing);
+    if (existing) existing.close();
+    if (present && !_store->removeFile(path)) ok = false;
+  }
+  return ok;
+}
+
+bool MyMesh::friendmeshLoadChannelRoster(
+    int channel_idx, friendmesh::ChannelRoster& roster,
+    bool initialize_self_admin) {
+  friendmesh::clearChannelRoster(roster);
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) {
+    FM_FRIEND_LOG("GROUP STORE roster-load allocation failed");
+    return false;
+  }
+  bool anySlotPresent = false;
+  const friendmesh::ResultCode stored = friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (stored == friendmesh::ResultCode::Ok)
+    return friendmesh::groupStorageRecordToRoster(*record, roster) ==
+        friendmesh::ResultCode::Ok;
+  if (stored != friendmesh::ResultCode::NotFound || anySlotPresent) {
+    FM_FRIEND_LOG("GROUP STORE roster-load blocked result=%u",
+                  static_cast<unsigned>(stored));
+    return false;
+  }
+
+  // One-time v1 migration. Reads are explicitly bounded so corrupt legacy
+  // state cannot be reinterpreted as an empty group.
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  uint8_t blobKey[8] = {};
+  if (!friendmeshChannelTag(channel_idx, tag, blobKey)) return false;
+  uint8_t encoded[friendmesh::kChannelRosterEncodedBytes] = {};
+  const int length = _store->getBlobByKeyBounded(
+      blobKey, sizeof(blobKey), encoded, sizeof(encoded));
+  if (length < 0) return false;
+  if (length > 0) {
+    if (friendmesh::decodeChannelRoster(encoded, length, roster) !=
+        friendmesh::ResultCode::Ok) return false;
+  } else {
+    if (!initialize_self_admin) return false;
+    if (friendmesh::setChannelRosterMember(
+            roster, self_id.pub_key,
+            friendmesh::ChannelRosterRole::Admin,
+            friendmesh::ChannelRosterState::Joined) !=
+        friendmesh::ResultCode::Ok) return false;
+  }
+  if (!_store || !_store->writesEnabled()) {
+    FM_FRIEND_LOG("GROUP STORE migration blocked read-only");
+    return true;
+  }
+  if (!friendmeshPopulateStoredRoster(roster, *record)) return false;
+  uint8_t coordinationKey[8] = {};
+  if (!friendmeshCoordinationBlobKey(channel_idx, coordinationKey))
+    return false;
+  uint8_t coordinationBytes[friendmesh::kGroupCoordinationStateMaxBytes] = {};
+  const int coordinationLength = _store->getBlobByKeyBounded(
+      coordinationKey, sizeof(coordinationKey), coordinationBytes,
+      sizeof(coordinationBytes));
+  if (coordinationLength < 0 ||
+      (coordinationLength > 0 &&
+       friendmesh::decodeGroupCoordinationState(
+           coordinationBytes, coordinationLength, record->coordination) !=
+       friendmesh::ResultCode::Ok)) return false;
+  const bool migrated = friendmeshSaveGroupStorageRecord(channel_idx, *record);
+  memset(encoded, 0, sizeof(encoded));
+  memset(coordinationBytes, 0, sizeof(coordinationBytes));
+  if (migrated)
+    FM_FRIEND_LOG("GROUP STORE migrated legacy members=%u",
+                  static_cast<unsigned>(roster.memberCount));
+  return migrated;
+}
+
+bool MyMesh::friendmeshSaveChannelRoster(
+    int channel_idx, const friendmesh::ChannelRoster& roster) {
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) {
+    FM_FRIEND_LOG("GROUP STORE roster-save allocation failed");
+    return false;
+  }
+  bool anySlotPresent = false;
+  const friendmesh::ResultCode loaded = friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (loaded != friendmesh::ResultCode::Ok &&
+      (loaded != friendmesh::ResultCode::NotFound || anySlotPresent))
+    return false;
+  if (loaded == friendmesh::ResultCode::NotFound) {
+    uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+    uint8_t legacyRosterKey[8] = {};
+    if (!friendmeshChannelTag(channel_idx, tag, legacyRosterKey)) return false;
+    uint8_t legacyRosterBytes[friendmesh::kChannelRosterEncodedBytes] = {};
+    const int legacyRosterLength = _store->getBlobByKeyBounded(
+        legacyRosterKey, sizeof(legacyRosterKey), legacyRosterBytes,
+        sizeof(legacyRosterBytes));
+    friendmesh::ChannelRoster legacyRoster = {};
+    if (legacyRosterLength < 0 ||
+        (legacyRosterLength > 0 &&
+         (friendmesh::decodeChannelRoster(
+              legacyRosterBytes, legacyRosterLength, legacyRoster) !=
+              friendmesh::ResultCode::Ok ||
+          !friendmeshPopulateStoredRoster(legacyRoster, *record)))) return false;
+    memset(legacyRosterBytes, 0, sizeof(legacyRosterBytes));
+    uint8_t coordinationKey[8] = {};
+    if (!friendmeshCoordinationBlobKey(channel_idx, coordinationKey))
+      return false;
+    uint8_t encoded[friendmesh::kGroupCoordinationStateMaxBytes] = {};
+    const int length = _store->getBlobByKeyBounded(
+        coordinationKey, sizeof(coordinationKey), encoded, sizeof(encoded));
+    if (length < 0 ||
+        (length > 0 && friendmesh::decodeGroupCoordinationState(
+             encoded, length, record->coordination) !=
+             friendmesh::ResultCode::Ok)) return false;
+    memset(encoded, 0, sizeof(encoded));
+  }
+  return friendmeshPopulateStoredRoster(roster, *record) &&
+      friendmeshSaveGroupStorageRecord(channel_idx, *record);
+}
+
+bool MyMesh::friendmeshDeleteChannelRoster(int channel_idx) {
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  uint8_t blobKey[8] = {};
+  if (!friendmeshChannelTag(channel_idx, tag, blobKey)) return false;
+  const bool recordDeleted = friendmeshDeleteGroupStorageRecord(channel_idx);
+  const bool legacyDeleted = _store->deleteBlobByKey(blobKey, sizeof(blobKey));
+  return recordDeleted && legacyDeleted;
+}
+
+bool MyMesh::friendmeshCoordinationBlobKey(int channel_idx,
+                                           uint8_t blob_key[8]) {
+  if (!blob_key) return false;
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) return false;
+  static const uint8_t kNamespace[] = {'F','M','C','S','1'};
+  mesh::Utils::sha256(blob_key, 8, kNamespace, sizeof(kNamespace),
+                      channel.channel.secret, 16);
+  memset(&channel, 0, sizeof(channel));
+  return true;
+}
+
+bool MyMesh::friendmeshLoadGroupCoordination(
+    int channel_idx, friendmesh::GroupCoordinationState& state) {
+  friendmesh::clearGroupCoordinationState(state);
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) {
+    FM_FRIEND_LOG("GROUP STORE coordination-load allocation failed");
+    return false;
+  }
+  bool anySlotPresent = false;
+  const friendmesh::ResultCode stored = friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (stored == friendmesh::ResultCode::Ok) {
+    state = record->coordination;
+    return true;
+  }
+  if (stored != friendmesh::ResultCode::NotFound || anySlotPresent) return false;
+  uint8_t blobKey[8] = {};
+  if (!friendmeshCoordinationBlobKey(channel_idx, blobKey)) return false;
+  uint8_t encoded[friendmesh::kGroupCoordinationStateMaxBytes] = {};
+  const int length = _store->getBlobByKeyBounded(
+      blobKey, sizeof(blobKey), encoded, sizeof(encoded));
+  if (length < 0) return false;
+  if (length == 0) return true;
+  return friendmesh::decodeGroupCoordinationState(encoded, length, state) ==
+         friendmesh::ResultCode::Ok;
+}
+
+bool MyMesh::friendmeshSaveGroupCoordination(
+    int channel_idx, const friendmesh::GroupCoordinationState& state) {
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) {
+    FM_FRIEND_LOG("GROUP STORE coordination-save allocation failed");
+    return false;
+  }
+  bool anySlotPresent = false;
+  const friendmesh::ResultCode loaded = friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (loaded != friendmesh::ResultCode::Ok) {
+    if (loaded != friendmesh::ResultCode::NotFound || anySlotPresent)
+      return false;
+    uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+    uint8_t rosterKey[8] = {};
+    if (!friendmeshChannelTag(channel_idx, tag, rosterKey)) return false;
+    uint8_t rosterBytes[friendmesh::kChannelRosterEncodedBytes] = {};
+    const int rosterLength = _store->getBlobByKeyBounded(
+        rosterKey, sizeof(rosterKey), rosterBytes, sizeof(rosterBytes));
+    friendmesh::ChannelRoster roster = {};
+    if (rosterLength <= 0 || friendmesh::decodeChannelRoster(
+            rosterBytes, rosterLength, roster) != friendmesh::ResultCode::Ok ||
+        !friendmeshPopulateStoredRoster(roster, *record)) return false;
+    memset(rosterBytes, 0, sizeof(rosterBytes));
+  }
+  record->coordination = state;
+  return friendmeshSaveGroupStorageRecord(channel_idx, *record);
+}
+
+bool MyMesh::friendmeshDeleteGroupCoordination(int channel_idx) {
+  bool recordCleared = true;
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) {
+    FM_FRIEND_LOG("GROUP STORE coordination-delete allocation failed");
+    return false;
+  }
+  bool anySlotPresent = false;
+  const friendmesh::ResultCode loaded = friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (loaded == friendmesh::ResultCode::Ok) {
+    friendmesh::clearGroupCoordinationState(record->coordination);
+    memset(&record->pending, 0, sizeof(record->pending));
+    recordCleared = friendmeshSaveGroupStorageRecord(channel_idx, *record);
+  } else if (loaded != friendmesh::ResultCode::NotFound || anySlotPresent) {
+    recordCleared = false;
+  }
+  uint8_t blobKey[8] = {};
+  if (!friendmeshCoordinationBlobKey(channel_idx, blobKey)) return false;
+  return recordCleared && _store->deleteBlobByKey(blobKey, sizeof(blobKey));
+}
+
+bool MyMesh::friendmeshSendChannelControl(
+    const ContactInfo& recipient, friendmesh::ChannelControlType type,
+    const uint8_t tag[friendmesh::kChannelControlTagBytes],
+    bool force_direct) {
+  char text[friendmesh::kChannelControlMaxText + 1] = {};
+  size_t written = 0;
+  if (friendmesh::encodeChannelControl(type, tag, text, sizeof(text), written) !=
+          friendmesh::ResultCode::Ok || written == 0) return false;
+  ContactInfo destination = recipient;
+  if (force_direct) {
+    destination.out_path_len = 0;
+    memset(destination.out_path, 0, sizeof(destination.out_path));
+  }
+  uint32_t expectedAck = 0;
+  uint32_t timeout = 0;
+  const int result = sendMessage(
+      destination, getRTCClock()->getCurrentTimeUnique(), 0, text,
+      expectedAck, timeout);
+  memset(text, 0, sizeof(text));
+  return result != MSG_SEND_FAILED;
+}
+
+bool MyMesh::uiSendFriendMeshCompassStarted(
+    int channel_idx, const uint8_t recipient_pub[PUB_KEY_SIZE]) {
+  if (channel_idx < 0 || !recipient_pub ||
+      memcmp(recipient_pub, self_id.pub_key, PUB_KEY_SIZE) == 0) return false;
+  ContactInfo* recipient = lookupContactByPubKey(recipient_pub, PUB_KEY_SIZE);
+  friendmesh::ChannelRoster roster = {};
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  if (!recipient || recipient->type != ADV_TYPE_CHAT ||
+      (recipient->gps_lat == 0 && recipient->gps_lon == 0) ||
+      !friendmeshLoadChannelRoster(channel_idx, roster, false) ||
+      !friendmeshChannelTag(channel_idx, tag)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  const friendmesh::ChannelRosterMember* target =
+      friendmesh::findChannelRosterMember(roster, recipient_pub);
+  if (!self || self->state != friendmesh::ChannelRosterState::Joined ||
+      !target || target->state != friendmesh::ChannelRosterState::Joined)
+    return false;
+
+  const double latitude = sensors.node_lat;
+  const double longitude = sensors.node_lon;
+  if ((latitude == 0.0 && longitude == 0.0) || latitude < -90.0 ||
+      latitude > 90.0 || longitude < -180.0 || longitude > 180.0)
+    return false;
+  const uint32_t now = getRTCClock()->getCurrentTime();
+  friendmesh::MeshCorePositionInput localInput = {};
+  memcpy(localInput.publicKey, self_id.pub_key, PUB_KEY_SIZE);
+  localInput.latitudeE6 = static_cast<int32_t>(latitude * 1000000.0);
+  localInput.longitudeE6 = static_cast<int32_t>(longitude * 1000000.0);
+  localInput.observedAt = now;
+  localInput.receivedAt = now;
+  friendmesh::MeshCorePositionInput targetInput = {};
+  memcpy(targetInput.publicKey, recipient->id.pub_key, PUB_KEY_SIZE);
+  targetInput.latitudeE6 = recipient->gps_lat;
+  targetInput.longitudeE6 = recipient->gps_lon;
+  targetInput.observedAt = recipient->last_advert_timestamp > recipient->lastmod
+      ? recipient->last_advert_timestamp : recipient->lastmod;
+  targetInput.receivedAt = now;
+  friendmesh::PositionRecord local = {};
+  friendmesh::PositionRecord remote = {};
+  if (friendmesh::adaptMeshCorePosition(localInput, local) !=
+          friendmesh::ResultCode::Ok ||
+      friendmesh::adaptMeshCorePosition(targetInput, remote) !=
+          friendmesh::ResultCode::Ok) return false;
+  const uint32_t distance = friendmesh::greatCircleDistanceMeters(local, remote);
+  if (distance == UINT32_MAX ||
+      distance > friendmesh::kCompassStartedMaxDistanceMeters) return false;
+
+  friendmesh::CompassStartedNotice notice = {};
+  memcpy(notice.channelTag, tag, sizeof(notice.channelTag));
+  notice.distanceMeters = distance;
+  char text[friendmesh::kCompassStartedNoticeMaxText + 1] = {};
+  size_t written = 0;
+  if (friendmesh::encodeCompassStartedNotice(
+          notice, text, sizeof(text), written) != friendmesh::ResultCode::Ok ||
+      written == 0) return false;
+  uint32_t expectedAck = 0;
+  uint32_t timeout = 0;
+  const int result = sendMessage(
+      *recipient, getRTCClock()->getCurrentTimeUnique(), 0, text,
+      expectedAck, timeout);
+  memset(text, 0, sizeof(text));
+  return result != MSG_SEND_FAILED;
+}
+
+bool MyMesh::friendmeshBroadcastChannelRoster(
+    int channel_idx, const friendmesh::ChannelRoster& roster) {
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) return false;
+  uint8_t data[friendmesh::kChannelRosterEncodedBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeChannelRoster(
+          roster, data, sizeof(data), written) != friendmesh::ResultCode::Ok ||
+      written == 0 || written > MAX_GROUP_DATA_LENGTH) {
+    memset(&channel, 0, sizeof(channel));
+    return false;
+  }
+  const bool sent = sendGroupData(
+      channel.channel, nullptr, OUT_PATH_UNKNOWN,
+      friendmesh::kChannelRosterDataType, data, static_cast<int>(written));
+  memset(data, 0, sizeof(data));
+  memset(&channel, 0, sizeof(channel));
+  return sent;
+}
+
+bool MyMesh::friendmeshApplyChannelRoster(
+    int channelIdx, const friendmesh::ChannelRoster& incoming) {
+  if (channelIdx < 0) return false;
+  const friendmesh::ChannelRosterMember* incomingSelf =
+      friendmesh::findChannelRosterMember(incoming, self_id.pub_key);
+  const friendmesh::ChannelRosterMember* incomingAdmin = nullptr;
+  uint8_t adminCount = 0;
+  for (size_t i = 0; i < incoming.memberCount; ++i) {
+    if (incoming.members[i].role == friendmesh::ChannelRosterRole::Admin &&
+        incoming.members[i].state == friendmesh::ChannelRosterState::Joined) {
+      incomingAdmin = &incoming.members[i];
+      ++adminCount;
+    }
+  }
+  // A shared-channel roster is functional synchronization, not production
+  // authorization. Still require one admin and our own active membership,
+  // and pin later snapshots to the admin learned during direct joining.
+  if (!incomingSelf ||
+      incomingSelf->state != friendmesh::ChannelRosterState::Joined ||
+      !incomingAdmin || adminCount != 1) return false;
+  friendmesh::ChannelRoster current = {};
+  if (friendmeshLoadChannelRoster(channelIdx, current, false)) {
+    const friendmesh::ChannelRosterMember* currentAdmin = nullptr;
+    for (size_t i = 0; i < current.memberCount; ++i) {
+      if (current.members[i].role == friendmesh::ChannelRosterRole::Admin) {
+        currentAdmin = &current.members[i];
+        break;
+      }
+    }
+    if (!currentAdmin ||
+        memcmp(currentAdmin->pubKeyPrefix, incomingAdmin->pubKeyPrefix,
+               friendmesh::kChannelRosterPrefixBytes) != 0) return false;
+  }
+  if (!friendmeshSaveChannelRoster(channelIdx, incoming)) return false;
+  ChannelDetails details = {};
+  if (_ui && getChannel(channelIdx, details)) {
+    _ui->onFriendMeshChannelRosterChanged(
+        details.name, "Group member list updated");
+  }
+  return true;
+}
+
+bool MyMesh::uiGetFriendMeshGroupCoordination(
+    int channel_idx, friendmesh::GroupCoordinationState& state) {
+  if (!friendmeshLoadGroupCoordination(channel_idx, state)) return false;
+  if (friendmesh::expireGroupCoordinationState(
+          state, getRTCClock()->getCurrentTime()) > 0)
+    friendmeshSaveGroupCoordination(channel_idx, state);
+  return true;
+}
+
+bool MyMesh::uiSendFriendMeshGroupCoordination(
+    int channel_idx, friendmesh::GroupCoordinationAction action,
+    friendmesh::GroupCoordinationKind kind,
+    friendmesh::GroupCoordinationResponse response, const char* note,
+    uint32_t expires_after_seconds) {
+  ChannelDetails channel = {};
+  friendmesh::ChannelRoster roster = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0] ||
+      !friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  if (!self || self->state != friendmesh::ChannelRosterState::Joined)
+    return false;
+  friendmesh::GroupCoordinationState state = {};
+  if (!friendmeshLoadGroupCoordination(channel_idx, state)) return false;
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record ||
+      friendmeshLoadGroupStorageRecord(channel_idx, *record) !=
+          friendmesh::ResultCode::Ok || record->pending.active) {
+    FM_FRIEND_LOG("GROUP STORE coordination blocked pending-or-unavailable");
+    return false;
+  }
+
+  const uint32_t now = getRTCClock()->getCurrentTimeUnique();
+  friendmesh::GroupCoordinationEvent event = {};
+  event.action = action;
+  event.response = response;
+  if (action == friendmesh::GroupCoordinationAction::SetMeetup ||
+      action == friendmesh::GroupCoordinationAction::OpenIncident) {
+    getRNG()->random(event.item.objectId,
+                     friendmesh::kCoordinationObjectIdBytes);
+    bool zero = true;
+    for (size_t i = 0; i < sizeof(event.item.objectId); ++i)
+      if (event.item.objectId[i] != 0) zero = false;
+    if (zero) event.item.objectId[0] = 1;
+    memcpy(event.item.ownerPrefix, self_id.pub_key,
+           friendmesh::kChannelRosterPrefixBytes);
+    event.item.kind = kind;
+    event.item.status = friendmesh::GroupCoordinationStatus::Active;
+    event.item.createdAt = now;
+    event.item.updatedAt = now;
+    event.item.expiresAt = expires_after_seconds
+        ? now + expires_after_seconds : 0;
+    const double latitude = sensors.node_lat;
+    const double longitude = sensors.node_lon;
+    if ((latitude != 0.0 || longitude != 0.0) && latitude >= -90.0 &&
+        latitude <= 90.0 && longitude >= -180.0 && longitude <= 180.0) {
+      event.item.latitudeE6 = static_cast<int32_t>(latitude * 1000000.0);
+      event.item.longitudeE6 = static_cast<int32_t>(longitude * 1000000.0);
+      event.item.hasLocation = true;
+    }
+    if (note) StrHelper::strncpy(event.item.note, note,
+                                 sizeof(event.item.note));
+  } else {
+    const bool meetupAction =
+        action == friendmesh::GroupCoordinationAction::CancelMeetup ||
+        action == friendmesh::GroupCoordinationAction::MeetupResponse;
+    const friendmesh::GroupCoordinationItem& current = meetupAction
+        ? state.meetup : state.incident;
+    if (!friendmesh::groupCoordinationItemActive(current, now)) return false;
+    event.item = current;
+    memcpy(event.item.ownerPrefix, self_id.pub_key,
+           friendmesh::kChannelRosterPrefixBytes);
+    event.item.updatedAt = now;
+  }
+
+  uint8_t encoded[friendmesh::kGroupCoordinationEventMaxBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeGroupCoordinationEvent(
+          event, encoded, sizeof(encoded), written) !=
+          friendmesh::ResultCode::Ok || written == 0 ||
+      written > MAX_GROUP_DATA_LENGTH) return false;
+  if (friendmesh::applyGroupCoordinationEvent(state, event, roster, now) !=
+      friendmesh::ResultCode::Ok) return false;
+
+  // Commit the resulting local state and an exact pending envelope before the
+  // radio sees it. A reset can therefore never produce a packet whose local
+  // source-of-truth was lost. The second slot commit clears the marker only
+  // after MeshCore accepted the packet for transmission.
+  const friendmesh::GroupCoordinationState previousCoordination =
+      record->coordination;
+  record->coordination = state;
+  memset(&record->pending, 0, sizeof(record->pending));
+  record->pending.active = true;
+  getRNG()->random(record->pending.transactionId,
+                   sizeof(record->pending.transactionId));
+  bool transactionIdZero = true;
+  for (size_t i = 0; i < sizeof(record->pending.transactionId); ++i)
+    if (record->pending.transactionId[i] != 0) transactionIdZero = false;
+  if (transactionIdZero) record->pending.transactionId[0] = 1;
+  record->pending.dataType = friendmesh::kGroupCoordinationDataType;
+  record->pending.payloadLength = static_cast<uint8_t>(written);
+  memcpy(record->pending.payload, encoded, written);
+  record->pending.createdAt = now;
+  if (!friendmeshSaveGroupStorageRecord(channel_idx, *record)) return false;
+  if (!sendGroupData(channel.channel, nullptr, OUT_PATH_UNKNOWN,
+                     friendmesh::kGroupCoordinationDataType, encoded,
+                     static_cast<int>(written))) {
+    record->coordination = previousCoordination;
+    memset(&record->pending, 0, sizeof(record->pending));
+    if (!friendmeshSaveGroupStorageRecord(channel_idx, *record))
+      FM_FRIEND_LOG("GROUP STORE coordination rollback failed");
+    return false;
+  }
+  memset(&record->pending, 0, sizeof(record->pending));
+  if (!friendmeshSaveGroupStorageRecord(channel_idx, *record)) return false;
+  if (_ui) _ui->onFriendMeshCoordinationChanged(
+      channel.name,
+      action == friendmesh::GroupCoordinationAction::SetMeetup
+          ? "Group meetup shared"
+          : action == friendmesh::GroupCoordinationAction::OpenIncident
+              ? (kind == friendmesh::GroupCoordinationKind::Sos
+                     ? "SOS sent to group" : "Help request sent")
+              : "Group coordination updated",
+      kind == friendmesh::GroupCoordinationKind::Sos);
+  return true;
+}
+
+FriendMeshInviteSendResult MyMesh::uiSendFriendMeshChannelInvite(
+    int channel_idx, const uint8_t recipient_pub[PUB_KEY_SIZE]) {
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::InvalidChannel;
+  }
+  ContactInfo* stored = recipient_pub
+      ? lookupContactByPubKey(recipient_pub, PUB_KEY_SIZE) : nullptr;
+  if (!stored || stored->type != ADV_TYPE_CHAT) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::InvalidContact;
+  }
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::EncodeFailed;
+  }
+  const friendmesh::ChannelRosterMember* existing =
+      friendmesh::findChannelRosterMember(roster, stored->id.pub_key);
+  if (existing && existing->state == friendmesh::ChannelRosterState::Joined) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::AlreadyMember;
+  }
+  const bool directAdvert = uiIsFreshZeroHopContact(stored->id.pub_key);
+  const bool nearbyBle = friendmesh::blePresenceWasSeen(stored->id.pub_key);
+  if (!directAdvert && !nearbyBle) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::NotFreshDirect;
+  }
+
+  if (friendmesh::setChannelRosterMember(
+          roster, stored->id.pub_key,
+          friendmesh::ChannelRosterRole::Member,
+          friendmesh::ChannelRosterState::Invited) !=
+          friendmesh::ResultCode::Ok ||
+      !friendmeshSaveChannelRoster(channel_idx, roster)) {
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::EncodeFailed;
+  }
+
+  friendmesh::DirectChannelInvite invite = {};
+  StrHelper::strncpy(invite.channelName, channel.name,
+                     sizeof(invite.channelName));
+  memcpy(invite.channelSecret, channel.channel.secret,
+         sizeof(invite.channelSecret));
+  char text[friendmesh::kDirectChannelInviteMaxText + 1] = {};
+  size_t written = 0;
+  if (friendmesh::encodeDirectChannelInvite(
+          invite, text, sizeof(text), written) != friendmesh::ResultCode::Ok ||
+      written == 0 || written > MAX_TEXT_LEN) {
+    memset(&invite, 0, sizeof(invite));
+    memset(&channel, 0, sizeof(channel));
+    return FriendMeshInviteSendResult::EncodeFailed;
+  }
+
+  ContactInfo direct = *stored;
+  direct.out_path_len = 0;
+  memset(direct.out_path, 0, sizeof(direct.out_path));
+  uint32_t expectedAck = 0;
+  uint32_t timeout = 0;
+  const int result = sendMessage(direct, getRTCClock()->getCurrentTimeUnique(),
+                                 0, text, expectedAck, timeout);
+  memset(text, 0, sizeof(text));
+  memset(&invite, 0, sizeof(invite));
+  memset(&channel, 0, sizeof(channel));
+  if (result == MSG_SEND_FAILED) {
+    friendmesh::ChannelRoster failed = {};
+    if (friendmeshLoadChannelRoster(channel_idx, failed, false)) {
+      friendmesh::ChannelRosterMember* member =
+          friendmesh::findChannelRosterMember(failed, stored->id.pub_key);
+      if (member) member->state = friendmesh::ChannelRosterState::InviteFailed;
+      friendmeshSaveChannelRoster(channel_idx, failed);
+    }
+    return FriendMeshInviteSendResult::SendFailed;
+  }
+  friendmeshBroadcastChannelRoster(channel_idx, roster);
+  return FriendMeshInviteSendResult::Sent;
+}
+
+bool MyMesh::uiIsFriendMeshChannelMemberJoined(
+    int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE]) {
+  if (!member_pub) return false;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* member =
+      friendmesh::findChannelRosterMember(roster, member_pub);
+  return member && member->state == friendmesh::ChannelRosterState::Joined;
+}
+
+bool MyMesh::friendmeshIsJoinedGroupPeer(
+    const uint8_t pub_key[PUB_KEY_SIZE]) {
+  if (!pub_key) return false;
+#ifdef MAX_GROUP_CHANNELS
+  for (int channel_idx = 0; channel_idx < MAX_GROUP_CHANNELS; ++channel_idx) {
+    friendmesh::ChannelRoster roster = {};
+    if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) continue;
+    const friendmesh::ChannelRosterMember* member =
+        friendmesh::findChannelRosterMember(roster, pub_key);
+    if (member && member->state == friendmesh::ChannelRosterState::Joined)
+      return true;
+  }
+#endif
+  return false;
+}
+
+size_t MyMesh::uiGetFriendMeshChannelPositions(
+    int channel_idx, FriendMeshChannelPositionView* destination,
+    size_t capacity, uint32_t stale_after_seconds) {
+  if (!destination || capacity == 0) return 0;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return 0;
+  const uint32_t now = getRTCClock()->getCurrentTime();
+  size_t written = 0;
+  for (uint32_t contactIndex = 0;
+       contactIndex < getNumContacts() && written < capacity;
+       ++contactIndex) {
+    ContactInfo contact = {};
+    if (!getContactByIdx(contactIndex, contact) ||
+        contact.type != ADV_TYPE_CHAT ||
+        (contact.gps_lat == 0 && contact.gps_lon == 0)) continue;
+    const friendmesh::ChannelRosterMember* member =
+        friendmesh::findChannelRosterMember(roster, contact.id.pub_key);
+    if (!member ||
+        member->state != friendmesh::ChannelRosterState::Joined ||
+        memcmp(member->pubKeyPrefix, self_id.pub_key,
+               friendmesh::kChannelRosterPrefixBytes) == 0) continue;
+    friendmesh::MeshCorePositionInput input = {};
+    memcpy(input.publicKey, contact.id.pub_key, PUB_KEY_SIZE);
+    input.latitudeE6 = contact.gps_lat;
+    input.longitudeE6 = contact.gps_lon;
+    input.observedAt = contact.last_advert_timestamp > contact.lastmod
+        ? contact.last_advert_timestamp : contact.lastmod;
+    input.receivedAt = now;
+    FriendMeshChannelPositionView view = {};
+    if (friendmesh::adaptMeshCorePosition(input, view.position) !=
+        friendmesh::ResultCode::Ok) continue;
+    view.contactIndex = contactIndex;
+    view.stale = input.observedAt == 0 || now == 0 || now < input.observedAt ||
+        now - input.observedAt > stale_after_seconds;
+    destination[written++] = view;
+  }
+  return written;
+}
+
+bool MyMesh::uiAcceptFriendMeshChannelInvite(
+    int channel_idx, const uint8_t inviter_pub[PUB_KEY_SIZE],
+    bool& notice_sent) {
+  notice_sent = false;
+  if (!inviter_pub || channel_idx < 0) return false;
+  ContactInfo* inviter = lookupContactByPubKey(inviter_pub, PUB_KEY_SIZE);
+  if (!inviter || inviter->type != ADV_TYPE_CHAT) return false;
+  friendmesh::ChannelRoster roster = {};
+  if (friendmesh::setChannelRosterMember(
+          roster, inviter->id.pub_key,
+          friendmesh::ChannelRosterRole::Admin,
+          friendmesh::ChannelRosterState::Joined) != friendmesh::ResultCode::Ok ||
+      friendmesh::setChannelRosterMember(
+          roster, self_id.pub_key,
+          friendmesh::ChannelRosterRole::Member,
+          friendmesh::ChannelRosterState::Joined) != friendmesh::ResultCode::Ok ||
+      !friendmeshSaveChannelRoster(channel_idx, roster)) return false;
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  if (friendmeshChannelTag(channel_idx, tag)) {
+    notice_sent = friendmeshSendChannelControl(
+        *inviter, friendmesh::ChannelControlType::Joined, tag, true);
+  }
+  return true;
+}
+
+bool MyMesh::uiFinalizeFriendMeshBleAdminJoin(
+    int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE],
+    const char* member_name) {
+  if (!member_pub || !member_name || !member_name[0] || channel_idx < 0 ||
+      memcmp(member_pub, self_id.pub_key, PUB_KEY_SIZE) == 0) return false;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  if (!self || self->role != friendmesh::ChannelRosterRole::Admin ||
+      self->state != friendmesh::ChannelRosterState::Joined) return false;
+  const friendmesh::ChannelRosterMember* existing =
+      friendmesh::findChannelRosterMember(roster, member_pub);
+  if (existing && existing->state == friendmesh::ChannelRosterState::Joined)
+    return true;
+  if (friendmesh::setChannelRosterMember(
+          roster, member_pub, friendmesh::ChannelRosterRole::Member,
+          friendmesh::ChannelRosterState::Joined) !=
+      friendmesh::ResultCode::Ok) return false;
+  if (!lookupContactByPubKey(member_pub, PUB_KEY_SIZE) &&
+      !uiAddManualContact(member_pub, member_name)) return false;
+  if (!friendmeshSaveChannelRoster(channel_idx, roster)) return false;
+  friendmeshBroadcastChannelRoster(channel_idx, roster);
+  ChannelDetails channel = {};
+  if (_ui && getChannel(channel_idx, channel))
+    _ui->onFriendMeshChannelRosterChanged(channel.name, "Member joined by Bluetooth");
+  return true;
+}
+
+bool MyMesh::uiInstallFriendMeshBleGroup(
+    const char* channel_name, const uint8_t channel_secret[16],
+    const uint8_t admin_pub[PUB_KEY_SIZE], const char* admin_name,
+    int& channel_idx) {
+  channel_idx = -1;
+  if (!channel_name || !channel_name[0] || !channel_secret || !admin_pub ||
+      !admin_name || !admin_name[0]) return false;
+  const int slot = findFirstEmptyChannelSlot();
+  if (slot < 0 || !uiAddOrUpdateChannel(slot, channel_name, channel_secret))
+    return false;
+  friendmesh::ChannelRoster roster = {};
+  const bool rosterOk =
+      friendmesh::setChannelRosterMember(
+          roster, admin_pub, friendmesh::ChannelRosterRole::Admin,
+          friendmesh::ChannelRosterState::Joined) ==
+          friendmesh::ResultCode::Ok &&
+      friendmesh::setChannelRosterMember(
+          roster, self_id.pub_key, friendmesh::ChannelRosterRole::Member,
+          friendmesh::ChannelRosterState::Joined) ==
+          friendmesh::ResultCode::Ok &&
+      friendmeshSaveChannelRoster(slot, roster);
+  if (!rosterOk) {
+    uiDeleteChannel(slot);
+    return false;
+  }
+  if (!lookupContactByPubKey(admin_pub, PUB_KEY_SIZE) &&
+      !uiAddManualContact(admin_pub, admin_name)) {
+    friendmeshDeleteChannelRoster(slot);
+    uiDeleteChannel(slot);
+    return false;
+  }
+  channel_idx = slot;
+  return true;
+}
+
+size_t MyMesh::uiGetFriendMeshChannelMembers(
+    int channel_idx, FriendMeshChannelMemberView* destination,
+    size_t capacity, bool& rekey_required) {
+  rekey_required = false;
+  if (!destination || capacity == 0) return 0;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return 0;
+  const size_t count = roster.memberCount < capacity
+      ? roster.memberCount : capacity;
+  for (size_t i = 0; i < count; ++i) {
+    FriendMeshChannelMemberView& view = destination[i];
+    memset(&view, 0, sizeof(view));
+    const friendmesh::ChannelRosterMember& member = roster.members[i];
+    view.role = member.role;
+    view.state = member.state;
+    view.isSelf = memcmp(member.pubKeyPrefix, self_id.pub_key,
+                         friendmesh::kChannelRosterPrefixBytes) == 0;
+    if (view.isSelf) {
+      memcpy(view.pubKey, self_id.pub_key, PUB_KEY_SIZE);
+      StrHelper::strncpy(view.name, _prefs.node_name, sizeof(view.name));
+      view.contactAvailable = true;
+    } else {
+      ContactInfo* contact = lookupContactByPubKey(
+          member.pubKeyPrefix, friendmesh::kChannelRosterPrefixBytes);
+      if (contact) {
+        memcpy(view.pubKey, contact->id.pub_key, PUB_KEY_SIZE);
+        StrHelper::strncpy(view.name, contact->name, sizeof(view.name));
+        view.contactAvailable = true;
+      } else {
+        memcpy(view.pubKey, member.pubKeyPrefix,
+               friendmesh::kChannelRosterPrefixBytes);
+        snprintf(view.name, sizeof(view.name), "Member %02X%02X%02X",
+                 member.pubKeyPrefix[0], member.pubKeyPrefix[1],
+                 member.pubKeyPrefix[2]);
+      }
+    }
+  }
+  rekey_required = roster.rekeyRequired;
+  return count;
+}
+
+bool MyMesh::uiRemoveFriendMeshChannelMember(
+    int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE]) {
+  if (!member_pub ||
+      memcmp(member_pub, self_id.pub_key, PUB_KEY_SIZE) == 0) return false;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  friendmesh::ChannelRosterMember* target =
+      friendmesh::findChannelRosterMember(roster, member_pub);
+  if (!self || self->role != friendmesh::ChannelRosterRole::Admin ||
+      self->state != friendmesh::ChannelRosterState::Joined || !target ||
+      target->role == friendmesh::ChannelRosterRole::Admin ||
+      target->state == friendmesh::ChannelRosterState::Removed ||
+      target->state == friendmesh::ChannelRosterState::Left) return false;
+  ContactInfo* contact = lookupContactByPubKey(member_pub, PUB_KEY_SIZE);
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  if (!contact || !friendmeshChannelTag(channel_idx, tag)) return false;
+  const friendmesh::ChannelRoster previous = roster;
+  const bool hadJoined = target->state == friendmesh::ChannelRosterState::Joined;
+  target->state = friendmesh::ChannelRosterState::Removed;
+  if (hadJoined) roster.rekeyRequired = true;
+  if (!friendmeshSaveChannelRoster(channel_idx, roster)) return false;
+  if (!friendmeshSendChannelControl(
+          *contact, friendmesh::ChannelControlType::Removed, tag, false)) {
+    if (!friendmeshSaveChannelRoster(channel_idx, previous))
+      FM_FRIEND_LOG("GROUP STORE removal rollback failed");
+    return false;
+  }
+  friendmeshBroadcastChannelRoster(channel_idx, roster);
+  return true;
+}
+
+bool MyMesh::uiDisbandFriendMeshChannel(int channel_idx,
+                                        uint8_t& notices_sent,
+                                        uint8_t& notices_failed) {
+  notices_sent = 0;
+  notices_failed = 0;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  if (!self || self->role != friendmesh::ChannelRosterRole::Admin ||
+      self->state != friendmesh::ChannelRosterState::Joined) return false;
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  if (!friendmeshChannelTag(channel_idx, tag)) return false;
+
+  // Reuse the existing encrypted Removed envelope: receivers already require
+  // its authenticated sender to be the joined roster admin and consume it
+  // before normal DM/chat delivery. Offline or missing contacts are counted so
+  // the UI never implies reliable revocation before Phase 7 exists.
+  for (size_t i = 0; i < roster.memberCount; ++i) {
+    const friendmesh::ChannelRosterMember& member = roster.members[i];
+    if (member.state != friendmesh::ChannelRosterState::Joined ||
+        memcmp(member.pubKeyPrefix, self_id.pub_key,
+               friendmesh::kChannelRosterPrefixBytes) == 0) continue;
+    ContactInfo* contact = lookupContactByPubKey(
+        member.pubKeyPrefix, friendmesh::kChannelRosterPrefixBytes);
+    if (contact && friendmeshSendChannelControl(
+            *contact, friendmesh::ChannelControlType::Removed, tag, false)) {
+      ++notices_sent;
+    } else {
+      ++notices_failed;
+    }
+  }
+  memset(tag, 0, sizeof(tag));
+  return uiDeleteChannel(channel_idx);
+}
+
+bool MyMesh::uiLeaveFriendMeshChannel(int channel_idx, bool& notice_sent) {
+  notice_sent = false;
+  friendmesh::ChannelRoster roster = {};
+  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
+  const friendmesh::ChannelRosterMember* self =
+      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+  if (!self || self->role == friendmesh::ChannelRosterRole::Admin) return false;
+  const friendmesh::ChannelRosterMember* admin = nullptr;
+  for (size_t i = 0; i < roster.memberCount; ++i) {
+    if (roster.members[i].role == friendmesh::ChannelRosterRole::Admin &&
+        roster.members[i].state == friendmesh::ChannelRosterState::Joined) {
+      admin = &roster.members[i];
+      break;
+    }
+  }
+  if (admin) {
+    ContactInfo* contact = lookupContactByPubKey(
+        admin->pubKeyPrefix, friendmesh::kChannelRosterPrefixBytes);
+    uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+    if (contact && friendmeshChannelTag(channel_idx, tag)) {
+      notice_sent = friendmeshSendChannelControl(
+          *contact, friendmesh::ChannelControlType::Left, tag, false);
+    }
+  }
+  friendmeshDeleteChannelRoster(channel_idx);
+  return uiDeleteChannel(channel_idx);
+}
+#endif
 
 void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                const char *text) {
@@ -2082,6 +3549,23 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // Compatibility firewall for the first roster build, which incorrectly
+  // emitted FMRS1 through group text. BaseChatMesh prefixes group text with
+  // "sender: ", so detect both forms before history, companion, MQTT, alerts,
+  // or the on-device UI can observe it. New builds never emit this format.
+  const char* legacyRoster = friendmesh::legacyChannelRosterTextPayload(text);
+  if (legacyRoster) {
+    const int channelIdx = findChannelIdx(channel);
+    friendmesh::ChannelRoster incoming = {};
+    if (channelIdx >= 0 &&
+        friendmesh::decodeChannelRosterText(legacyRoster, incoming) ==
+            friendmesh::ResultCode::Ok) {
+      friendmeshApplyChannelRoster(channelIdx, incoming);
+    }
+    return;
+  }
+#endif
   // Clock bootstrap from a channel peer's send-time (same sane-window + unset-only guard
   // as queueMessage above) so a Wi-Fi/GPS-off node can still get time off public channels.
   if (timestamp > 1700000000UL && timestamp < 2000000000UL &&
@@ -2155,6 +3639,1583 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
 #endif
 }
 
+void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel,
+                               mesh::Packet *pkt, uint16_t data_type,
+                               const uint8_t *data, size_t data_len) {
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (data_type == friendmesh::kFriendRequestDataType) {
+    if (!_ui || !_ui->friendMeshRequestsEnabled()) {
+      FM_FRIEND_LOG("PUBLIC RX drop=disabled len=%u", (unsigned)data_len);
+      return;
+    }
+    friendmesh::FriendRequestEnvelope request = {};
+    if (friendmesh::decodeFriendRequest(data, data_len, request) !=
+            friendmesh::ResultCode::Ok) {
+      FM_FRIEND_LOG("PUBLIC RX drop=decode len=%u", (unsigned)data_len);
+      return;
+    }
+    FM_FRIEND_LOG("PUBLIC RX id=%02X%02X%02X%02X from=%02X%02X%02X%02X name=%s",
+                  request.requestId[0], request.requestId[1],
+                  request.requestId[2], request.requestId[3],
+                  request.requesterPublicKey[0], request.requesterPublicKey[1],
+                  request.requesterPublicKey[2], request.requesterPublicKey[3],
+                  request.requesterName);
+    if (request.flags != 0) {
+      FM_FRIEND_LOG("PUBLIC RX drop=flags flags=%u", request.flags);
+      return;
+    }
+    if (!friendmeshSentChannelMessageMatches(
+            channel, request.targetMessageHash)) {
+      FM_FRIEND_LOG("PUBLIC RX drop=target-message-not-local id=%02X%02X%02X%02X",
+                    request.requestId[0], request.requestId[1],
+                    request.requestId[2], request.requestId[3]);
+      return;
+    }
+    const uint32_t now = getRTCClock()->getCurrentTime();
+    if (request.expiresAt >= 1700000000UL && now >= 1700000000UL &&
+        now > request.expiresAt) {
+      FM_FRIEND_LOG("PUBLIC RX drop=expired id=%02X%02X%02X%02X",
+                    request.requestId[0], request.requestId[1],
+                    request.requestId[2], request.requestId[3]);
+      return;
+    }
+    mesh::Identity requester(request.requesterPublicKey);
+    const size_t signedBytes = data_len -
+        friendmesh::kFriendRequestSignatureBytes;
+    if (!requester.verify(request.signature, data, signedBytes)) {
+      FM_FRIEND_LOG("PUBLIC RX drop=bad-signature id=%02X%02X%02X%02X",
+                    request.requestId[0], request.requestId[1],
+                    request.requestId[2], request.requestId[3]);
+      return;
+    }
+    if (_ui->friendMeshRequesterBlocked(request.requesterPublicKey)) {
+      FM_FRIEND_LOG("PUBLIC RX drop=blocked id=%02X%02X%02X%02X",
+                    request.requestId[0], request.requestId[1],
+                    request.requestId[2], request.requestId[3]);
+      return;
+    }
+    FM_FRIEND_LOG("PUBLIC RX verified id=%02X%02X%02X%02X return_path=%u",
+                  request.requestId[0], request.requestId[1],
+                  request.requestId[2], request.requestId[3],
+                  request.returnPathLength);
+    uint8_t observedReturnPath[MAX_PATH_SIZE] = {};
+    const uint8_t* acceptancePath = request.returnPath;
+    uint8_t acceptancePathLength = request.returnPathLength;
+    // A fallback flood may have found a newer route than the signed request's
+    // original path. Use the freshly observed flood path in reverse for the
+    // direct ACCEPT/DECLINE response; the request signature still authenticates
+    // the social payload and transaction ID.
+    if (pkt && pkt->isRouteFlood() &&
+        mesh::Packet::isValidPathLen(pkt->path_len) &&
+        pkt->getPathByteLen() <= sizeof(observedReturnPath) &&
+        friendmesh::reverseMeshPath(
+            pkt->path, pkt->path_len, observedReturnPath,
+            sizeof(observedReturnPath)) == pkt->getPathByteLen()) {
+      acceptancePath = observedReturnPath;
+      acceptancePathLength = (pkt->path_len & 0x3F) == 0
+          ? 0 : pkt->path_len;
+      FM_FRIEND_LOG("PUBLIC RX route=fresh-flood-reverse path=%u",
+                    acceptancePathLength);
+    }
+    if (friendmeshDeclinedRequestMatches(
+            request.requestId, request.requesterPublicKey)) {
+      ContactInfo requesterContact = {};
+      memcpy(requesterContact.id.pub_key, request.requesterPublicKey,
+             PUB_KEY_SIZE);
+      strncpy(requesterContact.name, request.requesterName,
+              sizeof(requesterContact.name) - 1);
+      requesterContact.type = ADV_TYPE_CHAT;
+      requesterContact.out_path_len = acceptancePathLength;
+      const size_t acceptancePathBytes =
+          acceptancePathLength == friendmesh::kFriendRequestReturnPathUnknown
+              ? 0
+              : static_cast<size_t>(acceptancePathLength & 0x3F) *
+                static_cast<size_t>((acceptancePathLength >> 6) + 1);
+      if (acceptancePathLength == friendmesh::kFriendRequestReturnPathUnknown ||
+          acceptancePathBytes > sizeof(requesterContact.out_path)) {
+        requesterContact.out_path_len = OUT_PATH_UNKNOWN;
+      } else if (acceptancePathBytes) {
+        memcpy(requesterContact.out_path, acceptancePath,
+               acceptancePathBytes);
+      }
+      const bool resent = friendmeshTransmitLinkControl(
+          requesterContact, friendmesh::FriendLinkAction::Declined,
+          request.requestId, false);
+      FM_FRIEND_LOG("PUBLIC RX duplicate-declined id=%02X%02X%02X%02X resent=%d",
+                    request.requestId[0], request.requestId[1],
+                    request.requestId[2], request.requestId[3],
+                    resent ? 1 : 0);
+      return;
+    }
+    _ui->onFriendMeshFriendRequest(
+        request.requestId, request.requesterPublicKey,
+        request.requesterName, request.createdAt, request.expiresAt,
+        acceptancePath, acceptancePathLength);
+    return;
+  }
+  if (data_type == friendmesh::kChannelRosterDataType) {
+    friendmesh::ChannelRoster incoming = {};
+    const int channelIdx = findChannelIdx(channel);
+    if (channelIdx >= 0 &&
+        friendmesh::decodeChannelRoster(data, data_len, incoming) ==
+            friendmesh::ResultCode::Ok) {
+      friendmeshApplyChannelRoster(channelIdx, incoming);
+    }
+    return;
+  }
+  if (data_type == friendmesh::kGroupCoordinationDataType) {
+    const int channelIdx = findChannelIdx(channel);
+    friendmesh::ChannelRoster roster = {};
+    friendmesh::GroupCoordinationState state = {};
+    friendmesh::GroupCoordinationEvent event = {};
+    if (channelIdx < 0 ||
+        !friendmeshLoadChannelRoster(channelIdx, roster, false) ||
+        !friendmeshLoadGroupCoordination(channelIdx, state) ||
+        friendmesh::decodeGroupCoordinationEvent(data, data_len, event) !=
+            friendmesh::ResultCode::Ok ||
+        friendmesh::applyGroupCoordinationEvent(
+            state, event, roster, getRTCClock()->getCurrentTime()) !=
+            friendmesh::ResultCode::Ok ||
+        !friendmeshSaveGroupCoordination(channelIdx, state)) return;
+    ChannelDetails details = {};
+    if (_ui && getChannel(channelIdx, details)) {
+      const bool urgent = event.action ==
+              friendmesh::GroupCoordinationAction::OpenIncident &&
+          event.item.kind == friendmesh::GroupCoordinationKind::Sos;
+      const char* status = urgent ? "Group SOS received"
+          : event.action == friendmesh::GroupCoordinationAction::OpenIncident
+              ? "Group help request received"
+              : event.action == friendmesh::GroupCoordinationAction::SetMeetup
+                  ? "Group meetup received"
+                  : "Group coordination updated";
+      _ui->onFriendMeshCoordinationChanged(details.name, status, urgent);
+    }
+    return;
+  }
+#endif
+  (void)channel;
+  (void)pkt;
+  (void)data_type;
+  (void)data;
+  (void)data_len;
+}
+
+void MyMesh::onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret,
+                            const mesh::Identity& sender, uint8_t* data,
+                            size_t len) {
+  (void)packet;
+  (void)secret;
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  ++_friendmesh_anon_callback_count;
+  FM_FRIEND_LOG("ANR CALLBACK enter from=%02X%02X%02X%02X len=%u",
+                sender.pub_key[0], sender.pub_key[1], sender.pub_key[2],
+                sender.pub_key[3], (unsigned)len);
+  if (!data) return;
+  // sendAnonReq prefixes a four-byte correlation tag. Accept an unprefixed
+  // payload too so a future MeshCore carrier that strips the tag does not
+  // silently break social controls again.
+  const uint8_t* appData = len >= 4 ? data + 4 : data;
+  const size_t appLen = len >= 4 ? len - 4 : len;
+  friendmesh::FriendLinkEnvelope link = {};
+  friendmesh::ResultCode linkResult =
+      friendmesh::decodeFriendLink(appData, appLen, link);
+  if (linkResult != friendmesh::ResultCode::Ok && appData != data)
+    linkResult = friendmesh::decodeFriendLink(data, len, link);
+  if (linkResult == friendmesh::ResultCode::Ok) {
+    FM_FRIEND_LOG("LINK RX action=%s id=%02X%02X%02X%02X from=%02X%02X%02X%02X len=%u",
+                  fmFriendLinkActionName(link.action),
+                  link.requestId[0], link.requestId[1],
+                  link.requestId[2], link.requestId[3],
+                  sender.pub_key[0], sender.pub_key[1],
+                  sender.pub_key[2], sender.pub_key[3], (unsigned)len);
+    if (link.action == friendmesh::FriendLinkAction::Accepted) {
+      friendmeshHandleAcceptedControl(
+          sender, link.requestId, link.peerName, false, packet,
+          link.returnPath, link.returnPathLength);
+    } else if (link.action == friendmesh::FriendLinkAction::Removed) {
+      if (_ui) _ui->onFriendMeshFriendRemoved(sender.pub_key);
+      friendmeshAcknowledgeLinkControl(sender, link.requestId, packet);
+    } else if (link.action ==
+               friendmesh::FriendLinkAction::Acknowledged) {
+      friendmeshConsumeLinkAcknowledgement(
+          sender.pub_key, link.requestId);
+    } else if (link.action == friendmesh::FriendLinkAction::Declined) {
+      friendmeshHandleDeclinedControl(
+          sender, link.requestId, link.peerName);
+    }
+    return;
+  }
+  FM_FRIEND_LOG("LINK RX primary-decode-failed result=%u prefixed-len=%u raw-len=%u",
+                (unsigned)linkResult, (unsigned)appLen, (unsigned)len);
+  // Compatibility with FMA1 acceptances sent by the first implementation.
+  if (appLen >= friendmesh::kFriendAcceptEncodedBytes ||
+      len >= friendmesh::kFriendAcceptEncodedBytes) {
+    friendmesh::FriendAcceptEnvelope accepted = {};
+    friendmesh::ResultCode acceptedResult =
+        friendmesh::decodeFriendAccept(appData, appLen, accepted);
+    if (acceptedResult != friendmesh::ResultCode::Ok && appData != data)
+      acceptedResult = friendmesh::decodeFriendAccept(data, len, accepted);
+    if (acceptedResult == friendmesh::ResultCode::Ok &&
+        _ui && !_ui->friendMeshRequesterBlocked(sender.pub_key)) {
+      friendmeshHandleAcceptedControl(
+          sender, accepted.requestId, accepted.responderName, true, packet);
+    }
+  }
+#else
+  (void)sender; (void)data; (void)len;
+#endif
+}
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+bool MyMesh::friendmeshLoadTransactionJournal() {
+  _friend_transaction_ledger.clear();
+  _friend_transaction_generation = 0;
+  _friend_transaction_slot = 0;
+#if defined(ESP32)
+  uint8_t* encoded = static_cast<uint8_t*>(
+      malloc(friendmesh::kFriendTransactionJournalMaxBytes));
+  if (!encoded) {
+    _friend_transaction_journal_ready = false;
+    FM_FRIEND_LOG("JOURNAL load=oom");
+    return false;
+  }
+  bool anyPresent = false;
+  bool found = false;
+  for (uint8_t slot = 0; slot < 2; ++slot) {
+    anyPresent = anyPresent || friendmeshTransactionNvsPresent(slot);
+    memset(encoded, 0, friendmesh::kFriendTransactionJournalMaxBytes);
+    size_t length = 0;
+    if (!friendmeshTransactionNvsLoad(
+            slot, encoded, friendmesh::kFriendTransactionJournalMaxBytes,
+            length)) continue;
+    friendmesh::FriendTransactionLedger candidate;
+    uint32_t generation = 0;
+    if (candidate.decode(encoded, length, generation) !=
+        friendmesh::ResultCode::Ok) {
+      FM_FRIEND_LOG("JOURNAL slot=%u invalid", slot);
+      continue;
+    }
+    if (!found || static_cast<int32_t>(generation -
+                                       _friend_transaction_generation) > 0) {
+      _friend_transaction_ledger = candidate;
+      _friend_transaction_generation = generation;
+      _friend_transaction_slot = slot;
+      found = true;
+    }
+  }
+  memset(encoded, 0, friendmesh::kFriendTransactionJournalMaxBytes);
+  free(encoded);
+  _friend_transaction_journal_ready = found || !anyPresent;
+  if (_friend_transaction_journal_ready && found) {
+    const uint32_t now = getRTCClock()->getCurrentTime();
+    if (_friend_transaction_ledger.expire(
+            now, now >= 1700000000UL) > 0 &&
+        !friendmeshCommitTransactionJournal())
+      _friend_transaction_journal_ready = false;
+  }
+  FM_FRIEND_LOG("JOURNAL load=%s generation=%lu records=%u",
+                _friend_transaction_journal_ready ? (found ? "restored" : "new")
+                                                  : "recovery-required",
+                (unsigned long)_friend_transaction_generation,
+                (unsigned)_friend_transaction_ledger.size());
+  return _friend_transaction_journal_ready;
+#else
+  _friend_transaction_journal_ready = true;
+  return true;
+#endif
+}
+
+bool MyMesh::friendmeshCommitTransactionJournal() {
+  if (!_friend_transaction_journal_ready) return false;
+#if defined(ESP32)
+  uint8_t* encoded = static_cast<uint8_t*>(
+      malloc(friendmesh::kFriendTransactionJournalMaxBytes));
+  if (!encoded) return false;
+  memset(encoded, 0, friendmesh::kFriendTransactionJournalMaxBytes);
+  size_t written = 0;
+  const uint32_t nextGeneration = _friend_transaction_generation + 1;
+  const bool encodedOk = _friend_transaction_ledger.encode(
+      nextGeneration, encoded, friendmesh::kFriendTransactionJournalMaxBytes,
+      written) == friendmesh::ResultCode::Ok;
+  const uint8_t nextSlot = static_cast<uint8_t>(_friend_transaction_slot ^ 1U);
+  const bool saved = encodedOk &&
+      friendmeshTransactionNvsSave(nextSlot, encoded, written);
+  memset(encoded, 0, friendmesh::kFriendTransactionJournalMaxBytes);
+  free(encoded);
+  if (!saved) {
+    FM_FRIEND_LOG("JOURNAL commit=failed generation=%lu records=%u",
+                  (unsigned long)nextGeneration,
+                  (unsigned)_friend_transaction_ledger.size());
+    _friend_transaction_journal_ready = false;
+    return false;
+  }
+  _friend_transaction_generation = nextGeneration;
+  _friend_transaction_slot = nextSlot;
+  FM_FRIEND_LOG("JOURNAL commit=ok slot=%u generation=%lu records=%u",
+                nextSlot, (unsigned long)nextGeneration,
+                (unsigned)_friend_transaction_ledger.size());
+#endif
+  return true;
+}
+
+bool MyMesh::friendmeshBeginTransaction(
+    const uint8_t transaction_id[8],
+    friendmesh::FriendTransactionKind kind, const uint8_t* peer_pub,
+    const char* peer_name, uint8_t flags, uint32_t expires_at) {
+  if (!_friend_transaction_journal_ready || !transaction_id) return false;
+  const uint32_t now = getRTCClock()->getCurrentTime();
+  const bool timeTrusted = now >= 1700000000UL;
+  if (_friend_transaction_ledger.pruneTerminal(
+          now, timeTrusted, 86400UL) > 0 &&
+      !friendmeshCommitTransactionJournal()) return false;
+  const friendmesh::FriendTransactionRecord* existing =
+      _friend_transaction_ledger.find(transaction_id);
+  if (existing) {
+    if (existing->kind != kind ||
+        (peer_pub && memcmp(existing->peerPublicKey, peer_pub,
+                            PUB_KEY_SIZE) != 0)) return false;
+    return true;
+  }
+  const friendmesh::ResultCode begun = _friend_transaction_ledger.begin(
+      transaction_id, kind, peer_pub, peer_name, flags, now, expires_at);
+  if (begun != friendmesh::ResultCode::Ok) return false;
+  if (friendmeshCommitTransactionJournal()) return true;
+  _friend_transaction_ledger.remove(transaction_id);
+  return false;
+}
+
+bool MyMesh::friendmeshReserveDirectAttempt(
+    const uint8_t transaction_id[8]) {
+  if (!_friend_transaction_journal_ready || !transaction_id) return false;
+  if (_friend_transaction_ledger.recordDirectAttempt(
+          transaction_id, getRTCClock()->getCurrentTime()) !=
+      friendmesh::ResultCode::Ok) return false;
+  if (friendmeshCommitTransactionJournal()) return true;
+  _friend_transaction_journal_ready = false;
+  return false;
+}
+
+bool MyMesh::friendmeshReserveFlood(const uint8_t transaction_id[8]) {
+  if (!_friend_transaction_journal_ready || !transaction_id) return false;
+  if (_friend_transaction_ledger.recordFlood(
+          transaction_id, getRTCClock()->getCurrentTime()) !=
+      friendmesh::ResultCode::Ok) return false;
+  if (friendmeshCommitTransactionJournal()) return true;
+  _friend_transaction_journal_ready = false;
+  return false;
+}
+
+void MyMesh::friendmeshRestoreTransactionUi() {
+  if (_friend_transaction_restore_notified || !_ui) return;
+  _friend_transaction_restore_notified = true;
+  if (!_friend_transaction_journal_ready) {
+    _ui->onFriendMeshTransactionRecoveryRequired();
+    return;
+  }
+  const friendmesh::FriendTransactionRecord* newest = nullptr;
+  for (size_t i = 0; i < _friend_transaction_ledger.size(); ++i) {
+    const friendmesh::FriendTransactionRecord* candidate =
+        _friend_transaction_ledger.at(i);
+    if (!candidate || friendmesh::friendTransactionStageTerminal(
+                          candidate->stage)) continue;
+    if (!newest || candidate->updatedAt >= newest->updatedAt)
+      newest = candidate;
+  }
+  if (newest) {
+    _ui->onFriendMeshTransactionProgress(
+        newest->transactionId, newest->kind,
+        newest->peerName[0] ? newest->peerName : "Friend", newest->stage,
+        newest->floodsUsed, friendmesh::kFriendTransactionFloodLimit);
+  }
+}
+
+void MyMesh::friendmeshRememberSentChannelMessage(
+    const mesh::GroupChannel& channel, mesh::Packet* packet) {
+  if (!packet || packet->getPayloadType() != PAYLOAD_TYPE_GRP_TXT) return;
+  uint8_t hash[MAX_HASH_SIZE] = {};
+  packet->calculatePacketHash(hash);
+  memcpy(_last_sent_packet_hash, hash, sizeof(_last_sent_packet_hash));
+  FriendRequestSentMessage& slot = _friend_request_sent_messages[
+      _friend_request_sent_message_head];
+  memcpy(slot.messageHash, hash, sizeof(slot.messageHash));
+  slot.channelHash = channel.hash[0];
+  slot.sentMillis = _ms->getMillis() ? _ms->getMillis() : 1;
+  FM_FRIEND_LOG("ORIGIN public-message remember hash=%02X%02X%02X%02X channel=%02X slot=%u",
+                hash[0], hash[1], hash[2], hash[3], channel.hash[0],
+                (unsigned)_friend_request_sent_message_head);
+  _friend_request_sent_message_head = static_cast<uint8_t>(
+      (_friend_request_sent_message_head + 1) %
+      FRIEND_REQUEST_SENT_MESSAGE_SLOTS);
+}
+
+bool MyMesh::friendmeshSentChannelMessageMatches(
+    const mesh::GroupChannel& channel, const uint8_t message_hash[8]) const {
+  if (!message_hash) return false;
+  const uint32_t now = _ms->getMillis();
+  for (uint8_t i = 0; i < FRIEND_REQUEST_SENT_MESSAGE_SLOTS; ++i) {
+    const FriendRequestSentMessage& slot = _friend_request_sent_messages[i];
+    if (slot.sentMillis != 0 && now - slot.sentMillis <= 86400000UL &&
+        slot.channelHash == channel.hash[0] &&
+        memcmp(slot.messageHash, message_hash, 8) == 0) return true;
+  }
+  return false;
+}
+
+bool MyMesh::friendmeshRememberOutgoingRequest(
+    const uint8_t request_id[8], const uint8_t target_hash[8],
+    int channel_idx, const char* peer_name, const uint8_t* direct_path,
+    uint8_t direct_path_length, const uint8_t* encoded_request) {
+  if (!request_id || !target_hash || !encoded_request ||
+      !mesh::Packet::isValidPathLen(direct_path_length)) return false;
+  const size_t pathBytes =
+      static_cast<size_t>(direct_path_length & 0x3F) *
+      static_cast<size_t>((direct_path_length >> 6) + 1);
+  if (pathBytes > MAX_PATH_SIZE || (pathBytes && !direct_path)) return false;
+  const uint32_t now = _ms->getMillis();
+  for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
+    FriendRequestOutgoing& slot = _friend_request_outgoing[i];
+    if (slot.sentMillis != 0 && now - slot.sentMillis <= 86400000UL &&
+        memcmp(slot.targetMessageHash, target_hash, 8) == 0) {
+      FM_FRIEND_LOG("OUTGOING reject=duplicate-target");
+      return false;
+    }
+  }
+  const uint32_t wallNow = getRTCClock()->getCurrentTime();
+  const uint32_t expiresAt = wallNow >= 1700000000UL
+      ? wallNow + friendmesh::kFriendRequestLifetimeSeconds : 0;
+  if (!friendmeshBeginTransaction(
+          request_id, friendmesh::FriendTransactionKind::Request, nullptr,
+          peer_name, friendmesh::FriendTransactionInitiator |
+                         friendmesh::FriendTransactionAllowFlood |
+                         friendmesh::FriendTransactionDurable,
+          expiresAt)) {
+    FM_FRIEND_LOG("OUTGOING reject=journal");
+    return false;
+  }
+  FriendRequestOutgoing& slot = _friend_request_outgoing[
+      _friend_request_outgoing_head];
+  memset(&slot, 0, sizeof(slot));
+  memcpy(slot.requestId, request_id, 8);
+  memcpy(slot.targetMessageHash, target_hash, 8);
+  slot.channelIndex = static_cast<int8_t>(channel_idx);
+  strncpy(slot.peerName, peer_name && peer_name[0] ? peer_name : "Friend",
+          sizeof(slot.peerName) - 1);
+  slot.directPathLength = (direct_path_length & 0x3F) == 0
+      ? 0 : direct_path_length;
+  if (pathBytes) memcpy(slot.directPath, direct_path, pathBytes);
+  memcpy(slot.encodedRequest, encoded_request,
+         sizeof(slot.encodedRequest));
+  slot.sentMillis = now ? now : 1;
+  // A delivered request may wait hours for a human response. Automatic rapid
+  // flooding would confuse "not answered yet" with "not delivered". The two
+  // fallback opportunities are deliberately spaced and bounded.
+  slot.nextFallbackMillis = now + 120000UL;
+  _friend_request_outgoing_head = static_cast<uint8_t>(
+      (_friend_request_outgoing_head + 1) % FRIEND_REQUEST_OUTGOING_SLOTS);
+  FM_FRIEND_LOG("OUTGOING remember id=%02X%02X%02X%02X",
+                request_id[0], request_id[1], request_id[2], request_id[3]);
+  return true;
+}
+
+MyMesh::FriendRequestOutgoing* MyMesh::friendmeshFindOutgoingRequest(
+    const uint8_t request_id[8]) {
+  if (!request_id) return nullptr;
+  for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
+    FriendRequestOutgoing& slot = _friend_request_outgoing[i];
+    if (slot.sentMillis != 0 &&
+        memcmp(slot.requestId, request_id, sizeof(slot.requestId)) == 0)
+      return &slot;
+  }
+  return nullptr;
+}
+
+const MyMesh::FriendRequestOutgoing* MyMesh::friendmeshFindOutgoingRequest(
+    const uint8_t request_id[8]) const {
+  if (!request_id) return nullptr;
+  for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
+    const FriendRequestOutgoing& slot = _friend_request_outgoing[i];
+    if (slot.sentMillis != 0 &&
+        memcmp(slot.requestId, request_id, sizeof(slot.requestId)) == 0)
+      return &slot;
+  }
+  return nullptr;
+}
+
+bool MyMesh::friendmeshConsumeOutgoingRequest(const uint8_t request_id[8]) {
+  if (!request_id) return false;
+  for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
+    FriendRequestOutgoing& slot = _friend_request_outgoing[i];
+    if (slot.sentMillis != 0 && memcmp(slot.requestId, request_id, 8) == 0) {
+      memset(&slot, 0, sizeof(slot));
+      FM_FRIEND_LOG("OUTGOING consume id=%02X%02X%02X%02X slot=%u",
+                    request_id[0], request_id[1],
+                    request_id[2], request_id[3], (unsigned)i);
+      return true;
+    }
+  }
+  FM_FRIEND_LOG("OUTGOING miss id=%02X%02X%02X%02X",
+                request_id[0], request_id[1],
+                request_id[2], request_id[3]);
+  return false;
+}
+
+bool MyMesh::friendmeshOutgoingRequestMatches(
+    const uint8_t request_id[8]) const {
+  if (friendmeshFindOutgoingRequest(request_id)) return true;
+  const friendmesh::FriendTransactionRecord* record =
+      _friend_transaction_ledger.find(request_id);
+  return record && record->kind == friendmesh::FriendTransactionKind::Request &&
+      !friendmesh::friendTransactionStageTerminal(record->stage);
+}
+
+bool MyMesh::friendmeshCompletedRequestMatches(
+    const uint8_t request_id[8],
+    const uint8_t peer_pub[PUB_KEY_SIZE]) const {
+  if (!request_id || !peer_pub) return false;
+  const uint32_t now = _ms->getMillis();
+  for (uint8_t i = 0; i < FRIEND_REQUEST_COMPLETED_SLOTS; ++i) {
+    const FriendRequestCompleted& slot = _friend_request_completed[i];
+    if (slot.completedMillis != 0 &&
+        now - slot.completedMillis <= 86400000UL &&
+        memcmp(slot.requestId, request_id, sizeof(slot.requestId)) == 0 &&
+        memcmp(slot.peerPub, peer_pub, PUB_KEY_SIZE) == 0) return true;
+  }
+  const friendmesh::FriendTransactionRecord* record =
+      _friend_transaction_ledger.find(request_id);
+  return record && record->kind == friendmesh::FriendTransactionKind::Request &&
+      record->stage == friendmesh::FriendTransactionStage::Complete &&
+      memcmp(record->peerPublicKey, peer_pub, PUB_KEY_SIZE) == 0;
+}
+
+void MyMesh::friendmeshRememberCompletedRequest(
+    const uint8_t request_id[8],
+    const uint8_t peer_pub[PUB_KEY_SIZE], const uint8_t* direct_path,
+    uint8_t direct_path_length) {
+  if (!request_id || !peer_pub) return;
+  if (_friend_transaction_ledger.bindPeer(
+          request_id, peer_pub, nullptr,
+          getRTCClock()->getCurrentTime()) == friendmesh::ResultCode::Ok)
+    friendmeshCommitTransactionJournal();
+  FriendRequestCompleted& slot = _friend_request_completed[
+      _friend_request_completed_head];
+  memset(&slot, 0, sizeof(slot));
+  slot.directPathLength = OUT_PATH_UNKNOWN;
+  memcpy(slot.requestId, request_id, sizeof(slot.requestId));
+  memcpy(slot.peerPub, peer_pub, sizeof(slot.peerPub));
+  if (mesh::Packet::isValidPathLen(direct_path_length)) {
+    const size_t pathBytes =
+        static_cast<size_t>(direct_path_length & 0x3F) *
+        static_cast<size_t>((direct_path_length >> 6) + 1);
+    if (pathBytes <= sizeof(slot.directPath) &&
+        (pathBytes == 0 || direct_path)) {
+      slot.directPathLength = (direct_path_length & 0x3F) == 0
+          ? 0 : direct_path_length;
+      if (pathBytes) memcpy(slot.directPath, direct_path, pathBytes);
+    }
+  }
+  slot.completedMillis = _ms->getMillis() ? _ms->getMillis() : 1;
+  FM_FRIEND_LOG("OUTGOING completed id=%02X%02X%02X%02X peer=%02X%02X%02X%02X slot=%u",
+                request_id[0], request_id[1], request_id[2], request_id[3],
+                peer_pub[0], peer_pub[1], peer_pub[2], peer_pub[3],
+                (unsigned)_friend_request_completed_head);
+  _friend_request_completed_head = static_cast<uint8_t>(
+      (_friend_request_completed_head + 1) %
+      FRIEND_REQUEST_COMPLETED_SLOTS);
+}
+
+bool MyMesh::friendmeshDeclinedRequestMatches(
+    const uint8_t request_id[8],
+    const uint8_t requester_pub[PUB_KEY_SIZE]) const {
+  if (!request_id || !requester_pub) return false;
+  const uint32_t now = _ms->getMillis();
+  for (uint8_t i = 0; i < FRIEND_REQUEST_DECLINED_SLOTS; ++i) {
+    const FriendRequestDeclined& declined = _friend_request_declined[i];
+    if (declined.declinedMillis != 0 &&
+        now - declined.declinedMillis <= 86400000UL &&
+        memcmp(declined.requestId, request_id,
+               sizeof(declined.requestId)) == 0 &&
+        memcmp(declined.requesterPub, requester_pub, PUB_KEY_SIZE) == 0)
+      return true;
+  }
+  const friendmesh::FriendTransactionRecord* record =
+      _friend_transaction_ledger.find(request_id);
+  return record && record->kind == friendmesh::FriendTransactionKind::Decline &&
+      record->stage == friendmesh::FriendTransactionStage::Complete &&
+      memcmp(record->peerPublicKey, requester_pub, PUB_KEY_SIZE) == 0;
+}
+
+void MyMesh::friendmeshRememberDeclinedRequest(
+    const uint8_t request_id[8],
+    const uint8_t requester_pub[PUB_KEY_SIZE]) {
+  if (!request_id || !requester_pub) return;
+  const friendmesh::FriendTransactionRecord* existing =
+      _friend_transaction_ledger.find(request_id);
+  if (!existing) {
+    const uint32_t now = getRTCClock()->getCurrentTime();
+    const uint32_t expiresAt = now >= 1700000000UL ? now + 86400UL : 0;
+    friendmeshBeginTransaction(
+        request_id, friendmesh::FriendTransactionKind::Decline,
+        requester_pub, "Friend", friendmesh::FriendTransactionDurable,
+        expiresAt);
+    friendmeshNotifyTransaction(
+        request_id, friendmesh::FriendTransactionKind::Decline, "Friend",
+        friendmesh::FriendTransactionStage::Complete, 0);
+  }
+  FriendRequestDeclined& declined = _friend_request_declined[
+      _friend_request_declined_head];
+  memset(&declined, 0, sizeof(declined));
+  memcpy(declined.requestId, request_id, sizeof(declined.requestId));
+  memcpy(declined.requesterPub, requester_pub,
+         sizeof(declined.requesterPub));
+  declined.declinedMillis = _ms->getMillis() ? _ms->getMillis() : 1;
+  _friend_request_declined_head = static_cast<uint8_t>(
+      (_friend_request_declined_head + 1) % FRIEND_REQUEST_DECLINED_SLOTS);
+}
+
+void MyMesh::friendmeshHandleAcceptedControl(
+    const mesh::Identity& sender, const uint8_t request_id[8],
+    const char* peer_name, bool legacy, mesh::Packet* packet,
+    const uint8_t* ack_path, uint8_t ack_path_length) {
+  if (!request_id || !_ui ||
+      _ui->friendMeshRequesterBlocked(sender.pub_key)) return;
+  const bool pending = friendmeshOutgoingRequestMatches(request_id);
+  const bool completed = friendmeshCompletedRequestMatches(
+      request_id, sender.pub_key);
+  if (!pending && !completed) {
+    FM_FRIEND_LOG("%sACCEPT reject=unknown id=%02X%02X%02X%02X from=%02X%02X%02X%02X ack-queued=0",
+                  legacy ? "LEGACY " : "", request_id[0], request_id[1],
+                  request_id[2], request_id[3], sender.pub_key[0],
+                  sender.pub_key[1], sender.pub_key[2], sender.pub_key[3]);
+    return;
+  }
+  if (pending) {
+    const friendmesh::ResultCode bound = _friend_transaction_ledger.bindPeer(
+        request_id, sender.pub_key, peer_name,
+        getRTCClock()->getCurrentTime());
+    if (bound != friendmesh::ResultCode::Ok ||
+        !friendmeshCommitTransactionJournal()) {
+      FM_FRIEND_LOG("ACCEPT reject=peer-bind id=%02X%02X%02X%02X result=%u",
+                    request_id[0], request_id[1], request_id[2], request_id[3],
+                    (unsigned)bound);
+      return;
+    }
+  }
+
+  FriendRequestOutgoing* outgoing =
+      friendmeshFindOutgoingRequest(request_id);
+  if (outgoing && ack_path_length != friendmesh::kFriendRequestReturnPathUnknown &&
+      mesh::Packet::isValidPathLen(ack_path_length)) {
+    const size_t ackPathBytes =
+        static_cast<size_t>(ack_path_length & 0x3F) *
+        static_cast<size_t>((ack_path_length >> 6) + 1);
+    if (ackPathBytes <= sizeof(outgoing->directPath) &&
+        (ackPathBytes == 0 || ack_path)) {
+      memset(outgoing->directPath, 0, sizeof(outgoing->directPath));
+      if (ackPathBytes)
+        memcpy(outgoing->directPath, ack_path, ackPathBytes);
+      outgoing->directPathLength = (ack_path_length & 0x3F) == 0
+          ? 0 : ack_path_length;
+      FM_FRIEND_LOG("ACCEPT route=authenticated-return path=%u",
+                    outgoing->directPathLength);
+    }
+  }
+  uint8_t savedPath[MAX_PATH_SIZE] = {};
+  uint8_t savedPathLength = OUT_PATH_UNKNOWN;
+  char savedPeerName[friendmesh::kFriendRequestNameBytes] = {};
+  if (outgoing) {
+    savedPathLength = outgoing->directPathLength;
+    memcpy(savedPath, outgoing->directPath, sizeof(savedPath));
+    strncpy(savedPeerName, outgoing->peerName, sizeof(savedPeerName) - 1);
+  }
+  const uint8_t floodsUsed = outgoing ? outgoing->floodAttempts : 0;
+  friendmeshNotifyTransaction(
+      request_id, friendmesh::FriendTransactionKind::Request,
+      peer_name && peer_name[0] ? peer_name : savedPeerName,
+      friendmesh::FriendTransactionStage::ResponseReceived,
+      floodsUsed);
+  const bool ackQueued =
+      friendmeshAcknowledgeLinkControl(sender, request_id, packet);
+  FM_FRIEND_LOG("%sACCEPT correlate id=%02X%02X%02X%02X state=%s ack-queued=%d",
+                legacy ? "LEGACY " : "", request_id[0], request_id[1],
+                request_id[2], request_id[3],
+                pending ? "pending" : "completed", ackQueued ? 1 : 0);
+  if (!ackQueued || completed) return;
+  friendmeshNotifyTransaction(
+      request_id, friendmesh::FriendTransactionKind::Request,
+      peer_name && peer_name[0] ? peer_name : savedPeerName,
+      friendmesh::FriendTransactionStage::ConfirmationSent,
+      floodsUsed);
+
+  // The ACK is queued first as required by the two-phase UX. Only a successful
+  // local Friend write advances this request to the completed retry ledger.
+  // A failed write leaves it pending so a later acceptance retry can converge.
+  if (!_ui->onFriendMeshFriendAccepted(
+          request_id, sender.pub_key, peer_name)) {
+    FM_FRIEND_LOG("ACCEPT requester-save=failed id=%02X%02X%02X%02X pending-kept=1",
+                  request_id[0], request_id[1], request_id[2], request_id[3]);
+    return;
+  }
+  if (friendmeshConsumeOutgoingRequest(request_id)) {
+    friendmeshRememberCompletedRequest(
+        request_id, sender.pub_key, savedPath, savedPathLength);
+    friendmeshNotifyTransaction(
+        request_id, friendmesh::FriendTransactionKind::Request,
+        peer_name && peer_name[0] ? peer_name : savedPeerName,
+        friendmesh::FriendTransactionStage::Complete,
+        floodsUsed);
+  }
+}
+
+void MyMesh::friendmeshHandleDeclinedControl(
+    const mesh::Identity& sender, const uint8_t request_id[8],
+    const char* peer_name) {
+  FriendRequestOutgoing* outgoing =
+      friendmeshFindOutgoingRequest(request_id);
+  const friendmesh::FriendTransactionRecord* transaction =
+      _friend_transaction_ledger.find(request_id);
+  if ((!outgoing && (!transaction ||
+                     transaction->kind !=
+                         friendmesh::FriendTransactionKind::Request ||
+                     friendmesh::friendTransactionStageTerminal(
+                         transaction->stage))) || !_ui ||
+      _ui->friendMeshRequesterBlocked(sender.pub_key)) {
+    FM_FRIEND_LOG("DECLINE reject=unknown-or-blocked id=%02X%02X%02X%02X",
+                  request_id ? request_id[0] : 0,
+                  request_id ? request_id[1] : 0,
+                  request_id ? request_id[2] : 0,
+                  request_id ? request_id[3] : 0);
+    return;
+  }
+  const friendmesh::ResultCode bound = _friend_transaction_ledger.bindPeer(
+      request_id, sender.pub_key, peer_name, getRTCClock()->getCurrentTime());
+  if (bound != friendmesh::ResultCode::Ok ||
+      !friendmeshCommitTransactionJournal()) return;
+  transaction = _friend_transaction_ledger.find(request_id);
+  const uint8_t floodsUsed = transaction ? transaction->floodsUsed
+                                         : outgoing->floodAttempts;
+  char name[friendmesh::kFriendRequestNameBytes] = {};
+  const char* fallbackName = outgoing ? outgoing->peerName
+      : transaction && transaction->peerName[0] ? transaction->peerName
+                                                : "Friend";
+  strncpy(name, peer_name && peer_name[0] ? peer_name : fallbackName,
+          sizeof(name) - 1);
+  _ui->onFriendMeshFriendDeclined(
+      request_id, sender.pub_key, name);
+  friendmeshConsumeOutgoingRequest(request_id);
+  friendmeshNotifyTransaction(
+      request_id, friendmesh::FriendTransactionKind::Request, name,
+      friendmesh::FriendTransactionStage::Declined, floodsUsed);
+}
+
+bool MyMesh::friendmeshTransmitLinkControl(
+    const ContactInfo& recipient, friendmesh::FriendLinkAction action,
+    const uint8_t request_id[8], bool allow_flood) {
+  if (recipient.out_path_len == OUT_PATH_UNKNOWN && !allow_flood) {
+    FM_FRIEND_LOG("LINK TX blocked=flood action=%s id=%02X%02X%02X%02X",
+                  fmFriendLinkActionName(action),
+                  request_id ? request_id[0] : 0,
+                  request_id ? request_id[1] : 0,
+                  request_id ? request_id[2] : 0,
+                  request_id ? request_id[3] : 0);
+    return false;
+  }
+  friendmesh::FriendLinkEnvelope link = {};
+  link.action = action;
+  link.returnPathLength = friendmesh::kFriendRequestReturnPathUnknown;
+  if (request_id) memcpy(link.requestId, request_id, sizeof(link.requestId));
+  strncpy(link.peerName, _prefs.node_name, sizeof(link.peerName) - 1);
+  if (!link.peerName[0]) strncpy(link.peerName, "Friend", sizeof(link.peerName) - 1);
+  if ((action == friendmesh::FriendLinkAction::Accepted ||
+       action == friendmesh::FriendLinkAction::Declined) &&
+      recipient.out_path_len != OUT_PATH_UNKNOWN &&
+      mesh::Packet::isValidPathLen(recipient.out_path_len)) {
+    const size_t pathBytes =
+        static_cast<size_t>(recipient.out_path_len & 0x3F) *
+        static_cast<size_t>((recipient.out_path_len >> 6) + 1);
+    if (pathBytes <= sizeof(link.returnPath) &&
+        friendmesh::reverseMeshPath(
+            recipient.out_path, recipient.out_path_len, link.returnPath,
+            sizeof(link.returnPath)) == pathBytes) {
+      link.returnPathLength = (recipient.out_path_len & 0x3F) == 0
+          ? 0 : recipient.out_path_len;
+    }
+  }
+  uint8_t encoded[friendmesh::kFriendLinkEncodedBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeFriendLink(link, encoded, sizeof(encoded), written) !=
+      friendmesh::ResultCode::Ok) return false;
+  uint32_t tag = 0, timeout = 0;
+  const int sendResult = sendAnonReq(
+      recipient, encoded, static_cast<uint8_t>(written), tag, timeout);
+  FM_FRIEND_LOG("LINK TX action=%s id=%02X%02X%02X%02X to=%02X%02X%02X%02X path=%u result=%d tag=%08lX timeout=%lu",
+                fmFriendLinkActionName(action),
+                request_id ? request_id[0] : 0,
+                request_id ? request_id[1] : 0,
+                request_id ? request_id[2] : 0,
+                request_id ? request_id[3] : 0,
+                recipient.id.pub_key[0], recipient.id.pub_key[1],
+                recipient.id.pub_key[2], recipient.id.pub_key[3],
+                recipient.out_path_len, sendResult,
+                (unsigned long)tag, (unsigned long)timeout);
+  return sendResult != MSG_SEND_FAILED;
+}
+
+bool MyMesh::friendmeshQueueLinkControl(
+    const ContactInfo& recipient, friendmesh::FriendLinkAction action,
+    const uint8_t request_id[8]) {
+  if (!request_id ||
+      (action != friendmesh::FriendLinkAction::Accepted &&
+       action != friendmesh::FriendLinkAction::Removed &&
+       action != friendmesh::FriendLinkAction::Declined)) return false;
+  const bool allowFloodFallback =
+      action == friendmesh::FriendLinkAction::Removed;
+  const size_t routeBytes = recipient.out_path_len == OUT_PATH_UNKNOWN
+      ? 0
+      : static_cast<size_t>(recipient.out_path_len & 0x3F) *
+            static_cast<size_t>((recipient.out_path_len >> 6) + 1);
+  const bool routeKnown = recipient.out_path_len != OUT_PATH_UNKNOWN &&
+      mesh::Packet::isValidPathLen(recipient.out_path_len) &&
+      routeBytes <= MAX_PATH_SIZE;
+  if (!routeKnown && !allowFloodFallback) {
+    friendmeshNotifyTransaction(
+        request_id,
+        action == friendmesh::FriendLinkAction::Accepted
+            ? friendmesh::FriendTransactionKind::Accept
+            : friendmesh::FriendTransactionKind::Decline,
+        recipient.name, friendmesh::FriendTransactionStage::Failed, 0);
+    return false;
+  }
+  FriendLinkPending* pending = nullptr;
+  for (uint8_t i = 0; i < FRIEND_LINK_PENDING_SLOTS; ++i) {
+    FriendLinkPending& candidate = _friend_link_pending[i];
+    if (candidate.active && candidate.action == action &&
+        memcmp(candidate.requestId, request_id,
+               sizeof(candidate.requestId)) == 0 &&
+        memcmp(candidate.recipientPub, recipient.id.pub_key,
+               PUB_KEY_SIZE) == 0) {
+      FM_FRIEND_LOG("LINK already-pending action=%s id=%02X%02X%02X%02X slot=%u",
+                    fmFriendLinkActionName(action),
+                    request_id[0], request_id[1],
+                    request_id[2], request_id[3], (unsigned)i);
+      return true;
+    }
+    if (!pending && !candidate.active) pending = &candidate;
+  }
+  if (!pending) {
+    FM_FRIEND_LOG("LINK reject=pending-table-full action=%s id=%02X%02X%02X%02X",
+                  fmFriendLinkActionName(action), request_id[0], request_id[1],
+                  request_id[2], request_id[3]);
+    return false;
+  }
+  const friendmesh::FriendTransactionKind kind =
+      action == friendmesh::FriendLinkAction::Accepted
+          ? friendmesh::FriendTransactionKind::Accept
+          : action == friendmesh::FriendLinkAction::Declined
+              ? friendmesh::FriendTransactionKind::Decline
+              : friendmesh::FriendTransactionKind::Remove;
+  const uint32_t wallNow = getRTCClock()->getCurrentTime();
+  const uint32_t expiresAt = wallNow >= 1700000000UL
+      ? wallNow + friendmesh::kFriendRequestLifetimeSeconds : 0;
+  uint8_t flags = friendmesh::FriendTransactionDurable;
+  if (action == friendmesh::FriendLinkAction::Removed)
+    flags |= friendmesh::FriendTransactionInitiator |
+             friendmesh::FriendTransactionAllowFlood;
+  if (!friendmeshBeginTransaction(
+          request_id, kind, recipient.id.pub_key, recipient.name, flags,
+          expiresAt)) return false;
+  memset(pending, 0, sizeof(*pending));
+  pending->active = true;
+  pending->action = action;
+  memcpy(pending->requestId, request_id, sizeof(pending->requestId));
+  memcpy(pending->recipientPub, recipient.id.pub_key, PUB_KEY_SIZE);
+  strncpy(pending->recipientName, recipient.name,
+          sizeof(pending->recipientName) - 1);
+  pending->pathLength = routeKnown ? recipient.out_path_len
+                                   : OUT_PATH_UNKNOWN;
+  pending->allowFloodFallback = allowFloodFallback;
+  if (routeKnown && routeBytes)
+    memcpy(pending->path, recipient.out_path, routeBytes);
+  const bool initialFlood = pending->pathLength == OUT_PATH_UNKNOWN;
+  const bool budgetReserved = initialFlood
+      ? friendmeshReserveFlood(request_id)
+      : friendmeshReserveDirectAttempt(request_id);
+  if (!budgetReserved) {
+    friendmeshNotifyTransaction(
+        request_id, kind, recipient.name,
+        friendmesh::FriendTransactionStage::Failed, 0);
+    memset(pending, 0, sizeof(*pending));
+    return false;
+  }
+  ContactInfo transmitRecipient = recipient;
+  if (initialFlood) transmitRecipient.out_path_len = OUT_PATH_UNKNOWN;
+  const bool sent = friendmeshTransmitLinkControl(
+      transmitRecipient, action, request_id, initialFlood);
+  pending->attempts = initialFlood ? 2 : 1;
+  const friendmesh::FriendTransactionRecord* transaction =
+      _friend_transaction_ledger.find(request_id);
+  pending->floodAttempts = transaction ? transaction->floodsUsed : 0;
+  // Even a zero-hop Friend control can occupy the LoRa radio for multiple
+  // seconds at slow presets. Do not enqueue a retry while the first packet is
+  // still transmitting.
+  pending->nextAttemptMillis = _ms->getMillis() +
+      (initialFlood ? 24000UL : 4000UL);
+  FM_FRIEND_LOG("LINK queued action=%s id=%02X%02X%02X%02X immediate=%d",
+                fmFriendLinkActionName(action),
+                request_id[0], request_id[1], request_id[2], request_id[3],
+                sent ? 1 : 0);
+  friendmeshNotifyTransaction(
+      request_id, kind, recipient.name,
+      !sent ? (allowFloodFallback
+                   ? friendmesh::FriendTransactionStage::RetryingDirect
+                   : friendmesh::FriendTransactionStage::Failed)
+            : initialFlood ? friendmesh::FriendTransactionStage::FloodFallback
+                           : friendmesh::FriendTransactionStage::DirectSent,
+      pending->floodAttempts);
+  if (!sent && !allowFloodFallback) {
+    memset(pending, 0, sizeof(*pending));
+    return false;
+  }
+  if (sent && action == friendmesh::FriendLinkAction::Declined) {
+    friendmeshNotifyTransaction(
+        request_id, kind, recipient.name,
+        friendmesh::FriendTransactionStage::Complete, 0);
+    memset(pending, 0, sizeof(*pending));
+  } else if (sent) {
+    friendmeshNotifyTransaction(
+        request_id, kind, recipient.name,
+        friendmesh::FriendTransactionStage::AwaitingResponse,
+        pending->floodAttempts);
+  }
+  return sent;
+}
+
+bool MyMesh::friendmeshAcknowledgeLinkControl(
+    const mesh::Identity& sender, const uint8_t request_id[8],
+    mesh::Packet* received_packet) {
+  if (!request_id) return false;
+  ContactInfo recipient = {};
+  recipient.id = sender;
+  strncpy(recipient.name, "Friend", sizeof(recipient.name) - 1);
+  recipient.type = ADV_TYPE_CHAT;
+  recipient.out_path_len = OUT_PATH_UNKNOWN;
+
+  // A requester's saved route is the exact requester->recipient direction
+  // needed by the final ACK. Keep using it after completion so duplicate
+  // ACCEPT packets remain idempotent and receive another direct ACK.
+  const FriendRequestOutgoing* outgoing =
+      friendmeshFindOutgoingRequest(request_id);
+  if (outgoing) {
+    recipient.out_path_len = outgoing->directPathLength;
+    memcpy(recipient.out_path, outgoing->directPath,
+           sizeof(recipient.out_path));
+  } else {
+    for (uint8_t i = 0; i < FRIEND_REQUEST_COMPLETED_SLOTS; ++i) {
+      const FriendRequestCompleted& completed = _friend_request_completed[i];
+      if (completed.completedMillis != 0 &&
+          memcmp(completed.requestId, request_id,
+                 sizeof(completed.requestId)) == 0 &&
+          memcmp(completed.peerPub, sender.pub_key, PUB_KEY_SIZE) == 0) {
+        recipient.out_path_len = completed.directPathLength;
+        memcpy(recipient.out_path, completed.directPath,
+               sizeof(recipient.out_path));
+        break;
+      }
+    }
+  }
+
+  // A flooded REMOVE supplies a fresh observed route. Reverse it for the
+  // direct REMOVE_ACK; never answer a flood with another flood.
+  if (recipient.out_path_len == OUT_PATH_UNKNOWN && received_packet &&
+      received_packet->isRouteFlood() &&
+      mesh::Packet::isValidPathLen(received_packet->path_len)) {
+    const size_t pathBytes = received_packet->getPathByteLen();
+    if (pathBytes <= sizeof(recipient.out_path) &&
+        friendmesh::reverseMeshPath(
+            received_packet->path, received_packet->path_len,
+            recipient.out_path, sizeof(recipient.out_path)) == pathBytes) {
+      recipient.out_path_len = (received_packet->path_len & 0x3F) == 0
+          ? 0 : received_packet->path_len;
+    }
+  }
+
+  if (recipient.out_path_len == OUT_PATH_UNKNOWN) {
+    ContactInfo* stored = lookupContactByPubKey(sender.pub_key, PUB_KEY_SIZE);
+    if (stored && stored->out_path_len != OUT_PATH_UNKNOWN)
+      recipient = *stored;
+  }
+  const bool queued = friendmeshTransmitLinkControl(
+      recipient, friendmesh::FriendLinkAction::Acknowledged, request_id,
+      false);
+  FM_FRIEND_LOG("ACK send id=%02X%02X%02X%02X to=%02X%02X%02X%02X route=%s queued=%d",
+                request_id[0], request_id[1],
+                request_id[2], request_id[3],
+                sender.pub_key[0], sender.pub_key[1],
+                sender.pub_key[2], sender.pub_key[3],
+                recipient.out_path_len == OUT_PATH_UNKNOWN ? "unavailable" : "direct",
+                queued ? 1 : 0);
+  return queued;
+}
+
+void MyMesh::friendmeshConsumeLinkAcknowledgement(
+    const uint8_t sender_pub[PUB_KEY_SIZE], const uint8_t request_id[8]) {
+  if (!sender_pub || !request_id) return;
+  for (uint8_t i = 0; i < FRIEND_LINK_PENDING_SLOTS; ++i) {
+    FriendLinkPending& pending = _friend_link_pending[i];
+    if (pending.active &&
+        memcmp(pending.requestId, request_id,
+               sizeof(pending.requestId)) == 0 &&
+        memcmp(pending.recipientPub, sender_pub, PUB_KEY_SIZE) == 0) {
+      const friendmesh::FriendLinkAction action = pending.action;
+      uint8_t recipientPub[PUB_KEY_SIZE] = {};
+      char recipientName[friendmesh::kFriendRequestNameBytes] = {};
+      memcpy(recipientPub, pending.recipientPub, sizeof(recipientPub));
+      strncpy(recipientName, pending.recipientName,
+              sizeof(recipientName) - 1);
+      bool finalized = true;
+      if (action == friendmesh::FriendLinkAction::Accepted) {
+        finalized = _ui &&
+            _ui->onFriendMeshFriendAcceptanceAcknowledged(
+                request_id, recipientPub, recipientName);
+      }
+      const friendmesh::FriendTransactionKind kind =
+          action == friendmesh::FriendLinkAction::Accepted
+              ? friendmesh::FriendTransactionKind::Accept
+              : friendmesh::FriendTransactionKind::Remove;
+      if (finalized) friendmeshNotifyTransaction(
+          request_id, kind, recipientName,
+          friendmesh::FriendTransactionStage::Complete,
+          pending.floodAttempts);
+      FM_FRIEND_LOG("ACK matched id=%02X%02X%02X%02X slot=%u action=%s finalized=%d",
+                    request_id[0], request_id[1],
+                    request_id[2], request_id[3], (unsigned)i,
+                    fmFriendLinkActionName(action), finalized ? 1 : 0);
+      if (finalized) memset(&pending, 0, sizeof(pending));
+      memset(recipientPub, 0, sizeof(recipientPub));
+      return;
+    }
+  }
+  FM_FRIEND_LOG("ACK unmatched id=%02X%02X%02X%02X from=%02X%02X%02X%02X",
+                request_id[0], request_id[1],
+                request_id[2], request_id[3],
+                sender_pub[0], sender_pub[1], sender_pub[2], sender_pub[3]);
+}
+
+void MyMesh::friendmeshTickLinkControls() {
+  const uint32_t now = _ms->getMillis();
+  for (uint8_t i = 0; i < FRIEND_LINK_PENDING_SLOTS; ++i) {
+    FriendLinkPending& pending = _friend_link_pending[i];
+    if (!pending.active ||
+        (int32_t)(now - pending.nextAttemptMillis) < 0) continue;
+    const friendmesh::FriendTransactionRecord* transaction =
+        _friend_transaction_ledger.find(pending.requestId);
+    const bool directExhausted = pending.pathLength == OUT_PATH_UNKNOWN ||
+                                 !transaction ||
+                                 transaction->directAttempts >=
+                                     friendmesh::friendTransactionDirectAttemptLimit(
+                                         transaction->kind);
+    const bool floodsExhausted = !transaction ||
+        !friendmesh::friendTransactionMayFlood(*transaction);
+    if (directExhausted && floodsExhausted) {
+      FM_FRIEND_LOG("LINK give-up action=%s id=%02X%02X%02X%02X attempts=%u",
+                    fmFriendLinkActionName(pending.action),
+                    pending.requestId[0], pending.requestId[1],
+                    pending.requestId[2], pending.requestId[3],
+                    pending.attempts);
+      const friendmesh::FriendTransactionKind kind =
+          pending.action == friendmesh::FriendLinkAction::Accepted
+              ? friendmesh::FriendTransactionKind::Accept
+              : friendmesh::FriendTransactionKind::Remove;
+      friendmeshNotifyTransaction(
+          pending.requestId, kind, pending.recipientName,
+          friendmesh::FriendTransactionStage::Failed,
+          pending.floodAttempts);
+      memset(&pending, 0, sizeof(pending));
+      continue;
+    }
+    ContactInfo recipient = {};
+    memcpy(recipient.id.pub_key, pending.recipientPub, PUB_KEY_SIZE);
+    strncpy(recipient.name, pending.recipientName,
+            sizeof(recipient.name) - 1);
+    recipient.type = ADV_TYPE_CHAT;
+    const bool useFlood = directExhausted && pending.allowFloodFallback;
+    recipient.out_path_len = useFlood ? OUT_PATH_UNKNOWN : pending.pathLength;
+    if (pending.pathLength != OUT_PATH_UNKNOWN &&
+        mesh::Packet::isValidPathLen(pending.pathLength)) {
+      const size_t pathBytes =
+          static_cast<size_t>(pending.pathLength & 0x3F) *
+          static_cast<size_t>((pending.pathLength >> 6) + 1);
+      if (pathBytes <= sizeof(recipient.out_path))
+        memcpy(recipient.out_path, pending.path, pathBytes);
+      else
+        recipient.out_path_len = OUT_PATH_UNKNOWN;
+    }
+    FM_FRIEND_LOG("LINK retry action=%s id=%02X%02X%02X%02X direct=%u flood=%u mode=%s",
+                  fmFriendLinkActionName(pending.action),
+                  pending.requestId[0], pending.requestId[1],
+                  pending.requestId[2], pending.requestId[3],
+                  (unsigned)(pending.attempts + (useFlood ? 0 : 1)),
+                  (unsigned)(pending.floodAttempts + (useFlood ? 1 : 0)),
+                  useFlood ? "flood" : "direct");
+    const bool budgetReserved = useFlood
+        ? friendmeshReserveFlood(pending.requestId)
+        : friendmeshReserveDirectAttempt(pending.requestId);
+    if (!budgetReserved) {
+      friendmeshNotifyTransaction(
+          pending.requestId,
+          pending.action == friendmesh::FriendLinkAction::Accepted
+              ? friendmesh::FriendTransactionKind::Accept
+              : friendmesh::FriendTransactionKind::Remove,
+          pending.recipientName, friendmesh::FriendTransactionStage::Failed,
+          pending.floodAttempts);
+      memset(&pending, 0, sizeof(pending));
+      continue;
+    }
+    const bool sent = friendmeshTransmitLinkControl(
+        recipient, pending.action, pending.requestId, useFlood);
+    transaction = _friend_transaction_ledger.find(pending.requestId);
+    pending.floodAttempts = transaction ? transaction->floodsUsed : 0;
+    pending.attempts = transaction ? transaction->directAttempts
+                                   : pending.attempts;
+    friendmeshNotifyTransaction(
+        pending.requestId,
+        pending.action == friendmesh::FriendLinkAction::Accepted
+            ? friendmesh::FriendTransactionKind::Accept
+            : friendmesh::FriendTransactionKind::Remove,
+        pending.recipientName,
+        useFlood ? friendmesh::FriendTransactionStage::FloodFallback
+                 : friendmesh::FriendTransactionStage::RetryingDirect,
+        pending.floodAttempts);
+    pending.nextAttemptMillis = now +
+        (useFlood ? (12000UL << pending.floodAttempts)
+                  : (4000UL << pending.attempts));
+  }
+}
+
+void MyMesh::friendmeshNotifyTransaction(
+    const uint8_t transaction_id[8],
+    friendmesh::FriendTransactionKind kind, const char* peer_name,
+    friendmesh::FriendTransactionStage stage, uint8_t floods_used) {
+  if (!transaction_id) return;
+  friendmesh::FriendTransactionRecord* record =
+      _friend_transaction_ledger.mutableFind(transaction_id);
+  if (record && record->kind == kind) {
+    const friendmesh::FriendTransactionStage previous = record->stage;
+    const friendmesh::ResultCode transitioned =
+        _friend_transaction_ledger.transition(
+            transaction_id, stage, getRTCClock()->getCurrentTime());
+    if (transitioned == friendmesh::ResultCode::Ok) {
+      if (previous != stage && !friendmeshCommitTransactionJournal()) {
+        FM_FRIEND_LOG("JOURNAL state=recovery-required transition=%u",
+                      (unsigned)stage);
+      }
+    } else {
+      stage = record->stage;
+    }
+    floods_used = record->floodsUsed;
+  }
+  if (_ui) _ui->onFriendMeshTransactionProgress(
+      transaction_id, kind,
+      peer_name && peer_name[0] ? peer_name : "Friend", stage,
+      floods_used, friendmesh::kFriendTransactionFloodLimit);
+}
+
+void MyMesh::friendmeshTickOutgoingRequests() {
+  const uint32_t now = _ms->getMillis();
+  for (uint8_t i = 0; i < FRIEND_REQUEST_OUTGOING_SLOTS; ++i) {
+    FriendRequestOutgoing& outgoing = _friend_request_outgoing[i];
+    if (outgoing.sentMillis == 0) continue;
+    const uint32_t age = now - outgoing.sentMillis;
+    if (age >= friendmesh::kFriendRequestLifetimeSeconds * 1000UL) {
+      friendmeshNotifyTransaction(
+          outgoing.requestId, friendmesh::FriendTransactionKind::Request,
+          outgoing.peerName, friendmesh::FriendTransactionStage::Expired,
+          outgoing.floodAttempts);
+      memset(&outgoing, 0, sizeof(outgoing));
+      continue;
+    }
+    const friendmesh::FriendTransactionRecord* transaction =
+        _friend_transaction_ledger.find(outgoing.requestId);
+    if (outgoing.channelIndex < 0 || !transaction ||
+        !friendmesh::friendTransactionMayFlood(*transaction) ||
+        (int32_t)(now - outgoing.nextFallbackMillis) < 0) continue;
+    ChannelDetails details = {};
+    if (!getChannel(outgoing.channelIndex, details) || !details.name[0]) {
+      friendmeshNotifyTransaction(
+          outgoing.requestId, friendmesh::FriendTransactionKind::Request,
+          outgoing.peerName, friendmesh::FriendTransactionStage::Failed,
+          outgoing.floodAttempts);
+      continue;
+    }
+    // Reserve and persist the flood before queueing it. A power cut can waste
+    // one allowance, but can never reset the budget and create a third flood.
+    if (!friendmeshReserveFlood(outgoing.requestId)) {
+      friendmeshNotifyTransaction(
+          outgoing.requestId, friendmesh::FriendTransactionKind::Request,
+          outgoing.peerName, friendmesh::FriendTransactionStage::Failed,
+          outgoing.floodAttempts);
+      memset(&outgoing, 0, sizeof(outgoing));
+      continue;
+    }
+    transaction = _friend_transaction_ledger.find(outgoing.requestId);
+    outgoing.floodAttempts = transaction ? transaction->floodsUsed
+                                         : outgoing.floodAttempts;
+    const bool sent = sendGroupData(
+        details.channel, nullptr, OUT_PATH_UNKNOWN,
+        friendmesh::kFriendRequestDataType, outgoing.encodedRequest,
+        static_cast<int>(friendmesh::kFriendRequestEncodedBytes));
+    if (!sent) {
+      // The durable reservation is intentionally retained after a queue
+      // failure; reboot or ambiguity must never create a third flood.
+      outgoing.nextFallbackMillis = now + 30000UL;
+      continue;
+    }
+    FM_FRIEND_LOG("PUBLIC fallback id=%02X%02X%02X%02X flood=%u/%u",
+                  outgoing.requestId[0], outgoing.requestId[1],
+                  outgoing.requestId[2], outgoing.requestId[3],
+                  outgoing.floodAttempts,
+                  friendmesh::kFriendTransactionFloodLimit);
+    friendmeshNotifyTransaction(
+        outgoing.requestId, friendmesh::FriendTransactionKind::Request,
+        outgoing.peerName, friendmesh::FriendTransactionStage::FloodFallback,
+        outgoing.floodAttempts);
+    friendmeshNotifyTransaction(
+        outgoing.requestId, friendmesh::FriendTransactionKind::Request,
+        outgoing.peerName,
+        friendmesh::FriendTransactionStage::AwaitingResponse,
+        outgoing.floodAttempts);
+    // Give the first network-wide retry ample time and airtime before the
+    // final allowed flood. No third flood is representable.
+    outgoing.nextFallbackMillis = now + 600000UL;
+  }
+}
+
+bool MyMesh::friendmeshSendLinkControl(
+    const ContactInfo& recipient, friendmesh::FriendLinkAction action,
+    const uint8_t request_id[8]) {
+  uint8_t generatedId[friendmesh::kFriendRequestIdBytes] = {};
+  const uint8_t* correlationId = request_id;
+  if (action == friendmesh::FriendLinkAction::Removed && !correlationId) {
+    getRNG()->random(generatedId, sizeof(generatedId));
+    if (generatedId[0] == 0 && generatedId[1] == 0) generatedId[0] = 1;
+    correlationId = generatedId;
+  }
+  return friendmeshQueueLinkControl(
+      recipient, action, correlationId);
+}
+
+bool MyMesh::uiSendFriendRequest(int channel_idx,
+                                 const uint8_t target_message_hash[8],
+                                 const uint8_t* incoming_path,
+                                 uint8_t encoded_path_len,
+                                 const char* target_name) {
+  if (!target_message_hash || channel_idx < 0 ||
+      channel_idx >= MAX_GROUP_CHANNELS ||
+      !mesh::Packet::isValidPathLen(encoded_path_len)) return false;
+  ChannelDetails details = {};
+  if (!getChannel(channel_idx, details) || !details.name[0]) return false;
+  const size_t pathBytes = static_cast<size_t>(encoded_path_len & 0x3F) *
+      static_cast<size_t>((encoded_path_len >> 6) + 1);
+  if (pathBytes > MAX_PATH_SIZE || (pathBytes && !incoming_path)) return false;
+
+  friendmesh::FriendRequestEnvelope request = {};
+  request.returnPathLength = friendmesh::kFriendRequestReturnPathUnknown;
+  getRNG()->random(request.requestId, sizeof(request.requestId));
+  if (request.requestId[0] == 0 && request.requestId[1] == 0)
+    request.requestId[0] = 1;
+  memcpy(request.targetMessageHash, target_message_hash,
+         sizeof(request.targetMessageHash));
+  request.createdAt = getRTCClock()->getCurrentTime();
+  request.expiresAt = request.createdAt >= 1700000000UL
+      ? request.createdAt + friendmesh::kFriendRequestLifetimeSeconds : 0;
+  memcpy(request.requesterPublicKey, self_id.pub_key,
+         sizeof(request.requesterPublicKey));
+  strncpy(request.requesterName, _prefs.node_name,
+          sizeof(request.requesterName) - 1);
+  // The public message's observed path runs from the request recipient back to
+  // us, so it is already the correct route for their acceptance. Keep it
+  // inside the signed request when it fits; longer routes fall back to flood.
+  if (pathBytes <= friendmesh::kFriendRequestReturnPathMaxBytes) {
+    // MeshCore path modes occupy the upper two bits. A value such as 64 means
+    // two-byte hashes with zero hash entries, but sendZeroHop()/routing use the
+    // canonical literal zero. Do not preserve an empty path's mode bits as a
+    // return route.
+    request.returnPathLength = (encoded_path_len & 0x3F) == 0
+        ? 0 : encoded_path_len;
+    if (pathBytes) memcpy(request.returnPath, incoming_path, pathBytes);
+  }
+  uint8_t encoded[friendmesh::kFriendRequestEncodedBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeFriendRequest(
+          request, encoded, sizeof(encoded), written) !=
+      friendmesh::ResultCode::Ok) {
+    return false;
+  }
+  self_id.sign(encoded + friendmesh::kFriendRequestSignedBytes,
+               encoded, friendmesh::kFriendRequestSignedBytes);
+  uint8_t reversePath[MAX_PATH_SIZE] = {};
+  if (pathBytes && friendmesh::reverseMeshPath(
+          incoming_path, encoded_path_len, reversePath,
+          sizeof(reversePath)) != pathBytes) {
+    return false;
+  }
+  if (!friendmeshRememberOutgoingRequest(
+          request.requestId, target_message_hash, channel_idx, target_name,
+          reversePath, encoded_path_len, encoded)) return false;
+  friendmeshNotifyTransaction(
+      request.requestId, friendmesh::FriendTransactionKind::Request,
+      target_name && target_name[0] ? target_name : "Friend",
+      friendmesh::FriendTransactionStage::Prepared, 0);
+  if (!friendmeshReserveDirectAttempt(request.requestId)) {
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target_name && target_name[0] ? target_name : "Friend",
+        friendmesh::FriendTransactionStage::Failed, 0);
+    friendmeshConsumeOutgoingRequest(request.requestId);
+    return false;
+  }
+  if (!sendGroupData(details.channel, reversePath, encoded_path_len,
+                     friendmesh::kFriendRequestDataType,
+                     encoded, static_cast<int>(written))) {
+    friendmeshConsumeOutgoingRequest(request.requestId);
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target_name && target_name[0] ? target_name : "Friend",
+        friendmesh::FriendTransactionStage::Failed, 0);
+    return false;
+  }
+  friendmeshNotifyTransaction(
+      request.requestId, friendmesh::FriendTransactionKind::Request,
+      target_name && target_name[0] ? target_name : "Friend",
+      friendmesh::FriendTransactionStage::DirectSent, 0);
+  friendmeshNotifyTransaction(
+      request.requestId, friendmesh::FriendTransactionKind::Request,
+      target_name && target_name[0] ? target_name : "Friend",
+      friendmesh::FriendTransactionStage::AwaitingResponse, 0);
+  FM_FRIEND_LOG("PUBLIC TX id=%02X%02X%02X%02X target_msg=%02X%02X%02X%02X path=%u channel=%d",
+                request.requestId[0], request.requestId[1],
+                request.requestId[2], request.requestId[3],
+                target_message_hash[0], target_message_hash[1],
+                target_message_hash[2], target_message_hash[3],
+                encoded_path_len, channel_idx);
+  return true;
+}
+
+friendmesh::BleFriendRequestResult MyMesh::uiSendNearbyFriendRequest(
+    const friendmesh::BlePresencePeer& peer,
+    const friendmesh::BleFriendIdentity& target) {
+  if (!target.name[0] ||
+      memcmp(peer.pubKeyPrefix, target.pubKey,
+             friendmesh::kBlePresencePrefixBytes) != 0 ||
+      memcmp(target.pubKey, self_id.pub_key, PUB_KEY_SIZE) == 0)
+    return friendmesh::BleFriendRequestResult::IdentityMismatch;
+
+  friendmesh::FriendRequestEnvelope request = {};
+  request.flags = friendmesh::kFriendRequestFlagNearbyBle;
+  request.returnPathLength = 0;  // BLE proximity permits a zero-hop reply.
+  getRNG()->random(request.requestId, sizeof(request.requestId));
+  if (request.requestId[0] == 0 && request.requestId[1] == 0)
+    request.requestId[0] = 1;
+  friendmesh::makeNearbyFriendTargetHash(
+      target.pubKey, request.targetMessageHash);
+  request.createdAt = getRTCClock()->getCurrentTime();
+  request.expiresAt = request.createdAt >= 1700000000UL
+      ? request.createdAt + friendmesh::kFriendRequestLifetimeSeconds : 0;
+  memcpy(request.requesterPublicKey, self_id.pub_key,
+         sizeof(request.requesterPublicKey));
+  strncpy(request.requesterName, _prefs.node_name,
+          sizeof(request.requesterName) - 1);
+  if (!request.requesterName[0])
+    strncpy(request.requesterName, "FriendMesh user",
+            sizeof(request.requesterName) - 1);
+
+  uint8_t encoded[friendmesh::kFriendRequestEncodedBytes] = {};
+  size_t written = 0;
+  if (friendmesh::encodeFriendRequest(
+          request, encoded, sizeof(encoded), written) !=
+      friendmesh::ResultCode::Ok) {
+    friendmeshConsumeOutgoingRequest(request.requestId);
+    return friendmesh::BleFriendRequestResult::ProtocolError;
+  }
+  self_id.sign(encoded + friendmesh::kFriendRequestSignedBytes,
+               encoded, friendmesh::kFriendRequestSignedBytes);
+  if (!friendmeshRememberOutgoingRequest(
+          request.requestId, request.targetMessageHash, -1, target.name,
+          nullptr, 0, encoded))
+    return friendmesh::BleFriendRequestResult::Busy;
+  friendmeshNotifyTransaction(
+      request.requestId, friendmesh::FriendTransactionKind::Request,
+      target.name, friendmesh::FriendTransactionStage::Prepared, 0);
+  if (!friendmeshReserveDirectAttempt(request.requestId)) {
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target.name, friendmesh::FriendTransactionStage::Failed, 0);
+    friendmeshConsumeOutgoingRequest(request.requestId);
+    memset(encoded, 0, sizeof(encoded));
+    return friendmesh::BleFriendRequestResult::Busy;
+  }
+  const friendmesh::BleFriendRequestResult result =
+      friendmesh::bleFriendSendRequest(peer, encoded, written);
+  FM_FRIEND_LOG("BLE TX id=%02X%02X%02X%02X to=%02X%02X%02X%02X result=%u",
+                request.requestId[0], request.requestId[1],
+                request.requestId[2], request.requestId[3],
+                target.pubKey[0], target.pubKey[1],
+                target.pubKey[2], target.pubKey[3],
+                (unsigned)result);
+  memset(encoded, 0, sizeof(encoded));
+  if (result != friendmesh::BleFriendRequestResult::Ok) {
+    friendmeshConsumeOutgoingRequest(request.requestId);
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target.name, friendmesh::FriendTransactionStage::Failed, 0);
+  } else {
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target.name, friendmesh::FriendTransactionStage::DirectSent, 0);
+    friendmeshNotifyTransaction(
+        request.requestId, friendmesh::FriendTransactionKind::Request,
+        target.name, friendmesh::FriendTransactionStage::AwaitingResponse, 0);
+  }
+  return result;
+}
+
+bool MyMesh::uiHandleNearbyFriendRequest(const uint8_t* encoded,
+                                         size_t length) {
+  if (!encoded || !_ui || !_ui->friendMeshRequestsEnabled()) {
+    FM_FRIEND_LOG("BLE RX drop=disabled-or-no-ui len=%u", (unsigned)length);
+    return false;
+  }
+  friendmesh::FriendRequestEnvelope request = {};
+  uint8_t expectedTarget[friendmesh::kFriendRequestTargetHashBytes] = {};
+  friendmesh::makeNearbyFriendTargetHash(self_id.pub_key, expectedTarget);
+  if (friendmesh::decodeFriendRequest(encoded, length, request) !=
+          friendmesh::ResultCode::Ok ||
+      request.flags != friendmesh::kFriendRequestFlagNearbyBle ||
+      memcmp(request.targetMessageHash, expectedTarget,
+             sizeof(expectedTarget)) != 0) {
+    FM_FRIEND_LOG("BLE RX drop=decode-flags-target len=%u", (unsigned)length);
+    return false;
+  }
+  FM_FRIEND_LOG("BLE RX id=%02X%02X%02X%02X from=%02X%02X%02X%02X name=%s",
+                request.requestId[0], request.requestId[1],
+                request.requestId[2], request.requestId[3],
+                request.requesterPublicKey[0], request.requesterPublicKey[1],
+                request.requesterPublicKey[2], request.requesterPublicKey[3],
+                request.requesterName);
+  const uint32_t now = getRTCClock()->getCurrentTime();
+  if (request.expiresAt >= 1700000000UL && now >= 1700000000UL &&
+      now > request.expiresAt) {
+    FM_FRIEND_LOG("BLE RX drop=expired id=%02X%02X%02X%02X",
+                  request.requestId[0], request.requestId[1],
+                  request.requestId[2], request.requestId[3]);
+    return false;
+  }
+  mesh::Identity requester(request.requesterPublicKey);
+  const size_t signedBytes = length -
+      friendmesh::kFriendRequestSignatureBytes;
+  if (!requester.verify(request.signature, encoded, signedBytes) ||
+      _ui->friendMeshRequesterBlocked(request.requesterPublicKey)) {
+    FM_FRIEND_LOG("BLE RX drop=signature-or-block id=%02X%02X%02X%02X",
+                  request.requestId[0], request.requestId[1],
+                  request.requestId[2], request.requestId[3]);
+    return false;
+  }
+  FM_FRIEND_LOG("BLE RX verified id=%02X%02X%02X%02X",
+                request.requestId[0], request.requestId[1],
+                request.requestId[2], request.requestId[3]);
+  _ui->onFriendMeshFriendRequest(
+      request.requestId, request.requesterPublicKey,
+      request.requesterName, request.createdAt, request.expiresAt,
+      nullptr, 0);
+  return true;
+}
+
+bool MyMesh::uiAcceptFriendRequest(const uint8_t requester_pub[32],
+                                   const uint8_t request_id[8],
+                                   const char* requester_name,
+                                   const uint8_t* return_path,
+                                   uint8_t return_path_length) {
+  if (!requester_pub || !request_id) return false;
+  ContactInfo recipient = {};
+  memcpy(recipient.id.pub_key, requester_pub, PUB_KEY_SIZE);
+  strncpy(recipient.name, requester_name ? requester_name : "Friend",
+          sizeof(recipient.name) - 1);
+  recipient.type = ADV_TYPE_CHAT;
+  recipient.out_path_len = OUT_PATH_UNKNOWN;
+  if (return_path_length != friendmesh::kFriendRequestReturnPathUnknown &&
+      mesh::Packet::isValidPathLen(return_path_length)) {
+    const size_t pathBytes =
+        static_cast<size_t>(return_path_length & 0x3F) *
+        static_cast<size_t>((return_path_length >> 6) + 1);
+    if (pathBytes <= friendmesh::kFriendRequestReturnPathMaxBytes &&
+        (pathBytes == 0 || return_path)) {
+      recipient.out_path_len = (return_path_length & 0x3F) == 0
+          ? 0 : return_path_length;
+      if (pathBytes) memcpy(recipient.out_path, return_path, pathBytes);
+    }
+  }
+  FM_FRIEND_LOG("ACCEPT UI send id=%02X%02X%02X%02X to=%02X%02X%02X%02X path=%u",
+                request_id[0], request_id[1], request_id[2], request_id[3],
+                requester_pub[0], requester_pub[1],
+                requester_pub[2], requester_pub[3], recipient.out_path_len);
+  return friendmeshSendLinkControl(
+      recipient, friendmesh::FriendLinkAction::Accepted, request_id);
+}
+
+bool MyMesh::uiDenyFriendRequest(const uint8_t requester_pub[32],
+                                 const uint8_t request_id[8],
+                                 const char* requester_name,
+                                 const uint8_t* return_path,
+                                 uint8_t return_path_length) {
+  if (!requester_pub || !request_id) return false;
+  ContactInfo recipient = {};
+  memcpy(recipient.id.pub_key, requester_pub, PUB_KEY_SIZE);
+  strncpy(recipient.name,
+          requester_name && requester_name[0] ? requester_name : "Friend",
+          sizeof(recipient.name) - 1);
+  recipient.type = ADV_TYPE_CHAT;
+  recipient.out_path_len = OUT_PATH_UNKNOWN;
+  if (return_path_length != friendmesh::kFriendRequestReturnPathUnknown &&
+      mesh::Packet::isValidPathLen(return_path_length)) {
+    const size_t pathBytes =
+        static_cast<size_t>(return_path_length & 0x3F) *
+        static_cast<size_t>((return_path_length >> 6) + 1);
+    if (pathBytes <= friendmesh::kFriendRequestReturnPathMaxBytes &&
+        (pathBytes == 0 || return_path)) {
+      recipient.out_path_len = (return_path_length & 0x3F) == 0
+          ? 0 : return_path_length;
+      if (pathBytes) memcpy(recipient.out_path, return_path, pathBytes);
+    }
+  }
+  FM_FRIEND_LOG("DECLINE UI send id=%02X%02X%02X%02X to=%02X%02X%02X%02X path=%u",
+                request_id[0], request_id[1], request_id[2], request_id[3],
+                requester_pub[0], requester_pub[1],
+                requester_pub[2], requester_pub[3], recipient.out_path_len);
+  const bool sent = friendmeshSendLinkControl(
+      recipient, friendmesh::FriendLinkAction::Declined, request_id);
+  if (sent) friendmeshRememberDeclinedRequest(request_id, requester_pub);
+  return sent;
+}
+
+bool MyMesh::uiRemoveFriendRelationship(const uint8_t friend_pub[32],
+                                        const char* friend_name) {
+  if (!friend_pub) return false;
+  ContactInfo recipient = {};
+  ContactInfo* stored = lookupContactByPubKey(friend_pub, PUB_KEY_SIZE);
+  if (stored) {
+    recipient = *stored;
+  } else {
+    memcpy(recipient.id.pub_key, friend_pub, PUB_KEY_SIZE);
+    strncpy(recipient.name,
+            friend_name && friend_name[0] ? friend_name : "Friend",
+            sizeof(recipient.name) - 1);
+    recipient.type = ADV_TYPE_CHAT;
+    recipient.out_path_len = OUT_PATH_UNKNOWN;
+  }
+  return friendmeshSendLinkControl(
+      recipient, friendmesh::FriendLinkAction::Removed, nullptr);
+}
+#endif
+
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
   if (data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {
@@ -2178,6 +5239,17 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
     } else if (_prefs.telemetry_mode_env == TELEM_MODE_ALLOW_FLAGS) {
       permissions |= cp & TELEM_PERM_ENVIRONMENT;
     }
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    // A joined FriendMesh peer may request our current position through the
+    // existing encrypted MeshCore contact-telemetry exchange. This is separate
+    // from advert_loc_policy: opening Group Map never forces a public advert.
+    // The request is authenticated as this contact by MeshCore, and removing or
+    // leaving the member locally removes this authorization on the next request.
+    if (friendmeshIsJoinedGroupPeer(contact.id.pub_key)) {
+      permissions |= TELEM_PERM_BASE | TELEM_PERM_LOCATION;
+    }
+#endif
 
     uint8_t perm_mask = ~(data[1]);    // NEW: first reserved byte (of 4), is now inverse mask to apply to permissions
     permissions &= perm_mask;
@@ -2648,6 +5720,9 @@ void MyMesh::begin(bool has_display) {
 
   // load persisted prefs
   _store->loadPrefs(_prefs, sensors.node_lat, sensors.node_lon);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  friendmeshLoadTransactionJournal();
+#endif
 
   // sanitise bad pref values
   _prefs.rx_delay_base = constrain(_prefs.rx_delay_base, 0, 20.0f);
@@ -4428,6 +7503,11 @@ void MyMesh::checkSerialInterface() {
 
 void MyMesh::loop() {
   BaseChatMesh::loop();
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  friendmeshRestoreTransactionUi();
+  friendmeshTickLinkControls();
+  friendmeshTickOutgoingRequests();
+#endif
 
   // Session keep-alives for logged-in servers (rooms). The core pinger sends the
   // 9-byte REQ_TYPE_KEEP_ALIVE (+ our sync_since) a room server expects; the ACK

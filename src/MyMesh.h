@@ -108,6 +108,15 @@
 
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+#include "friendmesh/people/FriendMeshBlePresence.h"
+#include "friendmesh/people/FriendMeshChannelInvite.h"
+#include "friendmesh/people/FriendMeshChannelRoster.h"
+#include "friendmesh/people/FriendMeshGroupStorage.h"
+#include "friendmesh/people/FriendMeshFriendRequest.h"
+#include "friendmesh/navigation/FriendMeshMeshCorePositionAdapter.h"
+#include "friendmesh/navigation/FriendMeshGroupCoordination.h"
+#endif
 
 /* -------------------------------------------------------------------------------------- */
 
@@ -120,8 +129,36 @@ struct AdvertPath {
   uint8_t path_len;
   char    name[32];
   uint32_t recv_timestamp;
+  uint32_t recv_millis;
   uint8_t path[MAX_PATH_SIZE];
 };
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+enum class FriendMeshInviteSendResult : uint8_t {
+  Sent = 0,
+  InvalidChannel,
+  InvalidContact,
+  AlreadyMember,
+  NotFreshDirect,
+  EncodeFailed,
+  SendFailed,
+};
+
+struct FriendMeshChannelMemberView {
+  uint8_t pubKey[PUB_KEY_SIZE];
+  char name[32];
+  friendmesh::ChannelRosterRole role;
+  friendmesh::ChannelRosterState state;
+  bool isSelf;
+  bool contactAvailable;
+};
+
+struct FriendMeshChannelPositionView {
+  uint32_t contactIndex;
+  friendmesh::PositionRecord position;
+  bool stale;
+};
+#endif
 
 class MyMesh : public BaseChatMesh, public DataStoreHost {
 public:
@@ -225,6 +262,10 @@ public:
 #endif
 
 protected:
+  // FriendMesh receive diagnostics wrap the normal MeshCore dispatcher without
+  // reimplementing it. The override only records entry/exit state, then calls
+  // BaseChatMesh::onRecvPacket exactly once.
+  mesh::DispatcherAction onRecvPacket(mesh::Packet* packet) override;
   float getAirtimeBudgetFactor() const override;
   int getInterferenceThreshold() const override;
   int calcRxDelay(float score, uint32_t air_time) const override;
@@ -245,6 +286,8 @@ protected:
   void sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis=0) override;
 
   void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override;
+  void logTx(mesh::Packet* packet, int len) override;
+  void logTxFail(mesh::Packet* packet, int len) override;
   bool isAutoAddEnabled() const override;
   bool shouldAutoAddContactType(uint8_t type) const override;
   bool shouldOverwriteWhenFull() const override;
@@ -265,6 +308,12 @@ protected:
                            const uint8_t *sender_prefix, const char *text) override;
   void onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                             const char *text) override;
+  void onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt,
+                         uint16_t data_type, const uint8_t *data,
+                         size_t data_len) override;
+  void onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret,
+                      const mesh::Identity& sender, uint8_t* data,
+                      size_t len) override;
 
   uint8_t onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                            uint8_t len, uint8_t *reply) override;
@@ -297,6 +346,7 @@ public:
    *  via AbstractUITask::onPingReply when the reply arrives.
    *  Returns the MSG_SEND_* result code. */
   int sendStatusPingForUI(ContactInfo& recipient) {
+    if (hasUIPingPending()) return MSG_SEND_FAILED;
     uint32_t tag = 0, est = 0;
     /* Clear any stale serial-side status pending so the legacy match doesn't
      * eat our reply before the UI hook sees it. */
@@ -320,6 +370,7 @@ public:
    *  No-op if the LOGIN packet pool is empty; falls through to send the
    *  STATUS REQ anyway so a repeater that already knows us still replies. */
   int sendStatusPingWithGuestLoginForUI(ContactInfo& recipient) {
+    if (hasUIPingPending()) return MSG_SEND_FAILED;
     uint32_t login_est = 0;
     sendLogin(recipient, "", login_est);
     return sendStatusPingForUI(recipient);
@@ -328,6 +379,7 @@ public:
   /** Same chained-login flavour for telemetry — repeaters and sensors also
    *  require ACL membership for REQ_TYPE_GET_TELEMETRY_DATA. */
   int sendTelemetryRequestWithGuestLoginForUI(ContactInfo& recipient) {
+    if (hasUIPingPending()) return MSG_SEND_FAILED;
     uint32_t login_est = 0;
     sendLogin(recipient, "", login_est);
     return sendTelemetryRequestForUI(recipient);
@@ -347,6 +399,7 @@ public:
    *  auto-poll keeps the immediate chained send above (a single arm slot can't
    *  serve its multi-node loop, and a missed poll just retries next interval). */
   int uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind) {
+    if (hasUIPingPending()) return MSG_SEND_FAILED;
     uint32_t login_est = 0;
     int r = sendLogin(recipient, "", login_est);
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
@@ -427,7 +480,9 @@ public:
     _ui_login_then_kind = UiReqKind::None;
   }
   /** True if a UI ping is still waiting on a reply. */
-  bool hasUIPingPending() const { return _ui_pending_status != 0; }
+  bool hasUIPingPending() const {
+    return _ui_pending_status != 0 || _ui_login_then != 0;
+  }
 
   /** Register an expected ACK hash that came out of a touch-UI sendMessage
    *  call, so MyMesh::processAck can match the inbound ACK and dispatch
@@ -464,6 +519,8 @@ public:
   uint8_t  _echo_hop_n[UI_ECHO_SLOTS]  = {0};                 // count, 0..ECHO_MAX_HOPS
   uint8_t  _echo_idx = 0;
   uint32_t _last_sent_fp = 0;
+  uint8_t  _last_sent_packet_hash[8] = {0};
+  uint8_t  _last_rx_packet_hash[8] = {0};
   uint8_t  _last_rx_path[32] = {0};
   uint8_t  _last_rx_path_n  = 0;
   uint16_t _last_rx_scope     = 0;     // transport_codes[0] of the last RX flood ("scope")
@@ -518,6 +575,12 @@ public:
 
   /** Fingerprint of the most-recently originated flood TXT payload (0 if none). */
   uint32_t uiLastSentFp() const { return _last_sent_fp; }
+  void uiLastSentPacketHash(uint8_t out[8]) const {
+    if (out) memcpy(out, _last_sent_packet_hash, 8);
+  }
+  void lastRxPacketHash(uint8_t out[8]) const {
+    if (out) memcpy(out, _last_rx_packet_hash, 8);
+  }
 
   /** Echoes (repeater re-broadcasts) heard of the flood TXT with this payload
    *  fingerprint. 0 if unknown / evicted from the ring. */
@@ -565,6 +628,12 @@ public:
    *  synchronously right before the newMsg* notification. */
   void uiStashRxMeta(mesh::Packet* pkt) {
     _last_rx_path_n = 0;
+    memset(_last_rx_packet_hash, 0, sizeof(_last_rx_packet_hash));
+    if (pkt) {
+      uint8_t hash[MAX_HASH_SIZE] = {};
+      pkt->calculatePacketHash(hash);
+      memcpy(_last_rx_packet_hash, hash, sizeof(_last_rx_packet_hash));
+    }
     if (pkt && pkt->isRouteFlood()) {
       int nb = (int)pkt->getPathHashCount() * (int)pkt->getPathHashSize();
       if (nb > (int)sizeof(_last_rx_path)) nb = (int)sizeof(_last_rx_path);
@@ -717,6 +786,7 @@ public:
    *  override the telemetry hook.
    *  Returns the MSG_SEND_* result code. */
   int sendTelemetryRequestForUI(ContactInfo& recipient) {
+    if (hasUIPingPending()) return MSG_SEND_FAILED;
     uint32_t tag = 0, est = 0;
     pending_telemetry = 0;
     int r = sendRequest(recipient, REQ_TYPE_GET_TELEMETRY_DATA, tag, est);
@@ -784,6 +854,67 @@ public:
     return true;
   }
 
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  /** Deliver an existing MeshCore private-channel key through the existing
+   *  encrypted contact-message protocol. The contact must have a fresh
+   *  zero-hop advert, and the packet is forced to a zero-length direct route. */
+  FriendMeshInviteSendResult uiSendFriendMeshChannelInvite(
+      int channel_idx, const uint8_t recipient_pub[PUB_KEY_SIZE]);
+  /** True only when this ordinary MeshCore channel has explicit persisted
+   *  FriendMesh group metadata and the local identity is a joined member. */
+  bool uiIsFriendMeshPrivateGroup(int channel_idx);
+  /** True when the group roster can be decoded (including a valid legacy
+   *  read-only source). False means group features must show recovery-needed
+   *  rather than interpreting the channel as an empty roster. */
+  bool uiFriendMeshGroupStorageReadable(int channel_idx);
+  /** Explicitly opt an existing private MeshCore channel into FriendMesh group
+   *  behavior by creating its initial self-admin roster. */
+  bool uiCreateFriendMeshPrivateGroup(int channel_idx);
+  bool uiIsFriendMeshChannelMemberJoined(
+      int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE]);
+  size_t uiGetFriendMeshChannelPositions(
+      int channel_idx, FriendMeshChannelPositionView* destination,
+      size_t capacity, uint32_t stale_after_seconds =
+          friendmesh::kDefaultPositionStaleSeconds);
+  bool uiIsFreshZeroHopContact(const uint8_t pub_key[PUB_KEY_SIZE],
+                               uint32_t max_age_ms = 120000) const;
+  bool uiAcceptFriendMeshChannelInvite(
+      int channel_idx, const uint8_t inviter_pub[PUB_KEY_SIZE],
+      bool& notice_sent);
+  bool uiFinalizeFriendMeshBleAdminJoin(
+      int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE],
+      const char* member_name);
+  bool uiInstallFriendMeshBleGroup(
+      const char* channel_name, const uint8_t channel_secret[16],
+      const uint8_t admin_pub[PUB_KEY_SIZE], const char* admin_name,
+      int& channel_idx);
+  size_t uiGetFriendMeshChannelMembers(
+      int channel_idx, FriendMeshChannelMemberView* destination,
+      size_t capacity, bool& rekey_required);
+  bool uiRemoveFriendMeshChannelMember(
+      int channel_idx, const uint8_t member_pub[PUB_KEY_SIZE]);
+  /** Admin-only cooperative disband. Each joined member is sent the existing
+   *  encrypted Removed control before this device deletes its local channel.
+   *  Delivery is best-effort until the Phase 7 durable signed protocol. */
+  bool uiDisbandFriendMeshChannel(int channel_idx, uint8_t& notices_sent,
+                                  uint8_t& notices_failed);
+  bool uiLeaveFriendMeshChannel(int channel_idx, bool& notice_sent);
+  bool uiGetFriendMeshGroupCoordination(
+      int channel_idx, friendmesh::GroupCoordinationState& state);
+  bool uiSendFriendMeshGroupCoordination(
+      int channel_idx, friendmesh::GroupCoordinationAction action,
+      friendmesh::GroupCoordinationKind kind =
+          friendmesh::GroupCoordinationKind::Meetup,
+      friendmesh::GroupCoordinationResponse response =
+          friendmesh::GroupCoordinationResponse::None,
+      const char* note = nullptr, uint32_t expires_after_seconds = 3600);
+  /** Notify one joined member that this device opened Friend Compass toward
+   *  them. Uses the existing authenticated encrypted contact-message path and
+   *  reports straight-line distance to their latest observed position. */
+  bool uiSendFriendMeshCompassStarted(
+      int channel_idx, const uint8_t recipient_pub[PUB_KEY_SIZE]);
+#endif
+
   /** Wipe the cached return path for a contact so the next outgoing message
    *  re-floods instead of routing through a stale hop list. Returns false
    *  when the contact isn't in the table any more. */
@@ -809,6 +940,30 @@ public:
     saveContacts();
     return true;
   }
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  bool uiSendFriendRequest(int channel_idx,
+                           const uint8_t target_message_hash[8],
+                           const uint8_t* incoming_path,
+                           uint8_t encoded_path_len,
+                           const char* target_name = nullptr);
+  friendmesh::BleFriendRequestResult uiSendNearbyFriendRequest(
+      const friendmesh::BlePresencePeer& peer,
+      const friendmesh::BleFriendIdentity& target);
+  bool uiHandleNearbyFriendRequest(const uint8_t* encoded, size_t length);
+  bool uiAcceptFriendRequest(const uint8_t requester_pub[32],
+                             const uint8_t request_id[8],
+                             const char* requester_name,
+                             const uint8_t* return_path,
+                             uint8_t return_path_length);
+  bool uiDenyFriendRequest(const uint8_t requester_pub[32],
+                           const uint8_t request_id[8],
+                           const char* requester_name,
+                           const uint8_t* return_path,
+                           uint8_t return_path_length);
+  bool uiRemoveFriendRelationship(const uint8_t friend_pub[32],
+                                  const char* friend_name);
+#endif
 
   /** Manually add a chat-type peer to contacts[] from a raw 32-byte pubkey
    *  + display name. Used by the Contacts tab "+" → "Add by pubkey" flow
@@ -860,6 +1015,14 @@ public:
   bool uiDeleteChannel(int idx) {
 #ifdef MAX_GROUP_CHANNELS
     if (idx < 0 || idx >= MAX_GROUP_CHANNELS) return false;
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    // Derive and remove feature blobs before clearing the channel secret that
+    // namespaces them. Deletion is deliberately idempotent for ordinary
+    // channels and callers that already removed the roster.
+    const bool rosterDeleted = friendmeshDeleteChannelRoster(idx);
+    const bool coordinationDeleted = friendmeshDeleteGroupCoordination(idx);
+    if (!rosterDeleted || !coordinationDeleted) return false;
+#endif
     ChannelDetails empty{};
     if (!setChannel(idx, empty)) return false;
     saveChannels();
@@ -902,6 +1065,49 @@ public:
   bool isRadioReceiving() const { return _radio && _radio->isReceiving(); }
 
 private:
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  bool friendmeshLoadChannelRoster(int channel_idx,
+                                   friendmesh::ChannelRoster& roster,
+                                   bool initialize_self_admin);
+  bool friendmeshSaveChannelRoster(int channel_idx,
+                                   const friendmesh::ChannelRoster& roster);
+  bool friendmeshDeleteChannelRoster(int channel_idx);
+  bool friendmeshChannelTag(int channel_idx,
+                            uint8_t tag[friendmesh::kChannelControlTagBytes],
+                            uint8_t blob_key[8] = nullptr);
+  int friendmeshFindChannelByTag(
+      const uint8_t tag[friendmesh::kChannelControlTagBytes]);
+  bool friendmeshSendChannelControl(
+      const ContactInfo& recipient, friendmesh::ChannelControlType type,
+      const uint8_t tag[friendmesh::kChannelControlTagBytes],
+      bool force_direct);
+  bool friendmeshBroadcastChannelRoster(
+      int channel_idx, const friendmesh::ChannelRoster& roster);
+  bool friendmeshApplyChannelRoster(
+      int channel_idx, const friendmesh::ChannelRoster& incoming);
+  bool friendmeshCoordinationBlobKey(int channel_idx, uint8_t blob_key[8]);
+  bool friendmeshLoadGroupCoordination(
+      int channel_idx, friendmesh::GroupCoordinationState& state);
+  bool friendmeshSaveGroupCoordination(
+      int channel_idx, const friendmesh::GroupCoordinationState& state);
+  bool friendmeshDeleteGroupCoordination(int channel_idx);
+  bool friendmeshGroupStorageBinding(
+      int channel_idx,
+      uint8_t binding[friendmesh::kGroupStorageBindingBytes]);
+  friendmesh::ResultCode friendmeshLoadGroupStorageRecord(
+      int channel_idx, friendmesh::GroupStorageRecord& record,
+      uint8_t* active_slot = nullptr, bool* any_slot_present = nullptr);
+  bool friendmeshSaveGroupStorageRecord(
+      int channel_idx, friendmesh::GroupStorageRecord& record);
+  bool friendmeshDeleteGroupStorageRecord(int channel_idx);
+  bool friendmeshPopulateStoredRoster(
+      const friendmesh::ChannelRoster& roster,
+      friendmesh::GroupStorageRecord& record);
+  /** True when this contact is locally recorded as Joined in at least one
+   *  FriendMesh channel. Used as the authorization boundary for responding
+   *  to an existing MeshCore telemetry request with our position. */
+  bool friendmeshIsJoinedGroupPeer(const uint8_t pub_key[PUB_KEY_SIZE]);
+#endif
   void writeOKFrame();
   void writeErrFrame(uint8_t err_code);
   void writeDisabledFrame();
@@ -1061,6 +1267,137 @@ private:
   // last one resolves or times out.
   uint32_t _ui_trace_ping_tag = 0;
   uint32_t _ui_sig_probe_tag  = 0;   // in-flight silent signal probe (updates _ui_sig_* only, no popup)
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  static constexpr uint8_t FRIEND_REQUEST_SENT_MESSAGE_SLOTS = 16;
+  struct FriendRequestSentMessage {
+    uint8_t messageHash[8];
+    uint8_t channelHash;
+    uint32_t sentMillis;
+  };
+  FriendRequestSentMessage _friend_request_sent_messages[
+      FRIEND_REQUEST_SENT_MESSAGE_SLOTS] = {};
+  uint8_t _friend_request_sent_message_head = 0;
+  static constexpr uint8_t FRIEND_REQUEST_OUTGOING_SLOTS = 8;
+  struct FriendRequestOutgoing {
+    uint8_t requestId[8];
+    uint8_t targetMessageHash[8];
+    uint32_t sentMillis;
+    int8_t channelIndex;
+    char peerName[friendmesh::kFriendRequestNameBytes];
+    uint8_t directPathLength;
+    uint8_t directPath[MAX_PATH_SIZE];
+    uint8_t encodedRequest[friendmesh::kFriendRequestEncodedBytes];
+    uint8_t floodAttempts;
+    uint32_t nextFallbackMillis;
+  };
+  FriendRequestOutgoing _friend_request_outgoing[
+      FRIEND_REQUEST_OUTGOING_SLOTS] = {};
+  uint8_t _friend_request_outgoing_head = 0;
+  static constexpr uint8_t FRIEND_REQUEST_COMPLETED_SLOTS = 8;
+  struct FriendRequestCompleted {
+    uint8_t requestId[friendmesh::kFriendRequestIdBytes];
+    uint8_t peerPub[PUB_KEY_SIZE];
+    uint8_t directPathLength;
+    uint8_t directPath[MAX_PATH_SIZE];
+    uint32_t completedMillis;
+  };
+  FriendRequestCompleted _friend_request_completed[
+      FRIEND_REQUEST_COMPLETED_SLOTS] = {};
+  uint8_t _friend_request_completed_head = 0;
+  static constexpr uint8_t FRIEND_REQUEST_DECLINED_SLOTS = 8;
+  struct FriendRequestDeclined {
+    uint8_t requestId[friendmesh::kFriendRequestIdBytes];
+    uint8_t requesterPub[PUB_KEY_SIZE];
+    uint32_t declinedMillis;
+  };
+  FriendRequestDeclined _friend_request_declined[
+      FRIEND_REQUEST_DECLINED_SLOTS] = {};
+  uint8_t _friend_request_declined_head = 0;
+  static constexpr uint8_t FRIEND_LINK_PENDING_SLOTS = 4;
+  struct FriendLinkPending {
+    bool active;
+    friendmesh::FriendLinkAction action;
+    uint8_t requestId[friendmesh::kFriendRequestIdBytes];
+    uint8_t recipientPub[PUB_KEY_SIZE];
+    char recipientName[friendmesh::kFriendRequestNameBytes];
+    uint8_t pathLength;
+    uint8_t path[MAX_PATH_SIZE];
+    uint8_t attempts;
+    uint8_t floodAttempts;
+    bool allowFloodFallback;
+    uint32_t nextAttemptMillis;
+  };
+  FriendLinkPending _friend_link_pending[FRIEND_LINK_PENDING_SLOTS] = {};
+  uint8_t _friend_link_pending_head = 0;
+  friendmesh::FriendTransactionLedger _friend_transaction_ledger;
+  uint32_t _friend_transaction_generation = 0;
+  uint8_t _friend_transaction_slot = 0;
+  bool _friend_transaction_journal_ready = false;
+  bool _friend_transaction_restore_notified = false;
+  uint32_t _friendmesh_anon_callback_count = 0;
+  bool friendmeshLoadTransactionJournal();
+  bool friendmeshCommitTransactionJournal();
+  bool friendmeshBeginTransaction(
+      const uint8_t transaction_id[8],
+      friendmesh::FriendTransactionKind kind, const uint8_t* peer_pub,
+      const char* peer_name, uint8_t flags, uint32_t expires_at);
+  bool friendmeshReserveDirectAttempt(const uint8_t transaction_id[8]);
+  bool friendmeshReserveFlood(const uint8_t transaction_id[8]);
+  void friendmeshRestoreTransactionUi();
+  void friendmeshRememberSentChannelMessage(
+      const mesh::GroupChannel& channel, mesh::Packet* packet);
+  bool friendmeshSentChannelMessageMatches(
+      const mesh::GroupChannel& channel, const uint8_t message_hash[8]) const;
+  bool friendmeshRememberOutgoingRequest(
+      const uint8_t request_id[8], const uint8_t target_hash[8],
+      int channel_idx, const char* peer_name, const uint8_t* direct_path,
+      uint8_t direct_path_length, const uint8_t* encoded_request);
+  FriendRequestOutgoing* friendmeshFindOutgoingRequest(
+      const uint8_t request_id[8]);
+  const FriendRequestOutgoing* friendmeshFindOutgoingRequest(
+      const uint8_t request_id[8]) const;
+  bool friendmeshConsumeOutgoingRequest(const uint8_t request_id[8]);
+  bool friendmeshOutgoingRequestMatches(const uint8_t request_id[8]) const;
+  bool friendmeshCompletedRequestMatches(
+      const uint8_t request_id[8], const uint8_t peer_pub[PUB_KEY_SIZE]) const;
+  void friendmeshRememberCompletedRequest(
+      const uint8_t request_id[8], const uint8_t peer_pub[PUB_KEY_SIZE],
+      const uint8_t* direct_path, uint8_t direct_path_length);
+  bool friendmeshDeclinedRequestMatches(
+      const uint8_t request_id[8],
+      const uint8_t requester_pub[PUB_KEY_SIZE]) const;
+  void friendmeshRememberDeclinedRequest(
+      const uint8_t request_id[8],
+      const uint8_t requester_pub[PUB_KEY_SIZE]);
+  void friendmeshHandleAcceptedControl(
+      const mesh::Identity& sender, const uint8_t request_id[8],
+      const char* peer_name, bool legacy, mesh::Packet* packet,
+      const uint8_t* ack_path = nullptr,
+      uint8_t ack_path_length = friendmesh::kFriendRequestReturnPathUnknown);
+  void friendmeshHandleDeclinedControl(
+      const mesh::Identity& sender, const uint8_t request_id[8],
+      const char* peer_name);
+  bool friendmeshTransmitLinkControl(
+      const ContactInfo& recipient, friendmesh::FriendLinkAction action,
+      const uint8_t request_id[8], bool allow_flood);
+  bool friendmeshQueueLinkControl(
+      const ContactInfo& recipient, friendmesh::FriendLinkAction action,
+      const uint8_t request_id[8]);
+  bool friendmeshAcknowledgeLinkControl(
+      const mesh::Identity& sender, const uint8_t request_id[8],
+      mesh::Packet* received_packet);
+  void friendmeshConsumeLinkAcknowledgement(
+      const uint8_t sender_pub[PUB_KEY_SIZE], const uint8_t request_id[8]);
+  void friendmeshTickLinkControls();
+  void friendmeshTickOutgoingRequests();
+  void friendmeshNotifyTransaction(
+      const uint8_t transaction_id[8],
+      friendmesh::FriendTransactionKind kind, const char* peer_name,
+      friendmesh::FriendTransactionStage stage, uint8_t floods_used = 0);
+  bool friendmeshSendLinkControl(
+      const ContactInfo& recipient, friendmesh::FriendLinkAction action,
+      const uint8_t request_id[8]);
+#endif
 };
 
 #if defined(ESP32_PLATFORM)

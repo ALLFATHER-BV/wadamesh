@@ -12,6 +12,9 @@
 #endif
 
 #include "NodePrefs.h"
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+#include "friendmesh/people/FriendMeshFriendRequest.h"
+#endif
 
 // Forward decl — defined in helpers/ContactInfo.h, included by MyMesh.h users.
 struct ContactInfo;
@@ -161,6 +164,82 @@ public:
    *  via CMD_SET_CHANNEL). Default: no-op; touch UI overrides to bump the
    *  periodic thread-refresh deadline so the new entry shows up immediately. */
   virtual void onThreadsChanged() {}
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  virtual bool friendMeshRequestsEnabled() const { return false; }
+  virtual bool friendMeshRequesterBlocked(
+      const uint8_t requester_pub[32]) const {
+    (void)requester_pub; return false;
+  }
+  virtual void onFriendMeshFriendRequest(const uint8_t request_id[8],
+                                         const uint8_t requester_pub[32],
+                                         const char* requester_name,
+                                         uint32_t created_at,
+                                         uint32_t expires_at,
+                                         const uint8_t* return_path,
+                                         uint8_t return_path_length) {
+    (void)request_id; (void)requester_pub; (void)requester_name;
+    (void)created_at; (void)expires_at; (void)return_path;
+    (void)return_path_length;
+  }
+  virtual bool onFriendMeshFriendAccepted(const uint8_t request_id[8],
+                                          const uint8_t responder_pub[32],
+                                          const char* responder_name) {
+    (void)request_id; (void)responder_pub; (void)responder_name;
+    return false;
+  }
+  /** The requester authenticated and acknowledged our acceptance. Return true
+   *  only after the requester has been durably promoted from pending request
+   *  to Friend; a false result leaves the acceptance retry active. */
+  virtual bool onFriendMeshFriendAcceptanceAcknowledged(
+      const uint8_t request_id[8], const uint8_t requester_pub[32],
+      const char* requester_name) {
+    (void)request_id; (void)requester_pub; (void)requester_name;
+    return false;
+  }
+  virtual void onFriendMeshFriendDeclined(const uint8_t request_id[8],
+                                          const uint8_t responder_pub[32],
+                                          const char* responder_name) {
+    (void)request_id; (void)responder_pub; (void)responder_name;
+  }
+  virtual void onFriendMeshFriendRemoved(const uint8_t remover_pub[32]) {
+    (void)remover_pub;
+  }
+  virtual void onFriendMeshTransactionProgress(
+      const uint8_t transaction_id[8],
+      friendmesh::FriendTransactionKind kind, const char* peer_name,
+      friendmesh::FriendTransactionStage stage, uint8_t floods_used,
+      uint8_t flood_limit) {
+    (void)transaction_id; (void)kind; (void)peer_name; (void)stage;
+    (void)floods_used; (void)flood_limit;
+  }
+  virtual void onFriendMeshTransactionRecoveryRequired() {}
+  /** A bounded FriendMesh channel invitation arrived inside an authenticated
+   *  MeshCore contact message whose route was verified as direct/zero-hop.
+   *  The UI must require explicit acceptance before saving the channel. */
+  virtual void onFriendMeshChannelInvite(const ContactInfo& from,
+                                         const char* channel_name,
+                                         const uint8_t secret16[16]) {
+    (void)from; (void)channel_name; (void)secret16;
+  }
+  /** Local channel-roster metadata changed after a join, leave, removal, or
+   *  invitation status update. Control envelopes are not exposed as chat. */
+  virtual void onFriendMeshChannelRosterChanged(const char* channel_name,
+                                                const char* status) {
+    (void)channel_name; (void)status;
+  }
+  virtual void onFriendMeshCoordinationChanged(const char* channel_name,
+                                               const char* status,
+                                               bool urgent) {
+    (void)channel_name; (void)status; (void)urgent;
+  }
+  /** A joined group member started Friend Compass toward this device. The
+   *  authenticated control envelope was consumed before normal DM delivery. */
+  virtual void onFriendMeshCompassStarted(const ContactInfo& starter,
+                                          const char* channel_name,
+                                          uint32_t distance_meters) {
+    (void)starter; (void)channel_name; (void)distance_meters;
+  }
+#endif
   /** ACK arrived for a previously-sent DM. `ack_hash` is the 4-byte
    *  expected-ack value the dispatcher returned from `sendMessage`. Touch
    *  UI flips the matching outgoing bubble to DELIVERED; default no-op for

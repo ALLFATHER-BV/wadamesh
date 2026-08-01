@@ -46,6 +46,7 @@ const char* DataStore::_rp(const char* name) {
 }
 
 File DataStore::openWrite(FILESYSTEM* fs, const char* filename) {
+  if (!_writesEnabled) return File();
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   fs->remove(_rp(filename));
   return fs->open(_rp(filename), FILE_O_WRITE);
@@ -73,7 +74,7 @@ void DataStore::begin() {
   #endif
 #else
   // init 'blob store' support
-  _fs->mkdir("/bl");
+  if (_writesEnabled) _fs->mkdir("/bl");
   #if defined(ESP32)
   // One-time migration: when a secondary FS is active (an SD card is present)
   // but contacts/channels still live on the primary FS from an earlier build,
@@ -202,10 +203,12 @@ File DataStore::openRead(FILESYSTEM* fs, const char* filename) {
 }
 
 bool DataStore::removeFile(const char* filename) {
+  if (!_writesEnabled) return false;
   return _fs->remove(_rp(filename));
 }
 
 bool DataStore::removeFile(FILESYSTEM* fs, const char* filename) {
+  if (!_writesEnabled) return false;
   return fs->remove(filename);
 }
 
@@ -239,6 +242,7 @@ bool DataStore::loadMainIdentity(mesh::LocalIdentity &identity) {
 }
 
 bool DataStore::saveMainIdentity(const mesh::LocalIdentity &identity) {
+  if (!_writesEnabled) return false;
   return identity_store.save("_main", identity);
 }
 
@@ -267,8 +271,10 @@ void DataStore::loadPrefs(NodePrefs& prefs, double& node_lat, double& node_lon) 
     savePrefs(prefs, node_lat, node_lon);                // re-establish the main file
   } else if (probe("/node_prefs")) {
     loadPrefsInt("/node_prefs", prefs, node_lat, node_lon);
-    savePrefs(prefs, node_lat, node_lon);                // save to new filename
-    _fs->remove(_rp("/node_prefs")); // remove old
+    // Remove the legacy source only after the replacement was actually saved.
+    // In SD-required recovery mode writes are disabled, so the source must stay.
+    if (savePrefs(prefs, node_lat, node_lon))
+      _fs->remove(_rp("/node_prefs"));
   } else {
     MESH_DEBUG_PRINTLN("DataStore: no prefs file found — using defaults");
   }
@@ -424,7 +430,7 @@ void DataStore::loadContacts(DataStoreHost* host) {
   // Recover an atomic-save swap interrupted by power loss: if the live file is gone but the
   // fully-written temp survives, adopt it. A temp alongside an intact live file is a stale
   // leftover (save crashed after writing temp but before the swap) — keep live, drop temp.
-  {
+  if (_writesEnabled) {
     FILESYSTEM* cfs = _getContactsChannelsFS();
     char live[80], tmp[80];
     if (_root[0]) { snprintf(live, sizeof live, "%s/contacts3", _root);
@@ -468,6 +474,7 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
 }
 
 void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
+  if (!_writesEnabled) return;
 #if defined(ESP32)
   // A full/fragmenting contacts write on SPIFFS can trigger a multi-second GC
   // pass that disables the flash cache and starves core 0's idle task, tripping
@@ -608,6 +615,7 @@ void DataStore::loadChannels(DataStoreHost* host) {
 }
 
 void DataStore::saveChannels(DataStoreHost* host) {
+  if (!_writesEnabled) return;
   File file = openWrite(_getContactsChannelsFS(), "/channels2");
   if (file) {
     uint8_t channel_idx = 0;
@@ -761,14 +769,32 @@ void DataStore::migrateToSecondaryFS() {
 }
 
 uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
+  return getBlobByKey(key, key_len, dest_buf, 255);
+}
+
+uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len,
+                                uint8_t dest_buf[], size_t dest_capacity) {
+  const int length = getBlobByKeyBounded(key, key_len, dest_buf,
+                                         dest_capacity);
+  return length > 0 ? static_cast<uint8_t>(length) : 0;
+}
+
+int DataStore::getBlobByKeyBounded(const uint8_t key[], int key_len,
+                                   uint8_t dest_buf[],
+                                   size_t dest_capacity) {
+  if (!key || key_len <= 0 || !dest_buf || dest_capacity == 0) return -1;
   File file = openRead(_getContactsChannelsFS(), "/adv_blobs");
-  uint8_t len = 0;  // 0 = not found
+  int len = 0;  // 0 = not found
   if (file) {
     BlobRec tmp;
     while (file.read((uint8_t *) &tmp, sizeof(tmp)) == sizeof(tmp)) {
       if (memcmp(key, tmp.key, sizeof(tmp.key)) == 0) {  // only match by 7 byte prefix
-        len = tmp.len;
-        memcpy(dest_buf, tmp.data, len);
+        if (tmp.len <= dest_capacity) {
+          len = tmp.len;
+          memcpy(dest_buf, tmp.data, len);
+        } else {
+          len = -1;
+        }
         break;
       }
     }
@@ -778,6 +804,7 @@ uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_b
 }
 
 bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
+  if (!_writesEnabled) return false;
   if (len < PUB_KEY_SIZE+4+SIGNATURE_SIZE || len > MAX_ADVERT_PKT_LEN) return false;
   checkAdvBlobFile();
   File file = _getContactsChannelsFS()->open("/adv_blobs", FILE_O_WRITE);
@@ -826,15 +853,39 @@ inline void makeBlobPath(const uint8_t key[], int key_len, char* path, size_t pa
 }
 
 uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
+  return getBlobByKey(key, key_len, dest_buf, 255);
+}
+
+uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len,
+                                uint8_t dest_buf[], size_t dest_capacity) {
+  const int length = getBlobByKeyBounded(key, key_len, dest_buf,
+                                         dest_capacity);
+  return length > 0 ? static_cast<uint8_t>(length) : 0;
+}
+
+int DataStore::getBlobByKeyBounded(const uint8_t key[], int key_len,
+                                   uint8_t dest_buf[],
+                                   size_t dest_capacity) {
+  if (!key || key_len <= 0 || !dest_buf || dest_capacity == 0) return -1;
   char path[64];
   makeBlobPath(key, key_len, path, sizeof(path));
 
   if (_fs->exists(_rp(path))) {
     File f = openRead(_fs, path);
     if (f) {
-      int len = f.read(dest_buf, 255); // currently MAX 255 byte blob len supported!!
+      size_t len = 0;
+      while (len < dest_capacity) {
+        const int next = f.read(dest_buf + len, dest_capacity - len);
+        if (next <= 0) break;
+        len += static_cast<size_t>(next);
+      }
+      const bool overflow = f.read() >= 0;
       f.close();
-      return len;
+      if (overflow || len > UINT8_MAX) {
+        memset(dest_buf, 0, dest_capacity);
+        return -1;
+      }
+      return static_cast<int>(len);
     }
   }
   return 0; // not found
@@ -856,6 +907,7 @@ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src
 }
 
 bool DataStore::deleteBlobByKey(const uint8_t key[], int key_len) {
+  if (!_writesEnabled) return false;
   char path[64];
   makeBlobPath(key, key_len, path, sizeof(path));
 

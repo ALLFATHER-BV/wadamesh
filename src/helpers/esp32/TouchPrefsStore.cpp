@@ -8,6 +8,7 @@
 
 #include <Preferences.h>
 #include <SPIFFS.h>
+#include <esp_heap_caps.h>
 #include <stddef.h>   // offsetof
 #include <string.h>   // memcpy
 #include <vector>     // writeUseSdToSpiffsKv record list
@@ -16,6 +17,459 @@ static const char* TOUCH_NS = "touch";
 
 static SdNvsPrefs s_prefs;
 static bool s_begun = false;
+
+// Curated friends are deliberately separate from MeshCore contacts. Three
+// chunks keep every SdNvsPrefs value below its 2048-byte file-backend limit.
+// Chunk zero carries the authoritative total, so stale trailing chunks from an
+// interrupted shrink are never surfaced.
+static constexpr uint16_t FRIENDS_MAGIC = 0x5246;  // "FR"
+static constexpr uint8_t FRIENDS_VERSION = 1;
+static constexpr int FRIENDS_PER_CHUNK = 24;
+static constexpr int FRIENDS_CHUNKS =
+    (TOUCH_FRIENDS_MAX + FRIENDS_PER_CHUNK - 1) / FRIENDS_PER_CHUNK;
+struct __attribute__((packed)) FriendsChunk {
+  uint16_t magic;
+  uint8_t version;
+  uint8_t chunk;
+  uint8_t total;
+  uint8_t count;
+  TouchFriendRecord records[FRIENDS_PER_CHUNK];
+};
+static_assert(sizeof(FriendsChunk) <= 2048,
+              "Friend chunk must fit the SdNvsPrefs value limit");
+
+static void friendsKey(int chunk, char out[8]) {
+  snprintf(out, 8, "frnd%d", chunk);
+}
+
+static void* friendsScratch(size_t bytes) {
+  void* p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+  if (!p) p = heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
+  return p;
+}
+
+static int friendsReadSdAll(TouchFriendRecord* out, int capacity) {
+  if (!out || capacity <= 0) return 0;
+  if (!s_begun) touchPrefsBegin();
+  FriendsChunk* data = static_cast<FriendsChunk*>(friendsScratch(sizeof(FriendsChunk)));
+  if (!data) return 0;
+  memset(data, 0, sizeof(*data));
+  char key[8];
+  friendsKey(0, key);
+  if (!s_prefs.isKey(key)) { heap_caps_free(data); return 0; }
+  const size_t first_n = s_prefs.getBytes(key, data, sizeof(*data));
+  if (first_n < offsetof(FriendsChunk, records) ||
+      data->magic != FRIENDS_MAGIC || data->version != FRIENDS_VERSION ||
+      data->chunk != 0 || data->total > TOUCH_FRIENDS_MAX ||
+      data->count > FRIENDS_PER_CHUNK) {
+    heap_caps_free(data); return 0;
+  }
+  const uint8_t authoritative_total = data->total;
+  const int wanted = authoritative_total < capacity ? authoritative_total : capacity;
+  int copied = 0;
+  for (int chunk = 0; chunk < FRIENDS_CHUNKS && copied < wanted; ++chunk) {
+    if (chunk != 0) {
+      memset(data, 0, sizeof(*data));
+      friendsKey(chunk, key);
+      if (!s_prefs.isKey(key)) break;
+      const size_t n = s_prefs.getBytes(key, data, sizeof(*data));
+      if (n < offsetof(FriendsChunk, records)) break;
+    }
+    if (data->magic != FRIENDS_MAGIC || data->version != FRIENDS_VERSION ||
+        data->chunk != chunk || data->total != authoritative_total ||
+        data->count > FRIENDS_PER_CHUNK) break;
+    for (int i = 0; i < data->count && copied < wanted; ++i) {
+      out[copied] = data->records[i];
+      out[copied].alias[sizeof(out[copied].alias) - 1] = '\0';
+      ++copied;
+    }
+  }
+  heap_caps_free(data);
+  return copied;
+}
+
+static bool friendsWriteSdAll(const TouchFriendRecord* records, int count) {
+  if (count < 0 || count > TOUCH_FRIENDS_MAX) return false;
+  if (!SdNvsPrefs::fileWritesEnabled()) return false;
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) {
+    s_begun = s_prefs.begin(TOUCH_NS, true);
+    return false;
+  }
+  FriendsChunk* data = static_cast<FriendsChunk*>(friendsScratch(sizeof(FriendsChunk)));
+  if (!data) {
+    s_prefs.end();
+    s_begun = s_prefs.begin(TOUCH_NS, true);
+    return false;
+  }
+  bool ok = true;
+  // Write trailing chunks first and chunk zero last: chunk zero's total is the
+  // commit marker used by readers.
+  for (int chunk = FRIENDS_CHUNKS - 1; chunk >= 0; --chunk) {
+    char key[8]; friendsKey(chunk, key);
+    const int start = chunk * FRIENDS_PER_CHUNK;
+    const int remaining = count - start;
+    const int nrec = remaining <= 0 ? 0
+        : (remaining > FRIENDS_PER_CHUNK ? FRIENDS_PER_CHUNK : remaining);
+    if (nrec == 0 && chunk != 0) {
+      s_prefs.remove(key);
+      continue;
+    }
+    memset(data, 0, sizeof(*data));
+    data->magic = FRIENDS_MAGIC;
+    data->version = FRIENDS_VERSION;
+    data->chunk = static_cast<uint8_t>(chunk);
+    data->total = static_cast<uint8_t>(count);
+    data->count = static_cast<uint8_t>(nrec);
+    for (int i = 0; i < nrec; ++i) data->records[i] = records[start + i];
+    const size_t bytes = offsetof(FriendsChunk, records) +
+                         static_cast<size_t>(nrec) * sizeof(TouchFriendRecord);
+    if (s_prefs.putBytes(key, data, bytes) != bytes) ok = false;
+  }
+  heap_caps_free(data);
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
+
+// Missing-SD emergency directory. This is intentionally a separate, fixed-size
+// NVS blob: four keys + 15-byte aliases, no request history, routes, locations,
+// timestamps, or message metadata. It is the only FriendMesh long-term data
+// allowed to fall back internally when the required SD store is unavailable.
+static constexpr uint16_t LITE_FRIENDS_MAGIC = 0x4C46;  // "FL"
+static constexpr uint8_t LITE_FRIENDS_VERSION = 1;
+struct __attribute__((packed)) LiteFriendRecord {
+  uint8_t pub_key[32];
+  char alias[16];
+};
+struct __attribute__((packed)) LiteFriendsBlob {
+  uint16_t magic;
+  uint8_t version;
+  uint8_t count;
+  LiteFriendRecord records[TOUCH_FRIENDS_NO_SD_MAX];
+};
+static_assert(sizeof(LiteFriendsBlob) < 256,
+              "No-SD friend fallback must stay tiny");
+
+static int friendsReadLite(TouchFriendRecord* out, int capacity) {
+  if (!out || capacity <= 0) return 0;
+  Preferences p;
+  if (!p.begin("fm_lite", true)) return 0;
+  LiteFriendsBlob blob = {};
+  const size_t n = p.getBytes("friends", &blob, sizeof(blob));
+  p.end();
+  if (n < offsetof(LiteFriendsBlob, records) ||
+      blob.magic != LITE_FRIENDS_MAGIC ||
+      blob.version != LITE_FRIENDS_VERSION ||
+      blob.count > TOUCH_FRIENDS_NO_SD_MAX) return 0;
+  int copied = blob.count < capacity ? blob.count : capacity;
+  for (int i = 0; i < copied; ++i) {
+    memset(&out[i], 0, sizeof(out[i]));
+    memcpy(out[i].pub_key, blob.records[i].pub_key, 32);
+    strncpy(out[i].alias, blob.records[i].alias, sizeof(out[i].alias) - 1);
+  }
+  return copied;
+}
+
+static bool friendsWriteLite(const TouchFriendRecord* records, int count) {
+  if (count < 0 || count > TOUCH_FRIENDS_NO_SD_MAX) return false;
+  LiteFriendsBlob blob = {};
+  blob.magic = LITE_FRIENDS_MAGIC;
+  blob.version = LITE_FRIENDS_VERSION;
+  blob.count = static_cast<uint8_t>(count);
+  for (int i = 0; i < count; ++i) {
+    memcpy(blob.records[i].pub_key, records[i].pub_key, 32);
+    strncpy(blob.records[i].alias, records[i].alias,
+            sizeof(blob.records[i].alias) - 1);
+  }
+  Preferences p;
+  if (!p.begin("fm_lite", false)) return false;
+  const bool ok = p.putBytes("friends", &blob, sizeof(blob)) == sizeof(blob);
+  p.end();
+  return ok;
+}
+
+static void friendsClearLite() {
+  Preferences p;
+  if (p.begin("fm_lite", false)) { p.remove("friends"); p.end(); }
+}
+
+static int friendsReadAll(TouchFriendRecord* out, int capacity) {
+  if (!SdNvsPrefs::fileWritesEnabled()) return friendsReadLite(out, capacity);
+  int count = friendsReadSdAll(out, capacity);
+  // Surface emergency friends after SD returns. The next deliberate Friend
+  // mutation commits this merged list to SD and clears the emergency blob.
+  TouchFriendRecord lite[TOUCH_FRIENDS_NO_SD_MAX] = {};
+  const int liteCount = friendsReadLite(lite, TOUCH_FRIENDS_NO_SD_MAX);
+  for (int i = 0; i < liteCount && count < capacity; ++i) {
+    bool duplicate = false;
+    for (int j = 0; j < count; ++j)
+      if (memcmp(out[j].pub_key, lite[i].pub_key, 32) == 0) {
+        duplicate = true; break;
+      }
+    if (!duplicate) out[count++] = lite[i];
+  }
+  return count;
+}
+
+static bool friendsWriteAll(const TouchFriendRecord* records, int count) {
+  if (!SdNvsPrefs::fileWritesEnabled()) return friendsWriteLite(records, count);
+  const bool ok = friendsWriteSdAll(records, count);
+  if (ok) friendsClearLite();
+  return ok;
+}
+
+int touchPrefsCopyFriends(TouchFriendRecord* out, int capacity) {
+  return friendsReadAll(out, capacity);
+}
+
+bool touchPrefsGetFriend(const uint8_t pub_key[32], TouchFriendRecord* out) {
+  if (!pub_key) return false;
+  TouchFriendRecord* all = static_cast<TouchFriendRecord*>(
+      friendsScratch(sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX));
+  if (!all) return false;
+  const int count = friendsReadAll(all, TOUCH_FRIENDS_MAX);
+  bool found = false;
+  for (int i = 0; i < count; ++i) {
+    if (memcmp(all[i].pub_key, pub_key, 32) == 0) {
+      if (out) *out = all[i];
+      found = true;
+      break;
+    }
+  }
+  heap_caps_free(all);
+  return found;
+}
+
+bool touchPrefsSetFriend(const uint8_t pub_key[32], const char* alias) {
+  if (!pub_key) return false;
+  TouchFriendRecord* all = static_cast<TouchFriendRecord*>(
+      friendsScratch(sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX));
+  if (!all) return false;
+  memset(all, 0, sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX);
+  int count = friendsReadAll(all, TOUCH_FRIENDS_MAX);
+  int found = -1;
+  for (int i = 0; i < count; ++i) {
+    if (memcmp(all[i].pub_key, pub_key, 32) == 0) { found = i; break; }
+  }
+  if (found < 0) {
+    if (count >= touchPrefsFriendCapacity()) { heap_caps_free(all); return false; }
+    found = count++;
+    memcpy(all[found].pub_key, pub_key, 32);
+  }
+  const char* value = alias ? alias : "";
+  strncpy(all[found].alias, value, sizeof(all[found].alias) - 1);
+  all[found].alias[sizeof(all[found].alias) - 1] = '\0';
+  const bool ok = friendsWriteAll(all, count);
+  heap_caps_free(all);
+  return ok;
+}
+
+int touchPrefsFriendCapacity() {
+  return SdNvsPrefs::fileWritesEnabled()
+      ? TOUCH_FRIENDS_MAX : TOUCH_FRIENDS_NO_SD_MAX;
+}
+
+bool touchPrefsFriendsUsingInternalFallback() {
+  return !SdNvsPrefs::fileWritesEnabled();
+}
+
+// ---------------------------------------------------------------------------
+// Friend Requests: SD-persisted inbox, RAM-only while SD is unavailable.
+// ---------------------------------------------------------------------------
+static constexpr uint16_t FRIEND_REQUESTS_MAGIC = 0x5152;  // "RQ"
+static constexpr uint8_t FRIEND_REQUESTS_VERSION = 2;
+static constexpr const char* FRIEND_REQUESTS_KEY = "freqs";
+struct __attribute__((packed)) FriendRequestsBlob {
+  uint16_t magic;
+  uint8_t version;
+  uint8_t count;
+  TouchFriendRequestRecord records[TOUCH_FRIEND_REQUESTS_MAX];
+};
+static_assert(sizeof(FriendRequestsBlob) <= 2048,
+              "Friend request inbox must fit one prefs value");
+static TouchFriendRequestRecord s_ram_friend_requests[
+    TOUCH_FRIEND_REQUESTS_NO_SD_MAX] = {};
+static uint8_t s_ram_friend_request_count = 0;
+static bool s_ram_friend_requests_enabled = false;
+
+static int friendRequestsRead(TouchFriendRequestRecord* out, int capacity) {
+  if (!out || capacity <= 0) return 0;
+  if (!SdNvsPrefs::fileWritesEnabled()) {
+    int n = s_ram_friend_request_count < capacity
+        ? s_ram_friend_request_count : capacity;
+    for (int i = 0; i < n; ++i) out[i] = s_ram_friend_requests[i];
+    return n;
+  }
+  if (!s_begun) touchPrefsBegin();
+  FriendRequestsBlob* blob = static_cast<FriendRequestsBlob*>(
+      friendsScratch(sizeof(FriendRequestsBlob)));
+  if (!blob) return 0;
+  memset(blob, 0, sizeof(*blob));
+  const size_t got = s_prefs.getBytes(FRIEND_REQUESTS_KEY, blob, sizeof(*blob));
+  if (got < offsetof(FriendRequestsBlob, records) ||
+      blob->magic != FRIEND_REQUESTS_MAGIC ||
+      blob->version != FRIEND_REQUESTS_VERSION ||
+      blob->count > TOUCH_FRIEND_REQUESTS_MAX) {
+    heap_caps_free(blob); return 0;
+  }
+  const int n = blob->count < capacity ? blob->count : capacity;
+  for (int i = 0; i < n; ++i) {
+    out[i] = blob->records[i];
+    out[i].requester_name[sizeof(out[i].requester_name) - 1] = '\0';
+  }
+  heap_caps_free(blob);
+  return n;
+}
+
+static bool friendRequestsWrite(const TouchFriendRequestRecord* records,
+                                int count) {
+  if (count < 0) return false;
+  if (!SdNvsPrefs::fileWritesEnabled()) {
+    if (count > TOUCH_FRIEND_REQUESTS_NO_SD_MAX) return false;
+    memset(s_ram_friend_requests, 0, sizeof(s_ram_friend_requests));
+    for (int i = 0; i < count; ++i) s_ram_friend_requests[i] = records[i];
+    s_ram_friend_request_count = static_cast<uint8_t>(count);
+    return true;
+  }
+  if (count > TOUCH_FRIEND_REQUESTS_MAX) return false;
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) {
+    s_begun = s_prefs.begin(TOUCH_NS, true); return false;
+  }
+  FriendRequestsBlob* blob = static_cast<FriendRequestsBlob*>(
+      friendsScratch(sizeof(FriendRequestsBlob)));
+  if (!blob) {
+    s_prefs.end(); s_begun = s_prefs.begin(TOUCH_NS, true); return false;
+  }
+  memset(blob, 0, sizeof(*blob));
+  blob->magic = FRIEND_REQUESTS_MAGIC;
+  blob->version = FRIEND_REQUESTS_VERSION;
+  blob->count = static_cast<uint8_t>(count);
+  for (int i = 0; i < count; ++i) blob->records[i] = records[i];
+  const size_t bytes = offsetof(FriendRequestsBlob, records) +
+      static_cast<size_t>(count) * sizeof(TouchFriendRequestRecord);
+  const bool ok = s_prefs.putBytes(FRIEND_REQUESTS_KEY, blob, bytes) == bytes;
+  heap_caps_free(blob);
+  s_prefs.end(); s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
+
+bool touchPrefsGetFriendRequestsEnabled() {
+  if (!SdNvsPrefs::fileWritesEnabled()) return s_ram_friend_requests_enabled;
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getBool("freq_on", false);
+}
+
+bool touchPrefsSetFriendRequestsEnabled(bool enabled) {
+  if (!SdNvsPrefs::fileWritesEnabled()) {
+    s_ram_friend_requests_enabled = enabled;
+    if (!enabled) s_ram_friend_request_count = 0;
+    return true;
+  }
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) {
+    s_begun = s_prefs.begin(TOUCH_NS, true); return false;
+  }
+  const bool ok = s_prefs.putBool("freq_on", enabled) == 1;
+  s_prefs.end(); s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
+
+int touchPrefsCopyFriendRequests(TouchFriendRequestRecord* out, int capacity) {
+  return friendRequestsRead(out, capacity);
+}
+
+bool touchPrefsGetFriendRequest(const uint8_t request_id[8],
+                                TouchFriendRequestRecord* out) {
+  if (!request_id) return false;
+  TouchFriendRequestRecord* records = static_cast<TouchFriendRequestRecord*>(
+      friendsScratch(sizeof(TouchFriendRequestRecord) * TOUCH_FRIEND_REQUESTS_MAX));
+  if (!records) return false;
+  memset(records, 0,
+         sizeof(TouchFriendRequestRecord) * TOUCH_FRIEND_REQUESTS_MAX);
+  const int count = friendRequestsRead(records, TOUCH_FRIEND_REQUESTS_MAX);
+  bool found = false;
+  for (int i = 0; i < count; ++i) {
+    if (memcmp(records[i].request_id, request_id, 8) == 0) {
+      if (out) *out = records[i];
+      found = true;
+      break;
+    }
+  }
+  heap_caps_free(records);
+  return found;
+}
+
+bool touchPrefsSetFriendRequest(const TouchFriendRequestRecord& request) {
+  if (!request.requester_name[0]) return false;
+  TouchFriendRequestRecord* records = static_cast<TouchFriendRequestRecord*>(
+      friendsScratch(sizeof(TouchFriendRequestRecord) * TOUCH_FRIEND_REQUESTS_MAX));
+  if (!records) return false;
+  memset(records, 0,
+         sizeof(TouchFriendRequestRecord) * TOUCH_FRIEND_REQUESTS_MAX);
+  int count = friendRequestsRead(records, TOUCH_FRIEND_REQUESTS_MAX);
+  int found = -1;
+  for (int i = 0; i < count; ++i) {
+    if (memcmp(records[i].request_id, request.request_id, 8) == 0 ||
+        memcmp(records[i].requester_pub_key, request.requester_pub_key, 32) == 0) {
+      found = i; break;
+    }
+  }
+  if (found < 0) {
+    const int cap = SdNvsPrefs::fileWritesEnabled()
+        ? TOUCH_FRIEND_REQUESTS_MAX : TOUCH_FRIEND_REQUESTS_NO_SD_MAX;
+    if (count >= cap) { heap_caps_free(records); return false; }
+    found = count++;
+  }
+  records[found] = request;
+  records[found].requester_name[
+      sizeof(records[found].requester_name) - 1] = '\0';
+  const bool ok = friendRequestsWrite(records, count);
+  heap_caps_free(records);
+  return ok;
+}
+
+bool touchPrefsRemoveFriendRequest(const uint8_t request_id[8]) {
+  if (!request_id) return false;
+  TouchFriendRequestRecord* records = static_cast<TouchFriendRequestRecord*>(
+      friendsScratch(sizeof(TouchFriendRequestRecord) * TOUCH_FRIEND_REQUESTS_MAX));
+  if (!records) return false;
+  memset(records, 0,
+         sizeof(TouchFriendRequestRecord) * TOUCH_FRIEND_REQUESTS_MAX);
+  int count = friendRequestsRead(records, TOUCH_FRIEND_REQUESTS_MAX);
+  int found = -1;
+  for (int i = 0; i < count; ++i)
+    if (memcmp(records[i].request_id, request_id, 8) == 0) {
+      found = i; break;
+    }
+  if (found < 0) { heap_caps_free(records); return false; }
+  for (int i = found; i + 1 < count; ++i) records[i] = records[i + 1];
+  const bool ok = friendRequestsWrite(records, count - 1);
+  heap_caps_free(records);
+  return ok;
+}
+
+bool touchPrefsRemoveFriend(const uint8_t pub_key[32]) {
+  if (!pub_key) return false;
+  TouchFriendRecord* all = static_cast<TouchFriendRecord*>(
+      friendsScratch(sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX));
+  if (!all) return false;
+  memset(all, 0, sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX);
+  int count = friendsReadAll(all, TOUCH_FRIENDS_MAX);
+  int found = -1;
+  for (int i = 0; i < count; ++i) {
+    if (memcmp(all[i].pub_key, pub_key, 32) == 0) { found = i; break; }
+  }
+  if (found < 0) { heap_caps_free(all); return false; }
+  for (int i = found; i + 1 < count; ++i) all[i] = all[i + 1];
+  const bool ok = friendsWriteAll(all, count - 1);
+  heap_caps_free(all);
+  return ok;
+}
 
 // ---------------------------------------------------------------------------
 // Packed scalar config blob ("cfg")
@@ -1669,12 +2123,16 @@ bool touchPrefsSetIgnored(const uint8_t* pub_key6, bool ignored) {
     if (found >= 0) return true;
     if (n >= TOUCH_IGNORED_MAX) return false;   // cap reached, silently refuse
     memcpy(&buf[n * TOUCH_IGNORE_KEY_BYTES], pub_key6, TOUCH_IGNORE_KEY_BYTES);
-    ++n; ignWriteAll(buf, n); return true;
+    ++n;
+    return ignWriteAll(buf, n);  // true only when the block is durable
   } else {
     if (found < 0) return false;
     for (int i = found; i < n - 1; ++i)
       memcpy(&buf[i * TOUCH_IGNORE_KEY_BYTES], &buf[(i + 1) * TOUCH_IGNORE_KEY_BYTES], TOUCH_IGNORE_KEY_BYTES);
-    --n; ignWriteAll(buf, n); return false;
+    --n;
+    // API returns the resulting blocked state. A failed rewrite means the old
+    // block remains authoritative, so report true rather than lying "Unblocked".
+    return !ignWriteAll(buf, n);
   }
 }
 

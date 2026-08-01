@@ -75,6 +75,7 @@ public:
     uint16_t in_scope;       // transport scope (transport_codes[0]); valid iff MSG_META_HAS_SCOPE
     uint8_t  in_path_n;
     uint8_t  in_path[MAX_UI_PATH];
+    uint8_t  packet_hash[8]; // RAM-only exact MeshCore hash for Friend Request targeting
     char thread[MAX_THREAD_NAME + 1];
     char sender[MAX_SENDER_NAME + 1];
     char text[MAX_MSG_TEXT + 1];
@@ -215,6 +216,47 @@ public:
    *  and flip their delivery state to DELIV_DELIVERED so the chat detail
    *  shows the double-check. No-op if no match. */
   void onMessageAcked(uint32_t ack_hash);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  bool friendMeshRequestsEnabled() const override;
+  bool friendMeshRequesterBlocked(
+      const uint8_t requester_pub[32]) const override;
+  void onFriendMeshFriendRequest(const uint8_t request_id[8],
+                                 const uint8_t requester_pub[32],
+                                 const char* requester_name,
+                                 uint32_t created_at,
+                                 uint32_t expires_at,
+                                 const uint8_t* return_path,
+                                 uint8_t return_path_length) override;
+  bool onFriendMeshFriendAccepted(const uint8_t request_id[8],
+                                  const uint8_t responder_pub[32],
+                                  const char* responder_name) override;
+  bool onFriendMeshFriendAcceptanceAcknowledged(
+      const uint8_t request_id[8], const uint8_t requester_pub[32],
+      const char* requester_name) override;
+  void onFriendMeshFriendDeclined(const uint8_t request_id[8],
+                                  const uint8_t responder_pub[32],
+                                  const char* responder_name) override;
+  void onFriendMeshFriendRemoved(
+      const uint8_t remover_pub[32]) override;
+  void onFriendMeshTransactionProgress(
+      const uint8_t transaction_id[8],
+      friendmesh::FriendTransactionKind kind, const char* peer_name,
+      friendmesh::FriendTransactionStage stage, uint8_t floods_used,
+      uint8_t flood_limit) override;
+  void onFriendMeshTransactionRecoveryRequired() override;
+  bool sendFriendRequestForMessage(int msg_idx);
+  void onFriendMeshChannelInvite(const ContactInfo& from,
+                                 const char* channel_name,
+                                 const uint8_t secret16[16]) override;
+  void onFriendMeshChannelRosterChanged(const char* channel_name,
+                                        const char* status) override;
+  void onFriendMeshCoordinationChanged(const char* channel_name,
+                                       const char* status,
+                                       bool urgent) override;
+  void onFriendMeshCompassStarted(const ContactInfo& starter,
+                                  const char* channel_name,
+                                  uint32_t distance_meters) override;
+#endif
   /** Trace-ping reply landed: open a modal with the bidirectional SNR
    *  numbers. Called by MyMesh::onTraceRecv when the trace's tag matches
    *  the one we issued from the contact action sheet's Trace Ping button. */

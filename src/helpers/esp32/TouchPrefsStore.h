@@ -14,6 +14,47 @@ void touchPrefsBegin();
 // boot: an earlier pref read may have cached the blob from the legacy backend.
 void touchPrefsReload();
 
+/** Local-only curated friend directory. MeshCore's contact table remains the
+ *  protocol/routing directory; these records only decide who appears in the
+ *  Friends view and which private alias is rendered. Full public keys are used
+ *  so duplicate advertised names and short-prefix collisions stay distinct.
+ *  The active prefs backend is SD /meshcomod on T-Deck FriendMesh builds. */
+constexpr int TOUCH_FRIENDS_MAX = 64;
+constexpr int TOUCH_FRIENDS_NO_SD_MAX = 4;
+struct TouchFriendRecord {
+  uint8_t pub_key[32];
+  char alias[32];
+};
+int  touchPrefsCopyFriends(TouchFriendRecord* out, int capacity);
+bool touchPrefsGetFriend(const uint8_t pub_key[32], TouchFriendRecord* out);
+bool touchPrefsSetFriend(const uint8_t pub_key[32], const char* alias);
+bool touchPrefsRemoveFriend(const uint8_t pub_key[32]);
+int  touchPrefsFriendCapacity();
+bool touchPrefsFriendsUsingInternalFallback();
+
+/** Explicit-consent Friend Requests inbox. Requests are disabled by default.
+ *  With writable SD, at most 12 compact pending records are retained. Without
+ *  SD, at most four pending records exist in RAM for the current boot and are
+ *  never written internally; only four compact accepted Friend cards persist. */
+constexpr int TOUCH_FRIEND_REQUESTS_MAX = 12;
+constexpr int TOUCH_FRIEND_REQUESTS_NO_SD_MAX = 4;
+struct TouchFriendRequestRecord {
+  uint8_t request_id[8];
+  uint8_t requester_pub_key[32];
+  char requester_name[24];
+  uint32_t created_at;
+  uint32_t expires_at;
+  uint8_t return_path_length;
+  uint8_t return_path[14];
+};
+bool touchPrefsGetFriendRequestsEnabled();
+bool touchPrefsSetFriendRequestsEnabled(bool enabled);
+int  touchPrefsCopyFriendRequests(TouchFriendRequestRecord* out, int capacity);
+bool touchPrefsGetFriendRequest(const uint8_t request_id[8],
+                                TouchFriendRequestRecord* out);
+bool touchPrefsSetFriendRequest(const TouchFriendRequestRecord& request);
+bool touchPrefsRemoveFriendRequest(const uint8_t request_id[8]);
+
 /** Screen timeout in seconds; 0 = never sleep. Default 20. */
 uint16_t touchPrefsGetScreenTimeoutSecs();
 bool touchPrefsSetScreenTimeoutSecs(uint16_t seconds);

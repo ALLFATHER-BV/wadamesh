@@ -31,5 +31,9 @@ extern EnvironmentSensorManager sensors;
 // the bus. Returns nullptr if the build has no LoRa SPI pins.
 SPIClass* tdeckSharedSPI();
 
+// Rate-limited UART/NMEA health report used to distinguish absent GPS hardware,
+// a baud mismatch, satellite acquisition, and UI propagation failures.
+void tdeckGpsDiagLoop(bool gps_enabled);
+
 bool radio_init();
 mesh::LocalIdentity radio_new_identity();

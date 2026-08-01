@@ -24,6 +24,7 @@ class DataStore {
   // opts in, all data lives in one tidy folder on the SD card. ESP32 only.
   char _root[24] = "";
   char _rpbuf[80];
+  bool _writesEnabled = true;
   const char* _rp(const char* name);   // returns _root-prefixed path (name as-is when _root empty)
 
   void loadPrefsInt(const char *filename, NodePrefs& prefs, double& node_lat, double& node_lon);
@@ -51,6 +52,11 @@ public:
 #endif
   FILESYSTEM* getPrimaryFS() const { return _fs; }
   FILESYSTEM* getSecondaryFS() const { return _fsExtra; }
+  // Fail closed when a board policy requires removable storage but the card
+  // is unavailable. Existing recovery data may still be read; no identity,
+  // prefs, contacts, channels, or blobs are written to the fallback medium.
+  void setWritesEnabled(bool enabled) { _writesEnabled = enabled; }
+  bool writesEnabled() const { return _writesEnabled; }
   // Route contacts + channels (see _getContactsChannelsFS) to a different FS than identity/prefs.
   // Used on the Tanmatsu to keep identity/prefs on the (working) internal FFat while putting the
   // frequently-rewritten contacts/channels on the reliable SD card. Call before begin().
@@ -68,6 +74,13 @@ public:
   void saveChannels(DataStoreHost* host);
   void migrateToSecondaryFS();
   uint8_t getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]);
+  uint8_t getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[],
+                       size_t dest_capacity);
+  // Returns the byte count, 0 when absent, or -1 when the stored blob is
+  // malformed/too large for the supplied destination. This lets migrations
+  // distinguish "no old state" from "old state exists but is unsafe to read".
+  int getBlobByKeyBounded(const uint8_t key[], int key_len,
+                          uint8_t dest_buf[], size_t dest_capacity);
   bool putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len);
   bool deleteBlobByKey(const uint8_t key[], int key_len);
   File openRead(const char* filename);

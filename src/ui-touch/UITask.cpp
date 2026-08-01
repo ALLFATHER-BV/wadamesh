@@ -102,6 +102,9 @@
 #include <Utils.h>
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  #include "friendmesh/people/FriendMeshBlePresence.h"
+#endif
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
@@ -1600,10 +1603,12 @@ static lv_obj_t* s_addch_name_ta    = nullptr;
 static lv_obj_t* s_addch_secret_ta  = nullptr;
 static lv_obj_t* s_addch_hashtag_ta = nullptr;
 static lv_obj_t* s_addch_error_l    = nullptr;
+static bool      s_addch_friendmesh_group = false;
 // ---- Contacts → "Add" manual contact modal pointers ----
 static lv_obj_t* s_addct_pub_ta  = nullptr;
 static lv_obj_t* s_addct_name_ta = nullptr;
 static lv_obj_t* s_addct_error_l = nullptr;
+static lv_obj_t* s_friend_alias_ta = nullptr;
 
 // ---- Keyboard rotation (landscape typing) ----
 // Stored as the lv_disp_rot_t value: 0 = portrait, 1 = ROT_90, 3 = ROT_270.
@@ -1663,6 +1668,43 @@ static void* psAlloc(size_t n) {
     // entries look "used" and the Found list shows corrupt contacts.
     if (p) memset(p, 0, n);
     return p;
+}
+
+// Local-only Friends view. MeshCore contacts remain the operational directory;
+// this full-key index controls curation and private display aliases only.
+static TouchFriendRecord* s_friends =
+    (TouchFriendRecord*)psAlloc(sizeof(TouchFriendRecord) * TOUCH_FRIENDS_MAX);
+static int s_friends_count = 0;
+static bool s_friends_loaded = false;
+static uint32_t s_friends_revision = 0;
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+// Pending inbox cache lives in PSRAM. Without SD, TouchPrefsStore exposes only
+// four session-only entries; this larger UI buffer never makes them persistent.
+static TouchFriendRequestRecord* s_friend_requests =
+    (TouchFriendRequestRecord*)psAlloc(
+        sizeof(TouchFriendRequestRecord) * TOUCH_FRIEND_REQUESTS_MAX);
+static int s_friend_request_count = 0;
+static lv_obj_t* s_friend_requests_root = nullptr;
+#endif
+
+static void friendsReload() {
+  if (!s_friends) { s_friends_count = 0; s_friends_loaded = true; return; }
+  s_friends_count = touchPrefsCopyFriends(s_friends, TOUCH_FRIENDS_MAX);
+  s_friends_loaded = true;
+  ++s_friends_revision;
+}
+
+static const TouchFriendRecord* friendByKey(const uint8_t pub_key[32]) {
+  if (!pub_key) return nullptr;
+  if (!s_friends_loaded) friendsReload();
+  for (int i = 0; i < s_friends_count; ++i)
+    if (memcmp(s_friends[i].pub_key, pub_key, 32) == 0) return &s_friends[i];
+  return nullptr;
+}
+
+static const char* friendDisplayName(const ContactInfo& contact) {
+  const TouchFriendRecord* f = friendByKey(contact.id.pub_key);
+  return (f && f->alias[0]) ? f->alias : contact.name;
 }
 static LvDiscoveredEntry* s_discovered = (LvDiscoveredEntry*)psAlloc(sizeof(LvDiscoveredEntry) * DISCOVERED_MAX);
 static uint32_t s_discovered_seq = 0;
@@ -4298,6 +4340,7 @@ static void openBlockedUsersModal();                            // ignore-list m
 static bool overlayBlocksTabSwipe();   // theme/channel-scope pickers swallow tab swipes
 static bool drawerPopupOpen();         // popups floating over the app drawer (signal/mentions/power/files)
 static void refreshContactsList();
+static void setContactsFilterUi(uint8_t filter);
 static void contactsListForceRefresh();   // refresh past the no-change cache (e.g. fav toggle, where the count is unchanged)
 static void refreshThreadLists();
 static void refreshStatusLabels();
@@ -4316,7 +4359,10 @@ static double contactDistanceKm(double lat1, double lon1, double lat2, double lo
 static void openLogModalCb(lv_event_t* e);
 static void logModeRxCb(lv_event_t* e);
 static void logModeRawCb(lv_event_t* e);
-static void showConfirm(const char* msg, const char* ok_label, void (*on_confirm)());
+static void showConfirm(const char* msg, const char* ok_label,
+                        void (*on_confirm)(), void (*on_cancel)() = nullptr,
+                        const char* cancel_label = nullptr,
+                        bool close_runs_cancel = true);
 static void clipboardSet(const char* text, const char* tag);
 static void copyLabelLongPressCb(lv_event_t* e);
 static void taClearSelection(lv_obj_t* ta);   // clear composer text-selection before an insert
@@ -4331,6 +4377,9 @@ static void freeMapTiles();
 // Single entry point used by tabChangedCb. Recenters on self GPS and
 // rebuilds the tile grid. Defined alongside the map state below.
 static void onMapTabActivated();
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static void friendmeshStopGroupLocationRefresh();
+#endif
 static void clearRouteReplay();        // drop the message-route overlay (defined with the map code)
 static void applyMapChrome(bool on);   // map-tab immersive chrome (transparent bars); defined near makeMapTab
 static void formatAgeBadge(char* buf, size_t cap, uint32_t age_secs);        // defined with the contacts list
@@ -4938,6 +4987,10 @@ static void betaUpdatesToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Test builds: on") : TR("Test builds: off"), 2000);
 }
 #endif
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static bool friendmeshCompassPageStep(int direction);
+#endif
+
 static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
   // The Snake game owns the whole screen while it's open: steer with the swipe
   // and return, so it can never reach the tab switcher / map pan / control
@@ -4956,6 +5009,12 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
   // tab/back swipe (e.g. raising the volume slider rightward kept triggering the
   // settings "swipe right = back"). Ignore swipes briefly after any slider touch.
   if (s_slider_touch_ms && (millis() - s_slider_touch_ms) < 500) return;
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // Friend Compass is a two-page fullscreen tool. Consume its horizontal
+  // gesture before the underlying Map tab can interpret it as map navigation.
+  if (swipe_x != 0 &&
+      friendmeshCompassPageStep(swipe_x < 0 ? 1 : -1)) return;
+#endif
   // An open chat/channel: a left→right (rightward) swipe closes it (iOS-style
   // back). Any other swipe is swallowed so the conversation keeps the screen.
   if (hasChatDetailOpen()) {
@@ -6228,6 +6287,114 @@ static void openChannelShareModal(const char* channel_name, const uint8_t secret
 // Per-channel long-press sheet: [Share secret] [Remove channel] [Cancel].
 static lv_obj_t* s_channel_long_sheet = nullptr;
 static int       s_channel_long_idx = -1;
+static void attachSettingsTaEvents(lv_obj_t* ta);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static int       s_friendmesh_invite_channel_slot = -1;
+static uint8_t   s_friendmesh_invite_pub[6][PUB_KEY_SIZE] = {};
+static uint8_t   s_friendmesh_invite_pub_count = 0;
+static lv_obj_t* s_friendmesh_invite_body = nullptr;
+static lv_obj_t* s_friendmesh_invite_status = nullptr;
+static lv_timer_t* s_friendmesh_invite_scan_timer = nullptr;
+static uint32_t  s_friendmesh_invite_scan_deadline = 0;
+static int       s_friendmesh_ble_host_channel_slot = -1;
+static lv_timer_t* s_friendmesh_ble_host_timer = nullptr;
+static lv_obj_t* s_friendmesh_ble_host_status = nullptr;
+static friendmesh::BlePresencePeer s_friendmesh_ble_join_hosts[
+    friendmesh::kBlePresenceMaxPeers] = {};
+static uint8_t   s_friendmesh_ble_join_host_count = 0;
+static friendmesh::BlePresencePeer s_friendmesh_ble_selected_host = {};
+static friendmesh::BlePresencePeer s_friendmesh_nearby_friend_peers[
+    friendmesh::kBlePresenceMaxPeers] = {};
+static uint8_t   s_friendmesh_nearby_friend_peer_count = 0;
+static lv_obj_t* s_friendmesh_nearby_friend_body = nullptr;
+static lv_obj_t* s_friendmesh_nearby_friend_status = nullptr;
+static lv_timer_t* s_friendmesh_nearby_friend_timer = nullptr;
+static uint32_t  s_friendmesh_nearby_friend_deadline = 0;
+static bool      s_friendmesh_nearby_friend_targeted = false;
+static uint8_t   s_friendmesh_nearby_friend_target[PUB_KEY_SIZE] = {};
+static char      s_friendmesh_nearby_friend_target_name[32] = {};
+static lv_obj_t* s_friendmesh_ble_join_code_ta = nullptr;
+static lv_obj_t* s_friendmesh_ble_join_status = nullptr;
+static char      s_friendmesh_pending_channel[32] = {};
+static uint8_t   s_friendmesh_pending_secret[16] = {};
+static uint8_t   s_friendmesh_pending_inviter[PUB_KEY_SIZE] = {};
+static bool      s_friendmesh_pending_invite = false;
+static int       s_friendmesh_members_channel_slot = -1;
+static int       s_friendmesh_coordination_channel_slot = -1;
+static lv_obj_t* s_friendmesh_coordination_status = nullptr;
+static lv_obj_t* s_friendmesh_coordination_note = nullptr;
+static lv_obj_t* s_friendmesh_sos_button = nullptr;
+static uint32_t  s_friendmesh_sos_hold_started = 0;
+static bool      s_friendmesh_sos_sent = false;
+static FriendMeshChannelMemberView s_friendmesh_member_views[
+    friendmesh::kChannelRosterMaxMembers] = {};
+static uint8_t   s_friendmesh_remove_member_pub[PUB_KEY_SIZE] = {};
+static int       s_friendmesh_map_channel_slot = -1;
+static char      s_friendmesh_map_channel_name[32] = {};
+static bool      s_friendmesh_map_group_only = false;
+static FriendMeshChannelPositionView* s_friendmesh_map_positions = nullptr;
+static size_t    s_friendmesh_map_position_count = 0;
+static lv_timer_t* s_friendmesh_map_refresh_timer = nullptr;
+static uint8_t   s_friendmesh_map_refresh_pub[
+    friendmesh::kChannelRosterMaxMembers][PUB_KEY_SIZE] = {};
+static uint8_t   s_friendmesh_map_refresh_count = 0;
+static uint8_t   s_friendmesh_map_refresh_index = 0;
+static bool      s_friendmesh_map_refresh_waiting = false;
+static uint32_t  s_friendmesh_map_refresh_deadline = 0;
+static lv_timer_t* s_friendmesh_compass_timer = nullptr;
+static lv_obj_t* s_friendmesh_compass_status = nullptr;
+static lv_obj_t* s_friendmesh_compass_meta = nullptr;
+static lv_obj_t* s_friendmesh_compass_line = nullptr;
+static lv_obj_t* s_friendmesh_compass_dot = nullptr;
+static lv_obj_t* s_friendmesh_compass_observed_dot = nullptr;
+static lv_obj_t* s_friendmesh_compass_previous_dot = nullptr;
+static lv_obj_t* s_friendmesh_compass_motion_line = nullptr;
+static lv_obj_t* s_friendmesh_compass_prediction_line = nullptr;
+static lv_obj_t* s_friendmesh_compass_root = nullptr;
+static lv_obj_t* s_friendmesh_compass_visual_page = nullptr;
+static lv_obj_t* s_friendmesh_compass_guidance_page = nullptr;
+static lv_obj_t* s_friendmesh_compass_page_dots[2] = {};
+static lv_obj_t* s_friendmesh_compass_scale_labels[3] = {};
+static lv_obj_t* s_friendmesh_compass_cardinal_labels[4] = {};
+static lv_obj_t* s_friendmesh_compass_orientation_button = nullptr;
+static lv_obj_t* s_friendmesh_compass_orientation_label = nullptr;
+static lv_obj_t* s_friendmesh_guidance_arrow = nullptr;
+static lv_obj_t* s_friendmesh_guidance_mode_button = nullptr;
+static lv_obj_t* s_friendmesh_guidance_mode_label = nullptr;
+static lv_obj_t* s_friendmesh_guidance_title = nullptr;
+static lv_obj_t* s_friendmesh_guidance_distance = nullptr;
+static lv_obj_t* s_friendmesh_guidance_motion = nullptr;
+static lv_obj_t* s_friendmesh_guidance_confidence = nullptr;
+static lv_obj_t* s_friendmesh_guidance_age = nullptr;
+static lv_obj_t* s_friendmesh_guidance_toggle = nullptr;
+static lv_obj_t* s_friendmesh_guidance_toggle_label = nullptr;
+static int       s_friendmesh_compass_contact_idx = -1;
+static bool      s_friendmesh_compass_notice_attempted = false;
+static uint8_t   s_friendmesh_compass_page = 0;
+static bool      s_friendmesh_compass_use_current = false;
+static bool      s_friendmesh_compass_headway_up = false;
+static bool      s_friendmesh_guidance_north_mode = false;
+static lv_point_t s_friendmesh_compass_line_points[2] = {};
+static lv_point_t s_friendmesh_compass_motion_points[2] = {};
+static lv_point_t s_friendmesh_compass_prediction_points[2] = {};
+static lv_point_t s_friendmesh_guidance_arrow_points[10] = {};
+
+struct FriendMeshMotionTrack {
+  friendmesh::PositionRecord previous;
+  friendmesh::PositionRecord current;
+  uint8_t samples;
+};
+// One slot for each bounded roster member plus the local T-Deck user. The
+// array lives in PSRAM and the same bounded records are persisted on SD.
+static constexpr size_t kFriendMeshMotionTrackCapacity =
+    friendmesh::kChannelRosterMaxMembers + 1;
+static FriendMeshMotionTrack* s_friendmesh_motion_tracks = nullptr;
+static size_t s_friendmesh_motion_track_count = 0;
+static int s_friendmesh_motion_channel_slot = -2;
+static bool s_friendmesh_motion_loaded = false;
+static bool s_friendmesh_motion_dirty = false;
+static uint32_t s_friendmesh_motion_save_after_ms = 0;
+#endif
 
 static void closeChannelLongSheet() {
   popupClose(&s_channel_long_sheet);
@@ -6257,6 +6424,1113 @@ static void channelLongSheetShareCb(lv_event_t* e) {
   }
 #endif
   if (g_lv.task) g_lv.task->showAlert(TR("Channel not found"), 1200);
+}
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static int friendmeshChannelSlotForThread(int thread_idx) {
+  if (thread_idx < 0 || !g_lv.task) return -1;
+  bool channel; uint16_t unread; uint32_t timestamp;
+  char name[UITask::MAX_THREAD_NAME + 1] = {};
+  if (!g_lv.task->getThreadInfo(thread_idx, channel, unread, timestamp,
+                                name, sizeof(name)) || !channel) return -1;
+#ifdef MAX_GROUP_CHANNELS
+  ChannelDetails details = {};
+  const int16_t pinned = g_lv.task->threadMeshChannelSlot(thread_idx);
+  if (pinned >= 0 && pinned < MAX_GROUP_CHANNELS &&
+      the_mesh.getChannel(pinned, details) && details.name[0] &&
+      strncmp(details.name, name, UITask::MAX_THREAD_NAME) == 0) {
+    return pinned;
+  }
+  for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+    if (the_mesh.getChannel(i, details) && details.name[0] &&
+        strncmp(details.name, name, UITask::MAX_THREAD_NAME) == 0) return i;
+  }
+#endif
+  return -1;
+}
+
+static void friendmeshInviteRecipientCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const uint8_t* pub = static_cast<const uint8_t*>(lv_event_get_user_data(e));
+  if (!pub || s_friendmesh_invite_channel_slot < 0) return;
+  const FriendMeshInviteSendResult result =
+      the_mesh.uiSendFriendMeshChannelInvite(
+          s_friendmesh_invite_channel_slot, pub);
+  if (result == FriendMeshInviteSendResult::Sent) {
+    closeSettingsModal();
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Direct channel invite sent"), 1500);
+    return;
+  }
+  const char* message = "Invite failed";
+  if (result == FriendMeshInviteSendResult::NotFreshDirect)
+    message = "Contact is no longer nearby or direct";
+  else if (result == FriendMeshInviteSendResult::InvalidContact)
+    message = "Contact is unavailable";
+  else if (result == FriendMeshInviteSendResult::AlreadyMember)
+    message = "Contact is already in this group";
+  else if (result == FriendMeshInviteSendResult::InvalidChannel)
+    message = "Channel is unavailable";
+  if (g_lv.task) g_lv.task->showAlert(TR(message), 1500);
+}
+
+static bool friendmeshInvitePubAlreadyListed(const uint8_t* pub) {
+  for (uint8_t i = 0; i < s_friendmesh_invite_pub_count; ++i) {
+    if (memcmp(s_friendmesh_invite_pub[i], pub, PUB_KEY_SIZE) == 0) return true;
+  }
+  return false;
+}
+
+static void friendmeshInvitePickerStopScan() {
+  if (s_friendmesh_invite_scan_timer) {
+    lv_timer_del(s_friendmesh_invite_scan_timer);
+    s_friendmesh_invite_scan_timer = nullptr;
+  }
+  friendmesh::blePresenceCancelScan();
+  s_friendmesh_invite_scan_deadline = 0;
+}
+
+static void friendmeshInviteAddContactButton(ContactInfo* contact, int& y) {
+  if (!contact || s_friendmesh_invite_pub_count >= 6 ||
+      friendmeshInvitePubAlreadyListed(contact->id.pub_key) ||
+      the_mesh.uiIsFriendMeshChannelMemberJoined(
+          s_friendmesh_invite_channel_slot, contact->id.pub_key)) return;
+  uint8_t* storedPub =
+      s_friendmesh_invite_pub[s_friendmesh_invite_pub_count++];
+  memcpy(storedPub, contact->id.pub_key, PUB_KEY_SIZE);
+  lv_obj_t* button = lv_btn_create(s_friendmesh_invite_body);
+  lv_obj_set_size(button, lv_pct(100), 36);
+  lv_obj_set_pos(button, 2, y);
+  styleButton(button);
+  lv_obj_add_event_cb(button, friendmeshInviteRecipientCb,
+                      LV_EVENT_CLICKED, storedPub);
+  lv_obj_t* label = lv_label_create(button);
+  lv_label_set_text_fmt(label, LV_SYMBOL_ENVELOPE "  %s",
+                        contact->name[0] ? contact->name : "Nearby contact");
+  lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(label, lv_pct(90));
+  lv_obj_center(label);
+  y += 42;
+}
+
+static void friendmeshInviteRenderResults(bool bleAvailable) {
+  if (!s_friendmesh_invite_body ||
+      !lv_obj_is_valid(s_friendmesh_invite_body)) return;
+  int y = 78;
+
+  friendmesh::BlePresencePeer peers[friendmesh::kBlePresenceMaxPeers] = {};
+  const size_t peerCount = bleAvailable
+      ? friendmesh::blePresenceCopyPeers(
+            peers, friendmesh::kBlePresenceMaxPeers)
+      : 0;
+  // Strongest observations first. RSSI is only a usability filter, never proof
+  // of distance or identity.
+  for (size_t i = 0; i < peerCount; ++i) {
+    for (size_t j = i + 1; j < peerCount; ++j) {
+      if (peers[j].rssi > peers[i].rssi) {
+        const friendmesh::BlePresencePeer tmp = peers[i];
+        peers[i] = peers[j];
+        peers[j] = tmp;
+      }
+    }
+    ContactInfo* contact = the_mesh.lookupContactByPubKey(
+        peers[i].pubKeyPrefix, friendmesh::kBlePresencePrefixBytes);
+    if (contact && contact->type == ADV_TYPE_CHAT)
+      friendmeshInviteAddContactButton(contact, y);
+  }
+
+  // Preserve the already-tested LoRa zero-hop path as a fallback and merge it
+  // with BLE results without duplicates.
+  AdvertPath recent[16] = {};
+  const int count = the_mesh.getRecentlyHeard(recent, 16);
+  for (int i = 0; i < count && s_friendmesh_invite_pub_count < 6; ++i) {
+    if (recent[i].path_len != 0 || recent[i].recv_millis == 0) continue;
+    ContactInfo* contact = the_mesh.lookupContactByPubKey(
+        recent[i].pubkey_prefix, sizeof(recent[i].pubkey_prefix));
+    if (!contact || contact->type != ADV_TYPE_CHAT ||
+        !the_mesh.uiIsFreshZeroHopContact(contact->id.pub_key) ||
+        friendmeshInvitePubAlreadyListed(contact->id.pub_key)) continue;
+    friendmeshInviteAddContactButton(contact, y);
+  }
+  if (s_friendmesh_invite_pub_count == 0) {
+    lv_label_set_text(s_friendmesh_invite_status,
+        bleAvailable
+          ? TR("No nearby saved contacts found. You can still use a fresh zero-hop advert.")
+          : TR("Bluetooth unavailable. Ask the other person to send a zero-hop advert."));
+  } else {
+    lv_label_set_text_fmt(s_friendmesh_invite_status,
+                          TR("%u nearby saved contact%s"),
+                          (unsigned)s_friendmesh_invite_pub_count,
+                          s_friendmesh_invite_pub_count == 1 ? "" : "s");
+  }
+}
+
+static void friendmeshInviteScanTimerCb(lv_timer_t* timer) {
+  if (!s_friendmesh_invite_body ||
+      !lv_obj_is_valid(s_friendmesh_invite_body)) {
+    s_friendmesh_invite_scan_timer = nullptr;
+    friendmesh::blePresenceCancelScan();
+    lv_timer_del(timer);
+    return;
+  }
+  if (!friendmesh::blePresenceScanFinished() &&
+      (int32_t)(millis() - s_friendmesh_invite_scan_deadline) < 0) return;
+  s_friendmesh_invite_scan_timer = nullptr;
+  friendmesh::blePresenceCancelScan();
+  friendmeshInviteRenderResults(true);
+  lv_timer_del(timer);
+}
+
+static void openFriendMeshNearbyInvitePicker(int channel_slot) {
+  friendmeshInvitePickerStopScan();
+  s_friendmesh_invite_channel_slot = channel_slot;
+  s_friendmesh_invite_pub_count = 0;
+  memset(s_friendmesh_invite_pub, 0, sizeof(s_friendmesh_invite_pub));
+  s_friendmesh_invite_body = createSettingsModal(
+      "Invite nearby", SettingsModalKind::AddContact);
+  lv_obj_set_scroll_dir(s_friendmesh_invite_body, LV_DIR_VER);
+
+  lv_obj_t* hint = lv_label_create(s_friendmesh_invite_body);
+  lv_obj_set_width(hint, lv_pct(100));
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_text(hint,
+      TR("Bluetooth finds nearby saved contacts. The channel key still travels only through an encrypted direct MeshCore message."));
+  lv_obj_set_pos(hint, 2, 0);
+
+  s_friendmesh_invite_status = lv_label_create(s_friendmesh_invite_body);
+  lv_obj_set_width(s_friendmesh_invite_status, lv_pct(100));
+  lv_label_set_long_mode(s_friendmesh_invite_status, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(s_friendmesh_invite_status, &g_font_12,
+                             LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_friendmesh_invite_status,
+                              lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_text(s_friendmesh_invite_status,
+                    TR("Scanning nearby Bluetooth devices..."));
+  lv_obj_set_pos(s_friendmesh_invite_status, 2, 50);
+
+  if (friendmesh::blePresenceStartScan(3)) {
+    s_friendmesh_invite_scan_deadline = millis() + 4500;
+    s_friendmesh_invite_scan_timer = lv_timer_create(
+        friendmeshInviteScanTimerCb, 200, nullptr);
+  } else {
+    friendmeshInviteRenderResults(false);
+  }
+}
+
+static void nearbyFriendPickerStopScan() {
+  if (s_friendmesh_nearby_friend_timer) {
+    lv_timer_del(s_friendmesh_nearby_friend_timer);
+    s_friendmesh_nearby_friend_timer = nullptr;
+  }
+  friendmesh::blePresenceCancelScan();
+  s_friendmesh_nearby_friend_deadline = 0;
+}
+
+static const char* nearbyFriendResultText(
+    friendmesh::BleFriendRequestResult result) {
+  switch (result) {
+    case friendmesh::BleFriendRequestResult::ConnectFailed:
+      return "Couldn't connect; keep both devices nearby";
+    case friendmesh::BleFriendRequestResult::IdentityMismatch:
+      return "Nearby identity changed; scan again";
+    case friendmesh::BleFriendRequestResult::Busy:
+      return "Device is busy; retry in a moment";
+    case friendmesh::BleFriendRequestResult::ProtocolError:
+      return "Nearby device needs the latest FriendMesh firmware";
+    case friendmesh::BleFriendRequestResult::Unavailable:
+      return "Bluetooth is unavailable";
+    default:
+      return "Friend request failed";
+  }
+}
+
+static void nearbyFriendRequestPeerCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  const friendmesh::BlePresencePeer* peer =
+      static_cast<const friendmesh::BlePresencePeer*>(
+          lv_event_get_user_data(e));
+  if (!peer) return;
+  if (s_friends_count >= touchPrefsFriendCapacity()) {
+    g_lv.task->showAlert(touchPrefsFriendsUsingInternalFallback()
+        ? TR("Friend limit reached (4 without SD)")
+        : TR("Friend list full"), 2200);
+    return;
+  }
+  g_lv.task->showAlert(TR("Verifying nearby identity..."), 5000);
+  friendmesh::BleFriendIdentity identity = {};
+  friendmesh::BleFriendRequestResult result =
+      friendmesh::bleFriendReadIdentity(*peer, identity);
+  if (result != friendmesh::BleFriendRequestResult::Ok) {
+    g_lv.task->showAlert(TR(nearbyFriendResultText(result)), 2400);
+    return;
+  }
+  if (s_friendmesh_nearby_friend_targeted &&
+      memcmp(identity.pubKey, s_friendmesh_nearby_friend_target,
+             PUB_KEY_SIZE) != 0) {
+    g_lv.task->showAlert(TR("That device does not match this person"), 2400);
+    return;
+  }
+  if (friendByKey(identity.pubKey)) {
+    g_lv.task->showAlert(TR("Already in Friends"), 1600);
+    return;
+  }
+  if (touchPrefsIsIgnored(identity.pubKey)) {
+    g_lv.task->showAlert(TR("Unblock this person before requesting"), 2200);
+    return;
+  }
+  result = the_mesh.uiSendNearbyFriendRequest(*peer, identity);
+  if (result != friendmesh::BleFriendRequestResult::Ok) {
+    g_lv.task->showAlert(TR(nearbyFriendResultText(result)), 2400);
+    return;
+  }
+  nearbyFriendPickerStopScan();
+  closeSettingsModal();
+  g_lv.task->showAlert(TR("Friend request sent nearby"), 1800);
+}
+
+static void nearbyFriendRenderResults() {
+  if (!s_friendmesh_nearby_friend_body ||
+      !lv_obj_is_valid(s_friendmesh_nearby_friend_body)) return;
+  friendmesh::BlePresencePeer peers[friendmesh::kBlePresenceMaxPeers] = {};
+  const size_t count = friendmesh::blePresenceCopyPeers(
+      peers, friendmesh::kBlePresenceMaxPeers);
+  for (size_t i = 0; i < count; ++i) {
+    for (size_t j = i + 1; j < count; ++j) {
+      if (peers[j].rssi > peers[i].rssi) {
+        const friendmesh::BlePresencePeer temp = peers[i];
+        peers[i] = peers[j];
+        peers[j] = temp;
+      }
+    }
+  }
+  int y = 76;
+  s_friendmesh_nearby_friend_peer_count = 0;
+  for (size_t i = 0; i < count &&
+       s_friendmesh_nearby_friend_peer_count <
+           friendmesh::kBlePresenceMaxPeers; ++i) {
+    if (s_friendmesh_nearby_friend_targeted &&
+        memcmp(peers[i].pubKeyPrefix, s_friendmesh_nearby_friend_target,
+               friendmesh::kBlePresencePrefixBytes) != 0) continue;
+    friendmesh::BlePresencePeer* stored =
+        &s_friendmesh_nearby_friend_peers[
+            s_friendmesh_nearby_friend_peer_count++];
+    *stored = peers[i];
+    lv_obj_t* button = lv_btn_create(s_friendmesh_nearby_friend_body);
+    lv_obj_set_size(button, lv_pct(100), 40);
+    lv_obj_set_pos(button, 2, y);
+    styleButton(button);
+    lv_obj_set_style_bg_color(button, lv_color_hex(COLOR_STATUS_OK),
+                              LV_PART_MAIN);
+    lv_obj_add_event_cb(button, nearbyFriendRequestPeerCb,
+                        LV_EVENT_CLICKED, stored);
+    lv_obj_t* label = lv_label_create(button);
+    lv_label_set_text_fmt(
+        label, LV_SYMBOL_ENVELOPE "  %s  (%d dBm)",
+        s_friendmesh_nearby_friend_targeted &&
+                s_friendmesh_nearby_friend_target_name[0]
+            ? s_friendmesh_nearby_friend_target_name
+            : (stored->name[0] ? stored->name : "Nearby FriendMesh device"),
+        (int)stored->rssi);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(label, lv_pct(92));
+    lv_obj_center(label);
+    y += 46;
+  }
+  if (s_friendmesh_nearby_friend_peer_count == 0) {
+    lv_label_set_text(s_friendmesh_nearby_friend_status,
+        s_friendmesh_nearby_friend_targeted
+            ? TR("This person was not found nearby. Keep BLE on for both devices and retry.")
+            : TR("No nearby FriendMesh devices found. Keep BLE on for both devices and retry."));
+  } else {
+    lv_label_set_text(s_friendmesh_nearby_friend_status,
+        TR("Choose a device to send a friend request. Discovery alone adds nobody."));
+  }
+}
+
+static void nearbyFriendScanTimerCb(lv_timer_t* timer) {
+  if (!s_friendmesh_nearby_friend_body ||
+      !lv_obj_is_valid(s_friendmesh_nearby_friend_body)) {
+    s_friendmesh_nearby_friend_timer = nullptr;
+    friendmesh::blePresenceCancelScan();
+    lv_timer_del(timer);
+    return;
+  }
+  if (!friendmesh::blePresenceScanFinished() &&
+      (int32_t)(millis() - s_friendmesh_nearby_friend_deadline) < 0) return;
+  s_friendmesh_nearby_friend_timer = nullptr;
+  friendmesh::blePresenceCancelScan();
+  nearbyFriendRenderResults();
+  lv_timer_del(timer);
+}
+
+static void openNearbyFriendRequestPicker(const uint8_t* targetPub = nullptr,
+                                          const char* targetName = nullptr) {
+  nearbyFriendPickerStopScan();
+  friendmeshInvitePickerStopScan();
+  memset(s_friendmesh_nearby_friend_peers, 0,
+         sizeof(s_friendmesh_nearby_friend_peers));
+  s_friendmesh_nearby_friend_peer_count = 0;
+  s_friendmesh_nearby_friend_targeted = targetPub != nullptr;
+  memset(s_friendmesh_nearby_friend_target, 0,
+         sizeof(s_friendmesh_nearby_friend_target));
+  memset(s_friendmesh_nearby_friend_target_name, 0,
+         sizeof(s_friendmesh_nearby_friend_target_name));
+  if (targetPub)
+    memcpy(s_friendmesh_nearby_friend_target, targetPub, PUB_KEY_SIZE);
+  if (targetName)
+    strncpy(s_friendmesh_nearby_friend_target_name, targetName,
+            sizeof(s_friendmesh_nearby_friend_target_name) - 1);
+  s_friendmesh_nearby_friend_body = createSettingsModal(
+      "Find nearby friends", SettingsModalKind::AddContact);
+  lv_obj_set_scroll_dir(s_friendmesh_nearby_friend_body, LV_DIR_VER);
+  lv_obj_t* hint = lv_label_create(s_friendmesh_nearby_friend_body);
+  lv_obj_set_width(hint, lv_pct(100));
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_label_set_text(hint, TR(
+      "Bluetooth confirms the device is nearby. A signed request is sent; friendship begins only after they accept."));
+  lv_obj_set_pos(hint, 2, 0);
+  s_friendmesh_nearby_friend_status = lv_label_create(
+      s_friendmesh_nearby_friend_body);
+  lv_obj_set_width(s_friendmesh_nearby_friend_status, lv_pct(100));
+  lv_label_set_long_mode(s_friendmesh_nearby_friend_status,
+                         LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(s_friendmesh_nearby_friend_status,
+                              lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_friendmesh_nearby_friend_status,
+                             &g_font_12, LV_PART_MAIN);
+  lv_label_set_text(s_friendmesh_nearby_friend_status,
+                    TR("Scanning nearby FriendMesh devices..."));
+  lv_obj_set_pos(s_friendmesh_nearby_friend_status, 2, 48);
+  if (friendmesh::blePresenceStartScan(4)) {
+    s_friendmesh_nearby_friend_deadline = millis() + 5500;
+    s_friendmesh_nearby_friend_timer = lv_timer_create(
+        nearbyFriendScanTimerCb, 200, nullptr);
+  } else {
+    lv_label_set_text(s_friendmesh_nearby_friend_status,
+                      TR("Bluetooth is unavailable. Turn BLE on and retry."));
+  }
+}
+
+static void friendmeshBleHostTimerCb(lv_timer_t* timer) {
+  if (!s_friendmesh_ble_host_status ||
+      !lv_obj_is_valid(s_friendmesh_ble_host_status)) {
+    s_friendmesh_ble_host_timer = nullptr;
+    friendmesh::bleJoinStopHost();
+    lv_timer_del(timer);
+    return;
+  }
+  if (!friendmesh::bleJoinHostActive()) {
+    lv_label_set_text(s_friendmesh_ble_host_status,
+                      TR("Invite expired. Close and reopen to get a new code."));
+    s_friendmesh_ble_host_timer = nullptr;
+    friendmesh::bleJoinStopHost();
+    lv_timer_del(timer);
+    return;
+  }
+  friendmesh::BleJoinAcceptedMember member = {};
+  if (!friendmesh::bleJoinTakeAcceptedMember(member)) return;
+  const bool saved = the_mesh.uiFinalizeFriendMeshBleAdminJoin(
+      s_friendmesh_ble_host_channel_slot, member.pubKey, member.name);
+  lv_label_set_text_fmt(
+      s_friendmesh_ble_host_status,
+      saved ? TR("%s joined. Ready for another nearby member.")
+            : TR("%s connected, but the roster could not be saved."),
+      member.name[0] ? member.name : "Nearby member");
+}
+
+static void openFriendMeshBleHostScreen(int channelSlot) {
+  ChannelDetails channel = {};
+  if (channelSlot < 0 || !the_mesh.getChannel(channelSlot, channel) ||
+      !channel.name[0]) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Channel not found"), 1400);
+    return;
+  }
+  char code[7] = {};
+  FriendMeshChannelMemberView members[friendmesh::kChannelRosterMaxMembers] = {};
+  bool rekeyRequired = false;
+  const size_t memberCount = the_mesh.uiGetFriendMeshChannelMembers(
+      channelSlot, members, friendmesh::kChannelRosterMaxMembers,
+      rekeyRequired);
+  if (memberCount >= friendmesh::kChannelRosterMaxMembers) {
+    if (g_lv.task) g_lv.task->showAlert(TR("This group is full"), 1600);
+    return;
+  }
+  uint8_t joinedPrefixes[friendmesh::kChannelRosterMaxMembers]
+                         [friendmesh::kChannelRosterPrefixBytes] = {};
+  size_t joinedCount = 0;
+  for (size_t i = 0; i < memberCount; ++i) {
+    if (members[i].state != friendmesh::ChannelRosterState::Joined) continue;
+    memcpy(joinedPrefixes[joinedCount++], members[i].pubKey,
+           friendmesh::kChannelRosterPrefixBytes);
+  }
+  const char* adminName = g_lv.task ? g_lv.task->getNodeNameCstr() : nullptr;
+  if (!adminName || !adminName[0]) adminName = "Admin";
+  lv_obj_t* body = createSettingsModal(
+      "FriendMesh invite", SettingsModalKind::AddContact);
+  if (!friendmesh::bleJoinStartHost(the_mesh.getSelfPubKey(), adminName,
+                                    channel.name, channel.channel.secret,
+                                    &joinedPrefixes[0][0], joinedCount, code)) {
+    closeSettingsModal();
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Bluetooth is unavailable. Turn BLE on and try again."), 2200);
+    return;
+  }
+  s_friendmesh_ble_host_channel_slot = channelSlot;
+  lv_obj_set_scroll_dir(body, LV_DIR_VER);
+  int y = 0;
+  lv_obj_t* title = lv_label_create(body);
+  lv_label_set_text_fmt(title, TR("Join %s"), channel.name);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_pos(title, 2, y);
+  y += 28;
+
+  lv_obj_t* hint = lv_label_create(body);
+  lv_obj_set_width(hint, lv_pct(100));
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_label_set_text(hint, TR(
+      "Keep this screen open. On the other T-Deck choose Add channel > FriendMesh channels > Join, then enter this code."));
+  lv_obj_set_pos(hint, 2, y);
+  y += 58;
+
+  lv_obj_t* codeLabel = lv_label_create(body);
+  lv_label_set_text(codeLabel, code);
+  lv_obj_set_style_text_color(codeLabel, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(codeLabel, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_letter_space(codeLabel, 5, LV_PART_MAIN);
+  lv_obj_align(codeLabel, LV_ALIGN_TOP_MID, 0, y);
+  y += 48;
+
+  s_friendmesh_ble_host_status = lv_label_create(body);
+  lv_obj_set_width(s_friendmesh_ble_host_status, lv_pct(100));
+  lv_label_set_long_mode(s_friendmesh_ble_host_status, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(s_friendmesh_ble_host_status,
+                              lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_friendmesh_ble_host_status, &g_font_12,
+                             LV_PART_MAIN);
+  lv_label_set_text(s_friendmesh_ble_host_status,
+                    TR("Visible nearby over Bluetooth for 2 minutes."));
+  lv_obj_set_pos(s_friendmesh_ble_host_status, 2, y);
+  s_friendmesh_ble_host_timer = lv_timer_create(
+      friendmeshBleHostTimerCb, 250, nullptr);
+}
+
+static void channelLongSheetInviteNearbyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int channelSlot = friendmeshChannelSlotForThread(s_channel_long_idx);
+  closeChannelLongSheet();
+  if (channelSlot < 0) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Channel not found"), 1200);
+    return;
+  }
+  openFriendMeshBleHostScreen(channelSlot);
+}
+
+static void openFriendMeshGroupMap(int channelSlot, const char* channelName);
+
+static void channelLongSheetGroupMapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int channelSlot = friendmeshChannelSlotForThread(s_channel_long_idx);
+  char channelName[32] = {};
+  ChannelDetails details = {};
+  if (channelSlot >= 0 && the_mesh.getChannel(channelSlot, details))
+    StrHelper::strncpy(channelName, details.name, sizeof(channelName));
+  closeChannelLongSheet();
+  if (channelSlot < 0) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Channel unavailable"), 1400);
+    return;
+  }
+  if (!the_mesh.uiFriendMeshGroupStorageReadable(channelSlot)) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Group storage needs recovery"), 2200);
+    return;
+  }
+  openFriendMeshGroupMap(channelSlot, channelName);
+}
+
+static const char* friendmeshCoordinationKindLabel(
+    friendmesh::GroupCoordinationKind kind) {
+  switch (kind) {
+    case friendmesh::GroupCoordinationKind::Meetup: return "Meetup";
+    case friendmesh::GroupCoordinationKind::Pickup: return "Pickup";
+    case friendmesh::GroupCoordinationKind::HelpRide: return "Ride help";
+    case friendmesh::GroupCoordinationKind::HelpLost: return "Lost / separated";
+    case friendmesh::GroupCoordinationKind::HelpEquipment: return "Equipment help";
+    case friendmesh::GroupCoordinationKind::HelpContact: return "Contact me";
+    case friendmesh::GroupCoordinationKind::Sos: return "SOS";
+  }
+  return "Coordination";
+}
+
+static void refreshFriendMeshCoordinationModal() {
+  if (!s_friendmesh_coordination_status ||
+      !lv_obj_is_valid(s_friendmesh_coordination_status) ||
+      s_friendmesh_coordination_channel_slot < 0) return;
+  friendmesh::GroupCoordinationState state = {};
+  if (!the_mesh.uiGetFriendMeshGroupCoordination(
+          s_friendmesh_coordination_channel_slot, state)) {
+    lv_label_set_text(s_friendmesh_coordination_status,
+                      TR("Coordination state unavailable"));
+    return;
+  }
+  const uint32_t now = the_mesh.getRTCClock()->getCurrentTime();
+  char text[220] = {};
+  int p = 0;
+  if (friendmesh::groupCoordinationItemActive(state.meetup, now)) {
+    p += snprintf(text + p, sizeof(text) - (size_t)p,
+                  "%s: %s\n%u response%s\n",
+                  friendmeshCoordinationKindLabel(state.meetup.kind),
+                  state.meetup.note[0] ? state.meetup.note : "Current location",
+                  (unsigned)state.meetupResponseCount,
+                  state.meetupResponseCount == 1 ? "" : "s");
+  }
+  if (friendmesh::groupCoordinationItemActive(state.incident, now) &&
+      p < (int)sizeof(text)) {
+    p += snprintf(text + p, sizeof(text) - (size_t)p,
+                  "%s: %s\n%u response%s",
+                  friendmeshCoordinationKindLabel(state.incident.kind),
+                  state.incident.note[0] ? state.incident.note : "Location attached",
+                  (unsigned)state.incidentResponseCount,
+                  state.incidentResponseCount == 1 ? "" : "s");
+  }
+  if (p == 0) StrHelper::strncpy(text,
+      "No active meetup or group incident.", sizeof(text));
+  lv_label_set_text(s_friendmesh_coordination_status, text);
+}
+
+static bool sendFriendMeshCoordination(
+    friendmesh::GroupCoordinationAction action,
+    friendmesh::GroupCoordinationKind kind,
+    friendmesh::GroupCoordinationResponse response,
+    uint32_t expiresAfter) {
+  const char* note = s_friendmesh_coordination_note &&
+      lv_obj_is_valid(s_friendmesh_coordination_note)
+      ? lv_textarea_get_text(s_friendmesh_coordination_note) : nullptr;
+  const bool sent = the_mesh.uiSendFriendMeshGroupCoordination(
+      s_friendmesh_coordination_channel_slot, action, kind, response,
+      note, expiresAfter);
+  if (g_lv.task) g_lv.task->showAlert(
+      sent ? TR("Group coordination sent") : TR("Couldn't send coordination"),
+      sent ? 1200 : 1800);
+  if (sent) {
+    refreshFriendMeshCoordinationModal();
+    if (getActiveTab() == MAP_TAB_INDEX) renderMapMarkers();
+  }
+  return sent;
+}
+
+static void friendmeshCoordinationActionCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const intptr_t token = reinterpret_cast<intptr_t>(
+      lv_event_get_user_data(e));
+  const auto action = static_cast<friendmesh::GroupCoordinationAction>(
+      token & 0xFF);
+  const auto kind = static_cast<friendmesh::GroupCoordinationKind>(
+      (token >> 8) & 0xFF);
+  const auto response = static_cast<friendmesh::GroupCoordinationResponse>(
+      (token >> 16) & 0xFF);
+  uint32_t expiry = 3600;
+  if (action == friendmesh::GroupCoordinationAction::OpenIncident)
+    expiry = kind == friendmesh::GroupCoordinationKind::Sos ? 86400 : 14400;
+  sendFriendMeshCoordination(action, kind, response, expiry);
+}
+
+static intptr_t friendmeshCoordinationToken(
+    friendmesh::GroupCoordinationAction action,
+    friendmesh::GroupCoordinationKind kind,
+    friendmesh::GroupCoordinationResponse response =
+        friendmesh::GroupCoordinationResponse::None) {
+  return static_cast<intptr_t>(action) |
+      (static_cast<intptr_t>(kind) << 8) |
+      (static_cast<intptr_t>(response) << 16);
+}
+
+static void friendmeshSosHoldCb(lv_event_t* e) {
+  const lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_PRESSED) {
+    s_friendmesh_sos_hold_started = millis();
+    s_friendmesh_sos_sent = false;
+    return;
+  }
+  if (code == LV_EVENT_PRESSING && !s_friendmesh_sos_sent &&
+      s_friendmesh_sos_hold_started != 0 &&
+      (uint32_t)(millis() - s_friendmesh_sos_hold_started) >= 3000) {
+    s_friendmesh_sos_sent = sendFriendMeshCoordination(
+        friendmesh::GroupCoordinationAction::OpenIncident,
+        friendmesh::GroupCoordinationKind::Sos,
+        friendmesh::GroupCoordinationResponse::None, 86400);
+    if (s_friendmesh_sos_button && lv_obj_is_valid(s_friendmesh_sos_button)) {
+      lv_obj_t* label = lv_obj_get_child(s_friendmesh_sos_button, 0);
+      if (label) lv_label_set_text(label,
+          s_friendmesh_sos_sent ? TR("SOS sent") : TR("Hold 3 seconds for SOS"));
+    }
+    return;
+  }
+  if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+    s_friendmesh_sos_hold_started = 0;
+    if (!s_friendmesh_sos_sent && s_friendmesh_sos_button &&
+        lv_obj_is_valid(s_friendmesh_sos_button)) {
+      lv_obj_t* label = lv_obj_get_child(s_friendmesh_sos_button, 0);
+      if (label) lv_label_set_text(label, TR("Hold 3 seconds for SOS"));
+    }
+  }
+}
+
+static void openFriendMeshCoordination(int channelSlot) {
+  s_friendmesh_coordination_channel_slot = channelSlot;
+  lv_obj_t* body = createSettingsModal(
+      "Group coordination", SettingsModalKind::AddContact);
+  lv_obj_set_scroll_dir(body, LV_DIR_VER);
+  int y = 0;
+  s_friendmesh_coordination_status = lv_label_create(body);
+  lv_obj_set_width(s_friendmesh_coordination_status, lv_pct(100));
+  lv_label_set_long_mode(s_friendmesh_coordination_status,
+                         LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(s_friendmesh_coordination_status,
+                             &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_friendmesh_coordination_status,
+                              lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(s_friendmesh_coordination_status, 2, y);
+  y += 72;
+
+  s_friendmesh_coordination_note = lv_textarea_create(body);
+  lv_obj_set_size(s_friendmesh_coordination_note, lv_pct(100), 38);
+  lv_obj_set_pos(s_friendmesh_coordination_note, 2, y);
+  lv_textarea_set_one_line(s_friendmesh_coordination_note, true);
+  lv_textarea_set_max_length(s_friendmesh_coordination_note,
+                             friendmesh::kCoordinationNoteBytes);
+  lv_textarea_set_placeholder_text(s_friendmesh_coordination_note,
+                                   TR("Optional short note"));
+  attachSettingsTaEvents(s_friendmesh_coordination_note);
+  y += 46;
+
+  auto add = [&](const char* label,
+                 friendmesh::GroupCoordinationAction action,
+                 friendmesh::GroupCoordinationKind kind,
+                 friendmesh::GroupCoordinationResponse response,
+                 uint32_t color = 0) {
+    lv_obj_t* button = lv_btn_create(body);
+    lv_obj_set_size(button, lv_pct(100), 36);
+    lv_obj_set_pos(button, 2, y);
+    styleButton(button);
+    if (color) lv_obj_set_style_bg_color(button, lv_color_hex(color),
+                                         LV_PART_MAIN);
+    lv_obj_add_event_cb(button, friendmeshCoordinationActionCb,
+                        LV_EVENT_CLICKED,
+                        reinterpret_cast<void*>(friendmeshCoordinationToken(
+                            action, kind, response)));
+    lv_obj_t* text = lv_label_create(button);
+    lv_label_set_text(text, TR(label));
+    lv_obj_center(text);
+    y += 42;
+  };
+
+  add("Meet here", friendmesh::GroupCoordinationAction::SetMeetup,
+      friendmesh::GroupCoordinationKind::Meetup,
+      friendmesh::GroupCoordinationResponse::None, 0x24695C);
+  add("Pickup here", friendmesh::GroupCoordinationAction::SetMeetup,
+      friendmesh::GroupCoordinationKind::Pickup,
+      friendmesh::GroupCoordinationResponse::None, 0x24695C);
+  add("I'm going", friendmesh::GroupCoordinationAction::MeetupResponse,
+      friendmesh::GroupCoordinationKind::Meetup,
+      friendmesh::GroupCoordinationResponse::Going);
+  add("I arrived", friendmesh::GroupCoordinationAction::MeetupResponse,
+      friendmesh::GroupCoordinationKind::Meetup,
+      friendmesh::GroupCoordinationResponse::Arrived);
+  add("Cancel meetup", friendmesh::GroupCoordinationAction::CancelMeetup,
+      friendmesh::GroupCoordinationKind::Meetup,
+      friendmesh::GroupCoordinationResponse::None, 0x704040);
+  add("Help: ride", friendmesh::GroupCoordinationAction::OpenIncident,
+      friendmesh::GroupCoordinationKind::HelpRide,
+      friendmesh::GroupCoordinationResponse::None, 0x8A6728);
+  add("Help: lost / separated",
+      friendmesh::GroupCoordinationAction::OpenIncident,
+      friendmesh::GroupCoordinationKind::HelpLost,
+      friendmesh::GroupCoordinationResponse::None, 0x8A6728);
+  add("Help: equipment",
+      friendmesh::GroupCoordinationAction::OpenIncident,
+      friendmesh::GroupCoordinationKind::HelpEquipment,
+      friendmesh::GroupCoordinationResponse::None, 0x8A6728);
+  add("Contact me", friendmesh::GroupCoordinationAction::OpenIncident,
+      friendmesh::GroupCoordinationKind::HelpContact,
+      friendmesh::GroupCoordinationResponse::None, 0x8A6728);
+  add("Responding", friendmesh::GroupCoordinationAction::IncidentResponse,
+      friendmesh::GroupCoordinationKind::HelpRide,
+      friendmesh::GroupCoordinationResponse::Going);
+  add("Unable", friendmesh::GroupCoordinationAction::IncidentResponse,
+      friendmesh::GroupCoordinationKind::HelpRide,
+      friendmesh::GroupCoordinationResponse::Unable);
+  add("Arrived to help",
+      friendmesh::GroupCoordinationAction::IncidentResponse,
+      friendmesh::GroupCoordinationKind::HelpRide,
+      friendmesh::GroupCoordinationResponse::Arrived);
+  add("Close incident", friendmesh::GroupCoordinationAction::CloseIncident,
+      friendmesh::GroupCoordinationKind::HelpRide,
+      friendmesh::GroupCoordinationResponse::None, 0x704040);
+
+  s_friendmesh_sos_button = lv_btn_create(body);
+  lv_obj_set_size(s_friendmesh_sos_button, lv_pct(100), 44);
+  lv_obj_set_pos(s_friendmesh_sos_button, 2, y + 4);
+  styleButton(s_friendmesh_sos_button);
+  lv_obj_set_style_bg_color(s_friendmesh_sos_button,
+                            lv_color_hex(0xB23A48), LV_PART_MAIN);
+  lv_obj_add_event_cb(s_friendmesh_sos_button, friendmeshSosHoldCb,
+                      LV_EVENT_ALL, nullptr);
+  lv_obj_t* sosLabel = lv_label_create(s_friendmesh_sos_button);
+  lv_label_set_text(sosLabel, TR("Hold 3 seconds for SOS"));
+  lv_obj_center(sosLabel);
+  refreshFriendMeshCoordinationModal();
+}
+
+static void channelLongSheetCoordinationCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int channelSlot = friendmeshChannelSlotForThread(s_channel_long_idx);
+  closeChannelLongSheet();
+  if (channelSlot < 0) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Channel unavailable"), 1400);
+    return;
+  }
+  if (!the_mesh.uiFriendMeshGroupStorageReadable(channelSlot)) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Group storage needs recovery"), 2200);
+    return;
+  }
+  openFriendMeshCoordination(channelSlot);
+}
+
+static const char* friendmeshMemberStateLabel(
+    friendmesh::ChannelRosterState state) {
+  switch (state) {
+    case friendmesh::ChannelRosterState::Invited: return "Invited - waiting";
+    case friendmesh::ChannelRosterState::Joined: return "Joined";
+    case friendmesh::ChannelRosterState::InviteFailed: return "Invite failed";
+    case friendmesh::ChannelRosterState::Left: return "Left";
+    case friendmesh::ChannelRosterState::Removed: return "Removed";
+  }
+  return "Unknown";
+}
+
+static void openFriendMeshMembers(int channelSlot);
+
+static void friendmeshRemoveMemberApply() {
+  if (s_friendmesh_members_channel_slot < 0) return;
+  const bool ok = the_mesh.uiRemoveFriendMeshChannelMember(
+      s_friendmesh_members_channel_slot, s_friendmesh_remove_member_pub);
+  memset(s_friendmesh_remove_member_pub, 0,
+         sizeof(s_friendmesh_remove_member_pub));
+  if (ok) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Member removed - rekey required"), 2200);
+    openFriendMeshMembers(s_friendmesh_members_channel_slot);
+  } else if (g_lv.task) {
+    g_lv.task->showAlert(TR("Couldn't notify or remove member"), 1800);
+  }
+}
+
+static void friendmeshRemoveMemberCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const FriendMeshChannelMemberView* member =
+      static_cast<const FriendMeshChannelMemberView*>(
+          lv_event_get_user_data(e));
+  if (!member || member->isSelf || !member->contactAvailable) return;
+  memcpy(s_friendmesh_remove_member_pub, member->pubKey,
+         sizeof(s_friendmesh_remove_member_pub));
+  char message[128] = {};
+  snprintf(message, sizeof(message),
+           "Remove %s from this group?\n\nTheir updated T-Deck will leave, but a security rekey is still required.",
+           member->name[0] ? member->name : "this member");
+  showConfirm(message, "Remove", friendmeshRemoveMemberApply);
+}
+
+static void friendmeshLeaveGroupApply() {
+  if (s_friendmesh_members_channel_slot < 0) return;
+  bool noticeSent = false;
+  const bool left = the_mesh.uiLeaveFriendMeshChannel(
+      s_friendmesh_members_channel_slot, noticeSent);
+  if (!left) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("The group owner cannot leave yet"), 1800);
+    return;
+  }
+  closeSettingsModal();
+  if (g_lv.task) g_lv.task->showAlert(
+      noticeSent ? TR("Left group")
+                 : TR("Left locally - owner notice failed"),
+      noticeSent ? 1400 : 2200);
+}
+
+static void friendmeshLeaveGroupCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  showConfirm(
+      "Leave this private group?\n\nThe channel is removed from this T-Deck.",
+      "Leave", friendmeshLeaveGroupApply);
+}
+
+static void friendmeshDisbandGroupApply() {
+  if (s_friendmesh_members_channel_slot < 0) return;
+  uint8_t noticesSent = 0;
+  uint8_t noticesFailed = 0;
+  const bool disbanded = the_mesh.uiDisbandFriendMeshChannel(
+      s_friendmesh_members_channel_slot, noticesSent, noticesFailed);
+  if (!disbanded) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Only the joined group administrator can disband"), 2200);
+    return;
+  }
+  closeSettingsModal();
+  s_friendmesh_members_channel_slot = -1;
+  if (!g_lv.task) return;
+  if (noticesSent == 0 && noticesFailed == 0) {
+    g_lv.task->showAlert(TR("Group disbanded"), 1600);
+  } else if (noticesFailed == 0) {
+    g_lv.task->showAlert(TR("Group disbanded - members notified"), 1800);
+  } else {
+    char result[96] = {};
+    snprintf(result, sizeof(result),
+             "Group removed locally\n%u notified, %u unreachable",
+             static_cast<unsigned>(noticesSent),
+             static_cast<unsigned>(noticesFailed));
+    g_lv.task->showAlert(result, 2600);
+  }
+}
+
+static void friendmeshDisbandGroupCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  showConfirm(
+      "Disband this FriendMesh group?\n\nJoined members will be notified, then this channel is permanently removed from this T-Deck.",
+      "Disband", friendmeshDisbandGroupApply);
+}
+
+static void openFriendMeshMembers(int channelSlot) {
+  s_friendmesh_members_channel_slot = channelSlot;
+  bool rekeyRequired = false;
+  memset(s_friendmesh_member_views, 0, sizeof(s_friendmesh_member_views));
+  const size_t count = the_mesh.uiGetFriendMeshChannelMembers(
+      channelSlot, s_friendmesh_member_views,
+      friendmesh::kChannelRosterMaxMembers, rekeyRequired);
+  lv_obj_t* body = createSettingsModal(
+      "Group members", SettingsModalKind::AddContact);
+  lv_obj_set_scroll_dir(body, LV_DIR_VER);
+  int y = 0;
+
+  lv_obj_t* hint = lv_label_create(body);
+  lv_obj_set_width(hint, lv_pct(100));
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(
+      hint, lv_color_hex(rekeyRequired ? 0xFFB24A : COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_text(
+      hint, rekeyRequired
+          ? TR("Membership changed. The current shared key still needs a security rekey.")
+          : TR("Invite and join status for this WadaMesh private channel."));
+  lv_obj_set_pos(hint, 2, y);
+  y += 46;
+
+  bool selfIsAdmin = false;
+  for (size_t i = 0; i < count; ++i) {
+    if (s_friendmesh_member_views[i].isSelf &&
+        s_friendmesh_member_views[i].role ==
+            friendmesh::ChannelRosterRole::Admin) {
+      selfIsAdmin = true;
+      break;
+    }
+  }
+
+  for (size_t i = 0; i < count; ++i) {
+    FriendMeshChannelMemberView& member = s_friendmesh_member_views[i];
+    const bool removable = selfIsAdmin && !member.isSelf &&
+        member.contactAvailable &&
+        member.role != friendmesh::ChannelRosterRole::Admin &&
+        member.state != friendmesh::ChannelRosterState::Left &&
+        member.state != friendmesh::ChannelRosterState::Removed;
+    lv_obj_t* row = lv_btn_create(body);
+    lv_obj_set_size(row, lv_pct(100), 48);
+    lv_obj_set_pos(row, 2, y);
+    styleButton(row);
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    if (removable) {
+      lv_obj_add_event_cb(row, friendmeshRemoveMemberCb,
+                          LV_EVENT_CLICKED, &member);
+    } else {
+      lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    }
+    lv_obj_t* label = lv_label_create(row);
+    lv_obj_set_width(label, removable ? lv_pct(72) : lv_pct(94));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_label_set_text_fmt(
+        label, "%s%s\n%s - %s",
+        member.name[0] ? member.name : "Unknown member",
+        member.isSelf ? " (You)" : "",
+        member.role == friendmesh::ChannelRosterRole::Admin
+            ? "Admin" : "Member",
+        friendmeshMemberStateLabel(member.state));
+    lv_obj_set_style_text_font(label, &g_font_12, LV_PART_MAIN);
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, 2, 0);
+    if (removable) {
+      lv_obj_t* action = lv_label_create(row);
+      lv_label_set_text(action, TR("Remove"));
+      lv_obj_set_style_text_font(action, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(action, lv_color_hex(0xFF6B76), LV_PART_MAIN);
+      lv_obj_align(action, LV_ALIGN_RIGHT_MID, -2, 0);
+    }
+    y += 54;
+  }
+
+  if (count == 0) {
+    lv_obj_t* empty = lv_label_create(body);
+    lv_label_set_text(empty, TR("No roster metadata for this channel."));
+    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(empty, 2, y);
+    y += 34;
+  }
+
+  if (selfIsAdmin) {
+    lv_obj_t* disband = lv_btn_create(body);
+    lv_obj_set_size(disband, lv_pct(100), 38);
+    lv_obj_set_pos(disband, 2, y + 4);
+    styleButton(disband);
+    lv_obj_set_style_bg_color(disband, lv_color_hex(0xB23A48), LV_PART_MAIN);
+    lv_obj_add_event_cb(disband, friendmeshDisbandGroupCb,
+                        LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* label = lv_label_create(disband);
+    lv_label_set_text(label, TR("Disband group"));
+    lv_obj_center(label);
+  } else {
+    lv_obj_t* leave = lv_btn_create(body);
+    lv_obj_set_size(leave, lv_pct(100), 38);
+    lv_obj_set_pos(leave, 2, y + 4);
+    styleButton(leave);
+    lv_obj_set_style_bg_color(leave, lv_color_hex(0xB23A48), LV_PART_MAIN);
+    lv_obj_add_event_cb(leave, friendmeshLeaveGroupCb,
+                        LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* label = lv_label_create(leave);
+    lv_label_set_text(label, TR("Leave group"));
+    lv_obj_center(label);
+  }
+}
+
+static void channelLongSheetMembersCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int channelSlot = friendmeshChannelSlotForThread(s_channel_long_idx);
+  closeChannelLongSheet();
+  if (channelSlot < 0) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Channel not found"), 1200);
+    return;
+  }
+  if (!the_mesh.uiFriendMeshGroupStorageReadable(channelSlot)) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Group storage needs recovery"), 2200);
+    return;
+  }
+  openFriendMeshMembers(channelSlot);
+}
+
+static void clearPendingFriendMeshInvite() {
+  memset(s_friendmesh_pending_channel, 0,
+         sizeof(s_friendmesh_pending_channel));
+  memset(s_friendmesh_pending_secret, 0,
+         sizeof(s_friendmesh_pending_secret));
+  memset(s_friendmesh_pending_inviter, 0,
+         sizeof(s_friendmesh_pending_inviter));
+  s_friendmesh_pending_invite = false;
+}
+
+static void acceptPendingFriendMeshInvite() {
+  if (!s_friendmesh_pending_invite || !g_lv.task) return;
+#ifdef MAX_GROUP_CHANNELS
+  ChannelDetails existing = {};
+  for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+    if (!the_mesh.getChannel(i, existing) || !existing.name[0]) continue;
+    if (memcmp(existing.channel.secret, s_friendmesh_pending_secret,
+               sizeof(s_friendmesh_pending_secret)) == 0) {
+      bool ownerNoticeSent = false;
+      const bool refreshed = the_mesh.uiAcceptFriendMeshChannelInvite(
+          i, s_friendmesh_pending_inviter, ownerNoticeSent);
+      clearPendingFriendMeshInvite();
+      if (refreshed) {
+        g_lv.dm.list_sig = 0;
+        g_lv.ch.list_sig = 0;
+        g_lv.dirty_threads = true;
+      }
+      g_lv.task->showAlert(
+          refreshed && ownerNoticeSent
+              ? TR("Membership refreshed")
+              : TR("Already joined - owner notice failed"),
+          refreshed && ownerNoticeSent ? 1400 : 2200);
+      return;
+    }
+    if (strncmp(existing.name, s_friendmesh_pending_channel,
+                sizeof(existing.name)) == 0) {
+      clearPendingFriendMeshInvite();
+      g_lv.task->showAlert(TR("Channel name already exists"), 1500);
+      return;
+    }
+  }
+#endif
+  const int slot = the_mesh.findFirstEmptyChannelSlot();
+  if (slot < 0 || !the_mesh.uiAddOrUpdateChannel(
+                      slot, s_friendmesh_pending_channel,
+                      s_friendmesh_pending_secret)) {
+    clearPendingFriendMeshInvite();
+    g_lv.task->showAlert(TR("Couldn't save channel"), 1500);
+    return;
+  }
+  bool ownerNoticeSent = false;
+  if (!the_mesh.uiAcceptFriendMeshChannelInvite(
+          slot, s_friendmesh_pending_inviter, ownerNoticeSent)) {
+    the_mesh.uiDeleteChannel(slot);
+    clearPendingFriendMeshInvite();
+    g_lv.task->showAlert(TR("Couldn't save group membership"), 1800);
+    return;
+  }
+  clearPendingFriendMeshInvite();
+  g_lv.task->refreshThreadsFromMesh();
+  g_lv.dirty_threads = true;
+  g_lv.dm.list_sig = 0;
+  g_lv.ch.list_sig = 0;
+  g_lv.task->showAlert(
+      ownerNoticeSent ? TR("Private group joined")
+                      : TR("Joined - owner notice failed"),
+      ownerNoticeSent ? 1500 : 2200);
+}
+#endif
+
+static bool threadIsFriendMeshGroup(int threadIdx) {
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  const int channelSlot = friendmeshChannelSlotForThread(threadIdx);
+  return channelSlot >= 0 &&
+      the_mesh.uiIsFriendMeshPrivateGroup(channelSlot);
+#else
+  (void)threadIdx;
+  return false;
+#endif
+}
+
+static void formatThreadDisplayName(int threadIdx, bool channel,
+                                    const char* name, char* destination,
+                                    size_t capacity) {
+  if (!destination || capacity == 0) return;
+  const char* source = name ? name : "";
+  if (channel && threadIsFriendMeshGroup(threadIdx))
+    snprintf(destination, capacity, "[FM] %s", source);
+  else
+    StrHelper::strncpy(destination, source, capacity);
+}
+
+static void setThreadStatusTitle(int threadIdx, bool channel,
+                                 const char* name) {
+  char display[UITask::MAX_THREAD_NAME + 8] = {};
+  char sanitized[UITask::MAX_THREAD_NAME + 8] = {};
+  formatThreadDisplayName(threadIdx, channel, name, display, sizeof(display));
+  copyUtf8ReplacingMissingGlyphs(&g_font_12, sanitized, sizeof(sanitized),
+                                 display);
+  setChatStatusTitle(sanitized);
 }
 
 static void channelLongSheetDeleteCb(lv_event_t* e) {
@@ -6450,6 +7724,8 @@ static void threadSheetIconResetCb(lv_event_t* e) {
 static void openThreadActionSheet(int thread_idx, const char* name, bool is_channel) {
   closeChannelLongSheet();
   s_channel_long_idx = thread_idx;
+  const bool is_friendmesh_group =
+      is_channel && threadIsFriendMeshGroup(thread_idx);
 
   s_channel_long_sheet = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_channel_long_sheet);
@@ -6495,7 +7771,13 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   // spans the full width at the bottom. Channel: mark-read + region + the two
   // mutes + share + blocked = 6 grid items (3 rows). Room: mark-read +
   // login-again + reset-path + blocked = 4 (2 rows). DM: 3 (2 rows).
-  const int grid_items = is_channel ? 7 : (is_room_thread ? 4 : 3);   // channels: +Chat icon
+  const int grid_items = is_channel ?
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+      (is_friendmesh_group ? 12 : 8) :
+#else
+      8 :
+#endif
+      (is_room_thread ? 4 : 3);   // channels: +Chat icon (+ nearby invite on T-Deck)
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
   int card_h = title_h + (grid_rows + 1) * (btn_h + btn_gap) + pad;
   const int max_h = lv_disp_get_ver_res(nullptr) - STATUSBAR_H - 12;
@@ -6517,7 +7799,10 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
 
   lv_obj_t* title = lv_label_create(card);
   char nm[40];
-  copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), name ? name : "");
+  char displayName[UITask::MAX_THREAD_NAME + 8] = {};
+  formatThreadDisplayName(thread_idx, is_channel, name, displayName,
+                          sizeof(displayName));
+  copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), displayName);
   lv_label_set_text_fmt(title, "%s  %s", is_channel ? LV_SYMBOL_LOOP : LV_SYMBOL_ENVELOPE,
                         nm[0] ? nm : (is_channel ? "(channel)" : "(chat)"));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -6590,6 +7875,14 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     s_chmute_men_btn = mk("", channelMuteMenCb, 0);
     chmuteRefreshLabels();
     mk(LV_SYMBOL_SHUFFLE  "  Share secret",   channelLongSheetShareCb,   0);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    if (is_friendmesh_group) {
+      mk(LV_SYMBOL_BLUETOOTH "  Invite by Bluetooth", channelLongSheetInviteNearbyCb, 0);
+      mk(LV_SYMBOL_LIST     "  Members",        channelLongSheetMembersCb, 0);
+      mk(LV_SYMBOL_GPS      "  Group map",      channelLongSheetGroupMapCb, 0);
+      mk(LV_SYMBOL_BELL     "  Coordinate",     channelLongSheetCoordinationCb, 0);
+    }
+#endif
     mk(LV_SYMBOL_CLOSE    "  Blocked users",  channelLongSheetBlockedCb, 0);
     // Chat-list avatar emoji: tap = pick, long-press = back to the two-letter auto avatar.
     lv_obj_t* icb = mk(LV_SYMBOL_IMAGE "  Chat icon", threadSheetIconCb, 0);
@@ -6699,9 +7992,7 @@ static void threadSelectCb(lv_event_t* e) {
   // Update header name
   bool ch; uint16_t unread; uint32_t ts; char name[UITask::MAX_THREAD_NAME + 1];
   if (g_lv.task->getThreadInfo(ctx->idx, ch, unread, ts, name, sizeof(name))) {
-    char san[UITask::MAX_THREAD_NAME + 8];
-    copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), name);
-    setChatStatusTitle(san);   // thread name → status bar (no in-chat header bar)
+    setThreadStatusTitle(ctx->idx, ch, name);
   }
   p.detail_open = true;
   hideKb();
@@ -7337,7 +8628,12 @@ static void tabChangedCb(lv_event_t* e) {
     applyMapChrome(true);    // transparent status bar + tab bar so the map shows through
     onMapTabActivated();
   } else {
-    if (prev_t == MAP_TAB_INDEX) applyMapChrome(false);   // restore opaque chrome
+    if (prev_t == MAP_TAB_INDEX) {
+      applyMapChrome(false);   // restore opaque chrome
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+      friendmeshStopGroupLocationRefresh();
+#endif
+    }
     clearRouteReplay();    // drop any route-replay overlay when leaving the map
     // Drop tile JPEGs from PSRAM the moment we leave the tab — keeps the
     // working set small and lets the map cold-load with fresh data on
@@ -7941,6 +9237,20 @@ static void kbBackspaceSelCb(lv_event_t* e) {
 
 static void closeSettingsModal() {
   hideKb();
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  friendmeshInvitePickerStopScan();
+  if (s_friendmesh_ble_host_timer) {
+    lv_timer_del(s_friendmesh_ble_host_timer);
+    s_friendmesh_ble_host_timer = nullptr;
+  }
+  friendmesh::bleJoinStopHost();
+  s_friendmesh_ble_host_channel_slot = -1;
+  s_friendmesh_ble_host_status = nullptr;
+  s_friendmesh_ble_join_code_ta = nullptr;
+  s_friendmesh_ble_join_status = nullptr;
+  s_friendmesh_invite_body = nullptr;
+  s_friendmesh_invite_status = nullptr;
+#endif
   if (g_set_modal.root) {
     lv_obj_del(g_set_modal.root);
   }
@@ -7953,6 +9263,7 @@ static void closeSettingsModal() {
   s_addct_pub_ta     = nullptr;
   s_addct_name_ta    = nullptr;
   s_addct_error_l    = nullptr;
+  s_friend_alias_ta  = nullptr;
   resetSettingsModalState();
 }
 
@@ -8605,14 +9916,32 @@ static void discoveredAddCb(lv_event_t* e) {
   LvDiscoveredEntry& e_disc = s_discovered[idx];
   if (!e_disc.used) return;
 
-  // Add the captured ContactInfo straight to the_mesh.
-  if (the_mesh.addContact(e_disc.ci)) {
-    the_mesh.uiPersistContacts();   // write /contacts3 so the add survives reboot
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (e_disc.ci.type == ADV_TYPE_CHAT) {
+    closeSettingsModal();
+    openNearbyFriendRequestPicker(e_disc.ci.id.pub_key, e_disc.ci.name);
+    return;
+  }
+#endif
+
+  // Non-person infrastructure nodes remain an explicit local save. People use
+  // the consent-based nearby request path above and are never auto-friended.
+  ContactInfo* existing = the_mesh.lookupContactByPubKey(
+      e_disc.ci.id.pub_key, PUB_KEY_SIZE);
+  const bool contact_ok = existing || the_mesh.addContact(e_disc.ci);
+  if (contact_ok) {
+    if (!existing) the_mesh.uiPersistContacts();   // make the protocol contact durable
+    const bool is_person = e_disc.ci.type == ADV_TYPE_CHAT;
+    if (is_person && !touchPrefsSetFriend(e_disc.ci.id.pub_key, e_disc.ci.name)) {
+      g_lv.task->showAlert(TR("Friend list full or SD unavailable"), 1600);
+      return;
+    }
+    if (is_person) friendsReload();
     e_disc.in_contacts = true;
     markDiscoveredDirty();
     refreshContactsList();          // rebuild the Contacts tab now (count changed) so the
                                     // new contact shows without needing a tab reload
-    g_lv.task->showAlert(TR("Added to contacts"), 1000);
+    g_lv.task->showAlert(TR(is_person ? "Friend added" : "Network node added"), 1000);
     // Re-open the Discovered modal so the list updates immediately.
     closeSettingsModal();
     lv_event_t synth{};
@@ -8925,7 +10254,8 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     lv_obj_set_width(meta, text_w);
     lv_obj_set_pos(meta, 2, 3 + name_h + 2);
 
-    // "Add" button on the right, vertically centred
+    // Chat peers become friends; infrastructure is added only to the network
+    // directory and never pollutes the Friends view.
     lv_obj_t* add_btn = lv_btn_create(card);
     lv_obj_set_size(add_btn, add_w, card_h - 2 * pad - 2);
     lv_obj_align(add_btn, LV_ALIGN_RIGHT_MID, 0, 0);
@@ -8933,7 +10263,13 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     s_disc_add_ctx[idx].slot_idx = idx;
     lv_obj_add_event_cb(add_btn, discoveredAddCb, LV_EVENT_CLICKED, &s_disc_add_ctx[idx]);
     lv_obj_t* add_lbl = lv_label_create(add_btn);
-    lv_label_set_text(add_lbl, TR("Add"));
+    lv_label_set_text(add_lbl, TR(e_disc.ci.type == ADV_TYPE_CHAT
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+                                     ? "Request"
+#else
+                                     ? "Friend"
+#endif
+                                     : "Add"));
     lv_obj_center(add_lbl);
 
     y += card_h + 6;
@@ -10163,6 +11499,12 @@ static inline const char* mapTileUrlPath() { return s_map_style == 1 ? "/opentop
 // the next reboot.
 static void useSdStorageToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  lv_obj_add_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  if (g_lv.task)
+    g_lv.task->showAlert(TR("FriendMesh long-term data requires SD"), 1800);
+  return;
+#endif
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
 #if defined(ESP32)
   touchPrefsSetUseSdStorage(on);
@@ -11378,11 +12720,21 @@ static void buildDeviceSettings(int sec) {
      /meshcomod instead of internal flash — for running under Launcher, or just
      to keep everything on a card. Read at boot, so it applies after a reboot. */
   {
-    int h = settingsRowLabel(body, y, 6, TR("Store data on SD (reboot)"), COLOR_SUB, nullptr, 56);
+    int h = settingsRowLabel(body, y, 6,
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+                             TR("Long-term data on SD (required)"),
+#else
+                             TR("Store data on SD (reboot)"),
+#endif
+                             COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
 #if defined(ESP32)
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    lv_obj_add_state(sw, LV_STATE_CHECKED | LV_STATE_DISABLED);
+#else
     if (touchPrefsGetUseSdStorage()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
 #endif
     lv_obj_add_event_cb(sw, useSdStorageToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
@@ -11393,18 +12745,23 @@ static void buildDeviceSettings(int sec) {
      even with it ON. This line shows the truth and flags that mismatch. */
   {
     extern bool g_contacts_on_sd;
+    extern bool g_long_term_storage_on_sd;
+    extern bool g_long_term_storage_sd_missing;
     const bool want_sd = touchPrefsGetUseSdStorage();
     lv_obj_t* st = lv_label_create(body);
     lv_label_set_long_mode(st, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(st, lv_pct(96));
     lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
     lv_obj_set_pos(st, 0, y);
-    if (g_contacts_on_sd) {
+    if (g_long_term_storage_on_sd) {
+      lv_label_set_text(st, TR("Identity, settings, contacts, channels, FriendMesh state, history, and caches are saved to SD."));
+      lv_obj_set_style_text_color(st, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
+    } else if (g_long_term_storage_sd_missing || want_sd) {
+      lv_label_set_text(st, TR("SD did not mount. Internal recovery data is read-only and long-term history is not being saved. Re-seat the card and reboot."));
+      lv_obj_set_style_text_color(st, lv_color_hex(0xE3A127), LV_PART_MAIN);  // amber warning
+    } else if (g_contacts_on_sd) {
       lv_label_set_text(st, TR("Contacts are saved to the SD card."));
       lv_obj_set_style_text_color(st, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
-    } else if (want_sd) {
-      lv_label_set_text(st, TR("Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot."));
-      lv_obj_set_style_text_color(st, lv_color_hex(0xE3A127), LV_PART_MAIN);  // amber warning
     } else {
       lv_label_set_text(st, TR("Contacts are on internal flash."));
       lv_obj_set_style_text_color(st, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -12118,13 +13475,24 @@ static void saveTransportWifiCb(lv_event_t* e) {
 namespace {
 typedef void (*SimpleCb)();
 SimpleCb s_confirm_cb = nullptr;
+SimpleCb s_confirm_cancel_cb = nullptr;
 lv_obj_t* s_confirm_modal = nullptr;
+bool s_confirm_close_runs_cancel = true;
 
-void confirmDismiss() {
+void confirmDismiss(bool accepted = false, bool run_cancel = true) {
+  SimpleCb cancel_cb = (!accepted && run_cancel) ? s_confirm_cancel_cb : nullptr;
   if (s_confirm_modal) {
     popupClose(&s_confirm_modal);
   }
   s_confirm_cb = nullptr;
+  s_confirm_cancel_cb = nullptr;
+  s_confirm_close_runs_cancel = true;
+  if (cancel_cb) cancel_cb();
+}
+
+void confirmCloseEvt(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  confirmDismiss(false, s_confirm_close_runs_cancel);
 }
 
 void confirmCancelEvt(lv_event_t* e) {
@@ -12135,14 +13503,19 @@ void confirmCancelEvt(lv_event_t* e) {
 void confirmOkEvt(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   SimpleCb cb = s_confirm_cb;
-  confirmDismiss();
+  confirmDismiss(true);
   if (cb) cb();
 }
 }  // namespace
 
-static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confirm) {
+static void showConfirm(const char* msg, const char* ok_label,
+                        SimpleCb on_confirm, SimpleCb on_cancel,
+                        const char* cancel_label,
+                        bool close_runs_cancel) {
   confirmDismiss();
   s_confirm_cb = on_confirm;
+  s_confirm_cancel_cb = on_cancel;
+  s_confirm_close_runs_cancel = close_runs_cancel;
 
   // Backdrop: semi-opaque full-screen catcher so taps outside the card do nothing.
   s_confirm_modal = lv_obj_create(lv_layer_top());
@@ -12171,7 +13544,7 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, PSC(12), LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  addCloseXBadge(card, confirmCancelEvt);   // X behaves like Cancel
+  addCloseXBadge(card, confirmCloseEvt);
 
   lv_obj_t* lbl = lv_label_create(card);
   lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
@@ -12197,7 +13570,7 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_set_style_text_color(b_cancel, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_add_event_cb(b_cancel, confirmCancelEvt, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lc = lv_label_create(b_cancel);
-  lv_label_set_text(lc, TR("Cancel"));
+  lv_label_set_text(lc, cancel_label ? TR(cancel_label) : TR("Cancel"));
   uiFitLabelWidth(lc, PSC(80) - 8);
   lv_obj_center(lc);
 
@@ -13489,6 +14862,10 @@ static void contactsSearchApplyCb(lv_event_t* e) {
             sizeof(g_lv.contacts_search) - 1);
     g_lv.contacts_search[sizeof(g_lv.contacts_search) - 1] = '\0';
   }
+  // Name lookup is a local search across the already-known MeshCore directory,
+  // not an over-the-air query. Show Network results so a non-friend can be
+  // selected and curated from the normal contact action sheet.
+  setContactsFilterUi(0);
   closeContactsSearchSheet();
   refreshContactsList();
   if (g_lv.contacts_list) lv_obj_scroll_to(g_lv.contacts_list, 0, 0, LV_ANIM_OFF);
@@ -13547,7 +14924,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   addCloseXBadge(card, contactsSearchSheetCloseCb);
 
   lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, LV_SYMBOL_EYE_OPEN "  Search contacts");
+  lv_label_set_text(title, LV_SYMBOL_EYE_OPEN "  Search people");
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 0);
@@ -13672,18 +15049,186 @@ static void actionSheetPingCb(lv_event_t* e) {
   }
 }
 
-static void actionSheetDeleteCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
-  ContactInfo c;
-  bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
-  closeActionSheet();
-  if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
-  if (the_mesh.uiRemoveContact(c)) {   // persists the removal (/contacts3) so it doesn't reappear on reboot
-    g_lv.task->showAlert(TR("Contact deleted"), 1000);
+static ContactInfo s_contact_danger_target = {};
+static bool s_contact_danger_target_valid = false;
+
+static void clearDiscoveredByPubKey(const uint8_t pub_key[32]) {
+  if (!s_discovered || !pub_key) return;
+  bool changed = false;
+  for (int i = 0; i < DISCOVERED_MAX; ++i) {
+    if (s_discovered[i].used &&
+        memcmp(s_discovered[i].ci.id.pub_key, pub_key, PUB_KEY_SIZE) == 0) {
+      memset(&s_discovered[i], 0, sizeof(s_discovered[i]));
+      changed = true;
+    }
+  }
+  if (changed) {
+    ++s_discovered_seq;
+    saveDiscovered();
+  }
+}
+
+static void actionSheetDeleteApply() {
+  if (!g_lv.task || !s_contact_danger_target_valid) return;
+  const ContactInfo target = s_contact_danger_target;
+  s_contact_danger_target_valid = false;
+  if (friendByKey(target.id.pub_key)) {
+    g_lv.task->showAlert(TR("Remove Friend status first"), 1700);
+    return;
+  }
+  if (the_mesh.uiRemoveContact(target)) {
+    clearDiscoveredByPubKey(target.id.pub_key);
+    g_lv.task->showAlert(TR("Node removed"), 1100);
     refreshContactsList();
   } else {
     g_lv.task->showAlert(TR("Delete failed"), 1200);
   }
+}
+
+static void actionSheetDeleteCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  ContactInfo target = {};
+  const bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, target);
+  closeActionSheet();
+  if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  if (friendByKey(target.id.pub_key)) {
+    g_lv.task->showAlert(TR("Use Remove friend for Friends"), 1800);
+    return;
+  }
+  s_contact_danger_target = target;
+  s_contact_danger_target_valid = true;
+  char message[128];
+  snprintf(message, sizeof(message),
+           "Remove \"%s\" from this device?\nIt may appear again after a future advert.",
+           target.name[0] ? target.name : "this node");
+  showConfirm(TR(message), TR("Remove node"), actionSheetDeleteApply);
+}
+
+static void actionSheetRemoveFriendApply() {
+  if (!g_lv.task || !s_contact_danger_target_valid) return;
+  const ContactInfo target = s_contact_danger_target;
+  s_contact_danger_target_valid = false;
+  Serial.printf("[FM-FRIEND] UI REMOVE tap target=%02X%02X%02X%02X\n",
+                target.id.pub_key[0], target.id.pub_key[1],
+                target.id.pub_key[2], target.id.pub_key[3]);
+  const bool reciprocalSent = the_mesh.uiRemoveFriendRelationship(
+      target.id.pub_key, target.name);
+  if (!touchPrefsRemoveFriend(target.id.pub_key)) {
+    Serial.printf("[FM-FRIEND] UI REMOVE local-save=failed remote-queued=%d\n",
+                  reciprocalSent ? 1 : 0);
+    g_lv.task->showAlert(TR("Friend update failed; check SD"), 1800);
+    return;
+  }
+  Serial.printf("[FM-FRIEND] UI REMOVE local-save=ok remote-queued=%d\n",
+                reciprocalSent ? 1 : 0);
+  friendsReload();
+  contactsListForceRefresh();
+  g_lv.task->showAlert(
+      reciprocalSent ? TR("Removed from Friends")
+                     : TR("Removed locally; remote update failed"),
+      reciprocalSent ? 1200 : 2400);
+}
+
+static void actionSheetRemoveFriendCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  ContactInfo target = {};
+  const bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, target);
+  closeActionSheet();
+  if (!ok || !friendByKey(target.id.pub_key)) {
+    g_lv.task->showAlert(TR("Friend gone"), 1200);
+    return;
+  }
+  s_contact_danger_target = target;
+  s_contact_danger_target_valid = true;
+  char message[128];
+  snprintf(message, sizeof(message),
+           "Remove \"%s\" from Friends?\nTheir MeshCore contact will be kept.",
+           friendDisplayName(target));
+  showConfirm(TR(message), TR("Remove friend"), actionSheetRemoveFriendApply);
+}
+
+static uint8_t s_friend_alias_pub[32] = {0};
+
+static void friendAliasSaveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_friend_alias_ta) return;
+  kbMirrorSyncToReal();
+  char alias[32] = {0};
+  strncpy(alias, lv_textarea_get_text(s_friend_alias_ta), sizeof(alias) - 1);
+  for (int i = (int)strlen(alias) - 1;
+       i >= 0 && (alias[i] == ' ' || alias[i] == '\t'); --i) alias[i] = '\0';
+  if (!alias[0]) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Friend name can't be empty"), 1400);
+    return;
+  }
+  if (!touchPrefsSetFriend(s_friend_alias_pub, alias)) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Friend update failed; check SD"), 1600);
+    return;
+  }
+  friendsReload();
+  s_friend_alias_ta = nullptr;
+  closeSettingsModal();
+  contactsListForceRefresh();
+  if (g_lv.task) g_lv.task->showAlert(TR("Private friend name saved"), 1200);
+}
+
+static void openFriendAliasModal(const ContactInfo& contact) {
+  memcpy(s_friend_alias_pub, contact.id.pub_key, sizeof(s_friend_alias_pub));
+  const TouchFriendRecord* record = friendByKey(contact.id.pub_key);
+  lv_obj_t* body = createSettingsModal("Friend name", SettingsModalKind::AddContact);
+  int y = 0;
+  lv_obj_t* hint = lv_label_create(body);
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(hint, lv_pct(100));
+  lv_label_set_text(hint, TR("This private name stays on this device and is never placed in MeshCore adverts."));
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(hint, 2, y); y += 44;
+
+  s_friend_alias_ta = lv_textarea_create(body);
+  lv_obj_set_size(s_friend_alias_ta, lv_pct(100), 34);
+  lv_obj_set_pos(s_friend_alias_ta, 2, y);
+  lv_textarea_set_one_line(s_friend_alias_ta, true);
+  lv_textarea_set_max_length(s_friend_alias_ta, 31);
+  lv_textarea_set_text(s_friend_alias_ta,
+                       (record && record->alias[0]) ? record->alias : contact.name);
+  attachSettingsTaEvents(s_friend_alias_ta);
+  y += 42;
+
+  lv_obj_t* save = lv_btn_create(body);
+  lv_obj_set_size(save, lv_pct(100), 36);
+  lv_obj_set_pos(save, 2, y);
+  styleButton(save);
+  lv_obj_set_style_bg_color(save, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
+  lv_obj_add_event_cb(save, friendAliasSaveCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* save_l = lv_label_create(save);
+  lv_label_set_text(save_l, TR("Save private name"));
+  lv_obj_center(save_l);
+}
+
+static void actionSheetFriendToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  ContactInfo c;
+  const bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
+  closeActionSheet();
+  if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  const bool was_friend = friendByKey(c.id.pub_key) != nullptr;
+  if (was_friend) {
+    openFriendAliasModal(c);
+    return;
+  }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  openNearbyFriendRequestPicker(c.id.pub_key, c.name);
+#else
+  const bool saved = touchPrefsSetFriend(c.id.pub_key, c.name);
+  if (!saved) {
+    g_lv.task->showAlert(TR("Friend update failed; check SD"), 1600);
+    return;
+  }
+  friendsReload();
+  setContactsFilterUi(6);
+  refreshContactsList();
+  g_lv.task->showAlert(TR("Friend added"), 1200);
+#endif
 }
 
 // "Reset path" — wipes the cached return path so the next send will re-flood
@@ -14441,9 +15986,20 @@ static void actionSheetBlockCb(lv_event_t* e) {
   if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
 #if defined(ESP32)
   bool was_blocked = touchPrefsIsIgnored(c.id.pub_key);
+  if (!was_blocked && friendByKey(c.id.pub_key)) {
+    // Blocking a friend also ends the relationship on both sides. The remote
+    // removal is authenticated but deliberately produces no notification.
+    the_mesh.uiRemoveFriendRelationship(c.id.pub_key, c.name);
+    touchPrefsRemoveFriend(c.id.pub_key);
+    friendsReload();
+  }
   bool now_blocked = touchPrefsSetIgnored(c.id.pub_key, !was_blocked);
-  g_lv.task->showAlert(now_blocked ? TR("Blocked \xe2\x80\x94 their messages are hidden")
-                                   : TR("Unblocked"), 1300);
+  if (!was_blocked && !now_blocked)
+    g_lv.task->showAlert(TR("Block failed or block list full"), 1900);
+  else
+    g_lv.task->showAlert(now_blocked
+        ? TR("Blocked \xe2\x80\x94 their messages are hidden")
+        : TR("Unblocked"), 1300);
   contactsListForceRefresh();   // show/hide the red blocked icon immediately
 #else
   g_lv.task->showAlert(TR("Blocking unsupported"), 1100);
@@ -15071,6 +16627,15 @@ static void actionSheetLosCb(lv_event_t* e) {
 #endif  // ESP32 && MULTI_TRANSPORT_COMPANION
 
 static void actionSheetShowOnMapCb(lv_event_t* e);   // defined with the map code (uses map statics)
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static void openFriendMeshCompass(int contactIndex);
+static void actionSheetFriendCompassCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int contactIndex = static_cast<int>(s_action_sheet_mesh_idx);
+  closeActionSheet();
+  openFriendMeshCompass(contactIndex);
+}
+#endif
 static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name, bool from_map = false) {
   s_action_sheet_mesh_idx = mesh_idx;
   s_action_sheet_is_repeater = is_repeater;
@@ -15120,9 +16685,15 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // both this contact and our node have a GPS fix.
   bool has_los = false;
   bool is_room = false;
+  bool is_chat = false;
+  bool is_friend = false;
   {
     ContactInfo _tc;
-    if (the_mesh.getContactByIdx(mesh_idx, _tc)) is_room = (_tc.type == ADV_TYPE_ROOM);
+    if (the_mesh.getContactByIdx(mesh_idx, _tc)) {
+      is_room = (_tc.type == ADV_TYPE_ROOM);
+      is_chat = (_tc.type == ADV_TYPE_CHAT);
+      is_friend = friendByKey(_tc.id.pub_key) != nullptr;
+    }
   }
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   {
@@ -15139,11 +16710,27 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
     ContactInfo _mc;
     has_map_btn = the_mesh.getContactByIdx(mesh_idx, _mc) && (_mc.gps_lat != 0 || _mc.gps_lon != 0);
   }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  bool has_friend_compass = false;
+  {
+    ContactInfo _fc;
+    has_friend_compass = s_friendmesh_map_channel_slot >= 0 &&
+        the_mesh.getContactByIdx(mesh_idx, _fc) &&
+        (_fc.gps_lat != 0 || _fc.gps_lon != 0) &&
+        the_mesh.uiIsFriendMeshChannelMemberJoined(
+            s_friendmesh_map_channel_slot, _fc.id.pub_key);
+  }
+#else
+  const bool has_friend_compass = false;
+#endif
   // Everything except Delete goes in a 2-column grid; Delete is a full-width
   // bottom row. Grid items = msg/ping + telemetry + range + favorite + reset +
   // block (6), + trace/admin for repeaters (2), + Join for rooms (1), +
   // line-of-sight (1), + Show on map (1 when contact has GPS and !from_map).
-  const int grid_items = (from_map ? 5 : 6) + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
+  const int grid_items = (from_map ? 5 : 6) + (is_chat ? 1 : 0) +
+      (is_repeater ? 2 : 0) +
+      (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0) +
+      (has_friend_compass ? 1 : 0);
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
   int card_h = title_h + (grid_rows + 1) * (btn_h + btn_gap) + padding;
   // Cap the card to the visible area and let the BUTTON BODY (below the fixed title/X) scroll when it
@@ -15254,8 +16841,22 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
     mk_btn(LV_SYMBOL_ENVELOPE "  Message", actionSheetSendMsgCb, 0);
   }
   mk_btn(LV_SYMBOL_BATTERY_3 "  Telemetry", actionSheetTelemetryCb, 0);
+  if (is_chat) {
+    mk_btn(is_friend ? TOUCH_SYM_PERSON "  Friend name"
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+                      : TOUCH_SYM_PERSON "  Send friend request",
+#else
+                      : TOUCH_SYM_PERSON "  Add friend",
+#endif
+           actionSheetFriendToggleCb, is_friend ? 0 : COLOR_STATUS_OK);
+  }
   if (has_map_btn)
     mk_btn(LV_SYMBOL_GPS "  Show on map", actionSheetShowOnMapCb, 0);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (has_friend_compass)
+    mk_btn(LV_SYMBOL_GPS "  Friend Compass", actionSheetFriendCompassCb,
+           COLOR_STATUS_OK);
+#endif
   if (is_repeater) {
     mk_btn(LV_SYMBOL_GPS      "  Trace SNR", actionSheetTracePingCb, 0);
     mk_btn(LV_SYMBOL_SETTINGS "  Admin",     actionSheetAdminCb,     0);
@@ -15293,7 +16894,12 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
     mk_btn(LV_SYMBOL_CLOSE "  Block", actionSheetBlockCb, 0);
 #endif
   }
-  mk_btn_full(LV_SYMBOL_TRASH "  Delete", actionSheetDeleteCb, 0xB23A48);
+  if (is_friend)
+    mk_btn_full(LV_SYMBOL_TRASH "  Remove friend",
+                actionSheetRemoveFriendCb, 0xB23A48);
+  else
+    mk_btn_full(LV_SYMBOL_TRASH "  Remove node",
+                actionSheetDeleteCb, 0xB23A48);
 }
 
 static void contactSelectCb(lv_event_t* e) {
@@ -15319,7 +16925,7 @@ static void contactSelectCb(lv_event_t* e) {
     g_lv.task->showAlert(TR("Contact gone"), 1200);
     return;
   }
-  openContactActionSheet(ctx->mesh_idx, ctx->is_repeater, c.name);
+  openContactActionSheet(ctx->mesh_idx, ctx->is_repeater, friendDisplayName(c));
 }
 
 // ============================================================
@@ -15362,6 +16968,10 @@ static void setAddChannelError(const char* msg) {
   if (s_addch_error_l) lv_label_set_text(s_addch_error_l, msg ? TR(msg) : "");
 }
 
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static void openFriendMeshBleHostScreen(int channelSlot);
+#endif
+
 // ---- Create-private channel ----
 static void createPrivateChannelSubmitCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -15400,14 +17010,31 @@ static void createPrivateChannelSubmitCb(lv_event_t* e) {
     setAddChannelError("Failed to save channel.");
     return;
   }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (s_addch_friendmesh_group &&
+      !the_mesh.uiCreateFriendMeshPrivateGroup(slot)) {
+    the_mesh.uiDeleteChannel(slot);
+    setAddChannelError("Failed to initialize FriendMesh group.");
+    return;
+  }
+#endif
   // Don't wait for the loop's deferred refresh — pull the channel into the
   // thread list right now so the chats list shows the new entry the instant
   // the modal closes.
   if (g_lv.task) {
     g_lv.task->refreshThreadsFromMesh();
     g_lv.dirty_threads = true;
+    g_lv.dm.list_sig = 0;
+    g_lv.ch.list_sig = 0;
   }
+  const bool friendMeshGroup = s_addch_friendmesh_group;
   closeSettingsModal();
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (friendMeshGroup) {
+    openFriendMeshBleHostScreen(slot);
+    return;
+  }
+#endif
   if (g_lv.task) g_lv.task->showAlert(TR("Channel created"), 1200);
 }
 
@@ -15463,18 +17090,19 @@ static void addContactSubmitCb(lv_event_t* e) {
     if (s_addct_error_l) lv_label_set_text(s_addct_error_l, TR("Name can't be empty."));
     return;
   }
-  if (!the_mesh.uiAddManualContact(pub, name)) {
-    if (s_addct_error_l) lv_label_set_text(s_addct_error_l, TR("Already exists or table full."));
+  ContactInfo* existing = the_mesh.lookupContactByPubKey(pub, PUB_KEY_SIZE);
+  if (!existing && !the_mesh.uiAddManualContact(pub, name)) {
+    if (s_addct_error_l) lv_label_set_text(s_addct_error_l, TR("Contact table full."));
     return;
   }
   closeSettingsModal();
-  if (g_lv.task) g_lv.task->showAlert(TR("Contact added"), 1200);
+  if (g_lv.task) g_lv.task->showAlert(TR("Contact saved locally"), 1400);
   refreshContactsList();
 }
 
 static void openAddContactModalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_obj_t* body = createSettingsModal("Add contact", SettingsModalKind::AddContact);
+  lv_obj_t* body = createSettingsModal("Save contact", SettingsModalKind::AddContact);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -15482,7 +17110,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_width(hint, lv_pct(100));
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
-  lv_label_set_text(hint, TR("Paste the 64-hex public key and a name. Useful when you want to DM someone before their advert has arrived."));
+  lv_label_set_text(hint, TR("Paste the 64-hex public key and choose a private name. This saves a local contact, not a friendship."));
   lv_obj_set_pos(hint, 2, y);
   y += 48;
 
@@ -15502,7 +17130,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   y += 60;
 
   lv_obj_t* name_l = lv_label_create(body);
-  lv_label_set_text(name_l, TR("Name"));
+  lv_label_set_text(name_l, TR("Private friend name"));
   lv_obj_set_style_text_color(name_l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(name_l, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(name_l, 2, y);
@@ -15533,12 +17161,15 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, addContactSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
-  lv_label_set_text(bl, TR("Add contact"));
+  lv_label_set_text(bl, TR("Save contact locally"));
   lv_obj_center(bl);
 }
 
 static void openCreatePrivateChannelModal() {
-  lv_obj_t* body = createSettingsModal("Create private channel", SettingsModalKind::ChCreatePrv);
+  lv_obj_t* body = createSettingsModal(
+      s_addch_friendmesh_group ? "Create FriendMesh group"
+                               : "Create private channel",
+      SettingsModalKind::ChCreatePrv);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -15546,9 +17177,11 @@ static void openCreatePrivateChannelModal() {
   lv_obj_set_width(hint, lv_pct(100));
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
-  lv_label_set_text(hint, TR("Share the 32-char secret so others can join. Leave the secret empty to generate a random one."));
+  lv_label_set_text(hint, TR(s_addch_friendmesh_group
+      ? "Creates a private MeshCore channel with FriendMesh group features. Invite members from the group's settings."
+      : "Share the 32-char secret so others can join. Leave the secret empty to generate a random one."));
   lv_obj_set_pos(hint, 2, y);
-  y += 44;
+  y += s_addch_friendmesh_group ? 60 : 44;
 
   lv_obj_t* name_l = lv_label_create(body);
   lv_label_set_text(name_l, TR("Channel name"));
@@ -15597,7 +17230,8 @@ static void openCreatePrivateChannelModal() {
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, createPrivateChannelSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
-  lv_label_set_text(bl, TR("Create"));
+  lv_label_set_text(bl, TR(s_addch_friendmesh_group
+                               ? "Create group" : "Create"));
   lv_obj_center(bl);
 }
 
@@ -15803,8 +17437,250 @@ static void addChannelSheetDismissCb(lv_event_t* e) {
 static void addChannelCreatePrivateCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeAddChannelSheet();
+  s_addch_friendmesh_group = false;
   openCreatePrivateChannelModal();
 }
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static void friendmeshBleJoinSubmitCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED ||
+      !s_friendmesh_ble_join_code_ta) return;
+  kbMirrorSyncToReal();
+  const char* code = lv_textarea_get_text(s_friendmesh_ble_join_code_ta);
+  if (!code || strlen(code) != 6) {
+    if (s_friendmesh_ble_join_status)
+      lv_label_set_text(s_friendmesh_ble_join_status,
+                        TR("Enter all 6 digits."));
+    return;
+  }
+  if (s_friendmesh_ble_join_status) {
+    lv_label_set_text(s_friendmesh_ble_join_status,
+                      TR("Connecting securely over Bluetooth..."));
+    lv_refr_now(nullptr);
+  }
+  friendmesh::BleJoinProvision provision = {};
+  const char* memberName = g_lv.task ? g_lv.task->getNodeNameCstr() : nullptr;
+  if (!memberName || !memberName[0]) memberName = "Member";
+  const friendmesh::BleJoinResult result = friendmesh::bleJoinWithHost(
+      s_friendmesh_ble_selected_host, code, the_mesh.getSelfPubKey(),
+      memberName, provision);
+  if (result != friendmesh::BleJoinResult::Ok) {
+    const char* message = "Bluetooth join failed. Try again.";
+    if (result == friendmesh::BleJoinResult::InvalidCode)
+      message = "That code was not accepted.";
+    else if (result == friendmesh::BleJoinResult::AlreadyMember)
+      message = "This device is already in that group.";
+    else if (result == friendmesh::BleJoinResult::Expired)
+      message = "The admin's invite expired.";
+    else if (result == friendmesh::BleJoinResult::ConnectFailed)
+      message = "Couldn't connect. Keep both devices nearby.";
+    if (s_friendmesh_ble_join_status)
+      lv_label_set_text(s_friendmesh_ble_join_status, TR(message));
+    return;
+  }
+  int channelSlot = -1;
+  if (!the_mesh.uiInstallFriendMeshBleGroup(
+          provision.channelName, provision.channelSecret,
+          provision.adminPubKey, provision.adminName, channelSlot)) {
+    memset(&provision, 0, sizeof(provision));
+    if (s_friendmesh_ble_join_status)
+      lv_label_set_text(s_friendmesh_ble_join_status,
+                        TR("Connected, but the group could not be saved."));
+    return;
+  }
+  memset(&provision, 0, sizeof(provision));
+  closeSettingsModal();
+  if (g_lv.task) {
+    g_lv.task->refreshThreadsFromMesh();
+    g_lv.dirty_threads = true;
+    g_lv.dm.list_sig = 0;
+    g_lv.ch.list_sig = 0;
+    g_lv.task->showAlert(TR("FriendMesh group joined"), 1600);
+  }
+}
+
+static void friendmeshBleJoinHostCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const friendmesh::BlePresencePeer* host =
+      static_cast<const friendmesh::BlePresencePeer*>(
+          lv_event_get_user_data(e));
+  if (!host) return;
+  s_friendmesh_ble_selected_host = *host;
+  closeSettingsModal();
+  lv_obj_t* body = createSettingsModal(
+      "Enter join code", SettingsModalKind::ChJoinPrv);
+  int y = 0;
+  lv_obj_t* hint = lv_label_create(body);
+  lv_obj_set_width(hint, lv_pct(100));
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_label_set_text_fmt(hint,
+      TR("Found %s nearby. Enter the 6-digit code shown on the admin's screen."),
+      s_friendmesh_ble_selected_host.name[0]
+          ? s_friendmesh_ble_selected_host.name : "FriendMesh admin");
+  lv_obj_set_pos(hint, 2, y);
+  y += 54;
+  s_friendmesh_ble_join_code_ta = lv_textarea_create(body);
+  lv_obj_set_size(s_friendmesh_ble_join_code_ta, lv_pct(100), 38);
+  lv_obj_set_pos(s_friendmesh_ble_join_code_ta, 2, y);
+  lv_textarea_set_one_line(s_friendmesh_ble_join_code_ta, true);
+  lv_textarea_set_max_length(s_friendmesh_ble_join_code_ta, 6);
+  lv_textarea_set_accepted_chars(s_friendmesh_ble_join_code_ta, "0123456789");
+  lv_textarea_set_placeholder_text(s_friendmesh_ble_join_code_ta, "000000");
+  attachSettingsTaEvents(s_friendmesh_ble_join_code_ta);
+  y += 46;
+  s_friendmesh_ble_join_status = lv_label_create(body);
+  lv_obj_set_width(s_friendmesh_ble_join_status, lv_pct(100));
+  lv_label_set_long_mode(s_friendmesh_ble_join_status, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(s_friendmesh_ble_join_status,
+                              lv_color_hex(0xE08080), LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_friendmesh_ble_join_status, &g_font_12,
+                             LV_PART_MAIN);
+  lv_label_set_text(s_friendmesh_ble_join_status, "");
+  lv_obj_set_pos(s_friendmesh_ble_join_status, 2, y);
+  y += 30;
+  lv_obj_t* join = lv_btn_create(body);
+  lv_obj_set_size(join, lv_pct(100), 38);
+  lv_obj_set_pos(join, 2, y);
+  styleButton(join);
+  lv_obj_set_style_bg_color(join, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
+  lv_obj_add_event_cb(join, friendmeshBleJoinSubmitCb, LV_EVENT_CLICKED,
+                      nullptr);
+  lv_obj_t* label = lv_label_create(join);
+  lv_label_set_text(label, TR("Join group"));
+  lv_obj_center(label);
+}
+
+static void friendmeshBleJoinScanTimerCb(lv_timer_t* timer) {
+  if (!s_friendmesh_invite_body ||
+      !lv_obj_is_valid(s_friendmesh_invite_body)) {
+    s_friendmesh_invite_scan_timer = nullptr;
+    friendmesh::blePresenceCancelScan();
+    lv_timer_del(timer);
+    return;
+  }
+  if (!friendmesh::blePresenceScanFinished() &&
+      (int32_t)(millis() - s_friendmesh_invite_scan_deadline) < 0) return;
+  s_friendmesh_invite_scan_timer = nullptr;
+  friendmesh::blePresenceCancelScan();
+  friendmesh::BlePresencePeer peers[friendmesh::kBlePresenceMaxPeers] = {};
+  const size_t count = friendmesh::blePresenceCopyPeers(
+      peers, friendmesh::kBlePresenceMaxPeers);
+  int y = 72;
+  s_friendmesh_ble_join_host_count = 0;
+  for (size_t i = 0; i < count &&
+       s_friendmesh_ble_join_host_count < friendmesh::kBlePresenceMaxPeers;
+       ++i) {
+    if (!peers[i].joinHost) continue;
+    friendmesh::BlePresencePeer* stored =
+        &s_friendmesh_ble_join_hosts[s_friendmesh_ble_join_host_count++];
+    *stored = peers[i];
+    lv_obj_t* button = lv_btn_create(s_friendmesh_invite_body);
+    lv_obj_set_size(button, lv_pct(100), 40);
+    lv_obj_set_pos(button, 2, y);
+    styleButton(button);
+    lv_obj_add_event_cb(button, friendmeshBleJoinHostCb, LV_EVENT_CLICKED,
+                        stored);
+    lv_obj_t* label = lv_label_create(button);
+    lv_label_set_text_fmt(label, LV_SYMBOL_BLUETOOTH "  %s  (%d dBm)",
+                          stored->name[0] ? stored->name : "FriendMesh admin",
+                          (int)stored->rssi);
+    lv_obj_center(label);
+    y += 46;
+  }
+  if (s_friendmesh_ble_join_host_count == 0)
+    lv_label_set_text(s_friendmesh_invite_status,
+        TR("No open FriendMesh invites found. Keep the admin's code screen open and retry."));
+  else
+    lv_label_set_text_fmt(s_friendmesh_invite_status,
+                          TR("Found %u nearby invite%s. Choose the admin."),
+                          (unsigned)s_friendmesh_ble_join_host_count,
+                          s_friendmesh_ble_join_host_count == 1 ? "" : "s");
+  lv_timer_del(timer);
+}
+
+static void openFriendMeshBleJoinScan() {
+  friendmeshInvitePickerStopScan();
+  memset(s_friendmesh_ble_join_hosts, 0,
+         sizeof(s_friendmesh_ble_join_hosts));
+  s_friendmesh_ble_join_host_count = 0;
+  s_friendmesh_invite_body = createSettingsModal(
+      "Join FriendMesh group", SettingsModalKind::AddContact);
+  lv_obj_set_scroll_dir(s_friendmesh_invite_body, LV_DIR_VER);
+  lv_obj_t* hint = lv_label_create(s_friendmesh_invite_body);
+  lv_obj_set_width(hint, lv_pct(100));
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_label_set_text(hint, TR(
+      "Searching directly over Bluetooth. No MeshCore advert or LoRa route is required."));
+  lv_obj_set_pos(hint, 2, 0);
+  s_friendmesh_invite_status = lv_label_create(s_friendmesh_invite_body);
+  lv_obj_set_width(s_friendmesh_invite_status, lv_pct(100));
+  lv_label_set_long_mode(s_friendmesh_invite_status, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(s_friendmesh_invite_status,
+                              lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_friendmesh_invite_status, &g_font_12,
+                             LV_PART_MAIN);
+  lv_label_set_text(s_friendmesh_invite_status,
+                    TR("Pinging nearby FriendMesh admins..."));
+  lv_obj_set_pos(s_friendmesh_invite_status, 2, 42);
+  if (friendmesh::blePresenceStartScan(4)) {
+    s_friendmesh_invite_scan_deadline = millis() + 5500;
+    s_friendmesh_invite_scan_timer = lv_timer_create(
+        friendmeshBleJoinScanTimerCb, 200, nullptr);
+  } else {
+    lv_label_set_text(s_friendmesh_invite_status,
+                      TR("Bluetooth is unavailable. Turn BLE on and retry."));
+  }
+}
+
+static void addChannelFriendMeshCreateChoiceCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeSettingsModal();
+  s_addch_friendmesh_group = true;
+  openCreatePrivateChannelModal();
+}
+
+static void addChannelFriendMeshJoinChoiceCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeSettingsModal();
+  openFriendMeshBleJoinScan();
+}
+
+static void openFriendMeshChannelChoices() {
+  lv_obj_t* body = createSettingsModal(
+      "FriendMesh channels", SettingsModalKind::AddContact);
+  lv_obj_t* hint = lv_label_create(body);
+  lv_obj_set_width(hint, lv_pct(100));
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_label_set_text(hint, TR(
+      "Create a private group or join an admin who is nearby over Bluetooth."));
+  lv_obj_set_pos(hint, 2, 0);
+  const char* labels[2] = {"Create", "Join"};
+  lv_event_cb_t callbacks[2] = {addChannelFriendMeshCreateChoiceCb,
+                                addChannelFriendMeshJoinChoiceCb};
+  for (int i = 0; i < 2; ++i) {
+    lv_obj_t* button = lv_btn_create(body);
+    lv_obj_set_size(button, lv_pct(100), 44);
+    lv_obj_set_pos(button, 2, 58 + i * 52);
+    styleButton(button);
+    lv_obj_add_event_cb(button, callbacks[i], LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* label = lv_label_create(button);
+    lv_label_set_text(label, TR(labels[i]));
+    lv_obj_center(label);
+  }
+}
+
+static void addChannelCreateFriendMeshCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeAddChannelSheet();
+  openFriendMeshChannelChoices();
+}
+#endif
 
 static void addChannelJoinPrivateCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -15847,10 +17723,14 @@ static void openAddChannelSheet() {
   lv_obj_move_foreground(s_addch_sheet);
   lv_obj_add_event_cb(s_addch_sheet, addChannelSheetDismissCb, LV_EVENT_CLICKED, nullptr);
 
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  const int rows  = 5;
+#else
   const int rows  = 4;
+#endif
   const int pad   = PSC(10);
   const int hdr_h = PSC(36);
-  const int row_gap = PSC(6);
+  const int row_gap = PSC(rows > 4 ? 4 : 6);
   // Shrink the button height if the four rows + header won't fit the (shorter)
   // landscape viewport, so the card never runs off-screen. Bigger on the Tanmatsu.
   int btn_h = PSC(38);
@@ -15893,6 +17773,9 @@ static void openAddChannelSheet() {
     y += btn_h + row_gap;
   };
   mk("Create a private channel", addChannelCreatePrivateCb);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  mk("FriendMesh channels", addChannelCreateFriendMeshCb);
+#endif
   mk("Join a private channel",   addChannelJoinPrivateCb);
   mk("Join the public channel",  addChannelJoinPublicCb);
   mk("Join a hashtag channel",   addChannelJoinHashtagCb);
@@ -16237,10 +18120,9 @@ static void calibrateBatteryCb(lv_event_t* e) {
 // is trimmed to the last 24h. The rewrite streams line-by-line via a temp file,
 // so memory cost is one short String at a time. Tapping the battery in the status
 // bar opens a voltage chart built from that file.
-// Battery log prefers the SD card when present (T-Deck); on boards with no SD
-// slot — or a T-Deck with no card inserted — it falls back to internal SPIFFS so
-// the 24h chart still works. SD path lives under /meshcomod with the other files;
-// SPIFFS (flat) uses a top-level path.
+// Battery log prefers the SD card when present. FriendMesh T-Deck builds never
+// fall back to internal SPIFFS; logging pauses until the required card returns.
+// Other boards retain the legacy internal fallback.
 static fs::FS& battLogFs() {
 #if CAP_SD
   if (SD.cardType() != CARD_NONE && SD.exists("/meshcomod")) return SD;
@@ -16254,6 +18136,13 @@ static bool battLogOnSd() {
   return false;
 #endif
 }
+static bool battLogStorageReady() {
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  return battLogOnSd();
+#else
+  return true;
+#endif
+}
 static const char* battLogPath() { return battLogOnSd() ? "/meshcomod/battery.log" : "/battery.log"; }
 static const char* battLogTmp()  { return battLogOnSd() ? "/meshcomod/battery.tmp" : "/battery.tmp"; }
 static const uint32_t k_batt_log_period_ms = 5u * 60u * 1000u;   // 5 min
@@ -16263,6 +18152,7 @@ static lv_obj_t*      s_batt_chart_root    = nullptr;
 // Append one sample + drop anything older than 24h. Line columns (tab-separated,
 // human-readable): <epoch>\t<YYYY-MM-DD HH:MM>\t<millivolts>\t<percent>\t<cpuMHz>
 static void batteryLogAppend(uint32_t epoch, uint16_t mv, int pct, uint16_t cpu_mhz) {
+  if (!battLogStorageReady()) return;
   fs::FS& fs = battLogFs();
   if (battLogOnSd()) markSdIo();
   char when[20] = "----------------";
@@ -16309,6 +18199,10 @@ static void batteryChartDismissCb(lv_event_t* e) {
 static void batteryChartCloseCb(lv_event_t* e) { (void)e; batteryChartClose(); }  // the X badge
 static void openBatteryChartWindow();   // fwd (clear reopens to show the empty chart)
 static void batteryLogClearConfirmed() {
+  if (!battLogStorageReady()) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Battery history needs an SD card"), 1800);
+    return;
+  }
   if (battLogOnSd()) markSdIo();
   battLogFs().remove(battLogPath());
   batteryChartClose();
@@ -16413,7 +18307,7 @@ static void openBatteryChartWindow() {
   int n = 0;
   if (mvs && cpus && eps) {   // null only under extreme OOM -> n stays 0 -> the empty-state below
     if (battLogOnSd()) markSdIo();
-    File rf = battLogFs().open(battLogPath(), FILE_READ);
+    File rf = battLogStorageReady() ? battLogFs().open(battLogPath(), FILE_READ) : File();
     if (rf) {
       while (rf.available() && n < k_max_pts) {
         String ln = rf.readStringUntil('\n');
@@ -16934,13 +18828,16 @@ static void closeTermCmdPicker() {
 }
 
 static void fmImageClose();   // fwd — defined in the file-manager section
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static void closeFriendMeshTransientState();
+#endif
 
 static void closeFullscreenView() {
   closeTermCmdPicker();
   // Detach the sink + null the widgets BEFORE the async delete so a late reply
   // (or the loop renderer) can't write into a freed label/box.
   MyMesh::setTerminalSink(nullptr);
-  const bool had_kb = (s_term_input_ta || s_fm_search_ta || s_fm_prompt_ta);
+  const bool had_kb = s_term_input_ta || s_fm_search_ta || s_fm_prompt_ta;
   if (s_editor_root) {
     if (g_lv.keyboard) lv_keyboard_set_textarea(g_lv.keyboard, nullptr);
     popupClose(&s_editor_root); s_editor_ta = nullptr;
@@ -16955,6 +18852,9 @@ static void closeFullscreenView() {
   s_fm_search_ta   = nullptr;
   s_fm_sort_lbl    = nullptr;
   s_fm_prompt_ta   = nullptr;
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  closeFriendMeshTransientState();
+#endif
   s_fm_fs          = nullptr;
   s_fm_filter[0]   = '\0';
   if (s_fm_entries) { free(s_fm_entries); s_fm_entries = nullptr; }   // release the PSRAM cache
@@ -16965,13 +18865,17 @@ static void closeFullscreenView() {
   updateGlobalStatusBar();  // restore MESHCOMOD / unread in the status bar
 }
 
-static void fullscreenHomeCb(lv_event_t* e) {
+static void fullscreenExitCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int return_tab = static_cast<int>(reinterpret_cast<intptr_t>(
+      lv_event_get_user_data(e)));
   closeFullscreenView();
-  if (g_lv.tabview) lv_tabview_set_act(g_lv.tabview, HOME_TAB_INDEX, LV_ANIM_OFF);   // back to Home
+  if (g_lv.tabview)
+    lv_tabview_set_act(g_lv.tabview, return_tab, LV_ANIM_OFF);
 }
 
-static lv_obj_t* openFullscreenView(const char* title) {
+static lv_obj_t* openFullscreenView(
+    const char* title, int return_tab = HOME_TAB_INDEX) {
   closeFullscreenView();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -16997,21 +18901,28 @@ static lv_obj_t* openFullscreenView(const char* title) {
   lv_obj_set_pos(body, 0, 0);
   lv_obj_set_style_pad_all(body, 6, LV_PART_MAIN);
 
-  // Home button floats as a small overlay over the top-right of the body.
-  lv_obj_t* home = lv_btn_create(s_fullscreen_view);
-  lv_obj_set_size(home, 40, 28);
-  lv_obj_align(home, LV_ALIGN_TOP_RIGHT, -6, 4);
-  styleButton(home);
-  lv_obj_add_event_cb(home, fullscreenHomeCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* hl = lv_label_create(home);
+  // Most tools retain their Home control at top-right. Views launched from a
+  // specific tab use a conventional Back control at top-left.
+  lv_obj_t* exit = lv_btn_create(s_fullscreen_view);
+  lv_obj_set_size(exit, 40, 28);
+  if (return_tab == HOME_TAB_INDEX)
+    lv_obj_align(exit, LV_ALIGN_TOP_RIGHT, -6, 4);
+  else
+    lv_obj_align(exit, LV_ALIGN_TOP_LEFT, 6, 4);
+  styleButton(exit);
+  lv_obj_add_event_cb(
+      exit, fullscreenExitCb, LV_EVENT_CLICKED,
+      reinterpret_cast<void*>(static_cast<intptr_t>(return_tab)));
+  lv_obj_t* hl = lv_label_create(exit);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hl, LV_SYMBOL_CLOSE);   // red ✕ close
   lv_obj_set_style_text_color(hl, lv_color_hex(0xE05544), LV_PART_MAIN);
 #else
-  lv_label_set_text(hl, LV_SYMBOL_HOME);
+  lv_label_set_text(hl, return_tab == HOME_TAB_INDEX
+                            ? LV_SYMBOL_HOME : LV_SYMBOL_LEFT);
 #endif
   lv_obj_center(hl);
-  lv_obj_move_foreground(home);
+  lv_obj_move_foreground(exit);
   return body;
 }
 
@@ -17918,11 +19829,41 @@ static inline SPIClass* sdSharedSPI() { return tdeckSharedSPI(); }
 // already initialised by the radio/display, so those pins are untouched.
 static bool fmSdTryMount() {
   if (s_sd_mounted) return true;
+  // Honour the backoff here, not only at selected UI call sites. Chat history,
+  // tiles, backups, and the file manager all share this helper; without a
+  // central guard an absent card made history walk the full 6-8 second mount
+  // ladder every few seconds.
+  const uint32_t mountNow = millis();
+  if (s_sd_retry_after_ms &&
+      static_cast<int32_t>(mountNow - s_sd_retry_after_ms) < 0) return false;
 #if defined(TLORA_PAGER)
   if (!pagerSdCardPresent()) return false;
 #endif
+#if defined(HAS_TDECK_GT911)
+  // Arduino-ESP32's SDFS failure path is not re-entrant: two cores can both
+  // enter SD.end()/SD.begin(), one clears s_cards[pdrv], and the other then
+  // dereferences that null slot in sdSelectCard(). The UI and tile/history
+  // worker can reach this helper concurrently, so allow only one mount ladder.
+  static portMUX_TYPE s_mount_mux = portMUX_INITIALIZER_UNLOCKED;
+  static bool s_mount_in_progress = false;
+  bool mountOwner = false;
+  portENTER_CRITICAL(&s_mount_mux);
+  if (!s_mount_in_progress) {
+    s_mount_in_progress = true;
+    mountOwner = true;
+  }
+  portEXIT_CRITICAL(&s_mount_mux);
+  if (!mountOwner) return false;
+#endif
   SPIClass* spi = sdSharedSPI();
-  if (!spi) return false;
+  if (!spi) {
+#if defined(HAS_TDECK_GT911)
+    portENTER_CRITICAL(&s_mount_mux);
+    s_mount_in_progress = false;
+    portEXIT_CRITICAL(&s_mount_mux);
+#endif
+    return false;
+  }
   // Cold microSD cards — especially the first mount after boot — often fail
   // the initial SD.begin and historically only recovered after a physical
   // reinsert (which power-cycles the card). The T-Deck shares ONE power rail
@@ -17970,10 +19911,20 @@ static bool fmSdTryMount() {
     s_sd_size = SD.cardSize();
     s_sd_retry_after_ms = 0;                    // clear any prior backoff
     markSdIo();                                 // mount touched the card -> blip the LED
+#if defined(HAS_TDECK_GT911)
+    portENTER_CRITICAL(&s_mount_mux);
+    s_mount_in_progress = false;
+    portEXIT_CRITICAL(&s_mount_mux);
+#endif
     return true;
   }
   SD.end();                                     // clean up on failure
   s_sd_retry_after_ms = millis() + 10000;       // back off so we don't hammer the card
+#if defined(HAS_TDECK_GT911)
+  portENTER_CRITICAL(&s_mount_mux);
+  s_mount_in_progress = false;
+  portEXIT_CRITICAL(&s_mount_mux);
+#endif
   return false;
 }
 static void fmSdUnmount() {
@@ -22019,6 +23970,469 @@ static void contactsOverflowBlockedCb(lv_event_t* e) {
   closeContactsOverflowSheet();
   openBlockedUsersModal();             // ignore-list manager (unblock people)
 }
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static void openFriendRequestsModal();
+
+static void contactsOverflowNearbyFriendsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeContactsOverflowSheet();
+  openNearbyFriendRequestPicker();
+}
+
+static void closeFriendRequestsModal() {
+  if (s_friend_requests_root) popupClose(&s_friend_requests_root);
+}
+
+static void friendRequestsDismissCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  lv_indev_t* active = lv_indev_get_act();
+  if (active) lv_indev_wait_release(active);
+  closeFriendRequestsModal();
+}
+
+static void friendRequestsToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* sw = lv_event_get_target(e);
+  const bool enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  if (!touchPrefsSetFriendRequestsEnabled(enabled) && g_lv.task) {
+    g_lv.task->showAlert(TR("Couldn't save request setting"), 1800);
+    if (enabled) lv_obj_clear_state(sw, LV_STATE_CHECKED);
+    else lv_obj_add_state(sw, LV_STATE_CHECKED);
+    return;
+  }
+  if (g_lv.task) g_lv.task->showAlert(enabled
+      ? TR("Friend requests on") : TR("Friend requests off"), 1200);
+}
+
+static TouchFriendRequestRecord s_friend_request_deny_target = {};
+static bool s_friend_request_deny_target_valid = false;
+
+struct FriendTransactionUiState {
+  bool valid;
+  bool dismissed;
+  uint8_t id[friendmesh::kFriendRequestIdBytes];
+  friendmesh::FriendTransactionKind kind;
+  friendmesh::FriendTransactionStage stage;
+  char peerName[friendmesh::kFriendRequestNameBytes];
+  uint8_t floodsUsed;
+  uint8_t floodLimit;
+};
+static FriendTransactionUiState s_friend_txn_ui = {};
+static lv_obj_t* s_friend_txn_overlay = nullptr;
+static lv_obj_t* s_friend_txn_title = nullptr;
+static lv_obj_t* s_friend_txn_steps = nullptr;
+static lv_obj_t* s_friend_txn_floods = nullptr;
+
+static void closeFriendTransactionModal(bool dismissed) {
+  if (dismissed) s_friend_txn_ui.dismissed = true;
+  if (s_friend_txn_overlay) lv_obj_del(s_friend_txn_overlay);
+  s_friend_txn_overlay = nullptr;
+  s_friend_txn_title = nullptr;
+  s_friend_txn_steps = nullptr;
+  s_friend_txn_floods = nullptr;
+}
+
+static void friendTransactionDismissCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED)
+    closeFriendTransactionModal(true);
+}
+
+static bool friendStageAtLeastResponse(
+    friendmesh::FriendTransactionStage stage) {
+  return stage == friendmesh::FriendTransactionStage::ResponseReceived ||
+      stage == friendmesh::FriendTransactionStage::ConfirmationSent ||
+      stage == friendmesh::FriendTransactionStage::Complete ||
+      stage == friendmesh::FriendTransactionStage::Declined;
+}
+
+static void renderFriendTransactionModal() {
+  if (!s_friend_txn_ui.valid || s_friend_txn_ui.dismissed) return;
+  if (!s_friend_txn_overlay) {
+    const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+    const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+    s_friend_txn_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_friend_txn_overlay);
+    lv_obj_set_size(s_friend_txn_overlay, sw, sh);
+    lv_obj_set_style_bg_color(
+        s_friend_txn_overlay, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(
+        s_friend_txn_overlay, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_clear_flag(s_friend_txn_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_friend_txn_overlay, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* card = lv_obj_create(s_friend_txn_overlay);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, sw - SC(34), sh - SC(34));
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(
+        card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, SC(10), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, SC(14), LV_PART_MAIN);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    s_friend_txn_title = lv_label_create(card);
+    lv_obj_set_style_text_color(
+        s_friend_txn_title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(
+        s_friend_txn_title, &g_font_14, LV_PART_MAIN);
+    lv_obj_align(s_friend_txn_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    lv_obj_t* close = lv_btn_create(card);
+    lv_obj_set_size(close, SC(70), SC(28));
+    lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, -SC(5));
+    lv_obj_set_style_bg_color(
+        close, lv_color_hex(0x343840), LV_PART_MAIN);
+    lv_obj_add_event_cb(
+        close, friendTransactionDismissCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* closeLabel = lv_label_create(close);
+    lv_label_set_text(closeLabel, TR("Dismiss"));
+    lv_obj_center(closeLabel);
+
+    s_friend_txn_steps = lv_label_create(card);
+    lv_obj_set_width(s_friend_txn_steps, sw - SC(70));
+    lv_obj_set_style_text_color(
+        s_friend_txn_steps, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(
+        s_friend_txn_steps, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_line_space(
+        s_friend_txn_steps, SC(4), LV_PART_MAIN);
+    lv_obj_align(s_friend_txn_steps, LV_ALIGN_TOP_LEFT, 0, SC(36));
+
+    s_friend_txn_floods = lv_label_create(card);
+    lv_obj_set_style_text_color(
+        s_friend_txn_floods, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(
+        s_friend_txn_floods, &g_font_12, LV_PART_MAIN);
+    lv_obj_align(s_friend_txn_floods, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  }
+
+  const char* verb = s_friend_txn_ui.kind ==
+          friendmesh::FriendTransactionKind::Remove
+      ? "Removing"
+      : s_friend_txn_ui.kind == friendmesh::FriendTransactionKind::Decline
+          ? "Declining"
+          : "Adding";
+  char title[64];
+  snprintf(title, sizeof(title), "%s %s", verb,
+           s_friend_txn_ui.peerName[0] ? s_friend_txn_ui.peerName : "Friend");
+  lv_label_set_text(s_friend_txn_title, TR(title));
+
+  const auto stage = s_friend_txn_ui.stage;
+  char steps[360] = {};
+  if (s_friend_txn_ui.kind == friendmesh::FriendTransactionKind::Request) {
+    const bool direct = stage != friendmesh::FriendTransactionStage::Prepared;
+    const bool response = friendStageAtLeastResponse(stage);
+    const bool confirmation =
+        stage == friendmesh::FriendTransactionStage::ConfirmationSent ||
+        stage == friendmesh::FriendTransactionStage::Complete;
+    const bool complete =
+        stage == friendmesh::FriendTransactionStage::Complete;
+    const bool declined =
+        stage == friendmesh::FriendTransactionStage::Declined;
+    snprintf(steps, sizeof(steps),
+             "[x] Request prepared\n%s Direct request sent\n%s %s\n%s %s\n%s",
+             direct ? "[x]" : "[ ]", response ? "[x]" : "[>]",
+             response ? (declined ? "Decline received" : "Acceptance received")
+                      : "Awaiting response",
+             declined ? "[x]" : confirmation ? "[x]" : "[ ]",
+             declined ? "No confirmation required" : "Confirmation sent",
+             declined ? "[x] Request declined"
+                      : complete ? "[x] Friendship confirmed"
+                                 : "[ ] Friendship confirmed");
+  } else if (s_friend_txn_ui.kind ==
+             friendmesh::FriendTransactionKind::Accept) {
+    const bool sent = stage != friendmesh::FriendTransactionStage::Prepared &&
+        stage != friendmesh::FriendTransactionStage::Failed;
+    const bool complete = stage == friendmesh::FriendTransactionStage::Complete;
+    snprintf(steps, sizeof(steps),
+             "[x] Acceptance prepared\n%s Direct acceptance sent\n%s Waiting for confirmation\n%s Friendship confirmed",
+             sent ? "[x]" : "[ ]", complete ? "[x]" : "[>]",
+             complete ? "[x]" : "[ ]");
+  } else if (s_friend_txn_ui.kind ==
+             friendmesh::FriendTransactionKind::Decline) {
+    const bool complete = stage == friendmesh::FriendTransactionStage::Complete;
+    snprintf(steps, sizeof(steps),
+             "[x] Decline prepared\n%s Direct decline sent\n%s Request closed",
+             complete ? "[x]" : "[>]", complete ? "[x]" : "[ ]");
+  } else {
+    const bool complete = stage == friendmesh::FriendTransactionStage::Complete;
+    const bool failed = stage == friendmesh::FriendTransactionStage::Failed;
+    snprintf(steps, sizeof(steps),
+             "[x] Removed on this device\n[x] Removal control prepared\n%s Waiting for remote confirmation\n%s",
+             complete ? "[x]" : failed ? "[!]" : "[>]",
+             complete ? "[x] Remote removal confirmed"
+                      : failed ? "[!] Remote confirmation pending"
+                               : "[ ] Remote removal confirmed");
+  }
+  if (stage == friendmesh::FriendTransactionStage::Failed &&
+      s_friend_txn_ui.kind != friendmesh::FriendTransactionKind::Remove)
+    strncat(steps, "\n[!] Transaction stopped", sizeof(steps) - strlen(steps) - 1);
+  if (stage == friendmesh::FriendTransactionStage::Expired)
+    strncat(steps, "\n[!] No response; request expired",
+            sizeof(steps) - strlen(steps) - 1);
+  if (stage == friendmesh::FriendTransactionStage::Interrupted)
+    strncat(steps, "\n[!] Interrupted; waiting for a safe retry",
+            sizeof(steps) - strlen(steps) - 1);
+  lv_label_set_text(s_friend_txn_steps, TR(steps));
+
+  char fallback[80];
+  snprintf(fallback, sizeof(fallback), "Network fallback: %u of %u floods used",
+           s_friend_txn_ui.floodsUsed, s_friend_txn_ui.floodLimit);
+  lv_label_set_text(s_friend_txn_floods, TR(fallback));
+}
+
+static void updateFriendTransactionProgress(
+    const uint8_t transactionId[8],
+    friendmesh::FriendTransactionKind kind, const char* peerName,
+    friendmesh::FriendTransactionStage stage, uint8_t floodsUsed,
+    uint8_t floodLimit) {
+  if (!transactionId) return;
+  const bool newTransaction = !s_friend_txn_ui.valid ||
+      memcmp(s_friend_txn_ui.id, transactionId,
+             sizeof(s_friend_txn_ui.id)) != 0;
+  if (newTransaction) {
+    closeFriendTransactionModal(false);
+    memset(&s_friend_txn_ui, 0, sizeof(s_friend_txn_ui));
+    s_friend_txn_ui.valid = true;
+    memcpy(s_friend_txn_ui.id, transactionId, sizeof(s_friend_txn_ui.id));
+  }
+  s_friend_txn_ui.kind = kind;
+  s_friend_txn_ui.stage = stage;
+  strncpy(s_friend_txn_ui.peerName,
+          peerName && peerName[0] ? peerName : "Friend",
+          sizeof(s_friend_txn_ui.peerName) - 1);
+  s_friend_txn_ui.floodsUsed = floodsUsed;
+  s_friend_txn_ui.floodLimit = floodLimit;
+  renderFriendTransactionModal();
+}
+
+static bool friendRequestSendDecline(
+    const TouchFriendRequestRecord& request) {
+  return the_mesh.uiDenyFriendRequest(
+      request.requester_pub_key, request.request_id,
+      request.requester_name, request.return_path,
+      request.return_path_length);
+}
+
+static void friendRequestDenyOnlyApply() {
+  if (!s_friend_request_deny_target_valid) return;
+  if (!friendRequestSendDecline(s_friend_request_deny_target)) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Decline not sent; request kept"), 2400);
+    return;
+  }
+  touchPrefsRemoveFriendRequest(s_friend_request_deny_target.request_id);
+  memset(&s_friend_request_deny_target, 0,
+         sizeof(s_friend_request_deny_target));
+  s_friend_request_deny_target_valid = false;
+  if (g_lv.task) g_lv.task->showAlert(TR("Request denied"), 1200);
+}
+
+static void friendRequestDenyAndBlockApply() {
+  if (!s_friend_request_deny_target_valid) return;
+  const bool declineSent =
+      friendRequestSendDecline(s_friend_request_deny_target);
+  const bool blocked = touchPrefsSetIgnored(
+      s_friend_request_deny_target.requester_pub_key, true);
+  touchPrefsRemoveFriendRequest(s_friend_request_deny_target.request_id);
+  memset(&s_friend_request_deny_target, 0,
+         sizeof(s_friend_request_deny_target));
+  s_friend_request_deny_target_valid = false;
+  contactsListForceRefresh();
+  if (g_lv.task) g_lv.task->showAlert(
+      blocked && declineSent ? TR("Request declined; sender blocked")
+              : blocked ? TR("Blocked locally; decline not sent")
+              : TR("Request denied; couldn't save block"),
+      blocked ? 1800 : 2400);
+}
+
+static void friendRequestDenyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int idx = static_cast<int>(reinterpret_cast<intptr_t>(
+      lv_event_get_user_data(e)));
+  if (!s_friend_requests || idx < 0 || idx >= s_friend_request_count) return;
+  s_friend_request_deny_target = s_friend_requests[idx];
+  s_friend_request_deny_target_valid = true;
+  closeFriendRequestsModal();
+  char message[160];
+  snprintf(message, sizeof(message),
+           "Deny %s's request?\n\nBlock stops future requests from this identity.",
+           s_friend_request_deny_target.requester_name[0]
+               ? s_friend_request_deny_target.requester_name : "this sender");
+  showConfirm(TR(message), TR("Block"), friendRequestDenyAndBlockApply,
+              friendRequestDenyOnlyApply, TR("Deny only"), false);
+}
+
+static void friendRequestAcceptCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  const int idx = static_cast<int>(reinterpret_cast<intptr_t>(
+      lv_event_get_user_data(e)));
+  if (!s_friend_requests || idx < 0 || idx >= s_friend_request_count) return;
+  const TouchFriendRequestRecord request = s_friend_requests[idx];
+  Serial.printf("[FM-FRIEND] UI ACCEPT tap id=%02X%02X%02X%02X from=%02X%02X%02X%02X\n",
+                request.request_id[0], request.request_id[1],
+                request.request_id[2], request.request_id[3],
+                request.requester_pub_key[0], request.requester_pub_key[1],
+                request.requester_pub_key[2], request.requester_pub_key[3]);
+  const bool already_friend = friendByKey(request.requester_pub_key) != nullptr;
+  if (!already_friend && s_friends_count >= touchPrefsFriendCapacity()) {
+    g_lv.task->showAlert(touchPrefsFriendsUsingInternalFallback()
+        ? TR("Friend limit reached (4 without SD)")
+        : TR("Friend list full"), 2400);
+    return;
+  }
+  if (!the_mesh.lookupContactByPubKey(request.requester_pub_key, PUB_KEY_SIZE) &&
+      !the_mesh.uiAddManualContact(request.requester_pub_key,
+                                  request.requester_name)) {
+    g_lv.task->showAlert(TR("Contacts full"), 1800);
+    return;
+  }
+  const bool reply_sent = the_mesh.uiAcceptFriendRequest(
+      request.requester_pub_key, request.request_id, request.requester_name,
+      request.return_path, request.return_path_length);
+  Serial.printf("[FM-FRIEND] UI ACCEPT friend-save=deferred already=%d acceptance-queued=%d id=%02X%02X%02X%02X\n",
+                already_friend ? 1 : 0, reply_sent ? 1 : 0,
+                request.request_id[0], request.request_id[1],
+                request.request_id[2], request.request_id[3]);
+  // Keep the inbox record until the requester authenticates and ACKs this
+  // acceptance. That record is the recoverable user decision if transmission
+  // fails; only the ACK callback promotes the requester to Friend and removes
+  // the pending request.
+  closeFriendRequestsModal();
+  g_lv.task->showAlert(reply_sent
+      ? TR("Acceptance sent; waiting for confirmation")
+      : TR("Acceptance failed; request kept"), reply_sent ? 2400 : 2800);
+}
+
+static void openFriendRequestsModal() {
+  closeFriendRequestsModal();
+  s_friend_request_count = s_friend_requests
+      ? touchPrefsCopyFriendRequests(s_friend_requests,
+                                    TOUCH_FRIEND_REQUESTS_MAX) : 0;
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_friend_requests_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_friend_requests_root);
+  lv_obj_set_size(s_friend_requests_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_friend_requests_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_friend_requests_root, lv_color_hex(0x000000), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_friend_requests_root, LV_OPA_60, LV_PART_MAIN);
+  lv_obj_clear_flag(s_friend_requests_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_friend_requests_root, friendRequestsDismissCb,
+                      LV_EVENT_CLICKED, nullptr);
+
+  const int margin = SC(6);
+  lv_obj_t* card = lv_obj_create(s_friend_requests_root);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, sw - 2 * margin, sh - STATUSBAR_H - 2 * margin);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  addCloseXBadge(card, friendRequestsDismissCb);
+
+  lv_obj_t* title = lv_label_create(card);
+  lv_label_set_text(title, TR("Friend requests"));
+  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(title, SC(10), SC(7));
+
+  lv_obj_t* toggle_label = lv_label_create(card);
+  lv_label_set_text(toggle_label, touchPrefsFriendsUsingInternalFallback()
+      ? TR("Receive requests (resets off after reboot)")
+      : TR("Receive friend requests"));
+  lv_obj_set_style_text_font(toggle_label, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(toggle_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(toggle_label, SC(10), SC(31));
+  uiFitLabelWidth(toggle_label, sw - SC(90));
+
+  lv_obj_t* toggle = lv_switch_create(card);
+  lv_obj_set_size(toggle, SC(38), SC(20));
+  lv_obj_align(toggle, LV_ALIGN_TOP_RIGHT, -SC(10), SC(28));
+  if (touchPrefsGetFriendRequestsEnabled())
+    lv_obj_add_state(toggle, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(toggle, friendRequestsToggleCb,
+                      LV_EVENT_VALUE_CHANGED, nullptr);
+
+  const int list_y = SC(55);
+  lv_obj_t* list = lv_obj_create(card);
+  lv_obj_remove_style_all(list);
+  lv_obj_set_pos(list, SC(6), list_y);
+  lv_obj_set_size(list, sw - 2 * margin - SC(12),
+                  sh - STATUSBAR_H - 2 * margin - list_y - SC(6));
+  lv_obj_set_style_pad_row(list, SC(4), LV_PART_MAIN);
+  lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_scroll_dir(list, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
+
+  if (s_friend_request_count == 0) {
+    lv_obj_t* empty = lv_label_create(list);
+    lv_label_set_text(empty, touchPrefsGetFriendRequestsEnabled()
+        ? TR("No pending requests")
+        : TR("Requests are off by default"));
+    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(empty, &g_font_14, LV_PART_MAIN);
+    lv_obj_center(empty);
+    return;
+  }
+
+  const int row_w = sw - 2 * margin - SC(12);
+  for (int i = 0; i < s_friend_request_count; ++i) {
+    const TouchFriendRequestRecord& request = s_friend_requests[i];
+    lv_obj_t* row = lv_obj_create(list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, row_w, SC(48));
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(row, 6, LV_PART_MAIN);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* name = lv_label_create(row);
+    lv_label_set_text(name, request.requester_name);
+    lv_obj_set_style_text_color(name, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(name, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_pos(name, SC(7), SC(5));
+    uiFitLabelWidth(name, row_w - SC(124));
+
+    char key_hint[20];
+    snprintf(key_hint, sizeof(key_hint), "ID %02X%02X%02X%02X",
+             request.requester_pub_key[0], request.requester_pub_key[1],
+             request.requester_pub_key[2], request.requester_pub_key[3]);
+    lv_obj_t* hint = lv_label_create(row);
+    lv_label_set_text(hint, key_hint);
+    lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(hint, SC(7), SC(25));
+
+    auto add_action = [&](const char* text, int x, lv_event_cb_t cb) {
+      lv_obj_t* button = lv_btn_create(row);
+      lv_obj_set_size(button, SC(52), SC(32));
+      lv_obj_align(button, LV_ALIGN_RIGHT_MID, x, 0);
+      styleButton(button);
+      lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED,
+                          reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+      lv_obj_t* label = lv_label_create(button);
+      lv_label_set_text(label, TR(text));
+      lv_obj_set_style_text_font(label, &g_font_12, LV_PART_MAIN);
+      lv_obj_center(label);
+    };
+    add_action("Deny", -SC(60), friendRequestDenyCb);
+    add_action("Accept", -SC(4), friendRequestAcceptCb);
+  }
+}
+
+static void contactsOverflowRequestsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeContactsOverflowSheet();
+  openFriendRequestsModal();
+}
+#endif
+
 static void openContactsOverflowSheetCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeContactsOverflowSheet();
@@ -22036,11 +24450,16 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   lv_obj_add_event_cb(s_contacts_overflow_root, contactsOverflowDismissCb, LV_EVENT_CLICKED, nullptr);
 
   // Bigger on the 800-px Tanmatsu panel; unchanged on the smaller boards (PSC no-op).
-  // Compact rows so all five buttons + title fit the T-Deck's short 240px landscape
-  // screen (the 5th "Blocked list" item pushed the old 36px rows off-screen). #72.
+  // Compact rows so the menu remains usable on the T-Deck's short landscape
+  // screen. The card is scrollable if the sixth Friend Requests row overflows.
   const int card_w = PCW(200);
   const int btn_h = SC(30), btn_gap = SC(4), title_h = SC(22), padding = SC(8);  // SC not PSC: the 1.7x boost clipped the lower rows (Auto-add / Blocked) off-screen at Large scale
-  const int rows = 5;
+  const int rows =
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+      7;
+#else
+      5;
+#endif
   int card_h = 2 * padding + title_h + rows * btn_h + (rows - 1) * btn_gap;  // reserve BOTH pad_all paddings (top+bottom) or the last row clips
   if (card_h > sh - STATUSBAR_H - 8) card_h = sh - STATUSBAR_H - 8;   // never taller than the visible area
   lv_obj_t* card = lv_obj_create(s_contacts_overflow_root);
@@ -22092,7 +24511,12 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   };
   mk(LV_SYMBOL_EYE_OPEN "  Search", contactsOverflowSearchCb, 0);
   mk(LV_SYMBOL_LIST     "  Discovered", contactsOverflowFoundCb, 0);
-  mk(LV_SYMBOL_PLUS     "  Add contact", contactsOverflowAddCb, 0);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  mk(LV_SYMBOL_BLUETOOTH  "  Find nearby friends",
+     contactsOverflowNearbyFriendsCb, COLOR_STATUS_OK);
+  mk(LV_SYMBOL_ENVELOPE "  Friend requests", contactsOverflowRequestsCb, 0);
+#endif
+  mk(LV_SYMBOL_PLUS     "  Save contact by key", contactsOverflowAddCb, 0);
   mk(LV_SYMBOL_DOWNLOAD "  Auto-add settings", contactsOverflowAutoAddCb, 0);
   mk(LV_SYMBOL_CLOSE    "  Blocked list", contactsOverflowBlockedCb, 0);
 }
@@ -22111,14 +24535,22 @@ static lv_obj_t* s_ct_normal_bar  = nullptr; // header toolbar shown in normal m
 static lv_obj_t* s_ct_select_bar  = nullptr; // header toolbar shown in select mode
 static lv_obj_t* s_ct_del_btn     = nullptr; // "Delete (N)" button in the select bar
 static lv_obj_t* s_ct_sort_btns[CONTACTS_SORT_COUNT] = { nullptr, nullptr, nullptr, nullptr };
-static lv_obj_t* s_ct_filter_btns[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+static lv_obj_t* s_ct_filter_btns[7] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 static lv_obj_t* s_ct_filter_btn_lbl = nullptr;   // header Filter button label (shows the active filter)
 static lv_obj_t* s_ct_disc_badge     = nullptr;   // count badge on the header Discovered button
 static const char* contactsFilterShortLabel() {
   switch (g_lv.contacts_filter) {
     case 1u: return "RPT";  case 2u: return "Peer"; case 3u: return "Fav"; case 4u: return "Loc"; case 5u: return "Dir";
-    default: return "All";
+    case 6u: return "Friends";
+    default: return "Network";
   }
+}
+static void setContactsFilterUi(uint8_t filter) {
+  g_lv.contacts_filter = filter;
+  updateContactsFilterSegments();
+  if (s_ct_filter_btn_lbl)
+    lv_label_set_text_fmt(s_ct_filter_btn_lbl, "%s %s", LV_SYMBOL_DOWN,
+                          contactsFilterShortLabel());
 }
 // Bulk-delete runs chunked across loop ticks (each uiRemoveContact rewrites the
 // contacts file to flash; doing 100+ synchronously froze the UI / tripped the WDT).
@@ -22144,19 +24576,27 @@ static bool ctSearchNeedle(char* out, int outsz){
 // Shared predicate so the rendered list and Select-all use IDENTICAL rules.
 static bool ctPassesFilter(const ContactInfo& c, bool is_fav, int fav_count, const char* needle){
   const bool is_rep = (c.type == ADV_TYPE_REPEATER);
+  const TouchFriendRecord* friend_record = friendByKey(c.id.pub_key);
   switch(g_lv.contacts_filter){
     case 1u: if(!is_rep) return false; break;                              // repeaters
     case 2u: if(is_rep)  return false; break;                              // peers
     case 3u: if(fav_count>0 && !is_fav) return false; break;               // favorites
     case 4u: if(!(c.gps_lat!=0 || c.gps_lon!=0)) return false; break;      // has location
     case 5u: if(c.out_path_len != 0) return false; break;                  // 0-hop / direct neighbors only
+    case 6u: if(!friend_record) return false; break;                       // explicitly curated local friends
     default: break;                                                        // 0 = all
   }
   if(needle && needle[0]){
     char nl[40]; int nn=(int)strlen(c.name); if(nn>(int)sizeof(nl)-1) nn=(int)sizeof(nl)-1;
     for(int j=0;j<nn;++j){ char ch=c.name[j]; if(ch>='A'&&ch<='Z') ch=(char)(ch-'A'+'a'); nl[j]=ch; }
     nl[nn]='\0';
-    if(!strstr(nl,needle)) return false;
+    bool matched = strstr(nl,needle) != nullptr;
+    if(!matched && friend_record && friend_record->alias[0]) {
+      char al[40]; int an=(int)strlen(friend_record->alias); if(an>(int)sizeof(al)-1) an=(int)sizeof(al)-1;
+      for(int j=0;j<an;++j){ char ch=friend_record->alias[j]; if(ch>='A'&&ch<='Z') ch=(char)(ch-'A'+'a'); al[j]=ch; }
+      al[an]='\0'; matched = strstr(al,needle) != nullptr;
+    }
+    if(!matched) return false;
   }
   return true;
 }
@@ -22190,6 +24630,12 @@ static void contactRowTapCb(lv_event_t* e){
   if(!ctx || !g_lv.task) return;
   if(s_ct_select_mode){
     if(ctx->is_fav){ g_lv.task->showAlert(TR("Unfavorite it first"), 1300); return; }
+    ContactInfo selected_contact = {};
+    if (the_mesh.getContactByIdx(ctx->mesh_idx, selected_contact) &&
+        friendByKey(selected_contact.id.pub_key)) {
+      g_lv.task->showAlert(TR("Use Remove friend from the contact menu"), 1800);
+      return;
+    }
     if(ctSelHas(ctx->key6)) ctSelDel(ctx->key6); else ctSelAdd(ctx->key6);
     ctUpdateRowCheck(lv_event_get_current_target(e), ctSelHas(ctx->key6));
     ctUpdateDelLabel();
@@ -22231,6 +24677,7 @@ static void ctSelectAllFiltered(){
     const bool is_fav = false;
 #endif
     if(is_fav) continue;                                   // favorites aren't deletable here
+    if(friendByKey(c.id.pub_key)) continue;                 // Friends use Remove friend, preserving the MeshCore contact
     if(!ctPassesFilter(c, is_fav, fav_count, needle)) continue;
     ctSelAdd(c.id.pub_key);
   }
@@ -22317,7 +24764,8 @@ static void ctDoDelete(){
   for(int i=0;i<cnt && n<128;++i){
     ContactInfo c;
     if(!the_mesh.getContactByIdx((uint32_t)i,c)) continue;
-    if(ctSelHas(c.id.pub_key)) s_ctd_list[n++] = c;   // snapshot first (delete shifts indices)
+    if(ctSelHas(c.id.pub_key) && !friendByKey(c.id.pub_key))
+      s_ctd_list[n++] = c;   // snapshot first (delete shifts indices); never delete a Friend's MeshCore contact
   }
   if(n==0){ ctSetSelectMode(false); return; }
   s_ctd_total = n; s_ctd_done = 0; s_ctd_active = true;
@@ -22357,7 +24805,7 @@ static void ctPaintOpt(lv_obj_t* b, bool active){
 }
 static void ctSheetRepaint(){
   for(int i=0;i<CONTACTS_SORT_COUNT;++i) ctPaintOpt(s_ct_sort_btns[i], g_contacts_sort==(uint8_t)i);
-  for(int i=0;i<6;++i) ctPaintOpt(s_ct_filter_btns[i], g_lv.contacts_filter==(uint8_t)i);
+  for(int i=0;i<7;++i) ctPaintOpt(s_ct_filter_btns[i], g_lv.contacts_filter==(uint8_t)i);
 }
 // Repaint the Sort sheet rows: highlight the active mode and show its direction
 // arrow (▼ = the mode's natural order, ▲ = reversed). Labels are pulled from
@@ -22452,7 +24900,7 @@ static lv_obj_t* ctOpenOptionSheet(const char* title){
   return card;
 }
 static void openContactsSortSheet(){
-  for(int i=0;i<6;++i) s_ct_filter_btns[i]=nullptr;   // the filter sheet's buttons are gone now
+  for(int i=0;i<7;++i) s_ct_filter_btns[i]=nullptr;   // the filter sheet's buttons are gone now
   lv_obj_t* card = ctOpenOptionSheet("Sort by");
   // active=false here; ctSortRowsRepaint() below sets the real highlight + arrow.
   s_ct_sort_btns[0] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_AZ),         ctSortOptCb, CONTACTS_SORT_AZ,         false);
@@ -22494,7 +24942,8 @@ static void openDiscSortSheetCb(lv_event_t* e){ if(lv_event_get_code(e)==LV_EVEN
 static void openContactsFilterSheet(){
   for(int i=0;i<CONTACTS_SORT_COUNT;++i) s_ct_sort_btns[i]=nullptr;     // the sort sheet's buttons are gone now
   lv_obj_t* card = ctOpenOptionSheet("Filter");
-  s_ct_filter_btns[0] = ctSheetOption(card, "All",            ctFilterOptCb, 0, g_lv.contacts_filter==0);
+  s_ct_filter_btns[6] = ctSheetOption(card, "Friends",        ctFilterOptCb, 6, g_lv.contacts_filter==6);
+  s_ct_filter_btns[0] = ctSheetOption(card, "All network nodes", ctFilterOptCb, 0, g_lv.contacts_filter==0);
   s_ct_filter_btns[1] = ctSheetOption(card, "Repeaters",      ctFilterOptCb, 1, g_lv.contacts_filter==1);
   s_ct_filter_btns[2] = ctSheetOption(card, "Peers",          ctFilterOptCb, 2, g_lv.contacts_filter==2);
   s_ct_filter_btns[3] = ctSheetOption(card, "Favorites",      ctFilterOptCb, 3, g_lv.contacts_filter==3);
@@ -22505,10 +24954,9 @@ static void openContactsFilterSheetCb(lv_event_t* e){ if(lv_event_get_code(e)==L
 
 static void makeContactsTab(lv_obj_t* tab) {
   g_lv.contacts_list   = nullptr;
-  // Default to the "All" segment — show every contact, ordered by most
-  // recently heard (favorites still pin to the top via the sort
-  // comparator). The ★ segment is one tap away for the favorites-only view.
-  g_lv.contacts_filter = 0;
+  // Human address book first. The noisy MeshCore operational directory remains
+  // available as "All network nodes" without changing routing or auto-add.
+  g_lv.contacts_filter = 6;
   g_lv.contacts_search[0] = '\0';
   g_lv.contacts_search_indicator = nullptr;
   for (int i = 0; i < 4; ++i) s_contacts_seg_btns[i] = nullptr;
@@ -24563,14 +27011,26 @@ static void renderMapTiles() {
 
 // ----- Markers -----
 //
-// Self marker = small white crosshair; contact markers = colored dots
+// Self marker = contrasting crosshair; contact markers = colored dots
 // sized for finger taps. Plotted as children of s_map_canvas so they
 // stack on top of the tile layer. The cache below is flat (linear scan
-// when handling marker taps) — fine for at-most-32 visible markers.
+// when handling marker taps) — fine for this bounded visible-marker set.
+enum class MapMarkerKind : uint8_t {
+  Empty = 0,
+  Self,
+  MeshContact,
+  FriendMeshGroup,
+};
+
 struct MapMarker {
-  int       mesh_idx;   // ContactInfo index for real contacts; -1 for self
+  MapMarkerKind kind;
+  int       source_idx;   // ContactInfo or FriendMesh MarkerService index
   lv_obj_t* obj;
 };
+// Keep the original fixed cache size. Four slots are reserved for the local
+// FriendMesh development overlays; production integration can replace this
+// with a single map-model adapter instead of growing LVGL/global caches.
+constexpr int k_map_mesh_markers_max = 28;
 constexpr int k_map_markers_max = 32;
 static MapMarker s_map_markers[k_map_markers_max] = {};
 
@@ -24632,7 +27092,8 @@ static void hideRouteHud();
 static void freeMapMarkers() {
   for (auto& m : s_map_markers) {
     if (m.obj) { lv_obj_del(m.obj); m.obj = nullptr; }
-    m.mesh_idx = -2;   // "slot empty" sentinel
+    m.kind = MapMarkerKind::Empty;
+    m.source_idx = -1;
   }
   for (auto& ln : s_map_link_objs) {
     if (ln) { lv_obj_del(ln); ln = nullptr; }
@@ -24643,9 +27104,466 @@ static void freeMapMarkers() {
   s_route_obj_n = 0;
 }
 
-static void openMarkerPopupForContact(int mesh_idx);
+static void openMapMarker(MapMarkerKind kind, int source_idx);
 static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name, bool from_map);
-static void openMapPicker(const int* idxs, int n);
+static void openMapPicker(const int* tokens, int n);
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+struct FriendMeshMotionDiskHeader {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t recordSize;
+  uint16_t recordCount;
+  uint16_t reserved;
+  uint32_t checksum;
+};
+
+struct FriendMeshMotionDiskRecord {
+  uint8_t subject[friendmesh::kIdSize];
+  int32_t previousLatE7;
+  int32_t previousLonE7;
+  uint32_t previousAt;
+  int32_t currentLatE7;
+  int32_t currentLonE7;
+  uint32_t currentAt;
+  uint8_t samples;
+  uint8_t reserved[3];
+};
+
+static constexpr uint32_t kFriendMeshMotionDiskMagic = 0x314D4D46UL; // FMM1
+static constexpr uint16_t kFriendMeshMotionDiskVersion = 1;
+
+static uint32_t friendmeshMotionChecksumUpdate(uint32_t checksum,
+                                               const uint8_t* data,
+                                               size_t length) {
+  for (size_t i = 0; i < length; ++i) {
+    checksum ^= data[i];
+    checksum *= 16777619u;
+  }
+  return checksum;
+}
+
+static bool friendmeshMotionPath(int channelSlot, bool temporary,
+                                 char* path, size_t capacity) {
+  ChannelDetails details = {};
+  if (!the_mesh.getChannel(channelSlot, details)) return false;
+  // Key filenames to the channel secret rather than its mutable array slot.
+  // Two differently seeded hashes keep the secret out of the directory name
+  // while making accidental history reuse after channel deletion negligible.
+  const uint8_t* secret = details.channel.secret;
+  const size_t secretSize = sizeof(details.channel.secret);
+  const uint32_t idHigh = friendmeshMotionChecksumUpdate(
+      2166136261u, secret, secretSize);
+  const uint32_t idLow = friendmeshMotionChecksumUpdate(
+      0x9E3779B9u, secret, secretSize);
+  snprintf(path, capacity, "/friendmesh/motion_%08lx%08lx.bin%s",
+           static_cast<unsigned long>(idHigh),
+           static_cast<unsigned long>(idLow), temporary ? ".tmp" : "");
+  return true;
+}
+
+static bool friendmeshMotionSdReady() {
+#if CAP_SD
+  if (SD.cardType() != CARD_NONE) return true;
+  if (s_sd_retry_after_ms && millis() < s_sd_retry_after_ms) return false;
+  return fmSdTryMount();
+#else
+  return false;
+#endif
+}
+
+static FriendMeshMotionDiskRecord friendmeshMotionDiskRecord(
+    const FriendMeshMotionTrack& track) {
+  FriendMeshMotionDiskRecord record = {};
+  memcpy(record.subject, track.current.subjectId.bytes, sizeof(record.subject));
+  if (track.samples >= 2) {
+    record.previousLatE7 = track.previous.latitudeE7;
+    record.previousLonE7 = track.previous.longitudeE7;
+    record.previousAt = track.previous.capturedAt;
+  }
+  record.currentLatE7 = track.current.latitudeE7;
+  record.currentLonE7 = track.current.longitudeE7;
+  record.currentAt = track.current.capturedAt;
+  record.samples = track.samples >= 2 ? 2 : 1;
+  return record;
+}
+
+static bool friendmeshMotionSaveToSd() {
+#if CAP_SD
+  if (s_friendmesh_motion_channel_slot < 0 || !s_friendmesh_motion_tracks ||
+      !friendmeshMotionSdReady()) return false;
+  if (!SD.exists("/friendmesh") && !SD.mkdir("/friendmesh")) return false;
+  char path[48], temporary[48];
+  if (!friendmeshMotionPath(s_friendmesh_motion_channel_slot, false,
+                            path, sizeof(path)) ||
+      !friendmeshMotionPath(s_friendmesh_motion_channel_slot, true,
+                            temporary, sizeof(temporary))) return false;
+  FriendMeshMotionDiskHeader header = {};
+  header.magic = kFriendMeshMotionDiskMagic;
+  header.version = kFriendMeshMotionDiskVersion;
+  header.recordSize = sizeof(FriendMeshMotionDiskRecord);
+  header.recordCount = static_cast<uint16_t>(s_friendmesh_motion_track_count);
+  uint32_t checksum = 2166136261u;
+  for (size_t i = 0; i < s_friendmesh_motion_track_count; ++i) {
+    const FriendMeshMotionDiskRecord record =
+        friendmeshMotionDiskRecord(s_friendmesh_motion_tracks[i]);
+    checksum = friendmeshMotionChecksumUpdate(
+        checksum, reinterpret_cast<const uint8_t*>(&record), sizeof(record));
+  }
+  header.checksum = checksum;
+  SD.remove(temporary);
+  File file = SD.open(temporary, FILE_WRITE);
+  if (!file) return false;
+  bool ok = file.write(reinterpret_cast<const uint8_t*>(&header),
+                       sizeof(header)) == sizeof(header);
+  for (size_t i = 0; ok && i < s_friendmesh_motion_track_count; ++i) {
+    const FriendMeshMotionDiskRecord record =
+        friendmeshMotionDiskRecord(s_friendmesh_motion_tracks[i]);
+    ok = file.write(reinterpret_cast<const uint8_t*>(&record),
+                    sizeof(record)) == sizeof(record);
+  }
+  file.flush();
+  file.close();
+  if (!ok) {
+    SD.remove(temporary);
+    return false;
+  }
+  SD.remove(path);
+  if (!SD.rename(temporary, path)) {
+    SD.remove(temporary);
+    return false;
+  }
+  markSdIo();
+  return true;
+#else
+  return false;
+#endif
+}
+
+static void friendmeshMotionFlush(bool force) {
+  if (!s_friendmesh_motion_dirty) return;
+  if (!force && static_cast<int32_t>(millis() -
+                                     s_friendmesh_motion_save_after_ms) < 0)
+    return;
+  if (friendmeshMotionSaveToSd()) {
+    s_friendmesh_motion_dirty = false;
+    s_friendmesh_motion_save_after_ms = 0;
+  } else {
+    // Missing/unreadable SD never falls back to internal flash. Back off so a
+    // live compass does not retry the shared SPI bus every render tick.
+    s_friendmesh_motion_save_after_ms = millis() + 30000UL;
+  }
+}
+
+static void friendmeshMotionLoadFromSd(int channelSlot) {
+#if CAP_SD
+  if (channelSlot < 0 || !s_friendmesh_motion_tracks ||
+      !friendmeshMotionSdReady()) return;
+  // A mounted card with no file is still a completed load. Remember that so
+  // the one-second map refresh does not repeatedly open the same missing path.
+  s_friendmesh_motion_loaded = true;
+  char path[48];
+  if (!friendmeshMotionPath(channelSlot, false, path, sizeof(path))) return;
+  File file = SD.open(path, FILE_READ);
+  if (!file) return;
+  FriendMeshMotionDiskHeader header = {};
+  bool ok = file.read(reinterpret_cast<uint8_t*>(&header), sizeof(header)) ==
+            sizeof(header);
+  ok = ok && header.magic == kFriendMeshMotionDiskMagic &&
+       header.version == kFriendMeshMotionDiskVersion &&
+       header.recordSize == sizeof(FriendMeshMotionDiskRecord) &&
+       header.recordCount <= kFriendMeshMotionTrackCapacity &&
+       file.size() == static_cast<size_t>(sizeof(header)) +
+           static_cast<size_t>(header.recordCount) * sizeof(FriendMeshMotionDiskRecord);
+  uint32_t checksum = 2166136261u;
+  size_t loaded = 0;
+  for (uint16_t i = 0; ok && i < header.recordCount; ++i) {
+    FriendMeshMotionDiskRecord record = {};
+    ok = file.read(reinterpret_cast<uint8_t*>(&record), sizeof(record)) ==
+         sizeof(record);
+    if (!ok) break;
+    checksum = friendmeshMotionChecksumUpdate(
+        checksum, reinterpret_cast<const uint8_t*>(&record), sizeof(record));
+    friendmesh::Id128 subject = {};
+    memcpy(subject.bytes, record.subject, sizeof(record.subject));
+    const bool currentValid = !friendmesh::idIsZero(subject) &&
+        !(record.currentLatE7 == 0 && record.currentLonE7 == 0) &&
+        friendmesh::positionCoordinatesValid(record.currentLatE7,
+                                             record.currentLonE7) &&
+        record.currentAt != 0;
+    const bool previousValid = record.samples >= 2 &&
+        !(record.previousLatE7 == 0 && record.previousLonE7 == 0) &&
+        friendmesh::positionCoordinatesValid(record.previousLatE7,
+                                             record.previousLonE7) &&
+        record.previousAt != 0 && record.currentAt > record.previousAt;
+    if (!currentValid) continue;
+    FriendMeshMotionTrack& track = s_friendmesh_motion_tracks[loaded++];
+    track = {};
+    track.current.subjectId = subject;
+    track.current.latitudeE7 = record.currentLatE7;
+    track.current.longitudeE7 = record.currentLonE7;
+    track.current.capturedAt = record.currentAt;
+    track.current.receivedAt = record.currentAt;
+    track.current.source = friendmesh::PositionSource::LastKnown;
+    track.current.valid = true;
+    track.samples = 1;
+    if (previousValid) {
+      track.previous = track.current;
+      track.previous.latitudeE7 = record.previousLatE7;
+      track.previous.longitudeE7 = record.previousLonE7;
+      track.previous.capturedAt = record.previousAt;
+      track.previous.receivedAt = record.previousAt;
+      track.samples = 2;
+    }
+  }
+  file.close();
+  if (!ok || checksum != header.checksum) {
+    memset(s_friendmesh_motion_tracks, 0,
+           sizeof(FriendMeshMotionTrack) *
+               kFriendMeshMotionTrackCapacity);
+    s_friendmesh_motion_track_count = 0;
+    return;
+  }
+  s_friendmesh_motion_track_count = loaded;
+  markSdIo();
+#else
+  (void)channelSlot;
+#endif
+}
+
+static bool friendmeshMotionPrepare() {
+  if (s_friendmesh_motion_channel_slot != s_friendmesh_map_channel_slot) {
+    friendmeshMotionFlush(true);
+    s_friendmesh_motion_channel_slot = s_friendmesh_map_channel_slot;
+    s_friendmesh_motion_track_count = 0;
+    s_friendmesh_motion_loaded = false;
+    s_friendmesh_motion_dirty = false;
+    s_friendmesh_motion_save_after_ms = 0;
+    if (s_friendmesh_motion_tracks)
+      memset(s_friendmesh_motion_tracks, 0,
+             sizeof(FriendMeshMotionTrack) *
+                 kFriendMeshMotionTrackCapacity);
+  }
+  if (!s_friendmesh_motion_tracks) {
+    s_friendmesh_motion_tracks = static_cast<FriendMeshMotionTrack*>(
+        psAlloc(sizeof(FriendMeshMotionTrack) *
+                kFriendMeshMotionTrackCapacity));
+    if (!s_friendmesh_motion_tracks) return false;
+    memset(s_friendmesh_motion_tracks, 0,
+           sizeof(FriendMeshMotionTrack) *
+               kFriendMeshMotionTrackCapacity);
+  }
+  if (!s_friendmesh_motion_loaded)
+    friendmeshMotionLoadFromSd(s_friendmesh_map_channel_slot);
+  return true;
+}
+
+static FriendMeshMotionTrack* friendmeshMotionTrackForUpdate(
+    const friendmesh::Id128& subject) {
+  for (size_t i = 0; i < s_friendmesh_motion_track_count; ++i) {
+    if (friendmesh::idsEqual(
+            s_friendmesh_motion_tracks[i].current.subjectId, subject))
+      return &s_friendmesh_motion_tracks[i];
+  }
+  if (s_friendmesh_motion_track_count >= kFriendMeshMotionTrackCapacity)
+    return nullptr;
+  FriendMeshMotionTrack* track =
+      &s_friendmesh_motion_tracks[s_friendmesh_motion_track_count++];
+  *track = {};
+  return track;
+}
+
+static bool friendmeshRecordMotionSample(
+    const friendmesh::PositionRecord& sample, bool requireSignificantMovement) {
+  FriendMeshMotionTrack* track =
+      friendmeshMotionTrackForUpdate(sample.subjectId);
+  if (!track) return false;
+  if (track->samples == 0) {
+    track->current = sample;
+    track->samples = 1;
+    return true;
+  }
+  if (sample.capturedAt <= track->current.capturedAt) return false;
+  if (requireSignificantMovement) {
+    const uint32_t elapsed = sample.capturedAt - track->current.capturedAt;
+    if (elapsed < friendmesh::kMotionMinSampleSeconds) return false;
+    if (elapsed > friendmesh::kMotionMaxSampleSeconds) {
+      // Do not pair a fresh fix with an old session and then display a bogus
+      // near-zero speed. Start a new two-fix window instead.
+      track->previous = {};
+      track->current = sample;
+      track->samples = 1;
+      return true;
+    }
+    const uint32_t displacement = friendmesh::greatCircleDistanceMeters(
+        track->current, sample);
+    if (displacement == UINT32_MAX ||
+        displacement < friendmesh::kMotionObservationSpacingMeters)
+      return false;
+  }
+  track->previous = track->current;
+  track->current = sample;
+  track->samples = 2;
+  return true;
+}
+
+static void friendmeshObserveMotionSamples() {
+  if (!friendmeshMotionPrepare()) return;
+  bool changed = false;
+  for (size_t i = 0; i < s_friendmesh_map_position_count; ++i) {
+    const friendmesh::PositionRecord& sample =
+        s_friendmesh_map_positions[i].position;
+    changed = friendmeshRecordMotionSample(sample, false) || changed;
+  }
+  if (changed) {
+    s_friendmesh_motion_dirty = true;
+    s_friendmesh_motion_save_after_ms = millis() + 1500UL;
+  }
+  friendmeshMotionFlush(false);
+}
+
+static void friendmeshObserveLocalMotionSample(
+    const friendmesh::PositionRecord& sample) {
+  if (!friendmeshMotionPrepare()) return;
+  if (friendmeshRecordMotionSample(sample, true)) {
+    s_friendmesh_motion_dirty = true;
+    s_friendmesh_motion_save_after_ms = millis() + 1500UL;
+  }
+  friendmeshMotionFlush(false);
+}
+
+static const FriendMeshMotionTrack* friendmeshMotionTrackFor(
+    const friendmesh::Id128& subject) {
+  for (size_t i = 0; i < s_friendmesh_motion_track_count; ++i) {
+    const FriendMeshMotionTrack& track = s_friendmesh_motion_tracks[i];
+    if (track.samples && friendmesh::idsEqual(
+            track.current.subjectId, subject)) return &track;
+  }
+  return nullptr;
+}
+
+static void friendmeshRefreshMapPositions() {
+  s_friendmesh_map_position_count = 0;
+  if (!s_friendmesh_map_positions) {
+    s_friendmesh_map_positions = static_cast<FriendMeshChannelPositionView*>(
+        psAlloc(sizeof(FriendMeshChannelPositionView) *
+                friendmesh::kChannelRosterMaxMembers));
+  }
+  if (!s_friendmesh_map_positions) return;
+  memset(s_friendmesh_map_positions, 0,
+         sizeof(FriendMeshChannelPositionView) *
+             friendmesh::kChannelRosterMaxMembers);
+  if (s_friendmesh_map_channel_slot < 0) return;
+  s_friendmesh_map_position_count =
+      the_mesh.uiGetFriendMeshChannelPositions(
+          s_friendmesh_map_channel_slot, s_friendmesh_map_positions,
+          friendmesh::kChannelRosterMaxMembers);
+  friendmeshObserveMotionSamples();
+}
+
+static void friendmeshStopGroupLocationRefresh() {
+  // Persist the latest bounded two-sample history before this screen stops
+  // driving its normal debounced SD flush.
+  friendmeshMotionFlush(true);
+  // This queue owns the shared matcher while waiting. Clear it when Map closes
+  // so a missing member cannot block later manual telemetry/ping actions.
+  if (s_friendmesh_map_refresh_waiting)
+    the_mesh.cancelUIPingPending();
+  if (s_friendmesh_map_refresh_timer) {
+    lv_timer_del(s_friendmesh_map_refresh_timer);
+    s_friendmesh_map_refresh_timer = nullptr;
+  }
+  s_friendmesh_map_refresh_count = 0;
+  s_friendmesh_map_refresh_index = 0;
+  s_friendmesh_map_refresh_waiting = false;
+  s_friendmesh_map_refresh_deadline = 0;
+  memset(s_friendmesh_map_refresh_pub, 0,
+         sizeof(s_friendmesh_map_refresh_pub));
+}
+
+static void friendmeshGroupLocationRefreshTick(lv_timer_t* timer) {
+  if (getActiveTab() != MAP_TAB_INDEX ||
+      s_friendmesh_map_channel_slot < 0 ||
+      timer != s_friendmesh_map_refresh_timer) {
+    friendmeshStopGroupLocationRefresh();
+    return;
+  }
+
+  const uint32_t now = millis();
+  if (s_friendmesh_map_refresh_waiting) {
+    if (the_mesh.hasUIPingPending() &&
+        (int32_t)(now - s_friendmesh_map_refresh_deadline) < 0) return;
+    if (the_mesh.hasUIPingPending()) the_mesh.cancelUIPingPending();
+    s_friendmesh_map_refresh_waiting = false;
+    ++s_friendmesh_map_refresh_index;
+    friendmeshRefreshMapPositions();
+    renderMapMarkers();
+    refreshMapInfoLabel();
+  }
+
+  // The touch UI has one response matcher. Never overwrite a manual ping,
+  // telemetry request, or another group member's in-flight tag.
+  if (the_mesh.hasUIPingPending()) return;
+
+  while (s_friendmesh_map_refresh_index <
+         s_friendmesh_map_refresh_count) {
+    ContactInfo* contact = the_mesh.lookupContactByPubKey(
+        s_friendmesh_map_refresh_pub[s_friendmesh_map_refresh_index],
+        PUB_KEY_SIZE);
+    if (!contact || contact->type != ADV_TYPE_CHAT) {
+      ++s_friendmesh_map_refresh_index;
+      continue;
+    }
+    const int result = the_mesh.sendTelemetryRequestForUI(*contact);
+    if (result == MSG_SEND_SENT_FLOOD ||
+        result == MSG_SEND_SENT_DIRECT) {
+      s_friendmesh_map_refresh_waiting = true;
+      s_friendmesh_map_refresh_deadline = now + UI_PING_TIMEOUT_MS;
+      markMeshRequest();
+      return;
+    }
+    ++s_friendmesh_map_refresh_index;
+  }
+
+  friendmeshStopGroupLocationRefresh();
+}
+
+static void friendmeshStartGroupLocationRefresh() {
+  friendmeshStopGroupLocationRefresh();
+  if (s_friendmesh_map_channel_slot < 0) return;
+
+  FriendMeshChannelMemberView members[
+      friendmesh::kChannelRosterMaxMembers] = {};
+  bool rekeyRequired = false;
+  const size_t count = the_mesh.uiGetFriendMeshChannelMembers(
+      s_friendmesh_map_channel_slot, members,
+      friendmesh::kChannelRosterMaxMembers, rekeyRequired);
+  (void)rekeyRequired;
+  for (size_t i = 0; i < count &&
+       s_friendmesh_map_refresh_count <
+           friendmesh::kChannelRosterMaxMembers; ++i) {
+    const FriendMeshChannelMemberView& member = members[i];
+    if (member.isSelf || !member.contactAvailable ||
+        member.state != friendmesh::ChannelRosterState::Joined) continue;
+    memcpy(s_friendmesh_map_refresh_pub[s_friendmesh_map_refresh_count++],
+           member.pubKey, PUB_KEY_SIZE);
+  }
+  if (s_friendmesh_map_refresh_count == 0) return;
+  s_friendmesh_map_refresh_timer = lv_timer_create(
+      friendmeshGroupLocationRefreshTick, 500, nullptr);
+  if (s_friendmesh_map_refresh_timer)
+    lv_timer_ready(s_friendmesh_map_refresh_timer);
+}
+
+static bool friendmeshMapContactAllowed(uint32_t contactIndex) {
+  if (!s_friendmesh_map_group_only ||
+      s_friendmesh_map_channel_slot < 0) return true;
+  for (size_t i = 0; i < s_friendmesh_map_position_count; ++i) {
+    if (s_friendmesh_map_positions[i].contactIndex == contactIndex)
+      return true;
+  }
+  return false;
+}
+#endif
 // (onMapMarkerClickedCb removed — marker taps are now dispatched centrally
 // from the canvas's RELEASED handler in mapCanvasEventCb. See the marker
 // scan in the tap branch below.)
@@ -24657,6 +27575,9 @@ static void renderMapMarkers() {
   freeMapMarkers();
   if (!s_map_canvas) return;
   if (s_map_center_lat == 0.0 && s_map_center_lon == 0.0) return;
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  friendmeshRefreshMapPositions();
+#endif
   // Markers share the pan layer with tiles so live-pan slides everything
   // together with a single set_pos.
   lv_obj_t* parent = s_map_pan_layer ? s_map_pan_layer : s_map_canvas;
@@ -24690,6 +27611,9 @@ static void renderMapMarkers() {
     };
     int link_n = 0;
     for (uint32_t i = 0; i < the_mesh.getNumContacts() && link_n < k_map_markers_max; ++i) {
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+      if (!friendmeshMapContactAllowed(i)) continue;
+#endif
       ContactInfo c;
       if (!the_mesh.getContactByIdx(i, c)) continue;
       if (c.gps_lat == 0 && c.gps_lon == 0) continue;
@@ -24718,16 +27642,19 @@ static void renderMapMarkers() {
     }
   }
 
-  // ---- Self marker — crosshair (on top of the links).
+  // ---- Self marker — crosshair (on top of the links). Normal map tiles are
+  //      light, so use black there; retain white when night inversion is on.
   if (self_has &&
       self_sx >= -10 && self_sx < k_map_canvas_w + 10 &&
       self_sy >= -10 && self_sy < k_map_canvas_h + 10) {
     MapMarker& m = s_map_markers[0];
-    m.mesh_idx = -1;
+    m.kind = MapMarkerKind::Self;
+    m.source_idx = -1;
     m.obj = lv_label_create(parent);
     lv_label_set_text(m.obj, LV_SYMBOL_GPS);
     lv_obj_set_style_text_font(m.obj, &g_font_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(m.obj, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_color(
+        m.obj, s_map_night ? lv_color_white() : lv_color_black(), LV_PART_MAIN);
     // The glyph's optical center isn't at its bbox center — fudge the
     // align slightly so the crosshair lines up with the tile pixel.
     lv_obj_set_pos(m.obj, self_sx - 8, self_sy - 11);
@@ -24737,7 +27664,10 @@ static void renderMapMarkers() {
   //      2-px black border so they read on any tile background).
   int slot = 1;   // slot 0 reserved for self
   // Contact markers — skipped entirely when "Contacts on map" is off (self stays).
-  for (uint32_t i = 0; s_map_show_contacts && i < the_mesh.getNumContacts() && slot < k_map_markers_max; ++i) {
+  for (uint32_t i = 0; s_map_show_contacts && i < the_mesh.getNumContacts() && slot < k_map_mesh_markers_max; ++i) {
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    if (!friendmeshMapContactAllowed(i)) continue;
+#endif
     ContactInfo c;
     if (!the_mesh.getContactByIdx(i, c)) continue;
     if (c.gps_lat == 0 && c.gps_lon == 0) continue;
@@ -24760,7 +27690,8 @@ static void renderMapMarkers() {
     else if (c.type == ADV_TYPE_ROOM) color = 0xC9A24A;
 
     MapMarker& m = s_map_markers[slot];
-    m.mesh_idx = (int)i;
+    m.kind = MapMarkerKind::MeshContact;
+    m.source_idx = (int)i;
     m.obj = lv_obj_create(parent);
     lv_obj_remove_style_all(m.obj);
     lv_obj_set_size(m.obj, 14, 14);
@@ -24779,6 +27710,59 @@ static void renderMapMarkers() {
     lv_obj_clear_flag(m.obj, LV_OBJ_FLAG_SCROLLABLE);
     ++slot;
   }
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // Active multi-device coordination records use the same map layer as the
+  // local development markers, but are read from the selected channel's
+  // persisted bounded state. At most two widgets are added: meetup + incident.
+  if (s_friendmesh_map_channel_slot >= 0 && slot < k_map_markers_max) {
+    friendmesh::GroupCoordinationState coordination = {};
+    if (the_mesh.uiGetFriendMeshGroupCoordination(
+            s_friendmesh_map_channel_slot, coordination)) {
+      const uint32_t now = the_mesh.getRTCClock()->getCurrentTime();
+      const friendmesh::GroupCoordinationItem* items[2] = {
+          &coordination.meetup, &coordination.incident};
+      for (int itemIndex = 0; itemIndex < 2 && slot < k_map_markers_max;
+           ++itemIndex) {
+        const friendmesh::GroupCoordinationItem& item = *items[itemIndex];
+        if (!friendmesh::groupCoordinationItemActive(item, now) ||
+            !item.hasLocation) continue;
+        const double lat = (double)item.latitudeE6 / 1.0e6;
+        const double lon = (double)item.longitudeE6 / 1.0e6;
+        double mwx, mwy;
+        latLonToWorldPx(lat, lon, s_map_zoom, &mwx, &mwy);
+        const int sx = (int)(mwx - cwx + k_map_canvas_w / 2);
+        const int sy = (int)(mwy - cwy + k_map_canvas_h / 2);
+        if (sx < -10 || sx >= k_map_canvas_w + 10 ||
+            sy < -10 || sy >= k_map_canvas_h + 10) continue;
+        const bool sos = item.kind ==
+            friendmesh::GroupCoordinationKind::Sos;
+        const uint32_t color = sos ? 0xE13B4F
+            : itemIndex == 1 ? 0xE6A62E : 0x58BFA5;
+        MapMarker& marker = s_map_markers[slot];
+        marker.kind = MapMarkerKind::FriendMeshGroup;
+        marker.source_idx = itemIndex;
+        marker.obj = lv_obj_create(parent);
+        lv_obj_remove_style_all(marker.obj);
+        lv_obj_set_size(marker.obj, sos ? 20 : 18, sos ? 20 : 18);
+        lv_obj_set_pos(marker.obj, sx - (sos ? 10 : 9),
+                       sy - (sos ? 10 : 9));
+        lv_obj_set_style_bg_color(marker.obj, lv_color_hex(color),
+                                  LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(marker.obj, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_color(marker.obj, lv_color_hex(0x101010),
+                                      LV_PART_MAIN);
+        lv_obj_set_style_border_width(marker.obj, sos ? 3 : 2, LV_PART_MAIN);
+        lv_obj_set_style_radius(marker.obj, itemIndex == 0 ? 3 : 9,
+                                LV_PART_MAIN);
+        lv_obj_clear_flag(marker.obj, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(marker.obj, LV_OBJ_FLAG_SCROLLABLE);
+        ++slot;
+      }
+    }
+  }
+
+#endif
 
   // Route-replay overlay — drawn last so the path + nodes sit above tiles,
   // link lines and contact markers.
@@ -25206,6 +28190,22 @@ static void mapOptDirectOnlyCb(lv_event_t* e) {
   s_map_direct_only = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   renderMapMarkers();
 }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static void mapOptFriendMeshGroupCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* sw = lv_event_get_target(e);
+  const bool requested = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  if (requested && s_friendmesh_map_channel_slot < 0) {
+    lv_obj_clear_state(sw, LV_STATE_CHECKED);
+    s_friendmesh_map_group_only = false;
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Open Group map from a channel first"), 1700);
+    return;
+  }
+  s_friendmesh_map_group_only = requested;
+  renderMapMarkers();
+}
+#endif
 
 static void mapZoomControlsApply();   // fwd (defined near the map build) — reposition zoom controls
 // Map zoom-control style toggle (map options popup): ON = +/- buttons, OFF = slider.
@@ -25503,6 +28503,20 @@ static void openMapOptions() {
       lv_obj_add_event_cb(sw, r.cb, LV_EVENT_VALUE_CHANGED, nullptr);
       y += 40;
     }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    lv_obj_t* gl = lv_label_create(card);
+    lv_label_set_text(gl, TR("FriendMesh group only"));
+    lv_obj_set_style_text_color(gl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(gl, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_pos(gl, 2, y + 4);
+    lv_obj_t* gsw = lv_switch_create(card);
+    lv_obj_align(gsw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (s_friendmesh_map_group_only)
+      lv_obj_add_state(gsw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(gsw, mapOptFriendMeshGroupCb,
+                        LV_EVENT_VALUE_CHANGED, nullptr);
+    y += 40;
+#endif
   }
 
   auto mk_row_btn = [&](const char* txt, lv_event_cb_t cb) {
@@ -25545,8 +28559,41 @@ static void mapOpenOptionsCb(lv_event_t* e) {
 // Reuses openContactActionSheet (the same sheet you get tapping a row in
 // the Contacts tab) so the user gets the full action set — send DM,
 // telemetry, range test, etc. — without us duplicating UI.
-static void openMarkerPopupForContact(int mesh_idx) {
-  if (mesh_idx < 0) {
+static int mapMarkerToken(MapMarkerKind kind, int source_idx) {
+  return ((int)kind << 24) | ((source_idx + 1) & 0x00FFFFFF);
+}
+
+static MapMarkerKind mapMarkerTokenKind(int token) {
+  return (MapMarkerKind)((token >> 24) & 0xFF);
+}
+
+static int mapMarkerTokenSource(int token) {
+  return (token & 0x00FFFFFF) - 1;
+}
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static void openFriendMeshGroupMarker(int source_idx) {
+  if (source_idx < 0 || source_idx > 1 ||
+      s_friendmesh_map_channel_slot < 0 || !g_lv.task) return;
+  friendmesh::GroupCoordinationState state = {};
+  if (!the_mesh.uiGetFriendMeshGroupCoordination(
+          s_friendmesh_map_channel_slot, state)) return;
+  const friendmesh::GroupCoordinationItem& item = source_idx == 0
+      ? state.meetup : state.incident;
+  if (!friendmesh::groupCoordinationItemActive(
+          item, the_mesh.getRTCClock()->getCurrentTime())) return;
+  char message[160] = {};
+  snprintf(message, sizeof(message), "%s\n%s\n%.5f, %.5f",
+           friendmeshCoordinationKindLabel(item.kind),
+           item.note[0] ? item.note : "Group coordination",
+           (double)item.latitudeE6 / 1.0e6,
+           (double)item.longitudeE6 / 1.0e6);
+  g_lv.task->showAlert(message, 2400);
+}
+#endif
+
+static void openMapMarker(MapMarkerKind kind, int source_idx) {
+  if (kind == MapMarkerKind::Self) {
     // Self marker — show a small toast with our coords. Cheaper than a
     // full popup; the user already has their own profile screen.
     if (g_lv.task) {
@@ -25557,10 +28604,18 @@ static void openMarkerPopupForContact(int mesh_idx) {
     }
     return;
   }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (kind == MapMarkerKind::FriendMeshGroup) {
+    openFriendMeshGroupMarker(source_idx);
+    return;
+  }
+#endif
+  if (kind != MapMarkerKind::MeshContact || source_idx < 0) return;
   ContactInfo c;
-  if (!the_mesh.getContactByIdx((uint32_t)mesh_idx, c)) return;
+  if (!the_mesh.getContactByIdx((uint32_t)source_idx, c)) return;
   const bool is_repeater = (c.type == ADV_TYPE_REPEATER);
-  openContactActionSheet((uint32_t)mesh_idx, is_repeater, c.name, /*from_map=*/true);
+  openContactActionSheet((uint32_t)source_idx, is_repeater,
+                         friendDisplayName(c), /*from_map=*/true);
 }
 
 // ----- Overlapping-markers picker -----
@@ -25585,14 +28640,14 @@ static void mapPickerBackdropCb(lv_event_t* e) {
 }
 static void mapPickerRowCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  const int token = (int)(intptr_t)lv_event_get_user_data(e);
   lv_indev_t* a = lv_indev_get_act();
   if (a) lv_indev_wait_release(a);
   closeMapPicker();
-  openMarkerPopupForContact(idx);
+  openMapMarker(mapMarkerTokenKind(token), mapMarkerTokenSource(token));
 }
 
-static void openMapPicker(const int* idxs, int n) {
+static void openMapPicker(const int* tokens, int n) {
   closeMapPicker();
   if (n <= 0) return;
   if (n > 6) n = 6;   // cap card height; in practice rare to overlap > a few
@@ -25639,13 +28694,28 @@ static void openMapPicker(const int* idxs, int n) {
 
   int y = hdr_h;
   for (int i = 0; i < n; ++i) {
-    const int midx = idxs[i];
+    const int token = tokens[i];
+    const MapMarkerKind kind = mapMarkerTokenKind(token);
+    const int source_idx = mapMarkerTokenSource(token);
     char row_label[40];
-    if (midx < 0) {
+    if (kind == MapMarkerKind::Self) {
       snprintf(row_label, sizeof(row_label), LV_SYMBOL_GPS "  (you)");
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    } else if (kind == MapMarkerKind::FriendMeshGroup) {
+      friendmesh::GroupCoordinationState state = {};
+      const friendmesh::GroupCoordinationItem* item = nullptr;
+      if (s_friendmesh_map_channel_slot >= 0 && source_idx >= 0 &&
+          source_idx <= 1 && the_mesh.uiGetFriendMeshGroupCoordination(
+              s_friendmesh_map_channel_slot, state))
+        item = source_idx == 0 ? &state.meetup : &state.incident;
+      snprintf(row_label, sizeof(row_label), LV_SYMBOL_GPS "  %s",
+               item ? friendmeshCoordinationKindLabel(item->kind)
+                    : "Group coordination");
+#endif
     } else {
       ContactInfo c;
-      if (!the_mesh.getContactByIdx((uint32_t)midx, c)) continue;
+      if (kind != MapMarkerKind::MeshContact || source_idx < 0 ||
+          !the_mesh.getContactByIdx((uint32_t)source_idx, c)) continue;
       const char* icon = (c.type == ADV_TYPE_REPEATER) ? LV_SYMBOL_CHARGE :
                          (c.type == ADV_TYPE_ROOM)     ? LV_SYMBOL_LOOP   :
                                                           LV_SYMBOL_ENVELOPE;
@@ -25659,7 +28729,7 @@ static void openMapPicker(const int* idxs, int n) {
     lv_obj_set_pos(b, 0, y);
     styleButton(b);
     lv_obj_add_event_cb(b, mapPickerRowCb, LV_EVENT_CLICKED,
-                        reinterpret_cast<void*>((intptr_t)midx));
+                        reinterpret_cast<void*>((intptr_t)token));
     lv_obj_t* lbl = lv_label_create(b);
     lv_label_set_text(lbl, row_label);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
@@ -25763,7 +28833,13 @@ static void mapContactsFillList() {
   uint32_t now_secs = 0;
   { mesh::RTCClock* rtc = the_mesh.getRTCClock(); if (rtc) now_secs = rtc->getCurrentTime(); }
   const uint32_t total = the_mesh.getNumContacts();
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  friendmeshRefreshMapPositions();
+#endif
   for (uint32_t i = 0; i < total && n < 64; ++i) {
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+    if (!friendmeshMapContactAllowed(i)) continue;
+#endif
     ContactInfo c;
     if (!the_mesh.getContactByIdx(i, c)) continue;
     if (c.gps_lat == 0 && c.gps_lon == 0) continue;
@@ -25937,6 +29013,1044 @@ static void mapOpenContactsCb(lv_event_t* e) {
   openMapContactsList();
 }
 
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static constexpr lv_coord_t kFriendMeshCompassDialSize = 164;
+static constexpr lv_coord_t kFriendMeshCompassCenter =
+    kFriendMeshCompassDialSize / 2;
+static constexpr lv_coord_t kFriendMeshCompassRadius = 64;
+
+static const char* friendmeshBearingCardinal(uint16_t degrees) {
+  static const char* directions[8] = {
+      "N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+  return directions[((degrees + 22) / 45) & 7];
+}
+
+static void friendmeshCompactDistance(uint32_t meters, char* output,
+                                      size_t capacity) {
+  if (!output || capacity == 0) return;
+  if (meters == UINT32_MAX) {
+    snprintf(output, capacity, "--");
+  } else if (meters < 1000) {
+    snprintf(output, capacity, "%lum", static_cast<unsigned long>(meters));
+  } else {
+    snprintf(output, capacity, "%.1fkm",
+             static_cast<double>(meters) / 1000.0);
+  }
+}
+
+static void friendmeshCompassShowPage(uint8_t page) {
+  if (!s_friendmesh_compass_root ||
+      !lv_obj_is_valid(s_friendmesh_compass_root)) return;
+  s_friendmesh_compass_page = page > 0 ? 1 : 0;
+  if (s_friendmesh_compass_visual_page) {
+    if (s_friendmesh_compass_page == 0)
+      lv_obj_clear_flag(s_friendmesh_compass_visual_page, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_add_flag(s_friendmesh_compass_visual_page, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (s_friendmesh_compass_guidance_page) {
+    if (s_friendmesh_compass_page == 1)
+      lv_obj_clear_flag(s_friendmesh_compass_guidance_page,
+                        LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_add_flag(s_friendmesh_compass_guidance_page,
+                      LV_OBJ_FLAG_HIDDEN);
+  }
+  for (uint8_t i = 0; i < 2; ++i) {
+    lv_obj_t* dot = s_friendmesh_compass_page_dots[i];
+    if (!dot) continue;
+    const bool active = i == s_friendmesh_compass_page;
+    lv_obj_set_style_bg_color(
+        dot, lv_color_hex(active ? 0x58BFA5 : COLOR_BG), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(
+        dot, lv_color_hex(active ? 0x58BFA5 : COLOR_SUB), LV_PART_MAIN);
+  }
+  navMarkDirty();
+}
+
+static bool friendmeshCompassPageStep(int direction) {
+  if (!s_friendmesh_compass_root ||
+      !lv_obj_is_valid(s_friendmesh_compass_root) || settingsModalIsOpen())
+    return false;
+  int next = static_cast<int>(s_friendmesh_compass_page) + direction;
+  if (next < 0) next = 0;
+  if (next > 1) next = 1;
+  friendmeshCompassShowPage(static_cast<uint8_t>(next));
+  return true;  // consume even at an edge so Map never receives the gesture
+}
+
+static void friendmeshCompassPageDotCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const uintptr_t page = reinterpret_cast<uintptr_t>(
+      lv_event_get_user_data(e));
+  friendmeshCompassShowPage(page ? 1 : 0);
+}
+
+static void friendmeshGuidanceArrowSetBearing(uint16_t degrees) {
+  if (!s_friendmesh_guidance_arrow) return;
+  const double radians = static_cast<double>(degrees) *
+      3.14159265358979323846 / 180.0;
+  const double ux = sin(radians);
+  const double uy = -cos(radians);
+  const double px = -uy;
+  const double py = ux;
+  const double cx = 53.0;
+  const double cy = 62.0;
+  const double tipX = cx + ux * 36.0;
+  const double tipY = cy + uy * 36.0;
+  s_friendmesh_guidance_arrow_points[0] = {
+      static_cast<lv_coord_t>(cx - ux * 18.0),
+      static_cast<lv_coord_t>(cy - uy * 18.0)};
+  s_friendmesh_guidance_arrow_points[1] = {
+      static_cast<lv_coord_t>(tipX), static_cast<lv_coord_t>(tipY)};
+  s_friendmesh_guidance_arrow_points[2] = {
+      static_cast<lv_coord_t>(tipX - ux * 14.0 + px * 11.0),
+      static_cast<lv_coord_t>(tipY - uy * 14.0 + py * 11.0)};
+  s_friendmesh_guidance_arrow_points[3] = {
+      static_cast<lv_coord_t>(tipX), static_cast<lv_coord_t>(tipY)};
+  s_friendmesh_guidance_arrow_points[4] = {
+      static_cast<lv_coord_t>(tipX - ux * 14.0 - px * 11.0),
+      static_cast<lv_coord_t>(tipY - uy * 14.0 - py * 11.0)};
+  lv_line_set_points(s_friendmesh_guidance_arrow,
+                     s_friendmesh_guidance_arrow_points, 5);
+  lv_obj_invalidate(s_friendmesh_guidance_arrow);
+}
+
+static lv_coord_t friendmeshGuidanceMirrorX(lv_coord_t x, int direction) {
+  return direction < 0 ? static_cast<lv_coord_t>(106 - x) : x;
+}
+
+// Draw a road-sign-like maneuver instead of making the user translate a
+// numeric angle while walking. Positive corrections turn right, negative turn
+// left. The sharp category deliberately uses a visible right-angle elbow.
+static void friendmeshGuidanceArrowSetTurn(int turnDegrees) {
+  if (!s_friendmesh_guidance_arrow) return;
+  const int magnitude = turnDegrees < 0 ? -turnDegrees : turnDegrees;
+  const int direction = turnDegrees < 0 ? -1 : 1;
+  uint8_t count = 0;
+  auto point = [&](lv_coord_t x, lv_coord_t y) {
+    s_friendmesh_guidance_arrow_points[count++] = {
+        friendmeshGuidanceMirrorX(x, direction), y};
+  };
+  if (magnitude <= 15) {
+    point(53, 94); point(53, 27); point(41, 42); point(53, 27); point(65, 42);
+  } else if (magnitude <= 45) {
+    point(43, 94); point(44, 72); point(51, 55); point(63, 40); point(78, 27);
+    point(61, 31); point(78, 27); point(74, 44);
+  } else if (magnitude <= 75) {
+    point(39, 94); point(39, 65); point(46, 52); point(60, 44); point(81, 44);
+    point(66, 33); point(81, 44); point(66, 55);
+  } else if (magnitude <= 135) {
+    point(37, 94); point(37, 49); point(81, 49); point(66, 38); point(81, 49);
+    point(66, 60);
+  } else {
+    point(37, 94); point(37, 50); point(43, 37); point(55, 31); point(67, 37);
+    point(73, 49); point(73, 70); point(62, 56); point(73, 70); point(84, 56);
+  }
+  lv_line_set_points(s_friendmesh_guidance_arrow,
+                     s_friendmesh_guidance_arrow_points, count);
+  lv_obj_invalidate(s_friendmesh_guidance_arrow);
+}
+
+static const char* friendmeshGuidanceTurnInstruction(int turnDegrees) {
+  const int magnitude = turnDegrees < 0 ? -turnDegrees : turnDegrees;
+  if (magnitude <= 15) return "Continue straight";
+  if (magnitude <= 45)
+    return turnDegrees < 0 ? "Turn slight left" : "Turn slight right";
+  if (magnitude <= 75)
+    return turnDegrees < 0 ? "Turn left" : "Turn right";
+  if (magnitude <= 135)
+    return turnDegrees < 0 ? "Turn sharp left" : "Turn sharp right";
+  return "Turn around";
+}
+
+static void friendmeshCompassSetMotionVisible(bool visible) {
+  lv_obj_t* objects[] = {
+      s_friendmesh_compass_observed_dot,
+      s_friendmesh_compass_previous_dot,
+      s_friendmesh_compass_motion_line,
+      s_friendmesh_compass_prediction_line,
+  };
+  for (lv_obj_t* object : objects) {
+    if (!object) continue;
+    if (visible) lv_obj_clear_flag(object, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+static lv_point_t friendmeshCompassPoint(
+    const friendmesh::PositionRecord& local,
+    const friendmesh::PositionRecord& position,
+    uint32_t scaleDistance, double headingDegrees) {
+  const uint32_t distance = friendmesh::greatCircleDistanceMeters(local, position);
+  const uint16_t bearing = friendmesh::absoluteBearingDegrees(local, position);
+  double shown = static_cast<double>(bearing) - headingDegrees;
+  while (shown < 0.0) shown += 360.0;
+  while (shown >= 360.0) shown -= 360.0;
+  const double radians = shown * 3.14159265358979323846 / 180.0;
+  double radius = static_cast<double>(kFriendMeshCompassRadius);
+  if (scaleDistance > 0 && distance != UINT32_MAX && distance < scaleDistance)
+    radius *= static_cast<double>(distance) / static_cast<double>(scaleDistance);
+  if (radius < 12.0) radius = 12.0;
+  lv_point_t point = {};
+  point.x = static_cast<lv_coord_t>(
+      kFriendMeshCompassCenter + sin(radians) * radius);
+  point.y = static_cast<lv_coord_t>(
+      kFriendMeshCompassCenter - cos(radians) * radius);
+  return point;
+}
+
+static double friendmeshCompassRelativeBearing(double absoluteDegrees,
+                                               double headingDegrees) {
+  double relative = absoluteDegrees - headingDegrees;
+  while (relative < 0.0) relative += 360.0;
+  while (relative >= 360.0) relative -= 360.0;
+  return relative;
+}
+
+static void friendmeshCompassUpdateCardinals(double headingDegrees) {
+  static const double kCardinalBearings[4] = {0.0, 90.0, 180.0, 270.0};
+  constexpr double kLabelRadius = 70.0;
+  for (uint8_t i = 0; i < 4; ++i) {
+    lv_obj_t* label = s_friendmesh_compass_cardinal_labels[i];
+    if (!label) continue;
+    const double shown = friendmeshCompassRelativeBearing(
+        kCardinalBearings[i], headingDegrees);
+    const double radians = shown * 3.14159265358979323846 / 180.0;
+    const lv_coord_t x = static_cast<lv_coord_t>(
+        kFriendMeshCompassCenter + sin(radians) * kLabelRadius - 8.0);
+    const lv_coord_t y = static_cast<lv_coord_t>(
+        kFriendMeshCompassCenter - cos(radians) * kLabelRadius - 8.0);
+    lv_obj_set_pos(label, x, y);
+  }
+}
+
+static void friendmeshGuidanceSetUnavailable(const char* primary,
+                                             const char* detail) {
+  for (lv_obj_t* scale : s_friendmesh_compass_scale_labels) {
+    if (scale) lv_label_set_text(scale, "--");
+  }
+  if (s_friendmesh_guidance_arrow)
+    lv_obj_add_flag(s_friendmesh_guidance_arrow, LV_OBJ_FLAG_HIDDEN);
+  if (s_friendmesh_guidance_toggle)
+    lv_obj_add_flag(s_friendmesh_guidance_toggle, LV_OBJ_FLAG_HIDDEN);
+  if (s_friendmesh_guidance_title)
+    lv_label_set_text(s_friendmesh_guidance_title,
+                      primary ? primary : "Position unavailable");
+  if (s_friendmesh_guidance_distance)
+    lv_label_set_text(s_friendmesh_guidance_distance,
+                      detail ? detail : "Waiting for location data");
+  if (s_friendmesh_guidance_motion)
+    lv_label_set_text(s_friendmesh_guidance_motion, "No direction yet");
+  if (s_friendmesh_guidance_confidence)
+    lv_label_set_text(s_friendmesh_guidance_confidence,
+                      "Prediction unavailable");
+  if (s_friendmesh_guidance_age)
+    lv_label_set_text(s_friendmesh_guidance_age, "Update the Group map");
+}
+
+static void friendmeshCompassRefresh(lv_timer_t*) {
+  if (!s_friendmesh_compass_status || !s_friendmesh_compass_meta ||
+      !s_friendmesh_compass_line || !s_friendmesh_compass_dot ||
+      !s_friendmesh_guidance_title || !s_friendmesh_guidance_distance ||
+      s_friendmesh_compass_contact_idx < 0 || !g_lv.task) return;
+  ContactInfo contact = {};
+  if (!the_mesh.getContactByIdx(
+          static_cast<uint32_t>(s_friendmesh_compass_contact_idx), contact) ||
+      !the_mesh.uiIsFriendMeshChannelMemberJoined(
+          s_friendmesh_map_channel_slot, contact.id.pub_key) ||
+      (contact.gps_lat == 0 && contact.gps_lon == 0)) {
+    lv_obj_add_flag(s_friendmesh_compass_line, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_friendmesh_compass_dot, LV_OBJ_FLAG_HIDDEN);
+    friendmeshCompassSetMotionVisible(false);
+    lv_label_set_text(s_friendmesh_compass_status,
+                      TR("Group member position unavailable"));
+    lv_label_set_text(s_friendmesh_compass_meta,
+                      TR("The member may have left or has not shared a position."));
+    friendmeshGuidanceSetUnavailable(
+        "Position unavailable", "Member has not shared a position");
+    return;
+  }
+  friendmesh::MeshCorePositionInput targetInput = {};
+  memcpy(targetInput.publicKey, contact.id.pub_key, PUB_KEY_SIZE);
+  targetInput.latitudeE6 = contact.gps_lat;
+  targetInput.longitudeE6 = contact.gps_lon;
+  targetInput.observedAt = contact.last_advert_timestamp > contact.lastmod
+      ? contact.last_advert_timestamp : contact.lastmod;
+  const uint32_t now = the_mesh.getRTCClock()->getCurrentTime();
+  targetInput.receivedAt = now;
+  friendmesh::PositionRecord target = {};
+  if (friendmesh::adaptMeshCorePosition(targetInput, target) !=
+      friendmesh::ResultCode::Ok) {
+    lv_obj_add_flag(s_friendmesh_compass_line, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_friendmesh_compass_dot, LV_OBJ_FLAG_HIDDEN);
+    friendmeshCompassSetMotionVisible(false);
+    lv_label_set_text(s_friendmesh_compass_status,
+                      TR("Group member position unavailable"));
+    friendmeshGuidanceSetUnavailable(
+        "Position unavailable", "Member position is invalid");
+    return;
+  }
+  const double localLat = g_lv.task->getNodeLat();
+  const double localLon = g_lv.task->getNodeLon();
+  if (localLat == 0.0 && localLon == 0.0) {
+    lv_obj_add_flag(s_friendmesh_compass_line, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_friendmesh_compass_dot, LV_OBJ_FLAG_HIDDEN);
+    friendmeshCompassSetMotionVisible(false);
+    lv_label_set_text_fmt(s_friendmesh_compass_status,
+                          "%s\n%s", contact.name[0] ? contact.name : "Group member",
+                          TR("Waiting for your GPS fix"));
+    lv_label_set_text(s_friendmesh_compass_meta,
+                      TR("The target is available, but distance and bearing need your position."));
+    friendmeshGuidanceSetUnavailable(
+        "Waiting for your GPS", "A local fix is required for direction");
+    return;
+  }
+  friendmesh::MeshCorePositionInput localInput = {};
+  memcpy(localInput.publicKey, the_mesh.getSelfPubKey(), PUB_KEY_SIZE);
+  localInput.latitudeE6 = static_cast<int32_t>(localLat * 1000000.0);
+  localInput.longitudeE6 = static_cast<int32_t>(localLon * 1000000.0);
+  localInput.observedAt = now;
+  localInput.receivedAt = now;
+  friendmesh::PositionRecord local = {};
+  if (friendmesh::adaptMeshCorePosition(localInput, local) !=
+      friendmesh::ResultCode::Ok) {
+    lv_obj_add_flag(s_friendmesh_compass_line, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_friendmesh_compass_dot, LV_OBJ_FLAG_HIDDEN);
+    friendmeshCompassSetMotionVisible(false);
+    lv_label_set_text(s_friendmesh_compass_status,
+                      TR("Your GPS position is invalid"));
+    friendmeshGuidanceSetUnavailable(
+        "Your GPS is invalid", "A valid local fix is required");
+    return;
+  }
+  local.source = friendmesh::PositionSource::OnDeviceGps;
+  friendmeshObserveLocalMotionSample(local);
+  if (!s_friendmesh_compass_notice_attempted) {
+    s_friendmesh_compass_notice_attempted = true;
+    the_mesh.uiSendFriendMeshCompassStarted(
+        s_friendmesh_map_channel_slot, contact.id.pub_key);
+  }
+  friendmesh::MotionEstimate motion = {};
+  const FriendMeshMotionTrack* track = friendmeshMotionTrackFor(target.subjectId);
+  if (track && track->samples >= 2)
+    motion = friendmesh::estimateTargetMotion(
+        track->previous, track->current, now);
+  const bool usePrediction = motion.moving &&
+      !s_friendmesh_compass_use_current;
+  const friendmesh::PositionRecord& guidanceTarget =
+      usePrediction ? motion.predicted : target;
+  friendmesh::CourseToTargetEstimate course = {};
+  const FriendMeshMotionTrack* localTrack =
+      friendmeshMotionTrackFor(local.subjectId);
+  // A saved coordinate is still a valid navigation target even when it came
+  // from a fixed, non-GPS device and has not changed recently. Target age may
+  // make motion prediction unavailable, but it must not disable the user's
+  // local course-over-ground or the turn arrow toward that fixed point.
+  if (localTrack && localTrack->samples >= 2) {
+    course = friendmesh::estimateCourseToTarget(
+        localTrack->previous, localTrack->current, guidanceTarget, now);
+  }
+  const uint32_t distance = friendmesh::greatCircleDistanceMeters(
+      local, guidanceTarget);
+  const uint16_t absolute = friendmesh::absoluteBearingDegrees(
+      local, guidanceTarget);
+  // T-Deck has no magnetometer. North-up therefore uses an absolute map
+  // bearing, while headway-up rotates the entire dial by the course calculated
+  // from the user's two most recent reliable GPS fixes.
+  const bool headwayAvailable = course.courseUsable;
+  const double currentHeading =
+      s_friendmesh_compass_headway_up && headwayAvailable
+          ? static_cast<double>(course.motion.bearingDegrees) : 0.0;
+  friendmeshCompassUpdateCardinals(currentHeading);
+  if (s_friendmesh_compass_orientation_label) {
+    if (!s_friendmesh_compass_headway_up)
+      lv_label_set_text(s_friendmesh_compass_orientation_label, "NORTH-UP");
+    else if (headwayAvailable)
+      lv_label_set_text_fmt(s_friendmesh_compass_orientation_label,
+                            "HEADWAY %s-UP",
+                            friendmeshBearingCardinal(
+                                course.motion.bearingDegrees));
+    else
+      lv_label_set_text(s_friendmesh_compass_orientation_label,
+                        "HEADWAY WAIT");
+  }
+  if (s_friendmesh_guidance_mode_label) {
+    lv_label_set_text(s_friendmesh_guidance_mode_label,
+                      s_friendmesh_guidance_north_mode
+                          ? "SHOW TURN" : "SHOW NORTH");
+  }
+  lv_obj_clear_flag(s_friendmesh_compass_line, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(s_friendmesh_compass_dot, LV_OBJ_FLAG_HIDDEN);
+  const uint32_t guidanceDistance = distance == UINT32_MAX ? 1 : distance;
+  uint32_t dialScaleDistance = guidanceDistance;
+  if (motion.moving && track) {
+    const uint32_t currentDistance = friendmesh::greatCircleDistanceMeters(
+        local, track->current);
+    const uint32_t previousDistance = friendmesh::greatCircleDistanceMeters(
+        local, track->previous);
+    if (currentDistance != UINT32_MAX && currentDistance > dialScaleDistance)
+      dialScaleDistance = currentDistance;
+    if (previousDistance != UINT32_MAX && previousDistance > dialScaleDistance)
+      dialScaleDistance = previousDistance;
+  }
+  s_friendmesh_compass_line_points[0] = {
+      kFriendMeshCompassCenter, kFriendMeshCompassCenter};
+  s_friendmesh_compass_line_points[1] = friendmeshCompassPoint(
+      local, guidanceTarget, dialScaleDistance, currentHeading);
+  lv_line_set_points(s_friendmesh_compass_line,
+                     s_friendmesh_compass_line_points, 2);
+  lv_obj_set_pos(s_friendmesh_compass_dot,
+                 s_friendmesh_compass_line_points[1].x - 6,
+                 s_friendmesh_compass_line_points[1].y - 6);
+  lv_obj_invalidate(s_friendmesh_compass_line);
+
+  if (motion.moving && track) {
+    const lv_point_t previousPoint = friendmeshCompassPoint(
+        local, track->previous, dialScaleDistance, currentHeading);
+    const lv_point_t currentPoint = friendmeshCompassPoint(
+        local, track->current, dialScaleDistance, currentHeading);
+    const lv_point_t predictedPoint = friendmeshCompassPoint(
+        local, motion.predicted, dialScaleDistance, currentHeading);
+    s_friendmesh_compass_motion_points[0] = previousPoint;
+    s_friendmesh_compass_motion_points[1] = currentPoint;
+    s_friendmesh_compass_prediction_points[0] = currentPoint;
+    s_friendmesh_compass_prediction_points[1] = predictedPoint;
+    lv_line_set_points(s_friendmesh_compass_motion_line,
+                       s_friendmesh_compass_motion_points, 2);
+    lv_line_set_points(s_friendmesh_compass_prediction_line,
+                       s_friendmesh_compass_prediction_points, 2);
+    lv_obj_set_pos(s_friendmesh_compass_previous_dot,
+                   previousPoint.x - 4, previousPoint.y - 4);
+    lv_obj_set_pos(s_friendmesh_compass_observed_dot,
+                   currentPoint.x - 5, currentPoint.y - 5);
+    friendmeshCompassSetMotionVisible(true);
+  } else {
+    friendmeshCompassSetMotionVisible(false);
+  }
+  const uint32_t ringDistances[3] = {
+      dialScaleDistance,
+      static_cast<uint32_t>((static_cast<uint64_t>(dialScaleDistance) * 2) / 3),
+      dialScaleDistance / 3,
+  };
+  for (uint8_t i = 0; i < 3; ++i) {
+    if (!s_friendmesh_compass_scale_labels[i]) continue;
+    char scaleText[16] = {};
+    friendmeshCompactDistance(ringDistances[i], scaleText, sizeof(scaleText));
+    lv_label_set_text(s_friendmesh_compass_scale_labels[i], scaleText);
+  }
+  char distanceText[24] = {};
+  if (distance == UINT32_MAX)
+    snprintf(distanceText, sizeof(distanceText), "unavailable");
+  else if (distance < 1000)
+    snprintf(distanceText, sizeof(distanceText), "%lu m",
+             static_cast<unsigned long>(distance));
+  else
+    snprintf(distanceText, sizeof(distanceText), "%.2f km",
+             static_cast<double>(distance) / 1000.0);
+  char visualStatus[96] = {};
+  snprintf(visualStatus, sizeof(visualStatus),
+           "%s%s\n%s  %u\xC2\xB0 %s",
+           usePrediction ? "Meet " : "",
+           contact.name[0] ? contact.name : "Group member",
+           distanceText, static_cast<unsigned>(absolute),
+           friendmeshBearingCardinal(absolute));
+  lv_label_set_text(s_friendmesh_compass_status, visualStatus);
+  char ageText[24] = "time unknown";
+  if (now && target.capturedAt && now >= target.capturedAt)
+    snprintf(ageText, sizeof(ageText), "%lus ago",
+             static_cast<unsigned long>(now - target.capturedAt));
+  char speedText[20] = {};
+  snprintf(speedText, sizeof(speedText), "%.1f m/s",
+           static_cast<double>(motion.speedCentimetersPerSecond) / 100.0);
+  const uint32_t predictionSeconds =
+      motion.horizonSeconds >= 5 && motion.horizonSeconds <= 300
+          ? motion.horizonSeconds : friendmesh::kMotionPredictionSeconds;
+  char visualMeta[176] = {};
+  if (motion.moving) {
+    if (usePrediction) {
+      snprintf(visualMeta, sizeof(visualMeta),
+               "Moving %s  %s\n"
+               "LEAD %lu sec  %s\n"
+               "Seen %s\n"
+               "Blue now / green meet",
+               friendmeshBearingCardinal(motion.bearingDegrees), speedText,
+               static_cast<unsigned long>(predictionSeconds),
+               motion.confidence == friendmesh::MotionConfidence::Good
+                   ? "GOOD" : "LIMITED",
+               ageText);
+    } else {
+      snprintf(visualMeta, sizeof(visualMeta),
+               "Moving %s  %s\n"
+               "CURRENT POSITION\n"
+               "Seen %s\n"
+               "Prediction available",
+               friendmeshBearingCardinal(motion.bearingDegrees), speedText,
+               ageText);
+    }
+  } else {
+    snprintf(visualMeta, sizeof(visualMeta),
+             "Last received %s\n"
+             "%s",
+             ageText,
+             track && track->samples >= 2
+                 ? "No recent movement" : "No movement history");
+  }
+  lv_label_set_text(s_friendmesh_compass_meta, visualMeta);
+
+  if (course.courseUsable && !s_friendmesh_guidance_north_mode)
+    friendmeshGuidanceArrowSetTurn(static_cast<int>(course.turnDegrees));
+  else
+    friendmeshGuidanceArrowSetBearing(absolute);
+  lv_obj_clear_flag(s_friendmesh_guidance_arrow, LV_OBJ_FLAG_HIDDEN);
+  if (course.courseUsable && !s_friendmesh_guidance_north_mode) {
+    lv_label_set_text(s_friendmesh_guidance_title,
+                      friendmeshGuidanceTurnInstruction(
+                          static_cast<int>(course.turnDegrees)));
+  } else {
+    lv_label_set_text_fmt(s_friendmesh_guidance_title, "Walk %s",
+                          friendmeshBearingCardinal(absolute));
+  }
+  if (distance == UINT32_MAX) {
+    lv_label_set_text(s_friendmesh_guidance_distance,
+                      "Distance unavailable");
+  } else {
+    const uint32_t walkMinutes = distance == 0 ? 0 : (distance + 83) / 84;
+    lv_label_set_text_fmt(s_friendmesh_guidance_distance,
+                          "%s  ~%lu min direct",
+                          distanceText,
+                          static_cast<unsigned long>(walkMinutes));
+  }
+  if (course.courseUsable) {
+    char localSpeedText[20] = {};
+    snprintf(localSpeedText, sizeof(localSpeedText), "%.1f m/s",
+             static_cast<double>(course.motion.speedCentimetersPerSecond) /
+                 100.0);
+    if (motion.moving) {
+      lv_label_set_text_fmt(s_friendmesh_guidance_motion,
+                            "You %s %s | Friend %s %s",
+                            friendmeshBearingCardinal(
+                                course.motion.bearingDegrees),
+                            localSpeedText,
+                            friendmeshBearingCardinal(motion.bearingDegrees),
+                            speedText);
+    } else {
+      lv_label_set_text_fmt(s_friendmesh_guidance_motion,
+                            "Your course %s  %s",
+                            friendmeshBearingCardinal(
+                                course.motion.bearingDegrees),
+                            localSpeedText);
+    }
+    const int32_t closing = course.closingSpeedCentimetersPerSecond;
+    const uint32_t closingMagnitude = static_cast<uint32_t>(
+        closing < 0 ? -static_cast<int64_t>(closing) : closing);
+    char closingSpeedText[20] = {};
+    snprintf(closingSpeedText, sizeof(closingSpeedText), "%.1f m/s",
+             static_cast<double>(closingMagnitude) / 100.0);
+    if (course.progress == friendmesh::NavigationProgress::Arrived) {
+      lv_label_set_text(s_friendmesh_guidance_confidence,
+                        "Headway: arrived - within 20 m");
+    } else if (closing > 0 && distance != UINT32_MAX) {
+      const uint32_t etaSeconds = static_cast<uint32_t>(
+          (static_cast<uint64_t>(distance) * 100u) /
+          static_cast<uint32_t>(closing));
+      if (etaSeconds <= 24u * 60u * 60u) {
+        const uint32_t etaMinutes = etaSeconds == 0 ? 0 :
+            (etaSeconds + 59u) / 60u;
+        lv_label_set_text_fmt(s_friendmesh_guidance_confidence,
+                              "Headway: closing %s - ~%lu min",
+                              closingSpeedText,
+                              static_cast<unsigned long>(etaMinutes));
+      } else {
+        lv_label_set_text_fmt(s_friendmesh_guidance_confidence,
+                              "Headway: closing %s", closingSpeedText);
+      }
+    } else if (closing < 0) {
+      lv_label_set_text_fmt(s_friendmesh_guidance_confidence,
+                            "Headway: opening %s", closingSpeedText);
+    } else {
+      lv_label_set_text(s_friendmesh_guidance_confidence,
+                        "Headway: distance steady");
+    }
+  } else if (motion.moving) {
+    lv_label_set_text_fmt(s_friendmesh_guidance_motion,
+                          "%s walking %s  %s",
+                          contact.name[0] ? contact.name : "Friend",
+                          friendmeshBearingCardinal(motion.bearingDegrees),
+                          speedText);
+    lv_label_set_text(s_friendmesh_guidance_confidence,
+                      "Headway needs 2 user GPS fixes");
+  } else {
+    lv_label_set_text(s_friendmesh_guidance_motion,
+                      "Friend movement not reliable yet");
+    lv_label_set_text(s_friendmesh_guidance_confidence,
+                      localTrack && localTrack->samples >= 2
+                          ? "Waiting for reliable user movement"
+                          : "Headway needs 2 user GPS fixes");
+  }
+  if (motion.moving) {
+    lv_obj_clear_flag(s_friendmesh_guidance_toggle, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_friendmesh_guidance_toggle_label,
+                      s_friendmesh_compass_use_current
+                          ? "Use prediction" : "Use current position");
+  } else {
+    lv_obj_add_flag(s_friendmesh_guidance_toggle, LV_OBJ_FLAG_HIDDEN);
+  }
+  lv_label_set_text_fmt(s_friendmesh_guidance_age, "Updated %s", ageText);
+}
+
+static void friendmeshGuidanceToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_friendmesh_compass_use_current = !s_friendmesh_compass_use_current;
+  friendmeshCompassRefresh(nullptr);
+}
+
+static void friendmeshCompassOrientationToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_friendmesh_compass_headway_up = !s_friendmesh_compass_headway_up;
+  friendmeshCompassRefresh(nullptr);
+}
+
+static void friendmeshGuidanceModeToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_friendmesh_guidance_north_mode = !s_friendmesh_guidance_north_mode;
+  friendmeshCompassRefresh(nullptr);
+}
+
+// The T-Deck has no magnetometer, so its compass is deliberately north-up: the
+// arrow is an absolute map bearing, not a promise that the top edge of the
+// device is already facing the friend. Keep that distinction beside the tool
+// instead of making users infer it from the compact status line.
+static void friendmeshCompassHelpCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  lv_obj_t* body = createSettingsModal(
+      "Using Friend Compass", SettingsModalKind::Device);
+  lv_obj_t* text = lv_label_create(body);
+  lv_obj_set_width(text, lv_pct(100));
+  lv_label_set_long_mode(text, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(text, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(text, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_line_space(text, 4, LV_PART_MAIN);
+  lv_label_set_text(text,
+      "TWO PAGES\n"
+      "Swipe left or right, roll the T-Deck trackball left or right, or tap "
+      "a bottom dot. The first page is the detailed compass. The second page "
+      "is simplified travel guidance and supporting data.\n\n"
+      "THE GREEN POINTER\n"
+      "Points toward the short predicted meeting position when movement is "
+      "reliable. Otherwise it points at your friend's current position.\n\n"
+      "OBSERVED AND PREDICTED\n"
+      "The blue dot is the latest observed position. The gray trail shows the "
+      "previous position. The dashed green segment leads to the 45-second "
+      "prediction. Predictions stop when data is old, noisy, or implausible.\n\n"
+      "NORTH-UP ON T-DECK\n"
+      "The top of the dial is north. The T-Deck does not sense which way you "
+      "are holding it. Face the top of the device north, then the pointer shows "
+      "the direction to travel. Tap NORTH-UP to switch to HEADWAY-UP. In "
+      "HEADWAY-UP, the top is your recent GPS course and the arrow shows the "
+      "turn toward your friend. This needs two reliable local GPS fixes. Tap "
+      "again to return to NORTH-UP.\n\n"
+      "THE READOUT\n"
+      "Distance is straight-line distance. The degree and letters (for example, "
+      "135 deg SE) are the absolute bearing from your position.\n\n"
+      "YOUR COURSE AND HEADWAY\n"
+      "After you move at least 5 meters across two recent GPS fixes, page two "
+      "shows your course over ground, speed, an immediate plain-language turn "
+      "such as slight right or sharp left, and "
+      "whether the distance is closing, opening, or steady. ETA appears only "
+      "while you are closing on the selected current or predicted target. This "
+      "is calculated locally and is not a magnetic device heading. The page-two "
+      "arrow changes shape to match the maneuver. SHOW NORTH replaces it with "
+      "an absolute north-relative arrow; align the top of the T-Deck with north "
+      "in that mode.\n\n"
+      "POSITION AGE\n"
+      "The age says when the friend's position was last received. A saved "
+      "coordinate remains usable as a fixed destination; only live movement "
+      "prediction expires when updates stop.\n\n"
+      "PREDICTION QUALITY\n"
+      "Good means the two saved samples are recent and far enough apart to rise above "
+      "normal GPS drift. It is still an estimate, not a guaranteed intercept.\n\n"
+      "USE CURRENT POSITION\n"
+      "On the guidance page, this temporarily points to the latest observed "
+      "position instead of the predicted meeting point. Use prediction switches "
+      "back. The walking time is a straight-line estimate, not a mapped route.\n\n"
+      "NO POINTER?\n"
+      "Both you and your friend need a saved or shared position. Open the Group "
+      "map again after positions update.");
+}
+
+static void openFriendMeshCompass(int contactIndex) {
+  if (s_friendmesh_map_channel_slot < 0 || contactIndex < 0) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Open a Group map first"), 1500);
+    return;
+  }
+  ContactInfo targetContact = {};
+  if (!the_mesh.getContactByIdx(static_cast<uint32_t>(contactIndex),
+                                targetContact) ||
+      (targetContact.gps_lat == 0 && targetContact.gps_lon == 0) ||
+      !the_mesh.uiIsFriendMeshChannelMemberJoined(
+          s_friendmesh_map_channel_slot, targetContact.id.pub_key)) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Member has no position"), 1500);
+    return;
+  }
+  char title[40] = "Friend Compass";
+  if (s_friendmesh_map_channel_name[0])
+    snprintf(title, sizeof(title), "Compass - %.27s",
+             s_friendmesh_map_channel_name);
+  lv_obj_t* body = openFullscreenView(title, MAP_TAB_INDEX);
+  s_friendmesh_compass_contact_idx = contactIndex;
+  s_friendmesh_compass_notice_attempted = false;
+  s_friendmesh_compass_use_current = false;
+  s_friendmesh_compass_headway_up = false;
+  s_friendmesh_guidance_north_mode = false;
+  s_friendmesh_compass_page = 0;
+  s_friendmesh_compass_root = body;
+  lv_obj_set_style_pad_all(body, 0, LV_PART_MAIN);
+  lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+
+  s_friendmesh_compass_visual_page = lv_obj_create(body);
+  lv_obj_remove_style_all(s_friendmesh_compass_visual_page);
+  lv_obj_set_size(s_friendmesh_compass_visual_page, lv_pct(100), lv_pct(100));
+  lv_obj_set_pos(s_friendmesh_compass_visual_page, 0, 0);
+  lv_obj_set_scroll_dir(s_friendmesh_compass_visual_page, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(s_friendmesh_compass_visual_page,
+                            LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_add_event_cb(s_friendmesh_compass_visual_page, scrollClampOnEndCb,
+                      LV_EVENT_SCROLL_END, nullptr);
+
+  s_friendmesh_compass_guidance_page = lv_obj_create(body);
+  lv_obj_remove_style_all(s_friendmesh_compass_guidance_page);
+  lv_obj_set_size(s_friendmesh_compass_guidance_page, lv_pct(100), lv_pct(100));
+  lv_obj_set_pos(s_friendmesh_compass_guidance_page, 0, 0);
+  lv_obj_set_scroll_dir(s_friendmesh_compass_guidance_page, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(s_friendmesh_compass_guidance_page,
+                            LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_add_event_cb(s_friendmesh_compass_guidance_page, scrollClampOnEndCb,
+                      LV_EVENT_SCROLL_END, nullptr);
+
+  lv_obj_t* dial = lv_obj_create(s_friendmesh_compass_visual_page);
+  lv_obj_remove_style_all(dial);
+  lv_obj_set_size(dial, kFriendMeshCompassDialSize,
+                  kFriendMeshCompassDialSize);
+  // Leave the upper-left corner clear for the Back-to-Map control.
+  lv_obj_set_pos(dial, 4, 32);
+  lv_obj_set_style_border_width(dial, 2, LV_PART_MAIN);
+  lv_obj_set_style_border_color(dial, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_radius(dial, kFriendMeshCompassDialSize / 2, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(dial, LV_DIR_VER);
+  lv_obj_add_flag(dial, LV_OBJ_FLAG_SCROLL_CHAIN_VER);
+
+  // Three quiet range rings make page one the detailed spatial view without
+  // introducing map tiles or another rendering subsystem.
+  const lv_coord_t ringSizes[3] = {122, 82, 42};
+  for (lv_coord_t ringSize : ringSizes) {
+    lv_obj_t* ring = lv_obj_create(dial);
+    lv_obj_remove_style_all(ring);
+    lv_obj_set_size(ring, ringSize, ringSize);
+    lv_obj_center(ring);
+    lv_obj_set_style_radius(ring, ringSize / 2, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ring, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(ring, lv_color_hex(0x353A40), LV_PART_MAIN);
+    lv_obj_set_style_border_opa(ring, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  }
+  for (uint8_t i = 0; i < 3; ++i) {
+    lv_obj_t* scale = lv_label_create(dial);
+    lv_obj_set_size(scale, 70, 16);
+    lv_obj_set_pos(scale, 47, 18 + i * 20);
+    lv_label_set_text(scale, "--");
+    lv_obj_set_style_text_align(scale, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_font(scale, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(scale, lv_color_hex(0x68717C), LV_PART_MAIN);
+    s_friendmesh_compass_scale_labels[i] = scale;
+  }
+
+  static const char* const cardinals[4] = {"N", "E", "S", "W"};
+  for (uint8_t i = 0; i < 4; ++i) {
+    lv_obj_t* label = lv_label_create(dial);
+    lv_obj_set_size(label, 16, 16);
+    lv_label_set_text(label, cardinals[i]);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_font(label, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_clear_flag(label, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    s_friendmesh_compass_cardinal_labels[i] = label;
+  }
+  friendmeshCompassUpdateCardinals(0.0);
+
+  s_friendmesh_compass_motion_line = lv_line_create(dial);
+  s_friendmesh_compass_motion_points[0] = {42, 116};
+  s_friendmesh_compass_motion_points[1] = {72, 108};
+  lv_line_set_points(s_friendmesh_compass_motion_line,
+                     s_friendmesh_compass_motion_points, 2);
+  lv_obj_set_style_line_width(s_friendmesh_compass_motion_line, 2, LV_PART_MAIN);
+  lv_obj_set_style_line_color(s_friendmesh_compass_motion_line,
+                              lv_color_hex(0x8A929B), LV_PART_MAIN);
+  lv_obj_set_style_line_dash_width(s_friendmesh_compass_motion_line, 5,
+                                   LV_PART_MAIN);
+  lv_obj_set_style_line_dash_gap(s_friendmesh_compass_motion_line, 3,
+                                 LV_PART_MAIN);
+  s_friendmesh_compass_prediction_line = lv_line_create(dial);
+  s_friendmesh_compass_prediction_points[0] = {72, 108};
+  s_friendmesh_compass_prediction_points[1] = {136, 118};
+  lv_line_set_points(s_friendmesh_compass_prediction_line,
+                     s_friendmesh_compass_prediction_points, 2);
+  lv_obj_set_style_line_width(s_friendmesh_compass_prediction_line, 2,
+                              LV_PART_MAIN);
+  lv_obj_set_style_line_color(s_friendmesh_compass_prediction_line,
+                              lv_color_hex(0x58BFA5), LV_PART_MAIN);
+  lv_obj_set_style_line_dash_width(s_friendmesh_compass_prediction_line, 5,
+                                   LV_PART_MAIN);
+  lv_obj_set_style_line_dash_gap(s_friendmesh_compass_prediction_line, 4,
+                                 LV_PART_MAIN);
+
+  s_friendmesh_compass_line = lv_line_create(dial);
+  s_friendmesh_compass_line_points[0] = {
+      kFriendMeshCompassCenter, kFriendMeshCompassCenter};
+  s_friendmesh_compass_line_points[1] = {
+      kFriendMeshCompassCenter, 12};
+  lv_line_set_points(s_friendmesh_compass_line,
+                     s_friendmesh_compass_line_points, 2);
+  lv_obj_set_style_line_width(s_friendmesh_compass_line, 4, LV_PART_MAIN);
+  lv_obj_set_style_line_color(s_friendmesh_compass_line,
+                              lv_color_hex(0x58BFA5), LV_PART_MAIN);
+  lv_obj_set_style_line_rounded(s_friendmesh_compass_line, true, LV_PART_MAIN);
+  s_friendmesh_compass_dot = lv_obj_create(dial);
+  lv_obj_remove_style_all(s_friendmesh_compass_dot);
+  lv_obj_set_size(s_friendmesh_compass_dot, 12, 12);
+  lv_obj_set_pos(s_friendmesh_compass_dot,
+                 kFriendMeshCompassCenter - 6, 6);
+  lv_obj_set_style_bg_color(s_friendmesh_compass_dot,
+                            lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_friendmesh_compass_dot, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_friendmesh_compass_dot, 3, LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_friendmesh_compass_dot,
+                                lv_color_hex(0x58BFA5), LV_PART_MAIN);
+  lv_obj_set_style_radius(s_friendmesh_compass_dot, 6, LV_PART_MAIN);
+
+  s_friendmesh_compass_observed_dot = lv_obj_create(dial);
+  lv_obj_remove_style_all(s_friendmesh_compass_observed_dot);
+  lv_obj_set_size(s_friendmesh_compass_observed_dot, 10, 10);
+  lv_obj_set_style_bg_color(s_friendmesh_compass_observed_dot,
+                            lv_color_hex(0x399BFF), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_friendmesh_compass_observed_dot, LV_OPA_COVER,
+                          LV_PART_MAIN);
+  lv_obj_set_style_radius(s_friendmesh_compass_observed_dot, 5, LV_PART_MAIN);
+  s_friendmesh_compass_previous_dot = lv_obj_create(dial);
+  lv_obj_remove_style_all(s_friendmesh_compass_previous_dot);
+  lv_obj_set_size(s_friendmesh_compass_previous_dot, 8, 8);
+  lv_obj_set_style_bg_color(s_friendmesh_compass_previous_dot,
+                            lv_color_hex(0x8A929B), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_friendmesh_compass_previous_dot, LV_OPA_COVER,
+                          LV_PART_MAIN);
+  lv_obj_set_style_radius(s_friendmesh_compass_previous_dot, 4, LV_PART_MAIN);
+
+  lv_obj_t* center = lv_obj_create(dial);
+  lv_obj_remove_style_all(center);
+  lv_obj_set_size(center, 8, 8);
+  lv_obj_set_pos(center, kFriendMeshCompassCenter - 4,
+                 kFriendMeshCompassCenter - 4);
+  lv_obj_set_style_bg_color(center, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(center, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(center, 2, LV_PART_MAIN);
+  lv_obj_set_style_border_color(center, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_radius(center, 4, LV_PART_MAIN);
+  lv_obj_t* you = lv_label_create(dial);
+  lv_label_set_text(you, "YOU");
+  lv_obj_set_style_text_font(you, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(you, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_align(you, LV_ALIGN_CENTER, 0, 14);
+
+  lv_obj_add_flag(s_friendmesh_compass_line, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(s_friendmesh_compass_dot, LV_OBJ_FLAG_HIDDEN);
+  friendmeshCompassSetMotionVisible(false);
+
+  s_friendmesh_compass_orientation_button = lv_btn_create(
+      s_friendmesh_compass_visual_page);
+  lv_obj_set_size(s_friendmesh_compass_orientation_button, 94, 28);
+  lv_obj_set_pos(s_friendmesh_compass_orientation_button, 178, 6);
+  styleButton(s_friendmesh_compass_orientation_button);
+  lv_obj_add_event_cb(s_friendmesh_compass_orientation_button,
+                      friendmeshCompassOrientationToggleCb,
+                      LV_EVENT_CLICKED, nullptr);
+  s_friendmesh_compass_orientation_label = lv_label_create(
+      s_friendmesh_compass_orientation_button);
+  lv_label_set_text(s_friendmesh_compass_orientation_label, "NORTH-UP");
+  lv_obj_set_style_text_font(s_friendmesh_compass_orientation_label,
+                             &g_font_12, LV_PART_MAIN);
+  lv_obj_center(s_friendmesh_compass_orientation_label);
+  s_friendmesh_compass_status = lv_label_create(
+      s_friendmesh_compass_visual_page);
+  lv_obj_set_size(s_friendmesh_compass_status, 132, 52);
+  lv_obj_set_pos(s_friendmesh_compass_status, 178, 40);
+  lv_label_set_long_mode(s_friendmesh_compass_status, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(s_friendmesh_compass_status,
+                             &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_friendmesh_compass_status,
+                              lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  s_friendmesh_compass_meta = lv_label_create(
+      s_friendmesh_compass_visual_page);
+  lv_obj_set_size(s_friendmesh_compass_meta, 132, 88);
+  lv_obj_set_pos(s_friendmesh_compass_meta, 178, 94);
+  lv_label_set_long_mode(s_friendmesh_compass_meta, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(s_friendmesh_compass_meta,
+                             &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_friendmesh_compass_meta,
+                              lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_line_space(s_friendmesh_compass_meta, 3,
+                                   LV_PART_MAIN);
+
+  // Page two: a plain-language travel instruction with the same live target.
+  // The mode button already communicates TURN versus NORTH, so the former
+  // top title was redundant.
+  s_friendmesh_guidance_mode_button = lv_btn_create(
+      s_friendmesh_compass_guidance_page);
+  lv_obj_set_size(s_friendmesh_guidance_mode_button, 96, 28);
+  lv_obj_set_pos(s_friendmesh_guidance_mode_button, 174, 4);
+  styleButton(s_friendmesh_guidance_mode_button);
+  lv_obj_add_event_cb(s_friendmesh_guidance_mode_button,
+                      friendmeshGuidanceModeToggleCb,
+                      LV_EVENT_CLICKED, nullptr);
+  s_friendmesh_guidance_mode_label = lv_label_create(
+      s_friendmesh_guidance_mode_button);
+  lv_label_set_text(s_friendmesh_guidance_mode_label, "SHOW NORTH");
+  lv_obj_set_style_text_font(s_friendmesh_guidance_mode_label,
+                             &g_font_12, LV_PART_MAIN);
+  lv_obj_center(s_friendmesh_guidance_mode_label);
+  s_friendmesh_guidance_arrow = lv_line_create(
+      s_friendmesh_compass_guidance_page);
+  lv_obj_set_pos(s_friendmesh_guidance_arrow, 4, 8);
+  lv_obj_set_style_line_width(s_friendmesh_guidance_arrow, 9, LV_PART_MAIN);
+  lv_obj_set_style_line_color(s_friendmesh_guidance_arrow,
+                              lv_color_hex(0x58BFA5), LV_PART_MAIN);
+  lv_obj_set_style_line_rounded(s_friendmesh_guidance_arrow, true,
+                                LV_PART_MAIN);
+  friendmeshGuidanceArrowSetBearing(135);
+  s_friendmesh_guidance_title = lv_label_create(
+      s_friendmesh_compass_guidance_page);
+  lv_obj_set_size(s_friendmesh_guidance_title, 196, 30);
+  lv_obj_set_pos(s_friendmesh_guidance_title, 112, 42);
+  lv_label_set_long_mode(s_friendmesh_guidance_title, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(s_friendmesh_guidance_title,
+                             &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_friendmesh_guidance_title,
+                              lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  s_friendmesh_guidance_distance = lv_label_create(
+      s_friendmesh_compass_guidance_page);
+  lv_obj_set_size(s_friendmesh_guidance_distance, 196, 24);
+  lv_obj_set_pos(s_friendmesh_guidance_distance, 112, 74);
+  lv_label_set_long_mode(s_friendmesh_guidance_distance, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(s_friendmesh_guidance_distance,
+                             &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_friendmesh_guidance_distance,
+                              lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_t* divider = lv_obj_create(s_friendmesh_compass_guidance_page);
+  lv_obj_remove_style_all(divider);
+  lv_obj_set_size(divider, 300, 1);
+  lv_obj_set_pos(divider, 10, 106);
+  lv_obj_set_style_bg_color(divider, lv_color_hex(0x353A40), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, LV_PART_MAIN);
+  s_friendmesh_guidance_motion = lv_label_create(
+      s_friendmesh_compass_guidance_page);
+  lv_obj_set_size(s_friendmesh_guidance_motion, 300, 22);
+  lv_obj_set_pos(s_friendmesh_guidance_motion, 10, 114);
+  lv_label_set_long_mode(s_friendmesh_guidance_motion, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(s_friendmesh_guidance_motion,
+                             &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_friendmesh_guidance_motion,
+                              lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  s_friendmesh_guidance_confidence = lv_label_create(
+      s_friendmesh_compass_guidance_page);
+  lv_obj_set_size(s_friendmesh_guidance_confidence, 300, 20);
+  lv_obj_set_pos(s_friendmesh_guidance_confidence, 10, 138);
+  lv_label_set_long_mode(s_friendmesh_guidance_confidence, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(s_friendmesh_guidance_confidence,
+                             &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_friendmesh_guidance_confidence,
+                              lv_color_hex(0x58BFA5), LV_PART_MAIN);
+  s_friendmesh_guidance_age = lv_label_create(
+      s_friendmesh_compass_guidance_page);
+  lv_obj_set_size(s_friendmesh_guidance_age, 146, 20);
+  lv_obj_set_pos(s_friendmesh_guidance_age, 10, 162);
+  lv_label_set_long_mode(s_friendmesh_guidance_age, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_font(s_friendmesh_guidance_age,
+                             &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_friendmesh_guidance_age,
+                              lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  s_friendmesh_guidance_toggle = lv_btn_create(
+      s_friendmesh_compass_guidance_page);
+  lv_obj_set_size(s_friendmesh_guidance_toggle, 148, 28);
+  lv_obj_set_pos(s_friendmesh_guidance_toggle, 164, 150);
+  styleButton(s_friendmesh_guidance_toggle);
+  lv_obj_add_event_cb(s_friendmesh_guidance_toggle,
+                      friendmeshGuidanceToggleCb, LV_EVENT_CLICKED, nullptr);
+  s_friendmesh_guidance_toggle_label = lv_label_create(
+      s_friendmesh_guidance_toggle);
+  lv_obj_set_style_text_font(s_friendmesh_guidance_toggle_label,
+                             &g_font_12, LV_PART_MAIN);
+  lv_obj_center(s_friendmesh_guidance_toggle_label);
+
+  lv_obj_t* help = lv_btn_create(body);
+  lv_obj_set_size(help, 32, 28);
+  lv_obj_set_pos(help, 278, 4);
+  styleButton(help);
+  lv_obj_add_event_cb(help, friendmeshCompassHelpCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* helpLabel = lv_label_create(help);
+  lv_label_set_text(helpLabel, "?");
+  lv_obj_set_style_text_font(helpLabel, &g_font_14, LV_PART_MAIN);
+  lv_obj_center(helpLabel);
+
+  // Two visible, tappable dots remain fixed while the page content swaps.
+  for (uint8_t i = 0; i < 2; ++i) {
+    lv_obj_t* target = lv_btn_create(body);
+    lv_obj_remove_style_all(target);
+    lv_obj_set_size(target, 28, 28);
+    lv_obj_set_pos(target, 132 + i * 28, 184);
+    lv_obj_add_event_cb(target, friendmeshCompassPageDotCb,
+                        LV_EVENT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<uintptr_t>(i)));
+    lv_obj_t* dot = lv_obj_create(target);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, 10, 10);
+    lv_obj_center(dot);
+    lv_obj_set_style_radius(dot, 5, LV_PART_MAIN);
+    lv_obj_set_style_border_width(dot, 2, LV_PART_MAIN);
+    lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    s_friendmesh_compass_page_dots[i] = dot;
+  }
+  lv_obj_move_foreground(help);
+  friendmeshCompassShowPage(0);
+  friendmeshCompassRefresh(nullptr);
+  s_friendmesh_compass_timer = lv_timer_create(
+      friendmeshCompassRefresh, 1000, nullptr);
+}
+
+static void openFriendMeshGroupMap(int channelSlot, const char* channelName) {
+  s_friendmesh_map_channel_slot = channelSlot;
+  StrHelper::strncpy(s_friendmesh_map_channel_name,
+                     channelName ? channelName : "",
+                     sizeof(s_friendmesh_map_channel_name));
+  s_friendmesh_map_group_only = true;
+  friendmeshRefreshMapPositions();
+  if (g_lv.task &&
+      (g_lv.task->getNodeLat() != 0.0 || g_lv.task->getNodeLon() != 0.0)) {
+    s_map_center_lat = g_lv.task->getNodeLat();
+    s_map_center_lon = g_lv.task->getNodeLon();
+    s_map_view_inited = true;
+  }
+  goToTab(MAP_TAB_INDEX);
+  friendmeshStartGroupLocationRefresh();
+  if (g_lv.task) {
+    char message[64] = {};
+    snprintf(message, sizeof(message),
+             "%u positioned - refreshing group locations",
+             static_cast<unsigned>(s_friendmesh_map_position_count));
+    g_lv.task->showAlert(message, 1500);
+  }
+}
+#endif
+
 // ----- Pan -----
 //
 // Touch-and-drag on the canvas with LIVE preview. PRESSING fires every
@@ -26021,11 +30135,12 @@ static void mapCanvasEventCb(lv_event_t* e) {
       const int ddx = mx - p.x;
       const int ddy = my - p.y;
       if (ddx * ddx + ddy * ddy <= R2) {
-        if (n_hits < k_map_markers_max) hits[n_hits++] = m.mesh_idx;
+        if (n_hits < k_map_markers_max)
+          hits[n_hits++] = mapMarkerToken(m.kind, m.source_idx);
       }
     }
     if (n_hits == 1) {
-      openMarkerPopupForContact(hits[0]);
+      openMapMarker(mapMarkerTokenKind(hits[0]), mapMarkerTokenSource(hits[0]));
     } else if (n_hits > 1) {
       openMapPicker(hits, n_hits);
     }
@@ -27269,7 +31384,11 @@ static bool crashDumpExport(char* out_path, size_t out_cap) {
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   if (!dst) dst = &FFat;              // no SPIFFS on these boards; internal = the FAT data partition
 #else
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (!dst) return false;              // never turn an export into long-term internal data
+#else
   if (!dst) { SPIFFS.begin(false); dst = &SPIFFS; }
+#endif
 #endif
   File f = dst->open(path, "w");
   if (!f) return false;
@@ -28098,6 +32217,29 @@ static void msgMenuAckCb(lv_event_t* e) {
   showKb(&p);                                      // focus composer so you can tweak/send
 }
 
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static void msgMenuFriendRequestCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  lv_indev_t* active = lv_indev_get_act();
+  if (active) lv_indev_wait_release(active);
+  const int message_idx = s_msg_menu_idx;
+  UITask::UIMessage message = {};
+  bool live_target = g_lv.task->getMessageByIndex(message_idx, message) &&
+      (message.meta_flags & UITask::MSG_META_HAS_RX);
+  bool has_hash = false;
+  for (uint8_t b : message.packet_hash) has_hash = has_hash || b != 0;
+  closeMsgActionMenu();
+  if (!live_target || !has_hash) {
+    g_lv.task->showAlert(TR("Use a newly received live channel message"), 2600);
+    return;
+  }
+  const bool sent = g_lv.task->sendFriendRequestForMessage(message_idx);
+  g_lv.task->showAlert(sent
+      ? TR("Friend request sent")
+      : TR("Request unavailable or already sent"), sent ? 1600 : 2200);
+}
+#endif
+
 static void openMessageActionMenu(int msg_idx) {
   if (!g_lv.task) return;
   UITask::UIMessage m;
@@ -28119,6 +32261,15 @@ static void openMessageActionMenu(int msg_idx) {
   const bool can_mention = m.channel && !m.outgoing && m.sender[0];
   const bool can_block   = !m.outgoing;   // block the sender — never for our own messages
   const bool can_resend  = m.outgoing && m.text[0];   // re-send one of OUR messages (DM or channel)
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // Always surface the action on an incoming channel message. Restored history
+  // intentionally has no packet hash, so tapping it explains that a newly
+  // received live message is required instead of making the feature appear to
+  // be missing entirely.
+  const bool can_friend_request = m.channel && !m.outgoing && m.sender[0];
+#else
+  const bool can_friend_request = false;
+#endif
 
   lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -28151,13 +32302,17 @@ static void openMessageActionMenu(int msg_idx) {
   // Header row reserves space for the close-X badge so it doesn't sit on a button.
   const int hdr_h  = 24;
 #endif
-  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) + 3 /*Copy+Info+Delete*/ + (can_block ? 1 : 0) + (can_resend ? 1 : 0);
+  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) +
+      (can_friend_request ? 1 : 0) + 3 /*Copy+Info+Delete*/ +
+      (can_block ? 1 : 0) + (can_resend ? 1 : 0);
   const int nrows  = (nbtn + 1) / 2;
   int card_h = hdr_h + nrows * btn_h + (nrows - 1) * gap + 2 * pad;
   // Never exceed the visible area under the status bar; scroll if it ever would
   // (e.g. an even taller menu, or a shorter display). The close-X floats, so it
   // stays pinned while the buttons scroll.
   const int avail_h = (int)(sh - STATUSBAR_H) - 8;
+  const int min_card_h = avail_h < SC(200) ? avail_h : SC(200);
+  if (card_h < min_card_h) card_h = min_card_h;
   const bool scroll_menu = (card_h > avail_h);
   if (scroll_menu) card_h = avail_h;
 
@@ -28171,12 +32326,12 @@ static void openMessageActionMenu(int msg_idx) {
   lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
-  if (scroll_menu) {
-    lv_obj_set_scroll_dir(card, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
-  } else {
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  }
+  // Keep the actions vertically scrollable even when they currently fit. This
+  // makes the capability discoverable on short/rotated displays and prevents a
+  // newly-added row from silently landing beyond the touchable area.
+  lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(card, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
   addCloseXBadge(card, msgMenuBackdropCb);
 
   // Two buttons per row, filled in reading order; an odd last button gets its
@@ -28203,6 +32358,10 @@ static void openMessageActionMenu(int msg_idx) {
     snprintf(ml, sizeof ml, "@%.10s", m.sender);   // "Mention" is implied by the @; half-width cell
     mk_btn(ml, msgMenuMentionCb);
   }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (can_friend_request)
+    mk_btn(LV_SYMBOL_PLUS "  Friend", msgMenuFriendRequestCb);
+#endif
   mk_btn(LV_SYMBOL_COPY "  Copy", msgMenuCopyCb);
   mk_btn(LV_SYMBOL_LIST "  Info", msgMenuInfoCb);
   if (can_block)  mk_btn(LV_SYMBOL_CLOSE   "  Block",  msgMenuBlockCb);
@@ -30435,8 +34594,12 @@ static void refreshChatList(LvChatPanel& p) {
     char name[UITask::MAX_THREAD_NAME + 1];
     if (!g_lv.task->getThreadInfo(idxs[i], ch, unread, ts, name, sizeof(name))) continue;
 
-    char san_name[UITask::MAX_THREAD_NAME + 8];
-    copyUtf8ReplacingMissingGlyphs(&g_font_14, san_name, sizeof(san_name), name);
+    char display_name[UITask::MAX_THREAD_NAME + 8] = {};
+    char san_name[UITask::MAX_THREAD_NAME + 8] = {};
+    formatThreadDisplayName(idxs[i], ch, name, display_name,
+                            sizeof(display_name));
+    copyUtf8ReplacingMissingGlyphs(&g_font_14, san_name, sizeof(san_name),
+                                   display_name);
 
     lv_obj_t* btn = nullptr;
     if (compact_rows) {
@@ -30868,6 +35031,7 @@ static void refreshContactsList() {
   static int     s_last_count  = -1;
   static uint8_t s_last_filter = 0xFF;
   static uint8_t s_last_sort   = 0xFF;
+  static uint32_t s_last_friends_revision = UINT32_MAX;
   static char    s_last_search[24] = {0};
   static unsigned long s_last_age_refresh_ms = 0;
   static bool    s_last_use_miles = false;
@@ -30886,6 +35050,7 @@ static void refreshContactsList() {
   const bool search_changed = strncmp(s_last_search, g_lv.contacts_search, sizeof(s_last_search)) != 0;
   if (curr_count == s_last_count && curr_filter == s_last_filter &&
       g_contacts_sort == s_last_sort && !search_changed &&
+      s_friends_revision == s_last_friends_revision &&
       curr_use_miles == s_last_use_miles && !s_ct_list_force &&
       lv_obj_get_child_cnt(g_lv.contacts_list) > 0) {
     if (!age_refresh_due) return;
@@ -30898,6 +35063,7 @@ static void refreshContactsList() {
   s_last_count  = curr_count;
   s_last_filter = curr_filter;
   s_last_sort   = g_contacts_sort;
+  s_last_friends_revision = s_friends_revision;
   s_last_use_miles = curr_use_miles;
   strncpy(s_last_search, g_lv.contacts_search, sizeof(s_last_search) - 1);
   s_last_search[sizeof(s_last_search) - 1] = '\0';
@@ -31003,8 +35169,17 @@ static void refreshContactsList() {
     e.is_blocked = is_blocked;
     e.last_heard = c.last_advert_timestamp;
     memcpy(e.key6, c.id.pub_key, 6);
-    strncpy(e.name, c.name, sizeof(e.name) - 1);
-    e.name[sizeof(e.name) - 1] = '\0';
+    const char* display_name = friendDisplayName(c);
+    if (have_search) {
+      // Search results need a human-visible discriminator for duplicate names.
+      // Selection still uses the complete key; this is display-only.
+      snprintf(e.name, sizeof(e.name), "%s · %02X%02X%02X%02X",
+               display_name, c.id.pub_key[0], c.id.pub_key[1],
+               c.id.pub_key[2], c.id.pub_key[3]);
+    } else {
+      strncpy(e.name, display_name, sizeof(e.name) - 1);
+      e.name[sizeof(e.name) - 1] = '\0';
+    }
   }
 
   // Capture the clock + self GPS before sorting (the qsort comparator is non-capturing).
@@ -31235,7 +35410,11 @@ static void refreshContactsList() {
   }
 
   if (n_entries == 0) {
-    lv_obj_t* l = lv_list_add_text(g_lv.contacts_list, "No matching contacts");
+    lv_obj_t* l = lv_list_add_text(
+        g_lv.contacts_list,
+        g_lv.contacts_filter == 6
+            ? "No friends yet — add from Discovered, the map, or Network"
+            : "No matching contacts");
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_pad_all(l, 20, LV_PART_MAIN);
   }
@@ -31438,8 +35617,51 @@ static void updateTrackball(unsigned long now) {
     return;
   }
 
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // Friend Compass owns horizontal trackball motion while its two-page view is
+  // open. This runs before Map handling because the fullscreen tool was opened
+  // from Map and must never pan the hidden map beneath it.
+  if (s_friendmesh_compass_root &&
+      lv_obj_is_valid(s_friendmesh_compass_root) &&
+      !settingsModalIsOpen() && s_tb_nav) {
+    if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
+      lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
+    static unsigned long s_compass_tb_last_motion = 0;
+    if (moved && (dx != 0 || dy != 0)) {
+      s_compass_tb_last_motion = now;
+      const int adx = dx < 0 ? -dx : dx;
+      const int ady = dy < 0 ? -dy : dy;
+      static unsigned long s_compass_tb_step_ms = 0;
+      if (adx > ady &&
+          (unsigned long)(now - s_compass_tb_step_ms) >= 250) {
+        s_compass_tb_step_ms = now;
+        friendmeshCompassPageStep(dx > 0 ? 1 : -1);
+      } else if (ady > adx) {
+        navMoveDir(dy > 0 ? NAV_DOWN : NAV_UP);
+      }
+      if (g_lv.task) g_lv.task->noteUserInput();
+    }
+    static bool s_compass_tb_click_prev = false;
+    if (s_tb_click_press && !s_compass_tb_click_prev &&
+        (now - s_compass_tb_last_motion) >= 350) {
+      lv_obj_t* focused = s_nav_group
+          ? lv_group_get_focused(s_nav_group) : nullptr;
+      if (focused && lv_obj_is_valid(focused)) {
+        lv_async_call([](void* pointer) {
+          lv_obj_t* object = static_cast<lv_obj_t*>(pointer);
+          if (object && lv_obj_is_valid(object))
+            lv_event_send(object, LV_EVENT_CLICKED, nullptr);
+        }, focused);
+        if (g_lv.task) g_lv.task->noteUserInput();
+      }
+    }
+    s_compass_tb_click_prev = s_tb_click_press;
+    return;
+  }
+#endif
+
   // Flush a pending map pan if the user navigated away from the Map tab.
-  const bool on_map = (getActiveTab() == MAP_TAB_INDEX);
+  const bool on_map = (getActiveTab() == MAP_TAB_INDEX) && !s_fullscreen_view;
   if (!on_map && s_map_tb_pan_pending) mapTrackballFinalizePan();
 
   if (on_map) {
@@ -32789,7 +37011,15 @@ static void doExportBackupFile(const char* fname) {
   // mounts it) so a backup truly lands on — and lists from — the SD card.
   if (fmSdTryMount()) { f = SD.open(path, FILE_WRITE); if (f) where = "SD"; }
 #endif
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  if (!f) {
+    lv_obj_del(ov);
+    g_lv.task->showAlert(TR("Export failed - SD card required"), 2200);
+    return;
+  }
+#else
   if (!f) { f = backupInternalFs()->open(path, FILE_WRITE); }
+#endif
   if (!f) { lv_obj_del(ov); g_lv.task->showAlert(TR("Export failed (can't open file)"), 1800); return; }
   { WdtHeavyGuard _wg;   // a 60 KB backup write to internal flash can trigger a SPIFFS GC
     { FileBufWriter bw(f);
@@ -34934,9 +39164,7 @@ static void openThreadDetailByIdx(int idx, bool channel) {
   g_lv.task->enterThread(channel, idx);
   bool ch; uint16_t unread; uint32_t ts; char name[UITask::MAX_THREAD_NAME + 1];
   if (g_lv.task->getThreadInfo(idx, ch, unread, ts, name, sizeof(name))) {
-    char san[UITask::MAX_THREAD_NAME + 8];
-    copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), name);
-    setChatStatusTitle(san);
+    setThreadStatusTitle(idx, ch, name);
   }
   p.detail_open = true;
   hideKb();
@@ -35082,6 +39310,44 @@ static void openMentionsScreen() {
     lv_obj_align(bd, LV_ALIGN_TOP_LEFT, 8, 25);
   }
 }
+
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+static void closeFriendMeshTransientState() {
+  friendmeshMotionFlush(true);
+  if (s_friendmesh_compass_timer) {
+    lv_timer_del(s_friendmesh_compass_timer);
+    s_friendmesh_compass_timer = nullptr;
+  }
+  s_friendmesh_compass_status = nullptr;
+  s_friendmesh_compass_meta = nullptr;
+  s_friendmesh_compass_line = nullptr;
+  s_friendmesh_compass_dot = nullptr;
+  s_friendmesh_compass_observed_dot = nullptr;
+  s_friendmesh_compass_previous_dot = nullptr;
+  s_friendmesh_compass_motion_line = nullptr;
+  s_friendmesh_compass_prediction_line = nullptr;
+  s_friendmesh_compass_root = nullptr;
+  s_friendmesh_compass_visual_page = nullptr;
+  s_friendmesh_compass_guidance_page = nullptr;
+  s_friendmesh_compass_page_dots[0] = nullptr;
+  s_friendmesh_compass_page_dots[1] = nullptr;
+  s_friendmesh_compass_scale_labels[0] = nullptr;
+  s_friendmesh_compass_scale_labels[1] = nullptr;
+  s_friendmesh_compass_scale_labels[2] = nullptr;
+  s_friendmesh_guidance_arrow = nullptr;
+  s_friendmesh_guidance_title = nullptr;
+  s_friendmesh_guidance_distance = nullptr;
+  s_friendmesh_guidance_motion = nullptr;
+  s_friendmesh_guidance_confidence = nullptr;
+  s_friendmesh_guidance_age = nullptr;
+  s_friendmesh_guidance_toggle = nullptr;
+  s_friendmesh_guidance_toggle_label = nullptr;
+  s_friendmesh_compass_contact_idx = -1;
+  s_friendmesh_compass_notice_attempted = false;
+  s_friendmesh_compass_page = 0;
+  s_friendmesh_compass_use_current = false;
+}
+#endif
 
 static void appTileCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -39187,7 +43453,7 @@ static void telemetryPollTick(uint32_t now_ms) {
   // Hold auto-poll while a manual request is awaiting its reply — an auto-poll
   // REQ would overwrite the manual request's pending tag and orphan its reply.
   // It'll poll on the next interval (the manual pending window is short).
-  if (s_telem_manual_pending) return;
+  if (s_telem_manual_pending || the_mesh.hasUIPingPending()) return;
   telemetryPollLoad();
   for (auto& e : s_telem_poll) {
     if (!e.used || (int32_t)(now_ms - e.next_ms) < 0) continue;
@@ -39196,6 +43462,7 @@ static void telemetryPollTick(uint32_t now_ms) {
     if (telemetryFindContact(e.key, &c)) {
       const int r = the_mesh.sendTelemetryRequestWithGuestLoginForUI(c);   // logged on reply; no window
       if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) markMeshRequest();
+      return;  // one shared UI response matcher: strictly one request at a time
     }
   }
 }
@@ -39925,6 +44192,13 @@ static uint16_t      s_hist_snap_head     = 0;
 static uint32_t      s_hist_snap_msgcount = 0;
 
 void UITask::flushHistoryIfDue(unsigned long now) {
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // The required SD failed during boot. Preserve the dirty in-RAM history, but
+  // do no filesystem or worker work until the user re-seats the card and
+  // reboots; uiDataFsReady() enforces the same boundary for forced saves.
+  extern bool g_long_term_storage_sd_missing;
+  if (g_long_term_storage_sd_missing) return;
+#endif
   // A worker write failed (storage hiccup): re-arm and try again.
   if (!s_hist_flush_ok) { s_hist_flush_ok = true; markMsgsDirty(5000); }
   // Thread metadata (~4 KB) flushes on a short delay; the message ring
@@ -40013,6 +44287,14 @@ static bool uiDataFsReady() {
   // survives a reflash) and is where chat history already lives. Prefer it; only
   // fall back to internal SPIFFS if no card is present. (Do NOT format/prefer
   // SPIFFS here — doing so orphaned the on-SD history.)
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // Boot already exhausted the mount ladder and deliberately placed the
+  // internal recovery store in read-only mode. Periodic history flushing must
+  // remain RAM-only for this boot; retrying SD.begin() here freezes the UI and
+  // can race the background worker inside Arduino's non-reentrant SD driver.
+  extern bool g_long_term_storage_sd_missing;
+  if (g_long_term_storage_sd_missing) return false;
+#endif
   if (SD.cardType() != CARD_NONE || fmSdTryMount()) {
     s_sd_mounted = true;
     SD.mkdir("/meshcomod");
@@ -40020,7 +44302,13 @@ static bool uiDataFsReady() {
     strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
     return true;
   }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // FriendMesh T-Deck long-term data is SD-bound. Keep history in RAM while
+  // the card is unavailable; never create a second internal history branch.
+  return false;
+#else
   if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
+#endif
 #else
   // V4 (no SD): internal SPIFFS. Format-on-fail so a fresh / never-formatted
   // partition becomes usable — that's the V4 history-loss fix. Safe: only formats
@@ -40757,6 +45045,10 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   m.sent_fp     = sent_fp;
   m.in_scope    = in_scope;
   m.in_path_n   = (in_path && in_path_n) ? (in_path_n > MAX_UI_PATH ? (uint8_t)MAX_UI_PATH : in_path_n) : 0;
+  // The packet hash is intentionally session-only. Clear it whenever this ring
+  // slot is reused so a history-loaded or locally-generated bubble can never
+  // inherit an old message's Friend Request target.
+  memset(m.packet_hash, 0, sizeof(m.packet_hash));
   if (m.in_path_n) memcpy(m.in_path, in_path, m.in_path_n);
   strncpy(m.thread, thread ? thread : (channel ? "#general" : "Unknown"), MAX_THREAD_NAME);
   m.thread[MAX_THREAD_NAME] = '\0';
@@ -41016,8 +45308,10 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
       showAlert(TR("Send failed"), 1200);
       return false;
     }
+    const int msg_slot = _ui_msg_head;
     appendMessage(_ui_threads[_active_thread_idx].name, sender, truncated, true, true, false,
                   0, DELIV_NONE, 0, 0, 0, 0, nullptr, 0, the_mesh.uiLastSentFp());
+    the_mesh.uiLastSentPacketHash(_ui_msgs[msg_slot].packet_hash);
     if (!override_text) resetComposer();   // a resend must not wipe a half-typed draft
     showAlert(TR("Sent"), 900);
     return true;
@@ -41328,11 +45622,24 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_tile_fs_default = s_tile_fs;
   strncpy(s_tile_root_default, s_tile_root, sizeof s_tile_root_default - 1);
 #if CAP_SD
-  if (s_tiles_from_sd && (SD.cardType() != CARD_NONE || fmSdTryMount())) {
+  const bool friendmeshSdCache =
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+      true;
+#else
+      false;
+#endif
+  if ((s_tiles_from_sd || friendmeshSdCache) &&
+      (SD.cardType() != CARD_NONE || fmSdTryMount())) {
     s_sd_mounted = true;
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';
-    WIRE_DBG("[TILE] microSD-tile mode -> caching Wi-Fi tiles on SD /tiles (merges with library)");
+    WIRE_DBG("[TILE] SD policy -> caching Wi-Fi tiles on SD /tiles (merges with library)");
+  } else if (friendmeshSdCache) {
+    // Do not silently resume a growing cache on the internal tiles partition
+    // while the FriendMesh T-Deck's required long-term medium is unavailable.
+    s_tile_fs = nullptr;
+    s_tile_root[0] = '\0';
+    WIRE_DBG("[TILE] SD REQUIRED -> Wi-Fi tile cache disabled");
   }
 #endif
 #endif
@@ -41898,6 +46205,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   uiInstallTouchSleepHooks();
   // Restore the persisted on/off state (default OFF until the user enables it).
   touchSleep::setEnabled(touchPrefsGetSleepIdle());
+#if defined(HAS_TDECK_GT911) && defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  extern bool g_long_term_storage_sd_missing;
+  if (g_long_term_storage_sd_missing) {
+    showAlert(TR("SD card required\nRecovery data is read-only\nHistory is not being saved"),
+              8000);
+  }
+#endif
 #endif
 }
 
@@ -42891,6 +47205,7 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
                 0 /*ack_hash*/, DELIV_NONE,
                 meta_flags, path_len, snr_q4, rssi,
                 in_path_n ? in_path : nullptr, in_path_n, 0 /*sent_fp*/, in_scope);
+  if (channel) the_mesh.lastRxPacketHash(_ui_msgs[msg_slot].packet_hash);
   // Stamp the bubble with the sender's embedded send-time (stashed by MyMesh::
   // queueMessage) instead of "now" — fixes room-server history replay showing the
   // whole batch at the delivery time. Only override with a real epoch; live DMs
@@ -42962,6 +47277,360 @@ void UITask::newMsgFromPubWithMeta(uint8_t path_len, bool is_flood,
   syncThreadMeshSlots(from_name, false);
 }
 
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+bool UITask::friendMeshRequestsEnabled() const {
+  return touchPrefsGetFriendRequestsEnabled();
+}
+
+bool UITask::friendMeshRequesterBlocked(
+    const uint8_t requester_pub[32]) const {
+  return requester_pub && touchPrefsIsIgnored(requester_pub);
+}
+
+void UITask::onFriendMeshFriendRequest(const uint8_t request_id[8],
+                                       const uint8_t requester_pub[32],
+                                       const char* requester_name,
+                                       uint32_t created_at,
+                                       uint32_t expires_at,
+                                       const uint8_t* return_path,
+                                       uint8_t return_path_length) {
+  if (!request_id || !requester_pub || !requester_name ||
+      !requester_name[0] || friendByKey(requester_pub) ||
+      touchPrefsIsIgnored(requester_pub)) {
+    Serial.printf("[FM-FRIEND] INBOX drop=invalid-already-friend-or-blocked\n");
+    return;
+  }
+  // One live request per identity. Repeated packets and newly-generated IDs
+  // from the same sender must not retrigger alerts or churn SD writes.
+  const int pendingCount = s_friend_requests
+      ? touchPrefsCopyFriendRequests(s_friend_requests,
+                                    TOUCH_FRIEND_REQUESTS_MAX) : 0;
+  const uint32_t now = the_mesh.getRTCClock()->getCurrentTime();
+  bool replacingRequest = false;
+  for (int i = 0; i < pendingCount; ++i) {
+    if (memcmp(s_friend_requests[i].requester_pub_key,
+               requester_pub, PUB_KEY_SIZE) != 0) continue;
+    const bool expired = s_friend_requests[i].expires_at >= 1700000000UL &&
+        now >= 1700000000UL && now > s_friend_requests[i].expires_at;
+    if (!expired) {
+      if (memcmp(s_friend_requests[i].request_id, request_id,
+                 sizeof(s_friend_requests[i].request_id)) != 0) {
+        replacingRequest = true;
+        Serial.printf("[FM-FRIEND] INBOX replace old=%02X%02X%02X%02X new=%02X%02X%02X%02X from=%02X%02X%02X%02X\n",
+                      s_friend_requests[i].request_id[0],
+                      s_friend_requests[i].request_id[1],
+                      s_friend_requests[i].request_id[2],
+                      s_friend_requests[i].request_id[3],
+                      request_id[0], request_id[1], request_id[2],
+                      request_id[3], requester_pub[0], requester_pub[1],
+                      requester_pub[2], requester_pub[3]);
+        break;
+      }
+      Serial.printf("[FM-FRIEND] INBOX duplicate from=%02X%02X%02X%02X\n",
+                    requester_pub[0], requester_pub[1],
+                    requester_pub[2], requester_pub[3]);
+      return;
+    }
+    touchPrefsRemoveFriendRequest(s_friend_requests[i].request_id);
+    break;
+  }
+  TouchFriendRequestRecord request = {};
+  memcpy(request.request_id, request_id, sizeof(request.request_id));
+  memcpy(request.requester_pub_key, requester_pub,
+         sizeof(request.requester_pub_key));
+  strncpy(request.requester_name, requester_name,
+          sizeof(request.requester_name) - 1);
+  request.created_at = created_at;
+  request.expires_at = expires_at;
+  request.return_path_length = friendmesh::kFriendRequestReturnPathUnknown;
+  if (return_path_length != friendmesh::kFriendRequestReturnPathUnknown &&
+      mesh::Packet::isValidPathLen(return_path_length)) {
+    const size_t pathBytes =
+        static_cast<size_t>(return_path_length & 0x3F) *
+        static_cast<size_t>((return_path_length >> 6) + 1);
+    if (pathBytes <= sizeof(request.return_path) &&
+        (pathBytes == 0 || return_path)) {
+      request.return_path_length = return_path_length;
+      if (pathBytes) memcpy(request.return_path, return_path, pathBytes);
+    }
+  }
+  if (!touchPrefsSetFriendRequest(request)) {
+    Serial.printf("[FM-FRIEND] INBOX save=failed id=%02X%02X%02X%02X\n",
+                  request_id[0], request_id[1],
+                  request_id[2], request_id[3]);
+    showAlert(TR("Friend request inbox full"), 2200);
+    return;
+  }
+  Serial.printf("[FM-FRIEND] INBOX save=ok id=%02X%02X%02X%02X from=%02X%02X%02X%02X path=%u\n",
+                request_id[0], request_id[1], request_id[2], request_id[3],
+                requester_pub[0], requester_pub[1],
+                requester_pub[2], requester_pub[3], return_path_length);
+  if (replacingRequest) {
+    // If the inbox is already visible, rebuild it immediately so an Accept tap
+    // cannot target the superseded request ID held by the old row.
+    if (s_friend_requests_root) openFriendRequestsModal();
+  } else {
+    showAlert(TR("Friend request received"), 2400);
+  }
+}
+
+bool UITask::onFriendMeshFriendAccepted(const uint8_t request_id[8],
+                                        const uint8_t responder_pub[32],
+                                        const char* responder_name) {
+  (void)request_id;
+  if (!responder_pub) return false;
+  const char* name = (responder_name && responder_name[0])
+      ? responder_name : "Friend";
+  if (!the_mesh.lookupContactByPubKey(responder_pub, PUB_KEY_SIZE))
+    the_mesh.uiAddManualContact(responder_pub, name);
+  if (!touchPrefsSetFriend(responder_pub, name)) {
+    Serial.printf("[FM-FRIEND] REQUESTER friend-save=failed id=%02X%02X%02X%02X from=%02X%02X%02X%02X\n",
+                  request_id ? request_id[0] : 0,
+                  request_id ? request_id[1] : 0,
+                  request_id ? request_id[2] : 0,
+                  request_id ? request_id[3] : 0,
+                  responder_pub[0], responder_pub[1],
+                  responder_pub[2], responder_pub[3]);
+    showAlert(touchPrefsFriendsUsingInternalFallback()
+        ? TR("Friend limit reached (4 without SD)")
+        : TR("Friend update failed; check SD"), 2600);
+    return false;
+  }
+  Serial.printf("[FM-FRIEND] REQUESTER friend-save=ok id=%02X%02X%02X%02X from=%02X%02X%02X%02X\n",
+                request_id ? request_id[0] : 0,
+                request_id ? request_id[1] : 0,
+                request_id ? request_id[2] : 0,
+                request_id ? request_id[3] : 0,
+                responder_pub[0], responder_pub[1],
+                responder_pub[2], responder_pub[3]);
+  clearDiscoveredByPubKey(responder_pub);
+  friendsReload();
+  contactsListForceRefresh();
+  char message[96];
+  snprintf(message, sizeof(message), "%s accepted your friend request",
+           name);
+  showAlert(TR(message), 2600);
+  return true;
+}
+
+bool UITask::onFriendMeshFriendAcceptanceAcknowledged(
+    const uint8_t request_id[8], const uint8_t requester_pub[32],
+    const char* requester_name) {
+  if (!request_id || !requester_pub) {
+    Serial.printf("[FM-FRIEND] REQUESTEE finalize=invalid-args\n");
+    return false;
+  }
+  const char* name = requester_name && requester_name[0]
+      ? requester_name : "Friend";
+  Serial.printf("[FM-FRIEND] REQUESTEE ACK confirmed id=%02X%02X%02X%02X from=%02X%02X%02X%02X; friend-save=begin\n",
+                request_id[0], request_id[1],
+                request_id[2], request_id[3],
+                requester_pub[0], requester_pub[1],
+                requester_pub[2], requester_pub[3]);
+  if (!the_mesh.lookupContactByPubKey(requester_pub, PUB_KEY_SIZE) &&
+      !the_mesh.uiAddManualContact(requester_pub, name)) {
+    Serial.printf("[FM-FRIEND] REQUESTEE friend-save=failed reason=contacts-full id=%02X%02X%02X%02X\n",
+                  request_id[0], request_id[1],
+                  request_id[2], request_id[3]);
+    showAlert(TR("Contacts full; acceptance remains pending"), 2600);
+    return false;
+  }
+  if (!touchPrefsSetFriend(requester_pub, name)) {
+    Serial.printf("[FM-FRIEND] REQUESTEE friend-save=failed reason=storage-or-capacity id=%02X%02X%02X%02X\n",
+                  request_id[0], request_id[1],
+                  request_id[2], request_id[3]);
+    showAlert(touchPrefsFriendsUsingInternalFallback()
+        ? TR("Friend limit reached; acceptance remains pending")
+        : TR("Friend update failed; acceptance remains pending"), 2800);
+    return false;
+  }
+  const bool requestRemoved = touchPrefsRemoveFriendRequest(request_id);
+  clearDiscoveredByPubKey(requester_pub);
+  friendsReload();
+  contactsListForceRefresh();
+  Serial.printf("[FM-FRIEND] REQUESTEE friend-save=ok inbox-remove=%d id=%02X%02X%02X%02X\n",
+                requestRemoved ? 1 : 0,
+                request_id[0], request_id[1],
+                request_id[2], request_id[3]);
+  showAlert(TR("Friend added; acceptance confirmed"), 2400);
+  return true;
+}
+
+void UITask::onFriendMeshFriendDeclined(
+    const uint8_t request_id[8], const uint8_t responder_pub[32],
+    const char* responder_name) {
+  (void)responder_pub;
+  const char* name = responder_name && responder_name[0]
+      ? responder_name : "Friend";
+  Serial.printf("[FM-FRIEND] REQUESTER decline id=%02X%02X%02X%02X from=%02X%02X%02X%02X\n",
+                request_id ? request_id[0] : 0,
+                request_id ? request_id[1] : 0,
+                request_id ? request_id[2] : 0,
+                request_id ? request_id[3] : 0,
+                responder_pub ? responder_pub[0] : 0,
+                responder_pub ? responder_pub[1] : 0,
+                responder_pub ? responder_pub[2] : 0,
+                responder_pub ? responder_pub[3] : 0);
+  char message[96];
+  snprintf(message, sizeof(message), "%s declined your friend request", name);
+  showAlert(TR(message), 2600);
+}
+
+void UITask::onFriendMeshTransactionProgress(
+    const uint8_t transaction_id[8],
+    friendmesh::FriendTransactionKind kind, const char* peer_name,
+    friendmesh::FriendTransactionStage stage, uint8_t floods_used,
+    uint8_t flood_limit) {
+  updateFriendTransactionProgress(
+      transaction_id, kind, peer_name, stage, floods_used, flood_limit);
+}
+
+void UITask::onFriendMeshTransactionRecoveryRequired() {
+  showAlert(TR("FriendMesh transaction recovery required; sending disabled"),
+            4200);
+}
+
+void UITask::onFriendMeshFriendRemoved(
+    const uint8_t remover_pub[32]) {
+  if (!remover_pub || !friendByKey(remover_pub)) {
+    Serial.printf("[FM-FRIEND] REMOVE RX local=no-match\n");
+    return;
+  }
+  // Reciprocal removal is intentionally quiet: no alert, chat bubble, or
+  // negative social notification. Keep the MeshCore contact for routing.
+  if (!touchPrefsRemoveFriend(remover_pub)) {
+    Serial.printf("[FM-FRIEND] REMOVE RX local-save=failed from=%02X%02X%02X%02X\n",
+                  remover_pub[0], remover_pub[1],
+                  remover_pub[2], remover_pub[3]);
+    return;
+  }
+  Serial.printf("[FM-FRIEND] REMOVE RX local-save=ok from=%02X%02X%02X%02X\n",
+                remover_pub[0], remover_pub[1],
+                remover_pub[2], remover_pub[3]);
+  friendsReload();
+  contactsListForceRefresh();
+}
+
+bool UITask::sendFriendRequestForMessage(int msg_idx) {
+  if (s_friends_count >= touchPrefsFriendCapacity()) return false;
+  UIMessage message = {};
+  if (!getMessageByIndex(msg_idx, message) || !message.channel ||
+      message.outgoing || !(message.meta_flags & MSG_META_HAS_RX)) return false;
+  bool has_hash = false;
+  for (uint8_t b : message.packet_hash) has_hash = has_hash || b != 0;
+  if (!has_hash) return false;
+
+  int thread_idx = findThreadByName(message.thread, true);
+  if (thread_idx < 0) return false;
+  syncThreadMeshSlots(message.thread, true);
+  const int channel_idx = _ui_threads[thread_idx].mesh_channel_slot;
+  if (channel_idx < 0) return false;
+
+  // A flood path is stored source->receiver and MyMesh reverses it. A directly
+  // heard channel post has no repeater bytes, so use MeshCore's valid zero-hop
+  // path encoding instead of the UI's 0xFF "direct" display sentinel.
+  uint8_t encoded_path = 0;
+  const uint8_t* path = nullptr;
+  if (message.meta_flags & MSG_META_IS_FLOOD) {
+    encoded_path = message.path_len;
+    const size_t path_bytes = static_cast<size_t>(encoded_path & 0x3F) *
+        static_cast<size_t>((encoded_path >> 6) + 1);
+    if (path_bytes != message.in_path_n || path_bytes > MAX_UI_PATH) return false;
+    path = path_bytes ? message.in_path : nullptr;
+  }
+  return the_mesh.uiSendFriendRequest(channel_idx, message.packet_hash,
+                                      path, encoded_path, message.sender);
+}
+
+void UITask::onFriendMeshChannelInvite(const ContactInfo& from,
+                                       const char* channel_name,
+                                       const uint8_t secret16[16]) {
+  if (!channel_name || !channel_name[0] || !secret16 ||
+      touchPrefsIsIgnored(from.id.pub_key)) return;
+  // Dismiss and wipe any older pending invitation before copying this one.
+  // showConfirm() also dismisses the current modal, but doing it after the copy
+  // would let the older modal's cancel callback erase the new invitation.
+  confirmDismiss();
+  clearPendingFriendMeshInvite();
+  strncpy(s_friendmesh_pending_channel, channel_name,
+          sizeof(s_friendmesh_pending_channel) - 1);
+  memcpy(s_friendmesh_pending_secret, secret16,
+         sizeof(s_friendmesh_pending_secret));
+  memcpy(s_friendmesh_pending_inviter, from.id.pub_key,
+         sizeof(s_friendmesh_pending_inviter));
+  s_friendmesh_pending_invite = true;
+  char message[128];
+  snprintf(message, sizeof(message),
+           "%s invited you to private group\n\"%s\".\n\nJoin this group?",
+           from.name[0] ? from.name : "A direct contact",
+           s_friendmesh_pending_channel);
+  showConfirm(message, "Join", acceptPendingFriendMeshInvite,
+              clearPendingFriendMeshInvite);
+}
+
+void UITask::onFriendMeshChannelRosterChanged(const char* channel_name,
+                                              const char* status) {
+  (void)channel_name;
+  g_lv.dirty_threads = true;
+  g_lv.dm.list_sig = 0;
+  g_lv.ch.list_sig = 0;
+  if (status && status[0]) showAlert(TR(status), 2200);
+}
+
+void UITask::onFriendMeshCoordinationChanged(const char* channel_name,
+                                             const char* status,
+                                             bool urgent) {
+  (void)channel_name;
+  g_lv.dirty_threads = true;
+  if (status && status[0]) showAlert(TR(status), urgent ? 5000 : 2600);
+  refreshFriendMeshCoordinationModal();
+  if (getActiveTab() == MAP_TAB_INDEX) renderMapMarkers();
+}
+
+void UITask::onFriendMeshCompassStarted(const ContactInfo& starter,
+                                        const char* channel_name,
+                                        uint32_t distance_meters) {
+  if (touchPrefsIsIgnored(starter.id.pub_key)) return;
+  char distance[20] = {};
+#if defined(ESP32)
+  const bool miles = touchPrefsGetUseMiles();
+#else
+  const bool miles = false;
+#endif
+  if (miles) {
+    const double feet = static_cast<double>(distance_meters) * 3.28084;
+    if (feet < 1000.0)
+      snprintf(distance, sizeof(distance), "%lu ft",
+               static_cast<unsigned long>(feet + 0.5));
+    else
+      snprintf(distance, sizeof(distance), "%.1f mi",
+               static_cast<double>(distance_meters) / 1609.344);
+  } else if (distance_meters < 1000) {
+    snprintf(distance, sizeof(distance), "%lu m",
+             static_cast<unsigned long>(distance_meters));
+  } else {
+    snprintf(distance, sizeof(distance), "%.1f km",
+             static_cast<double>(distance_meters) / 1000.0);
+  }
+  char message[144] = {};
+  snprintf(message, sizeof(message), "%s started Friend Compass to you\n%s away%s%s",
+           starter.name[0] ? starter.name : "A group member", distance,
+           channel_name && channel_name[0] ? " in " : "",
+           channel_name && channel_name[0] ? channel_name : "");
+  showAlert(message, 5000);
+#if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
+  if (!isBuzzerQuiet() && !dndActive() && touchPrefsGetSoundDirect())
+    uiPlaySlot(TOUCH_SND_DM);
+#endif
+#if defined(HAS_TDECK_KEYBOARD)
+  if (touchPrefsGetMsgFlash()) {
+    s_msgflash_until = millis() + 1600;
+    s_msgflash_wake = true;
+  }
+#endif
+}
+#endif
+
 void UITask::newRoomMsgFromPubWithMeta(uint8_t path_len, bool is_flood,
                                        const uint8_t* from_pub, const char* from_name,
                                        const char* author_name,
@@ -43020,8 +47689,10 @@ void UITask::appSentMsgToChannel(const char* channel_name, const char* text, uin
   // channel-send command otherwise never tells the on-device UI about companion sends (the DM path
   // does, via appSentMsgToContact above). appendMessage creates the thread + refreshes the view.
   // sent_fp links a locally-originated send (web/terminal) to the repeats-heard ring (0 = none).
+  const int msg_slot = _ui_msg_head;
   appendMessage(channel_name, sender, text, true /*channel*/, true /*outgoing*/, false /*mark_unread*/,
                 0 /*ack_hash*/, DELIV_SENT, 0, 0, 0, 0, nullptr, 0, sent_fp);
+  the_mesh.uiLastSentPacketHash(_ui_msgs[msg_slot].packet_hash);
 }
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
@@ -43208,6 +47879,18 @@ void UITask::loop() {
   if (s_msgled_flash_until) msgLedRefresh(getUnreadTotal() > 0);   // end the one-shot envelope-LED flash on time
 #endif
   { static bool s_disc_loaded = false; if (!s_disc_loaded) { s_disc_loaded = true; loadDiscovered(); } }
+#if defined(FRIENDMESH_FEATURES) && FRIENDMESH_FEATURES
+  // GATT callbacks only enqueue bounded wire data. Verify signatures, apply
+  // request policy, and touch persistent/UI state here on the normal UI task.
+  {
+    uint8_t encoded[friendmesh::kFriendRequestEncodedBytes] = {};
+    size_t encodedLength = 0;
+    if (friendmesh::bleFriendTakeRequest(
+            encoded, sizeof(encoded), encodedLength))
+      the_mesh.uiHandleNearbyFriendRequest(encoded, encodedLength);
+    memset(encoded, 0, sizeof(encoded));
+  }
+#endif
   uiCp("ui:disc");
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
   uiCp("ui:gps");
