@@ -1807,13 +1807,16 @@ static void purgeDiscovered() {
   for (int i = 0; i < DISCOVERED_MAX; ++i) s_discovered[i].used = false;
 }
 
-// ---- Persist the discovered ring across reboots (NVS blob "disc") ----
+// ---- Persist the discovered ring across reboots ---------------------------
+// High-churn discovery data has its own namespace so an advert burst never
+// rewrites the critical touch settings snapshot.
 static const char*   KDISC = "disc";   // chunk 0 (older firmware wrote ≤24 records here)
+static const char*   DISC_NS = "discovered";
+static const char*   DISC_MARKER = "ver";
 static bool          s_disc_dirty   = false;
 static unsigned long s_disc_save_at = 0;
-// Compact on-disk record (84 B/entry). SdNvsPrefs's SD .kv backend (used under
-// Launcher) silently DROPS any single value > 2048 B on load (sdLoad bails on
-// the oversize record), so we cap each stored blob at DISC_PER_CHUNK records
+// Compact on-disk record (84 B/entry). SdNvsPrefs caps one value at 2048 B, so
+// we cap each stored blob at DISC_PER_CHUNK records
 // (2 + 24*84 = 2018 B) and split the ring across as many chunk keys ("disc",
 // "disc1", …) as DISCOVERED_MAX needs. We persist only what the Discovered list
 // redraws — the bulky parts of ContactInfo (out_path[64], shared_secret, …) are
@@ -1837,6 +1840,9 @@ static void discChunkKey(int chunk, char* out, size_t cap) {
 }
 static void saveDiscovered() {
   if (!s_discovered || !discBlob()) return;
+  SdNvsPrefs prefs;
+  if (!prefs.begin(DISC_NS, false)) return;
+  prefs.putUChar(DISC_MARKER, DISC_BLOB_VER);
   int src = 0;   // walk the ring once, emitting used entries into successive chunk blobs
   for (int chunk = 0; chunk < DISC_CHUNKS; ++chunk) {
     uint8_t* p = s_disc_blob;
@@ -1860,18 +1866,23 @@ static void saveDiscovered() {
     }
     *pcount = count;
     char key[8]; discChunkKey(chunk, key, sizeof key);
-    if (count > 0) touchPrefsSetBlob(key, s_disc_blob, (size_t)(p - s_disc_blob));
-    else           touchPrefsSetBlob(key, nullptr, 0);   // clear an empty trailing chunk
+    if (count > 0) prefs.putBytes(key, s_disc_blob, (size_t)(p - s_disc_blob));
+    else           prefs.remove(key);   // clear an empty trailing chunk
   }
+  prefs.end();
   s_disc_dirty = false;
 }
 static void loadDiscovered() {
   if (!s_discovered || !discBlob()) return;
   memset(s_discovered, 0, sizeof(LvDiscoveredEntry) * DISCOVERED_MAX);
+  SdNvsPrefs prefs;
+  const bool prefs_open = prefs.begin(DISC_NS, true);
+  const bool have_new = prefs_open && prefs.isKey(DISC_MARKER);
   int dst = 0;
   for (int chunk = 0; chunk < DISC_CHUNKS && dst < DISCOVERED_MAX; ++chunk) {
     char key[8]; discChunkKey(chunk, key, sizeof key);
-    size_t got = touchPrefsGetBlob(key, s_disc_blob, DISC_BLOB_SZ);
+    size_t got = have_new ? prefs.getBytes(key, s_disc_blob, DISC_BLOB_SZ)
+                          : touchPrefsGetBlob(key, s_disc_blob, DISC_BLOB_SZ);
     if (got < 2 || s_disc_blob[0] != DISC_BLOB_VER) continue;   // missing / garbage chunk -> skip
     uint8_t count = s_disc_blob[1];
     const uint8_t* p   = s_disc_blob + 2;
@@ -1892,6 +1903,20 @@ static void loadDiscovered() {
       e.ci.gps_lat      = (int32_t)discGetU32(p);
       e.ci.gps_lon      = (int32_t)discGetU32(p);
       e.ci.shared_secret_valid = false;   // force secret recompute on first use
+    }
+  }
+  prefs.end();
+  if (!have_new) {
+    // First boot after the split: queue the new namespace but leave legacy
+    // chunks intact until a later boot proves the new snapshot is durable.
+    saveDiscovered();
+  } else {
+    // The separate snapshot survived a reboot, so the old copies are now safe
+    // to retire from the critical touch namespace.
+    for (int chunk = 0; chunk < DISC_CHUNKS; ++chunk) {
+      char key[8]; discChunkKey(chunk, key, sizeof key);
+      if (touchPrefsGetBlob(key, s_disc_blob, DISC_BLOB_SZ) > 0)
+        touchPrefsSetBlob(key, nullptr, 0);
     }
   }
 }
@@ -34550,6 +34575,7 @@ static void doFactoryReset() {
   lv_refr_now(nullptr);
   delay(150);                      // let the overlay actually hit the panel
   wdtHeavyBegin();                 // SPIFFS format is a long flash burst
+  touchPrefsFlush();               // do not format under an open prefs worker handle
 #if CAP_SD
   factoryWipeSdData();             // SD /meshcomod data (tiles at /tiles root are kept)
 #endif
@@ -35779,6 +35805,7 @@ static void powerOffCb(lv_event_t* e) {
     g_lv.task->persistHistoryNow();        // flush chat before we go down
     discoveredFlushNow();                  // and the Discovered ring
     the_mesh.flushContactsIfDirty();       // and any coalesced contacts refresh
+    touchPrefsFlush();                     // and all queued A/B preference snapshots
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 click trackball to wake"), 1500);
   }
   // Let the toast paint, then enter deep sleep.
@@ -35827,6 +35854,7 @@ static void powerDownloadCb(lv_event_t* e) {
   if (g_lv.task) {
     g_lv.task->persistHistoryNow();   // flush chat before we go down
     discoveredFlushNow();             // and the Discovered ring
+    touchPrefsFlush();                 // and all queued A/B preference snapshots
     g_lv.task->showAlert(TR("Download mode\xE2\x80\xA6 reflash over USB"), 1500);
   }
   lv_refr_now(NULL);
@@ -45095,13 +45123,6 @@ void UITask::onLvTabChanged(int tab_index) {
     if (tab_index > k_last) tab_index = k_last;
   }
   _touch_screen = static_cast<TouchUiScreen>(static_cast<uint8_t>(tab_index));
-#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
-  SdNvsPrefs prefs;
-  if (prefs.begin("meshTouch", false)) {
-    prefs.putUChar("tab", static_cast<uint8_t>(tab_index));
-    prefs.end();
-  }
-#endif
 }
 
 void UITask::appendDiag(const char* message) {
@@ -45774,6 +45795,7 @@ void UITask::rebootDevice() {
   }
   discoveredFlushNow();   // persist the Discovered ring before we go down
   the_mesh.flushContactsIfDirty();   // and any coalesced contacts refresh (card-less devices)
+  touchPrefsFlush();       // finish queued A/B snapshots before reset
   if (_board) _board->reboot();
 }
 
@@ -46137,7 +46159,7 @@ static void sdHealthTick() {
   // Hold off while the core-0 worker is (or may be about to be) on the card —
   // SD.end() under an open worker file handle is the crash we must not add.
   // On a truly wedged card the worker's own ops fail fast, so this clears.
-  if (s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request) return;
+  if (s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request || touchPrefsIoBusy()) return;
 #if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
   if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
 #endif
@@ -46183,6 +46205,10 @@ static void sdHealthTick() {
 
 void UITask::loop() {
   unsigned long now = millis();
+#if defined(ESP32)
+  // Snapshot copying is quick; all filesystem I/O runs on the core-0 worker.
+  touchPrefsTick(now);
+#endif
 #if !defined(HAS_TANMATSU)
   // REMOTE mode: draw/refresh the physical-panel placeholder (first pass via the IP
   // sentinel, then whenever the IP changes), and clear the bootloop guard once this
@@ -46228,9 +46254,8 @@ void UITask::loop() {
 #endif
   g_ui_stall_max = 0; g_ui_stall_tag = ""; s_ui_cp_tag = "ui:head"; s_ui_cp_t0 = now;
 #if defined(ESP32)
-  // Persist the clock floor every 15 min (small prefs-blob write; SdNvsPrefs
-  // rewrites a file on the Launcher-SD backend, so keep the cadence low). Power
-  // loss costs at most this window of floor progress — a soft reset keeps the
+  // Persist the clock floor every 15 min (coalesced into the next prefs snapshot).
+  // Power loss costs at most this window of floor progress — a soft reset keeps the
   // ESP32 RTC domain ticking, so only true power-off needs the persisted copy.
   { static unsigned long s_floor_due = 0;
     if (now >= s_floor_due) {
@@ -47182,7 +47207,8 @@ void UITask::shutdown(bool restart) {
   if (_threads_dirty) saveThreadsToStorage();
   if (_msgs_dirty) saveMsgsToStorage();
 #if defined(ESP32)
-  touchPrefsSetClockFloor(rtc_clock.getFloor());   // clock floor: final synchronous save (#89)
+  touchPrefsSetClockFloor(rtc_clock.getFloor());   // queue final clock-floor update (#89)
+  touchPrefsFlush();                                // finish queued A/B snapshots
 #endif
   if (_display) {
     _display->startFrame();
