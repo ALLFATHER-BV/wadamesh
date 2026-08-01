@@ -92,8 +92,7 @@
   #endif
 #elif defined(TLORA_PAGER)
   #include <SD.h>             // microSD (CS=21) on the shared radio/display SPI bus --
-                               // file manager browse + WAV picker only; no format support
-                               // this pass (see fmSdTryMount()'s comment)
+                               // storage + file manager/WAV access; formatting stays disabled
   #define PIN_SD_CS PAGER_PIN_SD_CS   // from TLoraPagerBoard.h, already visible via
                                       // MyMesh.h -> target.h -> TLoraPagerBoard.h above
   #include <driver/i2s.h>     // pager ES8311 codec (notification tones + WAV playback)
@@ -907,9 +906,9 @@ static bool wavOpen(const char* prefpath, File& f) {
   if (!prefpath || !prefpath[0]) return false;
   fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)   // only the T-Deck/pager sound picker ever writes an "sd:"-prefixed pref
-  // No fmSdTryMount() here: this runs on the throwaway notify task, and walking
-  // the SD.end()+SD.begin() mount ladder from a second task races the loop
-  // task's own SD use (the one documented single-task assumption). If the card
+  // No fmSdTryMount() here: this runs on the throwaway notify task, and changing
+  // the SD VFS lifecycle from a second task races the loop task's own SD use.
+  // If the card
   // isn't mounted the open below fails fast and the chime falls back; mounting
   // is owned by boot adoption / sdHealthTick's reinsert watch / the FM paths.
   if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; }
@@ -4742,6 +4741,7 @@ static bool          s_verchk_recheck  = false;  // force a fresh check now (e.g
 // with the worker's own SD writes) — doing it on the UI thread froze the About sheet and
 // dropped the Back tap. Off-load it to the core-0 worker; sysInfoText reads these.
 static volatile bool s_sdinfo_request  = false;  // UI -> worker: rescan SD usage
+static volatile bool s_sdinfo_busy     = false;  // worker is inside the FAT scan
 // UI -> worker: write the chat-history snapshot to storage. The full-file write
 // can stall for multiple seconds in SPIFFS garbage collection on SD-less boards
 // (Heltec V4); on the loop thread that froze the whole UI, incl. touch wake
@@ -4901,6 +4901,7 @@ static int  segGatherRange(const UITask::UIMessage* ring, int cap, int count, in
 static UITask::UIMessage* segEnsureBuf(UITask::UIMessage** slot);
 // fwd decls — the ops live with the storage code far below.
 static void uiDataEnsureDirs();
+static bool uiHistWaitWorkerIdle();
 static int  uiSegScan(uint32_t* out_first_seqs, int max_out, bool sweep_tmps);
 static bool uiSegOpenValidated(uint32_t first_seq, File& f, uint16_t* rec_size_out);
 static bool uiSegReadRec(File& f, uint16_t disk_sz, UITask::UIMessage* out, uint32_t* seq_out);
@@ -10617,16 +10618,20 @@ static void sysInfoTextRest(char* buf, size_t cap) {
                 (unsigned)(sketch_size / 1024u),
                 (unsigned)(sketch_free / 1024u));
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // microSD size + free. The FAT scan (usedBytes()) is done by the core-0 worker — never
   // on this UI thread — so the About sheet can't freeze on it. We just read the worker's
   // cached result here and request a (re)scan at most every 30 s.
   {
     static uint32_t sd_req_ms = 0;
     const uint32_t nowm = millis();
+    // Once armed, only the worker may clear this request (after publishing
+    // busy). A loop-side timeout creates a false/false window in the VFS gate
+    // and can let SD.end() race the worker's totalBytes()/usedBytes() scan.
     if (!s_sdinfo_request && (sd_req_ms == 0 || (uint32_t)(nowm - sd_req_ms) >= 30000)) {
       sd_req_ms = nowm ? nowm : 1;
-      s_sdinfo_request = true;   // worker rescans off-thread
+      if (ensureTileFetchTaskRunning())
+        s_sdinfo_request = true;   // worker rescans off-thread
     }
     if (!s_sdinfo_done)
       p += snprintf(buf + p, cap - p, "microSD\n  \xE2\x80\xA6\n\n");          // … (computing)
@@ -10797,7 +10802,7 @@ static inline const char* mapTileUrlPath() { return s_map_style == 1 ? "/opentop
 
 // Distance units toggle (km <-> miles). Applies immediately — saves the
 // pref and forces the contacts list to re-render its distance badges.
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // Store all data (identity/prefs/contacts/channels) on SD under /meshcomod vs
 // internal SPIFFS. Read at boot before data loads, so it only takes effect on
 // the next reboot.
@@ -10811,7 +10816,7 @@ static void useSdStorageToggleCb(lv_event_t* e) {
                                          : TR("Data -> internal on reboot"), 1800);
 }
 
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
 // "Copy internal data to SD": recovery for the beta_36 upgrades where the live
 // profile was orphaned on internal flash while the honored SD toggle adopted an
 // empty card (which then minted a fresh identity). Overwrites the card's copies
@@ -11491,7 +11496,7 @@ static void lockwallDisplayName(const char* path, char* out, int cap) {
 static void openLockWallPickerCb(lv_event_t* e);   // defined with the picker, below
 static void lockColorChosenCb(lv_event_t* e);
 #endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9
-#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck (SD or SPIFFS) or pager (SPIFFS only)
+#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck/pager (SD or SPIFFS)
 // Per-event notification-sound picker (Settings -> Sound). Mirrors the wallpaper picker.
 static lv_obj_t* s_snd_btn_lbl[3] = { nullptr, nullptr, nullptr };
 static int  s_snd_pending_slot = TOUCH_SND_MSG;    // slot we're choosing a sound for
@@ -12066,7 +12071,7 @@ static void buildDeviceSettings(int sec) {
   }
 
   if (sec == DSEC_GENERAL) {   // --- Storage (SD) ---
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   /* Store all data (identity/prefs/contacts/channels) on the SD card under
      /meshcomod instead of internal flash — for running under Launcher, or just
      to keep everything on a card. Read at boot, so it applies after a reboot. */
@@ -12092,7 +12097,12 @@ static void buildDeviceSettings(int sec) {
     lv_obj_set_width(st, lv_pct(96));
     lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
     lv_obj_set_pos(st, 0, y);
-    if (g_contacts_on_sd) {
+    if (g_contacts_on_sd && SD.cardType() == CARD_NONE) {
+      lv_label_set_text(st, want_sd
+          ? TR("SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.")
+          : TR("SD data is unavailable - contacts and channels cannot be saved until the card is reinserted."));
+      lv_obj_set_style_text_color(st, lv_color_hex(0xE34B4B), LV_PART_MAIN);
+    } else if (g_contacts_on_sd) {
       lv_label_set_text(st, TR("Contacts are saved to the SD card."));
       lv_obj_set_style_text_color(st, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
     } else if (want_sd) {
@@ -12109,9 +12119,9 @@ static void buildDeviceSettings(int sec) {
   /* Recovery for the beta_36 "lost my profile" upgrades: the live data was
      orphaned on internal flash when the honored SD toggle adopted an empty (or
      fresh-identity) card. This copies EVERYTHING from internal flash over the
-     card's copies and reboots into the restored profile. T-Deck only: the
-     migration is SPIFFS->SD; the Tanmatsu's CAP_SD is SD_MMC with no SPIFFS. */
-#if defined(HAS_TDECK_GT911)
+     card's copies and reboots into the restored profile. This is a SPIFFS->SD
+     recovery on T-Deck and Pager; Tanmatsu uses SD_MMC with no SPIFFS. */
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
   {
     lv_obj_t* b = lv_btn_create(body);
     lv_obj_set_size(b, lv_pct(96), SC(30));
@@ -12125,7 +12135,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_center(lbl);
     y += SC(40);
   }
-#endif  // HAS_TDECK_GT911 (SPIFFS->SD recovery copy)
+#endif  // HAS_TDECK_GT911 || TLORA_PAGER (SPIFFS->SD recovery copy)
 #endif
 
   }
@@ -17568,6 +17578,22 @@ static bool      s_fm_img_fs = false;       // viewer is in full-screen mode
 static bool          s_sd_mounted   = false;   // microSD mount state
 static uint64_t      s_sd_size      = 0;       // card capacity (bytes)
 static unsigned long s_sd_retry_after_ms = 0;  // don't re-probe SD before this (backoff)
+#if defined(TLORA_PAGER)
+static uint32_t      s_sd_data_warn_next_ms = 0;
+static inline uint32_t sdDataWarnDeadline(uint32_t now) {
+  const uint32_t next = now + 60000;
+  return next ? next : 1;
+}
+static inline void sdPagerParkCs() {
+  pinMode(PIN_SD_CS, OUTPUT);
+  digitalWrite(PIN_SD_CS, HIGH);
+}
+static const char* sdRemovedAlertText() {
+  extern bool g_contacts_on_sd;
+  return g_contacts_on_sd ? TR("SD removed - card-backed data cannot be saved")
+                          : TR("SD card removed");
+}
+#endif
 static int       s_sd_format_pending = 0;   // deferred FAT32 format (runs after notice paints)
 static lv_obj_t* s_fm_fmt_overlay = nullptr; // full-screen "formatting..." notice
 static lv_obj_t* s_fm_actions    = nullptr;  // per-entry action sheet
@@ -18658,20 +18684,10 @@ static void fmFmtSize64(uint64_t bytes, char* out, size_t outsz) {
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)   // microSD mount/format helpers — Arduino SD on the shared SPI bus
 // One shared-SPI accessor per board: the T-Deck/M9 expose their pre-begun SPIClass
 // via tdeckSharedSPI()/m9SharedSPI(); the V4-R8's microSD shares its TFT FSPI bus
-// (heltecV4R8SharedSPI()); the pager's radio+display already share TFT_eSPI's own
-// instance directly (variants/lilygo_tlora_pager/target.cpp), so reuse that the
-// same way.
+// (heltecV4R8SharedSPI()); the pager accessor returns the same TFT_eSPI SPIClass
+// already used by its display and RadioLib module.
 #if defined(TLORA_PAGER)
-static inline SPIClass* sdSharedSPI() { return &TFT_eSPI::getSPIinstance(); }
-// Card-detect via the XL9555 expander (PAGER_EXPAND_SD_DET). Polarity is INVERTED
-// from what you'd guess — confirmed against LilyGoLib's own LilyGo_LoRa_Pager.cpp
-// installSD() (`if (io.digitalRead(EXPANDS_SD_DET)) return false;`): HIGH = no card
-// seated, LOW = card present. Skip the whole mount ladder when no card is seated,
-// so opening the File Manager / WAV picker on a bare pager doesn't grind through
-// the ladder's worst-case delay on every call.
-static inline bool pagerSdCardPresent() {
-  return board.io_expander.digitalRead(PAGER_EXPAND_SD_DET) == LOW;
-}
+static inline SPIClass* sdSharedSPI() { return tloraPagerSharedSPI(); }
 #elif defined(HELTEC_LORA_V4_R8)
 static inline SPIClass* sdSharedSPI() { return heltecV4R8SharedSPI(); }   // V4-R8: micro-SD shares the TFT FSPI bus (CS=3)
 #elif defined(HAS_THINKNODE_M9)
@@ -18682,8 +18698,28 @@ static inline SPIClass* sdSharedSPI() { return tdeckSharedSPI(); }
 // Mount the microSD on its shared SPI bus. Safe to call repeatedly (no-op
 // once mounted). SD.begin's internal spi.begin() is a no-op because the bus is
 // already initialised by the radio/display, so those pins are untouched.
+static bool sdAdoptLiveMount() {
+  if (SD.cardType() == CARD_NONE) return false;
+  s_sd_mounted = true;
+  s_sd_size = SD.cardSize();
+  s_sd_retry_after_ms = 0;
+  return true;
+}
+static bool sdRuntimeLifecycleBusy();
 static bool fmSdTryMount() {
-  if (s_sd_mounted) return true;
+  // main.cpp may already have mounted this global SD object for DataStore.
+  // Adopt that live VFS before considering any lifecycle operation: SD.end()
+  // here would invalidate open prefs/history files beneath the boot sequence.
+#if defined(TLORA_PAGER)
+  // An SD-backed worker can enter here while its own busy flag is set. It may
+  // use an already-live VFS without touching the loop task's mount diagnostics
+  // or 64-bit size field. A cached CARD_NONE below only clears stale diagnostics.
+  if (SD.cardType() != CARD_NONE && sdRuntimeLifecycleBusy())
+    return board.sdCardState() != TLoraPagerBoard::SdCardState::Absent;
+#endif
+  if (sdAdoptLiveMount()) return true;
+  s_sd_mounted = false;
+  s_sd_size = 0;
   // Fast-fail inside the post-failure backoff window. Hot paths call this
   // directly (map tile lookups on the loop task, history writes via
   // uiDataFsReady, WAV chimes) — without this gate every such call re-walks
@@ -18691,10 +18727,18 @@ static bool fmSdTryMount() {
   // Explicit user retries clear the backoff first (fmSdMountOrFormatCb).
   if (s_sd_retry_after_ms && millis() < s_sd_retry_after_ms) return false;
 #if defined(TLORA_PAGER)
-  if (!pagerSdCardPresent()) return false;
+  if (sdRuntimeLifecycleBusy()) return false;
+  if (!board.sdCardPresent()) return false;
 #endif
   SPIClass* spi = sdSharedSPI();
   if (!spi) return false;
+#if defined(TLORA_PAGER)
+  // Vendor-compatible Pager sequence: the shared display/radio bus is already
+  // running, all other CS lines are parked HIGH, and the card gets one 4 MHz
+  // mount attempt. Never tear down that live shared bus or add a retry ladder.
+  const bool begin_ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
+  const bool mounted = begin_ok && SD.cardType() != CARD_NONE;
+#else
   // Cold microSD cards — especially the first mount after boot — often fail
   // the initial SD.begin and historically only recovered after a physical
   // reinsert (which power-cycles the card). The T-Deck shares ONE power rail
@@ -18755,19 +18799,41 @@ static bool fmSdTryMount() {
     }
   }
   enableLoopWDT();
+#endif
   if (mounted) {
     s_sd_mounted = true;
     s_sd_size = SD.cardSize();
     s_sd_retry_after_ms = 0;                    // clear any prior backoff
     markSdIo();                                 // mount touched the card -> blip the LED
+#if defined(TLORA_PAGER)
+    // History stays pinned to the backend loaded during UITask::begin(); a
+    // later mount only restores the independently SD-backed data consumers.
+    s_sd_data_warn_next_ms = 0;
+#endif
     return true;
   }
+#if defined(TLORA_PAGER)
+  if (begin_ok) {
+    // Clean up only the unusable VFS created by our quiescent mount attempt.
+    // SD.end() leaves the display/radio SPIClass running.
+    SD.end();
+  }
+  sdPagerParkCs();
+#else
   SD.end();                                     // clean up on failure
+#endif
   s_sd_retry_after_ms = millis() + 10000;       // back off so we don't hammer the card
   return false;
 }
 static void fmSdUnmount() {
-  if (s_sd_mounted) { SD.end(); s_sd_mounted = false; s_sd_size = 0; }
+  if (s_sd_mounted) {
+    SD.end();
+#if defined(TLORA_PAGER)
+    sdPagerParkCs();
+#endif
+    s_sd_mounted = false;
+    s_sd_size = 0;
+  }
   s_sd_retry_after_ms = 0;   // a reinsert should be able to mount right away
 }
 // True when the card still answers real I/O. SD.cardType() is useless for this:
@@ -18955,8 +19021,10 @@ static void fmFullPath(const char* name, char* out, size_t outsz) {
   else                             snprintf(out, outsz, "%s/%s", s_fm_path, name);
 }
 
-// Recursively delete a file or directory tree.
-static void fmRmRecursive(fs::FS* fs, const char* path) {
+// Recursively delete a file or directory tree. Return false immediately when
+// an entry cannot be removed; rewinding onto the same undeletable FAT entry
+// forever would hang factory reset with its watchdog intentionally suspended.
+static bool fmRmRecursive(fs::FS* fs, const char* path) {
   File d = fs->open(path);
   const bool isdir = d && d.isDirectory();
   if (isdir) {
@@ -18976,15 +19044,16 @@ static void fmRmRecursive(fs::FS* fs, const char* path) {
       const bool have = (base[0] != '\0');
       if (have) snprintf(child, sizeof child, "%s/%s", path, base);
       e.close();
-      if (!have) break;                 // nameless entry — don't spin forever
-      if (cdir) fmRmRecursive(fs, child); else fs->remove(child);
+      if (!have) { d.close(); return false; }
+      const bool removed = cdir ? fmRmRecursive(fs, child) : fs->remove(child);
+      if (!removed) { d.close(); return false; }
       d.rewindDirectory();
     }
     d.close();
-    fs->rmdir(path);
+    return fs->rmdir(path);
   } else {
     if (d) d.close();
-    fs->remove(path);
+    return fs->remove(path);
   }
 }
 
@@ -20088,7 +20157,8 @@ static void fmShowRoots() {
   // The card-detect line makes "not present" unambiguous, unlike the T-Deck (no detect
   // pin at all) -- so unlike its always-shown "tap to mount/format" fallback row, a bare
   // pager just shows no SD row at all rather than a row that can never succeed.
-  if (pagerSdCardPresent() && (s_sd_mounted || millis() >= s_sd_retry_after_ms) && fmSdTryMount()) {
+  if (board.sdCardPresent() && (s_sd_mounted || millis() >= s_sd_retry_after_ms) &&
+      fmSdTryMount() && s_sd_mounted) {
     char sdl[48], cs[16];
     fmFmtSize64(s_sd_size, cs, sizeof cs);
     snprintf(sdl, sizeof sdl, TR("SD card   %s"), cs);
@@ -24044,6 +24114,12 @@ static QueueHandle_t     s_tile_fetch_queue   = nullptr;
 static TaskHandle_t      s_tile_fetch_task    = nullptr;
 static volatile bool     s_tile_fetch_dirty   = false;
 volatile uint16_t s_tile_fetch_pending = 0;   // non-static: tdeckPlayNotify reads it via extern (above)
+#if defined(TLORA_PAGER)
+// Card-detect sets this before the VFS can be unmounted. It stops producers and
+// lets the worker discard its queued SD jobs, so the lifecycle gate converges
+// instead of being kept busy forever by a map that is still requesting tiles.
+static volatile bool     s_pager_sd_removal_pending = false;
+#endif
 static volatile uint16_t s_tile_fetch_ok      = 0;
 static volatile uint16_t s_tile_fetch_failed  = 0;
 // On-screen heartbeat: bumped each loop iteration of the fetch task so we
@@ -24781,9 +24857,13 @@ static void tileFetchTaskFn(void* arg) {
       s_verchk_done = true;
       continue;
     }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
     // microSD usage for the About page — the FAT scan runs here, off the UI thread.
     if (s_sdinfo_request) {
+      // Publish busy before clearing request so the loop task never observes a
+      // false/false gap and tears down the VFS underneath totalBytes/usedBytes.
+      s_sdinfo_busy = true;
+      __sync_synchronize();
       s_sdinfo_request = false;
       if (SD.cardType() != CARD_NONE) {
         const uint64_t t = SD.totalBytes(), u = SD.usedBytes();
@@ -24792,6 +24872,7 @@ static void tileFetchTaskFn(void* arg) {
         s_sdinfo_ok = false;
       }
       s_sdinfo_done = true;
+      s_sdinfo_busy = false;
       continue;
     }
 #endif
@@ -24856,6 +24937,15 @@ static void tileFetchTaskFn(void* arg) {
     // disk (the prefetch now enqueues without stat'ing) would otherwise be a
     // tight no-yield loop of tileCacheExists() and could starve core-0 IDLE.
     vTaskDelay(1);
+#if defined(TLORA_PAGER)
+    if (s_pager_sd_removal_pending && s_tile_fs == &SD) {
+      s_tile_fetch_last_wr = 'R';
+      ++s_tile_fetch_failed;
+      tileFetchForget(req.z, req.x, req.y);
+      if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+      continue;
+    }
+#endif
     if (WiFi.status() != WL_CONNECTED) {
       WIRE_DBG("[TILE] skip z=%u x=%ld y=%ld: WiFi down\n",
                     (unsigned)req.z, (long)req.x, (long)req.y);
@@ -24975,7 +25065,11 @@ static void tileFetchTaskFn(void* arg) {
       s_tile_fetch_step = 'd';
       s_tile_fetch_last_wr = 'e';                  // HTTP error (code shown as "http" on the map)
     }
-    if (code == HTTP_CODE_OK) {
+    bool sd_cache_available = true;
+#if defined(TLORA_PAGER)
+    sd_cache_available = !(s_pager_sd_removal_pending && s_tile_fs == &SD);
+#endif
+    if (code == HTTP_CODE_OK && sd_cache_available) {
       s_tile_fetch_step = 'r';
       int content_len = http.getSize();
       // Sanity cap — refuse anything > 100 KB. Tiles are typically 10-30 KB.
@@ -25203,6 +25297,9 @@ static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
   if (s_map_style == 0 && s_tiles_from_sd && s_tile_fs != &SD) return;
 #else
   if (s_map_style == 0 && s_tiles_from_sd) return;
+#endif
+#if defined(TLORA_PAGER)
+  if (s_pager_sd_removal_pending && s_tile_fs == &SD) return;
 #endif
   if (WiFi.status() != WL_CONNECTED) return;
   if (tileFetchSeen(z, x, y)) return;
@@ -25444,7 +25541,23 @@ static void freeMapTiles() {
 //     outage are retried instead of being remembered as in-flight forever
 //   * re-renders immediately when the map is the visible tab
 static void mapNoteStorageChanged() {
-#if CAP_SD
+#if defined(TLORA_PAGER)
+  if (!s_sd_mounted && s_tile_fs == &SD) {
+    s_tile_fs = nullptr;
+    s_tile_root[0] = '\0';
+    if (s_tile_fs_default == &SD) {
+      s_tile_fs_default = nullptr;
+      s_tile_root_default[0] = '\0';
+    }
+    s_tiles_fs_ready = false;
+  } else if (s_sd_mounted && !s_tiles_fs_ready) {
+    s_tile_fs = &SD;
+    s_tile_root[0] = '\0';
+    s_tile_fs_default = &SD;
+    s_tile_root_default[0] = '\0';
+    s_tiles_fs_ready = true;
+  }
+#elif CAP_SD
   if (s_sd_mounted && !s_tiles_fs_ready) {
     // No tile backend was resolved at boot; the card can serve as one now
     // (same layout the boot fallback uses: SD ROOT /tiles/<z>/<x>/<y>).
@@ -34155,7 +34268,7 @@ static void serviceLockscreen() {
 }
 #endif  // core lock screen (HAS_TDECK_GT911 || HAS_TANMATSU)
 
-#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck (SD/SPIFFS) or pager (SPIFFS only)
+#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck/pager (SD or SPIFFS)
 // ---- Notification-sound chooser (Settings -> Sound) ------------------------
 // Tapping a slot button opens a small menu: "Choose .wav from files" (opens the
 // File Manager, exactly like the wallpaper picker; opening a .wav there offers
@@ -34715,42 +34828,19 @@ static void backupDeleteCb(lv_event_t* e) {
   showConfirm(TR("Delete this backup file?\nThis cannot be undone."), "Delete", doDeleteBackup);
 }
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // Wipe the SD data folder (/meshcomod/*) — identity, prefs, logs, telemetry, and
 // any orphaned pre-#20 /meshcomod/tiles cache. The live Wi-Fi tile cache + offline
 // packs now live at the SD ROOT (/tiles, /maps/osm), outside /meshcomod, so a
 // factory reset keeps the map tiles automatically.
-static void factoryWipeSdData() {
-  if (!fmSdTryMount()) return;
-  File d = SD.open("/meshcomod");
-  if (!d || !d.isDirectory()) { if (d) d.close(); return; }
-  // Collect the entries to wipe FIRST, then delete. Removing during the
-  // openNextFile() walk skips entries on FatFS — a partial wipe is what left
-  // data behind after a factory reset.
-  static const int kMax = 24;
-  char names[kMax][48];
-  bool dirs[kMax];
-  int n = 0;
-  File e = d.openNextFile();
-  while (e && n < kMax) {
-    const char* full = e.name();
-    const char* base = strrchr(full, '/'); base = base ? base + 1 : full;
-    if (base[0]) {
-      strncpy(names[n], base, sizeof(names[n]) - 1);
-      names[n][sizeof(names[n]) - 1] = '\0';
-      dirs[n] = e.isDirectory();
-      ++n;
-    }
-    e.close();
-    e = d.openNextFile();
-  }
-  if (e) e.close();
-  d.close();
-  for (int i = 0; i < n; ++i) {
-    char child[200];
-    snprintf(child, sizeof child, "/meshcomod/%s", names[i]);
-    if (dirs[i]) fmRmRecursive(&SD, child); else SD.remove(child);
-  }
+static bool factoryWipeSdData() {
+  if (!fmSdTryMount() || !sdProbeAlive()) return false;
+  if (!SD.exists("/meshcomod"))
+    return sdProbeAlive() && !SD.exists("/meshcomod");
+  fmRmRecursive(&SD, "/meshcomod");
+  // A failed FAT operation can make exists() look false too, so verify the
+  // card still answers real I/O before accepting the destructive operation.
+  return sdProbeAlive() && !SD.exists("/meshcomod");
 }
 #endif
 
@@ -34772,8 +34862,51 @@ static void doFactoryReset() {
   delay(150);                      // let the overlay actually hit the panel
   wdtHeavyBegin();                 // SPIFFS format is a long flash burst
   touchPrefsFlush();               // do not format under an open prefs worker handle
-#if CAP_SD
-  factoryWipeSdData();             // SD /meshcomod data (tiles at /tiles root are kept)
+  uiHistWaitWorkerIdle();          // do not erase under an open history handle
+  if (s_hist_flush_busy) {
+    wdtHeavyEnd();
+    lv_obj_del(ov);
+    if (g_lv.task) {
+      g_lv.task->flushHistorySoon();
+      g_lv.task->showAlert(TR("Factory reset blocked: storage is busy"), 2600);
+    }
+    return;
+  }
+#if CAP_SD || defined(TLORA_PAGER)
+#if defined(TLORA_PAGER)
+  if (sdRuntimeLifecycleBusy()) {
+    wdtHeavyEnd();
+    lv_obj_del(ov);
+    if (g_lv.task) {
+      g_lv.task->flushHistorySoon();
+      g_lv.task->showAlert(TR("Factory reset blocked: SD is busy; retry"), 2600);
+    }
+    return;
+  }
+#endif
+  s_sd_retry_after_ms = 0;         // explicit reset request bypasses mount backoff
+  const bool sd_wiped = factoryWipeSdData();   // keeps root-level /tiles and /maps
+#if defined(TLORA_PAGER)
+  // Never erase internal identity/NVS while a positively detected or still-
+  // mounted card may hold the old /meshcomod identity. An UNKNOWN detect with
+  // no live card falls back to CARD_NONE so a failed XL9555 does not permanently
+  // disable the Pager's only factory-reset path.
+  const TLoraPagerBoard::SdCardState sd_state = board.sdCardState();
+  const bool card_may_still_hold_data =
+      sd_state == TLoraPagerBoard::SdCardState::Present ||
+      (sd_state == TLoraPagerBoard::SdCardState::Unknown && SD.cardType() != CARD_NONE);
+  if (!sd_wiped && card_may_still_hold_data) {
+    wdtHeavyEnd();
+    lv_obj_del(ov);
+    if (g_lv.task) {
+      g_lv.task->flushHistorySoon();
+      g_lv.task->showAlert(TR("Factory reset blocked: SD wipe failed; remove card and retry"), 4200);
+    }
+    return;
+  }
+#else
+  (void)sd_wiped;
+#endif
 #endif
   the_mesh.uiFactoryReset();       // SPIFFS.format() + nvs_flash_erase()
   ESP.restart();                   // fresh boot: new identity + first-boot wizard
@@ -42156,8 +42289,42 @@ void UITask::flushHistoryIfDue(unsigned long now) {
 // the chat to the SD card.
 static fs::FS* s_ui_data_fs       = nullptr;
 static char    s_ui_data_root[16] = "";
+#if defined(TLORA_PAGER)
+static bool    s_ui_data_boot_finalized = false;
+#endif
+// History stays on the filesystem selected during UITask::begin() for the
+// whole boot. Switching a live ring from SPIFFS to a newly inserted card can
+// purge history that was never loaded into RAM; switching a 5000-record SD ring
+// to SPIFFS can fill the small internal partition.
+#if defined(TLORA_PAGER)
+static bool uiHistoryStoreExists(fs::FS& fs, const char* root) {
+  const char* files[] = {
+    k_ui_threads_path, k_ui_msgs_path, k_ui_history_path, k_ui_seg_ok,
+  };
+  char path[64];
+  for (const char* file : files) {
+    snprintf(path, sizeof path, "%s%s", root, file);
+    if (fs.exists(path)) return true;
+  }
+  return false;
+}
+#endif
 static bool uiDataFsReady() {
   if (s_ui_data_fs != nullptr) return true;   // cache SUCCESS only — a failed resolve MUST stay retryable
+#if defined(TLORA_PAGER)
+  if (s_ui_data_boot_finalized) {
+    // Never adopt unseen card history after the boot loader has finished, but
+    // keep retrying the already-loaded internal backend if its first mount was
+    // transiently unavailable. This avoids a RAM-only history session without
+    // risking a switch to a card whose history was never loaded.
+    if (SPIFFS.begin(false)) {
+      s_ui_data_fs = &SPIFFS;
+      s_ui_data_root[0] = '\0';
+      return true;
+    }
+    return false;
+  }
+#endif
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   // Tanmatsu + T-Display P4: prefer the microSD card. On the Tanmatsu the internal FFat 'locfd'
   // loses frequently-rewritten data (broken FAT metadata; see the tile-cache notes); on the
@@ -42178,13 +42345,27 @@ static bool uiDataFsReady() {
     strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
     return true;
   }
+#elif defined(TLORA_PAGER)
+  // Prefer an existing card history. On upgrade, however, an empty card must
+  // not hide a Pager history that already lives in SPIFFS; keep using that
+  // established store instead of silently re-homing it without a migration.
+  if (fmSdTryMount()) {
+    const bool sd_has_history = uiHistoryStoreExists(SD, "/meshcomod");
+    const bool spiffs_ready = SPIFFS.begin(false);
+    if (!sd_has_history && spiffs_ready && uiHistoryStoreExists(SPIFFS, "")) {
+      s_ui_data_fs = &SPIFFS;
+      s_ui_data_root[0] = '\0';
+      return true;
+    }
+    SD.mkdir("/meshcomod");
+    s_ui_data_fs = &SD;
+    strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+    return true;
+  }
+  if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
 #elif defined(HAS_TDECK_GT911)
-  // T-Deck: the SD card is the persistent user-data store (large, removable,
-  // survives a reflash) and is where chat history already lives. Prefer it; only
-  // fall back to internal SPIFFS if no card is present. (Do NOT format/prefer
-  // SPIFFS here — doing so orphaned the on-SD history.)
-  if (SD.cardType() != CARD_NONE || fmSdTryMount()) {
-    s_sd_mounted = true;
+  // T-Deck: the SD card is the established persistent history store.
+  if (sdAdoptLiveMount() || fmSdTryMount()) {
     SD.mkdir("/meshcomod");
     s_ui_data_fs = &SD;
     strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
@@ -42211,7 +42392,7 @@ static bool uiDataFsIsSdCard() {
   if (!uiDataFsReady()) return false;
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   return s_ui_data_fs == &SD_MMC;
-#elif defined(HAS_TDECK_GT911)
+#elif defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
   return s_ui_data_fs == &SD;
 #else
   return false;
@@ -42228,7 +42409,7 @@ static File uiDataOpen(const char* name, const char* mode) {
   if (!uiDataFsReady()) return File();
   char p[80]; snprintf(p, sizeof p, "%s%s", s_ui_data_root, name);
   File f = s_ui_data_fs->open(p, mode);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
   // A failed WRITE open on the SD-backed history store is the wedge tell (reads
   // fail legitimately on first boot). Called from the loop task AND the core-0
   // history worker — sdNoteIoFailure is a volatile stamp, safe from both.
@@ -42853,7 +43034,7 @@ static bool uiMsgsWriteResult(bool ok) {
     s_msgs_write_fail_ms = m ? m : 1;
     s_msgs_write_fail_epoch = ep;
     if (s_msgs_write_fails < 0xFFFFu) s_msgs_write_fails = s_msgs_write_fails + 1;
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
     if (s_ui_data_fs == &SD) sdNoteIoFailure();
 #endif
   }
@@ -44243,7 +44424,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   if (_sensors && _node_prefs && _node_prefs->gps_enabled) {
     _sensors->setSettingValue("gps", "1");
   }
+#if defined(TLORA_PAGER)
+  // T-Deck's portable preference has no matching Pager toggle (CAP_SD=0).
+  // Ignore it here: the Pager still uses SD as its automatic cache fallback,
+  // but a card moved from a T-Deck cannot silently disable all online fetches.
+  s_tiles_from_sd = false;
+#else
   s_tiles_from_sd = touchPrefsGetTilesFromSd();   // map tile source: server (default) vs microSD
+#endif
   s_map_night = touchPrefsGetMapNight();          // map night mode (render-time tile invert)
   s_map_show_coords   = touchPrefsGetMapShowCoords();     // per-element map text/marker visibility
   s_map_show_tilexyz  = touchPrefsGetMapShowTileXYZ();
@@ -44290,6 +44478,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     setenv("TZ", tz, 1);
     tzset();
   }
+
+#if defined(TLORA_PAGER)
+  // Boot storage setup may have mounted SD before UITask starts. Synchronize
+  // the UI's lifecycle state before tile-backend selection and before the
+  // first loop tick can run health/remount logic.
+  sdAdoptLiveMount();
+#endif
 
   // Mount the dedicated tiles LittleFS partition. formatOnFail=true so a
   // pristine partition (all-0xFF after the partition-table upgrade) gets
@@ -44349,8 +44544,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // fmSdTryMount() unconditionally would SD.end()+remount the card mid-boot and
   // can fail while DataStore holds the volume — which left the map stuck on the
   // storage error. Only walk the mount ladder if the card isn't already up.
-  else if (SD.cardType() != CARD_NONE || fmSdTryMount()) {
-    s_sd_mounted = true;     // trust the live mount; skip future remount ladders
+  else if (sdAdoptLiveMount() || fmSdTryMount()) {
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';   // cache to the SD ROOT /tiles/<z>/<x>/<y>.jpg — the same place
                              // the offline library + microSD-tile mode use, so the Wi-Fi cache
@@ -44366,8 +44560,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // dedicated "tiles" partition — so the LittleFS mount above fails and the map showed
   // "Reflash the tiles partition". Fall back to the microSD card like the T-Deck: cache
   // Wi-Fi tiles to the SD ROOT /tiles/<z>/<x>/<y>.jpg (merges with any offline /maps library).
-  else if (SD.cardType() != CARD_NONE || fmSdTryMount()) {
-    s_sd_mounted     = true;
+  else if (fmSdTryMount()) {
     s_tile_fs        = &SD;
     s_tile_root[0]   = '\0';
     s_tiles_fs_ready = true;
@@ -44430,8 +44623,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_tile_fs_default = s_tile_fs;
   strncpy(s_tile_root_default, s_tile_root, sizeof s_tile_root_default - 1);
 #if CAP_SD
-  if (s_tiles_from_sd && (SD.cardType() != CARD_NONE || fmSdTryMount())) {
-    s_sd_mounted = true;
+  if (s_tiles_from_sd && (sdAdoptLiveMount() || fmSdTryMount())) {
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';
     WIRE_DBG("[TILE] microSD-tile mode -> caching Wi-Fi tiles on SD /tiles (merges with library)");
@@ -44609,6 +44801,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _msgs_dirty = false;
   _next_msgs_flush_ms = 0;
   loadHistoryFromStorage();
+#if defined(TLORA_PAGER)
+  // From here on, the loaded ring and its filesystem are one atomic history
+  // generation. If no backing store was available, wait for a reboot rather
+  // than adopting an inserted card whose on-disk history was never loaded.
+  s_ui_data_boot_finalized = true;
+#endif
   _next_mesh_thread_refresh = millis() + 2000;
   refreshThreadsFromMesh();
   _touch_screen = TouchUiScreen::Home;
@@ -46390,20 +46588,64 @@ static inline void uiCp(const char* next) {
 }
 
 #if CAP_SD || defined(TLORA_PAGER)
+// A mount lifecycle change invalidates every open FAT handle, so it must wait
+// until all UI-side and worker-side SD consumers are quiescent. SPI transaction
+// locking arbitrates individual transfers; this predicate arbitrates VFS lifetime.
+static bool sdRuntimeLifecycleBusy() {
+  bool busy = s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request ||
+              s_sdinfo_busy ||
+              touchPrefsIoBusy();
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+  busy = busy || s_notify_playing ||
+         (s_tile_fs == &SD && s_tile_fetch_pending > 0);
+#endif
+  return busy;
+}
+
 // Runtime SD wedge detect + recover. Some writer saw an SD write fail while the
 // card was supposedly mounted (sdNoteIoFailure) — verify with real I/O and,
-// if the card stopped answering, drop the mount and re-run the full mount
-// ladder (SD.end() + staged SD.begin): exactly what the next reboot would do,
-// minus the reboot. Without this the firmware is blind to a wedged card:
+// if the card stopped answering, drop and remount it once all SD consumers are
+// quiescent. Without this the firmware is blind to a wedged card:
 // SD.cardType() keeps returning its cached mount-time type, s_sd_mounted stays
 // true so fmSdTryMount() no-ops, and every SD feature fails silently until the
 // user power-cycles (the "SD stops working until reboot" report).
 static void sdHealthTick() {
   static uint32_t s_next_probe_ms    = 0;
   static uint32_t s_next_bg_probe_ms = 0;
+#if defined(TLORA_PAGER)
+  static uint32_t s_next_detect_ms   = 0;
+  static uint32_t s_absent_first_ms  = 0;
+  static uint8_t  s_absent_samples   = 0;
+#endif
   const uint32_t now = (uint32_t)millis();
+#if defined(TLORA_PAGER)
+  if (!s_sd_mounted && !sdRuntimeLifecycleBusy() && sdAdoptLiveMount()) {
+    s_sd_data_warn_next_ms = 0;
+    if (!s_ui_data_fs) uiDataFsReady();
+    if (s_ui_data_fs == &SD) {
+      SD.mkdir("/meshcomod");
+      uiDataEnsureDirs();
+      if (g_lv.task) g_lv.task->flushHistorySoon();
+    }
+    mapNoteStorageChanged();
+    return;
+  }
+#endif
   if (!s_sd_mounted) {
+#if defined(TLORA_PAGER)
+    // Another loop-side owner (notably the open File Manager) may have won the
+    // quiescent unmount race after card-detect marked removal pending.
+    s_pager_sd_removal_pending = false;
+#endif
     s_sd_fail_note_ms = 0;
+#if defined(TLORA_PAGER)
+    extern bool g_contacts_on_sd;
+    if (g_contacts_on_sd && !touchSleep::isSleeping() &&
+        (!s_sd_data_warn_next_ms || (int32_t)(now - s_sd_data_warn_next_ms) >= 0)) {
+      s_sd_data_warn_next_ms = sdDataWarnDeadline(now);
+      if (g_lv.task) g_lv.task->showAlert(sdRemovedAlertText(), 5000);
+    }
+#endif
     // Reinsert watch. After a failed remount ("SD card lost") the SD VFS is
     // unregistered and NOTHING outside the file manager ever re-runs a mount
     // — a reinserted card then LOOKED recovered (battery quietly falls back
@@ -46415,41 +46657,96 @@ static void sdHealthTick() {
     if (touchSleep::isSleeping()) return;
     if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
     s_next_bg_probe_ms = now + 30000;
+    if (s_fm_list) return;               // FM open: its 2 s poll owns remounting
+    if (sdRuntimeLifecycleBusy()) return;
 #if defined(TLORA_PAGER)
-    if (!pagerSdCardPresent()) return;   // card-detect says the slot is empty
+    if (!board.sdCardPresent()) return;  // card-detect says the slot is empty
 #endif
-    if (s_fm_list) return;               // FM open: its 2 s poll owns remounting (full ladder)
     SPIClass* spi = sdSharedSPI();
     if (!spi) return;
+#if defined(TLORA_PAGER)
+    // The Pager shares this SPIClass with display + radio: one 4 MHz attempt,
+    // with every other CS parked HIGH and no SD.end() of a potentially live bus.
+    const bool begin_ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
+    const bool remounted = begin_ok && SD.cardType() != CARD_NONE;
+#else
     SD.end();
-    if (SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
+    const bool remounted = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) &&
+                           SD.cardType() != CARD_NONE;
+#endif
+    if (remounted) {
       s_sd_mounted        = true;
       s_sd_size           = SD.cardSize();
       s_sd_retry_after_ms = 0;
+#if defined(TLORA_PAGER)
+      s_sd_data_warn_next_ms = 0;
+#endif
       markSdIo();
       if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
       // Land the RAM ring on the card promptly, not up to 30+ s later: every
       // message received while the card was out is only in RAM. Armed as an
       // OFF-THREAD flush — a synchronous write here froze the UI for >30 s on
       // a card that mounts fine but times out on large writes. mkdir first —
       // a fresh replacement card has no /meshcomod yet, and without it every
       // history flush fails silently.
-      SD.mkdir("/meshcomod");
-      uiDataEnsureDirs();   // segment dir too — a fresh replacement card has neither
-      if (g_lv.task) g_lv.task->flushHistorySoon();
+      if (!s_ui_data_fs) uiDataFsReady();
+      if (s_ui_data_fs == &SD) {
+        SD.mkdir("/meshcomod");
+        uiDataEnsureDirs();   // segment dir too — a fresh replacement card has neither
+        if (g_lv.task) g_lv.task->flushHistorySoon();
+      }
 #endif
       mapNoteStorageChanged();   // the map layer has to be told too, or it stays blank
     } else {
+#if defined(TLORA_PAGER)
+      if (begin_ok) SD.end();             // release only our failed, quiescent mount
+      sdPagerParkCs();
+#else
       SD.end();                          // leave cardType() honestly CARD_NONE
+#endif
     }
     return;
   }
   if (s_sd_format_pending) return;                        // format owns the card right now
-  // Hold off while the core-0 worker is (or may be about to be) on the card —
-  // SD.end() under an open worker file handle is the crash we must not add.
+#if defined(TLORA_PAGER)
+  // Card detect is pure I2C, so it must keep running even while an SD worker is
+  // busy. Once removal is confirmed, stop new SD tile jobs immediately; the
+  // worker discards its queued jobs and the normal lifecycle gate waits only
+  // for the genuinely in-flight operation before SD.end().
+  if (!s_pager_sd_removal_pending && (int32_t)(now - s_next_detect_ms) >= 0) {
+    s_next_detect_ms = now + 500;
+    const TLoraPagerBoard::SdCardState state = board.sdCardState();
+    if (state != TLoraPagerBoard::SdCardState::Absent) {
+      // Present resets the debounce. Unknown also resets it so an I2C fault can
+      // never be accumulated into a destructive VFS teardown.
+      s_absent_samples = 0;
+      s_absent_first_ms = 0;
+    } else if (!s_absent_samples || (uint32_t)(now - s_absent_first_ms) > 1100) {
+      s_absent_samples = 1;
+      s_absent_first_ms = now;
+    } else if (++s_absent_samples >= 2) {
+      s_absent_samples = 0;
+      s_absent_first_ms = 0;
+      s_pager_sd_removal_pending = true;
+      sdNoteIoFailure();
+    }
+  }
+  if (s_pager_sd_removal_pending) {
+    if (sdRuntimeLifecycleBusy()) return;
+    fmSdUnmount();
+    s_pager_sd_removal_pending = false;
+    mapNoteStorageChanged();
+    s_sd_data_warn_next_ms = sdDataWarnDeadline(now);
+    if (!touchSleep::isSleeping() && g_lv.task)
+      g_lv.task->showAlert(sdRemovedAlertText(), 5000);
+    if (s_fm_list && (s_fm_fs == &SD || !s_fm_fs)) fmShowRoots();
+    return;
+  }
+#endif
+  // SD.end() under any open worker/UI file handle invalidates that handle.
   // On a truly wedged card the worker's own ops fail fast, so this clears.
-  if (s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request || touchPrefsIoBusy()) return;
+  if (sdRuntimeLifecycleBusy()) return;
 #if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
   if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
 #endif
@@ -46476,18 +46773,29 @@ static void sdHealthTick() {
   if (sdProbeAlive()) return;     // transient failure (card full, bad path, ...) — not a wedge
   fmSdUnmount();                  // SD.end() so a fresh begin re-runs the full card handshake
   if (fmSdTryMount()) {
+#if defined(TLORA_PAGER)
+    s_sd_data_warn_next_ms = 0;
+#endif
     if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
-#if defined(HAS_TDECK_GT911)
-    SD.mkdir("/meshcomod");                            // fresh replacement card: recreate the data root
-    uiDataEnsureDirs();                                // segment dir too
-    if (g_lv.task) g_lv.task->flushHistorySoon();      // land the RAM ring promptly (off-thread — no UI stall)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+    if (!s_ui_data_fs) uiDataFsReady();
+    if (s_ui_data_fs == &SD) {
+      SD.mkdir("/meshcomod");                          // fresh replacement card: recreate the data root
+      uiDataEnsureDirs();                              // segment dir too
+      if (g_lv.task) g_lv.task->flushHistorySoon();    // land the RAM ring promptly (off-thread — no UI stall)
+    }
 #endif
     mapNoteStorageChanged();
   } else {
-    // Ladder failed — card needs a real power cycle (reinsert). s_sd_mounted is
+    // Remount failed — card needs a real power cycle (reinsert). s_sd_mounted is
     // now false and SD.cardType() reads CARD_NONE, so features degrade honestly
     // instead of silently failing, and the usual remount paths keep retrying.
+#if defined(TLORA_PAGER)
+    s_sd_data_warn_next_ms = sdDataWarnDeadline(now);
+    if (g_lv.task) g_lv.task->showAlert(sdRemovedAlertText(), 5000);
+#else
     if (g_lv.task) g_lv.task->showAlert(TR("SD card lost - reinsert to recover"), 2600);
+#endif
     mapNoteStorageChanged();   // drop tiles read off the card that just went away
   }
 }
@@ -46930,8 +47238,8 @@ void UITask::loop() {
 #if CAP_SD || defined(TLORA_PAGER)
   sdHealthTick();   // wedge detect + remount, driven by writer-flagged failures (any task)
   // microSD insert/remove detection — only while the file manager is open, so
-  // there's no idle SPI traffic. SD.begin runs on this loop task (never
-  // concurrent with the radio's SPI), and reuses the radio's already-begun bus.
+  // there's no idle SPI traffic. Lifecycle changes run on this loop task; each
+  // device transfer uses the shared SPIClass's transaction arbitration.
   if (s_fm_list) {
     static unsigned long s_sd_poll_next = 0;
     if (now >= s_sd_poll_next) {
@@ -46939,27 +47247,33 @@ void UITask::loop() {
       if (!s_sd_mounted) {
         // Only re-probe after the backoff window — repeatedly re-initing an
         // unmountable card spikes current / churns the bus and can reset the board.
-        if (now >= s_sd_retry_after_ms && fmSdTryMount()) {
+        if (!sdRuntimeLifecycleBusy() && now >= s_sd_retry_after_ms && fmSdTryMount()) {
           showAlert(TR("SD card inserted"), 1500);
-#if defined(HAS_TDECK_GT911)
-          SD.mkdir("/meshcomod");   // fresh replacement card: recreate the data root
-          uiDataEnsureDirs();        // segment dir too
-          flushHistorySoon();       // land the RAM ring promptly (off-thread — no UI stall)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+          if (!s_ui_data_fs) uiDataFsReady();
+          if (s_ui_data_fs == &SD) {
+            SD.mkdir("/meshcomod"); // fresh replacement card: recreate the data root
+            uiDataEnsureDirs();      // segment dir too
+            flushHistorySoon();     // land the RAM ring promptly (off-thread — no UI stall)
+          }
 #endif
           mapNoteStorageChanged();
           if (!s_fm_fs) fmShowRoots();          // refresh roots so it appears
         }
-      } else if (!s_hist_flush_busy && !s_hist_flush_req && !sdProbeAlive()) {
+      } else if (!sdRuntimeLifecycleBusy() && !sdProbeAlive()) {
         // Real-I/O probe, NOT `SD.cardType() == CARD_NONE`: cardType() is cached
         // at mount and only SD.end() ever resets it, so the old check could never
         // fire — neither a yanked card nor a wedged one was ever detected here.
-        // Never probe/unmount under an in-flight history flush: SD.end() while
-        // the flush holds its open temp file leaves a stale FIL, and every
-        // later write on it fails FR_INVALID_OBJECT -> EBADF ("bad file
-        // number") — recovery must not sabotage the very write it protects.
+        // Never probe/unmount while any SD consumer is active: SD.end() leaves
+        // its open FAT handle stale and recovery would sabotage that operation.
         fmSdUnmount();
         mapNoteStorageChanged();
+#if defined(TLORA_PAGER)
+        s_sd_data_warn_next_ms = sdDataWarnDeadline(now);
+        showAlert(sdRemovedAlertText(), 5000);
+#else
         showAlert(TR("SD card removed"), 1500);
+#endif
         if (s_fm_fs == &SD || !s_fm_fs) fmShowRoots();
       }
     }

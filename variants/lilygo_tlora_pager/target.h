@@ -35,4 +35,5 @@ extern EnvironmentSensorManager sensors;
 #endif
 
 bool radio_init();
+SPIClass* tloraPagerSharedSPI();
 mesh::LocalIdentity radio_new_identity();

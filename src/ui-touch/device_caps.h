@@ -39,17 +39,12 @@
   #define CAP_TOUCH        0   // no touchscreen — keyboard + rotary encoder nav only
   #define CAP_ROTATABLE    0   // fixed 480x222 landscape via hardware MADCTL rotation
   #define CAP_LARGE_SCREEN 0   // native 480x222, no UI upscaling
-  // CAP_SD/CAP_FILESYSTEM are 0 despite the hardware having a microSD slot:
-  // the code these caps gate (fmSdTryMount(), the #include <SD.h> block, the
-  // file manager's SD-vs-FFat backend selection) is still hardcoded to
-  // HAS_TDECK_GT911/HAS_TANMATSU specifically, never migrated to be CAP_SD-
-  // generic — turning these on here just hits "SD"/"CARD_NONE"/"fmSdTryMount"
-  // SD support shipped after this note was written: fmSdTryMount has a pager branch
-  // (TFT_eSPI shared SPIClass + XL9555 card-detect) and the tile cache falls back to the
-  // card under Launcher. Flags flipped for #193 so the Files app + "Store data on SD"
-  // machinery light up like the T-Deck's.
-  #define CAP_SD           1
-  #define CAP_FILESYSTEM   1
+  // Keep these structural caps at 0: they still gate several T-Deck-specific
+  // UI/features. Pager storage is wired explicitly at its audited call sites
+  // (boot DataStore, history, tiles, file manager and WAV playback) using its
+  // shared-SPI mount helper; formatting remains deliberately unavailable.
+  #define CAP_SD           0
+  #define CAP_FILESYSTEM   0
   #define CAP_GPS          1   // u-blox MIA-M10Q
   #define CAP_OTA          1   // dual-OTA partition layout, same shape as the T-Deck
   #define CAP_LOCK_SCREEN  1
