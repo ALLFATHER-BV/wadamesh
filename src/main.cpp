@@ -185,6 +185,10 @@ extern "C" void set_boot_phase(int phase) { g_boot_phase = phase; }
 // "Store data on SD" toggle is only a stored intent — if the card didn't mount at boot, contacts
 // silently stay on internal flash. The Storage settings page reads this to show the REAL location.
 bool g_contacts_on_sd = false;
+// True when full SD adoption was requested but the guarded SPIFFS -> SD copy
+// could not be proven complete. Settings surfaces the recovery action; contacts
+// may still use SD as the secondary store while identity/prefs remain internal.
+bool g_sd_migration_blocked = false;
 #endif
 
 
@@ -331,12 +335,21 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
   return complete;
 }
 
+bool meshcomodArmSdMigLatch() {
+  Preferences prefs;
+  if (!prefs.begin("touch", false)) return false;
+  const bool armed = prefs.putBool("sd_mig_busy", true) == 1;
+  prefs.end();
+  return armed;
+}
+
 // Clear the boot safe-mode latch (see the SPIFFS->SD migration above): called after a
 // successful manual "Copy internal data to SD" so a deliberate retry re-arms boot-time
 // auto-adoption. The boot path re-latches on its own if a later migration wedges. GH #142/#148.
 void meshcomodClearSdMigLatch() {
   Preferences _mp;
   if (_mp.begin("touch", false)) { _mp.remove("sd_mig_busy"); _mp.end(); }
+  g_sd_migration_blocked = false;
 }
 #endif
 
@@ -682,6 +695,7 @@ void setup() {
           if (mig_busy) {
             if (mp_ok) _mp.end();
             adopt = false;
+            g_sd_migration_blocked = true;
             Serial.println("[BOOT] prior SD migration did not complete -> skipping (staying on SPIFFS); retry via Settings > Copy internal data to SD");
           } else if (needs_migration) {
             // Do not start without a durable rollback breadcrumb. If NVS is
@@ -698,6 +712,7 @@ void setup() {
             if (adopt) {
               Preferences _mp2; if (_mp2.begin("touch", false)) { _mp2.remove("sd_mig_busy"); _mp2.end(); }
             }
+            g_sd_migration_blocked = !adopt;
             if (!adopt) Serial.println(armed
                 ? "[BOOT] SD migration incomplete -> staying on SPIFFS this boot"
                 : "[BOOT] SD migration breadcrumb unavailable -> staying on SPIFFS this boot");
