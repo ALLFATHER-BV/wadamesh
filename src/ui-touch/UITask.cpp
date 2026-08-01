@@ -495,6 +495,13 @@ extern "C" const lv_font_t cc_icons_16;
 extern "C" const lv_font_t extras_12;
 extern "C" const lv_font_t extras_14;
 extern "C" const lv_font_t extras_16;
+#if defined(TLORA_PAGER)
+// Full multilingual fallbacks at the Pager's accessible text sizes. These keep
+// accented Latin, Greek, Cyrillic, Arabic, punctuation, and units aligned with
+// the enlarged Montserrat primary instead of dropping back to 12/14/16 px.
+extern "C" const lv_font_t extras_20;
+extern "C" const lv_font_t extras_24;
+#endif
 #if defined(HAS_TANMATSU)
 // Compressed Latin-accent fonts at the scaled sizes so umlauts etc. match their
 // neighbours at Large/Huge UI scale (issue #129). Room for these was made by
@@ -636,6 +643,13 @@ static void initTouchFontFallbacks() {
   //   (Cyrillic/Greek/Arabic). The emoji font returns false for non-emoji
   //   codepoints, so they fall straight through to the size-matched extras.
   const lv_font_t* extras[3] = { &extras_12, &extras_14, &extras_16 };
+#if defined(TLORA_PAGER)
+  switch (touchPrefsGetUiScale()) {
+    case 1: extras[0] = &extras_16; extras[1] = &extras_20; extras[2] = &extras_20; break;
+    case 2: extras[0] = &extras_20; extras[1] = &extras_20; extras[2] = &extras_24; break;
+    default: break;
+  }
+#endif
 #if defined(HAS_TANMATSU)
   // At Large/Huge scale the primaries become Montserrat 20/24/28 (ASCII-only),
   // so accents dropped to the 16 px fallback and looked tiny. Splice the
@@ -1473,6 +1487,16 @@ constexpr int CHAT_COMP_H      = 64;   // big screen: ~2× the typing box (60px)
 constexpr int CHAT_COMP_H      = 34;   // composer row, single line (slimmed 50 → 40 → 34; hugs the 30px textbox)
 #endif
 constexpr int CHAT_COMP_MAX_LINES = 4; // composer grows up to this many wrapped lines, then scrolls vertically
+static inline lv_coord_t chatComposerBaseH() {
+#if defined(TLORA_PAGER)
+  // Preserve the 34-px Small composer, then add enough chrome around the live
+  // font line for Medium/Large without globally scaling the short viewport.
+  const lv_coord_t need = lv_font_get_line_height(&g_font_14) + 18;
+  return need > CHAT_COMP_H ? need : CHAT_COMP_H;
+#else
+  return CHAT_COMP_H;
+#endif
+}
 // Current composer-row height. The composer wraps long text to multiple lines
 // and grows UPWARD (its bottom stays pinned, the message list above shrinks)
 // instead of horizontally scrolling a single line. The chat layout helpers
@@ -5955,7 +5979,7 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   int lines = (int)((sz.y + lh - 1) / lh);   // ceil to whole lines
   if (lines < 1) lines = 1;
   if (lines > CHAT_COMP_MAX_LINES) lines = CHAT_COMP_MAX_LINES;
-  const lv_coord_t want = CHAT_COMP_H + (lv_coord_t)(lines - 1) * lh;
+  const lv_coord_t want = chatComposerBaseH() + (lv_coord_t)(lines - 1) * lh;
   if (want == s_comp_h) return;   // height unchanged → nothing to relayout
   s_comp_h = want;
   // Keyboard shown (V4) lifts the composer above the keys; otherwise (T-Deck, or
@@ -22341,7 +22365,19 @@ static void makeHome(lv_obj_t* tab) {
   const bool home_land = chatLandscape();
   // Right-hand button column. Scales with the UI size so bigger labels ("Terminal") don't clip;
   // RSTRIP is the strip the left-hand content (status text + chart + info) must stay clear of.
-  const int BTNW   = SC(100);
+#if defined(TLORA_PAGER)
+  const uint8_t pager_size = touchPrefsGetUiScale();
+  const int BTNW = pager_size == 2 ? 136 : pager_size == 1 ? 120 : 100;
+  const int home_line_h = lv_font_get_line_height(&g_font_14);
+  const int home_state_y  = pager_size ? 2 : 4;
+  const int home_unread_y = pager_size ? home_state_y + home_line_h + 2 : 22;
+  const int home_stats_y  = pager_size ? home_unread_y + home_line_h + 2 : 40;
+#else
+  const int BTNW = SC(100);
+  const int home_state_y  = SC(4);
+  const int home_unread_y = SC(22);
+  const int home_stats_y  = SC(40);
+#endif
   const int RSTRIP = BTNW + 10;
 
   // The previous in-tab status row (heartbeat dot, MESHCOMOD title, clock,
@@ -22370,7 +22406,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_label_set_text(g_lv.home_state, TR("Connecting..."));
   lv_obj_set_style_text_color(g_lv.home_state, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_lv.home_state, &g_font_14, LV_PART_MAIN);   // match the other status lines (scales with UI size)
-  lv_obj_align(g_lv.home_state, LV_ALIGN_TOP_LEFT, 0, SC(4));
+  lv_obj_align(g_lv.home_state, LV_ALIGN_TOP_LEFT, 0, home_state_y);
 
   // Unread line — its own tappable row (mail icon + live count) that jumps to
   // the Chats inbox. Kept separate from the memory line below so only the unread
@@ -22380,7 +22416,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_style_text_color(g_lv.home_unread, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_lv.home_unread, &g_font_14, LV_PART_MAIN);
   lv_obj_set_width(g_lv.home_unread, home_land ? (cw - RSTRIP) : cw);
-  lv_obj_align(g_lv.home_unread, LV_ALIGN_TOP_LEFT, 0, SC(22));
+  lv_obj_align(g_lv.home_unread, LV_ALIGN_TOP_LEFT, 0, home_unread_y);
   lv_obj_add_flag(g_lv.home_unread, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(g_lv.home_unread, 8);
   lv_obj_add_event_cb(g_lv.home_unread, homeUnreadClickedCb, LV_EVENT_CLICKED, nullptr);
@@ -22394,7 +22430,7 @@ static void makeHome(lv_obj_t* tab) {
   // In landscape, keep the status text clear of the top-right button column.
   lv_obj_set_width(g_lv.home_stats, home_land ? (cw - RSTRIP) : cw);
   lv_label_set_long_mode(g_lv.home_stats, LV_LABEL_LONG_WRAP);
-  lv_obj_align(g_lv.home_stats, LV_ALIGN_TOP_LEFT, 0, SC(40));
+  lv_obj_align(g_lv.home_stats, LV_ALIGN_TOP_LEFT, 0, home_stats_y);
   // home_dc_label/bar reserved for a future bar widget; meter for now is
   // appended into home_stats so it lives in the same scarce vertical band
   // and doesn't collide with the TX/RX chart legend at y=64.
@@ -22461,7 +22497,9 @@ static void makeHome(lv_obj_t* tab) {
   // Expansion Kit boards push this down to make room for the env line + chart
   // (env label at SC(58), env chart at SC(92)); relayoutHomeCharts() then
   // re-flows the TX/RX legend + chart + advert button to the measured bottom.
-#if defined(HAS_EXPANSION_KIT)
+#if defined(TLORA_PAGER)
+  const int chart_y = pager_size ? home_stats_y + home_line_h + 4 : 60;
+#elif defined(HAS_EXPANSION_KIT)
   // With the env widget present, push the TX/RX chart down to clear the env
   // label (SC(58)) + env chart (SC(92)). With it hidden, sit at the normal
   // non-Expansion offset so Home matches a plain build. (relayoutHomeCharts()
@@ -22470,6 +22508,12 @@ static void makeHome(lv_obj_t* tab) {
 #else
   const int chart_y = SC(60);
 #endif
+#if defined(TLORA_PAGER)
+  const int chart_head_h = lv_font_get_line_height(&g_font_12) + 2;
+#else
+  const int chart_head_h = 16;
+#endif
+  const int chart_body_y = chart_y + chart_head_h;
   s_home_chart_legend = lv_label_create(tab);
   lv_label_set_text(s_home_chart_legend, "TX 0  /  RX 0");
   lv_obj_set_style_text_color(s_home_chart_legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -22509,7 +22553,7 @@ static void makeHome(lv_obj_t* tab) {
   const int home_avail = tabContentH() - 20;                 // inside 10-px pad
   // Landscape: button sits in the right column, so the chart runs to the
   // bottom (no reserved button row). Portrait: reserve the button row below.
-  int chart_h = home_avail - (chart_y + 16) - 4 - (home_land ? 0 : (8 + 36));
+  int chart_h = home_avail - chart_body_y - 4 - (home_land ? 0 : (8 + 36));
   if (chart_h > 96) chart_h = 96;
   if (chart_h < 28) chart_h = 28;
 #if CAP_LARGE_SCREEN
@@ -22539,7 +22583,7 @@ static void makeHome(lv_obj_t* tab) {
                   // lets the info card below fit all 8 rows (Battery/Uptime were clipping off)
   const int p4_btn_h   = 40;
   const int p4_btn_gap = 8;
-  const int p4_grid_y  = chart_y + 16 + chart_h + 10;
+  const int p4_grid_y  = chart_body_y + chart_h + 10;
   const int p4_grid_bottom = p4_grid_y + 3 * p4_btn_h + 2 * p4_btn_gap;
 #endif
 #else
@@ -22562,7 +22606,7 @@ static void makeHome(lv_obj_t* tab) {
   s_home_chart = home_scaled ? nullptr : lv_chart_create(tab);
   if (s_home_chart) {
     lv_obj_set_size(s_home_chart, chart_w, chart_h);
-    lv_obj_align(s_home_chart, LV_ALIGN_TOP_LEFT, 0, chart_y + 16);
+    lv_obj_align(s_home_chart, LV_ALIGN_TOP_LEFT, 0, chart_body_y);
     lv_chart_set_type(s_home_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(s_home_chart, 60);
     lv_chart_set_update_mode(s_home_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -22622,7 +22666,7 @@ static void makeHome(lv_obj_t* tab) {
     const int info_y = p4_grid_bottom + 12;      // below the portrait launcher grid
     const int info_w = cw;                       // full width — no right button strip in portrait
 #else
-    const int info_y = chart_y + 16 + chart_h + 12;
+    const int info_y = chart_body_y + chart_h + 12;
     const int info_w = cw - RSTRIP;              // left/centre column, clear of the right button strip
 #endif
     lv_obj_t* card = lv_obj_create(tab);
@@ -22695,7 +22739,7 @@ static void makeHome(lv_obj_t* tab) {
   // Send Advert button. Portrait: full-width row below the chart. Landscape:
   // a compact button parked in the top-right strip (next to the status text),
   // which is why the chart above was allowed to run full-height.
-  const int adv_y = chart_y + 16 + chart_h + 8;
+  const int adv_y = chart_body_y + chart_h + 8;
 #if defined(HAS_TDISPLAY_P4) && CAP_LARGE_SCREEN
   (void)adv_y;   // P4 portrait-large uses the grid Ys (p4_grid_y); adv_y feeds the other layouts
 #endif
@@ -28409,7 +28453,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // Fresh panel starts at the single-line composer height; it grows as the user
   // types (chatComposerAutoGrow). Reset here so a previous chat's grown height
   // doesn't leak into this one's initial layout math below.
-  s_comp_h = CHAT_COMP_H;
+  s_comp_h = chatComposerBaseH();
 
   // ---- Message area (scrollable container of speech-bubble children) ----
   // Each message gets its own lv_obj bubble inside p.msgs so we can style
@@ -28513,8 +28557,9 @@ static void makeChatDetail(LvChatPanel& p) {
 #endif  // !TLORA_PAGER (jump_btn)
 
   // ---- Composer row ----
+  const lv_coord_t composer_h = chatComposerBaseH();
   p.composer_row = lv_obj_create(p.overlay);
-  lv_obj_set_size(p.composer_row, chatScreenW(), CHAT_COMP_H);
+  lv_obj_set_size(p.composer_row, chatScreenW(), composer_h);
   lv_obj_set_pos(p.composer_row, 0, chatCompYOpen());
   // Transparent row + no border: only the rounded chips / textarea / send button show,
   // and the chat bubbles scroll UNDER them (p.msgs extends to full height behind it).
@@ -28535,6 +28580,8 @@ static void makeChatDetail(LvChatPanel& p) {
   // CAP_LARGE_SCREEN) has room; 30 px elsewhere keeps the small boards unchanged.
 #if CAP_LARGE_SCREEN
   const lv_coord_t chip_sz = 56;
+#elif defined(TLORA_PAGER)
+  const lv_coord_t chip_sz = composer_h - 4;
 #else
   const lv_coord_t chip_sz = 30;
 #endif
@@ -28606,13 +28653,19 @@ static void makeChatDetail(LvChatPanel& p) {
   // Channel settings lives on the TOP status-bar gear (styled as the green ○ key), not a
   // composer chip — so the left chip row stays QR + emoji and the textarea geometry is fixed.
   const lv_coord_t comp_ta_x = 2 * chip_sz + 2 * chip_gap;       // start past both left chips + gaps
-  const lv_coord_t comp_ta_w = chatScreenW() - comp_ta_x - 48;   // leave the Send button area on the right
+  const lv_coord_t send_sz =
+#if defined(TLORA_PAGER)
+      chip_sz;
+#else
+      34;
+#endif
+  const lv_coord_t comp_ta_w = chatScreenW() - comp_ta_x - send_sz - 14;
 
   p.composer_ta = lv_textarea_create(p.composer_row);
   // Fill the row between the two left chips and Send (right): content width is
   // screen - 8 (pad), minus QR(30)+gap(6)+Emoji(30)+gap(6) on the left and
   // gap(6)+Send(34) on the right => screen - 120. Widens with the screen.
-  lv_obj_set_size(p.composer_ta, comp_ta_w, CHAT_COMP_H - 4);
+  lv_obj_set_size(p.composer_ta, comp_ta_w, composer_h - 4);
   // 30 (QR) + 6 + 30 (Emoji) + 6 = 72 offset from content-left. Bottom-aligned so
   // the box grows UPWARD as the message wraps to more lines (chatComposerAutoGrow).
   lv_obj_align(p.composer_ta, LV_ALIGN_BOTTOM_LEFT, comp_ta_x, 0);
@@ -28660,7 +28713,13 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_add_event_cb(p.composer_ta, composerEditLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
 
   lv_obj_t* send = lv_btn_create(p.composer_row);
-  lv_obj_set_size(send, 34, 30);
+  lv_obj_set_size(send, send_sz,
+#if defined(TLORA_PAGER)
+                  send_sz
+#else
+                  30
+#endif
+  );
   lv_obj_align(send, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
   styleButton(send);
   lv_obj_set_style_radius(send, 15, LV_PART_MAIN);
