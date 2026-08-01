@@ -47,3 +47,53 @@ CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=64
+
+# --- Whole-screen flicker (#167) -------------------------------------------------------------
+# Execute .text/.rodata from PSRAM instead of memory-mapped flash.
+#
+# This board's MIPI-DSI panel is a DPI/video one: its single ~1.4 MB framebuffer can only live in
+# PSRAM, and the DSI DMA streams it to the glass CONTINUOUSLY. PSRAM sits behind the same cache as
+# flash, and any flash write has to DISABLE that cache while it runs -- so for the duration of the
+# write the DMA cannot fetch the framebuffer, the panel underruns, and one frame comes out as a
+# whole-screen colour flash.
+#
+# That is why the reported triggers are all storage writes and nothing to do with what is drawn:
+# every received message (history write), opening a channel with unread messages (mark-read write),
+# and deleting a contact -- which writes repeatedly and therefore flickers continuously until it
+# finishes. It also explains why it appears on every screen and has been there since the port
+# began, and why moving the flush scratch buffer out of PSRAM (7aaff80) did not help: that reduced
+# bandwidth contention, but the cache is disabled outright here, so bandwidth was never the issue.
+#
+# With XIP enabled, code and constants are relocated into PSRAM at startup so the cache no longer
+# has to be dropped for a flash write. Supported on this SoC (CONFIG_SOC_SPIRAM_XIP_SUPPORTED=y);
+# IDF ships the same pairing as a P4 reference config
+# (esp_mm/test_apps/mm/sdkconfig.ci.xip_psram_esp32p4).
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+
+# --- esp-hosted C6 reset: callback, NOT a GPIO -------------------------------------------------
+# These were only ever present in the GENERATED sdkconfig, never in this tracked fragment, so a
+# regeneration silently dropped them and esp-hosted fell back to resetting the slave via GPIO 54.
+# There is no such reset line on this board: the C6's enable/reset is C6_EN on the XL9535 expander
+# (see Xl9535::powerOnSequence), which can only be driven through a callback. Currently inert
+# because TDP4_C6_READY is 0 and the C6 runs factory ESP-AT via c6_at rather than esp-hosted, but
+# pinned here so the config is reproducible from the fragments and a future C6 bring-up does not
+# inherit a bogus GPIO reset.
+CONFIG_ESP_HOSTED_RESET_SLAVE_USING_CALLBACK=y
+CONFIG_ESP_HOSTED_SDIO_RESET_SLAVE_USING_CALLBACK=y
+
+# --- #167 whole-screen blue flash: Espressif's documented DPI-underrun mitigations. -------------
+# The esp_lcd DSI driver's own ISR comment says an underrun turns the display blue, and the
+# esp-iot-solution MIPI-DSI guide prescribes exactly these three for "can't fetch data from
+# external memory fast enough": a 256 KB L2 cache with 128 B lines (fewer, larger PSRAM
+# transactions -> more headroom for the continuous ~120 MB/s DSI fetch), and perf optimization.
+# The shared 'wadamesh' fragment sets -Os for the Tanmatsu's AppFS size ceiling; this board is a
+# plain 4 MB OTA slot with ~1.1 MB free, so it can afford -O2 (build.sh orders this fragment last
+# so board overrides win). SPIRAM_SPEED_200M + XIP_FROM_PSRAM, the other two recommendations,
+# were already set.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=n
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_CACHE_L2_CACHE_128KB=n
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_64B=n
+CONFIG_CACHE_L2_CACHE_LINE_128B=y
+

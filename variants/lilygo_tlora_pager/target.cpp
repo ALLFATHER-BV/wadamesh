@@ -125,3 +125,10 @@ mesh::LocalIdentity radio_new_identity() {
   RadioNoiseListener rng(radio);
   return mesh::LocalIdentity(&rng); // create new random identity
 }
+
+// Shared-SPI accessor for main.cpp's boot-time SD storage mount (#193): the micro-SD rides the
+// SAME SPIClass the display/radio already own (see the bus-sharing note at the top of this file).
+// UITask's runtime mount uses TFT_eSPI::getSPIinstance() directly; main.cpp cannot cheaply
+// include TFT_eSPI, so it links this instead.
+#include <TFT_eSPI.h>
+SPIClass* tloraPagerSharedSPI() { return &TFT_eSPI::getSPIinstance(); }

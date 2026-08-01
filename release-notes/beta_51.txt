@@ -1,0 +1,14 @@
+# beta_51 - chat layout, an Airtime tool, and a lockscreen fix
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+A community drop. Thanks to Yazutsu, scratchdiver and jacobpretorius.
+
+# Chat
+Message bubbles now show the time on the top row next to the sender, so more messages fit on screen. Applies to channels, DMs and room-server threads. (scratchdiver)
+
+# New: Airtime tool
+New Airtime tool in the Apps drawer measures how busy the LoRa channel really is, so you can check congestion instead of guessing. It shows channel use over time, packets lost at the radio, live signal and noise, the LoRa preset, and a plain verdict on whether congestion is likely. (jacobpretorius)
+
+# Fixed
+Lockscreen wallpaper no longer turns into coloured noise after you use the map. A custom JPG wallpaper could show garbage until a reboot. (Yazutsu, fixes #127)
+T-Display P4: the text size setting works again. It was stuck at 100% no matter what you picked.

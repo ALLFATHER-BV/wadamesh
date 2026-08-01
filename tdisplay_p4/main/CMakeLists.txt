@@ -25,6 +25,14 @@ idf_component_register(
 # -Wno-error does not cancel it, so strip it outright (warnings stay visible, non-fatal).
 idf_build_set_property(COMPILE_OPTIONS "-Wno-error=unused-variable" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-Wno-error=unused-const-variable" APPEND)
+# -O2 (the #167 underrun fix stack) enables deeper flow analysis that trips new warnings in
+# VENDORED code (esp-modbus and friends) which builds clean at -Os. Same policy as above:
+# keep the warnings visible, never fatal, for code we consume as a library.
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=stringop-truncation" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=stringop-overflow" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=array-bounds" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=restrict" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=maybe-uninitialized" APPEND)
 idf_build_get_property(_co COMPILE_OPTIONS)
 list(REMOVE_ITEM _co "-Werror=all")
 idf_build_set_property(COMPILE_OPTIONS "${_co}")
@@ -52,9 +60,8 @@ set(WADA_DEFS
   XL9535_SX1262_RST_IO=16 XL9535_SX1262_DIO1_IO=17    # SX1262 reset + IRQ behind the expander
   XL9535_RF_SWITCH_IO=1                               # SKY13453 VCTL (TX/RX path)
 
-  # --- Display: RM69A10 AMOLED, MIPI-DSI, 568x1232 portrait (self-emissive; no backlight pin) ---
-  DISPLAY_CLASS=RM69A10Display
-  SCREEN_WIDTH=568 SCREEN_HEIGHT=1232
+  # --- Display: panel SKU (DISPLAY_CLASS / SCREEN_WIDTH / SCREEN_HEIGHT) is selected in the
+  # WADA_P4_LCD block below — the RESET line (XL9535 IO2) is shared by both SKUs. ---
   XL9535_SCREEN_RST_IO=2
 
   # --- Touch: HI8561 (I2C_1); RST/INT on the expander ---
@@ -70,8 +77,12 @@ set(WADA_DEFS
   # PIN_GPS_TX = the GPIO wired to the MODULE'S TX pin; PIN_GPS_RX = wired to the module's RX.
   # Matches LilyGo's t_display_p4_config.h "GPS_TX 22 / GPS_RX 23" naming. The first cut had them
   # swapped (silent: UART opens fine, just never hears NMEA). Wake: XL9535 GPS_WAKE must be HIGH
-  # (powerOnSequence) or the L76K sleeps. Baud: L76K power-on default 9600 = the core default. ---
-  ENV_INCLUDE_GPS=1 PIN_GPS_TX=22 PIN_GPS_RX=23
+  # (powerOnSequence) or the L76K sleeps. Baud: L76K power-on default 9600 = the core default.
+  # ENV_SKIP_GPS_DETECT: like the T-Deck, force gps_detected=true — the P4's heavy boot can miss the
+  # 1 s "any NMEA byte" detect window, and a false result then HIDES the GPS toggle and no-ops the
+  # saved-pref resume, so GPS stays dead with no recovery until a lucky reboot. GPS_BAUD_RATE=9600
+  # pins the correct L76K baud (a stale 38400 NVS override will still need clearing on-device). ---
+  ENV_INCLUDE_GPS=1 PIN_GPS_TX=22 PIN_GPS_RX=23 ENV_SKIP_GPS_DETECT=1 GPS_BAUD_RATE=9600
 
   # --- microSD on SDMMC slot 0 (CLK43/CMD44/D0-3=39-42); C6 esp-hosted is slot 1 ---
   BOARD_HAS_SDMMC=1 BOARD_SDMMC_SLOT=0
@@ -81,9 +92,65 @@ set(WADA_DEFS
 foreach(_d ${WADA_DEFS})
   idf_build_set_property(COMPILE_OPTIONS "-D${_d}" APPEND)
 endforeach()
+
+# --- Panel SKU: the LilyGo T-Display P4 ships as AMOLED (RM69A10, self-emissive, default) or
+# TFT-LCD (HI8561 TDDI, 540x1168 + integrated touch + DCS-0x51 backlight). LilyGo themselves branch
+# per-panel ([rm69a10] vs [hi8561] firmware), so we build a SEPARATE bin per SKU — the proven AMOLED
+# build stays byte-for-byte untouched. Select the LCD with `WADA_P4_LCD=1 ./build.sh build`
+# (compiles HI8561Display + the HI8561 integrated-touch path in Hi8561Touch.cpp). ---
+if(DEFINED ENV{WADA_P4_LCD})
+  set(P4_DISPLAY_DEFS DISPLAY_CLASS=HI8561Display SCREEN_WIDTH=540 SCREEN_HEIGHT=1168 HAS_TDP4_LCD=1)
+  message(STATUS "wadamesh: T-Display P4 panel = HI8561 TFT-LCD (540x1168)")
+else()
+  set(P4_DISPLAY_DEFS DISPLAY_CLASS=RM69A10Display SCREEN_WIDTH=568 SCREEN_HEIGHT=1232)
+  message(STATUS "wadamesh: T-Display P4 panel = RM69A10 AMOLED (568x1232)")
+endif()
+foreach(_d ${P4_DISPLAY_DEFS})
+  idf_build_set_property(COMPILE_OPTIONS "-D${_d}" APPEND)
+endforeach()
 # One-off C6-reflash helper: build with `C6_FLASH_HELPER=1 ./build.sh build` to boot a P4 image that
 # never touches the C6 (no C6_EN reset pulse, no AT worker), so the C6 can be held in ROM download mode
 # and reflashed over its own USB. Harmless when the env var is unset (normal builds are unaffected).
+# #167 SD-coupling experiments: WADA_SD_KHZ=<khz> / WADA_SD_1BIT=1 derate the primary SD mount
+# (clock and/or bus width) to isolate + mitigate the SD-activity screen flash.
+if(DEFINED ENV{WADA_SD_KHZ})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_SD_KHZ=$ENV{WADA_SD_KHZ}" APPEND)
+  message(STATUS "wadamesh: SD primary rung clock = $ENV{WADA_SD_KHZ} kHz")
+endif()
+if(DEFINED ENV{WADA_SD_1BIT})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_SD_1BIT=true" APPEND)
+  message(STATUS "wadamesh: SD primary rung = 1-bit bus")
+endif()
+
+# #167: WADA_DSI_MBPS=<n> overrides the RM69A10 DSI lane bit rate (default 750 -- see the
+# RM_BITRATE note in RM69A10Display.cpp; 1000 = the LilyGo/Meck value with the thin eye).
+if(DEFINED ENV{WADA_DSI_MBPS})
+  idf_build_set_property(COMPILE_OPTIONS "-DRM_BITRATE_MBPS=$ENV{WADA_DSI_MBPS}" APPEND)
+  message(STATUS "wadamesh: DSI lane rate = $ENV{WADA_DSI_MBPS} Mbps")
+endif()
+
+# #167: WADA_SD_STORE_TEST=1 puts the store back on the SD card (writes hop to core 0).
+if(DEFINED ENV{WADA_SD_STORE_TEST})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_SD_STORE_TEST=1" APPEND)
+  message(STATUS "wadamesh: SD-STORE-ON-CORE-0 experiment build")
+endif()
+
+# Companion diagnostic (#167): `WADA_P4_POKE_TRACE=1 ./build.sh build` logs every runtime poke at
+# the panel or the XL9535 expander (DCS brightness writes, disp on/off, expander bit writes) so
+# visible flashes can be correlated against them on the console.
+if(DEFINED ENV{WADA_P4_POKE_TRACE})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_POKE_TRACE=1" APPEND)
+  message(STATUS "wadamesh: POKE TRACE enabled (diagnostic build, do not ship)")
+endif()
+
+# Diagnostic build for the whole-screen colour flash (#167): `WADA_P4_FLUSH_TRACE=1 ./build.sh build`
+# logs every large, mostly-single-colour band pushed to the panel, with its RGB565 value. If the
+# screen flashes and nothing logs, the cause is below LVGL and the UI is the wrong place to look.
+if(DEFINED ENV{WADA_P4_FLUSH_TRACE})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_FLUSH_TRACE=1" APPEND)
+  message(STATUS "wadamesh: FLUSH TRACE enabled (diagnostic build, do not ship)")
+endif()
+
 if(DEFINED ENV{C6_FLASH_HELPER})
   idf_build_set_property(COMPILE_OPTIONS "-DTDP4_C6_FLASH_HELPER=1" APPEND)
   message(STATUS "wadamesh: BUILDING C6-FLASH HELPER (P4 leaves the C6 free)")
@@ -99,3 +166,12 @@ endif()
 idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_RELEASE_TAG=\"${WADA_FW_TAG}\"" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_BUILD_DATE=\"${WADA_FW_DATE}\"" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_VERSION=\"wadamesh ${WADA_FW_TAG}\"" APPEND)
+
+# On-device OTA / update-channel UI (the "Get test builds (beta)" toggle + the Install-update button
+# in UITask.cpp) is gated on a NON-EMPTY FIRMWARE_OTA_ENV. The 8 S3 boards set this per-env in
+# platformio.ini; the P4 is an IDF build and must set it here, or the whole update UI stays hidden
+# (the symptom testers hit on beta_49: no beta toggle, stuck reading the stable channel). The value is
+# only a presence marker — the OTA download URL is built from OTA_BIN_NAME (set per-SKU in UITask.cpp),
+# not from this. The P4 partition table has dual ota_0/ota_1 slots and the C6 WiFi shim routes the
+# HTTPClient + Update.h writer, so the OTA path itself is wired; this just unhides the UI.
+idf_build_set_property(COMPILE_OPTIONS "-DFIRMWARE_OTA_ENV=\"tdisplay_p4\"" APPEND)

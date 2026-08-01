@@ -1,0 +1,13 @@
+# beta_50 - on-device updates for every board, plus pager and Attaky fixes
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# On-device updates
+Fixed the on-device updater downloading the wrong firmware on several boards. The V4-R8, ThinkNode M9, RAK Tap V2, T-LoRa Pager and Attaky now each pull their own build instead of the Heltec V4 TFT one.
+T-Display P4: the "Get test builds (beta)" toggle and the on-device update now appear. They were hidden before, so the P4 could only be updated over USB. Newly enabled, please test and report.
+
+# T-LoRa Pager (codemonkeybr)
+Lock screen fixed: tap Backspace to peek the screen without unlocking, hold Backspace to unlock. The clock and text are repositioned to fit the wide screen and stay readable.
+
+# Attaky Mesh Series (attakygit)
+On-screen keyboard now works with the detachable keyboard module: the keys stay down while the module is attached, and the module's # key brings them back up for symbols. The POWER button toggles the screen and wakes the board.
+Board fixes: correct LoRa clock (no false TCXO), GPS baud, and sensor probing that was colliding with the touch and keyboard chips.
