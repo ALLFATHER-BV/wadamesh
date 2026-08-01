@@ -12048,7 +12048,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, useSdStorageToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
   /* Where contacts ACTUALLY live this boot. The toggle above is only an intent — if the
      card failed to mount at boot (cold/slow card), contacts silently stay on internal flash
      even with it ON. This line shows the truth and flags that mismatch. */
