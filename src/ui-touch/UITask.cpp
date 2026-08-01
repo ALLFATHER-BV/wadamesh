@@ -34887,14 +34887,12 @@ static void doFactoryReset() {
   s_sd_retry_after_ms = 0;         // explicit reset request bypasses mount backoff
   const bool sd_wiped = factoryWipeSdData();   // keeps root-level /tiles and /maps
 #if defined(TLORA_PAGER)
-  // Never erase internal identity/NVS while a positively detected or still-
-  // mounted card may hold the old /meshcomod identity. An UNKNOWN detect with
-  // no live card falls back to CARD_NONE so a failed XL9555 does not permanently
-  // disable the Pager's only factory-reset path.
+  // Never erase internal identity/NVS unless the card data was verifiably wiped
+  // or the slot is positively empty. UNKNOWN is not absence: a transient XL9555
+  // read failure can coincide with an inserted but temporarily unreadable card.
   const TLoraPagerBoard::SdCardState sd_state = board.sdCardState();
   const bool card_may_still_hold_data =
-      sd_state == TLoraPagerBoard::SdCardState::Present ||
-      (sd_state == TLoraPagerBoard::SdCardState::Unknown && SD.cardType() != CARD_NONE);
+      sd_state != TLoraPagerBoard::SdCardState::Absent;
   if (!sd_wiped && card_may_still_hold_data) {
     wdtHeavyEnd();
     lv_obj_del(ov);
@@ -42298,8 +42296,11 @@ static bool    s_ui_data_boot_finalized = false;
 // to SPIFFS can fill the small internal partition.
 #if defined(TLORA_PAGER)
 static bool uiHistoryStoreExists(fs::FS& fs, const char* root) {
+  // Thread metadata by itself is not a message store. It can land before a
+  // larger message file fails during SPIFFS -> SD migration; treating that one
+  // small file as authoritative would hide the complete SPIFFS history.
   const char* files[] = {
-    k_ui_threads_path, k_ui_msgs_path, k_ui_history_path, k_ui_seg_ok,
+    k_ui_msgs_path, k_ui_history_path, k_ui_seg_ok,
   };
   char path[64];
   for (const char* file : files) {
