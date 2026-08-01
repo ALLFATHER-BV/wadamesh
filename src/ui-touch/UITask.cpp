@@ -552,8 +552,8 @@ static bool emojiImgfontPathCb(const lv_font_t* /*font*/, void* img_src, uint16_
 static lv_font_t* s_emoji_font[3] = { nullptr, nullptr, nullptr };  // one per text size
 #endif
 
-// UI scale (font-based, at NATIVE resolution so it stays crisp). 100 / 130 / 160 percent — set in
-// initTouchFontFallbacks() from the saved pref. SC() scales a layout dimension to match. The bottom
+// UI size (font-based, at native resolution so it stays crisp) is set in
+// initTouchFontFallbacks() from the saved preset. SC() scales geometry where a board supports it. The bottom
 // tab bar is deliberately NOT scaled (g_font_tab stays 16 px + TABBAR_H is fixed) — by request it
 // stays the Normal size at every level.
 static int s_ui_fscale = 100;
@@ -578,12 +578,35 @@ static inline lv_coord_t PCW(int px) {
   lv_coord_t cap = lv_disp_get_hor_res(nullptr) - SC(12);
   return (cap > 0 && w > cap) ? cap : w;
 }
-#if CAP_LARGE_SCREEN
+#if CAP_UI_SIZE
 static lv_font_t g_font_tab;     // fixed 16 px tab-bar icon font (montserrat_16 + person glyph)
 #endif
 
 static void initTouchFontFallbacks() {
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  // The Pager is wide but only 222 px tall. Grow the semantic text roles while
+  // leaving SC() at 100%; globally scaling every row/card made content
+  // unreachable. Layouts that need more room are bounded individually below.
+  s_ui_fscale = 100;
+  switch (touchPrefsGetUiScale()) {
+    case 1:
+      g_font_12 = lv_font_montserrat_16;
+      g_font_14 = lv_font_montserrat_18;
+      g_font_16 = lv_font_montserrat_20;
+      break;
+    case 2:
+      g_font_12 = lv_font_montserrat_18;
+      g_font_14 = lv_font_montserrat_20;
+      g_font_16 = lv_font_montserrat_24;
+      break;
+    default:
+      g_font_12 = lv_font_montserrat_12;
+      g_font_14 = lv_font_montserrat_14;
+      g_font_16 = lv_font_montserrat_16;
+      break;
+  }
+  g_font_tab = lv_font_montserrat_16;
+#elif CAP_LARGE_SCREEN
   // Crisp "UI size": render bigger by swapping in larger built-in Montserrat fonts (NOT by
   // upscaling a low-res frame). g_font_12/14/16 are what the whole UI draws with, so this scales
   // every screen at once. The colour-emoji + non-Latin fallbacks stay their baked sizes (they don't
@@ -653,7 +676,7 @@ static void initTouchFontFallbacks() {
   s_cc_icons_font = cc_icons_16;
   s_cc_icons_font.fallback = g_font_16.fallback;
   g_font_16.fallback = &s_cc_icons_font;
-#if CAP_LARGE_SCREEN
+#if CAP_UI_SIZE
   // The fixed-size tab bar font needs the person glyph too (Contacts tab icon, U+F007) at 16 px.
   static lv_font_t s_tab_person; s_tab_person = person_font; s_tab_person.fallback = nullptr;
   g_font_tab.fallback = &s_tab_person;
@@ -10839,9 +10862,9 @@ static void clock12hToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Clock: 12-hour") : TR("Clock: 24-hour"), 900);
 }
 
-#if CAP_LARGE_SCREEN
-// UI size (resolution scale) selector — saves the pref; applied at the next boot (the LVGL
-// resolution + flush upscaler are set up in begin()), so prompt for a restart.
+#if CAP_UI_SIZE
+// UI-size selector — saves the board-specific preset. Fonts and any matching
+// geometry are selected while the UI tree is built, so prompt for a restart.
 static void uiScaleSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   touchPrefsSetUiScale((uint8_t)lv_dropdown_get_selected(lv_event_get_target(e)));
@@ -11868,13 +11891,16 @@ static void buildDeviceSettings(int sec) {
     y += SC(38);
   }
 
-#if CAP_LARGE_SCREEN
-  /* UI size (resolution scale): Normal 100% / Large 150% / Huge 200%. Renders the whole UI at a
-     lower resolution and upscales to the panel, so EVERYTHING grows. Applied at boot → restart. */
+#if CAP_UI_SIZE
+  /* Board-specific UI-size presets. Applied while the UI tree is built, so a restart is required. */
   {
     y += settingsRowLabel(body, y, 0, TR("UI size (restart to apply)"), COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* dd = lv_dropdown_create(body);
+#if defined(TLORA_PAGER)
+    lv_dropdown_set_options(dd, "Small\nMedium\nLarge");
+#else
     lv_dropdown_set_options(dd, TR("Normal (100%)\nLarge (150%)\nHuge (200%)"));
+#endif
     lv_dropdown_set_selected(dd, touchPrefsGetUiScale());
     lv_obj_set_width(dd, lv_pct(100));
     lv_obj_set_pos(dd, 2, y);
@@ -27677,6 +27703,15 @@ static void applyMapChrome(bool on) {
 }
 
 static void makeMapTab(lv_obj_t* tab) {
+#if defined(TLORA_PAGER)
+  // Diagnostic/map chrome stays compact at every Pager UI-size preset so the
+  // overlays do not hide the map itself.
+  const lv_font_t* map_info_font = &lv_font_montserrat_14;
+  const lv_font_t* map_control_font = &lv_font_montserrat_20;
+#else
+  const lv_font_t* map_info_font = &g_font_12;
+  const lv_font_t* map_control_font = &g_font_16;
+#endif
   lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
   lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
   lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
@@ -27724,7 +27759,7 @@ static void makeMapTab(lv_obj_t* tab) {
   lv_label_set_long_mode(s_map_status_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_map_status_lbl, k_map_canvas_w - 20);
   lv_obj_set_style_text_color(s_map_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_style_text_font(s_map_status_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_map_status_lbl, map_info_font, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_map_status_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(s_map_status_lbl,
       TR("Map — no tile pack on SPIFFS yet.\n\n"
@@ -27738,7 +27773,7 @@ static void makeMapTab(lv_obj_t* tab) {
   // dark map patches.
   auto style_corner = [&](lv_obj_t* l) {
     lv_obj_set_style_text_color(l, lv_color_hex(0x000000), LV_PART_MAIN);
-    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(l, map_info_font, LV_PART_MAIN);
     lv_obj_set_style_bg_color(l, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(l, LV_OPA_40, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(l, 4, LV_PART_MAIN);
@@ -27796,7 +27831,7 @@ static void makeMapTab(lv_obj_t* tab) {
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, sym);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(l, map_control_font, LV_PART_MAIN);
     lv_obj_center(l);
     return b;
   };
@@ -29448,7 +29483,14 @@ static void openMessageActionMenu(int msg_idx) {
   // smaller boards keep plain integers (PSC is a no-op there). Buttons sit TWO
   // per row — with Delete the menu carries up to 7 actions, and a single column
   // no longer fit the 240-px screens without scrolling.
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  // Spend the Pager's horizontal room instead of its scarce vertical room.
+  const int card_w = sw - 80;
+  const int btn_h  = 30;
+  const int gap    = 6;
+  const int pad    = 10;
+  const int hdr_h  = 24;
+#elif CAP_LARGE_SCREEN
   const int card_w = PCW(220);
   const int btn_h  = PSC(30);
   const int gap    = PSC(4);
@@ -29511,7 +29553,11 @@ static void openMessageActionMenu(int msg_idx) {
   if (can_ack) mk_btn(LV_SYMBOL_OK "  Ack", msgMenuAckCb);
   if (can_mention) {
     char ml[UITask::MAX_SENDER_NAME + 16];
+#if defined(TLORA_PAGER)
+    snprintf(ml, sizeof ml, "@%.16s", m.sender);   // wide Pager cells can keep more of the name
+#else
     snprintf(ml, sizeof ml, "@%.10s", m.sender);   // "Mention" is implied by the @; half-width cell
+#endif
     mk_btn(ml, msgMenuMentionCb);
   }
   mk_btn(LV_SYMBOL_COPY "  Copy", msgMenuCopyCb);
@@ -29588,7 +29634,12 @@ static void openMessageInfoPopup(int msg_idx) {
   const bool show_trace = !m.channel;
   const int  route_pts  = buildRouteFromMessage(m);
   const bool show_route = (route_pts >= 2);
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  // Reduce wrapping across the wide, short Pager. The independently scrollable
+  // body handles routes and ACK details that exceed the available height.
+  const int card_w = sw - 28;
+  int card_h = sh - STATUSBAR_H - 8;
+#elif CAP_LARGE_SCREEN
   const int card_w = PCW(220);
   int card_h = (show_trace || show_route) ? PSC(290) : PSC(250);
 #else
@@ -29793,7 +29844,14 @@ static void openMessageInfoPopup(int msg_idx) {
   lv_obj_set_pos(bodywrap, 0, body_top);
   lv_obj_set_style_bg_opa(bodywrap, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_scroll_dir(bodywrap, LV_DIR_VER);
-  lv_obj_set_scrollbar_mode(bodywrap, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_set_scrollbar_mode(bodywrap,
+#if defined(TLORA_PAGER)
+                            LV_SCROLLBAR_MODE_ON
+#else
+                            LV_SCROLLBAR_MODE_AUTO
+#endif
+  );
+  lv_obj_add_event_cb(bodywrap, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
   // Thin visible scrollbar (remove_style_all wiped the theme's).
   lv_obj_set_style_width(bodywrap, 4, LV_PART_SCROLLBAR);
   lv_obj_set_style_bg_color(bodywrap, lv_color_hex(0x6FA8DA), LV_PART_SCROLLBAR);
@@ -31999,8 +32057,15 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
     lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_min_height(btn, 56, LV_PART_MAIN);
-    lv_obj_set_height(btn, 56);
+#if defined(TLORA_PAGER)
+    static constexpr lv_coord_t kThreadRowH = 48;
+    static constexpr lv_coord_t kThreadAvatar = 34;
+#else
+    static constexpr lv_coord_t kThreadRowH = 56;
+    static constexpr lv_coord_t kThreadAvatar = 40;
+#endif
+    lv_obj_set_style_min_height(btn, kThreadRowH, LV_PART_MAIN);
+    lv_obj_set_height(btn, kThreadRowH);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
     // Avatar: same FNV-1a hue family as the chat-bubble colours (see
@@ -32011,7 +32076,7 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_remove_style_all(av);
     lv_obj_add_flag(av, LV_OBJ_FLAG_IGNORE_LAYOUT);
     lv_obj_clear_flag(av, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);   // taps fall through to the row
-    lv_obj_set_size(av, 40, 40);
+    lv_obj_set_size(av, kThreadAvatar, kThreadAvatar);
     lv_obj_set_style_radius(av, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(av, lv_color_hsv_to_rgb((uint16_t)(hh % 360u), 55, 42), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(av, LV_OPA_COVER, LV_PART_MAIN);
@@ -32060,7 +32125,7 @@ static void refreshChatList(LvChatPanel& p) {
       lv_obj_remove_style_all(gear);
       lv_obj_add_flag(gear, LV_OBJ_FLAG_IGNORE_LAYOUT);
       lv_obj_add_flag(gear, NAV_HMOVE_FLAG);
-      lv_obj_set_size(gear, gear_w, 40);
+      lv_obj_set_size(gear, gear_w, kThreadRowH - 8);
       lv_obj_align(gear, LV_ALIGN_RIGHT_MID, -2, 0);
       lv_obj_add_event_cb(gear, threadGearCb, LV_EVENT_CLICKED, &p.ctx_store[i]);
       lv_obj_t* gl = lv_label_create(gear);
@@ -32088,7 +32153,7 @@ static void refreshChatList(LvChatPanel& p) {
     }
 
     // Name (top line) + last-message preview (bottom line), right of the avatar.
-    const lv_coord_t text_x = 8 + 40 + 8;
+    const lv_coord_t text_x = 8 + kThreadAvatar + 8;
     const lv_coord_t name_w = (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - time_w - 24);
     lv_obj_t* nm2 = lv_label_create(btn);
     lv_obj_add_flag(nm2, LV_OBJ_FLAG_IGNORE_LAYOUT);
@@ -32098,8 +32163,20 @@ static void refreshChatList(LvChatPanel& p) {
     lv_label_set_long_mode(nm2, LV_LABEL_LONG_DOT);
     // Fixed ONE-LINE height: with only a width, LONG_DOT lets a long name wrap to
     // a second line (never truncating) and it overlapped the preview underneath.
-    lv_obj_set_size(nm2, name_w, 18);
-    lv_obj_align(nm2, LV_ALIGN_TOP_LEFT, text_x, 9);
+    lv_obj_set_size(nm2, name_w,
+#if defined(TLORA_PAGER)
+                    lv_font_get_line_height(&g_font_14)
+#else
+                    18
+#endif
+    );
+    lv_obj_align(nm2, LV_ALIGN_TOP_LEFT, text_x,
+#if defined(TLORA_PAGER)
+                 3
+#else
+                 9
+#endif
+    );
 
     // Preview: "sender: text" for channels, "You: text" for own DMs, plain text otherwise.
     char psender[UITask::MAX_SENDER_NAME + 1] = "";
@@ -32122,8 +32199,20 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_text_font(pv, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(pv, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_label_set_long_mode(pv, LV_LABEL_LONG_DOT);
-    lv_obj_set_size(pv, (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - 60), 16);   // one line, ellipsized
-    lv_obj_align(pv, LV_ALIGN_BOTTOM_LEFT, text_x, -8);
+    lv_obj_set_size(pv, (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - 60),
+#if defined(TLORA_PAGER)
+                    lv_font_get_line_height(&g_font_12)
+#else
+                    16
+#endif
+    );   // one line, ellipsized
+    lv_obj_align(pv, LV_ALIGN_BOTTOM_LEFT, text_x,
+#if defined(TLORA_PAGER)
+                 -3
+#else
+                 -8
+#endif
+    );
 
     // Unread pill bottom-right (under the time), @ to its left on a mention.
     if (unread > 0) {
@@ -32520,8 +32609,12 @@ static void refreshContactsList() {
   // scrolling the name (rejected) or gluing the value columns. TWO-LINE rows instead:
   //   line 1: the full name (one line, dot-ellipsized — never scrolls)
   //   line 2: heard-age and distance, small + dim under the name
-  const int  ROW_H   = mid_cols ? 46 : 34;
   const int  name_line_h_row = lv_font_get_line_height(&g_font_14);
+#if defined(TLORA_PAGER)
+  const int  ROW_H   = 5 + name_line_h_row + 2 + lv_font_get_line_height(&g_font_12) + 5;
+#else
+  const int  ROW_H   = mid_cols ? 46 : 34;
+#endif
   const int  row2_y  = 5 + name_line_h_row + 2;          // line 2 top (below the name line)
   int        name_w  = heard_x - name_x - 6;
   if (name_w < 50) name_w = 50;
@@ -33240,6 +33333,42 @@ static void updatePagerKbBacklight(unsigned long now) {
 #endif
 
 #if defined(HAS_PAGER_ENCODER)
+// A focus step normally asks LVGL to reveal the next object. On the Pager that
+// makes a message or popup body taller than the viewport impossible to read:
+// the next detent abandons it and reveals the following object. Consume detents
+// as page-scrolls until the focused oversized object reaches its edge.
+static bool pagerEncoderScrollOversizedFocused(bool up) {
+  lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if (!focused || !lv_obj_is_valid(focused)) return false;
+
+  for (lv_obj_t* scroller = lv_obj_get_parent(focused); scroller;
+       scroller = lv_obj_get_parent(scroller)) {
+    if (!lv_obj_has_flag(scroller, LV_OBJ_FLAG_SCROLLABLE)) continue;
+
+    lv_area_t viewport;
+    lv_area_t item;
+    lv_obj_get_coords(scroller, &viewport);
+    lv_obj_get_coords(focused, &item);
+    viewport.y1 += lv_obj_get_style_pad_top(scroller, LV_PART_MAIN);
+    viewport.y2 -= lv_obj_get_style_pad_bottom(scroller, LV_PART_MAIN);
+    const lv_coord_t view_h = viewport.y2 - viewport.y1 + 1;
+    const lv_coord_t item_h = item.y2 - item.y1 + 1;
+    if (view_h <= 0 || item_h <= view_h) return false;
+
+    const bool unread_edge = up ? (item.y1 < viewport.y1) : (item.y2 > viewport.y2);
+    const lv_coord_t room = up ? lv_obj_get_scroll_top(scroller)
+                               : lv_obj_get_scroll_bottom(scroller);
+    if (!unread_edge || room <= 0) return false;
+
+    lv_coord_t step = view_h * 2 / 3;
+    if (step < 24) step = 24;
+    if (step > room) step = room;
+    lv_obj_scroll_by(scroller, 0, up ? step : -step, LV_ANIM_ON);
+    return true;
+  }
+  return false;
+}
+
 // T-LoRa Pager rotary encoder: a single linear nav axis (not 2D like the
 // trackball, so none of updateTrackball()'s game/emoji-grid/cursor special
 // cases apply) — each detent moves focus one step via the same navFifo the
@@ -33493,8 +33622,16 @@ static void updatePagerEncoder(unsigned long now) {
     // top-bar items / back into the bubbles (pagerChatComposerNav), and the
     // edge bubble of a still-loading history scrolls the list instead of
     // stepping focus out (pagerEncoderChatEdgeScroll).
-    for (; delta > 0; delta--) { if (!pagerChatComposerNav(false) && !pagerEncoderChatEdgeScroll(false)) navPushTap(LV_KEY_NEXT); }
-    for (; delta < 0; delta++) { if (!pagerChatComposerNav(true)  && !pagerEncoderChatEdgeScroll(true))  navPushTap(LV_KEY_PREV); }
+    for (; delta > 0; delta--) {
+      if (!pagerEncoderScrollOversizedFocused(false) &&
+          !pagerChatComposerNav(false) && !pagerEncoderChatEdgeScroll(false))
+        navPushTap(LV_KEY_NEXT);
+    }
+    for (; delta < 0; delta++) {
+      if (!pagerEncoderScrollOversizedFocused(true) &&
+          !pagerChatComposerNav(true) && !pagerEncoderChatEdgeScroll(true))
+        navPushTap(LV_KEY_PREV);
+    }
   }
 
   static constexpr uint32_t kLongPressMs = 1000;
@@ -36882,7 +37019,7 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   // Rounded-square chip (iOS-style squircle), tinted with the app's accent
   // colour, centred up top. Bigger + a small proportional corner radius so it
   // reads as a SQUARE app icon, not a circle.
-#if CAP_LARGE_SCREEN
+#if CAP_UI_SIZE
   // Reserve the ACTUAL label line height (it grows with the UI-scale font) so the
   // name never overlaps the icon chip on the big panel.
   int chip = h - (lv_font_get_line_height(big ? &g_font_14 : &g_font_12) + 10);
@@ -37694,6 +37831,12 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_color(g_statusbar.left_label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_14, LV_PART_MAIN);
   lv_obj_align(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 6, 0);
+#if defined(TLORA_PAGER)
+  // Keep the large-text title out of the clock/status cluster. Individual home
+  // names may opt into a marquee; other titles truncate inside this window.
+  lv_obj_set_width(g_statusbar.left_label, 200);
+  lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+#endif
   // Tapping the unread badge (✉ N) jumps to the Chats inbox. The CLICKABLE flag is
   // toggled per-tick in updateGlobalStatusBar so only the badge state intercepts the
   // tap; every other left-zone state falls through to the bar's control-center tap.
@@ -37743,7 +37886,13 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.batt_pct, "?");
   lv_obj_set_style_text_color(g_statusbar.batt_pct, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.batt_pct, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.batt_pct, LV_ALIGN_RIGHT_MID, -SC(22), 0);
+  lv_obj_align(g_statusbar.batt_pct, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -32,
+#else
+               -SC(22),
+#endif
+               0);
 
   // Tapping the battery (icon or %) opens the 24h battery-history chart (logged to
   // SD on T-Deck, else internal SPIFFS — works on both builds). Generous ext-click
@@ -37768,14 +37917,26 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_font(g_statusbar.clock, &g_font_12, LV_PART_MAIN);
   // Unified across all boards: extra slot reserved for the DND/sleep moon glyph
   // (T-Deck's sleep_icon and the all-board dnd_icon below both live at -SC(105)).
-  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -SC(160), 0);
+  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -210,
+#else
+               -SC(160),
+#endif
+               0);
 
   // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars).
   g_statusbar.conn_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.conn_icon, "");
   lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.conn_icon, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID, -SC(73), 0);
+  lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -104,
+#else
+               -SC(73),
+#endif
+               0);
 
   // Bluetooth glyph (left of the SD LED). Unified offset across all boards (see clock above).
   g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
@@ -37784,7 +37945,13 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
   // Narrow bars (V4 portrait) have no DND slot beside BLE and their clock sits at -126, so BLE
   // stays at -111 there; wide bars keep -SC(127) (tight to the DND moon at -144).
-  lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID, (lv_disp_get_hor_res(nullptr) < 300) ? -111 : -SC(127), 0);
+  lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -142,
+#else
+               (lv_disp_get_hor_res(nullptr) < 300) ? -111 : -SC(127),
+#endif
+               0);
 
 #if defined(HAS_TDECK_GT911)
   // Idle power-save readiness indicator — moon glyph, left of the SD LED. T-Deck only,
@@ -37810,7 +37977,13 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.dnd_icon, TOUCH_SYM_MOON);
   lv_obj_set_style_text_color(g_statusbar.dnd_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.dnd_icon, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -SC(144), 0);
+  lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -164,
+#else
+               -SC(144),
+#endif
+               0);
   lv_obj_add_flag(g_statusbar.dnd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only while DND is active
   lv_obj_add_flag(g_statusbar.dnd_icon, NAV_SKIP_FLAG);        // passive status glyph, not a focus-nav target
 
@@ -37825,7 +37998,13 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_bg_color(g_statusbar.sd_icon, lv_color_hex(0xF5A623), LV_PART_MAIN);  // amber = SD activity
   lv_obj_set_style_bg_opa(g_statusbar.sd_icon, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_align(g_statusbar.sd_icon, LV_ALIGN_RIGHT_MID, -SC(91), 0);
+  lv_obj_align(g_statusbar.sd_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -124,
+#else
+               -SC(91),
+#endif
+               0);
   lv_obj_add_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only during SD I/O
 
   // Async mesh-request spinner — a refresh glyph centred in the bar, blinking
@@ -37845,7 +38024,13 @@ static void buildGlobalStatusBar() {
     lv_obj_t* sb = lv_obj_create(g_statusbar.root);
     lv_obj_remove_style_all(sb);
     lv_obj_set_size(sb, 15, 12);
-    lv_obj_align(sb, LV_ALIGN_RIGHT_MID, -SC(54), 0);
+    lv_obj_align(sb, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+                 -82,
+#else
+                 -SC(54),
+#endif
+                 0);
     lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
     g_statusbar.sig_box = sb;
     const int bw = 3, gap = 1;
@@ -38095,8 +38280,13 @@ static void updateGlobalStatusBar() {
     if (s_fullscreen_view && s_fullscreen_title[0]) home_zone = false;
 #endif
     if (!home_zone && s_left_home_cfg) {
+#if defined(TLORA_PAGER)
+      lv_obj_set_width(g_statusbar.left_label, 200);
+      lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+#else
       lv_obj_set_width(g_statusbar.left_label, LV_SIZE_CONTENT);
       lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_WRAP);
+#endif
       s_left_home_cfg = false;
       s_left_home_name[0] = '\0';   // force re-config on the next home entry
     }
@@ -38175,7 +38365,12 @@ static void updateGlobalStatusBar() {
     // smaller font — otherwise on the narrow V4 portrait bar its end ("…Map")
     // runs into the Wi-Fi icon. Restore the normal font on other tabs.
     lv_obj_set_style_text_font(g_statusbar.left_label,
-                               tab == MAP_TAB_INDEX ? &g_font_12 : &g_font_14, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+                               tab == MAP_TAB_INDEX ? &lv_font_montserrat_14 : &g_font_14,
+#else
+                               tab == MAP_TAB_INDEX ? &g_font_12 : &g_font_14,
+#endif
+                               LV_PART_MAIN);
     if (tab == MAP_TAB_INDEX) {
       // On the immersive map the left zone carries the required OSM attribution.
       lv_label_set_text(g_statusbar.left_label, s_map_style == 1
@@ -38212,6 +38407,8 @@ static void updateGlobalStatusBar() {
         // runs from the left inset up to just before the leftmost icon (Bluetooth, whose
         // right anchor is 126+inset from the right edge — reserve its glyph + a margin).
         lv_obj_set_width(g_statusbar.left_label, sb_w - (SB_INSET_X + 126 + 44));
+#elif defined(TLORA_PAGER)
+        lv_obj_set_width(g_statusbar.left_label, 200);
 #else
         lv_obj_set_width(g_statusbar.left_label,
                          (sb_w >= 600) ? (sb_w - SC(190)) : (sb_w >= 300) ? 100 : 66);   // #47a: narrower window on the 240px V4 bar so a long name can't run into the clock
@@ -38300,8 +38497,16 @@ static void updateGlobalStatusBar() {
           // Dedicated slot — re-assert on entry/return so a CAP_ROTATABLE board
           // (V4) rotating out of portrait mid-DND self-heals from the borrowed
           // signal-bars position instead of staying stranded there.
-          const int d = batteryIsCharging(batteryMvSmoothed()) ? 32 : 0;
-#if CAP_LARGE_SCREEN
+          const int d = batteryIsCharging(batteryMvSmoothed()) ?
+#if defined(TLORA_PAGER)
+                        45
+#else
+                        32
+#endif
+                        : 0;
+#if defined(TLORA_PAGER)
+          lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -164 + d, 0);
+#elif CAP_LARGE_SCREEN
           lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -SC(144) + SC(d), 0);
 #else
           lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -144 + d, 0);
@@ -38362,6 +38567,14 @@ static void updateGlobalStatusBar() {
       // Round panel: re-apply the two-row layout, sliding the row-2 sub-battery cluster
       // right by the hidden %-column width so it stays snug against the bolt.
       statusBarLayoutTwoRow(charging ? 32 : 0);
+#elif defined(TLORA_PAGER)
+      const int d = charging ? 45 : 0;
+      if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -82  + d, 0);
+      if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -104 + d, 0);
+      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -124 + d, 0);
+      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -142 + d, 0);
+      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -164 + d, 0);
+      if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -232 + d, 0);
 #elif CAP_LARGE_SCREEN
       // Tanmatsu: the cluster is built with SC() UI-scaling, so this slide MUST scale too — the raw
       // offsets below marched the scaled glyphs (incl. the BLE icon) into each other at Large/Huge the
@@ -38481,8 +38694,13 @@ static void updateGlobalStatusBar() {
         // Wide bar shifted 18px further left of its old -142/-110 to open a clean
         // ~16-17px gap for the DND moon icon (now at -SC(144)) on Bluetooth's left
         // side, instead of the old cramped 15px gap that used to sit here.
-        const int clk_x = narrow_bar ? (charging ? -94 : -126)
+        const int clk_x =
+#if defined(TLORA_PAGER)
+                          charging ? -165 : -210;
+#else
+                          narrow_bar ? (charging ? -94 : -126)
                                      : (charging ? -SC(128) : -SC(160));
+#endif
         lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, clk_x, 0);
       }
       // Park the async-request spinner just LEFT of the clock wherever it lands,
@@ -40475,7 +40693,11 @@ static void buildUiTree() {
 #endif
   lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS);
   // Slightly larger font for icons so they're easy to tap.
+#if CAP_UI_SIZE
+  lv_obj_set_style_text_font(tab_btns, &g_font_tab, LV_PART_MAIN);
+#else
   lv_obj_set_style_text_font(tab_btns, &g_font_16, LV_PART_MAIN);
+#endif
 
   // Home and Set tabs scroll vertically at the tab page level
   for (lv_obj_t* t : {tab_home, tab_settings}) {
