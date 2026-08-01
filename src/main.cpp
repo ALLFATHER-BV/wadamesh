@@ -215,6 +215,7 @@ void halt() {
 // Both filesystems must be mounted by the caller.
 bool meshcomodMigrateSpiffsToSd(bool force) {
   if (!SPIFFS.exists("/identity/_main.id")) return false;   // nothing worth adopting
+  const bool sd_identity_preexisting = SD.exists("/meshcomod/identity/_main.id");
   SD.mkdir("/meshcomod");
   SD.mkdir("/meshcomod/identity");
   SD.mkdir("/meshcomod/bl");
@@ -263,11 +264,23 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
   }
   root.close();
   // The boot path skips files the card already has — an identity already on the
-  // card counts as "landed" (nothing needed migrating).
+  // card counts as "landed" (nothing needed migrating). Identity alone is not
+  // enough, though: adopting after a larger history/prefs copy failed hides the
+  // complete SPIFFS store behind a partial SD tree.
   if (!force && !identity_ok && SD.exists("/meshcomod/identity/_main.id")) identity_ok = true;
   Serial.printf("[BOOT] SPIFFS -> SD migration: %d copied, %d failed, identity %s\n",
                 copied, failed, identity_ok ? "ok" : "MISSING");
-  return identity_ok;
+  const bool complete = identity_ok && failed == 0;
+  if (!complete && !sd_identity_preexisting &&
+      SD.exists("/meshcomod/identity/_main.id")) {
+    // This attempt introduced the adoption key. Roll it back so a missing NVS
+    // breadcrumb cannot make the next boot mistake a partial tree for a complete
+    // migration. Successfully copied non-identity files are harmless and let a
+    // later retry resume without clobbering them.
+    if (!SD.remove("/meshcomod/identity/_main.id"))
+      Serial.println("[BOOT] SD migrate: could not roll back partial identity");
+  }
+  return complete;
 }
 
 // Clear the boot safe-mode latch (see the SPIFFS->SD migration above): called after a
@@ -604,11 +617,11 @@ void setup() {
         // card lacks; a failed migration keeps the device on SPIFFS this boot
         // rather than adopting a card without the identity on it.
         bool adopt = true;
-        if (SPIFFS.exists("/identity/_main.id") && !SD.exists("/meshcomod/identity/_main.id")) {
+        if (SPIFFS.exists("/identity/_main.id")) {
           // Boot safe-mode (GH #142/#148): a wedged or corrupt SD card can hang / WDT-reboot the
           // device mid-migration, stranding it on the boot screen EVERY boot (reset can't escape,
           // only a downgrade could). Drop an NVS breadcrumb before migrating and clear it only if
-          // the copy RETURNS. If it's still set at the next boot, the last migration never finished
+          // the copy fully completes. If it's still set at the next boot, the last migration failed
           // -> skip it and boot from SPIFFS (the data is safe there); Settings > "Copy internal data
           // to SD" re-arms a deliberate retry. A merely-slow (healthy) card completes thanks to the
           // in-loop WDT feed, so it never latches here.
@@ -619,11 +632,20 @@ void setup() {
             if (mp_ok) _mp.end();
             adopt = false;
             Serial.println("[BOOT] prior SD migration did not complete -> skipping (staying on SPIFFS); retry via Settings > Copy internal data to SD");
-          } else {
+          } else if (!SD.exists("/meshcomod/identity/_main.id")) {
             if (mp_ok) { _mp.putBool("sd_mig_busy", true); _mp.end(); }
             adopt = meshcomodMigrateSpiffsToSd(false);
-            Preferences _mp2; if (_mp2.begin("touch", false)) { _mp2.remove("sd_mig_busy"); _mp2.end(); }
+            // Keep the breadcrumb latched after a returned-but-incomplete copy.
+            // That matters when identity landed before a larger history file
+            // failed: the next boot must not adopt the partial SD tree merely
+            // because the identity now exists. Manual Copy-to-SD clears it only
+            // after a fully successful retry.
+            if (adopt) {
+              Preferences _mp2; if (_mp2.begin("touch", false)) { _mp2.remove("sd_mig_busy"); _mp2.end(); }
+            }
             if (!adopt) Serial.println("[BOOT] SD migration incomplete -> staying on SPIFFS this boot");
+          } else {
+            if (mp_ok) _mp.end();
           }
         }
         if (adopt) {
