@@ -268,7 +268,7 @@ Implement together because they share identity references, verification state, m
   after reboot, but does not yet reconstruct the RAM-only encoded payload and
   route for autonomous resend. Both invalid journal slots disable new sends and
   raise a recovery-required UI state. Host tests and the T-Deck build pass;
-  physical multi-hop/two-T-Deck validation of the revised exchange remains open.
+  physical three-node/multi-hop validation of the revised exchange remains open.
 - [x] Local identity-reference lifecycle using development/test providers.
 - [x] Group create/rename/disband and eight-group bounds.
 - [x] Member aliases, roles, join ordering, approval, replacement, blocking, leave, kick, transfer, and recorded majority succession behavior.
@@ -322,8 +322,10 @@ Implement together because they share incident IDs, location policy, recipient s
 
 Integrate the completed functional feature set together so shared navigation/focus patterns are not repeatedly rewritten.
 
-- [ ] Reuse existing contacts, chat, map, settings, alerts, status bar, and app drawer.
-- [ ] Add only necessary rows, badges, actions, filters, metadata, and confirmation modals.
+- [x] Reuse existing contacts, chat, map, settings, alerts, and status bar;
+  FriendMesh adds no dedicated app-drawer tile or parallel workspace.
+- [x] Add only necessary rows, badges, actions, filters, metadata, and
+  confirmation/progress modals for the currently live FriendMesh surfaces.
 - [x] Add `Add channel` -> `FriendMesh channels` -> `Create` / `Join`; Create opens a two-minute six-digit BLE host session and Join discovers it without a MeshCore advert, verifies the code, and provisions the existing MeshCore private channel over an encrypted direct BLE exchange.
 - [x] Replace immediate nearby Friend writes with a consent-based BLE request flow: discovery-only scan, full-key/prefix match, signed target-bound request, shared Accept/Deny/Block inbox, acceptance-only reciprocal add/notification, and local-only `Save contact by key` semantics.
 - [x] Add a bounded `Members` view with persisted invite/join/failure/leave/removal states, encrypted direct control notices, binary encrypted roster snapshots that cannot surface as chat, duplicate-member invite prevention, and explicit rekey-required status.
@@ -331,17 +333,18 @@ Integrate the completed functional feature set together so shared navigation/foc
 - [x] Keep ordinary MeshCore channels free of FriendMesh actions; add an explicit `Create a FriendMesh group` path and `[FM]` inbox/header/action-sheet identification derived from persisted roster metadata.
 - [x] Add confirmed administrator disband to the native Members view, with best-effort encrypted member notices, chat suppression, local deletion, and explicit unreachable-recipient reporting.
 - [ ] Upgrade the six-digit BLE compatibility handshake to transcript-bound signed membership epochs and explicit administrator approval after shared production security exists.
-- [ ] No replacement home screen, launcher, visual identity, or required theme.
+- [x] No replacement home screen, launcher, visual identity, or required theme.
 - [ ] All functional states reachable by touch, keyboard, and trackball.
 - [ ] Sensitive entry masked from WadaMesh screenshots and remote surfaces.
-- [ ] Feature-complete local/development-provider walkthrough on T-Deck without production FriendMesh radio transmission.
+- [x] Remove the obsolete volatile local development app, its PSRAM runtime,
+  local-only notes/markers/Help demonstration, launcher tile, and walkthrough
+  test; retain the platform-neutral services and live integrations.
 
-Current Phase 6 slice: the existing app drawer opens a native WadaMesh-styled
-FriendMesh page with event-driven state refresh, local notes, meetup creation, a
-direct `View map` action, and local ride Help. FriendMesh meetup markers render
-as typed overlays in the existing map, participate in overlap selection, and
-show details when tapped. `Add channel` now exposes one `FriendMesh channels`
-entry with a secondary `Create` / `Join` choice. Create initializes the normal
+Current Phase 6 slice: the obsolete volatile FriendMesh app and its local-only
+workspace have been removed. FriendMesh behavior is exposed through WadaMesh's
+existing Contacts/Friends, Friend Request inbox, private-channel action sheet,
+map, alerts, and transaction-progress modal. `Add channel` exposes one
+`FriendMesh channels` entry with a secondary `Create` / `Join` choice. Create initializes the normal
 MeshCore private channel and opens a RAM-only two-minute host screen displaying
 a six-digit code. Join performs an active BLE scan; the host's scan response is
 the direct ACK, so neither device needs a MeshCore advert, saved contact, or LoRa
@@ -398,6 +401,17 @@ Current physical follow-up status:
 - [x] Diagnose the observed SD-backed settings transition.
 - [x] Complete the safe settings recovery/selection check.
 - [x] Confirm existing SD map tiles remain intact.
+- [ ] Validate the revised Friend Request transaction on requester, relay, and
+  recipient nodes: multi-hop request, direct acceptance, direct-only ACK,
+  authenticated one-way decline, and reciprocal removal.
+- [ ] Induce route loss and packet loss while proving no transaction can emit
+  more than two initiator-owned floods and no ACK can flood.
+- [ ] Reboot at each Friend Request transaction stage and confirm correlation,
+  peer binding, terminal tombstones, and flood budgets restore without duplicate
+  Friends or notifications. Automatic payload/route reconstruction remains
+  explicitly deferred.
+- [ ] Regress ordinary modified-to-modified and stock-to-modified MeshCore
+  messaging, relay behavior, contacts, and map behavior after the transaction test.
 - [ ] Install and test administrator disband on both current T-Decks.
 - [ ] Test the targeted Compass-start notification; hardware-blocked pending additional GPS-capable devices and a node.
 - [ ] Test two-moving-device prediction/headway; hardware-blocked pending additional GPS-capable devices and a node.
@@ -466,19 +480,30 @@ Implement all dependent security together across the completed features.
 
 Phases 1 through 5 are host/build complete. Phase 6 now includes the physically
 validated nearby join/roster path and compass interaction, the build-verified
-automatic group map and administrator disband flow, and build-verified shared meetup/pickup plus Help/SOS
-coordination over the existing encrypted MeshCore channel. The general
-development workspace still does not persist across reboot or communicate
-through its custom event path.
+automatic group map and administrator disband flow, build-verified shared
+meetup/pickup plus Help/SOS coordination over the existing encrypted MeshCore
+channel, and the shared Friend Request transaction engine. The obsolete
+FriendMesh development app has been removed. The current T-Deck build passes at
+89,388 bytes RAM (27.3%) and 3,346,061 bytes application flash (82.3%); no image
+containing the revised transaction system has yet been physically validated.
 
-Next, install and validate administrator disband on both current T-Decks, then
-physically validate the new coordination flow on two T-Decks: meetup map
-appearance without adverts, responses on both devices, cancel/close propagation,
-Help alerts, three-second SOS hold, protocol records absent from chat, reboot
+The next exact gate is an operator-approved three-node Friend Request campaign:
+requester -> relay -> recipient, followed by acceptance and direct-only ACK.
+The same campaign must cover one-way authenticated decline, reciprocal removal,
+intentional route/packet loss, duplicate delivery, reboot at every durable
+stage, and proof that the initiating operation emits no more than two floods.
+Run ordinary modified-to-modified and stock-to-modified MeshCore regression in
+the same configuration. Record radio logs and UI modal stages separately from
+end-state Friends-list results.
+
+After that gate, install and validate administrator disband on both current
+T-Decks, then physically validate meetup/pickup and Help/SOS coordination:
+map appearance without adverts, responses on both devices, cancel/close
+propagation, three-second SOS hold, protocol records absent from chat, reboot
 persistence, and ordinary chat/map regression. Compass-start and two-moving-GPS
-tests remain hardware-blocked as recorded above. After that, continue the
-remaining native people/group/chat flows before the shared Phase 7 protected
-identity, signing, replay, grant, and rekey implementation.
+tests remain hardware-blocked as recorded above. Shared Phase 7 protected
+identity, signing, replay, grant, and rekey work follows the functional physical
+gates; none of those security properties are claimed by the compatibility paths.
 
 ## Session handoff template
 
