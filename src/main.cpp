@@ -52,7 +52,11 @@ static uint32_t _atoi(const char* sp) {
     #include <SD.h>
     #include <Preferences.h>
     #ifndef PIN_SD_CS
-      #define PIN_SD_CS 39      // T-Deck microSD chip-select (V4-R8 sets 3 in the env)
+      #if defined(TLORA_PAGER)
+        #define PIN_SD_CS PAGER_PIN_SD_CS
+      #else
+        #define PIN_SD_CS 39    // T-Deck microSD chip-select (V4-R8 sets 3 in the env)
+      #endif
     #endif
   #endif
   extern "C" void set_boot_phase(int phase);
@@ -477,10 +481,10 @@ void setup() {
   bool sd_storage = false;
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
   {
-   #if defined(HELTEC_LORA_V4_R8)
+   #if defined(TLORA_PAGER)
+    extern SPIClass* tloraPagerSharedSPI();    // display/radio/SD shared bus
+   #elif defined(HELTEC_LORA_V4_R8)
     extern SPIClass* heltecV4R8SharedSPI();   // FSPI, shared with the TFT (CS=3)
-   #elif defined(TLORA_PAGER)
-    extern SPIClass* tloraPagerSharedSPI();   // the display/radio's shared SPIClass (#193)
    #else
     extern SPIClass* tdeckSharedSPI();        // LoRa SPI bus
    #endif
@@ -506,14 +510,41 @@ void setup() {
     // device has no usable SPIFFS, the user opted in, or it's a brand-new device.
     bool want_full_sd = !spiffs_ok || use_sd_pref || fresh_install;
 
-   #if defined(HELTEC_LORA_V4_R8)
-    SPIClass* _spi = heltecV4R8SharedSPI();
-   #elif defined(TLORA_PAGER)
+   #if defined(TLORA_PAGER)
     SPIClass* _spi = tloraPagerSharedSPI();
+   #elif defined(HELTEC_LORA_V4_R8)
+    SPIClass* _spi = heltecV4R8SharedSPI();
    #else
     SPIClass* _spi = tdeckSharedSPI();
-   #endif
+    #endif
     bool sd_mounted = false;
+#if defined(TLORA_PAGER)
+    if (!_spi) {
+      Serial.println("[BOOT] SD: shared SPI unavailable");
+    } else if (!board.sdCardPresent()) {
+      Serial.println("[BOOT] SD: no card detected");
+    } else {
+      // Match LilyGo's pager bring-up: the card shares the already-running
+      // display/radio SPIClass and gets one conservative 4 MHz mount attempt.
+      // Do not tear down that live shared bus or hide arbitration bugs behind
+      // delays/retry ladders.
+      Serial.println("[BOOT] SD: card detected; mounting at 4 MHz");
+      const bool sd_begin_ok = SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6);
+      sd_mounted = sd_begin_ok && SD.cardType() != CARD_NONE;
+      if (!sd_mounted) {
+        if (sd_begin_ok) {
+          // Release only the unusable mount created above. SD.end() unregisters
+          // this SD VFS; it does not stop the shared SPIClass used by TFT/radio.
+          SD.end();
+        }
+        // Keep the board bring-up invariant explicit even if the SD library
+        // changed this pin while unwinding a failed mount.
+        pinMode(PIN_SD_CS, OUTPUT);
+        digitalWrite(PIN_SD_CS, HIGH);
+      }
+      Serial.printf("[BOOT] SD mount: %s\n", sd_mounted ? "ok" : "failed");
+    }
+#else
     if (_spi) {
       // Try to mount the card on EVERY boot: even a device that keeps identity on SPIFFS
       // wants its churn-heavy contacts/channels on the card.
@@ -562,6 +593,7 @@ void setup() {
         }
       }
     }
+#endif
     if (sd_mounted) {
       g_contacts_on_sd = true;   // every branch below routes contacts/channels to the card
       if (want_full_sd) {
