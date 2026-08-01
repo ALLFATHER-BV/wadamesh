@@ -10,7 +10,6 @@
 #include <SPIFFS.h>
 #include <stddef.h>   // offsetof
 #include <string.h>   // memcpy
-#include <vector>     // writeUseSdToSpiffsKv record list
 
 static const char* TOUCH_NS = "touch";
 
@@ -30,11 +29,10 @@ static bool s_begun = false;
 // keys too. "use_sd" is mirrored to NVS on every UI toggle (main.cpp reads it at
 // boot via touchPrefsReadUseSdAtBoot); "setup_ok" is still NVS-only.
 //
-// On first run with the blob absent we read every legacy per-key into s_cfg, write
-// "cfg" ONCE, and only after that durable write do we remove() the legacy keys to
-// reclaim their entries. The write-before-remove ordering makes the migration
-// crash-safe and idempotent (a power-cut before the write just re-migrates next
-// boot; one after it finds "cfg" present and skips). `magic` rejects a garbage /
+// On first run with the blob absent we read every legacy per-key into s_cfg, add
+// "cfg", and remove the superseded file keys in the same queued RAM snapshot.
+// The released .kv remains the fallback until that complete A/B snapshot verifies,
+// making the migration crash-safe and idempotent. `magic` rejects a garbage /
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
@@ -215,8 +213,8 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.hist_sync_after    = 2;     // chat flush: 2 failed background writes -> synchronous loop-task fallback
 }
 
-// Persist the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
-// discipline every setter in this file uses. Returns true on a durable write.
+// Update the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
+// discipline every setter in this file uses. File mode queues a coalesced write.
 static bool cfgFlush() {
   s_prefs.end();
   if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = false; return false; }
@@ -327,9 +325,8 @@ static void cfgLoadOrMigrate() {
     }
   }
 
-  // Write "cfg" ONCE. Only after a durable write do we reclaim the legacy keys.
-  // If the write fails (e.g. NVS full / SD missing) we keep the legacy keys
-  // intact and retry the whole migration on the next boot.
+  // Add "cfg" and retire the old file keys in one RAM transaction. The A/B
+  // worker commits the complete result; until then the released .kv is intact.
   if (cfgFlush()) {
     s_prefs.end();
     if (s_prefs.begin(TOUCH_NS, false)) {
@@ -376,6 +373,10 @@ void touchPrefsReload() {
   s_cfg_loaded = false;
   touchPrefsBegin();
 }
+
+void touchPrefsTick(uint32_t now_ms) { SdNvsPrefs::tick(now_ms); }
+bool touchPrefsFlush(uint32_t timeout_ms) { return SdNvsPrefs::flush(timeout_ms); }
+bool touchPrefsIoBusy() { return SdNvsPrefs::busy(); }
 
 // Arduino's Preferences::getString()/getBytes() emit an [E] nvs_get_* "NOT_FOUND"
 // log every time a key is absent — which floods the (USB-CDC) console on a fresh
@@ -1234,36 +1235,23 @@ bool touchPrefsSetHomeIsDrawer(bool on) {
 // the data loads, so changing it needs a reboot. Key "use_sd" in the "touch"
 // namespace — main.cpp must see the same value the UI toggle writes.
 static const char* KEY_USE_SD_STORAGE = "use_sd";
-static const char* TOUCH_KV_BOOT_PATH = "/prefs/touch.kv";
-
-// SdNvsPrefs file mode writes touch.kv only — parse a bool for boot migration.
-static bool readBoolFromTouchKvFile(const char* want_key) {
-  if (!SPIFFS.exists(TOUCH_KV_BOOT_PATH)) return false;
-  File f = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_READ);
-  if (!f) return false;
-  while (f.available() > 0) {
-    int kl = f.read();
-    if (kl <= 0 || kl > 15) break;
-    char k[16] = {0};
-    if (f.read((uint8_t*)k, kl) != kl) break;
-    int lo = f.read(), hi = f.read();
-    if (lo < 0 || hi < 0) break;
-    size_t vl = (size_t)lo | ((size_t)hi << 8);
-    if (vl > 2048) break;
-    if (strncmp(k, want_key, sizeof k) == 0) {
-      const bool on = (vl >= 1) && (f.read() != 0);
-      f.close();
-      return on;
-    }
-    for (size_t i = 0; i < vl; ++i) {
-      if (f.read() < 0) { f.close(); return false; }
-    }
-  }
-  f.close();
-  return false;
-}
+static const char* BOOT_PREFS_NS = "bootprefs";
 
 bool touchPrefsReadUseSdAtBoot() {
+  bool file_val = false;
+  bool found = SdNvsPrefs::readFileBool((fs::FS*)&SPIFFS, "/prefs", BOOT_PREFS_NS,
+                                       KEY_USE_SD_STORAGE, file_val);
+  // Once present, the explicit boot namespace is authoritative. This lets a
+  // Launcher device recover even if its best-effort NVS mirror is stale.
+  if (found) {
+    Preferences mirror;
+    if (mirror.begin(TOUCH_NS, false)) {
+      mirror.putBool(KEY_USE_SD_STORAGE, file_val);
+      mirror.end();
+    }
+    return file_val;
+  }
+
   bool nvs_val = false;
   Preferences p;
   if (p.begin(TOUCH_NS, true)) {
@@ -1271,69 +1259,22 @@ bool touchPrefsReadUseSdAtBoot() {
     p.end();
   }
   if (nvs_val) return true;
-  const bool file_val = readBoolFromTouchKvFile(KEY_USE_SD_STORAGE);
-  if (file_val) {
-    Serial.println("[BOOT] use_sd read from /prefs/touch.kv (syncing to NVS)");
+  // One-time migration for builds that stored the boot flag inside touch.kv.
+  found = SdNvsPrefs::readFileBool((fs::FS*)&SPIFFS, "/prefs", TOUCH_NS,
+                                   KEY_USE_SD_STORAGE, file_val);
+  if (found && file_val) {
+    Serial.println("[BOOT] use_sd read from SPIFFS boot prefs (syncing to NVS)");
     if (p.begin(TOUCH_NS, false)) {
       p.putBool(KEY_USE_SD_STORAGE, true);
       p.end();
     }
   }
-  return file_val;
+  return found && file_val;
 }
 
 bool touchPrefsGetUseSdStorage() {
   if (!s_begun) touchPrefsBegin();
   return s_prefs.getBool(KEY_USE_SD_STORAGE, false);   // default = SPIFFS
-}
-
-// Rewrite (or create) the SPIFFS copy of touch.kv with use_sd set, keeping every
-// other record. Needed because the boot storage decision can only read SPIFFS
-// (SD isn't mounted yet, see touchPrefsReadUseSdAtBoot): when prefs actively
-// live on the SD card, the toggle must land in BOTH file copies — otherwise
-// installs with unusable NVS (Launcher) could turn SD storage on but never OFF
-// again (the stale SPIFFS true would win every boot). PR #123 follow-up.
-static void writeUseSdToSpiffsKv(bool on) {
-  struct Rec { char k[16]; std::vector<uint8_t> v; };
-  std::vector<Rec> recs;
-  File f = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_READ);
-  if (f) {
-    while (f.available() > 0 && recs.size() < 256) {
-      int kl = f.read();
-      if (kl <= 0 || kl > 15) break;
-      Rec r{};
-      if (f.read((uint8_t*)r.k, kl) != kl) break;
-      int lo = f.read(), hi = f.read();
-      if (lo < 0 || hi < 0) break;
-      size_t vl = (size_t)lo | ((size_t)hi << 8);
-      if (vl > 2048) break;
-      r.v.resize(vl);
-      if (vl && f.read(r.v.data(), vl) != (int)vl) break;
-      recs.push_back(std::move(r));
-    }
-    f.close();
-  }
-  bool found = false;
-  for (auto& r : recs) {
-    if (strncmp(r.k, KEY_USE_SD_STORAGE, sizeof r.k) == 0) { r.v.assign(1, on ? 1 : 0); found = true; }
-  }
-  if (!found) {
-    Rec r{};
-    strncpy(r.k, KEY_USE_SD_STORAGE, sizeof r.k - 1);
-    r.v.assign(1, on ? 1 : 0);
-    recs.push_back(std::move(r));
-  }
-  File w = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_WRITE);   // truncate + rewrite
-  if (!w) return;
-  for (auto& r : recs) {
-    size_t kl = strnlen(r.k, sizeof r.k), vl = r.v.size();
-    w.write((uint8_t)kl);
-    w.write((const uint8_t*)r.k, kl);
-    w.write((uint8_t)(vl & 0xFF));
-    w.write((uint8_t)((vl >> 8) & 0xFF));
-    if (vl) w.write(r.v.data(), vl);
-  }
-  w.close();
 }
 
 bool touchPrefsSetUseSdStorage(bool use_sd) {
@@ -1351,11 +1292,12 @@ bool touchPrefsSetUseSdStorage(bool use_sd) {
     nvs.putBool(KEY_USE_SD_STORAGE, use_sd);
     nvs.end();
   }
-  // When prefs live on the SD card, boot's fallback still reads the SPIFFS
-  // copy — keep it in sync so the toggle works in BOTH directions there.
-  fs::FS* ffs = SdNvsPrefs::fileFs();
-  if (ffs && ffs != (fs::FS*)&SPIFFS) writeUseSdToSpiffsKv(use_sd);
-  return ok;
+  // The boot storage decision happens before SD is mounted. Keep a tiny,
+  // crash-safe SPIFFS A/B namespace as the Launcher-safe fallback regardless
+  // of where the rest of the preferences currently live.
+  const bool boot_ok = SdNvsPrefs::writeFileBool((fs::FS*)&SPIFFS, "/prefs", BOOT_PREFS_NS,
+                                                 KEY_USE_SD_STORAGE, use_sd);
+  return ok && boot_ok;
 }
 
 // UI language index (UiLang enum in i18n.h; 0 = English). Read at boot to pick
