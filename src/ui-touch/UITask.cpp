@@ -43709,16 +43709,23 @@ static bool    s_ui_data_boot_finalized = false;
 // purge history that was never loaded into RAM; switching a 5000-record SD ring
 // to SPIFFS can fill the small internal partition.
 #if defined(TLORA_PAGER)
-static bool uiHistoryStoreExists(fs::FS& fs, const char* root) {
+extern bool meshcomodSdMigrationComplete();
+static bool uiHistoryStoreExists(fs::FS& fs, const char* root,
+                                 bool trust_segment_commit = true) {
   // Thread metadata by itself is not a message store. It can land before a
   // larger message file fails during SPIFFS -> SD migration; treating that one
   // small file as authoritative would hide the complete SPIFFS history.
-  const char* files[] = {
-    k_ui_msgs_path, k_ui_history_path, k_ui_seg_ok,
-  };
+  const char* files[] = { k_ui_msgs_path, k_ui_history_path };
   char path[64];
   for (const char* file : files) {
     snprintf(path, sizeof path, "%s%s", root, file);
+    if (fs.exists(path)) return true;
+  }
+  // store.ok commits a coherent segment set on its native filesystem. During
+  // a cross-filesystem copy it may arrive before later segments, so the SD copy
+  // is authoritative only after the outer migration marker was committed last.
+  if (trust_segment_commit) {
+    snprintf(path, sizeof path, "%s%s", root, k_ui_seg_ok);
     if (fs.exists(path)) return true;
   }
   return false;
@@ -43765,9 +43772,14 @@ static bool uiDataFsReady() {
   // not hide a Pager history that already lives in SPIFFS; keep using that
   // established store instead of silently re-homing it without a migration.
   if (fmSdTryMount()) {
-    const bool sd_has_history = uiHistoryStoreExists(SD, "/meshcomod");
+    const bool sd_migration_complete = meshcomodSdMigrationComplete();
+    const bool sd_has_history = uiHistoryStoreExists(
+        SD, "/meshcomod", sd_migration_complete);
     const bool spiffs_ready = SPIFFS.begin(false);
-    if (!sd_has_history && spiffs_ready && uiHistoryStoreExists(SPIFFS, "")) {
+    const bool spiffs_has_history =
+        spiffs_ready && uiHistoryStoreExists(SPIFFS, "");
+    if (spiffs_has_history &&
+        (!sd_migration_complete || !sd_has_history)) {
       s_ui_data_fs = &SPIFFS;
       s_ui_data_root[0] = '\0';
       return true;

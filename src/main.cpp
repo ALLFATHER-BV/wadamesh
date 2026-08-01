@@ -209,21 +209,28 @@ void halt() {
 // "lost profile settings". The data was never gone — it was orphaned on SPIFFS.
 // Copies every SPIFFS file into SD:/meshcomod ("/prefs/<ns>.kv" flattens to
 // "/meshcomod/<ns>.kv", matching SdNvsPrefs's SD layout). Returns true only when
-// every file and a last-written completion marker landed on the card — the caller
-// must NOT adopt the card otherwise. force=true (the Settings "Copy internal data to SD" recovery button)
+// every file landed on the card; Pager additionally requires a last-written
+// completion marker. The caller must NOT adopt the card otherwise. force=true
+// (the Settings "Copy internal data to SD" recovery button)
 // overwrites whatever the card holds; the boot path never clobbers existing files.
 // Both filesystems must be mounted by the caller.
+#if defined(TLORA_PAGER)
 static constexpr const char* kSdMigrationComplete = "/meshcomod/.spiffs-migration-v1";
 static constexpr const char* kSdMigrationCompleteTmp = "/meshcomod/.spiffs-migration-v1.tmp";
+bool meshcomodSdMigrationComplete() { return SD.exists(kSdMigrationComplete); }
+#endif
 
 bool meshcomodMigrateSpiffsToSd(bool force) {
   if (!SPIFFS.exists("/identity/_main.id")) return false;   // nothing worth adopting
   const bool sd_identity_preexisting = SD.exists("/meshcomod/identity/_main.id");
-  // The marker is the commit record. Remove it before an explicit overwrite so
-  // a reset halfway through cannot leave the old marker blessing mixed data.
+  // On Pager the marker is the cross-file commit record. Remove it before an
+  // explicit overwrite so a reset halfway through cannot leave the old marker
+  // blessing mixed data.
   if (force) {
+#if defined(TLORA_PAGER)
     SD.remove(kSdMigrationComplete);
     SD.remove(kSdMigrationCompleteTmp);
+#endif
   }
   SD.mkdir("/meshcomod");
   SD.mkdir("/meshcomod/identity");
@@ -296,6 +303,7 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
   Serial.printf("[BOOT] SPIFFS -> SD migration: %d copied, %d failed, identity %s\n",
                 copied, failed, identity_ok ? "ok" : "MISSING");
   bool complete = identity_ok && failed == 0;
+#if defined(TLORA_PAGER)
   if (complete) {
     SD.remove(kSdMigrationCompleteTmp);
     File marker = SD.open(kSdMigrationCompleteTmp, FILE_WRITE);
@@ -311,6 +319,7 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
       complete = false;
     }
   }
+#endif
   if (!complete && !sd_identity_preexisting &&
       SD.exists("/meshcomod/identity/_main.id")) {
     // This attempt introduced the adoption key. Roll it back so a missing NVS
