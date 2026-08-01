@@ -2214,6 +2214,14 @@ static bool g_radio_preset_cb_silent = false;
 
 static void kbMirrorSyncToReal();  // keyboard mirror strip; defined below
 
+// #161: duty% -> the core's airtime_factor (Dispatcher: duty = 1/(1+af)), clamped to the
+// core's 0..9 range (af 9 = 10% duty, the regulatory floor the UI offers).
+static float meshPresetAirtimeFactor(uint8_t pct) {
+  if (pct == 0 || pct >= 100) return 0.0f;                 // unlimited
+  float af = (100.0f / (float)pct) - 1.0f;
+  return af > 9.0f ? 9.0f : af;
+}
+
 static int findMatchingMeshRadioPreset(const NodePrefs* prefs) {
   if (!prefs) return -1;
   for (size_t i = 0; i < k_mesh_radio_preset_count; ++i) {
@@ -2223,11 +2231,32 @@ static int findMatchingMeshRadioPreset(const NodePrefs* prefs) {
     if (prefs->sf != p.sf) continue;
     if (prefs->cr != p.cr) continue;
     if (prefs->tx_power_dbm != p.tx_dbm) continue;
-    const double exp_af = static_cast<double>(p.airtime_limit_pct) / 100.0;
-    if (std::fabs(static_cast<double>(prefs->airtime_factor) - exp_af) > 0.05) continue;
+    const double exp_af = (double)meshPresetAirtimeFactor(p.airtime_limit_pct);
+    const double old_af = static_cast<double>(p.airtime_limit_pct) / 100.0;   // pre-#161 buggy write
+    const double cur    = static_cast<double>(prefs->airtime_factor);
+    if (std::fabs(cur - exp_af) > 0.05 && std::fabs(cur - old_af) > 0.05) continue;
     return static_cast<int>(i);
   }
   return -1;
+}
+
+// #161 boot heal: devices configured by the OLD preset code carry af = pct/100 (~91% duty on a
+// 10% preset). If the radio params match a preset exactly and the stored factor matches the OLD
+// buggy value (and NOT a deliberate user choice near it -- the exact-preset match is the guard),
+// rewrite it to the correct factor once and persist.
+static void healPresetAirtimeFactor() {
+  NodePrefs* prefs = the_mesh.getNodePrefs();
+  if (!prefs) return;
+  const int m = findMatchingMeshRadioPreset(prefs);
+  if (m < 0) return;
+  const MeshRadioPreset& p = k_mesh_radio_presets[m];
+  const float good = meshPresetAirtimeFactor(p.airtime_limit_pct);
+  const float bad  = (float)p.airtime_limit_pct / 100.0f;
+  if (std::fabs(prefs->airtime_factor - bad) <= 0.05f &&
+      std::fabs(prefs->airtime_factor - good) > 0.05f) {
+    prefs->airtime_factor = good;
+    the_mesh.savePrefs();
+  }
 }
 
 static void applyMeshRadioPresetFields(unsigned preset_idx) {
@@ -2245,7 +2274,10 @@ static void applyMeshRadioPresetFields(unsigned preset_idx) {
   lv_textarea_set_text(g_set_modal.cr_ta, buf);
   snprintf(buf, sizeof(buf), "%d", static_cast<int>(p.tx_dbm));
   lv_textarea_set_text(g_set_modal.tx_ta, buf);
-  const float af = static_cast<float>(p.airtime_limit_pct) / 100.0f;
+  // #161: MeshCore's airtime_factor is a TX pacing multiplier -- the core's Dispatcher runs at
+  // duty = 1/(1+af). A 10% duty limit therefore needs af = 9, NOT 0.10: the old pct/100 write
+  // configured every preset user's radio to ~91% duty (and the Home meter honestly said so).
+  const float af = meshPresetAirtimeFactor(p.airtime_limit_pct);
   snprintf(buf, sizeof(buf), "%.2f", static_cast<double>(af));
   lv_textarea_set_text(g_set_modal.airtime_ta, buf);
 }
@@ -44180,6 +44212,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _display    = display;
   _sensors    = sensors;
   _node_prefs = node_prefs;
+
+  // #161 one-time heal: presets used to write airtime_factor = pct/100 (a 10% preset
+  // configured ~91% duty). Exact-preset matches with the old value get the correct
+  // factor rewritten + persisted; see healPresetAirtimeFactor for the guard.
+  healPresetAirtimeFactor();
 
 #if defined(ESP32)
   // Clock floor (#89): restore the highest epoch this device ever handed out so
