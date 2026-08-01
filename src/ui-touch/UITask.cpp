@@ -45093,13 +45093,6 @@ void UITask::onLvTabChanged(int tab_index) {
     if (tab_index > k_last) tab_index = k_last;
   }
   _touch_screen = static_cast<TouchUiScreen>(static_cast<uint8_t>(tab_index));
-#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
-  SdNvsPrefs prefs;
-  if (prefs.begin("meshTouch", false)) {
-    prefs.putUChar("tab", static_cast<uint8_t>(tab_index));
-    prefs.end();
-  }
-#endif
 }
 
 void UITask::appendDiag(const char* message) {
