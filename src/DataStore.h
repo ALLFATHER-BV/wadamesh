@@ -74,6 +74,13 @@ public:
   void saveChannels(DataStoreHost* host);
   void migrateToSecondaryFS();
   uint8_t getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]);
+  uint8_t getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[],
+                       size_t dest_capacity);
+  // Returns the byte count, 0 when absent, or -1 when the stored blob is
+  // malformed/too large for the supplied destination. This lets migrations
+  // distinguish "no old state" from "old state exists but is unsafe to read".
+  int getBlobByKeyBounded(const uint8_t key[], int key_len,
+                          uint8_t dest_buf[], size_t dest_capacity);
   bool putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len);
   bool deleteBlobByKey(const uint8_t key[], int key_len);
   File openRead(const char* filename);

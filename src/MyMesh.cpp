@@ -3,6 +3,7 @@
 #include "friendmesh/people/FriendMeshChannelInvite.h"
 #include "friendmesh/people/FriendMeshBlePresence.h"
 #include "friendmesh/people/FriendMeshChannelRoster.h"
+#include "friendmesh/people/FriendMeshGroupStorage.h"
 #include "friendmesh/people/FriendMeshFriendRequest.h"
 #include "friendmesh/navigation/FriendMeshGroupCoordination.h"
 #if defined(ESP32)
@@ -60,6 +61,34 @@ static const char* fmFriendLinkActionName(
     default: return "UNKNOWN";
   }
 }
+
+template <typename T>
+class FmScopedHeapArray {
+ public:
+  explicit FmScopedHeapArray(size_t count = 1)
+      : count_(count), values_(static_cast<T*>(malloc(sizeof(T) * count))) {
+    if (values_) memset(values_, 0, sizeof(T) * count_);
+  }
+
+  ~FmScopedHeapArray() {
+    if (!values_) return;
+    memset(values_, 0, sizeof(T) * count_);
+    free(values_);
+  }
+
+  FmScopedHeapArray(const FmScopedHeapArray&) = delete;
+  FmScopedHeapArray& operator=(const FmScopedHeapArray&) = delete;
+
+  explicit operator bool() const { return values_ != nullptr; }
+  T* get() { return values_; }
+  T& operator*() { return *values_; }
+  T* operator->() { return values_; }
+  T& operator[](size_t index) { return values_[index]; }
+
+ private:
+  size_t count_;
+  T* values_;
+};
 #endif
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
@@ -2307,10 +2336,32 @@ bool MyMesh::uiIsFreshZeroHopContact(
 
 bool MyMesh::uiIsFriendMeshPrivateGroup(int channel_idx) {
   friendmesh::ChannelRoster roster = {};
-  if (!friendmeshLoadChannelRoster(channel_idx, roster, false)) return false;
-  const friendmesh::ChannelRosterMember* self =
-      friendmesh::findChannelRosterMember(roster, self_id.pub_key);
-  return self && self->state == friendmesh::ChannelRosterState::Joined;
+  if (friendmeshLoadChannelRoster(channel_idx, roster, false)) {
+    const friendmesh::ChannelRosterMember* self =
+        friendmesh::findChannelRosterMember(roster, self_id.pub_key);
+    return self && self->state == friendmesh::ChannelRosterState::Joined;
+  }
+  // Preserve FriendMesh classification when its durable metadata exists but
+  // needs recovery. Otherwise a corrupt group would silently look like an
+  // ordinary channel and hide the recovery-relevant controls/status.
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) return false;
+  bool anySlotPresent = false;
+  friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (anySlotPresent) return true;
+  if (!_store) return false;
+  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+  uint8_t legacyKey[8] = {};
+  uint8_t legacy[friendmesh::kChannelRosterEncodedBytes] = {};
+  return friendmeshChannelTag(channel_idx, tag, legacyKey) &&
+      _store->getBlobByKeyBounded(legacyKey, sizeof(legacyKey), legacy,
+                                  sizeof(legacy)) != 0;
+}
+
+bool MyMesh::uiFriendMeshGroupStorageReadable(int channel_idx) {
+  friendmesh::ChannelRoster roster = {};
+  return friendmeshLoadChannelRoster(channel_idx, roster, false);
 }
 
 bool MyMesh::uiCreateFriendMeshPrivateGroup(int channel_idx) {
@@ -2360,47 +2411,380 @@ int MyMesh::friendmeshFindChannelByTag(
   return -1;
 }
 
+namespace {
+
+void fmGroupStorageSlotPath(
+    const uint8_t binding[friendmesh::kGroupStorageBindingBytes],
+    uint8_t slot, char* destination, size_t capacity) {
+  char hex[friendmesh::kGroupStorageBindingBytes * 2 + 1] = {};
+  mesh::Utils::toHex(hex, binding, friendmesh::kGroupStorageBindingBytes);
+  snprintf(destination, capacity, "/fm_group_%s.%u", hex,
+           static_cast<unsigned>(slot));
+}
+
+bool fmReadBoundedFile(DataStore* store, const char* path, uint8_t* destination,
+                       size_t capacity, size_t& length, bool& present) {
+  length = 0;
+  present = false;
+  if (!store || !path || !destination || capacity == 0) return false;
+  File file = store->openRead(path);
+  if (!file) return true;
+  present = true;
+  while (length < capacity) {
+    const int read = file.read(destination + length, capacity - length);
+    if (read <= 0) break;
+    length += static_cast<size_t>(read);
+  }
+  const bool overflow = file.read() >= 0;
+  file.close();
+  if (overflow || length == 0) {
+    memset(destination, 0, capacity);
+    length = 0;
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
+bool MyMesh::friendmeshGroupStorageBinding(
+    int channel_idx,
+    uint8_t binding[friendmesh::kGroupStorageBindingBytes]) {
+  if (!binding) return false;
+  ChannelDetails channel = {};
+  if (channel_idx < 0 || !getChannel(channel_idx, channel) ||
+      !channel.name[0]) return false;
+  static const uint8_t kNamespace[] = {'F', 'M', 'G', 'S', '2'};
+  mesh::Utils::sha256(binding, friendmesh::kGroupStorageBindingBytes,
+                      kNamespace, sizeof(kNamespace),
+                      channel.channel.secret, sizeof(channel.channel.secret));
+  memset(&channel, 0, sizeof(channel));
+  return true;
+}
+
+friendmesh::ResultCode MyMesh::friendmeshLoadGroupStorageRecord(
+    int channel_idx, friendmesh::GroupStorageRecord& record,
+    uint8_t* active_slot, bool* any_slot_present) {
+  friendmesh::clearGroupStorageRecord(record);
+  if (active_slot) *active_slot = 0;
+  if (any_slot_present) *any_slot_present = false;
+  if (!_store) return friendmesh::ResultCode::StorageUnavailable;
+  uint8_t binding[friendmesh::kGroupStorageBindingBytes] = {};
+  if (!friendmeshGroupStorageBinding(channel_idx, binding))
+    return friendmesh::ResultCode::InvalidArgument;
+  FmScopedHeapArray<uint8_t> encoded(
+      friendmesh::kGroupStorageRecordMaxBytes * 2);
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> candidates(2);
+  if (!encoded || !candidates) {
+    FM_FRIEND_LOG("GROUP STORE load workspace allocation failed");
+    return friendmesh::ResultCode::StorageUnavailable;
+  }
+  bool present[2] = {};
+  bool valid[2] = {};
+  size_t lengths[2] = {};
+  for (uint8_t slot = 0; slot < 2; ++slot) {
+    char path[64] = {};
+    fmGroupStorageSlotPath(binding, slot, path, sizeof(path));
+    uint8_t* slotBytes = encoded.get() +
+        slot * friendmesh::kGroupStorageRecordMaxBytes;
+    if (!fmReadBoundedFile(_store, path, slotBytes,
+                           friendmesh::kGroupStorageRecordMaxBytes,
+                           lengths[slot], present[slot])) {
+      FM_FRIEND_LOG("GROUP STORE slot=%u invalid-length", slot);
+      continue;
+    }
+    if (!present[slot]) continue;
+    valid[slot] = friendmesh::decodeGroupStorageRecord(
+        slotBytes, lengths[slot], candidates[slot]) ==
+        friendmesh::ResultCode::Ok &&
+        memcmp(candidates[slot].channelBinding, binding,
+               sizeof(binding)) == 0;
+    if (!valid[slot]) FM_FRIEND_LOG("GROUP STORE slot=%u corrupt", slot);
+  }
+  if (any_slot_present) *any_slot_present = present[0] || present[1];
+  const bool equalBytes = valid[0] && valid[1] &&
+      lengths[0] == lengths[1] &&
+      memcmp(encoded.get(),
+             encoded.get() + friendmesh::kGroupStorageRecordMaxBytes,
+             lengths[0]) == 0;
+  uint8_t selected = 0;
+  const friendmesh::ResultCode selectedResult =
+      friendmesh::selectGroupStorageSlot(
+          valid[0], candidates[0].generation,
+          valid[1], candidates[1].generation, equalBytes, selected);
+  if (selectedResult == friendmesh::ResultCode::Ok) {
+    record = candidates[selected];
+    if (active_slot) *active_slot = selected;
+    if (present[selected ^ 1U] && !valid[selected ^ 1U])
+      FM_FRIEND_LOG("GROUP STORE recovered slot=%u generation=%lu", selected,
+                    (unsigned long)record.generation);
+  } else if ((present[0] || present[1]) &&
+             selectedResult == friendmesh::ResultCode::NotFound) {
+    return friendmesh::ResultCode::CorruptData;
+  }
+  return selectedResult;
+}
+
+bool MyMesh::friendmeshPopulateStoredRoster(
+    const friendmesh::ChannelRoster& roster,
+    friendmesh::GroupStorageRecord& record) {
+  FmScopedHeapArray<friendmesh::GroupStorageMember> previous(
+      friendmesh::kChannelRosterMaxMembers);
+  if (!previous) {
+    FM_FRIEND_LOG("GROUP STORE roster workspace allocation failed");
+    return false;
+  }
+  const uint8_t previousCount = record.memberCount;
+  memcpy(previous.get(), record.members, sizeof(record.members));
+  memset(record.members, 0, sizeof(record.members));
+  record.memberCount = 0;
+  for (size_t i = 0; i < roster.memberCount; ++i) {
+    const friendmesh::ChannelRosterMember& source = roster.members[i];
+    const uint8_t* identity = source.pubKeyPrefix;
+    uint8_t identityBytes = friendmesh::kChannelRosterPrefixBytes;
+    uint8_t resolved[PUB_KEY_SIZE] = {};
+    uint8_t matches = 0;
+    if (memcmp(source.pubKeyPrefix, self_id.pub_key,
+               friendmesh::kChannelRosterPrefixBytes) == 0) {
+      memcpy(resolved, self_id.pub_key, sizeof(resolved));
+      matches = 1;
+    }
+    const uint32_t contacts = getNumContacts();
+    for (uint32_t contactIndex = 0; contactIndex < contacts; ++contactIndex) {
+      ContactInfo contact = {};
+      if (!getContactByIdx(contactIndex, contact) ||
+          memcmp(source.pubKeyPrefix, contact.id.pub_key,
+                 friendmesh::kChannelRosterPrefixBytes) != 0) continue;
+      if (matches && memcmp(resolved, contact.id.pub_key,
+                            sizeof(resolved)) != 0) {
+        FM_FRIEND_LOG("GROUP STORE identity-prefix-conflict=%02X%02X%02X",
+                      source.pubKeyPrefix[0], source.pubKeyPrefix[1],
+                      source.pubKeyPrefix[2]);
+        return false;
+      }
+      memcpy(resolved, contact.id.pub_key, sizeof(resolved));
+      matches = 1;
+    }
+    if (matches == 1) {
+      identity = resolved;
+      identityBytes = sizeof(resolved);
+    } else {
+      for (uint8_t oldIndex = 0; oldIndex < previousCount; ++oldIndex) {
+        if (memcmp(previous[oldIndex].publicKey, source.pubKeyPrefix,
+                   friendmesh::kChannelRosterPrefixBytes) != 0) continue;
+        identity = previous[oldIndex].publicKey;
+        identityBytes = previous[oldIndex].publicKeyBytes;
+        break;
+      }
+    }
+    if (friendmesh::setGroupStorageMember(
+            record, identity, identityBytes, source.role, source.state) !=
+        friendmesh::ResultCode::Ok) return false;
+  }
+  record.rekeyRequired = roster.rekeyRequired;
+  return true;
+}
+
+bool MyMesh::friendmeshSaveGroupStorageRecord(
+    int channel_idx, friendmesh::GroupStorageRecord& record) {
+  if (!_store || !_store->writesEnabled()) return false;
+  uint8_t binding[friendmesh::kGroupStorageBindingBytes] = {};
+  if (!friendmeshGroupStorageBinding(channel_idx, binding)) return false;
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> records(2);
+  if (!records) {
+    FM_FRIEND_LOG("GROUP STORE save workspace allocation failed");
+    return false;
+  }
+  friendmesh::GroupStorageRecord& current = records[0];
+  friendmesh::GroupStorageRecord& verified = records[1];
+  uint8_t currentSlot = 0;
+  bool anyPresent = false;
+  const friendmesh::ResultCode loaded = friendmeshLoadGroupStorageRecord(
+      channel_idx, current, &currentSlot, &anyPresent);
+  if (loaded != friendmesh::ResultCode::Ok &&
+      loaded != friendmesh::ResultCode::NotFound) return false;
+  if (loaded == friendmesh::ResultCode::NotFound && anyPresent) return false;
+  memcpy(record.channelBinding, binding, sizeof(binding));
+  record.generation = loaded == friendmesh::ResultCode::Ok
+      ? current.generation + 1 : 1;
+  const uint8_t targetSlot = loaded == friendmesh::ResultCode::Ok
+      ? static_cast<uint8_t>(currentSlot ^ 1U) : 0;
+  FmScopedHeapArray<uint8_t> buffers(
+      friendmesh::kGroupStorageRecordMaxBytes * 2);
+  if (!buffers) {
+    FM_FRIEND_LOG("GROUP STORE encode workspace allocation failed");
+    return false;
+  }
+  uint8_t* encoded = buffers.get();
+  uint8_t* verify = buffers.get() + friendmesh::kGroupStorageRecordMaxBytes;
+  size_t written = 0;
+  if (friendmesh::encodeGroupStorageRecord(
+          record, encoded, friendmesh::kGroupStorageRecordMaxBytes, written) !=
+      friendmesh::ResultCode::Ok) {
+    return false;
+  }
+  char path[64] = {};
+  fmGroupStorageSlotPath(binding, targetSlot, path, sizeof(path));
+  File file = _store->openWrite(_store->getPrimaryFS(), path);
+  const bool wrote = file && file.write(encoded, written) == written;
+  if (file) file.close();
+  size_t verifyLength = 0;
+  bool present = false;
+  const bool verifiedOk = wrote &&
+      fmReadBoundedFile(_store, path, verify,
+                        friendmesh::kGroupStorageRecordMaxBytes,
+                        verifyLength, present) && present &&
+      verifyLength == written &&
+      memcmp(encoded, verify, written) == 0 &&
+      friendmesh::decodeGroupStorageRecord(
+          verify, verifyLength, verified) == friendmesh::ResultCode::Ok &&
+      verified.generation == record.generation;
+  if (!verifiedOk) {
+    _store->removeFile(path);
+    FM_FRIEND_LOG("GROUP STORE commit=failed slot=%u", targetSlot);
+    return false;
+  }
+  FM_FRIEND_LOG("GROUP STORE commit=ok slot=%u generation=%lu members=%u",
+                targetSlot, (unsigned long)record.generation,
+                (unsigned)record.memberCount);
+  return true;
+}
+
+bool MyMesh::friendmeshDeleteGroupStorageRecord(int channel_idx) {
+  uint8_t binding[friendmesh::kGroupStorageBindingBytes] = {};
+  if (!friendmeshGroupStorageBinding(channel_idx, binding)) return false;
+  if (!_store || !_store->writesEnabled()) return false;
+  bool ok = true;
+  for (uint8_t slot = 0; slot < 2; ++slot) {
+    char path[64] = {};
+    fmGroupStorageSlotPath(binding, slot, path, sizeof(path));
+    File existing = _store->openRead(path);
+    const bool present = static_cast<bool>(existing);
+    if (existing) existing.close();
+    if (present && !_store->removeFile(path)) ok = false;
+  }
+  return ok;
+}
+
 bool MyMesh::friendmeshLoadChannelRoster(
     int channel_idx, friendmesh::ChannelRoster& roster,
     bool initialize_self_admin) {
   friendmesh::clearChannelRoster(roster);
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) {
+    FM_FRIEND_LOG("GROUP STORE roster-load allocation failed");
+    return false;
+  }
+  bool anySlotPresent = false;
+  const friendmesh::ResultCode stored = friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (stored == friendmesh::ResultCode::Ok)
+    return friendmesh::groupStorageRecordToRoster(*record, roster) ==
+        friendmesh::ResultCode::Ok;
+  if (stored != friendmesh::ResultCode::NotFound || anySlotPresent) {
+    FM_FRIEND_LOG("GROUP STORE roster-load blocked result=%u",
+                  static_cast<unsigned>(stored));
+    return false;
+  }
+
+  // One-time v1 migration. Reads are explicitly bounded so corrupt legacy
+  // state cannot be reinterpreted as an empty group.
   uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
   uint8_t blobKey[8] = {};
   if (!friendmeshChannelTag(channel_idx, tag, blobKey)) return false;
   uint8_t encoded[friendmesh::kChannelRosterEncodedBytes] = {};
-  const uint8_t length = _store->getBlobByKey(
-      blobKey, sizeof(blobKey), encoded);
+  const int length = _store->getBlobByKeyBounded(
+      blobKey, sizeof(blobKey), encoded, sizeof(encoded));
+  if (length < 0) return false;
   if (length > 0) {
-    return friendmesh::decodeChannelRoster(encoded, length, roster) ==
-           friendmesh::ResultCode::Ok;
+    if (friendmesh::decodeChannelRoster(encoded, length, roster) !=
+        friendmesh::ResultCode::Ok) return false;
+  } else {
+    if (!initialize_self_admin) return false;
+    if (friendmesh::setChannelRosterMember(
+            roster, self_id.pub_key,
+            friendmesh::ChannelRosterRole::Admin,
+            friendmesh::ChannelRosterState::Joined) !=
+        friendmesh::ResultCode::Ok) return false;
   }
-  if (!initialize_self_admin) return false;
-  return friendmesh::setChannelRosterMember(
-             roster, self_id.pub_key,
-             friendmesh::ChannelRosterRole::Admin,
-             friendmesh::ChannelRosterState::Joined) ==
-         friendmesh::ResultCode::Ok;
+  if (!_store || !_store->writesEnabled()) {
+    FM_FRIEND_LOG("GROUP STORE migration blocked read-only");
+    return true;
+  }
+  if (!friendmeshPopulateStoredRoster(roster, *record)) return false;
+  uint8_t coordinationKey[8] = {};
+  if (!friendmeshCoordinationBlobKey(channel_idx, coordinationKey))
+    return false;
+  uint8_t coordinationBytes[friendmesh::kGroupCoordinationStateMaxBytes] = {};
+  const int coordinationLength = _store->getBlobByKeyBounded(
+      coordinationKey, sizeof(coordinationKey), coordinationBytes,
+      sizeof(coordinationBytes));
+  if (coordinationLength < 0 ||
+      (coordinationLength > 0 &&
+       friendmesh::decodeGroupCoordinationState(
+           coordinationBytes, coordinationLength, record->coordination) !=
+       friendmesh::ResultCode::Ok)) return false;
+  const bool migrated = friendmeshSaveGroupStorageRecord(channel_idx, *record);
+  memset(encoded, 0, sizeof(encoded));
+  memset(coordinationBytes, 0, sizeof(coordinationBytes));
+  if (migrated)
+    FM_FRIEND_LOG("GROUP STORE migrated legacy members=%u",
+                  static_cast<unsigned>(roster.memberCount));
+  return migrated;
 }
 
 bool MyMesh::friendmeshSaveChannelRoster(
     int channel_idx, const friendmesh::ChannelRoster& roster) {
-  uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
-  uint8_t blobKey[8] = {};
-  if (!friendmeshChannelTag(channel_idx, tag, blobKey)) return false;
-  uint8_t encoded[friendmesh::kChannelRosterEncodedBytes] = {};
-  size_t written = 0;
-  if (friendmesh::encodeChannelRoster(
-          roster, encoded, sizeof(encoded), written) !=
-          friendmesh::ResultCode::Ok || written > UINT8_MAX) return false;
-  return _store->putBlobByKey(blobKey, sizeof(blobKey), encoded,
-                              static_cast<uint8_t>(written));
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) {
+    FM_FRIEND_LOG("GROUP STORE roster-save allocation failed");
+    return false;
+  }
+  bool anySlotPresent = false;
+  const friendmesh::ResultCode loaded = friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (loaded != friendmesh::ResultCode::Ok &&
+      (loaded != friendmesh::ResultCode::NotFound || anySlotPresent))
+    return false;
+  if (loaded == friendmesh::ResultCode::NotFound) {
+    uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+    uint8_t legacyRosterKey[8] = {};
+    if (!friendmeshChannelTag(channel_idx, tag, legacyRosterKey)) return false;
+    uint8_t legacyRosterBytes[friendmesh::kChannelRosterEncodedBytes] = {};
+    const int legacyRosterLength = _store->getBlobByKeyBounded(
+        legacyRosterKey, sizeof(legacyRosterKey), legacyRosterBytes,
+        sizeof(legacyRosterBytes));
+    friendmesh::ChannelRoster legacyRoster = {};
+    if (legacyRosterLength < 0 ||
+        (legacyRosterLength > 0 &&
+         (friendmesh::decodeChannelRoster(
+              legacyRosterBytes, legacyRosterLength, legacyRoster) !=
+              friendmesh::ResultCode::Ok ||
+          !friendmeshPopulateStoredRoster(legacyRoster, *record)))) return false;
+    memset(legacyRosterBytes, 0, sizeof(legacyRosterBytes));
+    uint8_t coordinationKey[8] = {};
+    if (!friendmeshCoordinationBlobKey(channel_idx, coordinationKey))
+      return false;
+    uint8_t encoded[friendmesh::kGroupCoordinationStateMaxBytes] = {};
+    const int length = _store->getBlobByKeyBounded(
+        coordinationKey, sizeof(coordinationKey), encoded, sizeof(encoded));
+    if (length < 0 ||
+        (length > 0 && friendmesh::decodeGroupCoordinationState(
+             encoded, length, record->coordination) !=
+             friendmesh::ResultCode::Ok)) return false;
+    memset(encoded, 0, sizeof(encoded));
+  }
+  return friendmeshPopulateStoredRoster(roster, *record) &&
+      friendmeshSaveGroupStorageRecord(channel_idx, *record);
 }
 
 bool MyMesh::friendmeshDeleteChannelRoster(int channel_idx) {
   uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
   uint8_t blobKey[8] = {};
   if (!friendmeshChannelTag(channel_idx, tag, blobKey)) return false;
-  return _store->deleteBlobByKey(blobKey, sizeof(blobKey));
+  const bool recordDeleted = friendmeshDeleteGroupStorageRecord(channel_idx);
+  const bool legacyDeleted = _store->deleteBlobByKey(blobKey, sizeof(blobKey));
+  return recordDeleted && legacyDeleted;
 }
 
 bool MyMesh::friendmeshCoordinationBlobKey(int channel_idx,
@@ -2419,10 +2803,25 @@ bool MyMesh::friendmeshCoordinationBlobKey(int channel_idx,
 bool MyMesh::friendmeshLoadGroupCoordination(
     int channel_idx, friendmesh::GroupCoordinationState& state) {
   friendmesh::clearGroupCoordinationState(state);
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) {
+    FM_FRIEND_LOG("GROUP STORE coordination-load allocation failed");
+    return false;
+  }
+  bool anySlotPresent = false;
+  const friendmesh::ResultCode stored = friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (stored == friendmesh::ResultCode::Ok) {
+    state = record->coordination;
+    return true;
+  }
+  if (stored != friendmesh::ResultCode::NotFound || anySlotPresent) return false;
   uint8_t blobKey[8] = {};
   if (!friendmeshCoordinationBlobKey(channel_idx, blobKey)) return false;
   uint8_t encoded[friendmesh::kGroupCoordinationStateMaxBytes] = {};
-  const uint8_t length = _store->getBlobByKey(blobKey, sizeof(blobKey), encoded);
+  const int length = _store->getBlobByKeyBounded(
+      blobKey, sizeof(blobKey), encoded, sizeof(encoded));
+  if (length < 0) return false;
   if (length == 0) return true;
   return friendmesh::decodeGroupCoordinationState(encoded, length, state) ==
          friendmesh::ResultCode::Ok;
@@ -2430,22 +2829,53 @@ bool MyMesh::friendmeshLoadGroupCoordination(
 
 bool MyMesh::friendmeshSaveGroupCoordination(
     int channel_idx, const friendmesh::GroupCoordinationState& state) {
-  uint8_t blobKey[8] = {};
-  if (!friendmeshCoordinationBlobKey(channel_idx, blobKey)) return false;
-  uint8_t encoded[friendmesh::kGroupCoordinationStateMaxBytes] = {};
-  size_t written = 0;
-  if (friendmesh::encodeGroupCoordinationState(
-          state, encoded, sizeof(encoded), written) !=
-          friendmesh::ResultCode::Ok || written == 0 || written > UINT8_MAX)
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) {
+    FM_FRIEND_LOG("GROUP STORE coordination-save allocation failed");
     return false;
-  return _store->putBlobByKey(blobKey, sizeof(blobKey), encoded,
-                              static_cast<uint8_t>(written));
+  }
+  bool anySlotPresent = false;
+  const friendmesh::ResultCode loaded = friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (loaded != friendmesh::ResultCode::Ok) {
+    if (loaded != friendmesh::ResultCode::NotFound || anySlotPresent)
+      return false;
+    uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
+    uint8_t rosterKey[8] = {};
+    if (!friendmeshChannelTag(channel_idx, tag, rosterKey)) return false;
+    uint8_t rosterBytes[friendmesh::kChannelRosterEncodedBytes] = {};
+    const int rosterLength = _store->getBlobByKeyBounded(
+        rosterKey, sizeof(rosterKey), rosterBytes, sizeof(rosterBytes));
+    friendmesh::ChannelRoster roster = {};
+    if (rosterLength <= 0 || friendmesh::decodeChannelRoster(
+            rosterBytes, rosterLength, roster) != friendmesh::ResultCode::Ok ||
+        !friendmeshPopulateStoredRoster(roster, *record)) return false;
+    memset(rosterBytes, 0, sizeof(rosterBytes));
+  }
+  record->coordination = state;
+  return friendmeshSaveGroupStorageRecord(channel_idx, *record);
 }
 
 bool MyMesh::friendmeshDeleteGroupCoordination(int channel_idx) {
+  bool recordCleared = true;
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record) {
+    FM_FRIEND_LOG("GROUP STORE coordination-delete allocation failed");
+    return false;
+  }
+  bool anySlotPresent = false;
+  const friendmesh::ResultCode loaded = friendmeshLoadGroupStorageRecord(
+      channel_idx, *record, nullptr, &anySlotPresent);
+  if (loaded == friendmesh::ResultCode::Ok) {
+    friendmesh::clearGroupCoordinationState(record->coordination);
+    memset(&record->pending, 0, sizeof(record->pending));
+    recordCleared = friendmeshSaveGroupStorageRecord(channel_idx, *record);
+  } else if (loaded != friendmesh::ResultCode::NotFound || anySlotPresent) {
+    recordCleared = false;
+  }
   uint8_t blobKey[8] = {};
   if (!friendmeshCoordinationBlobKey(channel_idx, blobKey)) return false;
-  return _store->deleteBlobByKey(blobKey, sizeof(blobKey));
+  return recordCleared && _store->deleteBlobByKey(blobKey, sizeof(blobKey));
 }
 
 bool MyMesh::friendmeshSendChannelControl(
@@ -2623,6 +3053,13 @@ bool MyMesh::uiSendFriendMeshGroupCoordination(
     return false;
   friendmesh::GroupCoordinationState state = {};
   if (!friendmeshLoadGroupCoordination(channel_idx, state)) return false;
+  FmScopedHeapArray<friendmesh::GroupStorageRecord> record;
+  if (!record ||
+      friendmeshLoadGroupStorageRecord(channel_idx, *record) !=
+          friendmesh::ResultCode::Ok || record->pending.active) {
+    FM_FRIEND_LOG("GROUP STORE coordination blocked pending-or-unavailable");
+    return false;
+  }
 
   const uint32_t now = getRTCClock()->getCurrentTimeUnique();
   friendmesh::GroupCoordinationEvent event = {};
@@ -2673,12 +3110,40 @@ bool MyMesh::uiSendFriendMeshGroupCoordination(
           event, encoded, sizeof(encoded), written) !=
           friendmesh::ResultCode::Ok || written == 0 ||
       written > MAX_GROUP_DATA_LENGTH) return false;
+  if (friendmesh::applyGroupCoordinationEvent(state, event, roster, now) !=
+      friendmesh::ResultCode::Ok) return false;
+
+  // Commit the resulting local state and an exact pending envelope before the
+  // radio sees it. A reset can therefore never produce a packet whose local
+  // source-of-truth was lost. The second slot commit clears the marker only
+  // after MeshCore accepted the packet for transmission.
+  const friendmesh::GroupCoordinationState previousCoordination =
+      record->coordination;
+  record->coordination = state;
+  memset(&record->pending, 0, sizeof(record->pending));
+  record->pending.active = true;
+  getRNG()->random(record->pending.transactionId,
+                   sizeof(record->pending.transactionId));
+  bool transactionIdZero = true;
+  for (size_t i = 0; i < sizeof(record->pending.transactionId); ++i)
+    if (record->pending.transactionId[i] != 0) transactionIdZero = false;
+  if (transactionIdZero) record->pending.transactionId[0] = 1;
+  record->pending.dataType = friendmesh::kGroupCoordinationDataType;
+  record->pending.payloadLength = static_cast<uint8_t>(written);
+  memcpy(record->pending.payload, encoded, written);
+  record->pending.createdAt = now;
+  if (!friendmeshSaveGroupStorageRecord(channel_idx, *record)) return false;
   if (!sendGroupData(channel.channel, nullptr, OUT_PATH_UNKNOWN,
                      friendmesh::kGroupCoordinationDataType, encoded,
-                     static_cast<int>(written))) return false;
-  if (friendmesh::applyGroupCoordinationEvent(state, event, roster, now) !=
-      friendmesh::ResultCode::Ok ||
-      !friendmeshSaveGroupCoordination(channel_idx, state)) return false;
+                     static_cast<int>(written))) {
+    record->coordination = previousCoordination;
+    memset(&record->pending, 0, sizeof(record->pending));
+    if (!friendmeshSaveGroupStorageRecord(channel_idx, *record))
+      FM_FRIEND_LOG("GROUP STORE coordination rollback failed");
+    return false;
+  }
+  memset(&record->pending, 0, sizeof(record->pending));
+  if (!friendmeshSaveGroupStorageRecord(channel_idx, *record)) return false;
   if (_ui) _ui->onFriendMeshCoordinationChanged(
       channel.name,
       action == friendmesh::GroupCoordinationAction::SetMeetup
@@ -2984,15 +3449,18 @@ bool MyMesh::uiRemoveFriendMeshChannelMember(
       target->state == friendmesh::ChannelRosterState::Left) return false;
   ContactInfo* contact = lookupContactByPubKey(member_pub, PUB_KEY_SIZE);
   uint8_t tag[friendmesh::kChannelControlTagBytes] = {};
-  if (!contact || !friendmeshChannelTag(channel_idx, tag) ||
-      !friendmeshSendChannelControl(
-          *contact, friendmesh::ChannelControlType::Removed, tag, false)) {
-    return false;
-  }
+  if (!contact || !friendmeshChannelTag(channel_idx, tag)) return false;
+  const friendmesh::ChannelRoster previous = roster;
   const bool hadJoined = target->state == friendmesh::ChannelRosterState::Joined;
   target->state = friendmesh::ChannelRosterState::Removed;
   if (hadJoined) roster.rekeyRequired = true;
   if (!friendmeshSaveChannelRoster(channel_idx, roster)) return false;
+  if (!friendmeshSendChannelControl(
+          *contact, friendmesh::ChannelControlType::Removed, tag, false)) {
+    if (!friendmeshSaveChannelRoster(channel_idx, previous))
+      FM_FRIEND_LOG("GROUP STORE removal rollback failed");
+    return false;
+  }
   friendmeshBroadcastChannelRoster(channel_idx, roster);
   return true;
 }

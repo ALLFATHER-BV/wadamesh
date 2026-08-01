@@ -769,14 +769,32 @@ void DataStore::migrateToSecondaryFS() {
 }
 
 uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
+  return getBlobByKey(key, key_len, dest_buf, 255);
+}
+
+uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len,
+                                uint8_t dest_buf[], size_t dest_capacity) {
+  const int length = getBlobByKeyBounded(key, key_len, dest_buf,
+                                         dest_capacity);
+  return length > 0 ? static_cast<uint8_t>(length) : 0;
+}
+
+int DataStore::getBlobByKeyBounded(const uint8_t key[], int key_len,
+                                   uint8_t dest_buf[],
+                                   size_t dest_capacity) {
+  if (!key || key_len <= 0 || !dest_buf || dest_capacity == 0) return -1;
   File file = openRead(_getContactsChannelsFS(), "/adv_blobs");
-  uint8_t len = 0;  // 0 = not found
+  int len = 0;  // 0 = not found
   if (file) {
     BlobRec tmp;
     while (file.read((uint8_t *) &tmp, sizeof(tmp)) == sizeof(tmp)) {
       if (memcmp(key, tmp.key, sizeof(tmp.key)) == 0) {  // only match by 7 byte prefix
-        len = tmp.len;
-        memcpy(dest_buf, tmp.data, len);
+        if (tmp.len <= dest_capacity) {
+          len = tmp.len;
+          memcpy(dest_buf, tmp.data, len);
+        } else {
+          len = -1;
+        }
         break;
       }
     }
@@ -835,15 +853,39 @@ inline void makeBlobPath(const uint8_t key[], int key_len, char* path, size_t pa
 }
 
 uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
+  return getBlobByKey(key, key_len, dest_buf, 255);
+}
+
+uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len,
+                                uint8_t dest_buf[], size_t dest_capacity) {
+  const int length = getBlobByKeyBounded(key, key_len, dest_buf,
+                                         dest_capacity);
+  return length > 0 ? static_cast<uint8_t>(length) : 0;
+}
+
+int DataStore::getBlobByKeyBounded(const uint8_t key[], int key_len,
+                                   uint8_t dest_buf[],
+                                   size_t dest_capacity) {
+  if (!key || key_len <= 0 || !dest_buf || dest_capacity == 0) return -1;
   char path[64];
   makeBlobPath(key, key_len, path, sizeof(path));
 
   if (_fs->exists(_rp(path))) {
     File f = openRead(_fs, path);
     if (f) {
-      int len = f.read(dest_buf, 255); // currently MAX 255 byte blob len supported!!
+      size_t len = 0;
+      while (len < dest_capacity) {
+        const int next = f.read(dest_buf + len, dest_capacity - len);
+        if (next <= 0) break;
+        len += static_cast<size_t>(next);
+      }
+      const bool overflow = f.read() >= 0;
       f.close();
-      return len;
+      if (overflow || len > UINT8_MAX) {
+        memset(dest_buf, 0, dest_capacity);
+        return -1;
+      }
+      return static_cast<int>(len);
     }
   }
   return 0; // not found

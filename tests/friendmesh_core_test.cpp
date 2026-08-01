@@ -16,6 +16,7 @@
 #include "friendmesh/navigation/FriendMeshMeshCorePositionAdapter.h"
 #include "friendmesh/people/FriendMeshBlePresence.h"
 #include "friendmesh/people/FriendMeshChannelInvite.h"
+#include "friendmesh/people/FriendMeshGroupStorage.h"
 #include "friendmesh/people/FriendMeshFriendRequest.h"
 #include "friendmesh/people/FriendMeshChannelRoster.h"
 #include "friendmesh/people/FriendMeshMembership.h"
@@ -1887,6 +1888,156 @@ void testGroupCoordinationCodecAndState() {
         friendmesh::ResultCode::CorruptData);
 }
 
+void testGroupStorageRecordAndRecovery() {
+  friendmesh::GroupStorageRecord record = {};
+  for (size_t i = 0; i < sizeof(record.channelBinding); ++i)
+    record.channelBinding[i] = static_cast<uint8_t>(0x30 + i);
+  record.generation = 7;
+  record.rekeyRequired = true;
+  uint8_t alice[32] = {};
+  uint8_t bobPrefix[friendmesh::kChannelRosterPrefixBytes] = {};
+  for (size_t i = 0; i < sizeof(alice); ++i)
+    alice[i] = static_cast<uint8_t>(i + 1);
+  for (size_t i = 0; i < sizeof(bobPrefix); ++i)
+    bobPrefix[i] = static_cast<uint8_t>(0x70 + i);
+  CHECK(friendmesh::setGroupStorageMember(
+            record, alice, sizeof(alice),
+            friendmesh::ChannelRosterRole::Admin,
+            friendmesh::ChannelRosterState::Joined) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(friendmesh::setGroupStorageMember(
+            record, bobPrefix, sizeof(bobPrefix),
+            friendmesh::ChannelRosterRole::Member,
+            friendmesh::ChannelRosterState::Invited) ==
+        friendmesh::ResultCode::Ok);
+
+  friendmesh::GroupCoordinationItem& meetup = record.coordination.meetup;
+  meetup.objectId[0] = 1;
+  memcpy(meetup.ownerPrefix, alice,
+         friendmesh::kChannelRosterPrefixBytes);
+  meetup.kind = friendmesh::GroupCoordinationKind::Meetup;
+  meetup.status = friendmesh::GroupCoordinationStatus::Active;
+  meetup.createdAt = 100;
+  meetup.updatedAt = 100;
+  meetup.expiresAt = 200;
+  meetup.latitudeE6 = 34000000;
+  meetup.longitudeE6 = -118000000;
+  meetup.hasLocation = true;
+  strcpy(meetup.note, "Storage test");
+  record.pending.active = true;
+  record.pending.transactionId[0] = 9;
+  record.pending.dataType = friendmesh::kGroupCoordinationDataType;
+  record.pending.createdAt = 100;
+  record.pending.payloadLength = 4;
+  memcpy(record.pending.payload, "test", 4);
+
+  uint8_t encoded[friendmesh::kGroupStorageRecordMaxBytes] = {};
+  size_t written = 0;
+  CHECK(friendmesh::encodeGroupStorageRecord(
+            record, encoded, sizeof(encoded), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(written <= friendmesh::kGroupStorageRecordMaxBytes);
+  friendmesh::GroupStorageRecord decoded = {};
+  CHECK(friendmesh::decodeGroupStorageRecord(encoded, written, decoded) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(decoded.generation == 7);
+  CHECK(decoded.memberCount == 2);
+  CHECK(decoded.members[0].publicKeyBytes == 32);
+  CHECK(decoded.members[1].publicKeyBytes ==
+        friendmesh::kChannelRosterPrefixBytes);
+  CHECK(decoded.pending.active);
+  CHECK(decoded.pending.payloadLength == 4);
+  CHECK(strcmp(decoded.coordination.meetup.note, "Storage test") == 0);
+  friendmesh::ChannelRoster roster = {};
+  CHECK(friendmesh::groupStorageRecordToRoster(decoded, roster) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(roster.memberCount == 2);
+  CHECK(roster.rekeyRequired);
+
+  uint8_t selected = 9;
+  CHECK(friendmesh::selectGroupStorageSlot(
+            true, 7, true, 8, false, selected) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(selected == 1);
+  CHECK(friendmesh::selectGroupStorageSlot(
+            true, 8, true, 8, false, selected) ==
+        friendmesh::ResultCode::Conflict);
+  CHECK(friendmesh::selectGroupStorageSlot(
+            false, 0, false, 0, true, selected) ==
+        friendmesh::ResultCode::NotFound);
+
+  encoded[written - 1] ^= 0x80;
+  CHECK(friendmesh::decodeGroupStorageRecord(encoded, written, decoded) ==
+        friendmesh::ResultCode::CorruptData);
+  encoded[written - 1] ^= 0x80;
+  CHECK(friendmesh::decodeGroupStorageRecord(encoded, written - 1, decoded) ==
+        friendmesh::ResultCode::CorruptData);
+
+  uint8_t aliceCollision[32] = {};
+  memcpy(aliceCollision, alice, friendmesh::kChannelRosterPrefixBytes);
+  aliceCollision[31] = 0xAA;
+  CHECK(friendmesh::setGroupStorageMember(
+            record, aliceCollision, sizeof(aliceCollision),
+            friendmesh::ChannelRosterRole::Member,
+            friendmesh::ChannelRosterState::Joined) ==
+        friendmesh::ResultCode::Conflict);
+  record.members[1].publicKey[31] = 1;
+  CHECK(friendmesh::encodeGroupStorageRecord(
+            record, encoded, sizeof(encoded), written) ==
+        friendmesh::ResultCode::CorruptData);
+  record.members[1].publicKey[31] = 0;
+
+  // Prove the fixed record budget covers the actual worst case: eight full
+  // identities, both coordination objects, all response slots, and the largest
+  // pending radio envelope.
+  friendmesh::GroupStorageRecord maximum = {};
+  memcpy(maximum.channelBinding, record.channelBinding,
+         sizeof(maximum.channelBinding));
+  for (size_t i = 0; i < friendmesh::kChannelRosterMaxMembers; ++i) {
+    uint8_t key[friendmesh::kGroupStoragePublicKeyBytes] = {};
+    key[0] = static_cast<uint8_t>(i + 1);
+    key[31] = static_cast<uint8_t>(0xA0 + i);
+    CHECK(friendmesh::setGroupStorageMember(
+              maximum, key, sizeof(key),
+              i == 0 ? friendmesh::ChannelRosterRole::Admin
+                     : friendmesh::ChannelRosterRole::Member,
+              friendmesh::ChannelRosterState::Joined) ==
+          friendmesh::ResultCode::Ok);
+  }
+  maximum.coordination.meetup = meetup;
+  maximum.coordination.incident = meetup;
+  maximum.coordination.incident.objectId[0] = 2;
+  maximum.coordination.incident.kind =
+      friendmesh::GroupCoordinationKind::HelpEquipment;
+  maximum.coordination.meetupResponseCount =
+      friendmesh::kCoordinationMaxResponses;
+  maximum.coordination.incidentResponseCount =
+      friendmesh::kCoordinationMaxResponses;
+  for (size_t i = 0; i < friendmesh::kCoordinationMaxResponses; ++i) {
+    maximum.coordination.meetupResponses[i].memberPrefix[0] =
+        static_cast<uint8_t>(i + 1);
+    maximum.coordination.meetupResponses[i].response =
+        friendmesh::GroupCoordinationResponse::Going;
+    maximum.coordination.incidentResponses[i].memberPrefix[0] =
+        static_cast<uint8_t>(i + 21);
+    maximum.coordination.incidentResponses[i].response =
+        friendmesh::GroupCoordinationResponse::Unable;
+  }
+  maximum.pending.active = true;
+  maximum.pending.transactionId[0] = 1;
+  maximum.pending.dataType = friendmesh::kGroupCoordinationDataType;
+  maximum.pending.payloadLength =
+      friendmesh::kGroupStoragePendingPayloadBytes;
+  memset(maximum.pending.payload, 0x5A,
+         sizeof(maximum.pending.payload));
+  CHECK(friendmesh::encodeGroupStorageRecord(
+            maximum, encoded, sizeof(encoded), written) ==
+        friendmesh::ResultCode::Ok);
+  CHECK(written == 648);
+  CHECK(friendmesh::decodeGroupStorageRecord(encoded, written, decoded) ==
+        friendmesh::ResultCode::Ok);
+}
+
 void testMeshCorePositionAdapter() {
   friendmesh::MeshCorePositionInput input = {};
   for (size_t i = 0; i < sizeof(input.publicKey); ++i)
@@ -2230,6 +2381,7 @@ int main() {
   testChannelRoster();
   testBlePresenceEnvelope();
   testGroupCoordinationCodecAndState();
+  testGroupStorageRecordAndRecovery();
   testMeshCorePositionAdapter();
   testFriendRequestEnvelopeAndPath();
   testFriendTransactionLedgerAndJournal();

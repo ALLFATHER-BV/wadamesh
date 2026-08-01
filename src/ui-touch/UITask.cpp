@@ -6946,6 +6946,11 @@ static void channelLongSheetGroupMapCb(lv_event_t* e) {
     if (g_lv.task) g_lv.task->showAlert(TR("Channel unavailable"), 1400);
     return;
   }
+  if (!the_mesh.uiFriendMeshGroupStorageReadable(channelSlot)) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Group storage needs recovery"), 2200);
+    return;
+  }
   openFriendMeshGroupMap(channelSlot, channelName);
 }
 
@@ -7191,6 +7196,11 @@ static void channelLongSheetCoordinationCb(lv_event_t* e) {
     if (g_lv.task) g_lv.task->showAlert(TR("Channel unavailable"), 1400);
     return;
   }
+  if (!the_mesh.uiFriendMeshGroupStorageReadable(channelSlot)) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Group storage needs recovery"), 2200);
+    return;
+  }
   openFriendMeshCoordination(channelSlot);
 }
 
@@ -7411,6 +7421,11 @@ static void channelLongSheetMembersCb(lv_event_t* e) {
   closeChannelLongSheet();
   if (channelSlot < 0) {
     if (g_lv.task) g_lv.task->showAlert(TR("Channel not found"), 1200);
+    return;
+  }
+  if (!the_mesh.uiFriendMeshGroupStorageReadable(channelSlot)) {
+    if (g_lv.task) g_lv.task->showAlert(
+        TR("Group storage needs recovery"), 2200);
     return;
   }
   openFriendMeshMembers(channelSlot);
@@ -26996,7 +27011,7 @@ static void renderMapTiles() {
 
 // ----- Markers -----
 //
-// Self marker = small white crosshair; contact markers = colored dots
+// Self marker = contrasting crosshair; contact markers = colored dots
 // sized for finger taps. Plotted as children of s_map_canvas so they
 // stack on top of the tile layer. The cache below is flat (linear scan
 // when handling marker taps) — fine for this bounded visible-marker set.
@@ -27627,7 +27642,8 @@ static void renderMapMarkers() {
     }
   }
 
-  // ---- Self marker — crosshair (on top of the links).
+  // ---- Self marker — crosshair (on top of the links). Normal map tiles are
+  //      light, so use black there; retain white when night inversion is on.
   if (self_has &&
       self_sx >= -10 && self_sx < k_map_canvas_w + 10 &&
       self_sy >= -10 && self_sy < k_map_canvas_h + 10) {
@@ -27637,7 +27653,8 @@ static void renderMapMarkers() {
     m.obj = lv_label_create(parent);
     lv_label_set_text(m.obj, LV_SYMBOL_GPS);
     lv_obj_set_style_text_font(m.obj, &g_font_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(m.obj, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_color(
+        m.obj, s_map_night ? lv_color_white() : lv_color_black(), LV_PART_MAIN);
     // The glyph's optical center isn't at its bbox center — fudge the
     // align slightly so the crosshair lines up with the tile pixel.
     lv_obj_set_pos(m.obj, self_sx - 8, self_sy - 11);

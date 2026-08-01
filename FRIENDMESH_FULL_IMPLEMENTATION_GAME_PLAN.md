@@ -533,9 +533,16 @@ channel. The WadaMesh channel action sheet shows invite/join/failure/leave/remov
 states. Direct encrypted acknowledgements and cooperative leave/removal notices
 update the owner, while compact encrypted channel snapshots keep joined devices'
 functional rosters aligned without showing control text in chat. Metadata is
-persisted through the existing bounded blob store. Removal sets a prominent
-`rekey required` state because the old shared key is intentionally not presented
-as revoked.
+persisted with coordination state in a channel-bound, checksummed, generationed
+two-slot SD record. The inactive slot is reopened and byte/decode verified before
+selection; one corrupt peer can recover, while divergent equal-generation state
+fails closed. Valid legacy blobs migrate together on first access, full public
+keys replace six-byte prefixes when resolvable, and the legacy source stays in
+place until channel deletion. Group mutation is persisted before radio queueing,
+and one exact pending coordination envelope survives an interrupted send window.
+This is a functional crash-consistency layer, not authenticated or encrypted
+Phase 7 storage. Removal sets a prominent `rekey required` state because the old
+shared key is intentionally not presented as revoked.
 
 The direct exchange requires forwarding disabled and zero observed receive hops.
 Sender-side Bluetooth presence or a fresh zero-hop advert is a bounded discovery

@@ -112,6 +112,7 @@
 #include "friendmesh/people/FriendMeshBlePresence.h"
 #include "friendmesh/people/FriendMeshChannelInvite.h"
 #include "friendmesh/people/FriendMeshChannelRoster.h"
+#include "friendmesh/people/FriendMeshGroupStorage.h"
 #include "friendmesh/people/FriendMeshFriendRequest.h"
 #include "friendmesh/navigation/FriendMeshMeshCorePositionAdapter.h"
 #include "friendmesh/navigation/FriendMeshGroupCoordination.h"
@@ -862,6 +863,10 @@ public:
   /** True only when this ordinary MeshCore channel has explicit persisted
    *  FriendMesh group metadata and the local identity is a joined member. */
   bool uiIsFriendMeshPrivateGroup(int channel_idx);
+  /** True when the group roster can be decoded (including a valid legacy
+   *  read-only source). False means group features must show recovery-needed
+   *  rather than interpreting the channel as an empty roster. */
+  bool uiFriendMeshGroupStorageReadable(int channel_idx);
   /** Explicitly opt an existing private MeshCore channel into FriendMesh group
    *  behavior by creating its initial self-admin roster. */
   bool uiCreateFriendMeshPrivateGroup(int channel_idx);
@@ -1014,8 +1019,9 @@ public:
     // Derive and remove feature blobs before clearing the channel secret that
     // namespaces them. Deletion is deliberately idempotent for ordinary
     // channels and callers that already removed the roster.
-    friendmeshDeleteChannelRoster(idx);
-    friendmeshDeleteGroupCoordination(idx);
+    const bool rosterDeleted = friendmeshDeleteChannelRoster(idx);
+    const bool coordinationDeleted = friendmeshDeleteGroupCoordination(idx);
+    if (!rosterDeleted || !coordinationDeleted) return false;
 #endif
     ChannelDetails empty{};
     if (!setChannel(idx, empty)) return false;
@@ -1085,6 +1091,18 @@ private:
   bool friendmeshSaveGroupCoordination(
       int channel_idx, const friendmesh::GroupCoordinationState& state);
   bool friendmeshDeleteGroupCoordination(int channel_idx);
+  bool friendmeshGroupStorageBinding(
+      int channel_idx,
+      uint8_t binding[friendmesh::kGroupStorageBindingBytes]);
+  friendmesh::ResultCode friendmeshLoadGroupStorageRecord(
+      int channel_idx, friendmesh::GroupStorageRecord& record,
+      uint8_t* active_slot = nullptr, bool* any_slot_present = nullptr);
+  bool friendmeshSaveGroupStorageRecord(
+      int channel_idx, friendmesh::GroupStorageRecord& record);
+  bool friendmeshDeleteGroupStorageRecord(int channel_idx);
+  bool friendmeshPopulateStoredRoster(
+      const friendmesh::ChannelRoster& roster,
+      friendmesh::GroupStorageRecord& record);
   /** True when this contact is locally recorded as Joined in at least one
    *  FriendMesh channel. Used as the authorization boundary for responding
    *  to an existing MeshCore telemetry request with our position. */

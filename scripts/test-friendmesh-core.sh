@@ -26,6 +26,7 @@ compiler="${CXX:-c++}"
   "$repo_root/src/friendmesh/navigation/FriendMeshMeshCorePositionAdapter.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshBlePresence.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshChannelInvite.cpp" \
+  "$repo_root/src/friendmesh/people/FriendMeshGroupStorage.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshFriendRequest.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshChannelRoster.cpp" \
   "$repo_root/src/friendmesh/people/FriendMeshMembership.cpp" \
@@ -50,3 +51,13 @@ grep -q 'ANR RADIO TX complete' "$repo_root/src/MyMesh.cpp"
 grep -q 'INBOX replace old=' "$repo_root/src/ui-touch/UITask.cpp"
 grep -q 'ACCEPT reject=unknown' "$repo_root/src/MyMesh.cpp"
 grep -q 'OUTGOING completed' "$repo_root/src/MyMesh.cpp"
+
+# Group records are currently about 640 bytes. Keeping even one as a local in
+# the UI -> MyMesh -> storage call chain can exhaust the T-Deck loopTask stack;
+# the physical 2026-08-01 coredump proved that nested locals trip its canary.
+if grep -Eq \
+    'friendmesh::GroupStorageRecord [A-Za-z_][A-Za-z0-9_]*(\[[^]]+\])? = \{\}' \
+    "$repo_root/src/MyMesh.cpp"; then
+  echo "FriendMesh group storage record must not be allocated on the stack" >&2
+  exit 1
+fi

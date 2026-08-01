@@ -190,6 +190,29 @@ RAM-only records without SD, and receiving requests resets to off after reboot.
 When SD returns, emergency Friend cards are merged into the normal SD-backed
 Friends view and cleared from NVS after the next successful Friend mutation.
 
+Functional FriendMesh private-group metadata no longer uses separate generic
+roster and coordination blobs. A bounded version-2 record stores the eight-member
+roster, rekey flag, coordination state, and at most one exact pending
+coordination envelope. It retains full 32-byte identities when the local
+identity/contact table can resolve them and preserves an explicitly six-byte
+legacy identity otherwise. The filename is derived from a domain-separated
+channel binding; the record itself carries that binding, a generation, bounded
+lengths, and a checksum. Commits write the inactive one of two SD slots, close,
+reopen, compare exact bytes, decode, and verify the generation before success.
+Reads select the newest valid slot, recover from one corrupt peer, and refuse
+equal-generation divergence. Valid legacy roster and coordination blobs migrate
+together on first group access and are retained until channel deletion; corrupt
+or oversized legacy data, unavailable writes, and missing/read-only SD fail
+closed. Coordination and member-removal state is committed before transmission,
+with queue-failure rollback; a reset-stranded pending coordination envelope is
+preserved and blocks later mutation instead of being overwritten.
+Unreadable group metadata retains its FriendMesh classification and blocks the
+Members, Group Map, and Coordination entry points with a recovery-required UI
+message rather than rendering an empty group. The checksum and two-slot scheme
+addresses torn writes and accidental corruption only. It
+does not provide confidentiality, authenticity, rollback resistance against an
+SD attacker, or replace the Phase 7 protected-record design.
+
 Friend and network-node removal intentionally share the full-width danger slot
 in the contact action sheet while remaining different operations. Tapping a
 Friend shows `Remove friend`, requires confirmation, and removes the local

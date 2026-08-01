@@ -268,7 +268,8 @@ Implement together because they share identity references, verification state, m
   after reboot, but does not yet reconstruct the RAM-only encoded payload and
   route for autonomous resend. Both invalid journal slots disable new sends and
   raise a recovery-required UI state. Host tests and the T-Deck build pass;
-  physical three-node/multi-hop validation of the revised exchange remains open.
+  physical two-endpoint validation over the existing local multi-hop MeshCore
+  network remains open.
 - [x] Local identity-reference lifecycle using development/test providers.
 - [x] Group create/rename/disband and eight-group bounds.
 - [x] Member aliases, roles, join ordering, approval, replacement, blocking, leave, kick, transfer, and recorded majority succession behavior.
@@ -329,6 +330,13 @@ Integrate the completed functional feature set together so shared navigation/foc
 - [x] Add `Add channel` -> `FriendMesh channels` -> `Create` / `Join`; Create opens a two-minute six-digit BLE host session and Join discovers it without a MeshCore advert, verifies the code, and provisions the existing MeshCore private channel over an encrypted direct BLE exchange.
 - [x] Replace immediate nearby Friend writes with a consent-based BLE request flow: discovery-only scan, full-key/prefix match, signed target-bound request, shared Accept/Deny/Block inbox, acceptance-only reciprocal add/notification, and local-only `Save contact by key` semantics.
 - [x] Add a bounded `Members` view with persisted invite/join/failure/leave/removal states, encrypted direct control notices, binary encrypted roster snapshots that cannot surface as chat, duplicate-member invite prevention, and explicit rekey-required status.
+- [x] Replace the independent legacy roster/coordination blobs with one
+  versioned, channel-bound, checksummed two-slot group record. Preserve full
+  member public keys when locally resolvable, migrate valid legacy blobs on
+  first access, verify every inactive-slot write before selection, and block
+  corrupt, divergent, oversized, or read-only mutations rather than treating
+  them as empty state. This is crash recovery and integrity detection, not the
+  Phase 7 authenticated/encrypted protected store.
 - [x] Add bounded shared meetup/pickup, Help, response, closure, and three-second-hold SOS actions to the private-channel sheet, with encrypted binary control records and existing-map overlays.
 - [x] Keep ordinary MeshCore channels free of FriendMesh actions; add an explicit `Create a FriendMesh group` path and `[FM]` inbox/header/action-sheet identification derived from persisted roster metadata.
 - [x] Add confirmed administrator disband to the native Members view, with best-effort encrypted member notices, chat suppression, local deletion, and explicit unreachable-recipient reporting.
@@ -379,8 +387,33 @@ is consumed before chat surfaces. The fixed state caps at 248 bytes and adds no
 background transmission. Ordinary MeshCore channels now retain only ordinary
 channel actions; FriendMesh controls require a persisted joined roster created
 through the explicit group path or accepted nearby invitation. Those groups are
-marked `[FM]` without renaming the channel. Page one's prediction readout now
-preformats its speed outside LVGL's float-disabled formatter, bounds the lead
+marked `[FM]` without renaming the channel. Roster, rekey status, coordination,
+and one pending coordination envelope now share a version-2 group record bound
+to the channel secret. Each commit writes the inactive SD slot, reopens and
+byte/decode verifies it, then advances the generation. Valid legacy roster and
+coordination blobs migrate together and remain as rollback evidence; locally
+resolvable identities upgrade to full keys while unresolved six-byte prefixes
+remain explicitly legacy. One corrupt slot can recover from its valid peer;
+equal-generation divergence, invalid legacy data, and read-only storage fail
+closed. Coordination and member removal persist before radio submission and
+roll back on explicit queue failure. The checksum detects torn writes and
+accidental corruption but does not authenticate an attacker with SD access.
+Unreadable metadata retains its FriendMesh channel classification, and Members,
+Group Map, and Coordination show `Group storage needs recovery` instead of an
+empty roster or ordinary-channel interpretation. The first physical build of
+this record layer exposed a `loopTask` stack-canary crash while Create Group
+looked for the expected, not-yet-created first slot. The matching ELF decoded
+the path as Create Group -> roster save -> record save -> record load -> SD
+open; no corrupt group file was involved. The nested record locals consumed
+roughly 4 KiB of stack. All group-record candidates, save verification records,
+caller records, and roster-preservation workspaces now use bounded, wiped heap
+allocations and fail closed on allocation failure. Firmware disassembly reduced
+the record-load frame from about 1,456 to 176 bytes and the record-save frame
+from about 1,456 to 192 bytes; a host guard rejects future stack-local group
+records. This is host/build verified and still requires the same physical
+Friend Map and Create Group actions to prove the crash is gone.
+Page one's prediction readout now preformats its speed outside LVGL's
+float-disabled formatter, bounds the lead
 display to the intended 45 seconds, and uses labeled rings sharing the plotted
 position scale. The SD-required persistence and duplicate-asset cleanup pass
 puts the T-Deck build at 87,020 bytes RAM (26.6%) and 3,293,117 bytes flash
@@ -401,11 +434,23 @@ Current physical follow-up status:
 - [x] Diagnose the observed SD-backed settings transition.
 - [x] Complete the safe settings recovery/selection check.
 - [x] Confirm existing SD map tiles remain intact.
-- [ ] Validate the revised Friend Request transaction on requester, relay, and
-  recipient nodes: multi-hop request, direct acceptance, direct-only ACK,
-  authenticated one-way decline, and reciprocal removal.
-- [ ] Induce route loss and packet loss while proving no transaction can emit
-  more than two initiator-owned floods and no ACK can flood.
+- [x] Decode the matching Create Group coredump and identify `loopTask` stack
+  exhaustion in the nested version-2 group-storage call chain.
+- [x] Move all large group-record/storage workspaces off the UI task stack,
+  add fail-closed allocation handling, and build the T-Deck target.
+- [ ] Install the stack-safe build on both owned T-Decks and repeatedly open
+  Friend Map, create a group from a clean state, close/reopen it, and reboot.
+  Confirm no stack canary, the first non-empty `fm_group_<binding>.0` appears
+  only after a verified commit, and the group remains readable.
+- [ ] Validate the revised Friend Request transaction between two owned T-Deck
+  endpoints while the existing local MeshCore network supplies the relays. Do
+  not modify, flash, administer, or depend on cooperation from community nodes.
+  Capture the observed route/hop evidence for the request, direct acceptance,
+  direct-only ACK, authenticated one-way decline, and reciprocal removal.
+- [ ] Exercise natural route loss or locally invalidate an endpoint's cached
+  route during a quiet, deliberate test window. Do not jam or disrupt the live
+  network. Prove that no transaction emits more than two initiator-owned floods
+  and that no ACK can flood.
 - [ ] Reboot at each Friend Request transaction stage and confirm correlation,
   peer binding, terminal tombstones, and flood budgets restore without duplicate
   Friends or notifications. Automatic payload/route reconstruction remains
@@ -416,6 +461,15 @@ Current physical follow-up status:
 - [ ] Test the targeted Compass-start notification; hardware-blocked pending additional GPS-capable devices and a node.
 - [ ] Test two-moving-device prediction/headway; hardware-blocked pending additional GPS-capable devices and a node.
 - [ ] Confirm FriendMesh group, motion, and coordination state across reboot.
+- [ ] On both owned T-Decks, migrate an existing legacy group and verify roster,
+  rekey flag, meetup/incident state, and full-key upgrades across reboot. Then
+  inject one corrupt slot, one truncated inactive-slot write, and one
+  equal-generation divergence; prove valid-slot recovery where unambiguous and
+  fail-closed recovery-required behavior where it is not.
+- [ ] Interrupt power at each group commit boundary (before write, after
+  inactive-slot write, after radio queue acceptance, and before pending-marker
+  clear). Confirm there is no fabricated empty roster, no transmit before a
+  verified commit, and no silent overwrite of a pending coordination event.
 - [ ] Exercise missing, removed, read-only, and full-SD behavior.
 
 ### Phase 7 — Shared production security implementation
@@ -424,7 +478,9 @@ Implement all dependent security together across the completed features.
 
 - [ ] Real FriendMesh signing identity and MeshCore binding.
 - [ ] Independent storage PIN, KDF/wrapping, device binding, AEAD records, subkeys, nonce discipline, and secret wiping.
-- [ ] Authenticated two-slot/journal storage and schema migration.
+- [ ] Upgrade checksummed functional two-slot group records and the existing
+  transaction journal to authenticated/encrypted protected records with schema
+  migration, rollback resistance, and recovery UX.
 - [ ] Canonical signing/encryption for every event family.
 - [ ] Verification proof, invitations, member-specific key grants, epochs, replay windows, and downgrade rejection.
 - [ ] Transcript-bound ephemeral pairwise session and authenticated member-specific epoch grant; identity private keys never leave their device.
@@ -483,18 +539,38 @@ validated nearby join/roster path and compass interaction, the build-verified
 automatic group map and administrator disband flow, build-verified shared
 meetup/pickup plus Help/SOS coordination over the existing encrypted MeshCore
 channel, and the shared Friend Request transaction engine. The obsolete
-FriendMesh development app has been removed. The current T-Deck build passes at
-89,388 bytes RAM (27.3%) and 3,346,061 bytes application flash (82.3%); no image
-containing the revised transaction system has yet been physically validated.
+FriendMesh development app has been removed. The stack-safe T-Deck build passes
+at 89,388 bytes RAM (27.3%) and 3,355,329 bytes application flash (82.6%); no
+image containing the stack fix or revised transaction system has yet been
+physically validated.
 
-The next exact gate is an operator-approved three-node Friend Request campaign:
-requester -> relay -> recipient, followed by acceptance and direct-only ACK.
-The same campaign must cover one-way authenticated decline, reciprocal removal,
-intentional route/packet loss, duplicate delivery, reboot at every durable
-stage, and proof that the initiating operation emits no more than two floods.
-Run ordinary modified-to-modified and stock-to-modified MeshCore regression in
-the same configuration. Record radio logs and UI modal stages separately from
-end-state Friends-list results.
+The next exact gate is to install this build on the two owned endpoints and
+first repeat the two actions that crashed: open Friend Map and create/reopen a
+group. Capture the serial log through the first verified group commit and a
+reboot. Only after that smoke test passes, run the bounded group-storage
+preflight above: legacy migration, ordinary reboot, one-slot
+corruption/truncation recovery, divergence fail-closed behavior, and
+missing/read-only/full-SD mutation blocking. Do not intentionally corrupt the
+only valid slot; retain the legacy blobs and a card image for recovery.
+
+After that preflight, run the operator-approved two-endpoint Friend Request
+campaign over the existing local MeshCore network. One owned T-Deck is the
+requester and one is the recipient; ordinary community nodes/repeaters provide
+whatever relay
+path the network naturally selects and receive no firmware or configuration
+changes. First capture the actual multi-hop route evidence, then complete
+acceptance and the direct-only ACK. Separate bounded transactions cover the
+one-way authenticated decline and reciprocal removal.
+
+Exercise flood fallback only during a quiet, deliberate test window and only
+after natural route loss or local endpoint route invalidation; do not jam,
+impersonate, or disrupt community infrastructure. The campaign must also cover
+duplicate delivery, reboot at every durable stage, and proof that the initiating
+operation emits no more than two floods. Run ordinary modified-to-modified and
+stock-to-modified MeshCore regression on the same live network. Record endpoint
+radio logs, observed route/hop data, and UI modal stages separately from final
+Friends-list results. A community relay forwarding a reserved carrier is not by
+itself proof of full stock-node FriendMesh interoperability.
 
 After that gate, install and validate administrator disband on both current
 T-Decks, then physically validate meetup/pickup and Help/SOS coordination:
