@@ -36520,7 +36520,9 @@ static void openControlCenter() {
 #if !CAP_GPS
   ccToggle(row, LV_SYMBOL_GPS, "GPS", false, ccGpsNoneCb, tw, th, -1);   // no onboard GPS — info-only, untoggable
 #else
-  ccToggle(row, LV_SYMBOL_GPS, "GPS", gps_on, ccGpsCb, tw, th, CAT_RADIO);
+  // Long-press opens the GPS settings PAGE. CAT_RADIO here was a leftover from before the
+  // settings reorg gave GPS its own category (the GPS block used to live under radio/device).
+  ccToggle(row, LV_SYMBOL_GPS, "GPS", gps_on, ccGpsCb, tw, th, CAT_GPS);
 #endif
   ccToggle(row, LV_SYMBOL_TINT, "Theme", false, ccThemeCb, tw, th, CAT_DISPLAY);
 #if CAP_KEYBOARD
