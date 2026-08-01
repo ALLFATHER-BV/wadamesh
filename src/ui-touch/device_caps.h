@@ -41,8 +41,9 @@
   #define CAP_LARGE_SCREEN 0   // native 480x222, no UI upscaling
   // Keep these structural caps at 0: they still gate several T-Deck-specific
   // UI/features. Pager storage is wired explicitly at its audited call sites
-  // (boot DataStore, history, tiles, file manager and WAV playback) using its
-  // shared-SPI mount helper; formatting remains deliberately unavailable.
+  // (boot DataStore, history, tiles, file manager/WAV, telemetry/logging,
+  // backups and crash export) using its shared-SPI mount helper; formatting
+  // remains deliberately unavailable.
   #define CAP_SD           0
   #define CAP_FILESYSTEM   0
   #define CAP_GPS          1   // u-blox MIA-M10Q

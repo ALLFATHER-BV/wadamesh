@@ -10873,13 +10873,15 @@ static void useSdStorageToggleCb(lv_event_t* e) {
                                          : TR("Data -> internal on reboot"), 1800);
 }
 
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
 // "Copy internal data to SD": recovery for the beta_36 upgrades where the live
 // profile was orphaned on internal flash while the honored SD toggle adopted an
 // empty card (which then minted a fresh identity). Overwrites the card's copies
 // with EVERYTHING from internal flash, forces the SD pref on, reboots.
 extern bool meshcomodMigrateSpiffsToSd(bool force);   // main.cpp
+extern bool meshcomodArmSdMigLatch();                  // durable in-progress guard
 extern void meshcomodClearSdMigLatch();               // main.cpp (GH #142/#148 boot safe-mode)
+extern bool g_sd_migration_blocked;
 static void sdRestoreApply() {
   if (!g_lv.task) return;
   if (!fmSdTryMount()) { g_lv.task->showAlert(TR("No SD card"), 1600); return; }
@@ -10888,12 +10890,21 @@ static void sdRestoreApply() {
   // Land everything in RAM first — this path used to reboot WITHOUT persisting,
   // silently dropping every message since the last lazy flush.
   g_lv.task->persistHistoryNow();
+  if (!meshcomodArmSdMigLatch()) {
+    g_sd_migration_blocked = true;
+    g_lv.task->showAlert(TR("Copy blocked: migration guard unavailable"), 2600);
+    return;
+  }
   bool ok = false;
   {
     LoopWdtGuard loop_wdt_guard;
     ok = meshcomodMigrateSpiffsToSd(true);
   }
-  if (!ok) { g_lv.task->showAlert(TR("Copy failed (no internal identity)"), 2200); return; }
+  if (!ok) {
+    g_sd_migration_blocked = true;
+    g_lv.task->showAlert(TR("Copy incomplete: SD data may be mixed. Retry before reboot."), 4200);
+    return;
+  }
   meshcomodClearSdMigLatch();           // manual copy succeeded -> re-arm boot auto-adoption (GH #142/#148)
   touchPrefsSetUseSdStorage(true);      // make sure the reboot adopts the card
   delay(400);                           // let the alert render before the restart
@@ -12150,6 +12161,7 @@ static void buildDeviceSettings(int sec) {
      even with it ON. This line shows the truth and flags that mismatch. */
   {
     extern bool g_contacts_on_sd;
+    extern bool g_sd_migration_blocked;
     const bool want_sd = touchPrefsGetUseSdStorage();
     lv_obj_t* st = lv_label_create(body);
     lv_label_set_long_mode(st, LV_LABEL_LONG_WRAP);
@@ -12161,6 +12173,9 @@ static void buildDeviceSettings(int sec) {
           ? TR("SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.")
           : TR("SD data is unavailable - contacts and channels cannot be saved until the card is reinserted."));
       lv_obj_set_style_text_color(st, lv_color_hex(0xE34B4B), LV_PART_MAIN);
+    } else if (want_sd && g_sd_migration_blocked) {
+      lv_label_set_text(st, TR("SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry."));
+      lv_obj_set_style_text_color(st, lv_color_hex(0xE3A127), LV_PART_MAIN);
     } else if (g_contacts_on_sd) {
       lv_label_set_text(st, TR("Contacts are saved to the SD card."));
       lv_obj_set_style_text_color(st, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
@@ -12179,8 +12194,8 @@ static void buildDeviceSettings(int sec) {
      orphaned on internal flash when the honored SD toggle adopted an empty (or
      fresh-identity) card. This copies EVERYTHING from internal flash over the
      card's copies and reboots into the restored profile. This is a SPIFFS->SD
-     recovery on T-Deck and Pager; Tanmatsu uses SD_MMC with no SPIFFS. */
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+     recovery on T-Deck, V4-R8 and Pager; Tanmatsu uses SD_MMC with no SPIFFS. */
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
   {
     lv_obj_t* b = lv_btn_create(body);
     lv_obj_set_size(b, lv_pct(96), SC(30));
@@ -12194,7 +12209,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_center(lbl);
     y += SC(40);
   }
-#endif  // HAS_TDECK_GT911 || TLORA_PAGER (SPIFFS->SD recovery copy)
+#endif  // HAS_TDECK_GT911 || HELTEC_LORA_V4_R8 || TLORA_PAGER (SPIFFS->SD recovery copy)
 #endif
 
   }
@@ -14447,7 +14462,7 @@ static bool     s_telem_manual_pending = false; // a manual request is awaiting 
 static uint32_t s_telem_deadline_ms = 0;        // manual-request timeout (separate from ping)
 static int      s_telem_win_now_h  = 0;         // display window: newer bound (hours ago)
 static int      s_telem_win_past_h = 24;        // display window: older bound (hours ago)
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 static void openTelemetryWindow(const uint8_t* key6, const char* name, int state);   // fwd
 #endif
 static constexpr unsigned long UI_PING_TIMEOUT_MS = 30000;  // 30 s for flood paths
@@ -14522,7 +14537,7 @@ static void actionSheetTelemetryCb(lv_event_t* e) {
   bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
   closeActionSheet();
   if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Open the telemetry window on its history; it does NOT auto-request. The user
   // taps the Request button (refresh glyph, left of the gear) to poll.
   memcpy(s_telem_node, c.id.pub_key, 6);
@@ -17073,7 +17088,7 @@ static inline void sdNoteIoFailure() {
 // the 24h chart still works. SD path lives under /meshcomod with the other files;
 // SPIFFS (flat) uses a top-level path.
 static fs::FS& battLogFs() {
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (SD.cardType() != CARD_NONE) {
     if (SD.exists("/meshcomod")) return SD;
     // cardType() says present (cached) but real I/O failed — wedge/removal tell.
@@ -17084,7 +17099,7 @@ static fs::FS& battLogFs() {
   return SPIFFS;
 }
 static bool battLogOnSd() {
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   return SD.cardType() != CARD_NONE && SD.exists("/meshcomod");
 #else
   return false;
@@ -17443,7 +17458,7 @@ static void batteryTapCb(lv_event_t* e) {
   openBatteryChartWindow();
 }
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // ----- Per-node telemetry log (/meshcomod/telemetry/<id>.log) -----
 // One file per node (6-byte pubkey prefix, hex). Columns (tab-separated):
 //   epoch \t YYYY-MM-DD HH:MM \t battery_mv \t tempC*10 \t humidity%
@@ -21178,7 +21193,7 @@ static uint32_t  s_disc_log_count = 0;     // sightings written to SD this sessi
 static lv_obj_t* s_disc_footer = nullptr;  // bottom status line: GPS / wardrive state
 
 static void discoverLogSighting(int32_t lat_e6, int32_t lon_e6, const MyMesh::DiscoverHit& h) {
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (SD.cardType() == CARD_NONE) return;
   markSdIo();
   SD.mkdir("/meshcomod");
@@ -25489,7 +25504,7 @@ static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
   // elsewhere s_tiles_from_sd is always false, so the simple guard is equivalent.
   // The SD-pack offline mode is OSM-only; topo has no SD packs, so it always
   // fetches from the proxy regardless of the microSD-tiles setting.
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (s_map_style == 0 && s_tiles_from_sd && s_tile_fs != &SD) return;
 #else
   if (s_map_style == 0 && s_tiles_from_sd) return;
@@ -25629,7 +25644,7 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   char path[48];
   snprintf(path, sizeof(path), "%s/%u/%ld/%ld.jpg",
            mapTileRoot(), (unsigned)z, (long)x, (long)y);
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (s_tiles_from_sd && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
     // Tile source = microSD: read straight off the card (fully offline, no server fetch).
     if (s_sd_fail_note_ms) return false;   // card suspected dead — don't stack per-tile SPI timeouts (sdHealthTick arbitrates)
@@ -25771,7 +25786,7 @@ static void mapNoteStorageChanged() {
 #if defined(ESP32)
 // Is *some* tile source available to probe at all? (SD pack or LittleFS /tiles.)
 static bool mapTileSourceReady() {
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (s_tiles_from_sd) return true;
 #endif
   return s_tiles_fs_ready;
@@ -25782,7 +25797,7 @@ static bool mapTileSourceReady() {
 // online cache), so an SD /maps/osm offline pack was invisible to zoom — the loader
 // drew its tiles but the buttons reported "Max/Min zoom for this pack" offline.
 static bool tileExistsAt(uint8_t z, long x, long y) {
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (s_tiles_from_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
     if (s_sd_fail_note_ms) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
     if (!s_sd_mounted) return false;       // never ladder from the zoom guard (see loadTileJpeg)
@@ -26108,7 +26123,7 @@ static void renderMapTiles() {
   }
 
 #if defined(ESP32)
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (s_tiles_from_sd) {
     lv_label_set_text(s_map_status_lbl,
         TR("Map tiles: microSD\n\n"
@@ -26897,12 +26912,22 @@ static void mapOptZoomButtonsCb(lv_event_t* e) {
   mapZoomControlsApply();
 }
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // Map tile source toggle (in the map options popup): ON = tiles live on the microSD
 // card — read the user's SD library AND cache Wi-Fi-fetched gaps there (#20), so the
 // library grows and downloads survive; OFF = tile server + internal LittleFS cache.
 static void mapOptTilesSdCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  // The worker dereferences the shared cache backend throughout a request. Do
+  // not repoint it while a queued/in-flight fetch may still own a File on the
+  // old filesystem; on Pager that would also hide the live SD handle from the
+  // VFS lifecycle gate and permit SD.end() underneath it.
+  if (s_tile_fetch_pending > 0) {
+    if (s_tiles_from_sd) lv_obj_add_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    else                 lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    if (g_lv.task) g_lv.task->showAlert(TR("Tile download in progress - retry"), 1800);
+    return;
+  }
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetTilesFromSd(on);
   s_tiles_from_sd = on;
@@ -27086,7 +27111,7 @@ static void openMapOptions() {
   lv_obj_set_pos(title, 0, 0);
   int y = 26;
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Row: tile source — microSD (offline) vs the tile server. The important one,
   // so it sits at the very top.
   {
@@ -28955,7 +28980,7 @@ static void crashDumpCheck() {
   // so the whole crash-report UI stays off (everything downstream gates on s_crash_dump_size,
   // which then stays 0). The panic coredump still sits in its flash partition for a USB/esptool
   // pull if we ever need it.
-#if CAP_FILESYSTEM
+#if CAP_FILESYSTEM || defined(TLORA_PAGER)
   crashWdtCaptureRead();   // pull the Task-WDT culprit (if any) before checking for a dump
   size_t addr = 0, size = 0;
   if (esp_core_dump_image_check() == ESP_OK &&
@@ -28980,7 +29005,7 @@ static bool crashDumpExport(char* out_path, size_t out_cap) {
   bool used_sd = false;
   fs::FS* dst = nullptr;
   const char* path = "/wadamesh-crash.elf";
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (fmSdTryMount()) { dst = &SD; used_sd = true; }
 #elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   if (tanSdTryMount()) { dst = &SD_MMC; used_sd = true; }   // microSD on SDMMC slot 0
@@ -34176,7 +34201,7 @@ static uint8_t* lockscreenDecodeWallpaper(int* out_w, int* out_h) {
   // this path only runs for user-selected wallpapers.)
   fs::FS* fsp = &SPIFFS;
   const char* fp = path;
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (!strncmp(path, "sd:", 3)) { fsp = &SD; fp = path + 3; fmSdTryMount(); }   // mount on demand so the chosen SD wallpaper decodes (T-Deck SD only)
 #endif
 
@@ -34826,7 +34851,7 @@ static void backupScan() {
     }
     root.close();
   }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // SD card: scan the root AND the /meshcomod data folder. SD-storage builds keep
   // their data under /meshcomod, so users naturally drop a backup next to it —
   // previously only the root was scanned, so a json in /meshcomod never showed up
@@ -34876,7 +34901,7 @@ static void doBackupImportChosen() {
   fs::FS* fsp = nullptr;
   const char* path = s_backup_chosen;
   if (!strncmp(path, "int:", 4)) { fsp = backupInternalFs(); path += 4; }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   else if (!strncmp(path, "sd:", 3)) { fsp = &SD; path += 3; }
 #endif
   if (!fsp) { g_lv.task->showAlert(TR("Import: storage unavailable"), 2000); return; }
@@ -35033,7 +35058,7 @@ static void doExportBackupFile(const char* fname) {
 
   char path[96]; snprintf(path, sizeof path, "/%s", fname);
   File f; const char* where = "internal";
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Actually mount the card (SD.cardType alone reads CARD_NONE until something
   // mounts it) so a backup truly lands on — and lists from — the SD card.
   if (fmSdTryMount()) { f = SD.open(path, FILE_WRITE); if (f) where = "SD"; }
@@ -35055,7 +35080,7 @@ static void doDeleteBackup() {
   const char* path = s_backup_del_path;
   bool ok = false;
   if (!strncmp(path, "int:", 4)) { ok = backupInternalFs()->remove(path + 4); }   // FFat on Tanmatsu/P4, SPIFFS elsewhere
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   else if (!strncmp(path, "sd:", 3)) { if (fmSdTryMount()) ok = SD.remove(path + 3); }
 #endif
   s_backup_del_path[0] = '\0';
@@ -35122,7 +35147,7 @@ static void doFactoryReset() {
     lv_obj_del(ov);
     if (g_lv.task) {
       g_lv.task->flushHistorySoon();
-      g_lv.task->showAlert(TR("Factory reset blocked: SD is busy; retry"), 2600);
+      g_lv.task->showAlert(TR("Factory reset blocked: SD activity is still running; close tools and retry."), 3600);
     }
     return;
   }
@@ -35141,7 +35166,7 @@ static void doFactoryReset() {
     lv_obj_del(ov);
     if (g_lv.task) {
       g_lv.task->flushHistorySoon();
-      g_lv.task->showAlert(TR("Factory reset blocked: SD wipe failed; remove card and retry"), 4200);
+      g_lv.task->showAlert(TR("Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data."), 6000);
     }
     return;
   }
@@ -39069,7 +39094,7 @@ static void statusBarReaderBackCb(lv_event_t* e) {
 // compression) is the quickest viewable format to emit — rows are a direct copy
 // of the RGB565 framebuffer (LV_COLOR_16_SWAP is 0). Saved to /screenshots.
 static void takeScreenshotToSd() {
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   auto toast = [&](const char* m){ if (g_lv.task) g_lv.task->showAlert(m, 1800); };
   if (SD.cardType() == CARD_NONE) { toast(TR("Screenshot: no SD card")); return; }
   const int W = lv_disp_get_hor_res(nullptr);
@@ -42716,7 +42741,7 @@ void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t
 // popup) instead of a single-slot toast, so the full multi-line reading stays on
 // screen until tapped away and can scroll if it's long. Tap the dimmed backdrop
 // to close.
-#if CAP_SD   // telemetry window + per-node log/poll are SD-backed (T-Deck only)
+#if CAP_SD || defined(TLORA_PAGER)   // telemetry window + per-node log/poll use the mounted SD store
 static lv_obj_t* s_telemetry_root    = nullptr;
 static lv_obj_t* s_telem_config_root = nullptr;   // settings panel spawned on top
 static lv_obj_t* s_telem_poll_ta     = nullptr;   // auto-poll interval input (config panel)
@@ -43375,7 +43400,7 @@ void UITask::onTelemetryReply(const ContactInfo& contact, const uint8_t* data, s
     if (p > 0 && (size_t)p >= body_cap - 1) break;   // body buffer full
   }
 done: {
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Log every reply (manual or auto-poll) to the per-node telemetry file.
   if (any) telemetryLogAppend(contact.id.pub_key, (uint32_t)time(nullptr), tl_mv, tl_t10, tl_h);
 #endif
@@ -43397,7 +43422,7 @@ done: {
     snprintf(msg, sizeof(msg), "%s: %uB %s",
              nm, (unsigned)len, hex);
   }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Update the telemetry window ONLY for the node it's showing, and only when a
   // manual request is in flight — auto-poll just logs (above) without a window.
   if (s_telem_manual_pending && memcmp(s_telem_node, contact.id.pub_key, 6) == 0) {
@@ -46122,7 +46147,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // mirrors this when the toggle flips at runtime.
   s_tile_fs_default = s_tile_fs;
   strncpy(s_tile_root_default, s_tile_root, sizeof s_tile_root_default - 1);
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (s_tiles_from_sd && (sdAdoptLiveMount() || fmSdTryMount())) {
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';
@@ -48452,7 +48477,7 @@ void UITask::loop() {
     snprintf(msg, sizeof(msg), TR("No reply from %s"), s_ui_ping_target_name);
     showAlert(msg, 3500);
   }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Manual telemetry request timed out — flip the open window to "failed" (it
   // still shows the history). Auto-poll has no deadline, so it never lands here.
   if (s_telem_manual_pending && s_telem_deadline_ms != 0 && now >= s_telem_deadline_ms) {
@@ -49145,7 +49170,7 @@ void UITask::loop() {
   }
 
   batteryLogTick((uint32_t)now);   // 5-min battery sample (SD on T-Deck, else SPIFFS)
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   telemetryPollTick((uint32_t)now); // auto-poll due nodes -> log (no window)
 #endif
   uiCp("ui:verchk");
@@ -49396,7 +49421,7 @@ static const PopupEnt k_popup_registry[] = {
                                                                           PF_COUNT },
 #endif
   { P_OPEN(s_confirm_modal),         []{ confirmDismiss(); },             PF_COUNT },
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   { P_OPEN(s_telem_config_root),     []{ telemetryConfigClose(); },       PF_COUNT },   // sits on the telemetry window
   { P_OPEN(s_telemetry_root),        []{ telemetryClose(); },             PF_COUNT },
 #endif
