@@ -901,6 +901,9 @@ void loop() {
   static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
   static bool wifi_radio_prev = true;
   static bool wifi_radio_inited = false;
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+  static bool pager_wifi_was_connected = false;
+#endif
   /* Run the saved Wi-Fi state machine whenever its radio preference is on.
    * Pager setup separately guarantees that Wi-Fi claims its coexistence
    * resources before a cold BLE start. */
@@ -915,8 +918,12 @@ void loop() {
       delay(50);
       WiFi.mode(WIFI_OFF);
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
-      if (s_pager_ble_after_wifi) {
-        s_pager_ble_after_wifi = false;
+      pager_wifi_was_connected = false;
+      const bool ble_waiting = s_pager_ble_after_wifi ||
+                               (wifiConfigGetBleEnabled() &&
+                                !serial_interface.isBleStackBegun());
+      s_pager_ble_after_wifi = false;
+      if (ble_waiting) {
         if (wifiConfigGetBleEnabled() && !serial_interface.isBleEnabled()) {
           serial_interface.enableBle();
           if (serial_interface.isBleEnabled()) {
@@ -1019,7 +1026,12 @@ void loop() {
     static uint32_t sntp_kick_ms = 0;
     if (WiFi.status() == WL_CONNECTED) {
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
-      if (s_pager_ble_after_wifi) {
+      const bool became_connected = !pager_wifi_was_connected;
+      pager_wifi_was_connected = true;
+      const bool ble_waiting = s_pager_ble_after_wifi ||
+                               (wifiConfigGetBleEnabled() &&
+                                !serial_interface.isBleStackBegun());
+      if (became_connected && ble_waiting) {
         s_pager_ble_after_wifi = false;
         if (wifiConfigGetBleEnabled() && !serial_interface.isBleEnabled()) {
           // Wi-Fi is now stable, so a cold BLE allocation cannot enter WPA in
@@ -1068,6 +1080,9 @@ void loop() {
         }
       }
     } else {
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+      pager_wifi_was_connected = false;
+#endif
       // Link dropped: allow re-sync on next reconnect.
       if (sntp_kicked && !sntp_pushed) sntp_kicked = false;
     }
