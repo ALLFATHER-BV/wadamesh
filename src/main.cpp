@@ -227,7 +227,39 @@ void halt() {
 #if defined(TLORA_PAGER)
 static constexpr const char* kSdMigrationComplete = "/meshcomod/.spiffs-migration-v1";
 static constexpr const char* kSdMigrationCompleteTmp = "/meshcomod/.spiffs-migration-v1.tmp";
-bool meshcomodSdMigrationComplete() { return SD.exists(kSdMigrationComplete); }
+
+// Manual recovery may resume onto an empty card or the same profile, but it
+// must never fill one identity's missing files from another profile. Compare
+// the small identity files without logging their contents before arming the
+// durable migration latch. A read failure is treated as a mismatch.
+bool meshcomodSdProfileMatchesInternal() {
+  static constexpr const char* kInternalIdentity = "/identity/_main.id";
+  static constexpr const char* kSdIdentity = "/meshcomod/identity/_main.id";
+  File internal = SPIFFS.open(kInternalIdentity, FILE_READ);
+  if (!internal) return false;
+  if (!SD.exists(kSdIdentity)) {
+    internal.close();
+    return true;
+  }
+  File card = SD.open(kSdIdentity, FILE_READ);
+  if (!card || internal.size() != card.size()) {
+    internal.close();
+    if (card) card.close();
+    return false;
+  }
+  uint8_t internal_buf[64];
+  uint8_t card_buf[64];
+  bool matches = true;
+  while (matches && internal.available()) {
+    const size_t n = internal.read(internal_buf, sizeof internal_buf);
+    if (n == 0 || card.read(card_buf, n) != n || memcmp(internal_buf, card_buf, n) != 0)
+      matches = false;
+  }
+  if (card.available()) matches = false;
+  internal.close();
+  card.close();
+  return matches;
+}
 #endif
 
 bool meshcomodMigrateSpiffsToSd(bool force) {

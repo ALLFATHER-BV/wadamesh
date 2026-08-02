@@ -10892,10 +10892,13 @@ static void useSdStorageToggleCb(lv_event_t* e) {
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
 // "Copy internal data to SD": recovery for the beta_36 upgrades where the live
 // profile was orphaned on internal flash while the honored SD toggle adopted an
-// empty card (which then minted a fresh identity). Pager resumes without
-// replacing files already on the card; legacy targets retain their explicit
-// overwrite behavior. On success this forces the SD pref on and reboots.
+// empty card. Pager resumes only onto a card with no identity or the identical
+// profile; legacy targets retain their explicit overwrite behavior. On success
+// this forces the SD pref on and reboots.
 extern bool meshcomodMigrateSpiffsToSd(bool force);   // main.cpp
+#if defined(TLORA_PAGER)
+extern bool meshcomodSdProfileMatchesInternal();      // compares bytes without logging identity data
+#endif
 extern bool meshcomodArmSdMigLatch();                  // durable in-progress guard
 extern void meshcomodClearSdMigLatch();               // main.cpp (GH #142/#148 boot safe-mode)
 extern bool g_sd_migration_blocked;
@@ -10938,6 +10941,13 @@ static void sdRestoreRun() {
     s_sd_restore_pending = true;
     return;
   }
+
+#if defined(TLORA_PAGER)
+  if (!meshcomodSdProfileMatchesInternal()) {
+    g_lv.task->showAlert(TR("Copy blocked: SD card holds a different or unreadable profile"), 3600);
+    return;
+  }
+#endif
 
   if (!meshcomodArmSdMigLatch()) {
     g_sd_migration_blocked = true;
@@ -10982,7 +10992,7 @@ static void sdRestoreApply() {
 static void sdRestoreFromInternalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(TLORA_PAGER)
-  showConfirm(TR("Copy only missing internal files to SD,\nkeep existing SD data, then reboot?"),
+  showConfirm(TR("Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?"),
               TR("Resume"), sdRestoreApply);
 #else
   showConfirm(TR("Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?"),
@@ -26994,7 +27004,7 @@ static void mapOptZoomButtonsCb(lv_event_t* e) {
   mapZoomControlsApply();
 }
 
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_SD
 // Map tile source toggle (in the map options popup): ON = tiles live on the microSD
 // card — read the user's SD library AND cache Wi-Fi-fetched gaps there (#20), so the
 // library grows and downloads survive; OFF = tile server + internal LittleFS cache.
@@ -43815,29 +43825,6 @@ static bool    s_ui_data_boot_finalized = false;
 // whole boot. Switching a live ring from SPIFFS to a newly inserted card can
 // purge history that was never loaded into RAM; switching a 5000-record SD ring
 // to SPIFFS can fill the small internal partition.
-#if defined(TLORA_PAGER)
-extern bool meshcomodSdMigrationComplete();
-static bool uiHistoryStoreExists(fs::FS& fs, const char* root,
-                                 bool trust_segment_commit = true) {
-  // Thread metadata by itself is not a message store. It can land before a
-  // larger message file fails during SPIFFS -> SD migration; treating that one
-  // small file as authoritative would hide the complete SPIFFS history.
-  const char* files[] = { k_ui_msgs_path, k_ui_history_path };
-  char path[64];
-  for (const char* file : files) {
-    snprintf(path, sizeof path, "%s%s", root, file);
-    if (fs.exists(path)) return true;
-  }
-  // store.ok commits a coherent segment set on its native filesystem. During
-  // a cross-filesystem copy it may arrive before later segments, so the SD copy
-  // is authoritative only after the outer migration marker was committed last.
-  if (trust_segment_commit) {
-    snprintf(path, sizeof path, "%s%s", root, k_ui_seg_ok);
-    if (fs.exists(path)) return true;
-  }
-  return false;
-}
-#endif
 static bool uiDataFsReady() {
   if (s_ui_data_fs != nullptr) return true;   // cache SUCCESS only — a failed resolve MUST stay retryable
 #if defined(TLORA_PAGER)
