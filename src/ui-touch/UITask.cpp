@@ -48413,7 +48413,15 @@ static void sdHealthTick() {
   // Reinsertion may have completed while an internal-cache fetch was still
   // active. mapNoteStorageChanged deliberately deferred the backend swap; make
   // it effective at the first idle tick without invalidating that open File.
-  if (s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready) &&
+  // Skip it while card-detect has already confirmed removal: s_sd_mounted stays
+  // true until the teardown below wins quiescence, so adopting here would point
+  // the backend at a card that is physically gone and burn two full map
+  // re-renders on the loop task before the same tick undoes it.
+  bool sd_leaving = false;
+#if defined(TLORA_PAGER)
+  sd_leaving = s_pager_sd_removal_pending;
+#endif
+  if (!sd_leaving && s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready) &&
       s_tile_fs != &SD && tileFetchPendingLoad() == 0) {
     mapNoteStorageChanged();
   }
