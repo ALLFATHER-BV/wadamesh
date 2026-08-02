@@ -40,6 +40,11 @@ public:
   void prepareBle(const char* prefix, char* name, uint32_t pin_code);
   void enableBle() override;
   void disableBle() override;
+#if defined(TLORA_PAGER)
+  // Tear down the resident controller without changing the saved BLE intent.
+  // Wi-Fi can then re-associate before enableBle() recreates NimBLE.
+  void suspendBleForWifiReconnect();
+#endif
   bool isBleEnabled() const override { return _ble_enabled; }
   bool isBleStackBegun() const { return _ble_begun; }
 #if defined(HAS_TDISPLAY_P4)

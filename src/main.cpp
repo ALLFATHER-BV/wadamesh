@@ -945,14 +945,14 @@ void loop() {
    * from the UI (the transition above already covered the on case). */
   if (wifiConfigConsumeApplyRequest()) {
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
-    // With NimBLE resident, every explicit credential/reconnect request must
-    // return through setup. Wi-Fi-only applies stay live: opening the Wi-Fi
-    // page itself performs a scan/rejoin and must not reboot the device.
+    // Credential changes need the same Wi-Fi-before-BLE order as boot. Release
+    // the resident controller without changing the saved BLE intent, apply the
+    // credentials live, then recreate BLE after the new link reaches GOT_IP.
     if (wifi_radio_en && wifiConfigHasRuntime() &&
         serial_interface.isBleStackBegun()) {
-      Serial.println("[wifi] restarting for ordered T-Pager association");
-      ui_task.rebootDevice();
-      return;
+      s_pager_ble_after_wifi = wifiConfigGetBleEnabled();
+      serial_interface.suspendBleForWifiReconnect();
+      Serial.println("[wifi] BLE released for ordered T-Pager association");
     }
     if (wifi_radio_en && !serial_interface.isBleStackBegun()) {
       WiFi.setAutoReconnect(true);
@@ -999,11 +999,13 @@ void loop() {
         last_wifi_retry_ms = now;
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
         if (serial_interface.isBleStackBegun()) {
-          // Auto-reconnect is disabled once NimBLE exists. Re-authenticate at
-          // boot before recreating BLE rather than entering WPA under coex.
-          Serial.println("[wifi] link lost with BLE resident; restarting for ordered association");
-          ui_task.rebootDevice();
-          return;
+          // Auto-reconnect is disabled once NimBLE exists. Release the BLE
+          // controller first, then use the ordinary retry below; GOT_IP recreates
+          // BLE once Wi-Fi owns the coexistence path again. This bounds an AP
+          // outage to transport reconnects instead of a device reboot loop.
+          s_pager_ble_after_wifi = wifiConfigGetBleEnabled();
+          serial_interface.suspendBleForWifiReconnect();
+          Serial.println("[wifi] BLE released after link loss; re-associating");
         }
 #endif
         char ssid[WIFI_CONFIG_SSID_MAX];

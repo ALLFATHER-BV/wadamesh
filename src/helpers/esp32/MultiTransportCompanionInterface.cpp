@@ -236,8 +236,9 @@ void MultiTransportCompanionInterface::enableBle() {
   _ble.enable();
 #if defined(TLORA_PAGER)
   // A successful live enable means NimBLE is now resident. Do not let the
-  // Arduino Wi-Fi event path enter WPA automatically after a later link loss;
-  // main.cpp detects that state and reboots through the Wi-Fi-first boundary.
+  // Arduino Wi-Fi event path enter WPA automatically after a later link loss.
+  // main.cpp first releases NimBLE, then explicitly re-associates and recreates
+  // BLE after GOT_IP so the same Wi-Fi-first ordering holds without a reboot.
   // Avoid touching Wi-Fi when it has never been initialised (BLE-only mode).
   if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(false);
 #endif
@@ -250,17 +251,34 @@ void MultiTransportCompanionInterface::disableBle() {
   // its cached server pointer. Never call disable() again after that teardown;
   // a later begin() replaces the cached pointers with a fresh GATT server.
   if (_ble_begun) _ble.disable();    // stop advertising + drop any connection
-  // Pager only: if Wi-Fi is genuinely absent, fully release NimBLE so a later
-  // Wi-Fi enable has the contiguous internal heap esp_wifi_init needs. Other
-  // boards retain their established resident-stack disable/re-enable behavior.
-  // While Wi-Fi exists, keep the controller resident on every board.
+  // Pager only: release NimBLE whenever the user turns Bluetooth off. This
+  // returns its internal heap and restores Wi-Fi's ordinary reconnect path;
+  // a later enable recreates the GATT server after Wi-Fi is already stable.
+  // Other boards retain their established resident-stack disable/re-enable
+  // behavior.
 #if defined(TLORA_PAGER)
-  if (_ble_begun && WiFi.getMode() == WIFI_MODE_NULL) {
+  if (_ble_begun) {
     NimBLEDevice::deinit(true);
     _ble_begun = false;
   }
+  if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(true);
 #endif
 }
+
+#if defined(TLORA_PAGER)
+void MultiTransportCompanionInterface::suspendBleForWifiReconnect() {
+  // Preserve wifiConfig's BLE preference: this is a short ownership handoff,
+  // not a user-visible toggle. SerialBLEInterface::begin() replaces the cached
+  // server pointers after deinit(true), matching the cold enable path above.
+  if (_ble_begun) {
+    if (_ble_enabled) _ble.disable();
+    NimBLEDevice::deinit(true);
+    _ble_begun = false;
+  }
+  _ble_enabled = false;
+  if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(true);
+}
+#endif
 
 bool MultiTransportCompanionInterface::getBlePeerAddress(char* buf, size_t len) const {
   if (!_ble_begun || !_ble_enabled) {
