@@ -237,7 +237,12 @@ static constexpr const char* kSdMigrationOwner = "/meshcomod/.spiffs-migration-v
 static constexpr const char* kSdMigrationOwnerTmp = "/meshcomod/.spiffs-migration-v1.owner.tmp";
 
 static bool sdProfileTreeContainsFile(const char* path, uint8_t depth = 0) {
-  if (!SD.exists(path)) return false;
+  // Only the root may be judged absent. A recursive child came straight from
+  // openNextFile(), so it provably exists and re-stat'ing it can only produce a
+  // false negative — which would be the one verdict that lets a foreign
+  // residual subtree read as empty and get claimed. Below the root, let the
+  // open() fail-closed path govern instead.
+  if (depth == 0 && !SD.exists(path)) return false;
   if (depth >= 8) return true;   // unexpected/deep content is not safe to adopt
   File dir = SD.open(path, FILE_READ);
   if (!dir) return true;         // unreadable content is not an empty profile
