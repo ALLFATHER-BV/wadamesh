@@ -7906,9 +7906,17 @@ static const char* bleEnableFailureText() {
   return TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first.");
 }
 
+// "The user wants BLE on", covering the Pager's queued-behind-Wi-Fi request as
+// well as a live stack. Scoped to the Pager on purpose: only UITask::enableBle()
+// records a pending request (wifiConfigSetBleEnabled(true) on the deferral
+// path), and only main.cpp retries one after association. Everywhere else
+// wifiConfigGetBleEnabled() is a plain persisted preference that DEFAULTS TO ON
+// and can sit true with no stack begun (the boot co-init heap guard, an OTA
+// release) — folding that in there would make the toggles read ON while BLE is
+// dead, and turn the first tap into "clear my preference" instead of "start it".
 static bool bleRequestedOrEnabled() {
   bool requested = g_lv.task && g_lv.task->isBleEnabled();
-#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
   requested = requested || wifiConfigGetBleEnabled();
 #endif
   return requested;
@@ -13029,7 +13037,12 @@ static void bleEnableSwitchCb(lv_event_t* e) {
     if (!g_lv.task->enableBle()) {
       // A Pager request queued behind Wi-Fi is still ON as user intent. Keep it
       // checked so a second tap can cancel; only a true refusal reverts to OFF.
-      if (wifiConfigGetBleEnabled())
+      // Other boards have no pending-request state, so a refusal always reverts.
+      bool still_requested = false;
+#if defined(TLORA_PAGER)
+      still_requested = wifiConfigGetBleEnabled();
+#endif
+      if (still_requested)
         lv_obj_add_state(lv_event_get_target(e), LV_STATE_CHECKED);
       else
         lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -13146,7 +13159,9 @@ static void buildBluetoothSettings() {
   lv_obj_set_pos(sw_lbl, 2, y + 6);
   g_set_modal.wifi_sw = lv_switch_create(body);  // reuse the same slot — only one switch lives in a modal at a time
   lv_obj_align(g_set_modal.wifi_sw, LV_ALIGN_TOP_RIGHT, 0, y);   // flush right
-  if (ble_active || wifiConfigGetBleEnabled())
+  // Must be the SAME predicate bleEnableSwitchCb compares against, or its
+  // `want == requested` early-out swallows the first tap.
+  if (ble_active || bleRequestedOrEnabled())
     lv_obj_add_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(g_set_modal.wifi_sw, bleEnableSwitchCb, LV_EVENT_VALUE_CHANGED, nullptr);  // instant toggle (BLE is live)
   y += SC(38);
