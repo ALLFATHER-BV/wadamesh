@@ -713,6 +713,24 @@ static void initTouchFontFallbacks() {
   g_font_14.fallback = &s_person_font14;
 }
 
+#if defined(MULTI_TRANSPORT_COMPANION)
+// Cross-core tile lifecycle count. Increment before publishing a queue item so
+// the worker cannot open an SD File during a false-zero window; every read and
+// update is atomic because the producer and consumer run on different cores.
+volatile uint16_t s_tile_fetch_pending = 0;
+static inline uint16_t tileFetchPendingLoad() {
+  return __atomic_load_n(&s_tile_fetch_pending, __ATOMIC_ACQUIRE);
+}
+static inline void tileFetchPendingInc() {
+  __atomic_fetch_add(&s_tile_fetch_pending, (uint16_t)1, __ATOMIC_RELEASE);
+}
+static inline void tileFetchPendingDec() {
+  const uint16_t pending = tileFetchPendingLoad();
+  if (pending > 0)
+    __atomic_fetch_sub(&s_tile_fetch_pending, (uint16_t)1, __ATOMIC_RELEASE);
+}
+#endif
+
 // ---- I2S notification sound (T-Deck MAX98357A amp / pager ES8311 codec) ----
 // Synthesized beeps and small WAV playback for UI feedback (message arrived,
 // etc), both driven over I2S. The legacy genericBuzzer (RTTTL on a digital
@@ -731,8 +749,6 @@ static constexpr i2s_port_t kI2sPort = I2S_NUM_0;
 // beeping while tiles are downloading — the I2S DMA buffers + Wi-Fi RX DMA + a
 // tile decode all contend for the scarce internal DMA RAM, and this build is
 // already tight enough that tile downloads can OOM-reboot on their own.
-extern volatile uint16_t s_tile_fetch_pending;
-
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
 static bool fmSdTryMount();   // defined far below (microSD mount)
 #endif
@@ -997,7 +1013,7 @@ static void tdeckNotifyTaskFn(void* arg) {
 // download (DMA-RAM contention → reboot) and won't stack itself. Caller checks the
 // sound pref.
 static void tdeckPlayNotifySlot(int slot) {
-  if (s_tile_fetch_pending > 0) return;   // don't fight the Wi-Fi/tile DMA buffers
+  if (tileFetchPendingLoad() > 0) return;   // don't fight the Wi-Fi/tile DMA buffers
   if (s_notify_playing) return;           // already chiming — don't stack tasks/I2S
   s_notify_slot = slot;
   s_notify_vol = (int)touchPrefsGetSoundVolume() * 130;   // 0..100 -> 0..13000 amplitude
@@ -1010,7 +1026,7 @@ static void tdeckPlayNotifySlot(int slot) {
 }
 // Preview an arbitrary WAV (not yet saved to a slot) on the notify task.
 static void tdeckPreviewWavFile(const char* prefpath) {
-  if (s_tile_fetch_pending > 0 || s_notify_playing) return;
+  if (tileFetchPendingLoad() > 0 || s_notify_playing) return;
   strncpy(s_notify_path, prefpath, sizeof s_notify_path - 1);
   s_notify_path[sizeof s_notify_path - 1] = '\0';
   s_notify_slot = TOUCH_SND_MSG;          // if the file fails, the task plays the msg chime
@@ -1084,7 +1100,7 @@ static void pagerNotifyTaskFn(void* arg) {
 }
 
 static void pagerPlayNotifySlot(int slot) {
-  if (s_tile_fetch_pending > 0) return;
+  if (tileFetchPendingLoad() > 0) return;
   if (s_notify_playing) return;
   s_notify_slot = slot;
   s_notify_vol = (int)touchPrefsGetSoundVolume();   // 0..100 -> the codec's hw volume register
@@ -1095,7 +1111,7 @@ static void pagerPlayNotifySlot(int slot) {
   }
 }
 static void pagerPreviewWavFile(const char* prefpath) {
-  if (s_tile_fetch_pending > 0 || s_notify_playing) return;
+  if (tileFetchPendingLoad() > 0 || s_notify_playing) return;
   strncpy(s_notify_path, prefpath, sizeof s_notify_path - 1);
   s_notify_path[sizeof s_notify_path - 1] = '\0';
   s_notify_slot = TOUCH_SND_MSG;
@@ -10875,13 +10891,16 @@ static void sdRestoreRun() {
   const UBaseType_t low_water = uxTaskGetStackHighWaterMark(nullptr);
   Serial.printf("[BOOT] deferred SD migration, loop stack low-water: %u bytes\n",
                 (unsigned)(low_water * sizeof(StackType_t)));
-  disableLoopWDT();
 #if defined(TLORA_PAGER)
+  // The copy loop feeds the task watchdog itself. Avoid the inherited raw
+  // disable/enable pair here: enableLoopWDT() would subscribe an originally
+  // unwatched loopTask. #213 handles the legacy-board pairs independently.
   const bool ok = meshcomodMigrateSpiffsToSd(false);
 #else
+  disableLoopWDT();
   const bool ok = meshcomodMigrateSpiffsToSd(true);
-#endif
   enableLoopWDT();
+#endif
   if (!ok) {
     g_sd_migration_blocked = true;
     g_lv.task->showAlert(TR("Copy incomplete: SD data may be mixed. Retry before reboot."), 4200);
@@ -18784,10 +18803,15 @@ static bool fmSdTryMount() {
   // here would invalidate open prefs/history files beneath the boot sequence.
 #if defined(TLORA_PAGER)
   // An SD-backed worker can enter here while its own busy flag is set. It may
-  // use an already-live VFS without touching the loop task's mount diagnostics
-  // or 64-bit size field. A cached CARD_NONE below only clears stale diagnostics.
-  if (SD.cardType() != CARD_NONE && sdRuntimeLifecycleBusy())
-    return board.sdCardState() != TLoraPagerBoard::SdCardState::Absent;
+  // use an already-live VFS without changing its lifetime. Keep the mount
+  // diagnostics coherent so every successful return has the same contract.
+  if (SD.cardType() != CARD_NONE && sdRuntimeLifecycleBusy()) {
+    if (board.sdCardState() == TLoraPagerBoard::SdCardState::Absent) return false;
+    s_sd_mounted = true;
+    s_sd_size = SD.cardSize();
+    s_sd_retry_after_ms = 0;
+    return true;
+  }
 #endif
   if (sdAdoptLiveMount()) return true;
   s_sd_mounted = false;
@@ -24185,7 +24209,6 @@ static constexpr int     k_tile_fetch_queue_size = 64;   // holds a full zoomed-
 static QueueHandle_t     s_tile_fetch_queue   = nullptr;
 static TaskHandle_t      s_tile_fetch_task    = nullptr;
 static volatile bool     s_tile_fetch_dirty   = false;
-volatile uint16_t s_tile_fetch_pending = 0;   // non-static: tdeckPlayNotify reads it via extern (above)
 #if defined(TLORA_PAGER)
 // Card-detect sets this before the VFS can be unmounted. It stops producers and
 // lets the worker discard its queued SD jobs, so the lifecycle gate converges
@@ -25014,7 +25037,7 @@ static void tileFetchTaskFn(void* arg) {
       s_tile_fetch_last_wr = 'R';
       ++s_tile_fetch_failed;
       tileFetchForget(req.z, req.x, req.y);
-      if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+      tileFetchPendingDec();
       continue;
     }
 #endif
@@ -25025,7 +25048,7 @@ static void tileFetchTaskFn(void* arg) {
       s_tile_fetch_last_wr = 'W';
       ++s_tile_fetch_failed;
       tileFetchForget(req.z, req.x, req.y);   // transient — re-arm for retry once Wi-Fi is back (#20)
-      if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+      tileFetchPendingDec();
       continue;
     }
 
@@ -25054,7 +25077,7 @@ static void tileFetchTaskFn(void* arg) {
         vf.close();
         if (mr == 3 && m[0] == 0xFF && m[1] == 0xD8 && m[2] == 0xFF) {
           ++s_tile_fetch_ok;                         // already on disk + valid -> skip the re-download
-          if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+          tileFetchPendingDec();
           continue;
         }
         tileCacheRemove(path_jpg);   // present but unreadable/short/bad -> fall through and re-download
@@ -25087,7 +25110,7 @@ static void tileFetchTaskFn(void* arg) {
         s_tile_fetch_last_wr = 'H';
         ++s_tile_fetch_failed;
         tileFetchForget(req.z, req.x, req.y);
-        if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+        tileFetchPendingDec();
         continue;
       }
     }
@@ -25098,7 +25121,7 @@ static void tileFetchTaskFn(void* arg) {
       s_tile_fetch_last_wr = 'S';
       ++s_tile_fetch_failed;
       tileFetchForget(req.z, req.x, req.y);   // transient — retry after space frees (#20)
-      if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+      tileFetchPendingDec();
       continue;
     }
 
@@ -25215,7 +25238,7 @@ static void tileFetchTaskFn(void* arg) {
     // remains and the device reboots.
     http.end();
     client.stop();
-    if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+    tileFetchPendingDec();
 
     if (wrote) {
       WIRE_DBG("[TILE]  -> wrote %s\n", path_jpg);
@@ -25386,9 +25409,13 @@ static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
   if (!ensureTileFetchTaskRunning()) return;
   if (!s_tile_fetch_queue) return;
   TileFetchReq req = {z, x, y};
+  // Publish the lifecycle count before the queue item. Otherwise the worker can
+  // dequeue and open an SD File before the producer increments the count.
+  tileFetchPendingInc();
   if (xQueueSend(s_tile_fetch_queue, &req, 0) == pdTRUE) {
     tileFetchMarkSeen(z, x, y);    // only remember it once it's truly queued
-    ++s_tile_fetch_pending;
+  } else {
+    tileFetchPendingDec();
   }
 }
 
@@ -25937,7 +25964,7 @@ static void renderMapTiles() {
     // screen, which is heavy on internal DMA RAM — doing that per-tile WHILE the
     // Wi-Fi worker holds a socket pushed the heap into an OOM reboot. When tiles
     // are arriving from the network, let LVGL batch one redraw at the end.
-    if (s_tile_fetch_pending == 0) lv_refr_now(NULL);
+    if (tileFetchPendingLoad() == 0) lv_refr_now(NULL);
     // Yield to the IDLE task after each tile's read + decode + paint. This loop
     // runs on loopTask, which is what the task watchdog watches via IDLE1; a full
     // 9-tile load (or a few slow SD reads) can otherwise pin the core long enough
@@ -26783,7 +26810,7 @@ static void mapOptTilesSdCb(lv_event_t* e) {
   // not repoint it while a queued/in-flight fetch may still own a File on the
   // old filesystem; on Pager that would also hide the live SD handle from the
   // VFS lifecycle gate and permit SD.end() underneath it.
-  if (s_tile_fetch_pending > 0) {
+  if (tileFetchPendingLoad() > 0) {
     if (s_tiles_from_sd) lv_obj_add_state(lv_event_get_target(e), LV_STATE_CHECKED);
     else                 lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);
     if (g_lv.task) g_lv.task->showAlert(TR("Tile download in progress - retry"), 1800);
@@ -28164,9 +28191,9 @@ static void refreshMapInfoLabel() {
   char tail[28];
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   const bool wifi_up = (WiFi.status() == WL_CONNECTED);
-  if (s_tile_fetch_pending > 0) {
+  if (tileFetchPendingLoad() > 0) {
     snprintf(tail, sizeof(tail), "\xe2\x86\x93 %u downloading",
-             (unsigned)s_tile_fetch_pending);
+             (unsigned)tileFetchPendingLoad());
   } else if (s_map_last_missing > 0 && !wifi_up) {
     snprintf(tail, sizeof(tail), "Wi-Fi off \xe2\x80\x94 gaps");
   } else {
@@ -42404,14 +42431,11 @@ static bool uiDataFsReady() {
 #if defined(TLORA_PAGER)
   if (s_ui_data_boot_finalized) {
     // A boot-adopted card owns the active identity/profile. Never fall back to
-    // another profile's internal history if that card becomes unavailable.
+    // another profile's internal history if that card becomes unavailable. If
+    // history failed to resolve during begin(), also never attach it later in
+    // this boot: the RAM ring was not loaded from that card, and a subsequent
+    // flush could otherwise replace its existing segments with an empty ring.
     if (g_full_data_on_sd) {
-      if (fmSdTryMount()) {
-        SD.mkdir("/meshcomod");
-        s_ui_data_fs = &SD;
-        strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
-        return true;
-      }
       return false;
     }
     // Never adopt unseen card history after the boot loader has finished, but
@@ -46713,7 +46737,7 @@ static bool sdRuntimeLifecycleBusy() {
               touchPrefsIoBusy();
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
   busy = busy || s_notify_playing ||
-         (s_tile_fs == &SD && s_tile_fetch_pending > 0);
+         (s_tile_fs == &SD && tileFetchPendingLoad() > 0);
 #endif
   return busy;
 }
