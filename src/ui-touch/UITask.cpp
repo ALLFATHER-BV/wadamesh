@@ -13534,7 +13534,9 @@ static void wifiScanMainService() {
     s_wifiscan_reconnect_after = false;
     s_wifiscan_drop_ms = 0;
     wifiScanSetActive(false);             // un-gate main.cpp's reconnect retry
+#if !defined(TLORA_PAGER)
     WiFi.setAutoReconnect(true);
+#endif
     wifiConfigRequestApply();             // re-begin with the stored cred (main task)
   }
 }
@@ -13555,7 +13557,9 @@ static void wifiScanService() {
     s_wifiscan_reconnect_after = false;
     s_wifiscan_guard_ms = 0;              // normal completion — disarm the stuck-gate deadline
     wifiScanSetActive(false);
+#if !defined(TLORA_PAGER)
     WiFi.setAutoReconnect(true);
+#endif
     wifiConfigRequestApply();             // main.cpp re-begins with the stored cred (main task)
   }
 #endif

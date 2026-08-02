@@ -234,6 +234,13 @@ void MultiTransportCompanionInterface::enableBle() {
   _ble_enabled = true;
   wifiConfigSetBleEnabled(true);    // persist so it survives reboot
   _ble.enable();
+#if defined(TLORA_PAGER)
+  // A successful live enable means NimBLE is now resident. Do not let the
+  // Arduino Wi-Fi event path enter WPA automatically after a later link loss;
+  // main.cpp detects that state and reboots through the Wi-Fi-first boundary.
+  // Avoid touching Wi-Fi when it has never been initialised (BLE-only mode).
+  if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(false);
+#endif
 }
 
 void MultiTransportCompanionInterface::disableBle() {
