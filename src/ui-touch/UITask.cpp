@@ -25910,7 +25910,9 @@ static void mapNoteStorageChanged() {
 // Is *some* tile source available to probe at all? (SD pack or LittleFS /tiles.)
 static bool mapTileSourceReady() {
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd && s_tile_fs == &SD) return s_sd_mounted;
+  // Mirror loadTileJpeg's source selection: SD packs are OSM-only, so topo
+  // reads the generic /tiles/topo cache and its readiness is s_tiles_fs_ready.
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) return s_sd_mounted;
 #endif
   return s_tiles_fs_ready;
 }
@@ -26247,7 +26249,10 @@ static void renderMapTiles() {
 
 #if defined(ESP32)
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd && s_tile_fs == &SD) {
+  // s_map_style == 0: SD packs are OSM-only. In topo the loader reads the
+  // online /tiles/topo cache, so pointing the user at /maps/osm would be wrong
+  // and would hide the download progress/diagnostics below.
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {
     lv_label_set_text(s_map_status_lbl,
         TR("Map tiles: microSD\n\n"
         "/maps/osm/z/x/y.png\n"
