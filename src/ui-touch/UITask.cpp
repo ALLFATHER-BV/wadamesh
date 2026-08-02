@@ -25892,7 +25892,15 @@ static void mapNoteStorageChanged() {
   // swapped card keeps showing the previous card's tiles with the dedup ring
   // suppressing the re-fetch until that retry lands.
   const bool may_swap = (tileFetchPendingLoad() == 0);
-  if (may_swap && !s_sd_mounted && s_tile_fs == &SD) {
+  // Whether the backend actually has to move. Also decides whether a deferral
+  // leaves the pointer stale: most callers (a remount that changed nothing, a
+  // reinsert while already on the card) need no swap at all, and those must
+  // still repaint below even while a fetch is in flight.
+  const bool wants_teardown = !s_sd_mounted && s_tile_fs == &SD;
+  const bool wants_adopt    = s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready);
+  const bool swap_deferred  =
+      !may_swap && (wants_teardown || (wants_adopt && s_tile_fs != &SD));
+  if (may_swap && wants_teardown) {
     if (s_tile_fs_default && s_tile_fs_default != &SD) {
       // SD tile mode lost its card, but the dedicated LittleFS cache is still
       // mounted. Keep maps online instead of disabling that healthy fallback.
@@ -25907,7 +25915,7 @@ static void mapNoteStorageChanged() {
       s_tile_root_default[0] = '\0';
       s_tiles_fs_ready = false;
     }
-  } else if (may_swap && s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready)) {
+  } else if (may_swap && wants_adopt) {
     // Reinserted while SD mode is selected, or no internal backend exists.
     // Preserve an existing LittleFS default so toggling SD mode off remains a
     // valid fallback after any number of remove/reinsert cycles.
@@ -25924,11 +25932,12 @@ static void mapNoteStorageChanged() {
   s_tile_fetch_dedup_head = 0;
   freeMapTiles();
 #if CAP_SD || defined(TLORA_PAGER)
-  // Drop the stale tiles above either way, but do not paint from a backend we
-  // already know is wrong — that would read through &SD for a card that is gone
-  // and pay a full SPI timeout per probe on the loop task. sdHealthTick renders
-  // as soon as it lands the deferred swap.
-  if (!may_swap) return;
+  // Drop the stale tiles above either way, but do not paint through a pointer
+  // we already know is wrong — that would probe &SD for a card that is gone and
+  // pay a full SPI timeout per tile on the loop task. Only skip when a swap was
+  // genuinely wanted and deferred; sdHealthTick repaints once it lands. When no
+  // swap was needed the backend is correct, so fall through and repaint now.
+  if (swap_deferred) return;
 #endif
   if (g_lv.tabview && lv_tabview_get_tab_act(g_lv.tabview) == MAP_TAB_INDEX) renderMapTiles();
 }
