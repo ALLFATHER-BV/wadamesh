@@ -53,12 +53,12 @@ struct LoopWdtGuard {
 #else
 // Tanmatsu and T-Display-P4 supply app_main() themselves. Their Arduino
 // component has no loopTaskHandle or loop-WDT helpers to preserve.
-struct LoopWdtGuard {};
+struct LoopWdtGuard { LoopWdtGuard() {} ~LoopWdtGuard() {} };
 #endif
 #else
 inline void wdtHeavyBegin() {}
 inline void wdtHeavyEnd()   {}
-struct LoopWdtGuard {};
+struct LoopWdtGuard { LoopWdtGuard() {} ~LoopWdtGuard() {} };
 #endif
 
 struct WdtHeavyGuard { WdtHeavyGuard() { wdtHeavyBegin(); } ~WdtHeavyGuard() { wdtHeavyEnd(); } };
