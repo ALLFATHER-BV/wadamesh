@@ -13098,7 +13098,10 @@ static void buildBluetoothSettings() {
   const bool ble_cap_m = g_lv.task && g_lv.task->hasBleCapability();
   if (ble_active)
     lv_label_set_text(mode, wifi_on_m ? "Mode: BLE on (+ Wi-Fi)" : "Mode: BLE on");
-  else if (ble_cap_m && wifiConfigGetBleEnabled())
+  // "starting" only where something will actually act on the request later
+  // (the Pager's post-association retry). Elsewhere a saved-but-not-resident
+  // preference just means off, and one tap brings the stack up.
+  else if (ble_cap_m && bleRequestedOrEnabled())
     lv_label_set_text(mode, TR("Mode: BLE starting / low memory"));
   else
     lv_label_set_text(mode, wifi_on_m ? "Mode: BLE off (Wi-Fi on)" : "Mode: BLE off");
@@ -36051,7 +36054,7 @@ static void refreshSettingsSectionSubtitles() {
     } else {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       lv_label_set_text(g_set_sec_sub[SEC_BLUETOOTH],
-                        (g_lv.task->hasBleCapability() && wifiConfigGetBleEnabled())
+                        (g_lv.task->hasBleCapability() && bleRequestedOrEnabled())
                           ? "Starting…" : "Off");
 #else
       lv_label_set_text(g_set_sec_sub[SEC_BLUETOOTH], TR("Inactive"));
