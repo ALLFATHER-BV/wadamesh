@@ -426,8 +426,17 @@ bool DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
       _fs->remove(_rp("/new_prefs.tmp"));   // short write (storage full?) — keep the old main file
       return false;
     }
-    _fs->remove(_rp("/new_prefs"));
-    return _fs->rename(_rp("/new_prefs.tmp"), _rp("/new_prefs"));
+    // _rp() returns a pointer to one shared scratch buffer when the store has
+    // a root prefix (for example SD:/meshcomod). Calling it twice in rename()
+    // therefore aliases both arguments to whichever path was formatted last,
+    // leaving new_prefs.tmp stranded even though the data itself was written.
+    // Keep the source and destination in independent buffers for the swap.
+    char tmp_path[48];
+    char live_path[48];
+    snprintf(tmp_path, sizeof(tmp_path), "%s/new_prefs.tmp", _root);
+    snprintf(live_path, sizeof(live_path), "%s/new_prefs", _root);
+    _fs->remove(live_path);
+    return _fs->rename(tmp_path, live_path);
   }
   return false;
 }
