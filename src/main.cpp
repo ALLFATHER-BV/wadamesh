@@ -51,6 +51,9 @@ static uint32_t _atoi(const char* sp) {
   #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
     #include <SD.h>
     #include <Preferences.h>
+    #if defined(TLORA_PAGER)
+      #include <mbedtls/sha256.h>
+    #endif
     #ifndef PIN_SD_CS
       #if defined(TLORA_PAGER)
         #define PIN_SD_CS PAGER_PIN_SD_CS
@@ -218,15 +221,20 @@ void halt() {
 // "lost profile settings". The data was never gone — it was orphaned on SPIFFS.
 // Copies every SPIFFS file into SD:/meshcomod ("/prefs/<ns>.kv" flattens to
 // "/meshcomod/<ns>.kv", matching SdNvsPrefs's SD layout). Returns true only when
-// every file landed on the card; Pager additionally requires a last-written
-// completion marker. The caller must NOT adopt the card otherwise. force=true
+// every file landed on the card and a last-written completion marker commits
+// that attempt. The caller must NOT adopt the card otherwise. force=true
 // (the Settings "Copy internal data to SD" recovery button) overwrites whatever
 // the card holds on legacy targets. Pager recovery is deliberately non-clobbering;
 // its boot and manual paths only fill missing files and commit the marker last.
 // Both filesystems must be mounted by the caller.
-#if defined(TLORA_PAGER)
+static constexpr const char* kInternalIdentity = "/identity/_main.id";
+static constexpr const char* kSdIdentity = "/meshcomod/identity/_main.id";
 static constexpr const char* kSdMigrationComplete = "/meshcomod/.spiffs-migration-v1";
 static constexpr const char* kSdMigrationCompleteTmp = "/meshcomod/.spiffs-migration-v1.tmp";
+
+#if defined(TLORA_PAGER)
+static constexpr const char* kSdMigrationOwner = "/meshcomod/.spiffs-migration-v1.owner";
+static constexpr const char* kSdMigrationOwnerTmp = "/meshcomod/.spiffs-migration-v1.owner.tmp";
 
 static bool sdProfileTreeContainsFile(const char* path, uint8_t depth = 0) {
   if (!SD.exists(path)) return false;
@@ -251,19 +259,67 @@ static bool sdProfileTreeContainsFile(const char* path, uint8_t depth = 0) {
   return false;
 }
 
+static bool internalIdentityDigest(uint8_t out[32]) {
+  File identity = SPIFFS.open(kInternalIdentity, FILE_READ);
+  if (!identity) return false;
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  int rc = mbedtls_sha256_starts_ret(&ctx, 0);
+  uint8_t chunk[128];
+  while (rc == 0 && identity.available()) {
+    const size_t n = identity.read(chunk, sizeof chunk);
+    if (n == 0) { rc = -1; break; }
+    rc = mbedtls_sha256_update_ret(&ctx, chunk, n);
+  }
+  if (rc == 0) rc = mbedtls_sha256_finish_ret(&ctx, out);
+  mbedtls_sha256_free(&ctx);
+  identity.close();
+  return rc == 0;
+}
+
+static bool sdDigestFileMatches(const char* path, const uint8_t expected[32]) {
+  File marker = SD.open(path, FILE_READ);
+  if (!marker || marker.size() != 32) {
+    if (marker) marker.close();
+    return false;
+  }
+  uint8_t actual[32];
+  const bool matches = marker.read(actual, sizeof actual) == sizeof actual &&
+                       memcmp(actual, expected, sizeof actual) == 0;
+  marker.close();
+  return matches;
+}
+
+static bool ensureSdMigrationOwner() {
+  uint8_t digest[32];
+  if (!internalIdentityDigest(digest)) return false;
+  if (SD.exists(kSdMigrationOwner))
+    return sdDigestFileMatches(kSdMigrationOwner, digest);
+  if (SD.exists(kSdMigrationOwnerTmp)) {
+    if (sdDigestFileMatches(kSdMigrationOwnerTmp, digest))
+      return SD.rename(kSdMigrationOwnerTmp, kSdMigrationOwner);
+    if (!SD.remove(kSdMigrationOwnerTmp)) return false;   // only our own incomplete marker
+  }
+  // Without a matching owner marker, only a tree containing no file payload is
+  // safe to claim. Empty directories from an interrupted mkdir sequence are OK.
+  if (sdProfileTreeContainsFile("/meshcomod")) return false;
+  if (!SD.exists("/meshcomod") && !SD.mkdir("/meshcomod")) return false;
+  File marker = SD.open(kSdMigrationOwnerTmp, FILE_WRITE);
+  const bool wrote = marker && marker.write(digest, sizeof digest) == sizeof digest;
+  if (marker) marker.close();
+  return wrote && SD.rename(kSdMigrationOwnerTmp, kSdMigrationOwner);
+}
+
 // Manual recovery may resume onto an empty card or the same profile, but it
 // must never fill one identity's missing files from another profile. Compare
 // the small identity files without logging their contents before arming the
 // durable migration latch. A read failure is treated as a mismatch.
 bool meshcomodSdProfileMatchesInternal() {
-  static constexpr const char* kInternalIdentity = "/identity/_main.id";
-  static constexpr const char* kSdIdentity = "/meshcomod/identity/_main.id";
   File internal = SPIFFS.open(kInternalIdentity, FILE_READ);
   if (!internal) return false;
   if (!SD.exists(kSdIdentity)) {
-    const bool has_payload = sdProfileTreeContainsFile("/meshcomod");
     internal.close();
-    return !has_payload;
+    return ensureSdMigrationOwner();
   }
   File card = SD.open(kSdIdentity, FILE_READ);
   if (!card || internal.size() != card.size()) {
@@ -285,6 +341,17 @@ bool meshcomodSdProfileMatchesInternal() {
   return matches;
 }
 #endif
+
+bool meshcomodPrepareSdMigration() {
+  if (SD.exists(kSdMigrationCompleteTmp) && !SD.remove(kSdMigrationCompleteTmp))
+    return false;
+  if (SD.exists(kSdMigrationComplete) && !SD.remove(kSdMigrationComplete))
+    return false;
+#if defined(TLORA_PAGER)
+  if (!SD.exists(kSdIdentity) && !ensureSdMigrationOwner()) return false;
+#endif
+  return true;
+}
 
 bool meshcomodMigrateSpiffsToSd(bool force) {
   if (!SPIFFS.exists("/identity/_main.id")) return false;   // nothing worth adopting
@@ -458,7 +525,6 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
   Serial.printf("[BOOT] SPIFFS -> SD migration: %d copied, %d failed, identity %s\n",
                 copied, failed, identity_ok ? "ok" : "MISSING");
   bool complete = identity_ok && failed == 0;
-#if defined(TLORA_PAGER)
   if (complete) {
     if (SD.exists(kSdMigrationCompleteTmp) &&
         !SD.remove(kSdMigrationCompleteTmp)) {
@@ -483,7 +549,6 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
       return false;
     }
   }
-#endif
   return complete;
 }
 
@@ -742,7 +807,7 @@ void setup() {
     SPIClass* _spi = heltecV4R8SharedSPI();
    #else
     SPIClass* _spi = tdeckSharedSPI();
-    #endif
+   #endif
     bool sd_mounted = false;
 #if defined(TLORA_PAGER)
     if (!_spi) {
@@ -847,15 +912,25 @@ void setup() {
           const bool needs_migration =
               !SD.exists("/meshcomod/identity/_main.id");
           if (mig_busy) {
+            // A completion marker written after identity proves the interrupted
+            // state was only the tiny crash window before the NVS latch clear.
+            // Otherwise fail closed even if an older identity still exists.
+            const bool committed = !needs_migration && SD.exists(kSdMigrationComplete);
+            if (committed) {
+              if (mp_ok) _mp.remove("sd_mig_busy");
+              Serial.println("[BOOT] SD migration committed before reset -> adopting completed profile");
+            } else {
+              adopt = false;
+              g_sd_migration_blocked = true;
+              Serial.println("[BOOT] prior SD migration did not complete -> skipping (staying on SPIFFS); retry via Settings > Copy internal data to SD");
+            }
             if (mp_ok) _mp.end();
-            adopt = false;
-            g_sd_migration_blocked = true;
-            Serial.println("[BOOT] prior SD migration did not complete -> skipping (staying on SPIFFS); retry via Settings > Copy internal data to SD");
           } else if (needs_migration) {
             // Do not start without a durable rollback breadcrumb. If NVS is
             // unavailable, a reset after identity lands would otherwise leave
             // no evidence that the SD tree is only partially migrated.
-            const bool armed = mp_ok && _mp.putBool("sd_mig_busy", true) == 1;
+            const bool prepared = mp_ok && meshcomodPrepareSdMigration();
+            const bool armed = prepared && _mp.putBool("sd_mig_busy", true) == 1;
             if (mp_ok) _mp.end();
             adopt = armed && meshcomodMigrateSpiffsToSd(false);
             // Keep the breadcrumb latched after a returned-but-incomplete copy.
@@ -869,7 +944,7 @@ void setup() {
             g_sd_migration_blocked = !adopt;
             if (!adopt) Serial.println(armed
                 ? "[BOOT] SD migration incomplete -> staying on SPIFFS this boot"
-                : "[BOOT] SD migration breadcrumb unavailable -> staying on SPIFFS this boot");
+                : "[BOOT] SD migration preparation/breadcrumb unavailable -> staying on SPIFFS this boot");
           } else {
             if (mp_ok) _mp.end();
           }

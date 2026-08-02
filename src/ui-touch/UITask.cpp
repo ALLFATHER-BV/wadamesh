@@ -10896,6 +10896,7 @@ static void useSdStorageToggleCb(lv_event_t* e) {
 // profile; legacy targets retain their explicit overwrite behavior. On success
 // this forces the SD pref on and reboots.
 extern bool meshcomodMigrateSpiffsToSd(bool force);   // main.cpp
+extern bool meshcomodPrepareSdMigration();            // clears the prior commit marker / claims empty Pager tree
 #if defined(TLORA_PAGER)
 extern bool meshcomodSdProfileMatchesInternal();      // compares bytes without logging identity data
 #endif
@@ -10949,6 +10950,12 @@ static void sdRestoreRun() {
   }
 #endif
 
+  if (!meshcomodPrepareSdMigration()) {
+    g_sd_migration_blocked = true;
+    g_lv.task->showAlert(TR("Copy blocked: SD profile could not be prepared safely"), 3200);
+    return;
+  }
+
   if (!meshcomodArmSdMigLatch()) {
     g_sd_migration_blocked = true;
     g_lv.task->showAlert(TR("Copy blocked: migration guard unavailable"), 2600);
@@ -10957,16 +10964,11 @@ static void sdRestoreRun() {
   const UBaseType_t low_water = uxTaskGetStackHighWaterMark(nullptr);
   Serial.printf("[BOOT] deferred SD migration, loop stack low-water: %u bytes\n",
                 (unsigned)(low_water * sizeof(StackType_t)));
-  bool ok = false;
+  LoopWdtGuard loop_wdt_guard;
 #if defined(TLORA_PAGER)
-  // The copy loop feeds the task watchdog itself. Avoid changing the loop
-  // task's original watchdog subscription on the Pager.
-  ok = meshcomodMigrateSpiffsToSd(false);
+  const bool ok = meshcomodMigrateSpiffsToSd(false);
 #else
-  {
-    LoopWdtGuard loop_wdt_guard;
-    ok = meshcomodMigrateSpiffsToSd(true);
-  }
+  const bool ok = meshcomodMigrateSpiffsToSd(true);
 #endif
   if (!ok) {
     g_sd_migration_blocked = true;
