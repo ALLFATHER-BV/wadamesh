@@ -247,10 +247,18 @@ static bool sdProfileTreeContainsFile(const char* path, uint8_t depth = 0) {
   }
   for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
     const bool is_dir = entry.isDirectory();
+    if (!is_dir) {
+      entry.close();
+      dir.close();
+      return true;
+    }
     char child[160];
-    strlcpy(child, entry.path(), sizeof child);
+    const char* entry_path = entry.path();
+    const bool path_ok = entry_path && strlcpy(child, entry_path, sizeof child) < sizeof child;
     entry.close();
-    if (!is_dir || child[0] == '\0' || sdProfileTreeContainsFile(child, depth + 1)) {
+    // A truncated/unreadable directory name must fail closed. Treating the
+    // truncated path as absent could make a foreign residual subtree look empty.
+    if (!path_ok || child[0] == '\0' || sdProfileTreeContainsFile(child, depth + 1)) {
       dir.close();
       return true;
     }
