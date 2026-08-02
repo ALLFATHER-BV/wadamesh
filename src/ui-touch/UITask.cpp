@@ -23910,6 +23910,7 @@ static inline void tileCacheMkdir(const char* rel) {
   char p[80]; snprintf(p, sizeof p, "%s%s", s_tile_root, rel);
   s_tile_fs->mkdir(p);
 }
+
 // True when the LittleFS tile cache is nearly full. A FULL/fragmented LittleFS
 // FAULTS inside lfs_alloc during mkdir (coredump 2026-06-14: reboot while a
 // route replay re-centred the map onto an un-cached area and the fetch task
@@ -27011,7 +27012,7 @@ static void mapOptZoomButtonsCb(lv_event_t* e) {
   mapZoomControlsApply();
 }
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // Map tile source toggle (in the map options popup): ON = tiles live on the microSD
 // card — read the user's SD library AND cache Wi-Fi-fetched gaps there (#20), so the
 // library grows and downloads survive; OFF = tile server + internal LittleFS cache.
@@ -27222,7 +27223,7 @@ static void openMapOptions() {
   lv_obj_set_pos(title, 0, 0);
   int y = 26;
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Row: tile source — microSD (offline) vs the tile server. The important one,
   // so it sits at the very top.
   {
