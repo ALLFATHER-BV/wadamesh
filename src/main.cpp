@@ -185,6 +185,11 @@ extern "C" void set_boot_phase(int phase) { g_boot_phase = phase; }
 // "Store data on SD" toggle is only a stored intent — if the card didn't mount at boot, contacts
 // silently stay on internal flash. The Storage settings page reads this to show the REAL location.
 bool g_contacts_on_sd = false;
+// True only when DataStore adopted SD as the primary identity/preferences
+// backend for this boot. The UI history selector uses the same decision so an
+// established card identity can never be paired with another profile's
+// internal chat history merely because an old card lacks a migration marker.
+bool g_full_data_on_sd = false;
 // True when full SD adoption was requested but the guarded SPIFFS -> SD copy
 // could not be proven complete. Settings surfaces the recovery action; contacts
 // may still use SD as the secondary store while identity/prefs remain internal.
@@ -816,6 +821,7 @@ void setup() {
         }
         if (adopt) {
           sd_storage = store.useSdStorage();
+          g_full_data_on_sd = sd_storage;
           // On a genuine first run, persist the auto-pick so the "Store data on SD"
           // toggle reflects it and the choice sticks on every later boot.
           if (fresh_install && sd_storage && !use_sd_pref) {

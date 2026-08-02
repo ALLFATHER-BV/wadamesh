@@ -10826,6 +10826,7 @@ extern bool meshcomodMigrateSpiffsToSd(bool force);   // main.cpp
 extern bool meshcomodArmSdMigLatch();                  // durable in-progress guard
 extern void meshcomodClearSdMigLatch();               // main.cpp (GH #142/#148 boot safe-mode)
 extern bool g_sd_migration_blocked;
+extern bool g_full_data_on_sd;                         // boot chose SD for identity/prefs
 static bool sdRuntimeLifecycleBusy();
 static bool s_sd_restore_pending = false;
 
@@ -10851,6 +10852,7 @@ static void sdRestoreRun() {
   // snapshots must both be idle before the migration opens either filesystem.
   g_lv.task->persistHistoryNow();
   discoveredFlushNow();
+  the_mesh.flushContactsIfDirty();
   if (!touchPrefsFlush()) {
     g_sd_migration_blocked = true;
     g_lv.task->showAlert(TR("Copy blocked: internal data is busy"), 2600);
@@ -42432,6 +42434,17 @@ static bool uiDataFsReady() {
   if (s_ui_data_fs != nullptr) return true;   // cache SUCCESS only — a failed resolve MUST stay retryable
 #if defined(TLORA_PAGER)
   if (s_ui_data_boot_finalized) {
+    // A boot-adopted card owns the active identity/profile. Never fall back to
+    // another profile's internal history if that card becomes unavailable.
+    if (g_full_data_on_sd) {
+      if (fmSdTryMount()) {
+        SD.mkdir("/meshcomod");
+        s_ui_data_fs = &SD;
+        strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+        return true;
+      }
+      return false;
+    }
     // Never adopt unseen card history after the boot loader has finished, but
     // keep retrying the already-loaded internal backend if its first mount was
     // transiently unavailable. This avoids a RAM-only history session without
@@ -42465,6 +42478,16 @@ static bool uiDataFsReady() {
     return true;
   }
 #elif defined(TLORA_PAGER)
+  // Follow the boot loader's primary-profile decision. An established card may
+  // legitimately predate the migration marker; falling back to SPIFFS history
+  // in that case would expose and update another identity's conversations.
+  if (g_full_data_on_sd) {
+    if (!fmSdTryMount()) return false;
+    SD.mkdir("/meshcomod");
+    s_ui_data_fs = &SD;
+    strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+    return true;
+  }
   // Prefer an existing card history. On upgrade, however, an empty card must
   // not hide a Pager history that already lives in SPIFFS; keep using that
   // established store instead of silently re-homing it without a migration.
