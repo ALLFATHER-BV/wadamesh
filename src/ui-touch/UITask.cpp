@@ -25605,11 +25605,12 @@ static bool ensureHistFlushTaskRunning() {
 // tile was queued recently. Called from renderMapTiles after a SPIFFS
 // miss; the actual fetch happens off-thread.
 static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
-  // In microSD-tile mode, missing tiles normally merge into the SD library
-  // (#20). If that card is absent but a mounted internal cache is available,
-  // keep maps online through that live fallback until the card returns.
-  // The SD-pack offline mode is OSM-only; topo has no SD packs, so it always
-  // fetches from the proxy regardless of the microSD-tiles setting.
+  // Boards with a microSD backend fetch whenever SOME cache is mounted, and the
+  // destination follows whatever s_tile_fs currently points at: the card in
+  // microSD-tile mode (downloads merge into the SD library, #20), or the
+  // internal cache while that card is absent, so maps stay online through the
+  // fallback until it returns. Boards without one keep the plain offline guard:
+  // no SD packs exist there, so microSD-tile mode can only mean "don't fetch".
 #if CAP_SD || defined(TLORA_PAGER)
   if (!s_tiles_fs_ready || !s_tile_fs) return;
 #else
