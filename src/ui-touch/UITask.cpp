@@ -43893,6 +43893,18 @@ static bool uiDataFsReady() {
     strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
     return true;
   }
+  // A failed/incomplete reconciliation deliberately leaves the primary
+  // profile on internal flash. An older completion marker may still exist on
+  // the card, so it cannot be allowed to select SD history and recreate a
+  // split identity/history profile while the durable busy latch is armed.
+  if (g_sd_migration_blocked) {
+    if (SPIFFS.begin(false)) {
+      s_ui_data_fs = &SPIFFS;
+      s_ui_data_root[0] = '\0';
+      return true;
+    }
+    return false;
+  }
   // Prefer an existing card history. On upgrade, however, an empty card must
   // not hide a Pager history that already lives in SPIFFS; keep using that
   // established store instead of silently re-homing it without a migration.
