@@ -25784,7 +25784,15 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
       snprintf(ppath, sizeof(ppath), "/tiles/%u/%ld/%ld.PNG", (unsigned)z, (long)x, (long)y);
       fsd = SD.open(ppath, FILE_READ);
     }
-    if (!fsd) fsd = SD.open(path, FILE_READ);   // legacy /tiles/<z>/<x>/<y>.jpg
+    // /tiles/<z>/<x>/<y>.jpg is the WRITABLE download cache (where the fetcher
+    // merges Wi-Fi tiles into the library), not a read-only pack — track that so
+    // a corrupt one can be dropped and re-fetched below. The /maps/osm and PNG
+    // legs above are user-supplied packs and must never be removed.
+    bool sd_writable_cache = false;
+    if (!fsd) {
+      fsd = SD.open(path, FILE_READ);
+      sd_writable_cache = (bool)fsd;
+    }
     if (!fsd) { sdReadFailedCardDead(); return false; }   // missing tile (cheap, silent) vs dead card (stamp + short-circuit)
     const size_t szsd = fsd.size();
     if (szsd == 0 || szsd > 256 * 1024) { fsd.close(); return false; }   // PNG tiles run larger than JPEG
@@ -25793,6 +25801,17 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     const size_t nsd = fsd.read(bufsd, szsd);
     fsd.close();
     if (nsd != szsd) { lvglPsramFree(bufsd); sdReadFailedCardDead(); return false; }   // short read mid-tile = card died under us
+    // A garbled/partial download in the writable cache decodes to a blank/half
+    // tile and, because the decode failure path does not re-queue, stuck there
+    // until a manual "Reload visible tiles". Drop it so the render miss below
+    // re-queues a fresh fetch — same contract as the generic cache path, and
+    // still never applied to the read-only packs.
+    if (sd_writable_cache &&
+        (nsd < 3 || bufsd[0] != 0xFF || bufsd[1] != 0xD8 || bufsd[2] != 0xFF)) {
+      lvglPsramFree(bufsd);
+      SD.remove(path);
+      return false;
+    }
     *out_data = bufsd; *out_len = szsd;
     return true;
   }
