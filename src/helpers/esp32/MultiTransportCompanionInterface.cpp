@@ -201,11 +201,11 @@ void MultiTransportCompanionInterface::enableBle() {
     // now, live, from the params stashed by prepareBle()/beginBle().
     if (_ble_prefix[0] == '\0' && _ble_name[0] == '\0') return;   // no params known
 #if defined(TLORA_PAGER)
-    // The Pager must claim Wi-Fi before NimBLE. A cold BLE start after Wi-Fi
-    // exists can both violate that ordering and consume the last contiguous
-    // internal block after LVGL is built. Refuse here; UITask persists the
-    // request and reboots through setup's proven Wi-Fi -> BLE -> UI sequence.
-    if (WiFi.getMode() != WIFI_MODE_NULL) {
+    // The Pager must finish Wi-Fi association before NimBLE. Once connected,
+    // a deferred cold start preserves that order and the heap guard below
+    // decides whether post-UI allocation is still safe. Refuse only while the
+    // STA is absent or actively associating; UITask can reboot that path.
+    if (WiFi.getMode() != WIFI_MODE_NULL && WiFi.status() != WL_CONNECTED) {
       Serial.println("[ble] cold start deferred to ordered T-Pager reboot");
       return;
     }
@@ -243,14 +243,16 @@ void MultiTransportCompanionInterface::disableBle() {
   // its cached server pointer. Never call disable() again after that teardown;
   // a later begin() replaces the cached pointers with a fresh GATT server.
   if (_ble_begun) _ble.disable();    // stop advertising + drop any connection
-  // If Wi-Fi is genuinely absent, fully release NimBLE so a later Wi-Fi enable
-  // has the contiguous internal heap esp_wifi_init needs. While Wi-Fi exists we
-  // keep the controller resident: tearing it out from under an active coex path
-  // is unsafe, and re-enabling the already-created stack needs no allocation.
+  // Pager only: if Wi-Fi is genuinely absent, fully release NimBLE so a later
+  // Wi-Fi enable has the contiguous internal heap esp_wifi_init needs. Other
+  // boards retain their established resident-stack disable/re-enable behavior.
+  // While Wi-Fi exists, keep the controller resident on every board.
+#if defined(TLORA_PAGER)
   if (_ble_begun && WiFi.getMode() == WIFI_MODE_NULL) {
     NimBLEDevice::deinit(true);
     _ble_begun = false;
   }
+#endif
 }
 
 bool MultiTransportCompanionInterface::getBlePeerAddress(char* buf, size_t len) const {

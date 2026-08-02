@@ -15,6 +15,7 @@
 #include "helpers/esp32/TouchPrefsStore.h"   // QUOTED: get wadamesh's copy (touchPrefsReload), not the lib's stale one
 #include "helpers/esp32/SdNvsPrefs.h"        // route prefs to file storage (SD/SPIFFS), off NVS
                                              // (quoted: use wadamesh's src/ copy, not the lib's stale one)
+#include "ui-touch/i18n.h"                    // translated Pager transport-state alerts
 #include "wadamesh_mark_rgb.h"               // anti-aliased mesh-mark (RGB565) for the pre-LVGL boot screen
 #include "ui-touch/TouchSleep.h"             // idle light-sleep controller (loopEnd called at end of loop())
 #endif
@@ -105,8 +106,8 @@ static uint32_t _atoi(const char* sp) {
                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     }
     // Claim Wi-Fi's coexistence resources first. If association cannot finish
-    // during setup, keep NimBLE uninitialised and either retry Wi-Fi alone or
-    // reboot once before enabling the prepared BLE stack.
+    // during setup, keep NimBLE uninitialised; a later successful association
+    // may cold-start BLE only after Wi-Fi is already stable.
     static bool s_pager_ble_after_wifi = false;
     #endif
   #elif defined(WIFI_SSID)
@@ -733,7 +734,7 @@ void setup() {
         const uint32_t assoc_start_ms = millis();
         WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
         while (WiFi.status() != WL_CONNECTED &&
-               (uint32_t)(millis() - assoc_start_ms) < 12000UL) {
+               (uint32_t)(millis() - assoc_start_ms) < 6000UL) {
           delay(20);
         }
         pager_wifi_ready_for_ble = WiFi.status() == WL_CONNECTED;
@@ -762,12 +763,11 @@ void setup() {
   {
     const bool want_ble = wifiConfigGetBleEnabled();
     /* Serialise the Pager's first association before BLE init. Once associated,
-     * the two radios coexist normally. Pre-create the stack even if the saved
-     * BLE state is off, but only after Wi-Fi is actually associated; otherwise
-     * the setup wizard or an automatic retry could re-enter WPA with NimBLE
-     * resident and reproduce the coexistence watchdog. */
+     * the two radios coexist normally. Do not create a disabled NimBLE stack
+     * for Wi-Fi-only users: keeping Wi-Fi's normal auto-reconnect path avoids a
+     * needless device reboot when no Bluetooth controller is resident. */
     if (!want_wifi || pager_wifi_ready_for_ble) {
-      if (want_ble || want_wifi) {
+      if (want_ble) {
         serial_interface.beginBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
                                   the_mesh.getBLEPin(), want_ble);
         if (want_wifi) WiFi.setAutoReconnect(false);
@@ -778,8 +778,8 @@ void setup() {
     } else {
       // No credentials yet, or the saved association timed out. Leave NimBLE
       // completely absent so all credential/apply and retry paths remain safe.
-      // If BLE is requested, a late Wi-Fi success reboots once through setup's
-      // Wi-Fi -> BLE -> UI order before advertising begins.
+      // If BLE is requested, a late Wi-Fi success may allocate it only after
+      // association, subject to the same internal-heap guard as a UI cold start.
       s_pager_ble_after_wifi = want_ble;
       Serial.printf("[boot] BLE init deferred until ordered Wi-Fi association (enable=%d)\n",
                     (int)want_ble);
@@ -1019,11 +1019,17 @@ void loop() {
       if (s_pager_ble_after_wifi) {
         s_pager_ble_after_wifi = false;
         if (wifiConfigGetBleEnabled() && !serial_interface.isBleEnabled()) {
-          // Wi-Fi associated after setup, when the UI already owns its working
-          // set. Reboot once so BLE allocates before LVGL and after Wi-Fi.
-          Serial.println("[boot] Wi-Fi ready; restarting to allocate deferred BLE in order");
-          ui_task.rebootDevice();
-          return;
+          // Wi-Fi is now stable, so a cold BLE allocation cannot enter WPA in
+          // the unsafe order. The transport still refuses low-fragmentation
+          // headroom rather than risking an OOM after the UI has started.
+          serial_interface.enableBle();
+          if (serial_interface.isBleEnabled()) {
+            WiFi.setAutoReconnect(false);
+            Serial.println("[boot] deferred BLE enabled after T-Pager Wi-Fi association");
+          } else {
+            Serial.println("[boot] deferred BLE unavailable; retry from Bluetooth settings");
+            ui_task.showAlert(TR("Bluetooth deferred; retry from Settings"), 2600);
+          }
         }
       }
 #endif

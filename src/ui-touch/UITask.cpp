@@ -36165,7 +36165,7 @@ static void ccWifiCb(lv_event_t* e) {
   // Existing stacks apply live in the main loop; a cold Pager takes the ordered
   // restart path so Wi-Fi claims its allocations before NimBLE and LVGL.
   const bool on = wifiConfigGetRadioEnabled();
-  if (!on && !wifiPrepareEnable()) return;
+  if (!on && !wifiPrepareEnable()) { openControlCenter(); return; }
   wifiConfigSetRadioEnabled(!on);
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Wi-Fi off") : TR("Wi-Fi on"), 800);
   openControlCenter();
@@ -47602,7 +47602,8 @@ bool UITask::enableBle() {
   // and allocate NimBLE during the next ordered boot, before LVGL fragments
   // internal DRAM. rebootDevice() flushes pending history before ESP.restart().
   wifiConfigSetBleEnabled(true);
-  showAlert("Restarting to enable Bluetooth", 800);
+  showAlert(TR("Restarting to enable Bluetooth"), 800);
+  lv_refr_now(NULL);
   rebootDevice();
 #endif
   return false;
