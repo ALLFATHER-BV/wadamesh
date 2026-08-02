@@ -232,6 +232,12 @@ bool meshcomodSdMigrationComplete() { return SD.exists(kSdMigrationComplete); }
 
 bool meshcomodMigrateSpiffsToSd(bool force) {
   if (!SPIFFS.exists("/identity/_main.id")) return false;   // nothing worth adopting
+#if defined(TLORA_PAGER)
+  // Pager recovery is always resumable/non-clobbering. Keep that invariant in
+  // the migration primitive itself so a future caller cannot accidentally turn
+  // a profile-reconciliation action into an overwrite.
+  force = false;
+#endif
   // On Pager the marker is the cross-file commit record. Remove it before an
   // explicit overwrite so a reset halfway through cannot leave the old marker
   // blessing mixed data.
@@ -788,18 +794,11 @@ void setup() {
           Preferences _mp;
           const bool mp_ok = _mp.begin("touch", false);
           const bool mig_busy = mp_ok && _mp.getBool("sd_mig_busy", false);
-#if defined(TLORA_PAGER)
           // An identity makes this an existing SD profile, even if it predates
-          // the migration-complete marker. Overlaying its missing files from
-          // SPIFFS would mix two profiles (for example, history from the card
-          // with the internal channel table). Only migrate onto an empty card;
-          // sd_mig_busy still rejects a migration interrupted after identity.
+          // the Pager migration-complete marker. Never auto-overlay missing
+          // internal files onto an established card profile.
           const bool needs_migration =
               !SD.exists("/meshcomod/identity/_main.id");
-#else
-          const bool needs_migration =
-              !SD.exists("/meshcomod/identity/_main.id");
-#endif
           if (mig_busy) {
             if (mp_ok) _mp.end();
             adopt = false;
