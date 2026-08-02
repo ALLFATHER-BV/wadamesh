@@ -470,6 +470,14 @@ bool SdNvsPrefs::sdLoad() {
     ++cache.revision;
   }
   xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+  // Another task may have loaded this namespace while file I/O ran outside the
+  // mutex. Keep a single authoritative cache entry instead of inserting an
+  // invisible duplicate that the writer would still iterate.
+  if (FileCache* existing = findCacheLocked(_path)) {
+    const bool ok = existing->loaded;
+    xSemaphoreGive(s_cache_mutex);
+    return ok;
+  }
   s_caches.push_back(std::move(cache));
   xSemaphoreGive(s_cache_mutex);
   return true;
@@ -509,7 +517,7 @@ static bool scheduleOne(uint32_t now, bool force) {
     job->revision = cache.revision;
     job->slot = cache.active_slot == 'a' ? 'b'
               : cache.active_slot == 'b' ? 'a'
-              : 'b';   // first snapshot must not overwrite the legacy .kv path
+              : cache.legacy_present ? 'b' : 'a';
     cache.writing = true;
     strncpy(armed_path, cache.legacy_path, sizeof(armed_path) - 1);
     break;
@@ -608,7 +616,7 @@ bool SdNvsPrefs::writeFileBool(fs::FS* fs, const char* dir, const char* ns,
   std::vector<Kv> kv;
   uint32_t generation = 0;
   char active = 0;
-  loadExplicitNamespace(fs, legacy_path, kv, generation, active);
+  const bool existed = loadExplicitNamespace(fs, legacy_path, kv, generation, active);
   Kv* found = nullptr;
   for (auto& e : kv)
     if (strncmp(e.key, key, sizeof(e.key)) == 0) { found = &e; break; }
@@ -618,7 +626,7 @@ bool SdNvsPrefs::writeFileBool(fs::FS* fs, const char* dir, const char* ns,
     strncpy(found->key, key, sizeof(found->key) - 1);
   }
   found->val.assign(1, value ? 1 : 0);
-  const char slot = active == 'a' ? 'b' : active == 'b' ? 'a' : 'b';
+  const char slot = active == 'a' ? 'b' : active == 'b' ? 'a' : existed ? 'b' : 'a';
   if (!writeSnapshot(fs, legacy_path, slot, generation + 1, kv)) return false;
   return true;
 }
