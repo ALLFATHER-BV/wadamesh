@@ -219,18 +219,23 @@ static FileCache* findCacheLocked(const char* path) {
 }
 
 // File-mode caches are shared by every SdNvsPrefs instance and by both the UI
-// and worker cores. Copy a value while holding the cache mutex; returning a Kv*
-// would let a concurrent setter invalidate the vector element or its payload as
-// soon as the lock was released.
-static bool copyCachedValue(const char* path, const char* key, std::vector<uint8_t>& value) {
-  value.clear();
+// and worker cores. Copy into caller-owned storage while holding the cache
+// mutex; returning a Kv* would let a concurrent setter invalidate the vector
+// element or its payload as soon as the lock was released. Scalar and buffer
+// getters stay allocation-free, avoiding tiny heap churn on every preference
+// read. value_size reports the stored length even when the output is truncated.
+static bool copyCachedValue(const char* path, const char* key, void* out,
+                            size_t out_size, size_t& value_size) {
+  value_size = 0;
   if (!s_cache_mutex || !path || !key) return false;
   bool found = false;
   xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
   if (FileCache* cache = findCacheLocked(path)) {
     for (const auto& e : cache->kv) {
       if (strncmp(e.key, key, sizeof(e.key)) != 0) continue;
-      value = e.val;
+      value_size = e.val.size();
+      const size_t copy_size = value_size < out_size ? value_size : out_size;
+      if (out && copy_size) memcpy(out, e.val.data(), copy_size);
       found = true;
       break;
     }
@@ -644,22 +649,23 @@ bool SdNvsPrefs::writeFileBool(fs::FS* fs, const char* dir, const char* ns,
 }
 
 uint64_t SdNvsPrefs::sdGetInt(const char* key, uint64_t def, int width, bool* found) {
-  std::vector<uint8_t> cached;
-  const std::vector<uint8_t>* value = nullptr;
+  uint8_t cached[8] = {};
   if (fileMode()) {
-    const bool exists = copyCachedValue(_path, key, cached);
+    size_t value_size = 0;
+    const bool exists = copyCachedValue(_path, key, cached, sizeof cached, value_size);
     if (found) *found = exists;
-    if (!exists || cached.empty()) return def;
-    value = &cached;
-  } else {
-    Kv* e = sdFind(key);
-    if (found) *found = e != nullptr;
-    if (!e || e->val.empty()) return def;
-    value = &e->val;
+    if (!exists || value_size == 0) return def;
+    uint64_t v = 0;
+    int n = (int)value_size; if (n > width) n = width;
+    for (int i = 0; i < n; i++) v |= (uint64_t)cached[i] << (8 * i);
+    return v;
   }
+  Kv* e = sdFind(key);
+  if (found) *found = e != nullptr;
+  if (!e || e->val.empty()) return def;
   uint64_t v = 0;
-  int n = (int)value->size(); if (n > width) n = width;
-  for (int i = 0; i < n; i++) v |= (uint64_t)(*value)[i] << (8 * i);
+  int n = (int)e->val.size(); if (n > width) n = width;
+  for (int i = 0; i < n; i++) v |= (uint64_t)e->val[i] << (8 * i);
   return v;
 }
 
@@ -676,8 +682,9 @@ size_t SdNvsPrefs::sdPutInt(const char* key, uint64_t v, int width) {
 
 bool SdNvsPrefs::isKey(const char* key) {
   if (fileMode()) {
-    std::vector<uint8_t> value;
-    return copyCachedValue(_path, key, value) || (_nvs_open && _nvs.isKey(key));
+    size_t value_size = 0;
+    return copyCachedValue(_path, key, nullptr, 0, value_size) ||
+           (_nvs_open && _nvs.isKey(key));
   }
   return useNvs() ? (_nvs_open && _nvs.isKey(key)) : (sdFind(key) != nullptr);
 }
@@ -823,12 +830,23 @@ size_t SdNvsPrefs::putBool(const char* k, bool v) {
 
 String SdNvsPrefs::getString(const char* k, const String& def) {
   if (fileMode()) {
-    std::vector<uint8_t> value;
-    if (!copyCachedValue(_path, k, value))
+    if (!s_cache_mutex) return (_nvs_open && _nvs.isKey(k)) ? _nvs.getString(k, def) : def;
+    String value;
+    bool found = false;
+    xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    if (FileCache* cache = findCacheLocked(_path)) {
+      for (const auto& e : cache->kv) {
+        if (strncmp(e.key, k, sizeof(e.key)) != 0) continue;
+        value.reserve(e.val.size());
+        for (uint8_t c : e.val) value += (char)c;
+        found = true;
+        break;
+      }
+    }
+    xSemaphoreGive(s_cache_mutex);
+    if (!found)
       return (_nvs_open && _nvs.isKey(k)) ? _nvs.getString(k, def) : def;
-    String s; s.reserve(value.size());
-    for (uint8_t c : value) s += (char)c;
-    return s;
+    return value;
   }
   if (useNvs()) return _nvs.getString(k, def);
   Kv* e = sdFind(k);
@@ -840,15 +858,14 @@ String SdNvsPrefs::getString(const char* k, const String& def) {
 size_t SdNvsPrefs::getString(const char* k, char* buf, size_t maxLen) {
   if (!buf || !maxLen) return 0;
   if (fileMode()) {
-    std::vector<uint8_t> value;
-    if (!copyCachedValue(_path, k, value)) {
+    size_t value_size = 0;
+    if (!copyCachedValue(_path, k, buf, maxLen - 1, value_size)) {
       if (_nvs_open && _nvs.isKey(k)) return _nvs.getString(k, buf, maxLen);
       buf[0] = '\0';
       return 0;
     }
-    size_t n = value.size();
+    size_t n = value_size;
     if (n > maxLen - 1) n = maxLen - 1;
-    if (n) memcpy(buf, value.data(), n);
     buf[n] = '\0';
     return n;
   }
@@ -868,15 +885,10 @@ size_t SdNvsPrefs::putString(const char* k, const char* v) {
 
 size_t SdNvsPrefs::getBytes(const char* k, void* buf, size_t maxLen) {
   if (fileMode()) {
-    std::vector<uint8_t> value;
-    if (!copyCachedValue(_path, k, value))
+    size_t value_size = 0;
+    if (!copyCachedValue(_path, k, buf, maxLen, value_size))
       return (_nvs_open && _nvs.isKey(k)) ? _nvs.getBytes(k, buf, maxLen) : 0;
-    const size_t n = value.size();
-    if (buf && maxLen) {
-      const size_t copy_len = n > maxLen ? maxLen : n;
-      if (copy_len) memcpy(buf, value.data(), copy_len);
-    }
-    return n;
+    return value_size;
   }
   if (useNvs()) return _nvs.getBytes(k, buf, maxLen);
   Kv* e = sdFind(k);
