@@ -19070,11 +19070,29 @@ static void fmHideFormatOverlay() {
 // Confirm callback: paint the formatting notice, then defer the (blocking)
 // f_mkfs to UITask::loop so the notice is on-screen before the loop freezes.
 static void fmSdDoFormat() {
+#if defined(HAS_TDECK_GT911)
+  // f_mkfs rewrites the volume under every open handle, and the SD.end() that
+  // precedes it unregisters the pdrv those handles point at. Never start that
+  // while an SD consumer is live — the tile worker can own an open File for a
+  // whole download — so apply the same gate the Pager factory reset uses.
+  if (sdRuntimeLifecycleBusy()) {
+    if (g_lv.task)
+      g_lv.task->showAlert(TR("SD is busy - close tools and retry"), 2600);
+    return;
+  }
   fmShowBusyOverlay("Formatting SD as MESHCOMOD (FAT32)\n\n"
                     "Creates the core folders too.\n"
                     "Do NOT power off, disconnect,\nor remove the card.\n\n"
                     "This can take up to a minute...");
   s_sd_format_pending = 2;
+#else
+  // Only the T-Deck build carries the deferred f_mkfs executor in UITask::loop.
+  // Arming the countdown anywhere else parked sdHealthTick on its
+  // s_sd_format_pending guard for the rest of the boot, silently disabling
+  // wedge detection and remount, and never actually formatted anything.
+  if (g_lv.task)
+    g_lv.task->showAlert(TR("SD format isn't available on this device"), 2600);
+#endif
 }
 // Tap on an unmounted SD row: try to mount, and if the card is unreadable
 // (e.g. exFAT, which this build can't read — only FAT16/FAT32) offer to format.
@@ -49414,7 +49432,25 @@ void UITask::loop() {
   // all three, but this worker was T-Deck-only — on the others the formatting
   // notice stayed up forever with no format running, and the pending latch even
   // blocked remounting until reboot (#172).
+  // Re-check quiescence at fire time: the two ticks that let the notice paint
+  // are also two ticks in which a consumer can start (a map repaint queues tile
+  // fetches, history flushes, prefs snapshots). Hold the countdown rather than
+  // SD.end() under an open handle, but give up instead of waiting forever —
+  // the longest legitimate holder is a tile download, capped at 12 s.
+  static uint32_t s_sd_format_wait_until = 0;
+  if (s_sd_format_pending == 1 && sdRuntimeLifecycleBusy()) {
+    if (!s_sd_format_wait_until) s_sd_format_wait_until = millis() + 15000;
+    if ((int32_t)(millis() - s_sd_format_wait_until) < 0) {
+      s_sd_format_pending = 2;              // re-arm; the notice stays on screen
+    } else {
+      s_sd_format_wait_until = 0;
+      s_sd_format_pending = 0;
+      fmHideFormatOverlay();
+      showAlert(TR("SD stayed busy - format cancelled, retry"), 3000);
+    }
+  }
   if (s_sd_format_pending && --s_sd_format_pending == 0) {
+    s_sd_format_wait_until = 0;
     bool ok = false;
     {
       LoopWdtGuard loop_wdt_guard;
