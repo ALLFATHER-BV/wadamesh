@@ -228,6 +228,29 @@ void halt() {
 static constexpr const char* kSdMigrationComplete = "/meshcomod/.spiffs-migration-v1";
 static constexpr const char* kSdMigrationCompleteTmp = "/meshcomod/.spiffs-migration-v1.tmp";
 
+static bool sdProfileTreeContainsFile(const char* path, uint8_t depth = 0) {
+  if (!SD.exists(path)) return false;
+  if (depth >= 8) return true;   // unexpected/deep content is not safe to adopt
+  File dir = SD.open(path, FILE_READ);
+  if (!dir) return true;         // unreadable content is not an empty profile
+  if (!dir.isDirectory()) {
+    dir.close();
+    return true;
+  }
+  for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    const bool is_dir = entry.isDirectory();
+    char child[160];
+    strlcpy(child, entry.path(), sizeof child);
+    entry.close();
+    if (!is_dir || child[0] == '\0' || sdProfileTreeContainsFile(child, depth + 1)) {
+      dir.close();
+      return true;
+    }
+  }
+  dir.close();
+  return false;
+}
+
 // Manual recovery may resume onto an empty card or the same profile, but it
 // must never fill one identity's missing files from another profile. Compare
 // the small identity files without logging their contents before arming the
@@ -238,8 +261,9 @@ bool meshcomodSdProfileMatchesInternal() {
   File internal = SPIFFS.open(kInternalIdentity, FILE_READ);
   if (!internal) return false;
   if (!SD.exists(kSdIdentity)) {
+    const bool has_payload = sdProfileTreeContainsFile("/meshcomod");
     internal.close();
-    return true;
+    return !has_payload;
   }
   File card = SD.open(kSdIdentity, FILE_READ);
   if (!card || internal.size() != card.size()) {
