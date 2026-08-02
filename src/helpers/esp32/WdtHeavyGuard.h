@@ -38,6 +38,7 @@ inline void wdtHeavyEnd()   { int& d = _wdtHeavyDepth(); if (d > 0 && --d == 0) 
 // work instead of silently arming a new watchdog on the way out. The guard can
 // be constructed by a storage worker, so query Arduino's loopTask handle rather
 // than `nullptr` (which means the current worker task to ESP-IDF).
+#if defined(CONFIG_AUTOSTART_ARDUINO)
 extern TaskHandle_t loopTaskHandle;
 struct LoopWdtGuard {
   bool subscribed;
@@ -49,6 +50,11 @@ struct LoopWdtGuard {
     if (subscribed) enableLoopWDT();
   }
 };
+#else
+// Tanmatsu and T-Display-P4 supply app_main() themselves. Their Arduino
+// component has no loopTaskHandle or loop-WDT helpers to preserve.
+struct LoopWdtGuard {};
+#endif
 #else
 inline void wdtHeavyBegin() {}
 inline void wdtHeavyEnd()   {}
