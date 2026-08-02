@@ -30,12 +30,10 @@ public:
   void stopTcpServer();   // stop TCP server and disconnect clients; prevents startTcpServer until enableTcp()
 
 #ifdef BLE_PIN_CODE
-  // Call after begin() and the_mesh is ready (e.g. after startInterface). Enables BLE by default.
-  // create_enabled=false pre-creates the NimBLE host/GATT table but leaves
-  // advertising off and the user-visible/persisted state disabled. T-Pager
-  // uses this after Wi-Fi claims its heap so a later live toggle allocates
-  // nothing after the UI working set has filled internal DRAM.
-  void beginBle(const char* prefix, char* name, uint32_t pin_code, bool create_enabled = true);
+  // Call after begin() and the_mesh is ready (e.g. after startInterface).
+  // Creates and enables BLE; BLE-off Pager boots deliberately avoid a dormant
+  // NimBLE allocation so Wi-Fi retains its normal reconnect path.
+  void beginBle(const char* prefix, char* name, uint32_t pin_code);
   // Store the BLE name/pin WITHOUT bringing the stack up. Used at boot when the
   // heap guard defers co-initialising BLE alongside Wi-Fi: the params are kept so
   // a later enableBle() can lazily bring BLE up live (no reboot).

@@ -769,7 +769,7 @@ void setup() {
     if (!want_wifi || pager_wifi_ready_for_ble) {
       if (want_ble) {
         serial_interface.beginBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
-                                  the_mesh.getBLEPin(), want_ble);
+                                  the_mesh.getBLEPin());
         if (want_wifi) WiFi.setAutoReconnect(false);
         Serial.printf("[boot] BLE stack ready (enabled=%d wifi=%d)\n",
                       (int)want_ble, (int)want_wifi);
@@ -938,14 +938,17 @@ void loop() {
    * from the UI (the transition above already covered the on case). */
   if (wifiConfigConsumeApplyRequest()) {
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
-    // Every explicit credential/reconnect request must return through setup.
-    // This covers the setup wizard, saved-network/slot activation, scan
-    // reconnect, transport settings, and companion/CLI-backed preference
-    // updates instead of relying on each caller to remember the Pager's order.
-    if (wifi_radio_en && wifiConfigHasRuntime()) {
+    // With NimBLE resident, every explicit credential/reconnect request must
+    // return through setup. Wi-Fi-only applies stay live: opening the Wi-Fi
+    // page itself performs a scan/rejoin and must not reboot the device.
+    if (wifi_radio_en && wifiConfigHasRuntime() &&
+        serial_interface.isBleStackBegun()) {
       Serial.println("[wifi] restarting for ordered T-Pager association");
       ui_task.rebootDevice();
       return;
+    }
+    if (wifi_radio_en && !serial_interface.isBleStackBegun()) {
+      WiFi.setAutoReconnect(true);
     }
 #endif
     /* Only touch WiFi state if it was actually started this session. When

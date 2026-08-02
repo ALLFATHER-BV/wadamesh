@@ -184,15 +184,14 @@ void MultiTransportCompanionInterface::prepareBle(const char* prefix, char* name
   _ble_pin_code = pin_code;
 }
 
-void MultiTransportCompanionInterface::beginBle(const char* prefix, char* name, uint32_t pin_code,
-                                                 bool create_enabled) {
+void MultiTransportCompanionInterface::beginBle(const char* prefix, char* name, uint32_t pin_code) {
   prepareBle(prefix, name, pin_code);
   _ble.begin(prefix, name, pin_code);
   _ble_begun = true;
-  _ble_enabled = create_enabled;
+  _ble_enabled = true;
   _ota_ble_released = false;
   _ota_ble_was_enabled = false;
-  if (create_enabled) _ble.enable();
+  _ble.enable();
 }
 
 void MultiTransportCompanionInterface::enableBle() {
