@@ -35,10 +35,14 @@ inline void wdtHeavyEnd()   { int& d = _wdtHeavyDepth(); if (d > 0 && --d == 0) 
 
 // Arduino's enableLoopWDT() subscribes loopTask even when it was not watched
 // before. Preserve the caller's actual task-WDT state around slow filesystem
-// work instead of silently arming a new watchdog on the way out.
+// work instead of silently arming a new watchdog on the way out. The guard can
+// be constructed by a storage worker, so query Arduino's loopTask handle rather
+// than `nullptr` (which means the current worker task to ESP-IDF).
+extern TaskHandle_t loopTaskHandle;
 struct LoopWdtGuard {
   bool subscribed;
-  LoopWdtGuard() : subscribed(esp_task_wdt_status(nullptr) == ESP_OK) {
+  LoopWdtGuard() : subscribed(loopTaskHandle != nullptr &&
+                              esp_task_wdt_status(loopTaskHandle) == ESP_OK) {
     if (subscribed) disableLoopWDT();
   }
   ~LoopWdtGuard() {
