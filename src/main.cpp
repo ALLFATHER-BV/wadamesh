@@ -65,7 +65,11 @@ static uint32_t _atoi(const char* sp) {
 
 #ifdef ESP32
   #ifdef MULTI_TRANSPORT_COMPANION
-    #include <helpers/esp32/MultiTransportCompanionInterface.h>
+    // This class is extended locally (web mirror/P4 routing/BLE state). Include
+    // the matching project header explicitly: the MeshCore dependency ships an
+    // older class layout, and mixing that header with our local .cpp makes the
+    // placement allocation undersized and shifts every member after _ws_started.
+    #include "helpers/esp32/MultiTransportCompanionInterface.h"
     #include "helpers/esp32/MqttBridge.h"
     #include <esp_heap_caps.h>
     #include <new>
@@ -87,6 +91,23 @@ static uint32_t _atoi(const char* sp) {
     #endif
     #ifndef WS_PORT
       #define WS_PORT 8765
+    #endif
+
+    #if defined(TLORA_PAGER)
+    static void pagerLogInternalHeap(const char* phase) {
+      const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+      Serial.printf("[heap] %s: internal free=%u largest=%u low=%u dma=%u psram=%u\n",
+                    phase,
+                    (unsigned)heap_caps_get_free_size(caps),
+                    (unsigned)heap_caps_get_largest_free_block(caps),
+                    (unsigned)heap_caps_get_minimum_free_size(caps),
+                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    }
+    // On a fresh profile there may be no saved credentials yet.
+    // Claim Wi-Fi's coexistence resources first, then start the prepared BLE
+    // stack as soon as that first association succeeds.
+    static bool s_pager_ble_after_wifi = false;
     #endif
   #elif defined(WIFI_SSID)
     #include <helpers/esp32/SerialWifiInterface.h>
@@ -677,16 +698,13 @@ void setup() {
   serial_interface.begin(Serial, TCP_PORT, WS_PORT);
   Serial.println("[BOOT] serial_interface ok");
   serial_interface.setBroadcastResponses(true);  // RX log, channel messages, etc. go to all clients (USB + TCP + WS [+ BLE]), not only last sender
-  /* Pick BLE vs WiFi at boot. The ESP32-S3 doesn't have enough internal heap
-   * (esp_wifi_init needs ~50KB for DMA buffers) to run Bluedroid BLE +
-   * LVGL/TFT + WiFi all at once — esp_wifi_init silently returns ESP_ERR_NO_MEM,
-   * leaving WiFi.getMode() at WIFI_MODE_NULL. So we mutex them: if the user
-   * has saved WiFi credentials AND the radio is enabled, skip BLE init and
-   * use WiFi exclusively. Otherwise init BLE. Toggle by saving/clearing creds
-   * + reboot (saveWifiCb auto-restarts). On the touch build the user can also
-   * pick Wi-Fi with no creds yet (to scan/configure on-device) — wantsWifi()
-   * returns true for that case so the radio comes up scannable. */
+  /* Wi-Fi and NimBLE coexist, but their first allocations are order-sensitive
+   * on the Pager. Claim Wi-Fi's DMA/coexistence resources before starting BLE;
+   * T-Deck does not reproduce this sequencing constraint. */
   bool want_wifi = wifiConfigWantsWifi();
+#if defined(TLORA_PAGER)
+  bool pager_wifi_ready_for_ble = false;
+#endif
   /* Wi-Fi + BLE now COEXIST (NimBLE host is light enough — the old Bluedroid
    * heap clash is gone). Bring Wi-Fi up FIRST: esp_wifi_init grabs a big
    * contiguous DMA block, so let it claim memory before BLE. (Association
@@ -701,6 +719,32 @@ void setup() {
     // setup wizard, no creds yet) DTIM modem-sleep naps the radio through the
     // scan dwell, so WiFi.scanNetworks() comes back empty ("no networks found").
     // It's enabled once we actually associate — see the GOT_IP handler below.
+#if defined(TLORA_PAGER)
+    /* Arduino-ESP32 2.0.17 can watchdog in WPA3 SAE on the Pager when NimBLE
+     * already owns the coexistence path. Start the saved Wi-Fi association
+     * first and wait on the state transition (not a fixed delay), while
+     * internal heap is still plentiful; BLE starts below only after the link
+     * is established. T-Deck does not reproduce this ordering constraint. */
+    if (wifiConfigHasRuntime()) {
+      char ssid[WIFI_CONFIG_SSID_MAX];
+      char pwd[WIFI_CONFIG_PWD_MAX];
+      wifiConfigGetSsid(ssid, sizeof(ssid));
+      wifiConfigGetPwd(pwd, sizeof(pwd));
+      if (ssid[0]) {
+        const uint32_t assoc_start_ms = millis();
+        WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
+        while (WiFi.status() != WL_CONNECTED &&
+               (uint32_t)(millis() - assoc_start_ms) < 12000UL) {
+          delay(20);
+        }
+        pager_wifi_ready_for_ble = WiFi.status() == WL_CONNECTED;
+        Serial.printf("[boot] Pager Wi-Fi pre-BLE association: %s (%lums)\n",
+                      pager_wifi_ready_for_ble ? "ready" : "deferred",
+                      (unsigned long)(millis() - assoc_start_ms));
+        pagerLogInternalHeap("after Wi-Fi association");
+      }
+    }
+#endif
   }
 #if defined(BLE_PIN_CODE)
   /* Always stash the BLE params so the toggle can bring BLE up live later, even
@@ -715,6 +759,35 @@ void setup() {
   { NodePrefs* _np = the_mesh.getNodePrefs();
     _np->node_name[sizeof(_np->node_name) - 1] = '\0'; }
   serial_interface.prepareBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+#if defined(TLORA_PAGER)
+  {
+    const bool want_ble = wifiConfigGetBleEnabled();
+    /* Serialise the Pager's first association before BLE init. Once associated,
+     * the two radios coexist normally. When Wi-Fi is enabled, pre-create the
+     * stack even if the saved BLE state is off: late allocation after LVGL has
+     * built the home UI can no longer find a large enough internal block, while
+     * a pre-created disabled stack can start advertising allocation-free. */
+    if (!want_wifi || pager_wifi_ready_for_ble || !wifiConfigHasRuntime()) {
+      if (want_ble || want_wifi) {
+        serial_interface.beginBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
+                                  the_mesh.getBLEPin(), want_ble);
+        Serial.printf("[boot] BLE stack ready (enabled=%d wifi=%d)\n",
+                      (int)want_ble, (int)want_wifi);
+        pagerLogInternalHeap("after BLE init");
+      }
+    } else {
+      // Wi-Fi owns its required heap now, but a saved association did not
+      // complete. Still allocate the NimBLE/GATT objects before LVGL consumes
+      // and fragments the remaining internal RAM; leave advertising disabled
+      // until Wi-Fi connects (or the user explicitly enables BLE live).
+      serial_interface.beginBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
+                                the_mesh.getBLEPin(), false);
+      s_pager_ble_after_wifi = want_ble;
+      Serial.printf("[boot] BLE stack ready disabled; deferred enable=%d\n", (int)want_ble);
+      pagerLogInternalHeap("after deferred BLE init");
+    }
+  }
+#else
   if (wifiConfigGetBleEnabled()) {
     const size_t BLE_COEXIST_MIN_FREE  = 50 * 1024;   // free heap after Wi-Fi to also start BLE
     const size_t BLE_COEXIST_MIN_BLOCK = 20 * 1024;   // largest contiguous block (NimBLE controller/host)
@@ -727,6 +800,7 @@ void setup() {
       Serial.printf("[boot] BLE deferred: low heap (free=%u maxblk=%u) — Wi-Fi only\n", (unsigned)freeh, (unsigned)maxblk);
     }
   }
+#endif
 #endif
 #elif defined(WIFI_SSID)
   board.setInhibitSleep(true);   // prevent sleep when WiFi is active
@@ -798,6 +872,9 @@ void setup() {
 #ifdef DISPLAY_CLASS
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());  // still want to pass this in as dependency, as prefs might be moved
   Serial.println("[BOOT] ui ready");
+#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
+  pagerLogInternalHeap("after UI init");
+#endif
 #endif
 
   board.onBootComplete();
@@ -826,12 +903,9 @@ void loop() {
   static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
   static bool wifi_radio_prev = true;
   static bool wifi_radio_inited = false;
-  /* BLE-vs-WiFi mutex (chosen at setup based on saved creds + radio_en pref):
-   * if BLE was initialized, do NOT attempt to bring WiFi up here — esp_wifi_init
-   * would fail with ESP_ERR_NO_MEM after Bluedroid grabbed the internal heap,
-   * and the resulting OOM cascade freezes LVGL. Only run the WiFi state
-   * machine if creds are saved AND the radio pref is on, mirroring `want_wifi`
-   * in setup(). (Touch may also want Wi-Fi up with no creds, to scan.) */
+  /* Run the saved Wi-Fi state machine whenever its radio preference is on.
+   * Pager setup separately guarantees that Wi-Fi claims its coexistence
+   * resources before a cold BLE start. */
   bool wifi_radio_en = wifiConfigWantsWifi();
   if (!wifi_radio_inited) {
     wifi_radio_inited = true;
@@ -842,6 +916,15 @@ void loop() {
       WiFi.disconnect(true);
       delay(50);
       WiFi.mode(WIFI_OFF);
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+      if (s_pager_ble_after_wifi) {
+        s_pager_ble_after_wifi = false;
+        if (wifiConfigGetBleEnabled() && !serial_interface.isBleEnabled()) {
+          serial_interface.enableBle();
+          Serial.println("[boot] deferred BLE enabled after T-Pager Wi-Fi was disabled");
+        }
+      }
+#endif
     }
     wifi_started = false;
   }
@@ -877,10 +960,10 @@ void loop() {
         char pwd[WIFI_CONFIG_PWD_MAX];
         wifiConfigGetSsid(ssid, sizeof(ssid));
         wifiConfigGetPwd(pwd, sizeof(pwd));
-        if (strlen(ssid) > 0) {
+        if (strlen(ssid) > 0 && WiFi.status() != WL_CONNECTED) {
           WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
-          last_wifi_retry_ms = millis();
         }
+        last_wifi_retry_ms = millis();
       }
     }
     // Automatic WiFi recovery for TCP mode: retry connection periodically if link drops.
@@ -909,6 +992,15 @@ void loop() {
     static bool sntp_pushed = false;
     static uint32_t sntp_kick_ms = 0;
     if (WiFi.status() == WL_CONNECTED) {
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+      if (s_pager_ble_after_wifi) {
+        s_pager_ble_after_wifi = false;
+        if (wifiConfigGetBleEnabled() && !serial_interface.isBleEnabled()) {
+          serial_interface.enableBle();
+          Serial.println("[boot] deferred BLE enabled after T-Pager Wi-Fi association");
+        }
+      }
+#endif
       // Now that we're associated, enable DTIM modem-sleep (saves power + gives
       // BLE coexistence airtime). Deferred to here on purpose: enabling it on the
       // unassociated STA naps the radio through a scan dwell and breaks the setup

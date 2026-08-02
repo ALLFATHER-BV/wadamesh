@@ -31,7 +31,11 @@ public:
 
 #ifdef BLE_PIN_CODE
   // Call after begin() and the_mesh is ready (e.g. after startInterface). Enables BLE by default.
-  void beginBle(const char* prefix, char* name, uint32_t pin_code);
+  // create_enabled=false pre-creates the NimBLE host/GATT table but leaves
+  // advertising off and the user-visible/persisted state disabled. T-Pager
+  // uses this after Wi-Fi claims its heap so a later live toggle allocates
+  // nothing after the UI working set has filled internal DRAM.
+  void beginBle(const char* prefix, char* name, uint32_t pin_code, bool create_enabled = true);
   // Store the BLE name/pin WITHOUT bringing the stack up. Used at boot when the
   // heap guard defers co-initialising BLE alongside Wi-Fi: the params are kept so
   // a later enableBle() can lazily bring BLE up live (no reboot).
@@ -135,6 +139,7 @@ private:
   bool _ble_begun;    // beginBle() was called
   bool _ble_enabled;  // user has BLE on (toggle via UI)
   bool _ota_ble_released;
+  bool _ota_ble_was_enabled;
   char _ble_prefix[24];
   char _ble_name[48];
   uint32_t _ble_pin_code;
