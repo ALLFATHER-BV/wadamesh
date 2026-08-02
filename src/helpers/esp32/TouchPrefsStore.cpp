@@ -11,7 +11,6 @@
 #include <esp_heap_caps.h>
 #include <stddef.h>   // offsetof
 #include <string.h>   // memcpy
-#include <vector>     // writeUseSdToSpiffsKv record list
 
 static const char* TOUCH_NS = "touch";
 
@@ -484,15 +483,14 @@ bool touchPrefsRemoveFriend(const uint8_t pub_key[32]) {
 // keys too. "use_sd" is mirrored to NVS on every UI toggle (main.cpp reads it at
 // boot via touchPrefsReadUseSdAtBoot); "setup_ok" is still NVS-only.
 //
-// On first run with the blob absent we read every legacy per-key into s_cfg, write
-// "cfg" ONCE, and only after that durable write do we remove() the legacy keys to
-// reclaim their entries. The write-before-remove ordering makes the migration
-// crash-safe and idempotent (a power-cut before the write just re-migrates next
-// boot; one after it finds "cfg" present and skips). `magic` rejects a garbage /
+// On first run with the blob absent we read every legacy per-key into s_cfg, add
+// "cfg", and remove the superseded file keys in the same queued RAM snapshot.
+// The released .kv remains the fallback until that complete A/B snapshot verifies,
+// making the migration crash-safe and idempotent. `magic` rejects a garbage /
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 39;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF)
+static const uint8_t  TOUCH_CFG_VER   = 43;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF); v40 hist_sync_after (chat-history flush: consecutive off-thread write failures before the blocking loop-task fallback, 0 = never); v41 p4_antenna (T-Display P4 antenna select; now RESERVED/unused - the choice is session-only so every boot comes up on the on-board antenna); v42 hist_per_chat (max stored messages PER chat, default 250 - a busy public channel used to be able to fill the whole shared ring and drag the UI down); v43 Pager UI-size presets (reset the previously ignored large-screen default to Small once)
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -537,7 +535,7 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  map_show_tilexyz; // show the zoom + tile z/x/y line on the map (bool) — v6
   uint8_t  map_show_contacts;// show contact markers on the map (bool) — v6
   uint8_t  app_grid_large;   // app drawer: large grid (one fewer column, bigger icons) — v7
-  uint8_t  ui_scale;         // UI resolution scale: 0=100% 1=150% 2=200% (Tanmatsu, applied at boot) — v8
+  uint8_t  ui_scale;         // UI-size preset 0..2 (board-specific font/geometry mapping, applied at boot) — v8
   uint8_t  kbd_nav;          // T-Deck keyboard ESDFX nav: 0=off (default), 1=on (E/X/S/F move focus, D select, Q back) — v9 (was tb_keypad)
   uint8_t  sleep_idle;       // idle light-sleep feature on/off (bool) — v10 (trailing so existing blobs default it OFF)
   uint8_t  nav_keys[5];      // keyboard-nav tab hotkeys (ASCII), one per main tab [chat,contacts,home,map,settings] — v11 (trailing)
@@ -565,6 +563,9 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  remote_landscape;  // remote mode orientation: 1=landscape 800x480 (desktop), 0=portrait 480x800 (phone) — v36 (trailing)
   uint8_t  web_terminal;      // web mesh-CLI terminal served on the device IP (runtime; exclusive with VNC) — v38 (trailing)
   uint8_t  map_tile_debug;    // show the map tile-pipeline diagnostic overlay (bool, 0=off) — v39 (trailing)
+  uint8_t  hist_sync_after;   // chat-history flush: consecutive off-thread write failures before falling back to the blocking loop-task write; 0 = never — v40 (trailing)
+  uint16_t hist_per_chat;     // max stored messages per chat/thread; 0 = no per-chat cap (ring only) - v42 (trailing)
+  uint8_t  p4_antenna;        // RESERVED (was: T-Display P4 antenna select). The antenna choice is session-only by design and is never stored — see the note further down — v41 (trailing)
 };
 
 static TouchCfg s_cfg;
@@ -611,6 +612,8 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.lock_color    = DEFAULT_LOCK_COLOR;
   c.accent        = DEFAULT_ACCENT;
   c.gps_baud      = 0;          // 0 sentinel -> getter returns caller fallback
+  c.hist_per_chat = 250;        // keep the newest 250 per chat: enough to scroll back, small enough to stay quick
+  c.p4_antenna    = 0;          // reserved, unused: the P4 antenna choice is never persisted
   c.sig_probe_en  = DEFAULT_SIG_PROBE_EN;
   c.sig_poll_min  = DEFAULT_SIG_POLL_MIN;
   c.tz_zone       = 0;          // 0 = Europe (CET/CEST) — preserves prior behaviour
@@ -621,7 +624,11 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.map_show_tilexyz  = 1;
   c.map_show_contacts = 1;
   c.app_grid_large    = 0;      // default: compact app grid (T-Deck 4 cols / V4 3 cols)
-  c.ui_scale          = 1;      // default: 150% "Large" UI scale (Tanmatsu; S3 boards ignore this)
+#if defined(TLORA_PAGER)
+  c.ui_scale          = 0;      // Pager: Small/current typography by default
+#else
+  c.ui_scale          = 1;      // large-screen boards keep their existing 150% default
+#endif
 #if defined(HAS_TANMATSU)
   c.kbd_nav           = 1;      // Tanmatsu: no touchscreen — keyboard nav is the only input, always on
 #else
@@ -661,10 +668,11 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.remote_landscape   = 1;     // landscape 800x480 by default (remote mode = desktop/browser); portrait is a toggle
   c.web_terminal       = 0;     // OFF: web mesh terminal is opt-in (runtime; mutually exclusive with VNC)
   c.map_tile_debug     = 0;     // OFF: map tile-pipeline diagnostic overlay is opt-in (developer)
+  c.hist_sync_after    = 2;     // chat flush: 2 failed background writes -> synchronous loop-task fallback
 }
 
-// Persist the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
-// discipline every setter in this file uses. Returns true on a durable write.
+// Update the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
+// discipline every setter in this file uses. File mode queues a coalesced write.
 static bool cfgFlush() {
   s_prefs.end();
   if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = false; return false; }
@@ -732,6 +740,12 @@ static void cfgLoadOrMigrate() {
         if (s_cfg.ver < 37) s_cfg.remote_landscape = 1;   // remote mode = landscape/desktop by default (one-time flip; portrait stays a toggle)
         if (s_cfg.ver < 38) s_cfg.web_terminal = 0;       // new trailing field: web mesh terminal off by default (opt-in)
         if (s_cfg.ver < 39) s_cfg.map_tile_debug = 0;     // new trailing field: tile diagnostic overlay off by default
+#if defined(TLORA_PAGER)
+        // ui_scale existed before the Pager exposed the selector, so every old
+        // Pager inherited the unrelated large-screen default (1) while ignoring
+        // it. Reset it once so upgrading cannot enlarge the UI without consent.
+        if (s_cfg.ver < 43) s_cfg.ui_scale = 0;
+#endif
         s_cfg.ver = TOUCH_CFG_VER;
         s_cfg.magic = TOUCH_CFG_MAGIC;
         cfgFlush();                // rewrite with new fields defaulted-in
@@ -775,9 +789,8 @@ static void cfgLoadOrMigrate() {
     }
   }
 
-  // Write "cfg" ONCE. Only after a durable write do we reclaim the legacy keys.
-  // If the write fails (e.g. NVS full / SD missing) we keep the legacy keys
-  // intact and retry the whole migration on the next boot.
+  // Add "cfg" and retire the old file keys in one RAM transaction. The A/B
+  // worker commits the complete result; until then the released .kv is intact.
   if (cfgFlush()) {
     s_prefs.end();
     if (s_prefs.begin(TOUCH_NS, false)) {
@@ -825,6 +838,10 @@ void touchPrefsReload() {
   touchPrefsBegin();
 }
 
+void touchPrefsTick(uint32_t now_ms) { SdNvsPrefs::tick(now_ms); }
+bool touchPrefsFlush(uint32_t timeout_ms) { return SdNvsPrefs::flush(timeout_ms); }
+bool touchPrefsIoBusy() { return SdNvsPrefs::busy(); }
+
 // Arduino's Preferences::getString()/getBytes() emit an [E] nvs_get_* "NOT_FOUND"
 // log every time a key is absent — which floods the (USB-CDC) console on a fresh
 // device and on every empty Wi-Fi-slot read. isKey() (getType → raw nvs probes)
@@ -846,11 +863,44 @@ bool touchPrefsSetScreenTimeoutSecs(uint16_t seconds) {
 }
 
 // --- Mesh signal auto-discover probe (toggle + poll interval) ---------------
-// The interval is entered in whole minutes; clamp >1 min (one flood a minute is
-// already aggressive on shared airtime) .. 1 day so a bad/blank entry can't make
-// the probe hammer the mesh or effectively never run.
+// The interval is entered in whole minutes; clamp 1 min .. 1 day so a bad or blank entry
+// can't make the probe run hot or effectively never run.
+//
+// NOT A FLOOD. This comment used to describe the probe as a flood, which is where the
+// "wadamesh spams the mesh every 5 minutes" worry came from (issue #80). It is a ZERO-HOP
+// CTL_TYPE_NODE_DISCOVER_REQ (MyMesh::uiSendSignalProbe) — the same node-discovery packet
+// the other MeshCore GUIs use. Repeaters answer it DIRECTLY and never re-broadcast it, so
+// nothing propagates beyond our immediate neighbours; the fallback when no repeater path is
+// known is sendAdvert(false), also zero-hop. The caller additionally SKIPS the probe
+// whenever a direct neighbour was heard inside the poll window, so the busier the mesh, the
+// less this transmits.
 static const uint16_t SIG_POLL_MIN_MINS = 1;   // 1 min = 60 s (the old fixed cadence)
 static const uint16_t SIG_POLL_MAX_MINS = 1440;
+
+// --- T-Display P4 LoRa antenna select — deliberately NOT persisted -----------
+// XL9535 IO1 drives the board's SKY13453 antenna switch (full reasoning in Xl9535.h). The
+// getter/setter that used to live here are gone on purpose: the choice is session-only, so
+// there is nothing to store. Every boot forces the on-board antenna, in two places — the park
+// in Xl9535::powerOnSequence() and the re-assert in UITask::begin() — because the external
+// MMCX may have no antenna fitted, and keying a PA into an open connector damages it. That
+// safety property only holds if a power cycle cannot restore "external", which means the
+// choice must never reach flash. p4_antenna stays as a reserved trailing byte: dropping it
+// would rewind TOUCH_CFG_VER on devices already carrying a v41 blob, for no gain.
+
+// --- Per-chat history cap -----------------------------------------------------
+// A single busy channel could previously fill the entire shared message ring, which both
+// starved every other chat of history and made the inbox slow (see the thread-history cache
+// in UITask). This bounds each chat independently. 0 = no per-chat cap, i.e. the old
+// behaviour, which the settings UI warns about rather than hiding.
+uint16_t touchPrefsGetHistPerChat() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.hist_per_chat;
+}
+bool touchPrefsSetHistPerChat(uint16_t n) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.hist_per_chat = n;
+  return cfgFlush();
+}
 
 bool touchPrefsGetSigProbeEnabled() {
   if (!s_begun) touchPrefsBegin();
@@ -1382,6 +1432,15 @@ bool touchPrefsSetMapNight(bool on) {
   s_cfg.map_night = on ? 1 : 0;
   return cfgFlush();
 }
+uint8_t touchPrefsGetHistSyncAfter() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.hist_sync_after > 9 ? 9 : s_cfg.hist_sync_after;
+}
+bool touchPrefsSetHistSyncAfter(uint8_t n) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.hist_sync_after = n > 9 ? 9 : n;
+  return cfgFlush();
+}
 uint8_t touchPrefsGetMapZoom() {
   if (!s_begun) touchPrefsBegin();
   return s_cfg.map_zoom;
@@ -1458,7 +1517,7 @@ bool touchPrefsSetAppGridLarge(bool on) {
 
 uint8_t touchPrefsGetUiScale() {
   if (!s_begun) touchPrefsBegin();
-  return s_cfg.ui_scale > 2 ? 0 : s_cfg.ui_scale;   // 0=100% 1=150% 2=200%
+  return s_cfg.ui_scale > 2 ? 0 : s_cfg.ui_scale;
 }
 bool touchPrefsSetUiScale(uint8_t scale) {
   if (!s_begun) touchPrefsBegin();
@@ -1640,36 +1699,23 @@ bool touchPrefsSetHomeIsDrawer(bool on) {
 // the data loads, so changing it needs a reboot. Key "use_sd" in the "touch"
 // namespace — main.cpp must see the same value the UI toggle writes.
 static const char* KEY_USE_SD_STORAGE = "use_sd";
-static const char* TOUCH_KV_BOOT_PATH = "/prefs/touch.kv";
-
-// SdNvsPrefs file mode writes touch.kv only — parse a bool for boot migration.
-static bool readBoolFromTouchKvFile(const char* want_key) {
-  if (!SPIFFS.exists(TOUCH_KV_BOOT_PATH)) return false;
-  File f = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_READ);
-  if (!f) return false;
-  while (f.available() > 0) {
-    int kl = f.read();
-    if (kl <= 0 || kl > 15) break;
-    char k[16] = {0};
-    if (f.read((uint8_t*)k, kl) != kl) break;
-    int lo = f.read(), hi = f.read();
-    if (lo < 0 || hi < 0) break;
-    size_t vl = (size_t)lo | ((size_t)hi << 8);
-    if (vl > 2048) break;
-    if (strncmp(k, want_key, sizeof k) == 0) {
-      const bool on = (vl >= 1) && (f.read() != 0);
-      f.close();
-      return on;
-    }
-    for (size_t i = 0; i < vl; ++i) {
-      if (f.read() < 0) { f.close(); return false; }
-    }
-  }
-  f.close();
-  return false;
-}
+static const char* BOOT_PREFS_NS = "bootprefs";
 
 bool touchPrefsReadUseSdAtBoot() {
+  bool file_val = false;
+  bool found = SdNvsPrefs::readFileBool((fs::FS*)&SPIFFS, "/prefs", BOOT_PREFS_NS,
+                                       KEY_USE_SD_STORAGE, file_val);
+  // Once present, the explicit boot namespace is authoritative. This lets a
+  // Launcher device recover even if its best-effort NVS mirror is stale.
+  if (found) {
+    Preferences mirror;
+    if (mirror.begin(TOUCH_NS, false)) {
+      mirror.putBool(KEY_USE_SD_STORAGE, file_val);
+      mirror.end();
+    }
+    return file_val;
+  }
+
   bool nvs_val = false;
   Preferences p;
   if (p.begin(TOUCH_NS, true)) {
@@ -1677,69 +1723,22 @@ bool touchPrefsReadUseSdAtBoot() {
     p.end();
   }
   if (nvs_val) return true;
-  const bool file_val = readBoolFromTouchKvFile(KEY_USE_SD_STORAGE);
-  if (file_val) {
-    Serial.println("[BOOT] use_sd read from /prefs/touch.kv (syncing to NVS)");
+  // One-time migration for builds that stored the boot flag inside touch.kv.
+  found = SdNvsPrefs::readFileBool((fs::FS*)&SPIFFS, "/prefs", TOUCH_NS,
+                                   KEY_USE_SD_STORAGE, file_val);
+  if (found && file_val) {
+    Serial.println("[BOOT] use_sd read from SPIFFS boot prefs (syncing to NVS)");
     if (p.begin(TOUCH_NS, false)) {
       p.putBool(KEY_USE_SD_STORAGE, true);
       p.end();
     }
   }
-  return file_val;
+  return found && file_val;
 }
 
 bool touchPrefsGetUseSdStorage() {
   if (!s_begun) touchPrefsBegin();
   return s_prefs.getBool(KEY_USE_SD_STORAGE, false);   // default = SPIFFS
-}
-
-// Rewrite (or create) the SPIFFS copy of touch.kv with use_sd set, keeping every
-// other record. Needed because the boot storage decision can only read SPIFFS
-// (SD isn't mounted yet, see touchPrefsReadUseSdAtBoot): when prefs actively
-// live on the SD card, the toggle must land in BOTH file copies — otherwise
-// installs with unusable NVS (Launcher) could turn SD storage on but never OFF
-// again (the stale SPIFFS true would win every boot). PR #123 follow-up.
-static void writeUseSdToSpiffsKv(bool on) {
-  struct Rec { char k[16]; std::vector<uint8_t> v; };
-  std::vector<Rec> recs;
-  File f = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_READ);
-  if (f) {
-    while (f.available() > 0 && recs.size() < 256) {
-      int kl = f.read();
-      if (kl <= 0 || kl > 15) break;
-      Rec r{};
-      if (f.read((uint8_t*)r.k, kl) != kl) break;
-      int lo = f.read(), hi = f.read();
-      if (lo < 0 || hi < 0) break;
-      size_t vl = (size_t)lo | ((size_t)hi << 8);
-      if (vl > 2048) break;
-      r.v.resize(vl);
-      if (vl && f.read(r.v.data(), vl) != (int)vl) break;
-      recs.push_back(std::move(r));
-    }
-    f.close();
-  }
-  bool found = false;
-  for (auto& r : recs) {
-    if (strncmp(r.k, KEY_USE_SD_STORAGE, sizeof r.k) == 0) { r.v.assign(1, on ? 1 : 0); found = true; }
-  }
-  if (!found) {
-    Rec r{};
-    strncpy(r.k, KEY_USE_SD_STORAGE, sizeof r.k - 1);
-    r.v.assign(1, on ? 1 : 0);
-    recs.push_back(std::move(r));
-  }
-  File w = SPIFFS.open(TOUCH_KV_BOOT_PATH, FILE_WRITE);   // truncate + rewrite
-  if (!w) return;
-  for (auto& r : recs) {
-    size_t kl = strnlen(r.k, sizeof r.k), vl = r.v.size();
-    w.write((uint8_t)kl);
-    w.write((const uint8_t*)r.k, kl);
-    w.write((uint8_t)(vl & 0xFF));
-    w.write((uint8_t)((vl >> 8) & 0xFF));
-    if (vl) w.write(r.v.data(), vl);
-  }
-  w.close();
 }
 
 bool touchPrefsSetUseSdStorage(bool use_sd) {
@@ -1757,11 +1756,12 @@ bool touchPrefsSetUseSdStorage(bool use_sd) {
     nvs.putBool(KEY_USE_SD_STORAGE, use_sd);
     nvs.end();
   }
-  // When prefs live on the SD card, boot's fallback still reads the SPIFFS
-  // copy — keep it in sync so the toggle works in BOTH directions there.
-  fs::FS* ffs = SdNvsPrefs::fileFs();
-  if (ffs && ffs != (fs::FS*)&SPIFFS) writeUseSdToSpiffsKv(use_sd);
-  return ok;
+  // The boot storage decision happens before SD is mounted. Keep a tiny,
+  // crash-safe SPIFFS A/B namespace as the Launcher-safe fallback regardless
+  // of where the rest of the preferences currently live.
+  const bool boot_ok = SdNvsPrefs::writeFileBool((fs::FS*)&SPIFFS, "/prefs", BOOT_PREFS_NS,
+                                                 KEY_USE_SD_STORAGE, use_sd);
+  return ok && boot_ok;
 }
 
 // UI language index (UiLang enum in i18n.h; 0 = English). Read at boot to pick

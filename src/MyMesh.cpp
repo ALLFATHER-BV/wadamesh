@@ -205,6 +205,9 @@ static int s_companion_ota_pinned_reply_target = -1;
 // that freezes the loop, and re-adverts (last-heard/path refreshes) otherwise churn
 // it constantly. A change in the contact SET still saves promptly (see MyMesh::loop).
 #define CONTACTS_REFRESH_SAVE_INTERVAL  300000
+// Minimum gap between contacts saves that were triggered by an ADD/REMOVE (count change).
+// Coalesces a burst of newly-heard nodes into one atomic rewrite instead of one per node.
+#define CONTACTS_ADD_SAVE_MIN_INTERVAL   30000
 // Our self-chosen room-session keep-alive interval (secs). Room servers zero the
 // legacy suggested-interval field in LOGIN_OK, so the client picks. 128 is the
 // value upstream itself recommended while the field was live (CLIENT_KEEP_ALIVE_SECS
@@ -5313,14 +5316,30 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
   if (_ui_login_then && len > 4 && memcmp(&_ui_login_then, contact.id.pub_key, 4) == 0) {
     const bool login_ok = (data[4] == RESP_SERVER_LOGIN_OK)
                           || (len > 5 && memcmp(&data[4], "OK", 2) == 0);
-    const UiReqKind k = _ui_login_then_kind;
-    cancelUIDeferredLogin();
-    if (login_ok) {
-      ContactInfo& rc = const_cast<ContactInfo&>(contact);
-      if (k == UiReqKind::Telemetry) sendTelemetryRequestForUI(rc);
-      else                           sendStatusPingForUI(rc);
+    // The comment above assumes ANY response arriving while armed must be our login reply.
+    // That holds for the UI, but the COMPANION APP can have its own STATUS / TELEMETRY /
+    // BINARY request in flight to this same node, and there is no distinct "login failed"
+    // code on the wire (a failure is merely "not RESP_SERVER_LOGIN_OK"), so a non-OK frame
+    // is indistinguishable from the app's reply. Swallowing it here ate the app's response
+    // and returned, leaving the phone waiting forever — a contributor to the "no ping or
+    // telemetry response, from the device AND the app" reports (#124).
+    // A LOGIN_OK is unambiguously ours, so always take it. Otherwise, if the app is waiting
+    // on this same contact, fall through and let its matcher have the frame; our own reply
+    // deadline still disarms us, which is all the early disarm here ever bought.
+    const bool app_waiting =
+        (pending_status    && memcmp(&pending_status,    contact.id.pub_key, 4) == 0) ||
+        (pending_telemetry && memcmp(&pending_telemetry, contact.id.pub_key, 4) == 0) ||
+        (pending_req       && memcmp(&pending_req,       contact.id.pub_key, 4) == 0);
+    if (login_ok || !app_waiting) {
+      const UiReqKind k = _ui_login_then_kind;
+      cancelUIDeferredLogin();
+      if (login_ok) {
+        ContactInfo& rc = const_cast<ContactInfo&>(contact);
+        if (k == UiReqKind::Telemetry) sendTelemetryRequestForUI(rc);
+        else                           sendStatusPingForUI(rc);
+      }
+      return;   // login frame consumed (OK fired the REQ; fail disarmed)
     }
-    return;   // login frame consumed (OK fired the REQ; fail disarmed)
   }
 #endif
 
@@ -5473,6 +5492,22 @@ void MyMesh::onControlDataRecv(mesh::Packet *packet) {
       _ui_sig_ms     = millis();
     }
   }
+  // Discover scan (Discover app): collect EVERY NODE_DISCOVER_RESP matching the active discover
+  // sweep tag into _discover[], keyed by responder pubkey. Additive to the single-scalar probe
+  // capture above (they use different tags). RESP payload (MeshCore docs/payloads.md):
+  //   [0]=0x9<<4|node_type  [1]=their SNR*4 (reverse link)  [2..5]=tag  [6..]=pubkey (8 or 32 bytes).
+  if (packet->payload_len >= 6 + 8 && (packet->payload[0] & 0xF0) == CTL_TYPE_NODE_DISCOVER_RESP
+      && _discover_tag != 0) {
+    uint32_t rtag; memcpy(&rtag, &packet->payload[2], 4);
+    if (rtag == _discover_tag) {
+      uint8_t node_type    = packet->payload[0] & 0x0F;
+      int8_t  their_snr_q4 = (int8_t)packet->payload[1];
+      uint8_t pklen        = (packet->payload_len >= 6 + 32) ? 32 : 8;
+      int8_t  our_snr_q4   = (int8_t)(packet->getSNR() * 4.0f);
+      int8_t  our_rssi     = (int8_t)_radio->getLastRSSI();
+      discoverUpsert(&packet->payload[6], pklen, node_type, our_snr_q4, our_rssi, their_snr_q4, packet->path_len);
+    }
+  }
   if (packet->payload_len + 4 > sizeof(out_frame)) {
     MESH_DEBUG_PRINTLN("onControlDataRecv(), payload_len too long: %d", packet->payload_len);
     return;
@@ -5490,6 +5525,38 @@ void MyMesh::onControlDataRecv(mesh::Packet *packet) {
   } else {
     MESH_DEBUG_PRINTLN("onControlDataRecv(), data received while app offline");
   }
+}
+
+// Upsert a discover responder into _discover[] (keyed by the 8-byte pubkey prefix). New nodes
+// append; a full table evicts the least-recently-heard. Both link directions + hop count are
+// refreshed on every reply. See DiscoverHit / uiStartDiscoverScan in MyMesh.h.
+void MyMesh::discoverUpsert(const uint8_t* pk, uint8_t pklen, uint8_t node_type,
+                            int8_t our_snr_q4, int8_t our_rssi, int8_t their_snr_q4, uint8_t path_len) {
+  uint32_t now = millis();
+  int slot = -1;
+  for (uint8_t i = 0; i < _discover_cnt; i++) {
+    if (memcmp(_discover[i].pubkey, pk, 8) == 0) { slot = i; break; }
+  }
+  if (slot < 0) {
+    if (_discover_cnt < DISCOVER_MAX) {
+      slot = _discover_cnt++;
+    } else {                                    // table full -> evict the least-recently-heard
+      uint32_t oldest = 0xFFFFFFFFu; slot = 0;
+      for (uint8_t i = 0; i < _discover_cnt; i++)
+        if (_discover[i].last_ms < oldest) { oldest = _discover[i].last_ms; slot = i; }
+    }
+    memset(&_discover[slot], 0, sizeof(DiscoverHit));
+    memcpy(_discover[slot].pubkey, pk, pklen > 32 ? 32 : pklen);
+    _discover[slot].first_ms = now;
+  }
+  DiscoverHit& h = _discover[slot];
+  h.node_type    = node_type;
+  h.our_snr_q4   = our_snr_q4;
+  h.our_rssi     = our_rssi;
+  h.their_snr_q4 = their_snr_q4;
+  h.path_len     = path_len;
+  h.last_ms      = now;
+  if (h.heard < 0xFFFF) h.heard++;
 }
 
 void MyMesh::onRawDataRecv(mesh::Packet *packet) {
@@ -7099,6 +7166,7 @@ void MyMesh::saveContacts() {
   // freshly-written contact set + resets the refresh window.
   _last_saved_contacts_n = getNumContacts();
   _next_contacts_refresh_save = futureMillis(CONTACTS_REFRESH_SAVE_INTERVAL);
+  _next_contacts_add_save     = futureMillis(CONTACTS_ADD_SAVE_MIN_INTERVAL);
 }
 
 void MyMesh::enterCLIRescue() {
@@ -7565,6 +7633,20 @@ void MyMesh::loop() {
     if (getNumContacts() == _last_saved_contacts_n && _store->contactsOnInternalFlash()
         && !millisHasNowPassed(_next_contacts_refresh_save)) {
       defer = true;   // no add/remove + still inside the refresh window on GC-prone flash
+    }
+    // ...but a CHANGED contact count used to bypass the window entirely and rewrite the whole
+    // table immediately, every time. On a busy mesh that is the common case, not the rare one:
+    // each newly-heard node auto-added (and every transient/anon slot) bumps the count, so a
+    // burst of new nodes = a burst of full 30 KB rewrites 5 s apart, which is what drives the
+    // GC stalls a reporter measured at 11-19 s on two card-less V4s. Give add/remove its own
+    // short floor so a burst coalesces into ONE rewrite. Deliberately short (30 s, vs 5 min for
+    // pure refreshes): a new node still needs to reach flash promptly, and an unclean power loss
+    // inside the window only costs a rediscovery on that node's next advert, whereas the stall
+    // it prevents freezes the entire UI. The write stays ATOMIC (tmp + rename) — important on
+    // hardware that browns out, which is exactly what these reporters' boards do.
+    if (!defer && _store->contactsOnInternalFlash()
+        && !millisHasNowPassed(_next_contacts_add_save)) {
+      defer = true;
     }
 #endif
     if (defer) {

@@ -116,7 +116,15 @@ private:
   volatile uint8_t _ppressed = 0;
   volatile uint8_t _pknown   = 0;
 
-  static const int KEY_RING = 32;   // typed keys awaiting the UI thread (SPSC)
+  // Typed keys awaiting the UI thread (SPSC). 32 was far too small: the browser pushes from
+  // the network thread while the UI drains only a handful per loop iteration, and one
+  // iteration can be tens of ms (LVGL frame, SD write, radio). Anything arriving FASTER than
+  // that drain overflowed, and pushKey discards the overflow SILENTLY -- which is exactly
+  // what a phone autocomplete or a paste looks like, because it delivers a whole word at
+  // once. Reported over the web mirror as "missing a lot of characters while typing".
+  // 256 entries costs 512 bytes and is the MAXIMUM this ring can hold while _khead/_ktail
+  // stay uint8_t; anything larger REQUIRES widening those two or the modulo silently wraps.
+  static const int KEY_RING = 256;
   uint16_t _keys[KEY_RING];
   volatile uint8_t _khead = 0, _ktail = 0;
   volatile bool _kb_focused = false, _kb_dirty = false;   // editable-field focus signal

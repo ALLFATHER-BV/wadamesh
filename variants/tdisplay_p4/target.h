@@ -15,7 +15,11 @@ extern "C" void set_boot_phase(int phase);
 #include "../../src/helpers/ClockFloorRTC.h"   // monotonic send-timestamp floor (issue #89)
 #include <helpers/SensorManager.h>
 #include <helpers/sensors/EnvironmentSensorManager.h>
-#include "RM69A10Display.h"
+#if defined(HAS_TDP4_LCD)
+#include "HI8561Display.h"                // HI8561 TFT-LCD (LCD SKU) — DISPLAY_CLASS=HI8561Display
+#else
+#include "RM69A10Display.h"               // RM69A10 AMOLED (default SKU) — DISPLAY_CLASS=RM69A10Display
+#endif
 #include "Xl9535.h"
 
 class TDisplayP4Board : public ESP32Board {

@@ -84,12 +84,22 @@ void heltecV4CapTouchSetRotation(uint8_t lvgl_rot) { s_ui_rotation = lvgl_rot & 
 // identity. (Verified on hardware — without the flip, taps landed at the
 // diagonally-opposite point.)
 static void rotateSwipeDelta(int dx, int dy, int* odx, int* ody) {
+#if defined(HELTEC_LORA_V4_R8)
+  // R8: no +180 panel baseline (see applyPointRotation) -- plain rotations, V4 cases swapped.
+  switch (s_ui_rotation) {
+    case 1:  *odx =  dy; *ody = -dx; break;  // ROT_90  (baseline-0 panel)
+    case 2:  *odx = -dx; *ody = -dy; break;  // 180
+    case 3:  *odx = -dy; *ody =  dx; break;  // ROT_270
+    default: *odx =  dx; *ody =  dy; break;  // portrait
+  }
+#else
   switch (s_ui_rotation) {
     case 1:  *odx = -dy; *ody =  dx; break;  // ROT_90  (panel-rot-2 baseline)
     case 2:  *odx = -dx; *ody = -dy; break;  // 180
     case 3:  *odx =  dy; *ody = -dx; break;  // ROT_270
     default: *odx =  dx; *ody =  dy; break;  // portrait
   }
+#endif
 }
 
 // Hardware-rotation touch-point transform. When the panel is rotated in
@@ -107,6 +117,20 @@ static void applyPointRotation(uint16_t* x, uint16_t* y) {
   const int H = 320;    // V4 panel portrait height
   const int px = *x, py = *y;
   int lx, ly;
+#if defined(HELTEC_LORA_V4_R8)
+  // R8 (LovyanGFX panel, offset_rotation 0, portrait = setRotation(0)): the panel has NO +180
+  // baseline, so the plain 90/270 maps apply -- exactly the V4's two landscape cases swapped.
+  // The V4-tuned maps below landed every landscape touch point-mirrored on this board (the
+  // stuck-in-landscape report). TESTER-VERIFY: confirmed geometry, unconfirmed sign -- if
+  // landscape touch is still mirrored, swap case 1 and case 3 back. Boot forces portrait on
+  // this board (UITask), so a wrong guess costs a reboot, not a stuck device.
+  switch (s_point_rotation) {
+    case 1:  lx = py;            ly = (W - 1) - px; break;  // ROT_90  -> 320x240 (plain 90)
+    case 2:  lx = (W - 1) - px;  ly = (H - 1) - py; break;  // 180
+    case 3:  lx = (H - 1) - py;  ly = px;           break;  // ROT_270 -> 320x240 (plain 270)
+    default: lx = px;            ly = py;           break;
+  }
+#else
   // Same +180 baseline as rotateSwipeDelta: ROT_90 uses the 270-degree map.
   switch (s_point_rotation) {
     case 1:  lx = (H - 1) - py;  ly = px;           break;  // ROT_90  -> 320x240
@@ -114,6 +138,7 @@ static void applyPointRotation(uint16_t* x, uint16_t* y) {
     case 3:  lx = py;            ly = (W - 1) - px; break;  // ROT_270 -> 320x240
     default: lx = px;            ly = py;           break;
   }
+#endif
   if (lx < 0) lx = 0;
   if (ly < 0) ly = 0;
   *x = (uint16_t)lx;

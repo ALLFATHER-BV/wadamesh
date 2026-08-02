@@ -370,6 +370,39 @@ static const lv_btnmatrix_ctrl_t kb_it_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
+/* Romanian keeps QWERTY and promotes the three letters the accent popup can't
+ * offer today straight onto the deck: ă on the home row (like Spanish's ñ) and
+ * ş / ţ on the bottom row (like Italian's è / ì). â and î stay reachable from
+ * the a / i accent popups. Cedilla forms (ş/ţ) match the bundled font coverage;
+ * switch to comma-below (ș/ț) if the extras_* fonts ever gain U+0218-021B. */
+static const char* const kb_ro_lower[] = {
+    "1#", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
+    "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", "ă", LV_SYMBOL_NEW_LINE, "\n",
+    "ş", "ţ", "z", "x", "c", "v", "b", "n", "m", ".", ",", ":", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+};
+
+static const lv_btnmatrix_ctrl_t kb_ro_lower_ctrl[] = {
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+};
+
+static const char* const kb_ro_upper[] = {
+    "1#", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
+    "abc", "A", "S", "D", "F", "G", "H", "J", "K", "L", "Ă", LV_SYMBOL_NEW_LINE, "\n",
+    "Ş", "Ţ", "Z", "X", "C", "V", "B", "N", "M", ".", ",", ":", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+};
+
+static const lv_btnmatrix_ctrl_t kb_ro_upper_ctrl[] = {
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+};
+
 struct OsKeyboardLayout {
     KeyboardLayoutId id;
     const char*      name;
@@ -416,6 +449,9 @@ static const OsKeyboardLayout k_os_layouts[] = {
     { KeyboardLayoutId::IT, "IT",
       kb_it_lower, kb_it_lower_ctrl,
       kb_it_upper, kb_it_upper_ctrl },
+    { KeyboardLayoutId::RO, "RO",
+      kb_ro_lower, kb_ro_lower_ctrl,
+      kb_ro_upper, kb_ro_upper_ctrl },
 };
 
 /* ================================================================
@@ -440,6 +476,7 @@ static const HwKeyboardLayout k_hw_layouts[] = {
     { KeyboardLayoutId::DE, "DE" },
     { KeyboardLayoutId::ES, "ES" },
     { KeyboardLayoutId::IT, "IT" },
+    { KeyboardLayoutId::RO, "RO" },
 };
 
 /* Bulgarian phonetic mapping for T-Deck.
@@ -626,8 +663,9 @@ static const char* hw_de_upper[26] = {
 static const char* hw_de_digits[10]       = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
 static const char* hw_de_digits_shift[10] = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
 
-/* Dutch keeps the standard alpha matrix but exposes the common IJ digraph on a
- * digit slot so compact hardware still gets a language-specific shortcut. */
+/* Dutch keeps the standard alpha matrix. (The IJ digraph used to sit on a hardware
+ * digit slot, but slot 1 is the "1" key AND the back-mapped "!" key, so it broke both
+ * — GH #144/#164 — and the digraph now lives only on the on-screen keyboard's key.) */
 static const char* hw_nl_lower[26] = {
     "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
     "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
@@ -638,8 +676,8 @@ static const char* hw_nl_upper[26] = {
     "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
     "U", "V", "W", "X", "Y", "Z"
 };
-static const char* hw_nl_digits[10]       = { nullptr, "ij", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-static const char* hw_nl_digits_shift[10] = { nullptr, "IJ", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+static const char* hw_nl_digits[10]       = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+static const char* hw_nl_digits_shift[10] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 
 /* Spanish stays close to US QWERTY; use the number row to expose n-tilde on
  * compact hardware where the semicolon key is absent. */
@@ -669,6 +707,21 @@ static const char* hw_it_upper[26] = {
 };
 static const char* hw_it_digits[10]       = { nullptr, "à", "è", "ì", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 static const char* hw_it_digits_shift[10] = { nullptr, "À", "È", "Ì", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+
+/* Romanian keeps the standard alpha matrix; the number row surfaces the five
+ * special letters on compact hardware (same trick as Italian's accented vowels). */
+static const char* hw_ro_lower[26] = {
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
+    "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
+    "u", "v", "w", "x", "y", "z"
+};
+static const char* hw_ro_upper[26] = {
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
+    "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
+    "U", "V", "W", "X", "Y", "Z"
+};
+static const char* hw_ro_digits[10]       = { nullptr, "ă", "â", "î", "ş", "ţ", nullptr, nullptr, nullptr, nullptr };
+static const char* hw_ro_digits_shift[10] = { nullptr, "Ă", "Â", "Î", "Ş", "Ţ", nullptr, nullptr, nullptr, nullptr };
 
 /* ================================================================
  * Runtime state
@@ -754,6 +807,7 @@ static const HwPhoneticMap k_hw_maps[KEYBOARD_LAYOUT_COUNT] = {
     /* DE */ { hw_de_lower,  hw_de_upper,  hw_de_digits,   hw_de_digits_shift },
     /* ES */ { hw_es_lower,  hw_es_upper,  hw_es_digits,   hw_es_digits_shift },
     /* IT */ { hw_it_lower,  hw_it_upper,  hw_it_digits,   hw_it_digits_shift },
+    /* RO */ { hw_ro_lower,  hw_ro_upper,  hw_ro_digits,   hw_ro_digits_shift },
 };
 
 const char* keyboardLayoutMapHwKey(KeyboardLayoutId id, int key, bool shifted) {

@@ -42,6 +42,7 @@ BOARDS = {
     "manifest-heltec-v4-r8-tft.json": ("wadamesh — Heltec V4-R8 (experimental)", "wadamesh-heltec-v4-r8-tft-merged.bin", "ESP32-S3"),
     "manifest-tlora-pager-lr1121.json": ("wadamesh — LilyGo T-LoRa Pager (LR1121)", "wadamesh-tlora-pager-lr1121-merged.bin", "ESP32-S3"),
     "manifest-tlora-pager-sx1262.json": ("wadamesh — LilyGo T-LoRa Pager (SX1262)", "wadamesh-tlora-pager-sx1262-merged.bin", "ESP32-S3"),
+    "manifest-attaky.json":           ("wadamesh — Attaky Core (experimental)", "wadamesh-attaky-merged.bin", "ESP32-S3"),
     "manifest-tdisplay-p4.json":      ("wadamesh — LilyGo T-Display P4", "wadamesh-tdisplay-p4-merged.bin", "ESP32-P4"),
 }
 for fn, (name, binf, chip) in BOARDS.items():

@@ -101,3 +101,9 @@ public:
 private:
   FILESYSTEM* _getContactsChannelsFS() const { if (_fsExtra) return _fsExtra; return _fs;};
 };
+
+#if defined(HAS_TDISPLAY_P4)
+// #167: run fn(arg) on the dedicated CORE-1 storage task, blocking the caller. See DataStore.cpp.
+void p4StorageCall(void (*fn)(void*), void* arg);
+bool p4OnStorageTask();   // true when the current task IS the storage task (wrapper re-entry guard)
+#endif
