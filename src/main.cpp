@@ -238,15 +238,6 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
   // a profile-reconciliation action into an overwrite.
   force = false;
 #endif
-  // On Pager the marker is the cross-file commit record. Remove it before an
-  // explicit overwrite so a reset halfway through cannot leave the old marker
-  // blessing mixed data.
-  if (force) {
-#if defined(TLORA_PAGER)
-    SD.remove(kSdMigrationComplete);
-    SD.remove(kSdMigrationCompleteTmp);
-#endif
-  }
   SD.mkdir("/meshcomod");
   SD.mkdir("/meshcomod/identity");
   SD.mkdir("/meshcomod/bl");
