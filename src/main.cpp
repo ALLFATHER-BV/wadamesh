@@ -215,8 +215,9 @@ void halt() {
 // "/meshcomod/<ns>.kv", matching SdNvsPrefs's SD layout). Returns true only when
 // every file landed on the card; Pager additionally requires a last-written
 // completion marker. The caller must NOT adopt the card otherwise. force=true
-// (the Settings "Copy internal data to SD" recovery button)
-// overwrites whatever the card holds; the boot path never clobbers existing files.
+// (the Settings "Copy internal data to SD" recovery button) overwrites whatever
+// the card holds on legacy targets. Pager recovery is deliberately non-clobbering;
+// its boot and manual paths only fill missing files and commit the marker last.
 // Both filesystems must be mounted by the caller.
 #if defined(TLORA_PAGER)
 static constexpr const char* kSdMigrationComplete = "/meshcomod/.spiffs-migration-v1";
@@ -226,7 +227,6 @@ bool meshcomodSdMigrationComplete() { return SD.exists(kSdMigrationComplete); }
 
 bool meshcomodMigrateSpiffsToSd(bool force) {
   if (!SPIFFS.exists("/identity/_main.id")) return false;   // nothing worth adopting
-  const bool sd_identity_preexisting = SD.exists("/meshcomod/identity/_main.id");
   // On Pager the marker is the cross-file commit record. Remove it before an
   // explicit overwrite so a reset halfway through cannot leave the old marker
   // blessing mixed data.
@@ -243,95 +243,188 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
   SD.mkdir("/meshcomod/msgs");   // chat segments: SPIFFS names them flat ("/msgs/seg_*.bin"),
                                  // but the FAT card needs the real parent dir or every copy fails
   bool identity_ok = false;
+  bool identity_deferred = false;
   int copied = 0, failed = 0;
   static uint8_t buf[4096];
+  // This routine runs only on loopTask. Keep the working paths off its stack:
+  // the manual recovery used to be called from a deep LVGL event callback and
+  // field evidence showed this buffer being corrupted after dozens of files.
+  static char src[96];
+  static char dst[112];
+  static char tmp[120];
+  const UBaseType_t low_water = uxTaskGetStackHighWaterMark(nullptr);
+  Serial.printf("[BOOT] SD migration start, loop stack low-water: %u bytes\n",
+                (unsigned)(low_water * sizeof(StackType_t)));
+  auto ensureSdParents = [](const char* path) -> bool {
+    char parent[112];
+    strlcpy(parent, path, sizeof(parent));
+    for (char* slash = strchr(parent + 1, '/'); slash; slash = strchr(slash + 1, '/')) {
+      *slash = '\0';
+      const bool ok = SD.exists(parent) || SD.mkdir(parent);
+      *slash = '/';
+      if (!ok) return false;
+    }
+    return true;
+  };
+  // Copy identity last. Its presence is the boot-time adoption key, so landing
+  // it before a later history/settings failure could make a partial card look
+  // complete if the NVS in-progress breadcrumb were ever lost. Existing card
+  // identities are never replaced by the non-clobbering Pager path.
+  auto copyFile = [&](File& source, const char* destination,
+                      const char*& fail_stage) -> bool {
+    snprintf(tmp, sizeof tmp, "%s.mig", destination);
+    fail_stage = "parents";
+    bool ok = ensureSdParents(destination);
+    if (ok && SD.exists(tmp)) {
+      fail_stage = "stale temp";
+      ok = SD.remove(tmp);   // only our own prior migration residue
+    }
+    File d;
+    if (ok) {
+      fail_stage = "open temp";
+      d = SD.open(tmp, FILE_WRITE);
+      ok = (bool)d;
+    }
+    size_t since_feed = 0;
+    const size_t source_size = source.size();
+    size_t source_read = 0;
+    while (ok && source_read < source_size) {
+      fail_stage = "read source";
+      const size_t remain = source_size - source_read;
+      const size_t n = source.read(buf, remain < sizeof(buf) ? remain : sizeof(buf));
+      if (n == 0) { ok = false; break; }
+      fail_stage = "write temp";
+      if (d.write(buf, n) != n) { ok = false; break; }
+      source_read += n;
+      // A large history file on a slow card can exceed the task-WDT window.
+      since_feed += n;
+      if (since_feed >= 32768) { esp_task_wdt_reset(); since_feed = 0; }
+    }
+    source.close();
+    if (d) d.close();
+    // Commit only a complete temporary file, preserving the old destination
+    // until its replacement is ready.
+    if (ok) {
+      fail_stage = "replace destination";
+      if (force && SD.exists(destination) && !SD.remove(destination)) ok = false;
+      if (ok) {
+        fail_stage = "commit rename";
+        if (!SD.rename(tmp, destination)) ok = false;
+      }
+    }
+    return ok;
+  };
   File root = SPIFFS.open("/");
+  if (!root || !root.isDirectory()) {
+    if (root) root.close();
+    Serial.println("[BOOT] SD migrate FAILED: open SPIFFS root");
+    return false;
+  }
   for (File f = root.openNextFile(); f; f = root.openNextFile()) {
     if (f.isDirectory()) { f.close(); continue; }
-    // SPIFFS is flat: name() is the full path ("/identity/_main.id", "/prefs/touch.kv", ...)
-    const char* sp = f.name();
-    char src[96];
+    // Arduino-ESP32 File::name() is only the basename (pathToFileName()). Use
+    // path() so nested SPIFFS names retain identity/, prefs/, msgs/, etc. The
+    // old name() assumption made us reopen "/_main.id" instead of
+    // "/identity/_main.id", causing the first full-SD boot migration to fail.
+    const char* sp = f.path();
     snprintf(src, sizeof src, "%s%s", sp[0] == '/' ? "" : "/", sp);
-    char dst[112];
     if (strncmp(src, "/prefs/", 7) == 0)
       snprintf(dst, sizeof dst, "/meshcomod/%s", src + 7);   // kv files sit flat on the card
     else
       snprintf(dst, sizeof dst, "/meshcomod%s", src);
-    if (!force && SD.exists(dst)) { f.close(); continue; }   // boot path: never clobber
-    char tmp[120];
-    snprintf(tmp, sizeof tmp, "%s.mig", dst);
-    SD.remove(tmp);
-    File s = SPIFFS.open(src, FILE_READ);
-    File d = s ? SD.open(tmp, FILE_WRITE) : File();
-    bool ok = s && d;
-    size_t since_feed = 0;
-    while (ok && s.available()) {
-      const size_t n = s.read(buf, sizeof buf);
-      if (n == 0 || d.write(buf, n) != n) ok = false;
-      // Feed the task-WDT mid-file: a large history file on a slow/cold SD card can take
-      // longer than the 20 s task-WDT to copy in 4 KB chunks, and this runs on loopTask
-      // during setup() — without the feed the dog panics and reboot-loops the boot (GH
-      // #142/#148). The copy still can't tolerate a genuinely wedged FAT layer; the
-      // NVS breadcrumb at the call site handles that.
-      since_feed += n;
-      if (since_feed >= 32768) { esp_task_wdt_reset(); since_feed = 0; }
+    if (!force && SD.exists(dst)) {
+      if (strcmp(src, "/identity/_main.id") == 0) identity_ok = true;
+      f.close();
+      continue;   // boot path: never clobber
     }
-    if (s) s.close();
-    if (d) d.close();
-    // Commit each destination only after its temporary file is complete. This
-    // prevents a power cut from leaving an existing-looking truncated file that
-    // a later non-clobbering retry would skip.
-    if (ok) {
-      if (force && SD.exists(dst) && !SD.remove(dst)) ok = false;
-      if (ok && !SD.rename(tmp, dst)) ok = false;
+    if (strcmp(src, "/identity/_main.id") == 0) {
+      identity_deferred = true;
+      f.close();
+      continue;
     }
+    const char* fail_stage = nullptr;
+    const bool ok = copyFile(f, dst, fail_stage);
     if (ok) {
       ++copied;
-      if (strcmp(src, "/identity/_main.id") == 0) identity_ok = true;
     } else {
       ++failed;
-      Serial.printf("[BOOT] SD migrate FAILED: %s\n", src);
+      Serial.printf("[BOOT] SD migrate FAILED (%s): %s\n", fail_stage, src);
+#if defined(TLORA_PAGER)
+      // A failed FAT operation can mean the card/volume is wedged. Do not issue
+      // remove(), exists(), or another copy against that same volume: the old
+      // cleanup call was exactly where the first requested SD boot could hang.
+      // The .mig name is never adopted and a later explicit retry removes it.
+      break;
+#else
       SD.remove(tmp);
+#endif
     }
-    f.close();
     esp_task_wdt_reset();
     yield();
   }
   root.close();
+  if (failed != 0) {
+    Serial.printf("[BOOT] SPIFFS -> SD migration stopped after %d copied, %d failed\n",
+                  copied, failed);
+    return false;   // breadcrumb remains armed; no more SD calls on this boot
+  }
+  if (identity_deferred) {
+    strlcpy(src, "/identity/_main.id", sizeof(src));
+    strlcpy(dst, "/meshcomod/identity/_main.id", sizeof(dst));
+    File identity = SPIFFS.open(src, FILE_READ);
+    const char* fail_stage = "open source";
+    const bool identity_opened = (bool)identity;
+    bool ok = identity_opened;
+    if (ok) ok = copyFile(identity, dst, fail_stage);
+    if (!ok) {
+      if (identity) identity.close();
+      ++failed;
+      Serial.printf("[BOOT] SD migrate FAILED (%s): %s\n", fail_stage, src);
+#if !defined(TLORA_PAGER)
+      if (identity_opened) SD.remove(tmp);
+#endif
+      Serial.printf("[BOOT] SPIFFS -> SD migration stopped after %d copied, %d failed\n",
+                    copied, failed);
+      return false;
+    }
+    ++copied;
+    identity_ok = true;
+    esp_task_wdt_reset();
+    yield();
+  }
   // The boot path skips files the card already has — an identity already on the
   // card counts as "landed" (nothing needed migrating). Identity alone is not
   // enough, though: adopting after a larger history/prefs copy failed hides the
   // complete SPIFFS store behind a partial SD tree.
-  if (!force && !identity_ok && SD.exists("/meshcomod/identity/_main.id")) identity_ok = true;
   Serial.printf("[BOOT] SPIFFS -> SD migration: %d copied, %d failed, identity %s\n",
                 copied, failed, identity_ok ? "ok" : "MISSING");
   bool complete = identity_ok && failed == 0;
 #if defined(TLORA_PAGER)
   if (complete) {
-    SD.remove(kSdMigrationCompleteTmp);
+    if (SD.exists(kSdMigrationCompleteTmp) &&
+        !SD.remove(kSdMigrationCompleteTmp)) {
+      Serial.println("[BOOT] SD migrate FAILED: stale completion temp");
+      return false;
+    }
     File marker = SD.open(kSdMigrationCompleteTmp, FILE_WRITE);
     bool marker_ok = marker && marker.print("complete v1\n") == 12;
     if (marker) marker.close();
     if (marker_ok) {
-      SD.remove(kSdMigrationComplete);
-      marker_ok = SD.rename(kSdMigrationCompleteTmp, kSdMigrationComplete);
+      if (SD.exists(kSdMigrationComplete) &&
+          !SD.remove(kSdMigrationComplete)) {
+        marker_ok = false;
+      } else {
+        marker_ok = SD.rename(kSdMigrationCompleteTmp, kSdMigrationComplete);
+      }
     }
     if (!marker_ok) {
-      SD.remove(kSdMigrationCompleteTmp);
       Serial.println("[BOOT] SD migrate FAILED: completion marker");
-      complete = false;
+      // Treat marker failure like any other volume failure. Leaving the
+      // marker temp is harmless; touching the failed card again can hang.
+      return false;
     }
   }
 #endif
-  if (!complete && !sd_identity_preexisting &&
-      SD.exists("/meshcomod/identity/_main.id")) {
-    // This attempt introduced the adoption key. Roll it back so a missing NVS
-    // breadcrumb cannot make the next boot mistake a partial tree for a complete
-    // migration. Successfully copied non-identity files are harmless and let a
-    // later retry resume without clobbering them.
-    if (!SD.remove("/meshcomod/identity/_main.id"))
-      Serial.println("[BOOT] SD migrate: could not roll back partial identity");
-  }
   return complete;
 }
 
@@ -682,12 +775,13 @@ void setup() {
           const bool mp_ok = _mp.begin("touch", false);
           const bool mig_busy = mp_ok && _mp.getBool("sd_mig_busy", false);
 #if defined(TLORA_PAGER)
-          // #193 predates the completion marker. Re-walk an unmarked Pager tree
-          // without clobbering existing files, filling any missing files from
-          // SPIFFS and committing the marker last before it can be adopted.
+          // An identity makes this an existing SD profile, even if it predates
+          // the migration-complete marker. Overlaying its missing files from
+          // SPIFFS would mix two profiles (for example, history from the card
+          // with the internal channel table). Only migrate onto an empty card;
+          // sd_mig_busy still rejects a migration interrupted after identity.
           const bool needs_migration =
-              !SD.exists("/meshcomod/identity/_main.id") ||
-              !SD.exists(kSdMigrationComplete);
+              !SD.exists("/meshcomod/identity/_main.id");
 #else
           const bool needs_migration =
               !SD.exists("/meshcomod/identity/_main.id");
