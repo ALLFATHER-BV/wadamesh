@@ -25845,7 +25845,16 @@ static void freeMapTiles() {
 //   * re-renders immediately when the map is the visible tab
 static void mapNoteStorageChanged() {
 #if CAP_SD || defined(TLORA_PAGER)
-  if (!s_sd_mounted && s_tile_fs == &SD) {
+  // A fetch snapshots its paths but still dereferences the global backend for
+  // every filesystem operation of the request, so the pointer may only move
+  // while the queue and the worker are both idle. That governs BOTH directions:
+  // dropping a lost card strands an open SD File exactly as surely as adopting
+  // a new one does. When the swap has to wait, sdHealthTick retries it at the
+  // first idle tick — but the invalidation below still has to run now, or a
+  // swapped card keeps showing the previous card's tiles with the dedup ring
+  // suppressing the re-fetch until that retry lands.
+  const bool may_swap = (tileFetchPendingLoad() == 0);
+  if (may_swap && !s_sd_mounted && s_tile_fs == &SD) {
     if (s_tile_fs_default && s_tile_fs_default != &SD) {
       // SD tile mode lost its card, but the dedicated LittleFS cache is still
       // mounted. Keep maps online instead of disabling that healthy fallback.
@@ -25860,11 +25869,7 @@ static void mapNoteStorageChanged() {
       s_tile_root_default[0] = '\0';
       s_tiles_fs_ready = false;
     }
-  } else if (s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready)) {
-    // A fetch snapshots paths but still dereferences the global backend for
-    // each filesystem operation. Do not repoint it mid-request; sdHealthTick
-    // retries this transition as soon as the queue and worker are idle.
-    if (s_tile_fs != &SD && tileFetchPendingLoad() > 0) return;
+  } else if (may_swap && s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready)) {
     // Reinserted while SD mode is selected, or no internal backend exists.
     // Preserve an existing LittleFS default so toggling SD mode off remains a
     // valid fallback after any number of remove/reinsert cycles.
