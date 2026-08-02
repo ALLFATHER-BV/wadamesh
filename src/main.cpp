@@ -776,6 +776,12 @@ void setup() {
           Serial.printf("[boot] BLE stack ready (enabled=1 wifi=%d)\n", (int)want_wifi);
           pagerLogInternalHeap("after BLE init");
         } else {
+          // Leave the same pending state the association-timeout branch below
+          // leaves, so the GOT_IP retry picks this up too. Note it cannot fire
+          // in the !want_wifi case: Wi-Fi never associates, so a BLE-only boot
+          // that loses the heap guard stays deferred until the user toggles
+          // Bluetooth (which reboots into a clean allocation order).
+          s_pager_ble_after_wifi = true;
           Serial.println("[boot] BLE cold start deferred: insufficient contiguous heap");
         }
       }
