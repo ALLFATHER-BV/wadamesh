@@ -7906,9 +7906,18 @@ static const char* bleEnableFailureText() {
   return TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first.");
 }
 
+static bool bleRequestedOrEnabled() {
+  bool requested = g_lv.task && g_lv.task->isBleEnabled();
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  requested = requested || wifiConfigGetBleEnabled();
+#endif
+  return requested;
+}
+
 static void toggleBleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task || !g_lv.task->hasBleCapability()) return;
-  if (g_lv.task->isBleEnabled()) {
+  const bool requested = bleRequestedOrEnabled();
+  if (requested) {
     g_lv.task->disableBle();
   } else if (!g_lv.task->enableBle()) {
     g_lv.task->showAlert(bleEnableFailureText(), 2600);
@@ -13014,10 +13023,16 @@ static void bleEnableSwitchCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
   if (!g_lv.task->hasBleCapability()) { g_lv.task->showAlert(TR("No Bluetooth on this device"), 1400); return; }
   const bool want = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  if (want == g_lv.task->isBleEnabled()) return;
+  const bool requested = bleRequestedOrEnabled();
+  if (want == requested) return;
   if (want) {
     if (!g_lv.task->enableBle()) {
-      lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);   // revert the switch
+      // A Pager request queued behind Wi-Fi is still ON as user intent. Keep it
+      // checked so a second tap can cancel; only a true refusal reverts to OFF.
+      if (wifiConfigGetBleEnabled())
+        lv_obj_add_state(lv_event_get_target(e), LV_STATE_CHECKED);
+      else
+        lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);
       g_lv.task->showAlert(bleEnableFailureText(), 2600);
       return;
     }
@@ -13131,7 +13146,8 @@ static void buildBluetoothSettings() {
   lv_obj_set_pos(sw_lbl, 2, y + 6);
   g_set_modal.wifi_sw = lv_switch_create(body);  // reuse the same slot — only one switch lives in a modal at a time
   lv_obj_align(g_set_modal.wifi_sw, LV_ALIGN_TOP_RIGHT, 0, y);   // flush right
-  if (ble_active) lv_obj_add_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
+  if (ble_active || wifiConfigGetBleEnabled())
+    lv_obj_add_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(g_set_modal.wifi_sw, bleEnableSwitchCb, LV_EVENT_VALUE_CHANGED, nullptr);  // instant toggle (BLE is live)
   y += SC(38);
   // No Save button — the enable switch toggles BLE live, and the pairing code auto-saves on blur.
@@ -13163,8 +13179,8 @@ static void doApplyWifi() {
   wifiConfigSetRadioEnabled(s_pending_wifi_radio_on);
   wifiConfigRequestApply();
 
-  // Non-Pager boards apply live. Pager credential/reconnect requests return
-  // through setup so Wi-Fi associates before a resident NimBLE stack exists.
+  // Credential changes apply live. Pager first releases resident NimBLE in the
+  // main loop, re-associates Wi-Fi, then recreates BLE after GOT_IP.
   if (g_lv.task)
     g_lv.task->showAlert(
         s_pending_wifi_radio_on ? TR("Saved — applying\xE2\x80\xA6")
@@ -13294,8 +13310,8 @@ static void saveWifiCb(lv_event_t* e) {
     lv_obj_add_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
   }
   s_pending_wifi_was_wifi = wifiConfigWantsWifi();   // kept for status display; no longer gates a reboot
-  // Save immediately. Other boards reconnect live; Pager's main loop reboots
-  // through the ordered Wi-Fi -> BLE setup path.
+  // Save immediately. Pager's main loop preserves Wi-Fi -> BLE ordering with a
+  // live controller handoff rather than a reboot.
   doApplyWifi();
 }
 #endif
@@ -36138,7 +36154,7 @@ static void refreshSettingsSectionSubtitles() {
 // Status-bar control center (tap the top bar)
 // A small drop-down panel with date/time + battery/Wi-Fi info and quick
 // Wi-Fi / Bluetooth toggles, iPhone-control-center style. Resident stacks
-// toggle live; a cold or reconnecting Pager may take an ordered restart.
+// toggle live; a genuinely cold Pager allocation may take an ordered restart.
 // ============================================================
 
 static void closeControlCenter() {
@@ -36180,8 +36196,8 @@ static void openControlCenter();   // fwd — toggle cbs rebuild the panel
 static void toggleControlCenter() { if (s_cc_root) closeControlCenter(); else openControlCenter(); }
 
 // Wi-Fi and Bluetooth coexist once allocated. Resident stacks toggle live;
-// Pager cold starts/re-authentication use the ordered reboot path. Each radio's
-// requested state is persisted independently (radio_en / ble_en).
+// Pager cold starts may use the ordered reboot path; re-authentication releases
+// and recreates BLE live. Each requested state persists independently.
 static void ccWifiCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(ESP32)
@@ -36200,15 +36216,15 @@ static void ccBleCb(lv_event_t* e) {
     return;
 #if defined(ESP32)
   // Live: enableBle() lazily brings NimBLE up if it wasn't started at boot.
-  const bool on = g_lv.task->isBleEnabled();
-  if (on) {
+  const bool requested = bleRequestedOrEnabled();
+  if (requested) {
     g_lv.task->disableBle();
   } else if (!g_lv.task->enableBle()) {
     g_lv.task->showAlert(bleEnableFailureText(), 2600);
     openControlCenter();
     return;
   }
-  g_lv.task->showAlert(on ? TR("Bluetooth off") : TR("Bluetooth on"), 800);
+  g_lv.task->showAlert(requested ? TR("Bluetooth off") : TR("Bluetooth on"), 800);
   openControlCenter();
 #endif
 }
@@ -36969,7 +36985,7 @@ static void openControlCenter() {
 #if defined(ESP32)
   wifi_on = wifiConfigGetRadioEnabled();
 #endif
-  if (g_lv.task) ble_on = g_lv.task->isBleEnabled();
+  if (g_lv.task) ble_on = bleRequestedOrEnabled();
   lv_obj_t* row = lv_obj_create(card);
   lv_obj_remove_style_all(row);
 #if defined(HAS_TANMATSU)
@@ -40940,7 +40956,7 @@ static void setupFinishCb(lv_event_t* e) {
 #endif
   // Region was applied live when the user advanced past the region step
   // (setRadioParams -> applyRadioFromPrefs). Close the wizard; the Wi-Fi apply
-  // request reconnects live elsewhere and takes Pager's ordered restart path.
+  // request reconnects live; Pager temporarily releases BLE to preserve order.
   setupWizardClose();
   if (g_lv.task) g_lv.task->showAlert(TR("Setup complete"), 1400);
 }

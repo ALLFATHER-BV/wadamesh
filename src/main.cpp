@@ -768,12 +768,16 @@ void setup() {
      * needless device reboot when no Bluetooth controller is resident. */
     if (!want_wifi || pager_wifi_ready_for_ble) {
       if (want_ble) {
-        serial_interface.beginBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
-                                  the_mesh.getBLEPin());
-        if (want_wifi) WiFi.setAutoReconnect(false);
-        Serial.printf("[boot] BLE stack ready (enabled=%d wifi=%d)\n",
-                      (int)want_ble, (int)want_wifi);
-        pagerLogInternalHeap("after BLE init");
+        // Use the same contiguous-heap guard as every other cold NimBLE start.
+        // Boot normally has the most headroom, but a future driver allocation
+        // must degrade to BLE-pending instead of OOM-panicking setup().
+        serial_interface.enableBle();
+        if (serial_interface.isBleEnabled()) {
+          Serial.printf("[boot] BLE stack ready (enabled=1 wifi=%d)\n", (int)want_wifi);
+          pagerLogInternalHeap("after BLE init");
+        } else {
+          Serial.println("[boot] BLE cold start deferred: insufficient contiguous heap");
+        }
       }
     } else {
       // No credentials yet, or the saved association timed out. Leave NimBLE
