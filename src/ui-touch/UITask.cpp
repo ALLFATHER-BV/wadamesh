@@ -24147,14 +24147,6 @@ static inline void tileCacheMkdir(const char* rel) {
   char p[80]; snprintf(p, sizeof p, "%s%s", s_tile_root, rel);
   s_tile_fs->mkdir(p);
 }
-static inline bool tileBackendIsSd() {
-#if CAP_SD || defined(TLORA_PAGER)
-  return s_tile_fs == &SD;
-#else
-  return false;
-#endif
-}
-
 // True when the LittleFS tile cache is nearly full. A FULL/fragmented LittleFS
 // FAULTS inside lfs_alloc during mkdir (coredump 2026-06-14: reboot while a
 // route replay re-centred the map onto an un-cached area and the fetch task
@@ -25620,13 +25612,11 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   }
   f.close();
   // Reject a cached tile whose header isn't a JPEG SOI — a garbled/partial download that slipped
-  // through decodes to a blank/half "twilight zone" tile otherwise. Drop it from the writable online
-  // cache so the render miss re-queues a fresh fetch; never touch read-only SD packs (can't re-fetch).
+  // through decodes to a blank/half "twilight zone" tile otherwise. This generic path is the writable
+  // /tiles download cache; standard read-only /maps/osm packs return from the SD-pack branch above.
   if (n < 3 || buf[0] != 0xFF || buf[1] != 0xD8 || buf[2] != 0xFF) {
     lvglPsramFree(buf);
-    // Never mutate a user's offline SD pack. An internal-cache fallback remains
-    // writable even while the saved preference still requests SD tiles.
-    if (!(s_tiles_from_sd && tileBackendIsSd())) tileCacheRemove(path);
+    tileCacheRemove(path);
     return false;
   }
   *out_data = buf;
@@ -26884,8 +26874,6 @@ static void mapReloadVisibleTiles() {
   // Drop the in-RAM tile widgets so the next render re-reads from disk (and
   // misses, since we delete the files below) → re-queues the download.
   freeMapTiles();
-  const bool read_only_sd_pack =
-      s_map_style == 0 && s_tiles_from_sd && tileBackendIsSd();
   int n = 0;
   // Purge the on-disk cache for the visible band (current zoom ± 1) so a corrupt
   // tile is ALWAYS removed — even offline. This deletion used to sit behind the
@@ -26904,7 +26892,7 @@ static void mapReloadVisibleTiles() {
         char path[48];
         snprintf(path, sizeof(path), "%s/%u/%ld/%ld.jpg",
                  mapTileRoot(), (unsigned)z, (long)tx, (long)ty);
-        if (s_tiles_fs_ready && !read_only_sd_pack && tileCacheExists(path)) {
+        if (s_tiles_fs_ready && tileCacheExists(path)) {
           tileCacheRemove(path);
           ++n;
         }
@@ -26915,9 +26903,7 @@ static void mapReloadVisibleTiles() {
     }
   }
   if (g_lv.task) {
-    if (read_only_sd_pack) {
-      g_lv.task->showAlert(TR("SD pack tiles are read-only"), 1800);
-    } else if (WiFi.status() == WL_CONNECTED) {
+    if (WiFi.status() == WL_CONNECTED) {
       char msg[44]; snprintf(msg, sizeof(msg), "Reloading %d tiles\xE2\x80\xA6", n);
       g_lv.task->showAlert(msg, 1600);
     } else {
