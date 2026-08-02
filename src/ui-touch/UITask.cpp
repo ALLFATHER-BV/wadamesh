@@ -13453,6 +13453,7 @@ static bool wifiPrepareEnable(lv_obj_t* switch_to_revert = nullptr) {
     lv_refr_now(NULL);
     g_lv.task->rebootDevice();
   } else {
+    touchPrefsFlush();
     ESP.restart();
   }
   return false;
