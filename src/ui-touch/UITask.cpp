@@ -10894,7 +10894,7 @@ static void sdRestoreRun() {
 #if defined(TLORA_PAGER)
   // The copy loop feeds the task watchdog itself. Avoid the inherited raw
   // disable/enable pair here: enableLoopWDT() would subscribe an originally
-  // unwatched loopTask. #213 handles the legacy-board pairs independently.
+  // unwatched loopTask.
   const bool ok = meshcomodMigrateSpiffsToSd(false);
 #else
   disableLoopWDT();
@@ -26997,7 +26997,7 @@ static void openMapOptions() {
   lv_obj_set_pos(title, 0, 0);
   int y = 26;
 
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_SD
   // Row: tile source — microSD (offline) vs the tile server. The important one,
   // so it sits at the very top.
   {
@@ -42481,40 +42481,16 @@ static bool uiDataFsReady() {
     strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
     return true;
   }
-  // A failed/incomplete reconciliation deliberately leaves the primary
-  // profile on internal flash. An older completion marker may still exist on
-  // the card, so it cannot be allowed to select SD history and recreate a
-  // split identity/history profile while the durable busy latch is armed.
-  if (g_sd_migration_blocked) {
-    if (SPIFFS.begin(false)) {
-      s_ui_data_fs = &SPIFFS;
-      s_ui_data_root[0] = '\0';
-      return true;
-    }
-    return false;
-  }
-  // Prefer an existing card history. On upgrade, however, an empty card must
-  // not hide a Pager history that already lives in SPIFFS; keep using that
-  // established store instead of silently re-homing it without a migration.
-  if (fmSdTryMount()) {
-    const bool sd_migration_complete = meshcomodSdMigrationComplete();
-    const bool sd_has_history = uiHistoryStoreExists(
-        SD, "/meshcomod", sd_migration_complete);
-    const bool spiffs_ready = SPIFFS.begin(false);
-    const bool spiffs_has_history =
-        spiffs_ready && uiHistoryStoreExists(SPIFFS, "");
-    if (spiffs_has_history &&
-        (!sd_migration_complete || !sd_has_history)) {
-      s_ui_data_fs = &SPIFFS;
-      s_ui_data_root[0] = '\0';
-      return true;
-    }
-    SD.mkdir("/meshcomod");
-    s_ui_data_fs = &SD;
-    strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+  // The boot loader kept identity/preferences internal, either by user choice
+  // or because reconciliation failed closed. History must follow that same
+  // profile decision even when an inserted card carries a valid marker and
+  // history from another device. Never use foreign SD history as a fallback.
+  if (SPIFFS.begin(false)) {
+    s_ui_data_fs = &SPIFFS;
+    s_ui_data_root[0] = '\0';
     return true;
   }
-  if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
+  return false;
 #elif defined(HAS_TDECK_GT911)
   // T-Deck: the SD card is the established persistent history store.
   if (sdAdoptLiveMount() || fmSdTryMount()) {
