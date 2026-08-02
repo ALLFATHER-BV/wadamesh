@@ -47,7 +47,7 @@ void onTransition(TransitionCb cb) { g_transition = cb; }
 void setEnabled(bool on) { g_enabled = on; }
 bool enabled() { return g_enabled; }
 
-void loopEnd(uint32_t /*now_ms*/) {
+void loopEnd(uint32_t now_ms) {
   const bool pass = gatePasses();
   if (!pass) {
     if (g_asleep_regime) { g_asleep_regime = false; emitTransition(false); } // sun — resumed activity
@@ -55,10 +55,23 @@ void loopEnd(uint32_t /*now_ms*/) {
   }
   if (!g_asleep_regime) { g_asleep_regime = true; emitTransition(true); }    // moon — parked
 
-  // Yield the CPU to the idle task for THROTTLE_MS (replaces esp_light_sleep_start —
-  // see the note above). Standard FreeRTOS call: cannot starve a watchdog or hang.
+  // Yield the CPU to the idle task, capped by the earliest retry/UI deadline.
+  // This is the wake timer for these builds: unlike manual esp_light_sleep_start,
+  // a timed FreeRTOS block remains watchdog-safe and resumes the loop on schedule.
+  uint32_t park_ms = THROTTLE_MS;
+  if (g_hooks.nextWakeForcingDueMs) {
+    const uint32_t wake_due_ms = g_hooks.nextWakeForcingDueMs(now_ms);
+    if (wake_due_ms < park_ms) park_ms = wake_due_ms;
+  }
+  if (park_ms == 0) {
+    g_last_reason = WakeReason::Timer;
+    return;
+  }
+
   const uint64_t t0 = esp_timer_get_time();
-  vTaskDelay(pdMS_TO_TICKS(THROTTLE_MS));
+  TickType_t park_ticks = pdMS_TO_TICKS(park_ms);
+  if (park_ticks == 0) park_ticks = 1;
+  vTaskDelay(park_ticks);
   g_acc_idle_us += (uint64_t)(esp_timer_get_time() - t0);
   g_cycle_count++;
   g_last_reason = WakeReason::Timer;   // a throttle is a timed yield

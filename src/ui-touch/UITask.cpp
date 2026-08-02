@@ -15231,6 +15231,7 @@ static void actionSheetRangeTestCb(lv_event_t* e) {
   uint32_t ack_hash = 0;
   int r = the_mesh.sendMessage(c, ts, 0, "RangeTest \xe2\x80\x94 ACK?", ack_hash, est, &hash4);
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
+    the_mesh.uiRegisterExpectedAck(ack_hash, c.id.pub_key);
     markMeshRequest();   // status-bar async spinner
     g_lv.task->showAlert(r == MSG_SEND_SENT_DIRECT ? TR("RangeTest sent (direct)")
                                                    : TR("RangeTest sent (flood)"), 1400);
@@ -37697,15 +37698,23 @@ static bool tsBleOff()     {
 // — batteryIsCharging(batteryMvSmoothed())).
 static bool tsOnBattery()  { return !batteryIsCharging(batteryMvSmoothed()); }
 // tsMeshIdle: true when the radio is NOT mid-receive (preamble→RxDone race guarded),
-// AND no outbound packets are queued / no dirty contacts expiry is pending.
-// hasPendingWork() checks _mgr->getOutboundTotal() + dirty_contacts_expiry.
+// AND no outbound packet / retry / contact write is due now. Future retry and
+// write deadlines are allowed to use the timed idle-power-saving path.
 // isRadioReceiving() delegates to Dispatcher::_radio->isReceiving() (RadioLibWrapper override).
 static bool tsMeshIdle()   { return !the_mesh.hasPendingWork() && !the_mesh.isRadioReceiving(); }
-// tsNextWakeForcingDueMs: advert/sig-probe is the only wake-forcing deadline today;
-// clock alarms TBD.  s_sig_probe_at is promoted to file scope so we can read it here.
+// Bound the timed idle park by the earliest UI probe or companion retry.
 static uint32_t tsNextWakeForcingDueMs(uint32_t now_ms) {
-  if (s_sig_probe_at == 0) return UINT32_MAX;
-  return (uint32_t)(s_sig_probe_at > now_ms ? (s_sig_probe_at - now_ms) : 0);
+  uint32_t next_delay = UINT32_MAX;
+  if (s_sig_probe_at != 0) {
+    next_delay = (uint32_t)(s_sig_probe_at > now_ms ? (s_sig_probe_at - now_ms) : 0);
+  }
+
+  uint32_t retry_delay = 0;
+  if (the_mesh.getNextCompanionRetryWakeDelay(retry_delay)
+      && retry_delay < next_delay) {
+    next_delay = retry_delay;
+  }
+  return next_delay;
 }
 static uint32_t tsEpochNow() { return (uint32_t)time(nullptr); }
 
