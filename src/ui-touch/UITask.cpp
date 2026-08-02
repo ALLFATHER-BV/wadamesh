@@ -26815,7 +26815,7 @@ static void mapOptZoomButtonsCb(lv_event_t* e) {
   mapZoomControlsApply();
 }
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // Map tile source toggle (in the map options popup): ON = tiles live on the microSD
 // card — read the user's SD library AND cache Wi-Fi-fetched gaps there (#20), so the
 // library grows and downloads survive; OFF = tile server + internal LittleFS cache.
@@ -27024,7 +27024,7 @@ static void openMapOptions() {
   lv_obj_set_pos(title, 0, 0);
   int y = 26;
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Row: tile source — microSD (offline) vs the tile server. The important one,
   // so it sits at the very top.
   {
