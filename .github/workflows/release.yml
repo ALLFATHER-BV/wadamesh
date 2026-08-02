@@ -38,7 +38,7 @@ jobs:
       # true only when the VPS deploy key secret is configured (no secret value is exposed)
       HAS_VPS: ${{ secrets.WADAMESH_VPS_SSH_KEY != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
