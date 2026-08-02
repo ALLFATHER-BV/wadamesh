@@ -10876,29 +10876,67 @@ static void useSdStorageToggleCb(lv_event_t* e) {
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
 // "Copy internal data to SD": recovery for the beta_36 upgrades where the live
 // profile was orphaned on internal flash while the honored SD toggle adopted an
-// empty card (which then minted a fresh identity). Overwrites the card's copies
-// with EVERYTHING from internal flash, forces the SD pref on, reboots.
+// empty card (which then minted a fresh identity). Pager resumes without
+// replacing files already on the card; legacy targets retain their explicit
+// overwrite behavior. On success this forces the SD pref on and reboots.
 extern bool meshcomodMigrateSpiffsToSd(bool force);   // main.cpp
 extern bool meshcomodArmSdMigLatch();                  // durable in-progress guard
 extern void meshcomodClearSdMigLatch();               // main.cpp (GH #142/#148 boot safe-mode)
 extern bool g_sd_migration_blocked;
-static void sdRestoreApply() {
-  if (!g_lv.task) return;
-  if (!fmSdTryMount()) { g_lv.task->showAlert(TR("No SD card"), 1600); return; }
-  g_lv.task->showAlert(TR("Copying internal data to SD..."), 6000);
-  lv_refr_now(nullptr);                 // paint the notice before the blocking copy
-  // Land everything in RAM first — this path used to reboot WITHOUT persisting,
-  // silently dropping every message since the last lazy flush.
+static bool sdRuntimeLifecycleBusy();
+static bool s_sd_restore_pending = false;
+
+// Run the blocking filesystem walk only after lv_timer_handler() has returned.
+// Doing it directly in the confirmation callback stacked the migration's File
+// objects and path buffers on top of LVGL's event/render frames; on Pager that
+// eventually corrupted a source path and made SPIFFS reads fail mid-copy.
+// Quiesce both persistence workers before enumerating SPIFFS so no handle can
+// be rewritten underneath the walk.
+static void sdRestoreRun() {
+  if (!s_sd_restore_pending || !g_lv.task) return;
+  if (sdRuntimeLifecycleBusy()) return;
+  s_sd_restore_pending = false;
+
+  if (!fmSdTryMount()) {
+    g_lv.task->showAlert(TR("No SD card"), 1600);
+    return;
+  }
+
+  WdtHeavyGuard idle_wdt_guard;
+
+  // Land everything in RAM first. The history worker and queued A/B preference
+  // snapshots must both be idle before the migration opens either filesystem.
   g_lv.task->persistHistoryNow();
+  discoveredFlushNow();
+  if (!touchPrefsFlush()) {
+    g_sd_migration_blocked = true;
+    g_lv.task->showAlert(TR("Copy blocked: internal data is busy"), 2600);
+    return;
+  }
+  // A separate SD consumer (tile/notification/info worker) may have started
+  // while the internal writers were draining. Defer instead of overlapping
+  // its open FAT handle with the migration.
+  if (sdRuntimeLifecycleBusy()) {
+    s_sd_restore_pending = true;
+    return;
+  }
+
   if (!meshcomodArmSdMigLatch()) {
     g_sd_migration_blocked = true;
     g_lv.task->showAlert(TR("Copy blocked: migration guard unavailable"), 2600);
     return;
   }
+  const UBaseType_t low_water = uxTaskGetStackHighWaterMark(nullptr);
+  Serial.printf("[BOOT] deferred SD migration, loop stack low-water: %u bytes\n",
+                (unsigned)(low_water * sizeof(StackType_t)));
   bool ok = false;
   {
     LoopWdtGuard loop_wdt_guard;
+#if defined(TLORA_PAGER)
+    ok = meshcomodMigrateSpiffsToSd(false);
+#else
     ok = meshcomodMigrateSpiffsToSd(true);
+#endif
   }
   if (!ok) {
     g_sd_migration_blocked = true;
@@ -10910,10 +10948,26 @@ static void sdRestoreApply() {
   delay(400);                           // let the alert render before the restart
   board.reboot();
 }
+
+static void sdRestoreApply() {
+  if (!g_lv.task) return;
+  if (s_sd_restore_pending) return;
+#if defined(TLORA_PAGER)
+  g_lv.task->showAlert(TR("Resuming missing files to SD...\nThis may take a few minutes; keep powered."), 180000);
+#else
+  g_lv.task->showAlert(TR("Copying internal data to SD...\nThis may take a few minutes; keep powered."), 180000);
+#endif
+  s_sd_restore_pending = true;
+}
 static void sdRestoreFromInternalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+#if defined(TLORA_PAGER)
+  showConfirm(TR("Copy only missing internal files to SD,\nkeep existing SD data, then reboot?"),
+              TR("Resume"), sdRestoreApply);
+#else
   showConfirm(TR("Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?"),
               TR("Copy"), sdRestoreApply);
+#endif
 }
 #endif
 #endif
@@ -49266,6 +49320,10 @@ void UITask::loop() {
   uiCp("ui:lvgl");
   lv_timer_handler();
   uiCp("ui:tail");
+#if (CAP_SD || defined(TLORA_PAGER)) && \
+    (defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER))
+  sdRestoreRun();   // intentionally outside the LVGL event/render call stack
+#endif
 #if !defined(HAS_TANMATSU)
   webMirrorTick();   // coalesced, rate-capped, backpressure-gated send of the dirty region
 #endif
