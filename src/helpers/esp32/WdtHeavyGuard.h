@@ -27,13 +27,28 @@
 // -----------------------------------------------------------------------------
 #if defined(ESP32)
 #include <Arduino.h>   // disableCore0WDT / enableCore0WDT
+#include <esp_task_wdt.h>
 
 inline int& _wdtHeavyDepth() { static int d = 0; return d; }
 inline void wdtHeavyBegin() { int& d = _wdtHeavyDepth(); if (d++ == 0)               disableCore0WDT(); }
 inline void wdtHeavyEnd()   { int& d = _wdtHeavyDepth(); if (d > 0 && --d == 0)      enableCore0WDT();  }
+
+// Arduino's enableLoopWDT() subscribes loopTask even when it was not watched
+// before. Preserve the caller's actual task-WDT state around slow filesystem
+// work instead of silently arming a new watchdog on the way out.
+struct LoopWdtGuard {
+  bool subscribed;
+  LoopWdtGuard() : subscribed(esp_task_wdt_status(nullptr) == ESP_OK) {
+    if (subscribed) disableLoopWDT();
+  }
+  ~LoopWdtGuard() {
+    if (subscribed) enableLoopWDT();
+  }
+};
 #else
 inline void wdtHeavyBegin() {}
 inline void wdtHeavyEnd()   {}
+struct LoopWdtGuard {};
 #endif
 
 struct WdtHeavyGuard { WdtHeavyGuard() { wdtHeavyBegin(); } ~WdtHeavyGuard() { wdtHeavyEnd(); } };
