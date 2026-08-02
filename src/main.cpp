@@ -232,6 +232,33 @@ static constexpr const char* kSdIdentity = "/meshcomod/identity/_main.id";
 static constexpr const char* kSdMigrationComplete = "/meshcomod/.spiffs-migration-v1";
 static constexpr const char* kSdMigrationCompleteTmp = "/meshcomod/.spiffs-migration-v1.tmp";
 
+// Byte-compare the card's identity against the internal one without logging
+// either. Any read failure counts as a mismatch. True means the card carries
+// THIS device's profile — migration never deletes its SPIFFS sources, so a
+// device that already adopted the card still has a byte-identical copy here.
+static bool sdIdentityMatchesInternal() {
+  File internal = SPIFFS.open(kInternalIdentity, FILE_READ);
+  if (!internal) return false;
+  File card = SD.open(kSdIdentity, FILE_READ);
+  if (!card || internal.size() == 0 || internal.size() != card.size()) {
+    internal.close();
+    if (card) card.close();
+    return false;
+  }
+  uint8_t internal_buf[64];
+  uint8_t card_buf[64];
+  bool matches = true;
+  while (matches && internal.available()) {
+    const size_t n = internal.read(internal_buf, sizeof internal_buf);
+    if (n == 0 || card.read(card_buf, n) != n || memcmp(internal_buf, card_buf, n) != 0)
+      matches = false;
+  }
+  if (card.available()) matches = false;
+  internal.close();
+  card.close();
+  return matches;
+}
+
 #if defined(TLORA_PAGER)
 static constexpr const char* kSdMigrationOwner = "/meshcomod/.spiffs-migration-v1.owner";
 static constexpr const char* kSdMigrationOwnerTmp = "/meshcomod/.spiffs-migration-v1.owner.tmp";
@@ -311,7 +338,10 @@ static bool ensureSdMigrationOwner() {
   if (SD.exists(kSdMigrationOwnerTmp)) {
     if (sdDigestFileMatches(kSdMigrationOwnerTmp, digest))
       return SD.rename(kSdMigrationOwnerTmp, kSdMigrationOwner);
-    if (!SD.remove(kSdMigrationOwnerTmp)) return false;   // only our own incomplete marker
+    // Someone else's half-written claim. Clearing it is safe because the tree
+    // check below still refuses any card that holds real payload; a stranded
+    // tmp marker on an otherwise empty card is not an established profile.
+    if (!SD.remove(kSdMigrationOwnerTmp)) return false;
   }
   // Without a matching owner marker, only a tree containing no file payload is
   // safe to claim. Empty directories from an interrupted mkdir sequence are OK.
@@ -328,30 +358,10 @@ static bool ensureSdMigrationOwner() {
 // the small identity files without logging their contents before arming the
 // durable migration latch. A read failure is treated as a mismatch.
 bool meshcomodSdProfileMatchesInternal() {
-  File internal = SPIFFS.open(kInternalIdentity, FILE_READ);
-  if (!internal) return false;
-  if (!SD.exists(kSdIdentity)) {
-    internal.close();
-    return ensureSdMigrationOwner();
-  }
-  File card = SD.open(kSdIdentity, FILE_READ);
-  if (!card || internal.size() != card.size()) {
-    internal.close();
-    if (card) card.close();
-    return false;
-  }
-  uint8_t internal_buf[64];
-  uint8_t card_buf[64];
-  bool matches = true;
-  while (matches && internal.available()) {
-    const size_t n = internal.read(internal_buf, sizeof internal_buf);
-    if (n == 0 || card.read(card_buf, n) != n || memcmp(internal_buf, card_buf, n) != 0)
-      matches = false;
-  }
-  if (card.available()) matches = false;
-  internal.close();
-  card.close();
-  return matches;
+  if (!SPIFFS.exists(kInternalIdentity)) return false;
+  // An empty card is claimable; a populated one must prove it is ours.
+  if (!SD.exists(kSdIdentity)) return ensureSdMigrationOwner();
+  return sdIdentityMatchesInternal();
 }
 #endif
 
@@ -929,9 +939,27 @@ void setup() {
             // state was only the tiny crash window before the NVS latch clear.
             // Otherwise fail closed even if an older identity still exists.
             const bool committed = !needs_migration && SD.exists(kSdMigrationComplete);
-            if (committed) {
+            // Upgrade amnesty. Pre-#206 firmware had no completion marker and
+            // cleared the latch whenever the copy RETURNED, not when it
+            // succeeded. A device whose migration died after the identity landed
+            // therefore adopted the card anyway and has been running full-SD
+            // ever since, with sd_mig_busy stuck at 1 and no marker that could
+            // ever exist. Demanding the marker on upgrade would demote that live
+            // card to a months-stale SPIFFS snapshot. If the card's identity is
+            // byte-identical to ours the card demonstrably holds THIS profile
+            // and is the newer store, so adopt it -- but keep the recovery
+            // banner up so a reconciling Copy-to-SD can fill whatever the
+            // interrupted copy missed.
+            const bool legacy_adopted =
+                !committed && !needs_migration && sdIdentityMatchesInternal();
+            if (committed || legacy_adopted) {
               if (mp_ok) _mp.remove("sd_mig_busy");
-              Serial.println("[BOOT] SD migration committed before reset -> adopting completed profile");
+              if (legacy_adopted) {
+                g_sd_migration_blocked = true;   // surface the reconcile action
+                Serial.println("[BOOT] pre-marker SD profile matches internal identity -> adopting; reconcile via Settings > Copy internal data to SD");
+              } else {
+                Serial.println("[BOOT] SD migration committed before reset -> adopting completed profile");
+              }
             } else {
               adopt = false;
               g_sd_migration_blocked = true;
