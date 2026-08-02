@@ -104,9 +104,9 @@ static uint32_t _atoi(const char* sp) {
                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     }
-    // On a fresh profile there may be no saved credentials yet.
-    // Claim Wi-Fi's coexistence resources first, then start the prepared BLE
-    // stack as soon as that first association succeeds.
+    // Claim Wi-Fi's coexistence resources first. If association cannot finish
+    // during setup, keep NimBLE uninitialised and either retry Wi-Fi alone or
+    // reboot once before enabling the prepared BLE stack.
     static bool s_pager_ble_after_wifi = false;
     #endif
   #elif defined(WIFI_SSID)
@@ -711,9 +711,8 @@ void setup() {
    * happens later in loop(); this just inits the stack.) */
   if (want_wifi) {
     WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);   // let esp_wifi rejoin on its own after a beacon loss / AP reboot
-                                   // (was false — the 10 s poll below was the ONLY recovery, and a
-                                   // bare begin() on a wedged supplicant is a no-op -> never reconnected)
+    WiFi.setAutoReconnect(true);   // safe while NimBLE is not resident; disabled below once BLE
+                                   // exists so a later WPA re-auth cannot bypass Wi-Fi-first ordering
     WiFi.persistent(false);
     // NOTE: do NOT enable modem-sleep here. On a fresh, *unassociated* STA (the
     // setup wizard, no creds yet) DTIM modem-sleep naps the radio through the
@@ -763,28 +762,27 @@ void setup() {
   {
     const bool want_ble = wifiConfigGetBleEnabled();
     /* Serialise the Pager's first association before BLE init. Once associated,
-     * the two radios coexist normally. When Wi-Fi is enabled, pre-create the
-     * stack even if the saved BLE state is off: late allocation after LVGL has
-     * built the home UI can no longer find a large enough internal block, while
-     * a pre-created disabled stack can start advertising allocation-free. */
-    if (!want_wifi || pager_wifi_ready_for_ble || !wifiConfigHasRuntime()) {
+     * the two radios coexist normally. Pre-create the stack even if the saved
+     * BLE state is off, but only after Wi-Fi is actually associated; otherwise
+     * the setup wizard or an automatic retry could re-enter WPA with NimBLE
+     * resident and reproduce the coexistence watchdog. */
+    if (!want_wifi || pager_wifi_ready_for_ble) {
       if (want_ble || want_wifi) {
         serial_interface.beginBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
                                   the_mesh.getBLEPin(), want_ble);
+        if (want_wifi) WiFi.setAutoReconnect(false);
         Serial.printf("[boot] BLE stack ready (enabled=%d wifi=%d)\n",
                       (int)want_ble, (int)want_wifi);
         pagerLogInternalHeap("after BLE init");
       }
     } else {
-      // Wi-Fi owns its required heap now, but a saved association did not
-      // complete. Still allocate the NimBLE/GATT objects before LVGL consumes
-      // and fragments the remaining internal RAM; leave advertising disabled
-      // until Wi-Fi connects (or the user explicitly enables BLE live).
-      serial_interface.beginBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name,
-                                the_mesh.getBLEPin(), false);
+      // No credentials yet, or the saved association timed out. Leave NimBLE
+      // completely absent so all credential/apply and retry paths remain safe.
+      // If BLE is requested, a late Wi-Fi success reboots once through setup's
+      // Wi-Fi -> BLE -> UI order before advertising begins.
       s_pager_ble_after_wifi = want_ble;
-      Serial.printf("[boot] BLE stack ready disabled; deferred enable=%d\n", (int)want_ble);
-      pagerLogInternalHeap("after deferred BLE init");
+      Serial.printf("[boot] BLE init deferred until ordered Wi-Fi association (enable=%d)\n",
+                    (int)want_ble);
     }
   }
 #else
@@ -921,7 +919,13 @@ void loop() {
         s_pager_ble_after_wifi = false;
         if (wifiConfigGetBleEnabled() && !serial_interface.isBleEnabled()) {
           serial_interface.enableBle();
-          Serial.println("[boot] deferred BLE enabled after T-Pager Wi-Fi was disabled");
+          if (serial_interface.isBleEnabled()) {
+            Serial.println("[boot] deferred BLE enabled after T-Pager Wi-Fi was disabled");
+          } else {
+            Serial.println("[boot] restarting to allocate deferred BLE before the UI");
+            ui_task.rebootDevice();
+            return;
+          }
         }
       }
 #endif
@@ -933,11 +937,21 @@ void loop() {
    * with the freshly-saved credentials. Also handles toggling radio_en off
    * from the UI (the transition above already covered the on case). */
   if (wifiConfigConsumeApplyRequest()) {
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+    // Every explicit credential/reconnect request must return through setup.
+    // This covers the setup wizard, saved-network/slot activation, scan
+    // reconnect, transport settings, and companion/CLI-backed preference
+    // updates instead of relying on each caller to remember the Pager's order.
+    if (wifi_radio_en && wifiConfigHasRuntime()) {
+      Serial.println("[wifi] restarting for ordered T-Pager association");
+      ui_task.rebootDevice();
+      return;
+    }
+#endif
     /* Only touch WiFi state if it was actually started this session. When
      * BLE is the active transport (no creds saved), WiFi was never inited
      * and calling WiFi.disconnect()/mode(WIFI_OFF) would trigger esp_wifi_init
-     * under low heap → crash. Setting wifi_started=false here is harmless;
-     * setup() will re-pick BLE-vs-WiFi on the auto-reboot from saveWifiCb. */
+     * under low heap → crash. Setting wifi_started=false here is harmless. */
     if (wifi_started) {
       if (!wifi_radio_en) {
         WiFi.disconnect(true);
@@ -973,6 +987,15 @@ void loop() {
       uint32_t now = millis();
       if ((uint32_t)(now - last_wifi_retry_ms) >= WIFI_RETRY_INTERVAL_MS) {
         last_wifi_retry_ms = now;
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+        if (serial_interface.isBleStackBegun()) {
+          // Auto-reconnect is disabled once NimBLE exists. Re-authenticate at
+          // boot before recreating BLE rather than entering WPA under coex.
+          Serial.println("[wifi] link lost with BLE resident; restarting for ordered association");
+          ui_task.rebootDevice();
+          return;
+        }
+#endif
         char ssid[WIFI_CONFIG_SSID_MAX];
         char pwd[WIFI_CONFIG_PWD_MAX];
         wifiConfigGetSsid(ssid, sizeof(ssid));
@@ -996,8 +1019,11 @@ void loop() {
       if (s_pager_ble_after_wifi) {
         s_pager_ble_after_wifi = false;
         if (wifiConfigGetBleEnabled() && !serial_interface.isBleEnabled()) {
-          serial_interface.enableBle();
-          Serial.println("[boot] deferred BLE enabled after T-Pager Wi-Fi association");
+          // Wi-Fi associated after setup, when the UI already owns its working
+          // set. Reboot once so BLE allocates before LVGL and after Wi-Fi.
+          Serial.println("[boot] Wi-Fi ready; restarting to allocate deferred BLE in order");
+          ui_task.rebootDevice();
+          return;
         }
       }
 #endif

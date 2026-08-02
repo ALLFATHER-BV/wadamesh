@@ -12857,7 +12857,11 @@ static void saveTransportWifiCb(lv_event_t* e) {
       return;
     }
     wifiConfigRequestApply();
+#if defined(TLORA_PAGER)
+    g_lv.task->showAlert(TR("Wi-Fi saved, restarting"), 1400);
+#else
     g_lv.task->showAlert(TR("Wi-Fi saved, reconnecting"), 1400);
+#endif
   } else {
     wifiConfigRequestApply();
     g_lv.task->showAlert(TR("Wi-Fi saved (radio off)"), 1400);
@@ -13149,13 +13153,16 @@ static void doApplyWifi() {
   wifiConfigSetRadioEnabled(s_pending_wifi_radio_on);
   wifiConfigRequestApply();
 
-  // Wi-Fi and BLE coexist now (NimBLE shares the heap with esp_wifi), so the main
-  // loop brings esp_wifi up / down live in response to these prefs — exactly like
-  // the control-center Wi-Fi toggle. No reboot to switch transports any more,
-  // whatever the previous transport was.
+  // Non-Pager boards apply live. Pager credential/reconnect requests return
+  // through setup so Wi-Fi associates before a resident NimBLE stack exists.
   if (g_lv.task)
-    g_lv.task->showAlert(s_pending_wifi_radio_on ? TR("Saved — reconnecting\xE2\x80\xA6")
-                                                 : TR("Wi-Fi saved (radio off)"), 1600);
+    g_lv.task->showAlert(
+#if defined(TLORA_PAGER)
+        s_pending_wifi_radio_on ? TR("Saved — restarting\xE2\x80\xA6")
+#else
+        s_pending_wifi_radio_on ? TR("Saved — reconnecting\xE2\x80\xA6")
+#endif
+                                : TR("Wi-Fi saved (radio off)"), 1600);
   refreshStatusLabels();
 }
 
@@ -13281,9 +13288,8 @@ static void saveWifiCb(lv_event_t* e) {
     lv_obj_add_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
   }
   s_pending_wifi_was_wifi = wifiConfigWantsWifi();   // kept for status display; no longer gates a reboot
-  // Wi-Fi + BLE coexist (NimBLE), so applying creds is always a live operation —
-  // the main loop brings the radio up/down with the new settings. No reboot and
-  // no confirm prompt; just save and (re)connect.
+  // Save immediately. Other boards reconnect live; Pager's main loop reboots
+  // through the ordered Wi-Fi -> BLE setup path.
   doApplyWifi();
 }
 #endif
@@ -13461,7 +13467,7 @@ static void wifiScanStartCb(lv_event_t* e) {
   if (!wifiConfigWantsWifi()) {
     if (!wifiPrepareEnable()) return;
     wifiConfigSetRadioEnabled(true);   // wantsWifi() now true -> the scan worker can bring STA up
-    wifiConfigRequestApply();          // main loop brings esp_wifi up live (no reboot)
+    wifiConfigRequestApply();          // main loop applies live or takes Pager's ordered restart
     if (g_lv.task) g_lv.task->showAlert(TR("Wi-Fi on, scanning\xE2\x80\xA6"), 1200);
   }
   wifiScanOpenAndKick();
@@ -36108,8 +36114,8 @@ static void refreshSettingsSectionSubtitles() {
 // ============================================================
 // Status-bar control center (tap the top bar)
 // A small drop-down panel with date/time + battery/Wi-Fi info and quick
-// Wi-Fi / Bluetooth toggles, iPhone-control-center style. Both toggle live now
-// (NimBLE coexists with esp_wifi) — no reboot to switch.
+// Wi-Fi / Bluetooth toggles, iPhone-control-center style. Resident stacks
+// toggle live; a cold or reconnecting Pager may take an ordered restart.
 // ============================================================
 
 static void closeControlCenter() {
@@ -36150,9 +36156,9 @@ static void openControlCenter();   // fwd — toggle cbs rebuild the panel
 // (no touch), so a long-press of the green ○ Home key triggers this (see navPump).
 static void toggleControlCenter() { if (s_cc_root) closeControlCenter(); else openControlCenter(); }
 
-// Wi-Fi and Bluetooth COEXIST now (NimBLE host shares the heap with esp_wifi),
-// so both are plain LIVE toggles — no reboot to switch. Each radio is
-// independent and its state is persisted (radio_en / ble_en).
+// Wi-Fi and Bluetooth coexist once allocated. Resident stacks toggle live;
+// Pager cold starts/re-authentication use the ordered reboot path. Each radio's
+// requested state is persisted independently (radio_en / ble_en).
 static void ccWifiCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(ESP32)
@@ -40910,9 +40916,8 @@ static void setupFinishCb(lv_event_t* e) {
   }
 #endif
   // Region was applied live when the user advanced past the region step
-  // (setRadioParams -> applyRadioFromPrefs), and Wi-Fi re-associates live via the
-  // apply request above — so nothing here needs a reboot. Just close the wizard
-  // back to the main UI.
+  // (setRadioParams -> applyRadioFromPrefs). Close the wizard; the Wi-Fi apply
+  // request reconnects live elsewhere and takes Pager's ordered restart path.
   setupWizardClose();
   if (g_lv.task) g_lv.task->showAlert(TR("Setup complete"), 1400);
 }

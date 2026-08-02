@@ -43,6 +43,7 @@ public:
   void enableBle() override;
   void disableBle() override;
   bool isBleEnabled() const override { return _ble_enabled; }
+  bool isBleStackBegun() const { return _ble_begun; }
 #if defined(HAS_TDISPLAY_P4)
   // T-Display P4: the factory C6 ESP-AT firmware has its BLE advertising commands stubbed
   // (BLEADVDATA/ADVSTART all ERROR — Meck-P4 hit the same wall and ships Wi-Fi companion), and
