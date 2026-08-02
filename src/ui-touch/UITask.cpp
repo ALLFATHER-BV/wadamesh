@@ -46766,6 +46766,14 @@ static void sdHealthTick() {
     return;
   }
 #endif
+#if CAP_SD || defined(TLORA_PAGER)
+  // A teardown may have completed while the tile worker still held its final
+  // File. Defer dropping the stale SD backend until that request is finished;
+  // this also closes the failed-format path below.
+  if (!s_sd_mounted && s_tile_fs == &SD && tileFetchPendingLoad() == 0) {
+    mapNoteStorageChanged();
+  }
+#endif
   if (!s_sd_mounted) {
 #if defined(TLORA_PAGER)
     // Another loop-side owner (notably the open File Manager) may have won the
@@ -47932,7 +47940,9 @@ void UITask::loop() {
       showAlert(done, 3500);
     } else {
       s_sd_mounted = false;
-      mapNoteStorageChanged();   // drop a stale SD tile backend after the failed teardown/remount
+      // Do not repoint the global backend under the worker's open File. The
+      // next idle sdHealthTick drops it after the lifecycle count reaches 0.
+      if (tileFetchPendingLoad() == 0) mapNoteStorageChanged();
       showAlert(TR("Format failed (no card / SD error)"), 3500);
     }
     if (s_fm_list) fmShowRoots();
