@@ -1394,6 +1394,10 @@ static inline bool isMsgFloodType(uint8_t t) {
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   const int8_t   snr_q4 = (int8_t)(snr * 4.0f);
   const uint32_t now_ms = millis();
+  // Keep only encrypted direct/group text packets in the shared profile
+  // overflow. Packet hashes exclude route paths, so repeater echoes collapse
+  // to one unique record before they consume the 2,000-record queue.
+  captureEncryptedMessage(raw, len, snr_q4, (int8_t)rssi);
   // Parse route + path length (hop count). Header byte layout is
   //   [version:2][payload_type:4][route_type:2]
   // with 4 transport-code bytes following iff route is a TRANSPORT_* one; the
@@ -1677,6 +1681,7 @@ bool MyMesh::uiImportBackup(Stream& in, uint8_t sections,
         idx++;
       }
       saveChannels();
+      if (nch > 0) requestEncryptedBacklogRescan();
     }
   }
   int nco = 0;
@@ -1754,6 +1759,9 @@ bool MyMesh::shouldOverwriteWhenFull() const {
 }
 
 void MyMesh::onContactOverwrite(const uint8_t* pub_key) {
+  // The replacement is installed later in the same BaseChatMesh receive pass.
+  // Defer the scan to MyMesh::loop so it observes the new public key.
+  requestEncryptedBacklogRescan();
     _store->deleteBlobByKey(pub_key, PUB_KEY_SIZE); // delete from storage
   if (_serial->isConnected()) {
     out_frame[0] = PUSH_CODE_CONTACT_DELETED;
@@ -1770,6 +1778,12 @@ void MyMesh::onContactsFull() {
 }
 
 void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
+  // BaseChatMesh reports is_new=false for both an existing contact refresh and
+  // a freshly auto-added contact. Count growth identifies the latter without
+  // rescanning 2,000 packets after every routine advert.
+  const int contact_count = getNumContacts();
+  if (contact_count > _backlog_known_contact_count) requestEncryptedBacklogRescan();
+  else _backlog_known_contact_count = contact_count;
   if (_serial->isConnected()) {
     if (is_new) {
       writeContactRespFrame(PUSH_CODE_NEW_ADVERT, contact, true);
@@ -1948,7 +1962,8 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
     // per-message); RSSI is the radio's last-RSSI, which is current since
     // the packet handler runs inline with reception.
     const int8_t snr_q4 = (int8_t)(pkt->getSNR() * 4);
-    const int8_t rssi   = (int8_t)(_radio->getLastRSSI());
+    const int8_t rssi   = _replaying_backlog ? _replay_rssi
+                                              : (int8_t)(_radio->getLastRSSI());
     const bool   is_flood = pkt->isRouteFlood();
     uiStashRxMeta(pkt);   // capture route + scope for the per-message Info popup
     _last_sender_ts = sender_timestamp;   // embedded send-time -> UI bubble ts (room history replay)
@@ -2059,6 +2074,7 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
 
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
+  markEncryptedMessageSeen(pkt);
   markConnectionActive(from); // in case this is from a server, and we have a connection
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
@@ -2074,6 +2090,7 @@ void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint3
 
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                  const uint8_t *sender_prefix, const char *text) {
+  markEncryptedMessageSeen(pkt);
   markConnectionActive(from);
   // from.sync_since change needs to be persisted
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
@@ -2085,6 +2102,7 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
+  markEncryptedMessageSeen(pkt);
   // Clock bootstrap from a channel peer's send-time (same sane-window + unset-only guard
   // as queueMessage above) so a Wi-Fi/GPS-off node can still get time off public channels.
   if (timestamp > 1700000000UL && timestamp < 2000000000UL &&
@@ -2126,7 +2144,7 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     _serial->writeFrameToAll(frame, 1);
   }
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-  {
+  if (!_replaying_backlog) {
     const char* _ch_name = "";
     ChannelDetails _cd{};
     if (getChannel(channel_idx, _cd)) _ch_name = _cd.name;
@@ -2149,7 +2167,8 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   if (_ui) _ui->notify(UIEventType::channelMessage);
   if (_ui) {
     const int8_t snr_q4 = (int8_t)(pkt->getSNR() * 4);
-    const int8_t rssi   = (int8_t)(_radio->getLastRSSI());
+    const int8_t rssi   = _replaying_backlog ? _replay_rssi
+                                              : (int8_t)(_radio->getLastRSSI());
     const bool   is_flood = pkt->isRouteFlood();
     uiStashRxMeta(pkt);   // capture route + scope for the per-message Info popup
     _ui->newMsgFromPubWithMeta(path_len, is_flood, nullptr, channel_name,
@@ -2617,6 +2636,390 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
 #endif
 }
 
+void MyMesh::captureEncryptedMessage(const uint8_t raw[], int len,
+                                     int8_t snr_q4, int8_t rssi) {
+  if (!_profile_mode_enabled || !_rx_backlog || !raw || len <= 0 || len > MAX_TRANS_UNIT) return;
+  mesh::Packet packet;
+  if (!tryParsePacket(&packet, raw, len)) return;
+  const uint8_t type = packet.getPayloadType();
+  if (type != PAYLOAD_TYPE_TXT_MSG && type != PAYLOAD_TYPE_GRP_TXT) return;
+
+  uint8_t fingerprint[MAX_HASH_SIZE];
+  packet.calculatePacketHash(fingerprint);
+  for (uint16_t i = 0; i < _rx_backlog_count; ++i) {
+    const uint16_t idx = (uint16_t)((_rx_backlog_head + i) % RX_BACKLOG_MAX);
+    if (memcmp(_rx_backlog[idx].fingerprint, fingerprint, sizeof(fingerprint)) == 0) {
+      ++_rx_backlog_dups;
+      return;
+    }
+  }
+
+  uint16_t idx;
+  if (_rx_backlog_count < RX_BACKLOG_MAX) {
+    idx = (uint16_t)((_rx_backlog_head + _rx_backlog_count) % RX_BACKLOG_MAX);
+    ++_rx_backlog_count;
+  } else {
+    idx = _rx_backlog_head;
+    _rx_backlog_head = (uint16_t)((_rx_backlog_head + 1) % RX_BACKLOG_MAX);
+  }
+  EncryptedRxRecord& rec = _rx_backlog[idx];
+  memset(&rec, 0, sizeof(rec));
+  rec.raw_len = (uint8_t)len;
+  rec.snr_q4 = snr_q4;
+  rec.rssi = rssi;
+  memcpy(rec.fingerprint, fingerprint, sizeof(rec.fingerprint));
+  memcpy(rec.raw, raw, (size_t)len);
+
+  // The dispatcher logs an echoed copy of our own flood before its seen-table
+  // drops it. Do not replay that echo back into the sending profile as a new
+  // incoming bubble; the other profile may still decrypt a shared-channel post.
+  const uint32_t sent_fp = fnv1a32(packet.payload, packet.payload_len);
+  for (int i = 0; i < UI_ECHO_SLOTS; ++i) {
+    if (_echo_fp[i] == sent_fp) {
+      rec.processed_mask |= (uint8_t)(1u << _active_profile);
+      break;
+    }
+  }
+}
+
+void MyMesh::markEncryptedMessageSeen(const mesh::Packet* packet) {
+  if (!_rx_backlog || !packet) return;
+  const uint8_t type = packet->getPayloadType();
+  if (type != PAYLOAD_TYPE_TXT_MSG && type != PAYLOAD_TYPE_GRP_TXT) return;
+  uint8_t fingerprint[MAX_HASH_SIZE];
+  packet->calculatePacketHash(fingerprint);
+  const uint8_t bit = (uint8_t)(1u << _active_profile);
+  for (uint16_t i = 0; i < _rx_backlog_count; ++i) {
+    const uint16_t idx = (uint16_t)((_rx_backlog_head + i) % RX_BACKLOG_MAX);
+    if (memcmp(_rx_backlog[idx].fingerprint, fingerprint, sizeof(fingerprint)) == 0) {
+      _rx_backlog[idx].processed_mask |= bit;
+      return;
+    }
+  }
+}
+
+bool MyMesh::findDecryptingContact(const mesh::Packet& packet, ContactInfo& contact,
+                                   uint8_t secret[PUB_KEY_SIZE],
+                                   uint8_t data[MAX_PACKET_PAYLOAD + 1], int& data_len) {
+  data_len = 0;
+  if (packet.getPayloadType() != PAYLOAD_TYPE_TXT_MSG ||
+      packet.payload_len <= 2 + CIPHER_MAC_SIZE) return false;
+  if (!self_id.isHashMatch(&packet.payload[0])) return false;
+  const uint8_t src_hash = packet.payload[1];
+  for (int i = 0; i < getNumContacts(); ++i) {
+    ContactInfo candidate{};
+    if (!getContactByIdx((uint32_t)i, candidate) ||
+        !candidate.id.isHashMatch(&src_hash)) continue;
+    // getContactByIdx returns a copy. Populate the live contact's cached ECDH
+    // secret on its first match so replaying a large backlog does not repeat an
+    // expensive key agreement for every packet from the same sender.
+    const uint8_t* shared = nullptr;
+    if (candidate.shared_secret_valid) {
+      shared = candidate.getSharedSecret(self_id);
+    } else {
+      ContactInfo* live = lookupContactByPubKey(candidate.id.pub_key, PUB_KEY_SIZE);
+      if (!live) continue;
+      shared = live->getSharedSecret(self_id);
+      candidate = *live;
+    }
+    memcpy(secret, shared, PUB_KEY_SIZE);
+    const int n = mesh::Utils::MACThenDecrypt(secret, data, &packet.payload[2],
+                                               packet.payload_len - 2);
+    if (n > 0 && n <= MAX_PACKET_PAYLOAD) {
+      data[n] = 0;
+      data_len = n;
+      contact = candidate;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool MyMesh::decryptBacklogRecord(uint16_t idx, bool queue_ack) {
+  if (!_rx_backlog || idx >= RX_BACKLOG_MAX) return false;
+  EncryptedRxRecord& rec = _rx_backlog[idx];
+  const uint8_t bit = (uint8_t)(1u << _active_profile);
+  if (!rec.raw_len || (rec.processed_mask & bit)) return false;
+
+  mesh::Packet packet;
+  if (!tryParsePacket(&packet, rec.raw, rec.raw_len)) return false;
+  packet._snr = rec.snr_q4;
+  _replay_rssi = rec.rssi;
+  const uint8_t type = packet.getPayloadType();
+
+  if (type == PAYLOAD_TYPE_TXT_MSG) {
+    ContactInfo from{};
+    uint8_t secret[PUB_KEY_SIZE];
+    uint8_t data[MAX_PACKET_PAYLOAD + 1];
+    int data_len = 0;
+    if (!findDecryptingContact(packet, from, secret, data, data_len) || data_len <= 5) return false;
+
+    uint32_t timestamp = 0;
+    memcpy(&timestamp, data, sizeof(timestamp));
+    const uint8_t txt_type = data[4] >> 2;
+    if (txt_type == TXT_TYPE_PLAIN) {
+      const char* text = (const char*)&data[5];
+      const size_t text_len = strnlen(text, (size_t)data_len - 5);
+      if (text_len >= (size_t)data_len - 5) return false;
+      queueMessage(from, TXT_TYPE_PLAIN, &packet, timestamp, nullptr, 0, text);
+      if (queue_ack) {
+        mesh::Utils::sha256(rec.ack, 4, data, 5 + text_len, from.id.pub_key, PUB_KEY_SIZE);
+        rec.ack[4] = (5 + text_len + 1 <= (size_t)data_len) ? data[5 + text_len + 1] : 0;
+        getRNG()->random(&rec.ack[5], 1);
+        rec.ack_len = 6;
+        rec.ack_pending_mask |= bit;
+      }
+    } else if (txt_type == TXT_TYPE_SIGNED_PLAIN && data_len > 9) {
+      const char* text = (const char*)&data[9];
+      const size_t text_len = strnlen(text, (size_t)data_len - 9);
+      if (text_len >= (size_t)data_len - 9) return false;
+      queueMessage(from, TXT_TYPE_SIGNED_PLAIN, &packet, timestamp, &data[5], 4, text);
+      if (queue_ack) {
+        mesh::Utils::sha256(rec.ack, 4, data, 9 + text_len, self_id.pub_key, PUB_KEY_SIZE);
+        rec.ack_len = 4;
+        rec.ack_pending_mask |= bit;
+      }
+    } else {
+      return false;
+    }
+    rec.processed_mask |= bit;
+    return true;
+  }
+
+  if (type == PAYLOAD_TYPE_GRP_TXT && packet.payload_len > 1 + CIPHER_MAC_SIZE) {
+    for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+      ChannelDetails cd{};
+      if (!getChannel(i, cd) || cd.name[0] == '\0' ||
+          cd.channel.hash[0] != packet.payload[0]) continue;
+      uint8_t data[MAX_PACKET_PAYLOAD + 1];
+      const int n = mesh::Utils::MACThenDecrypt(cd.channel.secret, data, &packet.payload[1],
+                                                packet.payload_len - 1);
+      if (n <= 5 || n > MAX_PACKET_PAYLOAD) continue;
+      data[n] = 0;
+      if ((data[4] >> 2) != 0) continue;
+      const char* text = (const char*)&data[5];
+      if (strnlen(text, (size_t)n - 5) >= (size_t)n - 5) continue;
+      uint32_t timestamp = 0;
+      memcpy(&timestamp, data, sizeof(timestamp));
+      onChannelMessageRecv(cd.channel, &packet, timestamp, text);
+      rec.processed_mask |= bit;
+      return true;
+    }
+  }
+  return false;
+}
+
+int MyMesh::replayEncryptedBacklog() {
+  _profile_backlog_unlocked = true;
+  _backlog_rescan_pending = false;
+  if (!_rx_backlog) return 0;
+  int decoded = 0;
+  _replaying_backlog = true;
+  for (uint16_t i = 0; i < _rx_backlog_count; ++i) {
+    const uint16_t idx = (uint16_t)((_rx_backlog_head + i) % RX_BACKLOG_MAX);
+    if (decryptBacklogRecord(idx, true)) ++decoded;
+    if ((i & 31u) == 31u) delay(0);  // feed the ESP scheduler during a full 2,000-record unlock
+  }
+  _replaying_backlog = false;
+  if (_next_replay_ack_ms == 0) {
+    const uint8_t bit = (uint8_t)(1u << _active_profile);
+    for (uint16_t i = 0; i < _rx_backlog_count; ++i) {
+      const uint16_t idx = (uint16_t)((_rx_backlog_head + i) % RX_BACKLOG_MAX);
+      if (_rx_backlog[idx].ack_pending_mask & bit) {
+        _next_replay_ack_ms = millis();
+        break;
+      }
+    }
+  }
+  return decoded;
+}
+
+void MyMesh::requestEncryptedBacklogRescan() {
+  _backlog_known_contact_count = getNumContacts();
+  if (_profile_mode_enabled && _rx_backlog) _backlog_rescan_pending = true;
+}
+
+void MyMesh::serviceEncryptedBacklogRescan() {
+  if (!_backlog_rescan_pending || !_profile_backlog_unlocked ||
+      !_profile_mode_enabled || !_rx_backlog || _replaying_backlog) return;
+  replayEncryptedBacklog();
+}
+
+void MyMesh::serviceReplayAck() {
+  if (!_rx_backlog || _next_replay_ack_ms == 0 ||
+      (int32_t)(millis() - _next_replay_ack_ms) < 0) return;
+  const uint8_t bit = (uint8_t)(1u << _active_profile);
+  for (uint16_t i = 0; i < _rx_backlog_count; ++i) {
+    const uint16_t idx = (uint16_t)((_rx_backlog_head + i) % RX_BACKLOG_MAX);
+    EncryptedRxRecord& rec = _rx_backlog[idx];
+    if (!(rec.ack_pending_mask & bit) || (rec.ack_len != 4 && rec.ack_len != 6)) continue;
+    mesh::Packet packet;
+    if (!tryParsePacket(&packet, rec.raw, rec.raw_len)) {
+      rec.ack_pending_mask &= (uint8_t)~bit;
+      continue;
+    }
+    ContactInfo from{};
+    uint8_t secret[PUB_KEY_SIZE], data[MAX_PACKET_PAYLOAD + 1];
+    int data_len = 0;
+    if (!findDecryptingContact(packet, from, secret, data, data_len)) continue;
+
+    mesh::Packet* ack = nullptr;
+    if (packet.isRouteFlood()) {
+      ack = createPathReturn(from.id, secret, packet.path, packet.path_len,
+                             PAYLOAD_TYPE_ACK, rec.ack, rec.ack_len);
+      if (ack) sendFloodScoped(from, ack, 200);
+    } else {
+      ack = createAck(rec.ack, rec.ack_len);
+      if (ack) {
+        if (from.out_path_len == OUT_PATH_UNKNOWN) sendFloodScoped(from, ack, 200);
+        else sendDirect(ack, from.out_path, from.out_path_len, 200);
+      }
+    }
+    if (!ack) {
+      _next_replay_ack_ms = millis() + 1000;
+      return;
+    }
+    rec.ack_pending_mask &= (uint8_t)~bit;
+    _next_replay_ack_ms = millis() + 10000UL;
+    return;
+  }
+  _next_replay_ack_ms = 0;
+}
+
+void MyMesh::resetProfileRuntime() {
+  clearPendingReqs();
+  _ui_pending_status = 0;
+  _ui_pending_kind = UiReqKind::None;
+  _ui_pending_tag = 0;
+  cancelUIDeferredLogin();
+  memset(expected_ack_table, 0, sizeof(expected_ack_table));
+  next_ack_idx = 0;
+  offline_queue_len = 0;
+  history_count = 0;
+  history_head = 0;
+  history_next_seq = 0;
+  history_num_clients = 0;
+  _iter_started = false;
+  dirty_contacts_expiry = 0;
+  memset(_echo_fp, 0, sizeof(_echo_fp));
+  memset(_echo_rep, 0, sizeof(_echo_rep));
+  memset(_echo_hop, 0, sizeof(_echo_hop));
+  memset(_echo_hop_sz, 0, sizeof(_echo_hop_sz));
+  memset(_echo_hop_n, 0, sizeof(_echo_hop_n));
+  _echo_idx = 0;
+  _last_sent_fp = 0;
+  _last_rx_path_n = 0;
+  _last_rx_scope = 0;
+  _last_rx_has_scope = false;
+  _last_sender_ts = 0;
+  _echo_dirty = false;
+  _profile_backlog_unlocked = false;
+  _backlog_rescan_pending = false;
+  memset(advert_paths, 0, sizeof(advert_paths));
+  memset(_blob_seen, 0, sizeof(_blob_seen));
+  if (sign_data) { free(sign_data); sign_data = nullptr; sign_data_len = 0; }
+}
+
+bool MyMesh::selectLocalProfile(uint8_t profile) {
+  if (profile > 1) return false;
+  if (profile == _active_profile) return true;
+
+  const uint8_t old_profile = _active_profile;
+  const mesh::LocalIdentity old_identity = self_id;
+  NodePrefs inherited = _prefs;
+  const double inherited_lat = sensors.node_lat;
+  const double inherited_lon = sensors.node_lon;
+  auto rollback = [&]() {
+    _store->selectProfile(old_profile);
+    self_id = old_identity;
+    _prefs = inherited;
+    sensors.node_lat = inherited_lat;
+    sensors.node_lon = inherited_lon;
+  };
+  if (!savePrefs()) return false;
+  saveContacts();
+  saveChannels();
+
+  if (!_store->selectProfile(profile)) return false;
+  mesh::LocalIdentity identity;
+  const bool fresh = !_store->loadMainIdentity(identity);
+  if (fresh) {
+    identity = radio_new_identity();
+    int tries = 0;
+    while (tries++ < 10 && (identity.pub_key[0] == 0x00 || identity.pub_key[0] == 0xFF))
+      identity = radio_new_identity();
+    if (!_store->saveMainIdentity(identity)) {
+      rollback();
+      return false;
+    }
+
+    _prefs = inherited;
+    char key_hex[10];
+    mesh::Utils::toHex(key_hex, identity.pub_key, 4);
+    snprintf(_prefs.node_name, sizeof(_prefs.node_name), "Kid-%s", key_hex);
+    sensors.node_lat = inherited_lat;
+    sensors.node_lon = inherited_lon;
+    if (!_store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon)) {
+      rollback();
+      return false;
+    }
+    // Seed the second profile with the current contacts/channels so it can
+    // decrypt immediately; later edits are isolated by the selected store.
+    saveContacts();
+    saveChannels();
+  }
+
+  for (int i = 0; i < getNumContacts(); ++i) {
+    ContactInfo c{};
+    if (getContactByIdx((uint32_t)i, c)) stopConnection(c.id.pub_key);
+  }
+
+  self_id = identity;
+  _prefs = inherited;
+  sensors.node_lat = inherited_lat;
+  sensors.node_lon = inherited_lon;
+  _store->loadPrefs(_prefs, sensors.node_lat, sensors.node_lon);
+
+  resetContacts();
+  for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+    ChannelDetails empty{};
+    setChannel(i, empty);
+  }
+  _store->loadContacts(this);
+  _store->loadChannels(this);
+  _backlog_known_contact_count = getNumContacts();
+  _active_profile = profile;
+  resetProfileRuntime();
+  applyRadioFromPrefs();
+#ifdef BLE_PIN_CODE
+  _active_ble_pin = _prefs.ble_pin ? _prefs.ble_pin : BLE_PIN_CODE;
+#endif
+  return true;
+}
+
+bool MyMesh::setProfileModeEnabled(bool enabled) {
+  if (enabled && !_rx_backlog) {
+    _rx_backlog = (EncryptedRxRecord*)msPsAlloc(sizeof(EncryptedRxRecord) * RX_BACKLOG_MAX);
+    if (!_rx_backlog) return false;
+    _backlog_known_contact_count = getNumContacts();
+    _backlog_rescan_pending = false;
+    _profile_backlog_unlocked = false;
+  }
+  if (!enabled && _rx_backlog) {
+    memset(_rx_backlog, 0, sizeof(EncryptedRxRecord) * RX_BACKLOG_MAX);
+    heap_caps_free(_rx_backlog);
+    _rx_backlog = nullptr;
+    _rx_backlog_head = 0;
+    _rx_backlog_count = 0;
+    _rx_backlog_dups = 0;
+    _next_replay_ack_ms = 0;
+    _backlog_rescan_pending = false;
+    _profile_backlog_unlocked = false;
+  }
+  _profile_mode_enabled = enabled;
+  return true;
+}
+
 void MyMesh::applyRadioFromPrefs() {
   // setParams is a multi-step SPI sequence; hold the radio against the buffered-
   // receive drain task so it can't re-arm RX between the steps (no-op when off).
@@ -2757,6 +3160,7 @@ void MyMesh::begin(bool has_display) {
 
   resetContacts();
   _store->loadContacts(this);
+  _backlog_known_contact_count = getNumContacts();
   bootstrapRTCfromContacts();
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
@@ -3233,6 +3637,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       contact.lastmod = last_mod;
       contact.sync_since = 0;
       if (addContact(contact)) {
+        requestEncryptedBacklogRescan();
         dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
 #ifdef DISPLAY_CLASS
         // Tell the touch UI to refresh its thread list immediately so the new
@@ -3248,6 +3653,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (recipient && removeContact(*recipient)) {
+      requestEncryptedBacklogRescan();  // keep contact-count detection in sync
       _store->deleteBlobByKey(pub_key, PUB_KEY_SIZE);
       dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
 #ifdef DISPLAY_CLASS
@@ -3622,7 +4028,10 @@ void MyMesh::handleCmdFrame(size_t len) {
       anon.out_path_len = 0;   // default to zero-hop direct
       anon.type = ADV_TYPE_NONE;  // unknown
 
-      if (addContact(anon)) recipient = &anon;
+      if (addContact(anon)) {
+        requestEncryptedBacklogRescan();
+        recipient = &anon;
+      }
     }
     uint8_t *data = &cmd_frame[1 + PUB_KEY_SIZE];
     if (recipient) {
@@ -3783,6 +4192,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     memset(channel.channel.secret, 0, sizeof(channel.channel.secret));
     memcpy(channel.channel.secret, &cmd_frame[2 + 32], 16); // NOTE: only 128-bit supported
     if (setChannel(channel_idx, channel)) {
+      requestEncryptedBacklogRescan();
       saveChannels();
 #ifdef DISPLAY_CLASS
       /* Tell the touch UI to refresh its thread list immediately so the new
@@ -4496,6 +4906,8 @@ void MyMesh::checkSerialInterface() {
 
 void MyMesh::loop() {
   BaseChatMesh::loop();
+  serviceEncryptedBacklogRescan();
+  serviceReplayAck();
 
   // Session keep-alives for logged-in servers (rooms). The core pinger sends the
   // 9-byte REQ_TYPE_KEEP_ALIVE (+ our sync_since) a room server expects; the ACK

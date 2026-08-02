@@ -140,6 +140,11 @@
   #define CAP_LOCK_SCREEN  0
 #endif
 
+// Every touch-UI target has either a touchscreen or a physical keyboard, so it
+// can present the profile PIN gate even when the legacy wallpaper lock screen
+// was not exposed for that board.
+#define CAP_PROFILE_PIN 1
+
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
 // expose it; the Pager adds font-only presets because its 480x222 viewport is
 // wide enough for larger type but too short for global geometry scaling.

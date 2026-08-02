@@ -8,6 +8,8 @@
 
 #include <Preferences.h>
 #include <SPIFFS.h>
+#include <SHA256.h>
+#include <esp_system.h>
 #include <stddef.h>   // offsetof
 #include <string.h>   // memcpy
 
@@ -36,7 +38,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 43;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF); v40 hist_sync_after (chat-history flush: consecutive off-thread write failures before the blocking loop-task fallback, 0 = never); v41 p4_antenna (T-Display P4 antenna select; now RESERVED/unused - the choice is session-only so every boot comes up on the on-board antenna); v42 hist_per_chat (max stored messages PER chat, default 250 - a busy public channel used to be able to fill the whole shared ring and drag the UI down); v43 Pager UI-size presets (reset the previously ignored large-screen default to Small once)
+static const uint8_t  TOUCH_CFG_VER   = 44;  // v44: two profiles and salted lock PIN verifiers
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -112,6 +114,9 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  hist_sync_after;   // chat-history flush: consecutive off-thread write failures before falling back to the blocking loop-task write; 0 = never — v40 (trailing)
   uint16_t hist_per_chat;     // max stored messages per chat/thread; 0 = no per-chat cap (ring only) - v42 (trailing)
   uint8_t  p4_antenna;        // RESERVED (was: T-Display P4 antenna select). The antenna choice is session-only by design and is never stored — see the note further down — v41 (trailing)
+  uint8_t  kid_mode;          // two PIN-selected local profiles enabled
+  uint8_t  profile_pin_salt[2][8];
+  uint8_t  profile_pin_hash[2][16];
 };
 
 static TouchCfg s_cfg;
@@ -215,6 +220,9 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.web_terminal       = 0;     // OFF: web mesh terminal is opt-in (runtime; mutually exclusive with VNC)
   c.map_tile_debug     = 0;     // OFF: map tile-pipeline diagnostic overlay is opt-in (developer)
   c.hist_sync_after    = 2;     // chat flush: 2 failed background writes -> synchronous loop-task fallback
+  c.kid_mode           = 0;
+  memset(c.profile_pin_salt, 0, sizeof(c.profile_pin_salt));
+  memset(c.profile_pin_hash, 0, sizeof(c.profile_pin_hash));
 }
 
 // Update the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
@@ -292,6 +300,11 @@ static void cfgLoadOrMigrate() {
         // it. Reset it once so upgrading cannot enlarge the UI without consent.
         if (s_cfg.ver < 43) s_cfg.ui_scale = 0;
 #endif
+        if (s_cfg.ver < 44) {
+          s_cfg.kid_mode = 0;
+          memset(s_cfg.profile_pin_salt, 0, sizeof(s_cfg.profile_pin_salt));
+          memset(s_cfg.profile_pin_hash, 0, sizeof(s_cfg.profile_pin_hash));
+        }
         s_cfg.ver = TOUCH_CFG_VER;
         s_cfg.magic = TOUCH_CFG_MAGIC;
         cfgFlush();                // rewrite with new fields defaulted-in
@@ -1138,6 +1151,86 @@ bool touchPrefsSetRxQueue(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.rx_queue = on ? 1 : 0;
   return cfgFlush();
+}
+
+static bool profilePinValid(const char* pin) {
+  if (!pin) return false;
+  const size_t n = strlen(pin);
+  if (n < 4 || n > 8) return false;
+  for (size_t i = 0; i < n; ++i) {
+    if (pin[i] < '0' || pin[i] > '9') return false;
+  }
+  return true;
+}
+
+static void profilePinHash(uint8_t profile, const uint8_t salt[8],
+                           const char* pin, uint8_t out[16]) {
+  static const char context[] = "wadamesh-profile-pin-v1";
+  SHA256 sha;
+  sha.update(context, sizeof(context) - 1);
+  sha.update(&profile, 1);
+  sha.update(salt, 8);
+  sha.update(pin, strlen(pin));
+  uint8_t full[32];
+  sha.finalize(full, sizeof(full));
+  memcpy(out, full, 16);
+  memset(full, 0, sizeof(full));
+}
+
+bool touchPrefsProfilePinsReady() {
+  if (!s_begun) touchPrefsBegin();
+  uint8_t any0 = 0, any1 = 0;
+  for (size_t i = 0; i < sizeof(s_cfg.profile_pin_hash[0]); ++i) {
+    any0 |= s_cfg.profile_pin_hash[0][i];
+    any1 |= s_cfg.profile_pin_hash[1][i];
+  }
+  return any0 != 0 && any1 != 0;
+}
+
+bool touchPrefsGetKidMode() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.kid_mode != 0 && touchPrefsProfilePinsReady();
+}
+
+bool touchPrefsSetProfilePins(const char* parent_pin, const char* kid_pin) {
+  if (!s_begun) touchPrefsBegin();
+  if (!profilePinValid(parent_pin) || !profilePinValid(kid_pin) ||
+      strcmp(parent_pin, kid_pin) == 0) return false;
+  const TouchCfg previous = s_cfg;
+  esp_fill_random(s_cfg.profile_pin_salt, sizeof(s_cfg.profile_pin_salt));
+  profilePinHash(0, s_cfg.profile_pin_salt[0], parent_pin, s_cfg.profile_pin_hash[0]);
+  profilePinHash(1, s_cfg.profile_pin_salt[1], kid_pin, s_cfg.profile_pin_hash[1]);
+  s_cfg.kid_mode = 1;
+  if (cfgFlush()) return true;
+  s_cfg = previous;
+  return false;
+}
+
+bool touchPrefsDisableKidMode() {
+  if (!s_begun) touchPrefsBegin();
+  const TouchCfg previous = s_cfg;
+  s_cfg.kid_mode = 0;
+  memset(s_cfg.profile_pin_salt, 0, sizeof(s_cfg.profile_pin_salt));
+  memset(s_cfg.profile_pin_hash, 0, sizeof(s_cfg.profile_pin_hash));
+  if (cfgFlush()) return true;
+  s_cfg = previous;
+  return false;
+}
+
+int touchPrefsMatchProfilePin(const char* pin) {
+  if (!s_begun) touchPrefsBegin();
+  if (!s_cfg.kid_mode || !touchPrefsProfilePinsReady() || !profilePinValid(pin)) return -1;
+  for (uint8_t profile = 0; profile < 2; ++profile) {
+    uint8_t actual[16];
+    profilePinHash(profile, s_cfg.profile_pin_salt[profile], pin, actual);
+    uint8_t diff = 0;
+    for (size_t i = 0; i < sizeof(actual); ++i) {
+      diff |= actual[i] ^ s_cfg.profile_pin_hash[profile][i];
+    }
+    memset(actual, 0, sizeof(actual));
+    if (diff == 0) return profile;
+  }
+  return -1;
 }
 
 bool touchPrefsGetCompactChat() {

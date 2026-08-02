@@ -33,7 +33,7 @@
   #include <esp_sleep.h>   // esp_deep_sleep_start / ext0 wakeup for the power-off menu
   #include <driver/rtc_io.h>   // rtc_gpio_pullup_en — hold the wake pin's level in deep sleep
   #include "assets/lockscreen_placeholder_jpg.h"   // seeded to SPIFFS /lock/placeholder.jpg on first boot (PNG decode is broken on this board)
-  #if CAP_LOCK_SCREEN
+  #if CAP_LOCK_SCREEN || CAP_PROFILE_PIN
     #include "assets/lockscreen_wallpaper_rgb565.h"   // crisp pre-dithered default lock-screen wallpaper (no JPEG banding)
     #if defined(TLORA_PAGER)
       #include "assets/lockscreen_wallpaper_pager_rgb565.h"   // native 480x222 crop/layout for this board's wide/short panel
@@ -3133,6 +3133,7 @@ static void mapNudge(int dir);                 // (defined far below) map pan �
 static bool hwKeyDismissTopPopup();            // (defined far below) close the topmost modal/sheet
 static bool anyPopupOpen();                    // (defined below) is any modal/sheet currently up
 static void closeChatPanel(LvChatPanel* p);    // (defined far below) close an open chat/channel detail
+static bool lockscreenProfileKey(int key);     // two-profile PIN gate, defined with the lock screen
 static void toggleControlCenter();             // (defined far below) the top-bar "control center" dropdown
 static void homeKeyActivate();                 // (defined far below) green ○ tap: Home, or toggle drawer if already Home
 static uint32_t s_f4_down_ms = 0;              // green ○ press time — tap = Home, hold = control center
@@ -3788,7 +3789,7 @@ static void navPump() {
       if (fresh && g_lv.task) {
         if (g_lv.task->isManualLocked())          { g_lv.task->unlockScreen(); }
         else if (g_lv.task->isScreenOff())        { g_lv.task->wakeScreen();   }
-        else if (touchPrefsGetLockOnScreenOff())  { g_lv.task->lockScreen();   }
+        else if (touchPrefsGetLockOnScreenOff() || touchPrefsGetKidMode()) { g_lv.task->lockScreen(); }
         else                                      { g_lv.task->sleepScreen();  }
       }
       continue;
@@ -3808,6 +3809,12 @@ static void navPump() {
       continue;
     }
 #endif
+    if (g_lv.task && g_lv.task->isManualLocked() && touchPrefsGetKidMode()) {
+      g_lv.task->lockscreenReveal();
+      if (ev.type == INPUT_EVENT_TYPE_KEYBOARD)
+        lockscreenProfileKey((int)ev.args_keyboard.ascii);
+      continue;
+    }
     // Any key counts as activity: reset the idle timer, and if the screen idled
     // off, wake it and swallow this key (no touch on the Tanmatsu to wake it).
     if (g_lv.task) {
@@ -4485,8 +4492,14 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
     // several polls, so once the backlight is back on a still-down finger would
     // otherwise press the UI underneath and trigger the action before you see
     // it (issue #4). Applies to both boards (V4 + T-Deck).
-    if (g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) {
-      if (!g_lv.task->isManualLock()) g_lv.task->noteUserInput();
+    if (g_lv.task && g_lv.task->isManualLock() && touchPrefsGetKidMode() &&
+        !g_lv.task->isScreenOff()) {
+      // A lit two-profile lock screen is interactive: its full-screen overlay
+      // owns the pointer and exposes only the PIN pad. Continue into the normal
+      // pressed path below; the overlay prevents any tap from reaching the app.
+    } else if (g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) {
+      if (g_lv.task->isManualLock() && touchPrefsGetKidMode()) g_lv.task->lockscreenReveal();
+      else if (!g_lv.task->isManualLock()) g_lv.task->noteUserInput();
       s_wake_swallow = true;
       data->state = LV_INDEV_STATE_RELEASED;
       return;
@@ -4568,6 +4581,7 @@ static void copyLabelLongPressCb(lv_event_t* e);
 static void taClearSelection(lv_obj_t* ta);   // clear composer text-selection before an insert
 static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind);
 static void chatDeleteApply();
+static bool lockscreenProfileKey(int key);   // two-profile PIN input (touch + physical keyboards)
 static void shareMyContactBtnCb(lv_event_t* e);
 static void openShareMyContactPopup();
 static void refreshMapInfoLabel();
@@ -4885,6 +4899,28 @@ static UITask::UIMessage* s_segsync_buf = nullptr;  // sync-drain jobs only
 // its snapshot predates the tombstone, so the segment must stay dirty when
 // the job commits (a second compaction picks the deletion up).
 static bool s_segjob_redirty = false;
+
+// A profile switch changes the directory namespace underneath the segmented
+// history store. The old profile is synchronously drained first; this clears
+// only the loop-owned bookkeeping so the loader can rebuild it from the newly
+// selected profile without reusing a stale job or durability watermark.
+static void uiHistoryStoreStateReset() {
+  s_hist_flush_req = false;
+  s_hist_flush_ok = true;
+  memset(s_seg, 0, sizeof(s_seg));
+  s_seg_count = 0;
+  s_seg_total_bytes = 0;
+  s_seg_resync = false;
+  s_seg_stale_purge = false;
+  s_seg_store_ready = false;
+  s_seg_flushed_seq = 0;
+  s_segjob_kind = SEGJOB_NONE;
+  s_segjob_first_seq = 0;
+  s_segjob_last_seq = 0;
+  s_segjob_create = false;
+  s_segjob_n = 0;
+  s_segjob_redirty = false;
+}
 // fwd decls — scheduler helpers live with the storage code below.
 static int  segBuildJob(const UITask::UIMessage* ring, int cap, int count, int head,
                         UITask::UIMessage* buf, SegJob* out);
@@ -9125,6 +9161,7 @@ static void discoveredAddCb(lv_event_t* e) {
 
   // Add the captured ContactInfo straight to the_mesh.
   if (the_mesh.addContact(e_disc.ci)) {
+    the_mesh.requestEncryptedBacklogRescan();
     the_mesh.uiPersistContacts();   // write /contacts3 so the add survives reboot
     e_disc.in_contacts = true;
     markDiscoveredDirty();
@@ -10943,6 +10980,54 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(unlock_hint, 1600);
 }
 
+static lv_obj_t* s_kid_parent_pin_ta = nullptr;
+static lv_obj_t* s_kid_child_pin_ta = nullptr;
+
+static void kidModeApplyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task ||
+      !s_kid_parent_pin_ta || !s_kid_child_pin_ta) return;
+  if (the_mesh.activeLocalProfile() != 0) {
+    g_lv.task->showAlert(TR("Parent profile required"), 1600);
+    return;
+  }
+  kbMirrorSyncToReal();
+  char parent[9];
+  char kid[9];
+  snprintf(parent, sizeof(parent), "%s", lv_textarea_get_text(s_kid_parent_pin_ta));
+  snprintf(kid, sizeof(kid), "%s", lv_textarea_get_text(s_kid_child_pin_ta));
+  setTextareaSynced(s_kid_parent_pin_ta, "");
+  setTextareaSynced(s_kid_child_pin_ta, "");
+  hideKb();
+  const size_t parent_len = strlen(parent);
+  const size_t kid_len = strlen(kid);
+  if (parent_len < 4 || parent_len > 8 || kid_len < 4 || kid_len > 8 ||
+      strcmp(parent, kid) == 0) {
+    memset(parent, 0, sizeof(parent));
+    memset(kid, 0, sizeof(kid));
+    g_lv.task->showAlert(TR("Use two different 4-8 digit PINs"), 2200);
+    return;
+  }
+  const bool ok = g_lv.task->enableKidMode(parent, kid);
+  memset(parent, 0, sizeof(parent));
+  memset(kid, 0, sizeof(kid));
+  if (!ok) {
+    g_lv.task->showAlert(TR("Could not allocate or save profile mode"), 2400);
+    return;
+  }
+  closeSettingsCategory();
+}
+
+static void kidModeDisableCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  if (!g_lv.task->disableKidMode()) {
+    g_lv.task->showAlert(TR("Parent profile required"), 1600);
+    return;
+  }
+  hideKb();
+  closeSettingsCategory();
+  g_lv.task->showAlert(TR("Two-profile mode disabled"), 1500);
+}
+
 #if CAP_TRACKBALL
 // Invert the scrollball direction everywhere it drives motion (cursor, map pan,
 // emoji selector). Cached in s_tb_reverse so the per-tick poll never hits NVS.
@@ -12453,6 +12538,74 @@ static void buildDeviceSettings(int sec) {
   }
 
   if (sec == DSEC_LOCK) {   // --- Lock screen ---
+  // Two independent mesh identities share the encrypted RX queue but keep
+  // prefs, contacts/channels and plaintext chat history under separate roots.
+  // Only the parent profile can create/change the PIN pair or disable the gate.
+  {
+    y += settingsRowLabel(body, y, 0, TR("Two-profile kid mode"), COLOR_SUB, &g_font_12, 0) + 4;
+    const bool parent_profile = the_mesh.activeLocalProfile() == 0;
+    const bool enabled = touchPrefsGetKidMode();
+    if (!parent_profile) {
+      y += settingsRowLabel(body, y, 2, TR("Parent profile required to change PINs"),
+                            COLOR_TEXT, &g_font_12, 0) + 10;
+    } else {
+      lv_obj_t* state = lv_label_create(body);
+      lv_label_set_text(state, enabled ? TR("Enabled - enter new PINs to change them")
+                                       : TR("Two different PINs select Parent or Kid"));
+      lv_label_set_long_mode(state, LV_LABEL_LONG_WRAP);
+      lv_obj_set_width(state, lv_pct(100));
+      lv_obj_set_style_text_color(state, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_style_text_font(state, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_pos(state, 2, y);
+      y += SC(34);
+
+      s_kid_parent_pin_ta = lv_textarea_create(body);
+      lv_obj_set_size(s_kid_parent_pin_ta, lv_pct(100), SC(34));
+      lv_obj_set_pos(s_kid_parent_pin_ta, 2, y);
+      lv_textarea_set_one_line(s_kid_parent_pin_ta, true);
+      lv_textarea_set_password_mode(s_kid_parent_pin_ta, true);
+      lv_textarea_set_accepted_chars(s_kid_parent_pin_ta, "0123456789");
+      lv_textarea_set_max_length(s_kid_parent_pin_ta, 8);
+      lv_textarea_set_placeholder_text(s_kid_parent_pin_ta, TR("Parent PIN (4-8 digits)"));
+      attachSettingsTaEvents(s_kid_parent_pin_ta);
+      y += SC(40);
+
+      s_kid_child_pin_ta = lv_textarea_create(body);
+      lv_obj_set_size(s_kid_child_pin_ta, lv_pct(100), SC(34));
+      lv_obj_set_pos(s_kid_child_pin_ta, 2, y);
+      lv_textarea_set_one_line(s_kid_child_pin_ta, true);
+      lv_textarea_set_password_mode(s_kid_child_pin_ta, true);
+      lv_textarea_set_accepted_chars(s_kid_child_pin_ta, "0123456789");
+      lv_textarea_set_max_length(s_kid_child_pin_ta, 8);
+      lv_textarea_set_placeholder_text(s_kid_child_pin_ta, TR("Kid PIN (4-8 digits)"));
+      attachSettingsTaEvents(s_kid_child_pin_ta);
+      y += SC(42);
+
+      lv_obj_t* apply = lv_btn_create(body);
+      lv_obj_set_size(apply, lv_pct(100), SC(34));
+      lv_obj_set_pos(apply, 2, y);
+      styleButton(apply);
+      lv_obj_add_event_cb(apply, kidModeApplyCb, LV_EVENT_CLICKED, nullptr);
+      lv_obj_t* apply_l = lv_label_create(apply);
+      lv_label_set_text(apply_l, enabled ? TR("Change profile PINs") : TR("Enable two profiles"));
+      lv_obj_center(apply_l);
+      y += SC(42);
+
+      if (enabled) {
+        lv_obj_t* disable = lv_btn_create(body);
+        lv_obj_set_size(disable, lv_pct(100), SC(34));
+        lv_obj_set_pos(disable, 2, y);
+        styleButton(disable);
+        lv_obj_set_style_bg_color(disable, lv_color_hex(0x7A3038), LV_PART_MAIN);
+        lv_obj_add_event_cb(disable, kidModeDisableCb, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t* disable_l = lv_label_create(disable);
+        lv_label_set_text(disable_l, TR("Disable two profiles"));
+        lv_obj_center(disable_l);
+        y += SC(42);
+      }
+    }
+    y += 6;
+  }
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   /* Lock screen: pick the wallpaper (internal /lock/ or SD) and the colour of
      the clock + lock text drawn over it. */
@@ -18308,6 +18461,7 @@ static void webPushDiscovered() {
 static void webAddDiscovered(int i) {
   if (!s_discovered || i < 0 || i >= DISCOVERED_MAX || !s_discovered[i].used || s_discovered[i].in_contacts) return;
   if (the_mesh.addContact(s_discovered[i].ci)) {   // same path the on-device "Add" button uses
+    the_mesh.requestEncryptedBacklogRescan();
     the_mesh.uiPersistContacts();
     s_discovered[i].in_contacts = true;
     markDiscoveredDirty();
@@ -28952,6 +29106,10 @@ static void settingsCatBuild(int cat) {
 static void closeSettingsCategory() {
   if (!s_settings_sheet && s_settings_open_cat < 0) return;
   hideKb();
+  if (s_settings_open_cat == CAT_LOCK) {
+    s_kid_parent_pin_ta = nullptr;
+    s_kid_child_pin_ta = nullptr;
+  }
   if (s_settings_open_cat == CAT_ABOUT) {   // null the live-label ptrs (freed with the sheet)
     s_sysinfo_lbl = nullptr; s_sysinfo_rest_lbl = nullptr; s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
 #if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
@@ -29093,9 +29251,6 @@ static void makeSettings(lv_obj_t* tab) {
   const lv_coord_t card_h = landscape ? 54 : 46;
 
   for (int c = 0; c < CAT_COUNT; ++c) {
-#if !CAP_LOCK_SCREEN
-    if (c == CAT_LOCK) continue;   // lock screen is a T-Deck / Tanmatsu feature
-#endif
 #if !defined(HAS_EXPANSION_KIT)
     if (c == CAT_SENSORS) continue;   // Sensors page only exists with the V4 Expansion Kit
 #endif
@@ -33359,6 +33514,7 @@ static void updatePagerSpaceHold(unsigned long now) {
 // exactly the state it's meant to end.
 static void updatePagerBackspaceUnlockHold(unsigned long now) {
   if (!g_lv.task || !g_lv.task->isManualLock()) return;
+  if (touchPrefsGetKidMode()) return;   // PIN submission is the only unlock path in two-profile mode
   const bool held = pagerKeyboardBackspaceHeld();
   static constexpr uint32_t kLongPressMs = 1000;
   static bool     s_was_held    = false;
@@ -33784,7 +33940,7 @@ static int tabForKey(int key) {
 }
 #endif  // HAS_TDECK_KEYBOARD || HAS_PAGER_KEYBOARD || HAS_M9_KEYBOARD (keyboard helpers; the lock screen below is top-level)
 
-#if CAP_LOCK_SCREEN
+#if CAP_LOCK_SCREEN || CAP_PROFILE_PIN
 // ---- Lock screen -------------------------------------------------------------
 // A full-screen overlay (wallpaper + live clock + lock-state text) shown while
 // the T-Deck is hard-locked. The wallpaper is a JPEG decoded to RGB565; the
@@ -33811,6 +33967,124 @@ static const unsigned long kLockUnlockHoldMs = 1000;
 // while the trackball is held on the lock screen.
 static lv_obj_t* s_unlock_popup = nullptr;
 static lv_obj_t* s_unlock_count = nullptr;
+static lv_obj_t* s_profile_pin_dots = nullptr;
+static lv_obj_t* s_profile_pin_status = nullptr;
+static lv_obj_t* s_profile_pin_btnm = nullptr;
+static char s_profile_pin[9] = "";
+static uint8_t s_profile_pin_len = 0;
+static uint8_t s_profile_pin_failures = 0;
+static uint32_t s_profile_pin_block_until = 0;
+
+static void lockscreenProfileDotsUpdate() {
+  if (!s_profile_pin_dots) return;
+  char dots[24];
+  size_t p = 0;
+  for (uint8_t i = 0; i < s_profile_pin_len && p + 2 < sizeof(dots); ++i) {
+    if (p) dots[p++] = ' ';
+    dots[p++] = '*';
+  }
+  dots[p] = '\0';
+  lv_label_set_text(s_profile_pin_dots, p ? dots : "-");
+}
+
+static void lockscreenProfileReset() {
+  memset(s_profile_pin, 0, sizeof(s_profile_pin));
+  s_profile_pin_len = 0;
+  lockscreenProfileDotsUpdate();
+  if (s_profile_pin_status) {
+    lv_label_set_text(s_profile_pin_status,
+                      the_mesh.profileModeEnabled() ? TR("Parent or kid PIN")
+                                                    : TR("PIN - message backlog unavailable"));
+  }
+  if (s_profile_pin_btnm) lv_obj_clear_state(s_profile_pin_btnm, LV_STATE_DISABLED);
+}
+
+static void lockscreenProfileUnlockAsync(void* arg) {
+  const uint8_t profile = (uint8_t)(uintptr_t)arg;
+  if (!g_lv.task || !g_lv.task->unlockProfile(profile)) {
+    if (s_profile_pin_status)
+      lv_label_set_text(s_profile_pin_status, TR("Could not open profile"));
+    if (s_profile_pin_btnm) lv_obj_clear_state(s_profile_pin_btnm, LV_STATE_DISABLED);
+  }
+}
+
+static void lockscreenProfileSubmit() {
+  const uint32_t now = millis();
+  if ((int32_t)(now - s_profile_pin_block_until) < 0) {
+    if (s_profile_pin_status) {
+      const uint32_t secs = (s_profile_pin_block_until - now + 999u) / 1000u;
+      lv_label_set_text_fmt(s_profile_pin_status, TR("Try again in %u s"), (unsigned)secs);
+    }
+    return;
+  }
+  if (s_profile_pin_len < 4) {
+    if (s_profile_pin_status) lv_label_set_text(s_profile_pin_status, TR("PIN must be 4-8 digits"));
+    return;
+  }
+
+  char candidate[sizeof(s_profile_pin)];
+  memcpy(candidate, s_profile_pin, sizeof(candidate));
+  lockscreenProfileReset();
+  const int profile = touchPrefsMatchProfilePin(candidate);
+  memset(candidate, 0, sizeof(candidate));
+  if (profile < 0) {
+    if (s_profile_pin_failures < 8) ++s_profile_pin_failures;
+    uint32_t wait_s = 1u << (s_profile_pin_failures > 5 ? 5 : s_profile_pin_failures);
+    if (wait_s > 30u) wait_s = 30u;
+    s_profile_pin_block_until = now + wait_s * 1000u;
+    if (s_profile_pin_status)
+      lv_label_set_text_fmt(s_profile_pin_status, TR("Wrong PIN - wait %u s"), (unsigned)wait_s);
+    return;
+  }
+
+  s_profile_pin_failures = 0;
+  s_profile_pin_block_until = 0;
+  if (s_profile_pin_status) lv_label_set_text(s_profile_pin_status, TR("Opening profile..."));
+  if (s_profile_pin_btnm) lv_obj_add_state(s_profile_pin_btnm, LV_STATE_DISABLED);
+  lv_refr_now(nullptr);
+  lv_async_call(lockscreenProfileUnlockAsync, (void*)(uintptr_t)profile);
+}
+
+static bool lockscreenProfileKey(int key) {
+  if (!touchPrefsGetKidMode() || !g_lv.task || !g_lv.task->isManualLock()) return false;
+  if (key >= '0' && key <= '9') {
+    if ((int32_t)(millis() - s_profile_pin_block_until) < 0) {
+      lockscreenProfileSubmit();
+      return true;
+    }
+    if (s_profile_pin_len < 8) {
+      s_profile_pin[s_profile_pin_len++] = (char)key;
+      s_profile_pin[s_profile_pin_len] = '\0';
+      lockscreenProfileDotsUpdate();
+      if (s_profile_pin_status) lv_label_set_text(s_profile_pin_status, TR("Parent or kid PIN"));
+    }
+    return true;
+  }
+  if (key == 0x08 || key == 0x7F) {
+    if (s_profile_pin_len > 0) {
+      s_profile_pin[--s_profile_pin_len] = '\0';
+      lockscreenProfileDotsUpdate();
+    }
+    return true;
+  }
+  if (key == '\r' || key == '\n') {
+    lockscreenProfileSubmit();
+    return true;
+  }
+  return true;   // consume every other key while the PIN gate is active
+}
+
+static void lockscreenProfileBtnCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* btnm = lv_event_get_target(e);
+  const uint16_t idx = lv_btnmatrix_get_selected_btn(btnm);
+  if (idx == LV_BTNMATRIX_BTN_NONE) return;
+  const char* txt = lv_btnmatrix_get_btn_text(btnm, idx);
+  if (!txt) return;
+  if (txt[0] >= '0' && txt[0] <= '9' && txt[1] == '\0') lockscreenProfileKey(txt[0]);
+  else if (strcmp(txt, "OK") == 0) lockscreenProfileKey('\r');
+  else lockscreenProfileKey(0x08);
+}
 
 // Decode the configured wallpaper (internal SPIFFS path, or an "sd:"-prefixed SD
 // path) into a fresh RGB565 buffer; fall back to the embedded placeholder.
@@ -34122,6 +34396,68 @@ static void lockscreenShow() {
 #else
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
 #endif
+
+  if (touchPrefsGetKidMode()) {
+    lv_obj_add_flag(st, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(hint, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN);
+    if (sw < 420) lv_obj_add_flag(s_lock_clock, LV_OBJ_FLAG_HIDDEN);
+
+    const lv_coord_t card_w = sw >= 420 ? 238 : (sw > 236 ? 220 : sw - 12);
+    const lv_coord_t card_h = sh >= 300 ? 260 : sh - 16;
+    lv_obj_t* card = lv_obj_create(s_lock_root);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, card_w, card_h);
+    if (sw >= 420) lv_obj_align(card, LV_ALIGN_RIGHT_MID, -8, 0);
+    else lv_obj_align(card, LV_ALIGN_CENTER, 0, 5);
+    lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_90, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, 12, LV_PART_MAIN);
+    lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* title = lv_label_create(card);
+    lv_label_set_text(title, TR("Enter profile PIN"));
+    lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    s_profile_pin_dots = lv_label_create(card);
+    lv_obj_set_style_text_font(s_profile_pin_dots, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_profile_pin_dots, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_align(s_profile_pin_dots, LV_ALIGN_TOP_MID, 0, 24);
+
+    s_profile_pin_status = lv_label_create(card);
+    lv_obj_set_width(s_profile_pin_status, card_w - 16);
+    lv_obj_set_style_text_align(s_profile_pin_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_profile_pin_status, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_profile_pin_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_align(s_profile_pin_status, LV_ALIGN_TOP_MID, 0, 45);
+
+    static const char* pin_map[] = {
+      "1", "2", "3", "\n",
+      "4", "5", "6", "\n",
+      "7", "8", "9", "\n",
+      LV_SYMBOL_BACKSPACE, "0", "OK", ""
+    };
+    s_profile_pin_btnm = lv_btnmatrix_create(card);
+    lv_btnmatrix_set_map(s_profile_pin_btnm, pin_map);
+    lv_obj_set_size(s_profile_pin_btnm, card_w - 16, card_h - 72);
+    lv_obj_align(s_profile_pin_btnm, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_opa(s_profile_pin_btnm, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_profile_pin_btnm, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_profile_pin_btnm, 2, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(s_profile_pin_btnm, 3, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(s_profile_pin_btnm, 3, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_profile_pin_btnm, lv_color_hex(0x25282D), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(s_profile_pin_btnm, lv_color_hex(COLOR_ACCENT), LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(s_profile_pin_btnm, lv_color_hex(COLOR_TEXT), LV_PART_ITEMS);
+    lv_obj_set_style_radius(s_profile_pin_btnm, 7, LV_PART_ITEMS);
+    lv_obj_add_event_cb(s_profile_pin_btnm, lockscreenProfileBtnCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lockscreenProfileReset();
+  }
 }
 
 static void lockscreenHide() {
@@ -34134,6 +34470,11 @@ static void lockscreenHide() {
   if (s_lock_wall) { lv_img_cache_invalidate_src(&s_lock_wall_dsc); lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
   s_lock_clock_min = -1;
   s_lock_unread_n  = -1;
+  s_profile_pin_dots = nullptr;
+  s_profile_pin_status = nullptr;
+  s_profile_pin_btnm = nullptr;
+  memset(s_profile_pin, 0, sizeof(s_profile_pin));
+  s_profile_pin_len = 0;
   // Restore the status bar's normal opaque background + accent border.
   if (g_statusbar.root) {
     lv_obj_set_style_bg_opa(g_statusbar.root, LV_OPA_COVER, LV_PART_MAIN);
@@ -34151,9 +34492,21 @@ static void serviceLockscreen() {
   if (t > 0) { time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v); mm = v.tm_min; }
   if (mm != s_lock_clock_min) lockscreenUpdateClock();
   unsigned long now = millis();
-  if (now - s_lock_unread_ms >= 1000) { s_lock_unread_ms = now; lockscreenUpdateUnread(); }
+  if (now - s_lock_unread_ms >= 1000) {
+    s_lock_unread_ms = now;
+    lockscreenUpdateUnread();
+    if (s_profile_pin_status && s_profile_pin_block_until) {
+      if ((int32_t)(now - s_profile_pin_block_until) >= 0) {
+        s_profile_pin_block_until = 0;
+        lv_label_set_text(s_profile_pin_status, TR("Parent or kid PIN"));
+      } else {
+        const uint32_t secs = (s_profile_pin_block_until - now + 999u) / 1000u;
+        lv_label_set_text_fmt(s_profile_pin_status, TR("Try again in %u s"), (unsigned)secs);
+      }
+    }
+  }
 }
-#endif  // core lock screen (HAS_TDECK_GT911 || HAS_TANMATSU)
+#endif  // lock screen and two-profile PIN gate
 
 #if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck (SD/SPIFFS) or pager (SPIFFS only)
 // ---- Notification-sound chooser (Settings -> Sound) ------------------------
@@ -35074,6 +35427,11 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
 static void handleHwKey(int key) {
   if (!g_lv.keyboard) return;
 if (g_lv.task && g_lv.task->isManualLock()) {
+    if (touchPrefsGetKidMode()) {
+      g_lv.task->lockscreenReveal();
+      lockscreenProfileKey(key);
+      return;
+    }
 #if defined(HAS_M9_KEYBOARD)
     // M9 has no trackball to hold — the keyboard controller's own long-press
     // detection (M9_KEY_ENTER_LONG, a distinct byte from a normal Enter tap)
@@ -42154,8 +42512,30 @@ void UITask::flushHistoryIfDue(unsigned long now) {
 // found" spam — the history flush runs every ~2 s, and re-calling SPIFFS.begin()
 // each time both logged the error and, under Launcher, never actually persisted
 // the chat to the SD card.
-static fs::FS* s_ui_data_fs       = nullptr;
-static char    s_ui_data_root[16] = "";
+static fs::FS* s_ui_data_fs            = nullptr;
+static char    s_ui_data_base_root[16] = "";
+static char    s_ui_data_root[40]      = "";
+static uint8_t s_ui_data_profile       = 0;
+
+static void uiDataApplyProfileRoot() {
+  if (s_ui_data_profile == 0) {
+    snprintf(s_ui_data_root, sizeof(s_ui_data_root), "%s", s_ui_data_base_root);
+  } else {
+    snprintf(s_ui_data_root, sizeof(s_ui_data_root), "%s/profile1", s_ui_data_base_root);
+    if (s_ui_data_fs) s_ui_data_fs->mkdir(s_ui_data_root);
+  }
+}
+
+static void uiDataSetBaseRoot(const char* root) {
+  snprintf(s_ui_data_base_root, sizeof(s_ui_data_base_root), "%s", root ? root : "");
+  uiDataApplyProfileRoot();
+}
+
+static void uiDataSelectProfile(uint8_t profile) {
+  s_ui_data_profile = profile > 1 ? 0 : profile;
+  uiDataApplyProfileRoot();
+}
+
 static bool uiDataFsReady() {
   if (s_ui_data_fs != nullptr) return true;   // cache SUCCESS only — a failed resolve MUST stay retryable
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
@@ -42170,12 +42550,12 @@ static bool uiDataFsReady() {
   // (see the storage note in tdisplay_p4/main/main.cpp). SD = degraded fallback only;
   // tiles keep using the SD via their own selector.
   extern bool g_fs_ok;
-  if (g_fs_ok) { s_ui_data_fs = &LittleFS; s_ui_data_root[0] = '\0'; return true; }
+  if (g_fs_ok) { s_ui_data_fs = &LittleFS; uiDataSetBaseRoot(""); return true; }
   extern bool g_sd_ok;
   if (g_sd_ok) {
     SD_MMC.mkdir("/meshcomod");
     s_ui_data_fs = &SD_MMC;
-    strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+    uiDataSetBaseRoot("/meshcomod");
     return true;
   }
 #elif defined(HAS_TDECK_GT911)
@@ -42187,17 +42567,17 @@ static bool uiDataFsReady() {
     s_sd_mounted = true;
     SD.mkdir("/meshcomod");
     s_ui_data_fs = &SD;
-    strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+    uiDataSetBaseRoot("/meshcomod");
     return true;
   }
-  if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
+  if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; uiDataSetBaseRoot(""); return true; }
 #else
   // V4 (no SD): internal SPIFFS. Format-on-fail so a fresh / never-formatted
   // partition becomes usable — that's the V4 history-loss fix. Safe: only formats
   // an unmountable partition (contents were inaccessible anyway), and only when
   // begin(false) already failed.
   if (SPIFFS.begin(false) || SPIFFS.begin(true)) {
-    s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0';
+    s_ui_data_fs = &SPIFFS; uiDataSetBaseRoot("");
     return true;
   }
 #endif
@@ -44213,6 +44593,15 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _sensors    = sensors;
   _node_prefs = node_prefs;
 
+#if defined(ESP32)
+  const bool kid_mode_enabled = touchPrefsGetKidMode();
+  const bool profile_backlog_ready =
+      !kid_mode_enabled || the_mesh.setProfileModeEnabled(true);
+#else
+  const bool kid_mode_enabled = false;
+  const bool profile_backlog_ready = true;
+#endif
+
   // #161 one-time heal: presets used to write airtime_factor = pct/100 (a 10% preset
   // configured ~91% duty). Exact-preset matches with the old value get the correct
   // factor rewritten + persisted; see healPresetAirtimeFactor for the guard.
@@ -44569,7 +44958,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // internal-flash devices keep 500. Decided once, before the alloc; the loader
   // linearizes a history file written under either capacity.
 #if defined(ESP32)
-  _ui_msg_cap = uiDataFsIsSdCard() ? MAX_UI_MESSAGES_SD : MAX_UI_MESSAGES;
+  uiDataSelectProfile(the_mesh.activeLocalProfile());
+  _ui_msg_cap = kid_mode_enabled
+                    ? (profile_backlog_ready ? MAX_UI_MESSAGES_KID : MAX_UI_MESSAGES)
+                    : (uiDataFsIsSdCard() ? MAX_UI_MESSAGES_SD : MAX_UI_MESSAGES);
   uiDataEnsureDirs();   // segment dir exists before the loader scans / the first append
 #endif
   size_t msgs_bytes          = sizeof(UIMessage) * (size_t)_ui_msg_cap;
@@ -44579,6 +44971,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (!_ui_msgs && _ui_msg_cap > MAX_UI_MESSAGES) {
       // PSRAM can't fit the deep ring (unexpected) — drop to the base size rather
       // than strand 1.3 MB in internal RAM via the fallback below.
+      // In profile mode, the encrypted queue and the 2,000-entry UI ring are a
+      // single feature: replaying the full queue into a 500-entry ring would
+      // silently discard most of it. Free the queue and leave the PIN screen's
+      // explicit "backlog unavailable" warning active instead.
+      if (kid_mode_enabled) the_mesh.setProfileModeEnabled(false);
       _ui_msg_cap = MAX_UI_MESSAGES;
       msgs_bytes  = sizeof(UIMessage) * (size_t)_ui_msg_cap;
       _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
@@ -45034,6 +45431,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(ESP32)
     if (!s_setup_root) crashReportMaybePrompt();   // a panic coredump is waiting -> proactively offer to send it
 #endif
+    // A stale/reset setup-complete flag must not expose the setup wizard over a
+    // previously configured profile gate. The verified PIN unlock simply
+    // reveals the wizard underneath when one is present.
+    if (kid_mode_enabled) lockScreen();
   }
   g_lv.dirty_threads      = true;
   g_lv.dirty_timeline     = true;
@@ -45162,7 +45563,11 @@ void UITask::rebuildThreadHistoryFlags() const {
 // oldest end finds them immediately for the chat that is actually over the cap (it is the one
 // filling the ring), so the common case is a couple of steps, not a full scan.
 void UITask::enforceHistoryCap(int thread_idx) {
-  const uint16_t cap = touchPrefsGetHistPerChat();
+  // Profile unlock can legitimately release a whole queued burst into one
+  // channel. Preserve all of it up to the profile ring's 2,000-message limit;
+  // the normal per-chat preference resumes when two-profile mode is disabled.
+  const uint16_t cap = touchPrefsGetKidMode() ? (uint16_t)MAX_UI_MESSAGES_KID
+                                               : touchPrefsGetHistPerChat();
   if (!cap || thread_idx < 0 || thread_idx >= MAX_UI_THREADS || !_ui_threads[thread_idx].used) return;
   if (_thread_hist_dirty) rebuildThreadHistoryFlags();
   if (_thread_msgs[thread_idx] <= cap) return;
@@ -45906,6 +46311,10 @@ void UITask::noteUserInput() {
 }
 
 void UITask::wakeScreen() {
+  if (_manual_lock && touchPrefsGetKidMode() && !_profile_pin_authorized) {
+    lockscreenReveal();
+    return;
+  }
   if (!_screen_off) return;
   setCpuForScreen(true);     // back to 240 MHz before we render
   touchScreenBacklight(true);
@@ -45917,6 +46326,21 @@ void UITask::wakeScreen() {
 void UITask::lockScreen() {
   // Backlight off + manual lock so touch is ignored (noteUserInput()
   // early-returns) until a deliberate unlock.
+  _profile_pin_authorized = false;
+#if CAP_LOCK_SCREEN || CAP_PROFILE_PIN
+  if (touchPrefsGetKidMode()) {
+    the_mesh.lockEncryptedBacklog();
+    lockscreenProfileReset();
+    _manual_lock = true;
+    _screen_off = false;
+    setCpuForScreen(true);
+    touchScreenBacklight(true);
+    lockscreenShow();
+    _lock_lit_ms = millis();
+    _last_input_ms = millis();
+    return;
+  }
+#endif
 #if defined(HAS_TANMATSU)
   // Tanmatsu: a Vol- LONG-press locks. Light the screen + build/show the lock-screen overlay (so the
   // wallpaper + clock are visible the moment you lock) and block app input (_manual_lock). Another
@@ -45943,7 +46367,7 @@ void UITask::lockScreen() {
 }
 
 void UITask::lockscreenReveal() {
-#if CAP_LOCK_SCREEN
+#if CAP_LOCK_SCREEN || CAP_PROFILE_PIN
   if (!_manual_lock) return;
   if (_screen_off) {
     lockscreenShow();               // build + foreground FIRST
@@ -45958,13 +46382,18 @@ void UITask::lockscreenReveal() {
 }
 
 void UITask::unlockScreen() {
+  if (_manual_lock && touchPrefsGetKidMode() && !_profile_pin_authorized) {
+    lockscreenReveal();
+    return;
+  }
   _manual_lock = false;
   _screen_off  = false;
   setCpuForScreen(true);
   touchScreenBacklight(true);
-#if CAP_LOCK_SCREEN
+#if CAP_LOCK_SCREEN || CAP_PROFILE_PIN
   lockscreenHide();
 #endif
+  _profile_pin_authorized = false;
   _last_input_ms = millis();
 }
 
@@ -46059,6 +46488,151 @@ void UITask::persistHistoryNow() {
   saveMsgsToStorage();
 }
 
+bool UITask::enableKidMode(const char* parent_pin, const char* kid_pin) {
+  const bool profile_mode_was_enabled = the_mesh.profileModeEnabled();
+  if (!the_mesh.setProfileModeEnabled(true)) return false;
+
+  // Drain the current profile before changing the logical ring geometry. A
+  // worker that is still stuck after the bounded wait owns an old-root file
+  // handle, so changing profiles/capacity while it is alive is unsafe.
+  persistHistoryNow();
+  if (s_hist_flush_busy) {
+    if (!profile_mode_was_enabled) the_mesh.setProfileModeEnabled(false);
+    return false;
+  }
+
+  UIMessage* resized = nullptr;
+  int keep = _ui_msg_count;
+  if (keep > MAX_UI_MESSAGES_KID) keep = MAX_UI_MESSAGES_KID;
+  if (_ui_msg_cap != MAX_UI_MESSAGES_KID) {
+    const size_t bytes = sizeof(UIMessage) * (size_t)MAX_UI_MESSAGES_KID;
+    resized = (UIMessage*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    if (!resized) resized = (UIMessage*)heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
+    if (!resized) {
+      if (!profile_mode_was_enabled) the_mesh.setProfileModeEnabled(false);
+      return false;
+    }
+    memset(resized, 0, bytes);
+    const int skip = _ui_msg_count - keep;
+    for (int i = 0; i < keep; ++i) {
+      const int slot = (_ui_msg_head - _ui_msg_count + skip + i + _ui_msg_cap) % _ui_msg_cap;
+      resized[i] = _ui_msgs[slot];
+    }
+  }
+
+  if (!touchPrefsSetProfilePins(parent_pin, kid_pin)) {
+    if (resized) heap_caps_free(resized);
+    if (!profile_mode_was_enabled) the_mesh.setProfileModeEnabled(false);
+    return false;
+  }
+
+  if (resized) {
+    UIMessage* previous = _ui_msgs;
+    _ui_msgs = resized;
+    _ui_msg_cap = MAX_UI_MESSAGES_KID;
+    _ui_msg_count = keep;
+    _ui_msg_head = keep % _ui_msg_cap;
+    if (previous) heap_caps_free(previous);
+    _thread_hist_dirty = true;
+
+    // Rewrite the active profile's segmented store from the retained 2,000 and
+    // purge segment files that only contained evicted older records.
+    uiHistoryStoreStateReset();
+    s_seg_store_ready = true;
+    s_seg_resync = true;
+    _msgs_dirty = true;
+    saveThreadsToStorage();
+    saveMsgsToStorage();
+  }
+
+  refreshThreadsFromMesh();
+  refreshThreadLists();
+  lockScreen();
+  return true;
+}
+
+bool UITask::disableKidMode() {
+  if (the_mesh.activeLocalProfile() != 0) return false;
+  if (!touchPrefsDisableKidMode()) return false;
+  the_mesh.setProfileModeEnabled(false);
+  _profile_pin_authorized = false;
+  return true;
+}
+
+bool UITask::unlockProfile(uint8_t profile) {
+  if (!touchPrefsGetKidMode() || profile > 1) return false;
+
+  if (profile != the_mesh.activeLocalProfile()) {
+    persistHistoryNow();
+    if (s_hist_flush_busy) return false;
+
+    hideKb();
+    if (g_lv.dm.detail_open) closeChatPanel(&g_lv.dm);
+    if (g_lv.ch.detail_open) closeChatPanel(&g_lv.ch);
+    for (int i = 0; i < 12 && anyPopupOpen(); ++i) popupRegistryDismissTop();
+    closeSettingsCategory();
+
+    if (!the_mesh.selectLocalProfile(profile)) return false;
+
+    uiDataSelectProfile(profile);
+    uiDataEnsureDirs();
+    uiHistoryStoreStateReset();
+
+    _msgcount = 0;
+    _ui_seq_next = 1;
+    _ui_msg_count = 0;
+    _ui_msg_head = 0;
+    _next_thread_seed = 0;
+    _active_thread_idx = -1;
+    _active_thread_is_channel = false;
+    _thread_scroll = 0;
+    _composer_mode = false;
+    _composer_char_idx = 0;
+    _composer_action_idx = 0;
+    _compose_buf[0] = '\0';
+    _active_dm_contact_set = false;
+    memset(_active_dm_contact_pub, 0, sizeof(_active_dm_contact_pub));
+    memset(_thread_msgs, 0, sizeof(_thread_msgs));
+    _thread_hist_dirty = true;
+    _threads_dirty = false;
+    _msgs_dirty = false;
+    _next_threads_flush_ms = 0;
+    _next_msgs_flush_ms = 0;
+    if (_ui_msgs) memset(_ui_msgs, 0, sizeof(UIMessage) * (size_t)_ui_msg_cap);
+    if (_ui_threads) {
+      memset(_ui_threads, 0, sizeof(UIThread) * MAX_UI_THREADS);
+      for (int i = 0; i < MAX_UI_THREADS; ++i) {
+        _ui_threads[i].mesh_contact_idx = -1;
+        _ui_threads[i].mesh_channel_slot = -1;
+      }
+    }
+    chatVirtReset(&g_lv.dm);
+    chatVirtReset(&g_lv.ch);
+    loadHistoryFromStorage();
+    refreshThreadsFromMesh();
+  }
+
+  const int replayed = the_mesh.replayEncryptedBacklog();
+  refreshThreadsFromMesh();
+  refreshThreadLists();
+  contactsListForceRefresh();
+  goToTab(HOME_TAB_INDEX);
+  refreshStatusLabels();
+  updateGlobalStatusBar();
+
+  _profile_pin_authorized = true;
+  unlockScreen();
+  char msg[64];
+  if (replayed > 0) {
+    snprintf(msg, sizeof(msg), profile == 0 ? "Parent profile - %d messages unlocked"
+                                             : "Kid profile - %d messages unlocked", replayed);
+  } else {
+    snprintf(msg, sizeof(msg), profile == 0 ? "Parent profile" : "Kid profile");
+  }
+  showAlert(msg, 1600);
+  return true;
+}
+
 void UITask::rebootDevice() {
   // Persist chat history synchronously before we reboot — the periodic
   // flush is rate-capped, so without this a reboot could drop the most
@@ -46125,6 +46699,7 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       : (channel
       ? (parsed_sender[0] ? parsed_sender : (from_name && from_name[0] ? from_name : "node"))
       : (from_name && from_name[0] ? from_name : "node"));
+  const bool replaying_backlog = the_mesh.replayingEncryptedBacklog();
 
 #if defined(ESP32)
   // Blocked-by-name sender: a channel/room bot we have no pubkey to target via
@@ -46149,7 +46724,7 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     const bool is_mention = channel && text && textMentionsMe(text);
     const bool is_dm = (g_last_event == UIEventType::contactMessage);   // private/direct message
     const uint8_t cmute = channel ? touchPrefsGetChannelMute(thread) : 0;
-    if (!isBuzzerQuiet() && !dndActive()) {   // master Sound switch / Do Not Disturb: either silences everything
+    if (!replaying_backlog && !isBuzzerQuiet() && !dndActive()) {   // unlock replay stays silent
       if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) uiPlaySlot(TOUCH_SND_MEN);
       else if (is_dm) { if (touchPrefsGetSoundDirect()) uiPlaySlot(TOUCH_SND_DM); }
       else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          uiPlaySlot(TOUCH_SND_MSG);
@@ -46191,7 +46766,7 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
 #if defined(HAS_TDECK_GT911)
   // Mirror incoming traffic into the terminal live feed (only while it's open).
   // Runs on the mesh thread (core 1, same as the UI loop) so the append is safe.
-  if (s_term_log_box) {
+  if (s_term_log_box && !replaying_backlog) {
     char line[200];
     const bool  has_snr = (meta_flags & MSG_META_HAS_RX);
     const float snr     = snr_q4 / 4.0f;
@@ -46322,6 +46897,12 @@ void UITask::notify(UIEventType t) {
   // even while a companion app is connected (issue #73). Flag it; UITask::loop does
   // the rebuild on the LVGL thread (refreshContactsList no-op's when nothing changed).
   if (t == UIEventType::newContactMessage) s_ct_contacts_dirty = true;
+  // Backlog replay still needs g_last_event so newMsg() routes each decoded packet
+  // into the correct DM/channel thread. Do not turn a profile unlock into as many
+  // as 2,000 LEDs, wakeups, toasts, and diagnostic lines, though.
+  if (the_mesh.replayingEncryptedBacklog() &&
+      (t == UIEventType::contactMessage || t == UIEventType::channelMessage ||
+       t == UIEventType::roomMessage)) return;
   const char* msg = nullptr;
   switch (t) {
     case UIEventType::contactMessage:    msg = TR("New DM");          break;
@@ -46671,7 +47252,7 @@ void UITask::loop() {
         lockscreenReveal();          // light the lock screen, don't unlock
         s_tb_hold_start = now;
       }
-      if (tb_pressed && s_tb_hold_start && !_screen_off) {
+      if (!touchPrefsGetKidMode() && tb_pressed && s_tb_hold_start && !_screen_off) {
         const unsigned long held = now - s_tb_hold_start;
         if (held >= kLockUnlockHoldMs) {
           unlockScreen();            // hides the "Unlocking…" popup too
@@ -46747,6 +47328,7 @@ void UITask::loop() {
         setCpuForScreen(false);
         _screen_off  = true;
         _manual_lock = true;  // touch cannot unlock until BOOT pressed again
+        if (touchPrefsGetKidMode()) the_mesh.lockEncryptedBacklog();
       }
     }
 #endif
@@ -46784,7 +47366,7 @@ void UITask::loop() {
     // The P4 has no unlock path (no button/overlay), so it must NEVER hard-lock, even if an old
     // pref left the flag set — it always takes the plain screen-off branch below, which wakes on
     // touch. (Guards the trap; the "Lock when screen off" toggle is also hidden on the P4.)
-    if (s_lock_on_screen_off && !_manual_lock) {
+    if ((s_lock_on_screen_off || touchPrefsGetKidMode()) && !_manual_lock) {
       // "Lock when screen off": idle dim also hard-locks, so the touchscreen is
       // inert until a deliberate unlock (trackball hold on the T-Deck, BOOT
       // press on the V4) — Tim's request to stop pocket-taps while dark. The
@@ -47072,11 +47654,14 @@ void UITask::loop() {
     // very next tick right after waking.
     bool any = false;
     bool saw_backspace = false;
+    int locked_keys[12];
+    int locked_key_count = 0;
     for (int kbi = 0; kbi < 12; ++kbi) {
       int k = pagerKeyboardReadKey();
       if (k <= 0) break;
       any = true;
       if (k == 0x08) saw_backspace = true;
+      locked_keys[locked_key_count++] = k;
     }
     // Discard any Alt tap / Alt+Shift / Alt+Backspace chord picked up while
     // idle-dimmed -- none of them may fire (NEXT / Caps toggle / jump Home)
@@ -47096,7 +47681,12 @@ void UITask::loop() {
     // while the screen was actually dark did nothing (reported bug) even
     // though holding it through to unlockScreen worked fine.
     if (g_lv.task->isManualLock()) {
-      if (saw_backspace) g_lv.task->lockscreenReveal();
+      if (touchPrefsGetKidMode()) {
+        if (any) g_lv.task->lockscreenReveal();
+        for (int i = 0; i < locked_key_count; ++i) lockscreenProfileKey(locked_keys[i]);
+      } else if (saw_backspace) {
+        g_lv.task->lockscreenReveal();
+      }
     } else if (any) {
       g_lv.task->wakeScreen();
     }
@@ -47133,6 +47723,9 @@ void UITask::loop() {
   }
   serviceLockscreen();
   serviceLockingCountdown(now);
+#endif
+#if !CAP_KEYBOARD
+  serviceLockscreen();
 #endif
 #if defined(ATTAKY_MESH_SERIES)
   // POWER_BTN (AW9523 @0x59 P07) toggles the panel. Polled before the screen-off

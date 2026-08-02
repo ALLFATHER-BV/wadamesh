@@ -153,6 +153,7 @@ public:
     self_id = identity;
     resetContacts();
     _store->loadContacts(this);
+    requestEncryptedBacklogRescan();
     return true;
   }
   /** Add/merge a contact from a settings backup (name + pubkey + flags + GPS).
@@ -167,7 +168,9 @@ public:
     c.last_advert_timestamp = last_advert; c.lastmod = lastmod;
     c.out_path_len = OUT_PATH_UNKNOWN;
     strncpy(c.name, name ? name : "", sizeof(c.name) - 1);
-    return addContact(c);
+    if (!addContact(c)) return false;
+    requestEncryptedBacklogRescan();
+    return true;
   }
   // Channel count by iterating slots — `num_channels` is private in the base.
   // A channel slot is in-use when its name is non-empty (matches the lookup
@@ -791,6 +794,25 @@ private:
 public:
   bool savePrefs() { return _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon); }
 
+  // Switch the live mesh identity/contact/channel store without rebooting.
+  // Profile 0 uses all legacy paths; profile 1 is isolated below /profile1.
+  bool selectLocalProfile(uint8_t profile);
+  uint8_t activeLocalProfile() const { return _active_profile; }
+  bool setProfileModeEnabled(bool enabled);
+  bool profileModeEnabled() const { return _profile_mode_enabled; }
+
+  // Decrypt every shared encrypted backlog record not yet consumed by the
+  // active profile. This is called only after its PIN has unlocked that profile.
+  int replayEncryptedBacklog();
+  bool replayingEncryptedBacklog() const { return _replaying_backlog; }
+  int encryptedBacklogCount() const { return _rx_backlog_count; }
+  uint32_t encryptedBacklogDuplicates() const { return _rx_backlog_dups; }
+  // Key material can arrive after a packet (manual contact add, advert scan,
+  // channel import). Queue a safe pass from MyMesh::loop; it runs immediately
+  // only while the active profile has already passed its PIN gate.
+  void requestEncryptedBacklogRescan();
+  void lockEncryptedBacklog() { _profile_backlog_unlocked = false; }
+
   // Set the default flood scope (region) used to tag outgoing flood packets, so
   // repeaters on region-scoped networks ("flood only for their region") will
   // re-broadcast them. A public "#hashtag" region's scope key is SHA256("#name");
@@ -837,6 +859,7 @@ public:
     memset(channel.channel.secret, 0, sizeof(channel.channel.secret));
     memcpy(channel.channel.secret, secret16, 16);
     if (!setChannel(idx, channel)) return false;
+    requestEncryptedBacklogRescan();
     saveChannels();
     if (_ui) _ui->onThreadsChanged();
     return true;
@@ -884,6 +907,7 @@ public:
     ci.lastmod      = getRTCClock()->getCurrentTime();
     StrHelper::strncpy(ci.name, name, sizeof(ci.name));
     if (!addContact(ci)) return false;
+    requestEncryptedBacklogRescan();
     saveContacts();
     if (_ui) _ui->onThreadsChanged();
     return true;
@@ -905,6 +929,7 @@ public:
     ci.lastmod      = getRTCClock()->getCurrentTime();
     StrHelper::strncpy(ci.name, name, sizeof(ci.name));
     if (!addContact(ci)) return false;
+    requestEncryptedBacklogRescan();
     saveContacts();
     if (_ui) _ui->onThreadsChanged();
     return true;
@@ -927,6 +952,7 @@ public:
   bool uiRemoveContact(const ContactInfo& c) {
     ContactInfo* slot = lookupContactByPubKey(c.id.pub_key, PUB_KEY_SIZE);
     if (!slot || !removeContact(*slot)) return false;
+    requestEncryptedBacklogRescan();  // also keeps auto-add count tracking in sync
     _store->deleteBlobByKey(c.id.pub_key, PUB_KEY_SIZE);
     saveContacts();
     if (_ui) _ui->onThreadsChanged();
@@ -962,6 +988,7 @@ public:
     }
 #endif
     if (addChannel("Public", "izOH6cXN6mrJ5e26oRXNcg==") == nullptr) return false;
+    requestEncryptedBacklogRescan();
     saveChannels();
     if (_ui) _ui->onThreadsChanged();
     return true;
@@ -1035,6 +1062,15 @@ private:
   void checkCLIRescueCmd();
   void checkSerialInterface();
   bool isValidClientRepeatFreq(uint32_t f) const;
+  void captureEncryptedMessage(const uint8_t raw[], int len, int8_t snr_q4, int8_t rssi);
+  void markEncryptedMessageSeen(const mesh::Packet* packet);
+  bool decryptBacklogRecord(uint16_t idx, bool queue_ack);
+  bool findDecryptingContact(const mesh::Packet& packet, ContactInfo& contact,
+                             uint8_t secret[PUB_KEY_SIZE], uint8_t data[MAX_PACKET_PAYLOAD + 1],
+                             int& data_len);
+  void serviceReplayAck();
+  void serviceEncryptedBacklogRescan();
+  void resetProfileRuntime();
 
   // helpers, short-cuts
   void saveChannels() { _store->saveChannels(this); }
@@ -1099,6 +1135,36 @@ private:
   // putBlobByKey. Sized above a full contact list so the common case never thrashes.
   static const uint16_t kBlobSeenSlots = 512;   // power of two (mask), 2 KB total
   uint32_t _blob_seen[kBlobSeenSlots] = {0};
+
+  // The normal decrypted UI ring is 500 records; profile mode expands it to
+  // 2,000 and uses this shared queue to retain the encrypted TXT/GRP_TXT packet
+  // for either profile. Fingerprint dedupe guarantees that overflow records
+  // 501-2,000 are unique. Full packets live only in RAM and are not exposed as
+  // plaintext until a profile PIN unlocks the corresponding keys.
+  static const uint16_t RX_BACKLOG_MAX = 2000;
+  struct EncryptedRxRecord {
+    uint8_t  raw_len;
+    int8_t   snr_q4;
+    int8_t   rssi;
+    uint8_t  processed_mask;
+    uint8_t  ack_pending_mask;
+    uint8_t  ack_len;
+    uint8_t  ack[6];
+    uint8_t  fingerprint[MAX_HASH_SIZE];
+    uint8_t  raw[MAX_TRANS_UNIT];
+  };
+  EncryptedRxRecord* _rx_backlog = nullptr;
+  uint16_t _rx_backlog_head = 0;
+  uint16_t _rx_backlog_count = 0;
+  uint32_t _rx_backlog_dups = 0;
+  uint32_t _next_replay_ack_ms = 0;
+  uint8_t  _active_profile = 0;
+  bool     _profile_mode_enabled = false;
+  bool     _replaying_backlog = false;
+  int8_t   _replay_rssi = 0;
+  volatile bool _backlog_rescan_pending = false;
+  bool     _profile_backlog_unlocked = false;
+  int      _backlog_known_contact_count = 0;
 
   TransportKey send_scope;
   TransportKey _chan_scope_saved;             // push/popChannelScope stash

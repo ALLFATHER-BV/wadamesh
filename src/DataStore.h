@@ -23,8 +23,11 @@ class DataStore {
   // that, when SPIFFS is unavailable (e.g. installed under Launcher) or the user
   // opts in, all data lives in one tidy folder on the SD card. ESP32 only.
   char _root[24] = "";
-  char _rpbuf[80];
+  char _rpbuf[96];
+  char _identity_root[48] = "";
+  uint8_t _active_profile = 0;
   const char* _rp(const char* name);   // returns _root-prefixed path (name as-is when _root empty)
+  void applyIdentityRoot();
 
   void loadPrefsInt(const char *filename, NodePrefs& prefs, double& node_lat, double& node_lon);
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -35,6 +38,11 @@ public:
   DataStore(FILESYSTEM& fs, mesh::RTCClock& clock);
   DataStore(FILESYSTEM& fs, FILESYSTEM& fsExtra, mesh::RTCClock& clock);
   void begin();
+  // Select one of the two local user profiles. Profile 0 deliberately keeps
+  // the historical paths so existing installs require no migration. Profile 1
+  // lives below /profile1 (or /meshcomod/profile1 on a rooted SD store).
+  bool selectProfile(uint8_t profile);
+  uint8_t activeProfile() const { return _active_profile; }
   bool formatFileSystem();
   File openWrite(FILESYSTEM* fs, const char* filename);   // root-aware (was a free static fn)
 #if defined(ESP32)

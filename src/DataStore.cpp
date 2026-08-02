@@ -40,9 +40,47 @@ DataStore::DataStore(FILESYSTEM& fs, FILESYSTEM& fsExtra, mesh::RTCClock& clock)
 #endif
 
 const char* DataStore::_rp(const char* name) {
-  if (!_root[0]) return name;            // default: filesystem root, zero change
-  snprintf(_rpbuf, sizeof(_rpbuf), "%s%s", _root, name);
+  if (_active_profile == 0 && !_root[0]) return name; // legacy profile at filesystem root
+  snprintf(_rpbuf, sizeof(_rpbuf), "%s%s%s", _root,
+           _active_profile == 1 ? "/profile1" : "", name);
   return _rpbuf;
+}
+
+void DataStore::applyIdentityRoot() {
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  const char* legacy = "";
+#else
+  const char* legacy = "/identity";
+#endif
+  if (_active_profile == 0) {
+    snprintf(_identity_root, sizeof(_identity_root), "%s%s", _root, legacy);
+  } else {
+    snprintf(_identity_root, sizeof(_identity_root), "%s/profile1/identity", _root);
+  }
+  identity_store.use(*_fs, _identity_root);
+}
+
+bool DataStore::selectProfile(uint8_t profile) {
+  if (profile > 1) return false;
+  _active_profile = profile;
+
+  if (profile == 1) {
+    char dir[48];
+    snprintf(dir, sizeof(dir), "%s/profile1", _root);
+    _fs->mkdir(dir);
+    char bl[56];
+    snprintf(bl, sizeof(bl), "%s/profile1/bl", _root);
+    _fs->mkdir(bl);
+    char id[56];
+    snprintf(id, sizeof(id), "%s/profile1/identity", _root);
+    _fs->mkdir(id);
+    if (_fsExtra) {
+      _fsExtra->mkdir("/profile1");
+      _fsExtra->mkdir("/profile1/bl");
+    }
+  }
+  applyIdentityRoot();
+  return true;
 }
 
 File DataStore::openWrite(FILESYSTEM* fs, const char* filename) {
@@ -64,6 +102,7 @@ File DataStore::openWrite(FILESYSTEM* fs, const char* filename) {
 #endif
 
 void DataStore::begin() {
+  applyIdentityRoot();
 #if defined(RP2040_PLATFORM)
   identity_store.begin();
 #endif
@@ -212,7 +251,7 @@ bool DataStore::removeFile(const char* filename) {
 }
 
 bool DataStore::removeFile(FILESYSTEM* fs, const char* filename) {
-  return fs->remove(filename);
+  return fs->remove(_rp(filename));
 }
 
 bool DataStore::formatFileSystem() {
@@ -426,8 +465,13 @@ bool DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
       _fs->remove(_rp("/new_prefs.tmp"));   // short write (storage full?) — keep the old main file
       return false;
     }
-    _fs->remove(_rp("/new_prefs"));
-    return _fs->rename(_rp("/new_prefs.tmp"), _rp("/new_prefs"));
+    char tmp_path[96], final_path[96];
+    strncpy(tmp_path, _rp("/new_prefs.tmp"), sizeof(tmp_path) - 1);
+    tmp_path[sizeof(tmp_path) - 1] = '\0';
+    strncpy(final_path, _rp("/new_prefs"), sizeof(final_path) - 1);
+    final_path[sizeof(final_path) - 1] = '\0';
+    _fs->remove(final_path);
+    return _fs->rename(tmp_path, final_path);
   }
   return false;
 }
@@ -440,10 +484,10 @@ void DataStore::loadContacts(DataStoreHost* host) {
   {
     FILESYSTEM* cfs = _getContactsChannelsFS();
     char live[80], tmp[80];
-    if (_root[0]) { snprintf(live, sizeof live, "%s/contacts3", _root);
-                    snprintf(tmp,  sizeof tmp,  "%s/contacts3.tmp", _root); }
-    else          { strncpy(live, "/contacts3", sizeof live);
-                    strncpy(tmp,  "/contacts3.tmp", sizeof tmp); }
+    strncpy(live, _rp("/contacts3"), sizeof(live) - 1);
+    live[sizeof(live) - 1] = '\0';
+    strncpy(tmp, _rp("/contacts3.tmp"), sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
     if (cfs->exists(tmp)) {
       if (!cfs->exists(live)) cfs->rename(tmp, live);   // interrupted swap -> recover the temp
       else                    cfs->remove(tmp);          // stale temp -> the live file wins
@@ -588,10 +632,10 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
   {
     FILESYSTEM* cfs = _getContactsChannelsFS();
     char live[80], tmp[80];
-    if (_root[0]) { snprintf(live, sizeof live, "%s/contacts3", _root);
-                    snprintf(tmp,  sizeof tmp,  "%s/contacts3.tmp", _root); }
-    else          { strncpy(live, "/contacts3", sizeof live);
-                    strncpy(tmp,  "/contacts3.tmp", sizeof tmp); }
+    strncpy(live, _rp("/contacts3"), sizeof(live) - 1);
+    live[sizeof(live) - 1] = '\0';
+    strncpy(tmp, _rp("/contacts3.tmp"), sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
     if (wrote_ok) {
       cfs->remove(live);          // FAT/SPIFFS rename won't overwrite an existing target
       cfs->rename(tmp, live);     // if this rename fails, loadContacts recovers the temp at next boot
@@ -934,6 +978,7 @@ bool DataStore::useSdStorage() {
   _fs = &SD;
   _fsExtra = nullptr;
   identity_store.use(SD, "/meshcomod/identity");
+  applyIdentityRoot();
   return true;
 }
 #endif
@@ -964,6 +1009,7 @@ bool DataStore::useSdMmcStorage() {
   _fs = &SD_MMC;
   _fsExtra = nullptr;
   identity_store.use(SD_MMC, "/meshcomod/identity");
+  applyIdentityRoot();
   return true;
 }
 #endif

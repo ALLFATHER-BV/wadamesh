@@ -200,6 +200,15 @@ bool    touchPrefsSetCompactChat(bool on);
  * (the missed-messages class). Opt-in, default off = stock receive path. */
 bool    touchPrefsGetRxQueue();
 bool    touchPrefsSetRxQueue(bool on);
+
+/* Two-profile lock mode. PINs are 4-8 decimal digits and are stored as salted
+ * SHA-256 verifiers, never as plaintext. A matching PIN selects profile 0
+ * (parent) or profile 1 (kid). */
+bool touchPrefsGetKidMode();
+bool touchPrefsProfilePinsReady();
+bool touchPrefsSetProfilePins(const char* parent_pin, const char* kid_pin);
+bool touchPrefsDisableKidMode();
+int  touchPrefsMatchProfilePin(const char* pin);  // -1 = no match, otherwise 0 or 1
 uint32_t touchPrefsGetClockFloor();               // monotonic send-timestamp floor (#89)
 bool    touchPrefsSetClockFloor(uint32_t epoch);  // only ever grows; no-op below current
 

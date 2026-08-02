@@ -30,6 +30,8 @@ enum class TouchUiScreen : uint8_t { Home = 0, ChatInbox = 1, Contacts = 2, Sett
 class UITask : public AbstractUITask {
 public:
   static const int MAX_UI_MESSAGES = 500;
+  /** Two-profile mode keeps the complete decrypted unlock backlog visible. */
+  static const int MAX_UI_MESSAGES_KID = 2000;
   /** Deep ring for devices whose chat history lives on an SD card (T-Deck with a
    *  card, Tanmatsu SD_MMC): 10x the internal-flash ring. Chosen at begin() into
    *  _ui_msg_cap; PSRAM cost ~5000 * sizeof(UIMessage) ≈ 1.3 MB (of 8 MB). */
@@ -123,6 +125,10 @@ private:
    * unlock from this state, only another BOOT button press. False = the
    * screen turned off from idle timeout, in which case touch wakes it. */
   bool _manual_lock;
+  // A normal unlock gesture is never sufficient while two-profile mode is
+  // enabled. This is armed only by a matching parent/kid PIN and consumed by
+  // unlockScreen().
+  bool _profile_pin_authorized = false;
   // Burn-in guard for the lit lock screen (#55): stamped when the lock screen goes from off->lit;
   // the loop dims a hard-locked LIT panel a bounded time after this, independent of the screen-timeout
   // setting and of held/ghost touches that keep re-revealing it. 0 = not currently lit-locked.
@@ -143,9 +149,9 @@ private:
   uint32_t _ui_seq_next = 1;
   int _ui_msg_count;
   int _ui_msg_head;
-  /** Runtime ring capacity: MAX_UI_MESSAGES_SD when history lives on an SD card,
-   *  else MAX_UI_MESSAGES. Fixed for the whole boot (chosen before the PSRAM
-   *  alloc in begin()); the loader linearizes files written under another cap. */
+  /** Runtime ring capacity: 2000 in two-profile mode, MAX_UI_MESSAGES_SD when
+   *  normal history lives on an SD card, else MAX_UI_MESSAGES. The loader
+   *  linearizes files written under another cap. */
   int _ui_msg_cap = MAX_UI_MESSAGES;
   /** "Does this thread have any stored message?", answered in O(1).
    *
@@ -364,7 +370,7 @@ public:
     if (idx < 0 || idx >= MAX_UI_THREADS || !_ui_threads[idx].used || !_ui_threads[idx].channel) return -1;
     return _ui_threads[idx].mesh_channel_slot;
   }
-  /** Message-ring capacity this boot (500, or 5000 with SD-backed history). */
+  /** Message-ring capacity this boot (500, 2000 in profile mode, or 5000 on SD). */
   int  msgCap() const { return _ui_msg_cap; }
   /** DM thread's full contact pubkey (32 B) — for the chat sheet's "Reset path".
    *  False for channels, unused slots, or a thread with no pubkey mapping yet. */
@@ -516,6 +522,12 @@ public:
   void lockscreenReveal();
   /** Release a manual lock: hide the lock screen and turn the panel back on. */
   void unlockScreen();
+  /** Configure two PIN-selected local profiles and enter the PIN lock. */
+  bool enableKidMode(const char* parent_pin, const char* kid_pin);
+  /** Disable two-profile mode. Only profile 0 is permitted to call this. */
+  bool disableKidMode();
+  /** Switch/load the profile selected by a verified PIN, then unlock it. */
+  bool unlockProfile(uint8_t profile);
   /** True while the panel backlight is off (idle-dimmed or manually locked). */
   bool isScreenOff() const { return _screen_off; }
   bool isManualLocked() const { return _manual_lock; }   // hard screen lock engaged
