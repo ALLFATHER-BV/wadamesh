@@ -23910,6 +23910,13 @@ static inline void tileCacheMkdir(const char* rel) {
   char p[80]; snprintf(p, sizeof p, "%s%s", s_tile_root, rel);
   s_tile_fs->mkdir(p);
 }
+static inline bool tileBackendIsSd() {
+#if CAP_SD || defined(TLORA_PAGER)
+  return s_tile_fs == &SD;
+#else
+  return false;
+#endif
+}
 
 // True when the LittleFS tile cache is nearly full. A FULL/fragmented LittleFS
 // FAULTS inside lfs_alloc during mkdir (coredump 2026-06-14: reboot while a
@@ -25587,15 +25594,13 @@ static bool ensureHistFlushTaskRunning() {
 // tile was queued recently. Called from renderMapTiles after a SPIFFS
 // miss; the actual fetch happens off-thread.
 static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
-  // microSD-tile mode: fetch missing tiles only when the cache lives ON the card
-  // (s_tile_fs == &SD) — then downloads merge into the SD library (#20). Without an
-  // SD-backed cache, stay read-only/offline as before. (WiFi-down guard below still
-  // keeps it fully offline when there's no link.) This applies to the T-Deck and Pager;
-  // boards without SD keep s_tiles_from_sd false, so the simple guard is equivalent.
+  // In microSD-tile mode, missing tiles normally merge into the SD library
+  // (#20). If that card is absent but a mounted internal cache is available,
+  // keep maps online through that live fallback until the card returns.
   // The SD-pack offline mode is OSM-only; topo has no SD packs, so it always
   // fetches from the proxy regardless of the microSD-tiles setting.
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_map_style == 0 && s_tiles_from_sd && s_tile_fs != &SD) return;
+  if (!s_tiles_fs_ready || !s_tile_fs) return;
 #else
   if (s_map_style == 0 && s_tiles_from_sd) return;
 #endif
@@ -25739,7 +25744,7 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   snprintf(path, sizeof(path), "%s/%u/%ld/%ld.jpg",
            mapTileRoot(), (unsigned)z, (long)x, (long)y);
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
     // Tile source = microSD: read straight off the card (fully offline, no server fetch).
     if (s_sd_fail_note_ms) return false;   // card suspected dead — don't stack per-tile SPI timeouts (sdHealthTick arbitrates)
     // Mounted check only — a render loop must never walk the multi-second
@@ -25815,7 +25820,9 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   // cache so the render miss re-queues a fresh fetch; never touch read-only SD packs (can't re-fetch).
   if (n < 3 || buf[0] != 0xFF || buf[1] != 0xD8 || buf[2] != 0xFF) {
     lvglPsramFree(buf);
-    if (!s_tiles_from_sd) tileCacheRemove(path);
+    // Never mutate a user's offline SD pack. An internal-cache fallback remains
+    // writable even while the saved preference still requests SD tiles.
+    if (!(s_tiles_from_sd && tileBackendIsSd())) tileCacheRemove(path);
     return false;
   }
   *out_data = buf;
@@ -25846,28 +25853,36 @@ static void freeMapTiles() {
 //     outage are retried instead of being remembered as in-flight forever
 //   * re-renders immediately when the map is the visible tab
 static void mapNoteStorageChanged() {
-#if defined(TLORA_PAGER)
+#if CAP_SD || defined(TLORA_PAGER)
   if (!s_sd_mounted && s_tile_fs == &SD) {
-    s_tile_fs = nullptr;
-    s_tile_root[0] = '\0';
-    if (s_tile_fs_default == &SD) {
+    if (s_tile_fs_default && s_tile_fs_default != &SD) {
+      // SD tile mode lost its card, but the dedicated LittleFS cache is still
+      // mounted. Keep maps online instead of disabling that healthy fallback.
+      s_tile_fs = s_tile_fs_default;
+      strlcpy(s_tile_root, s_tile_root_default, sizeof(s_tile_root));
+      s_tiles_fs_ready = true;
+    } else {
+      // Launcher-style partition table: SD was the only tile backend.
+      s_tile_fs = nullptr;
+      s_tile_root[0] = '\0';
       s_tile_fs_default = nullptr;
       s_tile_root_default[0] = '\0';
+      s_tiles_fs_ready = false;
     }
-    s_tiles_fs_ready = false;
-  } else if (s_sd_mounted && !s_tiles_fs_ready) {
+  } else if (s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready)) {
+    // A fetch snapshots paths but still dereferences the global backend for
+    // each filesystem operation. Do not repoint it mid-request; sdHealthTick
+    // retries this transition as soon as the queue and worker are idle.
+    if (s_tile_fs != &SD && tileFetchPendingLoad() > 0) return;
+    // Reinserted while SD mode is selected, or no internal backend exists.
+    // Preserve an existing LittleFS default so toggling SD mode off remains a
+    // valid fallback after any number of remove/reinsert cycles.
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';
-    s_tile_fs_default = &SD;
-    s_tile_root_default[0] = '\0';
-    s_tiles_fs_ready = true;
-  }
-#elif CAP_SD
-  if (s_sd_mounted && !s_tiles_fs_ready) {
-    // No tile backend was resolved at boot; the card can serve as one now
-    // (same layout the boot fallback uses: SD ROOT /tiles/<z>/<x>/<y>).
-    s_tile_fs        = &SD;
-    s_tile_root[0]   = '\0';
+    if (!s_tile_fs_default) {
+      s_tile_fs_default = &SD;
+      s_tile_root_default[0] = '\0';
+    }
     s_tiles_fs_ready = true;
   }
 #endif
@@ -25881,7 +25896,7 @@ static void mapNoteStorageChanged() {
 // Is *some* tile source available to probe at all? (SD pack or LittleFS /tiles.)
 static bool mapTileSourceReady() {
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd) return true;
+  if (s_tiles_from_sd && s_tile_fs == &SD) return s_sd_mounted;
 #endif
   return s_tiles_fs_ready;
 }
@@ -25892,7 +25907,7 @@ static bool mapTileSourceReady() {
 // drew its tiles but the buttons reported "Max/Min zoom for this pack" offline.
 static bool tileExistsAt(uint8_t z, long x, long y) {
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
     if (s_sd_fail_note_ms) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
     if (!s_sd_mounted) return false;       // never ladder from the zoom guard (see loadTileJpeg)
     char p[56];
@@ -26218,7 +26233,7 @@ static void renderMapTiles() {
 
 #if defined(ESP32)
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd) {
+  if (s_tiles_from_sd && s_tile_fs == &SD) {
     lv_label_set_text(s_map_status_lbl,
         TR("Map tiles: microSD\n\n"
         "/maps/osm/z/x/y.png\n"
@@ -27029,7 +27044,15 @@ static void mapOptTilesSdCb(lv_event_t* e) {
   // the SD reader looks), so fetched tiles merge with the library; OFF -> the boot
   // default backend (LittleFS partition / SD fallback).
   if (on) {
-    if (fmSdTryMount() || SD.cardType() != CARD_NONE) { s_tile_fs = &SD; s_tile_root[0] = '\0'; }
+    if (fmSdTryMount() || SD.cardType() != CARD_NONE) {
+      s_tile_fs = &SD;
+      s_tile_root[0] = '\0';
+      s_tiles_fs_ready = true;
+      if (!s_tile_fs_default) {
+        s_tile_fs_default = &SD;
+        s_tile_root_default[0] = '\0';
+      }
+    }
   } else {
     s_tile_fs = s_tile_fs_default;
     strncpy(s_tile_root, s_tile_root_default, sizeof s_tile_root - 1);
@@ -27057,6 +27080,8 @@ static void mapReloadVisibleTiles() {
   // Drop the in-RAM tile widgets so the next render re-reads from disk (and
   // misses, since we delete the files below) → re-queues the download.
   freeMapTiles();
+  const bool read_only_sd_pack =
+      s_map_style == 0 && s_tiles_from_sd && tileBackendIsSd();
   int n = 0;
   // Purge the on-disk cache for the visible band (current zoom ± 1) so a corrupt
   // tile is ALWAYS removed — even offline. This deletion used to sit behind the
@@ -27073,8 +27098,12 @@ static void mapReloadVisibleTiles() {
       for (int dx = -s_map_grid_rx; dx <= s_map_grid_rx; ++dx) {
         const int32_t tx = zctx + dx, ty = zcty + dy;
         char path[48];
-        snprintf(path, sizeof(path), "/tiles/%u/%ld/%ld.jpg", (unsigned)z, (long)tx, (long)ty);
-        if (s_tiles_fs_ready && tileCacheExists(path)) { tileCacheRemove(path); ++n; }
+        snprintf(path, sizeof(path), "%s/%u/%ld/%ld.jpg",
+                 mapTileRoot(), (unsigned)z, (long)tx, (long)ty);
+        if (s_tiles_fs_ready && !read_only_sd_pack && tileCacheExists(path)) {
+          tileCacheRemove(path);
+          ++n;
+        }
         const uint32_t k = tileFetchDedupKey((uint8_t)z, tx, ty);   // clear dedup so it re-queues
         for (int i = 0; i < k_tile_fetch_dedup_size; ++i)
           if (s_tile_fetch_dedup[i] == k) s_tile_fetch_dedup[i] = 0;
@@ -27082,7 +27111,9 @@ static void mapReloadVisibleTiles() {
     }
   }
   if (g_lv.task) {
-    if (WiFi.status() == WL_CONNECTED) {
+    if (read_only_sd_pack) {
+      g_lv.task->showAlert(TR("SD pack tiles are read-only"), 1800);
+    } else if (WiFi.status() == WL_CONNECTED) {
       char msg[44]; snprintf(msg, sizeof(msg), "Reloading %d tiles\xE2\x80\xA6", n);
       g_lv.task->showAlert(msg, 1600);
     } else {
@@ -46026,14 +46057,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   if (_sensors && _node_prefs && _node_prefs->gps_enabled) {
     _sensors->setSettingValue("gps", "1");
   }
-#if defined(TLORA_PAGER)
-  // Start the Pager in server/cache mode on every boot. Its runtime SD-tile
-  // switch is intentionally not persistent yet, so a card moved from a T-Deck
-  // cannot silently disable all online fetches.
-  s_tiles_from_sd = false;
-#else
+  // Map options exposes the same source toggle on T-Deck and T-Pager. Restore
+  // that choice on both boards; forcing it off on Pager made a selected SD pack
+  // silently revert to the internal/server cache after every reboot.
   s_tiles_from_sd = touchPrefsGetTilesFromSd();   // map tile source: server (default) vs microSD
-#endif
   s_map_night = touchPrefsGetMapNight();          // map night mode (render-time tile invert)
   s_map_show_coords   = touchPrefsGetMapShowCoords();     // per-element map text/marker visibility
   s_map_show_tilexyz  = touchPrefsGetMapShowTileXYZ();
@@ -46228,6 +46255,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   if (s_tiles_from_sd && (sdAdoptLiveMount() || fmSdTryMount())) {
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';
+    s_tiles_fs_ready = true;
+    if (!s_tile_fs_default) {
+      s_tile_fs_default = &SD;
+      s_tile_root_default[0] = '\0';
+    }
     WIRE_DBG("[TILE] microSD-tile mode -> caching Wi-Fi tiles on SD /tiles (merges with library)");
   }
 #endif
@@ -48220,8 +48252,10 @@ static bool sdRuntimeLifecycleBusy() {
               s_sdinfo_busy ||
               touchPrefsIoBusy();
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
-  busy = busy || s_notify_playing ||
-         (s_tile_fs == &SD && tileFetchPendingLoad() > 0);
+  busy = busy || s_notify_playing;
+#endif
+#if CAP_SD || defined(TLORA_PAGER)
+  busy = busy || (s_tile_fs == &SD && tileFetchPendingLoad() > 0);
 #endif
   return busy;
 }
@@ -48333,6 +48367,15 @@ static void sdHealthTick() {
     return;
   }
   if (s_sd_format_pending) return;                        // format owns the card right now
+#if CAP_SD || defined(TLORA_PAGER)
+  // Reinsertion may have completed while an internal-cache fetch was still
+  // active. mapNoteStorageChanged deliberately deferred the backend swap; make
+  // it effective at the first idle tick without invalidating that open File.
+  if (s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready) &&
+      s_tile_fs != &SD && tileFetchPendingLoad() == 0) {
+    mapNoteStorageChanged();
+  }
+#endif
 #if defined(TLORA_PAGER)
   // Card detect is pure I2C, so it must keep running even while an SD worker is
   // busy. Once removal is confirmed, stop new SD tile jobs immediately; the
@@ -49417,6 +49460,7 @@ void UITask::loop() {
       showAlert(done, 3500);
     } else {
       s_sd_mounted = false;
+      mapNoteStorageChanged();   // drop a stale SD tile backend after the failed teardown/remount
       showAlert(TR("Format failed (no card / SD error)"), 3500);
     }
     if (s_fm_list) fmShowRoots();
