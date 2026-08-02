@@ -25923,6 +25923,13 @@ static void mapNoteStorageChanged() {
   for (int i = 0; i < k_tile_fetch_dedup_size; ++i) s_tile_fetch_dedup[i] = 0;
   s_tile_fetch_dedup_head = 0;
   freeMapTiles();
+#if CAP_SD || defined(TLORA_PAGER)
+  // Drop the stale tiles above either way, but do not paint from a backend we
+  // already know is wrong — that would read through &SD for a card that is gone
+  // and pay a full SPI timeout per probe on the loop task. sdHealthTick renders
+  // as soon as it lands the deferred swap.
+  if (!may_swap) return;
+#endif
   if (g_lv.tabview && lv_tabview_get_tab_act(g_lv.tabview) == MAP_TAB_INDEX) renderMapTiles();
 }
 
