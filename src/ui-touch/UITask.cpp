@@ -7892,12 +7892,26 @@ static void toggleTcpCb(lv_event_t* e) {
   refreshStatusLabels();
 }
 
+static bool bleEnableWaitingForWifi() {
+#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
+  return wifiConfigWantsWifi() && WiFi.status() != WL_CONNECTED;
+#else
+  return false;
+#endif
+}
+
+static const char* bleEnableFailureText() {
+  if (bleEnableWaitingForWifi())
+    return TR("Bluetooth will start after Wi-Fi connects, or turn Wi-Fi off first.");
+  return TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first.");
+}
+
 static void toggleBleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task || !g_lv.task->hasBleCapability()) return;
   if (g_lv.task->isBleEnabled()) {
     g_lv.task->disableBle();
   } else if (!g_lv.task->enableBle()) {
-    g_lv.task->showAlert(TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first."), 2200);
+    g_lv.task->showAlert(bleEnableFailureText(), 2600);
     refreshStatusLabels();
     return;
   }
@@ -12857,11 +12871,7 @@ static void saveTransportWifiCb(lv_event_t* e) {
       return;
     }
     wifiConfigRequestApply();
-#if defined(TLORA_PAGER)
-    g_lv.task->showAlert(TR("Wi-Fi saved, restarting"), 1400);
-#else
-    g_lv.task->showAlert(TR("Wi-Fi saved, reconnecting"), 1400);
-#endif
+    g_lv.task->showAlert(TR("Wi-Fi saved, applying"), 1400);
   } else {
     wifiConfigRequestApply();
     g_lv.task->showAlert(TR("Wi-Fi saved (radio off)"), 1400);
@@ -13008,7 +13018,7 @@ static void bleEnableSwitchCb(lv_event_t* e) {
   if (want) {
     if (!g_lv.task->enableBle()) {
       lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);   // revert the switch
-      g_lv.task->showAlert(TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first."), 2200);
+      g_lv.task->showAlert(bleEnableFailureText(), 2600);
       return;
     }
   } else {
@@ -13157,11 +13167,7 @@ static void doApplyWifi() {
   // through setup so Wi-Fi associates before a resident NimBLE stack exists.
   if (g_lv.task)
     g_lv.task->showAlert(
-#if defined(TLORA_PAGER)
-        s_pending_wifi_radio_on ? TR("Saved — restarting\xE2\x80\xA6")
-#else
-        s_pending_wifi_radio_on ? TR("Saved — reconnecting\xE2\x80\xA6")
-#endif
+        s_pending_wifi_radio_on ? TR("Saved — applying\xE2\x80\xA6")
                                 : TR("Wi-Fi saved (radio off)"), 1600);
   refreshStatusLabels();
 }
@@ -13449,7 +13455,15 @@ static bool wifiPrepareEnable(lv_obj_t* switch_to_revert = nullptr) {
   // the normal flush path so setup can claim Wi-Fi before NimBLE and LVGL.
   wifiConfigSetRadioEnabled(true);
   if (g_lv.task) {
-    g_lv.task->showAlert(TR("Restarting to enable Wi-Fi"), 800);
+    g_lv.task->showAlert(
+#if defined(TLORA_PAGER)
+        wifiConfigGetBleEnabled()
+          ? TR("Restarting for Wi-Fi; Bluetooth resumes after it connects")
+          : TR("Restarting to enable Wi-Fi"),
+#else
+        TR("Restarting to enable Wi-Fi"),
+#endif
+        1400);
     lv_refr_now(NULL);
     g_lv.task->rebootDevice();
   } else {
@@ -13478,14 +13492,18 @@ static void wifiScanStartCb(lv_event_t* e) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 static void wifiRebuildNetworkList();   // fwd: reworked Wi-Fi page list (defined before buildWifiSettings)
 #endif
-// Kick a Wi-Fi scan from the UI (LVGL ctx — only sets flags, never calls WiFi). On
-// the S3, scanning while associated is unreliable, so if we're connected we ask the
-// MAIN task to drop the link first (wifiScanMainService); otherwise scan straight away.
+// Kick a Wi-Fi scan from the UI (LVGL ctx — only sets flags, never calls WiFi).
+// Most S3 targets get more reliable results by dropping an association first.
+// Pager keeps an established link intact because re-authenticating while NimBLE
+// is resident crosses its known-unsafe coexistence boundary; its scan is
+// best-effort while associated and never turns a page-open into a reboot.
 static void wifiKickScan() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   ensureTileFetchTaskRunning();
 #if defined(HAS_TANMATSU)
   s_wifiscan_request = true;                         // esp-hosted C6 sweeps fine while associated
+#elif defined(TLORA_PAGER)
+  s_wifiscan_request = true;                         // never force WPA re-auth under resident NimBLE
 #else
   if (WiFi.status() == WL_CONNECTED) s_wifiscan_drop_req = true;
   else                               s_wifiscan_request = true;
@@ -36186,7 +36204,7 @@ static void ccBleCb(lv_event_t* e) {
   if (on) {
     g_lv.task->disableBle();
   } else if (!g_lv.task->enableBle()) {
-    g_lv.task->showAlert(TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first."), 2200);
+    g_lv.task->showAlert(bleEnableFailureText(), 2600);
     openControlCenter();
     return;
   }
@@ -47602,6 +47620,13 @@ bool UITask::enableBle() {
   // NimBLE. A resident disabled stack can always be re-enabled allocation-free.
   if (_serial->isBleEnabled()) return true;
 #if defined(TLORA_PAGER)
+  if (bleEnableWaitingForWifi()) {
+    // Remember the request; main.cpp cold-starts NimBLE after a stable Wi-Fi
+    // association. Rebooting here cannot improve the ordering and would return
+    // to the same deferred state, so surface the wait instead.
+    wifiConfigSetBleEnabled(true);
+    return false;
+  }
   // Same cold-start contract as Wi-Fi above. This is not an OOM failure the
   // user can repair by toggling the other radio: remember the requested state
   // and allocate NimBLE during the next ordered boot, before LVGL fragments
