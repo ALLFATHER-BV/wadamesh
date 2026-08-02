@@ -4,6 +4,15 @@ This document explains the FriendMesh OS feature layer being developed inside Wa
 
 The current implementation target is the LilyGo T-Deck. Heltec support remains an architectural consideration, not a currently validated target.
 
+## Documentation map
+
+- [`FEATURES.md`](FEATURES.md) surveys WadaMesh architecture, inherited capabilities, boundaries, and FriendMesh integration points.
+- [`ROADMAP.md`](ROADMAP.md) records implementation order, evidence, open gates, and handoff state.
+- [`IMPLEMENTATION_GAME_PLAN.md`](IMPLEMENTATION_GAME_PLAN.md) defines the detailed feature, security, recovery, testing, and release contracts.
+- [`NEARBY_JOIN_PROTOCOL.md`](NEARBY_JOIN_PROTOCOL.md) defines the nearby direct-join behavior and its current security boundary.
+- [`DESIGN_QA.md`](DESIGN_QA.md) records Friend Compass visual-validation evidence and remaining capture work.
+- [`images/`](images/) contains the FriendMesh architecture and interaction diagrams used below.
+
 ## Type definitions and example dataset
 
 The diagrams and examples below use one fictional scenario consistently:
@@ -45,7 +54,7 @@ SOS ID: SOS77A1F
 
 Fingerprints are shortened for display only. Identity decisions use complete keys.
 
-The exact source definitions live under [`src/friendmesh`](src/friendmesh).
+The exact source definitions live under [`src/friendmesh`](../../src/friendmesh).
 
 ## Core identity and Friend records
 
@@ -502,7 +511,7 @@ These are implemented in the general domain engine. They do not yet replace ordi
 
 ## Friend Request and mutual acceptance
 
-![Friend Request and mutual acceptance](docs/images/friendmesh/friend-request-flow.png)
+![Friend Request and mutual acceptance](images/friend-request-flow.png)
 
 Both public-channel and nearby BLE requests converge on the same approval and three-message completion sequence:
 
@@ -526,25 +535,25 @@ resend. If both existing slots fail validation, FriendMesh sending fails closed.
 
 ## BLE group creation and joining
 
-![BLE group joining](docs/images/friendmesh/ble-group-join-flow.png)
+![BLE group joining](images/ble-group-join-flow.png)
 
 The group remains an ordinary MeshCore private channel. BLE transfers its existing channel name and symmetric secret through a short-lived AES-256-GCM exchange.
 
 ## Group Map and Friend Compass
 
-![Group Map and Friend Compass](docs/images/friendmesh/group-map-friend-compass-flow.png)
+![Group Map and Friend Compass](images/group-map-friend-compass-flow.png)
 
 The image’s type rail uses visual shorthand. The exact integer and enum types are the definitions above.
 
 ## Meetup, Help, and SOS
 
-![Meetup Help and SOS flow](docs/images/friendmesh/meetup-help-sos-flow.png)
+![Meetup Help and SOS flow](images/meetup-help-sos-flow.png)
 
 These use encrypted binary group-data records and never enter the channel-text pipeline.
 
 ## System architecture and storage
 
-![FriendMesh inside WadaMesh architecture](docs/images/friendmesh/system-architecture-storage.png)
+![FriendMesh inside WadaMesh architecture](images/system-architecture-storage.png)
 
 The key architectural division is between live compatibility features and the general bounded domain engine whose production event transport remains disabled.
 
@@ -825,8 +834,8 @@ These were created with the built-in image-generation tool in `infographic-diagr
 
 Final generated files:
 
-- `docs/images/friendmesh/friend-request-flow.png`
-- `docs/images/friendmesh/ble-group-join-flow.png`
-- `docs/images/friendmesh/group-map-friend-compass-flow.png`
-- `docs/images/friendmesh/meetup-help-sos-flow.png`
-- `docs/images/friendmesh/system-architecture-storage.png`
+- `images/friend-request-flow.png`
+- `images/ble-group-join-flow.png`
+- `images/group-map-friend-compass-flow.png`
+- `images/meetup-help-sos-flow.png`
+- `images/system-architecture-storage.png`

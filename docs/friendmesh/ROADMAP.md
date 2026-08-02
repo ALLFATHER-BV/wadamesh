@@ -47,9 +47,9 @@ Rules:
 
 ## Sources of truth
 
-1. [`README.md`](README.md) — WadaMesh introduction/build entrypoint.
-2. [`FRIENDMESHOS_FEATURES.md`](FRIENDMESHOS_FEATURES.md) — repository survey and integration boundary.
-3. [`FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md`](FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md) — detailed product/security/test contracts.
+1. [`README.md`](../../README.md) — WadaMesh introduction/build entrypoint.
+2. [`FEATURES.md`](FEATURES.md) — repository survey and integration boundary.
+3. [`IMPLEMENTATION_GAME_PLAN.md`](IMPLEMENTATION_GAME_PLAN.md) — detailed product/security/test contracts.
 4. This roadmap — current order and completion state.
 5. Live source/build output — authority for current implementation facts.
 

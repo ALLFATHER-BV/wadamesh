@@ -1,6 +1,6 @@
 # Friend Compass Design QA
 
-- source visual truth path: `/Users/tylersmith/.codex/generated_images/019f775e-dc1e-71c1-a2b9-32da07bd4eff/exec-28b591bf-6dcc-4870-9c38-5c4a4ecf2a9f.png`
+- source visual truth: the original generated design reference was not checked into the repository and must be reattached or replaced before visual comparison can resume
 - implementation screenshot path: unavailable; the LVGL screen must be captured from a flashed T-Deck
 - viewport: 320 x 240 pixels, LilyGo T-Deck
 - state: both pager states for a group member with two recent position samples, an active 45-second motion prediction, and the refined page-one distance scale/readout

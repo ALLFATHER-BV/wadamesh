@@ -46,17 +46,13 @@ does not rename the repository, replace WadaMesh's product identity, or redesign
 its UI. Current implementation and verification are limited to the LilyGo T-Deck;
 other hardware is deferred until the scope is explicitly expanded.
 
-- **[FRIENDMESHOS_FEATURES.md](FRIENDMESHOS_FEATURES.md)** surveys the current
-  WadaMesh architecture, inherited capabilities, boundaries, and integration
-  points.
-- **[FRIENDMESHOS_ROADMAP.md](FRIENDMESHOS_ROADMAP.md)** explains what the project
-  is, records the verified baseline, and orders implementation from easiest to
-  hardest.
-- **[FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md](FRIENDMESH_FULL_IMPLEMENTATION_GAME_PLAN.md)**
-  defines the detailed feature, security, recovery, test, and release contracts.
-- **[FRIENDMESH_NEARBY_JOIN_PROTOCOL.md](FRIENDMESH_NEARBY_JOIN_PROTOCOL.md)**
-  defines the nearby zero-hop invitation UX and encrypted member-specific grant
-  boundary without ever sharing identity private keys.
+FriendMesh documentation is consolidated under **[docs/friendmesh](docs/friendmesh/README.md)**:
+
+- **[Feature and architecture survey](docs/friendmesh/FEATURES.md)**
+- **[Implementation roadmap](docs/friendmesh/ROADMAP.md)**
+- **[Full implementation game plan](docs/friendmesh/IMPLEMENTATION_GAME_PLAN.md)**
+- **[Nearby join protocol](docs/friendmesh/NEARBY_JOIN_PROTOCOL.md)**
+- **[Friend Compass design QA](docs/friendmesh/DESIGN_QA.md)**
 
 The current T-Deck build contains a platform-neutral FriendMesh application core
 and development-provider implementations of membership, chat/sync,

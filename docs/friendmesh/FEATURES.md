@@ -646,7 +646,7 @@ open. The T-Deck build passes at 89,404 bytes RAM and 3,253,533 bytes flash;
 FriendMesh transmission remains hard-disabled.
 
 The complete expected onboarding experience and production security boundary are
-specified in `FRIENDMESH_NEARBY_JOIN_PROTOCOL.md`. The important rule is that
+specified in `NEARBY_JOIN_PROTOCOL.md`. The important rule is that
 identity private keys never move between devices. Production onboarding delivers
 only a new group epoch key, inside a transcript-bound, authenticated encrypted
 grant addressed to the approved member.
@@ -1063,7 +1063,7 @@ This project follows feature-complete-first development rather than an MVP seque
 
 Production identity cryptography, protected storage, signing/encryption, replay, grants, rekey, and recovery are implemented as one shared security cluster after functional feature behavior exists. Their architectural interfaces and the hard transmit gate exist from the beginning so the security pass strengthens the same system rather than rewriting it.
 
-The detailed live phase tracker and completion evidence are in `FRIENDMESHOS_ROADMAP.md`. General FriendMesh radio transmission remains disabled until the shared security and protocol gates pass.
+The detailed live phase tracker and completion evidence are in `ROADMAP.md`. General FriendMesh radio transmission remains disabled until the shared security and protocol gates pass.
 
 ## 14. Session handoff template
 

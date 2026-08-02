@@ -30,9 +30,9 @@ The goal is to add these capabilities without disrupting ordinary WadaMesh chat,
 
 Use this document with:
 
-- [`FRIENDMESHOS_ROADMAP.md`](FRIENDMESHOS_ROADMAP.md) for phase order and live completion state;
-- [`FRIENDMESHOS_FEATURES.md`](FRIENDMESHOS_FEATURES.md) for the surveyed WadaMesh architecture and integration map;
-- [`README.md`](README.md) for the host project's build and usage instructions;
+- [`ROADMAP.md`](ROADMAP.md) for phase order and live completion state;
+- [`FEATURES.md`](FEATURES.md) for the surveyed WadaMesh architecture and integration map;
+- [`README.md`](../../README.md) for the host project's build and usage instructions;
 - live source and current build output for actual implementation facts.
 
 Authority rules:
@@ -40,7 +40,7 @@ Authority rules:
 1. Live compiled source owns current behavior.
 2. This game plan owns approved FriendMesh behavior and safety gates.
 3. The roadmap owns work order and completion tracking.
-4. `FRIENDMESHOS_FEATURES.md` owns the repository survey and architectural context.
+4. `FEATURES.md` owns the repository survey and architectural context.
 5. When they disagree, stop, inspect the source, record the decision, and update all affected documents before coding further.
 
 ## 3. Current starting base
@@ -555,7 +555,7 @@ transcript-bound ephemeral pairwise session and sends only the new group epoch
 key inside an authenticated, member-specific encrypted grant. A successful join
 advances the membership epoch so the new member does not automatically receive
 past-history access. Full UX, protocol, rejection, and recovery requirements are
-in `FRIENDMESH_NEARBY_JOIN_PROTOCOL.md`.
+in `NEARBY_JOIN_PROTOCOL.md`.
 
 ## 11. MeshCore protocol contract
 
