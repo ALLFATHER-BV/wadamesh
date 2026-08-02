@@ -542,7 +542,19 @@ void SdNvsPrefs::tick(uint32_t now_ms) {
 
 bool SdNvsPrefs::flush(uint32_t timeout_ms) {
   if (!fileMode()) return true;
-  if (!ensureWorker()) return false;
+  if (!ensureWorker()) {
+    // A writer-allocation failure is only a flush failure when RAM contains
+    // work that still needs landing. A clean store has nothing to wait for and
+    // must not permanently block unrelated migration/reboot workflows.
+    if (!s_cache_mutex) return true;
+    bool pending = false;
+    xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    for (const auto& cache : s_caches) {
+      if (cache.dirty || cache.writing) { pending = true; break; }
+    }
+    xSemaphoreGive(s_cache_mutex);
+    return !pending;
+  }
   const uint32_t start = millis();
   for (;;) {
     scheduleOne(millis(), true);
