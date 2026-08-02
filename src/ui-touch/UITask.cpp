@@ -13459,7 +13459,9 @@ static WifiEnableGate wifiEnableGate() {
 #if defined(TLORA_PAGER)
   // Pager coexistence is reliable only when setup claims Wi-Fi before NimBLE
   // and before LVGL. Always route a genuinely cold Wi-Fi start through that
-  // ordering, even if the current heap happens to look large enough.
+  // ordering, even if the current heap happens to look large enough. No heap
+  // check here on purpose: the restart is unconditional, so there is no
+  // LowMemory outcome to fall through to on this board.
   return WifiEnableGate::RestartRequired;
 #else
   const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
@@ -13468,8 +13470,8 @@ static WifiEnableGate wifiEnableGate() {
   if (freeh >= 50u * 1024u && maxblk >= 20u * 1024u) return WifiEnableGate::Ready;
   Serial.printf("[wifi] cold start refused: free=%u maxblk=%u\n",
                 (unsigned)freeh, (unsigned)maxblk);
-#endif
   return WifiEnableGate::LowMemory;
+#endif
 #else
   return WifiEnableGate::Ready;
 #endif

@@ -244,6 +244,22 @@ void MultiTransportCompanionInterface::enableBle() {
 #endif
 }
 
+#ifdef BLE_PIN_CODE
+// NimBLEDevice::deinit(true) deletes the NimBLEServer, and ~NimBLEServer() does
+//   if (m_deleteCallbacks && m_pServerCallbacks != &defaultCallbacks)
+//     delete m_pServerCallbacks;
+// SerialBLEInterface::begin() registers itself with pServer->setCallbacks(this),
+// whose deleteCallbacks parameter defaults to true. Our SerialBLEInterface is the
+// by-value member _ble of this object, and this object is placement-new'd into a
+// single heap block in main.cpp — so that delete would call operator delete on an
+// INTERIOR pointer and corrupt the heap. setCallbacks(nullptr) installs NimBLE's
+// static defaultCallbacks sentinel, which the destructor above explicitly skips.
+// (NimBLECharacteristic never deletes its callbacks, so only the server matters.)
+static void bleDetachServerCallbacks() {
+  if (NimBLEServer* server = NimBLEDevice::getServer()) server->setCallbacks(nullptr);
+}
+#endif
+
 void MultiTransportCompanionInterface::disableBle() {
   _ble_enabled = false;
   wifiConfigSetBleEnabled(false);   // persist so BT stays off across reboot
@@ -258,6 +274,7 @@ void MultiTransportCompanionInterface::disableBle() {
   // behavior.
 #if defined(TLORA_PAGER)
   if (_ble_begun) {
+    bleDetachServerCallbacks();
     NimBLEDevice::deinit(true);
     _ble_begun = false;
   }
@@ -272,6 +289,7 @@ void MultiTransportCompanionInterface::suspendBleForWifiReconnect() {
   // server pointers after deinit(true), matching the cold enable path above.
   if (_ble_begun) {
     if (_ble_enabled) _ble.disable();
+    bleDetachServerCallbacks();
     NimBLEDevice::deinit(true);
     _ble_begun = false;
   }
@@ -355,6 +373,7 @@ void MultiTransportCompanionInterface::prepareForHttpOta() {
   if (_ble_begun) {
     _ota_ble_was_enabled = _ble_enabled;
     if (_ble_enabled) _ble.disable();
+    bleDetachServerCallbacks();
     NimBLEDevice::deinit(true);
     _ble_begun = false;
     _ble_enabled = false;
