@@ -13,6 +13,7 @@
 #endif
 #endif
 #include <helpers/AdvertDataHelpers.h>
+#include "helpers/CompanionRetryPolicy.h"
 #include <helpers/HttpOtaDisplayState.h>
 #include <helpers/RepeaterTcpOtaEmit.h>
 #include "WiFiConfig.h"
@@ -1391,7 +1392,500 @@ static inline bool isMsgFloodType(uint8_t t) {
   return t == PAYLOAD_TYPE_TXT_MSG || t == PAYLOAD_TYPE_GRP_TXT;
 }
 
+uint8_t MyMesh::companionDetachQueuedText(mesh::Packet* packets[], uint8_t priorities[],
+                                          uint32_t scheduled_for[]) {
+  uint8_t count = 0;
+  int queue_idx = 0;
+  const uint32_t now = _ms->getMillis();
+  while (queue_idx < _mgr->getOutboundTotal()
+         && count < COMPANION_TEXT_QUEUE_CAPACITY) {
+    mesh::Packet* packet = _mgr->getOutboundByIdx(queue_idx);
+    if (!packet || packet->getPayloadType() != PAYLOAD_TYPE_TXT_MSG) {
+      queue_idx++;
+      continue;
+    }
+
+    packet = _mgr->removeOutboundByIdx(queue_idx);
+    if (!packet) continue;
+
+    packets[count] = packet;
+    priorities[count] = packet->isRouteDirect() ? 0 : 1;
+    scheduled_for[count] = now;
+    for (int i = 0; i < COMPANION_RETRY_SLOTS; i++) {
+      const CompanionRetrySlot& slot = _companion_retries[i];
+      if (slot.active && slot.queued_packet == packet) {
+        priorities[count] = slot.priority;
+        scheduled_for[count] = slot.retry_at;
+        break;
+      }
+    }
+    count++;
+  }
+  return count;
+}
+
+bool MyMesh::companionRestoreQueuedText(mesh::Packet* packets[], const uint8_t priorities[],
+                                        const uint32_t scheduled_for[], uint8_t count) {
+  bool restored_all = true;
+  for (uint8_t i = 0; i < count; i++) {
+    mesh::Packet* packet = packets[i];
+    if (!packet) continue;
+
+    _mgr->queueOutbound(packet, priorities[i], scheduled_for[i]);
+    bool found = false;
+    for (int j = 0; j < _mgr->getOutboundTotal(); j++) {
+      if (_mgr->getOutboundByIdx(j) == packet) {
+        found = true;
+        break;
+      }
+    }
+    if (found) continue;
+
+    // queueOutbound() returned a rejected packet to the pool. Retire any
+    // retry metadata that still referred to that pool object.
+    restored_all = false;
+    for (int j = 0; j < COMPANION_RETRY_SLOTS; j++) {
+      if (_companion_retries[j].active
+          && _companion_retries[j].queued_packet == packet) {
+        companionRetryResetSlot(j);
+      }
+    }
+  }
+  return restored_all;
+}
+
+mesh::Packet* MyMesh::companionDetachQueuedTextByHash4(
+    uint32_t packet_hash4, uint8_t retry_key[MAX_HASH_SIZE]) {
+  for (int i = 0; i < _mgr->getOutboundTotal(); i++) {
+    mesh::Packet* packet = _mgr->getOutboundByIdx(i);
+    if (!packet || packet->getPayloadType() != PAYLOAD_TYPE_TXT_MSG) continue;
+
+    uint8_t candidate_key[MAX_HASH_SIZE];
+    uint32_t candidate_hash4 = 0;
+    packet->calculatePacketHash(candidate_key);
+    memcpy(&candidate_hash4, candidate_key, sizeof(candidate_hash4));
+    if (candidate_hash4 != packet_hash4) continue;
+
+    memcpy(retry_key, candidate_key, MAX_HASH_SIZE);
+    return _mgr->removeOutboundByIdx(i);
+  }
+  return nullptr;
+}
+
+int MyMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt,
+                        const char* text, uint32_t& expected_ack, uint32_t& est_timeout,
+                        uint32_t* out_packet_hash4, TxtTxDebugInfo* out_dbg) {
+  if (!text) {
+    expected_ack = 0;
+    est_timeout = 0;
+    return MSG_SEND_FAILED;
+  }
+
+  mesh::Packet* held[COMPANION_TEXT_QUEUE_CAPACITY] = {};
+  uint8_t held_priorities[COMPANION_TEXT_QUEUE_CAPACITY] = {};
+  uint32_t held_schedules[COMPANION_TEXT_QUEUE_CAPACITY] = {};
+  const uint8_t held_count = companionDetachQueuedText(
+      held, held_priorities, held_schedules);
+
+  _last_plain_tx_meta_valid = false;
+  uint32_t packet_hash4 = 0;
+  int result = BaseChatMesh::sendMessage(recipient, timestamp, attempt, text,
+                                         expected_ack, est_timeout,
+                                         &packet_hash4, out_dbg);
+
+  uint8_t retry_key[MAX_HASH_SIZE] = {};
+  mesh::Packet* newest = result == MSG_SEND_FAILED
+      ? nullptr
+      : companionDetachQueuedTextByHash4(packet_hash4, retry_key);
+
+  const bool restored_old = companionRestoreQueuedText(
+      held, held_priorities, held_schedules, held_count);
+  bool restored_new = newest != nullptr;
+  if (newest) {
+    mesh::Packet* one[] = {newest};
+    const uint8_t priority[] = {static_cast<uint8_t>(newest->isRouteDirect() ? 0 : 1)};
+    const uint32_t scheduled[] = {_ms->getMillis()};
+    restored_new = companionRestoreQueuedText(one, priority, scheduled, 1);
+  }
+
+  if (!restored_old) {
+    MESH_DEBUG_PRINTLN("%s MyMesh::sendMessage(): failed to restore queued TXT", getLogDateTime());
+  }
+  if (result != MSG_SEND_FAILED && !restored_new) {
+    expected_ack = 0;
+    est_timeout = 0;
+    result = MSG_SEND_FAILED;
+  }
+
+  if (out_packet_hash4) *out_packet_hash4 = packet_hash4;
+  if (result != MSG_SEND_FAILED) {
+    _last_plain_tx_ack = expected_ack;
+    memcpy(_last_plain_tx_retry_key, retry_key, sizeof(_last_plain_tx_retry_key));
+    mesh::Utils::sha256(_last_plain_tx_fingerprint,
+                        sizeof(_last_plain_tx_fingerprint),
+                        recipient.id.pub_key, PUB_KEY_SIZE,
+                        reinterpret_cast<const uint8_t*>(text), strlen(text));
+    _last_plain_tx_meta_valid = true;
+  }
+  return result;
+}
+
+int MyMesh::sendCommandData(const ContactInfo& recipient, uint32_t timestamp,
+                            uint8_t attempt, const char* text, uint32_t& est_timeout,
+                            uint32_t* out_packet_hash4, TxtTxDebugInfo* out_dbg) {
+  if (!text) {
+    est_timeout = 0;
+    return MSG_SEND_FAILED;
+  }
+
+  mesh::Packet* held[COMPANION_TEXT_QUEUE_CAPACITY] = {};
+  uint8_t held_priorities[COMPANION_TEXT_QUEUE_CAPACITY] = {};
+  uint32_t held_schedules[COMPANION_TEXT_QUEUE_CAPACITY] = {};
+  const uint8_t held_count = companionDetachQueuedText(
+      held, held_priorities, held_schedules);
+
+  _last_plain_tx_meta_valid = false;
+  uint32_t packet_hash4 = 0;
+  int result = BaseChatMesh::sendCommandData(recipient, timestamp, attempt, text,
+                                             est_timeout, &packet_hash4, out_dbg);
+
+  uint8_t retry_key[MAX_HASH_SIZE] = {};
+  mesh::Packet* newest = result == MSG_SEND_FAILED
+      ? nullptr
+      : companionDetachQueuedTextByHash4(packet_hash4, retry_key);
+
+  const bool restored_old = companionRestoreQueuedText(
+      held, held_priorities, held_schedules, held_count);
+  bool restored_new = newest != nullptr;
+  if (newest) {
+    mesh::Packet* one[] = {newest};
+    const uint8_t priority[] = {static_cast<uint8_t>(newest->isRouteDirect() ? 0 : 1)};
+    const uint32_t scheduled[] = {_ms->getMillis()};
+    restored_new = companionRestoreQueuedText(one, priority, scheduled, 1);
+  }
+
+  if (!restored_old) {
+    MESH_DEBUG_PRINTLN("%s MyMesh::sendCommandData(): failed to restore queued TXT", getLogDateTime());
+  }
+  if (result != MSG_SEND_FAILED && !restored_new) {
+    est_timeout = 0;
+    result = MSG_SEND_FAILED;
+  }
+  if (out_packet_hash4) *out_packet_hash4 = packet_hash4;
+  return result;
+}
+
+uint32_t MyMesh::companionRetryDelay(const mesh::Packet* packet, bool direct,
+                                     uint8_t attempt_idx) {
+  if (!packet || !_radio) return 0;
+
+  const uint32_t packet_airtime = _radio->getEstAirtimeFor(packet->getRawLength());
+  if (direct) {
+    return CompanionRetryPolicy::directDelay(packet_airtime, attempt_idx);
+  }
+
+  const uint32_t max_packet_airtime = _radio->getEstAirtimeFor(MAX_TRANS_UNIT);
+  const uint32_t jitter_percent = getRNG()->nextInt(0, 201);
+  return CompanionRetryPolicy::floodDelay(max_packet_airtime, packet_airtime,
+                                           jitter_percent);
+}
+
+void MyMesh::companionRetryResetSlot(int slot_idx) {
+  if (slot_idx < 0 || slot_idx >= COMPANION_RETRY_SLOTS) return;
+
+  CompanionRetrySlot& slot = _companion_retries[slot_idx];
+  if (slot.active && _active_companion_retries > 0) {
+    _active_companion_retries--;
+  }
+  slot.queued_packet = nullptr;
+  slot.retry_at = 0;
+  slot.retry_delay = 0;
+  slot.missing_since = 0;
+  memset(slot.retry_key, 0, sizeof(slot.retry_key));
+  slot.attempts_sent = 0;
+  slot.max_attempts = 0;
+  slot.priority = 0;
+  slot.progress_marker = 0;
+  slot.payload_type = 0;
+  slot.direct = false;
+  slot.waiting_final_echo = false;
+  slot.active = false;
+}
+
+void MyMesh::companionRetryCancelSlot(int slot_idx) {
+  if (slot_idx < 0 || slot_idx >= COMPANION_RETRY_SLOTS) return;
+
+  CompanionRetrySlot& slot = _companion_retries[slot_idx];
+  mesh::Packet* queued = slot.queued_packet;
+  if (slot.active && queued) {
+    for (int i = 0; i < _mgr->getOutboundTotal(); i++) {
+      if (_mgr->getOutboundByIdx(i) != queued) continue;
+
+      uint8_t queued_key[MAX_HASH_SIZE];
+      queued->calculatePacketHash(queued_key);
+      if (memcmp(queued_key, slot.retry_key, sizeof(queued_key)) == 0) {
+        mesh::Packet* removed = _mgr->removeOutboundByIdx(i);
+        if (removed) releasePacket(removed);
+      }
+      break;
+    }
+  }
+  companionRetryResetSlot(slot_idx);
+}
+
+void MyMesh::companionRetryCancelKey(const uint8_t retry_key[MAX_HASH_SIZE]) {
+  if (!CompanionRetryPolicy::keyIsSet(retry_key, MAX_HASH_SIZE)) return;
+
+  // First retire tracked retry trains. companionRetryCancelSlot() also removes
+  // their queued clone when it has not entered the radio yet.
+  for (int i = 0; i < COMPANION_RETRY_SLOTS; i++) {
+    const CompanionRetrySlot& slot = _companion_retries[i];
+    if (slot.active && CompanionRetryPolicy::keysEqual(
+            slot.retry_key, retry_key, MAX_HASH_SIZE)) {
+      companionRetryCancelSlot(i);
+    }
+  }
+
+  // A semantic replacement can arrive before the original packet's first TX,
+  // before a CompanionRetrySlot exists. Remove that exact queued packet too.
+  for (int i = _mgr->getOutboundTotal() - 1; i >= 0; i--) {
+    mesh::Packet* packet = _mgr->getOutboundByIdx(i);
+    if (!packet || packet->getPayloadType() != PAYLOAD_TYPE_TXT_MSG) continue;
+
+    uint8_t queued_key[MAX_HASH_SIZE];
+    packet->calculatePacketHash(queued_key);
+    if (!CompanionRetryPolicy::keysEqual(
+            queued_key, retry_key, MAX_HASH_SIZE)) continue;
+
+    mesh::Packet* removed = _mgr->removeOutboundByIdx(i);
+    if (removed) releasePacket(removed);
+  }
+}
+
+bool MyMesh::companionRetryQueueClone(int slot_idx, const mesh::Packet* packet,
+                                      uint8_t attempt_idx) {
+  if (slot_idx < 0 || slot_idx >= COMPANION_RETRY_SLOTS || !packet) return false;
+
+  CompanionRetrySlot& slot = _companion_retries[slot_idx];
+  mesh::Packet* retry = obtainNewPacket();
+  if (!retry) return false;
+
+  *retry = *packet;  // exact duplicate: timestamp and ciphertext stay fixed
+  slot.retry_delay = companionRetryDelay(packet, slot.direct, attempt_idx);
+  slot.retry_at = _ms->getMillis() + slot.retry_delay;
+  _mgr->queueOutbound(retry, slot.priority, slot.retry_at);
+
+  for (int i = 0; i < _mgr->getOutboundTotal(); i++) {
+    if (_mgr->getOutboundByIdx(i) == retry) {
+      slot.queued_packet = retry;
+      slot.missing_since = 0;
+      return true;
+    }
+  }
+
+  // StaticPoolPacketManager already returned a rejected packet to its pool.
+  return false;
+}
+
+void MyMesh::companionRetryStart(const mesh::Packet* packet,
+                                 const uint8_t retry_key[MAX_HASH_SIZE]) {
+  if (!packet || !retry_key) return;
+
+  const uint8_t payload_type = packet->getPayloadType();
+  const uint8_t path_count = packet->getPathHashCount();
+  const bool text_from_self = packet->payload_len >= 2U * PATH_HASH_SIZE
+      && self_id.isHashMatch(&packet->payload[PATH_HASH_SIZE], PATH_HASH_SIZE);
+
+  bool direct = false;
+  uint8_t max_attempts = 0;
+  uint8_t priority = 0;
+  if (packet->isRouteDirect() && payload_type == PAYLOAD_TYPE_TXT_MSG
+      && path_count > 0 && text_from_self) {
+    direct = true;
+    max_attempts = CompanionRetryPolicy::DIRECT_MAX_ATTEMPTS;
+  } else if (packet->isRouteFlood() && path_count == 0
+             && ((payload_type == PAYLOAD_TYPE_TXT_MSG && text_from_self)
+                 || payload_type == PAYLOAD_TYPE_GRP_TXT)) {
+    max_attempts = CompanionRetryPolicy::FLOOD_MAX_ATTEMPTS;
+    priority = 1;
+  } else {
+    return;
+  }
+
+  for (int i = 0; i < COMPANION_RETRY_SLOTS; i++) {
+    const CompanionRetrySlot& slot = _companion_retries[i];
+    if (slot.active && slot.direct == direct
+        && memcmp(slot.retry_key, retry_key, MAX_HASH_SIZE) == 0) {
+      return;
+    }
+  }
+
+  int slot_idx = -1;
+  for (int i = 0; i < COMPANION_RETRY_SLOTS; i++) {
+    if (!_companion_retries[i].active) {
+      slot_idx = i;
+      break;
+    }
+  }
+  if (slot_idx < 0) return;
+
+  CompanionRetrySlot& slot = _companion_retries[slot_idx];
+  slot.queued_packet = nullptr;
+  slot.missing_since = 0;
+  memcpy(slot.retry_key, retry_key, MAX_HASH_SIZE);
+  slot.attempts_sent = 0;
+  slot.max_attempts = max_attempts;
+  slot.priority = priority;
+  slot.progress_marker = path_count;
+  slot.payload_type = payload_type;
+  slot.direct = direct;
+  slot.waiting_final_echo = false;
+  slot.active = true;
+  _active_companion_retries++;
+  if (!companionRetryQueueClone(slot_idx, packet, 0)) {
+    companionRetryResetSlot(slot_idx);
+  }
+}
+
+void MyMesh::logTx(mesh::Packet* packet, int len) {
+  (void)len;
+  if (!packet) return;
+
+  uint8_t packet_key[MAX_HASH_SIZE];
+  packet->calculatePacketHash(packet_key);
+
+  for (int i = 0; i < COMPANION_RETRY_SLOTS; i++) {
+    CompanionRetrySlot& slot = _companion_retries[i];
+    if (!slot.active || slot.queued_packet != packet) continue;
+
+    // If a pool object was unexpectedly reused, do not mistake the new packet
+    // for this retry.
+    if (memcmp(slot.retry_key, packet_key, MAX_HASH_SIZE) != 0) {
+      companionRetryResetSlot(i);
+      break;
+    }
+
+    slot.queued_packet = nullptr;
+    slot.missing_since = 0;
+    slot.attempts_sent++;
+    if (slot.attempts_sent >= slot.max_attempts) {
+      // Keep the metadata for one last echo window. Dispatcher releases the
+      // just-transmitted pool packet after this hook returns.
+      slot.waiting_final_echo = true;
+      slot.retry_at = _ms->getMillis() + slot.retry_delay;
+    } else if (!companionRetryQueueClone(i, packet, slot.attempts_sent)) {
+      companionRetryResetSlot(i);
+    }
+    return;
+  }
+
+  companionRetryStart(packet, packet_key);
+}
+
+void MyMesh::logTxFail(mesh::Packet* packet, int len) {
+  (void)len;
+  if (!packet) return;
+
+  for (int i = 0; i < COMPANION_RETRY_SLOTS; i++) {
+    CompanionRetrySlot& slot = _companion_retries[i];
+    if (!slot.active || slot.queued_packet != packet) continue;
+
+    // Dispatcher owns and releases this in-flight packet after the hook.
+    slot.queued_packet = nullptr;
+    companionRetryResetSlot(i);
+    return;
+  }
+}
+
+void MyMesh::companionRetryObserveRaw(const uint8_t raw[], int len) {
+  if (_active_companion_retries == 0 || !raw || len <= 0) return;
+
+  const uint8_t payload_type = (raw[0] >> PH_TYPE_SHIFT) & PH_TYPE_MASK;
+  if (payload_type != PAYLOAD_TYPE_TXT_MSG && payload_type != PAYLOAD_TYPE_GRP_TXT) {
+    return;
+  }
+
+  mesh::Packet packet;
+  if (!tryParsePacket(&packet, raw, len)) return;
+
+  const bool direct = packet.isRouteDirect();
+  if ((!direct && !packet.isRouteFlood())
+      || (direct && payload_type != PAYLOAD_TYPE_TXT_MSG)) {
+    return;
+  }
+
+  uint8_t retry_key[MAX_HASH_SIZE];
+  packet.calculatePacketHash(retry_key);
+  const uint8_t received_path_count = packet.getPathHashCount();
+  for (int i = 0; i < COMPANION_RETRY_SLOTS; i++) {
+    const CompanionRetrySlot& slot = _companion_retries[i];
+    if (!slot.active || slot.direct != direct
+        || memcmp(slot.retry_key, retry_key, MAX_HASH_SIZE) != 0) {
+      continue;
+    }
+
+    const bool is_echo = direct
+        ? CompanionRetryPolicy::isDirectEcho(slot.progress_marker, received_path_count)
+        : CompanionRetryPolicy::isFloodEcho(slot.progress_marker, received_path_count);
+    if (is_echo) companionRetryCancelSlot(i);
+  }
+}
+
+void MyMesh::companionRetryService() {
+  if (_active_companion_retries == 0) return;
+
+  const uint32_t now = _ms->getMillis();
+  const uint32_t missing_grace = 1000UL
+      + (2UL * _radio->getEstAirtimeFor(MAX_TRANS_UNIT));
+  for (int i = 0; i < COMPANION_RETRY_SLOTS; i++) {
+    CompanionRetrySlot& slot = _companion_retries[i];
+    if (!slot.active) continue;
+
+    if (slot.waiting_final_echo) {
+      if (millisHasNowPassed(slot.retry_at)) companionRetryResetSlot(i);
+      continue;
+    }
+
+    if (slot.queued_packet) {
+      bool found = false;
+      bool hash_matches = false;
+      for (int j = 0; j < _mgr->getOutboundTotal(); j++) {
+        mesh::Packet* queued = _mgr->getOutboundByIdx(j);
+        if (queued != slot.queued_packet) continue;
+
+        uint8_t queued_key[MAX_HASH_SIZE];
+        queued->calculatePacketHash(queued_key);
+        found = true;
+        hash_matches = memcmp(queued_key, slot.retry_key, MAX_HASH_SIZE) == 0;
+        break;
+      }
+
+      if (found) {
+        if (!hash_matches) {
+          // The pool object was reused after another send removed our retry.
+          companionRetryResetSlot(i);
+        } else {
+          slot.missing_since = 0;
+        }
+      } else if (slot.missing_since == 0) {
+        // Usually this means Dispatcher moved the packet from the queue to the
+        // radio. Allow enough time for its normal TX-complete/fail callback.
+        slot.missing_since = now == 0 ? 1 : now;
+      } else if ((uint32_t)(now - slot.missing_since) > missing_grace) {
+        // The pool object is no longer ours, so only retire the metadata here.
+        companionRetryResetSlot(i);
+      }
+      continue;
+    }
+
+    // A non-final active slot always owns one queued or in-flight clone.
+    companionRetryResetSlot(i);
+  }
+}
+
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+  companionRetryObserveRaw(raw, len);
+
   const int8_t   snr_q4 = (int8_t)(snr * 4.0f);
   const uint32_t now_ms = millis();
   // Parse route + path length (hop count). Header byte layout is
@@ -1844,6 +2338,74 @@ void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
 }
 
+void MyMesh::clearExpectedAck(AckTableEntry& entry, bool cancel_retry) {
+  if (cancel_retry) companionRetryCancelKey(entry.retry_key);
+  memset(&entry, 0, sizeof(entry));
+}
+
+MyMesh::AckTableEntry* MyMesh::findPendingTextMessage(
+    const uint8_t text_fingerprint[MAX_HASH_SIZE]) {
+  if (!text_fingerprint) return nullptr;
+  for (int i = 0; i < EXPECTED_ACK_TABLE_SIZE; i++) {
+    AckTableEntry& entry = expected_ack_table[i];
+    if (CompanionRetryPolicy::shouldReplacePendingText(
+            entry.ack, entry.text_fingerprint, text_fingerprint, MAX_HASH_SIZE)) {
+      return &entry;
+    }
+  }
+  return nullptr;
+}
+
+void MyMesh::uiRegisterExpectedAck(uint32_t expected_ack, const uint8_t pub_key[32]) {
+  if (expected_ack == 0 || !pub_key) return;
+
+  // Transport retries of the same command frame reuse the ACK. Do not create
+  // another table entry or disturb the packet's existing retry ownership.
+  for (int i = 0; i < EXPECTED_ACK_TABLE_SIZE; i++) {
+    if (expected_ack_table[i].ack == expected_ack) {
+      _last_plain_tx_meta_valid = false;
+      return;
+    }
+  }
+
+  ContactInfo* contact = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+  if (!contact) {
+    _last_plain_tx_meta_valid = false;
+    return;
+  }
+
+  const bool has_send_meta = _last_plain_tx_meta_valid
+      && _last_plain_tx_ack == expected_ack;
+  AckTableEntry* replacement = has_send_meta
+      ? findPendingTextMessage(_last_plain_tx_fingerprint)
+      : nullptr;
+
+  AckTableEntry* entry;
+  if (replacement) {
+    // Only the same recipient+text supersedes an older pending message.
+    // Unrelated messages retain both their ACK record and retry train.
+    clearExpectedAck(*replacement, true);
+    entry = replacement;
+  } else {
+    entry = &expected_ack_table[next_ack_idx];
+    // Circular-table eviction is bookkeeping only: do not cancel an unrelated
+    // message's lower-level retries merely because its ACK slot is reused.
+    clearExpectedAck(*entry, false);
+    next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
+  }
+
+  entry->msg_sent = _ms->getMillis();
+  entry->ack = expected_ack;
+  entry->contact = contact;
+  if (has_send_meta) {
+    memcpy(entry->text_fingerprint, _last_plain_tx_fingerprint,
+           sizeof(entry->text_fingerprint));
+    memcpy(entry->retry_key, _last_plain_tx_retry_key,
+           sizeof(entry->retry_key));
+  }
+  _last_plain_tx_meta_valid = false;
+}
+
 ContactInfo*  MyMesh::processAck(const uint8_t *data) {
 #if defined(DISPLAY_CLASS)
   // Diag: log every processAck call so we can see whether the ACK matching
@@ -1858,7 +2420,7 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
 #endif
   // see if matches any in a table
   for (int i = 0; i < EXPECTED_ACK_TABLE_SIZE; i++) {
-    if (memcmp(data, &expected_ack_table[i].ack, 4) == 0) { // got an ACK from recipient
+    if (CompanionRetryPolicy::ackMatches(expected_ack_table[i].ack, data)) {
       out_frame[0] = PUSH_CODE_SEND_CONFIRMED;
       memcpy(&out_frame[1], data, 4);
       uint32_t trip_time = _ms->getMillis() - expected_ack_table[i].msg_sent;
@@ -1874,9 +2436,11 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
       }
 #endif
 
-      // NOTE: the same ACK can be received multiple times!
-      expected_ack_table[i].ack = 0; // clear expected hash, now that we have received ACK
-      return expected_ack_table[i].contact;
+      // An ACK is stronger delivery evidence than a local repeater echo. Stop
+      // the exact retry train before clearing its bookkeeping entry.
+      ContactInfo* contact = expected_ack_table[i].contact;
+      clearExpectedAck(expected_ack_table[i], true);
+      return contact;
     }
   }
   return checkConnectionsAck(data);
@@ -2589,6 +3153,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   app_target_ver = 0;
   clearPendingReqs();
   _ui_pending_status = 0;
+  memset(expected_ack_table, 0, sizeof(expected_ack_table));
   next_ack_idx = 0;
   sign_data = NULL;
   dirty_contacts_expiry = 0;
@@ -3021,7 +3586,6 @@ void MyMesh::handleCmdFrame(size_t len) {
           _ui->appendDiag(line);
         }
       }
-      // TODO: add expected ACK to table
       if (result == MSG_SEND_FAILED) {
         writeErrFrame(ERR_CODE_TABLE_FULL);
       } else {
@@ -3030,10 +3594,7 @@ void MyMesh::handleCmdFrame(size_t len) {
           s_last_cmd_txt_est_timeout = est_timeout;
         }
         if (expected_ack) {
-          expected_ack_table[next_ack_idx].msg_sent = _ms->getMillis(); // add to circular table
-          expected_ack_table[next_ack_idx].ack = expected_ack;
-          expected_ack_table[next_ack_idx].contact = recipient;
-          next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
+          uiRegisterExpectedAck(expected_ack, recipient->id.pub_key);
         }
 
         out_frame[0] = RESP_CODE_SENT;
@@ -4496,6 +5057,7 @@ void MyMesh::checkSerialInterface() {
 
 void MyMesh::loop() {
   BaseChatMesh::loop();
+  companionRetryService();
 
   // Session keep-alives for logged-in servers (rooms). The core pinger sends the
   // 9-byte REQ_TYPE_KEEP_ALIVE (+ our sync_since) a room server expects; the ACK
@@ -4662,7 +5224,37 @@ bool MyMesh::sendAdvert(bool flood) {
   return true;
 }
 
-// To check if there is pending work
+bool MyMesh::getNextCompanionRetryWakeDelay(uint32_t& delay_millis) const {
+  if (_active_companion_retries == 0) return false;
+
+  const uint32_t now = _ms->getMillis();
+  bool found = false;
+  uint32_t shortest_delay = 0;
+  for (int i = 0; i < COMPANION_RETRY_SLOTS; i++) {
+    const CompanionRetrySlot& slot = _companion_retries[i];
+    if (!slot.active) continue;
+
+    const uint32_t candidate = CompanionRetryPolicy::wakeDelay(now, slot.retry_at);
+    if (!found || candidate < shortest_delay) {
+      shortest_delay = candidate;
+      found = true;
+    }
+  }
+  if (found) delay_millis = shortest_delay;
+  return found;
+}
+
+// Future queue entries, retry echo windows, and contact-write timers are wake
+// deadlines; they should not prevent the MCU's idle power-saving path. Report
+// only work that is due now. An in-flight retry keeps retry_at in the past until
+// its TX callback runs, so the CPU remains awake while the radio is transmitting.
 bool MyMesh::hasPendingWork() const {
-  return _mgr->getOutboundTotal() > 0 || dirty_contacts_expiry != 0;
+  const uint32_t now = _ms->getMillis();
+  if (_mgr->getOutboundCount(now) > 0) return true;
+  if (dirty_contacts_expiry != 0 && millisHasNowPassed(dirty_contacts_expiry)) {
+    return true;
+  }
+
+  uint32_t retry_delay = 0;
+  return getNextCompanionRetryWakeDelay(retry_delay) && retry_delay == 0;
 }

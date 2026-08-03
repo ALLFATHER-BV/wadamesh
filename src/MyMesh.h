@@ -130,6 +130,17 @@ public:
   void begin(bool has_display);
   void startInterface(BaseSerialInterface &serial);
 
+  // Keep WadaMesh's queued text packets intact around the pinned core's
+  // sendMessage/sendCommandData implementations.  That core currently drops
+  // every queued TXT before enqueueing a new one; these wrappers restore FIFO
+  // behavior and let MyMesh replace only the same logical private message.
+  int sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt,
+                  const char* text, uint32_t& expected_ack, uint32_t& est_timeout,
+                  uint32_t* out_packet_hash4 = nullptr, TxtTxDebugInfo* out_dbg = nullptr);
+  int sendCommandData(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt,
+                      const char* text, uint32_t& est_timeout,
+                      uint32_t* out_packet_hash4 = nullptr, TxtTxDebugInfo* out_dbg = nullptr);
+
   const char *getNodeName();
   NodePrefs *getNodePrefs();
   uint32_t getBLEPin();
@@ -245,6 +256,8 @@ protected:
   void sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis=0) override;
 
   void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override;
+  void logTx(mesh::Packet* packet, int len) override;
+  void logTxFail(mesh::Packet* packet, int len) override;
   bool isAutoAddEnabled() const override;
   bool shouldAutoAddContactType(uint8_t type) const override;
   bool shouldOverwriteWhenFull() const override;
@@ -434,18 +447,7 @@ public:
    *  onMessageAcked back to the UI. The companion-serial CMD_SEND_TXT_MSG
    *  handler already does this for app-originated messages; the touch UI
    *  reaches sendMessage directly and skipped this until now. */
-  void uiRegisterExpectedAck(uint32_t expected_ack, const uint8_t pub_key[32]) {
-    if (expected_ack == 0) return;
-    ContactInfo* c = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
-    if (!c) return;
-    expected_ack_table[next_ack_idx].msg_sent = _ms->getMillis();
-    expected_ack_table[next_ack_idx].ack = expected_ack;
-    expected_ack_table[next_ack_idx].contact = c;
-    // EXPECTED_ACK_TABLE_SIZE is #defined further down in this header next
-    // to the table itself; hard-code 8 here so this inline helper compiles
-    // wherever it's used.
-    next_ack_idx = (next_ack_idx + 1) % 8;
-  }
+  void uiRegisterExpectedAck(uint32_t expected_ack, const uint8_t pub_key[32]);
 
   // ---- "Repeats heard" for sent floods + route of the last received flood ----
   // When we originate a flood TXT, repeaters re-broadcast it and our own radio
@@ -970,6 +972,11 @@ public:
   // To check if there is pending work
   bool hasPendingWork() const;
 
+  /** Return the delay until the next companion retry/final-echo deadline.
+   *  Future retries are wake deadlines, not work that should hold the CPU
+   *  awake. Returns false when no retry train is active. */
+  bool getNextCompanionRetryWakeDelay(uint32_t& delay_millis) const;
+
   // Number of companion clients currently connected on any transport.
   // Used by the idle light-sleep gate (TouchSleep) to confirm no one is
   // actively talking to us before the node parks in light sleep.
@@ -981,6 +988,24 @@ public:
   bool isRadioReceiving() const { return _radio && _radio->isReceiving(); }
 
 private:
+  static const uint8_t COMPANION_TEXT_QUEUE_CAPACITY = 16;
+  uint8_t companionDetachQueuedText(mesh::Packet* packets[], uint8_t priorities[],
+                                    uint32_t scheduled_for[]);
+  bool companionRestoreQueuedText(mesh::Packet* packets[], const uint8_t priorities[],
+                                  const uint32_t scheduled_for[], uint8_t count);
+  mesh::Packet* companionDetachQueuedTextByHash4(uint32_t packet_hash4,
+                                                 uint8_t retry_key[MAX_HASH_SIZE]);
+  void companionRetryCancelKey(const uint8_t retry_key[MAX_HASH_SIZE]);
+
+  void companionRetryObserveRaw(const uint8_t raw[], int len);
+  void companionRetryStart(const mesh::Packet* packet, const uint8_t retry_key[MAX_HASH_SIZE]);
+  void companionRetryService();
+  void companionRetryCancelSlot(int slot_idx);
+  void companionRetryResetSlot(int slot_idx);
+  bool companionRetryQueueClone(int slot_idx, const mesh::Packet* packet,
+                                uint8_t attempt_idx);
+  uint32_t companionRetryDelay(const mesh::Packet* packet, bool direct, uint8_t attempt_idx);
+
   void writeOKFrame();
   void writeErrFrame(uint8_t err_code);
   void writeDisabledFrame();
@@ -1143,16 +1168,46 @@ private:
   int proto_num_clients;
 
   struct AckTableEntry {
-    unsigned long msg_sent;
-    uint32_t ack;
-    ContactInfo* contact;
+    unsigned long msg_sent = 0;
+    uint32_t ack = 0;
+    ContactInfo* contact = nullptr;
+    uint8_t text_fingerprint[MAX_HASH_SIZE] = {};
+    uint8_t retry_key[MAX_HASH_SIZE] = {};
   };
   #define EXPECTED_ACK_TABLE_SIZE 8
   AckTableEntry expected_ack_table[EXPECTED_ACK_TABLE_SIZE]; // circular table
   int next_ack_idx;
+  AckTableEntry* findPendingTextMessage(const uint8_t text_fingerprint[MAX_HASH_SIZE]);
+  void clearExpectedAck(AckTableEntry& entry, bool cancel_retry);
+
+  uint32_t _last_plain_tx_ack = 0;
+  uint8_t _last_plain_tx_fingerprint[MAX_HASH_SIZE] = {};
+  uint8_t _last_plain_tx_retry_key[MAX_HASH_SIZE] = {};
+  bool _last_plain_tx_meta_valid = false;
 
   #define ADVERT_PATH_TABLE_SIZE   16
   AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
+
+  // Client-side retry-until-echo state. Only one exact packet clone is retained
+  // in the outbound queue per active slot, matching the companion behavior.
+  static const uint8_t COMPANION_RETRY_SLOTS = 6;
+  struct CompanionRetrySlot {
+    mesh::Packet* queued_packet = nullptr;
+    uint32_t retry_at = 0;
+    uint32_t retry_delay = 0;
+    uint32_t missing_since = 0;
+    uint8_t retry_key[MAX_HASH_SIZE] = {};
+    uint8_t attempts_sent = 0;
+    uint8_t max_attempts = 0;
+    uint8_t priority = 0;
+    uint8_t progress_marker = 0;
+    uint8_t payload_type = 0;
+    bool direct = false;
+    bool waiting_final_echo = false;
+    bool active = false;
+  };
+  CompanionRetrySlot _companion_retries[COMPANION_RETRY_SLOTS];
+  uint8_t _active_companion_retries = 0;
 
   // One-shot auto-advert on boot. Recipients with auto-add ON pick up our
   // current pubkey, which is critical when the touch firmware regenerates

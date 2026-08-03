@@ -20,7 +20,7 @@ struct Hooks {
   bool     (*bleOff)();         // BLE fully off
   bool     (*onBattery)();      // running on battery (no USB / charge source)
   bool     (*meshIdle)();       // radio not mid-RX AND send queue empty
-  // ms until the soonest wake-forcing deadline (advert / clock alarm),
+  // ms until the soonest wake-forcing deadline (retry / advert / clock alarm),
   // or UINT32_MAX when nothing must wake us:
   uint32_t (*nextWakeForcingDueMs)(uint32_t now_ms);
   uint32_t (*epochNow)();       // wall-clock epoch seconds (for the event log)
