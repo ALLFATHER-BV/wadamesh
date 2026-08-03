@@ -9814,6 +9814,14 @@ static void radioRxQueueToggleCb(lv_event_t* e) {
   touchPrefsSetRxQueue(on);
   radio_driver.rxQueueEnable(on);
 }
+// Auto-retry sends until the mesh confirms them (echo/ACK) — mikecarper's #207 retry train.
+// Persists + applies live; OFF stops new trains, an in-flight one finishes its schedule.
+static void radioRetryEchoToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetRetryEcho(on);
+  the_mesh.setCompanionRetryEnabled(on);
+}
 static void radioSigPollSaveCb(lv_event_t* e) {
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !s_radio_sig_poll_ta) return;
@@ -10130,6 +10138,18 @@ static void buildRadioSettings() {
     lv_obj_add_event_cb(sw, radioRxQueueToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, rh + 10);
     y += settingsRowLabel(body, y, 0, TR("Reads packets on a background task so a busy screen can't drop them."),
+                          COLOR_SUB, &g_font_12, 0) + 2;
+  }
+
+  // Auto-retry until heard (#207): resend until the mesh echoes/ACKs the packet.
+  {
+    int rh = settingsRowLabel(body, y, 4, TR("Retry sends until heard"), COLOR_TEXT, &g_font_12, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetRetryEcho()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, radioRetryEchoToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, rh + 10);
+    y += settingsRowLabel(body, y, 0, TR("Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only."),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
 
@@ -44226,6 +44246,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // configured ~91% duty). Exact-preset matches with the old value get the correct
   // factor rewritten + persisted; see healPresetAirtimeFactor for the guard.
   healPresetAirtimeFactor();
+
+  // #207 auto-retry: apply the persisted Radio & Mesh toggle (default ON).
+  the_mesh.setCompanionRetryEnabled(touchPrefsGetRetryEcho());
 
 #if defined(ESP32)
   // Clock floor (#89): restore the highest epoch this device ever handed out so

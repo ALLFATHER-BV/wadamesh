@@ -1689,6 +1689,7 @@ bool MyMesh::companionRetryQueueClone(int slot_idx, const mesh::Packet* packet,
 
 void MyMesh::companionRetryStart(const mesh::Packet* packet,
                                  const uint8_t retry_key[MAX_HASH_SIZE]) {
+  if (!_companion_retry_enabled) return;   // Radio & Mesh toggle (default ON) — no train, no retries
   if (!packet || !retry_key) return;
 
   const uint8_t payload_type = packet->getPayloadType();

@@ -976,6 +976,9 @@ public:
    *  Future retries are wake deadlines, not work that should hold the CPU
    *  awake. Returns false when no retry train is active. */
   bool getNextCompanionRetryWakeDelay(uint32_t& delay_millis) const;
+  /** Radio & Mesh toggle: auto-retry sends until the mesh echoes/ACKs them (default ON).
+   *  Live-settable; OFF stops NEW retry trains, an in-flight train finishes its schedule. */
+  void setCompanionRetryEnabled(bool on) { _companion_retry_enabled = on; }
 
   // Number of companion clients currently connected on any transport.
   // Used by the idle light-sleep gate (TouchSleep) to confirm no one is
@@ -988,6 +991,7 @@ public:
   bool isRadioReceiving() const { return _radio && _radio->isReceiving(); }
 
 private:
+  bool _companion_retry_enabled = true;   // see setCompanionRetryEnabled
   static const uint8_t COMPANION_TEXT_QUEUE_CAPACITY = 16;
   uint8_t companionDetachQueuedText(mesh::Packet* packets[], uint8_t priorities[],
                                     uint32_t scheduled_for[]);

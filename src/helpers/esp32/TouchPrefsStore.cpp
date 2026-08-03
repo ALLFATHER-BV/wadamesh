@@ -36,7 +36,7 @@ static bool s_begun = false;
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 43;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF); v40 hist_sync_after (chat-history flush: consecutive off-thread write failures before the blocking loop-task fallback, 0 = never); v41 p4_antenna (T-Display P4 antenna select; now RESERVED/unused - the choice is session-only so every boot comes up on the on-board antenna); v42 hist_per_chat (max stored messages PER chat, default 250 - a busy public channel used to be able to fill the whole shared ring and drag the UI down); v43 Pager UI-size presets (reset the previously ignored large-screen default to Small once)
+static const uint8_t  TOUCH_CFG_VER   = 44;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF); v40 hist_sync_after (chat-history flush: consecutive off-thread write failures before the blocking loop-task fallback, 0 = never); v41 p4_antenna (T-Display P4 antenna select; now RESERVED/unused - the choice is session-only so every boot comes up on the on-board antenna); v42 hist_per_chat (max stored messages PER chat, default 250 - a busy public channel used to be able to fill the whole shared ring and drag the UI down); v43 Pager UI-size presets (reset the previously ignored large-screen default to Small once); v44 retry_echo (auto-retry sends until the mesh echoes/ACKs them, default ON; opt-out toggle in Radio & Mesh)
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -104,6 +104,7 @@ struct __attribute__((packed)) TouchCfg {
   uint8_t  compact_chat;      // IRC-style dense chat rows instead of bubbles (bool, 0=off) — v31 (trailing)
   uint32_t clock_floor;       // highest epoch this device handed out (ClockFloorRTC persistence) — v32 (trailing)
   uint8_t  rx_queue;          // buffered LoRa receive: drain task + packet ring (bool, 0=off, experimental) — v33 (trailing)
+  uint8_t  retry_echo;        // auto-retry sends until echo/ACK heard (bool, default ON) — v44 (trailing)
   uint8_t  web_mirror;        // web control panel: mirror the live UI to a phone browser + inject taps (bool, 0=off) — v34 (trailing)
   uint8_t  remote_mode;       // render the UI off-screen at a web resolution instead of the panel (bool, 0=off) — v35 (trailing)
   uint8_t  remote_landscape;  // remote mode orientation: 1=landscape 800x480 (desktop), 0=portrait 480x800 (phone) — v36 (trailing)
@@ -191,6 +192,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.compact_chat      = 0;      // OFF: bubble chat layout (opt-in IRC-style dense rows)
   c.clock_floor       = 0;      // no persisted send-timestamp floor yet
   c.rx_queue          = 1;      // ON: buffered receive (test-channel default; opt-out toggle in Radio & Mesh)
+  c.retry_echo        = 1;      // ON: retry sends until the mesh confirms them (opt-out toggle in Radio & Mesh)
   c.sleep_idle        = 0;      // default: idle light-sleep OFF
   { const char* d = "ertui"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // default tab hotkeys E/R/T/U/I
   c.map_zoom_buttons  = 0;      // default: map zoom = slider
@@ -280,6 +282,7 @@ static void cfgLoadOrMigrate() {
         if (s_cfg.ver < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
         if (s_cfg.ver < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (s_cfg.ver < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
+        if (s_cfg.ver < 44) s_cfg.retry_echo = 1;    // auto-retry ON by default (opt-out toggle in Radio & Mesh)
         if (s_cfg.ver < 34) s_cfg.web_mirror = 0;    // new trailing field: web control panel off by default (opt-in remote control)
         if (s_cfg.ver < 35) s_cfg.remote_mode = 0;   // new trailing field: remote mode off by default (opt-in, reboots to apply)
         if (s_cfg.ver < 36) s_cfg.remote_landscape = 0;
@@ -1133,6 +1136,15 @@ bool touchPrefsSetBootAdvert(bool on) {
 bool touchPrefsGetRxQueue() {
   if (!s_begun) touchPrefsBegin();
   return s_cfg.rx_queue != 0;
+}
+bool touchPrefsGetRetryEcho() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.retry_echo != 0;
+}
+bool touchPrefsSetRetryEcho(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.retry_echo = on ? 1 : 0;
+  return cfgFlush();
 }
 bool touchPrefsSetRxQueue(bool on) {
   if (!s_begun) touchPrefsBegin();
