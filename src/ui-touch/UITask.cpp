@@ -10846,9 +10846,11 @@ static void sdRestoreApply() {
   // Land everything in RAM first — this path used to reboot WITHOUT persisting,
   // silently dropping every message since the last lazy flush.
   g_lv.task->persistHistoryNow();
-  disableLoopWDT();
-  const bool ok = meshcomodMigrateSpiffsToSd(true);
-  enableLoopWDT();
+  bool ok = false;
+  {
+    LoopWdtGuard loop_wdt_guard;
+    ok = meshcomodMigrateSpiffsToSd(true);
+  }
   if (!ok) { g_lv.task->showAlert(TR("Copy failed (no internal identity)"), 2200); return; }
   meshcomodClearSdMigLatch();           // manual copy succeeded -> re-arm boot auto-adoption (GH #142/#148)
   touchPrefsSetUseSdStorage(true);      // make sure the reboot adopts the card
@@ -18752,30 +18754,31 @@ static bool fmSdTryMount() {
   const int kAttempts = (int)(sizeof(kMountLadder) / sizeof(kMountLadder[0]));
   bool mounted = false;
   uint32_t mounted_hz = 0;
-  disableLoopWDT();
-  for (int attempt = 0; attempt < kAttempts; ++attempt) {
-    SD.end();
-    delay(kMountLadder[attempt].settle_ms);
-    if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
-      mounted = true;
-      mounted_hz = kMountLadder[attempt].hz;
-      break;
-    }
-  }
-  // Renegotiate upward after a slow-rung success (GH #194): the succeeding rung's clock used
-  // to become the SESSION clock, so a card whose wake-up needed 400 kHz served contacts,
-  // history and tiles at ~25 KB/s forever after ("slower is fine" above predates the SD being
-  // the primary store). Init slow, then raise — fall back to the proven clock if 4 MHz fails.
-  if (mounted && mounted_hz < 4000000) {
-    SD.end();
-    delay(60);
-    if (!(SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE)) {
+  {
+    LoopWdtGuard loop_wdt_guard;
+    for (int attempt = 0; attempt < kAttempts; ++attempt) {
       SD.end();
-      delay(120);
-      mounted = SD.begin(PIN_SD_CS, *spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
+      delay(kMountLadder[attempt].settle_ms);
+      if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
+        mounted = true;
+        mounted_hz = kMountLadder[attempt].hz;
+        break;
+      }
+    }
+    // Renegotiate upward after a slow-rung success (GH #194): the succeeding rung's clock used
+    // to become the SESSION clock, so a card whose wake-up needed 400 kHz served contacts,
+    // history and tiles at ~25 KB/s forever after ("slower is fine" above predates the SD being
+    // the primary store). Init slow, then raise — fall back to the proven clock if 4 MHz fails.
+    if (mounted && mounted_hz < 4000000) {
+      SD.end();
+      delay(60);
+      if (!(SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE)) {
+        SD.end();
+        delay(120);
+        mounted = SD.begin(PIN_SD_CS, *spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
+      }
     }
   }
-  enableLoopWDT();
   if (mounted) {
     s_sd_mounted = true;
     s_sd_size = SD.cardSize();
@@ -36018,6 +36021,8 @@ static void powerOffCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
 #if defined(ESP32)
+  WdtHeavyGuard idle_wdt_guard;
+  LoopWdtGuard loop_wdt_guard;
   if (g_lv.task) {
     g_lv.task->persistHistoryNow();        // flush chat before we go down
     discoveredFlushNow();                  // and the Discovered ring
@@ -36068,6 +36073,8 @@ static void powerDownloadCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
 #if defined(ESP32)
+  WdtHeavyGuard idle_wdt_guard;
+  LoopWdtGuard loop_wdt_guard;
   if (g_lv.task) {
     g_lv.task->persistHistoryNow();   // flush chat before we go down
     discoveredFlushNow();             // and the Discovered ring
@@ -46092,6 +46099,8 @@ void UITask::persistHistoryNow() {
 }
 
 void UITask::rebootDevice() {
+  WdtHeavyGuard idle_wdt_guard;
+  LoopWdtGuard loop_wdt_guard;
   // Persist chat history synchronously before we reboot — the periodic
   // flush is rate-capped, so without this a reboot could drop the most
   // recent chat history.
@@ -47458,32 +47467,33 @@ void UITask::loop() {
   // watchdog around it (CPU0 idle keeps running, so no reset) to avoid a
   // mid-format reset that would corrupt the card.
   if (s_sd_format_pending && --s_sd_format_pending == 0) {
-    disableLoopWDT();
-    SPIClass* spi = tdeckSharedSPI();
     bool ok = false;
-    if (spi) {
-      // Explicit reformat (not SD.begin's format_if_empty, which only formats an
-      // already-unreadable card): init the card to register the FatFs diskio at
-      // pdrv (no mount), f_mkfs to FAT32, write the MESHCOMOD label by hand while
-      // unmounted, release, then remount the fresh FS via SD.begin. Works on any
-      // card (FAT32, exFAT, blank) since f_mkfs hardware-inits + overwrites it.
-      SD.end();                                          // drop any existing mount
-      uint8_t pdrv = sdcard_init(PIN_SD_CS, spi, 4000000);
-      if (pdrv != 0xFF) {
-        char drv[3] = { (char)('0' + pdrv), ':', 0 };
-        void* work = malloc(4096);                       // f_mkfs scratch (>= FF_MAX_SS)
-        if (work) {
-          if (f_mkfs(drv, MC_FM_FAT32, 0, work, 4096) == 0 /*FR_OK*/) {
-            sdWriteFatLabel(pdrv, "MESHCOMOD");
-            ok = true;
+    {
+      LoopWdtGuard loop_wdt_guard;
+      SPIClass* spi = tdeckSharedSPI();
+      if (spi) {
+        // Explicit reformat (not SD.begin's format_if_empty, which only formats an
+        // already-unreadable card): init the card to register the FatFs diskio at
+        // pdrv (no mount), f_mkfs to FAT32, write the MESHCOMOD label by hand while
+        // unmounted, release, then remount the fresh FS via SD.begin. Works on any
+        // card (FAT32, exFAT, blank) since f_mkfs hardware-inits + overwrites it.
+        SD.end();                                          // drop any existing mount
+        uint8_t pdrv = sdcard_init(PIN_SD_CS, spi, 4000000);
+        if (pdrv != 0xFF) {
+          char drv[3] = { (char)('0' + pdrv), ':', 0 };
+          void* work = malloc(4096);                       // f_mkfs scratch (>= FF_MAX_SS)
+          if (work) {
+            if (f_mkfs(drv, MC_FM_FAT32, 0, work, 4096) == 0 /*FR_OK*/) {
+              sdWriteFatLabel(pdrv, "MESHCOMOD");
+              ok = true;
+            }
+            free(work);
           }
-          free(work);
+          sdcard_uninit(pdrv);
         }
-        sdcard_uninit(pdrv);
+        if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
       }
-      if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
     }
-    enableLoopWDT();
     fmHideFormatOverlay();
     if (ok && SD.cardType() != CARD_NONE) {
       s_sd_mounted = true;
@@ -47508,9 +47518,11 @@ void UITask::loop() {
   }
   // Deferred copy/move (paste). WDT off — a big tree can take a while.
   if (s_fm_paste_pending && --s_fm_paste_pending == 0) {
-    disableLoopWDT();
-    bool ok = fmDoPaste();
-    enableLoopWDT();
+    bool ok = false;
+    {
+      LoopWdtGuard loop_wdt_guard;
+      ok = fmDoPaste();
+    }
     fmHideFormatOverlay();
     showAlert(ok ? TR("Pasted") : TR("Paste failed"), ok ? 1500 : 2400);
     if (s_fm_list) fmRefresh();
