@@ -47480,16 +47480,20 @@ void UITask::loop() {
       lv_group_focus_obj(s_nav_last);
   }
 #endif
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
   // Deferred microSD FAT32 format (runs a couple ticks after the notice paints).
   // f_mkfs blocks the loop for tens of seconds on a big card, so drop the loop
   // watchdog around it (CPU0 idle keeps running, so no reset) to avoid a
   // mid-format reset that would corrupt the card.
+  // Gate matches fmSdDoFormat (T-Deck + M9 + V4-R8): the Format button existed on
+  // all three, but this worker was T-Deck-only — on the others the formatting
+  // notice stayed up forever with no format running, and the pending latch even
+  // blocked remounting until reboot (#172).
   if (s_sd_format_pending && --s_sd_format_pending == 0) {
     bool ok = false;
     {
       LoopWdtGuard loop_wdt_guard;
-      SPIClass* spi = tdeckSharedSPI();
+      SPIClass* spi = sdSharedSPI();   // this board's SD bus (T-Deck: LoRa SPI; R8: TFT FSPI; M9: shared SPI)
       if (spi) {
         // Explicit reformat (not SD.begin's format_if_empty, which only formats an
         // already-unreadable card): init the card to register the FatFs diskio at
@@ -47535,7 +47539,10 @@ void UITask::loop() {
     }
     if (s_fm_list) fmShowRoots();
   }
-  // Deferred copy/move (paste). WDT off — a big tree can take a while.
+#endif
+  // Deferred copy/move (paste). WDT off — a big tree can take a while. Ungated
+  // like fmActPasteCb: every board with the Files app can paste, and with this
+  // worker T-Deck-only the busy overlay stayed up forever on the rest (#172 class).
   if (s_fm_paste_pending && --s_fm_paste_pending == 0) {
     bool ok = false;
     {
@@ -47546,7 +47553,6 @@ void UITask::loop() {
     showAlert(ok ? TR("Pasted") : TR("Paste failed"), ok ? 1500 : 2400);
     if (s_fm_list) fmRefresh();
   }
-#endif
 #endif
 }
 
