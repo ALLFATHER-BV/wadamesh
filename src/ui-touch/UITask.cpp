@@ -591,6 +591,19 @@ static inline lv_coord_t PCW(int px) {
 static lv_font_t g_font_tab;     // fixed 16 px tab-bar icon font (montserrat_16 + person glyph)
 #endif
 
+// Compact UI chrome (tab icons, popup close affordances, overview actions) must
+// not grow with the semantic text preset. On the Pager's 222-px-tall panel a
+// Large-preset 24-px glyph inside fixed 28/32-px controls crowds neighbouring
+// content even though the control itself has not grown. Match the deliberately
+// fixed bottom toolbar wherever UI-size presets exist.
+static inline const lv_font_t* uiChromeFont() {
+#if CAP_UI_SIZE
+  return &g_font_tab;
+#else
+  return &g_font_16;
+#endif
+}
+
 static void initTouchFontFallbacks() {
 #if defined(TLORA_PAGER)
   // The Pager is wide but only 222 px tall. Grow the semantic text roles while
@@ -2755,12 +2768,16 @@ static lv_obj_t* addCloseXBadge(lv_obj_t* card, lv_event_cb_t cb, void* user_dat
   lv_obj_add_flag(x, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(x, LV_OBJ_FLAG_FLOATING);
   lv_obj_add_flag(x, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  // A solid reverse-video focus fill turns the invisible 32-px hit target into
+  // a large white disk on keyboard-only devices. Keep the focus indication to
+  // the same restrained accent tint used by app-drawer chrome.
+  lv_obj_add_flag(x, NAV_ACCENTFOCUS_FLAG);
   lv_obj_clear_flag(x, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_move_foreground(x);
   lv_obj_add_event_cb(x, cb, LV_EVENT_CLICKED, user_data);
   lv_obj_t* lbl = lv_label_create(x);
   lv_label_set_text(lbl, LV_SYMBOL_CLOSE);
-  lv_obj_set_style_text_font(lbl, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_font(lbl, uiChromeFont(), LV_PART_MAIN);
 #if defined(HAS_TANMATSU)
   lv_obj_set_style_text_color(lbl, lv_color_hex(0xE05544), LV_PART_MAIN);   // red ✕ — matches the F1 / Power button
 #else
@@ -7005,7 +7022,17 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
 
   // Same metrics as the contact action sheet — the two sheets are siblings and
   // should read identically. (PSC is a no-op on the smaller boards.)
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  // The Pager is twice as wide as the 240/320-px touch layouts but substantially
+  // shorter. Spend that width: fixed-size one-line labels and shorter rows keep
+  // the complete channel menu visible at every text preset.
+  const int card_w  = lv_disp_get_hor_res(nullptr) - 80;
+  const int btn_h   = 26;
+  const int btn_gap = 3;
+  const int title_h = 32;   // reserve the full close-X focus/hit target
+  const int pad     = 6;
+  const lv_font_t* row_font = uiChromeFont();
+#elif CAP_LARGE_SCREEN
   const int card_w  = PCW(232);
   const int btn_h   = PSC(30);
   const int btn_gap = PSC(6);
@@ -7031,11 +7058,15 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   }
   // Everything except Remove/Delete goes in the 2-column grid; the danger row
   // spans the full width at the bottom. Channel: mark-read + region + the two
-  // mutes + share + blocked = 6 grid items (3 rows). Room: mark-read +
-  // login-again + reset-path + blocked = 4 (2 rows). DM: 3 (2 rows).
-  const int grid_items = is_channel ? 7 : (is_room_thread ? 4 : 3);   // channels: +Chat icon
+  // mutes + share + blocked + chat icon + delete history = 8 grid items
+  // (4 rows). Room: mark-read + login-again + reset-path + blocked +
+  // delete history = 5 (3 rows). DM: mark-read + reset-path + blocked +
+  // delete history = 4 (2 rows).
+  const int grid_items = is_channel ? 8 : (is_room_thread ? 5 : 4);
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
-  int card_h = title_h + (grid_rows + 1) * (btn_h + btn_gap) + pad;
+  // Exact content height: outer padding + fixed header + grid rows + one
+  // full-width danger row. There is no trailing gap after the danger row.
+  int card_h = 2 * pad + title_h + (grid_rows + 1) * btn_h + grid_rows * btn_gap;
   const int max_h = lv_disp_get_ver_res(nullptr) - STATUSBAR_H - 12;
   const bool card_scroll = (card_h > max_h);            // safety net only — all three variants fit both S3 boards
   if (card_scroll) card_h = max_h;
@@ -7096,7 +7127,9 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     lv_label_set_text(l, TR(lbl));
     lv_obj_set_style_text_font(l, row_font, LV_PART_MAIN);
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(l, half_w - 8);
+    // LONG_DOT only stays on one line when height is constrained. Previously a
+    // Large-preset label wrapped into a second line and escaped its 30-px row.
+    lv_obj_set_size(l, half_w - 8, lv_font_get_line_height(row_font));
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_center(l);
     if (col == 0) col = 1;
@@ -29862,7 +29895,7 @@ static void openMessageActionMenu(int msg_idx) {
   const int btn_h  = 30;
   const int gap    = 6;
   const int pad    = 10;
-  const int hdr_h  = 24;
+  const int hdr_h  = 32;   // keep the first row below the full close-X target
 #elif CAP_LARGE_SCREEN
   const int card_w = PCW(220);
   const int btn_h  = PSC(30);
@@ -39380,12 +39413,12 @@ static void buildGlobalStatusBar() {
     lv_obj_add_event_cb(g_statusbar.inbox_add, chatsAddBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* l = lv_label_create(g_statusbar.inbox_add); lv_label_set_text(l, LV_SYMBOL_PLUS);
       lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN); lv_obj_center(l); }
+      lv_obj_set_style_text_font(l, uiChromeFont(), LV_PART_MAIN); lv_obj_center(l); }
     g_statusbar.inbox_mark = mk(1);   // middle — mark all read
     lv_obj_add_event_cb(g_statusbar.inbox_mark, chatsMarkAllReadBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* ml = lv_label_create(g_statusbar.inbox_mark); lv_label_set_text(ml, LV_SYMBOL_OK);
       lv_obj_set_style_text_color(ml, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_set_style_text_font(ml, &g_font_14, LV_PART_MAIN); lv_obj_center(ml); }
+      lv_obj_set_style_text_font(ml, uiChromeFont(), LV_PART_MAIN); lv_obj_center(ml); }
     g_statusbar.inbox_qr   = mk(2);   // rightmost — share QR
     lv_obj_add_event_cb(g_statusbar.inbox_qr, shareMyContactBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* qimg = lv_img_create(g_statusbar.inbox_qr); lv_img_set_src(qimg, &qr_icon_dsc);
@@ -42291,15 +42324,17 @@ static void buildUiTree() {
   // lock screen) that sit above it in the screen z-order.
   s_update_badge = lv_label_create(lv_scr_act());
   lv_label_set_text(s_update_badge, "!");
-  lv_obj_set_size(s_update_badge, 15, 15);
+  lv_obj_set_size(s_update_badge, 16, 16);
   lv_obj_set_style_radius(s_update_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
   lv_obj_set_style_bg_color(s_update_badge, lv_color_hex(0xE2403A), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_update_badge, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_update_badge, lv_color_white(), LV_PART_MAIN);
-  lv_obj_set_style_text_font(s_update_badge, &g_font_12, LV_PART_MAIN);
+  // Bottom-bar badges are fixed chrome too: a Large-preset 18-px line cannot
+  // be drawn inside the old 15-px circle without clipping.
+  lv_obj_set_style_text_font(s_update_badge, &lv_font_montserrat_12, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_update_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_update_badge, 0, LV_PART_MAIN);
-  lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -(TABBAR_H - 15));
+  lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -(TABBAR_H - 16));
   lv_obj_add_flag(s_update_badge, LV_OBJ_FLAG_HIDDEN);
 
   // Unread-count badge over the Chats (envelope) tab — leftmost of 5. Same
@@ -42307,20 +42342,21 @@ static void buildUiTree() {
   // sets the count + show/hide. Content-width so it grows for 2-3 digits.
   s_chat_unread_badge = lv_label_create(lv_scr_act());
   lv_label_set_text(s_chat_unread_badge, "");
-  lv_obj_set_size(s_chat_unread_badge, LV_SIZE_CONTENT, 15);
+  lv_obj_set_size(s_chat_unread_badge, LV_SIZE_CONTENT, 16);
+  lv_obj_set_style_min_width(s_chat_unread_badge, 16, LV_PART_MAIN);
   lv_obj_set_style_radius(s_chat_unread_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
   lv_obj_set_style_bg_color(s_chat_unread_badge, lv_color_hex(0xE0533D), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_chat_unread_badge, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_chat_unread_badge, lv_color_white(), LV_PART_MAIN);
-  lv_obj_set_style_text_font(s_chat_unread_badge, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_chat_unread_badge, &lv_font_montserrat_12, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_chat_unread_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_pad_hor(s_chat_unread_badge, 3, LV_PART_MAIN);
   lv_obj_set_style_pad_ver(s_chat_unread_badge, 0, LV_PART_MAIN);
   lv_obj_align(s_chat_unread_badge, LV_ALIGN_BOTTOM_LEFT,
 #if defined(HAS_EXPANSION_KIT)
-               lv_disp_get_hor_res(nullptr) / 12 + 7, -(TABBAR_H - 15));   // 6 tabs: half-cell over Chats
+               lv_disp_get_hor_res(nullptr) / 12 + 7, -(TABBAR_H - 16));   // 6 tabs: half-cell over Chats
 #else
-               lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 15));   // 5 tabs: half-cell over Chats
+               lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 16));   // 5 tabs: half-cell over Chats
 #endif
   lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
 
