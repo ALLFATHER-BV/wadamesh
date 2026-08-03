@@ -1,0 +1,19 @@
+# beta_57 — community drop: auto-retry sends, Pager RF fix, SD-store repairs
+# Most of this beta is community work: PixPMusic (storage + Pager) and mikecarper (auto-retry).
+
+# sending
+Sends now auto-retry until the mesh actually hears them (echo or ACK), with smart backoff (mikecarper, PR #207)
+New Radio & Mesh toggle "Retry sends until heard" (default on) if you want the old one-shot behaviour
+
+# storage
+Settings saves no longer fail with "Couldn't save name to storage" on SD-based storage (PixPMusic, PR #211)
+Watchdog state is preserved around long SD/flash work — kills a class of spurious reboots (PixPMusic, PR #213)
+Preference reads are now thread-safe on the file-backed store (PixPMusic, PR #212)
+
+# pager
+T-Lora Pager SX1262: the radio's TCXO is now driven at the vendor-specified 3.0 V — better RF, fewer missed ACKs (PixPMusic, PR #209)
+
+# fixes
+Discover no longer freezes its list when a node name contains an emoji or a hash sign (#223)
+SD format on the Heltec V4-R8 and ThinkNode M9 now actually runs instead of sitting on the notice forever (#172)
+Files app: Copy/Paste now works on every board, not only the T-Deck
