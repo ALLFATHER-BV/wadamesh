@@ -40056,6 +40056,12 @@ static void buildGlobalStatusBar() {
     // ROW 2's left, inside the corner inset — the status cluster occupies row-2 right.
     const lv_coord_t BH = 18, BW = 30, GAP = 6, BX0 = SB_INSET_X;
     const lv_coord_t BY = SB_TOP_PAD + SB_ROW + (SB_ROW - BH) / 2;
+#elif defined(TLORA_PAGER)
+    // Match the compact status cluster instead of spanning most of the two-row
+    // header. All three actions, including the QR image button, live wholly in
+    // the lower 22-px row and keep identical 26x20 containers.
+    const lv_coord_t BH = 20, BW = 26, GAP = 3, BX0 = 6;
+    const lv_coord_t BY = STATUSBAR_H + (STATUSBAR_H - BH) / 2;
 #else
     const lv_coord_t BH = (lv_coord_t)((STATUSBAR_H * 2 - 4) * 7 / 10);
     const lv_coord_t BW = 34, GAP = 4, BX0 = 6, BY = (lv_coord_t)(STATUSBAR_H * 2 - BH) / 2;
