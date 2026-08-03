@@ -86,7 +86,7 @@ private:
   bool   sdSet(const char* key, const uint8_t* data, size_t len);
   bool   sdLoad();
   bool   sdSave();              // queue current RAM mirror (no filesystem I/O)
-  uint64_t sdGetInt(const char* key, uint64_t def, int width);
+  uint64_t sdGetInt(const char* key, uint64_t def, int width, bool* found = nullptr);
   size_t sdPutInt(const char* key, uint64_t v, int width);
 };
 

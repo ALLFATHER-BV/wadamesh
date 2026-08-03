@@ -218,6 +218,32 @@ static FileCache* findCacheLocked(const char* path) {
   return nullptr;
 }
 
+// File-mode caches are shared by every SdNvsPrefs instance and by both the UI
+// and worker cores. Copy into caller-owned storage while holding the cache
+// mutex; returning a Kv* would let a concurrent setter invalidate the vector
+// element or its payload as soon as the lock was released. Scalar and buffer
+// getters stay allocation-free, avoiding tiny heap churn on every preference
+// read. value_size reports the stored length even when the output is truncated.
+static bool copyCachedValue(const char* path, const char* key, void* out,
+                            size_t out_size, size_t& value_size) {
+  value_size = 0;
+  if (!s_cache_mutex || !path || !key) return false;
+  bool found = false;
+  xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+  if (FileCache* cache = findCacheLocked(path)) {
+    for (const auto& e : cache->kv) {
+      if (strncmp(e.key, key, sizeof(e.key)) != 0) continue;
+      value_size = e.val.size();
+      const size_t copy_size = value_size < out_size ? value_size : out_size;
+      if (out && copy_size) memcpy(out, e.val.data(), copy_size);
+      found = true;
+      break;
+    }
+  }
+  xSemaphoreGive(s_cache_mutex);
+  return found;
+}
+
 static void prefsWriterTask(void*) {
   for (;;) {
     WriteJob* job = nullptr;
@@ -331,18 +357,10 @@ void SdNvsPrefs::end() {
 
 // ----------------------------- file helpers -----------------------------
 SdNvsPrefs::Kv* SdNvsPrefs::sdFind(const char* key) {
-  if (fileMode()) {
-    if (!s_cache_mutex) return nullptr;
-    xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
-    FileCache* cache = findCacheLocked(_path);
-    Kv* found = nullptr;
-    if (cache) {
-      for (auto& e : cache->kv)
-        if (strncmp(e.key, key, sizeof(e.key)) == 0) { found = &e; break; }
-    }
-    xSemaphoreGive(s_cache_mutex);
-    return found;
-  }
+  // Shared file-mode entries must never escape s_cache_mutex. File-mode
+  // callers use copyCachedValue() instead; this pointer helper is only for the
+  // legacy per-instance vector below.
+  if (fileMode()) return nullptr;
   for (auto& e : _sd) if (strncmp(e.key, key, sizeof(e.key)) == 0) return &e;
   return nullptr;
 }
@@ -457,6 +475,14 @@ bool SdNvsPrefs::sdLoad() {
     ++cache.revision;
   }
   xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+  // Another task may have loaded this namespace while file I/O ran outside the
+  // mutex. Keep a single authoritative cache entry instead of inserting an
+  // invisible duplicate that the writer would still iterate.
+  if (FileCache* existing = findCacheLocked(_path)) {
+    const bool ok = existing->loaded;
+    xSemaphoreGive(s_cache_mutex);
+    return ok;
+  }
   s_caches.push_back(std::move(cache));
   xSemaphoreGive(s_cache_mutex);
   return true;
@@ -521,6 +547,19 @@ void SdNvsPrefs::tick(uint32_t now_ms) {
 
 bool SdNvsPrefs::flush(uint32_t timeout_ms) {
   if (!fileMode()) return true;
+  if (!ensureWorker()) {
+    // A writer-allocation failure is only a flush failure when RAM contains
+    // work that still needs landing. A clean store has nothing to wait for and
+    // must not permanently block unrelated migration/reboot workflows.
+    if (!s_cache_mutex) return true;
+    bool pending = false;
+    xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    for (const auto& cache : s_caches) {
+      if (cache.dirty || cache.writing) { pending = true; break; }
+    }
+    xSemaphoreGive(s_cache_mutex);
+    return !pending;
+  }
   const uint32_t start = millis();
   for (;;) {
     scheduleOne(millis(), true);
@@ -609,8 +648,20 @@ bool SdNvsPrefs::writeFileBool(fs::FS* fs, const char* dir, const char* ns,
   return true;
 }
 
-uint64_t SdNvsPrefs::sdGetInt(const char* key, uint64_t def, int width) {
+uint64_t SdNvsPrefs::sdGetInt(const char* key, uint64_t def, int width, bool* found) {
+  uint8_t cached[8] = {};
+  if (fileMode()) {
+    size_t value_size = 0;
+    const bool exists = copyCachedValue(_path, key, cached, sizeof cached, value_size);
+    if (found) *found = exists;
+    if (!exists || value_size == 0) return def;
+    uint64_t v = 0;
+    int n = (int)value_size; if (n > width) n = width;
+    for (int i = 0; i < n; i++) v |= (uint64_t)cached[i] << (8 * i);
+    return v;
+  }
   Kv* e = sdFind(key);
+  if (found) *found = e != nullptr;
   if (!e || e->val.empty()) return def;
   uint64_t v = 0;
   int n = (int)e->val.size(); if (n > width) n = width;
@@ -630,7 +681,11 @@ size_t SdNvsPrefs::sdPutInt(const char* key, uint64_t v, int width) {
 // ever touch the file — nothing new is written to NVS.
 
 bool SdNvsPrefs::isKey(const char* key) {
-  if (fileMode()) return sdFind(key) != nullptr || (_nvs_open && _nvs.isKey(key));
+  if (fileMode()) {
+    size_t value_size = 0;
+    return copyCachedValue(_path, key, nullptr, 0, value_size) ||
+           (_nvs_open && _nvs.isKey(key));
+  }
   return useNvs() ? (_nvs_open && _nvs.isKey(key)) : (sdFind(key) != nullptr);
 }
 
@@ -704,7 +759,9 @@ bool SdNvsPrefs::clear() {
 
 uint8_t SdNvsPrefs::getUChar(const char* k, uint8_t def) {
   if (fileMode()) {
-    if (sdFind(k)) return (uint8_t)sdGetInt(k, def, 1);
+    bool found = false;
+    const uint8_t value = (uint8_t)sdGetInt(k, def, 1, &found);
+    if (found) return value;
     if (_nvs_open && _nvs.isKey(k)) return _nvs.getUChar(k, def);
     return def;
   }
@@ -716,7 +773,9 @@ size_t SdNvsPrefs::putUChar(const char* k, uint8_t v) {
 }
 int8_t SdNvsPrefs::getChar(const char* k, int8_t def) {
   if (fileMode()) {
-    if (sdFind(k)) return (int8_t)sdGetInt(k, (uint8_t)def, 1);
+    bool found = false;
+    const int8_t value = (int8_t)sdGetInt(k, (uint8_t)def, 1, &found);
+    if (found) return value;
     if (_nvs_open && _nvs.isKey(k)) return _nvs.getChar(k, def);
     return def;
   }
@@ -728,7 +787,9 @@ size_t SdNvsPrefs::putChar(const char* k, int8_t v) {
 }
 uint16_t SdNvsPrefs::getUShort(const char* k, uint16_t def) {
   if (fileMode()) {
-    if (sdFind(k)) return (uint16_t)sdGetInt(k, def, 2);
+    bool found = false;
+    const uint16_t value = (uint16_t)sdGetInt(k, def, 2, &found);
+    if (found) return value;
     if (_nvs_open && _nvs.isKey(k)) return _nvs.getUShort(k, def);
     return def;
   }
@@ -740,7 +801,9 @@ size_t SdNvsPrefs::putUShort(const char* k, uint16_t v) {
 }
 uint32_t SdNvsPrefs::getUInt(const char* k, uint32_t def) {
   if (fileMode()) {
-    if (sdFind(k)) return (uint32_t)sdGetInt(k, def, 4);
+    bool found = false;
+    const uint32_t value = (uint32_t)sdGetInt(k, def, 4, &found);
+    if (found) return value;
     if (_nvs_open && _nvs.isKey(k)) return _nvs.getUInt(k, def);
     return def;
   }
@@ -752,7 +815,9 @@ size_t SdNvsPrefs::putUInt(const char* k, uint32_t v) {
 }
 bool SdNvsPrefs::getBool(const char* k, bool def) {
   if (fileMode()) {
-    if (sdFind(k)) return sdGetInt(k, def ? 1 : 0, 1) != 0;
+    bool found = false;
+    const bool value = sdGetInt(k, def ? 1 : 0, 1, &found) != 0;
+    if (found) return value;
     if (_nvs_open && _nvs.isKey(k)) return _nvs.getBool(k, def);
     return def;
   }
@@ -764,29 +829,48 @@ size_t SdNvsPrefs::putBool(const char* k, bool v) {
 }
 
 String SdNvsPrefs::getString(const char* k, const String& def) {
-  Kv* e = nullptr;
   if (fileMode()) {
-    e = sdFind(k);
-    if (!e) return (_nvs_open && _nvs.isKey(k)) ? _nvs.getString(k, def) : def;
-  } else {
-    if (useNvs()) return _nvs.getString(k, def);
-    e = sdFind(k);
-    if (!e) return def;
+    if (!s_cache_mutex) return (_nvs_open && _nvs.isKey(k)) ? _nvs.getString(k, def) : def;
+    String value;
+    bool found = false;
+    xSemaphoreTake(s_cache_mutex, portMAX_DELAY);
+    if (FileCache* cache = findCacheLocked(_path)) {
+      for (const auto& e : cache->kv) {
+        if (strncmp(e.key, k, sizeof(e.key)) != 0) continue;
+        value.reserve(e.val.size());
+        for (uint8_t c : e.val) value += (char)c;
+        found = true;
+        break;
+      }
+    }
+    xSemaphoreGive(s_cache_mutex);
+    if (!found)
+      return (_nvs_open && _nvs.isKey(k)) ? _nvs.getString(k, def) : def;
+    return value;
   }
+  if (useNvs()) return _nvs.getString(k, def);
+  Kv* e = sdFind(k);
+  if (!e) return def;
   String s; s.reserve(e->val.size());
   for (uint8_t c : e->val) s += (char)c;
   return s;
 }
 size_t SdNvsPrefs::getString(const char* k, char* buf, size_t maxLen) {
   if (!buf || !maxLen) return 0;
-  Kv* e = nullptr;
   if (fileMode()) {
-    e = sdFind(k);
-    if (!e) { if (_nvs_open && _nvs.isKey(k)) return _nvs.getString(k, buf, maxLen); buf[0] = '\0'; return 0; }
-  } else {
-    if (useNvs()) return _nvs.getString(k, buf, maxLen);
-    e = sdFind(k);
+    size_t value_size = 0;
+    if (!copyCachedValue(_path, k, buf, maxLen - 1, value_size)) {
+      if (_nvs_open && _nvs.isKey(k)) return _nvs.getString(k, buf, maxLen);
+      buf[0] = '\0';
+      return 0;
+    }
+    size_t n = value_size;
+    if (n > maxLen - 1) n = maxLen - 1;
+    buf[n] = '\0';
+    return n;
   }
+  if (useNvs()) return _nvs.getString(k, buf, maxLen);
+  Kv* e = sdFind(k);
   size_t n = e ? e->val.size() : 0;
   if (n > maxLen - 1) n = maxLen - 1;
   if (e && n) memcpy(buf, e->val.data(), n);
@@ -800,15 +884,15 @@ size_t SdNvsPrefs::putString(const char* k, const char* v) {
 }
 
 size_t SdNvsPrefs::getBytes(const char* k, void* buf, size_t maxLen) {
-  Kv* e = nullptr;
   if (fileMode()) {
-    e = sdFind(k);
-    if (!e) return (_nvs_open && _nvs.isKey(k)) ? _nvs.getBytes(k, buf, maxLen) : 0;
-  } else {
-    if (useNvs()) return _nvs.getBytes(k, buf, maxLen);
-    e = sdFind(k);
-    if (!e) return 0;
+    size_t value_size = 0;
+    if (!copyCachedValue(_path, k, buf, maxLen, value_size))
+      return (_nvs_open && _nvs.isKey(k)) ? _nvs.getBytes(k, buf, maxLen) : 0;
+    return value_size;
   }
+  if (useNvs()) return _nvs.getBytes(k, buf, maxLen);
+  Kv* e = sdFind(k);
+  if (!e) return 0;
   size_t n = e->val.size();
   if (buf && maxLen) { size_t c = n > maxLen ? maxLen : n; memcpy(buf, e->val.data(), c); }
   return n;
