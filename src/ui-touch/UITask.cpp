@@ -2087,7 +2087,9 @@ static void copyUtf8ReplacingMissingGlyphs(const lv_font_t* font, char* out, siz
     }
 
     if (uiFontHasGlyph(font, cp)) {
-      for (const char* q = seq_beg; q < p && w + 1 < out_cap; ++q) out[w++] = *q;
+      // Whole sequence or nothing: a glyph split at the cap leaves invalid UTF-8.
+      if (w + (size_t)(p - seq_beg) + 1 > out_cap) break;
+      for (const char* q = seq_beg; q < p; ++q) out[w++] = *q;
     } else {
       out[w++] = '*';
     }
@@ -21326,6 +21328,8 @@ static uint8_t s_disc_row_type[DISC_MAXROWS];
 static char    s_disc_row_name[DISC_MAXROWS][26];
 static int     s_disc_row_n = 0;
 
+static void recolorEscape(char* dst, size_t cap, const char* src);   // defined with the chat helpers
+
 // Rebuild the feed label from the engine's _discover[] table, strongest-signal first.
 static void discoverBuildFeed() {
   if (!s_discover_feed) return;
@@ -21349,9 +21353,14 @@ static void discoverBuildFeed() {
     const MyMesh::DiscoverHit& h = hits[idx[k]];
     if (h.node_type == ADV_TYPE_REPEATER) rpt++;
     else if (h.node_type == ADV_TYPE_CHAT) comp++;
+    // #223: a name can carry emoji (multi-byte UTF-8) or a literal '#'. Cutting it at
+    // a byte count splits a sequence, and an unescaped '#' toggles this label's
+    // recolor mode — either desyncs the '#RRGGBB …#' runs and visually kills every
+    // row after this one. Keep a structurally-clean copy here (font=nullptr: emoji
+    // preserved for the tap-to-add snapshot), and escape a capped display copy below.
     char name[26];
     ContactInfo* c = the_mesh.lookupContactByPubKey((uint8_t*)h.pubkey, 6);
-    if (c && c->name[0]) snprintf(name, sizeof name, "%s", c->name);
+    if (c && c->name[0]) copyUtf8ReplacingMissingGlyphs(nullptr, name, sizeof name, c->name);
     else                 snprintf(name, sizeof name, "Node \xC2\xB7%02X%02X", h.pubkey[0], h.pubkey[1]);
     memcpy(s_disc_row_key[k], h.pubkey, 32);           // snapshot this row for tap-to-add
     s_disc_row_type[k] = h.node_type;
@@ -21362,10 +21371,15 @@ static void discoverBuildFeed() {
     if (age < 60) snprintf(ago, sizeof ago, "%us", (unsigned)age);
     else          snprintf(ago, sizeof ago, "%um", (unsigned)(age / 60));
     const char* direct = (h.path_len == 0) ? "  #53C06B direct#" : "";
-    // #191: cap the name (%.14s) + single-letter type so the trailing age ALWAYS fits the line.
+    // #191: cap the name to 14 bytes (on a codepoint boundary, glyphs mapped to the
+    // feed's font) + single-letter type so the trailing age ALWAYS fits the line.
+    // recolorEscape doubles '#' so a hash in a name can't break the colour run.
+    char disp[15], disp_esc[30];
+    copyUtf8ReplacingMissingGlyphs(&g_font_12, disp, sizeof disp, name);
+    recolorEscape(disp_esc, sizeof disp_esc, disp);
     q += snprintf(buf + q, sizeof(buf) - q,
-      "#%06X %.14s#  %s  %ddBm %.1f%s  \xC2\xB7 %s\n",
-      (unsigned)discTypeColor(h.node_type), name, discTypeShort(h.node_type),
+      "#%06X %s#  %s  %ddBm %.1f%s  \xC2\xB7 %s\n",
+      (unsigned)discTypeColor(h.node_type), disp_esc, discTypeShort(h.node_type),
       (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, direct, ago);
   }
   if (q == 0) snprintf(buf, sizeof buf, "#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#");
@@ -29844,7 +29858,7 @@ static void openMessageInfoPopup(int msg_idx) {
     // Bounded (<= ECHO_MAX_HOPS) + hard buffer guard + read-only lookup -> no risk.
     uint8_t rhc = the_mesh.uiRepeatHopCount(m.sent_fp);
     for (uint8_t r = 0; r < rhc; r++) {
-      if (blen >= (int)sizeof(body) - 56) break;
+      if (blen >= (int)sizeof(body) - 96) break;   // escaped name (<=64B) + markers must fit whole
       uint8_t hh[4];
       uint8_t hsz = the_mesh.uiRepeatHop(m.sent_fp, r, hh, sizeof(hh));
       if (hsz == 0) continue;
@@ -29852,10 +29866,15 @@ static void openMessageInfoPopup(int msg_idx) {
       for (uint8_t b = 0; b < hsz && b < 4; ++b)
         snprintf(hashstr + b * 2, sizeof(hashstr) - b * 2, "%02X", hh[b]);
       char nm[33];   // ContactInfo.name is 32B; hold the full name (emoji eat 4B each)
-      if (the_mesh.uiHopName(hh, hsz, nm, sizeof(nm)))
+      if (the_mesh.uiHopName(hh, hsz, nm, sizeof(nm))) {
+        // #223 class: this name sits inside a '#RRGGBB …#' run — a literal '#' or a
+        // broken UTF-8 tail in it desyncs every colour block after this line.
+        char nm_c[33], nm_esc[66];
+        copyUtf8ReplacingMissingGlyphs(nullptr, nm_c, sizeof nm_c, nm);
+        recolorEscape(nm_esc, sizeof nm_esc, nm_c);
         blen += snprintf(body + blen, sizeof(body) - blen, "\n  #%06X %s#",
-                         (unsigned)nodeSigColorHex(nm), nm);   // name resolved -> no redundant hash
-      else
+                         (unsigned)nodeSigColorHex(nm), nm_esc);   // name resolved -> no redundant hash
+      } else
         blen += snprintf(body + blen, sizeof(body) - blen, "\n  #%06X %s#",
                          (unsigned)nodeSigColorHex(hashstr), hashstr);
     }
