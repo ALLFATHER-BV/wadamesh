@@ -207,11 +207,10 @@ void wifiScanSetActive(bool active) { s_wifi_scan_active = active; }
 bool wifiScanIsActive() { return s_wifi_scan_active; }
 
 void wifiConfigApply() {
-#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
-  // The Pager must release a resident NimBLE controller before starting WPA.
-  // Funnel every legacy/CLI apply through main.cpp, which owns that ordering,
-  // the bounded handoff deadline, and BLE restoration. Calling WiFi.begin()
-  // directly here would bypass the coexistence state machine.
+#if defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
+  // Multi-transport targets serialize apply and worker scans in main.cpp. The
+  // Pager additionally releases/recreates NimBLE around WPA. Calling
+  // disconnect()/begin() directly here bypasses both ownership contracts.
   wifiConfigRequestApply();
   return;
 #endif

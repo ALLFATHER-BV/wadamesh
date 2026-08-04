@@ -105,16 +105,21 @@ static uint32_t _atoi(const char* sp) {
                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     }
-    // Claim Wi-Fi's coexistence resources first. A real WPA association owns a
-    // bounded ordering window; idle/scannable Wi-Fi and a failed association
-    // both allow BLE to run.
+    // Claim Wi-Fi's coexistence resources first. A cold STA allocation or real
+    // WPA association owns a bounded ordering window; idle/scannable Wi-Fi and
+    // a failed association both allow BLE to run.
     static bool s_pager_ble_after_wifi = false;
     static uint32_t s_pager_wifi_ble_deadline_ms = 0;
     static const uint32_t PAGER_WIFI_BLE_HANDOFF_MS = 6000;
 
     static void pagerWifiEnterBleFallback(const char* reason) {
       WiFi.setAutoReconnect(false);
-      WiFi.mode(WIFI_OFF);
+      // Stop WPA without deinitializing esp_wifi. Keeping the STA allocation
+      // resident lets BLE come back immediately and avoids repeating the
+      // order-sensitive cold allocation for a later scan or explicit retry.
+      if ((WiFi.getMode() & WIFI_MODE_STA) != 0) {
+        WiFi.disconnect(false, false);
+      }
       wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::BleFallback);
       s_pager_wifi_ble_deadline_ms = 0;
       Serial.printf("[wifi] BLE fallback: %s\n", reason ? reason : "association stopped");
@@ -724,8 +729,11 @@ void setup() {
    * contiguous DMA block, so let it claim memory before BLE. (Association
    * happens later in loop(); this just inits the stack.) */
   if (want_wifi) {
-    WiFi.mode(WIFI_STA);
+    const bool wifi_mode_ready = WiFi.mode(WIFI_STA);
 #if defined(TLORA_PAGER)
+    if (!wifi_mode_ready) {
+      pagerWifiEnterBleFallback("boot STA initialization failed");
+    }
     // Pager reconnects are owned by the loop below. Background WPA retries are
     // invisible to PagerWifiBlePhase and could overlap a cold NimBLE start.
     WiFi.setAutoReconnect(false);
@@ -744,7 +752,7 @@ void setup() {
      * first and wait on the state transition (not a fixed delay), while
      * internal heap is still plentiful; BLE starts below only after the link
      * is established. T-Deck does not reproduce this ordering constraint. */
-    if (pager_has_wifi_credentials) {
+    if (wifi_mode_ready && pager_has_wifi_credentials) {
       char ssid[WIFI_CONFIG_SSID_MAX];
       char pwd[WIFI_CONFIG_PWD_MAX];
       wifiConfigGetSsid(ssid, sizeof(ssid));
@@ -772,7 +780,7 @@ void setup() {
                       (unsigned long)(millis() - assoc_start_ms));
         pagerLogInternalHeap("after Wi-Fi association");
       }
-    } else {
+    } else if (wifi_mode_ready) {
       // Keep STA available for the setup wizard's scan, but with no credentials
       // there is no association to order ahead of BLE.
       WiFi.setAutoReconnect(false);
@@ -939,9 +947,6 @@ void loop() {
   static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
   static bool wifi_radio_prev = true;
   static bool wifi_radio_inited = false;
-#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
-  static bool pager_wifi_was_connected = false;
-#endif
   /* Run the saved Wi-Fi state machine whenever its radio preference is on.
    * Pager setup separately guarantees that Wi-Fi claims its coexistence
    * resources before a cold BLE start. */
@@ -949,8 +954,10 @@ void loop() {
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
   // BLE fallback pauses automatic association so a missing AP cannot make the
   // advertised GATT service disappear every retry interval. Turning Bluetooth
-  // off releases that preference: Wi-Fi may resume its ordinary retry loop.
-  if (wifiConfigPagerBleFallbackActive() && !wifiConfigGetBleEnabled()) {
+  // off resumes retries only when the STA allocation itself is healthy; an
+  // allocation failure stays latched until an explicit Apply/toggle.
+  if (wifiConfigPagerBleFallbackActive() && !wifiConfigGetBleEnabled() &&
+      (WiFi.getMode() & WIFI_MODE_STA) != 0) {
     wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
   }
   // An association may have started while Bluetooth was disabled. If the user
@@ -973,7 +980,6 @@ void loop() {
       delay(50);
       WiFi.mode(WIFI_OFF);
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
-      pager_wifi_was_connected = false;
       s_pager_wifi_ble_deadline_ms = 0;
       wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
       const bool ble_waiting = s_pager_ble_after_wifi ||
@@ -986,9 +992,8 @@ void loop() {
           if (serial_interface.isBleEnabled()) {
             Serial.println("[boot] deferred BLE enabled after T-Pager Wi-Fi was disabled");
           } else {
-            Serial.println("[boot] restarting to allocate deferred BLE before the UI");
-            ui_task.rebootDevice();
-            return;
+            Serial.println("[wifi] deferred BLE unavailable after Wi-Fi was disabled");
+            ui_task.showAlert(TR("Bluetooth unavailable; retry from Settings"), 2600);
           }
         }
       }
@@ -1000,21 +1005,34 @@ void loop() {
    * by forcing wifi_started=false; on next iter the block below will WiFi.begin
    * with the freshly-saved credentials. Also handles toggling radio_en off
    * from the UI (the transition above already covered the on case). */
-  if (wifiConfigConsumeApplyRequest()) {
+  bool wifi_apply_ready = true;
+#if defined(ESP32)
+  // Keep a queued credential/radio re-apply pending until the worker releases
+  // its scan. Consuming it here would disconnect or reconfigure the driver
+  // underneath esp_wifi_scan_start on the other core.
+  wifi_apply_ready = !wifiScanIsActive();
+#endif
+  if (wifi_apply_ready && wifiConfigConsumeApplyRequest()) {
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
-    // Credential changes need the same Wi-Fi-before-BLE order as boot. Release
-    // the resident controller without changing the saved BLE intent, apply the
-    // credentials live, then recreate BLE after the new link reaches GOT_IP.
-    if (wifi_radio_en && wifiConfigHasRuntime()) {
-      s_pager_ble_after_wifi = wifiConfigGetBleEnabled();
-      s_pager_wifi_ble_deadline_ms = s_pager_ble_after_wifi
-          ? millis() + PAGER_WIFI_BLE_HANDOFF_MS : 0;
-      wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Associating);
-      if (serial_interface.isBleStackBegun()) {
+    // Cold Wi-Fi allocation and credential changes use the same live handoff:
+    // preserve BLE intent, release NimBLE, let the main task own esp_wifi_init
+    // and WPA, then recreate NimBLE once Wi-Fi is stable (or has timed out).
+    if (wifi_radio_en) {
+      const bool cold_sta = (WiFi.getMode() & WIFI_MODE_STA) == 0;
+      const bool ordered_handoff = cold_sta || wifiConfigHasRuntime();
+      s_pager_ble_after_wifi = wifiConfigGetBleEnabled() &&
+          (ordered_handoff || !serial_interface.isBleStackBegun());
+      s_pager_wifi_ble_deadline_ms =
+          (wifiConfigHasRuntime() && s_pager_ble_after_wifi)
+              ? millis() + PAGER_WIFI_BLE_HANDOFF_MS : 0;
+      wifiConfigSetPagerWifiBlePhase(ordered_handoff
+          ? PagerWifiBlePhase::Associating : PagerWifiBlePhase::Idle);
+      if (ordered_handoff && serial_interface.isBleStackBegun()) {
         serial_interface.suspendBleForWifiReconnect();
-        Serial.println("[wifi] BLE released for ordered T-Pager association");
+        Serial.println("[wifi] BLE released for ordered T-Pager Wi-Fi start");
       }
     } else {
+      s_pager_ble_after_wifi = false;
       s_pager_wifi_ble_deadline_ms = 0;
       wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
     }
@@ -1046,9 +1064,33 @@ void loop() {
 #endif
   if (wifi_state_machine_active) {
     if (!wifi_started) {
-      wifi_started = true;
-      WiFi.mode(WIFI_STA);
-      if (wifiConfigHasRuntime()) {
+      const bool wifi_mode_ready = WiFi.mode(WIFI_STA);
+      if (!wifi_mode_ready) {
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+        const bool ble_waiting = s_pager_ble_after_wifi ||
+                                 (wifiConfigGetBleEnabled() &&
+                                  !serial_interface.isBleStackBegun());
+        s_pager_ble_after_wifi = false;
+        last_wifi_retry_ms = millis();
+        pagerWifiEnterBleFallback("STA initialization failed; Bluetooth restored");
+        if (ble_waiting && wifiConfigGetBleEnabled() &&
+            !serial_interface.isBleEnabled()) {
+          serial_interface.enableBle();
+        }
+        if (wifiConfigGetBleEnabled() && serial_interface.isBleEnabled()) {
+          ui_task.showAlert(TR("Wi-Fi unavailable; Bluetooth restored"), 2200);
+        } else if (wifiConfigGetBleEnabled()) {
+          ui_task.showAlert(TR("Wi-Fi and Bluetooth unavailable; retry from Settings"), 2800);
+        } else {
+          ui_task.showAlert(TR("Wi-Fi unavailable; retry from Settings"), 2200);
+        }
+#else
+        last_wifi_retry_ms = millis();
+#endif
+      } else {
+        wifi_started = true;
+      }
+      if (wifi_mode_ready && wifiConfigHasRuntime() && !wifiScanIsActive()) {
         char ssid[WIFI_CONFIG_SSID_MAX];
         char pwd[WIFI_CONFIG_PWD_MAX];
         wifiConfigGetSsid(ssid, sizeof(ssid));
@@ -1061,8 +1103,23 @@ void loop() {
         }
         last_wifi_retry_ms = millis();
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
-      } else {
+      } else if (wifi_mode_ready) {
         wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
+        s_pager_wifi_ble_deadline_ms = 0;
+        const bool ble_waiting = s_pager_ble_after_wifi ||
+                                 (wifiConfigGetBleEnabled() &&
+                                  !serial_interface.isBleStackBegun());
+        s_pager_ble_after_wifi = false;
+        if (ble_waiting && wifiConfigGetBleEnabled() &&
+            !serial_interface.isBleEnabled()) {
+          serial_interface.enableBle();
+          if (serial_interface.isBleEnabled()) {
+            Serial.println("[wifi] BLE restored after idle STA initialization");
+          } else {
+            Serial.println("[wifi] BLE unavailable after idle STA initialization");
+            ui_task.showAlert(TR("Bluetooth unavailable; retry from Settings"), 2600);
+          }
+        }
 #endif
       }
     }
@@ -1109,12 +1166,11 @@ void loop() {
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
       wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Connected);
       s_pager_wifi_ble_deadline_ms = 0;
-      const bool became_connected = !pager_wifi_was_connected;
-      pager_wifi_was_connected = true;
-      const bool ble_waiting = s_pager_ble_after_wifi ||
-                               (wifiConfigGetBleEnabled() &&
-                                !serial_interface.isBleStackBegun());
-      if (became_connected && ble_waiting) {
+      // Consume only the explicit handoff token. If the cold NimBLE recreate
+      // is refused, do not hammer the allocator and alert on every loop while
+      // Wi-Fi remains connected; Settings is the deliberate retry surface.
+      const bool ble_waiting = s_pager_ble_after_wifi;
+      if (ble_waiting) {
         s_pager_ble_after_wifi = false;
         if (wifiConfigGetBleEnabled() && !serial_interface.isBleEnabled()) {
           // Wi-Fi is now stable, so a cold BLE allocation cannot enter WPA in
@@ -1164,7 +1220,6 @@ void loop() {
       }
     } else {
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
-      pager_wifi_was_connected = false;
       if (wifiConfigGetPagerWifiBlePhase() == PagerWifiBlePhase::Connected)
         wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
 #endif
@@ -1178,7 +1233,6 @@ void loop() {
       if (s_pager_ble_after_wifi && wifiConfigGetBleEnabled() &&
           WiFi.status() != WL_CONNECTED) {
         s_pager_ble_after_wifi = false;
-        pager_wifi_was_connected = false;
         wifi_started = false;
         pagerWifiEnterBleFallback("association timed out; Bluetooth restored");
         serial_interface.enableBle();

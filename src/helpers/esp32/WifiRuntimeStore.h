@@ -30,7 +30,8 @@ void wifiConfigSetBleEnabled(bool enabled);
 #if defined(TLORA_PAGER)
 /* Pager coexistence ownership. Wi-Fi intent alone cannot answer whether a
  * cold NimBLE start is safe: touch builds keep the STA scannable even with no
- * SSID. Only an active WPA association owns the ordering boundary. */
+ * SSID. Cold STA allocation and active WPA association own the short ordering
+ * boundary; an initialized idle STA can coexist with NimBLE. */
 enum class PagerWifiBlePhase : uint8_t {
   Idle,
   Associating,
