@@ -259,6 +259,15 @@ int lbColor(lua_State* L) {
   return 0;
 }
 
+int lbWidth(lua_State* L) {   // label:width(px) — wraps instead of overflowing
+  WidgetUd* u = checkLabel(L);
+  if (u->obj) {
+    lv_obj_set_width(u->obj, (lv_coord_t)luaL_checkinteger(L, 2));
+    lv_label_set_long_mode(u->obj, LV_LABEL_LONG_WRAP);
+  }
+  return 0;
+}
+
 int uiLabel(lua_State* L) {
   if (!s_h || !s_h->body) return luaL_error(L, "no app body");
   lv_obj_t* l = lv_label_create(s_h->body);
@@ -302,6 +311,20 @@ int chPos(lua_State* L) {
   if (c->obj) lv_obj_set_pos(c->obj, (lv_coord_t)luaL_checkinteger(L, 2), (lv_coord_t)luaL_checkinteger(L, 3));
   return 0;
 }
+// chart:axis(major_ticks, gutter_px) — Y-axis value labels. LVGL draws them to
+// the LEFT of the chart's outer edge, so position the chart at least gutter_px
+// in from the screen edge or they clip (the built-in page uses x=40).
+int chAxis(lua_State* L) {
+  ChartUd* c = checkChart(L);
+  if (!c->obj) return 0;
+  int major = (int)luaL_optinteger(L, 2, 4);
+  int gutter = (int)luaL_optinteger(L, 3, 40);
+  lv_obj_set_style_text_font(c->obj, luaHostFontForSize(12), LV_PART_TICKS);
+  lv_obj_set_style_text_color(c->obj, lv_color_hex(0x7A7F87), LV_PART_TICKS);
+  lv_obj_set_style_pad_left(c->obj, 4, LV_PART_TICKS);
+  lv_chart_set_axis_tick(c->obj, LV_CHART_AXIS_PRIMARY_Y, 4, 0, major, 1, true, gutter);
+  return 0;
+}
 
 int uiChart(lua_State* L) {   // wada.ui.chart(w, h, points, color1 [, color2] [, bars])
   if (!s_h || !s_h->body) return luaL_error(L, "no app body");
@@ -311,14 +334,21 @@ int uiChart(lua_State* L) {   // wada.ui.chart(w, h, points, color1 [, color2] [
   if (pts > 240) pts = 240;
   lv_obj_t* ch = lv_chart_create(s_h->body);
   lv_obj_set_size(ch, w, h);
+  lv_obj_clear_flag(ch, LV_OBJ_FLAG_SCROLLABLE);
   lv_chart_set_type(ch, lua_toboolean(L, 6) ? LV_CHART_TYPE_BAR : LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(ch, pts);
   lv_chart_set_update_mode(ch, LV_CHART_UPDATE_MODE_SHIFT);
   lv_chart_set_div_line_count(ch, 3, 0);
-  lv_obj_set_style_size(ch, 0, LV_PART_INDICATOR);          // no point dots
-  lv_obj_set_style_bg_color(ch, lv_color_hex(0x101418), LV_PART_MAIN);
-  lv_obj_set_style_border_width(ch, 0, LV_PART_MAIN);
-  lv_obj_set_style_line_color(ch, lv_color_hex(0x2A3038), LV_PART_ITEMS);
+  // Match the built-in Monitor/Airtime chart styling exactly: panel fill, thin
+  // dark border + rounded corners, dim grid lines, no point dots, 2 px series.
+  lv_obj_set_style_size(ch, 0, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(ch, lv_color_hex(0x15181B), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(ch, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(ch, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_width(ch, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(ch, 6, LV_PART_MAIN);
+  lv_obj_set_style_line_color(ch, lv_color_hex(0x1A1D1F), LV_PART_MAIN);   // grid
+  lv_obj_set_style_line_width(ch, 2, LV_PART_ITEMS);
   ChartUd* ud = (ChartUd*)lua_newuserdatauv(L, sizeof(ChartUd), 0);
   ud->obj = ch;
   ud->n_ser = 0;
@@ -716,6 +746,7 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, chSetAll); lua_setfield(L, -2, "fill");
   lua_pushcfunction(L, chRange);  lua_setfield(L, -2, "range");
   lua_pushcfunction(L, chPos);    lua_setfield(L, -2, "pos");
+  lua_pushcfunction(L, chAxis);   lua_setfield(L, -2, "axis");
   lua_setfield(L, -2, "__index");
   lua_pop(L, 1);
 
@@ -724,6 +755,7 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, lbSet);   lua_setfield(L, -2, "set");
   lua_pushcfunction(L, lbPos);   lua_setfield(L, -2, "pos");
   lua_pushcfunction(L, lbColor); lua_setfield(L, -2, "color");
+  lua_pushcfunction(L, lbWidth); lua_setfield(L, -2, "width");
   lua_setfield(L, -2, "__index");
   lua_pop(L, 1);
 }
