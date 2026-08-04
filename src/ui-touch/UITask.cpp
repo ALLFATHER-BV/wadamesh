@@ -7894,7 +7894,7 @@ static void toggleTcpCb(lv_event_t* e) {
 
 static bool bleEnableWaitingForWifi() {
 #if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
-  return wifiConfigWantsWifi() && WiFi.status() != WL_CONNECTED;
+  return wifiConfigPagerWifiBlocksBle();
 #else
   return false;
 #endif
@@ -47651,18 +47651,20 @@ static bool uiHistWaitWorkerIdle() {
 
 bool UITask::enableBle() {
   if (!_serial) return false;
+#if defined(TLORA_PAGER)
+  if (bleEnableWaitingForWifi()) {
+    // Remember the request; main.cpp enables BLE when this bounded association
+    // either succeeds or falls back. Wi-Fi intent without an active attempt
+    // never enters this branch.
+    wifiConfigSetBleEnabled(true);
+    return false;
+  }
+#endif
   _serial->enableBle();
   // The concrete transport applies the heap guard only when it must cold-start
   // NimBLE. A resident disabled stack can always be re-enabled allocation-free.
   if (_serial->isBleEnabled()) return true;
 #if defined(TLORA_PAGER)
-  if (bleEnableWaitingForWifi()) {
-    // Remember the request; main.cpp cold-starts NimBLE after a stable Wi-Fi
-    // association. Rebooting here cannot improve the ordering and would return
-    // to the same deferred state, so surface the wait instead.
-    wifiConfigSetBleEnabled(true);
-    return false;
-  }
   // Same cold-start contract as Wi-Fi above. This is not an OOM failure the
   // user can repair by toggling the other radio: remember the requested state
   // and allocate NimBLE during the next ordered boot, before LVGL fragments

@@ -21,6 +21,9 @@ static const char *WIFI_CONFIG_BLE_EN_KEY = "ble_en";   // BLE radio on/off (def
 static SdNvsPrefs s_prefs;
 static bool s_begun = false;
 static volatile bool s_wifi_apply_requested = false;
+#if defined(TLORA_PAGER)
+static volatile PagerWifiBlePhase s_pager_wifi_ble_phase = PagerWifiBlePhase::Idle;
+#endif
 
 void wifiConfigBegin() {
   if (s_begun) return;
@@ -139,6 +142,24 @@ void wifiConfigSetBleEnabled(bool enabled) {
   s_prefs.end();
   s_begun = s_prefs.begin(WIFI_CONFIG_NAMESPACE, true);
 }
+
+#if defined(TLORA_PAGER)
+void wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase phase) {
+  s_pager_wifi_ble_phase = phase;
+}
+
+PagerWifiBlePhase wifiConfigGetPagerWifiBlePhase() {
+  return s_pager_wifi_ble_phase;
+}
+
+bool wifiConfigPagerWifiBlocksBle() {
+  return s_pager_wifi_ble_phase == PagerWifiBlePhase::Associating;
+}
+
+bool wifiConfigPagerBleFallbackActive() {
+  return s_pager_wifi_ble_phase == PagerWifiBlePhase::BleFallback;
+}
+#endif
 
 bool wifiConfigGetWifiChosen() {
   if (!s_begun) wifiConfigBegin();

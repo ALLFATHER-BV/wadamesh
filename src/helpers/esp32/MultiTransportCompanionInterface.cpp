@@ -200,12 +200,10 @@ void MultiTransportCompanionInterface::enableBle() {
     // now, live, from the params stashed by prepareBle()/beginBle().
     if (_ble_prefix[0] == '\0' && _ble_name[0] == '\0') return;   // no params known
 #if defined(TLORA_PAGER)
-    // The Pager must finish Wi-Fi association before NimBLE. Once connected,
-    // a deferred cold start preserves that order and the heap guard below
-    // decides whether post-UI allocation is still safe. Refuse only while the
-    // STA is absent or actively associating; UITask keeps the saved request
-    // pending and tells the user that BLE resumes after association.
-    if (WiFi.getMode() != WIFI_MODE_NULL && WiFi.status() != WL_CONNECTED) {
+    // An idle STA may be kept up for on-device scans with no credentials, and
+    // a failed association explicitly falls back to BLE. Only the ordered WPA
+    // phase blocks a cold NimBLE start; main.cpp owns every phase transition.
+    if (wifiConfigPagerWifiBlocksBle()) {
       Serial.println("[ble] cold start deferred until T-Pager Wi-Fi associates");
       return;
     }

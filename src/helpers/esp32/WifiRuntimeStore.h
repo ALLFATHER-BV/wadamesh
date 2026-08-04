@@ -4,6 +4,7 @@
 #if defined(ESP32)
 
 #include <stddef.h>
+#include <stdint.h>
 
 #define WIFI_CONFIG_SSID_MAX 32
 #define WIFI_CONFIG_PWD_MAX 64
@@ -26,6 +27,22 @@ void wifiConfigSetRadioEnabled(bool enabled);
 bool wifiConfigGetBleEnabled();
 void wifiConfigSetBleEnabled(bool enabled);
 
+#if defined(TLORA_PAGER)
+/* Pager coexistence ownership. Wi-Fi intent alone cannot answer whether a
+ * cold NimBLE start is safe: touch builds keep the STA scannable even with no
+ * SSID. Only an active WPA association owns the ordering boundary. */
+enum class PagerWifiBlePhase : uint8_t {
+  Idle,
+  Associating,
+  Connected,
+  BleFallback,
+};
+void wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase phase);
+PagerWifiBlePhase wifiConfigGetPagerWifiBlePhase();
+bool wifiConfigPagerWifiBlocksBle();
+bool wifiConfigPagerBleFallbackActive();
+#endif
+
 /* "Wi-Fi chosen" sticky flag: set whenever the radio is explicitly enabled
  * (setRadioEnabled(true)). Historically gated whether the touch build brought
  * Wi-Fi up with no creds; now vestigial — touch defaults to Wi-Fi whenever the
@@ -33,11 +50,10 @@ void wifiConfigSetBleEnabled(bool enabled);
 bool wifiConfigGetWifiChosen();
 void wifiConfigSetWifiChosen(bool chosen);
 
-/* The actual BLE-vs-Wi-Fi transport decision used at boot and in the main loop.
- * True = bring Wi-Fi up (STA). Non-touch rule = radio enabled AND creds present.
- * On the touch build Wi-Fi is the primary transport: radio-enabled (the fresh
- * default) is enough — Wi-Fi comes up scannable even with no creds, so a brand
- * new device lands on Wi-Fi with BLE off. BLE is opt-in (clears radio_en). */
+/* Wi-Fi intent used at boot and in the main loop. True = bring Wi-Fi up (STA).
+ * Non-touch rule = radio enabled AND creds present. On touch builds, radio-on
+ * is enough to keep the STA scannable without credentials. Pager BLE ordering
+ * must use PagerWifiBlePhase rather than treating this intent as association. */
 bool wifiConfigWantsWifi();
 
 /* Request an immediate (re)apply of current Wi-Fi settings from the main loop.
