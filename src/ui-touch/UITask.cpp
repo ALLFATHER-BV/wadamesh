@@ -17318,6 +17318,7 @@ static lv_obj_t* s_home_heartbeat = nullptr;
 static lv_obj_t*       s_home_chart       = nullptr;
 static lv_chart_series_t* s_home_chart_tx = nullptr;
 static lv_chart_series_t* s_home_chart_rx = nullptr;
+static int             s_home_chart_max_y = 10;   // shared with the Pager's full-width detail chart
 #if defined(HAS_EXPANSION_KIT)
 // Expansion Kit: tiny batt/temp/hum history chart on Home + the Advert button
 // pointer (relayoutHomeCharts repositions it under the re-flowed TX/RX chart).
@@ -20889,12 +20890,18 @@ static void homeFilesCb(lv_event_t* e) {
 // ===== Signal & traffic detail popup (tap the home RX/TX graph) =============
 static lv_obj_t* s_siginfo_root = nullptr;
 static lv_obj_t* s_sig_poll_ta  = nullptr;   // poll-interval entry (minutes) inside the popup
+static lv_obj_t* s_siginfo_chart = nullptr;
+static lv_chart_series_t* s_siginfo_chart_tx = nullptr;
+static lv_chart_series_t* s_siginfo_chart_rx = nullptr;
 static void closeSigInfoPopup() {
   if (s_siginfo_root) {
     // The poll-interval field can leave the shared on-screen keyboard up; tear it
     // down so it doesn't linger over the home screen after the popup is gone.
     if (g_lv.keyboard && !lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN)) hideKb();
     s_sig_poll_ta = nullptr;
+    s_siginfo_chart = nullptr;
+    s_siginfo_chart_tx = nullptr;
+    s_siginfo_chart_rx = nullptr;
     popupClose(&s_siginfo_root);
   }
 }
@@ -20987,11 +20994,78 @@ static void openSignalInfoPopup() {
     lv_obj_set_pos(o, x, y);
   };
 
-  sigCell(stale && heard ? "Signal (stale)" : "Signal", 0, 30, COLOR_TEXT);
+  int sig_hdr_y = 30;
+  int sig_row1_y = 48;
+  int sig_row2_y = 66;
+#if defined(TLORA_PAGER)
+  // The Home graph is necessarily shallow at Large/Jumbo because status text
+  // and the launcher column consume the short viewport. Put a full-width copy
+  // first in this scrollable detail card and mirror the same samples into it.
+  constexpr int detail_chart_y = 34;
+  constexpr int detail_chart_h = 104;
+  s_siginfo_chart = lv_chart_create(card);
+  lv_obj_set_size(s_siginfo_chart, card_w - 20, detail_chart_h);
+  lv_obj_set_pos(s_siginfo_chart, 0, detail_chart_y);
+  lv_obj_clear_flag(s_siginfo_chart, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_chart_set_type(s_siginfo_chart, LV_CHART_TYPE_LINE);
+  lv_chart_set_point_count(s_siginfo_chart, 60);
+  lv_chart_set_update_mode(s_siginfo_chart, LV_CHART_UPDATE_MODE_SHIFT);
+  lv_chart_set_range(s_siginfo_chart, LV_CHART_AXIS_PRIMARY_Y, 0, s_home_chart_max_y);
+  lv_chart_set_div_line_count(s_siginfo_chart, 3, 6);
+  lv_obj_set_style_bg_color(s_siginfo_chart, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_siginfo_chart, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_siginfo_chart, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_border_opa(s_siginfo_chart, LV_OPA_40, LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_siginfo_chart, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_siginfo_chart, 6, LV_PART_MAIN);
+  lv_obj_set_style_line_color(s_siginfo_chart, lv_color_hex(0x25292C), LV_PART_MAIN);
+  lv_obj_set_style_line_width(s_siginfo_chart, 2, LV_PART_ITEMS);
+  lv_obj_set_style_size(s_siginfo_chart, 0, LV_PART_INDICATOR);
+  s_siginfo_chart_tx = lv_chart_add_series(s_siginfo_chart, lv_color_hex(COLOR_STATUS_OK),
+                                           LV_CHART_AXIS_PRIMARY_Y);
+  s_siginfo_chart_rx = lv_chart_add_series(s_siginfo_chart, lv_color_hex(0x4F94CD),
+                                           LV_CHART_AXIS_PRIMARY_Y);
+  // Clone the Home chart in display order. New samples are mirrored in
+  // refreshStatusLabels(), so this remains live without a second sampler.
+  if (s_home_chart && s_home_chart_tx && s_home_chart_rx) {
+    uint16_t n = lv_chart_get_point_count(s_home_chart);
+    const uint16_t tx0 = lv_chart_get_x_start_point(s_home_chart, s_home_chart_tx);
+    const uint16_t rx0 = lv_chart_get_x_start_point(s_home_chart, s_home_chart_rx);
+    lv_coord_t* tx = lv_chart_get_y_array(s_home_chart, s_home_chart_tx);
+    lv_coord_t* rx = lv_chart_get_y_array(s_home_chart, s_home_chart_rx);
+    for (uint16_t i = 0; i < n; ++i) {
+      lv_chart_set_next_value(s_siginfo_chart, s_siginfo_chart_tx, tx[(tx0 + i) % n]);
+      lv_chart_set_next_value(s_siginfo_chart, s_siginfo_chart_rx, rx[(rx0 + i) % n]);
+    }
+  }
+  lv_obj_t* graph_legend = lv_label_create(s_siginfo_chart);
+  char graph_legend_text[40];
+  snprintf(graph_legend_text, sizeof graph_legend_text, "#%06X TX#   #4F94CD RX#",
+           (unsigned)COLOR_STATUS_OK);
+  lv_label_set_recolor(graph_legend, true);
+  lv_label_set_text(graph_legend, graph_legend_text);
+  lv_obj_set_style_text_font(graph_legend, &lv_font_montserrat_12, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(graph_legend, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(graph_legend, LV_OPA_70, LV_PART_MAIN);
+  lv_obj_set_style_pad_hor(graph_legend, 3, LV_PART_MAIN);
+  lv_obj_set_style_radius(graph_legend, 3, LV_PART_MAIN);
+  lv_obj_align(graph_legend, LV_ALIGN_TOP_LEFT, 3, 3);
+
+  const int sig_line_h = lv_font_get_line_height(&g_font_12);
+  sig_hdr_y = detail_chart_y + detail_chart_h + 10;
+  sig_row1_y = sig_hdr_y + sig_line_h;
+  sig_row2_y = sig_row1_y + sig_line_h + 2;
+#endif
+
+  sigCell(stale && heard ? "Signal (stale)" : "Signal", 0, sig_hdr_y, COLOR_TEXT);
   int cy;
   if (!heard) {
-    sigCell("nothing heard yet", 8, 48, COLOR_SUB);
+    sigCell("nothing heard yet", 8, sig_row1_y, COLOR_SUB);
+#if defined(TLORA_PAGER)
+    cy = sig_row1_y + lv_font_get_line_height(&g_font_12) + 10;
+#else
     cy = 48 + 18 + 12;
+#endif
   } else {
     const float snr  = the_mesh.uiSignalSnrQ4() / 4.0f;
     const int   rssi = the_mesh.uiSignalRssi();
@@ -21006,9 +21080,13 @@ static void openSignalInfoPopup() {
     snprintf(l2, sizeof l2, "Bars  %d / 4", level);
     snprintf(r2, sizeof r2, "Heard %s", ago);
     const int colx = (card_w - 20) / 2;              // second column start
-    sigCell(l1, 8, 48, COLOR_TEXT);  sigCell(r1, colx, 48, COLOR_TEXT);   // SNR | RSSI
-    sigCell(l2, 8, 66, COLOR_TEXT);  sigCell(r2, colx, 66, COLOR_TEXT);   // Bars | Heard
+    sigCell(l1, 8, sig_row1_y, COLOR_TEXT);  sigCell(r1, colx, sig_row1_y, COLOR_TEXT);   // SNR | RSSI
+    sigCell(l2, 8, sig_row2_y, COLOR_TEXT);  sigCell(r2, colx, sig_row2_y, COLOR_TEXT);   // Bars | Heard
+#if defined(TLORA_PAGER)
+    cy = sig_row2_y + lv_font_get_line_height(&g_font_12) + 10;
+#else
     cy = 66 + 18 + 12;
+#endif
   }
 
   // ---- Auto-discover: on/off toggle (the periodic signal probe in loop()) ----
@@ -21029,10 +21107,25 @@ static void openSignalInfoPopup() {
   lv_label_set_text(plbl, TR("Poll every"));
   lv_obj_set_style_text_color(plbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(plbl, &g_font_12, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  const int poll_line_h = lv_font_get_line_height(&g_font_12);
+  const int poll_h = LV_MAX(32, poll_line_h + 10);
+  lv_obj_update_layout(plbl);
+  const int poll_x = lv_obj_get_width(plbl) + 12;
+  const int poll_w = 64;
+  lv_obj_set_pos(plbl, 0, cy + (poll_h - poll_line_h) / 2);
+#else
   lv_obj_set_pos(plbl, 0, cy + 7);
+#endif
   s_sig_poll_ta = lv_textarea_create(card);
+#if defined(TLORA_PAGER)
+  lv_obj_set_size(s_sig_poll_ta, poll_w, poll_h);
+  lv_obj_set_pos(s_sig_poll_ta, poll_x, cy);
+  lv_obj_set_style_text_font(s_sig_poll_ta, &g_font_12, LV_PART_MAIN);
+#else
   lv_obj_set_size(s_sig_poll_ta, 46, 30);
   lv_obj_set_pos(s_sig_poll_ta, 70, cy);
+#endif
   lv_textarea_set_one_line(s_sig_poll_ta, true);
   lv_textarea_set_max_length(s_sig_poll_ta, 4);
   attachSettingsTaEvents(s_sig_poll_ta);
@@ -21042,16 +21135,36 @@ static void openSignalInfoPopup() {
   lv_label_set_text(ulbl, "min");
   lv_obj_set_style_text_color(ulbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(ulbl, &g_font_12, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  lv_obj_update_layout(ulbl);
+  const int unit_x = poll_x + poll_w + 10;
+  lv_obj_set_pos(ulbl, unit_x, cy + (poll_h - poll_line_h) / 2);
+#else
   lv_obj_set_pos(ulbl, 122, cy + 7);
+#endif
   lv_obj_t* setb = lv_btn_create(card);
+#if defined(TLORA_PAGER)
+  lv_obj_update_layout(ulbl);
+  const int set_x = unit_x + lv_obj_get_width(ulbl) + 12;
+  lv_obj_set_size(setb, 58, poll_h);
+  lv_obj_set_pos(setb, set_x, cy);
+#else
   lv_obj_set_size(setb, 50, 30);
   lv_obj_set_pos(setb, 168, cy);
+#endif
   styleButton(setb);
   lv_obj_add_event_cb(setb, sigPollSaveCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* setl = lv_label_create(setb);
   lv_label_set_text(setl, TR("Set"));
+#if defined(TLORA_PAGER)
+  lv_obj_set_style_text_font(setl, &g_font_12, LV_PART_MAIN);
+#endif
   lv_obj_center(setl);
+#if defined(TLORA_PAGER)
+  cy += poll_h + 8;
+#else
   cy += 40;
+#endif
 
   // ---- Manual probe button ----
   lv_obj_t* rfb = lv_btn_create(card);
@@ -23122,7 +23235,7 @@ static void makeHome(lv_obj_t* tab) {
     lv_chart_set_type(s_home_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(s_home_chart, 60);
     lv_chart_set_update_mode(s_home_chart, LV_CHART_UPDATE_MODE_SHIFT);
-    lv_chart_set_range(s_home_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 10);
+    lv_chart_set_range(s_home_chart, LV_CHART_AXIS_PRIMARY_Y, 0, s_home_chart_max_y);
     // No gridlines — keep the chart visually clean.
     lv_chart_set_div_line_count(s_home_chart, 0, 0);
     // Chart sits on pure BG (was COLOR_PANEL which still rendered as a
@@ -41277,12 +41390,17 @@ static void refreshStatusLabels() {
     last_rx = cur_rx;
     lv_chart_set_next_value(s_home_chart, s_home_chart_tx, (lv_coord_t)dtx);
     lv_chart_set_next_value(s_home_chart, s_home_chart_rx, (lv_coord_t)drx);
+    if (s_siginfo_chart && s_siginfo_chart_tx && s_siginfo_chart_rx) {
+      lv_chart_set_next_value(s_siginfo_chart, s_siginfo_chart_tx, (lv_coord_t)dtx);
+      lv_chart_set_next_value(s_siginfo_chart, s_siginfo_chart_rx, (lv_coord_t)drx);
+    }
     // Auto-grow Y range (only grows — keeps the chart visually stable).
-    static int s_chart_max_y = 10;
     int peak = (int)((dtx > drx) ? dtx : drx);
-    if (peak > s_chart_max_y) {
-      s_chart_max_y = peak + 4;
-      lv_chart_set_range(s_home_chart, LV_CHART_AXIS_PRIMARY_Y, 0, s_chart_max_y);
+    if (peak > s_home_chart_max_y) {
+      s_home_chart_max_y = peak + 4;
+      lv_chart_set_range(s_home_chart, LV_CHART_AXIS_PRIMARY_Y, 0, s_home_chart_max_y);
+      if (s_siginfo_chart)
+        lv_chart_set_range(s_siginfo_chart, LV_CHART_AXIS_PRIMARY_Y, 0, s_home_chart_max_y);
     }
     // Legend: total counts since boot, plus the current y-range peak.
     {
