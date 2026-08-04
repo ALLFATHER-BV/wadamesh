@@ -62,7 +62,6 @@ jobs:
           [ -z "$TAG" ] && TAG="${GITHUB_REF_NAME}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Building release: $TAG"
-
       - name: Build both touch boards (tag embedded; Wi-Fi placeholder, no baked creds)
         env:
           TAG: ${{ steps.v.outputs.tag }}
@@ -70,7 +69,6 @@ jobs:
           unset WIFI_SSID WIFI_PWD
           export PLATFORMIO_BUILD_FLAGS="-DFIRMWARE_RELEASE_TAG='\"${TAG}\"' -DFIRMWARE_VERSION='\"wadamesh ${TAG}\"'"
           for e in $ENVS; do pio run -t mergebin -e "$e"; done
-
       - name: Collect bins
         env:
           TAG: ${{ steps.v.outputs.tag }}
@@ -86,7 +84,6 @@ jobs:
             cp ".pio/build/$e/firmware-merged.bin" "dist/$n-merged.bin"
           done
           ls -la dist
-
       - name: Web-flasher metadata (version.json + manifests, roll with release)
         env:
           TAG: ${{ steps.v.outputs.tag }}
@@ -103,7 +100,6 @@ jobs:
             gh release create "$TAG" dist/* --title "wadamesh $TAG" \
               --notes "Touch firmware **$TAG** for the LilyGo T-Deck and Heltec V4 + TFT. Built by CI from \`$GITHUB_SHA\`."
           fi
-
       - name: Publish to wadamesh.com (VPS) — skipped until VPS secrets are set
         if: env.HAS_VPS == 'true'
         env:
