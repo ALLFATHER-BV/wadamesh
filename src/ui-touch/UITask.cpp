@@ -26004,7 +26004,10 @@ static void mapNoteStorageChanged() {
     }
     s_tiles_fs_ready = true;
   }
-  if (may_swap) tileBackendSwapFinish();
+  // Only a real swap request acquired (or extended) the pause above. A no-op
+  // notification must not clear a pause owned by card removal/remount or the
+  // health probe while that lifecycle operation is still draining consumers.
+  if (wants_swap && may_swap) tileBackendSwapFinish();
 #endif
   for (int i = 0; i < k_tile_fetch_dedup_size; ++i) s_tile_fetch_dedup[i] = 0;
   s_tile_fetch_dedup_head = 0;
