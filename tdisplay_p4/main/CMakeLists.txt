@@ -25,6 +25,14 @@ idf_component_register(
 # -Wno-error does not cancel it, so strip it outright (warnings stay visible, non-fatal).
 idf_build_set_property(COMPILE_OPTIONS "-Wno-error=unused-variable" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-Wno-error=unused-const-variable" APPEND)
+# -O2 (the #167 underrun fix stack) enables deeper flow analysis that trips new warnings in
+# VENDORED code (esp-modbus and friends) which builds clean at -Os. Same policy as above:
+# keep the warnings visible, never fatal, for code we consume as a library.
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=stringop-truncation" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=stringop-overflow" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=array-bounds" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=restrict" APPEND)
+idf_build_set_property(COMPILE_OPTIONS "-Wno-error=maybe-uninitialized" APPEND)
 idf_build_get_property(_co COMPILE_OPTIONS)
 list(REMOVE_ITEM _co "-Werror=all")
 idf_build_set_property(COMPILE_OPTIONS "${_co}")
@@ -103,6 +111,46 @@ endforeach()
 # One-off C6-reflash helper: build with `C6_FLASH_HELPER=1 ./build.sh build` to boot a P4 image that
 # never touches the C6 (no C6_EN reset pulse, no AT worker), so the C6 can be held in ROM download mode
 # and reflashed over its own USB. Harmless when the env var is unset (normal builds are unaffected).
+# #167 SD-coupling experiments: WADA_SD_KHZ=<khz> / WADA_SD_1BIT=1 derate the primary SD mount
+# (clock and/or bus width) to isolate + mitigate the SD-activity screen flash.
+if(DEFINED ENV{WADA_SD_KHZ})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_SD_KHZ=$ENV{WADA_SD_KHZ}" APPEND)
+  message(STATUS "wadamesh: SD primary rung clock = $ENV{WADA_SD_KHZ} kHz")
+endif()
+if(DEFINED ENV{WADA_SD_1BIT})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_SD_1BIT=true" APPEND)
+  message(STATUS "wadamesh: SD primary rung = 1-bit bus")
+endif()
+
+# #167: WADA_DSI_MBPS=<n> overrides the RM69A10 DSI lane bit rate (default 750 -- see the
+# RM_BITRATE note in RM69A10Display.cpp; 1000 = the LilyGo/Meck value with the thin eye).
+if(DEFINED ENV{WADA_DSI_MBPS})
+  idf_build_set_property(COMPILE_OPTIONS "-DRM_BITRATE_MBPS=$ENV{WADA_DSI_MBPS}" APPEND)
+  message(STATUS "wadamesh: DSI lane rate = $ENV{WADA_DSI_MBPS} Mbps")
+endif()
+
+# #167: WADA_SD_STORE_TEST=1 puts the store back on the SD card (writes hop to core 0).
+if(DEFINED ENV{WADA_SD_STORE_TEST})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_SD_STORE_TEST=1" APPEND)
+  message(STATUS "wadamesh: SD-STORE-ON-CORE-0 experiment build")
+endif()
+
+# Companion diagnostic (#167): `WADA_P4_POKE_TRACE=1 ./build.sh build` logs every runtime poke at
+# the panel or the XL9535 expander (DCS brightness writes, disp on/off, expander bit writes) so
+# visible flashes can be correlated against them on the console.
+if(DEFINED ENV{WADA_P4_POKE_TRACE})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_POKE_TRACE=1" APPEND)
+  message(STATUS "wadamesh: POKE TRACE enabled (diagnostic build, do not ship)")
+endif()
+
+# Diagnostic build for the whole-screen colour flash (#167): `WADA_P4_FLUSH_TRACE=1 ./build.sh build`
+# logs every large, mostly-single-colour band pushed to the panel, with its RGB565 value. If the
+# screen flashes and nothing logs, the cause is below LVGL and the UI is the wrong place to look.
+if(DEFINED ENV{WADA_P4_FLUSH_TRACE})
+  idf_build_set_property(COMPILE_OPTIONS "-DTDP4_FLUSH_TRACE=1" APPEND)
+  message(STATUS "wadamesh: FLUSH TRACE enabled (diagnostic build, do not ship)")
+endif()
+
 if(DEFINED ENV{C6_FLASH_HELPER})
   idf_build_set_property(COMPILE_OPTIONS "-DTDP4_C6_FLASH_HELPER=1" APPEND)
   message(STATUS "wadamesh: BUILDING C6-FLASH HELPER (P4 leaves the C6 free)")

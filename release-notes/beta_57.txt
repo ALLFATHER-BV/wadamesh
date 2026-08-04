@@ -1,0 +1,20 @@
+# beta_57 - sends retry until heard, SD settings-save fix, Pager radio fix
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Community beta: PixPMusic (storage + Pager) and mikecarper (send retry).
+
+# --- Sending --------------------------------------------------------------------------
+Sends now retry until the mesh has actually heard them. Until now a message was transmitted exactly once - if that one transmission collided or a repeater was mid-hop, it was gone while the app showed it as sent. The device now listens for its own message coming back (a repeater echo or the delivery ACK) and retransmits with a growing backoff until something confirms it was heard. Works for direct and flood sends, including sends from the phone app. Built by mikecarper (PR #207).
+New toggle under Settings > Radio & Mesh: "Retry sends until heard" (on by default) - turn it off if you want the old single-shot behaviour.
+
+# --- Storage --------------------------------------------------------------------------
+Saving settings on SD storage works again. On devices that keep their data on the SD card (T-Deck, V4-R8, Pager, Launcher installs) every settings save failed with "Couldn't save name to storage" - the commit step renamed a file onto itself, so it could never succeed. Found and fixed by PixPMusic (PR #211).
+Watchdog state is preserved around long SD and flash work instead of being blindly re-armed afterwards - removes a cause of spurious watchdog reboots (PixPMusic, PR #213).
+Settings reads no longer hand out pointers into a shared cache another task could invalidate mid-read (PixPMusic, PR #212).
+
+# --- Pager ----------------------------------------------------------------------------
+T-Lora Pager (SX1262): the radio oscillator is now driven at the 3.0 V LilyGo's own reference code uses, instead of a generic 1.6 V fallback. Weak transmissions and missing ACKs on this board came down to this - confirmed on hardware by PixPMusic (PR #209).
+
+# --- Fixes ----------------------------------------------------------------------------
+Discover no longer freezes when a node's name contains an emoji or a "#". A name cut mid-emoji broke the list's colour markup for every row after it, so the list looked frozen from that point on. Names are cleaned and escaped before display, here and in the message-info repeat list. Thanks to 4nuts for reporting with the exact culprit name (#223).
+Formatting an SD card on the V4-R8 or ThinkNode M9 no longer hangs forever. The Format button existed on both boards but the code doing the format was only compiled for the T-Deck, so the notice stayed up with nothing running behind it. Thanks to TrustYourTechnoLust (#172).
+Files app: Copy and Paste now work on every board - outside the T-Deck they showed the busy overlay forever for the same reason as the format hang.

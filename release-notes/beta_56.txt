@@ -1,0 +1,13 @@
+# beta_56 - duty-cycle fix (important), Pager SD storage, issue-sweep fixes
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Read this first -------------------------------------------------------------------
+IMPORTANT - if you ever picked a region preset, your radio was transmitting at roughly 9x the duty limit (about 91% instead of 10%). The preset math set the airtime limit 10x too loose; the home-screen meter showing "91% max duty cycle" was correctly reporting it (#161). This build fixes the presets AND automatically corrects devices whose settings exactly match a preset. If you tuned your airtime factor by hand, nothing is touched.
+
+# --- T-Pager ----------------------------------------------------------------------------
+The SD card is now actually used (#193). The card mounted and browsed fine but nothing stored to it - the storage feature was never enabled for this board. The Pager now gets the same "Store data on SD" option, boot storage selection and migration as the T-Deck.
+
+# --- Fixes across boards ----------------------------------------------------------------
+Message details now show the region scope for scoped direct messages, and no longer show "Scope 0000" for senders that carry the region in the alternate slot (#157).
+The Discover app keeps the last-heard time on screen with long node names - names are trimmed and node types shown as single letters (#191).
+The screen-unlock animation says WADAMESH instead of the old MESHCOMOD (#165).

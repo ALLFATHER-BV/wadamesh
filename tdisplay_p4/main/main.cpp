@@ -14,7 +14,12 @@
 #include "esp_heap_caps.h"
 #include "UITask.h"
 #include "target.h"                // board, radio_driver, rtc_clock, display, sensors, radio_init()
-#include <FFat.h>                  // internal 'storage' FAT partition (no-card fallback)
+#include <LittleFS.h>              // internal 'storage' partition, mounted as LittleFS (label lookup is
+                                   // subtype-agnostic, so the ex-FAT partition converts in place -- no
+                                   // partition-table change, OTA-safe). The P4's FAT-on-flash layer has
+                                   // documented broken metadata (exists/size/f_getfree lie) and v3 of the
+                                   // #167 migration proved even its WRITES cannot be trusted; LittleFS is
+                                   // the same battle-proven backend every S3 board uses internally.
 #include <SD_MMC.h>                // microSD on SDMMC slot 0 (primary store)
 #include "esp_partition.h"
 #include <WiFi.h>
@@ -72,8 +77,8 @@ volatile int g_boot_phase = 0;
 extern "C" void set_boot_phase(int phase) { g_boot_phase = phase; }
 
 // App globals — src/main.cpp declares these; we own them here (that file is excluded from the build).
-DataStore store(FFat, rtc_clock);
-bool g_fs_ok = false;   // FFat('storage') mounted (extern — UITask file browser)
+DataStore store(LittleFS, rtc_clock);
+bool g_fs_ok = false;   // internal 'storage' (LittleFS) mounted (extern — UITask file browser)
 bool g_sd_ok = false;   // microSD mounted (extern)
 MultiTransportCompanionInterface serial_interface;
 StdRNG fast_rng;
@@ -99,9 +104,11 @@ static void hostedConnectC6() {
 
 // Recursive FS→FS copy for the one-time SD adoption migration (FFat store → SD /meshcomod).
 // Skips files that already exist at the destination, so a partial earlier run just completes.
-static void migrateFsCopyFile(fs::FS &src, const char *sp, fs::FS &dst, const char *dp) {
-  File probe = dst.open(dp, FILE_READ);
-  if (probe) { probe.close(); return; }
+static void migrateFsCopyFile(fs::FS &src, const char *sp, fs::FS &dst, const char *dp, bool overwrite = false) {
+  if (!overwrite) {
+    File probe = dst.open(dp, FILE_READ);
+    if (probe) { probe.close(); return; }
+  }
   File in = src.open(sp, FILE_READ);
   if (!in) return;
   File out = dst.open(dp, FILE_WRITE);
@@ -112,7 +119,7 @@ static void migrateFsCopyFile(fs::FS &src, const char *sp, fs::FS &dst, const ch
   out.close(); in.close();
   printf("[storage]   migrated %s\n", sp);
 }
-static void migrateFsDir(fs::FS &src, const char *sdir, fs::FS &dst, const char *ddir) {
+static void migrateFsDir(fs::FS &src, const char *sdir, fs::FS &dst, const char *ddir, bool overwrite = false) {
   File d = src.open(sdir);
   if (!d || !d.isDirectory()) { if (d) d.close(); return; }
   dst.mkdir(ddir);
@@ -126,8 +133,8 @@ static void migrateFsDir(fs::FS &src, const char *sdir, fs::FS &dst, const char 
     snprintf(dp, sizeof dp, "%s/%s", ddir, leaf);
     bool is_dir = f.isDirectory();
     f.close();
-    if (is_dir) migrateFsDir(src, sp, dst, dp);
-    else        migrateFsCopyFile(src, sp, dst, dp);
+    if (is_dir) migrateFsDir(src, sp, dst, dp, overwrite);
+    else        migrateFsCopyFile(src, sp, dst, dp, overwrite);
   }
   d.close();
 }
@@ -164,9 +171,12 @@ static void wadameshSetup() {
   DisplayDriver* disp = &display;
 
   // 6. Storage — microSD (SDMMC slot 0) primary, internal FFat 'storage' as the no-card fallback.
-  g_fs_ok = FFat.begin(true, "/ffat", 10, "storage");
-  printf("[storage] FFat(storage) = %s\n", g_fs_ok ? "OK" : "FAILED");
-  if (g_fs_ok) { FFat.mkdir("/identity"); FFat.mkdir("/bl"); }
+  // formatOnFail=true: the first boot of this build finds FAT data in the partition, fails the
+  // littlefs mount, and formats it — the deliberate one-way conversion (store contents come back
+  // from the SD card via the v4 migration below).
+  g_fs_ok = LittleFS.begin(true, "/lfs", 10, "storage");
+  printf("[storage] LittleFS(storage) = %s\n", g_fs_ok ? "OK" : "FAILED");
+  if (g_fs_ok) { LittleFS.mkdir("/identity"); LittleFS.mkdir("/bl"); }
   // The slot's VDD is gated by the XL9535's SD_EN (IO15), ACTIVE-LOW — powerOnSequence() drives it
   // low. (Root-caused 2026-07-15 with a GPIO pad sweep: SD_EN high = all six SD pads clamped LOW
   // through the unpowered card's ESD diodes -> 0x107/0x109 on every mount; SD_EN low = pads high,
@@ -180,9 +190,24 @@ static void wadameshSetup() {
   for (int p : {44, 39, 40, 41, 42}) gpio_pullup_en((gpio_num_t)p);
   // Mount ladder: 4-bit@20 MHz normally succeeds first try now that the slot is powered; the
   // fallbacks stay for marginal cards. (1-bit skips D1..D3; 5 MHz derates signal margin.)
+  //
+  // #167: SD activity IS the whole-screen flash. Proven by elimination on-device: identical
+  // firmware with the card removed never flashes, while every reported trigger (message arrives,
+  // opening an unread chat, contact add/delete, boot pre-splash) ends in an SD write burst or the
+  // mount probe. The display stack itself measured clean throughout (framebuffer content, bridge
+  // underrun, host protocol errors, DCS traffic, expander writes -- all silent during visible
+  // flashes; DSI config + panel init identical to the flash-free Meck-P4). Remaining coupling is
+  // electrical: the 4-bit 20 MHz SDMMC bus and/or the card's write-current spikes on the shared
+  // rail. TDP4_SD_KHZ / TDP4_SD_1BIT (build-time) tune the first mount rung to test/derate.
   {
+#ifndef TDP4_SD_KHZ
+#define TDP4_SD_KHZ SDMMC_FREQ_DEFAULT   // 20 MHz
+#endif
+#ifndef TDP4_SD_1BIT
+#define TDP4_SD_1BIT false
+#endif
     struct { bool onebit; int khz; const char *tag; } tries[] = {
-      { false, SDMMC_FREQ_DEFAULT, "4-bit 20MHz" },
+      { TDP4_SD_1BIT, TDP4_SD_KHZ, "primary (TDP4_SD_KHZ)" },
       { false, 5000,               "4-bit 5MHz"  },
       { true,  SDMMC_FREQ_DEFAULT, "1-bit 20MHz" },
       { true,  5000,               "1-bit 5MHz"  },
@@ -197,20 +222,79 @@ static void wadameshSetup() {
   }
   printf("[storage] SD_MMC = %s\n", g_sd_ok ? "OK" : "no card");
   if (g_sd_ok) {
-    SD_MMC.mkdir("/meshcomod"); SD_MMC.mkdir("/meshcomod/identity"); SD_MMC.mkdir("/meshcomod/bl");
-    // One-time ADOPTION MIGRATION (the beta_36 lesson: never flip a storage root without migrating).
-    // This device has been running with the store on FFat while the SD init was broken — if the card
-    // has no identity yet but FFat does, copy the whole FFat store across BEFORE switching the root,
-    // or the node would boot with a fresh identity and "lose" contacts/prefs/history.
-    File sp = SD_MMC.open("/meshcomod/identity/_main.id", FILE_READ);
-    bool sd_has_id = (bool)sp; if (sp) sp.close();
-    File fp = FFat.open("/identity/_main.id", FILE_READ);
-    bool ff_has_id = (bool)fp; if (fp) fp.close();
-    if (!sd_has_id && ff_has_id) {
-      printf("[storage] first SD adoption -> migrating FFat store to SD /meshcomod\n");
-      migrateFsDir(FFat, "/", SD_MMC, "/meshcomod");
+    // #167 RESOLUTION -- the hot store lives on INTERNAL FFat; the SD carries only bulk, gentle
+    // writers (map tiles, backups). Root cause, established by on-device elimination: SD-card
+    // WRITE bursts electrically disturb the AMOLED (whole-screen blue flash). The display stack
+    // measured clean throughout -- framebuffer content, DSI bridge underrun, DSI host protocol
+    // errors, DCS traffic, expander writes: all silent during visible flashes -- and the flash
+    // survived every digital derate (4->1-bit bus, 20->10 MHz SD clock, 1000->750 Mbps DSI lane
+    // rate) on EVERY card tried, at any brightness, yet vanished the moment the card was removed
+    // or left unwritten. The card's supply rail is shared with the panel (XL9535 SD_EN switches
+    // it off the same 3V3 domain), so its program-current spikes reach the panel and firmware
+    // cannot filter them -- it can only stop hammering the card. Streaming tile writes never
+    // flashed, so the SD keeps those. This is also why the flash-free Meck build proves nothing
+    // about the board: it keeps its store internal and never writes the SD at all.
+    //
+    // One-time REVERSE migration: earlier P4 builds kept the live store on SD /meshcomod, so if
+    // the card carries an identity and this build hasn't migrated yet, copy the store back to
+    // FFat, OVERWRITING FFat's stale pre-adoption copies (the SD is the current truth -- booting
+    // cardless on the old FFat set showed long-deleted contacts). SD data is left in place,
+    // untouched, as a rollback.
+    // v4 migration -- one lesson per predecessor: v1 trusted whichever card was in and copied a
+    // blank store; v2 copied the whole SD tree and filled the partition before contacts3 landed;
+    // v3 did format+whitelist correctly and STILL read back empty -- because the P4's FAT-on-flash
+    // driver itself is broken (its stat layer lying was already documented; v3 proved writes are
+    // no better). v4 = the same clean-slate whitelist copy, onto LittleFS. Card is never written.
+    File mk = LittleFS.open("/.hot_store_on_lfs_v4", FILE_READ);
+    bool migrated = (bool)mk; if (mk) mk.close();
+    if (!migrated) {
+      File sp = SD_MMC.open("/meshcomod/identity/_main.id", FILE_READ);
+      bool sd_has_id = (bool)sp; if (sp) sp.close();
+      auto fsize = [](fs::FS &f, const char *path) -> size_t {
+        File h = f.open(path, FILE_READ); size_t n = h ? h.size() : 0; if (h) h.close(); return n;
+      };
+      size_t sd_meshcomod = fsize(SD_MMC, "/meshcomod/contacts3");
+      size_t sd_root      = fsize(SD_MMC, "/contacts3");
+      size_t lf_contacts  = fsize(LittleFS, "/contacts3");
+      size_t sd_contacts  = sd_meshcomod > sd_root ? sd_meshcomod : sd_root;
+      if (sd_has_id && sd_contacts > lf_contacts) {
+        printf("[storage] #167 v4: store SD -> LittleFS (contacts3 /meshcomod=%uB root=%uB, lfs had %uB)\n",
+               (unsigned)sd_meshcomod, (unsigned)sd_root, (unsigned)lf_contacts);
+        LittleFS.mkdir("/identity"); LittleFS.mkdir("/bl");
+        const char *sub = sd_meshcomod >= sd_root ? "/meshcomod" : "";   // live layout root on the card
+        char sp2[64];
+        migrateFsDir(SD_MMC, "/meshcomod/identity", LittleFS, "/identity", true);
+        migrateFsDir(SD_MMC, "/meshcomod/bl",       LittleFS, "/bl",       true);
+        static const char *k_files[] = { "/contacts3", "/channels2", "/adv_blobs", "/new_prefs",
+                                         "/new_prefs.tmp", "/regions2", "/ui_chat_history_v1.bin" };
+        for (const char *nm : k_files) {
+          snprintf(sp2, sizeof sp2, "%s%s", sub, nm);
+          File probe = SD_MMC.open(sp2, FILE_READ); bool have = (bool)probe; if (probe) probe.close();
+          if (!have && sub[0]) { snprintf(sp2, sizeof sp2, "%s", nm); }
+          else if (!have)      { snprintf(sp2, sizeof sp2, "/meshcomod%s", nm); }
+          migrateFsCopyFile(SD_MMC, sp2, LittleFS, nm, true);
+        }
+        printf("[storage] #167 v4: done -- lfs used %u / %u KB, contacts3 readback %uB\n",
+               (unsigned)(LittleFS.usedBytes() / 1024), (unsigned)(LittleFS.totalBytes() / 1024),
+               (unsigned)fsize(LittleFS, "/contacts3"));
+        File w = LittleFS.open("/.hot_store_on_lfs_v4", FILE_WRITE);
+        if (w) { w.write((const uint8_t*)"1", 1); w.close(); }
+      } else {
+        printf("[storage] #167 v4: no migration (sd_id=%d sd=%uB lfs=%uB) -- LittleFS is the store\n",
+               (int)sd_has_id, (unsigned)sd_contacts, (unsigned)lf_contacts);
+        File w = LittleFS.open("/.hot_store_on_lfs_v4", FILE_WRITE);
+        if (w) { w.write((const uint8_t*)"1", 1); w.close(); }
+      }
     }
+#if defined(TDP4_SD_STORE_TEST)
+    // #167 EXPERIMENT: store back on the SD card with all hot writes hopped to core 0 (the tile
+    // task's core, which has never flashed). One variable vs the known-flashing config: the
+    // executing core. Uses the card's existing (slightly stale) store; migration skipped.
+    printf("[storage] TDP4_SD_STORE_TEST: store on SD, writes on core 0\n");
     store.useSdMmcStorage();
+#else
+    // Deliberately NOT calling store.useSdMmcStorage(): the internal store stays the DataStore root.
+#endif
   }
   store.begin();
 
@@ -237,11 +321,67 @@ static void wadameshSetup() {
   // here — the P4 has RAM to spare, and GPS detection itself needs an intact first second.
   Serial1.setRxBufferSize(4096);
   sensors.begin();
-  {   // GPS detect visibility (the "gps" setting is only registered when NMEA was heard)
-    bool has_gps = false;
+  {   // ---- GPS reality check -------------------------------------------------------------
+    // The line that used to be here reported whether the "gps" SETTING got registered, which on
+    // this board is FORCED true by ENV_SKIP_GPS_DETECT (we set that because the P4's heavy boot
+    // misses the core's 1 s detect window, and a false negative hides the GPS toggle entirely).
+    // So it printed DETECTED unconditionally and proved nothing, including across several rounds
+    // of "GPS still isn't working". Read the UART directly instead and report what arrives.
+    bool has_setting = false;
     for (int i = 0; i < sensors.getNumSettings(); i++)
-      if (strcmp(sensors.getSettingName(i), "gps") == 0) has_gps = true;
-    printf("[GPS] L76K %s\n", has_gps ? "DETECTED (NMEA on GPIO22)" : "NOT detected (no NMEA in the 1s window)");
+      if (strcmp(sensors.getSettingName(i), "gps") == 0) has_setting = true;
+
+    // Drain a SHORT window of NMEA. Bytes at all => pins, rails, wake and baud are ALL correct and
+    // a stuck "acquiring" is a FIX problem (antenna / sky view). Zero bytes => the link is dead.
+    // 1.2 s, not longer: this runs on every boot and it CONSUMES bytes the NMEA parser would
+    // otherwise see, so it is deliberately just long enough to catch one of each sentence type
+    // (the L76K repeats the full set about once a second).
+    uint32_t bytes = 0, lines = 0;
+    char first[96]; first[0] = '\0';
+    char cur[96];   size_t cl = 0;
+    // Keep one example of each distinct GSV/GGA/RMC talker so every constellation is represented
+    // without dumping the whole stream (the same 5 sentence types repeat every second).
+    char kept[10][96]; int kept_n = 0;
+    const uint32_t until = millis() + 1200;
+    while ((int32_t)(millis() - until) < 0) {
+      while (Serial1.available() > 0) {
+        const int c = Serial1.read();
+        if (c < 0) break;
+        ++bytes;
+        if (c == '\n' || c == '\r') {
+          if (cl) {
+            cur[cl] = '\0';
+            ++lines;
+            if (!first[0] && cur[0] == '$') { strncpy(first, cur, sizeof first - 1); first[sizeof first - 1] = '\0'; }
+            // Keep the first of each sentence TYPE (talker + type, e.g. "$GPGSV", "$GNGGA").
+            if (cur[0] == '$' && cl >= 6 && kept_n < 10) {
+              bool seen = false;
+              for (int k = 0; k < kept_n; ++k) if (strncmp(kept[k], cur, 6) == 0) { seen = true; break; }
+              if (!seen) { strncpy(kept[kept_n], cur, sizeof kept[0] - 1); kept[kept_n][sizeof kept[0] - 1] = '\0'; ++kept_n; }
+            }
+            cl = 0;
+          }
+        } else if (cl < sizeof(cur) - 1) {
+          cur[cl++] = (char)c;
+        }
+      }
+      delay(5);
+    }
+    printf("[GPS] setting_registered=%d (forced by ENV_SKIP_GPS_DETECT, proves nothing)\n", (int)has_setting);
+    printf("[GPS] UART probe: %lu bytes, %lu lines in 1.2s @ %d baud, module TX -> GPIO%d\n",
+           (unsigned long)bytes, (unsigned long)lines, (int)GPS_BAUD_RATE, (int)PIN_GPS_TX);
+    if (first[0])        printf("[GPS] first sentence: %s\n", first);
+    else if (bytes)      printf("[GPS] bytes but no complete '$' sentence -> wrong baud or line noise\n");
+    else                 printf("[GPS] NOTHING on the UART -> check wake (XL9535 IO11 HIGH), rails, RX pin\n");
+    // Satellite visibility across ALL constellations, plus the fix line. One GxGSV is not enough:
+    // GLGSV is GLONASS only, so "00" there says nothing about GPS/Galileo/BeiDou. GSV field 3 is
+    // sats-in-view for that constellation; GGA field 6 is fix quality (0 = no fix) and field 7 the
+    // sats used. Non-zero in-view with quality 0 means it IS hearing satellites and just needs
+    // time or better sky. All-zero in-view points at the antenna or shielding.
+    if (kept_n) {
+      printf("[GPS] --- satellite view (%d sentences) ---\n", kept_n);
+      for (int i = 0; i < kept_n; ++i) printf("[GPS]   %s\n", kept[i]);
+    }
   }
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());
   board.onBootComplete();
@@ -383,6 +523,17 @@ extern "C" void app_main(void) {
       }
     }
     serial_interface.tickWebSocketHandshake();
+
+    // Service the sensor manager. This was MISSING on this board: sensors.begin() ran at boot and
+    // then nothing ever pumped it again, while every S3 board calls this each iteration (see
+    // src/main.cpp, which is excluded from this build — that is how the call got lost in the port).
+    //
+    // sensors.loop() is what drains the GPS UART into MicroNMEA. Without it the parser never sees a
+    // byte, so isValid() stays false forever and the UI sits on "searching" no matter how good the
+    // sky is — while the module itself is perfectly happy and does acquire a fix (proven with a raw
+    // UART probe: a valid 3D fix at HDOP 2.2 that the firmware never knew about). It also starves
+    // everything else the manager provides: telemetry sensors and the GPS->RTC time sync.
+    sensors.loop();
 
     the_mesh.loop();
     vTaskDelay(1);

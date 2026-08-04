@@ -51,6 +51,11 @@ void Xl9535::write(uint8_t io, bool high) {
   uint8_t port, bit; split(io, port, bit);
   if (high) _out[port] |=  (1 << bit);
   else      _out[port] &= ~(1 << bit);
+#if defined(TDP4_POKE_TRACE)
+  // #167 hunt: any expander write while the panel streams is a glitch suspect (this is an
+  // UNLOCKED shadow RMW -- a cross-task race can transiently drop SCREEN_RST or a rail bit).
+  printf("[XLW] %lu io=%u v=%d out=%02X%02X\n", (unsigned long)millis(), io, (int)high, _out[1], _out[0]);
+#endif
   writeReg(REG_OUT0 + port, _out[port]);
 }
 
@@ -99,7 +104,11 @@ void Xl9535::powerOnSequence() {
   // OFF and made every mount fail (0x107 OCR timeout / 0x109 CRC). Drive it LOW, always.
   write(IO_SD_EN, false);              // SD slot power ON (active-low)
   write(IO_SX1262_RST, true);          // park high; radio_init pulses it
-  write(IO_RF_SWITCH, false);          // RX path
+  // Antenna select: park on the on-board antenna (RF1) before the radio exists, so the first
+  // transmit after any boot cannot key the PA into a possibly-empty external socket. LilyGo's own
+  // XL9535 init preloads this same level as its safe state. Choosing the external antenna is a
+  // deliberate, confirmed, session-only action from Settings -> Radio.
+  write(IO_RF_SWITCH, INTERNAL_LEVEL);
   write(IO_TOUCH_RST, true);           // release touch (HI8561 driver probes it)
   // NB: SCREEN_RST is intentionally NOT touched here — RM69A10Display::begin() sequences it with
   // the DSI-PHY LDO (HIGH->LOW->HIGH, 200 ms each), exactly as the working Meck-P4 app_main does.

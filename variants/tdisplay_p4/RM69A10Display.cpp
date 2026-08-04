@@ -3,12 +3,17 @@
 #include "RM69A10Display.h"
 #include <Arduino.h>
 #include "esp_heap_caps.h"
+#include "esp_cache.h"   // esp_cache_msync — flush the memset framebuffer out to the DSI DMA
 #include "esp_ldo_regulator.h"
 #include "Xl9535.h"                 // SCREEN_RST lives on the expander (reset_gpio_num = -1)
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_lcd_panel_io.h"       // esp_lcd_panel_io_tx_param (runtime brightness 0x51)
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_rm69a10.h"
+#if defined(TDP4_POKE_TRACE)
+#include "soc/mipi_dsi_host_struct.h"   // MIPI_DSI_HOST — raw host error status (poke-trace poller)
+#include "freertos/task.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -19,6 +24,22 @@
 // the frame buffer as horizontal black/garbage bands, worst during transitions (many rapid
 // flushes). This binary semaphore makes each flush synchronous: draw_bitmap → wait for done.
 static SemaphoreHandle_t s_flush_sem = nullptr;
+#if defined(TDP4_POKE_TRACE)
+// #167 hunt, round 3: the esp_lcd driver watches ONLY the bridge-FIFO underrun (proven silent
+// during visible flashes). The DSI HOST has its own never-read error latches: int_st0 = the
+// panel acking packets WITH ERRORS, int_st1 = ECC/CRC/timeout/payload-write errors INCLUDING
+// dpi_buff_pld_under (the host payload buffer underflowing -- a different FIFO than the bridge).
+// Both are read-clear, so a 25 ms poll gives per-event capture. If these latch when the screen
+// flashes, we have a hardware flash-detector and can bisect subsystems without eyes on the panel.
+static void dsiErrPollTask(void*) {
+  for (;;) {
+    const uint32_t st0 = MIPI_DSI_HOST.int_st0.val;   // RC
+    const uint32_t st1 = MIPI_DSI_HOST.int_st1.val;   // RC
+    if (st0 || st1) printf("[DSIERR] %lu st0=%08X st1=%08X\n", (unsigned long)millis(), (unsigned)st0, (unsigned)st1);
+    vTaskDelay(pdMS_TO_TICKS(25));
+  }
+}
+#endif
 static bool IRAM_ATTR rm69a10TransDone(esp_lcd_panel_handle_t, esp_lcd_dpi_panel_event_data_t*, void*) {
   BaseType_t hpw = pdFALSE;
   if (s_flush_sem) xSemaphoreGiveFromISR(s_flush_sem, &hpw);
@@ -37,7 +58,19 @@ static bool IRAM_ATTR rm69a10TransDone(esp_lcd_panel_handle_t, esp_lcd_dpi_panel
 #endif
 #define RM_DPI_MHZ  60
 #define RM_LANES    2
-#define RM_BITRATE  1000            // Mbps per lane — TODO(device): confirm vs LilyGo RM69A10 define
+// Lane bit rate. LilyGo/Meck ship 1000 Mbps (confirmed against both sources 2026-07-31), and the
+// panel needs only ~550 Mbps of it at DPI 60 MHz / RGB565 / 2 lanes -- the rest is eye margin.
+// #167 made that margin matter: SD-card write bursts load the P4's on-chip LDO4 and disturb the
+// sibling LDO3 that powers the DSI PHY, and at a 1 ns unit interval that wobble was enough to
+// glitch the link -- the panel loses a frame to a whole-screen blue flash (proven by elimination:
+// no flash with the card out or unwritten; framebuffer/underrun/host-error/DCS all measured clean;
+// identical timings+init to the flash-free Meck build). A 750 Mbps derate was tried against #167 and changed nothing
+// (the disturbance reaches the panel around the link, not through it), so this stays at the
+// vendor value. Overridable per build: -DRM_BITRATE_MBPS=<n>.
+#ifndef RM_BITRATE_MBPS
+#define RM_BITRATE_MBPS 1000
+#endif
+#define RM_BITRATE  RM_BITRATE_MBPS
 #define RM_HSYNC    50
 #define RM_HBP      150
 #define RM_HFP      50
@@ -109,6 +142,19 @@ bool RM69A10Display::begin() {
 
   esp_lcd_panel_reset(_panel);
   if (esp_lcd_panel_init(_panel) != ESP_OK) { Serial.println("[RM69A10] panel_init fail"); return false; }
+
+  // Blank the framebuffer BEFORE switching the panel on. It is freshly allocated PSRAM, so it holds
+  // garbage; turning the panel on first meant the DSI streamed that garbage to the screen until the
+  // clear below finished -- the colour flash testers see before the boot splash (#167). Write the
+  // buffer directly (memset + a cache flush to make it visible to the DSI's DMA) instead of pushing
+  // strips through draw_bitmap: it is one pass with the panel still dark, and it avoids a burst of
+  // 39 back-to-back DMA transfers into a buffer the panel is scanning out.
+  void* fb = nullptr;
+  if (esp_lcd_dpi_panel_get_frame_buffer(_panel, 1, &fb) == ESP_OK && fb) {
+    const size_t fb_bytes = (size_t)RM_W * RM_H * 2;
+    memset(fb, 0, fb_bytes);
+    esp_cache_msync(fb, fb_bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+  }
   esp_lcd_panel_disp_on_off(_panel, true);
 
   // Brightness: the init array ships 0x51=0 (placeholder), and RM69A10 brightness is driven at
@@ -125,35 +171,69 @@ bool RM69A10Display::begin() {
   cbs.on_color_trans_done = rm69a10TransDone;
   esp_lcd_dpi_panel_register_event_callbacks(_panel, &cbs, nullptr);
 
-  // Clear the panel framebuffer to black once, so nothing stale shows before LVGL's first flush.
-  {
-    const int SH = 32;
-    uint16_t* strip = (uint16_t*)heap_caps_calloc((size_t)RM_W * SH, 2, MALLOC_CAP_SPIRAM);
-    if (strip) {
-      for (int y0 = 0; y0 < RM_H; y0 += SH) {
-        int hh = (y0 + SH <= RM_H) ? SH : (RM_H - y0);
-        esp_lcd_panel_draw_bitmap(_panel, 0, y0, RM_W, y0 + hh, strip);
-        if (s_flush_sem) xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(100));   // let the copy finish before reusing/freeing strip
-      }
-      free(strip);
-    }
-  }
-
+  #if defined(TDP4_POKE_TRACE)
+  xTaskCreatePinnedToCore(dsiErrPollTask, "dsierr", 3072, nullptr, 3, nullptr, 1);
+#endif
   Serial.printf("[RM69A10] up %dx%d\n", RM_W, RM_H);
   return true;
 }
 
 void RM69A10Display::writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels) {
   if (!_panel || !pixels || w <= 0 || h <= 0) return;
+#if defined(TDP4_FLUSH_TRACE)
+  // Opt-in flush tracer for whole-screen colour-flash reports (#167). OFF unless the build adds
+  // -DTDP4_FLUSH_TRACE, so it costs nothing normally. Logs any large, mostly-single-colour band
+  // with its RGB565 value: if the flash is LVGL painting something you see a burst carrying that
+  // colour (brand teal 0x15B6A6 -> 0x15B4); if the screen visibly flashes and nothing logs, the
+  // cause is below LVGL (panel/DSI) and hunting in the UI is wasted effort. Note when using it
+  // that the per-band uniformity scan slows the flush path, which can mask a timing-sensitive
+  // bug — always confirm a fix on a build WITHOUT this enabled.
+  {
+    const long px = (long)w * h;
+    if (px > 1500) {                       // one full LVGL band is 284*24 = 6816 px
+      const uint16_t c0 = pixels[0];
+      long same = 0;
+      for (long i = 0; i < px; i += 37) { if (pixels[i] == c0) ++same; }   // sparse uniformity probe
+      const long probes = (px + 36) / 37;
+      // Log the colour whenever a large band is mostly ONE colour. A whole-screen flash shows
+      // up as a burst of these in the same millisecond range, all carrying the flash colour
+      // (brand teal 0x15B6A6 -> rgb565 0x15B4). Rate-limited so a normal repaint storm can't
+      // flood the console and perturb what we are measuring.
+      static uint32_t s_last_log = 0; static int s_burst = 0;
+      const uint32_t now_ms = (uint32_t)millis();
+      if (now_ms - s_last_log > 500) { s_burst = 0; s_last_log = now_ms; }
+      if (same * 10 >= probes * 9 && s_burst < 12) {
+        ++s_burst;
+        Serial.printf("[FLUSHTRACE] %lu x=%d y=%d w=%d h=%d rgb565=0x%04X\n",
+                      (unsigned long)now_ms, x, y, w, h, (unsigned)c0);
+      }
+    }
+  }
+#endif
 #if RM_UI_SCALE > 1
   // Nearest-neighbour upscale the (half-res) LVGL band to the native panel: each source pixel becomes
   // an RM_UI_SCALE x RM_UI_SCALE block. One expanded band -> one draw_bitmap (exclusive end coords).
   const int S = RM_UI_SCALE, dw = w * S, dh = h * S;
+  // The scratch band lives in INTERNAL DMA RAM, not PSRAM. This panel is a DPI/DSI one with a
+  // single ~1.4 MB framebuffer that can only live in PSRAM, and the DSI DMA streams that
+  // framebuffer out to the glass CONTINUOUSLY. Every draw_bitmap below is a copy INTO that
+  // framebuffer, so with the scratch also in PSRAM a flush put three streams on the same bus at
+  // once: the scratch read, the framebuffer write, and the DSI's own read. Anything else that
+  // wants PSRAM at that moment — notably the priority-10 "lora_rx" drain task, which wakes on
+  // every received packet — can then starve the DSI read, and a DPI underrun shows up as a
+  // whole-screen colour flash for one frame. That is the P4 "flicker on every RX" report
+  // (issue #167): it appears on any screen, because it is a display-bus problem and nothing to
+  // do with what is being drawn. Internal RAM removes the scratch read from the PSRAM bus.
+  // Cost is bounded and small: one LVGL band is 284x24 (LV_DRAW_BUF_LINES), so upscaled 2x this
+  // is 568*48*2 = ~53 KB out of the P4's 768 KB SRAM. PSRAM stays as the fallback so a
+  // fragmented heap degrades to the old behaviour instead of dropping to the unscaled path.
   static uint16_t* s_up = nullptr; static size_t s_up_px = 0;
   size_t need = (size_t)dw * dh;
   if (need > s_up_px) {
     if (s_up) heap_caps_free(s_up);
-    s_up = (uint16_t*)heap_caps_malloc(need * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    s_up = (uint16_t*)heap_caps_malloc(need * sizeof(uint16_t),
+                                       MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!s_up) s_up = (uint16_t*)heap_caps_malloc(need * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     s_up_px = s_up ? need : 0;
   }
   if (s_up) {
@@ -176,10 +256,20 @@ void RM69A10Display::writePixelsRGB565(int x, int y, int w, int h, const uint16_
 
 void RM69A10Display::setBrightness(uint8_t b) {
   if (!_dbi_io) return;
+#if defined(TDP4_POKE_TRACE)
+  // #167 hunt: DCS 0x51 is a low-power command injected into the LIVE video stream -- if the
+  // panel glitches a frame per command, these lines will pace the visible flashes exactly.
+  printf("[BRI] %lu val=%u\n", (unsigned long)millis(), b);
+#endif
   esp_lcd_panel_io_tx_param(_dbi_io, 0x51, &b, 1);   // DCS SET_DISPLAY_BRIGHTNESS
 }
 
+#if defined(TDP4_POKE_TRACE)
+void RM69A10Display::turnOn()  { printf("[DSP] %lu on\n",  (unsigned long)millis()); if (_panel) esp_lcd_panel_disp_on_off(_panel, true);  _on = true;  }
+void RM69A10Display::turnOff() { printf("[DSP] %lu off\n", (unsigned long)millis()); if (_panel) esp_lcd_panel_disp_on_off(_panel, false); _on = false; }
+#else
 void RM69A10Display::turnOn()  { if (_panel) esp_lcd_panel_disp_on_off(_panel, true);  _on = true;  }
 void RM69A10Display::turnOff() { if (_panel) esp_lcd_panel_disp_on_off(_panel, false); _on = false; }
+#endif
 
 #endif  // HAS_TDISPLAY_P4
