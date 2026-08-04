@@ -37606,12 +37606,26 @@ static void luaStoreRebuildList() {
     };
 
     lv_obj_t* hint = lv_label_create(s_luastore_list);
+#if CAP_BUILTIN_LANGS
+    lv_label_set_text(hint, TR("Tap Use to switch - the device reboots to apply."));
+#else
     lv_label_set_text(hint, TR("Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own."));
+#endif
     lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_width(hint, W - 12);
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
 
+#if CAP_BUILTIN_LANGS
+    // All translations ship in the image on this board: a picker, no downloads.
+    for (uint8_t l = 0; l < LANG_COUNT; ++l) {
+      lv_obj_t* row = langRow(kUiLangNames[l], nullptr);
+      if (!curFile[0] && l == curLang) activeTag(row, -6);
+      else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangBuiltinCb, (intptr_t)l, 0,
+                     narrow ? 52 : 58);
+    }
+    return;
+#endif
     section(TR("Installed"));
     {
       // English is always here (it's the source keys). Every other language is
@@ -37845,13 +37859,20 @@ static void openLuaStorePage() {
     lv_obj_set_pos(bar, 6, 4);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
     static const char* const kStoreTabs[3] = { "Apps", "Built-in", "Languages" };
-    const lv_coord_t bw = (sw - 12) / 3;
-    for (int t = 0; t < 3; t++) {
+#if CAP_BUILTIN_LUA_APPS
+    // This board ships its apps and languages inside the image, so there is
+    // nothing to browse or install — the page is a picker, not a shop.
+    const int t_first = 1, t_count = 2;
+#else
+    const int t_first = 0, t_count = 3;
+#endif
+    const lv_coord_t bw = (sw - 12) / t_count;
+    for (int t = t_first; t < 3; t++) {
       lv_obj_t* b = lv_btn_create(bar);
       s_luastore_tabbtn[t] = b;
       lv_obj_remove_style_all(b);
       lv_obj_set_size(b, bw - 4, bar_h - 4);
-      lv_obj_set_pos(b, t * bw + 2, 0);
+      lv_obj_set_pos(b, (t - t_first) * bw + 2, 0);
       lv_obj_set_style_radius(b, 8, LV_PART_MAIN);
       lv_obj_t* l = lv_label_create(b);
       lv_label_set_text(l, TR(kStoreTabs[t]));
@@ -37873,6 +37894,9 @@ static void openLuaStorePage() {
   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
 
+#if CAP_BUILTIN_LUA_APPS
+  if (s_luastore_tab == 0) s_luastore_tab = 2;   // no Apps tab on this board
+#endif
   appPageBeginSlim(TR("Store"), &closeLuaStorePage);   // one-line bar; the tab bar is the page header
 
   // Open instantly from the cached install list; the card re-listing (sideload
@@ -38259,6 +38283,7 @@ static void appTileLongPressCb(lv_event_t* e) {
   int act = (int)(intptr_t)lv_event_get_user_data(e);
   int idx = act - APPACT_LUA_BASE;
   if (idx >= 0 && idx < s_lua_inst_n) {          // installed Lua app -> remove
+    if (luaBuiltinSrc(s_lua_inst[idx].id)) return;   // seeded in the image: nothing to uninstall
     s_tile_lp_fired = true;
     s_lua_rm_pending = idx;
     char msg[64];
@@ -38615,9 +38640,7 @@ static void openAppDrawer() {
 #if !CAP_LUA_APPS
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (Lua boards install it from the Store)
 #else
-#if !CAP_BUILTIN_LUA_APPS   // boards that ship their apps in the image do not offer the Store
     { LV_SYMBOL_DOWNLOAD,  "WADA Store", APPACT_STORE,   0,         0x15B6A6 },      // Lua app store (brand teal)
-#endif
 #endif
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
