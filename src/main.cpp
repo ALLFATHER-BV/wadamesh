@@ -697,13 +697,17 @@ void setup() {
 #endif
 
 #if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
+  BOOTMEM("pre-wifi-cfg");
   wifiConfigBegin();
+  BOOTMEM("post-wifi-cfg");
   Serial.println("[BOOT] wifiConfig ok");
 #endif
 
 #ifdef MULTI_TRANSPORT_COMPANION
   board.setInhibitSleep(true);
+  BOOTMEM("pre-iface-srv");
   serial_interface.begin(Serial, TCP_PORT, WS_PORT);
+  BOOTMEM("post-iface-srv");
   Serial.println("[BOOT] serial_interface ok");
   serial_interface.setBroadcastResponses(true);  // RX log, channel messages, etc. go to all clients (USB + TCP + WS [+ BLE]), not only last sender
   /* Pick BLE vs WiFi at boot. The ESP32-S3 doesn't have enough internal heap
