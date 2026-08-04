@@ -168,4 +168,13 @@ same wada.* bindings — nice for contributors, not needed to start).
   state+libs 7.5 KB PSRAM / 2 ms, busy-script peak 31 KB, hostile while-true
   contained in 30 ms, zero leak after close. Hook cadence: 100k instructions
   (10k costs +111% on call-heavy code; 100k is ~free and still contains).
-  Pager fits (+2.4%, ~87% even with #198 fonts). Next: Phase 1 host + wada.* + Snake.
+  Pager fits (+2.4%, ~87% even with #198 fonts).
+- 2026-08-04: Phase 1 DONE — LuaAppHost (AppPage overlay, guarded pcall +
+  100k-instruction budget, deferred close from inside callbacks), wada.ui
+  (canvas/label/button + theme colors) + input (hw swipes, trackball, touch)
+  + timer + sys + store (per-app KV file, root-prefix aware), Snake ported
+  to Lua as the embedded+seedable reference app. Verified on the T-Deck:
+  open at 19 KB PSRAM, plays via hw-swipe steering, an early bug (pre-layout
+  size read) was contained exactly as designed (toast + clean close, 0 leak,
+  4 retries, no crash). Host layer costs 13 KB on top of the VM (85.1%%
+  T-Deck total). Next: Phase 2 store page + catalog.

@@ -254,3 +254,12 @@
 #else
   #define CAP_WEB_BROWSER 1   // 8 MB boards incl. the V4-R8
 #endif
+
+// ---- Lua app host (LUA_APPS.md) --------------------------------------------
+// Sandboxed Lua 5.4 apps from the store catalog. Board-agnostic by design: the
+// VM costs +96 KB flash and allocates exclusively from PSRAM (256 KB/app cap),
+// so every touch board carries it. Opt out per-board above (define it 0 in the
+// board's block) only if a flash ceiling ever demands it.
+#ifndef CAP_LUA_APPS
+  #define CAP_LUA_APPS 1
+#endif

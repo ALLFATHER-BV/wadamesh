@@ -107,6 +107,10 @@
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
 #include "LuaHost.h"          // Lua app host (LUA_APPS.md; Phase 0 spike gate)
+#include "LuaAppHost.h"       // sandboxed Lua apps (LUA_APPS.md Phase 1; self-gated on CAP_LUA_APPS)
+#if CAP_LUA_APPS
+  #include "assets/lua_apps/snake_lua.h"   // embedded reference app (seeded copy is user-editable)
+#endif
 #include "ChannelUtil.h"      // Apps → Airtime (self-contained channel-utilization tool)
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 
@@ -5353,6 +5357,11 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
   // cap-touch — so this, not SnakeGame's gestureCb, is what makes touch steering
   // actually work. swipe_x<0 == left, swipe_y<0 == up (see the control-center
   // note below for the sign convention).
+  if (luaAppIsOpen()) {   // Lua apps get the same reliable hardware swipes as Snake did
+    if (swipe_x != 0)      luaAppSteer(swipe_x < 0 ? -1 : 1, 0);
+    else if (swipe_y != 0) luaAppSteer(0, swipe_y < 0 ? -1 : 1);
+    return;
+  }
   if (SnakeGame::isOpen()) {
     if (swipe_x != 0)      SnakeGame::steer(swipe_x < 0 ? -1 : 1, 0);
     else if (swipe_y != 0) SnakeGame::steer(0, swipe_y < 0 ? -1 : 1);
@@ -33047,11 +33056,15 @@ static void updateTrackball(unsigned long now) {
 
   // ---- Snake game ----
   // While Snake is open the trackball steers it (no soft cursor on that page).
-  if (SnakeGame::isOpen()) {
+  if (SnakeGame::isOpen() || luaAppIsOpen()) {
     if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
       lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
     s_tb_click_press = false;
-    if (moved && (dx != 0 || dy != 0)) { SnakeGame::steer(dx, dy); if (g_lv.task) g_lv.task->noteUserInput(); }
+    if (moved && (dx != 0 || dy != 0)) {
+      if (luaAppIsOpen()) luaAppSteer(dx, dy);
+      else                SnakeGame::steer(dx, dy);
+      if (g_lv.task) g_lv.task->noteUserInput();
+    }
     return;
   }
 
@@ -37089,7 +37102,13 @@ static void appTileCb(lv_event_t* e) {
 #endif
     case APPACT_ADVERT:    openAdvertModalCb(e);  return;
     case APPACT_POWER:     openPowerMenu();      return;
+#if CAP_LUA_APPS
+    // Snake now runs on the Lua host (the wada.* reference app). The native
+    // module stays in-tree but unreferenced here, so the linker drops it.
+    case APPACT_SNAKE:     luaAppLaunchFile("snake", "Snake", kSnakeLua, sizeof(kSnakeLua) - 1); return;
+#else
     case APPACT_SNAKE:     SnakeGame::launch();  return;
+#endif
 #if defined(HAS_TOUCH_UI)
     case APPACT_TERMINAL:  homeTerminalCb(e);    return;
 #endif
@@ -42264,6 +42283,21 @@ static bool uiDataFsReady() {
   // Not ready yet — do NOT cache the failure, so a later call can still resolve.
   return false;
 }
+
+#if CAP_LUA_APPS
+// ---- Lua app host bridges (LuaAppHost.cpp externs) ----
+// The host lives in its own TU; these three shims are its only view of UITask.
+const lv_font_t* luaHostFontForSize(int size_class) {
+  return size_class <= 12 ? &g_font_12 : size_class <= 14 ? &g_font_14 : &g_font_16;
+}
+void luaHostToast(const char* msg, int ms) {
+  if (g_lv.task) g_lv.task->showAlert(msg, ms);
+}
+fs::FS* luaHostAppFs() { return uiDataFsReady() ? s_ui_data_fs : nullptr; }
+void luaHostAppPath(char* out, size_t cap, const char* rel) {
+  snprintf(out, cap, "%s%s", s_ui_data_root, rel);   // SD-rooted stores prefix /meshcomod
+}
+#endif
 // True when the chat history lives on a removable SD card (T-Deck SPI SD or the
 // Tanmatsu's SD_MMC) rather than internal flash — those devices get the deep
 // message ring (MAX_UI_MESSAGES_SD) since the card has room for the bigger file.
@@ -47404,7 +47438,7 @@ void UITask::loop() {
     }
     // Also hard-lock the tab bar while Snake is open so a swipe/tap near the
     // bottom can't slip through to the app switcher (e.g. into the map).
-    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen() || ChannelUtil::isOpen();
+    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen() || ChannelUtil::isOpen() || luaAppIsOpen();
     if (want_lock != s_tabbar_locked && g_lv.tabview) {
       lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
       if (tab_btns) {
