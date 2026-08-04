@@ -34486,8 +34486,12 @@ static void backupAddPath(const char* stored, const char* disp) {
 // would fail on an already-mounted volume), plain SPIFFS on the T-Deck / V4. Mirrors the file
 // manager's "Internal" root so a backup lands where the user can actually see + restore it.
 static fs::FS* backupInternalFs() {
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
-  return &FFat;      // FAT data partition (locfd / 'storage'), mounted at boot; no SPIFFS here
+#if defined(HAS_TDISPLAY_P4)
+  // The P4 hot store moved from FFat to LittleFS('storage') in beta_54 (#167);
+  // FFat is never mounted here anymore, so opening it failed every backup (#231).
+  return &LittleFS;
+#elif defined(HAS_TANMATSU)
+  return &FFat;      // FAT data partition (locfd), mounted at boot; no SPIFFS here
 #else
   SPIFFS.begin(false);
   return &SPIFFS;
