@@ -37182,10 +37182,13 @@ static void luaStoreRebuildList() {
     lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   }
+  const lv_coord_t lh14 = lv_font_get_line_height(&g_font_14);
+  const lv_coord_t lh12 = lv_font_get_line_height(&g_font_12);
+  const lv_coord_t row_h = lh14 + lh12 + 16;      // title + desc + padding, measured
   for (int i = 0; i < s_lua_cat_n; i++) {
     lv_obj_t* row = lv_obj_create(s_luastore_list);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, W - 8, 52);
+    lv_obj_set_size(row, W - 8, row_h);
     lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
@@ -37198,14 +37201,16 @@ static void luaStoreRebuildList() {
     lv_label_set_text(nm, head);
     lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_align(nm, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_width(nm, W - 100);                  // clear of the action button
+    lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+    lv_obj_set_pos(nm, 0, 0);
     lv_obj_t* ds = lv_label_create(row);
     lv_label_set_text(ds, s_lua_cat[i].desc);
     lv_obj_set_style_text_font(ds, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(ds, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_width(ds, W - 100);
     lv_label_set_long_mode(ds, LV_LABEL_LONG_DOT);
-    lv_obj_align(ds, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_pos(ds, 0, lh14 + 2);                // BELOW the title, measured
     lv_obj_t* b = lv_btn_create(row);
     lv_obj_set_size(b, 74, 30);
     lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
@@ -37316,7 +37321,7 @@ static void openLuaStorePage() {
   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
 
-  appPageBegin("App Store", &closeLuaStorePage);
+  appPageBegin("Lua Store", &closeLuaStorePage);
 
   luaStoreScanInstalled();
   if (s_lua_cat_n <= 0) {                 // no catalog yet this session -> fetch
@@ -37998,7 +38003,7 @@ static void openAppDrawer() {
 #if !CAP_LUA_APPS
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (Lua boards install it from the Store)
 #else
-    { LV_SYMBOL_DOWNLOAD,  "Store",     APPACT_STORE,    0,         0x15B6A6 },      // Lua app store (brand teal)
+    { LV_SYMBOL_DOWNLOAD,  "Lua Store", APPACT_STORE,    0,         0x15B6A6 },      // Lua app store (brand teal)
 #endif
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
