@@ -1310,6 +1310,10 @@ static bool s_statusbar_tall = false;
 // centred in the bar; a tap on the bar calls s_apppage_close (see statusBarTapCb).
 static const char* s_apppage_title = nullptr;
 static void      (*s_apppage_close)() = nullptr;
+// Slim variant: the page keeps the "‹ title" + tap-to-close bar behavior but the
+// bar stays ONE line — no double-height glass row (the Lua Store's tab bar sits
+// right at the top of its content, which the glass row used to sit over).
+static bool        s_apppage_slim  = false;
 #if CAP_ROUND_CORNERS
 // The round-panel bar is already two rows tall in every state — the tall personalities
 // (settings title, inbox actions, open chat) reuse the two rows rather than doubling it.
@@ -1348,7 +1352,16 @@ lv_obj_t* appPageCreateRoot(uint32_t bg_color) {
 void appPageBegin(const char* title, void (*close_fn)()) {
   s_apppage_title = title;
   s_apppage_close = close_fn;
+  s_apppage_slim  = false;
   statusBarSetTall(true);
+  updateGlobalStatusBar();
+}
+
+void appPageBeginSlim(const char* title, void (*close_fn)()) {
+  s_apppage_title = title;
+  s_apppage_close = close_fn;
+  s_apppage_slim  = true;
+  statusBarSetTall(false);
   updateGlobalStatusBar();
 }
 
@@ -1356,6 +1369,7 @@ void appPageEnd(void (*close_fn)()) {
   if (s_apppage_close != close_fn) return;   // a different page owns the bar now — leave it
   s_apppage_title = nullptr;
   s_apppage_close = nullptr;
+  s_apppage_slim  = false;
   statusBarSetTall(false);
   updateGlobalStatusBar();
 }
@@ -29051,9 +29065,20 @@ static void openSettingsCategory(int cat) {
   updateGlobalStatusBar();   // show the Back chevron + title in the bar immediately
 }
 
+#if CAP_LUA_APPS
+static void luaStoreOpenLanguages();   // fwd (defined with the Store page)
+#endif
+
 static void settingsCatOpenCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  openSettingsCategory((int)(intptr_t)lv_event_get_user_data(e));
+  const int cat = (int)(intptr_t)lv_event_get_user_data(e);
+#if CAP_LUA_APPS
+  if (cat == CAT_LANGUAGE) {   // languages live in the Lua Store now (files + picker)
+    luaStoreOpenLanguages();
+    return;
+  }
+#endif
+  openSettingsCategory(cat);
 }
 
 #if CAP_LUA_APPS
@@ -36973,7 +36998,6 @@ static lv_obj_t* s_luastore_tabbtn[3] = { nullptr, nullptr, nullptr };
 
 static void luaStoreRebuildList();        // fwd
 void settingsApplyHiddenCats();           // fwd (defined with makeSettings)
-static void luaStoreRefreshCb(lv_event_t* e);
 static void closeLuaStorePage() {
   if (s_luastore_poll) { lv_timer_del(s_luastore_poll); s_luastore_poll = nullptr; }
   s_luastore_list = nullptr;
@@ -37109,16 +37133,6 @@ static void luaStoreHideSwitchCb(lv_event_t* e) {
   else                                                            mask |= bit;
   touchPrefsSetAppHide(mask);
   settingsApplyHiddenCats();     // MQTT lives in Settings, not the drawer — apply now
-}
-
-static void luaStoreRefreshCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
-  s_lua_cat_n = 0;                 // "Loading..." until the worker answers
-  s_luacat_done = false;
-  s_luacat_request = true;
-  s_luascan_request = true;        // card re-listing runs on the worker too
-  ensureTileFetchTaskRunning();
-  luaStoreRebuildList();
 }
 
 // ---- Languages tab actions ----
@@ -37336,14 +37350,20 @@ static void luaStoreRebuildList() {
     lv_obj_set_width(hint, W - 12);
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
 
-    section(TR("Built-in languages"));
-    for (uint8_t l = 0; l < LANG_COUNT; ++l) {
-      lv_obj_t* row = langRow(kUiLangNames[l], nullptr);
-      if (!curFile[0] && l == curLang) activeTag(row, -6);
-      else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangBuiltinCb, (intptr_t)l, 0, 58);
+    section(TR("Installed"));
+    {
+      // English is always here (it's the source keys). Every other language is
+      // a downloaded .lang file — the built-in table only backs the files up.
+      lv_obj_t* row = langRow("English", nullptr);
+      if (!curFile[0] && curLang == LANG_EN) activeTag(row, -6);
+      else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangBuiltinCb, (intptr_t)LANG_EN, 0, 58);
     }
-
-    section(TR("Language files"));
+    if (!curFile[0] && curLang != LANG_EN && curLang < LANG_COUNT) {
+      // Legacy state: a built-in language picked before languages became files.
+      // Shown so the active choice stays visible; getting its file replaces it.
+      lv_obj_t* row = langRow(kUiLangNames[curLang], TR("built-in"));
+      activeTag(row, -6);
+    }
     for (int i = 0; i < s_langinst_n; i++) {
       char sub[20];
       snprintf(sub, sizeof sub, "%s.lang", s_langinst[i].code);
@@ -37353,6 +37373,7 @@ static void luaStoreRebuildList() {
       if (act) activeTag(row, -44);
       else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangUseCb, (intptr_t)i, -40, 58);
     }
+    section(TR("Available"));
     for (int i = 0; i < s_langcat_n; i++) {
       bool have = false;
       for (int j = 0; j < s_langinst_n; j++)
@@ -37398,34 +37419,6 @@ static void luaStoreRebuildList() {
     lv_obj_set_width(h, W - 26);
     lv_label_set_long_mode(h, LV_LABEL_LONG_WRAP);
     lv_obj_set_pos(h, 0, lh14 + 3);
-  }
-  // Header strip: what is installed vs available, and a refresh for the catalog.
-  {
-    lv_obj_t* hdr = lv_obj_create(s_luastore_list);
-    lv_obj_remove_style_all(hdr);
-    lv_obj_set_size(hdr, W - 8, lh14 + 12);
-    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* t = lv_label_create(hdr);
-    char hb[64];
-    if (s_lua_cat_n > 0)
-      snprintf(hb, sizeof hb, "%d app%s  Â·  %d installed",
-               s_lua_cat_n, s_lua_cat_n == 1 ? "" : "s", s_lua_inst_n);
-    else
-      snprintf(hb, sizeof hb, "%d installed", s_lua_inst_n);
-    lv_label_set_text(t, hb);
-    lv_obj_set_style_text_font(t, &g_font_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(t, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_align(t, LV_ALIGN_LEFT_MID, 2, 0);
-    lv_obj_t* rb = lv_btn_create(hdr);
-    lv_obj_set_size(rb, 34, lh14 + 8);
-    lv_obj_align(rb, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_radius(rb, 8, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(rb, LV_OPA_30, LV_PART_MAIN);
-    lv_obj_t* rl = lv_label_create(rb);
-    lv_label_set_text(rl, LV_SYMBOL_REFRESH);
-    lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-    lv_obj_center(rl);
-    lv_obj_add_event_cb(rb, luaStoreRefreshCb, LV_EVENT_CLICKED, nullptr);
   }
   const lv_coord_t row_h = lh14 + lh12 * 2 + 18;  // title + 2 wrapped description lines
   for (int i = 0; i < s_lua_cat_n; i++) {
@@ -37596,7 +37589,7 @@ static void openLuaStorePage() {
   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
 
-  appPageBegin("Lua Store", &closeLuaStorePage);
+  appPageBeginSlim("Lua Store", &closeLuaStorePage);   // one-line bar; the tab bar is the page header
 
   // Open instantly from the cached install list; the card re-listing (sideload
   // pickup) runs on the worker and the poll timer repaints when it lands.
@@ -37617,6 +37610,12 @@ static void openLuaStorePage() {
   }
   luaStoreRebuildList();
   s_luastore_poll = lv_timer_create(luaStorePollCb, 250, nullptr);
+}
+
+// Settings -> Language lands here: the Store, opened straight onto Languages.
+static void luaStoreOpenLanguages() {
+  s_luastore_tab = 2;
+  openLuaStorePage();
 }
 #endif  // CAP_LUA_APPS (store page)
 
@@ -39201,7 +39200,7 @@ static void updateGlobalStatusBar() {
   const bool chat_open      = (s_chat_title[0] != '\0') && !s_apppage_title;
   const bool inbox_overview = (getActiveTab() == CHAT_INBOX_TAB_INDEX) && !chat_open && (s_settings_open_cat < 0) && !s_apppage_title;
   {
-    const bool want_tall = (s_settings_open_cat >= 0) || s_apppage_title || inbox_overview || chat_open;
+    const bool want_tall = (s_settings_open_cat >= 0) || (s_apppage_title && !s_apppage_slim) || inbox_overview || chat_open;
     if (want_tall != s_statusbar_tall) statusBarSetTall(want_tall);
     // Glass lower row on EVERY double-height bar (settings detail, inbox/chat overview,
     // open chat) so the tall bar looks consistent everywhere it appears. Switch the

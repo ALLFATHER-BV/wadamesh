@@ -36,6 +36,10 @@ lv_obj_t* appPageCreateRoot(uint32_t bg_color);
 /** Take the status bar over: tall, "< title", tap anywhere on it calls close_fn. */
 void appPageBegin(const char* title, void (*close_fn)());
 
+/** Same contract, but the bar stays ONE line (no tall glass row) — for pages whose
+ *  own chrome (e.g. the Lua Store's tab bar) starts right at the top. */
+void appPageBeginSlim(const char* title, void (*close_fn)());
+
 /**
  * Hand the status bar back — but only if `close_fn` is still the installed hook, so a
  * page closing after another one already opened cannot steal the new page's chrome.
