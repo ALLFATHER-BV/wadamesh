@@ -17,6 +17,19 @@ enum UiLang : uint8_t {
 
 // Native names for the language picker (e.g. "Nederlands", "Русский", "Ελληνικά").
 extern const char* const kUiLangNames[LANG_COUNT];
+// Short file/catalog codes, same order ("en","hu","nl",... "pt-br","ro"). Used as
+// the .lang filename and the `# base:` fallback column in language files.
+extern const char* const kUiLangCodes[LANG_COUNT];
+
+// ---- File-language overlay (Lua Store -> Languages) ----
+// A .lang file (one `EN-key<TAB>translation` per line, \n/\t/\\ escaped) can be
+// loaded at boot and consulted BEFORE the built-in table; ui_lang stays active as
+// the fallback column, so a partial file degrades to the built-in translation,
+// then to English. The caller owns the pair array + backing strings (PSRAM);
+// pairs MUST be sorted by strcmp(key) — TR() binary-searches them.
+struct I18nPair { const char* key; const char* val; };
+void i18nSetFileOverlay(const I18nPair* pairs, int count);
+bool i18nHasFileOverlay();
 
 void    i18nSetLang(uint8_t lang);   // clamps an out-of-range value to English
 uint8_t i18nGetLang();

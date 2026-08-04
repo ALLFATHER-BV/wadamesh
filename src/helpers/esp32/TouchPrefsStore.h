@@ -75,6 +75,10 @@ bool touchPrefsSetWebTerminal(bool on);
 /** UI language index (UiLang enum in i18n.h; 0 = English). Read at boot. */
 uint8_t touchPrefsGetUiLang();
 bool    touchPrefsSetUiLang(uint8_t lang);
+/** File-language code ("" = none). When set, translations load at boot from
+ *  <data>/lang/<code>.lang and overlay the built-in table (ui_lang = fallback). */
+void    touchPrefsGetLangFile(char* out, size_t cap);
+bool    touchPrefsSetLangFile(const char* code);
 
 /** User-configurable quick-reply macros: up to 6 short strings the user can
  *  drop into the composer with a single tap (e.g. "ok", "on the way",

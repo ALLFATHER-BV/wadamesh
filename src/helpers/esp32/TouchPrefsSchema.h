@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 47;
+static constexpr uint8_t CURRENT_VERSION = 48;
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs
@@ -78,6 +78,7 @@ struct __attribute__((packed)) Config {
   uint8_t  p4_antenna;
   uint8_t  retry_echo;       // v45: actual trailing location; v44 inserted it before web_mirror
   uint32_t app_hide;         // v46: app-drawer hide bitmask (Store page "built-in" toggles)
+  char     lang_file[12];    // v48: file-language code ("" = built-in ui_lang; file at <data>/lang/<code>.lang)
 };
 
 static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
@@ -85,7 +86,7 @@ static constexpr size_t STABLE_V44_PREFIX_SIZE = offsetof(Config, web_mirror);
 
 static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeof(Config::rx_queue),
               "the pre-v44 suffix moved");
-static_assert(offsetof(Config, app_hide) + sizeof(Config::app_hide) == sizeof(Config),
+static_assert(offsetof(Config, lang_file) + sizeof(Config::lang_file) == sizeof(Config),
               "new preference fields must remain trailing");
 
 // Overlay a persisted blob on caller-provided defaults. Beta 57 wrote v44 with

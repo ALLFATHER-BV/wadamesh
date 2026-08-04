@@ -132,6 +132,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.rx_queue          = 1;      // ON: buffered receive (test-channel default; opt-out toggle in Radio & Mesh)
   c.retry_echo        = 0;      // OFF: auto-retry is opt-in (toggle in Radio & Mesh)
   c.app_hide          = (1u << 12);  // APPHIDE_MQTT: the MQTT bridge starts hidden (experimental + privacy)
+  memset(c.lang_file, 0, sizeof c.lang_file);   // no file language: built-in ui_lang column
   c.sleep_idle        = 0;      // default: idle light-sleep OFF
   { const char* d = "ertui"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // default tab hotkeys E/R/T/U/I
   c.map_zoom_buttons  = 0;      // default: map zoom = slider
@@ -230,6 +231,7 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 45 && s_cfg.ui_lang >= 1 && s_cfg.ui_lang <= 12) s_cfg.ui_lang += 1;
         if (stored_version < 46) s_cfg.app_hide = 0;             // v46 trailing field: nothing hidden
         if (stored_version < 47) s_cfg.app_hide |= (1u << 12);   // v47: MQTT bridge starts hidden (experimental + privacy)
+        if (stored_version < 48) memset(s_cfg.lang_file, 0, sizeof s_cfg.lang_file);   // v48 trailing field: no file language
         if (stored_version < 34) s_cfg.web_mirror = 0;    // new trailing field: web control panel off by default (opt-in remote control)
         if (stored_version < 35) s_cfg.remote_mode = 0;   // new trailing field: remote mode off by default (opt-in, reboots to apply)
         if (stored_version < 36) s_cfg.remote_landscape = 0;
@@ -1288,6 +1290,20 @@ uint8_t touchPrefsGetUiLang() {
 bool touchPrefsSetUiLang(uint8_t lang) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.ui_lang = lang;
+  return cfgFlush();
+}
+void touchPrefsGetLangFile(char* out, size_t cap) {
+  if (!out || !cap) return;
+  if (!s_begun) touchPrefsBegin();
+  size_t n = strnlen(s_cfg.lang_file, sizeof s_cfg.lang_file);
+  if (n >= cap) n = cap - 1;
+  memcpy(out, s_cfg.lang_file, n);
+  out[n] = 0;
+}
+bool touchPrefsSetLangFile(const char* code) {
+  if (!s_begun) touchPrefsBegin();
+  memset(s_cfg.lang_file, 0, sizeof s_cfg.lang_file);
+  if (code) strncpy(s_cfg.lang_file, code, sizeof s_cfg.lang_file - 1);
   return cfgFlush();
 }
 

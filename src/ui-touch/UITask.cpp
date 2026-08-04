@@ -24354,6 +24354,118 @@ static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
   }
   return true;
 }
+
+// ---- Language files (Store -> Languages tab): catalog + download ----------
+// Same worker/flag/poll pattern as the app catalog. A .lang file is the export
+// of one i18n table column (scripts/build/gen-lang-files.py) — or anything a
+// user writes themselves — living at <data>/lang/<code>.lang.
+struct LangCatEntry { char code[12]; char name[28]; };
+static LangCatEntry s_langcat[LANG_COUNT + 2];
+static int s_langcat_n = 0;                  // 0 = not fetched, -1 = fetch failed
+static char* s_langcat_buf = nullptr;        // langs.json (PSRAM, worker-filled)
+static volatile bool s_langcat_request = false, s_langcat_done = false;
+static volatile bool s_langdl_request = false, s_langdl_done = false;
+static bool s_langdl_ok = false;
+static char s_langdl_code[12];
+// Installed-apps rescan, moved off the UI thread (SD listing caused open lag).
+static volatile bool s_luascan_request = false, s_luascan_done = false;
+static void luaStoreScanInstalled(bool force = false);   // defined with the Store page
+
+static void luaStoreFetchLangCatalogWorker(WiFiClient& client, HTTPClient& http) {
+  const size_t kCap = 2048;
+  if (!s_langcat_buf)
+    s_langcat_buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_langcat_buf) return;
+  s_langcat_buf[0] = 0;
+  luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/langs.json",
+                  s_langcat_buf, kCap);
+}
+
+// Download /apps/lang/<code>.lang into <data>/lang/<code>.lang.
+static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http, const char* code) {
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return false;
+  char dir[48];
+  luaHostAppPath(dir, sizeof dir, "/lang");
+  fs->mkdir(dir);
+  const size_t kCap = 128 * 1024;            // a full 700+ row language is ~60 KB
+  char* buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!buf) return false;
+  char url[96];
+  snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s.lang", code);
+  int n = luaStoreHttpGet(client, http, url, buf, kCap);
+  bool ok = false;
+  if (n > 16) {
+    char rel[28], path[64];
+    snprintf(rel, sizeof rel, "/lang/%s.lang", code);
+    luaHostAppPath(path, sizeof path, rel);
+    File f = fs->open(path, "w");
+    if (f) { ok = (f.write((const uint8_t*)buf, n) == (size_t)n); f.close(); }
+  }
+  heap_caps_free(buf);
+  return ok;
+}
+
+// ---- Boot loader for the active .lang file --------------------------------
+// Reads the file into PSRAM once, parses `key<TAB>translation` lines in place
+// (\n, \t, \\ escapes; # lines are headers), sorts, and hands the table to
+// i18n. Allocations live for the session — switching languages reboots.
+static bool s_langfile_tried = false;
+static void uiLangFileBootLoad() {
+  if (s_langfile_tried) return;
+  char code[12];
+  touchPrefsGetLangFile(code, sizeof code);
+  if (!code[0]) { s_langfile_tried = true; return; }
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return;                       // storage not up yet — a later call retries
+  s_langfile_tried = true;
+  char rel[28], path[64];
+  snprintf(rel, sizeof rel, "/lang/%s.lang", code);
+  luaHostAppPath(path, sizeof path, rel);
+  File f = fs->open(path, "r");
+  if (!f) return;
+  const size_t sz = f.size();
+  if (sz < 8 || sz > 256 * 1024) { f.close(); return; }
+  char* buf = (char*)heap_caps_malloc(sz + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!buf) { f.close(); return; }
+  size_t rd = f.read((uint8_t*)buf, sz);
+  f.close();
+  buf[rd] = 0;
+  int lines = 1;
+  for (size_t i = 0; i < rd; i++) if (buf[i] == '\n') lines++;
+  I18nPair* pairs = (I18nPair*)heap_caps_malloc(sizeof(I18nPair) * lines,
+                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!pairs) { heap_caps_free(buf); return; }
+  int n = 0;
+  char* p = buf;
+  while (p && *p) {
+    char* nl = strchr(p, '\n');
+    if (nl) { if (nl > p && nl[-1] == '\r') nl[-1] = 0; *nl = 0; }
+    if (*p && *p != '#') {
+      char* tab = strchr(p, '\t');
+      if (tab) {
+        *tab = 0;
+        auto unesc = [](char* s) {           // \n \t \\ -> the real bytes, in place
+          char* w = s;
+          for (char* r = s; *r; r++) {
+            if (*r == '\\' && r[1]) { r++; *w++ = (*r == 'n') ? '\n' : (*r == 't') ? '\t' : *r; }
+            else *w++ = *r;
+          }
+          *w = 0;
+        };
+        unesc(p);
+        unesc(tab + 1);
+        if (*p && tab[1]) { pairs[n].key = p; pairs[n].val = tab + 1; n++; }
+      }
+    }
+    p = nl ? nl + 1 : nullptr;
+  }
+  if (!n) { heap_caps_free(pairs); heap_caps_free(buf); return; }
+  qsort(pairs, n, sizeof(I18nPair), [](const void* a, const void* b) {
+    return strcmp(((const I18nPair*)a)->key, ((const I18nPair*)b)->key);
+  });
+  i18nSetFileOverlay(pairs, n);
+}
 #endif  // CAP_LUA_APPS (store network side)
 
 // Watchdog-safe Wi-Fi scan. Starts an ASYNC scan and polls to completion with
@@ -24637,6 +24749,24 @@ static void tileFetchTaskFn(void* arg) {
       s_luainst_request = false;
       s_luainst_ok = luaStoreDownloadWorker(client, http, s_luainst_id, s_luainst_ver);
       s_luainst_done = true;
+      continue;
+    }
+    if (s_luascan_request) {
+      s_luascan_request = false;
+      luaStoreScanInstalled(true);           // SD listing off the UI thread
+      s_luascan_done = true;
+      continue;
+    }
+    if (s_langcat_request) {
+      s_langcat_request = false;
+      luaStoreFetchLangCatalogWorker(client, http);
+      s_langcat_done = true;
+      continue;
+    }
+    if (s_langdl_request) {
+      s_langdl_request = false;
+      s_langdl_ok = luaStoreLangDownloadWorker(client, http, s_langdl_code);
+      s_langdl_done = true;
       continue;
     }
     {
@@ -28408,6 +28538,9 @@ static void langChosenCb(lv_event_t* e) {
   uint8_t lang = (uint8_t)(intptr_t)lv_event_get_user_data(e);
 #if defined(ESP32)
   touchPrefsSetUiLang(lang);
+#if CAP_LUA_APPS
+  touchPrefsSetLangFile("");   // picking a built-in deactivates any .lang file overlay
+#endif
 #endif
   i18nSetLang(lang);
   kbApplyUiLangDefault(lang);   // auto-enable + select the matching keyboard layout for this UI language
@@ -36680,7 +36813,7 @@ static void luaStoreInvalidateInstalled();
 static bool s_lua_inst_valid = false;   // cache flag: the /apps listing is SD I/O
 static void luaStoreInvalidateInstalled() { s_lua_inst_valid = false; }
 
-static void luaStoreScanInstalled(bool force = false) {
+static void luaStoreScanInstalled(bool force) {   // default arg on the fwd decl (worker side)
   if (s_lua_inst_valid && !force) return;   // cached — the drawer opens without touching the card
   s_lua_inst_n = 0;
   fs::FS* fs = luaHostAppFs();
@@ -36738,6 +36871,95 @@ static const LuaInstApp* luaStoreFindInstalled(const char* id) {
   return nullptr;
 }
 
+// ---- installed .lang files (Languages tab) ----
+struct LangInst { char code[12]; char name[28]; };
+static LangInst s_langinst[12];
+static int s_langinst_n = 0;
+
+// Read the "# name:" / "# base:" header lines of an installed .lang file.
+static bool luaStoreLangFileMeta(const char* code, char* name, size_t name_cap,
+                                 char* base, size_t base_cap) {
+  name[0] = 0;
+  if (base_cap) base[0] = 0;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return false;
+  char rel[28], path[64];
+  snprintf(rel, sizeof rel, "/lang/%s.lang", code);
+  luaHostAppPath(path, sizeof path, rel);
+  File f = fs->open(path, "r");
+  if (!f) return false;
+  char head[192];
+  size_t rd = f.read((uint8_t*)head, sizeof head - 1);
+  f.close();
+  head[rd] = 0;
+  auto grab = [&](const char* tag, char* out, size_t cap) {
+    const char* q = strstr(head, tag);
+    if (!q) return;
+    q += strlen(tag);
+    while (*q == ' ') q++;
+    size_t o = 0;
+    while (q[o] && q[o] != '\n' && q[o] != '\r' && o + 1 < cap) { out[o] = q[o]; o++; }
+    out[o] = 0;
+  };
+  grab("# name:", name, name_cap);
+  if (base_cap) grab("# base:", base, base_cap);
+  return name[0] != 0;
+}
+
+static void luaStoreScanLangs() {
+  s_langinst_n = 0;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return;
+  char dir[48];
+  luaHostAppPath(dir, sizeof dir, "/lang");
+  File d = fs->open(dir);
+  if (!d || !d.isDirectory()) return;
+  File e;
+  while (s_langinst_n < (int)(sizeof s_langinst / sizeof s_langinst[0]) && (e = d.openNextFile())) {
+    const char* nm = e.name();
+    const char* leaf = strrchr(nm, '/');
+    leaf = leaf ? leaf + 1 : nm;
+    size_t ln = strlen(leaf);
+    if (leaf[0] != '.' && ln > 5 && ln - 5 < sizeof(s_langinst[0].code) &&
+        strcmp(leaf + ln - 5, ".lang") == 0) {
+      LangInst& L = s_langinst[s_langinst_n];
+      memcpy(L.code, leaf, ln - 5);
+      L.code[ln - 5] = 0;
+      e.close();
+      char base[12];
+      if (!luaStoreLangFileMeta(L.code, L.name, sizeof L.name, base, sizeof base))
+        snprintf(L.name, sizeof L.name, "%s", L.code);
+      s_langinst_n++;
+      continue;
+    }
+    e.close();
+  }
+  d.close();
+}
+
+static void luaStoreParseLangCatalog() {
+  s_langcat_n = 0;
+  if (!s_langcat_buf || !s_langcat_buf[0]) { s_langcat_n = -1; return; }
+  const char* p = s_langcat_buf;
+  while (s_langcat_n < (int)(sizeof s_langcat / sizeof s_langcat[0])) {
+    const char* ob = strchr(p, '{');
+    if (!ob) break;
+    const char* cb = strchr(ob, '}');
+    if (!cb) break;
+    char obj[128];
+    size_t n = (size_t)(cb - ob + 1);
+    if (n >= sizeof obj) n = sizeof obj - 1;
+    memcpy(obj, ob, n);
+    obj[n] = 0;
+    LangCatEntry& c = s_langcat[s_langcat_n];
+    if (luaJsonField(obj, "code", c.code, sizeof c.code) &&
+        luaJsonField(obj, "name", c.name, sizeof c.name))
+      s_langcat_n++;
+    p = cb + 1;
+  }
+  if (s_langcat_n == 0) s_langcat_n = -1;
+}
+
 // ---- the Store page ----
 static lv_obj_t* s_luastore_root = nullptr;
 static lv_obj_t* s_luastore_list = nullptr;
@@ -36746,6 +36968,8 @@ static lv_coord_t s_luastore_w = 240;   // list width, set at open — pre-layou
 static bool s_luastore_busy = false;      // an install/remove is in flight
 static int  s_lua_rm_pending = -1;        // long-press remove target (drawer tiles)
 static bool s_tile_lp_fired  = false;     // swallow the release-click after a long press
+static int  s_luastore_tab = 0;           // 0 = Apps, 1 = Built-in, 2 = Languages (kept across opens)
+static lv_obj_t* s_luastore_tabbtn[3] = { nullptr, nullptr, nullptr };
 
 static void luaStoreRebuildList();        // fwd
 void settingsApplyHiddenCats();           // fwd (defined with makeSettings)
@@ -36753,6 +36977,7 @@ static void luaStoreRefreshCb(lv_event_t* e);
 static void closeLuaStorePage() {
   if (s_luastore_poll) { lv_timer_del(s_luastore_poll); s_luastore_poll = nullptr; }
   s_luastore_list = nullptr;
+  s_luastore_tabbtn[0] = s_luastore_tabbtn[1] = s_luastore_tabbtn[2] = nullptr;
   appPageEnd(&closeLuaStorePage);
   popupClose(&s_luastore_root);
   // The drawer underneath was built BEFORE any install/remove done in here —
@@ -36828,6 +37053,24 @@ static void luaStorePollCb(lv_timer_t* t) {
     luaStoreParseCatalog();
     luaStoreRebuildList();
   }
+  if (s_luascan_done) {
+    s_luascan_done = false;
+    luaStoreRebuildList();       // worker finished the card re-listing
+  }
+  if (s_langcat_done) {
+    s_langcat_done = false;
+    luaStoreParseLangCatalog();
+    luaStoreRebuildList();
+  }
+  if (s_langdl_done) {
+    s_langdl_done = false;
+    s_luastore_busy = false;
+    if (s_langdl_ok) luaStoreScanLangs();
+    luaStoreRebuildList();
+    if (g_lv.task) g_lv.task->showAlert(
+        s_langdl_ok ? TR("Downloaded - tap Use to switch") : TR("Download failed (network?)"),
+        s_langdl_ok ? 1800 : 2200);
+  }
   if (s_luainst_done) {
     s_luainst_done = false;
     s_luastore_busy = false;
@@ -36873,8 +37116,98 @@ static void luaStoreRefreshCb(lv_event_t* e) {
   s_lua_cat_n = 0;                 // "Loading..." until the worker answers
   s_luacat_done = false;
   s_luacat_request = true;
+  s_luascan_request = true;        // card re-listing runs on the worker too
   ensureTileFetchTaskRunning();
-  luaStoreScanInstalled(true);
+  luaStoreRebuildList();
+}
+
+// ---- Languages tab actions ----
+// Switching language reboots (same as the Settings picker) so the whole UI —
+// fonts, keyboard layout, every built label — re-renders consistently.
+static void luaStoreLangBuiltinCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  uint8_t l = (uint8_t)(intptr_t)lv_event_get_user_data(e);
+  if (l >= LANG_COUNT) return;
+  touchPrefsSetLangFile("");
+  touchPrefsSetUiLang(l);
+  i18nSetLang(l);
+  kbApplyUiLangDefault(l);
+  if (g_lv.task) g_lv.task->rebootDevice();
+}
+
+static void luaStoreLangUseCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  if (i < 0 || i >= s_langinst_n) return;
+  // The file's "# base:" names the built-in column missing keys fall back to
+  // (a customized nl file degrades to built-in Dutch, not to English).
+  uint8_t base_lang = LANG_EN;
+  char name[28], base[12];
+  if (luaStoreLangFileMeta(s_langinst[i].code, name, sizeof name, base, sizeof base) && base[0]) {
+    for (uint8_t l = 0; l < LANG_COUNT; l++)
+      if (strcmp(base, kUiLangCodes[l]) == 0) { base_lang = l; break; }
+  }
+  touchPrefsSetUiLang(base_lang);
+  touchPrefsSetLangFile(s_langinst[i].code);
+  kbApplyUiLangDefault(base_lang);
+  if (g_lv.task) g_lv.task->rebootDevice();
+}
+
+static void luaStoreLangGetCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  if (i < 0 || i >= s_langcat_n) return;
+  snprintf(s_langdl_code, sizeof s_langdl_code, "%s", s_langcat[i].code);
+  s_luastore_busy = true;
+  s_langdl_done = false;
+  s_langdl_request = true;
+  ensureTileFetchTaskRunning();
+  if (g_lv.task) g_lv.task->showAlert(TR("Downloading\xE2\x80\xA6"), 1200);
+}
+
+static void luaStoreLangRemoveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  if (i < 0 || i >= s_langinst_n) return;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return;
+  char rel[28], path[64];
+  snprintf(rel, sizeof rel, "/lang/%s.lang", s_langinst[i].code);
+  luaHostAppPath(path, sizeof path, rel);
+  fs->remove(path);
+  char cur[12];
+  touchPrefsGetLangFile(cur, sizeof cur);
+  if (strcmp(cur, s_langinst[i].code) == 0) touchPrefsSetLangFile("");   // deleted the active one
+  luaStoreScanLangs();
+  luaStoreRebuildList();
+}
+
+static void luaStoreStyleTabs() {
+  for (int t = 0; t < 3; t++) {
+    lv_obj_t* b = s_luastore_tabbtn[t];
+    if (!b || !lv_obj_is_valid(b)) continue;
+    const bool on = (t == s_luastore_tab);
+    lv_obj_set_style_bg_color(b, lv_color_hex(on ? COLOR_ACCENT : COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t* l = lv_obj_get_child(b, 0);
+    if (l) lv_obj_set_style_text_color(l, lv_color_hex(on ? 0x0E1216 : COLOR_SUB), LV_PART_MAIN);
+  }
+}
+
+static void luaStoreTabCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int t = (int)(intptr_t)lv_event_get_user_data(e);
+  if (t == s_luastore_tab) return;
+  s_luastore_tab = t;
+  if (t == 2) {
+    luaStoreScanLangs();                          // tiny dir; sync is fine here
+    if (s_langcat_n <= 0) {                       // no lang catalog yet -> fetch
+      s_langcat_n = 0;
+      s_langcat_done = false;
+      s_langcat_request = true;
+      ensureTileFetchTaskRunning();
+    }
+  }
   luaStoreRebuildList();
 }
 
@@ -36899,8 +37232,149 @@ static void luaStoreRebuildList() {
     lv_obj_set_style_pad_left(l, 2, LV_PART_MAIN);
   };
 
-  // ---- catalog ----
-  section(TR("Catalog"));
+  luaStoreStyleTabs();
+
+  if (s_luastore_tab == 1) {
+    // ==== tab: Built-in — show/hide the stock apps ====
+    section(TR("Show in the app drawer"));
+    struct { const char* name; uint32_t bit; } builtins[] = {
+      { "Spectrum", APPHIDE_SPECTRUM }, { "Discover", APPHIDE_DISCOVER },
+#if !defined(HAS_TANMATSU)
+      { "VNC", APPHIDE_VNC }, { "Remote", APPHIDE_REMOTE },
+#endif
+#if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
+      { "Web", APPHIDE_READER },
+#endif
+      { "Signal", APPHIDE_SIGNAL }, { "Mentions", APPHIDE_MENTIONS },
+#if defined(HAS_TOUCH_UI)
+      { "Terminal", APPHIDE_TERMINAL },
+#endif
+#if CAP_FILESYSTEM || defined(TLORA_PAGER)
+      { "Files", APPHIDE_FILES },
+#endif
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      { "MQTT bridge", APPHIDE_MQTT },   // a Settings section, not a drawer tile
+#endif
+    };
+    for (auto& bi : builtins) {
+      lv_obj_t* row = lv_obj_create(s_luastore_list);
+      lv_obj_remove_style_all(row);
+      lv_obj_set_size(row, W - 8, 34);
+      lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_t* nm = lv_label_create(row);
+      lv_label_set_text(nm, bi.name);
+      lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_align(nm, LV_ALIGN_LEFT_MID, 2, 0);
+      lv_obj_t* sw = lv_switch_create(row);
+      lv_obj_align(sw, LV_ALIGN_RIGHT_MID, 0, 0);
+      if (!(hide & bi.bit)) lv_obj_add_state(sw, LV_STATE_CHECKED);
+      lv_obj_add_event_cb(sw, luaStoreHideSwitchCb, LV_EVENT_VALUE_CHANGED, (void*)(uintptr_t)bi.bit);
+    }
+    return;
+  }
+
+  if (s_luastore_tab == 2) {
+    // ==== tab: Languages — built-in picks + downloadable/custom .lang files ====
+    char curFile[12];
+    touchPrefsGetLangFile(curFile, sizeof curFile);
+    const uint8_t curLang = i18nGetLang();
+
+    auto langRow = [&](const char* name, const char* sub) {
+      lv_obj_t* row = lv_obj_create(s_luastore_list);
+      lv_obj_remove_style_all(row);
+      lv_obj_set_size(row, W - 8, 38);
+      lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_radius(row, 10, LV_PART_MAIN);
+      lv_obj_set_style_border_color(row, lv_color_hex(0x232830), LV_PART_MAIN);
+      lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
+      lv_obj_set_style_pad_hor(row, 8, LV_PART_MAIN);
+      lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_t* nm = lv_label_create(row);
+      lv_label_set_text(nm, name);
+      lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_set_width(nm, W - 150);
+      lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+      lv_obj_align(nm, LV_ALIGN_LEFT_MID, 0, sub ? -8 : 0);
+      if (sub) {
+        lv_obj_t* sb = lv_label_create(row);
+        lv_label_set_text(sb, sub);
+        lv_obj_set_style_text_font(sb, &g_font_12, LV_PART_MAIN);
+        lv_obj_set_style_text_color(sb, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+        lv_obj_align(sb, LV_ALIGN_LEFT_MID, 0, 8);
+      }
+      return row;
+    };
+    auto actionBtn = [&](lv_obj_t* row, const char* txt, uint32_t col,
+                         lv_event_cb_t cb, intptr_t ud, int xoff, int bw) {
+      lv_obj_t* b = lv_btn_create(row);
+      lv_obj_set_size(b, bw, 28);
+      lv_obj_align(b, LV_ALIGN_RIGHT_MID, xoff, 0);
+      lv_obj_set_style_radius(b, 8, LV_PART_MAIN);
+      lv_obj_set_style_bg_color(b, lv_color_hex(col), LV_PART_MAIN);
+      lv_obj_t* bl = lv_label_create(b);
+      lv_label_set_text(bl, txt);
+      lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
+      lv_obj_center(bl);
+      lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, (void*)ud);
+      return b;
+    };
+    auto activeTag = [&](lv_obj_t* row, int xoff) {
+      lv_obj_t* a = lv_label_create(row);
+      lv_label_set_text(a, TR("Active"));
+      lv_obj_set_style_text_font(a, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(a, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      lv_obj_align(a, LV_ALIGN_RIGHT_MID, xoff, 0);
+    };
+
+    lv_obj_t* hint = lv_label_create(s_luastore_list);
+    lv_label_set_text(hint, TR("Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own."));
+    lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_width(hint, W - 12);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+
+    section(TR("Built-in languages"));
+    for (uint8_t l = 0; l < LANG_COUNT; ++l) {
+      lv_obj_t* row = langRow(kUiLangNames[l], nullptr);
+      if (!curFile[0] && l == curLang) activeTag(row, -6);
+      else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangBuiltinCb, (intptr_t)l, 0, 58);
+    }
+
+    section(TR("Language files"));
+    for (int i = 0; i < s_langinst_n; i++) {
+      char sub[20];
+      snprintf(sub, sizeof sub, "%s.lang", s_langinst[i].code);
+      lv_obj_t* row = langRow(s_langinst[i].name, sub);
+      const bool act = curFile[0] && strcmp(curFile, s_langinst[i].code) == 0;
+      actionBtn(row, LV_SYMBOL_TRASH, 0x8A4444, luaStoreLangRemoveCb, (intptr_t)i, 0, 34);
+      if (act) activeTag(row, -44);
+      else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangUseCb, (intptr_t)i, -40, 58);
+    }
+    for (int i = 0; i < s_langcat_n; i++) {
+      bool have = false;
+      for (int j = 0; j < s_langinst_n; j++)
+        if (strcmp(s_langinst[j].code, s_langcat[i].code) == 0) { have = true; break; }
+      if (have) continue;
+      lv_obj_t* row = langRow(s_langcat[i].name, s_langcat[i].code);
+      actionBtn(row, TR("Get"), COLOR_ACCENT, luaStoreLangGetCb, (intptr_t)i, 0, 58);
+    }
+    if (s_langcat_n <= 0) {
+      lv_obj_t* h = lv_label_create(s_luastore_list);
+      lv_label_set_text(h, s_langcat_n < 0
+          ? TR("Language catalog unavailable - check Wi-Fi, then reopen this tab.")
+          : TR("Loading the language catalog\xE2\x80\xA6"));
+      lv_obj_set_style_text_font(h, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(h, lv_color_hex(s_langcat_n < 0 ? 0xE08080 : COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_width(h, W - 12);
+      lv_label_set_long_mode(h, LV_LABEL_LONG_WRAP);
+    }
+    return;
+  }
+
+  // ==== tab: Apps (the catalog) ====
   if (s_lua_cat_n <= 0) {
     lv_obj_t* card = lv_obj_create(s_luastore_list);
     lv_obj_remove_style_all(card);
@@ -37001,7 +37475,7 @@ static void luaStoreRebuildList() {
     lv_label_set_text(ds, s_lua_cat[i].desc);
     lv_obj_set_style_text_font(ds, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(ds, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_width(ds, W - tx - 18);
+    lv_obj_set_width(ds, W - tx - 100);   // same column as the title: never under the button
     lv_label_set_long_mode(ds, LV_LABEL_LONG_WRAP);
     lv_obj_set_pos(ds, tx, lh14 + 2);
     lv_obj_t* b = lv_btn_create(row);
@@ -37057,6 +37531,8 @@ static void luaStoreRebuildList() {
     lv_label_set_text(nm, head);
     lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_width(nm, W - 100);        // clear of the Remove button
+    lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
     lv_obj_align(nm, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_t* b = lv_btn_create(row);
     lv_obj_set_size(b, 74, 28);
@@ -37069,42 +37545,6 @@ static void luaStoreRebuildList() {
     lv_obj_add_event_cb(b, luaStoreRemoveBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
   }
 
-  // ---- built-in visibility ----
-  section(TR("Built-in apps (show / hide)"));
-  struct { const char* name; uint32_t bit; } builtins[] = {
-    { "Spectrum", APPHIDE_SPECTRUM }, { "Discover", APPHIDE_DISCOVER },
-#if !defined(HAS_TANMATSU)
-    { "VNC", APPHIDE_VNC }, { "Remote", APPHIDE_REMOTE },
-#endif
-#if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
-    { "Web", APPHIDE_READER },
-#endif
-    { "Signal", APPHIDE_SIGNAL }, { "Mentions", APPHIDE_MENTIONS },
-#if defined(HAS_TOUCH_UI)
-    { "Terminal", APPHIDE_TERMINAL },
-#endif
-#if CAP_FILESYSTEM || defined(TLORA_PAGER)
-    { "Files", APPHIDE_FILES },
-#endif
-#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-    { "MQTT bridge", APPHIDE_MQTT },   // a Settings section, not a drawer tile
-#endif
-  };
-  for (auto& bi : builtins) {
-    lv_obj_t* row = lv_obj_create(s_luastore_list);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, W - 8, 34);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* nm = lv_label_create(row);
-    lv_label_set_text(nm, bi.name);
-    lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_align(nm, LV_ALIGN_LEFT_MID, 2, 0);
-    lv_obj_t* sw = lv_switch_create(row);
-    lv_obj_align(sw, LV_ALIGN_RIGHT_MID, 0, 0);
-    if (!(hide & bi.bit)) lv_obj_add_state(sw, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(sw, luaStoreHideSwitchCb, LV_EVENT_VALUE_CHANGED, (void*)(uintptr_t)bi.bit);
-  }
 }
 
 static void openLuaStorePage() {
@@ -37122,23 +37562,58 @@ static void openLuaStorePage() {
   lv_obj_clear_flag(s_luastore_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_move_foreground(s_luastore_root);
 
+  // Segmented tab bar (fixed above the scrolling list): Apps | Built-in | Languages
+  const lv_coord_t bar_h = 30;
+  {
+    lv_obj_t* bar = lv_obj_create(s_luastore_root);
+    lv_obj_remove_style_all(bar);
+    lv_obj_set_size(bar, sw - 12, bar_h);
+    lv_obj_set_pos(bar, 6, 4);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    static const char* const kStoreTabs[3] = { "Apps", "Built-in", "Languages" };
+    const lv_coord_t bw = (sw - 12) / 3;
+    for (int t = 0; t < 3; t++) {
+      lv_obj_t* b = lv_btn_create(bar);
+      s_luastore_tabbtn[t] = b;
+      lv_obj_remove_style_all(b);
+      lv_obj_set_size(b, bw - 4, bar_h - 4);
+      lv_obj_set_pos(b, t * bw + 2, 0);
+      lv_obj_set_style_radius(b, 8, LV_PART_MAIN);
+      lv_obj_t* l = lv_label_create(b);
+      lv_label_set_text(l, TR(kStoreTabs[t]));
+      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+      lv_obj_center(l);
+      lv_obj_add_event_cb(b, luaStoreTabCb, LV_EVENT_CLICKED, (void*)(intptr_t)t);
+    }
+  }
+
   s_luastore_list = lv_obj_create(s_luastore_root);
   lv_obj_remove_style_all(s_luastore_list);
   s_luastore_w = sw - 12;
-  lv_obj_set_size(s_luastore_list, s_luastore_w, sh - STATUSBAR_H - 16);
-  lv_obj_set_pos(s_luastore_list, 6, 8);
+  lv_obj_set_size(s_luastore_list, s_luastore_w, sh - STATUSBAR_H - bar_h - 14);
+  lv_obj_set_pos(s_luastore_list, 6, 4 + bar_h + 4);
   lv_obj_set_scroll_dir(s_luastore_list, LV_DIR_VER);
   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
 
   appPageBegin("Lua Store", &closeLuaStorePage);
 
-  luaStoreScanInstalled(true);   // opening the store re-reads the card (sideloads)
+  // Open instantly from the cached install list; the card re-listing (sideload
+  // pickup) runs on the worker and the poll timer repaints when it lands.
+  s_luascan_request = true;
   if (s_lua_cat_n <= 0) {                 // no catalog yet this session -> fetch
     s_lua_cat_n = 0;
     s_luacat_done = false;
     s_luacat_request = true;
-    ensureTileFetchTaskRunning();
+  }
+  ensureTileFetchTaskRunning();
+  if (s_luastore_tab == 2) {              // reopened straight onto Languages
+    luaStoreScanLangs();
+    if (s_langcat_n <= 0) {
+      s_langcat_n = 0;
+      s_langcat_done = false;
+      s_langcat_request = true;
+    }
   }
   luaStoreRebuildList();
   s_luastore_poll = lv_timer_create(luaStorePollCb, 250, nullptr);
@@ -45354,6 +45829,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Accent-popup picker (both boards: on-screen + physical keyboard). Default on.
     s_accent_popups = touchPrefsGetAccentPopups();
     i18nSetLang(touchPrefsGetUiLang());   // active UI translation language (before the UI builds)
+#if CAP_LUA_APPS
+    uiLangFileBootLoad();   // overlay the active .lang file (mounts data storage a bit earlier)
+    s_luascan_request = true;             // pre-warm the installed-apps cache off the UI thread
+#endif
 #endif
     const bool ui_landscape = (s_ui_rotation == LV_DISP_ROT_90 ||
                                s_ui_rotation == LV_DISP_ROT_270);

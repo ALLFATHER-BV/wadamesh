@@ -8,9 +8,26 @@ const char* const kUiLangNames[LANG_COUNT] = {
   "Português (BR)", "Română",
 };
 
+// File/catalog codes, index order == UiLang. Keep in sync with the enum AND with
+// scripts/build/gen-lang-files.py (which exports the table columns as .lang files).
+const char* const kUiLangCodes[LANG_COUNT] = {
+  "en", "hu", "nl", "de", "fr", "es", "it",
+  "ru", "uk", "bg", "sr", "el", "pt-br", "ro",
+};
+
 static uint8_t s_ui_lang = LANG_EN;
 void    i18nSetLang(uint8_t l) { s_ui_lang = (l < LANG_COUNT) ? l : LANG_EN; }
 uint8_t i18nGetLang() { return s_ui_lang; }
+
+// File-language overlay: sorted key/translation pairs owned by the loader
+// (UITask reads the .lang file into PSRAM at boot). Checked before the table.
+static const I18nPair* s_file_pairs = nullptr;
+static int             s_file_n     = 0;
+void i18nSetFileOverlay(const I18nPair* pairs, int count) {
+  s_file_pairs = (count > 0) ? pairs : nullptr;
+  s_file_n     = (pairs && count > 0) ? count : 0;
+}
+bool i18nHasFileOverlay() { return s_file_n > 0; }
 
 // Translation table, keyed by the English source string. The `tr[]` column order
 // matches UiLang; index 0 (English) is unused because the key IS the English. A
@@ -797,7 +814,7 @@ static const int kI18nCount = (int)(sizeof(kI18n) / sizeof(kI18n[0]));
 
 const char* TR(const char* en) {
   if (!en) return "";
-  if (s_ui_lang == LANG_EN) return en;
+  if (s_ui_lang == LANG_EN && !s_file_n) return en;
   // Icon-prefixed labels ("<glyph>  Copy") carry the LVGL symbol's UTF-8 bytes
   // (3-byte private-use sequences, 0xEE/0xEF lead) in the lookup key, but the
   // table is keyed on the plain text — so those labels never matched and the
@@ -812,8 +829,19 @@ const char* TR(const char* en) {
   const size_t plen = (size_t)(txt - en);
   const char* base = txt[0] ? txt : en;   // an all-symbol string stays as-is
   const char* v = nullptr;
-  for (int i = 0; i < kI18nCount; ++i) {
-    if (strcmp(base, kI18n[i].en) == 0) { v = kI18n[i].tr[s_ui_lang]; break; }
+  if (s_file_n) {                          // file overlay first (sorted -> bsearch)
+    int lo = 0, hi = s_file_n - 1;
+    while (lo <= hi) {
+      const int mid = (lo + hi) / 2;
+      const int c = strcmp(base, s_file_pairs[mid].key);
+      if (c == 0) { v = s_file_pairs[mid].val; break; }
+      if (c < 0) hi = mid - 1; else lo = mid + 1;
+    }
+  }
+  if (!v && s_ui_lang != LANG_EN) {        // then the built-in column
+    for (int i = 0; i < kI18nCount; ++i) {
+      if (strcmp(base, kI18n[i].en) == 0) { v = kI18n[i].tr[s_ui_lang]; break; }
+    }
   }
   if (!v) return en;                       // untranslated: original, prefix intact
   if (plen == 0) return v;                 // plain key: the table cell directly
