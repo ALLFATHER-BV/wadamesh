@@ -642,6 +642,10 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
           snprintf(ble, sizeof(ble), "on (%s)", peer);
         else
           snprintf(ble, sizeof(ble), "on");
+#if defined(TLORA_PAGER)
+      } else if (wifiConfigGetBleEnabled()) {
+        snprintf(ble, sizeof(ble), "pending");
+#endif
       } else {
         snprintf(ble, sizeof(ble), "off");
       }
@@ -708,8 +712,24 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
     p += 3;
     while (*p == ' ' || *p == '\t') p++;
     if (strncasecmp(p, "on", 2) == 0 && (p[2] == '\0' || p[2] == ' ' || p[2] == '\t')) {
+#if defined(TLORA_PAGER)
+      // Record the request before asking the transport. A cold start may be
+      // intentionally refused while WPA owns the Pager coexistence handoff;
+      // main.cpp observes this preference and restores BLE on success/timeout.
+      wifiConfigSetBleEnabled(true);
+#endif
       _serial->enableBle();
-      pushMeshcomodReply("OK\nble: on");
+      if (_serial->isBleEnabled()) {
+        pushMeshcomodReply("OK\nble: on");
+#if defined(TLORA_PAGER)
+      } else if (wifiConfigPagerWifiBlocksBle()) {
+        pushMeshcomodReply("OK\nble: pending (Wi-Fi handoff)");
+      } else if (wifiConfigGetBleEnabled()) {
+        pushMeshcomodReply("ble: pending (restart required)");
+#endif
+      } else {
+        pushMeshcomodReply("error: Bluetooth could not start");
+      }
       return true;
     }
     if (strncasecmp(p, "off", 3) == 0 && (p[3] == '\0' || p[3] == ' ' || p[3] == '\t')) {
@@ -730,6 +750,10 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
         } else {
           pushMeshcomodReply("ble: on");
         }
+#if defined(TLORA_PAGER)
+      } else if (wifiConfigGetBleEnabled()) {
+        pushMeshcomodReply("ble: pending");
+#endif
       } else {
         pushMeshcomodReply("ble: off");
       }

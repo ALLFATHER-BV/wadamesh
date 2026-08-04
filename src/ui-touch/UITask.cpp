@@ -7902,7 +7902,7 @@ static bool bleEnableWaitingForWifi() {
 
 static const char* bleEnableFailureText() {
   if (bleEnableWaitingForWifi())
-    return TR("Bluetooth will start after Wi-Fi connects, or turn Wi-Fi off first.");
+    return TR("Bluetooth will start after Wi-Fi connects or times out.");
   return TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first.");
 }
 

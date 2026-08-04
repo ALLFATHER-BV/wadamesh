@@ -725,8 +725,14 @@ void setup() {
    * happens later in loop(); this just inits the stack.) */
   if (want_wifi) {
     WiFi.mode(WIFI_STA);
+#if defined(TLORA_PAGER)
+    // Pager reconnects are owned by the loop below. Background WPA retries are
+    // invisible to PagerWifiBlePhase and could overlap a cold NimBLE start.
+    WiFi.setAutoReconnect(false);
+#else
     WiFi.setAutoReconnect(true);   // safe while NimBLE is not resident; disabled below once BLE
                                    // exists so a later WPA re-auth cannot bypass Wi-Fi-first ordering
+#endif
     WiFi.persistent(false);
     // NOTE: do NOT enable modem-sleep here. On a fresh, *unassociated* STA (the
     // setup wizard, no creds yet) DTIM modem-sleep naps the radio through the
@@ -947,6 +953,15 @@ void loop() {
   if (wifiConfigPagerBleFallbackActive() && !wifiConfigGetBleEnabled()) {
     wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
   }
+  // An association may have started while Bluetooth was disabled. If the user
+  // requests BLE during that attempt, join the already-running ordered handoff
+  // immediately instead of waiting for the next 10-second Wi-Fi retry to arm it.
+  if (wifiConfigGetPagerWifiBlePhase() == PagerWifiBlePhase::Associating &&
+      wifiConfigGetBleEnabled() && !s_pager_ble_after_wifi) {
+    s_pager_ble_after_wifi = true;
+    s_pager_wifi_ble_deadline_ms = millis() + PAGER_WIFI_BLE_HANDOFF_MS;
+    Serial.println("[wifi] Bluetooth requested during association; handoff armed");
+  }
 #endif
   if (!wifi_radio_inited) {
     wifi_radio_inited = true;
@@ -1003,9 +1018,10 @@ void loop() {
       s_pager_wifi_ble_deadline_ms = 0;
       wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
     }
-    if (wifi_radio_en && !serial_interface.isBleStackBegun()) {
-      WiFi.setAutoReconnect(true);
-    }
+    // Keep Pager WPA retries explicit even when BLE is currently absent. The
+    // loop below records Associating before each begin(), so a simultaneous
+    // Bluetooth request can never cold-start NimBLE over a hidden retry.
+    if (wifi_radio_en) WiFi.setAutoReconnect(false);
 #endif
     /* Only touch WiFi state if it was actually started this session. When
      * BLE is the active transport (no creds saved), WiFi was never inited

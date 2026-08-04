@@ -266,8 +266,9 @@ void MultiTransportCompanionInterface::disableBle() {
   // a later begin() replaces the cached pointers with a fresh GATT server.
   if (_ble_begun) _ble.disable();    // stop advertising + drop any connection
   // Pager only: release NimBLE whenever the user turns Bluetooth off. This
-  // returns its internal heap and restores Wi-Fi's ordinary reconnect path;
-  // a later enable recreates the GATT server after Wi-Fi is already stable.
+  // returns its internal heap; a later enable recreates the GATT server after
+  // Wi-Fi is already stable. Pager reconnects remain main-loop-owned so their
+  // WPA phase is always visible to the BLE ownership gate.
   // Other boards retain their established resident-stack disable/re-enable
   // behavior.
 #if defined(TLORA_PAGER)
@@ -276,7 +277,7 @@ void MultiTransportCompanionInterface::disableBle() {
     NimBLEDevice::deinit(true);
     _ble_begun = false;
   }
-  if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(true);
+  if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(false);
 #endif
 }
 
@@ -292,7 +293,7 @@ void MultiTransportCompanionInterface::suspendBleForWifiReconnect() {
     _ble_begun = false;
   }
   _ble_enabled = false;
-  if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(true);
+  if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(false);
 }
 #endif
 

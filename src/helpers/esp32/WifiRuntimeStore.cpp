@@ -207,6 +207,14 @@ void wifiScanSetActive(bool active) { s_wifi_scan_active = active; }
 bool wifiScanIsActive() { return s_wifi_scan_active; }
 
 void wifiConfigApply() {
+#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
+  // The Pager must release a resident NimBLE controller before starting WPA.
+  // Funnel every legacy/CLI apply through main.cpp, which owns that ordering,
+  // the bounded handoff deadline, and BLE restoration. Calling WiFi.begin()
+  // directly here would bypass the coexistence state machine.
+  wifiConfigRequestApply();
+  return;
+#endif
 #if defined(HAS_TANMATSU)
   printf("[WIFI] apply radio_en=%d hasRuntime=%d mode=%d status=%d\n",
          (int)wifiConfigGetRadioEnabled(), (int)wifiConfigHasRuntime(),
