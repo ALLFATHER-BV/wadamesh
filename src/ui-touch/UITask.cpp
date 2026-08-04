@@ -37413,6 +37413,11 @@ static void luaStoreRebuildList() {
   const lv_coord_t W = s_luastore_w;
   const lv_coord_t lh14 = lv_font_get_line_height(&g_font_14);
   const lv_coord_t lh12 = lv_font_get_line_height(&g_font_12);
+  // The store was tuned on the 320 px T-Deck; the V4 / M9 panels are 240 px
+  // portrait, where a fixed 100 px button gutter eats half the text column.
+  const bool narrow = (W < 260);
+  const lv_coord_t act_w = narrow ? 62 : 78;      // Get / Update / Remove button
+  const lv_coord_t act_gut = act_w + (narrow ? 12 : 22);   // text column stops here
 
   auto section = [&](const char* txt) {
     lv_obj_t* l = lv_label_create(s_luastore_list);
@@ -37490,7 +37495,7 @@ static void luaStoreRebuildList() {
       lv_label_set_text(nm, name);
       lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
       lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_set_width(nm, W - 150);
+      lv_obj_set_width(nm, W - (narrow ? 108 : 150));   // room for [trash][Use]
       lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
       lv_obj_align(nm, LV_ALIGN_LEFT_MID, 0, sub ? -8 : 0);
       if (sub) {
@@ -37537,7 +37542,7 @@ static void luaStoreRebuildList() {
       // a downloaded .lang file — the built-in table only backs the files up.
       lv_obj_t* row = langRow("English", nullptr);
       if (!curFile[0] && curLang == LANG_EN) activeTag(row, -6);
-      else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangBuiltinCb, (intptr_t)LANG_EN, 0, 58);
+      else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangBuiltinCb, (intptr_t)LANG_EN, 0, narrow ? 52 : 58);
     }
     for (int i = 0; i < s_langinst_n; i++) {
       // A newer catalog ver for this installed file -> offer Update in place.
@@ -37549,10 +37554,13 @@ static void luaStoreRebuildList() {
       snprintf(sub, sizeof sub, "%s.lang  v%s", s_langinst[i].code, s_langinst[i].ver);
       lv_obj_t* row = langRow(s_langinst[i].name, sub);
       const bool act = curFile[0] && strcmp(curFile, s_langinst[i].code) == 0;
-      actionBtn(row, LV_SYMBOL_TRASH, 0x8A4444, luaStoreLangRemoveCb, (intptr_t)i, 0, 34);
-      if (stale)     actionBtn(row, TR("Update"), 0x4F9DF7, luaStoreLangGetCb, (intptr_t)cat, -40, 66);
-      else if (act)  activeTag(row, -44);
-      else           actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangUseCb, (intptr_t)i, -40, 58);
+      const lv_coord_t tw = narrow ? 30 : 34;          // trash
+      const lv_coord_t uw = narrow ? 52 : 58;          // Use
+      const lv_coord_t upw = narrow ? 58 : 66;         // Update
+      actionBtn(row, LV_SYMBOL_TRASH, 0x8A4444, luaStoreLangRemoveCb, (intptr_t)i, 0, tw);
+      if (stale)     actionBtn(row, TR("Update"), 0x4F9DF7, luaStoreLangGetCb, (intptr_t)cat, -(tw + 4), upw);
+      else if (act)  activeTag(row, -(tw + 8));
+      else           actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangUseCb, (intptr_t)i, -(tw + 4), uw);
     }
     section(TR("Available"));
     for (int i = 0; i < s_langcat_n; i++) {
@@ -37561,7 +37569,7 @@ static void luaStoreRebuildList() {
         if (strcmp(s_langinst[j].code, s_langcat[i].code) == 0) { have = true; break; }
       if (have) continue;
       lv_obj_t* row = langRow(s_langcat[i].name, s_langcat[i].code);
-      actionBtn(row, TR("Get"), COLOR_ACCENT, luaStoreLangGetCb, (intptr_t)i, 0, 58);
+      actionBtn(row, TR("Get"), COLOR_ACCENT, luaStoreLangGetCb, (intptr_t)i, 0, narrow ? 52 : 58);
     }
     if (s_langcat_n <= 0) {
       lv_obj_t* h = lv_label_create(s_luastore_list);
@@ -37640,7 +37648,7 @@ static void luaStoreRebuildList() {
     lv_label_set_text(nm, title);
     lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(nm, lv_color_hex(inst ? COLOR_ACCENT : COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_width(nm, W - tx - 100);             // clear of the action button
+    lv_obj_set_width(nm, W - tx - act_gut);         // clear of the action button
     lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
     lv_obj_set_pos(nm, tx, 0);
     // Description gets its own full-width line — it used to share the row with
@@ -37649,11 +37657,11 @@ static void luaStoreRebuildList() {
     lv_label_set_text(ds, s_lua_cat[i].desc);
     lv_obj_set_style_text_font(ds, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(ds, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_width(ds, W - tx - 100);   // same column as the title: never under the button
+    lv_obj_set_width(ds, W - tx - act_gut);   // same column as the title: never under the button
     lv_label_set_long_mode(ds, LV_LABEL_LONG_WRAP);
     lv_obj_set_pos(ds, tx, lh14 + 2);
     lv_obj_t* b = lv_btn_create(row);
-    lv_obj_set_size(b, 78, 32);
+    lv_obj_set_size(b, act_w, 32);
     lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_radius(b, 8, LV_PART_MAIN);
     lv_obj_t* bl = lv_label_create(b);
@@ -37705,11 +37713,11 @@ static void luaStoreRebuildList() {
     lv_label_set_text(nm, head);
     lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_width(nm, W - 100);        // clear of the Remove button
+    lv_obj_set_width(nm, W - act_gut);    // clear of the Remove button
     lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
     lv_obj_align(nm, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_t* b = lv_btn_create(row);
-    lv_obj_set_size(b, 74, 28);
+    lv_obj_set_size(b, act_w, 28);
     lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(b, lv_color_hex(0x8A4444), LV_PART_MAIN);
     lv_obj_t* bl = lv_label_create(b);
@@ -37756,6 +37764,9 @@ static void openLuaStorePage() {
       lv_obj_t* l = lv_label_create(b);
       lv_label_set_text(l, TR(kStoreTabs[t]));
       lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_width(l, bw - 10);                  // a translated tab name can
+      lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);  // exceed a 240px panel's cell
+      lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
       lv_obj_center(l);
       lv_obj_add_event_cb(b, luaStoreTabCb, LV_EVENT_CLICKED, (void*)(intptr_t)t);
     }
