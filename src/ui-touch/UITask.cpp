@@ -716,9 +716,9 @@ static void initTouchFontFallbacks() {
 }
 
 #if defined(MULTI_TRANSPORT_COMPANION)
-// Cross-core tile lifecycle count. Increment before publishing a queue item so
-// the worker cannot open an SD File during a false-zero window; every read and
-// update is atomic because the producer and consumer run on different cores.
+// Cross-core queued + in-flight tile count. This drives progress/memory gates;
+// backend ownership is tracked separately beside s_tile_fs so a queued backlog
+// does not unnecessarily delay a safe cache handoff.
 volatile uint16_t s_tile_fetch_pending = 0;
 static inline uint16_t tileFetchPendingLoad() {
   return __atomic_load_n(&s_tile_fetch_pending, __ATOMIC_ACQUIRE);
@@ -23892,6 +23892,67 @@ static char           s_tile_root[16] = "";
 static fs::FS*        s_tile_fs_default   = nullptr;
 static char           s_tile_root_default[16] = "";
 
+#if defined(MULTI_TRANSPORT_COMPANION)
+// The fetch queue may contain dozens of requests, but only the request currently
+// executing can dereference s_tile_fs or own a File. A backend swap requests a
+// boundary pause, waits only for that one request, then lets the queued backlog
+// resume against the new backend. The critical section closes both races:
+// worker-start vs swap-request, and worker-finish vs the next queued request.
+static portMUX_TYPE   s_tile_backend_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool s_tile_worker_active = false;
+static volatile bool s_tile_backend_swap_requested = false;
+
+static bool tileBackendSwapTryBegin() {
+  bool ready;
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  s_tile_backend_swap_requested = true;
+  ready = !s_tile_worker_active;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+  return ready;
+}
+
+static void tileBackendSwapFinish() {
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  s_tile_backend_swap_requested = false;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+}
+
+static bool tileFetchWorkerActive() {
+  bool active;
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  active = s_tile_worker_active;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+  return active;
+}
+
+class TileBackendWorkerLease {
+ public:
+  TileBackendWorkerLease() {
+    for (;;) {
+      portENTER_CRITICAL(&s_tile_backend_mux);
+      if (!s_tile_backend_swap_requested) {
+        s_tile_worker_active = true;
+        _held = true;
+      }
+      portEXIT_CRITICAL(&s_tile_backend_mux);
+      if (_held) break;
+      vTaskDelay(1);
+    }
+  }
+  ~TileBackendWorkerLease() {
+    if (!_held) return;
+    portENTER_CRITICAL(&s_tile_backend_mux);
+    s_tile_worker_active = false;
+    portEXIT_CRITICAL(&s_tile_backend_mux);
+  }
+  TileBackendWorkerLease(const TileBackendWorkerLease&) = delete;
+  TileBackendWorkerLease& operator=(const TileBackendWorkerLease&) = delete;
+
+ private:
+  bool _held = false;
+};
+#endif
+
 // When the tile cache is on the SD fallback (s_tile_fs != the LittleFS partition),
 // every access is real microSD I/O -> light the activity LED. On the flash
 // partition this is a no-op (the LED tracks SD only).
@@ -25268,6 +25329,11 @@ static void tileFetchTaskFn(void* arg) {
       continue;
     }
 
+    // Serialize only the request that can actually touch the cache backend.
+    // A swap request pauses here between Files; queued requests remain intact
+    // and resume against the newly-selected filesystem after the pointer moves.
+    TileBackendWorkerLease backend_lease;
+
     // Capture the active map style ONCE per fetch so the cache path and the
     // upstream URL can't disagree if the user toggles topo mid-download (both
     // pointers are static string literals, so they stay valid).
@@ -25890,22 +25956,23 @@ static void freeMapTiles() {
 static void mapNoteStorageChanged() {
 #if CAP_SD || defined(TLORA_PAGER)
   // A fetch snapshots its paths but still dereferences the global backend for
-  // every filesystem operation of the request, so the pointer may only move
-  // while the queue and the worker are both idle. That governs BOTH directions:
-  // dropping a lost card strands an open SD File exactly as surely as adopting
-  // a new one does. When the swap has to wait, sdHealthTick retries it at the
-  // first idle tick — but the invalidation below still has to run now, or a
-  // swapped card keeps showing the previous card's tiles with the dedup ring
-  // suppressing the re-fetch until that retry lands.
-  const bool may_swap = (tileFetchPendingLoad() == 0);
+  // every filesystem operation of the request, so the pointer may only move at
+  // a worker request boundary. The ownership handshake pauses dequeueing there;
+  // queued downloads survive and resume on the new backend. When the current
+  // request is still active, sdHealthTick retries the swap at the first safe
+  // boundary — but the invalidation below still has to run now, or a swapped
+  // card keeps showing the previous card's tiles with the dedup ring suppressing
+  // the re-fetch until that retry lands.
   // Whether the backend actually has to move. Also decides whether a deferral
   // leaves the pointer stale: most callers (a remount that changed nothing, a
   // reinsert while already on the card) need no swap at all, and those must
   // still repaint below even while a fetch is in flight.
   const bool wants_teardown = !s_sd_mounted && s_tile_fs == &SD;
   const bool wants_adopt    = s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready);
+  const bool wants_swap     = wants_teardown || (wants_adopt && s_tile_fs != &SD);
+  const bool may_swap       = !wants_swap || tileBackendSwapTryBegin();
   const bool swap_deferred  =
-      !may_swap && (wants_teardown || (wants_adopt && s_tile_fs != &SD));
+      !may_swap && wants_swap;
   if (may_swap && wants_teardown) {
     if (s_tile_fs_default && s_tile_fs_default != &SD) {
       // SD tile mode lost its card, but the dedicated LittleFS cache is still
@@ -25933,6 +26000,7 @@ static void mapNoteStorageChanged() {
     }
     s_tiles_fs_ready = true;
   }
+  if (may_swap) tileBackendSwapFinish();
 #endif
   for (int i = 0; i < k_tile_fetch_dedup_size; ++i) s_tile_fetch_dedup[i] = 0;
   s_tile_fetch_dedup_head = 0;
@@ -26361,7 +26429,11 @@ static void renderMapTiles() {
 #if defined(HAS_TANMATSU)
         (s_tile_fs == &SD_MMC ? "SD cache" : "flash cache"),
 #else
+#if CAP_SD || defined(TLORA_PAGER)
+        (s_tile_fs == &SD ? "SD cache" : "flash cache"),
+#else
         (s_tile_root[0] ? "SD cache" : "flash cache"),
+#endif
 #endif
         (unsigned)s_tile_fetch_ok, (unsigned)s_tile_fetch_failed,
         (int)s_tile_fetch_last_code, (char)s_tile_fetch_last_wr,
@@ -48366,7 +48438,7 @@ static void sdHealthTick() {
   // A teardown may have completed while the tile worker still held its final
   // File. Defer dropping the stale SD backend until that request is finished;
   // this also closes the failed-format path below.
-  if (!s_sd_mounted && s_tile_fs == &SD && tileFetchPendingLoad() == 0) {
+  if (!s_sd_mounted && s_tile_fs == &SD && !tileFetchWorkerActive()) {
     mapNoteStorageChanged();
   }
 #endif
@@ -48461,7 +48533,7 @@ static void sdHealthTick() {
   sd_leaving = s_pager_sd_removal_pending;
 #endif
   if (!sd_leaving && s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready) &&
-      s_tile_fs != &SD && tileFetchPendingLoad() == 0) {
+      s_tile_fs != &SD && !tileFetchWorkerActive()) {
     mapNoteStorageChanged();
   }
 #endif
