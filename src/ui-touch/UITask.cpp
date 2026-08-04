@@ -23671,7 +23671,14 @@ static void makeContactsTab(lv_obj_t* tab) {
     lv_obj_set_style_bg_color(s_ct_disc_badge, lv_color_hex(0xE0533D), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ct_disc_badge, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ct_disc_badge, lv_color_white(), LV_PART_MAIN);
+    // This is fixed-size chrome inside a 16-px pill, not semantic body text.
+    // Pager Large/Jumbo gives g_font_12 a 27-px line box, which clips the
+    // digits below the pill instead of centring them.
+#if defined(TLORA_PAGER)
+    lv_obj_set_style_text_font(s_ct_disc_badge, &lv_font_montserrat_12, LV_PART_MAIN);
+#else
     lv_obj_set_style_text_font(s_ct_disc_badge, &g_font_12, LV_PART_MAIN);
+#endif
     lv_obj_set_style_text_align(s_ct_disc_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(s_ct_disc_badge, 3, LV_PART_MAIN);
     lv_obj_align(s_ct_disc_badge, LV_ALIGN_RIGHT_MID, -2, 0);
