@@ -217,6 +217,7 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
   SD.mkdir("/meshcomod/lock");
   SD.mkdir("/meshcomod/msgs");   // chat segments: SPIFFS names them flat ("/msgs/seg_*.bin"),
                                  // but the FAT card needs the real parent dir or every copy fails
+  SD.mkdir("/meshcomod/apps");   // Lua apps installed to internal storage before a card existed
   bool identity_ok = false;
   int copied = 0, failed = 0;
   static uint8_t buf[4096];
