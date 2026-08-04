@@ -1,0 +1,924 @@
+# wadamesh language file
+# canonical source - translators: edit this file and PR it
+# code: es
+# ver: 8
+# name: Español
+# base: es
+ (device behind)	 (dispositivo atrasado)
+#7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d puntos de cobertura · %lu guardados en SD#
+#7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: esperando fijación GPS…#
+#7A7F87 Wardrive: …#	#7A7F87 Wardrive: …#
+#region	#region
+%.3f MHz · SF%u · TX %+ddBm	%.3f MHz · SF%u · TX %+ddBm
+%d on map	%d en el mapa
+%s · %d nearby (%d rpt, %d comp)	%s · %d cerca (%d rpt, %d comp)
+%u types · hops %u · manual %s	%u tipos · saltos %u · manual %s
+(RTC unset)	(RTC sin ajustar)
+(device behind)	(dispositivo atrasado)
+(no default)	(sin predeterminado)
+0123456789abcdef…	0123456789abcdef…
+1 byte (legacy)\n2 bytes\n3 bytes	1 byte (heredado)\n2 bytes\n3 bytes
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nSin límite
+12-hour clock	Reloj de 12 horas
+32 hex characters	32 caracteres hex
+32-hex secret. Anyone with this can read the channel.	Secreto de 32 hex. Cualquiera con esto puede leer el canal.
+>_  Terminal	>_  Terminal
+@  Mentions	@  Menciones
+@ mention sound	Sonido de menciones @
+AF	AF
+AUTOMATIC ADVERTS	ADVERTS AUTOMÁTICOS
+About	Acerca de
+About the map	Acerca del mapa
+Accent popups	Ventanas de acentos
+Accent popups: off	Ventanas de acentos: desactivado
+Accent popups: on	Ventanas de acentos: activado
+Ack	Ack
+Active	Activo
+Add	Añadir
+Add channel	Añadir canal
+Add contact	Añadir contacto
+Added	Añadido
+Added to contacts	Añadido a contactos
+Added to favorites	Añadido a favoritos
+Admin	Admin
+Advert	Anuncio
+Advert failed	Error en el anuncio
+Advert location	Ubicación del anuncio
+Advert policy saved	Política de anuncio guardada
+Advert sent	Anuncio enviado
+All marked read	Todo marcado como leído
+Already exists	Ya existe
+Already exists or table full.	Ya existe o tabla llena.
+Already in contacts	Ya está en contactos
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	Tras reiniciar siempre arranca con la antena integrada. Elige Externa solo con una antena puesta en el conector externo.
+Analyzing terrain…	Analizando terreno…
+Analyzing terrain…\n(retry %d of 3)	Analizando terreno…\n(intento %d de 3)
+Answer telemetry requests	Responder solicitudes de telemetría
+Anyone can join. Key is derived from the hashtag (lowercase).	Cualquiera puede unirse. La clave deriva del hashtag (minúsculas).
+App drawer as home	Cajón de apps como inicio
+App icon size	Tamaño de iconos de app
+Applies after restart.	Se aplica tras reiniciar.
+Apply	Aplicar
+Apply auto-poll	Aplicar auto-poll
+Apply radio params	Aplicar parámetros de radio
+Apps	Apps
+Arrows + Enter always work. These letters are extra — tap a row, then press a key.	Flechas + Enter siempre funcionan. Estas letras son extra: toca una fila y pulsa una tecla.
+Auto advert	Anuncio automático
+Auto chat	Chat auto
+Auto repeater	Repetidor auto
+Auto room	Sala auto
+Auto sensor	Sensor auto
+Auto-Join	Auto-unirse
+Auto-add contacts	Auto-añadir contactos
+Auto-add saved	Auto-añadir guardado
+Auto-add settings	Ajustes de añadido automático
+Auto-delete above hops	Autoeliminar por encima de saltos
+Auto-delete oldest	Autoeliminar los más antiguos
+Auto-delete oldest makes room when full. Hops: 0 = keep all; nodes heard via more hops are removed.	Autoeliminar los más antiguos libera espacio al llenarse. Saltos: 0 = conservar todos; se eliminan los nodos oídos con más saltos.
+Auto-discover	Autodescubrir
+Auto-discover off	Autodescubrir desactivado
+Auto-discover on	Autodescubrir activado
+Auto-poll every	Auto-poll cada
+Auto-refresh off	Autoactualizar desactivado
+Auto-refresh on	Autoactualizar activado
+Available	Disponibles
+BLE off	BLE apagado
+BLE on	BLE activado
+BT	BT
+Back	Atrás
+Backups	Copias
+Battery	Batería
+Battery & power history	Historial de batería y energía
+Battery (V)	Batería (V)
+Battery calibration reset to default	Calibración de batería restablecida
+Battery read too low — charge fully first	Lectura de batería muy baja — carga primero
+Battery saver (experimental)	Ahorro de batería (experimental)
+Battery — last 24h	Batería — últimas 24h
+Battery:	Batería:
+Block	Bloquear
+Block list full	Lista de bloqueo llena
+Blocked list	Lista de bloqueados
+Blocked users	Usuarios bloqueados
+Blocked — their messages are hidden	Bloqueado — sus mensajes se ocultan
+Blocking unsupported	Bloqueo no compatible
+Blue battery  Last 6 min	Azul batería  Últimos 6 min
+Blue battery  Orange temp  Cyan humidity	Azul batería  Naranja temp.  Cian humedad
+Bluetooth	Bluetooth
+Bluetooth already off	Bluetooth ya apagado
+Bluetooth already on	Bluetooth ya activado
+Bluetooth off	Bluetooth apagado
+Bluetooth on	Bluetooth activado
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	El emparejamiento Bluetooth no está disponible en este dispositivo.\n\nEl firmware de fábrica del chip de radio no lo admite.\n\nEmpareja la app del móvil por Wi-Fi: conecta este dispositivo a tu red y añádelo en la app por su dirección IP (TCP, puerto 5000) — visible en Ajustes > Red. USB también funciona.
+Broker host / IP	Host / IP del broker
+Buffered receive (experimental)	Recepción con búfer (experimental)
+Built-in	Integrado
+Built-in (default)	Integrado (predeterminado)
+CR	CR
+Calibrate battery (full = 100%)	Calibrar batería (lleno = 100%)
+Calibrated: 100%% = %u.%02u V  (long-press to reset)	Calibrado: 100%% = %u.%02u V  (mantén para restablecer)
+Can't block — not a contact	No se puede bloquear — no es un contacto
+Can't display image\n(JPEG only, <= 1024 px)	No se puede mostrar la imagen\n(solo JPEG, <= 1024 px)
+Cancel	Cancelar
+Cancelled	Cancelado
+Cannot open file	No se puede abrir el archivo
+Catalog unavailable	Catálogo no disponible
+Centered on %s	Centrado en %s
+Changing orientation - rebooting...	Cambiando orientación - reiniciando...
+Channel created	Canal creado
+Channel joined	Unido al canal
+Channel name	Nombre del canal
+Channel not found	Canal no encontrado
+Channel removed	Canal eliminado
+Channel scope saved	Alcance del canal guardado
+Channel settings	Ajustes del canal
+Channel table is full	Tabla de canales llena
+Channel table is full.	La tabla de canales está llena.
+Channel-specific regions can be set in each channel's settings.	Las regiones por canal se configuran en los ajustes de cada canal.
+Channels:	Canales:
+Chat bubbles	Burbujas de chat
+Chat bubbles: plain	Burbujas: lisas
+Chat history is NOT saving	El historial de chat NO se guarda
+Chat history save FAILED	FALLÓ el guardado del historial de chat
+Chat icon	Icono del chat
+Chat icon reset to letters	Icono del chat restablecido a letras
+Chat icon set	Icono del chat establecido
+Chat removed	Chat eliminado
+Chat save fallback (failed tries)	Respaldo de guardado del chat (intentos fallidos)
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Chats, contactos, ajustes y una terminal mesh - todo en el navegador. Sin reinicio; el dispositivo conserva su pantalla normal.
+Choose .wav from files	Elegir .wav de archivos
+Choose your name	Elige tu nombre
+Choose your region	Elige tu región
+Clear	Borrar
+Clear battery history?	¿Borrar el historial de batería?
+Clear history	Borrar historial
+Clear telemetry history for this node?	¿Borrar el historial de telemetría de este nodo?
+Client repeat	Repetición de cliente
+Clock synced	Reloj sincronizado
+Clock: 12-hour	Reloj: 12 horas
+Clock: 24-hour	Reloj: 24 horas
+Close	Cerrar
+Colourful chat bubbles	Burbujas de chat coloridas
+Commands	Comandos
+Community Preset	Preajuste comunitario
+Community preset (meshcomod web)	Preajuste comunidad (meshcomod web)
+Compact messages	Mensajes compactos
+Compact messages (IRC style)	Mensajes compactos (estilo IRC)
+Connect	Conectar
+Connect Wi-Fi to reload tiles	Conecta Wi-Fi para recargar teselas
+Connect to Wi-Fi	Conectar a Wi-Fi
+Connect to Wi-Fi first	Conéctate primero al Wi-Fi
+Connect to Wi-Fi first, then try again.	Conéctate primero al Wi-Fi y vuelve a intentarlo.
+Connect to Wi-Fi to get a browser address.	Conéctate al Wi-Fi para obtener una dirección de navegador.
+Connected	Conectado
+Connected - a browser is viewing this screen.	Conectado - un navegador está viendo esta pantalla.
+Connecting...	Conectando...
+Connecting…	Conectando…
+Console not available on this build	Consola no disponible en esta versión
+Contact added	Contacto añadido
+Contact deleted	Contacto eliminado
+Contact gone	Contacto perdido
+Contact missing	Falta el contacto
+Contacts	Contactos
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Los contactos están en memoria interna - la tarjeta SD no se montó al arrancar. Reinserta la tarjeta y reinicia.
+Contacts are on internal flash.	Los contactos están en la memoria interna.
+Contacts are saved to the SD card.	Los contactos se guardan en la tarjeta SD.
+Contacts full	Contactos llenos
+Contacts:	Contactos:
+Control	Control
+Control this device from a browser	Controla este dispositivo desde un navegador
+Copied %s	%s copiado
+Copied - Paste in a folder	Copiado - pega en una carpeta
+Copy	Copiar
+Copy failed (no internal identity)	Error al copiar (sin identidad interna)
+Copy internal data to SD	Copiar datos internos a SD
+Copy secret	Copiar secreto
+Copying internal data to SD...	Copiando datos internos a la SD...
+Could not add	No se pudo añadir
+Could not save the crash report	No se pudo guardar el informe de fallo
+Couldn't delete	No se pudo eliminar
+Couldn't fetch terrain data.\nCheck the connection and the\nelevation server, then\ntry again.	No se pudieron obtener datos del terreno.\nComprueba la conexión y el\nservidor de elevación y\nvuelve a intentarlo.
+Couldn't save the name to storage	No se pudo guardar el nombre
+Couldn't send login	No se pudo enviar el login
+Couldn't start the analyzer.\nTry again.	No se pudo iniciar el analizador.\nInténtalo de nuevo.
+Crash export failed	Error al exportar el informe de fallo
+Create	Crear
+Create QR	Crear QR
+Create a private channel	Crear un canal privado
+Create failed	Error al crear
+Create private channel	Crear canal privado
+Custom UTC offset (hours)	Desfase UTC personalizado (horas)
+Cut	Cortar
+Cut - Paste in a folder	Cortado - pega en una carpeta
+DM sound	Sonido de DM
+DND	DND
+Danger zone	Zona de peligro
+Data -> SD card on reboot\n(card must be inserted)	Datos -> tarjeta SD al reiniciar\n(tarjeta requerida)
+Data -> internal on reboot	Datos -> interno al reiniciar
+Delete	Eliminar
+Delete %d contact(s)?	¿Eliminar %d contacto(s)?
+Delete chat	Eliminar chat
+Delete chat with "%s"?\nMessage history will be cleared.	¿Eliminar el chat con "%s"?\nSe borrará el historial.
+Delete failed	Error al eliminar
+Delete history	Borrar historial
+Delete this backup file?\nThis cannot be undone.	¿Eliminar este archivo de copia?\nNo se puede deshacer.
+Delete this chat's entire history?\nThe chat itself stays.	¿Borrar todo el historial de este chat?\nEl chat en sí se conserva.
+Deleted	Eliminado
+Deleted %d	%d eliminado(s)
+Deleted %d messages	%d mensajes eliminados
+Deleting contacts	Eliminando contactos
+Delivered	Entregado
+Detailed sensors	Sensores detallados
+Device clock differs from "%s" by %lu h%s	El reloj difiere de "%s" en %lu h%s
+Device clock differs from "%s" by %lu min%s	El reloj difiere de "%s" en %lu min%s
+Device name hidden	Nombre del dispositivo oculto
+Device name shown	Nombre del dispositivo visible
+Device time:	Hora del dispositivo:
+Diagnostics	Diagnóstico
+Diagnostics are on the About page.	La diagnostica è nella pagina Informazioni.
+Discovered	Descubiertos
+Discovered settings	Ajustes de nodos descubiertos
+Display	Pantalla
+Display name	Nombre visible
+Distance in miles	Distancia en millas
+Distance: km	Distancia: km
+Distance: miles	Distancia: millas
+Do Not Disturb	No molestar
+Do Not Disturb off	No molestar desactivado
+Do Not Disturb on	No molestar activado
+Download failed	Falló la descarga
+Download failed (network?)	Falló la descarga (¿red?)
+Download mode	Modo descarga
+Download mode… reflash over USB	Modo descarga… reflashear por USB
+Downloaded - tap Use to switch	Descargado - toca Usar para cambiar
+Downloading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive\nand are saved for offline use.	Descargando teselas del mapa…\n\nMantén el Wi-Fi conectado.\nLas teselas aparecen al llegar\ny se guardan para uso sin conexión.
+Downloading…	Descargando…
+Duty meter	Medidor de ciclo
+Edge scroll	Desplaz. borde
+Edit in Settings → Quick replies	Editar en Ajustes → Respuestas rápidas
+Editing	Editando
+Empty = plaintext to a private broker	Vacío = texto plano a un broker privado
+Empty file	Archivo vacío
+Enable Bluetooth	Activar Bluetooth
+Enable MQTT bridge	Activar puente MQTT
+Enable only if your repeater re-floods just one region. Otherwise leave off — it can block cross-region login/DMs.	Actívalo solo si tu repetidor reinunda una sola región. Si no, déjalo apagado — puede bloquear login/MD entre regiones.
+Enable web access	Activar acceso web
+Encryption key (optional)	Clave de cifrado (opcional)
+End time	Hora de fin
+Enter SSID first	Introduce primero el SSID
+Enter a name	Introduce un nombre
+Enter a network name	Introduce un nombre de red
+Enter adds a new line	Enter añade una línea
+Enter exactly 32 hex characters.	Introduce exactamente 32 caracteres hex.
+Enter key sends message	La tecla Enter envía el mensaje
+Enter sends messages	Enter envía los mensajes
+Enter the 32-hex secret shared by the channel creator.	Introduce el secreto de 32 hex que comparte el creador del canal.
+Entering remote mode - rebooting...	Entrando en modo remoto - reiniciando...
+Erase all	Borrar todo
+Erases identity, contacts, channels, messages, Wi-Fi and all settings, then reboots.	Borra identidad, contactos, canales, mensajes, Wi-Fi y todos los ajustes, luego reinicia.
+Erasing everything…	Borrando todo…
+Every node you talk to must match. You can change this later in Settings.	Cada nodo debe coincidir. Puedes cambiarlo luego en Ajustes.
+Expansion Kit	Kit de expansión
+Experimental	Experimental
+Experimental - has known issues. Off = soft mouse cursor.	Experimental - tiene problemas conocidos. Off = cursor de ratón suave.
+Experimental saved	Experimental guardado
+Export failed (can't open file)	Error de exportación (no se abre el archivo)
+Export new backup	Nueva copia
+Export settings	Exportar ajustes
+Exporting settings…	Exportando ajustes…
+External antenna selected	Antena externa seleccionada
+Factory reset	Rest. de fábrica
+Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	¿Restablecer de fábrica?\n\nBorra identidad, contactos, canales, mensajes, Wi-Fi y todos los ajustes. Irreversible.
+Failed to save channel.	Error al guardar el canal.
+Favorites full (max %d)	Favoritos llenos (máx %d)
+Favorites unsupported	Favoritos no compatibles
+Fetching the app list from firmware.wadamesh.com	Obteniendo la lista de apps de firmware.wadamesh.com
+Files	Archivos
+Find	Buscar
+Finish	Finalizar
+Firmware beta_%d\nCouldn't reach the update server	Firmware beta_%d\nNo se pudo contactar el servidor
+Firmware:	Firmware:
+Flash on new message	Parpadear con mensaje nuevo
+Flood	Difusión
+Flood advert sent	Anuncio flood enviado
+Flood every	Flood cada
+Flood: relayed across the mesh (multi-hop).\nZero-hop: neighbours only (no relaying).	Flood: retransmitido por la malla (multisalto).\nZero-hop: solo vecinos (sin retransmisión).
+Folder created	Carpeta creada
+For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).	Para instalaciones con Launcher: guarda el firmware más reciente del canal elegido en la tarjeta SD (carpeta BINS).
+Forget network	Olvidar la red
+Format	Formatear
+Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased.	¿Formatear SD como MESHCOMOD (FAT32)?\nSe borrarán todos los datos de la tarjeta.
+Format failed (no card / SD error)	Error de formato (sin tarjeta / error SD)
+Frequency / bandwidth	Frecuencia / ancho de banda
+Full	Lleno
+GPS	GPS
+GPS %s · Buzzer %s	GPS %s · Zumbador %s
+GPS %s · Buzzer %s\n%s	GPS %s · Zumbador %s\n%s
+GPS off	GPS apagado
+GPS on	GPS activado
+GPS serial baud	Baudios serie GPS
+GPS unset	GPS sin definir
+GPS: acquiring...	GPS: buscando...
+GPS: fix	GPS: fijado
+GPS: off	GPS: apagado
+GPS: searching	GPS: buscando
+Game over  —  score %d   (tap to restart)	Fin del juego  —  puntos %d   (toca para reiniciar)
+Get	Obtener
+Get Started	Empezar
+Get test builds (beta)	Recibir versiones de prueba (beta)
+Go	Ir
+Green pressure  Gray altitude	Verde presión  Gris altitud
+Hashtag name	Nombre de hashtag
+Hidden - turn it back on in the Lua Store	Oculto - reactívalo en la Lua Store
+Hidden network	Red oculta
+Hide	Ocultar
+Hide device name	Ocultar nombre del dispositivo
+Hide this app from the drawer?	¿Ocultar esta app del cajón?
+High-gain receiver (FEM LNA)	Receptor de alta ganancia (FEM LNA)
+Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Muy experimental. Reenvía el texto, el nombre del remitente y la marca de tiempo de cada mensaje que recibe tu nodo a un broker MQTT, donde cualquiera que pueda leer el broker podrá leerlos. Los mensajes directos son privados, de otras personas que nunca aceptaron ser compartidas. Usa un broker que controles, define una clave de cifrado abajo, y nunca un broker público.
+History limit off	Límite de historial desactivado
+Hotkey saved	Atajo guardado
+How you'll appear to other nodes. You can change this later in Settings.	Cómo aparecerás ante otros nodos. Puedes cambiarlo en Ajustes.
+Humidity	Humedad
+I accept the privacy risk	Acepto el riesgo de privacidad
+Identity (public key)	Identidad (clave pública)
+Idle power-save	Ahorro de energía en reposo
+Idle sleep disabled	Suspensión en reposo desactivada
+Idle sleep enabled	Suspensión en reposo activada
+Image too large (>4 MB)	Imagen demasiado grande (>4 MB)
+Import	Importar
+Import backup	Importar copia de seguridad
+Import failed (bad/unreadable JSON)	Error de importación (JSON no válido)
+Import settings	Importar ajustes
+Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	¿Importar esta copia?\nReemplaza identidad,\ncanales y contactos,\nluego reinicia.
+Import: storage unavailable	Importar: almacenamiento no disponible
+Importing settings…	Importando ajustes…
+Inactive	Inactivo
+Info	Info
+Insert emoji / symbol	Insertar emoji / símbolo
+Install	Instalar
+Install a previous version	Instalar una versión anterior
+Install an earlier version	Instalar una versión anterior
+Install failed (network?)	Falló la instalación (¿red?)
+Install update	Instalar actualización
+Installed	Instaladas
+Installing…	Instalando…
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Interna (integrada)\nExterna (MMCX)\nAuto (antiguo, por transmisión)
+Internal has no folders	El interno no tiene carpetas
+Internal storage   %s / %s	Almacen. interno   %s / %s
+Invalid lat/lon	Lat/lon no válida
+Invalid max hops	Saltos máx no válidos
+Invalid radio values	Valores de radio no válidos
+Join	Unirse
+Join a hashtag channel	Unirse a un canal hashtag
+Join a private channel	Unirse a un canal privado
+Join hashtag channel	Unirse a canal de hashtag
+Join network	Unirse a la red
+Join private channel	Unirse a canal privado
+Join the public channel	Unirse al canal público
+Joined %.40s	Unido a %.40s
+Keep per chat (messages)	Conservar por chat (mensajes)
+Key already in use	Clave ya en uso
+Keyboard	Teclado
+Keyboard backlight	Retroiluminación del teclado
+Keyboard light auto	Luz del teclado auto
+Keyboard light off	Luz del teclado apagada
+Keyboard light on	Luz del teclado encendida
+Keyboard nav: WASDZ on	Nav. teclado: WASDZ act.
+Keyboard nav: off	Nav. teclado: desact.
+Keyboard navigation	Navegación por teclado
+LOS → %s	Línea de vista → %s
+Landscape (desktop)	Horizontal (escritorio)
+Landscape set - applies when remote mode starts.	Horizontal fijado - se aplica al iniciar el modo remoto.
+Language	Idioma
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Catálogo de idiomas no disponible - revisa el Wi-Fi y reabre esta pestaña.
+Language updated - restarting to apply it…	Idioma actualizado - reiniciando para aplicarlo…
+Languages	Idiomas
+Latitude	Latitud
+Leave empty if not required	Dejar vacío si no es necesario
+Leaving remote mode - rebooting...	Saliendo del modo remoto - reiniciando...
+Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Configuremos tu dispositivo.\n\nElegirás un nombre y tu región LoRa. Tarda alrededor de un minuto.
+Letters only	Solo letras
+LoRa antenna (P4)	Antena LoRa (P4)
+Loading catalog…	Cargando catálogo…
+Loading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive.	Cargando teselas del mapa…\n\nMantén el Wi-Fi conectado.\nLas teselas aparecen al llegar.
+Loading map…	Cargando mapa…
+Loading the language catalog…	Cargando catálogo de idiomas…
+Loading...	Cargando...
+Local every	Local cada
+Local sensors	Sensores locales
+Lock	Bloquear
+Lock screen	Pantalla de bloqueo
+Lock screen wallpaper	Fondo de pantalla de bloqueo
+Lock text colour	Color del texto de bloqueo
+Lock text colour set	Color de texto de bloqueo establecido
+Lock wallpaper	Fondo de bloqueo
+Lock wallpaper set	Fondo de bloqueo establecido
+Lock when screen off	Bloquear con pantalla apagada
+Locking…	Bloqueando…
+Locks when screen off\n(hold Backspace to unlock)	Se bloquea con la pantalla apagada\n(mantén Retroceso para desbloquear)
+Locks when screen off\n(hold the d-pad to unlock)	Se bloquea con pantalla apagada\n(mantén el d-pad para desbloquear)
+Locks when screen off\n(hold the trackball to unlock)	Se bloquea con pantalla apagada\n(mantén el trackball para desbloquear)
+Locks when screen off\n(press Volume Down to unlock)	Se bloquea con pantalla apagada\n(pulsa Bajar volumen para desbloquear)
+Locks when screen off\n(press the button to unlock)	Se bloquea con pantalla apagada\n(pulsa el botón para desbloquear)
+Log in again	Iniciar sesión de nuevo
+Logging in again...	Iniciando sesión de nuevo...
+Logging in…	Iniciando sesión…
+Login OK (perms %u)	Sesión OK (perms %u)
+Login failed	Error de inicio de sesión
+Logs	Registros
+Longitude	Longitud
+Lua Store	Tienda Lua
+MHz	MHz
+MQTT bridge	Puente MQTT
+Map	Mapa
+Map options	Opciones de mapa
+Map storage error.\nReflash the tiles partition.	Error de almacenamiento del mapa.\nReinstala la partición de teselas.
+Map storage error.\n\nSD card detected but the\ntile cache didn't mount.\nReboot to retry.	Error de almacenamiento del mapa.\n\nTarjeta SD detectada pero la\ncaché de teselas no se montó.\nReinicia para reintentar.
+Map tiles: microSD	Teselas: microSD
+Map tiles: microSD\n\n/maps/osm/z/x/y.png\n(or /tiles/z/x/y.jpg)\n\nMap appears when a tile\nfor this area is found.	Teselas del mapa: microSD\n\n/maps/osm/z/x/y.png\n(o /tiles/z/x/y.jpg)\n\nEl mapa aparece cuando se encuentra\nuna tesela para esta zona.
+Map tiles: server	Teselas: servidor
+Map — no tile pack on SPIFFS yet.\n\nUpload a tile pack to /tiles/<z>/<x>/<y>.jpg with the host-side generator.	Mapa — aún no hay paquete de teselas en SPIFFS.\n\nSube un paquete a /tiles/<z>/<x>/<y>.jpg con el generador del host.
+Map — set your location\nin Settings → Profile to\nshow the map here.	Mapa — establece tu ubicación\nen Ajustes → Perfil para\nmostrar el mapa aquí.
+Mark all chats and channels as read?	¿Marcar todos los chats y canales como leídos?
+Mark as read	Marcar como leído
+Mark read	Marcar como leído
+Marked read	Marcado como leído
+Max hops (0..64)	Saltos máx (0..64)
+Max zoom for this pack	Zoom máx para este paquete
+Memory detail	Detalle de memoria
+Mesh health: a flood advert is rebroadcast by every repeater in range, so frequent floods add airtime for the whole network. Keep them infrequent (a day or more). Your neighbours still see you from zero-hop adverts and your message replies, so flood mainly when distant nodes need to rediscover you. Leave both Off to advertise only when you tap the buttons above.	Salud de la malla: un advert flood lo reemite cada repetidor a su alcance, así que los floods frecuentes suman tiempo de aire para toda la red. Manténlos poco frecuentes (un día o más). Tus vecinos aún te ven por los adverts zero-hop y tus respuestas, así que haz flood sobre todo cuando nodos lejanos deban redescubrirte. Deja ambos apagados para anunciarte solo al pulsar los botones de arriba.
+Message	Mensaje
+Message LED	LED de mensaje
+Message LED off	LED de mensaje apagado
+Message LED on	LED de mensaje encendido
+Message deleted	Mensaje eliminado
+Message didn't get through.\nResend it?	El mensaje no llegó.\n¿Reenviarlo?
+Message info	Info del mensaje
+Message sound	Sonido de mensaje
+Min zoom for this pack	Zoom mín para este paquete
+Mode: BLE starting / low memory	Modo: BLE iniciando / poca memoria
+Model:	Modelo:
+Multi ACKs	Multi-ACK
+Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Repetir %s · RX boost %s
+Multi-byte routing (path hash)	Enrutamiento multibyte (hash de ruta)
+Mute @	Silenciar @
+Mute msgs	Silenciar msjs
+Mute notification sound	Silenciar sonido de notificación
+My position (no GPS fix)	Mi posición (sin fijación GPS)
+Name	Nombre
+Name can't be empty.	El nombre no puede estar vacío.
+Name fragment	Fragmento de nombre
+Name saved	Nombre guardado
+Navigation keys	Teclas de navegación
+Navigation keys — tap a row, then press a key	Teclas de navegación — toca una fila, luego pulsa una tecla
+Nearby on map	Cerca en el mapa
+Network name	Nombre de red
+Network name (SSID)	Nombre de red (SSID)
+New	Nuevo
+New DM	Nuevo MD
+New channel msg	Nuevo msj de canal
+New contact	Nuevo contacto
+New file	Nuevo archivo
+New folder	Nueva carpeta
+New game	Partida nueva
+New room msg	Nuevo msj de sala
+Next	Siguiente
+Night mode (invert)	Modo noche (invertir)
+No .json backups found.\nExport one first, or copy a\nmeshcore-backup.json to the\nSD card or internal flash.	No se hallaron copias .json.\nExporta una, o copia un\nmeshcore-backup.json a la\ntarjeta SD o flash interna.
+No @mentions yet	Aún no hay @menciones
+No Bluetooth on this device	Sin Bluetooth en este dispositivo
+No DM key	Sin clave de MD
+No GPS module on this device.	Sin módulo GPS en este dispositivo.
+No JPEGs found in /lock/.\nAdd images via the file\nmanager or an SD card.	No hay JPEG en /lock/.\nAñade imágenes con el gestor\nde archivos o una tarjeta SD.
+No SD card	Sin tarjeta SD
+No SD card (or unreadable format)	Sin tarjeta SD (o formato ilegible)
+No backups yet. Tap Export new backup above to create one.	Sin copias aún. Toca Nueva copia arriba para crear una.
+No battery history yet.\n\nLogged every 5 minutes.	Aún no hay historial de batería.\n\nRegistrado cada 5 minutos.
+No blocked users.\n\nLong-press a message and tap\nBlock to add one.	Sin usuarios bloqueados.\n\nMantén pulsado un mensaje y toca\nBloquear para añadir uno.
+No contact for thread	Sin contacto para el hilo
+No contact to trace	Sin contacto para rastrear
+No contacts have shared\na GPS location yet.	Ningún contacto ha compartido\nuna ubicación GPS aún.
+No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Aún no hay nodos descubiertos.\n\nTodo lo que se oiga por radio y no esté en tus contactos aparecerá aquí. Si el auto-añadir está desactivado, puedes añadir nodos manualmente a tus contactos.
+No earlier versions yet	Aún no hay versiones anteriores
+No local expansion data	Sin datos de expansión local
+No location for this contact	Sin ubicación para este contacto
+No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Sin almacenamiento de mapa.\n\nInserta una tarjeta SD para teselas\nWi-Fi (o reinstala para restaurar\nla partición de teselas).
+No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	No hay teselas aquí.\n\nConéctate a Wi-Fi (Ajustes → Wi-Fi)\npara descargar esta zona.
+No mapped repeaters in this route	Sin repetidores mapeados en esta ruta
+No networks found (2.4 GHz only)	No se encontraron redes (solo 2.4 GHz)
+No onboard GPS	Sin GPS integrado
+No other networks found	No se encontraron otras redes
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Aún sin posición. Un arranque en frío necesita cielo despejado y puede tardar varios minutos.
+No reply from %s	Sin respuesta de %s
+No reply. Check password, server,\nor device clock (device: %s)	Sin respuesta. Revisa contraseña, servidor\no reloj del dispositivo (dispositivo: %s)
+No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	No hay teselas guardadas aquí.\n\nConéctate a Wi-Fi (Ajustes → Wi-Fi)\npara descargar esta zona.\nLas teselas guardadas quedan disponibles sin conexión.
+No system time yet	Aún no hay hora del sistema
+No telemetry in this window.\nRequest one, or widen the range below.	Sin telemetría en esta ventana.\nSolicita una o amplía el rango abajo.
+No tiles (non-ESP32)	Sin teselas (no ESP32)
+No version known yet. Wi-Fi and a completed update check are needed first.	Aún no se conoce versión. Primero se necesitan Wi-Fi y una comprobación de actualización completada.
+Node name	Nombre del nodo
+Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime	Nodo\nRegión\nRadio\nSeñal\nContactos\nCanales\nBatería\nActividad
+Normal (100%)\nLarge (150%)\nHuge (200%)	Normal (100%)\nGrande (150%)\nEnorme (200%)
+Not enough free memory for Bluetooth. Turn Wi-Fi off first.	No hay memoria suficiente para Bluetooth. Desactiva primero el Wi-Fi.
+Not enough free memory for Wi-Fi. Turn Bluetooth off first.	No hay memoria suficiente para Wi-Fi. Desactiva primero el Bluetooth.
+Not enough free memory to fetch it. Reboot and try again.	No hay suficiente memoria libre para descargarlo. Reinicia e inténtalo de nuevo.
+Nothing selected	Nada seleccionado
+Notification sound set	Sonido de notificación establecido
+Notify on new contact	Avisar con nuevo contacto
+Off	Apagado
+Off\n1 day\n2 days\n3 days\n7 days	Apagado\n1 día\n2 días\n3 días\n7 días
+Off\n1\n2\n3\n5\n8	Apagado\n1\n2\n3\n5\n8
+Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours	Apagado\n60 min\n90 min\n2 horas\n3 horas\n4 horas
+Offline	Sin conexión
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Los mensajes más antiguos se descartan al superar esto. Un historial muy grande o ilimitado ralentiza la lista de chats.
+On - open the address above in a phone browser.	Activado - abre la dirección de arriba en el navegador del móvil.
+On boot	Al arrancar
+On map	En el mapa
+Open Advertise app	Abrir la app Advertise
+Open a .wav, then tap 'Set as notification sound'	Abre un .wav y toca 'Establecer como sonido de notificación'
+Open a JPEG, then tap 'Set as wallpaper'	Abre un JPEG y toca 'Establecer como fondo'
+Open chat	Abrir chat
+Open in a browser (same Wi-Fi):	Abrir en un navegador (mismo Wi-Fi):
+Open in web	Abrir en la web
+Open mesh console	Abrir consola de la malla
+Optional — type your network, or leave blank to skip.	Opcional — escribe tu red, o déjalo en blanco.
+Orange temp  Cyan humidity	Naranja temp.  Cian humedad
+Orientation (tap to rotate, reboots)	Orientación (toca para girar, reinicia)
+Out of memory	Sin memoria
+Overwrite oldest	Sobrescribir el más antiguo
+Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?	¿Sobrescribir los ajustes e identidad de la SD\ncon las copias internas\ny reiniciar?
+PNG isn't supported here\nUse a JPEG	PNG no se admite aquí\nUsa un JPEG
+Pairing code	Código de emparejamiento
+Pairing code saved — reboot to apply	Código de emparejamiento guardado — reinicia para aplicar
+Pairing code: %06lu	Código de emparejamiento: %06lu
+Pairing code: n/a	Código de emparejamiento: n/d
+Password (empty = open)	Contraseña (vacío = abierta)
+Password (empty = skip Wi-Fi)	Contraseña (vacío = omitir Wi-Fi)
+Password (optional)	Contraseña (opcional)
+Password too long	Contraseña demasiado larga
+Paste	Pegar
+Paste failed	Error al pegar
+Paste the 64-hex public key and a name. Useful when you want to DM someone before their advert has arrived.	Pega la clave pública de 64 hex y un nombre. Útil para enviar un MD antes de que llegue su anuncio.
+Pasted	Pegado
+Path hash: %u byte%s	Hash de ruta: %u byte%s
+Path reset	Ruta restablecida
+Path reset failed	Error al restablecer ruta
+Paused  —  score %d	En pausa  —  puntuación %d
+Per-transmit switching on	Conmutación por transmisión activada
+Pick colour	Elegir color
+Ping	Ping
+Ping failed	Error de ping
+Pinged (direct) — waiting…	Ping (directo) — esperando…
+Pinged (flood) — waiting…	Ping (flood) — esperando…
+Play	Reproducir
+Poll (min)	Sondeo (min)
+Poll every	Sondear cada
+Poll every %d min	Sondear cada %d min
+Port	Puerto
+Portrait set - applies when remote mode starts.	Vertical fijado - se aplica al iniciar el modo remoto.
+Position saved	Posición guardada
+Power	Energía
+Power off	Apagar
+Powering off… click trackball to wake	Apagando… pulsa el trackball para despertar
+Press a key…	Pulsa una tecla…
+Probe now	Sondear ahora
+Probing neighbours…	Sondeando vecinos…
+Profile	Perfil
+Pubkey must be 64 hex chars.	La clave pública debe tener 64 hex.
+Public channel ready	Canal público listo
+Public key (64 hex chars)	Clave pública (64 hex)
+Public key:	Clave pública:
+Publish channel messages	Publicar mensajes de canal
+Publish direct messages	Publicar mensajes directos
+Purge	Purgar
+Purge all discovered nodes?	¿Purgar todos los nodos descubiertos?
+Quick replies	Respuestas rápidas
+Quick reply	Respuesta rápida
+RAM %u%%  ·  PSRAM %u%%	RAM %u%%  ·  PSRAM %u%%
+RX %d entries · Raw %d entries	RX %d entradas · Raw %d entradas
+RX boosted gain	Ganancia RX aumentada
+RX log	Registro RX
+Radio & Mesh	Radio y mesh
+Radio + region set	Radio + región establecidas
+Radio applied	Radio aplicada
+Radio off	Radio apagada
+Radio: off	Radio: apagada
+Range test	Prueba de alcance
+RangeTest failed	Error de RangeTest
+RangeTest sent (direct)	RangeTest enviado (directo)
+RangeTest sent (flood)	RangeTest enviado (flood)
+Raw log	Registro sin procesar
+Reads packets on a background task so a busy screen can't drop them.	Lee paquetes en una tarea en segundo plano para que una pantalla ocupada no los pierda.
+Reboot	Reiniciar
+Reboot device	Reiniciar dispositivo
+Rebooting...	Reiniciando...
+Rebooting…	Reiniciando…
+Receive unreleased test firmware — newer features, but less tested. The update check and Install update both follow the beta channel.	Recibe firmware de prueba no publicado — funciones más nuevas, pero menos probadas. La comprobación y la instalación siguen el canal beta.
+Recently heard	Escuchado hace poco
+Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	¿Reformatear la SD como MESHCOMOD (FAT32)?\nSe borrarán TODOS los datos de la tarjeta.
+Region & scope	Región y alcance
+Region scope (#tag) for this channel.\nBlank = use the default scope.	Alcance de región (#tag) para este canal.\nVacío = alcance predeterminado.
+Region scope (#tag), blank = default.	Ámbito de región (#tag), vacío = predeterminado.
+Region scope (#tag, blank = none)	Alcance de región (#tag, vacío = ninguno)
+Remember password	Recordar contraseña
+Remote UI	Interfaz remota
+Remote UI (on)	Interfaz remota (activada)
+Remote access	Acceso remoto
+Remote terminal	Terminal remota
+Remote terminal (recommended)	Terminal remota (recomendada)
+Remote terminal off	Terminal remota desactivada
+Remove	Quitar
+Remove %s?	¿Eliminar %s?
+Remove channel	Eliminar canal
+Remove channel "%s"?\nLeaves it on this device only.	¿Quitar el canal "%s"?\nSolo de este dispositivo.
+Removed	Eliminada
+Removed from favorites	Quitado de favoritos
+Rename	Renombrar
+Rename failed	Error al renombrar
+Renamed	Renombrado
+Replay	Reproducir
+Replay route on map	Reproducir ruta en el mapa
+Replaying route…	Reproduciendo ruta…
+Resend	Reenviar
+Resend failed	Falló el reenvío
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Reenvía un mensaje hasta que un repetidor lo replique o el destinatario confirme. Desactívalo para enviar solo una vez.
+Reset	Restablecer
+Reset path	Restablecer ruta
+Restarting to apply the language…	Reiniciando para aplicar el idioma…
+Retry sends until heard	Reenviar hasta ser oído
+Reverse scrollball	Invertir la bola de desplazamiento
+Roll to highlight • click to insert	Desplaza para resaltar • pulsa para insertar
+Room is read-only for you.\nJoin with the room password to post.	La sala es de solo lectura para ti.\nÚnete con la contraseña de la sala para publicar.
+Rotating - reconnecting...	Girando - reconectando...
+Rotating… rebooting	Girando… reiniciando
+Run setup again	Ejecutar configuración de nuevo
+SD card   %s	Tarjeta SD   %s
+SD card   %s   (hold: format)	Tarjeta SD   %s   (mantener: formatear)
+SD card   (tap to mount)	Tarjeta SD   (toca para montar)
+SD card inserted	Tarjeta SD insertada
+SD card lost - reinsert to recover	Tarjeta SD perdida - reinsértala
+SD card remounted	Tarjeta SD remontada
+SD card removed	Tarjeta SD retirada
+SD download failed: %s	Fallo al descargar en SD: %s
+SD formatted - %s (MESHCOMOD)	SD formateada - %s (MESHCOMOD)
+SF	SF
+SF / CR / TX / AF	SF / CR / TX / AF
+SPIFFS %u/%u KB used	SPIFFS %u/%u KB usados
+SSID set — enter password, then Save	SSID establecido — escribe la contraseña y Guardar
+SSID too long	SSID demasiado largo
+Sample text	Texto de ejemplo
+Save	Guardar
+Save & restart	Guardar y reiniciar
+Save / turn on	Guardar / activar
+Save auto-add	Guardar auto-añadir
+Save experimental	Guardar experimental
+Save failed	Error al guardar
+Save name	Guardar nombre
+Save policy	Guardar política
+Save position	Guardar posición
+Save quick replies	Guardar respuestas rápidas
+Save report	Guardar informe
+Save update bin to SD	Guardar la actualización en SD
+Saved	Guardado
+Saved backups	Copias guardadas
+Saved network	Red guardada
+Saved profiles	Perfiles guardados
+Saved to slot %d	Guardado en ranura %d
+Saved — rebooting	Guardado — reiniciando
+Saved — reconnecting…	Guardado — reconectando…
+Saved: %s\nFlash it from the Launcher.	Guardado: %s\nFlashéalo desde el Launcher.
+Saving to SD… %d%%	Guardando en SD… %d%%
+Saving to SD… 0%	Guardando en SD… 0%
+Scan to open on phone	Escanea para abrir en el móvil
+Scanning…	Buscando…
+Scope direct msgs to region	Limitar mensajes directos a la región
+Screen locked	Pantalla bloqueada
+Screen timeout (s, 0 = never)	Tiempo de pantalla (s, 0 = nunca)
+Screen timeout (s, 0 = never, min 10)	Tiempo de pantalla (s, 0 = nunca, mín 10)
+Screen timeout: %ds	Tiempo de pantalla: %ds
+Screen timeout: never	Tiempo de pantalla: nunca
+Screen-off just dims	Pantalla apagada solo atenúa
+Screenshot needs an SD card	La captura necesita una tarjeta SD
+Screenshot: low memory	Captura: poca memoria
+Screenshot: no SD card	Captura: sin tarjeta SD
+Screenshot: write failed	Captura: fallo de escritura
+Scrollball: normal	Bola de desplazamiento: normal
+Scrollball: reversed	Bola de desplazamiento: invertida
+Search	Buscar
+Search contacts	Buscar contactos
+Secondary keyboards	Teclados secundarios
+Secret (32 hex chars)	Secreto (32 hex)
+Secret (32 hex, optional)	Secreto (32 hex, opcional)
+Secret must be 32 hex chars (or empty).	El secreto debe tener 32 hex (o vacío).
+Select a DM thread	Selecciona un hilo de MD
+Select all	Seleccionar todo
+Select network	Seleccionar red
+Send advert	Enviar anuncio
+Send advert now	Enviar anuncio ahora
+Send an advert now, or set how often you re-advertise.	Envía un advert ahora, o define con qué frecuencia re-adviertes.
+Send failed	Error al enviar
+Sender blocked	Remitente bloqueado
+Sensors tab: off (restart to apply)	Pestaña sensores: desactivada (reinicia para aplicar)
+Sensors tab: on (restart to apply)	Pestaña sensores: activada (reinicia para aplicar)
+Sent	Enviado
+Set	Fijar
+Set an SSID first	Establece primero un SSID
+Set as notification sound	Establecer como sonido de notificación
+Set as wallpaper	Establecer como fondo
+Set your location first	Establece primero tu ubicación
+Settings	Ajustes
+Setup complete	Configuración completa
+Share QR	Compartir QR
+Share channel	Compartir canal
+Share location in advert	Compartir ubicación en anuncio
+Share secret	Compartir secreto
+Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Comparte el secreto de 32 caracteres para que otros se unan. Déjalo vacío para uno aleatorio.
+Share: %s	Compartir: %s
+Show	Mostrar
+Show Sensors tab	Mostrar pestaña Sensores
+Show in the app drawer	Mostrar en el cajón de apps
+Show link lines	Mostrar líneas de enlace
+Show menu-bar letters	Mostrar letras de la barra
+Show on chart	Mostrar en gráfico
+Show on map	Mostrar en mapa
+Sightline	Línea de vista
+Signal & traffic	Señal y tráfico
+Signal probe	Sondeo de señal
+Skip	Omitir
+Sleep ready	Listo para dormir
+Slot %d cleared	Ranura %d borrada
+Slot empty	Ranura vacía
+Small\nMedium\nLarge	Pequeño\nMediano\nGrande
+Snake  —  swipe or roll the trackball	Snake  —  desliza o gira el trackball
+Sort	Ordenar
+Sound	Sonido
+Sound off	Sonido apagado
+Sound on	Sonido activado
+Sound: %s	Sonido: %s
+Start time	Hora de inicio
+Status	Estado
+Step 1 of 3	Paso 1 de 3
+Step 2 of 3	Paso 2 de 3
+Step 3 of 3	Paso 3 de 3
+Still analyzing the previous\npath… try again in a moment.	Aún analizando la ruta\nanterior… reinténtalo en un momento.
+Stop	Detener
+Storage	Almacenamiento
+Store	Tienda
+Store data on SD (reboot)	Guardar datos en SD (reinicio)
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Transmite la pantalla como imagen en vivo que tocas para controlar. Más pesado; el panel muestra un marcador. Cambiarlo reinicia el dispositivo.
+Switch	Cambiar
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	¿Cambiar a la antena externa?\n\nAsegúrate primero de que hay una antena conectada al conector externo. Transmitir sin nada puede dañar la radio.\n\nVuelve a la antena integrada en cada reinicio.
+Sync clock from system	Sincronizar reloj
+System	Sistema
+System info	Info del sistema
+TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nClientes WS %d  GPS %s  Zumbador %s
+TCP off	TCP apagado
+TCP on	TCP activado
+TOUCH BETA	TOUCH BETA
+TX	TX
+Tab hotkeys — tap a row, then press a key	Atajos de pestaña — toca una fila, luego una tecla
+Tap Use to switch - the device reboots to apply.	Toca Usar para cambiar: el dispositivo se reinicia para aplicarlo.
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Toca Usar para cambiar - el dispositivo se reinicia. Los archivos de idioma están en /lang del almacenamiento; edítalos o añade el tuyo.
+Tap a language; the device reboots to apply.	Toca un idioma; el dispositivo se reinicia.
+Taste the rainbow!	¡Saborea el arcoíris!
+Telemetry	Telemetría
+Telemetry req (direct)…	Solicitud telemetría (directo)…
+Telemetry req (flood)…	Solicitud telemetría (flood)…
+Telemetry req failed	Error de solicitud de telemetría
+Telemetry requests allowed	Solicitudes de telemetría permitidas
+Telemetry requests off	Solicitudes de telemetría desactivadas
+Telemetry req…	Solic. telem…
+Telemetry settings	Ajustes de telemetría
+Temperature	Temperatura
+Test builds: off	Compilaciones de prueba: off
+Test builds: on	Compilaciones de prueba: on
+Theme	Tema
+Theme colour	Color del tema
+Then pick a mode:	Luego elige un modo:
+This contact hasn't shared\na GPS position.	Este contacto no ha compartido\nuna posición GPS.
+This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Este dispositivo puede usar Wi-Fi y Bluetooth a la vez, como radio independiente y compañero del teléfono (app MeshCore).\n\nUsar ambos consume más RAM, así que activa solo lo que necesites.\n\nConfigúralos cuando quieras en Ajustes.
+Throttles the CPU when idle to save power	Reduce la CPU en reposo para ahorrar energía
+Tile reload needs Wi-Fi build	Recargar teselas requiere build Wi-Fi
+Tiles cleared — reconnect Wi-Fi to re-download	Teselas borradas — reconecta Wi-Fi para descargar de nuevo
+Tiles from SD card	Teselas desde tarjeta SD
+Time   %s	Hora   %s
+Time offset (vs automatic)	Desfase horario (vs automático)
+Time offset: %+d h	Desfase horario: %+d h
+Time range (hours ago)	Rango de tiempo (horas atrás)
+Time zone	Zona horaria
+Time zone: %s	Zona horaria: %s
+Tip: you can scan for networks in Settings → Network after setup.	Consejo: puedes buscar redes en Ajustes → Red tras la configuración.
+Today	Hoy
+Toggle GPS	Alternar GPS
+Too large to edit (>8 KB)	Demasiado grande para editar (>8 KB)
+Topographic map	Mapa topográfico
+Trace	Rastrear
+Trace SNR	Rastrear SNR
+Trace failed	Error de rastreo
+Trace route	Rastrear ruta
+Trace sent…	Rastreo enviado…
+Tracing route…	Rastreando ruta…
+Trackball navigates UI	Trackball navega la UI
+Trackball: cursor	Trackball: cursor
+Trackball: navigate UI	Trackball: navegar UI
+Turn Wi-Fi on first	Activa primero el Wi-Fi
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Activa el Wi-Fi y actualiza. Las apps ya instaladas siguen funcionando.
+Turn off	Apagar
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	¿Activar la conmutación antigua por transmisión?\n\nModo de diagnóstico, solo para comparar. Transmite por la antena integrada y escucha por la externa, así que tu señal saliente será mucho más débil que la entrante.\n\nVuelve a la antena integrada en cada reinicio.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	¿Desactivar el límite de historial?\n\nUn canal concurrido puede llenar todo el almacén de mensajes, lo que usa más espacio y ralentiza notablemente la lista y la app. Hazlo solo si de verdad necesitas todo el historial.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Actívalo y abre la dirección de abajo en cualquier navegador en el mismo Wi-Fi - sin app. La pantalla del dispositivo aparece en vivo y puedes tocar para controlarla.
+Type a URL, then Go	Escribe una URL y pulsa Ir
+Type a message...	Escribe un mensaje...
+Type a new 6-digit code · applies after a reboot	Escribe un nuevo código de 6 dígitos · se aplica al reiniciar
+Type your network name — or switch to Wi-Fi in Settings to scan	Escribe el nombre de la red — o cambia a Wi-Fi en Ajustes para buscar
+UI size (restart to apply)	Tamaño UI (reiniciar para aplicar)
+UI size saved — restart to apply	Tamaño UI guardado — reinicia para aplicar
+USB powered	Alimentado por USB
+Unblock	Desbloquear
+Unblocked	Desbloqueado
+Unfavorite it first	Quítalo de favoritos primero
+Unlocking…	Desbloqueando…
+Unmute @	Reactivar @
+Unmute msgs	Reactivar msjs
+Unread %d	Sin leer %d
+Unread %d\nRAM %u%%  ·  PSRAM %u%%	Sin leer %d\nRAM %u%%  ·  PSRAM %u%%
+Unsupported WAV (need 16-bit PCM)	WAV no compatible (requiere PCM de 16 bits)
+Update	Actualizar
+Update bin saved to SD	Bin de actualización guardado en SD
+Update complete.\nRebooting...	Actualización completa.\nReiniciando...
+Update manually at flasher.wadamesh.com\n(Wi-Fi update is paused for now)	Actualiza en flasher.wadamesh.com\n(la actualización Wi-Fi está en pausa)
+Update via the Launcher	Actualiza vía el Launcher
+Update via the Launcher / flasher.wadamesh.com	Actualiza vía el Launcher / flasher.wadamesh.com
+Update via the Launcher / flasher.wadamesh.com.	Actualiza vía el Launcher / flasher.wadamesh.com.
+Updated - rebooting…	Actualizado - reiniciando…
+Use	Usar
+Username (optional)	Nombre de usuario (opcional)
+Volume	Volumen
+W up  ·  A left  ·  D right  ·  Z down  ·  S select  ·  Q back	W arriba  ·  A izq.  ·  D der.  ·  Z abajo  ·  S elegir  ·  Q atrás
+WADA#15B6A6 MESH#	WADA#15B6A6 MESH#
+WADAMESH	WADAMESH
+Waiting for Wi-Fi...	Esperando Wi-Fi...
+Welcome to WADAMESH	Bienvenido a WADAMESH
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Mientras esté activo, cualquiera en tu Wi-Fi puede ver y controlar este dispositivo. Usa HTTP plano (solo red local).
+Wi-Fi	Wi-Fi
+Wi-Fi & Bluetooth	Wi-Fi y Bluetooth
+Wi-Fi is not enabled in this build.	Wi-Fi no está habilitado en este build.
+Wi-Fi isn't available on this build.	Wi-Fi no está disponible en este build.
+Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	Wi-Fi necesario para el perfil\ndel terreno de esta ruta.\nConéctate en Ajustes → Wi-Fi.
+Wi-Fi not connected	Wi-Fi no conectado
+Wi-Fi off	Wi-Fi apagado
+Wi-Fi on	Wi-Fi activado
+Wi-Fi on, scanning…	Wi-Fi activado, buscando…
+Wi-Fi saved (radio off)	Wi-Fi guardado (radio off)
+Wi-Fi saved, reconnecting	Wi-Fi guardado, reconectando
+Yesterday	Ayer
+You can run setup later in Settings → Device	Puedes ejecutar la configuración luego en Ajustes → Dispositivo
+Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Tu ubicación es desconocida.\nEstablece GPS / posición en\nAjustes → Perfil primero.
+Your name	Tu nombre
+Your own apps	Tus propias apps
+Zero-hop	Cero saltos
+Zero-hop advert sent	Anuncio zero-hop enviado
+Zoom: +/- buttons	Zoom: botones +/-
+client connected	cliente conectado
+command	comando
+contacts (%d):	contactos (%d):
+diag boot...	arranque diag...
+double-tap SPACE cycles through the ones you enable	doble toque en ESPACIO recorre los activados
+drive the UI without the screen; keys still type in text fields	controla la UI sin la pantalla; las teclas siguen escribiendo
+e.g. Family	p. ej. Familia
+e.g. mesh	p. ej. mesh
+from	de
+h  to	h  a
+hold Backspace to unlock	mantén Retroceso para desbloquear
+hold the d-pad to unlock	mantén el d-pad para desbloquear
+hold the trackball to unlock	mantén el trackball para desbloquear
+kHz	kHz
+keep holding	mantén pulsado
+last wake: 	último despertar: 
+leave empty to generate	dejar vacío para generar
+lights the keyboard + wakes the screen on an incoming message	ilumina el teclado + despierta la pantalla al recibir un mensaje
+mesh  link  armed	enlace mesh  armado
+mesh busy	malla ocupada
+min (0=off)	min (0=apagado)
+mkdir failed	Error al crear carpeta
+n/a in this build	n/d en este build
+now on channel %s	ahora en el canal %s
+now talking to %s	ahora hablando con %s
+off	desactivado
+off = Enter adds a new line; tap Send to send	off = Enter añade una línea nueva; toca Enviar para enviar
+on	activado
+peak --	pico --
+pick accented letters as you type; off = plain typing	elige letras acentuadas al escribir; desactivado = escritura simple
+press Volume Down to unlock	pulsa Bajar Volumen para desbloquear
+push past a screen edge to scroll content	empuja más allá del borde para desplazar
+score %d	puntos %d
+search	buscar
+tap for details	toca para detalles
+tap the language key (e.g. EN) on the keyboard to cycle the ones you enable	toca la tecla de idioma (p. ej. EN) del teclado para recorrer las activadas
+tap to cancel	toca para cancelar
+tap to exit full screen	toca para salir de pantalla completa
+zoom	zoom
+zoom %d	zoom %d
+~17 dB amp for quiet/remote areas; turn off in noisy spots.	amplificador ~17 dB para zonas tranquilas/remotas; apaga en zonas ruidosas.
+© OpenStreetMap	© OpenStreetMap
+© OpenTopoMap	© OpenTopoMap
