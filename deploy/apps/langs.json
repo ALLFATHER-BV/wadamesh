@@ -1,15 +1,15 @@
 {"langs":[
-  {"code":"bg","name":"Български","ver":"4"},
-  {"code":"de","name":"Deutsch","ver":"4"},
-  {"code":"el","name":"Ελληνικά","ver":"4"},
-  {"code":"es","name":"Español","ver":"4"},
-  {"code":"fr","name":"Français","ver":"4"},
-  {"code":"hu","name":"Magyar","ver":"4"},
-  {"code":"it","name":"Italiano","ver":"4"},
-  {"code":"nl","name":"Nederlands","ver":"4"},
-  {"code":"pt-br","name":"Português (BR)","ver":"4"},
-  {"code":"ro","name":"Română","ver":"4"},
-  {"code":"ru","name":"Русский","ver":"4"},
-  {"code":"sr","name":"Српски","ver":"4"},
-  {"code":"uk","name":"Українська","ver":"4"}
+  {"code":"bg","name":"Български","ver":"5"},
+  {"code":"de","name":"Deutsch","ver":"5"},
+  {"code":"el","name":"Ελληνικά","ver":"5"},
+  {"code":"es","name":"Español","ver":"5"},
+  {"code":"fr","name":"Français","ver":"5"},
+  {"code":"hu","name":"Magyar","ver":"5"},
+  {"code":"it","name":"Italiano","ver":"5"},
+  {"code":"nl","name":"Nederlands","ver":"5"},
+  {"code":"pt-br","name":"Português (BR)","ver":"5"},
+  {"code":"ro","name":"Română","ver":"5"},
+  {"code":"ru","name":"Русский","ver":"5"},
+  {"code":"sr","name":"Српски","ver":"5"},
+  {"code":"uk","name":"Українська","ver":"5"}
 ]}

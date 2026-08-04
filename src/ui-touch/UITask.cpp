@@ -24311,22 +24311,33 @@ int luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url,
   http.setUserAgent("wadamesh-touch");
   if (!http.begin(client, url)) return -1;
   if (http.GET() != 200) { http.end(); return -1; }
+  // Read by Content-Length. The old loop trusted connected() to mean "stream
+  // done" and could quit after the first TCP window (~16 KB) with the rest
+  // still in flight — a 49 KB language file came back one-third read. Now the
+  // only clean exit for a known length is receiving ALL of it; stalls get a
+  // progress-based 4 s grace (30 s absolute cap), and a short read FAILS
+  // instead of handing back a truncated buffer.
+  const int want = http.getSize();          // -1 when the server sent no length
   auto* st = http.getStreamPtr();
   size_t total = 0;
   const unsigned long t0 = millis();
-  while (http.connected() && total < cap - 1 && (millis() - t0) < 15000) {
+  unsigned long last_progress = millis();
+  while (total < cap - 1 && (millis() - t0) < 30000) {
+    if (want > 0 && total >= (size_t)want) break;
     int avail = st ? st->available() : 0;
     if (avail <= 0) {
-      if (!st || !st->connected()) break;
+      if (want <= 0 && (!st || (!st->connected() && !st->available()))) break;
+      if (millis() - last_progress > 4000) break;
       vTaskDelay(pdMS_TO_TICKS(5));
       continue;
     }
     int rd = st->read((uint8_t*)buf + total, min((size_t)avail, cap - 1 - total));
-    if (rd <= 0) break;
-    total += rd;
+    if (rd > 0) { total += rd; last_progress = millis(); }
+    else vTaskDelay(pdMS_TO_TICKS(5));
   }
   http.end();
   buf[total] = 0;
+  if (want > 0 && total < (size_t)want) return -1;   // truncated = failure, not data
   return (int)total;
 }
 
@@ -24383,6 +24394,7 @@ static volatile bool s_langdl_ok = false;   // volatile: written on the worker, 
 static char s_langdl_code[12];
 static char s_langdl_ver[8];                 // catalog ver -> immutable /lang/<ver>/ URL ("" = resolve on the worker)
 static bool s_langdl_reboot = false;         // an explicit Update of the ACTIVE language reboots on success
+static bool s_langdl_silent = false;         // boot self-heal: no user-facing toast on its result
 // Installed-apps rescan, moved off the UI thread (SD listing caused open lag).
 static volatile bool s_luascan_request = false, s_luascan_done = false;
 static void luaStoreScanInstalled(bool force = false);   // defined with the Store page
@@ -24396,6 +24408,40 @@ static void luaStoreFetchLangCatalogWorker(WiFiClient& client, HTTPClient& http)
   s_langcat_buf[0] = 0;
   luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/langs.json",
                   s_langcat_buf, kCap);
+}
+
+// Chunked writer through an internal bounce buffer, tolerant of transient
+// short/zero returns (retries with backoff; four dead attempts = give up).
+static size_t langWriteAll(File& f, const uint8_t* src, size_t n) {
+  uint8_t* bounce = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!bounce) return 0;
+  size_t wr = 0;
+  int stalls = 0;
+  while (wr < n) {
+    size_t step = n - wr;
+    if (step > 4096) step = 4096;
+    memcpy(bounce, src + wr, step);
+    size_t w = f.write(bounce, step);
+    if (!w) {
+      if (++stalls > 3) break;
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
+    stalls = 0;
+    wr += w;
+  }
+  heap_caps_free(bounce);
+  return wr;
+}
+
+// Verify the temp file's on-card size, then atomically replace the target.
+static bool langVerifyInstall(fs::FS* fs, const char* tmp, const char* path, size_t n) {
+  File chk = fs->open(tmp, "r");
+  const size_t on_card = chk ? (size_t)chk.size() : 0;
+  if (chk) chk.close();
+  if (on_card != n) return false;
+  fs->remove(path);
+  return fs->rename(tmp, path);
 }
 
 // Download a language file into <data>/lang/<code>.lang. With a known catalog
@@ -24422,27 +24468,67 @@ static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
   size_t wr = 0;
   bool opened = false;
   if (n > 16) {
-    char rel[28], path[64];
+    // Write to a TEMP file, verify every byte landed, then rename over the real
+    // one. A truncated direct write used to leave a file whose '# ver:' header
+    // (at the TOP) already claimed the new version while the appended rows (at
+    // the END) were gone — "v4 installed", no Update offered, translations
+    // missing. Now a failed write changes nothing and Update stays available.
+    char rel[32], path[64], tmp[64];
+    snprintf(rel, sizeof rel, "/lang/%s.tmp", code);
+    luaHostAppPath(tmp, sizeof tmp, rel);
     snprintf(rel, sizeof rel, "/lang/%s.lang", code);
     luaHostAppPath(path, sizeof path, rel);
-    File f = fs->open(path, "w");
+    File f = fs->open(tmp, "w");
     opened = (bool)f;
     if (f) {
-      // Chunked: one big f.write can return a SHORT count on FAT without any
-      // error — which looked like "Download failed" while the file was in fact
-      // (mostly) written. Loop until done; only a zero-progress write is fatal.
-      while (wr < (size_t)n) {
-        size_t step = (size_t)n - wr;
-        if (step > 8192) step = 8192;
-        size_t w = f.write((const uint8_t*)buf + wr, step);
-        if (!w) break;
-        wr += w;
-      }
+      wr = langWriteAll(f, (const uint8_t*)buf, (size_t)n);
       f.close();
-      ok = (wr == (size_t)n);
+      ok = langVerifyInstall(fs, tmp, path, (size_t)n);
+    }
+    if (!ok && opened) {
+      fs->remove(tmp);
+      // The write dies at the first cluster boundary while app installs to
+      // /apps succeed — the signature of a FAT chain corrupted under today's
+      // mid-write hard resets, localized to /lang. Prove it with an identical
+      // control write in /apps, then rebuild /lang from scratch and retry.
+      char ctl[64];
+      luaHostAppPath(ctl, sizeof ctl, "/apps/langtest.tmp");
+      size_t wr2 = 0;
+      File cf = fs->open(ctl, "w");
+      if (cf) { wr2 = langWriteAll(cf, (const uint8_t*)buf, (size_t)n); cf.close(); }
+      fs->remove(ctl);
+      size_t wr3 = 0;
+      if (wr2 == (size_t)n) {
+        // Healthy elsewhere -> nuke and recreate the /lang directory.
+        char ldir[48];
+        luaHostAppPath(ldir, sizeof ldir, "/lang");
+        File d = fs->open(ldir);
+        if (d && d.isDirectory()) {
+          File e;
+          while ((e = d.openNextFile())) {
+            char victim[80];
+            const char* nm = e.name();
+            e.close();
+            if (nm[0] == '/') snprintf(victim, sizeof victim, "%s", nm);
+            else snprintf(victim, sizeof victim, "%s/%s", ldir, nm);
+            fs->remove(victim);
+          }
+        }
+        if (d) d.close();
+        fs->rmdir(ldir);
+        fs->mkdir(ldir);
+        File rf = fs->open(tmp, "w");
+        if (rf) { wr3 = langWriteAll(rf, (const uint8_t*)buf, (size_t)n); rf.close(); }
+        ok = langVerifyInstall(fs, tmp, path, (size_t)n);
+        if (!ok) fs->remove(tmp);
+      }
+      Serial.printf("[LANGDL] repair ctl=%u relang=%u ok=%d\n", (unsigned)wr2, (unsigned)wr3, (int)ok);
     }
   }
-  Serial.printf("[LANGDL] %s n=%d open=%d wr=%u ok=%d\n", url, n, (int)opened, (unsigned)wr, (int)ok);
+  char root[16];
+  luaHostAppPath(root, sizeof root, "");   // "" = internal flash, "/meshcomod" = SD
+  Serial.printf("[LANGDL] %s n=%d root=%s open=%d wr=%u ok=%d\n",
+                url, n, root[0] ? root : "(internal)", (int)opened, (unsigned)wr, (int)ok);
   heap_caps_free(buf);
   return ok;
 }
@@ -24480,6 +24566,7 @@ static void uiLangFileBootLoad() {
     snprintf(s_langdl_code, sizeof s_langdl_code, "%s", code);
     s_langdl_ver[0] = 0;          // no catalog yet — the worker resolves the ver
     s_langdl_reboot = false;      // background heal: never reboot under the user
+    s_langdl_silent = true;       // and never toast — it just retries next boot
     s_langdl_done = false;
     s_langdl_request = true;
     ensureTileFetchTaskRunning();
@@ -37065,6 +37152,7 @@ static int  s_luastore_tab = 0;           // 0 = Apps, 1 = Built-in, 2 = Languag
 static lv_obj_t* s_luastore_tabbtn[3] = { nullptr, nullptr, nullptr };
 
 static void luaStoreRebuildList();        // fwd
+static void langRebootWithNotice(const char* msg);   // fwd (Languages tab actions)
 void settingsApplyHiddenCats();           // fwd (defined with makeSettings)
 static void closeLuaStorePage() {
   if (s_luastore_poll) { lv_timer_del(s_luastore_poll); s_luastore_poll = nullptr; }
@@ -37159,18 +37247,16 @@ static void luaStorePollCb(lv_timer_t* t) {
     s_luastore_busy = false;
     if (s_langdl_ok && s_langdl_reboot) {   // updated the active language
       s_langdl_reboot = false;
-      if (g_lv.task) {
-        g_lv.task->showAlert(TR("Updated - rebooting\xE2\x80\xA6"), 1200);
-        g_lv.task->rebootDevice();
-      }
+      langRebootWithNotice(TR("Language updated - restarting to apply it\xE2\x80\xA6"));
       return;
     }
     s_langdl_reboot = false;
     if (s_langdl_ok) luaStoreScanLangs();
     luaStoreRebuildList();
-    if (g_lv.task) g_lv.task->showAlert(
-        s_langdl_ok ? TR("Downloaded - tap Use to switch") : TR("Download failed (network?)"),
+    if (g_lv.task && !s_langdl_silent) g_lv.task->showAlert(
+        s_langdl_ok ? TR("Downloaded - tap Use to switch") : TR("Download failed"),
         s_langdl_ok ? 1800 : 2200);
+    s_langdl_silent = false;
   }
   if (s_luainst_done) {
     s_luainst_done = false;
@@ -37213,6 +37299,22 @@ static void luaStoreHideSwitchCb(lv_event_t* e) {
 }
 
 // ---- Languages tab actions ----
+// Every language change needs a restart to re-render the whole UI. Show WHY
+// first: showAlert + an immediate rebootDevice() never painted (the reboot ran
+// before LVGL's next frame), so the device just went dark under the user's
+// finger. Schedule the reboot instead, so the notice is on screen for it.
+static void langRebootTimerCb(lv_timer_t* t) {
+  (void)t;                                  // repeat_count 1 -> LVGL deletes it
+  if (g_lv.task) g_lv.task->rebootDevice();
+}
+
+static void langRebootWithNotice(const char* msg) {
+  s_luastore_busy = true;                   // swallow further taps on the way out
+  if (g_lv.task) g_lv.task->showAlert(msg, 2400);
+  lv_timer_t* t = lv_timer_create(langRebootTimerCb, 1800, nullptr);
+  if (t) lv_timer_set_repeat_count(t, 1);
+  else if (g_lv.task) g_lv.task->rebootDevice();   // no timer slot: don't strand the user
+}
 // Switching language reboots (same as the Settings picker) so the whole UI —
 // fonts, keyboard layout, every built label — re-renders consistently.
 static void luaStoreLangBuiltinCb(lv_event_t* e) {
@@ -37223,7 +37325,7 @@ static void luaStoreLangBuiltinCb(lv_event_t* e) {
   touchPrefsSetUiLang(l);
   i18nSetLang(l);
   kbApplyUiLangDefault(l);
-  if (g_lv.task) g_lv.task->rebootDevice();
+  langRebootWithNotice(TR("Restarting to apply the language\xE2\x80\xA6"));
 }
 
 static void luaStoreLangUseCb(lv_event_t* e) {
@@ -37241,7 +37343,7 @@ static void luaStoreLangUseCb(lv_event_t* e) {
   touchPrefsSetUiLang(base_lang);
   touchPrefsSetLangFile(s_langinst[i].code);
   kbApplyUiLangDefault(base_lang);
-  if (g_lv.task) g_lv.task->rebootDevice();
+  langRebootWithNotice(TR("Restarting to apply the language\xE2\x80\xA6"));
 }
 
 static void luaStoreLangGetCb(lv_event_t* e) {   // Get AND Update (same download)
@@ -37250,6 +37352,7 @@ static void luaStoreLangGetCb(lv_event_t* e) {   // Get AND Update (same downloa
   if (i < 0 || i >= s_langcat_n) return;
   snprintf(s_langdl_code, sizeof s_langdl_code, "%s", s_langcat[i].code);
   snprintf(s_langdl_ver, sizeof s_langdl_ver, "%s", s_langcat[i].ver);
+  s_langdl_silent = false;
   // Updating the language currently in use: apply it by rebooting on success —
   // the overlay in PSRAM is the old file, so a reboot is the honest apply.
   char cur[12];
