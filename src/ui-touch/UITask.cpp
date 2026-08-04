@@ -2782,10 +2782,8 @@ static lv_obj_t* addCloseXBadge(lv_obj_t* card, lv_event_cb_t cb, void* user_dat
   lv_obj_add_flag(x, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(x, LV_OBJ_FLAG_FLOATING);
   lv_obj_add_flag(x, LV_OBJ_FLAG_IGNORE_LAYOUT);
-  // A solid reverse-video focus fill turns the invisible 32-px hit target into
-  // a large white disk on keyboard-only devices. Keep the focus indication to
-  // the same restrained accent tint used by app-drawer chrome.
-  lv_obj_add_flag(x, NAV_ACCENTFOCUS_FLAG);
+  // Keep the normal reverse-video navigation focus: a bright 24-px disk with
+  // the child X inverted to black. The larger 32-px hit target stays invisible.
   lv_obj_clear_flag(x, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_move_foreground(x);
   lv_obj_add_event_cb(x, cb, LV_EVENT_CLICKED, user_data);
