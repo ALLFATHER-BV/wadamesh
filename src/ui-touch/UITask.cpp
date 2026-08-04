@@ -37007,6 +37007,7 @@ static const LuaInstApp* luaStoreFindInstalled(const char* id) {
 static lv_obj_t* s_luastore_root = nullptr;
 static lv_obj_t* s_luastore_list = nullptr;
 static lv_timer_t* s_luastore_poll = nullptr;
+static lv_coord_t s_luastore_w = 240;   // list width, set at open — pre-layout get_width() reads 0
 static bool s_luastore_busy = false;      // an install/remove is in flight
 
 static void luaStoreRebuildList();        // fwd
@@ -37105,7 +37106,7 @@ static void luaStoreRebuildList() {
   if (!s_luastore_list) return;
   lv_obj_clean(s_luastore_list);
   const uint32_t hide = touchPrefsGetAppHide();
-  const lv_coord_t W = lv_obj_get_width(s_luastore_list);
+  const lv_coord_t W = s_luastore_w;
 
   auto section = [&](const char* txt) {
     lv_obj_t* l = lv_label_create(s_luastore_list);
@@ -37241,17 +37242,23 @@ static void luaStoreRebuildList() {
 static void openLuaStorePage() {
   closeLuaStorePage();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
-  s_luastore_root = lv_obj_create(lv_scr_act());   // tall-bar page: parent on scr_act (tall-bar-page-layering)
+  // lv_layer_top, below the status bar, exactly like the Monitor/Discover pages:
+  // created AFTER the app drawer (also on layer_top), so it stacks above it and
+  // closing reveals the drawer again.
+  s_luastore_root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_luastore_root);
-  lv_obj_set_size(s_luastore_root, sw, sh);
+  lv_obj_set_size(s_luastore_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_luastore_root, 0, STATUSBAR_H);
   lv_obj_set_style_bg_color(s_luastore_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_luastore_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_luastore_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_move_foreground(s_luastore_root);
 
   s_luastore_list = lv_obj_create(s_luastore_root);
   lv_obj_remove_style_all(s_luastore_list);
-  lv_obj_set_size(s_luastore_list, sw - 12, sh - STATUSBAR_H - 12);
-  lv_obj_set_pos(s_luastore_list, 6, STATUSBAR_H + 8);
+  s_luastore_w = sw - 12;
+  lv_obj_set_size(s_luastore_list, s_luastore_w, sh - STATUSBAR_H - 16);
+  lv_obj_set_pos(s_luastore_list, 6, 8);
   lv_obj_set_scroll_dir(s_luastore_list, LV_DIR_VER);
   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
