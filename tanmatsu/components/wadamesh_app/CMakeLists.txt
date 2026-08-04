@@ -10,9 +10,12 @@ file(GLOB_RECURSE APP_SRCS "${APP}/*.cpp" "${APP}/*.c" "${REPO}/variants/tanmats
 list(FILTER APP_SRCS EXCLUDE REGEX "/main\\.cpp$")
 list(FILTER APP_SRCS EXCLUDE REGEX "/helpers/input/(HeltecV4CapTouch|TDeckKeyboard|TDeckTouch|TDeckTrackball)\\.cpp$")
 
+# Vendored Lua 5.4 VM (lib/lua) — the Lua app host (LUA_APPS.md). Plain C, RISC-V clean.
+file(GLOB LUA_SRCS "${REPO}/lib/lua/src/*.c")
+
 idf_component_register(
-  SRCS ${APP_SRCS}
-  INCLUDE_DIRS "${APP}" "${APP}/ui-touch" "${REPO}/include" "${REPO}/variants/tanmatsu"
+  SRCS ${APP_SRCS} ${LUA_SRCS}
+  INCLUDE_DIRS "${APP}" "${APP}/ui-touch" "${REPO}/include" "${REPO}/variants/tanmatsu" "${REPO}/lib/lua/src"
   REQUIRES espressif__arduino-esp32 meshcore lvgl ardlibs nvs_flash badge-bsp esp_lcd fatfs
            tanmatsu-lora tanmatsu-wifi h2zero__esp-nimble-cpp bt
            soc esp_hw_support app_update driver esp_timer esp_partition spi_flash esp_adc esp_pm espcoredump

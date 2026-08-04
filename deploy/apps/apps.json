@@ -1,0 +1,5 @@
+{"apps":[
+  {"id":"snake","name":"Snake","ver":"1.0","desc":"The classic, in Lua. Swipe to steer."},
+  {"id":"monitor","name":"RF Monitor","ver":"1.0","desc":"Recently heard packets + live radio stats."},
+  {"id":"airtime","name":"Airtime","ver":"1.0","desc":"Channel utilization from the mesh airtime counters."}
+]}

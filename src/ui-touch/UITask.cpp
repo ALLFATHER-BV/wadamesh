@@ -24596,8 +24596,8 @@ static bool luaJsonField(const char* buf, const char* key, char* out, size_t cap
 }
 
 // GET url into a PSRAM buffer (cap'd). Returns bytes read, -1 on failure.
-static int luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url,
-                           char* buf, size_t cap) {
+int luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url,
+                    char* buf, size_t cap) {   // shared with LuaAppHost wada.net
   http.setReuse(false);
   http.setConnectTimeout(8000);
   http.setTimeout(12000);
@@ -24945,6 +24945,11 @@ static void tileFetchTaskFn(void* arg) {
       s_luainst_ok = luaStoreDownloadWorker(client, http, s_luainst_id, s_luainst_ver);
       s_luainst_done = true;
       continue;
+    }
+    {
+      extern bool luaNetWorkerPending();
+      extern void luaNetWorkerService(WiFiClient& client, HTTPClient& http);
+      if (luaNetWorkerPending()) { luaNetWorkerService(client, http); continue; }
     }
 #endif
 #if CAP_SD
@@ -42848,6 +42853,42 @@ void luaHostToast(const char* msg, int ms) {
 fs::FS* luaHostAppFs() { return uiDataFsReady() ? s_ui_data_fs : nullptr; }
 void luaHostAppPath(char* out, size_t cap, const char* rel) {
   snprintf(out, cap, "%s%s", s_ui_data_root, rel);   // SD-rooted stores prefix /meshcomod
+}
+// ---- wada.mesh read-only bridges (no mesh types cross into the host TU) ----
+int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago) {
+  ContactInfo ci;
+  if (idx < 0 || !the_mesh.getContactByIdx((uint32_t)idx, ci)) return 0;
+  snprintf(name, name_cap, "%s", ci.name);
+  *type = ci.type;
+  uint32_t now = the_mesh.getRTCClock() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
+  *secs_ago = (ci.last_advert_timestamp && now > ci.last_advert_timestamp)
+                  ? now - ci.last_advert_timestamp : 0;
+  return 1;
+}
+int luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops) {
+  MyMesh::UiRxRec r;
+  if (idx < 0 || !the_mesh.uiRxLogGet((uint8_t)idx, r)) return 0;
+  *ms_ago = millis() - r.ms;
+  *ptype  = r.ptype;
+  *rssi   = r.rssi;
+  *snr    = (float)r.snr_q4 / 4.0f;
+  *hops   = r.hops;
+  return 1;
+}
+void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uint32_t* tx_air_s,
+                       uint32_t* rx_pkts, uint32_t* rx_err, int* budget_ms) {
+  *rssi     = radio_driver.getCurrentRSSI();
+  *noise    = radio_driver.getNoiseFloor();
+  *rx_air_s = (uint32_t)(the_mesh.getReceiveAirTime() / 1000UL);
+  *tx_air_s = (uint32_t)(the_mesh.getTotalAirTime() / 1000UL);
+  *rx_pkts  = radio_driver.getPacketsRecv();
+  *rx_err   = radio_driver.getPacketsRecvErrors();
+  *budget_ms = (int)the_mesh.getRemainingTxBudget();
+}
+void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon) {
+  snprintf(name, name_cap, "%s", the_mesh.getNodePrefs()->node_name);
+  *lat = g_lv.task ? g_lv.task->getNodeLat() : 0.0;
+  *lon = g_lv.task ? g_lv.task->getNodeLon() : 0.0;
 }
 #endif
 // True when the chat history lives on a removable SD card (T-Deck SPI SD or the

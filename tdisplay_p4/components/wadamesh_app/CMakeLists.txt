@@ -13,9 +13,12 @@ file(GLOB_RECURSE APP_SRCS "${APP}/*.cpp" "${APP}/*.c" "${REPO}/variants/tdispla
 list(FILTER APP_SRCS EXCLUDE REGEX "/main\\.cpp$")
 list(FILTER APP_SRCS EXCLUDE REGEX "/helpers/input/(HeltecV4CapTouch|TDeckKeyboard|TDeckTouch|TDeckTrackball|RakTapV2Touch)\\.cpp$")
 
+# Vendored Lua 5.4 VM (lib/lua) — the Lua app host (LUA_APPS.md). Plain C, RISC-V clean.
+file(GLOB LUA_SRCS "${REPO}/lib/lua/src/*.c")
+
 idf_component_register(
-  SRCS ${APP_SRCS}
-  INCLUDE_DIRS "${APP}" "${APP}/ui-touch" "${REPO}/include" "${REPO}/variants/tdisplay_p4"
+  SRCS ${APP_SRCS} ${LUA_SRCS}
+  INCLUDE_DIRS "${APP}" "${APP}/ui-touch" "${REPO}/include" "${REPO}/variants/tdisplay_p4" "${REPO}/lib/lua/src"
   REQUIRES espressif__arduino-esp32 meshcore lvgl ardlibs RadioLib nvs_flash esp_lcd fatfs
            esp_driver_i2c esp_driver_gpio esp_hosted h2zero__esp-nimble-cpp bt
            soc esp_hw_support app_update driver esp_timer esp_partition spi_flash esp_adc esp_pm espcoredump

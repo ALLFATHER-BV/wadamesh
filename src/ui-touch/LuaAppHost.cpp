@@ -24,6 +24,13 @@ extern const lv_font_t* luaHostFontForSize(int size_class);       // 12/14/16 ->
 extern void             luaHostToast(const char* msg, int ms);    // showAlert passthrough
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
 extern void             luaHostAppPath(char* out, size_t cap, const char* rel);   // prefixes the store root
+extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago);
+extern int  luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops);
+extern void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uint32_t* tx_air_s,
+                              uint32_t* rx_pkts, uint32_t* rx_err, int* budget_ms);
+extern void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon);
+class WiFiClient; class HTTPClient;
+extern int  luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url, char* buf, size_t cap);
 
 // ---------------------------------------------------------------------------
 // 1) allocator + budget
@@ -467,6 +474,109 @@ void pressCb(lv_event_t* e) {
             p.x - a.x1, p.y - a.y1);
 }
 
+// ---- wada.mesh (read-only) ----
+int meshContacts(lua_State* L) {
+  lua_newtable(L);
+  char name[36]; int type; uint32_t ago;
+  for (int i = 0, out = 0; i < 200 && out < 100; i++) {
+    if (!luaHostContactAt(i, name, sizeof name, &type, &ago)) break;
+    lua_createtable(L, 0, 3);
+    lua_pushstring(L, name);          lua_setfield(L, -2, "name");
+    lua_pushinteger(L, type);         lua_setfield(L, -2, "type");
+    lua_pushinteger(L, (lua_Integer)ago); lua_setfield(L, -2, "ago_s");
+    lua_rawseti(L, -2, ++out);
+  }
+  return 1;
+}
+int meshRxLog(lua_State* L) {
+  lua_newtable(L);
+  uint32_t ms_ago; int ptype, rssi, hops; float snr;
+  for (int i = 0, out = 0; i < 64; i++) {
+    if (!luaHostRxLogAt(i, &ms_ago, &ptype, &rssi, &snr, &hops)) break;
+    lua_createtable(L, 0, 5);
+    lua_pushinteger(L, (lua_Integer)ms_ago); lua_setfield(L, -2, "ago_ms");
+    lua_pushinteger(L, ptype);               lua_setfield(L, -2, "type");
+    lua_pushinteger(L, rssi);                lua_setfield(L, -2, "rssi");
+    lua_pushnumber(L, snr);                  lua_setfield(L, -2, "snr");
+    lua_pushinteger(L, hops);                lua_setfield(L, -2, "hops");
+    lua_rawseti(L, -2, ++out);
+  }
+  return 1;
+}
+int meshStats(lua_State* L) {
+  float rssi, noise; uint32_t rx_air, tx_air, rx_pkts, rx_err; int budget;
+  luaHostRadioStats(&rssi, &noise, &rx_air, &tx_air, &rx_pkts, &rx_err, &budget);
+  lua_createtable(L, 0, 7);
+  lua_pushnumber(L, rssi);                  lua_setfield(L, -2, "rssi");
+  lua_pushnumber(L, noise);                 lua_setfield(L, -2, "noise");
+  lua_pushinteger(L, (lua_Integer)rx_air);  lua_setfield(L, -2, "rx_air_s");
+  lua_pushinteger(L, (lua_Integer)tx_air);  lua_setfield(L, -2, "tx_air_s");
+  lua_pushinteger(L, (lua_Integer)rx_pkts); lua_setfield(L, -2, "rx_pkts");
+  lua_pushinteger(L, (lua_Integer)rx_err);  lua_setfield(L, -2, "rx_err");
+  lua_pushinteger(L, budget);               lua_setfield(L, -2, "tx_budget_ms");
+  return 1;
+}
+int meshSelf(lua_State* L) {
+  char name[36]; double lat, lon;
+  luaHostSelfInfo(name, sizeof name, &lat, &lon);
+  lua_createtable(L, 0, 3);
+  lua_pushstring(L, name);  lua_setfield(L, -2, "name");
+  lua_pushnumber(L, lat);   lua_setfield(L, -2, "lat");
+  lua_pushnumber(L, lon);   lua_setfield(L, -2, "lon");
+  return 1;
+}
+
+// ---- wada.net: one in-flight async http_get per app ----
+constexpr size_t kNetCapMax = 32 * 1024;
+char     s_net_url[160];
+char*    s_net_buf = nullptr;
+size_t   s_net_cap = 0;
+int      s_net_result = -1;
+volatile bool s_net_pending = false;   // worker should run it
+volatile bool s_net_done = false;      // result ready for the UI thread
+int      s_net_cb = LUA_NOREF;
+lv_timer_t* s_net_poll = nullptr;
+
+void netDeliver(lv_timer_t* t) {
+  (void)t;
+  if (!s_net_done) return;
+  s_net_done = false;
+  if (s_net_poll) { lv_timer_del(s_net_poll); s_net_poll = nullptr; }
+  if (!s_h || !s_h->L || s_net_cb == LUA_NOREF) { s_net_cb = LUA_NOREF; return; }
+  lua_State* L = s_h->L;
+  lua_rawgeti(L, LUA_REGISTRYINDEX, s_net_cb);
+  luaL_unref(L, LUA_REGISTRYINDEX, s_net_cb);
+  s_net_cb = LUA_NOREF;
+  lua_pushinteger(L, s_net_result >= 0 ? 200 : -1);
+  if (s_net_result >= 0 && s_net_buf) lua_pushlstring(L, s_net_buf, (size_t)s_net_result);
+  else                                lua_pushnil(L);
+  guardedCall(s_h, 2);
+  serviceDeferredClose();
+}
+
+int netHttpGet(lua_State* L) {
+  const char* url = luaL_checkstring(L, 1);
+  luaL_checktype(L, 2, LUA_TFUNCTION);
+  size_t maxb = (size_t)luaL_optinteger(L, 3, 16 * 1024);
+  if (maxb > kNetCapMax) maxb = kNetCapMax;
+  if (strncmp(url, "http://", 7) != 0) return luaL_error(L, "http:// urls only");
+  if (strlen(url) >= sizeof(s_net_url)) return luaL_error(L, "url too long");
+  if (s_net_pending || s_net_cb != LUA_NOREF) return luaL_error(L, "a fetch is already running");
+  if (!s_net_buf || s_net_cap < maxb + 1) {
+    if (s_net_buf) heap_caps_free(s_net_buf);
+    s_net_buf = (char*)heap_caps_malloc(maxb + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_net_cap = s_net_buf ? maxb + 1 : 0;
+    if (!s_net_buf) return luaL_error(L, "no memory for the fetch buffer");
+  }
+  snprintf(s_net_url, sizeof s_net_url, "%s", url);
+  lua_pushvalue(L, 2);
+  s_net_cb = luaL_ref(L, LUA_REGISTRYINDEX);
+  s_net_done = false;
+  s_net_pending = true;
+  if (!s_net_poll) s_net_poll = lv_timer_create(netDeliver, 120, nullptr);
+  return 0;
+}
+
 // ---- module registration ----
 void openWada(lua_State* L) {
   lua_newtable(L);                                       // wada
@@ -501,6 +611,17 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, storeGet); lua_setfield(L, -2, "get");
   lua_pushcfunction(L, storeSet); lua_setfield(L, -2, "set");
   lua_setfield(L, -2, "store");
+
+  lua_newtable(L);                                       // wada.mesh (read-only)
+  lua_pushcfunction(L, meshContacts); lua_setfield(L, -2, "contacts");
+  lua_pushcfunction(L, meshRxLog);    lua_setfield(L, -2, "rx_log");
+  lua_pushcfunction(L, meshStats);    lua_setfield(L, -2, "stats");
+  lua_pushcfunction(L, meshSelf);     lua_setfield(L, -2, "self");
+  lua_setfield(L, -2, "mesh");
+
+  lua_newtable(L);                                       // wada.net
+  lua_pushcfunction(L, netHttpGet); lua_setfield(L, -2, "http_get");
+  lua_setfield(L, -2, "net");
 
   lua_setglobal(L, "wada");
 
@@ -562,6 +683,9 @@ void hostTeardown() {
   if (!h) return;
   s_h = nullptr;                     // bindings see "closed" from here on
   if (h->timer) { lv_timer_del(h->timer); h->timer = nullptr; }
+  if (s_net_poll) { lv_timer_del(s_net_poll); s_net_poll = nullptr; }
+  if (h->L && s_net_cb != LUA_NOREF) { luaL_unref(h->L, LUA_REGISTRYINDEX, s_net_cb); }
+  s_net_cb = LUA_NOREF;              // a worker fetch may still land; netDeliver sees no app and drops it
   if (h->L) {
     // best-effort on_close + store flush before the state dies
     lua_State* L = h->L;
@@ -693,6 +817,14 @@ bool luaAppLaunchFile(const char* id, const char* title, const char* embedded, s
   }
   if (embedded && embedded_len) return luaAppLaunch(id, title, embedded, embedded_len);
   return false;
+}
+
+// ---- net worker entry points (UITask's tile/net worker calls these) --------
+bool luaNetWorkerPending() { return s_net_pending; }
+void luaNetWorkerService(WiFiClient& client, HTTPClient& http) {
+  s_net_pending = false;
+  s_net_result = s_net_buf ? luaStoreHttpGet(client, http, s_net_url, s_net_buf, s_net_cap) : -1;
+  s_net_done = true;
 }
 
 #endif  // CAP_LUA_APPS
