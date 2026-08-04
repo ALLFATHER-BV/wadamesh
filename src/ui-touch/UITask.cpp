@@ -6654,7 +6654,7 @@ static void openChannelShareModal(const char* channel_name, const uint8_t secret
   strncpy(s_channel_share_name, channel_name ? channel_name : "Channel",
           sizeof(s_channel_share_name) - 1);
 
-  lv_obj_t* body = createSettingsModal("Share channel", SettingsModalKind::AddContact);  // reuse a kind
+  lv_obj_t* body = createSettingsModal(TR("Share channel"), SettingsModalKind::AddContact);  // reuse a kind
   int y = 0;
 
   lv_obj_t* name_l = lv_label_create(body);
@@ -9016,7 +9016,7 @@ static void openAdvertPage() {
   styleButton(b_flood);
   lv_obj_add_event_cb(b_flood, advertFloodCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lf = lv_label_create(b_flood);
-  lv_label_set_text(lf, LV_SYMBOL_UPLOAD "  Flood");
+  lv_label_set_text(lf, TR(LV_SYMBOL_UPLOAD "  Flood"));
   lv_obj_center(lf);
 
   lv_obj_t* b_zh = lv_btn_create(body);
@@ -9025,7 +9025,7 @@ static void openAdvertPage() {
   styleButton(b_zh);
   lv_obj_add_event_cb(b_zh, advertZeroHopCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lz = lv_label_create(b_zh);
-  lv_label_set_text(lz, LV_SYMBOL_WIFI "  Zero-hop");
+  lv_label_set_text(lz, TR(LV_SYMBOL_WIFI "  Zero-hop"));
   lv_obj_center(lz);
   y += SC(54);
 
@@ -9056,7 +9056,7 @@ static void openAdvertPage() {
   lv_obj_set_style_text_color(flab, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_pos(flab, 2, y + SC(8));
   lv_obj_t* fdd = lv_dropdown_create(body);
-  lv_dropdown_set_options_static(fdd, "Off\n1 day\n2 days\n3 days\n7 days");
+  lv_dropdown_set_options_static(fdd, TR("Off\n1 day\n2 days\n3 days\n7 days"));
   lv_obj_set_width(fdd, SC(120));
   lv_obj_align(fdd, LV_ALIGN_TOP_RIGHT, -4, y);
   lv_dropdown_set_selected(fdd, advertDdIdx(kAutoFloodHrs, (int)(sizeof(kAutoFloodHrs)/sizeof(kAutoFloodHrs[0])), touchPrefsGetFloodAdvHrs()));
@@ -9069,7 +9069,7 @@ static void openAdvertPage() {
   lv_obj_set_style_text_color(llab, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_pos(llab, 2, y + SC(8));
   lv_obj_t* ldd = lv_dropdown_create(body);
-  lv_dropdown_set_options_static(ldd, "Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours");
+  lv_dropdown_set_options_static(ldd, TR("Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours"));
   lv_obj_set_width(ldd, SC(120));
   lv_obj_align(ldd, LV_ALIGN_TOP_RIGHT, -4, y);
   lv_dropdown_set_selected(ldd, advertDdIdx(kAutoLocalMin, 6, touchPrefsGetLocalAdvMin()));
@@ -9318,7 +9318,7 @@ static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
 
 static void openDiscoveredModalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_obj_t* body = createSettingsModal("Discovered", SettingsModalKind::Discovered);
+  lv_obj_t* body = createSettingsModal(TR("Discovered"), SettingsModalKind::Discovered);
   int y = 0;
 
   // Auto-add hint: any of the four "auto-add" type bits set means new contacts
@@ -9669,7 +9669,7 @@ static void buildProfileSettings() {
       openShareMyContactPopup();
     }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* sl = lv_label_create(sb);
-    lv_label_set_text(sl, LV_SYMBOL_IMAGE "   Share QR");
+    lv_label_set_text(sl, TR(LV_SYMBOL_IMAGE "   Share QR"));
     lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_font(sl, &g_font_14, LV_PART_MAIN);
     lv_obj_center(sl);
@@ -10246,7 +10246,7 @@ static void toggleNewContactToastCb(lv_event_t* e) {
 }
 
 static void buildAutoAddSettings() {
-  lv_obj_t* body = createSettingsModal("Auto-add contacts", SettingsModalKind::AutoAdd);
+  lv_obj_t* body = createSettingsModal(TR("Auto-add contacts"), SettingsModalKind::AutoAdd);
   NodePrefs* prefs = the_mesh.getNodePrefs();
   int y = 0;
   auto mk_switch = [&](const char* text, lv_obj_t** out) {
@@ -10307,7 +10307,7 @@ static void buildAutoAddSettings() {
 }
 
 static void buildExperimentalSettings() {
-  lv_obj_t* body = createSettingsModal("Experimental", SettingsModalKind::Experimental);
+  lv_obj_t* body = createSettingsModal(TR("Experimental"), SettingsModalKind::Experimental);
   NodePrefs* prefs = the_mesh.getNodePrefs();
   int y = 0;
   auto mk_switch = [&](const char* text, lv_obj_t** out) {
@@ -10361,7 +10361,7 @@ static void saveQuickRepliesCb(lv_event_t* e) {
 }
 
 static void buildQuickReplySettings() {
-  lv_obj_t* body = createSettingsModal("Quick replies", SettingsModalKind::QuickReply);
+  lv_obj_t* body = createSettingsModal(TR("Quick replies"), SettingsModalKind::QuickReply);
   for (int i = 0; i < TOUCH_QUICK_REPLY_COUNT; ++i) g_set_modal.qr_tas[i] = nullptr;
 
   int y = 0;
@@ -10794,7 +10794,7 @@ static void refreshSleepDiag(unsigned long now) {
 #endif  // HAS_TDECK_GT911
 
 static void buildSystemInfoSettings() {
-  lv_obj_t* body = createSettingsModal("System info", SettingsModalKind::SystemInfo);
+  lv_obj_t* body = createSettingsModal(TR("System info"), SettingsModalKind::SystemInfo);
   char buf[704];
 
   // Live tier (uptime + heap): a small constant-height label refreshed at 1 Hz.
@@ -11986,7 +11986,7 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("UI size (restart to apply)"), COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* dd = lv_dropdown_create(body);
 #if defined(TLORA_PAGER)
-    lv_dropdown_set_options(dd, "Small\nMedium\nLarge");
+    lv_dropdown_set_options(dd, TR("Small\nMedium\nLarge"));
 #else
     lv_dropdown_set_options(dd, TR("Normal (100%)\nLarge (150%)\nHuge (200%)"));
 #endif
@@ -13026,7 +13026,7 @@ static void blePinSaveCb(lv_event_t* e) {
 #endif
 
 static void buildBluetoothSettings() {
-  lv_obj_t* body = createSettingsModal("Bluetooth", SettingsModalKind::Bluetooth);
+  lv_obj_t* body = createSettingsModal(TR("Bluetooth"), SettingsModalKind::Bluetooth);
   int y = 0;
 
   if (!g_lv.task || !g_lv.task->hasBleCapability()) {
@@ -13938,7 +13938,7 @@ static void mqttSaveCb(lv_event_t* e) {
 
 static void buildMqttSettings() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-  lv_obj_t* body = createSettingsModal("MQTT bridge", SettingsModalKind::Mqtt);
+  lv_obj_t* body = createSettingsModal(TR("MQTT bridge"), SettingsModalKind::Mqtt);
   const lv_coord_t cw = s_settings_content_w;
   int y = 0;
 
@@ -14120,7 +14120,7 @@ static void buildMqttSettings() {
   styleButton(b_save);
   lv_obj_add_event_cb(b_save, mqttSaveCb, LV_EVENT_CLICKED, nullptr);
   { lv_obj_t* sl = lv_label_create(b_save);
-    lv_label_set_text(sl, LV_SYMBOL_SAVE "  Save");
+    lv_label_set_text(sl, TR(LV_SYMBOL_SAVE "  Save"));
     lv_obj_center(sl); }
   y += SC(44);
 
@@ -14194,7 +14194,7 @@ static void buildWifiSettings() {
 
 static void openLogModalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_obj_t* body = createSettingsModal("Logs", SettingsModalKind::Log);
+  lv_obj_t* body = createSettingsModal(TR("Logs"), SettingsModalKind::Log);
   int y = 0;
 
   g_set_modal.log_rx_btn = lv_btn_create(body);
@@ -14344,7 +14344,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   addCloseXBadge(card, contactsSearchSheetCloseCb);
 
   lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, LV_SYMBOL_EYE_OPEN "  Search contacts");
+  lv_label_set_text(title, TR(LV_SYMBOL_EYE_OPEN "  Search contacts"));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 0);
@@ -15804,7 +15804,7 @@ static void openLosModal(uint32_t mesh_idx) {
   char nm[36];
   copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), c.name);
   lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text_fmt(title, LV_SYMBOL_GPS "  LOS \xe2\x86\x92 %s", nm[0] ? nm : "?");
+  lv_label_set_text_fmt(title, TR(LV_SYMBOL_GPS "  LOS \xe2\x86\x92 %s"), nm[0] ? nm : "?");
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
@@ -16277,7 +16277,7 @@ static void addContactSubmitCb(lv_event_t* e) {
 
 static void openAddContactModalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_obj_t* body = createSettingsModal("Add contact", SettingsModalKind::AddContact);
+  lv_obj_t* body = createSettingsModal(TR("Add contact"), SettingsModalKind::AddContact);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -16341,7 +16341,7 @@ static void openAddContactModalCb(lv_event_t* e) {
 }
 
 static void openCreatePrivateChannelModal() {
-  lv_obj_t* body = createSettingsModal("Create private channel", SettingsModalKind::ChCreatePrv);
+  lv_obj_t* body = createSettingsModal(TR("Create private channel"), SettingsModalKind::ChCreatePrv);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -16443,7 +16443,7 @@ static void joinPrivateChannelSubmitCb(lv_event_t* e) {
 }
 
 static void openJoinPrivateChannelModal() {
-  lv_obj_t* body = createSettingsModal("Join private channel", SettingsModalKind::ChJoinPrv);
+  lv_obj_t* body = createSettingsModal(TR("Join private channel"), SettingsModalKind::ChJoinPrv);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -16548,7 +16548,7 @@ static void joinHashtagChannelSubmitCb(lv_event_t* e) {
 }
 
 static void openJoinHashtagChannelModal() {
-  lv_obj_t* body = createSettingsModal("Join hashtag channel", SettingsModalKind::ChJoinTag);
+  lv_obj_t* body = createSettingsModal(TR("Join hashtag channel"), SettingsModalKind::ChJoinTag);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -18908,8 +18908,7 @@ static void fmSdMountOrFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   s_sd_retry_after_ms = 0;   // explicit user retry — bypass the mount backoff
   if (fmSdTryMount()) { fmShowRoots(); return; }
-  showConfirm(TR("Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased."),
-              "Format", fmSdDoFormat);
+  showConfirm(TR("Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased."), TR("Format"), fmSdDoFormat);
 }
 
 // Seed the core folder layout on a freshly-formatted MESHCOMOD card. These back
@@ -18999,8 +18998,7 @@ static void sdWriteFatLabel(uint8_t pdrv, const char* label) {
 // only mounts, or formats an already-unreadable card).
 static void fmSdLongPressFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
-  showConfirm(TR("Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased."),
-              "Format", fmSdDoFormat);
+  showConfirm(TR("Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased."), TR("Format"), fmSdDoFormat);
 }
 
 #endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (microSD mount/format helpers)
@@ -19727,12 +19725,12 @@ static void fmOpenAudio(const char* name) {
   lv_obj_t* play = lv_btn_create(s_fm_snd_root);
   lv_obj_set_size(play, sw - 16, 40); lv_obj_set_pos(play, 8, 76); styleButton(play);
   lv_obj_add_event_cb(play, fmSndPlayCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* pl = lv_label_create(play); lv_label_set_text(pl, LV_SYMBOL_PLAY "  Play"); lv_obj_center(pl);
+  lv_obj_t* pl = lv_label_create(play); lv_label_set_text(pl, TR(LV_SYMBOL_PLAY "  Play")); lv_obj_center(pl);
   lv_obj_t* setb = lv_btn_create(s_fm_snd_root);
   lv_obj_set_size(setb, sw - 16, 44); lv_obj_set_pos(setb, 8, 124); styleButton(setb);
   lv_obj_set_style_bg_color(setb, lv_color_hex(0x35C9C9), LV_PART_MAIN);
   lv_obj_add_event_cb(setb, fmSndSetCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* sl = lv_label_create(setb); lv_label_set_text(sl, LV_SYMBOL_OK "  Set as notification sound");
+  lv_obj_t* sl = lv_label_create(setb); lv_label_set_text(sl, TR(LV_SYMBOL_OK "  Set as notification sound"));
   lv_obj_set_style_text_color(sl, lv_color_black(), LV_PART_MAIN); lv_obj_center(sl);
   lv_obj_t* close = lv_btn_create(s_fm_snd_root);
   lv_obj_set_size(close, 30, 26); lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 6); styleButton(close);
@@ -19862,7 +19860,7 @@ static void fmOpenImage(const char* name) {
   lv_obj_set_style_bg_color(wall, lv_color_hex(0x35C9C9), LV_PART_MAIN);
   lv_obj_add_event_cb(wall, fmSetWallpaperCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* wll = lv_label_create(wall);
-  lv_label_set_text(wll, LV_SYMBOL_IMAGE "  Set as wallpaper");
+  lv_label_set_text(wll, TR(LV_SYMBOL_IMAGE "  Set as wallpaper"));
   lv_obj_set_style_text_font(wll, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(wll, lv_color_black(), LV_PART_MAIN);
   lv_obj_center(wll);
@@ -20537,7 +20535,7 @@ static void openSignalInfoPopup() {
   styleButton(rfb);
   lv_obj_add_event_cb(rfb, sigProbeNowCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* rfl = lv_label_create(rfb);
-  lv_label_set_text(rfl, LV_SYMBOL_REFRESH "  Probe now");
+  lv_label_set_text(rfl, TR(LV_SYMBOL_REFRESH "  Probe now"));
   lv_obj_set_style_text_font(rfl, &g_font_14, LV_PART_MAIN);
   lv_obj_center(rfl);
   cy += 40;
@@ -20966,7 +20964,7 @@ static void openReaderPage() {
   // --- Expanded address bar: URL field + Go ---
   s_reader_url_ta = lv_textarea_create(s_reader_root);
   lv_textarea_set_one_line(s_reader_url_ta, true);
-  lv_textarea_set_placeholder_text(s_reader_url_ta, "Type a URL, then Go");
+  lv_textarea_set_placeholder_text(s_reader_url_ta, TR("Type a URL, then Go"));
   if (s_reader_url[0]) { lv_textarea_set_text(s_reader_url_ta, s_reader_url); s_reader_pristine = false; }
   else                 { lv_textarea_set_text(s_reader_url_ta, kReaderDefaultUrl); s_reader_pristine = true; }
   lv_obj_set_pos(s_reader_url_ta, 6, top);
@@ -20981,7 +20979,7 @@ static void openReaderPage() {
   lv_obj_align_to(s_reader_go, s_reader_url_ta, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
   styleButton(s_reader_go);
   lv_obj_add_event_cb(s_reader_go, readerGoCb, LV_EVENT_CLICKED, nullptr);
-  { lv_obj_t* gl = lv_label_create(s_reader_go); lv_label_set_text(gl, "Go"); lv_obj_center(gl); }
+  { lv_obj_t* gl = lv_label_create(s_reader_go); lv_label_set_text(gl, TR("Go")); lv_obj_center(gl); }
   s_reader_status = lv_label_create(s_reader_root);
   lv_label_set_long_mode(s_reader_status, LV_LABEL_LONG_DOT);
   lv_obj_set_width(s_reader_status, sw - 12);
@@ -21155,11 +21153,8 @@ static void discoverWardriveTick() {
     }
   }
   if (s_disc_footer) {
-    if (!fix) lv_label_set_text(s_disc_footer, "#7A7F87 Wardrive: waiting for GPS fix\xE2\x80\xA6#");
-    else lv_label_set_text_fmt(s_disc_footer,
-           "#7A7F87 Wardrive: %d coverage pts \xC2\xB7 %lu logged to SD#",
-           s_disc_track_n > k_disc_track_max ? k_disc_track_max : s_disc_track_n,
-           (unsigned long)s_disc_log_count);
+    if (!fix) lv_label_set_text(s_disc_footer, TR("#7A7F87 Wardrive: waiting for GPS fix\xE2\x80\xA6#"));
+    else lv_label_set_text_fmt(s_disc_footer, TR("#7A7F87 Wardrive: %d coverage pts \xC2\xB7 %lu logged to SD#"), s_disc_track_n > k_disc_track_max ? k_disc_track_max : s_disc_track_n, (unsigned long)s_disc_log_count);
   }
 }
 
@@ -21229,8 +21224,7 @@ static void discoverBuildFeed() {
   else if (buf[q - 1] == '\n') buf[q - 1] = '\0';
   lv_label_set_text(s_discover_feed, buf);
   if (s_discover_status)
-    lv_label_set_text_fmt(s_discover_status, "%s \xC2\xB7 %d nearby (%d rpt, %d comp)",
-      s_discover_scanning ? "Scanning\xE2\x80\xA6" : "Paused", (int)m, rpt, comp);
+    lv_label_set_text_fmt(s_discover_status, TR("%s \xC2\xB7 %d nearby (%d rpt, %d comp)"), s_discover_scanning ? "Scanning\xE2\x80\xA6" : "Paused", (int)m, rpt, comp);
 }
 
 static void discoverTimerCb(lv_timer_t* t) {
@@ -21366,7 +21360,7 @@ static void openDiscoverPage() {
   lv_label_set_recolor(s_disc_footer, true);
   lv_obj_set_style_text_font(s_disc_footer, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(s_disc_footer, 10, STATUSBAR_H + H - 18);
-  lv_label_set_text(s_disc_footer, "#7A7F87 Wardrive: \xE2\x80\xA6#");
+  lv_label_set_text(s_disc_footer, TR("#7A7F87 Wardrive: \xE2\x80\xA6#"));
 
   the_mesh.discoverClear();
   s_discover_scanning = true;
@@ -22720,7 +22714,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_add_event_cb(adv, openAdvertModalCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* adv_l = lv_label_create(adv);
   // Shorter label in the narrow landscape button + the half-width portrait button so it doesn't clip.
-  lv_label_set_text(adv_l, LV_SYMBOL_UPLOAD "  Advert");
+  lv_label_set_text(adv_l, TR(LV_SYMBOL_UPLOAD "  Advert"));
   lv_obj_set_style_text_font(adv_l, &g_font_14, LV_PART_MAIN);
   lv_obj_center(adv_l);
 
@@ -22749,7 +22743,7 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_add_event_cb(apb, homeAppsBtnCb, LV_EVENT_CLICKED, nullptr);
     g_lv.home_apps = apb;
     lv_obj_t* apl = lv_label_create(apb);
-    lv_label_set_text(apl, LV_SYMBOL_LIST "  Apps");
+    lv_label_set_text(apl, TR(LV_SYMBOL_LIST "  Apps"));
     lv_obj_set_style_text_font(apl, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(apl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_center(apl);
@@ -23496,7 +23490,7 @@ static void makeContactsTab(lv_obj_t* tab) {
     lv_obj_set_style_pad_ver(b, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(b, contactsOverflowFoundCb, LV_EVENT_CLICKED, nullptr);   // opens the Discovered list
     lv_obj_t* l = lv_label_create(b);
-    lv_label_set_text(l, LV_SYMBOL_EYE_OPEN "  Discovered");
+    lv_label_set_text(l, TR(LV_SYMBOL_EYE_OPEN "  Discovered"));
     lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
@@ -24589,7 +24583,10 @@ static void uiLangFileBootLoad() {
   while (p && *p) {
     char* nl = strchr(p, '\n');
     if (nl) { if (nl > p && nl[-1] == '\r') nl[-1] = 0; *nl = 0; }
-    if (*p && *p != '#') {
+    {
+      // A line is a header/comment only when it has NO tab. Testing for a
+      // leading '#' instead silently dropped every key that starts with LVGL
+      // recolor markup ("#7A7F87 Wardrive: …#") — those could never translate.
       char* tab = strchr(p, '\t');
       if (tab) {
         *tab = 0;
@@ -27424,7 +27421,7 @@ static void openMapContactsList() {
   addCloseXBadge(card, mapContactsBackdropCb);
 
   lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, LV_SYMBOL_GPS "  On map");
+  lv_label_set_text(title, TR(LV_SYMBOL_GPS "  On map"));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 2);
@@ -28961,7 +28958,7 @@ static void settingsCatBuild(int cat) {
         lv_obj_set_style_bg_color(s_ota_btn, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
         lv_obj_add_event_cb(s_ota_btn, otaInstallLatestCb, LV_EVENT_CLICKED, nullptr);
         s_ota_btn_lbl = lv_label_create(s_ota_btn);
-        lv_label_set_text(s_ota_btn_lbl, LV_SYMBOL_DOWNLOAD "  Install update");
+        lv_label_set_text(s_ota_btn_lbl, TR(LV_SYMBOL_DOWNLOAD "  Install update"));
         lv_obj_set_style_text_font(s_ota_btn_lbl, &g_font_14, LV_PART_MAIN);
         lv_obj_set_style_text_color(s_ota_btn_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
         lv_obj_center(s_ota_btn_lbl);
@@ -29042,7 +29039,7 @@ static void settingsCatBuild(int cat) {
           styleButton(sd_btn);
           lv_obj_add_event_cb(sd_btn, sdFwSaveToSdCb, LV_EVENT_CLICKED, nullptr);
           lv_obj_t* sl = lv_label_create(sd_btn);
-          lv_label_set_text(sl, LV_SYMBOL_SD_CARD "  Save update bin to SD");
+          lv_label_set_text(sl, TR(LV_SYMBOL_SD_CARD "  Save update bin to SD"));
           lv_obj_set_style_text_font(sl, &g_font_14, LV_PART_MAIN);
           lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
           lv_obj_center(sl);
@@ -34407,7 +34404,7 @@ static void openSoundMenu(int slot) {
   lv_obj_t* bf = lv_btn_create(s_snd_menu);
   lv_obj_set_size(bf, pw - 24, 40); lv_obj_set_pos(bf, 12, 44); styleButton(bf);
   lv_obj_add_event_cb(bf, sndMenuFilesCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* lf = lv_label_create(bf); lv_label_set_text(lf, LV_SYMBOL_DIRECTORY "  Choose .wav from files"); lv_obj_center(lf);
+  lv_obj_t* lf = lv_label_create(bf); lv_label_set_text(lf, TR(LV_SYMBOL_DIRECTORY "  Choose .wav from files")); lv_obj_center(lf);
   lv_obj_t* bb = lv_btn_create(s_snd_menu);
   lv_obj_set_size(bb, pw - 24, 40); lv_obj_set_pos(bb, 12, 92); styleButton(bb);
   lv_obj_add_event_cb(bb, sndMenuBuiltinCb, LV_EVENT_CLICKED, nullptr);
@@ -34769,8 +34766,7 @@ static void backupChosenCb(lv_event_t* e) {
   strncpy(s_backup_chosen, stored, sizeof(s_backup_chosen) - 1);
   s_backup_chosen[sizeof(s_backup_chosen) - 1] = '\0';
   backupPickerClose();
-  showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."),
-              "Import", doBackupImportChosen);
+  showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."), TR("Import"), doBackupImportChosen);
 }
 static void openBackupPicker() {
   backupScan();
@@ -34979,8 +34975,7 @@ static void doFactoryReset() {
 }
 static void backupFactoryResetCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  showConfirm(TR("Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone."),
-              "Erase all", doFactoryReset);
+  showConfirm(TR("Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone."), TR("Erase all"), doFactoryReset);
 }
 
 static void buildBackupsSettings() {
@@ -36298,7 +36293,7 @@ static void openPowerMenu() {
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, LV_SYMBOL_POWER "  Power");
+  lv_label_set_text(title, TR(LV_SYMBOL_POWER "  Power"));
   lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
@@ -37775,7 +37770,7 @@ static void openLuaStorePage() {
   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
 
-  appPageBeginSlim("Lua Store", &closeLuaStorePage);   // one-line bar; the tab bar is the page header
+  appPageBeginSlim(TR("Lua Store"), &closeLuaStorePage);   // one-line bar; the tab bar is the page header
 
   // Open instantly from the cached install list; the card re-listing (sideload
   // pickup) runs on the worker and the poll timer repaints when it lands.
@@ -42730,7 +42725,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     char b1[8]; snprintf(b1, sizeof b1, "%d", s_telem_win_past_h); lv_textarea_set_text(s_telem_past_ta, b1);
 
     lv_obj_t* lt = lv_label_create(card);
-    lv_label_set_text(lt, "h  to");
+    lv_label_set_text(lt, TR("h  to"));
     lv_obj_set_style_text_font(lt, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(lt, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_pos(lt, 88, y + 8);
@@ -42836,7 +42831,7 @@ static void openTelemetryConfigWindow() {
   attachSettingsTaEvents(s_telem_poll_ta);
   { char pb[8]; snprintf(pb, sizeof pb, "%d", telemetryPollGet(s_telem_node)); lv_textarea_set_text(s_telem_poll_ta, pb); }
   lv_obj_t* mlab = lv_label_create(card);
-  lv_label_set_text(mlab, "min (0=off)");
+  lv_label_set_text(mlab, TR("min (0=off)"));
   lv_obj_set_style_text_font(mlab, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(mlab, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(mlab, 182, y + 8);
@@ -42855,7 +42850,7 @@ static void openTelemetryConfigWindow() {
   styleButton(clr);
   lv_obj_set_style_bg_color(clr, lv_color_hex(0xB23A48), LV_PART_MAIN);
   lv_obj_add_event_cb(clr, telemClearCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* cl = lv_label_create(clr); lv_label_set_text(cl, LV_SYMBOL_TRASH "  Clear history"); lv_obj_center(cl);
+  lv_obj_t* cl = lv_label_create(clr); lv_label_set_text(cl, TR(LV_SYMBOL_TRASH "  Clear history")); lv_obj_center(cl);
 }
 #endif  // HAS_TDECK_GT911 (telemetry window)
 

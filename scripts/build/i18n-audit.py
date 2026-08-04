@@ -53,7 +53,9 @@ SKIP = {'...', '😊', 'Snake', '© OpenStreetMap', '© OpenTopoMap'}
 def lang_keys(path):
     have = set()
     for line in open(path, encoding='utf-8'):
-        if line.startswith('#') or '\t' not in line:
+        # Header lines have no tab; '#' can legitimately START a key (LVGL
+        # recolor markup), so never treat a leading '#' as a comment marker.
+        if '\t' not in line:
             continue
         k = line.split('\t', 1)[0]
         have.add(k.replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\'))

@@ -205,7 +205,7 @@ bool SnakeGame::open() {
   lv_obj_align(start_btn_, LV_ALIGN_CENTER, 0, 0);
   lv_obj_add_event_cb(start_btn_, startCb, LV_EVENT_CLICKED, this);
   lv_obj_t* sl = lv_label_create(start_btn_);
-  lv_label_set_text(sl, LV_SYMBOL_PLAY "  New game");
+  lv_label_set_text(sl, TR(LV_SYMBOL_PLAY "  New game"));
   lv_obj_center(sl);
   return true;
 }
