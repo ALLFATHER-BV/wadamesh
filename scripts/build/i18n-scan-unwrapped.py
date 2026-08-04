@@ -101,20 +101,151 @@ def meaningful(arg):
         return False
     if stripped.strip().startswith('/'):     # filesystem paths
         return False
-    if re.match(r'^[a-z0-9_.\-/]+$', stripped.strip()):   # ids, filenames, keys
+    if re.match(r'^[a-z0-9_.:\-/]+$', stripped.strip()):  # ids, filenames, keys ("ui:hist")
         return False
     return True
+
+# Local row/button builders. Their signatures differ, so --fix wraps EVERY
+# argument that reads as prose rather than a fixed index — a helper nobody
+# remembered to list is exactly how "Remove channel" stayed English.
+HELPER_CALLS = {
+    'mk', 'mk_full', 'mk_btn', 'mk_label', 'mk_ta', 'mk_switch', 'mk_row',
+    'item', 'setupHeader', 'setupBtn', 'fmActionBtn', 'ccToggle',
+    'make_launcher', 'setAddChannelError', 'addAppTile', 'navBtn',
+}
 
 # Brand and pure-technical tokens that are identical in every language.
 SKIP_TEXT = {'WADAMESH', 'CPU', 'PSK', 'TX 0  /  RX 0', 'Sig --', 'OK'}
 
+# ---- wide mode -------------------------------------------------------------
+# Naming the functions that take UI text has the same blind spot as grepping
+# for the strings: a local row helper nobody listed (mk_full) hides its
+# labels forever. Wide mode inverts it — EVERY prose literal is suspect unless
+# it is consumed by a known non-UI sink.
+NON_UI_CALLS = {
+    'snprintf_path', 'strcmp', 'strncmp', 'strcasecmp', 'strncasecmp', 'strstr',
+    'strchr', 'strrchr', 'strcpy', 'strncpy', 'strcat', 'strlen', 'atoi', 'atof',
+    'printf', 'sprintf', 'fprintf', 'sscanf', 'log_e', 'log_w', 'log_i', 'log_d',
+    'ESP_LOGE', 'ESP_LOGW', 'ESP_LOGI', 'ESP_LOGD', 'begin', 'open', 'mkdir',
+    'rmdir', 'remove', 'rename', 'exists', 'setUserAgent', 'addHeader',
+    'luaHostAppPath', 'prefsGetStr', 'putString', 'getString', 'isKey',
+    'lv_obj_set_style_text_font', 'captureScreenToSerial', 'docSettle',
+    'lua_setfield', 'lua_getfield', 'luaL_error', 'luaL_newmetatable',
+    'luaL_checkudata', 'lua_pushstring', 'lua_setglobal', 'luaL_requiref',
+    'MDNS', 'WiFi', 'client', 'http', 'Serial',
+}
+# Calls whose FORMAT argument is UI text (index 2 for snprintf-style).
+FMT_CALLS = {'snprintf': 2}
+
+def enclosing_call(src, pos):
+    """Name of the function whose argument list encloses `pos` (or '')."""
+    depth, i = 0, pos
+    while i > 0:
+        c = src[i]
+        if c == ')':
+            depth += 1
+        elif c == '(':
+            if depth == 0:
+                j = i - 1
+                while j >= 0 and src[j] in ' \t\n':
+                    j -= 1
+                k = j
+                while k >= 0 and (src[k].isalnum() or src[k] in '_:.>-'):
+                    k -= 1
+                name = src[k + 1:j + 1]
+                return name.split('>')[-1].split('.')[-1].split(':')[-1]
+            depth -= 1
+        i -= 1
+    return ''
+
+def wide_scan():
+    """Report every prose literal not inside TR() and not bound for a non-UI sink."""
+    out = []
+    for path in sorted(glob.glob(os.path.join(ROOT, 'src/ui-touch/*.cpp'))):
+        src = open(path, encoding='utf-8').read()
+        rel = os.path.relpath(path, ROOT)
+        # index every TR( ... ) span so we can tell what is already covered
+        tr_spans = []
+        for m in re.finditer(r'\bTR\s*\(', src):
+            _, close = call_args(src, m.end() - 1)
+            tr_spans.append((m.start(), close))
+        i = 0
+        while i < len(src):
+            c = src[i]
+            if c == '/' and i + 1 < len(src) and src[i + 1] == '/':      # line comment
+                i = src.find('\n', i)
+                if i < 0: break
+                continue
+            if c == '/' and i + 1 < len(src) and src[i + 1] == '*':      # block comment
+                i = src.find('*/', i)
+                if i < 0: break
+                i += 2
+                continue
+            if c != '"':
+                i += 1
+                continue
+            start = i
+            i += 1
+            while i < len(src):
+                if src[i] == '\\': i += 2; continue
+                if src[i] == '"': break
+                i += 1
+            end = i
+            i += 1
+            lit = src[start:end + 1]
+            if not meaningful(lit):
+                continue
+            if any(a < start < b for a, b in tr_spans):
+                continue
+            name = enclosing_call(src, start)
+            if name in NON_UI_CALLS:
+                continue
+            if name in FMT_CALLS:
+                args, _ = call_args(src, src.rfind('(', 0, start))
+                # only the format argument of an snprintf carries UI text
+                if args is None or len(args) <= FMT_CALLS[name] or \
+                   not args[FMT_CALLS[name]].lstrip().startswith('"'):
+                    continue
+            txt = ''.join(re.findall(r'"((?:[^"\\]|\\.)*)"', lit))
+            if txt.strip() in SKIP_TEXT:
+                continue
+            line = src.count('\n', 0, start) + 1
+            out.append((rel, line, name or '?', txt))
+    return out
+
 def main():
     fix = '--fix' in sys.argv
+    if '--wide' in sys.argv:
+        found = wide_scan()
+        for rel, line, name, txt in found:
+            print(f"{rel}:{line}  {name}()  {txt!r}")
+        print(f"\n{len(found)} prose literal(s) outside TR() [wide scan]")
+        sys.exit(1 if found else 0)
     findings = []
     for path in sorted(glob.glob(os.path.join(ROOT, 'src/ui-touch/*.cpp'))):
         src = open(path, encoding='utf-8').read()
         rel = os.path.relpath(path, ROOT)
         edits = []          # (start, end, replacement) for --fix, applied back-to-front
+        for hname in sorted(HELPER_CALLS):
+            for m in re.finditer(r'(?<![A-Za-z0-9_])' + hname + r'\s*\(', src):
+                open_paren = m.end() - 1
+                args, close = call_args(src, open_paren)
+                if not args:
+                    continue
+                new_args, touched = list(args), False
+                for i, a in enumerate(args):
+                    if a.startswith('TR(') or a.startswith('TR ('):
+                        continue
+                    if not meaningful(a):
+                        continue
+                    txt = ''.join(re.findall(r'"((?:[^"\\]|\\.)*)"', a))
+                    if txt.strip() in SKIP_TEXT:
+                        continue
+                    findings.append((rel, src.count('\n', 0, m.start()) + 1, hname, txt))
+                    new_args[i] = 'TR(' + a + ')'
+                    touched = True
+                if touched and fix:
+                    edits.append((open_paren + 1, close, ', '.join(new_args)))
         for name, idxs in TEXT_ARGS.items():
             for m in re.finditer(r'\b' + name + r'\s*\(', src):
                 open_paren = m.end() - 1

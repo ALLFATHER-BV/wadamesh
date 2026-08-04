@@ -7072,14 +7072,14 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     lv_obj_t* icb = mk(TR(LV_SYMBOL_IMAGE "  Chat icon"), threadSheetIconCb, 0);
     if (icb) lv_obj_add_event_cb(icb, threadSheetIconResetCb, LV_EVENT_LONG_PRESSED, nullptr);
     mk(TR(LV_SYMBOL_TRASH    "  Delete history"), threadSheetClearHistCb,    0);
-    mk_full(LV_SYMBOL_TRASH "  Remove channel", channelLongSheetDeleteCb, 0xB23A48);
+    mk_full(TR(LV_SYMBOL_TRASH "  Remove channel"), channelLongSheetDeleteCb, 0xB23A48);
   } else {
     if (is_room_thread)
       mk(TR(LV_SYMBOL_REFRESH "  Log in again"),  threadSheetRoomLoginCb,    0);
     mk(TR(LV_SYMBOL_LOOP     "  Reset path"),     threadSheetResetPathCb,    0);
     mk(TR(LV_SYMBOL_CLOSE    "  Blocked users"),  channelLongSheetBlockedCb, 0);
     mk(TR(LV_SYMBOL_TRASH    "  Delete history"), threadSheetClearHistCb,    0);
-    mk_full(LV_SYMBOL_TRASH "  Delete chat",   threadSheetDeleteDmCb,     0xB23A48);
+    mk_full(TR(LV_SYMBOL_TRASH "  Delete chat"), threadSheetDeleteDmCb, 0xB23A48);
   }
 }
 
@@ -9582,8 +9582,8 @@ static void buildProfileSettings() {
     return ta;
   };
 
-  mk_label("Node name");
-  g_set_modal.name_ta = mk_ta(cw, 0, "Node name", 31);
+  mk_label(TR("Node name"));
+  g_set_modal.name_ta = mk_ta(cw, 0, TR("Node name"), 31);
   lv_obj_add_event_cb(g_set_modal.name_ta, saveProfileNameCb, LV_EVENT_DEFOCUSED, nullptr);  // auto-save on blur
   if (g_lv.task) {
     char nm_vis[40];
@@ -9592,10 +9592,10 @@ static void buildProfileSettings() {
     lv_textarea_set_text(g_set_modal.name_ta, nm_vis);
   }
   y += SC(36);
-  mk_label("Advert location");
+  mk_label(TR("Advert location"));
   const int loc_g = 8, loc_fw = (cw - loc_g) / 2;   // lat / lon fill the row evenly
-  g_set_modal.lat_ta = mk_ta(loc_fw, 0, "Latitude", 20);
-  g_set_modal.lon_ta = mk_ta(loc_fw, loc_fw + loc_g, "Longitude", 20);
+  g_set_modal.lat_ta = mk_ta(loc_fw, 0, TR("Latitude"), 20);
+  g_set_modal.lon_ta = mk_ta(loc_fw, loc_fw + loc_g, TR("Longitude"), 20);
   lv_obj_add_event_cb(g_set_modal.lat_ta, saveProfilePosCb, LV_EVENT_DEFOCUSED, nullptr);  // auto-save the pair on blur
   lv_obj_add_event_cb(g_set_modal.lon_ta, saveProfilePosCb, LV_EVENT_DEFOCUSED, nullptr);
   if (g_lv.task) {
@@ -9622,8 +9622,8 @@ static void buildProfileSettings() {
 
     // (Path-hash size moved to Radio settings as "Multi-byte routing" — it's the
     // same NodePrefs.path_hash_mode, so no duplicate control here.)
-    mk_label("Advert");
-    mk_switch("Share location in advert", &g_set_modal.share_loc_sw);
+    mk_label(TR("Advert"));
+    mk_switch(TR("Share location in advert"), &g_set_modal.share_loc_sw);
     NodePrefs* pol_prefs = the_mesh.getNodePrefs();
     if (pol_prefs && pol_prefs->advert_loc_policy)
       lv_obj_add_state(g_set_modal.share_loc_sw, LV_STATE_CHECKED);
@@ -9634,7 +9634,7 @@ static void buildProfileSettings() {
   // Public key — long-press copies. We don't surface the *private* key here
   // (LocalIdentity::prv_key is library-private, and private material on a touch
   // screen is a footgun).
-  mk_label("Identity (public key)");
+  mk_label(TR("Identity (public key)"));
   {
     const uint8_t* pk = the_mesh.getSelfPubKey();
     char pk_hex[2 * PUB_KEY_SIZE + 1];
@@ -9934,7 +9934,7 @@ static void buildRadioSettings() {
 
   // No "RADIO" divider here — it duplicated the sub-tab name; the page opens straight on
   // the preset picker.
-  mk_label("Community Preset");
+  mk_label(TR("Community Preset"));
   {
     static const size_t PRESET_OPT_SZ = 1200;
     static char* preset_opt_buf = (char*)psAlloc(PRESET_OPT_SZ);   // lazy-PSRAM (frees 1.2 KB internal .bss)
@@ -9970,20 +9970,20 @@ static void buildRadioSettings() {
   }
 
   const lv_coord_t cw = s_settings_content_w;
-  mk_label("Frequency / bandwidth");
+  mk_label(TR("Frequency / bandwidth"));
   {
     const int g = 8, fw = (cw - g) / 2;           // two equal fields filling the row
-    g_set_modal.freq_ta = mk_ta(fw, 0,        "MHz", 15);
-    g_set_modal.bw_ta   = mk_ta(fw, fw + g,   "kHz", 10);
+    g_set_modal.freq_ta = mk_ta(fw, 0, TR("MHz"), 15);
+    g_set_modal.bw_ta   = mk_ta(fw, fw + g, TR("kHz"), 10);
   }
   y += SC(44);   // was SC(36): only left a 6px gap below the 30px-tall boxes, crowding the label below
-  mk_label("SF / CR / TX / AF");
+  mk_label(TR("SF / CR / TX / AF"));
   {
     const int g = 6, fw = (cw - 3 * g) / 4;       // four equal fields filling the row
-    g_set_modal.sf_ta      = mk_ta(fw, 0,              "SF", 2);
-    g_set_modal.cr_ta      = mk_ta(fw, fw + g,         "CR", 2);
-    g_set_modal.tx_ta      = mk_ta(fw, 2 * (fw + g),   "TX", 4);
-    g_set_modal.airtime_ta = mk_ta(fw, 3 * (fw + g),   "AF", 6);
+    g_set_modal.sf_ta      = mk_ta(fw, 0, TR("SF"), 2);
+    g_set_modal.cr_ta      = mk_ta(fw, fw + g, TR("CR"), 2);
+    g_set_modal.tx_ta      = mk_ta(fw, 2 * (fw + g), TR("TX"), 4);
+    g_set_modal.airtime_ta = mk_ta(fw, 3 * (fw + g), TR("AF"), 6);
   }
   y += SC(38);
 
@@ -10046,7 +10046,7 @@ static void buildRadioSettings() {
   // regions; 2-3 bytes disambiguate. Applied immediately + persisted (no radio
   // reconfig). All repeaters on a path must support it (MeshCore >= v1.14);
   // older ones silently drop 2/3-byte packets.
-  mk_label("Multi-byte routing (path hash)");
+  mk_label(TR("Multi-byte routing (path hash)"));
   {
     lv_obj_t* dd = lv_dropdown_create(body);
     lv_obj_set_size(dd, lv_pct(100), SC(34));
@@ -10071,8 +10071,8 @@ static void buildRadioSettings() {
   // Region scope: tags outgoing floods with a region so repeaters that only
   // re-flood their own region (region-scoped networks) still propagate them.
   // Public "#hashtag" region -> key = SHA256("#name"); blank = unscoped (default).
-  mk_label("Region scope (#tag, blank = none)");
-  g_set_modal.region_ta = mk_ta(cw, 0, "#region", TOUCH_REGION_SCOPE_MAXLEN - 1);
+  mk_label(TR("Region scope (#tag, blank = none)"));
+  g_set_modal.region_ta = mk_ta(cw, 0, TR("#region"), TOUCH_REGION_SCOPE_MAXLEN - 1);
   {
     char rbuf[TOUCH_REGION_SCOPE_MAXLEN];
     if (touchPrefsGetRegionScope(rbuf, sizeof(rbuf)) > 0 && rbuf[0])
@@ -10123,7 +10123,7 @@ static void buildRadioSettings() {
   // because keying the PA into an empty socket is how you destroy one. "Auto" keeps the old
   // per-transmit toggle purely for comparison: it sends internal and listens external, so Trace SNR
   // reads lopsided on it and roughly equal on a correctly pinned antenna.
-  mk_label("LoRa antenna (P4)");
+  mk_label(TR("LoRa antenna (P4)"));
   {
     lv_obj_t* dd = lv_dropdown_create(body);
     lv_obj_set_size(dd, lv_pct(100), SC(34));
@@ -10191,7 +10191,7 @@ static void buildRadioSettings() {
   // Signal probe — same setting as the home-graph Signal popup. A periodic
   // discover advert keeps the signal bars / graph fresh. Poll interval in whole
   // minutes (1..1440); the toggle saves immediately, the field on its Set button.
-  mk_label("Signal probe");
+  mk_label(TR("Signal probe"));
   {
     int rh = settingsRowLabel(body, y, 6, TR("Auto-discover"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -10218,7 +10218,7 @@ static void buildRadioSettings() {
 
   // Auto advert — a shortcut to the Advertise app, where you send an advert now and set the
   // periodic flood / local self-advert timers. Surfaced here so it's discoverable from Radio & Mesh.
-  mk_label("Auto advert");
+  mk_label(TR("Auto advert"));
   {
     lv_obj_t* b_adv = lv_btn_create(body);
     lv_obj_set_size(b_adv, lv_pct(100), SC(34));
@@ -10257,11 +10257,11 @@ static void buildAutoAddSettings() {
     if (out) *out = sw;
     y += LV_MAX(34, h + 12);
   };
-  mk_switch("Auto chat", &g_set_modal.auto_chat_sw);
-  mk_switch("Auto repeater", &g_set_modal.auto_rep_sw);
-  mk_switch("Auto room", &g_set_modal.auto_room_sw);
-  mk_switch("Auto sensor", &g_set_modal.auto_sensor_sw);
-  mk_switch("Overwrite oldest", &g_set_modal.auto_overwrite_sw);
+  mk_switch(TR("Auto chat"), &g_set_modal.auto_chat_sw);
+  mk_switch(TR("Auto repeater"), &g_set_modal.auto_rep_sw);
+  mk_switch(TR("Auto room"), &g_set_modal.auto_room_sw);
+  mk_switch(TR("Auto sensor"), &g_set_modal.auto_sensor_sw);
+  mk_switch(TR("Overwrite oldest"), &g_set_modal.auto_overwrite_sw);
   g_set_modal.manual_add_sw = nullptr;   // master "manual add" removed — per-type switches are authoritative now
 
   // "Notify on new contact" — a UI pref (not a NodePrefs autoadd bit), so it gets
@@ -10318,10 +10318,10 @@ static void buildExperimentalSettings() {
     y += LV_MAX(34, h + 12);
   };
 
-  mk_switch("Multi ACKs", &g_set_modal.exp_multi_sw);
-  mk_switch("Client repeat", &g_set_modal.exp_repeat_sw);
-  mk_switch("RX boosted gain", &g_set_modal.exp_boost_sw);
-  mk_switch("Duty meter", &g_set_modal.exp_dc_sw);
+  mk_switch(TR("Multi ACKs"), &g_set_modal.exp_multi_sw);
+  mk_switch(TR("Client repeat"), &g_set_modal.exp_repeat_sw);
+  mk_switch(TR("RX boosted gain"), &g_set_modal.exp_boost_sw);
+  mk_switch(TR("Duty meter"), &g_set_modal.exp_dc_sw);
 
   if (prefs) {
     if (prefs->multi_acks) lv_obj_add_state(g_set_modal.exp_multi_sw, LV_STATE_CHECKED);
@@ -16049,24 +16049,24 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // the thing to do first; the server only accepts posts + pushes you the room
   // history once you've joined. "Open chat" sits next to it.
   if (is_room) {
-    mk_btn(LV_SYMBOL_LOOP "  Join", actionSheetJoinRoomCb, COLOR_STATUS_OK);
-    mk_btn(LV_SYMBOL_ENVELOPE "  Open chat", actionSheetSendMsgCb, 0);
+    mk_btn(TR(LV_SYMBOL_LOOP "  Join"), actionSheetJoinRoomCb, COLOR_STATUS_OK);
+    mk_btn(TR(LV_SYMBOL_ENVELOPE "  Open chat"), actionSheetSendMsgCb, 0);
   } else if (is_repeater) {
-    mk_btn(LV_SYMBOL_REFRESH "  Ping", actionSheetPingCb, 0);
+    mk_btn(TR(LV_SYMBOL_REFRESH "  Ping"), actionSheetPingCb, 0);
   } else {
-    mk_btn(LV_SYMBOL_ENVELOPE "  Message", actionSheetSendMsgCb, 0);
+    mk_btn(TR(LV_SYMBOL_ENVELOPE "  Message"), actionSheetSendMsgCb, 0);
   }
-  mk_btn(LV_SYMBOL_BATTERY_3 "  Telemetry", actionSheetTelemetryCb, 0);
+  mk_btn(TR(LV_SYMBOL_BATTERY_3 "  Telemetry"), actionSheetTelemetryCb, 0);
   if (has_map_btn)
-    mk_btn(LV_SYMBOL_GPS "  Show on map", actionSheetShowOnMapCb, 0);
+    mk_btn(TR(LV_SYMBOL_GPS "  Show on map"), actionSheetShowOnMapCb, 0);
   if (is_repeater) {
-    mk_btn(LV_SYMBOL_GPS      "  Trace SNR", actionSheetTracePingCb, 0);
-    mk_btn(LV_SYMBOL_SETTINGS "  Admin",     actionSheetAdminCb,     0);
+    mk_btn(TR(LV_SYMBOL_GPS      "  Trace SNR"), actionSheetTracePingCb, 0);
+    mk_btn(TR(LV_SYMBOL_SETTINGS "  Admin"), actionSheetAdminCb, 0);
   }
-  mk_btn(LV_SYMBOL_WIFI "  Range test", actionSheetRangeTestCb, 0);
+  mk_btn(TR(LV_SYMBOL_WIFI "  Range test"), actionSheetRangeTestCb, 0);
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   // Terrain-aware line-of-sight (needs both GPS fixes; gated by has_los).
-  if (has_los) mk_btn(LV_SYMBOL_GPS "  Sightline", actionSheetLosCb, 0);
+  if (has_los) mk_btn(TR(LV_SYMBOL_GPS "  Sightline"), actionSheetLosCb, 0);
 #endif
   // Favorite toggle: label flips based on current state.
 #if defined(ESP32)
@@ -16083,7 +16083,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
 #else
   mk_btn(TOUCH_SYM_STAR "  Favorite", actionSheetFavoriteCb, 0);
 #endif
-  mk_btn(LV_SYMBOL_LOOP  "  Reset path", actionSheetResetPathCb, 0);
+  mk_btn(TR(LV_SYMBOL_LOOP  "  Reset path"), actionSheetResetPathCb, 0);
   // Block / unblock — label flips on the current ignore state. Skipped when the
   // sheet is opened from a map marker (keeps that popup compact).
   if (!from_map) {
@@ -16093,7 +16093,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
     if (the_mesh.getContactByIdx(s_action_sheet_mesh_idx, _bc)) _blk = touchPrefsIsIgnored(_bc.id.pub_key);
     mk_btn(_blk ? LV_SYMBOL_OK "  Unblock" : LV_SYMBOL_CLOSE "  Block", actionSheetBlockCb, 0);
 #else
-    mk_btn(LV_SYMBOL_CLOSE "  Block", actionSheetBlockCb, 0);
+    mk_btn(TR(LV_SYMBOL_CLOSE "  Block"), actionSheetBlockCb, 0);
 #endif
   }
   mk_btn_full(LV_SYMBOL_TRASH "  Delete", actionSheetDeleteCb, 0xB23A48);
@@ -16193,14 +16193,14 @@ static void createPrivateChannelSubmitCb(lv_event_t* e) {
     for (int i = 0; i < 16; ++i) secret[i] = static_cast<uint8_t>(rand() & 0xFF);
 #endif
   } else if (!hexToSecret16(hex, secret)) {
-    setAddChannelError("Secret must be 32 hex chars (or empty).");
+    setAddChannelError(TR("Secret must be 32 hex chars (or empty)."));
     return;
   }
 
   const int slot = the_mesh.findFirstEmptyChannelSlot();
-  if (slot < 0) { setAddChannelError("Channel table is full."); return; }
+  if (slot < 0) { setAddChannelError(TR("Channel table is full.")); return; }
   if (!the_mesh.uiAddOrUpdateChannel(slot, name, secret)) {
-    setAddChannelError("Failed to save channel.");
+    setAddChannelError(TR("Failed to save channel."));
     return;
   }
   // Don't wait for the loop's deferred refresh — pull the channel into the
@@ -16425,13 +16425,13 @@ static void joinPrivateChannelSubmitCb(lv_event_t* e) {
   hex[hn] = '\0';
   uint8_t secret[16];
   if (!hexToSecret16(hex, secret)) {
-    setAddChannelError("Enter exactly 32 hex characters.");
+    setAddChannelError(TR("Enter exactly 32 hex characters."));
     return;
   }
   const int slot = the_mesh.findFirstEmptyChannelSlot();
-  if (slot < 0) { setAddChannelError("Channel table is full."); return; }
+  if (slot < 0) { setAddChannelError(TR("Channel table is full.")); return; }
   if (!the_mesh.uiAddOrUpdateChannel(slot, jname, secret)) {
-    setAddChannelError("Failed to save channel.");
+    setAddChannelError(TR("Failed to save channel."));
     return;
   }
   if (g_lv.task) {
@@ -16534,9 +16534,9 @@ static void joinHashtagChannelSubmitCb(lv_event_t* e) {
                       (int)strlen(hashed));
 
   const int slot = the_mesh.findFirstEmptyChannelSlot();
-  if (slot < 0) { setAddChannelError("Channel table is full."); return; }
+  if (slot < 0) { setAddChannelError(TR("Channel table is full.")); return; }
   if (!the_mesh.uiAddOrUpdateChannel(slot, hashed, secret)) {
-    setAddChannelError("Failed to save channel.");
+    setAddChannelError(TR("Failed to save channel."));
     return;
   }
   if (g_lv.task) {
@@ -16695,10 +16695,10 @@ static void openAddChannelSheet() {
     lv_obj_center(l);
     y += btn_h + row_gap;
   };
-  mk("Create a private channel", addChannelCreatePrivateCb);
-  mk("Join a private channel",   addChannelJoinPrivateCb);
-  mk("Join the public channel",  addChannelJoinPublicCb);
-  mk("Join a hashtag channel",   addChannelJoinHashtagCb);
+  mk(TR("Create a private channel"), addChannelCreatePrivateCb);
+  mk(TR("Join a private channel"), addChannelJoinPrivateCb);
+  mk(TR("Join the public channel"), addChannelJoinPublicCb);
+  mk(TR("Join a hashtag channel"), addChannelJoinHashtagCb);
 }
 
 static void chatsAddBtnCb(lv_event_t* e) {
@@ -19367,13 +19367,13 @@ static void fmOpenActions(const char* name, bool isdir) {
   lv_obj_set_style_text_font(tl, &g_font_12, LV_PART_MAIN);
 
   if (name) {
-    fmActionBtn(card, "Rename", fmActRenameCb, 0x2B3440);
-    fmActionBtn(card, "Copy",   fmActCopyCb,   0x2B3440);
-    fmActionBtn(card, "Cut",    fmActCutCb,    0x2B3440);
+    fmActionBtn(card, TR("Rename"), fmActRenameCb, 0x2B3440);
+    fmActionBtn(card, TR("Copy"), fmActCopyCb, 0x2B3440);
+    fmActionBtn(card, TR("Cut"), fmActCutCb, 0x2B3440);
     fmActionBtn(card, TR("Delete"), fmActDeleteCb, 0x5A2D2D);
   } else {
-    fmActionBtn(card, "New file",   fmActNewFileCb,   0x2B3440);
-    fmActionBtn(card, "New folder", fmActNewFolderCb, 0x2B3440);
+    fmActionBtn(card, TR("New file"), fmActNewFileCb, 0x2B3440);
+    fmActionBtn(card, TR("New folder"), fmActNewFolderCb, 0x2B3440);
 #if defined(ESP32)
     if (s_fm_fs == &SPIFFS)   // Internal only: toggle MeshCore's hidden system files
       fmActionBtn(card, s_fm_show_hidden ? "Hide system files" : "Show system files",
@@ -22800,27 +22800,27 @@ static void makeHome(lv_obj_t* tab) {
     // The accent's inverse — used for the "Apps" pop colour and the Control-panel button.
     const uint32_t inv_accent = 0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu);
 #if CAP_LARGE_SCREEN
-    make_launcher(">_  Terminal", tanBtnY(1), homeTerminalCb, 0, tan_btn_h);
+    make_launcher(TR(">_  Terminal"), tanBtnY(1), homeTerminalCb, 0, tan_btn_h);
 #if defined(HAS_TDECK_GT911)
-    make_launcher(LV_SYMBOL_DIRECTORY "  Files", tanBtnY(2), homeFilesCb, 0, tan_btn_h);
+    make_launcher(TR(LV_SYMBOL_DIRECTORY "  Files"), tanBtnY(2), homeFilesCb, 0, tan_btn_h);
     // "Apps" (opens the app drawer) pops with the negative / inverse of the theme accent.
-    g_lv.home_apps = make_launcher(LV_SYMBOL_LIST "  Apps", tanBtnY(3), homeAppsBtnCb, inv_accent, tan_btn_h);
+    g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tanBtnY(3), homeAppsBtnCb, inv_accent, tan_btn_h);
 #else
     // Real Tanmatsu (no GT911 / no Files): Apps in slot 2, Control panel fills slot 3.
-    g_lv.home_apps = make_launcher(LV_SYMBOL_LIST "  Apps", tanBtnY(2), homeAppsBtnCb, inv_accent, tan_btn_h);
-    make_launcher(LV_SYMBOL_BARS "  Control", tanBtnY(3), homeControlPanelCb, 0, tan_btn_h);   // ☰ (mirrors the CC sliders), not the settings gear
+    g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tanBtnY(2), homeAppsBtnCb, inv_accent, tan_btn_h);
+    make_launcher(TR(LV_SYMBOL_BARS "  Control"), tanBtnY(3), homeControlPanelCb, 0, tan_btn_h);   // ☰ (mirrors the CC sliders), not the settings gear
 #endif
 #else
     // T-Deck (and any other non-Tanmatsu landscape board): evenly-spread slots.
-    make_launcher(">_  Terminal", tdBtnY(1), homeTerminalCb, 0, td_btn_h);
+    make_launcher(TR(">_  Terminal"), tdBtnY(1), homeTerminalCb, 0, td_btn_h);
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
-    make_launcher(LV_SYMBOL_DIRECTORY "  Files", tdBtnY(2), homeFilesCb, 0, td_btn_h);
+    make_launcher(TR(LV_SYMBOL_DIRECTORY "  Files"), tdBtnY(2), homeFilesCb, 0, td_btn_h);
     // "Apps" (opens the app drawer) pops with the negative / inverse of the theme accent.
-    g_lv.home_apps = make_launcher(LV_SYMBOL_LIST "  Apps", tdBtnY(3), homeAppsBtnCb, inv_accent, td_btn_h);
-    make_launcher(LV_SYMBOL_SETTINGS "  Control", tdBtnY(4), homeControlPanelCb, 0, td_btn_h);
+    g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tdBtnY(3), homeAppsBtnCb, inv_accent, td_btn_h);
+    make_launcher(TR(LV_SYMBOL_SETTINGS "  Control"), tdBtnY(4), homeControlPanelCb, 0, td_btn_h);
 #else
-    g_lv.home_apps = make_launcher(LV_SYMBOL_LIST "  Apps", tdBtnY(2), homeAppsBtnCb, inv_accent, td_btn_h);
-    make_launcher(LV_SYMBOL_SETTINGS "  Control", tdBtnY(3), homeControlPanelCb, 0, td_btn_h);
+    g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tdBtnY(2), homeAppsBtnCb, inv_accent, td_btn_h);
+    make_launcher(TR(LV_SYMBOL_SETTINGS "  Control"), tdBtnY(3), homeControlPanelCb, 0, td_btn_h);
 #endif
 #endif
   }
@@ -29791,7 +29791,7 @@ static void openMessageActionMenu(int msg_idx) {
     lv_obj_center(lbl);
     ++bi;
   };
-  if (can_ack) mk_btn(LV_SYMBOL_OK "  Ack", msgMenuAckCb);
+  if (can_ack) mk_btn(TR(LV_SYMBOL_OK "  Ack"), msgMenuAckCb);
   if (can_mention) {
     char ml[UITask::MAX_SENDER_NAME + 16];
 #if defined(TLORA_PAGER)
@@ -29801,11 +29801,11 @@ static void openMessageActionMenu(int msg_idx) {
 #endif
     mk_btn(ml, msgMenuMentionCb);
   }
-  mk_btn(LV_SYMBOL_COPY "  Copy", msgMenuCopyCb);
-  mk_btn(LV_SYMBOL_LIST "  Info", msgMenuInfoCb);
-  if (can_block)  mk_btn(LV_SYMBOL_CLOSE   "  Block",  msgMenuBlockCb);
-  if (can_resend) mk_btn(LV_SYMBOL_REFRESH "  Resend", msgMenuResendCb);
-  mk_btn(LV_SYMBOL_TRASH "  Delete", msgMenuDeleteCb);
+  mk_btn(TR(LV_SYMBOL_COPY "  Copy"), msgMenuCopyCb);
+  mk_btn(TR(LV_SYMBOL_LIST "  Info"), msgMenuInfoCb);
+  if (can_block)  mk_btn(TR(LV_SYMBOL_CLOSE   "  Block"), msgMenuBlockCb);
+  if (can_resend) mk_btn(TR(LV_SYMBOL_REFRESH "  Resend"), msgMenuResendCb);
+  mk_btn(TR(LV_SYMBOL_TRASH "  Delete"), msgMenuDeleteCb);
 }
 
 // "Trace route" from the message Info popup: run a full multi-hop trace to the
@@ -36319,9 +36319,9 @@ static void openPowerMenu() {
   mk(TR(LV_SYMBOL_REFRESH "  Reboot"),         powerRebootCb,   0,        p_y0 + p_step);
 #if !defined(HAS_RAK_TAP_V2)
   mk(TR(LV_SYMBOL_DOWNLOAD "  Download mode"), powerDownloadCb, 0,        p_y0 + 2 * p_step);
-  mk("Cancel",                             powerCancelCb,   0,        p_y0 + 3 * p_step);
+  mk(TR("Cancel"), powerCancelCb, 0, p_y0 + 3 * p_step);
 #else
-  mk("Cancel",                             powerCancelCb,   0,        p_y0 + 2 * p_step);
+  mk(TR("Cancel"), powerCancelCb, 0, p_y0 + 2 * p_step);
 #endif
 }
 
@@ -36935,36 +36935,36 @@ static void openControlCenter() {
 #endif
   // Each chip: tap = toggle, long-press = jump to that feature's settings page
   // (GPS -> Radio & Mesh, where the location-sharing settings live).
-  ccToggle(row, LV_SYMBOL_WIFI, "Wi-Fi", wifi_on, ccWifiCb, tw, th, CAT_WIFI);
+  ccToggle(row, LV_SYMBOL_WIFI, TR("Wi-Fi"), wifi_on, ccWifiCb, tw, th, CAT_WIFI);
   if (!g_lv.task || g_lv.task->hasBleCapability())
-    ccToggle(row, LV_SYMBOL_BLUETOOTH, "BT", ble_on, ccBleCb, tw, th, CAT_BLUETOOTH);
+    ccToggle(row, LV_SYMBOL_BLUETOOTH, TR("BT"), ble_on, ccBleCb, tw, th, CAT_BLUETOOTH);
 #if !CAP_GPS
-  ccToggle(row, LV_SYMBOL_GPS, "GPS", false, ccGpsNoneCb, tw, th, -1);   // no onboard GPS — info-only, untoggable
+  ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), false, ccGpsNoneCb, tw, th, -1);   // no onboard GPS — info-only, untoggable
 #else
   // Long-press opens the GPS settings PAGE. CAT_RADIO here was a leftover from before the
   // settings reorg gave GPS its own category (the GPS block used to live under radio/device).
-  ccToggle(row, LV_SYMBOL_GPS, "GPS", gps_on, ccGpsCb, tw, th, CAT_GPS);
+  ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), gps_on, ccGpsCb, tw, th, CAT_GPS);
 #endif
-  ccToggle(row, LV_SYMBOL_TINT, "Theme", false, ccThemeCb, tw, th, CAT_DISPLAY);
+  ccToggle(row, LV_SYMBOL_TINT, TR("Theme"), false, ccThemeCb, tw, th, CAT_DISPLAY);
 #if CAP_KEYBOARD
   // Keyboard-backlight chip: the keyboard glyph WITH its off/on/auto mode word beneath it,
   // so the mode stays visible at a glance (sub_text stacks a small caption under the icon).
   const char* kb_mode = s_kb_bl_mode == 0 ? "off" : (s_kb_bl_mode == 1 ? "on" : "auto");
-  ccToggle(row, LV_SYMBOL_KEYBOARD, "Keyboard", s_kb_bl_mode != 0, ccKbBacklightCb, tw, th, CAT_KEYBOARD, kb_mode);
+  ccToggle(row, LV_SYMBOL_KEYBOARD, TR("Keyboard"), s_kb_bl_mode != 0, ccKbBacklightCb, tw, th, CAT_KEYBOARD, kb_mode);
 #endif
 #if defined(HAS_TDECK_GT911)
-  ccToggle(row, TOUCH_SYM_LOCK, "Lock", false, ccLockCb, tw, th, CAT_LOCK);   // real padlock, not an eye
+  ccToggle(row, TOUCH_SYM_LOCK, TR("Lock"), false, ccLockCb, tw, th, CAT_LOCK);   // real padlock, not an eye
 #endif
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
   // Sound on/off — the notification-tone mute (T-Deck I2S speaker / Heltec V4 piezo / Tanmatsu ES8156).
   const bool sound_on = g_lv.task && !g_lv.task->isBuzzerQuiet();
-  ccToggle(row, LV_SYMBOL_AUDIO, "Sound", sound_on, ccSoundCb, tw, th, CAT_SOUND);
+  ccToggle(row, LV_SYMBOL_AUDIO, TR("Sound"), sound_on, ccSoundCb, tw, th, CAT_SOUND);
 #endif
   // Do Not Disturb (the scheduled-silence feature) — dynamic bell: a plain bell when DND is off,
   // a bell-with-a-slash when it's on. All boards; the time window lives in Settings > Sound.
   {
     const bool dnd_on = touchPrefsGetDndEnabled();
-    ccToggle(row, dnd_on ? TOUCH_SYM_BELL_SLASH : TOUCH_SYM_BELL, "DND", dnd_on, ccDndCb, tw, th, CAT_SOUND);
+    ccToggle(row, dnd_on ? TOUCH_SYM_BELL_SLASH : TOUCH_SYM_BELL, TR("DND"), dnd_on, ccDndCb, tw, th, CAT_SOUND);
   }
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
 }
@@ -40701,7 +40701,7 @@ static void setupShowStep(int step) {
   const lv_coord_t btn_y = sh - kSetupBtnH - 10;
 
   if (step == 0) {
-    setupHeader("Welcome to WADAMESH", nullptr, nullptr);
+    setupHeader(TR("Welcome to WADAMESH"), nullptr, nullptr);
     lv_obj_t* m = lv_label_create(s_setup_root);
     lv_label_set_text(m,
         TR("Let's set up your device.\n\n"
@@ -40711,12 +40711,10 @@ static void setupShowStep(int step) {
     lv_obj_set_style_text_font(m, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(m, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_pos(m, 12, 46);
-    setupBtn("Skip", setupSkipCb, false, 12, btn_y, 96);
-    setupBtn("Get Started", setupGetStartedCb, true, 12 + 96 + 8, btn_y, sw - 24 - 96 - 8);
+    setupBtn(TR("Skip"), setupSkipCb, false, 12, btn_y, 96);
+    setupBtn(TR("Get Started"), setupGetStartedCb, true, 12 + 96 + 8, btn_y, sw - 24 - 96 - 8);
   } else if (step == 1) {
-    int y = setupHeader("Choose your name",
-                        "How you'll appear to other nodes. You can change this later in Settings.",
-                        "Step 1 of 3");
+    int y = setupHeader(TR("Choose your name"), TR("How you'll appear to other nodes. You can change this later in Settings."), TR("Step 1 of 3"));
     s_setup_name_ta = lv_textarea_create(s_setup_root);
     lv_obj_set_size(s_setup_name_ta, sw - 24, 36);
     lv_obj_set_pos(s_setup_name_ta, 12, y + 6);
@@ -40728,12 +40726,10 @@ static void setupShowStep(int step) {
       if (cur && cur[0]) lv_textarea_set_text(s_setup_name_ta, cur);
     }
     attachSettingsTaEvents(s_setup_name_ta);
-    setupBtn("Back", setupBackCb, false, 12, btn_y, 72);
-    setupBtn("Next", setupNameNextCb, true, sw - 12 - 120, btn_y, 120);
+    setupBtn(TR("Back"), setupBackCb, false, 12, btn_y, 72);
+    setupBtn(TR("Next"), setupNameNextCb, true, sw - 12 - 120, btn_y, 120);
   } else if (step == 2) {
-    int y = setupHeader("Choose your region",
-                        "Every node you talk to must match. You can change this later in Settings.",
-                        "Step 2 of 3");
+    int y = setupHeader(TR("Choose your region"), TR("Every node you talk to must match. You can change this later in Settings."), TR("Step 2 of 3"));
     s_setup_region_list = lv_obj_create(s_setup_root);
     lv_obj_remove_style_all(s_setup_region_list);
     lv_obj_set_size(s_setup_region_list, sw - 24, btn_y - (y + 6) - 8);
@@ -40744,10 +40740,10 @@ static void setupShowStep(int step) {
     lv_obj_set_scrollbar_mode(s_setup_region_list, LV_SCROLLBAR_MODE_AUTO);
     if (s_setup_region_sel < 0) s_setup_region_sel = findMatchingMeshRadioPreset(the_mesh.getNodePrefs());
     setupFillRegionList();
-    setupBtn("Back", setupBackCb, false, 12, btn_y, 72);
-    s_setup_region_next_btn = setupBtn("Next", setupRegionNextCb, true, sw - 12 - 120, btn_y, 120);
+    setupBtn(TR("Back"), setupBackCb, false, 12, btn_y, 72);
+    s_setup_region_next_btn = setupBtn(TR("Next"), setupRegionNextCb, true, sw - 12 - 120, btn_y, 120);
   } else {
-    int y = setupHeader("Wi-Fi & Bluetooth", nullptr, "Step 3 of 3");
+    int y = setupHeader(TR("Wi-Fi & Bluetooth"), nullptr, TR("Step 3 of 3"));
     lv_obj_t* m = lv_label_create(s_setup_root);
     lv_label_set_text(m,
         TR("This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a "
@@ -40759,8 +40755,8 @@ static void setupShowStep(int step) {
     lv_obj_set_style_text_font(m, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(m, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_pos(m, 12, y + 6);
-    setupBtn("Back", setupBackCb, false, 12, btn_y, 72);
-    setupBtn("Finish", setupFinishCb, true, sw - 12 - 120, btn_y, 120);
+    setupBtn(TR("Back"), setupBackCb, false, 12, btn_y, 72);
+    setupBtn(TR("Finish"), setupFinishCb, true, sw - 12 - 120, btn_y, 120);
   }
 }
 
