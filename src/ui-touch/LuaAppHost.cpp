@@ -24,7 +24,8 @@ extern const lv_font_t* luaHostFontForSize(int size_class);       // 12/14/16 ->
 extern void             luaHostToast(const char* msg, int ms);    // showAlert passthrough
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
 extern void             luaHostAppPath(char* out, size_t cap, const char* rel);   // prefixes the store root
-extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago);
+extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
+                             double* lat, double* lon);
 extern int  luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops);
 extern void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uint32_t* tx_air_s,
                               uint32_t* rx_pkts, uint32_t* rx_err, int* budget_ms);
@@ -597,13 +598,15 @@ void pressCb(lv_event_t* e) {
 // ---- wada.mesh (read-only) ----
 int meshContacts(lua_State* L) {
   lua_newtable(L);
-  char name[36]; int type; uint32_t ago;
+  char name[36]; int type; uint32_t ago; double lat, lon;
   for (int i = 0, out = 0; i < 200 && out < 100; i++) {
-    if (!luaHostContactAt(i, name, sizeof name, &type, &ago)) break;
-    lua_createtable(L, 0, 3);
+    if (!luaHostContactAt(i, name, sizeof name, &type, &ago, &lat, &lon)) break;
+    lua_createtable(L, 0, 5);
     lua_pushstring(L, name);          lua_setfield(L, -2, "name");
     lua_pushinteger(L, type);         lua_setfield(L, -2, "type");
     lua_pushinteger(L, (lua_Integer)ago); lua_setfield(L, -2, "ago_s");
+    lua_pushnumber(L, lat);           lua_setfield(L, -2, "lat");
+    lua_pushnumber(L, lon);           lua_setfield(L, -2, "lon");
     lua_rawseti(L, -2, ++out);
   }
   return 1;

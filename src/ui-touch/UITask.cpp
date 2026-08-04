@@ -36719,6 +36719,7 @@ static int  s_lua_rm_pending = -1;        // long-press remove target (drawer ti
 static bool s_tile_lp_fired  = false;     // swallow the release-click after a long press
 
 static void luaStoreRebuildList();        // fwd
+static void luaStoreRefreshCb(lv_event_t* e);
 static void closeLuaStorePage() {
   if (s_luastore_poll) { lv_timer_del(s_luastore_poll); s_luastore_poll = nullptr; }
   s_luastore_list = nullptr;
@@ -36836,35 +36837,91 @@ static void luaStoreHideSwitchCb(lv_event_t* e) {
   touchPrefsSetAppHide(mask);
 }
 
+static void luaStoreRefreshCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
+  s_lua_cat_n = 0;                 // "Loading..." until the worker answers
+  s_luacat_done = false;
+  s_luacat_request = true;
+  ensureTileFetchTaskRunning();
+  luaStoreScanInstalled();
+  luaStoreRebuildList();
+}
+
 static void luaStoreRebuildList() {
   if (!s_luastore_list) return;
   lv_obj_clean(s_luastore_list);
   const uint32_t hide = touchPrefsGetAppHide();
   const lv_coord_t W = s_luastore_w;
+  const lv_coord_t lh14 = lv_font_get_line_height(&g_font_14);
+  const lv_coord_t lh12 = lv_font_get_line_height(&g_font_12);
 
   auto section = [&](const char* txt) {
     lv_obj_t* l = lv_label_create(s_luastore_list);
-    lv_label_set_text(l, txt);
+    char up[40];
+    snprintf(up, sizeof up, "%s", txt);
+    for (char* q = up; *q; ++q) if (*q >= 'a' && *q <= 'z') *q -= 32;   // small-caps header
+    lv_label_set_text(l, up);
     lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_style_pad_top(l, 8, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(l, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(l, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(l, 2, LV_PART_MAIN);
   };
 
   // ---- catalog ----
   section(TR("Catalog"));
-  if (s_lua_cat_n < 0) {
-    lv_obj_t* l = lv_label_create(s_luastore_list);
-    lv_label_set_text(l, TR("Couldn't load the catalog. Wi-Fi on?"));
-    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(l, lv_color_hex(0xE08080), LV_PART_MAIN);
-  } else if (s_lua_cat_n == 0) {
-    lv_obj_t* l = lv_label_create(s_luastore_list);
-    lv_label_set_text(l, TR("Loading\xE2\x80\xA6"));
-    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  if (s_lua_cat_n <= 0) {
+    lv_obj_t* card = lv_obj_create(s_luastore_list);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, W - 8, lh14 + lh12 + 22);
+    lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* t = lv_label_create(card);
+    lv_label_set_text(t, s_lua_cat_n < 0 ? TR("Catalog unavailable") : TR("Loading catalog\xE2\x80\xA6"));
+    lv_obj_set_style_text_font(t, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(t, lv_color_hex(s_lua_cat_n < 0 ? 0xE08080 : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_pos(t, 0, 0);
+    lv_obj_t* h = lv_label_create(card);
+    lv_label_set_text(h, s_lua_cat_n < 0
+        ? TR("Turn Wi-Fi on, then tap refresh. Apps already installed still work.")
+        : TR("Fetching the app list from firmware.wadamesh.com"));
+    lv_obj_set_style_text_font(h, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(h, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_width(h, W - 26);
+    lv_label_set_long_mode(h, LV_LABEL_LONG_WRAP);
+    lv_obj_set_pos(h, 0, lh14 + 3);
   }
-  const lv_coord_t lh14 = lv_font_get_line_height(&g_font_14);
-  const lv_coord_t lh12 = lv_font_get_line_height(&g_font_12);
+  // Header strip: what is installed vs available, and a refresh for the catalog.
+  {
+    lv_obj_t* hdr = lv_obj_create(s_luastore_list);
+    lv_obj_remove_style_all(hdr);
+    lv_obj_set_size(hdr, W - 8, lh14 + 12);
+    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* t = lv_label_create(hdr);
+    char hb[64];
+    if (s_lua_cat_n > 0)
+      snprintf(hb, sizeof hb, "%d app%s  Â·  %d installed",
+               s_lua_cat_n, s_lua_cat_n == 1 ? "" : "s", s_lua_inst_n);
+    else
+      snprintf(hb, sizeof hb, "%d installed", s_lua_inst_n);
+    lv_label_set_text(t, hb);
+    lv_obj_set_style_text_font(t, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(t, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(t, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_t* rb = lv_btn_create(hdr);
+    lv_obj_set_size(rb, 34, lh14 + 8);
+    lv_obj_align(rb, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_radius(rb, 8, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(rb, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_t* rl = lv_label_create(rb);
+    lv_label_set_text(rl, LV_SYMBOL_REFRESH);
+    lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_center(rl);
+    lv_obj_add_event_cb(rb, luaStoreRefreshCb, LV_EVENT_CLICKED, nullptr);
+  }
   const lv_coord_t row_h = lh14 + lh12 + 16;      // title + desc + padding, measured
   for (int i = 0; i < s_lua_cat_n; i++) {
     lv_obj_t* row = lv_obj_create(s_luastore_list);
@@ -36872,31 +36929,59 @@ static void luaStoreRebuildList() {
     lv_obj_set_size(row, W - 8, row_h);
     lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(row, 6, LV_PART_MAIN);
+    lv_obj_set_style_radius(row, 10, LV_PART_MAIN);
+    lv_obj_set_style_border_color(row, lv_color_hex(0x232830), LV_PART_MAIN);
+    lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(row, 7, LV_PART_MAIN);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_t* nm = lv_label_create(row);
     const LuaInstApp* inst = luaStoreFindInstalled(s_lua_cat[i].id);
-    char head[64];
-    snprintf(head, sizeof head, "%s  %s", s_lua_cat[i].name, s_lua_cat[i].ver);
-    lv_label_set_text(nm, head);
+    // Squircle icon chip with the app's initial, matching the drawer's look.
+    const int chip = lh14 + lh12 - 2;
+    lv_obj_t* ico = lv_obj_create(row);
+    lv_obj_remove_style_all(ico);
+    lv_obj_clear_flag(ico, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(ico, chip, chip);
+    lv_obj_align(ico, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_bg_color(ico, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(ico, LV_OPA_20, LV_PART_MAIN);
+    lv_obj_set_style_border_color(ico, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_border_width(ico, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(ico, LV_OPA_50, LV_PART_MAIN);
+    lv_obj_set_style_radius(ico, chip * 24 / 100, LV_PART_MAIN);
+    lv_obj_t* il = lv_label_create(ico);
+    char initial[2] = { s_lua_cat[i].name[0], 0 };
+    lv_label_set_text(il, initial);
+    lv_obj_set_style_text_font(il, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(il, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_center(il);
+    const int tx = chip + 8;                        // text column starts past the chip
+    lv_obj_t* nm = lv_label_create(row);
+    lv_label_set_text(nm, s_lua_cat[i].name);
     lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_width(nm, W - 100);                  // clear of the action button
+    lv_obj_set_width(nm, W - tx - 96);
     lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
-    lv_obj_set_pos(nm, 0, 0);
+    lv_obj_set_pos(nm, tx, 0);
+    lv_obj_t* vr = lv_label_create(row);            // version as a dim badge
+    lv_label_set_text(vr, s_lua_cat[i].ver);
+    lv_obj_set_style_text_font(vr, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(vr, lv_color_hex(inst ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(vr, tx, lh14 + 1);
     lv_obj_t* ds = lv_label_create(row);
     lv_label_set_text(ds, s_lua_cat[i].desc);
     lv_obj_set_style_text_font(ds, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(ds, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_width(ds, W - 100);
+    lv_obj_set_width(ds, W - tx - 96);
     lv_label_set_long_mode(ds, LV_LABEL_LONG_DOT);
-    lv_obj_set_pos(ds, 0, lh14 + 2);                // BELOW the title, measured
+    lv_obj_set_pos(ds, tx + 26, lh14 + 1);
     lv_obj_t* b = lv_btn_create(row);
-    lv_obj_set_size(b, 74, 30);
+    lv_obj_set_size(b, 78, 32);
     lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_radius(b, 8, LV_PART_MAIN);
     lv_obj_t* bl = lv_label_create(b);
     const bool cur = inst && strcmp(inst->ver, s_lua_cat[i].ver) == 0;
+    if (!inst) lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    else if (!cur) lv_obj_set_style_bg_color(b, lv_color_hex(0x4F9DF7), LV_PART_MAIN);
     lv_label_set_text(bl, !inst ? TR("Get") : cur ? TR("Remove") : TR("Update"));
     lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
     lv_obj_center(bl);
@@ -36910,7 +36995,17 @@ static void luaStoreRebuildList() {
     }
   }
 
-  // ---- installed-but-not-in-catalog (sideloaded) ----
+  // ---- installed-but-not-in-catalog (sideloaded from the card) ----
+  {
+    bool any_side = false;
+    for (int i = 0; i < s_lua_inst_n; i++) {
+      bool in_cat = false;
+      for (int c = 0; c < s_lua_cat_n; c++)
+        if (strcmp(s_lua_cat[c].id, s_lua_inst[i].id) == 0) { in_cat = true; break; }
+      if (!in_cat) { any_side = true; break; }
+    }
+    if (any_side) section(TR("Your own apps"));
+  }
   for (int i = 0; i < s_lua_inst_n; i++) {
     bool in_cat = false;
     for (int c = 0; c < s_lua_cat_n; c++)
@@ -36921,12 +37016,14 @@ static void luaStoreRebuildList() {
     lv_obj_set_size(row, W - 8, 40);
     lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(row, 6, LV_PART_MAIN);
+    lv_obj_set_style_radius(row, 10, LV_PART_MAIN);
+    lv_obj_set_style_border_color(row, lv_color_hex(0x232830), LV_PART_MAIN);
+    lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(row, 7, LV_PART_MAIN);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t* nm = lv_label_create(row);
     char head[64];
-    snprintf(head, sizeof head, "%s  %s  (sideloaded)", s_lua_inst[i].name, s_lua_inst[i].ver);
+    snprintf(head, sizeof head, "%s  %s", s_lua_inst[i].name, s_lua_inst[i].ver);
     lv_label_set_text(nm, head);
     lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -42552,11 +42649,14 @@ void luaHostAppPath(char* out, size_t cap, const char* rel) {
   snprintf(out, cap, "%s%s", s_ui_data_root, rel);   // SD-rooted stores prefix /meshcomod
 }
 // ---- wada.mesh read-only bridges (no mesh types cross into the host TU) ----
-int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago) {
+int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
+                     double* lat, double* lon) {
   ContactInfo ci;
   if (idx < 0 || !the_mesh.getContactByIdx((uint32_t)idx, ci)) return 0;
   snprintf(name, name_cap, "%s", ci.name);
   *type = ci.type;
+  *lat = ci.gps_lat / 1.0e6;
+  *lon = ci.gps_lon / 1.0e6;
   uint32_t now = the_mesh.getRTCClock() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
   *secs_ago = (ci.last_advert_timestamp && now > ci.last_advert_timestamp)
                   ? now - ci.last_advert_timestamp : 0;
