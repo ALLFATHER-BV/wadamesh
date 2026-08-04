@@ -24288,6 +24288,7 @@ void    luaHostAppPath(char* out, size_t cap, const char* rel);
 
 struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; };
 struct LuaInstApp { char id[20]; char name[28]; char ver[12]; };
+static const int kLuaCatMax = 16, kLuaInstMax = 16, kLangCatMax = LANG_COUNT + 2, kLangInstMax = 12;
 static LuaCatApp* s_lua_cat = nullptr;      // PSRAM, allocated on first store use
 static int        s_lua_cat_n = 0;          // -1 = last fetch failed
 static LuaInstApp* s_lua_inst = nullptr;    // PSRAM (see luaStoreTablesReady)
@@ -37025,7 +37026,7 @@ static void luaStoreScanInstalledFs(bool force) {
   s_lua_inst_valid = true;
   char appsdir[48];
   luaHostAppPath(appsdir, sizeof appsdir, "/apps");
-  const int kMax = (int)(sizeof(s_lua_inst) / sizeof(s_lua_inst[0]));
+  const int kMax = kLuaInstMax;
   // Pass 1: manifests (store installs). Pass 2: bare .lua files with no
   // manifest — a script dropped straight onto the card (any card reader, the
   // Files app, USB) becomes an app named after its file. Skip macOS "._*"
@@ -37076,7 +37077,7 @@ static void luaStoreScanInstalled(bool force) {
   // Seed AFTER the scan so a downloaded copy keeps its own entry and version;
   // the built-in only fills a gap. Runs even with no filesystem, which is the
   // whole point on a board that cannot depend on the Store.
-  const int kMaxInst = (int)(sizeof(s_lua_inst) / sizeof(s_lua_inst[0]));
+  const int kMaxInst = kLuaInstMax;
   for (int b = 0; b < kLuaBuiltinCount && s_lua_inst_n < kMaxInst; b++) {
     if (luaStoreFindInstalled(kLuaBuiltin[b].id)) continue;
     LuaInstApp& a = s_lua_inst[s_lua_inst_n++];
@@ -37142,10 +37143,10 @@ static bool luaStoreTablesReady() {
     void* p = heap_caps_calloc(1, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     return p ? p : calloc(1, n);            // no PSRAM (or none free): fall back
   };
-  s_lua_cat   = (LuaCatApp*)   ps(sizeof(LuaCatApp)  * 16);
-  s_lua_inst  = (LuaInstApp*)  ps(sizeof(LuaInstApp) * 16);
-  s_langcat   = (LangCatEntry*)ps(sizeof(LangCatEntry) * (LANG_COUNT + 2));
-  s_langinst  = (LangInst*)    ps(sizeof(LangInst) * 12);
+  s_lua_cat   = (LuaCatApp*)   ps(sizeof(LuaCatApp)  * kLuaCatMax);
+  s_lua_inst  = (LuaInstApp*)  ps(sizeof(LuaInstApp) * kLuaInstMax);
+  s_langcat   = (LangCatEntry*)ps(sizeof(LangCatEntry) * kLangCatMax);
+  s_langinst  = (LangInst*)    ps(sizeof(LangInst) * kLangInstMax);
   return s_lua_cat && s_lua_inst && s_langcat && s_langinst;
 }
 
@@ -37159,7 +37160,7 @@ static void luaStoreScanLangs() {
   File d = fs->open(dir);
   if (!d || !d.isDirectory()) return;
   File e;
-  while (s_langinst_n < (int)(sizeof s_langinst / sizeof s_langinst[0]) && (e = d.openNextFile())) {
+  while (s_langinst_n < kLangInstMax && (e = d.openNextFile())) {
     const char* nm = e.name();
     const char* leaf = strrchr(nm, '/');
     leaf = leaf ? leaf + 1 : nm;
@@ -37188,7 +37189,7 @@ static void luaStoreParseLangCatalog() {
   s_langcat_n = 0;
   if (!s_langcat_buf || !s_langcat_buf[0]) { s_langcat_n = -1; return; }
   const char* p = s_langcat_buf;
-  while (s_langcat_n < (int)(sizeof s_langcat / sizeof s_langcat[0])) {
+  while (s_langcat_n < kLangCatMax) {
     const char* ob = strchr(p, '{');
     if (!ob) break;
     const char* cb = strchr(ob, '}');
@@ -37239,7 +37240,7 @@ static void luaStoreParseCatalog() {
   s_lua_cat_n = 0;
   if (!s_luacat_buf || !s_luacat_buf[0]) { s_lua_cat_n = -1; return; }
   const char* p = s_luacat_buf;
-  while (s_lua_cat_n < (int)(sizeof(s_lua_cat) / sizeof(s_lua_cat[0]))) {
+  while (s_lua_cat_n < kLuaCatMax) {
     const char* ob = strchr(p, '{');
     if (!ob) break;
     const char* cb = strchr(ob, '}');
@@ -37335,7 +37336,7 @@ static void luaStorePollCb(lv_timer_t* t) {
     // re-listing of the directory we only now wrote (FAT dir entries can lag a
     // write on some cards, which left the button reading "Get" until reopen).
     if (s_luainst_ok && !luaStoreFindInstalled(s_luainst_id) &&
-        s_lua_inst_n < (int)(sizeof(s_lua_inst) / sizeof(s_lua_inst[0]))) {
+        s_lua_inst_n < kLuaInstMax) {
       LuaInstApp& a = s_lua_inst[s_lua_inst_n++];
       snprintf(a.id, sizeof a.id, "%s", s_luainst_id);
       snprintf(a.ver, sizeof a.ver, "%s", s_luainst_ver);
@@ -38614,7 +38615,9 @@ static void openAppDrawer() {
 #if !CAP_LUA_APPS
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (Lua boards install it from the Store)
 #else
+#if !CAP_BUILTIN_LUA_APPS   // boards that ship their apps in the image do not offer the Store
     { LV_SYMBOL_DOWNLOAD,  "WADA Store", APPACT_STORE,   0,         0x15B6A6 },      // Lua app store (brand teal)
+#endif
 #endif
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
