@@ -603,7 +603,7 @@ static inline const lv_font_t* uiChromeFont() {
 #endif
 }
 
-// Jumbo is deliberately an Extra Large UI with only conversation text taken
+// Jumbo is deliberately the Large UI with only conversation text taken
 // one step further. Keeping this role separate avoids enlarging status chrome,
 // settings, timestamps, sender labels, and the composer on the Pager's short
 // display. Compact-chat rows use the same role because the message and metadata
@@ -629,7 +629,7 @@ static void initTouchFontFallbacks() {
       g_font_16 = lv_font_montserrat_20;
       break;
     case 2:
-    case 3:   // Jumbo keeps Extra Large chrome; chat message text is bumped separately.
+    case 3:   // Jumbo keeps Large chrome; chat message text is bumped separately.
       g_font_12 = lv_font_montserrat_18;
       g_font_14 = lv_font_montserrat_20;
       g_font_16 = lv_font_montserrat_24;
@@ -12256,7 +12256,7 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("UI size (restart to apply)"), COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* dd = lv_dropdown_create(body);
 #if defined(TLORA_PAGER)
-    lv_dropdown_set_options(dd, "Default\nLarge\nExtra Large\nJumbo");
+    lv_dropdown_set_options(dd, "Small\nMedium\nLarge\nJumbo");
 #else
     lv_dropdown_set_options(dd, TR("Normal (100%)\nLarge (150%)\nHuge (200%)"));
 #endif
