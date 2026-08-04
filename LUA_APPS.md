@@ -112,7 +112,17 @@ Stays native, with reasons (do not creep):
 - **MQTT bridge** — background service woven into the main loop; gets the
   catalog uninstall-toggle only.
 
-## Phases (each = roughly one beta)
+## Delivery: ALL of it ships in ONE beta — beta_59 (Kaj, 2026-08-04)
+
+The phases below are the build order inside the beta_59 branch of work, not
+separate releases. Ship list for beta_59: runtime + host + wada.* v1 + the
+Store page + VPS catalog + Snake/Airtime/RF Monitor converted to Lua (seeded
+to storage at first boot so they work offline, native versions compiled out
+under CAP_LUA_APPS) + built-in hide/show toggles + an SDK docs page. The
+Pager go/no-go measurement happens mid-flight and only decides that board's
+CAP_LUA_APPS value, not the project.
+
+## Phases (build order within beta_59)
 
 - **Phase 0 — spike + go/no-go (behind an experimental flag, T-Deck only).**
   Vendor Lua 5.4 under `lib/lua/` (PIO) + an IDF component wrapper for
