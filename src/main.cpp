@@ -276,15 +276,6 @@ void meshcomodClearSdMigLatch() {
 #endif
 
 
-// Boot memory trace: 175 KB of internal RAM is gone before the UI starts, and
-// nothing said where. Print free/largest at each init step so the consumer
-// names itself instead of being guessed at.
-#define BOOTMEM(tag) do { \
-    multi_heap_info_t _h{}; heap_caps_get_info(&_h, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); \
-    Serial.printf("[BOOTMEM] %-12s free=%6u largest=%6u psram=%7u\n", tag, \
-                  (unsigned)_h.total_free_bytes, (unsigned)_h.largest_free_block, \
-                  (unsigned)ESP.getFreePsram()); Serial.flush(); } while (0)
-
 void setup() {
   Serial.begin(115200);
 #if defined(HAS_RAK_TAP_V2)
@@ -293,7 +284,6 @@ void setup() {
   delay(200);
 #endif
   Serial.println("[BOOT] setup start");
-  BOOTMEM("setup-start");
   // The SDK ships CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096: every allocation
   // under 4 KB is forced into internal DRAM even when PSRAM is free. On the V4
   // that is why internal sat at ~99% while 800+ KB of PSRAM went unused. Lower
@@ -301,7 +291,6 @@ void setup() {
   // genuinely needs internal/DMA memory asks for it by capability and is
   // unaffected. Tunable — raise it if something misbehaves.
   heap_caps_malloc_extmem_enable(256);
-  BOOTMEM("post-extmem");
 
   // Widen the task-watchdog grace period. The ~5 s default trips during a legitimate-but-slow flash
   // burst — a SPIFFS garbage-collect, or a bulk save (DataStore issues ~12 flash ops per contact,
@@ -344,7 +333,6 @@ void setup() {
 
   board.begin();
   Serial.println("[BOOT] board ok");
-  BOOTMEM("post-board");
 
 #if defined(HAS_RAK_TAP_V2)
   // Quick PSRAM sanity check — silent crash before SPIFFS could be bad PSRAM config
@@ -392,9 +380,7 @@ void setup() {
   }
 #endif
 
-  BOOTMEM("pre-radio");
   if (!radio_init()) { halt(); }
-  BOOTMEM("post-radio");
   Serial.println("[BOOT] radio ok");
 
   fast_rng.begin(radio_driver.getRngSeed());
@@ -440,10 +426,7 @@ void setup() {
       ExtraFS.begin();
   #endif
   #endif
-  BOOTMEM("pre-store");
   store.begin();
-  BOOTMEM("post-store");
-  BOOTMEM("pre-mesh");
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -457,15 +440,10 @@ void setup() {
 #else
   serial_interface.begin(Serial);
 #endif
-  BOOTMEM("pre-iface");
   the_mesh.startInterface(serial_interface);
-  BOOTMEM("post-iface");
 #elif defined(RP2040_PLATFORM)
   LittleFS.begin();
-  BOOTMEM("pre-store");
   store.begin();
-  BOOTMEM("post-store");
-  BOOTMEM("pre-mesh");
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -488,18 +466,14 @@ void setup() {
   #else
     serial_interface.begin(Serial);
   #endif
-    BOOTMEM("pre-iface");
     the_mesh.startInterface(serial_interface);
-    BOOTMEM("post-iface");
 #elif defined(ESP32)
   // Storage selection. SPIFFS by default; use the SD card under /meshcomod when
   // SPIFFS is unavailable (e.g. installed under Launcher) OR the user opted in
   // ("Store data on SD"). The SD shares the LoRa SPI bus, already brought up by
   // radio_init() above, so SD.begin's spi.begin is a no-op. Graceful: any SD
   // failure falls back to SPIFFS so the device always boots.
-  BOOTMEM("pre-spiffs");
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
-  BOOTMEM("post-spiffs");
   bool sd_storage = false;
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
   {
@@ -668,14 +642,11 @@ void setup() {
   Serial.println("[BOOT] touchPrefsReload ok"); Serial.flush();
 #endif
 #endif
-  BOOTMEM("pre-store");
   store.begin();
-  BOOTMEM("post-store");
 #if defined(HAS_RAK_TAP_V2)
   Serial.println("[BOOT] store ok"); Serial.flush();
   Serial.println("[BOOT] calling mesh.begin..."); Serial.flush();
 #endif
-  BOOTMEM("pre-mesh");
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -697,17 +668,13 @@ void setup() {
 #endif
 
 #if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
-  BOOTMEM("pre-wifi-cfg");
   wifiConfigBegin();
-  BOOTMEM("post-wifi-cfg");
   Serial.println("[BOOT] wifiConfig ok");
 #endif
 
 #ifdef MULTI_TRANSPORT_COMPANION
   board.setInhibitSleep(true);
-  BOOTMEM("pre-iface-srv");
   serial_interface.begin(Serial, TCP_PORT, WS_PORT);
-  BOOTMEM("post-iface-srv");
   Serial.println("[BOOT] serial_interface ok");
   serial_interface.setBroadcastResponses(true);  // RX log, channel messages, etc. go to all clients (USB + TCP + WS [+ BLE]), not only last sender
   /* Pick BLE vs WiFi at boot. The ESP32-S3 doesn't have enough internal heap
@@ -794,9 +761,7 @@ void setup() {
 #else
   serial_interface.begin(Serial);
 #endif
-  BOOTMEM("pre-iface");
   the_mesh.startInterface(serial_interface);
-  BOOTMEM("post-iface");
 #else
   #error "need to define filesystem"
 #endif

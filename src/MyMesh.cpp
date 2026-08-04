@@ -3257,15 +3257,8 @@ void MyMesh::popChannelScope() {
   _chan_scope_pushed = false;
 }
 
-#define MESHMEM(tag) do { \
-    multi_heap_info_t _h{}; heap_caps_get_info(&_h, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); \
-    Serial.printf("[MESHMEM] %-12s free=%6u psram=%7u\n", tag, \
-                  (unsigned)_h.total_free_bytes, (unsigned)ESP.getFreePsram()); Serial.flush(); } while (0)
-
 void MyMesh::begin(bool has_display) {
-  MESHMEM("enter");
   BaseChatMesh::begin();
-  MESHMEM("post-base");
 
   if (!_store->loadMainIdentity(self_id)) {
     self_id = radio_new_identity(); // create new random identity
@@ -3288,9 +3281,7 @@ void MyMesh::begin(bool has_display) {
 #endif
 
   // load persisted prefs
-  MESHMEM("pre-prefs");
   _store->loadPrefs(_prefs, sensors.node_lat, sensors.node_lon);
-  MESHMEM("post-prefs");
 
   // sanitise bad pref values
   _prefs.rx_delay_base = constrain(_prefs.rx_delay_base, 0, 20.0f);
@@ -3332,13 +3323,10 @@ void MyMesh::begin(bool has_display) {
 #endif
 
   resetContacts();
-  MESHMEM("pre-contacts");
   _store->loadContacts(this);
-  MESHMEM("post-contacts");
   bootstrapRTCfromContacts();
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
-  MESHMEM("post-channels");
 
   applyRadioFromPrefs();   // freq/bw/sf/cr + TX power + RX-boost (shared with the live UI apply)
 #if defined(DISPLAY_CLASS)
