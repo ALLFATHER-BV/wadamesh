@@ -1328,6 +1328,14 @@ static void statusBarSetTall(bool tall) {
   // NOT be called from here — it calls back into statusBarSetTall = recursion.)
 }
 
+void reserveTileFetchStack();   // fwd: claim the worker stack before Wi-Fi eats the heap
+
+#define MEMPROBE(tag) do { \
+    multi_heap_info_t _hi{}; heap_caps_get_info(&_hi, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); \
+    Serial.printf("[MEM] %-14s free=%6u largest=%6u psram=%7u\n", tag, \
+                  (unsigned)_hi.total_free_bytes, (unsigned)_hi.largest_free_block, \
+                  (unsigned)ESP.getFreePsram()); } while (0)
+
 // ---- AppPage: the shared full-screen app-page chrome (see AppPage.h) --------------
 // Thin wrappers over the machinery just above, exported so the self-contained app
 // modules (SnakeGame) build the same page as the in-file tool
@@ -24340,8 +24348,9 @@ static void luaStoreFetchCatalogWorker(WiFiClient& client, HTTPClient& http) {
     s_luacat_buf = (char*)heap_caps_malloc(kLuaCatBufMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!s_luacat_buf) { return; }
   s_luacat_buf[0] = 0;
-  luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/apps.json",
-                  s_luacat_buf, kLuaCatBufMax);
+  int cn = luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/apps.json",
+                           s_luacat_buf, kLuaCatBufMax);
+  Serial.printf("[APPCAT] n=%d wifi=%d\n", cn, (int)WiFi.status());
 }
 
 // Download <id>.lua + <id>.json (immutable per-version path) into /apps/.
@@ -24400,8 +24409,9 @@ static void luaStoreFetchLangCatalogWorker(WiFiClient& client, HTTPClient& http)
     s_langcat_buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!s_langcat_buf) return;
   s_langcat_buf[0] = 0;
-  luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/langs.json",
-                  s_langcat_buf, kCap);
+  int ln = luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/langs.json",
+                           s_langcat_buf, kCap);
+  Serial.printf("[LANGCAT] n=%d\n", ln);
 }
 
 // Chunked writer through an internal bounce buffer, tolerant of transient
@@ -24886,6 +24896,7 @@ static void tileFetchTaskFn(void* arg) {
     // Lua app store: catalog fetch + app install (LUA_APPS.md Phase 2).
     if (s_luacat_request) {
       s_luacat_request = false;
+      Serial.println("[APPCAT] worker picked up the request");
       luaStoreFetchCatalogWorker(client, http);
       s_luacat_done = true;
       continue;
@@ -37588,7 +37599,9 @@ static void luaStoreRebuildList() {
   if (s_lua_cat_n <= 0) {
     lv_obj_t* card = lv_obj_create(s_luastore_list);
     lv_obj_remove_style_all(card);
-    lv_obj_set_size(card, W - 8, lh14 + lh12 + 22);
+    // Height from the wrapped hint, not a one-line guess — on a 240 px panel
+    // the second/third line used to be cut off by the card's own bottom edge.
+    lv_obj_set_size(card, W - 8, lh14 + lh12 * (narrow ? 3 : 2) + 22);
     lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(card, 10, LV_PART_MAIN);
@@ -37600,9 +37613,22 @@ static void luaStoreRebuildList() {
     lv_obj_set_style_text_color(t, lv_color_hex(s_lua_cat_n < 0 ? 0xE08080 : COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_pos(t, 0, 0);
     lv_obj_t* h = lv_label_create(card);
-    lv_label_set_text(h, s_lua_cat_n < 0
-        ? TR("Turn Wi-Fi on, then tap refresh. Apps already installed still work.")
-        : TR("Fetching the app list from firmware.wadamesh.com"));
+    if (s_lua_cat_n < 0 && s_tile_fetch_task == nullptr) {
+      // The network worker could not start: report the numbers that decide it
+      // (it needs one contiguous 8 KB internal block) right on screen, so this
+      // is diagnosable from the device instead of a serial cable.
+      char mem[128];
+      snprintf(mem, sizeof mem,
+               "%s\nfree %u KB, largest block %u KB (needs 8 KB)",
+               TR("Not enough free memory to fetch it. Reboot and try again."),
+               (unsigned)(ESP.getFreeHeap() / 1024),
+               (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) / 1024));
+      lv_label_set_text(h, mem);
+    } else {
+      lv_label_set_text(h, s_lua_cat_n < 0
+          ? TR("Turn Wi-Fi on, then tap refresh. Apps already installed still work.")
+          : TR("Fetching the app list from firmware.wadamesh.com"));
+    }
     lv_obj_set_style_text_font(h, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(h, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_width(h, W - 26);
@@ -37781,7 +37807,7 @@ static void openLuaStorePage() {
   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
 
-  appPageBeginSlim(TR("Lua Store"), &closeLuaStorePage);   // one-line bar; the tab bar is the page header
+  appPageBeginSlim(TR("Store"), &closeLuaStorePage);   // one-line bar; the tab bar is the page header
 
   // Open instantly from the cached install list; the card re-listing (sideload
   // pickup) runs on the worker and the poll timer repaints when it lands.
@@ -37791,7 +37817,22 @@ static void openLuaStorePage() {
     s_luacat_done = false;
     s_luacat_request = true;
   }
-  ensureTileFetchTaskRunning();
+  MEMPROBE("store-open");
+  const bool worker_up = ensureTileFetchTaskRunning();
+  Serial.printf("[STORE] open: worker=%d spawn_ok=%d wifi=%d free_int=%u largest=%u free_psram=%u\n",
+                (int)worker_up, (int)s_tile_fetch_spawn_ok, (int)WiFi.status(),
+                (unsigned)ESP.getFreeHeap(),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                (unsigned)ESP.getFreePsram());
+  // The net worker needs an 8 KB contiguous internal block. When memory is too
+  // tight to start it, nothing will ever service the request — so fail visibly
+  // instead of spinning on "Loading catalog..." forever.
+  if (!worker_up) {
+    s_lua_cat_n = -1;
+    s_luacat_request = false;
+    s_langcat_n = -1;
+    s_langcat_request = false;
+  }
   if (s_luastore_tab == 2) {              // reopened straight onto Languages
     luaStoreScanLangs();
     if (s_langcat_n <= 0) {
@@ -38507,7 +38548,7 @@ static void openAppDrawer() {
 #if !CAP_LUA_APPS
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (Lua boards install it from the Store)
 #else
-    { LV_SYMBOL_DOWNLOAD,  "Lua Store", APPACT_STORE,    0,         0x15B6A6 },      // Lua app store (brand teal)
+    { LV_SYMBOL_DOWNLOAD,  "WADA Store", APPACT_STORE,   0,         0x15B6A6 },      // Lua app store (brand teal)
 #endif
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
@@ -41999,7 +42040,9 @@ static void buildUiTree() {
   makeChatDetail(g_lv.dm);
   makeChatDetail(g_lv.ch);
 
+  MEMPROBE("pre-settings");
   makeSettings(tab_settings);
+  MEMPROBE("post-UI-build");
 
 #if defined(HAS_TANMATSU)
   navBuildTabKeyHints();   // coloured △□○♣◇ shapes on the tab bar = the physical F-keys
@@ -45846,6 +45889,16 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(HAS_TOUCH_UI)
   g_lv.task = this;
   if (!g_lv.ready) {
+    // Claim the net worker's 8 KB internal stack NOW, while the heap is still
+    // whole. Its own comment always said "allocated at UITask::begin() time",
+    // but the only caller was the fallback inside ensureTileFetchTaskRunning()
+    // — which runs when the user first opens the map/store, by which point the
+    // Wi-Fi driver has taken the internal heap. On the V4 that left a 4-byte
+    // largest block, so the worker could never start and tiles, the update
+    // check and the app catalog were all silently dead.
+    reserveTileFetchStack();
+    MEMPROBE("post-reserve");
+    MEMPROBE("pre-lv_init");
     lv_init();
     initTouchFontFallbacks();
 #if CAP_ROUND_CORNERS
@@ -46015,6 +46068,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
     // Accent-popup picker (both boards: on-screen + physical keyboard). Default on.
     s_accent_popups = touchPrefsGetAccentPopups();
+    {
+      multi_heap_info_t hi{};
+      heap_caps_get_info(&hi, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      Serial.printf("[MEM] boot int: total=%u free=%u largest=%u minfree=%u | psram free=%u\n",
+                    (unsigned)(hi.total_free_bytes + hi.total_allocated_bytes),
+                    (unsigned)hi.total_free_bytes, (unsigned)hi.largest_free_block,
+                    (unsigned)hi.minimum_free_bytes, (unsigned)ESP.getFreePsram());
+    }
     i18nSetLang(touchPrefsGetUiLang());   // active UI translation language (before the UI builds)
 #if CAP_LUA_APPS
     uiLangFileBootLoad();   // overlay the active .lang file (mounts data storage a bit earlier)
@@ -46075,7 +46136,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // when the base orientation is portrait. In hardware landscape the LVGL
     // rotation is left at NONE so it never software-rotates on top of the panel.
     g_lv.disp_drv.sw_rotate = 1;
-    lv_disp_drv_register(&g_lv.disp_drv);
+    MEMPROBE("pre-disp_reg");
+  lv_disp_drv_register(&g_lv.disp_drv);
+  MEMPROBE("post-disp_reg");
 #if defined(HAS_TANMATSU)
     // Apply the 270° software rotation now that the driver is registered: logical surface
     // becomes 800x480 and lv_disp_get_hor/ver_res report landscape for every layout query.

@@ -275,6 +275,16 @@ void meshcomodClearSdMigLatch() {
 }
 #endif
 
+
+// Boot memory trace: 175 KB of internal RAM is gone before the UI starts, and
+// nothing said where. Print free/largest at each init step so the consumer
+// names itself instead of being guessed at.
+#define BOOTMEM(tag) do { \
+    multi_heap_info_t _h{}; heap_caps_get_info(&_h, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); \
+    Serial.printf("[BOOTMEM] %-12s free=%6u largest=%6u psram=%7u\n", tag, \
+                  (unsigned)_h.total_free_bytes, (unsigned)_h.largest_free_block, \
+                  (unsigned)ESP.getFreePsram()); Serial.flush(); } while (0)
+
 void setup() {
   Serial.begin(115200);
 #if defined(HAS_RAK_TAP_V2)
@@ -283,6 +293,7 @@ void setup() {
   delay(200);
 #endif
   Serial.println("[BOOT] setup start");
+  BOOTMEM("setup-start");
 
   // Widen the task-watchdog grace period. The ~5 s default trips during a legitimate-but-slow flash
   // burst — a SPIFFS garbage-collect, or a bulk save (DataStore issues ~12 flash ops per contact,
@@ -325,6 +336,7 @@ void setup() {
 
   board.begin();
   Serial.println("[BOOT] board ok");
+  BOOTMEM("post-board");
 
 #if defined(HAS_RAK_TAP_V2)
   // Quick PSRAM sanity check — silent crash before SPIFFS could be bad PSRAM config
@@ -372,7 +384,9 @@ void setup() {
   }
 #endif
 
+  BOOTMEM("pre-radio");
   if (!radio_init()) { halt(); }
+  BOOTMEM("post-radio");
   Serial.println("[BOOT] radio ok");
 
   fast_rng.begin(radio_driver.getRngSeed());
@@ -405,6 +419,7 @@ void setup() {
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  BOOTMEM("pre-fs");
   InternalFS.begin();
   #if defined(QSPIFLASH)
     if (!QSPIFlash.begin()) {
@@ -418,7 +433,9 @@ void setup() {
       ExtraFS.begin();
   #endif
   #endif
+  BOOTMEM("pre-store");
   store.begin();
+  BOOTMEM("pre-mesh");
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -432,9 +449,13 @@ void setup() {
 #else
   serial_interface.begin(Serial);
 #endif
+  BOOTMEM("pre-iface");
   the_mesh.startInterface(serial_interface);
+  BOOTMEM("post-iface");
 #elif defined(RP2040_PLATFORM)
+  BOOTMEM("pre-littlefs");
   LittleFS.begin();
+  BOOTMEM("post-littlefs");
   store.begin();
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
