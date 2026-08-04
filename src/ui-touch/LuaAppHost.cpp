@@ -28,6 +28,8 @@ extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, ui
 extern int  luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops);
 extern void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uint32_t* tx_air_s,
                               uint32_t* rx_pkts, uint32_t* rx_err, int* budget_ms);
+extern void luaHostRadioStats2(uint32_t* rx_evt, uint32_t* rx_drop, uint32_t* tx_pkts,
+                               float* freq, float* bw, int* sf, int* duty_pct);
 extern void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon);
 class WiFiClient; class HTTPClient;
 extern int  luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url, char* buf, size_t cap);
@@ -267,6 +269,66 @@ int uiLabel(lua_State* L) {
   WidgetUd* ud = (WidgetUd*)lua_newuserdatauv(L, sizeof(WidgetUd), 0);
   ud->obj = l;
   luaL_setmetatable(L, "wada.label");
+  return 1;
+}
+
+// ---- chart userdata (the primitive the native Monitor/Airtime pages use) ----
+struct ChartUd { lv_obj_t* obj; lv_chart_series_t* ser[2]; int n_ser; };
+ChartUd* checkChart(lua_State* L) { return (ChartUd*)luaL_checkudata(L, 1, "wada.chart"); }
+
+int chPush(lua_State* L) {   // chart:push(series_idx, value)
+  ChartUd* c = checkChart(L);
+  int si = (int)luaL_checkinteger(L, 2) - 1;
+  if (!c->obj || si < 0 || si >= c->n_ser) return 0;
+  lv_chart_set_next_value(c->obj, c->ser[si], (lv_coord_t)luaL_checkinteger(L, 3));
+  return 0;
+}
+int chSetAll(lua_State* L) {  // chart:fill(series_idx, value) — reset a series
+  ChartUd* c = checkChart(L);
+  int si = (int)luaL_checkinteger(L, 2) - 1;
+  if (!c->obj || si < 0 || si >= c->n_ser) return 0;
+  lv_chart_set_all_value(c->obj, c->ser[si], (lv_coord_t)luaL_checkinteger(L, 3));
+  return 0;
+}
+int chRange(lua_State* L) {   // chart:range(min, max)
+  ChartUd* c = checkChart(L);
+  if (c->obj) lv_chart_set_range(c->obj, LV_CHART_AXIS_PRIMARY_Y,
+                                 (lv_coord_t)luaL_checkinteger(L, 2),
+                                 (lv_coord_t)luaL_checkinteger(L, 3));
+  return 0;
+}
+int chPos(lua_State* L) {
+  ChartUd* c = checkChart(L);
+  if (c->obj) lv_obj_set_pos(c->obj, (lv_coord_t)luaL_checkinteger(L, 2), (lv_coord_t)luaL_checkinteger(L, 3));
+  return 0;
+}
+
+int uiChart(lua_State* L) {   // wada.ui.chart(w, h, points, color1 [, color2] [, bars])
+  if (!s_h || !s_h->body) return luaL_error(L, "no app body");
+  int w = (int)luaL_checkinteger(L, 1), h = (int)luaL_checkinteger(L, 2);
+  int pts = (int)luaL_optinteger(L, 3, 60);
+  if (pts < 2) pts = 2;
+  if (pts > 240) pts = 240;
+  lv_obj_t* ch = lv_chart_create(s_h->body);
+  lv_obj_set_size(ch, w, h);
+  lv_chart_set_type(ch, lua_toboolean(L, 6) ? LV_CHART_TYPE_BAR : LV_CHART_TYPE_LINE);
+  lv_chart_set_point_count(ch, pts);
+  lv_chart_set_update_mode(ch, LV_CHART_UPDATE_MODE_SHIFT);
+  lv_chart_set_div_line_count(ch, 3, 0);
+  lv_obj_set_style_size(ch, 0, LV_PART_INDICATOR);          // no point dots
+  lv_obj_set_style_bg_color(ch, lv_color_hex(0x101418), LV_PART_MAIN);
+  lv_obj_set_style_border_width(ch, 0, LV_PART_MAIN);
+  lv_obj_set_style_line_color(ch, lv_color_hex(0x2A3038), LV_PART_ITEMS);
+  ChartUd* ud = (ChartUd*)lua_newuserdatauv(L, sizeof(ChartUd), 0);
+  ud->obj = ch;
+  ud->n_ser = 0;
+  ud->ser[0] = lv_chart_add_series(ch, lv_color_hex(argColor(L, 4, 0x15B6A6)), LV_CHART_AXIS_PRIMARY_Y);
+  ud->n_ser = 1;
+  if (!lua_isnoneornil(L, 5)) {
+    ud->ser[1] = lv_chart_add_series(ch, lv_color_hex(argColor(L, 5, 0x7A7F87)), LV_CHART_AXIS_PRIMARY_Y);
+    ud->n_ser = 2;
+  }
+  luaL_setmetatable(L, "wada.chart");
   return 1;
 }
 
@@ -514,6 +576,15 @@ int meshStats(lua_State* L) {
   lua_pushinteger(L, (lua_Integer)rx_pkts); lua_setfield(L, -2, "rx_pkts");
   lua_pushinteger(L, (lua_Integer)rx_err);  lua_setfield(L, -2, "rx_err");
   lua_pushinteger(L, budget);               lua_setfield(L, -2, "tx_budget_ms");
+  uint32_t rx_evt, rx_drop, tx_pkts; float freq, bw; int sf, duty;
+  luaHostRadioStats2(&rx_evt, &rx_drop, &tx_pkts, &freq, &bw, &sf, &duty);
+  lua_pushinteger(L, (lua_Integer)rx_evt);  lua_setfield(L, -2, "rx_events");
+  lua_pushinteger(L, (lua_Integer)rx_drop); lua_setfield(L, -2, "rx_dropped");
+  lua_pushinteger(L, (lua_Integer)tx_pkts); lua_setfield(L, -2, "tx_pkts");
+  lua_pushnumber(L, freq);                  lua_setfield(L, -2, "freq");
+  lua_pushnumber(L, bw);                    lua_setfield(L, -2, "bw");
+  lua_pushinteger(L, sf);                   lua_setfield(L, -2, "sf");
+  lua_pushinteger(L, duty);                 lua_setfield(L, -2, "duty_pct");
   return 1;
 }
 int meshSelf(lua_State* L) {
@@ -585,6 +656,7 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, uiCanvas); lua_setfield(L, -2, "canvas");
   lua_pushcfunction(L, uiLabel);  lua_setfield(L, -2, "label");
   lua_pushcfunction(L, uiButton); lua_setfield(L, -2, "button");
+  lua_pushcfunction(L, uiChart);  lua_setfield(L, -2, "chart");
   lua_createtable(L, 0, 6);                              // wada.ui.colors (theme)
   lua_pushinteger(L, 0x15B6A6); lua_setfield(L, -2, "accent");
   lua_pushinteger(L, 0xE6E9ED); lua_setfield(L, -2, "text");
@@ -636,6 +708,15 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, cvPos);    lua_setfield(L, -2, "pos");
   lua_setfield(L, -2, "__index");
   lua_pushcfunction(L, cvGc);     lua_setfield(L, -2, "__gc");
+  lua_pop(L, 1);
+
+  luaL_newmetatable(L, "wada.chart");
+  lua_newtable(L);
+  lua_pushcfunction(L, chPush);   lua_setfield(L, -2, "push");
+  lua_pushcfunction(L, chSetAll); lua_setfield(L, -2, "fill");
+  lua_pushcfunction(L, chRange);  lua_setfield(L, -2, "range");
+  lua_pushcfunction(L, chPos);    lua_setfield(L, -2, "pos");
+  lua_setfield(L, -2, "__index");
   lua_pop(L, 1);
 
   luaL_newmetatable(L, "wada.label");

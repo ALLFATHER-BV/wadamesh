@@ -42904,6 +42904,18 @@ void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uint32_t* 
   *rx_err   = radio_driver.getPacketsRecvErrors();
   *budget_ms = (int)the_mesh.getRemainingTxBudget();
 }
+void luaHostRadioStats2(uint32_t* rx_evt, uint32_t* rx_drop, uint32_t* tx_pkts,
+                        float* freq, float* bw, int* sf, int* duty_pct) {
+  *rx_evt  = radio_driver.getRxEvents();
+  *rx_drop = radio_driver.getRxQueueDrops();
+  *tx_pkts = radio_driver.getPacketsSent();
+  NodePrefs* p = the_mesh.getNodePrefs();
+  *freq = p->freq;
+  *bw   = p->bw;
+  *sf   = p->sf;
+  // airtime_factor -> the duty ceiling the dispatcher enforces (see #161)
+  *duty_pct = p->airtime_factor > 0 ? (int)(100.0f / (1.0f + p->airtime_factor) + 0.5f) : 100;
+}
 void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon) {
   snprintf(name, name_cap, "%s", the_mesh.getNodePrefs()->node_name);
   *lat = g_lv.task ? g_lv.task->getNodeLat() : 0.0;
