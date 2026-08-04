@@ -131,6 +131,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.clock_floor       = 0;      // no persisted send-timestamp floor yet
   c.rx_queue          = 1;      // ON: buffered receive (test-channel default; opt-out toggle in Radio & Mesh)
   c.retry_echo        = 0;      // OFF: auto-retry is opt-in (toggle in Radio & Mesh)
+  c.app_hide          = 0;      // no drawer tiles hidden (Store page toggles)
   c.sleep_idle        = 0;      // default: idle light-sleep OFF
   { const char* d = "ertui"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // default tab hotkeys E/R/T/U/I
   c.map_zoom_buttons  = 0;      // default: map zoom = slider
@@ -227,6 +228,7 @@ static void cfgLoadOrMigrate() {
         // v45 also lands Hungarian INSERTED at UiLang slot 1 (#227), which shifts every
         // stored non-English choice by one. Remap once; RO (old max 12) becomes 13.
         if (stored_version < 45 && s_cfg.ui_lang >= 1 && s_cfg.ui_lang <= 12) s_cfg.ui_lang += 1;
+        if (stored_version < 46) s_cfg.app_hide = 0;   // v46 trailing field: nothing hidden
         if (stored_version < 34) s_cfg.web_mirror = 0;    // new trailing field: web control panel off by default (opt-in remote control)
         if (stored_version < 35) s_cfg.remote_mode = 0;   // new trailing field: remote mode off by default (opt-in, reboots to apply)
         if (stored_version < 36) s_cfg.remote_landscape = 0;
@@ -1080,6 +1082,16 @@ bool touchPrefsSetBootAdvert(bool on) {
 bool touchPrefsGetRxQueue() {
   if (!s_begun) touchPrefsBegin();
   return s_cfg.rx_queue != 0;
+}
+uint32_t touchPrefsGetAppHide() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.app_hide;
+}
+bool touchPrefsSetAppHide(uint32_t mask) {
+  if (!s_begun) touchPrefsBegin();
+  if (s_cfg.app_hide == mask) return true;
+  s_cfg.app_hide = mask;
+  return cfgFlush();
 }
 bool touchPrefsGetRetryEcho() {
   if (!s_begun) touchPrefsBegin();

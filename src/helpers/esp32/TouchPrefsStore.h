@@ -200,7 +200,9 @@ bool    touchPrefsSetCompactChat(bool on);
  * (the missed-messages class). Opt-in, default off = stock receive path. */
 bool    touchPrefsGetRxQueue();
 bool    touchPrefsSetRxQueue(bool on);
-bool    touchPrefsGetRetryEcho();      // v44: auto-retry sends until echoed/ACKed (default ON)
+uint32_t touchPrefsGetAppHide();       // v46: app-drawer hide bitmask (Store page toggles)
+bool     touchPrefsSetAppHide(uint32_t mask);
+bool    touchPrefsGetRetryEcho();      // v44/v45: auto-retry sends until echoed/ACKed (opt-in)
 bool    touchPrefsSetRetryEcho(bool on);
 uint32_t touchPrefsGetClockFloor();               // monotonic send-timestamp floor (#89)
 bool    touchPrefsSetClockFloor(uint32_t epoch);  // only ever grows; no-op below current

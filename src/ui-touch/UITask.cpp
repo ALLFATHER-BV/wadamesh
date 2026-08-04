@@ -24560,6 +24560,111 @@ static int verchkFetchLatest(WiFiClient& client, HTTPClient& http) {
   return best;
 }
 
+#if CAP_LUA_APPS
+// ===== Lua app store: state + network side (LUA_APPS.md Phase 2) ============
+// Catalog + installs ride the SAME net worker as the version check (flag in,
+// worker services with its shared client/http, done-flag out, UI polls).
+fs::FS* luaHostAppFs();                                        // bridges (defined later in this TU)
+void    luaHostAppPath(char* out, size_t cap, const char* rel);
+
+struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; };
+struct LuaInstApp { char id[20]; char name[28]; char ver[12]; };
+static LuaCatApp  s_lua_cat[16];
+static int        s_lua_cat_n = 0;          // -1 = last fetch failed
+static LuaInstApp s_lua_inst[16];
+static int        s_lua_inst_n = 0;
+static char*      s_luacat_buf = nullptr;   // catalog JSON (PSRAM, worker-filled)
+static const size_t kLuaCatBufMax = 8192;
+static volatile bool s_luacat_request = false, s_luacat_done = false;
+static volatile bool s_luainst_request = false, s_luainst_done = false;
+static bool  s_luainst_ok = false;
+static char  s_luainst_id[20], s_luainst_ver[12];
+
+// minimal "key":"value" extractor for our own flat-JSON manifests + catalog
+static bool luaJsonField(const char* buf, const char* key, char* out, size_t cap) {
+  char pat[28]; snprintf(pat, sizeof pat, "\"%s\"", key);
+  const char* q = strstr(buf, pat);
+  if (!q) return false;
+  q = strchr(q + strlen(pat), ':');
+  if (!q) return false;
+  q++;
+  while (*q == ' ' || *q == '\t') q++;
+  if (*q != '"') return false;
+  q++;
+  size_t o = 0;
+  while (*q && *q != '"' && o + 1 < cap) out[o++] = *q++;
+  out[o] = 0;
+  return o > 0;
+}
+
+// GET url into a PSRAM buffer (cap'd). Returns bytes read, -1 on failure.
+static int luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url,
+                           char* buf, size_t cap) {
+  http.setReuse(false);
+  http.setConnectTimeout(8000);
+  http.setTimeout(12000);
+  http.setUserAgent("wadamesh-touch");
+  if (!http.begin(client, url)) return -1;
+  if (http.GET() != 200) { http.end(); return -1; }
+  auto* st = http.getStreamPtr();
+  size_t total = 0;
+  const unsigned long t0 = millis();
+  while (http.connected() && total < cap - 1 && (millis() - t0) < 15000) {
+    int avail = st ? st->available() : 0;
+    if (avail <= 0) {
+      if (!st || !st->connected()) break;
+      vTaskDelay(pdMS_TO_TICKS(5));
+      continue;
+    }
+    int rd = st->read((uint8_t*)buf + total, min((size_t)avail, cap - 1 - total));
+    if (rd <= 0) break;
+    total += rd;
+  }
+  http.end();
+  buf[total] = 0;
+  return (int)total;
+}
+
+static void luaStoreFetchCatalogWorker(WiFiClient& client, HTTPClient& http) {
+  if (!s_luacat_buf)
+    s_luacat_buf = (char*)heap_caps_malloc(kLuaCatBufMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_luacat_buf) { return; }
+  s_luacat_buf[0] = 0;
+  luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/apps.json",
+                  s_luacat_buf, kLuaCatBufMax);
+}
+
+// Download <id>.lua + <id>.json (immutable per-version path) into /apps/.
+static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
+                                   const char* id, const char* ver) {
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return false;
+  char appsdir[48];
+  luaHostAppPath(appsdir, sizeof appsdir, "/apps");
+  fs->mkdir(appsdir);
+  static const char* const kExt[2] = { "lua", "json" };
+  const size_t kCap[2] = { 64 * 1024, 1024 };
+  for (int e = 0; e < 2; e++) {
+    char* buf = (char*)heap_caps_malloc(kCap[e], MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) return false;
+    char url[128];
+    snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/%s/%s/%s.%s", id, ver, id, kExt[e]);
+    int n = luaStoreHttpGet(client, http, url, buf, kCap[e]);
+    if (n <= 0) { heap_caps_free(buf); return false; }
+    char rel[40], path[64];
+    snprintf(rel, sizeof rel, "/apps/%s.%s", id, kExt[e]);
+    luaHostAppPath(path, sizeof path, rel);
+    File f = fs->open(path, "w");
+    if (!f) { heap_caps_free(buf); return false; }
+    size_t wr = f.write((const uint8_t*)buf, n);
+    f.close();
+    heap_caps_free(buf);
+    if (wr != (size_t)n) return false;
+  }
+  return true;
+}
+#endif  // CAP_LUA_APPS (store network side)
+
 // Watchdog-safe Wi-Fi scan. Starts an ASYNC scan and polls to completion with
 // vTaskDelay yields + a hard time cap, so the calling task never blocks long
 // enough to starve an idle task / the 5 s task watchdog. Replaces the old
@@ -24829,6 +24934,21 @@ static void tileFetchTaskFn(void* arg) {
       s_verchk_done = true;
       continue;
     }
+#if CAP_LUA_APPS
+    // Lua app store: catalog fetch + app install (LUA_APPS.md Phase 2).
+    if (s_luacat_request) {
+      s_luacat_request = false;
+      luaStoreFetchCatalogWorker(client, http);
+      s_luacat_done = true;
+      continue;
+    }
+    if (s_luainst_request) {
+      s_luainst_request = false;
+      s_luainst_ok = luaStoreDownloadWorker(client, http, s_luainst_id, s_luainst_ver);
+      s_luainst_done = true;
+      continue;
+    }
+#endif
 #if CAP_SD
     // microSD usage for the About page — the FAT scan runs here, off the UI thread.
     if (s_sdinfo_request) {
@@ -36837,6 +36957,319 @@ static void openControlCenter() {
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
 }
 
+#if CAP_LUA_APPS
+// ===== Lua app store: installed scan + Store page (LUA_APPS.md Phase 2) =====
+// Built-in tile hide bits (app_hide pref). Order is FROZEN — append only.
+enum {
+  APPHIDE_SNAKE = 1u << 0,  APPHIDE_AIRTIME = 1u << 1, APPHIDE_MONITOR = 1u << 2,
+  APPHIDE_SPECTRUM = 1u << 3, APPHIDE_DISCOVER = 1u << 4, APPHIDE_VNC = 1u << 5,
+  APPHIDE_REMOTE = 1u << 6, APPHIDE_READER = 1u << 7, APPHIDE_TERMINAL = 1u << 8,
+  APPHIDE_FILES = 1u << 9, APPHIDE_SIGNAL = 1u << 10, APPHIDE_MENTIONS = 1u << 11,
+};
+
+static void luaStoreScanInstalled() {
+  s_lua_inst_n = 0;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return;
+  char appsdir[48];
+  luaHostAppPath(appsdir, sizeof appsdir, "/apps");
+  File dir = fs->open(appsdir);
+  if (!dir || !dir.isDirectory()) return;
+  File e;
+  while (s_lua_inst_n < (int)(sizeof(s_lua_inst) / sizeof(s_lua_inst[0])) && (e = dir.openNextFile())) {
+    const char* nm = e.name();
+    const char* leaf = strrchr(nm, '/');
+    leaf = leaf ? leaf + 1 : nm;
+    size_t ln = strlen(leaf);
+    if (ln > 5 && strcmp(leaf + ln - 5, ".json") == 0 && e.size() > 0 && e.size() < 900) {
+      char buf[900];
+      size_t rd = e.read((uint8_t*)buf, sizeof buf - 1);
+      buf[rd] = 0;
+      LuaInstApp& a = s_lua_inst[s_lua_inst_n];
+      if (luaJsonField(buf, "id", a.id, sizeof a.id) &&
+          luaJsonField(buf, "name", a.name, sizeof a.name)) {
+        if (!luaJsonField(buf, "ver", a.ver, sizeof a.ver)) a.ver[0] = 0;
+        s_lua_inst_n++;
+      }
+    }
+    e.close();
+  }
+  dir.close();
+}
+
+static const LuaInstApp* luaStoreFindInstalled(const char* id) {
+  for (int i = 0; i < s_lua_inst_n; i++)
+    if (strcmp(s_lua_inst[i].id, id) == 0) return &s_lua_inst[i];
+  return nullptr;
+}
+
+// ---- the Store page ----
+static lv_obj_t* s_luastore_root = nullptr;
+static lv_obj_t* s_luastore_list = nullptr;
+static lv_timer_t* s_luastore_poll = nullptr;
+static bool s_luastore_busy = false;      // an install/remove is in flight
+
+static void luaStoreRebuildList();        // fwd
+static void closeLuaStorePage() {
+  if (s_luastore_poll) { lv_timer_del(s_luastore_poll); s_luastore_poll = nullptr; }
+  s_luastore_list = nullptr;
+  appPageEnd(&closeLuaStorePage);
+  popupClose(&s_luastore_root);
+}
+
+static void luaStoreParseCatalog() {
+  s_lua_cat_n = 0;
+  if (!s_luacat_buf || !s_luacat_buf[0]) { s_lua_cat_n = -1; return; }
+  const char* p = s_luacat_buf;
+  while (s_lua_cat_n < (int)(sizeof(s_lua_cat) / sizeof(s_lua_cat[0]))) {
+    const char* ob = strchr(p, '{');
+    if (!ob) break;
+    const char* cb = strchr(ob, '}');
+    if (!cb) break;
+    char obj[512];
+    size_t n = (size_t)(cb - ob + 1);
+    if (n >= sizeof obj) n = sizeof obj - 1;
+    memcpy(obj, ob, n);
+    obj[n] = 0;
+    LuaCatApp& c = s_lua_cat[s_lua_cat_n];
+    if (luaJsonField(obj, "id", c.id, sizeof c.id) &&
+        luaJsonField(obj, "name", c.name, sizeof c.name) &&
+        luaJsonField(obj, "ver", c.ver, sizeof c.ver)) {
+      if (!luaJsonField(obj, "desc", c.desc, sizeof c.desc)) c.desc[0] = 0;
+      s_lua_cat_n++;
+    }
+    p = cb + 1;
+  }
+  if (s_lua_cat_n == 0) s_lua_cat_n = -1;
+}
+
+static void luaStoreInstallBtnCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
+  int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  if (idx < 0 || idx >= s_lua_cat_n) return;
+  snprintf(s_luainst_id, sizeof s_luainst_id, "%s", s_lua_cat[idx].id);
+  snprintf(s_luainst_ver, sizeof s_luainst_ver, "%s", s_lua_cat[idx].ver);
+  s_luastore_busy = true;
+  s_luainst_done = false;
+  s_luainst_request = true;
+  ensureTileFetchTaskRunning();
+  if (g_lv.task) g_lv.task->showAlert(TR("Installing\xE2\x80\xA6"), 1200);
+}
+
+static void luaStoreRemoveBtnCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
+  int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  if (idx < 0 || idx >= s_lua_inst_n) return;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return;
+  static const char* const kExt[2] = { "lua", "json" };   // .sav kept: reinstalls keep scores
+  for (int x = 0; x < 2; x++) {
+    char rel[40], path[64];
+    snprintf(rel, sizeof rel, "/apps/%s.%s", s_lua_inst[idx].id, kExt[x]);
+    luaHostAppPath(path, sizeof path, rel);
+    fs->remove(path);
+  }
+  luaStoreScanInstalled();
+  luaStoreRebuildList();
+  if (g_lv.task) g_lv.task->showAlert(TR("Removed"), 1200);
+}
+
+static void luaStorePollCb(lv_timer_t* t) {
+  (void)t;
+  if (s_luacat_done) {
+    s_luacat_done = false;
+    luaStoreParseCatalog();
+    luaStoreRebuildList();
+  }
+  if (s_luainst_done) {
+    s_luainst_done = false;
+    s_luastore_busy = false;
+    luaStoreScanInstalled();
+    luaStoreRebuildList();
+    if (g_lv.task) g_lv.task->showAlert(s_luainst_ok ? TR("Installed") : TR("Install failed (network?)"),
+                                        s_luainst_ok ? 1400 : 2200);
+  }
+}
+
+static void luaStoreHideSwitchCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  uint32_t bit = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
+  uint32_t mask = touchPrefsGetAppHide();
+  // switch ON = app visible -> bit cleared
+  if (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED)) mask &= ~bit;
+  else                                                            mask |= bit;
+  touchPrefsSetAppHide(mask);
+}
+
+static void luaStoreRebuildList() {
+  if (!s_luastore_list) return;
+  lv_obj_clean(s_luastore_list);
+  const uint32_t hide = touchPrefsGetAppHide();
+  const lv_coord_t W = lv_obj_get_width(s_luastore_list);
+
+  auto section = [&](const char* txt) {
+    lv_obj_t* l = lv_label_create(s_luastore_list);
+    lv_label_set_text(l, txt);
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_pad_top(l, 8, LV_PART_MAIN);
+  };
+
+  // ---- catalog ----
+  section(TR("Catalog"));
+  if (s_lua_cat_n < 0) {
+    lv_obj_t* l = lv_label_create(s_luastore_list);
+    lv_label_set_text(l, TR("Couldn't load the catalog. Wi-Fi on?"));
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(0xE08080), LV_PART_MAIN);
+  } else if (s_lua_cat_n == 0) {
+    lv_obj_t* l = lv_label_create(s_luastore_list);
+    lv_label_set_text(l, TR("Loading\xE2\x80\xA6"));
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  }
+  for (int i = 0; i < s_lua_cat_n; i++) {
+    lv_obj_t* row = lv_obj_create(s_luastore_list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, W - 8, 52);
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(row, 6, LV_PART_MAIN);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* nm = lv_label_create(row);
+    const LuaInstApp* inst = luaStoreFindInstalled(s_lua_cat[i].id);
+    char head[64];
+    snprintf(head, sizeof head, "%s  %s", s_lua_cat[i].name, s_lua_cat[i].ver);
+    lv_label_set_text(nm, head);
+    lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(nm, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_t* ds = lv_label_create(row);
+    lv_label_set_text(ds, s_lua_cat[i].desc);
+    lv_obj_set_style_text_font(ds, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(ds, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_width(ds, W - 100);
+    lv_label_set_long_mode(ds, LV_LABEL_LONG_DOT);
+    lv_obj_align(ds, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_t* b = lv_btn_create(row);
+    lv_obj_set_size(b, 74, 30);
+    lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_t* bl = lv_label_create(b);
+    const bool cur = inst && strcmp(inst->ver, s_lua_cat[i].ver) == 0;
+    lv_label_set_text(bl, !inst ? TR("Get") : cur ? TR("Remove") : TR("Update"));
+    lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
+    lv_obj_center(bl);
+    if (inst && cur) {
+      // Remove needs the INSTALLED index
+      int ii = (int)(inst - s_lua_inst);
+      lv_obj_set_style_bg_color(b, lv_color_hex(0x8A4444), LV_PART_MAIN);
+      lv_obj_add_event_cb(b, luaStoreRemoveBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)ii);
+    } else {
+      lv_obj_add_event_cb(b, luaStoreInstallBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    }
+  }
+
+  // ---- installed-but-not-in-catalog (sideloaded) ----
+  for (int i = 0; i < s_lua_inst_n; i++) {
+    bool in_cat = false;
+    for (int c = 0; c < s_lua_cat_n; c++)
+      if (strcmp(s_lua_cat[c].id, s_lua_inst[i].id) == 0) { in_cat = true; break; }
+    if (in_cat) continue;
+    lv_obj_t* row = lv_obj_create(s_luastore_list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, W - 8, 40);
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(row, 6, LV_PART_MAIN);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* nm = lv_label_create(row);
+    char head[64];
+    snprintf(head, sizeof head, "%s  %s  (sideloaded)", s_lua_inst[i].name, s_lua_inst[i].ver);
+    lv_label_set_text(nm, head);
+    lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(nm, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_t* b = lv_btn_create(row);
+    lv_obj_set_size(b, 74, 28);
+    lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x8A4444), LV_PART_MAIN);
+    lv_obj_t* bl = lv_label_create(b);
+    lv_label_set_text(bl, TR("Remove"));
+    lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
+    lv_obj_center(bl);
+    lv_obj_add_event_cb(b, luaStoreRemoveBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+  }
+
+  // ---- built-in visibility ----
+  section(TR("Built-in apps (show / hide)"));
+  struct { const char* name; uint32_t bit; } builtins[] = {
+    { "Snake", APPHIDE_SNAKE }, { "Airtime", APPHIDE_AIRTIME }, { "Monitor", APPHIDE_MONITOR },
+    { "Spectrum", APPHIDE_SPECTRUM }, { "Discover", APPHIDE_DISCOVER },
+#if !defined(HAS_TANMATSU)
+    { "VNC", APPHIDE_VNC }, { "Remote", APPHIDE_REMOTE },
+#endif
+#if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
+    { "Web", APPHIDE_READER },
+#endif
+    { "Signal", APPHIDE_SIGNAL }, { "Mentions", APPHIDE_MENTIONS },
+#if defined(HAS_TOUCH_UI)
+    { "Terminal", APPHIDE_TERMINAL },
+#endif
+#if CAP_FILESYSTEM || defined(TLORA_PAGER)
+    { "Files", APPHIDE_FILES },
+#endif
+  };
+  for (auto& bi : builtins) {
+    lv_obj_t* row = lv_obj_create(s_luastore_list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, W - 8, 34);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* nm = lv_label_create(row);
+    lv_label_set_text(nm, bi.name);
+    lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(nm, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_t* sw = lv_switch_create(row);
+    lv_obj_align(sw, LV_ALIGN_RIGHT_MID, 0, 0);
+    if (!(hide & bi.bit)) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, luaStoreHideSwitchCb, LV_EVENT_VALUE_CHANGED, (void*)(uintptr_t)bi.bit);
+  }
+}
+
+static void openLuaStorePage() {
+  closeLuaStorePage();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
+  s_luastore_root = lv_obj_create(lv_scr_act());   // tall-bar page: parent on scr_act (tall-bar-page-layering)
+  lv_obj_remove_style_all(s_luastore_root);
+  lv_obj_set_size(s_luastore_root, sw, sh);
+  lv_obj_set_style_bg_color(s_luastore_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_luastore_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_luastore_root, LV_OBJ_FLAG_SCROLLABLE);
+
+  s_luastore_list = lv_obj_create(s_luastore_root);
+  lv_obj_remove_style_all(s_luastore_list);
+  lv_obj_set_size(s_luastore_list, sw - 12, sh - STATUSBAR_H - 12);
+  lv_obj_set_pos(s_luastore_list, 6, STATUSBAR_H + 8);
+  lv_obj_set_scroll_dir(s_luastore_list, LV_DIR_VER);
+  lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
+
+  appPageBegin("App Store", &closeLuaStorePage);
+
+  luaStoreScanInstalled();
+  if (s_lua_cat_n <= 0) {                 // no catalog yet this session -> fetch
+    s_lua_cat_n = 0;
+    s_luacat_done = false;
+    s_luacat_request = true;
+    ensureTileFetchTaskRunning();
+  }
+  luaStoreRebuildList();
+  s_luastore_poll = lv_timer_create(luaStorePollCb, 250, nullptr);
+}
+#endif  // CAP_LUA_APPS (store page)
+
 // ===== App drawer (full-screen grid launcher) =============================
 // Toggle-in alternative to the command-centre home: a grid of every tool. The
 // home's "Apps" button opens it; its own "Home" button (and the back key) close
@@ -36846,7 +37279,8 @@ enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
   APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_AIRTIME, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
-  APPACT_DISCOVER,
+  APPACT_DISCOVER, APPACT_STORE,
+  APPACT_LUA_BASE = 100,   // APPACT_LUA_BASE + i = installed Lua app s_lua_inst[i]
 };
 
 static void closeAppDrawer() {
@@ -37085,6 +37519,13 @@ static void appTileCb(lv_event_t* e) {
   const int act = (int)(intptr_t)lv_event_get_user_data(e);
   // Tools open OVER the drawer (do NOT close it), so dismissing them returns to
   // the drawer where they were launched — not the command centre.
+#if CAP_LUA_APPS
+  if (act >= APPACT_LUA_BASE && act < APPACT_LUA_BASE + s_lua_inst_n) {
+    const LuaInstApp& a = s_lua_inst[act - APPACT_LUA_BASE];
+    luaAppLaunchFile(a.id, a.name, nullptr, 0);
+    return;
+  }
+#endif
   switch (act) {
     case APPACT_MENTIONS:  openMentionsScreen();  return;
     case APPACT_CMDCENTER: setHomeDrawer(false);  return;   // explicit "back to command centre"
@@ -37103,6 +37544,7 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_ADVERT:    openAdvertModalCb(e);  return;
     case APPACT_POWER:     openPowerMenu();      return;
 #if CAP_LUA_APPS
+    case APPACT_STORE:     openLuaStorePage();   return;
     // Snake now runs on the Lua host (the wada.* reference app). The native
     // module stays in-tree but unreferenced here, so the linker drops it.
     case APPACT_SNAKE:     luaAppLaunchFile("snake", "Snake", kSnakeLua, sizeof(kSnakeLua) - 1); return;
@@ -37468,9 +37910,46 @@ static void openAppDrawer() {
     { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
 #endif
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // snake game (icon drawn from APPACT_SNAKE, not a glyph)
+#if CAP_LUA_APPS
+    { LV_SYMBOL_DOWNLOAD,  "Store",     APPACT_STORE,    0,         0x15B6A6 },      // Lua app store (brand teal)
+#endif
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
-  const int n = (int)(sizeof(tiles) / sizeof(tiles[0]));
+  const int n_static = (int)(sizeof(tiles) / sizeof(tiles[0]));
+#if CAP_LUA_APPS
+  // Hide filter (Store page toggles) + installed Lua apps as dynamic tiles.
+  const uint32_t hide_mask = touchPrefsGetAppHide();
+  auto tileHidden = [&](int act) -> bool {
+    switch (act) {
+      case APPACT_SNAKE:    return hide_mask & APPHIDE_SNAKE;
+      case APPACT_AIRTIME:  return hide_mask & APPHIDE_AIRTIME;
+      case APPACT_MONITOR:  return hide_mask & APPHIDE_MONITOR;
+      case APPACT_SPECTRUM: return hide_mask & APPHIDE_SPECTRUM;
+      case APPACT_DISCOVER: return hide_mask & APPHIDE_DISCOVER;
+      case APPACT_VNC:      return hide_mask & APPHIDE_VNC;
+      case APPACT_REMOTE:   return hide_mask & APPHIDE_REMOTE;
+      case APPACT_READER:   return hide_mask & APPHIDE_READER;
+      case APPACT_TERMINAL: return hide_mask & APPHIDE_TERMINAL;
+      case APPACT_FILES:    return hide_mask & APPHIDE_FILES;
+      case APPACT_SIGNAL:   return hide_mask & APPHIDE_SIGNAL;
+      case APPACT_MENTIONS: return hide_mask & APPHIDE_MENTIONS;
+      default:              return false;
+    }
+  };
+  static int s_draw_order[40];
+  int n = 0;
+  for (int i = 0; i < n_static; i++)
+    if (!tileHidden(tiles[i].act)) s_draw_order[n++] = i;
+  luaStoreScanInstalled();
+  int dyn0 = n;
+  for (int i = 0; i < s_lua_inst_n && n < 40; i++) {
+    if (strcmp(s_lua_inst[i].id, "snake") == 0) continue;   // built-in tile already covers it
+    s_draw_order[n++] = -(i + 1);                           // negative = dynamic index i
+  }
+  (void)dyn0;
+#else
+  const int n = n_static;
+#endif
 
   // Column count: 4 on the T-Deck, 3 on the V4 (a cleaner grid for the smaller
   // tile set). Tile height is sized to fit the rows on screen but CLAMPED to a
@@ -37496,9 +37975,21 @@ static void openAppDrawer() {
   if (tile_h < lo) tile_h = lo;
   for (int i = 0; i < n; i++) {
     const int col = i % cols, row = i / cols;
-    addAppTile(s_appdrawer_root, pad + col * (tile_w + gap), top + row * (tile_h + gap),
-               tile_w, tile_h, tiles[i].icon, tiles[i].label, tiles[i].act, tiles[i].badge,
-               tiles[i].color, big_grid);
+    const int x = pad + col * (tile_w + gap), y = top + row * (tile_h + gap);
+#if CAP_LUA_APPS
+    const int oi = s_draw_order[i];
+    if (oi < 0) {   // installed Lua app (dynamic)
+      const LuaInstApp& a = s_lua_inst[-oi - 1];
+      addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, LV_SYMBOL_PLAY, a.name,
+                 APPACT_LUA_BASE + (-oi - 1), 0, 0x15B6A6, big_grid);
+      continue;
+    }
+    addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, tiles[oi].icon, tiles[oi].label,
+               tiles[oi].act, tiles[oi].badge, tiles[oi].color, big_grid);
+#else
+    addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, tiles[i].icon, tiles[i].label,
+               tiles[i].act, tiles[i].badge, tiles[i].color, big_grid);
+#endif
   }
 
   // Keep the scrollbar permanently visible only when the grid actually overflows
