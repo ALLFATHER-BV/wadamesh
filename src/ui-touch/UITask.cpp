@@ -108,9 +108,7 @@
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
 #include "LuaHost.h"          // Lua app host (LUA_APPS.md; Phase 0 spike gate)
 #include "LuaAppHost.h"       // sandboxed Lua apps (LUA_APPS.md Phase 1; self-gated on CAP_LUA_APPS)
-#if CAP_LUA_APPS
-  #include "assets/lua_apps/snake_lua.h"   // embedded reference app (seeded copy is user-editable)
-#endif
+
 #include "ChannelUtil.h"      // Apps → Airtime (self-contained channel-utilization tool)
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 
@@ -37009,6 +37007,8 @@ static lv_obj_t* s_luastore_list = nullptr;
 static lv_timer_t* s_luastore_poll = nullptr;
 static lv_coord_t s_luastore_w = 240;   // list width, set at open — pre-layout get_width() reads 0
 static bool s_luastore_busy = false;      // an install/remove is in flight
+static int  s_lua_rm_pending = -1;        // long-press remove target (drawer tiles)
+static bool s_tile_lp_fired  = false;     // swallow the release-click after a long press
 
 static void luaStoreRebuildList();        // fwd
 static void closeLuaStorePage() {
@@ -37057,13 +37057,12 @@ static void luaStoreInstallBtnCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(TR("Installing\xE2\x80\xA6"), 1200);
 }
 
-static void luaStoreRemoveBtnCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
-  int idx = (int)(intptr_t)lv_event_get_user_data(e);
+// Delete an installed app's files (.sav kept: reinstalls keep scores) + rescan.
+static void luaStoreRemoveApp(int idx) {
   if (idx < 0 || idx >= s_lua_inst_n) return;
   fs::FS* fs = luaHostAppFs();
   if (!fs) return;
-  static const char* const kExt[2] = { "lua", "json" };   // .sav kept: reinstalls keep scores
+  static const char* const kExt[2] = { "lua", "json" };
   for (int x = 0; x < 2; x++) {
     char rel[40], path[64];
     snprintf(rel, sizeof rel, "/apps/%s.%s", s_lua_inst[idx].id, kExt[x]);
@@ -37071,8 +37070,13 @@ static void luaStoreRemoveBtnCb(lv_event_t* e) {
     fs->remove(path);
   }
   luaStoreScanInstalled();
-  luaStoreRebuildList();
   if (g_lv.task) g_lv.task->showAlert(TR("Removed"), 1200);
+}
+
+static void luaStoreRemoveBtnCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
+  luaStoreRemoveApp((int)(intptr_t)lv_event_get_user_data(e));
+  luaStoreRebuildList();
 }
 
 static void luaStorePollCb(lv_timer_t* t) {
@@ -37206,7 +37210,7 @@ static void luaStoreRebuildList() {
   // ---- built-in visibility ----
   section(TR("Built-in apps (show / hide)"));
   struct { const char* name; uint32_t bit; } builtins[] = {
-    { "Snake", APPHIDE_SNAKE }, { "Airtime", APPHIDE_AIRTIME }, { "Monitor", APPHIDE_MONITOR },
+    { "Airtime", APPHIDE_AIRTIME }, { "Monitor", APPHIDE_MONITOR },
     { "Spectrum", APPHIDE_SPECTRUM }, { "Discover", APPHIDE_DISCOVER },
 #if !defined(HAS_TANMATSU)
     { "VNC", APPHIDE_VNC }, { "Remote", APPHIDE_REMOTE },
@@ -37527,6 +37531,7 @@ static void appTileCb(lv_event_t* e) {
   // Tools open OVER the drawer (do NOT close it), so dismissing them returns to
   // the drawer where they were launched — not the command centre.
 #if CAP_LUA_APPS
+  if (s_tile_lp_fired) { s_tile_lp_fired = false; return; }   // release-click after a long press
   if (act >= APPACT_LUA_BASE && act < APPACT_LUA_BASE + s_lua_inst_n) {
     const LuaInstApp& a = s_lua_inst[act - APPACT_LUA_BASE];
     luaAppLaunchFile(a.id, a.name, nullptr, 0);
@@ -37552,9 +37557,9 @@ static void appTileCb(lv_event_t* e) {
     case APPACT_POWER:     openPowerMenu();      return;
 #if CAP_LUA_APPS
     case APPACT_STORE:     openLuaStorePage();   return;
-    // Snake now runs on the Lua host (the wada.* reference app). The native
-    // module stays in-tree but unreferenced here, so the linker drops it.
-    case APPACT_SNAKE:     luaAppLaunchFile("snake", "Snake", kSnakeLua, sizeof(kSnakeLua) - 1); return;
+    // Snake is store-only on Lua boards: install it from the catalog and it
+    // appears as a regular installed tile (the native module goes unreferenced
+    // here, so the linker drops it).
 #else
     case APPACT_SNAKE:     SnakeGame::launch();  return;
 #endif
@@ -37580,6 +37585,27 @@ static void appTileCb(lv_event_t* e) {
 // One launcher tile: a rounded panel with an accent icon over a label. The icon
 // font is g_font_16 — it carries the LV_SYMBOL set AND the spliced person glyph,
 // so every tile (including Contacts) renders without tofu.
+#if CAP_LUA_APPS
+// Long-press on an installed Lua app tile -> confirm -> remove (files deleted,
+// drawer rebuilt). A long press must swallow the release CLICK so the app
+// doesn't also launch under the confirm sheet.
+static void luaTileRemoveConfirmed() {
+  luaStoreRemoveApp(s_lua_rm_pending);
+  s_lua_rm_pending = -1;
+  if (s_appdrawer_root) { closeAppDrawer(); openAppDrawer(); }   // rebuild tiles
+}
+static void appTileLongPressCb(lv_event_t* e) {
+  int act = (int)(intptr_t)lv_event_get_user_data(e);
+  int idx = act - APPACT_LUA_BASE;
+  if (idx < 0 || idx >= s_lua_inst_n) return;
+  s_tile_lp_fired = true;
+  s_lua_rm_pending = idx;
+  char msg[64];
+  snprintf(msg, sizeof msg, TR("Remove %s?"), s_lua_inst[idx].name);
+  showConfirm(msg, TR("Remove"), luaTileRemoveConfirmed);
+}
+#endif
+
 static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
                        const char* icon, const char* label, int act, int badge,
                        uint32_t icon_col, bool big = false) {
@@ -37596,6 +37622,10 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_set_style_bg_opa(t, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_flag(t, NAV_ACCENTFOCUS_FLAG);   // keyboard/encoder focus = same accent tint as a touch press
   lv_obj_add_event_cb(t, appTileCb, LV_EVENT_CLICKED, (void*)(intptr_t)act);
+#if CAP_LUA_APPS
+  if (act >= APPACT_LUA_BASE)
+    lv_obj_add_event_cb(t, appTileLongPressCb, LV_EVENT_LONG_PRESSED, (void*)(intptr_t)act);
+#endif
 
   // Rounded-square chip (iOS-style squircle), tinted with the app's accent
   // colour, centred up top. Bigger + a small proportional corner radius so it
@@ -37916,8 +37946,9 @@ static void openAppDrawer() {
 #if CAP_FILESYSTEM || defined(TLORA_PAGER)
     { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
 #endif
-    { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // snake game (icon drawn from APPACT_SNAKE, not a glyph)
-#if CAP_LUA_APPS
+#if !CAP_LUA_APPS
+    { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (Lua boards install it from the Store)
+#else
     { LV_SYMBOL_DOWNLOAD,  "Store",     APPACT_STORE,    0,         0x15B6A6 },      // Lua app store (brand teal)
 #endif
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
@@ -37949,10 +37980,8 @@ static void openAppDrawer() {
     if (!tileHidden(tiles[i].act)) s_draw_order[n++] = i;
   luaStoreScanInstalled();
   int dyn0 = n;
-  for (int i = 0; i < s_lua_inst_n && n < 40; i++) {
-    if (strcmp(s_lua_inst[i].id, "snake") == 0) continue;   // built-in tile already covers it
+  for (int i = 0; i < s_lua_inst_n && n < 40; i++)
     s_draw_order[n++] = -(i + 1);                           // negative = dynamic index i
-  }
   (void)dyn0;
 #else
   const int n = n_static;
