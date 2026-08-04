@@ -1,5 +1,5 @@
 {"apps":[
   {"id":"snake","name":"Snake","ver":"1.0","desc":"The classic, in Lua. Swipe to steer."},
-  {"id":"monitor","name":"RF Monitor","ver":"1.0","desc":"Recently heard packets + live radio stats."},
-  {"id":"airtime","name":"Airtime","ver":"1.0","desc":"Channel utilization from the mesh airtime counters."}
+  {"id":"rxlog","name":"RX Log (example)","ver":"1.0","desc":"SDK example: recently heard packets from wada.mesh. The built-in RF Monitor stays the full tool."},
+  {"id":"airbars","name":"Air Bars (example)","ver":"1.0","desc":"SDK example: channel utilization bars from the mesh airtime counters."}
 ]}

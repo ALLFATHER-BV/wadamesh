@@ -37119,7 +37119,26 @@ static void luaStorePollCb(lv_timer_t* t) {
   if (s_luainst_done) {
     s_luainst_done = false;
     s_luastore_busy = false;
-    luaStoreScanInstalled();
+    // Reflect the install from what we just downloaded rather than trusting a
+    // re-listing of the directory we only now wrote (FAT dir entries can lag a
+    // write on some cards, which left the button reading "Get" until reopen).
+    if (s_luainst_ok && !luaStoreFindInstalled(s_luainst_id) &&
+        s_lua_inst_n < (int)(sizeof(s_lua_inst) / sizeof(s_lua_inst[0]))) {
+      LuaInstApp& a = s_lua_inst[s_lua_inst_n++];
+      snprintf(a.id, sizeof a.id, "%s", s_luainst_id);
+      snprintf(a.ver, sizeof a.ver, "%s", s_luainst_ver);
+      snprintf(a.name, sizeof a.name, "%s", s_luainst_id);
+      for (int c = 0; c < s_lua_cat_n; c++)                 // prefer the catalog's display name
+        if (strcmp(s_lua_cat[c].id, s_luainst_id) == 0) {
+          snprintf(a.name, sizeof a.name, "%s", s_lua_cat[c].name);
+          break;
+        }
+    } else if (s_luainst_ok) {
+      // already listed (an update): refresh its version in place
+      for (int i = 0; i < s_lua_inst_n; i++)
+        if (strcmp(s_lua_inst[i].id, s_luainst_id) == 0)
+          snprintf(s_lua_inst[i].ver, sizeof s_lua_inst[i].ver, "%s", s_luainst_ver);
+    }
     luaStoreRebuildList();
     if (g_lv.task) g_lv.task->showAlert(s_luainst_ok ? TR("Installed") : TR("Install failed (network?)"),
                                         s_luainst_ok ? 1400 : 2200);
