@@ -16933,11 +16933,23 @@ static void openShareMyContactPopup() {
   // the operator wants to dictate it over voice and there's no camera).
   // Clamp to the usable area and scale the QR to fit so the popup never runs
   // off the shorter landscape screen.
-  int card_w = PCW(220);
+  int card_w;
+  int card_h;
+#if defined(TLORA_PAGER)
+  // The Pager is very wide and very short. Use that width instead of squeezing
+  // a portrait card into the middle: QR on the left, identity prefix on the
+  // right, with a single title row across the top.
+  card_w = 360;
   if (card_w > modalAvailW()) card_w = modalAvailW();
-  int card_h = PSC(270);
+  card_h = modalAvailH();
+  int qr_size = card_h - 54;   // 10-px card padding + 32-px title row + 2-px bottom breathing room
+#else
+  card_w = PCW(220);
+  if (card_w > modalAvailW()) card_w = modalAvailW();
+  card_h = PSC(270);
   if (card_h > modalAvailH()) card_h = modalAvailH();
   int qr_size = card_h - 34 - 30 - 20;   // title row + hex caption + padding
+#endif
   if (qr_size > PSC(160)) qr_size = PSC(160);   // bigger QR on the Tanmatsu panel
   if (qr_size > card_w - 20) qr_size = card_w - 20;
   if (qr_size < 96) qr_size = 96;
@@ -16957,7 +16969,9 @@ static void openShareMyContactPopup() {
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text_fmt(title, TR("Share: %s"), name);
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  lv_obj_set_width(title, card_w - 20 - 32);   // trim for close-X
+  // Constrain both dimensions: LONG_DOT with only a width can wrap to a second
+  // line, which puts a long node name on top of the QR.
+  lv_obj_set_size(title, card_w - 20 - 32, lv_font_get_line_height(&g_font_14));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 4);
@@ -16969,7 +16983,11 @@ static void openShareMyContactPopup() {
                                   lv_color_hex(0x000000),
                                   lv_color_hex(0xFFFFFF));
   lv_qrcode_update(qr, payload, strlen(payload));
+#if defined(TLORA_PAGER)
+  lv_obj_align(qr, LV_ALIGN_TOP_LEFT, 0, 32);
+#else
   lv_obj_align(qr, LV_ALIGN_TOP_MID, 0, 32);
+#endif
   // White frame around the QR so the camera-side QR detector doesn't get
   // confused by the dark card bleeding into the quiet zone.
   lv_obj_set_style_border_color(qr, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
@@ -16984,9 +17002,16 @@ static void openShareMyContactPopup() {
   lv_label_set_text(hex_lbl, prefix_buf);
   lv_obj_set_style_text_color(hex_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hex_lbl, &g_font_12, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  const int hex_w = card_w - 20 - qr_size - 12;
+  lv_obj_set_width(hex_lbl, hex_w);
+  lv_obj_set_style_text_align(hex_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_align_to(hex_lbl, qr, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
+#else
   // Anchor under the QR (not the card bottom) so it can't ride up onto the
   // code when the QR shrinks in landscape.
   lv_obj_align_to(hex_lbl, qr, LV_ALIGN_OUT_BOTTOM_MID, 0, 6);
+#endif
 }
 
 static void shareMyContactBtnCb(lv_event_t* e) {
