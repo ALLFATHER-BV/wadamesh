@@ -5235,7 +5235,7 @@ static void otaPrevPickCb(lv_event_t* e) {
   otaPrevModalClose();
   char m[96];
   snprintf(m, sizeof m, "Install beta_%d?\nThis downgrades the firmware and reboots.", v);
-  showConfirm(m, "Install", otaConfirmInstallApply);
+  showConfirm(m, TR("Install"), otaConfirmInstallApply);
 }
 
 // "Install a previous version" button -> build the version-picker popup listing
@@ -6745,7 +6745,7 @@ static void channelLongSheetDeleteCb(lv_event_t* e) {
   char msg[80];
   snprintf(msg, sizeof(msg),
            TR("Remove channel \"%s\"?\nLeaves it on this device only."), tname);
-  showConfirm(msg, "Remove", chatDeleteApply);
+  showConfirm(msg, TR("Remove"), chatDeleteApply);
 }
 
 static void threadSheetMarkReadCb(lv_event_t* e) {
@@ -6768,7 +6768,7 @@ static void threadSheetDeleteDmCb(lv_event_t* e) {
   s_chat_del_is_channel = false;
   char msg[96];
   snprintf(msg, sizeof(msg), TR("Delete chat with \"%s\"?\nMessage history will be cleared."), name);
-  showConfirm(msg, "Delete", chatDeleteApply);
+  showConfirm(msg, TR("Delete"), chatDeleteApply);
 }
 
 // Per-channel mute toggles (in the channel action sheet). Mute suppresses the
@@ -7059,26 +7059,26 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     lv_obj_center(l);
     y += btn_h + btn_gap;
   };
-  mk(LV_SYMBOL_OK "  Mark as read", threadSheetMarkReadCb, 0);
+  mk(TR(LV_SYMBOL_OK "  Mark as read"), threadSheetMarkReadCb, 0);
   if (is_channel) {
-    mk(LV_SYMBOL_SETTINGS "  Region & scope", channelLongSheetRegionCb, 0);
+    mk(TR(LV_SYMBOL_SETTINGS "  Region & scope"), channelLongSheetRegionCb, 0);
     // The two mutes sit side by side on their own row; labels set by chmuteRefreshLabels().
     s_chmute_msg_btn = mk("", channelMuteMsgCb, 0);
     s_chmute_men_btn = mk("", channelMuteMenCb, 0);
     chmuteRefreshLabels();
-    mk(LV_SYMBOL_SHUFFLE  "  Share secret",   channelLongSheetShareCb,   0);
-    mk(LV_SYMBOL_CLOSE    "  Blocked users",  channelLongSheetBlockedCb, 0);
+    mk(TR(LV_SYMBOL_SHUFFLE  "  Share secret"),   channelLongSheetShareCb,   0);
+    mk(TR(LV_SYMBOL_CLOSE    "  Blocked users"),  channelLongSheetBlockedCb, 0);
     // Chat-list avatar emoji: tap = pick, long-press = back to the two-letter auto avatar.
-    lv_obj_t* icb = mk(LV_SYMBOL_IMAGE "  Chat icon", threadSheetIconCb, 0);
+    lv_obj_t* icb = mk(TR(LV_SYMBOL_IMAGE "  Chat icon"), threadSheetIconCb, 0);
     if (icb) lv_obj_add_event_cb(icb, threadSheetIconResetCb, LV_EVENT_LONG_PRESSED, nullptr);
-    mk(LV_SYMBOL_TRASH    "  Delete history", threadSheetClearHistCb,    0);
+    mk(TR(LV_SYMBOL_TRASH    "  Delete history"), threadSheetClearHistCb,    0);
     mk_full(LV_SYMBOL_TRASH "  Remove channel", channelLongSheetDeleteCb, 0xB23A48);
   } else {
     if (is_room_thread)
-      mk(LV_SYMBOL_REFRESH "  Log in again",  threadSheetRoomLoginCb,    0);
-    mk(LV_SYMBOL_LOOP     "  Reset path",     threadSheetResetPathCb,    0);
-    mk(LV_SYMBOL_CLOSE    "  Blocked users",  channelLongSheetBlockedCb, 0);
-    mk(LV_SYMBOL_TRASH    "  Delete history", threadSheetClearHistCb,    0);
+      mk(TR(LV_SYMBOL_REFRESH "  Log in again"),  threadSheetRoomLoginCb,    0);
+    mk(TR(LV_SYMBOL_LOOP     "  Reset path"),     threadSheetResetPathCb,    0);
+    mk(TR(LV_SYMBOL_CLOSE    "  Blocked users"),  channelLongSheetBlockedCb, 0);
+    mk(TR(LV_SYMBOL_TRASH    "  Delete history"), threadSheetClearHistCb,    0);
     mk_full(LV_SYMBOL_TRASH "  Delete chat",   threadSheetDeleteDmCb,     0xB23A48);
   }
 }
@@ -16714,7 +16714,7 @@ static void markAllReadApply() {
 }
 static void chatsMarkAllReadBtnCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  showConfirm(TR("Mark all chats and channels as read?"), "Mark read", markAllReadApply);
+  showConfirm(TR("Mark all chats and channels as read?"), TR("Mark read"), markAllReadApply);
 }
 
 // ---- Share-my-contact QR popup ------------------------------------------
@@ -19279,7 +19279,7 @@ static void fmActDeleteCb(lv_event_t* e) {
   char m[110];
   snprintf(m, sizeof m, "Delete %s%s?%s", s_fm_sel_isdir ? "folder " : "", s_fm_sel_name,
            s_fm_sel_isdir ? "\n(and everything inside)" : "");
-  showConfirm(m, "Delete", fmDoDelete);
+  showConfirm(m, TR("Delete"), fmDoDelete);
 }
 static void fmActNewFolderCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -19372,7 +19372,7 @@ static void fmOpenActions(const char* name, bool isdir) {
     fmActionBtn(card, "Rename", fmActRenameCb, 0x2B3440);
     fmActionBtn(card, "Copy",   fmActCopyCb,   0x2B3440);
     fmActionBtn(card, "Cut",    fmActCutCb,    0x2B3440);
-    fmActionBtn(card, "Delete", fmActDeleteCb, 0x5A2D2D);
+    fmActionBtn(card, TR("Delete"), fmActDeleteCb, 0x5A2D2D);
   } else {
     fmActionBtn(card, "New file",   fmActNewFileCb,   0x2B3440);
     fmActionBtn(card, "New folder", fmActNewFolderCb, 0x2B3440);
@@ -20526,7 +20526,7 @@ static void openSignalInfoPopup() {
   styleButton(setb);
   lv_obj_add_event_cb(setb, sigPollSaveCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* setl = lv_label_create(setb);
-  lv_label_set_text(setl, "Set");
+  lv_label_set_text(setl, TR("Set"));
   lv_obj_center(setl);
   cy += 40;
 
@@ -21318,7 +21318,7 @@ static void openDiscoverPage() {
   const int top = STATUSBAR_H + 8;
 
   s_discover_status = lv_label_create(s_discover_root);
-  lv_label_set_text(s_discover_status, "Scanning\xE2\x80\xA6");
+  lv_label_set_text(s_discover_status, TR("Scanning\xE2\x80\xA6"));
   lv_obj_set_style_text_font(s_discover_status, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_discover_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(s_discover_status, 10, top);
@@ -21331,7 +21331,7 @@ static void openDiscoverPage() {
   styleButton(btn);
   lv_obj_add_event_cb(btn, discoverScanToggleCb, LV_EVENT_CLICKED, nullptr);
   s_discover_btn_lbl = lv_label_create(btn);
-  lv_label_set_text(s_discover_btn_lbl, "Stop");
+  lv_label_set_text(s_discover_btn_lbl, TR("Stop"));
   lv_obj_center(s_discover_btn_lbl);
 
   lv_obj_t* mbtn = lv_btn_create(s_discover_root);          // Show on map
@@ -21340,7 +21340,7 @@ static void openDiscoverPage() {
   styleButton(mbtn);
   lv_obj_add_event_cb(mbtn, discoverShowMapCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* mlbl = lv_label_create(mbtn);
-  lv_label_set_text(mlbl, "Map");
+  lv_label_set_text(mlbl, TR("Map"));
   lv_obj_center(mlbl);
 
   lv_obj_t* sc = lv_obj_create(s_discover_root);
@@ -23031,11 +23031,11 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
     lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
     y += btn_h + btn_gap;
   };
-  mk(LV_SYMBOL_EYE_OPEN "  Search", contactsOverflowSearchCb, 0);
-  mk(LV_SYMBOL_LIST     "  Discovered", contactsOverflowFoundCb, 0);
-  mk(LV_SYMBOL_PLUS     "  Add contact", contactsOverflowAddCb, 0);
-  mk(LV_SYMBOL_DOWNLOAD "  Auto-add settings", contactsOverflowAutoAddCb, 0);
-  mk(LV_SYMBOL_CLOSE    "  Blocked list", contactsOverflowBlockedCb, 0);
+  mk(TR(LV_SYMBOL_EYE_OPEN "  Search"), contactsOverflowSearchCb, 0);
+  mk(TR(LV_SYMBOL_LIST     "  Discovered"), contactsOverflowFoundCb, 0);
+  mk(TR(LV_SYMBOL_PLUS     "  Add contact"), contactsOverflowAddCb, 0);
+  mk(TR(LV_SYMBOL_DOWNLOAD "  Auto-add settings"), contactsOverflowAutoAddCb, 0);
+  mk(TR(LV_SYMBOL_CLOSE    "  Blocked list"), contactsOverflowBlockedCb, 0);
 }
 
 // ============================================================
@@ -24419,13 +24419,17 @@ static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
     snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s.lang", code);
   int n = luaStoreHttpGet(client, http, url, buf, kCap);
   bool ok = false;
+  size_t wr = 0;
+  bool opened = false;
   if (n > 16) {
     char rel[28], path[64];
     snprintf(rel, sizeof rel, "/lang/%s.lang", code);
     luaHostAppPath(path, sizeof path, rel);
     File f = fs->open(path, "w");
-    if (f) { ok = (f.write((const uint8_t*)buf, n) == (size_t)n); f.close(); }
+    opened = (bool)f;
+    if (f) { wr = f.write((const uint8_t*)buf, n); ok = (wr == (size_t)n); f.close(); }
   }
+  Serial.printf("[LANGDL] %s n=%d open=%d wr=%u ok=%d\n", url, n, (int)opened, (unsigned)wr, (int)ok);
   heap_caps_free(buf);
   return ok;
 }
@@ -28807,7 +28811,7 @@ static void crashReportMaybePrompt() {
            LV_SYMBOL_WARNING "  The device restarted after a crash.\n\n%s%s"
            "Sending the crash report helps us find and fix the bug. Save it now?",
            s_crash_wdt_str[0] ? s_crash_wdt_str : "", s_crash_wdt_str[0] ? "\n\n" : "");
-  showConfirm(m, "Save report", crashReportConfirmCb);
+  showConfirm(m, TR("Save report"), crashReportConfirmCb);
 }
 #endif  // ESP32
 
@@ -31311,9 +31315,9 @@ static void openUrlMenu(const char* url) {
     by += btn_h + gap;
   };
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
-  mk(LV_SYMBOL_WIFI "  Open in web", urlMenuOpenWebCb);
+  mk(TR(LV_SYMBOL_WIFI "  Open in web"), urlMenuOpenWebCb);
 #endif
-  mk(LV_SYMBOL_IMAGE "  Create QR", urlMenuQrCb);
+  mk(TR(LV_SYMBOL_IMAGE "  Create QR"), urlMenuQrCb);
 }
 // Short tap on a chat bubble that contains a URL -> the action menu (re-extract the URL
 // from the live message; the ring may have rotated since the bubble was built).
@@ -34806,7 +34810,7 @@ static void backupDeleteCb(lv_event_t* e) {
   if (!path) return;
   strncpy(s_backup_del_path, path, sizeof s_backup_del_path - 1);
   s_backup_del_path[sizeof s_backup_del_path - 1] = '\0';
-  showConfirm(TR("Delete this backup file?\nThis cannot be undone."), "Delete", doDeleteBackup);
+  showConfirm(TR("Delete this backup file?\nThis cannot be undone."), TR("Delete"), doDeleteBackup);
 }
 
 #if CAP_SD
@@ -36216,10 +36220,10 @@ static void openPowerMenu() {
     lv_obj_center(l);
     return b;
   };
-  mk(LV_SYMBOL_POWER "  Power off",        powerOffCb,      0xC44B55, p_y0);
-  mk(LV_SYMBOL_REFRESH "  Reboot",         powerRebootCb,   0,        p_y0 + p_step);
+  mk(TR(LV_SYMBOL_POWER "  Power off"),        powerOffCb,      0xC44B55, p_y0);
+  mk(TR(LV_SYMBOL_REFRESH "  Reboot"),         powerRebootCb,   0,        p_y0 + p_step);
 #if !defined(HAS_RAK_TAP_V2)
-  mk(LV_SYMBOL_DOWNLOAD "  Download mode", powerDownloadCb, 0,        p_y0 + 2 * p_step);
+  mk(TR(LV_SYMBOL_DOWNLOAD "  Download mode"), powerDownloadCb, 0,        p_y0 + 2 * p_step);
   mk("Cancel",                             powerCancelCb,   0,        p_y0 + 3 * p_step);
 #else
   mk("Cancel",                             powerCancelCb,   0,        p_y0 + 2 * p_step);
