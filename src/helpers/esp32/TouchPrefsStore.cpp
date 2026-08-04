@@ -110,7 +110,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.map_show_contacts = 1;
   c.app_grid_large    = 0;      // default: compact app grid (T-Deck 4 cols / V4 3 cols)
 #if defined(TLORA_PAGER)
-  c.ui_scale          = 0;      // Pager: Small/current typography by default
+  c.ui_scale          = 0;      // Pager: Default/current typography by default
 #else
   c.ui_scale          = 1;      // large-screen boards keep their existing 150% default
 #endif
@@ -1015,11 +1015,19 @@ bool touchPrefsSetAppGridLarge(bool on) {
 
 uint8_t touchPrefsGetUiScale() {
   if (!s_begun) touchPrefsBegin();
+#if defined(TLORA_PAGER)
+  return s_cfg.ui_scale > 3 ? 0 : s_cfg.ui_scale;
+#else
   return s_cfg.ui_scale > 2 ? 0 : s_cfg.ui_scale;
+#endif
 }
 bool touchPrefsSetUiScale(uint8_t scale) {
   if (!s_begun) touchPrefsBegin();
+#if defined(TLORA_PAGER)
+  s_cfg.ui_scale = scale > 3 ? 0 : scale;
+#else
   s_cfg.ui_scale = scale > 2 ? 0 : scale;
+#endif
   return cfgFlush();
 }
 
