@@ -399,6 +399,34 @@ int uiButton(lua_State* L) {
 }
 
 // ---- sys / timer / store ----
+// wada.ui.scroll(true) — let the app body scroll vertically. Apps that lay out
+// more content than the screen (a log feed, a settings list) need this; games
+// leave it off so a swipe steers instead of dragging the page.
+int uiScroll(lua_State* L) {
+  if (!s_h || !s_h->body) return 0;
+  const bool on = lua_isnoneornil(L, 1) ? true : lua_toboolean(L, 1);
+  if (on) {
+    lv_obj_add_flag(s_h->body, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(s_h->body, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_h->body, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_bg_color(s_h->body, lv_color_hex(0x15B6A6), LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_opa(s_h->body, LV_OPA_60, LV_PART_SCROLLBAR);
+    lv_obj_set_style_width(s_h->body, 4, LV_PART_SCROLLBAR);
+    lv_obj_set_style_pad_bottom(s_h->body, 10, LV_PART_MAIN);
+  } else {
+    lv_obj_clear_flag(s_h->body, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(s_h->body, LV_SCROLLBAR_MODE_OFF);
+  }
+  return 0;
+}
+
+// wada.ui.text_h(size) — real line height of a size class, so an app can stack
+// rows without guessing (guessing is what made labels overlap).
+int uiTextH(lua_State* L) {
+  lua_pushinteger(L, lv_font_get_line_height(luaHostFontForSize((int)luaL_optinteger(L, 1, 12))));
+  return 1;
+}
+
 int sysMillis(lua_State* L) { lua_pushinteger(L, (lua_Integer)millis()); return 1; }
 int sysToast(lua_State* L)  { luaHostToast(luaL_checkstring(L, 1), (int)luaL_optinteger(L, 2, 1500)); return 0; }
 int sysRandom(lua_State* L) {
@@ -687,6 +715,8 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, uiLabel);  lua_setfield(L, -2, "label");
   lua_pushcfunction(L, uiButton); lua_setfield(L, -2, "button");
   lua_pushcfunction(L, uiChart);  lua_setfield(L, -2, "chart");
+  lua_pushcfunction(L, uiScroll); lua_setfield(L, -2, "scroll");
+  lua_pushcfunction(L, uiTextH);  lua_setfield(L, -2, "text_h");
   lua_createtable(L, 0, 6);                              // wada.ui.colors (theme)
   lua_pushinteger(L, 0x15B6A6); lua_setfield(L, -2, "accent");
   lua_pushinteger(L, 0xE6E9ED); lua_setfield(L, -2, "text");
