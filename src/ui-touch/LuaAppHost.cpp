@@ -32,6 +32,15 @@ extern void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uin
 extern void luaHostRadioStats2(uint32_t* rx_evt, uint32_t* rx_drop, uint32_t* tx_pkts,
                                float* freq, float* bw, int* sf, int* duty_pct);
 extern void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon);
+// On the T-Display P4 the C6 runs ESP-AT, so UITask.cpp rebinds every WiFiClient to
+// C6Client (AT-over-SDIO sockets). That alias MUST be mirrored here: without it the
+// worker entry point below mangles as luaNetWorkerService(WiFiClient&, ...) while the
+// caller in UITask.cpp references the C6Client& overload, and the P4 fails to LINK
+// while every S3 board builds fine. This TU only passes the reference through to
+// luaStoreHttpGet, so an incomplete type is all it needs.
+#if defined(HAS_TDISPLAY_P4)
+  #define WiFiClient C6Client
+#endif
 class WiFiClient; class HTTPClient;
 extern int  luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url, char* buf, size_t cap);
 
