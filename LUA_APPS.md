@@ -163,4 +163,9 @@ same wada.* bindings — nice for contributors, not needed to start).
 
 ## Status log
 
-- 2026-08-04: plan written. Next: Phase 0 spike.
+- 2026-08-04: plan written.
+- 2026-08-04: Phase 0 GO — measured on the T-Deck: flash +96 KB (budget 250),
+  state+libs 7.5 KB PSRAM / 2 ms, busy-script peak 31 KB, hostile while-true
+  contained in 30 ms, zero leak after close. Hook cadence: 100k instructions
+  (10k costs +111% on call-heavy code; 100k is ~free and still contains).
+  Pager fits (+2.4%, ~87% even with #198 fonts). Next: Phase 1 host + wada.* + Snake.

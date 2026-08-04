@@ -1,0 +1,10 @@
+{
+  "name": "lua",
+  "version": "5.4.7",
+  "description": "Vendored Lua 5.4.7 core + stdlib for wadamesh Lua apps (lua.c/luac.c mains excluded). LUA_32BITS: 32-bit integers + single floats fit the S3/P4 and halve value sizes.",
+  "license": "MIT",
+  "build": {
+    "flags": ["-Os", "-Wno-cast-function-type"],
+    "srcFilter": ["+<*.c>"]
+  }
+}

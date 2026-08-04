@@ -106,6 +106,7 @@
 #include <Utils.h>
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
+#include "LuaHost.h"          // Lua app host (LUA_APPS.md; Phase 0 spike gate)
 #include "ChannelUtil.h"      // Apps → Airtime (self-contained channel-utilization tool)
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 
@@ -44271,6 +44272,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _display    = display;
   _sensors    = sensors;
   _node_prefs = node_prefs;
+
+#if defined(WADA_LUA_SPIKE)
+  luaSpikeRun();   // Phase 0 measurement pass (LUA_APPS.md) — spike builds only
+#endif
 
   // #161 one-time heal: presets used to write airtime_factor = pct/100 (a 10% preset
   // configured ~91% duty). Exact-preset matches with the old value get the correct
