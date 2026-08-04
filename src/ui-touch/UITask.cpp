@@ -24373,7 +24373,7 @@ static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
 // Same worker/flag/poll pattern as the app catalog. A .lang file is the export
 // of one i18n table column (scripts/build/gen-lang-files.py) — or anything a
 // user writes themselves — living at <data>/lang/<code>.lang.
-struct LangCatEntry { char code[12]; char name[28]; };
+struct LangCatEntry { char code[12]; char name[28]; char ver[8]; };
 static LangCatEntry s_langcat[LANG_COUNT + 2];
 static int s_langcat_n = 0;                  // 0 = not fetched, -1 = fetch failed
 static char* s_langcat_buf = nullptr;        // langs.json (PSRAM, worker-filled)
@@ -24381,9 +24381,12 @@ static volatile bool s_langcat_request = false, s_langcat_done = false;
 static volatile bool s_langdl_request = false, s_langdl_done = false;
 static bool s_langdl_ok = false;
 static char s_langdl_code[12];
+static char s_langdl_ver[8];                 // catalog ver -> immutable /lang/<ver>/ URL ("" = resolve on the worker)
+static bool s_langdl_reboot = false;         // an explicit Update of the ACTIVE language reboots on success
 // Installed-apps rescan, moved off the UI thread (SD listing caused open lag).
 static volatile bool s_luascan_request = false, s_luascan_done = false;
 static void luaStoreScanInstalled(bool force = false);   // defined with the Store page
+static void luaStoreParseLangCatalog();                  // defined with the Store page
 
 static void luaStoreFetchLangCatalogWorker(WiFiClient& client, HTTPClient& http) {
   const size_t kCap = 2048;
@@ -24395,8 +24398,12 @@ static void luaStoreFetchLangCatalogWorker(WiFiClient& client, HTTPClient& http)
                   s_langcat_buf, kCap);
 }
 
-// Download /apps/lang/<code>.lang into <data>/lang/<code>.lang.
-static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http, const char* code) {
+// Download a language file into <data>/lang/<code>.lang. With a known catalog
+// ver the URL is the immutable /apps/lang/<ver>/<code>.lang copy — the flat path
+// sits behind a day-long edge cache, which would happily serve a stale file
+// right after a translation update (the exact trap the flasher once hit).
+static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
+                                       const char* code, const char* ver) {
   fs::FS* fs = luaHostAppFs();
   if (!fs) return false;
   char dir[48];
@@ -24405,8 +24412,11 @@ static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http, con
   const size_t kCap = 128 * 1024;            // a full 700+ row language is ~60 KB
   char* buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!buf) return false;
-  char url[96];
-  snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s.lang", code);
+  char url[112];
+  if (ver && ver[0])
+    snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s/%s.lang", ver, code);
+  else
+    snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s.lang", code);
   int n = luaStoreHttpGet(client, http, url, buf, kCap);
   bool ok = false;
   if (n > 16) {
@@ -24451,6 +24461,8 @@ static void uiLangFileBootLoad() {
     // never finished the download): fetch it in the background. This boot runs
     // English; the file applies from the next boot. Retries every boot.
     snprintf(s_langdl_code, sizeof s_langdl_code, "%s", code);
+    s_langdl_ver[0] = 0;          // no catalog yet — the worker resolves the ver
+    s_langdl_reboot = false;      // background heal: never reboot under the user
     s_langdl_done = false;
     s_langdl_request = true;
     ensureTileFetchTaskRunning();
@@ -24797,7 +24809,18 @@ static void tileFetchTaskFn(void* arg) {
     }
     if (s_langdl_request) {
       s_langdl_request = false;
-      s_langdl_ok = luaStoreLangDownloadWorker(client, http, s_langdl_code);
+      if (!s_langdl_ver[0]) {
+        // Boot self-heal has no catalog yet — fetch it here so the download can
+        // use the immutable versioned URL (falls back to the flat path if not).
+        luaStoreFetchLangCatalogWorker(client, http);
+        luaStoreParseLangCatalog();
+        for (int i = 0; i < s_langcat_n; i++)
+          if (strcmp(s_langcat[i].code, s_langdl_code) == 0) {
+            snprintf(s_langdl_ver, sizeof s_langdl_ver, "%s", s_langcat[i].ver);
+            break;
+          }
+      }
+      s_langdl_ok = luaStoreLangDownloadWorker(client, http, s_langdl_code, s_langdl_ver);
       s_langdl_done = true;
       continue;
     }
@@ -36915,15 +36938,17 @@ static const LuaInstApp* luaStoreFindInstalled(const char* id) {
 }
 
 // ---- installed .lang files (Languages tab) ----
-struct LangInst { char code[12]; char name[28]; };
+struct LangInst { char code[12]; char name[28]; char ver[8]; };
 static LangInst s_langinst[12];
 static int s_langinst_n = 0;
 
-// Read the "# name:" / "# base:" header lines of an installed .lang file.
+// Read the "# name:" / "# base:" / "# ver:" header lines of an installed .lang file.
 static bool luaStoreLangFileMeta(const char* code, char* name, size_t name_cap,
-                                 char* base, size_t base_cap) {
+                                 char* base, size_t base_cap,
+                                 char* ver = nullptr, size_t ver_cap = 0) {
   name[0] = 0;
   if (base_cap) base[0] = 0;
+  if (ver && ver_cap) ver[0] = 0;
   fs::FS* fs = luaHostAppFs();
   if (!fs) return false;
   char rel[28], path[64];
@@ -36946,6 +36971,10 @@ static bool luaStoreLangFileMeta(const char* code, char* name, size_t name_cap,
   };
   grab("# name:", name, name_cap);
   if (base_cap) grab("# base:", base, base_cap);
+  if (ver && ver_cap) {
+    grab("# ver:", ver, ver_cap);
+    if (!ver[0]) snprintf(ver, ver_cap, "1");   // pre-versioning files are v1
+  }
   return name[0] != 0;
 }
 
@@ -36970,8 +36999,10 @@ static void luaStoreScanLangs() {
       L.code[ln - 5] = 0;
       e.close();
       char base[12];
-      if (!luaStoreLangFileMeta(L.code, L.name, sizeof L.name, base, sizeof base))
+      if (!luaStoreLangFileMeta(L.code, L.name, sizeof L.name, base, sizeof base,
+                                L.ver, sizeof L.ver))
         snprintf(L.name, sizeof L.name, "%s", L.code);
+      if (!L.ver[0]) snprintf(L.ver, sizeof L.ver, "1");
       s_langinst_n++;
       continue;
     }
@@ -36996,8 +37027,10 @@ static void luaStoreParseLangCatalog() {
     obj[n] = 0;
     LangCatEntry& c = s_langcat[s_langcat_n];
     if (luaJsonField(obj, "code", c.code, sizeof c.code) &&
-        luaJsonField(obj, "name", c.name, sizeof c.name))
+        luaJsonField(obj, "name", c.name, sizeof c.name)) {
+      if (!luaJsonField(obj, "ver", c.ver, sizeof c.ver)) snprintf(c.ver, sizeof c.ver, "1");
       s_langcat_n++;
+    }
     p = cb + 1;
   }
   if (s_langcat_n == 0) s_langcat_n = -1;
@@ -37107,6 +37140,15 @@ static void luaStorePollCb(lv_timer_t* t) {
   if (s_langdl_done) {
     s_langdl_done = false;
     s_luastore_busy = false;
+    if (s_langdl_ok && s_langdl_reboot) {   // updated the active language
+      s_langdl_reboot = false;
+      if (g_lv.task) {
+        g_lv.task->showAlert(TR("Updated - rebooting\xE2\x80\xA6"), 1200);
+        g_lv.task->rebootDevice();
+      }
+      return;
+    }
+    s_langdl_reboot = false;
     if (s_langdl_ok) luaStoreScanLangs();
     luaStoreRebuildList();
     if (g_lv.task) g_lv.task->showAlert(
@@ -37185,11 +37227,17 @@ static void luaStoreLangUseCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->rebootDevice();
 }
 
-static void luaStoreLangGetCb(lv_event_t* e) {
+static void luaStoreLangGetCb(lv_event_t* e) {   // Get AND Update (same download)
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
   int i = (int)(intptr_t)lv_event_get_user_data(e);
   if (i < 0 || i >= s_langcat_n) return;
   snprintf(s_langdl_code, sizeof s_langdl_code, "%s", s_langcat[i].code);
+  snprintf(s_langdl_ver, sizeof s_langdl_ver, "%s", s_langcat[i].ver);
+  // Updating the language currently in use: apply it by rebooting on success —
+  // the overlay in PSRAM is the old file, so a reboot is the honest apply.
+  char cur[12];
+  touchPrefsGetLangFile(cur, sizeof cur);
+  s_langdl_reboot = (cur[0] && strcmp(cur, s_langcat[i].code) == 0);
   s_luastore_busy = true;
   s_langdl_done = false;
   s_langdl_request = true;
@@ -37377,13 +37425,19 @@ static void luaStoreRebuildList() {
       else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangBuiltinCb, (intptr_t)LANG_EN, 0, 58);
     }
     for (int i = 0; i < s_langinst_n; i++) {
-      char sub[20];
-      snprintf(sub, sizeof sub, "%s.lang", s_langinst[i].code);
+      // A newer catalog ver for this installed file -> offer Update in place.
+      int cat = -1;
+      for (int c = 0; c < s_langcat_n; c++)
+        if (strcmp(s_langcat[c].code, s_langinst[i].code) == 0) { cat = c; break; }
+      const bool stale = (cat >= 0) && strcmp(s_langcat[cat].ver, s_langinst[i].ver) != 0;
+      char sub[24];
+      snprintf(sub, sizeof sub, "%s.lang  v%s", s_langinst[i].code, s_langinst[i].ver);
       lv_obj_t* row = langRow(s_langinst[i].name, sub);
       const bool act = curFile[0] && strcmp(curFile, s_langinst[i].code) == 0;
       actionBtn(row, LV_SYMBOL_TRASH, 0x8A4444, luaStoreLangRemoveCb, (intptr_t)i, 0, 34);
-      if (act) activeTag(row, -44);
-      else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangUseCb, (intptr_t)i, -40, 58);
+      if (stale)     actionBtn(row, TR("Update"), 0x4F9DF7, luaStoreLangGetCb, (intptr_t)cat, -40, 66);
+      else if (act)  activeTag(row, -44);
+      else           actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangUseCb, (intptr_t)i, -40, 58);
     }
     section(TR("Available"));
     for (int i = 0; i < s_langcat_n; i++) {
