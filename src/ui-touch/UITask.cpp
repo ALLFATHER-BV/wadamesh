@@ -36675,11 +36675,17 @@ static void openControlCenter() {
 // ===== Lua app store: installed scan + Store page (LUA_APPS.md Phase 2) =====
 
 static const LuaInstApp* luaStoreFindInstalled(const char* id);   // fwd (defined below)
+static void luaStoreInvalidateInstalled();
 
-static void luaStoreScanInstalled() {
+static bool s_lua_inst_valid = false;   // cache flag: the /apps listing is SD I/O
+static void luaStoreInvalidateInstalled() { s_lua_inst_valid = false; }
+
+static void luaStoreScanInstalled(bool force = false) {
+  if (s_lua_inst_valid && !force) return;   // cached — the drawer opens without touching the card
   s_lua_inst_n = 0;
   fs::FS* fs = luaHostAppFs();
-  if (!fs) return;
+  if (!fs) return;              // storage not ready yet — stay invalid so we retry later
+  s_lua_inst_valid = true;
   char appsdir[48];
   luaHostAppPath(appsdir, sizeof appsdir, "/apps");
   const int kMax = (int)(sizeof(s_lua_inst) / sizeof(s_lua_inst[0]));
@@ -36805,7 +36811,7 @@ static void luaStoreRemoveApp(int idx) {
     luaHostAppPath(path, sizeof path, rel);
     fs->remove(path);
   }
-  luaStoreScanInstalled();
+  luaStoreScanInstalled(true);   // files just deleted
   if (g_lv.task) g_lv.task->showAlert(TR("Removed"), 1200);
 }
 
@@ -36868,7 +36874,7 @@ static void luaStoreRefreshCb(lv_event_t* e) {
   s_luacat_done = false;
   s_luacat_request = true;
   ensureTileFetchTaskRunning();
-  luaStoreScanInstalled();
+  luaStoreScanInstalled(true);
   luaStoreRebuildList();
 }
 
@@ -37127,7 +37133,7 @@ static void openLuaStorePage() {
 
   appPageBegin("Lua Store", &closeLuaStorePage);
 
-  luaStoreScanInstalled();
+  luaStoreScanInstalled(true);   // opening the store re-reads the card (sideloads)
   if (s_lua_cat_n <= 0) {                 // no catalog yet this session -> fetch
     s_lua_cat_n = 0;
     s_luacat_done = false;
