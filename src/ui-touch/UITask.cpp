@@ -4683,6 +4683,17 @@ enum {
   CAT_COUNT
 };
 struct SettingsCatDef { const char* label; const char* icon; };
+#if CAP_LUA_APPS
+// Built-in tile hide bits (app_hide pref). Order is FROZEN — append only.
+enum {
+  APPHIDE_SNAKE = 1u << 0,  APPHIDE_AIRTIME = 1u << 1, APPHIDE_MONITOR = 1u << 2,
+  APPHIDE_SPECTRUM = 1u << 3, APPHIDE_DISCOVER = 1u << 4, APPHIDE_VNC = 1u << 5,
+  APPHIDE_REMOTE = 1u << 6, APPHIDE_READER = 1u << 7, APPHIDE_TERMINAL = 1u << 8,
+  APPHIDE_FILES = 1u << 9, APPHIDE_SIGNAL = 1u << 10, APPHIDE_MENTIONS = 1u << 11,
+  APPHIDE_MQTT = 1u << 12,   // Settings -> MQTT bridge (hidden by default: experimental + privacy)
+};
+#endif
+
 static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "Profile",       LV_SYMBOL_EDIT },
   { "Radio & Mesh",  LV_SYMBOL_SHUFFLE },
@@ -28951,6 +28962,9 @@ static void makeSettings(lv_obj_t* tab) {
 #if !defined(HAS_EXPANSION_KIT)
     if (c == CAT_SENSORS) continue;   // Sensors page only exists with the V4 Expansion Kit
 #endif
+#if CAP_LUA_APPS
+    if (c == CAT_MQTT && (touchPrefsGetAppHide() & APPHIDE_MQTT)) continue;   // hidden via the Lua Store
+#endif
     lv_obj_t* card = lv_btn_create(land);
     lv_obj_remove_style_all(card);
     lv_obj_set_size(card, card_w, card_h);
@@ -36643,13 +36657,6 @@ static void openControlCenter() {
 
 #if CAP_LUA_APPS
 // ===== Lua app store: installed scan + Store page (LUA_APPS.md Phase 2) =====
-// Built-in tile hide bits (app_hide pref). Order is FROZEN — append only.
-enum {
-  APPHIDE_SNAKE = 1u << 0,  APPHIDE_AIRTIME = 1u << 1, APPHIDE_MONITOR = 1u << 2,
-  APPHIDE_SPECTRUM = 1u << 3, APPHIDE_DISCOVER = 1u << 4, APPHIDE_VNC = 1u << 5,
-  APPHIDE_REMOTE = 1u << 6, APPHIDE_READER = 1u << 7, APPHIDE_TERMINAL = 1u << 8,
-  APPHIDE_FILES = 1u << 9, APPHIDE_SIGNAL = 1u << 10, APPHIDE_MENTIONS = 1u << 11,
-};
 
 static const LuaInstApp* luaStoreFindInstalled(const char* id);   // fwd (defined below)
 
@@ -36922,7 +36929,7 @@ static void luaStoreRebuildList() {
     lv_obj_center(rl);
     lv_obj_add_event_cb(rb, luaStoreRefreshCb, LV_EVENT_CLICKED, nullptr);
   }
-  const lv_coord_t row_h = lh14 + lh12 + 16;      // title + desc + padding, measured
+  const lv_coord_t row_h = lh14 + lh12 * 2 + 18;  // title + 2 wrapped description lines
   for (int i = 0; i < s_lua_cat_n; i++) {
     lv_obj_t* row = lv_obj_create(s_luastore_list);
     lv_obj_remove_style_all(row);
@@ -36956,24 +36963,23 @@ static void luaStoreRebuildList() {
     lv_obj_center(il);
     const int tx = chip + 8;                        // text column starts past the chip
     lv_obj_t* nm = lv_label_create(row);
-    lv_label_set_text(nm, s_lua_cat[i].name);
+    char title[64];
+    snprintf(title, sizeof title, "%s  %s", s_lua_cat[i].name, s_lua_cat[i].ver);
+    lv_label_set_text(nm, title);
     lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_width(nm, W - tx - 96);
+    lv_obj_set_style_text_color(nm, lv_color_hex(inst ? COLOR_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_width(nm, W - tx - 100);             // clear of the action button
     lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
     lv_obj_set_pos(nm, tx, 0);
-    lv_obj_t* vr = lv_label_create(row);            // version as a dim badge
-    lv_label_set_text(vr, s_lua_cat[i].ver);
-    lv_obj_set_style_text_font(vr, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(vr, lv_color_hex(inst ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_pos(vr, tx, lh14 + 1);
+    // Description gets its own full-width line — it used to share the row with
+    // the version badge and was squeezed into an unreadable sliver.
     lv_obj_t* ds = lv_label_create(row);
     lv_label_set_text(ds, s_lua_cat[i].desc);
     lv_obj_set_style_text_font(ds, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(ds, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_width(ds, W - tx - 96);
-    lv_label_set_long_mode(ds, LV_LABEL_LONG_DOT);
-    lv_obj_set_pos(ds, tx + 26, lh14 + 1);
+    lv_obj_set_width(ds, W - tx - 18);
+    lv_label_set_long_mode(ds, LV_LABEL_LONG_WRAP);
+    lv_obj_set_pos(ds, tx, lh14 + 2);
     lv_obj_t* b = lv_btn_create(row);
     lv_obj_set_size(b, 78, 32);
     lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
@@ -37055,6 +37061,9 @@ static void luaStoreRebuildList() {
 #endif
 #if CAP_FILESYSTEM || defined(TLORA_PAGER)
     { "Files", APPHIDE_FILES },
+#endif
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+    { "MQTT bridge", APPHIDE_MQTT },   // a Settings section, not a drawer tile
 #endif
   };
   for (auto& bi : builtins) {
@@ -37418,20 +37427,51 @@ static void appTileCb(lv_event_t* e) {
 // Long-press on an installed Lua app tile -> confirm -> remove (files deleted,
 // drawer rebuilt). A long press must swallow the release CLICK so the app
 // doesn't also launch under the confirm sheet.
+static uint32_t s_lua_hide_pending = 0;
+static void luaTileHideConfirmed() {
+  touchPrefsSetAppHide(touchPrefsGetAppHide() | s_lua_hide_pending);
+  s_lua_hide_pending = 0;
+  if (s_appdrawer_root) { closeAppDrawer(); openAppDrawer(); }
+  if (g_lv.task) g_lv.task->showAlert(TR("Hidden - turn it back on in the Lua Store"), 2000);
+}
+
 static void luaTileRemoveConfirmed() {
   luaStoreRemoveApp(s_lua_rm_pending);
   s_lua_rm_pending = -1;
   if (s_appdrawer_root) { closeAppDrawer(); openAppDrawer(); }   // rebuild tiles
 }
+// Which built-ins a long press can hide (the same set the Lua Store lists).
+static uint32_t appHideBitFor(int act) {
+  switch (act) {
+    case APPACT_SPECTRUM: return APPHIDE_SPECTRUM;
+    case APPACT_DISCOVER: return APPHIDE_DISCOVER;
+    case APPACT_VNC:      return APPHIDE_VNC;
+    case APPACT_REMOTE:   return APPHIDE_REMOTE;
+    case APPACT_READER:   return APPHIDE_READER;
+    case APPACT_TERMINAL: return APPHIDE_TERMINAL;
+    case APPACT_FILES:    return APPHIDE_FILES;
+    case APPACT_SIGNAL:   return APPHIDE_SIGNAL;
+    case APPACT_MENTIONS: return APPHIDE_MENTIONS;
+    default:              return 0;   // core tiles (Chats/Map/Settings/...) stay put
+  }
+}
+
 static void appTileLongPressCb(lv_event_t* e) {
   int act = (int)(intptr_t)lv_event_get_user_data(e);
   int idx = act - APPACT_LUA_BASE;
-  if (idx < 0 || idx >= s_lua_inst_n) return;
+  if (idx >= 0 && idx < s_lua_inst_n) {          // installed Lua app -> remove
+    s_tile_lp_fired = true;
+    s_lua_rm_pending = idx;
+    char msg[64];
+    snprintf(msg, sizeof msg, TR("Remove %s?"), s_lua_inst[idx].name);
+    showConfirm(msg, TR("Remove"), luaTileRemoveConfirmed);
+    return;
+  }
+  const uint32_t bit = appHideBitFor(act);       // hideable built-in -> hide
+  if (!bit) return;
   s_tile_lp_fired = true;
-  s_lua_rm_pending = idx;
-  char msg[64];
-  snprintf(msg, sizeof msg, TR("Remove %s?"), s_lua_inst[idx].name);
-  showConfirm(msg, TR("Remove"), luaTileRemoveConfirmed);
+  s_lua_hide_pending = bit;
+  showConfirm(TR("Hide this app from the drawer?"), TR("Hide"), luaTileHideConfirmed);
 }
 #endif
 
@@ -37452,7 +37492,7 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_add_flag(t, NAV_ACCENTFOCUS_FLAG);   // keyboard/encoder focus = same accent tint as a touch press
   lv_obj_add_event_cb(t, appTileCb, LV_EVENT_CLICKED, (void*)(intptr_t)act);
 #if CAP_LUA_APPS
-  if (act >= APPACT_LUA_BASE)
+  if (act >= APPACT_LUA_BASE || appHideBitFor(act))
     lv_obj_add_event_cb(t, appTileLongPressCb, LV_EVENT_LONG_PRESSED, (void*)(intptr_t)act);
 #endif
 
