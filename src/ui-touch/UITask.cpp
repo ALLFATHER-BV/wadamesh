@@ -21161,7 +21161,9 @@ static void openSignalInfoPopup() {
 #endif
   lv_obj_center(setl);
 #if defined(TLORA_PAGER)
-  cy += poll_h + 8;
+  // The focused textarea's outline extends beyond its object bounds. Leave a
+  // full control gap so that outline cannot cover the Probe button below it.
+  cy += poll_h + 16;
 #else
   cy += 40;
 #endif
