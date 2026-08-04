@@ -4102,6 +4102,29 @@ static lv_obj_t* s_nav_prev_scr = nullptr;
 static uint32_t  s_nav_prev_sig = 0xFFFFFFFFu;
 static void navMarkDirty() { s_nav_dirty = true; }
 
+// A virtualized chat rebuild destroys the currently-materialized row objects.
+// Detach the navigation group while every object (and every descendant label
+// remembered by navInvertText) is still alive. Letting lv_obj_del() remove the
+// focused row itself is unsafe: LVGL has already torn down that row's styles and
+// animations when lv_group_remove_obj() auto-focuses a survivor and calls
+// navFocusCb(), which then tries to restore styles on the half-destructed row.
+// The caller must rebuild the group after recreating the object tree.
+static bool navDetachBeforeTreeMutation() {
+  if (!s_nav_group) return false;
+  if (s_nav_styled) {
+    navUnstyle(s_nav_styled);
+    s_nav_styled = nullptr;
+  } else {
+    navRestoreText();
+  }
+  lv_group_remove_all_objs(s_nav_group);
+  s_nav_first = s_nav_last = nullptr;
+  s_nav_count = 0;
+  for (int i = 0; i < kNavMax; ++i) s_nav_objs[i] = nullptr;
+  navMarkDirty();
+  return true;
+}
+
 // Repopulate the focus group when the visible screen actually changes (screen
 // swap, modal open/close, or a within-screen content rebuild). A 2-level
 // child-count signature avoids reshuffling focus during steady-state navigation.
@@ -30529,18 +30552,16 @@ static void chatVirtFreeOffsets() {
 
 #if defined(TLORA_PAGER)
 // Encoder-nav focus survival across the virtualized re-render. The render
-// deletes and recreates every bubble row — LVGL hands focus of a deleted
-// object to the next surviving group entry (the chat header/composer once
-// every bubble is gone), which is how focus "fell out" of the message list
-// mid-history on this no-touch board. The pending logical index below is the
-// message the encoder is steering toward: chatVirtRenderWindow re-aims focus
-// at the matching recreated row via the existing one-shot s_nav_focus_hint
-// rebuild mechanism, and pagerEncoderChatEdgeScroll both sets it (edge detent
-// = neighbor index) and folds further detents into it while a render is in
-// flight — fast turning otherwise stepped focus out from the transiently
-// wrong focus position before the load landed. -1 = idle. The timestamp
-// expires a stale pending target (see the clamp) so a render that never
-// fires can't wedge encoder nav.
+// deletes and recreates every bubble row, so a row pointer cannot preserve
+// focus across the rebuild. The pending logical index below is the message the
+// encoder is steering toward: chatVirtRenderWindow safely detaches the group
+// before destruction, then re-aims focus at the matching recreated row via the
+// existing one-shot s_nav_focus_hint mechanism. pagerEncoderChatEdgeScroll sets
+// the target (an edge detent selects the neighboring logical index) and folds
+// further detents into it while a render is in flight — fast turning otherwise
+// stepped focus out from the transiently wrong focus position before the load
+// landed. -1 = idle. The timestamp expires a stale pending target (see the
+// clamp) so a render that never fires can't wedge encoder nav.
 static int      s_pager_chat_focus_i  = -1;
 static uint32_t s_pager_chat_focus_ms = 0;
 #endif
@@ -30953,15 +30974,37 @@ static void chatVirtClearBubbleWidgets(LvChatPanel* p) {
 }
 
 // Sync purge — only call from lv_async_call / timer context, not indev handlers.
-static void chatVirtPurgeMsgsChildrenSync(LvChatPanel* p) {
-  if (!p || !p->msgs) return;
+// Returns true when keypad navigation was detached and must be rebuilt after the
+// replacement tree (normally a placeholder) has been created.
+static bool chatVirtPurgeMsgsChildrenSync(LvChatPanel* p) {
+  if (!p || !p->msgs) return false;
   chatVirtCancelRenderTimer();
+#if CAP_KEYPAD_NAV
+  const bool nav_detached = navDetachBeforeTreeMutation();
+#else
+  constexpr bool nav_detached = false;
+#endif
+  chatVirtResetInputForMsgs(p);
+  chatVirtBeforeMassDelete();
   for (int i = static_cast<int>(lv_obj_get_child_cnt(p->msgs)) - 1; i >= 0; --i) {
     lv_obj_t* ch = lv_obj_get_child(p->msgs, i);
     if (ch) lv_obj_del(ch);
   }
   s_chat_virt.spacer  = nullptr;
   s_chat_virt.divider = nullptr;
+  return nav_detached;
+}
+
+static void chatVirtResetToPlaceholder(LvChatPanel& p, const char* text) {
+  lv_indev_reset(nullptr, nullptr);
+  chatVirtReset(&p);
+  const bool nav_detached = chatVirtPurgeMsgsChildrenSync(&p);
+  chatDetailShowPlaceholder(p, text);
+#if CAP_KEYPAD_NAV
+  if (nav_detached) navMaybeRebuild();
+#else
+  (void)nav_detached;
+#endif
 }
 
 static void chatVirtEnsureSpacer(LvChatPanel* p, lv_coord_t total_h) {
@@ -31756,20 +31799,26 @@ static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t
     chatVirtLogScrollTransition(p, old_i0, old_i1, i0, i1);
 #endif
 
+#if CAP_KEYPAD_NAV
+  // Preserve focus without letting lv_obj_del() remove a focused group member.
+  // Rows are recreated, so remember them by logical index; header/composer
+  // controls survive the rebuild and can be retained by pointer.
+  int refocus_i = -1;
 #if defined(TLORA_PAGER)
-  // Capture where encoder focus should land after the rebuild BEFORE the clear
-  // deletes the focused row (see s_pager_chat_focus_i above). An explicit
-  // pending target from the encoder clamp wins; otherwise preserve the row
-  // that has focus right now (covers renders the encoder didn't cause, e.g. an
-  // incoming message re-render yanking focus off the list mid-read).
-  int refocus_i = s_pager_chat_focus_i;
-  if (refocus_i < 0 && s_nav_group) {
+  // An explicit pending target from the Pager encoder edge clamp wins.
+  refocus_i = s_pager_chat_focus_i;
+#endif
+  lv_obj_t* stable_focus = nullptr;
+  if (s_nav_group) {
     lv_obj_t* foc = lv_group_get_focused(s_nav_group);
     if (foc && lv_obj_get_parent(foc) == p->msgs) {
       const intptr_t ud = reinterpret_cast<intptr_t>(lv_obj_get_user_data(foc));
-      if (ud >= 0) refocus_i = (int)ud;   // rows carry their logical index; dividers are negative
+      if (refocus_i < 0 && ud >= 0) refocus_i = (int)ud;
+    } else if (foc && lv_obj_is_valid(foc)) {
+      stable_focus = foc;
     }
   }
+  const bool nav_detached = navDetachBeforeTreeMutation();
 #endif
 
   const lv_coord_t saved_scroll_y = scroll_y;
@@ -31800,14 +31849,10 @@ static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t
   chatVirtSyncBubblePositions(p);
   CHAT_SCROLL_TRACE_DO(chatVirtCheckStoreEdges(p));
 
-#if defined(TLORA_PAGER)
-  // Re-aim focus at the recreated row for the captured/pending logical index
-  // (clamped into the freshly materialized window — a fast multi-detent target
-  // can briefly run past it; landing on the window edge keeps the traversal
-  // moving and the next render catches up). Uses the one-shot
-  // s_nav_focus_hint: the recreated rows change the nav tree signature, so
-  // navMaybeRebuild fires on the next pump and consumes the hint — same
-  // mechanism settings toggles use to hold focus across their own rebuilds.
+#if CAP_KEYPAD_NAV
+  // Re-aim focus at the recreated row for the captured logical index. A fast
+  // Pager encoder target can briefly run past the materialized window, so clamp
+  // it to the nearest fresh row and let the next reflow continue from there.
   if (refocus_i >= 0) {
     if (refocus_i < i0) refocus_i = i0;
     if (refocus_i > i1) refocus_i = i1;
@@ -31820,18 +31865,17 @@ static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t
         break;
       }
     }
+#if defined(TLORA_PAGER)
     s_pager_chat_focus_i = -1;   // consumed (whether or not the row was found)
-    // Land the re-aim NOW, not on the next loop-tick nav pump: deleting the
-    // focused row above already made LVGL auto-focus a survivor (the header
-    // gear / a bottom element), and this function runs in an lv_async_call —
-    // LVGL paints right after it returns, so waiting for the pump let that
-    // wrong focus reach the glass for a frame or two (reported: focus visibly
-    // hops out of the list and back on every edge load). A forced synchronous
-    // rebuild consumes the hint before the next paint, so the hop never shows.
-    if (s_nav_focus_hint) {
-      navMarkDirty();
-      navMaybeRebuild();
-    }
+#endif
+  } else if (stable_focus && lv_obj_is_valid(stable_focus)) {
+    s_nav_focus_hint = stable_focus;
+  }
+  // The group was deliberately empty throughout destruction. Recollect once,
+  // consume the focus hint, and land the final focus before LVGL paints.
+  if (nav_detached) {
+    navMarkDirty();
+    navMaybeRebuild();
   }
 #endif
 }
@@ -31988,16 +32032,16 @@ static void refreshChatDetail(LvChatPanel& p) {
 
   if (!g_lv.task->hasActiveThread() ||
       g_lv.task->activeThreadIsChannel() != p.channel_mode) {
-    lv_indev_reset(nullptr, nullptr);
-    chatVirtReset(&p);
-    lv_obj_clean(p.msgs);
-    chatDetailShowPlaceholder(p, "No thread selected.\n\nTap a chat to open it.");
+    chatVirtResetToPlaceholder(p, "No thread selected.\n\nTap a chat to open it.");
     return;
   }
   if (p.detail_open) g_lv.task->markActiveThreadRead();
 
   chatVirtEnsureMsgIdx();
-  if (!s_chat_msg_idx || s_chat_msg_idx_cap <= 0) { chatDetailShowPlaceholder(p, "Low memory"); return; }
+  if (!s_chat_msg_idx || s_chat_msg_idx_cap <= 0) {
+    chatVirtResetToPlaceholder(p, "Low memory");
+    return;
+  }
 
   const int n = g_lv.task->getActiveThreadMessageCount(s_chat_msg_idx, s_chat_msg_idx_cap, false);
 #if TRACE_MESSAGE_SCROLL_ACTIVITY
@@ -32011,10 +32055,7 @@ static void refreshChatDetail(LvChatPanel& p) {
   }
 #endif
   if (n <= 0) {
-    lv_indev_reset(nullptr, nullptr);
-    chatVirtReset(&p);
-    lv_obj_clean(p.msgs);
-    chatDetailShowPlaceholder(p, "No messages yet.\nSay hello!");
+    chatVirtResetToPlaceholder(p, "No messages yet.\nSay hello!");
     return;
   }
 
@@ -32040,16 +32081,21 @@ static void refreshChatDetail(LvChatPanel& p) {
                            !s_chat_virt.offsets || ring_changed ||
                            s_chat_virt.compact_chat != compact_chat;
   const bool divider_rebuild = !need_layout && divider_i >= 0 && s_chat_virt.divider_y < 0;
-  if (opening || need_layout || divider_rebuild)
-    chatVirtPurgeMsgsChildrenSync(&p);
-  if (opening || (need_layout && s_chat_virt.panel != &p))
+  const bool changing_panel = s_chat_virt.panel != &p;
+  if (opening || need_layout || divider_rebuild) chatVirtCancelRenderTimer();
+  if (opening || changing_panel) {
+    // The next protected render clears every stale child. Drop these aliases so
+    // it cannot preserve/reuse a spacer owned by a previous panel or thread.
+    s_chat_virt.spacer = nullptr;
+    s_chat_virt.divider = nullptr;
     s_chat_virt.scroll_virt_valid = false;
+  }
   if (need_layout) {
     lv_indev_reset(nullptr, nullptr);
     s_chat_virt.last_i0 = -1;
     s_chat_virt.last_i1 = -1;
     if (!chatVirtRebuildLayout(&p, n, divider_i)) {
-      chatDetailShowPlaceholder(p, "Low memory");
+      chatVirtResetToPlaceholder(p, "Low memory");
       return;
     }
   } else {
@@ -32059,7 +32105,7 @@ static void refreshChatDetail(LvChatPanel& p) {
       s_chat_virt.last_i0 = -1;
       s_chat_virt.last_i1 = -1;
       if (!chatVirtRebuildLayout(&p, n, divider_i)) {
-        chatDetailShowPlaceholder(p, "Low memory");
+        chatVirtResetToPlaceholder(p, "Low memory");
         return;
       }
     }
