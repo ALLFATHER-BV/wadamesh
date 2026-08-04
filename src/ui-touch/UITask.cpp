@@ -4723,6 +4723,7 @@ static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
 enum { DSEC_DISPLAY = 0, DSEC_KEYBOARD, DSEC_SOUND, DSEC_LOCK,
        DSEC_GPS, DSEC_CLOCK, DSEC_BATTERY, DSEC_SENSORS, DSEC_GENERAL };
 static lv_obj_t* s_settings_landing  = nullptr;  // the category landing container
+static lv_obj_t* s_settings_cat_card[CAT_COUNT] = { nullptr };   // one card per category (for live hide/show)
 // s_settings_sheet / s_settings_open_cat / s_settings_from_cc are declared ABOVE the nav
 // functions (navMaybeRebuild needs them to collect the settings detail sheet for trackball nav).
 static void      closeSettingsCategory();        // fwd: tab-change + key-dismiss close the sheet
@@ -28922,6 +28923,20 @@ static void settingsCatOpenCb(lv_event_t* e) {
   openSettingsCategory((int)(intptr_t)lv_event_get_user_data(e));
 }
 
+#if CAP_LUA_APPS
+// Apply the Lua Store's built-in hide bits to the settings landing WITHOUT
+// rebuilding it: the page is constructed once at boot, so a toggle taken later
+// has to flip the existing card (flex layout skips hidden children, so the grid
+// closes up on its own).
+void settingsApplyHiddenCats() {
+  const uint32_t hide = touchPrefsGetAppHide();
+  if (s_settings_cat_card[CAT_MQTT] && lv_obj_is_valid(s_settings_cat_card[CAT_MQTT])) {
+    if (hide & APPHIDE_MQTT) lv_obj_add_flag(s_settings_cat_card[CAT_MQTT], LV_OBJ_FLAG_HIDDEN);
+    else                     lv_obj_clear_flag(s_settings_cat_card[CAT_MQTT], LV_OBJ_FLAG_HIDDEN);
+  }
+}
+#endif
+
 static void makeSettings(lv_obj_t* tab) {
   styleSurface(tab, COLOR_BG);
   lv_obj_set_style_pad_all(tab, 0, LV_PART_MAIN);
@@ -28962,10 +28977,8 @@ static void makeSettings(lv_obj_t* tab) {
 #if !defined(HAS_EXPANSION_KIT)
     if (c == CAT_SENSORS) continue;   // Sensors page only exists with the V4 Expansion Kit
 #endif
-#if CAP_LUA_APPS
-    if (c == CAT_MQTT && (touchPrefsGetAppHide() & APPHIDE_MQTT)) continue;   // hidden via the Lua Store
-#endif
     lv_obj_t* card = lv_btn_create(land);
+    s_settings_cat_card[c] = card;      // remembered so hiding can apply live
     lv_obj_remove_style_all(card);
     lv_obj_set_size(card, card_w, card_h);
     lv_obj_set_style_bg_color(card, lv_color_hex(0x121417), LV_PART_MAIN);
@@ -29021,6 +29034,9 @@ static void makeSettings(lv_obj_t* tab) {
   }
 
   versionCheckUpdateUi();   // reflect any completed check in the gear/About badges
+#if CAP_LUA_APPS
+  settingsApplyHiddenCats();
+#endif
 }
 
 // ============================================================
@@ -36726,6 +36742,7 @@ static int  s_lua_rm_pending = -1;        // long-press remove target (drawer ti
 static bool s_tile_lp_fired  = false;     // swallow the release-click after a long press
 
 static void luaStoreRebuildList();        // fwd
+void settingsApplyHiddenCats();           // fwd (defined with makeSettings)
 static void luaStoreRefreshCb(lv_event_t* e);
 static void closeLuaStorePage() {
   if (s_luastore_poll) { lv_timer_del(s_luastore_poll); s_luastore_poll = nullptr; }
@@ -36842,6 +36859,7 @@ static void luaStoreHideSwitchCb(lv_event_t* e) {
   if (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED)) mask &= ~bit;
   else                                                            mask |= bit;
   touchPrefsSetAppHide(mask);
+  settingsApplyHiddenCats();     // MQTT lives in Settings, not the drawer — apply now
 }
 
 static void luaStoreRefreshCb(lv_event_t* e) {
@@ -37431,6 +37449,7 @@ static uint32_t s_lua_hide_pending = 0;
 static void luaTileHideConfirmed() {
   touchPrefsSetAppHide(touchPrefsGetAppHide() | s_lua_hide_pending);
   s_lua_hide_pending = 0;
+  settingsApplyHiddenCats();
   if (s_appdrawer_root) { closeAppDrawer(); openAppDrawer(); }
   if (g_lv.task) g_lv.task->showAlert(TR("Hidden - turn it back on in the Lua Store"), 2000);
 }

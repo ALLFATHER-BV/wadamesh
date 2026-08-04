@@ -228,7 +228,8 @@ static void cfgLoadOrMigrate() {
         // v45 also lands Hungarian INSERTED at UiLang slot 1 (#227), which shifts every
         // stored non-English choice by one. Remap once; RO (old max 12) becomes 13.
         if (stored_version < 45 && s_cfg.ui_lang >= 1 && s_cfg.ui_lang <= 12) s_cfg.ui_lang += 1;
-        if (stored_version < 46) s_cfg.app_hide = (1u << 12);   // v46: nothing hidden except the MQTT bridge
+        if (stored_version < 46) s_cfg.app_hide = 0;             // v46 trailing field: nothing hidden
+        if (stored_version < 47) s_cfg.app_hide |= (1u << 12);   // v47: MQTT bridge starts hidden (experimental + privacy)
         if (stored_version < 34) s_cfg.web_mirror = 0;    // new trailing field: web control panel off by default (opt-in remote control)
         if (stored_version < 35) s_cfg.remote_mode = 0;   // new trailing field: remote mode off by default (opt-in, reboots to apply)
         if (stored_version < 36) s_cfg.remote_landscape = 0;
