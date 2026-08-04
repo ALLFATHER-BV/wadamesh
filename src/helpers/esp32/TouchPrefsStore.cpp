@@ -1,4 +1,5 @@
 #include "TouchPrefsStore.h"
+#include "TouchPrefsSchema.h"
 
 #if defined(ESP32)
 
@@ -35,8 +36,8 @@ static bool s_begun = false;
 // making the migration crash-safe and idempotent. `magic` rejects a garbage /
 // short read (→ treat as absent → defaults); `ver` lets later builds add fields.
 static const char* KEY_CFG = "cfg";
-static const uint16_t TOUCH_CFG_MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static const uint8_t  TOUCH_CFG_VER   = 44;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF); v40 hist_sync_after (chat-history flush: consecutive off-thread write failures before the blocking loop-task fallback, 0 = never); v41 p4_antenna (T-Display P4 antenna select; now RESERVED/unused - the choice is session-only so every boot comes up on the on-board antenna); v42 hist_per_chat (max stored messages PER chat, default 250 - a busy public channel used to be able to fill the whole shared ring and drag the UI down); v43 Pager UI-size presets (reset the previously ignored large-screen default to Small once); v44 retry_echo (auto-retry sends until the mesh echoes/ACKs them, default ON; opt-out toggle in Radio & Mesh)
+static const uint16_t TOUCH_CFG_MAGIC = TouchPrefsSchema::MAGIC;
+static const uint8_t  TOUCH_CFG_VER   = TouchPrefsSchema::CURRENT_VERSION;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF); v40 hist_sync_after (chat-history flush: consecutive off-thread write failures before the blocking loop-task fallback, 0 = never); v41 p4_antenna (T-Display P4 antenna select; now RESERVED/unused - the choice is session-only so every boot comes up on the on-board antenna); v42 hist_per_chat (max stored messages PER chat, default 250 - a busy public channel used to be able to fill the whole shared ring and drag the UI down); v43 Pager UI-size presets (reset the previously ignored large-screen default to Small once); v44 broken retry_echo mid-struct insertion; v45 moves retry_echo to the actual tail and resets the ambiguous v44 suffix
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
@@ -50,70 +51,7 @@ static const bool     DEFAULT_DC_SHOW          = true;
 static const uint8_t  DEFAULT_SIG_PROBE_EN     = 1;          // signal discover probe ON
 static const uint16_t DEFAULT_SIG_POLL_MIN     = 5;          // minutes between probes
 
-struct __attribute__((packed)) TouchCfg {
-  uint16_t magic;            // TOUCH_CFG_MAGIC — rejects a garbage/short read
-  uint8_t  ver;              // TOUCH_CFG_VER   — schema version
-  uint8_t  bright;           // "bright"     1..100 (clamped 5..100 on get/set)
-  uint8_t  kb_bl;            // "kb_bl"      0..2
-  uint8_t  kb_layout;        // "kblang"
-  uint8_t  kb_secondary;     // "kbsec"
-  uint8_t  ui_lang;          // "ui_lang"
-  uint8_t  ui_rotation;      // "uirot"      0..3
-  uint8_t  dc_show;          // "dc_show"    bool
-  uint8_t  use_miles;        // "use_miles"  bool
-  uint8_t  tiles_from_sd;    // "tiles_sd"   bool
-  uint8_t  clr_bubbles;      // "clr_bub"    bool
-  uint8_t  kb_accent;        // "kb_accent"  bool
-  int8_t   time_offs;        // "time_offs"  -23..23
-  uint16_t scr_to_s;         // "scr_to_s"
-  uint16_t kb_enabled;       // "kbenab"     bitmask
-  uint16_t batt_full_mv;     // "battfull"
-  uint32_t lock_color;       // "lk_col"     0xRRGGBB
-  uint32_t accent;           // "accent"     0xRRGGBB
-  uint32_t gps_baud;         // "gps_baud"   0 = unset -> caller fallback
-  uint8_t  sig_probe_en;     // signal auto-discover probe on/off (bool) — v2
-  uint16_t sig_poll_min;     // minutes between signal probes, 1..1440  — v2
-  uint8_t  tz_zone;          // selected time-zone index (0 = Europe/CET)  — v3
-  uint8_t  hide_node_name;   // hide the device name in the status bar + park clock left (bool) — v4
-  uint8_t  map_night;        // invert map tile colours at render time (bool) — v5
-  uint8_t  map_zoom;         // last map zoom level (0 = unset, auto-snap) — v5
-  uint8_t  map_show_coords;  // show the coords read-out on the map (bool) — v6
-  uint8_t  map_show_tilexyz; // show the zoom + tile z/x/y line on the map (bool) — v6
-  uint8_t  map_show_contacts;// show contact markers on the map (bool) — v6
-  uint8_t  app_grid_large;   // app drawer: large grid (one fewer column, bigger icons) — v7
-  uint8_t  ui_scale;         // UI-size preset 0..2 (board-specific font/geometry mapping, applied at boot) — v8
-  uint8_t  kbd_nav;          // T-Deck keyboard ESDFX nav: 0=off (default), 1=on (E/X/S/F move focus, D select, Q back) — v9 (was tb_keypad)
-  uint8_t  sleep_idle;       // idle light-sleep feature on/off (bool) — v10 (trailing so existing blobs default it OFF)
-  uint8_t  nav_keys[5];      // keyboard-nav tab hotkeys (ASCII), one per main tab [chat,contacts,home,map,settings] — v11 (trailing)
-  uint8_t  map_zoom_buttons; // map zoom control: 0=slider (default), 1=+/- buttons — v12 (trailing)
-  uint8_t  nav_dir_keys[6];  // keyboard-nav control keys (ASCII): up,down,left,right,select,back — v13 (trailing)
-  uint8_t  home_is_drawer;   // Home tab defaults to the app drawer (1) vs the Commander screen (0, default) — v14 (trailing)
-  uint8_t  nav_scroll_keys[2]; // keyboard-nav scroll keys (ASCII): scroll-up, scroll-down — v16 (trailing)
-  uint8_t  notify_new_contact;// toast/chip when a contact is auto-discovered (bool) — v17 (trailing)
-  uint8_t  show_sensors_tab;  // V4 Expansion Kit: show the Sensors tab + Home env widget (bool, default 1) — v19 (trailing)
-  uint8_t  map_show_links;    // show self->contact link lines on the map (bool, default 1) — v20 (trailing)
-  uint8_t  map_style;         // map tile style: 0=OpenStreetMap (default), 1=OpenTopoMap — v21 (trailing)
-  uint8_t  tb_nav;            // T-Deck trackball: 1=D-pad UI navigation (default), 0=soft cursor — v22 (trailing)
-  uint8_t  scope_direct;      // 1=tag direct/login/admin floods with the default region scope (opt-in, default 0) — v23 (trailing)
-  uint8_t  fem_lna;           // Heltec V4.3 high-gain FEM LNA (~17 dB): 1=on, 0=bypass (default) — v25 (trailing)
-  uint8_t  msg_flash;         // flash keyboard backlight + wake screen on a new message (bool) — v26 (trailing)
-  uint8_t  flood_adv_hrs;     // periodic flood self-advert interval in hours (0 = off) — v27 (trailing)
-  uint16_t local_adv_min;     // periodic zero-hop self-advert interval in minutes (0 = off) — v27 (trailing)
-  uint8_t  beta_updates;      // opt-in to test/beta firmware on the OTA check + install (bool) — v28 (trailing)
-  uint8_t  boot_advert;       // one-shot flood self-advert ~6s after boot (bool, 0=off) — v30 (trailing) — #76
-  uint8_t  compact_chat;      // IRC-style dense chat rows instead of bubbles (bool, 0=off) — v31 (trailing)
-  uint32_t clock_floor;       // highest epoch this device handed out (ClockFloorRTC persistence) — v32 (trailing)
-  uint8_t  rx_queue;          // buffered LoRa receive: drain task + packet ring (bool, 0=off, experimental) — v33 (trailing)
-  uint8_t  retry_echo;        // auto-retry sends until echo/ACK heard (bool, default ON) — v44 (trailing)
-  uint8_t  web_mirror;        // web control panel: mirror the live UI to a phone browser + inject taps (bool, 0=off) — v34 (trailing)
-  uint8_t  remote_mode;       // render the UI off-screen at a web resolution instead of the panel (bool, 0=off) — v35 (trailing)
-  uint8_t  remote_landscape;  // remote mode orientation: 1=landscape 800x480 (desktop), 0=portrait 480x800 (phone) — v36 (trailing)
-  uint8_t  web_terminal;      // web mesh-CLI terminal served on the device IP (runtime; exclusive with VNC) — v38 (trailing)
-  uint8_t  map_tile_debug;    // show the map tile-pipeline diagnostic overlay (bool, 0=off) — v39 (trailing)
-  uint8_t  hist_sync_after;   // chat-history flush: consecutive off-thread write failures before falling back to the blocking loop-task write; 0 = never — v40 (trailing)
-  uint16_t hist_per_chat;     // max stored messages per chat/thread; 0 = no per-chat cap (ring only) - v42 (trailing)
-  uint8_t  p4_antenna;        // RESERVED (was: T-Display P4 antenna select). The antenna choice is session-only by design and is never stored — see the note further down — v41 (trailing)
-};
+using TouchCfg = TouchPrefsSchema::Config;
 
 static TouchCfg s_cfg;
 static bool     s_cfg_loaded = false;
@@ -241,59 +179,62 @@ static void cfgLoadOrMigrate() {
   // isKey() does NOT emit the [E] NOT_FOUND log that getBytes() would on a miss,
   // so probe first to keep the (USB-CDC) console clean on a fresh device.
   if (s_prefs.isKey(KEY_CFG)) {
-    TouchCfg tmp;
-    memset(&tmp, 0, sizeof(tmp));
-    size_t n = s_prefs.getBytes(KEY_CFG, &tmp, sizeof(tmp));
+    uint8_t blob[sizeof(TouchCfg)] = {};
+    size_t n = s_prefs.getBytes(KEY_CFG, blob, sizeof(blob));
+    uint8_t stored_version = 0;
     // Need at least magic(2)+ver(1) to trust the header; reject anything shorter
     // (a half-written / garbage blob) and re-derive from legacy keys / defaults.
-    if (n >= offsetof(TouchCfg, bright) && tmp.magic == TOUCH_CFG_MAGIC) {
-      // Copy whatever was stored over the defaults (a shorter, older blob leaves
-      // newer trailing fields at their default), then version-upgrade if needed.
-      memcpy(&s_cfg, &tmp, n < sizeof(s_cfg) ? n : sizeof(s_cfg));
-      if (s_cfg.ver < TOUCH_CFG_VER) {
+    if (TouchPrefsSchema::overlayStored(s_cfg, blob, n, &stored_version)) {
+      // Older blobs overlay their established prefix on the defaults. Broken
+      // beta-57 v44 blobs stop at rx_queue: their suffix is byte-shifted and
+      // ambiguous, so web/remote/history tuning intentionally returns to safe
+      // defaults instead of guessing and silently enabling another boot mode.
+      if (stored_version == TouchPrefsSchema::BROKEN_MID_INSERT_VERSION)
+        Serial.println("[PREFS] repairing beta_57 v44 suffix with safe defaults");
+      if (stored_version < TOUCH_CFG_VER) {
         // v2->v3: a manual hour offset used to mean "CET base + offset". Preserve
         // that under the new zone picker by mapping such users onto the Custom
         // (UTC-offset) zone, so their clock doesn't jump to CET. 0xFE is resolved
         // to the real Custom index on the first touchPrefsGetTimezone() call (the
         // zone count isn't known here). offset 0 stays zone 0 (Europe) = unchanged.
-        if (s_cfg.ver < 3 && s_cfg.time_offs != 0) s_cfg.tz_zone = 0xFE;
+        if (stored_version < 3 && s_cfg.time_offs != 0) s_cfg.tz_zone = 0xFE;
         // v18: keyboard navigation is now OFF by default (it was force-enabled at v15, but it
         // complicated the touch UX more than it helped). Reset existing installs to off ONCE so
         // they match the new default; the user's later explicit on/off then persists (fires only
         // for ver < 18, never again). The Tanmatsu is exempt — it has no touchscreen, so keyboard
         // nav is its only input and must stay on.
 #if !defined(HAS_TANMATSU)
-        if (s_cfg.ver < 18) s_cfg.kbd_nav = 0;
+        if (stored_version < 18) s_cfg.kbd_nav = 0;
 #endif
         // v22: new trailing field — default the T-Deck trackball to D-pad UI nav on existing installs.
-        if (s_cfg.ver < 22) s_cfg.tb_nav = 1;
+        if (stored_version < 22) s_cfg.tb_nav = 1;
         // v23: new trailing field — scope-direct-floods OFF on existing installs (opt-in).
-        if (s_cfg.ver < 23) s_cfg.scope_direct = 0;
+        if (stored_version < 23) s_cfg.scope_direct = 0;
         // v24: trackball D-pad UI nav demoted to EXPERIMENTAL — default OFF (was on at v22). Flip
         // existing installs back to the soft cursor; the toggle lets users opt back in.
-        if (s_cfg.ver < 24) s_cfg.tb_nav = 0;
+        if (stored_version < 24) s_cfg.tb_nav = 0;
         // v25: new trailing field — V4.3 FEM LNA OFF on existing installs (matches hardware default).
-        if (s_cfg.ver < 25) s_cfg.fem_lna = 0;
-        if (s_cfg.ver < 26) s_cfg.msg_flash = 0;
-        if (s_cfg.ver < 27) { s_cfg.flood_adv_hrs = 0; s_cfg.local_adv_min = 0; }
-        if (s_cfg.ver < 28) s_cfg.beta_updates = 0;
-        if (s_cfg.ver < 29 && s_cfg.ui_scale == 0) s_cfg.ui_scale = 1;   // bump old 100% default -> Large (150%)
-        if (s_cfg.ver < 30) s_cfg.boot_advert = 0;   // #76 new trailing field: advert-on-boot off by default
-        if (s_cfg.ver < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
-        if (s_cfg.ver < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
-        if (s_cfg.ver < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
-        if (s_cfg.ver < 44) s_cfg.retry_echo = 1;    // auto-retry ON by default (opt-out toggle in Radio & Mesh)
-        if (s_cfg.ver < 34) s_cfg.web_mirror = 0;    // new trailing field: web control panel off by default (opt-in remote control)
-        if (s_cfg.ver < 35) s_cfg.remote_mode = 0;   // new trailing field: remote mode off by default (opt-in, reboots to apply)
-        if (s_cfg.ver < 36) s_cfg.remote_landscape = 0;
-        if (s_cfg.ver < 37) s_cfg.remote_landscape = 1;   // remote mode = landscape/desktop by default (one-time flip; portrait stays a toggle)
-        if (s_cfg.ver < 38) s_cfg.web_terminal = 0;       // new trailing field: web mesh terminal off by default (opt-in)
-        if (s_cfg.ver < 39) s_cfg.map_tile_debug = 0;     // new trailing field: tile diagnostic overlay off by default
+        if (stored_version < 25) s_cfg.fem_lna = 0;
+        if (stored_version < 26) s_cfg.msg_flash = 0;
+        if (stored_version < 27) { s_cfg.flood_adv_hrs = 0; s_cfg.local_adv_min = 0; }
+        if (stored_version < 28) s_cfg.beta_updates = 0;
+        if (stored_version < 29 && s_cfg.ui_scale == 0) s_cfg.ui_scale = 1;   // bump old 100% default -> Large (150%)
+        if (stored_version < 30) s_cfg.boot_advert = 0;   // #76 new trailing field: advert-on-boot off by default
+        if (stored_version < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
+        if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
+        if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
+        if (stored_version < 45) s_cfg.retry_echo = 1;    // v45: correctly appended auto-retry preference
+        if (stored_version < 34) s_cfg.web_mirror = 0;    // new trailing field: web control panel off by default (opt-in remote control)
+        if (stored_version < 35) s_cfg.remote_mode = 0;   // new trailing field: remote mode off by default (opt-in, reboots to apply)
+        if (stored_version < 36) s_cfg.remote_landscape = 0;
+        if (stored_version < 37) s_cfg.remote_landscape = 1;   // remote mode = landscape/desktop by default (one-time flip; portrait stays a toggle)
+        if (stored_version < 38) s_cfg.web_terminal = 0;       // new trailing field: web mesh terminal off by default (opt-in)
+        if (stored_version < 39) s_cfg.map_tile_debug = 0;     // new trailing field: tile diagnostic overlay off by default
 #if defined(TLORA_PAGER)
         // ui_scale existed before the Pager exposed the selector, so every old
         // Pager inherited the unrelated large-screen default (1) while ignoring
         // it. Reset it once so upgrading cannot enlarge the UI without consent.
-        if (s_cfg.ver < 43) s_cfg.ui_scale = 0;
+        if (stored_version < 43) s_cfg.ui_scale = 0;
 #endif
         s_cfg.ver = TOUCH_CFG_VER;
         s_cfg.magic = TOUCH_CFG_MAGIC;
