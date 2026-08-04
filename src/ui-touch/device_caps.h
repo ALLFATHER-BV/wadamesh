@@ -263,3 +263,16 @@
 #ifndef CAP_LUA_APPS
   #define CAP_LUA_APPS 1
 #endif
+
+// Compile the translations into the image (i18n_builtin.h, generated from
+// deploy/apps/lang/*.lang) instead of relying on downloading a .lang file.
+// ON for boards where the Lua Store is not dependable — the V4 runs at ~95%
+// internal RAM with Wi-Fi up, so its net worker and the store are fragile and
+// it would otherwise be stuck on English. Costs ~400 KB of FLASH, no RAM.
+#ifndef CAP_BUILTIN_LANGS
+  #if defined(HELTEC_LORA_V4_TFT) || defined(HELTEC_LORA_V4)
+    #define CAP_BUILTIN_LANGS 1
+  #else
+    #define CAP_BUILTIN_LANGS 0
+  #endif
+#endif

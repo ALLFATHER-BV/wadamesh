@@ -1,5 +1,9 @@
 #include "i18n.h"
 #include <string.h>
+#include "device_caps.h"
+#if CAP_BUILTIN_LANGS
+#include "i18n_builtin.h"   // generated: baked-in translations
+#endif
 
 // Native language names shown in the picker. Index order == UiLang.
 const char* const kUiLangNames[LANG_COUNT] = {
@@ -38,7 +42,11 @@ bool i18nHasFileOverlay() { return s_file_n > 0; }
 
 const char* TR(const char* en) {
   if (!en) return "";
+#if CAP_BUILTIN_LANGS
+  if (!s_file_n && s_ui_lang == LANG_EN) return en;
+#else
   if (!s_file_n) return en;   // no language file loaded: the keys ARE the English UI
+#endif
   // Icon-prefixed labels ("<glyph>  Copy") carry the LVGL symbol's UTF-8 bytes
   // (3-byte private-use sequences, 0xEE/0xEF lead) in the lookup key, but the
   // table is keyed on the plain text — so those labels never matched and the
@@ -62,6 +70,18 @@ const char* TR(const char* en) {
       if (c < 0) hi = mid - 1; else lo = mid + 1;
     }
   }
+#if CAP_BUILTIN_LANGS
+  if (!v && s_ui_lang != LANG_EN && kBuiltinLang[s_ui_lang]) {
+    const I18nPair* tab = kBuiltinLang[s_ui_lang];
+    int lo = 0, hi = kBuiltinLangCount[s_ui_lang] - 1;
+    while (lo <= hi) {                     // sorted by the generator
+      const int mid = (lo + hi) / 2;
+      const int c = strcmp(base, tab[mid].key);
+      if (c == 0) { v = tab[mid].val; break; }
+      if (c < 0) hi = mid - 1; else lo = mid + 1;
+    }
+  }
+#endif
   if (!v) return en;                       // untranslated: original, prefix intact
   if (plen == 0) return v;                 // plain key: the table cell directly
   static char ring[4][120];
