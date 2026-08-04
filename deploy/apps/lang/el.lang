@@ -1,4 +1,5 @@
 # wadamesh language file
+# canonical source - translators: edit this file and PR it
 # code: el
 # name: Ελληνικά
 # base: el
@@ -729,3 +730,93 @@ zoom %d	ζουμ %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	ενισχυτής ~17 dB για ήσυχες/απομακρυσμένες περιοχές· κλείστε σε θορυβώδεις.
 © OpenStreetMap	© OpenStreetMap
 © OpenTopoMap	© OpenTopoMap
+Apps	Εφαρμογές
+Languages	Γλώσσες
+Installed	Εγκατεστημένες
+Available	Διαθέσιμες
+Get	Λήψη
+Use	Χρήση
+Update	Ενημέρωση
+Hide	Απόκρυψη
+Removed	Αφαιρέθηκε
+Remove %s?	Αφαίρεση του %s;
+Added	Προστέθηκε
+Already in contacts	Ήδη στις επαφές
+Could not add	Αδύνατη η προσθήκη
+Catalog unavailable	Ο κατάλογος δεν είναι διαθέσιμος
+Loading catalog…	Φόρτωση καταλόγου…
+Loading the language catalog…	Φόρτωση καταλόγου γλωσσών…
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Ο κατάλογος γλωσσών δεν είναι διαθέσιμος - ελέγξτε το Wi-Fi και ξανανοίξτε την καρτέλα.
+Fetching the app list from firmware.wadamesh.com	Λήψη λίστας εφαρμογών από firmware.wadamesh.com
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Ενεργοποιήστε το Wi-Fi και ανανεώστε. Οι εγκατεστημένες εφαρμογές λειτουργούν.
+Installing…	Εγκατάσταση…
+Install failed (network?)	Η εγκατάσταση απέτυχε (δίκτυο;)
+Downloading…	Λήψη…
+Download failed (network?)	Η λήψη απέτυχε (δίκτυο;)
+Downloaded - tap Use to switch	Λήφθηκε - πατήστε Χρήση για αλλαγή
+Hidden - turn it back on in the Lua Store	Κρύφτηκε - ενεργοποιήστε το ξανά στο Lua Store
+Hide this app from the drawer?	Απόκρυψη της εφαρμογής από το συρτάρι;
+Show in the app drawer	Εμφάνιση στο συρτάρι εφαρμογών
+Your own apps	Οι δικές σας εφαρμογές
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Πατήστε Χρήση για αλλαγή - η συσκευή επανεκκινεί. Τα αρχεία γλώσσας βρίσκονται στο /lang· επεξεργαστείτε τα ή προσθέστε δικά σας.
+Do Not Disturb	Μην ενοχλείτε
+Do Not Disturb on	Μην ενοχλείτε: ενεργό
+Do Not Disturb off	Μην ενοχλείτε: ανενεργό
+Start time	Ώρα έναρξης
+End time	Ώρα λήξης
+Off	Ανενεργό
+Turn off	Απενεργοποίηση
+Off\n1\n2\n3\n5\n8	Ανενεργό\n1\n2\n3\n5\n8
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nΧωρίς όριο
+Keep per chat (messages)	Διατήρηση ανά συνομιλία (μηνύματα)
+History limit off	Όριο ιστορικού ανενεργό
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Παλαιότερα μηνύματα πέραν αυτού διαγράφονται. Πολύ μεγάλο ή απεριόριστο ιστορικό επιβραδύνει τη λίστα.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Απενεργοποίηση ορίου ιστορικού;\n\nΈνα πολυσύχναστο κανάλι μπορεί να γεμίσει όλο τον χώρο μηνυμάτων - περισσότερος χώρος και αισθητά πιο αργή λίστα και εφαρμογή. Μόνο αν χρειάζεστε πράγματι όλο το ιστορικό.
+Chat save fallback (failed tries)	Εφεδρική αποθήκευση συνομιλίας (αποτυχίες)
+Connect to Wi-Fi first	Συνδεθείτε πρώτα στο Wi-Fi
+Connect to Wi-Fi to get a browser address.	Συνδεθείτε στο Wi-Fi για διεύθυνση προγράμματος περιήγησης.
+Connected - a browser is viewing this screen.	Συνδέθηκε - ένα πρόγραμμα περιήγησης βλέπει την οθόνη.
+Control this device from a browser	Ελέγξτε τη συσκευή από πρόγραμμα περιήγησης
+Enable web access	Ενεργοποίηση πρόσβασης web
+Open in a browser (same Wi-Fi):	Ανοίξτε σε πρόγραμμα περιήγησης (ίδιο Wi-Fi):
+On - open the address above in a phone browser.	Ενεργό - ανοίξτε την παραπάνω διεύθυνση στο κινητό.
+Scan to open on phone	Σαρώστε για άνοιγμα στο κινητό
+Then pick a mode:	Μετά επιλέξτε λειτουργία:
+Remote access	Απομακρυσμένη πρόσβαση
+Remote UI	Απομακρυσμένο UI
+Remote UI (on)	Απομακρυσμένο UI (ενεργό)
+Remote terminal	Απομακρυσμένο τερματικό
+Remote terminal (recommended)	Απομακρυσμένο τερματικό (συνιστάται)
+Remote terminal off	Απομακρυσμένο τερματικό ανενεργό
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Συνομιλίες, επαφές, ρυθμίσεις και τερματικό mesh - όλα στον browser. Χωρίς επανεκκίνηση· η συσκευή κρατά την οθόνη της.
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Μεταδίδει την οθόνη ως ζωντανή εικόνα που πατάτε για έλεγχο. Βαρύτερο· το πάνελ δείχνει placeholder. Η εναλλαγή επανεκκινεί τη συσκευή.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Ενεργοποιήστε το και ανοίξτε την παρακάτω διεύθυνση σε browser στο ίδιο Wi-Fi - δεν χρειάζεται εφαρμογή. Η οθόνη εμφανίζεται ζωντανά και ελέγχεται με πάτημα.
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Όσο είναι ενεργό, οποιοσδήποτε στο Wi-Fi σας μπορεί να βλέπει και να ελέγχει τη συσκευή. Απλό HTTP (μόνο τοπικό δίκτυο).
+Entering remote mode - rebooting...	Είσοδος σε απομακρυσμένη λειτουργία - επανεκκίνηση...
+Leaving remote mode - rebooting...	Έξοδος από απομακρυσμένη λειτουργία - επανεκκίνηση...
+Changing orientation - rebooting...	Αλλαγή προσανατολισμού - επανεκκίνηση...
+Rotating - reconnecting...	Περιστροφή - επανασύνδεση...
+Landscape (desktop)	Οριζόντια (desktop)
+Landscape set - applies when remote mode starts.	Ορίστηκε οριζόντια - ισχύει όταν ξεκινήσει η απομακρυσμένη λειτουργία.
+Portrait set - applies when remote mode starts.	Ορίστηκε κατακόρυφη - ισχύει όταν ξεκινήσει η απομακρυσμένη λειτουργία.
+Waiting for Wi-Fi...	Αναμονή για Wi-Fi...
+GPS: searching	GPS: αναζήτηση
+No system time yet	Δεν υπάρχει ακόμη ώρα συστήματος
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Δεν υπάρχει ακόμη θέση. Η ψυχρή εκκίνηση θέλει ανοιχτό ουρανό και μπορεί να πάρει λεπτά.
+Contacts are saved to the SD card.	Οι επαφές αποθηκεύονται στην κάρτα SD.
+Contacts are on internal flash.	Οι επαφές είναι στην εσωτερική μνήμη.
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Οι επαφές είναι στην εσωτερική μνήμη - η κάρτα SD δεν προσαρτήθηκε στην εκκίνηση. Επανατοποθετήστε την και επανεκκινήστε.
+Keyboard light on	Φωτισμός πληκτρολογίου ενεργός
+Keyboard light off	Φωτισμός πληκτρολογίου ανενεργός
+Keyboard light auto	Φωτισμός πληκτρολογίου αυτόματος
+Locks when screen off\n(hold Backspace to unlock)	Κλειδώνει με σβηστή οθόνη\n(κρατήστε Backspace για ξεκλείδωμα)
+hold Backspace to unlock	κρατήστε Backspace για ξεκλείδωμα
+Retry sends until heard	Επανάληψη αποστολής μέχρι να ακουστεί
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Επαναλαμβάνει το μήνυμα μέχρι να το αναμεταδώσει επαναλήπτης ή να επιβεβαιώσει ο παραλήπτης. Απενεργοποιήστε για μία μόνο αποστολή.
+External antenna selected	Επιλέχθηκε εξωτερική κεραία
+Per-transmit switching on	Εναλλαγή ανά εκπομπή ενεργή
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Εσωτερική (ενσωματωμένη)\nΕξωτερική (MMCX)\nΑυτόματα (παλαιό, ανά εκπομπή)
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	Μετά από επανεκκίνηση ξεκινά πάντα με την ενσωματωμένη κεραία. Επιλέξτε Εξωτερική μόνο με κεραία στην υποδοχή.
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Αλλαγή στην εξωτερική κεραία;\n\nΒεβαιωθείτε πρώτα ότι υπάρχει κεραία στην υποδοχή. Η εκπομπή χωρίς κεραία μπορεί να βλάψει τον πομποδέκτη.\n\nΕπανέρχεται στην ενσωματωμένη σε κάθε επανεκκίνηση.
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Ενεργοποίηση παλαιάς εναλλαγής ανά εκπομπή;\n\nΛειτουργία διάγνωσης, μόνο για σύγκριση. Εκπέμπει στην ενσωματωμένη και ακούει στην εξωτερική - το εξερχόμενο σήμα θα είναι πολύ ασθενέστερο.\n\nΕπανέρχεται στην ενσωματωμένη σε κάθε επανεκκίνηση.
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Η σύζευξη Bluetooth δεν είναι διαθέσιμη σε αυτή τη συσκευή.\n\nΤο εργοστασιακό firmware του chip δεν την υποστηρίζει.\n\nΣυζεύξτε την εφαρμογή μέσω Wi-Fi: συνδέστε τη συσκευή στο δίκτυο και προσθέστε την στην εφαρμογή με τη διεύθυνση IP (TCP, θύρα 5000) — φαίνεται στις Ρυθμίσεις > Δίκτυο. Λειτουργεί και το USB.

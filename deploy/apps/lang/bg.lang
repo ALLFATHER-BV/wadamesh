@@ -1,4 +1,5 @@
 # wadamesh language file
+# canonical source - translators: edit this file and PR it
 # code: bg
 # name: Български
 # base: bg
@@ -729,3 +730,93 @@ zoom %d	мащаб %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	усилвател ~17 dB за тихи/отдалечени места; изключи в шумни.
 © OpenStreetMap	© OpenStreetMap
 © OpenTopoMap	© OpenTopoMap
+Apps	Приложения
+Languages	Езици
+Installed	Инсталирани
+Available	Налични
+Get	Изтегли
+Use	Избери
+Update	Обнови
+Hide	Скрий
+Removed	Премахнато
+Remove %s?	Премахни %s?
+Added	Добавено
+Already in contacts	Вече в контактите
+Could not add	Неуспешно добавяне
+Catalog unavailable	Каталогът е недостъпен
+Loading catalog…	Зареждане на каталога…
+Loading the language catalog…	Зареждане на каталога с езици…
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Каталогът с езици е недостъпен - провери Wi-Fi и отвори раздела отново.
+Fetching the app list from firmware.wadamesh.com	Изтегляне на списъка с приложения от firmware.wadamesh.com
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Включи Wi-Fi и опресни. Инсталираните приложения продължават да работят.
+Installing…	Инсталиране…
+Install failed (network?)	Инсталирането се провали (мрежа?)
+Downloading…	Изтегляне…
+Download failed (network?)	Изтеглянето се провали (мрежа?)
+Downloaded - tap Use to switch	Изтеглено - докосни «Избери» за смяна
+Hidden - turn it back on in the Lua Store	Скрито - включи го отново в Lua Store
+Hide this app from the drawer?	Да скрия ли това приложение от менюто?
+Show in the app drawer	Показвай в менюто с приложения
+Your own apps	Твоите приложения
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Докосни «Избери» за смяна - устройството се рестартира. Езиковите файлове са в /lang в паметта; редактирай ги или добави свои.
+Do Not Disturb	Не безпокой
+Do Not Disturb on	«Не безпокой» вкл.
+Do Not Disturb off	«Не безпокой» изкл.
+Start time	Начален час
+End time	Краен час
+Off	Изкл
+Turn off	Изключи
+Off\n1\n2\n3\n5\n8	Изкл\n1\n2\n3\n5\n8
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nБез лимит
+Keep per chat (messages)	Пазене на чат (съобщения)
+History limit off	Лимитът на историята е изключен
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Старите съобщения над това се изтриват. Много голяма или неограничена история забавя списъка с чатове.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Да изключа ли лимита на историята?\n\nНатоварен канал може да запълни цялото хранилище, което взима повече място и осезаемо забавя списъка и приложението. Направи го само ако наистина ти трябва целият архив.
+Chat save fallback (failed tries)	Резервен запис на чата (неуспехи)
+Connect to Wi-Fi first	Първо се свържи с Wi-Fi
+Connect to Wi-Fi to get a browser address.	Свържи се с Wi-Fi, за да получиш адрес за браузъра.
+Connected - a browser is viewing this screen.	Свързано - браузър гледа този екран.
+Control this device from a browser	Управлявай устройството от браузър
+Enable web access	Включи уеб достъп
+Open in a browser (same Wi-Fi):	Отвори в браузър (същата Wi-Fi мрежа):
+On - open the address above in a phone browser.	Вкл. - отвори горния адрес в браузъра на телефона.
+Scan to open on phone	Сканирай, за да отвориш на телефона
+Then pick a mode:	После избери режим:
+Remote access	Отдалечен достъп
+Remote UI	Отдалечен интерфейс
+Remote UI (on)	Отдалечен интерфейс (вкл.)
+Remote terminal	Отдалечен терминал
+Remote terminal (recommended)	Отдалечен терминал (препоръчително)
+Remote terminal off	Отдалеченият терминал е изкл.
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Чатове, контакти, настройки и mesh терминал - всичко в браузъра. Без рестарт; екранът на устройството си остава нормален.
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Излъчва екрана като живо изображение, което докосваш за управление. По-тежко; панелът показва заместител. Превключването рестартира устройството.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Включи това и отвори долния адрес в браузър в същата Wi-Fi мрежа - без приложение. Екранът на устройството се появява на живо и можеш да го управляваш с докосване.
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Докато е включено, всеки в твоята Wi-Fi мрежа може да гледа и управлява устройството. Използва обикновен HTTP (само локална мрежа).
+Entering remote mode - rebooting...	Влизане в отдалечен режим - рестартиране...
+Leaving remote mode - rebooting...	Излизане от отдалечен режим - рестартиране...
+Changing orientation - rebooting...	Смяна на ориентацията - рестартиране...
+Rotating - reconnecting...	Завъртане - повторно свързване...
+Landscape (desktop)	Пейзаж (десктоп)
+Landscape set - applies when remote mode starts.	Пейзажът е зададен - прилага се при стартиране на отдалечения режим.
+Portrait set - applies when remote mode starts.	Портретът е зададен - прилага се при стартиране на отдалечения режим.
+Waiting for Wi-Fi...	Изчакване на Wi-Fi...
+GPS: searching	GPS: търсене
+No system time yet	Все още няма системно време
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Още няма позиция. Студен старт изисква чисто небе и може да отнеме няколко минути.
+Contacts are saved to the SD card.	Контактите се записват на SD картата.
+Contacts are on internal flash.	Контактите са във вътрешната памет.
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Контактите са във вътрешната памет - SD картата не се монтира при старт. Постави картата отново и рестартирай.
+Keyboard light on	Подсветката на клавиатурата е вкл.
+Keyboard light off	Подсветката на клавиатурата е изкл.
+Keyboard light auto	Подсветка на клавиатурата: авто
+Locks when screen off\n(hold Backspace to unlock)	Заключва се при изгасен екран\n(задръж Backspace за отключване)
+hold Backspace to unlock	задръж Backspace за отключване
+Retry sends until heard	Повтаряй изпращането, докато бъде чуто
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Изпраща съобщението повторно, докато повторител го излъчи или получателят потвърди. Изключи за еднократно изпращане.
+External antenna selected	Избрана е външна антена
+Per-transmit switching on	Превключване при всяко предаване вкл.
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Вътрешна (вградена)\nВъншна (MMCX)\nАвто (старо, при предаване)
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	След рестарт винаги тръгва на вградената антена. Избирай «Външна» само с монтирана антена на извода.
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Превключване на външната антена?\n\nПърво се увери, че наистина има антена на външния извод. Предаване без антена може да повреди радиото.\n\nПри всеки рестарт се връща на вградената.
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Да включа ли старото превключване при предаване?\n\nДиагностичен режим, само за сравнение. Предава на вградената антена и слуша на външната - изходящият сигнал ще е много по-слаб от входящия.\n\nПри всеки рестарт се връща на вградената.
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Bluetooth сдвояване не е налично на това устройство.\n\nФабричният фърмуер на радиочипа не го поддържа.\n\nСвържи приложението през Wi-Fi: включи устройството в мрежата и го добави в приложението по IP адрес (TCP, порт 5000) — показан в Настройки > Мрежа. USB също работи.

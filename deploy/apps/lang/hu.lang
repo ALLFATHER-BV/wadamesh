@@ -1,4 +1,5 @@
 # wadamesh language file
+# canonical source - translators: edit this file and PR it
 # code: hu
 # name: Magyar
 # base: hu
@@ -729,3 +730,93 @@ zoom %d	zoom %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	~17 dB erősítővel csendes/távoli helyeken; zajos helyeken kapcsold ki.
 © OpenStreetMap	© OpenStreetMap
 © OpenTopoMap	© OpenTopoMap
+Apps	Appok
+Languages	Nyelvek
+Installed	Telepítve
+Available	Elérhető
+Get	Letölt
+Use	Használ
+Update	Frissít
+Hide	Elrejt
+Removed	Eltávolítva
+Remove %s?	Eltávolítod: %s?
+Added	Hozzáadva
+Already in contacts	Már a névjegyek közt
+Could not add	Nem sikerült hozzáadni
+Catalog unavailable	A katalógus nem érhető el
+Loading catalog…	Katalógus betöltése…
+Loading the language catalog…	Nyelvi katalógus betöltése…
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	A nyelvi katalógus nem érhető el - ellenőrizd a Wi-Fit, majd nyisd meg újra a lapot.
+Fetching the app list from firmware.wadamesh.com	Applista letöltése: firmware.wadamesh.com
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Kapcsold be a Wi-Fit, majd frissíts. A már telepített appok működnek.
+Installing…	Telepítés…
+Install failed (network?)	A telepítés nem sikerült (hálózat?)
+Downloading…	Letöltés…
+Download failed (network?)	A letöltés nem sikerült (hálózat?)
+Downloaded - tap Use to switch	Letöltve - a váltáshoz koppints a Használ gombra
+Hidden - turn it back on in the Lua Store	Elrejtve - a Lua Store-ban kapcsolhatod vissza
+Hide this app from the drawer?	Elrejted ezt az appot a menüből?
+Show in the app drawer	Megjelenítés az appmenüben
+Your own apps	Saját appok
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Váltáshoz koppints a Használ gombra - az eszköz újraindul. A nyelvi fájlok a tároló /lang mappájában vannak; szerkesztheted őket vagy hozzáadhatod a sajátodat.
+Do Not Disturb	Ne zavarj
+Do Not Disturb on	Ne zavarj bekapcsolva
+Do Not Disturb off	Ne zavarj kikapcsolva
+Start time	Kezdés
+End time	Befejezés
+Off	Ki
+Turn off	Kikapcsol
+Off\n1\n2\n3\n5\n8	Ki\n1\n2\n3\n5\n8
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nNincs korlát
+Keep per chat (messages)	Megőrzés csevegésenként (üzenet)
+History limit off	Előzménykorlát kikapcsolva
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Ezen túl a régebbi üzenetek törlődnek. A nagyon nagy vagy korlátlan előzmény lassítja a csevegőlistát.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Kikapcsolod az előzménykorlátot?\n\nEgy forgalmas csatorna így megtöltheti a teljes üzenettárat, ami több helyet foglal, és érezhetően lassítja a csevegőlistát és az appot. Csak akkor tedd, ha tényleg kell a teljes előzmény.
+Chat save fallback (failed tries)	Csevegésmentés tartalék (hibás próbák)
+Connect to Wi-Fi first	Előbb csatlakozz Wi-Fihez
+Connect to Wi-Fi to get a browser address.	Csatlakozz Wi-Fihez, hogy böngészőcímet kapj.
+Connected - a browser is viewing this screen.	Kapcsolódva - egy böngésző nézi ezt a képernyőt.
+Control this device from a browser	Vezéreld az eszközt böngészőből
+Enable web access	Webes hozzáférés bekapcsolása
+Open in a browser (same Wi-Fi):	Nyisd meg böngészőben (azonos Wi-Fi):
+On - open the address above in a phone browser.	Bekapcsolva - nyisd meg a fenti címet a telefon böngészőjében.
+Scan to open on phone	Olvasd be a telefonos megnyitáshoz
+Then pick a mode:	Majd válassz módot:
+Remote access	Távoli hozzáférés
+Remote UI	Távoli felület
+Remote UI (on)	Távoli felület (be)
+Remote terminal	Távoli terminál
+Remote terminal (recommended)	Távoli terminál (ajánlott)
+Remote terminal off	Távoli terminál kikapcsolva
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Csevegések, névjegyek, beállítások és mesh-terminál - mind a böngészőben. Nincs újraindítás; az eszköz képernyője változatlan marad.
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Élő képként közvetíti az eszköz képernyőjét, amelyre koppintva vezérelhetsz. Nehezebb; a panelen helykitöltő látszik. A váltás újraindítja az eszközt.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Kapcsold be, majd nyisd meg az alábbi címet bármely böngészőben ugyanazon a Wi-Fin - app nem kell. Az eszköz képernyője élőben jelenik meg a böngészőben, és koppintással vezérelheted.
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Amíg be van kapcsolva, a Wi-Fi hálózatodon bárki láthatja és vezérelheti az eszközt. Sima HTTP-t használ (csak helyi hálózat).
+Entering remote mode - rebooting...	Távoli módba lépés - újraindítás...
+Leaving remote mode - rebooting...	Kilépés a távoli módból - újraindítás...
+Changing orientation - rebooting...	Tájolásváltás - újraindítás...
+Rotating - reconnecting...	Forgatás - újracsatlakozás...
+Landscape (desktop)	Fekvő (asztali)
+Landscape set - applies when remote mode starts.	Fekvő beállítva - a távoli mód indulásakor lép életbe.
+Portrait set - applies when remote mode starts.	Álló beállítva - a távoli mód indulásakor lép életbe.
+Waiting for Wi-Fi...	Várakozás Wi-Fire...
+GPS: searching	GPS: keresés
+No system time yet	Még nincs rendszeridő
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Még nincs pozíció. A hidegindításhoz szabad égbolt kell, és több percig is tarthat.
+Contacts are saved to the SD card.	A névjegyek az SD-kártyára mentődnek.
+Contacts are on internal flash.	A névjegyek a belső tárolón vannak.
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	A névjegyek a belső tárolón vannak - az SD-kártya nem csatolódott induláskor. Helyezd be újra a kártyát, és indítsd újra.
+Keyboard light on	Billentyűzetfény be
+Keyboard light off	Billentyűzetfény ki
+Keyboard light auto	Billentyűzetfény auto
+Locks when screen off\n(hold Backspace to unlock)	Zárol képernyőkikapcsoláskor\n(feloldás: Backspace nyomva tartása)
+hold Backspace to unlock	feloldás: tartsd nyomva a Backspace-t
+Retry sends until heard	Újraküldés, míg meg nem hallják
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Addig küldi újra az üzenetet, míg egy ismétlő vissza nem sugározza vagy a címzett nem nyugtázza. Kikapcsolva csak egyszer küld.
+External antenna selected	Külső antenna kiválasztva
+Per-transmit switching on	Adásonkénti váltás bekapcsolva
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Belső (beépített)\nKülső (MMCX)\nAuto (régi, adásonként)
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	Újraindítás után mindig a beépített antennával indul. Csak akkor válassz Külsőt, ha tényleg van antenna a külső aljzatban.
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Váltasz a külső antennára?\n\nElőbb győződj meg róla, hogy tényleg van antenna a külső aljzatban. Antenna nélkül adni károsíthatja a rádiót.\n\nMinden újraindításkor visszaáll a beépített antennára.
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Bekapcsolod a régi adásonkénti váltást?\n\nDiagnosztikai mód, csak összehasonlításra. A beépített antennán ad és a külsőn hallgat, így a kimenő jeled sokkal gyengébb lesz a bejövőnél.\n\nMinden újraindításkor visszaáll a beépített antennára.
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Ezen az eszközön nincs Bluetooth-párosítás.\n\nA rádiócsip gyári firmware-e nem támogatja.\n\nPárosítsd a telefonos appot Wi-Fin: csatlakoztasd az eszközt a hálózatodra, majd add hozzá az appban IP-cím szerint (TCP, 5000-es port) — a Beállítások > Hálózat alatt látható. USB is működik.

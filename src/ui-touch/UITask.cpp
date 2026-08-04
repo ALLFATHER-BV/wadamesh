@@ -24429,6 +24429,15 @@ static void uiLangFileBootLoad() {
   if (s_langfile_tried) return;
   char code[12];
   touchPrefsGetLangFile(code, sizeof code);
+  if (!code[0]) {
+    // Migration: a built-in language picked before translations became files
+    // claims its file code now; the download self-heals below once Wi-Fi is up.
+    const uint8_t l = touchPrefsGetUiLang();
+    if (l > 0 && l < LANG_COUNT) {
+      touchPrefsSetLangFile(kUiLangCodes[l]);
+      touchPrefsGetLangFile(code, sizeof code);
+    }
+  }
   if (!code[0]) { s_langfile_tried = true; return; }
   fs::FS* fs = luaHostAppFs();
   if (!fs) return;                       // storage not up yet — a later call retries
@@ -24437,7 +24446,16 @@ static void uiLangFileBootLoad() {
   snprintf(rel, sizeof rel, "/lang/%s.lang", code);
   luaHostAppPath(path, sizeof path, rel);
   File f = fs->open(path, "r");
-  if (!f) return;
+  if (!f) {
+    // Language chosen but its file is missing (fresh migration, or the store
+    // never finished the download): fetch it in the background. This boot runs
+    // English; the file applies from the next boot. Retries every boot.
+    snprintf(s_langdl_code, sizeof s_langdl_code, "%s", code);
+    s_langdl_done = false;
+    s_langdl_request = true;
+    ensureTileFetchTaskRunning();
+    return;
+  }
   const size_t sz = f.size();
   if (sz < 8 || sz > 256 * 1024) { f.close(); return; }
   char* buf = (char*)heap_caps_malloc(sz + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -37357,12 +37375,6 @@ static void luaStoreRebuildList() {
       lv_obj_t* row = langRow("English", nullptr);
       if (!curFile[0] && curLang == LANG_EN) activeTag(row, -6);
       else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangBuiltinCb, (intptr_t)LANG_EN, 0, 58);
-    }
-    if (!curFile[0] && curLang != LANG_EN && curLang < LANG_COUNT) {
-      // Legacy state: a built-in language picked before languages became files.
-      // Shown so the active choice stays visible; getting its file replaces it.
-      lv_obj_t* row = langRow(kUiLangNames[curLang], TR("built-in"));
-      activeTag(row, -6);
     }
     for (int i = 0; i < s_langinst_n; i++) {
       char sub[20];

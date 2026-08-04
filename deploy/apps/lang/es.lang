@@ -1,4 +1,5 @@
 # wadamesh language file
+# canonical source - translators: edit this file and PR it
 # code: es
 # name: Español
 # base: es
@@ -729,3 +730,93 @@ zoom %d	zoom %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	amplificador ~17 dB para zonas tranquilas/remotas; apaga en zonas ruidosas.
 © OpenStreetMap	© OpenStreetMap
 © OpenTopoMap	© OpenTopoMap
+Apps	Apps
+Languages	Idiomas
+Installed	Instaladas
+Available	Disponibles
+Get	Obtener
+Use	Usar
+Update	Actualizar
+Hide	Ocultar
+Removed	Eliminada
+Remove %s?	¿Eliminar %s?
+Added	Añadido
+Already in contacts	Ya está en contactos
+Could not add	No se pudo añadir
+Catalog unavailable	Catálogo no disponible
+Loading catalog…	Cargando catálogo…
+Loading the language catalog…	Cargando catálogo de idiomas…
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Catálogo de idiomas no disponible - revisa el Wi-Fi y reabre esta pestaña.
+Fetching the app list from firmware.wadamesh.com	Obteniendo la lista de apps de firmware.wadamesh.com
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Activa el Wi-Fi y actualiza. Las apps ya instaladas siguen funcionando.
+Installing…	Instalando…
+Install failed (network?)	Falló la instalación (¿red?)
+Downloading…	Descargando…
+Download failed (network?)	Falló la descarga (¿red?)
+Downloaded - tap Use to switch	Descargado - toca Usar para cambiar
+Hidden - turn it back on in the Lua Store	Oculto - reactívalo en la Lua Store
+Hide this app from the drawer?	¿Ocultar esta app del cajón?
+Show in the app drawer	Mostrar en el cajón de apps
+Your own apps	Tus propias apps
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Toca Usar para cambiar - el dispositivo se reinicia. Los archivos de idioma están en /lang del almacenamiento; edítalos o añade el tuyo.
+Do Not Disturb	No molestar
+Do Not Disturb on	No molestar activado
+Do Not Disturb off	No molestar desactivado
+Start time	Hora de inicio
+End time	Hora de fin
+Off	Apagado
+Turn off	Apagar
+Off\n1\n2\n3\n5\n8	Apagado\n1\n2\n3\n5\n8
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nSin límite
+Keep per chat (messages)	Conservar por chat (mensajes)
+History limit off	Límite de historial desactivado
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Los mensajes más antiguos se descartan al superar esto. Un historial muy grande o ilimitado ralentiza la lista de chats.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	¿Desactivar el límite de historial?\n\nUn canal concurrido puede llenar todo el almacén de mensajes, lo que usa más espacio y ralentiza notablemente la lista y la app. Hazlo solo si de verdad necesitas todo el historial.
+Chat save fallback (failed tries)	Respaldo de guardado del chat (intentos fallidos)
+Connect to Wi-Fi first	Conéctate primero al Wi-Fi
+Connect to Wi-Fi to get a browser address.	Conéctate al Wi-Fi para obtener una dirección de navegador.
+Connected - a browser is viewing this screen.	Conectado - un navegador está viendo esta pantalla.
+Control this device from a browser	Controla este dispositivo desde un navegador
+Enable web access	Activar acceso web
+Open in a browser (same Wi-Fi):	Abrir en un navegador (mismo Wi-Fi):
+On - open the address above in a phone browser.	Activado - abre la dirección de arriba en el navegador del móvil.
+Scan to open on phone	Escanea para abrir en el móvil
+Then pick a mode:	Luego elige un modo:
+Remote access	Acceso remoto
+Remote UI	Interfaz remota
+Remote UI (on)	Interfaz remota (activada)
+Remote terminal	Terminal remota
+Remote terminal (recommended)	Terminal remota (recomendada)
+Remote terminal off	Terminal remota desactivada
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Chats, contactos, ajustes y una terminal mesh - todo en el navegador. Sin reinicio; el dispositivo conserva su pantalla normal.
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Transmite la pantalla como imagen en vivo que tocas para controlar. Más pesado; el panel muestra un marcador. Cambiarlo reinicia el dispositivo.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Actívalo y abre la dirección de abajo en cualquier navegador en el mismo Wi-Fi - sin app. La pantalla del dispositivo aparece en vivo y puedes tocar para controlarla.
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Mientras esté activo, cualquiera en tu Wi-Fi puede ver y controlar este dispositivo. Usa HTTP plano (solo red local).
+Entering remote mode - rebooting...	Entrando en modo remoto - reiniciando...
+Leaving remote mode - rebooting...	Saliendo del modo remoto - reiniciando...
+Changing orientation - rebooting...	Cambiando orientación - reiniciando...
+Rotating - reconnecting...	Girando - reconectando...
+Landscape (desktop)	Horizontal (escritorio)
+Landscape set - applies when remote mode starts.	Horizontal fijado - se aplica al iniciar el modo remoto.
+Portrait set - applies when remote mode starts.	Vertical fijado - se aplica al iniciar el modo remoto.
+Waiting for Wi-Fi...	Esperando Wi-Fi...
+GPS: searching	GPS: buscando
+No system time yet	Aún no hay hora del sistema
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Aún sin posición. Un arranque en frío necesita cielo despejado y puede tardar varios minutos.
+Contacts are saved to the SD card.	Los contactos se guardan en la tarjeta SD.
+Contacts are on internal flash.	Los contactos están en la memoria interna.
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Los contactos están en memoria interna - la tarjeta SD no se montó al arrancar. Reinserta la tarjeta y reinicia.
+Keyboard light on	Luz del teclado encendida
+Keyboard light off	Luz del teclado apagada
+Keyboard light auto	Luz del teclado auto
+Locks when screen off\n(hold Backspace to unlock)	Se bloquea con la pantalla apagada\n(mantén Retroceso para desbloquear)
+hold Backspace to unlock	mantén Retroceso para desbloquear
+Retry sends until heard	Reenviar hasta ser oído
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Reenvía un mensaje hasta que un repetidor lo replique o el destinatario confirme. Desactívalo para enviar solo una vez.
+External antenna selected	Antena externa seleccionada
+Per-transmit switching on	Conmutación por transmisión activada
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Interna (integrada)\nExterna (MMCX)\nAuto (antiguo, por transmisión)
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	Tras reiniciar siempre arranca con la antena integrada. Elige Externa solo con una antena puesta en el conector externo.
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	¿Cambiar a la antena externa?\n\nAsegúrate primero de que hay una antena conectada al conector externo. Transmitir sin nada puede dañar la radio.\n\nVuelve a la antena integrada en cada reinicio.
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	¿Activar la conmutación antigua por transmisión?\n\nModo de diagnóstico, solo para comparar. Transmite por la antena integrada y escucha por la externa, así que tu señal saliente será mucho más débil que la entrante.\n\nVuelve a la antena integrada en cada reinicio.
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	El emparejamiento Bluetooth no está disponible en este dispositivo.\n\nEl firmware de fábrica del chip de radio no lo admite.\n\nEmpareja la app del móvil por Wi-Fi: conecta este dispositivo a tu red y añádelo en la app por su dirección IP (TCP, puerto 5000) — visible en Ajustes > Red. USB también funciona.

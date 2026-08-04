@@ -1,4 +1,5 @@
 # wadamesh language file
+# canonical source - translators: edit this file and PR it
 # code: ro
 # name: Română
 # base: ro
@@ -727,3 +728,94 @@ zoom	zoom
 zoom %d	zoom %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	amplificator ~17 dB pentru zone liniştite/izolate; opreşte-l în locuri zgomotoase.
 © OpenTopoMap	© OpenTopoMap
+Apps	Aplicaţii
+Languages	Limbi
+Installed	Instalate
+Available	Disponibile
+Get	Descarcă
+Use	Foloseşte
+Update	Actualizează
+Hide	Ascunde
+Removed	Eliminat
+Remove %s?	Elimini %s?
+Added	Adăugat
+Already in contacts	Deja în contacte
+Could not add	Nu s-a putut adăuga
+Catalog unavailable	Catalog indisponibil
+Loading catalog…	Se încarcă catalogul…
+Loading the language catalog…	Se încarcă catalogul de limbi…
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Catalog de limbi indisponibil - verifică Wi-Fi, apoi redeschide fila.
+Fetching the app list from firmware.wadamesh.com	Se preia lista de aplicaţii de la firmware.wadamesh.com
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Porneşte Wi-Fi, apoi reîmprospătează. Aplicaţiile instalate funcţionează în continuare.
+Installing…	Se instalează…
+Install failed (network?)	Instalarea a eşuat (reţea?)
+Downloading…	Se descarcă…
+Download failed (network?)	Descărcarea a eşuat (reţea?)
+Downloaded - tap Use to switch	Descărcat - atinge Foloseşte pentru a schimba
+Hidden - turn it back on in the Lua Store	Ascuns - reactivează-l din Lua Store
+Hide this app from the drawer?	Ascunzi această aplicaţie din sertar?
+Show in the app drawer	Afişează în sertarul de aplicaţii
+Your own apps	Aplicaţiile tale
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Atinge Foloseşte pentru a schimba - dispozitivul reporneşte. Fişierele de limbă stau în /lang pe stocare; editează-le sau adaugă-le pe ale tale.
+Do Not Disturb	Nu deranja
+Do Not Disturb on	Nu deranja pornit
+Do Not Disturb off	Nu deranja oprit
+Start time	Ora de început
+End time	Ora de sfârşit
+Off	Oprit
+Turn off	Opreşte
+Off\n1\n2\n3\n5\n8	Oprit\n1\n2\n3\n5\n8
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nFără limită
+Keep per chat (messages)	Păstrează per conversaţie (mesaje)
+History limit off	Limita istoricului oprită
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Mesajele mai vechi peste această limită se şterg. Un istoric foarte mare sau nelimitat încetineşte lista de conversaţii.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Opreşti limita istoricului?\n\nUn canal aglomerat poate umple tot spaţiul de mesaje - mai mult spaţiu ocupat şi listă/aplicaţie vizibil mai lente. Fă asta doar dacă ai cu adevărat nevoie de tot istoricul.
+Chat save fallback (failed tries)	Salvare de rezervă a conversaţiei (eşecuri)
+Connect to Wi-Fi first	Conectează-te mai întâi la Wi-Fi
+Connect to Wi-Fi to get a browser address.	Conectează-te la Wi-Fi pentru o adresă de browser.
+Connected - a browser is viewing this screen.	Conectat - un browser vede acest ecran.
+Control this device from a browser	Controlează dispozitivul din browser
+Enable web access	Activează accesul web
+Open in a browser (same Wi-Fi):	Deschide într-un browser (acelaşi Wi-Fi):
+On - open the address above in a phone browser.	Pornit - deschide adresa de mai sus în browserul telefonului.
+Scan to open on phone	Scanează pentru a deschide pe telefon
+Then pick a mode:	Apoi alege un mod:
+Remote access	Acces la distanţă
+Remote UI	Interfaţă la distanţă
+Remote UI (on)	Interfaţă la distanţă (pornită)
+Remote terminal	Terminal la distanţă
+Remote terminal (recommended)	Terminal la distanţă (recomandat)
+Remote terminal off	Terminal la distanţă oprit
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Conversaţii, contacte, setări şi un terminal mesh - toate în browser. Fără repornire; dispozitivul îşi păstrează ecranul normal.
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Transmite ecranul ca imagine live pe care o atingi pentru control. Mai greu; panoul arată un substituent. Comutarea reporneşte dispozitivul.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Porneşte asta, apoi deschide adresa de mai jos în orice browser pe acelaşi Wi-Fi - fără aplicaţie. Ecranul dispozitivului apare live în browser şi îl poţi controla prin atingere.
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Cât timp e pornit, oricine din reţeaua ta Wi-Fi poate vedea şi controla dispozitivul. Foloseşte HTTP simplu (doar reţea locală).
+Entering remote mode - rebooting...	Se intră în modul la distanţă - repornire...
+Leaving remote mode - rebooting...	Se iese din modul la distanţă - repornire...
+Changing orientation - rebooting...	Se schimbă orientarea - repornire...
+Rotating - reconnecting...	Rotire - reconectare...
+Landscape (desktop)	Peisaj (desktop)
+Landscape set - applies when remote mode starts.	Peisaj setat - se aplică la pornirea modului la distanţă.
+Portrait set - applies when remote mode starts.	Portret setat - se aplică la pornirea modului la distanţă.
+Waiting for Wi-Fi...	Se aşteaptă Wi-Fi...
+GPS: searching	GPS: căutare
+No system time yet	Încă nu există oră de sistem
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Încă nicio poziţie. O pornire la rece are nevoie de cer liber şi poate dura câteva minute.
+Contacts are saved to the SD card.	Contactele se salvează pe cardul SD.
+Contacts are on internal flash.	Contactele sunt pe memoria internă.
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Contactele sunt pe memoria internă - cardul SD nu s-a montat la pornire. Reaşază cardul şi reporneşte.
+Keyboard light on	Lumina tastaturii pornită
+Keyboard light off	Lumina tastaturii oprită
+Keyboard light auto	Lumina tastaturii auto
+Locks when screen off\n(hold Backspace to unlock)	Se blochează cu ecranul stins\n(ţine Backspace pentru deblocare)
+hold Backspace to unlock	ţine Backspace pentru deblocare
+Retry sends until heard	Retrimite până e auzit
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Retrimite mesajul până când un repetor îl reflectă sau destinatarul confirmă. Opreşte pentru o singură trimitere.
+External antenna selected	Antenă externă selectată
+Per-transmit switching on	Comutare per transmisie pornită
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Internă (integrată)\nExternă (MMCX)\nAuto (vechi, per transmisie)
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	După repornire porneşte mereu pe antena integrată. Alege Externă doar cu o antenă montată în mufa externă.
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Comuţi pe antena externă?\n\nAsigură-te întâi că e chiar conectată o antenă la mufa externă. Transmisia fără antenă poate defecta radioul.\n\nRevine la antena integrată la fiecare repornire.
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Porneşti comutarea veche per transmisie?\n\nMod de diagnostic, doar pentru comparaţie. Transmite pe antena integrată şi ascultă pe cea externă, deci semnalul tău de ieşire va fi mult mai slab decât cel de intrare.\n\nRevine la antena integrată la fiecare repornire.
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Împerecherea Bluetooth nu este disponibilă pe acest dispozitiv.\n\nFirmware-ul din fabrică al cipului radio nu o suportă.\n\nÎmperechează aplicaţia prin Wi-Fi: conectează dispozitivul la reţea, apoi adaugă-l în aplicaţie după adresa IP (TCP, port 5000) — afişată la Setări > Reţea. Merge şi USB.
+Diagnostics are on the About page.	Diagnosticele sunt pe pagina Despre.

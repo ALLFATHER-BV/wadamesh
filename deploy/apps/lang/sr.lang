@@ -1,4 +1,5 @@
 # wadamesh language file
+# canonical source - translators: edit this file and PR it
 # code: sr
 # name: Српски
 # base: sr
@@ -729,3 +730,93 @@ zoom %d	зум %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	појачало ~17 dB за тиха/удаљена места; искључи у бучним.
 © OpenStreetMap	© OpenStreetMap
 © OpenTopoMap	© OpenTopoMap
+Apps	Апликације
+Languages	Језици
+Installed	Инсталиране
+Available	Доступне
+Get	Преузми
+Use	Користи
+Update	Ажурирај
+Hide	Сакриј
+Removed	Уклоњено
+Remove %s?	Уклонити %s?
+Added	Додато
+Already in contacts	Већ у контактима
+Could not add	Додавање није успело
+Catalog unavailable	Каталог није доступан
+Loading catalog…	Учитавање каталога…
+Loading the language catalog…	Учитавање каталога језика…
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Каталог језика није доступан - провери Wi-Fi па поново отвори картицу.
+Fetching the app list from firmware.wadamesh.com	Преузимање листе апликација са firmware.wadamesh.com
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Укључи Wi-Fi па освежи. Инсталиране апликације и даље раде.
+Installing…	Инсталирање…
+Install failed (network?)	Инсталирање није успело (мрежа?)
+Downloading…	Преузимање…
+Download failed (network?)	Преузимање није успело (мрежа?)
+Downloaded - tap Use to switch	Преузето - додирни «Користи» за промену
+Hidden - turn it back on in the Lua Store	Сакривено - поново укључи у Lua Store-у
+Hide this app from the drawer?	Сакрити ову апликацију из менија?
+Show in the app drawer	Прикажи у менију апликација
+Your own apps	Твоје апликације
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Додирни «Користи» за промену - уређај се поново покреће. Датотеке језика су у /lang на меморији; уреди их или додај своје.
+Do Not Disturb	Не узнемиравај
+Do Not Disturb on	«Не узнемиравај» укљ.
+Do Not Disturb off	«Не узнемиравај» искљ.
+Start time	Време почетка
+End time	Време краја
+Off	Искљ
+Turn off	Искључи
+Off\n1\n2\n3\n5\n8	Искљ\n1\n2\n3\n5\n8
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nБез ограничења
+Keep per chat (messages)	Чувај по ћаскању (порука)
+History limit off	Ограничење историје искључено
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Старије поруке преко овога се бришу. Веома велика или неограничена историја успорава листу ћаскања.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Искључити ограничење историје?\n\nПрометан канал тада може да напуни цело складиште порука - више простора и приметно спорија листа и апликација. Уради то само ако ти заиста треба цела историја.
+Chat save fallback (failed tries)	Резервно чување ћаскања (неуспеси)
+Connect to Wi-Fi first	Прво се повежи на Wi-Fi
+Connect to Wi-Fi to get a browser address.	Повежи се на Wi-Fi да добијеш адресу за прегледач.
+Connected - a browser is viewing this screen.	Повезано - прегледач гледа овај екран.
+Control this device from a browser	Управљај уређајем из прегледача
+Enable web access	Укључи веб приступ
+Open in a browser (same Wi-Fi):	Отвори у прегледачу (иста Wi-Fi мрежа):
+On - open the address above in a phone browser.	Укљ. - отвори горњу адресу у прегледачу телефона.
+Scan to open on phone	Скенирај да отвориш на телефону
+Then pick a mode:	Затим изабери режим:
+Remote access	Даљински приступ
+Remote UI	Даљински интерфејс
+Remote UI (on)	Даљински интерфејс (укљ.)
+Remote terminal	Даљински терминал
+Remote terminal (recommended)	Даљински терминал (препоручено)
+Remote terminal off	Даљински терминал искљ.
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Ћаскања, контакти, подешавања и mesh терминал - све у прегледачу. Без рестарта; уређај задржава свој нормалан екран.
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Преноси екран као живу слику коју додиром контролишеш. Теже; панел приказује чувар места. Пребацивање рестартује уређај.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Укључи ово па отвори доњу адресу у било ком прегледачу на истој Wi-Fi мрежи - апликација није потребна. Екран уређаја се појављује уживо и можеш га контролисати додиром.
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Док је ово укључено, свако на твом Wi-Fi-ју може да види и контролише уређај. Користи обичан HTTP (само локална мрежа).
+Entering remote mode - rebooting...	Улазак у даљински режим - рестартовање...
+Leaving remote mode - rebooting...	Излазак из даљинског режима - рестартовање...
+Changing orientation - rebooting...	Промена оријентације - рестартовање...
+Rotating - reconnecting...	Ротација - поновно повезивање...
+Landscape (desktop)	Положено (десктоп)
+Landscape set - applies when remote mode starts.	Положено подешено - важи кад крене даљински режим.
+Portrait set - applies when remote mode starts.	Усправно подешено - важи кад крене даљински режим.
+Waiting for Wi-Fi...	Чекање Wi-Fi...
+GPS: searching	GPS: тражење
+No system time yet	Још нема системског времена
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Још нема позиције. Хладан старт тражи чист поглед на небо и може да потраје неколико минута.
+Contacts are saved to the SD card.	Контакти се чувају на SD картици.
+Contacts are on internal flash.	Контакти су у унутрашњој меморији.
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Контакти су у унутрашњој меморији - SD картица се није монтирала при покретању. Поново убаци картицу и рестартуј.
+Keyboard light on	Осветљење тастатуре укљ.
+Keyboard light off	Осветљење тастатуре искљ.
+Keyboard light auto	Осветљење тастатуре ауто
+Locks when screen off\n(hold Backspace to unlock)	Закључава се кад се екран угаси\n(држи Backspace за откључавање)
+hold Backspace to unlock	држи Backspace за откључавање
+Retry sends until heard	Понављај слање док се не чује
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Понавља слање поруке док је репетитор не понови или прималац не потврди. Искључи за само једно слање.
+External antenna selected	Изабрана спољна антена
+Per-transmit switching on	Пребацивање по предаји укљ.
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Унутрашња (уграђена)\nСпољна (MMCX)\nАуто (старо, по предаји)
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	После рестарта увек креће на уграђеној антени. Бирај «Спољна» само са антеном на спољном прикључку.
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Пребацити на спољну антену?\n\nПрво провери да ли је антена стварно прикључена на спољни прикључак. Предаја без антене може оштетити радио.\n\nПри сваком рестарту враћа се на уграђену.
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Укључити старо пребацивање по предаји?\n\nДијагностички режим, само за поређење. Шаље на уграђеној антени а слуша на спољној, па ће одлазни сигнал бити много слабији од долазног.\n\nПри сваком рестарту враћа се на уграђену.
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Bluetooth упаривање није доступно на овом уређају.\n\nФабрички фирмвер радио чипа га не подржава.\n\nУпари апликацију преко Wi-Fi-ја: повежи уређај на мрежу па га додај у апликацији преко IP адресе (TCP, порт 5000) — приказано под Подешавања > Мрежа. USB такође ради.

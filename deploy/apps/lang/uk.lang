@@ -1,4 +1,5 @@
 # wadamesh language file
+# canonical source - translators: edit this file and PR it
 # code: uk
 # name: Українська
 # base: uk
@@ -729,3 +730,93 @@ zoom %d	масштаб %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	підсилювач ~17 дБ для тихих/віддалених місць; вимикайте в галасливих.
 © OpenStreetMap	© OpenStreetMap
 © OpenTopoMap	© OpenTopoMap
+Apps	Застосунки
+Languages	Мови
+Installed	Встановлено
+Available	Доступно
+Get	Отримати
+Use	Обрати
+Update	Оновити
+Hide	Приховати
+Removed	Видалено
+Remove %s?	Видалити %s?
+Added	Додано
+Already in contacts	Вже в контактах
+Could not add	Не вдалося додати
+Catalog unavailable	Каталог недоступний
+Loading catalog…	Завантаження каталогу…
+Loading the language catalog…	Завантаження каталогу мов…
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Каталог мов недоступний - перевірте Wi-Fi і відкрийте вкладку знову.
+Fetching the app list from firmware.wadamesh.com	Завантаження списку застосунків з firmware.wadamesh.com
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Увімкніть Wi-Fi і оновіть. Встановлені застосунки далі працюють.
+Installing…	Встановлення…
+Install failed (network?)	Встановлення не вдалося (мережа?)
+Downloading…	Завантаження…
+Download failed (network?)	Завантаження не вдалося (мережа?)
+Downloaded - tap Use to switch	Завантажено - натисніть «Обрати» для зміни
+Hidden - turn it back on in the Lua Store	Приховано - увімкніть знову в Lua Store
+Hide this app from the drawer?	Приховати цей застосунок з меню?
+Show in the app drawer	Показувати в меню застосунків
+Your own apps	Ваші застосунки
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Натисніть «Обрати» для зміни - пристрій перезавантажиться. Файли мов лежать у /lang у сховищі; редагуйте їх або додавайте власні.
+Do Not Disturb	Не турбувати
+Do Not Disturb on	«Не турбувати» увімк.
+Do Not Disturb off	«Не турбувати» вимк.
+Start time	Час початку
+End time	Час завершення
+Off	Вимк
+Turn off	Вимкнути
+Off\n1\n2\n3\n5\n8	Вимк\n1\n2\n3\n5\n8
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nБез ліміту
+Keep per chat (messages)	Зберігати на чат (повідомлень)
+History limit off	Ліміт історії вимкнено
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Старіші повідомлення понад це видаляються. Дуже велика або необмежена історія сповільнює список чатів.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Вимкнути ліміт історії?\n\nЖвавий канал може заповнити все сховище повідомлень - більше місця і помітно повільніший список чатів та застосунок. Робіть це лише якщо справді потрібен увесь архів.
+Chat save fallback (failed tries)	Резервне збереження чату (невдачі)
+Connect to Wi-Fi first	Спершу підключіться до Wi-Fi
+Connect to Wi-Fi to get a browser address.	Підключіться до Wi-Fi, щоб отримати адресу для браузера.
+Connected - a browser is viewing this screen.	Підключено - браузер переглядає цей екран.
+Control this device from a browser	Керуйте пристроєм із браузера
+Enable web access	Увімкнути веб-доступ
+Open in a browser (same Wi-Fi):	Відкрийте в браузері (та сама мережа Wi-Fi):
+On - open the address above in a phone browser.	Увімк. - відкрийте адресу вище в браузері телефона.
+Scan to open on phone	Відскануйте, щоб відкрити на телефоні
+Then pick a mode:	Потім виберіть режим:
+Remote access	Віддалений доступ
+Remote UI	Віддалений інтерфейс
+Remote UI (on)	Віддалений інтерфейс (увімк.)
+Remote terminal	Віддалений термінал
+Remote terminal (recommended)	Віддалений термінал (рекомендовано)
+Remote terminal off	Віддалений термінал вимк.
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Чати, контакти, налаштування і mesh-термінал - усе в браузері. Без перезавантаження; екран пристрою лишається звичайним.
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Транслює екран як живу картинку, якою керуєте дотиком. Важче; на панелі заглушка. Перемикання перезавантажує пристрій.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Увімкніть і відкрийте адресу нижче в будь-якому браузері в тій самій мережі Wi-Fi - застосунок не потрібен. Екран пристрою з'явиться в браузері, і ним можна керувати дотиками.
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Поки це увімкнено, будь-хто у вашій мережі Wi-Fi може бачити пристрій і керувати ним. Звичайний HTTP (лише локальна мережа).
+Entering remote mode - rebooting...	Вхід у віддалений режим - перезавантаження...
+Leaving remote mode - rebooting...	Вихід із віддаленого режиму - перезавантаження...
+Changing orientation - rebooting...	Зміна орієнтації - перезавантаження...
+Rotating - reconnecting...	Поворот - повторне підключення...
+Landscape (desktop)	Альбомна (десктоп)
+Landscape set - applies when remote mode starts.	Альбомну вибрано - застосується під час запуску віддаленого режиму.
+Portrait set - applies when remote mode starts.	Портретну вибрано - застосується під час запуску віддаленого режиму.
+Waiting for Wi-Fi...	Очікування Wi-Fi...
+GPS: searching	GPS: пошук
+No system time yet	Системний час ще не задано
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Позиції ще немає. Холодний старт потребує відкритого неба і може тривати кілька хвилин.
+Contacts are saved to the SD card.	Контакти зберігаються на SD-карту.
+Contacts are on internal flash.	Контакти у внутрішній пам'яті.
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Контакти у внутрішній пам'яті - SD-карта не змонтувалася під час завантаження. Переставте картку і перезавантажте.
+Keyboard light on	Підсвітка клавіатури увімк.
+Keyboard light off	Підсвітка клавіатури вимк.
+Keyboard light auto	Підсвітка клавіатури авто
+Locks when screen off\n(hold Backspace to unlock)	Блокується при вимкненні екрана\n(утримуйте Backspace для розблокування)
+hold Backspace to unlock	утримуйте Backspace для розблокування
+Retry sends until heard	Повторювати надсилання, поки не почують
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Повторює надсилання, поки ретранслятор не віддзеркалить його або отримувач не підтвердить. Вимкніть, щоб надсилати один раз.
+External antenna selected	Вибрано зовнішню антену
+Per-transmit switching on	Перемикання на кожну передачу увімк.
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Внутрішня (вбудована)\nЗовнішня (MMCX)\nАвто (застаріле, на передачу)
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	Після перезавантаження завжди стартує на вбудованій антені. Обирайте «Зовнішня» лише з підключеною антеною.
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Перемкнутися на зовнішню антену?\n\nСпершу переконайтеся, що антена справді підключена до роз'єму. Передача без антени може пошкодити радіо.\n\nПісля кожного перезавантаження повертається на вбудовану.
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Увімкнути застаріле перемикання на кожну передачу?\n\nДіагностичний режим, лише для порівняння. Передає на вбудованій антені, слухає на зовнішній - вихідний сигнал буде значно слабшим за вхідний.\n\nПісля кожного перезавантаження повертається на вбудовану.
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Bluetooth-сполучення на цьому пристрої недоступне.\n\nЗаводська прошивка радіочипа його не підтримує.\n\nПід'єднайте застосунок через Wi-Fi: підключіть пристрій до мережі та додайте його в застосунку за IP-адресою (TCP, порт 5000) — показано в Налаштування > Мережа. USB теж працює.

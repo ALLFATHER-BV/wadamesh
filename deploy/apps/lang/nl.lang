@@ -1,4 +1,5 @@
 # wadamesh language file
+# canonical source - translators: edit this file and PR it
 # code: nl
 # name: Nederlands
 # base: nl
@@ -729,3 +730,93 @@ zoom %d	zoom %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	~17 dB versterker voor stille/afgelegen gebieden; uit in drukke plekken.
 © OpenStreetMap	© OpenStreetMap
 © OpenTopoMap	© OpenTopoMap
+Apps	Apps
+Languages	Talen
+Installed	Geïnstalleerd
+Available	Beschikbaar
+Get	Ophalen
+Use	Gebruik
+Update	Bijwerken
+Hide	Verberg
+Removed	Verwijderd
+Remove %s?	%s verwijderen?
+Added	Toegevoegd
+Already in contacts	Al in contacten
+Could not add	Toevoegen mislukt
+Catalog unavailable	Catalogus niet beschikbaar
+Loading catalog…	Catalogus laden…
+Loading the language catalog…	Taalcatalogus laden…
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Taalcatalogus niet beschikbaar - controleer Wi-Fi en open dit tabblad opnieuw.
+Fetching the app list from firmware.wadamesh.com	App-lijst ophalen van firmware.wadamesh.com
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Zet Wi-Fi aan en ververs. Al geïnstalleerde apps blijven werken.
+Installing…	Installeren…
+Install failed (network?)	Installatie mislukt (netwerk?)
+Downloading…	Downloaden…
+Download failed (network?)	Download mislukt (netwerk?)
+Downloaded - tap Use to switch	Gedownload - tik Gebruik om te wisselen
+Hidden - turn it back on in the Lua Store	Verborgen - zet het weer aan in de Lua Store
+Hide this app from the drawer?	Deze app verbergen uit de lade?
+Show in the app drawer	Tonen in de app-lade
+Your own apps	Je eigen apps
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Tik Gebruik om te wisselen - het apparaat herstart. Taalbestanden staan in /lang op de opslag; bewerk ze of voeg je eigen toe.
+Do Not Disturb	Niet storen
+Do Not Disturb on	Niet storen aan
+Do Not Disturb off	Niet storen uit
+Start time	Starttijd
+End time	Eindtijd
+Off	Uit
+Turn off	Uitzetten
+Off\n1\n2\n3\n5\n8	Uit\n1\n2\n3\n5\n8
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nGeen limiet
+Keep per chat (messages)	Bewaren per chat (berichten)
+History limit off	Geschiedenislimiet uit
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Oudere berichten vervallen hierboven. Een zeer grote of onbeperkte geschiedenis maakt de chatlijst trager.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Geschiedenislimiet uitzetten?\n\nEen druk kanaal kan dan de hele berichtenopslag vullen, wat meer ruimte kost en de chatlijst en app merkbaar trager maakt. Doe dit alleen als je echt de volledige historie nodig hebt.
+Chat save fallback (failed tries)	Chat-opslag terugval (mislukte pogingen)
+Connect to Wi-Fi first	Verbind eerst met Wi-Fi
+Connect to Wi-Fi to get a browser address.	Verbind met Wi-Fi voor een browseradres.
+Connected - a browser is viewing this screen.	Verbonden - een browser bekijkt dit scherm.
+Control this device from a browser	Bedien dit apparaat vanuit een browser
+Enable web access	Webtoegang inschakelen
+Open in a browser (same Wi-Fi):	Open in een browser (zelfde Wi-Fi):
+On - open the address above in a phone browser.	Aan - open het bovenstaande adres in de browser van je telefoon.
+Scan to open on phone	Scan om op je telefoon te openen
+Then pick a mode:	Kies daarna een modus:
+Remote access	Externe toegang
+Remote UI	Externe UI
+Remote UI (on)	Externe UI (aan)
+Remote terminal	Externe terminal
+Remote terminal (recommended)	Externe terminal (aanbevolen)
+Remote terminal off	Externe terminal uit
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Chats, contacten, instellingen en een mesh-terminal - alles in de browser. Geen herstart; het apparaat houdt zijn normale scherm.
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Streamt het scherm als live beeld dat je aantikt om te bedienen. Zwaarder; het paneel toont een plaatshouder. Omschakelen herstart het apparaat.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Zet dit aan en open het onderstaande adres in een browser op dezelfde Wi-Fi - geen app nodig. Het scherm van dit apparaat verschijnt live in de browser en je kunt tikken om het te bedienen.
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Zolang dit aan staat kan iedereen op je Wi-Fi dit apparaat bekijken en bedienen. Gebruikt gewoon HTTP (alleen lokaal netwerk).
+Entering remote mode - rebooting...	Externe modus starten - herstarten...
+Leaving remote mode - rebooting...	Externe modus verlaten - herstarten...
+Changing orientation - rebooting...	Oriëntatie wijzigen - herstarten...
+Rotating - reconnecting...	Draaien - opnieuw verbinden...
+Landscape (desktop)	Liggend (desktop)
+Landscape set - applies when remote mode starts.	Liggend ingesteld - geldt zodra de externe modus start.
+Portrait set - applies when remote mode starts.	Staand ingesteld - geldt zodra de externe modus start.
+Waiting for Wi-Fi...	Wachten op Wi-Fi...
+GPS: searching	GPS: zoeken
+No system time yet	Nog geen systeemtijd
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Nog geen positie. Een koude start heeft vrij zicht op de lucht nodig en kan enkele minuten duren.
+Contacts are saved to the SD card.	Contacten worden op de SD-kaart opgeslagen.
+Contacts are on internal flash.	Contacten staan op intern flashgeheugen.
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Contacten staan op intern flash - de SD-kaart is bij het opstarten niet gekoppeld. Plaats de kaart opnieuw en herstart.
+Keyboard light on	Toetsenbordverlichting aan
+Keyboard light off	Toetsenbordverlichting uit
+Keyboard light auto	Toetsenbordverlichting auto
+Locks when screen off\n(hold Backspace to unlock)	Vergrendelt bij scherm uit\n(houd Backspace vast om te ontgrendelen)
+hold Backspace to unlock	houd Backspace vast om te ontgrendelen
+Retry sends until heard	Opnieuw verzenden tot gehoord
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Verstuurt een bericht opnieuw tot een repeater het echoot of de ontvanger bevestigt. Zet uit om maar één keer te verzenden.
+External antenna selected	Externe antenne geselecteerd
+Per-transmit switching on	Per-zending schakelen aan
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Intern (on-board)\nExtern (MMCX)\nAuto (verouderd, per zending)
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	Start na een herstart altijd op de interne antenne. Kies Extern alleen met een antenne in de externe aansluiting.
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Overschakelen naar de externe antenne?\n\nControleer eerst of er echt een antenne op de externe aansluiting zit. Zenden zonder antenne kan de radio beschadigen.\n\nValt bij elke herstart terug op de interne antenne.
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Verouderd per-zending schakelen aanzetten?\n\nDiagnosemodus, alleen ter vergelijking. Zendt op de interne antenne en luistert op de externe, dus je uitgaande signaal is veel zwakker dan je inkomende.\n\nValt bij elke herstart terug op de interne antenne.
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Bluetooth-koppelen is op dit apparaat niet beschikbaar.\n\nDe fabrieksfirmware van de radiochip ondersteunt het niet.\n\nKoppel de telefoon-app via Wi-Fi: verbind dit apparaat met je netwerk en voeg het in de app toe op IP-adres (TCP, poort 5000) — te vinden onder Instellingen > Netwerk. USB werkt ook.

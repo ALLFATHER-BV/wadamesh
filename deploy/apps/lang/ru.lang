@@ -1,4 +1,5 @@
 # wadamesh language file
+# canonical source - translators: edit this file and PR it
 # code: ru
 # name: Русский
 # base: ru
@@ -729,3 +730,93 @@ zoom %d	масштаб %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	усилитель ~17 дБ для тихих/удалённых мест; выключайте в шумных.
 © OpenStreetMap	© OpenStreetMap
 © OpenTopoMap	© OpenTopoMap
+Apps	Приложения
+Languages	Языки
+Installed	Установлено
+Available	Доступно
+Get	Скачать
+Use	Выбрать
+Update	Обновить
+Hide	Скрыть
+Removed	Удалено
+Remove %s?	Удалить %s?
+Added	Добавлено
+Already in contacts	Уже в контактах
+Could not add	Не удалось добавить
+Catalog unavailable	Каталог недоступен
+Loading catalog…	Загрузка каталога…
+Loading the language catalog…	Загрузка каталога языков…
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Каталог языков недоступен - проверьте Wi-Fi и откройте вкладку снова.
+Fetching the app list from firmware.wadamesh.com	Загрузка списка приложений с firmware.wadamesh.com
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Включите Wi-Fi и обновите. Установленные приложения продолжают работать.
+Installing…	Установка…
+Install failed (network?)	Установка не удалась (сеть?)
+Downloading…	Загрузка…
+Download failed (network?)	Загрузка не удалась (сеть?)
+Downloaded - tap Use to switch	Загружено - нажмите «Выбрать» для смены
+Hidden - turn it back on in the Lua Store	Скрыто - включите снова в Lua Store
+Hide this app from the drawer?	Скрыть это приложение из меню?
+Show in the app drawer	Показывать в меню приложений
+Your own apps	Ваши приложения
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Нажмите «Выбрать» для смены - устройство перезагрузится. Файлы языков лежат в /lang в хранилище; правьте их или добавляйте свои.
+Do Not Disturb	Не беспокоить
+Do Not Disturb on	«Не беспокоить» вкл.
+Do Not Disturb off	«Не беспокоить» выкл.
+Start time	Время начала
+End time	Время окончания
+Off	Выкл
+Turn off	Выключить
+Off\n1\n2\n3\n5\n8	Выкл\n1\n2\n3\n5\n8
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nБез лимита
+Keep per chat (messages)	Хранить на чат (сообщений)
+History limit off	Лимит истории выключен
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Старые сообщения сверх этого удаляются. Очень большая или безлимитная история замедляет список чатов.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Выключить лимит истории?\n\nОживлённый канал может заполнить всё хранилище сообщений - больше места и заметно медленнее список чатов и приложение. Делайте это только если действительно нужен весь архив.
+Chat save fallback (failed tries)	Резервное сохранение чата (неудачи)
+Connect to Wi-Fi first	Сначала подключитесь к Wi-Fi
+Connect to Wi-Fi to get a browser address.	Подключитесь к Wi-Fi, чтобы получить адрес для браузера.
+Connected - a browser is viewing this screen.	Подключено - браузер просматривает этот экран.
+Control this device from a browser	Управляйте устройством из браузера
+Enable web access	Включить веб-доступ
+Open in a browser (same Wi-Fi):	Откройте в браузере (та же сеть Wi-Fi):
+On - open the address above in a phone browser.	Вкл. - откройте адрес выше в браузере телефона.
+Scan to open on phone	Отсканируйте, чтобы открыть на телефоне
+Then pick a mode:	Затем выберите режим:
+Remote access	Удалённый доступ
+Remote UI	Удалённый интерфейс
+Remote UI (on)	Удалённый интерфейс (вкл.)
+Remote terminal	Удалённый терминал
+Remote terminal (recommended)	Удалённый терминал (рекомендуется)
+Remote terminal off	Удалённый терминал выкл.
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Чаты, контакты, настройки и mesh-терминал - всё в браузере. Без перезагрузки; экран устройства остаётся обычным.
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Транслирует экран как живую картинку, по которой вы нажимаете. Тяжелее; на панели заглушка. Переключение перезагружает устройство.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Включите и откройте адрес ниже в любом браузере в той же сети Wi-Fi - приложение не нужно. Экран устройства появится в браузере, и им можно управлять нажатиями.
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Пока это включено, любой в вашей сети Wi-Fi может видеть устройство и управлять им. Обычный HTTP (только локальная сеть).
+Entering remote mode - rebooting...	Вход в удалённый режим - перезагрузка...
+Leaving remote mode - rebooting...	Выход из удалённого режима - перезагрузка...
+Changing orientation - rebooting...	Смена ориентации - перезагрузка...
+Rotating - reconnecting...	Поворот - переподключение...
+Landscape (desktop)	Альбомная (десктоп)
+Landscape set - applies when remote mode starts.	Альбомная выбрана - применится при запуске удалённого режима.
+Portrait set - applies when remote mode starts.	Портретная выбрана - применится при запуске удалённого режима.
+Waiting for Wi-Fi...	Ожидание Wi-Fi...
+GPS: searching	GPS: поиск
+No system time yet	Системное время ещё не задано
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Позиции пока нет. Холодный старт требует открытого неба и может занять несколько минут.
+Contacts are saved to the SD card.	Контакты сохраняются на SD-карту.
+Contacts are on internal flash.	Контакты во внутренней памяти.
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Контакты во внутренней памяти - SD-карта не смонтировалась при загрузке. Переустановите карту и перезагрузитесь.
+Keyboard light on	Подсветка клавиатуры вкл.
+Keyboard light off	Подсветка клавиатуры выкл.
+Keyboard light auto	Подсветка клавиатуры авто
+Locks when screen off\n(hold Backspace to unlock)	Блокируется при выключении экрана\n(удерживайте Backspace для разблокировки)
+hold Backspace to unlock	удерживайте Backspace для разблокировки
+Retry sends until heard	Повторять отправку, пока не услышат
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Повторяет отправку, пока ретранслятор не отзеркалит её или получатель не подтвердит. Выключите, чтобы отправлять один раз.
+External antenna selected	Выбрана внешняя антенна
+Per-transmit switching on	Переключение на каждую передачу вкл.
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Внутренняя (встроенная)\nВнешняя (MMCX)\nАвто (устар., на передачу)
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	После перезагрузки всегда стартует на встроенной антенне. Выбирайте «Внешняя» только с подключённой антенной.
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Переключиться на внешнюю антенну?\n\nСначала убедитесь, что антенна действительно подключена к разъёму. Передача без антенны может повредить радио.\n\nПри каждой перезагрузке возвращается на встроенную.
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Включить устаревшее переключение на каждую передачу?\n\nДиагностический режим, только для сравнения. Передаёт на встроенной антенне, слушает на внешней - исходящий сигнал будет намного слабее входящего.\n\nПри каждой перезагрузке возвращается на встроенную.
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Сопряжение Bluetooth на этом устройстве недоступно.\n\nЗаводская прошивка радиочипа его не поддерживает.\n\nПодключите приложение по Wi-Fi: подключите устройство к сети и добавьте его в приложении по IP-адресу (TCP, порт 5000) — он показан в Настройки > Сеть. USB тоже работает.
