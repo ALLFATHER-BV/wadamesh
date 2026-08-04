@@ -130,7 +130,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.compact_chat      = 0;      // OFF: bubble chat layout (opt-in IRC-style dense rows)
   c.clock_floor       = 0;      // no persisted send-timestamp floor yet
   c.rx_queue          = 1;      // ON: buffered receive (test-channel default; opt-out toggle in Radio & Mesh)
-  c.retry_echo        = 1;      // ON: retry sends until the mesh confirms them (opt-out toggle in Radio & Mesh)
+  c.retry_echo        = 0;      // OFF: auto-retry is opt-in (toggle in Radio & Mesh)
   c.sleep_idle        = 0;      // default: idle light-sleep OFF
   { const char* d = "ertui"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // default tab hotkeys E/R/T/U/I
   c.map_zoom_buttons  = 0;      // default: map zoom = slider
@@ -223,7 +223,7 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
         if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
-        if (stored_version < 45) s_cfg.retry_echo = 1;    // v45: correctly appended auto-retry preference
+        if (stored_version < 45) s_cfg.retry_echo = 0;    // v45: correctly appended auto-retry preference; opt-in per user feedback
         if (stored_version < 34) s_cfg.web_mirror = 0;    // new trailing field: web control panel off by default (opt-in remote control)
         if (stored_version < 35) s_cfg.remote_mode = 0;   // new trailing field: remote mode off by default (opt-in, reboots to apply)
         if (stored_version < 36) s_cfg.remote_landscape = 0;
