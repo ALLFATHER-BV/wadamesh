@@ -42000,13 +42000,18 @@ static void buildUiTree() {
   }
 
   // ---- Build tab contents ----
+  MEMPROBE("pre-home");
   makeHome(tab_home);
+  MEMPROBE("tab-home");
 
   g_lv.dm.channel_mode = false;
   g_lv.ch.channel_mode = true;
   makeChatList(tab_chats, g_lv.dm, false, true);
+  MEMPROBE("tab-chats");
   makeContactsTab(tab_contacts);
+  MEMPROBE("tab-contacts");
   makeMapTab(tab_map);
+  MEMPROBE("tab-map");
 #if defined(HAS_EXPANSION_KIT)
   if (tab_sensors) makeSensorsTab(tab_sensors);
 #endif
@@ -42072,9 +42077,12 @@ static void buildUiTree() {
   // Create full-screen detail overlays (hidden until a thread is tapped)
   makeChatDetail(g_lv.dm);
   makeChatDetail(g_lv.ch);
+  MEMPROBE("tab-chatdetail");
 
   MEMPROBE("pre-settings");
+  MEMPROBE("pre-settings");
   makeSettings(tab_settings);
+  MEMPROBE("tab-settings");
   MEMPROBE("post-UI-build");
 
 #if defined(HAS_TANMATSU)
