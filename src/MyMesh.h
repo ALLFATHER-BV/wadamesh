@@ -991,7 +991,7 @@ public:
   bool isRadioReceiving() const { return _radio && _radio->isReceiving(); }
 
 private:
-  bool _companion_retry_enabled = false;  // opt-in; UITask::begin() applies the persisted toggle
+  bool _companion_retry_enabled = true;   // see setCompanionRetryEnabled
   static const uint8_t COMPANION_TEXT_QUEUE_CAPACITY = 16;
   uint8_t companionDetachQueuedText(mesh::Packet* packets[], uint8_t priorities[],
                                     uint32_t scheduled_for[]);
