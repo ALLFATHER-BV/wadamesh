@@ -178,3 +178,15 @@ same wada.* bindings — nice for contributors, not needed to start).
   size read) was contained exactly as designed (toast + clean close, 0 leak,
   4 retries, no crash). Host layer costs 13 KB on top of the VM (85.1%%
   T-Deck total). Next: Phase 2 store page + catalog.
+
+**2026-08-04 — Store v2: three tabs + languages-as-files.** The store page is
+now segmented: Apps (catalog + sideloads), Built-in (show/hide switches),
+Languages (new). Store opens instantly — the card re-listing moved to the net
+worker (s_luascan_* flags) and pre-warms at boot. Card text is width-capped
+clear of the action button. Languages: gen-lang-files.py exports every i18n
+column to apps/lang/<code>.lang + langs.json (serving on the VPS); the device
+downloads to <data>/lang/, prefs v48 stores the active code, and at boot the
+file loads into PSRAM and overlays TR() (bsearch; file → built-in column →
+EN). Users can sideload/edit their own .lang files. Built-in table stays as
+fallback this beta; dropping its columns for the flash win is the follow-up
+once files are field-proven.
