@@ -603,14 +603,14 @@ static inline const lv_font_t* uiChromeFont() {
 #endif
 }
 
-// Jumbo is deliberately the Large UI with only conversation text taken
-// one step further. Keeping this role separate avoids enlarging status chrome,
+// Jumbo is deliberately the Large UI with only conversation text taken to
+// the Pager's 24-px role. Keeping this separate avoids enlarging status chrome,
 // settings, timestamps, sender labels, and the composer on the Pager's short
 // display. Compact-chat rows use the same role because the message and metadata
 // share a single LVGL label there.
 static inline const lv_font_t* chatMessageFont() {
 #if defined(TLORA_PAGER)
-  return touchPrefsGetUiScale() == 3 ? &g_font_14 : &g_font_12;
+  return touchPrefsGetUiScale() == 3 ? &g_font_16 : &g_font_12;
 #else
   return &g_font_12;
 #endif
