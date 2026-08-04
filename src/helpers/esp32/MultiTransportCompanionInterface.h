@@ -41,9 +41,9 @@ public:
   void enableBle() override;
   void disableBle() override;
 #if defined(TLORA_PAGER)
-  // Tear down the resident controller without changing the saved BLE intent.
-  // Wi-Fi can then re-associate before enableBle() recreates NimBLE.
-  void suspendBleForWifiReconnect();
+  // Quiesce BLE without changing the saved intent or destroying its bond/GATT
+  // state. Wi-Fi can then re-associate before enableBle() resumes advertising.
+  bool suspendBleForWifiReconnect();
 #endif
   bool isBleEnabled() const override { return _ble_enabled; }
   bool isBleStackBegun() const { return _ble_begun; }

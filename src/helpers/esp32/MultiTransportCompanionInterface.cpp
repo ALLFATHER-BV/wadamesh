@@ -282,18 +282,34 @@ void MultiTransportCompanionInterface::disableBle() {
 }
 
 #if defined(TLORA_PAGER)
-void MultiTransportCompanionInterface::suspendBleForWifiReconnect() {
-  // Preserve wifiConfig's BLE preference: this is a short ownership handoff,
-  // not a user-visible toggle. SerialBLEInterface::begin() replaces the cached
-  // server pointers after deinit(true), matching the cold enable path above.
+bool MultiTransportCompanionInterface::suspendBleForWifiReconnect() {
+  // Preserve both the user's BLE preference and NimBLE's live bond/GATT state.
+  // Recreating the controller/server here made an already-bonded phone fall
+  // into repeat pairing after every Wi-Fi handoff; NimBLE then discarded its
+  // side of the bond while the phone retained the old LTK. Stopping advertising
+  // and disconnecting the peer removes BLE traffic from the association window
+  // without invalidating that long-term security state.
   if (_ble_begun) {
     if (_ble_enabled) _ble.disable();
-    bleDetachServerCallbacks();
-    NimBLEDevice::deinit(true);
-    _ble_begun = false;
+    // ble_gap_terminate() is asynchronous. Do not start WPA while the old BLE
+    // link is still on air; that recreates the exact overlap this handoff is
+    // meant to prevent. Wait for the NimBLE host's connection table to drain,
+    // with a bounded failure so a wedged peer cannot stall the main loop/WDT.
+    NimBLEServer* server = NimBLEDevice::getServer();
+    const uint32_t started = millis();
+    while (server && server->getConnectedCount() != 0 &&
+           (uint32_t)(millis() - started) < 1000u) {
+      delay(1);
+    }
+    if (server && server->getConnectedCount() != 0) {
+      Serial.println("[ble] disconnect timed out; Wi-Fi handoff cancelled");
+      _ble_enabled = false;
+      return false;
+    }
   }
   _ble_enabled = false;
   if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(false);
+  return true;
 }
 #endif
 
