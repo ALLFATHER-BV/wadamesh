@@ -300,7 +300,7 @@ void setup() {
   // the threshold at runtime so ordinary mallocs land in PSRAM; anything that
   // genuinely needs internal/DMA memory asks for it by capability and is
   // unaffected. Tunable — raise it if something misbehaves.
-  heap_caps_malloc_extmem_enable(1024);
+  heap_caps_malloc_extmem_enable(256);
   BOOTMEM("post-extmem");
 
   // Widen the task-watchdog grace period. The ~5 s default trips during a legitimate-but-slow flash
