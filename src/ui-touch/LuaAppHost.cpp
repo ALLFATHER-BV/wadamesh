@@ -32,17 +32,18 @@ extern void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uin
 extern void luaHostRadioStats2(uint32_t* rx_evt, uint32_t* rx_drop, uint32_t* tx_pkts,
                                float* freq, float* bw, int* sf, int* duty_pct);
 extern void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon);
-// On the T-Display P4 the C6 runs ESP-AT, so UITask.cpp rebinds every WiFiClient to
-// C6Client (AT-over-SDIO sockets). That alias MUST be mirrored here: without it the
-// worker entry point below mangles as luaNetWorkerService(WiFiClient&, ...) while the
-// caller in UITask.cpp references the C6Client& overload, and the P4 fails to LINK
-// while every S3 board builds fine. This TU only passes the reference through to
-// luaStoreHttpGet, so an incomplete type is all it needs.
-#if defined(HAS_TDISPLAY_P4)
-  #define WiFiClient C6Client
-#endif
-class WiFiClient; class HTTPClient;
-extern int  luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url, char* buf, size_t cap);
+// DO NOT name the network client type here. What "WiFiClient" means depends on the
+// board: a real class on the S3 envs, a `using WiFiClient = NetworkClient` alias
+// under arduino-esp32 3.x (Tanmatsu), and a #define to C6Client on the T-Display P4
+// (its C6 runs ESP-AT, so sockets go over AT-over-SDIO). Writing `class WiFiClient;`
+// declared a BRAND NEW incomplete class on the two boards where the name is an
+// alias, so this file emitted luaNetWorkerService under a signature the caller in
+// UITask.cpp never referenced — both P4 targets failed to LINK while all 8 S3 envs
+// built clean, which is why it stayed hidden.
+//
+// UITask owns the networking, so it passes the objects down as opaque handles and
+// casts them back on its side. This TU never dereferences them.
+extern int luaStoreHttpGetOpaque(void* client, void* http, const char* url, char* buf, size_t cap);
 
 // ---------------------------------------------------------------------------
 // 1) allocator + budget
@@ -976,9 +977,9 @@ bool luaAppLaunchFile(const char* id, const char* title, const char* embedded, s
 
 // ---- net worker entry points (UITask's tile/net worker calls these) --------
 bool luaNetWorkerPending() { return s_net_pending; }
-void luaNetWorkerService(WiFiClient& client, HTTPClient& http) {
+void luaNetWorkerService(void* client, void* http) {
   s_net_pending = false;
-  s_net_result = s_net_buf ? luaStoreHttpGet(client, http, s_net_url, s_net_buf, s_net_cap) : -1;
+  s_net_result = s_net_buf ? luaStoreHttpGetOpaque(client, http, s_net_url, s_net_buf, s_net_cap) : -1;
   s_net_done = true;
 }
 

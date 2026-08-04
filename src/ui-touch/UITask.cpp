@@ -24352,6 +24352,15 @@ int luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url,
   return (int)total;
 }
 
+// Opaque bridge for LuaAppHost.cpp — see the long note at the top of that file. It
+// must not name the client type (WiFiClient is a real class here, an alias of
+// NetworkClient on the Tanmatsu, and a #define to C6Client on the T-Display P4), so
+// it hands us void* and this side, which owns the networking, casts them back.
+int luaStoreHttpGetOpaque(void* client, void* http, const char* url, char* buf, size_t cap) {
+  return luaStoreHttpGet(*static_cast<WiFiClient*>(client), *static_cast<HTTPClient*>(http),
+                         url, buf, cap);
+}
+
 static void luaStoreFetchCatalogWorker(WiFiClient& client, HTTPClient& http) {
   if (!s_luacat_buf)
     s_luacat_buf = (char*)heap_caps_malloc(kLuaCatBufMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -24964,8 +24973,8 @@ static void tileFetchTaskFn(void* arg) {
     }
     {
       extern bool luaNetWorkerPending();
-      extern void luaNetWorkerService(WiFiClient& client, HTTPClient& http);
-      if (luaNetWorkerPending()) { luaNetWorkerService(client, http); continue; }
+      extern void luaNetWorkerService(void* client, void* http);
+      if (luaNetWorkerPending()) { luaNetWorkerService(&client, &http); continue; }
     }
 #endif
 #if CAP_SD
@@ -37277,6 +37286,36 @@ static void luaStoreParseCatalog() {
   if (s_lua_cat_n == 0) s_lua_cat_n = -1;
 }
 
+// Turn an action button into a "working on it" state. A download over a weak link
+// takes tens of seconds and the only feedback used to be a 1.2 s toast, so the tap
+// read as if nothing had happened and people pressed again.
+//
+// The caption is HIDDEN rather than deleted: this runs inside the button's own
+// click event, and deleting objects mid-dispatch is exactly how the popup
+// use-after-frees happened. Adding the spinner as a new child is safe.
+static void luaStoreMarkBtnBusy(lv_obj_t* b) {
+  if (!b) return;
+  const uint32_t n = lv_obj_get_child_cnt(b);
+  for (uint32_t k = 0; k < n; k++) lv_obj_add_flag(lv_obj_get_child(b, k), LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_style_bg_color(b, lv_color_hex(0x39404C), LV_PART_MAIN);
+#if LV_USE_SPINNER
+  lv_obj_t* sp = lv_spinner_create(b, 800, 60);
+  const lv_coord_t d = lv_font_get_line_height(&g_font_12) + 2;
+  lv_obj_set_size(sp, d, d);
+  lv_obj_center(sp);
+  lv_obj_clear_flag(sp, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_arc_width(sp, 2, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(sp, 2, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(sp, lv_color_hex(0x555E6B), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(sp, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+#else
+  lv_obj_t* dots = lv_label_create(b);      // no spinner widget: a static tell still beats nothing
+  lv_label_set_text(dots, "\xE2\x80\xA6");
+  lv_obj_set_style_text_font(dots, &g_font_12, LV_PART_MAIN);
+  lv_obj_center(dots);
+#endif
+}
+
 static void luaStoreInstallBtnCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
   int idx = (int)(intptr_t)lv_event_get_user_data(e);
@@ -37287,6 +37326,7 @@ static void luaStoreInstallBtnCb(lv_event_t* e) {
   s_luainst_done = false;
   s_luainst_request = true;
   ensureTileFetchTaskRunning();
+  luaStoreMarkBtnBusy(lv_event_get_target(e));
   if (g_lv.task) g_lv.task->showAlert(TR("Installing\xE2\x80\xA6"), 1200);
 }
 
@@ -37448,6 +37488,7 @@ static void luaStoreLangGetCb(lv_event_t* e) {   // Get AND Update (same downloa
   s_langdl_done = false;
   s_langdl_request = true;
   ensureTileFetchTaskRunning();
+  luaStoreMarkBtnBusy(lv_event_get_target(e));
   if (g_lv.task) g_lv.task->showAlert(TR("Downloading\xE2\x80\xA6"), 1200);
 }
 
@@ -37509,6 +37550,20 @@ static void luaStoreRebuildList() {
   const bool narrow = (W < 260);
   const lv_coord_t act_w = narrow ? 62 : 78;      // Get / Update / Remove button
   const lv_coord_t act_gut = act_w + (narrow ? 12 : 22);   // text column stops here
+
+  // Height a wrapped string actually needs in a column `w` wide. The cards used
+  // to hardcode "title + two description lines", which only held for the 320 px
+  // T-Deck the store was designed on: on the P4's 568 px portrait panel, and for
+  // any language whose translation runs longer than the English, the description
+  // wraps to three or four lines and the fixed card height cut it off. Measure
+  // the text and let the card follow it. lv_txt_get_size is a pure calculation,
+  // so this is safe before layout (reading lv_obj_get_height here returns 0).
+  auto wrapH = [](const char* txt, const lv_font_t* f, lv_coord_t w) -> lv_coord_t {
+    if (!txt || !txt[0] || w <= 0) return 0;
+    lv_point_t sz;
+    lv_txt_get_size(&sz, txt, f, 0, 0, w, LV_TEXT_FLAG_NONE);
+    return sz.y;
+  };
 
   auto section = [&](const char* txt) {
     lv_obj_t* l = lv_label_create(s_luastore_list);
@@ -37588,6 +37643,8 @@ static void luaStoreRebuildList() {
       lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_set_width(nm, W - (narrow ? 108 : 150));   // room for [trash][Use]
       lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+      lv_obj_set_height(nm, lh14);   // one line: LONG_DOT only ellipsizes when the
+                                     // height is bounded, else it silently wraps
       lv_obj_align(nm, LV_ALIGN_LEFT_MID, 0, sub ? -8 : 0);
       if (sub) {
         lv_obj_t* sb = lv_label_create(row);
@@ -37662,8 +37719,13 @@ static void luaStoreRebuildList() {
       const lv_coord_t tw = narrow ? 30 : 34;          // trash
       const lv_coord_t uw = narrow ? 52 : 58;          // Use
       const lv_coord_t upw = narrow ? 58 : 66;         // Update
+      const bool dl = s_luastore_busy && s_langdl_code[0] &&
+                      strcmp(s_langdl_code, s_langinst[i].code) == 0;   // this one is downloading
       actionBtn(row, LV_SYMBOL_TRASH, 0x8A4444, luaStoreLangRemoveCb, (intptr_t)i, 0, tw);
-      if (stale)     actionBtn(row, TR("Update"), 0x4F9DF7, luaStoreLangGetCb, (intptr_t)cat, -(tw + 4), upw);
+      if (stale) {
+        lv_obj_t* ub = actionBtn(row, TR("Update"), 0x4F9DF7, luaStoreLangGetCb, (intptr_t)cat, -(tw + 4), upw);
+        if (dl) luaStoreMarkBtnBusy(ub);      // survive a rebuild landing mid-download
+      }
       else if (act)  activeTag(row, -(tw + 8));
       else           actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangUseCb, (intptr_t)i, -(tw + 4), uw);
     }
@@ -37674,7 +37736,9 @@ static void luaStoreRebuildList() {
         if (strcmp(s_langinst[j].code, s_langcat[i].code) == 0) { have = true; break; }
       if (have) continue;
       lv_obj_t* row = langRow(s_langcat[i].name, s_langcat[i].code);
-      actionBtn(row, TR("Get"), COLOR_ACCENT, luaStoreLangGetCb, (intptr_t)i, 0, narrow ? 52 : 58);
+      lv_obj_t* gb = actionBtn(row, TR("Get"), COLOR_ACCENT, luaStoreLangGetCb, (intptr_t)i, 0, narrow ? 52 : 58);
+      if (s_luastore_busy && s_langdl_code[0] && strcmp(s_langdl_code, s_langcat[i].code) == 0)
+        luaStoreMarkBtnBusy(gb);              // survive a rebuild landing mid-download
     }
     if (s_langcat_n <= 0) {
       lv_obj_t* h = lv_label_create(s_luastore_list);
@@ -37728,12 +37792,31 @@ static void luaStoreRebuildList() {
     lv_obj_set_width(h, W - 26);
     lv_label_set_long_mode(h, LV_LABEL_LONG_WRAP);
     lv_obj_set_pos(h, 0, lh14 + 3);
+    // Size to whatever the (possibly translated, possibly multi-line diagnostic)
+    // body actually needs — read the text back so this can't drift from the
+    // branches above.
+    lv_obj_set_height(card, lh14 + 3 + wrapH(lv_label_get_text(h), &g_font_12, W - 26) + 16);
   }
-  const lv_coord_t row_h = lh14 + lh12 * 2 + 18;  // title + 2 wrapped description lines
+  const int  chip_h  = lh14 + lh12 - 2;                  // icon chip (square)
+  const lv_coord_t pad_v = 14;                           // pad_all 7, top + bottom
   for (int i = 0; i < s_lua_cat_n; i++) {
+    // Per card, because every description wraps differently. Content is the
+    // title line plus the wrapped description, but never shorter than the icon
+    // chip or the action button or those would poke out of a short card.
+    char title[64];
+    snprintf(title, sizeof title, "%s  %s", s_lua_cat[i].name, s_lua_cat[i].ver);
+    // Measure the TITLE too, don't assume one line. A long name plus its version
+    // wraps in the text column, and the description used to sit at a fixed
+    // lh14 + 2 regardless — so the second title line landed on top of it.
+    const lv_coord_t dsw   = W - (chip_h + 8) - act_gut;
+    const lv_coord_t ttlH  = wrapH(title, &g_font_14, dsw);
+    const lv_coord_t textH = ttlH + 2 + wrapH(s_lua_cat[i].desc, &g_font_12, dsw);
+    lv_coord_t contentH = textH;
+    if (contentH < chip_h) contentH = chip_h;
+    if (contentH < 32)     contentH = 32;                // the Get/Update/Remove button
     lv_obj_t* row = lv_obj_create(s_luastore_list);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, W - 8, row_h);
+    lv_obj_set_size(row, W - 8, contentH + pad_v);
     lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(row, 10, LV_PART_MAIN);
@@ -37743,12 +37826,14 @@ static void luaStoreRebuildList() {
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
     const LuaInstApp* inst = luaStoreFindInstalled(s_lua_cat[i].id);
     // Squircle icon chip with the app's initial, matching the drawer's look.
-    const int chip = lh14 + lh12 - 2;
+    const int chip = chip_h;
     lv_obj_t* ico = lv_obj_create(row);
     lv_obj_remove_style_all(ico);
     lv_obj_clear_flag(ico, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(ico, chip, chip);
-    lv_obj_align(ico, LV_ALIGN_LEFT_MID, 0, 0);
+    // Top-aligned, not centred: once a card can be four lines tall a centred chip
+    // drifts away from the title it belongs to.
+    lv_obj_align(ico, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(ico, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(ico, LV_OPA_20, LV_PART_MAIN);
     lv_obj_set_style_border_color(ico, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
@@ -37763,13 +37848,11 @@ static void luaStoreRebuildList() {
     lv_obj_center(il);
     const int tx = chip + 8;                        // text column starts past the chip
     lv_obj_t* nm = lv_label_create(row);
-    char title[64];
-    snprintf(title, sizeof title, "%s  %s", s_lua_cat[i].name, s_lua_cat[i].ver);
     lv_label_set_text(nm, title);
     lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(nm, lv_color_hex(inst ? COLOR_ACCENT : COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_width(nm, W - tx - act_gut);         // clear of the action button
-    lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+    lv_label_set_long_mode(nm, LV_LABEL_LONG_WRAP);   // WRAP, not DOT: the card grew to fit it
     lv_obj_set_pos(nm, tx, 0);
     // Description gets its own full-width line — it used to share the row with
     // the version badge and was squeezed into an unreadable sliver.
@@ -37779,7 +37862,7 @@ static void luaStoreRebuildList() {
     lv_obj_set_style_text_color(ds, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_width(ds, W - tx - act_gut);   // same column as the title: never under the button
     lv_label_set_long_mode(ds, LV_LABEL_LONG_WRAP);
-    lv_obj_set_pos(ds, tx, lh14 + 2);
+    lv_obj_set_pos(ds, tx, ttlH + 2);         // below the title's ACTUAL height, however it wrapped
     lv_obj_t* b = lv_btn_create(row);
     lv_obj_set_size(b, act_w, 32);
     lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
@@ -37799,6 +37882,10 @@ static void luaStoreRebuildList() {
     } else {
       lv_obj_add_event_cb(b, luaStoreInstallBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     }
+    // A rebuild can land mid-download (a card scan or the catalog fetch finishing)
+    // and would wipe the spinner set on tap, so repaint it from the in-flight id.
+    if (s_luastore_busy && s_luainst_id[0] && strcmp(s_luainst_id, s_lua_cat[i].id) == 0)
+      luaStoreMarkBtnBusy(b);
   }
 
   // ---- installed-but-not-in-catalog (sideloaded from the card) ----
@@ -37835,6 +37922,7 @@ static void luaStoreRebuildList() {
     lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_width(nm, W - act_gut);    // clear of the Remove button
     lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+    lv_obj_set_height(nm, lh12);          // one line (see the Languages rows above)
     lv_obj_align(nm, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_t* b = lv_btn_create(row);
     lv_obj_set_size(b, act_w, 28);
@@ -37866,7 +37954,12 @@ static void openLuaStorePage() {
   lv_obj_move_foreground(s_luastore_root);
 
   // Segmented tab bar (fixed above the scrolling list): Apps | Built-in | Languages
-  const lv_coord_t bar_h = 30;
+  // Follows the font instead of being a hardcoded 30 px: on the P4's high-DPI panel
+  // (and at the larger UI scales) a 12 px line box plus padding is taller than 30,
+  // so the tab label was clipped inside its own button. Floored at 30 so the S3
+  // boards keep exactly the bar they had.
+  lv_coord_t bar_h = lv_font_get_line_height(&g_font_12) + 14;
+  if (bar_h < 30) bar_h = 30;
   {
     lv_obj_t* bar = lv_obj_create(s_luastore_root);
     lv_obj_remove_style_all(bar);
@@ -37881,22 +37974,44 @@ static void openLuaStorePage() {
 #else
     const int t_first = 0, t_count = 3;
 #endif
-    const lv_coord_t bw = (sw - 12) / t_count;
+    // Cells sized to their text, NOT even thirds. The P4 is 284 px logical and its
+    // fonts are scaled up, so an even third is ~90 px — "Languages" cannot fit that
+    // at the board's smallest font (uiFitLabelWidth bottoms out at g_font_12, which
+    // is montserrat_16/18/20 there), while "Apps" leaves half its cell empty. Hand
+    // out the bar in proportion to what each label actually measures and the long
+    // one gets the room the short one was wasting. Self-balancing for translations.
+    const lv_coord_t total = sw - 12;
+    lv_coord_t need[3] = { 0, 0, 0 };
+    int32_t need_sum = 0;
     for (int t = t_first; t < 3; t++) {
+      lv_point_t sz;
+      lv_txt_get_size(&sz, TR(kStoreTabs[t]), &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      need[t] = sz.x + 16;                      // text plus breathing room
+      need_sum += need[t];
+    }
+    if (need_sum <= 0) need_sum = t_count;      // degenerate: fall back to even
+    lv_coord_t x = 0;
+    for (int t = t_first; t < 3; t++) {
+      // Last cell takes the remainder so rounding can never leave a gap or overrun.
+      const lv_coord_t cw = (t == 2) ? (total - x)
+                                     : (lv_coord_t)(((int32_t)total * need[t]) / need_sum);
       lv_obj_t* b = lv_btn_create(bar);
       s_luastore_tabbtn[t] = b;
       lv_obj_remove_style_all(b);
-      lv_obj_set_size(b, bw - 4, bar_h - 4);
-      lv_obj_set_pos(b, (t - t_first) * bw + 2, 0);
+      lv_obj_set_size(b, cw - 4, bar_h - 4);
+      lv_obj_set_pos(b, x + 2, 0);
       lv_obj_set_style_radius(b, 8, LV_PART_MAIN);
       lv_obj_t* l = lv_label_create(b);
       lv_label_set_text(l, TR(kStoreTabs[t]));
       lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
-      lv_obj_set_width(l, bw - 10);                  // a translated tab name can
-      lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);  // exceed a 240px panel's cell
+      // Shrink the font rather than setting a width: a width plus LONG_DOT does NOT
+      // ellipsize here (DOT only kicks in when the HEIGHT is bounded), it silently
+      // wraps the label onto a second line inside a one-line button.
+      uiFitLabelWidth(l, cw - 8);
       lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
       lv_obj_center(l);
       lv_obj_add_event_cb(b, luaStoreTabCb, LV_EVENT_CLICKED, (void*)(intptr_t)t);
+      x += cw;
     }
   }
 
@@ -38649,7 +38764,7 @@ static void openAppDrawer() {
 #if !CAP_LUA_APPS
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (Lua boards install it from the Store)
 #else
-    { LV_SYMBOL_DOWNLOAD,  "WADA Store", APPACT_STORE,   0,         0x15B6A6 },      // Lua app store (brand teal)
+    { LV_SYMBOL_DOWNLOAD,  "Store",      APPACT_STORE,   0,         0x15B6A6 },      // Lua app store (brand teal); short name = fits every panel
 #endif
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
