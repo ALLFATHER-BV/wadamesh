@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WADAMESH — Lua app SDK</title>
+<meta name="description" content="Write your own apps for WADAMESH in Lua. The wada.* API reference: ui, input, mesh, net, store, sys and timer, plus the app format and how to publish to the Store.">
+<link rel="icon" href="wadamesh-badge.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#ffffff; --bg2:#f4f6f2; --ink:#15181e; --mut:#5d6770;
+    --line:#e5e8e2; --teal:#15b6a6; --teal-ink:#0e8d80;
+    color-scheme:light;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif; background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased}
+  a{color:var(--teal-ink); text-decoration:none}
+
+  .top{position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:14px; padding:12px 22px;
+    background:rgba(255,255,255,.88); backdrop-filter:saturate(1.2) blur(8px); border-bottom:1px solid var(--line)}
+  .top .word{font-weight:700; letter-spacing:2px; font-size:1.05rem; color:var(--ink)}
+  .top .word .t{color:var(--teal)}
+  .top .tag{font-family:'JetBrains Mono',monospace; font-size:.66rem; letter-spacing:.18em; text-transform:uppercase; color:var(--mut); border:1px solid var(--line); border-radius:100px; padding:4px 9px}
+  .top .sp{flex:1}
+  .top .home{display:inline-flex; align-items:center; gap:7px; color:var(--mut); font-size:.86rem; border:1px solid var(--line); border-radius:100px; padding:6px 13px; background:#fff; transition:background .15s,color .15s,border-color .15s}
+  .top .home:hover{color:var(--teal-ink); background:var(--bg2); border-color:#bfe6e0}
+  .top .home svg{width:16px;height:16px}
+
+  .shell{max-width:1200px; margin:0 auto; display:grid; grid-template-columns:220px 1fr; gap:34px; padding:0 22px}
+  nav.toc{position:sticky; top:64px; align-self:start; height:calc(100vh - 64px); overflow:auto; padding:26px 0 40px}
+  nav.toc .grp{font-family:'JetBrains Mono',monospace; font-size:.68rem; letter-spacing:.13em; text-transform:uppercase; color:var(--mut); margin:20px 0 7px}
+  nav.toc .grp:first-child{margin-top:0}
+  nav.toc a{display:block; padding:6px 12px; border-radius:9px; color:#46525c; font-size:.92rem; border-left:2px solid transparent}
+  nav.toc a:hover{background:var(--bg2); color:var(--ink)}
+  nav.toc a.on{color:var(--teal-ink); background:rgba(21,182,166,.09); border-left-color:var(--teal); font-weight:600}
+
+  main{padding:30px 0 90px; min-width:0}
+  .hero h1{font-size:clamp(1.9rem,4.4vw,2.6rem); letter-spacing:-.5px; font-weight:750}
+  .hero p{color:var(--mut); max-width:64ch; margin-top:10px; font-size:1.05rem}
+  .hero .meta{display:flex; gap:8px; flex-wrap:wrap; margin-top:16px}
+  .chip{display:inline-flex; align-items:center; gap:6px; font-size:.8rem; color:#3a444d; border:1px solid var(--line); border-radius:100px; padding:5px 11px; background:#fff}
+  .chip svg{width:14px;height:14px;color:var(--teal)}
+
+  section.doc{padding:36px 0; border-top:1px solid var(--line); scroll-margin-top:74px}
+  .doc h2{font-size:1.5rem; font-weight:730; letter-spacing:-.3px; display:flex; align-items:center; gap:10px}
+  .doc h2 .ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;flex:none; background:rgba(21,182,166,.12);color:var(--teal)}
+  .doc h2 .ico svg{width:18px;height:18px}
+  .row{display:grid; grid-template-columns:minmax(0,1fr) 372px; gap:34px; align-items:start; margin-top:16px}
+  @media(max-width:980px){.row{grid-template-columns:1fr}}
+  .prose{color:#3c454d; min-width:0}
+  .prose p{margin:0 0 12px}
+  .prose h3{font-size:1.02rem; margin:18px 0 6px; color:var(--ink)}
+  .prose ul{margin:4px 0 12px; padding-left:18px}
+  .prose li{margin:4px 0}
+  .prose b{color:var(--ink)}
+  .prose code{font-family:'JetBrains Mono',monospace; font-size:.85em; background:var(--bg2); border:1px solid var(--line); border-radius:6px; padding:1px 6px}
+  .shot{position:sticky; top:74px}
+  .cap{text-align:center; font-family:'JetBrains Mono',monospace; font-size:.68rem; color:var(--mut); margin-top:10px; letter-spacing:.04em}
+
+  /* T-Deck frame: the real screenshot + a generated QWERTY keyboard (added in JS) */
+  .device{width:344px; margin:0 auto; background:#16191d; border-radius:16px; padding:12px 12px 9px; border:1px solid #e9ece7; box-shadow:0 24px 60px -30px rgba(21,24,30,.5)}
+  .device img.screen{display:block; width:320px; height:240px; border-radius:8px}
+  .kbd{margin:9px auto 2px; display:flex; flex-direction:column; gap:4px; width:312px}
+  .kr{display:flex; gap:4px; justify-content:center}
+  .key{flex:1; max-width:28px; height:15px; background:#23282e; border-radius:4px; display:grid; place-items:center; font:8px/1 system-ui; color:#7d8893}
+  .key.wide{max-width:140px; flex:4}
+
+  .gallery{display:grid; grid-template-columns:repeat(auto-fill,minmax(232px,1fr)); gap:20px; margin-top:18px}
+  .mini{background:#16191d; border-radius:12px; padding:7px; border:1px solid #e9ece7}
+  .mini img{display:block; width:100%; height:auto; border-radius:6px}
+  .mini .cap{margin-top:6px}
+  .webgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(178px,1fr)); gap:18px; margin-top:22px}
+  figure.phone{margin:0; background:#16191d; border-radius:20px; padding:8px; border:1px solid #e9ece7; box-shadow:0 18px 44px -26px rgba(21,24,30,.5)}
+  figure.phone img{display:block; width:100%; height:auto; border-radius:13px}
+  figure.phone figcaption{text-align:center; font-family:'JetBrains Mono',monospace; font-size:.66rem; color:var(--mut); margin-top:8px; letter-spacing:.04em}
+  .subh{font-size:1.06rem; font-weight:700; color:var(--ink); margin:30px 0 2px}
+
+  /* Settings-page detail cards: real screenshot + what the page does + its controls */
+  .sgrp{font-family:'JetBrains Mono',monospace; font-size:.7rem; letter-spacing:.14em; text-transform:uppercase; color:var(--mut); margin:30px 0 0; padding-top:4px}
+  .scards{display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:20px; margin-top:13px}
+  .scard{border:1px solid var(--line); border-radius:14px; background:#fff; padding:13px; display:flex; flex-direction:column}
+  .scard .thumb{background:#16191d; border-radius:9px; padding:6px}
+  .scard .thumb img{display:block; width:100%; height:auto; border-radius:5px}
+  .scard .thumb.ph{aspect-ratio:4/3; display:grid; place-items:center; border:1px dashed #39424b; padding:0}
+  .scard .thumb.ph span{font-family:'JetBrains Mono',monospace; font-size:.6rem; letter-spacing:.12em; color:#7d8893; text-transform:uppercase}
+  .scard h3{font-size:1.04rem; margin:12px 0 2px; color:var(--ink); display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+  .scard h3 .tag{font-family:'JetBrains Mono',monospace; font-size:.58rem; letter-spacing:.05em; text-transform:uppercase; color:var(--teal-ink); background:rgba(21,182,166,.1); border-radius:5px; padding:2px 6px; font-weight:600}
+  .scard .lede{color:var(--mut); font-size:.9rem; margin:2px 0 9px}
+  .scard ul{margin:0; padding-left:17px}
+  .scard li{margin:4px 0; font-size:.89rem; color:#3c454d; line-height:1.5}
+  .scard li b{color:var(--ink); font-weight:600}
+
+  /* Caution callout (amber) */
+  .callout{display:flex; gap:11px; margin-top:18px; padding:13px 15px; border-radius:11px; background:#fff7ed; border:1px solid #f6dcb8}
+  .callout .cico{flex:none; width:20px; height:20px; color:#c2740b; margin-top:1px}
+  .callout .cico svg{width:20px; height:20px}
+  .callout b{display:block; color:#7c4a03; margin-bottom:3px; font-size:.94rem}
+  .callout p{margin:0; color:#7a5320; font-size:.9rem; line-height:1.55}
+
+  footer{border-top:1px solid var(--line); padding:26px 22px; text-align:center; color:var(--mut); font-size:.85rem}
+  @media(max-width:980px){
+    .shell{grid-template-columns:1fr; gap:0}
+    nav.toc{position:static; height:auto; border-bottom:1px solid var(--line); padding:14px 0; display:flex; gap:6px; overflow:auto; white-space:nowrap}
+    nav.toc .grp{display:none} nav.toc a{border-left:0; flex:none}
+    .shot{position:static; margin:0 auto 6px}
+  }
+
+  .prose pre{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:14px 0;font:13px/1.6 "JetBrains Mono",ui-monospace,Menlo,Consolas,monospace}
+  .prose pre code{background:none;padding:0;font-size:inherit}
+  .api{width:100%;border-collapse:collapse;margin:12px 0 18px;font-size:.92rem;display:block;overflow-x:auto}
+  .api th,.api td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  .api th{font-weight:700;white-space:nowrap}
+  .api td:first-child{white-space:nowrap;font-family:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.86rem;color:var(--teal-ink)}
+  .note{background:var(--bg2);border-left:3px solid var(--teal);border-radius:0 8px 8px 0;padding:12px 16px;margin:16px 0}
+  .note p{margin:0}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <a class="word" href="index.html">WADA<span class="t">MESH</span></a>
+  <span class="tag">Lua SDK</span>
+  <span class="sp"></span>
+  <a class="home" href="index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg> Back to site</a>
+</div>
+
+<div class="shell">
+  <nav class="toc" id="toc">
+    <div class="grp">Start here</div>
+    <a href="#intro">What this is</a>
+    <a href="#hello">Your first app</a>
+    <a href="#lifecycle">App lifecycle</a>
+    <div class="grp">Reference</div>
+    <a href="#ui">wada.ui</a>
+    <a href="#input">wada.input</a>
+    <a href="#mesh">wada.mesh</a>
+    <a href="#net">wada.net</a>
+    <a href="#store">wada.store</a>
+    <a href="#sys">wada.sys</a>
+    <a href="#timer">wada.timer</a>
+    <div class="grp">Shipping</div>
+    <a href="#format">App format</a>
+    <a href="#install">Install yours</a>
+    <a href="#publish">Publish to the Store</a>
+    <a href="#sandbox">Sandbox limits</a>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <h1>Lua app SDK</h1>
+      <p>WADAMESH runs small Lua apps. They live on the device as a single <code>.lua</code> file, appear in the app drawer next to the built-ins, and can be installed and updated from the Store over the air.</p>
+      <div class="meta"><span class="chip">API v1</span> <span class="chip">Lua 5.4</span></div>
+    </div>
+
+    <section class="doc" id="intro">
+      <h2>What this is</h2>
+      <div class="row"><div class="prose">
+        <p>An app is one Lua chunk. The firmware gives it a screen, an input stream, read access to the mesh, a little key/value storage and an HTTP fetch. That is deliberately the whole surface — roughly thirty functions, all under the <code>wada.</code> table.</p>
+        <p>LVGL is <b>not</b> exposed. Binding a UI toolkit wholesale would freeze us out of ever changing it, and would hand every app enough rope to wedge the device. Instead there is a small set of widgets we own and can keep stable across firmware versions.</p>
+        <p>Two of the apps that ship in the Store — <b>RF Monitor</b> and <b>Airtime</b> — are written against exactly this API and nothing else. They are the reference implementations; read them if a doc paragraph is ambiguous.</p>
+        <div class="note"><p><b>API v1 is read-only where the mesh is concerned.</b> An app can see contacts, the packet log and radio statistics. It cannot transmit. That line is deliberate: a buggy or hostile app must not be able to put packets on the air in your name.</p></div>
+      </div></div>
+    </section>
+
+    <section class="doc" id="hello">
+      <h2>Your first app</h2>
+      <div class="row"><div class="prose">
+        <p>Save this as <code>hello.lua</code>:</p>
+        <pre><code>local n = 0
+
+function on_start()
+  wada.ui.label("Hello from Lua", 16)
+  status = wada.ui.label("tick 0", 12)
+  status:color(wada.ui.colors.sub)
+  wada.timer.every(1000)
+end
+
+function on_tick()
+  n = n + 1
+  status:set("tick " .. n)
+end
+
+function on_input(ev)
+  if ev.type == "key" then
+    wada.sys.toast("you pressed " .. tostring(ev.name))
+  end
+end</code></pre>
+        <p>Copy it to <code>/apps/hello.lua</code> on the device's SD card (or internal storage on boards without a card), open the app drawer, and it is there. No manifest is required for a file you side-load yourself — see <a href="#install">Install yours</a>.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="lifecycle">
+      <h2>App lifecycle</h2>
+      <div class="row"><div class="prose">
+        <p>Define the callbacks you need as globals. All four are optional.</p>
+        <table class="api">
+          <tr><th>Callback</th><th>When it runs</th></tr>
+          <tr><td>on_start()</td><td>Once, when the app opens. Build your UI here.</td></tr>
+          <tr><td>on_tick()</td><td>On the cadence set by <code>wada.timer.every(ms)</code>. Never faster than 33&nbsp;ms.</td></tr>
+          <tr><td>on_input(ev)</td><td>For every touch, key or trackball event. See <a href="#input">wada.input</a>.</td></tr>
+          <tr><td>on_stop()</td><td>Once, when the app closes. Persist anything you care about here.</td></tr>
+        </table>
+        <p>Every callback runs inside a guarded call on the UI thread. If your code raises an error the app is closed with a toast rather than taking the firmware down with it — but it does mean a slow callback stalls the whole UI, so keep them short. There is an instruction budget: an app that spins forever is stopped.</p>
+        <p>Widgets you create in <code>on_start</code> are destroyed for you when the app closes. You do not free anything.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="ui">
+      <h2>wada.ui</h2>
+      <div class="row"><div class="prose">
+        <p>Widgets are created in order, top to bottom, on the app's page. Every constructor returns a handle with methods you can call later.</p>
+        <table class="api">
+          <tr><th>Call</th><th>Returns / does</th></tr>
+          <tr><td>wada.ui.label(text, size)</td><td>A text line. <code>size</code> is a class, not a pixel height: 12, 14 or 16.</td></tr>
+          <tr><td>wada.ui.button(text, fn)</td><td>A tappable button; <code>fn</code> is called with no arguments.</td></tr>
+          <tr><td>wada.ui.canvas(w, h)</td><td>A drawing surface. See the canvas methods below.</td></tr>
+          <tr><td>wada.ui.chart(points)</td><td>A line chart sized to the page. The Airtime and RF Monitor primitive.</td></tr>
+          <tr><td>wada.ui.scroll(on)</td><td>Allow the page to scroll when content is taller than the screen.</td></tr>
+          <tr><td>wada.ui.text_h(size)</td><td>Line height in pixels for a size class — use it to lay out a canvas.</td></tr>
+          <tr><td>wada.ui.colors</td><td>Theme table: <code>text</code>, <code>sub</code>, <code>bg</code>, <code>accent</code>, <code>good</code>, <code>bad</code>.</td></tr>
+        </table>
+        <h3>Label handle</h3>
+        <table class="api">
+          <tr><td>lbl:set(text)</td><td>Replace the text.</td></tr>
+          <tr><td>lbl:color(c)</td><td>Set the colour, e.g. <code>wada.ui.colors.accent</code>.</td></tr>
+          <tr><td>lbl:pos(x, y)</td><td>Place it explicitly instead of in flow.</td></tr>
+          <tr><td>lbl:width(px)</td><td>Fix the width; longer text wraps instead of running off the panel.</td></tr>
+        </table>
+        <h3>Canvas handle</h3>
+        <table class="api">
+          <tr><td>cv:fill(c)</td><td>Flood the whole canvas.</td></tr>
+          <tr><td>cv:rect(x, y, w, h, c)</td><td>Filled rectangle.</td></tr>
+          <tr><td>cv:line(x1, y1, x2, y2, c)</td><td>Line.</td></tr>
+          <tr><td>cv:circle(x, y, r, c)</td><td>Filled circle.</td></tr>
+          <tr><td>cv:text(x, y, s, c, size)</td><td>Draw a string.</td></tr>
+          <tr><td>cv:pos(x, y)</td><td>Move the canvas itself.</td></tr>
+        </table>
+        <h3>Chart handle</h3>
+        <table class="api">
+          <tr><td>ch:push(v)</td><td>Append a point, scrolling the series.</td></tr>
+          <tr><td>ch:fill(t)</td><td>Replace every point from a table.</td></tr>
+          <tr><td>ch:range(min, max)</td><td>Fix the Y range instead of autoscaling.</td></tr>
+          <tr><td>ch:axis(ticks, gutter)</td><td>Draw Y-axis labels; <code>gutter</code> reserves space for them.</td></tr>
+          <tr><td>ch:pos(x, y)</td><td>Move the chart.</td></tr>
+        </table>
+        <div class="note"><p>Screens differ a lot — 240&nbsp;px portrait on a Heltec V4, 320&nbsp;px landscape on a T-Deck, and a tall high-DPI panel on a T-Display P4. Ask <code>wada.sys.board()</code> for the real width and height rather than hardcoding a layout, and prefer <code>wada.ui.text_h()</code> over assuming a font is so many pixels tall.</p></div>
+      </div></div>
+    </section>
+
+    <section class="doc" id="input">
+      <h2>wada.input</h2>
+      <div class="row"><div class="prose">
+        <p>Input arrives through <code>on_input(ev)</code>. The event is a table; <code>ev.type</code> tells you which kind it is.</p>
+        <table class="api">
+          <tr><th>ev.type</th><th>Fields</th></tr>
+          <tr><td>"touch"</td><td><code>ev.x</code>, <code>ev.y</code> in page coordinates.</td></tr>
+          <tr><td>"key"</td><td><code>ev.name</code> — the key label on boards with a keyboard.</td></tr>
+          <tr><td>"dir"</td><td><code>ev.dir</code> — one of <code>up</code>, <code>down</code>, <code>left</code>, <code>right</code>, <code>select</code>. Trackball, D-pad and swipes all arrive here.</td></tr>
+        </table>
+        <p>Handle <code>"dir"</code> if you want your app to work on every board. A touch-only board sends swipes as directions, and a keyboard board sends its navigation keys the same way, so one branch covers both.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="mesh">
+      <h2>wada.mesh</h2>
+      <div class="row"><div class="prose">
+        <p>Read-only in API v1.</p>
+        <table class="api">
+          <tr><td>wada.mesh.contacts()</td><td>Array of <code>{name, type, ago_s, lat, lon}</code>.</td></tr>
+          <tr><td>wada.mesh.rx_log()</td><td>Recent packets: <code>{ago_ms, type, rssi, snr, hops}</code>. The RF Monitor feed.</td></tr>
+          <tr><td>wada.mesh.stats()</td><td><code>{rssi, noise, rx_air_s, tx_air_s, rx_pkts, rx_err, tx_budget_ms, rx_events, rx_dropped, tx_pkts, freq, bw, sf, duty_pct}</code>.</td></tr>
+          <tr><td>wada.mesh.self()</td><td>This node: <code>{name, lat, lon}</code>.</td></tr>
+        </table>
+        <p>These are snapshots taken when you call them, not live views — call again on each tick to refresh.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="net">
+      <h2>wada.net</h2>
+      <div class="row"><div class="prose">
+        <table class="api">
+          <tr><td>wada.net.http_get(url, cb)</td><td>Fetch a URL. <code>cb(body)</code> runs when it lands, or with <code>nil</code> on failure.</td></tr>
+        </table>
+        <p>The fetch is asynchronous and runs on the firmware's existing network worker, so it does not block the UI. Your callback runs on the UI thread once the body is in memory.</p>
+        <div class="note"><p><b>Plain HTTP only, and that is not an oversight.</b> After Wi-Fi associates there is not enough free internal memory on the smaller boards for a TLS handshake — mbedTLS wants around 30&nbsp;KB and roughly 5&nbsp;KB is free. If you need an HTTPS source, put a small proxy in front of it, the way the map tiles do. Responses are capped (64&nbsp;KB by default).</p></div>
+      </div></div>
+    </section>
+
+    <section class="doc" id="store">
+      <h2>wada.store</h2>
+      <div class="row"><div class="prose">
+        <table class="api">
+          <tr><td>wada.store.get(key)</td><td>Read a string, or <code>nil</code>.</td></tr>
+          <tr><td>wada.store.set(key, value)</td><td>Write a string.</td></tr>
+        </table>
+        <p>Keys are namespaced per app, so two apps cannot collide. Keep it small — the budget is about 2&nbsp;KB per app, and the underlying store silently drops oversized values. High scores and settings, not logs.</p>
+        <p>Writes hit flash. Do them in <code>on_stop()</code> or on a real user action, never on every tick.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="sys">
+      <h2>wada.sys</h2>
+      <div class="row"><div class="prose">
+        <table class="api">
+          <tr><td>wada.sys.millis()</td><td>Milliseconds since boot.</td></tr>
+          <tr><td>wada.sys.board()</td><td><code>{w, h, touch, keyboard, trackball, gps}</code> — size and capabilities.</td></tr>
+          <tr><td>wada.sys.toast(msg)</td><td>Brief on-screen message.</td></tr>
+          <tr><td>wada.sys.random(n)</td><td>Integer in 1..n.</td></tr>
+        </table>
+      </div></div>
+    </section>
+
+    <section class="doc" id="timer">
+      <h2>wada.timer</h2>
+      <div class="row"><div class="prose">
+        <table class="api">
+          <tr><td>wada.timer.every(ms)</td><td>Call <code>on_tick</code> every <code>ms</code>. Clamped to 33&nbsp;ms minimum.</td></tr>
+          <tr><td>wada.timer.stop()</td><td>Stop ticking.</td></tr>
+        </table>
+        <p>One timer per app. Calling <code>every</code> again changes the interval rather than adding a second timer.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="format">
+      <h2>App format</h2>
+      <div class="row"><div class="prose">
+        <p>On the device an app is one or two files on the active storage root:</p>
+        <pre><code>/apps/&lt;id&gt;.lua     the code
+/apps/&lt;id&gt;.json    the manifest (optional for side-loaded apps)</code></pre>
+        <p>The manifest is what the Store and the drawer read:</p>
+        <pre><code>{
+  "id":      "airtime",
+  "name":    "Airtime",
+  "version": "1.3",
+  "min_api": 1,
+  "icon":    "A",
+  "description": "Duty cycle and airtime budget.",
+  "boards":  ["*"]
+}</code></pre>
+        <table class="api">
+          <tr><td>id</td><td>Lowercase, no spaces. Must match the filename.</td></tr>
+          <tr><td>min_api</td><td>Refuse to run on firmware older than this API version.</td></tr>
+          <tr><td>icon</td><td>A single character shown in the drawer tile and Store card.</td></tr>
+          <tr><td>boards</td><td><code>["*"]</code> for everything, or a list of board ids to restrict to.</td></tr>
+        </table>
+      </div></div>
+    </section>
+
+    <section class="doc" id="install">
+      <h2>Install your own</h2>
+      <div class="row"><div class="prose">
+        <p>Drop a bare <code>.lua</code> file into <code>/apps/</code> on the SD card and it shows up in the drawer — no manifest needed. The filename becomes the name. That is the fast loop while you are writing something.</p>
+        <p>Apps you side-load appear in the Store under <b>Your own apps</b>, where you can remove them again. A long press on the drawer tile also offers to remove.</p>
+        <p>On boards without an SD card the same path lives on internal storage.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="publish">
+      <h2>Publish to the Store</h2>
+      <div class="row"><div class="prose">
+        <p>The Store is served as static files, so publishing is a pull request against the firmware repository:</p>
+        <ul>
+          <li>Add <code>deploy/apps/&lt;id&gt;/&lt;version&gt;/&lt;id&gt;.lua</code> and the matching <code>.json</code>.</li>
+          <li>Add an entry to <code>deploy/apps/apps.json</code>.</li>
+        </ul>
+        <p>Version paths are immutable — publishing 1.1 never rewrites 1.0. Devices compare the catalog version against what they have installed and offer <b>Update</b> when they differ, so bumping the version in both places is the whole release process.</p>
+        <p>Apps in the catalog are reviewed before they are merged. Keep them small and keep them readable.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="sandbox">
+      <h2>Sandbox limits</h2>
+      <div class="row"><div class="prose">
+        <p>Apps run in a restricted environment. These are removed: <code>io</code>, <code>os</code>, <code>require</code>, <code>dofile</code>, and loading new chunks at runtime. Available: <code>math</code>, <code>string</code>, <code>table</code>, and the usual <code>pairs</code>, <code>ipairs</code>, <code>select</code>, <code>pcall</code>, <code>tostring</code>, <code>tonumber</code>.</p>
+        <p>Memory comes from a capped pool in PSRAM, so an app that allocates without bound fails its own allocation rather than starving the radio or the UI. There is an instruction budget on every callback for the same reason.</p>
+        <p>None of this makes a hostile app safe, which is why the catalog is curated. It makes an <i>honest</i> app that has a bug survivable: it gets closed, and the device keeps carrying traffic.</p>
+      </div></div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  // Highlight the section currently in view, same behaviour as the docs page.
+  (function () {
+    var links = [].slice.call(document.querySelectorAll('#toc a'));
+    var secs  = links.map(function (a) { return document.querySelector(a.getAttribute('href')); });
+    function sync() {
+      var y = window.scrollY + 120, cur = 0;
+      for (var i = 0; i < secs.length; i++) if (secs[i] && secs[i].offsetTop <= y) cur = i;
+      links.forEach(function (a, i) { a.classList.toggle('on', i === cur); });
+    }
+    window.addEventListener('scroll', sync, { passive: true });
+    sync();
+  })();
+</script>
+
+</body>
+</html>
