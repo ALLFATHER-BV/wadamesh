@@ -294,6 +294,14 @@ void setup() {
 #endif
   Serial.println("[BOOT] setup start");
   BOOTMEM("setup-start");
+  // The SDK ships CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096: every allocation
+  // under 4 KB is forced into internal DRAM even when PSRAM is free. On the V4
+  // that is why internal sat at ~99% while 800+ KB of PSRAM went unused. Lower
+  // the threshold at runtime so ordinary mallocs land in PSRAM; anything that
+  // genuinely needs internal/DMA memory asks for it by capability and is
+  // unaffected. Tunable — raise it if something misbehaves.
+  heap_caps_malloc_extmem_enable(1024);
+  BOOTMEM("post-extmem");
 
   // Widen the task-watchdog grace period. The ~5 s default trips during a legitimate-but-slow flash
   // burst — a SPIFFS garbage-collect, or a bulk save (DataStore issues ~12 flash ops per contact,
