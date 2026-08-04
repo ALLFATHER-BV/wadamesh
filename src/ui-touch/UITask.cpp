@@ -21169,14 +21169,25 @@ static void discoverWardriveTick() {
 // Per-row snapshot for tap-to-add (populated by discoverBuildFeed in the displayed sort order):
 // full pubkey + type + name, so a tap on the feed resolves to the exact node under it.
 static const int DISC_MAXROWS = 40;
-static uint8_t s_disc_row_key[DISC_MAXROWS][32];
+static uint8_t (*s_disc_row_key)[32] = nullptr;   // PSRAM, allocated when Discover opens
 static uint8_t s_disc_row_type[DISC_MAXROWS];
-static char    s_disc_row_name[DISC_MAXROWS][26];
+static char    (*s_disc_row_name)[26] = nullptr;  // PSRAM (see discoverRowsReady)
 static int     s_disc_row_n = 0;
 
 static void recolorEscape(char* dst, size_t cap, const char* src);   // defined with the chat helpers
 
 // Rebuild the feed label from the engine's _discover[] table, strongest-signal first.
+// Discover's per-row snapshots are ~2.3 KB that only matter while the page is
+// open; on the V4 that is a meaningful slice of internal DRAM, so PSRAM it is.
+static bool discoverRowsReady() {
+  if (s_disc_row_key) return true;
+  s_disc_row_key  = (uint8_t(*)[32])heap_caps_calloc(DISC_MAXROWS, 32, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  s_disc_row_name = (char(*)[26])   heap_caps_calloc(DISC_MAXROWS, 26, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_disc_row_key)  s_disc_row_key  = (uint8_t(*)[32])calloc(DISC_MAXROWS, 32);
+  if (!s_disc_row_name) s_disc_row_name = (char(*)[26])   calloc(DISC_MAXROWS, 26);
+  return s_disc_row_key && s_disc_row_name;
+}
+
 static void discoverBuildFeed() {
   if (!s_discover_feed) return;
   const uint32_t now = millis();
@@ -21208,6 +21219,7 @@ static void discoverBuildFeed() {
     ContactInfo* c = the_mesh.lookupContactByPubKey((uint8_t*)h.pubkey, 6);
     if (c && c->name[0]) copyUtf8ReplacingMissingGlyphs(nullptr, name, sizeof name, c->name);
     else                 snprintf(name, sizeof name, "Node \xC2\xB7%02X%02X", h.pubkey[0], h.pubkey[1]);
+    if (!discoverRowsReady()) break;
     memcpy(s_disc_row_key[k], h.pubkey, 32);           // snapshot this row for tap-to-add
     s_disc_row_type[k] = h.node_type;
     snprintf(s_disc_row_name[k], sizeof s_disc_row_name[k], "%s", name);
@@ -24276,9 +24288,9 @@ void    luaHostAppPath(char* out, size_t cap, const char* rel);
 
 struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; };
 struct LuaInstApp { char id[20]; char name[28]; char ver[12]; };
-static LuaCatApp  s_lua_cat[16];
+static LuaCatApp* s_lua_cat = nullptr;      // PSRAM, allocated on first store use
 static int        s_lua_cat_n = 0;          // -1 = last fetch failed
-static LuaInstApp s_lua_inst[16];
+static LuaInstApp* s_lua_inst = nullptr;    // PSRAM (see luaStoreTablesReady)
 static int        s_lua_inst_n = 0;
 static char*      s_luacat_buf = nullptr;   // catalog JSON (PSRAM, worker-filled)
 static const size_t kLuaCatBufMax = 8192;
@@ -24388,7 +24400,7 @@ static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
 // of one i18n table column (scripts/build/gen-lang-files.py) — or anything a
 // user writes themselves — living at <data>/lang/<code>.lang.
 struct LangCatEntry { char code[12]; char name[28]; char ver[8]; };
-static LangCatEntry s_langcat[LANG_COUNT + 2];
+static LangCatEntry* s_langcat = nullptr;   // PSRAM (see luaStoreTablesReady)
 static int s_langcat_n = 0;                  // 0 = not fetched, -1 = fetch failed
 static char* s_langcat_buf = nullptr;        // langs.json (PSRAM, worker-filled)
 static volatile bool s_langcat_request = false, s_langcat_done = false;
@@ -24402,6 +24414,7 @@ static bool s_langdl_silent = false;         // boot self-heal: no user-facing t
 static volatile bool s_luascan_request = false, s_luascan_done = false;
 static void luaStoreScanInstalled(bool force = false);   // defined with the Store page
 static void luaStoreParseLangCatalog();                  // defined with the Store page
+static bool luaStoreTablesReady();                       // PSRAM tables (defined with the Store page)
 
 static void luaStoreFetchLangCatalogWorker(WiFiClient& client, HTTPClient& http) {
   const size_t kCap = 2048;
@@ -36989,7 +37002,8 @@ static void luaStoreInvalidateInstalled();
 static bool s_lua_inst_valid = false;   // cache flag: the /apps listing is SD I/O
 static void luaStoreInvalidateInstalled() { s_lua_inst_valid = false; }
 
-static void luaStoreScanInstalled(bool force) {   // default arg on the fwd decl (worker side)
+static void luaStoreScanInstalled(bool force) {
+  if (!luaStoreTablesReady()) return;   // default arg on the fwd decl (worker side)
   if (s_lua_inst_valid && !force) return;   // cached — the drawer opens without touching the card
   s_lua_inst_n = 0;
   fs::FS* fs = luaHostAppFs();
@@ -37049,7 +37063,7 @@ static const LuaInstApp* luaStoreFindInstalled(const char* id) {
 
 // ---- installed .lang files (Languages tab) ----
 struct LangInst { char code[12]; char name[28]; char ver[8]; };
-static LangInst s_langinst[12];
+static LangInst* s_langinst = nullptr;      // PSRAM (see luaStoreTablesReady)
 static int s_langinst_n = 0;
 
 // Read the "# name:" / "# base:" / "# ver:" header lines of an installed .lang file.
@@ -37088,7 +37102,23 @@ static bool luaStoreLangFileMeta(const char* code, char* name, size_t name_cap,
   return name[0] != 0;
 }
 
+// The store's tables live in PSRAM: they are ~4.4 KB that only matter while the
+// store is open, and internal DRAM on the V4 is the scarcest resource there.
+static bool luaStoreTablesReady() {
+  if (s_lua_cat) return true;
+  auto ps = [](size_t n) {
+    void* p = heap_caps_calloc(1, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? p : calloc(1, n);            // no PSRAM (or none free): fall back
+  };
+  s_lua_cat   = (LuaCatApp*)   ps(sizeof(LuaCatApp)  * 16);
+  s_lua_inst  = (LuaInstApp*)  ps(sizeof(LuaInstApp) * 16);
+  s_langcat   = (LangCatEntry*)ps(sizeof(LangCatEntry) * (LANG_COUNT + 2));
+  s_langinst  = (LangInst*)    ps(sizeof(LangInst) * 12);
+  return s_lua_cat && s_lua_inst && s_langcat && s_langinst;
+}
+
 static void luaStoreScanLangs() {
+  if (!luaStoreTablesReady()) return;
   s_langinst_n = 0;
   fs::FS* fs = luaHostAppFs();
   if (!fs) return;
@@ -37122,6 +37152,7 @@ static void luaStoreScanLangs() {
 }
 
 static void luaStoreParseLangCatalog() {
+  if (!luaStoreTablesReady()) return;
   s_langcat_n = 0;
   if (!s_langcat_buf || !s_langcat_buf[0]) { s_langcat_n = -1; return; }
   const char* p = s_langcat_buf;
@@ -37172,6 +37203,7 @@ static void closeLuaStorePage() {
 }
 
 static void luaStoreParseCatalog() {
+  if (!luaStoreTablesReady()) return;
   s_lua_cat_n = 0;
   if (!s_luacat_buf || !s_luacat_buf[0]) { s_lua_cat_n = -1; return; }
   const char* p = s_luacat_buf;
@@ -37756,6 +37788,7 @@ static void luaStoreRebuildList() {
 }
 
 static void openLuaStorePage() {
+  luaStoreTablesReady();
   closeLuaStorePage();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
   // lv_layer_top, below the status bar, exactly like the Monitor/Discover pages:

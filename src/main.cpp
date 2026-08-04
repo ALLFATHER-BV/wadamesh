@@ -419,7 +419,6 @@ void setup() {
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
-  BOOTMEM("pre-fs");
   InternalFS.begin();
   #if defined(QSPIFLASH)
     if (!QSPIFlash.begin()) {
@@ -435,6 +434,7 @@ void setup() {
   #endif
   BOOTMEM("pre-store");
   store.begin();
+  BOOTMEM("post-store");
   BOOTMEM("pre-mesh");
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
@@ -453,10 +453,11 @@ void setup() {
   the_mesh.startInterface(serial_interface);
   BOOTMEM("post-iface");
 #elif defined(RP2040_PLATFORM)
-  BOOTMEM("pre-littlefs");
   LittleFS.begin();
-  BOOTMEM("post-littlefs");
+  BOOTMEM("pre-store");
   store.begin();
+  BOOTMEM("post-store");
+  BOOTMEM("pre-mesh");
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -479,14 +480,18 @@ void setup() {
   #else
     serial_interface.begin(Serial);
   #endif
+    BOOTMEM("pre-iface");
     the_mesh.startInterface(serial_interface);
+    BOOTMEM("post-iface");
 #elif defined(ESP32)
   // Storage selection. SPIFFS by default; use the SD card under /meshcomod when
   // SPIFFS is unavailable (e.g. installed under Launcher) OR the user opted in
   // ("Store data on SD"). The SD shares the LoRa SPI bus, already brought up by
   // radio_init() above, so SD.begin's spi.begin is a no-op. Graceful: any SD
   // failure falls back to SPIFFS so the device always boots.
+  BOOTMEM("pre-spiffs");
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
+  BOOTMEM("post-spiffs");
   bool sd_storage = false;
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
   {
@@ -655,11 +660,14 @@ void setup() {
   Serial.println("[BOOT] touchPrefsReload ok"); Serial.flush();
 #endif
 #endif
+  BOOTMEM("pre-store");
   store.begin();
+  BOOTMEM("post-store");
 #if defined(HAS_RAK_TAP_V2)
   Serial.println("[BOOT] store ok"); Serial.flush();
   Serial.println("[BOOT] calling mesh.begin..."); Serial.flush();
 #endif
+  BOOTMEM("pre-mesh");
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -774,7 +782,9 @@ void setup() {
 #else
   serial_interface.begin(Serial);
 #endif
+  BOOTMEM("pre-iface");
   the_mesh.startInterface(serial_interface);
+  BOOTMEM("post-iface");
 #else
   #error "need to define filesystem"
 #endif
