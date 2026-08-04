@@ -23917,6 +23917,14 @@ static void tileBackendSwapFinish() {
   portEXIT_CRITICAL(&s_tile_backend_mux);
 }
 
+static bool tileBackendSwapRequested() {
+  bool requested;
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  requested = s_tile_backend_swap_requested;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+  return requested;
+}
+
 static bool tileFetchWorkerActive() {
   bool active;
   portENTER_CRITICAL(&s_tile_backend_mux);
@@ -23939,11 +23947,13 @@ class TileBackendWorkerLease {
       vTaskDelay(1);
     }
   }
-  ~TileBackendWorkerLease() {
+  ~TileBackendWorkerLease() { release(); }
+  void release() {
     if (!_held) return;
     portENTER_CRITICAL(&s_tile_backend_mux);
     s_tile_worker_active = false;
     portEXIT_CRITICAL(&s_tile_backend_mux);
+    _held = false;
   }
   TileBackendWorkerLease(const TileBackendWorkerLease&) = delete;
   TileBackendWorkerLease& operator=(const TileBackendWorkerLease&) = delete;
@@ -24055,8 +24065,8 @@ static TaskHandle_t      s_tile_fetch_task    = nullptr;
 static volatile bool     s_tile_fetch_dirty   = false;
 #if defined(TLORA_PAGER)
 // Card-detect sets this before the VFS can be unmounted. It stops producers and
-// lets the worker discard its queued SD jobs, so the lifecycle gate converges
-// instead of being kept busy forever by a map that is still requesting tiles.
+// requests a worker pause at the next request boundary, so the current SD File
+// can close while the queued backlog survives the fallback/remount handoff.
 static volatile bool     s_pager_sd_removal_pending = false;
 #endif
 static volatile uint16_t s_tile_fetch_ok      = 0;
@@ -25309,15 +25319,6 @@ static void tileFetchTaskFn(void* arg) {
     // disk (the prefetch now enqueues without stat'ing) would otherwise be a
     // tight no-yield loop of tileCacheExists() and could starve core-0 IDLE.
     vTaskDelay(1);
-#if defined(TLORA_PAGER)
-    if (s_pager_sd_removal_pending && s_tile_fs == &SD) {
-      s_tile_fetch_last_wr = 'R';
-      ++s_tile_fetch_failed;
-      tileFetchForget(req.z, req.x, req.y);
-      tileFetchPendingDec();
-      continue;
-    }
-#endif
     if (WiFi.status() != WL_CONNECTED) {
       WIRE_DBG("[TILE] skip z=%u x=%ld y=%ld: WiFi down\n",
                     (unsigned)req.z, (long)req.x, (long)req.y);
@@ -25521,6 +25522,9 @@ static void tileFetchTaskFn(void* arg) {
     http.end();
     client.stop();
     tileFetchPendingDec();
+    // No cache/File access follows. Release before the 500 ms rate-limit delay
+    // so a lifecycle handoff waits for I/O, not an unrelated pacing sleep.
+    backend_lease.release();
 
     if (wrote) {
       WIRE_DBG("[TILE]  -> wrote %s\n", path_jpg);
@@ -26426,7 +26430,7 @@ static void renderMapTiles() {
         "ok %u   fail %u   http %d   wr %c\n"
         "open-fail %u   short-wr %u\n\n"
         "Keep Wi-Fi connected.\nTiles appear as they arrive.",
-#if defined(HAS_TANMATSU)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
         (s_tile_fs == &SD_MMC ? "SD cache" : "flash cache"),
 #else
 #if CAP_SD || defined(TLORA_PAGER)
@@ -27176,14 +27180,18 @@ static void mapOptZoomButtonsCb(lv_event_t* e) {
 // library grows and downloads survive; OFF = tile server + internal LittleFS cache.
 static void mapOptTilesSdCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  // The worker dereferences the shared cache backend throughout a request. Do
-  // not repoint it while a queued/in-flight fetch may still own a File on the
-  // old filesystem; on Pager that would also hide the live SD handle from the
-  // VFS lifecycle gate and permit SD.end() underneath it.
-  if (tileFetchPendingLoad() > 0) {
+  // Pause at a request boundary before repointing the cache. A queued backlog is
+  // harmless and resumes on the new backend; only the request currently owning
+  // a File must finish. Do not steal a pause already owned by remount/removal.
+  const bool pause_owned_elsewhere = tileBackendSwapRequested();
+  const bool pause_ready = !pause_owned_elsewhere && tileBackendSwapTryBegin();
+  if (!pause_ready) {
+    // If this callback asserted the pause but found an active request, cancel
+    // only its own request. Lifecycle-owned pauses stay asserted for their retry.
+    if (!pause_owned_elsewhere) tileBackendSwapFinish();
     if (s_tiles_from_sd) lv_obj_add_state(lv_event_get_target(e), LV_STATE_CHECKED);
     else                 lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);
-    if (g_lv.task) g_lv.task->showAlert(TR("Tile download in progress - retry"), 1800);
+    if (g_lv.task) g_lv.task->showAlert(TR("Current tile transfer is busy - retry"), 1800);
     return;
   }
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -27208,6 +27216,7 @@ static void mapOptTilesSdCb(lv_event_t* e) {
   }
   freeMapTiles();                // drop stale tile widgets → reload from the new source
   renderMapTiles();
+  tileBackendSwapFinish();       // queued requests resume against the selected backend
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Map tiles: microSD") : TR("Map tiles: server"), 1400);
 }
 #endif
@@ -48400,7 +48409,15 @@ static bool sdRuntimeLifecycleBusy() {
   busy = busy || s_notify_playing;
 #endif
 #if CAP_SD || defined(TLORA_PAGER)
-  busy = busy || (s_tile_fs == &SD && tileFetchPendingLoad() > 0);
+  // Before a lifecycle owner requests a backend pause, keep the conservative
+  // queued+active gate used by format/reset paths. Once the pause is asserted,
+  // no queued request can acquire a new lease, so only the current lease owns
+  // the VFS; the preserved backlog is not a reason to delay SD.end().
+  if (s_tile_fs == &SD) {
+    busy = busy || (tileBackendSwapRequested()
+        ? tileFetchWorkerActive()
+        : tileFetchPendingLoad() > 0);
+  }
 #endif
   return busy;
 }
@@ -48539,9 +48556,9 @@ static void sdHealthTick() {
 #endif
 #if defined(TLORA_PAGER)
   // Card detect is pure I2C, so it must keep running even while an SD worker is
-  // busy. Once removal is confirmed, stop new SD tile jobs immediately; the
-  // worker discards its queued jobs and the normal lifecycle gate waits only
-  // for the genuinely in-flight operation before SD.end().
+  // busy. Once removal is confirmed, pause the worker at a request boundary;
+  // the normal lifecycle gate then waits only for the genuinely in-flight
+  // operation before SD.end(), preserving the queued backlog.
   if (!s_pager_sd_removal_pending && (int32_t)(now - s_next_detect_ms) >= 0) {
     s_next_detect_ms = now + 500;
     const TLoraPagerBoard::SdCardState state = board.sdCardState();
@@ -48557,6 +48574,10 @@ static void sdHealthTick() {
       s_absent_samples = 0;
       s_absent_first_ms = 0;
       s_pager_sd_removal_pending = true;
+      // Stop the worker at the next request boundary. Its current File may
+      // finish, but the queued backlog stays intact while SD.end() and the
+      // fallback selection run below.
+      tileBackendSwapTryBegin();
       sdNoteIoFailure();
     }
   }
@@ -48572,9 +48593,6 @@ static void sdHealthTick() {
     return;
   }
 #endif
-  // SD.end() under any open worker/UI file handle invalidates that handle.
-  // On a truly wedged card the worker's own ops fail fast, so this clears.
-  if (sdRuntimeLifecycleBusy()) return;
 #if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
   if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
 #endif
@@ -48595,10 +48613,20 @@ static void sdHealthTick() {
     if (touchSleep::isSleeping()) return;
     if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
   }
+  // This tick is going to probe and may invalidate the VFS. Assert the backend
+  // pause before the lifecycle-busy check, so queued requests cannot repeatedly
+  // win the boundary while recovery waits. Other SD consumers still drain first.
+  tileBackendSwapTryBegin();
+  if (sdRuntimeLifecycleBusy()) return;
   s_next_probe_ms    = now + 5000;
   s_next_bg_probe_ms = now + 30000;
   s_sd_fail_note_ms = 0;
-  if (sdProbeAlive()) return;     // transient failure (card full, bad path, ...) — not a wedge
+  if (sdProbeAlive()) {
+    // Transient failure (card full, bad path, ...) — keep the mount and let the
+    // preserved tile queue continue on it.
+    tileBackendSwapFinish();
+    return;
+  }
   fmSdUnmount();                  // SD.end() so a fresh begin re-runs the full card handshake
   if (fmSdTryMount()) {
 #if defined(TLORA_PAGER)
@@ -49639,9 +49667,9 @@ void UITask::loop() {
       showAlert(done, 3500);
     } else {
       s_sd_mounted = false;
-      // Do not repoint the global backend under the worker's open File. The
-      // next idle sdHealthTick drops it after the lifecycle count reaches 0.
-      if (tileFetchPendingLoad() == 0) mapNoteStorageChanged();
+      // The backend handshake waits for any current File and preserves queued
+      // requests, then drops the failed SD backend without leaving a pause set.
+      mapNoteStorageChanged();
       showAlert(TR("Format failed (no card / SD error)"), 3500);
     }
     if (s_fm_list) fmShowRoots();
