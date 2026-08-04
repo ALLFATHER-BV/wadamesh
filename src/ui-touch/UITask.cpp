@@ -36965,34 +36965,56 @@ enum {
   APPHIDE_FILES = 1u << 9, APPHIDE_SIGNAL = 1u << 10, APPHIDE_MENTIONS = 1u << 11,
 };
 
+static const LuaInstApp* luaStoreFindInstalled(const char* id);   // fwd (defined below)
+
 static void luaStoreScanInstalled() {
   s_lua_inst_n = 0;
   fs::FS* fs = luaHostAppFs();
   if (!fs) return;
   char appsdir[48];
   luaHostAppPath(appsdir, sizeof appsdir, "/apps");
-  File dir = fs->open(appsdir);
-  if (!dir || !dir.isDirectory()) return;
-  File e;
-  while (s_lua_inst_n < (int)(sizeof(s_lua_inst) / sizeof(s_lua_inst[0])) && (e = dir.openNextFile())) {
-    const char* nm = e.name();
-    const char* leaf = strrchr(nm, '/');
-    leaf = leaf ? leaf + 1 : nm;
-    size_t ln = strlen(leaf);
-    if (ln > 5 && strcmp(leaf + ln - 5, ".json") == 0 && e.size() > 0 && e.size() < 900) {
-      char buf[900];
-      size_t rd = e.read((uint8_t*)buf, sizeof buf - 1);
-      buf[rd] = 0;
-      LuaInstApp& a = s_lua_inst[s_lua_inst_n];
-      if (luaJsonField(buf, "id", a.id, sizeof a.id) &&
-          luaJsonField(buf, "name", a.name, sizeof a.name)) {
-        if (!luaJsonField(buf, "ver", a.ver, sizeof a.ver)) a.ver[0] = 0;
-        s_lua_inst_n++;
+  const int kMax = (int)(sizeof(s_lua_inst) / sizeof(s_lua_inst[0]));
+  // Pass 1: manifests (store installs). Pass 2: bare .lua files with no
+  // manifest — a script dropped straight onto the card (any card reader, the
+  // Files app, USB) becomes an app named after its file. Skip macOS "._*"
+  // AppleDouble junk so a Mac-touched card doesn't grow ghost apps.
+  for (int pass = 0; pass < 2 && s_lua_inst_n < kMax; pass++) {
+    File dir = fs->open(appsdir);
+    if (!dir || !dir.isDirectory()) return;
+    File e;
+    while (s_lua_inst_n < kMax && (e = dir.openNextFile())) {
+      const char* nm = e.name();
+      const char* leaf = strrchr(nm, '/');
+      leaf = leaf ? leaf + 1 : nm;
+      size_t ln = strlen(leaf);
+      if (leaf[0] == '.') { e.close(); continue; }
+      if (pass == 0 && ln > 5 && strcmp(leaf + ln - 5, ".json") == 0 && e.size() > 0 && e.size() < 900) {
+        char buf[900];
+        size_t rd = e.read((uint8_t*)buf, sizeof buf - 1);
+        buf[rd] = 0;
+        LuaInstApp& a = s_lua_inst[s_lua_inst_n];
+        if (luaJsonField(buf, "id", a.id, sizeof a.id) &&
+            luaJsonField(buf, "name", a.name, sizeof a.name)) {
+          if (!luaJsonField(buf, "ver", a.ver, sizeof a.ver)) a.ver[0] = 0;
+          s_lua_inst_n++;
+        }
+      } else if (pass == 1 && ln > 4 && strcmp(leaf + ln - 4, ".lua") == 0) {
+        char id[20];
+        size_t o = 0;
+        for (size_t k = 0; k + 4 < ln && o + 1 < sizeof id; k++) id[o++] = leaf[k];
+        id[o] = 0;
+        if (!luaStoreFindInstalled(id)) {   // no manifest claimed this id in pass 1
+          LuaInstApp& a = s_lua_inst[s_lua_inst_n];
+          snprintf(a.id, sizeof a.id, "%s", id);
+          snprintf(a.name, sizeof a.name, "%s", id);
+          snprintf(a.ver, sizeof a.ver, "dev");
+          s_lua_inst_n++;
+        }
       }
+      e.close();
     }
-    e.close();
+    dir.close();
   }
-  dir.close();
 }
 
 static const LuaInstApp* luaStoreFindInstalled(const char* id) {
