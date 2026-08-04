@@ -37016,6 +37016,9 @@ static void closeLuaStorePage() {
   s_luastore_list = nullptr;
   appPageEnd(&closeLuaStorePage);
   popupClose(&s_luastore_root);
+  // The drawer underneath was built BEFORE any install/remove done in here —
+  // rebuild it so new tiles appear (and removed ones vanish) immediately.
+  if (s_appdrawer_root) { closeAppDrawer(); openAppDrawer(); }
 }
 
 static void luaStoreParseCatalog() {
