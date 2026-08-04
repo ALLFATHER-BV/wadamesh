@@ -22979,12 +22979,10 @@ static void makeChatList(lv_obj_t* tab, LvChatPanel& p, bool channel_mode, bool 
   styleSurface(tab, COLOR_BG, 0);
   lv_obj_set_style_pad_all(tab, 0, LV_PART_MAIN);
 
-  // Inbox/overview tab: the [+ add | ✓ mark-read | QR share] actions live in the
-  // global status bar, which goes DOUBLE height on this overview (see
-  // updateGlobalStatusBar / g_statusbar.inbox_*). The bar's lower row is a glass strip,
-  // so the list fills the whole tab and just INSETS its top by that row height — rows
-  // rest below the bar but scroll UNDER the glass like the chat bubbles do. (Channel
-  // detail panels get no inset.)
+  // Inbox/overview tab: the [+ add | ✓ mark-read | QR share] actions normally live in
+  // a second status-bar row, so the list needs one row of top inset. Pager puts those
+  // compact actions in the regular status row instead; reserving the old second row
+  // there leaves a full chat-row-sized hole above the first thread.
   p.list_cont = lv_list_create(tab);
   lv_obj_set_size(p.list_cont, tabContentW(), tabContentH());
   lv_obj_set_pos(p.list_cont, 0, 0);
@@ -22994,7 +22992,9 @@ static void makeChatList(lv_obj_t* tab, LvChatPanel& p, bool channel_mode, bool 
   // Inset the top so the FIRST row rests just below the tall bar (the inbox opens at the
   // top, unlike the chat which opens at the bottom). Older rows still scroll UP under the
   // glass lower row — and now read through it because the rows are a visible grey.
+#if !defined(TLORA_PAGER)
   if (inbox_combined) lv_obj_set_style_pad_top(p.list_cont, STATUSBAR_H, LV_PART_MAIN);
+#endif
   lv_obj_set_style_pad_row(p.list_cont, 1, LV_PART_MAIN);
   lv_obj_add_event_cb(p.list_cont, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
 }
@@ -39773,7 +39773,8 @@ static void updateGlobalStatusBar() {
   // ---- Double-height bar driver (edge-triggered) ----
   // The bar goes 2× tall for (a) settings detail pages, (b) the chat/channel OVERVIEW
   // (lower row = [+ ✓ QR] actions), and (c) an OPEN chat (lower row = thread name, cog
-  // centred across both rows).
+  // centred across both rows). Pager's compact overview actions share the regular top
+  // row, so its overview stays single-height.
   // An open app/tool page (the reader, RF Monitor, …) takes over the bar even when a
   // chat is still open underneath it, so suppress chat-mode chrome (the cog + back
   // chevron + centred title) then — otherwise they sit over the page's "‹ title" and
@@ -39781,7 +39782,11 @@ static void updateGlobalStatusBar() {
   const bool chat_open      = (s_chat_title[0] != '\0') && !s_apppage_title;
   const bool inbox_overview = (getActiveTab() == CHAT_INBOX_TAB_INDEX) && !chat_open && (s_settings_open_cat < 0) && !s_apppage_title;
   {
+#if defined(TLORA_PAGER)
+    const bool want_tall = (s_settings_open_cat >= 0) || (s_apppage_title && !s_apppage_slim) || chat_open;
+#else
     const bool want_tall = (s_settings_open_cat >= 0) || (s_apppage_title && !s_apppage_slim) || inbox_overview || chat_open;
+#endif
     if (want_tall != s_statusbar_tall) statusBarSetTall(want_tall);
     // Glass lower row on EVERY double-height bar (settings detail, inbox/chat overview,
     // open chat) so the tall bar looks consistent everywhere it appears. Switch the
