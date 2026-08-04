@@ -19177,9 +19177,11 @@ static bool fmCopyFile(fs::FS* sf, const char* sp, fs::FS* df, const char* dp) {
   if (!in) return false;
   File out = df->open(dp, "w");
   if (!out) { in.close(); return false; }
-  static uint8_t* buf = nullptr;   // copy scratch — lazy PSRAM (internal fallback): ~2 KB off internal DRAM
-  if (!buf) { buf = (uint8_t*)heap_caps_malloc(2048, MALLOC_CAP_SPIRAM);
-              if (!buf) buf = (uint8_t*)heap_caps_malloc(2048, MALLOC_CAP_8BIT); }
+  // Copy scratch, lazily allocated once. MUST be internal DMA-capable RAM: a
+  // destination on SD DMAs straight out of this buffer, and PSRAM as a DMA source
+  // short-writes at a random offset (same defect as the SD firmware download).
+  static uint8_t* buf = nullptr;
+  if (!buf) buf = (uint8_t*)heap_caps_malloc(2048, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
   if (!buf) { out.close(); in.close(); return false; }
   bool ok = true;
   int n;
@@ -24416,9 +24418,8 @@ static void luaStoreFetchLangCatalogWorker(WiFiClient& client, HTTPClient& http)
     s_langcat_buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!s_langcat_buf) return;
   s_langcat_buf[0] = 0;
-  int ln = luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/langs.json",
-                           s_langcat_buf, kCap);
-  Serial.printf("[LANGCAT] n=%d\n", ln);
+  luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/langs.json",
+                  s_langcat_buf, kCap);
 }
 
 // Chunked writer through an internal bounce buffer, tolerant of transient
@@ -24779,10 +24780,17 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
   SD.remove(path);                       // refresh any stale copy of the same tag
   File f = SD.open(path, FILE_WRITE);
   if (!f) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD open failed"); http.end(); s_sdfw_state = 3; return; }
-  // Copy buffer off the worker's ~8 KB stack: PSRAM preferred, small DRAM fallback.
-  size_t bufsz = 8192;
-  uint8_t* buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (!buf) { bufsz = 2048; buf = (uint8_t*)malloc(bufsz); }
+  // The copy buffer MUST be internal DMA-capable RAM, NOT PSRAM. f.write() hands
+  // the pointer down to SD/SPI, which DMAs from it; a PSRAM source is not reliably
+  // DMA-capable, so the write commits fewer bytes than asked and the transfer dies
+  // at a random offset — this is the "SD write failed" at 1-7% that three T-Decks
+  // reported, and it has been broken since the feature landed in beta_36. The tile
+  // cache never hit it because it copies through a 1 KB *stack* buffer; the .lang
+  // installer did hit it and is fixed the same way (see langWriteAll).
+  // Do NOT "optimise" this back onto PSRAM to save internal heap.
+  size_t bufsz = 4096;
+  uint8_t* buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+  if (!buf) { bufsz = 1024; buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_DMA | MALLOC_CAP_8BIT); }
   if (!buf) { f.close(); http.end(); snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "out of memory"); s_sdfw_state = 3; return; }
   auto* st = http.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
   int received = 0;
@@ -24802,11 +24810,30 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
       continue;
     }
     last_data = millis();
-    if ((int)f.write(buf, (size_t)n) != n) {
+    // A busy card can legitimately commit a short write; push the remainder
+    // rather than declaring failure on the first one (four dead attempts in a
+    // row means the card really is gone).
+    int put = 0, stalls = 0;
+    while (put < n) {
+      const size_t w = f.write(buf + put, (size_t)(n - put));
+      if (!w) {
+        if (++stalls > 3) break;
+        vTaskDelay(pdMS_TO_TICKS(50));
+        continue;
+      }
+      stalls = 0;
+      put += (int)w;
+    }
+    if (put != n) {
       snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD write failed"); ok = false; break;
     }
     received += n;
     s_sdfw_pct = (int)((uint64_t)received * 100 / (uint64_t)len);
+    // Feed the IDLE task every chunk. read()'s internal yield only runs equal-
+    // priority tasks, and a ~3 MB download over a fast link spins this loop hot
+    // for long enough to starve the task watchdog — the same trap the tile
+    // fetcher documents a few hundred lines down.
+    vTaskDelay(1);
   }
   free(buf);
   f.close();
@@ -28844,8 +28871,9 @@ static bool crashDumpExport(char* out_path, size_t out_cap) {
   File f = dst->open(path, "w");
   if (!f) return false;
 
-  uint8_t* buf = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
-  if (!buf) buf = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_8BIT);
+  // Internal DMA-capable RAM, not PSRAM — the dump lands on SD/SD_MMC, which
+  // DMAs from this buffer (see the SD firmware download for the full write-up).
+  uint8_t* buf = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
   if (!buf) { f.close(); return false; }
   bool ok = true; size_t off = 0;
   while (off < size) {
