@@ -37002,7 +37002,21 @@ static void luaStoreInvalidateInstalled();
 static bool s_lua_inst_valid = false;   // cache flag: the /apps listing is SD I/O
 static void luaStoreInvalidateInstalled() { s_lua_inst_valid = false; }
 
-static void luaStoreScanInstalled(bool force) {
+#if CAP_BUILTIN_LUA_APPS
+#include "lua_builtin.h"   // generated: the catalog's apps, compiled in
+// Source for a seeded app, or nullptr when the id is not one of the built-ins.
+static const char* luaBuiltinSrc(const char* id) {
+  for (int i = 0; i < kLuaBuiltinCount; i++)
+    if (strcmp(kLuaBuiltin[i].id, id) == 0) return kLuaBuiltin[i].src;
+  return nullptr;
+}
+#else
+static const char* luaBuiltinSrc(const char*) { return nullptr; }
+#endif
+
+// The filesystem half of the scan; luaStoreScanInstalled() wraps it and then
+// seeds the compiled-in apps, so those exist even when storage is absent.
+static void luaStoreScanInstalledFs(bool force) {
   if (!luaStoreTablesReady()) return;   // default arg on the fwd decl (worker side)
   if (s_lua_inst_valid && !force) return;   // cached — the drawer opens without touching the card
   s_lua_inst_n = 0;
@@ -37053,6 +37067,24 @@ static void luaStoreScanInstalled(bool force) {
     }
     dir.close();
   }
+}
+
+static void luaStoreScanInstalled(bool force) {
+  if (s_lua_inst_valid && !force) return;
+  luaStoreScanInstalledFs(force);
+#if CAP_BUILTIN_LUA_APPS
+  // Seed AFTER the scan so a downloaded copy keeps its own entry and version;
+  // the built-in only fills a gap. Runs even with no filesystem, which is the
+  // whole point on a board that cannot depend on the Store.
+  const int kMaxInst = (int)(sizeof(s_lua_inst) / sizeof(s_lua_inst[0]));
+  for (int b = 0; b < kLuaBuiltinCount && s_lua_inst_n < kMaxInst; b++) {
+    if (luaStoreFindInstalled(kLuaBuiltin[b].id)) continue;
+    LuaInstApp& a = s_lua_inst[s_lua_inst_n++];
+    snprintf(a.id,   sizeof a.id,   "%s", kLuaBuiltin[b].id);
+    snprintf(a.name, sizeof a.name, "%s", kLuaBuiltin[b].name);
+    snprintf(a.ver,  sizeof a.ver,  "%s", kLuaBuiltin[b].ver);
+  }
+#endif
 }
 
 static const LuaInstApp* luaStoreFindInstalled(const char* id) {
@@ -38138,7 +38170,8 @@ static void appTileCb(lv_event_t* e) {
   if (s_tile_lp_fired) { s_tile_lp_fired = false; return; }   // release-click after a long press
   if (act >= APPACT_LUA_BASE && act < APPACT_LUA_BASE + s_lua_inst_n) {
     const LuaInstApp& a = s_lua_inst[act - APPACT_LUA_BASE];
-    luaAppLaunchFile(a.id, a.name, nullptr, 0);
+    const char* emb = luaBuiltinSrc(a.id);   // file-first; this is the fallback
+    luaAppLaunchFile(a.id, a.name, emb, emb ? strlen(emb) : 0);
     return;
   }
 #endif

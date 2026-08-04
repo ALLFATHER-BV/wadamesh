@@ -276,3 +276,15 @@
     #define CAP_BUILTIN_LANGS 0
   #endif
 #endif
+
+// Ship the catalog's Lua apps inside the image (lua_builtin.h, generated from
+// out/firmware/apps/) so a board that cannot reach the Lua Store still has
+// them in the drawer. A downloaded <data>/apps/<id>.lua always wins, because
+// luaAppLaunchFile() is file-first. Costs ~10 KB of FLASH, no RAM.
+#ifndef CAP_BUILTIN_LUA_APPS
+  #if defined(HELTEC_LORA_V4_TFT) || defined(HELTEC_LORA_V4)
+    #define CAP_BUILTIN_LUA_APPS 1
+  #else
+    #define CAP_BUILTIN_LUA_APPS 0
+  #endif
+#endif
