@@ -24379,7 +24379,7 @@ static int s_langcat_n = 0;                  // 0 = not fetched, -1 = fetch fail
 static char* s_langcat_buf = nullptr;        // langs.json (PSRAM, worker-filled)
 static volatile bool s_langcat_request = false, s_langcat_done = false;
 static volatile bool s_langdl_request = false, s_langdl_done = false;
-static bool s_langdl_ok = false;
+static volatile bool s_langdl_ok = false;   // volatile: written on the worker, read at poll
 static char s_langdl_code[12];
 static char s_langdl_ver[8];                 // catalog ver -> immutable /lang/<ver>/ URL ("" = resolve on the worker)
 static bool s_langdl_reboot = false;         // an explicit Update of the ACTIVE language reboots on success
@@ -24427,7 +24427,20 @@ static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
     luaHostAppPath(path, sizeof path, rel);
     File f = fs->open(path, "w");
     opened = (bool)f;
-    if (f) { wr = f.write((const uint8_t*)buf, n); ok = (wr == (size_t)n); f.close(); }
+    if (f) {
+      // Chunked: one big f.write can return a SHORT count on FAT without any
+      // error — which looked like "Download failed" while the file was in fact
+      // (mostly) written. Loop until done; only a zero-progress write is fatal.
+      while (wr < (size_t)n) {
+        size_t step = (size_t)n - wr;
+        if (step > 8192) step = 8192;
+        size_t w = f.write((const uint8_t*)buf + wr, step);
+        if (!w) break;
+        wr += w;
+      }
+      f.close();
+      ok = (wr == (size_t)n);
+    }
   }
   Serial.printf("[LANGDL] %s n=%d open=%d wr=%u ok=%d\n", url, n, (int)opened, (unsigned)wr, (int)ok);
   heap_caps_free(buf);

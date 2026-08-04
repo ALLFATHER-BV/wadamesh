@@ -32,14 +32,16 @@ def source_keys():
     for f in glob.glob(os.path.join(ROOT, 'src/ui-touch/*.cpp')) + \
              glob.glob(os.path.join(ROOT, 'src/ui-touch/*.h')):
         src = open(f, encoding='utf-8').read()
-        for m in re.finditer(r'TR\(\s*((?:"(?:[^"\\]|\\.)*"\s*)+)\)', src):
+        # An optional LV_SYMBOL_* macro may precede the literal: TR(LV_SYMBOL_OK "  Text").
+        # Requiring the group to START with a quote silently skipped every such
+        # call - the audit's worst blind spot (the sheet rows never got checked).
+        for m in re.finditer(r'TR\(\s*((?:LV_SYMBOL_[A-Z0-9_]+\s+)?(?:"(?:[^"\\]|\\.)*"\s*)+)\)', src):
             parts = re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(1))
             k = unescape_c(''.join(parts))
-            # strip icon-glyph prefixes the same way TR() does at runtime
-            i = 0
-            while i + 2 < len(k) and k[i] in '' or (i < len(k) and 0xE000 <= ord(k[i]) <= 0xF8FF):
-                i += 1
-            k = k[i:].lstrip(' ') if i else k
+            # strip icon glyphs + their spacer, exactly as TR() does at runtime
+            while k and 0xE000 <= ord(k[0]) <= 0xF8FF:
+                k = k[1:]
+            k = k.lstrip(' ')
             if k.strip():
                 keys.add(k)
     keys |= {"Apps", "Built-in", "Languages"}   # TR(kStoreTabs[t])
