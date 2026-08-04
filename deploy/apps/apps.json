@@ -1,7 +1,5 @@
 {"apps":[
   {"id":"monitor","name":"RF Monitor","ver":"1.3","desc":"Scrollable: RSSI/noise chart with dBm axis, link margin, RX rate, radio params, heard feed."},
   {"id":"airtime","name":"Airtime","ver":"1.3","desc":"Utilization bars with a % axis, rx/tx split, duty ceiling, budget. Reset button top-right."},
-  {"id":"nodes","name":"Nodes","ver":"1.0","desc":"Who is on the mesh, sorted by last heard, with freshness colours."},
-  {"id":"snake","name":"Snake","ver":"1.0","desc":"The classic, in Lua. Swipe to steer."},
-  {"id":"breakout","name":"Breakout","ver":"1.0","desc":"Clear the bricks. Drag or swipe to steer the paddle."}
+  {"id":"snake","name":"Snake","ver":"1.0","desc":"The classic, in Lua. Swipe to steer."}
 ]}
