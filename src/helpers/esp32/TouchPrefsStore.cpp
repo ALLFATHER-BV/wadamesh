@@ -224,6 +224,9 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
         if (stored_version < 45) s_cfg.retry_echo = 0;    // v45: correctly appended auto-retry preference; opt-in per user feedback
+        // v45 also lands Hungarian INSERTED at UiLang slot 1 (#227), which shifts every
+        // stored non-English choice by one. Remap once; RO (old max 12) becomes 13.
+        if (stored_version < 45 && s_cfg.ui_lang >= 1 && s_cfg.ui_lang <= 12) s_cfg.ui_lang += 1;
         if (stored_version < 34) s_cfg.web_mirror = 0;    // new trailing field: web control panel off by default (opt-in remote control)
         if (stored_version < 35) s_cfg.remote_mode = 0;   // new trailing field: remote mode off by default (opt-in, reboots to apply)
         if (stored_version < 36) s_cfg.remote_landscape = 0;
