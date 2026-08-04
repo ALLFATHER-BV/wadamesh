@@ -33072,11 +33072,11 @@ static void refreshContactsList() {
   //   line 1: the full name (one line, dot-ellipsized — never scrolls)
   //   line 2: heard-age and distance, small + dim under the name
   const int  name_line_h_row = lv_font_get_line_height(&g_font_14);
-#if defined(TLORA_PAGER)
-  const int  ROW_H   = 5 + name_line_h_row + 2 + lv_font_get_line_height(&g_font_12) + 5;
-#else
+  // The Pager is in the wide, single-line column layout. Keep its original
+  // compact row geometry even when the UI-size preset selects larger fonts;
+  // stacking the name and metadata line heights here reserved a second line
+  // that the wide layout never draws.
   const int  ROW_H   = mid_cols ? 46 : 34;
-#endif
   const int  row2_y  = 5 + name_line_h_row + 2;          // line 2 top (below the name line)
   int        name_w  = heard_x - name_x - 6;
   if (name_w < 50) name_w = 50;
