@@ -25590,8 +25590,8 @@ static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
   // microSD-tile mode: fetch missing tiles only when the cache lives ON the card
   // (s_tile_fs == &SD) — then downloads merge into the SD library (#20). Without an
   // SD-backed cache, stay read-only/offline as before. (WiFi-down guard below still
-  // keeps it fully offline when there's no link.) SD exists only on the T-Deck build;
-  // elsewhere s_tiles_from_sd is always false, so the simple guard is equivalent.
+  // keeps it fully offline when there's no link.) This applies to the T-Deck and Pager;
+  // boards without SD keep s_tiles_from_sd false, so the simple guard is equivalent.
   // The SD-pack offline mode is OSM-only; topo has no SD packs, so it always
   // fetches from the proxy regardless of the microSD-tiles setting.
 #if CAP_SD || defined(TLORA_PAGER)
@@ -46027,9 +46027,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     _sensors->setSettingValue("gps", "1");
   }
 #if defined(TLORA_PAGER)
-  // T-Deck's portable preference has no matching Pager toggle (CAP_SD=0).
-  // Ignore it here: the Pager still uses SD as its automatic cache fallback,
-  // but a card moved from a T-Deck cannot silently disable all online fetches.
+  // Start the Pager in server/cache mode on every boot. Its runtime SD-tile
+  // switch is intentionally not persistent yet, so a card moved from a T-Deck
+  // cannot silently disable all online fetches.
   s_tiles_from_sd = false;
 #else
   s_tiles_from_sd = touchPrefsGetTilesFromSd();   // map tile source: server (default) vs microSD
