@@ -1344,8 +1344,8 @@ struct GlobalStatusBar {
   lv_obj_t* chan_gear;      // channel-settings gear, left of the thread name (channels only)
   lv_obj_t* sig_bars[4];    // mesh signal-strength bars (lit count = last-heard SNR)
   lv_obj_t* sig_box;        // container holding sig_bars (slides over when charging hides the %)
-  lv_obj_t* inbox_add;      // chat/channel-overview actions, shown in the lower row of the
-  lv_obj_t* inbox_mark;     // DOUBLE-height bar (only on the overview): [+ add | ✓ read | QR]
+  lv_obj_t* inbox_add;      // chat/channel-overview actions: [+ add | ✓ read | QR]
+  lv_obj_t* inbox_mark;
   lv_obj_t* inbox_qr;
   lv_obj_t* chat_back;      // "‹" affordance shown while in a chat (tap the bar = close)
   lv_obj_t* fade;           // glass backdrop for the lower row in a chat/overview: top-row solid,
@@ -40044,10 +40044,10 @@ static void buildGlobalStatusBar() {
     }
   }
 
-  // Chat/channel-OVERVIEW actions: live in the LOWER row of the double-height bar,
-  // right-aligned [+ add | ✓ mark-read | QR share]. Hidden by default; shown only on
-  // the overview (updateGlobalStatusBar). y sits in the extra row (below STATUSBAR_H),
-  // so they're off-screen while the bar is normal height — and they're hidden anyway.
+  // Chat/channel-OVERVIEW actions: [+ add | ✓ mark-read | QR share]. Hidden by
+  // default and shown only on the overview (updateGlobalStatusBar). Most square
+  // panels centre them across the double-height bar; Pager keeps them aligned
+  // with the first-row status cluster so the compact header reads as one row.
   {
     // LEFT-aligned group. ~70% of the double-bar height so there's breathing room
     // above/below; soft rounded corners + a dimmer edge so they don't pop.
@@ -40058,10 +40058,10 @@ static void buildGlobalStatusBar() {
     const lv_coord_t BY = SB_TOP_PAD + SB_ROW + (SB_ROW - BH) / 2;
 #elif defined(TLORA_PAGER)
     // Match the compact status cluster instead of spanning most of the two-row
-    // header. All three actions, including the QR image button, live wholly in
-    // the lower 22-px row and keep identical 26x20 containers.
+    // header. Keep all three actions in the first status-bar row, sharing its
+    // vertical centreline with the clock and connection/battery indicators.
     const lv_coord_t BH = 20, BW = 26, GAP = 3, BX0 = 6;
-    const lv_coord_t BY = STATUSBAR_H + (STATUSBAR_H - BH) / 2;
+    const lv_coord_t BY = (STATUSBAR_H - BH) / 2;
 #else
     const lv_coord_t BH = (lv_coord_t)((STATUSBAR_H * 2 - 4) * 7 / 10);
     const lv_coord_t BW = 34, GAP = 4, BX0 = 6, BY = (lv_coord_t)(STATUSBAR_H * 2 - BH) / 2;
@@ -40091,6 +40091,7 @@ static void buildGlobalStatusBar() {
     g_statusbar.inbox_qr   = mk(2);   // rightmost — share QR
     lv_obj_add_event_cb(g_statusbar.inbox_qr, shareMyContactBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* qimg = lv_img_create(g_statusbar.inbox_qr); lv_img_set_src(qimg, &qr_icon_dsc);
+      lv_img_set_zoom(qimg, 228);   // baked 18 px glyph -> 16 px, matching uiChromeFont()
       lv_obj_set_style_img_recolor(qimg, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_set_style_img_recolor_opa(qimg, LV_OPA_COVER, LV_PART_MAIN); lv_obj_center(qimg); }
   }
