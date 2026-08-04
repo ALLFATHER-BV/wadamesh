@@ -19070,11 +19070,11 @@ static void fmHideFormatOverlay() {
 // Confirm callback: paint the formatting notice, then defer the (blocking)
 // f_mkfs to UITask::loop so the notice is on-screen before the loop freezes.
 static void fmSdDoFormat() {
-#if defined(HAS_TDECK_GT911)
   // f_mkfs rewrites the volume under every open handle, and the SD.end() that
   // precedes it unregisters the pdrv those handles point at. Never start that
   // while an SD consumer is live — the tile worker can own an open File for a
-  // whole download — so apply the same gate the Pager factory reset uses.
+  // whole download — so apply the same gate on every board that carries the
+  // deferred formatter below (T-Deck, ThinkNode M9, and Heltec V4-R8).
   if (sdRuntimeLifecycleBusy()) {
     if (g_lv.task)
       g_lv.task->showAlert(TR("SD is busy - close tools and retry"), 2600);
@@ -19085,14 +19085,6 @@ static void fmSdDoFormat() {
                     "Do NOT power off, disconnect,\nor remove the card.\n\n"
                     "This can take up to a minute...");
   s_sd_format_pending = 2;
-#else
-  // Only the T-Deck build carries the deferred f_mkfs executor in UITask::loop.
-  // Arming the countdown anywhere else parked sdHealthTick on its
-  // s_sd_format_pending guard for the rest of the boot, silently disabling
-  // wedge detection and remount, and never actually formatted anything.
-  if (g_lv.task)
-    g_lv.task->showAlert(TR("SD format isn't available on this device"), 2600);
-#endif
 }
 // Tap on an unmounted SD row: try to mount, and if the card is unreadable
 // (e.g. exFAT, which this build can't read — only FAT16/FAT32) offer to format.
@@ -25741,8 +25733,10 @@ static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len, int* out_w
 // function just reads bytes — decode happens later in
 // decodeJpegToRgb565 (which is a misnomer now; it handles both).
 static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
-                         uint8_t** out_data, size_t* out_len) {
+                         uint8_t** out_data, size_t* out_len,
+                         bool* out_repairable_cache) {
 #if defined(ESP32)
+  if (out_repairable_cache) *out_repairable_cache = false;
   // Format support:
   //   • JPEG (.jpg)  — decoded by SJPG/TJpgDec straight to RGB565 in stripes (cheap).
   //                    The LittleFS online cache stores ONLY .jpg (the tiles.wadamesh.com
@@ -25808,11 +25802,16 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     // re-queues a fresh fetch — same contract as the generic cache path, and
     // still never applied to the read-only packs.
     if (sd_writable_cache &&
-        (nsd < 3 || bufsd[0] != 0xFF || bufsd[1] != 0xD8 || bufsd[2] != 0xFF)) {
+        (nsd < 4 || bufsd[0] != 0xFF || bufsd[1] != 0xD8 || bufsd[2] != 0xFF ||
+         bufsd[nsd - 2] != 0xFF || bufsd[nsd - 1] != 0xD9)) {
       lvglPsramFree(bufsd);
       SD.remove(path);
+#if defined(MULTI_TRANSPORT_COMPANION)
+      tileFetchForget(z, x, y);
+#endif
       return false;
     }
+    if (out_repairable_cache) *out_repairable_cache = sd_writable_cache;
     *out_data = bufsd; *out_len = szsd;
     return true;
   }
@@ -25846,19 +25845,26 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     n += (size_t)r;
   }
   f.close();
-  // Reject a cached tile whose header isn't a JPEG SOI — a garbled/partial download that slipped
-  // through decodes to a blank/half "twilight zone" tile otherwise. This generic path is the writable
-  // /tiles download cache; standard read-only /maps/osm packs return from the SD-pack branch above.
-  if (n < 3 || buf[0] != 0xFF || buf[1] != 0xD8 || buf[2] != 0xFF) {
+  // Reject a cached tile without both JPEG framing markers — a garbled/partial
+  // download can retain its SOI while losing the EOI and otherwise decode to a
+  // blank/half "twilight zone" tile. This generic path is the writable /tiles
+  // download cache; standard read-only /maps/osm packs return above.
+  if (n < 4 || buf[0] != 0xFF || buf[1] != 0xD8 || buf[2] != 0xFF ||
+      buf[n - 2] != 0xFF || buf[n - 1] != 0xD9) {
     lvglPsramFree(buf);
     tileCacheRemove(path);
+#if defined(MULTI_TRANSPORT_COMPANION)
+    tileFetchForget(z, x, y);
+#endif
     return false;
   }
+  if (out_repairable_cache) *out_repairable_cache = true;
   *out_data = buf;
   *out_len  = n;
   return true;
 #else
   (void)z; (void)x; (void)y; (void)out_data; (void)out_len;
+  (void)out_repairable_cache;
   return false;
 #endif
 }
@@ -26176,7 +26182,9 @@ static void renderMapTiles() {
     if (!dst->rgb565) { ++n_missing; continue; }   // no buffer available this pass
     uint8_t* jpeg = nullptr;
     size_t   jlen = 0;
-    if (!loadTileJpeg(s_map_zoom, wanted[i].tx, wanted[i].ty, &jpeg, &jlen)) {
+    bool repairable_cache = false;
+    if (!loadTileJpeg(s_map_zoom, wanted[i].tx, wanted[i].ty,
+                      &jpeg, &jlen, &repairable_cache)) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       // Tile not on disk — queue an OSM download if Wi-Fi is up. No-op
       // when offline; if/when Wi-Fi comes up later, the next render
@@ -26195,7 +26203,21 @@ static void renderMapTiles() {
                      ? decodePngToRgb565(jpeg, jlen, &dw, &dh, dst->rgb565, kTileBufBytes)
                      : decodeJpegScaledToRgb565(jpeg, jlen, &dw, &dh, 256, dst->rgb565, kTileBufBytes);
     lvglPsramFree(jpeg);
-    if (!rgb) { ++n_missing; continue; }   // decode failed; buffer kept for reuse
+    if (!rgb) {
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      if (repairable_cache) {
+        char bad_path[48];
+        snprintf(bad_path, sizeof(bad_path), "%s/%u/%ld/%ld.jpg",
+                 mapTileRoot(), (unsigned)s_map_zoom,
+                 (long)wanted[i].tx, (long)wanted[i].ty);
+        tileCacheRemove(bad_path);
+        tileFetchForget(s_map_zoom, wanted[i].tx, wanted[i].ty);
+        queueTileForFetch(s_map_zoom, wanted[i].tx, wanted[i].ty);
+      }
+#endif
+      ++n_missing;
+      continue;   // decode failed; buffer kept for reuse
+    }
     // Night mode: invert the decoded RGB565 in place (render-only — the on-disk
     // tile is untouched). ~p flips all three channels; light maps go dark.
     if (s_map_night) {
