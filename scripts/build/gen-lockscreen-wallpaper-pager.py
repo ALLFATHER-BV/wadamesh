@@ -3,9 +3,9 @@
 """Regenerate the T-Pager lock wallpaper from the shared lock artwork.
 
 The Pager uses a native 480x222 wallpaper so LVGL does not enlarge and crop the
-shared 320x240 image.  This script preserves the Pager's existing background
-and replaces its left-hand artwork with a deterministic transform of the shared
-wallpaper.  No source artwork or font rendering is recreated here.
+shared 320x240 image.  This script derives both the native-height background
+and the left-hand artwork from that shared wallpaper.  No source artwork or
+font rendering is recreated here.
 """
 
 from __future__ import annotations
@@ -23,12 +23,6 @@ PAGER_HEIGHT = 222
 ART_SCALE = 0.9
 ART_OFFSET_X = -42.0
 ART_OFFSET_Y = 26.0
-
-# Clear both the old and replacement artwork before compositing.  The right
-# side of the Pager image is artwork-free and supplies its background pixels.
-COMPOSITE_X_END = 212
-COMPOSITE_Y_START = 65
-PAGER_BACKGROUND_X = 280
 
 # The shared wallpaper has clean background margins on both sides.  RGB565
 # quantization varies individual pixels, so average both margins per row before
@@ -79,7 +73,10 @@ def rgb_to_rgb565(rgb: tuple[float, float, float]) -> int:
 
 def shared_foreground_delta(
     image: Rgb565Image,
-) -> list[tuple[float, float, float]]:
+) -> tuple[
+    list[tuple[float, float, float]],
+    list[tuple[float, float, float]],
+]:
     rgb = [rgb565_to_rgb(pixel) for pixel in image.pixels]
     margins = list(range(SHARED_BACKGROUND_MARGIN)) + list(
         range(image.width - SHARED_BACKGROUND_MARGIN, image.width)
@@ -100,7 +97,20 @@ def shared_foreground_delta(
             if max(abs(channel) for channel in difference) < BACKGROUND_NOISE_THRESHOLD:
                 difference = (0.0, 0.0, 0.0)
             delta.append(difference)
-    return delta
+    return row_background, delta
+
+
+def bilinear_row(
+    rows: list[tuple[float, float, float]], y: float
+) -> tuple[float, float, float]:
+    y = max(0.0, min(len(rows) - 1.0, y))
+    y0 = int(y)
+    y1 = min(len(rows) - 1, y0 + 1)
+    fraction = y - y0
+    return tuple(
+        rows[y0][channel] * (1.0 - fraction) + rows[y1][channel] * fraction
+        for channel in range(3)
+    )
 
 
 def bilinear_delta(
@@ -132,23 +142,15 @@ def bilinear_delta(
     )
 
 
-def compose(shared: Rgb565Image, pager: Rgb565Image) -> list[int]:
-    if pager.width != PAGER_WIDTH or pager.height != PAGER_HEIGHT:
-        raise ValueError(
-            f"Pager template is {pager.width}x{pager.height}; expected "
-            f"{PAGER_WIDTH}x{PAGER_HEIGHT}"
-        )
+def compose(shared: Rgb565Image) -> list[int]:
+    row_background, shared_delta = shared_foreground_delta(shared)
+    rgb: list[list[list[float]]] = []
 
-    shared_delta = shared_foreground_delta(shared)
-    pager_rgb = [rgb565_to_rgb(pixel) for pixel in pager.pixels]
-    output = list(pager.pixels)
-    clean_width = pager.width - PAGER_BACKGROUND_X
-
-    for y in range(COMPOSITE_Y_START, pager.height):
-        for x in range(COMPOSITE_X_END):
-            background = pager_rgb[
-                y * pager.width + PAGER_BACKGROUND_X + (x % clean_width)
-            ]
+    for y in range(PAGER_HEIGHT):
+        background_y = (y + 0.5) * shared.height / PAGER_HEIGHT - 0.5
+        background = bilinear_row(row_background, background_y)
+        row: list[list[float]] = []
+        for x in range(PAGER_WIDTH):
             source_x = (x - ART_OFFSET_X + 0.5) / ART_SCALE - 0.5
             source_y = (y - ART_OFFSET_Y + 0.5) / ART_SCALE - 0.5
             foreground = bilinear_delta(
@@ -158,9 +160,32 @@ def compose(shared: Rgb565Image, pager: Rgb565Image) -> list[int]:
                 source_x,
                 source_y,
             )
-            output[y * pager.width + x] = rgb_to_rgb565(
-                tuple(background[channel] + foreground[channel] for channel in range(3))
+            row.append(
+                [background[channel] + foreground[channel] for channel in range(3)]
             )
+        rgb.append(row)
+
+    # Re-quantize the completed composition once, diffusing error onto the
+    # display's actual 5/6/5 grid instead of introducing flat color bands.
+    output: list[int] = []
+    for y in range(PAGER_HEIGHT):
+        for x in range(PAGER_WIDTH):
+            old = rgb[y][x]
+            pixel = rgb_to_rgb565(tuple(old))
+            quantized = rgb565_to_rgb(pixel)
+            error = [old[channel] - quantized[channel] for channel in range(3)]
+            output.append(pixel)
+            for dx, dy, weight in (
+                (1, 0, 7.0 / 16.0),
+                (-1, 1, 3.0 / 16.0),
+                (0, 1, 5.0 / 16.0),
+                (1, 1, 1.0 / 16.0),
+            ):
+                next_x = x + dx
+                next_y = y + dy
+                if 0 <= next_x < PAGER_WIDTH and next_y < PAGER_HEIGHT:
+                    for channel in range(3):
+                        rgb[next_y][next_x][channel] += error[channel] * weight
     return output
 
 
@@ -194,7 +219,7 @@ def main() -> None:
         default=default_assets / "lockscreen_wallpaper_rgb565.h",
     )
     parser.add_argument(
-        "--pager",
+        "--output",
         type=Path,
         default=default_assets / "lockscreen_wallpaper_pager_rgb565.h",
     )
@@ -206,14 +231,13 @@ def main() -> None:
     args = parser.parse_args()
 
     shared = parse_rgb565_header(args.shared)
-    pager = parse_rgb565_header(args.pager)
-    generated = render_header(compose(shared, pager))
-    current = args.pager.read_text(encoding="utf-8")
+    generated = render_header(compose(shared))
+    current = args.output.read_text(encoding="utf-8") if args.output.exists() else ""
     if args.check:
         if current != generated:
-            raise SystemExit(f"{args.pager} is stale; regenerate it with this script")
+            raise SystemExit(f"{args.output} is stale; regenerate it with this script")
         return
-    args.pager.write_text(generated, encoding="utf-8")
+    args.output.write_text(generated, encoding="utf-8")
 
 
 if __name__ == "__main__":
