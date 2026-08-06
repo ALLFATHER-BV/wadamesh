@@ -1993,11 +1993,11 @@ static bool discoveredSweepHops() {
 static bool g_cap_touch_hw_started = false;
 
 // ---- LVGL draw buffer ----
-// 240x24 RGB565 = 11,520 bytes. Allocated in PSRAM at UITask::begin() so the
-// internal DRAM stays free for WiFi DMA buffers (esp_wifi_init needs ~50 KB
-// of DRAM; with the buffer + LVGL widgets in DRAM the device was OOM'ing as
-// soon as WiFi came up). PSRAM is slower than DRAM but the Adafruit ST7789
-// SPI driver reads the buffer linearly which the cache handles well.
+// 240x24 RGB565 = 11,520 bytes. The T-Pager keeps this in PSRAM so Wi-Fi +
+// NimBLE connection/security allocations retain enough contiguous internal
+// DRAM. Its ST7796 flush is synchronous TFT_eSPI::pushColors (no DMA), so the
+// external-RAM source is valid. Other boards retain the faster internal-DMA
+// allocation below unless it fails.
 //
 // 1.5x the original 240x16 size — modest bump to reduce setAddrWindow
 // round-trips without giving LVGL more headroom to over-invalidate.
@@ -4964,12 +4964,17 @@ static char          s_wifiscan_ssids[kWifiScanMax][WIFI_CONFIG_SSID_MAX];
 static volatile int  s_wifiscan_count   = 0;
 static volatile bool s_wifiscan_request = false;   // UI -> worker: scan now
 static volatile bool s_wifiscan_done    = false;   // worker -> UI: results ready
+#if defined(TLORA_PAGER)
+static bool          s_wifiscan_wait_for_radio = false; // main task must cold-start STA first
+static uint32_t      s_wifiscan_pager_guard_ms = 0;     // recover if worker never services request
+#endif
 // Scan-while-connected handshake (S3): the radio can't sweep reliably while
 // associated, so the MAIN task briefly drops the link before the worker scans and
 // rejoins after. All WiFi state changes happen on the main task (never the worker).
 static volatile bool s_wifiscan_drop_req       = false;  // UI -> main: drop link, then scan
 static bool          s_wifiscan_reconnect_after = false;  // main: rejoin once results land
 static uint32_t      s_wifiscan_drop_ms        = 0;      // main: disassoc-settle timer
+static uint32_t      s_wifiscan_guard_ms       = 0;      // main: cancel only an unclaimed scan
 // DEBUG: last wifiScanWatchdogSafe outcome (so the main-task list rebuild can log it).
 static volatile int16_t  s_swd_kick   = -9;
 static volatile int16_t  s_swd_st     = -9;
@@ -7892,12 +7897,43 @@ static void toggleTcpCb(lv_event_t* e) {
   refreshStatusLabels();
 }
 
+static bool bleEnableWaitingForWifi() {
+#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
+  return wifiConfigPagerWifiBlocksBle();
+#else
+  return false;
+#endif
+}
+
+static const char* bleEnableFailureText() {
+  if (bleEnableWaitingForWifi())
+    return TR("Bluetooth will start after Wi-Fi connects or times out.");
+  return TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first.");
+}
+
+// "The user wants BLE on", covering the Pager's queued-behind-Wi-Fi request as
+// well as a live stack. Scoped to the Pager on purpose: only UITask::enableBle()
+// records a pending request (wifiConfigSetBleEnabled(true) on the deferral
+// path), and only main.cpp retries one after association. Everywhere else
+// wifiConfigGetBleEnabled() is a plain persisted preference that DEFAULTS TO ON
+// and can sit true with no stack begun (the boot co-init heap guard, an OTA
+// release) — folding that in there would make the toggles read ON while BLE is
+// dead, and turn the first tap into "clear my preference" instead of "start it".
+static bool bleRequestedOrEnabled() {
+  bool requested = g_lv.task && g_lv.task->isBleEnabled();
+#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
+  requested = requested || wifiConfigGetBleEnabled();
+#endif
+  return requested;
+}
+
 static void toggleBleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task || !g_lv.task->hasBleCapability()) return;
-  if (g_lv.task->isBleEnabled()) {
+  const bool requested = bleRequestedOrEnabled();
+  if (requested) {
     g_lv.task->disableBle();
   } else if (!g_lv.task->enableBle()) {
-    g_lv.task->showAlert(TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first."), 2200);
+    g_lv.task->showAlert(bleEnableFailureText(), 2600);
     refreshStatusLabels();
     return;
   }
@@ -12857,7 +12893,7 @@ static void saveTransportWifiCb(lv_event_t* e) {
       return;
     }
     wifiConfigRequestApply();
-    g_lv.task->showAlert(TR("Wi-Fi saved, reconnecting"), 1400);
+    g_lv.task->showAlert(TR("Wi-Fi saved, applying"), 1400);
   } else {
     wifiConfigRequestApply();
     g_lv.task->showAlert(TR("Wi-Fi saved (radio off)"), 1400);
@@ -12987,24 +13023,35 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
 }
 
 // ----- Bluetooth settings page -----
-// Wi-Fi + BLE coexist now (NimBLE's host is light enough to share the ESP32-S3
-// internal heap with esp_wifi + LVGL), so this is a plain LIVE toggle of the BLE
-// radio — no reboot, and Wi-Fi is left untouched. State is persisted (ble_en).
+// Wi-Fi + BLE coexist once both stacks are allocated. Re-enabling a resident
+// stack is live; a cold Pager allocation restarts through setup's Wi-Fi-first
+// ordering. State is persisted (ble_en), and Wi-Fi is left enabled.
 // The pairing code is editable here (persisted to _prefs.ble_pin; applied at the
 // next boot, since the passkey is baked into serial_interface.begin()).
 static lv_obj_t* s_ble_pin_ta = nullptr;   // editable 6-digit pairing-code field on the BLE page
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-// Bluetooth enable switch: instant toggle (BLE on/off is live — enableBle() lazily brings
-// NimBLE up; no Save button, no reboot).
+// Bluetooth enable switch: resident BLE toggles live; enableBle() handles the
+// Pager's ordered-restart fallback for a cold stack. No Save button is needed.
 static void bleEnableSwitchCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
   if (!g_lv.task->hasBleCapability()) { g_lv.task->showAlert(TR("No Bluetooth on this device"), 1400); return; }
   const bool want = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  if (want == g_lv.task->isBleEnabled()) return;
+  const bool requested = bleRequestedOrEnabled();
+  if (want == requested) return;
   if (want) {
     if (!g_lv.task->enableBle()) {
-      lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);   // revert the switch
-      g_lv.task->showAlert(TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first."), 2200);
+      // A Pager request queued behind Wi-Fi is still ON as user intent. Keep it
+      // checked so a second tap can cancel; only a true refusal reverts to OFF.
+      // Other boards have no pending-request state, so a refusal always reverts.
+      bool still_requested = false;
+#if defined(TLORA_PAGER)
+      still_requested = wifiConfigGetBleEnabled();
+#endif
+      if (still_requested)
+        lv_obj_add_state(lv_event_get_target(e), LV_STATE_CHECKED);
+      else
+        lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);
+      g_lv.task->showAlert(bleEnableFailureText(), 2600);
       return;
     }
   } else {
@@ -13056,7 +13103,10 @@ static void buildBluetoothSettings() {
   const bool ble_cap_m = g_lv.task && g_lv.task->hasBleCapability();
   if (ble_active)
     lv_label_set_text(mode, wifi_on_m ? "Mode: BLE on (+ Wi-Fi)" : "Mode: BLE on");
-  else if (ble_cap_m && wifiConfigGetBleEnabled())
+  // "starting" only where something will actually act on the request later
+  // (the Pager's post-association retry). Elsewhere a saved-but-not-resident
+  // preference just means off, and one tap brings the stack up.
+  else if (ble_cap_m && bleRequestedOrEnabled())
     lv_label_set_text(mode, TR("Mode: BLE starting / low memory"));
   else
     lv_label_set_text(mode, wifi_on_m ? "Mode: BLE off (Wi-Fi on)" : "Mode: BLE off");
@@ -13117,7 +13167,10 @@ static void buildBluetoothSettings() {
   lv_obj_set_pos(sw_lbl, 2, y + 6);
   g_set_modal.wifi_sw = lv_switch_create(body);  // reuse the same slot — only one switch lives in a modal at a time
   lv_obj_align(g_set_modal.wifi_sw, LV_ALIGN_TOP_RIGHT, 0, y);   // flush right
-  if (ble_active) lv_obj_add_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
+  // Must be the SAME predicate bleEnableSwitchCb compares against, or its
+  // `want == requested` early-out swallows the first tap.
+  if (ble_active || bleRequestedOrEnabled())
+    lv_obj_add_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(g_set_modal.wifi_sw, bleEnableSwitchCb, LV_EVENT_VALUE_CHANGED, nullptr);  // instant toggle (BLE is live)
   y += SC(38);
   // No Save button — the enable switch toggles BLE live, and the pairing code auto-saves on blur.
@@ -13149,13 +13202,12 @@ static void doApplyWifi() {
   wifiConfigSetRadioEnabled(s_pending_wifi_radio_on);
   wifiConfigRequestApply();
 
-  // Wi-Fi and BLE coexist now (NimBLE shares the heap with esp_wifi), so the main
-  // loop brings esp_wifi up / down live in response to these prefs — exactly like
-  // the control-center Wi-Fi toggle. No reboot to switch transports any more,
-  // whatever the previous transport was.
+  // Credential changes apply live. Pager first releases resident NimBLE in the
+  // main loop, re-associates Wi-Fi, then recreates BLE after GOT_IP.
   if (g_lv.task)
-    g_lv.task->showAlert(s_pending_wifi_radio_on ? TR("Saved — reconnecting\xE2\x80\xA6")
-                                                 : TR("Wi-Fi saved (radio off)"), 1600);
+    g_lv.task->showAlert(
+        s_pending_wifi_radio_on ? TR("Saved — applying\xE2\x80\xA6")
+                                : TR("Wi-Fi saved (radio off)"), 1600);
   refreshStatusLabels();
 }
 
@@ -13281,9 +13333,8 @@ static void saveWifiCb(lv_event_t* e) {
     lv_obj_add_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
   }
   s_pending_wifi_was_wifi = wifiConfigWantsWifi();   // kept for status display; no longer gates a reboot
-  // Wi-Fi + BLE coexist (NimBLE), so applying creds is always a live operation —
-  // the main loop brings the radio up/down with the new settings. No reboot and
-  // no confirm prompt; just save and (re)connect.
+  // Save immediately. Pager's main loop preserves Wi-Fi -> BLE ordering with a
+  // live controller handoff rather than a reboot.
   doApplyWifi();
 }
 #endif
@@ -13383,6 +13434,38 @@ static void openWifiScanPopup() {
 // results instantly (if any) while the rescan lands. Shared by the Settings
 // Wi-Fi page, the setup wizard's Scan button, and the wizard's auto-scan on
 // arrival. Caller must have already confirmed wifiConfigWantsWifi() (radio up).
+static void wifiQueueScanWhenReady() {
+  if (wifiScanIsActive() ||
+      __atomic_load_n(&s_wifiscan_request, __ATOMIC_ACQUIRE) ||
+      s_wifiscan_drop_req || s_wifiscan_drop_ms != 0
+#if defined(TLORA_PAGER)
+      || s_wifiscan_wait_for_radio
+#endif
+     ) return;
+  ensureTileFetchTaskRunning();   // the worker idles out after 5 s — respawn it
+#if defined(TLORA_PAGER)
+  wifiScanSetActive(true);   // suppress main-loop reconnects for the whole sweep
+  s_wifiscan_pager_guard_ms = millis();
+  s_wifiscan_reconnect_after = false;
+  if ((WiFi.getMode() & WIFI_MODE_STA) == 0 || wifiConfigPagerWifiBlocksBle()) {
+    // The worker must never call esp_wifi_init. Ask the main-loop handoff to
+    // initialize STA, and release the scan only after the ordering phase ends.
+    s_wifiscan_wait_for_radio = true;
+    if ((WiFi.getMode() & WIFI_MODE_STA) == 0) {
+      s_wifiscan_reconnect_after = wifiConfigHasRuntime();
+      wifiConfigRequestApply();
+    }
+    return;
+  }
+#elif defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
+  wifiScanSetActive(true);
+  s_wifiscan_guard_ms = millis();
+  s_wifiscan_reconnect_after =
+      wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED;
+#endif
+  __atomic_store_n(&s_wifiscan_request, true, __ATOMIC_RELEASE);
+}
+
 static void wifiScanOpenAndKick() {
   hideKb();   // unbind the keyboard mirror so it can't later revert the picked SSID
   openWifiScanPopup();
@@ -13394,36 +13477,60 @@ static void wifiScanOpenAndKick() {
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
   }
-  ensureTileFetchTaskRunning();   // the worker idles out after 5 s — respawn it
-  s_wifiscan_request = true;
+  wifiQueueScanWhenReady();
 }
 
 // Mirror of the BLE-enable guard: bringing esp_wifi up needs ~50 KB free internal
 // heap, and with BLE already holding its share on a tight board the init fails
-// DEEP in the Wi-Fi state machine (main.cpp) where nothing reports it — the UI
-// toasted "Wi-Fi on" while the radio never came up. Refuse at the toggle instead,
-// symmetrically with UITask::enableBle(). Thresholds match the boot co-init guard.
-static bool wifiEnableGuardOk() {
+// DEEP in the Wi-Fi state machine (main.cpp) where nothing reports it. Pager
+// uses the live main-loop BLE handoff; the preflight remains for other boards.
+enum class WifiEnableGate : uint8_t { Ready, LowMemory };
+
+static WifiEnableGate wifiEnableGate() {
 #if defined(ESP32)
-  return ESP.getFreeHeap() >= 50u * 1024u && ESP.getMaxAllocHeap() >= 20u * 1024u;
+  // Once esp_wifi is initialized, a live off/on toggle does not need its large
+  // one-time DMA allocation. Apply the reserve only to a cold start.
+  if (WiFi.getMode() != WIFI_MODE_NULL) return WifiEnableGate::Ready;
+#if defined(TLORA_PAGER)
+  // The main loop releases NimBLE, allocates Wi-Fi, then recreates NimBLE live.
+  // Let that path make the authoritative allocation attempt and report failure.
+  return WifiEnableGate::Ready;
 #else
-  return true;
+  const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  const size_t freeh = heap_caps_get_free_size(internal_caps);
+  const size_t maxblk = heap_caps_get_largest_free_block(internal_caps);
+  if (freeh >= 50u * 1024u && maxblk >= 20u * 1024u) return WifiEnableGate::Ready;
+  Serial.printf("[wifi] cold start refused: free=%u maxblk=%u\n",
+                (unsigned)freeh, (unsigned)maxblk);
+  return WifiEnableGate::LowMemory;
+#endif
+#else
+  return WifiEnableGate::Ready;
 #endif
 }
 
+static bool wifiPrepareEnable(lv_obj_t* switch_to_revert = nullptr) {
+  const WifiEnableGate gate = wifiEnableGate();
+  if (gate == WifiEnableGate::Ready) return true;
+  if (gate == WifiEnableGate::LowMemory) {
+    if (switch_to_revert) lv_obj_clear_state(switch_to_revert, LV_STATE_CHECKED);
+    if (g_lv.task)
+      g_lv.task->showAlert(TR("Not enough free memory for Wi-Fi. Turn Bluetooth off first."), 2200);
+    return false;
+  }
+  return true;
+}
+
 // "Scan" button -> open the popup + queue a scan on the core-0 worker. If Wi-Fi
-// is off (BLE active), bring the radio up LIVE first — it coexists with NimBLE,
-// no reboot — then scan; the worker brings STA up and lists networks.
+// is off, prepare the radio first, then let the main loop initialize it before
+// the worker lists networks.
 static void wifiScanStartCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(MULTI_TRANSPORT_COMPANION)
   if (!wifiConfigWantsWifi()) {
-    if (!wifiEnableGuardOk()) {
-      if (g_lv.task) g_lv.task->showAlert(TR("Not enough free memory for Wi-Fi. Turn Bluetooth off first."), 2200);
-      return;
-    }
+    if (!wifiPrepareEnable()) return;
     wifiConfigSetRadioEnabled(true);   // wantsWifi() now true -> the scan worker can bring STA up
-    wifiConfigRequestApply();          // main loop brings esp_wifi up live (no reboot)
+    wifiConfigRequestApply();          // main loop applies the live Pager handoff
     if (g_lv.task) g_lv.task->showAlert(TR("Wi-Fi on, scanning\xE2\x80\xA6"), 1200);
   }
   wifiScanOpenAndKick();
@@ -13433,17 +13540,24 @@ static void wifiScanStartCb(lv_event_t* e) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 static void wifiRebuildNetworkList();   // fwd: reworked Wi-Fi page list (defined before buildWifiSettings)
 #endif
-// Kick a Wi-Fi scan from the UI (LVGL ctx — only sets flags, never calls WiFi). On
-// the S3, scanning while associated is unreliable, so if we're connected we ask the
-// MAIN task to drop the link first (wifiScanMainService); otherwise scan straight away.
+// Kick a Wi-Fi scan from the UI (LVGL ctx — only sets flags, never calls WiFi).
+// Most S3 targets get more reliable results by dropping an association first.
+// Pager keeps an established link intact because re-authenticating while NimBLE
+// is resident crosses its known-unsafe coexistence boundary; its scan is
+// best-effort while associated and never turns a page-open into a reboot.
 static void wifiKickScan() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  if (wifiScanIsActive() ||
+      __atomic_load_n(&s_wifiscan_request, __ATOMIC_ACQUIRE) ||
+      s_wifiscan_drop_req || s_wifiscan_drop_ms != 0) return;
   ensureTileFetchTaskRunning();
 #if defined(HAS_TANMATSU)
-  s_wifiscan_request = true;                         // esp-hosted C6 sweeps fine while associated
+  __atomic_store_n(&s_wifiscan_request, true, __ATOMIC_RELEASE); // esp-hosted C6 sweeps fine while associated
+#elif defined(TLORA_PAGER)
+  wifiQueueScanWhenReady();                          // main task owns any cold STA allocation
 #else
   if (WiFi.status() == WL_CONNECTED) s_wifiscan_drop_req = true;
-  else                               s_wifiscan_request = true;
+  else                               wifiQueueScanWhenReady();
 #endif
 #endif
 }
@@ -13453,9 +13567,6 @@ static void wifiKickScan() {
 // here (sequential with main.cpp's wifi loop on the same task — no worker race, and
 // never eraseap, which wedges this radio). Drop the link, let the disassoc settle,
 // then kick the worker; wifiScanService rejoins once results land.
-// Wall-clock deadline for the scan gate below (0 = not armed). See the recovery
-// branch in wifiScanMainService for why this exists.
-static uint32_t s_wifiscan_guard_ms = 0;
 static void wifiScanMainService() {
   if (s_wifiscan_drop_req) {
     s_wifiscan_drop_req = false;
@@ -13467,11 +13578,11 @@ static void wifiScanMainService() {
       s_wifiscan_guard_ms = millis();     // arm the stuck-gate deadline (recovery below)
       s_wifiscan_reconnect_after = true;
     } else {
-      s_wifiscan_request = true;          // already disconnected — scan now
+      wifiQueueScanWhenReady();            // already disconnected — establish scan ownership now
     }
   } else if (s_wifiscan_drop_ms && (uint32_t)(millis() - s_wifiscan_drop_ms) >= 400) {
     s_wifiscan_drop_ms = 0;
-    s_wifiscan_request = true;            // disassoc settled -> run the sweep
+    __atomic_store_n(&s_wifiscan_request, true, __ATOMIC_RELEASE); // disassoc settled -> run the sweep
   }
   // RECOVERY: opening the Wi-Fi page drops the link and raises the scan gate, which is
   // normally lowered in wifiScanService() once the worker reports s_wifiscan_done. But
@@ -13480,18 +13591,29 @@ static void wifiScanMainService() {
   // long tile/LOS/OTA job. If it never reports, the gate LATCHES: autoreconnect is off
   // and main.cpp's 10 s reconnect retry stays suppressed (main.cpp gates it on
   // !wifiScanIsActive()), so Wi-Fi never comes back until a reboot — a plausible source
-  // of "connects on a fresh flash, never reconnects after a reboot" (issue #171). The
-  // deadline is deliberately far longer than any legitimate sweep (the worker's own scan
-  // path allows several seconds plus retries) so this can only fire when the normal
-  // completion path is genuinely lost, never mid-scan.
+  // of "connects on a fresh flash, never reconnects after a reboot" (issue #171).
+  // Only cancel a request the worker has not claimed. Once the worker atomically
+  // consumes the request, its bounded scan owns the gate until normal completion;
+  // clearing it on a wall-clock guess would race esp_wifi_scan_start.
   if (s_wifiscan_guard_ms && wifiScanIsActive() &&
-      (uint32_t)(millis() - s_wifiscan_guard_ms) >= 30000UL) {
+      (uint32_t)(millis() - s_wifiscan_guard_ms) >= 60000UL) {
     s_wifiscan_guard_ms = 0;
-    s_wifiscan_reconnect_after = false;
-    s_wifiscan_drop_ms = 0;
-    wifiScanSetActive(false);             // un-gate main.cpp's reconnect retry
-    WiFi.setAutoReconnect(true);
-    wifiConfigRequestApply();             // re-begin with the stored cred (main task)
+    bool cancelled = false;
+    if (s_wifiscan_drop_ms != 0) {
+      s_wifiscan_drop_ms = 0;
+      cancelled = true;
+    }
+    if (__atomic_exchange_n(&s_wifiscan_request, false, __ATOMIC_ACQ_REL))
+      cancelled = true;
+    if (cancelled) {
+      const bool reconnect = s_wifiscan_reconnect_after;
+      s_wifiscan_reconnect_after = false;
+      wifiScanSetActive(false);           // un-gate main.cpp's reconnect retry
+#if !defined(TLORA_PAGER)
+      WiFi.setAutoReconnect(true);
+#endif
+      if (reconnect) wifiConfigRequestApply();
+    }
   }
 }
 #endif
@@ -13501,35 +13623,73 @@ static void wifiScanService() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
   wifiScanMainService();   // drive the drop-link-then-scan handshake (main task)
 #endif
+#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
+  if (s_wifiscan_wait_for_radio) {
+    const bool sta_ready = (WiFi.getMode() & WIFI_MODE_STA) != 0;
+    if (!wifiConfigWantsWifi()) {
+      s_wifiscan_wait_for_radio = false;
+      s_wifiscan_reconnect_after = false;
+      s_wifiscan_done = true;
+    } else if (sta_ready && !wifiConfigPagerWifiBlocksBle()) {
+      s_wifiscan_wait_for_radio = false;
+      __atomic_store_n(&s_wifiscan_request, true, __ATOMIC_RELEASE);
+    } else if (!sta_ready && wifiConfigPagerBleFallbackActive()) {
+      // main.cpp already reported the failed allocation and restored BLE.
+      s_wifiscan_wait_for_radio = false;
+      s_wifiscan_reconnect_after = false;
+      s_wifiscan_done = true;
+    }
+  }
+  // Cancel only a wait or queue entry the worker has not claimed. If the worker
+  // already atomically consumed the request, normal completion alone releases
+  // the scan gate; a timeout must never race its esp_wifi_scan_start call.
+  if (s_wifiscan_pager_guard_ms && wifiScanIsActive() &&
+      (uint32_t)(millis() - s_wifiscan_pager_guard_ms) >= 60000UL) {
+    s_wifiscan_pager_guard_ms = 0;
+    bool cancelled = s_wifiscan_wait_for_radio;
+    s_wifiscan_wait_for_radio = false;
+    if (__atomic_exchange_n(&s_wifiscan_request, false, __ATOMIC_ACQ_REL))
+      cancelled = true;
+    if (cancelled) s_wifiscan_done = true;
+  }
+#endif
   if (!s_wifiscan_done) return;
   s_wifiscan_done = false;
   wifiScanFillList();   // legacy scan popup — no-op if closed
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   wifiRebuildNetworkList();   // refresh the reworked Wi-Fi page (guarded: no-op unless it's open)
 #if !defined(HAS_TANMATSU)
-  if (s_wifiscan_reconnect_after) {       // we dropped the link for this sweep — rejoin now
+#if defined(TLORA_PAGER)
+  const bool reconnect_after_scan = s_wifiscan_reconnect_after;
+  s_wifiscan_reconnect_after = false;
+  s_wifiscan_pager_guard_ms = 0;
+  wifiScanSetActive(false);
+  if (reconnect_after_scan) wifiConfigRequestApply();
+#else
+  if (wifiScanIsActive()) {
+    const bool reconnect_after_scan = s_wifiscan_reconnect_after;
     s_wifiscan_reconnect_after = false;
     s_wifiscan_guard_ms = 0;              // normal completion — disarm the stuck-gate deadline
     wifiScanSetActive(false);
+#if !defined(TLORA_PAGER)
     WiFi.setAutoReconnect(true);
-    wifiConfigRequestApply();             // main.cpp re-begins with the stored cred (main task)
+#endif
+    if (reconnect_after_scan)
+      wifiConfigRequestApply();           // main.cpp re-begins with the stored cred (main task)
   }
+#endif
 #endif
 #endif
 }
 
-// Live Wi-Fi radio toggle on the Wi-Fi settings page (mirrors the control-center
-// toggle). wifiConfigSetRadioEnabled persists the pref + flags an apply, so the
-// main loop brings esp_wifi up / down on the spot — no Save needed, no reboot.
+// Wi-Fi radio toggle on the Wi-Fi settings page (mirrors the control-center
+// toggle). Existing stacks apply live; a cold Pager uses the main-loop BLE
+// handoff above. No separate Save action is needed.
 static void wifiRadioToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  if (on && !wifiEnableGuardOk()) {
-    lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);   // revert the switch
-    if (g_lv.task) g_lv.task->showAlert(TR("Not enough free memory for Wi-Fi. Turn Bluetooth off first."), 2200);
-    return;
-  }
+  if (on && !wifiPrepareEnable(lv_event_get_target(e))) return;
   wifiConfigSetRadioEnabled(on);
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Wi-Fi on") : TR("Wi-Fi off"), 800);
   refreshStatusLabels();
@@ -13790,7 +13950,12 @@ static void wifiHiddenRowCb(lv_event_t* e) {
 static void wifiRefreshRowCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   if (!wifiConfigWantsWifi()) { if (g_lv.task) g_lv.task->showAlert(TR("Turn Wi-Fi on first"), 1200); return; }
-  if (s_wifiscan_request || s_wifiscan_drop_req || s_wifiscan_drop_ms) return;   // a scan is already queued/running
+  if (wifiScanIsActive() || s_wifiscan_request ||
+      s_wifiscan_drop_req || s_wifiscan_drop_ms
+#if defined(TLORA_PAGER)
+      || s_wifiscan_wait_for_radio
+#endif
+     ) return;   // a scan is already queued/running
   wifiKickScan();                                 // connected -> main task drops link first
   wifiRebuildNetworkList();                        // re-render so the row shows "Scanning…"
 }
@@ -13846,7 +14011,12 @@ static void wifiRebuildNetworkList() {
   const bool connected = (WiFi.status() == WL_CONNECTED);
   if (connected) strlcpy(cur, WiFi.SSID().c_str(), sizeof cur);
   // "Scanning…" spans the whole cycle: the main-task drop window AND the worker sweep.
-  const bool scanning_now = (s_wifiscan_request || s_wifiscan_drop_req || s_wifiscan_drop_ms != 0);
+  const bool scanning_now = (wifiScanIsActive() || s_wifiscan_request ||
+                             s_wifiscan_drop_req || s_wifiscan_drop_ms != 0
+#if defined(TLORA_PAGER)
+                             || s_wifiscan_wait_for_radio
+#endif
+                            );
 
   // Saved networks, most-recent first.
   TouchWifiNet nets[TOUCH_WIFI_NET_COUNT];
@@ -25009,16 +25179,26 @@ static void tileFetchTaskFn(void* arg) {
 #endif
     // Wi-Fi scan (user-initiated from the Network tab / setup wizard). Blocking
     // here on the Wi-Fi core, not the UI thread. Mirrors the CLI `wifi scan`.
-    if (s_wifiscan_request) {
-      s_wifiscan_request = false;
+    if (__atomic_exchange_n(&s_wifiscan_request, false, __ATOMIC_ACQ_REL)) {
       s_wifiscan_count = 0;
       // Never bring the Wi-Fi driver up from here when BLE owns the radio (fresh device
       // on BLE => Bluedroid holds the internal heap). WiFi.mode(STA)/esp_wifi_init would
       // then OOM-panic (BLE-vs-Wi-Fi mutex, see main.cpp). wantsWifi() mirrors the boot
       // transport choice: true only when Wi-Fi is the active transport.
       if (!wifiConfigWantsWifi()) { s_wifiscan_done = true; continue; }
+#if defined(TLORA_PAGER)
+      // Cold STA allocation is order-sensitive with NimBLE on the Pager and is
+      // owned exclusively by main.cpp. If the driver disappeared after the UI
+      // released this request, fail the sweep instead of initializing it here.
+      if ((WiFi.getMode() & WIFI_MODE_STA) == 0 || wifiConfigPagerWifiBlocksBle()) {
+        s_wifiscan_done = true;
+        continue;
+      }
+      vTaskDelay(pdMS_TO_TICKS(40));
+#else
       if ((WiFi.getMode() & WIFI_MODE_STA) == 0) { WiFi.mode(WIFI_STA); vTaskDelay(pdMS_TO_TICKS(180)); }
       else                                        { vTaskDelay(pdMS_TO_TICKS(40)); }
+#endif
       // One bounded, yielding async pass — the stable beta_19 scan. NEVER touch WiFi
       // state (disconnect/begin/eraseap) from this worker: it races main.cpp's wifi
       // state machine and wedges the radio (a hard lesson). Scanning while associated
@@ -35957,7 +36137,7 @@ static void refreshSettingsSectionSubtitles() {
     } else {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       lv_label_set_text(g_set_sec_sub[SEC_BLUETOOTH],
-                        (g_lv.task->hasBleCapability() && wifiConfigGetBleEnabled())
+                        (g_lv.task->hasBleCapability() && bleRequestedOrEnabled())
                           ? "Starting…" : "Off");
 #else
       lv_label_set_text(g_set_sec_sub[SEC_BLUETOOTH], TR("Inactive"));
@@ -36074,8 +36254,8 @@ static void refreshSettingsSectionSubtitles() {
 // ============================================================
 // Status-bar control center (tap the top bar)
 // A small drop-down panel with date/time + battery/Wi-Fi info and quick
-// Wi-Fi / Bluetooth toggles, iPhone-control-center style. Both toggle live now
-// (NimBLE coexists with esp_wifi) — no reboot to switch.
+// Wi-Fi / Bluetooth toggles, iPhone-control-center style. Resident stacks
+// toggle live; a genuinely cold Pager allocation may take an ordered restart.
 // ============================================================
 
 static void closeControlCenter() {
@@ -36116,20 +36296,15 @@ static void openControlCenter();   // fwd — toggle cbs rebuild the panel
 // (no touch), so a long-press of the green ○ Home key triggers this (see navPump).
 static void toggleControlCenter() { if (s_cc_root) closeControlCenter(); else openControlCenter(); }
 
-// Wi-Fi and Bluetooth COEXIST now (NimBLE host shares the heap with esp_wifi),
-// so both are plain LIVE toggles — no reboot to switch. Each radio is
-// independent and its state is persisted (radio_en / ble_en).
+// Wi-Fi and Bluetooth coexist once allocated. Pager cold starts and
+// re-authentication release and recreate BLE live; no reboot is required.
 static void ccWifiCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(ESP32)
-  // Live: the main loop brings esp_wifi up (WiFi.mode/begin) or down (WIFI_OFF)
-  // in response to this pref — no reboot.
+  // Existing stacks apply live in the main loop; a cold Pager temporarily
+  // releases NimBLE so Wi-Fi can claim its allocation first.
   const bool on = wifiConfigGetRadioEnabled();
-  if (!on && !wifiEnableGuardOk()) {
-    if (g_lv.task) g_lv.task->showAlert(TR("Not enough free memory for Wi-Fi. Turn Bluetooth off first."), 2200);
-    openControlCenter();
-    return;
-  }
+  if (!on && !wifiPrepareEnable()) { openControlCenter(); return; }
   wifiConfigSetRadioEnabled(!on);
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Wi-Fi off") : TR("Wi-Fi on"), 800);
   openControlCenter();
@@ -36141,15 +36316,15 @@ static void ccBleCb(lv_event_t* e) {
     return;
 #if defined(ESP32)
   // Live: enableBle() lazily brings NimBLE up if it wasn't started at boot.
-  const bool on = g_lv.task->isBleEnabled();
-  if (on) {
+  const bool requested = bleRequestedOrEnabled();
+  if (requested) {
     g_lv.task->disableBle();
   } else if (!g_lv.task->enableBle()) {
-    g_lv.task->showAlert(TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first."), 2200);
+    g_lv.task->showAlert(bleEnableFailureText(), 2600);
     openControlCenter();
     return;
   }
-  g_lv.task->showAlert(on ? TR("Bluetooth off") : TR("Bluetooth on"), 800);
+  g_lv.task->showAlert(requested ? TR("Bluetooth off") : TR("Bluetooth on"), 800);
   openControlCenter();
 #endif
 }
@@ -36910,7 +37085,7 @@ static void openControlCenter() {
 #if defined(ESP32)
   wifi_on = wifiConfigGetRadioEnabled();
 #endif
-  if (g_lv.task) ble_on = g_lv.task->isBleEnabled();
+  if (g_lv.task) ble_on = bleRequestedOrEnabled();
   lv_obj_t* row = lv_obj_create(card);
   lv_obj_remove_style_all(row);
 #if defined(HAS_TANMATSU)
@@ -40880,9 +41055,8 @@ static void setupFinishCb(lv_event_t* e) {
   }
 #endif
   // Region was applied live when the user advanced past the region step
-  // (setRadioParams -> applyRadioFromPrefs), and Wi-Fi re-associates live via the
-  // apply request above — so nothing here needs a reboot. Just close the wizard
-  // back to the main UI.
+  // (setRadioParams -> applyRadioFromPrefs). Close the wizard; the Wi-Fi apply
+  // request reconnects live; Pager temporarily releases BLE to preserve order.
   setupWizardClose();
   if (g_lv.task) g_lv.task->showAlert(TR("Setup complete"), 1400);
 }
@@ -46148,17 +46322,25 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       const int draw_band_w = 240;
 #endif
       const size_t buf_bytes = sizeof(lv_color_t) * draw_band_w * LV_DRAW_BUF_LINES;
-      // Internal DMA-capable DRAM — this is the hot loop's read source
-      // during SPI flush. PSRAM (~80 MHz QSPI) is ~3× slower than
-      // internal SRAM. INTERNAL|DMA also makes it eligible for SPI DMA
-      // transfers if the display driver ever grows them. Fall back to
-      // PSRAM if internal DRAM is too fragmented at boot.
+      // Internal DMA-capable DRAM — this is the hot loop's read source during
+      // SPI flush. The T-Pager is deliberately the exception: ST7796LCDDisplay
+      // uses synchronous pushColors (not DMA), while BLE needs this contiguous
+      // internal block later when a client connects and negotiates security.
+#if defined(TLORA_PAGER)
+      g_draw_buffer = (lv_color_t*)heap_caps_malloc(
+          buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (!g_draw_buffer) {
+        g_draw_buffer = (lv_color_t*)heap_caps_malloc(
+            buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+      }
+#else
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(
           buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) {
         g_draw_buffer = (lv_color_t*)heap_caps_malloc(
             buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       }
+#endif
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
       // Last-ditch under severe DRAM pressure — e.g. a unit whose PSRAM didn't
       // init (some T-Deck clones are QSPI, not the expected OPI), so even SPIRAM
@@ -47549,15 +47731,30 @@ static bool uiHistWaitWorkerIdle() {
 
 bool UITask::enableBle() {
   if (!_serial) return false;
-#if defined(ESP32)
-  // Same thresholds as the boot-time co-init guard (main.cpp) — keep in sync.
-  const size_t BLE_COEXIST_MIN_FREE  = 50u * 1024u;
-  const size_t BLE_COEXIST_MIN_BLOCK = 20u * 1024u;
-  if (ESP.getFreeHeap() < BLE_COEXIST_MIN_FREE || ESP.getMaxAllocHeap() < BLE_COEXIST_MIN_BLOCK)
+#if defined(TLORA_PAGER)
+  if (bleEnableWaitingForWifi()) {
+    // Remember the request; main.cpp enables BLE when this bounded association
+    // either succeeds or falls back. Wi-Fi intent without an active attempt
+    // never enters this branch.
+    wifiConfigSetBleEnabled(true);
     return false;
+  }
 #endif
   _serial->enableBle();
-  return true;
+  // The concrete transport applies the heap guard only when it must cold-start
+  // NimBLE. A resident disabled stack can always be re-enabled allocation-free.
+  if (_serial->isBleEnabled()) return true;
+#if defined(TLORA_PAGER)
+  // Same cold-start contract as Wi-Fi above. This is not an OOM failure the
+  // user can repair by toggling the other radio: remember the requested state
+  // and allocate NimBLE during the next ordered boot, before LVGL fragments
+  // internal DRAM. rebootDevice() flushes pending history before ESP.restart().
+  wifiConfigSetBleEnabled(true);
+  showAlert(TR("Restarting to enable Bluetooth"), 800);
+  lv_refr_now(NULL);
+  rebootDevice();
+#endif
+  return false;
 }
 
 void UITask::persistHistoryNow() {

@@ -642,6 +642,10 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
           snprintf(ble, sizeof(ble), "on (%s)", peer);
         else
           snprintf(ble, sizeof(ble), "on");
+#if defined(TLORA_PAGER)
+      } else if (wifiConfigGetBleEnabled()) {
+        snprintf(ble, sizeof(ble), "pending");
+#endif
       } else {
         snprintf(ble, sizeof(ble), "off");
       }
@@ -708,8 +712,24 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
     p += 3;
     while (*p == ' ' || *p == '\t') p++;
     if (strncasecmp(p, "on", 2) == 0 && (p[2] == '\0' || p[2] == ' ' || p[2] == '\t')) {
+#if defined(TLORA_PAGER)
+      // Record the request before asking the transport. A cold start may be
+      // intentionally refused while WPA owns the Pager coexistence handoff;
+      // main.cpp observes this preference and restores BLE on success/timeout.
+      wifiConfigSetBleEnabled(true);
+#endif
       _serial->enableBle();
-      pushMeshcomodReply("OK\nble: on");
+      if (_serial->isBleEnabled()) {
+        pushMeshcomodReply("OK\nble: on");
+#if defined(TLORA_PAGER)
+      } else if (wifiConfigPagerWifiBlocksBle()) {
+        pushMeshcomodReply("OK\nble: pending (Wi-Fi handoff)");
+      } else if (wifiConfigGetBleEnabled()) {
+        pushMeshcomodReply("ble: pending (retry from Settings)");
+#endif
+      } else {
+        pushMeshcomodReply("error: Bluetooth could not start");
+      }
       return true;
     }
     if (strncasecmp(p, "off", 3) == 0 && (p[3] == '\0' || p[3] == ' ' || p[3] == '\t')) {
@@ -730,6 +750,10 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
         } else {
           pushMeshcomodReply("ble: on");
         }
+#if defined(TLORA_PAGER)
+      } else if (wifiConfigGetBleEnabled()) {
+        pushMeshcomodReply("ble: pending");
+#endif
       } else {
         pushMeshcomodReply("ble: off");
       }
@@ -908,14 +932,35 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
       pushMeshcomodReply("error: wifi radio off — send wifi on first");
       return true;
     }
+    if (wifiScanIsActive()) {
+      pushMeshcomodReply("wifi: scan already in progress");
+      return true;
+    }
     // Ensure STA is fully up before scan; disconnected STA needs a bit more settle time.
     wifi_mode_t mode = WiFi.getMode();
+#if defined(TLORA_PAGER)
+    // Never cold-initialize Wi-Fi from a command handler while NimBLE is
+    // resident. The main loop performs the ordered live handoff; a subsequent
+    // command can scan once that short transition has completed.
+    if ((mode & WIFI_MODE_STA) == 0) {
+      wifiConfigRequestApply();
+      pushMeshcomodReply("wifi: starting; retry scan shortly");
+      return true;
+    }
+    if (wifiConfigPagerWifiBlocksBle()) {
+      pushMeshcomodReply("wifi: association in progress; retry scan shortly");
+      return true;
+    }
+    delay(40);
+#else
     if ((mode & WIFI_MODE_STA) == 0) {
       WiFi.mode(WIFI_STA);
       delay(180);
     } else {
       delay(40);
     }
+#endif
+    wifiScanSetActive(true);
     s_meshcomod_scan_count = 0;
     // Watchdog-safe: one bounded, yielding async pass (see wifiScanWatchdogSafe).
     // This handler runs on the main/loop task, so the old twin synchronous scans
@@ -924,6 +969,7 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
     if (found <= 0) {
       pushMeshcomodReply("scan: no networks (2.4GHz only)");
       WiFi.scanDelete();
+      wifiScanSetActive(false);
       return true;
     }
     String scanMsg = "scan results:";
@@ -968,6 +1014,7 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
       pushMeshcomodReply(scanMsg.c_str());
     }
     WiFi.scanDelete();
+    wifiScanSetActive(false);
     return true;
   }
   if (strncasecmp(p, "use", 3) == 0 && (p[3] == '\0' || p[3] == ' ' || p[3] == '\t')) {
