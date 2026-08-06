@@ -155,8 +155,8 @@ bool touchPrefsSetAppGridLarge(bool on);
 bool touchPrefsGetSleepIdle();
 bool touchPrefsSetSleepIdle(bool on);
 
-/* UI-size preset, 0..2. Large-screen boards retain their percentage mapping;
- * the T-Pager exposes Small/Medium/Large font presets. Reboot to apply. */
+/* UI-size preset. Large-screen boards retain their 0..2 percentage mapping;
+ * the T-Pager exposes four 0..3 semantic font presets. Reboot to apply. */
 uint8_t touchPrefsGetUiScale();
 bool    touchPrefsSetUiScale(uint8_t scale);
 
