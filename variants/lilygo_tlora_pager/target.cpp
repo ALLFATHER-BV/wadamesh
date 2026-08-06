@@ -22,6 +22,10 @@ RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BU
 
 WRAPPER_CLASS radio_driver(radio, board);
 
+SPIClass* tloraPagerSharedSPI() {
+  return &TFT_eSPI::getSPIinstance();
+}
+
 ESP32RTCClock fallback_clock;
 ClockFloorRTC        rtc_clock(fallback_clock);
 MicroNMEALocationProvider gps(Serial1, &rtc_clock);
@@ -125,10 +129,3 @@ mesh::LocalIdentity radio_new_identity() {
   RadioNoiseListener rng(radio);
   return mesh::LocalIdentity(&rng); // create new random identity
 }
-
-// Shared-SPI accessor for main.cpp's boot-time SD storage mount (#193): the micro-SD rides the
-// SAME SPIClass the display/radio already own (see the bus-sharing note at the top of this file).
-// UITask's runtime mount uses TFT_eSPI::getSPIinstance() directly; main.cpp cannot cheaply
-// include TFT_eSPI, so it links this instead.
-#include <TFT_eSPI.h>
-SPIClass* tloraPagerSharedSPI() { return &TFT_eSPI::getSPIinstance(); }

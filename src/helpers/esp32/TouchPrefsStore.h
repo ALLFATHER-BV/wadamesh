@@ -103,7 +103,8 @@ bool touchPrefsGetUseMiles();
 bool touchPrefsSetUseMiles(bool use_miles);
 
 /** Map tile source: false = tile server + on-device cache (default), true = read tiles off the
- *  microSD card (/tiles/<z>/<x>/<y>.jpg). T-Deck only (the V4 TFT has no SD slot). */
+ *  microSD card (/tiles/<z>/<x>/<y>.jpg). Persistent on T-Deck; the Pager currently resets
+ *  this runtime choice to the server/cache mode at boot. */
 bool touchPrefsGetTilesFromSd();
 bool touchPrefsSetTilesFromSd(bool from_sd);
 
