@@ -10,6 +10,8 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <helpers/ESP32Board.h>
 #include <driver/rtc_io.h>
 #include <ExtensionIOXL9555.hpp>
@@ -54,7 +56,11 @@
 
 class TLoraPagerBoard : public ESP32Board {
 public:
+  enum class SdCardState : uint8_t { Absent, Present, Unknown };
+
   void begin();
+  SdCardState sdCardState();
+  bool sdCardPresent();
 
   void enterDeepSleep(uint32_t secs, int pin_wake_btn) {
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
@@ -94,9 +100,7 @@ public:
   // for bus-integrity reasons unrelated to audio -- see begin()'s comment):
   // this is the runtime toggle the sound code brackets each chime/WAV with,
   // so the amp is only live while something is actually playing.
-  void setAmpEnabled(bool on) {
-    io_expander.digitalWrite(PAGER_EXPAND_AMP_EN, on ? HIGH : LOW);
-  }
+  void setAmpEnabled(bool on);
 
   // TODO: BQ25896 charger (XPowersLib) bring-up is out of scope for now — the
   // BQ27220 gauge alone covers battery %/mV for the UI. Add charge-status/
@@ -104,4 +108,8 @@ public:
 
   ExtensionIOXL9555 io_expander;
   GaugeBQ27220 gauge;
+
+private:
+  bool expander_ready_ = false;
+  SemaphoreHandle_t expander_mutex_ = nullptr;
 };
