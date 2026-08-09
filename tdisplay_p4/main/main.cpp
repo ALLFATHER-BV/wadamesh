@@ -23,7 +23,7 @@
 #include <SD_MMC.h>                // microSD on SDMMC slot 0 (primary store)
 #include "esp_partition.h"
 #include <WiFi.h>
-#include <helpers/esp32/MultiTransportCompanionInterface.h>
+#include "../../src/helpers/esp32/MultiTransportCompanionInterface.h"
 #include <helpers/esp32/WifiRuntimeStore.h>   // wifiConfig* (runtime Wi-Fi state the loop drives)
 #include <helpers/esp32/TouchPrefsStore.h>    // touchPrefsBuildLocalTz + WIFI_CONFIG_* sizes
 #include "esp_hosted.h"

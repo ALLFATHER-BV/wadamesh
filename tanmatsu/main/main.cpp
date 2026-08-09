@@ -17,7 +17,7 @@
 #include <SD_MMC.h>          // microSD (slot 0): reliable store for contacts/channels/chat (internal FFat loses them on this P4)
 #include "esp_partition.h"   // enumerate partitions (AppFS apps boot fresh — verify locfd is visible)
 #include <WiFi.h>
-#include <helpers/esp32/MultiTransportCompanionInterface.h>
+#include "../../src/helpers/esp32/MultiTransportCompanionInterface.h"
 #include <helpers/esp32/WifiRuntimeStore.h>
 #include <helpers/esp32/TouchPrefsStore.h>
 #include "esp32-hal-hosted.h"   // arduino's esp-hosted bring-up (shared by LoRa + WiFi on the C6)

@@ -2,6 +2,7 @@
 #include <helpers/RepeaterTcpOtaEmit.h>
 #include "WifiRuntimeStore.h"   // persist BLE on/off (ble_en) across reboots
 #include "WebMirror.h"          // web UI mirror bridge (served over the WS server)
+#include <esp_heap_caps.h>
 #include <string.h>
 
 // Companion push code for the per-packet RX log (matches MyMesh.cpp). It is kept OFF
@@ -14,7 +15,7 @@ bool MultiTransportCompanionInterface::s_ble_rxlog_once = false;
 MultiTransportCompanionInterface::MultiTransportCompanionInterface()
   : _tcp_port(0), _ws_port(0), _tcp_started(false), _ws_started(false), _tcp_enabled(true), _isEnabled(false), _broadcast(false), _last_reply_target(REPLY_TARGET_USB), _ota_tcp_suspended(false), _ota_ws_suspended(false), _ota_ws_listen_paused(false)
 #ifdef BLE_PIN_CODE
-  , _ble_begun(false), _ble_enabled(false), _ota_ble_released(false), _ble_pin_code(0)
+  , _ble_begun(false), _ble_enabled(false), _ota_ble_released(false), _ota_ble_was_enabled(false), _ble_pin_code(0)
 #endif
 {
   for (size_t i = 0; i < sizeof(_client_ids) / sizeof(_client_ids[0]); i++)
@@ -189,6 +190,7 @@ void MultiTransportCompanionInterface::beginBle(const char* prefix, char* name, 
   _ble_begun = true;
   _ble_enabled = true;
   _ota_ble_released = false;
+  _ota_ble_was_enabled = false;
   _ble.enable();
 }
 
@@ -197,6 +199,30 @@ void MultiTransportCompanionInterface::enableBle() {
     // Deferred at boot (heap guard) or toggled on from off: bring the stack up
     // now, live, from the params stashed by prepareBle()/beginBle().
     if (_ble_prefix[0] == '\0' && _ble_name[0] == '\0') return;   // no params known
+#if defined(TLORA_PAGER)
+    // An idle STA may be kept up for on-device scans with no credentials, and
+    // a failed association explicitly falls back to BLE. Only the ordered WPA
+    // phase blocks a cold NimBLE start; main.cpp owns every phase transition.
+    if (wifiConfigPagerWifiBlocksBle()) {
+      Serial.println("[ble] cold start deferred until T-Pager Wi-Fi associates");
+      return;
+    }
+#endif
+    // Only a cold NimBLE start needs the coexistence reserve. Re-enabling an
+    // already-created stack below this threshold is allocation-free and must
+    // not be rejected (UITask used to gate both cases identically, trapping the
+    // user with BLE resident-but-off and neither radio enableable).
+    const size_t BLE_COEXIST_MIN_FREE  = 50u * 1024u;
+    const size_t BLE_COEXIST_MIN_BLOCK = 20u * 1024u;
+    const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const size_t internal_free = heap_caps_get_free_size(internal_caps);
+    const size_t internal_max  = heap_caps_get_largest_free_block(internal_caps);
+    if (internal_free < BLE_COEXIST_MIN_FREE ||
+        internal_max < BLE_COEXIST_MIN_BLOCK) {
+      Serial.printf("[ble] cold start refused: free=%u maxblk=%u\n",
+                    (unsigned)internal_free, (unsigned)internal_max);
+      return;
+    }
     char name[sizeof(_ble_name)];
     strncpy(name, _ble_name, sizeof(name) - 1);
     name[sizeof(name) - 1] = '\0';
@@ -206,17 +232,86 @@ void MultiTransportCompanionInterface::enableBle() {
   _ble_enabled = true;
   wifiConfigSetBleEnabled(true);    // persist so it survives reboot
   _ble.enable();
+#if defined(TLORA_PAGER)
+  // A successful live enable means NimBLE is now resident. Do not let the
+  // Arduino Wi-Fi event path enter WPA automatically after a later link loss.
+  // main.cpp first releases NimBLE, then explicitly re-associates and recreates
+  // BLE after GOT_IP so the same Wi-Fi-first ordering holds without a reboot.
+  // Avoid touching Wi-Fi when it has never been initialised (BLE-only mode).
+  if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(false);
+#endif
 }
+
+#ifdef BLE_PIN_CODE
+// NimBLEDevice::deinit(true) deletes the NimBLEServer, and ~NimBLEServer() does
+//   if (m_deleteCallbacks && m_pServerCallbacks != &defaultCallbacks)
+//     delete m_pServerCallbacks;
+// SerialBLEInterface::begin() registers itself with pServer->setCallbacks(this),
+// whose deleteCallbacks parameter defaults to true. Our SerialBLEInterface is the
+// by-value member _ble of this object, and this object is placement-new'd into a
+// single heap block in main.cpp — so that delete would call operator delete on an
+// INTERIOR pointer and corrupt the heap. setCallbacks(nullptr) installs NimBLE's
+// static defaultCallbacks sentinel, which the destructor above explicitly skips.
+// (NimBLECharacteristic never deletes its callbacks, so only the server matters.)
+static void bleDetachServerCallbacks() {
+  if (NimBLEServer* server = NimBLEDevice::getServer()) server->setCallbacks(nullptr);
+}
+#endif
 
 void MultiTransportCompanionInterface::disableBle() {
   _ble_enabled = false;
   wifiConfigSetBleEnabled(false);   // persist so BT stays off across reboot
-  _ble.disable();                    // stop advertising + drop any connection
-  // NOTE: we deliberately do NOT NimBLEDevice::deinit() here. Tearing the BT
-  // controller down while Wi-Fi+BLE coexistence is active crashes — the esp_coex
-  // layer still holds a reference to the controller — so "off" stops advertising
-  // but keeps the NimBLE host resident. Its RAM is only fully reclaimed on reboot.
+  // deinit(true) below deletes NimBLE's server, but SerialBLEInterface keeps
+  // its cached server pointer. Never call disable() again after that teardown;
+  // a later begin() replaces the cached pointers with a fresh GATT server.
+  if (_ble_begun) _ble.disable();    // stop advertising + drop any connection
+  // Pager only: release NimBLE whenever the user turns Bluetooth off. This
+  // returns its internal heap; a later enable recreates the GATT server after
+  // Wi-Fi is already stable. Pager reconnects remain main-loop-owned so their
+  // WPA phase is always visible to the BLE ownership gate.
+  // Other boards retain their established resident-stack disable/re-enable
+  // behavior.
+#if defined(TLORA_PAGER)
+  if (_ble_begun) {
+    bleDetachServerCallbacks();
+    NimBLEDevice::deinit(true);
+    _ble_begun = false;
+  }
+  if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(false);
+#endif
 }
+
+#if defined(TLORA_PAGER)
+bool MultiTransportCompanionInterface::suspendBleForWifiReconnect() {
+  // Preserve both the user's BLE preference and NimBLE's live bond/GATT state.
+  // Recreating the controller/server here made an already-bonded phone fall
+  // into repeat pairing after every Wi-Fi handoff; NimBLE then discarded its
+  // side of the bond while the phone retained the old LTK. Stopping advertising
+  // and disconnecting the peer removes BLE traffic from the association window
+  // without invalidating that long-term security state.
+  if (_ble_begun) {
+    if (_ble_enabled) _ble.disable();
+    // ble_gap_terminate() is asynchronous. Do not start WPA while the old BLE
+    // link is still on air; that recreates the exact overlap this handoff is
+    // meant to prevent. Wait for the NimBLE host's connection table to drain,
+    // with a bounded failure so a wedged peer cannot stall the main loop/WDT.
+    NimBLEServer* server = NimBLEDevice::getServer();
+    const uint32_t started = millis();
+    while (server && server->getConnectedCount() != 0 &&
+           (uint32_t)(millis() - started) < 1000u) {
+      delay(1);
+    }
+    if (server && server->getConnectedCount() != 0) {
+      Serial.println("[ble] disconnect timed out; Wi-Fi handoff cancelled");
+      _ble_enabled = false;
+      return false;
+    }
+  }
+  _ble_enabled = false;
+  if (WiFi.getMode() != WIFI_MODE_NULL) WiFi.setAutoReconnect(false);
+  return true;
+}
+#endif
 
 bool MultiTransportCompanionInterface::getBlePeerAddress(char* buf, size_t len) const {
   if (!_ble_begun || !_ble_enabled) {
@@ -241,7 +336,9 @@ void MultiTransportCompanionInterface::disable() {
   _isEnabled = false;
   _usb.disable();
 #ifdef BLE_PIN_CODE
-  _ble.disable();
+  // A prior disableBle() may have fully deinitialised NimBLE and left the
+  // wrapped SerialBLEInterface's cached server pointer dangling.
+  if (_ble_begun) _ble.disable();
 #endif
 }
 
@@ -288,8 +385,10 @@ void MultiTransportCompanionInterface::prepareForHttpOta() {
   }
 
 #ifdef BLE_PIN_CODE
-  if (_ble_begun && _ble_enabled) {
-    _ble.disable();
+  if (_ble_begun) {
+    _ota_ble_was_enabled = _ble_enabled;
+    if (_ble_enabled) _ble.disable();
+    bleDetachServerCallbacks();
     NimBLEDevice::deinit(true);
     _ble_begun = false;
     _ble_enabled = false;
@@ -320,9 +419,10 @@ void MultiTransportCompanionInterface::restoreAfterHttpOta() {
     ble_name[sizeof(ble_name) - 1] = '\0';
     _ble.begin(_ble_prefix, ble_name, _ble_pin_code);
     _ble_begun = true;
-    _ble_enabled = true;
-    _ble.enable();
+    _ble_enabled = _ota_ble_was_enabled;
+    if (_ble_enabled) _ble.enable();
     _ota_ble_released = false;
+    _ota_ble_was_enabled = false;
     meshcoreRepeaterTcpOtaEmitLine("OTA: restored BLE stack");
   }
 #endif
