@@ -641,7 +641,7 @@ static const I18nPair kBuiltin_hu[] = {
   { "Remove", "Eltávolítás" },
   { "Remove %s?", "Eltávolítod: %s?" },
   { "Remove channel", "Csatorna eltávolítása" },
-  { "Remove channel \"%s\"?\nLeaves it on this device only.", "Eltávolítja a(z) „%s” csatornát?\nCsak ezen az eszközön hagyja." },
+  { "Remove channel \"%s\"?\nLeaves it on this device only.", "Eltávolítja a(z) “%s” csatornát?\nCsak ezen az eszközön hagyja." },
   { "Removed", "Eltávolítva" },
   { "Removed from favorites", "Eltávolítva a kedvencek közül" },
   { "Rename", "Átnevezés" },
