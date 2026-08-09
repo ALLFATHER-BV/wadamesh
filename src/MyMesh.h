@@ -917,6 +917,22 @@ public:
    *  "Add to contacts" button — can persist; otherwise that contact is RAM-only
    *  and lost on reboot. */
   bool uiPersistContacts() { saveContacts(); return true; }
+
+  /** Mirror the device-side favorite star into the firmware contact table's
+   *  flags bit 0 — the bit the core's overwrite-oldest eviction skips and the
+   *  phone app reads/writes. Without this a device-starred contact was still
+   *  evictable when the table filled (#178): the star lived only in
+   *  TouchPrefs, invisible to the core. Returns false if the contact is gone;
+   *  a no-op flag state is success without a save. */
+  bool uiSetContactFavorite(const uint8_t pub_key[32], bool fav) {
+    ContactInfo* slot = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+    if (!slot) return false;
+    const uint8_t nf = fav ? (uint8_t)(slot->flags | 0x01) : (uint8_t)(slot->flags & ~0x01);
+    if (nf == slot->flags) return true;
+    slot->flags = nf;
+    saveContacts();
+    return true;
+  }
   // Flush a pending (possibly coalesced) contacts write before a deliberate
   // shutdown/reboot, so the on-device power paths don't lose the last refresh
   // window on card-less devices (see MyMesh::loop). No-op when nothing is pending.

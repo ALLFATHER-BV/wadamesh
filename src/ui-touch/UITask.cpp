@@ -15486,9 +15486,10 @@ static void actionSheetJoinRoomCb(lv_event_t* e) {
   openAdminLoginPrompt(c);
 }
 
-// Toggle a contact's favorite state. Persists in NVS via TouchPrefsStore so
-// both the star marker in the contact row and the favorites filter pick it
-// up. Pure UI metadata; the firmware contact table isn't touched.
+// Toggle a contact's favorite state. Persists in NVS via TouchPrefsStore (the
+// star marker + favorites filter) AND mirrors into the firmware contact
+// table's flags bit 0 — the bit the core's overwrite-oldest eviction skips
+// (#178). Without the mirror a device-starred contact was still evictable.
 static void actionSheetFavoriteCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   ContactInfo c;
@@ -15506,6 +15507,7 @@ static void actionSheetFavoriteCb(lv_event_t* e) {
     g_lv.task->showAlert(full_msg, 1500);
     return;
   }
+  the_mesh.uiSetContactFavorite(c.id.pub_key, now_fav);   // eviction protection (#178)
   g_lv.task->showAlert(now_fav ? TR("Added to favorites") : TR("Removed from favorites"), 1100);
   // Force a list rebuild so the star (or its removal) shows immediately — a plain
   // refresh hits the no-change cache (the contact count is unchanged by a fav toggle).
@@ -17888,7 +17890,7 @@ static inline void feedLoopWDT() {}
 static char      s_fm_store[12]  = {0};     // storage label ("Internal" / "SD")
 static char      s_fm_filter[40] = {0};     // active search filter (empty = none)
 static uint8_t   s_fm_sort       = 0;       // 0 Name A-Z, 1 Z-A, 2 Size, 3 Type
-struct FmEntry { char name[64]; uint32_t size; bool isdir; };
+struct FmEntry { char name[64]; uint32_t size; uint32_t mtime; bool isdir; };   // mtime: epoch secs, 0 = unknown (#185)
 static const int FM_MAX_ENTRIES  = 192;
 static FmEntry*  s_fm_entries    = nullptr; // PSRAM-allocated while the file manager is open
 static int       s_fm_count      = 0;
@@ -20299,13 +20301,22 @@ static void fmRender() {
   for (int i = 0; i < s_fm_count; ++i) {
     FmEntry& en = s_fm_entries[i];
     if (!fmContainsCI(en.name, s_fm_filter)) continue;
-    char label[96];
+    char label[120];
     if (en.isdir) {
       snprintf(label, sizeof label, "%s", en.name);
     } else {
       char sz[16];
       fmFmtSize((size_t)en.size, sz, sizeof sz);
-      snprintf(label, sizeof label, "%s   %s", en.name, sz);
+      // Timestamp when the FS provides one and it's sane (> 2001; FAT's 1980
+      // epoch / a clockless write shows as garbage, better omitted) (#185).
+      char ts[24] = "";
+      if (en.mtime > 978307200u) {
+        time_t t = (time_t)en.mtime;
+        struct tm tmv;
+        localtime_r(&t, &tmv);
+        strftime(ts, sizeof ts, "  %d %b %H:%M", &tmv);
+      }
+      snprintf(label, sizeof label, "%s   %s%s", en.name, sz, ts);
     }
     lv_obj_t* row = lv_list_add_btn(s_fm_list, en.isdir ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE, label);
     fmStyleRow(row, COLOR_TEXT);
@@ -20352,13 +20363,13 @@ static bool fmIsHiddenName(const char* base) {
   return false;
 }
 // Append an entry, de-duplicating by (name,isdir) so synthesised virtual folders collapse.
-static void fmAddEntry(const char* name, uint32_t size, bool isdir) {
+static void fmAddEntry(const char* name, uint32_t size, bool isdir, uint32_t mtime = 0) {
   if (!name[0] || s_fm_count >= FM_MAX_ENTRIES) return;
   for (int i = 0; i < s_fm_count; ++i)
     if (s_fm_entries[i].isdir == isdir && !strcmp(s_fm_entries[i].name, name)) return;
   FmEntry& en = s_fm_entries[s_fm_count++];
   snprintf(en.name, sizeof en.name, "%s", name);
-  en.size = size; en.isdir = isdir;
+  en.size = size; en.isdir = isdir; en.mtime = mtime;
 }
 
 static void fmRefresh() {
@@ -20383,6 +20394,7 @@ static void fmRefresh() {
       while (e) {
         const char* full = e.path();   // full path incl. leading '/' (name() is basename-only on this core)
         const uint32_t esz = (uint32_t)e.size();
+        const uint32_t emt = (uint32_t)e.getLastWrite();   // 0 when the FS has no mtime (#185)
         if (s_fm_show_hidden || !fmIsSystemPath(full)) {
           const char* rel = (full[0] == '/') ? full + 1 : full;
           if (!strncmp(rel, pfx, pfxlen)) {                 // belongs in the current virtual folder
@@ -20395,7 +20407,7 @@ static void fmRefresh() {
                 memcpy(seg, sub, n); seg[n] = '\0';
                 fmAddEntry(seg, 0, true);
               } else {
-                fmAddEntry(sub, esz, false);                // a file in this folder
+                fmAddEntry(sub, esz, false, emt);           // a file in this folder
               }
             }
           }
@@ -20414,7 +20426,7 @@ static void fmRefresh() {
         const char* full = e.name();
         const char* base = strrchr(full, '/'); base = base ? base + 1 : full;
         if (s_fm_show_hidden || !fmIsHiddenName(base))
-          fmAddEntry(base, (uint32_t)e.size(), e.isDirectory());
+          fmAddEntry(base, (uint32_t)e.size(), e.isDirectory(), (uint32_t)e.getLastWrite());
         e.close();
         e = dir.openNextFile();
       }
@@ -48875,6 +48887,25 @@ void UITask::loop() {
 #if defined(ESP32)
   // Snapshot copying is quick; all filesystem I/O runs on the core-0 worker.
   touchPrefsTick(now);
+  // One-shot (#178): contacts starred on-device before the flags mirror
+  // existed have their favorite only in TouchPrefs — invisible to the core's
+  // overwrite-oldest eviction. Stamp flags bit 0 once per boot, after the
+  // mesh + prefs are both up. Saves only when something actually changed.
+  {
+    static bool s_fav_synced = false;
+    if (!s_fav_synced && now > 9000) {
+      s_fav_synced = true;
+      bool changed = false;
+      const int n = the_mesh.getNumContacts();
+      for (int i = 0; i < n; ++i) {
+        ContactInfo c;
+        if (!the_mesh.getContactByIdx(i, c)) continue;
+        if ((c.flags & 0x01) == 0 && touchPrefsIsFavorite(c.id.pub_key))
+          changed |= the_mesh.uiSetContactFavorite(c.id.pub_key, true);
+      }
+      if (changed) Serial.println("[UI] favorite flags synced into contact table (#178)");
+    }
+  }
 #endif
 #if !defined(HAS_TANMATSU)
   // REMOTE mode: draw/refresh the physical-panel placeholder (first pass via the IP
