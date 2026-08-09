@@ -36,9 +36,9 @@ public:
   void turnOff() override;
   void setBrightness(uint8_t b);   // HI8561 cmd 0x51 (integrated backlight)
   void clear() override {}
-  void startFrame(Color) override {}
+  void startFrame(ColorVal) override {}
   void setTextSize(int) override {}
-  void setColor(Color) override {}
+  void setColor(ColorVal) override {}
   void setCursor(int, int) override {}
   void print(const char*) override {}
   void fillRect(int, int, int, int) override {}

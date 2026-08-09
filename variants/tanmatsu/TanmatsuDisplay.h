@@ -36,9 +36,9 @@ public:
   void turnOn() override  { _on = true;  bsp_input_set_backlight_brightness(100); }
   void turnOff() override { _on = false; bsp_input_set_backlight_brightness(0); }
   void clear() override {}
-  void startFrame(Color) override {}
+  void startFrame(ColorVal) override {}
   void setTextSize(int) override {}
-  void setColor(Color) override {}
+  void setColor(ColorVal) override {}
   void setCursor(int, int) override {}
   void print(const char*) override {}
   void fillRect(int, int, int, int) override {}
