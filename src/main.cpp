@@ -745,9 +745,9 @@ void setup() {
     if (disp) {
       display.startFrame();
       display.setTextSize(1);
-      display.setColor(DisplayDriver::RED);
+      display.setColor(UIColor::warning_txt);
       display.drawTextCentered(display.width() / 2, display.height() / 2 - 20, "LoRa radio not detected");
-      display.setColor(DisplayDriver::LIGHT);
+      display.setColor(UIColor::primary_txt);
       display.drawTextCentered(display.width() / 2, display.height() / 2 + 2,  "wadamesh needs the LoRa module.");
       display.drawTextCentered(display.width() / 2, display.height() / 2 + 16, "Check it is fitted, then power-cycle.");
       display.endFrame();

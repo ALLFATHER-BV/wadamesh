@@ -45,8 +45,8 @@ public:
 
   uint8_t getSpreadingFactor() const override { return ((CustomLR1121 *)_radio)->getSpreadingFactor(); }
 
-  void setRxBoostedGainMode(bool en) override {
-    ((CustomLR1121 *)_radio)->setRxBoostedGainMode(en);
+  bool setRxBoostedGainMode(bool en) override {   // 1.17 base returns success
+    return ((CustomLR1121 *)_radio)->setRxBoostedGainMode(en) == RADIOLIB_ERR_NONE;
   }
   bool getRxBoostedGainMode() const override {
     return ((CustomLR1121 *)_radio)->getRxBoostedGainMode();

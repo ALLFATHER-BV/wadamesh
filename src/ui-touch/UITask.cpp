@@ -2763,7 +2763,7 @@ static uint32_t s_remote_exit_armed = 0;   // time of the first of two SPACE pre
 static void drawRemotePlaceholder(bool exit_armed = false) {
   const int W = display.width(), H = display.height();
   const bool up = (WiFi.status() == WL_CONNECTED) && ((uint32_t)WiFi.localIP() != 0);
-  display.startFrame(DisplayDriver::DARK);
+  display.startFrame(UIColor::window_bkg);
   // wadamesh mesh mark up top (same white-on-black artwork as the boot splash). The
   // touch DisplayDriver runs at scale 1.0, so writePixelsRGB565 shares text coords.
   const int ly = (H >= 288) ? 46 : 14;   // portrait panels have room to breathe; landscape sits high
@@ -2771,7 +2771,7 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
                             WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
   int y = ly + WADAMESH_MARK_H + 18;
   // Prominent title (the logo already carries the brand — no redundant "wadamesh" line).
-  display.setColor(DisplayDriver::LIGHT);
+  display.setColor(UIColor::primary_txt);
   display.setTextSize(2);
   display.drawTextCentered(W / 2, y, "REMOTE MODE");
   y += 34;
@@ -2779,12 +2779,12 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
   if (up) {
     char u[48];
     snprintf(u, sizeof u, "http://%s:" WEB_UI_PORT_STR, WiFi.localIP().toString().c_str());
-    display.setColor(DisplayDriver::LIGHT);
+    display.setColor(UIColor::primary_txt);
     display.drawTextCentered(W / 2, y, "Open this address in a browser");
-    display.setColor(DisplayDriver::GREEN);
+    display.setColor((ColorVal)0x07E0);
     display.drawTextCentered(W / 2, y + 20, u);
   } else {
-    display.setColor(DisplayDriver::ORANGE);
+    display.setColor((ColorVal)0xFD20);
     display.drawTextCentered(W / 2, y, "Connecting to Wi-Fi...");
   }
   // Footer: how to leave remote mode — the physical method, plus the browser fallback.
@@ -2795,10 +2795,10 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
 #else
   const char* how = "Tap Exit in the browser to leave";
 #endif
-  display.setColor(exit_armed ? DisplayDriver::GREEN : DisplayDriver::YELLOW);
+  display.setColor(exit_armed ? (ColorVal)0x07E0 : (ColorVal)0xFFE0);
   display.drawTextCentered(W / 2, H - 30, how);
 #if CAP_KEYBOARD || CAP_TOUCH
-  display.setColor(DisplayDriver::LIGHT);
+  display.setColor(UIColor::primary_txt);
   display.drawTextCentered(W / 2, H - 14, "or tap Exit in the browser");
 #endif
   display.endFrame();

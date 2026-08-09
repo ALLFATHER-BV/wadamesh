@@ -15,6 +15,7 @@ file(GLOB_RECURSE CORE_SRCS "${CMAKE_CURRENT_LIST_DIR}/${CORE}/*.cpp")
 # EnvironmentSensorManager.cpp (its heavy telemetry drivers are all #if ENV_INCLUDE_* — off here,
 # leaving just the GPS/NMEA path). Only the RAK soil-moisture sensor (a separate I2C lib) is dropped.
 list(FILTER CORE_SRCS EXCLUDE REGEX "/helpers/sensors/RAK12035_SoilMoisture\\.cpp$")
+list(FILTER CORE_SRCS EXCLUDE REGEX "/helpers/ethernet/")   # 1.17: RAK13800/CH390 ethernet ifaces need libs we don't vendor
 list(FILTER CORE_SRCS EXCLUDE REGEX "(NRF52Board|TBeamBoard)\\.cpp$")   # keep ESP32Board (base TDisplayP4Board extends); drop nRF52 + TBeam
 list(FILTER CORE_SRCS EXCLUDE REGEX "/helpers/ui/.*(Display|OLED|TFT|Epaper|EInk|GxEPD|U8g2|SH1106|SSD1306|ST77|ILI9|Adafruit).*\\.cpp$")
 list(FILTER CORE_SRCS EXCLUDE REGEX "(LvglPsramAlloc|TouchDiagTrace)\\.cpp$")
