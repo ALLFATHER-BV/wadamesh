@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: hu
-# ver: 8
+# ver: 9
 # name: Magyar
 # base: hu
  (device behind)	 (készülék hátulján)
@@ -19,10 +19,10 @@
 0123456789abcdef…	0123456789abcdef…
 1 byte (legacy)\n2 bytes\n3 bytes	1 bájt (hagyományos)\n2 bájt\n3 bájt
 100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nNincs korlát
-12-hour clock	12 órás óra
+12-hour clock	12 órás
 32 hex characters	32 hex karakter
-32-hex secret. Anyone with this can read the channel.	32 hexadecimális titok. Bárki, aki ezzel rendelkezik, olvashatja a csatornát.
->_  Terminal	>_  Terminal
+32-hex secret. Anyone with this can read the channel.	32 hex titok. Bárki, aki ezzel rendelkezik, olvashatja a csatornát.
+>_  Terminal	>_  Terminál
 @  Mentions	@  Említések
 @ mention sound	@ említés hangja
 AF	AF
@@ -32,19 +32,19 @@ About the map	A térképről
 Accent popups	Accent popups
 Accent popups: off	Accent popups: kikapcsolva
 Accent popups: on	Accent popups: bekapcsolva
-Ack	Nyugta
+Ack	Ack
 Active	Aktív
 Add	Hozzáad
-Add channel	Catorna hozzáadás
-Add contact	Kontakt hozzáadás
+Add channel	Csatorna hozzáadás
+Add contact	Névjegy hozzáadás
 Added	Hozzáadva
-Added to contacts	Hozzáadva a kontaktokhoz
+Added to contacts	Hozzáadva a névjegyekhez
 Added to favorites	Hozzáadva a kedvencekhez
 Admin	Adminisztráció
-Advert	Hirdetés
-Advert failed	Hirdetés sikertelen
-Advert location	Hirdetés helye
-Advert policy saved	Hirdetési szabályzat mentve
+Advert	Advert
+Advert failed	Advert sikertelen
+Advert location	Advert helye
+Advert policy saved	Advert szabályzat mentve
 Advert sent	Advert elküldve
 All marked read	Összes megjelölve olvasottnak
 Already exists	Már létezik
@@ -63,24 +63,25 @@ Apply auto-poll	Automatikus szavazás alkalmazása
 Apply radio params	Rádióparaméterek alkalmazása
 Apps	Appok
 Arrows + Enter always work. These letters are extra — tap a row, then press a key.	A nyilak + Enter mindig működik. Ezek a betűk extra – koppintson egy sorra, majd nyomjon meg egy billentyűt.
-Auto advert	Automatikus hirdetés
-Auto chat	Automatikus csevegés
-Auto repeater	Automatikus ismétlő
+Auto advert	Auto. advert
+Auto chat	Auto. csevegés
+Auto repeater	Auto repeater
 Auto room	Auto room
 Auto sensor	Auto szenzor
-Auto-Join	Automatikus csatlakozás
+Auto-Join	Auto. csatlakozás
+Auto-add	Auto. hozzáad.
 Auto-add contacts	Névjegyek automatikus hozzáadása
-Auto-add saved	Automatikus hozzáadás mentve
-Auto-add settings	Automatikus hozzáadás beállításai
-Auto-delete above hops	Automatikus törlés a fenti hops-ok felett
+Auto-add saved	Auto. hozzáadás mentve
+Auto-add settings	Auto. hozzáadás beállításai
+Auto-delete above hops	Auto. törlés a fenti hops-ok felett
 Auto-delete oldest	Legrégebbi automatikus törlése
 Auto-delete oldest makes room when full. Hops: 0 = keep all; nodes heard via more hops are removed.	A legrégebbi automatikus törlése helyet szabadít fel, ha megtelik. Hops-ok: 0 = összes megtartása; a további hops-on keresztül hallott nodeok eltávolításra kerülnek.
-Auto-discover	Automatikus felismerés
-Auto-discover off	Automatikus felismerés kikapcsolva
-Auto-discover on	Automatikus felismerés bekapcsolva
-Auto-poll every	Automatikus lekérdezés minden
-Auto-refresh off	Automatikus frissítés kikapcsolva
-Auto-refresh on	Automatikus frissítés bekapcsolva
+Auto-discover	Auto. felismerés
+Auto-discover off	Auto. felismerés kikapcsolva
+Auto-discover on	Auto. felismerés bekapcsolva
+Auto-poll every	Auto. lekérdezés minden
+Auto-refresh off	Auto. frissítő kikapcsolva
+Auto-refresh on	Auto. frissítő bekapcsolva
 Available	Elérhető
 BLE off	BLE kikapcsolva
 BLE on	BLE bekapcsolva
@@ -114,6 +115,7 @@ Buffered receive (experimental)	Pufferelt fogadás (kísérleti)
 Built-in	Beépített
 Built-in (default)	Beépített (alapértelmezett)
 CR	CR
+Calendar	Naptár
 Calibrate battery (full = 100%)	Akkumulátor kalibrálása (full = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Kalibrálva: 100%% = %u.%02u V (hosszan nyomva a visszaállításhoz)
 Can't block — not a contact	Nem blokkolható – nem egy névjegy
@@ -135,6 +137,7 @@ Channel table is full	A csatornatáblázat megtelt
 Channel table is full.	A csatornatábla megtelt.
 Channel-specific regions can be set in each channel's settings.	A csatornaspecifikus régiók az egyes csatornák beállításaiban állíthatók be.
 Channels:	Csatornák
+Chat	Üzenetek
 Chat bubbles	Csetbuborékok
 Chat bubbles: plain	Csevegőbuborékok: sima
 Chat history is NOT saving	A csevegési előzmények NEM kerülnek mentésre
@@ -174,8 +177,8 @@ Connected - a browser is viewing this screen.	Kapcsolódva - egy böngésző né
 Connecting...	Csatlakozás...
 Connecting…	Kapcsolódás…
 Console not available on this build	Konzol nem érhető el ezen a builden
-Contact added	Kontakt hozzáadva
-Contact deleted	Kontact törölve
+Contact added	Névjegy hozzáadva
+Contact deleted	Névjegy törölve
 Contact gone	Eltűnt névjegy
 Contact missing	Hiányzó névjegy
 Contacts	Névjegyek
@@ -184,7 +187,7 @@ Contacts are on internal flash.	A névjegyek a belső tárolón vannak.
 Contacts are saved to the SD card.	A névjegyek az SD-kártyára mentődnek.
 Contacts full	Névjegyek tele
 Contacts:	Névjegyek
-Control	Vezérlés
+Control	Vezérlő
 Control this device from a browser	Vezéreld az eszközt böngészőből
 Copied %s	%s másolva
 Copied - Paste in a folder	Másolt - Beillesztés egy mappába
@@ -235,6 +238,7 @@ Device name shown	Eszköz neve látható
 Device time:	Eszköz idő
 Diagnostics	Diagnosztika
 Diagnostics are on the About page.	A diagnosztika a Névjegy oldalon található.,Diagnostiek staat op de pagina Over.
+Discover	Felfedezés
 Discovered	Felfedezve
 Discovered settings	Discovered beállítások
 Display	Kijelző
@@ -242,6 +246,7 @@ Display name	Megjelenített név
 Distance in miles	Távolság mérföldben
 Distance: km	Távolság: km
 Distance: miles	Távolság: mérföld
+Direct (DM) sound	Közvetlen (DM) hang
 Do Not Disturb	Ne zavarj
 Do Not Disturb off	Ne zavarj kikapcsolva
 Do Not Disturb on	Ne zavarj bekapcsolva
@@ -284,6 +289,7 @@ Experimental saved	Kísérleti mentés
 Export failed (can't open file)	Exportálás sikertelen (nem lehet megnyitni a fájlt)
 Export new backup	Új biztonsági mentés exportálása
 Export settings	Beállítások exportálása
+Export crash report	Hibajelentés exportálása
 Exporting settings…	Beállítások exportálása…
 External antenna selected	Külső antenna kiválasztva
 Factory reset	Gyári visszaállítás
@@ -298,10 +304,10 @@ Finish	Befejezés
 Firmware beta_%d\nCouldn't reach the update server	Firmware beta_%d\nNem sikerült elérni a frissítőszervert
 Firmware:	Firmware:
 Flash on new message	Villog, ha új üzenet érkezett
-Flood	Szórás
+Flood	Flood
 Flood advert sent	Flood advert elküldve
-Flood every	Flood every
-Flood: relayed across the mesh (multi-hop).\nZero-hop: neighbours only (no relaying).	Árvíz: a hálón keresztül továbbítva (többugrásos).\nNullaugrásos: csak szomszédok (nincs továbbítás).
+Flood every	Flood időköz
+Flood: relayed across the mesh (multi-hop).\nZero-hop: neighbours only (no relaying).	Flood: a hálón keresztül továbbítva (multi-hop).\nZero-hop: csak neighbours (nincs továbbítás).
 Folder created	Mappa létrehozva
 For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).	Indító telepítések esetén: a kiválasztott csatorna legújabb firmware-jét menti az SD-kártyára (BINS mappa).
 Forget network	Hálózat elfelejtése
@@ -404,7 +410,7 @@ Loading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive.	Tér
 Loading map…	Térkép betöltése…
 Loading the language catalog…	Nyelvi katalógus betöltése…
 Loading...	Betöltés...
-Local every	Helyi minden
+Local every	Helyi időköz
 Local sensors	Helyi szenzorok
 Lock	Zár
 Lock screen	Képernyőzár
@@ -446,6 +452,7 @@ Marked read	Olvasottként megjelölve
 Max hops (0..64)	Max ugrások (0-64)
 Max zoom for this pack	Maximális zoom ehhez a csomaghoz
 Memory detail	Memória részletei
+Mentions	Említések
 Mesh health: a flood advert is rebroadcast by every repeater in range, so frequent floods add airtime for the whole network. Keep them infrequent (a day or more). Your neighbours still see you from zero-hop adverts and your message replies, so flood mainly when distant nodes need to rediscover you. Leave both Off to advertise only when you tap the buttons above.	Mesh állapota: az flood adverteket minden hatótávolságon belüli repeater újra sugározza, így a gyakori foold-ok növelik az egész hálózat sugárzási idejét. Tartsd őket ritkán (egy napig vagy tovább). A szomszédaid továbbra is látnak a nulla-ugrásos hirdetésekből és az üzenetre adott válaszokból, ezért az flood-ot főleg akkor alkalmazd, amikor a távoli node-oknak újra fel kell fedezniük téged. Hagyd mindkettőt kikapcsolva, ha csak akkor szeretnél advertezni, ha a fenti gombokra koppintasz.
 Message	Üzenet
 Message LED	Üzenet LED
@@ -497,7 +504,7 @@ No battery history yet.\n\nLogged every 5 minutes.	Még nincsenek akkumulátor-e
 No blocked users.\n\nLong-press a message and tap\nBlock to add one.	Nincsenek blokkolt felhasználók.\n\nÉrintse meg hosszan az üzenetet, majd koppintson a\nBlokkolás lehetőségre egy hozzáadásához.
 No contact for thread	Nincs elérhetőség a szálhoz
 No contact to trace	Nincs nyomon követhető kapcsolat
-No contacts have shared\na GPS location yet.	Még egyetlen kontakt sem osztotta meg GPS-helyzetét.
+No contacts have shared\na GPS location yet.	Még egyetlen névjegy sem osztotta meg GPS-helyzetét.
 No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Még nincsenek felfedezett csomópontok.\n\nMinden, amit a rádióban hallasz, és ami nem szerepel a névjegyeid között, itt fog megjelenni. Ha az automatikus hozzáadás ki van kapcsolva, manuálisan is hozzáadhatsz csomópontokat a névjegyeidhez.
 No earlier versions yet	Még nincsenek korábbi verziók
 No local expansion data	Nincsenek helyi bővítési adatok
@@ -544,6 +551,8 @@ Open mesh console	Nyissa meg a mesh konzolt
 Optional — type your network, or leave blank to skip.	Opcionális – írja be a hálózatát, vagy hagyja üresen a kihagyáshoz.
 Orange temp  Cyan humidity	Narancssárga hőmérséklet Ciánkék páratartalom
 Orientation (tap to rotate, reboots)	Tájolás (érintse meg az elforgatáshoz, újraindításhoz)
+Other networks	Egyéb hálozatok
+Other (hidden) networks	Egyéb (rejtett) hálózatok
 Out of memory	Megtelt a memória
 Overwrite oldest	Legrégebbi felülírása
 Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?	Felülírja az SD-kártya beállításait és\nidentitását a belső másolatokkal,\nmajd újraindítja?
@@ -563,7 +572,7 @@ Pasted	Beillesztve
 Path hash: %u byte%s	Útvonal-hash: %u bájt%s
 Path reset	Útvonal visszaállítása
 Path reset failed	Útvonal visszaállítása sikertelen
-Paused  —  score %d	Szüneteltetve — Pontok %d
+Paused  —  score %d	Szünet — Pontok %d
 Per-transmit switching on	Adásonkénti váltás bekapcsolva
 Pick colour	Színválasztás
 Ping	Ping
@@ -572,7 +581,7 @@ Pinged (direct) — waiting…	Pingelt (közvetlen) — várakozás…
 Pinged (flood) — waiting…	Pingelt (flood) — várakozás…
 Play	Lejátszás
 Poll (min)	Lekérdezés (perc)
-Poll every	összes lekérdezése
+Poll every	össz. lekér.
 Poll every %d min	Lekérdezés %d percenként
 Port	Port
 Portrait set - applies when remote mode starts.	Álló beállítva - a távoli mód indulásakor lép életbe.
@@ -581,7 +590,7 @@ Power	Energia
 Power off	Kikapcsolás
 Powering off… click trackball to wake	Kikapcsolás… kattintson a görgetőgombbal az ébresztéshez
 Press a key…	Nyomj meg egy billentyűt…
-Probe now	Mérés most
+Probe now	Teszt most
 Probing neighbours…	Szomszédok fürkészése…
 Profile	Profil
 Pubkey must be 64 hex chars.	A nyilvános kulcsnak 64 hexadecimális karakterből kell állnia.
@@ -621,6 +630,7 @@ Region scope (#tag) for this channel.\nBlank = use the default scope.	Régió ha
 Region scope (#tag), blank = default.	Régió hatóköre (#tag), üres = alapértelmezett.
 Region scope (#tag, blank = none)	Régió hatóköre (#címke, üres = nincs)
 Remember password	Jelszó megjegyzése
+Remote	Távoli
 Remote UI	Távoli felület
 Remote UI (on)	Távoli felület (be)
 Remote access	Távoli hozzáférés
@@ -666,6 +676,7 @@ SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB felhasználva
 SSID set — enter password, then Save	SSID beállítva — adja meg a jelszót, majd mentse el
 SSID too long	Az SSID túl hosszú
+SSID not found	SSID nem található
 Sample text	Mintaszöveg
 Save	Mentés
 Save & restart	Mentés és újraindítás
@@ -682,6 +693,7 @@ Save update bin to SD	Frissítés mentése SD-re
 Saved	Mentett
 Saved backups	Mentett biztonsági mentések
 Saved network	Mentett hálózat
+Saved networks	Mentett hálózatok
 Saved profiles	Profil mentve
 Saved to slot %d	Mentve a(z) %d helyre
 Saved — rebooting	Mentve — újraindítás
@@ -690,7 +702,9 @@ Saved: %s\nFlash it from the Launcher.	Mentett: %s\nFlash-eld a Launcher-ből.
 Saving to SD… %d%%	Mentés SD-kártyára… %d%%
 Saving to SD… 0%	Mentés SD-kártyára… 0%
 Scan to open on phone	Olvasd be a telefonos megnyitáshoz
-Scanning…	Szkennelés…
+Scan	Keres
+Scan again	Újrakeresés
+Scanning…	Keresés…
 Scope direct msgs to region	Közvetlen üzenet a régiónak
 Screen locked	képernyő lezárva
 Screen timeout (s, 0 = never)	Képernyő időkorlátja (s, 0=soha)
@@ -713,8 +727,8 @@ Secret must be 32 hex chars (or empty).	A titkos kódnak 32 hex karakterből kel
 Select a DM thread	Válassz egy DM-szálat
 Select all	Összes kijelölése
 Select network	Hálózat kiválasztása
-Send advert	Hirdetés küldése
-Send advert now	Advert küldése most
+Send advert	Advert küldés
+Send advert now	Advert küldés most
 Send an advert now, or set how often you re-advertise.	Küldjön hirdetést most, vagy állítsa be, hogy milyen gyakran szeretné újrahirdetni.
 Send failed	Küldés sikertelen
 Sender blocked	Feladó blokkolva
@@ -742,8 +756,10 @@ Show menu-bar letters	Menüsáv betűinek megjelenítése
 Show on chart	Mutasd a diagramon
 Show on map	Mutasd a térképen
 Sightline	Rálátás
+Signal	Jelerősség
 Signal & traffic	Jelzés és forgalom
 Signal probe	Jelmérés
+Size	Méret
 Skip	Kihagyás
 Sleep ready	Készen áll az alvásra
 Slot %d cleared	%d hely kiürítve
@@ -755,14 +771,15 @@ Sound	Hang
 Sound off	Hang kikapcsolva
 Sound on	Hang bekapcsolva
 Sound: %s	Hang: %s
+Spectrum	Spektrum
 Start time	Kezdés
 Status	Státusz
 Step 1 of 3	1. lépés a 3-ból
 Step 2 of 3	2. lépés a 3-ból
 Step 3 of 3	3. lépés a 3-ból
 Still analyzing the previous\npath… try again in a moment.	Még mindig elemzem az előző\nútvonalat… próbáld újra egy pillanat múlva.
-Stop	Leállít
-Storage	Storage
+Stop	Állj
+Storage	Tárhely
 Store	Áruház
 Store data on SD (reboot)	Adatok tárolása SD-n (újraindítás)
 Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Élő képként közvetíti az eszköz képernyőjét, amelyre koppintva vezérelhetsz. Nehezebb; a panelen helykitöltő látszik. A váltás újraindítja az eszközt.
@@ -771,6 +788,7 @@ Switch to the external antenna?\n\nMake sure an antenna is actually connected to
 Sync clock from system	Óra szinkronizálása a rendszerből
 System	Rendszer
 System info	Rendszerinfó
+Target	Célpont
 TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s BLE %s\nWS kliensek %d GPS %s Buzzer %s
 TCP off	TCP kikapcsolva
 TCP on	TCP bekapcsolva
@@ -821,12 +839,14 @@ Tracing route…	Útvonal követése…
 Trackball navigates UI	Trackball navigál a felhasználói felületen
 Trackball: cursor	Trackball: kurzor
 Trackball: navigate UI	Trackball: navigáció az UI-n
+Traffic (since boot)	Forgalom (indítás óta)
 Turn Wi-Fi on first	Először kapcsold be a Wi-Fi-t
 Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Kapcsold be a Wi-Fit, majd frissíts. A már telepített appok működnek.
 Turn off	Kikapcsol
 Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Bekapcsolod a régi adásonkénti váltást?\n\nDiagnosztikai mód, csak összehasonlításra. A beépített antennán ad és a külsőn hallgat, így a kimenő jeled sokkal gyengébb lesz a bejövőnél.\n\nMinden újraindításkor visszaáll a beépített antennára.
 Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Kikapcsolod az előzménykorlátot?\n\nEgy forgalmas csatorna így megtöltheti a teljes üzenettárat, ami több helyet foglal, és érezhetően lassítja a csevegőlistát és az appot. Csak akkor tedd, ha tényleg kell a teljes előzmény.
 Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Kapcsold be, majd nyisd meg az alábbi címet bármely böngészőben ugyanazon a Wi-Fin - app nem kell. Az eszköz képernyője élőben jelenik meg a böngészőben, és koppintással vezérelheted.
+Type	Tipus
 Type a URL, then Go	Írj be egy URL-t, majd Mehet
 Type a message...	Írj be egy üzenetet...
 Type a new 6-digit code · applies after a reboot	Írjon be egy új 6 jegyű kódot · újraindítás után érvényes
@@ -851,6 +871,7 @@ Update via the Launcher	Frissítés a Launcher
 Update via the Launcher / flasher.wadamesh.com	Frissítés a Launcher / flasher.wadamesh.com oldalon
 Update via the Launcher / flasher.wadamesh.com.	Frissítés a Launcher / flasher.wadamesh.com oldalon.
 Updated - rebooting…	Frissítve - újraindítás…
+Up to date	Naprakész
 Use	Használ
 Username (optional)	Felhasználónév (nem kötelező)
 Volume	Hangerő
@@ -876,7 +897,7 @@ You can run setup later in Settings → Device	A beállítást később is futta
 Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	A tartózkodási helye ismeretlen.\nElőször állítsa be a GPS-t / pozíciót a\nBeállítások → Profil menüpontban.
 Your name	A neved
 Your own apps	Saját appok
-Zero-hop	Nulla ugrás
+Zero-hop	Zero-hop
 Zero-hop advert sent	Zero-hop advert elküldve
 Zoom: +/- buttons	Nagyítás: +/- gombok
 client connected	kliens csatlakozva
@@ -912,8 +933,8 @@ pick accented letters as you type; off = plain typing	ékezetes betűk kiválasz
 press Volume Down to unlock	Nyomja meg a hangerő csökkentését a feloldáshoz
 push past a screen edge to scroll content	Görgetéshez húzza végig az ujját a képernyő szélén
 score %d	eredmény %d
-search	keresés
-tap for details	Koppintson a részletekért
+search	keres
+tap for details	Részletek
 tap the language key (e.g. EN) on the keyboard to cycle the ones you enable	koppintson a billentyűzeten a nyelvi billentyűre (pl. EN) az engedélyezettek közötti váltáshoz
 tap to cancel	koppintson a megszakításhoz
 tap to exit full screen	koppintson a teljes képernyős kilépéshez

@@ -38364,7 +38364,17 @@ static void luaStoreRebuildList() {
       int cat = -1;
       for (int c = 0; c < s_langcat_n; c++)
         if (strcmp(s_langcat[c].code, s_langinst[i].code) == 0) { cat = c; break; }
-      const bool stale = (cat >= 0) && strcmp(s_langcat[cat].ver, s_langinst[i].ver) != 0;
+      // #247: != treated ANY difference as "update available" — including an
+      // installed file NEWER than the catalog (a translator side-loading their
+      // work-in-progress), and clicking Update then DOWNGRADED it. Offer the
+      // update only when the catalog is numerically newer; non-numeric vers
+      // (atof 0 on both) fall back to the old inequality.
+      bool stale = false;
+      if (cat >= 0) {
+        const double cv = atof(s_langcat[cat].ver), iv = atof(s_langinst[i].ver);
+        stale = (cv > 0.0 || iv > 0.0) ? (cv > iv + 1e-9)
+                                       : strcmp(s_langcat[cat].ver, s_langinst[i].ver) != 0;
+      }
       char sub[24];
       snprintf(sub, sizeof sub, "%s.lang  v%s", s_langinst[i].code, s_langinst[i].ver);
       lv_obj_t* row = langRow(s_langinst[i].name, sub);
