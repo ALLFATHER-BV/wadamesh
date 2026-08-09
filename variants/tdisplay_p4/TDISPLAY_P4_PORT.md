@@ -121,7 +121,12 @@ is never touched. **Select the LCD at build time:** `WADA_P4_LCD=1 ./build.sh bu
   driver (`esp_lcd_new_panel_hi8561`), the resolution (**540×1168**) and the DPI timing (**48 MHz**,
   `hbp40/hpw20/hfp20 · vbp12/vpw2/vfp200`) differ. Same P4 DSI bring-up, same **1.83 V** DSI-PHY LDO
   (a deprecated LilyGo P4 bin notes "changed MIPI voltage domain to 1.8V"), same XL9535 IO2 reset.
-  Backlight is HI8561-internal (no GPIO) — brightness = DCS **0x51**, like the AMOLED.
+  Backlight: the TFT-LCD has a **real LED backlight on GPIO 51**, driven by LEDC PWM
+  (`kBacklightGpio`/`LEDC_CHANNEL_0` in `HI8561Display.cpp`, in the tree since ~beta_53) —
+  **not** panel-internal. `setBrightness()` drives the PWM and additionally sends DCS 0x51
+  (harmless where the panel ignores it). Only the AMOLED (RM69A10, self-emissive) uses DCS
+  0x51 alone. (An earlier revision of this note claimed no-GPIO/DCS-only — that was wrong;
+  flagged by bmorcelli in #242.)
 - **Touch** the HI8561 is a TDDI (touch+display in one): its **integrated touch at I2C 0x68** (NOT the
   AMOLED's GT9895) — added as the `HAS_TDP4_LCD` path in `Hi8561Touch.cpp`. Indirect ERAM-pointer
   protocol ported from LilyGo `cpp_bus_driver/hi8561_touch.cpp` (GPL-3.0): read the touch-info start
