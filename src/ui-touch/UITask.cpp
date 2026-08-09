@@ -716,9 +716,9 @@ static void initTouchFontFallbacks() {
 }
 
 #if defined(MULTI_TRANSPORT_COMPANION)
-// Cross-core tile lifecycle count. Increment before publishing a queue item so
-// the worker cannot open an SD File during a false-zero window; every read and
-// update is atomic because the producer and consumer run on different cores.
+// Cross-core queued + in-flight tile count. This drives progress/memory gates;
+// backend ownership is tracked separately beside s_tile_fs so a queued backlog
+// does not unnecessarily delay a safe cache handoff.
 volatile uint16_t s_tile_fetch_pending = 0;
 static inline uint16_t tileFetchPendingLoad() {
   return __atomic_load_n(&s_tile_fetch_pending, __ATOMIC_ACQUIRE);
@@ -19070,6 +19070,16 @@ static void fmHideFormatOverlay() {
 // Confirm callback: paint the formatting notice, then defer the (blocking)
 // f_mkfs to UITask::loop so the notice is on-screen before the loop freezes.
 static void fmSdDoFormat() {
+  // f_mkfs rewrites the volume under every open handle, and the SD.end() that
+  // precedes it unregisters the pdrv those handles point at. Never start that
+  // while an SD consumer is live — the tile worker can own an open File for a
+  // whole download — so apply the same gate on every board that carries the
+  // deferred formatter below (T-Deck, ThinkNode M9, and Heltec V4-R8).
+  if (sdRuntimeLifecycleBusy()) {
+    if (g_lv.task)
+      g_lv.task->showAlert(TR("SD is busy - close tools and retry"), 2600);
+    return;
+  }
   fmShowBusyOverlay("Formatting SD as MESHCOMOD (FAT32)\n\n"
                     "Creates the core folders too.\n"
                     "Do NOT power off, disconnect,\nor remove the card.\n\n"
@@ -23882,6 +23892,77 @@ static char           s_tile_root[16] = "";
 static fs::FS*        s_tile_fs_default   = nullptr;
 static char           s_tile_root_default[16] = "";
 
+#if defined(MULTI_TRANSPORT_COMPANION)
+// The fetch queue may contain dozens of requests, but only the request currently
+// executing can dereference s_tile_fs or own a File. A backend swap requests a
+// boundary pause, waits only for that one request, then lets the queued backlog
+// resume against the new backend. The critical section closes both races:
+// worker-start vs swap-request, and worker-finish vs the next queued request.
+static portMUX_TYPE   s_tile_backend_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool s_tile_worker_active = false;
+static volatile bool s_tile_backend_swap_requested = false;
+
+static bool tileBackendSwapTryBegin() {
+  bool ready;
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  s_tile_backend_swap_requested = true;
+  ready = !s_tile_worker_active;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+  return ready;
+}
+
+static void tileBackendSwapFinish() {
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  s_tile_backend_swap_requested = false;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+}
+
+static bool tileBackendSwapRequested() {
+  bool requested;
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  requested = s_tile_backend_swap_requested;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+  return requested;
+}
+
+static bool tileFetchWorkerActive() {
+  bool active;
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  active = s_tile_worker_active;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+  return active;
+}
+
+class TileBackendWorkerLease {
+ public:
+  TileBackendWorkerLease() {
+    for (;;) {
+      portENTER_CRITICAL(&s_tile_backend_mux);
+      if (!s_tile_backend_swap_requested) {
+        s_tile_worker_active = true;
+        _held = true;
+      }
+      portEXIT_CRITICAL(&s_tile_backend_mux);
+      if (_held) break;
+      vTaskDelay(1);
+    }
+  }
+  ~TileBackendWorkerLease() { release(); }
+  void release() {
+    if (!_held) return;
+    portENTER_CRITICAL(&s_tile_backend_mux);
+    s_tile_worker_active = false;
+    portEXIT_CRITICAL(&s_tile_backend_mux);
+    _held = false;
+  }
+  TileBackendWorkerLease(const TileBackendWorkerLease&) = delete;
+  TileBackendWorkerLease& operator=(const TileBackendWorkerLease&) = delete;
+
+ private:
+  bool _held = false;
+};
+#endif
+
 // When the tile cache is on the SD fallback (s_tile_fs != the LittleFS partition),
 // every access is real microSD I/O -> light the activity LED. On the flash
 // partition this is a no-op (the LED tracks SD only).
@@ -23984,8 +24065,8 @@ static TaskHandle_t      s_tile_fetch_task    = nullptr;
 static volatile bool     s_tile_fetch_dirty   = false;
 #if defined(TLORA_PAGER)
 // Card-detect sets this before the VFS can be unmounted. It stops producers and
-// lets the worker discard its queued SD jobs, so the lifecycle gate converges
-// instead of being kept busy forever by a map that is still requesting tiles.
+// requests a worker pause at the next request boundary, so the current SD File
+// can close while the queued backlog survives the fallback/remount handoff.
 static volatile bool     s_pager_sd_removal_pending = false;
 #endif
 static volatile uint16_t s_tile_fetch_ok      = 0;
@@ -25238,15 +25319,6 @@ static void tileFetchTaskFn(void* arg) {
     // disk (the prefetch now enqueues without stat'ing) would otherwise be a
     // tight no-yield loop of tileCacheExists() and could starve core-0 IDLE.
     vTaskDelay(1);
-#if defined(TLORA_PAGER)
-    if (s_pager_sd_removal_pending && s_tile_fs == &SD) {
-      s_tile_fetch_last_wr = 'R';
-      ++s_tile_fetch_failed;
-      tileFetchForget(req.z, req.x, req.y);
-      tileFetchPendingDec();
-      continue;
-    }
-#endif
     if (WiFi.status() != WL_CONNECTED) {
       WIRE_DBG("[TILE] skip z=%u x=%ld y=%ld: WiFi down\n",
                     (unsigned)req.z, (long)req.x, (long)req.y);
@@ -25257,6 +25329,11 @@ static void tileFetchTaskFn(void* arg) {
       tileFetchPendingDec();
       continue;
     }
+
+    // Serialize only the request that can actually touch the cache backend.
+    // A swap request pauses here between Files; queued requests remain intact
+    // and resume against the newly-selected filesystem after the pointer moves.
+    TileBackendWorkerLease backend_lease;
 
     // Capture the active map style ONCE per fetch so the cache path and the
     // upstream URL can't disagree if the user toggles topo mid-download (both
@@ -25445,6 +25522,9 @@ static void tileFetchTaskFn(void* arg) {
     http.end();
     client.stop();
     tileFetchPendingDec();
+    // No cache/File access follows. Release before the 500 ms rate-limit delay
+    // so a lifecycle handoff waits for I/O, not an unrelated pacing sleep.
+    backend_lease.release();
 
     if (wrote) {
       WIRE_DBG("[TILE]  -> wrote %s\n", path_jpg);
@@ -25587,15 +25667,14 @@ static bool ensureHistFlushTaskRunning() {
 // tile was queued recently. Called from renderMapTiles after a SPIFFS
 // miss; the actual fetch happens off-thread.
 static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
-  // microSD-tile mode: fetch missing tiles only when the cache lives ON the card
-  // (s_tile_fs == &SD) — then downloads merge into the SD library (#20). Without an
-  // SD-backed cache, stay read-only/offline as before. (WiFi-down guard below still
-  // keeps it fully offline when there's no link.) This applies to the T-Deck and Pager;
-  // boards without SD keep s_tiles_from_sd false, so the simple guard is equivalent.
-  // The SD-pack offline mode is OSM-only; topo has no SD packs, so it always
-  // fetches from the proxy regardless of the microSD-tiles setting.
+  // Boards with a microSD backend fetch whenever SOME cache is mounted, and the
+  // destination follows whatever s_tile_fs currently points at: the card in
+  // microSD-tile mode (downloads merge into the SD library, #20), or the
+  // internal cache while that card is absent, so maps stay online through the
+  // fallback until it returns. Boards without one keep the plain offline guard:
+  // no SD packs exist there, so microSD-tile mode can only mean "don't fetch".
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_map_style == 0 && s_tiles_from_sd && s_tile_fs != &SD) return;
+  if (!s_tiles_fs_ready || !s_tile_fs) return;
 #else
   if (s_map_style == 0 && s_tiles_from_sd) return;
 #endif
@@ -25724,8 +25803,10 @@ static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len, int* out_w
 // function just reads bytes — decode happens later in
 // decodeJpegToRgb565 (which is a misnomer now; it handles both).
 static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
-                         uint8_t** out_data, size_t* out_len) {
+                         uint8_t** out_data, size_t* out_len,
+                         bool* out_repairable_cache) {
 #if defined(ESP32)
+  if (out_repairable_cache) *out_repairable_cache = false;
   // Format support:
   //   • JPEG (.jpg)  — decoded by SJPG/TJpgDec straight to RGB565 in stripes (cheap).
   //                    The LittleFS online cache stores ONLY .jpg (the tiles.wadamesh.com
@@ -25739,7 +25820,7 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   snprintf(path, sizeof(path), "%s/%u/%ld/%ld.jpg",
            mapTileRoot(), (unsigned)z, (long)x, (long)y);
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
     // Tile source = microSD: read straight off the card (fully offline, no server fetch).
     if (s_sd_fail_note_ms) return false;   // card suspected dead — don't stack per-tile SPI timeouts (sdHealthTick arbitrates)
     // Mounted check only — a render loop must never walk the multi-second
@@ -25768,7 +25849,15 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
       snprintf(ppath, sizeof(ppath), "/tiles/%u/%ld/%ld.PNG", (unsigned)z, (long)x, (long)y);
       fsd = SD.open(ppath, FILE_READ);
     }
-    if (!fsd) fsd = SD.open(path, FILE_READ);   // legacy /tiles/<z>/<x>/<y>.jpg
+    // /tiles/<z>/<x>/<y>.jpg is the WRITABLE download cache (where the fetcher
+    // merges Wi-Fi tiles into the library), not a read-only pack — track that so
+    // a corrupt one can be dropped and re-fetched below. The /maps/osm and PNG
+    // legs above are user-supplied packs and must never be removed.
+    bool sd_writable_cache = false;
+    if (!fsd) {
+      fsd = SD.open(path, FILE_READ);
+      sd_writable_cache = (bool)fsd;
+    }
     if (!fsd) { sdReadFailedCardDead(); return false; }   // missing tile (cheap, silent) vs dead card (stamp + short-circuit)
     const size_t szsd = fsd.size();
     if (szsd == 0 || szsd > 256 * 1024) { fsd.close(); return false; }   // PNG tiles run larger than JPEG
@@ -25777,6 +25866,22 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     const size_t nsd = fsd.read(bufsd, szsd);
     fsd.close();
     if (nsd != szsd) { lvglPsramFree(bufsd); sdReadFailedCardDead(); return false; }   // short read mid-tile = card died under us
+    // A garbled/partial download in the writable cache decodes to a blank/half
+    // tile and, because the decode failure path does not re-queue, stuck there
+    // until a manual "Reload visible tiles". Drop it so the render miss below
+    // re-queues a fresh fetch — same contract as the generic cache path, and
+    // still never applied to the read-only packs.
+    if (sd_writable_cache &&
+        (nsd < 4 || bufsd[0] != 0xFF || bufsd[1] != 0xD8 || bufsd[2] != 0xFF ||
+         bufsd[nsd - 2] != 0xFF || bufsd[nsd - 1] != 0xD9)) {
+      lvglPsramFree(bufsd);
+      SD.remove(path);
+#if defined(MULTI_TRANSPORT_COMPANION)
+      tileFetchForget(z, x, y);
+#endif
+      return false;
+    }
+    if (out_repairable_cache) *out_repairable_cache = sd_writable_cache;
     *out_data = bufsd; *out_len = szsd;
     return true;
   }
@@ -25810,19 +25915,26 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     n += (size_t)r;
   }
   f.close();
-  // Reject a cached tile whose header isn't a JPEG SOI — a garbled/partial download that slipped
-  // through decodes to a blank/half "twilight zone" tile otherwise. Drop it from the writable online
-  // cache so the render miss re-queues a fresh fetch; never touch read-only SD packs (can't re-fetch).
-  if (n < 3 || buf[0] != 0xFF || buf[1] != 0xD8 || buf[2] != 0xFF) {
+  // Reject a cached tile without both JPEG framing markers — a garbled/partial
+  // download can retain its SOI while losing the EOI and otherwise decode to a
+  // blank/half "twilight zone" tile. This generic path is the writable /tiles
+  // download cache; standard read-only /maps/osm packs return above.
+  if (n < 4 || buf[0] != 0xFF || buf[1] != 0xD8 || buf[2] != 0xFF ||
+      buf[n - 2] != 0xFF || buf[n - 1] != 0xD9) {
     lvglPsramFree(buf);
-    if (!s_tiles_from_sd) tileCacheRemove(path);
+    tileCacheRemove(path);
+#if defined(MULTI_TRANSPORT_COMPANION)
+    tileFetchForget(z, x, y);
+#endif
     return false;
   }
+  if (out_repairable_cache) *out_repairable_cache = true;
   *out_data = buf;
   *out_len  = n;
   return true;
 #else
   (void)z; (void)x; (void)y; (void)out_data; (void)out_len;
+  (void)out_repairable_cache;
   return false;
 #endif
 }
@@ -25846,34 +25958,68 @@ static void freeMapTiles() {
 //     outage are retried instead of being remembered as in-flight forever
 //   * re-renders immediately when the map is the visible tab
 static void mapNoteStorageChanged() {
-#if defined(TLORA_PAGER)
-  if (!s_sd_mounted && s_tile_fs == &SD) {
-    s_tile_fs = nullptr;
-    s_tile_root[0] = '\0';
-    if (s_tile_fs_default == &SD) {
+#if CAP_SD || defined(TLORA_PAGER)
+  // A fetch snapshots its paths but still dereferences the global backend for
+  // every filesystem operation of the request, so the pointer may only move at
+  // a worker request boundary. The ownership handshake pauses dequeueing there;
+  // queued downloads survive and resume on the new backend. When the current
+  // request is still active, sdHealthTick retries the swap at the first safe
+  // boundary — but the invalidation below still has to run now, or a swapped
+  // card keeps showing the previous card's tiles with the dedup ring suppressing
+  // the re-fetch until that retry lands.
+  // Whether the backend actually has to move. Also decides whether a deferral
+  // leaves the pointer stale: most callers (a remount that changed nothing, a
+  // reinsert while already on the card) need no swap at all, and those must
+  // still repaint below even while a fetch is in flight.
+  const bool wants_teardown = !s_sd_mounted && s_tile_fs == &SD;
+  const bool wants_adopt    = s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready);
+  const bool wants_swap     = wants_teardown || (wants_adopt && s_tile_fs != &SD);
+  const bool may_swap       = !wants_swap || tileBackendSwapTryBegin();
+  const bool swap_deferred  =
+      !may_swap && wants_swap;
+  if (may_swap && wants_teardown) {
+    if (s_tile_fs_default && s_tile_fs_default != &SD) {
+      // SD tile mode lost its card, but the dedicated LittleFS cache is still
+      // mounted. Keep maps online instead of disabling that healthy fallback.
+      s_tile_fs = s_tile_fs_default;
+      strlcpy(s_tile_root, s_tile_root_default, sizeof(s_tile_root));
+      s_tiles_fs_ready = true;
+    } else {
+      // Launcher-style partition table: SD was the only tile backend.
+      s_tile_fs = nullptr;
+      s_tile_root[0] = '\0';
       s_tile_fs_default = nullptr;
       s_tile_root_default[0] = '\0';
+      s_tiles_fs_ready = false;
     }
-    s_tiles_fs_ready = false;
-  } else if (s_sd_mounted && !s_tiles_fs_ready) {
+  } else if (may_swap && wants_adopt) {
+    // Reinserted while SD mode is selected, or no internal backend exists.
+    // Preserve an existing LittleFS default so toggling SD mode off remains a
+    // valid fallback after any number of remove/reinsert cycles.
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';
-    s_tile_fs_default = &SD;
-    s_tile_root_default[0] = '\0';
+    if (!s_tile_fs_default) {
+      s_tile_fs_default = &SD;
+      s_tile_root_default[0] = '\0';
+    }
     s_tiles_fs_ready = true;
   }
-#elif CAP_SD
-  if (s_sd_mounted && !s_tiles_fs_ready) {
-    // No tile backend was resolved at boot; the card can serve as one now
-    // (same layout the boot fallback uses: SD ROOT /tiles/<z>/<x>/<y>).
-    s_tile_fs        = &SD;
-    s_tile_root[0]   = '\0';
-    s_tiles_fs_ready = true;
-  }
+  // Only a real swap request acquired (or extended) the pause above. A no-op
+  // notification must not clear a pause owned by card removal/remount or the
+  // health probe while that lifecycle operation is still draining consumers.
+  if (wants_swap && may_swap) tileBackendSwapFinish();
 #endif
   for (int i = 0; i < k_tile_fetch_dedup_size; ++i) s_tile_fetch_dedup[i] = 0;
   s_tile_fetch_dedup_head = 0;
   freeMapTiles();
+#if CAP_SD || defined(TLORA_PAGER)
+  // Drop the stale tiles above either way, but do not paint through a pointer
+  // we already know is wrong — that would probe &SD for a card that is gone and
+  // pay a full SPI timeout per tile on the loop task. Only skip when a swap was
+  // genuinely wanted and deferred; sdHealthTick repaints once it lands. When no
+  // swap was needed the backend is correct, so fall through and repaint now.
+  if (swap_deferred) return;
+#endif
   if (g_lv.tabview && lv_tabview_get_tab_act(g_lv.tabview) == MAP_TAB_INDEX) renderMapTiles();
 }
 
@@ -25881,7 +26027,9 @@ static void mapNoteStorageChanged() {
 // Is *some* tile source available to probe at all? (SD pack or LittleFS /tiles.)
 static bool mapTileSourceReady() {
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd) return true;
+  // Mirror loadTileJpeg's source selection: SD packs are OSM-only, so topo
+  // reads the generic /tiles/topo cache and its readiness is s_tiles_fs_ready.
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) return s_sd_mounted;
 #endif
   return s_tiles_fs_ready;
 }
@@ -25892,7 +26040,7 @@ static bool mapTileSourceReady() {
 // drew its tiles but the buttons reported "Max/Min zoom for this pack" offline.
 static bool tileExistsAt(uint8_t z, long x, long y) {
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
     if (s_sd_fail_note_ms) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
     if (!s_sd_mounted) return false;       // never ladder from the zoom guard (see loadTileJpeg)
     char p[56];
@@ -26109,7 +26257,9 @@ static void renderMapTiles() {
     if (!dst->rgb565) { ++n_missing; continue; }   // no buffer available this pass
     uint8_t* jpeg = nullptr;
     size_t   jlen = 0;
-    if (!loadTileJpeg(s_map_zoom, wanted[i].tx, wanted[i].ty, &jpeg, &jlen)) {
+    bool repairable_cache = false;
+    if (!loadTileJpeg(s_map_zoom, wanted[i].tx, wanted[i].ty,
+                      &jpeg, &jlen, &repairable_cache)) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       // Tile not on disk — queue an OSM download if Wi-Fi is up. No-op
       // when offline; if/when Wi-Fi comes up later, the next render
@@ -26128,7 +26278,21 @@ static void renderMapTiles() {
                      ? decodePngToRgb565(jpeg, jlen, &dw, &dh, dst->rgb565, kTileBufBytes)
                      : decodeJpegScaledToRgb565(jpeg, jlen, &dw, &dh, 256, dst->rgb565, kTileBufBytes);
     lvglPsramFree(jpeg);
-    if (!rgb) { ++n_missing; continue; }   // decode failed; buffer kept for reuse
+    if (!rgb) {
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      if (repairable_cache) {
+        char bad_path[48];
+        snprintf(bad_path, sizeof(bad_path), "%s/%u/%ld/%ld.jpg",
+                 mapTileRoot(), (unsigned)s_map_zoom,
+                 (long)wanted[i].tx, (long)wanted[i].ty);
+        tileCacheRemove(bad_path);
+        tileFetchForget(s_map_zoom, wanted[i].tx, wanted[i].ty);
+        queueTileForFetch(s_map_zoom, wanted[i].tx, wanted[i].ty);
+      }
+#endif
+      ++n_missing;
+      continue;   // decode failed; buffer kept for reuse
+    }
     // Night mode: invert the decoded RGB565 in place (render-only — the on-disk
     // tile is untouched). ~p flips all three channels; light maps go dark.
     if (s_map_night) {
@@ -26218,7 +26382,10 @@ static void renderMapTiles() {
 
 #if defined(ESP32)
 #if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd) {
+  // s_map_style == 0: SD packs are OSM-only. In topo the loader reads the
+  // online /tiles/topo cache, so pointing the user at /maps/osm would be wrong
+  // and would hide the download progress/diagnostics below.
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {
     lv_label_set_text(s_map_status_lbl,
         TR("Map tiles: microSD\n\n"
         "/maps/osm/z/x/y.png\n"
@@ -26266,10 +26433,14 @@ static void renderMapTiles() {
         "ok %u   fail %u   http %d   wr %c\n"
         "open-fail %u   short-wr %u\n\n"
         "Keep Wi-Fi connected.\nTiles appear as they arrive.",
-#if defined(HAS_TANMATSU)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
         (s_tile_fs == &SD_MMC ? "SD cache" : "flash cache"),
 #else
+#if CAP_SD || defined(TLORA_PAGER)
+        (s_tile_fs == &SD ? "SD cache" : "flash cache"),
+#else
         (s_tile_root[0] ? "SD cache" : "flash cache"),
+#endif
 #endif
         (unsigned)s_tile_fetch_ok, (unsigned)s_tile_fetch_failed,
         (int)s_tile_fetch_last_code, (char)s_tile_fetch_last_wr,
@@ -27006,20 +27177,24 @@ static void mapOptZoomButtonsCb(lv_event_t* e) {
   mapZoomControlsApply();
 }
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // Map tile source toggle (in the map options popup): ON = tiles live on the microSD
 // card — read the user's SD library AND cache Wi-Fi-fetched gaps there (#20), so the
 // library grows and downloads survive; OFF = tile server + internal LittleFS cache.
 static void mapOptTilesSdCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  // The worker dereferences the shared cache backend throughout a request. Do
-  // not repoint it while a queued/in-flight fetch may still own a File on the
-  // old filesystem; on Pager that would also hide the live SD handle from the
-  // VFS lifecycle gate and permit SD.end() underneath it.
-  if (tileFetchPendingLoad() > 0) {
+  // Pause at a request boundary before repointing the cache. A queued backlog is
+  // harmless and resumes on the new backend; only the request currently owning
+  // a File must finish. Do not steal a pause already owned by remount/removal.
+  const bool pause_owned_elsewhere = tileBackendSwapRequested();
+  const bool pause_ready = !pause_owned_elsewhere && tileBackendSwapTryBegin();
+  if (!pause_ready) {
+    // If this callback asserted the pause but found an active request, cancel
+    // only its own request. Lifecycle-owned pauses stay asserted for their retry.
+    if (!pause_owned_elsewhere) tileBackendSwapFinish();
     if (s_tiles_from_sd) lv_obj_add_state(lv_event_get_target(e), LV_STATE_CHECKED);
     else                 lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);
-    if (g_lv.task) g_lv.task->showAlert(TR("Tile download in progress - retry"), 1800);
+    if (g_lv.task) g_lv.task->showAlert(TR("Current tile transfer is busy - retry"), 1800);
     return;
   }
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -27029,13 +27204,22 @@ static void mapOptTilesSdCb(lv_event_t* e) {
   // the SD reader looks), so fetched tiles merge with the library; OFF -> the boot
   // default backend (LittleFS partition / SD fallback).
   if (on) {
-    if (fmSdTryMount() || SD.cardType() != CARD_NONE) { s_tile_fs = &SD; s_tile_root[0] = '\0'; }
+    if (fmSdTryMount() || SD.cardType() != CARD_NONE) {
+      s_tile_fs = &SD;
+      s_tile_root[0] = '\0';
+      s_tiles_fs_ready = true;
+      if (!s_tile_fs_default) {
+        s_tile_fs_default = &SD;
+        s_tile_root_default[0] = '\0';
+      }
+    }
   } else {
     s_tile_fs = s_tile_fs_default;
     strncpy(s_tile_root, s_tile_root_default, sizeof s_tile_root - 1);
   }
   freeMapTiles();                // drop stale tile widgets → reload from the new source
   renderMapTiles();
+  tileBackendSwapFinish();       // queued requests resume against the selected backend
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Map tiles: microSD") : TR("Map tiles: server"), 1400);
 }
 #endif
@@ -27073,8 +27257,12 @@ static void mapReloadVisibleTiles() {
       for (int dx = -s_map_grid_rx; dx <= s_map_grid_rx; ++dx) {
         const int32_t tx = zctx + dx, ty = zcty + dy;
         char path[48];
-        snprintf(path, sizeof(path), "/tiles/%u/%ld/%ld.jpg", (unsigned)z, (long)tx, (long)ty);
-        if (s_tiles_fs_ready && tileCacheExists(path)) { tileCacheRemove(path); ++n; }
+        snprintf(path, sizeof(path), "%s/%u/%ld/%ld.jpg",
+                 mapTileRoot(), (unsigned)z, (long)tx, (long)ty);
+        if (s_tiles_fs_ready && tileCacheExists(path)) {
+          tileCacheRemove(path);
+          ++n;
+        }
         const uint32_t k = tileFetchDedupKey((uint8_t)z, tx, ty);   // clear dedup so it re-queues
         for (int i = 0; i < k_tile_fetch_dedup_size; ++i)
           if (s_tile_fetch_dedup[i] == k) s_tile_fetch_dedup[i] = 0;
@@ -27205,7 +27393,7 @@ static void openMapOptions() {
   lv_obj_set_pos(title, 0, 0);
   int y = 26;
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Row: tile source — microSD (offline) vs the tile server. The important one,
   // so it sits at the very top.
   {
@@ -46026,14 +46214,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   if (_sensors && _node_prefs && _node_prefs->gps_enabled) {
     _sensors->setSettingValue("gps", "1");
   }
-#if defined(TLORA_PAGER)
-  // Start the Pager in server/cache mode on every boot. Its runtime SD-tile
-  // switch is intentionally not persistent yet, so a card moved from a T-Deck
-  // cannot silently disable all online fetches.
-  s_tiles_from_sd = false;
-#else
+  // Map options exposes the same source toggle on T-Deck and T-Pager. Restore
+  // that choice on both boards; forcing it off on Pager made a selected SD pack
+  // silently revert to the internal/server cache after every reboot.
   s_tiles_from_sd = touchPrefsGetTilesFromSd();   // map tile source: server (default) vs microSD
-#endif
   s_map_night = touchPrefsGetMapNight();          // map night mode (render-time tile invert)
   s_map_show_coords   = touchPrefsGetMapShowCoords();     // per-element map text/marker visibility
   s_map_show_tilexyz  = touchPrefsGetMapShowTileXYZ();
@@ -46228,6 +46412,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   if (s_tiles_from_sd && (sdAdoptLiveMount() || fmSdTryMount())) {
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';
+    s_tiles_fs_ready = true;
+    if (!s_tile_fs_default) {
+      s_tile_fs_default = &SD;
+      s_tile_root_default[0] = '\0';
+    }
     WIRE_DBG("[TILE] microSD-tile mode -> caching Wi-Fi tiles on SD /tiles (merges with library)");
   }
 #endif
@@ -48220,8 +48409,18 @@ static bool sdRuntimeLifecycleBusy() {
               s_sdinfo_busy ||
               touchPrefsIoBusy();
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
-  busy = busy || s_notify_playing ||
-         (s_tile_fs == &SD && tileFetchPendingLoad() > 0);
+  busy = busy || s_notify_playing;
+#endif
+#if CAP_SD || defined(TLORA_PAGER)
+  // Before a lifecycle owner requests a backend pause, keep the conservative
+  // queued+active gate used by format/reset paths. Once the pause is asserted,
+  // no queued request can acquire a new lease, so only the current lease owns
+  // the VFS; the preserved backlog is not a reason to delay SD.end().
+  if (s_tile_fs == &SD) {
+    busy = busy || (tileBackendSwapRequested()
+        ? tileFetchWorkerActive()
+        : tileFetchPendingLoad() > 0);
+  }
 #endif
   return busy;
 }
@@ -48253,6 +48452,14 @@ static void sdHealthTick() {
     }
     mapNoteStorageChanged();
     return;
+  }
+#endif
+#if CAP_SD || defined(TLORA_PAGER)
+  // A teardown may have completed while the tile worker still held its final
+  // File. Defer dropping the stale SD backend until that request is finished;
+  // this also closes the failed-format path below.
+  if (!s_sd_mounted && s_tile_fs == &SD && !tileFetchWorkerActive()) {
+    mapNoteStorageChanged();
   }
 #endif
   if (!s_sd_mounted) {
@@ -48333,11 +48540,28 @@ static void sdHealthTick() {
     return;
   }
   if (s_sd_format_pending) return;                        // format owns the card right now
+#if CAP_SD || defined(TLORA_PAGER)
+  // Reinsertion may have completed while an internal-cache fetch was still
+  // active. mapNoteStorageChanged deliberately deferred the backend swap; make
+  // it effective at the first idle tick without invalidating that open File.
+  // Skip it while card-detect has already confirmed removal: s_sd_mounted stays
+  // true until the teardown below wins quiescence, so adopting here would point
+  // the backend at a card that is physically gone and burn two full map
+  // re-renders on the loop task before the same tick undoes it.
+  bool sd_leaving = false;
+#if defined(TLORA_PAGER)
+  sd_leaving = s_pager_sd_removal_pending;
+#endif
+  if (!sd_leaving && s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready) &&
+      s_tile_fs != &SD && !tileFetchWorkerActive()) {
+    mapNoteStorageChanged();
+  }
+#endif
 #if defined(TLORA_PAGER)
   // Card detect is pure I2C, so it must keep running even while an SD worker is
-  // busy. Once removal is confirmed, stop new SD tile jobs immediately; the
-  // worker discards its queued jobs and the normal lifecycle gate waits only
-  // for the genuinely in-flight operation before SD.end().
+  // busy. Once removal is confirmed, pause the worker at a request boundary;
+  // the normal lifecycle gate then waits only for the genuinely in-flight
+  // operation before SD.end(), preserving the queued backlog.
   if (!s_pager_sd_removal_pending && (int32_t)(now - s_next_detect_ms) >= 0) {
     s_next_detect_ms = now + 500;
     const TLoraPagerBoard::SdCardState state = board.sdCardState();
@@ -48353,6 +48577,10 @@ static void sdHealthTick() {
       s_absent_samples = 0;
       s_absent_first_ms = 0;
       s_pager_sd_removal_pending = true;
+      // Stop the worker at the next request boundary. Its current File may
+      // finish, but the queued backlog stays intact while SD.end() and the
+      // fallback selection run below.
+      tileBackendSwapTryBegin();
       sdNoteIoFailure();
     }
   }
@@ -48368,9 +48596,6 @@ static void sdHealthTick() {
     return;
   }
 #endif
-  // SD.end() under any open worker/UI file handle invalidates that handle.
-  // On a truly wedged card the worker's own ops fail fast, so this clears.
-  if (sdRuntimeLifecycleBusy()) return;
 #if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
   if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
 #endif
@@ -48391,10 +48616,20 @@ static void sdHealthTick() {
     if (touchSleep::isSleeping()) return;
     if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
   }
+  // This tick is going to probe and may invalidate the VFS. Assert the backend
+  // pause before the lifecycle-busy check, so queued requests cannot repeatedly
+  // win the boundary while recovery waits. Other SD consumers still drain first.
+  tileBackendSwapTryBegin();
+  if (sdRuntimeLifecycleBusy()) return;
   s_next_probe_ms    = now + 5000;
   s_next_bg_probe_ms = now + 30000;
   s_sd_fail_note_ms = 0;
-  if (sdProbeAlive()) return;     // transient failure (card full, bad path, ...) — not a wedge
+  if (sdProbeAlive()) {
+    // Transient failure (card full, bad path, ...) — keep the mount and let the
+    // preserved tile queue continue on it.
+    tileBackendSwapFinish();
+    return;
+  }
   fmSdUnmount();                  // SD.end() so a fresh begin re-runs the full card handshake
   if (fmSdTryMount()) {
 #if defined(TLORA_PAGER)
@@ -49371,7 +49606,25 @@ void UITask::loop() {
   // all three, but this worker was T-Deck-only — on the others the formatting
   // notice stayed up forever with no format running, and the pending latch even
   // blocked remounting until reboot (#172).
+  // Re-check quiescence at fire time: the two ticks that let the notice paint
+  // are also two ticks in which a consumer can start (a map repaint queues tile
+  // fetches, history flushes, prefs snapshots). Hold the countdown rather than
+  // SD.end() under an open handle, but give up instead of waiting forever —
+  // the longest legitimate holder is a tile download, capped at 12 s.
+  static uint32_t s_sd_format_wait_until = 0;
+  if (s_sd_format_pending == 1 && sdRuntimeLifecycleBusy()) {
+    if (!s_sd_format_wait_until) s_sd_format_wait_until = millis() + 15000;
+    if ((int32_t)(millis() - s_sd_format_wait_until) < 0) {
+      s_sd_format_pending = 2;              // re-arm; the notice stays on screen
+    } else {
+      s_sd_format_wait_until = 0;
+      s_sd_format_pending = 0;
+      fmHideFormatOverlay();
+      showAlert(TR("SD stayed busy - format cancelled, retry"), 3000);
+    }
+  }
   if (s_sd_format_pending && --s_sd_format_pending == 0) {
+    s_sd_format_wait_until = 0;
     bool ok = false;
     {
       LoopWdtGuard loop_wdt_guard;
@@ -49417,6 +49670,9 @@ void UITask::loop() {
       showAlert(done, 3500);
     } else {
       s_sd_mounted = false;
+      // The backend handshake waits for any current File and preserves queued
+      // requests, then drops the failed SD backend without leaving a pause set.
+      mapNoteStorageChanged();
       showAlert(TR("Format failed (no card / SD error)"), 3500);
     }
     if (s_fm_list) fmShowRoots();
