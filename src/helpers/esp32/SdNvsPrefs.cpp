@@ -376,6 +376,15 @@ bool SdNvsPrefs::sdSet(const char* key, const uint8_t* data, size_t len) {
     Kv* e = nullptr;
     for (auto& item : cache->kv)
       if (strncmp(item.key, key, sizeof(item.key)) == 0) { e = &item; break; }
+    // Same-value writes are a successful no-op. Boot-time normalize/repair
+    // setters re-put unchanged values every boot; without this check each one
+    // dirtied the cache and bought a full snapshot rewrite — on the Pager's
+    // internal SPIFFS that's a 0.7-1.5 s flash burst that stalls both cores
+    // (cache-suspend) and widens the interrupted-write loss window (#246).
+    if (e && e->val.size() == len && (len == 0 || memcmp(e->val.data(), data, len) == 0)) {
+      xSemaphoreGive(s_cache_mutex);
+      return true;
+    }
     if (!e) {
       if (cache->kv.size() >= 256) { xSemaphoreGive(s_cache_mutex); return false; }
       cache->kv.push_back(Kv{});
@@ -402,6 +411,10 @@ bool SdNvsPrefs::sdSet(const char* key, const uint8_t* data, size_t len) {
     strncpy(e->key, key, sizeof(e->key) - 1);
     e->key[sizeof(e->key) - 1] = '\0';
   } else {
+    // Same-value no-op for the legacy path too — skips a synchronous full-file
+    // rewrite on SD for a value that hasn't changed.
+    if (e->val.size() == len && (len == 0 || memcmp(e->val.data(), data, len) == 0))
+      return true;
     old = e->val;
   }
   if (len == 0) e->val.clear();
