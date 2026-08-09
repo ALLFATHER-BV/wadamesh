@@ -38,7 +38,7 @@
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "v1.16.0-touch"
+#define FIRMWARE_VERSION "v1.17.0-touch"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
