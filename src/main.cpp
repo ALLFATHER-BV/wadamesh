@@ -735,7 +735,26 @@ void setup() {
   }
 #endif
 
-  if (!radio_init()) { halt(); }
+  bool radio_ok = radio_init();
+  if (!radio_ok) { delay(150); radio_ok = radio_init(); }   // one retry: transient SPI/reset flakes
+  if (!radio_ok) {
+    // A dead or absent LoRa module used to halt behind the frozen boot logo,
+    // with the only clue on serial (#244). Say it on the panel instead.
+    Serial.println("[BOOT] FATAL: LoRa radio init failed — halting with on-screen notice");
+#ifdef DISPLAY_CLASS
+    if (disp) {
+      display.startFrame();
+      display.setTextSize(1);
+      display.setColor(DisplayDriver::RED);
+      display.drawTextCentered(display.width() / 2, display.height() / 2 - 20, "LoRa radio not detected");
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawTextCentered(display.width() / 2, display.height() / 2 + 2,  "wadamesh needs the LoRa module.");
+      display.drawTextCentered(display.width() / 2, display.height() / 2 + 16, "Check it is fitted, then power-cycle.");
+      display.endFrame();
+    }
+#endif
+    halt();
+  }
   Serial.println("[BOOT] radio ok");
 
   fast_rng.begin(radio_driver.getRngSeed());
