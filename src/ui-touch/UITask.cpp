@@ -21496,6 +21496,11 @@ static void discoverLogSighting(int32_t lat_e6, int32_t lon_e6, const MyMesh::Di
 #endif
 }
 
+// Defined later (contacts detail section); used here for the Discover rows (#239).
+static void formatDistanceBadge(char* out, size_t out_cap,
+                                double self_lat, double self_lon,
+                                int32_t c_lat_e6, int32_t c_lon_e6);
+
 // Called every scan tick: refresh the footer + (once we've moved ~15 m) log a coverage sample.
 static void discoverWardriveTick() {
   UITask* task = g_lv.task;
@@ -21593,6 +21598,16 @@ static void discoverBuildFeed() {
     if (age < 60) snprintf(ago, sizeof ago, "%us", (unsigned)age);
     else          snprintf(ago, sizeof ago, "%um", (unsigned)(age / 60));
     const char* direct = (h.path_len == 0) ? "  #53C06B direct#" : "";
+    // Distance (#239): the DISCOVER_RESP wire format carries no position, but a
+    // node we've also heard an advert from has lat/lon on its contact entry —
+    // pair that with our own fix. Empty badge = one of the fixes is unknown.
+    char dist[16] = "";
+    if (c && g_lv.task && g_lv.task->getGpsFix())
+      formatDistanceBadge(dist, sizeof dist,
+                          g_lv.task->getNodeLat(), g_lv.task->getNodeLon(),
+                          c->gps_lat, c->gps_lon);
+    char dist_seg[24] = "";
+    if (dist[0]) snprintf(dist_seg, sizeof dist_seg, "  %s", dist);
     // #191: cap the name to 14 bytes (on a codepoint boundary, glyphs mapped to the
     // feed's font) + single-letter type so the trailing age ALWAYS fits the line.
     // recolorEscape doubles '#' so a hash in a name can't break the colour run.
@@ -21600,9 +21615,9 @@ static void discoverBuildFeed() {
     copyUtf8ReplacingMissingGlyphs(&g_font_12, disp, sizeof disp, name);
     recolorEscape(disp_esc, sizeof disp_esc, disp);
     q += snprintf(buf + q, sizeof(buf) - q,
-      "#%06X %s#  %s  %ddBm %.1f%s  \xC2\xB7 %s\n",
+      "#%06X %s#  %s  %ddBm %.1f%s%s  \xC2\xB7 %s\n",
       (unsigned)discTypeColor(h.node_type), disp_esc, discTypeShort(h.node_type),
-      (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, direct, ago);
+      (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, direct, dist_seg, ago);
   }
   if (q == 0) snprintf(buf, sizeof buf, "#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#");
   else if (buf[q - 1] == '\n') buf[q - 1] = '\0';
