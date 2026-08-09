@@ -6006,8 +6006,8 @@ static void composerAutoGrowCb(lv_event_t* e) {
 // the extras_* fallback fonts (Latin-1 + Latin-Extended-A), so they render in
 // the textarea and chat. Keys carry LV_BTNMATRIX_CTRL_NO_REPEAT (KeyboardLayouts
 // .cpp) so a hold doesn't auto-repeat — it cleanly long-presses instead.
-static const char* const kAccA[]   = {"à","á","â","ă","ä","ã","å","ą"};
-static const char* const kAccA_u[] = {"À","Á","Â","Ă","Ä","Ã","Å","Ą"};
+static const char* const kAccA[]   = {"à","á","â","ă","ä","ã","å","ą","æ"};   // æ: Danish/Norwegian (#237)
+static const char* const kAccA_u[] = {"À","Á","Â","Ă","Ä","Ã","Å","Ą","Æ"};
 static const char* const kAccE[]   = {"è","é","ê","ë","ě","ę"};
 static const char* const kAccE_u[] = {"È","É","Ê","Ë","Ě","Ę"};
 static const char* const kAccI[]   = {"ì","í","î","ï"};
@@ -6034,7 +6034,7 @@ static const char* const kAccL_u[] = {"Ł"};
 static const char* const kAccS_u[] = {"Ś","Š","Ş"};
 struct AccentSet { char key; const char* const* v; uint8_t n; };
 static const AccentSet kAccentSets[] = {
-  {'a',kAccA,8},{'A',kAccA_u,8},{'e',kAccE,6},{'E',kAccE_u,6},
+  {'a',kAccA,9},{'A',kAccA_u,9},{'e',kAccE,6},{'E',kAccE_u,6},
   {'i',kAccI,4},{'I',kAccI_u,4},{'o',kAccO,6},{'O',kAccO_u,6},
   {'u',kAccU,5},{'U',kAccU_u,5},{'n',kAccN,2},{'N',kAccN_u,2},
   {'c',kAccC,3},{'C',kAccC_u,3},{'s',kAccS,4},{'S',kAccS_u,3},{'y',kAccY,2},
