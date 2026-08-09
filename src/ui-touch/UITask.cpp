@@ -2763,7 +2763,7 @@ static uint32_t s_remote_exit_armed = 0;   // time of the first of two SPACE pre
 static void drawRemotePlaceholder(bool exit_armed = false) {
   const int W = display.width(), H = display.height();
   const bool up = (WiFi.status() == WL_CONNECTED) && ((uint32_t)WiFi.localIP() != 0);
-  display.startFrame(UIColor::window_bkg);
+  display.startFrame((ColorVal)0x0000);   // explicit dark (core palettes vary -- see main.cpp boot splash)
   // wadamesh mesh mark up top (same white-on-black artwork as the boot splash). The
   // touch DisplayDriver runs at scale 1.0, so writePixelsRGB565 shares text coords.
   const int ly = (H >= 288) ? 46 : 14;   // portrait panels have room to breathe; landscape sits high
@@ -2771,7 +2771,7 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
                             WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
   int y = ly + WADAMESH_MARK_H + 18;
   // Prominent title (the logo already carries the brand — no redundant "wadamesh" line).
-  display.setColor(UIColor::primary_txt);
+  display.setColor((ColorVal)0xFFFF);
   display.setTextSize(2);
   display.drawTextCentered(W / 2, y, "REMOTE MODE");
   y += 34;
@@ -2779,7 +2779,7 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
   if (up) {
     char u[48];
     snprintf(u, sizeof u, "http://%s:" WEB_UI_PORT_STR, WiFi.localIP().toString().c_str());
-    display.setColor(UIColor::primary_txt);
+    display.setColor((ColorVal)0xFFFF);
     display.drawTextCentered(W / 2, y, "Open this address in a browser");
     display.setColor((ColorVal)0x07E0);
     display.drawTextCentered(W / 2, y + 20, u);
@@ -2798,7 +2798,7 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
   display.setColor(exit_armed ? (ColorVal)0x07E0 : (ColorVal)0xFFE0);
   display.drawTextCentered(W / 2, H - 30, how);
 #if CAP_KEYBOARD || CAP_TOUCH
-  display.setColor(UIColor::primary_txt);
+  display.setColor((ColorVal)0xFFFF);
   display.drawTextCentered(W / 2, H - 14, "or tap Exit in the browser");
 #endif
   display.endFrame();
@@ -49974,7 +49974,8 @@ void UITask::shutdown(bool restart) {
   touchPrefsFlush();                                // finish queued A/B snapshots
 #endif
   if (_display) {
-    _display->startFrame();
+    _display->startFrame((ColorVal)0x0000);   // explicit dark (core palettes vary)
+    _display->setColor((ColorVal)0xFFFF);
     _display->drawTextCentered(_display->width() / 2, _display->height() / 2, "Shutting down...");
     _display->endFrame();
   }

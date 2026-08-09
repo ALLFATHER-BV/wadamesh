@@ -727,7 +727,10 @@ void setup() {
     // arrive with the LVGL splash. Centred exactly: the artwork is centred within
     // the bitmap, and the colour splash mark is centred to the same point, so the
     // hand-off stays in place.
-    display.startFrame();
+    // Explicit black: startFrame()'s default is UIColor::window_bkg, and on boards
+    // whose DISPLAY_CLASS is a core driver the 1.17 core's palette makes that WHITE
+    // (the boot logo grew a white border). Our pre-LVGL screens are always dark.
+    display.startFrame((ColorVal)0x0000);
     display.writePixelsRGB565((display.width()  - WADAMESH_MARK_W) / 2,
                               (display.height() - WADAMESH_MARK_H) / 2,
                               WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
@@ -743,11 +746,11 @@ void setup() {
     Serial.println("[BOOT] FATAL: LoRa radio init failed — halting with on-screen notice");
 #ifdef DISPLAY_CLASS
     if (disp) {
-      display.startFrame();
+      display.startFrame((ColorVal)0x0000);   // explicit dark (core palettes vary — see boot splash)
       display.setTextSize(1);
-      display.setColor(UIColor::warning_txt);
+      display.setColor((ColorVal)0xF800);     // red
       display.drawTextCentered(display.width() / 2, display.height() / 2 - 20, "LoRa radio not detected");
-      display.setColor(UIColor::primary_txt);
+      display.setColor((ColorVal)0xFFFF);     // white
       display.drawTextCentered(display.width() / 2, display.height() / 2 + 2,  "wadamesh needs the LoRa module.");
       display.drawTextCentered(display.width() / 2, display.height() / 2 + 16, "Check it is fitted, then power-cycle.");
       display.endFrame();
