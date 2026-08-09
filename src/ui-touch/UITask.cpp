@@ -30240,8 +30240,16 @@ static void msgMenuResendCb(lv_event_t* e) {
   if (a) lv_indev_wait_release(a);
   closeMsgActionMenu();
   if (!s_msg_menu_text[0]) return;
-  if (!g_lv.task->composerSend(s_msg_menu_text))
+  if (!g_lv.task->composerSend(s_msg_menu_text)) {
     g_lv.task->showAlert(TR("Resend failed"), 1400);
+    return;
+  }
+  // The composer's send button refreshes the open detail itself; this
+  // programmatic path must too, or the new bubble only appears when something
+  // else redraws the thread (#248).
+  if (g_lv.dm.detail_open) refreshChatDetailAsync(g_lv.dm);
+  if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
+  g_lv.dirty_threads = true;
 }
 
 static void msgMenuDeleteCb(lv_event_t* e) {
@@ -30269,8 +30277,13 @@ static void msgMenuDeleteCb(lv_event_t* e) {
 static char s_retry_text[UITask::MAX_MSG_TEXT + 1] = "";
 static void retryConfirmedApply() {
   if (!g_lv.task || !s_retry_text[0]) return;
-  if (!g_lv.task->composerSend(s_retry_text))
+  if (!g_lv.task->composerSend(s_retry_text)) {
     g_lv.task->showAlert(TR("Resend failed"), 1400);
+    return;
+  }
+  if (g_lv.dm.detail_open) refreshChatDetailAsync(g_lv.dm);   // see msgMenuResendCb (#248)
+  if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
+  g_lv.dirty_threads = true;
 }
 static void bubbleRetryTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
