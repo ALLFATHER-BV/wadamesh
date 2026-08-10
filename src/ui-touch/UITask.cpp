@@ -39221,9 +39221,13 @@ static void openMentionsScreen() {
   lv_obj_add_event_cb(back, mentionsBackCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bks = lv_label_create(back);
   lv_label_set_text(bks, LV_SYMBOL_LEFT);
+  lv_obj_set_style_text_font(bks, uiChromeFont(), LV_PART_MAIN);
   lv_obj_center(bks);
 
-  const int header_h = 38;
+  // The title follows the selected semantic font role. At the Pager's larger
+  // presets its live fallback line box is taller than the historical 38-px
+  // header, so measure it instead of letting the title overlap the list.
+  const int header_h = LV_MAX(38, 14 + lv_font_get_line_height(&g_font_16));
   lv_obj_t* list = lv_obj_create(s_mentions_root);
   lv_obj_remove_style_all(list);
   lv_obj_set_size(list, sw, (sh - STATUSBAR_H - TABBAR_H) - header_h);
@@ -39262,13 +39266,17 @@ static void openMentionsScreen() {
   }
 
   const int row_w = sw - 16;   // list has 8 px padding each side
+  const int line_h = lv_font_get_line_height(&g_font_12);
+  const int row_top = 7;
+  const int body_y = row_top + line_h + 2;
+  const int row_h = body_y + 2 * line_h + 7;
   for (int k = 0; k < nf; k++) {
     UITask::UIMessage m;
     if (!g_lv.task->getMessageByIndex(found[k].idx, m)) continue;
 
     lv_obj_t* row = lv_btn_create(list);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, row_w, 68);   // taller: fits a 2-line message body
+    lv_obj_set_size(row, row_w, row_h);   // channel line + two-line preview + padding
     lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
@@ -39278,11 +39286,11 @@ static void openMentionsScreen() {
 
     lv_obj_t* chl = lv_label_create(row);   // channel name (accent)
     lv_label_set_long_mode(chl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(chl, row_w - 72);
+    lv_obj_set_size(chl, row_w - 72, line_h);
     lv_label_set_text(chl, m.thread);
     lv_obj_set_style_text_color(chl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_text_font(chl, &g_font_12, LV_PART_MAIN);
-    lv_obj_align(chl, LV_ALIGN_TOP_LEFT, 8, 7);
+    lv_obj_align(chl, LV_ALIGN_TOP_LEFT, 8, row_top);
 
     char when[16] = {0};
     if (m.ts > 1700000000UL) {
@@ -39294,18 +39302,18 @@ static void openMentionsScreen() {
       lv_label_set_text(tl, when);
       lv_obj_set_style_text_color(tl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
       lv_obj_set_style_text_font(tl, &g_font_12, LV_PART_MAIN);
-      lv_obj_align(tl, LV_ALIGN_TOP_RIGHT, -8, 7);
+      lv_obj_align(tl, LV_ALIGN_TOP_RIGHT, -8, row_top);
     }
 
     char bodytxt[UITask::MAX_SENDER_NAME + UITask::MAX_MSG_TEXT + 4];
     snprintf(bodytxt, sizeof bodytxt, "%s: %s", m.sender[0] ? m.sender : "?", m.text);
-    lv_obj_t* bd = lv_label_create(row);   // "sender: text", wraps to 2 lines
-    lv_label_set_long_mode(bd, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(bd, row_w - 16);
+    lv_obj_t* bd = lv_label_create(row);   // "sender: text", capped at 2 lines
+    lv_label_set_long_mode(bd, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(bd, row_w - 16, 2 * line_h);
     lv_label_set_text(bd, bodytxt);
     lv_obj_set_style_text_color(bd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_font(bd, &g_font_12, LV_PART_MAIN);
-    lv_obj_align(bd, LV_ALIGN_TOP_LEFT, 8, 25);
+    lv_obj_align(bd, LV_ALIGN_TOP_LEFT, 8, body_y);
   }
 }
 
