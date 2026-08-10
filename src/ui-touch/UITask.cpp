@@ -34383,13 +34383,15 @@ static void updateTrackball(unsigned long now) {
 
 #if defined(HAS_PAGER_ENCODER) || defined(HAS_PAGER_KEYBOARD)
 // "Back", extending the T-Deck/Tanmatsu back-key ladder: a popup/sheet on top
-// closes first, then an open chat/channel detail, then Home (the pager has no
-// dedicated Home hotkey and the bottom tab bar isn't a nav-group target, so a
-// bare main tab otherwise had no way back to Home), else plain ESC. Shared by
-// the rotary encoder's long-press (updatePagerEncoder) and the keyboard's
-// Backspace-hold alternative (updatePagerBackspaceHold) so both agree exactly.
+// closes first, then a full-screen AppPage (Store, Lua apps, tools), then an
+// open chat/channel detail, then Home (the pager has no dedicated Home hotkey
+// and the bottom tab bar isn't a nav-group target, so a bare main tab otherwise
+// had no way back to Home), else plain ESC. Shared by the rotary encoder's
+// long-press (updatePagerEncoder) and the keyboard's Backspace-hold alternative
+// (updatePagerBackspaceHold) so both agree exactly.
 static void pagerNavGoBack() {
   if (anyPopupOpen())                            hwKeyDismissTopPopup();
+  else if (s_apppage_close)                      s_apppage_close();
   else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
   else if (getActiveTab() != HOME_TAB_INDEX)     navGoToMainTab(HOME_TAB_INDEX);
   else                                           navPushTap(LV_KEY_ESC);
