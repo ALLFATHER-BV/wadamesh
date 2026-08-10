@@ -112,7 +112,11 @@ echo "listing ($MODE): $(python3 -c 'import json,sys;print(", ".join(x["name"] f
 missing=""
 for f in "$ARCH/$TAG"/*.bin; do
   case "$f" in *-merged.bin) continue;; esac      # merged images embed the same app
-  strings "$f" | grep -q "$TAG" || missing="$missing $(basename "$f")"
+  # grep -c, not grep -q: this script runs under `set -o pipefail`, and grep -q
+  # exits at the first match, which SIGPIPEs `strings` and makes the whole
+  # pipeline "fail" — reporting every image as untagged even when it is fine.
+  n="$(strings "$f" | grep -c "$TAG" || true)"
+  [ "${n:-0}" -gt 0 ] || missing="$missing $(basename "$f")"
 done
 if [ -n "$missing" ]; then
   echo "ERROR: these staged images do not embed $TAG:$missing"
