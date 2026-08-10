@@ -53,7 +53,10 @@ if [ "$MODE" = "beta" ]; then
   # beta_60 shipped with a stale in-tree default and About read "v1.16.0-touch".
   CORE_VER="$(grep -oE 'meshcomod\.git#core-v[0-9.]+' platformio.ini | head -1 | sed 's/.*#core-//')"
   [ -n "$CORE_VER" ] || { echo "ERROR: no core-v* pin found in platformio.ini"; exit 1; }
-  BUILD_DATE="$(date '+%d %b %Y')"
+  # Hyphens, NOT spaces: PLATFORMIO_BUILD_FLAGS is whitespace-split, so a date
+  # like "10 Aug 2026" tears the flag string apart and every -D after it is lost
+  # — including the release tag, which is how a build silently ships untagged.
+  BUILD_DATE="$(date '+%d-%b-%Y')"
   echo "firmware data: tag=$TAG core=$CORE_VER date=$BUILD_DATE"
   export PLATFORMIO_BUILD_FLAGS="-DFIRMWARE_RELEASE_TAG='\"${TAG}\"' -DFIRMWARE_VERSION='\"wadamesh ${TAG}\"' -DFIRMWARE_BUILD_DATE='\"${BUILD_DATE}\"' -DFIRMWARE_CORE_VERSION='\"${CORE_VER}\"'"
   # Keep the in-tree default (what DEV flashes show) in step with the pinned core,
