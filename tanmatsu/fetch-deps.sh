@@ -167,3 +167,19 @@ sub(C, [
 ])
 print("patched: SerialBLEInterface -> esp-nimble-cpp 2.x")
 PYEOF
+
+# --- Guard: the vendored tree is gitignored and this script rm -rf's it, so any
+# hand-edit made in there is destroyed with no git history to recover it. That
+# has now cost us twice: the esp-nimble-cpp 2.x BLE port, and the T-Display P4's
+# polled receive (its DIO1 reaches no host GPIO, so polling is the ONLY way it
+# ever sees a packet — losing it left the board able to transmit and completely
+# unable to receive). Both are upstream in the core now; verify they survived the
+# copy, so a regression fails here instead of on a user's device.
+for probe in \
+  "components/meshcore/core/src/helpers/radiolib/RadioLibWrappers.cpp:pollRxIfNoIrq" \
+  "components/meshcore/core/src/helpers/radiolib/CustomSX1262Wrapper.h:pollRxDone" \
+  "components/meshcore/core/src/helpers/esp32/SerialBLEInterface.h:NimBLEConnInfo"; do
+  f="${probe%%:*}"; sym="${probe##*:}"
+  grep -q "$sym" "$f" || { echo "!! $f is missing '$sym' — the vendored core is stale or the core changed shape. FIX BEFORE BUILDING."; exit 1; }
+done
+echo "verified: polled-RX + BLE 2.x present in the vendored core"
