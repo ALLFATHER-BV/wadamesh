@@ -16298,9 +16298,8 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
 
   s_action_sheet_root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_action_sheet_root);
-  // Backdrop starts below the global status bar so the centered card is
-  // centered in the visible 298 px area (not the full 320 — that pushed
-  // the top of the 8-row repeater card behind the time/battery row).
+  // Backdrop starts below the global status bar so the card is centered in
+  // the visible content area instead of drifting behind the time/battery row.
   lv_obj_set_size(s_action_sheet_root, sw, sh - STATUSBAR_H);
   lv_obj_set_pos(s_action_sheet_root, 0, STATUSBAR_H);
   lv_obj_set_style_bg_color(s_action_sheet_root, lv_color_hex(0x000000), LV_PART_MAIN);
@@ -16312,23 +16311,30 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   lv_obj_add_event_cb(s_action_sheet_root, actionSheetCloseCb, LV_EVENT_CLICKED, nullptr);
 
   // On the big 800×480 Tanmatsu the 232-wide sheet looked lost in the middle, so
-  // widen the card and grow the rows/gaps/title. The non-Tanmatsu values are the
-  // historical integers, untouched (PSC is a no-op there).
-#if CAP_LARGE_SCREEN
+  // widen the card and grow the rows/gaps/title. The Pager gets its own wide,
+  // short layout; the remaining compact boards keep the historical integers.
+#if defined(TLORA_PAGER)
+  // Match the sibling chat-details sheet: use the Pager's width while keeping
+  // rows compact enough for its short display. Semantic text presets still
+  // resize the contact title; action labels remain fixed-size UI chrome.
+  const int card_w = sw - 80;
+  const int btn_h = 26;
+  const int btn_gap = 3;
+  const int title_h = 32;
+  const int padding = 6;
+#elif CAP_LARGE_SCREEN
   const int card_w = PCW(232);
-  int btn_h = PSC(30);           // vertical metrics are mutable: the shrink-to-fit below trims them
-  int btn_gap = PSC(6);          // when the big-screen 1.7x scale would push the sheet off-screen
-  int title_h = PSC(28);
+  const int btn_h = PSC(30);
+  const int btn_gap = PSC(6);
+  const int title_h = PSC(28);
   const int padding = PSC(6);
 #else
   const int card_w = 232;
-  // Two-column button grid so the (now up to 9) actions fit without
-  // clipping below the status bar. Delete spans the full width as the
-  // bottom danger row. Repeater worst case: 8 grid items -> 4 rows + 1
-  // delete row = 5 * (30+6) + title 28 + pad 6 = 214 px (fits in 298).
-  int btn_h = 30;
-  int btn_gap = 6;
-  int title_h = 28;
+  // Two-column button grid keeps the common actions compact. Delete spans the
+  // full-width bottom danger row, and unusually tall sets scroll below.
+  const int btn_h = 30;
+  const int btn_gap = 6;
+  const int title_h = 28;
   const int padding = 6;
 #endif
   // msg/ping + telemetry + (trace ping + admin, repeaters only) + range
@@ -16362,7 +16368,8 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // line-of-sight (1), + Show on map (1 when contact has GPS and !from_map).
   const int grid_items = (from_map ? 5 : 6) + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
-  int card_h = title_h + (grid_rows + 1) * (btn_h + btn_gap) + padding;
+  const int body_content_h = (grid_rows + 1) * btn_h + grid_rows * btn_gap;
+  int card_h = 2 * padding + title_h + body_content_h;
   // Cap the card to the visible area and let the BUTTON BODY (below the fixed title/X) scroll when it
   // overflows — so a tall sheet (repeater, big UI scale) always fits on-screen and every button stays
   // reachable (keyboard nav focus-scrolls it into view). Replaces the old shrink-to-fit-the-rows hack.
@@ -16391,9 +16398,9 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  // Trim 28 px on the right so the close-X badge doesn't sit on top of
+  // Trim 32 px on the right so the close-X badge doesn't sit on top of
   // the contact name when it's long.
-  lv_obj_set_width(title, card_w - 2 * padding - 28);
+  lv_obj_set_width(title, card_w - 2 * padding - 32);
   lv_obj_set_pos(title, 0, 0);
 
   // Scrollable button body below the fixed title/X. The absolute-positioned grid buttons go in here;
@@ -16403,12 +16410,14 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   lv_obj_set_pos(body, 0, title_h);
   lv_obj_set_size(body, card_w - 2 * padding, card_h - 2 * padding - title_h);
   lv_obj_set_style_pad_all(body, 0, LV_PART_MAIN);
-  if ((grid_rows + 1) * (btn_h + btn_gap) > card_h - 2 * padding - title_h)
+  if (body_content_h > card_h - 2 * padding - title_h)
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
   else
     lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
 
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  const int col_gap = btn_gap;
+#elif CAP_LARGE_SCREEN
   const int col_gap = PSC(6);
 #else
   const int col_gap = 6;
@@ -16416,9 +16425,11 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   const int half_w  = (card_w - 2 * padding - col_gap) / 2;
   int y   = 0;
   int col = 0;   // 0 = left column, 1 = right column
-  // On the Tanmatsu the rows are PSC-taller, so step the row label up one font
-  // size to fill them; the smaller boards keep the original g_font_12.
-#if CAP_LARGE_SCREEN
+  // Tanmatsu rows grow with the panel; the Pager uses fixed-size chrome so text
+  // presets do not overfill compact rows. Other boards retain g_font_12.
+#if defined(TLORA_PAGER)
+  const lv_font_t* row_font = uiChromeFont();
+#elif CAP_LARGE_SCREEN
   const lv_font_t* row_font = &g_font_14;
 #else
   const lv_font_t* row_font = &g_font_12;
@@ -16437,6 +16448,9 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, TR(label));
     lv_obj_set_style_text_font(l, row_font, LV_PART_MAIN);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(l, half_w - 8, lv_font_get_line_height(row_font));
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_center(l);
     if (col == 0) col = 1;
     else { col = 0; y += btn_h + btn_gap; }
@@ -23658,10 +23672,16 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   lv_obj_move_foreground(s_contacts_overflow_root);
   lv_obj_add_event_cb(s_contacts_overflow_root, contactsOverflowDismissCb, LV_EVENT_CLICKED, nullptr);
 
-  // Bigger on the 800-px Tanmatsu panel; unchanged on the smaller boards (PSC no-op).
+  // Bigger on the 800-px Tanmatsu panel. The Pager also has spare horizontal
+  // room, so give its longest action ("Auto-add settings") enough width at
+  // the larger text presets; compact boards retain the historical width.
   // Compact rows so all five buttons + title fit the T-Deck's short 240px landscape
   // screen (the 5th "Blocked list" item pushed the old 36px rows off-screen). #72.
+#if defined(TLORA_PAGER)
+  const int card_w = sw / 2;
+#else
   const int card_w = PCW(200);
+#endif
   const int btn_h = SC(30), btn_gap = SC(4), title_h = SC(22), padding = SC(8);  // SC not PSC: the 1.7x boost clipped the lower rows (Auto-add / Blocked) off-screen at Large scale
   const int rows = 5;
   int card_h = 2 * padding + title_h + rows * btn_h + (rows - 1) * btn_gap;  // reserve BOTH pad_all paddings (top+bottom) or the last row clips
@@ -23710,6 +23730,9 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, TR(label));
     lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(l, card_w - 2 * padding - 20,
+                    lv_font_get_line_height(&g_font_14));
     lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
     y += btn_h + btn_gap;
   };
