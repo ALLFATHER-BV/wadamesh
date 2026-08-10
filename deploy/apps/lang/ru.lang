@@ -69,6 +69,7 @@ Auto repeater	Авто ретранслятор
 Auto room	Авто комната
 Auto sensor	Авто датчик
 Auto-Join	Автовход
+Auto-add	
 Auto-add contacts	Автодобавление контактов
 Auto-add saved	Автодобавление сохранено
 Auto-add settings	Настройки автодобавления
@@ -106,9 +107,12 @@ Blue battery  Orange temp  Cyan humidity	Синий — батарея  Оран
 Bluetooth	Bluetooth
 Bluetooth already off	Bluetooth уже выкл
 Bluetooth already on	Bluetooth уже вкл
+Bluetooth deferred; retry from Settings	
 Bluetooth off	Bluetooth выкл
 Bluetooth on	Bluetooth вкл
 Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Сопряжение Bluetooth на этом устройстве недоступно.\n\nЗаводская прошивка радиочипа его не поддерживает.\n\nПодключите приложение по Wi-Fi: подключите устройство к сети и добавьте его в приложении по IP-адресу (TCP, порт 5000) — он показан в Настройки > Сеть. USB тоже работает.
+Bluetooth unavailable; retry from Settings	
+Bluetooth will start after Wi-Fi connects or times out.	
 Broker host / IP	Хост / IP брокера
 Buffered receive (experimental)	Буферизованный приём (экспериментально)
 Built-in	Встроенный
@@ -153,6 +157,7 @@ Clear battery history?	Очистить историю батареи?
 Clear history	Очистить историю
 Clear telemetry history for this node?	Очистить историю телеметрии этого узла?
 Client repeat	Повтор клиента
+Clock & time	
 Clock synced	Часы синхронизированы
 Clock: 12-hour	Часы: 12-часовые
 Clock: 24-hour	Часы: 24-часовые
@@ -161,6 +166,7 @@ Colourful chat bubbles	Цветные пузыри чата
 Commands	Команды
 Community Preset	Пресет сообщества
 Community preset (meshcomod web)	Пресет сообщества (meshcomod web)
+Compact	
 Compact messages	Компактные сообщения
 Compact messages (IRC style)	Компактные сообщения (стиль IRC)
 Connect	Подключить
@@ -189,10 +195,17 @@ Control this device from a browser	Управляйте устройством �
 Copied %s	%s скопировано
 Copied - Paste in a folder	Скопировано - вставьте в папку
 Copy	Копировать
+Copy blocked: SD card holds a different or unreadable profile	
+Copy blocked: SD profile could not be prepared safely	
+Copy blocked: internal data is busy	
+Copy blocked: migration guard unavailable	
 Copy failed (no internal identity)	Ошибка копирования (нет внутренней идентичности)
+Copy incomplete: SD data may be mixed. Retry before reboot.	
 Copy internal data to SD	Скопировать данные на SD
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	
 Copy secret	Копировать секрет
 Copying internal data to SD...	Копирование внутренних данных на SD...
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	
 Could not add	Не удалось добавить
 Could not save the crash report	Не удалось сохранить отчёт о сбое
 Couldn't delete	Не удалось удалить
@@ -206,6 +219,7 @@ Create QR	Создать QR
 Create a private channel	Создать приватный канал
 Create failed	Не удалось создать
 Create private channel	Создать приватный канал
+Current tile transfer is busy - retry	
 Custom UTC offset (hours)	Свой сдвиг UTC (часы)
 Cut	Вырезать
 Cut - Paste in a folder	Вырезано - вставьте в папку
@@ -245,6 +259,7 @@ Distance: miles	Расстояние: мили
 Do Not Disturb	Не беспокоить
 Do Not Disturb off	«Не беспокоить» выкл.
 Do Not Disturb on	«Не беспокоить» вкл.
+Down	
 Download failed	Загрузка не удалась
 Download failed (network?)	Загрузка не удалась (сеть?)
 Download mode	Режим загрузки
@@ -287,6 +302,9 @@ Export settings	Экспорт настроек
 Exporting settings…	Экспорт настроек…
 External antenna selected	Выбрана внешняя антенна
 Factory reset	Сброс настроек
+Factory reset blocked: SD activity is still running; close tools and retry.	
+Factory reset blocked: storage is busy	
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	
 Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Сброс к заводским?\n\nСтирает личность, контакты, каналы, сообщения, Wi-Fi и все настройки. Необратимо.
 Failed to save channel.	Не удалось сохранить канал.
 Favorites full (max %d)	Избранное заполнено (макс %d)
@@ -322,6 +340,7 @@ GPS: fix	GPS: есть
 GPS: off	GPS: выкл
 GPS: searching	GPS: поиск
 Game over  —  score %d   (tap to restart)	Игра окончена  —  счёт %d   (нажмите для рестарта)
+General	
 Get	Скачать
 Get Started	Начать
 Get test builds (beta)	Получать тестовые сборки (бета)
@@ -336,6 +355,7 @@ Hide this app from the drawer?	Скрыть это приложение из м�
 High-gain receiver (FEM LNA)	Приёмник с высоким усилением (FEM LNA)
 Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Крайне экспериментально. Пересылает текст, имя отправителя и метку времени каждого сообщения, которое принимает ваш узел, на брокер MQTT, где их сможет прочитать любой, кто имеет доступ к брокеру. Личные сообщения приватны — от людей, не соглашавшихся на их передачу. Используйте свой брокер, задайте ключ шифрования ниже и никогда не публичный брокер.
 History limit off	Лимит истории выключен
+Home	
 Hotkey saved	Горячая клавиша сохранена
 How you'll appear to other nodes. You can change this later in Settings.	Как вы будете видны другим узлам. Можно изменить в Настройках.
 Humidity	Влажность
@@ -386,6 +406,7 @@ Keyboard light on	Подсветка клавиатуры вкл.
 Keyboard nav: WASDZ on	Навигация клавиатурой: WASDZ вкл.
 Keyboard nav: off	Навигация клавиатурой: выкл.
 Keyboard navigation	Навигация клавиатурой
+Keys	
 LOS → %s	Прямая видимость → %s
 Landscape (desktop)	Альбомная (десктоп)
 Landscape set - applies when remote mode starts.	Альбомная выбрана - применится при запуске удалённого режима.
@@ -393,9 +414,11 @@ Language	Язык
 Language catalog unavailable - check Wi-Fi, then reopen this tab.	Каталог языков недоступен - проверьте Wi-Fi и откройте вкладку снова.
 Language updated - restarting to apply it…	Язык обновлён - перезагрузка для применения…
 Languages	Языки
+Large (bigger icons)	
 Latitude	Широта
 Leave empty if not required	Оставьте пустым, если не нужно
 Leaving remote mode - rebooting...	Выход из удалённого режима - перезагрузка...
+Left	
 Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Настроим ваше устройство.\n\nВы выберете имя и регион LoRa. Займёт около минуты.
 Letters only	Только буквы
 LoRa antenna (P4)	Антенна LoRa (P4)
@@ -455,6 +478,7 @@ Message deleted	Сообщение удалено
 Message didn't get through.\nResend it?	Сообщение не дошло.\nОтправить снова?
 Message info	Информация о сообщении
 Message sound	Звук сообщений
+Messages	
 Min zoom for this pack	Мин. зум для этого пакета
 Mode: BLE starting / low memory	Режим: BLE запускается / мало памяти
 Model:	Модель:
@@ -645,8 +669,12 @@ Resends a message until a repeater echoes it or the recipient ACKs. Turn off to 
 Reset	Сброс
 Reset path	Сбросить маршрут
 Restarting to apply the language…	Перезагрузка для применения языка…
+Restarting to enable Bluetooth	
+Resume	
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	
 Retry sends until heard	Повторять отправку, пока не услышат
 Reverse scrollball	Инвертировать трекбол
+Right	
 Roll to highlight • click to insert	Прокрутите для выбора • нажмите для вставки
 Room is read-only for you.\nJoin with the room password to post.	Комната только для чтения.\nВойдите с паролем комнаты, чтобы писать.
 Rotating - reconnecting...	Поворот - переподключение...
@@ -659,8 +687,14 @@ SD card inserted	SD-карта вставлена
 SD card lost - reinsert to recover	SD-карта потеряна - переставьте её
 SD card remounted	SD-карта перемонтирована
 SD card removed	SD-карта извлечена
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	
 SD download failed: %s	Не удалось загрузить на SD: %s
 SD formatted - %s (MESHCOMOD)	SD отформатирована - %s (MESHCOMOD)
+SD is busy - close tools and retry	
+SD removed - card-backed data cannot be saved	
+SD stayed busy - format cancelled, retry	
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u КБ занято
@@ -684,6 +718,7 @@ Saved backups	Сохранённые копии
 Saved network	Сохранённая сеть
 Saved profiles	Сохранённые профили
 Saved to slot %d	Сохранено в слот %d
+Saved — applying…	
 Saved — rebooting	Сохранено — перезагрузка
 Saved — reconnecting…	Сохранено — переподключение…
 Saved: %s\nFlash it from the Launcher.	Сохранено: %s\nПрошейте из Launcher.
@@ -692,6 +727,7 @@ Saving to SD… 0%	Сохранение на SD… 0%
 Scan to open on phone	Отсканируйте, чтобы открыть на телефоне
 Scanning…	Сканирование…
 Scope direct msgs to region	Ограничить личные сообщения регионом
+Screen	
 Screen locked	Экран заблокирован
 Screen timeout (s, 0 = never)	Тайм-аут экрана (с, 0 = никогда)
 Screen timeout (s, 0 = never, min 10)	Тайм-аут экрана (с, 0 = никогда, мин 10)
@@ -702,6 +738,8 @@ Screenshot needs an SD card	Для скриншота нужна SD-карта
 Screenshot: low memory	Скриншот: мало памяти
 Screenshot: no SD card	Скриншот: нет SD-карты
 Screenshot: write failed	Скриншот: ошибка записи
+Scroll down	
+Scroll up	
 Scrollball: normal	Трекбол: обычный
 Scrollball: reversed	Трекбол: инвертирован
 Search	Поиск
@@ -710,6 +748,7 @@ Secondary keyboards	Дополнительные клавиатуры
 Secret (32 hex chars)	Секрет (32 hex)
 Secret (32 hex, optional)	Секрет (32 hex, необяз.)
 Secret must be 32 hex chars (or empty).	Секрет — 32 hex-символа (или пусто).
+Select	
 Select a DM thread	Выберите тему ЛС
 Select all	Выбрать всё
 Select network	Выбрать сеть
@@ -718,6 +757,7 @@ Send advert now	Отправить advert
 Send an advert now, or set how often you re-advertise.	Отправить advert сейчас или задать частоту повторной отправки.
 Send failed	Не удалось отправить
 Sender blocked	Отправитель заблокирован
+Sensors	
 Sensors tab: off (restart to apply)	Вкладка датчиков: выкл (перезагрузите для применения)
 Sensors tab: on (restart to apply)	Вкладка датчиков: вкл (перезагрузите для применения)
 Sent	Отправлено
@@ -749,6 +789,7 @@ Sleep ready	Готов ко сну
 Slot %d cleared	Слот %d очищен
 Slot empty	Слот пуст
 Small\nMedium\nLarge	Малый\nСредний\nБольшой
+Snake	
 Snake  —  swipe or roll the trackball	Snake  —  проведите или крутите трекбол
 Sort	Сортировка
 Sound	Звук
@@ -843,6 +884,7 @@ Unmute msgs	Включить сообщ.
 Unread %d	Непроч. %d
 Unread %d\nRAM %u%%  ·  PSRAM %u%%	Непроч. %d\nRAM %u%%  ·  PSRAM %u%%
 Unsupported WAV (need 16-bit PCM)	WAV не поддерживается (нужен 16-бит PCM)
+Up	
 Update	Обновить
 Update bin saved to SD	Файл обновления сохранён на SD
 Update complete.\nRebooting...	Обновление завершено.\nПерезагрузка...
@@ -862,6 +904,7 @@ Welcome to WADAMESH	Добро пожаловать в WADAMESH
 While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Пока это включено, любой в вашей сети Wi-Fi может видеть устройство и управлять им. Обычный HTTP (только локальная сеть).
 Wi-Fi	Wi-Fi
 Wi-Fi & Bluetooth	Wi-Fi и Bluetooth
+Wi-Fi and Bluetooth unavailable; retry from Settings	
 Wi-Fi is not enabled in this build.	Wi-Fi не включён в этой сборке.
 Wi-Fi isn't available on this build.	Wi-Fi недоступен в этой сборке.
 Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	Нужен Wi-Fi для профиля\nрельефа этого пути.\nПодключите в Настройки → Wi-Fi.
@@ -869,8 +912,12 @@ Wi-Fi not connected	Wi-Fi не подключён
 Wi-Fi off	Wi-Fi выкл
 Wi-Fi on	Wi-Fi вкл
 Wi-Fi on, scanning…	Wi-Fi вкл, поиск…
+Wi-Fi paused; Bluetooth disconnect timed out	
 Wi-Fi saved (radio off)	Wi-Fi сохранён (радио выкл)
+Wi-Fi saved, applying	
 Wi-Fi saved, reconnecting	Wi-Fi сохранён, переподключение
+Wi-Fi unavailable; Bluetooth restored	
+Wi-Fi unavailable; retry from Settings	
 Yesterday	Вчера
 You can run setup later in Settings → Device	Настройку можно запустить позже в Настройки → Устройство
 Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Местоположение неизвестно.\nСначала задайте GPS / позицию в\nНастройки → Профиль.
@@ -894,6 +941,7 @@ hold the d-pad to unlock	удерживайте d-pad для разблокир�
 hold the trackball to unlock	удерживайте трекбол для разблокировки
 kHz	kHz
 keep holding	удерживайте
+last wake:	
 last wake: 	последнее пробуждение: 
 leave empty to generate	оставьте пустым для генерации
 lights the keyboard + wakes the screen on an incoming message	подсвечивает клавиатуру + будит экран при входящем сообщении

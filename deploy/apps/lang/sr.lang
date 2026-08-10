@@ -69,6 +69,7 @@ Auto repeater	Ауто репетитор
 Auto room	Ауто соба
 Auto sensor	Ауто сензор
 Auto-Join	Ауто-придруживање
+Auto-add	
 Auto-add contacts	Аутоматско додавање контаката
 Auto-add saved	Аутододавање сачувано
 Auto-add settings	Подешавања ауто-додавања
@@ -106,9 +107,12 @@ Blue battery  Orange temp  Cyan humidity	Плаво — батерија  Нар
 Bluetooth	Bluetooth
 Bluetooth already off	Bluetooth већ искључен
 Bluetooth already on	Bluetooth већ укључен
+Bluetooth deferred; retry from Settings	
 Bluetooth off	Bluetooth искљ
 Bluetooth on	Bluetooth укљ
 Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Bluetooth упаривање није доступно на овом уређају.\n\nФабрички фирмвер радио чипа га не подржава.\n\nУпари апликацију преко Wi-Fi-ја: повежи уређај на мрежу па га додај у апликацији преко IP адресе (TCP, порт 5000) — приказано под Подешавања > Мрежа. USB такође ради.
+Bluetooth unavailable; retry from Settings	
+Bluetooth will start after Wi-Fi connects or times out.	
 Broker host / IP	Хост / IP брокера
 Buffered receive (experimental)	Баферовани пријем (експериментално)
 Built-in	Уграђен
@@ -153,6 +157,7 @@ Clear battery history?	Обрисати историју батерије?
 Clear history	Обриши историју
 Clear telemetry history for this node?	Обрисати историју телеметрије овог чвора?
 Client repeat	Понављање клијента
+Clock & time	
 Clock synced	Сат синхронизован
 Clock: 12-hour	Сат: 12-часовни
 Clock: 24-hour	Сат: 24-часовни
@@ -161,6 +166,7 @@ Colourful chat bubbles	Шарени облачићи ћаскања
 Commands	Команде
 Community Preset	Претподешавање заједнице
 Community preset (meshcomod web)	Унапред (meshcomod web)
+Compact	
 Compact messages	Компактне поруке
 Compact messages (IRC style)	Компактне поруке (IRC стил)
 Connect	Повежи
@@ -189,10 +195,17 @@ Control this device from a browser	Управљај уређајем из пре
 Copied %s	%s копирано
 Copied - Paste in a folder	Копирано - налепи у фасциклу
 Copy	Копирај
+Copy blocked: SD card holds a different or unreadable profile	
+Copy blocked: SD profile could not be prepared safely	
+Copy blocked: internal data is busy	
+Copy blocked: migration guard unavailable	
 Copy failed (no internal identity)	Копирање није успело (нема интерног идентитета)
+Copy incomplete: SD data may be mixed. Retry before reboot.	
 Copy internal data to SD	Копирај податке на SD
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	
 Copy secret	Копирај тајну
 Copying internal data to SD...	Копирање интерних података на SD...
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	
 Could not add	Додавање није успело
 Could not save the crash report	Извештај о паду није сачуван
 Couldn't delete	Брисање није успело
@@ -206,6 +219,7 @@ Create QR	Направи QR
 Create a private channel	Направи приватни канал
 Create failed	Креирање није успело
 Create private channel	Направи приватни канал
+Current tile transfer is busy - retry	
 Custom UTC offset (hours)	Прилагођени UTC померај (сати)
 Cut	Исеци
 Cut - Paste in a folder	Исечено - налепи у фасциклу
@@ -245,6 +259,7 @@ Distance: miles	Растојање: миље
 Do Not Disturb	Не узнемиравај
 Do Not Disturb off	«Не узнемиравај» искљ.
 Do Not Disturb on	«Не узнемиравај» укљ.
+Down	
 Download failed	Преузимање није успело
 Download failed (network?)	Преузимање није успело (мрежа?)
 Download mode	Режим преузимања
@@ -287,6 +302,9 @@ Export settings	Извези подешавања
 Exporting settings…	Извоз подешавања…
 External antenna selected	Изабрана спољна антена
 Factory reset	Фабричко ресет.
+Factory reset blocked: SD activity is still running; close tools and retry.	
+Factory reset blocked: storage is busy	
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	
 Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Фабричко ресетовање?\n\nБрише идентитет, контакте, канале, поруке, Wi-Fi и сва подешавања. Неповратно.
 Failed to save channel.	Чување канала није успело.
 Favorites full (max %d)	Омиљени пуни (макс %d)
@@ -322,6 +340,7 @@ GPS: fix	GPS: фикс
 GPS: off	GPS: искљ
 GPS: searching	GPS: тражење
 Game over  —  score %d   (tap to restart)	Крај игре  —  резултат %d   (додирните за рестарт)
+General	
 Get	Преузми
 Get Started	Започни
 Get test builds (beta)	Преузми тест верзије (бета)
@@ -336,6 +355,7 @@ Hide this app from the drawer?	Сакрити ову апликацију из �
 High-gain receiver (FEM LNA)	Пријемник високог појачања (FEM LNA)
 Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Изузетно експериментално. Ово прослеђује текст, име пошиљаоца и временску ознаку сваке поруке коју ваш чвор прими на MQTT брокер, где их може прочитати свако ко има приступ брокеру. Директне поруке су приватне, од других људи који никада нису пристали да буду дељени. Користите брокер који контролишете, поставите кључ за шифровање испод, и никада јавни брокер.
 History limit off	Ограничење историје искључено
+Home	
 Hotkey saved	Пречица сачувана
 How you'll appear to other nodes. You can change this later in Settings.	Како ћете изгледати другим чворовима. У Подешавањима.
 Humidity	Влажност
@@ -386,6 +406,7 @@ Keyboard light on	Осветљење тастатуре укљ.
 Keyboard nav: WASDZ on	Навиг. тастатуром: WASDZ укљ.
 Keyboard nav: off	Навиг. тастатуром: искљ.
 Keyboard navigation	Навигација тастатуром
+Keys	
 LOS → %s	Оптичка видљивост → %s
 Landscape (desktop)	Положено (десктоп)
 Landscape set - applies when remote mode starts.	Положено подешено - важи кад крене даљински режим.
@@ -393,9 +414,11 @@ Language	Језик
 Language catalog unavailable - check Wi-Fi, then reopen this tab.	Каталог језика није доступан - провери Wi-Fi па поново отвори картицу.
 Language updated - restarting to apply it…	Језик ажуриран - рестартовање ради примене…
 Languages	Језици
+Large (bigger icons)	
 Latitude	Географска ширина
 Leave empty if not required	Оставите празно ако није потребно
 Leaving remote mode - rebooting...	Излазак из даљинског режима - рестартовање...
+Left	
 Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Хајде да подесимо ваш уређај.\n\nИзабраћете име и ваш LoRa регион. Траје око минут.
 Letters only	Само слова
 LoRa antenna (P4)	LoRa антена (P4)
@@ -455,6 +478,7 @@ Message deleted	Порука обрисана
 Message didn't get through.\nResend it?	Порука није стигла.\nПослати поново?
 Message info	Подаци о поруци
 Message sound	Звук порука
+Messages	
 Min zoom for this pack	Мин. зум за овај пакет
 Mode: BLE starting / low memory	Режим: BLE стартује / мало меморије
 Model:	Модел:
@@ -645,8 +669,12 @@ Resends a message until a repeater echoes it or the recipient ACKs. Turn off to 
 Reset	Ресетуј
 Reset path	Ресетуј путању
 Restarting to apply the language…	Рестартовање ради примене језика…
+Restarting to enable Bluetooth	
+Resume	
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	
 Retry sends until heard	Понављај слање док се не чује
 Reverse scrollball	Обрни scrollball
+Right	
 Roll to highlight • click to insert	Котрљајте за истицање • кликните за уметање
 Room is read-only for you.\nJoin with the room password to post.	Соба је само за читање за вас.\nПридружите се лозинком собе да објавите.
 Rotating - reconnecting...	Ротација - поновно повезивање...
@@ -659,8 +687,14 @@ SD card inserted	SD картица убачена
 SD card lost - reinsert to recover	SD картица изгубљена - убаците поново
 SD card remounted	SD картица поново монтирана
 SD card removed	SD картица уклоњена
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	
 SD download failed: %s	Преузимање на SD није успело: %s
 SD formatted - %s (MESHCOMOD)	SD форматирана - %s (MESHCOMOD)
+SD is busy - close tools and retry	
+SD removed - card-backed data cannot be saved	
+SD stayed busy - format cancelled, retry	
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB заузето
@@ -684,6 +718,7 @@ Saved backups	Сачуване копије
 Saved network	Сачувана мрежа
 Saved profiles	Сачувани профили
 Saved to slot %d	Сачувано у слот %d
+Saved — applying…	
 Saved — rebooting	Сачувано — рестарт
 Saved — reconnecting…	Сачувано — поновно повезивање…
 Saved: %s\nFlash it from the Launcher.	Сачувано: %s\nФлешујте га из Launcher-а.
@@ -692,6 +727,7 @@ Saving to SD… 0%	Чување на SD… 0%
 Scan to open on phone	Скенирај да отвориш на телефону
 Scanning…	Скенирање…
 Scope direct msgs to region	Ограничи директне поруке на регион
+Screen	
 Screen locked	Екран закључан
 Screen timeout (s, 0 = never)	Истек екрана (с, 0 = никад)
 Screen timeout (s, 0 = never, min 10)	Истек екрана (с, 0 = никад, мин 10)
@@ -702,6 +738,8 @@ Screenshot needs an SD card	Снимак екрана захтева SD карт
 Screenshot: low memory	Снимак екрана: мало меморије
 Screenshot: no SD card	Снимак екрана: нема SD картице
 Screenshot: write failed	Снимак екрана: упис није успео
+Scroll down	
+Scroll up	
 Scrollball: normal	Scrollball: нормалан
 Scrollball: reversed	Scrollball: обрнут
 Search	Претрага
@@ -710,6 +748,7 @@ Secondary keyboards	Секундарне тастатуре
 Secret (32 hex chars)	Тајна (32 hex)
 Secret (32 hex, optional)	Тајна (32 hex, опционо)
 Secret must be 32 hex chars (or empty).	Тајна мора бити 32 hex (или празно).
+Select	
 Select a DM thread	Изаберите ДП разговор
 Select all	Изабери све
 Select network	Изабери мрежу
@@ -718,6 +757,7 @@ Send advert now	Пошаљи advert
 Send an advert now, or set how often you re-advertise.	Пошаљите advert сада или подесите колико често га понављате.
 Send failed	Слање није успело
 Sender blocked	Пошиљалац блокиран
+Sensors	
 Sensors tab: off (restart to apply)	Картица сензора: искључено (рестарт за примену)
 Sensors tab: on (restart to apply)	Картица сензора: укључено (рестарт за примену)
 Sent	Послато
@@ -749,6 +789,7 @@ Sleep ready	Спреман за спавање
 Slot %d cleared	Слот %d обрисан
 Slot empty	Слот празан
 Small\nMedium\nLarge	Мали\nСредњи\nВелики
+Snake	
 Snake  —  swipe or roll the trackball	Snake  —  превуци или заврти трекбол
 Sort	Сортирај
 Sound	Звук
@@ -843,6 +884,7 @@ Unmute msgs	Укључи поруке
 Unread %d	Непроч. %d
 Unread %d\nRAM %u%%  ·  PSRAM %u%%	Непроч. %d\nRAM %u%%  ·  PSRAM %u%%
 Unsupported WAV (need 16-bit PCM)	Неподржан WAV (потребан 16-битни PCM)
+Up	
 Update	Ажурирај
 Update bin saved to SD	Датотека ажурирања сачувана на SD
 Update complete.\nRebooting...	Ажурирање завршено.\nПоновно покретање...
@@ -862,6 +904,7 @@ Welcome to WADAMESH	Добро дошли у WADAMESH
 While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Док је ово укључено, свако на твом Wi-Fi-ју може да види и контролише уређај. Користи обичан HTTP (само локална мрежа).
 Wi-Fi	Wi-Fi
 Wi-Fi & Bluetooth	Wi-Fi и Bluetooth
+Wi-Fi and Bluetooth unavailable; retry from Settings	
 Wi-Fi is not enabled in this build.	Wi-Fi није омогућен у овом билду.
 Wi-Fi isn't available on this build.	Wi-Fi није доступан на овом билду.
 Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	Потребан Wi-Fi за профил\nтерена ове путање.\nПовежите у Подешавања → Wi-Fi.
@@ -869,8 +912,12 @@ Wi-Fi not connected	Wi-Fi није повезан
 Wi-Fi off	Wi-Fi искљ
 Wi-Fi on	Wi-Fi укљ
 Wi-Fi on, scanning…	Wi-Fi укључен, тражим…
+Wi-Fi paused; Bluetooth disconnect timed out	
 Wi-Fi saved (radio off)	Wi-Fi сачуван (радио искљ)
+Wi-Fi saved, applying	
 Wi-Fi saved, reconnecting	Wi-Fi сачуван, поновно повезивање
+Wi-Fi unavailable; Bluetooth restored	
+Wi-Fi unavailable; retry from Settings	
 Yesterday	Јуче
 You can run setup later in Settings → Device	Подешавање можете покренути касније у Подешавања → Уређај
 Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Локација је непозната.\nПрво поставите GPS / позицију у\nПодешавања → Профил.
@@ -894,6 +941,7 @@ hold the d-pad to unlock	држи d-pad за откључавање
 hold the trackball to unlock	држите куглицу да откључате
 kHz	kHz
 keep holding	држите
+last wake:	
 last wake: 	последње буђење: 
 leave empty to generate	оставите празно за генерисање
 lights the keyboard + wakes the screen on an incoming message	осветљава тастатуру + буди екран при долазној поруци

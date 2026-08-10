@@ -83,11 +83,17 @@ def audit(path, keys):
     rows = []
     for line in open(path, encoding='utf-8'):
         line = line.rstrip('\n')
-        if not line or line.startswith('#') or '\t' not in line: continue
+        # A line is a header/comment only when it has NO tab — same rule as the
+        # loader. Testing for a leading '#' would drop every key that starts with
+        # LVGL recolor markup ("#7A7F87 Wardrive: …#"), which are real keys.
+        if '\t' not in line: continue
         en, tr = line.split('\t', 1)
         rows.append((c_unescape(en), tr))
     dead    = [en for en, tr in rows if en not in keys]
-    missing = sorted(k for k in keys if k and k not in {en for en, _ in rows})
+    # Keys with no letters (a lone emoji, a glyph-only button) translate to
+    # themselves — not worth a row, and not a gap.
+    missing = sorted(k for k in keys
+                     if k and k not in {en for en, _ in rows} and re.search(r'[A-Za-z]', k))
     name = os.path.basename(path)
     print(f'\n=== {name} — {len(rows)} rows vs {len(keys)} TR() keys ===')
     print(f'  translated but NEVER looked up : {len(dead)}')

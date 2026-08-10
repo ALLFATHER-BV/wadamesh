@@ -69,6 +69,7 @@ Auto repeater	Repetor auto
 Auto room	Cameră auto
 Auto sensor	Senzor auto
 Auto-Join	Auto-intrare
+Auto-add	
 Auto-add contacts	Auto-adăugare contacte
 Auto-add saved	Auto-adăugare salvată
 Auto-add settings	Setări adăugare automată
@@ -106,9 +107,12 @@ Blue battery  Orange temp  Cyan humidity	Albastru baterie  Portocaliu temp  Cyan
 Bluetooth	Bluetooth
 Bluetooth already off	Bluetooth deja oprit
 Bluetooth already on	Bluetooth deja pornit
+Bluetooth deferred; retry from Settings	
 Bluetooth off	Bluetooth oprit
 Bluetooth on	Bluetooth pornit
 Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Împerecherea Bluetooth nu este disponibilă pe acest dispozitiv.\n\nFirmware-ul din fabrică al cipului radio nu o suportă.\n\nÎmperechează aplicaţia prin Wi-Fi: conectează dispozitivul la reţea, apoi adaugă-l în aplicaţie după adresa IP (TCP, port 5000) — afişată la Setări > Reţea. Merge şi USB.
+Bluetooth unavailable; retry from Settings	
+Bluetooth will start after Wi-Fi connects or times out.	
 Broker host / IP	Gazdă broker / IP
 Buffered receive (experimental)	Recepţie cu buffer (experimental)
 Built-in	Încorporat
@@ -153,6 +157,7 @@ Clear battery history?	Goleşti istoricul bateriei?
 Clear history	Şterge istoricul
 Clear telemetry history for this node?	Goleşti istoricul de telemetrie al acestui nod?
 Client repeat	Repetare client
+Clock & time	
 Clock synced	Ceas sincronizat
 Clock: 12-hour	Ceas: 12 ore
 Clock: 24-hour	Ceas: 24 ore
@@ -161,6 +166,7 @@ Colourful chat bubbles	Baloane de chat colorate
 Commands	Comenzi
 Community Preset	Presetare comunitară
 Community preset (meshcomod web)	Presetare comunitate (meshcomod web)
+Compact	
 Compact messages	Mesaje compacte
 Compact messages (IRC style)	Mesaje compacte (stil IRC)
 Connect	Conectează
@@ -189,10 +195,17 @@ Control this device from a browser	Controlează dispozitivul din browser
 Copied %s	Copiat %s
 Copied - Paste in a folder	Copiat - lipeşte într-un folder
 Copy	Copiază
+Copy blocked: SD card holds a different or unreadable profile	
+Copy blocked: SD profile could not be prepared safely	
+Copy blocked: internal data is busy	
+Copy blocked: migration guard unavailable	
 Copy failed (no internal identity)	Copiere eşuată (fără identitate internă)
+Copy incomplete: SD data may be mixed. Retry before reboot.	
 Copy internal data to SD	Copiază datele interne pe SD
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	
 Copy secret	Copiază secretul
 Copying internal data to SD...	Se copiază datele interne pe SD...
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	
 Could not add	Nu s-a putut adăuga
 Could not save the crash report	Raportul de eroare nu a putut fi salvat
 Couldn't delete	Nu s-a putut şterge
@@ -206,6 +219,7 @@ Create QR	Creează QR
 Create a private channel	Creează un canal privat
 Create failed	Creare eşuată
 Create private channel	Creează canal privat
+Current tile transfer is busy - retry	
 Custom UTC offset (hours)	Decalaj UTC personalizat (ore)
 Cut	Decupează
 Cut - Paste in a folder	Decupat - lipeşte într-un folder
@@ -245,6 +259,7 @@ Distance: miles	Distanţă: mile
 Do Not Disturb	Nu deranja
 Do Not Disturb off	Nu deranja oprit
 Do Not Disturb on	Nu deranja pornit
+Down	
 Download failed	Descărcarea a eşuat
 Download failed (network?)	Descărcarea a eşuat (reţea?)
 Download mode	Mod descărcare
@@ -287,6 +302,9 @@ Export settings	Exportă setările
 Exporting settings…	Se exportă setările…
 External antenna selected	Antenă externă selectată
 Factory reset	Resetare din fabrică
+Factory reset blocked: SD activity is still running; close tools and retry.	
+Factory reset blocked: storage is busy	
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	
 Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Resetare din fabrică?\n\nŞterge identitatea, contactele,\ncanalele, mesajele, Wi-Fi\nşi fiecare setare. Nu poate\nfi anulată.
 Failed to save channel.	Salvarea canalului a eşuat.
 Favorites full (max %d)	Favorite pline (max %d)
@@ -322,6 +340,7 @@ GPS: fix	GPS: fix
 GPS: off	GPS: oprit
 GPS: searching	GPS: căutare
 Game over  —  score %d   (tap to restart)	Joc terminat  —  scor %d   (atinge pentru restart)
+General	
 Get	Descarcă
 Get Started	Începe
 Get test builds (beta)	Primeşte versiuni de test (beta)
@@ -336,6 +355,7 @@ Hide this app from the drawer?	Ascunzi această aplicaţie din sertar?
 High-gain receiver (FEM LNA)	Receptor cu amplificare mare (FEM LNA)
 Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Extrem de experimental. Trimite textul, numele expeditorului şi ora fiecărui mesaj primit de nodul tău către un broker MQTT, unde oricine poate citi brokerul le poate citi şi el. Mesajele directe sunt mesaje private de la persoane care nu au acceptat să fie partajate. Foloseşte un broker pe care îl controlezi, setează o cheie de criptare mai jos şi nu folosi niciodată un broker public.
 History limit off	Limita istoricului oprită
+Home	
 Hotkey saved	Tastă rapidă salvată
 How you'll appear to other nodes. You can change this later in Settings.	Cum vei apărea altor noduri. Poţi schimba asta mai târziu în Setări.
 Humidity	Umiditate
@@ -386,6 +406,7 @@ Keyboard light on	Lumina tastaturii pornită
 Keyboard nav: WASDZ on	Navigare tastatură: WASDZ pornit
 Keyboard nav: off	Navigare tastatură: oprită
 Keyboard navigation	Navigare cu tastatura
+Keys	
 LOS → %s	Linie vizuală → %s
 Landscape (desktop)	Peisaj (desktop)
 Landscape set - applies when remote mode starts.	Peisaj setat - se aplică la pornirea modului la distanţă.
@@ -393,9 +414,11 @@ Language	Limbă
 Language catalog unavailable - check Wi-Fi, then reopen this tab.	Catalog de limbi indisponibil - verifică Wi-Fi, apoi redeschide fila.
 Language updated - restarting to apply it…	Limbă actualizată - repornire pentru aplicare…
 Languages	Limbi
+Large (bigger icons)	
 Latitude	Latitudine
 Leave empty if not required	Lasă gol dacă nu e necesar
 Leaving remote mode - rebooting...	Se iese din modul la distanţă - repornire...
+Left	
 Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Să-ţi configurăm dispozitivul.\n\nÎţi alegi un nume şi regiunea LoRa. Durează cam un minut.
 Letters only	Doar litere
 LoRa antenna (P4)	Antenă LoRa (P4)
@@ -455,6 +478,7 @@ Message deleted	Mesaj şters
 Message didn't get through.\nResend it?	Mesajul nu a ajuns.\nÎl retrimiţi?
 Message info	Informaţii mesaj
 Message sound	Sunet mesaj
+Messages	
 Min zoom for this pack	Zoom minim pentru acest pachet
 Mode: BLE starting / low memory	Mod: BLE porneşte / memorie redusă
 Model:	Model:
@@ -645,8 +669,12 @@ Resends a message until a repeater echoes it or the recipient ACKs. Turn off to 
 Reset	Resetează
 Reset path	Resetează ruta
 Restarting to apply the language…	Repornire pentru aplicarea limbii…
+Restarting to enable Bluetooth	
+Resume	
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	
 Retry sends until heard	Retrimite până e auzit
 Reverse scrollball	Inversează scrollball-ul
+Right	
 Roll to highlight • click to insert	Rulează pentru evidenţiere • apasă pentru inserare
 Room is read-only for you.\nJoin with the room password to post.	Camera e doar în citire pentru tine.\nIntră cu parola camerei ca să postezi.
 Rotating - reconnecting...	Rotire - reconectare...
@@ -659,8 +687,14 @@ SD card inserted	Card SD introdus
 SD card lost - reinsert to recover	Card SD pierdut - reintrodu-l pentru recuperare
 SD card remounted	Card SD remontat
 SD card removed	Card SD scos
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	
 SD download failed: %s	Descărcare SD eşuată: %s
 SD formatted - %s (MESHCOMOD)	SD formatat - %s (MESHCOMOD)
+SD is busy - close tools and retry	
+SD removed - card-backed data cannot be saved	
+SD stayed busy - format cancelled, retry	
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB folosiţi
@@ -684,6 +718,7 @@ Saved backups	Backupuri salvate
 Saved network	Reţea salvată
 Saved profiles	Profiluri salvate
 Saved to slot %d	Salvat în slotul %d
+Saved — applying…	
 Saved — rebooting	Salvat — se reporneşte
 Saved — reconnecting…	Salvat — se reconectează…
 Saved: %s\nFlash it from the Launcher.	Salvat: %s\nInstalează-l din Launcher.
@@ -692,6 +727,7 @@ Saving to SD… 0%	Se salvează pe SD… 0%
 Scan to open on phone	Scanează pentru a deschide pe telefon
 Scanning…	Se scanează…
 Scope direct msgs to region	Limitează DM-urile la regiune
+Screen	
 Screen locked	Ecran blocat
 Screen timeout (s, 0 = never)	Stingere ecran (s, 0 = niciodată)
 Screen timeout (s, 0 = never, min 10)	Stingere ecran (s, 0 = niciodată, min 10)
@@ -702,6 +738,8 @@ Screenshot needs an SD card	Captura de ecran necesită un card SD
 Screenshot: low memory	Captură: memorie redusă
 Screenshot: no SD card	Captură: fără card SD
 Screenshot: write failed	Captură: scriere eşuată
+Scroll down	
+Scroll up	
 Scrollball: normal	Scrollball: normal
 Scrollball: reversed	Scrollball: inversat
 Search	Căutare
@@ -710,6 +748,7 @@ Secondary keyboards	Tastaturi secundare
 Secret (32 hex chars)	Secret (32 caractere hex)
 Secret (32 hex, optional)	Secret (32 hex, opţional)
 Secret must be 32 hex chars (or empty).	Secretul trebuie să aibă 32 caractere hex (sau gol).
+Select	
 Select a DM thread	Selectează o conversaţie DM
 Select all	Selectează tot
 Select network	Selectează reţeaua
@@ -718,6 +757,7 @@ Send advert now	Trimite advert acum
 Send an advert now, or set how often you re-advertise.	Trimite un advert acum sau setează cât de des te re-anunţi.
 Send failed	Trimitere eşuată
 Sender blocked	Expeditor blocat
+Sensors	
 Sensors tab: off (restart to apply)	Fila Senzori: oprită (repornire pentru aplicare)
 Sensors tab: on (restart to apply)	Fila Senzori: pornită (repornire pentru aplicare)
 Sent	Trimis
@@ -749,6 +789,7 @@ Sleep ready	Pregătit de somn
 Slot %d cleared	Slot %d golit
 Slot empty	Slot gol
 Small\nMedium\nLarge	Mic\nMediu\nMare
+Snake	
 Snake  —  swipe or roll the trackball	Snake  —  glisează sau roteşte trackball-ul
 Sort	Sortează
 Sound	Sunet
@@ -843,6 +884,7 @@ Unmute msgs	Cu sunet mesaje
 Unread %d	Necitite %d
 Unread %d\nRAM %u%%  ·  PSRAM %u%%	Necitite %d\nRAM %u%%  ·  PSRAM %u%%
 Unsupported WAV (need 16-bit PCM)	WAV neacceptat (necesită PCM 16-bit)
+Up	
 Update	Actualizează
 Update bin saved to SD	Bin de actualizare salvat pe SD
 Update complete.\nRebooting...	Actualizare completă.\nSe reporneşte...
@@ -862,6 +904,7 @@ Welcome to WADAMESH	Bun venit la WADAMESH
 While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Cât timp e pornit, oricine din reţeaua ta Wi-Fi poate vedea şi controla dispozitivul. Foloseşte HTTP simplu (doar reţea locală).
 Wi-Fi	Wi-Fi
 Wi-Fi & Bluetooth	Wi-Fi şi Bluetooth
+Wi-Fi and Bluetooth unavailable; retry from Settings	
 Wi-Fi is not enabled in this build.	Wi-Fi nu este activat în acest build.
 Wi-Fi isn't available on this build.	Wi-Fi nu este disponibil în acest build.
 Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	E nevoie de Wi-Fi pentru profilul\nde teren al acestei căi.\nConectează-te în Setări → Wi-Fi.
@@ -869,8 +912,12 @@ Wi-Fi not connected	Wi-Fi neconectat
 Wi-Fi off	Wi-Fi oprit
 Wi-Fi on	Wi-Fi pornit
 Wi-Fi on, scanning…	Wi-Fi pornit, se scanează…
+Wi-Fi paused; Bluetooth disconnect timed out	
 Wi-Fi saved (radio off)	Wi-Fi salvat (radio oprit)
+Wi-Fi saved, applying	
 Wi-Fi saved, reconnecting	Wi-Fi salvat, se reconectează
+Wi-Fi unavailable; Bluetooth restored	
+Wi-Fi unavailable; retry from Settings	
 Yesterday	Ieri
 You can run setup later in Settings → Device	Poţi rula configurarea mai târziu în Setări → Dispozitiv
 Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Locaţia ta e necunoscută.\nSetează mai întâi GPS / poziţia\nîn Setări → Profil.
@@ -894,6 +941,7 @@ hold the d-pad to unlock	ţine d-pad pentru deblocare
 hold the trackball to unlock	ţine trackball-ul apăsat pentru deblocare
 kHz	kHz
 keep holding	ţine apăsat
+last wake:	
 last wake: 	ultima trezire: 
 leave empty to generate	lasă gol pentru generare
 lights the keyboard + wakes the screen on an incoming message	aprinde tastatura + trezeşte ecranul la un mesaj primit
@@ -920,4 +968,5 @@ tap to exit full screen	atinge pentru a ieşi din ecran complet
 zoom	zoom
 zoom %d	zoom %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	amplificator ~17 dB pentru zone liniştite/izolate; opreşte-l în locuri zgomotoase.
+© OpenStreetMap	
 © OpenTopoMap	© OpenTopoMap

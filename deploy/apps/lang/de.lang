@@ -69,6 +69,7 @@ Auto repeater	Auto-Repeater
 Auto room	Auto-Raum
 Auto sensor	Auto-Sensor
 Auto-Join	Auto-Beitritt
+Auto-add	
 Auto-add contacts	Kontakte automatisch hinzufügen
 Auto-add saved	Auto-Hinzufügen gespeichert
 Auto-add settings	Auto-Hinzufügen-Einstellungen
@@ -106,9 +107,12 @@ Blue battery  Orange temp  Cyan humidity	Blau Akku  Orange Temp.  Cyan Feuchte
 Bluetooth	Bluetooth
 Bluetooth already off	Bluetooth bereits aus
 Bluetooth already on	Bluetooth bereits ein
+Bluetooth deferred; retry from Settings	
 Bluetooth off	Bluetooth aus
 Bluetooth on	Bluetooth ein
 Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Bluetooth-Kopplung ist auf diesem Gerät nicht verfügbar.\n\nDie Werksfirmware des Funkchips unterstützt sie nicht.\n\nStattdessen die Handy-App über Wi-Fi koppeln: Gerät ins Netzwerk bringen und in der App per IP-Adresse hinzufügen (TCP, Port 5000) — zu finden unter Einstellungen > Netzwerk. USB geht auch.
+Bluetooth unavailable; retry from Settings	
+Bluetooth will start after Wi-Fi connects or times out.	
 Broker host / IP	Broker-Host / IP
 Buffered receive (experimental)	Gepufferter Empfang (experimentell)
 Built-in	Integriert
@@ -153,6 +157,7 @@ Clear battery history?	Akkuverlauf löschen?
 Clear history	Verlauf löschen
 Clear telemetry history for this node?	Telemetrieverlauf dieses Nodes löschen?
 Client repeat	Client-Wiederholung
+Clock & time	
 Clock synced	Uhr synchronisiert
 Clock: 12-hour	Uhr: 12-Stunden
 Clock: 24-hour	Uhr: 24-Stunden
@@ -161,6 +166,7 @@ Colourful chat bubbles	Bunte Chat-Blasen
 Commands	Befehle
 Community Preset	Community-Voreinstellung
 Community preset (meshcomod web)	Community-Vorgabe (meshcomod web)
+Compact	
 Compact messages	Kompakte Nachrichten
 Compact messages (IRC style)	Kompakte Nachrichten (IRC-Stil)
 Connect	Verbinden
@@ -189,10 +195,17 @@ Control this device from a browser	Dieses Gerät im Browser steuern
 Copied %s	%s kopiert
 Copied - Paste in a folder	Kopiert - in einen Ordner einfügen
 Copy	Kopieren
+Copy blocked: SD card holds a different or unreadable profile	
+Copy blocked: SD profile could not be prepared safely	
+Copy blocked: internal data is busy	
+Copy blocked: migration guard unavailable	
 Copy failed (no internal identity)	Kopieren fehlgeschlagen (keine interne Identität)
+Copy incomplete: SD data may be mixed. Retry before reboot.	
 Copy internal data to SD	Interne Daten auf SD kopieren
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	
 Copy secret	Geheimnis kopieren
 Copying internal data to SD...	Interne Daten werden auf SD kopiert...
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	
 Could not add	Hinzufügen fehlgeschlagen
 Could not save the crash report	Absturzbericht konnte nicht gespeichert werden
 Couldn't delete	Löschen fehlgeschlagen
@@ -206,6 +219,7 @@ Create QR	QR erstellen
 Create a private channel	Privaten Kanal erstellen
 Create failed	Erstellen fehlgeschlagen
 Create private channel	Privaten Kanal erstellen
+Current tile transfer is busy - retry	
 Custom UTC offset (hours)	Eigener UTC-Versatz (Stunden)
 Cut	Ausschneiden
 Cut - Paste in a folder	Ausgeschnitten - in einen Ordner einfügen
@@ -245,6 +259,7 @@ Distance: miles	Entfernung: Meilen
 Do Not Disturb	Nicht stören
 Do Not Disturb off	Nicht stören aus
 Do Not Disturb on	Nicht stören ein
+Down	
 Download failed	Download fehlgeschlagen
 Download failed (network?)	Download fehlgeschlagen (Netzwerk?)
 Download mode	Download-Modus
@@ -287,6 +302,9 @@ Export settings	Einstellungen exportieren
 Exporting settings…	Einstellungen werden exportiert…
 External antenna selected	Externe Antenne gewählt
 Factory reset	Werksreset
+Factory reset blocked: SD activity is still running; close tools and retry.	
+Factory reset blocked: storage is busy	
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	
 Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Werksreset?\n\nLöscht Identität, Kontakte, Kanäle, Nachrichten, WLAN und alle Einstellungen. Unwiderruflich.
 Failed to save channel.	Kanal konnte nicht gespeichert werden.
 Favorites full (max %d)	Favoriten voll (max %d)
@@ -322,6 +340,7 @@ GPS: fix	GPS: Fix
 GPS: off	GPS: aus
 GPS: searching	GPS: Suche
 Game over  —  score %d   (tap to restart)	Game over  —  Punkte %d   (tippen für Neustart)
+General	
 Get	Laden
 Get Started	Loslegen
 Get test builds (beta)	Test-Builds erhalten (Beta)
@@ -336,6 +355,7 @@ Hide this app from the drawer?	Diese App aus dem Menü ausblenden?
 High-gain receiver (FEM LNA)	Hochverstärkungs-Empfänger (FEM LNA)
 Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Hochgradig experimentell. Dies leitet Text, Absendername und Zeitstempel jeder Nachricht, die dein Knoten empfängt, an einen MQTT-Broker weiter, wo jeder, der den Broker lesen kann, sie lesen kann. Direktnachrichten sind private Nachrichten anderer, die einer Weitergabe nie zugestimmt haben. Nutze einen Broker, den du selbst kontrollierst, setze unten einen Verschlüsselungsschlüssel und niemals einen öffentlichen Broker.
 History limit off	Verlaufslimit aus
+Home	
 Hotkey saved	Hotkey gespeichert
 How you'll appear to other nodes. You can change this later in Settings.	Wie Sie für andere Knoten erscheinen. Später in den Einstellungen änderbar.
 Humidity	Luftfeuchtigkeit
@@ -386,6 +406,7 @@ Keyboard light on	Tastaturlicht ein
 Keyboard nav: WASDZ on	Tastaturnav.: WASDZ an
 Keyboard nav: off	Tastaturnav.: aus
 Keyboard navigation	Tastaturnavigation
+Keys	
 LOS → %s	Sichtlinie → %s
 Landscape (desktop)	Querformat (Desktop)
 Landscape set - applies when remote mode starts.	Querformat gesetzt - gilt beim Start des Fernmodus.
@@ -393,9 +414,11 @@ Language	Sprache
 Language catalog unavailable - check Wi-Fi, then reopen this tab.	Sprachkatalog nicht verfügbar - Wi-Fi prüfen, dann den Tab neu öffnen.
 Language updated - restarting to apply it…	Sprache aktualisiert - Neustart zum Anwenden…
 Languages	Sprachen
+Large (bigger icons)	
 Latitude	Breitengrad
 Leave empty if not required	Leer lassen, wenn nicht nötig
 Leaving remote mode - rebooting...	Fernmodus wird beendet - Neustart...
+Left	
 Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Richten wir dein Gerät ein.\n\nDu wählst einen Namen und deine LoRa-Region. Dauert etwa eine Minute.
 Letters only	Nur Buchstaben
 LoRa antenna (P4)	LoRa-Antenne (P4)
@@ -455,6 +478,7 @@ Message deleted	Nachricht gelöscht
 Message didn't get through.\nResend it?	Nachricht kam nicht an.\nErneut senden?
 Message info	Nachrichteninfo
 Message sound	Nachrichtenton
+Messages	
 Min zoom for this pack	Min. Zoom für dieses Paket
 Mode: BLE starting / low memory	Modus: BLE startet / wenig Speicher
 Model:	Modell:
@@ -645,8 +669,12 @@ Resends a message until a repeater echoes it or the recipient ACKs. Turn off to 
 Reset	Zurücksetzen
 Reset path	Pfad zurücksetzen
 Restarting to apply the language…	Neustart, um die Sprache anzuwenden…
+Restarting to enable Bluetooth	
+Resume	
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	
 Retry sends until heard	Erneut senden, bis gehört
 Reverse scrollball	Scrollball umkehren
+Right	
 Roll to highlight • click to insert	Rollen zum Hervorheben • Klick zum Einfügen
 Room is read-only for you.\nJoin with the room password to post.	Der Raum ist für dich schreibgeschützt.\nMit dem Raumpasswort beitreten, um zu posten.
 Rotating - reconnecting...	Drehen - neu verbinden...
@@ -659,8 +687,14 @@ SD card inserted	SD-Karte eingelegt
 SD card lost - reinsert to recover	SD-Karte verloren - neu einstecken
 SD card remounted	SD-Karte neu eingebunden
 SD card removed	SD-Karte entfernt
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	
 SD download failed: %s	SD-Download fehlgeschlagen: %s
 SD formatted - %s (MESHCOMOD)	SD formatiert - %s (MESHCOMOD)
+SD is busy - close tools and retry	
+SD removed - card-backed data cannot be saved	
+SD stayed busy - format cancelled, retry	
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB belegt
@@ -684,6 +718,7 @@ Saved backups	Gespeicherte Backups
 Saved network	Gespeichertes Netzwerk
 Saved profiles	Gespeicherte Profile
 Saved to slot %d	In Slot %d gespeichert
+Saved — applying…	
 Saved — rebooting	Gespeichert — Neustart
 Saved — reconnecting…	Gespeichert — verbinde neu…
 Saved: %s\nFlash it from the Launcher.	Gespeichert: %s\nFlashe es über den Launcher.
@@ -692,6 +727,7 @@ Saving to SD… 0%	Speichern auf SD… 0%
 Scan to open on phone	Scannen, um am Handy zu öffnen
 Scanning…	Suche…
 Scope direct msgs to region	Direktnachrichten auf Region begrenzen
+Screen	
 Screen locked	Bildschirm gesperrt
 Screen timeout (s, 0 = never)	Bildschirm-Timeout (s, 0 = nie)
 Screen timeout (s, 0 = never, min 10)	Bildschirm-Timeout (s, 0 = nie, min 10)
@@ -702,6 +738,8 @@ Screenshot needs an SD card	Screenshot benötigt eine SD-Karte
 Screenshot: low memory	Screenshot: wenig Speicher
 Screenshot: no SD card	Screenshot: keine SD-Karte
 Screenshot: write failed	Screenshot: Schreiben fehlgeschlagen
+Scroll down	
+Scroll up	
 Scrollball: normal	Scrollball: normal
 Scrollball: reversed	Scrollball: umgekehrt
 Search	Suchen
@@ -710,6 +748,7 @@ Secondary keyboards	Sekundäre Tastaturen
 Secret (32 hex chars)	Geheimnis (32 Hex)
 Secret (32 hex, optional)	Geheimnis (32 Hex, optional)
 Secret must be 32 hex chars (or empty).	Geheimnis muss 32 Hex-Zeichen sein (oder leer).
+Select	
 Select a DM thread	DN-Unterhaltung wählen
 Select all	Alles auswählen
 Select network	Netzwerk wählen
@@ -718,6 +757,7 @@ Send advert now	Advert jetzt senden
 Send an advert now, or set how often you re-advertise.	Jetzt einen Advert senden oder festlegen, wie oft du neu advertisest.
 Send failed	Senden fehlgeschlagen
 Sender blocked	Absender blockiert
+Sensors	
 Sensors tab: off (restart to apply)	Sensoren-Tab: aus (Neustart zum Anwenden)
 Sensors tab: on (restart to apply)	Sensoren-Tab: an (Neustart zum Anwenden)
 Sent	Gesendet
@@ -749,6 +789,7 @@ Sleep ready	Bereit zum Schlafen
 Slot %d cleared	Slot %d gelöscht
 Slot empty	Slot leer
 Small\nMedium\nLarge	Klein\nMittel\nGroß
+Snake	
 Snake  —  swipe or roll the trackball	Snake  —  wischen oder Trackball rollen
 Sort	Sortieren
 Sound	Ton
@@ -843,6 +884,7 @@ Unmute msgs	Nachrichten an
 Unread %d	Ungelesen %d
 Unread %d\nRAM %u%%  ·  PSRAM %u%%	Ungelesen %d\nRAM %u%%  ·  PSRAM %u%%
 Unsupported WAV (need 16-bit PCM)	Nicht unterstütztes WAV (16-Bit PCM nötig)
+Up	
 Update	Update
 Update bin saved to SD	Update-Bin auf SD gespeichert
 Update complete.\nRebooting...	Update fertig.\nNeustart...
@@ -862,6 +904,7 @@ Welcome to WADAMESH	Willkommen bei WADAMESH
 While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Solange dies aktiv ist, kann jeder im Wi-Fi dieses Gerät sehen und steuern. Nutzt einfaches HTTP (nur lokales Netz).
 Wi-Fi	Wi-Fi
 Wi-Fi & Bluetooth	WLAN & Bluetooth
+Wi-Fi and Bluetooth unavailable; retry from Settings	
 Wi-Fi is not enabled in this build.	WLAN ist in diesem Build nicht aktiviert.
 Wi-Fi isn't available on this build.	WLAN ist in diesem Build nicht verfügbar.
 Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	WLAN nötig, um das Geländeprofil\nfür diesen Pfad zu laden.\nVerbinden in Einstellungen → Wi-Fi.
@@ -869,8 +912,12 @@ Wi-Fi not connected	Wi-Fi nicht verbunden
 Wi-Fi off	WLAN aus
 Wi-Fi on	WLAN ein
 Wi-Fi on, scanning…	Wi-Fi an, suche…
+Wi-Fi paused; Bluetooth disconnect timed out	
 Wi-Fi saved (radio off)	WLAN gespeichert (Funk aus)
+Wi-Fi saved, applying	
 Wi-Fi saved, reconnecting	WLAN gespeichert, verbinde neu
+Wi-Fi unavailable; Bluetooth restored	
+Wi-Fi unavailable; retry from Settings	
 Yesterday	Gestern
 You can run setup later in Settings → Device	Sie können die Einrichtung später in Einstellungen → Gerät ausführen
 Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Ihr Standort ist unbekannt.\nGPS / Position zuerst in\nEinstellungen → Profil festlegen.
@@ -894,6 +941,7 @@ hold the d-pad to unlock	D-Pad halten zum Entsperren
 hold the trackball to unlock	Trackball halten zum Entsperren
 kHz	kHz
 keep holding	weiter halten
+last wake:	
 last wake: 	Letztes Wecken: 
 leave empty to generate	leer lassen zum Erzeugen
 lights the keyboard + wakes the screen on an incoming message	beleuchtet die Tastatur + weckt den Bildschirm bei einer Nachricht

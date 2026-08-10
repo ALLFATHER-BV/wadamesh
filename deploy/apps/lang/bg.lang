@@ -69,6 +69,7 @@ Auto repeater	Авто ретранслатор
 Auto room	Авто стая
 Auto sensor	Авто сензор
 Auto-Join	Авто-присъединяване
+Auto-add	
 Auto-add contacts	Автоматично добавяне на контакти
 Auto-add saved	Авто-добавянето е запазено
 Auto-add settings	Настройки за автодобавяне
@@ -106,9 +107,12 @@ Blue battery  Orange temp  Cyan humidity	Синьо — батерия  Оран
 Bluetooth	Bluetooth
 Bluetooth already off	Bluetooth вече е изкл
 Bluetooth already on	Bluetooth вече е вкл
+Bluetooth deferred; retry from Settings	
 Bluetooth off	Bluetooth изкл
 Bluetooth on	Bluetooth вкл
 Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Bluetooth сдвояване не е налично на това устройство.\n\nФабричният фърмуер на радиочипа не го поддържа.\n\nСвържи приложението през Wi-Fi: включи устройството в мрежата и го добави в приложението по IP адрес (TCP, порт 5000) — показан в Настройки > Мрежа. USB също работи.
+Bluetooth unavailable; retry from Settings	
+Bluetooth will start after Wi-Fi connects or times out.	
 Broker host / IP	Хост / IP на брокера
 Buffered receive (experimental)	Буфериран прием (експериментално)
 Built-in	Вграден
@@ -153,6 +157,7 @@ Clear battery history?	Изчистване на историята на бат�
 Clear history	Изчисти историята
 Clear telemetry history for this node?	Изчистване на телеметрията за този възел?
 Client repeat	Повтаряне от клиент
+Clock & time	
 Clock synced	Часовникът е синхронизиран
 Clock: 12-hour	Часовник: 12-часов
 Clock: 24-hour	Часовник: 24-часов
@@ -161,6 +166,7 @@ Colourful chat bubbles	Цветни чат балончета
 Commands	Команди
 Community Preset	Готова настройка на общността
 Community preset (meshcomod web)	Пресет на общността (meshcomod web)
+Compact	
 Compact messages	Компактни съобщения
 Compact messages (IRC style)	Компактни съобщения (IRC стил)
 Connect	Свързване
@@ -189,10 +195,17 @@ Control this device from a browser	Управлявай устройството
 Copied %s	%s копирано
 Copied - Paste in a folder	Копирано - поставете в папка
 Copy	Копирай
+Copy blocked: SD card holds a different or unreadable profile	
+Copy blocked: SD profile could not be prepared safely	
+Copy blocked: internal data is busy	
+Copy blocked: migration guard unavailable	
 Copy failed (no internal identity)	Копирането не успя (няма вътрешна идентичност)
+Copy incomplete: SD data may be mixed. Retry before reboot.	
 Copy internal data to SD	Копирай данните на SD
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	
 Copy secret	Копирай тайната
 Copying internal data to SD...	Копиране на вътрешните данни към SD...
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	
 Could not add	Неуспешно добавяне
 Could not save the crash report	Докладът за срив не се записа
 Couldn't delete	Изтриването неуспешно
@@ -206,6 +219,7 @@ Create QR	Създай QR
 Create a private channel	Създай частен канал
 Create failed	Създаването неуспешно
 Create private channel	Създай частен канал
+Current tile transfer is busy - retry	
 Custom UTC offset (hours)	Собствено UTC отместване (часове)
 Cut	Изрежи
 Cut - Paste in a folder	Изрязано - поставете в папка
@@ -245,6 +259,7 @@ Distance: miles	Разстояние: мили
 Do Not Disturb	Не безпокой
 Do Not Disturb off	«Не безпокой» изкл.
 Do Not Disturb on	«Не безпокой» вкл.
+Down	
 Download failed	Изтеглянето се провали
 Download failed (network?)	Изтеглянето се провали (мрежа?)
 Download mode	Режим за изтегляне
@@ -287,6 +302,9 @@ Export settings	Експорт на настройки
 Exporting settings…	Експортиране на настройки…
 External antenna selected	Избрана е външна антена
 Factory reset	Фабрични настройки
+Factory reset blocked: SD activity is still running; close tools and retry.	
+Factory reset blocked: storage is busy	
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	
 Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Фабричен ресет?\n\nИзтрива идентичност, контакти, канали, съобщения, Wi-Fi и всички настройки. Необратимо.
 Failed to save channel.	Каналът не можа да се запази.
 Favorites full (max %d)	Любимите са пълни (макс %d)
@@ -322,6 +340,7 @@ GPS: fix	GPS: фикс
 GPS: off	GPS: изкл
 GPS: searching	GPS: търсене
 Game over  —  score %d   (tap to restart)	Край на играта  —  точки %d   (докоснете за рестарт)
+General	
 Get	Изтегли
 Get Started	Започни
 Get test builds (beta)	Получаване на тестови версии (бета)
@@ -336,6 +355,7 @@ Hide this app from the drawer?	Да скрия ли това приложени�
 High-gain receiver (FEM LNA)	Приемник с високо усилване (FEM LNA)
 Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Изключително експериментално. Препраща текста, името на подателя и времевия печат на всяко съобщение, което възелът ви получава, към MQTT брокер, където всеки с достъп до брокера може да ги чете. Директните съобщения са лични, от хора, които никога не са се съгласили да бъдат споделяни. Използвайте брокер, който контролирате, задайте ключ за криптиране по-долу и никога публичен брокер.
 History limit off	Лимитът на историята е изключен
+Home	
 Hotkey saved	Клавишът е запазен
 How you'll appear to other nodes. You can change this later in Settings.	Как ще изглеждате за други възли. Промяна в Настройки.
 Humidity	Влажност
@@ -386,6 +406,7 @@ Keyboard light on	Подсветката на клавиатурата е вкл
 Keyboard nav: WASDZ on	Клавиатурна навиг.: WASDZ вкл.
 Keyboard nav: off	Клавиатурна навиг.: изкл.
 Keyboard navigation	Навигация с клавиатура
+Keys	
 LOS → %s	Пряка видимост → %s
 Landscape (desktop)	Пейзаж (десктоп)
 Landscape set - applies when remote mode starts.	Пейзажът е зададен - прилага се при стартиране на отдалечения режим.
@@ -393,9 +414,11 @@ Language	Език
 Language catalog unavailable - check Wi-Fi, then reopen this tab.	Каталогът с езици е недостъпен - провери Wi-Fi и отвори раздела отново.
 Language updated - restarting to apply it…	Езикът е обновен - рестартиране за прилагане…
 Languages	Езици
+Large (bigger icons)	
 Latitude	Географска ширина
 Leave empty if not required	Оставете празно, ако не е нужно
 Leaving remote mode - rebooting...	Излизане от отдалечен режим - рестартиране...
+Left	
 Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Нека настроим устройството ви.\n\nЩе изберете име и вашия LoRa регион. Отнема около минута.
 Letters only	Само букви
 LoRa antenna (P4)	LoRa антена (P4)
@@ -455,6 +478,7 @@ Message deleted	Съобщението е изтрито
 Message didn't get through.\nResend it?	Съобщението не стигна.\nДа го изпратя ли пак?
 Message info	Информация за съобщението
 Message sound	Звук на съобщения
+Messages	
 Min zoom for this pack	Мин. мащаб за този пакет
 Mode: BLE starting / low memory	Режим: BLE стартира / малко памет
 Model:	Модел:
@@ -645,8 +669,12 @@ Resends a message until a repeater echoes it or the recipient ACKs. Turn off to 
 Reset	Нулиране
 Reset path	Нулирай маршрута
 Restarting to apply the language…	Рестартиране за прилагане на езика…
+Restarting to enable Bluetooth	
+Resume	
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	
 Retry sends until heard	Повтаряй изпращането, докато бъде чуто
 Reverse scrollball	Обръщане на скролбол
+Right	
 Roll to highlight • click to insert	Превъртете за маркиране • щракнете за вмъкване
 Room is read-only for you.\nJoin with the room password to post.	Стаята е само за четене за вас.\nВлезте с паролата на стаята, за да публикувате.
 Rotating - reconnecting...	Завъртане - повторно свързване...
@@ -659,8 +687,14 @@ SD card inserted	SD картата е поставена
 SD card lost - reinsert to recover	SD картата е изгубена - поставете я отново
 SD card remounted	SD картата е монтирана отново
 SD card removed	SD картата е извадена
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	
 SD download failed: %s	Изтеглянето на SD е неуспешно: %s
 SD formatted - %s (MESHCOMOD)	SD форматирана - %s (MESHCOMOD)
+SD is busy - close tools and retry	
+SD removed - card-backed data cannot be saved	
+SD stayed busy - format cancelled, retry	
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB използвани
@@ -684,6 +718,7 @@ Saved backups	Запазени копия
 Saved network	Запазена мрежа
 Saved profiles	Запазени профили
 Saved to slot %d	Запазено в слот %d
+Saved — applying…	
 Saved — rebooting	Запазено — рестарт
 Saved — reconnecting…	Запазено — повторно свързване…
 Saved: %s\nFlash it from the Launcher.	Запазено: %s\nФлашнете го от Launcher.
@@ -692,6 +727,7 @@ Saving to SD… 0%	Запис на SD… 0%
 Scan to open on phone	Сканирай, за да отвориш на телефона
 Scanning…	Сканиране…
 Scope direct msgs to region	Ограничи директните съобщения до региона
+Screen	
 Screen locked	Екранът е заключен
 Screen timeout (s, 0 = never)	Изключване на екрана (с, 0 = никога)
 Screen timeout (s, 0 = never, min 10)	Изключване на екрана (с, 0 = никога, мин 10)
@@ -702,6 +738,8 @@ Screenshot needs an SD card	Екранната снимка изисква SD к
 Screenshot: low memory	Екранна снимка: малко памет
 Screenshot: no SD card	Екранна снимка: няма SD карта
 Screenshot: write failed	Екранна снимка: записът е неуспешен
+Scroll down	
+Scroll up	
 Scrollball: normal	Скролбол: нормален
 Scrollball: reversed	Скролбол: обърнат
 Search	Търсене
@@ -710,6 +748,7 @@ Secondary keyboards	Допълнителни клавиатури
 Secret (32 hex chars)	Тайна (32 hex)
 Secret (32 hex, optional)	Тайна (32 hex, по избор)
 Secret must be 32 hex chars (or empty).	Тайната трябва да е 32 hex (или празно).
+Select	
 Select a DM thread	Изберете ЛС разговор
 Select all	Избери всичко
 Select network	Избери мрежа
@@ -718,6 +757,7 @@ Send advert now	Изпрати advert
 Send an advert now, or set how often you re-advertise.	Изпратете advert сега или задайте колко често го повтаряте.
 Send failed	Изпращането неуспешно
 Sender blocked	Подателят е блокиран
+Sensors	
 Sensors tab: off (restart to apply)	Раздел сензори: изключен (рестарт за прилагане)
 Sensors tab: on (restart to apply)	Раздел сензори: включен (рестарт за прилагане)
 Sent	Изпратено
@@ -749,6 +789,7 @@ Sleep ready	Готов за заспиване
 Slot %d cleared	Слот %d изчистен
 Slot empty	Слотът е празен
 Small\nMedium\nLarge	Малък\nСреден\nГолям
+Snake	
 Snake  —  swipe or roll the trackball	Snake  —  плъзни или завърти трекбола
 Sort	Сортирай
 Sound	Звук
@@ -843,6 +884,7 @@ Unmute msgs	Възстанови съобщ.
 Unread %d	Непроч. %d
 Unread %d\nRAM %u%%  ·  PSRAM %u%%	Непроч. %d\nRAM %u%%  ·  PSRAM %u%%
 Unsupported WAV (need 16-bit PCM)	Неподдържан WAV (нужен 16-битов PCM)
+Up	
 Update	Обнови
 Update bin saved to SD	Файлът за обновяване е записан на SD
 Update complete.\nRebooting...	Обновяването завърши.\nРестартиране...
@@ -862,6 +904,7 @@ Welcome to WADAMESH	Добре дошли в WADAMESH
 While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Докато е включено, всеки в твоята Wi-Fi мрежа може да гледа и управлява устройството. Използва обикновен HTTP (само локална мрежа).
 Wi-Fi	Wi-Fi
 Wi-Fi & Bluetooth	Wi-Fi и Bluetooth
+Wi-Fi and Bluetooth unavailable; retry from Settings	
 Wi-Fi is not enabled in this build.	Wi-Fi не е разрешен в тази компилация.
 Wi-Fi isn't available on this build.	Wi-Fi не е наличен в тази компилация.
 Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	Нужен е Wi-Fi за профила на\nтерена за този път.\nСвържете в Настройки → Wi-Fi.
@@ -869,8 +912,12 @@ Wi-Fi not connected	Wi-Fi не е свързан
 Wi-Fi off	Wi-Fi изкл
 Wi-Fi on	Wi-Fi вкл
 Wi-Fi on, scanning…	Wi-Fi вкл, сканиране…
+Wi-Fi paused; Bluetooth disconnect timed out	
 Wi-Fi saved (radio off)	Wi-Fi запазен (радио изкл)
+Wi-Fi saved, applying	
 Wi-Fi saved, reconnecting	Wi-Fi запазен, повторно свързване
+Wi-Fi unavailable; Bluetooth restored	
+Wi-Fi unavailable; retry from Settings	
 Yesterday	Вчера
 You can run setup later in Settings → Device	Можете да стартирате настройката по-късно в Настройки → Устройство
 Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Местоположението е неизвестно.\nПърво задайте GPS / позиция в\nНастройки → Профил.
@@ -894,6 +941,7 @@ hold the d-pad to unlock	задръж d-pad за отключване
 hold the trackball to unlock	задръжте топчето за отключване
 kHz	kHz
 keep holding	задръжте
+last wake:	
 last wake: 	последно събуждане: 
 leave empty to generate	оставете празно за генериране
 lights the keyboard + wakes the screen on an incoming message	осветява клавиатурата + събужда екрана при входящо съобщение
