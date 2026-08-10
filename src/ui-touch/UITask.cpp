@@ -31160,11 +31160,13 @@ static bool chatVirtNeedReflow(int new_i0, int new_i1) {
 }
 
 static void chatVirtCancelRenderTimer() {
-  if (s_chat_virt_render_timer) {
-    lv_timer_del(s_chat_virt_render_timer);
-    s_chat_virt_render_timer = nullptr;
-  }
   s_chat_virt_render_panel = nullptr;
+  // Keep one timer allocation for the lifetime of the UI.  This path is hit
+  // repeatedly while a fast scroll crosses virtual-window boundaries. Two
+  // matching dumps reached lv_timer_exec through an invalid callback (#251), so
+  // do not churn this timer's list node in the reproducing path. Pausing keeps
+  // its callback allocation stable while still cancelling the pending work.
+  if (s_chat_virt_render_timer) lv_timer_pause(s_chat_virt_render_timer);
 }
 
 static void chatVirtResetInputForMsgs(LvChatPanel* p) {
@@ -32552,16 +32554,18 @@ static void chatVirtRenderAsyncCb(void*) {
 
 static void chatVirtRenderTimerCb(lv_timer_t* t) {
   LvChatPanel* p = s_chat_virt_render_panel;
-  s_chat_virt_render_timer = nullptr;
-  s_chat_virt_render_panel = nullptr;
-  lv_timer_del(t);
-  if (!p || !p->detail_open || s_chat_virt.panel != p || s_chat_virt.n <= 0) return;
-  if (chatVirtIndevStillScrolling(p)) {
-    s_chat_virt_render_panel = p;
-    s_chat_virt_render_timer = lv_timer_create(chatVirtRenderTimerCb, 16, nullptr);
-    lv_timer_set_repeat_count(s_chat_virt_render_timer, 1);
+  if (!p || !p->detail_open || s_chat_virt.panel != p || s_chat_virt.n <= 0) {
+    s_chat_virt_render_panel = nullptr;
+    lv_timer_pause(t);
     return;
   }
+  if (chatVirtIndevStillScrolling(p)) {
+    lv_timer_set_period(t, 16);
+    lv_timer_reset(t);
+    return;
+  }
+  s_chat_virt_render_panel = nullptr;
+  lv_timer_pause(t);
   if (s_chat_virt_render_async_busy) return;
   s_chat_virt_render_async_panel = p;
   s_chat_virt_render_async_busy  = true;
@@ -32575,13 +32579,18 @@ static void chatVirtRenderTimerCb(lv_timer_t* t) {
 
 static void chatVirtScheduleRender(LvChatPanel* p) {
   if (!p || !p->detail_open || s_chat_virt.panel != p || s_chat_virt.n <= 0) return;
-  if (s_chat_virt_render_timer) {
-    lv_timer_reset(s_chat_virt_render_timer);
-    return;
-  }
   s_chat_virt_render_panel = p;
-  s_chat_virt_render_timer = lv_timer_create(chatVirtRenderTimerCb, 1, nullptr);
-  lv_timer_set_repeat_count(s_chat_virt_render_timer, 1);
+  if (!s_chat_virt_render_timer) {
+    s_chat_virt_render_timer = lv_timer_create(chatVirtRenderTimerCb, 1, nullptr);
+    if (!s_chat_virt_render_timer) {
+      s_chat_virt_render_panel = nullptr;
+      return;
+    }
+  } else {
+    lv_timer_set_period(s_chat_virt_render_timer, 1);
+    lv_timer_reset(s_chat_virt_render_timer);
+    lv_timer_resume(s_chat_virt_render_timer);
+  }
 }
 
 static void chatVirtOnScrollEnd(LvChatPanel* p) {
