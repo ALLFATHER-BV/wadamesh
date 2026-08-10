@@ -45880,6 +45880,13 @@ void UITask::refreshThreadsFromMesh() {
       _ui_threads[t].mesh_contact_idx = static_cast<int16_t>(i);
       memcpy(_ui_threads[t].mesh_contact_pub, c.id.pub_key, sizeof(_ui_threads[t].mesh_contact_pub));
       memcpy(_ui_threads[t].mesh_contact_key6, c.id.pub_key, sizeof(_ui_threads[t].mesh_contact_key6));
+      // Follow a peer's rename. The thread was matched by KEY above, but inbound
+      // messages are routed by findThreadByName(sender) — so leaving the old name
+      // here spawned a SECOND thread for the same peer the next time they wrote.
+      if (c.name[0] && strncmp(_ui_threads[t].name, c.name, MAX_THREAD_NAME) != 0) {
+        strlcpy(_ui_threads[t].name, c.name, sizeof(_ui_threads[t].name));
+        _threads_dirty = true;
+      }
     }
   }
 #ifdef MAX_GROUP_CHANNELS

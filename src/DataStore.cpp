@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <string.h>
 #include "DataStore.h"
+#include <helpers/AdvertDataHelpers.h>   // ADV_TYPE_NONE (blank-record skip in loadContacts)
 #if defined(ESP32)
 #include <SD.h>
 #include "helpers/esp32/WdtHeavyGuard.h"   // suspend core-0 idle WDT during the (SPIFFS-GC-prone) contact write
@@ -481,6 +482,12 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
         success = success && (file.read((uint8_t *)&c.gps_lon, 4) == 4);
 
         if (!success) break; // EOF
+
+        // Skip blank records. beta_60 saved the core's reserved anon slots (the
+        // save walked the raw table, which 1.17 had shifted), so an upgrade from
+        // it carries up to MAX_ANON_CONTACTS empty entries that would otherwise
+        // load as real, nameless contacts. The next save drops them for good.
+        if (c.type == ADV_TYPE_NONE || !c.name[0]) continue;
 
         c.id = mesh::Identity(pub_key);
         if (!host->onContactLoaded(c)) full = true;

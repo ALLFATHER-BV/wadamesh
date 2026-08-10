@@ -47,7 +47,19 @@ mkdir -p "$ARCH/$TAG" "$FEED"
 
 if [ "$MODE" = "beta" ]; then
   # 2b. TEST build: compile both boards (tag + version embedded) into the beta archive + feed.
-  export PLATFORMIO_BUILD_FLAGS="-DFIRMWARE_RELEASE_TAG='\"${TAG}\"' -DFIRMWARE_VERSION='\"wadamesh ${TAG}\"'"
+  # Firmware data (About screen + the app's device info) is derived here, never
+  # hand-maintained: the tag, the core version actually pinned in platformio.ini,
+  # and today's build date. Every staged binary is verified to carry them below —
+  # beta_60 shipped with a stale in-tree default and About read "v1.16.0-touch".
+  CORE_VER="$(grep -oE 'meshcomod\.git#core-v[0-9.]+' platformio.ini | head -1 | sed 's/.*#core-//')"
+  [ -n "$CORE_VER" ] || { echo "ERROR: no core-v* pin found in platformio.ini"; exit 1; }
+  BUILD_DATE="$(date '+%d %b %Y')"
+  echo "firmware data: tag=$TAG core=$CORE_VER date=$BUILD_DATE"
+  export PLATFORMIO_BUILD_FLAGS="-DFIRMWARE_RELEASE_TAG='\"${TAG}\"' -DFIRMWARE_VERSION='\"wadamesh ${TAG}\"' -DFIRMWARE_BUILD_DATE='\"${BUILD_DATE}\"' -DFIRMWARE_CORE_VERSION='\"${CORE_VER}\"'"
+  # Keep the in-tree default (what DEV flashes show) in step with the pinned core,
+  # so a bench build never reports a version the firmware no longer is.
+  sed -i '' -E "s/^#define FIRMWARE_VERSION \"v[0-9.]+-touch\"/#define FIRMWARE_VERSION \"${CORE_VER}-touch\"/" src/MyMesh.h
+  git diff --quiet src/MyMesh.h || echo "note: refreshed the dev FIRMWARE_VERSION default in src/MyMesh.h -> ${CORE_VER}-touch (commit it)"
   for pair in $ENVS; do
     env="${pair%%:*}"; name="${pair##*:}"
     "$PIO" run -t mergebin -e "$env"
@@ -88,6 +100,23 @@ betas = sorted(d for d in os.listdir(rel)
 print(json.dumps([{"name": b, "type": "dir"} for b in betas], indent=2))
 PY
 echo "listing ($MODE): $(python3 -c 'import json,sys;print(", ".join(x["name"] for x in json.load(open(sys.argv[1]))))' "$ARCH/index.json")"
+
+# 3a2. FIRMWARE DATA GATE — every staged app image must carry this tag, or the
+#      release ships binaries whose About screen / update check disagree with the
+#      release they are published under. Covers the out-of-band IDF boards
+#      (T-Display P4) too: they are injected into $ARCH/$TAG before this runs, so
+#      forgetting to rebuild them with WADA_FW_TAG fails here instead of shipping.
+missing=""
+for f in "$ARCH/$TAG"/*.bin; do
+  case "$f" in *-merged.bin) continue;; esac      # merged images embed the same app
+  strings "$f" | grep -q "$TAG" || missing="$missing $(basename "$f")"
+done
+if [ -n "$missing" ]; then
+  echo "ERROR: these staged images do not embed $TAG:$missing"
+  echo "       rebuild them with the tag (S3: release.sh does it; P4: WADA_FW_TAG=$TAG ./build.sh build)"
+  exit 1
+fi
+echo "firmware data verified: every staged image embeds $TAG"
 
 # 3b. Web-flasher metadata for THIS channel (version.json + manifests -> the channel feed).
 python3 "$ROOT/scripts/build/gen-flasher-meta.py" "$TAG" "$FEED" "$ROOT/release-notes/$TAG.txt" "$MODE"
