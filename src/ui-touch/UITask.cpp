@@ -514,6 +514,26 @@ static lv_font_t g_font_12;
 static lv_font_t g_font_14;
 static lv_font_t g_font_16;
 
+// Swap a label's RESOLVED raw Montserrat for its chained twin (g_font_NN), so
+// accents, Greek, Cyrillic and Arabic reach the fallback fonts instead of
+// rendering as tofu boxes. LVGL's theme puts a font on each widget, so a label
+// that sets none of its own lands on the stock LV_FONT_MONTSERRAT_* — which has
+// no fallback chain. That is the Hungarian "Lek□rdez□s (perc)" class of bug.
+//
+// Reads what the label actually resolves to rather than assuming 14, so a label
+// inheriting a larger font from its parent keeps that size. Anything already
+// chained, or using a deliberately different font, is left alone — so this is
+// safe to call after any lv_label_create.
+static void useChainedFont(lv_obj_t* label) {
+  if (!label) return;
+  const lv_font_t* f = lv_obj_get_style_text_font(label, LV_PART_MAIN);
+  const lv_font_t* repl = nullptr;
+  if      (f == &lv_font_montserrat_12) repl = &g_font_12;
+  else if (f == &lv_font_montserrat_14) repl = &g_font_14;
+  else if (f == &lv_font_montserrat_16) repl = &g_font_16;
+  if (repl) lv_obj_set_style_text_font(label, repl, LV_PART_MAIN);
+}
+
 // Auto-shrink a single-line label's font one baked step (16 -> 14 -> 12) until its
 // text fits within max_w, so a longer translation (French/German/Russian/…) fits a
 // fixed-width button or cell instead of clipping. No-op if it already fits or is
@@ -2759,6 +2779,14 @@ static void styleButton(lv_obj_t* obj) {
   lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
   lv_obj_set_style_border_opa(obj, LV_OPA_40, LV_PART_MAIN);
   lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  // ...and the font, for the same reason as the text colour. A button carries a
+  // font from the LVGL theme which its child label inherits, and that one has no
+  // fallback chain — so accents inside button labels came out as tofu boxes
+  // ("Eszk□z □jraind□t□sa") even after the screen-level default was fixed, because
+  // the button sits between the screen and the label. g_font_14 is the same face
+  // and metrics plus the accent/Greek/Cyrillic/Arabic fallbacks. Labels that set
+  // their own font are unaffected — a style on the label beats one on the button.
+  lv_obj_set_style_text_font(obj, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_radius(obj, 4, LV_PART_MAIN);
   lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN);
 }
@@ -6807,6 +6835,7 @@ static void openChannelShareModal(const char* channel_name, const uint8_t secret
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, channelShareCopyCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
+  useChainedFont(bl);
   lv_label_set_text(bl, TR("Copy secret"));
   lv_obj_center(bl);
 }
@@ -8765,6 +8794,7 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   styleButton(close_btn);
   lv_obj_add_event_cb(close_btn, settingsCloseCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* close_lbl = lv_label_create(close_btn);
+  useChainedFont(close_lbl);
 #if defined(HAS_TANMATSU)
   { char _cb[40]; snprintf(_cb, sizeof _cb, LV_SYMBOL_CLOSE "  %s", TR("Close")); lv_label_set_text(close_lbl, _cb);
     lv_obj_set_style_text_color(close_lbl, lv_color_hex(0xE05544), LV_PART_MAIN); }   // red ✕
@@ -9200,6 +9230,7 @@ static void openAdvertPage() {
   styleButton(b_flood);
   lv_obj_add_event_cb(b_flood, advertFloodCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lf = lv_label_create(b_flood);
+  useChainedFont(lf);
   lv_label_set_text(lf, TR(LV_SYMBOL_UPLOAD "  Flood"));
   lv_obj_center(lf);
 
@@ -9209,6 +9240,7 @@ static void openAdvertPage() {
   styleButton(b_zh);
   lv_obj_add_event_cb(b_zh, advertZeroHopCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lz = lv_label_create(b_zh);
+  useChainedFont(lz);
   lv_label_set_text(lz, TR(LV_SYMBOL_WIFI "  Zero-hop"));
   lv_obj_center(lz);
   y += SC(54);
@@ -9573,6 +9605,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
       styleButton(cog);
       lv_obj_add_event_cb(cog, openDiscoveredSettingsSheetCb, LV_EVENT_CLICKED, nullptr);
       lv_obj_t* cl = lv_label_create(cog);
+      useChainedFont(cl);
       lv_label_set_text(cl, LV_SYMBOL_SETTINGS);
       lv_obj_set_style_text_color(cl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_center(cl);
@@ -9584,6 +9617,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
       styleButton(srt);
       lv_obj_add_event_cb(srt, openDiscSortSheetCb, LV_EVENT_CLICKED, nullptr);
       lv_obj_t* srtl = lv_label_create(srt);
+      useChainedFont(srtl);
       lv_label_set_text(srtl, LV_SYMBOL_SHUFFLE);
       lv_obj_set_style_text_color(srtl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_center(srtl);
@@ -9595,6 +9629,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
         lv_obj_set_style_bg_color(pb, lv_color_hex(0x7A2A2A), LV_PART_MAIN);
         lv_obj_add_event_cb(pb, discoveredPurgeCb, LV_EVENT_CLICKED, nullptr);
         lv_obj_t* pl = lv_label_create(pb);
+        useChainedFont(pl);
         lv_label_set_text(pl, LV_SYMBOL_TRASH);
         lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
         lv_obj_center(pl);
@@ -9640,6 +9675,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     // Name label — clamped to ONE line (height = line height) so a long name
     // ellipsises instead of wrapping down onto the meta row below it.
     lv_obj_t* nm = lv_label_create(card);
+    useChainedFont(nm);
     char nm_buf[40];
     copyUtf8ReplacingMissingGlyphs(&g_font_14, nm_buf, sizeof(nm_buf), e_disc.ci.name);
     lv_label_set_text(nm, nm_buf[0] ? nm_buf : "(unnamed)");
@@ -9650,6 +9686,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
 
     // Type + hops + key prefix (single line, ellipsised, below the name)
     lv_obj_t* meta = lv_label_create(card);
+    useChainedFont(meta);
     const char* type_label = "node";
     switch (e_disc.ci.type) {
       case ADV_TYPE_NONE:     type_label = "none";     break;
@@ -9680,6 +9717,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     s_disc_add_ctx[idx].slot_idx = idx;
     lv_obj_add_event_cb(add_btn, discoveredAddCb, LV_EVENT_CLICKED, &s_disc_add_ctx[idx]);
     lv_obj_t* add_lbl = lv_label_create(add_btn);
+    useChainedFont(add_lbl);
     lv_label_set_text(add_lbl, TR("Add"));
     lv_obj_center(add_lbl);
 
@@ -9741,7 +9779,13 @@ static int settingsRowLabel(lv_obj_t* body, int y, int y_off, const char* text,
   lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
   lv_label_set_text(l, TR(text));
   lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
-  if (font) lv_obj_set_style_text_font(l, font, LV_PART_MAIN);
+  // Always set a font. Inheriting looks equivalent but is not: the inherited
+  // value is LVGL's raw LV_FONT_MONTSERRAT_14, which carries no fallback chain,
+  // so every non-ASCII character in these labels rendered as a tofu box —
+  // "Közösségi profil" came out "K□z□ss□gi profil" while the title bar beside it
+  // was fine, because that one sets &g_font_16 explicitly. g_font_14 is the same
+  // typeface and metrics, plus the accent/Greek/Cyrillic/Arabic fallbacks.
+  lv_obj_set_style_text_font(l, font ? font : &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(l, 2, y + y_off);
   lv_obj_update_layout(l);
   return lv_obj_get_height(l);
@@ -10386,6 +10430,7 @@ static void buildRadioSettings() {
 
     lv_obj_t* pl = lv_label_create(body);
     lv_label_set_text(pl, TR("Poll (min)"));
+    lv_obj_set_style_text_font(pl, &g_font_14, LV_PART_MAIN);   // accents need the fallback chain
     lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_pos(pl, 2, y + 6);
     s_radio_sig_poll_ta = lv_textarea_create(body);
@@ -10410,6 +10455,7 @@ static void buildRadioSettings() {
     styleButton(b_adv);
     lv_obj_add_event_cb(b_adv, openAdvertModalCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* l_adv = lv_label_create(b_adv);
+    useChainedFont(l_adv);
     lv_label_set_text_fmt(l_adv, LV_SYMBOL_UPLOAD "  %s", TR("Open Advertise app"));
     lv_obj_center(l_adv);
     y += SC(42);
@@ -10460,6 +10506,7 @@ static void buildAutoAddSettings() {
   }
 
   lv_obj_t* hops_l = lv_label_create(body);
+  useChainedFont(hops_l);
   lv_label_set_text(hops_l, TR("Max hops (0..64)"));
   lv_obj_set_style_text_color(hops_l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(hops_l, 2, y + 6);
@@ -10596,6 +10643,7 @@ static void buildQuickReplySettings() {
   styleButton(b);
   lv_obj_add_event_cb(b, saveQuickRepliesCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l = lv_label_create(b);
+  useChainedFont(l);
   lv_label_set_text(l, TR("Save quick replies"));
   lv_obj_center(l);
 }
@@ -11725,6 +11773,7 @@ static void openLocalSensorsPage() {
   styleButton(term);
   lv_obj_add_event_cb(term, localSensorsOpenTerminalCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* tl = lv_label_create(term);
+  useChainedFont(tl);
   lv_label_set_text(tl, TR("Open mesh console"));
   lv_obj_center(tl);
 
@@ -11785,6 +11834,7 @@ static void openExpansionCard() {
   styleButton(d);
   lv_obj_add_event_cb(d, openLocalSensorsPageCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* dl = lv_label_create(d);
+  useChainedFont(dl);
   lv_label_set_text(dl, TR("Detailed sensors"));
   lv_obj_center(dl);
 
@@ -11992,6 +12042,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b_exp);
     lv_obj_add_event_cb(b_exp, openExpansionCardCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* le = lv_label_create(b_exp);
+    useChainedFont(le);
     lv_label_set_text(le, TR("Expansion Kit"));
     lv_obj_center(le);
     y += SC(38);
@@ -12169,6 +12220,7 @@ static void buildDeviceSettings(int sec) {
   styleButton(b_time);
   lv_obj_add_event_cb(b_time, syncClockCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l_time = lv_label_create(b_time);
+  useChainedFont(l_time);
   lv_label_set_text(l_time, TR("Sync clock from system"));
   lv_obj_center(l_time);
   y += SC(40);
@@ -12181,6 +12233,7 @@ static void buildDeviceSettings(int sec) {
   styleButton(b_adv);
   lv_obj_add_event_cb(b_adv, advertNowCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l_adv = lv_label_create(b_adv);
+  useChainedFont(l_adv);
   lv_label_set_text(l_adv, TR("Send advert now"));
   lv_obj_center(l_adv);
   y += SC(40);
@@ -12377,6 +12430,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b);
     lv_obj_add_event_cb(b, openAccentPickerCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* bl = lv_label_create(b);
+    useChainedFont(bl);
     lv_label_set_text(bl, TR("Pick colour"));
     lv_obj_center(bl);
     lv_obj_t* swatch = lv_obj_create(body);
@@ -12496,6 +12550,7 @@ static void buildDeviceSettings(int sec) {
       lv_obj_set_pos(b, 2 + i * SC(54), y);
       lv_obj_add_event_cb(b, kbBlPresetCb, LV_EVENT_CLICKED, (void*)(intptr_t)k_presets[i].pct);
       lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, k_presets[i].txt); lv_obj_center(l);
+      useChainedFont(l);
     }
     y += SC(38);
   }
@@ -12511,6 +12566,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b);
     lv_obj_add_event_cb(b, pagerKbBlCycleCb, LV_EVENT_CLICKED, nullptr);
     s_pager_kbbl_lbl = lv_label_create(b);
+    useChainedFont(s_pager_kbbl_lbl);
     lv_label_set_text(s_pager_kbbl_lbl, pagerKbBlModeText());
     lv_obj_center(s_pager_kbbl_lbl);
     y += SC(42);
@@ -12779,6 +12835,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b_rot);
     lv_obj_add_event_cb(b_rot, rotateScreenCycleCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lr = lv_label_create(b_rot);
+    useChainedFont(lr);
     lv_label_set_text(lr, uiRotationLabel());
     lv_obj_center(lr);
     y += SC(42);
@@ -12799,6 +12856,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b_wall);
     lv_obj_add_event_cb(b_wall, openLockWallPickerCb, LV_EVENT_CLICKED, nullptr);
     s_lockwall_btn_lbl = lv_label_create(b_wall);
+    useChainedFont(s_lockwall_btn_lbl);
     {
       char cur[TOUCH_LOCK_WALLPAPER_MAXLEN], disp[64];
       touchPrefsGetLockWallpaper(cur, sizeof cur);
@@ -12863,6 +12921,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b_tz);
     lv_obj_add_event_cb(b_tz, openTimezoneCb, LV_EVENT_CLICKED, nullptr);
     s_tz_btn_lbl = lv_label_create(b_tz);
+    useChainedFont(s_tz_btn_lbl);
     lv_label_set_text(s_tz_btn_lbl, touchPrefsTimezoneLabel(touchPrefsGetTimezone()));
     lv_label_set_long_mode(s_tz_btn_lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_tz_btn_lbl, lv_pct(92));
@@ -12881,6 +12940,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(bminus);
     lv_obj_add_event_cb(bminus, timeOffsetMinusCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lm = lv_label_create(bminus); lv_label_set_text(lm, "-1 h"); lv_obj_center(lm);
+    useChainedFont(lm);
 
     s_time_offset_lbl = lv_label_create(body);
     lv_obj_set_width(s_time_offset_lbl, 100);
@@ -12896,6 +12956,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(bplus);
     lv_obj_add_event_cb(bplus, timeOffsetPlusCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lp = lv_label_create(bplus); lv_label_set_text(lp, "+1 h"); lv_obj_center(lp);
+    useChainedFont(lp);
     y += SC(42);
   }
   }
@@ -12908,6 +12969,7 @@ static void buildDeviceSettings(int sec) {
   styleButton(b_setup);
   lv_obj_add_event_cb(b_setup, setupRerunCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l_setup = lv_label_create(b_setup);
+  useChainedFont(l_setup);
   lv_label_set_text_fmt(l_setup, LV_SYMBOL_REFRESH "  %s", TR("Run setup again"));
   lv_obj_center(l_setup);
   y += SC(42);
@@ -12921,6 +12983,7 @@ static void buildDeviceSettings(int sec) {
   lv_obj_set_style_text_color(b_reboot, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_add_event_cb(b_reboot, rebootCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l_reboot = lv_label_create(b_reboot);
+  useChainedFont(l_reboot);
   lv_label_set_text(l_reboot, TR("Reboot device"));
   lv_obj_center(l_reboot);
   y += SC(42);
@@ -12938,6 +13001,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b_bat);
     lv_obj_add_event_cb(b_bat, batteryTapCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* l_bat = lv_label_create(b_bat);
+    useChainedFont(l_bat);
     lv_label_set_text_fmt(l_bat, LV_SYMBOL_BATTERY_2 "  %s", TR("Battery & power history"));
     lv_obj_center(l_bat);
     y += SC(42);
@@ -12976,6 +13040,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(b_cal, calibrateBatteryCb, LV_EVENT_SHORT_CLICKED, nullptr);
     lv_obj_add_event_cb(b_cal, calibrateBatteryCb, LV_EVENT_LONG_PRESSED, nullptr);
     lv_obj_t* l_cal = lv_label_create(b_cal);
+    useChainedFont(l_cal);
     lv_label_set_text_fmt(l_cal, LV_SYMBOL_BATTERY_FULL "  %s", TR("Calibrate battery (full = 100%)"));
     lv_obj_center(l_cal);
     y += SC(46);
@@ -13247,6 +13312,7 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_set_style_text_color(b_cancel, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_add_event_cb(b_cancel, confirmCancelEvt, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lc = lv_label_create(b_cancel);
+  useChainedFont(lc);
   lv_label_set_text(lc, TR("Cancel"));
   uiFitLabelWidth(lc, PSC(80) - 8);
   lv_obj_center(lc);
@@ -13257,6 +13323,7 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   styleButton(b_ok);
   lv_obj_add_event_cb(b_ok, confirmOkEvt, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lo = lv_label_create(b_ok);
+  useChainedFont(lo);
   lv_label_set_text(lo, ok_label ? TR(ok_label) : "OK");
   uiFitLabelWidth(lo, SC(100) - 8);
   lv_obj_center(lo);
@@ -13338,6 +13405,7 @@ static void buildBluetoothSettings() {
   // ---- Mode line ---- (Wi-Fi + BLE coexist now; show both radios' state)
   const bool ble_active = g_lv.task && g_lv.task->hasBleCapability() && g_lv.task->isBleEnabled();
   lv_obj_t* mode = lv_label_create(body);
+  useChainedFont(mode);
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   const bool wifi_on_m = wifiConfigGetRadioEnabled();
   const bool ble_cap_m = g_lv.task && g_lv.task->hasBleCapability();
@@ -13402,6 +13470,7 @@ static void buildBluetoothSettings() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   // ---- Enable switch + save button ----
   lv_obj_t* sw_lbl = lv_label_create(body);
+  useChainedFont(sw_lbl);
   lv_label_set_text(sw_lbl, TR("Enable Bluetooth"));
   lv_obj_set_style_text_color(sw_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(sw_lbl, 2, y + 6);
@@ -14597,6 +14666,7 @@ static void buildWifiSettings() {
   (void)body;
   (void)y;
   lv_obj_t* unsup = lv_label_create(body);
+  useChainedFont(unsup);
   lv_label_set_text(unsup, TR("Wi-Fi is not enabled in this build."));
   lv_obj_set_style_text_color(unsup, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(unsup, 2, 8);
@@ -14615,6 +14685,7 @@ static void openLogModalCb(lv_event_t* e) {
   styleButton(g_set_modal.log_rx_btn);
   lv_obj_add_event_cb(g_set_modal.log_rx_btn, logModeRxCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* rx_lbl = lv_label_create(g_set_modal.log_rx_btn);
+  useChainedFont(rx_lbl);
   lv_label_set_text(rx_lbl, TR("RX log"));
   lv_obj_center(rx_lbl);
 
@@ -14624,6 +14695,7 @@ static void openLogModalCb(lv_event_t* e) {
   styleButton(g_set_modal.log_raw_btn);
   lv_obj_add_event_cb(g_set_modal.log_raw_btn, logModeRawCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* raw_lbl = lv_label_create(g_set_modal.log_raw_btn);
+  useChainedFont(raw_lbl);
   lv_label_set_text(raw_lbl, TR("Raw log"));
   lv_obj_center(raw_lbl);
   y += 38;
@@ -14786,6 +14858,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   styleButton(clear_btn);
   lv_obj_add_event_cb(clear_btn, contactsSearchClearCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* cl = lv_label_create(clear_btn);
+  useChainedFont(cl);
   lv_label_set_text(cl, TR("Clear"));
   lv_obj_center(cl);
 
@@ -14796,6 +14869,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   lv_obj_set_style_bg_color(apply_btn, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_add_event_cb(apply_btn, contactsSearchApplyCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* al = lv_label_create(apply_btn);
+  useChainedFont(al);
   lv_label_set_text(al, TR("Apply"));
   lv_obj_center(al);
 }
@@ -15405,6 +15479,7 @@ static void openAdminConsole(const ContactInfo& c) {
                   LV_EVENT_CLICKED, nullptr);
   }, LV_EVENT_READY, send_btn);  // Enter key on textarea sends
   lv_obj_t* send_lbl = lv_label_create(send_btn);
+  useChainedFont(send_lbl);
   lv_label_set_text(send_lbl, LV_SYMBOL_RIGHT);
   lv_obj_center(send_lbl);
 }
@@ -15577,6 +15652,7 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   styleButton(cancel_btn);
   lv_obj_add_event_cb(cancel_btn, adminPwCancelCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* cl = lv_label_create(cancel_btn);
+  useChainedFont(cl);
   lv_label_set_text(cl, TR("Cancel"));
   lv_obj_center(cl);
 
@@ -15587,6 +15663,7 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   lv_obj_set_style_bg_color(login_btn, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_add_event_cb(login_btn, adminPwSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* ll = lv_label_create(login_btn);
+  useChainedFont(ll);
   lv_label_set_text(ll, is_room ? "Join" : "Login");
   lv_obj_center(ll);
 }
@@ -16764,6 +16841,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, addContactSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
+  useChainedFont(bl);
   lv_label_set_text(bl, TR("Add contact"));
   lv_obj_center(bl);
 }
@@ -16828,6 +16906,7 @@ static void openCreatePrivateChannelModal() {
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, createPrivateChannelSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
+  useChainedFont(bl);
   lv_label_set_text(bl, TR("Create"));
   lv_obj_center(bl);
 }
@@ -16930,6 +17009,7 @@ static void openJoinPrivateChannelModal() {
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, joinPrivateChannelSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
+  useChainedFont(bl);
   lv_label_set_text(bl, TR("Join"));
   lv_obj_center(bl);
 }
@@ -17021,6 +17101,7 @@ static void openJoinHashtagChannelModal() {
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, joinHashtagChannelSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
+  useChainedFont(bl);
   lv_label_set_text(bl, TR("Join"));
   lv_obj_center(bl);
 }
@@ -17833,6 +17914,7 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_bg_color(clr, lv_color_hex(0xB23A48), LV_PART_MAIN);
   lv_obj_add_event_cb(clr, batteryClearCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* clrl = lv_label_create(clr); lv_label_set_text(clrl, LV_SYMBOL_TRASH); lv_obj_center(clrl);
+  useChainedFont(clrl);
 
   // Show/hide the CPU-MHz series (same size/style as the trash button, to its left).
   lv_obj_t* cpub = lv_btn_create(card);
@@ -18298,6 +18380,7 @@ static lv_obj_t* openFullscreenView(const char* title) {
   styleButton(home);
   lv_obj_add_event_cb(home, fullscreenHomeCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* hl = lv_label_create(home);
+  useChainedFont(hl);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hl, LV_SYMBOL_CLOSE);   // red ✕ close
   lv_obj_set_style_text_color(hl, lv_color_hex(0xE05544), LV_PART_MAIN);
@@ -19063,6 +19146,7 @@ static void buildTerminal(lv_obj_t* body) {
     terminalSubmit();
   }, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* send_lbl = lv_label_create(send_btn);
+  useChainedFont(send_lbl);
   lv_label_set_text(send_lbl, LV_SYMBOL_RIGHT);
   lv_obj_center(send_lbl);
 
@@ -19643,6 +19727,7 @@ static void fmTextPrompt(const char* title, const char* initial, void (*cb)(cons
   lv_obj_set_style_bg_color(bc, lv_color_hex(0x3A4A5C), LV_PART_MAIN);
   lv_obj_add_event_cb(bc, fmPromptCancelCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lc = lv_label_create(bc); lv_label_set_text(lc, TR("Cancel")); lv_obj_center(lc);
+  useChainedFont(lc);
 
   lv_obj_t* bo = lv_btn_create(card);
   lv_obj_set_size(bo, 80, 32);
@@ -19651,6 +19736,7 @@ static void fmTextPrompt(const char* title, const char* initial, void (*cb)(cons
   lv_obj_set_style_bg_color(bo, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_add_event_cb(bo, fmPromptOkCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lo = lv_label_create(bo); lv_label_set_text(lo, "OK"); lv_obj_center(lo);
+  useChainedFont(lo);
 
   if (g_lv.keyboard) kbMirrorBind(s_fm_prompt_ta);
 }
@@ -19789,6 +19875,7 @@ static lv_obj_t* fmActionBtn(lv_obj_t* parent, const char* text, lv_event_cb_t c
   lv_obj_set_style_bg_color(b, lv_color_hex(bg), LV_PART_MAIN);
   lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l = lv_label_create(b);
+  useChainedFont(l);
   lv_label_set_text(l, TR(text));
   lv_obj_center(l);
   return b;
@@ -20256,11 +20343,13 @@ static void fmOpenAudio(const char* name) {
   lv_obj_set_size(play, sw - 16, 40); lv_obj_set_pos(play, 8, 76); styleButton(play);
   lv_obj_add_event_cb(play, fmSndPlayCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* pl = lv_label_create(play); lv_label_set_text(pl, TR(LV_SYMBOL_PLAY "  Play")); lv_obj_center(pl);
+  useChainedFont(pl);
   lv_obj_t* setb = lv_btn_create(s_fm_snd_root);
   lv_obj_set_size(setb, sw - 16, 44); lv_obj_set_pos(setb, 8, 124); styleButton(setb);
   lv_obj_set_style_bg_color(setb, lv_color_hex(0x35C9C9), LV_PART_MAIN);
   lv_obj_add_event_cb(setb, fmSndSetCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* sl = lv_label_create(setb); lv_label_set_text(sl, TR(LV_SYMBOL_OK "  Set as notification sound"));
+  useChainedFont(sl);
   lv_obj_set_style_text_color(sl, lv_color_black(), LV_PART_MAIN); lv_obj_center(sl);
   lv_obj_t* close = lv_btn_create(s_fm_snd_root);
   lv_obj_set_size(close, 30, 26); lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 6); styleButton(close);
@@ -20821,6 +20910,7 @@ static void buildFileManager(lv_obj_t* body) {
   lv_obj_set_style_pad_all(back, 0, LV_PART_MAIN);
   lv_obj_add_event_cb(back, fmBackCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* backl = lv_label_create(back);
+  useChainedFont(backl);
   lv_label_set_text(backl, LV_SYMBOL_LEFT);
   lv_obj_center(backl);
 
@@ -20833,6 +20923,7 @@ static void buildFileManager(lv_obj_t* body) {
   lv_obj_set_style_pad_all(add, 0, LV_PART_MAIN);
   lv_obj_add_event_cb(add, fmFolderMenuCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* addl = lv_label_create(add);
+  useChainedFont(addl);
   lv_label_set_text(addl, LV_SYMBOL_PLUS);
   lv_obj_center(addl);
 
@@ -22007,6 +22098,7 @@ static void openDiscoverPage() {
   styleButton(btn);
   lv_obj_add_event_cb(btn, discoverScanToggleCb, LV_EVENT_CLICKED, nullptr);
   s_discover_btn_lbl = lv_label_create(btn);
+  useChainedFont(s_discover_btn_lbl);
   lv_label_set_text(s_discover_btn_lbl, TR("Stop"));
   lv_obj_center(s_discover_btn_lbl);
 
@@ -22016,6 +22108,7 @@ static void openDiscoverPage() {
   styleButton(mbtn);
   lv_obj_add_event_cb(mbtn, discoverShowMapCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* mlbl = lv_label_create(mbtn);
+  useChainedFont(mlbl);
   lv_label_set_text(mlbl, TR("Map"));
   lv_obj_center(mlbl);
 
@@ -27584,6 +27677,7 @@ static void showRouteHud() {
   lv_obj_set_style_bg_color(rb, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(rb, routeReplayRestartCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* rl = lv_label_create(rb);
+  useChainedFont(rl);
   lv_label_set_text(rl, LV_SYMBOL_REFRESH);
   lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_center(rl);
@@ -29000,16 +29094,19 @@ static void makeMapTab(lv_obj_t* tab) {
     lv_obj_set_style_radius(l, 3, LV_PART_MAIN);
   };
   s_map_info_lbl = lv_label_create(tab);   // coords (bottom-left)
+  useChainedFont(s_map_info_lbl);
   style_corner(s_map_info_lbl);
   lv_label_set_text(s_map_info_lbl, "—");
   lv_obj_align(s_map_info_lbl, LV_ALIGN_BOTTOM_LEFT, 2, -2);
   s_map_count_lbl = lv_label_create(tab);  // marker / status count (bottom-right)
+  useChainedFont(s_map_count_lbl);
   style_corner(s_map_count_lbl);
   lv_label_set_text(s_map_count_lbl, "");
   lv_obj_align(s_map_count_lbl, LV_ALIGN_BOTTOM_RIGHT, -2, -2);
   // Zoom + tile path at the current center — a second line just under the
   // "© OpenStreetMap" status-bar attribution (top-left).
   s_map_zoom_lbl = lv_label_create(tab);
+  useChainedFont(s_map_zoom_lbl);
   style_corner(s_map_zoom_lbl);
   lv_label_set_text(s_map_zoom_lbl, "");
   lv_obj_align(s_map_zoom_lbl, LV_ALIGN_TOP_LEFT, 2, STATUSBAR_H + 2);
@@ -31167,6 +31264,7 @@ static void bubbleLongPressMenuCb(lv_event_t* e) {
 // Helper: render a centered placeholder label into the (cleaned) msgs panel.
 static void chatDetailShowPlaceholder(LvChatPanel& p, const char* msg) {
   lv_obj_t* lbl = lv_label_create(p.msgs);
+  useChainedFont(lbl);
   lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(lbl, 200);
   lv_label_set_text(lbl, TR(msg));
@@ -33980,6 +34078,7 @@ static void refreshContactsList() {
     char san[40];
     copyUtf8ReplacingMissingGlyphs(&g_font_14, san, sizeof(san), e.name);
     lv_obj_t* nm = lv_label_create(rb);
+    useChainedFont(nm);
     if (mid_cols) {
       lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
       // BOTH dimensions constrained: with free height LONG_DOT doesn't ellipsize — the name
@@ -35328,6 +35427,7 @@ static void lockscreenShow() {
 #endif
 
   lv_obj_t* hint = lv_label_create(s_lock_root);
+  useChainedFont(hint);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hint, TR("press Volume Down to unlock"));
 #elif defined(HAS_PAGER_KEYBOARD)
@@ -35448,10 +35548,12 @@ static void openSoundMenu(int slot) {
   lv_obj_set_size(bf, pw - 24, 40); lv_obj_set_pos(bf, 12, 44); styleButton(bf);
   lv_obj_add_event_cb(bf, sndMenuFilesCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lf = lv_label_create(bf); lv_label_set_text(lf, TR(LV_SYMBOL_DIRECTORY "  Choose .wav from files")); lv_obj_center(lf);
+  useChainedFont(lf);
   lv_obj_t* bb = lv_btn_create(s_snd_menu);
   lv_obj_set_size(bb, pw - 24, 40); lv_obj_set_pos(bb, 12, 92); styleButton(bb);
   lv_obj_add_event_cb(bb, sndMenuBuiltinCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lb = lv_label_create(bb); lv_label_set_text(lb, TR("Built-in (default)")); lv_obj_center(lb);
+  useChainedFont(lb);
   lv_obj_t* close = lv_btn_create(s_snd_menu);
   lv_obj_set_size(close, 30, 26); lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 6); styleButton(close);
   lv_obj_add_event_cb(close, sndMenuCloseCb, LV_EVENT_CLICKED, nullptr);
@@ -35604,6 +35706,7 @@ static void openLockWallPicker() {
     styleButton(b);
     lv_obj_add_event_cb(b, lockwallChosenCb, LV_EVENT_CLICKED, s_lockwall_paths[i]);
     lv_obj_t* l = lv_label_create(b);
+    useChainedFont(l);
     char disp[64]; lockwallDisplayName(s_lockwall_paths[i], disp, sizeof disp);
     lv_label_set_text(l, disp);
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
@@ -35859,6 +35962,7 @@ static void openBackupPicker() {
     styleButton(b);
     lv_obj_add_event_cb(b, backupChosenCb, LV_EVENT_CLICKED, s_backup_paths[i]);
     lv_obj_t* l = lv_label_create(b);
+    useChainedFont(l);
     lv_label_set_text(l, s_backup_disp[i]);
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
     lv_obj_set_width(l, lv_pct(94));
@@ -38788,6 +38892,7 @@ static void luaStoreRebuildList() {
     lv_obj_set_style_text_color(t, lv_color_hex(s_lua_cat_n < 0 ? 0xE08080 : COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_pos(t, 0, 0);
     lv_obj_t* h = lv_label_create(card);
+    useChainedFont(h);
     if (s_lua_cat_n < 0 && s_tile_fetch_task == nullptr) {
       // The network worker could not start: report the numbers that decide it
       // (it needs one contiguous 8 KB internal block) right on screen, so this
@@ -42283,6 +42388,7 @@ static void openAccentPicker() {
   lv_obj_remove_style_all(hexrow);
   lv_obj_set_size(hexrow, 150, 30);
   lv_obj_t* hash = lv_label_create(hexrow);
+  useChainedFont(hash);
   lv_label_set_text(hash, "#");
   lv_obj_set_style_text_color(hash, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_align(hash, LV_ALIGN_LEFT_MID, 2, 0);
@@ -42301,6 +42407,7 @@ static void openAccentPicker() {
   lv_obj_set_style_radius(s_accent_preview, 6, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_accent_preview, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_t* pv = lv_label_create(s_accent_preview);
+  useChainedFont(pv);
   lv_label_set_text(pv, TR("Sample text"));
   lv_obj_set_style_text_color(pv, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_center(pv);
@@ -42319,6 +42426,7 @@ static void openAccentPicker() {
   styleButton(rst);
   lv_obj_add_event_cb(rst, accentResetCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* rl = lv_label_create(rst); lv_label_set_text(rl, TR("Reset")); lv_obj_center(rl);
+  useChainedFont(rl);
 
   accentSetSelection(touchPrefsGetAccentColor(), true);
 }
@@ -42620,6 +42728,7 @@ static void openChannelScopeModal(int slot, const char* name) {
   styleButton(save);
   lv_obj_add_event_cb(save, chanScopeSaveCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* sl = lv_label_create(save); lv_label_set_text(sl, TR("Save")); lv_obj_center(sl);
+  useChainedFont(sl);
 
   lv_obj_t* blk = lv_btn_create(s_chanscope_modal);
   lv_obj_set_size(blk, half_w, SC(34));
@@ -42627,6 +42736,7 @@ static void openChannelScopeModal(int slot, const char* name) {
   styleButton(blk);
   lv_obj_add_event_cb(blk, chanScopeBlockedCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(blk); lv_label_set_text(bl, TR("Blocked users")); lv_obj_center(bl);
+  useChainedFont(bl);
 }
 // Open settings for the currently-active chat: per-channel region scope for a channel (or the
 // blocked-users manager if its slot is unknown / it's a DM). Shared by the status-bar gear, the
@@ -43386,6 +43496,7 @@ static void buildUiTree() {
     lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* l = lv_label_create(b);
+    useChainedFont(l);
     lv_label_set_text(l, sym);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_center(l);
@@ -44080,6 +44191,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     styleButton(showb);
     lv_obj_add_event_cb(showb, telemWinApplyCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* sl = lv_label_create(showb); lv_label_set_text(sl, TR("Show")); lv_obj_center(sl);
+    useChainedFont(sl);
     y += 42;
   }
 }
@@ -44174,6 +44286,7 @@ static void openTelemetryConfigWindow() {
   lv_obj_set_style_bg_opa(ap, LV_OPA_40, LV_PART_MAIN);
   lv_obj_add_event_cb(ap, telemPollApplyCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* apl = lv_label_create(ap); lv_label_set_text(apl, TR("Apply auto-poll")); lv_obj_center(apl);
+  useChainedFont(apl);
   y += 86;
 
   // --- Clear history ---
@@ -44183,6 +44296,7 @@ static void openTelemetryConfigWindow() {
   lv_obj_set_style_bg_color(clr, lv_color_hex(0xB23A48), LV_PART_MAIN);
   lv_obj_add_event_cb(clr, telemClearCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* cl = lv_label_create(clr); lv_label_set_text(cl, TR(LV_SYMBOL_TRASH "  Clear history")); lv_obj_center(cl);
+  useChainedFont(cl);
 }
 #endif  // HAS_TDECK_GT911 (telemetry window)
 
@@ -47252,6 +47366,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     reserveTileFetchStack();
     lv_init();
     initTouchFontFallbacks();
+    // NB: re-pointing the LVGL theme's font here does NOT work (tried, verified
+    // on device: no effect) and neither does a text_font style on the screen /
+    // top / sys layers — the theme applies a font per widget, which beats both.
+    // Non-ASCII coverage is handled at the label instead: useChainedFont() swaps
+    // a resolved raw Montserrat for its chained twin, and every label that sets
+    // no font of its own calls it.
 #if CAP_ROUND_CORNERS
     STATUSBAR_H = SB_TOP_PAD + SB_ROW * 2;   // top safe-area + two rows (round phone panel)
 #else
