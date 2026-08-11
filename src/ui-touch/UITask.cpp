@@ -25245,7 +25245,23 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
   if (code != 200) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "HTTP %d", code); http.end(); s_sdfw_state = 3; return; }
   const int len = http.getSize();
   if (len <= 0) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "bad length"); http.end(); s_sdfw_state = 3; return; }
-  SD.remove(path);                       // refresh any stale copy of the same tag
+  // Free space, BEFORE writing a byte. Without this a full card fails partway
+  // through with a bare "SD write failed" — indistinguishable from the DMA-buffer
+  // short-write this path used to have, and the reported failure percentage is
+  // just however far the remaining space stretched. The tile cache is the usual
+  // culprit: it fills the card happily, and each tile is small enough to keep
+  // succeeding long after a 2.8 MB firmware image cannot fit.
+  SD.remove(path);                       // refresh any stale copy of the same tag (frees its space first)
+  {
+    const uint64_t total = SD.totalBytes(), used = SD.usedBytes();
+    const uint64_t freeb = (total > used) ? (total - used) : 0;
+    if (freeb < (uint64_t)len + (256u * 1024u)) {   // headroom for FAT metadata
+      snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "need %u MB, %u MB free",
+               (unsigned)(((uint64_t)len + 1048575u) / 1048576u),
+               (unsigned)(freeb / 1048576u));
+      http.end(); s_sdfw_state = 3; return;
+    }
+  }
   File f = SD.open(path, FILE_WRITE);
   if (!f) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD open failed"); http.end(); s_sdfw_state = 3; return; }
   // The copy buffer MUST be internal DMA-capable RAM, NOT PSRAM. f.write() hands
