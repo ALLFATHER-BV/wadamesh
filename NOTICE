@@ -44,6 +44,12 @@ Noto Color Emoji (emoji glyph artwork, baked to image data)
     SIL Open Font License 1.1 — https://github.com/googlefonts/noto-emoji
     Used as bundled image data with attribution.
 
+Touch UI bitmap fonts (generated LVGL font data)
+    Montserrat Project Authors and Noto Project Authors
+    SIL Open Font License 1.1 — see src/ui-touch/FONT_LICENSES.md
+    Generated reproducibly by scripts/build/gen-touch-fonts.sh from pinned,
+    hash-verified Montserrat and Noto font releases.
+
 ed25519 (bundled in lib/ed25519)
     Orson Peters / orlp — public domain (Creative Commons Zero / zlib)
     https://github.com/orlp/ed25519
