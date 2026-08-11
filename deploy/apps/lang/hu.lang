@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: hu
-# ver: 9
+# ver: 10
 # name: Magyar
 # base: hu
  (device behind)	 (készülék hátulján)
@@ -107,12 +107,12 @@ Blue battery  Orange temp  Cyan humidity	Kék akkumulátor  Narancssárga hőmé
 Bluetooth	Bluetooth
 Bluetooth already off	Bluetooth már ki van kapcsolva
 Bluetooth already on	Bluetooth már be van kapcsolva
-Bluetooth deferred; retry from Settings	
+Bluetooth deferred; retry from Settings	Bluetooth késleltetve; próbálja újra a Beállításokból
 Bluetooth off	Bluetooth kikapcsolva
 Bluetooth on	Bluetooth bekapcsolva
 Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Ezen az eszközön nincs Bluetooth-párosítás.\n\nA rádiócsip gyári firmware-e nem támogatja.\n\nPárosítsd a telefonos appot Wi-Fin: csatlakoztasd az eszközt a hálózatodra, majd add hozzá az appban IP-cím szerint (TCP, 5000-es port) — a Beállítások > Hálózat alatt látható. USB is működik.
-Bluetooth unavailable; retry from Settings	
-Bluetooth will start after Wi-Fi connects or times out.	
+Bluetooth unavailable; retry from Settings	Bluetooth nem elérhető; próbálja újra a Beállításokból
+Bluetooth will start after Wi-Fi connects or times out.	A Bluetooth a Wi-Fi csatlakozása vagy időtúllépés után elindul.
 Broker host / IP	Broker host / IP
 Buffered receive (experimental)	Pufferelt fogadás (kísérleti)
 Built-in	Beépített
@@ -159,7 +159,7 @@ Clear battery history?	Törli az akkumulátorelőzményeket?
 Clear history	Előzmények törlése
 Clear telemetry history for this node?	Törli a telemetriai előzményeket ehhez a csomóponthoz?
 Client repeat	Client repeat
-Clock & time	
+Clock & time	Idő és dátum
 Clock synced	Óra szinkronizálva
 Clock: 12-hour	Óra: 12 órás
 Clock: 24-hour	Óra: 24 órás
@@ -168,7 +168,7 @@ Colourful chat bubbles	Színes csevegőbuborékok
 Commands	Parancsok
 Community Preset	Közösségi profil
 Community preset (meshcomod web)	Közösségi előbeállítás (meshcomod web)
-Compact	
+Compact	Kompakt
 Compact messages	Kompakt üzenetek
 Compact messages (IRC style)	Kompakt üzenetek (IRC stílus)
 Connect	Csatlakozás
@@ -197,17 +197,17 @@ Control this device from a browser	Vezéreld az eszközt böngészőből
 Copied %s	%s másolva
 Copied - Paste in a folder	Másolt - Beillesztés egy mappába
 Copy	Másolás
-Copy blocked: SD card holds a different or unreadable profile	
-Copy blocked: SD profile could not be prepared safely	
-Copy blocked: internal data is busy	
+Copy blocked: SD card holds a different or unreadable profile	Másik vagy nem olvasható profil van az SD-kártyán, ezért a másolás letiltva.
+Copy blocked: SD profile could not be prepared safely	Biztonsági előkészítés sikertelen, ezért a másolás letiltva.
+Copy blocked: internal data is busy	Másolás letiltva: a belső adatok használatban vannak.
 Copy blocked: migration guard unavailable	
 Copy failed (no internal identity)	Másolás sikertelen (nincs belső identitás)
-Copy incomplete: SD data may be mixed. Retry before reboot.	
+Copy incomplete: SD data may be mixed. Retry before reboot.	Másolás nem teljes: az SD-kártyán lévő adatok keveredhetnek. Indítsd újra a másolást a készülék újraindítása előtt.
 Copy internal data to SD	Belső adatok másolása SD-re
-Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	Csak a hiányzó belső fájlokat másolja egy megfelelő SD-profilba,\ntartsa meg a meglévő SD-adatokat, majd indítsa újra?
 Copy secret	Secret másolása
 Copying internal data to SD...	Belső adatok másolása SD-kártyára...
-Copying internal data to SD...\nThis may take a few minutes; keep powered.	
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	Belső adatok másolása az SD-kártyára…\nEz eltarthat néhány percig; tartsd bekapcsolva a készüléket.
 Could not add	Nem sikerült hozzáadni
 Could not save the crash report	Nem sikerült menteni a hibajelentést
 Couldn't delete	Nem sikerült törölni
@@ -221,7 +221,7 @@ Create QR	QR készítése
 Create a private channel	Privát csatorna létrehozása
 Create failed	Létrehozás sikertelen
 Create private channel	Privát csatorna létrehozása
-Current tile transfer is busy - retry	
+Current tile transfer is busy - retry	Az aktuális csempeátvitel folyamatban van – próbáld újra később.
 Custom UTC offset (hours)	Egyéni UTC eltolás (órában)
 Cut	Kivágás
 Cut - Paste in a folder	Kivágás - Beillesztés egy mappába
@@ -263,7 +263,7 @@ Direct (DM) sound	Közvetlen (DM) hang
 Do Not Disturb	Ne zavarj
 Do Not Disturb off	Ne zavarj kikapcsolva
 Do Not Disturb on	Ne zavarj bekapcsolva
-Down	
+Down	Le
 Download failed	A letöltés nem sikerült
 Download failed (network?)	A letöltés nem sikerült (hálózat?)
 Download mode	Letöltési mód
@@ -307,9 +307,9 @@ Export crash report	Hibajelentés exportálása
 Exporting settings…	Beállítások exportálása…
 External antenna selected	Külső antenna kiválasztva
 Factory reset	Gyári visszaállítás
-Factory reset blocked: SD activity is still running; close tools and retry.	
-Factory reset blocked: storage is busy	
-Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	
+Factory reset blocked: SD activity is still running; close tools and retry.	Gyári visszaállítás letiltva: az SD-kártya művelete még folyamatban van. Zárd be az eszközöket, majd próbáld újra.
+Factory reset blocked: storage is busy	Gyári visszaállítás letiltva: a tárhely használatban van.
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	Gyári visszaállítás nem teljes: az SD-kártya adatai részben már törlődhettek. Próbáld újra a befejezéshez, vagy távolítsd el a kártyát a belső adatok visszaállítása előtt.
 Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Gyári beállítások visszaállítása?\n\nTörli az identitást, a névjegyeket,\ncsatornákat, üzeneteket, a Wi-Fi-t\nés minden beállítást. Ez\na művelet nem vonható vissza.
 Failed to save channel.	Nem sikerült menteni a csatornát.
 Favorites full (max %d)	Kedvencek megteltek (max. %d)
@@ -345,7 +345,7 @@ GPS: fix	GPS: fix
 GPS: off	GPS: kikapcsolva
 GPS: searching	GPS: keresés
 Game over  —  score %d   (tap to restart)	Vége a játéknak — %d pont (érintsd meg az újraindításhoz)
-General	
+General	Általános
 Get	Letölt
 Get Started	Kezdés
 Get test builds (beta)	Tesztverziók beszerzése (béta)
@@ -360,7 +360,7 @@ Hide this app from the drawer?	Elrejted ezt az appot a menüből?
 High-gain receiver (FEM LNA)	Nagy nyereségű vevő (FEM LNA)
 Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Nagyon kísérleti jellegű. Ez a funkció továbbítja a csomópont által fogadott összes üzenet szövegét, feladó nevét és időbélyegét egy MQTT brókernek, ahol bárki, aki el tudja olvasni a brókert, elolvashatja azokat. A közvetlen üzenetek olyan személyek privát üzenetei, akik soha nem járultak hozzá a megosztásukhoz. Használjon egy általa felügyelt brókert, állítson be titkosítási kulcsot alább, és soha ne használjon nyilvános brókert.
 History limit off	Előzménykorlát kikapcsolva
-Home	
+Home	Kezdőlap
 Hotkey saved	Gyorsbillentyű mentése
 How you'll appear to other nodes. You can change this later in Settings.	Hogyan fogsz megjelenni más csomópontok számára. Ezt később módosíthatod a Beállításokban.
 Humidity	Páratartalom
@@ -411,7 +411,7 @@ Keyboard light on	Billentyűzetfény be
 Keyboard nav: WASDZ on	Billentyűzet navigáció: WASDZ bekapcsolva
 Keyboard nav: off	Billentyűzetnavigáció: kikapcsolva
 Keyboard navigation	Billentyűzetnavigáció
-Keys	
+Keys	Kulcsok
 LOS → %s	Rálátás → %s
 Landscape (desktop)	Fekvő (asztali)
 Landscape set - applies when remote mode starts.	Fekvő beállítva - a távoli mód indulásakor lép életbe.
@@ -419,11 +419,11 @@ Language	Nyelv
 Language catalog unavailable - check Wi-Fi, then reopen this tab.	A nyelvi katalógus nem érhető el - ellenőrizd a Wi-Fit, majd nyisd meg újra a lapot.
 Language updated - restarting to apply it…	Nyelv frissítve - újraindítás az alkalmazáshoz…
 Languages	Nyelvek
-Large (bigger icons)	
+Large (bigger icons)	Nagy (nagyobb ikonok)
 Latitude	Szélesség
 Leave empty if not required	Hagyja üresen, ha nem szükséges
 Leaving remote mode - rebooting...	Kilépés a távoli módból - újraindítás...
-Left	
+Left	Balra
 Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Állítsuk be az eszközt.\n\nVálassz egy nevet, és válaszd ki a LoRa régiódat. Körülbelül egy percet vesz igénybe.
 Letters only	Csak betűk
 LoRa antenna (P4)	LoRa antenna (P4)
@@ -484,7 +484,7 @@ Message deleted	Üzenet törölve
 Message didn't get through.\nResend it?	Az üzenet nem érkezett meg.\nÚjraküldi?
 Message info	Üzenet adatai
 Message sound	Üzenet hangja
-Messages	
+Messages	Üzenetek
 Min zoom for this pack	Minimális zoom ehhez a csomaghoz
 Mode: BLE starting / low memory	Mód: BLE indítás / kevés memória
 Model:	Modell
@@ -678,12 +678,12 @@ Resends a message until a repeater echoes it or the recipient ACKs. Turn off to 
 Reset	Visszaállítás
 Reset path	Útvonal visszaállítása
 Restarting to apply the language…	Újraindítás a nyelv alkalmazásához…
-Restarting to enable Bluetooth	
-Resume	
-Resuming missing files to SD...\nThis may take a few minutes; keep powered.	
+Restarting to enable Bluetooth	Újraindítás a Bluetooth engedélyezéséhez
+Resume	Folytatás
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	Hiányzó fájlok folytatása az SD-kártyára…\nEz eltarthat néhány percig; tartsd bekapcsolva a készüléket.
 Retry sends until heard	Újraküldés, míg meg nem hallják
 Reverse scrollball	Fordított görgetőgolyó
-Right	
+Right	Jobbra
 Roll to highlight • click to insert	Görgessen a kiemeléshez • kattintson a beszúráshoz
 Room is read-only for you.\nJoin with the room password to post.	A szoba csak írásvédett számodra.\nCsatlakozz a szoba jelszavával, hogy hozzászólhass.
 Rotating - reconnecting...	Forgatás - újracsatlakozás...
@@ -696,14 +696,14 @@ SD card inserted	SD-kártya behelyezve
 SD card lost - reinsert to recover	SD-kártya elveszett - helyezze be újra a helyreállításhoz
 SD card remounted	SD kártya újracsatolva
 SD card removed	SD-kártya eltávolítva
-SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
-SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
-SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	Az SD-kártya adatai nem érhetők el – a névjegyek és a csatornák nem menthetők a kártya újbóli behelyezéséig.
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	Az SD-kártya adatai nem érhetők el – az azonosító, a beállítások, a névjegyek és a csatornák nem menthetők a kártya újbóli behelyezéséig.
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	Az SD-kártya adatainak áthelyezése nem teljes. Az azonosító és a beállítások továbbra is a belső tárhelyen vannak; a folytatáshoz használd a „Belső adatok másolása SD-kártyára” lehetőséget.
 SD download failed: %s	SD-letöltés sikertelen: %s
 SD formatted - %s (MESHCOMOD)	SD formázás - %s (MESHCOMOD)
-SD is busy - close tools and retry	
-SD removed - card-backed data cannot be saved	
-SD stayed busy - format cancelled, retry	
+SD is busy - close tools and retry	Az SD-kártya foglalt – zárd be az eszközöket, majd próbáld újra.
+SD removed - card-backed data cannot be saved	SD-kártya eltávolítva – az SD-kártyán tárolt adatok nem menthetők.
+SD stayed busy - format cancelled, retry	Az SD-kártya továbbra is foglalt – a formázás megszakítva, próbáld újra.
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB felhasználva
@@ -729,7 +729,7 @@ Saved network	Mentett hálózat
 Saved networks	Mentett hálózatok
 Saved profiles	Profil mentve
 Saved to slot %d	Mentve a(z) %d helyre
-Saved — applying…	
+Saved — applying…	Mentve — alkalmazás folyamatban…
 Saved — rebooting	Mentve — újraindítás
 Saved — reconnecting…	Mentve — újracsatlakozás…
 Saved: %s\nFlash it from the Launcher.	Mentett: %s\nFlash-eld a Launcher-ből.
@@ -740,7 +740,7 @@ Scan	Keres
 Scan again	Újrakeresés
 Scanning…	Keresés…
 Scope direct msgs to region	Közvetlen üzenet a régiónak
-Screen	
+Screen	Kijelző
 Screen locked	képernyő lezárva
 Screen timeout (s, 0 = never)	Képernyő időkorlátja (s, 0=soha)
 Screen timeout (s, 0 = never, min 10)	Képernyő időkorlátja (s, 0 = soha, min. 10)
@@ -751,8 +751,8 @@ Screenshot needs an SD card	Screenshot-hoz SD-kártya szükséges
 Screenshot: low memory	Screenshot: kevés a memória
 Screenshot: no SD card	Screenshot: nincs sd kártya
 Screenshot: write failed	Screenshot: írási hiba
-Scroll down	
-Scroll up	
+Scroll down	Görgetés le
+Scroll up	Görgetés fel
 Scrollball: normal	Scrollball: normális
 Scrollball: reversed	Scrollbar: megfordítva
 Search	Keresés
@@ -761,7 +761,7 @@ Secondary keyboards	Másodlagos billentyűk
 Secret (32 hex chars)	Secret (32 hex karakter)
 Secret (32 hex, optional)	Secret (32 hex opcionális)
 Secret must be 32 hex chars (or empty).	A titkos kódnak 32 hex karakterből kell állnia (vagy üresen kell állnia).
-Select	
+Select	Kiválasztás
 Select a DM thread	Válassz egy DM-szálat
 Select all	Összes kijelölése
 Select network	Hálózat kiválasztása
@@ -770,7 +770,7 @@ Send advert now	Advert küldés most
 Send an advert now, or set how often you re-advertise.	Küldjön hirdetést most, vagy állítsa be, hogy milyen gyakran szeretné újrahirdetni.
 Send failed	Küldés sikertelen
 Sender blocked	Feladó blokkolva
-Sensors	
+Sensors	Szenzorok
 Sensors tab: off (restart to apply)	Érzékelők lap: kikapcsolva (újraindítás az alkalmazáshoz)
 Sensors tab: on (restart to apply)	Érzékelők lap: bekapcsolva (újraindítás az alkalmazáshoz)
 Sent	Elküldve
@@ -804,7 +804,7 @@ Sleep ready	Készen áll az alvásra
 Slot %d cleared	%d hely kiürítve
 Slot empty	Üres hely
 Small\nMedium\nLarge	Kicsi\nKözepes\nNagy
-Snake	
+Snake	Snake
 Snake  —  swipe or roll the trackball	Kígyó – pöccintsd vagy görgesd a görgetőgolyót
 Sort	Sort
 Sound	Hang
@@ -903,7 +903,7 @@ Unmute msgs	Üzenetek némításának feloldása
 Unread %d	Olvasatlan %d
 Unread %d\nRAM %u%%  ·  PSRAM %u%%	Olvasatlan %d\nRAM %u%%  ·  PSRAM %u%%
 Unsupported WAV (need 16-bit PCM)	Nem támogatott WAV (16 bites PCM szükséges)
-Up	
+Up	Fel
 Update	Frissít
 Update bin saved to SD	A frissítési láda SD-kártyára mentve
 Update complete.\nRebooting...	Frissítés kész.\nÚjraindítás...
@@ -924,7 +924,7 @@ Welcome to WADAMESH	Üdvözöl a WADAMESH
 While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Amíg be van kapcsolva, a Wi-Fi hálózatodon bárki láthatja és vezérelheti az eszközt. Sima HTTP-t használ (csak helyi hálózat).
 Wi-Fi	Wi-Fi
 Wi-Fi & Bluetooth	Wi-Fi és Bluetooth
-Wi-Fi and Bluetooth unavailable; retry from Settings	
+Wi-Fi and Bluetooth unavailable; retry from Settings	A Wi-Fi és a Bluetooth nem érhető el; próbáld újra a Beállításokban.
 Wi-Fi is not enabled in this build.	Ebben a buildben nincs engedélyezve a Wi-Fi.
 Wi-Fi isn't available on this build.	Wi-Fi nem érhető el ezen a builden.
 Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	Wi-Fi szükséges a terepprofil lekéréséhez ehhez az útvonalhoz. Csatlakozás a Beállítások → Wi-Fi menüpontban.
@@ -932,12 +932,12 @@ Wi-Fi not connected	Nincs Wi-Fi-kapcsolat
 Wi-Fi off	WiFi kikapcsolva
 Wi-Fi on	WiFi bekapcsolva
 Wi-Fi on, scanning…	Wi-Fi bekapcsolva, szkennelés…
-Wi-Fi paused; Bluetooth disconnect timed out	
+Wi-Fi paused; Bluetooth disconnect timed out	Wi-Fi szüneteltetve; a Bluetooth bontása időtúllépés miatt meghiúsult.
 Wi-Fi saved (radio off)	Wi-Fi mentve (rádió kikapcsolva)
-Wi-Fi saved, applying	
+Wi-Fi saved, applying	Wi-Fi mentve, alkalmazás folyamatban.
 Wi-Fi saved, reconnecting	Wi-Fi mentve, újracsatlakozás
-Wi-Fi unavailable; Bluetooth restored	
-Wi-Fi unavailable; retry from Settings	
+Wi-Fi unavailable; Bluetooth restored	Wi-Fi nem érhető el; a Bluetooth helyreállítva.
+Wi-Fi unavailable; retry from Settings	Wi-Fi nem érhető el; próbáld újra a Beállításokban.
 Yesterday	Tegnap
 You can run setup later in Settings → Device	A beállítást később is futtathatja a Beállítások → Eszköz menüpontban.
 Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	A tartózkodási helye ismeretlen.\nElőször állítsa be a GPS-t / pozíciót a\nBeállítások → Profil menüpontban.
@@ -961,7 +961,7 @@ hold the d-pad to unlock	tartsa lenyomva a d-padot a feloldáshoz
 hold the trackball to unlock	tartsa lenyomva a trackballt a feloldáshoz
 kHz	kHz
 keep holding	tartsd ki
-last wake:	
+last wake:	utolsó ébresztés:
 last wake: 	utolsó ébredés: 
 leave empty to generate	hagyja üresen a generáláshoz
 lights the keyboard + wakes the screen on an incoming message	bejövő üzenet esetén bekapcsolja a billentyűzet megvilágítását + felébreszti a képernyőt

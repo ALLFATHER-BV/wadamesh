@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: nl
-# ver: 8
+# ver: 9
 # name: Nederlands
 # base: nl
  (device behind)	(apparaat loopt achter)
@@ -69,7 +69,7 @@ Auto repeater	Auto repeater
 Auto room	Auto room
 Auto sensor	Auto sensor
 Auto-Join	Auto-deelnemen
-Auto-add	
+Auto-add	Auto toevoegen
 Auto-add contacts	Contacten automatisch toevoegen
 Auto-add saved	Auto-toevoegen opgeslagen
 Auto-add settings	Auto-toevoegen instellingen
@@ -107,12 +107,12 @@ Blue battery  Orange temp  Cyan humidity	Blauw batterij  Oranje temp  Cyaan voch
 Bluetooth	Bluetooth
 Bluetooth already off	Bluetooth al uit
 Bluetooth already on	Bluetooth al aan
-Bluetooth deferred; retry from Settings	
+Bluetooth deferred; retry from Settings	Bluetooth uitgesteld; opnieuw proberen via Instellingen
 Bluetooth off	Bluetooth uit
 Bluetooth on	Bluetooth aan
 Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Bluetooth-koppelen is op dit apparaat niet beschikbaar.\n\nDe fabrieksfirmware van de radiochip ondersteunt het niet.\n\nKoppel de telefoon-app via Wi-Fi: verbind dit apparaat met je netwerk en voeg het in de app toe op IP-adres (TCP, poort 5000) — te vinden onder Instellingen > Netwerk. USB werkt ook.
-Bluetooth unavailable; retry from Settings	
-Bluetooth will start after Wi-Fi connects or times out.	
+Bluetooth unavailable; retry from Settings	Bluetooth niet beschikbaar; opnieuw proberen via Instellingen
+Bluetooth will start after Wi-Fi connects or times out.	Bluetooth start na verbinding met Wi-Fi of na time-out.
 Broker host / IP	Broker-host / IP
 Buffered receive (experimental)	Gebufferde ontvangst (experimenteel)
 Built-in	Ingebouwd
@@ -157,7 +157,7 @@ Clear battery history?	Batterijgeschiedenis wissen?
 Clear history	Geschiedenis wissen
 Clear telemetry history for this node?	Telemetriegeschiedenis van deze node wissen?
 Client repeat	Client herhaling
-Clock & time	
+Clock & time	Klok & tijd
 Clock synced	Klok gesynchroniseerd
 Clock: 12-hour	Klok: 12-uurs
 Clock: 24-hour	Klok: 24-uurs
@@ -166,7 +166,7 @@ Colourful chat bubbles	Kleurrijke chatbubbels
 Commands	Opdrachten
 Community Preset	Community-preset
 Community preset (meshcomod web)	Community-preset (meshcomod web)
-Compact	
+Compact	Compact
 Compact messages	Compacte berichten
 Compact messages (IRC style)	Compacte berichten (IRC-stijl)
 Connect	Verbinden
@@ -195,17 +195,17 @@ Control this device from a browser	Bedien dit apparaat vanuit een browser
 Copied %s	%s gekopieerd
 Copied - Paste in a folder	Gekopieerd - plak in een map
 Copy	Kopiëren
-Copy blocked: SD card holds a different or unreadable profile	
-Copy blocked: SD profile could not be prepared safely	
-Copy blocked: internal data is busy	
-Copy blocked: migration guard unavailable	
+Copy blocked: SD card holds a different or unreadable profile	Kopiëren geblokkeerd: SD-kaart heeft een ander of onleesbaar profiel
+Copy blocked: SD profile could not be prepared safely	Kopiëren geblokkeerd: SD-profiel kon niet veilig worden voorbereid
+Copy blocked: internal data is busy	Kopiëren geblokkeerd: interne data is bezig
+Copy blocked: migration guard unavailable	Kopiëren geblokkeerd: migratiebeveiliging niet beschikbaar
 Copy failed (no internal identity)	Kopiëren mislukt (geen interne identiteit)
-Copy incomplete: SD data may be mixed. Retry before reboot.	
+Copy incomplete: SD data may be mixed. Retry before reboot.	Kopiëren onvolledig: SD-data kan gemengd zijn. Opnieuw proberen vóór herstart.
 Copy internal data to SD	Interne data naar SD kopiëren
-Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	Alleen ontbrekende interne bestanden naar een passend SD-profiel kopiëren,\nbestaande SD-data behouden en daarna herstarten?
 Copy secret	Geheim kopiëren
 Copying internal data to SD...	Interne data naar SD kopiëren...
-Copying internal data to SD...\nThis may take a few minutes; keep powered.	
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	Interne data wordt naar SD gekopieerd...\nDit kan enkele minuten duren; apparaat ingeschakeld laten
 Could not add	Toevoegen mislukt
 Could not save the crash report	Kon het crashrapport niet opslaan
 Couldn't delete	Verwijderen mislukt
@@ -219,7 +219,7 @@ Create QR	QR maken
 Create a private channel	Privékanaal aanmaken
 Create failed	Aanmaken mislukt
 Create private channel	Privékanaal aanmaken
-Current tile transfer is busy - retry	
+Current tile transfer is busy - retry	Huidige tegeloverdracht is bezig - opnieuw proberen
 Custom UTC offset (hours)	Aangepaste UTC-offset (uren)
 Cut	Knippen
 Cut - Paste in a folder	Geknipt - plak in een map
@@ -259,7 +259,7 @@ Distance: miles	Afstand: mijlen
 Do Not Disturb	Niet storen
 Do Not Disturb off	Niet storen uit
 Do Not Disturb on	Niet storen aan
-Down	
+Down	Omlaag
 Download failed	Download mislukt
 Download failed (network?)	Download mislukt (netwerk?)
 Download mode	Downloadmodus
@@ -302,9 +302,9 @@ Export settings	Instellingen exporteren
 Exporting settings…	Instellingen exporteren…
 External antenna selected	Externe antenne geselecteerd
 Factory reset	Fabrieksreset
-Factory reset blocked: SD activity is still running; close tools and retry.	
-Factory reset blocked: storage is busy	
-Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	
+Factory reset blocked: SD activity is still running; close tools and retry.	Fabrieksreset geblokkeerd: SD-activiteit loopt nog; sluit tools en probeer opnieuw.
+Factory reset blocked: storage is busy	Fabrieksreset geblokkeerd: opslag is bezig
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	Fabrieksreset onvolledig: SD-data kan al deels gewist zijn. Opnieuw proberen om te voltooien, of kaart verwijderen voordat interne data wordt gereset.
 Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Fabrieksreset?\n\nWist identiteit, contacten, kanalen, berichten, wifi en elke instelling. Onomkeerbaar.
 Failed to save channel.	Kan kanaal niet opslaan.
 Favorites full (max %d)	Favorieten vol (max %d)
@@ -340,7 +340,7 @@ GPS: fix	GPS: fix
 GPS: off	GPS: uit
 GPS: searching	GPS: zoeken
 Game over  —  score %d   (tap to restart)	Game over  —  score %d   (tik om te herstarten)
-General	
+General	Algemeen
 Get	Ophalen
 Get Started	Aan de slag
 Get test builds (beta)	Testversies ontvangen (bèta)
@@ -355,7 +355,7 @@ Hide this app from the drawer?	Deze app verbergen uit de lade?
 High-gain receiver (FEM LNA)	Hoge-versterking ontvanger (FEM LNA)
 Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Zeer experimenteel. Dit stuurt de tekst, afzendernaam en tijdstempel van elk bericht dat je node ontvangt door naar een MQTT-broker, waar iedereen die de broker kan lezen ze kan lezen. Directe berichten zijn privéberichten van anderen die nooit met delen hebben ingestemd. Gebruik een broker die je zelf beheert, stel hieronder een encryptiesleutel in, en nooit een openbare broker.
 History limit off	Geschiedenislimiet uit
-Home	
+Home	Start
 Hotkey saved	Sneltoets opgeslagen
 How you'll appear to other nodes. You can change this later in Settings.	Hoe je verschijnt voor andere nodes. Je kunt dit later wijzigen in Instellingen.
 Humidity	Vochtigheid
@@ -406,7 +406,7 @@ Keyboard light on	Toetsenbordverlichting aan
 Keyboard nav: WASDZ on	Toetsenbordnav.: WASDZ aan
 Keyboard nav: off	Toetsenbordnav.: uit
 Keyboard navigation	Toetsenbordnavigatie
-Keys	
+Keys	Toetsen
 LOS → %s	Zichtlijn → %s
 Landscape (desktop)	Liggend (desktop)
 Landscape set - applies when remote mode starts.	Liggend ingesteld - geldt zodra de externe modus start.
@@ -414,11 +414,11 @@ Language	Taal
 Language catalog unavailable - check Wi-Fi, then reopen this tab.	Taalcatalogus niet beschikbaar - controleer Wi-Fi en open dit tabblad opnieuw.
 Language updated - restarting to apply it…	Taal bijgewerkt - opnieuw opstarten om toe te passen…
 Languages	Talen
-Large (bigger icons)	
+Large (bigger icons)	Groot (grotere pictogrammen)
 Latitude	Breedtegraad
 Leave empty if not required	Leeg laten indien niet vereist
 Leaving remote mode - rebooting...	Externe modus verlaten - herstarten...
-Left	
+Left	Links
 Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Laten we je apparaat instellen.\n\nJe kiest een naam en je LoRa-regio. Duurt ongeveer een minuut.
 Letters only	Alleen letters
 LoRa antenna (P4)	LoRa-antenne (P4)
@@ -478,7 +478,7 @@ Message deleted	Bericht verwijderd
 Message didn't get through.\nResend it?	Bericht is niet aangekomen.\nOpnieuw versturen?
 Message info	Berichtinfo
 Message sound	Berichtgeluid
-Messages	
+Messages	Berichten
 Min zoom for this pack	Min zoom voor dit pakket
 Mode: BLE starting / low memory	Modus: BLE start / weinig geheugen
 Model:	Model:
@@ -669,12 +669,12 @@ Resends a message until a repeater echoes it or the recipient ACKs. Turn off to 
 Reset	Herstellen
 Reset path	Pad resetten
 Restarting to apply the language…	Opnieuw opstarten om de taal toe te passen…
-Restarting to enable Bluetooth	
-Resume	
-Resuming missing files to SD...\nThis may take a few minutes; keep powered.	
+Restarting to enable Bluetooth	Herstarten om Bluetooth te activeren
+Resume	Hervatten
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	Ontbrekende bestanden worden naar SD hervat...\nDit kan enkele minuten duren; apparaat ingeschakeld laten.
 Retry sends until heard	Opnieuw verzenden tot gehoord
 Reverse scrollball	Scrollball omkeren
-Right	
+Right	Rechts
 Roll to highlight • click to insert	Rol om te markeren • klik om in te voegen
 Room is read-only for you.\nJoin with the room password to post.	De ruimte is voor jou alleen-lezen.\nDoe mee met het ruimtewachtwoord om te posten.
 Rotating - reconnecting...	Draaien - opnieuw verbinden...
@@ -687,14 +687,14 @@ SD card inserted	SD-kaart geplaatst
 SD card lost - reinsert to recover	SD-kaart verloren - plaats opnieuw
 SD card remounted	SD-kaart opnieuw gekoppeld
 SD card removed	SD-kaart verwijderd
-SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
-SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
-SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	SD-data niet beschikbaar - contacten en kanalen kunnen pas na opnieuw plaatsen van de kaart worden opgeslagen.
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	SD-data niet beschikbaar - identiteit, instellingen, contacten en kanalen kunnen pas na opnieuw plaatsen van de kaart worden opgeslagen.
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	SD-datamigratie onvolledig. Identiteit en instellingen blijven intern; gebruik Interne data naar SD kopiëren om opnieuw te proberen.
 SD download failed: %s	SD-download mislukt: %s
 SD formatted - %s (MESHCOMOD)	SD geformatteerd - %s (MESHCOMOD)
-SD is busy - close tools and retry	
-SD removed - card-backed data cannot be saved	
-SD stayed busy - format cancelled, retry	
+SD is busy - close tools and retry	SD is bezig - sluit tools en probeer opnieuw
+SD removed - card-backed data cannot be saved	SD verwijderd - kaartgegevens kunnen niet worden opgeslagen
+SD stayed busy - format cancelled, retry	SD bleef bezig - formatteren geannuleerd, opnieuw proberen
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB gebruikt
@@ -718,7 +718,7 @@ Saved backups	Opgeslagen back-ups
 Saved network	Opgeslagen netwerk
 Saved profiles	Opgeslagen profielen
 Saved to slot %d	Opgeslagen in slot %d
-Saved — applying…	
+Saved — applying…	Opgeslagen — wordt toegepast…
 Saved — rebooting	Opgeslagen — opnieuw opstarten
 Saved — reconnecting…	Opgeslagen — opnieuw verbinden…
 Saved: %s\nFlash it from the Launcher.	Opgeslagen: %s\nFlash het vanuit de Launcher.
@@ -727,7 +727,7 @@ Saving to SD… 0%	Opslaan naar SD… 0%
 Scan to open on phone	Scan om op je telefoon te openen
 Scanning…	Scannen…
 Scope direct msgs to region	Directe berichten beperken tot regio
-Screen	
+Screen	Scherm
 Screen locked	Scherm vergrendeld
 Screen timeout (s, 0 = never)	Schermtime-out (s, 0 = nooit)
 Screen timeout (s, 0 = never, min 10)	Schermtime-out (s, 0 = nooit, min 10)
@@ -738,8 +738,8 @@ Screenshot needs an SD card	Schermafbeelding vereist een SD-kaart
 Screenshot: low memory	Schermafbeelding: weinig geheugen
 Screenshot: no SD card	Schermafbeelding: geen SD-kaart
 Screenshot: write failed	Schermafbeelding: schrijven mislukt
-Scroll down	
-Scroll up	
+Scroll down	Omlaag scrollen
+Scroll up	Omhoog scrollen
 Scrollball: normal	Scrollball: normaal
 Scrollball: reversed	Scrollball: omgekeerd
 Search	Zoeken
@@ -748,7 +748,7 @@ Secondary keyboards	Secundaire toetsenborden
 Secret (32 hex chars)	Geheim (32 hex)
 Secret (32 hex, optional)	Geheim (32 hex, optioneel)
 Secret must be 32 hex chars (or empty).	Geheim moet 32 hex-tekens zijn (of leeg).
-Select	
+Select	Selecteren
 Select a DM thread	Kies een DM-gesprek
 Select all	Alles selecteren
 Select network	Netwerk kiezen
@@ -757,7 +757,7 @@ Send advert now	Nu advert verzenden
 Send an advert now, or set how often you re-advertise.	Verstuur nu een advert, of stel in hoe vaak je opnieuw adverteert.
 Send failed	Verzenden mislukt
 Sender blocked	Afzender geblokkeerd
-Sensors	
+Sensors	Sensoren
 Sensors tab: off (restart to apply)	Sensortab: uit (herstart om toe te passen)
 Sensors tab: on (restart to apply)	Sensortab: aan (herstart om toe te passen)
 Sent	Verzonden
@@ -789,7 +789,7 @@ Sleep ready	Klaar voor slaap
 Slot %d cleared	Slot %d gewist
 Slot empty	Slot leeg
 Small\nMedium\nLarge	Klein\nMiddel\nGroot
-Snake	
+Snake	Snake
 Snake  —  swipe or roll the trackball	Snake  —  veeg of rol de trackball
 Sort	Sorteer
 Sound	Geluid
@@ -884,7 +884,7 @@ Unmute msgs	Berichten aan
 Unread %d	Ongelezen %d
 Unread %d\nRAM %u%%  ·  PSRAM %u%%	Ongelezen %d\nRAM %u%%  ·  PSRAM %u%%
 Unsupported WAV (need 16-bit PCM)	Niet-ondersteunde WAV (16-bit PCM vereist)
-Up	
+Up	Omhoog
 Update	Bijwerken
 Update bin saved to SD	Update-bin opgeslagen op SD
 Update complete.\nRebooting...	Update voltooid.\nOpnieuw opstarten...
@@ -904,7 +904,7 @@ Welcome to WADAMESH	Welkom bij WADAMESH
 While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Zolang dit aan staat kan iedereen op je Wi-Fi dit apparaat bekijken en bedienen. Gebruikt gewoon HTTP (alleen lokaal netwerk).
 Wi-Fi	Wi-Fi
 Wi-Fi & Bluetooth	Wi-Fi & Bluetooth
-Wi-Fi and Bluetooth unavailable; retry from Settings	
+Wi-Fi and Bluetooth unavailable; retry from Settings	Wi-Fi en Bluetooth niet beschikbaar; opnieuw proberen via Instellingen
 Wi-Fi is not enabled in this build.	Wi-Fi is niet ingeschakeld in deze build.
 Wi-Fi isn't available on this build.	Wi-Fi is niet beschikbaar in deze build.
 Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	Wifi nodig om het terreinprofiel\nvoor dit pad op te halen.\nVerbind in Instellingen → Wi-Fi.
@@ -912,12 +912,12 @@ Wi-Fi not connected	Wi-Fi niet verbonden
 Wi-Fi off	Wi-Fi uit
 Wi-Fi on	Wi-Fi aan
 Wi-Fi on, scanning…	Wi-Fi aan, scannen…
-Wi-Fi paused; Bluetooth disconnect timed out	
+Wi-Fi paused; Bluetooth disconnect timed out	Wi-Fi gepauzeerd; Bluetooth-verbinding verbreken mislukt door time-out
 Wi-Fi saved (radio off)	Wi-Fi opgeslagen (radio uit)
-Wi-Fi saved, applying	
+Wi-Fi saved, applying	Wi-Fi opgeslagen, wordt toegepast
 Wi-Fi saved, reconnecting	Wi-Fi opgeslagen, opnieuw verbinden
-Wi-Fi unavailable; Bluetooth restored	
-Wi-Fi unavailable; retry from Settings	
+Wi-Fi unavailable; Bluetooth restored	Wi-Fi niet beschikbaar; Bluetooth hersteld
+Wi-Fi unavailable; retry from Settings	Wi-Fi niet beschikbaar; opnieuw proberen via Instellingen
 Yesterday	Gisteren
 You can run setup later in Settings → Device	Je kunt de installatie later uitvoeren in Instellingen → Apparaat
 Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Je locatie is onbekend.\nStel GPS / positie eerst in bij\nInstellingen → Profiel.
@@ -941,7 +941,7 @@ hold the d-pad to unlock	houd de d-pad vast om te ontgrendelen
 hold the trackball to unlock	houd de trackball vast om te ontgrendelen
 kHz	kHz
 keep holding	blijf vasthouden
-last wake:	
+last wake:	laatste ontwaken:
 last wake: 	laatst wakker: 
 leave empty to generate	leeg laten om te genereren
 lights the keyboard + wakes the screen on an incoming message	verlicht het toetsenbord + wekt het scherm bij een inkomend bericht
