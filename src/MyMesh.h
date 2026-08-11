@@ -263,6 +263,13 @@ protected:
   bool shouldOverwriteWhenFull() const override;
   void onContactsFull() override;
   void onContactOverwrite(const uint8_t* pub_key) override;
+  // Blob deletes queued by onContactOverwrite and drained from loop() — never
+  // from packet handling, see #222 (SPIFFS GC stalls both cores).
+  static const uint8_t PENDING_DEL_MAX = 8;
+  uint8_t _pending_del[PENDING_DEL_MAX][PUB_KEY_SIZE];
+  uint8_t _pending_del_n = 0;
+  uint32_t _next_pending_del_at = 0;
+  void drainPendingBlobDeletes();
   bool onContactPathRecv(ContactInfo& from, uint8_t* in_path, uint8_t in_path_len, uint8_t* out_path, uint8_t out_path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override;
   void onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) override;
   void onContactPathUpdated(const ContactInfo &contact) override;

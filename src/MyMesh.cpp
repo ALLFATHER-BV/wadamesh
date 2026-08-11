@@ -15,6 +15,7 @@
 #endif
 #include <helpers/AdvertDataHelpers.h>
 #include "helpers/CompanionRetryPolicy.h"
+#include "helpers/esp32/WdtHeavyGuard.h"   // eviction blob deletes are SPIFFS-GC-prone (#222)
 #include <helpers/HttpOtaDisplayState.h>
 #include <helpers/RepeaterTcpOtaEmit.h>
 #include "WiFiConfig.h"
@@ -2296,8 +2297,39 @@ bool MyMesh::shouldOverwriteWhenFull() const {
   return (_prefs.autoadd_config & AUTO_ADD_OVERWRITE_OLDEST) != 0;
 }
 
+// Drained from loop(), one blob per tick and never faster than every 500 ms, so a
+// burst of evictions (a busy mesh against a full contact table is a steady stream
+// of them) cannot chain garbage-collection passes back to back. The guard is the
+// same one saveContacts uses: a GC pass here starves the idle task, and without it
+// the watchdog turns a stall into a reboot.
+void MyMesh::drainPendingBlobDeletes() {
+  if (_pending_del_n == 0) return;
+  uint32_t now = millis();
+  if (_next_pending_del_at != 0 && (int32_t)(now - _next_pending_del_at) < 0) return;
+  _next_pending_del_at = now + 500;
+
+  uint8_t key[PUB_KEY_SIZE];
+  memcpy(key, _pending_del[0], PUB_KEY_SIZE);
+  if (--_pending_del_n > 0) {
+    memmove(_pending_del[0], _pending_del[1], (size_t)_pending_del_n * PUB_KEY_SIZE);
+  }
+  WdtHeavyGuard _wdt;
+  _store->deleteBlobByKey(key, PUB_KEY_SIZE);
+}
+
 void MyMesh::onContactOverwrite(const uint8_t* pub_key) {
-    _store->deleteBlobByKey(pub_key, PUB_KEY_SIZE); // delete from storage
+  // QUEUE the blob delete, never do it here (#222). This runs from the
+  // advert-receive path when the contact table is full, and on a Heltec V4 the
+  // store is internal SPIFFS: an unlink can trigger garbage collection, and
+  // SPIFFS GC suspends the flash cache, which stalls BOTH cores. The device
+  // froze solid for the duration — Bluetooth and TCP dropped, the screen would
+  // not wake — every single time a new contact evicted the oldest, and it got
+  // worse the fuller the volume (reports at ~350, ~600 and ~2000 contacts).
+  // Draining from loop() instead keeps it out of packet handling and rate-caps
+  // it, so a burst of evictions cannot chain GC passes back to back.
+  if (_pending_del_n < PENDING_DEL_MAX) {
+    memcpy(_pending_del[_pending_del_n++], pub_key, PUB_KEY_SIZE);
+  }   // queue full: the blob is orphaned, harmless — reclaimed on the next wipe
   if (_serial->isConnected()) {
     out_frame[0] = PUSH_CODE_CONTACT_DELETED;
     memcpy(&out_frame[1], pub_key, PUB_KEY_SIZE);
@@ -5107,6 +5139,7 @@ void MyMesh::checkSerialInterface() {
 void MyMesh::loop() {
   BaseChatMesh::loop();
   companionRetryService();
+  drainPendingBlobDeletes();   // evicted contacts' blobs, off the packet path (#222)
 
   // Session keep-alives for logged-in servers (rooms). The core pinger sends the
   // 9-byte REQ_TYPE_KEEP_ALIVE (+ our sync_since) a room server expects; the ACK
