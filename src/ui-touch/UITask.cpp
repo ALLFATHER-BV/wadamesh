@@ -3719,10 +3719,9 @@ static void navRefocusFirstVisible(lv_obj_t* p) {
 static void navMenubarKeysSync() {
 #if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
   // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys. The
-  // pager has no such optional nav-mode toggle to hint at either (s_kbd_nav is
-  // T-Deck's trackball-nav-vs-touch concept, CAP_TRACKBALL-only, so it isn't
-  // even declared here) — no hints. A plain `return` isn't enough since the
-  // body below still needs s_kbd_nav to exist at compile time; exclude it.
+  // pager prints each fixed mnemonic beside its icon directly in the tab label,
+  // so neither target needs this optional overlay. A plain `return` isn't enough
+  // since the body below still needs s_kbd_nav to exist at compile time; exclude it.
 #else
   if (!g_lv.tabview) return;
   lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
@@ -28695,7 +28694,7 @@ static void mapCanvasEventCb(lv_event_t* e) {
 }
 
 #if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
-// Keyboard pan (Ctrl+Arrow on Tanmatsu / WASD on the pager, both on the Map
+// Keyboard pan (Ctrl+Arrow on Tanmatsu / WAXD on the pager, both on the Map
 // tab). Mirrors the drag-release math in mapCanvasEventCb: synthesize a pixel
 // delta of ~1/4 the visible span in the arrow direction, convert it through
 // the same world-px ↔ lat/lon helpers (so the lon step automatically scales
@@ -34574,9 +34573,8 @@ static void updateTrackball(unsigned long now) {
 #if defined(HAS_PAGER_ENCODER) || defined(HAS_PAGER_KEYBOARD)
 // "Back", extending the T-Deck/Tanmatsu back-key ladder: a popup/sheet on top
 // closes first, then a full-screen AppPage (Store, Lua apps, tools), then an
-// open chat/channel detail, then Home (the pager has no dedicated Home hotkey
-// and the bottom tab bar isn't a nav-group target, so a bare main tab otherwise
-// had no way back to Home), else plain ESC. Shared by the rotary encoder's
+// open chat/channel detail, then Home (the H mnemonic is deliberately inactive
+// inside those nested views), else plain ESC. Shared by the rotary encoder's
 // long-press (updatePagerEncoder) and the keyboard's Backspace-hold alternative
 // (updatePagerBackspaceHold) so both agree exactly.
 static void pagerNavGoBack() {
@@ -35054,13 +35052,10 @@ static void updatePagerEncoder(unsigned long now) {
     // Alt (the bottom-left orange key, otherwise a hold-only modifier for the
     // keyboard's symbol layer — free to reuse here since it types nothing on
     // its own) + turn jumps directly between the 5 main tabs (Chats/Contacts/
-    // Home/Map/Settings). The bottom tab bar is deliberately not a nav-group
-    // focus target (same as T-Deck/Tanmatsu), and unlike those boards the
-    // pager has no separate dedicated hotkeys to reach it, so plain turning
-    // could otherwise only ever move focus WITHIN the current screen —
-    // reported: the tab bar icons were unreachable from Home. Scoped to the
-    // main-tab level (navOnMainPage()) — reported bug: this used to fire even
-    // inside a settings sheet/chat, silently abandoning it to jump tabs.
+    // Home/Map/Settings). This remains a sequential alternative to the direct
+    // M/C/H/A/S mnemonics. Scoped to the main-tab level (navOnMainPage()) —
+    // reported bug: this used to fire even inside a settings sheet/chat,
+    // silently abandoning it to jump tabs.
     for (; delta > 0; delta--) navSwitchTab(+1);
     for (; delta < 0; delta++) navSwitchTab(-1);
   } else if (pagerKeyboardAltHeld()) {
@@ -35181,14 +35176,28 @@ static bool isDismissKey(int key) {
 // drawerPopupOpen() / anyPopupOpen() are defined just above the
 // HAS_TDECK_KEYBOARD block so the (ungated) gesture handlers can call them too.
 
-// Bottom-tab a key jumps to (no popup, no field focused), or -1. Space/H Home,
-// M Chats, C Contacts, L Map, S Settings.
+// Bottom-tab a key jumps to (no popup, no field focused), or -1.
 static int tabForKey(int key) {
+#if defined(TLORA_PAGER)
+  // Pager mnemonic keys are only a bottom-bar shortcut at the top level. In
+  // an open chat, settings detail, app page, or popup they remain inert so a
+  // letter cannot unexpectedly abandon the inner screen.
+  if (!navOnMainPage()) return -1;
+  switch (key) {
+    case 'm': case 'M': return CHAT_INBOX_TAB_INDEX;
+    case 'c': case 'C': return CONTACTS_TAB_INDEX;
+    case 'h': case 'H': return HOME_TAB_INDEX;
+    case 'a': case 'A': return MAP_TAB_INDEX;
+    case 's': case 'S': return SETTINGS_TAB_INDEX;
+    default: return -1;
+  }
+#else
   // Old fixed letter tab-jumps (h/m/c/l/s) removed — tab jumps are now the
   // programmable keyboard-nav hotkeys (navTabForHotkey, default E/R/T/U/I), active
   // only while keyboard navigation is on.
   (void)key;
   return -1;
+#endif
 }
 #endif  // HAS_TDECK_KEYBOARD || HAS_PAGER_KEYBOARD || HAS_M9_KEYBOARD (keyboard helpers; the lock screen below is top-level)
 
@@ -36640,6 +36649,16 @@ if (g_lv.task && g_lv.task->isManualLock()) {
         return;
       }
     }
+    // Bottom-bar mnemonic shortcuts: active only on a bare main tab (the
+    // navOnMainPage gate lives in tabForKey). Do this before Map panning so S
+    // can leave Map for Settings. If the requested tab is already active, let
+    // the key continue: A on Map remains the west-pan control.
+    const int pager_tab = tabForKey(key);
+    if (pager_tab >= 0 && pager_tab != getActiveTab()) {
+      goToTab(pager_tab);
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
+    }
     // Slider nudge: this board has no touch/trackball to drag a slider's
     // knob, so a focused lv_slider (Control Center brightness, a Settings
     // slider, the Map zoom bar, …) is otherwise stuck at whatever value it
@@ -36647,7 +36666,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // (proportional ~20-presses-end-to-end step, live update + persist) —
     // the same adjustment the T-Deck trackball's LEFT/RIGHT already does —
     // rather than a fixed step that's wrong for every slider's range. (Was
-    // D/F; moved to Q/E to free up WASD for map panning below.)
+    // D/F; moved to Q/E to free up the map-panning keys below.)
     if (key == 'q' || key == 'Q' || key == 'e' || key == 'E') {
       lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
       if (focused && lv_obj_check_type(focused, &lv_slider_class)) {
@@ -36655,15 +36674,16 @@ if (g_lv.task && g_lv.task->isManualLock()) {
         return;
       }
     }
-    // Map pan: WASD moves the map around on the Map tab (no touch/trackball
+    // Map pan: W/A/X/D moves the map around on the Map tab (no touch/trackball
     // to drag it), reusing the same mapNudge() step/re-render Tanmatsu's
-    // Ctrl+Arrow already uses. W=north A=west S=south D=east.
+    // Ctrl+Arrow already uses. X replaces S because S is now the Settings
+    // mnemonic. W=north A=west X=south D=east.
     if ((key == 'w' || key == 'W' || key == 'a' || key == 'A' ||
-         key == 's' || key == 'S' || key == 'd' || key == 'D') &&
+         key == 'x' || key == 'X' || key == 'd' || key == 'D') &&
         getActiveTab() == MAP_TAB_INDEX) {
       switch (key) {
         case 'w': case 'W': mapNudge(0); break;
-        case 's': case 'S': mapNudge(1); break;
+        case 'x': case 'X': mapNudge(1); break;
         case 'a': case 'A': mapNudge(2); break;
         case 'd': case 'D': mapNudge(3); break;
       }
@@ -43393,14 +43413,20 @@ static void buildUiTree() {
   lv_obj_add_event_cb(tab_btns, navMenubarSizeCb, LV_EVENT_SIZE_CHANGED, nullptr);  // keep the keyboard-nav key hints positioned
 #endif
 
-  // Tab labels: icons-only (house, envelope, list, GPS pin, gear) — saves
-  // space and lets all five tabs sit comfortably in the 240px wide bar
-  // (240/5 = 48 px per icon).
+  // Tab labels: icons-only on touch targets; the 480px-wide Pager prefixes each
+  // icon with its physical-keyboard mnemonic so the shortcuts are discoverable.
   // Add order == index order: Chats(0), Contacts(1), Home(2, middle), Map(3), Settings(4).
+#if defined(TLORA_PAGER)
+  lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE " M");
+  lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON " C");
+  lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME " H");
+  lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS " A");
+#else
   lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE);
   lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON);   // person icon (FA user)
   lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME);
   lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS);
+#endif
 #if defined(HAS_EXPANSION_KIT)
   // Sensors tab is conditional: only add it (and shift Settings to index 5) when
   // an env sensor is present and the user pref is on. Otherwise Settings lands
@@ -43418,7 +43444,11 @@ static void buildUiTree() {
     TAB_LAST           = 4;
   }
 #endif
+#if defined(TLORA_PAGER)
+  lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS " S");
+#else
   lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS);
+#endif
   // Slightly larger font for icons so they're easy to tap.
 #if CAP_UI_SIZE
   lv_obj_set_style_text_font(tab_btns, &g_font_tab, LV_PART_MAIN);
