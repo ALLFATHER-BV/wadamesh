@@ -2728,6 +2728,27 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
 #endif
 }
 
+int MyMesh::findConfiguredChannelIdx(const mesh::GroupChannel& ch) const {
+  for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    ChannelDetails cd;
+    if (!const_cast<MyMesh*>(this)->getChannel(i, cd)) continue;
+    if (!channelSlotConfigured(cd)) continue;            // never match an empty slot
+    if (memcmp(ch.secret, cd.channel.secret, sizeof(ch.secret)) == 0) return i;
+  }
+  return -1;
+}
+
+int MyMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel dest[], int max_matches) {
+  int n = 0;
+  for (int i = 0; i < MAX_GROUP_CHANNELS && n < max_matches; i++) {
+    ChannelDetails cd;
+    if (!getChannel(i, cd)) continue;
+    if (!channelSlotConfigured(cd)) continue;   // an all-zero slot is not a channel
+    if (cd.channel.hash[0] == hash[0]) dest[n++] = cd.channel;
+  }
+  return n;
+}
+
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
   // Clock bootstrap from a channel peer's send-time (same sane-window + unset-only guard
@@ -2742,11 +2763,13 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   out_frame[i++] = 0; // reserved1
   out_frame[i++] = 0; // reserved2
 
-  int channel_idx_i = findChannelIdx(channel);
-  if (channel_idx_i < 0 || channel_idx_i >= MAX_GROUP_CHANNELS) {
-    // Keep on-wire channel index stable for clients that assume 0..MAX_GROUP_CHANNELS-1.
-    channel_idx_i = 0;
-  }
+  // Configured slots only: an all-zero slot must never be reported as the
+  // channel a message arrived on (#260).
+  const int resolved_idx = findConfiguredChannelIdx(channel);
+  // Keep the on-wire index inside 0..MAX_GROUP_CHANNELS-1 for clients that
+  // assume it, but remember whether it was actually resolved — an unresolved
+  // channel must not borrow slot 0's identity on screen.
+  int channel_idx_i = (resolved_idx >= 0 && resolved_idx < MAX_GROUP_CHANNELS) ? resolved_idx : 0;
   uint8_t channel_idx = (uint8_t)channel_idx_i;
   out_frame[i++] = channel_idx;
   uint8_t path_len = out_frame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
@@ -2782,9 +2805,12 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
 #endif
 #ifdef DISPLAY_CLASS
   // Get the channel name from the channel index
-  const char *channel_name = "Unknown";
+  // Never hand the UI an empty name: it renders one as a "#unknown" thread, which
+  // is what users saw. Only a RESOLVED, configured, actually-named slot names the
+  // thread; anything else is honestly labelled instead of borrowing slot 0.
+  const char *channel_name = "Unknown channel";
   ChannelDetails channel_details;
-  if (getChannel(channel_idx, channel_details)) {
+  if (resolved_idx >= 0 && getChannel(channel_idx, channel_details) && channel_details.name[0]) {
     channel_name = channel_details.name;
   }
   /* notify BEFORE newMsgFromPub: UITask::newMsg keys on the last UIEventType
@@ -3710,7 +3736,13 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);
     } else {
       ChannelDetails channel;
-      bool success = getChannel(channel_idx, channel);
+      // getChannel() succeeds for ANY in-range index, including a slot that was
+      // never configured — whose secret is all zeroes. Transmitting on one sends
+      // a group message encrypted with an all-zero key, which every OTHER device
+      // then decrypts against its own spare empty slot and files under a nameless
+      // "#unknown" thread (#260). An app whose channel list is out of step with
+      // the device's slots must get an error, not a broadcast nobody can attribute.
+      bool success = getChannel(channel_idx, channel) && channelSlotConfigured(channel);
       if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
         writeOKFrame();
         // Mirror the app-sent channel message into the on-device touch UI — the channel-send path

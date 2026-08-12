@@ -576,6 +576,10 @@
       <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span> Apps</h2>
       <div class="prose" style="max-width:64ch">
         <p>Tools from the home launcher. <b>RF Monitor</b> is a repeater-style view of recent packets and radio stats; <b>Spectrum</b> sweeps the band so you can spot interference or find a clear frequency.</p>
+        <h3>Writing your own</h3>
+        <p>The Apps drawer is open. Snake, RF Monitor and Airtime are ordinary Lua apps downloaded from the store over Wi-Fi, and anyone can submit one — they are not built into the firmware and they get no privileges yours would not have.</p>
+        <p>An app is a single Lua file plus a one-line manifest, talking to the firmware through the <code>wada.*</code> API. Submit it as a pull request to <a href="https://github.com/ALLFATHER-BV/wadamesh">the repository</a>, or open an issue with the file attached if you would rather not use git. The full procedure — file layout, versioning, and what the review looks for — is in <a href="https://github.com/ALLFATHER-BV/wadamesh/blob/main/deploy/apps/README.md">deploy/apps/README.md</a>.</p>
+        <p><b>Every submission is reviewed and safety-checked before it is added.</b> An app runs on other people's radios, so each one is read for anything touching the node identity, keys or channel secrets, for flash-write patterns that can stall the device, and for anything that would block the UI or the mesh. If something needs changing we say what and why, and we would rather help you land it than turn it away.</p>
       </div>
       <div class="gallery">
         <div class="mini"><img src="docs-img/app_rfmonitor.png" alt="RF Monitor"><div class="cap">RF Monitor</div></div>

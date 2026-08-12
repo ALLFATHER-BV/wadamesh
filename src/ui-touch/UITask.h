@@ -56,6 +56,12 @@ public:
     MSG_META_HAS_RX    = (1u << 0),  // snr_q4/rssi/path_len populated
     MSG_META_IS_FLOOD  = (1u << 1),  // packet was flooded (path_len = hop count); else 0xFF / direct
     MSG_META_HAS_SCOPE = (1u << 2),  // in_scope holds a valid transport scope (transport_codes[0])
+    // The scope code is an HMAC of THIS packet's payload under the sender's
+    // region key, so it differs for every message and cannot be read as a region
+    // id (#259). The only thing a receiver can say about it is whether it
+    // verifies against a key we hold — which we check at RX, while the packet is
+    // still around, and record here.
+    MSG_META_SCOPE_HOME = (1u << 3),  // in_scope verified against OUR region key
   };
 
   struct UIMessage {
