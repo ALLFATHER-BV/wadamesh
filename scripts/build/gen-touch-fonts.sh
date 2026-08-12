@@ -92,7 +92,20 @@ if [[ $("${font_conv[@]}" --version) != "1.5.3" ]]; then
   exit 1
 fi
 
-symbols='•·–—‘’“”…→←↑↓°±×÷€£¥§©®™≠≤≥½¼¾℃℉'
+symbols='•·–—‘’“”…°±×÷€£¥§©®™½¼¾℃℉'
+# Arrows (U+2190-2193) and the comparison operators (U+2260/2264/2265) are NOT in
+# Noto Sans. Asking $noto_sans for them, as this script did until #261, silently
+# produced nothing — lv_font_conv omits a glyph the source font lacks instead of
+# failing — so "Settings → Quick replies" drew a tofu box in EVERY language, at
+# 137 sites in the UI and in all 13 .lang files. (Noto Sans Symbols 2 does not
+# have them either; verified, it errors outright when asked.)
+#
+# Montserrat DOES have all seven, and is already the primary UI face and the first
+# --font here, so cutting them from it costs no new dependency or licence line and
+# makes the arrow match the text around it. lv_font_conv takes the FIRST font that
+# supplies a codepoint, so listing these on Montserrat wins while every other
+# symbol still comes from Noto Sans below, unchanged.
+symbols_fallback='→←↑↓≠≤≥'
 stage="$work_dir/stage"
 mkdir -p "$stage/src/ui-touch"
 
@@ -144,6 +157,7 @@ generate_extras() {
     -r 0x00C0-0x00FF \
     -r 0x0100-0x017F \
     -r 0x0400-0x04FF \
+    --symbols "$symbols_fallback" \
     --font "$noto_sans" \
     -r 0x0370-0x03FF \
     --symbols "$symbols" \
@@ -154,7 +168,7 @@ generate_extras() {
     -o "$raw"
 
   normalise "$raw" "$output" \
-    "Montserrat Medium (LVGL v8.4.0), Noto Sans 2.015, Noto Sans Arabic UI 2.011" \
+    "Montserrat Medium (LVGL v8.4.0), Noto Sans 2.015, Noto Sans Symbols 2.008, Noto Sans Arabic UI 2.011" \
     "$guard"
 }
 
