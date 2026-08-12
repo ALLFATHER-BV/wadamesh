@@ -283,6 +283,24 @@ protected:
                          const char *text) override;
   void onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const uint8_t *sender_prefix, const char *text) override;
+  // An UNCONFIGURED channel slot is all zeroes — including its secret, its hash
+  // and its name. Both core lookups treat such a slot as a real channel, which
+  // is what produced the "#unknown" threads (#260): a device that transmits on
+  // an unconfigured slot encrypts with an all-zero key, and every receiver with
+  // a spare slot decrypts it successfully against that same all-zero key, then
+  // resolves the name to "" and files the message under a nameless thread.
+  // Treat "has a non-zero secret" as the definition of a real channel.
+  static bool channelSlotConfigured(const ChannelDetails& cd) {
+    for (size_t i = 0; i < sizeof(cd.channel.secret); i++) if (cd.channel.secret[i]) return true;
+    return false;
+  }
+  /** findChannelIdx() that ignores unconfigured slots. -1 = not one of ours. */
+  int findConfiguredChannelIdx(const mesh::GroupChannel& ch) const;
+  /** Decrypt candidates for a received group packet, unconfigured slots excluded.
+   *  Also stops empty slots (hash byte 0x00) from filling the 4-entry candidate
+   *  array and starving out a REAL channel whose hash byte happens to be 0x00 —
+   *  that one silently dropped the message instead of misfiling it. */
+  int searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel dest[], int max_matches) override;
   void onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                             const char *text) override;
 
