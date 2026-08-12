@@ -79,6 +79,19 @@ def tr_keys():
                     keys.add(strip_icon(c_unescape(lit)).strip())
     return keys
 
+# Ordered printf conversions in a string, as the (length-modifier, conversion)
+# pairs that decide each vararg's TYPE. Mirrors i18nNextSpec() in i18n.cpp — keep
+# the two in step. "%%" is a literal percent, '*' takes its own int argument.
+_SPEC = re.compile(r"%[-+ #0]*(\*|[0-9]*)(?:\.(\*|[0-9]*))?(hh|h|ll|l|j|z|t|L)?([diouxXeEfgGaAcsp%])")
+def fmt_specs(s):
+    out = []
+    for w, p, ln, cv in _SPEC.findall(s):
+        if cv == '%': continue          # literal '%%', consumes no argument
+        if w == '*': out.append('*')
+        if p == '*': out.append('*')
+        out.append((ln or '') + cv)
+    return out
+
 def audit(path, keys):
     rows = []
     for line in open(path, encoding='utf-8'):
@@ -94,19 +107,34 @@ def audit(path, keys):
     # themselves — not worth a row, and not a gap.
     missing = sorted(k for k in keys
                      if k and k not in {en for en, _ in rows} and re.search(r'[A-Za-z]', k))
+    # UNSAFE rows: TR()'s result is handed to snprintf as the FORMAT string, so a
+    # translation whose conversions differ from the key's makes the caller misread
+    # its varargs. A Hungarian row that reordered "%s …%lu" to "%lu …%s" rebooted
+    # the device on every repeater login (#258) — snprintf took an integer as a
+    # char* and dereferenced it. The runtime now falls back to English on a
+    # mismatch, so this is no longer fatal, but a flagged row means that string
+    # silently shows English: still a bug, just a survivable one.
+    unsafe = [(en, tr) for en, tr in rows
+              if tr.strip() and fmt_specs(en) != fmt_specs(tr)]
     name = os.path.basename(path)
     print(f'\n=== {name} — {len(rows)} rows vs {len(keys)} TR() keys ===')
     print(f'  translated but NEVER looked up : {len(dead)}')
     print(f'  looked up but NOT translated   : {len(missing)}')
+    print(f'  UNSAFE format mismatch         : {len(unsafe)}')
     for e in dead:    print('    dead     ', repr(e)[:110])
     for e in missing: print('    missing  ', repr(e)[:110])
-    return len(dead), len(missing)
+    for en, tr in unsafe:
+        print(f'    UNSAFE    {en!r}\n              key{fmt_specs(en)} vs translation{fmt_specs(tr)}: {tr!r}')
+    return len(dead), len(missing), len(unsafe)
 
 if __name__ == '__main__':
     keys = tr_keys()
     files = sys.argv[1:] or sorted(glob.glob(f'{ROOT}/deploy/apps/lang/*.lang'))
     worst = 0
     for f in files:
-        d, m = audit(f, keys)
-        worst = max(worst, d)
+        d, m, u = audit(f, keys)
+        worst = max(worst, u)
     print(f'\n{len(keys)} distinct TR() keys in the UI.')
+    if worst:
+        print(f'\nFAIL: {worst} unsafe format row(s) — these crash pre-beta_63 firmware.')
+        sys.exit(1)

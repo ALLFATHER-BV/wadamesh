@@ -40,6 +40,65 @@ bool i18nHasFileOverlay() { return s_file_n > 0; }
 // boot (uiLangFileBootLoad in UITask.cpp) — TR() below consults only that overlay.
 // scripts/build/i18n-audit.py checks the files cover every TR() key in source.
 
+// Advance *p to just past the next printf conversion and write its type
+// signature (length modifier + conversion char) into out. "%%" is a literal
+// percent, not a conversion. Returns false when there are no more.
+static bool i18nNextSpec(const char** p, char* out, size_t cap) {
+  const char* s = *p;
+  for (;;) {
+    while (*s && *s != '%') ++s;
+    if (!*s) { *p = s; return false; }
+    ++s;                                   // past '%'
+    if (*s == '%') { ++s; continue; }       // literal '%%' — keep scanning
+    if (!*s) { *p = s; return false; }      // trailing '%': no conversion
+    size_t n = 0;
+    while (*s == '-' || *s == '+' || *s == ' ' || *s == '#' || *s == '0') ++s;
+    if (*s == '*') { ++s; if (n + 1 < cap) out[n++] = '*'; }   // width from a vararg
+    else while (*s >= '0' && *s <= '9') ++s;
+    if (*s == '.') {
+      ++s;
+      if (*s == '*') { ++s; if (n + 1 < cap) out[n++] = '*'; } // precision vararg
+      else while (*s >= '0' && *s <= '9') ++s;
+    }
+    while (*s == 'h' || *s == 'l' || *s == 'j' || *s == 'z' || *s == 't' || *s == 'L') {
+      if (n + 1 < cap) out[n++] = *s;
+      ++s;
+    }
+    if (!*s) { *p = s; return false; }      // truncated spec: nothing to compare
+    if (n + 1 < cap) out[n++] = *s;
+    ++s;
+    out[n < cap ? n : cap - 1] = '\0';
+    *p = s;
+    return true;
+  }
+}
+
+// ---- Format-string safety (issue #258) -------------------------------------
+// Callers pass TR()'s result straight to snprintf as the FORMAT string, so a
+// translation is attacker-shaped input: it decides how many varargs are read
+// and how each is typed. A Hungarian row reordered "…%s… %lu…" to "…%lu… %s…",
+// which made snprintf read the caller's minute COUNT as a char* and dereference
+// address 3 — an instant reboot whenever a Hungarian user logged into a
+// repeater. Translations arrive from .lang files users download or hand-write,
+// so no amount of fixing the shipped files makes this safe; the runtime has to
+// refuse a translation whose conversions do not match the key's.
+//
+// Compares the ordered sequence of (length-modifier, conversion) pairs, which
+// is exactly what determines each vararg's type. '*' width/precision counts as
+// its own int argument. On any mismatch the caller gets the English key, which
+// is always in step with the call site because the key IS the format string.
+static bool i18nFmtSpecsMatch(const char* a, const char* b) {
+  const char* pa = a; const char* pb = b;
+  for (;;) {
+    char sa[8], sb[8];
+    const bool ha = i18nNextSpec(&pa, sa, sizeof sa);
+    const bool hb = i18nNextSpec(&pb, sb, sizeof sb);
+    if (ha != hb) return false;          // one ran out of conversions first
+    if (!ha) return true;                // both exhausted, all pairs matched
+    if (strcmp(sa, sb) != 0) return false;
+  }
+}
+
 const char* TR(const char* en) {
   if (!en) return "";
 #if CAP_BUILTIN_LANGS
@@ -83,6 +142,10 @@ const char* TR(const char* en) {
   }
 #endif
   if (!v) return en;                       // untranslated: original, prefix intact
+  // A translated FORMAT string must read the same varargs as the key, or the
+  // caller's snprintf misreads the stack (#258). Only pay for the scan when the
+  // key actually has conversions — most UI strings have none.
+  if (strchr(base, '%') && !i18nFmtSpecsMatch(base, v)) return en;
   if (plen == 0) return v;                 // plain key: the table cell directly
   static char ring[4][120];
   static uint8_t slot = 0;
