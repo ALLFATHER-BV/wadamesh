@@ -28990,8 +28990,11 @@ static void applyMapChrome(bool on) {
     applyBattColor();            // ...with the power-save amber overlaid if enabled
     if (g_statusbar.batt_pct)   lv_obj_set_style_text_color(g_statusbar.batt_pct, fg_sub, LV_PART_MAIN);
     if (g_statusbar.clock)      lv_obj_set_style_text_color(g_statusbar.clock, fg_sub, LV_PART_MAIN);
-    if (g_statusbar.conn_icon)   lv_obj_set_style_text_color(g_statusbar.conn_icon,  fg_sub, LV_PART_MAIN);
-    if (g_statusbar.ble_icon)    lv_obj_set_style_text_color(g_statusbar.ble_icon,   fg_sub, LV_PART_MAIN);
+    // The radio glyphs keep their accent tint off-map (matching the signal bars); on-map they
+    // join the rest of the chrome in black/off-white, which the light OSM tiles need for legibility.
+    const lv_color_t fg_radio = on ? fg_sub : lv_color_hex(COLOR_ACCENT);
+    if (g_statusbar.conn_icon)   lv_obj_set_style_text_color(g_statusbar.conn_icon,  fg_radio, LV_PART_MAIN);
+    if (g_statusbar.ble_icon)    lv_obj_set_style_text_color(g_statusbar.ble_icon,   fg_radio, LV_PART_MAIN);
 #if defined(HAS_TDECK_GT911)
     if (g_statusbar.sleep_icon)  lv_obj_set_style_text_color(g_statusbar.sleep_icon, fg_sub, LV_PART_MAIN);
 #endif
@@ -40553,10 +40556,12 @@ static void buildGlobalStatusBar() {
 #endif
                0);
 
-  // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars).
+  // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars). Painted in
+  // the accent, matching the lit signal bars beside it — the glyph is only ever shown
+  // while the STA is connected, so accent always reads as "this radio is up".
   g_statusbar.conn_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.conn_icon, "");
-  lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.conn_icon, &g_font_12, LV_PART_MAIN);
   lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID,
 #if defined(TLORA_PAGER)
@@ -40569,7 +40574,7 @@ static void buildGlobalStatusBar() {
   // Bluetooth glyph (left of the SD LED). Unified offset across all boards (see clock above).
   g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.ble_icon, "");
-  lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
   // Narrow bars (V4 portrait) have no DND slot beside BLE and their clock sits at -126, so BLE
   // stays at -111 there; wide bars keep -SC(127) (tight to the DND moon at -144).
@@ -47668,6 +47673,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
     // (Audio: the I2S speaker amp is installed on demand per tone — see
     // tdeckPlayNotify — so nothing to set up at boot.)
+
+    // Load the saved theme accent BEFORE the bar is built: the status bar is the one
+    // widget tree created here in begin() rather than in buildUiTree (which loads the
+    // accent itself), so without this its accent-tinted glyphs — the Wi-Fi/Bluetooth
+    // icons — would freeze the compile-time default instead of the user's colour.
+    // Idempotent: buildUiTree's own call just re-sets the same globals.
+    applyAccent(touchPrefsGetAccentColor());
 
     // Build the always-on top status bar AFTER the display driver is
     // registered — lv_layer_sys() needs an active disp or it returns
