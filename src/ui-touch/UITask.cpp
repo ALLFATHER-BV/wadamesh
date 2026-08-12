@@ -31090,8 +31090,10 @@ static void openMessageInfoPopup(int msg_idx) {
       } else {
         snprintf(region, sizeof region, "%s", TR("another region"));
       }
+      // Key is "Scope" with no trailing space: TR() strips icon prefixes, NOT
+      // trailing whitespace, so "Scope " would never match its .lang row.
       blen += snprintf(body + blen, sizeof(body) - blen,
-                       "\n%s %s (%04X)", TR("Scope "), region, (unsigned)m.in_scope);
+                       "\n%s  %s (%04X)", TR("Scope"), region, (unsigned)m.in_scope);
     }
     // Full inbound route — the repeaters this flood traversed. Resolve each hop's
     // hash to its repeater name when that contact is known. EVERY hop is listed
