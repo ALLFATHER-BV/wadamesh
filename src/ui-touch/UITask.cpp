@@ -31076,7 +31076,22 @@ static void openMessageInfoPopup(int msg_idx) {
     blen += snprintf(body + blen, sizeof(body) - blen,
                      "\nRSSI   %d dBm", (int)m.rssi);
     if (m.meta_flags & UITask::MSG_META_HAS_SCOPE) {
-      blen += snprintf(body + blen, sizeof(body) - blen, "\nScope  %04X", (unsigned)m.in_scope);
+      // The raw code is an HMAC of this packet under the sender's region key, so
+      // it is different on every message and means nothing on its own — showing
+      // the bare hex read as "the region", and people reasonably asked why it kept
+      // changing (#259). Report what was actually determined: whether it verified
+      // against our own region key. The hex stays, in parentheses, for anyone
+      // cross-checking a capture.
+      char region[40];
+      if (m.meta_flags & UITask::MSG_META_SCOPE_HOME) {
+        char home[24] = {0};
+        touchPrefsGetRegionScope(home, sizeof home);
+        snprintf(region, sizeof region, "%s", home[0] ? home : TR("my region"));
+      } else {
+        snprintf(region, sizeof region, "%s", TR("another region"));
+      }
+      blen += snprintf(body + blen, sizeof(body) - blen,
+                       "\n%s %s (%04X)", TR("Scope "), region, (unsigned)m.in_scope);
     }
     // Full inbound route — the repeaters this flood traversed. Resolve each hop's
     // hash to its repeater name when that contact is known. EVERY hop is listed
@@ -48960,7 +48975,11 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       in_path_n = the_mesh.lastRxPath(in_path, sizeof(in_path));
     bool has_scope = false;
     in_scope = the_mesh.lastRxScope(&has_scope);
-    if (has_scope) meta_flags |= MSG_META_HAS_SCOPE;
+    if (has_scope) {
+      meta_flags |= MSG_META_HAS_SCOPE;
+      // Verified at RX (the check needs the packet); the popup only reads the bit.
+      if (the_mesh.lastRxScopeIsHome()) meta_flags |= MSG_META_SCOPE_HOME;
+    }
   }
   const int msg_slot = _ui_msg_head;   // appendMessage writes _ui_msgs[head], then advances head
   appendMessage(thread, sender, body, channel, false, true,

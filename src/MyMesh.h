@@ -494,6 +494,7 @@ public:
   uint8_t  _last_rx_path[32] = {0};
   uint8_t  _last_rx_path_n  = 0;
   uint16_t _last_rx_scope     = 0;     // transport_codes[0] of the last RX flood ("scope")
+  bool     _last_rx_scope_home = false; // that code verified against OUR region key (#259)
   bool     _last_rx_has_scope = false; // false if the packet carried no transport codes
   uint32_t _last_sender_ts    = 0;     // embedded send-time of the last inbound msg (UI bubble ts; 0 = use now)
   volatile bool _echo_dirty = false;   // a repeat was counted -> UI should refresh
@@ -633,9 +634,23 @@ public:
     // codes[0] zero -- the Info popup then showed "Scope 0000" for a genuinely scoped message.
     // Show whichever code is set; [0] (the scope proper) wins when both are.
     _last_rx_scope = 0;
-    if (_last_rx_has_scope && pkt)
+    _last_rx_scope_home = false;
+    if (_last_rx_has_scope && pkt) {
       _last_rx_scope = pkt->transport_codes[0] ? pkt->transport_codes[0] : pkt->transport_codes[1];
+      // The code is HMAC(region key, payload) truncated to 16 bits — per-PACKET,
+      // not a region id, which is why the same sender in the same region shows a
+      // different value on every message (#259). It can still be VERIFIED: recompute
+      // it with our own region key and see if it matches. That answers the only
+      // question a reader actually has ("was this scoped to my region?") and must
+      // happen here, while the packet is still in hand.
+      TransportKey home;
+      memcpy(&home.key, _prefs.default_scope_key, sizeof(home.key));
+      if (!home.isNull() && pkt->transport_codes[0])
+        _last_rx_scope_home = (home.calcTransportCode(pkt) == pkt->transport_codes[0]);
+    }
   }
+  /** True when the last RX flood's scope verified against our own region key. */
+  bool lastRxScopeIsHome() const { return _last_rx_scope_home; }
 
   /** Track a freshly-sent flood TXT fingerprint (called from sendFloodScoped). */
   void uiTrackSentFp(uint32_t fp) {
