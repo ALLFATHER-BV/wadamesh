@@ -45068,6 +45068,31 @@ void luaHostRadioStats2(uint32_t* rx_evt, uint32_t* rx_drop, uint32_t* tx_pkts,
   // airtime_factor -> the duty ceiling the dispatcher enforces (see #161)
   *duty_pct = p->airtime_factor > 0 ? (int)(100.0f / (1.0f + p->airtime_factor) + 0.5f) : 100;
 }
+#if CAP_LUA_SDK_EXT
+// wada.sys.battery(). Reads the SMOOTHED millivolts the status bar uses, not a
+// raw ADC sample, so a Lua chart cannot show noise the rest of the UI hides.
+void luaHostBattery(uint16_t* mv, int* pct, bool* charging) {
+  const uint16_t v = batteryMvSmoothed();
+  if (mv)       *mv = v;
+  if (pct)      *pct = batteryPercentFromMv(v);
+  if (charging) *charging = batteryIsCharging(v);
+}
+// wada.sys.gps(). False when there is no fix -- the caller then gets nil rather
+// than the last known position, which wada.mesh.self() already provides. An app
+// plotting a track needs to tell a live fix from a stale one.
+// No altitude: the LocationProvider that has it is a PRIVATE UITask member and
+// there is no public accessor, unlike getGpsFix()/getGpsSats(). Adding one is a
+// header change worth doing deliberately rather than in passing -- and lat/lon/
+// sats is what a track logger or a compass actually needs.
+bool luaHostGps(double* lat, double* lon, int* sats) {
+  if (!g_lv.task || !g_lv.task->getGpsFix()) return false;
+  if (lat)  *lat  = g_lv.task->getNodeLat();
+  if (lon)  *lon  = g_lv.task->getNodeLon();
+  if (sats) *sats = g_lv.task->getGpsSats();
+  return true;
+}
+#endif  // CAP_LUA_SDK_EXT
+
 void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon) {
   snprintf(name, name_cap, "%s", the_mesh.getNodePrefs()->node_name);
   *lat = g_lv.task ? g_lv.task->getNodeLat() : 0.0;

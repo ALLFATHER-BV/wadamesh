@@ -251,6 +251,36 @@
   #define CAP_LUA_APPS 1
 #endif
 
+// ---- Extended Lua SDK ------------------------------------------------------
+// The BASE SDK (drawing, timers, key/value store, read-only mesh + radio stats,
+// http_get) is board-agnostic and ships everywhere CAP_LUA_APPS is on.
+//
+// The EXTENDED SDK is the part with real running cost, and it is gated:
+//   wada.sys.battery/gps/sensors   live device state
+//   wada.fs.*                      scoped file read/write/list under /apps
+//   wada.net.http_post + wifi_scan
+//   wada.mesh.send + on_message    the only WRITE path into the mesh
+//   wada.ui.input/list + on_key    text entry, lists, key events
+//
+// Why it is not everywhere: these add per-app RAM (an inbound message queue, a
+// scan buffer, retained Lua callbacks) and invite apps that hold buffers and do
+// I/O. The 2 MB-PSRAM Heltec V4 already runs at ~95% internal RAM with Wi-Fi up
+// — the same headroom problem that gates CAP_WEB_BROWSER and forces
+// CAP_BUILTIN_LANGS there — so it gets the base SDK only.
+//
+// TO GATE A FUTURE LOW-RESOURCE BOARD, pick either:
+//   * define WADA_LOW_RESOURCE_BOARD in the board's block  (also gates future extras), or
+//   * define CAP_LUA_SDK_EXT 0 in the board's block        (gates only this)
+// Apps must feature-detect with wada.sys.caps().sdk_ext rather than assume.
+#ifndef CAP_LUA_SDK_EXT
+  #if !CAP_LUA_APPS || defined(WADA_LOW_RESOURCE_BOARD) || \
+      (defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8))
+    #define CAP_LUA_SDK_EXT 0   // 2 MB V4 (and anything marked low-resource)
+  #else
+    #define CAP_LUA_SDK_EXT 1   // 8 MB boards incl. the V4-R8
+  #endif
+#endif
+
 // Compile the translations into the image (i18n_builtin.h, generated from
 // deploy/apps/lang/*.lang) instead of relying on downloading a .lang file.
 // ON for boards where the Lua Store is not dependable — the V4 runs at ~95%

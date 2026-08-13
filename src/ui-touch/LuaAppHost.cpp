@@ -10,8 +10,10 @@
 #include <lvgl.h>
 #include <esp_heap_caps.h>
 #include <FS.h>
-#include <time.h>   // wada.sys.epoch/datetime (#245)
+#include <time.h>
+#include <math.h>   // isnan for optional sensor fields   // wada.sys.epoch/datetime (#245)
 #include "AppPage.h"
+#include "device_caps.h"
 
 extern "C" {
 #include "lua.h"
@@ -34,6 +36,12 @@ extern void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uin
 extern void luaHostRadioStats2(uint32_t* rx_evt, uint32_t* rx_drop, uint32_t* tx_pkts,
                                float* freq, float* bw, int* sf, int* duty_pct);
 extern void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon);
+#if CAP_LUA_SDK_EXT
+extern void luaHostBattery(uint16_t* mv, int* pct, bool* charging);
+// No HDOP: MeshCore's LocationProvider interface does not expose one, and a
+// fabricated accuracy figure is worse than none for anything that would use it.
+extern bool luaHostGps(double* lat, double* lon, int* sats);
+#endif
 // DO NOT name the network client type here. What "WiFiClient" means depends on the
 // board: a real class on the S3 envs, a `using WiFiClient = NetworkClient` alias
 // under arduino-esp32 3.x (Tanmatsu), and a #define to C6Client on the T-Display P4
@@ -474,6 +482,49 @@ int sysDatetime(lua_State* L) {
 // a melody engine an app could not rely on: the return value lets an app fall
 // back to a visual cue instead of silently doing nothing.
 int sysBeep(lua_State* L) { lua_pushboolean(L, luaHostBeep()); return 1; }
+
+// wada.sys.caps() -> what THIS board actually offers. Apps must branch on this
+// rather than assume: the extended SDK is absent on low-resource boards (see
+// CAP_LUA_SDK_EXT in device_caps.h), and a store app runs on all of them.
+int sysCaps(lua_State* L) {
+  lua_createtable(L, 0, 4);
+  lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "sdk_ext");
+  lua_pushboolean(L, CAP_KEYBOARD);     lua_setfield(L, -2, "keyboard");
+  lua_pushboolean(L, CAP_TOUCH);        lua_setfield(L, -2, "touch");
+  lua_pushboolean(L, CAP_SD);           lua_setfield(L, -2, "sd");
+  return 1;
+}
+
+#if CAP_LUA_SDK_EXT
+// wada.sys.battery() -> { mv, pct, charging }
+int sysBattery(lua_State* L) {
+  uint16_t mv = 0; int pct = -1; bool chg = false;
+  luaHostBattery(&mv, &pct, &chg);
+  lua_createtable(L, 0, 3);
+  lua_pushinteger(L, mv);      lua_setfield(L, -2, "mv");
+  lua_pushinteger(L, pct);     lua_setfield(L, -2, "pct");
+  lua_pushboolean(L, chg);     lua_setfield(L, -2, "charging");
+  return 1;
+}
+// wada.sys.gps() -> { lat, lon, sats } or nil with NO fix.
+// nil rather than stale coordinates: wada.mesh.self() already hands out the last
+// known position, and an app plotting a track needs to know the difference.
+int sysGps(lua_State* L) {
+  double lat = 0, lon = 0; int sats = 0;
+  if (!luaHostGps(&lat, &lon, &sats)) { lua_pushnil(L); return 1; }
+  lua_createtable(L, 0, 3);
+  lua_pushnumber(L, lat);   lua_setfield(L, -2, "lat");
+  lua_pushnumber(L, lon);   lua_setfield(L, -2, "lon");
+  lua_pushinteger(L, sats); lua_setfield(L, -2, "sats");
+  return 1;
+}
+// NOT exposed: wada.sys.sensors(). The only environment-sensor source in the
+// firmware is LocalEnvSnapshot, which is #if defined(HAS_EXPANSION_KIT) -- the
+// Heltec V4 Expansion Kit. That is precisely the board CAP_LUA_SDK_EXT excludes,
+// so the function would return nil on every board that could call it. Sensor
+// access belongs on a HARDWARE gate (does this board have the rail?) rather than
+// this MEMORY gate, and wants its own caps() entry when it lands.
+#endif  // CAP_LUA_SDK_EXT
 int sysToast(lua_State* L)  { luaHostToast(luaL_checkstring(L, 1), (int)luaL_optinteger(L, 2, 1500)); return 0; }
 int sysRandom(lua_State* L) {
   // esp_random-backed: apps should not have to seed math.random for games
@@ -783,6 +834,11 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, sysEpoch);    lua_setfield(L, -2, "epoch");     // #245
   lua_pushcfunction(L, sysDatetime); lua_setfield(L, -2, "datetime");  // #245
   lua_pushcfunction(L, sysBeep);     lua_setfield(L, -2, "beep");      // #245
+  lua_pushcfunction(L, sysCaps);     lua_setfield(L, -2, "caps");      // feature detection
+#if CAP_LUA_SDK_EXT
+  lua_pushcfunction(L, sysBattery);  lua_setfield(L, -2, "battery");
+  lua_pushcfunction(L, sysGps);      lua_setfield(L, -2, "gps");
+#endif
   lua_setfield(L, -2, "sys");
 
   lua_newtable(L);                                       // wada.timer
