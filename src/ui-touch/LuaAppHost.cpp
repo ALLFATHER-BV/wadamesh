@@ -10,6 +10,7 @@
 #include <lvgl.h>
 #include <esp_heap_caps.h>
 #include <FS.h>
+#include <time.h>   // wada.sys.epoch/datetime (#245)
 #include "AppPage.h"
 
 extern "C" {
@@ -22,6 +23,7 @@ extern "C" {
 // to keep this TU decoupled from the 47k-line UITask.cpp).
 extern const lv_font_t* luaHostFontForSize(int size_class);       // 12/14/16 -> g_font_*
 extern void             luaHostToast(const char* msg, int ms);    // showAlert passthrough
+extern bool             luaHostBeep();                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
 extern void             luaHostAppPath(char* out, size_t cap, const char* rel);   // prefixes the store root
 extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
@@ -439,6 +441,39 @@ int uiTextH(lua_State* L) {
 }
 
 int sysMillis(lua_State* L) { lua_pushinteger(L, (lua_Integer)millis()); return 1; }
+// wada.sys.epoch() -> Unix seconds, or nil when the clock has never been set.
+// nil rather than 0 on purpose: an app that stamps a log wants to be able to
+// tell "no clock yet" from "1970", and the device genuinely boots without one
+// until GPS, NTP or a mesh peer supplies the time (#245).
+int sysEpoch(lua_State* L) {
+  const time_t now = time(nullptr);
+  if (now < 1700000000) { lua_pushnil(L); return 1; }   // same sane-clock floor the mesh uses
+  lua_pushinteger(L, (lua_Integer)now);
+  return 1;
+}
+// wada.sys.datetime() -> table in LOCAL time (the timezone the user picked),
+// because every use for it is display. Fields match pisti87's request in #245.
+// nil under the same unset-clock rule as epoch().
+int sysDatetime(lua_State* L) {
+  const time_t now = time(nullptr);
+  struct tm tmv;
+  if (now < 1700000000 || !localtime_r(&now, &tmv)) { lua_pushnil(L); return 1; }
+  lua_createtable(L, 0, 7);
+  lua_pushinteger(L, tmv.tm_year + 1900); lua_setfield(L, -2, "year");
+  lua_pushinteger(L, tmv.tm_mon + 1);     lua_setfield(L, -2, "month");
+  lua_pushinteger(L, tmv.tm_mday);        lua_setfield(L, -2, "day");
+  lua_pushinteger(L, tmv.tm_hour);        lua_setfield(L, -2, "hour");
+  lua_pushinteger(L, tmv.tm_min);         lua_setfield(L, -2, "min");
+  lua_pushinteger(L, tmv.tm_sec);         lua_setfield(L, -2, "sec");
+  lua_pushinteger(L, tmv.tm_wday);        lua_setfield(L, -2, "wday");   // 0 = Sunday
+  return 1;
+}
+// wada.sys.beep() -> true if a sound was actually produced. #245 asked for a
+// melody player; what the firmware has is one notification chime, and only some
+// boards have a sounder at all. Exposing the truthful primitive beats inventing
+// a melody engine an app could not rely on: the return value lets an app fall
+// back to a visual cue instead of silently doing nothing.
+int sysBeep(lua_State* L) { lua_pushboolean(L, luaHostBeep()); return 1; }
 int sysToast(lua_State* L)  { luaHostToast(luaL_checkstring(L, 1), (int)luaL_optinteger(L, 2, 1500)); return 0; }
 int sysRandom(lua_State* L) {
   // esp_random-backed: apps should not have to seed math.random for games
@@ -745,6 +780,9 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, sysToast);  lua_setfield(L, -2, "toast");
   lua_pushcfunction(L, sysBoard);  lua_setfield(L, -2, "board");
   lua_pushcfunction(L, sysRandom); lua_setfield(L, -2, "random");
+  lua_pushcfunction(L, sysEpoch);    lua_setfield(L, -2, "epoch");     // #245
+  lua_pushcfunction(L, sysDatetime); lua_setfield(L, -2, "datetime");  // #245
+  lua_pushcfunction(L, sysBeep);     lua_setfield(L, -2, "beep");      // #245
   lua_setfield(L, -2, "sys");
 
   lua_newtable(L);                                       // wada.timer

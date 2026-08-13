@@ -45004,6 +45004,17 @@ static bool uiDataFsReady() {
 const lv_font_t* luaHostFontForSize(int size_class) {
   return size_class <= 12 ? &g_font_12 : size_class <= 14 ? &g_font_14 : &g_font_16;
 }
+// Lua wada.sys.beep() (#245). Routes to the SAME per-board chime the UI uses, so
+// a Lua app cannot be louder or different from the rest of the firmware, and it
+// honours the user's sound setting rather than overriding it. Returns whether a
+// sound was actually produced: boards without a sounder, and a muted device,
+// both report false so an app can show something instead.
+bool luaHostBeep() {
+  if (!g_lv.task || g_lv.task->isBuzzerQuiet()) return false;
+  uiPlaySlot(TOUCH_SND_MSG);
+  return true;
+}
+
 void luaHostToast(const char* msg, int ms) {
   if (g_lv.task) g_lv.task->showAlert(msg, ms);
 }
