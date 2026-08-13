@@ -4559,6 +4559,20 @@ void MyMesh::handleCmdFrame(size_t len) {
     char *np = strchr(sp, ':'); // look for separator char
     if (np) {
       *np++ = 0; // modify 'cmd_frame', replace ':' with null
+      // #256: "ble.rxlog:1" opts THIS session's BLE companion into the full
+      // per-packet RX log (0x88). It is not a sensor setting, so intercept it
+      // before the sensor dispatch below. Coverage/region apps need it because
+      // the transport codes and the full relay path exist only in that frame —
+      // RESP_CODE_CHANNEL_MSG_RECV_V3 carries neither. Off by default and never
+      // persisted, so the #46/#54 fix stands for everyone who does not ask.
+      // Requested by the KiekR author (marcelverdult), who traced it for us.
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      if (strcmp(sp, "ble.rxlog") == 0) {
+        MultiTransportCompanionInterface::bleSetRxLogFirehose(np[0] == '1');
+        writeOKFrame();
+        return;
+      }
+#endif
       bool success = sensors.setSettingValue(sp, np);
       if (success) {
         #if ENV_INCLUDE_GPS == 1

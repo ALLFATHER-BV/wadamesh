@@ -11,6 +11,7 @@
 #define PUSH_CODE_LOG_RX_DATA   0x88
 
 bool MultiTransportCompanionInterface::s_ble_rxlog_once = false;
+bool MultiTransportCompanionInterface::s_ble_rxlog_all  = false;   // #256: opt-in, per session
 
 MultiTransportCompanionInterface::MultiTransportCompanionInterface()
   : _tcp_port(0), _ws_port(0), _tcp_started(false), _ws_started(false), _tcp_enabled(true), _isEnabled(false), _broadcast(false), _last_reply_target(REPLY_TARGET_USB), _ota_tcp_suspended(false), _ota_ws_suspended(false), _ota_ws_listen_paused(false)
@@ -548,7 +549,11 @@ size_t MultiTransportCompanionInterface::writeFrameToAll(const uint8_t src[], si
   // blanket skip landed in beta_23 — issue #94), and a few echoes per send are
   // nowhere near the flood that caused #46/#54.
   const bool rxlog    = (len > 0 && src[0] == PUSH_CODE_LOG_RX_DATA);
-  const bool ble_pass = rxlog && s_ble_rxlog_once;
+  // #256: a companion that wants the whole firehose (coverage/region mapping —
+  // region and the full path exist ONLY in this frame) can ask for it per
+  // session with CMD_SET_CUSTOM_VAR "ble.rxlog:1". Default stays off, so the
+  // #46/#54 behaviour above is unchanged for every app that does not opt in.
+  const bool ble_pass = rxlog && (s_ble_rxlog_once || s_ble_rxlog_all);
   if (rxlog) s_ble_rxlog_once = false;                // consume the one-shot either way
   const bool skip_ble = rxlog && !ble_pass;
   if (!skip_ble && _ble_begun && _ble_enabled && _ble.isConnected() && _ble.writeFrame(src, len) != len)

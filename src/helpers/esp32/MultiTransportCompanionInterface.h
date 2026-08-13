@@ -94,6 +94,13 @@ public:
    *  gets exactly the few frames the app needs and none of the flood (#94).
    *  Same-thread set-then-consume (both in the mesh loop), so no atomics. */
   static void bleAllowNextRxLog() { s_ble_rxlog_once = true; }
+  /** Opt a BLE companion into the FULL per-packet RX log (#256).
+   *  Off by default and NOT persisted: an app asks for it after connecting, via
+   *  CMD_SET_CUSTOM_VAR "ble.rxlog:1". Deliberately session-scoped — a stored
+   *  flag would silently reinstate the #46/#54 flood for someone who tried a
+   *  coverage app once and moved on, on a link that cannot afford it. */
+  static void bleSetRxLogFirehose(bool on) { s_ble_rxlog_all = on; }
+  static bool bleRxLogFirehose() { return s_ble_rxlog_all; }
   bool companionUnsolicitedPushesBroadcastToAll() const override { return _broadcast; }
   size_t checkRecvFrame(uint8_t dest[]) override;
 
@@ -105,6 +112,7 @@ public:
 
 private:
   static bool s_ble_rxlog_once;   // one-shot BLE pass for the next RX-log frame (#94)
+  static bool s_ble_rxlog_all;    // app opted into the whole RX log over BLE (#256); session-scoped
 public:
 
 private:
