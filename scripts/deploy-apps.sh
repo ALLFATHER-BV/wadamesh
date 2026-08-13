@@ -44,8 +44,19 @@ missing = [f"{l['code']} v{l['ver']}" for l in langs
            if not os.path.isfile(os.path.join(apps_dir, "lang", str(l["ver"]), l["code"] + ".lang"))]
 if missing:
     sys.exit("ABORT: langs.json points at files that do not exist: " + ", ".join(missing))
-json.load(open(os.path.join(apps_dir, "apps.json")))          # parse check
-print(f"catalogs ok: {len(langs)} languages, every referenced .lang present")
+
+# Same check for apps: an entry whose <id>/<ver>/<id>.lua is absent shows up in the
+# Store and then fails to install, with nothing on screen to say why.
+apps = json.load(open(os.path.join(apps_dir, "apps.json")))["apps"]
+bad = []
+for a in apps:
+    base = os.path.join(apps_dir, a["id"], a["ver"])
+    for f in (a["id"] + ".lua", a["id"] + ".json"):
+        if not os.path.isfile(os.path.join(base, f)):
+            bad.append(f'{a["id"]} v{a["ver"]}: {f}')
+if bad:
+    sys.exit("ABORT: apps.json points at files that do not exist: " + ", ".join(bad))
+print(f"catalogs ok: {len(langs)} languages and {len(apps)} apps, every referenced file present")
 PY
 
 # --delete mirrors the repo: the store is generated content, the repo is the source
