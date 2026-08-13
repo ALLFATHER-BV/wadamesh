@@ -42,6 +42,9 @@ extern void luaHostBattery(uint16_t* mv, int* pct, bool* charging);
 // No HDOP: MeshCore's LocationProvider interface does not expose one, and a
 // fabricated accuracy figure is worse than none for anything that would use it.
 extern bool luaHostGps(double* lat, double* lon, int* sats);
+extern int  luaHostSendPerm(const char* app_id);                              // 1 grant, -1 refused, 0 unasked
+extern void luaHostRequestSendPerm(const char* app_id, const char* app_name); // raises the consent prompt
+extern bool luaHostMeshSendChannel(const char* chan_name, const char* text);
 #endif
 // DO NOT name the network client type here. What "WiFiClient" means depends on the
 // board: a real class on the S3 envs, a `using WiFiClient = NetworkClient` alias
@@ -107,6 +110,7 @@ struct Host {
   int         ref_btncb = LUA_NOREF; // { [btn lightuserdata] = fn } button callbacks
   bool        store_dirty = false;
   uint32_t    fs_last_write_ms = 0;   // wada.fs write rate limit (#222 lesson)
+  uint32_t    mesh_last_send_ms = 0;  // wada.mesh.send airtime rate limit
   bool        in_lua = false;        // re-entrancy guard (dismiss from inside a callback)
   bool        want_close = false;
   char        id[24]    = "";
@@ -580,6 +584,51 @@ int timerStop(lua_State* L) {
 // Store: a Lua table mirrored to /apps/<id>.sav as "k=v" lines (strings and
 // numbers only). Loaded at launch, flushed on dismiss when dirty — tiny, rare,
 // and off the hot path (touch_perf: never spam flash from the UI thread).
+#if CAP_LUA_SDK_EXT
+// wada.mesh.send(channel, text) -> true | false, reason
+//
+// The ONLY write path an app has into the mesh, and the one API where a bad app
+// costs other people rather than just its own device: LoRa is a shared channel,
+// and anything sent goes out under the user's node name.
+//
+// Three gates, in order:
+//   1. per-app consent, granted by the user once and bound to THIS app id
+//   2. an airtime rate limit, far stricter than the filesystem one
+//   3. a length cap, so one call cannot occupy the channel
+//
+// The app never sees a prompt API and cannot pre-approve itself: the first call
+// without a grant fails AND raises the prompt, so consent is always something
+// the user did, not something the app asked for at a convenient moment.
+static const uint32_t kMeshSendMinGapMs = 5000;   // per app
+static const size_t   kMeshSendMaxLen   = 180;    // one LoRa text payload
+
+int meshSend(lua_State* L) {
+  const char* chan = luaL_checkstring(L, 1);
+  size_t len = 0;
+  const char* text = luaL_checklstring(L, 2, &len);
+  if (!s_h) { lua_pushboolean(L, 0); lua_pushstring(L, "no app"); return 2; }
+  if (len == 0 || len > kMeshSendMaxLen) {
+    lua_pushboolean(L, 0); lua_pushstring(L, "bad length"); return 2;
+  }
+  const int perm = luaHostSendPerm(s_h->id);
+  if (perm != 1) {
+    if (perm == 0) luaHostRequestSendPerm(s_h->id, s_h->id);   // ask once, never in a loop
+    lua_pushboolean(L, 0);
+    lua_pushstring(L, perm == 0 ? "permission requested" : "permission denied");
+    return 2;
+  }
+  const uint32_t now = millis();
+  if (s_h->mesh_last_send_ms && (uint32_t)(now - s_h->mesh_last_send_ms) < kMeshSendMinGapMs) {
+    lua_pushboolean(L, 0); lua_pushstring(L, "too fast"); return 2;
+  }
+  const bool ok = luaHostMeshSendChannel(chan, text);
+  if (ok) s_h->mesh_last_send_ms = now;   // only a real transmission starts the clock
+  lua_pushboolean(L, ok);
+  if (!ok) { lua_pushstring(L, "no such channel"); return 2; }
+  return 1;
+}
+#endif
+
 int storeGet(lua_State* L) {
   lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetab");
   lua_pushvalue(L, 1);
@@ -986,6 +1035,9 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, meshRxLog);    lua_setfield(L, -2, "rx_log");
   lua_pushcfunction(L, meshStats);    lua_setfield(L, -2, "stats");
   lua_pushcfunction(L, meshSelf);     lua_setfield(L, -2, "self");
+#if CAP_LUA_SDK_EXT
+  lua_pushcfunction(L, meshSend); lua_setfield(L, -2, "send");   // consent-gated
+#endif
   lua_setfield(L, -2, "mesh");
 
   lua_newtable(L);                                       // wada.net

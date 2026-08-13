@@ -45069,6 +45069,115 @@ void luaHostRadioStats2(uint32_t* rx_evt, uint32_t* rx_drop, uint32_t* tx_pkts,
   *duty_pct = p->airtime_factor > 0 ? (int)(100.0f / (1.0f + p->airtime_factor) + 0.5f) : 100;
 }
 #if CAP_LUA_SDK_EXT
+// ---- Lua app permissions: mesh send ----------------------------------------
+// wada.mesh.send() is the first WRITE path a store app has into the mesh, and
+// anything it sends goes out under the user's own node name -- to readers it is
+// indistinguishable from the user typing it. That is a different category from
+// an app writing a file, so it needs explicit, informed, per-app consent.
+//
+// The grant is bound to ONE app id. Approving a beacon app grants nothing to any
+// other app, and re-installing under a different id asks again. Stored as a tiny
+// text file next to the app data so it survives reboots and can be inspected.
+//
+// The app cannot bypass this: it never sees a prompt API. wada.mesh.send simply
+// returns false until a grant exists, and the FIRST refusal raises the prompt.
+// Read by the confirm callback. Only one app runs at a time (apps are
+// full-screen) and only one dialog can be open, so a single slot is enough.
+static char s_lua_perm_target[24] = {0};
+
+static void luaPermPath(char* out, size_t cap) { luaHostAppPath(out, cap, "/apps/perms.kv"); }
+
+// 1 = granted, -1 = refused, 0 = never asked.
+int luaHostSendPerm(const char* app_id) {
+  if (!app_id || !*app_id || !s_ui_data_fs) return 0;
+  char path[80]; luaPermPath(path, sizeof path);
+  File f = s_ui_data_fs->open(path, "r");
+  if (!f) return 0;
+  int verdict = 0;
+  char line[64];
+  while (f.available()) {
+    const size_t n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+    line[n] = '\0';
+    char* eq = strchr(line, '=');
+    if (!eq) continue;
+    *eq = '\0';
+    if (strcmp(line, app_id) == 0) { verdict = (eq[1] == '1') ? 1 : -1; break; }
+  }
+  f.close();
+  return verdict;
+}
+
+static void luaPermWrite(const char* app_id, bool allow) {
+  if (!app_id || !*app_id || !s_ui_data_fs) return;
+  // Rewrite whole-file: the table is a handful of short lines, and an in-place
+  // edit would have to deal with a shrinking record.
+  char path[80]; luaPermPath(path, sizeof path);
+  String keep;
+  File in = s_ui_data_fs->open(path, "r");
+  if (in) {
+    char line[64];
+    while (in.available()) {
+      const size_t n = in.readBytesUntil('\n', line, sizeof(line) - 1);
+      line[n] = '\0';
+      if (!line[0]) continue;
+      char* eq = strchr(line, '=');
+      if (eq) { *eq = '\0'; const bool same = (strcmp(line, app_id) == 0); *eq = '='; if (same) continue; }
+      keep += line; keep += '\n';
+    }
+    in.close();
+  }
+  keep += app_id; keep += (allow ? "=1\n" : "=0\n");
+  WdtHeavyGuard guard;                       // small, but it is still a flash write
+  char appsdir[80]; luaHostAppPath(appsdir, sizeof appsdir, "/apps");
+  s_ui_data_fs->mkdir(appsdir);
+  File out = s_ui_data_fs->open(path, "w");
+  if (!out) return;
+  out.write((const uint8_t*)keep.c_str(), keep.length());
+  out.close();
+}
+
+// Raised from wada.mesh.send's first refusal. Deliberately blunt about what is
+// being granted -- "send messages" understates it; the point the user needs is
+// that the messages carry THEIR name.
+void luaHostRequestSendPerm(const char* app_id, const char* app_name) {
+  if (!app_id || !*app_id) return;
+  snprintf(s_lua_perm_target, sizeof s_lua_perm_target, "%s", app_id);
+  // Record the refusal FIRST, so the answer is "no" unless the user says
+  // otherwise -- a power cut mid-dialog must not leave a grant. It also stops
+  // this app re-prompting: its next send sees -1 and fails without a dialog.
+  luaPermWrite(app_id, false);
+  const char* label = (app_name && *app_name) ? app_name : app_id;
+  char msg[220];
+  snprintf(msg, sizeof msg,
+           TR("\"%s\" wants to send messages on the mesh.\n\n"
+              "They will be sent as %s and cannot be told apart from messages you typed.\n\n"
+              "Only allow this for an app you trust."),
+           label, the_mesh.getNodePrefs()->node_name);
+  // Cancel needs no handler: the refusal is already on disk. The user can revisit
+  // a decision by deleting /apps/perms.kv.
+  showConfirm(msg, TR("Allow"), +[]() { luaPermWrite(s_lua_perm_target, true); });
+}
+
+// Send on a channel matched BY NAME. Matching by name rather than a cached slot
+// index is deliberate: a stale slot transmits on the WRONG key, which is exactly
+// the bug behind the channel-send fix in the touch composer.
+bool luaHostMeshSendChannel(const char* chan_name, const char* text) {
+  if (!chan_name || !*chan_name || !text || !*text) return false;
+  for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    ChannelDetails cd;
+    if (!the_mesh.getChannel(i, cd) || !cd.name[0]) continue;
+    if (strcmp(cd.name, chan_name) != 0) continue;
+    uint32_t ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
+    const char* sender = the_mesh.getNodePrefs()->node_name;
+    if (!the_mesh.sendGroupMessage(ts, cd.channel, sender, (char*)text, (int)strlen(text))) return false;
+    if (g_lv.task) g_lv.task->appSentMsgToChannel(cd.name, text, the_mesh.uiLastSentFp());
+    return true;
+  }
+  return false;   // no such channel on this device
+}
+#endif  // CAP_LUA_SDK_EXT
+
+#if CAP_LUA_SDK_EXT
 // wada.sys.battery(). Reads the SMOOTHED millivolts the status bar uses, not a
 // raw ADC sample, so a Lua chart cannot show noise the rest of the UI hides.
 void luaHostBattery(uint16_t* mv, int* pct, bool* charging) {
