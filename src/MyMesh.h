@@ -971,6 +971,31 @@ public:
    *  evictable when the table filled (#178): the star lived only in
    *  TouchPrefs, invisible to the core. Returns false if the contact is gone;
    *  a no-op flag state is success without a save. */
+  // Per-contact telemetry permissions (#266: share position with chosen contacts
+  // instead of broadcasting it in every advert).
+  //
+  // MeshCore packs these into contact.flags ABOVE the favourite bit — the request
+  // handler does `contact.flags >> 1` before masking with TELEM_PERM_* — so the bit
+  // for a given TELEM_PERM_x lives at (x << 1) here. They only take effect for a
+  // category whose telemetry_mode_* is TELEM_MODE_ALLOW_FLAGS; ALLOW_ALL ignores
+  // them and answers everyone, DENY answers nobody.
+  static uint8_t contactTelemBit(uint8_t telem_perm) { return (uint8_t)(telem_perm << 1); }
+
+  bool uiGetContactTelemetryPerm(const uint8_t pub_key[32], uint8_t telem_perm) {
+    ContactInfo* slot = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+    return slot && (slot->flags & contactTelemBit(telem_perm)) != 0;
+  }
+  bool uiSetContactTelemetryPerm(const uint8_t pub_key[32], uint8_t telem_perm, bool on) {
+    ContactInfo* slot = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+    if (!slot) return false;
+    const uint8_t bit = contactTelemBit(telem_perm);
+    const uint8_t nf = on ? (uint8_t)(slot->flags | bit) : (uint8_t)(slot->flags & ~bit);
+    if (nf == slot->flags) return true;
+    slot->flags = nf;
+    saveContacts();
+    return true;
+  }
+
   bool uiSetContactFavorite(const uint8_t pub_key[32], bool fav) {
     ContactInfo* slot = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (!slot) return false;

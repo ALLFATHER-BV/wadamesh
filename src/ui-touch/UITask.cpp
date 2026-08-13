@@ -9996,6 +9996,19 @@ static void buildProfileSettings() {
   }
 }
 
+// Location telemetry (#266). Separate from the plain telemetry switch on purpose:
+// battery/environment is not position, and a single "allow telemetry" must never be
+// able to hand out where you are. Dropdown order matches TELEM_MODE_*: 0 deny,
+// 1 allow-flags (chosen contacts), 2 allow-all.
+static void locTelemetryModeChangedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
+  const uint8_t sel = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
+  g_lv.task->setLocationTelemetryMode(sel);
+  const char* msg = (sel == TELEM_MODE_ALLOW_ALL)   ? TR("Location shared with anyone who asks")
+                  : (sel == TELEM_MODE_ALLOW_FLAGS) ? TR("Location shared with chosen contacts only")
+                                                    : TR("Location sharing off");
+  g_lv.task->showAlert(msg, 1600);
+}
 static void pathHashModeChangedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
   uint8_t sel = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
@@ -10317,6 +10330,51 @@ static void buildRadioSettings() {
     if (prefs && prefs->telemetry_mode_base != 0) lv_obj_add_state(sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw, telemetryAllowChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(SC(40), h + SC(12));
+  }
+
+  // Position sharing (#266). Until now the only way to share position was to put it
+  // in the advert, which broadcasts it in the clear to every node in range, forever.
+  // MeshCore can answer position on REQUEST instead — encrypted to the contact that
+  // asked, and only to contacts you picked — but nothing ever set telemetry_mode_loc,
+  // so that whole path was unreachable. "Chosen contacts" reads the per-contact
+  // permission set from each contact's own menu.
+  mk_label(TR("Share my location when asked"));
+  {
+    lv_obj_t* dd = lv_dropdown_create(body);
+    lv_obj_set_size(dd, lv_pct(100), SC(34));
+    lv_obj_set_pos(dd, 2, y);
+    // Order MUST match TELEM_MODE_*: 0 = deny, 1 = allow-flags, 2 = allow-all.
+    lv_dropdown_set_options(dd, TR("Never\nChosen contacts only\nAnyone who asks"));
+    lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_border_color(dd, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_t* loclist = lv_dropdown_get_list(dd);
+    lv_obj_set_style_bg_color(loclist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_text_color(loclist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(loclist, &g_font_12, LV_PART_MAIN);
+    uint8_t lm = prefs ? prefs->telemetry_mode_loc : TELEM_MODE_DENY;
+    if (lm > TELEM_MODE_ALLOW_ALL) lm = TELEM_MODE_DENY;
+    lv_dropdown_set_selected(dd, lm);
+    lv_obj_add_event_cb(dd, locTelemetryModeChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+    y += SC(40);
+  }
+  {
+    // Be explicit about the two things that surprise people: this is answered on
+    // request (nothing is broadcast), and MeshCore only replies at all when plain
+    // telemetry is allowed, so the switch above is a prerequisite rather than an
+    // unrelated setting.
+    lv_obj_t* note = lv_label_create(body);
+    lv_label_set_text(note, TR("Sent only when that contact asks, encrypted to them — not broadcast. "
+                               "Needs \"Answer telemetry requests\" on. Pick contacts in a contact's menu."));
+    lv_obj_set_width(note, s_settings_content_w - SC(4));
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(note, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(note, 2, y);
+    lv_obj_update_layout(note);
+    y += lv_obj_get_height(note) + SC(10);
   }
 
   // Multi-byte routing: how many bytes of each repeater's hash this node stamps
@@ -15803,6 +15861,40 @@ static void actionSheetFavoriteCb(lv_event_t* e) {
 #endif
 }
 
+// Share position with THIS contact (#266). Sharing position used to mean putting it
+// in the advert, i.e. broadcasting it in the clear to everyone in range. MeshCore can
+// instead answer position only when a contact asks, encrypted to that contact — the
+// permission is a bit in contact.flags, read whenever telemetry_mode_loc is
+// ALLOW_FLAGS. Granting is per contact and revocable from the same menu.
+static void actionSheetShareLocCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+#if defined(ESP32)
+  ContactInfo c;
+  const bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
+  closeActionSheet();
+  if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  const bool was = the_mesh.uiGetContactTelemetryPerm(c.id.pub_key, TELEM_PERM_LOCATION);
+  if (!the_mesh.uiSetContactTelemetryPerm(c.id.pub_key, TELEM_PERM_LOCATION, !was)) {
+    g_lv.task->showAlert(TR("Contact gone"), 1200);
+    return;
+  }
+  if (!was) {
+    // Granting one contact is an unambiguous "share with someone". If position sharing
+    // is switched off entirely the grant would silently do nothing, so move to the
+    // per-contact mode — which still shares with nobody except the contacts picked here.
+    NodePrefs* np = the_mesh.getNodePrefs();
+    if (np && np->telemetry_mode_loc == TELEM_MODE_DENY)
+      g_lv.task->setLocationTelemetryMode(TELEM_MODE_ALLOW_FLAGS);
+    g_lv.task->showAlert(TR("Location shared with this contact"), 1600);
+  } else {
+    g_lv.task->showAlert(TR("Location no longer shared"), 1600);
+  }
+#else
+  closeActionSheet();
+  g_lv.task->showAlert(TR("Not supported on this board"), 1100);
+#endif
+}
+
 // Block / unblock toggle: stores the sender's 6-byte pub-key prefix in the
 // ignore list (newMsgImpl drops messages from ignored senders). Same prefix
 // scheme as favorites; managed here or from the chat "Blocked users" sheet.
@@ -16667,6 +16759,19 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
          actionSheetFavoriteCb, 0);
 #else
   mk_btn(TOUCH_SYM_STAR "  Favorite", actionSheetFavoriteCb, 0);
+#endif
+  // Share position with this contact (#266) — label flips on the current grant.
+  // Hidden on the map-marker sheet, which stays compact.
+#if defined(ESP32)
+  if (!from_map) {
+    bool _loc_shared = false;
+    ContactInfo _lc;
+    if (the_mesh.getContactByIdx(s_action_sheet_mesh_idx, _lc))
+      _loc_shared = the_mesh.uiGetContactTelemetryPerm(_lc.id.pub_key, TELEM_PERM_LOCATION);
+    mk_btn(_loc_shared ? TR(LV_SYMBOL_GPS "  Stop sharing loc")
+                       : TR(LV_SYMBOL_GPS "  Share my loc"),
+           actionSheetShareLocCb, 0);
+  }
 #endif
   mk_btn(TR(LV_SYMBOL_LOOP  "  Reset path"), actionSheetResetPathCb, 0);
   // Block / unblock — label flips on the current ignore state. Skipped when the
@@ -49024,6 +49129,21 @@ void UITask::setTelemetryAllow(bool on) {
   // setting so this simple toggle can't expose position.
   _node_prefs->telemetry_mode_base = on ? TELEM_MODE_ALLOW_ALL : TELEM_MODE_DENY;
   _node_prefs->telemetry_mode_env  = on ? TELEM_MODE_ALLOW_ALL : TELEM_MODE_DENY;
+  the_mesh.savePrefs();
+}
+// Position sharing, deliberately its own control rather than part of the switch above
+// (#266). DENY / ALLOW_FLAGS (only contacts you granted it) / ALLOW_ALL.
+void UITask::setLocationTelemetryMode(uint8_t mode) {
+  if (!_node_prefs) return;
+  if (mode > TELEM_MODE_ALLOW_ALL) mode = TELEM_MODE_DENY;
+  _node_prefs->telemetry_mode_loc = mode;
+  // MeshCore answers a telemetry request at all only when the BASE permission is set,
+  // so location would silently never be sent with the master switch off. Turning
+  // sharing ON implies answering requests; say so via the note under the dropdown
+  // rather than leaving the user with a setting that does nothing.
+  if (mode != TELEM_MODE_DENY && _node_prefs->telemetry_mode_base == TELEM_MODE_DENY) {
+    _node_prefs->telemetry_mode_base = TELEM_MODE_ALLOW_ALL;
+  }
   the_mesh.savePrefs();
 }
 

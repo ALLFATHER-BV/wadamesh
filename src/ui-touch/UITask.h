@@ -490,6 +490,7 @@ public:
   void setPathHashMode(uint8_t mode);
   void setExperimentalFlags(uint8_t multi_acks, uint8_t client_repeat, uint8_t rx_boosted);
   void setTelemetryAllow(bool on);   // answer mesh telemetry requests (battery+env; location stays separate)
+  void setLocationTelemetryMode(uint8_t mode);   // TELEM_MODE_* — position on request (#266)
   /** Meshcomod CLI on device: `wifi on` / `wifi off`. */
   bool setWifiRadio(bool on);
   bool isTcpEnabled() const { return _serial && _serial->isTcpEnabled(); }
