@@ -40194,6 +40194,13 @@ static void openAppDrawer() {
 // Status-bar long-hold (3 s) -> full-screen screenshot to /screenshots on SD.
 static uint32_t s_sb_press_ms  = 0;
 static bool     s_sb_shot_done = false;
+// millis() of a press the bar's PRESSED handler already used to leave an app page, so
+// the CLICKED from that same tap gets swallowed instead of toggling the control center.
+// TIMESTAMPED rather than a plain flag on purpose: the whole reason that handler closes
+// on touch-DOWN is that the matching CLICKED sometimes never arrives (the cap-touch swipe
+// detector aborts it), and a sticky bool would then eat the NEXT genuine bar tap. A stale
+// one simply expires.
+static uint32_t s_sb_back_ms = 0;
 static void takeScreenshotToSd();   // fwd
 static void statusBarHoldCb(lv_event_t* e) {
   switch (lv_event_get_code(e)) {
@@ -40218,6 +40225,11 @@ static void statusBarTapCb(lv_event_t* e) {
   // statusBarReaderBackCb, which they never got and which is the only reliable exit on a
   // cap-touch board that drops the lone CLICKED.
   if (s_sb_shot_done) { s_sb_shot_done = false; return; }   // this press was a screenshot hold
+  // …and this one already closed an app page on touch-DOWN (statusBarReaderBackCb).
+  // Without this the tap goes back AND falls through to the control-center toggle at
+  // the bottom of this function — "back also opens the status bar" (Istvan, beta_64).
+  if (s_sb_back_ms && (uint32_t)(millis() - s_sb_back_ms) < 1500) { s_sb_back_ms = 0; return; }
+  s_sb_back_ms = 0;
   // A full-screen tool page (RF Monitor / Spectrum) is up: the bar carries its Back
   // chevron + title, so a tap goes back (closes the page) just like settings.
   if (s_apppage_close) { s_apppage_close(); return; }
@@ -40252,8 +40264,13 @@ static void statusBarReaderBackCb(lv_event_t* e) {
   // exited only by the bar's CLICKED -> s_apppage_close. On cap-touch the swipe detector's
   // click-abort (lvglTouchRead) can drop that lone CLICKED, trapping the user on a touch-only board
   // (the P4). Close on PRESSED too — the proven Reader fallback, now generalised to every app page.
-  // close() clears s_apppage_close, so the later CLICKED in statusBarTapCb is then a no-op.
-  if (s_apppage_close) s_apppage_close();
+  //
+  // The CLICKED that follows this same tap must be SWALLOWED. Clearing s_apppage_close does not
+  // make it harmless (the original claim here): statusBarTapCb only skips its app-page branch and
+  // then falls through every other branch to the control-center toggle at its end — so exiting any
+  // app page by the "‹" also popped the dropdown open. Harmless while this was Reader-only, wrong
+  // for every app page since beta_49.
+  if (s_apppage_close) { s_apppage_close(); s_sb_back_ms = millis() | 1u; }   // |1: 0 means "none"
 }
 
 // Capture the composited screen to a 16-bit BMP on the SD card. BMP (no
