@@ -740,6 +740,32 @@ void setup() {
 
   bool radio_ok = radio_init();
   if (!radio_ok) { delay(150); radio_ok = radio_init(); }   // one retry: transient SPI/reset flakes
+#if defined(PIN_PERF_POWERON)
+  // Last resort: do what the error screen would otherwise ask the USER to do —
+  // power-cycle the module — by bouncing the rail that feeds it.
+  //
+  // On boards with a peripheral power gate (T-Deck, GPIO10) the LoRa module is only
+  // powered once that pin is driven high in Board::begin(), a few milliseconds before
+  // it gets probed. A cold start survives that because the rail was already settled;
+  // a SOFTWARE reset does not. An OTA update ends in ESP.restart(), which releases the
+  // pin, collapses the rail, and re-drives it immediately — so the radio is probed
+  // while it is still coming up, and the boot dead-ends on "LoRa radio not detected"
+  // until the user power-cycles by hand (reported on a T-Deck straight after an
+  // update; a reboot cleared it). A brief, deliberate LOW gives the module a clean
+  // power-on reset regardless of how this boot was reached.
+  //
+  // Only reached when the alternative is halting with the fatal screen, so it cannot
+  // regress a healthy boot: a board that probes fine never runs any of this.
+  if (!radio_ok) {
+    Serial.println("[BOOT] radio not detected — power-cycling the peripheral rail and retrying");
+    digitalWrite(PIN_PERF_POWERON, LOW);
+    delay(120);                       // long enough for the rail to actually drain
+    digitalWrite(PIN_PERF_POWERON, HIGH);
+    delay(250);                       // POR + crystal startup before the module answers SPI
+    radio_ok = radio_init();
+    if (radio_ok) Serial.println("[BOOT] radio came up after the power-cycle");
+  }
+#endif
   if (!radio_ok) {
     // A dead or absent LoRa module used to halt behind the frozen boot logo,
     // with the only clue on serial (#244). Say it on the panel instead.
