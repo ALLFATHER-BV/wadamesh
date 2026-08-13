@@ -21206,7 +21206,7 @@ static void openSignalInfoPopup() {
     snprintf(l1, sizeof l1, "SNR   %.1f dB", (double)snr);
     snprintf(r1, sizeof r1, "RSSI  %d dBm", rssi);
     snprintf(l2, sizeof l2, "Bars  %d / 4", level);
-    snprintf(r2, sizeof r2, "Heard %s", ago);
+    snprintf(r2, sizeof r2, TR("Heard %s"), ago);
     const int colx = (card_w - 20) / 2;              // second column start
     sigCell(l1, 8, sig_row1_y, COLOR_TEXT);  sigCell(r1, colx, sig_row1_y, COLOR_TEXT);   // SNR | RSSI
     sigCell(l2, 8, sig_row2_y, COLOR_TEXT);  sigCell(r2, colx, sig_row2_y, COLOR_TEXT);   // Bars | Heard
@@ -21311,7 +21311,7 @@ static void openSignalInfoPopup() {
   // ---- Traffic readout ----
   char tbody[160];
   snprintf(tbody, sizeof tbody,
-    "Traffic (since boot)\n  Sent   %u flood, %u direct\n  Recv   %u flood, %u direct",
+    TR("Traffic (since boot)\n  Sent   %u flood, %u direct\n  Recv   %u flood, %u direct"),
     (unsigned)the_mesh.getNumSentFlood(), (unsigned)the_mesh.getNumSentDirect(),
     (unsigned)the_mesh.getNumRecvFlood(), (unsigned)the_mesh.getNumRecvDirect());
   lv_obj_t* tlbl = lv_label_create(card);
@@ -24220,7 +24220,7 @@ static lv_obj_t* ctOpenOptionSheet(const char* title){
 }
 static void openContactsSortSheet(){
   for(int i=0;i<6;++i) s_ct_filter_btns[i]=nullptr;   // the filter sheet's buttons are gone now
-  lv_obj_t* card = ctOpenOptionSheet("Sort by");
+  lv_obj_t* card = ctOpenOptionSheet(TR("Sort by"));
   // active=false here; ctSortRowsRepaint() below sets the real highlight + arrow.
   s_ct_sort_btns[0] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_AZ),         ctSortOptCb, CONTACTS_SORT_AZ,         false);
   s_ct_sort_btns[1] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_LAST_HEARD), ctSortOptCb, CONTACTS_SORT_LAST_HEARD, false);
@@ -24244,7 +24244,7 @@ static void discSortOptCb(lv_event_t* e){
   openDiscoveredModalCb(&synth);   // rebuild the Discovered list in the new order
 }
 static void openDiscSortSheet(){
-  lv_obj_t* card = ctOpenOptionSheet("Sort discovered");
+  lv_obj_t* card = ctOpenOptionSheet(TR("Sort discovered"));
   for(int i=0;i<DISC_SORT_COUNT;++i){
     const bool active=((uint8_t)i==g_disc_sort);
     // Pass the English name (ctSheetOption translates it); add the direction arrow
@@ -24263,10 +24263,10 @@ static void openContactsFilterSheet(){
   lv_obj_t* card = ctOpenOptionSheet("Filter");
   s_ct_filter_btns[0] = ctSheetOption(card, "All",            ctFilterOptCb, 0, g_lv.contacts_filter==0);
   s_ct_filter_btns[1] = ctSheetOption(card, "Repeaters",      ctFilterOptCb, 1, g_lv.contacts_filter==1);
-  s_ct_filter_btns[2] = ctSheetOption(card, "Peers",          ctFilterOptCb, 2, g_lv.contacts_filter==2);
-  s_ct_filter_btns[3] = ctSheetOption(card, "Favorites",      ctFilterOptCb, 3, g_lv.contacts_filter==3);
-  s_ct_filter_btns[4] = ctSheetOption(card, "Has location",   ctFilterOptCb, 4, g_lv.contacts_filter==4);
-  s_ct_filter_btns[5] = ctSheetOption(card, "Direct (0-hop)", ctFilterOptCb, 5, g_lv.contacts_filter==5);
+  s_ct_filter_btns[2] = ctSheetOption(card, TR("Peers"),          ctFilterOptCb, 2, g_lv.contacts_filter==2);
+  s_ct_filter_btns[3] = ctSheetOption(card, TR("Favorites"),      ctFilterOptCb, 3, g_lv.contacts_filter==3);
+  s_ct_filter_btns[4] = ctSheetOption(card, TR("Has location"),   ctFilterOptCb, 4, g_lv.contacts_filter==4);
+  s_ct_filter_btns[5] = ctSheetOption(card, TR("Direct (0-hop)"), ctFilterOptCb, 5, g_lv.contacts_filter==5);
 }
 static void openContactsFilterSheetCb(lv_event_t* e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) openContactsFilterSheet(); }
 
