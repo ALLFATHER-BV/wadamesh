@@ -1,0 +1,48 @@
+# beta_63 promoted to STABLE — cumulative over beta_51..beta_63 (previous stable: beta_50)
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Curated from the 13 beta notes: test-build warnings dropped, statements that
+# later changed (the save chip, the core version) corrected to what now ships.
+
+# --- Read this before updating -----------------------------------------------------------
+Read this one first if you are coming from beta_50: the chat-history format on the SD card changed during this run, and the change is ONE-WAY. Updating is safe and your history is converted for you, but if you later flash a firmware older than beta_52 it will not be able to read that history. Back up first if that matters to you.
+Chats now keep the newest 250 messages each by default. If you had a chat with more than that, the extra is trimmed on first run. The limit is yours to change under Settings > Chats > "Keep per chat (messages)" - 100, 250, 500, 1000 or off.
+If you ever picked a region preset, your radio was transmitting at roughly 9x less power than it should have been. That is fixed. Expect noticeably better range, and re-check your power setting if you had raised it to compensate.
+Your identity no longer lives on the SD card, so swapping or removing the card can never cost you your node identity again.
+
+# --- The big changes ----------------------------------------------------------------------
+The MeshCore core moved from 1.16 to 1.17. Every board is rebased on it. This is the largest under-the-hood change since 1.16, and it lays the groundwork for listen-before-talk: the radio can check whether the channel is busy before transmitting. About reports v1.17.4-touch.
+WADAMESH runs apps written in Lua. They install from a Store on the device, appear in the app drawer, and can be updated or removed from there. RF Monitor and Airtime are now Lua apps rather than firmware pages, and both gained features as a result. You can write your own: drop a bare .lua file into /apps/ on the card and it shows up.
+Translations are no longer baked into the firmware - they download from the Store's Languages tab, so a language can be fixed or completed without a new firmware release. Every language got a full sweep of around 150 strings that had quietly stayed English, and Romanian and Hungarian joined as full interface languages.
+Major SD storage rework, contributed by the community: the device recovers from a wedged or removed card at runtime instead of playing dead until reboot, and chat history is stored in append-friendly segments. A large chat history no longer slows the whole interface down.
+Storage writes run on a dedicated background worker, so a big save can no longer make the interface stutter or the device freeze.
+
+# --- Crashes and data loss fixed ----------------------------------------------------------
+Hungarian devices no longer reboot when logging in to a repeater. A translated sentence had its two values in the wrong order, and the firmware followed a number as if it were a memory address. Beyond fixing the text, a translation that does not match the original is now ignored rather than trusted - no language file can crash a device, including one you write yourself.
+The T-Lora Pager no longer crashes while scrolling back through chat history.
+Heltec V4 units no longer freeze in a busy mesh. Two separate causes: every advert heard used to trigger a storage write, and later, a full contact list made every new contact delete a stored record on the receive path. Both are off the packet path now.
+Settings can no longer silently reset themselves. An interrupted settings write could truncate the file and lose everything in it.
+Messages no longer arrive in a nameless "#unknown" thread, and channel messages can no longer be silently dropped by an unused channel slot.
+Fixed the 3-minute boot with an SD card inserted, and formatting a card on the V4-R8 or ThinkNode M9 no longer hangs forever.
+Blocking someone now actually works - three separate bugs, and unblocking now fully clears the block.
+
+# --- Messaging and the interface ------------------------------------------------------------
+Sends retry until the mesh has actually heard them, under Settings > Radio & Mesh > "Retry sends until heard" (off by default).
+Message bubbles show the time on the top row next to the sender, so more messages fit on screen.
+The chat list preview no longer shows an old message and never updates.
+Accented and non-Latin characters render everywhere, and the arrow character that used to be an empty box now renders - it had never been in the bundled fonts, in any language.
+Message details show the region a message was scoped to, rather than a raw four-digit number that changed on every message.
+Files app shows each file's modified date, and Copy and Paste work on every board.
+The Discover app shows the distance to a node when both sides have a position, and no longer freezes on names containing emoji.
+The long-press accent picker gained ae/AE on the A key for Danish and Norwegian.
+The lock screen and the unlock animation carry the WADAMESH name.
+
+# --- Per board -------------------------------------------------------------------------------
+T-Display P4: the clock, text size, profile export and backups all work again, and the whole-screen blue flash is fixed - it was SD card access delaying the display, not the display itself.
+T-Lora Pager: new UI size presets (Small, Medium, Large), Wi-Fi and Bluetooth hand off cleanly without a reboot, map tiles load reliably from SD, and the radio oscillator is driven at the voltage LilyGo's own reference specifies.
+Heltec V4: around 17 KB of internal memory reclaimed, measured step by step, which is what made the Store usable on a board with 2 MB of PSRAM.
+Heltec V4 Expansion Kit V2: the buzzer works.
+GPS is genuinely fixed - the firmware never actually read what the module was sending. The GPS settings page now shows live satellite count and signal strength.
+New LoRa antenna setting under Settings > Radio.
+
+# --- Community ---------------------------------------------------------------------------------
+This run is heavily community work: PixPMusic, Vybo, pisti87, Yazutsu, scratchdiver, jacobpretorius, oumike, codemonkeybr, attakygit, Steve Glenner, Fr Cyril and mikecarper all contributed code or translations, alongside everyone who filed a report with enough detail to find the cause.
