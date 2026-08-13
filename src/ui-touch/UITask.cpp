@@ -23084,11 +23084,11 @@ static void homeControlPanelCb(lv_event_t* e) {   // "Control panel" launcher ->
 // colour to use.
 static uint32_t homeStoreChipText(char* out, size_t cap) {
   if (s_msgs_write_fails) {                       // saves are failing right now
-    snprintf(out, cap, "Save FAIL x%u", (unsigned)s_msgs_write_fails);
+    snprintf(out, cap, TR("Save FAIL x%u"), (unsigned)s_msgs_write_fails);
     return 0xE05252;                              // red — history is NOT landing
   }
   if (!s_seg_store_ready) {                       // old-format file not converted yet
-    snprintf(out, cap, "Save migrating");
+    snprintf(out, cap, "%s", TR("Save migrating"));
     return 0xF5A623;                              // amber
   }
   // Healthy: WHEN the store last saved. A clock time answers "is my history
@@ -23098,7 +23098,7 @@ static uint32_t homeStoreChipText(char* out, size_t cap) {
   // stopped saving yesterday can't read as fresh.
   char when[16];
   chatSaveStamp(when, sizeof when, s_msgs_write_ok_epoch);
-  snprintf(out, cap, "Saved %s", when);
+  snprintf(out, cap, TR("Saved %s"), when);
   return COLOR_SUB;
 }
 
