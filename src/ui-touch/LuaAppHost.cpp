@@ -842,6 +842,38 @@ void sendInput(const char* type, const char* dir, int x, int y) {
   serviceDeferredClose();
 }
 
+// Key delivery reuses on_input rather than adding an on_key callback: an app
+// already branches on ev.type, and one entry point keeps a Lua app's input model
+// to a single place. type="key", with `key` as a one-character string for
+// printable input and a name ("up", "enter", ...) for the rest, so an app can
+// write ev.key == "w" without knowing scancodes.
+void sendKey(int key) {
+  if (!s_h || !s_h->L) return;
+  if (!pushCallback(s_h, "on_input")) return;
+  lua_State* L = s_h->L;
+  lua_createtable(L, 0, 2);
+  lua_pushstring(L, "key"); lua_setfield(L, -2, "type");
+  char buf[8];
+  const char* named = nullptr;
+  switch (key) {
+    case LV_KEY_UP:    named = "up";    break;
+    case LV_KEY_DOWN:  named = "down";  break;
+    case LV_KEY_LEFT:  named = "left";  break;
+    case LV_KEY_RIGHT: named = "right"; break;
+    case LV_KEY_ENTER: named = "enter"; break;
+    case LV_KEY_ESC:   named = "esc";   break;
+    case '\b': case 127: named = "backspace"; break;
+    default: break;
+  }
+  if (named) { lua_pushstring(L, named); }
+  else if (key >= 32 && key < 127) { buf[0] = (char)key; buf[1] = '\0'; lua_pushstring(L, buf); }
+  else { lua_pushnil(L); }
+  lua_setfield(L, -2, "key");
+  lua_pushinteger(L, key); lua_setfield(L, -2, "code");   // raw, for anything unmapped
+  guardedCall(s_h, 1);
+  serviceDeferredClose();
+}
+
 void gestureCb(lv_event_t* e) {
   lv_dir_t d = lv_indev_get_gesture_dir(lv_indev_get_act());
   const char* dir = (d == LV_DIR_TOP) ? "up" : (d == LV_DIR_BOTTOM) ? "down"
@@ -1096,6 +1128,14 @@ void hostTeardown();   // fwd
 // 3) lifecycle
 // ---------------------------------------------------------------------------
 bool luaAppIsOpen() { return s_h != nullptr; }
+
+// Returns true when the running app took the key. False lets the firmware keep
+// its own handling, so an app that does not implement on_input changes nothing.
+bool luaAppKey(int key) {
+  if (!s_h || !s_h->L || key <= 0) return false;
+  sendKey(key);
+  return true;
+}
 
 void luaAppSteer(int dx, int dy) {
   if (!s_h) return;

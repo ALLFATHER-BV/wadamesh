@@ -36547,6 +36547,18 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
 // settings mirror textarea. No field open -> the key is ignored.
 static void handleHwKey(int key) {
   if (!g_lv.keyboard) return;
+  // A running Lua app gets the keyboard, which is what makes Lua apps usable at
+  // all on the boards that have one (T-Deck, Pager, M9, Attaky) -- until now an
+  // app only ever saw touch and trackball direction.
+  //
+  // The dismiss key is deliberately NOT forwarded: an app must never be able to
+  // trap the user by swallowing its own exit, whether by bug or by design.
+  if (luaAppIsOpen() && !isDismissKey(key)) {
+    if (luaAppKey(key)) {
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
+    }
+  }
 if (g_lv.task && g_lv.task->isManualLock()) {
 #if defined(HAS_M9_KEYBOARD)
     // M9 has no trackball to hold — the keyboard controller's own long-press

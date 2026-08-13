@@ -20,8 +20,10 @@ bool luaAppLaunchFile(const char* id, const char* title, const char* embedded, s
 bool luaAppIsOpen();
 void luaAppDismiss();                 // THE close path (AppPage back hook)
 void luaAppSteer(int dx, int dy);     // trackball/keypad direction -> on_input
+bool luaAppKey(int key);              // hardware key -> on_input; true = app consumed it
 #else
 inline bool luaAppIsOpen() { return false; }
 inline void luaAppDismiss() {}
 inline void luaAppSteer(int, int) {}
+inline bool luaAppKey(int) { return false; }
 #endif
