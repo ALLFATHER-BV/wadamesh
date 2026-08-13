@@ -1,0 +1,14 @@
+# beta_65 — test build. Stable stays beta_63.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Fixes for what beta_64 testers hit -------------------------------------------------
+Updating no longer leaves the device stuck on "LoRa radio not detected". On boards where the radio sits behind a peripheral power switch, an update ends in a software reset that drops that power and then checks for the radio before it has finished coming back up - so the first boot after an update could dead-end on the error screen until you power-cycled by hand. The firmware now does that power-cycle itself and tries again, so the update just works.
+Leaving an app by the back arrow no longer also pulls the status bar dropdown open. One tap did two things: it went back, and then the same tap fell through to the dropdown toggle.
+
+# --- Position sharing, without broadcasting it ----------------------------------------------
+You can now share your position with specific contacts instead of putting it in your advert. An advert is broadcast in the clear to every node in range; this is sent only when a contact you chose asks for it, and it is encrypted to them. Settings > Mesh > "Share my location when asked" - Never, Chosen contacts only, or Anyone who asks - and you pick the contacts from each contact's own menu, where you can also take it back later. Requested by janmashat.
+
+# --- For people writing apps -------------------------------------------------------------
+The Lua SDK documentation at wadamesh.com/sdk.html was wrong about the most basic thing and is now correct. It said to define your callbacks as globals named on_start and on_stop; the firmware has never called those. An app is a table you build and return, with on_open, on_tick, on_input, on_message and on_close. Following the old page gave you an app where nothing ran and nothing was reported - a blank screen. If you tried to write an app and gave up, that is why, and it is worth another go.
+The page also now documents everything added in beta_64: the clock, the buzzer, battery, GPS, per-app file storage, sending mesh messages, receiving them, and the permission model behind the last two.
+The app and language Store is served from a place nothing was publishing to, so translations sat at an older version than the ones in the project and a published app never appeared at all. Fixed, with the Hungarian, German and Dutch updates now live along with the SDK Test app.
