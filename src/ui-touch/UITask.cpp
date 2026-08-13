@@ -4868,6 +4868,7 @@ enum {
   CAT_BACKUPS,       // list/delete .json backups + factory reset
   CAT_LANGUAGE,      // UI language picker
   CAT_MQTT,          // MQTT bridge — broker host/port/credentials
+  CAT_APPPERMS,      // what each Lua app is allowed to do, and taking it back
   CAT_ABOUT,         // firmware / update / system info / diagnostics
   CAT_COUNT
 };
@@ -4902,6 +4903,7 @@ static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "Backups",       LV_SYMBOL_SAVE },
   { "Language",      LV_SYMBOL_BARS },
   { "MQTT bridge",   LV_SYMBOL_UPLOAD },
+  { "App permissions", LV_SYMBOL_WARNING },
   { "About",         LV_SYMBOL_LIST },
 };
 // Which slice of the (formerly monolithic) Device settings a builder emits. One
@@ -4917,6 +4919,9 @@ static lv_obj_t* s_settings_cat_card[CAT_COUNT] = { nullptr };   // one card per
 // functions (navMaybeRebuild needs them to collect the settings detail sheet for trackball nav).
 static void      closeSettingsCategory();        // fwd: tab-change + key-dismiss close the sheet
 static void      openSettingsCategory(int cat);  // fwd: the Contacts overflow links to CAT_AUTOADD
+#if CAP_LUA_SDK_EXT
+static void      buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw);   // fwd: defined with the perm helpers
+#endif
 
 // ---- Firmware update check (red badge on the Settings gear + About-tab line) ----
 // Compares our embedded release tag against the latest pre-alpha_N published to
@@ -30110,6 +30115,12 @@ static void settingsCatBuild(int cat) {
     case CAT_BACKUPS:      buildBackupsSettings(); break;
     case CAT_LANGUAGE:     buildLanguageSettings(); break;
     case CAT_MQTT:         buildMqttSettings(); break;
+    case CAT_APPPERMS:
+#if CAP_LUA_SDK_EXT
+      s_settings_inline_parent = nullptr;
+      buildAppPermsSettings(page, lblw);
+#endif
+      break;
     case CAT_ABOUT: {
       s_settings_inline_parent = nullptr;
       s_update_about_lbl = lv_label_create(page);   // update/firmware status (top)
@@ -30449,6 +30460,9 @@ static void makeSettings(lv_obj_t* tab) {
 #endif
 #if !defined(HAS_EXPANSION_KIT)
     if (c == CAT_SENSORS) continue;   // Sensors page only exists with the V4 Expansion Kit
+#if !CAP_LUA_SDK_EXT
+    if (c == CAT_APPPERMS) continue;  // nothing on this board can request a permission
+#endif
 #endif
     lv_obj_t* card = lv_btn_create(land);
     s_settings_cat_card[c] = card;      // remembered so hiding can apply live
@@ -45223,6 +45237,95 @@ bool luaHostGps(double* lat, double* lon, int* sats) {
   if (lon)  *lon  = g_lv.task->getNodeLon();
   if (sats) *sats = g_lv.task->getGpsSats();
   return true;
+}
+#endif  // CAP_LUA_SDK_EXT
+
+#if CAP_LUA_SDK_EXT
+// ---- Settings -> App permissions -------------------------------------------
+// You could GRANT a permission but not review or take one back, which is only
+// acceptable on a bench. "Which apps can transmit as me?" has to be answerable,
+// and answerable without knowing a file path.
+//
+// Lists every app that has been ASKED (an entry in perms.kv) plus every INSTALLED
+// app, so an app that has not asked yet is visible with its answer pre-set rather
+// than appearing out of nowhere the first time it wants the radio.
+static void appPermsToggleCb(lv_event_t* e) {
+  const char* id = (const char*)lv_event_get_user_data(e);
+  if (!id) return;
+  lv_obj_t* sw = lv_event_get_target(e);
+  luaPermWrite(id, lv_obj_has_state(sw, LV_STATE_CHECKED));
+}
+
+static void buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw) {
+  int y = 6;
+  lv_obj_t* hint = lv_label_create(page);
+  lv_label_set_text(hint, TR("Apps that may send messages on the mesh. Anything they send goes "
+                             "out under your node name and cannot be told apart from a message "
+                             "you typed. Turn one off to take the permission back."));
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(hint, lblw);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(hint, 6, y);
+  lv_obj_update_layout(hint);
+  y += lv_obj_get_height(hint) + 10;
+
+  // Collect ids: everything installed, plus anything already in perms.kv (an app
+  // can be removed while its decision lives on -- that decision must stay visible
+  // and revocable, or a reinstall silently inherits an old yes).
+  static char ids[12][24];
+  int n = 0;
+  for (int i = 0; i < s_lua_inst_n && n < 12; ++i) {
+    snprintf(ids[n], sizeof ids[n], "%s", s_lua_inst[i].id);
+    n++;
+  }
+  if (s_ui_data_fs) {
+    char path[80]; luaPermPath(path, sizeof path);
+    File f = s_ui_data_fs->open(path, "r");
+    if (f) {
+      char line[64];
+      while (f.available() && n < 12) {
+        const size_t got = f.readBytesUntil('\n', line, sizeof(line) - 1);
+        line[got] = '\0';
+        char* eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        bool dup = false;
+        for (int k = 0; k < n; ++k) if (strcmp(ids[k], line) == 0) { dup = true; break; }
+        if (!dup) { snprintf(ids[n], sizeof ids[n], "%s", line); n++; }
+      }
+      f.close();
+    }
+  }
+
+  if (n == 0) {
+    lv_obj_t* none = lv_label_create(page);
+    lv_label_set_text(none, TR("No apps installed."));
+    lv_obj_set_style_text_font(none, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(none, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(none, 6, y);
+    return;
+  }
+
+  for (int i = 0; i < n; ++i) {
+    const int perm = luaHostSendPerm(ids[i]);
+    char row[40];
+    snprintf(row, sizeof row, "%s", ids[i]);
+    const int h = settingsRowLabel(page, y, 6, row, COLOR_TEXT, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(page);
+    lv_obj_set_size(sw, 44, 24);
+    lv_obj_set_pos(sw, lblw - 44 + 6, y);
+    if (perm == 1) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, appPermsToggleCb, LV_EVENT_VALUE_CHANGED, (void*)ids[i]);
+    // "not asked" reads differently from "refused": one is a decision, one is not.
+    lv_obj_t* st = lv_label_create(page);
+    lv_label_set_text(st, perm == 1 ? TR("send: allowed")
+                        : perm == -1 ? TR("send: refused") : TR("send: not asked yet"));
+    lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(st, lv_color_hex(perm == 1 ? 0x53C06B : COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(st, 6, y + (h > 0 ? h : 18));
+    y += LV_MAX(40, (h > 0 ? h : 18) + 22);
+  }
 }
 #endif  // CAP_LUA_SDK_EXT
 
