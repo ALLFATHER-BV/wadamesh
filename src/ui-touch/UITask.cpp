@@ -3719,10 +3719,9 @@ static void navRefocusFirstVisible(lv_obj_t* p) {
 static void navMenubarKeysSync() {
 #if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
   // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys. The
-  // pager has no such optional nav-mode toggle to hint at either (s_kbd_nav is
-  // T-Deck's trackball-nav-vs-touch concept, CAP_TRACKBALL-only, so it isn't
-  // even declared here) — no hints. A plain `return` isn't enough since the
-  // body below still needs s_kbd_nav to exist at compile time; exclude it.
+  // pager prints each fixed mnemonic beside its icon directly in the tab label,
+  // so neither target needs this optional overlay. A plain `return` isn't enough
+  // since the body below still needs s_kbd_nav to exist at compile time; exclude it.
 #else
   if (!g_lv.tabview) return;
   lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
@@ -23085,11 +23084,11 @@ static void homeControlPanelCb(lv_event_t* e) {   // "Control panel" launcher ->
 // colour to use.
 static uint32_t homeStoreChipText(char* out, size_t cap) {
   if (s_msgs_write_fails) {                       // saves are failing right now
-    snprintf(out, cap, LV_SYMBOL_SAVE " FAIL x%u", (unsigned)s_msgs_write_fails);
+    snprintf(out, cap, "Save FAIL x%u", (unsigned)s_msgs_write_fails);
     return 0xE05252;                              // red — history is NOT landing
   }
   if (!s_seg_store_ready) {                       // old-format file not converted yet
-    snprintf(out, cap, LV_SYMBOL_SAVE " migrating");
+    snprintf(out, cap, "Save migrating");
     return 0xF5A623;                              // amber
   }
   // Healthy: WHEN the store last saved. A clock time answers "is my history
@@ -23099,7 +23098,7 @@ static uint32_t homeStoreChipText(char* out, size_t cap) {
   // stopped saving yesterday can't read as fresh.
   char when[16];
   chatSaveStamp(when, sizeof when, s_msgs_write_ok_epoch);
-  snprintf(out, cap, LV_SYMBOL_SAVE " %s", when);
+  snprintf(out, cap, "Saved %s", when);
   return COLOR_SUB;
 }
 
@@ -23110,9 +23109,20 @@ static void makeHome(lv_obj_t* tab) {
   // Contacts / Settings.
   styleSurface(tab, COLOR_BG);
   lv_obj_set_style_pad_all(tab, 10, LV_PART_MAIN);
-  lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
-  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+
+  const bool home_land = chatLandscape();
+  if (home_land) {
+    lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
+    lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+  } else {
+    // The live Expansion-Kit summary can add enough lines to push the charts
+    // and launcher row below the short portrait viewport. Let the page scroll
+    // instead of clipping those controls at the tab bar.
+    lv_obj_set_scroll_dir(tab, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+  }
 
   // Content width = screen width minus the 10-px tab padding on each side.
   // Tracks rotation (220 portrait / 300 landscape).
@@ -23120,7 +23130,6 @@ static void makeHome(lv_obj_t* tab) {
   // Landscape is short and wide: park the Send-advert button in the empty
   // right-hand strip (top-right) instead of a full-width bottom row, so the
   // TX/RX chart can use the freed vertical space and be ~2x taller.
-  const bool home_land = chatLandscape();
   // Right-hand button column. Scales with the UI size so bigger labels ("Terminal") don't clip;
   // RSTRIP is the strip the left-hand content (status text + chart + info) must stay clear of.
 #if defined(TLORA_PAGER)
@@ -23217,10 +23226,9 @@ static void makeHome(lv_obj_t* tab) {
   g_lv.home_env_chart = s_home_env_chart;
   lv_obj_set_size(s_home_env_chart, home_land ? (cw - RSTRIP) : cw, SC(34));
   lv_obj_align(s_home_env_chart, LV_ALIGN_TOP_LEFT, 0, SC(92));
-  lv_obj_clear_flag(s_home_env_chart, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(s_home_env_chart, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_ext_click_area(s_home_env_chart, 6);
-  lv_obj_add_event_cb(s_home_env_chart, openLocalSensorsPageCb, LV_EVENT_CLICKED, nullptr);
+  // Keep the graph passive so a portrait drag beginning here scrolls Home.
+  // The summary text directly above remains the explicit Sensors link.
+  lv_obj_clear_flag(s_home_env_chart, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
   lv_chart_set_type(s_home_env_chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(s_home_env_chart, kHomeEnvHistoryPoints);
   lv_chart_set_update_mode(s_home_env_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -23229,10 +23237,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_chart_set_div_line_count(s_home_env_chart, 0, 0);
   lv_obj_set_style_bg_color(s_home_env_chart, lv_color_hex(COLOR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_home_env_chart, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_home_env_chart, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_border_opa(s_home_env_chart, LV_OPA_20, LV_PART_MAIN);
-  lv_obj_set_style_border_width(s_home_env_chart, 1, LV_PART_MAIN);
-  lv_obj_set_style_radius(s_home_env_chart, 6, LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_home_env_chart, 0, LV_PART_MAIN);
   lv_obj_set_style_size(s_home_env_chart, 0, LV_PART_INDICATOR);
   s_home_env_batt = lv_chart_add_series(s_home_env_chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);
   s_home_env_temp = lv_chart_add_series(s_home_env_chart, lv_color_hex(0xF5A623), LV_CHART_AXIS_SECONDARY_Y);
@@ -28695,7 +28700,7 @@ static void mapCanvasEventCb(lv_event_t* e) {
 }
 
 #if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
-// Keyboard pan (Ctrl+Arrow on Tanmatsu / WASD on the pager, both on the Map
+// Keyboard pan (Ctrl+Arrow on Tanmatsu / WAXD on the pager, both on the Map
 // tab). Mirrors the drag-release math in mapCanvasEventCb: synthesize a pixel
 // delta of ~1/4 the visible span in the arrow direction, convert it through
 // the same world-px ↔ lat/lon helpers (so the lon step automatically scales
@@ -29013,8 +29018,11 @@ static void applyMapChrome(bool on) {
     applyBattColor();            // ...with the power-save amber overlaid if enabled
     if (g_statusbar.batt_pct)   lv_obj_set_style_text_color(g_statusbar.batt_pct, fg_sub, LV_PART_MAIN);
     if (g_statusbar.clock)      lv_obj_set_style_text_color(g_statusbar.clock, fg_sub, LV_PART_MAIN);
-    if (g_statusbar.conn_icon)   lv_obj_set_style_text_color(g_statusbar.conn_icon,  fg_sub, LV_PART_MAIN);
-    if (g_statusbar.ble_icon)    lv_obj_set_style_text_color(g_statusbar.ble_icon,   fg_sub, LV_PART_MAIN);
+    // The radio glyphs keep their accent tint off-map (matching the signal bars); on-map they
+    // join the rest of the chrome in black/off-white, which the light OSM tiles need for legibility.
+    const lv_color_t fg_radio = on ? fg_sub : lv_color_hex(COLOR_ACCENT);
+    if (g_statusbar.conn_icon)   lv_obj_set_style_text_color(g_statusbar.conn_icon,  fg_radio, LV_PART_MAIN);
+    if (g_statusbar.ble_icon)    lv_obj_set_style_text_color(g_statusbar.ble_icon,   fg_radio, LV_PART_MAIN);
 #if defined(HAS_TDECK_GT911)
     if (g_statusbar.sleep_icon)  lv_obj_set_style_text_color(g_statusbar.sleep_icon, fg_sub, LV_PART_MAIN);
 #endif
@@ -34571,9 +34579,8 @@ static void updateTrackball(unsigned long now) {
 #if defined(HAS_PAGER_ENCODER) || defined(HAS_PAGER_KEYBOARD)
 // "Back", extending the T-Deck/Tanmatsu back-key ladder: a popup/sheet on top
 // closes first, then a full-screen AppPage (Store, Lua apps, tools), then an
-// open chat/channel detail, then Home (the pager has no dedicated Home hotkey
-// and the bottom tab bar isn't a nav-group target, so a bare main tab otherwise
-// had no way back to Home), else plain ESC. Shared by the rotary encoder's
+// open chat/channel detail, then Home (the H mnemonic is deliberately inactive
+// inside those nested views), else plain ESC. Shared by the rotary encoder's
 // long-press (updatePagerEncoder) and the keyboard's Backspace-hold alternative
 // (updatePagerBackspaceHold) so both agree exactly.
 static void pagerNavGoBack() {
@@ -35051,13 +35058,10 @@ static void updatePagerEncoder(unsigned long now) {
     // Alt (the bottom-left orange key, otherwise a hold-only modifier for the
     // keyboard's symbol layer — free to reuse here since it types nothing on
     // its own) + turn jumps directly between the 5 main tabs (Chats/Contacts/
-    // Home/Map/Settings). The bottom tab bar is deliberately not a nav-group
-    // focus target (same as T-Deck/Tanmatsu), and unlike those boards the
-    // pager has no separate dedicated hotkeys to reach it, so plain turning
-    // could otherwise only ever move focus WITHIN the current screen —
-    // reported: the tab bar icons were unreachable from Home. Scoped to the
-    // main-tab level (navOnMainPage()) — reported bug: this used to fire even
-    // inside a settings sheet/chat, silently abandoning it to jump tabs.
+    // Home/Map/Settings). This remains a sequential alternative to the direct
+    // M/C/H/A/S mnemonics. Scoped to the main-tab level (navOnMainPage()) —
+    // reported bug: this used to fire even inside a settings sheet/chat,
+    // silently abandoning it to jump tabs.
     for (; delta > 0; delta--) navSwitchTab(+1);
     for (; delta < 0; delta++) navSwitchTab(-1);
   } else if (pagerKeyboardAltHeld()) {
@@ -35178,14 +35182,28 @@ static bool isDismissKey(int key) {
 // drawerPopupOpen() / anyPopupOpen() are defined just above the
 // HAS_TDECK_KEYBOARD block so the (ungated) gesture handlers can call them too.
 
-// Bottom-tab a key jumps to (no popup, no field focused), or -1. Space/H Home,
-// M Chats, C Contacts, L Map, S Settings.
+// Bottom-tab a key jumps to (no popup, no field focused), or -1.
 static int tabForKey(int key) {
+#if defined(TLORA_PAGER)
+  // Pager mnemonic keys are only a bottom-bar shortcut at the top level. In
+  // an open chat, settings detail, app page, or popup they remain inert so a
+  // letter cannot unexpectedly abandon the inner screen.
+  if (!navOnMainPage()) return -1;
+  switch (key) {
+    case 'm': case 'M': return CHAT_INBOX_TAB_INDEX;
+    case 'c': case 'C': return CONTACTS_TAB_INDEX;
+    case 'h': case 'H': return HOME_TAB_INDEX;
+    case 'a': case 'A': return MAP_TAB_INDEX;
+    case 's': case 'S': return SETTINGS_TAB_INDEX;
+    default: return -1;
+  }
+#else
   // Old fixed letter tab-jumps (h/m/c/l/s) removed — tab jumps are now the
   // programmable keyboard-nav hotkeys (navTabForHotkey, default E/R/T/U/I), active
   // only while keyboard navigation is on.
   (void)key;
   return -1;
+#endif
 }
 #endif  // HAS_TDECK_KEYBOARD || HAS_PAGER_KEYBOARD || HAS_M9_KEYBOARD (keyboard helpers; the lock screen below is top-level)
 
@@ -36637,6 +36655,16 @@ if (g_lv.task && g_lv.task->isManualLock()) {
         return;
       }
     }
+    // Bottom-bar mnemonic shortcuts: active only on a bare main tab (the
+    // navOnMainPage gate lives in tabForKey). Do this before Map panning so S
+    // can leave Map for Settings. If the requested tab is already active, let
+    // the key continue: A on Map remains the west-pan control.
+    const int pager_tab = tabForKey(key);
+    if (pager_tab >= 0 && pager_tab != getActiveTab()) {
+      goToTab(pager_tab);
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
+    }
     // Slider nudge: this board has no touch/trackball to drag a slider's
     // knob, so a focused lv_slider (Control Center brightness, a Settings
     // slider, the Map zoom bar, …) is otherwise stuck at whatever value it
@@ -36644,7 +36672,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // (proportional ~20-presses-end-to-end step, live update + persist) —
     // the same adjustment the T-Deck trackball's LEFT/RIGHT already does —
     // rather than a fixed step that's wrong for every slider's range. (Was
-    // D/F; moved to Q/E to free up WASD for map panning below.)
+    // D/F; moved to Q/E to free up the map-panning keys below.)
     if (key == 'q' || key == 'Q' || key == 'e' || key == 'E') {
       lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
       if (focused && lv_obj_check_type(focused, &lv_slider_class)) {
@@ -36652,15 +36680,16 @@ if (g_lv.task && g_lv.task->isManualLock()) {
         return;
       }
     }
-    // Map pan: WASD moves the map around on the Map tab (no touch/trackball
+    // Map pan: W/A/X/D moves the map around on the Map tab (no touch/trackball
     // to drag it), reusing the same mapNudge() step/re-render Tanmatsu's
-    // Ctrl+Arrow already uses. W=north A=west S=south D=east.
+    // Ctrl+Arrow already uses. X replaces S because S is now the Settings
+    // mnemonic. W=north A=west X=south D=east.
     if ((key == 'w' || key == 'W' || key == 'a' || key == 'A' ||
-         key == 's' || key == 'S' || key == 'd' || key == 'D') &&
+         key == 'x' || key == 'X' || key == 'd' || key == 'D') &&
         getActiveTab() == MAP_TAB_INDEX) {
       switch (key) {
         case 'w': case 'W': mapNudge(0); break;
-        case 's': case 'S': mapNudge(1); break;
+        case 'x': case 'X': mapNudge(1); break;
         case 'a': case 'A': mapNudge(2); break;
         case 'd': case 'D': mapNudge(3); break;
       }
@@ -40479,8 +40508,14 @@ static void buildGlobalStatusBar() {
     const lv_coord_t BH = 20, BW = 26, GAP = 3, BX0 = 6;
     const lv_coord_t BY = (STATUSBAR_H - BH) / 2;
 #else
-    const lv_coord_t BH = (lv_coord_t)((STATUSBAR_H * 2 - 4) * 7 / 10);
-    const lv_coord_t BW = 34, GAP = 4, BX0 = 6, BY = (lv_coord_t)(STATUSBAR_H * 2 - BH) / 2;
+  const bool portrait = lv_disp_get_hor_res(nullptr) < lv_disp_get_ver_res(nullptr);
+  const lv_coord_t BH = portrait ? 20 : (lv_coord_t)((STATUSBAR_H * 2 - 4) * 7 / 10);
+  const lv_coord_t BW = portrait ? 30 : 34;
+  const lv_coord_t GAP = 4, BX0 = 6;
+  // Portrait's clock occupies row 1. Keep the Mail actions wholly in row 2;
+  // centering them across both rows put their upper half through the time.
+  const lv_coord_t BY = portrait ? STATUSBAR_H + (STATUSBAR_H - BH) / 2
+                   : (lv_coord_t)(STATUSBAR_H * 2 - BH) / 2;
 #endif
     auto mk = [&](int slot_from_left) -> lv_obj_t* {
       lv_obj_t* b = lv_btn_create(g_statusbar.root);
@@ -40625,10 +40660,12 @@ static void buildGlobalStatusBar() {
 #endif
                0);
 
-  // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars).
+  // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars). Painted in
+  // the accent, matching the lit signal bars beside it — the glyph is only ever shown
+  // while the STA is connected, so accent always reads as "this radio is up".
   g_statusbar.conn_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.conn_icon, "");
-  lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.conn_icon, &g_font_12, LV_PART_MAIN);
   lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID,
 #if defined(TLORA_PAGER)
@@ -40641,7 +40678,7 @@ static void buildGlobalStatusBar() {
   // Bluetooth glyph (left of the SD LED). Unified offset across all boards (see clock above).
   g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.ble_icon, "");
-  lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
   // Narrow bars (V4 portrait) have no DND slot beside BLE and their clock sits at -126, so BLE
   // stays at -111 there; wide bars keep -SC(127) (tight to the DND moon at -144).
@@ -41514,14 +41551,13 @@ static void relayoutHomeCharts() {
   if (!g_lv.home_env || !s_home_env_chart || !s_home_chart_legend) return;
 
   const bool home_land = lv_disp_get_hor_res(nullptr) > lv_disp_get_ver_res(nullptr);
-  const int cw = tabContentW();
+  // makeHome() gives the tab 10 px of padding on each side. Stay inside that
+  // content box; using the full screen width made the chart's top/right frame
+  // look like a stray L drawn across the portrait screen.
+  const int cw = tabContentW() - 20;
   const int BTNW = SC(100);
   const int RSTRIP = BTNW + 10;
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2) || defined(ATTAKY_MESH_SERIES)
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
-#else
-  const int chart_w = cw;
-#endif
 
   // The env summary line is hard-placed at SC(58) in the tree, which collides with
   // the (up to two-line, WRAP) stats line on the narrow V4 portrait — the stats line
@@ -41561,8 +41597,15 @@ static void relayoutHomeCharts() {
   }
 
   if (s_home_adv_btn && !home_land) {
-    lv_obj_set_pos(s_home_adv_btn, 0, legend_y + 16 + chart_h + 8);
-    lv_obj_set_width(s_home_adv_btn, cw);
+    const int button_y = legend_y + 16 + chart_h + 8;
+    const int button_gap = 8;
+    const int button_w = (cw - button_gap) / 2;
+    lv_obj_set_pos(s_home_adv_btn, 0, button_y);
+    lv_obj_set_size(s_home_adv_btn, button_w, 36);
+    if (g_lv.home_apps && lv_obj_is_valid(g_lv.home_apps)) {
+      lv_obj_set_pos(g_lv.home_apps, button_w + button_gap, button_y);
+      lv_obj_set_size(g_lv.home_apps, button_w, 36);
+    }
   }
 }
 #endif  // HAS_EXPANSION_KIT
@@ -43388,14 +43431,20 @@ static void buildUiTree() {
   lv_obj_add_event_cb(tab_btns, navMenubarSizeCb, LV_EVENT_SIZE_CHANGED, nullptr);  // keep the keyboard-nav key hints positioned
 #endif
 
-  // Tab labels: icons-only (house, envelope, list, GPS pin, gear) — saves
-  // space and lets all five tabs sit comfortably in the 240px wide bar
-  // (240/5 = 48 px per icon).
+  // Tab labels: icons-only on touch targets; the 480px-wide Pager prefixes each
+  // icon with its physical-keyboard mnemonic so the shortcuts are discoverable.
   // Add order == index order: Chats(0), Contacts(1), Home(2, middle), Map(3), Settings(4).
+#if defined(TLORA_PAGER)
+  lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE " M");
+  lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON " C");
+  lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME " H");
+  lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS " A");
+#else
   lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE);
   lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON);   // person icon (FA user)
   lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME);
   lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS);
+#endif
 #if defined(HAS_EXPANSION_KIT)
   // Sensors tab is conditional: only add it (and shift Settings to index 5) when
   // an env sensor is present and the user pref is on. Otherwise Settings lands
@@ -43413,7 +43462,11 @@ static void buildUiTree() {
     TAB_LAST           = 4;
   }
 #endif
+#if defined(TLORA_PAGER)
+  lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS " S");
+#else
   lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS);
+#endif
   // Slightly larger font for icons so they're easy to tap.
 #if CAP_UI_SIZE
   lv_obj_set_style_text_font(tab_btns, &g_font_tab, LV_PART_MAIN);
@@ -47740,6 +47793,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
     // (Audio: the I2S speaker amp is installed on demand per tone — see
     // tdeckPlayNotify — so nothing to set up at boot.)
+
+    // Load the saved theme accent BEFORE the bar is built: the status bar is the one
+    // widget tree created here in begin() rather than in buildUiTree (which loads the
+    // accent itself), so without this its accent-tinted glyphs — the Wi-Fi/Bluetooth
+    // icons — would freeze the compile-time default instead of the user's colour.
+    // Idempotent: buildUiTree's own call just re-sets the same globals.
+    applyAccent(touchPrefsGetAccentColor());
 
     // Build the always-on top status bar AFTER the display driver is
     // registered — lv_layer_sys() needs an active disp or it returns

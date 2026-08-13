@@ -21,6 +21,21 @@ Everything below only fires while you're **not** actively typing into a text
 field — if a field is focused and you're typing into it, letters type
 normally and these combos step out of the way.
 
+## Bottom menu shortcuts
+
+The five main screens show their keyboard shortcuts directly in the bottom
+bar:
+
+```text
+[mail] M    [contacts] C    [home] H    [map] A    [settings] S
+```
+
+Press **M**, **C**, **H**, **A**, or **S** to jump to that screen. These
+shortcuts only work while one of the five main screens is at its top level.
+They do nothing inside an open chat, settings detail, app page, or popup, so a
+letter cannot unexpectedly close the inner screen. They also remain inactive
+while editing a text field, where the keys type normally.
+
 ## Rotary encoder
 
 | Gesture | Action | Keyboard equivalent |
@@ -28,16 +43,16 @@ normally and these combos step out of the way.
 | Turn | Move focus to the next/previous item on screen | **Fn (Alt) tapped alone** moves forward one step (NEXT only — no keyboard way to go backward) |
 | Short click | Select / confirm the focused item | **Enter** |
 | Hold ~1 s, then release | **Back**: closes a popup → closes an open chat → goes Home → Esc (whichever applies first) | **Backspace held ~1 s** |
-| **Fn (Alt) + turn**, on a main tab | Jump directly between the 5 main tabs (Chats / Contacts / Home / Map / Settings) | none — encoder only |
+| **Fn (Alt) + turn**, on a main tab | Move between the 5 main tabs (Mail / Contacts / Home / Map / Settings) | **M / C / H / A / S** jumps directly |
 | **Fn (Alt) + turn**, inside a settings page or chat | Scroll the page up/down | none — encoder only |
 | Turn, with a dropdown open | Scroll through the dropdown's options | none — encoder only |
 | Turn, with the accent picker open | Cycle through the accent variants (see below) | none — encoder only (Fn+Space to enter is shared) |
 | Turn, with the @-mention list open | Cycle through matching contacts (see below) | none — encoder only |
 | Turn, at the oldest/newest **loaded** message in an open chat | Loads more history in that direction and keeps going — see [Chat screen](#chat-screen) | none — encoder only |
 
-The knob doubles as your only way to reach the bottom tab bar — since
-there's no touch to tap an icon, **Fn+turn** while on any main tab is the
-fastest way to switch sections.
+Since there's no touch to tap the bottom bar, use its visible **M / C / H / A /
+S** shortcuts to jump directly or **Fn+turn** to move through the tabs in
+order.
 
 ## Chat screen
 
@@ -193,8 +208,12 @@ While the **Map** tab is active:
 
 - **W** — pan north
 - **A** — pan west
-- **S** — pan south
+- **X** — pan south
 - **D** — pan east
+
+`X` replaces the usual `S` position because **S** is the visible Settings
+shortcut. Pressing **A** on another main screen opens Map; once Map is already
+active, **A** pans west.
 
 Each press shifts the view a quarter-screen and reloads tiles/markers as
 needed.
@@ -216,6 +235,7 @@ dimmable brightness curve.
 
 | Input | Action |
 |---|---|
+| M / C / H / A / S (top-level main screens only) | Open Mail / Contacts / Home / Map / Settings |
 | Turn encoder (or Fn tap = NEXT only) | Move focus |
 | Turn, at the loaded edge of a chat | Load more history, keep moving — only exits the list at the true oldest/newest message |
 | Click encoder (or Enter) | Select / confirm |
@@ -236,4 +256,4 @@ dimmable brightness curve.
 | Space (double-tap) | Switch keyboard language |
 | Space (hold 1s) | Lock screen |
 | Q / E (slider focused) | Decrease / increase |
-| W / A / S / D (Map tab) | Pan map north/west/south/east |
+| W / A / X / D (Map tab) | Pan map north/west/south/east |
