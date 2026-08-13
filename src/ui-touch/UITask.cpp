@@ -23084,11 +23084,11 @@ static void homeControlPanelCb(lv_event_t* e) {   // "Control panel" launcher ->
 // colour to use.
 static uint32_t homeStoreChipText(char* out, size_t cap) {
   if (s_msgs_write_fails) {                       // saves are failing right now
-    snprintf(out, cap, LV_SYMBOL_SAVE " FAIL x%u", (unsigned)s_msgs_write_fails);
+    snprintf(out, cap, "Save FAIL x%u", (unsigned)s_msgs_write_fails);
     return 0xE05252;                              // red — history is NOT landing
   }
   if (!s_seg_store_ready) {                       // old-format file not converted yet
-    snprintf(out, cap, LV_SYMBOL_SAVE " migrating");
+    snprintf(out, cap, "Save migrating");
     return 0xF5A623;                              // amber
   }
   // Healthy: WHEN the store last saved. A clock time answers "is my history
@@ -23098,7 +23098,7 @@ static uint32_t homeStoreChipText(char* out, size_t cap) {
   // stopped saving yesterday can't read as fresh.
   char when[16];
   chatSaveStamp(when, sizeof when, s_msgs_write_ok_epoch);
-  snprintf(out, cap, LV_SYMBOL_SAVE " %s", when);
+  snprintf(out, cap, "Saved %s", when);
   return COLOR_SUB;
 }
 
@@ -23109,9 +23109,20 @@ static void makeHome(lv_obj_t* tab) {
   // Contacts / Settings.
   styleSurface(tab, COLOR_BG);
   lv_obj_set_style_pad_all(tab, 10, LV_PART_MAIN);
-  lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
-  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+
+  const bool home_land = chatLandscape();
+  if (home_land) {
+    lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
+    lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+  } else {
+    // The live Expansion-Kit summary can add enough lines to push the charts
+    // and launcher row below the short portrait viewport. Let the page scroll
+    // instead of clipping those controls at the tab bar.
+    lv_obj_set_scroll_dir(tab, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+  }
 
   // Content width = screen width minus the 10-px tab padding on each side.
   // Tracks rotation (220 portrait / 300 landscape).
@@ -23119,7 +23130,6 @@ static void makeHome(lv_obj_t* tab) {
   // Landscape is short and wide: park the Send-advert button in the empty
   // right-hand strip (top-right) instead of a full-width bottom row, so the
   // TX/RX chart can use the freed vertical space and be ~2x taller.
-  const bool home_land = chatLandscape();
   // Right-hand button column. Scales with the UI size so bigger labels ("Terminal") don't clip;
   // RSTRIP is the strip the left-hand content (status text + chart + info) must stay clear of.
 #if defined(TLORA_PAGER)
@@ -23216,10 +23226,9 @@ static void makeHome(lv_obj_t* tab) {
   g_lv.home_env_chart = s_home_env_chart;
   lv_obj_set_size(s_home_env_chart, home_land ? (cw - RSTRIP) : cw, SC(34));
   lv_obj_align(s_home_env_chart, LV_ALIGN_TOP_LEFT, 0, SC(92));
-  lv_obj_clear_flag(s_home_env_chart, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(s_home_env_chart, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_ext_click_area(s_home_env_chart, 6);
-  lv_obj_add_event_cb(s_home_env_chart, openLocalSensorsPageCb, LV_EVENT_CLICKED, nullptr);
+  // Keep the graph passive so a portrait drag beginning here scrolls Home.
+  // The summary text directly above remains the explicit Sensors link.
+  lv_obj_clear_flag(s_home_env_chart, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
   lv_chart_set_type(s_home_env_chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(s_home_env_chart, kHomeEnvHistoryPoints);
   lv_chart_set_update_mode(s_home_env_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -23228,10 +23237,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_chart_set_div_line_count(s_home_env_chart, 0, 0);
   lv_obj_set_style_bg_color(s_home_env_chart, lv_color_hex(COLOR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_home_env_chart, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_home_env_chart, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_border_opa(s_home_env_chart, LV_OPA_20, LV_PART_MAIN);
-  lv_obj_set_style_border_width(s_home_env_chart, 1, LV_PART_MAIN);
-  lv_obj_set_style_radius(s_home_env_chart, 6, LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_home_env_chart, 0, LV_PART_MAIN);
   lv_obj_set_style_size(s_home_env_chart, 0, LV_PART_INDICATOR);
   s_home_env_batt = lv_chart_add_series(s_home_env_chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);
   s_home_env_temp = lv_chart_add_series(s_home_env_chart, lv_color_hex(0xF5A623), LV_CHART_AXIS_SECONDARY_Y);
@@ -40502,8 +40508,14 @@ static void buildGlobalStatusBar() {
     const lv_coord_t BH = 20, BW = 26, GAP = 3, BX0 = 6;
     const lv_coord_t BY = (STATUSBAR_H - BH) / 2;
 #else
-    const lv_coord_t BH = (lv_coord_t)((STATUSBAR_H * 2 - 4) * 7 / 10);
-    const lv_coord_t BW = 34, GAP = 4, BX0 = 6, BY = (lv_coord_t)(STATUSBAR_H * 2 - BH) / 2;
+  const bool portrait = lv_disp_get_hor_res(nullptr) < lv_disp_get_ver_res(nullptr);
+  const lv_coord_t BH = portrait ? 20 : (lv_coord_t)((STATUSBAR_H * 2 - 4) * 7 / 10);
+  const lv_coord_t BW = portrait ? 30 : 34;
+  const lv_coord_t GAP = 4, BX0 = 6;
+  // Portrait's clock occupies row 1. Keep the Mail actions wholly in row 2;
+  // centering them across both rows put their upper half through the time.
+  const lv_coord_t BY = portrait ? STATUSBAR_H + (STATUSBAR_H - BH) / 2
+                   : (lv_coord_t)(STATUSBAR_H * 2 - BH) / 2;
 #endif
     auto mk = [&](int slot_from_left) -> lv_obj_t* {
       lv_obj_t* b = lv_btn_create(g_statusbar.root);
@@ -41539,14 +41551,13 @@ static void relayoutHomeCharts() {
   if (!g_lv.home_env || !s_home_env_chart || !s_home_chart_legend) return;
 
   const bool home_land = lv_disp_get_hor_res(nullptr) > lv_disp_get_ver_res(nullptr);
-  const int cw = tabContentW();
+  // makeHome() gives the tab 10 px of padding on each side. Stay inside that
+  // content box; using the full screen width made the chart's top/right frame
+  // look like a stray L drawn across the portrait screen.
+  const int cw = tabContentW() - 20;
   const int BTNW = SC(100);
   const int RSTRIP = BTNW + 10;
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2) || defined(ATTAKY_MESH_SERIES)
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
-#else
-  const int chart_w = cw;
-#endif
 
   // The env summary line is hard-placed at SC(58) in the tree, which collides with
   // the (up to two-line, WRAP) stats line on the narrow V4 portrait — the stats line
@@ -41586,8 +41597,15 @@ static void relayoutHomeCharts() {
   }
 
   if (s_home_adv_btn && !home_land) {
-    lv_obj_set_pos(s_home_adv_btn, 0, legend_y + 16 + chart_h + 8);
-    lv_obj_set_width(s_home_adv_btn, cw);
+    const int button_y = legend_y + 16 + chart_h + 8;
+    const int button_gap = 8;
+    const int button_w = (cw - button_gap) / 2;
+    lv_obj_set_pos(s_home_adv_btn, 0, button_y);
+    lv_obj_set_size(s_home_adv_btn, button_w, 36);
+    if (g_lv.home_apps && lv_obj_is_valid(g_lv.home_apps)) {
+      lv_obj_set_pos(g_lv.home_apps, button_w + button_gap, button_y);
+      lv_obj_set_size(g_lv.home_apps, button_w, 36);
+    }
   }
 }
 #endif  // HAS_EXPANSION_KIT
