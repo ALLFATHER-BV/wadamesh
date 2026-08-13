@@ -1,22 +1,24 @@
 -- SDK self-test. Exercises everything added to the extended SDK so the results
 -- can be read off the screen instead of inferred from a build log.
--- Not for the store catalog: it is a bench tool.
+-- Published to the store as a developer/bench tool.
 local ui, sys, store, timer = wada.ui, wada.sys, wada.store, wada.timer
 local C = ui.colors
 
 local app = {}
 local rows, keyline, sendline = {}, nil, nil
+local W = 300   -- replaced with the real body width in on_open
 
 local function row(y, text, color)
   local l = ui.label(text, 6, y, 12, color or C.text)
-  l:width(300)
+  l:width(W - 12)
   rows[#rows + 1] = l
   return l
 end
 
 local function yn(v) return v and "yes" or "NO" end
 
-function app.start()
+function app.on_open(w, h)
+  W = w or 300
   ui.scroll(true)
   local y = 4
 
