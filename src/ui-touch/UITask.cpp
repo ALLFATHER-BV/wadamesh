@@ -11010,6 +11010,13 @@ static void sysInfoTextRest(char* buf, size_t cap) {
                     (unsigned)(sp_used / 1024u), (unsigned)(sp_tot / 1024u),
                     (unsigned)((uint64_t)sp_used * 100ull / sp_tot));
     }
+    DataStore* ds = the_mesh.getStore();
+    if (ds && ds->lastContactsSaveValid()) {
+      p += snprintf(buf + p, cap - p, "  last save: %s, %u rec, %u ms\n",
+                    ds->lastContactsSaveInPlace() ? "in-place" : "FULL rewrite",
+                    (unsigned)ds->lastContactsSaveRecs(),
+                    (unsigned)ds->lastContactsSaveMs());
+    }
     const uint32_t orph = the_mesh.getOrphanedBlobs();
     if (orph) p += snprintf(buf + p, cap - p, "  orphaned blobs: %lu\n", (unsigned long)orph);
     p += snprintf(buf + p, cap - p, "\n");

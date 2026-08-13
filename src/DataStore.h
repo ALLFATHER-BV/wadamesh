@@ -68,6 +68,16 @@ public:
   // Patch only the contact records that changed, in place. True = live file is up to
   // date; false = caller must do the full atomic rewrite. See the definition for why.
   bool saveContactsInPlace(DataStoreHost* host, bool (*filter)(const ContactInfo& c));
+  // Cost of the most recent contacts save, for the About diagnostics (#222). A full
+  // rewrite here is the expensive path that stalls both cores on a card-less board.
+  uint16_t lastContactsSaveRecs() const { return _cs_recs; }
+  uint16_t lastContactsSaveMs()   const { return _cs_ms; }
+  bool     lastContactsSaveInPlace() const { return _cs_in_place; }
+  bool     lastContactsSaveValid() const { return _cs_any; }
+private:
+  uint16_t _cs_recs = 0, _cs_ms = 0;
+  bool     _cs_in_place = false, _cs_any = false;
+public:
 #endif
   void loadChannels(DataStoreHost* host);
   void saveChannels(DataStoreHost* host);

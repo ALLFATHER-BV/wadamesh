@@ -546,9 +546,11 @@ bool DataStore::saveContactsInPlace(DataStoreHost* host, bool (*filter)(const Co
   uint8_t* rbuf = (uint8_t*)malloc(REC * CHUNK_RECS);
   if (!wbuf || !rbuf) { free(wbuf); free(rbuf); f.close(); return false; }
 
+  const uint32_t t0 = millis();
   bool ok = true;
   uint32_t base = 0;                         // record number of wbuf[0]
   size_t fill = 0;                           // records packed in wbuf
+  uint32_t written = 0;                      // records actually re-written (the cost)
 
   // Reconcile one slab: read what is there, and write back only the records that differ.
   // Records at or past the old end of file are appends (the table grew), written in
@@ -563,11 +565,26 @@ bool DataStore::saveContactsInPlace(DataStoreHost* host, bool (*filter)(const Co
       if ((size_t)f.read(rbuf, in_file) != in_file) return false;
       if (in_file == bytes && memcmp(rbuf, wbuf, bytes) == 0) return true;   // slab unchanged
     }
+    bool touched = false;
     for (size_t k = 0; k < count; k++) {
       const size_t ro = k * REC;
       if (ro + REC <= in_file && memcmp(rbuf + ro, wbuf + ro, REC) == 0) continue;
       if (!f.seek(off + ro)) return false;
       if (f.write(wbuf + ro, REC) != REC) return false;
+      written++;
+      touched = true;
+    }
+    // Read back what we just wrote and PROVE it landed. Positioned writes through
+    // fopen("r+") are a far less travelled path than the whole-file rewrite this
+    // replaces, it differs per filesystem (SPIFFS / FAT / LittleFS), and the data at
+    // stake is the operator's contact list — the one thing worth more than the freeze
+    // this fixes. If the read-back disagrees for any reason at all, bail and let the
+    // caller do the full atomic rewrite, which is the known-good path. Costs one extra
+    // read of only the slab that changed, and reads never trigger GC.
+    if (touched) {
+      if (!f.seek(off)) return false;
+      if ((size_t)f.read(rbuf, bytes) != bytes) return false;
+      if (memcmp(rbuf, wbuf, bytes) != 0) return false;
     }
     return true;
   };
@@ -604,7 +621,12 @@ bool DataStore::saveContactsInPlace(DataStoreHost* host, bool (*filter)(const Co
   free(rbuf);
   // base is the number of records reconciled; if it disagrees with the pre-count the
   // table changed underneath us — let the caller rewrite rather than trust the file.
-  return ok && base == nrec;
+  if (!(ok && base == nrec)) return false;
+  _cs_recs = (uint16_t)(written > 0xFFFF ? 0xFFFF : written);
+  _cs_ms = (uint16_t)((millis() - t0) > 0xFFFF ? 0xFFFF : (millis() - t0));
+  _cs_in_place = true;
+  _cs_any = true;
+  return true;
 }
 #endif
 
@@ -631,6 +653,7 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
   // by far, and the one that was freezing card-less V4s (#222). Falls through to the full
   // atomic rewrite below whenever that is not provably safe.
   if (saveContactsInPlace(host, filter)) return;
+  const uint32_t t0_full = millis();     // the expensive path — worth reporting when it runs
 #endif
 #if defined(ESP32)
   // Write to a TEMP file and swap it in only after it is FULLY written, so a partial
@@ -645,6 +668,7 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
 #endif
   File file = openWrite(_getContactsChannelsFS(), kContactsWriteTarget);
   bool wrote_ok = false;                     // true only if every record reached the file
+  uint32_t recs_out = 0;                     // records written by this (full) rewrite
   if (file) {
     bool ok = true;                          // cleared on any short write (partial file)
     uint32_t idx = 0;
@@ -680,6 +704,7 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
         memcpy(p, (uint8_t *)&c.gps_lat, 4);               p += 4;
         memcpy(p, (uint8_t *)&c.gps_lon, 4);               p += 4;
         fill += REC;
+        recs_out++;
         if (fill == REC * CHUNK_RECS) {
           ok = (file.write(buf, fill) == fill);
           fill = 0;
@@ -709,6 +734,7 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
 
         if (!success) { ok = false; break; } // write failed -> keep the live file
 
+        recs_out++;
         idx++;  // advance to next contact
       }
     }
@@ -731,6 +757,13 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
     } else {
       cfs->remove(tmp);           // discard the partial temp; the live contact list is untouched
     }
+  }
+  {
+    const uint32_t el = millis() - t0_full;
+    _cs_recs = (uint16_t)(recs_out > 0xFFFF ? 0xFFFF : recs_out);
+    _cs_ms = (uint16_t)(el > 0xFFFF ? 0xFFFF : el);
+    _cs_in_place = false;
+    _cs_any = true;
   }
 #endif
 }

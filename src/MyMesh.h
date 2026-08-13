@@ -146,6 +146,7 @@ public:
   uint32_t getBLEPin();
   bool     setBLEPin(uint32_t pin);   // user-chosen 6-digit pairing code (persisted; applies next boot)
   uint32_t getOrphanedBlobs() const { return _orphaned_blobs; }   // see PENDING_DEL_MAX (#222)
+  DataStore* getStore() { return _store; }                        // for the About diagnostics
 
   // Live device info accessors (used by the touch Settings → Device modal to
   // mirror the web client's "Device (live)" panel — public key prefix, channel
