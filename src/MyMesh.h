@@ -145,6 +145,7 @@ public:
   NodePrefs *getNodePrefs();
   uint32_t getBLEPin();
   bool     setBLEPin(uint32_t pin);   // user-chosen 6-digit pairing code (persisted; applies next boot)
+  uint32_t getOrphanedBlobs() const { return _orphaned_blobs; }   // see PENDING_DEL_MAX (#222)
 
   // Live device info accessors (used by the touch Settings → Device modal to
   // mirror the web client's "Device (live)" panel — public key prefix, channel
@@ -265,10 +266,15 @@ protected:
   void onContactOverwrite(const uint8_t* pub_key) override;
   // Blob deletes queued by onContactOverwrite and drained from loop() — never
   // from packet handling, see #222 (SPIFFS GC stalls both cores).
-  static const uint8_t PENDING_DEL_MAX = 8;
+  // 8 was too shallow: a drop here does not just skip work, it ORPHANS the blob file
+  // permanently (nothing else ever deletes it), and orphans accumulate on the one
+  // resource that drives GC cost — how full the volume is. 32 costs 1 KB of RAM and
+  // needs a 16-second eviction burst to overflow.
+  static const uint8_t PENDING_DEL_MAX = 32;
   uint8_t _pending_del[PENDING_DEL_MAX][PUB_KEY_SIZE];
   uint8_t _pending_del_n = 0;
   uint32_t _next_pending_del_at = 0;
+  uint16_t _orphaned_blobs = 0;   // queue overflows — each one leaks a blob file for good
   void drainPendingBlobDeletes();
   bool onContactPathRecv(ContactInfo& from, uint8_t* in_path, uint8_t in_path_len, uint8_t* out_path, uint8_t out_path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override;
   void onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) override;

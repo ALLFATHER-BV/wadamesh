@@ -64,6 +64,11 @@ public:
   bool savePrefs(const NodePrefs& prefs, double node_lat, double node_lon);
   void loadContacts(DataStoreHost* host);
   void saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c) = NULL);
+#if defined(ESP32)
+  // Patch only the contact records that changed, in place. True = live file is up to
+  // date; false = caller must do the full atomic rewrite. See the definition for why.
+  bool saveContactsInPlace(DataStoreHost* host, bool (*filter)(const ContactInfo& c));
+#endif
   void loadChannels(DataStoreHost* host);
   void saveChannels(DataStoreHost* host);
   void migrateToSecondaryFS();

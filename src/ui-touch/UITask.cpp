@@ -10995,6 +10995,26 @@ static void sysInfoTextRest(char* buf, size_t cap) {
                   (unsigned)nvs.free_entries, (unsigned)nvs.namespace_count);
   }
 
+  // Contact store pressure — the #222 diagnostic. The table is a flat file of 152-byte
+  // records, so its size follows the contact count directly, and on a card-less board it
+  // shares the internal volume with one blob file per contact. SPIFFS GC cost is driven by
+  // how FULL that volume is, and GC suspends the flash cache, which stalls both cores. So
+  // "used %" here is the number that predicts freezes; a reporter can photograph it.
+  {
+    const int nc = the_mesh.getNumContacts();
+    p += snprintf(buf + p, cap - p, "Contact store\n  %d / %d contacts (~%u KB)\n",
+                  nc, (int)MAX_CONTACTS, (unsigned)(((uint32_t)nc * 152u) / 1024u));
+    const size_t sp_tot = SPIFFS.totalBytes(), sp_used = SPIFFS.usedBytes();
+    if (sp_tot) {
+      p += snprintf(buf + p, cap - p, "  internal flash: %u / %u KB (%u%%)\n",
+                    (unsigned)(sp_used / 1024u), (unsigned)(sp_tot / 1024u),
+                    (unsigned)((uint64_t)sp_used * 100ull / sp_tot));
+    }
+    const uint32_t orph = the_mesh.getOrphanedBlobs();
+    if (orph) p += snprintf(buf + p, cap - p, "  orphaned blobs: %lu\n", (unsigned long)orph);
+    p += snprintf(buf + p, cap - p, "\n");
+  }
+
   p += snprintf(buf + p, cap - p,
                 "Last reset\n  %s\n\n", resetReasonString(esp_reset_reason()));
 #endif

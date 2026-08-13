@@ -496,6 +496,118 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
     }
 }
 
+#if defined(ESP32)
+// A full contacts write REWRITES THE WHOLE TABLE — 152 bytes per contact, so 304 KB at
+// MAX_CONTACTS=2000 — and the atomic swap below keeps a same-sized .tmp alongside it, so
+// the peak cost is ~608 KB of a card-less V4's 3.375 MB SPIFFS volume that is already
+// carrying one blob file per contact. SPIFFS garbage collection suspends the flash cache,
+// which stalls BOTH cores, and it gets dramatically worse the fuller the volume — that is
+// the #222 freeze, and taking the eviction blob delete off the packet path only removed
+// the smaller half of it (the reporter still saw stalls, and LONGER ones, because this
+// rewrite is what was left).
+//
+// But the table only ever CHANGES one slot at a time: eviction replaces contacts[oldest]
+// in place (the array is unsorted and never shifts), and an advert refresh touches a
+// single entry. So compare each record we would write against the record already on disk
+// and patch only the ones that actually differ — 152 bytes instead of 304 KB, with no
+// .tmp and no free-space spike. Reads never trigger GC, so the scan itself is cheap.
+//
+// Returns true only if the live file is now fully up to date. False means "not
+// applicable" — the caller must fall back to the full atomic rewrite. This never
+// truncates or renames, and the fallback rewrite repairs a partial patch, so a false
+// return always ends with a valid list on disk.
+bool DataStore::saveContactsInPlace(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
+  static const size_t REC = 152;             // MUST match the record packing in saveContacts
+  static const size_t CHUNK_RECS = 16;
+
+  FILESYSTEM* fs = _getContactsChannelsFS();
+  if (!fs->exists(_rp("/contacts3"))) return false;    // no live file yet -> full write
+
+  // Count first, with no I/O at all. A table that SHRANK needs records dropped off the
+  // end and this FS API has no truncate, so bail BEFORE touching the file — that keeps
+  // the fallback a clean rewrite instead of a half-patched one.
+  uint32_t nrec = 0;
+  {
+    uint32_t idx = 0;
+    ContactInfo c;
+    while (host->getContactForSave(idx, c)) {
+      if (!filter || filter(c)) nrec++;
+      idx++;
+    }
+  }
+
+  File f = fs->open(_rp("/contacts3"), "r+");
+  if (!f) return false;
+  const size_t fsz = f.size();
+  if (fsz == 0 || (fsz % REC) != 0 || (fsz / REC) > nrec) { f.close(); return false; }
+  const uint32_t nfile = fsz / REC;          // records currently on disk
+
+  uint8_t* wbuf = (uint8_t*)malloc(REC * CHUNK_RECS);
+  uint8_t* rbuf = (uint8_t*)malloc(REC * CHUNK_RECS);
+  if (!wbuf || !rbuf) { free(wbuf); free(rbuf); f.close(); return false; }
+
+  bool ok = true;
+  uint32_t base = 0;                         // record number of wbuf[0]
+  size_t fill = 0;                           // records packed in wbuf
+
+  // Reconcile one slab: read what is there, and write back only the records that differ.
+  // Records at or past the old end of file are appends (the table grew), written in
+  // ascending order so each one extends the file contiguously.
+  auto reconcile = [&](uint32_t at, size_t count) -> bool {
+    const size_t off = (size_t)at * REC;
+    const size_t bytes = count * REC;
+    size_t in_file = (at < nfile) ? ((size_t)(nfile - at) * REC) : 0;
+    if (in_file > bytes) in_file = bytes;
+    if (in_file) {
+      if (!f.seek(off)) return false;
+      if ((size_t)f.read(rbuf, in_file) != in_file) return false;
+      if (in_file == bytes && memcmp(rbuf, wbuf, bytes) == 0) return true;   // slab unchanged
+    }
+    for (size_t k = 0; k < count; k++) {
+      const size_t ro = k * REC;
+      if (ro + REC <= in_file && memcmp(rbuf + ro, wbuf + ro, REC) == 0) continue;
+      if (!f.seek(off + ro)) return false;
+      if (f.write(wbuf + ro, REC) != REC) return false;
+    }
+    return true;
+  };
+
+  uint32_t idx = 0;
+  ContactInfo c;
+  uint8_t unused = 0;
+  while (ok) {
+    if (!host->getContactForSave(idx, c)) break;
+    idx++;
+    if (filter && !filter(c)) continue;
+
+    uint8_t* p = wbuf + fill * REC;
+    memcpy(p, c.id.pub_key, 32);                       p += 32;
+    memcpy(p, (uint8_t *)&c.name, 32);                 p += 32;
+    *p++ = c.type;
+    *p++ = c.flags;
+    *p++ = unused;
+    memcpy(p, (uint8_t *)&c.sync_since, 4);            p += 4;
+    memcpy(p, (uint8_t *)&c.out_path_len, 1);          p += 1;
+    memcpy(p, (uint8_t *)&c.last_advert_timestamp, 4); p += 4;
+    memcpy(p, c.out_path, 64);                         p += 64;
+    memcpy(p, (uint8_t *)&c.lastmod, 4);               p += 4;
+    memcpy(p, (uint8_t *)&c.gps_lat, 4);               p += 4;
+    memcpy(p, (uint8_t *)&c.gps_lon, 4);               p += 4;
+    fill++;
+
+    if (fill == CHUNK_RECS) { ok = reconcile(base, fill); base += fill; fill = 0; }
+  }
+  if (ok && fill > 0) { ok = reconcile(base, fill); base += fill; fill = 0; }
+
+  f.close();
+  free(wbuf);
+  free(rbuf);
+  // base is the number of records reconciled; if it disagrees with the pre-count the
+  // table changed underneath us — let the caller rewrite rather than trust the file.
+  return ok && base == nrec;
+}
+#endif
+
 void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
 #if defined(HAS_TDISPLAY_P4)
   if (!p4OnStorageTask()) {
@@ -514,6 +626,11 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
   // that calls saveContacts stays balanced. On SD-routed devices this is cheap
   // (FAT has no such GC); it matters most for card-less SPIFFS devices.
   WdtHeavyGuard _wdt;
+
+  // Patch the live file in place when only individual records changed — the normal case
+  // by far, and the one that was freezing card-less V4s (#222). Falls through to the full
+  // atomic rewrite below whenever that is not provably safe.
+  if (saveContactsInPlace(host, filter)) return;
 #endif
 #if defined(ESP32)
   // Write to a TEMP file and swap it in only after it is FULLY written, so a partial

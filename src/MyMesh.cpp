@@ -2329,7 +2329,12 @@ void MyMesh::onContactOverwrite(const uint8_t* pub_key) {
   // it, so a burst of evictions cannot chain GC passes back to back.
   if (_pending_del_n < PENDING_DEL_MAX) {
     memcpy(_pending_del[_pending_del_n++], pub_key, PUB_KEY_SIZE);
-  }   // queue full: the blob is orphaned, harmless — reclaimed on the next wipe
+  } else {
+    // Overflow orphans the blob for good — no other path deletes it — so it is not the
+    // "harmless" case the first cut of this assumed. Count it so a device that is
+    // actually hitting the wall can say so instead of silently leaking flash.
+    if (_orphaned_blobs < 0xFFFF) _orphaned_blobs++;
+  }
   if (_serial->isConnected()) {
     out_frame[0] = PUSH_CODE_CONTACT_DELETED;
     memcpy(&out_frame[1], pub_key, PUB_KEY_SIZE);
