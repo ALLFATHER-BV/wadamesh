@@ -45125,13 +45125,18 @@ static char s_lua_perm_target[24] = {0};
 
 static void luaPermPath(char* out, size_t cap) { luaHostAppPath(out, cap, "/apps/perms.kv"); }
 
-// 1 = granted, -1 = refused, 0 = never asked.
-int luaHostSendPerm(const char* app_id) {
+// Permission bits. The on-disk value is this mask as a decimal, which keeps every
+// file written before read permission existed valid: "=1" already meant send.
+//   0 = asked, nothing allowed    1 = send    2 = read    3 = both
+// Entry PRESENCE is what records "we asked" -- absent is not the same as refused,
+// and the settings page shows that difference.
+int luaHostAppPerms(const char* app_id, bool* asked) {
+  if (asked) *asked = false;
   if (!app_id || !*app_id || !s_ui_data_fs) return 0;
   char path[80]; luaPermPath(path, sizeof path);
   File f = s_ui_data_fs->open(path, "r");
   if (!f) return 0;
-  int verdict = 0;
+  int mask = 0;
   char line[64];
   while (f.available()) {
     const size_t n = f.readBytesUntil('\n', line, sizeof(line) - 1);
@@ -45139,13 +45144,32 @@ int luaHostSendPerm(const char* app_id) {
     char* eq = strchr(line, '=');
     if (!eq) continue;
     *eq = '\0';
-    if (strcmp(line, app_id) == 0) { verdict = (eq[1] == '1') ? 1 : -1; break; }
+    if (strcmp(line, app_id) == 0) {
+      if (asked) *asked = true;
+      mask = atoi(eq + 1);
+      break;
+    }
   }
   f.close();
-  return verdict;
+  return mask;
 }
 
-static void luaPermWrite(const char* app_id, bool allow) {
+// 1 = granted, -1 = refused, 0 = never asked.
+int luaHostSendPerm(const char* app_id) {
+  bool asked = false;
+  const int mask = luaHostAppPerms(app_id, &asked);
+  if (!asked) return 0;
+  return (mask & LUA_PERM_SEND) ? 1 : -1;
+}
+// True when the app may be shown incoming messages. No prompt is raised from
+// here: unlike send, this fires on someone ELSE's traffic arriving, so a dialog
+// would appear unbidden. An app asks for it in the settings page instead.
+bool luaHostReadPerm(const char* app_id) {
+  bool asked = false;
+  return (luaHostAppPerms(app_id, &asked) & LUA_PERM_READ) != 0;
+}
+
+static void luaPermWrite(const char* app_id, int mask) {
   if (!app_id || !*app_id || !s_ui_data_fs) return;
   // Rewrite whole-file: the table is a handful of short lines, and an in-place
   // edit would have to deal with a shrinking record.
@@ -45164,7 +45188,9 @@ static void luaPermWrite(const char* app_id, bool allow) {
     }
     in.close();
   }
-  keep += app_id; keep += (allow ? "=1\n" : "=0\n");
+  char rec[40];
+  snprintf(rec, sizeof rec, "%s=%d\n", app_id, mask);
+  keep += rec;
   WdtHeavyGuard guard;                       // small, but it is still a flash write
   char appsdir[80]; luaHostAppPath(appsdir, sizeof appsdir, "/apps");
   s_ui_data_fs->mkdir(appsdir);
@@ -45183,7 +45209,7 @@ void luaHostRequestSendPerm(const char* app_id, const char* app_name) {
   // Record the refusal FIRST, so the answer is "no" unless the user says
   // otherwise -- a power cut mid-dialog must not leave a grant. It also stops
   // this app re-prompting: its next send sees -1 and fails without a dialog.
-  luaPermWrite(app_id, false);
+  luaPermWrite(app_id, 0);   // refused unless the user says otherwise
   const char* label = (app_name && *app_name) ? app_name : app_id;
   char msg[220];
   snprintf(msg, sizeof msg,
@@ -45193,7 +45219,7 @@ void luaHostRequestSendPerm(const char* app_id, const char* app_name) {
            label, the_mesh.getNodePrefs()->node_name);
   // Cancel needs no handler: the refusal is already on disk. The user can revisit
   // a decision by deleting /apps/perms.kv.
-  showConfirm(msg, TR("Allow"), +[]() { luaPermWrite(s_lua_perm_target, true); });
+  showConfirm(msg, TR("Allow"), +[]() { luaPermWrite(s_lua_perm_target, LUA_PERM_SEND); });
 }
 
 // Send on a channel matched BY NAME. Matching by name rather than a cached slot
@@ -45249,11 +45275,19 @@ bool luaHostGps(double* lat, double* lon, int* sats) {
 // Lists every app that has been ASKED (an entry in perms.kv) plus every INSTALLED
 // app, so an app that has not asked yet is visible with its answer pre-set rather
 // than appearing out of nowhere the first time it wants the radio.
+// user_data packs (app index << 4) | permission bit -- ids[] outlives the sheet.
+static char s_appperm_ids[12][24];
 static void appPermsToggleCb(lv_event_t* e) {
-  const char* id = (const char*)lv_event_get_user_data(e);
-  if (!id) return;
-  lv_obj_t* sw = lv_event_get_target(e);
-  luaPermWrite(id, lv_obj_has_state(sw, LV_STATE_CHECKED));
+  const intptr_t packed = (intptr_t)lv_event_get_user_data(e);
+  const int idx = (int)(packed >> 4);
+  const int bit = (int)(packed & 0xF);
+  if (idx < 0 || idx >= 12 || !s_appperm_ids[idx][0]) return;
+  const char* id = s_appperm_ids[idx];
+  bool asked = false;
+  int mask = luaHostAppPerms(id, &asked);
+  if (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED)) mask |= bit;
+  else                                                            mask &= ~bit;
+  luaPermWrite(id, mask);   // writing also RECORDS the decision (entry presence)
 }
 
 static void buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw) {
@@ -45273,7 +45307,7 @@ static void buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw) {
   // Collect ids: everything installed, plus anything already in perms.kv (an app
   // can be removed while its decision lives on -- that decision must stay visible
   // and revocable, or a reinstall silently inherits an old yes).
-  static char ids[12][24];
+  auto& ids = s_appperm_ids;
   int n = 0;
   for (int i = 0; i < s_lua_inst_n && n < 12; ++i) {
     snprintf(ids[n], sizeof ids[n], "%s", s_lua_inst[i].id);
@@ -45312,19 +45346,42 @@ static void buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw) {
     char row[40];
     snprintf(row, sizeof row, "%s", ids[i]);
     const int h = settingsRowLabel(page, y, 6, row, COLOR_TEXT, nullptr, 56);
-    lv_obj_t* sw = lv_switch_create(page);
-    lv_obj_set_size(sw, 44, 24);
-    lv_obj_set_pos(sw, lblw - 44 + 6, y);
-    if (perm == 1) lv_obj_add_state(sw, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(sw, appPermsToggleCb, LV_EVENT_VALUE_CHANGED, (void*)ids[i]);
-    // "not asked" reads differently from "refused": one is a decision, one is not.
-    lv_obj_t* st = lv_label_create(page);
-    lv_label_set_text(st, perm == 1 ? TR("send: allowed")
-                        : perm == -1 ? TR("send: refused") : TR("send: not asked yet"));
-    lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(st, lv_color_hex(perm == 1 ? 0x53C06B : COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_pos(st, 6, y + (h > 0 ? h : 18));
-    y += LV_MAX(40, (h > 0 ? h : 18) + 22);
+    bool asked = false;
+    const int mask = luaHostAppPerms(ids[i], &asked);
+    const int rowh = (h > 0 ? h : 18);
+    // Two switches: sending as you, and reading what arrives. They are separate
+    // risks -- one speaks in your name, the other sees your conversations -- and
+    // an app that wants both has to be given both.
+    struct { const char* label; int bit; } perms[2] = {
+      { TR("Send messages as me"), LUA_PERM_SEND },
+      { TR("Read incoming messages"), LUA_PERM_READ },
+    };
+    int sy = y + rowh + 2;
+    for (int k = 0; k < 2; ++k) {
+      lv_obj_t* pl = lv_label_create(page);
+      lv_label_set_text(pl, perms[k].label);
+      lv_obj_set_style_text_font(pl, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_pos(pl, 16, sy + 4);
+      lv_obj_t* sw = lv_switch_create(page);
+      lv_obj_set_size(sw, 44, 24);
+      lv_obj_set_pos(sw, lblw - 44 + 6, sy);
+      if (mask & perms[k].bit) lv_obj_add_state(sw, LV_STATE_CHECKED);
+      // user_data packs the app index and the bit, so one callback serves both.
+      lv_obj_add_event_cb(sw, appPermsToggleCb, LV_EVENT_VALUE_CHANGED,
+                          (void*)(intptr_t)((i << 4) | perms[k].bit));
+      sy += 30;
+    }
+    if (!asked) {
+      lv_obj_t* st = lv_label_create(page);
+      lv_label_set_text(st, TR("not asked yet"));
+      lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(st, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_pos(st, 16, sy);
+      sy += 18;
+    }
+    y = sy + 8;
+    (void)perm;
   }
 }
 #endif  // CAP_LUA_SDK_EXT
@@ -49319,6 +49376,12 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   _msgcount = msgcount;
   const bool have_sender_override = (sender_override && sender_override[0]);
   bool channel = (g_last_event == UIEventType::channelMessage);
+#if CAP_LUA_SDK_EXT
+  // Hand a running Lua app the incoming message (app.on_message). Permission is
+  // rechecked inside, per message, so revoking read access in Settings stops
+  // delivery at once rather than at the app's next launch.
+  if (channel && luaAppIsOpen()) luaAppMessage(from_name, sender_override, text);
+#endif
   const char* thread = channel
       ? (from_name && from_name[0] ? from_name : "#unknown")
       : (from_name && from_name[0] ? from_name : "Unknown");

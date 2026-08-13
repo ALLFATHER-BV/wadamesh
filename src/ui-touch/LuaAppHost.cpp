@@ -43,6 +43,7 @@ extern void luaHostBattery(uint16_t* mv, int* pct, bool* charging);
 // fabricated accuracy figure is worse than none for anything that would use it.
 extern bool luaHostGps(double* lat, double* lon, int* sats);
 extern int  luaHostSendPerm(const char* app_id);                              // 1 grant, -1 refused, 0 unasked
+extern bool luaHostReadPerm(const char* app_id);                             // may be shown incoming messages
 extern void luaHostRequestSendPerm(const char* app_id, const char* app_name); // raises the consent prompt
 extern bool luaHostMeshSendChannel(const char* chan_name, const char* text);
 #endif
@@ -1131,11 +1132,35 @@ bool luaAppIsOpen() { return s_h != nullptr; }
 
 // Returns true when the running app took the key. False lets the firmware keep
 // its own handling, so an app that does not implement on_input changes nothing.
+#if CAP_LUA_SDK_EXT
+// Incoming channel message -> app.on_message{channel, sender, text}. Permission
+// checked HERE rather than at subscribe time, so revoking it in Settings stops
+// delivery immediately instead of at the next launch.
+static void deliverMessage(const char* channel, const char* sender, const char* text) {
+  if (!s_h || !s_h->L) return;
+  if (!luaHostReadPerm(s_h->id)) return;
+  if (!pushCallback(s_h, "on_message")) return;
+  lua_State* L = s_h->L;
+  lua_createtable(L, 0, 3);
+  lua_pushstring(L, channel ? channel : ""); lua_setfield(L, -2, "channel");
+  lua_pushstring(L, sender  ? sender  : ""); lua_setfield(L, -2, "sender");
+  lua_pushstring(L, text    ? text    : ""); lua_setfield(L, -2, "text");
+  guardedCall(s_h, 1);
+  serviceDeferredClose();
+}
+#endif
+
 bool luaAppKey(int key) {
   if (!s_h || !s_h->L || key <= 0) return false;
   sendKey(key);
   return true;
 }
+
+#if CAP_LUA_SDK_EXT
+void luaAppMessage(const char* channel, const char* sender, const char* text) {
+  deliverMessage(channel, sender, text);
+}
+#endif
 
 void luaAppSteer(int dx, int dy) {
   if (!s_h) return;

@@ -21,9 +21,14 @@ bool luaAppIsOpen();
 void luaAppDismiss();                 // THE close path (AppPage back hook)
 void luaAppSteer(int dx, int dy);     // trackball/keypad direction -> on_input
 bool luaAppKey(int key);              // hardware key -> on_input; true = app consumed it
+void luaAppMessage(const char* channel, const char* sender, const char* text);  // -> on_message
+// Per-app permission bits, stored as a decimal mask in /apps/perms.kv.
+#define LUA_PERM_SEND  1
+#define LUA_PERM_READ  2
 #else
 inline bool luaAppIsOpen() { return false; }
 inline void luaAppDismiss() {}
 inline void luaAppSteer(int, int) {}
 inline bool luaAppKey(int) { return false; }
+inline void luaAppMessage(const char*, const char*, const char*) {}
 #endif
