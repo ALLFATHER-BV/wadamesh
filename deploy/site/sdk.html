@@ -306,7 +306,7 @@ return app</code></pre>
           <tr><td>wada.store.set(key, value)</td><td>Write a string.</td></tr>
         </table>
         <p>Keys are namespaced per app, so two apps cannot collide. Keep it small — the budget is about 2&nbsp;KB per app, and the underlying store silently drops oversized values. High scores and settings, not logs.</p>
-        <p>Writes hit flash. Do them in <code>on_stop()</code> or on a real user action, never on every tick.</p>
+        <p>Writes hit flash. Do them in <code>app.on_close()</code> or on a real user action, never on every tick.</p>
       </div></div>
     </section>
 
