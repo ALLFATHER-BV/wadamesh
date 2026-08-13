@@ -984,3 +984,4 @@ Has location
 Direct (0-hop)	
 Heard %s	
 Traffic (since boot)\n  Sent   %u flood, %u direct\n  Recv   %u flood, %u direct	
+Overwrite oldest non-favorite	

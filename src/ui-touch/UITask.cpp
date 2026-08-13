@@ -10513,7 +10513,10 @@ static void buildAutoAddSettings() {
   mk_switch(TR("Auto repeater"), &g_set_modal.auto_rep_sw);
   mk_switch(TR("Auto room"), &g_set_modal.auto_room_sw);
   mk_switch(TR("Auto sensor"), &g_set_modal.auto_sensor_sw);
-  mk_switch(TR("Overwrite oldest"), &g_set_modal.auto_overwrite_sw);
+  // #178: favourites are already exempt — the core's eviction loop skips any
+  // contact with the favourite flag — but the label never said so, leaving users
+  // to guess whether starring a contact protected it while roaming.
+  mk_switch(TR("Overwrite oldest non-favorite"), &g_set_modal.auto_overwrite_sw);
   g_set_modal.manual_add_sw = nullptr;   // master "manual add" removed — per-type switches are authoritative now
 
   // "Notify on new contact" — a UI pref (not a NodePrefs autoadd bit), so it gets
