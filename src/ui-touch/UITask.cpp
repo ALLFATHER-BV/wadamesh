@@ -2763,6 +2763,29 @@ static void styleCard(lv_obj_t* obj) {
   lv_obj_set_style_border_color(obj, lv_color_hex(0x18191A), LV_PART_MAIN);
 }
 
+// LVGL draws a text area's PLACEHOLDER from LV_PART_TEXTAREA_PLACEHOLDER, and that
+// part does NOT inherit the LV_PART_MAIN font the creation sites set. So the hint
+// text fell back to the theme's plain Montserrat and every accented character in it
+// rendered as a box -- "H(box)l(box)zat n(box)v" for "Halozat nev" -- while text the
+// user typed into the same field was fine. 27 placeholders, and the part was styled
+// in none of them. The beta_62 sweep fixed ~79 LABELS; this is the other LVGL part
+// it never touched.
+//
+// Resolve the chained face from whatever MAIN already carries, so this cannot change
+// how any field looks -- only which glyphs it can draw. Placeholders are often set
+// BEFORE the site assigns MAIN's font, so an unrecognised font falls back to
+// g_font_14 (the size every such site ends up using anyway).
+static void taSetPlaceholder(lv_obj_t* ta, const char* txt) {
+  if (!ta) return;
+  lv_textarea_set_placeholder_text(ta, txt);
+  const lv_font_t* f = lv_obj_get_style_text_font(ta, LV_PART_MAIN);
+  if      (f == &lv_font_montserrat_12) f = &g_font_12;
+  else if (f == &lv_font_montserrat_14) f = &g_font_14;
+  else if (f == &lv_font_montserrat_16) f = &g_font_16;
+  else if (f != &g_font_12 && f != &g_font_14 && f != &g_font_16) f = &g_font_14;
+  lv_obj_set_style_text_font(ta, f, LV_PART_TEXTAREA_PLACEHOLDER);
+}
+
 static void styleButton(lv_obj_t* obj) {
   // Subdued slate chip. Background sits at the panel colour with a low
   // overall opacity so the pure-black BG bleeds through — chips read as
@@ -9826,7 +9849,7 @@ static void buildProfileSettings() {
     lv_obj_set_size(ta, w, SC(30));
     lv_obj_set_pos(ta, x, y);
     lv_textarea_set_one_line(ta, true);
-    lv_textarea_set_placeholder_text(ta, TR(ph));
+    taSetPlaceholder(ta, TR(ph));
     lv_textarea_set_max_length(ta, max_len);
     attachSettingsTaEvents(ta);
     return ta;
@@ -10158,7 +10181,7 @@ static void buildRadioSettings() {
     lv_obj_set_size(ta, w, SC(30));
     lv_obj_set_pos(ta, x, y);
     lv_textarea_set_one_line(ta, true);
-    lv_textarea_set_placeholder_text(ta, TR(ph));
+    taSetPlaceholder(ta, TR(ph));
     lv_textarea_set_max_length(ta, max_len);
     attachSettingsTaEvents(ta);
     lv_obj_add_event_cb(ta, saveRadioParamsCb, LV_EVENT_DEFOCUSED, nullptr);  // auto-save the group on blur (silent if mid-edit)
@@ -13477,7 +13500,7 @@ static void buildBluetoothSettings() {
       char pb[12];
       if (cur >= 1 && cur <= 999999) snprintf(pb, sizeof pb, "%06lu", static_cast<unsigned long>(cur));
       else snprintf(pb, sizeof pb, "------");
-      lv_textarea_set_placeholder_text(s_ble_pin_ta, pb);
+      taSetPlaceholder(s_ble_pin_ta, pb);
       lv_textarea_set_text(s_ble_pin_ta, "");
     }
     attachSettingsTaEvents(s_ble_pin_ta);
@@ -14150,7 +14173,7 @@ static void openWifiJoinSheet(const char* ssid, bool manual) {
     s_wifi_sheet_ssid_ta = lv_textarea_create(body);
     lv_obj_set_size(s_wifi_sheet_ssid_ta, iw, SC(32)); lv_obj_set_pos(s_wifi_sheet_ssid_ta, 0, yy);
     lv_textarea_set_one_line(s_wifi_sheet_ssid_ta, true);
-    lv_textarea_set_placeholder_text(s_wifi_sheet_ssid_ta, TR("Network name"));
+    taSetPlaceholder(s_wifi_sheet_ssid_ta, TR("Network name"));
     lv_textarea_set_max_length(s_wifi_sheet_ssid_ta, WIFI_CONFIG_SSID_MAX - 1);
     attachSettingsTaEvents(s_wifi_sheet_ssid_ta);
     yy += SC(40);
@@ -14165,7 +14188,7 @@ static void openWifiJoinSheet(const char* ssid, bool manual) {
   lv_obj_set_size(s_wifi_sheet_pwd_ta, iw, SC(32)); lv_obj_set_pos(s_wifi_sheet_pwd_ta, 0, yy);
   lv_textarea_set_one_line(s_wifi_sheet_pwd_ta, true);
   lv_textarea_set_password_mode(s_wifi_sheet_pwd_ta, true);
-  lv_textarea_set_placeholder_text(s_wifi_sheet_pwd_ta, "PSK");
+  taSetPlaceholder(s_wifi_sheet_pwd_ta, "PSK");
   lv_textarea_set_max_length(s_wifi_sheet_pwd_ta, WIFI_CONFIG_PWD_MAX - 1);
   attachSettingsTaEvents(s_wifi_sheet_pwd_ta);
   // Prefill the saved passphrase if we already know this network.
@@ -14499,7 +14522,7 @@ static void buildMqttSettings() {
   lv_obj_set_size(g_set_modal.mqtt_host_ta, cw - 86, SC(30));
   lv_obj_set_pos(g_set_modal.mqtt_host_ta, 0, y);
   lv_textarea_set_one_line(g_set_modal.mqtt_host_ta, true);
-  lv_textarea_set_placeholder_text(g_set_modal.mqtt_host_ta, "192.168.1.x");
+  taSetPlaceholder(g_set_modal.mqtt_host_ta, "192.168.1.x");
   lv_textarea_set_max_length(g_set_modal.mqtt_host_ta, 63);
   attachSettingsTaEvents(g_set_modal.mqtt_host_ta);
   // Port field on the same row
@@ -14512,7 +14535,7 @@ static void buildMqttSettings() {
   lv_obj_set_size(g_set_modal.mqtt_port_ta, 80, SC(30));
   lv_obj_set_pos(g_set_modal.mqtt_port_ta, cw - 80, y);
   lv_textarea_set_one_line(g_set_modal.mqtt_port_ta, true);
-  lv_textarea_set_placeholder_text(g_set_modal.mqtt_port_ta, "1883");
+  taSetPlaceholder(g_set_modal.mqtt_port_ta, "1883");
   lv_textarea_set_max_length(g_set_modal.mqtt_port_ta, 5);
   lv_textarea_set_accepted_chars(g_set_modal.mqtt_port_ta, "0123456789");
   attachSettingsTaEvents(g_set_modal.mqtt_port_ta);
@@ -14529,7 +14552,7 @@ static void buildMqttSettings() {
   lv_obj_set_size(g_set_modal.mqtt_user_ta, lv_pct(100), SC(30));
   lv_obj_set_pos(g_set_modal.mqtt_user_ta, 0, y);
   lv_textarea_set_one_line(g_set_modal.mqtt_user_ta, true);
-  lv_textarea_set_placeholder_text(g_set_modal.mqtt_user_ta, TR("Leave empty if not required"));
+  taSetPlaceholder(g_set_modal.mqtt_user_ta, TR("Leave empty if not required"));
   lv_textarea_set_max_length(g_set_modal.mqtt_user_ta, 31);
   attachSettingsTaEvents(g_set_modal.mqtt_user_ta);
   y += SC(36);
@@ -14546,7 +14569,7 @@ static void buildMqttSettings() {
   lv_obj_set_pos(g_set_modal.mqtt_pwd_ta, 0, y);
   lv_textarea_set_one_line(g_set_modal.mqtt_pwd_ta, true);
   lv_textarea_set_password_mode(g_set_modal.mqtt_pwd_ta, true);
-  lv_textarea_set_placeholder_text(g_set_modal.mqtt_pwd_ta, TR("Leave empty if not required"));
+  taSetPlaceholder(g_set_modal.mqtt_pwd_ta, TR("Leave empty if not required"));
   lv_textarea_set_max_length(g_set_modal.mqtt_pwd_ta, 31);
   attachSettingsTaEvents(g_set_modal.mqtt_pwd_ta);
   y += SC(36);
@@ -14582,7 +14605,7 @@ static void buildMqttSettings() {
   lv_obj_set_pos(g_set_modal.mqtt_psk_ta, 0, y);
   lv_textarea_set_one_line(g_set_modal.mqtt_psk_ta, true);
   lv_textarea_set_password_mode(g_set_modal.mqtt_psk_ta, true);
-  lv_textarea_set_placeholder_text(g_set_modal.mqtt_psk_ta, TR("Empty = plaintext to a private broker"));
+  taSetPlaceholder(g_set_modal.mqtt_psk_ta, TR("Empty = plaintext to a private broker"));
   lv_textarea_set_max_length(g_set_modal.mqtt_psk_ta, 32);
   attachSettingsTaEvents(g_set_modal.mqtt_psk_ta);
   y += SC(36);
@@ -14864,7 +14887,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   styleCard(s_contacts_search_ta);
   lv_textarea_set_one_line(s_contacts_search_ta, true);
   lv_textarea_set_max_length(s_contacts_search_ta, (uint32_t)(sizeof(g_lv.contacts_search) - 1));
-  lv_textarea_set_placeholder_text(s_contacts_search_ta, TR("Name fragment"));
+  taSetPlaceholder(s_contacts_search_ta, TR("Name fragment"));
   lv_textarea_set_text(s_contacts_search_ta, g_lv.contacts_search);
   lv_obj_set_style_text_color(s_contacts_search_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_contacts_search_ta, &g_font_14, LV_PART_MAIN);
@@ -15466,7 +15489,7 @@ static void openAdminConsole(const ContactInfo& c) {
   styleCard(s_admin_cmd_ta);
   lv_textarea_set_one_line(s_admin_cmd_ta, true);
   lv_textarea_set_max_length(s_admin_cmd_ta, 64);
-  lv_textarea_set_placeholder_text(s_admin_cmd_ta, TR("command"));
+  taSetPlaceholder(s_admin_cmd_ta, TR("command"));
   lv_obj_set_style_text_color(s_admin_cmd_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_admin_cmd_ta, &g_font_14, LV_PART_MAIN);
   attachSettingsTaEvents(s_admin_cmd_ta);
@@ -15630,7 +15653,7 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   lv_textarea_set_one_line(s_admin_pw_ta, true);
   lv_textarea_set_password_mode(s_admin_pw_ta, true);
   lv_textarea_set_max_length(s_admin_pw_ta, 15);
-  lv_textarea_set_placeholder_text(s_admin_pw_ta, "");
+  taSetPlaceholder(s_admin_pw_ta, "");
   lv_obj_set_style_text_color(s_admin_pw_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_admin_pw_ta, &g_font_14, LV_PART_MAIN);
   attachSettingsTaEvents(s_admin_pw_ta);
@@ -16829,7 +16852,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_size(s_addct_pub_ta, lv_pct(100),56);
   lv_obj_set_pos(s_addct_pub_ta, 2, y);
   lv_textarea_set_one_line(s_addct_pub_ta, false);
-  lv_textarea_set_placeholder_text(s_addct_pub_ta, TR("0123456789abcdef…"));
+  taSetPlaceholder(s_addct_pub_ta, TR("0123456789abcdef…"));
   lv_textarea_set_max_length(s_addct_pub_ta, 80);
   attachSettingsTaEvents(s_addct_pub_ta);
   y += 60;
@@ -16844,7 +16867,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_size(s_addct_name_ta, lv_pct(100),30);
   lv_obj_set_pos(s_addct_name_ta, 2, y);
   lv_textarea_set_one_line(s_addct_name_ta, true);
-  lv_textarea_set_placeholder_text(s_addct_name_ta, TR("Display name"));
+  taSetPlaceholder(s_addct_name_ta, TR("Display name"));
   lv_textarea_set_max_length(s_addct_name_ta, 31);
   attachSettingsTaEvents(s_addct_name_ta);
   y += 36;
@@ -16894,7 +16917,7 @@ static void openCreatePrivateChannelModal() {
   lv_obj_set_size(s_addch_name_ta, lv_pct(100),30);
   lv_obj_set_pos(s_addch_name_ta, 2, y);
   lv_textarea_set_one_line(s_addch_name_ta, true);
-  lv_textarea_set_placeholder_text(s_addch_name_ta, TR("e.g. Family"));
+  taSetPlaceholder(s_addch_name_ta, TR("e.g. Family"));
   lv_textarea_set_max_length(s_addch_name_ta, 31);
   attachSettingsTaEvents(s_addch_name_ta);
   y += 36;
@@ -16909,7 +16932,7 @@ static void openCreatePrivateChannelModal() {
   lv_obj_set_size(s_addch_secret_ta, lv_pct(100),30);
   lv_obj_set_pos(s_addch_secret_ta, 2, y);
   lv_textarea_set_one_line(s_addch_secret_ta, true);
-  lv_textarea_set_placeholder_text(s_addch_secret_ta, TR("leave empty to generate"));
+  taSetPlaceholder(s_addch_secret_ta, TR("leave empty to generate"));
   lv_textarea_set_max_length(s_addch_secret_ta, 32);
   attachSettingsTaEvents(s_addch_secret_ta);
   y += 36;
@@ -16997,7 +17020,7 @@ static void openJoinPrivateChannelModal() {
   lv_obj_set_size(s_addch_name_ta, lv_pct(100), 30);
   lv_obj_set_pos(s_addch_name_ta, 2, y);
   lv_textarea_set_one_line(s_addch_name_ta, true);
-  lv_textarea_set_placeholder_text(s_addch_name_ta, TR("Channel name"));
+  taSetPlaceholder(s_addch_name_ta, TR("Channel name"));
   lv_textarea_set_max_length(s_addch_name_ta, 30);
   attachSettingsTaEvents(s_addch_name_ta);
   y += 36;
@@ -17012,7 +17035,7 @@ static void openJoinPrivateChannelModal() {
   lv_obj_set_size(s_addch_secret_ta, lv_pct(100),30);
   lv_obj_set_pos(s_addch_secret_ta, 2, y);
   lv_textarea_set_one_line(s_addch_secret_ta, true);
-  lv_textarea_set_placeholder_text(s_addch_secret_ta, TR("32 hex characters"));
+  taSetPlaceholder(s_addch_secret_ta, TR("32 hex characters"));
   lv_textarea_set_max_length(s_addch_secret_ta, 32);
   attachSettingsTaEvents(s_addch_secret_ta);
   y += 36;
@@ -17103,7 +17126,7 @@ static void openJoinHashtagChannelModal() {
   lv_obj_set_size(s_addch_hashtag_ta, lv_pct(100),30);
   lv_obj_set_pos(s_addch_hashtag_ta, 2, y);
   lv_textarea_set_one_line(s_addch_hashtag_ta, true);
-  lv_textarea_set_placeholder_text(s_addch_hashtag_ta, TR("e.g. mesh"));
+  taSetPlaceholder(s_addch_hashtag_ta, TR("e.g. mesh"));
   lv_textarea_set_text(s_addch_hashtag_ta, "#");
   lv_textarea_set_max_length(s_addch_hashtag_ta, 31);
   attachSettingsTaEvents(s_addch_hashtag_ta);
@@ -19156,7 +19179,7 @@ static void buildTerminal(lv_obj_t* body) {
   styleCard(s_term_input_ta);
   lv_textarea_set_one_line(s_term_input_ta, true);
   lv_textarea_set_max_length(s_term_input_ta, 96);
-  lv_textarea_set_placeholder_text(s_term_input_ta, TR("command"));
+  taSetPlaceholder(s_term_input_ta, TR("command"));
   lv_obj_set_style_text_color(s_term_input_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_term_input_ta, &g_font_14, LV_PART_MAIN);
   attachSettingsTaEvents(s_term_input_ta);
@@ -20865,7 +20888,7 @@ static void fmToggleSearch() {
   lv_obj_set_size(s_fm_search_ta, w, 26);
   styleCard(s_fm_search_ta);
   lv_textarea_set_one_line(s_fm_search_ta, true);
-  lv_textarea_set_placeholder_text(s_fm_search_ta, TR("search"));
+  taSetPlaceholder(s_fm_search_ta, TR("search"));
   lv_textarea_set_max_length(s_fm_search_ta, sizeof(s_fm_filter) - 1);
   lv_obj_set_style_text_font(s_fm_search_ta, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_fm_search_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -21735,7 +21758,7 @@ static void openReaderPage() {
   // --- Expanded address bar: URL field + Go ---
   s_reader_url_ta = lv_textarea_create(s_reader_root);
   lv_textarea_set_one_line(s_reader_url_ta, true);
-  lv_textarea_set_placeholder_text(s_reader_url_ta, TR("Type a URL, then Go"));
+  taSetPlaceholder(s_reader_url_ta, TR("Type a URL, then Go"));
   if (s_reader_url[0]) { lv_textarea_set_text(s_reader_url_ta, s_reader_url); s_reader_pristine = false; }
   else                 { lv_textarea_set_text(s_reader_url_ta, kReaderDefaultUrl); s_reader_pristine = true; }
   lv_obj_set_pos(s_reader_url_ta, 6, top);
@@ -29729,7 +29752,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // messages at 127 bytes, shorter than this limit.)
   lv_textarea_set_max_length(p.composer_ta, UITask::MAX_MSG_TEXT);
   lv_obj_set_scrollbar_mode(p.composer_ta, LV_SCROLLBAR_MODE_OFF);
-  lv_textarea_set_placeholder_text(p.composer_ta, TR("Type a message..."));
+  taSetPlaceholder(p.composer_ta, TR("Type a message..."));
   lv_obj_set_style_text_color(p.composer_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(p.composer_ta, &g_font_14, LV_PART_MAIN);
   // Readable selection highlight: the label draws selected text using its OWN
@@ -42275,7 +42298,7 @@ static void setupShowStep(int step) {
     lv_obj_set_size(s_setup_name_ta, sw - 24, 36);
     lv_obj_set_pos(s_setup_name_ta, 12, y + 6);
     lv_textarea_set_one_line(s_setup_name_ta, true);
-    lv_textarea_set_placeholder_text(s_setup_name_ta, TR("Your name"));
+    taSetPlaceholder(s_setup_name_ta, TR("Your name"));
     lv_textarea_set_max_length(s_setup_name_ta, 30);
     if (g_lv.task) {
       const char* cur = g_lv.task->getNodeNameCstr();
@@ -42819,9 +42842,9 @@ static void openChannelScopeModal(int slot, const char* name) {
     touchPrefsGetChannelScope(slot, cur, sizeof cur);
     if (cur[0]) lv_textarea_set_text(s_chanscope_ta, cur);
     touchPrefsGetRegionScope(def, sizeof def);
-    lv_textarea_set_placeholder_text(s_chanscope_ta, def[0] ? def : TR("(no default)")); }
+    taSetPlaceholder(s_chanscope_ta, def[0] ? def : TR("(no default)")); }
 #else
-  lv_textarea_set_placeholder_text(s_chanscope_ta, TR("(no default)"));
+  taSetPlaceholder(s_chanscope_ta, TR("(no default)"));
 #endif
   attachSettingsTaEvents(s_chanscope_ta);
 
