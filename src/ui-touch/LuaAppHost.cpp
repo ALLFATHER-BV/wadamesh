@@ -14,6 +14,7 @@
 #include <math.h>   // isnan for optional sensor fields   // wada.sys.epoch/datetime (#245)
 #include "AppPage.h"
 #include "device_caps.h"
+#include "helpers/esp32/WdtHeavyGuard.h"   // wada.fs writes can trigger SPIFFS GC
 
 extern "C" {
 #include "lua.h"
@@ -105,6 +106,7 @@ struct Host {
   int         ref_app   = LUA_NOREF; // the table the chunk returned
   int         ref_btncb = LUA_NOREF; // { [btn lightuserdata] = fn } button callbacks
   bool        store_dirty = false;
+  uint32_t    fs_last_write_ms = 0;   // wada.fs write rate limit (#222 lesson)
   bool        in_lua = false;        // re-entrancy guard (dismiss from inside a callback)
   bool        want_close = false;
   char        id[24]    = "";
@@ -597,6 +599,124 @@ int storeSet(lua_State* L) {
   return 0;
 }
 
+#if CAP_LUA_SDK_EXT
+// ---- wada.fs: scoped file access -------------------------------------------
+// Every app gets ONE directory, /apps/<id>.d/, and cannot address anything
+// outside it. Store apps are user-submitted, so the name check is a security
+// boundary rather than tidiness: no '/', no '..', no leading dot, and a strict
+// [A-Za-z0-9._-] whitelist. Rejecting outright beats sanitising -- a sanitiser
+// that "fixes" ../../identity into something valid is how these go wrong.
+static const size_t kFsMaxFile  = 32u * 1024u;   // per file
+static const uint32_t kFsMinGapMs = 1000;        // between writes, per app
+
+static bool fsSafeName(const char* n) {
+  if (!n || !*n || n[0] == '.') return false;
+  size_t len = 0;
+  for (const char* p = n; *p; ++p, ++len) {
+    const char c = *p;
+    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+    if (!ok) return false;
+  }
+  return len <= 32;
+}
+static bool fsPath(char* out, size_t cap, const char* name) {
+  if (!s_h || !fsSafeName(name)) return false;
+  char rel[96];
+  snprintf(rel, sizeof rel, "/apps/%s.d/%s", s_h->id, name);
+  luaHostAppPath(out, cap, rel);
+  return true;
+}
+static void fsEnsureDir() {
+  fs::FS* fs = luaHostAppFs();
+  if (!fs || !s_h) return;
+  char d[80], rel[64];
+  luaHostAppPath(d, sizeof d, "/apps");            fs->mkdir(d);
+  snprintf(rel, sizeof rel, "/apps/%s.d", s_h->id);
+  luaHostAppPath(d, sizeof d, rel);                fs->mkdir(d);
+}
+// Shared by write and append. Rate-limited on purpose: on internal flash a burst
+// of small writes triggers garbage collection, and a GC pass suspends the flash
+// cache and stalls BOTH cores -- the fault behind #222 and the beta_25 bootloop.
+// An app that ignores the advice in deploy/apps/README.md and writes every frame
+// gets `false, "too fast"` instead of wedging the device. The guard covers the
+// case where a write DOES trigger GC, so it stalls briefly instead of rebooting.
+static int fsWriteCommon(lua_State* L, const char* mode) {
+  const char* name = luaL_checkstring(L, 1);
+  size_t len = 0;
+  const char* data = luaL_checklstring(L, 2, &len);
+  char path[128];
+  if (!fsPath(path, sizeof path, name)) { lua_pushboolean(L, 0); lua_pushstring(L, "bad name"); return 2; }
+  if (len > kFsMaxFile)                 { lua_pushboolean(L, 0); lua_pushstring(L, "too big");  return 2; }
+  const uint32_t now = millis();
+  if (s_h->fs_last_write_ms && (uint32_t)(now - s_h->fs_last_write_ms) < kFsMinGapMs) {
+    lua_pushboolean(L, 0); lua_pushstring(L, "too fast"); return 2;
+  }
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) { lua_pushboolean(L, 0); lua_pushstring(L, "no storage"); return 2; }
+  fsEnsureDir();
+  bool ok = false;
+  {
+    WdtHeavyGuard guard;            // a GC pass here must stall, not reboot
+    File f = fs->open(path, mode);
+    if (f) { ok = (f.write((const uint8_t*)data, len) == len); f.close(); }
+  }
+  s_h->fs_last_write_ms = now;
+  lua_pushboolean(L, ok);
+  if (!ok) { lua_pushstring(L, "write failed"); return 2; }
+  return 1;
+}
+int fsWrite(lua_State* L)  { return fsWriteCommon(L, "w"); }
+int fsAppend(lua_State* L) { return fsWriteCommon(L, "a"); }
+
+int fsRead(lua_State* L) {
+  const char* name = luaL_checkstring(L, 1);
+  char path[128];
+  if (!fsPath(path, sizeof path, name)) { lua_pushnil(L); return 1; }
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) { lua_pushnil(L); return 1; }
+  File f = fs->open(path, "r");
+  if (!f) { lua_pushnil(L); return 1; }
+  size_t n = f.size();
+  if (n > kFsMaxFile) n = kFsMaxFile;              // never hand Lua an unbounded buffer
+  luaL_Buffer b;
+  char* dst = luaL_buffinitsize(L, &b, n);
+  const size_t got = f.read((uint8_t*)dst, n);
+  f.close();
+  luaL_pushresultsize(&b, got);
+  return 1;
+}
+int fsRemove(lua_State* L) {
+  const char* name = luaL_checkstring(L, 1);
+  char path[128];
+  fs::FS* fs = luaHostAppFs();
+  if (!fs || !fsPath(path, sizeof path, name)) { lua_pushboolean(L, 0); return 1; }
+  lua_pushboolean(L, fs->remove(path));
+  return 1;
+}
+int fsList(lua_State* L) {
+  lua_newtable(L);
+  fs::FS* fs = luaHostAppFs();
+  if (!fs || !s_h) return 1;
+  char d[80], rel[64];
+  snprintf(rel, sizeof rel, "/apps/%s.d", s_h->id);
+  luaHostAppPath(d, sizeof d, rel);
+  File dir = fs->open(d);
+  if (!dir || !dir.isDirectory()) return 1;
+  int i = 0;
+  for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+    if (e.isDirectory()) continue;
+    lua_createtable(L, 0, 2);
+    const char* nm = strrchr(e.name(), '/');
+    lua_pushstring(L, nm ? nm + 1 : e.name()); lua_setfield(L, -2, "name");
+    lua_pushinteger(L, (lua_Integer)e.size()); lua_setfield(L, -2, "size");
+    lua_rawseti(L, -2, ++i);
+  }
+  dir.close();
+  return 1;
+}
+#endif  // CAP_LUA_SDK_EXT
+
 void storePath(char* out, size_t cap) {
   char rel[40];
   snprintf(rel, sizeof rel, "/apps/%s.sav", s_h->id);
@@ -850,6 +970,16 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, storeGet); lua_setfield(L, -2, "get");
   lua_pushcfunction(L, storeSet); lua_setfield(L, -2, "set");
   lua_setfield(L, -2, "store");
+
+#if CAP_LUA_SDK_EXT
+  lua_newtable(L);                                       // wada.fs (scoped to /apps/<id>.d)
+  lua_pushcfunction(L, fsRead);   lua_setfield(L, -2, "read");
+  lua_pushcfunction(L, fsWrite);  lua_setfield(L, -2, "write");
+  lua_pushcfunction(L, fsAppend); lua_setfield(L, -2, "append");
+  lua_pushcfunction(L, fsList);   lua_setfield(L, -2, "list");
+  lua_pushcfunction(L, fsRemove); lua_setfield(L, -2, "remove");
+  lua_setfield(L, -2, "fs");
+#endif
 
   lua_newtable(L);                                       // wada.mesh (read-only)
   lua_pushcfunction(L, meshContacts); lua_setfield(L, -2, "contacts");
