@@ -38790,6 +38790,14 @@ static void luaStoreTabCb(lv_event_t* e) {
 
 static void luaStoreRebuildList() {
   if (!s_luastore_list) return;
+  // Keep the reader where they were. This runs from ASYNC completions -- the
+  // catalog fetch, the card scan, a language catalog -- which land a second or
+  // two after the Store opens, i.e. exactly while someone is scrolling down it.
+  // Rebuilding threw them back to the top every time, which also hid whatever
+  // they had scrolled to (an app near the bottom could look like it had no
+  // button at all). Restored after the rows exist, so the value is clamped
+  // against the NEW content height rather than the old one.
+  const lv_coord_t keep_scroll_y = lv_obj_get_scroll_y(s_luastore_list);
   lv_obj_clean(s_luastore_list);
   const uint32_t hide = touchPrefsGetAppHide();
   const lv_coord_t W = s_luastore_w;
@@ -39196,6 +39204,10 @@ static void luaStoreRebuildList() {
     lv_obj_add_event_cb(b, luaStoreRemoveBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
   }
 
+  if (keep_scroll_y > 0) {
+    lv_obj_update_layout(s_luastore_list);          // content height must be known first
+    lv_obj_scroll_to_y(s_luastore_list, keep_scroll_y, LV_ANIM_OFF);
+  }
 }
 
 static void openLuaStorePage() {
