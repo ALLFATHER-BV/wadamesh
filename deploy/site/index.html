@@ -259,6 +259,23 @@
   .cookiebar.show{display:flex}
   .cookiebar a{color:var(--teal-ink); cursor:pointer}
   .cookiebar button{background:var(--teal); color:#fff; border:0; border-radius:8px; padding:8px 16px; font-weight:650; cursor:pointer; font-size:.86rem; flex:none}
+
+/* Resources section: the four things people were only finding via the small
+   floating buttons on the right, which almost nobody noticed. Same icons, so
+   the rail still reads as a shortcut to these once you have seen them. */
+.rescards{display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(215px,1fr));
+  max-width:940px; margin:22px auto 0}
+.rescard{border:1px solid var(--line); background:var(--card); border-radius:14px; padding:20px;
+  display:flex; flex-direction:column; gap:9px; align-items:flex-start;
+  box-shadow:0 8px 26px -22px rgba(21,24,30,.5); transition:transform .16s ease, box-shadow .16s ease}
+.rescard:hover{transform:translateY(-2px); box-shadow:0 16px 34px -22px rgba(21,24,30,.55)}
+.rescard .ico{width:38px; height:38px; border-radius:10px; display:grid; place-items:center;
+  background:rgba(21,182,166,.10); color:var(--teal); flex:none}
+.rescard .ico svg{width:20px; height:20px}
+.rescard h4{font-size:1.02rem; margin:2px 0 0}
+.rescard p{color:var(--mut); font-size:.88rem; line-height:1.55; margin:0}
+.rescard .go{margin-top:auto; padding-top:6px; color:var(--teal); font-weight:650; font-size:.88rem}
+.rescard:hover .go{text-decoration:underline}
 </style>
 </head>
 <body>
@@ -520,6 +537,44 @@
           <p style="margin:11px 0 0;font-size:.84rem;color:var(--mut);line-height:1.5">You're downloading version <b data-wn-tag style="color:var(--teal)">…</b><span data-wm-chlabel></span>.<br>The file saves as <code data-dl-fname style="font-size:.82em">wadamesh-tdeck.bin</code> — rename it if you keep several.</p></div>
       </div>
       <p class="hint">New to Launcher? It's the easiest way to try WADAMESH without giving up your other firmware — and you can fully switch to Standalone any time.</p>
+    </div>
+  </div>
+</section>
+
+<section id="resources">
+  <div class="wrap">
+    <h2 class="h2">Docs, tools and help</h2>
+    <p class="p">Everything past the install. These are also the small buttons on the right of the screen.</p>
+    <div class="rescards">
+
+      <a class="rescard" href="docs.html">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg></span>
+        <h4>User guide</h4>
+        <p>Every screen explained, from first boot and adding contacts through channels, room servers, the map and the settings that matter.</p>
+        <span class="go">Read the guide</span>
+      </a>
+
+      <a class="rescard" href="sdk.html">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg></span>
+        <h4>Lua app SDK</h4>
+        <p>Write your own apps. They install from the Store on the device and sit next to the built-ins. One file, no toolchain, no firmware build.</p>
+        <span class="go">Build an app</span>
+      </a>
+
+      <a class="rescard" href="https://t413.com/p/projects/MapTileDl/" target="_blank" rel="noopener">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg></span>
+        <h4>Offline map tiles</h4>
+        <p>Download the area you care about to the SD card so the map works with no Wi-Fi and no data, which is the point of carrying a mesh radio.</p>
+        <span class="go">Get map tiles</span>
+      </a>
+
+      <a class="rescard" href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="14" x="8" y="6" rx="4"/><path d="m19 7-3 2"/><path d="m5 7 3 2"/><path d="m19 19-3-2"/><path d="m5 19 3-2"/><path d="M20 13h-4"/><path d="M4 13h4"/><path d="m10 4 1 2"/><path d="m14 4-1 2"/></svg></span>
+        <h4>Bugs and requests</h4>
+        <p>Report anything broken or ask for a feature on GitHub. Reports with a board name and what you did get fixed fastest, and plenty already have.</p>
+        <span class="go">Open an issue</span>
+      </a>
+
     </div>
   </div>
 </section>
