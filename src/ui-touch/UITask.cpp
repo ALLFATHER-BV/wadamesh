@@ -1371,7 +1371,7 @@ struct GlobalStatusBar {
   lv_obj_t* ble_icon;        // Bluetooth glyph (separate from Wi-Fi)
   lv_obj_t* sleep_icon;      // idle light-sleep readiness indicator (T-Deck only)
   lv_obj_t* dnd_icon;        // Do Not Disturb active glyph (moon, all boards)
-  lv_obj_t* sd_icon;         // microSD read/write activity LED (left of Wi-Fi)
+  lv_obj_t* sd_icon;         // microSD read/write activity LED (left of Bluetooth)
   lv_obj_t* async_icon;      // async mesh-request spinner glyph (centre, transient)
   lv_obj_t* clock;
   lv_obj_t* batt_pct;
@@ -40888,18 +40888,16 @@ static void buildGlobalStatusBar() {
 #endif
                0);
 
-  // Bluetooth glyph (left of the SD LED). Unified offset across all boards (see clock above).
+  // Bluetooth glyph immediately left of Wi-Fi; the less-active SD LED sits to its left.
   g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.ble_icon, "");
   lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
-  // Narrow bars (V4 portrait) have no DND slot beside BLE and their clock sits at -126, so BLE
-  // stays at -111 there; wide bars keep -SC(127) (tight to the DND moon at -144).
   lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID,
 #if defined(TLORA_PAGER)
-               -142,
+               -124,
 #else
-               (lv_disp_get_hor_res(nullptr) < 300) ? -111 : -SC(127),
+               -SC(91),
 #endif
                0);
 
@@ -40937,8 +40935,8 @@ static void buildGlobalStatusBar() {
   lv_obj_add_flag(g_statusbar.dnd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only while DND is active
   lv_obj_add_flag(g_statusbar.dnd_icon, NAV_SKIP_FLAG);        // passive status glyph, not a focus-nav target
 
-  // microSD read/write activity LED — a small amber dot in the gap just left of
-  // the Wi-Fi glyph. Hidden when idle; UITask::loop lights it for ~180 ms after
+  // microSD read/write activity LED — a small amber dot just left of Bluetooth.
+  // Hidden when idle; UITask::loop lights it for ~180 ms after
   // any SD access (markSdIo). A bg-coloured dot (not a glyph) keeps it tiny and
   // unambiguous as an activity light, and costs no font space.
   g_statusbar.sd_icon = lv_obj_create(g_statusbar.root);
@@ -40950,9 +40948,9 @@ static void buildGlobalStatusBar() {
   lv_obj_clear_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_align(g_statusbar.sd_icon, LV_ALIGN_RIGHT_MID,
 #if defined(TLORA_PAGER)
-               -124,
+               -142,
 #else
-               -SC(91),
+               (lv_disp_get_hor_res(nullptr) < 300) ? -111 : -SC(127),
 #endif
                0);
   lv_obj_add_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only during SD I/O
@@ -41039,7 +41037,7 @@ static void buildGlobalStatusBar() {
 static void statusBarLayoutTwoRow(int slide) {
   const int ins = SB_INSET_X;
   // Row 2 — status cluster, right→left, evenly spaced. Battery pinned at the inset;
-  // the sub-battery cluster (signal/sd/wifi/ble) sits to its left and slides right by
+  // the sub-battery cluster (signal/ble/wifi/sd) sits to its left and slides right by
   // `slide` when the %-column hides while charging. y nudges centre each glyph in the
   // row (montserrat_14 battery sits a touch higher than the 12px glyphs; sig/sd dots
   // drop a few px). The scrolling profile name shares this row on the left (placed by
@@ -41047,9 +41045,9 @@ static void statusBarLayoutTwoRow(int slide) {
   if (g_statusbar.batt_icon) lv_obj_align(g_statusbar.batt_icon, LV_ALIGN_TOP_RIGHT, -(2   + ins),         SB_ROW2_Y - 2);
   if (g_statusbar.batt_pct)  lv_obj_align(g_statusbar.batt_pct,  LV_ALIGN_TOP_RIGHT, -(26  + ins),         SB_ROW2_Y);
   if (g_statusbar.sig_box)   lv_obj_align(g_statusbar.sig_box,   LV_ALIGN_TOP_RIGHT, -(64  + ins - slide), SB_ROW2_Y + 2);
-  if (g_statusbar.sd_icon)   lv_obj_align(g_statusbar.sd_icon,   LV_ALIGN_TOP_RIGHT, -(86  + ins - slide), SB_ROW2_Y + 4);
+  if (g_statusbar.sd_icon)   lv_obj_align(g_statusbar.sd_icon,   LV_ALIGN_TOP_RIGHT, -(126 + ins - slide), SB_ROW2_Y + 4);
   if (g_statusbar.conn_icon) lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_TOP_RIGHT, -(102 + ins - slide), SB_ROW2_Y);
-  if (g_statusbar.ble_icon)  lv_obj_align(g_statusbar.ble_icon,  LV_ALIGN_TOP_RIGHT, -(126 + ins - slide), SB_ROW2_Y);
+  if (g_statusbar.ble_icon)  lv_obj_align(g_statusbar.ble_icon,  LV_ALIGN_TOP_RIGHT, -(86  + ins - slide), SB_ROW2_Y);
   // Row 1 — clock at the right inset (+ keyboard-layout tag to its left when typing).
   if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_TOP_RIGHT, -ins,        SB_ROW1_Y);
   if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_TOP_RIGHT, -(48 + ins), SB_ROW1_Y);
@@ -41538,8 +41536,8 @@ static void updateGlobalStatusBar() {
       const int d = charging ? 45 : 0;
       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -82  + d, 0);
       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -104 + d, 0);
-      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -124 + d, 0);
-      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -142 + d, 0);
+      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -142 + d, 0);
+      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -124 + d, 0);
       if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -164 + d, 0);
       if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -232 + d, 0);
 #elif CAP_LARGE_SCREEN
@@ -41551,21 +41549,18 @@ static void updateGlobalStatusBar() {
       const int d = charging ? SC(32) : 0;
       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -SC(54)  + d, 0);
       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -SC(73)  + d, 0);
-      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -SC(91)  + d, 0);
-      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -SC(127) + d, 0);
+      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -SC(127) + d, 0);
+      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -SC(91)  + d, 0);
       if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -SC(144) + d, 0);
       if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -SC(182) + d, 0);
 #else
       const int d = charging ? 32 : 0;
-      // Base offsets MUST match the builder (which shifted for the SD LED): the
-      // SD dot is at -91, ble -127, clock -142, layout -166. The dot slides with
-      // the cluster too so it stays between Wi-Fi and Bluetooth while charging.
+      // Base offsets MUST match the builder: BLE is next to Wi-Fi, with the SD
+      // dot farther left. Both slide with the cluster while charging.
       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -54  + d, 0);
       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -73  + d, 0);
-      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -91  + d, 0);
-      // Narrow bar (V4 portrait) has no DND slot next to BLE (DND borrows the signal slot),
-      // and its clock sits at -126 — so keep BLE at its pre-DND -111 there; -127 lands on the clock.
-      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, (lv_disp_get_hor_res(nullptr) < 300 ? -111 : -127) + d, 0);
+      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, (lv_disp_get_hor_res(nullptr) < 300 ? -111 : -127) + d, 0);
+      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -91  + d, 0);
       if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_RIGHT_MID, -160 + d, 0);
       if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -182 + d, 0);
       if (g_statusbar.sleep_icon)   lv_obj_align(g_statusbar.sleep_icon,   LV_ALIGN_RIGHT_MID, -144 + d, 0);
