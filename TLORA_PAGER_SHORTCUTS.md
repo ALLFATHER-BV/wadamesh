@@ -231,6 +231,19 @@ needed.
 Unlike the T-Deck, this is a plain on/off strip under the keys, not a
 dimmable brightness curve.
 
+## Leaving Remote Mode
+
+Remote Mode replaces the normal device UI with a physical-screen placeholder
+showing the browser address and an **EXIT REMOTE** button. While that screen is
+active, normal navigation is paused. Press the **encoder knob** to activate the
+button, turn off Remote Mode, and reboot back to the normal screen. You can also
+press **Space twice within 3 seconds**; after the first press, the button changes
+to **press SPACE again**. The browser's **Exit remote** button performs the same
+action.
+
+This Remote Mode gesture is separate from the normal 250 ms Space double-tap
+that changes keyboard language.
+
 ## Quick reference
 
 | Input | Action |
@@ -255,5 +268,7 @@ dimmable brightness curve.
 | Space (tap) | Space |
 | Space (double-tap) | Switch keyboard language |
 | Space (hold 1s) | Lock screen |
+| Encoder click (Remote Mode only) | Activate EXIT REMOTE and reboot normally |
+| Space twice within 3s (Remote Mode only) | Exit Remote Mode and reboot normally |
 | Q / E (slider focused) | Decrease / increase |
 | W / A / X / D (Map tab) | Pan map north/west/south/east |
