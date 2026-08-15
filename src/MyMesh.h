@@ -441,11 +441,23 @@ public:
    *  push-abandon counter, so pushes resume (issue #89: self-heal + the chat
    *  sheet's "Log in again"). NOTE it cannot recover a server that REBOOTED
    *  (non-admin ACL entries aren't persisted there) — that needs a passworded
-   *  Join from the Contacts sheet. */
+   *  Join, which the UI escalates to when this gets no LOGIN_OK (#267). */
   int uiRoomRelogin(const uint8_t pub_key[32]) {
     ContactInfo* c = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (!c || c->type != ADV_TYPE_ROOM) return MSG_SEND_FAILED;
     return uiSendAdminLogin(*c, "");
+  }
+
+  /** Contact-table INDEX for a public key, or -1. lookupContactByPubKey returns
+   *  the record; the touch UI's room-join path needs the index instead, because
+   *  that is what openMeshContactDm() takes (#267). */
+  int uiContactIdxByPubKey(const uint8_t pub_key[32]) {
+    const uint32_t n = getNumContacts();
+    for (uint32_t i = 0; i < n; ++i) {
+      ContactInfo c;
+      if (getContactByIdx(i, c) && memcmp(c.id.pub_key, pub_key, PUB_KEY_SIZE) == 0) return (int)i;
+    }
+    return -1;
   }
 
   /** Send a CLI command line to a previously-logged-in repeater / room
