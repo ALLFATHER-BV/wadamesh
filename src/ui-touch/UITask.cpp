@@ -41101,6 +41101,9 @@ static void updateGlobalStatusBar() {
     static bool s_bar_dim = false;
     const bool want_dim = anyPopupOpen() && !s_cc_root && !s_settings_sheet &&
                           !s_appdrawer_root && !chanScopeIsOpen() && !blockedModalIsOpen() &&
+#if CAP_LUA_APPS
+                          !s_luastore_root &&   // same: the Store page's ‹ back lives in the bar
+#endif
                           !s_reader_page_open;   // the reader uses the bar for its ‹ back — don't dim/block it
     if (want_dim != s_bar_dim) {
       s_bar_dim = want_dim;
@@ -51266,6 +51269,14 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_los_root),              []{ closeLosModal(); },              PF_COUNT },
 #endif
   { P_OPEN(s_admin_root),            []{ closeAdminConsole(); },          PF_COUNT },
+#if CAP_LUA_APPS
+  // The Store page (also where Settings -> Language lands, see luaStoreOpenLanguages)
+  // was never registered, so backspace/Esc did nothing on it and the ONLY way out was
+  // tapping the status bar's back chevron -- every other settings screen closes with the
+  // key (issue #281). Sits below the modals that open OVER the store (confirm, pickers)
+  // so those still close first.
+  { P_OPEN(s_luastore_root),         []{ closeLuaStorePage(); },          PF_COUNT },
+#endif
   { P_OPEN(s_settings_sheet),        []{ closeSettingsCategory(); },      PF_COUNT | PF_SWIPE },
   { []{ return settingsModalIsOpen(); }, []{ closeSettingsModal(); },     PF_COUNT },
   { P_OPEN(s_power_menu),            []{ closePowerMenu(); },             PF_COUNT },
