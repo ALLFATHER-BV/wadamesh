@@ -17910,6 +17910,17 @@ static const char* batteryGlyphForMv(uint16_t mv) {
 }
 
 static int batteryPercentFromMv(uint16_t mv) {
+#if defined(HAS_TDISPLAY_P4)
+  // This board has a BQ27220 fuel gauge, which coulomb-counts against its learned
+  // pack profile and therefore knows the actual state of charge. Ask it, and only
+  // fall back to the voltage curve below if it does not answer. Terminal voltage is
+  // charger-driven, so the curve read 100% the moment USB was plugged in while the
+  // pack was nearly empty, and never quite reached 100% resting on battery (#273).
+  {
+    const int soc = board.getBattStateOfCharge();
+    if (soc >= 0) return soc;
+  }
+#endif
   // Li-ion curve: 3.30 V empty, FULL = the calibrated full (default 4.20 V).
   // While charging the rail reads above full (charger-driven) — cap at 100
   // rather than show a bogus number; the real cell % isn't observable here.

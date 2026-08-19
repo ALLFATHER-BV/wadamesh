@@ -44,6 +44,29 @@ static uint16_t bq27220ReadU16(uint8_t cmd) {
   return (uint16_t)(lo | (hi << 8));
 }
 
+// StateOfCharge() = REG 0x2C, a percentage the gauge computes by coulomb counting
+// against its learned pack profile. This is the number to trust, and the reason the
+// battery readout was wrong (#273): we were reporting terminal VOLTAGE through a
+// generic 3.3-4.2 V linear curve instead. Voltage is charger-driven, so plugging USB
+// in pinned the display at 100% while the pack was nearly flat (one reporter read 71%
+// here and 11% under Meck-P4, another watched it jump 51% -> 100% on plugging in), a
+// resting-but-full pack never quite reached 100%, and "calibrate 100% here" captured a
+// charging rail as full and made the error permanent.
+//
+// Returns -1 when the gauge does not answer or reports out of range, so the caller can
+// fall back to the voltage curve rather than show a made-up number.
+int TDisplayP4Board::getBattStateOfCharge() {
+  static uint32_t last_ms = 0;
+  static int      last_pct = -1;
+  const uint32_t now = millis();
+  if (last_ms == 0 || now - last_ms >= 5000) {
+    last_ms = now;
+    const uint16_t soc = bq27220ReadU16(0x2C);       // StateOfCharge(), %
+    last_pct = (soc <= 100) ? (int)soc : -1;
+  }
+  return last_pct;
+}
+
 uint16_t TDisplayP4Board::getBattMilliVolts() {
   static uint32_t last_ms = 0;
   static uint16_t last_mv = 3800;      // pre-first-read placeholder
