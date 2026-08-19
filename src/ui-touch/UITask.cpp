@@ -15449,9 +15449,23 @@ static void loginWaitTimeoutCb(lv_timer_t* t) {
   time_t tt = (time_t)the_mesh.getRTCClock()->getCurrentTime();
   struct tm tmv;
   if (localtime_r(&tt, &tmv)) strftime(when, sizeof when, "%H:%M %d %b", &tmv);
-  char msg[120];
-  snprintf(msg, sizeof msg, TR("No reply. Check password, server,\nor device clock (device: %s)"), when);
-  g_lv.task->showAlert(msg, 4500);
+  char msg[160];
+  // Multi-byte path hashing is the one setting that makes a login fail EXACTLY like
+  // this: a repeater that predates it, or does not implement it, silently drops 2- and
+  // 3-byte-hash packets, so the request never arrives and no error is ever generated
+  // anywhere. It is opt-in and defaults to 1 byte, but someone who turned it on has no
+  // way to connect that choice to "remote management stopped working" — reported twice
+  // (#278, #280), once explicitly while running 3-byte hashes. Name it here, where the
+  // operator is already looking, rather than leaving them to find it in Settings.
+  const uint8_t phm = the_mesh.getNodePrefs() ? the_mesh.getNodePrefs()->path_hash_mode : 0;
+  if (phm > 0) {
+    snprintf(msg, sizeof msg,
+             TR("No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)"),
+             (unsigned)(phm + 1));
+  } else {
+    snprintf(msg, sizeof msg, TR("No reply. Check password, server,\nor device clock (device: %s)"), when);
+  }
+  g_lv.task->showAlert(msg, 5000);
 }
 static void loginWaitArm(LoginWaitKind kind) {
   loginWaitCancel();
