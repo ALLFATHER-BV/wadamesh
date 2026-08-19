@@ -171,16 +171,8 @@
             <li><b>Settings</b>, <b>Terminal</b> (MeshCore CLI), <b>Files</b> (microSD).</li>
           </ul>
           <p>The bar along the bottom is always there — it switches the five main tabs (Chat, Contacts, Home, Map, Settings) from anywhere. The top bar shows unread count, time, signal and battery.</p>
-          <h3>The save chip <span class="tag">Cmdr</span></h3>
-          <p>On the command centre, the TX/RX traffic chart has a legend row underneath it: packet totals on the left, and on the right a small chip reading <b>Saved</b> and a time. That chip is not about the radio — it is about your <b>chat history</b>, and it answers one question: are your messages actually reaching storage?</p>
-          <ul>
-            <li><code>Saved 14:32</code> — the moment history last saved successfully, in 12- or 24-hour form to match your clock setting. It is a timestamp, not a running clock, so it only moves when a save happens.</li>
-            <li><code>Saved 14:32-2D</code> — that last successful save was <b>two days ago</b>. Saving has quietly stopped; the suffix exists so a stale store cannot pass for a fresh one at a glance.</li>
-            <li><code>Saved --:--</code> — nothing has saved yet, or the save happened before the clock was set, so there is no meaningful time to show.</li>
-            <li><code>Save FAIL x3</code>, in red — writes are failing right now, with a count. Recent messages are at risk of being lost on reboot.</li>
-            <li><code>Save migrating</code>, in amber — an older history file is still being converted to the current segmented format. This is normal after an update and clears itself.</li>
-          </ul>
-          <p>A time that keeps pace with your conversations means history is safe. Red, amber, or a time that has stopped moving is worth a look at <b>Settings &rarr; About &rarr; Chat store</b>, which names the storage backend in use and the exact stage and error a failing save is hitting.</p>
+          <h3>Is my history actually saving? <span class="tag">Cmdr</span></h3>
+          <p><b>Settings &rarr; About &rarr; Chat store</b> is the answer: it names the storage backend in use, when history last saved successfully, and the exact stage and error a failing save is hitting. Worth a look if messages seem to vanish across a reboot.</p>
         </div>
         <div class="shot"><div class="device"><img class="screen" src="docs-img/home.png" alt="Home app launcher"></div><div class="cap">Home — app launcher</div></div>
       </div>
