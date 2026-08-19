@@ -10489,7 +10489,7 @@ static void buildRadioSettings() {
     // telemetry is allowed, so the switch above is a prerequisite rather than an
     // unrelated setting.
     lv_obj_t* note = lv_label_create(body);
-    lv_label_set_text(note, TR("Sent only when that contact asks, encrypted to them — not broadcast. "
+    lv_label_set_text(note, TR("Sent only when that contact asks, encrypted to them. Nothing is broadcast. "
                                "Needs \"Answer telemetry requests\" on. Pick contacts in a contact's menu."));
     lv_obj_set_width(note, s_settings_content_w - SC(4));
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
