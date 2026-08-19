@@ -4848,6 +4848,10 @@ static void formatDistanceBadge(char* out, size_t out_cap, double self_lat, doub
                                 int32_t c_lat_e6, int32_t c_lon_e6);          // defined with the contacts list
 static void openChannelLongPressActionSheet(int thread_idx, const char* name);
 static void usernameBubbleColors(const char* name, lv_color_t* bubble_bg, lv_color_t* name_col);
+// Room-server login recovery (#267). Both live with the admin-login code far below,
+// but the room thread sheet up here drives them.
+static void roomReloginBegin(const uint8_t pub[32]);          // blank re-login + no-reply watchdog
+static void openRoomJoinPrompt(const uint8_t pub[32], bool after_relogin_failed);  // passworded Join
 // ============================================================
 // Helpers
 // ============================================================
@@ -7096,16 +7100,30 @@ static void channelLongSheetBlockedCb(lv_event_t* e) {
 // LOGIN_OK re-arms our keep-alive, whose first REQ clears the server's
 // push-abandon counter — resuming a room that went one-way-dead (issue #89:
 // "no possibility to log in once it is done"). A REBOOTED server forgets
-// non-admin clients; that case needs the passworded Join from Contacts.
+// non-admin clients, and a blank login cannot recreate a record the server no
+// longer has: it simply never replies. roomReloginBegin() therefore arms the
+// no-reply watchdog, which escalates to the passworded Join prompt in place
+// rather than leaving the operator on a toast with no result (#267).
 static void threadSheetRoomLoginCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   const int idx = s_channel_long_idx;
   closeChannelLongSheet();
   uint8_t pub[32];
-  if (g_lv.task->getThreadContactPub(idx, pub) && the_mesh.uiRoomRelogin(pub) != MSG_SEND_FAILED)
-    g_lv.task->showAlert(TR("Logging in again..."), 1400);
-  else
-    g_lv.task->showAlert(TR("Couldn't send login"), 1400);
+  if (g_lv.task->getThreadContactPub(idx, pub)) roomReloginBegin(pub);
+  else g_lv.task->showAlert(TR("Couldn't send login"), 1400);
+}
+
+// "Join with password" (room threads) — the recovery that actually recreates a
+// forgotten client record, previously reachable only from the Contacts sheet
+// even though a room with a thread is something you reach from Chats (#267).
+static void threadSheetRoomJoinCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  const int idx = s_channel_long_idx;
+  closeChannelLongSheet();
+  uint8_t pub[32];
+  if (g_lv.task->getThreadContactPub(idx, pub))
+    openRoomJoinPrompt(pub, /*after_relogin_failed=*/false);
+  else g_lv.task->showAlert(TR("Contact gone"), 1200);
 }
 
 // "Reset path" (DM sheet) — wipes the cached return path for this chat's contact so
@@ -7239,10 +7257,11 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   // Everything except Remove/Delete goes in the 2-column grid; the danger row
   // spans the full width at the bottom. Channel: mark-read + region + the two
   // mutes + share + blocked + chat icon + delete history = 8 grid items
-  // (4 rows). Room: mark-read + login-again + reset-path + blocked +
-  // delete history = 5 (3 rows). DM: mark-read + reset-path + blocked +
-  // delete history = 4 (2 rows).
-  const int grid_items = is_channel ? 8 : (is_room_thread ? 5 : 4);
+  // (4 rows). Room: mark-read + login-again + join + reset-path + blocked +
+  // delete history = 6 (3 rows — the join row fills what was a half-empty
+  // bottom row, so the card height is unchanged). DM: mark-read + reset-path
+  // + blocked + delete history = 4 (2 rows).
+  const int grid_items = is_channel ? 8 : (is_room_thread ? 6 : 4);
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
   // Exact content height: outer padding + fixed header + grid rows + one
   // full-width danger row. There is no trailing gap after the danger row.
@@ -7348,8 +7367,10 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     mk(TR(LV_SYMBOL_TRASH    "  Delete history"), threadSheetClearHistCb,    0);
     mk_full(TR(LV_SYMBOL_TRASH "  Remove channel"), channelLongSheetDeleteCb, 0xB23A48);
   } else {
-    if (is_room_thread)
+    if (is_room_thread) {
       mk(TR(LV_SYMBOL_REFRESH "  Log in again"),  threadSheetRoomLoginCb,    0);
+      mk(TR(LV_SYMBOL_LOOP    "  Join w/ password"), threadSheetRoomJoinCb,  0);
+    }
     mk(TR(LV_SYMBOL_LOOP     "  Reset path"),     threadSheetResetPathCb,    0);
     mk(TR(LV_SYMBOL_CLOSE    "  Blocked users"),  channelLongSheetBlockedCb, 0);
     mk(TR(LV_SYMBOL_TRASH    "  Delete history"), threadSheetClearHistCb,    0);
@@ -15247,6 +15268,21 @@ static char*     s_admin_log = (char*)psAlloc(ADMIN_LOG_SZ);  // ring-ish log bu
 // chat on success. -1 = the current login is a normal repeater admin login.
 static int       s_room_join_idx   = -1;
 static int       s_admin_log_len   = 0;
+// The room server a user-initiated "Log in again" is currently waiting on (#267).
+// That path sends a blank login WITHOUT opening the prompt, so it never sets
+// s_admin_pub32 — which is why onAdminLoginResult's identity guard used to drop
+// the reply and the row said nothing whether it worked or not. Tracked separately
+// so the two pending-login kinds can't be confused for one another.
+static uint8_t   s_room_relogin_pub32[32] = {0};
+static bool      s_room_relogin_active    = false;
+static void roomReloginClear() {
+  s_room_relogin_active = false;
+  memset(s_room_relogin_pub32, 0, sizeof s_room_relogin_pub32);
+}
+// Reason line for the next login prompt, consumed (and cleared) by
+// openAdminLoginPrompt. Lets the escalated Join explain why it appeared instead
+// of looking like a password box out of nowhere. nullptr = the default subtitle.
+static const char* s_admin_pw_reason = nullptr;
 
 // Static help banner shown when the console opens. Lists the common
 // CommonCLI commands plus the simple_repeater-specific extras. The repeater
@@ -15348,6 +15384,13 @@ static void closeAdminCmdPicker() {
 // attempt; any login result (or closing the prompt) disarms it. 20 s covers the
 // core's worst-case flood est_timeout on slow spreading factors, with margin.
 static lv_timer_t* s_login_wait_timer = nullptr;
+// What the pending attempt was, so the timeout can say something useful about
+// it (#267). A typed password that goes unanswered is a password/clock/server
+// problem; a blank room re-login that goes unanswered means the server has
+// forgotten our client record, which is a different message AND a different
+// remedy.
+enum class LoginWaitKind : uint8_t { Password, RoomRelogin };
+static LoginWaitKind s_login_wait_kind = LoginWaitKind::Password;
 static void loginWaitCancel() {
   if (s_login_wait_timer) { lv_timer_del(s_login_wait_timer); s_login_wait_timer = nullptr; }
 }
@@ -15355,6 +15398,19 @@ static void loginWaitTimeoutCb(lv_timer_t* t) {
   (void)t;
   s_login_wait_timer = nullptr;   // one-shot: LVGL frees the timer after this cb
   if (!g_lv.task) return;
+  // Blank room re-login went unanswered: the server no longer holds our client
+  // record (a reboot drops non-admin ACL entries), and no amount of passwordless
+  // retrying will recreate it. Escalate to the passworded Join right here rather
+  // than ending on a toast that leaves the operator with no result and no next
+  // step — the whole point of #267.
+  if (s_login_wait_kind == LoginWaitKind::RoomRelogin) {
+    if (!s_room_relogin_active) return;
+    uint8_t pub[32];
+    memcpy(pub, s_room_relogin_pub32, sizeof pub);
+    roomReloginClear();
+    openRoomJoinPrompt(pub, /*after_relogin_failed=*/true);
+    return;
+  }
   // Show what the DEVICE thinks the time is — a wrong clock here is the tell
   // for the replay-guard case (the other causes read the first two hints).
   char when[24] = "?";
@@ -15365,8 +15421,9 @@ static void loginWaitTimeoutCb(lv_timer_t* t) {
   snprintf(msg, sizeof msg, TR("No reply. Check password, server,\nor device clock (device: %s)"), when);
   g_lv.task->showAlert(msg, 4500);
 }
-static void loginWaitArm() {
+static void loginWaitArm(LoginWaitKind kind) {
   loginWaitCancel();
+  s_login_wait_kind  = kind;
   s_login_wait_timer = lv_timer_create(loginWaitTimeoutCb, 20000, nullptr);
   if (s_login_wait_timer) lv_timer_set_repeat_count(s_login_wait_timer, 1);
 }
@@ -15716,11 +15773,15 @@ static void adminPwSubmitCb(lv_event_t* e) {
   s_admin_pw_attempt[sizeof(s_admin_pw_attempt) - 1] = '\0';
   s_admin_pw_remember_flag = (s_admin_pw_remember &&
                               lv_obj_has_state(s_admin_pw_remember, LV_STATE_CHECKED));
+  // An explicit login supersedes any blank re-login still in flight (usually to
+  // this very room): without this, that one's late reply — or its watchdog —
+  // could pop the escalation prompt on top of the login the user just started.
+  roomReloginClear();
   int r = the_mesh.uiSendAdminLogin(*c, s_admin_pw_attempt);
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
     markMeshRequest();   // status-bar async spinner
     if (g_lv.task) g_lv.task->showAlert(TR("Logging in\xe2\x80\xa6"), 1500);
-    loginWaitArm();      // silence past 20 s gets a real error instead of forever-spin (#89)
+    loginWaitArm(LoginWaitKind::Password);   // silence past 20 s gets a real error instead of forever-spin (#89)
   } else {
     if (g_lv.task) g_lv.task->showAlert(TR("Send failed"), 1200);
   }
@@ -15735,6 +15796,17 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   closeAdminPwPrompt();
   closeAdminConsole();
   memcpy(s_admin_pub32, c.id.pub_key, 32);
+
+  // Consume the one-shot reason line before any layout maths — a reason needs two
+  // lines where the stock hint needs one, so the card grows by exactly one line
+  // and everything below the subtitle shifts down with it (#267). Bounded on
+  // purpose, and bounded TIGHT: the card is top-anchored inside a root only
+  // 218 px tall on a 240 px T-Deck, so a third line would leave no margin at all.
+  // A translation that overruns two lines clips rather than pushing the Join
+  // button off the card.
+  const char* const reason = s_admin_pw_reason;
+  s_admin_pw_reason        = nullptr;
+  const int         shift  = reason ? PSC(14) : 0;
 
   lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -15755,10 +15827,10 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
 
 #if CAP_LARGE_SCREEN
   const int card_w = PCW(220);
-  const int card_h = PSC(180);
+  const int card_h = PSC(180) + shift;
 #else
   const int card_w = 220;
-  const int card_h = 180;   // taller now: room for the Remember checkbox
+  const int card_h = 180 + shift;   // taller now: room for the Remember checkbox (+ a reason line)
 #endif
   lv_obj_t* card = lv_obj_create(s_admin_pw_root);
   lv_obj_remove_style_all(card);
@@ -15800,15 +15872,26 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   lv_obj_set_pos(title, 0, 0);
 
   lv_obj_t* sub = lv_label_create(card);
-  lv_label_set_text(sub, is_room ? "Room password (blank = guest)"
-                                 : "Password (blank = guest)");
+  // A caller-supplied reason wins over the generic hint: when this prompt opens
+  // by itself after a failed re-login it has to say why (#267), or it reads as a
+  // password box appearing out of nowhere.
+  lv_label_set_text(sub, reason ? reason
+                                : (is_room ? "Room password (blank = guest)"
+                                           : "Password (blank = guest)"));
   lv_obj_set_style_text_color(sub, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(sub, &g_font_12, LV_PART_MAIN);
+  // Only the reason gets a wrap box, sized to the two lines `shift` paid for.
+  // The stock one-line hint keeps its auto-size — pinning a height here would
+  // risk clipping it if the font's line height exceeds the guess.
+  if (reason) {
+    lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
+    lv_obj_set_size(sub, card_w - 20, PSC(28));
+  }
   lv_obj_set_pos(sub, 0, PSC(22));
 
   s_admin_pw_ta = lv_textarea_create(card);
   lv_obj_set_size(s_admin_pw_ta, card_w - 20, PSC(32));
-  lv_obj_set_pos(s_admin_pw_ta, 0, PSC(42));
+  lv_obj_set_pos(s_admin_pw_ta, 0, PSC(42) + shift);
   styleCard(s_admin_pw_ta);
   lv_textarea_set_one_line(s_admin_pw_ta, true);
   lv_textarea_set_password_mode(s_admin_pw_ta, true);
@@ -15851,12 +15934,12 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   lv_checkbox_set_text(s_admin_pw_remember, TR("Remember password"));
   lv_obj_set_style_text_color(s_admin_pw_remember, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_admin_pw_remember, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_pos(s_admin_pw_remember, 0, PSC(82));
+  lv_obj_set_pos(s_admin_pw_remember, 0, PSC(82) + shift);
   lv_obj_add_state(s_admin_pw_remember, LV_STATE_CHECKED);
 
   lv_obj_t* cancel_btn = lv_btn_create(card);
   lv_obj_set_size(cancel_btn, PSC(88), PSC(32));
-  lv_obj_set_pos(cancel_btn, 0, PSC(116));
+  lv_obj_set_pos(cancel_btn, 0, PSC(116) + shift);
   styleButton(cancel_btn);
   lv_obj_add_event_cb(cancel_btn, adminPwCancelCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* cl = lv_label_create(cancel_btn);
@@ -15866,7 +15949,7 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
 
   lv_obj_t* login_btn = lv_btn_create(card);
   lv_obj_set_size(login_btn, PSC(100), PSC(32));
-  lv_obj_set_pos(login_btn, card_w - 20 - PSC(100), PSC(116));
+  lv_obj_set_pos(login_btn, card_w - 20 - PSC(100), PSC(116) + shift);
   styleButton(login_btn);
   lv_obj_set_style_bg_color(login_btn, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_add_event_cb(login_btn, adminPwSubmitCb, LV_EVENT_CLICKED, nullptr);
@@ -15874,6 +15957,48 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   useChainedFont(ll);
   lv_label_set_text(ll, is_room ? "Join" : "Login");
   lv_obj_center(ll);
+}
+
+// Blank re-login to a room server, with the no-reply watchdog armed (#267). The
+// watchdog is what makes this row honest: a server that has forgotten our client
+// record never answers a passwordless login, so without it the action ended on
+// "Logging in again…" and nothing more, forever.
+//
+// Deliberately NOT used by the once-a-minute self-heal in the main loop — that
+// one runs unprompted while the operator reads a room, and must never be able to
+// throw a password prompt on screen by itself.
+static void roomReloginBegin(const uint8_t pub[32]) {
+  if (!g_lv.task) return;
+  if (the_mesh.uiRoomRelogin(pub) == MSG_SEND_FAILED) {
+    g_lv.task->showAlert(TR("Couldn't send login"), 1400);
+    return;
+  }
+  memcpy(s_room_relogin_pub32, pub, sizeof s_room_relogin_pub32);
+  s_room_relogin_active = true;
+  markMeshRequest();   // status-bar async spinner
+  g_lv.task->showAlert(TR("Logging in again..."), 1400);
+  loginWaitArm(LoginWaitKind::RoomRelogin);
+}
+
+// Passworded Join against a room server, from anywhere. This is the only action
+// that can RECREATE a client record the server has dropped — the blank re-login
+// can merely resume one that still exists. Reachable from the room thread sheet
+// and as the automatic escalation when a blank re-login goes unanswered, so the
+// recovery no longer depends on the operator knowing to walk back to Contacts.
+static void openRoomJoinPrompt(const uint8_t pub[32], bool after_relogin_failed) {
+  if (!g_lv.task) return;
+  ContactInfo* c = the_mesh.lookupContactByPubKey(pub, PUB_KEY_SIZE);
+  if (!c || c->type != ADV_TYPE_ROOM) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  // s_room_join_idx is what routes the LOGIN_OK into the room chat instead of the
+  // CLI console, and it is a contact-table index, not a thread index.
+  const int idx = the_mesh.uiContactIdxByPubKey(pub);
+  if (idx < 0) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  roomReloginClear();          // supersede the attempt that got us here
+  s_room_join_idx = idx;
+  if (after_relogin_failed)
+    // Two short lines: the 200 px-wide subtitle fits ~30 chars per line at font_12.
+    s_admin_pw_reason = TR("Server has forgotten you.\nJoin with the room password.");
+  openAdminLoginPrompt(*c);
 }
 
 static void actionSheetAdminCb(lv_event_t* e) {
@@ -44914,7 +45039,16 @@ void UITask::onServerClock(const ContactInfo& contact, uint32_t server_epoch) {
 }
 
 void UITask::onAdminLoginResult(const ContactInfo& contact, bool success, uint8_t perms) {
-  loginWaitCancel();   // a reply arrived (either way) — disarm the no-reply watchdog (#89)
+  // Which pending attempt, if any, is this the reply to? Disarming the watchdog
+  // used to be unconditional, which was harmless while it only drove a toast —
+  // but it means the once-a-minute background room self-heal, logging in to some
+  // OTHER room, can call off the watchdog for the login the operator is actually
+  // standing in front of. Now that the timeout opens a prompt, that would silently
+  // lose the recovery (#267), so match the contact first.
+  const bool for_admin_attempt = (memcmp(contact.id.pub_key, s_admin_pub32, 32) == 0);
+  const bool for_room_relogin  = (s_room_relogin_active &&
+                                  memcmp(contact.id.pub_key, s_room_relogin_pub32, 32) == 0);
+  if (for_admin_attempt || for_room_relogin) loginWaitCancel();   // a reply arrived (#89)
   // Room read-only downgrade warning (issue #89 hardening): LOGIN_OK with the
   // zero-permission marker (server reply byte 6 == 2) means the room accepted us
   // as a READ-ONLY guest — our posts will be silently discarded with no ACK, so
@@ -44928,10 +45062,28 @@ void UITask::onAdminLoginResult(const ContactInfo& contact, bool success, uint8_
       showAlert(TR("Room is read-only for you.\nJoin with the room password to post."), 2600);
     }
   }
+  // Result of the room thread sheet's "Log in again". That path sends its login
+  // without opening the prompt, so it never sets s_admin_pub32 and both outcomes
+  // used to fall off the guard below — the row looked identical whether it had
+  // recovered the session or done nothing at all (#267).
+  if (for_room_relogin) {
+    roomReloginClear();
+    if (success) {
+      char msg[80];
+      snprintf(msg, sizeof msg, TR("Reconnected to %.40s"), contact.name);
+      showAlert(msg, 1400);
+      return;
+    }
+    // An explicit rejection means the blank login was understood and refused, so
+    // waiting out the remaining watchdog would only delay the same conclusion.
+    openRoomJoinPrompt(contact.id.pub_key, /*after_relogin_failed=*/true);
+    return;
+  }
+
   // Only react if the user opened a login prompt against THIS contact —
   // otherwise this could be a stale login from the companion-serial side
   // (the web app) bleeding into our touch flow.
-  if (memcmp(contact.id.pub_key, s_admin_pub32, 32) != 0) return;
+  if (!for_admin_attempt) return;
 #if defined(ESP32)
   // Save (or clear) the remembered password based on the Remember
   // checkbox snapshot. We do this on success only — saving a known-bad
@@ -51005,6 +51157,10 @@ void UITask::loop() {
         ContactInfo* rc = the_mesh.lookupContactByPubKey(rpub, PUB_KEY_SIZE);
         if (rc && rc->type == ADV_TYPE_ROOM) {
           s_room_relogin_ms = (uint32_t)now;
+          // Raw send on purpose — NOT roomReloginBegin(). This fires unprompted
+          // once a minute while the operator is reading a room; arming the
+          // watchdog here would let it escalate to a password prompt nobody
+          // asked for. Silent best-effort is the whole contract of a self-heal.
           the_mesh.uiRoomRelogin(rpub);   // LOGIN_OK re-arms the keep-alive + resyncs
         }
       }
