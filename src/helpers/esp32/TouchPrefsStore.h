@@ -397,6 +397,9 @@ void    touchPrefsSetDiscoveredAutoEvict(bool on);
 uint8_t touchPrefsGetDiscoveredMaxHops();      // auto-delete discovered nodes heard via more hops than this (0 = off)
 void    touchPrefsSetDiscoveredMaxHops(uint8_t hops);
 bool    touchPrefsGetSoundMentions();          // default true
+// Spam filter: drop incoming messages whose body is one character (#spam). Default OFF.
+bool    touchPrefsGetIgnoreTinyMsgs();
+void    touchPrefsSetIgnoreTinyMsgs(bool on);
 void    touchPrefsSetSoundMentions(bool on);
 bool    touchPrefsGetSoundDirect();            // direct/DM chime on/off, default true
 void    touchPrefsSetSoundDirect(bool on);

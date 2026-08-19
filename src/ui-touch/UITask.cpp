@@ -10087,6 +10087,15 @@ static void buildProfileSettings() {
   }
 }
 
+// Single-character spam filter. A lot of mesh spam is a 1-byte payload — the cheapest
+// message there is — and it still costs every receiver a notification and a chime.
+static void ignoreTinyMsgsChangedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetIgnoreTinyMsgs(on);
+  g_lv.task->showAlert(on ? TR("1-character messages will be ignored")
+                          : TR("1-character messages will be shown"), 1600);
+}
 // Location telemetry (#266). Separate from the plain telemetry switch on purpose:
 // battery/environment is not position, and a single "allow telemetry" must never be
 // able to hand out where you are. Dropdown order matches TELEM_MODE_*: 0 deny,
@@ -10421,6 +10430,29 @@ static void buildRadioSettings() {
     if (prefs && prefs->telemetry_mode_base != 0) lv_obj_add_state(sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw, telemetryAllowChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(SC(40), h + SC(12));
+  }
+
+  // Drop 1-character messages. Off by default: this filters other people's traffic,
+  // so it is a deliberate choice rather than something we decide for the operator.
+  {
+    int h = settingsRowLabel(body, y, 4, TR("Ignore 1-character messages"), COLOR_TEXT, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetIgnoreTinyMsgs()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, ignoreTinyMsgsChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(SC(40), h + SC(12));
+  }
+  {
+    lv_obj_t* note = lv_label_create(body);
+    lv_label_set_text(note, TR("Most mesh spam is a single character, because it is the cheapest "
+                               "message to send. Dropped silently: no chat entry, no notification, no sound."));
+    lv_obj_set_width(note, s_settings_content_w - SC(4));
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(note, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(note, 2, y);
+    lv_obj_update_layout(note);
+    y += lv_obj_get_height(note) + SC(10);
   }
 
   // Position sharing (#266). Until now the only way to share position was to put it
@@ -49871,6 +49903,26 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // keeps using the pubkey filter and is unaffected — important, because a DM contact
   // sharing a display name with a blocked room bot must not vanish.
   if ((channel || have_sender_override) && touchPrefsIsNameIgnored(sender)) return;
+
+  // Single-character spam filter (Settings > Radio & Mesh). A lot of the junk on the
+  // mesh is a 1-byte payload, because that is the cheapest possible message to send
+  // and it still costs every receiver a notification. Nobody sends one character on
+  // purpose, so dropping them is safe in a way that a length threshold would not be.
+  //
+  // Tested on `body`, NOT on `text`: a channel post arrives on the wire as
+  // "SenderName: body", so the raw string is never short even when the message is.
+  // `body` is the parsed message for channels and the whole text for a DM.
+  //
+  // Placed with the block filters and BEFORE the chime below, so a dropped message
+  // is silent too — a spam filter that still beeps has not filtered anything.
+  if (touchPrefsGetIgnoreTinyMsgs()) {
+    const char* b = body ? body : "";
+    while (*b == ' ' || *b == '\t' || *b == '\r' || *b == '\n') b++;   // whitespace is not content
+    size_t blen = strlen(b);
+    while (blen > 0 && (b[blen-1] == ' ' || b[blen-1] == '\t' ||
+                        b[blen-1] == '\r' || b[blen-1] == '\n')) blen--;
+    if (blen <= 1) return;   // 0 or 1 character of actual content
+  }
 #endif
 
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)

@@ -1756,6 +1756,16 @@ bool touchPrefsGetSoundDirect() {
   return s_prefs.getUChar("snd_dm", 1) != 0;
 }
 void touchPrefsSetSoundDirect(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_dm", on ? 1 : 0); }
+// Drop incoming text messages whose body is a single character. Mesh spam is
+// overwhelmingly 1-byte payloads (cheapest possible airtime per message), and a
+// 1-character message is never something a person meant to send. Off by default:
+// it is a filter on other people's traffic, so it should be a deliberate choice.
+bool touchPrefsGetIgnoreTinyMsgs() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUChar("ign_tiny", 0) != 0;
+}
+void touchPrefsSetIgnoreTinyMsgs(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ign_tiny", on ? 1 : 0); }
+
 bool touchPrefsGetDiscoveredAutoEvict() {
   if (!s_begun) touchPrefsBegin();
   return s_prefs.getUChar("dsc_evict", 1) != 0;
