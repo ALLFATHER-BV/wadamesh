@@ -398,6 +398,9 @@ uint8_t touchPrefsGetDiscoveredMaxHops();      // auto-delete discovered nodes h
 void    touchPrefsSetDiscoveredMaxHops(uint8_t hops);
 bool    touchPrefsGetSoundMentions();          // default true
 // Spam filter: drop incoming messages whose body is one character (#spam). Default OFF.
+// Map: most contact dots drawn at once. 0 = no limit (default).
+uint16_t touchPrefsGetMapMarkerCap();
+void     touchPrefsSetMapMarkerCap(uint16_t n);
 bool    touchPrefsGetIgnoreTinyMsgs();
 void    touchPrefsSetIgnoreTinyMsgs(bool on);
 void    touchPrefsSetSoundMentions(bool on);

@@ -1741,6 +1741,14 @@ static void prefsPutUChar(const char* key, uint8_t v) {
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
 }
+// Same re-open dance as prefsPutUChar above, for the one 16-bit setting.
+static void prefsPutUShort(const char* key, uint16_t v) {
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return; }
+  s_prefs.putUShort(key, v);
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+}
 bool touchPrefsGetSoundMessages() {
   if (!s_begun) touchPrefsBegin();
   return s_prefs.getUChar("snd_msg", 1) != 0;
@@ -1765,6 +1773,15 @@ bool touchPrefsGetIgnoreTinyMsgs() {
   return s_prefs.getUChar("ign_tiny", 0) != 0;
 }
 void touchPrefsSetIgnoreTinyMsgs(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ign_tiny", on ? 1 : 0); }
+
+// Most contact dots to draw on the map at once. 0 = no limit (draw every positioned
+// contact in view, up to the firmware's own ceiling), which is the default: a map that
+// quietly stops plotting is worse than a slow one. Lower it on a board that struggles.
+uint16_t touchPrefsGetMapMarkerCap() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUShort("map_cap", 0);
+}
+void touchPrefsSetMapMarkerCap(uint16_t n) { if (!s_begun) touchPrefsBegin(); prefsPutUShort("map_cap", n); }
 
 bool touchPrefsGetDiscoveredAutoEvict() {
   if (!s_begun) touchPrefsBegin();

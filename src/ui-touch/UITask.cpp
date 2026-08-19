@@ -27559,14 +27559,48 @@ struct MapMarker {
   int       mesh_idx;   // ContactInfo index for real contacts; -1 for self
   lv_obj_t* obj;
 };
-constexpr int k_map_markers_max = 32;
+// Was 32, which with slot 0 reserved for self meant only 31 contact dots could ever
+// render while the bottom-right label counted every positioned contact with no cap at
+// all. Past that the map silently stopped drawing and the label kept counting, so the
+// two disagreed with nothing on screen to say why (reported as "new contacts never
+// appear on the map, but the number is right"). Markers are only built for contacts
+// INSIDE the viewport (see the cull in the fill loop), so this is the number visible
+// at once, not the contact count.
+// Hard ceiling on simultaneously-drawn contact dots. Was 32, which with slot 0 reserved
+// for self meant only 31 could ever render while the bottom-right label counted every
+// positioned contact with no cap at all — so past 31 the map silently stopped drawing
+// and the label kept counting, with nothing on screen to explain the difference
+// (reported as "new contacts never appear on the map, but the number is right").
+// Markers are only built for contacts INSIDE the viewport, so this is how many are
+// visible at once, not the contact count. Costs 8 bytes of static RAM per slot.
+constexpr int k_map_markers_max = 256;
+// The self->contact link LINES keep their own, much smaller ceiling: each one holds a
+// persistent 2-point array LVGL does not copy, so they cost 12 bytes a slot rather than
+// 8, and a screen with hundreds of dotted lines on it is unreadable long before it is
+// slow. Raising the dot ceiling deliberately does not drag this up with it.
+constexpr int k_map_links_max = 32;
+// How many contact dots the last rebuild actually drew, and how many wanted to be
+// drawn. The status label reports the shortfall instead of hiding it.
+static int s_map_markers_drawn = 0;
+static int s_map_markers_wanted = 0;
 static MapMarker s_map_markers[k_map_markers_max] = {};
+// Effective dot limit: the user's setting (Map settings), clamped to the array. 0 in
+// the setting means "no limit", i.e. everything in view up to the firmware ceiling.
+static int mapMarkerCap() {
+#if defined(ESP32)
+  const uint16_t want = touchPrefsGetMapMarkerCap();
+  if (want == 0 || want > (uint16_t)(k_map_markers_max - 1)) return k_map_markers_max - 1;
+  return (int)want;
+#else
+  return k_map_markers_max - 1;
+#endif
+}
 
 // Dotted self->contact link lines (toggled by the on-map button). Each line
 // keeps its own persistent 2-point array — LVGL does not copy the points.
 static bool       s_map_show_links = true;
-static lv_obj_t*  s_map_link_objs[k_map_markers_max] = {};
-static lv_point_t s_map_link_pts[k_map_markers_max][2];
+static lv_obj_t*  s_map_link_objs[k_map_links_max] = {};
+static lv_point_t s_map_link_pts[k_map_links_max][2];
 
 // Per-element visibility of the map's on-screen text/markers (persisted; all
 // default shown). Coords = bottom-left read-out, TileXYZ = the zoom + tile path
@@ -27728,7 +27762,7 @@ static void renderMapMarkers() {
       return (lv_coord_t)v;
     };
     int link_n = 0;
-    for (uint32_t i = 0; i < the_mesh.getNumContacts() && link_n < k_map_markers_max; ++i) {
+    for (uint32_t i = 0; i < the_mesh.getNumContacts() && link_n < k_map_links_max; ++i) {
       ContactInfo c;
       if (!the_mesh.getContactByIdx(i, c)) continue;
       if (c.gps_lat == 0 && c.gps_lon == 0) continue;
@@ -27775,8 +27809,10 @@ static void renderMapMarkers() {
   // ---- Contact markers — colored circles sized for taps (14×14 with a
   //      2-px black border so they read on any tile background).
   int slot = 1;   // slot 0 reserved for self
+  s_map_markers_wanted = 0;
   // Contact markers — skipped entirely when "Contacts on map" is off (self stays).
-  for (uint32_t i = 0; s_map_show_contacts && i < the_mesh.getNumContacts() && slot < k_map_markers_max; ++i) {
+  const int marker_cap = mapMarkerCap();
+  for (uint32_t i = 0; s_map_show_contacts && i < the_mesh.getNumContacts(); ++i) {
     ContactInfo c;
     if (!the_mesh.getContactByIdx(i, c)) continue;
     if (c.gps_lat == 0 && c.gps_lon == 0) continue;
@@ -27791,6 +27827,12 @@ static void renderMapMarkers() {
     // Cull off-screen markers — they'd just allocate widgets we never see.
     if (sx < -8 || sx >= k_map_canvas_w + 8 ||
         sy < -8 || sy >= k_map_canvas_h + 8) continue;
+
+    // Past the cull this contact is positioned AND on screen, so it wanted a dot.
+    // Count it either way — the status label reports the shortfall rather than
+    // letting the map and the number disagree in silence.
+    s_map_markers_wanted++;
+    if (slot >= marker_cap + 1) continue;   // +1: slot 0 is self
 
     // Color by contact type so a glance at the map maps to the chip
     // colors on the Contacts tab. Defaults to chat-peer orange.
@@ -27818,6 +27860,7 @@ static void renderMapMarkers() {
     lv_obj_clear_flag(m.obj, LV_OBJ_FLAG_SCROLLABLE);
     ++slot;
   }
+  s_map_markers_drawn = slot - 1;   // slot 0 is self
 
   // Discover wardriving coverage dots (my logged signal samples), under the route overlay.
   if (s_disc_track_n > 0) discoverDrawCoverage(parent, cwx, cwy);
@@ -28366,6 +28409,31 @@ static void mapReloadVisibleTiles() {
 }
 #endif
 
+// Max contact dots drawn at once. Cycles All -> 200 -> 100 -> 50 -> 25 -> All, in
+// place, so the card keeps its compact switch-row shape instead of growing a dropdown.
+// "All" is the default and means every positioned contact in view, up to the firmware
+// ceiling; the lower steps exist for a board that struggles with a crowded viewport,
+// not because the map should be quietly limiting itself.
+static void mapOptMarkerCapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+#if defined(ESP32)
+  static const uint16_t kSteps[] = { 0, 200, 100, 50, 25 };
+  const uint16_t cur = touchPrefsGetMapMarkerCap();
+  int idx = 0;
+  for (int i = 0; i < (int)(sizeof kSteps / sizeof kSteps[0]); ++i)
+    if (kSteps[i] == cur) { idx = i; break; }
+  const uint16_t next = kSteps[(idx + 1) % (int)(sizeof kSteps / sizeof kSteps[0])];
+  touchPrefsSetMapMarkerCap(next);
+  // Relabel the button we were tapped on, so the card reflects it without a rebuild.
+  lv_obj_t* b = lv_event_get_target(e);
+  lv_obj_t* l = lv_obj_get_child(b, 0);
+  char txt[48];
+  if (next == 0) snprintf(txt, sizeof txt, LV_SYMBOL_GPS "  %s: %s", TR("Max dots"), TR("All"));
+  else           snprintf(txt, sizeof txt, LV_SYMBOL_GPS "  %s: %u", TR("Max dots"), (unsigned)next);
+  if (l) lv_label_set_text(l, txt);
+  renderMapMarkers();   // redraw with the new limit
+#endif
+}
 static void mapOptReloadCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeMapOptions();
@@ -28590,6 +28658,29 @@ static void openMapOptions() {
     lv_obj_align(l, LV_ALIGN_LEFT_MID, 8, 0);
     y += 40;
   };
+  {
+    char capbuf[48];
+    const uint16_t cap_now =
+#if defined(ESP32)
+        touchPrefsGetMapMarkerCap();
+#else
+        0;
+#endif
+    if (cap_now == 0) snprintf(capbuf, sizeof capbuf, LV_SYMBOL_GPS "  %s: %s", TR("Max dots"), TR("All"));
+    else              snprintf(capbuf, sizeof capbuf, LV_SYMBOL_GPS "  %s: %u", TR("Max dots"), (unsigned)cap_now);
+    // mk_row_btn TR()s its argument; this string is already assembled + translated.
+    lv_obj_t* b = lv_btn_create(card);
+    lv_obj_set_size(b, cardw - 24, 38);
+    lv_obj_set_pos(b, 0, y);
+    styleButton(b);
+    lv_obj_add_event_cb(b, mapOptMarkerCapCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, capbuf);
+    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(l, LV_ALIGN_LEFT_MID, 8, 0);
+    y += 40;
+  }
   mk_row_btn(LV_SYMBOL_REFRESH "  Reload tiles in view", mapOptReloadCb);
   mk_row_btn(LV_SYMBOL_EYE_OPEN "  About / credits",     mapOptInfoCb);
 
@@ -29682,11 +29773,19 @@ static void refreshMapInfoLabel() {
              (unsigned)tileFetchPendingLoad());
   } else if (s_map_last_missing > 0 && !wifi_up) {
     snprintf(tail, sizeof(tail), "Wi-Fi off \xe2\x80\x94 gaps");
+  } else if (s_map_markers_wanted > s_map_markers_drawn) {
+    // More positioned contacts are on screen than we drew dots for. Say so: the old
+    // label counted every positioned contact and the map quietly stopped at its cap,
+    // so the two disagreed with no explanation anywhere.
+    snprintf(tail, sizeof(tail), TR("%d of %d on map"), s_map_markers_drawn, with_gps);
   } else {
     snprintf(tail, sizeof(tail), TR("%d on map"), with_gps);
   }
 #else
-  snprintf(tail, sizeof(tail), TR("%d on map"), with_gps);
+  if (s_map_markers_wanted > s_map_markers_drawn)
+    snprintf(tail, sizeof(tail), TR("%d of %d on map"), s_map_markers_drawn, with_gps);
+  else
+    snprintf(tail, sizeof(tail), TR("%d on map"), with_gps);
 #endif
   // Coords → bottom-left corner; count/status → bottom-right corner.
   char buf[40];
