@@ -57,6 +57,13 @@ set(WADA_DEFS
   MESH_RADIO_DIO1_POLLED=1                            # DIO1 behind the expander → poll RxDone/TxDone over SPI (no host IRQ)
   P_LORA_TX_LED=-1 P_LORA_TX_NEOPIXEL_LED=-1
   SX126X_RX_BOOSTED_GAIN=1
+  # OCP, and the reason the P4 would only ever transmit at about +14 dBm however high you
+  # set the power (#283, measured on a test set: capped at +14.1 dBm while Meck-P4 reached
+  # +21.0 dBm on the same board). The SX1262 needs ~118 mA to deliver +22 dBm, but its
+  # over-current protection defaults to 60 mA, so the PA was being current-limited and the
+  # power steps went non-monotonic near the top. Every S3 board already sets this; the P4
+  # was the one target that never did. 140 mA matches them.
+  SX126X_CURRENT_LIMIT=140
   XL9535_SX1262_RST_IO=16 XL9535_SX1262_DIO1_IO=17    # SX1262 reset + IRQ behind the expander
   XL9535_RF_SWITCH_IO=1                               # SKY13453 VCTL (TX/RX path)
 
