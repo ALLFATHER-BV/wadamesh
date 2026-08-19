@@ -25668,6 +25668,10 @@ static char* s_langcat_buf = nullptr;        // langs.json (PSRAM, worker-filled
 static volatile bool s_langcat_request = false, s_langcat_done = false;
 static volatile bool s_langdl_request = false, s_langdl_done = false;
 static volatile bool s_langdl_ok = false;   // volatile: written on the worker, read at poll
+// Why the last language download failed, for the toast. "Download failed" on its own
+// produced a bug report with nothing to go on (#274): every failure path here is silent,
+// so the reporter could only say it never works. Written on the worker, read at poll.
+static const char* volatile s_langdl_err = nullptr;
 static char s_langdl_code[12];
 static char s_langdl_ver[8];                 // catalog ver -> immutable /lang/<ver>/ URL ("" = resolve on the worker)
 static bool s_langdl_reboot = false;         // an explicit Update of the ACTIVE language reboots on success
@@ -25733,9 +25737,18 @@ static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
   char dir[48];
   luaHostAppPath(dir, sizeof dir, "/lang");
   fs->mkdir(dir);
-  const size_t kCap = 128 * 1024;            // a full 700+ row language is ~60 KB
+  // A full 700+ row language is ~60 KB, so 128 KB was the comfortable size. But it is a
+  // CONTIGUOUS PSRAM request made while the Store page is up, and app downloads ask for
+  // only 64 KB — which is exactly why a device can install apps all day and never once
+  // get a language (#274, reported on a pager: /apps healthy and populated, /lang empty
+  // forever). Step down rather than give up, and fall back to internal heap, the same
+  // ladder the reader uses for its own big buffer.
+  size_t kCap = 128 * 1024;
   char* buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (!buf) return false;
+  if (!buf) { kCap =  96 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
+  if (!buf) { kCap =  72 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
+  if (!buf) { kCap =  72 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_8BIT); }
+  if (!buf) { s_langdl_err = "Not enough memory"; return false; }
   char url[112];
   if (ver && ver[0])
     snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s/%s.lang", ver, code);
@@ -25744,6 +25757,10 @@ static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
   int n = luaStoreHttpGet(client, http, url, buf, kCap);
   bool ok = false;
   bool opened = false;
+  // -1 is "no 200, or the body stopped short of Content-Length". A language file is ~60 KB
+  // where an app is a few KB, so a link that drops mid-transfer fails here while app
+  // installs keep succeeding — indistinguishable from the memory case without saying so.
+  if (n <= 16) s_langdl_err = (n < 0) ? "Server or connection failed" : "Empty reply";
   if (n > 16) {
     // Write to a TEMP file, verify every byte landed, then rename over the real
     // one. A truncated direct write used to leave a file whose '# ver:' header
@@ -26240,7 +26257,9 @@ static void tileFetchTaskFn(void* arg) {
             break;
           }
       }
+      s_langdl_err = nullptr;   // fresh attempt: do not report the previous one's reason
       s_langdl_ok = luaStoreLangDownloadWorker(client, http, s_langdl_code, s_langdl_ver);
+      if (!s_langdl_ok && !s_langdl_err) s_langdl_err = "Could not write to storage";
       s_langdl_done = true;
       continue;
     }
@@ -38974,6 +38993,15 @@ static void luaStorePollCb(lv_timer_t* t) {
   if (s_langdl_done) {
     s_langdl_done = false;
     s_luastore_busy = false;
+    // "Download failed" alone sent a reporter to GitHub with nothing to go on, because
+    // every failure path in the worker is silent (#274). Name the cause when we know it.
+    auto langDlFailText = []() -> const char* {
+      static char msg[72];
+      const char* why = (const char*)s_langdl_err;
+      if (!why) return TR("Download failed");
+      snprintf(msg, sizeof msg, "%s\n%s", TR("Download failed"), TR(why));
+      return msg;
+    };
     if (s_langdl_ok && s_langdl_reboot) {   // updated the active language
       s_langdl_reboot = false;
       langRebootWithNotice(TR("Language updated - restarting to apply it\xE2\x80\xA6"));
@@ -38983,8 +39011,8 @@ static void luaStorePollCb(lv_timer_t* t) {
     if (s_langdl_ok) luaStoreScanLangs();
     luaStoreRebuildList();
     if (g_lv.task && !s_langdl_silent) g_lv.task->showAlert(
-        s_langdl_ok ? TR("Downloaded - tap Use to switch") : TR("Download failed"),
-        s_langdl_ok ? 1800 : 2200);
+        s_langdl_ok ? TR("Downloaded - tap Use to switch") : langDlFailText(),
+        s_langdl_ok ? 1800 : 3200);
     s_langdl_silent = false;
   }
   if (s_luainst_done) {
