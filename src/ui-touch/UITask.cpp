@@ -49240,6 +49240,31 @@ bool UITask::getGPSState() {
 
 #if defined(HAS_EXPANSION_KIT)
 bool UITask::getLocalEnvSnapshot(LocalEnvSnapshot& out) const {
+  // The sensor half of this is a LIVE I2C conversation with the BME280, and this
+  // function is called from refreshStatusLabels — the ~1 Hz home-screen refresh. So a
+  // V4-R8 with the Expansion Kit was running a repeated-start I2C transaction every
+  // second, forever, on the UI thread.
+  //
+  // That crashed a device in the field (coredump, beta_65 V4-R8): Adafruit's driver
+  // reads the BME280 with write_then_read, i.e. a repeated start, which puts Arduino's
+  // TwoWire into nonStop mode holding its lock across two calls. If that sequence does
+  // not complete — a slow or unhappy sensor is enough — nonStop stays set, and the NEXT
+  // beginTransmission takes the "release the lock" branch for a lock this task no longer
+  // holds. FreeRTOS asserts inside xQueueGenericSend and the device panics:
+  //   assert failed: xQueueGenericSend queue.c:832 (... xMutexHolder == xTaskGetCurrentTaskHandle())
+  // The bug is in TwoWire's lock accounting, which is not ours to fix, but polling it at
+  // 1 Hz is what turned a rare bus hiccup into a reboot.
+  //
+  // So cache the queried half and refresh it on a timer. The readings are room
+  // temperature and pressure; nobody needs them re-measured every frame. This also takes
+  // a blocking I2C round trip off the UI thread's per-refresh path.
+  static uint32_t s_env_cache_ms = 0;          // millis() of the last real query (0 = never)
+  static LocalEnvSnapshot s_env_cache;
+  static bool s_env_cache_valid = false;
+  const uint32_t env_now = millis();
+  const bool env_fresh = s_env_cache_valid && s_env_cache_ms != 0 &&
+                         (uint32_t)(env_now - s_env_cache_ms) < 3000;
+
   out = LocalEnvSnapshot();
   out.buzzer_available = true;
   out.buzzer_quiet = _node_prefs ? (_node_prefs->buzzer_quiet != 0) : true;
@@ -49255,9 +49280,23 @@ bool UITask::getLocalEnvSnapshot(LocalEnvSnapshot& out) const {
   }
   if (!_sensors) return localEnvHasAnySensors(out);
 
+  if (env_fresh) {
+    // Copy only the sensor-derived fields; GPS and battery above are cheap and stay live.
+    const LocalEnvSnapshot& c = s_env_cache;
+    out.query_ok          = c.query_ok;
+    out.have_bme_temp     = c.have_bme_temp;      out.bme_temp_c      = c.bme_temp_c;
+    out.have_bme_hum      = c.have_bme_hum;       out.bme_hum_pct     = c.bme_hum_pct;
+    out.have_bme_pressure = c.have_bme_pressure;  out.bme_pressure_hpa= c.bme_pressure_hpa;
+    out.have_bme_alt      = c.have_bme_alt;       out.bme_alt_m       = c.bme_alt_m;
+    out.have_gxhtv3_temp  = c.have_gxhtv3_temp;   out.gxhtv3_temp_c   = c.gxhtv3_temp_c;
+    out.have_gxhtv3_hum   = c.have_gxhtv3_hum;    out.gxhtv3_hum_pct  = c.gxhtv3_hum_pct;
+    return localEnvHasAnySensors(out);
+  }
+
   CayenneLPP telemetry(96);
   out.query_ok = _sensors->querySensors(TELEM_PERM_ENVIRONMENT, telemetry);
-  if (!out.query_ok) return localEnvHasAnySensors(out);
+  s_env_cache_ms = env_now ? env_now : 1;   // stamp even on failure: do not retry-storm a sick bus
+  if (!out.query_ok) { s_env_cache = out; s_env_cache_valid = true; return localEnvHasAnySensors(out); }
 
   LPPReader rd(telemetry.getBuffer(), telemetry.getSize());
   uint8_t channel = 0, type = 0;
@@ -49290,6 +49329,8 @@ bool UITask::getLocalEnvSnapshot(LocalEnvSnapshot& out) const {
         break;
     }
   }
+  s_env_cache = out;            // seed the cache with what we just measured
+  s_env_cache_valid = true;
   return localEnvHasAnySensors(out);
 }
 
