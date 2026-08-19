@@ -16,6 +16,10 @@ this panel's 222px glass is narrower than the ST7796 controller's 320px GRAM, an
 ST7796_Rotation.h only applies the required 49px column/row offset when CGRAM_OFFSET is defined."
 #endif
 
+#if !defined(LOAD_GLCD)
+#error "ST7796LCDDisplay requires -D LOAD_GLCD=1 -- its DisplayDriver text API uses TFT_eSPI font 1."
+#endif
+
 #ifndef DISPLAY_ROTATION
   #define DISPLAY_ROTATION 3   // landscape, matches the other boards' default
 #endif

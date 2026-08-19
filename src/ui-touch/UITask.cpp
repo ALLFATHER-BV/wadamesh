@@ -2900,6 +2900,72 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
   const int W = display.width(), H = display.height();
   const bool up = (WiFi.status() == WL_CONNECTED) && ((uint32_t)WiFi.localIP() != 0);
   display.startFrame((ColorVal)0x0000);   // explicit dark (core palettes vary -- see main.cpp boot splash)
+#if defined(TLORA_PAGER)
+  // The Pager panel is only 222 px tall in landscape. Give it a purpose-built
+  // two-column status screen instead of squeezing the tall touch-board layout
+  // underneath a 98 px logo. The outlined control is actionable with the
+  // encoder knob; SPACE twice remains the keyboard fallback.
+  if (W >= H) {
+    display.writePixelsRGB565(18, (H - WADAMESH_MARK_H) / 2,
+                              WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
+    const int panel_x = 190;
+    const int panel_w = W - panel_x - 14;
+    display.setColor((ColorVal)0xFFFF);
+    display.setTextSize(2);
+    display.drawTextCentered(panel_x + panel_w / 2, 14, "REMOTE UI");
+    display.setTextSize(1);
+    if (up) {
+      char url[48];
+      snprintf(url, sizeof url, "http://%s:" WEB_UI_PORT_STR, WiFi.localIP().toString().c_str());
+      display.setColor((ColorVal)0xFFFF);
+      display.drawTextCentered(panel_x + panel_w / 2, 48, "Open in browser:");
+      display.setColor((ColorVal)0x07E0);
+      display.drawTextCentered(panel_x + panel_w / 2, 66, url);
+    } else {
+      display.setColor((ColorVal)0xFD20);
+      display.drawTextCentered(panel_x + panel_w / 2, 58, "Connecting to Wi-Fi...");
+    }
+    display.setColor(exit_armed ? (ColorVal)0x0320 : (ColorVal)0x3000);
+    display.fillRect(panel_x, 98, panel_w, 60);
+    display.setColor(exit_armed ? (ColorVal)0x07E0 : (ColorVal)0xFBEF);
+    display.drawRect(panel_x, 98, panel_w, 60);
+    display.setTextSize(2);
+    display.drawTextCentered(panel_x + panel_w / 2, 106, "EXIT REMOTE");
+    display.setTextSize(1);
+    display.drawTextCentered(panel_x + panel_w / 2, 136,
+                             exit_armed ? "press SPACE again" : "press encoder knob");
+    display.setColor((ColorVal)0xFFE0);
+    display.drawTextCentered(panel_x + panel_w / 2, 180, "or press SPACE twice within 3s");
+  } else {
+    display.writePixelsRGB565((W - WADAMESH_MARK_W) / 2, 18,
+                              WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
+    display.setColor((ColorVal)0xFFFF);
+    display.setTextSize(2);
+    display.drawTextCentered(W / 2, 130, "REMOTE UI");
+    display.setTextSize(1);
+    if (up) {
+      char url[48];
+      snprintf(url, sizeof url, "http://%s:" WEB_UI_PORT_STR, WiFi.localIP().toString().c_str());
+      display.drawTextCentered(W / 2, 166, "Open in browser:");
+      display.setColor((ColorVal)0x07E0);
+      display.drawTextCentered(W / 2, 184, url);
+    } else {
+      display.setColor((ColorVal)0xFD20);
+      display.drawTextCentered(W / 2, 176, "Connecting to Wi-Fi...");
+    }
+    display.setColor(exit_armed ? (ColorVal)0x0320 : (ColorVal)0x3000);
+    display.fillRect(16, 220, W - 32, 62);
+    display.setColor(exit_armed ? (ColorVal)0x07E0 : (ColorVal)0xFBEF);
+    display.drawRect(16, 220, W - 32, 62);
+    display.setTextSize(2);
+    display.drawTextCentered(W / 2, 228, "EXIT REMOTE");
+    display.setTextSize(1);
+    display.drawTextCentered(W / 2, 258,
+                             exit_armed ? "press SPACE again" : "press encoder knob");
+    display.setColor((ColorVal)0xFFE0);
+    display.drawTextCentered(W / 2, 304, "or press SPACE twice within 3s");
+  }
+#else
   // wadamesh mesh mark up top (same white-on-black artwork as the boot splash). The
   // touch DisplayDriver runs at scale 1.0, so writePixelsRGB565 shares text coords.
   const int ly = (H >= 288) ? 46 : 14;   // portrait panels have room to breathe; landscape sits high
@@ -2937,8 +3003,14 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
   display.setColor((ColorVal)0xFFFF);
   display.drawTextCentered(W / 2, H - 14, "or tap Exit in the browser");
 #endif
+#endif
   display.endFrame();
   s_remote_ph_ip = up ? (uint32_t)WiFi.localIP() : 0;
+}
+
+static void exitRemoteModeNow() {
+  touchPrefsSetRemoteMode(false);
+  if (g_lv.task) g_lv.task->rebootDevice();
 }
 
 // In remote mode the panel shows only the placeholder, so the physical keyboard is the
@@ -2947,8 +3019,7 @@ static void remotePhysicalKey(int key) {
   if (key != ' ') return;
   uint32_t nowm = millis();
   if (s_remote_exit_armed && (nowm - s_remote_exit_armed) < 3000) {
-    touchPrefsSetRemoteMode(false);
-    if (g_lv.task) g_lv.task->rebootDevice();   // saves chat history, reboots to normal mode
+    exitRemoteModeNow();   // saves chat history + prefs, then reboots to normal mode
   } else {
     s_remote_exit_armed = nowm;
     drawRemotePlaceholder(true);
@@ -2968,8 +3039,7 @@ static void remoteTouchTick() {
   if (pressed) {
     if (!s_remote_touch_start) { s_remote_touch_start = nowm; drawRemotePlaceholder(true); }   // "Keep holding..."
     else if (nowm - s_remote_touch_start >= 3000) {                                            // held long enough -> leave
-      touchPrefsSetRemoteMode(false);
-      if (g_lv.task) g_lv.task->rebootDevice();
+      exitRemoteModeNow();
     }
   } else if (s_remote_touch_start) {
     s_remote_touch_start = 0;
@@ -35160,6 +35230,18 @@ static bool pagerChatComposerNav(bool up) {
 static void updatePagerEncoder(unsigned long now) {
   int delta = pagerEncoderReadDelta();
   const bool held = pagerEncoderClickHeld();
+  static bool s_remote_encoder_was_held = false;
+
+  // The physical Remote UI screen presents one focused action: EXIT REMOTE.
+  // Its drawn button is activated directly by pressing the encoder knob; do
+  // not leak encoder turns or click events into the off-screen browser UI.
+  if (s_remote_mode) {
+    const bool pressed = held && !s_remote_encoder_was_held;
+    s_remote_encoder_was_held = held;
+    if (pressed) exitRemoteModeNow();
+    return;
+  }
+  s_remote_encoder_was_held = held;
 
   // No touch and no trackball on this board: the encoder (and the keyboard,
   // see the HAS_PAGER_KEYBOARD drain in loop()) are the ONLY way to wake an
@@ -48220,11 +48302,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     g_lv.disp_drv.ver_res  = 616;
   #endif
 #elif defined(TLORA_PAGER)
-    // Fixed landscape via hardware MADCTL rotation (like T-Deck/Heltec below),
-    // just a different native panel size — no ui_landscape ternary needed since
-    // this board is never portrait.
-    g_lv.disp_drv.hor_res  = 480;
-    g_lv.disp_drv.ver_res  = 222;
+    // The normal Pager UI is fixed landscape. Remote mode may rotate its virtual
+    // display for the browser without changing the physical placeholder panel.
+    g_lv.disp_drv.hor_res  = (s_remote_mode && !s_remote_landscape) ? 222 : 480;
+    g_lv.disp_drv.ver_res  = (s_remote_mode && !s_remote_landscape) ? 480 : 222;
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
@@ -48340,6 +48421,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       g_lv.indev_drv.disp    = lv_disp_get_default();
       if (!lv_indev_drv_register(&g_lv.indev_drv)) pushDiagLine("LVGL indev failed");
     }
+#endif
+
+#if !defined(HAS_TANMATSU)
     // Web UI mirror: stream this display + accept a phone browser's taps as a second
     // pointer indev (opt-in via the VNC/REMOTE apps; see WebMirror / the WS server).
     // Size the remote ring to just above ONE frame (w*h*2 + 48 KB) instead of a fixed
@@ -48356,13 +48440,20 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     g_web_mirror.setEnabled(s_remote_mode ? true : touchPrefsGetWebMirror());
     g_web_mirror.setRemote(s_remote_mode);    // browser shows the Rotate button only in remote mode
     g_web_mirror.setTerminalOn(!s_remote_mode && touchPrefsGetWebTerminal());   // web mesh terminal (runtime; not in the off-screen boot mode)
-    if (s_remote_mode) webMirrorEnsureBufs();   // pre-allocate the mirror shadow/band buffers up front
+    if (s_remote_mode) {
+      const bool mirror_ready = g_web_mirror.ringBytes() > 0 && webMirrorEnsureBufs();
+      Serial.printf("[REMOTE] mirror %dx%d ring=%u buffers=%s\n",
+            s_web_fb_w, s_web_fb_h, (unsigned)g_web_mirror.ringBytes(),
+            mirror_ready ? "ready" : "FAILED");
+    }
     lv_indev_drv_init(&s_web_indev_drv);
     s_web_indev_drv.type    = LV_INDEV_TYPE_POINTER;
     s_web_indev_drv.read_cb = webPointerRead;
     s_web_indev_drv.disp    = lv_disp_get_default();
     lv_indev_drv_register(&s_web_indev_drv);
-#if CAP_KEYPAD_NAV
+#endif
+
+#if CAP_KEYPAD_NAV && !defined(HAS_TANMATSU) && !defined(TLORA_PAGER)
     // Second indev for the keyboard/d-pad nav: a KEYPAD indev + focus group.
     // On the T-Deck it's optional (touchPrefsGetKbdNav()) since touch is the
     // primary input; on the M9 (no touch at all) it's always driven — see
@@ -48389,7 +48480,6 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     s_nav_mbar_keys = touchPrefsGetNavMenubarKeys();   // menubar letter hints: off by default
     for (int i = 0; i < 5; i++) { uint8_t k = touchPrefsGetNavKey(i);    if (k) s_nav_keys[i] = k; }   // load programmable tab hotkeys
     for (int i = 0; i < 8; i++) { uint8_t k = touchPrefsGetNavDirKey(i); if (k) s_dir_keys[i] = k; }   // load programmable control + scroll keys
-#endif
 #endif
 #endif
 
@@ -50146,7 +50236,7 @@ void UITask::loop() {
     if (s_remote_exit_armed && (now - s_remote_exit_armed) >= 3000) { s_remote_exit_armed = 0; drawRemotePlaceholder(false); }
     // Exit button on the web page -> leave remote mode (board-agnostic; the main way out
     // for keyboard-less boards like the Heltec V4).
-    if (g_web_mirror.takeExit()) { touchPrefsSetRemoteMode(false); if (g_lv.task) g_lv.task->rebootDevice(); }
+    if (g_web_mirror.takeExit()) exitRemoteModeNow();
 #if CAP_TOUCH
     remoteTouchTick();   // 3 s touch-and-hold on the panel also leaves remote (no SPACE key)
 #endif
@@ -50690,15 +50780,29 @@ void UITask::loop() {
   // and drain right here, once per tick. Space press-and-hold locks the screen
   // (updatePagerSpaceHold); Backspace press-and-hold unlocks it again
   // (updatePagerBackspaceUnlockHold) -- the latter must run unconditionally,
-  // BEFORE the isScreenOff() split below, since it has to keep working while
-  // the screen is dark. updatePagerKbBacklight() is the same story -- it has
-  // to force the backlight dark the instant the screen goes off/locked, so it
-  // runs unconditionally too, rather than being skipped like the awake-only
-  // helpers in the else branch below.
+  // BEFORE the normal-mode isScreenOff() split below, since it has to keep
+  // working while the screen is dark. updatePagerKbBacklight() follows the
+  // same rule. Remote Mode pauses both because it owns the lit placeholder.
   pagerKeyboardPoll();
-  updatePagerBackspaceUnlockHold(now);
-  updatePagerKbBacklight(now);
-  if (g_lv.task && g_lv.task->isScreenOff()) {
+  // Remote Mode keeps the placeholder lit and reserves all keys for its local
+  // escape path, so normal lock/backlight state machines stay paused there.
+  if (!s_remote_mode) {
+    updatePagerBackspaceUnlockHold(now);
+    updatePagerKbBacklight(now);
+  }
+  if (s_remote_mode) {
+    // The physical panel is only a placeholder in Remote Mode. Match the
+    // T-Deck/M9 contract: discard normal input and use two SPACE presses as
+    // the local escape path.
+    for (int kbi = 0; kbi < 12; ++kbi) {
+      int key = pagerKeyboardReadKey();
+      if (key <= 0) break;
+      remotePhysicalKey(key);
+    }
+    pagerKeyboardConsumeAltTap();
+    pagerKeyboardConsumeAltShiftChord();
+    pagerKeyboardConsumeAltBackspaceChord();
+  } else if (g_lv.task && g_lv.task->isScreenOff()) {
     // Same rationale as updatePagerEncoder(): no touch/trackball wake path on
     // this board, so a keypress while idle-dimmed just wakes the screen
     // instead of being silently swallowed (which is what handleHwKey()'s own
