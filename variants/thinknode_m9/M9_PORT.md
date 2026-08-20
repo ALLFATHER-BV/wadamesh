@@ -656,6 +656,34 @@ These are left intentionally unset/unwired rather than guessed:
     config commands now issued from standby on open, and the stale SX126x-era
     comments/readout. Bin pitch (150 kHz) vs RBW (62.5 kHz) = ~42% span
     coverage is documented at the constants, deliberately unchanged.
+13. **App sync after a power cycle — fixed (2026-08-20), bench verification
+    wanted.** User report: the V4-R8 "remembers the chats and syncs them when
+    connecting to an app (MeshCore / MeshCore One)" but the M9 does not. Two
+    separate stores are involved. (a) The on-device chat store (UITask
+    threads/segments) — its power-cut loss was Deferred #9 above, fixed on
+    this branch but NOT in any released build up to beta_66. (b) The
+    companion sync ring (`MyMesh::history_ring` + per-client cursors, what
+    `CMD_SYNC_NEXT_MESSAGE` / `SyncSince` replay to an app that connects
+    later) was RAM-only on EVERY board, so any power cycle emptied it. On the
+    V4 that mostly goes unnoticed (USB-powered / left on; its menu power-off
+    deep-sleeps and also loses RAM), but the M9's only "off" is the slider —
+    a hard VBAT cut — so every M9 session started with an empty ring and the
+    app got `NO_MORE_MESSAGES` for everything received while it was away.
+    Now persisted on all boards (shared code, `MyMesh.cpp`
+    "Companion sync-history persistence"): `/synchist` append-only log of the
+    message frames (~180 B per message, coalesced 3 s / 10 s max, compacted
+    tmp+swap once it holds > 2x the ring) and `/synccur` per-client
+    `last_delivered_seq` + `next_seq` (tiny tmp+swap, coalesced 5 s / 30 s
+    max, flushed immediately on app disconnect). Both live on
+    `DataStore::getHotDataFS()` — the SD card under /meshcomod when the store
+    adopted it, else SPIFFS — and are restored in `MyMesh::begin()`. All
+    reboot / power-off / download-mode / SD-copy paths flush them next to
+    `persistHistoryNow()`. VERIFY on hardware: receive a few DMs + channel
+    messages with the phone app disconnected, slide the M9 off, slide it on,
+    connect the app — the messages should arrive. Residuals by design:
+    messages inside the 3 s coalesce before a hard cut are not replayed
+    (the on-device store has its own 2-5 s window), and a cut inside the
+    cursor window can make the app re-receive a few already-seen messages.
 
 
 ## Keyboard: register-addressed I2C slave (protocol build #8, USB-pad release build #9)

@@ -140,6 +140,20 @@ static int s_companion_ota_pinned_reply_target = -1;
 #define DIRECT_SEND_PERHOP_FACTOR       6.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
 #define LAZY_CONTACTS_WRITE_DELAY       5000
+// Companion sync-history persistence pacing (see serviceSyncHistory). The log append
+// is a ~180 B write per message, so it lands quickly — the coalesce is the hard-cut
+// loss window. Cursor rewrites (tmp + swap of a ~300 B file) happen on every synced
+// or live-pushed message while an app is connected, so they coalesce longer; a stale
+// cursor only costs the app a few re-delivered (already-seen) messages, never loss.
+#define SYNC_HIST_LOG_COALESCE_MS       3000
+#define SYNC_HIST_LOG_MAX_LATENCY_MS    10000
+#define SYNC_HIST_CUR_COALESCE_MS       5000
+#define SYNC_HIST_CUR_MAX_LATENCY_MS    30000
+#define SYNC_HIST_RETRY_MS              30000   // storage unavailable / write failed
+#define SYNC_HIST_LOG_FILE              "/synchist"
+#define SYNC_HIST_LOG_TMP               "/synchist.tmp"
+#define SYNC_HIST_CUR_FILE              "/synccur"
+#define SYNC_HIST_CUR_TMP               "/synccur.tmp"
 // On card-less (internal-flash) devices, coalesce advert-refresh contacts saves to
 // at most once per this window — a full rewrite can trigger a multi-second SPIFFS GC
 // that freezes the loop, and re-adverts (last-heard/path refreshes) otherwise churn
@@ -1162,7 +1176,228 @@ uint32_t MyMesh::addToHistoryRing(const uint8_t frame[], int len) {
   if (history_count < HISTORY_RING_SIZE) {
     history_count++;
   }
+  // Every add counts as unflushed (appendSyncLog walks the newest N ring slots and
+  // skips non-message codes itself); only message frames arm a write.
+  if (_synchist_unflushed < HISTORY_RING_SIZE) _synchist_unflushed++;
+  if (isSyncMessageCode(frame[0])) markSyncLogDirty();
   return assigned;
+}
+
+// ---------------------------------------------------------------------------
+// Companion sync-history persistence (ring + per-client cursors). File formats:
+//   /synchist : "WSH" 0x01, then records { u32 seq, u8 len, u8 buf[len] } oldest first.
+//   /synccur  : "WSC" 0x01, u32 next_seq, u8 n, then n x { char id[MAX_CLIENT_ID_LEN+1], u32 last_seq }.
+// Little-endian, packed by hand (no struct dumps) so the layout is explicit.
+// ---------------------------------------------------------------------------
+static const uint8_t kSyncHistMagic[4] = { 'W', 'S', 'H', 1 };
+static const uint8_t kSyncCurMagic[4]  = { 'W', 'S', 'C', 1 };
+
+bool MyMesh::isSyncMessageCode(uint8_t code) {
+  return code == RESP_CODE_CONTACT_MSG_RECV || code == RESP_CODE_CONTACT_MSG_RECV_V3 ||
+         code == RESP_CODE_CHANNEL_MSG_RECV || code == RESP_CODE_CHANNEL_MSG_RECV_V3;
+}
+
+void MyMesh::markSyncLogDirty() {
+  unsigned long now = millis();
+  if (!_synchist_log_dirty) _synchist_log_first = now;
+  _synchist_log_dirty = true;
+  _synchist_log_due = now + SYNC_HIST_LOG_COALESCE_MS;
+}
+
+void MyMesh::markSyncCursorsDirty() {
+  unsigned long now = millis();
+  if (!_synchist_cur_dirty) _synchist_cur_first = now;
+  _synchist_cur_dirty = true;
+  _synchist_cur_due = now + SYNC_HIST_CUR_COALESCE_MS;
+}
+
+static size_t syncHistWriteRecord(File& f, const uint8_t* frame, uint8_t len, uint32_t seq) {
+  uint8_t hdr[5];
+  memcpy(hdr, &seq, 4);
+  hdr[4] = len;
+  size_t n = f.write(hdr, sizeof(hdr));
+  n += f.write(frame, len);
+  return n;
+}
+
+// Adopt a fully-written temp when the live file is missing (swap interrupted by a
+// power cut); drop a stale temp that sits beside an intact live file.
+static void syncHistRecoverSwap(DataStore* store, FILESYSTEM* fs, const char* live, const char* tmp) {
+  if (!store->fileExists(fs, tmp)) return;
+  if (!store->fileExists(fs, live)) store->renameFile(fs, tmp, live);
+  else                              store->removeRooted(fs, tmp);
+}
+
+void MyMesh::loadSyncHistory() {
+  FILESYSTEM* fs = _store->getHotDataFS();
+  syncHistRecoverSwap(_store, fs, SYNC_HIST_LOG_FILE, SYNC_HIST_LOG_TMP);
+  syncHistRecoverSwap(_store, fs, SYNC_HIST_CUR_FILE, SYNC_HIST_CUR_TMP);
+
+  uint32_t last_seq = 0;
+  bool any = false;
+  File f = _store->openRead(fs, SYNC_HIST_LOG_FILE);
+  if (f) {
+    uint8_t magic[4];
+    if (f.read(magic, 4) == 4 && memcmp(magic, kSyncHistMagic, 4) == 0) {
+      size_t pos = 4, size = f.size();
+      while (pos + 5 <= size) {
+        uint8_t hdr[5];
+        if (f.read(hdr, 5) != 5) { _synchist_need_compact = true; break; }
+        uint32_t seq; memcpy(&seq, hdr, 4);
+        uint8_t len = hdr[4];
+        if (len == 0 || len > MAX_FRAME_SIZE || pos + 5 + len > size) { _synchist_need_compact = true; break; }  // torn tail
+        uint8_t buf[MAX_FRAME_SIZE];
+        if (f.read(buf, len) != len) { _synchist_need_compact = true; break; }
+        pos += 5 + len;
+        _synchist_file_recs++;
+        if ((any && seq <= last_seq) || !isSyncMessageCode(buf[0])) { _synchist_need_compact = true; continue; }
+        HistoryEntry& e = history_ring[history_head];
+        e.len = len;
+        memcpy(e.buf, buf, len);
+        e.seq = seq;
+        history_head = (history_head + 1) % HISTORY_RING_SIZE;
+        if (history_count < HISTORY_RING_SIZE) history_count++;
+        last_seq = seq;
+        any = true;
+      }
+      if (pos != size) _synchist_need_compact = true;   // trailing partial record
+    } else {
+      _synchist_need_compact = true;   // foreign / corrupt header: rewrite from RAM on the next flush
+    }
+    f.close();
+  }
+  if (any) history_next_seq = last_seq + 1;
+  if (_synchist_file_recs > 2u * HISTORY_RING_SIZE) _synchist_need_compact = true;
+  _synchist_unflushed = 0;
+
+  File c = _store->openRead(fs, SYNC_HIST_CUR_FILE);
+  if (c) {
+    uint8_t magic[4];
+    uint32_t next_seq = 0;
+    uint8_t n = 0;
+    if (c.read(magic, 4) == 4 && memcmp(magic, kSyncCurMagic, 4) == 0 &&
+        c.read((uint8_t*)&next_seq, 4) == 4 && c.read(&n, 1) == 1) {
+      if (next_seq > history_next_seq) history_next_seq = next_seq;
+      if (n > MAX_HISTORY_CLIENTS) n = MAX_HISTORY_CLIENTS;
+      for (uint8_t i = 0; i < n; i++) {
+        char id[MAX_CLIENT_ID_LEN + 1];
+        uint32_t last = 0;
+        if (c.read((uint8_t*)id, sizeof(id)) != sizeof(id) || c.read((uint8_t*)&last, 4) != 4) break;
+        id[MAX_CLIENT_ID_LEN] = '\0';
+        if (history_next_seq > 0 && last > history_next_seq - 1) last = history_next_seq - 1;  // never point past the ring
+        ClientHistoryState& st = history_clients[history_num_clients++];
+        strncpy(st.client_id, id, MAX_CLIENT_ID_LEN);
+        st.client_id[MAX_CLIENT_ID_LEN] = '\0';
+        st.last_delivered_seq = last;
+      }
+    }
+    c.close();
+  }
+  if (any || history_num_clients > 0) {
+    MESH_DEBUG_PRINTLN("sync history restored: %d msgs, %d clients, next_seq=%lu%s",
+                       history_count, history_num_clients, (unsigned long)history_next_seq,
+                       _synchist_need_compact ? " (log needs compaction)" : "");
+  }
+}
+
+bool MyMesh::appendSyncLog() {
+  int n = _synchist_unflushed;
+  if (n > history_count) n = history_count;
+  FILESYSTEM* fs = _store->getHotDataFS();
+  File f = _store->openAppend(fs, SYNC_HIST_LOG_FILE);
+  if (!f) return false;
+  bool ok = true;
+  if (f.size() == 0) ok = (f.write(kSyncHistMagic, 4) == 4);
+  int tail = (history_head - history_count + HISTORY_RING_SIZE) % HISTORY_RING_SIZE;
+  uint32_t recs = 0;
+  for (int i = history_count - n; ok && i < history_count; i++) {
+    const HistoryEntry& e = history_ring[(tail + i) % HISTORY_RING_SIZE];
+    if (!isSyncMessageCode(e.buf[0])) continue;
+    ok = (syncHistWriteRecord(f, e.buf, e.len, e.seq) == (size_t)(5 + e.len));
+    if (ok) recs++;
+  }
+  f.close();
+  if (!ok) {
+    _synchist_need_compact = true;   // a short append left a torn tail: rewrite next time
+    return false;
+  }
+  _synchist_file_recs += recs;
+  _synchist_unflushed = 0;
+  return true;
+}
+
+bool MyMesh::compactSyncLog() {
+  FILESYSTEM* fs = _store->getHotDataFS();
+  WdtHeavyGuard idle_wdt_guard;   // up to HISTORY_RING_SIZE x ~180 B in one go; SPIFFS may GC
+  File f = _store->openWrite(fs, SYNC_HIST_LOG_TMP);
+  if (!f) return false;
+  bool ok = (f.write(kSyncHistMagic, 4) == 4);
+  int tail = (history_head - history_count + HISTORY_RING_SIZE) % HISTORY_RING_SIZE;
+  uint32_t recs = 0;
+  for (int i = 0; ok && i < history_count; i++) {
+    const HistoryEntry& e = history_ring[(tail + i) % HISTORY_RING_SIZE];
+    if (!isSyncMessageCode(e.buf[0])) continue;
+    ok = (syncHistWriteRecord(f, e.buf, e.len, e.seq) == (size_t)(5 + e.len));
+    if (ok) recs++;
+  }
+  f.close();
+  if (!ok) { _store->removeRooted(fs, SYNC_HIST_LOG_TMP); return false; }   // keep the old log
+  _store->removeRooted(fs, SYNC_HIST_LOG_FILE);
+  if (!_store->renameFile(fs, SYNC_HIST_LOG_TMP, SYNC_HIST_LOG_FILE)) return false;  // loader adopts the tmp
+  _synchist_file_recs = recs;
+  _synchist_unflushed = 0;
+  _synchist_need_compact = false;
+  return true;
+}
+
+bool MyMesh::saveSyncCursors() {
+  FILESYSTEM* fs = _store->getHotDataFS();
+  File f = _store->openWrite(fs, SYNC_HIST_CUR_TMP);
+  if (!f) return false;
+  uint8_t n = (uint8_t)history_num_clients;
+  bool ok = (f.write(kSyncCurMagic, 4) == 4) &&
+            (f.write((const uint8_t*)&history_next_seq, 4) == 4) &&
+            (f.write(&n, 1) == 1);
+  for (int i = 0; ok && i < history_num_clients; i++) {
+    const ClientHistoryState& st = history_clients[i];
+    ok = (f.write((const uint8_t*)st.client_id, sizeof(st.client_id)) == sizeof(st.client_id)) &&
+         (f.write((const uint8_t*)&st.last_delivered_seq, 4) == 4);
+  }
+  f.close();
+  if (!ok) { _store->removeRooted(fs, SYNC_HIST_CUR_TMP); return false; }
+  _store->removeRooted(fs, SYNC_HIST_CUR_FILE);
+  return _store->renameFile(fs, SYNC_HIST_CUR_TMP, SYNC_HIST_CUR_FILE);
+}
+
+void MyMesh::serviceSyncHistory() {
+  unsigned long now = millis();
+  // An app disconnecting is the natural sync point: land its cursor right away so a
+  // power cut before the coalesce window closes cannot make it re-receive, on the
+  // next connect, the messages it just pulled.
+  bool connected = _serial && _serial->isConnected();
+  if (_synchist_was_connected && !connected && _synchist_cur_dirty) _synchist_cur_due = now;
+  _synchist_was_connected = connected;
+  if (_synchist_log_dirty &&
+      (millisHasNowPassed(_synchist_log_due) || now - _synchist_log_first >= SYNC_HIST_LOG_MAX_LATENCY_MS)) {
+    bool ok = (_synchist_need_compact || _synchist_file_recs > 2u * HISTORY_RING_SIZE)
+                ? compactSyncLog() : appendSyncLog();
+    if (ok) _synchist_log_dirty = false;
+    else    _synchist_log_due = now + SYNC_HIST_RETRY_MS;   // card missing / write failed: keep in RAM, retry later
+  }
+  if (_synchist_cur_dirty &&
+      (millisHasNowPassed(_synchist_cur_due) || now - _synchist_cur_first >= SYNC_HIST_CUR_MAX_LATENCY_MS)) {
+    if (saveSyncCursors()) _synchist_cur_dirty = false;
+    else                   _synchist_cur_due = now + SYNC_HIST_RETRY_MS;
+  }
+}
+
+void MyMesh::persistSyncHistoryNow() {
+  if (_synchist_log_dirty) {
+    bool ok = (_synchist_need_compact || _synchist_file_recs > 2u * HISTORY_RING_SIZE)
+                ? compactSyncLog() : appendSyncLog();
+    if (ok) _synchist_log_dirty = false;
+  }
+  if (_synchist_cur_dirty && saveSyncCursors()) _synchist_cur_dirty = false;
 }
 
 static bool clientIdEqual(const char* a, const char* b) {
@@ -1233,6 +1468,7 @@ int MyMesh::getNextFromHistoryForClient(const char* client_id, uint8_t frame[], 
     history_clients[slot].client_id[MAX_CLIENT_ID_LEN] = '\0';
     history_clients[slot].last_delivered_seq = history_next_seq > (uint32_t)history_count
       ? history_next_seq - (uint32_t)history_count : 0;
+    markSyncCursorsDirty();
   }
 
   uint32_t last = history_clients[slot].last_delivered_seq;
@@ -1267,8 +1503,10 @@ void MyMesh::commitHistoryForClient(const char* client_id, uint32_t seq) {
   const char* cid = (client_id && client_id[0]) ? client_id : "";
   for (int i = 0; i < history_num_clients; i++) {
     if (clientIdEqual(history_clients[i].client_id, cid)) {
-      if (seq > history_clients[i].last_delivered_seq)
+      if (seq > history_clients[i].last_delivered_seq) {
         history_clients[i].last_delivered_seq = seq;
+        markSyncCursorsDirty();
+      }
       return;
     }
   }
@@ -1278,8 +1516,10 @@ void MyMesh::advanceHistoryClientsAfterV3Broadcast(uint32_t seq) {
   for (int i = 0; i < history_num_clients; i++) {
     if (!shouldAdvanceClientAfterV3Broadcast(history_clients[i].client_id))
       continue;
-    if (seq > history_clients[i].last_delivered_seq)
+    if (seq > history_clients[i].last_delivered_seq) {
       history_clients[i].last_delivered_seq = seq;
+      markSyncCursorsDirty();
+    }
   }
 }
 
@@ -3437,6 +3677,7 @@ void MyMesh::begin(bool has_display) {
   bootstrapRTCfromContacts();
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
+  loadSyncHistory();   // app-sync replay ring + client cursors survive a reboot/power cut
 
   applyRadioFromPrefs();   // freq/bw/sf/cr + TX power + RX-boost (shared with the live UI apply)
 #if defined(DISPLAY_CLASS)
@@ -4176,6 +4417,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     // first — the same contract the on-device power menu honors. Skipping this
     // was the "read and unread messages deleted after a manual reboot" report.
     if (_ui) _ui->persistHistoryNow();
+    persistSyncHistoryNow();   // and the app-sync replay ring
     board.reboot();
   } else if (cmd_frame[0] == CMD_GET_BATT_AND_STORAGE) {
     uint8_t reply[11];
@@ -5271,6 +5513,7 @@ void MyMesh::loop() {
       dirty_contacts_expiry = 0;
     }
   }
+  serviceSyncHistory();   // coalesced app-sync ring / cursor writes
 
 #if defined(ENABLE_ADVERT_ON_BOOT) && ENABLE_ADVERT_ON_BOOT == 1
   // Fire the one-shot boot advert when the scheduled time passes. Flood so

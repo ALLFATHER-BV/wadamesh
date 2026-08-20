@@ -1021,6 +1021,12 @@ public:
   // shutdown/reboot, so the on-device power paths don't lose the last refresh
   // window on card-less devices (see MyMesh::loop). No-op when nothing is pending.
   void flushContactsIfDirty() { if (dirty_contacts_expiry) { saveContacts(); dirty_contacts_expiry = 0; } }
+  /** Flush the companion sync history (message ring + per-client cursors) to
+   *  storage synchronously. Call on every deliberate reboot/power-off path, next
+   *  to persistHistoryNow(): the periodic writes are coalesced (see
+   *  serviceSyncHistory), so a reset inside the window would otherwise drop the
+   *  newest messages from the app-sync replay. No-op when nothing is pending. */
+  void persistSyncHistoryNow();
 
   /** Remove a contact from a device-UI action and PERSIST it (mirrors the
    *  companion app's CMD_REMOVE_CONTACT). The base removeContact() only drops it
@@ -1268,6 +1274,34 @@ private:
   uint32_t history_next_seq;
   ClientHistoryState history_clients[MAX_HISTORY_CLIENTS];
   int history_num_clients;
+
+  // Companion sync-history persistence. The ring above is what CMD_SYNC_NEXT_MESSAGE /
+  // SyncSince replay to an app that (re)connects — and it used to be RAM-only, so any
+  // power cycle emptied it: an app that was not connected while messages arrived never
+  // got them after the reboot, while the on-device chat store (UITask) still showed them.
+  // Worst on boards whose only "off" is a hard power cut (ThinkNode M9 slider), but the
+  // V4/T-Deck power menus deep-sleep (RAM lost) just the same.
+  //   /synchist  append-only log of the sync-relevant frames (seq + raw frame); small
+  //              per-message appends, compacted (tmp + swap) once it holds > 2x the ring.
+  //   /synccur   next_seq + per-client last_delivered_seq (tiny, tmp + swap) so a
+  //              returning client resumes where it left off instead of re-receiving
+  //              everything. Both live on DataStore::getHotDataFS() (SD when routed).
+  bool     _synchist_log_dirty = false;    // ring entries appended since the last log write
+  bool     _synchist_cur_dirty = false;    // client cursors / next_seq changed since last write
+  bool     _synchist_need_compact = false; // torn/oversized log: rewrite from the ring instead of appending
+  int      _synchist_unflushed = 0;        // newest N ring entries not yet in the log
+  uint32_t _synchist_file_recs = 0;        // records currently in /synchist
+  unsigned long _synchist_log_due = 0, _synchist_log_first = 0;   // coalesce deadline / first-dirty time
+  unsigned long _synchist_cur_due = 0, _synchist_cur_first = 0;
+  bool     _synchist_was_connected = false; // disconnect edge -> flush cursors now
+  static bool isSyncMessageCode(uint8_t code);
+  void markSyncLogDirty();
+  void markSyncCursorsDirty();
+  void loadSyncHistory();      // MyMesh::begin(): restore ring + cursors from storage
+  bool appendSyncLog();        // land the newest _synchist_unflushed ring entries
+  bool compactSyncLog();       // rewrite the whole ring (tmp + swap)
+  bool saveSyncCursors();      // /synccur (tmp + swap)
+  void serviceSyncHistory();   // MyMesh::loop(): coalesced flushes
   ClientProtoState proto_clients[MAX_HISTORY_CLIENTS];
   int proto_num_clients;
 

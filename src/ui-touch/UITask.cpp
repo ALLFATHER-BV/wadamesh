@@ -11449,6 +11449,7 @@ static void sdRestoreRun() {
 
 #if defined(TLORA_PAGER)
   if (!meshcomodSdProfileMatchesInternal()) {
+  the_mesh.persistSyncHistoryNow();
     g_lv.task->showAlert(TR("Copy blocked: SD card holds a different or unreadable profile"), 3600);
     return;
   }
@@ -38478,6 +38479,7 @@ static void rebootToDownloadMode() {
 #endif
 
 static void powerDownloadCb(lv_event_t* e) {
+    the_mesh.persistSyncHistoryNow();      // and the app-sync replay ring (RAM is lost in deep sleep)
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
 #if defined(ESP32)
@@ -38552,6 +38554,7 @@ static void openPowerMenu() {
     }
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* l = lv_label_create(b);
+    the_mesh.persistSyncHistoryNow(); // and the app-sync replay ring
     lv_label_set_text(l, TR(txt));
     lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -50564,6 +50567,7 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   if (touchPrefsGetIgnoreTinyMsgs()) {
     const char* b = body ? body : "";
     while (*b == ' ' || *b == '\t' || *b == '\r' || *b == '\n') b++;   // whitespace is not content
+  the_mesh.persistSyncHistoryNow();  // and the app-sync replay ring
     size_t blen = strlen(b);
     while (blen > 0 && (b[blen-1] == ' ' || b[blen-1] == '\t' ||
                         b[blen-1] == '\r' || b[blen-1] == '\n')) blen--;

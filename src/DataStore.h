@@ -98,6 +98,18 @@ public:
   // _root; setSecondaryFS sets _fsExtra) — FAT has no such GC. Lets callers coalesce
   // the advert-driven contacts save on card-less devices without changing SD boards.
   bool contactsOnInternalFlash() const { return _root[0] == '\0' && _fsExtra == nullptr; }
+
+  // Root-aware file helpers for the app-level stores that live beside the core
+  // data files (MyMesh's companion sync-history log, see MyMesh::loadSyncHistory).
+  // getHotDataFS() is whichever filesystem already takes the frequently-rewritten
+  // contacts/channels — the SD card when one is routed, else the primary FS — so
+  // an often-appended log never lands on GC-prone internal flash while a card
+  // exists. NB removeFile(fs, name) above is NOT root-aware (legacy); these are.
+  FILESYSTEM* getHotDataFS() const { return _getContactsChannelsFS(); }
+  File openAppend(FILESYSTEM* fs, const char* filename);             // create if missing
+  bool fileExists(FILESYSTEM* fs, const char* filename);
+  bool removeRooted(FILESYSTEM* fs, const char* filename);
+  bool renameFile(FILESYSTEM* fs, const char* from, const char* to);
 #endif
 
 private:

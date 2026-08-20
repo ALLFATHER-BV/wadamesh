@@ -216,6 +216,29 @@ bool DataStore::removeFile(FILESYSTEM* fs, const char* filename) {
   return fs->remove(filename);
 }
 
+#if defined(ESP32)
+File DataStore::openAppend(FILESYSTEM* fs, const char* filename) {
+  return fs->open(_rp(filename), "a", true);
+}
+
+bool DataStore::fileExists(FILESYSTEM* fs, const char* filename) {
+  return fs->exists(_rp(filename));
+}
+
+bool DataStore::removeRooted(FILESYSTEM* fs, const char* filename) {
+  return fs->remove(_rp(filename));
+}
+
+bool DataStore::renameFile(FILESYSTEM* fs, const char* from, const char* to) {
+  // _rp() hands back ONE shared scratch buffer, so the two paths must be built
+  // into independent buffers (same trap savePrefs documents).
+  char from_path[80], to_path[80];
+  snprintf(from_path, sizeof(from_path), "%s%s", _root, from);
+  snprintf(to_path,   sizeof(to_path),   "%s%s", _root, to);
+  return fs->rename(from_path, to_path);
+}
+#endif
+
 bool DataStore::formatFileSystem() {
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   if (_fsExtra == nullptr) {
