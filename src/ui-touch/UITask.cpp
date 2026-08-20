@@ -22639,8 +22639,9 @@ static void openDiscoverPage() {
 // ============================================================
 // Spectrum app  (app-drawer tile -> APPACT_SPECTRUM)
 // ============================================================
-// A handheld swept-tuned spectrum analyzer built on the SX126x. While open it
-// BORROWS the radio from the mesh: main.cpp stops calling the_mesh.loop() (it
+// A handheld swept-tuned spectrum analyzer built on the mesh radio (SX126x on
+// most boards, LR1110 on the ThinkNode M9). While open it BORROWS the radio
+// from the mesh: main.cpp stops calling the_mesh.loop() (it
 // checks spectrumOwnsRadio()) so the mesh never re-arms RX on the home channel
 // while we are hopping the modem across the band. On close we re-apply the
 // mesh's saved radio params and clear the flag, so the next the_mesh.loop()
@@ -22662,11 +22663,23 @@ static void openDiscoverPage() {
 // the radio while we own it.
 static const int   SPEC_BINS      = 160;     // frequency bins across the span
 static const int   SPEC_WF_ROWS   = 48;      // waterfall height (rows of history; zoomed to fit width)
-static const int   SPEC_CHUNK     = 8;       // bins swept per timer tick (~5 ms/bin -> ~42 ms UI block)
+static const int   SPEC_CHUNK     = 8;       // bins swept per timer tick (~5.5 ms/bin -> ~44 ms UI block)
+// Honest-coverage note: 24 MHz / 160 bins = 150 kHz of bin pitch, but each bin
+// listens through a 62.5 kHz channel filter — only ~42% of the span is inside a
+// filter on any sweep, so a narrowband carrier sitting between bin centers is
+// attenuated or invisible. That is the deliberate resolution-vs-coverage trade
+// of a swept analyzer at these constants: 62.5 kHz is the narrowest LoRa RBW the
+// chips offer (adjacent bins resolve crisply); an RBW >= the 150 kHz pitch would
+// close the gap but blur every peak across neighbouring bins.
 static const float SPEC_RBW_KHZ   = 62.5f;   // resolution bandwidth used for each bin read
 static const float SPEC_SPAN_MHZ  = 24.0f;   // total swept span (center ±12 MHz)
-static const float SPEC_FMIN_MHZ  = 137.0f;  // SX126x physical tuning floor (region-agnostic)
-static const float SPEC_FMAX_MHZ  = 1020.0f; // SX126x physical tuning ceiling
+// 150-960 is what BOTH in-tree drivers actually accept: SX1262::setFrequency
+// and LR1110::setFrequency each range-check exactly that (the old 137/1020
+// pair was the SX126x SILICON range, which the driver refuses anyway — bins
+// outside 150-960 silently kept the previous bin's tune and mis-attributed
+// its RSSI).
+static const float SPEC_FMIN_MHZ  = 150.0f;  // driver-enforced tuning floor (SX126x + LR11x0)
+static const float SPEC_FMAX_MHZ  = 960.0f;  // driver-enforced tuning ceiling
 static const int   SPEC_DBM_MIN   = -130;    // chart Y floor (dBm)
 static const int   SPEC_DBM_MAX   = -50;     // chart Y ceiling (dBm)
 static const int   SPEC_DWELL       = 6;     // RSSI reads per bin (peak-hold over the settle window)
@@ -22688,7 +22701,7 @@ static lv_chart_series_t* s_spec_ser      = nullptr;
 static lv_obj_t*          s_spec_wf       = nullptr;    // waterfall canvas
 static lv_color_t*        s_spec_wf_buf   = nullptr;    // PSRAM RGB565 backing buffer (SPEC_BINS x SPEC_WF_ROWS)
 static lv_obj_t*          s_spec_axis_lbl = nullptr;    // start/center/end MHz row
-static lv_obj_t*          s_spec_info_lbl = nullptr;    // "RBW … span … center … gain" readout
+static lv_obj_t*          s_spec_info_lbl = nullptr;    // "RBW … span" readout
 static lv_obj_t*          s_spec_peak_lbl = nullptr;    // live "peak −87 dBm @ 869.7" readout
 static lv_obj_t*          s_spec_scale_lbl = nullptr;   // vertical colour-scale: floor dBm (bottom)
 static lv_obj_t*          s_spec_scale_hi_lbl = nullptr;// vertical colour-scale: ceiling dBm (top)
@@ -22699,7 +22712,6 @@ static float              s_spec_step     = 0.0f;       // per-bin step (MHz)
 static int                s_spec_pos      = 0;          // next bin to sweep this pass
 static uint8_t            s_spec_sf       = 7;          // mesh SF/CR reused for the reads
 static uint8_t            s_spec_cr       = 5;
-static bool               s_spec_gain     = false;      // mesh rx_boosted_gain (for the readout)
 static int                s_spec_floor    = -120;       // smoothed noise-floor estimate (dBm) -> waterfall colour auto-scales to it
 static int                s_spec_ylo      = -130;       // dynamic trace Y range (dBm), tracks live min/max
 static int                s_spec_yhi      = -80;
@@ -22742,8 +22754,9 @@ static void spectrumUpdateFloor() {
 // Sweep a chunk of bins. Spread across several ticks so a full sweep doesn't block
 // the UI. Returns true when a full sweep just completed (caller paints a row).
 //
-// On SX126x boards (RADIO_CLASS defined) we drive the modem DIRECTLY — retune to the
-// bin, startReceive() to ARM RX, settle, then peak-hold several GET_RSSI_INST reads.
+// On boards with a raw RadioLib handle (RADIO_CLASS defined — SX126x family and the
+// M9's LR1110) we drive the modem DIRECTLY — retune to the bin, startReceive() to
+// ARM RX, settle, then peak-hold several GET_RSSI_INST reads.
 // This is the fix for the "dead trace": the wrapper path (setParams + recvRaw) left a
 // stale STATE_RX in the wrapper after the first retune, so recvRaw() never re-armed and
 // every later bin read a meaningless standby RSSI. Going direct also lets us peak-hold
@@ -22759,19 +22772,25 @@ static bool spectrumSweepChunk() {
 #if defined(HAS_THINKNODE_M9)
     // LR1110: skipCalibration — LR1110::setFrequency(f) recalibrates image
     // rejection whenever the retune jumps >= 20 MHz, which the 24 MHz wrap
-    // from band end back to band start does EVERY sweep; a relative RSSI
-    // display doesn't need it (the mesh's own begin() calibration covers the
-    // ±12 MHz span) and it stalls the sweep for nothing.
-    radio.setFrequency(f, true);          // retune (chip -> standby on the new freq)
+    // from band end back to band start does EVERY sweep, stalling the sweep
+    // for nothing. openSpectrumPage already ran one CalibImage over the whole
+    // swept span (begin()'s own calibration only reaches mesh_freq ±4 MHz), so
+    // every bin is inside a calibrated band without per-bin work.
+    // If the retune itself fails, skip the bin's reads (keep its previous
+    // value) rather than attributing the OLD frequency's RSSI to this bin.
+    if (radio.setFrequency(f, true) != RADIOLIB_ERR_NONE) continue;   // retune (chip stays in standby on the new freq)
 #else
-    radio.setFrequency(f);                // retune (chip -> standby on the new freq)
+    // Same skip-on-failure as the LR1110 branch: a rejected retune must not
+    // attribute the old frequency's RSSI to this bin.
+    if (radio.setFrequency(f) != RADIOLIB_ERR_NONE) continue;   // retune (chip -> standby on the new freq)
 #endif
     radio.startReceive();                 // ARM RX — GET_RSSI_INST is only valid in RX
-    // The SX1262's instantaneous-RSSI register needs SEVERAL ms in RX to settle after
-    // arming: at ~1.5 ms it still reads the -127 dBm reset default, only by ~3-4 ms does
-    // it report the true channel power. So we settle, then peak-hold a handful of reads
-    // out to ~4 ms — the late (valid) reads dominate, the early -127s are discarded by
-    // the max(). A single short snapshot read here was the original "dead -127" bug.
+    // The modem's instantaneous-RSSI readout needs SEVERAL ms in RX to settle after
+    // arming (measured on the SX1262; the LR1110 behaves the same): at ~1.5 ms it
+    // still reads the reset default, only by ~3-4 ms does it report the true channel
+    // power. So we settle, then peak-hold a handful of reads out to ~4 ms — the late
+    // (valid) reads dominate, the early defaults are discarded by the max(). A single
+    // short snapshot read here was the original "dead -127" bug.
     delayMicroseconds(SPEC_SETTLE_US);
     int peak = -200;
     for (int k = 0; k < SPEC_DWELL; k++) {
@@ -22787,16 +22806,32 @@ static bool spectrumSweepChunk() {
 #else
       int r = (int)radio.getRSSI(false);  // instantaneous channel RSSI (dBm)
 #endif
-      if (r > peak) peak = r;
+      // Both driver families return 0 dBm when the underlying RSSI read fails
+      // (an SPI/BUSY hiccup on this shared bus) — and 0 would win the peak-hold,
+      // paint a full-scale spike, and blow the auto-scaled Y range out for tens
+      // of sweeps (it only contracts SPEC_Y_DECAY dB per sweep). Real channel
+      // power can never plausibly reach -5 dBm at this RBW, so discard anything
+      // outside (-180, -5) instead of letting one glitch squash the trace.
+      if (r <= -5 && r >= -180 && r > peak) peak = r;
       delayMicroseconds(SPEC_READ_GAP_US);
     }
 #if defined(HAS_THINKNODE_M9)
-    radio.standby();   // getRSSI(…, skipReceive) no longer drops RX for us — leave the bin cleanly
+    // Park in STDBY_XOSC (raw mode byte 0x01), NOT the default standby(): the
+    // plain call selects STDBY_RC, which stops the TCXO on this board (it is
+    // powered from the chip's DIO3 rail), so the next bin's startReceive would
+    // re-pay the ~5 ms TCXO startup RadioLib programmed — roughly doubling the
+    // per-bin cost. XOSC standby keeps the TCXO running between bins (~5.5 ms
+    // per bin expected; re-verify with a micros() log on hardware). The raw
+    // byte is deliberate: this RadioLib defines RADIOLIB_LR11X0_STANDBY_XOSC
+    // with the SAME value as STANDBY_RC (both 0x00), so the named constant
+    // would silently select RC again. closeSpectrumPage's restore drops the
+    // chip back to a true STDBY_RC before handing it to the mesh.
+    radio.standby(0x01);
 #endif
-    s_spec_rssi[i] = (int16_t)peak;
+    if (peak > -200) s_spec_rssi[i] = (int16_t)peak;   // every read discarded -> keep the old bin
   }
 #else
-  // Non-SX126x fallback (e.g. the Tanmatsu LoRa bridge): wrapper single read.
+  // No raw radio handle (e.g. the Tanmatsu LoRa bridge): wrapper single read.
   uint8_t scratch[8];
   for (int i = s_spec_pos; i < end; i++) {
     const float f = s_spec_start + (float)i * s_spec_step;
@@ -22916,6 +22951,20 @@ static void spectrumTimerCb(lv_timer_t* t) {
 static void spectrumRestoreRadio() {
   if (!s_spectrum_active) return;     // idempotent — never restore/clear twice
   NodePrefs* p = the_mesh.getNodePrefs();
+#if defined(HAS_THINKNODE_M9)
+  // The sweep left the chip parked in STDBY_XOSC; drop to a true STDBY_RC first
+  // so the mesh gets the chip back in the standby mode RadioLib's own flow uses
+  // (and because CalibImage is only legal in RC standby). Then re-run image
+  // calibration over the mesh channel ±4 MHz — the exact band begin() had
+  // calibrated — so the mesh RX returns to its begin()-time image rejection
+  // instead of the sweep's span-wide compromise cal. setParams below normally
+  // stays under the driver's 20 MHz auto-recal trigger, so nothing else would
+  // restore it (a mesh channel within ~8 MHz of the 150/960 band edge clamps
+  // the span asymmetrically and CAN leave the last bin >20 MHz out — the
+  // auto-recal then fires redundantly before this explicit one; harmless).
+  radio.standby();
+  if (p) radio.calibrateImageRejection(p->freq - 4.0f, p->freq + 4.0f);
+#endif
   if (p) {
     radio_driver.setParams(p->freq, p->bw, p->sf, p->cr);
     radio_driver.setTxPower(p->tx_power_dbm);
@@ -23347,6 +23396,39 @@ static void openRemotePage() {
 
 static void openSpectrumPage() {
   closeSpectrumPage();
+#if defined(HAS_THINKNODE_M9)
+  // A mesh transmit may be ON AIR right now: sends are asynchronous (startSendRaw
+  // arms the chip and returns while the packet is still transmitting), and this
+  // callback runs right after the_mesh.loop() in the same task. Seizing the radio
+  // immediately would cut that packet off mid-air — lost packet plus a partial
+  // burst splattered across the channel. The mesh and UI share one task, so at
+  // this boundary the wrapper is in RX whenever no send is pending; if it is NOT,
+  // wait (bounded) for the transmit to finish before taking over. isSendComplete()
+  // consumes the TX-done event, so the dispatcher will later expire this packet as
+  // a timed-out send — a stats/log blemish, versus truncating it on the air (the
+  // packet double-counts: n_sent++ from the consumed TX-done plus the timeout
+  // path's logTxFail; that timeout's finishTransmit also blips the restored RX
+  // for one mesh-loop pass — all transient). The cap means a stuck flag can only
+  // delay the sweep, never hang it. Two accepted costs: this wait runs on the
+  // shared UI/mesh task, so LVGL and the keys freeze for its duration (~2.3 s at
+  // the shipping SF8/BW62.5 config, 6 s absolute cap) — tolerable because it only
+  // triggers while a packet is genuinely on air; and in the rare one-loop-pass
+  // window where a radio-error path left the wrapper IDLE (not RX, nothing
+  // pending), the wait burns the full cap for nothing — telling IDLE apart from
+  // TX-in-flight needs a wrapper accessor that doesn't exist yet; bounded and
+  // self-recovering, so tolerated. (The same truncation exists on every board,
+  // but only this port's dispatcher-recovery path has been re-validated, so the
+  // wait stays M9-only for now.)
+  if (!radio_driver.isInRecvMode()) {
+    uint32_t cap = radio_driver.getEstAirtimeFor(MAX_TRANS_UNIT) * 3 / 2;   // dispatcher's own worst-case send budget
+    if (cap > 6000) cap = 6000;
+    const uint32_t t0 = millis();
+    while (millis() - t0 < cap) {
+      if (radio_driver.isSendComplete() || radio_driver.isInRecvMode()) break;
+      delay(5);
+    }
+  }
+#endif
   // Park the buffered-receive drain task while this page drives the raw radio.
   // The acquire/release pair guarantees no drain is mid-flight when we take over.
   radio_driver.radioAcquire();
@@ -23361,11 +23443,10 @@ static void openSpectrumPage() {
   float center = pr ? pr->freq : 915.0f;
   s_spec_sf   = pr ? pr->sf : 7;
   s_spec_cr   = pr ? pr->cr : 5;
-  s_spec_gain = pr ? (pr->rx_boosted_gain != 0) : false;
   float span = SPEC_SPAN_MHZ;
   // Centre the sweep on the node's HOME frequency for ANY region (US915 / EU868 / 433 /
   // AU915 …) — never pin it to a US-ISM window, or non-US users would sweep an empty band
-  // that never includes their channel. Clamp only to the SX126x's physical tuning range.
+  // that never includes their channel. Clamp only to the radio's physical tuning range.
   float start = center - span * 0.5f;
   float stop  = center + span * 0.5f;
   if (start < SPEC_FMIN_MHZ) start = SPEC_FMIN_MHZ;
@@ -23382,6 +23463,19 @@ static void openSpectrumPage() {
   // Configure the modem ONCE for the scan: a narrow resolution bandwidth so adjacent
   // bins resolve, and boosted RX gain for sensitivity. The per-bin sweep then only
   // changes frequency, which keeps each bin fast. (Restored to mesh config on close.)
+  // Drop to standby FIRST: the chip is still in mesh RX at this point, and the
+  // datasheets describe these config commands as standby-mode commands. Whether the
+  // silicon actually rejects them from RX is unverified — but one SPI command is
+  // cheap hardening against the first sweep running on stale modem config.
+  radio.standby();
+#if defined(HAS_THINKNODE_M9)
+  // LR1110: image rejection is only calibrated where the chip was told to
+  // calibrate it — begin() covered mesh_freq ±4 MHz, NOT this ±12 MHz span. One
+  // CalibImage over the whole span (legal from the RC standby above, a few ms,
+  // once per open) makes every bin's skipCalibration retune within spec; the
+  // close path re-runs the mesh's own ±4 MHz calibration on the way out.
+  radio.calibrateImageRejection(start, stop);
+#endif
   radio.setBandwidth(SPEC_RBW_KHZ);
   radio.setRxBoostedGainMode(true);
 #endif
@@ -23516,9 +23610,11 @@ static void openSpectrumPage() {
   lv_obj_set_style_text_color(s_spec_axis_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(s_spec_axis_lbl, chart_x, wf_y + wf_disp_h + 3);
 
-  // Each bin needs ~4 ms (the SX1262 RSSI settle), so SPEC_CHUNK=5 caps the per-tick
-  // radio work at ~20 ms (smooth UI blocks); a 28 ms tick keeps ~30% idle for LVGL.
-  // A full 160-bin sweep takes ~32 ticks (~0.9 s) -> a fresh waterfall row ~every 0.9 s.
+  // Each bin costs ~5.5 ms (1.5 ms settle + ~2.4 ms of peak-hold reads + retune/RX
+  // command overhead), so SPEC_CHUNK=8 blocks the UI ~44 ms per tick; the 8 ms timer
+  // makes the ticks run essentially back-to-back, so a full 160-bin sweep is 20
+  // ticks ≈ ~1 s and the quarter-sweep waterfall rows land ~every 250 ms. (Numbers
+  // assume the between-bin XOSC standby holds the TCXO up — re-time on hardware.)
   s_spec_timer = lv_timer_create(spectrumTimerCb, 8, nullptr);    // ticks back-to-back with the sweep chunks; waterfall + trace repaint every quarter sweep (~250 ms)
   lv_obj_move_foreground(s_spec_root);
   lv_obj_move_foreground(g_statusbar.root);   // keep the tall title bar above this page

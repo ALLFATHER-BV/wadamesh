@@ -631,6 +631,31 @@ These are left intentionally unset/unwired rather than guessed:
       popup), then immediately reading the now-mutated `s_home_drawer_mode`
       flag and reopening it in the same keypress. Fixed by snapshotting the
       flag before the dismiss loop runs.
+12. **Spectrum app LR1110 pass (2026-08-20) — fixes compile-verified, three
+    on-device checks wanted:**
+    - Between-bin standby now sends the raw LR1110 `SetStandby(0x01)`
+      (STDBY_XOSC) so the DIO3-powered TCXO stays up across bins — the
+      vendored RadioLib's `RADIOLIB_LR11X0_STANDBY_XOSC` define equals
+      `STANDBY_RC` (both 0x00, upstream define bug), so the named constant
+      would silently re-select RC and re-pay the ~5 ms TCXO startup per bin.
+      VERIFY: a `micros()` log around `spectrumSweepChunk()` should show
+      ~5.5 ms/bin (~1 s full sweep), roughly half the pre-fix time.
+    - Open now runs one span-wide `calibrateImageRejection(start, stop)`
+      (begin() only calibrated mesh ±4 MHz); restore re-runs the mesh's own
+      ±4 MHz cal from a true STDBY_RC. VERIFY: mesh RX sensitivity unchanged
+      after a Spectrum session (image cal is back to the begin()-time band).
+    - Opening Spectrum during an in-flight mesh TX now waits (bounded by the
+      dispatcher's own 1.5x-airtime budget, capped 6 s) instead of truncating
+      the packet mid-air; the consumed TX-done means the dispatcher logs that
+      packet as a timed-out send — stats/log blemish only. VERIFY: open the
+      app while a long send is on air; the send should complete (watch for
+      the dispatcher's timeout warning, and no partial burst on a monitor).
+    Also fixed in the same pass: sweep clamps now 150-960 MHz (LR1110 range;
+    setFrequency failures skip the bin instead of mis-attributing RSSI), a
+    0-dBm failed-read sentinel guard in the peak-hold (shared with SX126x),
+    config commands now issued from standby on open, and the stale SX126x-era
+    comments/readout. Bin pitch (150 kHz) vs RBW (62.5 kHz) = ~42% span
+    coverage is documented at the constants, deliberately unchanged.
 
 
 ## Keyboard: register-addressed I2C slave (protocol build #8, USB-pad release build #9)
