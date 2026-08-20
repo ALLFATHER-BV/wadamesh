@@ -51,6 +51,7 @@ static uint32_t _atoi(const char* sp) {
   #include <SPIFFS.h>
   #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     #include <SD.h>
+    #include "SdFastClock.h"   // post-mount operating-clock raise (SD_SPI_FAST_HZ boards)
     #include <Preferences.h>
     #if defined(TLORA_PAGER)
       #include <mbedtls/sha256.h>
@@ -996,6 +997,7 @@ void setup() {
         delay(60);
         if (SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
           Serial.printf("[BOOT] SD renegotiated %lu -> 4000000 Hz\n", (unsigned long)mounted_hz);
+          mounted_hz = 4000000;
         } else {
           SD.end();
           delay(120);
@@ -1003,6 +1005,9 @@ void setup() {
           if (sd_mounted) Serial.printf("[BOOT] SD stays at %lu Hz (4 MHz renegotiation failed)\n", (unsigned long)mounted_hz);
         }
       }
+      // Operating-clock raise with read-verify (SD_SPI_FAST_HZ boards only; no-op elsewhere).
+      if (sd_mounted) { mounted_hz = sdTryFastClock(PIN_SD_CS, *_spi, mounted_hz, "BOOT"); sd_mounted = mounted_hz != 0; }
+      if (sd_mounted) { extern uint32_t g_sd_operating_hz; g_sd_operating_hz = mounted_hz; }   // About-page readout (UITask.cpp)
     }
 #endif
     if (sd_mounted) {
@@ -1686,8 +1691,16 @@ void loop() {
       // BLE coexistence airtime). Deferred to here on purpose: enabling it on the
       // unassociated STA naps the radio through a scan dwell and breaks the setup
       // wizard's WiFi.scanNetworks() ("no networks found"). One-shot.
+      // Persisted preference (Wi-Fi settings -> "Power save"): default ON, except the V4-R8
+      // where it defaults OFF (perf pass 2026-08-20 — lower-latency app link, steadier
+      // association on its weak 2.4 GHz path). The toggle also applies live once associated.
       static bool modem_sleep_set = false;
-      if (!modem_sleep_set) { WiFi.setSleep(true); modem_sleep_set = true; }
+      if (!modem_sleep_set) {
+        const bool ps = wifiConfigGetPowerSave();
+        WiFi.setSleep(ps);
+        Serial.printf("[wifi] modem power save %s\n", ps ? "on" : "off");
+        modem_sleep_set = true;
+      }
       if (!sntp_kicked) {
         /* Brussels timezone with DST rules baked in (POSIX "CET-1CEST,...").
          * On touch builds the base is shifted by the user's manual hour offset

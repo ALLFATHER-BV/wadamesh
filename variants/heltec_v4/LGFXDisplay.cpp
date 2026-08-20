@@ -3,14 +3,24 @@
 
 #include "LGFXDisplay.h"
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 
 #ifndef LGFX_INVERT_COLOR
   #define LGFX_INVERT_COLOR true  // default: black bg (ST7789 INVON)
 #endif
+// Largest LVGL band this driver ever sees: the R8's draw buffer is 240 x LV_DRAW_BUF_LINES
+// (24) px = 5760 px, in either orientation (LVGL re-splits to the buffer size). Rounded up.
+#ifndef LGFX_SWAP_BUF_PX
+  #define LGFX_SWAP_BUF_PX 6144
+#endif
 
 LGFXDisplay::LGFXDisplay(RefCountedDigitalPin* peripher_power)
   : DisplayDriver(240, 320),
-    _periph_power(peripher_power)
+    _periph_power(peripher_power),
+    _swap_buf(nullptr),
+    _swap_px(0),
+    _swap_alloc_failed(false),
+    _frame_open(false)
 {
   _isOn  = false;
   _color = 0xFFFF;
@@ -22,11 +32,13 @@ LGFXDisplay::LGFXDisplay(RefCountedDigitalPin* peripher_power)
     auto cfg = _bus.config();
     cfg.spi_host    = SPI2_HOST;
     cfg.spi_mode    = 0;
-    cfg.freq_write  = 40000000;      // 40 MHz — the old 20 MHz made a full-screen flush
-                                     // ~61 ms of pure bus time (~4x the plain V4's 80 MHz
-                                     // driver); ST7789 typically takes 62.5-80 MHz, so 40
-                                     // is still the conservative choice. If hardware shows
-                                     // tearing/garbled bands, fall back to 26.6 MHz.
+    // 80 MHz (perf pass 2026-08-20) — parity with the plain V4's TFT_eSPI driver on the
+    // same ST7789 panel family. History: 20 MHz made a full-screen flush ~61 ms of pure
+    // bus time, 40 MHz ~31 ms, 80 MHz ~15 ms. The S3's SPI clock is 80 MHz / n, so the
+    // only rungs are 80 / 40 / 26.7 / 20; build with -D LGFX_SPI_WRITE_HZ=40000000 to
+    // step back down if a unit shows tearing or garbled bands (the micro-SD shares
+    // SCLK/MOSI, so the trace load is higher than the plain V4's).
+    cfg.freq_write  = LGFX_SPI_WRITE_HZ;
     cfg.freq_read   = 16000000;
     cfg.spi_3wire   = false;
     cfg.use_lock    = true;
@@ -107,13 +119,14 @@ void LGFXDisplay::turnOn() {
 }
 void LGFXDisplay::turnOff() {
   if (!_isOn) return;
+  finishFrame();
   pinMode(PIN_TFT_LEDA_CTL, OUTPUT);
   digitalWrite(PIN_TFT_LEDA_CTL, LOW);
   _isOn = false;
   if (_periph_power) _periph_power->release();
 }
-void LGFXDisplay::clear()                     { _lcd.fillScreen(0x0000); }
-void LGFXDisplay::startFrame(ColorVal)        { _lcd.fillScreen(0x0000); }
+void LGFXDisplay::clear()                     { finishFrame(); _lcd.fillScreen(0x0000); }
+void LGFXDisplay::startFrame(ColorVal)        { finishFrame(); _lcd.fillScreen(0x0000); }
 void LGFXDisplay::setTextSize(int sz)         { _lcd.setTextSize(sz); }
 
 void LGFXDisplay::setColor(ColorVal c) {
@@ -136,9 +149,61 @@ void LGFXDisplay::writePixelsRGB565(int x, int y, int w, int h, const uint16_t* 
   _lcd.endWrite();
 }
 
+// Async LVGL flush (perf pass 2026-08-20).
+//
+// LVGL renders little-endian RGB565 into ONE draw buffer; the ST7789 wants big-endian.
+// The sync path above hands that buffer to LovyanGFX with setSwapBytes(true), which is
+// LGFX's *convert* path: a per-pixel byte swap into 32..256 px chunks, each chunk its own
+// DMA kick, and the call only returns once the whole band is on the wire — so LVGL's
+// render of band N+1 never overlapped the transfer of band N (13 bands per full frame).
+//
+// Here the swap is one 16-bit rotate per pixel into our own internal DMA buffer, the band
+// goes out as ONE no-convert DMA (swap=false -> src depth == panel depth -> no_convert ->
+// Bus_SPI::writeBytes DMA), and we return at once: LVGL renders the next band while the
+// SPI drains this one. Ordering is LGFX's: the next writeBytes waits on SPI_USR before it
+// starts, and we waitDMA() before overwriting the buffer. One startWrite()/endWrite()
+// transaction spans the frame and is closed on the last band, so the micro-SD (bus_shared)
+// gets the bus back between frames exactly as before — just with ~13 fewer transaction
+// setups per frame. Total bus time is unchanged; what changes is that the CPU is free
+// during it.
+void LGFXDisplay::flushBandRGB565(int x, int y, int w, int h, const uint16_t* pixels, bool last) {
+  if (!_isOn || !pixels || w <= 0 || h <= 0) { if (last) finishFrame(); return; }
+  const size_t px = (size_t)w * (size_t)h;
+  if (!_swap_buf && !_swap_alloc_failed) {
+    _swap_px  = LGFX_SWAP_BUF_PX;
+    _swap_buf = (uint16_t*)heap_caps_malloc(_swap_px * sizeof(uint16_t),
+                                            MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!_swap_buf) {
+      _swap_alloc_failed = true;   // internal DRAM exhausted: stay on the sync path for good
+      Serial.println("[TFT] async flush: no internal DMA RAM for the swap buffer; sync flush");
+    }
+  }
+  if (!_swap_buf || px > _swap_px) {          // fallback: synchronous convert path
+    writePixelsRGB565(x, y, w, h, pixels);
+    if (last) finishFrame();
+    return;
+  }
+  if (!_frame_open) { _lcd.startWrite(); _frame_open = true; }
+  _lcd.waitDMA();                             // the previous band may still be reading _swap_buf
+  const uint16_t* s = pixels;
+  uint16_t*       d = _swap_buf;
+  for (size_t i = 0; i < px; ++i) d[i] = __builtin_bswap16(s[i]);
+  _lcd.setAddrWindow(x, y, w, h);
+  _lcd.writePixelsDMA(_swap_buf, (int32_t)px, /*swap=*/false);   // already panel byte order
+  if (last) finishFrame();
+}
+
+void LGFXDisplay::finishFrame() {
+  if (!_frame_open) return;
+  _lcd.waitDMA();
+  _lcd.endWrite();
+  _frame_open = false;
+}
+
 // UI contract (see UITask applyRotation): called with 1 for ROT_90, 3 for ROT_270; portrait
 // stays as-inited (rotation 0). Honor the argument — the old hardcoded 1 ignored it.
 void LGFXDisplay::setDisplayRotation(uint8_t r) {
+  finishFrame();
   _lcd.setRotation(r & 3);
   setLogicalSize(_lcd.width(), _lcd.height());
 }
@@ -152,6 +217,7 @@ void LGFXDisplay::panelSleep(bool sleep) {
   // setSleep writes the bare command with no delay: t_SLPIN wants 5 ms of bus
   // quiet after SLPIN, and >=5 ms must pass after SLPOUT before the next
   // command (the wake path fires backlight + LVGL flushes immediately after).
+  finishFrame();
   if (sleep) { _lcd.sleep();  delay(5); }   // SLPIN
   else       { _lcd.wakeup(); delay(6); }   // SLPOUT
 }

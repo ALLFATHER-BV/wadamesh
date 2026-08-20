@@ -141,3 +141,53 @@ on the physical device.
 - Refuted during verification: the About "Model:" mislabel (code is inside
   `#if 0`); slot-pool/cull, drain-order, tab-bar-geometry concerns (M9-pass
   parity checks) — all verified non-issues on the R8.
+
+---
+
+# Perf pass (2026-08-20)
+
+Question asked: "are we achieving full performance out of the R8 build?" Audit of
+CPU / memory / flash / display / SD / Wi-Fi / RF paths. Compute side was already at
+spec (240 MHz runtime clock, octal PSRAM @ 80 MHz, QIO flash @ 80 MHz, LVGL heap in
+PSRAM, draw buffer in internal DMA RAM, 16 ms refresh). Six gaps found and fixed,
+all flashed to the user's unit the same day:
+
+1. **FEM LNA defaulted OFF.** The R8 is a V4.3.1-generation board (KCT8103L FEM with
+   the software-switchable ~17 dB RX LNA); `fem_lna` defaulted to 0 = bypassed.
+   Prefs schema v49: default ON on `HELTEC_LORA_V4_R8`, one-time flip of existing
+   installs (no new field). Toggle stays in Radio & Mesh. **[HW]** confirm the boot
+   line `[R8] FEM type=1` / About "LNA on"; expect better RX in quiet sites, possibly
+   worse in RF-noisy ones (then turn it off).
+2. **Display bus 40 → 80 MHz** (`LGFX_SPI_WRITE_HZ`, LGFXDisplay.h): parity with
+   the plain V4's TFT_eSPI driver. Full-frame bus time ~31 → ~15 ms. **[HW]** watch
+   for tearing / garbled bands; `-D LGFX_SPI_WRITE_HZ=40000000` steps back.
+3. **Async DMA band flush** (`LGFXDisplay::flushBandRGB565`, used by `lvglFlush` on
+   the R8 only). Before: LVGL's LE pixels went through LovyanGFX's convert path
+   (per-pixel swap into 32..256 px chunks, each its own DMA kick) and the flush
+   returned only when the band was on the wire — render and transfer never
+   overlapped. Now: one 16-bit rotate per pixel into an internal DMA buffer (12 KB),
+   ONE no-convert DMA per band, `lv_disp_flush_ready` immediately; the last band
+   (`lv_disp_flush_is_last`) waits and closes the frame transaction so the shared
+   micro-SD gets the bus between frames exactly as before. Sync fallback if the
+   buffer can't be allocated. `finishFrame()` guards panel sleep / rotation / clear.
+4. **Wi-Fi modem power save is now a pref** (`wifi_ps` in the NVS Wi-Fi store;
+   toggle in Wi-Fi settings, applies live once associated). Default ON everywhere
+   (unchanged behaviour), OFF on the R8 (USB-powered kit; lower-latency TCP/app
+   link and steadier association on this unit's weak 2.4 GHz path).
+5. **micro-SD operating clock 4 → 20 MHz** (`SD_SPI_FAST_HZ`, include/SdFastClock.h):
+   after the proven 4 MHz mount, re-begin at 20 MHz and READ-VERIFY (a probe file's
+   first 512 B captured at 4 MHz and byte-compared after the raise; SPI-mode SD has
+   no data CRC so a bare mount success would not catch a marginal clock). Falls
+   back to 4 MHz. Wired at all three mount sites (boot adoption in main.cpp, the
+   UITask mount ladder, the reinsert remount). No-op on boards without the flag.
+6. **Boot at 240 MHz**: the R8 env now sets `ESP32_CPU_FREQ=240`; previously all of
+   setup() (radio init, SD ladder, store load, mesh begin) ran at the base env's
+   80 MHz until UITask bumped it. Screen-off DFS to 80 MHz unchanged.
+
+Verification aid: Settings → About on the R8 gained a `Perf:` row —
+`CPU 240 · TFT 80 MHz DMA · SD 20 MHz · LNA on` is the all-green reading.
+("sync" = DMA buffer alloc failed; "SD 4 MHz" = the 20 MHz verify failed and it
+fell back; both are safe degradations, not faults.)
+
+Deliberately NOT done: `-O2` (image is 3.70 MB in a 3.875 MB OTA slot), bigger data
+cache (baked into Arduino's prebuilt IDF libs), radio BW/SF/CR (network parameters).

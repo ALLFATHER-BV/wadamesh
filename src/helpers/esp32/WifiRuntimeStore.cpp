@@ -17,6 +17,12 @@ static const char *WIFI_CONFIG_PWD_KEY = "wifi_pwd";
 static const char *WIFI_CONFIG_RADIO_EN_KEY = "wifi_radio_en";
 static const char *WIFI_CONFIG_WIFI_CHOSEN_KEY = "wifi_chosen";
 static const char *WIFI_CONFIG_BLE_EN_KEY = "ble_en";   // BLE radio on/off (default on)
+static const char *WIFI_CONFIG_PS_KEY = "wifi_ps";      // modem power save once associated
+#if defined(HELTEC_LORA_V4_R8)
+  #define WIFI_CONFIG_PS_DEFAULT 0   // USB-powered Expansion Kit: latency + link stability over mA
+#else
+  #define WIFI_CONFIG_PS_DEFAULT 1   // battery boards keep the DTIM sleep they always had
+#endif
 
 static SdNvsPrefs s_prefs;
 static bool s_begun = false;
@@ -139,6 +145,20 @@ void wifiConfigSetBleEnabled(bool enabled) {
   s_prefs.end();
   if (!s_prefs.begin(WIFI_CONFIG_NAMESPACE, false)) return;
   s_prefs.putUChar(WIFI_CONFIG_BLE_EN_KEY, enabled ? 1 : 0);
+  s_prefs.end();
+  s_begun = s_prefs.begin(WIFI_CONFIG_NAMESPACE, true);
+}
+
+bool wifiConfigGetPowerSave() {
+  if (!s_begun) wifiConfigBegin();
+  return s_prefs.getUChar(WIFI_CONFIG_PS_KEY, WIFI_CONFIG_PS_DEFAULT) != 0;
+}
+
+void wifiConfigSetPowerSave(bool enabled) {
+  if (!s_begun) wifiConfigBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(WIFI_CONFIG_NAMESPACE, false)) return;
+  s_prefs.putUChar(WIFI_CONFIG_PS_KEY, enabled ? 1 : 0);
   s_prefs.end();
   s_begun = s_prefs.begin(WIFI_CONFIG_NAMESPACE, true);
 }

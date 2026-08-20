@@ -27,6 +27,14 @@ void wifiConfigSetRadioEnabled(bool enabled);
 bool wifiConfigGetBleEnabled();
 void wifiConfigSetBleEnabled(bool enabled);
 
+/* Wi-Fi modem power save (DTIM sleep) once associated. ON saves power and gives BLE
+ * coexistence airtime; OFF keeps the RX chain up for a lower-latency companion-TCP /
+ * web-mirror link and holds a marginal association better. Default ON everywhere
+ * except the V4-R8 (USB-powered Expansion Kit form factor; perf pass 2026-08-20).
+ * Applied by the main loop after association and live by the Wi-Fi settings toggle. */
+bool wifiConfigGetPowerSave();
+void wifiConfigSetPowerSave(bool enabled);
+
 #if defined(TLORA_PAGER)
 /* Pager coexistence ownership. Wi-Fi intent alone cannot answer whether a
  * cold NimBLE start is safe: touch builds keep the STA scannable even with no

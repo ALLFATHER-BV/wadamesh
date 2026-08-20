@@ -62,6 +62,7 @@
 #endif
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
   #include <SD.h>             // microSD — T-Deck/M9 on the LoRa SPI, V4-R8 on the TFT SPI
+  #include "SdFastClock.h"    // post-mount operating-clock raise (SD_SPI_FAST_HZ boards)
   #include "sd_diskio.h"      // internal Arduino-SD drive helpers (sdcard_init / sd_*_raw)
   extern SPIClass* tdeckSharedSPI();
   // FatFs mkfs (the prebuilt ESP-IDF compiles f_setlabel OUT — FF_USE_LABEL=0 —
@@ -2149,6 +2150,10 @@ static bool g_cap_touch_hw_started = false;
 // LVGL just calls flush_cb more often.
 static constexpr int LV_DRAW_BUF_LINES = 24;
 static lv_color_t* g_draw_buffer = nullptr;
+// Operating clock of the LAST successful SD.begin() on SPI-SD boards (0 = none). Recorded at
+// every mount/remount site (main.cpp boot adoption + the two UITask mounts) because SD.begin's
+// clock is the session clock; Settings -> About reports it on the R8 (no serial console there).
+uint32_t g_sd_operating_hz = 0;
 static uint32_t    g_draw_buf_px  = 240 * LV_DRAW_BUF_LINES;   // actual buffer size in px; shrinks if the full alloc fails at boot
 #if CAP_LARGE_SCREEN
 // UI resolution scaling (Tanmatsu, no touchscreen). LVGL renders at s_lv_pw x s_lv_ph (PHYSICAL
@@ -3230,7 +3235,16 @@ static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t
     return;
   }
 #endif
+#if defined(HELTEC_LORA_V4_R8)
+  // Async DMA band flush: returns as soon as the swapped copy is handed to the SPI DMA, so
+  // LVGL renders the next band while this one drains; the last band of the refresh closes
+  // the frame transaction. The screenshot/web-mirror copies below read color_p, which the
+  // driver has already copied out — unaffected. (LGFXDisplay::flushBandRGB565)
+  display.flushBandRGB565(area->x1, area->y1, w, h, reinterpret_cast<uint16_t*>(color_p),
+                          lv_disp_flush_is_last(disp_drv));
+#else
   display.writePixelsRGB565(area->x1, area->y1, w, h, reinterpret_cast<uint16_t*>(color_p));
+#endif
   if (g_shot_buf) {                       // mirror this area into the screenshot buffer
     for (int32_t row = 0; row < h; ++row) {
       const int32_t dy = area->y1 + row;
@@ -3821,10 +3835,10 @@ static void navRefocusFirstVisible(lv_obj_t* p) {
 }
 // Small key hints over each menubar icon — shown only while keyboard nav is on.
 static void navMenubarKeysSync() {
-#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys. The
   // pager prints each fixed mnemonic beside its icon directly in the tab label,
-  // so neither target needs this optional overlay. A plain `return` isn't enough
+  // so neither target needs this optional overlay. The M9 has no tab bar at all. A plain `return` isn't enough
   // since the body below still needs s_kbd_nav to exist at compile time; exclude it.
 #else
   if (!g_lv.tabview) return;
@@ -10639,7 +10653,8 @@ static void buildRadioSettings() {
 
 #if defined(HELTEC_LORA_V4_TFT)
   // Heltec V4.3 only: the external FEM's high-gain receive amplifier (~17 dB). Bypassed by
-  // default; a big win in quiet/remote sites, but can desensitize in noisy areas. This is
+  // default on the plain V4 (ON by default on the V4-R8 since prefs v49); a big win in
+  // quiet/remote sites, but can desensitize in noisy areas. This is
   // SEPARATE from the SX1262's tiny internal "boosted gain". Hidden on V4.2 (no switchable LNA).
   if (board.femLnaControllable()) {
     int rh = settingsRowLabel(body, y, 4, TR("High-gain receiver (FEM LNA)"), COLOR_TEXT, &g_font_12, 56);
@@ -11434,6 +11449,7 @@ static void sdRestoreRun() {
   g_lv.task->persistHistoryNow();
   discoveredFlushNow();
   the_mesh.flushContactsIfDirty();
+  the_mesh.persistSyncHistoryNow();
   if (!touchPrefsFlush()) {
     g_sd_migration_blocked = true;
     g_lv.task->showAlert(TR("Copy blocked: internal data is busy"), 2600);
@@ -11449,7 +11465,6 @@ static void sdRestoreRun() {
 
 #if defined(TLORA_PAGER)
   if (!meshcomodSdProfileMatchesInternal()) {
-  the_mesh.persistSyncHistoryNow();
     g_lv.task->showAlert(TR("Copy blocked: SD card holds a different or unreadable profile"), 3600);
     return;
   }
@@ -13388,6 +13403,22 @@ static void buildDeviceSettings(int sec) {
 #else
     mk_info(TR("Model:"), "Heltec LoRa32 V4");
 #endif
+#if defined(HELTEC_LORA_V4_R8)
+    // Perf-pass readout (2026-08-20). This board has no reachable serial console, so the
+    // four runtime facts that pass needs verified live here: CPU clock, display bus clock +
+    // flush mode (DMA = async band flush active), micro-SD operating clock, FEM LNA state.
+    {
+      char sd[16];
+      if (g_sd_operating_hz >= 1000000)   snprintf(sd, sizeof sd, "%lu MHz", (unsigned long)(g_sd_operating_hz / 1000000));
+      else if (g_sd_operating_hz > 0)     snprintf(sd, sizeof sd, "%lu kHz", (unsigned long)(g_sd_operating_hz / 1000));
+      else                                snprintf(sd, sizeof sd, "none");
+      snprintf(buf, sizeof(buf), "CPU %u · TFT %u MHz %s · SD %s · LNA %s",
+               (unsigned)getCpuFrequencyMhz(), (unsigned)(LGFX_SPI_WRITE_HZ / 1000000),
+               display.asyncFlushActive() ? "DMA" : "sync", sd,
+               board.femLnaControllable() ? (touchPrefsGetFemLna() ? "on" : "off") : "n/a");
+      mk_info(TR("Perf:"), buf);
+    }
+#endif
     // Public key prefix (first 8 bytes = 16 hex)
     {
       const uint8_t* pk = the_mesh.getSelfPubKey();
@@ -14912,6 +14943,18 @@ static void buildMqttSettings() {
 #endif
 }
 
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+// Wi-Fi modem power save: persist + apply live. Only touches the driver once associated —
+// WiFi.setSleep() on an unassociated STA naps the radio through scan dwells (see main.cpp).
+// esp_wifi_set_ps is a plain setter (no disconnect/begin), so it is safe from the LVGL ctx.
+static void wifiPowerSaveToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  wifiConfigSetPowerSave(on);
+  if (WiFi.status() == WL_CONNECTED) WiFi.setSleep(on);
+}
+#endif
+
 static void buildWifiSettings() {
   lv_obj_t* body = createSettingsModal("", SettingsModalKind::Wifi);   // no group header — the top bar already says "Wi-Fi"
   int y = 0;
@@ -14931,6 +14974,18 @@ static void buildWifiSettings() {
   lv_obj_set_pos(g_set_modal.wifi_sta_status_l, 2, y + SC(7));
   lv_label_set_text(g_set_modal.wifi_sta_status_l, TR("Loading..."));
   y += SC(30);
+
+  // Modem power save (DTIM sleep) — see wifiPowerSaveToggleCb. Default ON; OFF on the V4-R8.
+  {
+    int rh = settingsRowLabel(body, y, 4, TR("Power save (modem sleep)"), COLOR_TEXT, &g_font_12, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (wifiConfigGetPowerSave()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, wifiPowerSaveToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, rh + 10);
+    y += settingsRowLabel(body, y, 0, TR("Off: snappier app/TCP link, steadier on a weak signal. On: less power, kinder to Bluetooth."),
+                          COLOR_SUB, &g_font_12, 0) + 2;
+  }
 
   // Make sure the network we're currently using shows up as saved, and on first
   // run import any legacy 3-slot profiles into the new known-networks store.
@@ -19868,8 +19923,13 @@ static bool fmSdTryMount() {
         SD.end();
         delay(120);
         mounted = SD.begin(PIN_SD_CS, *spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
+      } else {
+        mounted_hz = 4000000;
       }
     }
+    // Operating-clock raise with read-verify (SD_SPI_FAST_HZ boards only; no-op elsewhere).
+    if (mounted) { mounted_hz = sdTryFastClock(PIN_SD_CS, *spi, mounted_hz, "SD"); mounted = mounted_hz != 0; }
+    if (mounted) g_sd_operating_hz = mounted_hz;
   }
 #endif
   if (mounted) {
@@ -23489,6 +23549,12 @@ static void openSpectrumPage() {
   lv_obj_set_style_bg_opa(s_spec_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_spec_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_spec_root, spectrumDismissCb, LV_EVENT_CLICKED, nullptr);
+  // Keyboard/d-pad nav (M9, T-Deck, Tanmatsu): nothing on this page is actionable — the
+  // chart and the waterfall's scale box are plain containers, so the nav collector was
+  // highlighting them for no reason. Skip the whole subtree (same as the lock screen):
+  // the focus group stays empty and the only way out is Back (hardware key / bar chevron /
+  // Esc — all routed through the page ladder, none of which needs focus).
+  lv_obj_add_flag(s_spec_root, NAV_SKIP_FLAG);
 
   // Settings-subpage chrome: the GLOBAL status bar goes tall and shows "‹ Spectrum"
   // (tap the bar = Back). Content insets below the bar's lower row — no second header.
@@ -27765,11 +27831,11 @@ static bool       s_map_show_links = true;
 static lv_obj_t*  s_map_link_objs[k_map_links_max] = {};
 static lv_point_t s_map_link_pts[k_map_links_max][2];
 
-// Per-element visibility of the map's on-screen text/markers (persisted; all
-// default shown). Coords = bottom-left read-out, TileXYZ = the zoom + tile path
-// line, Contacts = the contact markers.
+// Per-element visibility of the map's on-screen text/markers (persisted; coords +
+// contacts default shown, the tile line default hidden since prefs v50). Coords =
+// bottom-left read-out, TileXYZ = the zoom + tile path line, Contacts = the contact markers.
 static bool s_map_show_coords    = true;
-static bool s_map_show_tilexyz   = true;
+static bool s_map_show_tilexyz   = false;
 static bool s_map_show_contacts  = true;
 static bool s_map_tile_debug     = false;  // developer: tile-pipeline diagnostic overlay on the zoom line (off by default)
 static bool s_map_direct_only    = false;  // when true, only 0-hop (directly-heard) contacts appear
@@ -38413,6 +38479,7 @@ static void powerOffCb(lv_event_t* e) {
     g_lv.task->persistHistoryNow();        // flush chat before we go down
     discoveredFlushNow();                  // and the Discovered ring
     the_mesh.flushContactsIfDirty();       // and any coalesced contacts refresh
+    the_mesh.persistSyncHistoryNow();      // and the app-sync replay ring (RAM is lost in deep sleep)
     touchPrefsFlush();                     // and all queued A/B preference snapshots
 #if defined(HELTEC_LORA_V4_R8)
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
@@ -38479,7 +38546,6 @@ static void rebootToDownloadMode() {
 #endif
 
 static void powerDownloadCb(lv_event_t* e) {
-    the_mesh.persistSyncHistoryNow();      // and the app-sync replay ring (RAM is lost in deep sleep)
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
 #if defined(ESP32)
@@ -38488,6 +38554,7 @@ static void powerDownloadCb(lv_event_t* e) {
   if (g_lv.task) {
     g_lv.task->persistHistoryNow();   // flush chat before we go down
     discoveredFlushNow();             // and the Discovered ring
+    the_mesh.persistSyncHistoryNow(); // and the app-sync replay ring
     touchPrefsFlush();                 // and all queued A/B preference snapshots
     g_lv.task->showAlert(TR("Download mode\xE2\x80\xA6 reflash over USB"), 1500);
   }
@@ -38554,7 +38621,6 @@ static void openPowerMenu() {
     }
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* l = lv_label_create(b);
-    the_mesh.persistSyncHistoryNow(); // and the app-sync replay ring
     lv_label_set_text(l, TR(txt));
     lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -44417,10 +44483,14 @@ static void buildUiTree() {
 
   lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
 #if defined(HAS_THINKNODE_M9)
-  // TABBAR_H is 0 on this board (see its definition) — hide the zero-height
-  // btnmatrix outright so it can never paint, hit-test, or take focus.
+  // No tab bar on this board (TABBAR_H == 0, see its definition): hide the zero-height
+  // btnmatrix outright so it can never paint, hit-test, or take focus — and build NONE of
+  // the bar chrome below (surface styling, Home re-tap / swipe-up gestures, key hints, the
+  // tab font, the accent "glow" indicator). The M9 switches screens with its dedicated
+  // HOME/MESSAGE/MAP keys and the app drawer; a bottom highlight over content was the only
+  // visible leftover of the bar once the icons went.
   lv_obj_add_flag(tab_btns, LV_OBJ_FLAG_HIDDEN);
-#endif
+#else
   // Tab bar bar itself sits on pure BG, not the panel — keeps the bottom
   // strip indistinguishable from the rest of the screen except for the
   // active-tab highlight.
@@ -44453,6 +44523,7 @@ static void buildUiTree() {
 #if CAP_TRACKBALL
   lv_obj_add_event_cb(tab_btns, navMenubarSizeCb, LV_EVENT_SIZE_CHANGED, nullptr);  // keep the keyboard-nav key hints positioned
 #endif
+#endif  // !HAS_THINKNODE_M9 — tab-bar chrome
 
   // Tab labels: icons-only on touch targets; the 480px-wide Pager prefixes each
   // icon with its physical-keyboard mnemonic so the shortcuts are discoverable.
@@ -44491,7 +44562,9 @@ static void buildUiTree() {
   lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS);
 #endif
   // Slightly larger font for icons so they're easy to tap.
-#if CAP_UI_SIZE
+#if defined(HAS_THINKNODE_M9)
+  // no tab bar on the M9 (see above) — nothing to size
+#elif CAP_UI_SIZE
   lv_obj_set_style_text_font(tab_btns, &g_font_tab, LV_PART_MAIN);
 #else
   lv_obj_set_style_text_font(tab_btns, &g_font_16, LV_PART_MAIN);
@@ -44566,11 +44639,14 @@ static void buildUiTree() {
 #endif
   lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
 
+#if !defined(HAS_THINKNODE_M9)
   // Thin rounded accent "glow" bar that marks the active tab. A child of the
   // screen (like s_update_badge) created BEFORE the chat overlays so those cover
   // it, and above the tabview so it shows over the bottom bar. A soft accent
   // shadow gives it the glow; updateTabIndicator() slides it under the active
-  // tab and hides it on the map.
+  // tab and hides it on the map. NOT built on the M9 (no tab bar): it sat on the
+  // screen, not in the bar, so hiding the bar left it glowing over the content's
+  // bottom edge — the "lingering tab highlight". updateTabIndicator() null-guards.
   s_tab_indicator = lv_obj_create(lv_scr_act());
   lv_obj_remove_style_all(s_tab_indicator);
   lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -44583,6 +44659,7 @@ static void buildUiTree() {
   lv_obj_set_style_shadow_opa(s_tab_indicator, LV_OPA_40, LV_PART_MAIN);
   lv_obj_set_style_shadow_spread(s_tab_indicator, 0, LV_PART_MAIN);
   updateTabIndicator();   // place it under the initial active tab
+#endif  // !HAS_THINKNODE_M9
 
   // Create full-screen detail overlays (hidden until a thread is tapped)
   makeChatDetail(g_lv.dm);
@@ -48502,7 +48579,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // sluggishness. 160 MHz is the known-good 2x bump; 240 MHz showed RGB565
   // noise on the map's SJPG decode, so 160 is the ceiling. The T-Deck sets no
   // ESP32_CPU_FREQ so it already boots at the 240 MHz default — bumping only
-  // the V4 here avoids dragging the T-Deck *down* to 160.
+  // the V4 here avoids dragging the T-Deck *down* to 160. The V4-R8 env now
+  // sets ESP32_CPU_FREQ=240 itself (whole of setup() at full clock), so this
+  // is a no-op there.
 #if !defined(HAS_TDECK_GT911)
   setCpuFrequencyMhz(240);   // S3 max; watch the map tiles for SJPG decode noise (drop to 160 if it shows)
 #endif
@@ -49308,8 +49387,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // mesh so it survives reboot. OFF by default — no effect unless the user enabled it.
     the_mesh.setScopeDirectFloods(touchPrefsGetScopeDirect());
 #if defined(HELTEC_LORA_V4_TFT)
-    // Heltec V4.3 high-gain FEM LNA: apply the saved state at boot (default OFF / bypassed,
-    // matching the hardware). No-op on a V4.2 board (femLnaControllable() == false).
+    // Heltec V4.3 high-gain FEM LNA: apply the saved state at boot (default OFF / bypassed on
+    // the plain V4; ON on the V4-R8 since prefs v49). No-op on a V4.2 board (femLnaControllable() == false).
     if (board.femLnaControllable()) board.setFemLnaEnable(touchPrefsGetFemLna());
 #endif
 #if defined(HAS_TDISPLAY_P4)
@@ -50488,6 +50567,7 @@ void UITask::rebootDevice() {
   }
   discoveredFlushNow();   // persist the Discovered ring before we go down
   the_mesh.flushContactsIfDirty();   // and any coalesced contacts refresh (card-less devices)
+  the_mesh.persistSyncHistoryNow();  // and the app-sync replay ring
   touchPrefsFlush();       // finish queued A/B snapshots before reset
   if (_board) _board->reboot();
 }
@@ -50567,7 +50647,6 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   if (touchPrefsGetIgnoreTinyMsgs()) {
     const char* b = body ? body : "";
     while (*b == ' ' || *b == '\t' || *b == '\r' || *b == '\n') b++;   // whitespace is not content
-  the_mesh.persistSyncHistoryNow();  // and the app-sync replay ring
     size_t blen = strlen(b);
     while (blen > 0 && (b[blen-1] == ' ' || b[blen-1] == '\t' ||
                         b[blen-1] == '\r' || b[blen-1] == '\n')) blen--;
@@ -50931,8 +51010,13 @@ static void sdHealthTick() {
     const bool remounted = begin_ok && SD.cardType() != CARD_NONE;
 #else
     SD.end();
-    const bool remounted = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) &&
-                           SD.cardType() != CARD_NONE;
+    bool remounted = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) &&
+                     SD.cardType() != CARD_NONE;
+    if (remounted) {
+      const uint32_t hz = sdTryFastClock(PIN_SD_CS, *spi, 4000000, "SD");   // no-op unless SD_SPI_FAST_HZ
+      remounted = hz != 0;
+      if (remounted) g_sd_operating_hz = hz;
+    }
 #endif
     if (remounted) {
       s_sd_mounted        = true;
