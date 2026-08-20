@@ -104,12 +104,12 @@ int m9KeyboardReadKey() {
   return key;
 }
 
-void m9KeyboardSetBacklight(uint8_t duty) {
-  if (!s_inited || !s_bus) return;
+bool m9KeyboardSetBacklight(uint8_t duty) {
+  if (!s_inited || !s_bus) return false;   // controller not found yet (see the probe note above)
   s_bus->beginTransmission((uint8_t)PIN_KB_ADDR);
   s_bus->write(M9_KB_REG_BACKLIGHT);
   s_bus->write(duty);
-  s_bus->endTransmission();
+  return s_bus->endTransmission() == 0;    // NACK/bus error -> the duty was NOT taken
 }
 
 #endif

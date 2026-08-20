@@ -64,7 +64,10 @@ int m9KeyboardReadKey();
 
 /** Set the keyboard backlight PWM duty (0..255) on the controller. The
  *  controller lights up on keypress by itself and times out after 10 s;
- *  this just sets HOW bright. No-op until the controller has been found. */
-void m9KeyboardSetBacklight(uint8_t duty);
+ *  this just sets HOW bright. Returns false — writing nothing — until the
+ *  controller has been found, or when the I2C write NACKs, so a caller that
+ *  caches "last written" can retry instead of latching a duty the
+ *  controller never took. */
+bool m9KeyboardSetBacklight(uint8_t duty);
 
 #endif

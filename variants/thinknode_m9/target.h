@@ -36,5 +36,3 @@ mesh::LocalIdentity radio_new_identity();
 // directly (no dedicated local SPIClass — see target.cpp), so this just
 // hands that same instance to SD.begin().
 SPIClass *m9SharedSPI();
-
-void m9SetBacklight(bool on);

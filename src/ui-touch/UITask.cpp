@@ -75,7 +75,6 @@
   #endif
 #endif
 #if defined(HAS_THINKNODE_M9)
-  extern void m9SetBacklight(bool on);
   extern SPIClass* m9SharedSPI();
 #endif
 #if defined(HAS_TDECK_GT911)
@@ -6585,6 +6584,15 @@ static void accentBoxCellCb(lv_event_t* e) {
 }
 static void accentBoxMaybeShow() {
   accentBoxHide();                          // each new keystroke clears the last box
+#if defined(HAS_M9_KEYBOARD)
+  // Never on the M9: the box is tap-to-pick (its cells are NAV_SKIP_FLAG by
+  // design) and the key-selection machinery is pager-only (encoder walk +
+  // Enter) — with no touch and no nav path here it would float over the
+  // composer as dead chrome nothing can select. Deliberately suppressed
+  // until an M9 d-pad selection path is built; the Accent-popups settings
+  // row is hidden there for the same reason.
+  return;
+#endif
   if (!s_accent_popups) return;             // user turned accent popups off in settings
   if (!g_lv.keyboard) return;
   lv_obj_t* ta = lv_keyboard_get_textarea(g_lv.keyboard);
@@ -6736,6 +6744,9 @@ static void mentionBoxCellCb(lv_event_t* e) {
 // when a picker is shown (so the caller suppresses the accent box).
 static bool mentionBoxMaybeShow() {
   mentionBoxHide();
+#if defined(HAS_M9_KEYBOARD)
+  return false;   // suppressed like the accent box (see accentBoxMaybeShow): touch-only cells, no key path here
+#endif
   if (!g_lv.keyboard) return false;
   lv_obj_t* ta = lv_keyboard_get_textarea(g_lv.keyboard);
   if (!ta) return false;
@@ -11733,6 +11744,9 @@ static void showSensorsTabToggleCb(lv_event_t* e) {
 
 // Accent-popup picker on/off. Persisted + live: gates accentBoxMaybeShow() so
 // the tap-to-pick accent box stops appearing as you type. Default ON.
+// (Not compiled on the M9 — the pickers are suppressed there and its settings
+// row is hidden, see accentBoxMaybeShow.)
+#if !defined(HAS_M9_KEYBOARD)
 static void accentPopupsToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -11743,6 +11757,7 @@ static void accentPopupsToggleCb(lv_event_t* e) {
   if (!on) accentBoxHide();   // dismiss any box already on screen
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Accent popups: on") : TR("Accent popups: off"), 1100);
 }
+#endif
 
 // One handler for every per-language switch in the multi-select list. The
 // layout id is stashed in the switch's user_data. Flipping a switch updates the
@@ -12890,8 +12905,11 @@ static void buildDeviceSettings(int sec) {
     }
   }
 
+#if !defined(HAS_M9_KEYBOARD)
   /* Accent popups. Typing a Latin letter that has accented variants pops up a
-     tap-to-pick box; turn this off for plain typing. Default on. */
+     tap-to-pick box; turn this off for plain typing. Default on. Not on the
+     M9: the pickers are suppressed there (no touch and no key-selection path
+     — see accentBoxMaybeShow), so the switch would control nothing. */
   {
     int h = settingsRowLabel(body, y, 4, TR("Accent popups"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -12907,6 +12925,7 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("pick accented letters as you type; off = plain typing"),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
+#endif
 
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   /* Enter sends the message (default) vs. inserts a newline so you send only via
@@ -12975,7 +12994,7 @@ static void buildDeviceSettings(int sec) {
 #endif
 
 #if CAP_TRACKBALL
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD)   // never the M9: nav is force-set on at boot there (the board's only input) and must not grow an off-switch
   /* Keyboard navigation: off (default) vs on. When no text field is focused, the
      WASDZ cluster moves focus so the whole UI is reachable from the keyboard (incl.
      Settings), and the tab hotkeys below jump straight to a tab. The trackball
@@ -20738,7 +20757,7 @@ static void fmSetWallpaperCb(lv_event_t* e) {
   if (s_fm_img_on_sd) snprintf(pref, sizeof pref, "sd:%s", s_fm_img_path);
   else                snprintf(pref, sizeof pref, "%s", s_fm_img_path);
   touchPrefsSetLockWallpaper(pref);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // the set of boards that declare s_lockwall_btn_lbl
   if (s_lockwall_btn_lbl && lv_obj_is_valid(s_lockwall_btn_lbl)) {   // update the settings button if still around
     char disp[64]; lockwallDisplayName(pref, disp, sizeof disp);
     lv_label_set_text(s_lockwall_btn_lbl, disp);
@@ -27522,9 +27541,11 @@ static void renderMapTiles() {
   } else
 #endif
   if (!s_tiles_fs_ready) {
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     // Pager included: under the launcher there's no "tiles" partition, so point the user at the
     // microSD fallback rather than the (launcher-wrong) "reflash the tiles partition" advice.
+    // M9 included: its cache PREFERS the built-in 16 GB microSD (every unit ships with one), so
+    // this state almost always means the card didn't mount — reflash advice would be the wrong fix.
     if (SD.cardType() != CARD_NONE)
       lv_label_set_text(s_map_status_lbl,
           TR("Map storage error.\n\nSD card detected but the\ntile cache didn't mount.\nReboot to retry."));
@@ -37071,18 +37092,34 @@ static bool m9HandleNavKey(int key) {
       // s_ct_select_mode is a flags=0 registry row (a MODE, not "a popup is
       // open"), so anyPopupOpen() alone would never let Back leave it.
       if (s_setup_root) return true;   // wizard: nothing to back out of
+      // Pan is only the innermost "thing open" while the bare map is frontmost.
+      // A popup stacked over it (CTRL) or a tab jump that missed a clear makes
+      // the flag stale — drop it silently so THIS press acts on what the user
+      // sees, instead of a "Map pan off" toast reading as a dead Back key.
+      if (s_m9_map_pan && (getActiveTab() != MAP_TAB_INDEX || anyPopupOpen()))
+        s_m9_map_pan = false;
       if (s_m9_map_pan) {              // pan mode is the innermost "thing open" on the map
         s_m9_map_pan = false;
         if (g_lv.task) g_lv.task->showAlert(TR("Map pan off"), 900);
       }
       else if (navOpenDropdown())                    navPushTap(LV_KEY_ESC);
-      // An open app page covers everything EXCEPT the Control Center / power
-      // menu (the only popups a key can open OVER an app page here). The app
-      // drawer it was launched from stays open BENEATH it by design — the
-      // generic registry dismiss used to eat that invisible drawer first, so
-      // Back looked dead inside every app (reported bug). Close the page
-      // itself; the drawer is then the next, visible Back target.
-      else if (s_apppage_close && !s_cc_root && !s_power_menu) s_apppage_close();
+      // CTRL stacks the Control Center (and its power menu) over ANY popup,
+      // but both sit near the BOTTOM of the popup registry — the generic
+      // dismiss would close whatever popup is buried BENEATH them (a Files
+      // rename prompt, typed name and all) while the screen looks unchanged.
+      // They are always frontmost when open: close them explicitly, power
+      // menu first (it opens over the CC).
+      else if (s_power_menu)                         closePowerMenu();
+      else if (s_cc_root)                            closeControlCenter();
+      // An open app page covers everything EXCEPT the CC / power menu (peeled
+      // above) and a confirm modal — the Lua send-permission ask is raised
+      // OVER the requesting app's page, and closing the page under the
+      // question would orphan it. The app drawer the page was launched from
+      // stays open BENEATH it by design — the generic registry dismiss used
+      // to eat that invisible drawer first, so Back looked dead inside every
+      // app (reported bug). Close the page itself; the drawer is then the
+      // next, visible Back target.
+      else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
       else if (anyPopupOpen() || s_ct_select_mode)   hwKeyDismissTopPopup();
       else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
       else                                           navPushTap(LV_KEY_ESC);
@@ -37101,6 +37138,10 @@ static bool m9HandleNavKey(int key) {
       // never chord — bind the standalone press to the Control Center, a
       // one-press quick-settings key matching its label.
       if (s_setup_root) return true;
+      // The CC must never stack OVER the power menu: Back's ladder peels
+      // power first and would close it invisibly beneath the CC (the reverse
+      // stacking is fine — openPowerMenu() closes the CC itself).
+      if (s_power_menu) closePowerMenu();
       openControlCenter();
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_HOME:
@@ -37109,7 +37150,13 @@ static bool m9HandleNavKey(int key) {
         // A full-screen app page (Lua app, Snake, Web…) isn't a popup-registry
         // row — close it and stop: one action per press, so HOME on the Home
         // tab doesn't also toggle the drawer underneath the closing page.
-        s_apppage_close();
+        // CTRL can stack the CC / power menu over the page, and the Lua
+        // send-permission confirm opens over its requesting app — peel the
+        // frontmost layer instead of yanking the page out from under it.
+        if      (s_power_menu)    closePowerMenu();
+        else if (s_cc_root)       closeControlCenter();
+        else if (s_confirm_modal) confirmDismiss();
+        else                      s_apppage_close();
         s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
       }
       if (getActiveTab() == HOME_TAB_INDEX) {
@@ -37117,16 +37164,27 @@ static bool m9HandleNavKey(int key) {
         for (int i = 0; i < 8 && anyPopupOpen(); i++) hwKeyDismissTopPopup();   // still closes anything else on top (registry untouched, Back/etc. keep working)
         setHomeDrawer(!was_open);                            // decide from the snapshot, not the now-mutated flag
       } else {
+        s_m9_map_pan = false;   // leaving the Map: pan must not outlive the tab (a stale flag ate the next Back press)
         navGoToMainTab(HOME_TAB_INDEX);
       }
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_LEFT_MESSAGE:
       if (s_setup_root) return true;
+      s_m9_map_pan = false;   // leaving the Map: same stale-pan clear as HOME
       if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
       navGoToMainTab(CHAT_INBOX_TAB_INDEX);
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_SUB_MESSAGE:
       if (s_setup_root) return true;
+      s_m9_map_pan = false;   // the overlay covers the map: arrows must drive the list, not pan under it
+      // NOTHING may stay open beneath the overlay — mentions sits near the
+      // bottom of the popup registry, so any row left open (CC, a Files
+      // rename prompt, …) becomes Back's silent (invisible) next target.
+      // Same bounded loop as HOME; a null-close progress row stops the walk
+      // (blocker semantics), in which case don't stack the overlay either.
+      for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+      if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
+      if (s_apppage_close) s_apppage_close();
       openMentionsScreen();
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_MAP:
@@ -37145,6 +37203,14 @@ static bool m9HandleNavKey(int key) {
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_SUB_MAP:
       if (s_setup_root) return true;
+      s_m9_map_pan = false;   // the page covers the map: same stale-pan clear as SUB_MESSAGE
+      // Same full dismiss as SUB_MESSAGE: nothing may stay open beneath.
+      for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+      if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
+      // Close an open app page first — openAdvertPage() takes the single
+      // s_apppage_close slot, so opening OVER a Lua app would steal its only
+      // key-exit and strand the app unreachable behind the advert page.
+      if (s_apppage_close) s_apppage_close();
       openAdvertPage();
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     default: return false;
@@ -37171,9 +37237,12 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
     return true;
   }
   // Map pan mode (toggled by the Map key on the Map tab): arrows pan the map
-  // instead of moving focus. Self-clears if the user somehow left the tab.
+  // instead of moving focus. Self-clears if the user somehow left the tab or
+  // a popup got stacked over the map (CTRL's Control Center opens without
+  // changing the active tab) — the arrows must drive what's frontmost, not
+  // nudge the map buried beneath it.
   if (s_m9_map_pan) {
-    if (getActiveTab() != MAP_TAB_INDEX || ta) {
+    if (getActiveTab() != MAP_TAB_INDEX || ta || anyPopupOpen()) {
       s_m9_map_pan = false;
     } else {
       switch (key) {
@@ -37266,6 +37335,11 @@ static void handleHwKey(int key) {
       // ENTER_LONG (this board's only unlock) is eaten by the app and the
       // device can never be unlocked again without the power slider.
       && !(g_lv.task && (g_lv.task->isManualLock() || g_lv.task->isScreenOff()))
+      // A confirm modal (the Lua send-permission ask) is a question for the
+      // USER: arrows/Enter must reach its Allow/Deny buttons, not the app
+      // that raised it — forwarded keys would make the dialog unanswerable
+      // on a board with no touch to tap it.
+      && !s_confirm_modal
       // Display-only apps (no on_input — Airtime, RF Monitor): forward nothing;
       // the d-pad keeps its native meaning so it can focus the page's own
       // buttons (Airtime's Reset), click them with Enter, and page-scroll the
@@ -37599,6 +37673,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     s_nav_ta_editing = false;
     s_nav_show = true;
     accentBoxHide();
+    mentionBoxHide();   // leaving edit mode tears down BOTH typing popups, like Enter does
     if (g_lv.task) g_lv.task->noteUserInput();
     return;
   }
@@ -41891,7 +41966,7 @@ static void updateGlobalStatusBar() {
   {
     int htab = (g_lv.tabview) ? (int)lv_tabview_get_tab_act(g_lv.tabview) : -1;
     bool home_zone = (s_settings_open_cat < 0) && !s_apppage_title && (s_chat_title[0] == '\0') && (htab == HOME_TAB_INDEX);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
     if (s_fullscreen_view && s_fullscreen_title[0]) home_zone = false;
 #endif
     if (!home_zone && s_left_home_cfg) {
@@ -41966,7 +42041,7 @@ static void updateGlobalStatusBar() {
       lv_label_set_text(g_statusbar.left_label, s_chat_title);
     }
   } else
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   if (s_fullscreen_view && s_fullscreen_title[0]) {
     // A fullscreen tool view (Terminal / Files) borrows the left zone for its
     // title, so it can drop its own header row and use the full height.
@@ -50451,9 +50526,11 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     if (emb_ts > 1700000000 && emb_ts < 2000000000) _ui_msgs[msg_slot].ts = emb_ts;
   }
   syncThreadMeshSlots(thread, channel);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   // Mirror incoming traffic into the terminal live feed (only while it's open).
   // Runs on the mesh thread (core 1, same as the UI loop) so the append is safe.
+  // M9 included: its terminal (and the chat mode's "to <name>"/"send") is fully
+  // wired, so without the mirror a console conversation showed only the TX side.
   if (s_term_log_box) {
     char line[200];
     const bool  has_snr = (meta_flags & MSG_META_HAS_RX);
@@ -51621,8 +51698,23 @@ void UITask::loop() {
     else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = 255;
     if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
     else if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = 255;   // notify pulse
-    static uint8_t s_kb_bl_last = 0xFF;
-    if (kb_bl != s_kb_bl_last) { s_kb_bl_last = kb_bl; m9KeyboardSetBacklight(kb_bl); }
+    // Cache the last duty the controller ACTUALLY took, not the last one
+    // computed: the write is dropped while the controller (its own MCU on the
+    // switched rail) is still booting, or on a NACK — latching a dropped
+    // write would leave the controller on its power-on default until the
+    // next mode/lock change. And 255 is a normal FIRST value (mode "On"
+    // restored from prefs; auto during the first idle window), so a 0xFF
+    // "never written" sentinel would swallow it — use -1, which no real duty
+    // can equal. A failed write stays pending but retries at a calm 250 ms
+    // cadence, not every free-running loop pass: a found-then-wedged bus
+    // would otherwise pay a real I2C transaction (worst case the full Wire
+    // timeout) per pass.
+    static int s_kb_bl_last = -1;
+    static uint32_t s_kb_bl_retry_ms = 0;
+    if ((int)kb_bl != s_kb_bl_last && (int32_t)(now - s_kb_bl_retry_ms) >= 0) {
+      if (m9KeyboardSetBacklight(kb_bl)) s_kb_bl_last = kb_bl;
+      else s_kb_bl_retry_ms = now + 250;
+    }
   }
   serviceLockscreen();
   serviceLockingCountdown(now);
@@ -52157,7 +52249,14 @@ static bool popupRegistryAny() {
 }
 static bool popupRegistryDismissTop() {
   for (const auto& e : k_popup_registry)
-    if (e.close && e.is_open()) { e.close(); return true; }
+    if (e.is_open()) {
+      // Stop at the first OPEN row either way: a null-close row is a key
+      // BLOCKER (progress overlay) — walking past it would dismiss whatever
+      // sits BENEATH the overlay mid-operation (e.g. the fullscreen Files
+      // view under a running SD format).
+      if (e.close) { e.close(); return true; }
+      return false;
+    }
   return false;
 }
 static bool popupRegistryBlocksSwipe() {

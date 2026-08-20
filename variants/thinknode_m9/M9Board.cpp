@@ -1,5 +1,7 @@
 #include "M9Board.h"
 #include "soc/usb_serial_jtag_reg.h"
+#include "target.h" // radio_driver / sensors / display externs for enterDeepSleep
+                    // (same source the base ESP32Board.cpp pulls them from)
 #include <Arduino.h>
 #include <SPI.h>
 
@@ -15,6 +17,18 @@ void ThinkNodeM9Board::begin() {
 
   ESP32Board::begin(); // attaches PIN_VBAT_READ, brings up Wire on
                        // PIN_BOARD_SDA/SCL (7/6)
+
+  // Undo the pad holds enterDeepSleep() arms (backlight/rail/NSS): a held pad
+  // silently ignores every pinMode/digitalWrite below, so a timer wake would
+  // otherwise come up with both rails latched OFF and the radio's NSS stuck.
+  // The holds live in the RTC domain and survive ANY reset short of the power
+  // slider actually cutting VBAT — the RST button included — so release them
+  // on every boot rather than gating on ESP_RST_DEEPSLEEP like HeltecV4Board
+  // does (harmless no-ops on a cold boot).
+  rtc_gpio_hold_dis((gpio_num_t)PIN_TFT_BL_EN);
+  rtc_gpio_hold_dis((gpio_num_t)PIN_PERIPH_POWER);
+  gpio_deep_sleep_hold_dis();
+  gpio_hold_dis((gpio_num_t)P_LORA_NSS); // digital pad (39 > RTC range), own API
 
   // The one place this board's init genuinely has to differ from T-Deck/
   // Heltec V4's pattern: their displays use ST7789LCDDisplay's dedicated-
@@ -79,14 +93,62 @@ void ThinkNodeM9Board::enterDeepSleep(uint32_t secs, int pin_wake_btn) {
   // edge/polarity/pulse width are undocumented — wire ext0/ext1 to it only
   // after characterizing it on hardware (M9_PORT.md Deferred #6).
   (void)pin_wake_btn;   // no wakeable button exists on this board
+
+  // Everything below mirrors the base ESP32Board::enterDeepSleep sequence this
+  // override hides — the rewrite exists only to drop the base's impossible
+  // rtc_gpio/ext1 wake calls (see above), not its power-downs.
+  //
+  // Display first: ST7789LCDDisplay::begin() holds its own claim on
+  // periph_power (via the pointer passed in target.cpp), so without turnOff()
+  // the release below would only drop the refcount 2->1 and GPIO18 would
+  // still be driven LOW (rail ON) when the CPU halts.
+#ifdef DISPLAY_CLASS
+  display.turnOff();
+#endif
+
+  // The LR1110 hangs off the always-on 3V3 rail, NOT the GPIO18-gated one,
+  // and with no wake source that could ever answer a packet, RX through deep
+  // sleep is pure drain (the exact failure V4-R8's power-off path fixed) —
+  // put the radio to sleep and park NSS high. GPIO39 is beyond the S3's RTC
+  // pads (GPIO0-21), so the base class's rtc_gpio_hold_en would return
+  // ESP_ERR_INVALID_ARG here; the digital-pad hold (latched through the sleep
+  // by gpio_deep_sleep_hold_en below) is the S3 equivalent.
+  radio_driver.powerOff();
+  digitalWrite(P_LORA_NSS, HIGH);
+  gpio_hold_en((gpio_num_t)P_LORA_NSS);
+
+  // Tell the GPS to stop while its rail is still up (the rail cut below kills
+  // it regardless, but stop() parks the provider's state cleanly).
+  if (sensors.getLocationProvider() != NULL) {
+    sensors.getLocationProvider()->stop();
+  }
+
+  Serial.flush();
+
+  // Clear stale wake sources before arming the timer, so a leftover from
+  // PM/auto-light-sleep can't ghost-wake us — same guard as the base class.
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
   if (secs > 0) {
     esp_sleep_enable_timer_wakeup(secs * 1000000ULL);
   }
-  // Release the active-LOW rails before sleeping: without an explicit hold
-  // their driven levels are lost in deep sleep anyway, and releasing them
-  // turns the LCD/GPS/sensor rail and backlight off deliberately.
-  backlight.release();
-  periph_power.release();
+
+  // Turn both active-LOW rails off. The backlight pad needs a re-route first:
+  // UITask's applyBrightness attached LEDC ch7 to GPIO17, and a bare
+  // digitalWrite doesn't take the pad back from the LEDC matrix signal (which
+  // is why RefCountedDigitalPin's release() alone can't darken it) — same
+  // pinMode dance as the V4-R8 power-off path.
+  pinMode(PIN_TFT_BL_EN, OUTPUT); // re-route from LEDC ch7 back to plain GPIO
+  backlight.release();            // refcount 1->0: drives HIGH = backlight off
+  periph_power.release();         // 1->0 now the display let go: rail off
+
+  // Latch the OFF levels through the sleep — the pads tristate the moment
+  // esp_deep_sleep_start() runs and both active-LOW gates would drift back
+  // on. GPIO17/18 ARE RTC pads, so their hold lives in the RTC domain and
+  // survives deep sleep on its own; NSS (held above) additionally needs the
+  // global digital-pad latch. All three are released again in begin().
+  rtc_gpio_hold_en((gpio_num_t)PIN_TFT_BL_EN);
+  rtc_gpio_hold_en((gpio_num_t)PIN_PERIPH_POWER);
+  gpio_deep_sleep_hold_en();
 
   esp_deep_sleep_start(); // CPU halts here and never returns
 }

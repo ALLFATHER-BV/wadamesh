@@ -269,7 +269,9 @@ compile-verified; on-device validation still wanted for the UX items):
 - **Keyboard backlight wired**: `m9KeyboardSetBacklight()` (controller reg
   0x02) is now driven from the drain-loop tick — off/on/auto via the CC
   "Keyboard" chip, write-on-change only. The old drain comment claiming "no
-  backlight control exists" was wrong.
+  backlight control exists" was wrong. (Audit pass 2 hardened this: the setter
+  reports success and the cache only latches written-and-ACKed duties — see
+  below.)
 - **Message flash/wake wired**: "Flash on new message" was a dead switch on M9
   (producer/consumer were T-Deck-only). M9 now wakes (or lock-reveals) on
   message and pulses the keyboard light; the 10 s notify re-dim applies.
@@ -372,6 +374,118 @@ ruled out the tile-slot pool, the tab-bar removal, and the key-drain timing:
   (`getRSSI(false, /*skipReceive=*/true)` + one explicit `standby()` per bin)
   and skips the pointless image recalibration the 24 MHz wrap-around jump
   triggered every sweep (`setFrequency(f, /*skipCalibration=*/true)`).
+
+## Audit pass 2 (2026-08-20) — second full sweep after the 08-19 fixes
+
+A second 7-dimension multi-agent audit (each dimension adversarially verified:
+30 findings, 29 confirmed, 1 refuted) over the tree WITH the 08-19 pass
+applied. All 29 fixed, compile-verified. On-device retest list at the end.
+
+**Key-trap / soft-lock class (all in UITask.cpp's M9 handlers):**
+
+- **SUB_MAP over a display-only Lua app orphaned the app** (the worst find):
+  0x84 opened the Advert page without closing the app page, the Advert page's
+  close stole the single `s_apppage_close` slot, and closing it nulled the
+  hook — the Lua app underneath became unreachable by ANY key (reboot/slider
+  only). SUB_MAP and SUB_MESSAGE now close an open app page first, like the
+  LEFT_MESSAGE/MAP jump keys always did.
+- **Back-ladder z-order redesign.** The old ladder's app-page rung assumed
+  "CC and power menu are the only popups that can stack over an app page" —
+  false for the Lua send-permission confirm (which the app itself raises) and
+  the registry walk closed the FIRST open row in declaration order, so Back
+  with the CC open over e.g. a Files rename prompt silently discarded the
+  prompt UNDERNEATH. New invariant: power menu and CC are always-frontmost
+  rungs (power before CC — CTRL peels an open power menu before opening the
+  CC so it holds in both stacking directions), the app-page rung defers to an
+  open confirm modal, and SUB_MESSAGE/SUB_MAP run HOME's bounded
+  dismiss-everything loop before opening their own overlay (refusing to
+  stack over a null-close progress blocker) so nothing is ever left open
+  beneath. HOME peels power/CC/confirm the same
+  way. Arrows/Enter are also no longer forwarded to an `on_input` Lua app
+  while a confirm modal is up — the send-permission dialog used to be
+  UNANSWERABLE on M9 (keys went to the app; Back/Home killed the app under
+  the dialog).
+- **Map pan-mode flag could go stale**: no popup guard (arrows panned the map
+  hidden under the CC) and no tab-jump clear (HOME with pan on left the flag
+  armed — the next Back anywhere was eaten by "Map pan off", and re-entering
+  the map via the drawer tile arrived still panning). Pan now self-clears on
+  any popup or tab leave; a stale flag is cleared silently, the toast only
+  fires for a genuine pan exit.
+- **Null-closer "blocker" popup rows now actually block**:
+  `popupRegistryDismissTop()` used to SKIP rows without a closer and dismiss
+  whatever sat beneath the progress overlay (Back during bulk-delete exited
+  select mode mid-operation; Back during SD format tore down the fullscreen
+  Files view the format returns to). The walker now stops at the first open
+  row; null-close rows refuse the dismiss. Shared fix (T-Deck had the same
+  hole). Behavior note: a tab jump during a progress overlay now leaves the
+  overlay up — intended blocker semantics.
+
+**Gate parity (compiled on M9 but wired only for the T-Deck):**
+
+- Terminal RX mirror — incoming mesh traffic never appeared in the M9's
+  terminal chat mode (TX echo only). Gate widened. (TLORA_PAGER also compiles
+  the terminal and still lacks the mirror — upstream follow-up, not M9's.)
+- Accent + @-mention pickers popped up while typing but were UNPICKABLE
+  (touch-only cells; the key-nav selection machinery is pager-only) — pure
+  dead chrome on a touchless board, and the mention box could linger after
+  leaving edit mode. Deliberate call: SUPPRESSED on M9 (auto-popups gated
+  off, dead settings row compiled out, `mentionBoxHide()` added to Back's
+  edit-mode branch). Porting the pager's key-nav selection is possible future
+  work if accents are ever wanted on this keyboard.
+- Fullscreen Terminal/Files title (status-bar borrow), wallpaper-set caption
+  refresh in the Device modal, and the map storage-error message (M9 now gets
+  the SD guidance, not "reflash the tiles partition") — all widened.
+- Dead `HAS_M9_KEYBOARD` alternative removed from a CAP_TRACKBALL-only
+  settings block (M9 nav is force-on at boot and must never grow an
+  off-switch).
+
+**Keyboard backlight cache**: `static uint8_t s_kb_bl_last = 0xFF` was meant
+as a never-written sentinel — but M9 duties are only 0/255 and 255 == 0xFF,
+so mode "On" restored from prefs skipped the first write EVERY BOOT (stuck on
+the controller's keypress-auto default until the first dim/wake cycle). The
+cache also latched duties whose I2C writes were dropped (controller still
+booting, NACK). `m9KeyboardSetBacklight()` now returns success (false on no
+bus / NACK), the cache is an int(-1) updated only on success — dropped writes
+retry until ACKed, at a 250 ms cadence so a found-then-wedged bus never pays
+an I2C transaction per free-running loop pass.
+
+**Board API (latent — nothing calls powerOff/enterDeepSleep on M9 today, but
+it shipped broken):** `enterDeepSleep()`'s single rail release left GPIO18
+driven ON (refcount was 2: board + display — `display.turnOff()` now drops
+the display's claim first), its backlight `digitalWrite` was inert (LEDC ch7
+owned the pad since UI boot — `pinMode()` re-route first, V4-R8 idiom), and
+no hold meant even correct levels were lost when pads tristate in sleep
+(`rtc_gpio_hold_en` on 17/18, `gpio_hold_en` + `gpio_deep_sleep_hold_en` for
+non-RTC NSS GPIO39; unconditional hold release at the top of `begin()` —
+RTC-domain holds survive the RST button). It also now mirrors the base-class
+sequence it was hiding: radio `powerOff()` + NSS parked HIGH, GPS provider
+stop, `Serial.flush()`, stale wake sources cleared — previously a "powered
+off" M9 kept the LR1110 in RX (mA-scale drain with no wake source that could
+ever use it) until the slider cut the battery.
+
+**Radio/build hardening:** the TCXO fallback in `radio_init()` still encoded
+the DISPROVEN tcxo=0 theory with a comment saying it "must stay 0" (a trap:
+the build only worked because platformio.ini defines the macro) — fallback is
+now 3.3f with the disproof recorded. `patch_radiolib_lr11x0.py` fail-closes:
+pattern drift with RadioLib present is a hard build error, and a pre-link
+check verifies the patch marker after libdeps exist (a fresh checkout's first
+`pio run` fails at link with a "patched — re-run" message rather than
+shipping an unpatched -706 binary; the second run builds clean). M9 env
+gained `ENV_SKIP_GPS_DETECT=1` (the cold-booting CC1167Q could miss the 1 s
+NMEA probe → `gps_detected` false all session → GPS toggle + GPS_LONG key
+dead; every sibling soldered-GPS env already set it) and `CORE_DEBUG_LEVEL=0`
+(ARDUHAL [E] spam on UART0, which doubles as the companion frame stream).
+Partition-CSV headroom prose refreshed (~2.99 MB firmware, ~0.88 MB headroom
+per slot). Refuted by the verifier, deliberately NOT applied:
+`RADIOLIB_EXCLUDE_SX126X`.
+
+**On-device retest list for this pass:** Airtime/RF-Monitor + SUB_MAP then
+Back (no orphan); CTRL over a Files rename prompt then Back (CC closes,
+prompt survives); send-permission dialog from a store app (arrows/Enter
+answer it); map pan → HOME → Back elsewhere (no eaten press); "Keyboard
+light: On" applied immediately at boot; GPS working from a cold boot without
+toggling; terminal chat shows the peer's replies; Back during an SD format
+does nothing.
 
 Still open / needs hardware (designed but deliberately NOT coded blind):
 ST7789 SLPIN/DISPOFF panel sleep on screen-off (shared-bus variant of the

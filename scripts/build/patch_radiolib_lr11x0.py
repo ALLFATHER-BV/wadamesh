@@ -12,9 +12,15 @@
 #
 # Idempotent. Each PlatformIO env has its own libdeps copy, so this only
 # affects envs that list this script in extra_scripts (the M9 env).
-# NOTE: on a completely fresh checkout the first build may run before
-# RadioLib is downloaded - the script then warns and the patch lands on the
-# next build. Re-run `pio run` once if you see the warning.
+#
+# Fail-closed: an unpatched binary boots to a fatal -706 radio-init screen on
+# preprod units, indistinguishable from a good build except by its build log —
+# so any state where the patch can't land ABORTS the build instead of warning.
+# The one soft case is a completely fresh checkout: pre-scripts run before the
+# LDF fetches lib_deps, so there is nothing to patch yet, and aborting here
+# would stop the build before RadioLib can even be downloaded. For that case a
+# pre-link check (below) patches late and fails the link, so the NEXT `pio run`
+# compiles the patched source — no linked binary can ever ship unpatched.
 Import("env")
 import os
 
@@ -35,18 +41,58 @@ NEW = """  state = this->driveDiosInSleepMode(true);
 path = os.path.join(env.subst("$PROJECT_LIBDEPS_DIR"), env.subst("$PIOENV"),
                     "RadioLib", "src", "modules", "LR11x0", "LR11x0.cpp")
 
-if not os.path.isfile(path):
-    print("[patch_radiolib_lr11x0] WARNING: %s not found (libdeps not fetched yet?)" % path)
-    print("[patch_radiolib_lr11x0] WARNING: RadioLib NOT patched - re-run the build once libdeps exist")
-else:
+
+def apply_patch():
+    """Patch LR11x0.cpp in place. Returns an error string, or None on success
+    (including already-patched)."""
     with open(path) as f:
         src = f.read()
     if MARKER in src:
         print("[patch_radiolib_lr11x0] already patched")
-    elif OLD in src:
-        with open(path, "w") as f:
-            f.write(src.replace(OLD, NEW, 1))
-        print("[patch_radiolib_lr11x0] patched LR11x0::config() for old-FW tolerance")
-    else:
-        print("[patch_radiolib_lr11x0] WARNING: pattern not found - RadioLib version drift?")
-        print("[patch_radiolib_lr11x0] WARNING: check LR11x0::config() by hand, NOT patched")
+        return None
+    if OLD not in src:
+        # lib_deps uses a caret range (^7.6.0), so a `pio pkg update` can pull
+        # a RadioLib whose config() no longer matches the expected shape.
+        return ("LR11x0::config() doesn't match the expected shape (RadioLib "
+                "version drift?) - port the old-FW patch by hand, or pin "
+                "lib_deps back to a known-good version")
+    with open(path, "w") as f:
+        f.write(src.replace(OLD, NEW, 1))
+    print("[patch_radiolib_lr11x0] patched LR11x0::config() for old-FW tolerance")
+    return None
+
+
+if os.path.isfile(path):
+    error = apply_patch()
+    if error is not None:
+        print("[patch_radiolib_lr11x0] ERROR: %s" % error)
+        env.Exit(1)
+else:
+    # Fresh checkout: RadioLib isn't fetched yet. Let the build proceed so the
+    # LDF can download it; the pre-link check below is what keeps this run from
+    # producing an unpatched binary.
+    print("[patch_radiolib_lr11x0] RadioLib not fetched yet - patch deferred to pre-link check")
+
+
+def verify_patched(target, source, env):
+    # Runs right before the link, after libdeps exist and every RadioLib object
+    # has been compiled. A missing marker here means those objects came from
+    # UNPATCHED source: patch now (SCons's content signatures then recompile
+    # LR11x0.cpp on the next run) and fail this link. Non-zero return = SCons
+    # build failure, so no .elf/.bin is produced.
+    if not os.path.isfile(path):
+        print("[patch_radiolib_lr11x0] ERROR: %s still missing at link time" % path)
+        return 1
+    with open(path) as f:
+        if MARKER in f.read():
+            return 0
+    error = apply_patch()
+    if error is not None:
+        print("[patch_radiolib_lr11x0] ERROR: %s" % error)
+        return 1
+    print("[patch_radiolib_lr11x0] ERROR: RadioLib was fetched during this build and is")
+    print("[patch_radiolib_lr11x0] ERROR: now patched - re-run `pio run` to compile it in")
+    return 1
+
+
+env.AddPreAction("$BUILD_DIR/${PROGNAME}.elf", verify_patched)
