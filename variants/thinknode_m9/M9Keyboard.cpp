@@ -64,6 +64,17 @@ void m9KeyboardBegin() {
 
 void m9KeyboardPoll() {
   if (!s_inited) return;
+  // Rate-limit: the UI loop free-runs, and unthrottled this was a blocking
+  // ~0.5 ms write+read on the 100 kHz bus EVERY iteration (hundreds/s) — pure
+  // waste on the UI thread. The controller latches one key, so the poll only
+  // has to outpace keystrokes: 15 ms (~66/s) is ample for burst typing and
+  // removes ~97% of the bus traffic. Wraparound-safe; first call passes.
+  {
+    static uint32_t s_next_poll_ms = 0;
+    const uint32_t now_ms = millis();
+    if ((int32_t)(now_ms - s_next_poll_ms) < 0) return;
+    s_next_poll_ms = now_ms + 15;
+  }
   if (!s_bus) {
     uint32_t now = millis();
     if (now - s_last_probe_ms < 1000) return;
@@ -71,13 +82,18 @@ void m9KeyboardPoll() {
     kbTryFindBus();
     if (!s_bus) return;
   }
-  uint8_t key = 0;
-  if (!kbReadReg(*s_bus, M9_KB_REG_KEY, &key)) return;
-  if (key == 0x00 || key == 0xFF) return;   // no key / undefined-register reply
-  const uint8_t nh = (uint8_t)((s_head + 1) & 15);
-  if (nh != s_tail) {     // drop if the ring is full
-    s_ring[s_head] = key;
-    s_head = nh;
+  // Read the latched key; when one IS pending, drain a couple more reads in
+  // the same poll (bounded) — the controller holds a single slot, so a second
+  // key struck inside the 15 ms window would otherwise be lost.
+  for (int i = 0; i < 3; i++) {
+    uint8_t key = 0;
+    if (!kbReadReg(*s_bus, M9_KB_REG_KEY, &key)) return;
+    if (key == 0x00 || key == 0xFF) return;   // no key / undefined-register reply
+    const uint8_t nh = (uint8_t)((s_head + 1) & 15);
+    if (nh != s_tail) {     // drop if the ring is full
+      s_ring[s_head] = key;
+      s_head = nh;
+    }
   }
 }
 

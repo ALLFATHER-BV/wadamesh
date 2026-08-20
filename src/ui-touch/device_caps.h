@@ -85,12 +85,23 @@
   // HELTEC_LORA_V4_TFT to reuse all its UI code); the deltas are 8 MB octal
   // PSRAM (→ web browser) and a micro-SD slot on the Expansion Kit V2.
   #define CAP_TOUCH        1   // CHSC6x capacitive touch (Expansion Kit V2)
-  #define CAP_ROTATABLE    1   // user can flip portrait/landscape
+  // Rotation is OFF until a tester verifies the R8-specific landscape touch
+  // maps (HeltecV4CapTouch.cpp, TESTER-VERIFY): the boot guard at UITask.cpp
+  // ("V4-R8: force PORTRAIT at every boot") reverts any landscape pref anyway,
+  // so with 1 the Orientation control was a reboot trap that always landed
+  // back on Portrait (plus one garbled session, since the boot wordmark had
+  // already rotated the panel). Flip back to 1 together with removing that
+  // guard once landscape touch is confirmed on hardware.
+  #define CAP_ROTATABLE    0
   #define CAP_LARGE_SCREEN 0   // 240x320
   #define CAP_SD           1   // micro-SD on Expansion Kit V2 (shared TFT SPI bus, CS=3)
   #define CAP_FILESYSTEM   1   // browsable filesystem (the SD card)
   #define CAP_GPS          1
   #define CAP_OTA          1   // native dual-OTA slot
+  // 0: no unlock gesture exists yet — touch is deliberately inert while
+  // hard-locked and BOOT already wake-unlocks in the generic branch. Enabling
+  // needs a reveal+hold-to-unlock input path plus the DSEC_LOCK row gates
+  // (see UITask.cpp lockScreen()/noteUserInput) — a feature, not a cap flip.
   #define CAP_LOCK_SCREEN  0
 
 #elif defined(HAS_TDISPLAY_P4)        // ===== LilyGo T-Display P4 (ESP32-P4 + C6) =====

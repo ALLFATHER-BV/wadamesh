@@ -36,7 +36,9 @@ EnvironmentSensorManager sensors(gps);
 // (GPIO17, PNP) is handled separately by ThinkNodeM9Board — see M9Board.h
 // for why it's NOT routed through PIN_TFT_LEDA_CTL.
 DISPLAY_CLASS display(&board.periph_power);
-MomentaryButton user_btn(PIN_USER_BTN, 1000, true);
+// (No MomentaryButton here: the M9 has NO user/BOOT button — schematic-
+// confirmed, only a power-cut slider and reset. PIN_USER_BTN is undefined for
+// this env so UITask's button poll compiles out too.)
 #endif
 
 #ifndef LORA_CR

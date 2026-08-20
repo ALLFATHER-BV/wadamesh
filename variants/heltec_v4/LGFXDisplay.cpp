@@ -22,7 +22,11 @@ LGFXDisplay::LGFXDisplay(RefCountedDigitalPin* peripher_power)
     auto cfg = _bus.config();
     cfg.spi_host    = SPI2_HOST;
     cfg.spi_mode    = 0;
-    cfg.freq_write  = 20000000;      // 20 MHz — conservative for this PCB
+    cfg.freq_write  = 40000000;      // 40 MHz — the old 20 MHz made a full-screen flush
+                                     // ~61 ms of pure bus time (~4x the plain V4's 80 MHz
+                                     // driver); ST7789 typically takes 62.5-80 MHz, so 40
+                                     // is still the conservative choice. If hardware shows
+                                     // tearing/garbled bands, fall back to 26.6 MHz.
     cfg.freq_read   = 16000000;
     cfg.spi_3wire   = false;
     cfg.use_lock    = true;
@@ -63,15 +67,12 @@ LGFXDisplay::LGFXDisplay(RefCountedDigitalPin* peripher_power)
   }
 
   // ---- Backlight ----
-  {
-    auto cfg = _light.config();
-    cfg.pin_bl = PIN_TFT_LEDA_CTL; // 44
-    cfg.invert = false;
-    cfg.freq   = 44000;
-    cfg.pwm_channel = 7;
-    _light.config(cfg);
-    _panel.setLight(&_light);
-  }
+  // Deliberately NOT routed through LGFX's Light_PWM: UITask's applyBrightness()
+  // owns GPIO44 on LEDC channel 6 (20 kHz / 8-bit), and a second owner
+  // (Light_PWM ch7, 44 kHz / 9-bit, sharing LEDC timer 3) was a latent
+  // conflict — any future _lcd.setBrightness() would write 9-bit duty onto a
+  // channel that no longer owns the pin. begin()/turnOn()/turnOff() drive the
+  // pad directly for the boot-logo window; UITask takes over once the UI is up.
 
   _lcd.setPanel(&_panel);
 }
@@ -87,7 +88,8 @@ bool LGFXDisplay::begin() {
   // The old hardcoded setRotation(1) here put the panel in landscape under portrait frames —
   // the tester's "boot logo in the wrong orientation".
   _lcd.setRotation(0);
-  _lcd.setBrightness(255);
+  pinMode(PIN_TFT_LEDA_CTL, OUTPUT);       // boot-logo backlight (UITask's LEDC takes over later)
+  digitalWrite(PIN_TFT_LEDA_CTL, HIGH);
   _lcd.fillScreen(0x0000);
   setLogicalSize(_lcd.width(), _lcd.height());
 
@@ -99,12 +101,14 @@ bool LGFXDisplay::begin() {
 void LGFXDisplay::turnOn() {
   if (_isOn) return;
   if (_periph_power) _periph_power->claim();
-  _lcd.setBrightness(255);
+  pinMode(PIN_TFT_LEDA_CTL, OUTPUT);       // re-route from any LEDC attach back to plain GPIO
+  digitalWrite(PIN_TFT_LEDA_CTL, HIGH);
   _isOn = true;
 }
 void LGFXDisplay::turnOff() {
   if (!_isOn) return;
-  _lcd.setBrightness(0);
+  pinMode(PIN_TFT_LEDA_CTL, OUTPUT);
+  digitalWrite(PIN_TFT_LEDA_CTL, LOW);
   _isOn = false;
   if (_periph_power) _periph_power->release();
 }
@@ -144,8 +148,12 @@ void LGFXDisplay::setDisplayRotation(uint8_t r) {
 // back with no redraw). Using LGFX's bus — not a second HSPI SPIClass on the same
 // pins — is what keeps the shared FSPI display bus intact across a wake.
 void LGFXDisplay::panelSleep(bool sleep) {
-  if (sleep) _lcd.sleep();    // SLPIN
-  else       _lcd.wakeup();   // SLPOUT
+  // Mirror the hardware-proven V4/T-Deck shim's datasheet timing — LovyanGFX's
+  // setSleep writes the bare command with no delay: t_SLPIN wants 5 ms of bus
+  // quiet after SLPIN, and >=5 ms must pass after SLPOUT before the next
+  // command (the wake path fires backlight + LVGL flushes immediately after).
+  if (sleep) { _lcd.sleep();  delay(5); }   // SLPIN
+  else       { _lcd.wakeup(); delay(6); }   // SLPOUT
 }
 
 #endif  // HELTEC_LORA_V4_R8

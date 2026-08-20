@@ -25,7 +25,7 @@ extern EnvironmentSensorManager sensors;
 
 #ifdef DISPLAY_CLASS
 extern DISPLAY_CLASS display;
-extern MomentaryButton user_btn;
+// (no user_btn: the M9 has no user/BOOT button — see target.cpp)
 #endif
 
 bool radio_init();

@@ -861,7 +861,7 @@ void sendKey(int key) {
     case LV_KEY_DOWN:  named = "down";  break;
     case LV_KEY_LEFT:  named = "left";  break;
     case LV_KEY_RIGHT: named = "right"; break;
-    case LV_KEY_ENTER: named = "enter"; break;
+    case LV_KEY_ENTER: case '\r': named = "enter"; break;   // '\r': physical keyboards send CR, not LV_KEY_ENTER
     case LV_KEY_ESC:   named = "esc";   break;
     case '\b': case 127: named = "backspace"; break;
     default: break;
@@ -1166,6 +1166,44 @@ void luaAppSteer(int dx, int dy) {
   if (!s_h) return;
   const char* dir = (dy < 0) ? "up" : (dy > 0) ? "down" : (dx < 0) ? "left" : (dx > 0) ? "right" : nullptr;
   if (dir) sendInput("swipe", dir, 0, 0);
+}
+
+// Synthetic centre tap (down then up) for boards with no touch: the select key
+// stands in for "tap to start / retry" flows that listen for type=="down".
+void luaAppPress() {
+  if (!s_h || !s_h->body) return;
+  const int x = lv_obj_get_width(s_h->body) / 2;
+  const int y = lv_obj_get_height(s_h->body) / 2;
+  sendInput("down", nullptr, x, y);
+  sendInput("up",   nullptr, x, y);
+}
+
+// True when the running app declares on_input. Touchless boards use this to
+// decide whether the d-pad belongs to the app (steer/press events) or should
+// keep its native meaning so it can drive the app page's own LVGL widgets —
+// display-only apps (Airtime, RF Monitor) otherwise ate every key into a
+// callback that doesn't exist.
+bool luaAppHasOnInput() {
+  if (!s_h || !s_h->L) return false;
+  if (!pushCallback(s_h, "on_input")) return false;
+  lua_pop(s_h->L, 1);
+  return true;
+}
+
+// Page-scroll the app body (display-only apps: RF Monitor's feed runs past the
+// screen and there is no touch to drag it). Returns true while an app is open
+// — even at the scroll edge the key belongs to the page, not to whatever is
+// underneath it.
+bool luaAppScroll(bool up) {
+  if (!s_h || !s_h->body) return false;
+  const lv_coord_t room = up ? lv_obj_get_scroll_top(s_h->body)
+                             : lv_obj_get_scroll_bottom(s_h->body);
+  if (room <= 0) return true;   // at the edge / page not scrollable
+  lv_coord_t step = (lv_coord_t)((s_h->body_h * 3) / 5);
+  if (step > room) step = room;
+  const lv_coord_t cur = lv_obj_get_scroll_y(s_h->body);
+  lv_obj_scroll_to_y(s_h->body, up ? cur - step : cur + step, LV_ANIM_ON);
+  return true;
 }
 
 static void luaAppRootDeletedCb(lv_event_t* e) {

@@ -39,11 +39,14 @@
 #define M9_KEY_SUB_MAP       0x84
 #define M9_KEY_MAP           0x85
 #define M9_KEY_HW_BACK       0x86
-#define M9_KEY_CTRL          0x90
-// From the controller firmware's key tables (not yet bound in the UI):
-// 0x84 long-press emits 0x87 (labeled "GPS toggle"), Enter long-press emits
-// 0xA3, and matrix position col3/row4 emits 0x89 (unlabeled). Shift/Sym/Alt
-// never reach the wire — the controller consumes them as layer modifiers.
+#define M9_KEY_CTRL          0x90   // bound: opens the Control Center (single latched key — can never chord)
+// From the controller firmware's key tables: 0x84 long-press emits 0x87
+// (labeled "GPS toggle" — bound to toggleGPS()), Enter long-press emits 0xA3
+// (bound: LV_EVENT_LONG_PRESSED on the focused widget / lock-screen unlock).
+// Shift/Sym/Alt never reach the wire — the controller consumes them as layer
+// modifiers. DELIBERATELY UNBOUND: MIC 0x88 (no audio-capture feature exists)
+// and 0x89 (matrix col3/row4, physical key cap unidentified — binding an
+// unknown cap invites accidental triggers).
 #define M9_KEY_GPS_LONG      0x87
 #define M9_KEY_ENTER_LONG    0xA3
 
