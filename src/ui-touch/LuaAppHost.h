@@ -20,7 +20,10 @@ bool luaAppLaunchFile(const char* id, const char* title, const char* embedded, s
 bool luaAppIsOpen();
 void luaAppDismiss();                 // THE close path (AppPage back hook)
 void luaAppSteer(int dx, int dy);     // trackball/keypad direction -> on_input
+void luaAppPress();                   // synthetic centre tap (down+up) -> on_input, for touchless boards' select key
 bool luaAppKey(int key);              // hardware key -> on_input; true = app consumed it
+bool luaAppHasOnInput();              // app declares on_input? (touchless boards: app keys vs native d-pad)
+bool luaAppScroll(bool up);           // page-scroll the app body (display-only apps on touchless boards)
 void luaAppMessage(const char* channel, const char* sender, const char* text);  // -> on_message
 // Per-app permission bits, stored as a decimal mask in /apps/perms.kv.
 #define LUA_PERM_SEND  1
@@ -29,6 +32,9 @@ void luaAppMessage(const char* channel, const char* sender, const char* text);  
 inline bool luaAppIsOpen() { return false; }
 inline void luaAppDismiss() {}
 inline void luaAppSteer(int, int) {}
+inline void luaAppPress() {}
 inline bool luaAppKey(int) { return false; }
+inline bool luaAppHasOnInput() { return false; }
+inline bool luaAppScroll(bool) { return false; }
 inline void luaAppMessage(const char*, const char*, const char*) {}
 #endif

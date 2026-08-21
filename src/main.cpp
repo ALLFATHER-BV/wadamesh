@@ -49,8 +49,9 @@ static uint32_t _atoi(const char* sp) {
   DataStore store(LittleFS, rtc_clock);
 #elif defined(ESP32)
   #include <SPIFFS.h>
-  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
+  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     #include <SD.h>
+    #include "SdFastClock.h"   // post-mount operating-clock raise (SD_SPI_FAST_HZ boards)
     #include <Preferences.h>
     #if defined(TLORA_PAGER)
       #include <mbedtls/sha256.h>
@@ -246,10 +247,18 @@ void halt() {
   bool wifi_needs_reconnect = false;
   unsigned long last_wifi_reconnect_attempt = 0;
 #endif
+#if defined(ESP32)
+// Last STA disconnect reason (esp_wifi wifi_err_reason_t). The UI's coarse
+// "auth failed" (WL_CONNECT_FAILED) covers wrong password, WPA3-SAE handshake
+// failure and AP-side rejection alike — the reason number tells them apart
+// (15 = 4-way handshake timeout ≈ wrong password; 2/202 = auth expired/failed
+// ≈ WPA3-only or auth mismatch; 201 = AP not found).
+volatile uint8_t g_wifi_last_disc_reason = 0;
+#endif
 
 #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)
 
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
 // ---- SPIFFS -> SD migration (fixes the beta_36 "lost my profile" upgrades) ----
 // Users who flipped "Store data on SD" before beta_36 ran with the toggle IGNORED
 // (the flag never survived a reboot), so their identity/prefs/contacts kept living
@@ -878,12 +887,14 @@ void setup() {
   // failure falls back to SPIFFS so the device always boots.
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
   bool sd_storage = false;
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   {
    #if defined(TLORA_PAGER)
     extern SPIClass* tloraPagerSharedSPI();    // display/radio/SD shared bus
    #elif defined(HELTEC_LORA_V4_R8)
     extern SPIClass* heltecV4R8SharedSPI();   // FSPI, shared with the TFT (CS=3)
+   #elif defined(HAS_THINKNODE_M9)
+    extern SPIClass* m9SharedSPI();           // radio/display/SD shared bus
    #else
     extern SPIClass* tdeckSharedSPI();        // LoRa SPI bus
    #endif
@@ -913,6 +924,8 @@ void setup() {
     SPIClass* _spi = tloraPagerSharedSPI();
    #elif defined(HELTEC_LORA_V4_R8)
     SPIClass* _spi = heltecV4R8SharedSPI();
+   #elif defined(HAS_THINKNODE_M9)
+    SPIClass* _spi = m9SharedSPI();
    #else
     SPIClass* _spi = tdeckSharedSPI();
    #endif
@@ -984,6 +997,7 @@ void setup() {
         delay(60);
         if (SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
           Serial.printf("[BOOT] SD renegotiated %lu -> 4000000 Hz\n", (unsigned long)mounted_hz);
+          mounted_hz = 4000000;
         } else {
           SD.end();
           delay(120);
@@ -991,6 +1005,9 @@ void setup() {
           if (sd_mounted) Serial.printf("[BOOT] SD stays at %lu Hz (4 MHz renegotiation failed)\n", (unsigned long)mounted_hz);
         }
       }
+      // Operating-clock raise with read-verify (SD_SPI_FAST_HZ boards only; no-op elsewhere).
+      if (sd_mounted) { mounted_hz = sdTryFastClock(PIN_SD_CS, *_spi, mounted_hz, "BOOT"); sd_mounted = mounted_hz != 0; }
+      if (sd_mounted) { extern uint32_t g_sd_operating_hz; g_sd_operating_hz = mounted_hz; }   // About-page readout (UITask.cpp)
     }
 #endif
     if (sd_mounted) {
@@ -1108,7 +1125,7 @@ void setup() {
   // Route touch settings + Wi-Fi creds to the active filesystem (SD when that's
   // the data store, else SPIFFS) instead of NVS. Old NVS values still load and
   // migrate on their next save, so this is a transparent in-place upgrade.
-  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
+  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
   #else
@@ -1187,6 +1204,12 @@ void setup() {
                                    // exists so a later WPA re-auth cannot bypass Wi-Fi-first ordering
 #endif
     WiFi.persistent(false);
+    // Record WHY every STA disconnect happened — surfaced by the UI's Wi-Fi
+    // status string as "auth failed (rNN)" so failures are diagnosable on a
+    // device with no serial console. Additive: multiple onEvent handlers coexist.
+    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info){
+        g_wifi_last_disc_reason = info.wifi_sta_disconnected.reason;
+      }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
     // NOTE: do NOT enable modem-sleep here. On a fresh, *unassociated* STA (the
     // setup wizard, no creds yet) DTIM modem-sleep naps the radio through the
     // scan dwell, so WiFi.scanNetworks() comes back empty ("no networks found").
@@ -1370,6 +1393,19 @@ void setup() {
 }
 
 void loop() {
+#ifdef R8_DIAG_BATT
+  // TEMP diagnostic (build with -DR8_DIAG_BATT, remove after): raw battery mV
+  // every 5 s to Serial AND as an on-screen toast every 8 s — the R8's
+  // USB-Serial-JTAG resets into the ROM bootloader whenever a host opens the
+  // port, so the screen is the only reliable live readout on this board.
+  { static uint32_t s_batt_next = 0;
+    if (millis() > s_batt_next) { s_batt_next = millis() + 5000;
+      Serial.printf("[BATT] %u mV\n", (unsigned)board.getBattMilliVolts()); } }
+  { static uint32_t s_batt_ui_next = 0;
+    if (millis() > s_batt_ui_next && millis() > 15000) { s_batt_ui_next = millis() + 8000;
+      char b[28]; snprintf(b, sizeof b, "BATT %u mV", (unsigned)board.getBattMilliVolts());
+      ui_task.showAlert(b, 2500); } }
+#endif
   // Run UI first every iteration so splash can dismiss at 3s even if mesh/serial blocks later (was stuck on version screen when the_mesh.loop() ran before ui_task.loop()).
 #ifdef DISPLAY_CLASS
   // ---- beta_31 field-freeze tracer (see UITask.cpp): time each loop section ----
@@ -1655,8 +1691,21 @@ void loop() {
       // BLE coexistence airtime). Deferred to here on purpose: enabling it on the
       // unassociated STA naps the radio through a scan dwell and breaks the setup
       // wizard's WiFi.scanNetworks() ("no networks found"). One-shot.
+      //
+      // Unconditional, and deliberately NOT a user preference. This was briefly
+      // configurable (default off on the V4-R8, for a lower-latency app link), but
+      // WIFI_PS_NONE is not a legal sleep mode while the BT controller is running --
+      // modem sleep is exactly what yields airtime to BLE, and the Wi-Fi PM blob
+      // aborts rather than refusing. An R8 with saved credentials and Bluetooth on
+      // crashed on association every time: task "wifi", abort() in pm_set_sleep_type.
+      // The latency it was buying did not exist either: profiling the companion link
+      // showed sync cost is round-trip COUNT (~40 CMD_GET_CHANNEL), with the firmware
+      // accounting for 0.3% of it. So there is nothing to trade away here.
       static bool modem_sleep_set = false;
-      if (!modem_sleep_set) { WiFi.setSleep(true); modem_sleep_set = true; }
+      if (!modem_sleep_set) {
+        WiFi.setSleep(true);
+        modem_sleep_set = true;
+      }
       if (!sntp_kicked) {
         /* Brussels timezone with DST rules baked in (POSIX "CET-1CEST,...").
          * On touch builds the base is shifted by the user's manual hour offset

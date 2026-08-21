@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 48;
+static constexpr uint8_t CURRENT_VERSION = 50;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields)
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs

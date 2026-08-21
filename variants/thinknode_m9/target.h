@@ -25,7 +25,7 @@ extern EnvironmentSensorManager sensors;
 
 #ifdef DISPLAY_CLASS
 extern DISPLAY_CLASS display;
-extern MomentaryButton user_btn;
+// (no user_btn: the M9 has no user/BOOT button — see target.cpp)
 #endif
 
 bool radio_init();
@@ -36,5 +36,3 @@ mesh::LocalIdentity radio_new_identity();
 // directly (no dedicated local SPIClass — see target.cpp), so this just
 // hands that same instance to SD.begin().
 SPIClass *m9SharedSPI();
-
-void m9SetBacklight(bool on);

@@ -8,7 +8,7 @@ ThinkNodeM9Board board;
 // minewsemi_me25ls01). Module() takes the same (NSS, IRQ/DIO1, RESET, BUSY,
 // spi) signature either way. M9: NSS=39, DIO1=42, RESET=45, BUSY=41,
 // SCLK=40, MISO=38, MOSI=47 — all on the SAME physical SPI bus as the LCD
-// (CS=16) and the microSD slot (CS=36), so radio and display share the
+// (CS=16) and the microSD slot (CS=48), so radio and display share the
 // literal global `SPI` object — matching how T-Deck/Heltec V4's radio (a
 // plain default-constructed `static SPIClass spi;`, not an explicit-host
 // instance) and the LR1110 reference boards (thinknode_m3, me25ls01, which
@@ -36,7 +36,9 @@ EnvironmentSensorManager sensors(gps);
 // (GPIO17, PNP) is handled separately by ThinkNodeM9Board — see M9Board.h
 // for why it's NOT routed through PIN_TFT_LEDA_CTL.
 DISPLAY_CLASS display(&board.periph_power);
-MomentaryButton user_btn(PIN_USER_BTN, 1000, true);
+// (No MomentaryButton here: the M9 has NO user/BOOT button — schematic-
+// confirmed, only a power-cut slider and reset. PIN_USER_BTN is undefined for
+// this env so UITask's button poll compiles out too.)
 #endif
 
 #ifndef LORA_CR
@@ -54,12 +56,15 @@ bool radio_init() {
 #ifdef LR11X0_DIO3_TCXO_VOLTAGE
   float tcxo = LR11X0_DIO3_TCXO_VOLTAGE;
 #else
-  // 0 = disable RadioLib's internal TCXO-bias feature. M9's LR1110 clock
-  // comes from Y1, a self-powered active oscillator (schematic-confirmed:
-  // VCC/GND/GND/OUT, output -> XTA directly) — not a passive crystal the
-  // chip needs to bias itself, so this must stay 0. See the build-flag
-  // comment in platformio.ini for the full explanation.
-  float tcxo = 0.0f;
+  // Fallback = the hardware-confirmed value, NOT 0. An earlier theory (Y1 =
+  // self-powered active oscillator, so disable RadioLib's TCXO bias) was
+  // disproven on the real unit: with tcxo=0 the chip boots on its internal
+  // RC (SPI alive) but the first command needing the true 32 MHz clock is
+  // rejected — radio init fails -707. The schematic's "VTCXO" rail feeding
+  // Y1 is the LR1110's own TCXO-supply output, so DIO3 must drive it at
+  // 3.3 V — see the LR11X0_DIO3_TCXO_VOLTAGE comment in platformio.ini for
+  // the empirical confirmation.
+  float tcxo = 3.3f;
 #endif
 
   // SPI bus itself was already begun once in ThinkNodeM9Board::begin() (the
@@ -148,11 +153,4 @@ mesh::LocalIdentity radio_new_identity() {
 SPIClass *m9SharedSPI() {
   return &SPI; // global instance, shared by radio + display + SD; begun once in
                // M9Board::begin()
-}
-
-void m9SetBacklight(bool on) {
-  if (on)
-    board.backlight.claim();
-  else
-    board.backlight.release();
 }

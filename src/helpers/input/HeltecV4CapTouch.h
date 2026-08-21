@@ -57,6 +57,7 @@ bool heltecV4CapTouchIsSwiping();
  * the display rotation changes (boot + on a rotation toggle). Default 0.
  */
 void heltecV4CapTouchSetRotation(uint8_t lvgl_rot);
+void heltecV4CapTouchSetSlowPoll(bool slow);   // screen-off poll throttle (R8 shared-bus)
 
 /**
  * Set the HARDWARE-rotation touch-point transform. When the panel is rotated

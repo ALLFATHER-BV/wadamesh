@@ -11,6 +11,20 @@ void HeltecV4Board::begin() {
 
     loRaFEMControl.init();
 
+#if defined(HELTEC_LORA_V4_R8) && defined(PIN_SD_CS)
+    // Park the shared-FSPI micro-SD's chip-select HIGH before LGFX starts
+    // driving the bus (display.begin + logo blit run before the first
+    // SD.begin): GPIO3 is a strapping pin with no firmware pull, and a card
+    // that samples CS low during that window can latch a confused state the
+    // mount ladder then has to rescue. Same discipline as M9Board/the pager.
+    pinMode(PIN_SD_CS, OUTPUT);
+    digitalWrite(PIN_SD_CS, HIGH);
+    // The R8 boot FEM-type line makes the auto-detect visible (the About page
+    // reports the board name only) — needed to verify GPIO46 really is the
+    // FEM TX-enable on this board rather than a plain LED (see r8 audit).
+    Serial.printf("[R8] FEM type=%d (0=GC1109 1=KCT8103L 2=other)\n", (int)loRaFEMControl.getFEMType());
+#endif
+
     periph_power.begin();
     esp_reset_reason_t reason = esp_reset_reason();
     if (reason == ESP_RST_DEEPSLEEP) {
@@ -21,6 +35,15 @@ void HeltecV4Board::begin() {
 
       rtc_gpio_hold_dis((gpio_num_t)P_LORA_NSS);
       rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
+#if defined(HELTEC_LORA_V4_R8)
+      // Release the digital-pad holds powerOffCb armed before deep sleep
+      // (VEXT / GPS_EN / backlight) — held pads would otherwise block this
+      // boot's own rail and backlight drives.
+      gpio_deep_sleep_hold_dis();
+      gpio_hold_dis((gpio_num_t)PIN_VEXT_EN);
+      gpio_hold_dis((gpio_num_t)PIN_GPS_EN);
+      gpio_hold_dis((gpio_num_t)PIN_TFT_LEDA_CTL);
+#endif
     }
   }
 
@@ -64,6 +87,21 @@ void HeltecV4Board::begin() {
   }
 
   uint16_t HeltecV4Board::getBattMilliVolts()  {
+#if defined(HELTEC_LORA_V4_R8)
+    // R8: match Meshtastic's heltec_v4_r8 variant — the always-connected
+    // high-resistance divider wants LOW attenuation (2.5 dB, full-scale
+    // ~1.05 V; the node sits at VBAT/5.07 ≈ 0.65-0.85 V) and a CALIBRATED
+    // millivolt read. The generic uncalibrated raw*(3.3/1024) at the default
+    // 11 dB under-read this divider by ~5-10%: a full 4.2 V pack displayed
+    // ~3.9 V, so the charging-bolt threshold (batteryFullMv()+50) was
+    // unreachable by construction and one ADC count quantized to ~16 mV of
+    // display (the "frozen at 3839 mV" report).
+    static bool s_atten_set = false;
+    if (!s_atten_set) { analogSetPinAttenuation(PIN_VBAT_READ, ADC_2_5db); s_atten_set = true; }
+    uint32_t mv = 0;
+    for (int i = 0; i < 8; i++) mv += analogReadMilliVolts(PIN_VBAT_READ);
+    return (uint16_t)((mv / 8) * adc_mult);
+#else
     analogReadResolution(10);
 #if defined(PIN_ADC_CTRL) && PIN_ADC_CTRL >= 0
     digitalWrite(PIN_ADC_CTRL, HIGH);   // enable the battery divider
@@ -78,6 +116,7 @@ void HeltecV4Board::begin() {
     digitalWrite(PIN_ADC_CTRL, LOW);
 #endif
     return (adc_mult * (3.3 / 1024.0) * raw) * 1000;
+#endif
   }
 
   const char* HeltecV4Board::getManufacturerName() const {

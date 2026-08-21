@@ -62,6 +62,7 @@
 #endif
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
   #include <SD.h>             // microSD — T-Deck/M9 on the LoRa SPI, V4-R8 on the TFT SPI
+  #include "SdFastClock.h"    // post-mount operating-clock raise (SD_SPI_FAST_HZ boards)
   #include "sd_diskio.h"      // internal Arduino-SD drive helpers (sdcard_init / sd_*_raw)
   extern SPIClass* tdeckSharedSPI();
   // FatFs mkfs (the prebuilt ESP-IDF compiles f_setlabel OUT — FF_USE_LABEL=0 —
@@ -75,7 +76,6 @@
   #endif
 #endif
 #if defined(HAS_THINKNODE_M9)
-  extern void m9SetBacklight(bool on);
   extern SPIClass* m9SharedSPI();
 #endif
 #if defined(HAS_TDECK_GT911)
@@ -226,6 +226,11 @@ constexpr uint16_t k_ui_history_min_version = 6;   // v4/v5 used 96-char records
 // the ring (larger, scales with MAX_UI_MESSAGES) flushes lazily every 2 s,
 // reducing flash write pressure when the ring is large.
 constexpr const char* k_ui_threads_path = "/ui_threads_v1.bin";
+// Threads-index writes go tmp+rename (same discipline as the segment compacts):
+// a truncate-in-place "w" rewrite interrupted by a hard power-cut left a short
+// file the next boot quarantine-DELETED — chat list, unread counts and DM
+// entries gone (M9 power slider = rail cut; any board on a brownout).
+constexpr const char* k_ui_threads_tmp_path = "/ui_threads_v1.bin.tmp";
 constexpr const char* k_ui_msgs_path    = "/ui_msgs_v1.bin";
 constexpr const char* k_ui_msgs_tmp_path = "/ui_msgs_v1.bin.tmp";
 // Separate temp for the SYNCHRONOUS (shutdown/reboot/no-PSRAM) writer. The
@@ -819,8 +824,8 @@ static inline void tileFetchPendingDec() {
 // below are shared; T-Deck and the pager each get their own I2S install/
 // tone/WAV functions, since the pager additionally drives an ES8311 codec
 // over I2C that the T-Deck's plain MAX98357A DAC doesn't have.
-#if defined(HELTEC_LORA_V4_R8)
-static bool fmSdTryMount();   // V4-R8 microSD — fwd decl (defined in the mount-helper block below)
+#if defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
+static bool fmSdTryMount();   // V4-R8/M9 microSD — fwd decl (defined in the mount-helper block below; sdRestoreRun needs it)
 #endif
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
 static constexpr int kI2sSampleRate = 16000;
@@ -1590,6 +1595,12 @@ constexpr int CHAT_KB_H        = 130;  // on-screen keyboard (portrait)
 // 320×180 landscape).
 #if CAP_LARGE_SCREEN
 constexpr int TABBAR_H = 46;   // taller on the big 800×480 panel — room for the coloured F-key shapes
+#elif defined(HAS_THINKNODE_M9)
+// No tab bar on this board: it is tap-only chrome (navMaybeRebuild deliberately
+// never adds it to the focus group), and the M9 has no touch — the dedicated
+// HOME/MESSAGE/MAP keys and the app drawer's Chats/Contacts/Map/Settings tiles
+// cover every tab. Reclaims the row for content (user request).
+constexpr int TABBAR_H = 0;
 #else
 constexpr int TABBAR_H = 30;   // bottom nav bar (trimmed from 38; icons stay g_font_16)
 #endif
@@ -2139,6 +2150,10 @@ static bool g_cap_touch_hw_started = false;
 // LVGL just calls flush_cb more often.
 static constexpr int LV_DRAW_BUF_LINES = 24;
 static lv_color_t* g_draw_buffer = nullptr;
+// Operating clock of the LAST successful SD.begin() on SPI-SD boards (0 = none). Recorded at
+// every mount/remount site (main.cpp boot adoption + the two UITask mounts) because SD.begin's
+// clock is the session clock; Settings -> About reports it on the R8 (no serial console there).
+uint32_t g_sd_operating_hz = 0;
 static uint32_t    g_draw_buf_px  = 240 * LV_DRAW_BUF_LINES;   // actual buffer size in px; shrinks if the full alloc fails at boot
 #if CAP_LARGE_SCREEN
 // UI resolution scaling (Tanmatsu, no touchscreen). LVGL renders at s_lv_pw x s_lv_ph (PHYSICAL
@@ -2699,6 +2714,7 @@ static lv_obj_t* s_cc_env_label = nullptr;   // Expansion-Kit local-env line in 
 static lv_obj_t* s_cc_sys_label = nullptr;   // CPU/RAM/PSRAM/IP line; refreshed live while CC open
 static void ccBuildSysInfo(char* buf, size_t n);   // fwd-decl; defined with the CC helpers below
 static void closeControlCenter();   // defined in the control-center section below
+static void openControlCenter();    // defined in the control-center section below (early decl for the M9 CTRL key)
 static lv_obj_t* s_power_menu   = nullptr;   // power off / reboot menu (control center)
 static void closePowerMenu();               // defined in the control-center section below
 static void openPowerMenu();                // hold the red ✕ (F1) on the Tanmatsu → power off / reboot
@@ -3219,7 +3235,16 @@ static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t
     return;
   }
 #endif
+#if defined(HELTEC_LORA_V4_R8)
+  // Async DMA band flush: returns as soon as the swapped copy is handed to the SPI DMA, so
+  // LVGL renders the next band while this one drains; the last band of the refresh closes
+  // the frame transaction. The screenshot/web-mirror copies below read color_p, which the
+  // driver has already copied out — unaffected. (LGFXDisplay::flushBandRGB565)
+  display.flushBandRGB565(area->x1, area->y1, w, h, reinterpret_cast<uint16_t*>(color_p),
+                          lv_disp_flush_is_last(disp_drv));
+#else
   display.writePixelsRGB565(area->x1, area->y1, w, h, reinterpret_cast<uint16_t*>(color_p));
+#endif
   if (g_shot_buf) {                       // mirror this area into the screenshot buffer
     for (int32_t row = 0; row < h; ++row) {
       const int32_t dy = area->y1 + row;
@@ -3810,10 +3835,10 @@ static void navRefocusFirstVisible(lv_obj_t* p) {
 }
 // Small key hints over each menubar icon — shown only while keyboard nav is on.
 static void navMenubarKeysSync() {
-#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys. The
   // pager prints each fixed mnemonic beside its icon directly in the tab label,
-  // so neither target needs this optional overlay. A plain `return` isn't enough
+  // so neither target needs this optional overlay. The M9 has no tab bar at all. A plain `return` isn't enough
   // since the body below still needs s_kbd_nav to exist at compile time; exclude it.
 #else
   if (!g_lv.tabview) return;
@@ -5344,7 +5369,7 @@ static void otaButtonRefreshState() {
   }
 }
 
-#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 // ---- Save-update-to-SD (Launcher installs) ---------------------------------
 // Launcher-managed T-Decks have no spare A/B slot (touchHasOtaUpdateSlot() is
 // false), so Wi-Fi OTA can't work there — but the Launcher itself can flash an
@@ -6573,6 +6598,15 @@ static void accentBoxCellCb(lv_event_t* e) {
 }
 static void accentBoxMaybeShow() {
   accentBoxHide();                          // each new keystroke clears the last box
+#if defined(HAS_M9_KEYBOARD)
+  // Never on the M9: the box is tap-to-pick (its cells are NAV_SKIP_FLAG by
+  // design) and the key-selection machinery is pager-only (encoder walk +
+  // Enter) — with no touch and no nav path here it would float over the
+  // composer as dead chrome nothing can select. Deliberately suppressed
+  // until an M9 d-pad selection path is built; the Accent-popups settings
+  // row is hidden there for the same reason.
+  return;
+#endif
   if (!s_accent_popups) return;             // user turned accent popups off in settings
   if (!g_lv.keyboard) return;
   lv_obj_t* ta = lv_keyboard_get_textarea(g_lv.keyboard);
@@ -6724,6 +6758,9 @@ static void mentionBoxCellCb(lv_event_t* e) {
 // when a picker is shown (so the caller suppresses the accent box).
 static bool mentionBoxMaybeShow() {
   mentionBoxHide();
+#if defined(HAS_M9_KEYBOARD)
+  return false;   // suppressed like the accent box (see accentBoxMaybeShow): touch-only cells, no key path here
+#endif
   if (!g_lv.keyboard) return false;
   lv_obj_t* ta = lv_keyboard_get_textarea(g_lv.keyboard);
   if (!ta) return false;
@@ -8803,6 +8840,12 @@ static void kbBackspaceSelCb(lv_event_t* e) {
 
 static void closeSettingsModal() {
   hideKb();
+#if CAP_KEYPAD_NAV
+  // The synchronous lv_obj_del below can take down the group-focused object —
+  // detach first, exactly like the chat rebuilds do (navDetachBeforeTreeMutation
+  // has no !CAP_KEYPAD_NAV fallback, hence the gate; navMarkDirty below does).
+  navDetachBeforeTreeMutation();
+#endif
   if (g_set_modal.root) {
     lv_obj_del(g_set_modal.root);
   }
@@ -8816,6 +8859,7 @@ static void closeSettingsModal() {
   s_addct_name_ta    = nullptr;
   s_addct_error_l    = nullptr;
   resetSettingsModalState();
+  navMarkDirty();   // focus group re-roots to whatever the modal was covering
 }
 
 static void settingsCloseCb(lv_event_t* e) {
@@ -10609,7 +10653,8 @@ static void buildRadioSettings() {
 
 #if defined(HELTEC_LORA_V4_TFT)
   // Heltec V4.3 only: the external FEM's high-gain receive amplifier (~17 dB). Bypassed by
-  // default; a big win in quiet/remote sites, but can desensitize in noisy areas. This is
+  // default on the plain V4 (ON by default on the V4-R8 since prefs v49); a big win in
+  // quiet/remote sites, but can desensitize in noisy areas. This is
   // SEPARATE from the SX1262's tiny internal "boosted gain". Hidden on V4.2 (no switchable LNA).
   if (board.femLnaControllable()) {
     int rh = settingsRowLabel(body, y, 4, TR("High-gain receiver (FEM LNA)"), COLOR_TEXT, &g_font_12, 56);
@@ -11363,7 +11408,7 @@ static void useSdStorageToggleCb(lv_event_t* e) {
                                          : TR("Data -> internal on reboot"), 1800);
 }
 
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
 // "Copy internal data to SD": recovery for the beta_36 upgrades where the live
 // profile was orphaned on internal flash while the honored SD toggle adopted an
 // empty card. Pager resumes only onto a card with no identity or the identical
@@ -11404,6 +11449,7 @@ static void sdRestoreRun() {
   g_lv.task->persistHistoryNow();
   discoveredFlushNow();
   the_mesh.flushContactsIfDirty();
+  the_mesh.persistSyncHistoryNow();
   if (!touchPrefsFlush()) {
     g_sd_migration_blocked = true;
     g_lv.task->showAlert(TR("Copy blocked: internal data is busy"), 2600);
@@ -11540,7 +11586,7 @@ static void uiScaleSelectCb(lv_event_t* e) {
 #endif
 
 // Hard-lock (not just dim) when the screen idles off, so the touchscreen is
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
 // Toggle idle light-sleep via the Settings row. Updates NVS, the live
 // touchSleep state, and the status-bar icon in one shot (mirrors lockOnScreenOffToggleCb).
 static void sleepIdleToggleCb(lv_event_t* e) {
@@ -11714,6 +11760,9 @@ static void showSensorsTabToggleCb(lv_event_t* e) {
 
 // Accent-popup picker on/off. Persisted + live: gates accentBoxMaybeShow() so
 // the tap-to-pick accent box stops appearing as you type. Default ON.
+// (Not compiled on the M9 — the pickers are suppressed there and its settings
+// row is hidden, see accentBoxMaybeShow.)
+#if !defined(HAS_M9_KEYBOARD)
 static void accentPopupsToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -11724,6 +11773,7 @@ static void accentPopupsToggleCb(lv_event_t* e) {
   if (!on) accentBoxHide();   // dismiss any box already on screen
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Accent popups: on") : TR("Accent popups: off"), 1100);
 }
+#endif
 
 // One handler for every per-language switch in the multi-select list. The
 // layout id is stashed in the switch's user_data. Flipping a switch updates the
@@ -12721,7 +12771,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, useSdStorageToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   /* Where contacts ACTUALLY live this boot. The toggle above is only an intent — if the
      card failed to mount at boot (cold/slow card), contacts silently stay on internal flash
      even with it ON. This line shows the truth and flags that mismatch. */
@@ -12761,7 +12811,7 @@ static void buildDeviceSettings(int sec) {
      fresh-identity) card. This copies EVERYTHING from internal flash over the
      card's copies and reboots into the restored profile. This is a SPIFFS->SD
      recovery on T-Deck, V4-R8 and Pager; Tanmatsu uses SD_MMC with no SPIFFS. */
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   {
     lv_obj_t* b = lv_btn_create(body);
     lv_obj_set_size(b, lv_pct(96), SC(30));
@@ -12775,7 +12825,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_center(lbl);
     y += SC(40);
   }
-#endif  // HAS_TDECK_GT911 || HELTEC_LORA_V4_R8 || TLORA_PAGER (SPIFFS->SD recovery copy)
+#endif  // HAS_TDECK_GT911 || HELTEC_LORA_V4_R8 || TLORA_PAGER || HAS_THINKNODE_M9 (SPIFFS->SD recovery copy)
 #endif
 
   }
@@ -12871,8 +12921,11 @@ static void buildDeviceSettings(int sec) {
     }
   }
 
+#if !defined(HAS_M9_KEYBOARD)
   /* Accent popups. Typing a Latin letter that has accented variants pops up a
-     tap-to-pick box; turn this off for plain typing. Default on. */
+     tap-to-pick box; turn this off for plain typing. Default on. Not on the
+     M9: the pickers are suppressed there (no touch and no key-selection path
+     — see accentBoxMaybeShow), so the switch would control nothing. */
   {
     int h = settingsRowLabel(body, y, 4, TR("Accent popups"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -12888,6 +12941,7 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("pick accented letters as you type; off = plain typing"),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
+#endif
 
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   /* Enter sends the message (default) vs. inserts a newline so you send only via
@@ -12956,7 +13010,7 @@ static void buildDeviceSettings(int sec) {
 #endif
 
 #if CAP_TRACKBALL
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD)   // never the M9: nav is force-set on at boot there (the board's only input) and must not grow an off-switch
   /* Keyboard navigation: off (default) vs on. When no text field is focused, the
      WASDZ cluster moves focus so the whole UI is reachable from the keyboard (incl.
      Settings), and the tab hotkeys below jump straight to a tab. The trackball
@@ -13267,11 +13321,12 @@ static void buildDeviceSettings(int sec) {
     lv_obj_center(l_bat);
     y += SC(42);
   }
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
   // Experimental battery saver (idle power-save) — throttles the CPU when the
   // device is parked (screen off, on battery, standalone). Moved here from
-  // Settings -> Lock so it lives with the battery. T-Deck only (the gate never
-  // passes on the V4).
+  // Settings -> Lock so it lives with the battery. T-Deck + V4-R8 (the old
+  // "gate never passes on the V4" note was stale for the R8: batteryIsCharging
+  // can't block it there, and the other gates are user state).
   {
     int h = settingsRowLabel(body, y, 6, TR("Battery saver (experimental)"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -13347,6 +13402,22 @@ static void buildDeviceSettings(int sec) {
     mk_info(TR("Model:"), "Heltec LoRa32 V4 TFT (touch)");
 #else
     mk_info(TR("Model:"), "Heltec LoRa32 V4");
+#endif
+#if defined(HELTEC_LORA_V4_R8)
+    // Perf-pass readout (2026-08-20). This board has no reachable serial console, so the
+    // four runtime facts that pass needs verified live here: CPU clock, display bus clock +
+    // flush mode (DMA = async band flush active), micro-SD operating clock, FEM LNA state.
+    {
+      char sd[16];
+      if (g_sd_operating_hz >= 1000000)   snprintf(sd, sizeof sd, "%lu MHz", (unsigned long)(g_sd_operating_hz / 1000000));
+      else if (g_sd_operating_hz > 0)     snprintf(sd, sizeof sd, "%lu kHz", (unsigned long)(g_sd_operating_hz / 1000));
+      else                                snprintf(sd, sizeof sd, "none");
+      snprintf(buf, sizeof(buf), "CPU %u · TFT %u MHz %s · SD %s · LNA %s",
+               (unsigned)getCpuFrequencyMhz(), (unsigned)(LGFX_SPI_WRITE_HZ / 1000000),
+               display.asyncFlushActive() ? "DMA" : "sync", sd,
+               board.femLnaControllable() ? (touchPrefsGetFemLna() ? "on" : "off") : "n/a");
+      mk_info(TR("Perf:"), buf);
+    }
 #endif
     // Public key prefix (first 8 bytes = 16 hex)
     {
@@ -17888,7 +17959,10 @@ static uint16_t batteryFullMv() {
   return s_batt_full_mv ? s_batt_full_mv : 4200;
 }
 
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+// (R8: the divider is permanently connected — PIN_ADC_CTRL=-1 — so the same
+// EMA + above-full voltage heuristic applies; threshold accuracy vs the
+// uncalibrated ADC_MULTIPLIER=5.07 conversion needs on-device confirmation.)
 static constexpr uint16_t kBattChargingMv = 4250;
 
 // Per-board battery sampler: EMA over the noisy ADC so the value doesn't jitter
@@ -18021,22 +18095,23 @@ static inline void sdNoteIoFailure() {
   s_sd_fail_note_ms = m ? m : 1;
 }
 
-// ----- Battery history: 5-minute log to SD + a 24h chart popup (T-Deck only) -----
+// ----- Battery history: 5-minute log + a 24h chart popup (every board) -----
 // Logging piggybacks the always-on UITask::loop (no extra wakeup): every
 // k_batt_log_period_ms a line is appended to /meshcomod/battery.log and the file
 // is trimmed to the last 24h. The rewrite streams line-by-line via a temp file,
 // so memory cost is one short String at a time. Tapping the battery in the status
 // bar opens a voltage chart built from that file.
-// Battery log prefers the SD card when present (T-Deck); on boards with no SD
-// slot — or a T-Deck with no card inserted — it falls back to internal SPIFFS so
-// the 24h chart still works. SD path lives under /meshcomod with the other files;
+// The log follows the RESOLVED ui-data backend (where chat history lives), not
+// bare card presence: telemetry/discover logging mkdirs /meshcomod on ANY
+// mounted card, which used to flip the battery log onto a card the profile
+// never opted into — the log and its chart then disagreed with where the rest
+// of the data lived. SD path lives under /meshcomod with the other files;
 // SPIFFS (flat) uses a top-level path.
 static fs::FS& battLogFs() {
 #if CAP_SD || defined(TLORA_PAGER)
-  if (SD.cardType() != CARD_NONE) {
+  if (uiDataFsIsSdCard()) {
     if (SD.exists("/meshcomod")) return SD;
-    // cardType() says present (cached) but real I/O failed — wedge/removal tell.
-    // (Or just a card without /meshcomod; sdHealthTick's probe arbitrates cheaply.)
+    // Backend resolved to SD but real I/O failed — wedge/removal tell.
     sdNoteIoFailure();
   }
 #endif
@@ -18044,7 +18119,7 @@ static fs::FS& battLogFs() {
 }
 static bool battLogOnSd() {
 #if CAP_SD || defined(TLORA_PAGER)
-  return SD.cardType() != CARD_NONE && SD.exists("/meshcomod");
+  return uiDataFsIsSdCard() && SD.exists("/meshcomod");
 #else
   return false;
 #endif
@@ -19824,8 +19899,13 @@ static bool fmSdTryMount() {
         SD.end();
         delay(120);
         mounted = SD.begin(PIN_SD_CS, *spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
+      } else {
+        mounted_hz = 4000000;
       }
     }
+    // Operating-clock raise with read-verify (SD_SPI_FAST_HZ boards only; no-op elsewhere).
+    if (mounted) { mounted_hz = sdTryFastClock(PIN_SD_CS, *spi, mounted_hz, "SD"); mounted = mounted_hz != 0; }
+    if (mounted) g_sd_operating_hz = mounted_hz;
   }
 #endif
   if (mounted) {
@@ -20634,8 +20714,13 @@ static void fmShowObj(lv_obj_t* o, bool show) {
 }
 
 // "Set as lock wallpaper" action shown in the windowed image viewer, plus the
-// open image's path / filesystem so the action can persist it.
+// open image's path / filesystem so the action can persist it. The button is
+// CAP_LOCK_SCREEN-gated: on the one filesystem board WITHOUT a lock screen
+// (V4-R8) nothing ever renders the wallpaper, so offering to set one — with a
+// "Lock wallpaper set" toast — was a dead control.
+#if CAP_LOCK_SCREEN
 static lv_obj_t* s_fm_img_wall = nullptr;
+#endif
 static char      s_fm_img_path[208] = {0};
 static bool      s_fm_img_on_sd     = false;
 
@@ -20654,7 +20739,9 @@ static void fmImageRelayout() {
   fmShowObj(s_fm_img_hdr,   !fs);
   fmShowObj(s_fm_img_close, !fs);
   fmShowObj(s_fm_img_full,  !fs);
+#if CAP_LOCK_SCREEN
   fmShowObj(s_fm_img_wall,  !fs);
+#endif
   fmShowObj(s_fm_img_hint,   fs);
   // The status bar lives on lv_layer_sys (above this overlay), so hide it
   // outright for a true full-screen image; restore it otherwise.
@@ -20700,13 +20787,14 @@ static void fmImageRootClickCb(lv_event_t* e) {
 // Persist the currently-viewed JPEG as the lock-screen wallpaper. By the time the
 // viewer is up the file is a confirmed JPEG (PNG is rejected earlier), so it's a
 // valid wallpaper. SD paths get the "sd:" prefix the decoder expects.
+#if CAP_LOCK_SCREEN
 static void fmSetWallpaperCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_fm_img_path[0]) return;
   char pref[TOUCH_LOCK_WALLPAPER_MAXLEN];
   if (s_fm_img_on_sd) snprintf(pref, sizeof pref, "sd:%s", s_fm_img_path);
   else                snprintf(pref, sizeof pref, "%s", s_fm_img_path);
   touchPrefsSetLockWallpaper(pref);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // the set of boards that declare s_lockwall_btn_lbl
   if (s_lockwall_btn_lbl && lv_obj_is_valid(s_lockwall_btn_lbl)) {   // update the settings button if still around
     char disp[64]; lockwallDisplayName(pref, disp, sizeof disp);
     lv_label_set_text(s_lockwall_btn_lbl, disp);
@@ -20715,6 +20803,7 @@ static void fmSetWallpaperCb(lv_event_t* e) {
   fmImageClose();
   if (g_lv.task) g_lv.task->showAlert(TR("Lock wallpaper set"), 1300);
 }
+#endif  // CAP_LOCK_SCREEN (fmSetWallpaperCb)
 
 #if CAP_SOUND_FILES
 // ---- .wav -> notification-sound chooser (opened from the File Manager) ------
@@ -20907,6 +20996,7 @@ static void fmOpenImage(const char* name) {
   lv_obj_t* fll = lv_label_create(full); lv_label_set_text(fll, TR("Full"));
   lv_obj_set_style_text_font(fll, &g_font_12, LV_PART_MAIN); lv_obj_center(fll);
 
+#if CAP_LOCK_SCREEN
   // "Set as lock wallpaper" — bottom-left, windowed chrome only.
   lv_obj_t* wall = lv_btn_create(s_fm_img_root);
   lv_obj_set_height(wall, 30);
@@ -20920,6 +21010,7 @@ static void fmOpenImage(const char* name) {
   lv_obj_set_style_text_color(wll, lv_color_black(), LV_PART_MAIN);
   lv_obj_center(wll);
   s_fm_img_wall = wall;
+#endif  // CAP_LOCK_SCREEN (wallpaper button)
 
   // "tap to exit" hint, shown only in full-screen mode.
   lv_obj_t* hint = lv_label_create(s_fm_img_root);
@@ -22585,8 +22676,9 @@ static void openDiscoverPage() {
 // ============================================================
 // Spectrum app  (app-drawer tile -> APPACT_SPECTRUM)
 // ============================================================
-// A handheld swept-tuned spectrum analyzer built on the SX126x. While open it
-// BORROWS the radio from the mesh: main.cpp stops calling the_mesh.loop() (it
+// A handheld swept-tuned spectrum analyzer built on the mesh radio (SX126x on
+// most boards, LR1110 on the ThinkNode M9). While open it BORROWS the radio
+// from the mesh: main.cpp stops calling the_mesh.loop() (it
 // checks spectrumOwnsRadio()) so the mesh never re-arms RX on the home channel
 // while we are hopping the modem across the band. On close we re-apply the
 // mesh's saved radio params and clear the flag, so the next the_mesh.loop()
@@ -22608,11 +22700,23 @@ static void openDiscoverPage() {
 // the radio while we own it.
 static const int   SPEC_BINS      = 160;     // frequency bins across the span
 static const int   SPEC_WF_ROWS   = 48;      // waterfall height (rows of history; zoomed to fit width)
-static const int   SPEC_CHUNK     = 8;       // bins swept per timer tick (~5 ms/bin -> ~42 ms UI block)
+static const int   SPEC_CHUNK     = 8;       // bins swept per timer tick (~5.5 ms/bin -> ~44 ms UI block)
+// Honest-coverage note: 24 MHz / 160 bins = 150 kHz of bin pitch, but each bin
+// listens through a 62.5 kHz channel filter — only ~42% of the span is inside a
+// filter on any sweep, so a narrowband carrier sitting between bin centers is
+// attenuated or invisible. That is the deliberate resolution-vs-coverage trade
+// of a swept analyzer at these constants: 62.5 kHz is the narrowest LoRa RBW the
+// chips offer (adjacent bins resolve crisply); an RBW >= the 150 kHz pitch would
+// close the gap but blur every peak across neighbouring bins.
 static const float SPEC_RBW_KHZ   = 62.5f;   // resolution bandwidth used for each bin read
 static const float SPEC_SPAN_MHZ  = 24.0f;   // total swept span (center ±12 MHz)
-static const float SPEC_FMIN_MHZ  = 137.0f;  // SX126x physical tuning floor (region-agnostic)
-static const float SPEC_FMAX_MHZ  = 1020.0f; // SX126x physical tuning ceiling
+// 150-960 is what BOTH in-tree drivers actually accept: SX1262::setFrequency
+// and LR1110::setFrequency each range-check exactly that (the old 137/1020
+// pair was the SX126x SILICON range, which the driver refuses anyway — bins
+// outside 150-960 silently kept the previous bin's tune and mis-attributed
+// its RSSI).
+static const float SPEC_FMIN_MHZ  = 150.0f;  // driver-enforced tuning floor (SX126x + LR11x0)
+static const float SPEC_FMAX_MHZ  = 960.0f;  // driver-enforced tuning ceiling
 static const int   SPEC_DBM_MIN   = -130;    // chart Y floor (dBm)
 static const int   SPEC_DBM_MAX   = -50;     // chart Y ceiling (dBm)
 static const int   SPEC_DWELL       = 6;     // RSSI reads per bin (peak-hold over the settle window)
@@ -22634,7 +22738,7 @@ static lv_chart_series_t* s_spec_ser      = nullptr;
 static lv_obj_t*          s_spec_wf       = nullptr;    // waterfall canvas
 static lv_color_t*        s_spec_wf_buf   = nullptr;    // PSRAM RGB565 backing buffer (SPEC_BINS x SPEC_WF_ROWS)
 static lv_obj_t*          s_spec_axis_lbl = nullptr;    // start/center/end MHz row
-static lv_obj_t*          s_spec_info_lbl = nullptr;    // "RBW … span … center … gain" readout
+static lv_obj_t*          s_spec_info_lbl = nullptr;    // "RBW … span" readout
 static lv_obj_t*          s_spec_peak_lbl = nullptr;    // live "peak −87 dBm @ 869.7" readout
 static lv_obj_t*          s_spec_scale_lbl = nullptr;   // vertical colour-scale: floor dBm (bottom)
 static lv_obj_t*          s_spec_scale_hi_lbl = nullptr;// vertical colour-scale: ceiling dBm (top)
@@ -22645,7 +22749,6 @@ static float              s_spec_step     = 0.0f;       // per-bin step (MHz)
 static int                s_spec_pos      = 0;          // next bin to sweep this pass
 static uint8_t            s_spec_sf       = 7;          // mesh SF/CR reused for the reads
 static uint8_t            s_spec_cr       = 5;
-static bool               s_spec_gain     = false;      // mesh rx_boosted_gain (for the readout)
 static int                s_spec_floor    = -120;       // smoothed noise-floor estimate (dBm) -> waterfall colour auto-scales to it
 static int                s_spec_ylo      = -130;       // dynamic trace Y range (dBm), tracks live min/max
 static int                s_spec_yhi      = -80;
@@ -22688,8 +22791,9 @@ static void spectrumUpdateFloor() {
 // Sweep a chunk of bins. Spread across several ticks so a full sweep doesn't block
 // the UI. Returns true when a full sweep just completed (caller paints a row).
 //
-// On SX126x boards (RADIO_CLASS defined) we drive the modem DIRECTLY — retune to the
-// bin, startReceive() to ARM RX, settle, then peak-hold several GET_RSSI_INST reads.
+// On boards with a raw RadioLib handle (RADIO_CLASS defined — SX126x family and the
+// M9's LR1110) we drive the modem DIRECTLY — retune to the bin, startReceive() to
+// ARM RX, settle, then peak-hold several GET_RSSI_INST reads.
 // This is the fix for the "dead trace": the wrapper path (setParams + recvRaw) left a
 // stale STATE_RX in the wrapper after the first retune, so recvRaw() never re-armed and
 // every later bin read a meaningless standby RSSI. Going direct also lets us peak-hold
@@ -22702,24 +22806,69 @@ static bool spectrumSweepChunk() {
 #if defined(RADIO_CLASS)
   for (int i = s_spec_pos; i < end; i++) {
     const float f = s_spec_start + (float)i * s_spec_step;
-    radio.setFrequency(f);                // retune (chip -> standby on the new freq)
+#if defined(HAS_THINKNODE_M9)
+    // LR1110: skipCalibration — LR1110::setFrequency(f) recalibrates image
+    // rejection whenever the retune jumps >= 20 MHz, which the 24 MHz wrap
+    // from band end back to band start does EVERY sweep, stalling the sweep
+    // for nothing. openSpectrumPage already ran one CalibImage over the whole
+    // swept span (begin()'s own calibration only reaches mesh_freq ±4 MHz), so
+    // every bin is inside a calibrated band without per-bin work.
+    // If the retune itself fails, skip the bin's reads (keep its previous
+    // value) rather than attributing the OLD frequency's RSSI to this bin.
+    if (radio.setFrequency(f, true) != RADIOLIB_ERR_NONE) continue;   // retune (chip stays in standby on the new freq)
+#else
+    // Same skip-on-failure as the LR1110 branch: a rejected retune must not
+    // attribute the old frequency's RSSI to this bin.
+    if (radio.setFrequency(f) != RADIOLIB_ERR_NONE) continue;   // retune (chip -> standby on the new freq)
+#endif
     radio.startReceive();                 // ARM RX — GET_RSSI_INST is only valid in RX
-    // The SX1262's instantaneous-RSSI register needs SEVERAL ms in RX to settle after
-    // arming: at ~1.5 ms it still reads the -127 dBm reset default, only by ~3-4 ms does
-    // it report the true channel power. So we settle, then peak-hold a handful of reads
-    // out to ~4 ms — the late (valid) reads dominate, the early -127s are discarded by
-    // the max(). A single short snapshot read here was the original "dead -127" bug.
+    // The modem's instantaneous-RSSI readout needs SEVERAL ms in RX to settle after
+    // arming (measured on the SX1262; the LR1110 behaves the same): at ~1.5 ms it
+    // still reads the reset default, only by ~3-4 ms does it report the true channel
+    // power. So we settle, then peak-hold a handful of reads out to ~4 ms — the late
+    // (valid) reads dominate, the early defaults are discarded by the max(). A single
+    // short snapshot read here was the original "dead -127" bug.
     delayMicroseconds(SPEC_SETTLE_US);
     int peak = -200;
     for (int k = 0; k < SPEC_DWELL; k++) {
+#if defined(HAS_THINKNODE_M9)
+      // LR11x0::getRSSI(false) is NOT the SX126x's cheap register read: it
+      // re-arms RX and drops to standby around EVERY call (startReceive +
+      // GetRssiInst + standby) — 6x per bin that both crawled the sweep
+      // (hundreds of extra chip commands + BUSY waits per chunk: the reported
+      // "spectrum refreshes poorly on M9") and, worse, sampled the unsettled
+      // post-arm default instead of live channel power, defeating the settle
+      // above. We hold RX ourselves through the dwell: skipReceive=true.
+      int r = (int)radio.getRSSI(false, true);
+#else
       int r = (int)radio.getRSSI(false);  // instantaneous channel RSSI (dBm)
-      if (r > peak) peak = r;
+#endif
+      // Both driver families return 0 dBm when the underlying RSSI read fails
+      // (an SPI/BUSY hiccup on this shared bus) — and 0 would win the peak-hold,
+      // paint a full-scale spike, and blow the auto-scaled Y range out for tens
+      // of sweeps (it only contracts SPEC_Y_DECAY dB per sweep). Real channel
+      // power can never plausibly reach -5 dBm at this RBW, so discard anything
+      // outside (-180, -5) instead of letting one glitch squash the trace.
+      if (r <= -5 && r >= -180 && r > peak) peak = r;
       delayMicroseconds(SPEC_READ_GAP_US);
     }
-    s_spec_rssi[i] = (int16_t)peak;
+#if defined(HAS_THINKNODE_M9)
+    // Park in STDBY_XOSC (raw mode byte 0x01), NOT the default standby(): the
+    // plain call selects STDBY_RC, which stops the TCXO on this board (it is
+    // powered from the chip's DIO3 rail), so the next bin's startReceive would
+    // re-pay the ~5 ms TCXO startup RadioLib programmed — roughly doubling the
+    // per-bin cost. XOSC standby keeps the TCXO running between bins (~5.5 ms
+    // per bin expected; re-verify with a micros() log on hardware). The raw
+    // byte is deliberate: this RadioLib defines RADIOLIB_LR11X0_STANDBY_XOSC
+    // with the SAME value as STANDBY_RC (both 0x00), so the named constant
+    // would silently select RC again. closeSpectrumPage's restore drops the
+    // chip back to a true STDBY_RC before handing it to the mesh.
+    radio.standby(0x01);
+#endif
+    if (peak > -200) s_spec_rssi[i] = (int16_t)peak;   // every read discarded -> keep the old bin
   }
 #else
-  // Non-SX126x fallback (e.g. the Tanmatsu LoRa bridge): wrapper single read.
+  // No raw radio handle (e.g. the Tanmatsu LoRa bridge): wrapper single read.
   uint8_t scratch[8];
   for (int i = s_spec_pos; i < end; i++) {
     const float f = s_spec_start + (float)i * s_spec_step;
@@ -22839,6 +22988,20 @@ static void spectrumTimerCb(lv_timer_t* t) {
 static void spectrumRestoreRadio() {
   if (!s_spectrum_active) return;     // idempotent — never restore/clear twice
   NodePrefs* p = the_mesh.getNodePrefs();
+#if defined(HAS_THINKNODE_M9)
+  // The sweep left the chip parked in STDBY_XOSC; drop to a true STDBY_RC first
+  // so the mesh gets the chip back in the standby mode RadioLib's own flow uses
+  // (and because CalibImage is only legal in RC standby). Then re-run image
+  // calibration over the mesh channel ±4 MHz — the exact band begin() had
+  // calibrated — so the mesh RX returns to its begin()-time image rejection
+  // instead of the sweep's span-wide compromise cal. setParams below normally
+  // stays under the driver's 20 MHz auto-recal trigger, so nothing else would
+  // restore it (a mesh channel within ~8 MHz of the 150/960 band edge clamps
+  // the span asymmetrically and CAN leave the last bin >20 MHz out — the
+  // auto-recal then fires redundantly before this explicit one; harmless).
+  radio.standby();
+  if (p) radio.calibrateImageRejection(p->freq - 4.0f, p->freq + 4.0f);
+#endif
   if (p) {
     radio_driver.setParams(p->freq, p->bw, p->sf, p->cr);
     radio_driver.setTxPower(p->tx_power_dbm);
@@ -23270,6 +23433,39 @@ static void openRemotePage() {
 
 static void openSpectrumPage() {
   closeSpectrumPage();
+#if defined(HAS_THINKNODE_M9)
+  // A mesh transmit may be ON AIR right now: sends are asynchronous (startSendRaw
+  // arms the chip and returns while the packet is still transmitting), and this
+  // callback runs right after the_mesh.loop() in the same task. Seizing the radio
+  // immediately would cut that packet off mid-air — lost packet plus a partial
+  // burst splattered across the channel. The mesh and UI share one task, so at
+  // this boundary the wrapper is in RX whenever no send is pending; if it is NOT,
+  // wait (bounded) for the transmit to finish before taking over. isSendComplete()
+  // consumes the TX-done event, so the dispatcher will later expire this packet as
+  // a timed-out send — a stats/log blemish, versus truncating it on the air (the
+  // packet double-counts: n_sent++ from the consumed TX-done plus the timeout
+  // path's logTxFail; that timeout's finishTransmit also blips the restored RX
+  // for one mesh-loop pass — all transient). The cap means a stuck flag can only
+  // delay the sweep, never hang it. Two accepted costs: this wait runs on the
+  // shared UI/mesh task, so LVGL and the keys freeze for its duration (~2.3 s at
+  // the shipping SF8/BW62.5 config, 6 s absolute cap) — tolerable because it only
+  // triggers while a packet is genuinely on air; and in the rare one-loop-pass
+  // window where a radio-error path left the wrapper IDLE (not RX, nothing
+  // pending), the wait burns the full cap for nothing — telling IDLE apart from
+  // TX-in-flight needs a wrapper accessor that doesn't exist yet; bounded and
+  // self-recovering, so tolerated. (The same truncation exists on every board,
+  // but only this port's dispatcher-recovery path has been re-validated, so the
+  // wait stays M9-only for now.)
+  if (!radio_driver.isInRecvMode()) {
+    uint32_t cap = radio_driver.getEstAirtimeFor(MAX_TRANS_UNIT) * 3 / 2;   // dispatcher's own worst-case send budget
+    if (cap > 6000) cap = 6000;
+    const uint32_t t0 = millis();
+    while (millis() - t0 < cap) {
+      if (radio_driver.isSendComplete() || radio_driver.isInRecvMode()) break;
+      delay(5);
+    }
+  }
+#endif
   // Park the buffered-receive drain task while this page drives the raw radio.
   // The acquire/release pair guarantees no drain is mid-flight when we take over.
   radio_driver.radioAcquire();
@@ -23284,11 +23480,10 @@ static void openSpectrumPage() {
   float center = pr ? pr->freq : 915.0f;
   s_spec_sf   = pr ? pr->sf : 7;
   s_spec_cr   = pr ? pr->cr : 5;
-  s_spec_gain = pr ? (pr->rx_boosted_gain != 0) : false;
   float span = SPEC_SPAN_MHZ;
   // Centre the sweep on the node's HOME frequency for ANY region (US915 / EU868 / 433 /
   // AU915 …) — never pin it to a US-ISM window, or non-US users would sweep an empty band
-  // that never includes their channel. Clamp only to the SX126x's physical tuning range.
+  // that never includes their channel. Clamp only to the radio's physical tuning range.
   float start = center - span * 0.5f;
   float stop  = center + span * 0.5f;
   if (start < SPEC_FMIN_MHZ) start = SPEC_FMIN_MHZ;
@@ -23305,6 +23500,19 @@ static void openSpectrumPage() {
   // Configure the modem ONCE for the scan: a narrow resolution bandwidth so adjacent
   // bins resolve, and boosted RX gain for sensitivity. The per-bin sweep then only
   // changes frequency, which keeps each bin fast. (Restored to mesh config on close.)
+  // Drop to standby FIRST: the chip is still in mesh RX at this point, and the
+  // datasheets describe these config commands as standby-mode commands. Whether the
+  // silicon actually rejects them from RX is unverified — but one SPI command is
+  // cheap hardening against the first sweep running on stale modem config.
+  radio.standby();
+#if defined(HAS_THINKNODE_M9)
+  // LR1110: image rejection is only calibrated where the chip was told to
+  // calibrate it — begin() covered mesh_freq ±4 MHz, NOT this ±12 MHz span. One
+  // CalibImage over the whole span (legal from the RC standby above, a few ms,
+  // once per open) makes every bin's skipCalibration retune within spec; the
+  // close path re-runs the mesh's own ±4 MHz calibration on the way out.
+  radio.calibrateImageRejection(start, stop);
+#endif
   radio.setBandwidth(SPEC_RBW_KHZ);
   radio.setRxBoostedGainMode(true);
 #endif
@@ -23317,6 +23525,12 @@ static void openSpectrumPage() {
   lv_obj_set_style_bg_opa(s_spec_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_spec_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_spec_root, spectrumDismissCb, LV_EVENT_CLICKED, nullptr);
+  // Keyboard/d-pad nav (M9, T-Deck, Tanmatsu): nothing on this page is actionable — the
+  // chart and the waterfall's scale box are plain containers, so the nav collector was
+  // highlighting them for no reason. Skip the whole subtree (same as the lock screen):
+  // the focus group stays empty and the only way out is Back (hardware key / bar chevron /
+  // Esc — all routed through the page ladder, none of which needs focus).
+  lv_obj_add_flag(s_spec_root, NAV_SKIP_FLAG);
 
   // Settings-subpage chrome: the GLOBAL status bar goes tall and shows "‹ Spectrum"
   // (tap the bar = Back). Content insets below the bar's lower row — no second header.
@@ -23439,9 +23653,11 @@ static void openSpectrumPage() {
   lv_obj_set_style_text_color(s_spec_axis_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(s_spec_axis_lbl, chart_x, wf_y + wf_disp_h + 3);
 
-  // Each bin needs ~4 ms (the SX1262 RSSI settle), so SPEC_CHUNK=5 caps the per-tick
-  // radio work at ~20 ms (smooth UI blocks); a 28 ms tick keeps ~30% idle for LVGL.
-  // A full 160-bin sweep takes ~32 ticks (~0.9 s) -> a fresh waterfall row ~every 0.9 s.
+  // Each bin costs ~5.5 ms (1.5 ms settle + ~2.4 ms of peak-hold reads + retune/RX
+  // command overhead), so SPEC_CHUNK=8 blocks the UI ~44 ms per tick; the 8 ms timer
+  // makes the ticks run essentially back-to-back, so a full 160-bin sweep is 20
+  // ticks ≈ ~1 s and the quarter-sweep waterfall rows land ~every 250 ms. (Numbers
+  // assume the between-bin XOSC standby holds the TCXO up — re-time on hardware.)
   s_spec_timer = lv_timer_create(spectrumTimerCb, 8, nullptr);    // ticks back-to-back with the sweep chunks; waterfall + trace repaint every quarter sweep (~250 ms)
   lv_obj_move_foreground(s_spec_root);
   lv_obj_move_foreground(g_statusbar.root);   // keep the tall title bar above this page
@@ -25426,6 +25642,16 @@ static uint8_t  s_map_zoom       = k_map_zoom_default;
 static bool     s_map_view_inited = false;  // first map open did the recenter+zoom-snap; after that, remember the user's view (issue #5)
 static bool       s_map_follow     = false; // auto-follow: recenter on self whenever the GPS coords change
 static lv_obj_t*  s_map_follow_btn = nullptr;
+#if defined(HAS_M9_KEYBOARD)
+// Map pan mode (M9): the Map key on the Map tab toggles it — arrows then pan
+// via mapNudge, Map/Back exits. Lives here with the map state because
+// mapAutoFollowTick must pause while it's active: auto-follow compares the GPS
+// fix against the MAP CENTER, so the pan itself creates the delta and follow
+// snapped the view back within one 250 ms tick of every nudge — no GPS
+// movement needed. Follow (if on) resumes, by design, the moment pan exits.
+static bool s_m9_map_pan = false;
+static bool s_m9_pan_gap_hinted = false;   // one "Wi-Fi off" hint per pan session
+#endif
 // Map zoom control style: false = slider (default, toggled by the on-map button),
 // true = a +/- button pair (issue #26). Loaded from prefs at boot; toggled in the
 // Map options popup. mapZoomControlsApply() positions/shows the right controls.
@@ -26046,7 +26272,7 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_ota_state = 2;   // success -> the UI poll timer reboots into the new slot
 }
 
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
 // Stream the app-only bin for the active update channel onto the SD card
 // (/BINS/wadamesh-beta_<N>-<stable|beta>.bin) so the Launcher can flash it —
 // the no-A/B-slot counterpart to otaWorkerRun above. Same immutable versioned
@@ -26307,7 +26533,7 @@ static void tileFetchTaskFn(void* arg) {
       otaWorkerRun(client, http);
       continue;
     }
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
     // SD firmware download for Launcher installs (user-initiated from About).
     if (s_sdfw_request) {
       s_sdfw_request = false;
@@ -26412,6 +26638,14 @@ static void tileFetchTaskFn(void* arg) {
         vf.close();
         if (mr == 3 && m[0] == 0xFF && m[1] == 0xD8 && m[2] == 0xFF) {
           ++s_tile_fetch_ok;                         // already on disk + valid -> skip the re-download
+#if defined(HAS_THINKNODE_M9)
+          // A visible tile gets queued when its READ was transiently blocked
+          // (SD fail-note window, PSRAM pressure) even though it's on disk.
+          // Skipping WITHOUT arming the repaint left it blank until the next
+          // manual pan ("one pan behind"). Visible-zoom only, so draining a
+          // zoom-pack backlog doesn't fire spurious re-renders.
+          if (req.z == s_map_zoom) s_tile_fetch_dirty = true;
+#endif
           tileFetchPendingDec();
           continue;
         }
@@ -27446,9 +27680,11 @@ static void renderMapTiles() {
   } else
 #endif
   if (!s_tiles_fs_ready) {
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     // Pager included: under the launcher there's no "tiles" partition, so point the user at the
     // microSD fallback rather than the (launcher-wrong) "reflash the tiles partition" advice.
+    // M9 included: its cache PREFERS the built-in 16 GB microSD (every unit ships with one), so
+    // this state almost always means the card didn't mount — reflash advice would be the wrong fix.
     if (SD.cardType() != CARD_NONE)
       lv_label_set_text(s_map_status_lbl,
           TR("Map storage error.\n\nSD card detected but the\ntile cache didn't mount.\nReboot to retry."));
@@ -27571,11 +27807,11 @@ static bool       s_map_show_links = true;
 static lv_obj_t*  s_map_link_objs[k_map_links_max] = {};
 static lv_point_t s_map_link_pts[k_map_links_max][2];
 
-// Per-element visibility of the map's on-screen text/markers (persisted; all
-// default shown). Coords = bottom-left read-out, TileXYZ = the zoom + tile path
-// line, Contacts = the contact markers.
+// Per-element visibility of the map's on-screen text/markers (persisted; coords +
+// contacts default shown, the tile line default hidden since prefs v50). Coords =
+// bottom-left read-out, TileXYZ = the zoom + tile path line, Contacts = the contact markers.
 static bool s_map_show_coords    = true;
-static bool s_map_show_tilexyz   = true;
+static bool s_map_show_tilexyz   = false;
 static bool s_map_show_contacts  = true;
 static bool s_map_tile_debug     = false;  // developer: tile-pipeline diagnostic overlay on the zoom line (off by default)
 static bool s_map_direct_only    = false;  // when true, only 0-hop (directly-heard) contacts appear
@@ -29179,13 +29415,14 @@ static void mapCanvasEventCb(lv_event_t* e) {
   refreshMapInfoLabel();
 }
 
-#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
-// Keyboard pan (Ctrl+Arrow on Tanmatsu / WAXD on the pager, both on the Map
-// tab). Mirrors the drag-release math in mapCanvasEventCb: synthesize a pixel
-// delta of ~1/4 the visible span in the arrow direction, convert it through
-// the same world-px ↔ lat/lon helpers (so the lon step automatically scales
-// with the current zoom's degrees-per-pixel) and re-render. dir: 0=up(north,
-// +lat) 1=down(south,−lat) 2=left(west,−lon) 3=right(east,+lon).
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+// Keyboard pan (Ctrl+Arrow on Tanmatsu / WAXD on the pager / the M9's Map-key
+// pan mode, all on the Map tab). Mirrors the drag-release math in
+// mapCanvasEventCb: synthesize a pixel delta of ~1/4 the visible span in the
+// arrow direction, convert it through the same world-px ↔ lat/lon helpers (so
+// the lon step automatically scales with the current zoom's degrees-per-pixel)
+// and re-render. dir: 0=up(north, +lat) 1=down(south,−lat) 2=left(west,−lon)
+// 3=right(east,+lon).
 static void mapNudge(int dir) {
   if (!s_map_canvas) return;
   // No center yet (no GPS / location) → nothing to pan around.
@@ -29202,13 +29439,16 @@ static void mapNudge(int dir) {
     default: return;
   }
   worldPxToLatLon(cwx, cwy, s_map_zoom, &s_map_center_lat, &s_map_center_lon);
-  // Match the touch-drag: it does NOT clear s_map_follow, so neither do we
-  // (mapAutoFollowTick re-centers on the next GPS move regardless).
+  // Match the touch-drag: it does NOT clear s_map_follow. NB auto-follow
+  // recenters on the CENTER-vs-fix delta — the pan itself trips it, no GPS
+  // movement needed — so mapAutoFollowTick pauses while the M9's pan mode is
+  // active (s_m9_map_pan); on touch boards a drag away simply snaps back on
+  // the next 250 ms tick while follow is on, which is that button's contract.
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
 }
-#endif  // HAS_TANMATSU || TLORA_PAGER (mapNudge)
+#endif  // HAS_TANMATSU || TLORA_PAGER || HAS_THINKNODE_M9 (mapNudge)
 
 // ----- Zoom + recenter -----
 //
@@ -29361,6 +29601,9 @@ static void mapRecenterCb(lv_event_t* e) {
 // moves meaningfully (or the view was panned away). Called from the map tick.
 static void mapAutoFollowTick() {
   if (!s_map_follow || !g_lv.task) return;
+#if defined(HAS_M9_KEYBOARD)
+  if (s_m9_map_pan) return;   // Map-key pan mode owns the center; follow resumes when pan exits
+#endif
   const double lat = g_lv.task->getNodeLat();
   const double lon = g_lv.task->getNodeLon();
   if (lat == 0.0 && lon == 0.0) return;                 // no fix yet
@@ -30669,7 +30912,7 @@ static void settingsCatBuild(int cat) {
           lv_obj_set_style_text_color(beta_note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
         }
 
-#if defined(HAS_TDECK_GT911) && CAP_OTA
+#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && CAP_OTA
         // "Save update bin to SD" — the Launcher-install update path: downloads
         // the app-only bin for the active channel into /BINS/ on the SD card,
         // named wadamesh-beta_<N>-<stable|beta>.bin, ready for the Launcher to
@@ -30748,7 +30991,7 @@ static void closeSettingsCategory() {
   hideKb();
   if (s_settings_open_cat == CAT_ABOUT) {   // null the live-label ptrs (freed with the sheet)
     s_sysinfo_lbl = nullptr; s_sysinfo_rest_lbl = nullptr; s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
-#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
     s_sdfw_status_lbl = nullptr;
 #endif
     s_ota_btn = nullptr; s_ota_btn_lbl = nullptr;
@@ -35640,7 +35883,7 @@ static void updatePagerEncoder(unsigned long now) {
 // Defined OUTSIDE HAS_TDECK_KEYBOARD so the ungated gesture handlers can use it.
 static bool drawerPopupOpen() {
   return s_siginfo_root || s_spec_root || s_mentions_root || s_power_menu || s_ct_sort_sheet || s_ctd_overlay || settingsModalIsOpen()
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
          || s_fullscreen_view
 #endif
          ;
@@ -35675,6 +35918,18 @@ static bool isDismissKey(int key) {
     case 'p': case 'P':
     case 'q': case 'Q':
     case 'a': case 'A':
+      return true;
+    default: return false;
+  }
+#elif defined(HAS_M9_KEYBOARD)
+  // The dedicated Back/Home function keys must always stay with the firmware —
+  // a Lua app may never swallow its own exit (see the forward in handleHwKey),
+  // and this board has no touchscreen fallback to tap its way out with. They
+  // are sentinel bytes the keyboard controller reserves, never typed text, so
+  // there is no typing conflict.
+  switch (key) {
+    case M9_KEY_HW_BACK:
+    case M9_KEY_HOME:
       return true;
     default: return false;
   }
@@ -36949,6 +37204,9 @@ static void serviceLockingCountdown(unsigned long now) {
 // handled HERE, in their own function, called before that swallow — not
 // wedged into T-Deck's CAP_TRACKBALL chain as an #elif. Returns true if the
 // key was consumed.
+// (s_m9_map_pan — the Map-key pan-mode flag — is declared with the map state,
+// next to s_map_follow: mapAutoFollowTick pauses while it's set.)
+
 static bool m9HandleNavKey(int key) {
   if (!s_kbd_nav) return false;
   switch (key) {
@@ -36965,30 +37223,133 @@ static bool m9HandleNavKey(int key) {
       if (foc && lv_obj_is_valid(foc)) lv_event_send(foc, LV_EVENT_LONG_PRESSED, nullptr);
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     }
+    case M9_KEY_HW_BACK:
+      // Restored after 0ea242c accidentally replaced this case with ENTER_LONG
+      // (the board's only Back). Ladder mirrors pagerNavGoBack(): innermost
+      // thing open closes first. An open dropdown LIST must take ESC before the
+      // registry, or Back would close the enclosing modal instead of the list.
+      // s_ct_select_mode is a flags=0 registry row (a MODE, not "a popup is
+      // open"), so anyPopupOpen() alone would never let Back leave it.
+      if (s_setup_root) return true;   // wizard: nothing to back out of
+      // Pan is only the innermost "thing open" while the bare map is frontmost.
+      // A popup stacked over it (CTRL) or a tab jump that missed a clear makes
+      // the flag stale — drop it silently so THIS press acts on what the user
+      // sees, instead of a "Map pan off" toast reading as a dead Back key.
+      if (s_m9_map_pan && (getActiveTab() != MAP_TAB_INDEX || anyPopupOpen()))
+        s_m9_map_pan = false;
+      if (s_m9_map_pan) {              // pan mode is the innermost "thing open" on the map
+        s_m9_map_pan = false;
+        if (g_lv.task) g_lv.task->showAlert(TR("Map pan off"), 900);
+      }
+      else if (navOpenDropdown())                    navPushTap(LV_KEY_ESC);
+      // CTRL stacks the Control Center (and its power menu) over ANY popup,
+      // but both sit near the BOTTOM of the popup registry — the generic
+      // dismiss would close whatever popup is buried BENEATH them (a Files
+      // rename prompt, typed name and all) while the screen looks unchanged.
+      // They are always frontmost when open: close them explicitly, power
+      // menu first (it opens over the CC).
+      else if (s_power_menu)                         closePowerMenu();
+      else if (s_cc_root)                            closeControlCenter();
+      // An open app page covers everything EXCEPT the CC / power menu (peeled
+      // above) and a confirm modal — the Lua send-permission ask is raised
+      // OVER the requesting app's page, and closing the page under the
+      // question would orphan it. The app drawer the page was launched from
+      // stays open BENEATH it by design — the generic registry dismiss used
+      // to eat that invisible drawer first, so Back looked dead inside every
+      // app (reported bug). Close the page itself; the drawer is then the
+      // next, visible Back target.
+      else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
+      else if (anyPopupOpen() || s_ct_select_mode)   hwKeyDismissTopPopup();
+      else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+      else                                           navPushTap(LV_KEY_ESC);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_GPS_LONG:
+      // The controller's own long-press of SUB_MAP (0x84), labeled "GPS
+      // toggle" in Elecrow's keyboard firmware — mirror the CC GPS chip.
+      if (s_setup_root) return true;
+      if (g_lv.task) {
+        g_lv.task->toggleGPS();
+        g_lv.task->showAlert(g_lv.task->getGPSState() ? TR("GPS on") : TR("GPS off"), 800);
+      }
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_CTRL:
+      // The controller latches ONE key and resolves layers itself, so CTRL can
+      // never chord — bind the standalone press to the Control Center, a
+      // one-press quick-settings key matching its label.
+      if (s_setup_root) return true;
+      // The CC must never stack OVER the power menu: Back's ladder peels
+      // power first and would close it invisibly beneath the CC (the reverse
+      // stacking is fine — openPowerMenu() closes the CC itself).
+      if (s_power_menu) closePowerMenu();
+      openControlCenter();
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_HOME:
       if (s_setup_root) return true;
+      if (s_apppage_close) {
+        // A full-screen app page (Lua app, Snake, Web…) isn't a popup-registry
+        // row — close it and stop: one action per press, so HOME on the Home
+        // tab doesn't also toggle the drawer underneath the closing page.
+        // CTRL can stack the CC / power menu over the page, and the Lua
+        // send-permission confirm opens over its requesting app — peel the
+        // frontmost layer instead of yanking the page out from under it.
+        if      (s_power_menu)    closePowerMenu();
+        else if (s_cc_root)       closeControlCenter();
+        else if (s_confirm_modal) confirmDismiss();
+        else                      s_apppage_close();
+        s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+      }
       if (getActiveTab() == HOME_TAB_INDEX) {
         const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything
         for (int i = 0; i < 8 && anyPopupOpen(); i++) hwKeyDismissTopPopup();   // still closes anything else on top (registry untouched, Back/etc. keep working)
         setHomeDrawer(!was_open);                            // decide from the snapshot, not the now-mutated flag
       } else {
+        s_m9_map_pan = false;   // leaving the Map: pan must not outlive the tab (a stale flag ate the next Back press)
         navGoToMainTab(HOME_TAB_INDEX);
       }
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_LEFT_MESSAGE:
       if (s_setup_root) return true;
+      s_m9_map_pan = false;   // leaving the Map: same stale-pan clear as HOME
+      if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
       navGoToMainTab(CHAT_INBOX_TAB_INDEX);
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_SUB_MESSAGE:
       if (s_setup_root) return true;
+      s_m9_map_pan = false;   // the overlay covers the map: arrows must drive the list, not pan under it
+      // NOTHING may stay open beneath the overlay — mentions sits near the
+      // bottom of the popup registry, so any row left open (CC, a Files
+      // rename prompt, …) becomes Back's silent (invisible) next target.
+      // Same bounded loop as HOME; a null-close progress row stops the walk
+      // (blocker semantics), in which case don't stack the overlay either.
+      for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+      if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
+      if (s_apppage_close) s_apppage_close();
       openMentionsScreen();
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_MAP:
       if (s_setup_root) return true;
-      navGoToMainTab(MAP_TAB_INDEX);
+      if (getActiveTab() == MAP_TAB_INDEX && !anyPopupOpen() && !s_apppage_close) {
+        // Already on the map: toggle pan mode (arrows pan, Map/Back exits).
+        s_m9_map_pan = !s_m9_map_pan;
+        s_m9_pan_gap_hinted = false;   // fresh session: the Wi-Fi-off gap hint may fire once
+        if (g_lv.task) g_lv.task->showAlert(s_m9_map_pan ? TR("Map pan: arrows pan, Back exits")
+                                                         : TR("Map pan off"), 1200);
+      } else {
+        s_m9_map_pan = false;   // fresh entry always starts in nav mode
+        if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
+        navGoToMainTab(MAP_TAB_INDEX);
+      }
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_SUB_MAP:
       if (s_setup_root) return true;
+      s_m9_map_pan = false;   // the page covers the map: same stale-pan clear as SUB_MESSAGE
+      // Same full dismiss as SUB_MESSAGE: nothing may stay open beneath.
+      for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+      if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
+      // Close an open app page first — openAdvertPage() takes the single
+      // s_apppage_close slot, so opening OVER a Lua app would steal its only
+      // key-exit and strand the app unreachable behind the advert page.
+      if (s_apppage_close) s_apppage_close();
       openAdvertPage();
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     default: return false;
@@ -36999,23 +37360,94 @@ static bool m9HandleNavKey(int key) {
 #if defined(HAS_M9_KEYBOARD)
 static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
   if (!s_kbd_nav) return false;
+  // An open dropdown LIST owns the arrows (mirrors Tanmatsu's navPump capture):
+  // navMoveDir would move group focus off the dropdown, which closes the list —
+  // the "UP/DOWN closes the dropdown instead of moving its highlight" bug. The
+  // FIFO'd LV_KEY_UP/DOWN reach the focused dropdown's own LV_EVENT_KEY handler,
+  // which moves the highlighted option.
+  if (navOpenDropdown()) {
+    switch (key) {
+      case M9_KEY_UP:   navPushTap(LV_KEY_UP);   break;
+      case M9_KEY_DOWN: navPushTap(LV_KEY_DOWN); break;
+      case M9_KEY_LEFT: case M9_KEY_RIGHT:       break;   // swallow — the list is vertical-only
+      default: return false;
+    }
+    s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+    return true;
+  }
+  // Map pan mode (toggled by the Map key on the Map tab): arrows pan the map
+  // instead of moving focus. Self-clears if the user somehow left the tab or
+  // a popup got stacked over the map (CTRL's Control Center opens without
+  // changing the active tab) — the arrows must drive what's frontmost, not
+  // nudge the map buried beneath it.
+  if (s_m9_map_pan) {
+    if (getActiveTab() != MAP_TAB_INDEX || ta || anyPopupOpen()) {
+      s_m9_map_pan = false;
+    } else {
+      switch (key) {
+        case M9_KEY_UP:    mapNudge(0); break;
+        case M9_KEY_DOWN:  mapNudge(1); break;
+        case M9_KEY_LEFT:  mapNudge(2); break;
+        case M9_KEY_RIGHT: mapNudge(3); break;
+        default: return false;
+      }
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      // Panned into an area with no cached tiles while offline: the fetch
+      // queue silently no-ops without Wi-Fi, so the leading edge stays blank
+      // with only the small corner label saying why. Say it once per session.
+      if (!s_m9_pan_gap_hinted && s_map_last_missing > 0 && WiFi.status() != WL_CONNECTED) {
+        s_m9_pan_gap_hinted = true;
+        if (g_lv.task) g_lv.task->showAlert(TR("Wi-Fi off — new map areas can't download"), 1600);
+      }
+#endif
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    }
+  }
   switch (key) {
-    case M9_KEY_UP:
+    case M9_KEY_UP: {
+      lv_obj_t* const was = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
       navMoveDir(NAV_UP);
+      // Focus had nowhere to go: page-scroll instead. A display-only Lua app
+      // scrolls its own body (RF Monitor's feed); everything else falls to
+      // navScrollFocused — nearest scrollable ancestor, else the biggest
+      // scrollable on screen — which is what makes sparse pages with few or
+      // NO focusable rows (the Signal info popup's stats) scrollable at all
+      // on a board with no touch to drag them.
+      if (s_nav_group && lv_group_get_focused(s_nav_group) == was) {
+        if (!(luaAppIsOpen() && luaAppScroll(true))) navScrollFocused(true);
+      }
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
       return true;
-    case M9_KEY_DOWN:
+    }
+    case M9_KEY_DOWN: {
+      lv_obj_t* const was = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
       navMoveDir(NAV_DOWN);
+      if (s_nav_group && lv_group_get_focused(s_nav_group) == was) {
+        if (!(luaAppIsOpen() && luaAppScroll(false))) navScrollFocused(false);
+      }
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
       return true;
+    }
     case M9_KEY_LEFT:
-      if (ta)                 lv_textarea_cursor_left(ta);
+      if (ta) {
+        // Caret already at the start: fall through to focus-move so arrows
+        // always eventually LEAVE the field (a silent boundary no-op read as
+        // "textareas need 3-4 presses to move off").
+        const uint32_t p = lv_textarea_get_cursor_pos(ta);
+        lv_textarea_cursor_left(ta);
+        if (lv_textarea_get_cursor_pos(ta) == p) navMoveDir(NAV_LEFT);
+      }
       else if (navOnTabBar()) navSwitchTab(-1);
       else                    navMoveDir(NAV_LEFT);
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
       return true;
     case M9_KEY_RIGHT:
-      if (ta)                 lv_textarea_cursor_right(ta);
+      if (ta) {
+        const uint32_t p = lv_textarea_get_cursor_pos(ta);
+        lv_textarea_cursor_right(ta);
+        if (lv_textarea_get_cursor_pos(ta) == p) navMoveDir(NAV_RIGHT);   // caret at end — same as LEFT
+      }
       else if (navOnTabBar()) navSwitchTab(+1);
       else                    navMoveDir(NAV_RIGHT);
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
@@ -37036,7 +37468,39 @@ static void handleHwKey(int key) {
   //
   // The dismiss key is deliberately NOT forwarded: an app must never be able to
   // trap the user by swallowing its own exit, whether by bug or by design.
-  if (luaAppIsOpen() && !isDismissKey(key)) {
+  if (luaAppIsOpen() && !isDismissKey(key)
+#if defined(HAS_M9_KEYBOARD)
+      // Locked or dark: the lock/wake handlers below must see the key — else
+      // ENTER_LONG (this board's only unlock) is eaten by the app and the
+      // device can never be unlocked again without the power slider.
+      && !(g_lv.task && (g_lv.task->isManualLock() || g_lv.task->isScreenOff()))
+      // A confirm modal (the Lua send-permission ask) is a question for the
+      // USER: arrows/Enter must reach its Allow/Deny buttons, not the app
+      // that raised it — forwarded keys would make the dialog unanswerable
+      // on a board with no touch to tap it.
+      && !s_confirm_modal
+      // Display-only apps (no on_input — Airtime, RF Monitor): forward nothing;
+      // the d-pad keeps its native meaning so it can focus the page's own
+      // buttons (Airtime's Reset), click them with Enter, and page-scroll the
+      // body (m9HandleArrowKey's luaAppScroll fallback). luaAppKey would
+      // otherwise eat every key into a callback that doesn't exist.
+      && luaAppHasOnInput()
+#endif
+     ) {
+#if defined(HAS_M9_KEYBOARD)
+    // The M9 d-pad emits raw sentinel bytes no app understands (sendKey maps
+    // only LV_KEY_*/printables) — feed them through the same steer/press
+    // channel the T-Deck trackball uses, so store apps (Snake, 2048, …) are
+    // playable here: arrows -> swipe, d-pad centre -> also a synthetic tap
+    // (store apps' "tap to start / retry" listens for type=="down").
+    switch (key) {
+      case M9_KEY_UP:    luaAppSteer(0, -1); if (g_lv.task) g_lv.task->noteUserInput(); return;
+      case M9_KEY_DOWN:  luaAppSteer(0,  1); if (g_lv.task) g_lv.task->noteUserInput(); return;
+      case M9_KEY_LEFT:  luaAppSteer(-1, 0); if (g_lv.task) g_lv.task->noteUserInput(); return;
+      case M9_KEY_RIGHT: luaAppSteer(1,  0); if (g_lv.task) g_lv.task->noteUserInput(); return;
+      case M9_KEY_ENTER: luaAppPress(); break;   // then also delivered as ev.key=="enter" below
+    }
+#endif
     if (luaAppKey(key)) {
       if (g_lv.task) g_lv.task->noteUserInput();
       return;
@@ -37348,6 +37812,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     s_nav_ta_editing = false;
     s_nav_show = true;
     accentBoxHide();
+    mentionBoxHide();   // leaving edit mode tears down BOTH typing popups, like Enter does
     if (g_lv.task) g_lv.task->noteUserInput();
     return;
   }
@@ -37403,7 +37868,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // goes through hideKb(); this covers the physical-keyboard Enter.
     accentBoxHide();
     mentionBoxHide();
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
     if (s_editor_ta && ta == s_editor_ta) {
       lv_textarea_add_char(ta, '\n');   // multiline editor: Enter inserts a newline
     } else if (s_term_input_ta && s_kb_bind_ta == s_term_input_ta) {
@@ -37639,7 +38104,18 @@ static const char* wifiStaStatusBrief(int s) {
       return "off";
     case WL_NO_SSID_AVAIL: return "AP not found";
     case WL_SCAN_COMPLETED: return "scan done";
-    case WL_CONNECT_FAILED: return "auth failed";
+    case WL_CONNECT_FAILED: {
+      // Append the esp_wifi disconnect reason — "auth failed" alone covers
+      // wrong password (r15, 4-way handshake timeout), WPA3-only/H2E SAE
+      // failures (r2/r202), and AP-side rejection alike.
+      extern volatile uint8_t g_wifi_last_disc_reason;   // main.cpp
+      static char s_auth_fail[24];
+      if (g_wifi_last_disc_reason) {
+        snprintf(s_auth_fail, sizeof s_auth_fail, "auth failed (r%u)", (unsigned)g_wifi_last_disc_reason);
+        return s_auth_fail;
+      }
+      return "auth failed";
+    }
     case WL_CONNECTION_LOST: return "link lost";
     case WL_DISCONNECTED: return "disconnected";
     default: return "connecting…";
@@ -37968,6 +38444,7 @@ static void powerRebootCb(lv_event_t* e) {
   g_lv.task->showAlert(TR("Rebooting\xE2\x80\xA6"), 600);
   g_lv.task->rebootDevice();   // flushes chat history, then reboots
 }
+#if !defined(HAS_THINKNODE_M9)   // M9 has no Power-off row (no wake-capable button — see openPowerMenu)
 static void powerOffCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
@@ -37978,12 +38455,35 @@ static void powerOffCb(lv_event_t* e) {
     g_lv.task->persistHistoryNow();        // flush chat before we go down
     discoveredFlushNow();                  // and the Discovered ring
     the_mesh.flushContactsIfDirty();       // and any coalesced contacts refresh
+    the_mesh.persistSyncHistoryNow();      // and the app-sync replay ring (RAM is lost in deep sleep)
     touchPrefsFlush();                     // and all queued A/B preference snapshots
+#if defined(HELTEC_LORA_V4_R8)
+    g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
+#else
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 click trackball to wake"), 1500);
+#endif
   }
   // Let the toast paint, then enter deep sleep.
   lv_refr_now(NULL);
   delay(900);
+#if defined(HELTEC_LORA_V4_R8)
+  // Park everything before sleeping — without this the SX1262 stayed in RX
+  // with the FEM enabled (pure drain, no wake purpose: all wake sources are
+  // cleared below except the button) and the non-RTC rail pins (VEXT=40,
+  // GPS_EN=42, backlight=44) lost their driven levels and floated.
+  radio_driver.powerOff();
+  board.loRaFEMControl.setSleepModeEnable();
+  pinMode(PIN_TFT_LEDA_CTL, OUTPUT);              // re-route from LEDC ch6 back to plain GPIO
+  digitalWrite(PIN_TFT_LEDA_CTL, LOW);            // backlight off
+  pinMode(PIN_GPS_EN, OUTPUT);
+  digitalWrite(PIN_GPS_EN, HIGH);                 // inactive (PIN_GPS_EN_ACTIVE=LOW)
+  pinMode(PIN_VEXT_EN, OUTPUT);
+  digitalWrite(PIN_VEXT_EN, HIGH);                // inactive (active LOW) — VEXT rail off
+  gpio_hold_en((gpio_num_t)PIN_VEXT_EN);          // non-RTC pads: hold levels through deep sleep
+  gpio_hold_en((gpio_num_t)PIN_GPS_EN);
+  gpio_hold_en((gpio_num_t)PIN_TFT_LEDA_CTL);
+  gpio_deep_sleep_hold_en();                      // released in HeltecV4Board::begin on wake
+#endif
 #if defined(PIN_USER_BTN)
   const gpio_num_t wake = (gpio_num_t)PIN_USER_BTN;   // GPIO0, trackball click, active-low
   // CRITICAL: the trackball button is held HIGH by a pull-up while idle and
@@ -38002,6 +38502,7 @@ static void powerOffCb(lv_event_t* e) {
   esp_deep_sleep_start();   // never returns; a press wakes via full reboot
 #endif
 }
+#endif  // !HAS_THINKNODE_M9 (powerOffCb)
 
 #if defined(ESP32)
 #if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
@@ -38029,6 +38530,7 @@ static void powerDownloadCb(lv_event_t* e) {
   if (g_lv.task) {
     g_lv.task->persistHistoryNow();   // flush chat before we go down
     discoveredFlushNow();             // and the Discovered ring
+    the_mesh.persistSyncHistoryNow(); // and the app-sync replay ring
     touchPrefsFlush();                 // and all queued A/B preference snapshots
     g_lv.task->showAlert(TR("Download mode\xE2\x80\xA6 reflash over USB"), 1500);
   }
@@ -38058,6 +38560,10 @@ static void openPowerMenu() {
   const int p_bh = 52, p_y0 = 46, p_step = 60, card_h = p_y0 + 4 * p_step + 8;   // bigger on the 800×480 panel
 #elif defined(HAS_RAK_TAP_V2)
   // ROM force-download leaves a COM that esptool cannot open on HW CDC — hide the entry.
+  const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
+  const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
+#elif defined(HAS_THINKNODE_M9)
+  // Power-off row hidden (see below) — 3 rows: Reboot / Download / Cancel.
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
   const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
 #else
@@ -38097,13 +38603,22 @@ static void openPowerMenu() {
     lv_obj_center(l);
     return b;
   };
-  mk(TR(LV_SYMBOL_POWER "  Power off"),        powerOffCb,      0xC44B55, p_y0);
-  mk(TR(LV_SYMBOL_REFRESH "  Reboot"),         powerRebootCb,   0,        p_y0 + p_step);
-#if !defined(HAS_RAK_TAP_V2)
-  mk(TR(LV_SYMBOL_DOWNLOAD "  Download mode"), powerDownloadCb, 0,        p_y0 + 2 * p_step);
-  mk(TR("Cancel"), powerCancelCb, 0, p_y0 + 3 * p_step);
+#if defined(HAS_THINKNODE_M9)
+  // No "Power off" here: deep sleep would arm ext0 wake on a user button this
+  // board doesn't have (only a power-cut slider and reset, neither a wakeable
+  // GPIO) — an off state recoverable only by cycling the slider. The slider IS
+  // the power-off. Remaining rows shift up one slot.
+  const int p_y = p_y0;
 #else
-  mk(TR("Cancel"), powerCancelCb, 0, p_y0 + 2 * p_step);
+  mk(TR(LV_SYMBOL_POWER "  Power off"),        powerOffCb,      0xC44B55, p_y0);
+  const int p_y = p_y0 + p_step;
+#endif
+  mk(TR(LV_SYMBOL_REFRESH "  Reboot"),         powerRebootCb,   0,        p_y);
+#if !defined(HAS_RAK_TAP_V2)
+  mk(TR(LV_SYMBOL_DOWNLOAD "  Download mode"), powerDownloadCb, 0,        p_y + p_step);
+  mk(TR("Cancel"), powerCancelCb, 0, p_y + 2 * p_step);
+#else
+  mk(TR("Cancel"), powerCancelCb, 0, p_y + p_step);
 #endif
 }
 
@@ -41592,7 +42107,7 @@ static void updateGlobalStatusBar() {
   {
     int htab = (g_lv.tabview) ? (int)lv_tabview_get_tab_act(g_lv.tabview) : -1;
     bool home_zone = (s_settings_open_cat < 0) && !s_apppage_title && (s_chat_title[0] == '\0') && (htab == HOME_TAB_INDEX);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
     if (s_fullscreen_view && s_fullscreen_title[0]) home_zone = false;
 #endif
     if (!home_zone && s_left_home_cfg) {
@@ -41667,7 +42182,7 @@ static void updateGlobalStatusBar() {
       lv_label_set_text(g_statusbar.left_label, s_chat_title);
     }
   } else
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   if (s_fullscreen_view && s_fullscreen_title[0]) {
     // A fullscreen tool view (Terminal / Files) borrows the left zone for its
     // title, so it can drop its own header row and use the full height.
@@ -43943,6 +44458,15 @@ static void buildUiTree() {
   }
 
   lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
+#if defined(HAS_THINKNODE_M9)
+  // No tab bar on this board (TABBAR_H == 0, see its definition): hide the zero-height
+  // btnmatrix outright so it can never paint, hit-test, or take focus — and build NONE of
+  // the bar chrome below (surface styling, Home re-tap / swipe-up gestures, key hints, the
+  // tab font, the accent "glow" indicator). The M9 switches screens with its dedicated
+  // HOME/MESSAGE/MAP keys and the app drawer; a bottom highlight over content was the only
+  // visible leftover of the bar once the icons went.
+  lv_obj_add_flag(tab_btns, LV_OBJ_FLAG_HIDDEN);
+#else
   // Tab bar bar itself sits on pure BG, not the panel — keeps the bottom
   // strip indistinguishable from the rest of the screen except for the
   // active-tab highlight.
@@ -43975,6 +44499,7 @@ static void buildUiTree() {
 #if CAP_TRACKBALL
   lv_obj_add_event_cb(tab_btns, navMenubarSizeCb, LV_EVENT_SIZE_CHANGED, nullptr);  // keep the keyboard-nav key hints positioned
 #endif
+#endif  // !HAS_THINKNODE_M9 — tab-bar chrome
 
   // Tab labels: icons-only on touch targets; the 480px-wide Pager prefixes each
   // icon with its physical-keyboard mnemonic so the shortcuts are discoverable.
@@ -44013,7 +44538,9 @@ static void buildUiTree() {
   lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS);
 #endif
   // Slightly larger font for icons so they're easy to tap.
-#if CAP_UI_SIZE
+#if defined(HAS_THINKNODE_M9)
+  // no tab bar on the M9 (see above) — nothing to size
+#elif CAP_UI_SIZE
   lv_obj_set_style_text_font(tab_btns, &g_font_tab, LV_PART_MAIN);
 #else
   lv_obj_set_style_text_font(tab_btns, &g_font_16, LV_PART_MAIN);
@@ -44056,7 +44583,11 @@ static void buildUiTree() {
   lv_obj_set_style_text_font(s_update_badge, &lv_font_montserrat_12, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_update_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_update_badge, 0, LV_PART_MAIN);
+#if defined(HAS_THINKNODE_M9)
+  lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -4);   // no tab bar on this board
+#else
   lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -(TABBAR_H - 16));
+#endif
   lv_obj_add_flag(s_update_badge, LV_OBJ_FLAG_HIDDEN);
 
   // Unread-count badge over the Chats (envelope) tab — leftmost of 5. Same
@@ -44075,18 +44606,23 @@ static void buildUiTree() {
   lv_obj_set_style_pad_hor(s_chat_unread_badge, 3, LV_PART_MAIN);
   lv_obj_set_style_pad_ver(s_chat_unread_badge, 0, LV_PART_MAIN);
   lv_obj_align(s_chat_unread_badge, LV_ALIGN_BOTTOM_LEFT,
-#if defined(HAS_EXPANSION_KIT)
+#if defined(HAS_THINKNODE_M9)
+               8, -4);                                                     // no tab bar on this board — bottom-left corner
+#elif defined(HAS_EXPANSION_KIT)
                lv_disp_get_hor_res(nullptr) / 12 + 7, -(TABBAR_H - 16));   // 6 tabs: half-cell over Chats
 #else
                lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 16));   // 5 tabs: half-cell over Chats
 #endif
   lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
 
+#if !defined(HAS_THINKNODE_M9)
   // Thin rounded accent "glow" bar that marks the active tab. A child of the
   // screen (like s_update_badge) created BEFORE the chat overlays so those cover
   // it, and above the tabview so it shows over the bottom bar. A soft accent
   // shadow gives it the glow; updateTabIndicator() slides it under the active
-  // tab and hides it on the map.
+  // tab and hides it on the map. NOT built on the M9 (no tab bar): it sat on the
+  // screen, not in the bar, so hiding the bar left it glowing over the content's
+  // bottom edge — the "lingering tab highlight". updateTabIndicator() null-guards.
   s_tab_indicator = lv_obj_create(lv_scr_act());
   lv_obj_remove_style_all(s_tab_indicator);
   lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -44099,6 +44635,7 @@ static void buildUiTree() {
   lv_obj_set_style_shadow_opa(s_tab_indicator, LV_OPA_40, LV_PART_MAIN);
   lv_obj_set_style_shadow_spread(s_tab_indicator, 0, LV_PART_MAIN);
   updateTabIndicator();   // place it under the initial active tab
+#endif  // !HAS_THINKNODE_M9
 
   // Create full-screen detail overlays (hidden until a thread is tapped)
   makeChatDetail(g_lv.dm);
@@ -45530,6 +46067,33 @@ static bool uiDataFsReady() {
     return true;
   }
   if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
+#elif defined(HAS_THINKNODE_M9)
+  // ThinkNode M9: same Arduino-SD-on-shared-bus shape as the T-Deck (CAP_SD=1;
+  // used to fall into the V4 SPIFFS #else, losing the SD-backed deep message
+  // ring despite a mounted card).
+  if (sdAdoptLiveMount() || fmSdTryMount()) {
+    SD.mkdir("/meshcomod");
+    s_ui_data_fs = &SD;
+    strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+    return true;
+  }
+  if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
+#elif defined(HELTEC_LORA_V4_R8)
+  // R8 (Expansion Kit V2, REMOVABLE card): follow the boot adoption decision,
+  // never bare card presence — mirrors the pager's profile-keyed shape. When
+  // the boot store adopted the card (g_full_data_on_sd: identity/prefs/
+  // contacts live there), chat history + battery log + Lua app files follow;
+  // otherwise everything stays on internal SPIFFS as before. NB an R8 that
+  // adopted a card on an OLDER build carries a day-one /msgs snapshot on the
+  // card — Settings > Storage > "Copy internal data to SD" refreshes it.
+  if (g_full_data_on_sd) {
+    if (!(sdAdoptLiveMount() || fmSdTryMount())) return false;
+    SD.mkdir("/meshcomod");
+    s_ui_data_fs = &SD;
+    strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+    return true;
+  }
+  if (SPIFFS.begin(false) || SPIFFS.begin(true)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
 #else
   // V4 (no SD): internal SPIFFS. Format-on-fail so a fresh / never-formatted
   // partition becomes usable — that's the V4 history-loss fix. Safe: only formats
@@ -45907,7 +46471,7 @@ static bool uiDataFsIsSdCard() {
   if (!uiDataFsReady()) return false;
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   return s_ui_data_fs == &SD_MMC;
-#elif defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#elif defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
   return s_ui_data_fs == &SD;
 #else
   return false;
@@ -45924,7 +46488,7 @@ static File uiDataOpen(const char* name, const char* mode) {
   if (!uiDataFsReady()) return File();
   char p[80]; snprintf(p, sizeof p, "%s%s", s_ui_data_root, name);
   File f = s_ui_data_fs->open(p, mode);
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
   // A failed WRITE open on the SD-backed history store is the wedge tell (reads
   // fail legitimately on first boot). Called from the loop task AND the core-0
   // history worker — sdNoteIoFailure is a volatile stamp, safe from both.
@@ -45963,6 +46527,7 @@ static bool readHistoryRec(File& f, void* dst, size_t cur_sz, size_t disk_sz) {
 
 bool UITask::loadThreadsFromStorage() {
 #if defined(ESP32)
+  uiDataRemove(k_ui_threads_tmp_path);   // sweep an orphaned tmp from an interrupted save (mirrors the msgs-tmp sweep)
   File f = uiDataOpen(k_ui_threads_path, "r");
   if (!f) return false;
 
@@ -46486,7 +47051,9 @@ bool UITask::saveThreadsToStorage() {
   }
 #endif
   WdtHeavyGuard _wg;
-  File f = uiDataOpen(k_ui_threads_path, "w");
+  // Write to the tmp, commit with rename: a power cut mid-write leaves the old
+  // index intact instead of a short file the next boot would quarantine.
+  File f = uiDataOpen(k_ui_threads_tmp_path, "w");
   if (!f) return false;
 
   UiHistoryHeader hdr{};
@@ -46499,7 +47066,7 @@ bool UITask::saveThreadsToStorage() {
   // this (frequently-rewritten, small) file does instead.
   hdr.msgcount              = static_cast<uint32_t>(_msgcount);
   if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
-    f.close(); return false;
+    f.close(); uiDataRemove(k_ui_threads_tmp_path); return false;
   }
 
   UiHistoryThread t{};
@@ -46516,11 +47083,11 @@ bool UITask::saveThreadsToStorage() {
     strncpy(t.name, _ui_threads[i].name, MAX_THREAD_NAME);
     t.name[MAX_THREAD_NAME] = '\0';
     if (f.write(reinterpret_cast<const uint8_t*>(&t), sizeof(t)) != sizeof(t)) {
-      f.close(); return false;
+      f.close(); uiDataRemove(k_ui_threads_tmp_path); return false;
     }
   }
   f.close();
-  return true;
+  return uiDataReplaceFile(k_ui_threads_path, k_ui_threads_tmp_path);
 #else
   return false;
 #endif
@@ -46549,7 +47116,7 @@ static bool uiMsgsWriteResult(bool ok) {
     s_msgs_write_fail_ms = m ? m : 1;
     s_msgs_write_fail_epoch = ep;
     if (s_msgs_write_fails < 0xFFFFu) s_msgs_write_fails = s_msgs_write_fails + 1;
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
     if (s_ui_data_fs == &SD) sdNoteIoFailure();
 #endif
   }
@@ -47988,7 +48555,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // sluggishness. 160 MHz is the known-good 2x bump; 240 MHz showed RGB565
   // noise on the map's SJPG decode, so 160 is the ceiling. The T-Deck sets no
   // ESP32_CPU_FREQ so it already boots at the 240 MHz default — bumping only
-  // the V4 here avoids dragging the T-Deck *down* to 160.
+  // the V4 here avoids dragging the T-Deck *down* to 160. The V4-R8 env now
+  // sets ESP32_CPU_FREQ=240 itself (whole of setup() at full clock), so this
+  // is a no-op there.
 #if !defined(HAS_TDECK_GT911)
   setCpuFrequencyMhz(240);   // S3 max; watch the map tiles for SJPG decode noise (drop to 160 if it shows)
 #endif
@@ -48004,10 +48573,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     tzset();
   }
 
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8)
   // Boot storage setup may have mounted SD before UITask starts. Synchronize
   // the UI's lifecycle state before tile-backend selection and before the
-  // first loop tick can run health/remount logic.
+  // first loop tick can run health/remount logic. (R8: without this the
+  // reinsert watch SD.end()'d the LIVE DataStore volume ~30 s after boot —
+  // spurious "SD card remounted" toast, or a slow card stranded unmounted.)
   sdAdoptLiveMount();
 #endif
 
@@ -48157,6 +48728,30 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       s_tile_root_default[0] = '\0';
     }
     WIRE_DBG("[TILE] microSD-tile mode -> caching Wi-Fi tiles on SD /tiles (merges with library)");
+  }
+#endif
+#if defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+  // Prefer the SD card for the Wi-Fi tile cache even when "Tiles from SD card"
+  // is off. The 4.75 MB tiles partition fills after a few panned screens of
+  // downloads and has NO eviction, after which every further tile fetch fails
+  // forever ("panning doesn't reload tiles"). Cache to the card root /tiles
+  // (same layout the Launcher T-Deck uses; merges with any dropped-in pack).
+  // The partition stays registered as s_tile_fs_default, so
+  // mapNoteStorageChanged falls back to it if the card ever wedges or (R8) is
+  // pulled — maps stay online either way.
+#if defined(HAS_THINKNODE_M9)
+  // M9: the card is BUILT IN — always worth walking the full mount ladder.
+  if (s_tile_fs != &SD && (sdAdoptLiveMount() || fmSdTryMount())) {
+#else
+  // R8: the Expansion-Kit card is REMOVABLE — follow the boot mount only
+  // (adopting is a cached cardType() check; a card-less boot pays nothing and
+  // a late-inserted card is adopted by sdHealthTick + mapNoteStorageChanged).
+  if (s_tile_fs != &SD && sdAdoptLiveMount()) {
+#endif
+    s_tile_fs = &SD;
+    s_tile_root[0] = '\0';
+    s_tiles_fs_ready = true;
+    printf("[TILE] caching Wi-Fi tiles on SD /tiles\n");
   }
 #endif
 #endif
@@ -48449,6 +49044,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (s_ui_rotation != LV_DISP_ROT_NONE) {
       s_ui_rotation = LV_DISP_ROT_NONE;
       touchPrefsSetUiRotation(LV_DISP_ROT_NONE);
+      // Heal the PANEL too: main.cpp's boot wordmark already applied the saved
+      // landscape rotation before this guard ran, so reverting only the pref
+      // left LVGL rendering portrait frames into a landscape-rotated panel —
+      // one fully garbled session per landscape attempt. (::display — the
+      // begin() parameter shadows the global, and the DisplayDriver base has
+      // no setDisplayRotation.)
+      ::display.setDisplayRotation(0);
     }
 #endif
 #if defined(HAS_TDECK_GT911)
@@ -48761,8 +49363,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // mesh so it survives reboot. OFF by default — no effect unless the user enabled it.
     the_mesh.setScopeDirectFloods(touchPrefsGetScopeDirect());
 #if defined(HELTEC_LORA_V4_TFT)
-    // Heltec V4.3 high-gain FEM LNA: apply the saved state at boot (default OFF / bypassed,
-    // matching the hardware). No-op on a V4.2 board (femLnaControllable() == false).
+    // Heltec V4.3 high-gain FEM LNA: apply the saved state at boot (default OFF / bypassed on
+    // the plain V4; ON on the V4-R8 since prefs v49). No-op on a V4.2 board (femLnaControllable() == false).
     if (board.femLnaControllable()) board.setFemLnaEnable(touchPrefsGetFemLna());
 #endif
 #if defined(HAS_TDISPLAY_P4)
@@ -49670,6 +50272,16 @@ static inline void touchScreenBacklight(bool on) {
   if (on) touchPanelSleep(false);   // wake the panel BEFORE lighting it (old frame intact)
   ledcWrite(kBlPwmChannel, on ? ((uint32_t)s_brightness_pct * 255u / 100u) : 0u);
   if (!on) touchPanelSleep(true);   // then stop the panel driving the crystals (anti burn-in)
+#if defined(HELTEC_LORA_V4_R8)
+  // Dark screen: throttle the CHSC6x poll task (8 ms -> 50 ms) — its blocking
+  // I2C read rides the SHARED sensor/RTC bus on this board, and full-rate
+  // polling with the screen off was pure idle drain. Wake-on-touch keeps
+  // working, at most ~42 ms later. (Local extern: the include path resolves
+  // the VENDORED MeshCore copy of HeltecV4CapTouch.h, which predates this
+  // function — the compiled driver is the repo copy in src/helpers/input.)
+  extern void heltecV4CapTouchSetSlowPoll(bool slow);
+  heltecV4CapTouchSetSlowPoll(!on);
+#endif
 #elif defined(TFT_BL)
   pinMode(TFT_BL, OUTPUT);
   #ifdef TFT_BACKLIGHT_ON
@@ -49931,6 +50543,7 @@ void UITask::rebootDevice() {
   }
   discoveredFlushNow();   // persist the Discovered ring before we go down
   the_mesh.flushContactsIfDirty();   // and any coalesced contacts refresh (card-less devices)
+  the_mesh.persistSyncHistoryNow();  // and the app-sync replay ring
   touchPrefsFlush();       // finish queued A/B snapshots before reset
   if (_board) _board->reboot();
 }
@@ -50068,9 +50681,11 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     if (emb_ts > 1700000000 && emb_ts < 2000000000) _ui_msgs[msg_slot].ts = emb_ts;
   }
   syncThreadMeshSlots(thread, channel);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   // Mirror incoming traffic into the terminal live feed (only while it's open).
   // Runs on the mesh thread (core 1, same as the UI loop) so the append is safe.
+  // M9 included: its terminal (and the chat mode's "to <name>"/"send") is fully
+  // wired, so without the mirror a console conversation showed only the TX side.
   if (s_term_log_box) {
     char line[200];
     const bool  has_snr = (meta_flags & MSG_META_HAS_RX);
@@ -50216,8 +50831,8 @@ void UITask::notify(UIEventType t) {
   if (t == UIEventType::contactMessage || t == UIEventType::channelMessage || t == UIEventType::roomMessage)
     msgLedFlash();
 #endif
-#if defined(HAS_TDECK_KEYBOARD)
-  // Same idea on the T-Deck (no notification LED): wake the screen + briefly light the keyboard.
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+  // Same idea on the T-Deck and M9 (no notification LED): wake the screen + briefly light the keyboard.
   if (touchPrefsGetMsgFlash() &&
       (t == UIEventType::contactMessage || t == UIEventType::channelMessage || t == UIEventType::roomMessage)) {
     s_msgflash_until = millis() + 1600;
@@ -50371,8 +50986,13 @@ static void sdHealthTick() {
     const bool remounted = begin_ok && SD.cardType() != CARD_NONE;
 #else
     SD.end();
-    const bool remounted = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) &&
-                           SD.cardType() != CARD_NONE;
+    bool remounted = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) &&
+                     SD.cardType() != CARD_NONE;
+    if (remounted) {
+      const uint32_t hz = sdTryFastClock(PIN_SD_CS, *spi, 4000000, "SD");   // no-op unless SD_SPI_FAST_HZ
+      remounted = hz != 0;
+      if (remounted) g_sd_operating_hz = hz;
+    }
 #endif
     if (remounted) {
       s_sd_mounted        = true;
@@ -50383,7 +51003,7 @@ static void sdHealthTick() {
 #endif
       markSdIo();
       if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
       // Land the RAM ring on the card promptly, not up to 30+ s later: every
       // message received while the card was out is only in RAM. Armed as an
       // OFF-THREAD flush — a synchronous write here froze the UI for >30 s on
@@ -50465,7 +51085,7 @@ static void sdHealthTick() {
     return;
   }
 #endif
-#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
   if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
 #endif
   // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
@@ -50496,6 +51116,11 @@ static void sdHealthTick() {
   if (sdProbeAlive()) {
     // Transient failure (card full, bad path, ...) — keep the mount and let the
     // preserved tile queue continue on it.
+#if defined(MULTI_TRANSPORT_COMPANION) && defined(HAS_THINKNODE_M9)
+    // The note window blanked every SD tile read (loadTileJpeg bails on it) —
+    // arm the rate-capped map repaint so pan gaps heal without a keypress.
+    if (s_map_last_missing > 0) s_tile_fetch_dirty = true;
+#endif
     tileBackendSwapFinish();
     return;
   }
@@ -50505,7 +51130,7 @@ static void sdHealthTick() {
     s_sd_data_warn_next_ms = 0;
 #endif
     if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
     if (!s_ui_data_fs) uiDataFsReady();
     if (s_ui_data_fs == &SD) {
       SD.mkdir("/meshcomod");                          // fresh replacement card: recreate the data root
@@ -50870,7 +51495,7 @@ void UITask::loop() {
     }
   }
 
-#if defined(HAS_TDECK_KEYBOARD)   // notify-flash (and so the notify wake) is a T-Deck feature
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)   // notify-flash (and so the notify wake): T-Deck + M9
   // Notify-wake re-dim: a screen lit by a MESSAGE (not user input) goes dark again after a
   // short bounded window. On a busy channel the per-message wakes otherwise keep a static
   // image lit for the full screen-timeout — or forever at "never" — which retains into the
@@ -50887,7 +51512,7 @@ void UITask::loop() {
       _screen_off = true;
     }
   }
-#endif  // HAS_TDECK_KEYBOARD (notify-wake re-dim)
+#endif  // HAS_TDECK_KEYBOARD || HAS_M9_KEYBOARD (notify-wake re-dim)
 
 #if defined(HAS_TOUCH_UI)
   if (!g_lv.ready) return;
@@ -50996,7 +51621,7 @@ void UITask::loop() {
         // unmountable card spikes current / churns the bus and can reset the board.
         if (!sdRuntimeLifecycleBusy() && now >= s_sd_retry_after_ms && fmSdTryMount()) {
           showAlert(TR("SD card inserted"), 1500);
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
           if (!s_ui_data_fs) uiDataFsReady();
           if (s_ui_data_fs == &SD) {
             SD.mkdir("/meshcomod"); // fresh replacement card: recreate the data root
@@ -51195,9 +51820,16 @@ void UITask::loop() {
 #elif defined(HAS_M9_KEYBOARD)
   // M9's keyboard controller is on its OWN bus (Wire1) — no touch task shares
   // it, so polling happens right here on the UI thread rather than from a
-  // separate core-0 task. No keyboard-backlight control exists on this
-  // controller (TODO — see M9_PORT.md if/when one is confirmed), so this is
-  // just poll + drain, no backlight tick.
+  // separate core-0 task (the poll itself rate-limits to ~15 ms inside
+  // m9KeyboardPoll so the free-running loop doesn't hammer the bus).
+  //
+  // Keys used to dispatch against a one-tick-stale nav mirror: Enter's tree
+  // mutations (open/close a modal) only land inside lv_timer_handler at the
+  // END of a tick, so the FIRST arrow of the next tick ran navMoveDir against
+  // s_nav_objs still mirroring the screen behind the modal — the intermittent
+  // "modal navigation breaks out to the screen behind" bug. Sync the group to
+  // the current tree before draining (cheap: sig-compare early-out).
+  if (s_kbd_nav || s_tb_nav) navMaybeRebuild();
   m9KeyboardPoll();
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = m9KeyboardReadKey();
@@ -51205,6 +51837,44 @@ void UITask::loop() {
     if (!_screen_off) s_kb_last_key_ms = now;
     if (s_remote_mode) { remotePhysicalKey(key); continue; }   // remote mode: physical keys are the exit
     handleHwKey(key);
+  }
+  // New-message notify flash — same contract as the T-Deck branch above:
+  // hard-locked reveals the lock screen (lights the wallpaper, keeps the
+  // lock), an unlocked idle-dim gets the full wake. Especially useful here:
+  // no notification LED and no touch to check the screen with.
+  if (s_msgflash_wake) {
+    s_msgflash_wake = false;
+    if (_manual_lock)     { lockscreenReveal(); s_notify_wake_ms = millis(); }
+    else if (_screen_off) { wakeScreen();       s_notify_wake_ms = millis(); }
+  }
+  // Keyboard backlight: the controller DOES expose duty control (reg 0x02;
+  // it also auto-lights on keypress and times out after 10 s on its own —
+  // this sets the level/mode our side wants). off / on / auto follow the same
+  // s_kb_bl_mode the Control Center "Keyboard" chip cycles; write-on-change
+  // only, so the tick costs zero I2C in steady state.
+  {
+    uint8_t kb_bl = 0;
+    if (s_kb_bl_mode == 1) kb_bl = 255;
+    else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = 255;
+    if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
+    else if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = 255;   // notify pulse
+    // Cache the last duty the controller ACTUALLY took, not the last one
+    // computed: the write is dropped while the controller (its own MCU on the
+    // switched rail) is still booting, or on a NACK — latching a dropped
+    // write would leave the controller on its power-on default until the
+    // next mode/lock change. And 255 is a normal FIRST value (mode "On"
+    // restored from prefs; auto during the first idle window), so a 0xFF
+    // "never written" sentinel would swallow it — use -1, which no real duty
+    // can equal. A failed write stays pending but retries at a calm 250 ms
+    // cadence, not every free-running loop pass: a found-then-wedged bus
+    // would otherwise pay a real I2C transaction (worst case the full Wire
+    // timeout) per pass.
+    static int s_kb_bl_last = -1;
+    static uint32_t s_kb_bl_retry_ms = 0;
+    if ((int)kb_bl != s_kb_bl_last && (int32_t)(now - s_kb_bl_retry_ms) >= 0) {
+      if (m9KeyboardSetBacklight(kb_bl)) s_kb_bl_last = kb_bl;
+      else s_kb_bl_retry_ms = now + 250;
+    }
   }
   serviceLockscreen();
   serviceLockingCountdown(now);
@@ -51485,7 +52155,7 @@ void UITask::loop() {
   lv_timer_handler();
   uiCp("ui:tail");
 #if (CAP_SD || defined(TLORA_PAGER)) && \
-    (defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER))
+    (defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9))
   sdRestoreRun();   // intentionally outside the LVGL event/render call stack
 #endif
 #if !defined(HAS_TANMATSU)
@@ -51649,12 +52319,12 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_local_sensors_root),    []{ closeLocalSensorsPage(); },      PF_COUNT },   // was in no registry at all
 #endif
   { P_OPEN(s_siginfo_root),          []{ closeSigInfoPopup(); },          PF_COUNT },
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   { P_OPEN(s_fm_img_root),           []{ fmImageClose(); },               PF_COUNT },
   { P_OPEN(s_editor_root),           []{ fmEditorClose(); },              PF_COUNT },
   { P_OPEN(s_fm_prompt),             []{ fmPromptClose(); },              PF_COUNT },
   { P_OPEN(s_fm_actions),            []{ fmCloseActions(); },             PF_COUNT },
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_SOUND_FILES   // s_fm_snd_root exists only under this gate (same set as the old CAP_SD||PAGER inside this block, minus the M9)
   { P_OPEN(s_fm_snd_root),           []{ fmSndClose(); },                 PF_COUNT },   // was in no registry at all
 #endif
   { P_OPEN(s_fm_fmt_overlay),        nullptr,                             PF_COUNT },   // format progress: block keys, not dismissable
@@ -51669,7 +52339,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_telem_config_root),     []{ telemetryConfigClose(); },       PF_COUNT },   // sits on the telemetry window
   { P_OPEN(s_telemetry_root),        []{ telemetryClose(); },             PF_COUNT },
 #endif
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   { P_OPEN(s_lockwall_picker),       []{ lockwallPickerClose(); },        PF_COUNT },
 #endif
   { P_OPEN(s_accent_picker),         []{ accentPickerClose(); },          PF_COUNT | PF_SWIPE },
@@ -51739,7 +52409,14 @@ static bool popupRegistryAny() {
 }
 static bool popupRegistryDismissTop() {
   for (const auto& e : k_popup_registry)
-    if (e.close && e.is_open()) { e.close(); return true; }
+    if (e.is_open()) {
+      // Stop at the first OPEN row either way: a null-close row is a key
+      // BLOCKER (progress overlay) — walking past it would dismiss whatever
+      // sits BENEATH the overlay mid-operation (e.g. the fullscreen Files
+      // view under a running SD format).
+      if (e.close) { e.close(); return true; }
+      return false;
+    }
   return false;
 }
 static bool popupRegistryBlocksSwipe() {
