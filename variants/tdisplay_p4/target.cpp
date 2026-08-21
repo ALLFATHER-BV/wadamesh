@@ -35,13 +35,22 @@ void TDisplayP4Board::begin() {
 // internal lock makes each transaction atomic across tasks). Standard command reads: 16-bit
 // little-endian at Voltage()=0x08 (mV). Reads are rate-limited and sanity-windowed; on any I2C
 // hiccup the last good value is kept so the battery UI never flickers to nonsense.
-static uint16_t bq27220ReadU16(uint8_t cmd) {
+// Returns false when the gauge did not answer. This USED to return 0 on an I2C
+// failure, which is indistinguishable from a real reading of zero — and the gauge
+// shares this bus with the XL9535 expander, the RTC and the touch controller, so a
+// lost transaction now and then is normal rather than exceptional. The voltage
+// reader below always range-checked its result and kept the last good value, but
+// the state-of-charge reader took 0 at face value and reported 0%, which is what
+// made the battery flicker between 0 and the real figure. Report the failure
+// instead of encoding it as data.
+static bool bq27220ReadU16(uint8_t cmd, uint16_t& out) {
   Wire.beginTransmission(0x55);
   Wire.write(cmd);
-  if (Wire.endTransmission(false) != 0) return 0;
-  if (Wire.requestFrom(0x55, 2) != 2) return 0;
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(0x55, 2) != 2) return false;
   uint16_t lo = Wire.read(), hi = Wire.read();
-  return (uint16_t)(lo | (hi << 8));
+  out = (uint16_t)(lo | (hi << 8));
+  return true;
 }
 
 // StateOfCharge() = REG 0x2C, a percentage the gauge computes by coulomb counting
@@ -61,8 +70,10 @@ int TDisplayP4Board::getBattStateOfCharge() {
   const uint32_t now = millis();
   if (last_ms == 0 || now - last_ms >= 5000) {
     last_ms = now;
-    const uint16_t soc = bq27220ReadU16(0x2C);       // StateOfCharge(), %
-    last_pct = (soc <= 100) ? (int)soc : -1;
+    // Keep the previous good percentage when the gauge does not answer, exactly as
+    // the voltage read does. Only a genuine in-range reply moves the number.
+    uint16_t soc = 0;
+    if (bq27220ReadU16(0x2C, soc) && soc <= 100) last_pct = (int)soc;
   }
   return last_pct;
 }
@@ -74,8 +85,9 @@ uint16_t TDisplayP4Board::getBattMilliVolts() {
   const uint32_t now = millis();
   if (last_ms == 0 || now - last_ms >= 5000) {
     last_ms = now;
-    const uint16_t mv = bq27220ReadU16(0x08);          // Voltage(), mV
-    if (mv >= 2500 && mv <= 4600) {
+    uint16_t mv = 0;
+    const bool mv_ok = bq27220ReadU16(0x08, mv);      // Voltage(), mV
+    if (mv_ok && mv >= 2500 && mv <= 4600) {
       last_mv = mv;
       if (!logged) { printf("[BATT] BQ27220 alive: %u mV\n", mv); logged = true; }
     } else if (!logged) {
