@@ -129,6 +129,8 @@
     <a href="#contacts">Contacts</a>
     <a href="#map">Map</a>
     <a href="#settings">Settings</a>
+    <div class="grp">Finding nodes</div>
+    <a href="#discover">Discover &amp; wardriving</a>
     <div class="grp">With your phone</div>
     <a href="#companion">Companion mode</a>
     <a href="#remote">Remote &amp; web app</a>
@@ -202,7 +204,7 @@
       <div class="row">
         <div class="prose">
           <p>Everyone your node knows — name, type and how recently you heard them. Tap a contact to message it or open its details: signal history, a route trace, telemetry, and share/favourite options.</p>
-          <p>The <b>overflow menu</b> (top right) holds Search, the <b>Discovered</b> list (nodes heard but not yet added), Add contact, Auto-add settings, and the Blocked list. Auto-add can pull new nodes in from their adverts, or you can add them by hand.</p>
+          <p>The <b>overflow menu</b> (top right) holds Search, the <b>Discovered</b> list (nodes heard but not yet added), Add contact, Auto-add settings, and the Blocked list. That list is passive, built from what the device overhears; to go looking for nodes actively, see <a href="#discover">Discover</a>. Auto-add can pull new nodes in from their adverts, or you can add them by hand.</p>
         </div>
         <div class="shot"><div class="device"><img class="screen" src="docs-img/contacts.png" alt="Contacts list"></div><div class="cap">Contacts</div></div>
       </div>
@@ -212,7 +214,7 @@
       <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg></span> Map</h2>
       <div class="row">
         <div class="prose">
-          <p>An OpenStreetMap / OpenTopoMap view with your position and your contacts plotted as markers, plus link lines from you to each node. Tiles are fetched over Wi-Fi through the wadamesh proxy and cached to flash (or microSD), so areas you've viewed work offline.</p>
+          <p>An OpenStreetMap / OpenTopoMap view with your position and your contacts plotted as markers, plus link lines from you to each node. Tiles are fetched over Wi-Fi through the wadamesh proxy and cached to flash (or microSD), so areas you've viewed work offline. Coloured dots along a route you have walked or driven come from <a href="#discover">wardriving</a>.</p>
           <p>It also has a line-of-sight analyzer: pick a contact and it uses SRTM elevation to show whether terrain blocks the path.</p>
         </div>
         <div class="shot"><div class="device"><img class="screen" src="docs-img/map.png?v=2" alt="Map"></div><div class="cap">Map</div></div>
@@ -235,6 +237,40 @@
             <p>The "Tiles from SD card" toggle is a T-Deck feature. The Heltec V4 has no microSD slot, so it caches downloaded tiles to a small internal partition (no offline packs there). On the Tanmatsu, tiles &mdash; your own or downloaded &mdash; live at <code>/tiles/&lt;z&gt;/&lt;x&gt;/&lt;y&gt;.jpg</code> on the microSD card; drop JPEG tiles there and they show alongside the downloaded ones.</p>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section class="doc" id="discover">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><path d="M6.3 6.3l2.1 2.1M15.6 15.6l2.1 2.1M17.7 6.3l-2.1 2.1M8.4 15.6l-2.1 2.1"/></svg></span> Discover &amp; wardriving</h2>
+      <div class="prose" style="max-width:64ch">
+        <p><b>Discover</b> is an app in the home launcher. It does something the rest of the firmware never does: instead of waiting to overhear other nodes, it <b>asks</b>. It broadcasts a request that neighbouring repeaters answer directly, so anything that replies is provably reachable from exactly where you are standing.</p>
+
+        <div class="note"><p><b>Two similar names, two different things.</b> The <b>Discovered</b> list in the Contacts overflow menu is passive: nodes you happened to overhear, waiting to be added. The <b>Discover app</b> is active: it transmits a request and lists who answers. This section is about the app.</p></div>
+
+        <h3>What you see</h3>
+        <p>A live list of everything answering right now, strongest signal first. Each row shows the node's name (or <code>Node &middot;A1B2</code> from its key if it is not a contact yet), its signal, how many hops away it is, and how long ago it replied. <b>Tap a row to add that node as a contact.</b></p>
+        <p>The list is live rather than historical: a node that stops answering for more than about eight seconds drops off it. That is the point, because the question being answered is "what can I reach from here, now".</p>
+
+        <h3>Wardriving: mapping your coverage</h3>
+        <p>If the device has a <b>GPS fix</b>, Discover starts recording while it scans. There is nothing to switch on. Every time you move roughly 15 metres, or every 20 seconds if you stay put, it takes a sample: your position, plus every node answering at that moment.</p>
+        <p>Because a reply proves reachability from that spot, the trail of samples is a map of <b>your own radio coverage</b>. Open the <b>Map</b> tab and the samples are drawn as coloured dots along the route you walked or drove: <span style="color:#53C06B"><b>green</b></span> where the best signal was strong, <span style="color:#D7574E"><b>red</b></span> where it was weak.</p>
+        <p>The footer of the Discover app tells you what is happening: <code>Wardrive: 42 coverage pts &middot; 137 logged to SD</code>, or <code>waiting for GPS fix</code> if there is no position yet.</p>
+
+        <h3>How to do a wardrive</h3>
+        <ol>
+          <li>Put a <b>microSD card</b> in, if your board takes one. Without it the map still works, but nothing survives a reboot.</li>
+          <li>Wait for a <b>GPS fix</b>. The footer says so plainly when it is still waiting.</li>
+          <li>Open <b>Discover</b> from the home launcher and leave it open.</li>
+          <li>Go for a walk or a drive. Samples are taken automatically as you move.</li>
+          <li>Open the <b>Map</b> tab to see the coverage dots along your route.</li>
+        </ol>
+        <p>Discover keeps transmitting while it is open, so it uses more power and more airtime than sitting idle. It is a tool to use deliberately for a while, not something to leave running all day.</p>
+
+        <h3>The log file</h3>
+        <p>Every sighting is appended to <code>/meshcomod/discover/wardrive.csv</code> on the card, one row per node per sample:</p>
+        <pre><code>epoch,lat,lon,type,pubkey,rssi,snr,hops</code></pre>
+        <p>That is a plain CSV, so it opens in any spreadsheet or mapping tool. It is the only part of a wardrive that survives a reboot: the coloured dots on the map are held in memory and the newest 160 samples are kept, so a long drive keeps the most recent stretch rather than the whole thing.</p>
+        <p>There is <b>no on-device viewer</b> for the log. You can see the file in the Files app, but reading the sightings back means taking the card to a computer.</p>
       </div>
     </section>
 
