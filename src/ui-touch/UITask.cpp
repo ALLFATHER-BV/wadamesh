@@ -12569,7 +12569,7 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("UI size (restart to apply)"), COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* dd = lv_dropdown_create(body);
 #if defined(TLORA_PAGER)
-    lv_dropdown_set_options(dd, "Small\nMedium\nLarge\nJumbo");
+    lv_dropdown_set_options(dd, TR("Small\nMedium\nLarge\nJumbo"));
 #else
     lv_dropdown_set_options(dd, TR("Normal (100%)\nLarge (150%)\nHuge (200%)"));
 #endif
@@ -18151,7 +18151,7 @@ static void batteryEstimateText(const uint32_t* eps, const uint16_t* mvs, int n,
     const double x = (double)(eps[i] - t0), y = (double)mvs[i];
     sx += x; sy += y; sxx += x * x; sxy += x * y; ++m; last_v = mvs[i]; last_t = eps[i];
   }
-  if (m < 3 || (last_t - t0) < 900) { snprintf(out, cap, "Battery life: gathering data\xe2\x80\xa6"); return; }
+  if (m < 3 || (last_t - t0) < 900) { snprintf(out, cap, "%s", TR("Battery life: gathering data\xe2\x80\xa6")); return; }
   const double denom = (double)m * sxx - sx * sx;
   if (denom <= 0) { snprintf(out, cap, "Battery life: \xe2\x80\x94"); return; }
   const double slope = ((double)m * sxy - sx * sy) / denom;   // mV/s (negative = discharging)
