@@ -282,6 +282,7 @@ End time	Hora de término
 Enter SSID first	Digite o SSID primeiro
 Enter a name	Digite um nome
 Enter a network name	Digite um nome de rede
+Enter a region name	Enter a region name
 Enter adds a new line	Enter adiciona uma linha
 Enter exactly 32 hex characters.	Digite exatamente 32 caracteres hex.
 Enter key sends message	A tecla Enter envia a mensagem
@@ -407,6 +408,7 @@ Keyboard nav: WASDZ on	Nav. teclado: WASDZ ligado
 Keyboard nav: off	Nav. teclado: desligado
 Keyboard navigation	Navegação por teclado
 Keys	
+Known regions	Known regions
 LOS → %s	Linha de visada → %s
 Landscape (desktop)	Paisagem (desktop)
 Landscape set - applies when remote mode starts.	Paisagem definida - vale quando o modo remoto iniciar.
@@ -533,6 +535,7 @@ No networks found (2.4 GHz only)	Nenhuma rede encontrada (só 2.4 GHz)
 No onboard GPS	Sem GPS integrado
 No other networks found	Nenhuma outra rede encontrada
 No position yet. A cold start needs a clear view of the sky and can take several minutes.	Ainda sem posição. Uma partida a frio precisa de céu aberto e pode levar vários minutos.
+No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.	No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.
 No reply from %s	Sem resposta de %s
 No reply. Check password, server,\nor device clock (device: %s)	Sem resposta. Verifique senha, servidor\nou relógio do dispositivo (dispositivo: %s)
 No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Sem blocos salvos aqui.\n\nConecte-se ao Wi-Fi (Ajustes → Wi-Fi)\npara baixar esta área.\nOs blocos salvos ficam disponíveis offline.
@@ -641,6 +644,7 @@ Receive unreleased test firmware — newer features, but less tested. The update
 Recently heard	Ouvido recentemente
 Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Reformatar o SD como MESHCOMOD (FAT32)?\nTODOS os dados do cartão serão apagados.
 Region & scope	Região e alcance
+Region list is full	Region list is full
 Region scope (#tag) for this channel.\nBlank = use the default scope.	Escopo de região (#tag) para este canal.\nVazio = usar o escopo padrão.
 Region scope (#tag), blank = default.	Escopo da região (#tag), vazio = padrão.
 Region scope (#tag, blank = none)	Escopo de região (#tag, vazio = nenhum)

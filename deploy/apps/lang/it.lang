@@ -282,6 +282,7 @@ End time	Ora di fine
 Enter SSID first	Inserisci prima l'SSID
 Enter a name	Inserisci un nome
 Enter a network name	Inserisci un nome di rete
+Enter a region name	Enter a region name
 Enter adds a new line	Invio aggiunge una riga
 Enter exactly 32 hex characters.	Inserisci esattamente 32 caratteri hex.
 Enter key sends message	Il tasto Invio invia il messaggio
@@ -407,6 +408,7 @@ Keyboard nav: WASDZ on	Nav. tastiera: WASDZ on
 Keyboard nav: off	Nav. tastiera: off
 Keyboard navigation	Navigazione da tastiera
 Keys	
+Known regions	Known regions
 LOS → %s	Vista diretta → %s
 Landscape (desktop)	Orizzontale (desktop)
 Landscape set - applies when remote mode starts.	Orizzontale impostato - vale all'avvio della modalità remota.
@@ -533,6 +535,7 @@ No networks found (2.4 GHz only)	Nessuna rete trovata (solo 2.4 GHz)
 No onboard GPS	Nessun GPS integrato
 No other networks found	Nessun'altra rete trovata
 No position yet. A cold start needs a clear view of the sky and can take several minutes.	Ancora nessuna posizione. Un avvio a freddo richiede cielo libero e può durare diversi minuti.
+No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.	No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.
 No reply from %s	Nessuna risposta da %s
 No reply. Check password, server,\nor device clock (device: %s)	Nessuna risposta. Controlla password, server\no orologio del dispositivo (dispositivo: %s)
 No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Nessuna tessera salvata qui.\n\nConnettiti al Wi-Fi (Impostazioni → Wi-Fi)\nper scaricare quest'area.\nLe tessere salvate restano disponibili offline.
@@ -641,6 +644,7 @@ Receive unreleased test firmware — newer features, but less tested. The update
 Recently heard	Sentito di recente
 Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Riformattare la SD come MESHCOMOD (FAT32)?\nTUTTI i dati sulla scheda saranno cancellati.
 Region & scope	Regione e ambito
+Region list is full	Region list is full
 Region scope (#tag) for this channel.\nBlank = use the default scope.	Ambito regione (#tag) per questo canale.\nVuoto = ambito predefinito.
 Region scope (#tag), blank = default.	Ambito regione (#tag), vuoto = predefinito.
 Region scope (#tag, blank = none)	Ambito regione (#tag, vuoto = nessuno)

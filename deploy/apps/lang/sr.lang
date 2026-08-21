@@ -282,6 +282,7 @@ End time	Време краја
 Enter SSID first	Прво унесите SSID
 Enter a name	Унесите име
 Enter a network name	Унесите име мреже
+Enter a region name	Enter a region name
 Enter adds a new line	Enter додаје нови ред
 Enter exactly 32 hex characters.	Унесите тачно 32 hex знака.
 Enter key sends message	Тастер Enter шаље поруку
@@ -407,6 +408,7 @@ Keyboard nav: WASDZ on	Навиг. тастатуром: WASDZ укљ.
 Keyboard nav: off	Навиг. тастатуром: искљ.
 Keyboard navigation	Навигација тастатуром
 Keys	
+Known regions	Known regions
 LOS → %s	Оптичка видљивост → %s
 Landscape (desktop)	Положено (десктоп)
 Landscape set - applies when remote mode starts.	Положено подешено - важи кад крене даљински режим.
@@ -533,6 +535,7 @@ No networks found (2.4 GHz only)	Нема мрежа (само 2.4 GHz)
 No onboard GPS	Нема уграђеног GPS
 No other networks found	Нема других мрежа
 No position yet. A cold start needs a clear view of the sky and can take several minutes.	Још нема позиције. Хладан старт тражи чист поглед на небо и може да потраје неколико минута.
+No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.	No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.
 No reply from %s	Нема одговора од %s
 No reply. Check password, server,\nor device clock (device: %s)	Нема одговора. Проверите лозинку, сервер\nили сат уређаја (уређај: %s)
 No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Овде нема сачуваних плочица.\n\nПовежите се на Wi-Fi (Подешавања → Wi-Fi)\nда преузмете ову област.\nСачуване плочице остају доступне ван мреже.
@@ -641,6 +644,7 @@ Receive unreleased test firmware — newer features, but less tested. The update
 Recently heard	Недавно чути
 Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Форматирати SD као MESHCOMOD (FAT32)?\nСВИ подаци на картици биће обрисани.
 Region & scope	Регион и опсег
+Region list is full	Region list is full
 Region scope (#tag) for this channel.\nBlank = use the default scope.	Опсег региона (#tag) за овај канал.\nПразно = подразумевани опсег.
 Region scope (#tag), blank = default.	Опсег региона (#tag), празно = подразумевано.
 Region scope (#tag, blank = none)	Опсег региона (#tag, празно = ниједан)

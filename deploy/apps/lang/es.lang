@@ -282,6 +282,7 @@ End time	Hora de fin
 Enter SSID first	Introduce primero el SSID
 Enter a name	Introduce un nombre
 Enter a network name	Introduce un nombre de red
+Enter a region name	Enter a region name
 Enter adds a new line	Enter añade una línea
 Enter exactly 32 hex characters.	Introduce exactamente 32 caracteres hex.
 Enter key sends message	La tecla Enter envía el mensaje
@@ -407,6 +408,7 @@ Keyboard nav: WASDZ on	Nav. teclado: WASDZ act.
 Keyboard nav: off	Nav. teclado: desact.
 Keyboard navigation	Navegación por teclado
 Keys	
+Known regions	Known regions
 LOS → %s	Línea de vista → %s
 Landscape (desktop)	Horizontal (escritorio)
 Landscape set - applies when remote mode starts.	Horizontal fijado - se aplica al iniciar el modo remoto.
@@ -533,6 +535,7 @@ No networks found (2.4 GHz only)	No se encontraron redes (solo 2.4 GHz)
 No onboard GPS	Sin GPS integrado
 No other networks found	No se encontraron otras redes
 No position yet. A cold start needs a clear view of the sky and can take several minutes.	Aún sin posición. Un arranque en frío necesita cielo despejado y puede tardar varios minutos.
+No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.	No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.
 No reply from %s	Sin respuesta de %s
 No reply. Check password, server,\nor device clock (device: %s)	Sin respuesta. Revisa contraseña, servidor\no reloj del dispositivo (dispositivo: %s)
 No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	No hay teselas guardadas aquí.\n\nConéctate a Wi-Fi (Ajustes → Wi-Fi)\npara descargar esta zona.\nLas teselas guardadas quedan disponibles sin conexión.
@@ -641,6 +644,7 @@ Receive unreleased test firmware — newer features, but less tested. The update
 Recently heard	Escuchado hace poco
 Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	¿Reformatear la SD como MESHCOMOD (FAT32)?\nSe borrarán TODOS los datos de la tarjeta.
 Region & scope	Región y alcance
+Region list is full	Region list is full
 Region scope (#tag) for this channel.\nBlank = use the default scope.	Alcance de región (#tag) para este canal.\nVacío = alcance predeterminado.
 Region scope (#tag), blank = default.	Ámbito de región (#tag), vacío = predeterminado.
 Region scope (#tag, blank = none)	Alcance de región (#tag, vacío = ninguno)

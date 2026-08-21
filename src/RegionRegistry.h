@@ -49,13 +49,20 @@
 
 #define REGION_REG_MAP_PATH   "/region_map.dat"
 #define REGION_REG_SLOT_PATH  "/region_slots.dat"
-#define REGION_REG_SLOT_MAGIC 0x52475331UL   // "RGS1"
+#define REGION_REG_SLOT_MAGIC 0x52475331UL   // "RGS1" — slots only
+#define REGION_REG_SLOT_MAGIC2 0x52475332UL  // "RGS2" — slots + active mask
 
 class RegionRegistry {
   TransportKeyStore _keys;
   RegionMap         _map;
   // index = slot (1..REGION_SLOT_MAX); value = RegionEntry::id, 0 = free.
+  // A slot binding is PERMANENT once assigned. Removing a region clears its bit
+  // in _slot_active -- it stops being matched at RX -- but the binding stays, so
+  // messages received while it WAS registered still resolve to the right name.
+  // Freeing the slot for reuse would silently relabel that history, which is the
+  // failure #271 explicitly warns about.
   uint16_t          _slot_id[REGION_SLOT_MAX + 1];
+  uint16_t          _slot_active = 0;   // bit (slot-1) set => participates in matching
   FILESYSTEM*       _fs = nullptr;
   bool              _ready = false;
 
@@ -80,14 +87,23 @@ class RegionRegistry {
 
   void loadSlots() {
     memset(_slot_id, 0, sizeof _slot_id);
+    _slot_active = 0;
     if (!_fs) return;
     File f = _fs->open(REGION_REG_SLOT_PATH, "r");
     if (!f) return;
     uint32_t magic = 0;
-    if (f.read((uint8_t*)&magic, sizeof magic) == (int)sizeof magic && magic == REGION_REG_SLOT_MAGIC)
+    if (f.read((uint8_t*)&magic, sizeof magic) == (int)sizeof magic
+        && (magic == REGION_REG_SLOT_MAGIC || magic == REGION_REG_SLOT_MAGIC2)) {
       f.read((uint8_t*)_slot_id, sizeof _slot_id);
-    else
+      if (magic == REGION_REG_SLOT_MAGIC2) {
+        f.read((uint8_t*)&_slot_active, sizeof _slot_active);
+      } else {
+        for (uint8_t s = 1; s <= REGION_SLOT_MAX; ++s)   // pre-mask file: all assigned slots were live
+          if (_slot_id[s]) _slot_active |= (uint16_t)(1u << (s - 1));
+      }
+    } else {
       memset(_slot_id, 0, sizeof _slot_id);
+    }
     f.close();
   }
 
@@ -109,9 +125,10 @@ public:
     _map.save(_fs, REGION_REG_MAP_PATH);
     File f = _fs->open(REGION_REG_SLOT_PATH, "w");
     if (!f) return;
-    const uint32_t magic = REGION_REG_SLOT_MAGIC;
+    const uint32_t magic = REGION_REG_SLOT_MAGIC2;
     f.write((const uint8_t*)&magic, sizeof magic);
     f.write((const uint8_t*)_slot_id, sizeof _slot_id);
+    f.write((const uint8_t*)&_slot_active, sizeof _slot_active);
     f.close();
   }
 
@@ -127,10 +144,22 @@ public:
     if (!e) e = _map.putRegion(tag, 0);
     if (!e) return REGION_SLOT_NONE;
 
-    for (uint8_t s = 1; s <= REGION_SLOT_MAX; ++s)          // already slotted?
-      if (_slot_id[s] == e->id) return s;
+    for (uint8_t s = 1; s <= REGION_SLOT_MAX; ++s) {       // already slotted?
+      if (_slot_id[s] == e->id) {
+        // Re-adding a retired region revives its ORIGINAL slot rather than
+        // taking a new one, so its old messages and its new ones stay one region.
+        _slot_active |= (uint16_t)(1u << (s - 1));
+        save();
+        return s;
+      }
+    }
     for (uint8_t s = 1; s <= REGION_SLOT_MAX; ++s) {        // take the first free
-      if (_slot_id[s] == 0) { _slot_id[s] = e->id; save(); return s; }
+      if (_slot_id[s] == 0) {
+        _slot_id[s] = e->id;
+        _slot_active |= (uint16_t)(1u << (s - 1));
+        save();
+        return s;
+      }
     }
     return REGION_SLOT_NONE;   // full: the message records "unknown", never a wrong name
   }
@@ -144,7 +173,8 @@ public:
     uint8_t  hit = REGION_SLOT_NONE;
     uint8_t  n   = 0;
     for (uint8_t s = 1; s <= REGION_SLOT_MAX; ++s) {
-      if (_slot_id[s] == 0) continue;
+      if (_slot_id[s] == 0 || !isActive(s)) continue;   // retired regions keep their
+                                                       // name for history, but stop matching
       RegionEntry* e = const_cast<RegionMap&>(_map).findById(_slot_id[s]);
       if (!e) continue;
       TransportKey keys[4];
@@ -170,9 +200,34 @@ public:
     return (e && e->name[0]) ? e->name : nullptr;
   }
 
+  /** True when this slot currently takes part in matching. A retired slot still
+   *  resolves via nameForSlot() so old messages keep their region name. */
+  bool isActive(uint8_t slot) const {
+    if (slot == REGION_SLOT_NONE || slot > REGION_SLOT_MAX) return false;
+    return (_slot_active & (uint16_t)(1u << (slot - 1))) != 0;
+  }
+
+  /** Stop matching this region. The slot binding and name are KEPT on purpose --
+   *  see the note on _slot_id. Returns false if the slot was never assigned. */
+  bool retire(uint8_t slot) {
+    if (!_ready || slot == REGION_SLOT_NONE || slot > REGION_SLOT_MAX) return false;
+    if (_slot_id[slot] == 0) return false;
+    _slot_active &= (uint16_t)~(1u << (slot - 1));
+    save();
+    return true;
+  }
+
+  /** Live regions (what the user sees as "the list"). */
   int count() const {
     int n = 0;
-    for (uint8_t s = 1; s <= REGION_SLOT_MAX; ++s) if (_slot_id[s]) n++;
+    for (uint8_t s = 1; s <= REGION_SLOT_MAX; ++s) if (_slot_id[s] && isActive(s)) n++;
     return n;
+  }
+
+  /** True when every slot is assigned, so no NEW region can be added. Retired
+   *  slots still count: their bindings are permanent. */
+  bool isFull() const {
+    for (uint8_t s = 1; s <= REGION_SLOT_MAX; ++s) if (_slot_id[s] == 0) return false;
+    return true;
   }
 };

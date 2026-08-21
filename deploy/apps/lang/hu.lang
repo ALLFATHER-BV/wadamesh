@@ -286,6 +286,7 @@ End time	Befejezés
 Enter SSID first	Először adja meg az SSID-t
 Enter a name	Írjon be egy nevet
 Enter a network name	Adjon meg egy hálózatnevet
+Enter a region name	Enter a region name
 Enter adds a new line	Az Enter új sort ad hozzá
 Enter exactly 32 hex characters.	Pontosan 32 hex karaktert adjon meg.
 Enter key sends message	Az Enter billentyű elküldi az üzenetet
@@ -412,6 +413,7 @@ Keyboard nav: WASDZ on	Billentyűzet navigáció: WASDZ bekapcsolva
 Keyboard nav: off	Billentyűzetnavigáció: kikapcsolva
 Keyboard navigation	Billentyűzetnavigáció
 Keys	Kulcsok
+Known regions	Known regions
 LOS → %s	Rálátás → %s
 Landscape (desktop)	Fekvő (asztali)
 Landscape set - applies when remote mode starts.	Fekvő beállítva - a távoli mód indulásakor lép életbe.
@@ -539,6 +541,7 @@ No networks found (2.4 GHz only)	Nem található hálózat (csak 2,4 GHz)
 No onboard GPS	Nincs beépített GPS
 No other networks found	Nem található más hálózat
 No position yet. A cold start needs a clear view of the sky and can take several minutes.	Még nincs pozíció. A hidegindításhoz szabad égbolt kell, és több percig is tarthat.
+No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.	No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.
 No reply from %s	Nincs válasz %s-tól
 No reply. Check password, server,\nor device clock (device: %s)	Nincs válasz. Ellenőrizze a jelszót, a szervert,\nvagy az eszköz óráját (eszköz: %s)
 No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Nincsenek mentett térképszeletek. \n\nCsatlakozzon Wi-Fi-hez (Beállítások → Wi-Fi) a terület letöltéséhez.\nA mentett szeletek offline is elérhetők maradnak.
@@ -649,6 +652,7 @@ Receive unreleased test firmware — newer features, but less tested. The update
 Recently heard	Nemrég hallottam
 Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Újraformázza az SD kártyát MESHCOMOD (FAT32) formátumban?\nA kártyán lévő ÖSSZES adat törlődik.
 Region & scope	Régió és hatókör
+Region list is full	Region list is full
 Region scope (#tag) for this channel.\nBlank = use the default scope.	Régió hatóköre (#tag) ehhez a csatornához.\nÜres = az alapértelmezett hatókör használata.
 Region scope (#tag), blank = default.	Régió hatóköre (#tag), üres = alapértelmezett.
 Region scope (#tag, blank = none)	Régió hatóköre (#címke, üres = nincs)

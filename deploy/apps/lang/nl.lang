@@ -282,6 +282,7 @@ End time	Eindtijd
 Enter SSID first	Voer eerst SSID in
 Enter a name	Voer een naam in
 Enter a network name	Voer een netwerknaam in
+Enter a region name	Enter a region name
 Enter adds a new line	Enter voegt een nieuwe regel toe
 Enter exactly 32 hex characters.	Voer precies 32 hex-tekens in.
 Enter key sends message	Enter verstuurt bericht
@@ -407,6 +408,7 @@ Keyboard nav: WASDZ on	Toetsenbordnav.: WASDZ aan
 Keyboard nav: off	Toetsenbordnav.: uit
 Keyboard navigation	Toetsenbordnavigatie
 Keys	Toetsen
+Known regions	Known regions
 LOS → %s	Zichtlijn → %s
 Landscape (desktop)	Liggend (desktop)
 Landscape set - applies when remote mode starts.	Liggend ingesteld - geldt zodra de externe modus start.
@@ -533,6 +535,7 @@ No networks found (2.4 GHz only)	Geen netwerken gevonden (alleen 2.4 GHz)
 No onboard GPS	Geen ingebouwde GPS
 No other networks found	Geen andere netwerken gevonden
 No position yet. A cold start needs a clear view of the sky and can take several minutes.	Nog geen positie. Een koude start heeft vrij zicht op de lucht nodig en kan enkele minuten duren.
+No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.	No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.
 No reply from %s	Geen antwoord van %s
 No reply. Check password, server,\nor device clock (device: %s)	Geen antwoord. Controleer wachtwoord, server,\nof apparaatklok (apparaat: %s)
 No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Hier geen opgeslagen kaarttegels.\n\nMaak verbinding met Wi-Fi (Instellingen → Wi-Fi)\nom dit gebied te downloaden.\nOpgeslagen tegels blijven offline beschikbaar.
@@ -641,6 +644,7 @@ Receive unreleased test firmware — newer features, but less tested. The update
 Recently heard	Recent gehoord
 Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	SD herformatteren als MESHCOMOD (FAT32)?\nALLE data op de kaart wordt gewist.
 Region & scope	Regio en bereik
+Region list is full	Region list is full
 Region scope (#tag) for this channel.\nBlank = use the default scope.	Regiobereik (#tag) voor dit kanaal.\nLeeg = standaardbereik gebruiken.
 Region scope (#tag), blank = default.	Regiobereik (#tag), leeg = standaard.
 Region scope (#tag, blank = none)	Regiobereik (#tag, leeg = geen)
