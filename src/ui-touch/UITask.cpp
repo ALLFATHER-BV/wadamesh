@@ -41217,7 +41217,7 @@ static void statusBarTapCb(lv_event_t* e) {
   if (s_sb_shot_done) { s_sb_shot_done = false; return; }   // this press was a screenshot hold
   // …and this one already closed an app page on touch-DOWN (statusBarReaderBackCb).
   // Without this the tap goes back AND falls through to the control-center toggle at
-  // the bottom of this function — "back also opens the status bar" (Istvan, beta_64).
+  // the bottom of this function: "back also opens the status bar" (pisti87, beta_64).
   if (s_sb_back_ms && (uint32_t)(millis() - s_sb_back_ms) < 1500) { s_sb_back_ms = 0; return; }
   s_sb_back_ms = 0;
   // A full-screen tool page (RF Monitor / Spectrum) is up: the bar carries its Back
