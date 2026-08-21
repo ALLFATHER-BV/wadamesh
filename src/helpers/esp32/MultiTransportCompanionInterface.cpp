@@ -188,6 +188,15 @@ void MultiTransportCompanionInterface::prepareBle(const char* prefix, char* name
 void MultiTransportCompanionInterface::beginBle(const char* prefix, char* name, uint32_t pin_code) {
   prepareBle(prefix, name, pin_code);
   _ble.begin(prefix, name, pin_code);
+  // ATT notification payload is ATT_MTU-3, so SerialBLEInterface::begin()'s
+  // setMTU(MAX_FRAME_SIZE) leaves a full-length frame 3 bytes too big and NimBLE
+  // silently drops the overflow (ble_att_truncate_to_mtu()). MyMesh::queueMessage()
+  // clamps message text to exactly MAX_FRAME_SIZE, so a maximum-length message lost
+  // its last 3 bytes -- over BLE only; USB/TCP/WS were unaffected. Widen it here
+  // rather than in the core: that file is upstream MeshCore, this transport is
+  // vendored in our src/, and setMTU() is a public static, so no core change is
+  // needed. Verified on an M9: the app now negotiates ATT MTU 179 (was 176).
+  NimBLEDevice::setMTU(MAX_FRAME_SIZE + 3);
   _ble_begun = true;
   _ble_enabled = true;
   _ota_ble_released = false;
@@ -228,6 +237,7 @@ void MultiTransportCompanionInterface::enableBle() {
     strncpy(name, _ble_name, sizeof(name) - 1);
     name[sizeof(name) - 1] = '\0';
     _ble.begin(_ble_prefix, name, _ble_pin_code);
+    NimBLEDevice::setMTU(MAX_FRAME_SIZE + 3);   // see beginBle(): ATT payload is MTU-3
     _ble_begun = true;
   }
   _ble_enabled = true;

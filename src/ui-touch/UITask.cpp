@@ -14943,18 +14943,6 @@ static void buildMqttSettings() {
 #endif
 }
 
-#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-// Wi-Fi modem power save: persist + apply live. Only touches the driver once associated —
-// WiFi.setSleep() on an unassociated STA naps the radio through scan dwells (see main.cpp).
-// esp_wifi_set_ps is a plain setter (no disconnect/begin), so it is safe from the LVGL ctx.
-static void wifiPowerSaveToggleCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  wifiConfigSetPowerSave(on);
-  if (WiFi.status() == WL_CONNECTED) WiFi.setSleep(on);
-}
-#endif
-
 static void buildWifiSettings() {
   lv_obj_t* body = createSettingsModal("", SettingsModalKind::Wifi);   // no group header — the top bar already says "Wi-Fi"
   int y = 0;
@@ -14974,18 +14962,6 @@ static void buildWifiSettings() {
   lv_obj_set_pos(g_set_modal.wifi_sta_status_l, 2, y + SC(7));
   lv_label_set_text(g_set_modal.wifi_sta_status_l, TR("Loading..."));
   y += SC(30);
-
-  // Modem power save (DTIM sleep) — see wifiPowerSaveToggleCb. Default ON; OFF on the V4-R8.
-  {
-    int rh = settingsRowLabel(body, y, 4, TR("Power save (modem sleep)"), COLOR_TEXT, &g_font_12, 56);
-    lv_obj_t* sw = lv_switch_create(body);
-    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
-    if (wifiConfigGetPowerSave()) lv_obj_add_state(sw, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(sw, wifiPowerSaveToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    y += LV_MAX(34, rh + 10);
-    y += settingsRowLabel(body, y, 0, TR("Off: snappier app/TCP link, steadier on a weak signal. On: less power, kinder to Bluetooth."),
-                          COLOR_SUB, &g_font_12, 0) + 2;
-  }
 
   // Make sure the network we're currently using shows up as saved, and on first
   // run import any legacy 3-slot profiles into the new known-networks store.

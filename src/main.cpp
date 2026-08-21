@@ -1691,14 +1691,19 @@ void loop() {
       // BLE coexistence airtime). Deferred to here on purpose: enabling it on the
       // unassociated STA naps the radio through a scan dwell and breaks the setup
       // wizard's WiFi.scanNetworks() ("no networks found"). One-shot.
-      // Persisted preference (Wi-Fi settings -> "Power save"): default ON, except the V4-R8
-      // where it defaults OFF (perf pass 2026-08-20 — lower-latency app link, steadier
-      // association on its weak 2.4 GHz path). The toggle also applies live once associated.
+      //
+      // Unconditional, and deliberately NOT a user preference. This was briefly
+      // configurable (default off on the V4-R8, for a lower-latency app link), but
+      // WIFI_PS_NONE is not a legal sleep mode while the BT controller is running --
+      // modem sleep is exactly what yields airtime to BLE, and the Wi-Fi PM blob
+      // aborts rather than refusing. An R8 with saved credentials and Bluetooth on
+      // crashed on association every time: task "wifi", abort() in pm_set_sleep_type.
+      // The latency it was buying did not exist either: profiling the companion link
+      // showed sync cost is round-trip COUNT (~40 CMD_GET_CHANNEL), with the firmware
+      // accounting for 0.3% of it. So there is nothing to trade away here.
       static bool modem_sleep_set = false;
       if (!modem_sleep_set) {
-        const bool ps = wifiConfigGetPowerSave();
-        WiFi.setSleep(ps);
-        Serial.printf("[wifi] modem power save %s\n", ps ? "on" : "off");
+        WiFi.setSleep(true);
         modem_sleep_set = true;
       }
       if (!sntp_kicked) {
