@@ -5377,6 +5377,21 @@ static void otaButtonRefreshState() {
 // the ACTIVE update channel (stable, or beta when "Get test builds" is on)
 // into /BINS/wadamesh-beta_<N>-<stable|beta>.bin on the SD card. The download
 // streams on the tile worker; this UI side mirrors the OTA poll pattern.
+// Wording is board-conditional and the two sets are SEPARATE TR() keys on purpose.
+// Only the T-Deck has bmorcelli's Launcher; now that this feature is gated on
+// CAP_SD it also compiles for the Pager, the ThinkNode M9 and the Heltec V4-R8,
+// where "flash it from the Launcher" names something the user does not have. The
+// T-Deck strings must stay byte-identical: they are translated in all 13 .lang
+// files, and editing the English key orphans every translation of it (audit with
+// scripts/build/audit-lang.py).
+#if defined(HAS_TDECK_GT911)
+  #define SDFW_SAVED_FMT TR("Saved: %s\nFlash it from the Launcher.")
+  #define SDFW_HINT_TEXT TR("For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).")
+#else
+  #define SDFW_SAVED_FMT TR("Saved: %s\nReady for offline flashing.")
+  #define SDFW_HINT_TEXT TR("Saves the latest firmware of the selected channel to the SD card (BINS folder).")
+#endif
+
 static volatile bool s_sdfw_request  = false;   // UI -> worker
 static volatile int  s_sdfw_state    = 0;       // 0 idle, 1 running, 2 ok, 3 error
 static volatile int  s_sdfw_pct      = 0;
@@ -5400,7 +5415,7 @@ static void sdFwPollTimerCb(lv_timer_t* t) {
   if (st == 2) {
     if (s_sdfw_status_lbl) {
       char b[112];
-      snprintf(b, sizeof b, TR("Saved: %s\nFlash it from the Launcher."), s_sdfw_msg);
+      snprintf(b, sizeof b, SDFW_SAVED_FMT, s_sdfw_msg);
       lv_label_set_text(s_sdfw_status_lbl, b);
     }
     if (g_lv.task) g_lv.task->showAlert(TR("Update bin saved to SD"), 3000);
@@ -30965,7 +30980,7 @@ static void settingsCatBuild(int cat) {
           lv_obj_set_width(s_sdfw_status_lbl, lblw);
           lv_obj_set_style_text_font(s_sdfw_status_lbl, &g_font_12, LV_PART_MAIN);
           lv_obj_set_style_text_color(s_sdfw_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-          lv_label_set_text(s_sdfw_status_lbl, TR("For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder)."));
+          lv_label_set_text(s_sdfw_status_lbl, SDFW_HINT_TEXT);
         }
 #endif
       }

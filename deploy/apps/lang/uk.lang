@@ -722,6 +722,8 @@ Saved — applying…
 Saved — rebooting	Збережено — перезавантаження
 Saved — reconnecting…	Збережено — перепідключення…
 Saved: %s\nFlash it from the Launcher.	Збережено: %s\nПрошийте з Launcher.
+Saved: %s\nReady for offline flashing.	Saved: %s\nReady for offline flashing.
+Saves the latest firmware of the selected channel to the SD card (BINS folder).	Saves the latest firmware of the selected channel to the SD card (BINS folder).
 Saving to SD… %d%%	Збереження на SD… %d%%
 Saving to SD… 0%	Збереження на SD… 0%
 Scan to open on phone	Відскануйте, щоб відкрити на телефоні

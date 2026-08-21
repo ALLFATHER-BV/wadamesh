@@ -722,6 +722,8 @@ Saved — applying…
 Saved — rebooting	Αποθηκεύτηκε — επανεκκίνηση
 Saved — reconnecting…	Αποθηκεύτηκε — επανασύνδεση…
 Saved: %s\nFlash it from the Launcher.	Αποθηκεύτηκε: %s\nΕγκαταστήστε το από τον Launcher.
+Saved: %s\nReady for offline flashing.	Saved: %s\nReady for offline flashing.
+Saves the latest firmware of the selected channel to the SD card (BINS folder).	Saves the latest firmware of the selected channel to the SD card (BINS folder).
 Saving to SD… %d%%	Αποθήκευση στην SD… %d%%
 Saving to SD… 0%	Αποθήκευση στην SD… 0%
 Scan to open on phone	Σαρώστε για άνοιγμα στο κινητό

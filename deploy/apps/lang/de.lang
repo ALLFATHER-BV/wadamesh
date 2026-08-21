@@ -722,6 +722,8 @@ Saved — applying…	Gespeichert – wird angewendet …
 Saved — rebooting	Gespeichert — Neustart
 Saved — reconnecting…	Gespeichert — verbinde neu…
 Saved: %s\nFlash it from the Launcher.	Gespeichert: %s\nFlashe es über den Launcher.
+Saved: %s\nReady for offline flashing.	Saved: %s\nReady for offline flashing.
+Saves the latest firmware of the selected channel to the SD card (BINS folder).	Saves the latest firmware of the selected channel to the SD card (BINS folder).
 Saving to SD… %d%%	Speichern auf SD… %d%%
 Saving to SD… 0%	Speichern auf SD… 0%
 Scan to open on phone	Scannen, um am Handy zu öffnen
