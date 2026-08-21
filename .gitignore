@@ -36,3 +36,9 @@ CLAUDE.md
 
 # Local reconstruction notes (scratch, never publish)
 /.notes/
+
+# Tanmatsu sideload tooling: fetched/dumped per developer, never committed.
+# appfs-src is badge.team's repo (fetch-appfs.sh); dev_appfs.bin is a dump of YOUR
+# device's AppFS partition and is both large and device-specific.
+tanmatsu/tools/appfs-src/
+tanmatsu/tools/dev_appfs.bin

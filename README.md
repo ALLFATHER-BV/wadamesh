@@ -22,7 +22,7 @@ per-board status.
 
 - LilyGo T-Deck / T-Deck Plus — env `LilyGo_TDeck_companion_radio_touch` (stable)
 - Heltec V4 + TFT + CHSC6x touch — env `heltec_v4_tft_companion_radio_usb_tcp_touch` (stable)
-- Tanmatsu (ESP32-P4) — built from `tanmatsu/` (ESP-IDF), ships via the Tanmatsu app store
+- Tanmatsu (ESP32-P4) — built from `tanmatsu/` (ESP-IDF), ships via the Tanmatsu app store — [sideload guide](TANMATSU_SIDELOAD.md) for running your own build
 - Elecrow ThinkNode M9 — env `ThinkNode_M9_companion_radio_touch` (beta) — [keyboard & d-pad guide](THINKNODE_M9_SHORTCUTS.md)
 - RAK WisMesh Tap V2 (RAK3312) — env `rak_tap_v2_companion_radio_touch` (beta)
 - LilyGo T-Lora Pager — envs `tlora_pager_lr1121_companion_radio_touch` / `tlora_pager_sx1262_companion_radio_touch` (stable) — [keyboard shortcuts](TLORA_PAGER_SHORTCUTS.md)

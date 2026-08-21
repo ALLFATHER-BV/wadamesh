@@ -171,6 +171,9 @@
             <li><b>Settings</b>, <b>Terminal</b> (MeshCore CLI), <b>Files</b> (microSD).</li>
           </ul>
           <p>The bar along the bottom is always there — it switches the five main tabs (Chat, Contacts, Home, Map, Settings) from anywhere. The top bar shows unread count, time, signal and battery.</p>
+          <h3>Building it yourself <span class="tag">Dev</span></h3>
+          <p>Firmware for the ESP32-S3 boards builds with PlatformIO from the repo. The <b>Tanmatsu</b> is different: it runs under badge.team's launcher as an app rather than as standalone firmware, and flashing it the usual way replaces the launcher OS. There is a separate guide for that: <a href="tanmatsu.html">Sideloading on the Tanmatsu</a>.</p>
+          <p>If you only want to write software for the device, you do not need a firmware build at all: see the <a href="sdk.html">Lua app SDK</a>.</p>
           <h3>Is my history actually saving? <span class="tag">Cmdr</span></h3>
           <p><b>Settings &rarr; About &rarr; Chat store</b> is the answer: it names the storage backend in use, when history last saved successfully, and the exact stage and error a failing save is hitting. Worth a look if messages seem to vanish across a reboot.</p>
         </div>
