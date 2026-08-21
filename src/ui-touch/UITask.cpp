@@ -27118,11 +27118,25 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     // Prefer the Meshtastic/MeshCore standard layout /maps/osm/{z}/{x}/{y}.png
     // (decoded via lodepng); fall back to the legacy /tiles/{z}/{x}/{y}.jpg.
     char ppath[56];
-    snprintf(ppath, sizeof(ppath), "/maps/osm/%u/%ld/%ld.png", (unsigned)z, (long)x, (long)y);
-    File fsd = SD.open(ppath, FILE_READ);
-    if (!fsd) {   // some tile packs name the extension upper-case (.PNG)
-      snprintf(ppath, sizeof(ppath), "/maps/osm/%u/%ld/%ld.PNG", (unsigned)z, (long)x, (long)y);
-      fsd = SD.open(ppath, FILE_READ);
+    // Directory case matters here even though FAT is nominally case-insensitive: what
+    // resolves depends on the card's long-filename entries and the FATFS build, and we
+    // were only ever asking for the lower-case spelling. Meanwhile our OWN card
+    // bootstrap creates "/MAPS" and the README we write onto the card says "MAPS/", so
+    // a user who followed our instructions to the letter could end up with a directory
+    // the loader never looked in. Reported by w7aaf via pisti87 (#286), who could not
+    // reproduce it on his own card — which is exactly the shape of a case-resolution
+    // difference rather than a wrong path.
+    //
+    // Ask for both spellings, upper first since that is the one we create.
+    File fsd;
+    static const char* const kMapRoots[2] = { "/MAPS", "/maps" };
+    static const char* const kPngExt[2]   = { "png", "PNG" };
+    for (int r = 0; r < 2 && !fsd; ++r) {
+      for (int e = 0; e < 2 && !fsd; ++e) {
+        snprintf(ppath, sizeof(ppath), "%s/osm/%u/%ld/%ld.%s",
+                 kMapRoots[r], (unsigned)z, (long)x, (long)y, kPngExt[e]);
+        fsd = SD.open(ppath, FILE_READ);
+      }
     }
     // Plain /tiles/<z>/<x>/<y>.{png,PNG} — a PNG pack dropped straight into /tiles/
     // (OSM's native format), not the /maps/osm layout. Decoded via lodepng like the
@@ -27330,10 +27344,15 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
     if (s_sd_fail_note_ms) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
     if (!s_sd_mounted) return false;       // never ladder from the zoom guard (see loadTileJpeg)
     char p[56];
-    snprintf(p, sizeof p, "/maps/osm/%u/%ld/%ld.png", (unsigned)z, x, y);
-    if (SD.exists(p)) return true;
-    snprintf(p, sizeof p, "/maps/osm/%u/%ld/%ld.PNG", (unsigned)z, x, y);   // upper-case packs
-    if (SD.exists(p)) return true;
+    // Both directory spellings, upper first: our own card bootstrap creates "/MAPS"
+    // while this only ever probed "/maps" (#286). Must stay in step with the loader in
+    // tileFromSd(), or zoom levels would advertise as reachable and then not draw.
+    for (const char* root : { "/MAPS", "/maps" }) {
+      for (const char* ext : { "png", "PNG" }) {
+        snprintf(p, sizeof p, "%s/osm/%u/%ld/%ld.%s", root, (unsigned)z, x, y, ext);
+        if (SD.exists(p)) return true;
+      }
+    }
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.png", (unsigned)z, x, y);      // PNG pack in /tiles/
     if (SD.exists(p)) return true;
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.PNG", (unsigned)z, x, y);
