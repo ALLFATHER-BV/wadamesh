@@ -47,6 +47,10 @@
   .note b{color:var(--ink)}
   a{color:var(--teal-ink)}
   footer{color:var(--mut);font-size:.85rem;padding:0 20px 40px;text-align:center}
+  .card h2 .beta{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:999px;font-size:.7rem;
+    font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8a5a12;background:#fdf0d8;
+    border:1px solid #f0d6a8;vertical-align:middle}
+  .card .warn{color:#b4631a;font-size:.85rem}
   .unsupported{display:none;color:#b4631a}
   body.no-serial .unsupported{display:block}
   body.no-serial esp-web-install-button{display:none}
@@ -86,11 +90,27 @@
       <esp-web-install-button manifest="./manifest-tdeck.json"></esp-web-install-button>
       <span class="unsupported">Use Chrome or Edge on desktop (Web Serial).</span>
     </div>
+    <div class="card">
+      <h2>T-LoRa Pager <span class="beta">Beta</span> <span style="font-weight:600;color:var(--mut)">LR1121</span></h2>
+      <p>ESP32-S3 QWERTY + rotary encoder, no touchscreen.</p>
+      <p class="warn">Only for units with the <b>LR1121</b> radio — SX1262 units need the other Pager card.</p>
+      <esp-web-install-button manifest="./manifest-tlora-pager-lr1121.json"></esp-web-install-button>
+      <span class="unsupported">Use Chrome or Edge on desktop (Web Serial).</span>
+    </div>
+    <div class="card">
+      <h2>T-LoRa Pager <span class="beta">Beta</span> <span style="font-weight:600;color:var(--mut)">SX1262</span></h2>
+      <p>ESP32-S3 QWERTY + rotary encoder, no touchscreen.</p>
+      <p class="warn">Only for units with the <b>SX1262</b> radio — LR1121 units need the other Pager card.</p>
+      <esp-web-install-button manifest="./manifest-tlora-pager-sx1262.json"></esp-web-install-button>
+      <span class="unsupported">Use Chrome or Edge on desktop (Web Serial).</span>
+    </div>
   </div>
   <div class="note">
     <b>How it works:</b> plug the device in over USB, click <b>Connect</b>, pick the serial port,
     and let it flash — a clean full install. On a T-Deck, hold the trackball while tapping reset if it
-    doesn't enter download mode on its own. Works in <b>Chrome / Edge on desktop</b>. Want the guided
+    doesn't enter download mode on its own. The T-LoRa Pager ships with either an LR1121 or an SX1262
+    radio — check yours and pick the matching card, since the wrong build leaves the radio dead; both
+    install from the <b>beta</b> channel. Works in <b>Chrome / Edge on desktop</b>. Want the guided
     version (incl. running under bmorcelli's Launcher)? See <a href="https://wadamesh.com">wadamesh.com</a>.
   </div>
 </main>

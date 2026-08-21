@@ -5,8 +5,8 @@ Distribution stack for wadamesh: a **VPS nginx origin behind Cloudflare**.
 ```
 tiles.wadamesh.com     →CF (HTTP, edge-cached) →  nginx → OpenStreetMap / OpenTopoMap
 firmware.wadamesh.com  →CF (cache bins)        →  nginx → /srv/wadamesh/firmware
-flasher.wadamesh.com   →CF (HTTPS)             →  web flasher        (TODO — see below)
-wadamesh.com           →CF (HTTPS)             →  landing page       (later)
+flasher.wadamesh.com   →CF (HTTPS)             →  301 → wadamesh.com
+wadamesh.com           →CF (HTTPS)             →  nginx → /srv/wadamesh/site
 ```
 
 **Map tile styles.** The default `/{z}/{x}/{y}.jpg` route serves **OpenStreetMap**
@@ -67,11 +67,18 @@ highest `beta_<N>`, and (once OTA-over-Wi-Fi is re-enabled) pulls
 
 ## Done
 
-- **Web flasher** ✅ at `flasher.wadamesh.com` — `deploy/flasher/` (esp-web-tools /
-  Web Serial, board picker, manifests pointing at the rolling `/latest/` merged
-  bins; `release.sh` refreshes `/latest/` each publish).
-- **Apex** `wadamesh.com` 301-redirects to the flasher — **activate by pointing
-  the `wadamesh.com` A record at the VPS** in Cloudflare (it's still on the parking IP).
+- **Web flasher** ✅ — the guided install page at `wadamesh.com`, served from
+  `deploy/site/` and published by `scripts/deploy-site.sh` (esp-web-tools / Web
+  Serial, per-board install buttons + .bin downloads, manifests generated per
+  release by `scripts/build/gen-flasher-meta.py` into the `/latest/` and
+  `/latest-beta/` feeds that `release.sh` refreshes each publish).
+- **`flasher.wadamesh.com` 301-redirects to the apex** (see
+  `deploy/nginx/flasher.wadamesh.com.conf`) — it is an alias, not its own page.
+- **`deploy/flasher/`** is the original standalone flasher page. **No deploy
+  script publishes it** — `deploy-site.sh` ships `deploy/site/` only — so it is
+  effectively an offline/local copy kept in parity by hand. Retire it or wire it
+  into a deploy target; until then, treat `deploy/site/index.html` as the only
+  install page users can reach.
 
 ## TODO before public launch
 
