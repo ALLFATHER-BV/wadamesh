@@ -26272,11 +26272,19 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_ota_state = 2;   // success -> the UI poll timer reboots into the new slot
 }
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 // Stream the app-only bin for the active update channel onto the SD card
 // (/BINS/wadamesh-beta_<N>-<stable|beta>.bin) so the Launcher can flash it —
 // the no-A/B-slot counterpart to otaWorkerRun above. Same immutable versioned
 // URL, same worker, but the bytes go to SD instead of the spare OTA slot.
+//
+// This feature is spread over SIX #if regions (state+callbacks, this worker,
+// the tile-worker dispatch below, the About button, the settings-close teardown,
+// and the sdHealthTick bail-out). They are character-for-character identical on
+// purpose. A board admitted to some but not all of them still COMPILES — the
+// worker's only caller sits behind the same gate, so nothing link-errors — and
+// then hangs at "Saving to SD… 0%" with a poll timer writing to a label the
+// teardown never nulled. Change all six or none.
 static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_sdfw_pct = 0;
   if (SD.cardType() == CARD_NONE) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "no SD card"); s_sdfw_state = 3; return; }
@@ -26533,7 +26541,7 @@ static void tileFetchTaskFn(void* arg) {
       otaWorkerRun(client, http);
       continue;
     }
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
     // SD firmware download for Launcher installs (user-initiated from About).
     if (s_sdfw_request) {
       s_sdfw_request = false;
@@ -31015,7 +31023,7 @@ static void closeSettingsCategory() {
   hideKb();
   if (s_settings_open_cat == CAT_ABOUT) {   // null the live-label ptrs (freed with the sheet)
     s_sysinfo_lbl = nullptr; s_sysinfo_rest_lbl = nullptr; s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
-#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
     s_sdfw_status_lbl = nullptr;
 #endif
     s_ota_btn = nullptr; s_ota_btn_lbl = nullptr;
@@ -51214,8 +51222,8 @@ static void sdHealthTick() {
     return;
   }
 #endif
-#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
-  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS
 #endif
   // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
   // also on a slow 30 s background cadence — a card yanked while nothing is
