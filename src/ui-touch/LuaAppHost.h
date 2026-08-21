@@ -35,6 +35,7 @@ void luaAppMessage(const char* kind, const char* channel, const char* sender, co
 #define LUA_PERM_READ     2   // see incoming channel traffic
 #define LUA_PERM_DM_SEND  4   // send a direct message, or post to a room server, AS the user
 #define LUA_PERM_DM_READ  8   // see incoming direct messages and room posts
+#define LUA_PERM_PROBE    16  // transmit discovery probes (wada.mesh.discover)
 #else
 inline bool luaAppIsOpen() { return false; }
 inline void luaAppDismiss() {}

@@ -20174,12 +20174,20 @@ static bool fmRmRecursive(fs::FS* fs, const char* path) {
 }
 
 // ----- text-input modal (rename / new folder) -----
+// A Lua app driving this prompt (wada.ui.input) must hear about EVERY way it
+// closes, or it sits waiting on a callback that will never arrive. Set while an
+// OK is being delivered so the close below does not also report a cancel.
+void luaHostTextPromptCancel();
+static bool s_fm_prompt_ok = false;
 static void fmPromptClose() {
   if (s_fm_prompt) {
     hideKb();
     popupClose(&s_fm_prompt);
     s_fm_prompt_ta = nullptr;
   }
+#if CAP_LUA_APPS
+  if (!s_fm_prompt_ok) luaHostTextPromptCancel();
+#endif
 }
 static void fmPromptOkCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -20189,7 +20197,9 @@ static void fmPromptOkCb(lv_event_t* e) {
   const char* t = lv_textarea_get_text(s_fm_prompt_ta);
   snprintf(buf, sizeof buf, "%s", t ? t : "");
   void (*cb)(const char*) = s_fm_prompt_cb;
+  s_fm_prompt_ok = (cb && buf[0]);      // empty text is a cancel, not a delivery
   fmPromptClose();
+  s_fm_prompt_ok = false;
   if (cb && buf[0]) cb(buf);
 }
 static void fmPromptCancelCb(lv_event_t* e) {
@@ -25808,15 +25818,26 @@ static bool luaJsonField(const char* buf, const char* key, char* out, size_t cap
   return o > 0;
 }
 
-// GET url into a PSRAM buffer (cap'd). Returns bytes read, -1 on failure.
-int luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url,
-                    char* buf, size_t cap) {   // shared with LuaAppHost wada.net
+// Fetch url into a PSRAM buffer (cap'd). Returns bytes of response read, -1 on
+// failure. `body` non-null makes it a POST with that payload; null is a GET.
+int luaStoreHttpReq(WiFiClient& client, HTTPClient& http, const char* url,
+                    char* buf, size_t cap,
+                    const uint8_t* body, size_t body_len, const char* ctype) {
   http.setReuse(false);
   http.setConnectTimeout(8000);
   http.setTimeout(12000);
   http.setUserAgent("wadamesh-touch");
   if (!http.begin(client, url)) return -1;
-  if (http.GET() != 200) { http.end(); return -1; }
+  int code;
+  if (body) {
+    http.addHeader("Content-Type", (ctype && *ctype) ? ctype : "application/octet-stream");
+    code = http.POST((uint8_t*)body, body_len);
+  } else {
+    code = http.GET();
+  }
+  // Any 2xx counts: a POST that a server answers 201 or 204 succeeded, and
+  // demanding exactly 200 would fail every correctly-built upload endpoint.
+  if (code < 200 || code > 299) { http.end(); return -1; }
   // Read by Content-Length. The old loop trusted connected() to mean "stream
   // done" and could quit after the first TCP window (~16 KB) with the rest
   // still in flight — a 49 KB language file came back one-third read. Now the
@@ -25847,6 +25868,11 @@ int luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url,
   return (int)total;
 }
 
+int luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url,
+                    char* buf, size_t cap) {
+  return luaStoreHttpReq(client, http, url, buf, cap, nullptr, 0, nullptr);
+}
+
 // Opaque bridge for LuaAppHost.cpp — see the long note at the top of that file. It
 // must not name the client type (WiFiClient is a real class here, an alias of
 // NetworkClient on the Tanmatsu, and a #define to C6Client on the T-Display P4), so
@@ -25854,6 +25880,11 @@ int luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url,
 int luaStoreHttpGetOpaque(void* client, void* http, const char* url, char* buf, size_t cap) {
   return luaStoreHttpGet(*static_cast<WiFiClient*>(client), *static_cast<HTTPClient*>(http),
                          url, buf, cap);
+}
+int luaStoreHttpPostOpaque(void* client, void* http, const char* url, char* buf, size_t cap,
+                           const void* body, size_t body_len, const char* ctype) {
+  return luaStoreHttpReq(*static_cast<WiFiClient*>(client), *static_cast<HTTPClient*>(http),
+                         url, buf, cap, (const uint8_t*)body, body_len, ctype);
 }
 
 static void luaStoreFetchCatalogWorker(WiFiClient& client, HTTPClient& http) {
@@ -27797,6 +27828,286 @@ struct MapMarker {
 // (reported as "new contacts never appear on the map, but the number is right").
 // Markers are only built for contacts INSIDE the viewport, so this is how many are
 // visible at once, not the contact count. Costs 8 bytes of static RAM per slot.
+
+#if CAP_LUA_SDK_EXT
+// ---------------------------------------------------------------------------
+// App map views (wada.map) -- a real slippy map an app can put on its page.
+//
+// Apps could previously draw geography only onto their own canvas, from
+// scratch, with no basemap. This gives them the firmware's actual tiles,
+// projection and cache.
+//
+// It does NOT share the map tab's tile pool. That pool is sized and culled for
+// a full-screen viewport and is rebuilt on pan/zoom; borrowing slots from it
+// would mean an app and the map tab evicting each other's tiles at whatever
+// rate they happened to redraw. A view owns a small pool of its own instead,
+// capped at kAppMapTilesMax so the cost is bounded and predictable: 128 KB per
+// tile, exactly like the map tab, and freed the moment the view is collected.
+static const int    kAppMapTilesMax  = 4;
+static const size_t kAppMapTileBytes = 256u * 256u * sizeof(lv_color_t);
+
+struct AppMapTile {
+  uint8_t  z; int32_t x, y;
+  uint8_t* rgb = nullptr;
+  int      w = 0, h = 0;
+  lv_img_dsc_t dsc;
+  lv_obj_t* img = nullptr;
+  bool     in_use = false;
+};
+struct AppMapView {
+  lv_obj_t* cont   = nullptr;   // clips to the app's requested rectangle
+  lv_obj_t* tiles  = nullptr;   // tile images
+  lv_obj_t* ovl    = nullptr;   // markers + lines, always above the tiles
+  int       w = 0, h = 0;
+  double    lat = 0, lon = 0;
+  uint8_t   zoom = 13;
+  int       placed = 0;         // tiles actually drawn at the last render
+  AppMapTile pool[kAppMapTilesMax];
+};
+
+static void appMapFreeTile(AppMapTile& t) {
+  if (t.img) { lv_obj_del(t.img); t.img = nullptr; }
+  if (t.rgb) { lvglPsramFree(t.rgb); t.rgb = nullptr; }
+  t.in_use = false;
+}
+
+void* luaHostMapCreate(int x, int y, int w, int h) {
+  if (!g_lv.task) return nullptr;
+  AppMapView* v = new (std::nothrow) AppMapView();
+  if (!v) return nullptr;
+  v->w = w; v->h = h;
+  extern lv_obj_t* luaHostAppBody();
+  lv_obj_t* body = luaHostAppBody();
+  if (!body) { delete v; return nullptr; }
+  v->cont = lv_obj_create(body);
+  lv_obj_remove_style_all(v->cont);
+  lv_obj_set_pos(v->cont, (lv_coord_t)x, (lv_coord_t)y);
+  lv_obj_set_size(v->cont, (lv_coord_t)w, (lv_coord_t)h);
+  lv_obj_set_style_bg_color(v->cont, lv_color_hex(0x11161B), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(v->cont, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(v->cont, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(v->cont, LV_OBJ_FLAG_CLICKABLE);
+  // Two layers so overlays can never be painted over by a tile that happens to
+  // be created later -- the exact bug the map tab fixes with move_background.
+  v->tiles = lv_obj_create(v->cont);
+  lv_obj_remove_style_all(v->tiles);
+  lv_obj_set_pos(v->tiles, 0, 0);
+  lv_obj_set_size(v->tiles, (lv_coord_t)w, (lv_coord_t)h);
+  lv_obj_clear_flag(v->tiles, LV_OBJ_FLAG_SCROLLABLE);
+  v->ovl = lv_obj_create(v->cont);
+  lv_obj_remove_style_all(v->ovl);
+  lv_obj_set_pos(v->ovl, 0, 0);
+  lv_obj_set_size(v->ovl, (lv_coord_t)w, (lv_coord_t)h);
+  lv_obj_clear_flag(v->ovl, LV_OBJ_FLAG_SCROLLABLE);
+  return v;
+}
+
+void luaHostMapDestroy(void* vp) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v) return;
+  for (int i = 0; i < kAppMapTilesMax; i++) appMapFreeTile(v->pool[i]);
+  if (v->cont) lv_obj_del(v->cont);      // takes the two layers and every overlay with it
+  delete v;
+}
+
+void luaHostMapSet(void* vp, double lat, double lon, int zoom) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v) return;
+  v->lat = lat; v->lon = lon;
+  if (zoom >= 1 && zoom <= 19) v->zoom = (uint8_t)zoom;
+}
+// Zoom alone. Separate from the call above because 0,0 is a real coordinate,
+// so there is no lat/lon value that can mean "leave the centre alone".
+void luaHostMapSetZoom(void* vp, int zoom) {
+  AppMapView* v = (AppMapView*)vp;
+  if (v && zoom >= 1 && zoom <= 19) v->zoom = (uint8_t)zoom;
+}
+int luaHostMapZoom(void* vp) { AppMapView* v = (AppMapView*)vp; return v ? v->zoom : 0; }
+int luaHostMapPlaced(void* vp) { AppMapView* v = (AppMapView*)vp; return v ? v->placed : 0; }
+
+// lat/lon -> pixel within the view. Deliberately NOT clamped: an app placing
+// its own labels needs to know a point is off-view, and a clamped coordinate
+// would silently pile everything onto the edge.
+void luaHostMapToScreen(void* vp, double lat, double lon, int* px, int* py) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v) { *px = *py = 0; return; }
+  double cwx, cwy, wx, wy;
+  latLonToWorldPx(v->lat, v->lon, v->zoom, &cwx, &cwy);
+  latLonToWorldPx(lat, lon, v->zoom, &wx, &wy);
+  *px = (int)lround(wx - cwx + v->w / 2.0);
+  *py = (int)lround(wy - cwy + v->h / 2.0);
+}
+void luaHostMapToLatLon(void* vp, int px, int py, double* lat, double* lon) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v) { *lat = *lon = 0; return; }
+  double cwx, cwy;
+  latLonToWorldPx(v->lat, v->lon, v->zoom, &cwx, &cwy);
+  worldPxToLatLon(cwx + (px - v->w / 2.0), cwy + (py - v->h / 2.0), v->zoom, lat, lon);
+}
+
+void luaHostMapClearOverlay(void* vp) {
+  AppMapView* v = (AppMapView*)vp;
+  if (v && v->ovl) lv_obj_clean(v->ovl);
+}
+
+int luaHostMapMarker(void* vp, double lat, double lon, uint32_t color, int size) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v || !v->ovl) return 0;
+  int px, py;
+  luaHostMapToScreen(vp, lat, lon, &px, &py);
+  if (size < 3) size = 3;
+  if (size > 24) size = 24;
+  // Off-view markers are dropped rather than created off-screen: they would be
+  // invisible LVGL objects accumulating on every redraw of a panning map.
+  if (px < -size || py < -size || px > v->w + size || py > v->h + size) return 0;
+  lv_obj_t* d = lv_obj_create(v->ovl);
+  lv_obj_remove_style_all(d);
+  lv_obj_set_size(d, size, size);
+  lv_obj_set_pos(d, px - size / 2, py - size / 2);
+  lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(d, lv_color_hex(color), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(d, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(d, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_color(d, lv_color_hex(0x0E1216), LV_PART_MAIN);
+  lv_obj_clear_flag(d, LV_OBJ_FLAG_SCROLLABLE);
+  return 1;
+}
+
+int luaHostMapLine(void* vp, double la1, double lo1, double la2, double lo2,
+                   uint32_t color, int width) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v || !v->ovl) return 0;
+  int x1, y1, x2, y2;
+  luaHostMapToScreen(vp, la1, lo1, &x1, &y1);
+  luaHostMapToScreen(vp, la2, lo2, &x2, &y2);
+  // Both ends off the same side means the segment cannot cross the view.
+  if ((x1 < 0 && x2 < 0) || (y1 < 0 && y2 < 0) ||
+      (x1 > v->w && x2 > v->w) || (y1 > v->h && y2 > v->h)) return 0;
+  // LVGL does not copy a line's point array, so it has to outlive the object.
+  // Attaching it as the object's user_data and freeing it on DELETE keeps the
+  // lifetime tied to the widget instead of to a fixed slot table.
+  lv_point_t* pts = (lv_point_t*)lv_mem_alloc(sizeof(lv_point_t) * 2);
+  if (!pts) return 0;
+  pts[0].x = (lv_coord_t)x1; pts[0].y = (lv_coord_t)y1;
+  pts[1].x = (lv_coord_t)x2; pts[1].y = (lv_coord_t)y2;
+  lv_obj_t* ln = lv_line_create(v->ovl);
+  lv_line_set_points(ln, pts, 2);
+  lv_obj_set_user_data(ln, pts);
+  lv_obj_add_event_cb(ln, [](lv_event_t* e) {
+    void* p = lv_obj_get_user_data(lv_event_get_target(e));
+    if (p) lv_mem_free(p);
+  }, LV_EVENT_DELETE, nullptr);
+  lv_obj_set_style_line_color(ln, lv_color_hex(color), LV_PART_MAIN);
+  lv_obj_set_style_line_width(ln, width < 1 ? 1 : (width > 8 ? 8 : width), LV_PART_MAIN);
+  lv_obj_set_style_line_opa(ln, LV_OPA_COVER, LV_PART_MAIN);
+  return 1;
+}
+
+// Render the tiles covering the view. Same slot-reuse idea as the map tab: a
+// small pan shares most tiles, so only newcomers are read and decoded.
+void luaHostMapRender(void* vp) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v || !v->tiles) return;
+  double cwx, cwy;
+  latLonToWorldPx(v->lat, v->lon, v->zoom, &cwx, &cwy);
+  const int32_t ctx = (int32_t)floor(cwx / 256.0);
+  const int32_t cty = (int32_t)floor(cwy / 256.0);
+  const int rx = (v->w / 2 + 255) / 256;      // tiles needed each side to cover the view
+  const int ry = (v->h / 2 + 255) / 256;
+
+  struct Want { int32_t tx, ty; double d2; bool placed; };
+  Want cand[25];
+  int nc = 0;
+  for (int dy = -ry; dy <= ry; dy++) {
+    for (int dx = -rx; dx <= rx; dx++) {
+      if (nc >= (int)(sizeof cand / sizeof cand[0])) break;
+      const int32_t tx = ctx + dx, ty = cty + dy;
+      // Cull to what actually touches the view, so the pool is spent on tiles
+      // the user can see rather than on the corners of an oversized grid.
+      const double sx = (double)tx * 256.0 - cwx + v->w / 2.0;
+      const double sy = (double)ty * 256.0 - cwy + v->h / 2.0;
+      if (sx > v->w || sy > v->h || sx + 256 < 0 || sy + 256 < 0) continue;
+      // Distance from the tile's centre to the view's, so that when a view is
+      // bigger than the pool can cover we keep the MOST VISIBLE tiles rather
+      // than whichever the scan happened to reach first -- that ordering put
+      // the gap in the middle of the view instead of at its edge.
+      const double mx = sx + 128.0 - v->w / 2.0, my = sy + 128.0 - v->h / 2.0;
+      cand[nc++] = { tx, ty, mx * mx + my * my, false };
+    }
+  }
+  for (int a = 1; a < nc; a++) {            // insertion sort; nc is at most 25
+    Want key = cand[a];
+    int b = a - 1;
+    while (b >= 0 && cand[b].d2 > key.d2) { cand[b + 1] = cand[b]; b--; }
+    cand[b + 1] = key;
+  }
+  const int nw = nc < kAppMapTilesMax ? nc : kAppMapTilesMax;
+  Want* wanted = cand;
+
+  for (int i = 0; i < kAppMapTilesMax; i++) {           // keep matches, free the rest
+    AppMapTile& t = v->pool[i];
+    if (!t.in_use) continue;
+    bool keep = false;
+    for (int k = 0; k < nw; k++) {
+      if (t.z == v->zoom && t.x == wanted[k].tx && t.y == wanted[k].ty) {
+        keep = true; wanted[k].placed = true;
+        lv_obj_set_pos(t.img, (lv_coord_t)((double)t.x * 256.0 - cwx + v->w / 2.0),
+                              (lv_coord_t)((double)t.y * 256.0 - cwy + v->h / 2.0));
+        break;
+      }
+    }
+    if (!keep) appMapFreeTile(t);
+  }
+
+  v->placed = 0;
+  for (int k = 0; k < nw; k++) {
+    if (wanted[k].placed) { v->placed++; continue; }
+    AppMapTile* dst = nullptr;
+    for (int i = 0; i < kAppMapTilesMax; i++) if (!v->pool[i].in_use) { dst = &v->pool[i]; break; }
+    if (!dst) break;
+    uint8_t* enc = nullptr; size_t elen = 0; bool repairable = false;
+    if (!loadTileJpeg(v->zoom, wanted[k].tx, wanted[k].ty, &enc, &elen, &repairable) || !enc) {
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      queueTileForFetch(v->zoom, wanted[k].tx, wanted[k].ty);   // fills in if Wi-Fi is up
+#endif
+      continue;
+    }
+    if (!dst->rgb) dst->rgb = (uint8_t*)lvglPsramAlloc(kAppMapTileBytes);
+    if (!dst->rgb) { lvglPsramFree(enc); break; }
+    int dw = 0, dh = 0;
+    uint8_t* rgb = (elen >= 4 && enc[0] == 0x89 && enc[1] == 'P' && enc[2] == 'N' && enc[3] == 'G')
+                     ? decodePngToRgb565(enc, elen, &dw, &dh, dst->rgb, kAppMapTileBytes)
+                     : decodeJpegScaledToRgb565(enc, elen, &dw, &dh, 256, dst->rgb, kAppMapTileBytes);
+    lvglPsramFree(enc);
+    if (!rgb) continue;
+    if (s_map_night) {   // follow the user's map setting rather than inventing a second one
+      uint16_t* px = (uint16_t*)rgb;
+      const int cnt = dw * dh;
+      for (int p = 0; p < cnt; ++p) px[p] = (uint16_t)~px[p];
+    }
+    dst->z = v->zoom; dst->x = wanted[k].tx; dst->y = wanted[k].ty;
+    dst->w = dw; dst->h = dh;
+    memset(&dst->dsc, 0, sizeof(dst->dsc));
+    dst->dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+    dst->dsc.header.w  = (uint32_t)dw;
+    dst->dsc.header.h  = (uint32_t)dh;
+    dst->dsc.data      = rgb;
+    dst->dsc.data_size = (uint32_t)((size_t)dw * dh * sizeof(lv_color_t));
+    lv_img_cache_invalidate_src(&dst->dsc);   // the buffer is reused at a stable address
+    dst->img = lv_img_create(v->tiles);
+    lv_img_set_src(dst->img, &dst->dsc);
+    lv_obj_set_pos(dst->img, (lv_coord_t)((double)dst->x * 256.0 - cwx + v->w / 2.0),
+                             (lv_coord_t)((double)dst->y * 256.0 - cwy + v->h / 2.0));
+    dst->in_use = true;
+    v->placed++;
+    // Same watchdog courtesy as the map tab: read + decode on the loop task can
+    // pin the core long enough to starve IDLE if several tiles land at once.
+    vTaskDelay(1);
+  }
+  if (v->ovl) lv_obj_move_foreground(v->ovl);
+}
+#endif  // CAP_LUA_SDK_EXT
+
 constexpr int k_map_markers_max = 256;
 // The self->contact link LINES keep their own, much smaller ceiling: each one holds a
 // persistent 2-point array LVGL does not copy, so they cost 12 bytes a slot rather than
@@ -29494,6 +29805,36 @@ static bool mapZoomReachable(uint8_t z) {
 #endif
 // One zoom step, shared by the +/- buttons and the keyboard-nav scroll keys.
 // Skips levels the current tile source can't show (same walk the buttons did).
+// In slider mode the zoom number lives above the slider, so it is on screen the
+// whole time the slider is. Buttons mode hides the slider, and the readout was
+// hidden with it -- which left the +/- pair with no indication of the level at
+// all. Reported by a user who had switched to buttons and could no longer see
+// the zoom anywhere. So in buttons mode the readout is flashed beside the
+// buttons on each step instead.
+static lv_timer_t* s_map_zoomval_hide = nullptr;
+static void mapZoomValHideCb(lv_timer_t* t) {
+  if (s_map_zoom_val && lv_obj_is_valid(s_map_zoom_val))
+    lv_obj_add_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
+  if (t) lv_timer_del(t);
+  s_map_zoomval_hide = nullptr;
+}
+static void mapZoomValFlash() {
+  if (!s_map_zoom_val || !lv_obj_is_valid(s_map_zoom_val)) return;
+  lv_label_set_text_fmt(s_map_zoom_val, TR("zoom %d"), (int)s_map_zoom);
+  // Anchored to the slider at build time, which is hidden here. Re-anchor to the
+  // "+" button so it tracks the column: the buttons are placed with plain
+  // set_pos and no status-bar offset, so a hand-computed y would sit low.
+  if (s_map_btn_zoomin && lv_obj_is_valid(s_map_btn_zoomin))
+    lv_obj_align_to(s_map_zoom_val, s_map_btn_zoomin, LV_ALIGN_OUT_LEFT_MID, -6, 0);
+  else
+    lv_obj_align(s_map_zoom_val, LV_ALIGN_TOP_RIGHT, -(32 + 10), 4 + 32);
+  lv_obj_clear_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(s_map_zoom_val);
+  if (s_map_zoomval_hide) { lv_timer_del(s_map_zoomval_hide); s_map_zoomval_hide = nullptr; }
+  s_map_zoomval_hide = lv_timer_create(mapZoomValHideCb, 1400, nullptr);
+  if (s_map_zoomval_hide) lv_timer_set_repeat_count(s_map_zoomval_hide, 1);
+}
+
 static void mapZoomStep(bool zoom_in) {
   if (zoom_in  && s_map_zoom >= k_map_zoom_max) return;
   if (!zoom_in && s_map_zoom <= k_map_zoom_min) return;
@@ -29523,6 +29864,7 @@ static void mapZoomStep(bool zoom_in) {
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
+  if (s_map_zoom_buttons) mapZoomValFlash();   // slider mode already shows it permanently
 }
 static void mapZoomInCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -29597,6 +29939,8 @@ static void mapZoomControlsApply() {
     hide(s_map_btn_zoomtoggle);
     if (s_map_zoom_slider) lv_obj_add_flag(s_map_zoom_slider, LV_OBJ_FLAG_HIDDEN);   // no slider in buttons mode
     if (s_map_zoom_val)    lv_obj_add_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
+    // Starts hidden; mapZoomStep flashes it on each +/- press.
+    if (s_map_zoomval_hide) { lv_timer_del(s_map_zoomval_hide); s_map_zoomval_hide = nullptr; }
   } else {
     show(s_map_btn_zoomtoggle, y); y += H;
     hide(s_map_btn_zoomin);
@@ -38132,7 +38476,7 @@ static const char* wifiStaStatusBrief(int s) {
       // Append the esp_wifi disconnect reason — "auth failed" alone covers
       // wrong password (r15, 4-way handshake timeout), WPA3-only/H2E SAE
       // failures (r2/r202), and AP-side rejection alike.
-      extern volatile uint8_t g_wifi_last_disc_reason;   // main.cpp
+      extern volatile uint8_t g_wifi_last_disc_reason;   // defined at the foot of this file
       static char s_auth_fail[24];
       if (g_wifi_last_disc_reason) {
         snprintf(s_auth_fail, sizeof s_auth_fail, "auth failed (r%u)", (unsigned)g_wifi_last_disc_reason);
@@ -46157,27 +46501,54 @@ void luaHostAppPath(char* out, size_t cap, const char* rel) {
   snprintf(out, cap, "%s%s", s_ui_data_root, rel);   // SD-rooted stores prefix /meshcomod
 }
 // ---- wada.mesh read-only bridges (no mesh types cross into the host TU) ----
+// Hex-encode the first n bytes of a public key. 4 bytes (8 hex chars) is what the
+// rest of the UI uses to name a node, and it is what an app needs to line up a
+// contact with a discovery hit or an overheard advert.
+static void luaPubkeyHex(const uint8_t* pk, int n, char* out, size_t cap) {
+  static const char* H = "0123456789abcdef";
+  size_t o = 0;
+  for (int i = 0; i < n && o + 2 < cap; i++) {
+    out[o++] = H[(pk[i] >> 4) & 0x0F];
+    out[o++] = H[pk[i] & 0x0F];
+  }
+  if (cap) out[o < cap ? o : cap - 1] = '\0';
+}
+
 int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
-                     double* lat, double* lon) {
+                     double* lat, double* lon, char* pk_hex, size_t pk_cap,
+                     int32_t* lat_e6, int32_t* lon_e6) {
   ContactInfo ci;
   if (idx < 0 || !the_mesh.getContactByIdx((uint32_t)idx, ci)) return 0;
   snprintf(name, name_cap, "%s", ci.name);
   *type = ci.type;
+  if (pk_hex && pk_cap) luaPubkeyHex(ci.id.pub_key, 4, pk_hex, pk_cap);
   *lat = ci.gps_lat / 1.0e6;
   *lon = ci.gps_lon / 1.0e6;
+  if (lat_e6) *lat_e6 = ci.gps_lat;   // stored as micro-degrees already
+  if (lon_e6) *lon_e6 = ci.gps_lon;
   uint32_t now = the_mesh.getRTCClock() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
   *secs_ago = (ci.last_advert_timestamp && now > ci.last_advert_timestamp)
                   ? now - ci.last_advert_timestamp : 0;
   return 1;
 }
-int luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops) {
+int luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops,
+                   int* route, int* len, int* org_kind, char* org_hex, size_t org_cap,
+                   uint32_t* at_ms) {
   MyMesh::UiRxRec r;
   if (idx < 0 || !the_mesh.uiRxLogGet((uint8_t)idx, r)) return 0;
+  if (at_ms) *at_ms = r.ms;   // the record's own timestamp: a stable delivery key
   *ms_ago = millis() - r.ms;
   *ptype  = r.ptype;
   *rssi   = r.rssi;
   *snr    = (float)r.snr_q4 / 4.0f;
   *hops   = r.hops;
+  *route  = r.route;
+  *len    = r.len;
+  *org_kind = r.org_kind;
+  // kind 1 = a real public-key prefix (advert); kind 2 = the one-byte
+  // destination and source hashes an addressed frame carries. Encoded to the
+  // width the frame actually justifies, so 8 hex chars always means a key.
+  if (org_hex && org_cap) luaPubkeyHex(r.org, r.org_kind == 1 ? 4 : 2, org_hex, org_cap);
   return 1;
 }
 void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uint32_t* tx_air_s,
@@ -46442,15 +46813,26 @@ void luaHostBattery(uint16_t* mv, int* pct, bool* charging) {
 // wada.sys.gps(). False when there is no fix -- the caller then gets nil rather
 // than the last known position, which wada.mesh.self() already provides. An app
 // plotting a track needs to tell a live fix from a stale one.
-// No altitude: the LocationProvider that has it is a PRIVATE UITask member and
-// there is no public accessor, unlike getGpsFix()/getGpsSats(). Adding one is a
-// header change worth doing deliberately rather than in passing -- and lat/lon/
-// sats is what a track logger or a compass actually needs.
-bool luaHostGps(double* lat, double* lon, int* sats) {
+// Altitude is included because height dominates LoRa range: two samples a metre
+// apart on the map can be a hilltop and a hollow, and a coverage survey that
+// records only lat/lon cannot tell them apart afterwards. `time` is satellite
+// time (0 until the receiver has decoded the date), which is the only clock a
+// logger can trust before the device has been near a network.
+bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, uint32_t* fix_time,
+                int32_t* lat_e6, int32_t* lon_e6) {
   if (!g_lv.task || !g_lv.task->getGpsFix()) return false;
-  if (lat)  *lat  = g_lv.task->getNodeLat();
-  if (lon)  *lon  = g_lv.task->getNodeLon();
+  const double la = g_lv.task->getNodeLat(), lo = g_lv.task->getNodeLon();
+  if (lat)  *lat  = la;
+  if (lon)  *lon  = lo;
   if (sats) *sats = g_lv.task->getGpsSats();
+  if (alt_m)    *alt_m    = g_lv.task->getGpsAltitude();
+  if (fix_time) *fix_time = g_lv.task->getGpsTime();
+  // Lua is built LUA_32BITS, so its floats are SINGLE precision: a latitude
+  // keeps roughly a metre. Fine to display, not fine to log -- so the exact
+  // micro-degrees go across as integers too, which int32 holds without loss
+  // (180e6 is well inside its range). A track logger should write these.
+  if (lat_e6) *lat_e6 = (int32_t)llround(la * 1.0e6);
+  if (lon_e6) *lon_e6 = (int32_t)llround(lo * 1.0e6);
   return true;
 }
 #endif  // CAP_LUA_SDK_EXT
@@ -46549,6 +46931,7 @@ static void buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw) {
       { TR("Read channel messages"), LUA_PERM_READ },
       { TR("Send private messages as me"), LUA_PERM_DM_SEND },
       { TR("Read private messages"), LUA_PERM_DM_READ },
+      { TR("Send discovery probes"), LUA_PERM_PROBE },
     };
     int sy = y + rowh + 2;
     for (int k = 0; k < (int)(sizeof perms / sizeof perms[0]); ++k) {
@@ -46578,12 +46961,136 @@ static void buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw) {
     (void)perm;
   }
 }
+
+// ---- wada.mesh.discover: the active half of discovery -----------------------
+// A probe is a zero-hop broadcast that asks every node in earshot to answer, so
+// one call costs airtime across the whole neighbourhood, not just ours. That is
+// also exactly what makes it worth having: a reply PROVES the link works from
+// where you are standing, which no amount of listening can establish.
+//
+// Its own permission rather than reusing "send": posting a message and making
+// every neighbour transmit are different impositions on other people's radios,
+// and a survey app has no business acquiring the ability to speak as the user.
+int luaHostProbePerm(const char* app_id) {
+  bool asked = false;
+  const int mask = luaHostAppPerms(app_id, &asked);
+  if (!asked) return 0;
+  return (mask & LUA_PERM_PROBE) ? 1 : -1;
+}
+void luaHostRequestProbePerm(const char* app_id, const char* app_name) {
+  if (!app_id || !*app_id) return;
+  snprintf(s_lua_perm_target, sizeof s_lua_perm_target, "%s", app_id);
+  luaPermSetBit(app_id, LUA_PERM_PROBE, false);   // refused unless the user says otherwise
+  const char* label = (app_name && *app_name) ? app_name : app_id;
+  char msg[240];
+  snprintf(msg, sizeof msg,
+           TR("\"%s\" wants to send discovery probes.\n\n"
+              "Each probe asks every node in range to reply, so it uses airtime "
+              "on the whole local mesh, not just yours.\n\n"
+              "Nothing is sent under your name and no message is transmitted."),
+           label);
+  showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_PROBE, true); });
+}
+// type_filter is a bitmask over ADV_TYPE_*; 0 means every node type.
+// Returns the scan tag (non-zero) if the probe went out.
+uint32_t luaHostMeshDiscover(int type_filter) {
+  return the_mesh.uiStartDiscoverScan((uint8_t)(type_filter & 0xFF));
+}
 #endif  // CAP_LUA_SDK_EXT
 
-void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon) {
+void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon,
+                    char* pk_hex, size_t pk_cap, int32_t* lat_e6, int32_t* lon_e6) {
   snprintf(name, name_cap, "%s", the_mesh.getNodePrefs()->node_name);
   *lat = g_lv.task ? g_lv.task->getNodeLat() : 0.0;
   *lon = g_lv.task ? g_lv.task->getNodeLon() : 0.0;
+  if (lat_e6) *lat_e6 = (int32_t)llround(*lat * 1.0e6);
+  if (lon_e6) *lon_e6 = (int32_t)llround(*lon * 1.0e6);
+  if (pk_hex && pk_cap) luaPubkeyHex(the_mesh.self_id.pub_key, 4, pk_hex, pk_cap);
+}
+
+// ---- Discovery results (read side) -----------------------------------------
+// The table the Discover app fills. Reading it is passive -- these are replies
+// the radio already received -- so it is ungated, like contacts() and rx_log().
+// FIRING a probe is the gated half; see luaHostMeshDiscover below.
+int luaHostDiscoverCount() { return the_mesh.discoverCount(); }
+void luaHostDiscoverClear() { the_mesh.discoverClear(); }
+int luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, size_t name_cap,
+                      int* type, int* rssi, float* snr, float* their_snr, int* hops,
+                      uint32_t* first_ms_ago, uint32_t* last_ms_ago, int* heard) {
+  MyMesh::DiscoverHit h;
+  if (idx < 0 || !the_mesh.discoverGet((uint8_t)idx, h)) return 0;
+  luaPubkeyHex(h.pubkey, 4, pk_hex, pk_cap);
+  // A responder is only named if the user already has it as a contact. A
+  // discovery reply carries no name of its own, and inventing one would let an
+  // app present an unknown node as a known one.
+  ContactInfo* c = the_mesh.lookupContactByPubKey(h.pubkey, PUB_KEY_SIZE);
+  snprintf(name, name_cap, "%s", c ? c->name : "");
+  *type      = h.node_type;
+  *rssi      = h.our_rssi;
+  *snr       = (float)h.our_snr_q4 / 4.0f;
+  // The reverse link: how well THEY heard US. This is the half a wardriving
+  // survey cannot get any other way, and it is why a probe beats listening.
+  *their_snr = (float)h.their_snr_q4 / 4.0f;
+  *hops      = h.path_len;
+  const uint32_t now = millis();
+  *first_ms_ago = now - h.first_ms;
+  *last_ms_ago  = now - h.last_ms;
+  *heard        = h.heard;
+  return 1;
+}
+
+// ---- wada.ui.input: one modal text field, reusing the file-manager prompt ----
+// Exactly one callback per call: the text on OK, nullptr on any other close, so
+// an app can always re-enable itself.
+static void (*s_lua_prompt_cb)(const char*) = nullptr;
+static void luaPromptDeliver(const char* text) {
+  void (*cb)(const char*) = s_lua_prompt_cb;
+  s_lua_prompt_cb = nullptr;
+  if (cb) cb(text);
+}
+void luaHostTextPromptCancel() {          // closed some other way: report a cancel
+  void (*cb)(const char*) = s_lua_prompt_cb;
+  s_lua_prompt_cb = nullptr;
+  if (cb) cb(nullptr);
+}
+#if CAP_SENSORS
+// wada.sys.env(). Reports per-field presence rather than a value with a magic
+// "missing" number, so an app can distinguish an absent sensor from a real
+// reading of zero. The snapshot is the same one the Sensors tab renders.
+void luaHostEnv(bool* ok, bool* have_t, float* temp_c, bool* have_h, float* hum_pct,
+                bool* have_p, float* press_hpa, bool* have_alt, int* alt_m) {
+  *ok = false;
+  if (!g_lv.task) return;
+  UITask::LocalEnvSnapshot snap;
+  if (!g_lv.task->getLocalEnvSnapshot(snap) || !snap.query_ok) return;
+  // Two possible sources for temperature and humidity: the BME280 on the
+  // Expansion Kit and the GXHTC3 on the board. Prefer the BME, fall back.
+  *have_t = snap.have_bme_temp || snap.have_gxhtv3_temp;
+  *temp_c = snap.have_bme_temp ? snap.bme_temp_c : snap.gxhtv3_temp_c;
+  *have_h = snap.have_bme_hum || snap.have_gxhtv3_hum;
+  *hum_pct = snap.have_bme_hum ? snap.bme_hum_pct : snap.gxhtv3_hum_pct;
+  *have_p  = snap.have_bme_pressure;
+  *press_hpa = snap.bme_pressure_hpa;
+  *have_alt  = snap.have_bme_alt;
+  *alt_m     = snap.bme_alt_m;
+  *ok = (*have_t || *have_h || *have_p);
+}
+#endif
+
+// App teardown. Drops the callback FIRST so the close below cannot re-enter a
+// Lua state that is being torn down, then closes the dialog -- it lives on
+// lv_layer_top and would otherwise outlive the app that opened it.
+void luaHostTextPromptDismiss() {
+  s_lua_prompt_cb = nullptr;
+  fmPromptClose();
+}
+void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const char*)) {
+  luaHostTextPromptCancel();              // a second prompt cancels the first
+  // Register the callback AFTER the dialog exists. fmTextPrompt opens with its
+  // own fmPromptClose(), which reports a cancel to whatever is pending -- so
+  // setting cb first made every prompt fire cb(nil) before the user saw it.
+  fmTextPrompt(title && *title ? title : TR("Enter text"), initial, luaPromptDeliver);
+  s_lua_prompt_cb = cb;
 }
 #endif
 // True when the chat history lives on a removable SD card (T-Deck SPI SD or the
@@ -52553,3 +53060,12 @@ static bool popupRegistryBlocksSwipe() {
     if ((e.flags & PF_SWIPE) && e.is_open()) return true;
   return false;
 }
+
+// Last Wi-Fi STA disconnect reason, surfaced by wifiStaStatusBrief as
+// "auth failed (rNN)". Defined HERE rather than in src/main.cpp because every
+// target compiles this file, while the two ESP32-P4 targets are IDF builds with
+// their own main.cpp -- the S3-only definition left both of them failing to link.
+// The S3 Wi-Fi event handler in src/main.cpp writes it through an extern.
+#if defined(ESP32)
+volatile uint8_t g_wifi_last_disc_reason = 0;
+#endif

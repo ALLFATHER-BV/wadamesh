@@ -58,6 +58,11 @@
   .prose li{margin:4px 0}
   .prose b{color:var(--ink)}
   .prose code{font-family:'JetBrains Mono',monospace; font-size:.85em; background:var(--bg2); border:1px solid var(--line); border-radius:6px; padding:1px 6px}
+  /* Code blocks and callouts, matching sdk.html so the two reference pages look alike. */
+  .prose pre{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;margin:14px 0;font:13px/1.6 'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace}
+  .prose pre code{background:none;border:none;padding:0;font-size:inherit}
+  .note{background:var(--bg2);border-left:3px solid var(--teal);border-radius:0 8px 8px 0;padding:12px 16px;margin:16px 0}
+  .note p{margin:0}
   .shot{position:sticky; top:74px}
   .cap{text-align:center; font-family:'JetBrains Mono',monospace; font-size:.68rem; color:var(--mut); margin-top:10px; letter-spacing:.04em}
 
@@ -139,6 +144,7 @@
     <a href="#updates">Updates &amp; test builds</a>
     <a href="#settings-pages">Settings pages</a>
     <a href="#apps">Apps</a>
+    <a href="#translations">Translating WADAMESH</a>
   </nav>
 
   <main>
@@ -617,6 +623,44 @@
         <div class="mini"><img src="docs-img/app_spectrum.png" alt="Spectrum analyzer"><div class="cap">Spectrum analyzer</div></div>
       </div>
     </section>
+
+    <section class="doc" id="translations">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg></span> Translating WADAMESH</h2>
+      <div class="prose" style="max-width:64ch">
+        <p>The interface ships in thirteen languages besides English, and every one of them was written by somebody who uses the device. Corrections and new languages are welcome. This section is the whole procedure, because getting it wrong is easy and the failure is quiet.</p>
+
+        <h3>Edit one file, and only that file</h3>
+        <p>The canonical source for a language is:</p>
+        <pre><code>deploy/apps/lang/&lt;code&gt;.lang</code></pre>
+        <p>for example <code>hu.lang</code>, <code>de.lang</code>, <code>nl.lang</code>. It is a plain UTF-8 text file, one string per line, with the English original and your translation separated by a <b>single TAB</b>:</p>
+        <pre><code>Contacts	Névjegyek
+No SD card	Nincs SD-kártya</code></pre>
+        <p>A short header at the top carries the language code, its name as it appears in the picker, and a version number.</p>
+
+        <div class="note"><p><b>Do not edit <code>src/ui-touch/i18n_builtin.h</code>.</b> It is a <i>generated</i> file and says so on its first line. It is rebuilt from the <code>.lang</code> files by a script, so anything typed into it directly is thrown away the next time anyone regenerates it — and it never reaches the language Store either, so devices that download their language would keep the old text while devices using the built-in copy showed the new. Two sources of truth, silently disagreeing. Put the work in the <code>.lang</code> file and it lands in both.</p></div>
+
+        <h3>Rules that keep a language file safe</h3>
+        <ul>
+          <li><b>The English side is a key, not a label.</b> It has to match the firmware's string exactly — every character, including the ellipsis <code>…</code> where the original uses one rather than three dots. A key that does not match is simply never used, and nothing warns you.</li>
+          <li><b>Placeholders must survive.</b> If the English contains <code>%s</code>, <code>%d</code> or <code>%u</code>, your line needs the same ones, the same number of times, in an order that still makes sense. The firmware checks this and <i>ignores</i> a line whose placeholders do not match, because a mismatch there can crash the device.</li>
+          <li><b>A newline is written <code>\n</code></b>, two characters, exactly as in the English. A real line break would end the entry.</li>
+          <li><b>No tab characters inside a translation</b> — the tab is the separator.</li>
+          <li><b>Leave the technical strings alone.</b> Units and protocol terms (<code>SF</code>, <code>CR</code>, <code>MHz</code>, <code>dBm</code>, <code>GPS</code>, <code>Wi-Fi</code>, <code>Bluetooth</code>) and the product name are meant to stay as they are.</li>
+          <li><b>Watch the length.</b> Buttons and list rows are sized for the English. A translation twice as long will be cut off on a small screen — prefer the shorter phrasing where there is a choice.</li>
+        </ul>
+
+        <h3>How to send it</h3>
+        <p>A pull request that changes only <code>deploy/apps/lang/&lt;code&gt;.lang</code> is the easiest thing to review and merge. If you would rather not use git, open an issue and attach the file, or paste the lines you have changed — that is just as welcome, and we will do the rest.</p>
+        <p>What happens on our side: the version number is bumped, the file is republished to the language Store so existing devices are offered the update, and the compiled-in table is regenerated so a fresh install has it too. You do not need to do any of that.</p>
+
+        <h3>Starting a new language</h3>
+        <p>Copy an existing file, change the header's code and name, and translate as much as you have patience for. <b>Partial is fine.</b> Any line you leave out falls back to English, so a half-finished language is genuinely useful on day one and can be filled in over time.</p>
+
+        <h3>Finding what still needs doing</h3>
+        <p>Strings are added and reworded as the firmware grows, so a language drifts. Open an issue asking for the current gaps for your language and we will generate the list: exactly which strings are missing, and which are still sitting in English. It is usually a couple of dozen lines rather than a thousand.</p>
+        <p>One thing worth knowing when a translation you wrote seems to have disappeared: if the English wording itself was changed — say a setting was renamed to be more specific — the old key no longer matches anything, and the translation attached to it goes unused. It has not been deleted or rejected. It just needs re-pointing at the new English, which is a good moment to check the meaning still fits.</p>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -644,7 +688,7 @@
       if (a) a.classList.add('on');
     }});
   }, { rootMargin: '-25% 0px -65% 0px' });
-  ['overview','home','chat','contacts','map','settings','companion','settings-pages','apps'].forEach(function(id){ var el = document.getElementById(id); if (el) obs.observe(el); });
+  ['overview','home','chat','contacts','map','settings','companion','settings-pages','apps','translations'].forEach(function(id){ var el = document.getElementById(id); if (el) obs.observe(el); });
 </script>
 </body>
 </html>

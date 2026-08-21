@@ -162,6 +162,7 @@
     <section class="doc" id="setup">
       <h2>One-time setup</h2>
       <div class="row"><div class="prose">
+        <div class="note"><p><b>The tools live on <code>main</code>.</b> <code>tanmatsu/tools/</code> was added on 21 August 2026, shortly <i>after</i> <code>beta_67</code> was tagged, so a release tarball or a <code>stable</code> checkout does not contain it and neither does a clone made before that date. Get it with <code>git fetch origin &amp;&amp; git checkout main &amp;&amp; git pull</code>, or browse the four scripts directly at <a href="https://github.com/ALLFATHER-BV/wadamesh/tree/main/tanmatsu/tools">github.com/ALLFATHER-BV/wadamesh/tree/main/tanmatsu/tools</a>. They will be in the next beta as a matter of course.</p></div>
         <p>You need ESP-IDF 5.5.1. The build uses a project-local copy in <code>tanmatsu/esp-idf</code> (gitignored, around 3&nbsp;GB); <code>make prepare</code> from <code>tanmatsu/</code> fetches it. Then two one-off steps:</p>
         <pre><code>tanmatsu/tools/fetch-appfs.sh</code></pre>
         <p>Clones badge.team's <code>esp32-component-appfs</code>, whose <code>appfs.py</code> reads and rewrites the AppFS image. It is deliberately not vendored into the wadamesh repo: it is their code, and the copy in circulation carries no licence header.</p>

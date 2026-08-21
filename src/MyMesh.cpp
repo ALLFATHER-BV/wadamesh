@@ -2183,11 +2183,36 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   // with 4 transport-code bytes following iff route is a TRANSPORT_* one; the
   // next byte's low 6 bits are the path length. hops == 0 = heard DIRECTLY.
   uint8_t rt = 0, hops = 0;
+  // What the frame says about WHO sent it. Only an advert carries a real
+  // identity (its payload opens with the sender's 32-byte public key); the
+  // addressed types open with a one-byte destination hash then a one-byte
+  // source hash. Anything else is anonymous on the wire and stays that way
+  // here -- see UiRxRec::org_kind.
+  uint8_t org_kind = 0, org[4] = {0, 0, 0, 0};
   if (len > 0) {
     rt = raw[0] & 0x03;
     const bool xp = (rt == ROUTE_TYPE_TRANSPORT_FLOOD || rt == ROUTE_TYPE_TRANSPORT_DIRECT);
     const int  ps = 1 + (xp ? 4 : 0);
-    hops = (ps < len) ? (uint8_t)(raw[ps] & 0x3F) : 0;
+    // The path-length byte packs BOTH counts: low 6 bits = number of hops, top
+    // 2 bits = bytes per hop hash minus one (Packet::getPathHashSize). So the
+    // path occupies count * size bytes on the wire, not count -- assuming one
+    // byte each reads the payload at the wrong offset the moment a mesh uses
+    // wider hashes, and a mis-offset "public key" is worse than none.
+    const uint8_t plb = (ps < len) ? raw[ps] : 0;
+    hops = (uint8_t)(plb & 0x3F);
+    const int payload = ps + 1 + (int)hops * (int)(((plb >> 6) & 0x03) + 1);
+    switch ((raw[0] >> 2) & 0x0F) {
+      case PAYLOAD_TYPE_ADVERT:
+        if (payload + 32 <= len) { org_kind = 1; memcpy(org, &raw[payload], 4); }
+        break;
+      case PAYLOAD_TYPE_REQ:
+      case PAYLOAD_TYPE_RESPONSE:
+      case PAYLOAD_TYPE_TXT_MSG:
+      case PAYLOAD_TYPE_PATH:
+        if (payload + 2 <= len) { org_kind = 2; org[0] = raw[payload]; org[1] = raw[payload + 1]; }
+        break;
+      default: break;
+    }
   }
   // Live signal for the top-bar icon: ONLY from packets heard DIRECTLY (0-hop), so
   // the reading reflects a real direct-neighbour RF link, not the SNR of a repeater
@@ -2203,7 +2228,7 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   if (len > 0) {
     uiRxLogPush(now_ms, (int8_t)rssi, snr_q4,
                 (uint8_t)((raw[0] >> 2) & 0x0F), rt, hops,
-                (uint8_t)(len > 255 ? 255 : len));
+                (uint8_t)(len > 255 ? 255 : len), org_kind, org);
   }
 #if defined(DISPLAY_CLASS)
   // Diagnostic: log EVERY received frame so we can prove what reaches the

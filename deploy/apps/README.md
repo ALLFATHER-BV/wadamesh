@@ -13,9 +13,17 @@ so somebody has to read it first.
 ## What an app is
 
 One Lua file plus a small manifest. Apps talk to the firmware through the `wada.*`
-API — `wada.ui` (widgets, colours), `wada.sys`, `wada.store` (persistence),
-`wada.timer`. There is no arbitrary filesystem or network access; the API is the
-whole surface, which is what makes reviewing tractable.
+API — `wada.ui` (widgets, colours, a text prompt), `wada.sys`, `wada.store`
+(persistence), `wada.timer`, and on the larger boards `wada.fs`, `wada.net`,
+`wada.crypto` and the writable half of `wada.mesh`. There is no arbitrary
+filesystem or network access; the API is the whole surface, which is what makes
+reviewing tractable. It is documented at
+[wadamesh.com/sdk.html](https://wadamesh.com/sdk.html).
+
+Two numbers worth knowing before you start: every callback runs under a
+**100,000 Lua instruction** budget, and Lua here is built with **32-bit numbers**,
+so its floats are single precision. If you are logging coordinates, use the
+`lat_e6` / `lon_e6` integers rather than `lat` / `lon`.
 
 Apps run on **every** board that has the Apps drawer, from the 2 MB-PSRAM Heltec
 V4 to the 800×480 Tanmatsu. Do not hard-code pixel sizes — read the screen from
@@ -84,6 +92,11 @@ people's devices. We read every submission for:
   has 2 MB and is the floor.
 - **Radio behaviour** — an app may read counters and statistics. Transmitting, or
   changing radio parameters, needs a clear reason and an explicit user action.
+- **Probing** — `wada.mesh.discover()` costs a transmission from the user *and a
+  reply from every node that hears it*, so it spends other people's airtime as
+  well as theirs. The firmware enforces 15 seconds between probes, but a survey
+  app is still expected to probe on a cadence a person chose and to stop when it
+  is not on screen. Probing in a loop for no stated reason gets sent back.
 - **Where data goes** — anything leaving the device has to be something the user
   asked for and can see.
 

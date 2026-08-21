@@ -253,7 +253,12 @@ void halt() {
 // failure and AP-side rejection alike — the reason number tells them apart
 // (15 = 4-way handshake timeout ≈ wrong password; 2/202 = auth expired/failed
 // ≈ WPA3-only or auth mismatch; 201 = AP not found).
-volatile uint8_t g_wifi_last_disc_reason = 0;
+//
+// DEFINED in ui-touch/UITask.cpp, not here. The ESP32-P4 targets (Tanmatsu,
+// T-Display P4) are IDF builds with their own main.cpp and never compile this
+// file, so a definition here links on the S3 boards and leaves both P4 targets
+// with an undefined reference from the UI that reads it.
+extern volatile uint8_t g_wifi_last_disc_reason;
 #endif
 
 #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)

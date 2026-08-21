@@ -143,6 +143,11 @@
     <a href="#fs">wada.fs</a>
     <a href="#sys">wada.sys</a>
     <a href="#timer">wada.timer</a>
+    <a href="#discover">Discovery</a>
+    <a href="#map">wada.map</a>
+    <a href="#geo">wada.geo</a>
+    <a href="#packets">on_packet</a>
+    <a href="#timers">Timers</a>
     <a href="#budget">Instruction budget</a>
     <a href="#crypto">wada.crypto</a>
     <a href="#perms">Permissions</a>
@@ -226,6 +231,8 @@ return app</code></pre>
           <tr><th>Call</th><th>Returns / does</th></tr>
           <tr><td>wada.ui.label(text, x, y, size, color)</td><td>A text line placed at <code>x, y</code>. <code>size</code> is a class, not a pixel height: 12, 14 or 16. <code>color</code> takes a <code>wada.ui.colors</code> value.</td></tr>
           <tr><td>wada.ui.button(text, x, y, w, h, fn)</td><td>A tappable button at <code>x, y</code> sized <code>w &times; h</code>; <code>fn</code> is called with no arguments.</td></tr>
+          <tr><td>wada.ui.list(x, y, w, h)</td><td>A scrollable list of selectable rows &mdash; the "pick one of N" widget. Methods: <code>add(text [, fn])</code> returning the row index, <code>set(i, text)</code>, <code>color(i, c)</code>, <code>select(i)</code> (highlights <i>and</i> scrolls it into view), <code>selected()</code>, <code>count()</code>, <code>clear()</code>, <code>pos(x, y)</code>. Rows are real buttons, so keyboard and trackball navigation walks them on touchless boards without you doing anything.</td></tr>
+          <tr><td>wada.ui.input(title, initial, cb)</td><td>A modal text field. <code>cb(text)</code> on OK, <code>cb(nil)</code> on cancel or on the dialog being closed any other way &mdash; exactly one call, always, so an app that disabled itself while waiting always gets to re-enable. Uses the firmware's own dialog and keyboard, so it behaves identically on a touchscreen, on the Tanmatsu's physical keyboard and on a trackball board. One prompt at a time.</td></tr>
           <tr><td>wada.ui.canvas(w, h)</td><td>A drawing surface. See the canvas methods below.</td></tr>
           <tr><td>wada.ui.chart(points)</td><td>A line chart sized to the page. The Airtime and RF Monitor primitive.</td></tr>
           <tr><td>wada.ui.scroll(on)</td><td>Allow the page to scroll when content is taller than the screen.</td></tr>
@@ -277,17 +284,112 @@ return app</code></pre>
     <section class="doc" id="mesh">
       <h2>wada.mesh</h2>
       <div class="row"><div class="prose">
-        <p>Read-only in API v1.</p>
         <table class="api">
-          <tr><td>wada.mesh.contacts()</td><td>Array of <code>{name, type, ago_s, lat, lon}</code>.</td></tr>
-          <tr><td>wada.mesh.rx_log()</td><td>Recent packets: <code>{ago_ms, type, rssi, snr, hops}</code>. The RF Monitor feed.</td></tr>
+          <tr><td>wada.mesh.contacts()</td><td>Array of <code>{name, pubkey, type, ago_s, lat, lon, lat_e6, lon_e6}</code>. <code>pubkey</code> is the first 4 bytes as 8 hex characters &mdash; the same short form the rest of the interface uses, and what lines a contact up with a discovery hit.</td></tr>
+          <tr><td>wada.mesh.rx_log()</td><td>Recent packets, newest first: <code>{ago_ms, type, rssi, snr, hops, route, len}</code>, plus whatever identity the frame actually carried &mdash; see below. The RF Monitor feed.</td></tr>
           <tr><td>wada.mesh.stats()</td><td><code>{rssi, noise, rx_air_s, tx_air_s, rx_pkts, rx_err, tx_budget_ms, rx_events, rx_dropped, tx_pkts, freq, bw, sf, duty_pct}</code>.</td></tr>
-          <tr><td>wada.mesh.self()</td><td>This node: <code>{name, lat, lon}</code>.</td></tr>
+          <tr><td>wada.mesh.self()</td><td>This node: <code>{name, pubkey, lat, lon, lat_e6, lon_e6}</code>.</td></tr>
+          <tr><td>wada.mesh.discovered()</td><td>Everything that has answered a probe this session: <code>{pubkey, name, type, rssi, snr, their_snr, hops, direct, first_ms_ago, last_ms_ago, heard}</code>. <code>name</code> is present only if the responder is already one of your contacts. See <a href="#discover">discovery</a>.</td></tr>
+          <tr><td>wada.mesh.discover_clear()</td><td>Forget every hit so far. A survey calls this between locations, or the next sample inherits nodes you heard a street back.</td></tr>
+          <tr><td>wada.mesh.discover([types]) <span class="chip">ext</span></td><td>Broadcast a discovery probe. Returns the scan tag, or <code>false, err</code>. Needs the <b>discovery-probe</b> permission and has a 15&nbsp;second floor. See <a href="#discover">discovery</a>.</td></tr>
           <tr><td>wada.mesh.send(channel, text) <span class="chip">ext</span></td><td>Post to a channel by name, public or private. Returns <code>ok, err</code>. Needs the channel-send permission; the first call prompts the user. <code>err</code> is <code>"permission denied"</code> if they refused, <code>"too fast"</code> inside the 5&nbsp;second floor, <code>"bad length"</code> past 180 characters.</td></tr>
           <tr><td>wada.mesh.send_dm(to, text) <span class="chip">ext</span></td><td>Send a direct message, or post to a room server. <code>to</code> is a contact <b>name</b> as it appears in <code>wada.mesh.contacts()</code>. A room is a contact too, so one call covers both and the second return is <code>"sent"</code> or <code>"room"</code>. Needs the <b>private</b> send permission, which is separate from channels.</td></tr>
           <tr><td>wada.mesh.channels()</td><td>Array of the channel names configured on this device, so you can find the private ones rather than being told their names. Names only: the channel secret is never exposed to Lua.</td></tr>
         </table>
         <p>These are snapshots taken when you call them, not live views — call again on each tick to refresh.</p>
+
+        <h3>Who sent a packet</h3>
+        <p>MeshCore only puts a real identity on the wire in one place: an <b>advert</b>, whose payload opens with the sender's public key. Those entries in <code>rx_log()</code> carry <code>pubkey</code>, 8 hex characters, and they are the ones worth logging &mdash; an advert both names a node and proves it was audible from where you are.</p>
+        <p>Addressed frames (text, requests, responses, path replies) carry one-byte destination and source hashes instead, exposed as <code>dst</code> and <code>src</code>, two hex characters each. Two characters collide easily, so treat them as a hint and never as an identity. Everything else is anonymous on the wire and gets neither field. Nothing here is inferred: if a field is absent, the frame did not contain it.</p>
+
+        <h3 id="node-types">Node types</h3>
+        <p>The <code>type</code> field everywhere, and the filter <code>discover()</code> takes, use these. They are on the <code>wada.mesh</code> table so you never have to hardcode the wire numbers.</p>
+        <table class="api">
+          <tr><td>wada.mesh.NODE_CHAT</td><td><code>1</code> &mdash; a companion / chat node.</td></tr>
+          <tr><td>wada.mesh.NODE_REPEATER</td><td><code>2</code></td></tr>
+          <tr><td>wada.mesh.NODE_ROOM</td><td><code>3</code> &mdash; a room server.</td></tr>
+          <tr><td>wada.mesh.NODE_SENSOR</td><td><code>4</code></td></tr>
+        </table>
+      </div></div>
+    </section>
+
+    <section class="doc" id="discover">
+      <h2>Discovery, and writing a coverage survey</h2>
+      <div class="row"><div class="prose">
+        <p><code>wada.mesh.discover()</code> broadcasts a zero-hop request that every node in earshot answers. That is a different thing from listening, and the difference is the whole reason it exists: a reply <b>proves</b> the link works from exactly where you are standing. Listening only tells you what happened to transmit while you were there, so a node that stays quiet is indistinguishable from a node you cannot reach.</p>
+        <p>The call returns immediately. Replies arrive over the next few seconds and accumulate in <code>wada.mesh.discovered()</code>, so the shape of a survey loop is: probe, wait a few seconds, read, <code>discover_clear()</code>, move.</p>
+
+        <h3>Both directions of the link</h3>
+        <p>Each hit carries <code>snr</code> (how well <b>you</b> heard <b>them</b>) and <code>their_snr</code> (how well <b>they</b> heard <b>you</b>, reported back inside the reply). These are rarely equal, because their antenna, height and transmit power are not yours. The asymmetry is the most useful thing a survey can record: <i>"I can hear the repeater but it cannot hear me"</i> is a different fact from <i>"no coverage"</i>, and no amount of passive listening will tell you which one you are looking at.</p>
+        <p><code>hops</code> is <code>0</code> when the reply came straight back &mdash; <code>direct</code> is that same test as a boolean. A hit with <code>hops &gt; 0</code> reached you through a repeater, so it says something about the mesh but nothing about your radio horizon.</p>
+
+        <h3>Cost, and the rate limit</h3>
+        <p>One probe costs one transmission from you and <b>a reply from every node that hears it</b>. That is airtime spent across the whole neighbourhood, not just yours, which is why it sits behind its own permission rather than reusing the message-send one: making other people's radios transmit and speaking as the user are different impositions, and a survey app has no business acquiring the second. The firmware enforces a <b>15&nbsp;second</b> minimum between probes per app; a faster call returns <code>false, "too fast"</code>. In practice sweep every 20&nbsp;seconds, which is quicker than anyone drives out of a cell.</p>
+
+        <h3>Logging it</h3>
+        <p>Lua here is built with 32-bit numbers, so <code>lat</code> and <code>lon</code> are <b>single-precision floats</b> &mdash; about a metre, fine to display and lossy to store. <code>sys.gps()</code>, <code>mesh.self()</code> and <code>mesh.contacts()</code> therefore also hand you <code>lat_e6</code> / <code>lon_e6</code>, the same reading as exact integers in micro-degrees. Write those. <code>sys.gps()</code> also gives <code>alt_m</code>, which matters more than people expect: height dominates LoRa range, and two samples a metre apart on the map can be a hilltop and a hollow.</p>
+        <p><code>wada.fs</code> allows one write a second, so buffer a sweep's rows and append them as one block rather than a line at a time. <code>wada.fs.read(name, offset, len)</code> reads a window, so an append-only log may grow past the 32&nbsp;KB single-read limit and still be readable in chunks.</p>
+        <p>There is a working example of all of this: the <b>Wardrive</b> app in the Store. It probes on a cadence, discards samples taken without a GPS fix rather than logging them at 0,0, and writes a CSV with both link directions per node.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="timers">
+      <h2>wada.timer</h2>
+      <div class="row"><div class="prose">
+        <table class="api">
+          <tr><td>wada.timer.every(ms)</td><td>Sets the period of <code>on_tick</code>. This is the app heartbeat and there is one of it.</td></tr>
+          <tr><td>wada.timer.every(ms, fn)</td><td>A <b>named</b> repeating timer calling <code>fn</code>. Returns a handle.</td></tr>
+          <tr><td>wada.timer.after(ms, fn)</td><td>Fires <code>fn</code> once. Returns a handle you can cancel before it fires.</td></tr>
+          <tr><td>wada.timer.stop()</td><td>Stops the <code>on_tick</code> heartbeat.</td></tr>
+          <tr><td>wada.timer.stop(handle) / handle:stop()</td><td>Stops that one timer.</td></tr>
+        </table>
+        <p>An app used to get exactly one clock. Anything needing a second cadence &mdash; a slow poll beside a fast animation, a delayed retry, a timeout on a fetch &mdash; had to be a counter inside <code>on_tick</code>, which is both tedious and wrong when the tick period changes. Up to <b>eight</b> named timers per app; a ninth raises an error rather than quietly filling LVGL's timer list. Everything is stopped for you when the app closes.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="packets">
+      <h2>app.on_packet</h2>
+      <div class="row"><div class="prose">
+        <p>Declare <code>on_packet</code> and the firmware calls it once per frame the radio received, in arrival order, with the same table <a href="#mesh"><code>rx_log()</code></a> rows use.</p>
+        <pre><code>function app.on_packet(p)
+  if p.pubkey then adverts = adverts + 1 end   -- an advert: a real identity
+  total = total + 1
+end</code></pre>
+        <p>Polling <code>rx_log()</code> on a tick samples a 16-deep ring, so in any real traffic an app sees a subset and cannot <i>count</i> anything. This delivers each frame exactly once. An app that does not declare <code>on_packet</code> costs nothing: the drain is only started for apps that asked for it.</p>
+        <p>Ungated, exactly like <code>rx_log()</code>: this is radio metadata about frames the device already received, not message content. Anything carrying content still arrives through <code>on_message</code> and its permissions.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="map">
+      <h2>wada.map <span class="chip">ext</span></h2>
+      <div class="row"><div class="prose">
+        <p>The firmware's own slippy map, inside your app page: the same OpenStreetMap tiles, the same Web Mercator projection and the same on-disk cache the Map tab uses. Before this an app could draw geography only onto a bare canvas, with no basemap.</p>
+        <table class="api">
+          <tr><td>wada.map.view(x, y, w, h)</td><td>Creates the view. <b>One per app</b> &mdash; it owns a pool of up to four decoded tiles, which is 512&nbsp;KB of PSRAM, so opening them in a loop would be a straightforward way to exhaust the board. A second call errors.</td></tr>
+          <tr><td>map:center(lat, lon [, zoom])</td><td>Moves the view and redraws.</td></tr>
+          <tr><td>map:zoom() / map:zoom(z)</td><td>Reads, or sets and redraws. 1&ndash;19.</td></tr>
+          <tr><td>map:marker(lat, lon [, color [, size]])</td><td>A dot. Returns <code>false</code> if the point is outside the view, in which case nothing was drawn.</td></tr>
+          <tr><td>map:line(lat1, lon1, lat2, lon2 [, color [, width]])</td><td>A segment between two coordinates.</td></tr>
+          <tr><td>map:clear()</td><td>Removes every marker and line. The basemap stays.</td></tr>
+          <tr><td>map:to_screen(lat, lon)</td><td><code>x, y</code> within the view. Deliberately not clamped, so you can tell that a point is off-view instead of finding everything piled on the edge.</td></tr>
+          <tr><td>map:to_latlon(x, y)</td><td>The inverse &mdash; turn a tap into a coordinate.</td></tr>
+          <tr><td>map:tiles()</td><td>How many tiles the last redraw actually placed. <b>Check this.</b> Zero means nothing is cached for this area at this zoom, and an empty rectangle looks exactly like open water unless you say otherwise.</td></tr>
+          <tr><td>map:redraw() / map:close()</td><td>Force a redraw; dispose of the view early rather than waiting for the collector.</td></tr>
+        </table>
+        <p>Tiles come from whatever the device already has &mdash; the SD pack or the online cache &mdash; and a missing one is queued for download if Wi-Fi is up, exactly as on the Map tab. The view follows the user's night-mode setting rather than introducing a second one. The <b>Nearby</b> app in the Store is a worked example.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="geo">
+      <h2>wada.geo</h2>
+      <div class="row"><div class="prose">
+        <table class="api">
+          <tr><td>wada.geo.distance(lat1, lon1, lat2, lon2)</td><td>Great-circle distance in <b>metres</b>.</td></tr>
+          <tr><td>wada.geo.bearing(lat1, lon1, lat2, lon2)</td><td>Initial true bearing, 0&ndash;360 degrees.</td></tr>
+          <tr><td>wada.geo.cardinal(degrees)</td><td><code>"N"</code>, <code>"NE"</code>, … Eight points, not sixteen: more would be false precision on a bearing derived from consumer GPS.</td></tr>
+        </table>
+        <p>In C because it is not a convenience wrapper: haversine and the bearing formula are a dozen trig calls each, and an app doing them per contact per tick spends a real slice of its <a href="#budget">instruction budget</a> on arithmetic the chip does in microseconds.</p>
+        <div class="note"><p><b>This is not a compass.</b> <code>bearing()</code> is a true bearing from one coordinate to another &mdash; the direction to <i>steer</i>, not the direction the user is <i>facing</i>. No board in the range has a magnetometer, so a magnetic heading is not available at any level of the stack. To point somebody at something you need their course over ground from successive GPS fixes, or a physical compass.</p></div>
       </div></div>
     </section>
 
@@ -295,8 +397,10 @@ return app</code></pre>
       <h2>wada.net</h2>
       <div class="row"><div class="prose">
         <table class="api">
-          <tr><td>wada.net.http_get(url, cb)</td><td>Fetch a URL. <code>cb(body)</code> runs when it lands, or with <code>nil</code> on failure.</td></tr>
+          <tr><td>wada.net.http_get(url, cb [, max_bytes])</td><td>Fetch a URL. <code>cb(status, body)</code> runs when it lands, or with a negative status and <code>nil</code> on failure.</td></tr>
+          <tr><td>wada.net.http_post(url, body [, content_type], cb [, max_reply])</td><td>Upload. Any 2xx counts as success, so an endpoint answering 201 or 204 works. <code>content_type</code> defaults to <code>application/octet-stream</code>. This is how an app gets data <b>off</b> the device &mdash; a survey log, a sensor series, a webhook.</td></tr>
         </table>
+        <p><code>http://</code> only, both of them. On-device TLS is not workable at the heap these boards have left once Wi-Fi has associated, so there is no <code>https</code> to offer; put a proxy in front if you need it. One request in flight at a time per app.</p>
         <p>The fetch is asynchronous and runs on the firmware's existing network worker, so it does not block the UI. Your callback runs on the UI thread once the body is in memory.</p>
         <div class="note"><p><b>Plain HTTP only, and that is not an oversight.</b> After Wi-Fi associates there is not enough free internal memory on the smaller boards for a TLS handshake — mbedTLS wants around 30&nbsp;KB and roughly 5&nbsp;KB is free. If you need an HTTPS source, put a small proxy in front of it, the way the map tiles do. Responses are capped (64&nbsp;KB by default).</p></div>
       </div></div>
@@ -320,7 +424,7 @@ return app</code></pre>
         <p>A private folder per app, for things too big or too structured for <a href="#store">wada.store</a> — a log, a track, a cache. Paths are plain names inside your own folder: an app cannot name a file outside it, and cannot see another app's files. <code>..</code> and absolute paths are rejected rather than sanitised.</p>
         <table class="api">
           <tr><th>Call</th><th>Returns / does</th></tr>
-          <tr><td>wada.fs.read(name)</td><td>File contents as a string, or <code>nil</code>.</td></tr>
+          <tr><td>wada.fs.read(name [, offset [, len]])</td><td>Returns <code>data, total_size</code>, or <code>nil</code> if there is no such file. One read hands back at most 32&nbsp;KB, but <code>offset</code> makes that a window rather than a ceiling: an append-only log may grow past it and be walked in chunks using the returned total.</td></tr>
           <tr><td>wada.fs.write(name, data)</td><td>Replace a file. Returns <code>ok, err</code>.</td></tr>
           <tr><td>wada.fs.append(name, data)</td><td>Append. Returns <code>ok, err</code>.</td></tr>
           <tr><td>wada.fs.list()</td><td>Array of <code>{name, size}</code>.</td></tr>
@@ -341,9 +445,10 @@ return app</code></pre>
           <tr><td>wada.sys.epoch()</td><td>Unix time in seconds, or <code>nil</code> when the clock has not been set yet (no GPS fix and no NTP). Always handle the <code>nil</code>.</td></tr>
           <tr><td>wada.sys.datetime()</td><td><code>{year, month, day, hour, min, sec, wday}</code> in local time. <code>wday</code> is 0 for Sunday.</td></tr>
           <tr><td>wada.sys.beep()</td><td>Short beep on boards with a buzzer; silent elsewhere, and silent when the user has sound off.</td></tr>
-          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span> below.</td></tr>
+          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, discover, input, rx_identity, list, packets, sensors, map}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span> below. The last three are feature flags for calls added after the extended SDK first shipped, so an app can degrade on older firmware instead of erroring.</td></tr>
           <tr><td>wada.sys.battery() <span class="chip">ext</span></td><td><code>{mv, pct, charging}</code>.</td></tr>
-          <tr><td>wada.sys.gps() <span class="chip">ext</span></td><td><code>{lat, lon, sats}</code>, or <code>nil</code> with no fix — which is the normal indoor case, so handle it.</td></tr>
+          <tr><td>wada.sys.env() <span class="chip">sensors</span></td><td><code>{temp_c, humidity, pressure_hpa, alt_m}</code>, or <code>nil</code>. A field is present only when the hardware actually reported it, so you can tell "no humidity sensor" from "0% humidity". Gated on <code>caps().sensors</code> &mdash; does this board <i>have</i> the sensor rail &mdash; and <b>not</b> on <code>sdk_ext</code>, which is a memory gate. Those are different questions: the plain Heltec V4 has the Expansion Kit but not the extended SDK, and most boards with the extended SDK have no sensors at all.</td></tr>
+          <tr><td>wada.sys.gps() <span class="chip">ext</span></td><td><code>{lat, lon, lat_e6, lon_e6, alt_m, sats, time}</code>, or <code>nil</code> with no fix — which is the normal indoor case, so handle it. <code>lat_e6</code>/<code>lon_e6</code> are exact micro-degrees; <code>lat</code>/<code>lon</code> are single-precision floats, so <a href="#discover">log the integers</a>. <code>time</code> is satellite time, absent until the receiver has decoded the date.</td></tr>
         </table>
       </div></div>
     </section>
@@ -403,6 +508,7 @@ return app</code></pre>
           <tr><td>Read channel messages</td><td><code>app.on_message</code> for <code>kind == "channel"</code>.</td></tr>
           <tr><td>Send private messages as me</td><td><code>wada.mesh.send_dm</code>, writing to one contact or posting to a room as you.</td></tr>
           <tr><td>Read private messages</td><td><code>app.on_message</code> for <code>kind == "dm"</code> and <code>"room"</code>.</td></tr>
+          <tr><td>Send discovery probes</td><td><code>wada.mesh.discover</code>. Separate from the send permissions because it transmits nothing under your name but does make every node in range transmit a reply.</td></tr>
         </table>
         <p>Four rather than one because the risks genuinely differ: posting to a channel you are already in is not the same act as writing to one person as you, and channel traffic is not somebody's private conversations. They are separate: granting one does not grant another. The prompt names the app and appears on the first attempt, not at install time, so you are asked at the moment it is obvious what the app wants it for. A refusal is remembered — the app does not get to ask again on a loop — and the call simply returns <code>false, "denied"</code>, which a well-written app should handle rather than break on.</p>
         <p><b>Settings &rarr; App permissions</b> lists every installed app and what it holds, and revokes with one switch. Granting happens where an app asks; that page is for review and for taking it back.</p>
@@ -462,7 +568,7 @@ return app</code></pre>
       <div class="row"><div class="prose">
         <p>Apps run in a restricted environment. These are removed: <code>io</code>, <code>os</code>, <code>require</code>, <code>dofile</code>, and loading new chunks at runtime. Available: <code>math</code>, <code>string</code>, <code>table</code>, and the usual <code>pairs</code>, <code>ipairs</code>, <code>select</code>, <code>pcall</code>, <code>tostring</code>, <code>tonumber</code>.</p>
         <p>Memory comes from a capped pool in PSRAM, so an app that allocates without bound fails its own allocation rather than starving the radio or the UI. There is an <a href="#budget">instruction budget</a> on every callback for the same reason.</p>
-        <p><b>The extended calls are not on every board.</b> Anything marked <span class="chip">ext</span> above &mdash; <code>wada.fs</code>, <code>wada.mesh.send</code>, <code>wada.mesh.send_dm</code>, <code>sys.battery</code>, <code>sys.gps</code> &mdash; needs a board with the memory to carry it, so the Heltec V4 keeps its RAM for the mesh instead. Call <code>wada.sys.caps().sdk_ext</code> and degrade gracefully rather than assuming; an app that hard-depends on them without checking simply errors out on the small boards.</p>
+        <p><b>The extended calls are not on every board.</b> Anything marked <span class="chip">ext</span> above &mdash; <code>wada.fs</code>, <code>wada.mesh.send</code>, <code>wada.mesh.send_dm</code>, <code>wada.mesh.discover</code>, <code>sys.battery</code>, <code>sys.gps</code> &mdash; needs a board with the memory to carry it, so the Heltec V4 keeps its RAM for the mesh instead. Call <code>wada.sys.caps().sdk_ext</code> and degrade gracefully rather than assuming; an app that hard-depends on them without checking simply errors out on the small boards.</p>
         <p>Rate limits are part of the contract, not a rainy-day guard: <code>wada.fs</code> writes are about one per second with a 32&nbsp;KB file cap, and <code>wada.mesh.send</code> has a 5&nbsp;second floor and a 180-character limit. They return <code>false, "too fast"</code> rather than throwing, and hitting them is expected &mdash; handle it.</p>
         <p>None of this makes a hostile app safe, which is why the catalog is curated. It makes an <i>honest</i> app that has a bug survivable: it gets closed, and the device keeps carrying traffic.</p>
       </div></div>
