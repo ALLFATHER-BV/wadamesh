@@ -9119,6 +9119,11 @@ static void saveRadioParamsCb(lv_event_t* e) {
   if (has_region_ta) {
     the_mesh.setDefaultFloodScope(region);
     touchPrefsSetRegionScope(region);
+    // #271: keep the registry in step with the region we just adopted, so its
+    // messages are named immediately. Any previously-registered region keeps its
+    // slot — changing our own region does not un-name the history we received
+    // while we were in the old one.
+    if (region[0]) the_mesh.regionRegistry().ensureRegion(region);
     has_region = (region[0] != '\0');
   }
   if (ok) {
@@ -32221,8 +32226,22 @@ static void openMessageInfoPopup(int msg_idx) {
       // changing (#259). Report what was actually determined: whether it verified
       // against our own region key. The hex stays, in parentheses, for anyone
       // cross-checking a capture.
+      // #271: when the code verified against one of the registered regions we can
+      // name it outright. Fall back to the older my-region / another-region
+      // answer when nothing matched, which is still all we can honestly say.
       char region[40];
-      if (m.meta_flags & UITask::MSG_META_SCOPE_HOME) {
+      const uint8_t rslot = UITask::metaScopeSlot(m.meta_flags);
+      const char* rname = (rslot && rslot != REGION_SLOT_AMBIGUOUS)
+                            ? the_mesh.regionRegistry().nameForSlot(rslot) : nullptr;
+      if (rslot == REGION_SLOT_AMBIGUOUS) {
+        // Several registered regions produced this same 16-bit code. Naming any
+        // one of them would be a guess, and a confident wrong region reads worse
+        // than an honest "cannot tell" -- the tag is only 16 bits, so with N keys
+        // live a collision runs at about N/65534 per packet.
+        snprintf(region, sizeof region, "%s", TR("ambiguous (several regions matched)"));
+      } else if (rname) {
+        snprintf(region, sizeof region, "%s", rname);
+      } else if (m.meta_flags & UITask::MSG_META_SCOPE_HOME) {
         char home[24] = {0};
         touchPrefsGetRegionScope(home, sizeof home);
         snprintf(region, sizeof region, "%s", home[0] ? home : TR("my region"));
@@ -44010,6 +44029,11 @@ static void chanScopeSaveCb(lv_event_t* e) {
     const char* t = lv_textarea_get_text(s_chanscope_ta);
 #if defined(ESP32)
     touchPrefsSetChannelScope(s_chanscope_slot, t ? t : "");
+    // #271: register it now rather than at next boot, so messages arriving in
+    // this region are named from the next packet on. Idempotent; the old region
+    // keeps its slot, since a slot outlives the config that introduced it (old
+    // messages must keep resolving to the region they actually arrived under).
+    if (t && t[0]) the_mesh.regionRegistry().ensureRegion(t);
 #endif
   }
   chanScopeClose();
@@ -49121,6 +49145,21 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // factor rewritten + persisted; see healPresetAirtimeFactor for the guard.
   healPresetAirtimeFactor();
 
+  // #271: seed the region registry with the per-channel scope overrides. The
+  // default region is seeded in MyMesh::begin(); these live in touch prefs, which
+  // only this side can read. ensureRegion() canonicalises and de-duplicates, so
+  // channels sharing a region collapse to one slot and re-running each boot is a
+  // no-op. Registering a region is what lets an incoming message be NAMED as
+  // being from it -- a channel scoped to "#denmark" means we hold that key, so
+  // every "#denmark" message becomes identifiable, not just this channel's.
+#ifdef MAX_GROUP_CHANNELS
+  for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+    char rgn[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    if (touchPrefsGetChannelScope(i, rgn, sizeof rgn) > 0 && rgn[0])
+      the_mesh.regionRegistry().ensureRegion(rgn);
+  }
+#endif
+
   // #207 auto-retry: apply the persisted Radio & Mesh toggle (default ON).
   the_mesh.setCompanionRetryEnabled(touchPrefsGetRetryEcho());
 
@@ -51298,6 +51337,10 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       meta_flags |= MSG_META_HAS_SCOPE;
       // Verified at RX (the check needs the packet); the popup only reads the bit.
       if (the_mesh.lastRxScopeIsHome()) meta_flags |= MSG_META_SCOPE_HOME;
+      // Which registered region it verified against (#271), also decided at RX
+      // for the same reason: the packet is gone by the time the popup opens, so
+      // the answer has to be captured here and persisted with the message.
+      meta_flags = metaWithScopeSlot(meta_flags, the_mesh.lastRxScopeSlot());
     }
   }
   const int msg_slot = _ui_msg_head;   // appendMessage writes _ui_msgs[head], then advances head

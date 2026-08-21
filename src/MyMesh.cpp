@@ -3673,6 +3673,15 @@ void MyMesh::begin(bool has_display) {
     _prefs.autoadd_max_hops = 64;
   }
 
+  // #271: bring up the region registry and seed it from what this node is
+  // already configured for, so scope naming works out of the box with no list to
+  // fill in first. Our own default region is the one we can always name; the UI
+  // adds any per-channel scope overrides once those prefs are readable.
+  // ensureRegion() is idempotent, so re-running this every boot is a no-op after
+  // the first, and a slot once assigned is never renumbered.
+  _region_reg.begin(_store->getPrimaryFS());
+  if (_prefs.default_scope_name[0]) _region_reg.ensureRegion(_prefs.default_scope_name);
+
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
 #ifdef DISPLAY_CLASS
