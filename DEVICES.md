@@ -13,6 +13,10 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 | Tanmatsu | ESP32-P4 + ESP32-C6, SX1262 | 4" 800x480, 69-key keyboard (no touch) | Tanmatsu app store on the device (runs under the badge.team launcher, not web-flashable) | Store tracks the test channel | Fully supported; LoRa + Wi-Fi + Bluetooth simultaneously, standalone and companion in one |
 | Elecrow ThinkNode M9 | ESP32-S3, LR1110 | 2.4" 240x320 (no touch), I2C QWERTY + d-pad | Web flasher | Beta (new in beta_38) | Hardware-complete community port by ded (#138): GPS, microSD, buzzer, lock screen, d-pad navigation |
 | RAK WisMesh Tap V2 (RAK3312) | ESP32-S3, SX1262 | Touch display (LovyanGFX, 30+ fps) | Web flasher | Beta (new in beta_38) | Early community port by Ethac.chen (#136); core mesh, chat and map working |
+| LilyGo T-Lora Pager | ESP32-S3, LR1121 or SX1262 | 2.33" AMOLED (no touch), QWERTY + rotary encoder | Web flasher (pick the build matching your radio) | Stable | Fully supported; keyboard-first navigation, microSD, map tile packs |
+| Heltec V4-R8 + Expansion Kit V2 | ESP32-S3 (8 MB octal PSRAM), SX1262 | 2.4" touch (CHSC6x) | Web flasher | Stable | As the V4 plus microSD and the Expansion Kit sensors; buzzer supported |
+| LilyGo T-Display P4 | ESP32-P4 + ESP32-C6, SX1262 | AMOLED or TFT-LCD, touch | Web flasher (AMOLED) or the .bin for the LCD SKU | Stable | Two screen SKUs; fuel-gauge battery reporting, full TX power |
+| Attaky Mesh Series | ESP32-S3, SX1262 | Touch display | Web flasher | Beta (new in beta_47) | Community port by attakygit (#158/#169); detachable keyboard supported |
 
 ## Feature notes per board
 
@@ -41,7 +45,6 @@ Open hardware requests, roughly in demand order. Ports are welcome, see
 PRs.
 
 - LilyGo T-Deck Pro Max: [#62](https://github.com/ALLFATHER-BV/wadamesh/issues/62)
-- LilyGo T-pager: [#60](https://github.com/ALLFATHER-BV/wadamesh/issues/60)
 - SenseCAP Indicator D1L: [#14](https://github.com/ALLFATHER-BV/wadamesh/issues/14)
 
 ## Channels

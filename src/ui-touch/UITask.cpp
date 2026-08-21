@@ -5369,7 +5369,7 @@ static void otaButtonRefreshState() {
   }
 }
 
-#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 // ---- Save-update-to-SD (Launcher installs) ---------------------------------
 // Launcher-managed T-Decks have no spare A/B slot (touchHasOtaUpdateSlot() is
 // false), so Wi-Fi OTA can't work there — but the Launcher itself can flash an
@@ -30931,7 +30931,12 @@ static void settingsCatBuild(int cat) {
           lv_obj_set_style_text_color(beta_note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
         }
 
-#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && CAP_OTA
+// Gated on the CAPABILITY, not a list of board names: this needs a writable Arduino-SD
+// card and OTA, which is exactly CAP_SD && CAP_OTA. The board list had grown to three
+// entries and still left the T-Lora Pager out despite it having both (#289) — every new
+// board with a card had to remember to add itself here, which is the failure mode
+// device_caps.h exists to prevent.
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
         // "Save update bin to SD" — the Launcher-install update path: downloads
         // the app-only bin for the active channel into /BINS/ on the SD card,
         // named wadamesh-beta_<N>-<stable|beta>.bin, ready for the Launcher to
