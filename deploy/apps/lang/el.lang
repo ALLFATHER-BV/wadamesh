@@ -683,6 +683,7 @@ Run setup again	Εκτέλεση ρύθμισης ξανά
 SD card   %s	Κάρτα SD   %s
 SD card   %s   (hold: format)	Κάρτα SD   %s   (κράτημα: διαμόρφωση)
 SD card   (tap to mount)	Κάρτα SD   (πατήστε για προσάρτηση)
+SD card   (unreadable - tap to retry)	SD card   (unreadable - tap to retry)
 SD card inserted	Η κάρτα SD εισήχθη
 SD card lost - reinsert to recover	Η κάρτα SD χάθηκε - επανατοποθετήστε
 SD card remounted	Η κάρτα SD επανασυνδέθηκε
@@ -695,6 +696,7 @@ SD formatted - %s (MESHCOMOD)	SD διαμορφώθηκε - %s (MESHCOMOD)
 SD is busy - close tools and retry	
 SD removed - card-backed data cannot be saved	
 SD stayed busy - format cancelled, retry	
+SD unreadable - format it as FAT32 on a computer	SD unreadable - format it as FAT32 on a computer
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB σε χρήση

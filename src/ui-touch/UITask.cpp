@@ -92,7 +92,9 @@
   #endif
 #elif defined(TLORA_PAGER)
   #include <SD.h>             // microSD (CS=21) on the shared radio/display SPI bus --
-                               // storage + file manager/WAV access; formatting stays disabled
+                               // storage + file manager/WAV access. No sd_diskio.h/f_mkfs
+                               // here: formatting is deliberately off on this board (the
+                               // reasons are on the format-helper guard in the file manager).
   #define PIN_SD_CS PAGER_PIN_SD_CS   // from TLoraPagerBoard.h, already visible via
                                       // MyMesh.h -> target.h -> TLoraPagerBoard.h above
   #include <driver/i2s.h>     // pager ES8311 codec (notification tones + WAV playback)
@@ -19995,6 +19997,27 @@ static void fmSdClickCb(lv_event_t* e) {
   if (s_sd_mounted) fmOpenStorage(&SD, "SD", "/");
 }
 
+#if defined(TLORA_PAGER)
+// Recovery entry for a card the Pager can SEE (card-detect asserted) but cannot
+// mount: exFAT/NTFS, or a damaged FAT. Without this the roots page renders no SD
+// row at all (fmShowRoots below), so there is no way to tell "no card" from "card
+// the firmware won't take", and no way to retry without a reboot.
+//
+// Deliberately NON-destructive. It clears the mount backoff and makes exactly the
+// one vendor-compatible 4 MHz attempt fmSdTryMount() already makes — it does not
+// add a retry ladder and never tears down the live shared display/radio bus. If
+// that attempt fails the card needs formatting, and on this board that is a
+// deliberate host-side task: see the format-helper guard below for why the in-app
+// formatter stays off for the Pager.
+static void fmSdPagerRetryMountCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_sd_retry_after_ms = 0;                       // explicit user retry — bypass the backoff
+  if (fmSdTryMount() && s_sd_mounted) { fmShowRoots(); return; }
+  if (g_lv.task)
+    g_lv.task->showAlert(TR("SD unreadable - format it as FAT32 on a computer"), 3600);
+}
+#endif
+
 #endif  // HAS_TDECK_GT911 || TLORA_PAGER || HAS_THINKNODE_M9 || HELTEC_LORA_V4_R8 (microSD mount helpers; the busy overlays below are generic LVGL)
 
 // Full-screen "busy" notice (copy/move/format). Pure LVGL — used by the generic paste path too.
@@ -20022,6 +20045,24 @@ static void fmHideFormatOverlay() {
   if (s_fm_fmt_overlay) { popupClose(&s_fm_fmt_overlay); }
 }
 
+// TLORA_PAGER is deliberately NOT in this list — the in-app formatter is omitted
+// on the Pager, not merely unimplemented. Three reasons, in order of weight:
+//  1. f_mkfs needs SD.end() + sdcard_init/uninit around it. That is a card and
+//     diskio lifecycle teardown on a bus the display AND the radio are actively
+//     driving, and this board's mount path is explicitly documented (fmSdTryMount
+//     above) to make ONE 4 MHz attempt and never tear the live shared bus down.
+//     The Arduino SD library never touches the SPI peripheral itself, so this is
+//     very likely fine — but "very likely" is not a basis for a one-way, whole-card
+//     erase, and it has never been run on Pager hardware.
+//  2. There is no touchscreen, so the T-Deck's tap-to-open / hold-to-format split
+//     does not map. The nearest equivalent is holding ENTER on the focused row —
+//     an undiscoverable gesture that destroys the card, on a device where the
+//     encoder and ENTER are the only ways to move at all.
+//  3. The recoverable case is already covered non-destructively:
+//     fmSdPagerRetryMountCb above surfaces a detected-but-unmountable card and
+//     retries the mount, and the alert it raises on failure points at the host.
+// Formatting a card on a computer is a 30-second task with no such risk. Revisit
+// only with a Pager in hand and a card that is safe to lose.
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)   // SD format helpers resume (Arduino SD, T-Deck + M9 + V4-R8)
 // Confirm callback: paint the formatting notice, then defer the (blocking)
 // f_mkfs to UITask::loop so the notice is on-screen before the loop freezes.
@@ -21312,7 +21353,7 @@ static void fmShowRoots() {
     fmStyleRow(sd, COLOR_SUB);
     lv_obj_add_event_cb(sd, fmSdMountOrFormatCb, LV_EVENT_CLICKED, nullptr);
   }
-#elif defined(TLORA_PAGER)   // microSD row — browse only this pass, no format (see fmSdTryMount())
+#elif defined(TLORA_PAGER)   // microSD row — browse + mount recovery, no in-app format
   // The card-detect line makes "not present" unambiguous, unlike the T-Deck (no detect
   // pin at all) -- so unlike its always-shown "tap to mount/format" fallback row, a bare
   // pager just shows no SD row at all rather than a row that can never succeed.
@@ -21324,6 +21365,13 @@ static void fmShowRoots() {
     lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, sdl);
     fmStyleRow(sd, COLOR_TEXT);
     lv_obj_add_event_cb(sd, fmSdClickCb, LV_EVENT_SHORT_CLICKED, nullptr);
+  } else if (board.sdCardPresent()) {
+    // Detected but not mounted. Surfacing it (greyed) is the whole recovery path
+    // on this board: it distinguishes "card the firmware won't take" from the
+    // absent case above, and gives a retry that bypasses the mount backoff.
+    lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, TR("SD card   (unreadable - tap to retry)"));
+    fmStyleRow(sd, COLOR_SUB);
+    lv_obj_add_event_cb(sd, fmSdPagerRetryMountCb, LV_EVENT_CLICKED, nullptr);
   }
 #endif
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)

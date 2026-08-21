@@ -683,6 +683,7 @@ Run setup again	Поново покрени подешавање
 SD card   %s	SD картица   %s
 SD card   %s   (hold: format)	SD картица   %s   (држи: формат)
 SD card   (tap to mount)	SD картица   (додирни за монтирање)
+SD card   (unreadable - tap to retry)	SD card   (unreadable - tap to retry)
 SD card inserted	SD картица убачена
 SD card lost - reinsert to recover	SD картица изгубљена - убаците поново
 SD card remounted	SD картица поново монтирана
@@ -695,6 +696,7 @@ SD formatted - %s (MESHCOMOD)	SD форматирана - %s (MESHCOMOD)
 SD is busy - close tools and retry	
 SD removed - card-backed data cannot be saved	
 SD stayed busy - format cancelled, retry	
+SD unreadable - format it as FAT32 on a computer	SD unreadable - format it as FAT32 on a computer
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB заузето

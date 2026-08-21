@@ -683,6 +683,7 @@ Run setup again	Rulează configurarea din nou
 SD card   %s	Card SD   %s
 SD card   %s   (hold: format)	Card SD   %s   (ţine: formatare)
 SD card   (tap to mount)	Card SD   (atinge pentru montare)
+SD card   (unreadable - tap to retry)	SD card   (unreadable - tap to retry)
 SD card inserted	Card SD introdus
 SD card lost - reinsert to recover	Card SD pierdut - reintrodu-l pentru recuperare
 SD card remounted	Card SD remontat
@@ -695,6 +696,7 @@ SD formatted - %s (MESHCOMOD)	SD formatat - %s (MESHCOMOD)
 SD is busy - close tools and retry	
 SD removed - card-backed data cannot be saved	
 SD stayed busy - format cancelled, retry	
+SD unreadable - format it as FAT32 on a computer	SD unreadable - format it as FAT32 on a computer
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB folosiţi
