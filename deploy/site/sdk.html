@@ -143,6 +143,7 @@
     <a href="#fs">wada.fs</a>
     <a href="#sys">wada.sys</a>
     <a href="#timer">wada.timer</a>
+    <a href="#budget">Instruction budget</a>
     <a href="#crypto">wada.crypto</a>
     <a href="#perms">Permissions</a>
     <div class="grp">Shipping</div>
@@ -212,7 +213,7 @@ return app</code></pre>
           <tr><td>app.on_message(m)</td><td>An incoming message. <code>m.kind</code> is <code>"channel"</code>, <code>"dm"</code> or <code>"room"</code>, alongside <code>m.channel</code>, <code>m.sender</code> and <code>m.text</code>. Channel traffic needs the channel-read permission; DMs and room posts need the private-read one. See <a href="#perms">Permissions</a>.</td></tr>
           <tr><td>app.on_close()</td><td>Once, when the app closes. Persist anything you care about here.</td></tr>
         </table>
-        <p>Every callback runs inside a guarded call on the UI thread. If your code raises an error the app is closed with a toast rather than taking the firmware down with it — but it does mean a slow callback stalls the whole UI, so keep them short. There is an instruction budget: an app that spins forever is stopped.</p>
+        <p>Every callback runs inside a guarded call on the UI thread. If your code raises an error the app is closed with a toast rather than taking the firmware down with it — but it does mean a slow callback stalls the whole UI, so keep them short. There is an <a href="#budget">instruction budget</a> on every callback, so an app that spins forever is stopped rather than taking the device with it.</p>
         <p>Widgets you create in <code>on_open</code> are destroyed for you when the app closes. You do not free anything.</p>
       </div></div>
     </section>
@@ -358,6 +359,23 @@ return app</code></pre>
       </div></div>
     </section>
 
+    <section class="doc" id="budget">
+      <h2>The instruction budget</h2>
+      <div class="row"><div class="prose">
+        <p>Every callback runs under a cap of <b>100,000 Lua VM instructions</b>. Reaching it raises <code>instruction budget exceeded (app tick too long)</code>, which closes the app with a toast instead of letting it hold the UI thread forever.</p>
+        <table class="api">
+          <tr><th>Question</th><th>Answer</th></tr>
+          <tr><td>What is counted?</td><td><b>VM opcodes</b>, by Lua's own counter (<code>lua_sethook</code> with <code>LUA_MASKCOUNT</code>). Not native calls, not wall-clock time.</td></tr>
+          <tr><td>Per what?</td><td><b>Per callback.</b> The counter is armed immediately before each call and cleared after, so <code>on_open</code>, every <code>on_tick</code>, every <code>on_input</code> and every <code>on_message</code> each get a fresh 100,000. It is not a session allowance you can exhaust.</td></tr>
+          <tr><td>Does <code>on_open</code> get more?</td><td>Yes, <b>5&times;</b> (500,000). Setting a UI up legitimately does more work than a tick.</td></tr>
+          <tr><td>Do <code>wada.*</code> calls count?</td><td><b>No.</b> Time inside a native call costs wall-clock but not budget, because the VM is not executing opcodes. That cuts both ways: the budget will not save you from a slow host call, which is why <code>wada.fs</code> and the mesh sends carry their own rate limits instead.</td></tr>
+        </table>
+        <p>For scale, 100,000 instructions is well under 2&nbsp;ms of straight-line Lua on an ESP32-S3, and a runaway loop is contained in about 30&nbsp;ms. Ordinary per-tick app code is nowhere near it.</p>
+        <div class="note"><p><b>If you are hitting it, you are probably doing cryptography.</b> A HMAC-SHA1 in pure Lua is 80 bit operations per 64-byte block with interpreter overhead on every one, and that genuinely exceeds 100,000 instructions. That is not a runaway and the answer is not a bigger budget: use <a href="#crypto">wada.crypto</a>, where the same work costs microseconds and a handful of opcodes. This section exists because a one-time-password app hit exactly this.</p></div>
+        <p>The other way to stay inside it is to do less per callback. State kept in your app table persists between ticks, so a long job can be split across several: do a slice of the work, return, and continue on the next <code>on_tick</code>.</p>
+      </div></div>
+    </section>
+
     <section class="doc" id="crypto">
       <h2>wada.crypto</h2>
       <div class="row"><div class="prose">
@@ -443,8 +461,8 @@ return app</code></pre>
       <h2>Sandbox limits</h2>
       <div class="row"><div class="prose">
         <p>Apps run in a restricted environment. These are removed: <code>io</code>, <code>os</code>, <code>require</code>, <code>dofile</code>, and loading new chunks at runtime. Available: <code>math</code>, <code>string</code>, <code>table</code>, and the usual <code>pairs</code>, <code>ipairs</code>, <code>select</code>, <code>pcall</code>, <code>tostring</code>, <code>tonumber</code>.</p>
-        <p>Memory comes from a capped pool in PSRAM, so an app that allocates without bound fails its own allocation rather than starving the radio or the UI. There is an instruction budget on every callback for the same reason.</p>
-        <p><b>The extended calls are not on every board.</b> Anything marked <span class="chip">ext</span> above &mdash; <code>wada.fs</code>, <code>wada.mesh.send</code>, <code>sys.battery</code>, <code>sys.gps</code> &mdash; needs a board with the memory to carry it, so the Heltec V4 keeps its RAM for the mesh instead. Call <code>wada.sys.caps().sdk_ext</code> and degrade gracefully rather than assuming; an app that hard-depends on them without checking simply errors out on the small boards.</p>
+        <p>Memory comes from a capped pool in PSRAM, so an app that allocates without bound fails its own allocation rather than starving the radio or the UI. There is an <a href="#budget">instruction budget</a> on every callback for the same reason.</p>
+        <p><b>The extended calls are not on every board.</b> Anything marked <span class="chip">ext</span> above &mdash; <code>wada.fs</code>, <code>wada.mesh.send</code>, <code>wada.mesh.send_dm</code>, <code>sys.battery</code>, <code>sys.gps</code> &mdash; needs a board with the memory to carry it, so the Heltec V4 keeps its RAM for the mesh instead. Call <code>wada.sys.caps().sdk_ext</code> and degrade gracefully rather than assuming; an app that hard-depends on them without checking simply errors out on the small boards.</p>
         <p>Rate limits are part of the contract, not a rainy-day guard: <code>wada.fs</code> writes are about one per second with a 32&nbsp;KB file cap, and <code>wada.mesh.send</code> has a 5&nbsp;second floor and a 180-character limit. They return <code>false, "too fast"</code> rather than throwing, and hitting them is expected &mdash; handle it.</p>
         <p>None of this makes a hostile app safe, which is why the catalog is curated. It makes an <i>honest</i> app that has a bug survivable: it gets closed, and the device keeps carrying traffic.</p>
       </div></div>
