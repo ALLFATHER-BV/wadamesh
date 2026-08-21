@@ -143,6 +143,7 @@
     <a href="#fs">wada.fs</a>
     <a href="#sys">wada.sys</a>
     <a href="#timer">wada.timer</a>
+    <a href="#crypto">wada.crypto</a>
     <a href="#perms">Permissions</a>
     <div class="grp">Shipping</div>
     <a href="#format">App format</a>
@@ -208,7 +209,7 @@ return app</code></pre>
           <tr><td>app.on_open(w, h)</td><td>Once, when the app opens. Build your UI here. <code>w</code>&nbsp;/&nbsp;<code>h</code> are the usable body size in pixels — use them instead of assuming a screen size, since the boards differ.</td></tr>
           <tr><td>app.on_tick()</td><td>On the cadence set by <code>wada.timer.every(ms)</code>. Never faster than 33&nbsp;ms.</td></tr>
           <tr><td>app.on_input(ev)</td><td>For every touch, key or trackball event. See <a href="#input">wada.input</a>.</td></tr>
-          <tr><td>app.on_message(m)</td><td>An incoming mesh message, if the user granted the app the read permission. See <a href="#perms">Permissions</a>.</td></tr>
+          <tr><td>app.on_message(m)</td><td>An incoming message. <code>m.kind</code> is <code>"channel"</code>, <code>"dm"</code> or <code>"room"</code>, alongside <code>m.channel</code>, <code>m.sender</code> and <code>m.text</code>. Channel traffic needs the channel-read permission; DMs and room posts need the private-read one. See <a href="#perms">Permissions</a>.</td></tr>
           <tr><td>app.on_close()</td><td>Once, when the app closes. Persist anything you care about here.</td></tr>
         </table>
         <p>Every callback runs inside a guarded call on the UI thread. If your code raises an error the app is closed with a toast rather than taking the firmware down with it — but it does mean a slow callback stalls the whole UI, so keep them short. There is an instruction budget: an app that spins forever is stopped.</p>
@@ -281,7 +282,9 @@ return app</code></pre>
           <tr><td>wada.mesh.rx_log()</td><td>Recent packets: <code>{ago_ms, type, rssi, snr, hops}</code>. The RF Monitor feed.</td></tr>
           <tr><td>wada.mesh.stats()</td><td><code>{rssi, noise, rx_air_s, tx_air_s, rx_pkts, rx_err, tx_budget_ms, rx_events, rx_dropped, tx_pkts, freq, bw, sf, duty_pct}</code>.</td></tr>
           <tr><td>wada.mesh.self()</td><td>This node: <code>{name, lat, lon}</code>.</td></tr>
-          <tr><td>wada.mesh.send(channel, text) <span class="chip">ext</span></td><td>Send to a channel by name. Returns <code>ok, err</code>. Needs the send permission — the first call prompts the user. <code>err</code> is <code>"denied"</code> if they refused, <code>"too fast"</code> inside the 5&nbsp;second floor, <code>"too long"</code> past 180 characters.</td></tr>
+          <tr><td>wada.mesh.send(channel, text) <span class="chip">ext</span></td><td>Post to a channel by name, public or private. Returns <code>ok, err</code>. Needs the channel-send permission; the first call prompts the user. <code>err</code> is <code>"permission denied"</code> if they refused, <code>"too fast"</code> inside the 5&nbsp;second floor, <code>"bad length"</code> past 180 characters.</td></tr>
+          <tr><td>wada.mesh.send_dm(to, text) <span class="chip">ext</span></td><td>Send a direct message, or post to a room server. <code>to</code> is a contact <b>name</b> as it appears in <code>wada.mesh.contacts()</code>. A room is a contact too, so one call covers both and the second return is <code>"sent"</code> or <code>"room"</code>. Needs the <b>private</b> send permission, which is separate from channels.</td></tr>
+          <tr><td>wada.mesh.channels()</td><td>Array of the channel names configured on this device, so you can find the private ones rather than being told their names. Names only: the channel secret is never exposed to Lua.</td></tr>
         </table>
         <p>These are snapshots taken when you call them, not live views — call again on each tick to refresh.</p>
       </div></div>
@@ -355,16 +358,35 @@ return app</code></pre>
       </div></div>
     </section>
 
+    <section class="doc" id="crypto">
+      <h2>wada.crypto</h2>
+      <div class="row"><div class="prose">
+        <p>Hashing in C, because hashing in Lua does not fit the instruction budget. HMAC-SHA1 is 80 bit operations per 64-byte block and the interpreter overhead multiplies every one, so a one-time-password app doing it by hand runs out of budget mid-callback. These call the mbedTLS the firmware already links: microseconds, and a handful of VM instructions.</p>
+        <table class="api">
+          <tr><th>Call</th><th>Returns</th></tr>
+          <tr><td>wada.crypto.sha256(data)</td><td>32-byte digest, as a binary string.</td></tr>
+          <tr><td>wada.crypto.sha1(data)</td><td>20-byte digest.</td></tr>
+          <tr><td>wada.crypto.hmac_sha256(key, msg)</td><td>32-byte HMAC.</td></tr>
+          <tr><td>wada.crypto.hmac_sha1(key, msg)</td><td>20-byte HMAC, the RFC&nbsp;4226 / 6238 one.</td></tr>
+          <tr><td>wada.crypto.hex(binary)</td><td>Lower-case hex of a binary string.</td></tr>
+        </table>
+        <p>Digests come back <b>raw</b>, not hex, so RFC&nbsp;4226 dynamic truncation works on them directly. Lua strings are 8-bit clean, so binary keys and messages are fine as they are.</p>
+        <p>Available on <b>every</b> board, unlike the <span class="chip">ext</span> calls. This is pure computation over data your app already holds: it reads nothing of the user's and transmits nothing, so there is no reason for the small boards to go without it.</p>
+      </div></div>
+    </section>
+
     <section class="doc" id="perms">
       <h2>Permissions</h2>
       <div class="row"><div class="prose">
         <p>Two things an app can ask for reach past its own window, so they are not granted by installing it:</p>
         <table class="api">
           <tr><th>Permission</th><th>Unlocks</th></tr>
-          <tr><td>Send</td><td><code>wada.mesh.send</code> — transmitting in your name.</td></tr>
-          <tr><td>Read messages</td><td><code>app.on_message</code> — seeing messages as they arrive.</td></tr>
+          <tr><td>Post to channels as me</td><td><code>wada.mesh.send</code>, posting to a channel in your name.</td></tr>
+          <tr><td>Read channel messages</td><td><code>app.on_message</code> for <code>kind == "channel"</code>.</td></tr>
+          <tr><td>Send private messages as me</td><td><code>wada.mesh.send_dm</code>, writing to one contact or posting to a room as you.</td></tr>
+          <tr><td>Read private messages</td><td><code>app.on_message</code> for <code>kind == "dm"</code> and <code>"room"</code>.</td></tr>
         </table>
-        <p>They are separate: granting one does not grant the other. The prompt names the app and appears on the first attempt, not at install time, so you are asked at the moment it is obvious what the app wants it for. A refusal is remembered — the app does not get to ask again on a loop — and the call simply returns <code>false, "denied"</code>, which a well-written app should handle rather than break on.</p>
+        <p>Four rather than one because the risks genuinely differ: posting to a channel you are already in is not the same act as writing to one person as you, and channel traffic is not somebody's private conversations. They are separate: granting one does not grant another. The prompt names the app and appears on the first attempt, not at install time, so you are asked at the moment it is obvious what the app wants it for. A refusal is remembered — the app does not get to ask again on a loop — and the call simply returns <code>false, "denied"</code>, which a well-written app should handle rather than break on.</p>
         <p><b>Settings &rarr; App permissions</b> lists every installed app and what it holds, and revokes with one switch. Granting happens where an app asks; that page is for review and for taking it back.</p>
         <div class="note"><p><b>Write for the denial.</b> The user can say no, or revoke later. Treat a permitted send as the lucky path, not the assumption.</p></div>
       </div></div>

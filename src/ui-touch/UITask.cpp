@@ -37421,7 +37421,7 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
       // with only the small corner label saying why. Say it once per session.
       if (!s_m9_pan_gap_hinted && s_map_last_missing > 0 && WiFi.status() != WL_CONNECTED) {
         s_m9_pan_gap_hinted = true;
-        if (g_lv.task) g_lv.task->showAlert(TR("Wi-Fi off — new map areas can't download"), 1600);
+        if (g_lv.task) g_lv.task->showAlert(TR("Wi-Fi off, new map areas can't download"), 1600);
       }
 #endif
       if (g_lv.task) g_lv.task->noteUserInput();
