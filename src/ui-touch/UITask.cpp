@@ -46265,6 +46265,33 @@ bool luaHostReadPerm(const char* app_id) {
   return (luaHostAppPerms(app_id, &asked) & LUA_PERM_READ) != 0;
 }
 
+// Private conversations are their own grants. Posting to a channel the user is
+// already in is a different act from writing to one person as them, and reading
+// channel traffic is different from reading their DMs — so an app that needs one
+// does not silently acquire the other.
+int luaHostDmSendPerm(const char* app_id) {
+  bool asked = false;
+  const int mask = luaHostAppPerms(app_id, &asked);
+  if (!asked) return 0;
+  return (mask & LUA_PERM_DM_SEND) ? 1 : -1;
+}
+bool luaHostDmReadPerm(const char* app_id) {
+  bool asked = false;
+  return (luaHostAppPerms(app_id, &asked) & LUA_PERM_DM_READ) != 0;
+}
+
+// Set or clear ONE permission bit, leaving the app's other grants alone. The
+// prompt path used to write a whole mask, so asking for send silently revoked a
+// read grant the user had given in Settings — harmless with one bit, wrong the
+// moment there is more than one.
+static void luaPermWrite(const char* app_id, int mask);
+static void luaPermSetBit(const char* app_id, int bit, bool on) {
+  bool asked = false;
+  int mask = luaHostAppPerms(app_id, &asked);
+  if (on) mask |= bit; else mask &= ~bit;
+  luaPermWrite(app_id, mask);
+}
+
 static void luaPermWrite(const char* app_id, int mask) {
   if (!app_id || !*app_id || !s_ui_data_fs) return;
   // Rewrite whole-file: the table is a handful of short lines, and an in-place
@@ -46305,7 +46332,7 @@ void luaHostRequestSendPerm(const char* app_id, const char* app_name) {
   // Record the refusal FIRST, so the answer is "no" unless the user says
   // otherwise -- a power cut mid-dialog must not leave a grant. It also stops
   // this app re-prompting: its next send sees -1 and fails without a dialog.
-  luaPermWrite(app_id, 0);   // refused unless the user says otherwise
+  luaPermSetBit(app_id, LUA_PERM_SEND, false);   // refused unless the user says otherwise
   const char* label = (app_name && *app_name) ? app_name : app_id;
   char msg[220];
   snprintf(msg, sizeof msg,
@@ -46315,12 +46342,78 @@ void luaHostRequestSendPerm(const char* app_id, const char* app_name) {
            label, the_mesh.getNodePrefs()->node_name);
   // Cancel needs no handler: the refusal is already on disk. The user can revisit
   // a decision by deleting /apps/perms.kv.
-  showConfirm(msg, TR("Allow"), +[]() { luaPermWrite(s_lua_perm_target, LUA_PERM_SEND); });
+  showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_SEND, true); });
 }
 
 // Send on a channel matched BY NAME. Matching by name rather than a cached slot
 // index is deliberate: a stale slot transmits on the WRONG key, which is exactly
 // the bug behind the channel-send fix in the touch composer.
+// Send a direct message to a contact BY NAME, or post to a room server (a room is
+// just a contact of type ADV_TYPE_ROOM, and the send is identical — which is why one
+// call covers both). Mirrors into the on-device chat thread and registers the expected
+// ACK exactly as a composer send does, so an app-sent message is a first-class message
+// rather than something that vanishes off the radio with no local trace.
+bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_room) {
+  if (was_room) *was_room = false;
+  if (!to_name || !*to_name || !text || !*text) return false;
+  ContactInfo* by = nullptr;
+  const uint32_t n = the_mesh.getNumContacts();
+  for (uint32_t i = 0; i < n; ++i) {
+    ContactInfo c;
+    if (!the_mesh.getContactByIdx(i, c)) continue;
+    if (strcmp(c.name, to_name) != 0) continue;
+    by = the_mesh.lookupContactByPubKey(c.id.pub_key, PUB_KEY_SIZE);
+    break;
+  }
+  if (!by) return false;                      // no contact with that name
+  if (was_room) *was_room = (by->type == ADV_TYPE_ROOM);
+
+  ContactInfo rcpt = *by;
+  rcpt.out_path_len = OUT_PATH_UNKNOWN;       // flood, same as the Chats composer does
+  const uint32_t ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
+  uint32_t expected_ack = 0, est_timeout = 0;
+  const int rr = the_mesh.sendMessage(rcpt, ts, 0, (char*)text, expected_ack, est_timeout);
+  if (rr == MSG_SEND_FAILED) return false;
+  the_mesh.uiRegisterExpectedAck(expected_ack, by->id.pub_key);
+  if (g_lv.task)
+    g_lv.task->appSentMsgToContact(by->id.pub_key, by->name, text, expected_ack, the_mesh.uiLastSentFp());
+  return true;
+}
+
+// Names of the channels configured on this device, so an app can discover the
+// private ones rather than having to be told their names. Names only: the channel
+// SECRET is never exposed to Lua, so an app can post to a channel the user already
+// has but can never derive one or hand it to anybody.
+int luaHostMeshChannelNames(char out[][32], int max_n) {
+  int n = 0;
+  for (int i = 0; i < MAX_GROUP_CHANNELS && n < max_n; i++) {
+    ChannelDetails cd;
+    if (!the_mesh.getChannel(i, cd) || !cd.name[0]) continue;
+    snprintf(out[n], 32, "%s", cd.name);
+    n++;
+  }
+  return n;
+}
+
+// Raised from wada.mesh.send_dm's first refusal. Worded harder than the channel
+// prompt on purpose: a channel post is visible to everyone on that channel and is
+// obviously "from" the node, while a direct message arrives in one person's private
+// thread looking exactly like something the user typed to them.
+void luaHostRequestDmSendPerm(const char* app_id, const char* app_name) {
+  if (!app_id || !*app_id) return;
+  snprintf(s_lua_perm_target, sizeof s_lua_perm_target, "%s", app_id);
+  luaPermSetBit(app_id, LUA_PERM_DM_SEND, false);   // refused unless the user says otherwise
+  const char* label = (app_name && *app_name) ? app_name : app_id;
+  char msg[240];
+  snprintf(msg, sizeof msg,
+           TR("\"%s\" wants to send PRIVATE messages as you.\n\n"
+              "It could write to any of your contacts, or post to a room, and the "
+              "message will look exactly like one you typed.\n\n"
+              "Only allow this for an app you trust."),
+           label);
+  showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_DM_SEND, true); });
+}
+
 bool luaHostMeshSendChannel(const char* chan_name, const char* text) {
   if (!chan_name || !*chan_name || !text || !*text) return false;
   for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
@@ -46389,9 +46482,10 @@ static void appPermsToggleCb(lv_event_t* e) {
 static void buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw) {
   int y = 6;
   lv_obj_t* hint = lv_label_create(page);
-  lv_label_set_text(hint, TR("Apps that may send messages on the mesh. Anything they send goes "
-                             "out under your node name and cannot be told apart from a message "
-                             "you typed. Turn one off to take the permission back."));
+  lv_label_set_text(hint, TR("What each installed app is allowed to do. Anything an app sends goes out "
+                             "under your node name and cannot be told apart from a message you "
+                             "typed. Private covers direct messages and room posts, and is kept "
+                             "separate from channels on purpose. Turn one off to take it back."));
   lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(hint, lblw);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
@@ -46445,15 +46539,19 @@ static void buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw) {
     bool asked = false;
     const int mask = luaHostAppPerms(ids[i], &asked);
     const int rowh = (h > 0 ? h : 18);
-    // Two switches: sending as you, and reading what arrives. They are separate
-    // risks -- one speaks in your name, the other sees your conversations -- and
-    // an app that wants both has to be given both.
-    struct { const char* label; int bit; } perms[2] = {
-      { TR("Send messages as me"), LUA_PERM_SEND },
-      { TR("Read incoming messages"), LUA_PERM_READ },
+    // Four switches: speaking in your name vs reading what arrives, each split
+    // again between channels and private conversations. They are different risks --
+    // posting to a channel you are already in is not the same act as writing to one
+    // person as you, and channel traffic is not your DMs -- so an app that wants
+    // more than one has to be given each.
+    struct { const char* label; int bit; } perms[] = {
+      { TR("Post to channels as me"), LUA_PERM_SEND },
+      { TR("Read channel messages"), LUA_PERM_READ },
+      { TR("Send private messages as me"), LUA_PERM_DM_SEND },
+      { TR("Read private messages"), LUA_PERM_DM_READ },
     };
     int sy = y + rowh + 2;
-    for (int k = 0; k < 2; ++k) {
+    for (int k = 0; k < (int)(sizeof perms / sizeof perms[0]); ++k) {
       lv_obj_t* pl = lv_label_create(page);
       lv_label_set_text(pl, perms[k].label);
       lv_obj_set_style_text_font(pl, &g_font_12, LV_PART_MAIN);
@@ -50585,12 +50683,6 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   _msgcount = msgcount;
   const bool have_sender_override = (sender_override && sender_override[0]);
   bool channel = (g_last_event == UIEventType::channelMessage);
-#if CAP_LUA_SDK_EXT
-  // Hand a running Lua app the incoming message (app.on_message). Permission is
-  // rechecked inside, per message, so revoking read access in Settings stops
-  // delivery at once rather than at the app's next launch.
-  if (channel && luaAppIsOpen()) luaAppMessage(from_name, sender_override, text);
-#endif
   const char* thread = channel
       ? (from_name && from_name[0] ? from_name : "#unknown")
       : (from_name && from_name[0] ? from_name : "Unknown");
@@ -50651,6 +50743,19 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     while (blen > 0 && (b[blen-1] == ' ' || b[blen-1] == '\t' ||
                         b[blen-1] == '\r' || b[blen-1] == '\n')) blen--;
     if (blen <= 1) return;   // 0 or 1 character of actual content
+  }
+#endif
+
+#if CAP_LUA_SDK_EXT
+  // Hand a running Lua app the incoming message (app.on_message), AFTER the block
+  // and spam filters so an app sees exactly the messages the user does. Permission
+  // is rechecked per message inside deliverMessage, so revoking in Settings stops
+  // delivery at once rather than at the app's next launch. Channel traffic rides
+  // LUA_PERM_READ; direct messages and room posts need the separate, more sensitive
+  // LUA_PERM_DM_READ. "kind" lets an app tell them apart rather than inferring it.
+  if (luaAppIsOpen()) {
+    const char* kind = channel ? "channel" : (have_sender_override ? "room" : "dm");
+    luaAppMessage(kind, channel ? thread : "", sender, body);
   }
 #endif
 

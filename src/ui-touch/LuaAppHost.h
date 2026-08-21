@@ -24,10 +24,17 @@ void luaAppPress();                   // synthetic centre tap (down+up) -> on_in
 bool luaAppKey(int key);              // hardware key -> on_input; true = app consumed it
 bool luaAppHasOnInput();              // app declares on_input? (touchless boards: app keys vs native d-pad)
 bool luaAppScroll(bool up);           // page-scroll the app body (display-only apps on touchless boards)
-void luaAppMessage(const char* channel, const char* sender, const char* text);  // -> on_message
+// kind: "channel" | "dm" | "room" — what arrived, so an app can tell them apart.
+void luaAppMessage(const char* kind, const char* channel, const char* sender, const char* text);  // -> on_message
 // Per-app permission bits, stored as a decimal mask in /apps/perms.kv.
-#define LUA_PERM_SEND  1
-#define LUA_PERM_READ  2
+// Per-app grants, stored as a bitmask in /apps/perms.kv. Channels and private
+// conversations are deliberately separate grants: posting to #public is not the
+// same act as reading somebody's direct messages, and an app that legitimately
+// needs one usually has no business with the other.
+#define LUA_PERM_SEND     1   // post to a channel (public or private) the user has
+#define LUA_PERM_READ     2   // see incoming channel traffic
+#define LUA_PERM_DM_SEND  4   // send a direct message, or post to a room server, AS the user
+#define LUA_PERM_DM_READ  8   // see incoming direct messages and room posts
 #else
 inline bool luaAppIsOpen() { return false; }
 inline void luaAppDismiss() {}
@@ -36,5 +43,5 @@ inline void luaAppPress() {}
 inline bool luaAppKey(int) { return false; }
 inline bool luaAppHasOnInput() { return false; }
 inline bool luaAppScroll(bool) { return false; }
-inline void luaAppMessage(const char*, const char*, const char*) {}
+inline void luaAppMessage(const char*, const char*, const char*, const char*) {}
 #endif

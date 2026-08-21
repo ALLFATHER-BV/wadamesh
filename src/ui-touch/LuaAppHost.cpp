@@ -4,6 +4,9 @@
 //   2. the wada.* bindings (ui/input/timer/sys/store) — API v1
 //   3. lifecycle: launch -> run chunk -> callbacks via guarded pcall -> dismiss
 #include "LuaAppHost.h"
+#if defined(ESP32)
+#include "mbedtls/md.h"      // wada.crypto: HMAC/SHA in C, not interpreted Lua
+#endif
 
 #if CAP_LUA_APPS
 #include <Arduino.h>
@@ -46,6 +49,11 @@ extern int  luaHostSendPerm(const char* app_id);                              //
 extern bool luaHostReadPerm(const char* app_id);                             // may be shown incoming messages
 extern void luaHostRequestSendPerm(const char* app_id, const char* app_name); // raises the consent prompt
 extern bool luaHostMeshSendChannel(const char* chan_name, const char* text);
+extern bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_room);
+extern int  luaHostMeshChannelNames(char out[][32], int max_n);
+extern int  luaHostDmSendPerm(const char* app_id);
+extern bool luaHostDmReadPerm(const char* app_id);
+extern void luaHostRequestDmSendPerm(const char* app_id, const char* app_name);
 #endif
 // DO NOT name the network client type here. What "WiFiClient" means depends on the
 // board: a real class on the S3 envs, a `using WiFiClient = NetworkClient` alias
@@ -628,6 +636,52 @@ int meshSend(lua_State* L) {
   if (!ok) { lua_pushstring(L, "no such channel"); return 2; }
   return 1;
 }
+
+// wada.mesh.send_dm(to, text) -> ok, err
+// `to` is a CONTACT NAME as it appears in wada.mesh.contacts(). A room server is a
+// contact too, so the same call posts to a room; the second return value says which
+// it was ("sent" or "room") so an app does not have to keep its own table of types.
+// Shares the send rate limiter with channel sends: one app, one radio.
+int meshSendDm(lua_State* L) {
+  const char* to = luaL_checkstring(L, 1);
+  size_t len = 0;
+  const char* text = luaL_checklstring(L, 2, &len);
+  if (!s_h) { lua_pushboolean(L, 0); lua_pushstring(L, "no app"); return 2; }
+  if (len == 0 || len > kMeshSendMaxLen) {
+    lua_pushboolean(L, 0); lua_pushstring(L, "bad length"); return 2;
+  }
+  const int perm = luaHostDmSendPerm(s_h->id);
+  if (perm != 1) {
+    if (perm == 0) luaHostRequestDmSendPerm(s_h->id, s_h->id);   // ask once, never in a loop
+    lua_pushboolean(L, 0);
+    lua_pushstring(L, perm == 0 ? "permission requested" : "permission denied");
+    return 2;
+  }
+  const uint32_t now = millis();
+  if (s_h->mesh_last_send_ms && (uint32_t)(now - s_h->mesh_last_send_ms) < kMeshSendMinGapMs) {
+    lua_pushboolean(L, 0); lua_pushstring(L, "too fast"); return 2;
+  }
+  bool was_room = false;
+  const bool ok = luaHostMeshSendDM(to, text, &was_room);
+  if (ok) s_h->mesh_last_send_ms = now;
+  lua_pushboolean(L, ok);
+  lua_pushstring(L, ok ? (was_room ? "room" : "sent") : "no such contact");
+  return 2;
+}
+
+// wada.mesh.channels() -> { "Public", "MyPrivate", ... }
+// Names only. The channel secret is never handed to Lua, so an app can post to a
+// channel the user already has but can neither derive one nor pass it on.
+int meshChannels(lua_State* L) {
+  static char names[MAX_GROUP_CHANNELS][32];
+  const int n = luaHostMeshChannelNames(names, MAX_GROUP_CHANNELS);
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    lua_pushstring(L, names[i]);
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
 #endif
 
 int storeGet(lua_State* L) {
@@ -1007,6 +1061,70 @@ int netHttpGet(lua_State* L) {
   return 0;
 }
 
+// ---- wada.crypto ------------------------------------------------------------
+// Hashing belongs in C. An OTP app doing HMAC-SHA1 in pure Lua blows the 100k
+// per-callback instruction budget legitimately — SHA-1 is 80 bit-twiddling rounds
+// per 64-byte block, and the interpreter overhead around each one multiplies it
+// (reported from a real app: "otp_messenger:941: instruction budget exceeded").
+// The chip already links mbedTLS, so the same work costs microseconds and a
+// handful of VM instructions here.
+//
+// NOT gated on CAP_LUA_SDK_EXT: this is pure computation over data the app already
+// holds. It reads nothing of the user's, transmits nothing, and the mbedTLS context
+// is ~100 bytes — so there is no reason to deny it to the small boards, and an app
+// that needs a hash should not have to check a capability first.
+//
+// Strings in and out are BINARY (Lua strings are 8-bit clean), so an app gets the
+// raw digest and can do RFC 4226 dynamic truncation on it directly.
+#if defined(ESP32)
+static int cryptoDigest(lua_State* L, mbedtls_md_type_t type, bool hmac) {
+  size_t klen = 0, mlen = 0;
+  const char* key = hmac ? luaL_checklstring(L, 1, &klen) : nullptr;
+  const char* msg = luaL_checklstring(L, hmac ? 2 : 1, &mlen);
+  const mbedtls_md_info_t* info = mbedtls_md_info_from_type(type);
+  if (!info) { lua_pushnil(L); lua_pushstring(L, "digest unavailable"); return 2; }
+  unsigned char out[32];
+  const unsigned char olen = mbedtls_md_get_size(info);
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  int rc = mbedtls_md_setup(&ctx, info, hmac ? 1 : 0);
+  if (rc == 0) {
+    if (hmac) {
+      rc = mbedtls_md_hmac_starts(&ctx, (const unsigned char*)key, klen);
+      if (rc == 0) rc = mbedtls_md_hmac_update(&ctx, (const unsigned char*)msg, mlen);
+      if (rc == 0) rc = mbedtls_md_hmac_finish(&ctx, out);
+    } else {
+      rc = mbedtls_md_starts(&ctx);
+      if (rc == 0) rc = mbedtls_md_update(&ctx, (const unsigned char*)msg, mlen);
+      if (rc == 0) rc = mbedtls_md_finish(&ctx, out);
+    }
+  }
+  mbedtls_md_free(&ctx);
+  if (rc != 0) { lua_pushnil(L); lua_pushstring(L, "digest failed"); return 2; }
+  lua_pushlstring(L, (const char*)out, olen);
+  return 1;
+}
+int cryptoSha256(lua_State* L)     { return cryptoDigest(L, MBEDTLS_MD_SHA256, false); }
+int cryptoSha1(lua_State* L)       { return cryptoDigest(L, MBEDTLS_MD_SHA1,   false); }
+int cryptoHmacSha256(lua_State* L) { return cryptoDigest(L, MBEDTLS_MD_SHA256, true);  }
+int cryptoHmacSha1(lua_State* L)   { return cryptoDigest(L, MBEDTLS_MD_SHA1,   true);  }
+
+// Lowercase hex of a binary string — the one conversion every app writes badly.
+int cryptoHex(lua_State* L) {
+  size_t n = 0;
+  const unsigned char* p = (const unsigned char*)luaL_checklstring(L, 1, &n);
+  luaL_Buffer b;
+  luaL_buffinit(L, &b);
+  static const char* const kHex = "0123456789abcdef";
+  for (size_t i = 0; i < n; i++) {
+    luaL_addchar(&b, kHex[p[i] >> 4]);
+    luaL_addchar(&b, kHex[p[i] & 0x0F]);
+  }
+  luaL_pushresult(&b);
+  return 1;
+}
+#endif
+
 // ---- module registration ----
 void openWada(lua_State* L) {
   lua_newtable(L);                                       // wada
@@ -1069,9 +1187,21 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, meshStats);    lua_setfield(L, -2, "stats");
   lua_pushcfunction(L, meshSelf);     lua_setfield(L, -2, "self");
 #if CAP_LUA_SDK_EXT
-  lua_pushcfunction(L, meshSend); lua_setfield(L, -2, "send");   // consent-gated
+  lua_pushcfunction(L, meshSend);     lua_setfield(L, -2, "send");      // consent-gated (channels)
+  lua_pushcfunction(L, meshSendDm);   lua_setfield(L, -2, "send_dm");   // consent-gated (DMs + rooms)
+  lua_pushcfunction(L, meshChannels); lua_setfield(L, -2, "channels");  // names only, no secrets
 #endif
   lua_setfield(L, -2, "mesh");
+
+#if defined(ESP32)
+  lua_newtable(L);                                       // wada.crypto (all boards)
+  lua_pushcfunction(L, cryptoSha256);     lua_setfield(L, -2, "sha256");
+  lua_pushcfunction(L, cryptoSha1);       lua_setfield(L, -2, "sha1");
+  lua_pushcfunction(L, cryptoHmacSha256); lua_setfield(L, -2, "hmac_sha256");
+  lua_pushcfunction(L, cryptoHmacSha1);   lua_setfield(L, -2, "hmac_sha1");
+  lua_pushcfunction(L, cryptoHex);        lua_setfield(L, -2, "hex");
+  lua_setfield(L, -2, "crypto");
+#endif
 
   lua_newtable(L);                                       // wada.net
   lua_pushcfunction(L, netHttpGet); lua_setfield(L, -2, "http_get");
@@ -1136,12 +1266,20 @@ bool luaAppIsOpen() { return s_h != nullptr; }
 // Incoming channel message -> app.on_message{channel, sender, text}. Permission
 // checked HERE rather than at subscribe time, so revoking it in Settings stops
 // delivery immediately instead of at the next launch.
-static void deliverMessage(const char* channel, const char* sender, const char* text) {
+// Each kind is behind its OWN grant, rechecked per message so revoking in Settings
+// stops delivery at once rather than at the app's next launch. Channel traffic is
+// semi-public and rides LUA_PERM_READ; direct messages and room posts are private
+// and need LUA_PERM_DM_READ, which is never auto-prompted (it would fire on someone
+// else's traffic arriving) and is granted only from Settings > App permissions.
+static void deliverMessage(const char* kind, const char* channel, const char* sender, const char* text) {
   if (!s_h || !s_h->L) return;
-  if (!luaHostReadPerm(s_h->id)) return;
+  const bool is_channel = (kind && strcmp(kind, "channel") == 0);
+  if (is_channel) { if (!luaHostReadPerm(s_h->id))   return; }
+  else            { if (!luaHostDmReadPerm(s_h->id)) return; }
   if (!pushCallback(s_h, "on_message")) return;
   lua_State* L = s_h->L;
-  lua_createtable(L, 0, 3);
+  lua_createtable(L, 0, 4);
+  lua_pushstring(L, kind    ? kind    : ""); lua_setfield(L, -2, "kind");
   lua_pushstring(L, channel ? channel : ""); lua_setfield(L, -2, "channel");
   lua_pushstring(L, sender  ? sender  : ""); lua_setfield(L, -2, "sender");
   lua_pushstring(L, text    ? text    : ""); lua_setfield(L, -2, "text");
@@ -1157,8 +1295,8 @@ bool luaAppKey(int key) {
 }
 
 #if CAP_LUA_SDK_EXT
-void luaAppMessage(const char* channel, const char* sender, const char* text) {
-  deliverMessage(channel, sender, text);
+void luaAppMessage(const char* kind, const char* channel, const char* sender, const char* text) {
+  deliverMessage(kind, channel, sender, text);
 }
 #endif
 
