@@ -91,8 +91,18 @@ local function load_prefs()
   if type(ox) == "number" and type(oy) == "number" and type(oz) == "number" then
     cal = { ox = ox, oy = oy, oz = oz }
   end
-  align = tonumber(store.get("align", 0)) or 0
-  mirror = (store.get("mirror", 0) == 1)
+  -- Orientation settings are versioned: the heading formula changed once the
+  -- M9's axes were measured, so values saved against the old one would push a
+  -- correct default back off north. Anything older is discarded, not migrated.
+  if store.get("orient_ver", 0) == 2 then
+    align = tonumber(store.get("align", 0)) or 0
+    mirror = (store.get("mirror", 0) == 1)
+  else
+    align, mirror = 0, false
+    store.set("align", nil); store.set("mirror", nil)
+    store.set("orient", nil); store.set("flip", nil)   -- the even older pair
+    store.set("orient_ver", 2)
+  end
   UNITS.alt = store.get("u_alt", 1) == 1
   UNITS.spd = store.get("u_spd", 1) == 1
 end
@@ -100,6 +110,7 @@ end
 local function save_align()
   store.set("align", math.floor(align + 0.5))
   store.set("mirror", mirror and 1 or 0)
+  store.set("orient_ver", 2)
 end
 
 local function save_cal()
@@ -112,14 +123,24 @@ end
 
 -- ---------------------------------------------------------------------------
 -- heading
--- Raw angle of the horizontal field in the sensor's own frame. `mirror` picks
--- the direction of travel (which follows from where the sensor's Z axis
--- points — see align_north); `align` rotates that so the device's top edge
--- reading north comes out as 000.
+-- Heading from the horizontal field, in the sensor's own frame.
+--
+-- The default is MEASURED, not guessed: on the ThinkNode M9, holding the
+-- device flat and reading the field at north / east / south / west gives
+-- (after subtracting the hard-iron centre)
+--     N  x'=-0.055 y'=+0.310      E  x'=+0.268 y'=-0.018
+--     S  x'=+0.013 y'=-0.275      W  x'=-0.225 y'=-0.016
+-- i.e. +Y points at the device's top edge and +X to its left, so
+-- atan2(x, y) reads 0/90/180/270 at N/E/S/W and counts up clockwise. That
+-- needs no offset and no press.
+--
+-- `mirror` covers a sensor mounted the other way up (its Z facing out of the
+-- screen instead of into it), which reverses the direction of travel;
+-- `align` is the fine offset A sets, and stays 0 on a known board.
 local function mag_heading(m)
   local x, y = m.x, m.y
   if cal then x, y = x - cal.ox, y - cal.oy end
-  local a = mirror and math.atan(y, x) or math.atan(-y, x)
+  local a = mirror and math.atan(-x, y) or math.atan(x, y)
   return norm360(math.deg(a) + align)
 end
 
@@ -484,9 +505,13 @@ local function align_north()
   end
   local dip_ok = math.abs(mag_z) > 0.05 * (mag_norm or 1)
   if lat and dip_ok then
-    -- Z out of the screen: field points down (north) -> negative z reading
-    local z_up = (lat >= 0) == (mag_z < 0)
-    mirror = not z_up
+    -- Held flat, Earth's field points DOWN north of the magnetic equator and
+    -- UP south of it. The base formula above is the one for a sensor whose Z
+    -- faces INTO the screen, and such a sensor reads that downward field as a
+    -- POSITIVE z in the north. (This test was inverted at first, which is
+    -- what made a correctly-defaulted M9 turn the wrong way.)
+    local z_into_screen = (lat >= 0) == (mag_z > 0)
+    mirror = not z_into_screen
   end
 
   align = 0
@@ -626,9 +651,14 @@ function app.on_open(w, h)
     label(name, valx, y, 12, C.text, valw)   -- key-less rows line up with the values
     if name == "alt" or name == "spd" then row_hit[name] = { y = y, h = line } end
     if name == "fix" then
-      SATS_W = math.min(52, math.max(30, valw - math.floor(TH12 * 0.55 * 8)))
+      -- The meter sits right after the count, not out at the column edge —
+      -- the reserve is sized for the widest text ("99 sats") so the bars hold
+      -- still as the number changes.
+      local gap = math.floor(TH12 * 0.45)
+      local sats_x = valx + text_w("99 sats", TH12) + gap
+      SATS_W = math.max(20, math.min(52, valx + valw - sats_x - 2))
       sats_cv = ui.canvas(SATS_W, SATS_H)
-      sats_cv:pos(valx + valw - SATS_W, y + math.floor((TH12 - SATS_H) / 2))
+      sats_cv:pos(sats_x, y + math.floor((TH12 - SATS_H) / 2))
       sats_cv:fill(C.bg)
     end
     y = y + line

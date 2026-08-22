@@ -5,6 +5,14 @@
 #include <Arduino.h>
 #include <Wire.h>
 
+// Bring-up aid: log the raw field vector once a second so the sensor's axis
+// orientation on this board can be derived from readings at known headings
+// (it is not documented anywhere, and Meshtastic's M9 driver never verified
+// its own guess). Set to 0 once the mapping is baked into the default.
+#ifndef M9_COMPASS_DEBUG
+  #define M9_COMPASS_DEBUG 0
+#endif
+
 namespace {
 
 constexpr uint8_t kAddr      = 0x7C;   // the only address the part offers
@@ -162,6 +170,16 @@ bool m9CompassRead(float* x, float* y, float* z, bool* overflow) {
       // dropped: silently discarding it would make a board with a huge
       // hard-iron bias or a magnet nearby look exactly like a missing chip.
       s_ovfl = (st & kStatOvfl) != 0;
+#if M9_COMPASS_DEBUG
+      {
+        static uint32_t last = 0;
+        if (now - last >= 1000) {
+          last = now;
+          Serial.printf("[MAG] x=%.3f y=%.3f z=%.3f G%s\n", (double)s_x, (double)s_y, (double)s_z,
+                        s_ovfl ? " OVFL" : "");
+        }
+      }
+#endif
       if (s_ovfl && (s_ovfl_log_ms == 0 || (now - s_ovfl_log_ms) > kOvflLogEvery)) {
         s_ovfl_log_ms = now;
         Serial.printf("M9 compass: OVFL raw=%d,%d,%d (axis beyond +/-32000 counts at +/-32 G)\n",

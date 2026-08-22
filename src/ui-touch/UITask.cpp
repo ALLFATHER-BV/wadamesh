@@ -51343,7 +51343,8 @@ void UITask::loop() {
   uiCp("ui:disc");
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
   uiCp("ui:gps");
-  updateGpsLocation(now);   // sync + persist node location from GPS once fixed
+  updateGpsLocation(now);
+  uiCp("ui:timers");   // GPS sync/persist is its own bucket: it can write prefs   // sync + persist node location from GPS once fixed
   ++s_live_diag_loops;
   if (_alert_expiry != 0 && now >= _alert_expiry) {
     _alert[0]     = '\0';
@@ -51709,6 +51710,7 @@ void UITask::loop() {
   }
 #endif
 
+  uiCp("ui:threads");
   if (now >= _next_mesh_thread_refresh) {
     /* Pick up contact / channel additions that came in from the companion
      * serial client (CMD_SET_CHANNEL etc.). 4 s is the backstop — the app
@@ -51749,6 +51751,7 @@ void UITask::loop() {
     _next_refresh = now + UI_REFRESH_MS;
   }
 #if CAP_TRACKBALL
+  uiCp("ui:input");
   updateTrackball(now);
 #elif defined(HAS_PAGER_ENCODER)
   updatePagerEncoder(now);
@@ -52025,6 +52028,7 @@ void UITask::loop() {
   // hits the CH32 over I2C when the value actually changes.
   tanKbBacklightTick(_screen_off || _manual_lock);
 #endif
+  uiCp("ui:diag");
   refreshLiveDiag(now);
   // Keep the signal fresh with a "discover" probe: send a ZERO-HOP advert whenever
   // we have no recent DIRECT signal. Zero-hop = neighbours only, never re-broadcast,
