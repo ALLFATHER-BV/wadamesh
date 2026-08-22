@@ -49428,6 +49428,16 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     consoleWriteLine("");
     Serial.println("[BOOT] console: text ok"); Serial.flush();
     the_mesh.setTerminalSink(&consoleWriteLine);
+    // Screen-timeout state. Set further down begin() for the graphical path,
+    // which console mode returns before, so without this _screen_timeout_ms
+    // stayed at its constructor value and the panel never slept: the console
+    // stayed lit indefinitely. Same pref the UI reads.
+    touchPrefsBegin();
+    _screen_timeout_ms = (uint32_t)touchPrefsGetScreenTimeoutSecs() * 1000u;
+    _last_input_ms     = millis();
+    _screen_off        = false;
+    Serial.printf("[BOOT] console: screen timeout %lus\n",
+                  (unsigned long)(_screen_timeout_ms / 1000u));
     Serial.println("[BOOT] console: sink set"); Serial.flush();
     return;
   }
@@ -52125,14 +52135,48 @@ void UITask::loop() {
     // The physical-keyboard drain lives further down this function, below this
     // return, so console mode has to do its own. Same ring, filled by the task
     // started above.
+    bool con_activity = false;
 #if defined(HAS_TDECK_KEYBOARD)
     for (int kbi = 0; kbi < 12; ++kbi) {
       int key = tdeckKeyboardReadKey();
       if (key <= 0) break;
+      con_activity = true;
+      s_kb_last_key_ms = now;
+      // A key pressed on a dark screen WAKES rather than types, the same as a
+      // touch does in the UI. Otherwise the character you used to see the screen
+      // ends up in the command you are typing.
+      if (_screen_off) { wakeScreen(); continue; }
       consoleKey(key);
     }
 #endif
-    consoleLoop();
+#if CAP_TOUCH
+    { uint16_t _tx, _ty; if (heltecV4CapTouchGetLive(&_tx, &_ty)) { con_activity = true; } }
+#endif
+    if (con_activity) _last_input_ms = now;
+
+    // Screen timeout. The graphical path does this far below, so without it a
+    // console stayed lit forever: battery drain, and burn-in on the panels that
+    // suffer from it. Same pref, same helpers.
+    if (!_screen_off && _screen_timeout_ms > 0 &&
+        (uint32_t)(now - _last_input_ms) >= _screen_timeout_ms) {
+      touchScreenBacklight(false);
+      setCpuForScreen(false);       // idle -> 80 MHz, as the UI does
+      _screen_off = true;
+    }
+
+#if defined(HAS_TDECK_KEYBOARD)
+    // Keyboard backlight: off / on / auto, and dark whenever the screen is.
+    {
+      uint8_t kb_bl = 0;
+      if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();
+      else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = tdeckKbBlLevel();
+      if (_screen_off) kb_bl = 0;
+      tdeckKeyboardSetBacklight(kb_bl);
+    }
+#endif
+
+    // Nothing to draw while the panel is dark; skip the render entirely.
+    if (!_screen_off) consoleLoop();
     return;                      // the graphical loop is never entered
   }
 #endif
