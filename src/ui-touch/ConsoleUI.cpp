@@ -19,6 +19,17 @@
   #include "../helpers/esp32/TouchPrefsStore.h"
 #endif
 
+// Contacts, channels and the send path, all from UITask so the console reuses
+// exactly what the UI and the Lua host use. In particular the channel send
+// matches BY NAME at transmit time; a cached slot index is how messages once
+// went out encrypted to the wrong channel.
+extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
+                             double* lat, double* lon, char* pk_hex, size_t pk_cap,
+                             int32_t* lat_e6, int32_t* lon_e6);
+extern int  luaHostMeshChannelNames(char out[][32], int max_n);
+extern bool luaHostMeshSendChannel(const char* chan_name, const char* text);
+extern bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_room);
+
 #if CAP_TOUCH
 // Board touch driver, read directly. lvglTouchRead() is only an adapter that
 // feeds LVGL, so there is nothing to unpick here: the driver polls either way.
@@ -263,6 +274,33 @@ void render() {
   s_dirty = false;
 }
 
+// Current recipient, set by `to`. A name rather than an index or a slot, for the
+// same reason the send path matches by name: an index goes stale the moment the
+// contact list changes underneath it.
+char s_to[40] = {0};
+
+void cmdContacts() {
+  char name[36], pk[12]; int type; uint32_t ago; double lat, lon; int32_t la6, lo6;
+  int shown = 0;
+  for (int i = 0; i < 200 && shown < 40; i++) {
+    if (!luaHostContactAt(i, name, sizeof name, &type, &ago, &lat, &lon, pk, sizeof pk, &la6, &lo6)) break;
+    static const char* kType[5] = { "?", "chat", "repeater", "room", "sensor" };
+    char line[kLineCap];
+    snprintf(line, sizeof line, "%-16s %-8s %s", name,
+             (type >= 1 && type <= 4) ? kType[type] : "?", pk);
+    consoleWriteLine(line);
+    shown++;
+  }
+  if (!shown) consoleWriteLine("(no contacts yet)");
+}
+
+void cmdChannels() {
+  static char names[8][32];
+  const int n = luaHostMeshChannelNames(names, 8);
+  for (int i = 0; i < n; i++) consoleWriteLine(names[i]);
+  if (!n) consoleWriteLine("(no channels)");
+}
+
 // ---- command dispatch -------------------------------------------------------
 void submit() {
   if (s_input_len == 0) return;
@@ -296,9 +334,51 @@ void submit() {
   }
 #endif
   if (!strcasecmp(cmd, "help")) {
-    consoleWriteLine("console: clear, help, ui");
-    consoleWriteLine("node: everything the CLI answers, e.g.");
-    consoleWriteLine("  advert, get name, set name <x>, time, ver");
+    consoleWriteLine("console  clear, help, mem, ui");
+    consoleWriteLine("mesh     contacts, chans");
+    consoleWriteLine("         to <name>   pick a contact or channel");
+    consoleWriteLine("         msg <text>  send to it");
+    consoleWriteLine("node     anything the CLI answers:");
+    consoleWriteLine("         advert, get name, set name <x>, time, ver");
+    return;
+  }
+  // Free memory. This is the number console mode is justified by, so it is a
+  // command rather than something you have to instrument a build to see:
+  // read it here, reboot into the UI, read it there.
+  if (!strcasecmp(cmd, "mem")) {
+#if defined(ESP32)
+    const size_t dr_f = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t dr_t = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t ps_f = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    const size_t ps_t = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    const size_t ps_b = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+    consolePrintf("DRAM  %u / %u KB free", (unsigned)(dr_f / 1024), (unsigned)(dr_t / 1024));
+    consolePrintf("PSRAM %u / %u KB free", (unsigned)(ps_f / 1024), (unsigned)(ps_t / 1024));
+    consolePrintf("PSRAM largest block %u KB", (unsigned)(ps_b / 1024));
+#else
+    consoleWriteLine("not available on this build");
+#endif
+    return;
+  }
+  if (!strcasecmp(cmd, "contacts")) { cmdContacts(); return; }
+  if (!strcasecmp(cmd, "chans") || !strcasecmp(cmd, "channels")) { cmdChannels(); return; }
+  if (!strncasecmp(cmd, "to ", 3)) {
+    snprintf(s_to, sizeof s_to, "%s", cmd + 3);
+    consolePrintf("sending to: %s", s_to);
+    return;
+  }
+  if (!strncasecmp(cmd, "msg ", 4)) {
+    if (!s_to[0]) { consoleWriteLine("no recipient - use 'to <name>' first"); return; }
+    const char* text = cmd + 4;
+    // Try a channel first, then a contact. Channels and contacts share a name
+    // space here on purpose: the user typed a name, not a category.
+    if (luaHostMeshSendChannel(s_to, text)) { consolePrintf("sent to #%s", s_to); return; }
+    bool was_room = false;
+    if (luaHostMeshSendDM(s_to, text, &was_room)) {
+      consolePrintf("sent to %s%s", s_to, was_room ? " (room)" : "");
+      return;
+    }
+    consolePrintf("no channel or contact named '%s'", s_to);
     return;
   }
   the_mesh.runLocalCli(cmd);

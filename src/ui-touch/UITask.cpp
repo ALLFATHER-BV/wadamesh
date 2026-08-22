@@ -46719,7 +46719,12 @@ void luaHostRadioStats2(uint32_t* rx_evt, uint32_t* rx_drop, uint32_t* tx_pkts,
   // airtime_factor -> the duty ceiling the dispatcher enforces (see #161)
   *duty_pct = p->airtime_factor > 0 ? (int)(100.0f / (1.0f + p->airtime_factor) + 0.5f) : 100;
 }
-#if CAP_LUA_SDK_EXT
+// Widened for console mode: CAP_LUA_SDK_EXT is OFF on the V4, which is exactly
+// the board console mode exists for, and the console needs the same send path.
+// Reusing it rather than duplicating matters most for luaHostMeshSendChannel:
+// it matches the channel BY NAME at transmit time, and a cached slot index is
+// how messages went out encrypted to the wrong channel before.
+#if CAP_LUA_SDK_EXT || CAP_CONSOLE
 // ---- Lua app permissions: mesh send ----------------------------------------
 // wada.mesh.send() is the first WRITE path a store app has into the mesh, and
 // anything it sends goes out under the user's own node name -- to readers it is
@@ -46945,7 +46950,7 @@ bool luaHostMeshSendChannel(const char* chan_name, const char* text) {
   }
   return false;   // no such channel on this device
 }
-#endif  // CAP_LUA_SDK_EXT
+#endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
 
 #if CAP_LUA_SDK_EXT
 // wada.sys.battery(). Reads the SMOOTHED millivolts the status bar uses, not a
