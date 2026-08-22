@@ -50,8 +50,15 @@ char*    s_ring       = nullptr;    // kMaxLines * (kLineCap + 1)
 int      s_head       = 0;          // next write slot
 int      s_count      = 0;
 int      s_scroll     = 0;          // lines scrolled back from the newest
-bool     s_dirty      = true;
+// Two levels of dirt, because startFrame() is a full fillScreen() and endFrame()
+// is a no-op: drawing is direct to the panel with no buffer. A full redraw for
+// every cursor blink flashed the whole screen twice a second, and one per
+// keystroke did the same while typing. Only the scrollback changing needs the
+// full clear; the input line and the cursor repaint their own few pixels.
+bool     s_dirty      = true;      // scrollback changed -> full redraw
+bool     s_dirty_in   = false;     // only the input line / cursor changed
 bool     s_active     = false;
+int      s_cur_x = 0, s_cur_y = 0; // cursor cell, set by the last input-line draw
 
 DisplayDriver* s_disp = nullptr;
 int      s_char_w = 6, s_line_h = 8, s_cols = 40, s_rows = 10;
@@ -74,6 +81,10 @@ void ringPush(const char* s, int len) {
   s_scroll = 0;              // any new output jumps back to the live tail
   s_dirty = true;
 }
+
+// Paint just the input row: clear it to the background, then prompt + text.
+// Never touches the scrollback above it or the keypad below, so no flash.
+void drawInputLine(bool cursor_on);
 
 // i = 0 is the OLDEST retained line.
 const char* ringGet(int i) {
@@ -237,35 +248,7 @@ void render() {
     y += s_line_h;
   }
 
-  // Input line, directly under the scrollback (above the keypad where there is
-  // one) with a blinking block cursor.
-#if CAP_TOUCH && !CAP_KEYBOARD
-  const int iy = s_kb_top - s_line_h;
-#else
-  const int iy = s_disp->height() - s_line_h;
-#endif
-  s_disp->setColor(UIColor::title_txt);
-  s_disp->setCursor(0, iy);
-  s_disp->print(">");
-  s_disp->setColor(UIColor::primary_txt);
-  s_disp->setCursor(s_char_w * 2, iy);
-  // Show the tail of a long line so the caret stays visible while typing.
-  const int room = s_cols - 3;
-  const char* shown = s_input;
-  if (s_input_len > room) shown = s_input + (s_input_len - room);
-  s_disp->print(shown);
-  if (s_blink_on) {
-    const int cx = s_char_w * 2 + s_disp->getTextWidth(shown);
-    s_disp->fillRect(cx, iy, s_char_w, s_line_h);
-  }
-
-  // Scrollback indicator: without it there is no way to tell you are not live.
-  if (s_scroll > 0) {
-    char tag[24];
-    snprintf(tag, sizeof tag, "-%d", s_scroll);
-    s_disp->setColor(UIColor::warning_txt);
-    s_disp->drawTextRightAlign(s_disp->width() - 2, iy, tag);
-  }
+  drawInputLine(s_blink_on);
 
 #if CAP_TOUCH && !CAP_KEYBOARD
   keypadDraw();
@@ -299,6 +282,52 @@ void cmdChannels() {
   const int n = luaHostMeshChannelNames(names, 8);
   for (int i = 0; i < n; i++) consoleWriteLine(names[i]);
   if (!n) consoleWriteLine("(no channels)");
+}
+
+void drawInputLine(bool cursor_on) {
+  if (!s_disp) return;
+#if CAP_TOUCH && !CAP_KEYBOARD
+  const int iy = s_kb_top - s_line_h;
+#else
+  const int iy = s_disp->height() - s_line_h;
+#endif
+  // Clear only this row. fillScreen would take the scrollback and keypad with it.
+  s_disp->setColor(UIColor::window_bkg);
+  s_disp->fillRect(0, iy, s_disp->width(), s_line_h);
+
+  s_disp->setTextSize(1);
+  s_disp->setColor(UIColor::title_txt);
+  s_disp->setCursor(0, iy);
+  s_disp->print(">");
+  s_disp->setColor(UIColor::primary_txt);
+  s_disp->setCursor(s_char_w * 2, iy);
+  // Show the tail of a long line so the caret stays visible while typing.
+  const int room = s_cols - 3;
+  const char* shown = s_input;
+  if (s_input_len > room) shown = s_input + (s_input_len - room);
+  s_disp->print(shown);
+
+  s_cur_x = s_char_w * 2 + s_disp->getTextWidth(shown);
+  s_cur_y = iy;
+  if (cursor_on) {
+    s_disp->setColor(UIColor::primary_txt);
+    s_disp->fillRect(s_cur_x, s_cur_y, s_char_w, s_line_h);
+  }
+
+  // Scrollback indicator: without it there is no way to tell you are not live.
+  if (s_scroll > 0) {
+    char tag[24];
+    snprintf(tag, sizeof tag, "-%d", s_scroll);
+    s_disp->setColor(UIColor::warning_txt);
+    s_disp->drawTextRightAlign(s_disp->width() - 2, iy, tag);
+  }
+}
+
+// Toggle just the cursor cell. Two fillRects, no text, no clear.
+void drawCursorOnly(bool on) {
+  if (!s_disp) return;
+  s_disp->setColor(on ? UIColor::primary_txt : UIColor::window_bkg);
+  s_disp->fillRect(s_cur_x, s_cur_y, s_char_w, s_line_h);
 }
 
 // ---- command dispatch -------------------------------------------------------
@@ -436,14 +465,14 @@ bool consoleKey(int c) {
   if (!s_active) return false;
   if (c == '\r' || c == '\n') { submit(); s_dirty = true; return true; }
   if (c == '\b' || c == 127) {
-    if (s_input_len > 0) { s_input[--s_input_len] = '\0'; s_dirty = true; }
+    if (s_input_len > 0) { s_input[--s_input_len] = '\0'; s_dirty_in = true; }
     return true;
   }
   if (c < 32 || c > 126) return false;
   if (s_input_len < kInputCap - 1) {
     s_input[s_input_len++] = (char)c;
     s_input[s_input_len] = '\0';
-    s_dirty = true;
+    s_dirty_in = true;       // only the input row repaints; no full-screen flash
   }
   return true;
 }
@@ -454,14 +483,18 @@ void consoleLoop() {
   touchTick();
 #endif
   const uint32_t now = millis();
-  if (now - s_blink_ms >= 500) {
+  bool blink_flip = false;
+  if (now - s_blink_ms >= 530) {
     s_blink_ms = now;
     s_blink_on = !s_blink_on;
-    s_dirty = true;
+    blink_flip = true;
   }
-  // Redraw only when something changed. This is the whole point of the mode:
-  // an idle console costs a millis() comparison, not a render pass.
-  if (s_dirty) render();
+  // Cheapest repaint that covers what actually changed. An idle console paints
+  // one character cell every half second; typing repaints one row; only new
+  // output clears the screen.
+  if (s_dirty)          { render(); s_dirty_in = false; }
+  else if (s_dirty_in)  { drawInputLine(s_blink_on); s_dirty_in = false; }
+  else if (blink_flip)  { drawCursorOnly(s_blink_on); }
 }
 
 #endif  // CAP_CONSOLE
