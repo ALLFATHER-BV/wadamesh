@@ -358,6 +358,8 @@ public:
   // Active channel's mesh slot (-1 when the open thread isn't a channel). For the
   // status-bar channel-settings gear (per-channel region scope).
   int16_t activeChannelSlot() const {
+    // _ui_threads is null in console mode (allocated later in begin()).
+    if (!_ui_threads) return -1;
     if (!_active_thread_is_channel || _active_thread_idx < 0 || _active_thread_idx >= MAX_UI_THREADS) return -1;
     return _ui_threads[_active_thread_idx].mesh_channel_slot;
   }
@@ -367,6 +369,7 @@ public:
    *  deleting a channel actually drops its mesh-table entry — otherwise
    *  refreshThreadsFromMesh() recreates the thread from the surviving channel. */
   int16_t threadMeshChannelSlot(int idx) const {
+    if (!_ui_threads) return -1;                       // console mode: no table
     if (idx < 0 || idx >= MAX_UI_THREADS || !_ui_threads[idx].used || !_ui_threads[idx].channel) return -1;
     return _ui_threads[idx].mesh_channel_slot;
   }

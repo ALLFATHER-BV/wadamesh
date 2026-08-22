@@ -48594,6 +48594,12 @@ bool UITask::saveMsgsToStorage() {
 // ============================================================
 int UITask::findOrCreateThread(const char* name, bool channel) {
   if (!name || !name[0]) return -1;
+  // _ui_threads is allocated further down begin(), which console mode returns
+  // before, so it is null there. An incoming message reached here and
+  // dereferenced it: the device panicked, and since it rebooted straight back
+  // into console mode it did so every time a message arrived. Guard rather than
+  // allocate: in console mode nothing reads the table.
+  if (!_ui_threads) return -1;
   for (int i = 0; i < MAX_UI_THREADS; ++i) {
     if (_ui_threads[i].used && _ui_threads[i].channel == channel &&
         strncmp(_ui_threads[i].name, name, MAX_THREAD_NAME) == 0) return i;
@@ -48866,6 +48872,7 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
                           uint16_t in_scope) {
   int t_idx = findOrCreateThread(thread, channel);
   if (t_idx < 0) return -1;
+  if (!_ui_msgs) return -1;   // console mode: the ring is never allocated
   UIMessage& m = _ui_msgs[_ui_msg_head];
   // Full ring: this append overwrites the oldest record — tell the segment
   // table so a fully-aged-out segment file gets unlinked.
@@ -51390,6 +51397,21 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
                         const char* sender_override) {
   (void)path_len;
   _msgcount = msgcount;
+#if CAP_CONSOLE
+  if (s_console_mode) {
+    // Everything below builds LVGL chat state that does not exist here. Print
+    // the message instead, which is also the receiving half console mode was
+    // missing: it could send but never showed anything arriving.
+    const bool chan = (g_last_event == UIEventType::channelMessage);
+    char line[160];
+    snprintf(line, sizeof line, "%s%s: %s",
+             chan ? "#" : "",
+             (from_name && from_name[0]) ? from_name : "?",
+             text ? text : "");
+    consoleWriteLine(line);
+    return;
+  }
+#endif
   const bool have_sender_override = (sender_override && sender_override[0]);
   bool channel = (g_last_event == UIEventType::channelMessage);
   const char* thread = channel
