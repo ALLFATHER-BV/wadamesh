@@ -44,7 +44,29 @@ def source_keys():
             k = k.lstrip(' ')
             if k.strip():
                 keys.add(k)
-    keys |= {"Apps", "Built-in", "Languages"}   # TR(kStoreTabs[t])
+    # INDIRECT keys: TR(kSomeTable[i]) / TR(tbl[i].field). The regex above only sees
+    # TR("literal"), so every string reached through a table looked unused — including
+    # "About", "Backups" and every other settings-category name. Anyone pruning the
+    # language files on that output would have deleted live translations, which is
+    # exactly what a translator asked about before doing it (#262).
+    #
+    # So: find the table names that appear inside a TR(...) subscript, then pull every
+    # string literal out of each table's initialiser. Deliberately greedy — over-
+    # collecting keeps a translation alive, under-collecting deletes one.
+    for f in glob.glob(os.path.join(ROOT, 'src/ui-touch/*.cpp')) + \
+             glob.glob(os.path.join(ROOT, 'src/ui-touch/*.h')):
+        src = open(f, encoding='utf-8').read()
+        for name in set(re.findall(r'TR\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\[', src)):
+            for m in re.finditer(r'\b' + re.escape(name) + r'\s*\[[^\]]*\]\s*=\s*\{', src):
+                i, depth = m.end(), 1
+                while i < len(src) and depth:
+                    if src[i] == '{': depth += 1
+                    elif src[i] == '}': depth -= 1
+                    i += 1
+                for lit in re.findall(r'"((?:[^"\\]|\\.)*)"', src[m.end():i]):
+                    k = unescape_c(lit)
+                    if k.strip():
+                        keys.add(k)
     return keys
 
 # Known untranslatable / identical-everywhere keys.
@@ -63,6 +85,28 @@ def lang_keys(path):
 
 def main():
     keys = source_keys() - SKIP
+
+    # --obsolete: the REVERSE check. Rows in the .lang files that no TR() key matches
+    # any more, i.e. translation work that is being carried for strings the firmware
+    # no longer shows. Reported, never deleted automatically.
+    #
+    # Read the caveat before acting on it: this is static analysis. A string reached in
+    # a way the extractor cannot see reads as unreferenced, and pruning it silently
+    # deletes a working translation. That is not hypothetical -- before the indirect-
+    # table support above, "About" and every other settings-category name appeared in
+    # this list. Treat the output as candidates to CHECK, not a delete list.
+    if "--obsolete" in sys.argv:
+        for path in sorted(glob.glob(os.path.join(ROOT, 'deploy/apps/lang/*.lang'))):
+            have = lang_keys(path)
+            dead = sorted(k for k in have if k not in keys)
+            tag = os.path.basename(path)
+            print(f"{tag}: {len(have)} rows, {len(dead)} unreferenced")
+            for k in dead:
+                print(f"  {k!r}")
+        print("\nCandidates only. Grep the source for one before removing it: a string "
+              "reached indirectly can look unreferenced while being on screen.")
+        return 0
+
     bad = 0
     for path in sorted(glob.glob(os.path.join(ROOT, 'deploy/apps/lang/*.lang'))):
         missing = sorted(k for k in keys if k not in lang_keys(path))

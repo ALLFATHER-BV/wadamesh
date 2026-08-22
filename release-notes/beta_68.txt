@@ -1,0 +1,33 @@
+# beta_68 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Apps can now do the things the firmware does ------------------------------------------
+The Lua SDK gained the four capabilities that were holding third-party apps back, so an app can now be as good as a built-in one rather than a sketch of one.
+Apps can put the real map on their page. Not a drawing of a map: the same OpenStreetMap tiles, the same projection and the same cached tiles the Map tab uses, with markers and lines placed by latitude and longitude, taps turned back into coordinates, and a tile count so an app can say "nothing cached here" instead of showing an empty rectangle that looks like open water.
+Apps got a scrollable list. There was no "pick one of N" widget, so every app that needed one drew rows by hand and tracked scrolling itself, which is why app screens looked worse than the firmware's own. Rows are real buttons, so keyboard and trackball navigation walks them on boards without a touchscreen.
+Apps can be told about each packet as it arrives instead of polling for it. Polling sampled a 16-deep ring on a timer, so in real traffic an app saw a subset and could not count anything. Every frame is now delivered once, in order.
+Apps can ask the mesh who is out there. A discovery probe is a zero-hop request that every node in earshot answers, and a reply proves the link works from where you are standing, which listening can never establish. It has its own permission, separate from sending messages, because it costs airtime on every neighbour's radio and not only yours.
+Each discovery reply carries both directions of the link: how well you heard them, and how well they heard you. Those are rarely equal, and "I can hear the repeater but it cannot hear me" is a different fact from "no coverage".
+Packets an app is shown now say who sent them, as far as the frame honestly can. An advert carries a real public key and is reported as one; addressed frames carry only one-byte hashes and are reported as those; anything else stays anonymous, because it is. Nothing is guessed.
+Text entry, at last. An app can ask for a line of text using the firmware's own dialog and keyboard, so it behaves the same on a touchscreen, on a physical keyboard and on a trackball.
+Distance and bearing between two points, computed in C. A dozen trigonometry calls per contact per tick is a real slice of an app's instruction budget, and now costs almost none of it.
+Environment sensors are available to apps on the boards that have them. That is a hardware question, so it is now asked as one, rather than being bundled with the memory limit that gates the rest of the extended SDK.
+Apps can set more than one timer, including one-shot ones. Previously an app had one clock and anything with a second cadence had to be a counter inside it.
+Apps can upload as well as download. A survey log, a sensor series or a webhook can now leave the device.
+Coordinates handed to apps come with exact integers alongside the decimals. The scripting language uses 32-bit floats, which is fine to display and lossy to store, so anything writing a track was quietly losing about a metre. GPS altitude and satellite time are available too.
+Two new apps in the Store show all of it working. Wardrive is a coverage survey that probes on a cadence and logs each reply with position, altitude and both link directions to a CSV. Nearby puts your contacts on a real map sorted by distance, with bearing, and counts frames live.
+The SDK page at wadamesh.com/sdk.html documents every one of these, including the instruction budget and what it costs.
+
+# --- Fixes -------------------------------------------------------------------------------------
+The map zoom level was invisible if you used the +/- buttons instead of the slider. The number only ever lived above the slider and was hidden along with it, so buttons mode had no zoom indicator at all. Tapping + or - now shows the level briefly beside the buttons.
+Hungarian and Dutch had each other's translation of "No SD card": Hungarian users saw Dutch and Dutch users saw Hungarian. Both are back in the right file, and all thirteen languages were checked for the same problem.
+The app and language Store is published from a script for the first time, so translations and new apps actually reach devices instead of sitting in the project.
+Two boards could not be built at all. A change merged for the Heltec and ThinkNode audit put a variable somewhere the ESP32-P4 builds never compile, so both the Tanmatsu and the T-Display P4 failed to link while every other board looked fine.
+
+# --- For testers -------------------------------------------------------------------------------
+This drop is almost entirely new SDK surface and has had far less time on real hardware than usual. If you write apps, please exercise the new calls and report anything that misbehaves.
+The map inside an app holds up to half a megabyte of tiles while it is open, so it is limited to boards with the memory for it and to one map view per app. Watch for anything that looks like memory pressure and say so.
+
+# --- Community -----------------------------------------------------------------------------------
+Thanks to pisti87 for the Hungarian translation work covering the strings added over the last few releases, and for the report that found the missing map zoom indicator.
+Thanks to cvhviz for the ThinkNode M9 and Heltec V4-R8 audit passes that landed in beta_67.

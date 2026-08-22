@@ -365,7 +365,7 @@ local function refresh(now)
     set_text("fix", string.format("%d sats", sats_n), C.text)
     set_text("lat", string.format("%.5f", g.lat), C.text)
     set_text("lon", string.format("%.5f", g.lon), C.text)
-    set_text("alt", fmt_alt(g.alt or 0), C.text)
+    set_text("alt", fmt_alt(g.alt_m or 0), C.text)
     if g.speed_kmh then
       local s = fmt_speed(g.speed_kmh)
       if g.course then s = s .. string.format("  %03d\194\176", math.floor(g.course + 0.5) % 360) end

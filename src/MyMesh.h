@@ -571,6 +571,16 @@ public:
     uint8_t  route;     // route type    raw[0]&0x03
     uint8_t  hops;      // path length carried (0 = heard direct from origin)
     uint8_t  len;       // frame length (clamped to 255)
+    // Who sent it, as far as the frame actually says. MeshCore only carries a
+    // full identity on an ADVERT (the payload opens with the 32-byte public
+    // key); the addressed types carry one-byte destination/source hashes, and
+    // the rest carry nothing at all. Recorded honestly rather than guessed, so
+    // a caller can tell "node X was here" from "something was here".
+    //   org_kind 0 = nothing identifying in this frame
+    //            1 = org[0..3] is the first 4 bytes of the origin's public key
+    //            2 = org[0] is the destination hash, org[1] the source hash
+    uint8_t  org_kind;
+    uint8_t  org[4];
   };
   static const int UI_RXLOG_MAX = 16;
   UiRxRec  _ui_rxlog[UI_RXLOG_MAX];
@@ -585,10 +595,13 @@ public:
   }
   // Record a reception into the ring (called from logRxRaw).
   void uiRxLogPush(uint32_t ms, int8_t rssi, int8_t snr_q4,
-                   uint8_t ptype, uint8_t route, uint8_t hops, uint8_t len) {
+                   uint8_t ptype, uint8_t route, uint8_t hops, uint8_t len,
+                   uint8_t org_kind = 0, const uint8_t* org = nullptr) {
     UiRxRec& r = _ui_rxlog[_ui_rxlog_head];
     r.ms = ms; r.rssi = rssi; r.snr_q4 = snr_q4;
     r.ptype = ptype; r.route = route; r.hops = hops; r.len = len;
+    r.org_kind = org ? org_kind : 0;
+    if (r.org_kind) memcpy(r.org, org, 4); else memset(r.org, 0, 4);
     _ui_rxlog_head = (uint8_t)((_ui_rxlog_head + 1) % UI_RXLOG_MAX);
     if (_ui_rxlog_cnt < UI_RXLOG_MAX) _ui_rxlog_cnt++;
   }

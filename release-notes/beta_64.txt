@@ -27,4 +27,4 @@ More of the interface is translatable: the Discovered and Contacts sort menus, a
 
 # --- Community ------------------------------------------------------------------------------
 Pager keyboard shortcuts, portrait layout fixes, a theme-matching Wi-Fi icon and Heltec UI tweaks (oumike, PR #263).
-Thanks to Yoss101 and pisti87, whose reports drove the contact-store work - particularly Yoss101 for coming back to say a fix had only half worked, which is the report that found the rest of it. Thanks to pisti87 also for the character-rendering reports, and to istvan for finding the last text field with boxes in it.
+Thanks to Yoss101 and pisti87, whose reports drove the contact-store work - particularly Yoss101 for coming back to say a fix had only half worked, which is the report that found the rest of it. Thanks to pisti87 also for the character-rendering reports, including finding the last text field with boxes in it.
