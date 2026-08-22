@@ -51966,8 +51966,12 @@ void UITask::rebootDevice() {
     char why[64]; chatSaveFailText(why, sizeof why);
     char msg[128];
     snprintf(msg, sizeof msg, "%s\n%s", TR("Chat history save FAILED"), why);
-    showAlert(msg, 1800);
+    showAlert(msg, 1800);          // console-aware: prints instead when there is no LVGL
+#if CAP_CONSOLE
+    if (!s_console_mode) lv_refr_now(NULL);
+#else
     lv_refr_now(NULL);
+#endif
     delay(1500);   // let the warning actually paint before the reset
   }
   discoveredFlushNow();   // persist the Discovered ring before we go down
@@ -51976,6 +51980,27 @@ void UITask::rebootDevice() {
   touchPrefsFlush();       // finish queued A/B snapshots before reset
   if (_board) _board->reboot();
 }
+
+#if CAP_CONSOLE && defined(ESP32)
+// The console's way back to the graphical UI (the `ui` / `exit` command).
+//
+// It must go through rebootDevice(), not ESP.restart(), and the reason is not
+// obvious: touchPrefsSetConsoleMode() only QUEUES an A/B snapshot. SdNvsPrefs
+// deliberately keeps filesystem I/O off the calling thread, and
+// touchPrefsFlush() -- which rebootDevice() calls last -- is what forces the
+// queued write out. Restarting directly discarded it, so the pref still said
+// "console" on the next boot and `ui` looked like it did nothing.
+//
+// Going through rebootDevice() also means the console exits on the same terms
+// as everything else: chat history, the Discovered ring and the sync replay
+// ring are all persisted first.
+void consoleHostRebootToUi() {
+  touchPrefsSetConsoleMode(false);
+  if (g_lv.task) { g_lv.task->rebootDevice(); return; }
+  touchPrefsFlush();   // no UITask (should not happen): at least do not lose the pref
+  ESP.restart();
+}
+#endif
 
 void UITask::msgRead(int msgcount) { _msgcount = msgcount; }
 

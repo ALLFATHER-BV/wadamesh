@@ -50,6 +50,9 @@ extern int  luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, 
 // Board touch driver, read directly. lvglTouchRead() is only an adapter that
 // feeds LVGL, so there is nothing to unpick here: the driver polls either way.
 extern bool heltecV4CapTouchGetLive(uint16_t* x, uint16_t* y);
+#if defined(ESP32)
+extern void consoleHostRebootToUi();   // clears the pref, flushes it, reboots
+#endif
 #endif
 
 namespace {
@@ -526,11 +529,13 @@ void submit() {
   // The way back to the graphical UI. One of three, per CONSOLE_MODE.md: this,
   // a key held at boot, and clearing the pref over serial or the flasher.
   if (!strcasecmp(cmd, "ui") || !strcasecmp(cmd, "exit")) {
-    touchPrefsSetConsoleMode(false);
     consoleWriteLine("switching to the graphical UI, rebooting...");
     render();
     delay(600);            // let the line land on the panel before the reset
-    ESP.restart();
+    // Clears the pref AND flushes it. Doing the write here and calling
+    // ESP.restart() left the queued snapshot unwritten, so this came straight
+    // back to the console.
+    consoleHostRebootToUi();
     return;
   }
 #endif
