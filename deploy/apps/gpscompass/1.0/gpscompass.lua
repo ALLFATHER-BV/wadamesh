@@ -63,6 +63,9 @@ local sel = "alt"
 local row_hit = {}                -- name -> { y, h } in body coordinates
 local col_x0, col_x1 = 0, 0       -- the stats column's horizontal span
 
+local diag = false                -- D: show what the app is actually computing
+local diag_m = nil                -- last raw sample, for the diagnostic rows
+
 local press = nil                 -- pending touch: { x, y } from the last "down"
 local last_swipe_ms = -100000     -- debounce: LVGL's gesture and the hardware swipe
                                   -- detector can both report one finger swipe
@@ -122,6 +125,98 @@ local function save_cal()
 end
 
 -- ---------------------------------------------------------------------------
+-- calibration: least-squares sphere fit
+--
+-- Rotating the device sweeps a sphere whose CENTRE is the hard-iron offset and
+-- whose radius is the true field. Taking the midpoint of each axis's min/max
+-- finds that centre only from a complete sweep, and is skewed by whichever
+-- extreme was missed — on this hardware the bias is ~7x the field, so a centre
+-- that is off by a tenth of a Gauss is a third of the whole signal and the
+-- heading error then swings with direction (measured: -1 deg at north but +22
+-- at west). A sphere fit uses EVERY sample instead of six extremes.
+--
+-- Fitting |p - c|^2 = r^2 is linear in (c, k = r^2 - |c|^2):
+--     2*cx*x + 2*cy*y + 2*cz*z + k = x^2 + y^2 + z^2
+-- so the normal equations are a 4x4 solve over running sums — no sample
+-- storage, which matters inside a 256 KB app heap. Coordinates are kept
+-- relative to the first sample: Lua here is single-precision, and squaring raw
+-- values near 3.5 G loses the precision the fit depends on.
+local function calib_new()
+  return { n = 0, o = nil, t0 = sys.millis(),
+           sx = 0, sy = 0, sz = 0, sxx = 0, syy = 0, szz = 0,
+           sxy = 0, sxz = 0, syz = 0, sxs = 0, sys_ = 0, szs = 0, ss = 0,
+           mn = { 1e9, 1e9, 1e9 }, mx = { -1e9, -1e9, -1e9 } }
+end
+
+local function calib_add(m)
+  local c = calib
+  if not c.o then c.o = { m.x, m.y, m.z } end
+  local x, y, z = m.x - c.o[1], m.y - c.o[2], m.z - c.o[3]
+  local s = x * x + y * y + z * z
+  c.n = c.n + 1
+  c.sx = c.sx + x; c.sy = c.sy + y; c.sz = c.sz + z
+  c.sxx = c.sxx + x * x; c.syy = c.syy + y * y; c.szz = c.szz + z * z
+  c.sxy = c.sxy + x * y; c.sxz = c.sxz + x * z; c.syz = c.syz + y * z
+  c.sxs = c.sxs + x * s; c.sys_ = c.sys_ + y * s; c.szs = c.szs + z * s
+  c.ss = c.ss + s
+  local mn, mx = c.mn, c.mx
+  if m.x < mn[1] then mn[1] = m.x end; if m.x > mx[1] then mx[1] = m.x end
+  if m.y < mn[2] then mn[2] = m.y end; if m.y > mx[2] then mx[2] = m.y end
+  if m.z < mn[3] then mn[3] = m.z end; if m.z > mx[3] then mx[3] = m.z end
+end
+
+-- Gaussian elimination with partial pivoting on the 4x4 normal equations.
+local function solve4(M, v)
+  for col = 1, 4 do
+    local piv, best = col, math.abs(M[col][col])
+    for r = col + 1, 4 do
+      local a = math.abs(M[r][col])
+      if a > best then piv, best = r, a end
+    end
+    if best < 1e-9 then return nil end          -- singular: coverage too poor
+    if piv ~= col then M[col], M[piv] = M[piv], M[col]; v[col], v[piv] = v[piv], v[col] end
+    local d = M[col][col]
+    for r = col + 1, 4 do
+      local f = M[r][col] / d
+      if f ~= 0 then
+        for k = col, 4 do M[r][k] = M[r][k] - f * M[col][k] end
+        v[r] = v[r] - f * v[col]
+      end
+    end
+  end
+  local out = {}
+  for r = 4, 1, -1 do
+    local acc = v[r]
+    for k = r + 1, 4 do acc = acc - M[r][k] * out[k] end
+    out[r] = acc / M[r][r]
+  end
+  return out
+end
+
+-- Returns offsets + the fitted field radius, or nil plus why it was refused.
+local function calib_solve()
+  local c = calib
+  if c.n < 40 then return nil, "too few samples" end
+  local M = {
+    { 4 * c.sxx, 4 * c.sxy, 4 * c.sxz, 2 * c.sx },
+    { 4 * c.sxy, 4 * c.syy, 4 * c.syz, 2 * c.sy },
+    { 4 * c.sxz, 4 * c.syz, 4 * c.szz, 2 * c.sz },
+    { 2 * c.sx,  2 * c.sy,  2 * c.sz,  c.n },
+  }
+  local v = { 2 * c.sxs, 2 * c.sys_, 2 * c.szs, c.ss }
+  local sol = solve4(M, v)
+  if not sol then return nil, "turn the device in more directions" end
+  local cx, cy, cz, k = sol[1], sol[2], sol[3], sol[4]
+  local r2 = k + cx * cx + cy * cy + cz * cz
+  if r2 <= 0 then return nil, "turn the device in more directions" end
+  local r = math.sqrt(r2)
+  -- Earth's total field is 0.25..0.65 G everywhere on the planet; a fit far
+  -- outside that has locked onto the wrong sphere and must not be saved.
+  if r < 0.15 or r > 1.2 then return nil, string.format("fit looks wrong (%.2f G)", r) end
+  return { ox = c.o[1] + cx, oy = c.o[2] + cy, oz = c.o[3] + cz }, r
+end
+
+-- ---------------------------------------------------------------------------
 -- heading
 -- Heading from the horizontal field, in the sensor's own frame.
 --
@@ -160,14 +255,10 @@ local function update_heading(now)
   local m = has_compass and sys.compass() or nil
   if m then
     last_mag_ms = now
+    diag_m = m
     mag_sat = m.ovfl == true
     if not mag_sat then
-      if calib then
-        local mn, mx = calib.mn, calib.mx
-        if m.x < mn[1] then mn[1] = m.x end; if m.x > mx[1] then mx[1] = m.x end
-        if m.y < mn[2] then mn[2] = m.y end; if m.y > mx[2] then mx[2] = m.y end
-        if m.z < mn[3] then mn[3] = m.z end; if m.z > mx[3] then mx[3] = m.z end
-      end
+      if calib then calib_add(m) end
       local x, y, z = m.x, m.y, m.z
       if cal then x, y, z = x - cal.ox, y - cal.oy, z - cal.oz end
       mag_norm = math.sqrt(x * x + y * y + z * z)
@@ -393,7 +484,7 @@ local function refresh(now)
   -- heading-source line over the dial (<= 18 glyphs: it spans the dial width)
   if calib then
     local left = CAL_SECS - math.floor((now - calib.t0) / 1000)
-    set_text("src", string.format("Calibrating  %ds", math.max(left, 0)), AMBER)
+    set_text("src", string.format("Calibrating %ds  %d pts", math.max(left, 0), calib.n), AMBER)
   elseif mag_sat then
     set_text("src", "Field saturated", C.bad)
   elseif src == "mag" then
@@ -404,6 +495,25 @@ local function refresh(now)
     set_text("src", "Sensor: no data", C.bad)
   else
     set_text("src", "GPS when moving", C.sub)
+  end
+
+  -- D: what the app is actually computing, so a wrong heading can be diagnosed
+  -- from the screen instead of guessed at. Takes over the target rows.
+  if diag then
+    local m = diag_m
+    set_text("tgt", string.format("cal %s", cal and string.format("%.2f %.2f %.2f", cal.ox, cal.oy, cal.oz)
+                                                or "NONE - press C"), cal and C.text or C.bad)
+    set_text("tgt2", m and string.format("raw %.2f %.2f %.2f", m.x, m.y, m.z) or "raw --", C.text)
+    if m and cal then
+      set_text("rel", string.format("hor %.2f %.2f", m.x - cal.ox, m.y - cal.oy), C.text)
+    else
+      set_text("rel", "hor --", C.sub)
+    end
+    set_text("seen", string.format("align %d  mirror %d  |B| %.2f", math.floor(align + 0.5),
+                                   mirror and 1 or 0, mag_norm or 0), AMBER)
+    draw_dial(nil)
+    last_dial_key = nil          -- keep the dial live while diagnosing
+    return
   end
 
   -- target: name, range + bearing, which way to turn, when it was last heard
@@ -459,23 +569,18 @@ end
 local function toggle_cal()
   if not has_compass then sys.toast("No magnetometer on this board", 1500) return end
   if calib then
-    local mn, mx = calib.mn, calib.mx
-    local span = math.min(mx[1] - mn[1], mx[2] - mn[2])
-    if span < 0.2 then
-      sys.toast("Calibration cancelled: turn the device more", 2000)
-    else
-      cal = { ox = (mn[1] + mx[1]) / 2, oy = (mn[2] + mx[2]) / 2, oz = (mn[3] + mx[3]) / 2 }
+    local fit, r = calib_solve()
+    if fit then
+      cal = fit
       save_cal()
-      -- field strength: a fully rotated axis spans +/-|B|, so the widest half-
-      -- span is the field. Earth is 0.25..0.65 G; far off means a magnet
-      -- nearby or a poor calibration
-      local hb = math.max((mx[1] - mn[1]) / 2, (mx[2] - mn[2]) / 2, (mx[3] - mn[3]) / 2)
-      sys.toast(string.format("Calibrated  field %.2f G", hb), 2000)
+      sys.toast(string.format("Calibrated  field %.2f G", r), 2200)
+    else
+      sys.toast("Not calibrated: " .. tostring(r), 2600)
     end
     calib = nil
   else
-    calib = { mn = { 1e9, 1e9, 1e9 }, mx = { -1e9, -1e9, -1e9 }, t0 = sys.millis() }
-    sys.toast("Turn the device through every orientation", 2000)
+    calib = calib_new()
+    sys.toast("Turn the device every way - tumble it, do not just spin it", 2600)
   end
   hv_x, hv_y = 0, 0
 end
@@ -491,6 +596,12 @@ end
 --     as it was and only the offset is set.
 --   * offset — whatever angle the sensor reports while pointing north becomes
 --     the zero.
+-- Note on what "north" means here: this is a MAGNETIC compass. Magnetic north
+-- and true north differ by the local declination — about 13° in California,
+-- and over 15° in parts of the US — so a dial that disagrees with a phone (which
+-- shows true north) by roughly that much is not broken, it is measuring a
+-- different north. Pressing A while pointing at TRUE north folds the local
+-- declination into `align` and makes the two agree.
 local function align_north()
   if not has_compass then sys.toast("No magnetometer on this board", 1500) return end
   if not cal then sys.toast("Calibrate first: press C", 2000) return end
@@ -767,6 +878,10 @@ function app.on_input(ev)
     -- down/up pair AND an enter key event, so acting on both would toggle
     -- twice and look like nothing happened
     if k == "up" or k == "down" then move_sel(k)
+    elseif k == "d" or k == "D" then
+      diag = not diag
+      last_dial_key = nil
+      sys.toast(diag and "Diagnostics on" or "Diagnostics off", 900)
     elseif k == "c" or k == "C" then toggle_cal()
     elseif k == "a" or k == "A" then align_north()
     elseif k == "f" or k == "F" then flip_frame()      -- fallback, see align_north
