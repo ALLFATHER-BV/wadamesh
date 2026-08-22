@@ -7,6 +7,11 @@
 #   ./build.sh flash -p /dev/cu.usbmodemXXXX
 #   ./build.sh menuconfig
 set -e
+
+# Keep the baked-in translation table in step with deploy/apps/lang/*.lang.
+# The PlatformIO envs get this from a pre: hook; the IDF builds need it here
+# or a .lang edit ships stale translations on the P4 boards.
+python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/pre_gen_lang.py"
 cd "$(dirname "$0")"
 export IDF_TOOLS_PATH="$PWD/esp-idf-tools"
 # shellcheck disable=SC1091

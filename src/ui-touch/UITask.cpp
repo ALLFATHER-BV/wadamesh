@@ -9753,19 +9753,19 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     const uint8_t mask = prefs ? (prefs->autoadd_config & static_cast<uint8_t>(
         AUTO_ADD_CHAT | AUTO_ADD_REPEATER | AUTO_ADD_ROOM_SERVER | AUTO_ADD_SENSOR)) : 0u;
     if (mask) {
-      char hint[120];
-      char types[64]; types[0] = '\0';
+      char hint[240];   // translations run long; the HU string is ~1.6x English
+      char types[128]; types[0] = '\0';   // 4 translated plurals, UTF-8
       size_t off = 0;
       auto add = [&](const char* s) {
         if (off > 0 && off + 3 < sizeof(types)) { types[off++] = ','; types[off++] = ' '; types[off] = '\0'; }
         size_t n = strlen(s);
         if (off + n < sizeof(types)) { memcpy(types + off, s, n); off += n; types[off] = '\0'; }
       };
-      if (mask & AUTO_ADD_CHAT)        add("chats");
-      if (mask & AUTO_ADD_REPEATER)    add("repeaters");
-      if (mask & AUTO_ADD_ROOM_SERVER) add("rooms");
-      if (mask & AUTO_ADD_SENSOR)      add("sensors");
-      snprintf(hint, sizeof(hint), "Auto-add on for %s — new %s land in Contacts automatically.",
+      if (mask & AUTO_ADD_CHAT)        add(TR("chats"));
+      if (mask & AUTO_ADD_REPEATER)    add(TR("repeaters"));
+      if (mask & AUTO_ADD_ROOM_SERVER) add(TR("rooms"));
+      if (mask & AUTO_ADD_SENSOR)      add(TR("sensors"));
+      snprintf(hint, sizeof(hint), TR("Auto-add on for %s — new %s land in Contacts automatically."),
                types, types);
       lv_obj_t* l = lv_label_create(body);
       lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
@@ -29275,18 +29275,17 @@ static void mapOptInfoCb(lv_event_t* e) {
   // Attribution header is style-dependent (legal requirement). OpenTopoMap's map
   // style is CC-BY-SA and must be credited; its underlying data is still OSM+SRTM.
   const char* attrib = (s_map_style == 1)
-    ? "Map style \xC2\xA9 OpenTopoMap (CC-BY-SA) \xE2\x80\x94 opentopomap.org\n"
-      "Map data \xC2\xA9 OpenStreetMap contributors (ODbL) + SRTM.\n\n"
-    : "Map data \xC2\xA9 OpenStreetMap contributors.\n"
-      "openstreetmap.org/copyright\n"
-      "Licensed under the Open Database License (ODbL).\n\n";
-  static const size_t CREDITS_SZ = 820;
-  static char* credits = (char*)psAlloc(CREDITS_SZ);   // lazy-PSRAM (frees 820 B internal .bss)
-  if (!credits) return;                                // OOM only: skip the credits text
-  snprintf(credits, CREDITS_SZ, "%s%s", attrib,
+    ? TR("Map style \xC2\xA9 OpenTopoMap (CC-BY-SA) \xE2\x80\x94 opentopomap.org\n"
+         "Map data \xC2\xA9 OpenStreetMap contributors (ODbL) + SRTM.\n\n")
+    : TR("Map data \xC2\xA9 OpenStreetMap contributors.\n"
+         "openstreetmap.org/copyright\n"
+         "Licensed under the Open Database License (ODbL).\n\n");
+  // NOTE: the literal break after \x97 is REQUIRED — "\xC3\x97256" would parse the
+  // trailing 256 as part of the hex escape (all hex digits) and emit one garbage byte.
+  // Kept as ONE translatable block: it is continuous prose, and splitting it per
+  // paragraph would hand translators fragments that only make sense together.
+  const char* body = TR(
     "How tiles work:\n"
-    // NOTE: the literal break after \x97 is REQUIRED — "\xC3\x97256" would parse the
-    // trailing 256 as part of the hex escape (all hex digits) and emit one garbage byte.
     "The map is built from 256\xC3\x97" "256 \"slippy\" tiles. Only the tiles for the "
     "area you're viewing are fetched \xE2\x80\x94 there is no bulk pre-download.\n\n"
     "Because this device can't do HTTPS (not enough heap after Wi-Fi starts) "
@@ -29296,6 +29295,12 @@ static void mapOptInfoCb(lv_event_t* e) {
     "each tile to its own flash, so a tile is only downloaded once.\n\n"
     "Use Options \xE2\x86\x92 Reload tiles to re-download the tiles currently in "
     "view if one looks corrupted.");
+  // Sized for the longest translation, not for English: Hungarian runs ~1.5x and
+  // the Cyrillic/Greek files are two bytes per letter in UTF-8.
+  static const size_t CREDITS_SZ = 2048;
+  static char* credits = (char*)psAlloc(CREDITS_SZ);   // lazy-PSRAM (nothing in .bss)
+  if (!credits) return;                                // OOM only: skip the credits text
+  snprintf(credits, CREDITS_SZ, "%s%s", attrib, body);
   lv_label_set_text(lbl, credits);
 }
 
