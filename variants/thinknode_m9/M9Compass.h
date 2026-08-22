@@ -44,4 +44,9 @@ bool m9CompassPresent();
  *  compass", but they are not a usable heading. */
 bool m9CompassRead(float* x_gauss, float* y_gauss, float* z_gauss, bool* overflow = nullptr);
 
+/** Call periodically (cheap: one comparison until it acts). Suspends the chip
+ *  a couple of seconds after the last read, so it only draws its ~1 mA while
+ *  something is actually using the compass. The next read wakes it. */
+void m9CompassIdleTick();
+
 #endif

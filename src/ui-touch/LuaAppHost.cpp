@@ -29,7 +29,8 @@ extern "C" {
 // to keep this TU decoupled from the 47k-line UITask.cpp).
 extern const lv_font_t* luaHostFontForSize(int size_class);       // 12/14/16 -> g_font_*
 extern void             luaHostToast(const char* msg, int ms);    // showAlert passthrough
-extern bool             luaHostBeep();                            // notification chime; false = no sounder / muted
+extern bool             luaHostBeep();
+extern bool             luaHostScreenOn();   // false = display asleep; app ticks pause                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
 extern void             luaHostAppPath(char* out, size_t cap, const char* rel);   // prefixes the store root
 extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
@@ -893,6 +894,11 @@ int sysBoard(lua_State* L) {
 void tickTimerCb(lv_timer_t* t) {
   (void)t;
   if (!s_h || !s_h->L) return;
+  // Screen asleep: nothing the app draws is visible, and an app polling a
+  // sensor would keep the hardware awake for a dark screen. Skip the tick and
+  // let it resume on wake — dt is derived from millis(), so the app sees the
+  // pause as one long frame rather than a broken clock.
+  if (!luaHostScreenOn()) { s_h->last_tick = 0; return; }
   uint32_t now = millis();
   uint32_t dt = s_h->last_tick ? now - s_h->last_tick : 0;
   s_h->last_tick = now;

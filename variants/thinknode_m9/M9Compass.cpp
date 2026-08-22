@@ -44,10 +44,14 @@ constexpr uint8_t kCtrl2 = 0x30;
 // quarter of the lag. Normal mode honours the ODR (≈1 mA at 100 Hz/OSR 8);
 // continuous mode free-runs at the maximum rate and is not needed here.
 constexpr uint8_t kCtrl1 = 0x41;
+// CTRL1 with MODE = 00: suspend. Registers keep their values, so waking is a
+// single write of kCtrl1 — no reconfiguration.
+constexpr uint8_t kModeSuspend = 0x40;
 
 constexpr float    kGaussPerLsb   = 1.0f / 1000.0f;   // ±32 G range
 constexpr uint32_t kOvflLogEvery  = 10000;            // ms between overflow log lines
 constexpr uint32_t kSampleMaxAge  = 1000;             // ms a cached sample stays valid
+constexpr uint32_t kIdleSuspendMs = 2000;            // no reads for this long -> suspend the chip
 constexpr uint32_t kReprobeEvery  = 2000;             // ms between probes while absent
 constexpr int      kMaxBusErrors  = 8;                // consecutive, before re-probing
 
@@ -61,6 +65,11 @@ uint32_t s_sample_ms = 0;
 bool     s_have_sample = false;
 bool     s_ovfl = false;
 uint32_t s_ovfl_log_ms = 0;
+// The part measures continuously in normal mode (~1 mA at 100 Hz / OSR 8) —
+// worth having while an app is reading the compass, pure waste the rest of the
+// time, which is nearly always. So it is parked in suspend and woken on demand.
+bool     s_awake = false;
+uint32_t s_last_read_ms = 0;
 
 bool writeReg(uint8_t reg, uint8_t val) {
   s_bus->beginTransmission(kAddr);
@@ -90,6 +99,7 @@ bool configure() {
   delay(10);
   if (!writeReg(kRegCtrl2, kCtrl2)) return false;
   if (!writeReg(kRegCtrl1, kCtrl1)) return false;
+  s_awake = true;
   // Read back: one third-party driver (madflight) saw configuration writes not
   // stick right after power-up and retries — do the same once rather than
   // trusting the ACK.
@@ -124,6 +134,9 @@ bool probe(bool log) {
   if (log) Serial.println("M9 compass: QMC6309 ok (id=0x90, 100 Hz, +/-32 G, OSR 8, LPF 4)");
   s_errors = 0;
   s_have_sample = false;
+  // Nothing is reading it yet: park it rather than burn ~1 mA from boot to the
+  // first app that asks. m9CompassRead() wakes it.
+  if (writeReg(kRegCtrl1, kModeSuspend)) s_awake = false;
   return true;
 }
 
@@ -150,6 +163,17 @@ bool m9CompassRead(float* x, float* y, float* z, bool* overflow) {
     s_next_probe_ms = now + kReprobeEvery;
     s_present = probe(false);
     if (!s_present) return false;
+  }
+
+  s_last_read_ms = now;
+  if (!s_awake) {
+    // Waking costs one register write; the first conversion lands a sample
+    // period later, so this call reports "nothing fresh" and the caller's next
+    // poll gets real data. Callers already handle a miss (the chip may be
+    // absent), so this needs no special case at the other end.
+    if (!writeReg(kRegCtrl1, kCtrl1)) return false;
+    s_awake = true;
+    return false;
   }
 
   uint8_t st = 0;
@@ -207,6 +231,16 @@ bool m9CompassRead(float* x, float* y, float* z, bool* overflow) {
   if (z) *z = s_z;
   if (overflow) *overflow = s_ovfl;
   return true;
+}
+
+void m9CompassIdleTick() {
+  if (!s_bus || !s_present || !s_awake) return;
+  const uint32_t now = millis();
+  if ((now - s_last_read_ms) < kIdleSuspendMs) return;
+  if (writeReg(kRegCtrl1, kModeSuspend)) {
+    s_awake = false;
+    s_have_sample = false;   // whatever is cached is stale by the time we wake
+  }
 }
 
 #endif  // HAS_M9_COMPASS && ESP32

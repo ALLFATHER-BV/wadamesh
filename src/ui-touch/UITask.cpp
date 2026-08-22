@@ -46532,6 +46532,12 @@ static bool uiDataFsReady() {
 #if CAP_LUA_APPS
 // ---- Lua app host bridges (LuaAppHost.cpp externs) ----
 // The host lives in its own TU; these three shims are its only view of UITask.
+// A Lua app's timer keeps firing while the screen is off — lv_timer_handler runs
+// unconditionally — so an app polling a sensor at 10 Hz went on doing it into a
+// dark screen. Nothing it draws can be seen, so the host skips the tick; the app
+// resumes on wake and sees the gap through sys.millis() like any other pause.
+bool luaHostScreenOn() { return g_lv.task ? !g_lv.task->isScreenOff() : true; }
+
 const lv_font_t* luaHostFontForSize(int size_class) {
   return size_class <= 12 ? &g_font_12 : size_class <= 14 ? &g_font_14 : &g_font_16;
 }
@@ -52568,6 +52574,9 @@ void UITask::loop() {
   // the current tree before draining (cheap: sig-compare early-out).
   if (s_kbd_nav || s_tb_nav) navMaybeRebuild();
   m9KeyboardPoll();
+#if defined(HAS_M9_COMPASS)
+  m9CompassIdleTick();   // park the magnetometer when no app is reading it
+#endif
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = m9KeyboardReadKey();
     if (key <= 0) break;
