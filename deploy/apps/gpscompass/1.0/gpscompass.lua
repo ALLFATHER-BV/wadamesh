@@ -41,8 +41,21 @@ local acc = nil                    -- last accelerometer sample, g, sensor frame
 local cal = nil                   -- { ox, oy, oz } hard-iron offsets
 local calib = nil                 -- in-progress: { mn = {x,y,z}, mx = {x,y,z}, t0 }
 local align = 0                   -- degrees added to the raw angle so north reads 000
+local align_pending_decl = false  -- A was pressed before the model had a fix
+local hint_normal = ""            -- bottom row text outside diagnostics
+-- Magnetic declination: the angle between magnetic north (what the sensor
+-- measures) and true north (what every GPS bearing is relative to). Mixing the
+-- two offsets every waypoint by exactly this much -- measured on hardware as
+-- all contacts sitting 22 degrees west, including ones whose positions were
+-- known to be right. East positive, so true = magnetic + decl.
+local decl = 0
+local decl_src = "none"           -- "model" | "stale" | "manual" | "none"
+local decl_lat, decl_lon = nil, nil   -- where the model was last evaluated
+local DECL_REFRESH_KM = 2         -- it moves ~1 deg per 100 km; 2 km is free
+local BUILD_YEAR = 2026.6         -- used only when the clock has never been set
 local mag_norm = nil              -- |B| after offsets, Gauss (sanity check for the user)
 local tilt_deg = nil              -- how far from level, degrees (nil = unknown)
+local weak_field = false          -- WMM caution/blackout zone: compass unreliable
 local mag_sat = false             -- last magnetometer sample was flagged as saturated
 
 local hv_x, hv_y = 0, 0           -- smoothed heading unit vector
@@ -80,6 +93,12 @@ local CAL_SECS = 20
 
 local CARD = { "N","NNE","NE","ENE","E","ESE","SE","SSE",
                "S","SSW","SW","WSW","W","WNW","NW","NNW" }
+-- Which north the dial is showing. Bearings computed from coordinates are
+-- always true; the dial is only true once a declination is known.
+local function href()
+  return decl_src == "none" and "M" or "T"
+end
+
 local function cardinal(deg)
   return CARD[(math.floor((deg + 11.25) / 22.5) % 16) + 1]
 end
@@ -89,6 +108,139 @@ local function norm360(d)
   if d < 0 then d = d + 360 end
   return d
 end
+
+-- ---------------------------------------------------------------------------
+-- Magnetic declination (WMM2025), so the dial and the bearings share a north.
+--
+-- The magnetometer measures MAGNETIC north; every bearing computed from GPS
+-- coordinates is relative to TRUE north. Plotting one against the other offsets
+-- every waypoint by the local declination -- measured on hardware as all
+-- contacts, including ones whose positions were known to be right, sitting
+-- about 22 degrees west of where they belong.
+--
+-- This is the real World Magnetic Model rather than a lookup table: degree 12,
+-- 4.4 KB of coefficients and code, and it reproduces NOAA's own calculator to
+-- 0.00005 degrees at seventeen sites worldwide, verified in this exact
+-- single-precision interpreter. A grid accurate enough to stay inside a degree
+-- would have cost five times the space and still been worse.
+--
+-- Includes the secular-variation terms, so it is exact across its 2025.0-2030.0
+-- window rather than drifting ~0.1 deg/yr from a frozen snapshot. Past expiry
+-- it degrades gracefully -- roughly 0.14 deg/yr -- so it stays inside a degree
+-- until about 2033 even if nobody reissues it.
+--
+-- Regenerate: out/wmm/gen_lua.py (see the URL below for the coefficients).
+-- WMM2025 magnetic declination, degree 12.
+-- Data: NOAA/NCEI WMM.COF epoch 2025.0, valid 2025.0-2030.0.
+-- Source: https://www.ncei.noaa.gov/sites/default/files/2024-12/WMM2025COF.zip
+local declination
+do
+local EPOCH,NMAX=2025.0,12
+local G={-29351.8,-1410.8,-2556.6,2951.1,1649.3,1361,-2404.1,1243.8,453.6,895,799.5,55.7,-281.1,12.1,
+-233.2,368.9,187.2,-138.7,-142,20.9,64.4,63.8,76.9,-115.7,-40.9,14.9,-60.7,79.5,-77,-8.8,59.3,
+15.8,2.5,-11.1,14.2,23.2,10.8,-17.5,2,-21.7,16.9,15,-16.8,.9,4.6,7.8,3,-.2,-2.5,-13.1,2.4,8.6,
+-8.7,-12.9,-1.3,-6.4,.2,2,-1,-.6,-.9,1.5,.9,-2.7,-3.9,2.9,-1.5,-2.5,2.4,-.6,-.1,-.6,-.1,1.1,-1,
+-.2,2.6,-2,-.2,.3,1.2,-1.3,.6,.6,.5,-.1,-.4,-.2,-1.3,-.7,}
+local H={4545.4,-3133.6,-815.1,-56.6,237.5,-549.5,278.6,-133.9,212,-375.6,45.4,220.2,-122.9,43,106.1,
+-18.4,16.8,48.8,-59.8,10.9,72.7,-48.9,-14.4,-1,23.4,-7.4,-25.1,-2.3,7.1,-12.6,11.4,-9.7,12.7,.7,
+-5.2,3.9,-24.8,12.2,8.3,-3.3,-5.2,7.2,-.6,.8,10,3.3,0,2.4,5.3,-9.1,.4,-4.2,-3.8,.9,-9.1,0,2.9,
+-.6,.2,.5,-.3,-1.2,-1.7,-2.9,-1.8,-2.3,-1.3,.7,1,-1.4,0,.6,-.1,.8,.1,-1,.1,.2,}
+local GD={12,9.7,-11.6,-5.2,-8,-1.3,-4.2,.4,-15.6,-1.6,-2.4,-6,5.6,-7,.6,1.4,0,.6,2.2,.9,-.2,-.4,.9,1.2,
+-.9,.3,.9,0,-.1,-.1,.5,-.1,-.8,-.8,.8,-.1,.2,0,.5,-.1,.3,.2,0,.2,0,-.1,.1,.3,-.3,0,.3,-.1,.1,
+-.1,.1,0,.1,.1,0,-.3,0,-.1,-.1,0,0,0,0,0,0,0,-.1,0,0,-.1,-.1,-.1,-.1,0,0,0,0,0,0,.1,0,0,0,-.1,0,
+-.1,}
+local HD={-21.5,-27.7,-12.1,4,-.3,-4.1,-1.1,4.1,1.6,-4.4,-.5,2.2,.4,1.7,1.9,.3,-1.6,-.4,.9,.7,.9,.6,.5,
+-.8,0,-1,.6,-.2,-.2,.5,-.4,.4,-.5,-.6,.3,.2,-.3,.3,-.3,.3,.2,-.1,-.2,.4,.1,0,0,-.2,.1,-.1,.1,0,
+-.1,.2,0,0,.1,0,.1,0,0,.1,0,0,0,0,0,0,-.1,.1,0,0,0,0,0,0,0,-.1,}
+
+local sqrt,sin,cos,asin,atan=math.sqrt,math.sin,math.cos,math.asin,math.atan
+-- Flat (n,m) index = n*(n+1)/2 + m + 1, so every table stays in Lua's array
+-- part (no hash lookups in the inner loop).
+local OFF={} ; for n=0,NMAX do OFF[n]=n*(n+1)//2 end
+local NP=OFF[NMAX]+NMAX+1
+-- one-time recursion constants (position independent)
+local K,C,E={},{},{}
+for n=1,NMAX do
+  local k=sqrt((2*n-1)/(2*n)); if n==1 then k=k*sqrt(2) end
+  K[n]=k
+  for m=0,n-1 do
+    local d=sqrt(n*n-m*m); local i=OFF[n]+m+1
+    C[i]=(2*n-1)/d
+    E[i]=(n>=m+2) and sqrt((n-1)*(n-1)-m*m)/d or 0
+  end
+end
+local P,DP={},{}
+for i=1,NP do P[i]=0; DP[i]=0 end
+local CM,SM={},{}
+
+-- lat,lon in degrees; year is a decimal year (e.g. 2027.6, default = EPOCH).
+-- Returns (1) declination in degrees, EAST positive: true = magnetic + decl,
+--         (2) horizontal field intensity H in nT.
+-- H gives the caller WMM's own error bar for free:
+--     sigma_D = sqrt(0.26^2 + (5417/H)^2)   degrees, 1-sigma
+-- and the official reliability zones: H < 2000 nT is the WMM "Blackout Zone"
+-- (a magnetic compass is unusable), 2000 <= H < 6000 nT the "Caution Zone".
+function declination(lat,lon,year)
+  local dt=(year or EPOCH)-EPOCH
+  if lat>89.99 then lat=89.99 elseif lat<-89.99 then lat=-89.99 end
+  local phi,lam=lat*0.017453292,lon*0.017453292
+  local sp,cp=sin(phi),cos(phi)
+  -- WGS-84 geodetic -> geocentric spherical
+  local rc=6378.137/sqrt(1-0.006694380*sp*sp)
+  local p,z=rc*cp,rc*0.993305620*sp
+  local r=sqrt(p*p+z*z)
+  local pp=asin(z/r)                 -- geocentric latitude
+  local ct,st=sin(pp),cos(pp)        -- cos(colatitude), sin(colatitude)
+  P[1],DP[1]=1,0                     -- (0,0)
+  for n=1,NMAX do
+    local o,o1=OFF[n],OFF[n-1]
+    local k=K[n]
+    local dnn=o1+n                   -- (n-1,n-1)
+    P[o+n+1]=k*st*P[dnn]
+    DP[o+n+1]=k*(st*DP[dnn]+ct*P[dnn])
+    for m=0,n-1 do
+      local i,j=o+m+1,o1+m+1
+      local c,e=C[i],E[i]
+      local pv=c*ct*P[j]
+      local dv=c*(ct*DP[j]-st*P[j])
+      if e~=0 then local h=OFF[n-2]+m+1; pv=pv-e*P[h]; dv=dv-e*DP[h] end
+      P[i],DP[i]=pv,dv
+    end
+  end
+  for m=0,NMAX do CM[m+1]=cos(m*lam); SM[m+1]=sin(m*lam) end
+  local ratio=6371.2/r
+  local X,Y,Z=0,0,0
+  local pw=ratio*ratio
+  local gi,hi=0,0
+  for n=1,NMAX do
+    pw=pw*ratio
+    local o=OFF[n]
+    local np1=n+1
+    for m=0,n do
+      gi=gi+1
+      local i,m1=o+m+1,m+1
+      local gv=G[gi]+dt*GD[gi]
+      local cm,sm=CM[m1],SM[m1]
+      local a
+      if m>0 then
+        hi=hi+1
+        local hv=H[hi]+dt*HD[hi]
+        a=gv*cm+hv*sm
+        Y=Y+pw*m*(gv*sm-hv*cm)*P[i]
+      else
+        a=gv
+      end
+      X=X+pw*a*DP[i]
+      Z=Z-np1*pw*a*P[i]
+    end
+  end
+  Y=Y/st
+  local d=pp-phi
+  local Xg=X*cos(d)-Z*sin(d)
+  return atan(Y,Xg)*57.29577951, sqrt(Xg*Xg+Y*Y)
+end
+end   -- the coefficients stay in here: the app assigns a global H (screen
+      -- height) and a module-scope `local H` would silently eat it
 
 -- ---------------------------------------------------------------------------
 -- persistence
@@ -116,6 +268,12 @@ local function load_prefs()
     store.set("orient", nil); store.set("flip", nil)   -- the even older pair
     store.set("orient_ver", 2)
   end
+  local d = store.get("decl")
+  if type(d) == "number" then
+    decl, decl_src = d, "stale"
+    decl_lat, decl_lon = store.get("decl_lat"), store.get("decl_lon")
+  end
+  align_pending_decl = store.get("align_pd") and true or false
   UNITS.alt = store.get("u_alt", 1) == 1
   UNITS.spd = store.get("u_spd", 1) == 1
 end
@@ -337,11 +495,11 @@ local function mag_heading(m)
       local xh = bx * cp + by * sp * sr + bz * sp * cr
       local yh = by * cr - bz * sr
       tilt_deg = math.deg(math.acos(math.max(-1, math.min(1, gz))))
-      return norm360(math.deg(math.atan(-yh, xh)) + align)
+      return norm360(math.deg(math.atan(-yh, xh)) + align + decl)
     end
   end
   tilt_deg = nil
-  return norm360(math.deg(math.atan(bx, by)) + align)
+  return norm360(math.deg(math.atan(bx, by)) + align + decl)
 end
 
 local function smooth_heading(h)
@@ -433,6 +591,38 @@ local function geo(lat1, lon1, lat2, lon2)
 end
 
 -- range to a target follows the ALTITUDE row's units (one "how far" setting)
+-- Recompute only when the fix has actually moved: the model costs ~8k VM
+-- instructions, which is 8% of one tick's budget, and declination changes by
+-- about a degree per 100 km.
+local function update_decl(lat, lon)
+  if not lat or (lat == 0 and lon == 0) then return end
+  if decl_src == "model" and decl_lat then
+    local dist = geo(decl_lat, decl_lon, lat, lon)
+    if dist < DECL_REFRESH_KM * 1000 then return end
+  end
+  local yr = BUILD_YEAR
+  local dt = sys.datetime and sys.datetime()
+  if dt and dt.year and dt.year > 2020 then yr = dt.year + (dt.month - 0.5) / 12 end
+  local d, hfield = declination(lat, lon, yr)
+  if d then
+    if align_pending_decl then
+      -- north was set against TRUE north while the model was blind, so the
+      -- offset the user made is carrying this declination already
+      align = align - d
+      align_pending_decl = false
+      store.set("align_pd", nil); store.set("align", math.floor(align + 0.5))
+    end
+    decl, decl_src = d, "model"
+    decl_lat, decl_lon = lat, lon
+    -- keep it across a reboot: a stale value from 50 km away is worth about a
+    -- degree, where assuming zero is worth the whole declination
+    store.set("decl", d); store.set("decl_lat", lat); store.set("decl_lon", lon)
+    -- WMM's own error model: below 6000 nT of horizontal field a magnetic
+    -- compass is not to be trusted, and below 2000 nT it is useless
+    weak_field = hfield and hfield < 6000
+  end
+end
+
 local function fmt_dist(m)
   if UNITS.alt then
     local ft = m * 3.28084
@@ -535,6 +725,11 @@ local function draw_dial(tgt_bearing)
     local dx = CX - math.floor(dw / 2)
     cv:text(dx, CY - TH16 + 1, digits, C.text, 16)
     cv:text(dx + dw, CY - TH16 + 1, "\194\176", C.sub, 16)
+    -- T or M rides with the degree sign, outside the centred digits: the point
+    -- of the number is useless without knowing what it is measured from
+    local ref = (src == "gps") and "T" or href()
+    cv:text(dx + dw + text_w("\194\176", TH16, 16), CY - TH16 + 1, ref,
+            ref == "M" and AMBER or C.sub, 12)
     local cd = cardinal(h)
     cv:text(CX - math.floor(text_w(cd, TH12, 12) / 2), CY + 3, cd, src == "mag" and C.accent or AMBER, 12)
   else
@@ -563,6 +758,7 @@ local function refresh(now)
   local sats_n, sats_col = 0, RING
   if g then
     me_lat, me_lon = g.lat, g.lon
+    update_decl(g.lat, g.lon)
     sats_n = g.sats or 0
     sats_col = sats_n >= 6 and C.good or AMBER
     set_text("fix", string.format("%d sats", sats_n), C.text)
@@ -571,7 +767,7 @@ local function refresh(now)
     set_text("alt", fmt_alt(g.alt_m or 0), C.text)
     if g.speed_kmh then
       local s = fmt_speed(g.speed_kmh)
-      if g.course then s = s .. string.format("  %03d\194\176", math.floor(g.course + 0.5) % 360) end
+      if g.course then s = s .. string.format("  %03d\194\176T", math.floor(g.course + 0.5) % 360) end
       set_text("spd", s, C.text)
     else
       set_text("spd", "--", C.sub)
@@ -580,6 +776,7 @@ local function refresh(now)
     local me = mesh.self()
     if me and (me.lat ~= 0 or me.lon ~= 0) then
       me_lat, me_lon = me.lat, me.lon
+      update_decl(me.lat, me.lon)
       set_text("lat", string.format("%.5f", me.lat), C.sub)
       set_text("lon", string.format("%.5f", me.lon), C.sub)
     else
@@ -626,7 +823,19 @@ local function refresh(now)
       -- correction stops being trustworthy; say so rather than lie
       set_text("src", "Too steep to read", AMBER)
     elseif tilt_deg then
-      set_text("src", string.format("Tilt-corrected  %.0f\194\176", tilt_deg), C.good)
+      -- Which north the dial is showing, in the room the panel actually has.
+      -- Amber MAG is a warning: bearings to contacts are TRUE, so while the
+      -- declination is unknown every waypoint is off by it.
+      if weak_field then
+        -- WMM ships a blackout/caution model with its coefficients: under
+        -- 6000 nT of horizontal field the direction is not worth trusting,
+        -- whatever the calibration says
+        set_text("src", "Weak field: heading unreliable", AMBER)
+      else
+        set_text("src", string.format("%s  tilt %.0f\194\176",
+                                      decl_src == "none" and "MAG north" or "TRUE north",
+                                      tilt_deg), decl_src == "none" and AMBER or C.good)
+      end
     else
       set_text("src", "Hold it level", AMBER)
     end
@@ -663,6 +872,17 @@ local function refresh(now)
     if tilt_deg then bits = bits .. string.format(" t%d", math.floor(tilt_deg + 0.5)) end
     if align ~= 0 then bits = bits .. string.format(" a%d", math.floor(align + 0.5)) end
     set_text("seen", bits, AMBER)
+    -- The declination gets the full-width bottom row: it is what separates the
+    -- dial's north from every bearing on the panel, and seeing the position it
+    -- was computed at is how a wrong marker gets traced to a bad fix rather
+    -- than a bad model.
+    if decl_src == "none" then
+      set_text("hint", "no declination yet - bearings are TRUE, dial is MAGNETIC", AMBER)
+    else
+      set_text("hint", string.format("decl %+.1f\194\176 %s  @ %.2f, %.2f", decl,
+                                     decl_src == "model" and "WMM2025" or "stored",
+                                     decl_lat or 0, decl_lon or 0), C.sub)
+    end
     draw_dial(nil)
     last_dial_key = nil          -- keep the dial live while diagnosing
     return
@@ -676,7 +896,7 @@ local function refresh(now)
     if me_lat then
       local dist, brg = geo(me_lat, me_lon, t.lat, t.lon)
       tgt_bearing = brg
-      set_text("tgt2", string.format("%s  %03d\194\176 %s", fmt_dist(dist), math.floor(brg + 0.5) % 360,
+      set_text("tgt2", string.format("%s  %03d\194\176T %s", fmt_dist(dist), math.floor(brg + 0.5) % 360,
                                      cardinal(brg)), C.text)
       if heading then
         local rel = norm360(brg - heading)
@@ -706,10 +926,12 @@ local function refresh(now)
     set_text("seen", "", C.sub)
   end
 
-  -- dial: redraw only when what it shows changed
-  local key = string.format("%d|%s|%s|%s|%s", heading and math.floor(heading + 0.5) or -1, src,
+  -- dial: redraw only when what it shows changed. The T/M reference belongs in
+  -- the key too: when the first fix lands the heading itself often does not
+  -- move, and without this the dial would keep claiming MAGNETIC.
+  local key = string.format("%d|%s|%s|%s|%s|%s", heading and math.floor(heading + 0.5) or -1, src,
                             tgt_bearing and math.floor(tgt_bearing + 0.5) or "-", tostring(cal ~= nil),
-                            tostring(mag_sat))
+                            tostring(mag_sat), href())
   if key ~= last_dial_key then
     draw_dial(tgt_bearing)
     last_dial_key = key
@@ -797,9 +1019,16 @@ local function align_north()
   if not m or m.ovfl then sys.toast("No usable reading", 1500) return end
   align = 0
   align = -mag_heading(m)          -- whatever it reads now becomes 000
+  -- mag_heading() already added the declination, so `align` is the residual on
+  -- top of the model -- mounting error, a stray magnet in the case -- and it
+  -- stays correct as the model updates. But with no fix yet the declination in
+  -- there was 0, so `align` quietly swallowed the real one; counting it again
+  -- when the fix arrives would double it. Remember to take it back out.
+  align_pending_decl = (decl_src == "none")
+  store.set("align_pd", align_pending_decl and 1 or nil)   -- the store takes numbers, not booleans
   save_align()
   hv_x, hv_y = 0, 0
-  sys.toast("North set here", 1400)
+  sys.toast(align_pending_decl and "North set (magnetic until a fix)" or "North set here", 1600)
 end
 
 -- ---------------------------------------------------------------------------
@@ -923,15 +1152,16 @@ function app.on_open(w, h)
   L.hint:width(w, "center")
   if caps.keyboard then
     -- "A set north" is deliberately not advertised: the axis mapping is
-    -- measured, so a calibrated device points north on its own. A (and F)
-    -- still work for an unknown board or a stubborn environment.
-    set_text("hint", has_compass and "C calibrate   up/down + OK units   <> target"
-                                  or "up/down + OK units   <> target", C.sub)
+    -- measured, so a calibrated device points north on its own. A still works
+    -- for an unknown board or a stubborn environment.
+    hint_normal = has_compass and "C calibrate   up/down + OK units   <> target"
+                              or "up/down + OK units   <> target"
   elseif caps.touch then
-    set_text("hint", "Tap a row for units, the dial for the next target", C.sub)
+    hint_normal = "Tap a row for units, the dial for the next target"
   else
-    set_text("hint", "up/down + OK units   <> target", C.sub)
+    hint_normal = "up/down + OK units   <> target"
   end
+  set_text("hint", hint_normal, C.sub)
 
   paint_selection()
   refresh_contacts()
@@ -1025,6 +1255,7 @@ function app.on_input(ev)
       diag = not diag
       last_dial_key = nil
       diag_layout(diag)
+      if not diag then set_text("hint", hint_normal, C.sub) end
       sys.toast(diag and "Diagnostics on" or "Diagnostics off", 900)
     elseif k == "c" or k == "C" then toggle_cal()
     elseif k == "a" or k == "A" then align_north()
