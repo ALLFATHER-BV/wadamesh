@@ -50,9 +50,13 @@ extern int  luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, 
 // Board touch driver, read directly. lvglTouchRead() is only an adapter that
 // feeds LVGL, so there is nothing to unpick here: the driver polls either way.
 extern bool heltecV4CapTouchGetLive(uint16_t* x, uint16_t* y);
+#endif
+
+// UNGATED on purpose: every board with a console can leave it, so this must not
+// sit behind a board capability (it was inside CAP_TOUCH and the M9 stopped
+// building).
 #if defined(ESP32)
 extern void consoleHostRebootToUi();   // clears the pref, flushes it, reboots
-#endif
 #endif
 
 namespace {
