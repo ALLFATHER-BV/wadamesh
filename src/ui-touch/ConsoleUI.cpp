@@ -147,25 +147,32 @@ uint8_t ringGetSpl2(int i) {
   return s_ring_spl2[(start + i) % kMaxLines];
 }
 
-// The console palette, as explicit RGB565. Deliberately NOT the UIColor theme
-// names: several of those resolve to the same value on a given board, so
-// "channel" and "sender" would have come out identical, and on e-ink they are
-// all black. Explicit values guarantee the three parts of a message actually
-// look different.
+// The console palette. Explicit RGB565, and explicit about the BACKGROUND too.
+//
+// Two reasons not to take these from UIColor. First, several of its names
+// resolve to the same value on a given board, so "channel" and "sender" came
+// out identical. Second, and worse: the core's own ST7789 driver carries an
+// upstream palette where window_bkg is WHITE, and that is what the console was
+// drawing on, so a light-on-dark palette was being painted onto a light panel
+// and the greens were unreadable. Owning both ends removes the dependency on
+// which definition happens to win at link time.
+#define RGB565(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
+constexpr uint16_t kBg = RGB565(0x0E, 0x12, 0x16);   // the firmware's near-black
+
 uint16_t colourFor(uint8_t c) {
-  // e-ink has one ink colour; anything else would be invisible or dithered.
+  // e-ink has one ink colour; anything else is invisible or dithered.
   if (s_disp && s_disp->isEink()) return UIColor::primary_txt;
   switch (c) {
-    case CC_DIM:    return 0x7BEF;   // grey
-    case CC_ECHO:   return 0x07E0;   // green, the shell-echo convention
-    case CC_OK:     return 0x07E0;   // green
-    case CC_WARN:   return 0xFD20;   // orange
-    case CC_ERR:    return 0xF800;   // red
-    case CC_CHAN:   return 0x07FF;   // cyan  - where it came from
-    case CC_SENDER: return 0xFFE0;   // yellow - who said it
-    case CC_DM:     return 0xF81F;   // magenta - a DM stands out in a busy feed
-    case CC_HEAD:   return 0x15B4;   // brand teal
-    default:        return 0xC618;   // light grey, the message itself
+    case CC_DIM:    return RGB565(0x7A, 0x7F, 0x87);   // grey, the theme's "sub"
+    case CC_ECHO:   return RGB565(0x53, 0xC0, 0x6B);   // green, the shell-echo convention
+    case CC_OK:     return RGB565(0x53, 0xC0, 0x6B);
+    case CC_WARN:   return RGB565(0xE8, 0xA3, 0x3D);   // amber
+    case CC_ERR:    return RGB565(0xD7, 0x57, 0x4E);   // red, the theme's "bad"
+    case CC_CHAN:   return RGB565(0x4F, 0x9D, 0xF7);   // blue   - where it came from
+    case CC_SENDER: return RGB565(0xE8, 0xA3, 0x3D);   // amber  - who said it
+    case CC_DM:     return RGB565(0xA7, 0x84, 0xE0);   // violet - a DM in a busy feed
+    case CC_HEAD:   return RGB565(0x15, 0xB6, 0xA6);   // brand teal
+    default:        return RGB565(0xE6, 0xE9, 0xED);   // near-white: the message itself
   }
 }
 
@@ -206,7 +213,7 @@ void keypadDraw() {
     const int y  = s_kb_top + r * s_key_h;
     for (int c = 0; c < n; c++) {
       const int x = c * kw;
-      s_disp->setColor(UIColor::secondary_txt);
+      s_disp->setColor(colourFor(CC_DIM));
       s_disp->drawRect(x, y, kw - 1, s_key_h - 1);
       char lbl[8];
       switch (row[c]) {
@@ -217,7 +224,7 @@ void keypadDraw() {
         case ' ':    snprintf(lbl, sizeof lbl, "%s", "spc"); break;
         default:     lbl[0] = row[c]; lbl[1] = '\0'; break;
       }
-      s_disp->setColor(UIColor::primary_txt);
+      s_disp->setColor(colourFor(CC_TEXT));
       s_disp->drawTextCentered(x + kw / 2, y + (s_key_h - s_line_h) / 2, lbl);
     }
   }
@@ -307,7 +314,7 @@ void measure() {
 // ---- render -----------------------------------------------------------------
 void render() {
   if (!s_disp || !s_active) return;
-  s_disp->startFrame(UIColor::window_bkg);
+  s_disp->startFrame(kBg);
   s_disp->setTextSize(1);
 
   // Oldest-first from the scroll position, newest at the bottom.
@@ -396,7 +403,7 @@ void drawInputLine(bool cursor_on) {
   const int iy = s_disp->height() - s_line_h;
 #endif
   // Clear only this row. fillScreen would take the scrollback and keypad with it.
-  s_disp->setColor(UIColor::window_bkg);
+  s_disp->setColor(kBg);
   s_disp->fillRect(0, iy, s_disp->width(), s_line_h);
 
   s_disp->setTextSize(1);
@@ -410,7 +417,7 @@ void drawInputLine(bool cursor_on) {
   s_disp->setCursor(0, iy);
   s_disp->print(prompt);
   const int px = s_disp->getTextWidth(prompt);
-  s_disp->setColor(UIColor::primary_txt);
+  s_disp->setColor(colourFor(CC_TEXT));
   s_disp->setCursor(px, iy);
   // Show the tail of a long line so the caret stays visible while typing.
   const int room = s_cols - (int)strlen(prompt) - 1;
@@ -422,7 +429,7 @@ void drawInputLine(bool cursor_on) {
   s_cur_x = px + s_disp->getTextWidth(shown);
   s_cur_y = iy;
   if (cursor_on) {
-    s_disp->setColor(UIColor::primary_txt);
+    s_disp->setColor(colourFor(CC_TEXT));
     s_disp->fillRect(s_cur_x, s_cur_y, s_char_w, s_line_h);
   }
 
@@ -430,7 +437,7 @@ void drawInputLine(bool cursor_on) {
   if (s_scroll > 0) {
     char tag[24];
     snprintf(tag, sizeof tag, "-%d", s_scroll);
-    s_disp->setColor(UIColor::warning_txt);
+    s_disp->setColor(colourFor(CC_WARN));
     s_disp->drawTextRightAlign(s_disp->width() - 2, iy, tag);
   }
 }
@@ -438,7 +445,7 @@ void drawInputLine(bool cursor_on) {
 // Toggle just the cursor cell. Two fillRects, no text, no clear.
 void drawCursorOnly(bool on) {
   if (!s_disp) return;
-  s_disp->setColor(on ? UIColor::primary_txt : UIColor::window_bkg);
+  s_disp->setColor(on ? colourFor(CC_TEXT) : kBg);
   s_disp->fillRect(s_cur_x, s_cur_y, s_char_w, s_line_h);
 }
 
@@ -447,10 +454,14 @@ void drawCursorOnly(bool on) {
 // do, so the first screen answers "now what?" instead of leaving a bare prompt.
 // Deliberately narrow: 26 columns fits the smallest panel we ship (the V4 at
 // 240 px), so nobody sees a broken box.
+// Deliberately plain. The first attempt was slash-and-underscore figlet art,
+// which at a 6 px cell on a 240 px panel is a smear rather than a logo. A ruled
+// header reads at any size and on any board, which is what a login banner is
+// for: say what this machine is, immediately and legibly.
 const char* const kBanner[] = {
-  " _ _ _  _ ___  _   _  _ ___ ___ _ _ ",
-  "| | | |/ \\| \\ / \\ | \\/ |/ __/ __| |_|",
-  "|_____|\\_/|_/ \\_/ |_/\\_|\\___/___|_|_|",
+  "========================",
+  "  W A D A M E S H",
+  "========================",
 };
 
 // The quick menu. Numbers because typing 1 is faster than typing 'contacts',
