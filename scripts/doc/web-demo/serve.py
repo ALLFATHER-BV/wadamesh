@@ -74,6 +74,8 @@ def dispatch(cmd):
         return ("json", demo.settings_payload(now))
     if is_word("st"):
         return ("json", demo.status_payload(now))
+    if is_word("mh"):
+        return ("json", demo.mentions_payload(int_arg(2)))
     if a.startswith("m "):
         return ("json", demo.messages_payload(now, int_arg(2)))
     if a.startswith("oc "):
