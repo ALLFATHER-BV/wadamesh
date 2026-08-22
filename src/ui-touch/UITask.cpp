@@ -9957,6 +9957,11 @@ static void doExportBackupFile(const char* fname);   // write a backup (SD if a 
 // for a control pinned to the card's right edge (~56 for a switch); pass 0 for a
 // full-width label. font==nullptr keeps the inherited default (g_font_14). The
 // text is run through TR() here, so callers pass the bare English literal.
+#if CAP_CONSOLE
+// Defined with the other boot-mode toggles further down, next to Remote UI's,
+// which is the same kind of switch. Declared here for Settings > General.
+static void consoleModeToggleCb(lv_event_t* e);
+#endif
 static int settingsRowLabel(lv_obj_t* body, int y, int y_off, const char* text,
                             uint32_t color, const lv_font_t* font, int reserve_right) {
   lv_obj_t* l = lv_label_create(body);
@@ -13275,6 +13280,42 @@ static void buildDeviceSettings(int sec) {
     y += SC(42);
   }
   }
+
+#if CAP_CONSOLE
+  if (sec == DSEC_GENERAL) {   // --- Console mode (boot mode; reboots) ---
+  y += settingsRowLabel(body, y, 0, TR("Console mode"), COLOR_SUB, &g_font_12, 0) + 2;
+  {
+    lv_obj_t* crow = lv_obj_create(body);
+    lv_obj_remove_style_all(crow);
+    lv_obj_set_size(crow, lv_pct(100), SC(34));
+    lv_obj_set_pos(crow, 2, y);
+    lv_obj_set_style_bg_color(crow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(crow, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(crow, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(crow, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(crow, 10, LV_PART_MAIN);
+    lv_obj_clear_flag(crow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* cl = lv_label_create(crow);
+    lv_label_set_text(cl, TR("Text console (no UI)"));
+    useChainedFont(cl);
+    lv_obj_set_style_text_color(cl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_label_set_long_mode(cl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(cl, lv_pct(70));
+    lv_obj_align(cl, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_t* csw = lv_switch_create(crow);
+    lv_obj_set_size(csw, 44, 24);
+    lv_obj_align(csw, LV_ALIGN_RIGHT_MID, 0, 0);
+    if (touchPrefsGetConsoleMode()) lv_obj_add_state(csw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(csw, consoleModeToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += SC(42);
+  }
+  y += settingsRowLabel(body, y, 0,
+        TR("Boots into a text console with no graphical interface: type commands, read replies. "
+           "Frees the memory and processor time the interface uses. Type 'ui' in the console to "
+           "come back. Toggling reboots."),
+        COLOR_SUB, &g_font_12, 1) + 8;
+  }
+#endif
 
   if (sec == DSEC_GENERAL) {   // --- Run setup + reboot ---
   // Re-run the first-boot setup flow (name / region / Wi-Fi) on demand.
