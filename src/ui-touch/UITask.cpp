@@ -25796,7 +25796,11 @@ fs::FS* luaHostAppFs();                                        // bridges (defin
 void    luaHostAppPath(char* out, size_t cap, const char* rel);
 
 struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; };
-struct LuaInstApp { char id[20]; char name[28]; char ver[12]; };
+// `icon` is the manifest's optional icon NAME (not a glyph): the device's JSON
+// scanner only reads quoted strings, and a name is reviewable in a store
+// submission where a raw private-use codepoint would not be. Mapped to a glyph
+// by luaAppIconGlyph(); empty = the generic app symbol.
+struct LuaInstApp { char id[20]; char name[28]; char ver[12]; char icon[12]; };
 static const int kLuaCatMax = 16, kLuaInstMax = 16, kLangCatMax = LANG_COUNT + 2, kLangInstMax = 12;
 static LuaCatApp* s_lua_cat = nullptr;      // PSRAM, allocated on first store use
 static int        s_lua_cat_n = 0;          // -1 = last fetch failed
@@ -39339,6 +39343,7 @@ static void luaStoreScanInstalledFs(bool force) {
         if (luaJsonField(buf, "id", a.id, sizeof a.id) &&
             luaJsonField(buf, "name", a.name, sizeof a.name)) {
           if (!luaJsonField(buf, "ver", a.ver, sizeof a.ver)) a.ver[0] = 0;
+          if (!luaJsonField(buf, "icon", a.icon, sizeof a.icon)) a.icon[0] = 0;
           s_lua_inst_n++;
         }
       } else if (pass == 1 && ln > 4 && strcmp(leaf + ln - 4, ".lua") == 0) {
@@ -39351,6 +39356,7 @@ static void luaStoreScanInstalledFs(bool force) {
           snprintf(a.id, sizeof a.id, "%s", id);
           snprintf(a.name, sizeof a.name, "%s", id);
           snprintf(a.ver, sizeof a.ver, "dev");
+          a.icon[0] = 0;
           s_lua_inst_n++;
         }
       }
@@ -41014,6 +41020,35 @@ static void appDrawerSettingsCb(lv_event_t* e) {
   openAppGridSheet();
 }
 
+// Manifest icon name -> glyph for a Lua app's drawer tile. Names only, and only
+// glyphs the UI fonts already carry: a submission cannot ship its own artwork,
+// so an unknown or absent name falls back to the generic app symbol rather than
+// drawing a missing-glyph box. LUA_APPS.md promised manifests an "icon" field
+// from the start; this is it.
+static const char* luaAppIconGlyph(const char* name) {
+  if (!name || !name[0]) return LV_SYMBOL_PLAY;
+  static const struct { const char* name; const char* glyph; } kMap[] = {
+    { "gps",      LV_SYMBOL_GPS },        // location pin — compass / navigation apps
+    { "compass",  LV_SYMBOL_GPS },
+    { "map",      LV_SYMBOL_GPS },
+    { "radio",    TOUCH_SYM_ANTENNA },
+    { "signal",   LV_SYMBOL_WIFI },
+    { "chart",    LV_SYMBOL_IMAGE },
+    { "list",     LV_SYMBOL_LIST },
+    { "message",  LV_SYMBOL_ENVELOPE },
+    { "person",   TOUCH_SYM_PERSON },
+    { "group",    TOUCH_SYM_GROUP },
+    { "bell",     TOUCH_SYM_BELL },
+    { "star",     TOUCH_SYM_STAR },
+    { "search",   TOUCH_SYM_ZOOM },
+    { "settings", LV_SYMBOL_SETTINGS },
+    { "battery",  LV_SYMBOL_CHARGE },
+    { "game",     LV_SYMBOL_PLAY },
+  };
+  for (const auto& e : kMap) if (strcmp(e.name, name) == 0) return e.glyph;
+  return LV_SYMBOL_PLAY;
+}
+
 static void openAppDrawer() {
   closeAppDrawer();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -41135,7 +41170,7 @@ static void openAppDrawer() {
     const int oi = s_draw_order[i];
     if (oi < 0) {   // installed Lua app (dynamic)
       const LuaInstApp& a = s_lua_inst[-oi - 1];
-      addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, LV_SYMBOL_PLAY, a.name,
+      addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, luaAppIconGlyph(a.icon), a.name,
                  APPACT_LUA_BASE + (-oi - 1), 0, 0x15B6A6, big_grid);
       continue;
     }

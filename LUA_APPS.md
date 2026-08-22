@@ -209,3 +209,13 @@ once files are field-proven.
   instruction budget. Hardware validation (axis orientation, real bias
   magnitude) is in M9_PORT.md. Not seeded into lua_builtin.h on purpose:
   CAP_BUILTIN_LUA_APPS also hides the Store > Apps tab.
+
+- 2026-08-22: **manifest `icon` implemented.** The drawer gave every Lua app
+  the same generic glyph while `LUA_APPS.md` had promised manifests an icon
+  field since the plan was written. `icon` is now read from `<id>.json` and
+  mapped to a glyph by NAME (`gps`, `radio`, `chart`, `game`, ...) — names,
+  not codepoints, so a store submission stays reviewable and an app can never
+  ship a missing-glyph box; anything unrecognised falls back to the generic
+  symbol. `deploy/site/sdk.html`'s manifest table was corrected at the same
+  time: it documented `version` / `min_api` / `description` / `boards`, none
+  of which the device has ever parsed.

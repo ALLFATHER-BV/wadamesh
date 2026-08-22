@@ -34,11 +34,17 @@ deploy/apps/<id>/<ver>/<id>.lua      the app
 The manifest is one line:
 
 ```json
-{"id":"snake","name":"Snake","ver":"1.0","desc":"The classic, in Lua. Swipe to steer."}
+{"id":"snake","name":"Snake","ver":"1.0","desc":"The classic, in Lua. Swipe to steer.","icon":"game"}
 ```
 
 `desc` is what people read in the store listing before installing, so make it say
 what the app *does*. One sentence.
+
+`icon` is optional and picks the drawer tile's glyph by NAME — an app cannot
+ship its own artwork, so anything unrecognised falls back to the generic app
+symbol. Choose from: `gps` / `compass` / `map`, `radio`, `signal`, `chart`,
+`list`, `message`, `person`, `group`, `bell`, `star`, `search`, `settings`,
+`battery`, `game`.
 
 **Version directories are immutable.** Once `1.0/` is published it is never edited
 — a change ships as `1.1/`. Devices cache by version, so editing in place means

@@ -380,22 +380,16 @@ return app</code></pre>
         <p>On the device an app is one or two files on the active storage root:</p>
         <pre><code>/apps/&lt;id&gt;.lua     the code
 /apps/&lt;id&gt;.json    the manifest (optional for side-loaded apps)</code></pre>
-        <p>The manifest is what the Store and the drawer read:</p>
-        <pre><code>{
-  "id":      "airtime",
-  "name":    "Airtime",
-  "version": "1.3",
-  "min_api": 1,
-  "icon":    "A",
-  "description": "Duty cycle and airtime budget.",
-  "boards":  ["*"]
-}</code></pre>
+        <p>The manifest is what the Store and the drawer read — one line, all values quoted strings:</p>
+        <pre><code>{"id":"airtime","name":"Airtime","ver":"1.3","desc":"Duty cycle and airtime budget.","icon":"chart"}</code></pre>
         <table class="api">
           <tr><td>id</td><td>Lowercase, no spaces. Must match the filename.</td></tr>
-          <tr><td>min_api</td><td>Refuse to run on firmware older than this API version.</td></tr>
-          <tr><td>icon</td><td>A single character shown in the drawer tile and Store card.</td></tr>
-          <tr><td>boards</td><td><code>["*"]</code> for everything, or a list of board ids to restrict to.</td></tr>
+          <tr><td>name</td><td>Shown on the drawer tile and the Store card.</td></tr>
+          <tr><td>ver</td><td><code>major.minor</code>, matching the version directory. Compared against the catalog to offer an update.</td></tr>
+          <tr><td>desc</td><td>One sentence, read in the Store before installing.</td></tr>
+          <tr><td>icon</td><td>Optional. Picks the drawer tile's glyph by name — an app cannot ship artwork, and an unknown name falls back to the generic app symbol. One of: <code>gps</code> / <code>compass</code> / <code>map</code>, <code>radio</code>, <code>signal</code>, <code>chart</code>, <code>list</code>, <code>message</code>, <code>person</code>, <code>group</code>, <code>bell</code>, <code>star</code>, <code>search</code>, <code>settings</code>, <code>battery</code>, <code>game</code>.</td></tr>
         </table>
+        <p>Earlier versions of this page showed <code>version</code>, <code>min_api</code>, <code>description</code> and <code>boards</code>. The device has never parsed those — its manifest reader takes quoted strings only, and the keys above are the ones it looks for. Use <code>ver</code> and <code>desc</code>.</p>
       </div></div>
     </section>
 
