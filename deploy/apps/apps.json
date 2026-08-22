@@ -29,6 +29,12 @@
       "name": "2048",
       "ver": "1.2",
       "desc": "The classic sliding-tile puzzle. Swipe to move, tap to restart. Keeps your best score. Contributed by pisti87."
+    },
+    {
+      "id": "gpscompass",
+      "name": "GPS Compass",
+      "ver": "1.0",
+      "desc": "Compass rose: magnetometer or GPS course, live fix, bearing to contacts"
     }
   ]
 }

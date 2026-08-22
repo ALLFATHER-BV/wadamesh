@@ -495,6 +495,71 @@ input; Wire1 at 400 kHz; charging-detection (`batteryIsCharging` is
 compile-time false on M9); GPIO12 ESP_WAKEUP characterization for a real
 Power-off wake.
 
+## Compass (QMC6309) + GPS motion for Lua apps (2026-08-22)
+
+First use of the magnetometer. The chip was documented (peripheral bus, 0x7C)
+but nothing ever talked to it; the QMI8658 IMU still has no driver.
+
+- **Driver: `M9Compass.{h,cpp}`** (`HAS_M9_COMPASS=1` in the env). Probe =
+  chip id 0x00 == 0x90; soft reset (0x0B=0x80 then the mandatory 0x0B=0x00 —
+  the bit is not self-clearing); CTRL2 0x0B=0x20 (ODR 50 Hz, ±32 G, set/reset
+  on), CTRL1 0x0A=0x61 (normal mode, OSR1 8, low-pass 8 — the datasheet's own
+  worked example), both read back and re-written once if they did not stick.
+  Read path: status 0x09 (bit0 DRDY, cleared by the read; bit1 OVFL → sample
+  kept but flagged, logged at most every 10 s), then 6 bytes from 0x01
+  little-endian int16, ×1/1000 → Gauss (±32 G chosen over ±8 G because of
+  the bias magnitude question below; 1 mG/count is still ≈0.13° of heading).
+  Synchronous on the UI thread from `luaHostCompass()` (three short
+  transactions at 100 kHz, no poll hook), cached sample valid 1 s, re-probe
+  every 2 s while absent (rail-powered part may still be in POR when
+  `radio_init()` runs), eight consecutive bus errors → forget and re-probe.
+  Boot log: `M9 compass: QMC6309 ok (id=0x90, 50 Hz, +/-32 G, OSR 8/8)` or the
+  reason it is not. Register layout cross-checked against the Rev A datasheet
+  and the SlimeVR/madflight/Tildagon drivers — NOT SensorLib, whose
+  `setOutputDataRate()` writes the ODR into 0x0A (the OSR bits); Meshtastic
+  inherits that bug and only works because it runs continuous mode.
+- **Exposure: `CAP_COMPASS`** (device_caps.h, hardware gate, `caps().compass`)
+  → `wada.sys.compass()` = `{x, y, z, ovfl}` Gauss, sensor frame,
+  uncalibrated. No heading on purpose: see the two unknowns below.
+- **GPS motion: `WadaNmeaLocationProvider`** (`src/helpers/`, `HAS_GPS_MOTION=1`)
+  replaces the core `MicroNMEALocationProvider` in `target.cpp` — a line-for-
+  line copy that also exposes RMC speed/course (the core keeps its parser
+  private; patching libdeps is the build-fragile route this repo avoids).
+  `wadaGpsMotion()` feeds `wada.sys.gps().speed_kmh/course`; course is absent
+  under 1 km/h because MicroNMEA parses an empty course field as 0 (= north).
+  `gps()` also returns nil while the GPS toggle is off.
+- **App: `deploy/apps/gpscompass/1.0`** (Store catalog entry added; not baked
+  into `lua_builtin.h` — `CAP_BUILTIN_LUA_APPS` also removes the Store > Apps
+  tab). Keys: `C` start/finish calibration (auto-finishes after 20 s), `O`
+  rotate the sensor frame 90°, `F` mirror it, `X` clear calibration, d-pad
+  left/right or OK = cycle the target contact. Offsets/orientation persist in
+  the app's KV store.
+
+**Two things only the hardware can answer:**
+
+1. **Sensor axis orientation vs. the screen.** Not in any datasheet figure we
+   could extract, and Meshtastic's M9 driver declares a 180° offset it marks
+   "must be verified on real hardware" and then never uses. Hence O/F in the
+   app: point the device's top edge at a known north (the Map page's bearing
+   to a far contact, or a phone compass) and step O / F until the rose reads
+   0° and turning clockwise makes the number go up.
+2. **Hard-iron bias magnitude.** Meshtastic hard-codes M9 calibration extrema
+   around −6…−7.6 "G" per axis, >10× Earth's field — either a unit bug on
+   their side or a real on-board magnet. That is why the driver runs at ±32 G:
+   if their numbers are real, ±8 G would saturate. The app shows `|B|` after
+   offsets — expect 0.25–0.65 G once calibrated — and says "SATURATED" when
+   the chip flags OVFL (boot log also prints the raw counts every 10 s while
+   it persists). If raw readings turn out to be small, ±8 G (CTRL2 RNG bits
+   10, 4000 LSB/G) buys 4× finer counts; not worth it unless `|B|` is noisy.
+
+**Hardware-verify recipe:** flash; boot log shows the `M9 compass:` line;
+copy `gpscompass.lua` + `gpscompass.json` to the SD card at
+`/meshcomod/apps/` (the Store's "Your own apps" section picks them up; the
+catalog copy arrives once `deploy/apps` is published); open the app; `C`,
+turn the device through every orientation for 20 s; check `|B|`; set O/F
+against a known north; walk with GPS on and confirm `Speed`/`Course` populate
+above ~1 km/h; pick a contact and sanity-check the bearing against the map.
+
 ## Deferred — hardware-verify list
 
 These are left intentionally unset/unwired rather than guessed:

@@ -41,11 +41,17 @@ extern void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lo
 extern void luaHostBattery(uint16_t* mv, int* pct, bool* charging);
 // No HDOP: MeshCore's LocationProvider interface does not expose one, and a
 // fabricated accuracy figure is worse than none for anything that would use it.
-extern bool luaHostGps(double* lat, double* lon, int* sats);
+// speed_kmh / course_deg come back NAN where the board's provider does not
+// report them (only boards built on WadaNmeaLocationProvider do).
+extern bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m,
+                       float* speed_kmh, float* course_deg);
 extern int  luaHostSendPerm(const char* app_id);                              // 1 grant, -1 refused, 0 unasked
 extern bool luaHostReadPerm(const char* app_id);                             // may be shown incoming messages
 extern void luaHostRequestSendPerm(const char* app_id, const char* app_name); // raises the consent prompt
 extern bool luaHostMeshSendChannel(const char* chan_name, const char* text);
+#endif
+#if CAP_COMPASS
+extern bool luaHostCompass(float* x_gauss, float* y_gauss, float* z_gauss, bool* overflow);   // sensor frame, uncalibrated
 #endif
 // DO NOT name the network client type here. What "WiFiClient" means depends on the
 // board: a real class on the S3 envs, a `using WiFiClient = NetworkClient` alias
@@ -494,11 +500,12 @@ int sysBeep(lua_State* L) { lua_pushboolean(L, luaHostBeep()); return 1; }
 // rather than assume: the extended SDK is absent on low-resource boards (see
 // CAP_LUA_SDK_EXT in device_caps.h), and a store app runs on all of them.
 int sysCaps(lua_State* L) {
-  lua_createtable(L, 0, 4);
+  lua_createtable(L, 0, 5);
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "sdk_ext");
   lua_pushboolean(L, CAP_KEYBOARD);     lua_setfield(L, -2, "keyboard");
   lua_pushboolean(L, CAP_TOUCH);        lua_setfield(L, -2, "touch");
   lua_pushboolean(L, CAP_SD);           lua_setfield(L, -2, "sd");
+  lua_pushboolean(L, CAP_COMPASS);      lua_setfield(L, -2, "compass");   // wada.sys.compass() exists
   return 1;
 }
 
@@ -513,16 +520,23 @@ int sysBattery(lua_State* L) {
   lua_pushboolean(L, chg);     lua_setfield(L, -2, "charging");
   return 1;
 }
-// wada.sys.gps() -> { lat, lon, sats } or nil with NO fix.
-// nil rather than stale coordinates: wada.mesh.self() already hands out the last
-// known position, and an app plotting a track needs to know the difference.
+// wada.sys.gps() -> { lat, lon, sats, alt, [speed_kmh], [course] } or nil with
+// NO fix. nil rather than stale coordinates: wada.mesh.self() already hands out
+// the last known position, and an app plotting a track needs to know the
+// difference. alt is metres. speed_kmh and course (degrees clockwise from
+// north) are present only on boards whose GPS provider reports them, and
+// course only while actually moving — a stationary receiver's course is
+// meaningless, so it is absent rather than 0.
 int sysGps(lua_State* L) {
-  double lat = 0, lon = 0; int sats = 0;
-  if (!luaHostGps(&lat, &lon, &sats)) { lua_pushnil(L); return 1; }
-  lua_createtable(L, 0, 3);
+  double lat = 0, lon = 0; int sats = 0, alt = 0; float spd = NAN, crs = NAN;
+  if (!luaHostGps(&lat, &lon, &sats, &alt, &spd, &crs)) { lua_pushnil(L); return 1; }
+  lua_createtable(L, 0, 6);
   lua_pushnumber(L, lat);   lua_setfield(L, -2, "lat");
   lua_pushnumber(L, lon);   lua_setfield(L, -2, "lon");
   lua_pushinteger(L, sats); lua_setfield(L, -2, "sats");
+  lua_pushinteger(L, alt);  lua_setfield(L, -2, "alt");
+  if (!isnan(spd)) { lua_pushnumber(L, spd); lua_setfield(L, -2, "speed_kmh"); }
+  if (!isnan(crs)) { lua_pushnumber(L, crs); lua_setfield(L, -2, "course"); }
   return 1;
 }
 // NOT exposed: wada.sys.sensors(). The only environment-sensor source in the
@@ -532,6 +546,32 @@ int sysGps(lua_State* L) {
 // access belongs on a HARDWARE gate (does this board have the rail?) rather than
 // this MEMORY gate, and wants its own caps() entry when it lands.
 #endif  // CAP_LUA_SDK_EXT
+
+#if CAP_COMPASS
+// wada.sys.compass() -> { x, y, z, ovfl } in Gauss, SENSOR frame, uncalibrated
+// — or nil when the chip is absent, not answering, or has nothing fresh. On the
+// hardware gate the comment above asks for (CAP_COMPASS), not the memory gate.
+// `ovfl` is true when the chip flagged the sample as saturated (magnet nearby,
+// or a hard-iron bias beyond the range): the numbers are delivered so the app
+// can say so, but they are not a heading.
+// Deliberately no `heading`: a heading needs hard-iron offsets (the M9 carries
+// a large on-board bias that the user has to calibrate away by rotating the
+// device) and the sensor-to-screen axis mapping, both of which belong in the
+// app where they can be adjusted and persisted per user. Once the offsets are
+// subtracted and the axes mapped so fx points along the screen's top edge and
+// fy along its right edge, heading = math.atan(-fy, fx) (clockwise from
+// magnetic north) — deploy/apps/gpscompass is the worked example.
+int sysCompass(lua_State* L) {
+  float x = 0, y = 0, z = 0; bool ovfl = false;
+  if (!luaHostCompass(&x, &y, &z, &ovfl)) { lua_pushnil(L); return 1; }
+  lua_createtable(L, 0, 4);
+  lua_pushnumber(L, x);     lua_setfield(L, -2, "x");
+  lua_pushnumber(L, y);     lua_setfield(L, -2, "y");
+  lua_pushnumber(L, z);     lua_setfield(L, -2, "z");
+  lua_pushboolean(L, ovfl); lua_setfield(L, -2, "ovfl");
+  return 1;
+}
+#endif  // CAP_COMPASS
 int sysToast(lua_State* L)  { luaHostToast(luaL_checkstring(L, 1), (int)luaL_optinteger(L, 2, 1500)); return 0; }
 int sysRandom(lua_State* L) {
   // esp_random-backed: apps should not have to seed math.random for games
@@ -889,8 +929,12 @@ void pressCb(lv_event_t* e) {
   if (indev) lv_indev_get_point(indev, &p);
   lv_area_t a;
   lv_obj_get_coords(s_h->body, &a);
+  // Content coordinates, not viewport ones: once an app has turned on
+  // ui.scroll() and the body is scrolled, a hit-test against where the app
+  // PLACED its widgets only works if the scroll offset is folded in.
   sendInput(lv_event_get_code(e) == LV_EVENT_PRESSED ? "down" : "up", nullptr,
-            p.x - a.x1, p.y - a.y1);
+            p.x - a.x1 + lv_obj_get_scroll_x(s_h->body),
+            p.y - a.y1 + lv_obj_get_scroll_y(s_h->body));
 }
 
 // ---- wada.mesh (read-only) ----
@@ -1040,6 +1084,9 @@ void openWada(lua_State* L) {
 #if CAP_LUA_SDK_EXT
   lua_pushcfunction(L, sysBattery);  lua_setfield(L, -2, "battery");
   lua_pushcfunction(L, sysGps);      lua_setfield(L, -2, "gps");
+#endif
+#if CAP_COMPASS
+  lua_pushcfunction(L, sysCompass);  lua_setfield(L, -2, "compass");   // hardware-gated, see caps().compass
 #endif
   lua_setfield(L, -2, "sys");
 

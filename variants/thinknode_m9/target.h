@@ -12,9 +12,13 @@
 #include <helpers/ui/ST7789LCDDisplay.h>
 #endif
 #include "helpers/sensors/EnvironmentSensorManager.h"
-#include "helpers/sensors/MicroNMEALocationProvider.h"
+// Wadamesh-owned NMEA provider (the core one plus speed/course for wada.sys.gps)
+#include "../../src/helpers/WadaNmeaLocationProvider.h"
 #if defined(HAS_M9_KEYBOARD)
 #include "M9Keyboard.h"
+#endif
+#if defined(HAS_M9_COMPASS)
+#include "M9Compass.h"
 #endif
 
 extern ThinkNodeM9Board board;
@@ -36,3 +40,8 @@ mesh::LocalIdentity radio_new_identity();
 // directly (no dedicated local SPIClass — see target.cpp), so this just
 // hands that same instance to SD.begin().
 SPIClass *m9SharedSPI();
+
+// Speed/course over ground from the GPS for the Lua host (HAS_GPS_MOTION).
+// Plain function so UITask.cpp needs no provider type: false = no fix / no
+// RMC yet; course_deg is NAN while not moving (see WadaNmeaLocationProvider).
+bool wadaGpsMotion(float *speed_kmh, float *course_deg);

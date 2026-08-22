@@ -121,6 +121,9 @@
   #elif defined(HAS_M9_KEYBOARD)
     #include <M9Keyboard.h>
   #endif
+  #if defined(HAS_M9_COMPASS)
+    #include <M9Compass.h>           // wada.sys.compass() source (luaHostCompass)
+  #endif
   #if defined(HAS_PAGER_KEYBOARD)
     #include <helpers/input/PagerKeyboard.h>
   #endif
@@ -46141,7 +46144,13 @@ int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* 
   *type = ci.type;
   *lat = ci.gps_lat / 1.0e6;
   *lon = ci.gps_lon / 1.0e6;
-  uint32_t now = the_mesh.getRTCClock() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
+  // One clock read per contacts() walk, not one per contact: on boards whose
+  // clock is an I2C RTC (the M9's PCF8563 on Wire) getCurrentTime() is a bus
+  // transaction, and an app listing 100 contacts would otherwise stall the UI
+  // loop for ~100 ms each call. meshContacts() always walks from idx 0.
+  static uint32_t s_walk_now = 0;
+  if (idx == 0) s_walk_now = the_mesh.getRTCClock() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
+  const uint32_t now = s_walk_now;
   *secs_ago = (ci.last_advert_timestamp && now > ci.last_advert_timestamp)
                   ? now - ci.last_advert_timestamp : 0;
   return 1;
@@ -46324,19 +46333,52 @@ void luaHostBattery(uint16_t* mv, int* pct, bool* charging) {
 }
 // wada.sys.gps(). False when there is no fix -- the caller then gets nil rather
 // than the last known position, which wada.mesh.self() already provides. An app
-// plotting a track needs to tell a live fix from a stale one.
-// No altitude: the LocationProvider that has it is a PRIVATE UITask member and
-// there is no public accessor, unlike getGpsFix()/getGpsSats(). Adding one is a
-// header change worth doing deliberately rather than in passing -- and lat/lon/
-// sats is what a track logger or a compass actually needs.
-bool luaHostGps(double* lat, double* lon, int* sats) {
-  if (!g_lv.task || !g_lv.task->getGpsFix()) return false;
-  if (lat)  *lat  = g_lv.task->getNodeLat();
-  if (lon)  *lon  = g_lv.task->getNodeLon();
-  if (sats) *sats = g_lv.task->getGpsSats();
+// plotting a track needs to tell a live fix from a stale one. Also false while
+// the user has GPS switched off (same gate updateGpsLocation() applies), so a
+// last sentence parsed before the toggle cannot masquerade as a live fix.
+// Altitude comes from getGpsAltitude() (metres, same accessor the Device page
+// uses). Speed/course exist only where the board's target.cpp provides
+// wadaGpsMotion() on top of WadaNmeaLocationProvider (HAS_GPS_MOTION); the
+// core provider keeps its RMC fields private, so other boards report NAN and
+// the binding omits the fields.
+#if defined(HAS_GPS_MOTION)
+extern bool wadaGpsMotion(float* speed_kmh, float* course_deg);
+#endif
+bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, float* speed_kmh, float* course_deg) {
+  if (speed_kmh)  *speed_kmh  = NAN;
+  if (course_deg) *course_deg = NAN;
+  if (!g_lv.task || !g_lv.task->getGPSState() || !g_lv.task->getGpsFix()) return false;
+  if (lat)   *lat   = g_lv.task->getNodeLat();
+  if (lon)   *lon   = g_lv.task->getNodeLon();
+  if (sats)  *sats  = g_lv.task->getGpsSats();
+  if (alt_m) *alt_m = g_lv.task->getGpsAltitude();
+#if defined(HAS_GPS_MOTION)
+  {
+    float spd = NAN, crs = NAN;
+    if (wadaGpsMotion(&spd, &crs)) {
+      if (speed_kmh)  *speed_kmh  = spd;
+      if (course_deg) *course_deg = crs;
+    }
+  }
+#endif
   return true;
 }
 #endif  // CAP_LUA_SDK_EXT
+
+#if CAP_COMPASS
+// wada.sys.compass(). Raw field vector from the board's magnetometer; the only
+// one wired so far is the M9's QMC6309 (variants/thinknode_m9/M9Compass.*).
+// Runs on the UI thread like every other luaHost* bridge; the driver's I2C
+// reads are short and the bus (Wire) has no other task on it.
+bool luaHostCompass(float* x, float* y, float* z, bool* overflow) {
+#if defined(HAS_M9_COMPASS)
+  return m9CompassRead(x, y, z, overflow);
+#else
+  (void)x; (void)y; (void)z; (void)overflow;
+  return false;
+#endif
+}
+#endif  // CAP_COMPASS
 
 #if CAP_LUA_SDK_EXT
 // ---- Settings -> App permissions -------------------------------------------

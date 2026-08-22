@@ -190,3 +190,22 @@ file loads into PSRAM and overlays TR() (bsearch; file → built-in column →
 EN). Users can sideload/edit their own .lang files. Built-in table stays as
 fallback this beta; dropping its columns for the flash win is the follow-up
 once files are field-proven.
+
+- 2026-08-22: **wada.sys.gps() widened + wada.sys.compass() + GPS Compass
+  app.** gps() now carries `alt` (m) everywhere and `speed_kmh`/`course` on
+  boards that build their GPS on `src/helpers/WadaNmeaLocationProvider.h`
+  (a Wadamesh-owned copy of the core provider exposing the RMC motion fields
+  it keeps private; M9 first, flag `HAS_GPS_MOTION`), and it returns nil while
+  the user has GPS switched off. compass() is on a new HARDWARE gate
+  `CAP_COMPASS` (the M9's QMC6309, driver `variants/thinknode_m9/M9Compass.*`,
+  exposed in `caps().compass`) and hands out the raw field vector in Gauss —
+  calibration, axis mapping and the heading maths live in the app so they can
+  be adjusted per user without a firmware cut. `deploy/apps/gpscompass/1.0`
+  is that app: rotating rose, live fix readout, bearing/range to a contact,
+  C/O/F keys for calibrate/rotate/flip, GPS-course fallback on every other
+  board. Verified on a host harness built from the vendored Lua (same
+  LUA_32BITS numeric model): calibration recovers a simulated hard-iron bias
+  exactly, heading error 0° at six test angles, worst tick ≈10k of the 100k
+  instruction budget. Hardware validation (axis orientation, real bias
+  magnitude) is in M9_PORT.md. Not seeded into lua_builtin.h on purpose:
+  CAP_BUILTIN_LUA_APPS also hides the Store > Apps tab.

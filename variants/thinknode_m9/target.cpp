@@ -26,7 +26,10 @@ WRAPPER_CLASS radio_driver(radio, board);
 ESP32RTCClock fallback_clock;
 ClockFloorRTC rtc_clock(
     fallback_clock); // wraps AutoDiscover: monotonic send-timestamp floor (#89)
-MicroNMEALocationProvider gps(Serial1, &rtc_clock);
+// Wadamesh's own provider rather than the core's MicroNMEALocationProvider:
+// identical behaviour, plus the RMC speed/course the core keeps private (see
+// src/helpers/WadaNmeaLocationProvider.h for why it is a copy, not a subclass).
+WadaNmeaLocationProvider gps(Serial1, &rtc_clock);
 EnvironmentSensorManager sensors(gps);
 
 #ifdef DISPLAY_CLASS
@@ -51,6 +54,12 @@ bool radio_init() {
 
 #if defined(HAS_M9_KEYBOARD)
   m9KeyboardBegin(); // own bus, Wire1 (20/21) — no contention with Wire
+#endif
+#if defined(HAS_M9_COMPASS)
+  // QMC6309 on the same peripheral bus as the RTC, behind the GPIO18 rail that
+  // board.begin() claimed well before this runs. Absent / still-booting chips
+  // are re-probed lazily from the read path, so a miss here is not fatal.
+  m9CompassBegin(Wire);
 #endif
 
 #ifdef LR11X0_DIO3_TCXO_VOLTAGE
@@ -153,4 +162,8 @@ mesh::LocalIdentity radio_new_identity() {
 SPIClass *m9SharedSPI() {
   return &SPI; // global instance, shared by radio + display + SD; begun once in
                // M9Board::begin()
+}
+
+bool wadaGpsMotion(float *speed_kmh, float *course_deg) {
+  return gps.motion(speed_kmh, course_deg);
 }

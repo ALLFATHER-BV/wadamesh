@@ -200,6 +200,16 @@
   #define CAP_SENSORS 0
 #endif
 
+// Magnetometer readable by apps (wada.sys.compass(), caps().compass). A HARDWARE
+// gate, deliberately separate from CAP_SENSORS (the V4 expansion-kit env
+// sensors) and from the CAP_LUA_SDK_EXT memory gate: the ThinkNode M9's
+// QMC6309 is the only one wired so far (variants/thinknode_m9/M9Compass.*).
+#if defined(HAS_M9_COMPASS)
+  #define CAP_COMPASS 1
+#else
+  #define CAP_COMPASS 0
+#endif
+
 #if defined(HAS_CC_BRIGHTNESS)
   #define CAP_BACKLIGHT 1
 #else
