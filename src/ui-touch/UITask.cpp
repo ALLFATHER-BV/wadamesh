@@ -46665,6 +46665,26 @@ fs::FS* luaHostAppFs() { return uiDataFsReady() ? s_ui_data_fs : nullptr; }
 void luaHostAppPath(char* out, size_t cap, const char* rel) {
   snprintf(out, cap, "%s%s", s_ui_data_root, rel);   // SD-rooted stores prefix /meshcomod
 }
+#if CAP_LUA_SD_LIST
+// Return the physical removable card, never the app-data filesystem. Mounting
+// stays in UITask so Lua cannot bypass shared-bus coordination or create a
+// second SD lifecycle. The existing backoff keeps repeated no-card calls cheap.
+fs::FS* luaHostSdFs(bool* busy) {
+  if (busy) *busy = false;
+  if (s_sd_fail_note_ms) return nullptr;
+  if (!s_sd_mounted && !sdAdoptLiveMount()) {
+    if (sdRuntimeLifecycleBusy()) {
+      if (busy) *busy = true;
+      return nullptr;
+    }
+    if (!fmSdTryMount()) return nullptr;
+  }
+  if (!s_sd_mounted) return nullptr;
+  markSdIo();
+  return &SD;
+}
+bool luaHostSdReadFailed() { return sdReadFailedCardDead(); }
+#endif
 // ---- wada.mesh read-only bridges (no mesh types cross into the host TU) ----
 // Hex-encode the first n bytes of a public key. 4 bytes (8 hex chars) is what the
 // rest of the UI uses to name a node, and it is what an app needs to line up a

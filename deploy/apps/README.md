@@ -15,9 +15,10 @@ so somebody has to read it first.
 One Lua file plus a small manifest. Apps talk to the firmware through the `wada.*`
 API — `wada.ui` (widgets, colours, a text prompt), `wada.sys`, `wada.store`
 (persistence), `wada.timer`, and on the larger boards `wada.fs`, `wada.net`,
-`wada.crypto` and the writable half of `wada.mesh`. There is no arbitrary
-filesystem or network access; the API is the whole surface, which is what makes
-reviewing tractable. It is documented at
+`wada.crypto` and the writable half of `wada.mesh`. Supported boards also expose
+read-only SD directory metadata through `wada.sd`; file contents and writes stay
+inaccessible. There is no general-purpose filesystem or network access; the API
+is the whole surface, which is what makes reviewing tractable. It is documented at
 [wadamesh.com/sdk.html](https://wadamesh.com/sdk.html).
 
 Two numbers worth knowing before you start: every callback runs under a

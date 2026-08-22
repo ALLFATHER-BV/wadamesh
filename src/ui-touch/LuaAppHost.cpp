@@ -32,6 +32,10 @@ extern void             luaHostToast(const char* msg, int ms);    // showAlert p
 extern bool             luaHostBeep();                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
 extern void             luaHostAppPath(char* out, size_t cap, const char* rel);   // prefixes the store root
+#if CAP_LUA_SD_LIST
+extern fs::FS*          luaHostSdFs(bool* busy);                  // mounted physical SD, or null
+extern bool             luaHostSdReadFailed();                    // failed open was a dead card
+#endif
 extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
                              double* lat, double* lon, char* pk_hex, size_t pk_cap,
                              int32_t* lat_e6, int32_t* lon_e6);
@@ -729,6 +733,7 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, CAP_KEYBOARD);     lua_setfield(L, -2, "keyboard");
   lua_pushboolean(L, CAP_TOUCH);        lua_setfield(L, -2, "touch");
   lua_pushboolean(L, CAP_SD);           lua_setfield(L, -2, "sd");
+  lua_pushboolean(L, CAP_LUA_SD_LIST);  lua_setfield(L, -2, "sd_list");
   // Feature flags for the calls added after the first extended SDK shipped, so
   // an app can degrade instead of erroring on firmware that predates them.
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "discover");   // wada.mesh.discover
@@ -1349,6 +1354,88 @@ int fsList(lua_State* L) {
   dir.close();
   return 1;
 }
+
+#if CAP_LUA_SD_LIST
+// ---- wada.sd: read-only physical SD directory listing ----------------------
+// Unlike wada.fs, this intentionally accepts paths, but only absolute paths
+// rooted on the card. Reject traversal rather than normalising it into a
+// different valid path. Directory work is bounded so one huge card folder
+// cannot consume an app's entire Lua heap.
+static const size_t kSdMaxPath = 192;
+static const int kSdMaxEntries = 192;
+
+static bool sdSafePath(const char* in, size_t len, char* out, size_t cap) {
+  if (!in || len == 0 || len >= cap || in[0] != '/') return false;
+  if (len > 1 && in[len - 1] == '/') return false;
+  if (len == 1) { out[0] = '/'; out[1] = '\0'; return true; }
+
+  size_t segment = 1;
+  for (size_t i = 1; i <= len; ++i) {
+    if (i < len) {
+      const unsigned char c = (unsigned char)in[i];
+      if (c == 0 || c < 0x20 || c == 0x7F || c == '\\') return false;
+      if (c != '/') continue;
+    }
+    const size_t n = i - segment;
+    if (n == 0 || (n == 1 && in[segment] == '.') ||
+        (n == 2 && in[segment] == '.' && in[segment + 1] == '.')) return false;
+    segment = i + 1;
+  }
+  memcpy(out, in, len);
+  out[len] = '\0';
+  return true;
+}
+
+static int sdListError(lua_State* L, const char* error) {
+  lua_pushnil(L);
+  lua_pushstring(L, error);
+  return 2;
+}
+
+// wada.sd.list(path) -> entries | nil,error
+// entries is an array of { name, type = "file"|"dir", size, mtime } and gains
+// entries.truncated = true only when the directory exceeds kSdMaxEntries.
+int sdList(lua_State* L) {
+  const char* requested = "/";
+  size_t requested_len = 1;
+  if (!lua_isnoneornil(L, 1)) requested = luaL_checklstring(L, 1, &requested_len);
+  char path[kSdMaxPath];
+  if (!sdSafePath(requested, requested_len, path, sizeof path))
+    return sdListError(L, "bad path");
+
+  bool busy = false;
+  fs::FS* fs = luaHostSdFs(&busy);
+  if (!fs) return sdListError(L, busy ? "busy" : "no sd");
+  File dir = fs->open(path, "r");
+  if (!dir) return sdListError(L, luaHostSdReadFailed() ? "no sd" : "not found");
+  if (!dir.isDirectory()) { dir.close(); return sdListError(L, "not a directory"); }
+
+  lua_newtable(L);
+  int count = 0;
+  bool truncated = false;
+  for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    const char* full = entry.name();
+    const char* base = full ? strrchr(full, '/') : nullptr;
+    base = base ? base + 1 : full;
+    if (!base || !base[0]) { entry.close(); continue; }
+    if (count >= kSdMaxEntries) { truncated = true; entry.close(); break; }
+
+    const bool is_dir = entry.isDirectory();
+    lua_createtable(L, 0, 4);
+    lua_pushstring(L, base);                         lua_setfield(L, -2, "name");
+    lua_pushstring(L, is_dir ? "dir" : "file");  lua_setfield(L, -2, "type");
+    lua_pushinteger(L, is_dir ? 0 : (lua_Integer)entry.size());
+                                                     lua_setfield(L, -2, "size");
+    lua_pushinteger(L, (lua_Integer)entry.getLastWrite());
+                                                     lua_setfield(L, -2, "mtime");
+    lua_rawseti(L, -2, ++count);
+    entry.close();
+  }
+  dir.close();
+  if (truncated) { lua_pushboolean(L, 1); lua_setfield(L, -2, "truncated"); }
+  return 1;
+}
+#endif
 #endif  // CAP_LUA_SDK_EXT
 
 void storePath(char* out, size_t cap) {
@@ -1939,6 +2026,12 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, fsList);   lua_setfield(L, -2, "list");
   lua_pushcfunction(L, fsRemove); lua_setfield(L, -2, "remove");
   lua_setfield(L, -2, "fs");
+#endif
+
+#if CAP_LUA_SD_LIST
+  lua_newtable(L);                                       // wada.sd (read-only physical card)
+  lua_pushcfunction(L, sdList); lua_setfield(L, -2, "list");
+  lua_setfield(L, -2, "sd");
 #endif
 
   lua_newtable(L);                                       // wada.mesh (read-only)
