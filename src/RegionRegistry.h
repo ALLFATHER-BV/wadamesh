@@ -148,8 +148,10 @@ public:
       if (_slot_id[s] == e->id) {
         // Re-adding a retired region revives its ORIGINAL slot rather than
         // taking a new one, so its old messages and its new ones stay one region.
-        _slot_active |= (uint16_t)(1u << (s - 1));
-        save();
+        if (!isActive(s)) {
+          _slot_active |= (uint16_t)(1u << (s - 1));
+          save();
+        }
         return s;
       }
     }

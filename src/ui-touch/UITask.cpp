@@ -49312,13 +49312,19 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // factor rewritten + persisted; see healPresetAirtimeFactor for the guard.
   healPresetAirtimeFactor();
 
-  // #271: seed the region registry with the per-channel scope overrides. The
-  // default region is seeded in MyMesh::begin(); these live in touch prefs, which
-  // only this side can read. ensureRegion() canonicalises and de-duplicates, so
+  // #271: seed the region registry with the default and per-channel scopes held
+  // in touch prefs. MyMesh::begin() seeds the companion-configured default from
+  // NodePrefs; the touch UI stores its display name separately, so it must be
+  // included here as well. ensureRegion() canonicalises and de-duplicates, so
   // channels sharing a region collapse to one slot and re-running each boot is a
   // no-op. Registering a region is what lets an incoming message be NAMED as
   // being from it. A channel scoped to "#denmark" means we hold that key, so
   // every "#denmark" message becomes identifiable, not just this channel's.
+  {
+    char rgn[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    if (touchPrefsGetRegionScope(rgn, sizeof rgn) > 0 && rgn[0])
+      the_mesh.regionRegistry().ensureRegion(rgn);
+  }
 #ifdef MAX_GROUP_CHANNELS
   for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
     char rgn[TOUCH_REGION_SCOPE_MAXLEN] = {0};
