@@ -13,17 +13,17 @@
 //
 // The only way to name a region is to recompute the code with a key we hold and
 // compare, while the packet is still in hand. MyMesh has done exactly that since
-// #259 -- for ONE key, our own default scope -- which is why the Info popup can
-// only say "my region" or "another region". This holds the other candidate keys
-// so it can say WHICH region instead.
+// #259, but for only ONE key: our own default scope. That is why the Info popup
+// can say no more than "my region" or "another region". This holds the other
+// candidate keys so it can say WHICH region instead.
 //
 // Storage and key derivation are MeshCore's (RegionMap + TransportKeyStore):
 //   * a public "#tag" region's key is plain SHA256("#tag"), so a name is all we
-//     need to store -- and it matches what MyMesh::setRegionScope already
-//     derives for our own region, byte for byte.
+//     need to store. It matches what MyMesh::setRegionScope already derives for
+//     our own region, byte for byte.
 //   * "$private" regions ask TransportKeyStore for an explicit 16-byte key.
-//     NOTE: that side of the core store is stubbed in MeshCore 1.10 --
-//     loadKeysFor() returns 0 and saveKeysFor() returns false -- so a private
+//     NOTE: that side of the core store is stubbed in MeshCore 1.10, where
+//     loadKeysFor() returns 0 and saveKeysFor() returns false, so a private
 //     region simply never matches today. Public tags are unaffected. When the
 //     core implements it, getTransportKeysFor() starts returning keys and this
 //     works with no change here.
@@ -31,14 +31,14 @@
 // Two things this deliberately does NOT reuse from RegionMap:
 //   * findMatch(), which returns the FIRST matching region. With N keys live,
 //     a 16-bit tag collides at roughly N/65534 per packet, and reporting a
-//     confident wrong name is worse than reporting nothing -- so the loop below
+//     confident wrong name is worse than reporting nothing. So the loop below
 //     counts every match and the caller renders "ambiguous" for >1.
 //   * RegionEntry::id as the value stored per message. Those ids are uint16 and
 //     climb as regions are added; message history has 4 spare bits. Hence SLOTS.
 //
 // SLOTS: 1..14 identify a region for the lifetime of chat history, and live in
-// the free top nibble of UIMessage::meta_flags -- no record growth, no history
-// version bump, and pre-existing messages read back slot 0 = "unknown", which is
+// the free top nibble of UIMessage::meta_flags. That costs no record growth and
+// no history version bump, and pre-existing messages read back slot 0 = "unknown", which is
 // the honest state for a message received before its region was known. Slot 15
 // is the ambiguous sentinel, 0 is none/unknown. A slot is NOT a list index: it
 // is assigned once and never renumbered, so deleting or reordering regions can
@@ -49,16 +49,16 @@
 
 #define REGION_REG_MAP_PATH   "/region_map.dat"
 #define REGION_REG_SLOT_PATH  "/region_slots.dat"
-#define REGION_REG_SLOT_MAGIC 0x52475331UL   // "RGS1" — slots only
-#define REGION_REG_SLOT_MAGIC2 0x52475332UL  // "RGS2" — slots + active mask
+#define REGION_REG_SLOT_MAGIC 0x52475331UL   // "RGS1": slots only
+#define REGION_REG_SLOT_MAGIC2 0x52475332UL  // "RGS2": slots + active mask
 
 class RegionRegistry {
   TransportKeyStore _keys;
   RegionMap         _map;
   // index = slot (1..REGION_SLOT_MAX); value = RegionEntry::id, 0 = free.
   // A slot binding is PERMANENT once assigned. Removing a region clears its bit
-  // in _slot_active -- it stops being matched at RX -- but the binding stays, so
-  // messages received while it WAS registered still resolve to the right name.
+  // in _slot_active, which stops it being matched at RX, but the binding stays.
+  // Messages received while it WAS registered still resolve to the right name.
   // Freeing the slot for reuse would silently relabel that history, which is the
   // failure #271 explicitly warns about.
   uint16_t          _slot_id[REGION_SLOT_MAX + 1];
@@ -67,8 +67,8 @@ class RegionRegistry {
   bool              _ready = false;
 
   // Canonical form, matching MyMesh::setRegionScope exactly: trim surrounding
-  // whitespace, then force a leading '#'. Case is NOT touched -- the name is key
-  // material (SHA256 over these bytes), so lowercasing would silently derive a
+  // whitespace, then force a leading '#'. Case is NOT touched, because the name
+  // is key material (SHA256 over these bytes), so lowercasing would silently derive a
   // different key and the region would stop matching.
   static void canonicalise(const char* in, char* out, size_t out_sz) {
     if (!out || out_sz == 0) return;
@@ -192,7 +192,7 @@ public:
   }
 
   /** Canonical name for a slot, or nullptr. Never returns a name for the
-   *  ambiguous sentinel -- callers must render that state explicitly. */
+   *  ambiguous sentinel, so callers must render that state explicitly. */
   const char* nameForSlot(uint8_t slot) const {
     if (!_ready || slot == REGION_SLOT_NONE || slot > REGION_SLOT_MAX) return nullptr;
     if (_slot_id[slot] == 0) return nullptr;

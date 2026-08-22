@@ -9122,8 +9122,8 @@ static void saveRadioParamsCb(lv_event_t* e) {
     touchPrefsSetRegionScope(region);
     // #271: keep the registry in step with the region we just adopted, so its
     // messages are named immediately. Any previously-registered region keeps its
-    // slot — changing our own region does not un-name the history we received
-    // while we were in the old one.
+    // slot, so changing our own region does not un-name the history we
+    // received while we were in the old one.
     if (region[0]) the_mesh.regionRegistry().ensureRegion(region);
     has_region = (region[0] != '\0');
   }
@@ -10602,7 +10602,7 @@ static void buildRadioSettings() {
     y += lv_obj_get_height(note) + SC(8);
   }
   // #271: the regions above are the ones we SEND under. This opens the list of
-  // regions we can RECOGNISE — naming them in message details needs only the
+  // regions we can RECOGNISE. Naming them in message details needs only the
   // name, since the key is derived from it.
   {
     lv_obj_t* rb = lv_btn_create(body);
@@ -32256,7 +32256,7 @@ static void openMessageInfoPopup(int msg_idx) {
       if (rslot == REGION_SLOT_AMBIGUOUS) {
         // Several registered regions produced this same 16-bit code. Naming any
         // one of them would be a guess, and a confident wrong region reads worse
-        // than an honest "cannot tell" -- the tag is only 16 bits, so with N keys
+        // than an honest "cannot tell". The tag is only 16 bits, so with N keys
         // live a collision runs at about N/65534 per packet.
         snprintf(region, sizeof region, "%s", TR("ambiguous (several regions matched)"));
       } else if (rname) {
@@ -44117,7 +44117,7 @@ static void blockedUnblockNameCb(lv_event_t* e) {
 // ---- Known regions manager (#271) -------------------------------------------
 // The list that makes scope naming possible. A region's key is derived from its
 // NAME (SHA256("#tag")), so holding the name is enough to recompute an incoming
-// packet's transport code and recognise it -- which is why adding a region here
+// packet's transport code and recognise it. That is why adding a region here
 // names its traffic even though we do not participate in it.
 //
 // Adding is the whole point of the feature; removing is deliberately "retire":
@@ -44162,17 +44162,27 @@ static void openRegionsModal() {
   regionsModalClose();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+
+  // Go tall BEFORE measuring, and measure with statusBarCurH() rather than
+  // chatBarH(). They disagree on the Pager: chatBarH() is one row there (that
+  // board keeps back/cog/title on a single line), but statusBarSetTall() still
+  // doubles the bar to STATUSBAR_H * 2. Laying out against chatBarH() therefore
+  // put the page origin a whole row UNDER the bar and the top control was clipped
+  // by it. statusBarCurH() is the height the bar actually has once tall, so the
+  // content clears it on every board and this stays identical elsewhere.
+  s_apppage_title = "Known regions";
+  s_apppage_close = regionsModalClose;
+  statusBarSetTall(true);
+  const lv_coord_t top = statusBarCurH();
+
   s_regions_modal = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_regions_modal);
-  lv_obj_set_size(s_regions_modal, sw, sh - chatBarH());
-  lv_obj_set_pos(s_regions_modal, 0, chatBarH());
+  lv_obj_set_size(s_regions_modal, sw, sh - top);
+  lv_obj_set_pos(s_regions_modal, 0, top);
   lv_obj_set_style_bg_color(s_regions_modal, lv_color_hex(COLOR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_regions_modal, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_regions_modal, LV_OBJ_FLAG_SCROLLABLE);
 
-  s_apppage_title = "Known regions";
-  s_apppage_close = regionsModalClose;
-  statusBarSetTall(true);
   updateGlobalStatusBar();
   lv_obj_move_foreground(s_regions_modal);
   if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
@@ -44214,7 +44224,7 @@ static void openRegionsModal() {
 
   lv_obj_t* list = lv_obj_create(s_regions_modal);
   lv_obj_remove_style_all(list);
-  lv_obj_set_size(list, sw - pad * 2, sh - chatBarH() - y - SC(6));
+  lv_obj_set_size(list, sw - pad * 2, sh - top - y - SC(6));
   lv_obj_set_pos(list, pad, y);
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(list, SC(5), LV_PART_MAIN);
@@ -49307,7 +49317,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // only this side can read. ensureRegion() canonicalises and de-duplicates, so
   // channels sharing a region collapse to one slot and re-running each boot is a
   // no-op. Registering a region is what lets an incoming message be NAMED as
-  // being from it -- a channel scoped to "#denmark" means we hold that key, so
+  // being from it. A channel scoped to "#denmark" means we hold that key, so
   // every "#denmark" message becomes identifiable, not just this channel's.
 #ifdef MAX_GROUP_CHANNELS
   for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
