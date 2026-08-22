@@ -41,7 +41,6 @@ local acc = nil                    -- last accelerometer sample, g, sensor frame
 local cal = nil                   -- { ox, oy, oz } hard-iron offsets
 local calib = nil                 -- in-progress: { mn = {x,y,z}, mx = {x,y,z}, t0 }
 local align = 0                   -- degrees added to the raw angle so north reads 000
-local mirror = false              -- sensor Z faces into the screen: heading runs the other way
 local mag_norm = nil              -- |B| after offsets, Gauss (sanity check for the user)
 local tilt_deg = nil              -- how far from level, degrees (nil = unknown)
 local mag_sat = false             -- last magnetometer sample was flagged as saturated
@@ -63,7 +62,9 @@ local CONTACTS_EVERY = 20000      -- positions only change on adverts
 local UNITS = { alt = true, spd = true }   -- true = imperial
 local sel = "alt"
 local row_hit = {}                -- name -> { y, h } in body coordinates
+local row_y = {}                  -- name -> y, so diagnostics can move rows
 local col_x0, col_x1 = 0, 0       -- the stats column's horizontal span
+local val_x, val_w = 0, 0         -- where the value column starts, and its width
 
 local diag = false                -- D: show what the app is actually computing
 local diag_m = nil                -- last raw sample, for the diagnostic rows
@@ -99,16 +100,19 @@ local function load_prefs()
   -- take it only when the whole set is there.
   if type(ox) == "number" and type(oy) == "number" and type(oz) == "number" then
     cal = { ox = ox, oy = oy, oz = oz, r = (type(r) == "number" and r > 0) and r or nil }
+    local bx, by, bz = store.get("acc_bx"), store.get("acc_by"), store.get("acc_bz")
+    if type(bx) == "number" and type(by) == "number" and type(bz) == "number" then
+      cal.abx, cal.aby, cal.abz = bx, by, bz
+    end
   end
   -- Orientation settings are versioned: the heading formula changed once the
   -- M9's axes were measured, so values saved against the old one would push a
   -- correct default back off north. Anything older is discarded, not migrated.
   if store.get("orient_ver", 0) == 2 then
     align = tonumber(store.get("align", 0)) or 0
-    mirror = (store.get("mirror", 0) == 1)
   else
-    align, mirror = 0, false
-    store.set("align", nil); store.set("mirror", nil)
+    align = 0
+    store.set("align", nil)
     store.set("orient", nil); store.set("flip", nil)   -- the even older pair
     store.set("orient_ver", 2)
   end
@@ -118,7 +122,7 @@ end
 
 local function save_align()
   store.set("align", math.floor(align + 0.5))
-  store.set("mirror", mirror and 1 or 0)
+  store.set("mirror", nil)     -- the old hand-flipped handedness; measured now
   store.set("orient_ver", 2)
 end
 
@@ -126,9 +130,11 @@ local function save_cal()
   if cal then
     store.set("cal_ox", cal.ox); store.set("cal_oy", cal.oy); store.set("cal_oz", cal.oz)
     store.set("cal_r", cal.r)
+    store.set("acc_bx", cal.abx); store.set("acc_by", cal.aby); store.set("acc_bz", cal.abz)
   else
     store.set("cal_ox", nil); store.set("cal_oy", nil); store.set("cal_oz", nil)
     store.set("cal_r", nil)
+    store.set("acc_bx", nil); store.set("acc_by", nil); store.set("acc_bz", nil)
   end
 end
 
@@ -169,7 +175,11 @@ local function calib_new()
   return { n = 0, o = nil, t0 = sys.millis(),
            sx = 0, sy = 0, sz = 0, sxx = 0, syy = 0, szz = 0,
            sxy = 0, sxz = 0, syz = 0, sxs = 0, sys_ = 0, szs = 0, ss = 0,
-           gmn = { 9, 9, 9 }, gmx = { -9, -9, -9 } }
+           gmn = { 9, 9, 9 }, gmx = { -9, -9, -9 },
+           -- the same sweep traces a 1 g sphere for the accelerometer, so its
+           -- own zero-g offset falls out of the same fit for free
+           an = 0, ao = nil, ax = 0, ay = 0, az = 0, axx = 0, ayy = 0, azz = 0,
+           axy = 0, axz = 0, ayz = 0, axs = 0, ays = 0, azs = 0, ass = 0 }
 end
 
 local function calib_add(m, a)
@@ -191,6 +201,15 @@ local function calib_add(m, a)
       if g[i] < c.gmn[i] then c.gmn[i] = g[i] end
       if g[i] > c.gmx[i] then c.gmx[i] = g[i] end
     end
+    if not c.ao then c.ao = { a.x, a.y, a.z } end
+    local ux, uy, uz = a.x - c.ao[1], a.y - c.ao[2], a.z - c.ao[3]
+    local us = ux * ux + uy * uy + uz * uz
+    c.an = c.an + 1
+    c.ax = c.ax + ux; c.ay = c.ay + uy; c.az = c.az + uz
+    c.axx = c.axx + ux * ux; c.ayy = c.ayy + uy * uy; c.azz = c.azz + uz * uz
+    c.axy = c.axy + ux * uy; c.axz = c.axz + ux * uz; c.ayz = c.ayz + uy * uz
+    c.axs = c.axs + ux * us; c.ays = c.ays + uy * us; c.azs = c.azs + uz * us
+    c.ass = c.ass + us
   end
 end
 
@@ -262,7 +281,36 @@ local function calib_solve()
   if resid > 0.15 * r then
     return nil, string.format("too distorted (%.0f%%) - turn it ON THE SPOT", 100 * resid / r)
   end
-  return { ox = c.o[1] + cx, oy = c.o[2] + cy, oz = c.o[3] + cz, r = r }, r
+  local out = { ox = c.o[1] + cx, oy = c.o[2] + cy, oz = c.o[3] + cz, r = r }
+  -- Accelerometer zero-g offset, from the same sweep. A MEMS part is commonly
+  -- tens of milli-g out of true, and this one reads ~0.08 g on Y lying flat --
+  -- about 5 degrees of tilt that is not there, which the compensation would
+  -- then apply to the heading. Only taken when the sphere it fits is close to
+  -- the 1 g it must be.
+  if c.an >= 80 then
+    local AM = {
+      { 4 * c.axx, 4 * c.axy, 4 * c.axz, 2 * c.ax },
+      { 4 * c.axy, 4 * c.ayy, 4 * c.ayz, 2 * c.ay },
+      { 4 * c.axz, 4 * c.ayz, 4 * c.azz, 2 * c.az },
+      { 2 * c.ax,  2 * c.ay,  2 * c.az,  c.an },
+    }
+    local av = { 2 * c.axs, 2 * c.ays, 2 * c.azs, c.ass }
+    local asol = solve4(AM, av)
+    if asol then
+      local acx, acy, acz, ak = asol[1], asol[2], asol[3], asol[4]
+      local ar2 = ak + acx * acx + acy * acy + acz * acz
+      if ar2 > 0 then
+        local ar = math.sqrt(ar2)
+        if ar > 0.85 and ar < 1.15 then
+          out.abx = c.ao[1] + acx
+          out.aby = c.ao[2] + acy
+          out.abz = c.ao[3] + acz
+          out.ar = ar
+        end
+      end
+    end
+  end
+  return out, r
 end
 
 -- Heading. With the accelerometer, the magnetic vector is rotated back into
@@ -275,7 +323,10 @@ local function mag_heading(m)
   if acc then
     -- gravity's DIRECTION in the body frame: the part reads specific force, so
     -- the skyward axis reads +1 and down is the negative of that
-    local gx, gy, gz = -acc.x, -acc.y, -acc.z
+    -- gravity's direction, with the sensor's own zero-g offset removed
+    local gx = -(acc.x - (cal and cal.abx or 0))
+    local gy = -(acc.y - (cal and cal.aby or 0))
+    local gz = -(acc.z - (cal and cal.abz or 0))
     local gn = math.sqrt(gx * gx + gy * gy + gz * gz)
     if gn > 0.5 then
       gx, gy, gz = gx / gn, gy / gn, gz / gn
@@ -286,13 +337,11 @@ local function mag_heading(m)
       local xh = bx * cp + by * sp * sr + bz * sp * cr
       local yh = by * cr - bz * sr
       tilt_deg = math.deg(math.acos(math.max(-1, math.min(1, gz))))
-      local a = mirror and math.atan(yh, xh) or math.atan(-yh, xh)
-      return norm360(math.deg(a) + align)
+      return norm360(math.deg(math.atan(-yh, xh)) + align)
     end
   end
   tilt_deg = nil
-  local a = mirror and math.atan(-bx, by) or math.atan(bx, by)
-  return norm360(math.deg(a) + align)
+  return norm360(math.deg(math.atan(bx, by)) + align)
 end
 
 local function smooth_heading(h)
@@ -593,18 +642,27 @@ local function refresh(now)
   -- from the screen instead of guessed at. Takes over the target rows.
   if diag then
     local m = diag_m
-    set_text("tgt", string.format("cal %s", cal and string.format("%.2f %.2f %.2f r%.2f", cal.ox, cal.oy,
-                                                cal.oz or 0, cal.r or 0) or "NONE - press C"),
-             cal and C.text or C.bad)
-    set_text("tgt2", m and string.format("raw %.2f %.2f %.2f", m.x, m.y, m.z) or "raw --", C.text)
-    if m and cal then
-      set_text("rel", string.format("hor %.3f %.3f |H| %.3f", m.x - cal.ox, m.y - cal.oy, mag_norm or 0), C.text)
-    else
-      set_text("rel", "hor --", C.sub)
+    -- Rows are short on purpose: the value column is ~22 characters at this
+    -- font, and a longer line wraps onto the row below and overprints it.
+    -- Diagnostics also take the whole panel width (see diag_layout), which is
+    -- the key column back.
+    set_text("tgt", cal and string.format("cal %.2f %.2f %.2f", cal.ox, cal.oy, cal.oz or 0)
+                        or "cal NONE - press C", cal and C.text or C.bad)
+    set_text("tgt2", m and string.format("mag %.2f %.2f %.2f", m.x, m.y, m.z) or "mag --", C.text)
+    set_text("rel", acc and string.format("acc %.2f %.2f %.2f", acc.x, acc.y, acc.z) or "acc --", C.text)
+    local bits = string.format("|B|%.2f", mag_norm or 0)
+    if m then
+      -- Vertical field. North of the equator, held flat, this MUST be positive
+      -- if the magnetometer's +Z points into the screen -- which is what the
+      -- tilt correction assumes. Negative here means that sign is inverted,
+      -- and pitching the device would still swing the heading.
+      local _, _, bz = to_body(m)
+      bits = bits .. string.format(" d%+.2f", bz)
     end
-    set_text("seen", acc and string.format("acc %+.2f %+.2f %+.2f", acc.x, acc.y, acc.z)
-                          or string.format("align %d mirror %d", math.floor(align + 0.5), mirror and 1 or 0),
-             AMBER)
+    if cal and cal.r then bits = bits .. string.format(" r%.2f", cal.r) end
+    if tilt_deg then bits = bits .. string.format(" t%d", math.floor(tilt_deg + 0.5)) end
+    if align ~= 0 then bits = bits .. string.format(" a%d", math.floor(align + 0.5)) end
+    set_text("seen", bits, AMBER)
     draw_dial(nil)
     last_dial_key = nil          -- keep the dial live while diagnosing
     return
@@ -691,8 +749,6 @@ end
 --     the vertical field: Earth's field dips DOWN north of the magnetic
 --     equator and UP south of it. With a position (a fix, or the last one the
 --     node knows) the sign of `mag_z` therefore says which way Z points.
---     Near the equator the dip is too shallow to read, so the mirror is left
---     as it was and only the offset is set.
 --   * offset — whatever angle the sensor reports while pointing north becomes
 --     the zero.
 -- the selected row's key is drawn in the accent colour so it is obvious which
@@ -744,18 +800,6 @@ local function align_north()
   save_align()
   hv_x, hv_y = 0, 0
   sys.toast("North set here", 1400)
-end
-
--- Escape hatch: reverses the direction of travel. Nothing on the M9 needs it
--- now that both frames are measured; it exists for a board whose sensors are
--- mounted the other way up.
-local function flip_frame()
-  mirror = not mirror
-  align = 0
-  save_align()
-  hv_x, hv_y = 0, 0
-  sys.toast(mirror and "Direction reversed - press A again facing north"
-                    or "Direction normal - press A again facing north", 2500)
 end
 
 -- ---------------------------------------------------------------------------
@@ -827,6 +871,7 @@ function app.on_open(w, h)
   local valx = x0 + keyw + 6
   local valw = colw - keyw - 6
   col_x0, col_x1 = x0, x0 + colw
+  val_x, val_w = valx, valw
   name_max = math.max(8, math.min(18, math.floor((valw - 4) / (TH12 * 0.62))))
   -- Montserrat runs ~0.48 x line height per glyph: the status line over the
   -- dial is the longest (22 glyphs, ~10.6 x); go compact when the dial is
@@ -839,9 +884,10 @@ function app.on_open(w, h)
     y = y + (gap_before[name] or 0)
     if key then
       local kl = ui.label(key, x0, y, 12, C.sub)
-      if name == "alt" or name == "spd" then L["k_" .. name] = kl end
+      if name == "alt" or name == "spd" or name == "tgt" then L["k_" .. name] = kl end
     end
     label(name, valx, y, 12, C.text, valw)   -- key-less rows line up with the values
+    row_y[name] = y
     if name == "alt" or name == "spd" then row_hit[name] = { y = y, h = line } end
     if name == "fix" then
       -- The meter sits right after the count. The reserve is sized for the
@@ -866,7 +912,6 @@ function app.on_open(w, h)
     if has_compass then
       ui.button("Cal", bx, by, bw, bh, toggle_cal);   bx = bx + bw + 3
       ui.button("North", bx, by, bw, bh, align_north); bx = bx + bw + 3
-      ui.button("Flip", bx, by, bw, bh, flip_frame);   bx = bx + bw + 3
     end
     ui.button("Target", bx, by, bw, bh, function() cycle_target(1) end)
     y = by + bh + 4
@@ -907,6 +952,22 @@ end
 
 local function in_dial(x, y)
   return x >= dial_x and x < dial_x + D and y >= dial_y and y < dial_y + D
+end
+
+-- Diagnostics need every pixel of the panel, so the four target rows move out
+-- to the key column's left edge and take the full width while it is on. The
+-- TGT key label would sit on top of that, so it is blanked and restored.
+local function diag_layout(on)
+  for _, n in ipairs({ "tgt", "tgt2", "rel", "seen" }) do
+    local l = L[n]
+    if l then
+      l:width(on and (col_x1 - col_x0) or val_w)
+      local x, y = on and col_x0 or val_x, row_y[n]
+      if y then l:pos(x, y) end
+    end
+    last_text[n] = nil            -- force a re-render at the new width
+  end
+  if L.k_tgt then L.k_tgt:set(on and "" or "TGT") end
 end
 
 -- which stats row a press landed on, or nil
@@ -963,14 +1024,14 @@ function app.on_input(ev)
     elseif k == "d" or k == "D" then
       diag = not diag
       last_dial_key = nil
+      diag_layout(diag)
       sys.toast(diag and "Diagnostics on" or "Diagnostics off", 900)
     elseif k == "c" or k == "C" then toggle_cal()
     elseif k == "a" or k == "A" then align_north()
-    elseif k == "f" or k == "F" then flip_frame()      -- fallback, see align_north
     elseif k == "x" or k == "X" then
       if cal then
         cal = nil; save_cal()
-        align = 0; mirror = false; save_align()
+        align = 0; save_align()
         sys.toast("Calibration cleared", 1000)
       end
     end
