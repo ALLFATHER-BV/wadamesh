@@ -651,11 +651,12 @@ function app.on_open(w, h)
     label(name, valx, y, 12, C.text, valw)   -- key-less rows line up with the values
     if name == "alt" or name == "spd" then row_hit[name] = { y = y, h = line } end
     if name == "fix" then
-      -- The meter sits right after the count, not out at the column edge —
-      -- the reserve is sized for the widest text ("99 sats") so the bars hold
-      -- still as the number changes.
-      local gap = math.floor(TH12 * 0.45)
-      local sats_x = valx + text_w("99 sats", TH12) + gap
+      -- The meter sits right after the count. The reserve is sized for the
+      -- widest text ("99 sats") so the bars hold still as the number changes,
+      -- but measured properly: text_w's 0.55-per-character estimate is for
+      -- mixed text, while digits and spaces in Montserrat run nearer 0.39 of
+      -- the line height, which left an obvious gap.
+      local sats_x = valx + math.floor(TH12 * 2.8) + 4
       SATS_W = math.max(20, math.min(52, valx + valw - sats_x - 2))
       sats_cv = ui.canvas(SATS_W, SATS_H)
       sats_cv:pos(sats_x, y + math.floor((TH12 - SATS_H) / 2))
@@ -683,9 +684,10 @@ function app.on_open(w, h)
   L.hint = ui.label("", 0, hint_y or (y + 2), 12, C.sub)
   L.hint:width(w, "center")
   if caps.keyboard then
-    local wide = w >= TH12 * 20                 -- room for the target hint too
-    set_text("hint", has_compass and (wide and "C calibrate   A set north   up/down + OK units   <> target"
-                                              or "C calibrate   A north   OK units   <> target")
+    -- "A set north" is deliberately not advertised: the axis mapping is
+    -- measured, so a calibrated device points north on its own. A (and F)
+    -- still work for an unknown board or a stubborn environment.
+    set_text("hint", has_compass and "C calibrate   up/down + OK units   <> target"
                                   or "up/down + OK units   <> target", C.sub)
   elseif caps.touch then
     set_text("hint", "Tap a row for units, the dial for the next target", C.sub)
