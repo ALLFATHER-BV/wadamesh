@@ -683,6 +683,7 @@ Run setup again	Setup erneut ausführen
 SD card   %s	SD-Karte   %s
 SD card   %s   (hold: format)	SD-Karte   %s   (halten: formatieren)
 SD card   (tap to mount)	SD-Karte   (zum Einbinden tippen)
+SD card   (unreadable - tap to retry)	SD card   (unreadable - tap to retry)
 SD card inserted	SD-Karte eingelegt
 SD card lost - reinsert to recover	SD-Karte verloren - neu einstecken
 SD card remounted	SD-Karte neu eingebunden
@@ -695,6 +696,7 @@ SD formatted - %s (MESHCOMOD)	SD formatiert - %s (MESHCOMOD)
 SD is busy - close tools and retry	SD ist belegt – Tools schließen und erneut versuchen
 SD removed - card-backed data cannot be saved	SD entfernt – Kartendaten können nicht gespeichert werden
 SD stayed busy - format cancelled, retry	SD blieb belegt – Formatierung abgebrochen, erneut versuchen
+SD unreadable - format it as FAT32 on a computer	SD unreadable - format it as FAT32 on a computer
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB belegt
@@ -722,6 +724,8 @@ Saved — applying…	Gespeichert – wird angewendet …
 Saved — rebooting	Gespeichert — Neustart
 Saved — reconnecting…	Gespeichert — verbinde neu…
 Saved: %s\nFlash it from the Launcher.	Gespeichert: %s\nFlashe es über den Launcher.
+Saved: %s\nReady for offline flashing.	Saved: %s\nReady for offline flashing.
+Saves the latest firmware of the selected channel to the SD card (BINS folder).	Saves the latest firmware of the selected channel to the SD card (BINS folder).
 Saving to SD… %d%%	Speichern auf SD… %d%%
 Saving to SD… 0%	Speichern auf SD… 0%
 Scan to open on phone	Scannen, um am Handy zu öffnen

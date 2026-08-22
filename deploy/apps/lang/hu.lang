@@ -692,6 +692,7 @@ Run setup again	Futtassa újra a beállítást
 SD card   %s	SD-kártya %s
 SD card   %s   (hold: format)	SD-kártya %s (tartás: formázás)
 SD card   (tap to mount)	SD-kártya (érintésre csatlakoztatható)
+SD card   (unreadable - tap to retry)	SD card   (unreadable - tap to retry)
 SD card inserted	SD-kártya behelyezve
 SD card lost - reinsert to recover	SD-kártya elveszett - helyezze be újra a helyreállításhoz
 SD card remounted	SD kártya újracsatolva
@@ -704,6 +705,7 @@ SD formatted - %s (MESHCOMOD)	SD formázás - %s (MESHCOMOD)
 SD is busy - close tools and retry	Az SD-kártya foglalt – zárd be az eszközöket, majd próbáld újra.
 SD removed - card-backed data cannot be saved	SD-kártya eltávolítva – az SD-kártyán tárolt adatok nem menthetők.
 SD stayed busy - format cancelled, retry	Az SD-kártya továbbra is foglalt – a formázás megszakítva, próbáld újra.
+SD unreadable - format it as FAT32 on a computer	SD unreadable - format it as FAT32 on a computer
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB felhasználva
@@ -733,6 +735,8 @@ Saved — applying…	Mentve — alkalmazás folyamatban…
 Saved — rebooting	Mentve — újraindítás
 Saved — reconnecting…	Mentve — újracsatlakozás…
 Saved: %s\nFlash it from the Launcher.	Mentett: %s\nFlash-eld a Launcher-ből.
+Saved: %s\nReady for offline flashing.	Saved: %s\nReady for offline flashing.
+Saves the latest firmware of the selected channel to the SD card (BINS folder).	Saves the latest firmware of the selected channel to the SD card (BINS folder).
 Saving to SD… %d%%	Mentés SD-kártyára… %d%%
 Saving to SD… 0%	Mentés SD-kártyára… 0%
 Scan to open on phone	Olvasd be a telefonos megnyitáshoz

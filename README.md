@@ -25,9 +25,9 @@ per-board status.
 - Tanmatsu (ESP32-P4) — built from `tanmatsu/` (ESP-IDF), ships via the Tanmatsu app store — [sideload guide](TANMATSU_SIDELOAD.md) for running your own build
 - Elecrow ThinkNode M9 — env `ThinkNode_M9_companion_radio_touch` (beta) — [keyboard & d-pad guide](THINKNODE_M9_SHORTCUTS.md)
 - RAK WisMesh Tap V2 (RAK3312) — env `rak_tap_v2_companion_radio_touch` (beta)
-- LilyGo T-Lora Pager — envs `tlora_pager_lr1121_companion_radio_touch` / `tlora_pager_sx1262_companion_radio_touch` (stable) — [keyboard shortcuts](TLORA_PAGER_SHORTCUTS.md)
-- Heltec V4-R8 + Expansion Kit V2 — env `heltec_v4_r8_tft_companion_radio_usb_tcp_touch` (stable)
-- LilyGo T-Display P4 — built from `tdisplay_p4/` (ESP-IDF); AMOLED by default, `WADA_P4_LCD=1` for the TFT-LCD SKU
+- LilyGo T-Lora Pager — envs `tlora_pager_lr1121_companion_radio_touch` / `tlora_pager_sx1262_companion_radio_touch` (beta) — [keyboard shortcuts](TLORA_PAGER_SHORTCUTS.md)
+- Heltec V4-R8 + Expansion Kit V2 — env `heltec_v4_r8_tft_companion_radio_usb_tcp_touch` (beta)
+- LilyGo T-Display P4 — built from `tdisplay_p4/` (ESP-IDF); AMOLED by default, `WADA_P4_LCD=1` for the TFT-LCD SKU (beta)
 - Attaky Mesh Series — env `attaky_mesh_series_companion_radio_touch` (beta)
 
 ## Architecture

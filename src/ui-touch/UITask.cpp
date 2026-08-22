@@ -92,7 +92,9 @@
   #endif
 #elif defined(TLORA_PAGER)
   #include <SD.h>             // microSD (CS=21) on the shared radio/display SPI bus --
-                               // storage + file manager/WAV access; formatting stays disabled
+                               // storage + file manager/WAV access. No sd_diskio.h/f_mkfs
+                               // here: formatting is deliberately off on this board (the
+                               // reasons are on the format-helper guard in the file manager).
   #define PIN_SD_CS PAGER_PIN_SD_CS   // from TLoraPagerBoard.h, already visible via
                                       // MyMesh.h -> target.h -> TLoraPagerBoard.h above
   #include <driver/i2s.h>     // pager ES8311 codec (notification tones + WAV playback)
@@ -5377,6 +5379,21 @@ static void otaButtonRefreshState() {
 // the ACTIVE update channel (stable, or beta when "Get test builds" is on)
 // into /BINS/wadamesh-beta_<N>-<stable|beta>.bin on the SD card. The download
 // streams on the tile worker; this UI side mirrors the OTA poll pattern.
+// Wording is board-conditional and the two sets are SEPARATE TR() keys on purpose.
+// Only the T-Deck has bmorcelli's Launcher; now that this feature is gated on
+// CAP_SD it also compiles for the Pager, the ThinkNode M9 and the Heltec V4-R8,
+// where "flash it from the Launcher" names something the user does not have. The
+// T-Deck strings must stay byte-identical: they are translated in all 13 .lang
+// files, and editing the English key orphans every translation of it (audit with
+// scripts/build/audit-lang.py).
+#if defined(HAS_TDECK_GT911)
+  #define SDFW_SAVED_FMT TR("Saved: %s\nFlash it from the Launcher.")
+  #define SDFW_HINT_TEXT TR("For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).")
+#else
+  #define SDFW_SAVED_FMT TR("Saved: %s\nReady for offline flashing.")
+  #define SDFW_HINT_TEXT TR("Saves the latest firmware of the selected channel to the SD card (BINS folder).")
+#endif
+
 static volatile bool s_sdfw_request  = false;   // UI -> worker
 static volatile int  s_sdfw_state    = 0;       // 0 idle, 1 running, 2 ok, 3 error
 static volatile int  s_sdfw_pct      = 0;
@@ -5400,7 +5417,7 @@ static void sdFwPollTimerCb(lv_timer_t* t) {
   if (st == 2) {
     if (s_sdfw_status_lbl) {
       char b[112];
-      snprintf(b, sizeof b, TR("Saved: %s\nFlash it from the Launcher."), s_sdfw_msg);
+      snprintf(b, sizeof b, SDFW_SAVED_FMT, s_sdfw_msg);
       lv_label_set_text(s_sdfw_status_lbl, b);
     }
     if (g_lv.task) g_lv.task->showAlert(TR("Update bin saved to SD"), 3000);
@@ -20037,6 +20054,27 @@ static void fmSdClickCb(lv_event_t* e) {
   if (s_sd_mounted) fmOpenStorage(&SD, "SD", "/");
 }
 
+#if defined(TLORA_PAGER)
+// Recovery entry for a card the Pager can SEE (card-detect asserted) but cannot
+// mount: exFAT/NTFS, or a damaged FAT. Without this the roots page renders no SD
+// row at all (fmShowRoots below), so there is no way to tell "no card" from "card
+// the firmware won't take", and no way to retry without a reboot.
+//
+// Deliberately NON-destructive. It clears the mount backoff and makes exactly the
+// one vendor-compatible 4 MHz attempt fmSdTryMount() already makes — it does not
+// add a retry ladder and never tears down the live shared display/radio bus. If
+// that attempt fails the card needs formatting, and on this board that is a
+// deliberate host-side task: see the format-helper guard below for why the in-app
+// formatter stays off for the Pager.
+static void fmSdPagerRetryMountCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_sd_retry_after_ms = 0;                       // explicit user retry — bypass the backoff
+  if (fmSdTryMount() && s_sd_mounted) { fmShowRoots(); return; }
+  if (g_lv.task)
+    g_lv.task->showAlert(TR("SD unreadable - format it as FAT32 on a computer"), 3600);
+}
+#endif
+
 #endif  // HAS_TDECK_GT911 || TLORA_PAGER || HAS_THINKNODE_M9 || HELTEC_LORA_V4_R8 (microSD mount helpers; the busy overlays below are generic LVGL)
 
 // Full-screen "busy" notice (copy/move/format). Pure LVGL — used by the generic paste path too.
@@ -20064,6 +20102,24 @@ static void fmHideFormatOverlay() {
   if (s_fm_fmt_overlay) { popupClose(&s_fm_fmt_overlay); }
 }
 
+// TLORA_PAGER is deliberately NOT in this list — the in-app formatter is omitted
+// on the Pager, not merely unimplemented. Three reasons, in order of weight:
+//  1. f_mkfs needs SD.end() + sdcard_init/uninit around it. That is a card and
+//     diskio lifecycle teardown on a bus the display AND the radio are actively
+//     driving, and this board's mount path is explicitly documented (fmSdTryMount
+//     above) to make ONE 4 MHz attempt and never tear the live shared bus down.
+//     The Arduino SD library never touches the SPI peripheral itself, so this is
+//     very likely fine — but "very likely" is not a basis for a one-way, whole-card
+//     erase, and it has never been run on Pager hardware.
+//  2. There is no touchscreen, so the T-Deck's tap-to-open / hold-to-format split
+//     does not map. The nearest equivalent is holding ENTER on the focused row —
+//     an undiscoverable gesture that destroys the card, on a device where the
+//     encoder and ENTER are the only ways to move at all.
+//  3. The recoverable case is already covered non-destructively:
+//     fmSdPagerRetryMountCb above surfaces a detected-but-unmountable card and
+//     retries the mount, and the alert it raises on failure points at the host.
+// Formatting a card on a computer is a 30-second task with no such risk. Revisit
+// only with a Pager in hand and a card that is safe to lose.
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)   // SD format helpers resume (Arduino SD, T-Deck + M9 + V4-R8)
 // Confirm callback: paint the formatting notice, then defer the (blocking)
 // f_mkfs to UITask::loop so the notice is on-screen before the loop freezes.
@@ -21364,7 +21420,7 @@ static void fmShowRoots() {
     fmStyleRow(sd, COLOR_SUB);
     lv_obj_add_event_cb(sd, fmSdMountOrFormatCb, LV_EVENT_CLICKED, nullptr);
   }
-#elif defined(TLORA_PAGER)   // microSD row — browse only this pass, no format (see fmSdTryMount())
+#elif defined(TLORA_PAGER)   // microSD row — browse + mount recovery, no in-app format
   // The card-detect line makes "not present" unambiguous, unlike the T-Deck (no detect
   // pin at all) -- so unlike its always-shown "tap to mount/format" fallback row, a bare
   // pager just shows no SD row at all rather than a row that can never succeed.
@@ -21376,6 +21432,13 @@ static void fmShowRoots() {
     lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, sdl);
     fmStyleRow(sd, COLOR_TEXT);
     lv_obj_add_event_cb(sd, fmSdClickCb, LV_EVENT_SHORT_CLICKED, nullptr);
+  } else if (board.sdCardPresent()) {
+    // Detected but not mounted. Surfacing it (greyed) is the whole recovery path
+    // on this board: it distinguishes "card the firmware won't take" from the
+    // absent case above, and gives a retry that bypasses the mount backoff.
+    lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, TR("SD card   (unreadable - tap to retry)"));
+    fmStyleRow(sd, COLOR_SUB);
+    lv_obj_add_event_cb(sd, fmSdPagerRetryMountCb, LV_EVENT_CLICKED, nullptr);
   }
 #endif
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
@@ -26460,11 +26523,19 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_ota_state = 2;   // success -> the UI poll timer reboots into the new slot
 }
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 // Stream the app-only bin for the active update channel onto the SD card
 // (/BINS/wadamesh-beta_<N>-<stable|beta>.bin) so the Launcher can flash it —
 // the no-A/B-slot counterpart to otaWorkerRun above. Same immutable versioned
 // URL, same worker, but the bytes go to SD instead of the spare OTA slot.
+//
+// This feature is spread over SIX #if regions (state+callbacks, this worker,
+// the tile-worker dispatch below, the About button, the settings-close teardown,
+// and the sdHealthTick bail-out). They are character-for-character identical on
+// purpose. A board admitted to some but not all of them still COMPILES — the
+// worker's only caller sits behind the same gate, so nothing link-errors — and
+// then hangs at "Saving to SD… 0%" with a poll timer writing to a label the
+// teardown never nulled. Change all six or none.
 static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_sdfw_pct = 0;
   if (SD.cardType() == CARD_NONE) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "no SD card"); s_sdfw_state = 3; return; }
@@ -26721,7 +26792,7 @@ static void tileFetchTaskFn(void* arg) {
       otaWorkerRun(client, http);
       continue;
     }
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
     // SD firmware download for Launcher installs (user-initiated from About).
     if (s_sdfw_request) {
       s_sdfw_request = false;
@@ -31458,7 +31529,7 @@ static void settingsCatBuild(int cat) {
           lv_obj_set_width(s_sdfw_status_lbl, lblw);
           lv_obj_set_style_text_font(s_sdfw_status_lbl, &g_font_12, LV_PART_MAIN);
           lv_obj_set_style_text_color(s_sdfw_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-          lv_label_set_text(s_sdfw_status_lbl, TR("For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder)."));
+          lv_label_set_text(s_sdfw_status_lbl, SDFW_HINT_TEXT);
         }
 #endif
       }
@@ -31516,7 +31587,7 @@ static void closeSettingsCategory() {
   hideKb();
   if (s_settings_open_cat == CAT_ABOUT) {   // null the live-label ptrs (freed with the sheet)
     s_sysinfo_lbl = nullptr; s_sysinfo_rest_lbl = nullptr; s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
-#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
     s_sdfw_status_lbl = nullptr;
 #endif
     s_ota_btn = nullptr; s_ota_btn_lbl = nullptr;
@@ -52082,8 +52153,8 @@ static void sdHealthTick() {
     return;
   }
 #endif
-#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
-  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS
 #endif
   // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
   // also on a slow 30 s background cadence — a card yanked while nothing is

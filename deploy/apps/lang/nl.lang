@@ -683,6 +683,7 @@ Run setup again	Setup opnieuw uitvoeren
 SD card   %s	SD-kaart   %s
 SD card   %s   (hold: format)	SD-kaart   %s   (vasthouden: formatteren)
 SD card   (tap to mount)	SD-kaart   (tik om te koppelen)
+SD card   (unreadable - tap to retry)	SD card   (unreadable - tap to retry)
 SD card inserted	SD-kaart geplaatst
 SD card lost - reinsert to recover	SD-kaart verloren - plaats opnieuw
 SD card remounted	SD-kaart opnieuw gekoppeld
@@ -695,6 +696,7 @@ SD formatted - %s (MESHCOMOD)	SD geformatteerd - %s (MESHCOMOD)
 SD is busy - close tools and retry	SD is bezig - sluit tools en probeer opnieuw
 SD removed - card-backed data cannot be saved	SD verwijderd - kaartgegevens kunnen niet worden opgeslagen
 SD stayed busy - format cancelled, retry	SD bleef bezig - formatteren geannuleerd, opnieuw proberen
+SD unreadable - format it as FAT32 on a computer	SD unreadable - format it as FAT32 on a computer
 SF	SF
 SF / CR / TX / AF	SF / CR / TX / AF
 SPIFFS %u/%u KB used	SPIFFS %u/%u KB gebruikt
@@ -722,6 +724,8 @@ Saved — applying…	Opgeslagen — wordt toegepast…
 Saved — rebooting	Opgeslagen — opnieuw opstarten
 Saved — reconnecting…	Opgeslagen — opnieuw verbinden…
 Saved: %s\nFlash it from the Launcher.	Opgeslagen: %s\nFlash het vanuit de Launcher.
+Saved: %s\nReady for offline flashing.	Saved: %s\nReady for offline flashing.
+Saves the latest firmware of the selected channel to the SD card (BINS folder).	Saves the latest firmware of the selected channel to the SD card (BINS folder).
 Saving to SD… %d%%	Opslaan naar SD… %d%%
 Saving to SD… 0%	Opslaan naar SD… 0%
 Scan to open on phone	Scan om op je telefoon te openen
