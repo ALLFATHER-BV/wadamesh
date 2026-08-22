@@ -23285,6 +23285,21 @@ static void remoteToggleCb(lv_event_t* e) {
 }
 
 #if CAP_CONSOLE
+// ---- console bridges: unread state ------------------------------------------
+// The console shows messages as they arrive but must NOT mark them read; these
+// let it report what is waiting and clear a thread deliberately.
+int consoleHostUnreadTotal() { return g_lv.task ? g_lv.task->getUnreadTotal() : 0; }
+
+int consoleHostThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_channel) {
+  if (!g_lv.task) return 0;
+  return g_lv.task->consoleThreadAt(idx, name, cap, unread, is_channel);
+}
+bool consoleHostMarkRead(const char* name) {
+  return g_lv.task ? g_lv.task->consoleMarkThreadRead(name) : false;
+}
+#endif
+
+#if CAP_CONSOLE
 // Console mode is a boot mode like remote mode, so it is toggled the same way:
 // set the pref, then reboot through rebootDevice() so chat history is flushed
 // first rather than lost to the reset.
@@ -48592,6 +48607,37 @@ bool UITask::saveMsgsToStorage() {
 // ============================================================
 // Thread management
 // ============================================================
+#if CAP_CONSOLE
+// Walk the thread table for the console. Read-only: seeing a thread listed with
+// its unread count must not change that count.
+int UITask::consoleThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_channel) {
+  if (!_ui_threads || idx < 0) return 0;
+  int seen = 0;
+  for (int i = 0; i < MAX_UI_THREADS; ++i) {
+    if (!_ui_threads[i].used) continue;
+    if (seen++ != idx) continue;
+    snprintf(name, cap, "%s", _ui_threads[i].name);
+    if (unread)     *unread     = (int)_ui_threads[i].unread;
+    if (is_channel) *is_channel = _ui_threads[i].channel;
+    return 1;
+  }
+  return 0;
+}
+
+// Clearing unread is an explicit act, which is the whole point: the monitor
+// showing a message must not count as having read it.
+bool UITask::consoleMarkThreadRead(const char* name) {
+  if (!_ui_threads || !name || !*name) return false;
+  for (int i = 0; i < MAX_UI_THREADS; ++i) {
+    if (!_ui_threads[i].used) continue;
+    if (strncmp(_ui_threads[i].name, name, MAX_THREAD_NAME) != 0) continue;
+    markThreadRead(i);
+    return true;
+  }
+  return false;
+}
+#endif
+
 int UITask::findOrCreateThread(const char* name, bool channel) {
   if (!name || !name[0]) return -1;
   // _ui_threads is allocated further down begin(), which console mode returns
@@ -49283,6 +49329,45 @@ static void consoleAlert(const char* msg) {
 bool uiConsoleModeActive() { return false; }
 #endif
 
+// The chat store: message ring + thread table, both PSRAM. Extracted from
+// begin() because CONSOLE MODE needs it too. Console mode returns from begin()
+// long before the LVGL setup, and skipping this left _ui_threads null, which an
+// incoming message then dereferenced. It is also what makes unread counts work
+// there: the console shows a message as it arrives, but the message is still
+// appended and still marked unread, so opening the thread later is what clears
+// it, not having seen it scroll past.
+void UITask::allocMessageStore() {
+#if defined(ESP32)
+  _ui_msg_cap = uiDataFsIsSdCard() ? MAX_UI_MESSAGES_SD : MAX_UI_MESSAGES;
+  uiDataEnsureDirs();   // segment dir exists before the loader scans / the first append
+#endif
+  size_t msgs_bytes          = sizeof(UIMessage) * (size_t)_ui_msg_cap;
+  const size_t threads_bytes = sizeof(UIThread)  * MAX_UI_THREADS;
+  if (!_ui_msgs) {
+    _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
+    if (!_ui_msgs && _ui_msg_cap > MAX_UI_MESSAGES) {
+      // PSRAM can't fit the deep ring (unexpected) — drop to the base size rather
+      // than strand 1.3 MB in internal RAM via the fallback below.
+      _ui_msg_cap = MAX_UI_MESSAGES;
+      msgs_bytes  = sizeof(UIMessage) * (size_t)_ui_msg_cap;
+      _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
+    }
+    if (!_ui_msgs) _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_8BIT);
+  }
+  if (!_ui_threads) {
+    _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_SPIRAM);
+    if (!_ui_threads) _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_8BIT);
+  }
+  if (_ui_msgs)    memset(_ui_msgs,    0, msgs_bytes);
+  if (_ui_threads) memset(_ui_threads, 0, threads_bytes);
+  for (int i = 0; i < MAX_UI_THREADS; ++i) {
+    _ui_threads[i].mesh_contact_idx  = -1;
+    memset(_ui_threads[i].mesh_contact_pub, 0, sizeof(_ui_threads[i].mesh_contact_pub));
+    memset(_ui_threads[i].mesh_contact_key6, 0, sizeof(_ui_threads[i].mesh_contact_key6));
+    _ui_threads[i].mesh_channel_slot = -1;
+  }
+}
+
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
   _display    = display;
   _sensors    = sensors;
@@ -49303,6 +49388,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   if (s_console_mode) {
     // Nothing below this point runs: no lv_init(), no draw buffer, no widget
     // tree. The console owns the panel from here.
+    // The chat store, exactly as the graphical path builds it. Console mode
+    // needs it for two reasons: an incoming message dereferences the thread
+    // table, and the monitor below relies on the NORMAL append path so a
+    // message stays unread until its thread is actually opened.
+    allocMessageStore();
     Serial.println("[BOOT] console: begin"); Serial.flush();
     consoleBegin(_display);
     Serial.println("[BOOT] console: panel up"); Serial.flush();
@@ -49718,35 +49808,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // (5000 msgs ≈ 1.3 MB PSRAM — the card comfortably holds the bigger file);
   // internal-flash devices keep 500. Decided once, before the alloc; the loader
   // linearizes a history file written under either capacity.
-#if defined(ESP32)
-  _ui_msg_cap = uiDataFsIsSdCard() ? MAX_UI_MESSAGES_SD : MAX_UI_MESSAGES;
-  uiDataEnsureDirs();   // segment dir exists before the loader scans / the first append
-#endif
-  size_t msgs_bytes          = sizeof(UIMessage) * (size_t)_ui_msg_cap;
-  const size_t threads_bytes = sizeof(UIThread)  * MAX_UI_THREADS;
-  if (!_ui_msgs) {
-    _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
-    if (!_ui_msgs && _ui_msg_cap > MAX_UI_MESSAGES) {
-      // PSRAM can't fit the deep ring (unexpected) — drop to the base size rather
-      // than strand 1.3 MB in internal RAM via the fallback below.
-      _ui_msg_cap = MAX_UI_MESSAGES;
-      msgs_bytes  = sizeof(UIMessage) * (size_t)_ui_msg_cap;
-      _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
-    }
-    if (!_ui_msgs) _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_8BIT);
-  }
-  if (!_ui_threads) {
-    _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_SPIRAM);
-    if (!_ui_threads) _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_8BIT);
-  }
-  if (_ui_msgs)    memset(_ui_msgs,    0, msgs_bytes);
-  if (_ui_threads) memset(_ui_threads, 0, threads_bytes);
-  for (int i = 0; i < MAX_UI_THREADS; ++i) {
-    _ui_threads[i].mesh_contact_idx  = -1;
-    memset(_ui_threads[i].mesh_contact_pub, 0, sizeof(_ui_threads[i].mesh_contact_pub));
-    memset(_ui_threads[i].mesh_contact_key6, 0, sizeof(_ui_threads[i].mesh_contact_key6));
-    _ui_threads[i].mesh_channel_slot = -1;
-  }
+  allocMessageStore();
   // NOTE: a dev-era "interop safety" block used to live here that, on EVERY
   // boot, force-reset manual_add_contacts=0 and OR'd AUTO_ADD_CHAT|REPEATER into
   // autoadd_config, then savePrefs()'d. That silently clobbered the user's saved
@@ -51397,21 +51459,7 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
                         const char* sender_override) {
   (void)path_len;
   _msgcount = msgcount;
-#if CAP_CONSOLE
-  if (s_console_mode) {
-    // Everything below builds LVGL chat state that does not exist here. Print
-    // the message instead, which is also the receiving half console mode was
-    // missing: it could send but never showed anything arriving.
-    const bool chan = (g_last_event == UIEventType::channelMessage);
-    char line[160];
-    snprintf(line, sizeof line, "%s%s: %s",
-             chan ? "#" : "",
-             (from_name && from_name[0]) ? from_name : "?",
-             text ? text : "");
-    consoleWriteLine(line);
-    return;
-  }
-#endif
+
   const bool have_sender_override = (sender_override && sender_override[0]);
   bool channel = (g_last_event == UIEventType::channelMessage);
   const char* thread = channel
@@ -51559,6 +51607,18 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       else         snprintf(line, sizeof line, "RX %s: %s", sender, body);
       termLogAppendC(TERM_C_RX_DM, nullptr, line);
     }
+  }
+#endif
+#if CAP_CONSOLE
+  // The monitor: show it as it arrives, without opening anything. Deliberately
+  // placed AFTER appendMessage, which was called with mark_unread = true, so the
+  // message is stored and still counts as unread. Watching it scroll past is not
+  // reading it; opening the thread is.
+  if (s_console_mode && touchPrefsGetConsoleMonitor()) {
+    char line[200];
+    if (channel) snprintf(line, sizeof line, "#%s %s: %s", thread, sender, body);
+    else         snprintf(line, sizeof line, "%s: %s", sender, body);
+    consoleWriteLine(line);
   }
 #endif
 #if defined(HAS_TOUCH_UI)

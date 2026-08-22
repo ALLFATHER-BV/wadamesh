@@ -29,6 +29,11 @@ extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, ui
 extern int  luaHostMeshChannelNames(char out[][32], int max_n);
 extern bool luaHostMeshSendChannel(const char* chan_name, const char* text);
 extern bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_room);
+// Unread state. The monitor prints messages as they arrive but never marks them
+// read; these report what is waiting and clear a thread on request.
+extern int  consoleHostUnreadTotal();
+extern int  consoleHostThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_channel);
+extern bool consoleHostMarkRead(const char* name);
 
 #if CAP_TOUCH
 // Board touch driver, read directly. lvglTouchRead() is only an adapter that
@@ -364,7 +369,9 @@ void submit() {
 #endif
   if (!strcasecmp(cmd, "help")) {
     consoleWriteLine("console  clear, help, mem, ui");
-    consoleWriteLine("mesh     contacts, chans");
+    consoleWriteLine("mesh     contacts, chans, unread");
+    consoleWriteLine("         read <name>    clear that thread's unread");
+    consoleWriteLine("         monitor on|off show arriving messages");
     consoleWriteLine("         to <name>   pick a contact or channel");
     consoleWriteLine("         msg <text>  send to it");
     consoleWriteLine("node     anything the CLI answers:");
@@ -387,6 +394,38 @@ void submit() {
 #else
     consoleWriteLine("not available on this build");
 #endif
+    return;
+  }
+  // The monitor: on by default, and a boot-persistent pref rather than a
+  // session flag, because "show me what is arriving" is how you want the device
+  // to come up, not something to re-enable every reboot.
+  if (!strncasecmp(cmd, "monitor", 7)) {
+    const char* arg = cmd + 7;
+    while (*arg == ' ') arg++;
+    if (!strcasecmp(arg, "on"))       { touchPrefsSetConsoleMonitor(true);  consoleWriteLine("monitor on"); }
+    else if (!strcasecmp(arg, "off")) { touchPrefsSetConsoleMonitor(false); consoleWriteLine("monitor off"); }
+    else consolePrintf("monitor is %s  (monitor on | monitor off)",
+                       touchPrefsGetConsoleMonitor() ? "on" : "off");
+    return;
+  }
+  // What is waiting. Listing it does NOT clear it.
+  if (!strcasecmp(cmd, "unread")) {
+    char name[40]; int un = 0; bool chan = false; int shown = 0;
+    for (int i = 0; i < 64; i++) {
+      if (!consoleHostThreadAt(i, name, sizeof name, &un, &chan)) break;
+      if (un <= 0) continue;
+      consolePrintf("%s%-20s %d", chan ? "#" : " ", name, un);
+      shown++;
+    }
+    consolePrintf("%d unread in %d thread%s", consoleHostUnreadTotal(), shown, shown == 1 ? "" : "s");
+    return;
+  }
+  // Clearing is explicit. Seeing a message go past in the monitor is not
+  // reading it; this is.
+  if (!strncasecmp(cmd, "read ", 5)) {
+    const char* who = cmd + 5;
+    if (consoleHostMarkRead(who)) consolePrintf("marked %s read", who);
+    else                          consolePrintf("no thread named '%s'", who);
     return;
   }
   if (!strcasecmp(cmd, "contacts")) { cmdContacts(); return; }
