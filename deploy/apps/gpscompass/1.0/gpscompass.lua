@@ -11,15 +11,20 @@
 --   * hard-iron calibration: press C (or Cal), turn the device through every
 --     orientation for ~20 s, press C again. Offsets persist in wada.store.
 --   * orientation: the sensor's axes vs. the screen are not documented for
---     the M9, so O (Rot) steps the frame by 90° and F (Flip) mirrors it.
---     Point the top of the device at a known north and adjust until the dial
---     reads 000 and the number grows as you turn clockwise. Persisted too.
+--     the M9, so the app works it out. Hold the device flat, point the top
+--     edge at north and press A. Which way the sensor's Z axis faces decides
+--     whether the heading runs clockwise or anticlockwise, and that follows
+--     from the sign of the vertical field: Earth's field dips DOWN in the
+--     northern hemisphere and UP in the southern one, so with a GPS fix (or
+--     the last known position) the app reads the handedness off the sensor
+--     itself and only needs the one press for the rest. Both persist.
 -- Magnetic declination is not applied: this is a magnetic compass.
 local ui, sys, mesh, store, timer = wada.ui, wada.sys, wada.mesh, wada.store, wada.timer
 local C = ui.colors
 local AMBER  = 0xE8A33D
 local RING   = 0x3A424A        -- dial ring + minor ticks
-local RING2  = 0x1C2228        -- inner ring
+local RING2  = 0x252C33        -- inner ring
+local PANEL  = C.panel or 0x15181B   -- the dial's own surface (older hosts: literal)
 local app = {}
 
 local caps, W, H
@@ -33,8 +38,10 @@ local L = {}                      -- labels by name
 local has_compass = false
 local cal = nil                   -- { ox, oy, oz } hard-iron offsets
 local calib = nil                 -- in-progress: { mn = {x,y,z}, mx = {x,y,z}, t0 }
-local orient, flip = 0, false     -- quarter turns + mirror applied to the sensor frame
+local align = 0                   -- degrees added to the raw angle so north reads 000
+local mirror = false              -- sensor Z faces into the screen: heading runs the other way
 local mag_norm = nil              -- |B| after offsets, Gauss (sanity check for the user)
+local mag_z = 0                   -- vertical component after offsets (handedness + dip)
 local mag_sat = false             -- last magnetometer sample was flagged as saturated
 
 local hv_x, hv_y = 0, 0           -- smoothed heading unit vector
@@ -76,8 +83,13 @@ local function load_prefs()
   if type(ox) == "number" and type(oy) == "number" and type(oz) == "number" then
     cal = { ox = ox, oy = oy, oz = oz }
   end
-  orient = math.floor(tonumber(store.get("orient", 0)) or 0) % 4
-  flip = (store.get("flip", 0) == 1)
+  align = tonumber(store.get("align", 0)) or 0
+  mirror = (store.get("mirror", 0) == 1)
+end
+
+local function save_align()
+  store.set("align", math.floor(align + 0.5))
+  store.set("mirror", mirror and 1 or 0)
 end
 
 local function save_cal()
@@ -90,16 +102,15 @@ end
 
 -- ---------------------------------------------------------------------------
 -- heading
--- Sensor frame -> screen frame -> heading. After the offsets, `fx` is the
--- field component along the screen's top edge direction and `fy` along its
--- right edge. Device top pointing north: field along +fx -> 0°. Pointing
--- east: north is to the device's left -> fy negative -> 90°.
+-- Raw angle of the horizontal field in the sensor's own frame. `mirror` picks
+-- the direction of travel (which follows from where the sensor's Z axis
+-- points — see align_north); `align` rotates that so the device's top edge
+-- reading north comes out as 000.
 local function mag_heading(m)
   local x, y = m.x, m.y
   if cal then x, y = x - cal.ox, y - cal.oy end
-  if flip then y = -y end
-  for _ = 1, orient do x, y = -y, x end
-  return norm360(math.deg(math.atan(-y, x)))
+  local a = mirror and math.atan(y, x) or math.atan(-y, x)
+  return norm360(math.deg(a) + align)
 end
 
 local function smooth_heading(h)
@@ -129,6 +140,7 @@ local function update_heading(now)
       local x, y, z = m.x, m.y, m.z
       if cal then x, y, z = x - cal.ox, y - cal.oy, z - cal.oz end
       mag_norm = math.sqrt(x * x + y * y + z * z)
+      mag_z = z
       heading, src = smooth_heading(mag_heading(m)), "mag"
     end
     return
@@ -221,7 +233,10 @@ end
 local function draw_dial(tgt_bearing)
   local h = heading or 0
   local live = heading ~= nil
+  -- the page is the firmware's black; the dial sits on its own raised disc so
+  -- it reads as an instrument rather than as drawing on the page
   cv:fill(C.bg)
+  cv:circle(CX, CY, R, PANEL, true)
   -- rings
   cv:circle(CX, CY, R, live and RING or RING2, false, 2)
   cv:circle(CX, CY, R - 14, RING2, false, 1)
@@ -283,7 +298,7 @@ local function draw_sats(n, col)
   for i = 0, 9 do
     local x = i * (cw + 1)
     if i < n then sats_cv:rect(x, 0, cw, SATS_H, col, true)
-    else sats_cv:rect(x, 0, cw, SATS_H, RING, true) end
+    else sats_cv:rect(x, 0, cw, SATS_H, PANEL, true) end
   end
 end
 
@@ -416,18 +431,58 @@ local function toggle_cal()
   hv_x, hv_y = 0, 0
 end
 
-local function rotate_frame()
-  orient = (orient + 1) % 4
-  store.set("orient", orient)
+-- One press does the whole orientation job: hold the device flat with the top
+-- edge at north and press A.
+--   * handedness — whether the heading runs clockwise or anticlockwise depends
+--     on which way the sensor's Z axis faces, and that shows up in the sign of
+--     the vertical field: Earth's field dips DOWN north of the magnetic
+--     equator and UP south of it. With a position (a fix, or the last one the
+--     node knows) the sign of `mag_z` therefore says which way Z points.
+--     Near the equator the dip is too shallow to read, so the mirror is left
+--     as it was and only the offset is set.
+--   * offset — whatever angle the sensor reports while pointing north becomes
+--     the zero.
+local function align_north()
+  if not has_compass then sys.toast("No magnetometer on this board", 1500) return end
+  if not cal then sys.toast("Calibrate first: press C", 2000) return end
+  local m = sys.compass()
+  if not m or m.ovfl then sys.toast("No usable reading", 1500) return end
+
+  local lat
+  local g = caps.sdk_ext and sys.gps() or nil
+  if g then lat = g.lat else
+    local me = mesh.self()
+    if me and (me.lat ~= 0 or me.lon ~= 0) then lat = me.lat end
+  end
+  local dip_ok = math.abs(mag_z) > 0.05 * (mag_norm or 1)
+  if lat and dip_ok then
+    -- Z out of the screen: field points down (north) -> negative z reading
+    local z_up = (lat >= 0) == (mag_z < 0)
+    mirror = not z_up
+  end
+
+  align = 0
+  align = -mag_heading(m)          -- whatever it reads now becomes 000
+  save_align()
   hv_x, hv_y = 0, 0
-  sys.toast(string.format("Frame rotated: %d\194\176", orient * 90), 900)
+  if lat and dip_ok then
+    sys.toast("North set", 1200)
+  elseif not lat then
+    sys.toast("North set (no position: turn right, then A again if it counts down)", 3000)
+  else
+    sys.toast("North set (field too flat here to check direction)", 2500)
+  end
 end
 
+-- Fallback when align_north cannot read the dip (near the magnetic equator, or
+-- no position at all): flip the direction of travel by hand.
 local function flip_frame()
-  flip = not flip
-  store.set("flip", flip and 1 or 0)
+  mirror = not mirror
+  align = 0
+  save_align()
   hv_x, hv_y = 0, 0
-  sys.toast(flip and "Frame mirrored" or "Frame normal", 900)
+  sys.toast(mirror and "Direction reversed - press A again facing north"
+                    or "Direction normal - press A again facing north", 2500)
 end
 
 -- ---------------------------------------------------------------------------
@@ -460,15 +515,15 @@ function app.on_open(w, h)
   local hint_y
 
   if landscape then
-    -- status line over the dial, the dial below it taking what is left after
-    -- a panel wide enough for the values, the hint along the bottom edge
+    -- stats column on the left, dial on the right under its status line, the
+    -- hint centred along the bottom edge
     hint_y = h - TH12 - 3
     dial_y = TH12 + 4
     D = math.min(hint_y - 4 - dial_y, w - 176)
     cv = ui.canvas(D, D)
-    dial_x = 2
-    x0, y0 = D + 10, 4
-    colw = w - x0 - 4
+    dial_x = w - D - 2
+    x0, y0 = 4, 4
+    colw = dial_x - x0 - 8
     line = TH12 + 2
     local function total()
       local t = 0
@@ -524,9 +579,9 @@ function app.on_open(w, h)
     local by = y + 2
     local bx = 6
     if has_compass then
-      ui.button("Cal", bx, by, bw, bh, toggle_cal);  bx = bx + bw + 3
-      ui.button("Rot", bx, by, bw, bh, rotate_frame); bx = bx + bw + 3
-      ui.button("Flip", bx, by, bw, bh, flip_frame);  bx = bx + bw + 3
+      ui.button("Cal", bx, by, bw, bh, toggle_cal);   bx = bx + bw + 3
+      ui.button("North", bx, by, bw, bh, align_north); bx = bx + bw + 3
+      ui.button("Flip", bx, by, bw, bh, flip_frame);   bx = bx + bw + 3
     end
     ui.button("Target", bx, by, bw, bh, function() cycle_target(1) end)
     y = by + bh + 4
@@ -538,8 +593,8 @@ function app.on_open(w, h)
   L.hint:width(w, "center")
   if caps.keyboard then
     local wide = w >= TH12 * 20                 -- room for the target hint too
-    set_text("hint", has_compass and (wide and "C calibrate   O rotate   F flip   <> target"
-                                              or "C calibrate   O rotate   F flip")
+    set_text("hint", has_compass and (wide and "C calibrate   A set north   <> target"
+                                              or "C calibrate   A set north")
                                   or "<> target", C.sub)
   elseif caps.touch then
     set_text("hint", "Tap dial: next target", C.sub)
@@ -594,10 +649,14 @@ function app.on_input(ev)
   elseif ev.type == "key" then
     local k = ev.key
     if k == "c" or k == "C" then toggle_cal()
-    elseif k == "o" or k == "O" then rotate_frame()
-    elseif k == "f" or k == "F" then flip_frame()
+    elseif k == "a" or k == "A" then align_north()
+    elseif k == "f" or k == "F" then flip_frame()      -- fallback, see align_north
     elseif k == "x" or k == "X" then
-      if cal then cal = nil; save_cal(); sys.toast("Calibration cleared", 1000) end
+      if cal then
+        cal = nil; save_cal()
+        align = 0; mirror = false; save_align()
+        sys.toast("Calibration cleared", 1000)
+      end
     end
   end
 end

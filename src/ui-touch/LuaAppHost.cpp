@@ -1070,11 +1070,12 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, uiChart);  lua_setfield(L, -2, "chart");
   lua_pushcfunction(L, uiScroll); lua_setfield(L, -2, "scroll");
   lua_pushcfunction(L, uiTextH);  lua_setfield(L, -2, "text_h");
-  lua_createtable(L, 0, 6);                              // wada.ui.colors (theme)
+  lua_createtable(L, 0, 7);                              // wada.ui.colors (theme)
   lua_pushinteger(L, 0x15B6A6); lua_setfield(L, -2, "accent");
   lua_pushinteger(L, 0xE6E9ED); lua_setfield(L, -2, "text");
   lua_pushinteger(L, 0x7A7F87); lua_setfield(L, -2, "sub");
-  lua_pushinteger(L, 0x0E1216); lua_setfield(L, -2, "bg");
+  lua_pushinteger(L, 0x000000); lua_setfield(L, -2, "bg");      // the page ground (matches the firmware)
+  lua_pushinteger(L, 0x15181B); lua_setfield(L, -2, "panel");   // a raised surface on top of it
   lua_pushinteger(L, 0xD7574E); lua_setfield(L, -2, "bad");
   lua_pushinteger(L, 0x53C06B); lua_setfield(L, -2, "good");
   lua_setfield(L, -2, "colors");
@@ -1323,7 +1324,10 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   h->root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(h->root);
   lv_obj_set_size(h->root, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr));
-  lv_obj_set_style_bg_color(h->root, lv_color_hex(0x0E1216), LV_PART_MAIN);
+  // Pure black, the same ground the rest of the firmware paints (COLOR_BG in
+  // UITask.cpp) — an app page must not read as a lighter panel floating over
+  // the UI. Apps that want a raised surface draw one (wada.ui.colors.panel).
+  lv_obj_set_style_bg_color(h->root, lv_color_hex(0x000000), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(h->root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(h->root, LV_OBJ_FLAG_SCROLLABLE);
   // A plain lv_obj is CLICKABLE by default, and it has to stay so (it is the
