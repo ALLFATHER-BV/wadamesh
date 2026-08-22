@@ -22594,14 +22594,35 @@ static void discoverBuildFeed() {
     lv_label_set_text_fmt(s_discover_status, TR("%s \xC2\xB7 %d nearby (%d rpt, %d comp)"), s_discover_scanning ? "Scanning\xE2\x80\xA6" : "Paused", (int)m, rpt, comp);
 }
 
+// Sweep interval, backing off. A probe is not one packet: it is our zero-hop
+// broadcast PLUS a reply from every node that hears it, so a fixed 4 s sweep
+// with the page left open put a burst on the whole neighbourhood every four
+// seconds, for as long as it stayed open. Reported from a regional packet
+// monitor as "a ton of Control packets" that could not be attributed to any
+// node (a discovery REQ carries no sender identity, by design).
+//
+// The answer is not simply "slower": the first seconds are when the user is
+// actually looking, so those stay fast and the steady state goes quiet. Same
+// reasoning as the 15 s floor the Lua SDK enforces on wada.mesh.discover(),
+// which this used to undercut by nearly 4x while being the built-in.
+static const uint32_t kDiscSweepMs[]  = { 4000, 4000, 8000, 15000, 30000 };
+static uint8_t        s_disc_sweep_n  = 0;
+
+static uint32_t discoverSweepInterval() {
+  const uint8_t n = sizeof(kDiscSweepMs) / sizeof(kDiscSweepMs[0]);
+  return kDiscSweepMs[s_disc_sweep_n < n ? s_disc_sweep_n : (n - 1)];
+}
+
 static void discoverTimerCb(lv_timer_t* t) {
   (void)t;
   if (!s_discover_root) return;
   const uint32_t now = millis();
-  if (s_discover_scanning && (s_discover_last_scan_ms == 0 || (now - s_discover_last_scan_ms) >= 4000)) {
+  if (s_discover_scanning &&
+      (s_discover_last_scan_ms == 0 || (now - s_discover_last_scan_ms) >= discoverSweepInterval())) {
     if (the_mesh.getRemainingTxBudget() >= 300) {   // airtime gate: keep a duty-cycle cushion
       the_mesh.uiStartDiscoverScan(0);              // 0 = all node types
       s_discover_last_scan_ms = now;
+      if (s_disc_sweep_n < 250) s_disc_sweep_n++;
     }
   }
   discoverBuildFeed();
@@ -22611,7 +22632,10 @@ static void discoverTimerCb(lv_timer_t* t) {
 static void discoverScanToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   s_discover_scanning = !s_discover_scanning;
-  if (s_discover_scanning) s_discover_last_scan_ms = 0;   // resume -> sweep immediately
+  if (s_discover_scanning) {
+    s_discover_last_scan_ms = 0;   // resume -> sweep immediately...
+    s_disc_sweep_n = 0;            // ...and at the fast cadence again
+  }
   if (s_discover_btn_lbl) lv_label_set_text(s_discover_btn_lbl, s_discover_scanning ? "Stop" : "Scan");
   discoverBuildFeed();
 }
@@ -22653,6 +22677,7 @@ static void closeDiscoverPage() {
   s_discover_feed = s_discover_status = s_discover_btn_lbl = s_disc_footer = nullptr;
   s_disc_row_n = 0;
   s_discover_scanning = true;
+  s_disc_sweep_n = 0;   // a fresh look starts fast, then backs off
   if (s_apppage_close == closeDiscoverPage) {
     s_apppage_title = nullptr; s_apppage_close = nullptr;
     statusBarSetTall(false); updateGlobalStatusBar();
@@ -22733,6 +22758,7 @@ static void openDiscoverPage() {
 
   the_mesh.discoverClear();
   s_discover_scanning = true;
+  s_disc_sweep_n = 0;   // a fresh look starts fast, then backs off
   s_discover_last_scan_ms = 0;                // fire the first sweep on the first tick
   discoverBuildFeed();
   s_discover_timer = lv_timer_create(discoverTimerCb, 1000, nullptr);
