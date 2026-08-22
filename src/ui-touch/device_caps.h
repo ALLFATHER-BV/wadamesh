@@ -304,6 +304,17 @@
   #endif
 #endif
 
+// Read-only access to a physical SD card's directory tree from Lua. This first
+// pass follows the existing shared-SPI Arduino SD lifecycle; P4 SD_MMC needs its
+// own removal/recovery contract before it can safely expose the same API.
+#ifndef CAP_LUA_SD_LIST
+  #if CAP_LUA_SDK_EXT && CAP_SD
+    #define CAP_LUA_SD_LIST 1
+  #else
+    #define CAP_LUA_SD_LIST 0
+  #endif
+#endif
+
 // Compile the translations into the image (i18n_builtin.h, generated from
 // deploy/apps/lang/*.lang) instead of relying on downloading a .lang file.
 // ON for boards where the Lua Store is not dependable — the V4 runs at ~95%

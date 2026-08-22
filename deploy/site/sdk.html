@@ -141,6 +141,7 @@
     <a href="#net">wada.net</a>
     <a href="#store">wada.store</a>
     <a href="#fs">wada.fs</a>
+    <a href="#sd">wada.sd</a>
     <a href="#sys">wada.sys</a>
     <a href="#timer">wada.timer</a>
     <a href="#discover">Discovery</a>
@@ -436,6 +437,19 @@ end</code></pre>
       </div></div>
     </section>
 
+    <section class="doc" id="sd">
+      <h2>wada.sd <span class="chip">sd_list</span></h2>
+      <div class="row"><div class="prose">
+        <p>Read-only directory access to the physical SD card. This is separate from <a href="#fs">wada.fs</a>: it can inspect the card's directory tree, but cannot read file contents, write, rename or delete anything. Check <code>wada.sys.caps().sd_list</code> before using it.</p>
+        <table class="api">
+          <tr><th>Call</th><th>Returns / does</th></tr>
+          <tr><td>wada.sd.list([path])</td><td>Returns an array of <code>{name, type, size, mtime}</code>, or <code>nil, error</code>. <code>path</code> defaults to <code>/</code>. <code>type</code> is <code>"file"</code> or <code>"dir"</code>; directories report size 0, and <code>mtime</code> is 0 when the filesystem has no timestamp.</td></tr>
+        </table>
+        <p>Paths are absolute from the card root and at most 191 bytes. Empty segments, trailing slashes, backslashes, <code>.</code> and <code>..</code> are rejected with <code>nil, "bad path"</code>. A missing or unreadable card returns <code>nil, "no sd"</code>; <code>"busy"</code> means another storage operation is changing the card lifecycle, so retry later. Missing paths and files used as directories return <code>"not found"</code> and <code>"not a directory"</code>.</p>
+        <p>One call returns at most 192 entries. When more exist, the returned array also has <code>entries.truncated == true</code>. Listing may mount an inserted card through the firmware's existing SD lifecycle, but never formats or modifies it.</p>
+      </div></div>
+    </section>
+
     <section class="doc" id="sys">
       <h2>wada.sys</h2>
       <div class="row"><div class="prose">
@@ -447,7 +461,7 @@ end</code></pre>
           <tr><td>wada.sys.epoch()</td><td>Unix time in seconds, or <code>nil</code> when the clock has not been set yet (no GPS fix and no NTP). Always handle the <code>nil</code>.</td></tr>
           <tr><td>wada.sys.datetime()</td><td><code>{year, month, day, hour, min, sec, wday}</code> in local time. <code>wday</code> is 0 for Sunday.</td></tr>
           <tr><td>wada.sys.beep()</td><td>Short beep on boards with a buzzer; silent elsewhere, and silent when the user has sound off.</td></tr>
-          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, discover, input, rx_identity, list, packets, sensors, map, measure}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span> below. The last three are feature flags for calls added after the extended SDK first shipped, so an app can degrade on older firmware instead of erroring.</td></tr>
+          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, discover, input, rx_identity, list, packets, sensors, map, measure}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span>, and <code>sd_list</code> before using <code>wada.sd</code>. Feature flags let an app degrade on older firmware instead of erroring.</td></tr>
           <tr><td>wada.sys.battery() <span class="chip">ext</span></td><td><code>{mv, pct, charging}</code>.</td></tr>
           <tr><td>wada.sys.env() <span class="chip">sensors</span></td><td><code>{temp_c, humidity, pressure_hpa, alt_m}</code>, or <code>nil</code>. A field is present only when the hardware actually reported it, so you can tell "no humidity sensor" from "0% humidity". Gated on <code>caps().sensors</code> &mdash; does this board <i>have</i> the sensor rail &mdash; and <b>not</b> on <code>sdk_ext</code>, which is a memory gate. Those are different questions: the plain Heltec V4 has the Expansion Kit but not the extended SDK, and most boards with the extended SDK have no sensors at all.</td></tr>
           <tr><td>wada.sys.gps() <span class="chip">ext</span></td><td><code>{lat, lon, lat_e6, lon_e6, alt_m, sats, time}</code>, or <code>nil</code> with no fix — which is the normal indoor case, so handle it. <code>lat_e6</code>/<code>lon_e6</code> are exact micro-degrees; <code>lat</code>/<code>lon</code> are single-precision floats, so <a href="#discover">log the integers</a>. <code>time</code> is satellite time, absent until the receiver has decoded the date.</td></tr>
@@ -570,7 +584,7 @@ end</code></pre>
       <div class="row"><div class="prose">
         <p>Apps run in a restricted environment. These are removed: <code>io</code>, <code>os</code>, <code>require</code>, <code>dofile</code>, and loading new chunks at runtime. Available: <code>math</code>, <code>string</code>, <code>table</code>, and the usual <code>pairs</code>, <code>ipairs</code>, <code>select</code>, <code>pcall</code>, <code>tostring</code>, <code>tonumber</code>.</p>
         <p>Memory comes from a capped pool in PSRAM, so an app that allocates without bound fails its own allocation rather than starving the radio or the UI. There is an <a href="#budget">instruction budget</a> on every callback for the same reason.</p>
-        <p><b>The extended calls are not on every board.</b> Anything marked <span class="chip">ext</span> above &mdash; <code>wada.fs</code>, <code>wada.mesh.send</code>, <code>wada.mesh.send_dm</code>, <code>wada.mesh.discover</code>, <code>sys.battery</code>, <code>sys.gps</code> &mdash; needs a board with the memory to carry it, so the Heltec V4 keeps its RAM for the mesh instead. Call <code>wada.sys.caps().sdk_ext</code> and degrade gracefully rather than assuming; an app that hard-depends on them without checking simply errors out on the small boards.</p>
+        <p><b>The extended calls are not on every board.</b> Anything marked <span class="chip">ext</span> above &mdash; <code>wada.fs</code>, <code>wada.mesh.send</code>, <code>wada.mesh.send_dm</code>, <code>wada.mesh.discover</code>, <code>sys.battery</code>, <code>sys.gps</code> &mdash; needs a board with the memory to carry it, so the Heltec V4 keeps its RAM for the mesh instead. Call <code>wada.sys.caps().sdk_ext</code> and degrade gracefully rather than assuming. <code>wada.sd</code> additionally needs a physical card interface, reported by <code>caps().sd_list</code>.</p>
         <p>Rate limits are part of the contract, not a rainy-day guard: <code>wada.fs</code> writes are about one per second with a 32&nbsp;KB file cap, and <code>wada.mesh.send</code> has a 5&nbsp;second floor and a 180-character limit. They return <code>false, "too fast"</code> rather than throwing, and hitting them is expected &mdash; handle it.</p>
         <p>None of this makes a hostile app safe, which is why the catalog is curated. It makes an <i>honest</i> app that has a bug survivable: it gets closed, and the device keeps carrying traffic.</p>
       </div></div>
