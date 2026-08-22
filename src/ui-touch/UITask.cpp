@@ -42368,7 +42368,14 @@ static void updateGlobalStatusBar() {
   // chat is still open underneath it, so suppress chat-mode chrome (the cog + back
   // chevron + centred title) then — otherwise they sit over the page's "‹ title" and
   // swallow its back tap.
-  const bool chat_open      = (s_chat_title[0] != '\0') && !s_apppage_title;
+  // ...and a settings detail page too. It sets s_settings_open_cat rather than
+  // s_apppage_title, so the guard above missed it: opening Settings from inside
+  // a chat left the chat's back chevron AND its cog drawn over the settings
+  // page's own "‹ Title". Two back chevrons on the left of the tall bar, and the
+  // cog is clickable, so a tap near the wrong one went to channel settings or
+  // nowhere instead of going back (#308).
+  const bool chat_open      = (s_chat_title[0] != '\0') && !s_apppage_title &&
+                              (s_settings_open_cat < 0);
   const bool inbox_overview = (getActiveTab() == CHAT_INBOX_TAB_INDEX) && !chat_open && (s_settings_open_cat < 0) && !s_apppage_title;
   {
 #if defined(TLORA_PAGER)
