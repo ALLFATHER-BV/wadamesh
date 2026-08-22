@@ -553,12 +553,23 @@ but nothing ever talked to it; the QMI8658 IMU still has no driver.
    10, 4000 LSB/G) buys 4× finer counts; not worth it unless `|B|` is noisy.
 
 **Hardware-verify recipe:** flash; boot log shows the `M9 compass:` line;
-copy `gpscompass.lua` + `gpscompass.json` to the SD card at
-`/meshcomod/apps/` (the Store's "Your own apps" section picks them up; the
-catalog copy arrives once `deploy/apps` is published); open the app; `C`,
-turn the device through every orientation for 20 s; check `|B|`; set O/F
-against a known north; walk with GPS on and confirm `Speed`/`Course` populate
-above ~1 km/h; pick a contact and sanity-check the bearing against the map.
+push the app over the console — the M9's card is soldered on, so
+`scripts/sideload_app.py --port /dev/cu.wchusbserial10 --reboot
+deploy/apps/gpscompass/1.0` (the `fput`/`fadd`/`fend` CLI commands write into
+the Store's own `/apps/` on the card; "Your own apps" lists it, the catalog
+copy arrives once `deploy/apps` is published); open the app; `C`, turn the
+device through every orientation for 20 s; check `|B|`; set O/F against a
+known north; walk with GPS on and confirm `Speed`/`Course` populate above
+~1 km/h; pick a contact and sanity-check the bearing against the map.
+
+Serial-console notes learned doing this: the CH34x bridge resets the board
+whenever the port is opened (DTR/RTS, regardless of what pyserial asks), and
+the console is not serviced until `[BOOT] ui ready`; the UART interrupt is
+not IRAM-resident, so while the loop sits in a flash-cache pause only the
+128-byte hardware FIFO buffers input and the middle of a longer line is
+lost — hence the sideload's short, self-checking lines. Done on 2026-08-22:
+`M9 compass: QMC6309 ok (id=0x90, 50 Hz, +/-32 G, OSR 8/8)` on the first
+flash (0x7C answers, config sticks); app files pushed and listed by `ls /apps`.
 
 ## Deferred — hardware-verify list
 

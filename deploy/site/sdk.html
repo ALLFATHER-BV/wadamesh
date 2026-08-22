@@ -402,6 +402,7 @@ return app</code></pre>
         <p>Drop a bare <code>.lua</code> file into <code>/apps/</code> on the SD card and it shows up in the drawer — no manifest needed. The filename becomes the name. That is the fast loop while you are writing something.</p>
         <p>Apps you side-load appear in the Store under <b>Your own apps</b>, where you can remove them again. A long press on the drawer tile also offers to remove.</p>
         <p>On boards without an SD card the same path lives on internal storage.</p>
+        <p>No card slot you can reach (the ThinkNode M9's card is soldered on)? Push the files over the USB serial console instead: <code>scripts/sideload_app.py --port /dev/cu.wchusbserial10 --reboot deploy/apps/&lt;id&gt;/&lt;ver&gt;</code> sends the <code>.lua</code> + <code>.json</code> through the firmware's <code>fput</code>/<code>fadd</code>/<code>fend</code> commands into the same <code>/apps/</code> the Store uses (<code>--dest /lang</code> for a language file). Needs pyserial.</p>
       </div></div>
     </section>
 

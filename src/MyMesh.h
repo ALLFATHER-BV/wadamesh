@@ -1214,7 +1214,17 @@ private:
   bool _cli_rescue;
   bool send_unscoped;   // force un-scoped flood (instead of using send_scope)
   bool scope_direct_floods = false;  // opt-in (#64): tag direct/login/admin floods with the default region scope
-  char cli_command[80];
+  // 200 not 80: the serial sideload ("fadd ...", see cliPutChunk) carries up
+  // to ~130 chars per line; every other command is far shorter.
+  char cli_command[200];
+#if defined(ESP32)
+  // Serial sideload state ("fput" / "fadd" / "fend"): the file being written.
+  File _cli_put;
+  uint32_t _cli_put_len = 0;
+  void cliPutBegin(const char* path);
+  void cliPutChunk(const char* args);
+  void cliPutEnd();
+#endif
   uint8_t app_target_ver;
   uint8_t *sign_data;
   uint32_t sign_data_len;
