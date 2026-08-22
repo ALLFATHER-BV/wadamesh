@@ -43,11 +43,17 @@ deploy/apps/<id>/<ver>/<id>.lua      the app
 The manifest is one line:
 
 ```json
-{"id":"snake","name":"Snake","ver":"1.0","desc":"The classic, in Lua. Swipe to steer."}
+{"id":"snake","name":"Snake","ver":"1.0","desc":"The classic, in Lua. Swipe to steer.","icon":"game"}
 ```
 
 `desc` is what people read in the store listing before installing, so make it say
 what the app *does*. One sentence.
+
+`icon` is optional and picks the drawer tile's glyph by NAME — an app cannot
+ship its own artwork, so anything unrecognised falls back to the generic app
+symbol. Choose from: `gps` / `compass` / `map`, `radio`, `signal`, `chart`,
+`list`, `message`, `person`, `group`, `bell`, `star`, `search`, `settings`,
+`battery`, `game`.
 
 **Version directories are immutable.** Once `1.0/` is published it is never edited
 — a change ships as `1.1/`. Devices cache by version, so editing in place means
@@ -58,6 +64,11 @@ some users silently run different code from others under the same version number
 1. Fork `ALLFATHER-BV/wadamesh` and branch off `main`.
 2. Add your `deploy/apps/<id>/<ver>/` directory with the two files.
 3. Add or update your app's row in `deploy/apps/apps.json` (the store catalog).
+   Add `"seed": false` to that row if your app should be downloadable but not
+   compiled into the firmware. Apps in the catalog are baked into the image as
+   built-ins for boards that cannot reach the Store, and that is flash spent on
+   the boards with the least of it. A large app, or one that needs hardware
+   those boards do not have, is better left to the Store.
 4. Open a pull request. In the description, say what the app does, which boards
    you tested it on, and anything it persists via `wada.store`.
 

@@ -212,6 +212,26 @@
   #define CAP_SENSORS 0
 #endif
 
+// Magnetometer readable by apps (wada.sys.compass(), caps().compass). A HARDWARE
+// gate, deliberately separate from CAP_SENSORS (the V4 expansion-kit env
+// sensors) and from the CAP_LUA_SDK_EXT memory gate: the ThinkNode M9's
+// QMC6309 is the only one wired so far (variants/thinknode_m9/M9Compass.*).
+#if defined(HAS_M9_COMPASS)
+  #define CAP_COMPASS 1
+#else
+  #define CAP_COMPASS 0
+#endif
+
+// Accelerometer readable by apps (wada.sys.accel(), caps().accel). Same kind of
+// hardware gate as CAP_COMPASS: the ThinkNode M9's QMI8658 is the only one
+// driven so far (variants/thinknode_m9/M9Imu.*). Its point is tilt — a 2-axis
+// magnetic heading is wrong by ~1.5 degrees per degree of tilt at mid latitudes.
+#if defined(HAS_M9_IMU)
+  #define CAP_IMU 1
+#else
+  #define CAP_IMU 0
+#endif
+
 #if defined(HAS_CC_BRIGHTNESS)
   #define CAP_BACKLIGHT 1
 #else

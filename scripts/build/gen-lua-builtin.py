@@ -36,6 +36,14 @@ def main():
     entries = []
     for app in cat:
         aid, ver, name = app['id'], app['ver'], app['name']
+        # "seed": false keeps an app out of the image while still publishing it to
+        # the Store. Seeding is not free: it is flash on the boards that have the
+        # least of it, which are exactly the CAP_BUILTIN_LUA_APPS boards. An app
+        # that is large, or that needs hardware those boards do not have, earns its
+        # place rather than getting it by being in the catalog.
+        if app.get('seed') is False:
+            print('  skip %s: seed=false in apps.json' % aid)
+            continue
         src = os.path.join(APPS, aid, ver, aid + '.lua')
         if not os.path.exists(src):
             print('  skip %s: no %s' % (aid, os.path.relpath(src, ROOT)))

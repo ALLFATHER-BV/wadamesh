@@ -227,6 +227,9 @@ return app</code></pre>
     <section class="doc" id="ui">
       <h2>wada.ui</h2>
       <div class="row"><div class="prose">
+        <p><b>Colours.</b> <code>wada.ui.colors</code> carries the firmware's palette: <code>bg</code> (the page ground — black, the same as the rest of the interface), <code>panel</code> (a raised surface to lift a card or an instrument off that ground), <code>text</code>, <code>sub</code>, <code>accent</code>, <code>good</code>, <code>bad</code>. Use them rather than your own hex so an app looks like part of the device.</p>
+      </div></div>
+      <div class="row"><div class="prose">
         <p>Widgets are created in order, top to bottom, on the app's page. Every constructor returns a handle with methods you can call later.</p>
         <table class="api">
           <tr><th>Call</th><th>Returns / does</th></tr>
@@ -247,7 +250,7 @@ return app</code></pre>
           <tr><td>lbl:set(text)</td><td>Replace the text.</td></tr>
           <tr><td>lbl:color(c)</td><td>Set the colour, e.g. <code>wada.ui.colors.accent</code>.</td></tr>
           <tr><td>lbl:pos(x, y)</td><td>Place it explicitly instead of in flow.</td></tr>
-          <tr><td>lbl:width(px)</td><td>Fix the width; longer text wraps instead of running off the panel.</td></tr>
+          <tr><td>lbl:width(px, [align])</td><td>Fix the width; longer text wraps instead of running off the panel. Optional <code>"center"</code> / <code>"right"</code> aligns the text inside that width (default left).</td></tr>
         </table>
         <h3>Canvas handle</h3>
         <table class="api">
@@ -346,6 +349,7 @@ return app</code></pre>
           <tr><td>wada.timer.stop()</td><td>Stops the <code>on_tick</code> heartbeat.</td></tr>
           <tr><td>wada.timer.stop(handle) / handle:stop()</td><td>Stops that one timer.</td></tr>
         </table>
+        <p><b>Repeating timers pause while the display sleeps.</b> Nothing you draw is visible then, and an app polling a sensor would otherwise hold that hardware awake for a dark screen — so <code>on_tick</code> and repeating named timers stop being called and resume on wake. A one-shot from <code>timer.after</code> still fires: it is scheduled app logic, and skipping it would drop the work rather than defer it. Derive elapsed time from <code>wada.sys.millis()</code> rather than counting ticks and a sleep looks like one long frame.</p>
         <p>An app used to get exactly one clock. Anything needing a second cadence &mdash; a slow poll beside a fast animation, a delayed retry, a timeout on a fetch &mdash; had to be a counter inside <code>on_tick</code>, which is both tedious and wrong when the tick period changes. Up to <b>eight</b> named timers per app; a ninth raises an error rather than quietly filling LVGL's timer list. Everything is stopped for you when the app closes.</p>
       </div></div>
     </section>
@@ -392,7 +396,7 @@ end</code></pre>
           <tr><td>wada.geo.cardinal(degrees)</td><td><code>"N"</code>, <code>"NE"</code>, … Eight points, not sixteen: more would be false precision on a bearing derived from consumer GPS.</td></tr>
         </table>
         <p>In C because it is not a convenience wrapper: haversine and the bearing formula are a dozen trig calls each, and an app doing them per contact per tick spends a real slice of its <a href="#budget">instruction budget</a> on arithmetic the chip does in microseconds.</p>
-        <div class="note"><p><b>This is not a compass.</b> <code>bearing()</code> is a true bearing from one coordinate to another &mdash; the direction to <i>steer</i>, not the direction the user is <i>facing</i>. No board in the range has a magnetometer, so a magnetic heading is not available at any level of the stack. To point somebody at something you need their course over ground from successive GPS fixes, or a physical compass.</p></div>
+        <div class="note"><p><b>This is not a compass.</b> <code>bearing()</code> is a true bearing from one coordinate to another &mdash; the direction to <i>steer</i>, not the direction the user is <i>facing</i>. Only the ThinkNode M9 carries a magnetometer, and even there the heading is the app&apos;s to derive &mdash; see <a href="#sys">wada.sys.compass()</a>. On every other board a magnetic heading is not available at any level of the stack: to point somebody at something you need their course over ground from successive GPS fixes (<code>sys.gps().course</code>), or a physical compass.</p></div>
       </div></div>
     </section>
 
@@ -462,10 +466,13 @@ end</code></pre>
           <tr><td>wada.sys.datetime()</td><td><code>{year, month, day, hour, min, sec, wday}</code> in local time. <code>wday</code> is 0 for Sunday.</td></tr>
           <tr><td>wada.sys.tr(s)</td><td>Translate <code>s</code> through the device's active language, using the same table the firmware's own interface uses. Returns <code>s</code> unchanged when there is no translation, so it is always safe to wrap a string. Add your keys to <code>deploy/apps/lang/&lt;code&gt;.lang</code> alongside the firmware's. Older firmware has no <code>sys.tr</code>: write <code>local tr = sys.tr or function(x) return x end</code> and call <code>tr()</code>.</td></tr>
           <tr><td>wada.sys.beep()</td><td>Short beep on boards with a buzzer; silent elsewhere, and silent when the user has sound off.</td></tr>
-          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, discover, input, rx_identity, list, packets, sensors, map, measure}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span>, and <code>sd_list</code> before using <code>wada.sd</code>. Feature flags let an app degrade on older firmware instead of erroring.</td></tr>
+          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, compass, accel, discover, input, rx_identity, list, packets, sensors, map, measure}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span> below, and <code>sd_list</code> before using <code>wada.sd</code>. The rest are feature flags for calls added after the extended SDK first shipped, so an app can degrade on older firmware instead of erroring.</td></tr>
           <tr><td>wada.sys.battery() <span class="chip">ext</span></td><td><code>{mv, pct, charging}</code>.</td></tr>
           <tr><td>wada.sys.env() <span class="chip">sensors</span></td><td><code>{temp_c, humidity, pressure_hpa, alt_m}</code>, or <code>nil</code>. A field is present only when the hardware actually reported it, so you can tell "no humidity sensor" from "0% humidity". Gated on <code>caps().sensors</code> &mdash; does this board <i>have</i> the sensor rail &mdash; and <b>not</b> on <code>sdk_ext</code>, which is a memory gate. Those are different questions: the plain Heltec V4 has the Expansion Kit but not the extended SDK, and most boards with the extended SDK have no sensors at all.</td></tr>
-          <tr><td>wada.sys.gps() <span class="chip">ext</span></td><td><code>{lat, lon, lat_e6, lon_e6, alt_m, sats, time}</code>, or <code>nil</code> with no fix — which is the normal indoor case, so handle it. <code>lat_e6</code>/<code>lon_e6</code> are exact micro-degrees; <code>lat</code>/<code>lon</code> are single-precision floats, so <a href="#discover">log the integers</a>. <code>time</code> is satellite time, absent until the receiver has decoded the date.</td></tr>
+          <tr><td>wada.sys.gps() <span class="chip">ext</span></td><td><code>{lat, lon, lat_e6, lon_e6, sats, alt_m, time, speed_kmh, course}</code>, or <code>nil</code> with no fix &mdash; which is the normal indoor case, so handle it. <code>lat_e6</code>/<code>lon_e6</code> are exact micro-degrees; <code>lat</code>/<code>lon</code> are single-precision floats, so <a href="#discover">log the integers</a>. <code>alt_m</code> is metres. <code>time</code> is satellite time, absent until the receiver has decoded the date. <code>speed_kmh</code> and <code>course</code> (degrees clockwise from north) appear only on boards whose GPS provider reports them, and <code>course</code> only while actually moving &mdash; a stationary receiver has no course, so it is absent rather than 0. Treat those last three as optional.</td></tr>
+          <tr><td>wada.sys.accel() <span class="chip">accel</span></td><td>Only where <code>caps().accel</code> is true (ThinkNode M9 today). <code>{x, y, z}</code> acceleration in g, sensor frame, or <code>nil</code> when nothing fresh. Held still the magnitude is 1 and the axis pointing at the sky carries it &mdash; which is how an app works out which axis is which. Its real job is tilt: a magnetic heading taken from two axes is wrong by roughly 1.5&deg; per degree of tilt at mid latitudes, because the field dips ~60&deg; and tipping the device leaks that vertical field into the horizontal pair.</td></tr>
+          <tr><td>wada.sys.keep_awake(on)</td><td>For an app that is <i>measuring</i> rather than showing: holds the screen on and keeps <code>on_tick</code> running. Released automatically when the app closes. Use it around a calibration or a capture, not for the whole app &mdash; ticks otherwise pause with the display.</td></tr>
+          <tr><td>wada.sys.compass()</td><td>Only where <code>caps().compass</code> is true (ThinkNode M9 today), and note that this one is <b>not</b> <span class="chip">ext</span>-gated: it rides the hardware flag, not the memory flag. <code>{x, y, z, ovfl}</code> magnetic field in Gauss in the sensor's own frame, <b>uncalibrated</b>, or <code>nil</code> when nothing fresh; <code>ovfl</code> is true when the chip flagged the sample as saturated (a magnet nearby), in which case show that rather than a heading. There is deliberately no <code>heading</code>: the board carries a hard-iron bias the user has to calibrate away (track per-axis min/max while they turn the device, subtract the midpoints), and the sensor-to-screen axis mapping is the app's to set. Then <code>math.atan(-fy, fx)</code> with <code>fx</code> along the screen's top edge and <code>fy</code> along its right edge gives the heading. The GPS Compass app in the Store is the worked example.</td></tr>
         </table>
       </div></div>
     </section>
@@ -539,22 +546,16 @@ end</code></pre>
         <p>On the device an app is one or two files on the active storage root:</p>
         <pre><code>/apps/&lt;id&gt;.lua     the code
 /apps/&lt;id&gt;.json    the manifest (optional for side-loaded apps)</code></pre>
-        <p>The manifest is what the Store and the drawer read:</p>
-        <pre><code>{
-  "id":      "airtime",
-  "name":    "Airtime",
-  "version": "1.3",
-  "min_api": 1,
-  "icon":    "A",
-  "description": "Duty cycle and airtime budget.",
-  "boards":  ["*"]
-}</code></pre>
+        <p>The manifest is what the Store and the drawer read — one line, all values quoted strings:</p>
+        <pre><code>{"id":"airtime","name":"Airtime","ver":"1.3","desc":"Duty cycle and airtime budget.","icon":"chart"}</code></pre>
         <table class="api">
           <tr><td>id</td><td>Lowercase, no spaces. Must match the filename.</td></tr>
-          <tr><td>min_api</td><td>Refuse to run on firmware older than this API version.</td></tr>
-          <tr><td>icon</td><td>A single character shown in the drawer tile and Store card.</td></tr>
-          <tr><td>boards</td><td><code>["*"]</code> for everything, or a list of board ids to restrict to.</td></tr>
+          <tr><td>name</td><td>Shown on the drawer tile and the Store card.</td></tr>
+          <tr><td>ver</td><td><code>major.minor</code>, matching the version directory. Compared against the catalog to offer an update.</td></tr>
+          <tr><td>desc</td><td>One sentence, read in the Store before installing.</td></tr>
+          <tr><td>icon</td><td>Optional. Picks the drawer tile's glyph by name — an app cannot ship artwork, and an unknown name falls back to the generic app symbol. One of: <code>gps</code> / <code>compass</code> / <code>map</code>, <code>radio</code>, <code>signal</code>, <code>chart</code>, <code>list</code>, <code>message</code>, <code>person</code>, <code>group</code>, <code>bell</code>, <code>star</code>, <code>search</code>, <code>settings</code>, <code>battery</code>, <code>game</code>.</td></tr>
         </table>
+        <p>Earlier versions of this page showed <code>version</code>, <code>min_api</code>, <code>description</code> and <code>boards</code>. The device has never parsed those — its manifest reader takes quoted strings only, and the keys above are the ones it looks for. Use <code>ver</code> and <code>desc</code>.</p>
       </div></div>
     </section>
 
@@ -564,6 +565,7 @@ end</code></pre>
         <p>Drop a bare <code>.lua</code> file into <code>/apps/</code> on the SD card and it shows up in the drawer — no manifest needed. The filename becomes the name. That is the fast loop while you are writing something.</p>
         <p>Apps you side-load appear in the Store under <b>Your own apps</b>, where you can remove them again. A long press on the drawer tile also offers to remove.</p>
         <p>On boards without an SD card the same path lives on internal storage.</p>
+        <p>No card slot you can reach (the ThinkNode M9's card is soldered on)? Push the files over the USB serial console instead: <code>scripts/sideload_app.py --port /dev/cu.wchusbserial10 --reboot deploy/apps/&lt;id&gt;/&lt;ver&gt;</code> sends the <code>.lua</code> + <code>.json</code> through the firmware's <code>fput</code>/<code>fadd</code>/<code>fend</code> commands into the same <code>/apps/</code> the Store uses (<code>--dest /lang</code> for a language file). Needs pyserial.</p>
       </div></div>
     </section>
 

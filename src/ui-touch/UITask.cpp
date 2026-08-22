@@ -123,6 +123,12 @@
   #elif defined(HAS_M9_KEYBOARD)
     #include <M9Keyboard.h>
   #endif
+  #if defined(HAS_M9_COMPASS)
+    #include <M9Compass.h>           // wada.sys.compass() source (luaHostCompass)
+  #endif
+  #if defined(HAS_M9_IMU)
+    #include <M9Imu.h>               // wada.sys.accel() source (luaHostAccel)
+  #endif
   #if defined(HAS_PAGER_KEYBOARD)
     #include <helpers/input/PagerKeyboard.h>
   #endif
@@ -4326,7 +4332,8 @@ static bool navCollect(lv_obj_t* obj) {
     if (c && navCollect(c) && !lv_obj_has_flag(c, NAV_HMOVE_FLAG)) descHasClickable = true;
   }
   bool meClickable = lv_obj_has_flag(obj, LV_OBJ_FLAG_CLICKABLE)
-                     && !lv_obj_has_flag(obj, NAV_SKIP_FLAG);   // skip explicit non-nav targets (e.g. the map catcher)
+                     && !lv_obj_has_flag(obj, NAV_SKIP_FLAG)      // skip explicit non-nav targets (e.g. the map catcher)
+                     && !lv_obj_has_flag(obj, NAV_PASSTHRU_FLAG); // container that only exists to catch touches (Lua app body)
   if (meClickable && !descHasClickable) {
     // LVGL's btn/switch/checkbox widgets ship with LV_OBJ_FLAG_SCROLL_ON_FOCUS,
     // and lv_obj's own FOCUSED handler scrolls them into view — bypassing our
@@ -8223,10 +8230,26 @@ static void tabChangedCb(lv_event_t* e) {
   } else {
     if (prev_t == MAP_TAB_INDEX) applyMapChrome(false);   // restore opaque chrome
     clearRouteReplay();    // drop any route-replay overlay when leaving the map
-    // Drop tile JPEGs from PSRAM the moment we leave the tab — keeps the
-    // working set small and lets the map cold-load with fresh data on
-    // the next visit. (CPU stays at 160 MHz — the whole UI runs there.)
-    freeMapTiles();
+    // Leaving the map used to drop all nine decoded tiles, so every re-open
+    // paid the full read + JPEG decode again — measured at ~2.5 s of blocked
+    // UI on the M9 ([STALL] ui:lvgl), on EVERY visit, not just the first.
+    // The grid costs 9 x 128 KB = 1.15 MB of PSRAM, which only matters on the
+    // 2 MB V4 (the same board renderMapTiles already caps to a 4-tile pool),
+    // so keep the decodes on boards with room and re-open as a pure blit.
+    // Freshness is unaffected: renderMapTiles re-attempts MISSING tiles on
+    // every pass, and a style / mode / storage change frees the cache at its
+    // own call sites.
+    // Nothing is released on a roomy board: the slots keep their identity,
+    // their pixels AND their widgets, which is exactly the state panning
+    // within the tab already leaves them in — the tab is simply not drawn
+    // while it is hidden. (releaseMapTileSlot is not enough here: it clears
+    // in_use, so the next render would treat the tile as absent and decode
+    // it again.)
+    static const size_t kPsramTotalB = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    // No non-zero guard: a board reporting 0 belongs on the CONSERVATIVE side of
+    // this test, not the roomy one.
+    const bool low_psram = (kPsramTotalB < 4u * 1024 * 1024);
+    if (low_psram) freeMapTiles();
   }
 
   // The status bar is shown on every tab now: the Settings page is a clean
@@ -19594,6 +19617,27 @@ static bool handleWebDataCmd(const char* cmd) {
 }
 #endif  // !HAS_TANMATSU
 
+#if CAP_CONSOLE
+// Outside the !HAS_TANMATSU block above ON PURPOSE. The Settings row that binds
+// this callback lives in buildDeviceSettings, which every board compiles, and
+// the console boot path itself is only gated on CAP_CONSOLE -- so leaving the
+// callback in a board-excluded region gave the Tanmatsu a switch it could see,
+// could not link, and would not have worked from anyway.
+// Console mode is a boot mode like remote mode, so it is toggled the same way:
+// set the pref, then reboot through rebootDevice() so chat history is flushed
+// first rather than lost to the reset.
+static void consoleModeToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetConsoleMode(on);
+  if (g_lv.task) {
+    g_lv.task->showAlert(on ? TR("Entering console mode - rebooting...")
+                            : TR("Leaving console mode - rebooting..."), 1600);
+    g_lv.task->rebootDevice();
+  }
+}
+#endif
+
+
 // Scrollable command picker, modelled on openAdminCmdPicker. Tapping a row
 // stuffs the template into the terminal input and keeps it focused so Enter
 // (or the value typed after a "set ..." template) sends it.
@@ -23419,21 +23463,6 @@ int consoleHostHistoryAt(const char* thread, int back, char* sender, size_t sc,
 }
 #endif
 
-#if CAP_CONSOLE
-// Console mode is a boot mode like remote mode, so it is toggled the same way:
-// set the pref, then reboot through rebootDevice() so chat history is flushed
-// first rather than lost to the reset.
-static void consoleModeToggleCb(lv_event_t* e) {
-  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  touchPrefsSetConsoleMode(on);
-  if (g_lv.task) {
-    g_lv.task->showAlert(on ? TR("Entering console mode - rebooting...")
-                            : TR("Leaving console mode - rebooting..."), 1600);
-    g_lv.task->rebootDevice();
-  }
-}
-#endif
-
 static void remoteLandscapeCb(lv_event_t* e) {
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetRemoteLandscape(on);
@@ -26034,7 +26063,11 @@ fs::FS* luaHostAppFs();                                        // bridges (defin
 void    luaHostAppPath(char* out, size_t cap, const char* rel);
 
 struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; };
-struct LuaInstApp { char id[20]; char name[28]; char ver[12]; };
+// `icon` is the manifest's optional icon NAME (not a glyph): the device's JSON
+// scanner only reads quoted strings, and a name is reviewable in a store
+// submission where a raw private-use codepoint would not be. Mapped to a glyph
+// by luaAppIconGlyph(); empty = the generic app symbol.
+struct LuaInstApp { char id[20]; char name[28]; char ver[12]; char icon[12]; };
 static const int kLuaCatMax = 16, kLuaInstMax = 16, kLangCatMax = LANG_COUNT + 2, kLangInstMax = 12;
 static LuaCatApp* s_lua_cat = nullptr;      // PSRAM, allocated on first store use
 static int        s_lua_cat_n = 0;          // -1 = last fetch failed
@@ -39965,6 +39998,7 @@ static void luaStoreScanInstalledFs(bool force) {
         if (luaJsonField(buf, "id", a.id, sizeof a.id) &&
             luaJsonField(buf, "name", a.name, sizeof a.name)) {
           if (!luaJsonField(buf, "ver", a.ver, sizeof a.ver)) a.ver[0] = 0;
+          if (!luaJsonField(buf, "icon", a.icon, sizeof a.icon)) a.icon[0] = 0;
           s_lua_inst_n++;
         }
       } else if (pass == 1 && ln > 4 && strcmp(leaf + ln - 4, ".lua") == 0) {
@@ -39977,6 +40011,7 @@ static void luaStoreScanInstalledFs(bool force) {
           snprintf(a.id, sizeof a.id, "%s", id);
           snprintf(a.name, sizeof a.name, "%s", id);
           snprintf(a.ver, sizeof a.ver, "dev");
+          a.icon[0] = 0;
           s_lua_inst_n++;
         }
       }
@@ -41640,6 +41675,35 @@ static void appDrawerSettingsCb(lv_event_t* e) {
   openAppGridSheet();
 }
 
+// Manifest icon name -> glyph for a Lua app's drawer tile. Names only, and only
+// glyphs the UI fonts already carry: a submission cannot ship its own artwork,
+// so an unknown or absent name falls back to the generic app symbol rather than
+// drawing a missing-glyph box. LUA_APPS.md promised manifests an "icon" field
+// from the start; this is it.
+static const char* luaAppIconGlyph(const char* name) {
+  if (!name || !name[0]) return LV_SYMBOL_PLAY;
+  static const struct { const char* name; const char* glyph; } kMap[] = {
+    { "gps",      LV_SYMBOL_GPS },        // location pin — compass / navigation apps
+    { "compass",  LV_SYMBOL_GPS },
+    { "map",      LV_SYMBOL_GPS },
+    { "radio",    TOUCH_SYM_ANTENNA },
+    { "signal",   LV_SYMBOL_WIFI },
+    { "chart",    LV_SYMBOL_IMAGE },
+    { "list",     LV_SYMBOL_LIST },
+    { "message",  LV_SYMBOL_ENVELOPE },
+    { "person",   TOUCH_SYM_PERSON },
+    { "group",    TOUCH_SYM_GROUP },
+    { "bell",     TOUCH_SYM_BELL },
+    { "star",     TOUCH_SYM_STAR },
+    { "search",   TOUCH_SYM_ZOOM },
+    { "settings", LV_SYMBOL_SETTINGS },
+    { "battery",  LV_SYMBOL_CHARGE },
+    { "game",     LV_SYMBOL_PLAY },
+  };
+  for (const auto& e : kMap) if (strcmp(e.name, name) == 0) return e.glyph;
+  return LV_SYMBOL_PLAY;
+}
+
 static void openAppDrawer() {
   closeAppDrawer();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -41761,7 +41825,7 @@ static void openAppDrawer() {
     const int oi = s_draw_order[i];
     if (oi < 0) {   // installed Lua app (dynamic)
       const LuaInstApp& a = s_lua_inst[-oi - 1];
-      addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, LV_SYMBOL_PLAY, a.name,
+      addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, luaAppIconGlyph(a.icon), a.name,
                  APPACT_LUA_BASE + (-oi - 1), 0, 0x15B6A6, big_grid);
       continue;
     }
@@ -46939,6 +47003,30 @@ static bool uiDataFsReady() {
 #if CAP_LUA_APPS
 // ---- Lua app host bridges (LuaAppHost.cpp externs) ----
 // The host lives in its own TU; these three shims are its only view of UITask.
+// A Lua app's timer keeps firing while the screen is off — lv_timer_handler runs
+// unconditionally — so an app polling a sensor at 10 Hz went on doing it into a
+// dark screen. Nothing it draws can be seen, so the host skips the tick; the app
+// resumes on wake and sees the gap through sys.millis() like any other pause.
+static bool s_lua_keep_awake = false;
+// wada.sys.keep_awake(true): an app that is MEASURING rather than displaying —
+// a calibration sweep, a timed capture — must keep running and must not have
+// the screen blank underneath it. Pausing app ticks with the screen (below)
+// truncated exactly such a sweep: the M9's default screen timeout is 20 s and
+// GPS Compass calibrates for 20 s, so collection stopped at the same instant
+// the countdown was supposed to end. This keeps BOTH alive, and is cleared
+// when the app closes so it cannot leak into the next one.
+void luaHostKeepAwake(bool on) {
+  s_lua_keep_awake = on;
+  if (on && g_lv.task) g_lv.task->noteUserInput();   // push the idle timer out now
+}
+bool luaHostScreenOn() {
+  if (s_lua_keep_awake) {
+    if (g_lv.task) g_lv.task->noteUserInput();       // and keep pushing it, tick by tick
+    return true;
+  }
+  return g_lv.task ? !g_lv.task->isScreenOff() : true;
+}
+
 const lv_font_t* luaHostFontForSize(int size_class) {
   return size_class <= 12 ? &g_font_12 : size_class <= 14 ? &g_font_14 : &g_font_16;
 }
@@ -47006,7 +47094,13 @@ int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* 
   *lon = ci.gps_lon / 1.0e6;
   if (lat_e6) *lat_e6 = ci.gps_lat;   // stored as micro-degrees already
   if (lon_e6) *lon_e6 = ci.gps_lon;
-  uint32_t now = the_mesh.getRTCClock() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
+  // One clock read per contacts() walk, not one per contact: on boards whose
+  // clock is an I2C RTC (the M9's PCF8563 on Wire) getCurrentTime() is a bus
+  // transaction, and an app listing 100 contacts would otherwise stall the UI
+  // loop for ~100 ms each call. meshContacts() always walks from idx 0.
+  static uint32_t s_walk_now = 0;
+  if (idx == 0) s_walk_now = the_mesh.getRTCClock() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
+  const uint32_t now = s_walk_now;
   *secs_ago = (ci.last_advert_timestamp && now > ci.last_advert_timestamp)
                   ? now - ci.last_advert_timestamp : 0;
   return 1;
@@ -47297,15 +47391,30 @@ void luaHostBattery(uint16_t* mv, int* pct, bool* charging) {
 }
 // wada.sys.gps(). False when there is no fix -- the caller then gets nil rather
 // than the last known position, which wada.mesh.self() already provides. An app
-// plotting a track needs to tell a live fix from a stale one.
-// Altitude is included because height dominates LoRa range: two samples a metre
-// apart on the map can be a hilltop and a hollow, and a coverage survey that
-// records only lat/lon cannot tell them apart afterwards. `time` is satellite
-// time (0 until the receiver has decoded the date), which is the only clock a
+// plotting a track needs to tell a live fix from a stale one. Also false while
+// the user has GPS switched off (same gate updateGpsLocation() applies), so a
+// last sentence parsed before the toggle cannot masquerade as a live fix.
+// Altitude (getGpsAltitude(), metres, the accessor the Device page uses) is
+// included because height dominates LoRa range: two samples a metre apart on
+// the map can be a hilltop and a hollow, and a coverage survey that records
+// only lat/lon cannot tell them apart afterwards. `time` is satellite time
+// (0 until the receiver has decoded the date), which is the only clock a
 // logger can trust before the device has been near a network.
+// Speed/course exist only where the board's target.cpp provides wadaGpsMotion()
+// on top of WadaNmeaLocationProvider (HAS_GPS_MOTION); the core provider keeps
+// its RMC fields private, so other boards report NAN and the binding omits the
+// fields.
+#if defined(HAS_GPS_MOTION)
+extern bool wadaGpsMotion(float* speed_kmh, float* course_deg);
+#endif
 bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, uint32_t* fix_time,
-                int32_t* lat_e6, int32_t* lon_e6) {
-  if (!g_lv.task || !g_lv.task->getGpsFix()) return false;
+                int32_t* lat_e6, int32_t* lon_e6, float* speed_kmh, float* course_deg) {
+  // Pre-set the motion fields BEFORE the fix gate: a caller that bails on a
+  // false return still reads defined values, and boards without HAS_GPS_MOTION
+  // report NAN so the binding can omit the fields rather than publish a 0.
+  if (speed_kmh)  *speed_kmh  = NAN;
+  if (course_deg) *course_deg = NAN;
+  if (!g_lv.task || !g_lv.task->getGPSState() || !g_lv.task->getGpsFix()) return false;
   const double la = g_lv.task->getNodeLat(), lo = g_lv.task->getNodeLon();
   if (lat)  *lat  = la;
   if (lon)  *lon  = lo;
@@ -47318,9 +47427,48 @@ bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, uint32_t* fix_t
   // (180e6 is well inside its range). A track logger should write these.
   if (lat_e6) *lat_e6 = (int32_t)llround(la * 1.0e6);
   if (lon_e6) *lon_e6 = (int32_t)llround(lo * 1.0e6);
+#if defined(HAS_GPS_MOTION)
+  {
+    float spd = NAN, crs = NAN;
+    if (wadaGpsMotion(&spd, &crs)) {
+      if (speed_kmh)  *speed_kmh  = spd;
+      if (course_deg) *course_deg = crs;
+    }
+  }
+#endif
   return true;
 }
 #endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
+
+#if CAP_COMPASS
+// wada.sys.compass(). Raw field vector from the board's magnetometer; the only
+// one wired so far is the M9's QMC6309 (variants/thinknode_m9/M9Compass.*).
+// Runs on the UI thread like every other luaHost* bridge; the driver's I2C
+// reads are short and the bus (Wire) has no other task on it.
+#if CAP_IMU
+// wada.sys.accel(). Acceleration in g, sensor frame, as the chip reports it —
+// the mapping to the device's own axes is the consumer's, for the same reason
+// as the magnetometer: it is not documented for this board and had to be
+// measured.
+bool luaHostAccel(float* x, float* y, float* z) {
+#if defined(HAS_M9_IMU)
+  return m9ImuRead(x, y, z);
+#else
+  (void)x; (void)y; (void)z;
+  return false;
+#endif
+}
+#endif  // CAP_IMU
+
+bool luaHostCompass(float* x, float* y, float* z, bool* overflow) {
+#if defined(HAS_M9_COMPASS)
+  return m9CompassRead(x, y, z, overflow);
+#else
+  (void)x; (void)y; (void)z; (void)overflow;
+  return false;
+#endif
+}
+#endif  // CAP_COMPASS
 
 #if CAP_LUA_SDK_EXT || CAP_CONSOLE   // console mode needs it on the V4 too
 // ---- Settings -> App permissions -------------------------------------------
@@ -52679,7 +52827,8 @@ void UITask::loop() {
   uiCp("ui:disc");
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
   uiCp("ui:gps");
-  updateGpsLocation(now);   // sync + persist node location from GPS once fixed
+  updateGpsLocation(now);
+  uiCp("ui:timers");   // GPS sync/persist is its own bucket: it can write prefs   // sync + persist node location from GPS once fixed
   ++s_live_diag_loops;
   if (_alert_expiry != 0 && now >= _alert_expiry) {
     _alert[0]     = '\0';
@@ -53045,6 +53194,7 @@ void UITask::loop() {
   }
 #endif
 
+  uiCp("ui:threads");
   if (now >= _next_mesh_thread_refresh) {
     /* Pick up contact / channel additions that came in from the companion
      * serial client (CMD_SET_CHANNEL etc.). 4 s is the backstop — the app
@@ -53085,6 +53235,7 @@ void UITask::loop() {
     _next_refresh = now + UI_REFRESH_MS;
   }
 #if CAP_TRACKBALL
+  uiCp("ui:input");
   updateTrackball(now);
 #elif defined(HAS_PAGER_ENCODER)
   updatePagerEncoder(now);
@@ -53224,6 +53375,12 @@ void UITask::loop() {
   // the current tree before draining (cheap: sig-compare early-out).
   if (s_kbd_nav || s_tb_nav) navMaybeRebuild();
   m9KeyboardPoll();
+#if defined(HAS_M9_COMPASS)
+  m9CompassIdleTick();   // park the magnetometer when no app is reading it
+#endif
+#if defined(HAS_M9_IMU)
+  m9ImuIdleTick();       // and the accelerometer
+#endif
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = m9KeyboardReadKey();
     if (key <= 0) break;
@@ -53361,6 +53518,7 @@ void UITask::loop() {
   // hits the CH32 over I2C when the value actually changes.
   tanKbBacklightTick(_screen_off || _manual_lock);
 #endif
+  uiCp("ui:diag");
   refreshLiveDiag(now);
   // Keep the signal fresh with a "discover" probe: send a ZERO-HOP advert whenever
   // we have no recent DIRECT signal. Zero-hop = neighbours only, never re-broadcast,
