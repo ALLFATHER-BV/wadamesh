@@ -23243,6 +23243,21 @@ static void remoteToggleCb(lv_event_t* e) {
   }
 }
 
+#if CAP_CONSOLE
+// Console mode is a boot mode like remote mode, so it is toggled the same way:
+// set the pref, then reboot through rebootDevice() so chat history is flushed
+// first rather than lost to the reset.
+static void consoleModeToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetConsoleMode(on);
+  if (g_lv.task) {
+    g_lv.task->showAlert(on ? TR("Entering console mode - rebooting...")
+                            : TR("Leaving console mode - rebooting..."), 1600);
+    g_lv.task->rebootDevice();
+  }
+}
+#endif
+
 static void remoteLandscapeCb(lv_event_t* e) {
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetRemoteLandscape(on);
@@ -23431,6 +23446,46 @@ static void openRemotePage() {
   if (on) lv_obj_add_state(sw2, LV_STATE_CHECKED);
   lv_obj_add_event_cb(sw2, remoteToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_move_to_index(row, lv_obj_get_index(expl));   // toggle sits ABOVE its explanation
+
+#if CAP_CONSOLE
+  // ---- 2b. Console mode (no LVGL at all; reboots) ----
+  lv_obj_t* ch = lv_label_create(s_remote_root);
+  lv_label_set_text(ch, TR("Console mode"));
+  lv_obj_set_style_text_font(ch, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(ch, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_width(ch, cw);
+
+  lv_obj_t* cexpl = lv_label_create(s_remote_root);
+  lv_label_set_text(cexpl, TR("Boots into a text console with no graphical interface: type commands, "
+                              "read replies. Frees the memory and processor time the interface uses. "
+                              "Type 'ui' in the console to come back. Toggling reboots the device."));
+  lv_obj_set_style_text_font(cexpl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(cexpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(cexpl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(cexpl, cw);
+
+  lv_obj_t* crow = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(crow);
+  lv_obj_set_size(crow, cw, SC(42));
+  lv_obj_set_style_bg_color(crow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(crow, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(crow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(crow, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(crow, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(crow, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* cll = lv_label_create(crow);
+  lv_label_set_text(cll, TR("Console mode"));
+  lv_obj_set_style_text_font(cll, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(cll, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(cll, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(cll, cw - 84);
+  lv_obj_align(cll, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* csw = lv_switch_create(crow);
+  lv_obj_align(csw, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (touchPrefsGetConsoleMode()) lv_obj_add_state(csw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(csw, consoleModeToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_move_to_index(crow, lv_obj_get_index(cexpl));
+#endif
 
   lv_obj_t* lrow = lv_obj_create(s_remote_root);
   lv_obj_remove_style_all(lrow);
@@ -51881,6 +51936,15 @@ void UITask::loop() {
   unsigned long now = millis();
 #if CAP_CONSOLE
   if (s_console_mode) {
+    // The physical-keyboard drain lives further down this function, below this
+    // return, so console mode has to do its own. Same source, same buffer.
+#if defined(HAS_TDECK_KEYBOARD)
+    for (int kbi = 0; kbi < 12; ++kbi) {
+      int key = tdeckKeyboardReadKey();
+      if (key <= 0) break;
+      consoleKey(key);
+    }
+#endif
     consoleLoop();
     return;                      // the graphical loop is never entered
   }
