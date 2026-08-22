@@ -194,6 +194,18 @@
   #define CAP_TRACKBALL 0
 #endif
 
+// Console mode (CONSOLE_MODE.md): a text front end drawn straight to the panel
+// with no LVGL. Needs a DisplayDriver, which every board that has a screen has,
+// so this is on wherever there is something to draw on. It does NOT imply the
+// device boots into it; that is a user pref read at startup.
+#ifndef CAP_CONSOLE
+  #if defined(DISPLAY_CLASS)
+    #define CAP_CONSOLE 1
+  #else
+    #define CAP_CONSOLE 0
+  #endif
+#endif
+
 #if defined(HAS_EXPANSION_KIT)
   #define CAP_SENSORS 1
 #else

@@ -9963,6 +9963,11 @@ static void doExportBackupFile(const char* fname);   // write a backup (SD if a 
 // for a control pinned to the card's right edge (~56 for a switch); pass 0 for a
 // full-width label. font==nullptr keeps the inherited default (g_font_14). The
 // text is run through TR() here, so callers pass the bare English literal.
+#if CAP_CONSOLE
+// Defined with the other boot-mode toggles further down, next to Remote UI's,
+// which is the same kind of switch. Declared here for Settings > General.
+static void consoleModeToggleCb(lv_event_t* e);
+#endif
 static int settingsRowLabel(lv_obj_t* body, int y, int y_off, const char* text,
                             uint32_t color, const lv_font_t* font, int reserve_right) {
   lv_obj_t* l = lv_label_create(body);
@@ -13300,6 +13305,42 @@ static void buildDeviceSettings(int sec) {
     y += SC(42);
   }
   }
+
+#if CAP_CONSOLE
+  if (sec == DSEC_GENERAL) {   // --- Console mode (boot mode; reboots) ---
+  y += settingsRowLabel(body, y, 0, TR("Console mode"), COLOR_SUB, &g_font_12, 0) + 2;
+  {
+    lv_obj_t* crow = lv_obj_create(body);
+    lv_obj_remove_style_all(crow);
+    lv_obj_set_size(crow, lv_pct(100), SC(34));
+    lv_obj_set_pos(crow, 2, y);
+    lv_obj_set_style_bg_color(crow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(crow, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(crow, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(crow, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(crow, 10, LV_PART_MAIN);
+    lv_obj_clear_flag(crow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* cl = lv_label_create(crow);
+    lv_label_set_text(cl, TR("Text console (no UI)"));
+    useChainedFont(cl);
+    lv_obj_set_style_text_color(cl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_label_set_long_mode(cl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(cl, lv_pct(70));
+    lv_obj_align(cl, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_t* csw = lv_switch_create(crow);
+    lv_obj_set_size(csw, 44, 24);
+    lv_obj_align(csw, LV_ALIGN_RIGHT_MID, 0, 0);
+    if (touchPrefsGetConsoleMode()) lv_obj_add_state(csw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(csw, consoleModeToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += SC(42);
+  }
+  y += settingsRowLabel(body, y, 0,
+        TR("Boots into a text console with no graphical interface: type commands, read replies. "
+           "Frees the memory and processor time the interface uses. Type 'ui' in the console to "
+           "come back. Toggling reboots."),
+        COLOR_SUB, &g_font_12, 1) + 8;
+  }
+#endif
 
   if (sec == DSEC_GENERAL) {   // --- Run setup + reboot ---
   // Re-run the first-boot setup flow (name / region / Wi-Fi) on demand.
@@ -17124,6 +17165,21 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
 #endif
   }
   mk_btn_full(LV_SYMBOL_TRASH "  Delete", actionSheetDeleteCb, 0xB23A48);
+
+  // Scrollability is decided HERE, from the height the buttons actually reached,
+  // not from the grid_items tally above. That tally is hand-maintained and has
+  // to be updated every time a conditional button is added; the location-sharing
+  // row added for #266 is not in it, so a contact showing that button has one
+  // more row than the card was sized for. When the estimate is short the body is
+  // left unscrollable and the overflow is simply unreachable, which is the shape
+  // of #306. `y` is the truth, so use it and let the tally be wrong harmlessly.
+  {
+    const int body_h = card_h - 2 * padding - title_h;
+    if (y > body_h) {
+      lv_obj_set_scroll_dir(body, LV_DIR_VER);
+      lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    }
+  }
 }
 
 static void contactSelectCb(lv_event_t* e) {
@@ -23253,6 +23309,40 @@ static void remoteToggleCb(lv_event_t* e) {
   }
 }
 
+#if CAP_CONSOLE
+// ---- console bridges: unread state ------------------------------------------
+// The console shows messages as they arrive but must NOT mark them read; these
+// let it report what is waiting and clear a thread deliberately.
+int consoleHostUnreadTotal() { return g_lv.task ? g_lv.task->getUnreadTotal() : 0; }
+
+int consoleHostThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_channel) {
+  if (!g_lv.task) return 0;
+  return g_lv.task->consoleThreadAt(idx, name, cap, unread, is_channel);
+}
+bool consoleHostMarkRead(const char* name) {
+  return g_lv.task ? g_lv.task->consoleMarkThreadRead(name) : false;
+}
+int consoleHostHistoryAt(const char* thread, int back, char* sender, size_t sc,
+                         char* text, size_t tc, uint32_t* ts, bool* outgoing) {
+  return g_lv.task ? g_lv.task->consoleHistoryAt(thread, back, sender, sc, text, tc, ts, outgoing) : 0;
+}
+#endif
+
+#if CAP_CONSOLE
+// Console mode is a boot mode like remote mode, so it is toggled the same way:
+// set the pref, then reboot through rebootDevice() so chat history is flushed
+// first rather than lost to the reset.
+static void consoleModeToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetConsoleMode(on);
+  if (g_lv.task) {
+    g_lv.task->showAlert(on ? TR("Entering console mode - rebooting...")
+                            : TR("Leaving console mode - rebooting..."), 1600);
+    g_lv.task->rebootDevice();
+  }
+}
+#endif
+
 static void remoteLandscapeCb(lv_event_t* e) {
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetRemoteLandscape(on);
@@ -23441,6 +23531,46 @@ static void openRemotePage() {
   if (on) lv_obj_add_state(sw2, LV_STATE_CHECKED);
   lv_obj_add_event_cb(sw2, remoteToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_move_to_index(row, lv_obj_get_index(expl));   // toggle sits ABOVE its explanation
+
+#if CAP_CONSOLE
+  // ---- 2b. Console mode (no LVGL at all; reboots) ----
+  lv_obj_t* ch = lv_label_create(s_remote_root);
+  lv_label_set_text(ch, TR("Console mode"));
+  lv_obj_set_style_text_font(ch, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(ch, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_width(ch, cw);
+
+  lv_obj_t* cexpl = lv_label_create(s_remote_root);
+  lv_label_set_text(cexpl, TR("Boots into a text console with no graphical interface: type commands, "
+                              "read replies. Frees the memory and processor time the interface uses. "
+                              "Type 'ui' in the console to come back. Toggling reboots the device."));
+  lv_obj_set_style_text_font(cexpl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(cexpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(cexpl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(cexpl, cw);
+
+  lv_obj_t* crow = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(crow);
+  lv_obj_set_size(crow, cw, SC(42));
+  lv_obj_set_style_bg_color(crow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(crow, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(crow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(crow, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(crow, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(crow, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* cll = lv_label_create(crow);
+  lv_label_set_text(cll, TR("Console mode"));
+  lv_obj_set_style_text_font(cll, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(cll, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(cll, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(cll, cw - 84);
+  lv_obj_align(cll, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* csw = lv_switch_create(crow);
+  lv_obj_align(csw, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (touchPrefsGetConsoleMode()) lv_obj_add_state(csw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(csw, consoleModeToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_move_to_index(crow, lv_obj_get_index(cexpl));
+#endif
 
   lv_obj_t* lrow = lv_obj_create(s_remote_root);
   lv_obj_remove_style_all(lrow);
@@ -36757,7 +36887,10 @@ static void serviceLockscreen() {
 // "Set as notification sound"), or "Built-in (default)" to reset to the chime.
 static void soundDisplayName(const char* path, char* out, int cap) {
   if (!out || cap <= 0) return;
-  if (!path || !path[0]) { snprintf(out, cap, "Built-in"); return; }
+  // TR(), not a bare literal: this is the label shown for the default chime, and
+  // it was the one path of two that never went through the translation table, so
+  // the same word appeared translated in the menu and English on the button.
+  if (!path || !path[0]) { snprintf(out, cap, "%s", TR("Built-in")); return; }
   const bool sd = !strncmp(path, "sd:", 3);
   const char* p = sd ? path + 3 : path;
   const char* base = strrchr(p, '/'); base = base ? base + 1 : p;
@@ -38579,7 +38712,7 @@ static void refreshSettingsSectionSubtitles() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       lv_label_set_text(g_set_sec_sub[SEC_BLUETOOTH],
                         (g_lv.task->hasBleCapability() && bleRequestedOrEnabled())
-                          ? "Starting…" : "Off");
+                          ? TR("Starting…") : TR("Off"));
 #else
       lv_label_set_text(g_set_sec_sub[SEC_BLUETOOTH], TR("Inactive"));
 #endif
@@ -42389,7 +42522,14 @@ static void updateGlobalStatusBar() {
   // chat is still open underneath it, so suppress chat-mode chrome (the cog + back
   // chevron + centred title) then — otherwise they sit over the page's "‹ title" and
   // swallow its back tap.
-  const bool chat_open      = (s_chat_title[0] != '\0') && !s_apppage_title;
+  // ...and a settings detail page too. It sets s_settings_open_cat rather than
+  // s_apppage_title, so the guard above missed it: opening Settings from inside
+  // a chat left the chat's back chevron AND its cog drawn over the settings
+  // page's own "‹ Title". Two back chevrons on the left of the tall bar, and the
+  // cog is clickable, so a tap near the wrong one went to channel settings or
+  // nowhere instead of going back (#308).
+  const bool chat_open      = (s_chat_title[0] != '\0') && !s_apppage_title &&
+                              (s_settings_open_cat < 0);
   const bool inbox_overview = (getActiveTab() == CHAT_INBOX_TAB_INDEX) && !chat_open && (s_settings_open_cat < 0) && !s_apppage_title;
   {
 #if defined(TLORA_PAGER)
@@ -43213,16 +43353,21 @@ static void refreshStatusLabels() {
       IPAddress ip = WiFi.localIP();
       snprintf(st, sizeof st, LV_SYMBOL_WIFI " %d.%d.%d.%d%s",
                ip[0], ip[1], ip[2], ip[3], ble_suffix);
-    } else if (WiFi.getMode() == WIFI_STA) {
+    // Gate on what the USER asked for, not on the driver mode. Reading only
+    // WiFi.getMode() meant that anything leaving the radio in STA made the home
+    // screen announce "Starting…" forever with Wi-Fi switched off, which is
+    // what #305 reported. The mode is still checked, so a genuinely idle STA is
+    // not described as connecting either.
+    } else if (wifiConfigGetRadioEnabled() && WiFi.getMode() == WIFI_STA) {
       const char* hint;
       switch (WiFi.status()) {
-        case WL_IDLE_STATUS:     hint = "Starting…";  break;
-        case WL_NO_SSID_AVAIL:   hint = "SSID not found"; break;
-        case WL_CONNECT_FAILED:  hint = "Auth failed";   break;
-        case WL_CONNECTION_LOST: hint = "Link lost";     break;
-        case WL_DISCONNECTED:    hint = "Connecting…";   break;
-        case WL_NO_SHIELD:       hint = "Init…";         break;
-        default:                 hint = "Connecting…";   break;
+        case WL_IDLE_STATUS:     hint = TR("Starting…");     break;
+        case WL_NO_SSID_AVAIL:   hint = TR("SSID not found"); break;
+        case WL_CONNECT_FAILED:  hint = TR("Auth failed");    break;
+        case WL_CONNECTION_LOST: hint = TR("Link lost");      break;
+        case WL_DISCONNECTED:    hint = TR("Connecting…");    break;
+        case WL_NO_SHIELD:       hint = TR("Init…");          break;
+        default:                 hint = TR("Connecting…");    break;
       }
       snprintf(st, sizeof st, LV_SYMBOL_WIFI " %s%s", hint, ble_suffix);
     } else if (ble_on) {
@@ -43994,20 +44139,40 @@ static void openAccentPicker() {
   lv_obj_set_style_text_color(pv, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_center(pv);
 
+  // Buttons size to their label instead of to 124/84 px. Those numbers were
+  // measured against "Save & restart" / "Reset"; Hungarian's
+  // "Mentés és újraindítás" is half again as long and ran off both edges of its
+  // button (#307). A wrapping row means an over-long pair drops onto two lines
+  // rather than clipping, and the picker is a scrollable flex column so the
+  // extra height costs nothing. max_width keeps a single very long label inside
+  // the card instead of pushing the row wider than the screen.
   lv_obj_t* btnrow = lv_obj_create(s_accent_picker);
   lv_obj_remove_style_all(btnrow);
-  lv_obj_set_size(btnrow, 220, 32);
-  lv_obj_t* save = lv_btn_create(btnrow);
-  lv_obj_set_size(save, 124, 30); lv_obj_align(save, LV_ALIGN_LEFT_MID, 0, 0);
-  styleButton(save);
-  lv_obj_add_event_cb(save, accentSaveCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_set_width(btnrow, sw - 24);
+  lv_obj_set_height(btnrow, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(btnrow, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(btnrow, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(btnrow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(btnrow, 6, LV_PART_MAIN);
+  lv_obj_clear_flag(btnrow, LV_OBJ_FLAG_SCROLLABLE);
+
+  auto sized_btn = [&](lv_event_cb_t cb) {
+    lv_obj_t* b = lv_btn_create(btnrow);
+    lv_obj_set_size(b, LV_SIZE_CONTENT, 30);
+    lv_obj_set_style_max_width(b, LV_PCT(100), LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(b, 12, LV_PART_MAIN);
+    styleButton(b);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+    return b;
+  };
+  lv_obj_t* save = sized_btn(accentSaveCb);
   lv_obj_t* sl = lv_label_create(save); lv_label_set_text(sl, TR("Save & restart"));
   lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN); lv_obj_center(sl);
-  lv_obj_t* rst = lv_btn_create(btnrow);
-  lv_obj_set_size(rst, 84, 30); lv_obj_align(rst, LV_ALIGN_RIGHT_MID, 0, 0);
-  styleButton(rst);
-  lv_obj_add_event_cb(rst, accentResetCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* rl = lv_label_create(rst); lv_label_set_text(rl, TR("Reset")); lv_obj_center(rl);
+  useChainedFont(sl);
+  lv_obj_t* rst = sized_btn(accentResetCb);
+  lv_obj_t* rl = lv_label_create(rst); lv_label_set_text(rl, TR("Reset"));
+  lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN); lv_obj_center(rl);
   useChainedFont(rl);
 
   accentSetSelection(touchPrefsGetAccentColor(), true);
@@ -46764,7 +46929,12 @@ void luaHostRadioStats2(uint32_t* rx_evt, uint32_t* rx_drop, uint32_t* tx_pkts,
   // airtime_factor -> the duty ceiling the dispatcher enforces (see #161)
   *duty_pct = p->airtime_factor > 0 ? (int)(100.0f / (1.0f + p->airtime_factor) + 0.5f) : 100;
 }
-#if CAP_LUA_SDK_EXT
+// Widened for console mode: CAP_LUA_SDK_EXT is OFF on the V4, which is exactly
+// the board console mode exists for, and the console needs the same send path.
+// Reusing it rather than duplicating matters most for luaHostMeshSendChannel:
+// it matches the channel BY NAME at transmit time, and a cached slot index is
+// how messages went out encrypted to the wrong channel before.
+#if CAP_LUA_SDK_EXT || CAP_CONSOLE
 // ---- Lua app permissions: mesh send ----------------------------------------
 // wada.mesh.send() is the first WRITE path a store app has into the mesh, and
 // anything it sends goes out under the user's own node name -- to readers it is
@@ -46990,9 +47160,9 @@ bool luaHostMeshSendChannel(const char* chan_name, const char* text) {
   }
   return false;   // no such channel on this device
 }
-#endif  // CAP_LUA_SDK_EXT
+#endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
 
-#if CAP_LUA_SDK_EXT
+#if CAP_LUA_SDK_EXT || CAP_CONSOLE   // console mode needs it on the V4 too
 // wada.sys.battery(). Reads the SMOOTHED millivolts the status bar uses, not a
 // raw ADC sample, so a Lua chart cannot show noise the rest of the UI hides.
 void luaHostBattery(uint16_t* mv, int* pct, bool* charging) {
@@ -47026,9 +47196,9 @@ bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, uint32_t* fix_t
   if (lon_e6) *lon_e6 = (int32_t)llround(lo * 1.0e6);
   return true;
 }
-#endif  // CAP_LUA_SDK_EXT
+#endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
 
-#if CAP_LUA_SDK_EXT
+#if CAP_LUA_SDK_EXT || CAP_CONSOLE   // console mode needs it on the V4 too
 // ---- Settings -> App permissions -------------------------------------------
 // You could GRANT a permission but not review or take one back, which is only
 // acceptable on a bench. "Which apps can transmit as me?" has to be answerable,
@@ -47187,7 +47357,7 @@ void luaHostRequestProbePerm(const char* app_id, const char* app_name) {
 uint32_t luaHostMeshDiscover(int type_filter) {
   return the_mesh.uiStartDiscoverScan((uint8_t)(type_filter & 0xFF));
 }
-#endif  // CAP_LUA_SDK_EXT
+#endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
 
 void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon,
                     char* pk_hex, size_t pk_cap, int32_t* lat_e6, int32_t* lon_e6) {
@@ -48632,8 +48802,67 @@ bool UITask::saveMsgsToStorage() {
 // ============================================================
 // Thread management
 // ============================================================
+#if CAP_CONSOLE
+// Walk the thread table for the console. Read-only: seeing a thread listed with
+// its unread count must not change that count.
+int UITask::consoleThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_channel) {
+  if (!_ui_threads || idx < 0) return 0;
+  int seen = 0;
+  for (int i = 0; i < MAX_UI_THREADS; ++i) {
+    if (!_ui_threads[i].used) continue;
+    if (seen++ != idx) continue;
+    snprintf(name, cap, "%s", _ui_threads[i].name);
+    if (unread)     *unread     = (int)_ui_threads[i].unread;
+    if (is_channel) *is_channel = _ui_threads[i].channel;
+    return 1;
+  }
+  return 0;
+}
+
+// Read back a thread's stored messages, NEWEST first. Read-only, like
+// consoleThreadAt: showing history is not the same act as clearing unread, so
+// the caller decides whether to also mark it read.
+int UITask::consoleHistoryAt(const char* thread, int back, char* sender, size_t sc,
+                             char* text, size_t tc, uint32_t* ts, bool* outgoing) {
+  if (!_ui_msgs || !thread || !*thread || back < 0) return 0;
+  int seen = 0;
+  for (int n = 0; n < _ui_msg_count; ++n) {
+    // walk backwards from the newest record in the ring
+    int i = (_ui_msg_head - 1 - n + _ui_msg_cap * 2) % _ui_msg_cap;
+    const UIMessage& m = _ui_msgs[i];
+    if (strncmp(m.thread, thread, MAX_THREAD_NAME) != 0) continue;
+    if (seen++ != back) continue;
+    snprintf(sender, sc, "%s", m.sender);
+    snprintf(text,   tc, "%s", m.text);
+    if (ts)       *ts       = m.ts;
+    if (outgoing) *outgoing = m.outgoing;
+    return 1;
+  }
+  return 0;
+}
+
+// Clearing unread is an explicit act, which is the whole point: the monitor
+// showing a message must not count as having read it.
+bool UITask::consoleMarkThreadRead(const char* name) {
+  if (!_ui_threads || !name || !*name) return false;
+  for (int i = 0; i < MAX_UI_THREADS; ++i) {
+    if (!_ui_threads[i].used) continue;
+    if (strncmp(_ui_threads[i].name, name, MAX_THREAD_NAME) != 0) continue;
+    markThreadRead(i);
+    return true;
+  }
+  return false;
+}
+#endif
+
 int UITask::findOrCreateThread(const char* name, bool channel) {
   if (!name || !name[0]) return -1;
+  // _ui_threads is allocated further down begin(), which console mode returns
+  // before, so it is null there. An incoming message reached here and
+  // dereferenced it: the device panicked, and since it rebooted straight back
+  // into console mode it did so every time a message arrived. Guard rather than
+  // allocate: in console mode nothing reads the table.
+  if (!_ui_threads) return -1;
   for (int i = 0; i < MAX_UI_THREADS; ++i) {
     if (_ui_threads[i].used && _ui_threads[i].channel == channel &&
         strncmp(_ui_threads[i].name, name, MAX_THREAD_NAME) == 0) return i;
@@ -48906,6 +49135,7 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
                           uint16_t in_scope) {
   int t_idx = findOrCreateThread(thread, channel);
   if (t_idx < 0) return -1;
+  if (!_ui_msgs) return -1;   // console mode: the ring is never allocated
   UIMessage& m = _ui_msgs[_ui_msg_head];
   // Full ring: this append overwrites the oldest record — tell the segment
   // table so a fully-aged-out segment file gets unlinked.
@@ -49298,10 +49528,101 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
 // ============================================================
 // UITask::begin
 // ============================================================
+#if CAP_CONSOLE
+#include "ConsoleUI.h"
+// Console mode (CONSOLE_MODE.md). Decided once at begin() from a boot pref and
+// never re-read, so nothing can flip the front end mid-session. When set, LVGL
+// is never initialised and no draw buffer is allocated: that skip IS the saving,
+// so it has to be a genuine one and not a hidden LVGL instance.
+static bool s_console_mode = false;
+bool uiConsoleModeActive() { return s_console_mode; }
+
+// Route a UI alert to the console. Callers in main.cpp keep calling showAlert()
+// and do not need to know which front end is running.
+static void consoleAlert(const char* msg) {
+  if (s_console_mode && msg) consoleWriteLine(msg);
+}
+#else
+bool uiConsoleModeActive() { return false; }
+#endif
+
+// The chat store: message ring + thread table, both PSRAM. Extracted from
+// begin() because CONSOLE MODE needs it too. Console mode returns from begin()
+// long before the LVGL setup, and skipping this left _ui_threads null, which an
+// incoming message then dereferenced. It is also what makes unread counts work
+// there: the console shows a message as it arrives, but the message is still
+// appended and still marked unread, so opening the thread later is what clears
+// it, not having seen it scroll past.
+void UITask::allocMessageStore() {
+#if defined(ESP32)
+  _ui_msg_cap = uiDataFsIsSdCard() ? MAX_UI_MESSAGES_SD : MAX_UI_MESSAGES;
+  uiDataEnsureDirs();   // segment dir exists before the loader scans / the first append
+#endif
+  size_t msgs_bytes          = sizeof(UIMessage) * (size_t)_ui_msg_cap;
+  const size_t threads_bytes = sizeof(UIThread)  * MAX_UI_THREADS;
+  if (!_ui_msgs) {
+    _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
+    if (!_ui_msgs && _ui_msg_cap > MAX_UI_MESSAGES) {
+      // PSRAM can't fit the deep ring (unexpected) — drop to the base size rather
+      // than strand 1.3 MB in internal RAM via the fallback below.
+      _ui_msg_cap = MAX_UI_MESSAGES;
+      msgs_bytes  = sizeof(UIMessage) * (size_t)_ui_msg_cap;
+      _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
+    }
+    if (!_ui_msgs) _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_8BIT);
+  }
+  if (!_ui_threads) {
+    _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_SPIRAM);
+    if (!_ui_threads) _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_8BIT);
+  }
+  if (_ui_msgs)    memset(_ui_msgs,    0, msgs_bytes);
+  if (_ui_threads) memset(_ui_threads, 0, threads_bytes);
+  for (int i = 0; i < MAX_UI_THREADS; ++i) {
+    _ui_threads[i].mesh_contact_idx  = -1;
+    memset(_ui_threads[i].mesh_contact_pub, 0, sizeof(_ui_threads[i].mesh_contact_pub));
+    memset(_ui_threads[i].mesh_contact_key6, 0, sizeof(_ui_threads[i].mesh_contact_key6));
+    _ui_threads[i].mesh_channel_slot = -1;
+  }
+}
+
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
   _display    = display;
   _sensors    = sensors;
   _node_prefs = node_prefs;
+
+#if CAP_CONSOLE && defined(ESP32)
+  s_console_mode = touchPrefsGetConsoleMode();
+  // SELF-HEAL. If the previous boot panicked while console mode was on, come up
+  // in the graphical UI and turn console mode off. Without this a crash on the
+  // console path is unrecoverable from the device: it panics, reboots into the
+  // console, panics again. The plan called for three ways out and this is the
+  // one that does not need the user to know anything.
+  if (s_console_mode && esp_reset_reason() == ESP_RST_PANIC) {
+    s_console_mode = false;
+    touchPrefsSetConsoleMode(false);
+    Serial.println("[BOOT] console mode disabled after a panic — starting the UI");
+  }
+  if (s_console_mode) {
+    // Nothing below this point runs: no lv_init(), no draw buffer, no widget
+    // tree. The console owns the panel from here.
+    // The chat store, exactly as the graphical path builds it. Console mode
+    // needs it for two reasons: an incoming message dereferences the thread
+    // table, and the monitor below relies on the NORMAL append path so a
+    // message stays unread until its thread is actually opened.
+    allocMessageStore();
+    Serial.println("[BOOT] console: begin"); Serial.flush();
+    consoleBegin(_display);
+    Serial.println("[BOOT] console: panel up"); Serial.flush();
+    consoleBanner(the_mesh.getNodePrefs() ? the_mesh.getNodePrefs()->node_name : nullptr,
+                  FIRMWARE_VERSION);
+    consoleWriteLineC(CC_DIM, "'help' for everything, 'ui' for the graphical interface");
+    consoleWriteLine("");
+    Serial.println("[BOOT] console: text ok"); Serial.flush();
+    the_mesh.setTerminalSink(&consoleWriteLine);
+    Serial.println("[BOOT] console: sink set"); Serial.flush();
+    return;
+  }
+#endif
 
 #if defined(WADA_LUA_SPIKE)
   luaSpikeRun();   // Phase 0 measurement pass (LUA_APPS.md) — spike builds only
@@ -49726,35 +50047,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // (5000 msgs ≈ 1.3 MB PSRAM — the card comfortably holds the bigger file);
   // internal-flash devices keep 500. Decided once, before the alloc; the loader
   // linearizes a history file written under either capacity.
-#if defined(ESP32)
-  _ui_msg_cap = uiDataFsIsSdCard() ? MAX_UI_MESSAGES_SD : MAX_UI_MESSAGES;
-  uiDataEnsureDirs();   // segment dir exists before the loader scans / the first append
-#endif
-  size_t msgs_bytes          = sizeof(UIMessage) * (size_t)_ui_msg_cap;
-  const size_t threads_bytes = sizeof(UIThread)  * MAX_UI_THREADS;
-  if (!_ui_msgs) {
-    _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
-    if (!_ui_msgs && _ui_msg_cap > MAX_UI_MESSAGES) {
-      // PSRAM can't fit the deep ring (unexpected) — drop to the base size rather
-      // than strand 1.3 MB in internal RAM via the fallback below.
-      _ui_msg_cap = MAX_UI_MESSAGES;
-      msgs_bytes  = sizeof(UIMessage) * (size_t)_ui_msg_cap;
-      _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
-    }
-    if (!_ui_msgs) _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_8BIT);
-  }
-  if (!_ui_threads) {
-    _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_SPIRAM);
-    if (!_ui_threads) _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_8BIT);
-  }
-  if (_ui_msgs)    memset(_ui_msgs,    0, msgs_bytes);
-  if (_ui_threads) memset(_ui_threads, 0, threads_bytes);
-  for (int i = 0; i < MAX_UI_THREADS; ++i) {
-    _ui_threads[i].mesh_contact_idx  = -1;
-    memset(_ui_threads[i].mesh_contact_pub, 0, sizeof(_ui_threads[i].mesh_contact_pub));
-    memset(_ui_threads[i].mesh_contact_key6, 0, sizeof(_ui_threads[i].mesh_contact_key6));
-    _ui_threads[i].mesh_channel_slot = -1;
-  }
+  allocMessageStore();
   // NOTE: a dev-era "interop safety" block used to live here that, on EVERY
   // boot, force-reset manual_add_contacts=0 and OR'd AUTO_ADD_CHAT|REPEATER into
   // autoadd_config, then savePrefs()'d. That silently clobbered the user's saved
@@ -50273,6 +50566,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 // ============================================================
 void UITask::showAlert(const char* text, int duration_millis) {
   if (!text) return;
+#if CAP_CONSOLE
+  // main.cpp reports Wi-Fi and Bluetooth outcomes through here in ~20 places.
+  // They keep calling showAlert and do not need to know which front end is up.
+  if (s_console_mode) { consoleAlert(text); return; }
+#endif
   strncpy(_alert, text, sizeof(_alert) - 1);
   _alert[sizeof(_alert) - 1] = '\0';
   _alert_expiry = millis() + static_cast<unsigned long>(duration_millis);
@@ -51400,6 +51698,7 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
                         const char* sender_override) {
   (void)path_len;
   _msgcount = msgcount;
+
   const bool have_sender_override = (sender_override && sender_override[0]);
   bool channel = (g_last_event == UIEventType::channelMessage);
   const char* thread = channel
@@ -51551,6 +51850,18 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       else         snprintf(line, sizeof line, "RX %s: %s", sender, body);
       termLogAppendC(TERM_C_RX_DM, nullptr, line);
     }
+  }
+#endif
+#if CAP_CONSOLE
+  // The monitor: show it as it arrives, without opening anything. Deliberately
+  // placed AFTER appendMessage, which was called with mark_unread = true, so the
+  // message is stored and still counts as unread. Watching it scroll past is not
+  // reading it; opening the thread is.
+  if (s_console_mode && touchPrefsGetConsoleMonitor()) {
+    char line[200];
+    if (channel) snprintf(line, sizeof line, "#%s %s: %s", thread, sender, body);
+    else         snprintf(line, sizeof line, "%s: %s", sender, body);
+    consoleWriteLine(line);
   }
 #endif
 #if defined(HAS_TOUCH_UI)
@@ -52008,6 +52319,39 @@ static void sdHealthTick() {
 
 void UITask::loop() {
   unsigned long now = millis();
+#if CAP_CONSOLE
+  if (s_console_mode) {
+#if CAP_TOUCH
+    // Bring up the input hardware ourselves. The graphical path does this far
+    // below, behind `if (!g_lv.ready) return;` — and g_lv.ready is false here
+    // because LVGL is never initialised, so nothing ever started the poll task
+    // and the keyboard was never even begun. That is why keys did nothing.
+    //
+    // One call covers both: the background poll task owns the shared I2C bus
+    // and scans the touch panel AND (on the T-Deck) the keyboard, which is
+    // exactly why they must not be polled from two places at once.
+    static bool s_con_input_up = false;
+    if (!s_con_input_up) {
+      if (heltecV4CapTouchBegin()) {
+        heltecV4CapTouchStartBackgroundPoll(8);
+        s_con_input_up = true;
+      }
+    }
+#endif
+    // The physical-keyboard drain lives further down this function, below this
+    // return, so console mode has to do its own. Same ring, filled by the task
+    // started above.
+#if defined(HAS_TDECK_KEYBOARD)
+    for (int kbi = 0; kbi < 12; ++kbi) {
+      int key = tdeckKeyboardReadKey();
+      if (key <= 0) break;
+      consoleKey(key);
+    }
+#endif
+    consoleLoop();
+    return;                      // the graphical loop is never entered
+  }
+#endif
 #if defined(ESP32)
   // Snapshot copying is quick; all filesystem I/O runs on the core-0 worker.
   touchPrefsTick(now);

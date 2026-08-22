@@ -99,8 +99,11 @@ function app.on_open(w, h)
   local LH = ui.text_h(12)
   hdr = ui.label("", 4, 4, 12, C.accent); hdr:width(w - 10)
 
+  -- hdr and detail below are width-limited, which turns wrapping on, and both
+  -- carry variable-length text (node names, a status phrase). Reserve two lines
+  -- for each: a wrapped line would otherwise be drawn over by whatever follows.
   local map_h = math.floor(h * 0.45)
-  local y = 4 + LH + 4
+  local y = 4 + LH * 2 + 4
   if sys.caps().map then
     map = wada.map.view(4, y, w - 8, map_h)
   else
@@ -109,7 +112,7 @@ function app.on_open(w, h)
   y = y + map_h + 4
 
   detail = ui.label("pick a contact", 4, y, 12, C.sub); detail:width(w - 10)
-  y = y + LH + 4
+  y = y + LH * 2 + 4
 
   list = ui.list(4, y, w - 8, h - y - 4)
 

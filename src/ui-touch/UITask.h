@@ -193,6 +193,7 @@ private:
   unsigned long _next_thread_seed;
   UIMessage* _ui_msgs   = nullptr;   // ring of recent messages — PSRAM-allocated in begin()
   UIThread*  _ui_threads = nullptr;  // thread table — PSRAM-allocated in begin()
+  void allocMessageStore();          // ring + thread table; also used by console mode
   unsigned long ui_started_at, next_batt_chck;
   int next_backlight_btn_check = 0;
 #ifdef PIN_STATUS_LED
@@ -330,6 +331,12 @@ public:
   int  getUnreadTotal() const;
   int  getUnreadMentionCount() const;   // # of threads with an unread @mention of me
   void markThreadRead(int idx);   // clear one thread's unread count (persisted)
+  // Console mode: list threads with their unread counts (read-only), and clear
+  // one deliberately. Kept separate so the monitor cannot mark anything read.
+  int  consoleThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_channel);
+  bool consoleMarkThreadRead(const char* name);
+  int  consoleHistoryAt(const char* thread, int back, char* sender, size_t sc,
+                        char* text, size_t tc, uint32_t* ts, bool* outgoing);
   void markActiveThreadRead();    // clear the currently-open thread's unread (viewing == read)
   void markAllThreadsRead();      // clear every thread's unread count
   bool threadHasMention(int idx) const;   // unread @mention of me in this thread
@@ -375,6 +382,8 @@ public:
   // Active channel's mesh slot (-1 when the open thread isn't a channel). For the
   // status-bar channel-settings gear (per-channel region scope).
   int16_t activeChannelSlot() const {
+    // _ui_threads is null in console mode (allocated later in begin()).
+    if (!_ui_threads) return -1;
     if (!_active_thread_is_channel || _active_thread_idx < 0 || _active_thread_idx >= MAX_UI_THREADS) return -1;
     return _ui_threads[_active_thread_idx].mesh_channel_slot;
   }
@@ -384,6 +393,7 @@ public:
    *  deleting a channel actually drops its mesh-table entry — otherwise
    *  refreshThreadsFromMesh() recreates the thread from the surviving channel. */
   int16_t threadMeshChannelSlot(int idx) const {
+    if (!_ui_threads) return -1;                       // console mode: no table
     if (idx < 0 || idx >= MAX_UI_THREADS || !_ui_threads[idx].used || !_ui_threads[idx].channel) return -1;
     return _ui_threads[idx].mesh_channel_slot;
   }

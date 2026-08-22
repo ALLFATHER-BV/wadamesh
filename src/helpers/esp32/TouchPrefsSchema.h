@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 50;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields)
+static constexpr uint8_t CURRENT_VERSION = 52;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON)
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs
@@ -79,6 +79,10 @@ struct __attribute__((packed)) Config {
   uint8_t  retry_echo;       // v45: actual trailing location; v44 inserted it before web_mirror
   uint32_t app_hide;         // v46: app-drawer hide bitmask (Store page "built-in" toggles)
   char     lang_file[12];    // v48: file-language code ("" = built-in ui_lang; file at <data>/lang/<code>.lang)
+  // NEW FIELDS GO HERE, AT THE TAIL. v44 inserted one mid-struct and shifted
+  // every field after it, which is what v45 had to undo. Append, never insert.
+  uint8_t  console_mode;     // v51: boot into the LVGL-free text console (CONSOLE_MODE.md)
+  uint8_t  console_monitor;  // v52: console mode shows incoming messages as they arrive
 };
 
 static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
@@ -86,8 +90,17 @@ static constexpr size_t STABLE_V44_PREFIX_SIZE = offsetof(Config, web_mirror);
 
 static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeof(Config::rx_queue),
               "the pre-v44 suffix moved");
-static_assert(offsetof(Config, lang_file) + sizeof(Config::lang_file) == sizeof(Config),
+static_assert(offsetof(Config, console_monitor) + sizeof(Config::console_monitor) == sizeof(Config),
               "new preference fields must remain trailing");
+// lang_file must stay immediately before the tail, or a v48-era blob overlays
+// onto the wrong bytes. Checking both ends means the next person to append is
+// told at compile time instead of shipping another v44.
+static_assert(offsetof(Config, console_mode) ==
+                  offsetof(Config, lang_file) + sizeof(Config::lang_file),
+              "console_mode must follow lang_file");
+static_assert(offsetof(Config, console_monitor) ==
+                  offsetof(Config, console_mode) + sizeof(Config::console_mode),
+              "console_monitor must follow console_mode");
 
 // Overlay a persisted blob on caller-provided defaults. Beta 57 wrote v44 with
 // retry_echo inserted before web_mirror, shifting every later value. That blob
