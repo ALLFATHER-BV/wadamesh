@@ -937,6 +937,12 @@ void namedTimerCb(lv_timer_t* t) {
   if (slot < 0 || slot >= Host::kMaxTimers) return;
   Host::AppTimer& s = s_h->timers[slot];
   if (s.cb == LUA_NOREF) return;
+  // Same rule as on_tick: a REPEATING timer does not run while the display is
+  // asleep, since its usual job is polling something nobody can see. A one-shot
+  // still fires — it is a scheduled piece of app logic, and skipping it would
+  // drop that work permanently rather than defer it (the slot is released
+  // around the call), which is not the same trade at all.
+  if (!s.once && !luaHostScreenOn()) return;
   lua_State* L = s_h->L;
   // A one-shot is released BEFORE the call, so the callback may safely start
   // another timer in the same slot without it being torn down underneath.

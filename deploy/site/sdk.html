@@ -346,6 +346,7 @@ return app</code></pre>
           <tr><td>wada.timer.stop()</td><td>Stops the <code>on_tick</code> heartbeat.</td></tr>
           <tr><td>wada.timer.stop(handle) / handle:stop()</td><td>Stops that one timer.</td></tr>
         </table>
+        <p><b>Repeating timers pause while the display sleeps.</b> Nothing you draw is visible then, and an app polling a sensor would otherwise hold that hardware awake for a dark screen — so <code>on_tick</code> and repeating named timers stop being called and resume on wake. A one-shot from <code>timer.after</code> still fires: it is scheduled app logic, and skipping it would drop the work rather than defer it. Derive elapsed time from <code>wada.sys.millis()</code> rather than counting ticks and a sleep looks like one long frame.</p>
         <p>An app used to get exactly one clock. Anything needing a second cadence &mdash; a slow poll beside a fast animation, a delayed retry, a timeout on a fetch &mdash; had to be a counter inside <code>on_tick</code>, which is both tedious and wrong when the tick period changes. Up to <b>eight</b> named timers per app; a ninth raises an error rather than quietly filling LVGL's timer list. Everything is stopped for you when the app closes.</p>
       </div></div>
     </section>
