@@ -356,6 +356,25 @@ public:
     return r;
   }
 
+  /** Does a blank-password LOGIN mean anything to this contact?
+   *
+   *  Only to a node that keeps an ACL: repeaters, room servers and sensors.
+   *  A plain chat contact is another companion, which has no LOGIN handler at
+   *  all. Chaining one in front of a request there either wastes a packet (the
+   *  fire-and-forget helpers below) or, in the deferred path, arms a wait for a
+   *  LOGIN-OK that can never arrive -- so the request is never sent and the UI
+   *  reports a failure.
+   *
+   *  That is why telemetry and position for a chat contact worked from the
+   *  phone app, which sends the request straight out, and never worked from the
+   *  device (#293). The map went stale with it: a contact's position is
+   *  refreshed from the CayenneLPP GPS field in a telemetry reply, and there
+   *  was no reply. */
+  static bool contactNeedsGuestLogin(const ContactInfo& c) {
+    return c.type == ADV_TYPE_REPEATER || c.type == ADV_TYPE_ROOM ||
+           c.type == ADV_TYPE_SENSOR;
+  }
+
   /** Same as sendStatusPingForUI, but sends an unauthenticated guest LOGIN
    *  first. Repeaters need the sender to be in their ACL before they will
    *  decrypt a PAYLOAD_TYPE_REQ; the ACL is only populated by handleLoginReq.
@@ -366,16 +385,20 @@ public:
    *  No-op if the LOGIN packet pool is empty; falls through to send the
    *  STATUS REQ anyway so a repeater that already knows us still replies. */
   int sendStatusPingWithGuestLoginForUI(ContactInfo& recipient) {
-    uint32_t login_est = 0;
-    sendLogin(recipient, "", login_est);
+    if (contactNeedsGuestLogin(recipient)) {
+      uint32_t login_est = 0;
+      sendLogin(recipient, "", login_est);
+    }
     return sendStatusPingForUI(recipient);
   }
 
   /** Same chained-login flavour for telemetry — repeaters and sensors also
    *  require ACL membership for REQ_TYPE_GET_TELEMETRY_DATA. */
   int sendTelemetryRequestWithGuestLoginForUI(ContactInfo& recipient) {
-    uint32_t login_est = 0;
-    sendLogin(recipient, "", login_est);
+    if (contactNeedsGuestLogin(recipient)) {
+      uint32_t login_est = 0;
+      sendLogin(recipient, "", login_est);
+    }
     return sendTelemetryRequestForUI(recipient);
   }
 
@@ -393,6 +416,12 @@ public:
    *  auto-poll keeps the immediate chained send above (a single arm slot can't
    *  serve its multi-node loop, and a missed poll just retries next interval). */
   int uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind) {
+    // Nothing to defer behind on a companion: send the request itself, now.
+    if (!contactNeedsGuestLogin(recipient)) {
+      cancelUIDeferredLogin();
+      return (kind == UiReqKind::Telemetry) ? sendTelemetryRequestForUI(recipient)
+                                            : sendStatusPingForUI(recipient);
+    }
     uint32_t login_est = 0;
     int r = sendLogin(recipient, "", login_est);
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
