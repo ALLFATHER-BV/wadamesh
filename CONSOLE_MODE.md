@@ -1,0 +1,285 @@
+# Console mode
+
+A boot mode where the device runs with **no LVGL**: a text console driven by
+typed commands, with core mesh functionality and Lua apps. For boards that
+struggle under the UI, and for people who would rather type than tap.
+
+Regular mode is unaffected and you can go back at any time.
+
+---
+
+## Short answer
+
+**Possible: yes, and considerably more of it already exists than you would
+expect.** Four of the five pieces are built and shipping today.
+
+**A lot of work: no, not for a usable console.** The work is not the console
+itself, it is everything that currently assumes the UI is there. Realistic
+shape: a useful console in a few days of work, a polished one that runs Lua
+apps in a couple of weeks.
+
+**Saves resources: yes, but not the resource you might think.** See
+[What it actually saves](#what-it-actually-saves) below, because this changes
+how the feature should be sold and to whom.
+
+---
+
+## What already exists
+
+This is the reason the estimate is not larger.
+
+| Piece | Where | State |
+|---|---|---|
+| **Command surface** | `CommonCLI::handleCommand` (MeshCore core) | Done. The full command set the node already answers over serial and over the mesh. |
+| **Run a command locally, capture its output** | `MyMesh::runLocalCli()` + `MyMesh::setTerminalSink()` | Done. Feed it a line, get reply lines back through a callback. |
+| **Text rendering with no LVGL** | `DisplayDriver` (core): `startFrame`, `setCursor`, `print`, `printWordWrap`, `getTextWidth`, `fillRect`, `drawTextEllipsized`, `endFrame`, UTF-8 to blocks | Done, and linked into the touch build already. |
+| **A mode where LVGL does not drive the panel** | Remote mode (`s_remote_mode` in `UITask.cpp`) | Done and shipping. It paints the physical screen with `display.drawTextCentered(...)` directly while LVGL renders elsewhere. This is the exact precedent. |
+| **An on-device terminal** | `homeTerminalCb` / `s_term_log_box` in `UITask.cpp` | Done, but built out of LVGL widgets. The *behaviour* is the model; the widgets are what console mode replaces. |
+
+So the console does not need a new command language, a new renderer, or a new
+way of talking to the mesh. It needs a different **front end** over machinery
+that is already there and already tested.
+
+---
+
+## What it actually saves
+
+Worth being precise, because the obvious assumption is wrong in one direction
+and right in another.
+
+### PSRAM: a large, real saving
+
+Both of LVGL's big consumers are in PSRAM:
+
+- **The object heap.** `include/lv_conf.h` sets `LV_MEM_CUSTOM 1` with
+  `LV_MEM_CUSTOM_ALLOC lvglPsramAlloc`, so every LVGL object, style and font
+  cache entry is a PSRAM allocation.
+- **The draw buffer.** `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`, sized
+  `800 * LV_DRAW_BUF_LINES` pixels at 2 bytes each on the big panels.
+
+Console mode frees both outright.
+
+**This matters most exactly where you said it hurts.** The Heltec V4 has 2 MB of
+PSRAM, and PSRAM pressure there is a recurring source of real bugs: map tiles
+fragmenting the heap, the tile pool needing a cull and a cap, the extended Lua
+SDK gated off the board entirely for want of memory. Console mode gives that
+board its PSRAM back.
+
+### Internal DRAM: a smaller saving than it looks
+
+The scarce resource on these boards is internal DRAM, and LVGL is largely not
+in it. What *is* in it is UITask's static data: the contact cache, message
+rings, layout tables. Most of that is data the console still needs to do the
+same job, so it does not simply disappear.
+
+Two caveats worth keeping honest:
+
+- There is a fallback at boot: if the PSRAM draw-buffer allocation fails,
+  `malloc()` puts it in internal DRAM instead. On a board already under
+  pressure that is exactly when it happens, so for the worst-off devices the
+  DRAM saving is real after all.
+- A meaningful DRAM number needs measuring, not guessing. See Phase 0.
+
+### CPU: a real saving, and probably the one users feel
+
+`lv_timer_handler()` runs on every pass of the main loop, alongside input-device
+polling and any animation or scroll in flight, and a redraw blits through SPI.
+A console redraws only when a line is added.
+
+This is also the mechanism behind several bugs we have already fixed: the loop
+being stalled by the UI is what starved the GPS UART ring, and what made SPIFFS
+garbage collection visible as a freeze. Less time in the UI is less exposure to
+that whole class of problem.
+
+**How to describe the feature honestly:** it buys back PSRAM and CPU. On the
+V4 that is the difference between comfortable and not. It is not a fix for
+internal-DRAM exhaustion on its own.
+
+---
+
+## The hard parts
+
+Not the console. These three.
+
+### 1. Everything that assumes the UI exists
+
+`src/main.cpp` calls `ui_task.showAlert(...)` in roughly twenty places to report
+Wi-Fi and Bluetooth outcomes, and `ui_task.loop()` unconditionally. UITask is
+also the owner of things the console still wants: the storage root, the Lua app
+host, the update check.
+
+The wrong fix is `#if` sprinkled through main. The right one is that UITask
+keeps its role as the front end and gains a **headless personality**: the same
+entry points, LVGL never initialised, `showAlert` becoming a console line.
+
+### 2. Lua apps
+
+This is the largest single item and needs a decision rather than an
+implementation.
+
+`wada.ui` is LVGL all the way down: `label`, `button`, `list`, `chart`,
+`canvas`, `input`, and `map`. Existing apps **cannot** run unchanged, because
+`canvas` and `map` have no console equivalent, and no amount of shimming
+invents one.
+
+What makes this tractable is that apps are already required to feature-detect.
+`wada.sys.caps()` exists and every store app checks it. So a console-mode app
+surface is a legitimate capability tier rather than a broken one:
+
+| API | Console mode |
+|---|---|
+| `label`, `list`, `button` | Map to console lines and numbered selections. Natural fit. |
+| `input` | Natural fit: it is a prompt. |
+| `text_w` / `text_lines` | Measured in characters instead of pixels. |
+| `chart` | Possible as sparkline text, or report absent. |
+| `canvas`, `map` | Absent. `caps().canvas` / `caps().map` false. |
+| Everything non-UI (`mesh`, `fs`, `net`, `crypto`, `geo`, `sys`, `timer`, `store`) | Unchanged. This is most of the SDK. |
+
+Snake and 2048 will not run. RF Monitor, Airtime, Wardrive and SDK Test mostly
+will, because their output is lines of text. That is a reasonable outcome and
+should be stated plainly in the docs rather than discovered.
+
+### 3. Getting back out
+
+A boot flag that lands you in a console with no way back is a device that feels
+bricked, and it will happen to somebody. This needs to be designed, not bolted
+on. See [Safety](#safety).
+
+---
+
+## Plan
+
+Each phase is shippable and useful on its own. Stop after any of them and
+nothing is half-built.
+
+### Phase 0: measure first
+
+Before building anything, get the numbers the feature is being justified by.
+
+- Free internal DRAM and free PSRAM at the home screen, on a V4 and a T-Deck.
+- The same with `lv_timer_handler()` stubbed out and nothing built.
+- Loop iterations per second, both ways.
+
+Cheap, and it either confirms the case or changes what to build. If the DRAM
+saving turns out to be negligible on the V4 and the PSRAM saving large, that is
+worth knowing before the docs promise anything.
+
+**Output:** real numbers in this file.
+
+### Phase 1: the console front end
+
+A `ConsoleUI` that owns the panel through `DisplayDriver`, with no LVGL.
+
+- Scrollback ring in PSRAM, N lines, prune oldest.
+- Prompt line, cursor, word wrap via `printWordWrap`.
+- Input from the hardware keyboard where there is one; on touch-only boards, the
+  existing on-screen keyboard is LVGL, so those boards need either the serial
+  console or a minimal drawn keypad. **Decide early:** the T-Deck, Tanmatsu, M9
+  and Pager all have keyboards, so console mode could reasonably require one.
+- Commands go straight to `the_mesh.runLocalCli()`; output arrives through
+  `setTerminalSink`. This part is close to free.
+- One touch affordance, as you said: a back/exit target.
+
+At the end of this phase the device is usable over the mesh from a console.
+
+### Phase 2: boot into it, and back out
+
+- A pref, `touchPrefsGetBootMode()`, read early in `setup()`.
+- In console mode: never call `lv_init()`, never allocate the draw buffer, never
+  build the UI. This is where the saving comes from, so it has to be a genuine
+  skip and not a hidden LVGL instance.
+- `ui_task.showAlert()` and friends route to the console.
+- Commands to switch: `ui` reboots into the graphical mode, `console` reboots
+  into this one. Also a Settings toggle in normal mode.
+
+### Phase 3: the things the CLI does not cover
+
+`CommonCLI` is a node CLI, not a messenger. Console mode needs conversational
+commands, some of which the existing on-device terminal already has (`to <name>`
+sets a recipient):
+
+- `msg`, `to`, `reply`, unread counts, reading a thread's scrollback
+- `contacts`, `chans`, `discover` with the results table
+- `apps`, `run <id>`
+
+Most of this is a thin layer over calls that already exist for the UI.
+
+### Phase 4: Lua apps in the console
+
+- A `WADA_UI_CONSOLE` backend behind the same `wada.ui` names, per the table
+  above.
+- `caps()` gains `console`, `canvas`, `map` so apps can adapt, and the docs say
+  which apps work.
+- Store apps audited; those that cannot work say so on launch rather than
+  failing oddly.
+
+### Phase 5: polish
+
+- Command history and tab completion.
+- Colour, where the panel has it.
+- A `help` that is actually good, since there is no discoverable UI.
+- Docs page, and a section in the user guide.
+
+---
+
+## Safety
+
+The failure that matters is a device that boots to a console the owner cannot
+leave. Three independent ways out, because one is not enough:
+
+1. **A command.** `ui` then reboot.
+2. **A key held at boot.** Any boot with the key down forces graphical mode
+   regardless of the pref, the same shape as the existing recovery paths.
+3. **The web flasher and the serial CLI** can always clear the pref.
+
+And the pref should be stored so that a corrupt or unreadable value means
+*graphical*, never console. Fail toward the mode everyone can use.
+
+---
+
+## Risks
+
+| Risk | Containment |
+|---|---|
+| Console mode rots because nobody builds it | It compiles into every build from Phase 1, and SDK Test runs in it. A broken console fails the build, not a user. |
+| Two front ends drift apart | The console consumes the same `runLocalCli` and the same MyMesh accessors the UI does. Do not let it grow a private copy of anything. |
+| Touch-only boards get a console they cannot type into | Decide in Phase 1. Requiring a keyboard is a legitimate answer. |
+| It quietly degrades normal mode | Everything new is behind the boot pref, and the graphical path keeps its current code path unchanged. Phase 0's numbers are the regression check. |
+| Lua apps half-work and look broken | `caps()` first, refuse to launch second, document third. |
+
+---
+
+## Effort
+
+Honest, assuming no surprises:
+
+| Phase | Effort |
+|---|---|
+| 0 measure | Half a day |
+| 1 console front end | 2 to 3 days |
+| 2 boot mode and back out | 1 to 2 days |
+| 3 messaging commands | 2 to 3 days |
+| 4 Lua apps in console | 3 to 5 days |
+| 5 polish and docs | 2 days |
+
+**A console you can actually use on the mesh: Phases 0 to 3, about a week.**
+Phase 4 is the one that can grow, because it is the one with a design question
+in it rather than just code.
+
+---
+
+## Open decisions
+
+Worth settling before Phase 1 rather than during it.
+
+1. **Keyboard required?** If console mode assumes a hardware keyboard, the
+   T-Deck, Tanmatsu, M9 and Pager are covered and the V4 is not. But the V4 is
+   the board that most needs the resources back. Options: a minimal drawn keypad
+   for the V4, or console-over-serial only there.
+2. **Is the goal a console, or a lighter UI?** A third option exists: keep LVGL
+   but ship a minimal skin. Cheaper, saves much less, and does not serve the
+   terminal users at all. Worth naming so it is a choice rather than an
+   oversight.
+3. **Do Lua apps matter in v1?** Phases 0 to 3 are worth shipping without them.
+4. **Does this replace the Terminal app** in graphical mode eventually, or do
+   both stay?

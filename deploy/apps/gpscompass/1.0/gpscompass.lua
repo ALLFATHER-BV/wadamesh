@@ -421,13 +421,15 @@ local function pt(deg, r)
   return math.floor(CX + math.sin(a) * r + 0.5), math.floor(CY - math.cos(a) * r + 0.5)
 end
 
--- Canvas text is left-anchored and the app cannot measure glyphs, so widths
--- are estimated at ~0.55 x line height per CHARACTER — counting characters,
--- not bytes: "°" is two bytes in UTF-8 and counting those pushed centred text
--- half a glyph off.
-local function text_w(s, lh)
+-- Canvas text is left-anchored, so centring means knowing the width. Newer
+-- firmware can MEASURE it (wada.ui.text_w, gated on caps().measure); older
+-- firmware cannot, and then this estimates ~0.55 x line height per CHARACTER —
+-- counting characters, not bytes, since "°" is two bytes in UTF-8 and counting
+-- those once pushed the centred heading half a glyph off.
+local function text_w(str, lh, size)
+  if ui.text_w then return ui.text_w(str, size or 12) end
   local n = 0
-  for _ in s:gmatch("[%z\1-\127\194-\244]") do n = n + 1 end
+  for _ in str:gmatch("[%z\1-\127\194-\244]") do n = n + 1 end
   return math.floor(n * lh * 0.55)
 end
 
@@ -480,14 +482,14 @@ local function draw_dial(tgt_bearing)
   -- shift when the reading crosses 100 or 200
   if live then
     local digits = string.format("%03d", math.floor(h + 0.5) % 360)
-    local dw = text_w(digits, TH16)
+    local dw = text_w(digits, TH16, 16)
     local dx = CX - math.floor(dw / 2)
     cv:text(dx, CY - TH16 + 1, digits, C.text, 16)
     cv:text(dx + dw, CY - TH16 + 1, "\194\176", C.sub, 16)
     local cd = cardinal(h)
-    cv:text(CX - math.floor(text_w(cd, TH12) / 2), CY + 3, cd, src == "mag" and C.accent or AMBER, 12)
+    cv:text(CX - math.floor(text_w(cd, TH12, 12) / 2), CY + 3, cd, src == "mag" and C.accent or AMBER, 12)
   else
-    cv:text(CX - math.floor(text_w("--", TH16) / 2), CY - math.floor(TH16 / 2), "--", C.sub, 16)
+    cv:text(CX - math.floor(text_w("--", TH16, 16) / 2), CY - math.floor(TH16 / 2), "--", C.sub, 16)
   end
 end
 
@@ -847,7 +849,7 @@ function app.on_open(w, h)
       -- but measured properly: text_w's 0.55-per-character estimate is for
       -- mixed text, while digits and spaces in Montserrat run nearer 0.39 of
       -- the line height, which left an obvious gap.
-      local sats_x = valx + math.floor(TH12 * 2.8) + 4
+      local sats_x = valx + text_w("99 sats", TH12, 12) + 4
       SATS_W = math.max(20, math.min(52, valx + valw - sats_x - 2))
       sats_cv = ui.canvas(SATS_W, SATS_H)
       sats_cv:pos(sats_x, y + math.floor((TH12 - SATS_H) / 2))
