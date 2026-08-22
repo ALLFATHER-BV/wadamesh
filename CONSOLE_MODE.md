@@ -112,32 +112,50 @@ The wrong fix is `#if` sprinkled through main. The right one is that UITask
 keeps its role as the front end and gains a **headless personality**: the same
 entry points, LVGL never initialised, `showAlert` becoming a console line.
 
-### 2. Lua apps
+### 2. Lua apps: the `wada.ui` translator
 
-This is the largest single item and needs a decision rather than an
-implementation.
+Decided: `wada.ui` gets a **console backend** behind the same names, so an app
+keeps working without knowing which mode it is in.
 
-`wada.ui` is LVGL all the way down: `label`, `button`, `list`, `chart`,
-`canvas`, `input`, and `map`. Existing apps **cannot** run unchanged, because
-`canvas` and `map` have no console equivalent, and no amount of shimming
-invents one.
+This turns out to be far more achievable than "no UI" suggests, because console
+mode is **not a text-only terminal**. It still owns a real pixel panel. The
+thing being removed is LVGL's object tree, not the ability to draw.
 
-What makes this tractable is that apps are already required to feature-detect.
-`wada.sys.caps()` exists and every store app checks it. So a console-mode app
-surface is a legitimate capability tier rather than a broken one:
+The enabler is a raw framebuffer blit that already exists outside LVGL:
 
-| API | Console mode |
-|---|---|
-| `label`, `list`, `button` | Map to console lines and numbered selections. Natural fit. |
-| `input` | Natural fit: it is a prompt. |
-| `text_w` / `text_lines` | Measured in characters instead of pixels. |
-| `chart` | Possible as sparkline text, or report absent. |
-| `canvas`, `map` | Absent. `caps().canvas` / `caps().map` false. |
-| Everything non-UI (`mesh`, `fs`, `net`, `crypto`, `geo`, `sys`, `timer`, `store`) | Unchanged. This is most of the SDK. |
+```
+ST7789LCDDisplay::writePixelsRGB565(x, y, w, h, const uint16_t* pixels)
+```
 
-Snake and 2048 will not run. RF Monitor, Airtime, Wardrive and SDK Test mostly
-will, because their output is lines of text. That is a reasonable outcome and
-should be stated plainly in the docs rather than discovered.
+Present today on `ST7789LCDDisplay` (V4 TFT, T-Deck), `TanmatsuDisplay`,
+`RM69A10Display` and `HI8561Display`. Missing only on `LGFXDisplay` (V4-R8) and
+`ST7796LCDDisplay` (the pagers), and LovyanGFX has `pushImage` underneath, so
+those are a wrapper method rather than new work.
+
+That changes the answer on the two APIs that looked impossible:
+
+| API | Console backend | Why it works |
+|---|---|---|
+| `label` | Text at a cursor. | `print` / `printWordWrap` / `drawTextEllipsized`. |
+| `button` | A highlighted line with a selection index; activated by key or tap. | Text plus `fillRect` for the highlight. |
+| `list` | Numbered lines, one selected. | Same. |
+| `input` | A prompt, using the console's own keypad. | Phase 1 already builds it. |
+| `text_w` / `text_lines` | `getTextWidth`, honestly measured. | Already the right shape. |
+| `chart` | Drawn directly. | It is bars and lines; `fillRect` does it. |
+| **`canvas`** | **Works.** The app already gets an RGB565 buffer and draws into it; console mode blits that buffer instead of handing it to LVGL. | `writePixelsRGB565`. |
+| **`map`** | **Works.** Tiles are already decoded to RGB565 buffers (`MapTile.rgb565`); the projection and cache are ours and have no LVGL in them. | Same blit, plus markers as `fillRect`. |
+| Everything non-UI | Unchanged. | `mesh`, `fs`, `net`, `crypto`, `geo`, `sys`, `timer`, `store` never touched LVGL. |
+
+**What is genuinely lost is interaction, not drawing.** LVGL supplies scrolling
+containers, a focus group, flex layout and event bubbling. The console backend
+has to provide its own much simpler version: a line cursor, a selection index,
+a scroll offset. That is the real work in this phase, and it is bounded.
+
+So the honest expectation is that **most apps work**, including the graphical
+ones, and a few that lean on LVGL behaviour we do not reimplement will not.
+Apps already feature-detect through `wada.sys.caps()`, so anything that cannot
+be supported is reported rather than broken, and `caps().console` lets an app
+adapt its layout deliberately.
 
 ### 3. Getting back out
 
@@ -172,10 +190,14 @@ A `ConsoleUI` that owns the panel through `DisplayDriver`, with no LVGL.
 
 - Scrollback ring in PSRAM, N lines, prune oldest.
 - Prompt line, cursor, word wrap via `printWordWrap`.
-- Input from the hardware keyboard where there is one; on touch-only boards, the
-  existing on-screen keyboard is LVGL, so those boards need either the serial
-  console or a minimal drawn keypad. **Decide early:** the T-Deck, Tanmatsu, M9
-  and Pager all have keyboards, so console mode could reasonably require one.
+- Input from the hardware keyboard where there is one.
+- **An on-screen keypad on touch boards.** Decided: the V4 is the board that
+  most needs its resources back, so console mode has to be usable there without
+  a keyboard. The existing on-screen keyboard is LVGL and cannot be reused, so
+  the console draws its own: `fillRect` + `drawRect` + `print` for the keys, and
+  touch read straight from the board driver (`heltecV4CapTouchCheck()` and its
+  equivalents), which is already independent of LVGL. `lvglTouchRead` is only an
+  adapter feeding LVGL, so nothing needs to be untangled first.
 - Commands go straight to `the_mesh.runLocalCli()`; output arrives through
   `setTerminalSink`. This part is close to free.
 - One touch affordance, as you said: a back/exit target.
@@ -245,7 +267,8 @@ And the pref should be stored so that a corrupt or unreadable value means
 | Two front ends drift apart | The console consumes the same `runLocalCli` and the same MyMesh accessors the UI does. Do not let it grow a private copy of anything. |
 | Touch-only boards get a console they cannot type into | Decide in Phase 1. Requiring a keyboard is a legitimate answer. |
 | It quietly degrades normal mode | Everything new is behind the boot pref, and the graphical path keeps its current code path unchanged. Phase 0's numbers are the regression check. |
-| Lua apps half-work and look broken | `caps()` first, refuse to launch second, document third. |
+| Lua apps half-work and look broken | `caps()` first, refuse to launch second, document third. Less likely now that canvas and map can actually be drawn. |
+| Two display drivers lack a raw blit | `LGFXDisplay` and `ST7796LCDDisplay` need a `writePixelsRGB565`; LovyanGFX's `pushImage` does the work. Until then `caps().canvas` is false on those boards and apps adapt. |
 
 ---
 
@@ -256,10 +279,10 @@ Honest, assuming no surprises:
 | Phase | Effort |
 |---|---|
 | 0 measure | Half a day |
-| 1 console front end | 2 to 3 days |
+| 1 console front end (incl. the drawn keypad) | 3 to 4 days |
 | 2 boot mode and back out | 1 to 2 days |
 | 3 messaging commands | 2 to 3 days |
-| 4 Lua apps in console | 3 to 5 days |
+| 4 `wada.ui` console backend | 4 to 6 days |
 | 5 polish and docs | 2 days |
 
 **A console you can actually use on the mesh: Phases 0 to 3, about a week.**
@@ -272,14 +295,14 @@ in it rather than just code.
 
 Worth settling before Phase 1 rather than during it.
 
-1. **Keyboard required?** If console mode assumes a hardware keyboard, the
-   T-Deck, Tanmatsu, M9 and Pager are covered and the V4 is not. But the V4 is
-   the board that most needs the resources back. Options: a minimal drawn keypad
-   for the V4, or console-over-serial only there.
+1. ~~Keyboard required?~~ **Decided: no.** Touch boards get a drawn on-screen
+   keypad, because the V4 is exactly the board this feature is for.
 2. **Is the goal a console, or a lighter UI?** A third option exists: keep LVGL
    but ship a minimal skin. Cheaper, saves much less, and does not serve the
    terminal users at all. Worth naming so it is a choice rather than an
    oversight.
 3. **Do Lua apps matter in v1?** Phases 0 to 3 are worth shipping without them.
+   The translator is now a known quantity rather than a question mark, so it can
+   follow safely.
 4. **Does this replace the Terminal app** in graphical mode eventually, or do
    both stay?
