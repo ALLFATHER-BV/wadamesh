@@ -17,6 +17,7 @@
 #include <math.h>   // isnan for optional sensor fields   // wada.sys.epoch/datetime (#245)
 #include "AppPage.h"
 #include "device_caps.h"
+#include "i18n.h"   // wada.sys.tr: apps can use the same translation table the UI does
 #include "helpers/esp32/WdtHeavyGuard.h"   // wada.fs writes can trigger SPIFFS GC
 
 extern "C" {
@@ -852,6 +853,20 @@ int sysRandom(lua_State* L) {
   lua_pushinteger(L, lo + (lua_Integer)(esp_random() % (uint32_t)(hi - lo + 1)));
   return 1;
 }
+// wada.sys.tr(s) -- translate through the same table the UI uses.
+//
+// Lua apps had no way to reach it, so every built-in app (airtime's "channel
+// busy", the monitor, the games) was hard-English no matter what language the
+// device was set to, and a translator could file the string but nothing could
+// consume it (#257). Keys go in deploy/apps/lang/*.lang exactly like the
+// firmware's own; an untranslated key returns unchanged, so an app that calls
+// this is never worse off than one that does not.
+static int sysTr(lua_State* L) {
+  const char* s = luaL_checkstring(L, 1);
+  lua_pushstring(L, TR(s));
+  return 1;
+}
+
 int sysBoard(lua_State* L) {
   lua_createtable(L, 0, 6);
   lua_pushinteger(L, s_h ? s_h->body_w : lv_disp_get_hor_res(nullptr));
@@ -1981,6 +1996,7 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, sysMillis); lua_setfield(L, -2, "millis");
   lua_pushcfunction(L, sysToast);  lua_setfield(L, -2, "toast");
   lua_pushcfunction(L, sysBoard);  lua_setfield(L, -2, "board");
+  lua_pushcfunction(L, sysTr);     lua_setfield(L, -2, "tr");      // #257
   lua_pushcfunction(L, sysRandom); lua_setfield(L, -2, "random");
   lua_pushcfunction(L, sysEpoch);    lua_setfield(L, -2, "epoch");     // #245
   lua_pushcfunction(L, sysDatetime); lua_setfield(L, -2, "datetime");  // #245

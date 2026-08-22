@@ -67,7 +67,157 @@ def source_keys():
                     k = unescape_c(lit)
                     if k.strip():
                         keys.add(k)
+
+    # HELPER-WRAPPED keys: mk_row_btn("Reload tiles in view", cb) and its ~20
+    # siblings take a raw literal and call TR() on it *inside* the helper. At
+    # runtime they translate correctly -- but the extractor above only ever saw
+    # TR("literal"), so the literal at the CALL SITE was never emitted as a key,
+    # so it never landed in a .lang file, so no translator could ever supply it.
+    # That is why a whole map/options/settings sheet stayed English in every
+    # language while looking perfectly wrapped in the source (#257).
+    #
+    # Two passes: find every function or lambda that calls TR() on one of its own
+    # parameters and note which parameter, then pull the literal out of that
+    # argument position at every call site.
+    for f in _sources():
+        src = open(f, encoding='utf-8').read()
+        for name, idx in _tr_wrapping_helpers(src):
+            for arg in _call_args_at(src, name, idx):
+                parts = re.findall(r'"((?:[^"\\]|\\.)*)"', arg)
+                if not parts:
+                    continue
+                k = unescape_c(''.join(parts))
+                while k and 0xE000 <= ord(k[0]) <= 0xF8FF:
+                    k = k[1:]
+                k = k.lstrip(' ')
+                if k.strip():
+                    keys.add(k)
+
+    # RANGE-FOR over a local table: `struct {...} rows[] = {{"Show contacts", ...}};`
+    # then `for (auto& r : rows) TR(r.label)`. Same blind spot as the helper case --
+    # correct at runtime, invisible to a TR("literal") scan, so untranslatable.
+    for f in _sources():
+        src = open(f, encoding='utf-8').read()
+        for m in re.finditer(r'for\s*\(\s*(?:const\s+)?auto\s*&?\s*(\w+)\s*:\s*(\w+)\s*\)', src):
+            var, tbl = m.group(1), m.group(2)
+            brace = src.find('{', m.end())
+            if brace < 0 or brace - m.end() > 8:   # single-statement body, no block
+                brace = -1
+            body = src[m.end():_balanced(src, brace)] if brace >= 0 else src[m.end():m.end() + 400]
+            if not re.search(r'\bTR\(\s*' + re.escape(var) + r'\s*(?:\.|->)', body):
+                continue
+            init = None
+            for d in re.finditer(r'\b' + re.escape(tbl) + r'\s*\[[^\]]*\]\s*=\s*\{', src[:m.start()]):
+                init = d
+            if init:
+                seg = src[init.end():_balanced(src, init.end() - 1)]
+                for lit in re.findall(r'"((?:[^"\\]|\\.)*)"', seg):
+                    k = unescape_c(lit)
+                    if k.strip():
+                        keys.add(k)
+
+    # TR(someFunc(...)): a helper that RETURNS one of several literals, translated
+    # by the caller. Every literal it can return is a key.
+    for f in _sources():
+        src = open(f, encoding='utf-8').read()
+        for name in set(re.findall(r'TR\(\s*([A-Za-z_]\w*)\s*\(', src)):
+            for d in re.finditer(r'\b' + re.escape(name) + r'\s*\([^;{}]*\)\s*\{', src):
+                seg = src[d.end() - 1:_balanced(src, d.end() - 1)]
+                for lit in re.findall(r'"((?:[^"\\]|\\.)*)"', seg):
+                    k = unescape_c(lit)
+                    if k.strip():
+                        keys.add(k)
+    # LUA APPS: wada.sys.tr("...") (aliased to a local `tr` by convention). The
+    # apps ship from the same catalog and their strings belong in the same files.
+    for f in sorted(glob.glob(os.path.join(ROOT, 'deploy/apps/*/*/*.lua'))):
+        src = open(f, encoding='utf-8').read()
+        for lit in re.findall(r'\b(?:sys\.)?tr\(\s*"((?:[^"\\]|\\.)*)"', src):
+            k = unescape_c(lit)
+            if k.strip():
+                keys.add(k)
     return keys
+
+
+def _sources():
+    return sorted(glob.glob(os.path.join(ROOT, 'src/ui-touch/*.cpp')) +
+                  glob.glob(os.path.join(ROOT, 'src/ui-touch/*.h')))
+
+
+def _balanced(src, i):
+    """Index just past the '}' closing the block whose '{' is at src[i]."""
+    depth = 0
+    while i < len(src):
+        if src[i] == '{': depth += 1
+        elif src[i] == '}':
+            depth -= 1
+            if depth == 0: return i + 1
+        i += 1
+    return len(src)
+
+
+def _split_args(s):
+    """Top-level comma split, ignoring commas inside (), [], {} or a string."""
+    out, cur, depth, q, i = [], [], 0, None, 0
+    while i < len(s):
+        c = s[i]
+        if q:
+            cur.append(c)
+            if c == '\\': 
+                if i + 1 < len(s): cur.append(s[i+1]); i += 1
+            elif c == q: q = None
+        elif c in '"\'': q = c; cur.append(c)
+        elif c in '([{': depth += 1; cur.append(c)
+        elif c in ')]}': depth -= 1; cur.append(c)
+        elif c == ',' and depth == 0: out.append(''.join(cur)); cur = []
+        else: cur.append(c)
+        i += 1
+    out.append(''.join(cur))
+    return out
+
+
+# A function/lambda header: a name, a parenthesised parameter list, then '{'.
+_HDR = re.compile(r'(?:auto\s+(?P<lam>[A-Za-z_]\w*)\s*=\s*\[[^\]]*\]\s*'
+                  r'|\b(?P<fn>[A-Za-z_]\w*)\s*)\((?P<args>[^;{}]*)\)\s*'
+                  r'(?:const\s*)?(?:->\s*[\w:*&<> ]+\s*)?\{')
+
+
+def _tr_wrapping_helpers(src):
+    """(helper name, argument index) for every helper that TR()s a parameter."""
+    found = set()
+    for m in _HDR.finditer(src):
+        name = m.group('lam') or m.group('fn')
+        if not name or name in ('if', 'for', 'while', 'switch', 'catch', 'TR'):
+            continue
+        params = []
+        for a in _split_args(m.group('args')):
+            names = re.findall(r'[A-Za-z_]\w*', a)
+            params.append(names[-1] if names else '')
+        body = src[m.end() - 1:_balanced(src, m.end() - 1)]
+        for i, pn in enumerate(params):
+            if pn and re.search(r'\bTR\(\s*' + re.escape(pn) + r'\s*\)', body):
+                found.add((name, i))
+    return found
+
+
+def _call_args_at(src, name, idx):
+    """Every argument at position idx across all calls to name(...)."""
+    out = []
+    for m in re.finditer(r'\b' + re.escape(name) + r'\s*\(', src):
+        i = m.end()
+        depth, q, start = 1, None, i
+        while i < len(src) and depth:
+            c = src[i]
+            if q:
+                if c == '\\': i += 1
+                elif c == q: q = None
+            elif c in '"\'': q = c
+            elif c == '(': depth += 1
+            elif c == ')': depth -= 1
+            i += 1
+        args = _split_args(src[start:i - 1])
+        if idx < len(args):
+            out.append(args[idx])
+    return out
 
 # Known untranslatable / identical-everywhere keys.
 SKIP = {'...', '😊', 'Snake', '© OpenStreetMap', '© OpenTopoMap'}

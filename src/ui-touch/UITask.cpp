@@ -20662,7 +20662,7 @@ static void fmOpenActions(const char* name, bool isdir) {
 #endif
   }
   if (s_fm_clip.active) {
-    fmActionBtn(card, s_fm_clip.is_cut ? "Paste (move)" : "Paste (copy)", fmActPasteCb, 0x2D4A2D);
+    fmActionBtn(card, s_fm_clip.is_cut ? TR("Paste (move)") : TR("Paste (copy)"), fmActPasteCb, 0x2D4A2D);
   }
 }
 
@@ -22414,7 +22414,8 @@ static void openReaderPage() {
   lv_obj_set_pos(s_reader_status, 6, top + 44);
   lv_obj_set_style_text_font(s_reader_status, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_reader_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_label_set_text(s_reader_status, s_reader_msg[0] ? s_reader_msg : "On-device text browser \xc2\xb7 no proxy, no tracking");
+  lv_label_set_text(s_reader_status, s_reader_msg[0] ? s_reader_msg
+                                                    : TR("On-device text browser \xc2\xb7 no proxy, no tracking"));
   // (Collapsed state shows the URL in the status-bar title zone — see readerSetAddrExpanded.)
   // --- Body: a vertical scroll container we fill with paragraph + link labels ---
   s_reader_scroll = lv_obj_create(s_reader_root);
@@ -22675,7 +22676,7 @@ static void discoverBuildFeed() {
       (unsigned)discTypeColor(h.node_type), disp_esc, discTypeShort(h.node_type),
       (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, direct, dist_seg, ago);
   }
-  if (q == 0) snprintf(buf, sizeof buf, "#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#");
+  if (q == 0) snprintf(buf, sizeof buf, TR("#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#"));
   else if (buf[q - 1] == '\n') buf[q - 1] = '\0';
   lv_label_set_text(s_discover_feed, buf);
   if (s_discover_status)
@@ -31574,8 +31575,8 @@ static void settingsCatBuild(int cat) {
         lv_obj_set_style_bg_color(crash_btn, lv_color_hex(0x8A3B2E), LV_PART_MAIN);  // warning red-brown
         lv_obj_add_event_cb(crash_btn, crashDumpExportCb, LV_EVENT_CLICKED, nullptr);
         lv_obj_t* cbl = lv_label_create(crash_btn);
-        char ct[56];
-        snprintf(ct, sizeof ct, LV_SYMBOL_WARNING "  Export crash report (%uK)",
+        char ct[96];   // room for a translated label
+        snprintf(ct, sizeof ct, TR(LV_SYMBOL_WARNING "  Export crash report (%uK)"),
                  (unsigned)(s_crash_dump_size / 1024));
         lv_label_set_text(cbl, ct);
         lv_obj_set_style_text_font(cbl, &g_font_14, LV_PART_MAIN);

@@ -82,7 +82,13 @@ def main():
         rows = langs.get(code, {})
         sym = 'kBuiltin_' + code.replace('-', '_')
         w.append('static const I18nPair %s[] = {' % sym)
+        # A row whose translation IS the key does nothing: TR() already returns the
+        # key when it finds no match. The .lang files carry those deliberately, as
+        # placeholders telling translators the string exists, but baking them costs
+        # flash on exactly the board that needs the flash (the V4 sits at ~90%).
         for k in sorted(rows):                  # sorted: TR() binary-searches
+            if rows[k] == k:
+                continue
             w.append('  { "%s", "%s" },' % (c_escape(k), c_escape(rows[k])))
         w.append('};')
 
@@ -103,8 +109,8 @@ def main():
     w.append('')
 
     open(OUT, 'w', encoding='utf-8').write('\n'.join(w))
-    total = sum(len(r) for r in langs.values())
-    print('%s: %d languages, %d rows, %d bytes' %
+    total = sum(sum(1 for k, v in r.items() if v != k) for r in langs.values())
+    print('%s: %d languages, %d translated rows, %d bytes' %
           (os.path.relpath(OUT, ROOT), len(langs), total, os.path.getsize(OUT)))
 
 

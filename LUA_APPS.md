@@ -50,7 +50,8 @@ We do NOT bind LVGL wholesale. We bind a stable, versioned surface we own
 - `wada.store` — per-app KV: `get/set(key, value)` under an `app.<id>.` prefix
   in the file-mode prefs. Quota 2 KB/app (respects the SdNvsPrefs blob cap).
 - `wada.sys` — `millis()`, `board()` (id, screen w/h, caps: keyboard,
-  trackball, gps), `version()`, `toast(msg)`.
+  trackball, gps), `version()`, `toast(msg)`, `tr(s)` (the firmware's own
+  translation table, so an app is not stuck in English).
 - `wada.timer` — `every(ms)` drives `on_tick` cadence (min 33 ms).
 
 Sandbox env (no `io`, `os`, `require`, `dofile`, `load` of new chunks;
