@@ -17099,6 +17099,21 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
 #endif
   }
   mk_btn_full(LV_SYMBOL_TRASH "  Delete", actionSheetDeleteCb, 0xB23A48);
+
+  // Scrollability is decided HERE, from the height the buttons actually reached,
+  // not from the grid_items tally above. That tally is hand-maintained and has
+  // to be updated every time a conditional button is added; the location-sharing
+  // row added for #266 is not in it, so a contact showing that button has one
+  // more row than the card was sized for. When the estimate is short the body is
+  // left unscrollable and the overflow is simply unreachable, which is the shape
+  // of #306. `y` is the truth, so use it and let the tally be wrong harmlessly.
+  {
+    const int body_h = card_h - 2 * padding - title_h;
+    if (y > body_h) {
+      lv_obj_set_scroll_dir(body, LV_DIR_VER);
+      lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    }
+  }
 }
 
 static void contactSelectCb(lv_event_t* e) {
@@ -36718,7 +36733,10 @@ static void serviceLockscreen() {
 // "Set as notification sound"), or "Built-in (default)" to reset to the chime.
 static void soundDisplayName(const char* path, char* out, int cap) {
   if (!out || cap <= 0) return;
-  if (!path || !path[0]) { snprintf(out, cap, "Built-in"); return; }
+  // TR(), not a bare literal: this is the label shown for the default chime, and
+  // it was the one path of two that never went through the translation table, so
+  // the same word appeared translated in the menu and English on the button.
+  if (!path || !path[0]) { snprintf(out, cap, "%s", TR("Built-in")); return; }
   const bool sd = !strncmp(path, "sd:", 3);
   const char* p = sd ? path + 3 : path;
   const char* base = strrchr(p, '/'); base = base ? base + 1 : p;
@@ -38540,7 +38558,7 @@ static void refreshSettingsSectionSubtitles() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       lv_label_set_text(g_set_sec_sub[SEC_BLUETOOTH],
                         (g_lv.task->hasBleCapability() && bleRequestedOrEnabled())
-                          ? "Starting…" : "Off");
+                          ? TR("Starting…") : TR("Off"));
 #else
       lv_label_set_text(g_set_sec_sub[SEC_BLUETOOTH], TR("Inactive"));
 #endif
@@ -43174,16 +43192,21 @@ static void refreshStatusLabels() {
       IPAddress ip = WiFi.localIP();
       snprintf(st, sizeof st, LV_SYMBOL_WIFI " %d.%d.%d.%d%s",
                ip[0], ip[1], ip[2], ip[3], ble_suffix);
-    } else if (WiFi.getMode() == WIFI_STA) {
+    // Gate on what the USER asked for, not on the driver mode. Reading only
+    // WiFi.getMode() meant that anything leaving the radio in STA made the home
+    // screen announce "Starting…" forever with Wi-Fi switched off, which is
+    // what #305 reported. The mode is still checked, so a genuinely idle STA is
+    // not described as connecting either.
+    } else if (wifiConfigGetRadioEnabled() && WiFi.getMode() == WIFI_STA) {
       const char* hint;
       switch (WiFi.status()) {
-        case WL_IDLE_STATUS:     hint = "Starting…";  break;
-        case WL_NO_SSID_AVAIL:   hint = "SSID not found"; break;
-        case WL_CONNECT_FAILED:  hint = "Auth failed";   break;
-        case WL_CONNECTION_LOST: hint = "Link lost";     break;
-        case WL_DISCONNECTED:    hint = "Connecting…";   break;
-        case WL_NO_SHIELD:       hint = "Init…";         break;
-        default:                 hint = "Connecting…";   break;
+        case WL_IDLE_STATUS:     hint = TR("Starting…");     break;
+        case WL_NO_SSID_AVAIL:   hint = TR("SSID not found"); break;
+        case WL_CONNECT_FAILED:  hint = TR("Auth failed");    break;
+        case WL_CONNECTION_LOST: hint = TR("Link lost");      break;
+        case WL_DISCONNECTED:    hint = TR("Connecting…");    break;
+        case WL_NO_SHIELD:       hint = TR("Init…");          break;
+        default:                 hint = TR("Connecting…");    break;
       }
       snprintf(st, sizeof st, LV_SYMBOL_WIFI " %s%s", hint, ble_suffix);
     } else if (ble_on) {
@@ -43955,20 +43978,40 @@ static void openAccentPicker() {
   lv_obj_set_style_text_color(pv, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_center(pv);
 
+  // Buttons size to their label instead of to 124/84 px. Those numbers were
+  // measured against "Save & restart" / "Reset"; Hungarian's
+  // "Mentés és újraindítás" is half again as long and ran off both edges of its
+  // button (#307). A wrapping row means an over-long pair drops onto two lines
+  // rather than clipping, and the picker is a scrollable flex column so the
+  // extra height costs nothing. max_width keeps a single very long label inside
+  // the card instead of pushing the row wider than the screen.
   lv_obj_t* btnrow = lv_obj_create(s_accent_picker);
   lv_obj_remove_style_all(btnrow);
-  lv_obj_set_size(btnrow, 220, 32);
-  lv_obj_t* save = lv_btn_create(btnrow);
-  lv_obj_set_size(save, 124, 30); lv_obj_align(save, LV_ALIGN_LEFT_MID, 0, 0);
-  styleButton(save);
-  lv_obj_add_event_cb(save, accentSaveCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_set_width(btnrow, sw - 24);
+  lv_obj_set_height(btnrow, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(btnrow, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(btnrow, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(btnrow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(btnrow, 6, LV_PART_MAIN);
+  lv_obj_clear_flag(btnrow, LV_OBJ_FLAG_SCROLLABLE);
+
+  auto sized_btn = [&](lv_event_cb_t cb) {
+    lv_obj_t* b = lv_btn_create(btnrow);
+    lv_obj_set_size(b, LV_SIZE_CONTENT, 30);
+    lv_obj_set_style_max_width(b, LV_PCT(100), LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(b, 12, LV_PART_MAIN);
+    styleButton(b);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+    return b;
+  };
+  lv_obj_t* save = sized_btn(accentSaveCb);
   lv_obj_t* sl = lv_label_create(save); lv_label_set_text(sl, TR("Save & restart"));
   lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN); lv_obj_center(sl);
-  lv_obj_t* rst = lv_btn_create(btnrow);
-  lv_obj_set_size(rst, 84, 30); lv_obj_align(rst, LV_ALIGN_RIGHT_MID, 0, 0);
-  styleButton(rst);
-  lv_obj_add_event_cb(rst, accentResetCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* rl = lv_label_create(rst); lv_label_set_text(rl, TR("Reset")); lv_obj_center(rl);
+  useChainedFont(sl);
+  lv_obj_t* rst = sized_btn(accentResetCb);
+  lv_obj_t* rl = lv_label_create(rst); lv_label_set_text(rl, TR("Reset"));
+  lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN); lv_obj_center(rl);
   useChainedFont(rl);
 
   accentSetSelection(touchPrefsGetAccentColor(), true);

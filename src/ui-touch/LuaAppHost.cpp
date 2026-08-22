@@ -503,6 +503,43 @@ void listPaintRow(lv_obj_t* row, bool selected) {
   lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
 }
 
+// wada.ui.text_w(text [, size]) -> rendered width in pixels.
+//
+// The gap this closes: an app can ask how TALL a line is (text_h) but had no way
+// to ask how WIDE it is, so any app laying out its own rows had to guess whether
+// a string would wrap. Guessing wrong puts the next row on top of it, which is
+// exactly what happened to the SDK Test app's channel list. With this an app can
+// compute its own line count instead of estimating from character counts.
+int uiTextW(lua_State* L) {
+  size_t len = 0;
+  const char* txt = luaL_checklstring(L, 1, &len);
+  const lv_font_t* f = luaHostFontForSize((int)luaL_optinteger(L, 2, 14));
+  lua_pushinteger(L, (lua_Integer)lv_txt_get_width(txt, (uint32_t)len, f, 0, LV_TEXT_FLAG_NONE));
+  return 1;
+}
+
+// wada.ui.text_lines(text, width [, size]) -> how many lines it wraps to.
+// The question apps actually have. Counts explicit newlines too, and measures
+// rather than guessing, so a layout built on it cannot overlap.
+int uiTextLines(lua_State* L) {
+  size_t len = 0;
+  const char* txt = luaL_checklstring(L, 1, &len);
+  const int w = (int)luaL_checkinteger(L, 2);
+  const lv_font_t* f = luaHostFontForSize((int)luaL_optinteger(L, 3, 14));
+  if (w <= 0) { lua_pushinteger(L, 1); return 1; }
+  int lines = 0;
+  const char* p = txt;
+  while (*p) {
+    uint32_t consumed = _lv_txt_get_next_line(p, f, 0, (lv_coord_t)w, nullptr, LV_TEXT_FLAG_NONE);
+    if (!consumed) break;
+    p += consumed;
+    lines++;
+    if (lines > 512) break;               // pathological input: stop counting
+  }
+  lua_pushinteger(L, lines < 1 ? 1 : lines);
+  return 1;
+}
+
 int uiList(lua_State* L) {
   if (!s_h || !s_h->body) return luaL_error(L, "no app body");
   const int x = (int)luaL_checkinteger(L, 1), y = (int)luaL_checkinteger(L, 2);
@@ -699,6 +736,7 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "rx_identity");// rx_log pubkey/src/dst
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "list");       // wada.ui.list
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "packets");    // app.on_packet
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "measure");    // ui.text_w / text_lines
   lua_pushboolean(L, CAP_SENSORS);      lua_setfield(L, -2, "sensors");    // wada.sys.env
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "map");        // wada.map.view
   return 1;
@@ -1838,6 +1876,8 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, uiChart);  lua_setfield(L, -2, "chart");
   lua_pushcfunction(L, uiScroll); lua_setfield(L, -2, "scroll");
   lua_pushcfunction(L, uiTextH);  lua_setfield(L, -2, "text_h");
+  lua_pushcfunction(L, uiTextW);     lua_setfield(L, -2, "text_w");
+  lua_pushcfunction(L, uiTextLines); lua_setfield(L, -2, "text_lines");
   lua_createtable(L, 0, 6);                              // wada.ui.colors (theme)
   lua_pushinteger(L, 0x15B6A6); lua_setfield(L, -2, "accent");
   lua_pushinteger(L, 0xE6E9ED); lua_setfield(L, -2, "text");
