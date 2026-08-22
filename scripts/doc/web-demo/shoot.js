@@ -2,6 +2,7 @@
 // Start the demo server first:  python3 scripts/doc/web-demo/serve.py 8791
 // Then:  NODE_PATH=<playwright node_modules> node scripts/doc/web-demo/shoot.js [port] [outdir]
 const { chromium } = require('playwright');
+const assert = require('assert');
 
 const PORT = process.argv[2] || '8791';
 const OUT  = process.argv[3] || 'doc-shots';
@@ -11,7 +12,10 @@ const path = require('path');
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 (async () => {
-  const browser = await chromium.launch();
+  const launchOptions = process.env.PLAYWRIGHT_EXECUTABLE_PATH
+    ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH }
+    : {};
+  const browser = await chromium.launch(launchOptions);
   const page = await browser.newPage({
     viewport: { width: 390, height: 780 },
     deviceScaleFactor: 2,           // crisp @2x for docs
@@ -35,6 +39,31 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   await page.waitForSelector('#cvmsgs .b', { timeout: 5000 });
   await sleep(500);
   await shot('chat');
+
+  // Mention autocomplete: recent-first filtering, keyboard selection, escaped
+  // labels, and replacement around a caret in the middle of existing text.
+  await page.fill('#cvi', '@sa');
+  await page.waitForSelector('#mnames.on button', { timeout: 5000 });
+  assert.deepStrictEqual(await page.locator('#mnames button').allTextContents(), ['@Sanne', '@Sam <Ops>']);
+  assert.strictEqual(await page.locator('#mnames ops').count(), 0);
+  await page.press('#cvi', 'ArrowDown');
+  await page.press('#cvi', 'Enter');
+  assert.strictEqual(await page.inputValue('#cvi'), '@Sam <Ops> ');
+
+  await page.fill('#cvi', 'hello @sa, later');
+  await page.locator('#cvi').evaluate((el) => {
+    el.setSelectionRange(9, 9);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForSelector('#mnames.on button', { timeout: 5000 });
+  await page.press('#cvi', 'Tab');
+  assert.strictEqual(await page.inputValue('#cvi'), 'hello @Sanne, later');
+
+  await page.fill('#cvi', '@r');
+  await page.waitForSelector('#mnames.on button', { timeout: 5000 });
+  assert.strictEqual(await page.locator('#mnames button').first().textContent(), '@R&D "QA"');
+  await shot('mentions');
+  await page.fill('#cvi', '');
   await page.click('#cvback'); await sleep(300);
 
   // 3. Contacts tab

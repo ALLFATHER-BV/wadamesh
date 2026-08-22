@@ -120,7 +120,17 @@ struct AdvertPath {
   uint8_t path_len;
   char    name[32];
   uint32_t recv_timestamp;
+  uint32_t recv_seq;
+  uint8_t type;
+  bool used;
   uint8_t path[MAX_PATH_SIZE];
+};
+
+struct RecentlyHeardName {
+  uint8_t pubkey_prefix[7];
+  char name[32];
+  uint32_t recv_seq;
+  uint8_t type;
 };
 
 class MyMesh : public BaseChatMesh, public DataStoreHost {
@@ -225,7 +235,10 @@ public:
   bool sendAdvert(bool flood);
   void enterCLIRescue();
 
-  int  getRecentlyHeard(AdvertPath dest[], int max_num);
+  int  getRecentlyHeard(RecentlyHeardName dest[], int max_num);
+  bool uiIsMeshcomodRecipient(const uint8_t* pub_key_prefix_6) const {
+    return isMeshcomodRecipient(pub_key_prefix_6);
+  }
 
   // On-device terminal: register an output sink (nullptr = off) and run a local
   // CLI command. Replies flow through pushMeshcomodReply -> the sink.
@@ -1338,6 +1351,10 @@ private:
 
   #define ADVERT_PATH_TABLE_SIZE   16
   AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
+  uint32_t advert_recv_seq = 0;
+#if defined(ESP32)
+  portMUX_TYPE advert_paths_mux = portMUX_INITIALIZER_UNLOCKED;
+#endif
 
   // Client-side retry-until-echo state. Only one exact packet clone is retained
   // in the outbound queue per active slot, matching the companion behavior.
