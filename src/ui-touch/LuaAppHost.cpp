@@ -99,6 +99,9 @@ extern uint32_t luaHostMeshDiscover(int type_filter);
 #if CAP_COMPASS
 extern bool luaHostCompass(float* x_gauss, float* y_gauss, float* z_gauss, bool* overflow);   // sensor frame, uncalibrated
 #endif
+#if CAP_IMU
+extern bool luaHostAccel(float* x_g, float* y_g, float* z_g);   // sensor frame, g
+#endif
 // DO NOT name the network client type here. What "WiFiClient" means depends on the
 // board: a real class on the S3 envs, a `using WiFiClient = NetworkClient` alias
 // under arduino-esp32 3.x (Tanmatsu), and a #define to C6Client on the T-Display P4
@@ -719,7 +722,7 @@ int sysBeep(lua_State* L) { lua_pushboolean(L, luaHostBeep()); return 1; }
 // rather than assume: the extended SDK is absent on low-resource boards (see
 // CAP_LUA_SDK_EXT in device_caps.h), and a store app runs on all of them.
 int sysCaps(lua_State* L) {
-  lua_createtable(L, 0, 12);
+  lua_createtable(L, 0, 13);
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "sdk_ext");
   lua_pushboolean(L, CAP_KEYBOARD);     lua_setfield(L, -2, "keyboard");
   lua_pushboolean(L, CAP_TOUCH);        lua_setfield(L, -2, "touch");
@@ -734,6 +737,7 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, CAP_SENSORS);      lua_setfield(L, -2, "sensors");    // wada.sys.env
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "map");        // wada.map.view
   lua_pushboolean(L, CAP_COMPASS);      lua_setfield(L, -2, "compass");    // wada.sys.compass()
+  lua_pushboolean(L, CAP_IMU);          lua_setfield(L, -2, "accel");      // wada.sys.accel()
   return 1;
 }
 
@@ -801,6 +805,25 @@ int sysCompass(lua_State* L) {
   return 1;
 }
 #endif  // CAP_COMPASS
+
+#if CAP_IMU
+// wada.sys.accel() -> { x, y, z } in g, SENSOR frame — or nil when the chip is
+// absent or has nothing fresh. Held still, the magnitude is 1 and the axis
+// pointing at the sky carries it, which is how an app identifies the axes.
+// Its purpose here is tilt: a magnetic heading taken from two axes is wrong by
+// roughly 1.5 degrees per degree of tilt at mid latitudes, because the field
+// dips ~60 degrees and tipping the device swaps some of that vertical field
+// into the horizontal pair.
+int sysAccel(lua_State* L) {
+  float x = 0, y = 0, z = 0;
+  if (!luaHostAccel(&x, &y, &z)) { lua_pushnil(L); return 1; }
+  lua_createtable(L, 0, 3);
+  lua_pushnumber(L, x); lua_setfield(L, -2, "x");
+  lua_pushnumber(L, y); lua_setfield(L, -2, "y");
+  lua_pushnumber(L, z); lua_setfield(L, -2, "z");
+  return 1;
+}
+#endif  // CAP_IMU
 
 #if CAP_SENSORS
 // wada.sys.env() -> { temp_c, humidity, pressure_hpa, alt_m }, or nil.
@@ -1958,6 +1981,9 @@ void openWada(lua_State* L) {
 #endif
 #if CAP_COMPASS
   lua_pushcfunction(L, sysCompass);  lua_setfield(L, -2, "compass");   // hardware-gated, see caps().compass
+#endif
+#if CAP_IMU
+  lua_pushcfunction(L, sysAccel);    lua_setfield(L, -2, "accel");     // tilt, see caps().accel
 #endif
 #if CAP_SENSORS
   lua_pushcfunction(L, sysEnv);      lua_setfield(L, -2, "env");   // HARDWARE gate, not the memory one

@@ -124,6 +124,9 @@
   #if defined(HAS_M9_COMPASS)
     #include <M9Compass.h>           // wada.sys.compass() source (luaHostCompass)
   #endif
+  #if defined(HAS_M9_IMU)
+    #include <M9Imu.h>               // wada.sys.accel() source (luaHostAccel)
+  #endif
   #if defined(HAS_PAGER_KEYBOARD)
     #include <helpers/input/PagerKeyboard.h>
   #endif
@@ -46949,6 +46952,21 @@ bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, uint32_t* fix_t
 // one wired so far is the M9's QMC6309 (variants/thinknode_m9/M9Compass.*).
 // Runs on the UI thread like every other luaHost* bridge; the driver's I2C
 // reads are short and the bus (Wire) has no other task on it.
+#if CAP_IMU
+// wada.sys.accel(). Acceleration in g, sensor frame, as the chip reports it —
+// the mapping to the device's own axes is the consumer's, for the same reason
+// as the magnetometer: it is not documented for this board and had to be
+// measured.
+bool luaHostAccel(float* x, float* y, float* z) {
+#if defined(HAS_M9_IMU)
+  return m9ImuRead(x, y, z);
+#else
+  (void)x; (void)y; (void)z;
+  return false;
+#endif
+}
+#endif  // CAP_IMU
+
 bool luaHostCompass(float* x, float* y, float* z, bool* overflow) {
 #if defined(HAS_M9_COMPASS)
   return m9CompassRead(x, y, z, overflow);
@@ -52594,6 +52612,9 @@ void UITask::loop() {
   m9KeyboardPoll();
 #if defined(HAS_M9_COMPASS)
   m9CompassIdleTick();   // park the magnetometer when no app is reading it
+#endif
+#if defined(HAS_M9_IMU)
+  m9ImuIdleTick();       // and the accelerometer
 #endif
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = m9KeyboardReadKey();

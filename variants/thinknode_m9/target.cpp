@@ -61,6 +61,9 @@ bool radio_init() {
   // are re-probed lazily from the read path, so a miss here is not fatal.
   m9CompassBegin(Wire);
 #endif
+#if defined(HAS_M9_IMU)
+  m9ImuBegin(Wire);   // QMI8658 at 0x6B, same bus, same lazy re-probe
+#endif
 
 #ifdef LR11X0_DIO3_TCXO_VOLTAGE
   float tcxo = LR11X0_DIO3_TCXO_VOLTAGE;

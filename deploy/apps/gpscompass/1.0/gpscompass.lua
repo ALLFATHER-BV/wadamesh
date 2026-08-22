@@ -36,12 +36,14 @@ local TH12, TH14, TH16 = 15, 17, 19   -- font line heights, replaced from ui.tex
 local L = {}                      -- labels by name
 
 local has_compass = false
+local has_accel = false            -- QMI8658 present: gravity for tilt
+local acc = nil                    -- last accelerometer sample, g, sensor frame
 local cal = nil                   -- { ox, oy, oz } hard-iron offsets
 local calib = nil                 -- in-progress: { mn = {x,y,z}, mx = {x,y,z}, t0 }
 local align = 0                   -- degrees added to the raw angle so north reads 000
 local mirror = false              -- sensor Z faces into the screen: heading runs the other way
 local mag_norm = nil              -- |B| after offsets, Gauss (sanity check for the user)
-local mag_z = 0                   -- vertical component after offsets (handedness + dip)
+local tilt_deg = nil              -- how far from level, degrees (nil = unknown)
 local mag_sat = false             -- last magnetometer sample was flagged as saturated
 
 local hv_x, hv_y = 0, 0           -- smoothed heading unit vector
@@ -90,9 +92,13 @@ end
 -- ---------------------------------------------------------------------------
 -- persistence
 local function load_prefs()
-  local ox, oy, r = store.get("cal_ox"), store.get("cal_oy"), store.get("cal_r")
-  if type(ox) == "number" and type(oy) == "number" then
-    cal = { ox = ox, oy = oy, r = (type(r) == "number" and r > 0) and r or nil }
+  local ox, oy = store.get("cal_ox"), store.get("cal_oy")
+  local oz, r = store.get("cal_oz"), store.get("cal_r")
+  -- oz is required for tilt compensation, so a calibration saved by the
+  -- flat-only version (which had no third offset) is not good enough any more:
+  -- take it only when the whole set is there.
+  if type(ox) == "number" and type(oy) == "number" and type(oz) == "number" then
+    cal = { ox = ox, oy = oy, oz = oz, r = (type(r) == "number" and r > 0) and r or nil }
   end
   -- Orientation settings are versioned: the heading formula changed once the
   -- M9's axes were measured, so values saved against the old one would push a
@@ -118,136 +124,174 @@ end
 
 local function save_cal()
   if cal then
-    store.set("cal_ox", cal.ox); store.set("cal_oy", cal.oy); store.set("cal_r", cal.r)
+    store.set("cal_ox", cal.ox); store.set("cal_oy", cal.oy); store.set("cal_oz", cal.oz)
+    store.set("cal_r", cal.r)
   else
-    store.set("cal_ox", nil); store.set("cal_oy", nil); store.set("cal_r", nil)
+    store.set("cal_ox", nil); store.set("cal_oy", nil); store.set("cal_oz", nil)
+    store.set("cal_r", nil)
   end
-  store.set("cal_oz", nil)   -- the 3D fit's third offset; nothing reads it now
 end
 
 -- ---------------------------------------------------------------------------
--- calibration: least-squares circle fit from a FLAT, IN-PLACE turn
+-- calibration + heading
 --
--- Turning the device flat traces a circle in the sensor's x/y plane whose
--- CENTRE is the hard-iron offset and whose radius is the local horizontal
--- field. Only that centre is needed for a heading, so this fits exactly it.
+-- MEASURED FRAMES on the ThinkNode M9 (both by holding known attitudes and
+-- logging the raw vectors; neither is documented by anyone, and the only other
+-- firmware that touches these parts passes them through unverified):
+--   magnetometer  +Y = top edge, +X = LEFT edge, +Z = into the screen
+--   accelerometer +X = top edge, +Y = RIGHT edge, +Z = into the screen
+-- The accelerometer is therefore already in the aerospace body frame (forward,
+-- right, down); the magnetometer becomes (fwd, right, down) = (my, -mx, mz).
 --
--- Why flat-and-in-place rather than tumbling the device by hand: hard-iron
--- calibration assumes the device ROTATES in a uniform field. Carrying it
--- through the air around a desk also TRANSLATES it through the field of the
--- laptop, the desk frame and anything else ferrous, which corrupts the fit --
--- measured here as a centre that moved 0.15 G between sessions, which is more
--- than half the entire horizontal signal. Rotated flat on one spot, the same
--- sensor fitted a circle to within 4%.
+-- WHY TILT MATTERS: at this latitude Earth's field dips about 60 degrees below
+-- horizontal, so the vertical component is ~1.6x the horizontal one. A heading
+-- taken from two axes assumes the device is level; tip it and some of that
+-- large vertical field leaks into the horizontal pair, which is worth roughly
+-- 1.5 degrees of heading per degree of tilt. That, not the sensor, is why a
+-- hand-held reading wanders.
+local function to_body(m)
+  return m.y - (cal and cal.oy or 0),        -- forward (top edge)
+       -(m.x - (cal and cal.ox or 0)),       -- right
+         m.z - (cal and cal.oz or 0)         -- down (into the screen)
+end
+
+-- Hard-iron calibration: fit the sphere the samples lie on. Rotating the
+-- device sweeps that sphere, whose centre is the offset and whose radius is
+-- the true field.
 --
--- |p - c|^2 = r^2 is linear in (c, k = r^2 - |c|^2), so this is a 3x3 solve
--- over running sums: no sample storage, which matters in a 256 KB app heap.
--- Sums are kept relative to the first sample because Lua here is
--- single-precision and squaring raw values near 3.5 G throws away the
--- precision the fit depends on.
+-- ROTATE IT IN PLACE. Carrying it around the room while turning it does not
+-- just rotate the device, it also TRANSLATES it through the field of the desk,
+-- the laptop and anything else ferrous — and that corrupts the fit. Measured
+-- here: a centre that moved 0.15 G between hand-tumbled sessions, against a
+-- horizontal signal of only 0.26 G. The accelerometer now checks that the
+-- device was actually turned every way, which is the part a user cannot see.
 local function calib_new()
   return { n = 0, o = nil, t0 = sys.millis(),
-           sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sxs = 0, sys_ = 0, ss = 0,
-           mnx = 1e9, mxx = -1e9, mny = 1e9, mxy = -1e9 }
+           sx = 0, sy = 0, sz = 0, sxx = 0, syy = 0, szz = 0,
+           sxy = 0, sxz = 0, syz = 0, sxs = 0, sys_ = 0, szs = 0, ss = 0,
+           gmn = { 9, 9, 9 }, gmx = { -9, -9, -9 } }
 end
 
-local function calib_add(m)
+local function calib_add(m, a)
   local c = calib
-  if not c.o then c.o = { m.x, m.y } end
-  local x, y = m.x - c.o[1], m.y - c.o[2]
-  local s = x * x + y * y
+  if not c.o then c.o = { m.x, m.y, m.z } end
+  local x, y, z = m.x - c.o[1], m.y - c.o[2], m.z - c.o[3]
+  local s = x * x + y * y + z * z
   c.n = c.n + 1
-  c.sx = c.sx + x; c.sy = c.sy + y
-  c.sxx = c.sxx + x * x; c.syy = c.syy + y * y; c.sxy = c.sxy + x * y
-  c.sxs = c.sxs + x * s; c.sys_ = c.sys_ + y * s; c.ss = c.ss + s
-  if x < c.mnx then c.mnx = x end; if x > c.mxx then c.mxx = x end
-  if y < c.mny then c.mny = y end; if y > c.mxy then c.mxy = y end
+  c.sx = c.sx + x; c.sy = c.sy + y; c.sz = c.sz + z
+  c.sxx = c.sxx + x * x; c.syy = c.syy + y * y; c.szz = c.szz + z * z
+  c.sxy = c.sxy + x * y; c.sxz = c.sxz + x * z; c.syz = c.syz + y * z
+  c.sxs = c.sxs + x * s; c.sys_ = c.sys_ + y * s; c.szs = c.szs + z * s
+  c.ss = c.ss + s
+  -- coverage, measured by where gravity pointed rather than by where the field
+  -- went: it is the honest test of "was this thing actually turned over?"
+  if a then
+    local g = { a.x, a.y, a.z }
+    for i = 1, 3 do
+      if g[i] < c.gmn[i] then c.gmn[i] = g[i] end
+      if g[i] > c.gmx[i] then c.gmx[i] = g[i] end
+    end
+  end
 end
 
-local function solve3(M, v)
-  for col = 1, 3 do
+local function solve4(M, v)
+  for col = 1, 4 do
     local piv, best = col, math.abs(M[col][col])
-    for r = col + 1, 3 do
+    for r = col + 1, 4 do
       local a = math.abs(M[r][col])
       if a > best then piv, best = r, a end
     end
     if best < 1e-9 then return nil end
     if piv ~= col then M[col], M[piv] = M[piv], M[col]; v[col], v[piv] = v[piv], v[col] end
     local d = M[col][col]
-    for r = col + 1, 3 do
+    for r = col + 1, 4 do
       local f = M[r][col] / d
       if f ~= 0 then
-        for k = col, 3 do M[r][k] = M[r][k] - f * M[col][k] end
+        for k = col, 4 do M[r][k] = M[r][k] - f * M[col][k] end
         v[r] = v[r] - f * v[col]
       end
     end
   end
   local out = {}
-  for r = 3, 1, -1 do
+  for r = 4, 1, -1 do
     local acc = v[r]
-    for k = r + 1, 3 do acc = acc - M[r][k] * out[k] end
+    for k = r + 1, 4 do acc = acc - M[r][k] * out[k] end
     out[r] = acc / M[r][r]
   end
   return out
 end
 
--- Returns { ox, oy, r } or nil plus the reason it was refused. Every refusal
--- leaves the previous calibration in place: a silently-accepted bad fit is
--- worse than no new one, and that is exactly how the last one went wrong.
+-- Returns { ox, oy, oz, r } or nil plus the reason. Every refusal keeps the
+-- previous calibration: silently saving a bad fit is how north broke before.
 local function calib_solve()
   local c = calib
-  if c.n < 60 then return nil, "too few readings - turn slower" end
+  if c.n < 80 then return nil, "too few readings" end
+  -- Was it really turned every way? Gravity should have pointed along both
+  -- ends of each axis at some point. This is what a flat spin fails.
+  if has_accel and c.gmx[1] > -9 then
+    local worst, axis = 9, 1
+    for i = 1, 3 do
+      local span = c.gmx[i] - c.gmn[i]
+      if span < worst then worst, axis = span, i end
+    end
+    if worst < 0.9 then
+      return nil, ({ "turn it nose over tail", "turn it side over side",
+                     "turn it face up and down" })[axis]
+    end
+  end
   local M = {
-    { 4 * c.sxx, 4 * c.sxy, 2 * c.sx },
-    { 4 * c.sxy, 4 * c.syy, 2 * c.sy },
-    { 2 * c.sx,  2 * c.sy,  c.n },
+    { 4 * c.sxx, 4 * c.sxy, 4 * c.sxz, 2 * c.sx },
+    { 4 * c.sxy, 4 * c.syy, 4 * c.syz, 2 * c.sy },
+    { 4 * c.sxz, 4 * c.syz, 4 * c.szz, 2 * c.sz },
+    { 2 * c.sx,  2 * c.sy,  2 * c.sz,  c.n },
   }
-  local v = { 2 * c.sxs, 2 * c.sys_, c.ss }
-  local sol = solve3(M, v)
-  if not sol then return nil, "turn it right around" end
-  local cx, cy, k = sol[1], sol[2], sol[3]
-  local r2 = k + cx * cx + cy * cy
-  if r2 <= 0 then return nil, "turn it right around" end
+  local v = { 2 * c.sxs, 2 * c.sys_, 2 * c.szs, c.ss }
+  local sol = solve4(M, v)
+  if not sol then return nil, "turn it in more directions" end
+  local cx, cy, cz, k = sol[1], sol[2], sol[3], sol[4]
+  local r2 = k + cx * cx + cy * cy + cz * cz
+  if r2 <= 0 then return nil, "turn it in more directions" end
   local r = math.sqrt(r2)
-  -- Earth's HORIZONTAL field is 0.08 G near the poles and 0.41 G at the
-  -- magnetic equator. Outside that the fit has locked onto something else.
-  if r < 0.08 or r > 0.45 then return nil, string.format("field reads %.2f G", r) end
-  -- Coverage: a full turn makes each axis span 2r. Much less than that means
-  -- an arc, and an arc puts the centre almost anywhere.
-  if (c.mxx - c.mnx) < 1.4 * r or (c.mxy - c.mny) < 1.4 * r then
-    return nil, "turn it a FULL circle"
-  end
-  -- Roundness: sums give the mean square radius in closed form, so the
-  -- residual costs nothing to check. A fit distorted by moving the device
-  -- through nearby metal shows up here with a perfectly normal radius.
-  local mean_r2 = (c.ss - 2 * (cx * c.sx + cy * c.sy)) / c.n + cx * cx + cy * cy
+  -- Earth's TOTAL field is 0.25..0.65 G everywhere on the planet.
+  if r < 0.22 or r > 0.70 then return nil, string.format("field reads %.2f G", r) end
+  -- Roundness, in closed form from the sums. A fit distorted by carrying the
+  -- device past nearby metal has a normal-looking radius and a bad residual.
+  local mean_r2 = (c.ss - 2 * (cx * c.sx + cy * c.sy + cz * c.sz)) / c.n
+                  + cx * cx + cy * cy + cz * cz
   local resid = math.sqrt(math.max(mean_r2 - r * r, 0))
-  if resid > 0.18 * r then
-    return nil, string.format("too distorted (%.0f%%) - move away from metal", 100 * resid / r)
+  if resid > 0.15 * r then
+    return nil, string.format("too distorted (%.0f%%) - turn it ON THE SPOT", 100 * resid / r)
   end
-  return { ox = c.o[1] + cx, oy = c.o[2] + cy, r = r }, r
+  return { ox = c.o[1] + cx, oy = c.o[2] + cy, oz = c.o[3] + cz, r = r }, r
 end
 
--- ---------------------------------------------------------------------------
--- heading
--- Heading from the horizontal field, in the sensor's own frame.
---
--- The default is MEASURED, not guessed: on the ThinkNode M9, holding the
--- device flat and reading the field at north / east / south / west gives
--- (after subtracting the hard-iron centre)
---     N  x'=-0.055 y'=+0.310      E  x'=+0.268 y'=-0.018
---     S  x'=+0.013 y'=-0.275      W  x'=-0.225 y'=-0.016
--- i.e. +Y points at the device's top edge and +X to its left, so
--- atan2(x, y) reads 0/90/180/270 at N/E/S/W and counts up clockwise. That
--- needs no offset and no press.
---
--- `mirror` covers a sensor mounted the other way up (its Z facing out of the
--- screen instead of into it), which reverses the direction of travel;
--- `align` is the fine offset A sets, and stays 0 on a known board.
+-- Heading. With the accelerometer, the magnetic vector is rotated back into
+-- the horizontal plane before the angle is taken, so tipping the device no
+-- longer swings the reading (NXP AN4248 / ST AN3192, in the body frame above).
+-- Without one, it falls back to the flat-earth two-axis form, which is only
+-- honest while the device is held level.
 local function mag_heading(m)
-  local x, y = m.x, m.y
-  if cal then x, y = x - cal.ox, y - cal.oy end
-  local a = mirror and math.atan(-x, y) or math.atan(x, y)
+  local bx, by, bz = to_body(m)
+  if acc then
+    -- gravity's DIRECTION in the body frame: the part reads specific force, so
+    -- the skyward axis reads +1 and down is the negative of that
+    local gx, gy, gz = -acc.x, -acc.y, -acc.z
+    local gn = math.sqrt(gx * gx + gy * gy + gz * gz)
+    if gn > 0.5 then
+      gx, gy, gz = gx / gn, gy / gn, gz / gn
+      local pitch = math.atan(-gx, math.sqrt(gy * gy + gz * gz))
+      local roll  = math.atan(gy, gz)
+      local sp, cp = math.sin(pitch), math.cos(pitch)
+      local sr, cr = math.sin(roll), math.cos(roll)
+      local xh = bx * cp + by * sp * sr + bz * sp * cr
+      local yh = by * cr - bz * sr
+      tilt_deg = math.deg(math.acos(math.max(-1, math.min(1, gz))))
+      local a = mirror and math.atan(yh, xh) or math.atan(-yh, xh)
+      return norm360(math.deg(a) + align)
+    end
+  end
+  tilt_deg = nil
+  local a = mirror and math.atan(-bx, by) or math.atan(bx, by)
   return norm360(math.deg(a) + align)
 end
 
@@ -264,19 +308,22 @@ local function smooth_heading(h)
 end
 
 local function update_heading(now)
+  -- Gravity first: which way is down decides how much of the vertical field is
+  -- leaking into the horizontal pair, and the field dips ~60 degrees here.
+  if has_accel then acc = sys.accel() or acc end
   local m = has_compass and sys.compass() or nil
   if m then
     last_mag_ms = now
     diag_m = m
     mag_sat = m.ovfl == true
     if not mag_sat then
-      if calib then calib_add(m) end
-      -- horizontal magnitude: that is what the heading is made of, and what
-      -- the calibrated radius can be compared against to detect tilt
-      local x, y = m.x, m.y
-      if cal then x, y = x - cal.ox, y - cal.oy end
-      mag_norm = math.sqrt(x * x + y * y)
-      mag_z = m.z
+      if calib then calib_add(m, acc) end
+      -- total field magnitude: with tilt compensation the heading no longer
+      -- cares about attitude, so the useful health check is whether the whole
+      -- vector still has the length the calibration found. A big departure
+      -- means a magnet nearby or a stale calibration, not a tipped device.
+      local bx, by, bz = to_body(m)
+      mag_norm = math.sqrt(bx * bx + by * by + bz * bz)
       heading, src = smooth_heading(mag_heading(m)), "mag"
     end
     return
@@ -500,9 +547,15 @@ local function refresh(now)
     local left = CAL_SECS - math.floor((now - calib.t0) / 1000)
     -- coverage, not just a countdown: the span of each axis reaches 2r over a
     -- full turn, so this reads ~100% exactly when the sweep is complete
-    local spanx, spany = calib.mxx - calib.mnx, calib.mxy - calib.mny
-    local cov = math.floor(math.min(spanx, spany) / 0.5 * 100)
-    set_text("src", string.format("Turn it round  %ds  %d%%", math.max(left, 0), math.min(cov, 99)), AMBER)
+    -- coverage measured by how far gravity has swung on its worst axis: 2.0
+    -- means the device has been fully over in that direction
+    local worst = 9
+    for i = 1, 3 do
+      local span = calib.gmx[i] - calib.gmn[i]
+      if span < worst then worst = span end
+    end
+    local cov = (worst < 8) and math.floor(worst / 1.6 * 100) or 0
+    set_text("src", string.format("Turn it all ways  %ds  %d%%", math.max(left, 0), math.min(cov, 99)), AMBER)
   elseif mag_sat then
     set_text("src", "Field saturated", C.bad)
   elseif src == "mag" then
@@ -512,13 +565,19 @@ local function refresh(now)
     -- that without the IMU, but it CAN notice: held level the horizontal
     -- magnitude equals the calibrated radius, and tilting shrinks or inflates
     -- it. So say when the reading should not be trusted.
-    local level_off = cal and cal.r and mag_norm and math.abs(mag_norm - cal.r) > 0.22 * cal.r
+    local field_off = cal and cal.r and mag_norm and math.abs(mag_norm - cal.r) > 0.25 * cal.r
     if not cal then
       set_text("src", "Calibrate: press C", AMBER)
-    elseif level_off then
-      set_text("src", "Hold it level", AMBER)
+    elseif field_off then
+      set_text("src", string.format("Field off (%.2f G)", mag_norm or 0), C.bad)
+    elseif tilt_deg and tilt_deg > 55 then
+      -- past ~55 degrees the horizontal projection is small enough that the
+      -- correction stops being trustworthy; say so rather than lie
+      set_text("src", "Too steep to read", AMBER)
+    elseif tilt_deg then
+      set_text("src", string.format("Tilt-corrected  %.0f\194\176", tilt_deg), C.good)
     else
-      set_text("src", "Magnetometer ok", C.good)
+      set_text("src", "Hold it level", AMBER)
     end
   elseif src == "gps" then
     set_text("src", "GPS course", AMBER)
@@ -532,16 +591,18 @@ local function refresh(now)
   -- from the screen instead of guessed at. Takes over the target rows.
   if diag then
     local m = diag_m
-    set_text("tgt", string.format("cal %s", cal and string.format("%.3f %.3f r%.2f", cal.ox, cal.oy, cal.r or 0)
-                                                or "NONE - press C"), cal and C.text or C.bad)
+    set_text("tgt", string.format("cal %s", cal and string.format("%.2f %.2f %.2f r%.2f", cal.ox, cal.oy,
+                                                cal.oz or 0, cal.r or 0) or "NONE - press C"),
+             cal and C.text or C.bad)
     set_text("tgt2", m and string.format("raw %.2f %.2f %.2f", m.x, m.y, m.z) or "raw --", C.text)
     if m and cal then
       set_text("rel", string.format("hor %.3f %.3f |H| %.3f", m.x - cal.ox, m.y - cal.oy, mag_norm or 0), C.text)
     else
       set_text("rel", "hor --", C.sub)
     end
-    set_text("seen", string.format("align %d  mirror %d  |B| %.2f", math.floor(align + 0.5),
-                                   mirror and 1 or 0, mag_norm or 0), AMBER)
+    set_text("seen", acc and string.format("acc %+.2f %+.2f %+.2f", acc.x, acc.y, acc.z)
+                          or string.format("align %d mirror %d", math.floor(align + 0.5), mirror and 1 or 0),
+             AMBER)
     draw_dial(nil)
     last_dial_key = nil          -- keep the dial live while diagnosing
     return
@@ -616,7 +677,7 @@ local function toggle_cal()
     -- to stop the sampling dead half way through and save the partial fit.
     if sys.keep_awake then sys.keep_awake(true) end
     calib = calib_new()
-    sys.toast("Lay it FLAT and turn it slowly right around", 2800)
+    sys.toast("Turn it every way ON ONE SPOT - do not carry it around", 3000)
   end
   hv_x, hv_y = 0, 0
 end
@@ -632,50 +693,6 @@ end
 --     as it was and only the offset is set.
 --   * offset — whatever angle the sensor reports while pointing north becomes
 --     the zero.
--- Note on what "north" means here: this is a MAGNETIC compass. Magnetic north
--- and true north differ by the local declination — about 13° in California,
--- and over 15° in parts of the US — so a dial that disagrees with a phone (which
--- shows true north) by roughly that much is not broken, it is measuring a
--- different north. Pressing A while pointing at TRUE north folds the local
--- declination into `align` and makes the two agree.
-local function align_north()
-  if not has_compass then sys.toast("No magnetometer on this board", 1500) return end
-  if not cal then sys.toast("Calibrate first: press C", 2000) return end
-  local m = sys.compass()
-  if not m or m.ovfl then sys.toast("No usable reading", 1500) return end
-
-  local lat
-  local g = caps.sdk_ext and sys.gps() or nil
-  if g then lat = g.lat else
-    local me = mesh.self()
-    if me and (me.lat ~= 0 or me.lon ~= 0) then lat = me.lat end
-  end
-  local dip_ok = math.abs(mag_z) > 0.05 * (mag_norm or 1)
-  if lat and dip_ok then
-    -- Held flat, Earth's field points DOWN north of the magnetic equator and
-    -- UP south of it. The base formula above is the one for a sensor whose Z
-    -- faces INTO the screen, and such a sensor reads that downward field as a
-    -- POSITIVE z in the north. (This test was inverted at first, which is
-    -- what made a correctly-defaulted M9 turn the wrong way.)
-    local z_into_screen = (lat >= 0) == (mag_z > 0)
-    mirror = not z_into_screen
-  end
-
-  align = 0
-  align = -mag_heading(m)          -- whatever it reads now becomes 000
-  save_align()
-  hv_x, hv_y = 0, 0
-  if lat and dip_ok then
-    sys.toast("North set", 1200)
-  elseif not lat then
-    sys.toast("North set (no position: turn right, then A again if it counts down)", 3000)
-  else
-    sys.toast("North set (field too flat here to check direction)", 2500)
-  end
-end
-
--- Fallback when align_north cannot read the dip (near the magnetic equator, or
--- no position at all): flip the direction of travel by hand.
 -- the selected row's key is drawn in the accent colour so it is obvious which
 -- one OK will switch
 local function paint_selection()
@@ -704,6 +721,32 @@ local function toggle_units(which)
   end
 end
 
+-- Note on what "north" means here: this is a MAGNETIC compass. Magnetic north
+-- and true north differ by the local declination -- about 13 degrees in
+-- California, over 15 in parts of the US -- so a dial that disagrees with a
+-- phone (which shows true north) by roughly that much is not broken, it is
+-- measuring a different north.
+--
+-- A pressed while pointing at TRUE north folds the local declination into
+-- `align` and makes the two agree. That is now its only job: both sensors'
+-- axis mappings are measured, so nothing here has to guess at handedness any
+-- more (the first version tried to infer it from the dip and had the test
+-- inverted, which is what once made the dial turn the wrong way).
+local function align_north()
+  if not has_compass then sys.toast("No magnetometer on this board", 1500) return end
+  if not cal then sys.toast("Calibrate first: press C", 2000) return end
+  local m = sys.compass()
+  if not m or m.ovfl then sys.toast("No usable reading", 1500) return end
+  align = 0
+  align = -mag_heading(m)          -- whatever it reads now becomes 000
+  save_align()
+  hv_x, hv_y = 0, 0
+  sys.toast("North set here", 1400)
+end
+
+-- Escape hatch: reverses the direction of travel. Nothing on the M9 needs it
+-- now that both frames are measured; it exists for a board whose sensors are
+-- mounted the other way up.
 local function flip_frame()
   mirror = not mirror
   align = 0
@@ -725,6 +768,7 @@ function app.on_open(w, h)
   W, H = w, h
   caps = sys.caps()
   has_compass = caps.compass == true
+  has_accel = caps.accel == true
   load_prefs()
   landscape = w >= h * 1.3
   TH12, TH14, TH16 = ui.text_h(12), ui.text_h(14), ui.text_h(16)

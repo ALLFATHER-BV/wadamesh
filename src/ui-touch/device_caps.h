@@ -210,6 +210,16 @@
   #define CAP_COMPASS 0
 #endif
 
+// Accelerometer readable by apps (wada.sys.accel(), caps().accel). Same kind of
+// hardware gate as CAP_COMPASS: the ThinkNode M9's QMI8658 is the only one
+// driven so far (variants/thinknode_m9/M9Imu.*). Its point is tilt — a 2-axis
+// magnetic heading is wrong by ~1.5 degrees per degree of tilt at mid latitudes.
+#if defined(HAS_M9_IMU)
+  #define CAP_IMU 1
+#else
+  #define CAP_IMU 0
+#endif
+
 #if defined(HAS_CC_BRIGHTNESS)
   #define CAP_BACKLIGHT 1
 #else

@@ -20,6 +20,9 @@
 #if defined(HAS_M9_COMPASS)
 #include "M9Compass.h"
 #endif
+#if defined(HAS_M9_IMU)
+#include "M9Imu.h"
+#endif
 
 extern ThinkNodeM9Board board;
 extern WRAPPER_CLASS radio_driver;
