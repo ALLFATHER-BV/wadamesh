@@ -334,18 +334,18 @@ which is why the console needed far fewer new commands than the UI has screens.
 | Chats: unread badges | `unread`, `read <name>` | **done**, and the monitor never clears them |
 | Live incoming messages | the monitor, `monitor on\|off` | **done** |
 | Contacts list | `contacts` | **done** |
-| Contacts: favourite / block / delete | — | gap |
+| Contacts: favourite / block / delete | none | gap |
 | Channels list | `chans` | **done** |
 | Discover | `discover`, `discovered` | **done**, with both link directions |
 | Advertise | CLI `advert` | free |
 | Signal / traffic | `stat` | **done** |
-| Map | — | needs the `wada.map` blit path; not console-shaped yet |
+| Map | none | needs the `wada.map` blit path; not console-shaped yet |
 | Terminal | this *is* the console | n/a |
-| Files | — | gap |
-| Spectrum | — | gap, and heavy |
-| Store / Lua apps | — | Phase 4 |
-| Web reader | — | gap |
-| VNC / Remote | — | deliberate: another front end, not a console feature |
+| Files | none | gap |
+| Spectrum | none | gap, and heavy |
+| Store / Lua apps | none | Phase 4 |
+| Web reader | none | gap |
+| VNC / Remote | none | deliberate: another front end, not a console feature |
 | Power menu | CLI `poweroff` / `reboot` | free |
 | Mentions | `unread` shows counts | partial |
 
@@ -360,14 +360,14 @@ which is why the console needed far fewer new commands than the UI has screens.
 | About | CLI `ver`, `board`; `mem` | free |
 | Battery | `batt` | **done** |
 | Wi-Fi | `wifi` (state only) | partial |
-| Bluetooth | — | gap |
-| Auto-add | — | gap |
-| Display / Keyboard / Sound / Lock screen | — | not meaningful without the UI |
-| Quick replies | — | gap |
-| Backups | — | gap |
-| Language | — | gap |
-| MQTT bridge | — | gap |
-| App permissions | — | with Phase 4 |
+| Bluetooth | none | gap |
+| Auto-add | none | gap |
+| Display / Keyboard / Sound / Lock screen | none | not meaningful without the UI |
+| Quick replies | none | gap |
+| Backups | none | gap |
+| Language | none | gap |
+| MQTT bridge | none | gap |
+| App permissions | none | with Phase 4 |
 | General | `console`/`ui` toggle | partial |
 
 ### What the gaps have in common
