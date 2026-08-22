@@ -49283,14 +49283,28 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
 #if CAP_CONSOLE && defined(ESP32)
   s_console_mode = touchPrefsGetConsoleMode();
+  // SELF-HEAL. If the previous boot panicked while console mode was on, come up
+  // in the graphical UI and turn console mode off. Without this a crash on the
+  // console path is unrecoverable from the device: it panics, reboots into the
+  // console, panics again. The plan called for three ways out and this is the
+  // one that does not need the user to know anything.
+  if (s_console_mode && esp_reset_reason() == ESP_RST_PANIC) {
+    s_console_mode = false;
+    touchPrefsSetConsoleMode(false);
+    Serial.println("[BOOT] console mode disabled after a panic — starting the UI");
+  }
   if (s_console_mode) {
     // Nothing below this point runs: no lv_init(), no draw buffer, no widget
     // tree. The console owns the panel from here.
+    Serial.println("[BOOT] console: begin"); Serial.flush();
     consoleBegin(_display);
+    Serial.println("[BOOT] console: panel up"); Serial.flush();
     consoleWriteLine("wadamesh console");
     consoleWriteLine("type 'help', or 'ui' to go back to the graphical UI");
     consoleWriteLine("");
+    Serial.println("[BOOT] console: text ok"); Serial.flush();
     the_mesh.setTerminalSink(&consoleWriteLine);
+    Serial.println("[BOOT] console: sink set"); Serial.flush();
     return;
   }
 #endif

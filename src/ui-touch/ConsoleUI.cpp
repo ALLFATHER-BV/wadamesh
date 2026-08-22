@@ -440,15 +440,37 @@ bool consoleActive() { return s_active; }
 void consoleWriteLine(const char* line) {
   if (!s_ring) return;
   if (!line) { ringPush("", 0); return; }
-  // Wrap to the panel width rather than truncating: a command reply that runs
-  // off the edge is the same as no reply at all on a screen this size.
   const int width = s_cols > 0 ? s_cols : 40;
-  const int len = (int)strlen(line);
-  if (len == 0) { ringPush("", 0); return; }
-  for (int off = 0; off < len; off += width) {
-    int n = len - off;
-    if (n > width) n = width;
-    ringPush(line + off, n);
+
+  // Split on embedded newlines FIRST. The node CLI hands its reply to the sink
+  // as one buffer containing '\n' (its help text is a dozen lines in a single
+  // string), and storing that as one ring entry meant print() rendered the
+  // breaks itself while our y-cursor still advanced by one row. Every later
+  // line then landed on top of the one before it, which is the overlap in the
+  // report, worsening down the screen as the error accumulated.
+  //
+  // Then wrap each piece to the panel width, rather than truncating: a reply
+  // that runs off the edge is the same as no reply on a screen this size. This
+  // also guarantees no stored line can be wider than the panel, so the text
+  // renderer never wraps one on its own and desynchronises the cursor again.
+  int pushed = 0;
+  const char* seg = line;
+  while (seg && pushed < 512) {                 // bound: a runaway reply cannot spin here
+    const char* nl = strchr(seg, '\n');
+    int seg_len = nl ? (int)(nl - seg) : (int)strlen(seg);
+    // Strip a trailing CR so CRLF output does not leave a stray glyph.
+    if (seg_len > 0 && seg[seg_len - 1] == '\r') seg_len--;
+    if (seg_len == 0) {
+      ringPush("", 0); pushed++;
+    } else {
+      for (int off = 0; off < seg_len && pushed < 512; off += width) {
+        int n = seg_len - off;
+        if (n > width) n = width;
+        ringPush(seg + off, n); pushed++;
+      }
+    }
+    if (!nl) break;
+    seg = nl + 1;
   }
 }
 
