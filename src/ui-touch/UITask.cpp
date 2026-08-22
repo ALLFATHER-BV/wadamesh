@@ -8209,10 +8209,24 @@ static void tabChangedCb(lv_event_t* e) {
   } else {
     if (prev_t == MAP_TAB_INDEX) applyMapChrome(false);   // restore opaque chrome
     clearRouteReplay();    // drop any route-replay overlay when leaving the map
-    // Drop tile JPEGs from PSRAM the moment we leave the tab — keeps the
-    // working set small and lets the map cold-load with fresh data on
-    // the next visit. (CPU stays at 160 MHz — the whole UI runs there.)
-    freeMapTiles();
+    // Leaving the map used to drop all nine decoded tiles, so every re-open
+    // paid the full read + JPEG decode again — measured at ~2.5 s of blocked
+    // UI on the M9 ([STALL] ui:lvgl), on EVERY visit, not just the first.
+    // The grid costs 9 x 128 KB = 1.15 MB of PSRAM, which only matters on the
+    // 2 MB V4 (the same board renderMapTiles already caps to a 4-tile pool),
+    // so keep the decodes on boards with room and re-open as a pure blit.
+    // Freshness is unaffected: renderMapTiles re-attempts MISSING tiles on
+    // every pass, and a style / mode / storage change frees the cache at its
+    // own call sites.
+    // Nothing is released on a roomy board: the slots keep their identity,
+    // their pixels AND their widgets, which is exactly the state panning
+    // within the tab already leaves them in — the tab is simply not drawn
+    // while it is hidden. (releaseMapTileSlot is not enough here: it clears
+    // in_use, so the next render would treat the tile as absent and decode
+    // it again.)
+    static const size_t kPsramTotalB = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    const bool low_psram = (kPsramTotalB && kPsramTotalB < 4u * 1024 * 1024);
+    if (low_psram) freeMapTiles();
   }
 
   // The status bar is shown on every tab now: the Settings page is a clean

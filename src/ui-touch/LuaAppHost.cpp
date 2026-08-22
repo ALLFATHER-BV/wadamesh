@@ -247,9 +247,14 @@ int cvPos(lua_State* L) {
   return 0;
 }
 int cvGc(lua_State* L) {
-  // The buffer is heap_caps memory owned by the userdata; the lv object dies
-  // with the app root. Free the pixels only when Lua collects the handle AND
-  // the app is closing (root gone) — during app lifetime the canvas holds it.
+  // Frees the pixel buffer. This runs only when the Lua state is closed (see
+  // uiCanvas: every canvas is pinned in the registry for the app's lifetime),
+  // so the LVGL object is never left pointing at freed pixels.
+  //
+  // The comment here used to claim the free was conditional on the app
+  // closing; it never was, and nothing stopped an ordinary collection cycle
+  // from reclaiming a canvas whose Lua handle had gone out of scope while the
+  // widget was still on screen and being drawn from that buffer.
   CanvasUd* c = (CanvasUd*)luaL_checkudata(L, 1, "wada.canvas");
   if (c->buf) { heap_caps_free(c->buf); c->buf = nullptr; }
   c->obj = nullptr;
@@ -270,6 +275,15 @@ int uiCanvas(lua_State* L) {
   CanvasUd* ud = (CanvasUd*)lua_newuserdatauv(L, sizeof(CanvasUd), 0);
   ud->obj = cv; ud->buf = buf; ud->w = w; ud->h = h;
   luaL_setmetatable(L, "wada.canvas");
+  // Pin the handle in the registry for the app's lifetime. LVGL draws straight
+  // out of this buffer, so the pixels must outlive the widget — and an app that
+  // creates a canvas without keeping a reference (or drops one) would otherwise
+  // have it collected mid-run, leaving the widget reading freed memory. The
+  // registry dies with the state at lua_close, which is where __gc frees the
+  // buffer; the ref id is deliberately not tracked, since there is no API to
+  // destroy a canvas early.
+  lua_pushvalue(L, -1);
+  luaL_ref(L, LUA_REGISTRYINDEX);
   return 1;
 }
 
@@ -1277,6 +1291,11 @@ void hostTeardown() {
   if (s_net_poll) { lv_timer_del(s_net_poll); s_net_poll = nullptr; }
   if (h->L && s_net_cb != LUA_NOREF) { luaL_unref(h->L, LUA_REGISTRYINDEX, s_net_cb); }
   s_net_cb = LUA_NOREF;              // a worker fetch may still land; netDeliver sees no app and drops it
+  // The fetch buffer (up to 64 KB of PSRAM) belongs to a fetch, and with no app
+  // there is no fetch — hold it only while the worker could still be writing
+  // into it (s_net_pending), otherwise it sits allocated until some later app
+  // happens to call http_get.
+  if (!s_net_pending && s_net_buf) { heap_caps_free(s_net_buf); s_net_buf = nullptr; s_net_cap = 0; }
   if (h->L) {
     // best-effort on_close + store flush before the state dies
     lua_State* L = h->L;
@@ -1291,8 +1310,9 @@ void hostTeardown() {
     storeFlush();
     s_h = nullptr;
     lua_close(L);          // runs canvas __gc -> frees pixel buffers
-    Serial.printf("[LUAAPP] %s closed, leaked=%u peak=%u\n", h->id,
-                  (unsigned)h->heap.used, (unsigned)h->heap.peak);
+    Serial.printf("[LUAAPP] %s closed, leaked=%u peak=%u psram_free=%u\n", h->id,
+                  (unsigned)h->heap.used, (unsigned)h->heap.peak,
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
   }
   if (h->root) appPageDeleteRootAsync(h->root);
   appPageEnd(&luaAppDismiss);
@@ -1394,7 +1414,12 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
     guardedCall(h, 2);
   }
   serviceDeferredClose();
-  if (s_h) Serial.printf("[LUAAPP] %s open, heap=%u\n", id, (unsigned)h->heap.used);
+  // PSRAM is reported alongside the Lua heap because the app heap does NOT
+  // account for canvas pixel buffers (allocated directly), so it cannot show
+  // whether an app really gave everything back. Compare this against the same
+  // figure on the matching "closed" line.
+  if (s_h) Serial.printf("[LUAAPP] %s open, heap=%u psram_free=%u\n", id, (unsigned)h->heap.used,
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
   return s_h != nullptr;
 }
 
