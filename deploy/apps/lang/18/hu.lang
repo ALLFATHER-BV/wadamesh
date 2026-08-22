@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: hu
-# ver: 17
+# ver: 18
 # name: Magyar
 # base: hu
  (device behind)	 (készülék hátulján)
@@ -29,7 +29,7 @@ AF	AF
 AUTOMATIC ADVERTS	AUTOMATIKUS ADVERTEK
 About	Névjegy
 About the map	A térképről
-Accent popups	Accent popups
+Accent popups	Ékezetes felugró ablakok
 Accent popups: off	Accent popups: kikapcsolva
 Accent popups: on	Accent popups: bekapcsolva
 Ack	Ack
@@ -65,8 +65,8 @@ Apps	Appok
 Arrows + Enter always work. These letters are extra — tap a row, then press a key.	A nyilak + Enter mindig működik. Ezek a betűk extra – koppintson egy sorra, majd nyomjon meg egy billentyűt.
 Auto advert	Auto. advert
 Auto chat	Auto. csevegés
-Auto repeater	Auto repeater
-Auto room	Auto room
+Auto repeater	Auto. repeater
+Auto room	Auto. room
 Auto sensor	Auto szenzor
 Auto-Join	Auto. csatlakozás
 Auto-add	Auto. hozzáad.
@@ -158,7 +158,7 @@ Clear	Tisztít
 Clear battery history?	Törli az akkumulátorelőzményeket?
 Clear history	Előzmények törlése
 Clear telemetry history for this node?	Törli a telemetriai előzményeket ehhez a csomóponthoz?
-Client repeat	Client repeat
+Client repeat	Kliens repeat
 Clock & time	Idő és dátum
 Clock synced	Óra szinkronizálva
 Clock: 12-hour	Óra: 12 órás
@@ -550,7 +550,7 @@ No telemetry in this window.\nRequest one, or widen the range below.	Nincs telem
 No tiles (non-ESP32)	Nincsenek csempék (nem ESP32)
 No version known yet. Wi-Fi and a completed update check are needed first.	Egyelőre nincs ismert verzió. Először Wi-Fi-kapcsolat és egy frissítés-ellenőrzés szükséges.
 Node name	Node név
-Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime	Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime
+Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime	Node\nRégió\nRádió\nJel\nNévjegyekk\nCsatornák\nAkkumulátor\nÜzemidő
 Normal (100%)\nLarge (150%)\nHuge (200%)	Normál (100%)\nLarge (150%)\nHuge (200%)
 Not enough free memory for Bluetooth. Turn Wi-Fi off first.	Nincs elég szabad memória a Bluetooth-hoz. Először kapcsold ki a Wi-Fi-t.
 Not enough free memory for Wi-Fi. Turn Bluetooth off first.	Nincs elég szabad memória a Wi-Fi-hez. Először kapcsold ki a Bluetooth-t.
@@ -1044,19 +1044,19 @@ Share my location when asked	Helyzetem megosztása kérésre
 Stop sharing loc	Helyzetmegosztás leállítása
 not asked yet	Még nem kérték
 Battery life: gathering data…	Üzemidő: adatok gyűjtése…
-Small\nMedium\nLarge\nJumbo	Small\nMedium\nLarge\nJumbo
-"%s" wants to send PRIVATE messages as you.\n\nIt could write to any of your contacts, or post to a room, and the message will look exactly like one you typed.\n\nOnly allow this for an app you trust.	"%s" wants to send PRIVATE messages as you.\n\nIt could write to any of your contacts, or post to a room, and the message will look exactly like one you typed.\n\nOnly allow this for an app you trust.
-Map pan off	Map pan off
-Map pan: arrows pan, Back exits	Map pan: arrows pan, Back exits
+Small\nMedium\nLarge\nJumbo	Kicsi\nKözepes\nNagy\nÓriási
+"%s" wants to send PRIVATE messages as you.\n\nIt could write to any of your contacts, or post to a room, and the message will look exactly like one you typed.\n\nOnly allow this for an app you trust.	"%s" privát üzenetek küldését kéri a nevedben.\n\nÜzenetet küldhet bármelyik kontaktodnak, vagy írhat egy roomba, és az üzenet pontosan úgy fog kinézni, mintha te írtad volna.\n\nCsak olyan appnak engedélyezd ezt, amelyben megbízol.
+Map pan off	Térképmozgatás kikapcsolva
+Map pan: arrows pan, Back exits	Térképmozgatás: a nyilakkal mozgatod, a Back kilép
 Perf:	Perf:
-Post to channels as me	Post to channels as me
-Powering off… press BOOT to wake	Powering off… press BOOT to wake
-Read channel messages	Read channel messages
-Read private messages	Read private messages
-Send private messages as me	Send private messages as me
-What each installed app is allowed to do. Anything an app sends goes out under your node name and cannot be told apart from a message you typed. Private covers direct messages and room posts, and is kept separate from channels on purpose. Turn one off to take it back.	What each installed app is allowed to do. Anything an app sends goes out under your node name and cannot be told apart from a message you typed. Private covers direct messages and room posts, and is kept separate from channels on purpose. Turn one off to take it back.
-Wi-Fi off, new map areas can't download	Wi-Fi off, new map areas can't download
-App permissions	App permissions
+Post to channels as me	Üzenetek küldése a csatornákra a nevemben
+Powering off… press BOOT to wake	Kikapcsolás… a BOOT gombbal ébresztheted fel
+Read channel messages	Csatornaüzenetek olvasása
+Read private messages	Privát üzenetek olvasása
+Send private messages as me	Privát üzenetek küldése a nevemben
+What each installed app is allowed to do. Anything an app sends goes out under your node name and cannot be told apart from a message you typed. Private covers direct messages and room posts, and is kept separate from channels on purpose. Turn one off to take it back.	Az egyes telepített appok engedélyei. Az app által küldött üzenetek a node neved alatt jelennek meg, mintha te küldted volna. A privát üzenetek a közvetlen és room-üzenetekre vonatkoznak, külön a csatornáktól. Az engedély kikapcsolásával visszavonhatod.
+Wi-Fi off, new map areas can't download	A Wi-Fi ki van kapcsolva, az új térképrészletek nem tölthetők le
+App permissions	Appengedélyek
 About / credits	Névjegy / köszönet
 chats	csevegések
 repeaters	ismétlők
@@ -1066,3 +1066,53 @@ Auto-add on for %s — new %s land in Contacts automatically.	Automatikus hozzá
 Map data © OpenStreetMap contributors.\nopenstreetmap.org/copyright\nLicensed under the Open Database License (ODbL).\n\n	Térkép adatok © OpenStreetMap közreműködői.\nopenstreetmap.org/copyright\nAz Open Database License (ODbL) licenc alatt.\n\n
 Map style © OpenTopoMap (CC-BY-SA) — opentopomap.org\nMap data © OpenStreetMap contributors (ODbL) + SRTM.\n\n	Térkép stílus © OpenTopoMap (CC-BY-SA) — opentopomap.org\nTérkép adatok © OpenStreetMap közreműködői (ODbL) + SRTM.\n\n
 How tiles work:\nThe map is built from 256×256 "slippy" tiles. Only the tiles for the area you're viewing are fetched — there is no bulk pre-download.\n\nBecause this device can't do HTTPS (not enough heap after Wi-Fi starts) and decodes JPEG far more cheaply than PNG, tiles come from the wadamesh proxy: it fetches the upstream PNG over HTTPS with an identifying User-Agent, re-encodes it as JPEG, and caches it. Your device then caches each tile to its own flash, so a tile is only downloaded once.\n\nUse Options → Reload tiles to re-download the tiles currently in view if one looks corrupted.	A csempék működése:\nA térkép 256×256 képpontos „slippy” csempékből épül fel. Csak a megtekintett területhez szükséges csempék töltődnek le — nincs tömeges előzetes letöltés.\n\nMivel az eszköz nem támogatja a HTTPS-t (a Wi-Fi elindítása után nincs elegendő heap memória), és a JPEG képek dekódolása sokkal kevesebb erőforrást igényel, mint a PNG-é, a csempék a wadamesh proxyn keresztül érkeznek: a proxy HTTPS-en keresztül lekéri a forrásból a PNG-t egy azonosító User-Agent használatával, JPEG formátumba kódolja át, majd eltárolja a gyorsítótárban. Az eszköz ezután minden csempét a saját flash memóriájában is eltárol, így egy csempét csak egyszer kell letölteni.\n\nAz Options → Reload tiles lehetőséggel újra letöltheted a jelenleg megtekintett terület csempéit, ha valamelyik hibásan jelenik meg.
+"%s" wants to send discovery probes.\n\nEach probe asks every node in range to reply, so it uses airtime on the whole local mesh, not just yours.\n\nNothing is sent under your name and no message is transmitted.	"%s" felfedezési probe-ok küldését kéri.\n\nMinden probe válaszra kéri a hatótávolságon belüli node-okat, ezért a teljes helyi mesh hálózat airtime-ját használja, nem csak a tiédet.\n\nSemmi sem kerül elküldésre a nevedben, és üzenet sem kerül továbbításra.
+?	?
+Auth failed	Auth failed
+Batteryactivityon	Batteryactivityon
+Console mode	Console mode
+Console mode (experimental)	Console mode (experimental)
+Direct (0-hop) only	Csak közvetlen (0-hop)
+EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, read replies. Frees the memory and processor time the interface uses. Type 'ui' in the console to come back, and if it ever fails to start the device returns here on its own. Toggling reboots.	EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, read replies. Frees the memory and processor time the interface uses. Type 'ui' in the console to come back, and if it ever fails to start the device returns here on its own. Toggling reboots.
+EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, read replies. Frees the memory and processor time the interface uses. Type 'ui' in the console to come back. Toggling reboots.	EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, read replies. Frees the memory and processor time the interface uses. Type 'ui' in the console to come back. Toggling reboots.
+Enter text	Szöveg megadása
+Entering console mode - rebooting...	Entering console mode - rebooting...
+Favorite	Favorite
+Geblokkeerde gebruikers	Geblokkeerde gebruikers
+Hide system filesShow system files	Hide system filesShow system files
+Init…	Init…
+Leaving console mode - rebooting...	Leaving console mode - rebooting...
+Link lost	Link lost
+MESH	MESH
+Name (A-Z)	Név (A–Z)
+Nearest first	Legközelebbi elöl
+Other networksNetworks	Other networksNetworks
+Paste (move)Paste (copy)	Paste (move)Paste (copy)
+Recent message	Legutóbbi üzenet
+Reload tiles in view	Csempék újratöltése
+Repeaters	Repeaters
+SIGNAL	SIGNAL
+Select to delete	Törléshez válassz ki
+Send discovery probes	Discovery probe-ok küldése
+Show contacts	Névjegyek megjelenítése
+Show coordinates	Koordináták
+Show tile z/x/y	Csempe z/x/y
+Starting…	Starting…
+Stop sharing loc  Share my loc	Stop sharing loc  Share my loc
+Supprimer	Supprimer
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.
+Text console (experimental)	Text console (experimental)
+Tile debug overlay	Csempe hiba keret
+Unblock  Block	Unblock  Block
+Unfav  Favorite	Unfav  Favorite
+tap to cycle off / on / auto	tap to cycle off / on / auto
+#7A7F87 Scanning… nothing has answered yet#	#7A7F87 Scanning… nothing has answered yet#
+Export crash report (%uK)	Hibajelentés exportálása (%uK)
+On-device text browser · no proxy, no tracking	On-device text browser · no proxy, no tracking
+Paste (copy)	Beszúrás (másolt)
+Paste (move)	Beszúrás (mozgat)
+avg %.1f%%   peak %.1f%%   over %ds	avg %.1f%%   peak %.1f%%   over %ds
+channel busy %.1f%%	channel busy %.1f%%
+sampling...	sampling...
+teal = now   blue = average	teal = now   blue = average
+window restarted	window restarted

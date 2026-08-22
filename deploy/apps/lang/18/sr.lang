@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: sr
-# ver: 17
+# ver: 18
 # name: Српски
 # base: sr
  (device behind)	 (уређај касни)
@@ -1037,3 +1037,64 @@ Send private messages as me	Send private messages as me
 What each installed app is allowed to do. Anything an app sends goes out under your node name and cannot be told apart from a message you typed. Private covers direct messages and room posts, and is kept separate from channels on purpose. Turn one off to take it back.	What each installed app is allowed to do. Anything an app sends goes out under your node name and cannot be told apart from a message you typed. Private covers direct messages and room posts, and is kept separate from channels on purpose. Turn one off to take it back.
 Wi-Fi off, new map areas can't download	Wi-Fi off, new map areas can't download
 App permissions	App permissions
+"%s" wants to send discovery probes.\n\nEach probe asks every node in range to reply, so it uses airtime on the whole local mesh, not just yours.\n\nNothing is sent under your name and no message is transmitted.	"%s" wants to send discovery probes.\n\nEach probe asks every node in range to reply, so it uses airtime on the whole local mesh, not just yours.\n\nNothing is sent under your name and no message is transmitted.
+?	?
+About / credits	About / credits
+Auth failed	Auth failed
+Auto-add on for %s — new %s land in Contacts automatically.	Auto-add on for %s — new %s land in Contacts automatically.
+Batteryactivityon	Batteryactivityon
+Console mode	Console mode
+Console mode (experimental)	Console mode (experimental)
+Direct (0-hop) only	Direct (0-hop) only
+EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, read replies. Frees the memory and processor time the interface uses. Type 'ui' in the console to come back, and if it ever fails to start the device returns here on its own. Toggling reboots.	EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, read replies. Frees the memory and processor time the interface uses. Type 'ui' in the console to come back, and if it ever fails to start the device returns here on its own. Toggling reboots.
+EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, read replies. Frees the memory and processor time the interface uses. Type 'ui' in the console to come back. Toggling reboots.	EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, read replies. Frees the memory and processor time the interface uses. Type 'ui' in the console to come back. Toggling reboots.
+Enter text	Enter text
+Entering console mode - rebooting...	Entering console mode - rebooting...
+Favorite	Favorite
+Geblokkeerde gebruikers	Geblokkeerde gebruikers
+Hide system filesShow system files	Hide system filesShow system files
+How tiles work:\nThe map is built from 256×256 "slippy" tiles. Only the tiles for the area you're viewing are fetched — there is no bulk pre-download.\n\nBecause this device can't do HTTPS (not enough heap after Wi-Fi starts) and decodes JPEG far more cheaply than PNG, tiles come from the wadamesh proxy: it fetches the upstream PNG over HTTPS with an identifying User-Agent, re-encodes it as JPEG, and caches it. Your device then caches each tile to its own flash, so a tile is only downloaded once.\n\nUse Options → Reload tiles to re-download the tiles currently in view if one looks corrupted.	How tiles work:\nThe map is built from 256×256 "slippy" tiles. Only the tiles for the area you're viewing are fetched — there is no bulk pre-download.\n\nBecause this device can't do HTTPS (not enough heap after Wi-Fi starts) and decodes JPEG far more cheaply than PNG, tiles come from the wadamesh proxy: it fetches the upstream PNG over HTTPS with an identifying User-Agent, re-encodes it as JPEG, and caches it. Your device then caches each tile to its own flash, so a tile is only downloaded once.\n\nUse Options → Reload tiles to re-download the tiles currently in view if one looks corrupted.
+Init…	Init…
+Leaving console mode - rebooting...	Leaving console mode - rebooting...
+Link lost	Link lost
+MESH	MESH
+Map data © OpenStreetMap contributors.\nopenstreetmap.org/copyright\nLicensed under the Open Database License (ODbL).\n\n	Map data © OpenStreetMap contributors.\nopenstreetmap.org/copyright\nLicensed under the Open Database License (ODbL).\n\n
+Map style © OpenTopoMap (CC-BY-SA) — opentopomap.org\nMap data © OpenStreetMap contributors (ODbL) + SRTM.\n\n	Map style © OpenTopoMap (CC-BY-SA) — opentopomap.org\nMap data © OpenStreetMap contributors (ODbL) + SRTM.\n\n
+Name (A-Z)	Name (A-Z)
+Nearest first	Nearest first
+Other networksNetworks	Other networksNetworks
+Paste (move)Paste (copy)	Paste (move)Paste (copy)
+Recent message	Recent message
+Reload tiles in view	Reload tiles in view
+Repeaters	Repeaters
+SIGNAL	SIGNAL
+SSID not found	SSID not found
+Saved networks	Saved networks
+Select to delete	Select to delete
+Send discovery probes	Send discovery probes
+Show contacts	Show contacts
+Show coordinates	Show coordinates
+Show tile z/x/y	Show tile z/x/y
+Starting…	Starting…
+Stop sharing loc  Share my loc	Stop sharing loc  Share my loc
+Supprimer	Supprimer
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.
+Text console (experimental)	Text console (experimental)
+Tile debug overlay	Tile debug overlay
+Unblock  Block	Unblock  Block
+Unfav  Favorite	Unfav  Favorite
+chats	chats
+repeaters	repeaters
+rooms	rooms
+sensors	sensors
+tap to cycle off / on / auto	tap to cycle off / on / auto
+#7A7F87 Scanning… nothing has answered yet#	#7A7F87 Scanning… nothing has answered yet#
+Export crash report (%uK)	Export crash report (%uK)
+On-device text browser · no proxy, no tracking	On-device text browser · no proxy, no tracking
+Paste (copy)	Paste (copy)
+Paste (move)	Paste (move)
+avg %.1f%%   peak %.1f%%   over %ds	avg %.1f%%   peak %.1f%%   over %ds
+channel busy %.1f%%	channel busy %.1f%%
+sampling...	sampling...
+teal = now   blue = average	teal = now   blue = average
+window restarted	window restarted
