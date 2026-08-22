@@ -51977,8 +51977,26 @@ void UITask::loop() {
   unsigned long now = millis();
 #if CAP_CONSOLE
   if (s_console_mode) {
+#if CAP_TOUCH
+    // Bring up the input hardware ourselves. The graphical path does this far
+    // below, behind `if (!g_lv.ready) return;` — and g_lv.ready is false here
+    // because LVGL is never initialised, so nothing ever started the poll task
+    // and the keyboard was never even begun. That is why keys did nothing.
+    //
+    // One call covers both: the background poll task owns the shared I2C bus
+    // and scans the touch panel AND (on the T-Deck) the keyboard, which is
+    // exactly why they must not be polled from two places at once.
+    static bool s_con_input_up = false;
+    if (!s_con_input_up) {
+      if (heltecV4CapTouchBegin()) {
+        heltecV4CapTouchStartBackgroundPoll(8);
+        s_con_input_up = true;
+      }
+    }
+#endif
     // The physical-keyboard drain lives further down this function, below this
-    // return, so console mode has to do its own. Same source, same buffer.
+    // return, so console mode has to do its own. Same ring, filled by the task
+    // started above.
 #if defined(HAS_TDECK_KEYBOARD)
     for (int kbi = 0; kbi < 12; ++kbi) {
       int key = tdeckKeyboardReadKey();
