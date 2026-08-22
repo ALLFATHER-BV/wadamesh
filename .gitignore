@@ -11,6 +11,10 @@
 .vscode/extensions.json
 out/*
 !out/README.md
+
+# host Lua harness: the compiled binary, not the sources (scripts/lua-harness)
+scripts/lua-harness/luah
+scripts/lua-harness/*.o
 .DS_Store
 .idea
 cmake-*

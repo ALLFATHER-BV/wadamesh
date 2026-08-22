@@ -202,13 +202,20 @@ once files are field-proven.
   calibration, axis mapping and the heading maths live in the app so they can
   be adjusted per user without a firmware cut. `deploy/apps/gpscompass/1.0`
   is that app: rotating rose, live fix readout, bearing/range to a contact,
-  C/O/F keys for calibrate/rotate/flip, GPS-course fallback on every other
-  board. Verified on a host harness built from the vendored Lua (same
-  LUA_32BITS numeric model): calibration recovers a simulated hard-iron bias
-  exactly, heading error 0° at six test angles, worst tick ≈10k of the 100k
-  instruction budget. Hardware validation (axis orientation, real bias
-  magnitude) is in M9_PORT.md. Not seeded into lua_builtin.h on purpose:
-  CAP_BUILTIN_LUA_APPS also hides the Store > Apps tab.
+  C to calibrate (a 3D sphere fit that also calibrates the accelerometer's
+  zero-g offset from the same sweep), tilt compensation off the M9's QMI8658,
+  GPS-course fallback on every other board. It carries a real WMM2025
+  declination model (`scripts/wmm/`) so the dial and the bearings share a
+  north: the magnetometer measures magnetic north, every bearing computed from
+  coordinates is true, and drawing one against the other put every waypoint
+  ~22° out. Headings and bearings are labelled `T` or an amber `M` accordingly.
+  Verified on the host harness in `scripts/lua-harness` (same vendored Lua,
+  same LUA_32BITS numeric model): calibration recovers a simulated hard-iron
+  bias exactly, heading error 0° at six test angles, bearings checked against
+  absolute compass directions, declination within 0.0002° of NOAA, worst tick
+  ≈12k of the 100k instruction budget. Hardware validation (axis orientation,
+  real bias magnitude) is in M9_PORT.md. Not seeded into lua_builtin.h on
+  purpose: CAP_BUILTIN_LUA_APPS also hides the Store > Apps tab.
 
 - 2026-08-22: **manifest `icon` implemented.** The drawer gave every Lua app
   the same generic glyph while `LUA_APPS.md` had promised manifests an icon
