@@ -51652,10 +51652,23 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // message is stored and still counts as unread. Watching it scroll past is not
   // reading it; opening the thread is.
   if (s_console_mode && touchPrefsGetConsoleMonitor()) {
-    char line[200];
-    if (channel) snprintf(line, sizeof line, "#%s %s: %s", thread, sender, body);
-    else         snprintf(line, sizeof line, "%s: %s", sender, body);
-    consoleWriteLine(line);
+    char line[220];
+    // Three colours, because the three parts answer different questions:
+    // WHERE it arrived (channel, cyan), WHO said it (sender, yellow) and WHAT
+    // they said (grey). A DM has no channel, so its sender takes the magenta
+    // slot instead and stands out in a busy feed.
+    int n1 = 0, n2 = 0;
+    if (channel) {
+      n1 = snprintf(line, sizeof line, "#%s ", thread);
+      if (n1 < 0) n1 = 0;
+      n2 = snprintf(line + n1, sizeof line - n1, "%s: ", sender);
+      if (n2 < 0) n2 = 0;
+    } else {
+      n2 = snprintf(line, sizeof line, "%s: ", sender);
+      if (n2 < 0) n2 = 0;
+    }
+    snprintf(line + n1 + n2, sizeof line - n1 - n2, "%s", body ? body : "");
+    consoleWriteLineSeg(CC_CHAN, n1, channel ? CC_SENDER : CC_DM, n2, line);
   }
 #endif
 #if defined(HAS_TOUCH_UI)
@@ -52151,6 +52164,22 @@ void UITask::loop() {
 #endif
 #if CAP_TOUCH
     { uint16_t _tx, _ty; if (heltecV4CapTouchGetLive(&_tx, &_ty)) { con_activity = true; } }
+#endif
+#if defined(HAS_TDECK_TRACKBALL)
+    // Trackball scrolls the scrollback. Roll up for history, down for live.
+    // Accumulated because the ball reports many small deltas per physical flick;
+    // one line per detent would race past everything.
+    {
+      int tdx = 0, tdy = 0;
+      if (tdeckTrackballReadMotion(&tdx, &tdy) && tdy != 0) {
+        static int tb_accum = 0;
+        tb_accum += tdy;
+        while (tb_accum <= -2) { consoleScroll(+1); tb_accum += 2; }   // up = back
+        while (tb_accum >=  2) { consoleScroll(-1); tb_accum -= 2; }   // down = live
+        con_activity = true;
+        if (_screen_off) wakeScreen();
+      }
+    }
 #endif
     if (con_activity) _last_input_ms = now;
 

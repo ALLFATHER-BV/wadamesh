@@ -37,8 +37,9 @@ enum ConsoleColor : uint8_t {
   CC_OK,         // success
   CC_WARN,       // warnings, refusals
   CC_ERR,        // failures
-  CC_CHAN,       // an incoming channel message
-  CC_DM,         // an incoming direct message
+  CC_CHAN,       // the channel a message arrived on
+  CC_SENDER,     // who sent it
+  CC_DM,         // a direct message (its sender)
   CC_HEAD,       // section headings, the banner
 };
 
@@ -48,9 +49,17 @@ void consoleWriteLine(const char* line);
 void consoleWriteLineC(uint8_t colour, const char* line);
 void consolePrintf(const char* fmt, ...);
 void consolePrintfC(uint8_t colour, const char* fmt, ...);
+// A line in up to THREE colours: [0,len1) in c1, [len1,len1+len2) in c2, the
+// remainder as normal text. That is exactly the shape of an incoming message:
+// the channel, then who said it, then what they said, each its own colour.
+void consoleWriteLineSeg(uint8_t c1, int len1, uint8_t c2, int len2, const char* line);
+void consoleWriteLineSplit(uint8_t colour, int split, const char* line);   // two-tone shorthand
 
 // The login banner: ASCII mark, who this node is, and the quick-launch menu.
 void consoleBanner(const char* node_name, const char* version);
+void consoleSetNodeName(const char* n);
+// Scroll the view. +1 = one line back into history, -1 = one line towards live.
+void consoleScroll(int delta);
 
 // Feed one character from a hardware keyboard. '\n' submits, '\b' deletes.
 // Returns true if the console consumed it.

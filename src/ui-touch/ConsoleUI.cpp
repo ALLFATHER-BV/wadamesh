@@ -64,6 +64,9 @@ constexpr int  kInputCap = 128;
 
 char*    s_ring       = nullptr;    // kMaxLines * (kLineCap + 1)
 uint8_t* s_ring_col   = nullptr;    // one ConsoleColor per stored line
+uint8_t* s_ring_split = nullptr;    // length of segment 1
+uint8_t* s_ring_col2  = nullptr;    // colour of segment 2
+uint8_t* s_ring_spl2  = nullptr;    // length of segment 2 (the rest is CC_TEXT)
 int      s_head       = 0;          // next write slot
 int      s_count      = 0;
 int      s_scroll     = 0;          // lines scrolled back from the newest
@@ -80,6 +83,11 @@ int      s_cur_x = 0, s_cur_y = 0; // cursor cell, set by the last input-line dr
 DisplayDriver* s_disp = nullptr;
 int      s_char_w = 6, s_line_h = 8, s_cols = 40, s_rows = 10;
 
+// Current recipient (set by `to`) and node name: both appear in the shell
+// prompt, so they have to be declared before the input line is drawn.
+char     s_to[40]   = {0};
+char     s_node[24] = {0};
+
 char     s_input[kInputCap] = {0};
 int      s_input_len = 0;
 uint32_t s_blink_ms  = 0;
@@ -87,7 +95,10 @@ bool     s_blink_on  = true;
 
 inline char* lineAt(int i) { return s_ring + (size_t)i * (kLineCap + 1); }
 
-uint8_t s_push_col = CC_TEXT;      // colour applied by the next ringPush
+uint8_t s_push_col   = CC_TEXT;    // colour of segment 1 for the next ringPush
+uint8_t s_push_split = 0;          // length of segment 1 (0 = whole line)
+uint8_t s_push_col2  = CC_TEXT;    // colour of segment 2
+uint8_t s_push_spl2  = 0;          // length of segment 2
 
 void ringPush(const char* s, int len) {
   if (!s_ring) return;
@@ -95,7 +106,10 @@ void ringPush(const char* s, int len) {
   char* dst = lineAt(s_head);
   memcpy(dst, s, len);
   dst[len] = '\0';
-  if (s_ring_col) s_ring_col[s_head] = s_push_col;
+  if (s_ring_col)   s_ring_col[s_head]   = s_push_col;
+  if (s_ring_split) s_ring_split[s_head] = s_push_split;
+  if (s_ring_col2)  s_ring_col2[s_head]  = s_push_col2;
+  if (s_ring_spl2)  s_ring_spl2[s_head]  = s_push_spl2;
   s_head = (s_head + 1) % kMaxLines;
   if (s_count < kMaxLines) s_count++;
   s_scroll = 0;              // any new output jumps back to the live tail
@@ -117,21 +131,41 @@ uint8_t ringGetCol(int i) {
   const int start = (s_head - s_count + kMaxLines * 2) % kMaxLines;
   return s_ring_col[(start + i) % kMaxLines];
 }
+uint8_t ringGetSplit(int i) {
+  if (!s_ring_split || i < 0 || i >= s_count) return 0;
+  const int start = (s_head - s_count + kMaxLines * 2) % kMaxLines;
+  return s_ring_split[(start + i) % kMaxLines];
+}
+uint8_t ringGetCol2(int i) {
+  if (!s_ring_col2 || i < 0 || i >= s_count) return CC_TEXT;
+  const int start = (s_head - s_count + kMaxLines * 2) % kMaxLines;
+  return s_ring_col2[(start + i) % kMaxLines];
+}
+uint8_t ringGetSpl2(int i) {
+  if (!s_ring_spl2 || i < 0 || i >= s_count) return 0;
+  const int start = (s_head - s_count + kMaxLines * 2) % kMaxLines;
+  return s_ring_spl2[(start + i) % kMaxLines];
+}
 
-// One place that decides what a colour means on this panel. UIColor is the
-// core's named set, so the console tracks the rest of the firmware rather than
-// inventing its own values.
+// The console palette, as explicit RGB565. Deliberately NOT the UIColor theme
+// names: several of those resolve to the same value on a given board, so
+// "channel" and "sender" would have come out identical, and on e-ink they are
+// all black. Explicit values guarantee the three parts of a message actually
+// look different.
 uint16_t colourFor(uint8_t c) {
+  // e-ink has one ink colour; anything else would be invisible or dithered.
+  if (s_disp && s_disp->isEink()) return UIColor::primary_txt;
   switch (c) {
-    case CC_DIM:  return UIColor::secondary_txt;
-    case CC_ECHO: return UIColor::title_txt;
-    case CC_OK:   return UIColor::corp_blue;
-    case CC_WARN: return UIColor::warning_txt;
-    case CC_ERR:  return UIColor::warning_txt;
-    case CC_CHAN: return UIColor::corp_blue;
-    case CC_DM:   return UIColor::title_txt;
-    case CC_HEAD: return UIColor::title_txt;
-    default:      return UIColor::primary_txt;
+    case CC_DIM:    return 0x7BEF;   // grey
+    case CC_ECHO:   return 0x07E0;   // green, the shell-echo convention
+    case CC_OK:     return 0x07E0;   // green
+    case CC_WARN:   return 0xFD20;   // orange
+    case CC_ERR:    return 0xF800;   // red
+    case CC_CHAN:   return 0x07FF;   // cyan  - where it came from
+    case CC_SENDER: return 0xFFE0;   // yellow - who said it
+    case CC_DM:     return 0xF81F;   // magenta - a DM stands out in a busy feed
+    case CC_HEAD:   return 0x15B4;   // brand teal
+    default:        return 0xC618;   // light grey, the message itself
   }
 }
 
@@ -283,9 +317,34 @@ void render() {
     const int idx = first + r;
     const char* l = (idx >= 0) ? ringGet(idx) : nullptr;
     if (l && *l) {
-      s_disp->setColor(colourFor(ringGetCol(idx)));
-      s_disp->setCursor(0, y);
-      s_disp->print(l);
+      // Up to three coloured segments on one line: where it came from, who
+      // said it, and what they said. Drawn left to right, each starting at the
+      // measured width of everything before it.
+      const int len   = (int)strlen(l);
+      int       n1    = ringGetSplit(idx);
+      int       n2    = ringGetSpl2(idx);
+      if (n1 > len) n1 = len;
+      if (n1 + n2 > len) n2 = len - n1;
+      int x = 0;
+      char seg[kLineCap + 1];
+      if (n1 > 0) {
+        memcpy(seg, l, n1); seg[n1] = '\0';
+        s_disp->setColor(colourFor(ringGetCol(idx)));
+        s_disp->setCursor(x, y); s_disp->print(seg);
+        x += s_disp->getTextWidth(seg);
+      }
+      if (n2 > 0) {
+        memcpy(seg, l + n1, n2); seg[n2] = '\0';
+        s_disp->setColor(colourFor(ringGetCol2(idx)));
+        s_disp->setCursor(x, y); s_disp->print(seg);
+        x += s_disp->getTextWidth(seg);
+      }
+      if (n1 + n2 < len) {
+        // The remainder. When there were no segments this is the whole line, so
+        // it takes the line's own colour rather than always being plain text.
+        s_disp->setColor(colourFor((n1 + n2) == 0 ? ringGetCol(idx) : CC_TEXT));
+        s_disp->setCursor(x, y); s_disp->print(l + n1 + n2);
+      }
     }
     y += s_line_h;
   }
@@ -299,10 +358,10 @@ void render() {
   s_dirty = false;
 }
 
-// Current recipient, set by `to`. A name rather than an index or a slot, for the
-// same reason the send path matches by name: an index goes stale the moment the
-// contact list changes underneath it.
-char s_to[40] = {0};
+// (s_to is declared with the console state above, because the shell prompt
+// draws it. It holds a NAME rather than an index for the same reason the send
+// path matches by name: an index goes stale the moment the contact list
+// changes underneath it.)
 
 void cmdContacts() {
   char name[36], pk[12]; int type; uint32_t ago; double lat, lon; int32_t la6, lo6;
@@ -311,9 +370,12 @@ void cmdContacts() {
     if (!luaHostContactAt(i, name, sizeof name, &type, &ago, &lat, &lon, pk, sizeof pk, &la6, &lo6)) break;
     static const char* kType[5] = { "?", "chat", "repeater", "room", "sensor" };
     char line[kLineCap];
-    snprintf(line, sizeof line, "%-16s %-8s %s", name,
+    // Name in the accent, the type and key dim: the name is what you are
+    // looking for, the rest is reference.
+    const int split = snprintf(line, sizeof line, "%-16s ", name);
+    snprintf(line + split, sizeof line - split, "%-8s %s",
              (type >= 1 && type <= 4) ? kType[type] : "?", pk);
-    consoleWriteLine(line);
+    consoleWriteLineSplit(CC_DM, split, line);
     shown++;
   }
   if (!shown) consoleWriteLine("(no contacts yet)");
@@ -338,18 +400,26 @@ void drawInputLine(bool cursor_on) {
   s_disp->fillRect(0, iy, s_disp->width(), s_line_h);
 
   s_disp->setTextSize(1);
-  s_disp->setColor(UIColor::title_txt);
+  // A shell prompt rather than a bare caret: node name, the current recipient
+  // as the working "directory", then $. Where you are and who you are talking
+  // to is exactly what a shell prompt is for.
+  char prompt[48];
+  snprintf(prompt, sizeof prompt, "%s:%s$ ",
+           s_node[0] ? s_node : "wadamesh", s_to[0] ? s_to : "~");
+  s_disp->setColor(colourFor(CC_OK));
   s_disp->setCursor(0, iy);
-  s_disp->print(">");
+  s_disp->print(prompt);
+  const int px = s_disp->getTextWidth(prompt);
   s_disp->setColor(UIColor::primary_txt);
-  s_disp->setCursor(s_char_w * 2, iy);
+  s_disp->setCursor(px, iy);
   // Show the tail of a long line so the caret stays visible while typing.
-  const int room = s_cols - 3;
+  const int room = s_cols - (int)strlen(prompt) - 1;
+  if (room < 4) { /* tiny panel: still show something */ }
   const char* shown = s_input;
   if (s_input_len > room) shown = s_input + (s_input_len - room);
   s_disp->print(shown);
 
-  s_cur_x = s_char_w * 2 + s_disp->getTextWidth(shown);
+  s_cur_x = px + s_disp->getTextWidth(shown);
   s_cur_y = iy;
   if (cursor_on) {
     s_disp->setColor(UIColor::primary_txt);
@@ -378,10 +448,9 @@ void drawCursorOnly(bool on) {
 // Deliberately narrow: 26 columns fits the smallest panel we ship (the V4 at
 // 240 px), so nobody sees a broken box.
 const char* const kBanner[] = {
-  " _ _ _ ___ ___ ___ ",
-  "| | | | .'|   |  _|",
-  "|_____|__,|_|_|_|  ",
-  "  m e s h",
+  " _ _ _  _ ___  _   _  _ ___ ___ _ _ ",
+  "| | | |/ \\| \\ / \\ | \\/ |/ __/ __| |_|",
+  "|_____|\\_/|_/ \\_/ |_/\\_|\\___/___|_|_|",
 };
 
 // The quick menu. Numbers because typing 1 is faster than typing 'contacts',
@@ -401,17 +470,14 @@ const QuickItem kQuick[] = {
 const int kQuickN = (int)(sizeof(kQuick) / sizeof(kQuick[0]));
 
 void cmdMenu() {
-  consoleWriteLineC(CC_HEAD, "quick launch");
-  for (int i = 0; i < kQuickN; i += 2) {
-    char line[kLineCap];
-    if (i + 1 < kQuickN)
-      snprintf(line, sizeof line, " %s %-10s  %s %-10s",
-               kQuick[i].key, kQuick[i].label, kQuick[i + 1].key, kQuick[i + 1].label);
-    else
-      snprintf(line, sizeof line, " %s %-10s", kQuick[i].key, kQuick[i].label);
+  // Three per row: the menu costs three lines instead of five, which is what
+  // lets the banner above it stay on screen.
+  for (int i = 0; i < kQuickN; i += 3) {
+    char line[kLineCap]; int o = 0;
+    for (int k = i; k < i + 3 && k < kQuickN; k++)
+      o += snprintf(line + o, sizeof line - o, "%s %-9s", kQuick[k].key, kQuick[k].label);
     consoleWriteLine(line);
   }
-  consoleWriteLineC(CC_DIM, "type a number, or 'help'");
 }
 
 // ---- command dispatch -------------------------------------------------------
@@ -458,7 +524,7 @@ void submit() {
   }
 #endif
   if (!strcasecmp(cmd, "help")) {
-    consoleWriteLine("console  clear, help, mem, ui");
+    consoleWriteLineC(CC_HEAD, "console  clear, help, menu, mem, ui");
     consoleWriteLine("mesh     contacts, chans, unread");
     consoleWriteLine("         chat <name>    show a thread");
     consoleWriteLine("         discover / discovered");
@@ -507,7 +573,10 @@ void submit() {
     for (int i = 0; i < 64; i++) {
       if (!consoleHostThreadAt(i, name, sizeof name, &un, &chan)) break;
       if (un <= 0) continue;
-      consolePrintf("%s%-20s %d", chan ? "#" : " ", name, un);
+      char row[kLineCap];
+      const int sp = snprintf(row, sizeof row, "%s%-18s ", chan ? "#" : " ", name);
+      snprintf(row + sp, sizeof row - sp, "%d unread", un);
+      consoleWriteLineSplit(chan ? CC_CHAN : CC_DM, sp, row);
       shown++;
     }
     consolePrintf("%d unread in %d thread%s", consoleHostUnreadTotal(), shown, shown == 1 ? "" : "s");
@@ -529,7 +598,10 @@ void submit() {
     // Collect newest-first, print oldest-first, so it reads like a conversation.
     for (int i = 11; i >= 0; i--) {
       if (!consoleHostHistoryAt(who, i, sender, sizeof sender, text, sizeof text, &ts, &out)) continue;
-      consolePrintfC(out ? CC_DIM : CC_TEXT, "%s%s: %s", out ? "> " : "", sender, text);
+      char row[220];
+      const int sp = snprintf(row, sizeof row, "%s%s: ", out ? "> " : "", sender);
+      snprintf(row + sp, sizeof row - sp, "%s", text);
+      consoleWriteLineSplit(out ? CC_DIM : CC_DM, sp, row);
       shown++;
     }
     if (!shown) consolePrintfC(CC_WARN, "nothing stored for '%s'", who);
@@ -625,6 +697,19 @@ void consoleBegin(DisplayDriver* d) {
 #endif
     if (!s_ring_col) s_ring_col = (uint8_t*)malloc(kMaxLines);
     if (s_ring_col) memset(s_ring_col, CC_TEXT, kMaxLines);   // null is tolerated: all text
+#if defined(ESP32)
+    s_ring_split = (uint8_t*)heap_caps_malloc(kMaxLines, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+    if (!s_ring_split) s_ring_split = (uint8_t*)malloc(kMaxLines);
+    if (s_ring_split) memset(s_ring_split, 0, kMaxLines);
+#if defined(ESP32)
+    s_ring_col2 = (uint8_t*)heap_caps_malloc(kMaxLines, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_ring_spl2 = (uint8_t*)heap_caps_malloc(kMaxLines, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+    if (!s_ring_col2) s_ring_col2 = (uint8_t*)malloc(kMaxLines);
+    if (!s_ring_spl2) s_ring_spl2 = (uint8_t*)malloc(kMaxLines);
+    if (s_ring_col2) memset(s_ring_col2, CC_TEXT, kMaxLines);
+    if (s_ring_spl2) memset(s_ring_spl2, 0, kMaxLines);
   }
   s_active = true;
   measure();
@@ -634,15 +719,30 @@ void consoleBegin(DisplayDriver* d) {
 
 // Printed once at boot by UITask::begin. Not inside consoleBegin, because the
 // node name and version are not knowable until the mesh is up.
+void consoleSetNodeName(const char* n) { if (n) snprintf(s_node, sizeof s_node, "%s", n); }
+
 void consoleBanner(const char* node_name, const char* version) {
+  consoleSetNodeName(node_name);
+  // Kept SHORT on purpose. The first version was seventeen lines of boot text
+  // on a panel that fits fewer, so the art scrolled off before anyone saw it,
+  // which is exactly how it was reported. Banner + identity + menu now fits.
   for (unsigned i = 0; i < sizeof(kBanner) / sizeof(kBanner[0]); i++)
     consoleWriteLineC(CC_HEAD, kBanner[i]);
-  consoleWriteLine("");
-  if (node_name && *node_name) consolePrintfC(CC_OK, "node   %s", node_name);
-  if (version   && *version)   consolePrintfC(CC_DIM, "build  %s", version);
-  consoleWriteLine("");
+  consolePrintfC(CC_OK, "%s   %s", node_name && *node_name ? node_name : "node",
+                 version && *version ? version : "");
   cmdMenu();
-  consoleWriteLine("");
+}
+
+// Scroll the view. +1 goes one line back into history, -1 one line towards live.
+// Clamped so it cannot run past either end.
+void consoleScroll(int delta) {
+  if (!s_active) return;
+  int limit = s_count - s_rows;
+  if (limit < 0) limit = 0;
+  int next = s_scroll + delta;
+  if (next < 0) next = 0;
+  if (next > limit) next = limit;
+  if (next != s_scroll) { s_scroll = next; s_dirty = true; }
 }
 
 void consoleEnd() { s_active = false; }
@@ -689,6 +789,20 @@ void consoleWriteLineC(uint8_t colour, const char* line) {
   s_push_col = colour;
   consoleWriteLine(line);
   s_push_col = CC_TEXT;
+}
+
+static inline uint8_t clamp255(int v) { return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); }
+
+void consoleWriteLineSeg(uint8_t c1, int len1, uint8_t c2, int len2, const char* line) {
+  s_push_col   = c1;  s_push_split = clamp255(len1);
+  s_push_col2  = c2;  s_push_spl2  = clamp255(len2);
+  consoleWriteLine(line);
+  s_push_col = CC_TEXT; s_push_split = 0;
+  s_push_col2 = CC_TEXT; s_push_spl2 = 0;
+}
+
+void consoleWriteLineSplit(uint8_t colour, int split, const char* line) {
+  consoleWriteLineSeg(colour, split, CC_TEXT, 0, line);
 }
 
 void consolePrintfC(uint8_t colour, const char* fmt, ...) {
