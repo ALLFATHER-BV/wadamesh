@@ -536,29 +536,50 @@ but nothing ever talked to it; the QMI8658 IMU still has no driver.
   left/right or OK = cycle the target contact. Offsets/orientation persist in
   the app's KV store.
 
-**Two things only the hardware can answer:**
+**Both unknowns are now MEASURED (2026-08-22), not guessed.** Held flat,
+logging the raw vector (`M9_COMPASS_DEBUG` in M9Compass.cpp) at four headings
+90° apart:
 
-1. **Sensor axis orientation vs. the screen.** Not in any datasheet figure we
-   could extract, and Meshtastic's M9 driver declares a 180° offset it marks
-   "must be verified on real hardware" and then never uses. Hence O/F in the
-   app: point the device's top edge at a known north (the Map page's bearing
-   to a far contact, or a phone compass) and step O / F until the rose reads
-   0° and turning clockwise makes the number go up.
-2. **Hard-iron bias magnitude.** Meshtastic hard-codes M9 calibration extrema
-   around −6…−7.6 "G" per axis, >10× Earth's field — either a unit bug on
-   their side or a real on-board magnet. That is why the driver runs at ±32 G:
-   if their numbers are real, ±8 G would saturate. The app shows `|B|` after
-   offsets — expect 0.25–0.65 G once calibrated — and says "SATURATED" when
-   the chip flags OVFL (boot log also prints the raw counts every 10 s while
-   it persists). If raw readings turn out to be small, ±8 G (CTRL2 RNG bits
-   10, 4000 LSB/G) buys 4× finer counts; not worth it unless `|B|` is noisy.
+| heading | raw x | raw y | raw z | x−ox | y−oy |
+|---|---|---|---|---|---|
+| N | −0.395 | −3.068 | −2.768 | **−0.055** | **+0.310** |
+| E | −0.072 | −3.396 | −2.704 | **+0.268** | **−0.018** |
+| S | −0.327 | −3.653 | −2.752 | **+0.013** | **−0.275** |
+| W | −0.565 | −3.394 | −2.754 | **−0.225** | **−0.016** |
+
+1. **Axis orientation.** Hard-iron centre (ox, oy) = (−0.340, −3.378);
+   `atan2(x−ox, y−oy)` then reads 350° / 94° / 177° / 266° at N/E/S/W —
+   0/90/180/270 within a few degrees, counting UP clockwise. So **+Y points at
+   the device's top edge, +X to its left**, and (right-handed) +Z into the
+   screen. `deploy/apps/gpscompass` ships that as the default: correct after
+   calibration alone, with no orientation press. Repeatability: returning to
+   north landed within 0.066 G / 0.041 G of the first reading.
+   NB the app's first auto-handedness rule had this INVERTED — it assumed a
+   Z-out-of-screen sensor was the un-mirrored case — which is what made a
+   correctly-defaulted device turn the wrong way. The dip test now reads:
+   held flat, north of the magnetic equator, a Z-INTO-screen sensor sees the
+   downward field as POSITIVE z.
+2. **The hard-iron bias is real and large** — about −0.34 G on X, **−3.4 G on
+   Y**, −2.8 G on Z: ~7× Earth's field, which vindicates Meshtastic's
+   otherwise implausible hardcoded extrema. The horizontal signal riding on it
+   is only ~0.27 G, so an UNCALIBRATED M9 barely moves the dial — that is the
+   expected symptom, not a fault. It also confirms the ±32 G range: at ±8 G the
+   Y axis sits within half a scale of the rail before the user's own
+   environment is added. Expect `|B|` ≈ 0.25–0.65 G once calibrated;
+   "Field saturated" (OVFL, raw counts logged every 10 s) means a magnet is
+   nearby.
+
+**Calibration must TUMBLE the device, not just spin it flat.** A flat-only
+sweep leaves Z unvarying, so the min/max pass subtracts the true vertical
+field along with the bias — which also disables the dip check the manual
+fallback relies on.
 
 **Hardware-verify recipe:** flash; boot log shows the `M9 compass:` line;
 push the app over the console — the M9's card is soldered on, so
 `scripts/sideload_app.py --port /dev/cu.wchusbserial10 --reboot
 deploy/apps/gpscompass/1.0` (the `fput`/`fadd`/`fend` CLI commands write into
 the Store's own `/apps/` on the card; "Your own apps" lists it, the catalog
-copy arrives once `deploy/apps` is published); open the app; `C`, turn the
+copy arrives once `deploy/apps` is published); open the app; `C`, TUMBLING (not just spinning) the
 device through every orientation for 20 s; check `|B|`; set O/F against a
 known north; walk with GPS on and confirm `Speed`/`Course` populate above
 ~1 km/h; pick a contact and sanity-check the bearing against the map.
