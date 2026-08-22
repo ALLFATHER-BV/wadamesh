@@ -13296,7 +13296,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_set_style_pad_right(crow, 10, LV_PART_MAIN);
     lv_obj_clear_flag(crow, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t* cl = lv_label_create(crow);
-    lv_label_set_text(cl, TR("Text console (no UI)"));
+    lv_label_set_text(cl, TR("Text console (experimental)"));
     useChainedFont(cl);
     lv_obj_set_style_text_color(cl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_label_set_long_mode(cl, LV_LABEL_LONG_DOT);
@@ -13310,9 +13310,10 @@ static void buildDeviceSettings(int sec) {
     y += SC(42);
   }
   y += settingsRowLabel(body, y, 0,
-        TR("Boots into a text console with no graphical interface: type commands, read replies. "
-           "Frees the memory and processor time the interface uses. Type 'ui' in the console to "
-           "come back. Toggling reboots."),
+        TR("EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, "
+           "read replies. Frees the memory and processor time the interface uses. Type 'ui' in "
+           "the console to come back, and if it ever fails to start the device returns here on "
+           "its own. Toggling reboots."),
         COLOR_SUB, &g_font_12, 1) + 8;
   }
 #endif
@@ -23510,15 +23511,15 @@ static void openRemotePage() {
 #if CAP_CONSOLE
   // ---- 2b. Console mode (no LVGL at all; reboots) ----
   lv_obj_t* ch = lv_label_create(s_remote_root);
-  lv_label_set_text(ch, TR("Console mode"));
+  lv_label_set_text(ch, TR("Console mode (experimental)"));
   lv_obj_set_style_text_font(ch, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(ch, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_width(ch, cw);
 
   lv_obj_t* cexpl = lv_label_create(s_remote_root);
-  lv_label_set_text(cexpl, TR("Boots into a text console with no graphical interface: type commands, "
-                              "read replies. Frees the memory and processor time the interface uses. "
-                              "Type 'ui' in the console to come back. Toggling reboots the device."));
+  lv_label_set_text(cexpl, TR("EXPERIMENTAL. Boots into a text console with no graphical interface: "
+                              "type commands, read replies. Frees the memory and processor time the "
+                              "interface uses. Type 'ui' in the console to come back. Toggling reboots."));
   lv_obj_set_style_text_font(cexpl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(cexpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_label_set_long_mode(cexpl, LV_LABEL_LONG_WRAP);
