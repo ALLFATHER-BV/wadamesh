@@ -4831,6 +4831,7 @@ static void chanScopeClose();    // fwd
 static bool blockedModalIsOpen();// fwd: the bar's Back chevron also closes the blocked-users sheet
 static void blockedModalClose(); // fwd
 static void openBlockedUsersModal();                            // ignore-list manager (unblock)
+static void openRegionsModal();                                 // known-regions manager (#271)
 static bool overlayBlocksTabSwipe();   // theme/channel-scope pickers swallow tab swipes
 static bool drawerPopupOpen();         // popups floating over the app drawer (signal/mentions/power/files)
 static void refreshContactsList();
@@ -9136,6 +9137,11 @@ static void saveRadioParamsCb(lv_event_t* e) {
   if (has_region_ta) {
     the_mesh.setDefaultFloodScope(region);
     touchPrefsSetRegionScope(region);
+    // #271: keep the registry in step with the region we just adopted, so its
+    // messages are named immediately. Any previously-registered region keeps its
+    // slot, so changing our own region does not un-name the history we
+    // received while we were in the old one.
+    if (region[0]) the_mesh.regionRegistry().ensureRegion(region);
     has_region = (region[0] != '\0');
   }
   if (ok) {
@@ -10616,6 +10622,25 @@ static void buildRadioSettings() {
     lv_obj_set_pos(note, 2, y);
     lv_obj_update_layout(note);
     y += lv_obj_get_height(note) + SC(8);
+  }
+  // #271: the regions above are the ones we SEND under. This opens the list of
+  // regions we can RECOGNISE. Naming them in message details needs only the
+  // name, since the key is derived from it.
+  {
+    lv_obj_t* rb = lv_btn_create(body);
+    lv_obj_set_size(rb, s_settings_content_w - SC(4), SC(34));
+    lv_obj_set_pos(rb, 2, y);
+    styleButton(rb);
+    lv_obj_add_event_cb(rb, [](lv_event_t* e) {
+      if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+      closeSettingsModal();
+      openRegionsModal();
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* rl = lv_label_create(rb);
+    lv_label_set_text(rl, TR(LV_SYMBOL_LIST "  Known regions"));
+    lv_obj_set_style_text_font(rl, &g_font_14, LV_PART_MAIN);
+    lv_obj_center(rl);
+    y += SC(40);
   }
 
   // Opt-in: also scope DIRECT messages / logins / remote-management floods to the region
@@ -32449,8 +32474,22 @@ static void openMessageInfoPopup(int msg_idx) {
       // changing (#259). Report what was actually determined: whether it verified
       // against our own region key. The hex stays, in parentheses, for anyone
       // cross-checking a capture.
+      // #271: when the code verified against one of the registered regions we can
+      // name it outright. Fall back to the older my-region / another-region
+      // answer when nothing matched, which is still all we can honestly say.
       char region[40];
-      if (m.meta_flags & UITask::MSG_META_SCOPE_HOME) {
+      const uint8_t rslot = UITask::metaScopeSlot(m.meta_flags);
+      const char* rname = (rslot && rslot != REGION_SLOT_AMBIGUOUS)
+                            ? the_mesh.regionRegistry().nameForSlot(rslot) : nullptr;
+      if (rslot == REGION_SLOT_AMBIGUOUS) {
+        // Several registered regions produced this same 16-bit code. Naming any
+        // one of them would be a guess, and a confident wrong region reads worse
+        // than an honest "cannot tell". The tag is only 16 bits, so with N keys
+        // live a collision runs at about N/65534 per packet.
+        snprintf(region, sizeof region, "%s", TR("ambiguous (several regions matched)"));
+      } else if (rname) {
+        snprintf(region, sizeof region, "%s", rname);
+      } else if (m.meta_flags & UITask::MSG_META_SCOPE_HOME) {
         char home[24] = {0};
         touchPrefsGetRegionScope(home, sizeof home);
         snprintf(region, sizeof region, "%s", home[0] ? home : TR("my region"));
@@ -44273,6 +44312,11 @@ static void chanScopeSaveCb(lv_event_t* e) {
     const char* t = lv_textarea_get_text(s_chanscope_ta);
 #if defined(ESP32)
     touchPrefsSetChannelScope(s_chanscope_slot, t ? t : "");
+    // #271: register it now rather than at next boot, so messages arriving in
+    // this region are named from the next packet on. Idempotent; the old region
+    // keeps its slot, since a slot outlives the config that introduced it (old
+    // messages must keep resolving to the region they actually arrived under).
+    if (t && t[0]) the_mesh.regionRegistry().ensureRegion(t);
 #endif
   }
   chanScopeClose();
@@ -44333,6 +44377,153 @@ static void blockedUnblockNameCb(lv_event_t* e) {
   }
   openBlockedUsersModal();   // rebuild the list
 }
+// ---- Known regions manager (#271) -------------------------------------------
+// The list that makes scope naming possible. A region's key is derived from its
+// NAME (SHA256("#tag")), so holding the name is enough to recompute an incoming
+// packet's transport code and recognise it. That is why adding a region here
+// names its traffic even though we do not participate in it.
+//
+// Adding is the whole point of the feature; removing is deliberately "retire":
+// the slot and name are kept so messages already received under that region keep
+// resolving, it just stops being matched from now on. See RegionRegistry.
+static lv_obj_t* s_regions_modal = nullptr;
+static lv_obj_t* s_regions_ta    = nullptr;
+static void openRegionsModal();   // fwd: the add/remove callbacks rebuild the page
+
+static void regionsModalClose() {
+  if (s_regions_modal) { hideKb(); popupClose(&s_regions_modal); }
+  s_regions_ta = nullptr;
+  if (s_apppage_close == regionsModalClose) {
+    s_apppage_title = nullptr; s_apppage_close = nullptr;
+    statusBarSetTall(false); updateGlobalStatusBar();
+  }
+}
+static void regionsAddCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!s_regions_ta) return;
+  const char* t = lv_textarea_get_text(s_regions_ta);
+  if (!t || !t[0]) { if (g_lv.task) g_lv.task->showAlert(TR("Enter a region name"), 1400); return; }
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  if (reg.ensureRegion(t) == REGION_SLOT_NONE) {
+    // Two different failures, and the user can only act on one of them: the list
+    // being full, or the name canonicalising away to nothing (blank, or a bare
+    // "#"). Say which rather than silently not adding a row.
+    if (g_lv.task) g_lv.task->showAlert(reg.isFull() ? TR("Region list is full")
+                                                     : TR("Enter a region name"), 2000);
+    return;
+  }
+  openRegionsModal();   // rebuild (closes first)
+}
+static void regionsRemoveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const uint8_t slot = (uint8_t)(intptr_t)lv_event_get_user_data(e);
+  the_mesh.regionRegistry().retire(slot);
+  openRegionsModal();   // rebuild
+}
+
+static void openRegionsModal() {
+  regionsModalClose();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+
+  // Go tall BEFORE measuring, and measure with statusBarCurH() rather than
+  // chatBarH(). They disagree on the Pager: chatBarH() is one row there (that
+  // board keeps back/cog/title on a single line), but statusBarSetTall() still
+  // doubles the bar to STATUSBAR_H * 2. Laying out against chatBarH() therefore
+  // put the page origin a whole row UNDER the bar and the top control was clipped
+  // by it. statusBarCurH() is the height the bar actually has once tall, so the
+  // content clears it on every board and this stays identical elsewhere.
+  s_apppage_title = "Known regions";
+  s_apppage_close = regionsModalClose;
+  statusBarSetTall(true);
+  const lv_coord_t top = statusBarCurH();
+
+  s_regions_modal = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_regions_modal);
+  lv_obj_set_size(s_regions_modal, sw, sh - top);
+  lv_obj_set_pos(s_regions_modal, 0, top);
+  lv_obj_set_style_bg_color(s_regions_modal, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_regions_modal, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_regions_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+  updateGlobalStatusBar();
+  lv_obj_move_foreground(s_regions_modal);
+  if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
+
+  const lv_coord_t pad = SC(6);
+  lv_coord_t y = SC(6);
+
+  // Add row: field + button on one line, so the common action is reachable
+  // without scrolling on the short panels too.
+  const lv_coord_t btn_w = SC(64);
+  s_regions_ta = lv_textarea_create(s_regions_modal);
+  lv_textarea_set_one_line(s_regions_ta, true);
+  lv_textarea_set_max_length(s_regions_ta, TOUCH_REGION_SCOPE_MAXLEN - 1);
+  lv_obj_set_size(s_regions_ta, sw - pad * 3 - btn_w, SC(32));
+  lv_obj_set_pos(s_regions_ta, pad, y);
+  taSetPlaceholder(s_regions_ta, TR("#region"));
+  attachSettingsTaEvents(s_regions_ta);
+
+  lv_obj_t* add = lv_btn_create(s_regions_modal);
+  lv_obj_set_size(add, btn_w, SC(32));
+  lv_obj_set_pos(add, sw - pad - btn_w, y);
+  styleButton(add);
+  lv_obj_add_event_cb(add, regionsAddCb, LV_EVENT_CLICKED, nullptr);
+  { lv_obj_t* l = lv_label_create(add); lv_label_set_text(l, TR("Add"));
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l); }
+  y += SC(38);
+
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  if (reg.count() <= 0) {
+    lv_obj_t* empty = lv_label_create(s_regions_modal);
+    lv_label_set_text(empty, TR("No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details."));
+    lv_label_set_long_mode(empty, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(empty, sw - pad * 2);
+    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(empty, pad, y);
+    return;
+  }
+
+  lv_obj_t* list = lv_obj_create(s_regions_modal);
+  lv_obj_remove_style_all(list);
+  lv_obj_set_size(list, sw - pad * 2, sh - top - y - SC(6));
+  lv_obj_set_pos(list, pad, y);
+  lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(list, SC(5), LV_PART_MAIN);
+  lv_obj_set_scroll_dir(list, LV_DIR_VER);
+
+  for (uint8_t slot = 1; slot <= REGION_SLOT_MAX; ++slot) {
+    if (!reg.isActive(slot)) continue;
+    const char* nm = reg.nameForSlot(slot);
+    if (!nm || !nm[0]) continue;
+
+    lv_obj_t* row = lv_obj_create(list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, sw - pad * 2 - SC(4), SC(36));
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(row, 6, LV_PART_MAIN);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* lbl = lv_label_create(row);
+    lv_label_set_text(lbl, nm);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(lbl, sw - pad * 2 - SC(4) - SC(84));
+    lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, SC(6), 0);
+
+    lv_obj_t* rm = lv_btn_create(row);
+    lv_obj_set_size(rm, SC(72), SC(28));
+    lv_obj_align(rm, LV_ALIGN_RIGHT_MID, -SC(5), 0);
+    styleButton(rm);
+    lv_obj_add_event_cb(rm, regionsRemoveCb, LV_EVENT_CLICKED, (void*)(intptr_t)slot);
+    { lv_obj_t* l = lv_label_create(rm); lv_label_set_text(l, TR("Remove"));
+      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l); }
+  }
+}
+
 static void openBlockedUsersModal() {
   blockedModalClose();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -49570,6 +49761,27 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // factor rewritten + persisted; see healPresetAirtimeFactor for the guard.
   healPresetAirtimeFactor();
 
+  // #271: seed the region registry with the default and per-channel scopes held
+  // in touch prefs. MyMesh::begin() seeds the companion-configured default from
+  // NodePrefs; the touch UI stores its display name separately, so it must be
+  // included here as well. ensureRegion() canonicalises and de-duplicates, so
+  // channels sharing a region collapse to one slot and re-running each boot is a
+  // no-op. Registering a region is what lets an incoming message be NAMED as
+  // being from it. A channel scoped to "#denmark" means we hold that key, so
+  // every "#denmark" message becomes identifiable, not just this channel's.
+  {
+    char rgn[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    if (touchPrefsGetRegionScope(rgn, sizeof rgn) > 0 && rgn[0])
+      the_mesh.regionRegistry().ensureRegion(rgn);
+  }
+#ifdef MAX_GROUP_CHANNELS
+  for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+    char rgn[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    if (touchPrefsGetChannelScope(i, rgn, sizeof rgn) > 0 && rgn[0])
+      the_mesh.regionRegistry().ensureRegion(rgn);
+  }
+#endif
+
   // #207 auto-retry: apply the persisted Radio & Mesh toggle (default ON).
   the_mesh.setCompanionRetryEnabled(touchPrefsGetRetryEcho());
 
@@ -51725,6 +51937,10 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       meta_flags |= MSG_META_HAS_SCOPE;
       // Verified at RX (the check needs the packet); the popup only reads the bit.
       if (the_mesh.lastRxScopeIsHome()) meta_flags |= MSG_META_SCOPE_HOME;
+      // Which registered region it verified against (#271), also decided at RX
+      // for the same reason: the packet is gone by the time the popup opens, so
+      // the answer has to be captured here and persisted with the message.
+      meta_flags = metaWithScopeSlot(meta_flags, the_mesh.lastRxScopeSlot());
     }
   }
   const int msg_slot = _ui_msg_head;   // appendMessage writes _ui_msgs[head], then advances head

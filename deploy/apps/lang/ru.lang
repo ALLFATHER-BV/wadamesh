@@ -282,6 +282,7 @@ End time	Время окончания
 Enter SSID first	Сначала введите SSID
 Enter a name	Введите имя
 Enter a network name	Введите имя сети
+Enter a region name	Enter a region name
 Enter adds a new line	Enter добавляет строку
 Enter exactly 32 hex characters.	Введите ровно 32 hex-символа.
 Enter key sends message	Клавиша Enter отправляет сообщение
@@ -407,6 +408,7 @@ Keyboard nav: WASDZ on	Навигация клавиатурой: WASDZ вкл.
 Keyboard nav: off	Навигация клавиатурой: выкл.
 Keyboard navigation	Навигация клавиатурой
 Keys	
+Known regions	Known regions
 LOS → %s	Прямая видимость → %s
 Landscape (desktop)	Альбомная (десктоп)
 Landscape set - applies when remote mode starts.	Альбомная выбрана - применится при запуске удалённого режима.
@@ -533,6 +535,7 @@ No networks found (2.4 GHz only)	Сети не найдены (только 2.4 
 No onboard GPS	Нет встроенного GPS
 No other networks found	Другие сети не найдены
 No position yet. A cold start needs a clear view of the sky and can take several minutes.	Позиции пока нет. Холодный старт требует открытого неба и может занять несколько минут.
+No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.	No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.
 No reply from %s	Нет ответа от %s
 No reply. Check password, server,\nor device clock (device: %s)	Нет ответа. Проверьте пароль, сервер\nили часы устройства (устройство: %s)
 No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Здесь нет сохранённых тайлов.\n\nПодключитесь к Wi-Fi (Настройки → Wi-Fi),\nчтобы загрузить этот район.\nСохранённые тайлы остаются доступны офлайн.
@@ -641,6 +644,7 @@ Receive unreleased test firmware — newer features, but less tested. The update
 Recently heard	Недавно слышно
 Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Отформатировать SD как MESHCOMOD (FAT32)?\nВСЕ данные на карте будут стёрты.
 Region & scope	Регион и охват
+Region list is full	Region list is full
 Region scope (#tag) for this channel.\nBlank = use the default scope.	Регион (#tag) для этого канала.\nПусто = область по умолчанию.
 Region scope (#tag), blank = default.	Область региона (#tag), пусто = по умолчанию.
 Region scope (#tag, blank = none)	Регион (#tag, пусто = нет)
@@ -930,6 +934,7 @@ Your own apps	Ваши приложения
 Zero-hop	Без ретрансляции
 Zero-hop advert sent	Zero-hop advert отправлен
 Zoom: +/- buttons	Масштаб: кнопки +/-
+ambiguous (several regions matched)	ambiguous (several regions matched)
 client connected	клиент подключён
 command	команда
 contacts (%d):	контакты (%d):

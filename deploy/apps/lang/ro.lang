@@ -282,6 +282,7 @@ End time	Ora de sfârşit
 Enter SSID first	Introdu mai întâi SSID-ul
 Enter a name	Introdu un nume
 Enter a network name	Introdu un nume de reţea
+Enter a region name	Enter a region name
 Enter adds a new line	Enter adaugă un rând nou
 Enter exactly 32 hex characters.	Introdu exact 32 caractere hex.
 Enter key sends message	Tasta Enter trimite mesajul
@@ -407,6 +408,7 @@ Keyboard nav: WASDZ on	Navigare tastatură: WASDZ pornit
 Keyboard nav: off	Navigare tastatură: oprită
 Keyboard navigation	Navigare cu tastatura
 Keys	
+Known regions	Known regions
 LOS → %s	Linie vizuală → %s
 Landscape (desktop)	Peisaj (desktop)
 Landscape set - applies when remote mode starts.	Peisaj setat - se aplică la pornirea modului la distanţă.
@@ -533,6 +535,7 @@ No networks found (2.4 GHz only)	Nicio reţea găsită (doar 2,4 GHz)
 No onboard GPS	Fără GPS integrat
 No other networks found	Nicio altă reţea găsită
 No position yet. A cold start needs a clear view of the sky and can take several minutes.	Încă nicio poziţie. O pornire la rece are nevoie de cer liber şi poate dura câteva minute.
+No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.	No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.
 No reply from %s	Niciun răspuns de la %s
 No reply. Check password, server,\nor device clock (device: %s)	Niciun răspuns. Verifică parola, serverul\nsau ceasul dispozitivului (dispozitiv: %s)
 No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Fără dale salvate aici.\n\nConectează Wi-Fi (Setări → Wi-Fi)\npentru a descărca zona.\nDalele salvate rămân offline.
@@ -641,6 +644,7 @@ Receive unreleased test firmware — newer features, but less tested. The update
 Recently heard	Auzite recent
 Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Reformatezi SD ca MESHCOMOD (FAT32)?\nTOATE datele de pe card vor fi şterse.
 Region & scope	Regiune şi acoperire
+Region list is full	Region list is full
 Region scope (#tag) for this channel.\nBlank = use the default scope.	Domeniu regional (#tag) pentru acest canal.\nGol = domeniul implicit.
 Region scope (#tag), blank = default.	Domeniu regional (#tag), gol = implicit.
 Region scope (#tag, blank = none)	Domeniu regional (#tag, gol = niciunul)
@@ -930,6 +934,7 @@ Your own apps	Aplicaţiile tale
 Zero-hop	Fără salt
 Zero-hop advert sent	Advert zero-hop trimis
 Zoom: +/- buttons	Zoom: butoane +/-
+ambiguous (several regions matched)	ambiguous (several regions matched)
 client connected	client conectat
 command	comandă
 contacts (%d):	contacte (%d):

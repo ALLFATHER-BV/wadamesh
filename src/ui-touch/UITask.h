@@ -62,7 +62,24 @@ public:
     // verifies against a key we hold — which we check at RX, while the packet is
     // still around, and record here.
     MSG_META_SCOPE_HOME = (1u << 3),  // in_scope verified against OUR region key
+    // Bits 4-7: which REGISTERED region in_scope verified against (#271), as a
+    // RegionRegistry slot, where 0 = none/unknown, 15 = several regions matched
+    // and 1..14 name one. Packed into the spare top nibble on purpose: meta_flags is
+    // already persisted at a fixed offset, so this costs no record growth and no
+    // history version bump, and messages written before a region was registered
+    // read back 0, which is exactly the honest "unknown" state. A slot is stable
+    // for the life of the history and is never a list index, so deleting or
+    // reordering regions cannot relabel old messages.
+    MSG_META_SCOPE_SLOT_SHIFT = 4,
+    MSG_META_SCOPE_SLOT_MASK  = 0xF0,
   };
+  static uint8_t metaScopeSlot(uint8_t meta_flags) {
+    return (uint8_t)((meta_flags & MSG_META_SCOPE_SLOT_MASK) >> MSG_META_SCOPE_SLOT_SHIFT);
+  }
+  static uint8_t metaWithScopeSlot(uint8_t meta_flags, uint8_t slot) {
+    return (uint8_t)((meta_flags & ~MSG_META_SCOPE_SLOT_MASK)
+                     | ((slot & 0x0F) << MSG_META_SCOPE_SLOT_SHIFT));
+  }
 
   struct UIMessage {
     uint32_t ts;

@@ -282,6 +282,7 @@ End time	Ώρα λήξης
 Enter SSID first	Εισαγάγετε πρώτα το SSID
 Enter a name	Εισαγάγετε όνομα
 Enter a network name	Εισαγάγετε όνομα δικτύου
+Enter a region name	Enter a region name
 Enter adds a new line	Το Enter προσθέτει γραμμή
 Enter exactly 32 hex characters.	Εισαγάγετε ακριβώς 32 hex χαρακτήρες.
 Enter key sends message	Το πλήκτρο Enter στέλνει το μήνυμα
@@ -407,6 +408,7 @@ Keyboard nav: WASDZ on	Πλοήγηση πληκτρ.: WASDZ ενεργό
 Keyboard nav: off	Πλοήγηση πληκτρ.: κλειστό
 Keyboard navigation	Πλοήγηση με πληκτρολόγιο
 Keys	
+Known regions	Known regions
 LOS → %s	Οπτική επαφή → %s
 Landscape (desktop)	Οριζόντια (desktop)
 Landscape set - applies when remote mode starts.	Ορίστηκε οριζόντια - ισχύει όταν ξεκινήσει η απομακρυσμένη λειτουργία.
@@ -533,6 +535,7 @@ No networks found (2.4 GHz only)	Δεν βρέθηκαν δίκτυα (μόνο 
 No onboard GPS	Χωρίς ενσωματωμένο GPS
 No other networks found	Δεν βρέθηκαν άλλα δίκτυα
 No position yet. A cold start needs a clear view of the sky and can take several minutes.	Δεν υπάρχει ακόμη θέση. Η ψυχρή εκκίνηση θέλει ανοιχτό ουρανό και μπορεί να πάρει λεπτά.
+No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.	No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details.
 No reply from %s	Καμία απάντηση από %s
 No reply. Check password, server,\nor device clock (device: %s)	Καμία απάντηση. Ελέγξτε κωδικό, διακομιστή\nή ρολόι συσκευής (συσκευή: %s)
 No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Δεν υπάρχουν αποθηκευμένα πλακίδια εδώ.\n\nΣυνδεθείτε στο Wi-Fi (Ρυθμίσεις → Wi-Fi)\nγια λήψη αυτής της περιοχής.\nΤα αποθηκευμένα πλακίδια μένουν διαθέσιμα εκτός σύνδεσης.
@@ -641,6 +644,7 @@ Receive unreleased test firmware — newer features, but less tested. The update
 Recently heard	Ακούστηκε πρόσφατα
 Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Επαναδιαμόρφωση SD ως MESHCOMOD (FAT32);\nΟΛΑ τα δεδομένα στην κάρτα θα διαγραφούν.
 Region & scope	Περιοχή & εμβέλεια
+Region list is full	Region list is full
 Region scope (#tag) for this channel.\nBlank = use the default scope.	Εύρος περιοχής (#tag) για αυτό το κανάλι.\nΚενό = προεπιλεγμένο εύρος.
 Region scope (#tag), blank = default.	Εύρος περιοχής (#tag), κενό = προεπιλογή.
 Region scope (#tag, blank = none)	Εύρος περιοχής (#tag, κενό = κανένα)
@@ -930,6 +934,7 @@ Your own apps	Οι δικές σας εφαρμογές
 Zero-hop	Χωρίς άλμα
 Zero-hop advert sent	Στάλθηκε zero-hop advert
 Zoom: +/- buttons	Ζουμ: κουμπιά +/-
+ambiguous (several regions matched)	ambiguous (several regions matched)
 client connected	ο πελάτης συνδέθηκε
 command	εντολή
 contacts (%d):	επαφές (%d):
