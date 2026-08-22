@@ -45,6 +45,19 @@ missing = [f"{l['code']} v{l['ver']}" for l in langs
 if missing:
     sys.exit("ABORT: langs.json points at files that do not exist: " + ", ".join(missing))
 
+# The catalog version is what makes a device re-download a language. If it does
+# not match the "# ver:" line inside the file, translators' work is published to
+# a version nobody fetches and the change is invisible on device.
+import re
+drift = []
+for l in langs:
+    f = os.path.join(apps_dir, "lang", str(l["ver"]), l["code"] + ".lang")
+    m = re.search(r"^# ver:\s*(\S+)", open(f, encoding="utf-8").read(), re.M)
+    if m and m.group(1) != str(l["ver"]):
+        drift.append(f"{l['code']}: catalog v{l['ver']} but file says v{m.group(1)}")
+if drift:
+    sys.exit("ABORT: langs.json and the .lang headers disagree: " + "; ".join(drift))
+
 # Same check for apps: an entry whose <id>/<ver>/<id>.lua is absent shows up in the
 # Store and then fails to install, with nothing on screen to say why.
 apps = json.load(open(os.path.join(apps_dir, "apps.json")))["apps"]

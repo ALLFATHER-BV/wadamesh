@@ -225,6 +225,11 @@ bool DataStore::fileExists(FILESYSTEM* fs, const char* filename) {
   return fs->exists(_rp(filename));
 }
 
+bool DataStore::mkdirRooted(FILESYSTEM* fs, const char* dir) {
+  const char* p = _rp(dir);
+  return fs->exists(p) || fs->mkdir(p);
+}
+
 bool DataStore::removeRooted(FILESYSTEM* fs, const char* filename) {
   return fs->remove(_rp(filename));
 }

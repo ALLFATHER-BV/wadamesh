@@ -50,7 +50,8 @@ We do NOT bind LVGL wholesale. We bind a stable, versioned surface we own
 - `wada.store` — per-app KV: `get/set(key, value)` under an `app.<id>.` prefix
   in the file-mode prefs. Quota 2 KB/app (respects the SdNvsPrefs blob cap).
 - `wada.sys` — `millis()`, `board()` (id, screen w/h, caps: keyboard,
-  trackball, gps), `version()`, `toast(msg)`.
+  trackball, gps), `version()`, `toast(msg)`, `tr(s)` (the firmware's own
+  translation table, so an app is not stuck in English).
 - `wada.timer` — `every(ms)` drives `on_tick` cadence (min 33 ms).
 
 Sandbox env (no `io`, `os`, `require`, `dofile`, `load` of new chunks;
@@ -190,3 +191,39 @@ file loads into PSRAM and overlays TR() (bsearch; file → built-in column →
 EN). Users can sideload/edit their own .lang files. Built-in table stays as
 fallback this beta; dropping its columns for the flash win is the follow-up
 once files are field-proven.
+
+- 2026-08-22: **wada.sys.gps() widened + wada.sys.compass() + GPS Compass
+  app.** gps() now carries `alt` (m) everywhere and `speed_kmh`/`course` on
+  boards that build their GPS on `src/helpers/WadaNmeaLocationProvider.h`
+  (a Wadamesh-owned copy of the core provider exposing the RMC motion fields
+  it keeps private; M9 first, flag `HAS_GPS_MOTION`), and it returns nil while
+  the user has GPS switched off. compass() is on a new HARDWARE gate
+  `CAP_COMPASS` (the M9's QMC6309, driver `variants/thinknode_m9/M9Compass.*`,
+  exposed in `caps().compass`) and hands out the raw field vector in Gauss —
+  calibration, axis mapping and the heading maths live in the app so they can
+  be adjusted per user without a firmware cut. `deploy/apps/gpscompass/1.0`
+  is that app: rotating rose, live fix readout, bearing/range to a contact,
+  C to calibrate (a 3D sphere fit that also calibrates the accelerometer's
+  zero-g offset from the same sweep), tilt compensation off the M9's QMI8658,
+  GPS-course fallback on every other board. It carries a real WMM2025
+  declination model (`scripts/wmm/`) so the dial and the bearings share a
+  north: the magnetometer measures magnetic north, every bearing computed from
+  coordinates is true, and drawing one against the other put every waypoint
+  ~22° out. Headings and bearings are labelled `T` or an amber `M` accordingly.
+  Verified on the host harness in `scripts/lua-harness` (same vendored Lua,
+  same LUA_32BITS numeric model): calibration recovers a simulated hard-iron
+  bias exactly, heading error 0° at six test angles, bearings checked against
+  absolute compass directions, declination within 0.0002° of NOAA, worst tick
+  ≈12k of the 100k instruction budget. Hardware validation (axis orientation,
+  real bias magnitude) is in M9_PORT.md. Not seeded into lua_builtin.h on
+  purpose: CAP_BUILTIN_LUA_APPS also hides the Store > Apps tab.
+
+- 2026-08-22: **manifest `icon` implemented.** The drawer gave every Lua app
+  the same generic glyph while `LUA_APPS.md` had promised manifests an icon
+  field since the plan was written. `icon` is now read from `<id>.json` and
+  mapped to a glyph by NAME (`gps`, `radio`, `chart`, `game`, ...) — names,
+  not codepoints, so a store submission stays reviewable and an app can never
+  ship a missing-glyph box; anything unrecognised falls back to the generic
+  symbol. `deploy/site/sdk.html`'s manifest table was corrected at the same
+  time: it documented `version` / `min_api` / `description` / `boards`, none
+  of which the device has ever parsed.

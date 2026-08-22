@@ -7,6 +7,11 @@
 #   ./build.sh flash -p /dev/cu.usbmodemXXXX
 #   ./build.sh menuconfig
 set -e
+
+# Keep the baked-in translation + Lua app tables in step with deploy/apps/.
+# Same for the seeded Lua apps. The PlatformIO envs get this from a pre: hook;
+# the IDF builds need it here or the P4 boards ship stale copies.
+python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/pre_gen_baked.py"
 cd "$(dirname "$0")"
 export IDF_TOOLS_PATH="$PWD/esp-idf-tools"
 # shellcheck disable=SC1091

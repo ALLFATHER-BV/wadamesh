@@ -495,6 +495,178 @@ input; Wire1 at 400 kHz; charging-detection (`batteryIsCharging` is
 compile-time false on M9); GPIO12 ESP_WAKEUP characterization for a real
 Power-off wake.
 
+## Compass (QMC6309) + GPS motion for Lua apps (2026-08-22)
+
+First use of the magnetometer. The chip was documented (peripheral bus, 0x7C)
+but nothing ever talked to it; the QMI8658 IMU still has no driver.
+
+- **Driver: `M9Compass.{h,cpp}`** (`HAS_M9_COMPASS=1` in the env). Probe =
+  chip id 0x00 == 0x90; soft reset (0x0B=0x80 then the mandatory 0x0B=0x00 —
+  the bit is not self-clearing); CTRL2 0x0B=0x30 (ODR 100 Hz, ±32 G, set/reset
+  on), CTRL1 0x0A=0x41 (normal mode, OSR1 8, low-pass 4 — the datasheet's
+  0x61 example is low-pass 8 at 50 Hz, which read as sluggish on the dial),
+  both read back and re-written once if they did not stick.
+  Read path: status 0x09 (bit0 DRDY, cleared by the read; bit1 OVFL → sample
+  kept but flagged, logged at most every 10 s), then 6 bytes from 0x01
+  little-endian int16, ×1/1000 → Gauss (±32 G chosen over ±8 G because of
+  the bias magnitude question below; 1 mG/count is still ≈0.13° of heading).
+  Synchronous on the UI thread from `luaHostCompass()` (three short
+  transactions at 100 kHz, no poll hook), cached sample valid 1 s, re-probe
+  every 2 s while absent (rail-powered part may still be in POR when
+  `radio_init()` runs), eight consecutive bus errors → forget and re-probe.
+  Boot log: `M9 compass: QMC6309 ok (id=0x90, 100 Hz, +/-32 G, OSR 8, LPF 4)` or the
+  reason it is not. Register layout cross-checked against the Rev A datasheet
+  and the SlimeVR/madflight/Tildagon drivers — NOT SensorLib, whose
+  `setOutputDataRate()` writes the ODR into 0x0A (the OSR bits); Meshtastic
+  inherits that bug and only works because it runs continuous mode.
+- **Exposure: `CAP_COMPASS`** (device_caps.h, hardware gate, `caps().compass`)
+  → `wada.sys.compass()` = `{x, y, z, ovfl}` Gauss, sensor frame,
+  uncalibrated. No heading on purpose: see the two unknowns below.
+- **GPS motion: `WadaNmeaLocationProvider`** (`src/helpers/`, `HAS_GPS_MOTION=1`)
+  replaces the core `MicroNMEALocationProvider` in `target.cpp` — a line-for-
+  line copy that also exposes RMC speed/course (the core keeps its parser
+  private; patching libdeps is the build-fragile route this repo avoids).
+  `wadaGpsMotion()` feeds `wada.sys.gps().speed_kmh/course`; course is absent
+  under 1 km/h because MicroNMEA parses an empty course field as 0 (= north).
+  `gps()` also returns nil while the GPS toggle is off.
+- **App: `deploy/apps/gpscompass/1.0`** (Store catalog entry added; not baked
+  into `lua_builtin.h` — `CAP_BUILTIN_LUA_APPS` also removes the Store > Apps
+  tab). Keys: `C` start/finish calibration (auto-finishes after 20 s), `O`
+  rotate the sensor frame 90°, `F` mirror it, `X` clear calibration, d-pad
+  left/right or OK = cycle the target contact. Offsets/orientation persist in
+  the app's KV store.
+
+**Both unknowns are now MEASURED (2026-08-22), not guessed.** Held flat,
+logging the raw vector (`M9_COMPASS_DEBUG` in M9Compass.cpp) at four headings
+90° apart:
+
+| heading | raw x | raw y | raw z | x−ox | y−oy |
+|---|---|---|---|---|---|
+| N | −0.395 | −3.068 | −2.768 | **−0.055** | **+0.310** |
+| E | −0.072 | −3.396 | −2.704 | **+0.268** | **−0.018** |
+| S | −0.327 | −3.653 | −2.752 | **+0.013** | **−0.275** |
+| W | −0.565 | −3.394 | −2.754 | **−0.225** | **−0.016** |
+
+1. **Axis orientation.** Hard-iron centre (ox, oy) = (−0.340, −3.378);
+   `atan2(x−ox, y−oy)` then reads 350° / 94° / 177° / 266° at N/E/S/W —
+   0/90/180/270 within a few degrees, counting UP clockwise. So **+Y points at
+   the device's top edge, +X to its left**, and (right-handed) +Z into the
+   screen. `deploy/apps/gpscompass` ships that as the default: correct after
+   calibration alone, with no orientation press. Repeatability: returning to
+   north landed within 0.066 G / 0.041 G of the first reading.
+   NB the app's first auto-handedness rule had this INVERTED — it assumed a
+   Z-out-of-screen sensor was the un-mirrored case — which is what made a
+   correctly-defaulted device turn the wrong way. The dip test now reads:
+   held flat, north of the magnetic equator, a Z-INTO-screen sensor sees the
+   downward field as POSITIVE z.
+2. **The hard-iron bias is real and large** — about −0.34 G on X, **−3.4 G on
+   Y**, −2.8 G on Z: ~7× Earth's field, which vindicates Meshtastic's
+   otherwise implausible hardcoded extrema. The horizontal signal riding on it
+   is only ~0.27 G, so an UNCALIBRATED M9 barely moves the dial — that is the
+   expected symptom, not a fault. It also confirms the ±32 G range: at ±8 G the
+   Y axis sits within half a scale of the rail before the user's own
+   environment is added. Expect `|B|` ≈ 0.25–0.65 G once calibrated;
+   "Field saturated" (OVFL, raw counts logged every 10 s) means a magnet is
+   nearby.
+
+**Calibration must ROTATE THE DEVICE IN ONE PLACE.** Carrying it around while
+turning it does not only rotate it, it also TRANSLATES it through the field of
+a laptop, a desk frame, anything ferrous — and that corrupts the fit. Measured
+consequence: a centre that moved 0.15 G between hand-tumbled sessions against a
+0.26 G horizontal signal, i.e. tens of degrees of direction-dependent error,
+reported on hardware as "it drifts when rotating". The app now measures
+coverage from GRAVITY (the accelerometer, below) and refuses a sweep that never
+turned the device over, naming the axis.
+
+## IMU (QMI8658) + tilt compensation (2026-08-22)
+
+`variants/thinknode_m9/M9Imu.{h,cpp}`, `HAS_M9_IMU=1` → `CAP_IMU` →
+`wada.sys.accel()`. Accelerometer only — the gyro is most of the part's power
+budget and nothing here needs it. QMI8658 at **0x6B** on the same peripheral
+bus; this board carries the **A** die (`WHO_AM_I 0x05`, `REVISION_ID 0x7C`).
+±2 g at 62.5 Hz with the accel low-pass on, soft reset (0x60←0xB0) then a
+160 ms wait covering both die variants and a 0x4D==0x80 check, same idle
+suspend as the compass.
+
+**CTRL1 bit6 (ADDR_AI) must be set and read back.** With it clear the burst
+read from 0x35 silently returns six copies of one byte — a sensor that probes
+fine and reports nonsense.
+
+**Axes MEASURED** (three attitudes, `M9_IMU_DEBUG` logging):
+
+| attitude | reading | conclusion |
+|---|---|---|
+| flat, screen up | z = −1.02 | **+Z into the screen** (down) |
+| on bottom edge, top edge up | x = +0.97 | **+X at the top edge** (forward) |
+| on left edge, right edge up | y = +1.08 | **+Y at the right edge** |
+
+So the IMU is already in the aerospace body frame (forward / right / down), and
+it agrees independently with the magnetometer's measured +Z-into-screen. The
+magnetometer maps into that frame as `(fwd, right, down) = (my−oy, −(mx−ox),
+mz−oz)`.
+
+**Why tilt compensation was needed at all:** the field dips ~60° here, so the
+vertical component is 1.6× the horizontal one and tipping the device leaks it
+into the pair the heading is made from — about **1.5° of heading per 1° of
+tilt**. A hand-held reading wandered by tens of degrees. The app now rotates
+the field back into the horizontal plane using gravity (NXP AN4248 / ST AN3192)
+before taking the angle, shows the tilt angle, and says "too steep to read"
+past 55° instead of lying. Confirmed working on hardware.
+
+**Not copied from Meshtastic:** its M9 driver passes both sensors through
+untransformed, carries a dead 180° constant, has its axis swaps commented out,
+and mirrors the heading on the sign of accel Z — so its compass flips when the
+device is turned over.
+
+
+**Hardware-verify recipe:** flash; boot log shows the `M9 compass:` line;
+push the app over the console — the M9's card is soldered on, so
+`scripts/sideload_app.py --port /dev/cu.wchusbserial10 --reboot
+deploy/apps/gpscompass/1.0` (the `fput`/`fadd`/`fend` CLI commands write into
+the Store's own `/apps/` on the card; "Your own apps" lists it, the catalog
+copy arrives once `deploy/apps` is published); open the app; `C`, TUMBLING (not just spinning) the
+device through every orientation for 20 s; check `|B|`; set O/F against a
+known north; walk with GPS on and confirm `Speed`/`Course` populate above
+~1 km/h; pick a contact and sanity-check the bearing against the map.
+
+Serial-console notes learned doing this: the CH34x bridge resets the board
+whenever the port is opened (DTR/RTS, regardless of what pyserial asks), and
+the console is not serviced until `[BOOT] ui ready`; the UART interrupt is
+not IRAM-resident, so while the loop sits in a flash-cache pause only the
+128-byte hardware FIFO buffers input and the middle of a longer line is
+lost — hence the sideload's short, self-checking lines. Done on 2026-08-22:
+`M9 compass: QMC6309 ok` on the first flash (0x7C answers, config sticks);
+app files pushed and listed by `ls /apps`; calibration + rotation confirmed
+working by Chris on the device the same night.
+
+Two more M9 findings from that session: (1) the keypad-nav focus highlight
+painted the whole Lua app body white — the body is a clickable object on the
+top layer, so `navCollect` focused it and `navFocusCb`'s reverse-video fill
+covered it (the canvas on top stayed dark). Fixed in the host with
+`NAV_SKIP_FLAG` on the body, the same exclusion the map's touch catcher uses.
+(2) Low-pass depth 8 at 50 Hz felt laggy; now 4 at 100 Hz.
+
+## Map re-open cost (2026-08-22) — measured and fixed
+
+`[STALL] ui:lvgl 2597ms` on EVERY map open, not just the first: leaving the
+Map tab called `freeMapTiles()` (UITask.cpp, tab-change handler), so the next
+visit re-read and re-decoded all nine 256x256 JPEGs. Boards with >=4 MB PSRAM
+now leave the slots exactly as panning within the tab leaves them — the grid
+costs 9 x 128 KB = 1.15 MB, which only matters on the 2 MB V4 (already capped
+to a 4-tile pool by renderMapTiles), so that board keeps the old free.
+
+Measured on the M9 after the change: cold open (first after boot) 2598 ms,
+every re-open **245 ms**.
+
+Gotchas for anyone revisiting this:
+- `releaseMapTileSlot()` is NOT a substitute: it clears `in_use`, so the next
+  render treats the tile as absent and decodes it again. Keeping the slots
+  fully intact is what makes renderMapTiles' pass-1 match-and-reposition hit.
+- The remaining cold-open cost is the SJPG decode, not the SD read. Raising the
+  CPU to 240 MHz is already ruled out (RGB565 noise from the PSRAM bus, see
+  onMapTabActivated). The open levers are decoding on core 0, or the M9's SD
+  clock (still 4 MHz — see the deferred list below).
+
 ## Deferred — hardware-verify list
 
 These are left intentionally unset/unwired rather than guessed:

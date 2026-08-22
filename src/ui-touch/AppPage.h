@@ -2,6 +2,16 @@
 #pragma once
 #include <lvgl.h>
 
+// Keyboard-nav: a CLICKABLE container that must never be a focus target itself
+// but whose children still are. Distinct from UITask.cpp's NAV_SKIP_FLAG, which
+// takes the whole subtree out of nav. Needed by the Lua app host: its body is
+// clickable so touch boards get press events, and on keypad-nav boards (M9,
+// Pager, Tanmatsu, T-Deck trackball) navCollect otherwise harvests that body as
+// a leaf target and navFocusCb's reverse-video fill paints the whole app white
+// under the app's own widgets. Lives here because AppPage.h is the header both
+// UITask.cpp and LuaAppHost.cpp already share.
+#define NAV_PASSTHRU_FLAG LV_OBJ_FLAG_USER_4
+
 // Shared chrome for full-screen "app pages" — Spectrum, RF Monitor, Discover, Airtime,
 // Snake, VNC, Remote, Reader. Every one of them must look and behave identically:
 //

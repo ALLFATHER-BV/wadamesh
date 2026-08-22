@@ -108,6 +108,7 @@
 
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
+#include "RegionRegistry.h"
 
 /* -------------------------------------------------------------------------------------- */
 
@@ -368,6 +369,25 @@ public:
     return r;
   }
 
+  /** Does a blank-password LOGIN mean anything to this contact?
+   *
+   *  Only to a node that keeps an ACL: repeaters, room servers and sensors.
+   *  A plain chat contact is another companion, which has no LOGIN handler at
+   *  all. Chaining one in front of a request there either wastes a packet (the
+   *  fire-and-forget helpers below) or, in the deferred path, arms a wait for a
+   *  LOGIN-OK that can never arrive -- so the request is never sent and the UI
+   *  reports a failure.
+   *
+   *  That is why telemetry and position for a chat contact worked from the
+   *  phone app, which sends the request straight out, and never worked from the
+   *  device (#293). The map went stale with it: a contact's position is
+   *  refreshed from the CayenneLPP GPS field in a telemetry reply, and there
+   *  was no reply. */
+  static bool contactNeedsGuestLogin(const ContactInfo& c) {
+    return c.type == ADV_TYPE_REPEATER || c.type == ADV_TYPE_ROOM ||
+           c.type == ADV_TYPE_SENSOR;
+  }
+
   /** Same as sendStatusPingForUI, but sends an unauthenticated guest LOGIN
    *  first. Repeaters need the sender to be in their ACL before they will
    *  decrypt a PAYLOAD_TYPE_REQ; the ACL is only populated by handleLoginReq.
@@ -378,16 +398,20 @@ public:
    *  No-op if the LOGIN packet pool is empty; falls through to send the
    *  STATUS REQ anyway so a repeater that already knows us still replies. */
   int sendStatusPingWithGuestLoginForUI(ContactInfo& recipient) {
-    uint32_t login_est = 0;
-    sendLogin(recipient, "", login_est);
+    if (contactNeedsGuestLogin(recipient)) {
+      uint32_t login_est = 0;
+      sendLogin(recipient, "", login_est);
+    }
     return sendStatusPingForUI(recipient);
   }
 
   /** Same chained-login flavour for telemetry — repeaters and sensors also
    *  require ACL membership for REQ_TYPE_GET_TELEMETRY_DATA. */
   int sendTelemetryRequestWithGuestLoginForUI(ContactInfo& recipient) {
-    uint32_t login_est = 0;
-    sendLogin(recipient, "", login_est);
+    if (contactNeedsGuestLogin(recipient)) {
+      uint32_t login_est = 0;
+      sendLogin(recipient, "", login_est);
+    }
     return sendTelemetryRequestForUI(recipient);
   }
 
@@ -405,6 +429,12 @@ public:
    *  auto-poll keeps the immediate chained send above (a single arm slot can't
    *  serve its multi-node loop, and a missed poll just retries next interval). */
   int uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind) {
+    // Nothing to defer behind on a companion: send the request itself, now.
+    if (!contactNeedsGuestLogin(recipient)) {
+      cancelUIDeferredLogin();
+      return (kind == UiReqKind::Telemetry) ? sendTelemetryRequestForUI(recipient)
+                                            : sendStatusPingForUI(recipient);
+    }
     uint32_t login_est = 0;
     int r = sendLogin(recipient, "", login_est);
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
@@ -527,6 +557,11 @@ public:
   uint8_t  _last_rx_path_n  = 0;
   uint16_t _last_rx_scope     = 0;     // transport_codes[0] of the last RX flood ("scope")
   bool     _last_rx_scope_home = false; // that code verified against OUR region key (#259)
+  // Which REGISTERED region that code verified against (#271): a stable slot,
+  // REGION_SLOT_AMBIGUOUS when several matched, or REGION_SLOT_NONE. Widens the
+  // one-key _last_rx_scope_home check above to every region the user tracks.
+  uint8_t  _last_rx_scope_slot = REGION_SLOT_NONE;
+  RegionRegistry _region_reg;
   bool     _last_rx_has_scope = false; // false if the packet carried no transport codes
   uint32_t _last_sender_ts    = 0;     // embedded send-time of the last inbound msg (UI bubble ts; 0 = use now)
   volatile bool _echo_dirty = false;   // a repeat was counted -> UI should refresh
@@ -680,6 +715,7 @@ public:
     // Show whichever code is set; [0] (the scope proper) wins when both are.
     _last_rx_scope = 0;
     _last_rx_scope_home = false;
+    _last_rx_scope_slot = REGION_SLOT_NONE;
     if (_last_rx_has_scope && pkt) {
       _last_rx_scope = pkt->transport_codes[0] ? pkt->transport_codes[0] : pkt->transport_codes[1];
       // The code is HMAC(region key, payload) truncated to 16 bits — per-PACKET,
@@ -692,8 +728,21 @@ public:
       memcpy(&home.key, _prefs.default_scope_key, sizeof(home.key));
       if (!home.isNull() && pkt->transport_codes[0])
         _last_rx_scope_home = (home.calcTransportCode(pkt) == pkt->transport_codes[0]);
+      // #271: same verification, widened to every region the user has registered,
+      // so the Info popup can name WHICH one instead of only "mine / not mine".
+      // Only codes[0] is the forwarding scope; codes[1] is a reply-region hint and
+      // is reported separately, so match strictly against [0] and never against
+      // the [1] fallback that _last_rx_scope may be holding.
+      _last_rx_scope_slot = pkt->transport_codes[0]
+                              ? _region_reg.matchPacket(pkt, pkt->transport_codes[0])
+                              : REGION_SLOT_NONE;
     }
   }
+  /** Region registry backing the scope naming above (#271). */
+  RegionRegistry& regionRegistry() { return _region_reg; }
+  /** Stable slot of the region the last RX scope verified against, or
+   *  REGION_SLOT_AMBIGUOUS / REGION_SLOT_NONE. */
+  uint8_t lastRxScopeSlot() const { return _last_rx_scope_slot; }
   /** True when the last RX flood's scope verified against our own region key. */
   bool lastRxScopeIsHome() const { return _last_rx_scope_home; }
 
@@ -1240,7 +1289,17 @@ private:
   bool _cli_rescue;
   bool send_unscoped;   // force un-scoped flood (instead of using send_scope)
   bool scope_direct_floods = false;  // opt-in (#64): tag direct/login/admin floods with the default region scope
-  char cli_command[80];
+  // 200 not 80: the serial sideload ("fadd ...", see cliPutChunk) carries up
+  // to ~130 chars per line; every other command is far shorter.
+  char cli_command[200];
+#if defined(ESP32)
+  // Serial sideload state ("fput" / "fadd" / "fend"): the file being written.
+  File _cli_put;
+  uint32_t _cli_put_len = 0;
+  void cliPutBegin(const char* path);
+  void cliPutChunk(const char* args);
+  void cliPutEnd();
+#endif
   uint8_t app_target_ver;
   uint8_t *sign_data;
   uint32_t sign_data_len;

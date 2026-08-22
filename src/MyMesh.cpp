@@ -8,6 +8,9 @@
 #include <SHA256.h>   // derive a region's flood-scope key from its #hashtag name
 #include <time.h>     // gmtime_r for the "clock" CLI command
 #ifdef ESP32
+#include <mbedtls/base64.h>   // "fadd" serial-sideload chunks
+#endif
+#ifdef ESP32
 #include <esp_system.h>          // esp_restart for the "bootloader" CLI command
 #if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
 #include <soc/rtc_cntl_reg.h>    // RTC_CNTL_OPTION1_REG / FORCE_DOWNLOAD_BOOT (S3-only; both P4 boards lack it)
@@ -3708,6 +3711,15 @@ void MyMesh::begin(bool has_display) {
     _prefs.autoadd_max_hops = 64;
   }
 
+  // #271: bring up the region registry and seed it from what this node is
+  // already configured for, so scope naming works out of the box with no list to
+  // fill in first. Our own default region is the one we can always name; the UI
+  // adds any per-channel scope overrides once those prefs are readable.
+  // ensureRegion() is idempotent, so re-running this every boot is a no-op after
+  // the first, and a slot once assigned is never renumbered.
+  _region_reg.begin(_store->getPrimaryFS());
+  if (_prefs.default_scope_name[0]) _region_reg.ensureRegion(_prefs.default_scope_name);
+
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
 #ifdef DISPLAY_CLASS
@@ -5425,6 +5437,21 @@ void MyMesh::checkCLIRescueCmd() {
 
       }
 
+#if defined(ESP32)
+    } else if (memcmp(cli_command, "fput ", 5) == 0) {
+      // Serial sideload (scripts/sideload_app.py). Boards with a soldered card
+      // (the ThinkNode M9) have no other way to get a Lua app or a .lang file
+      // onto the device than the Store's own download, so: "fput /apps/<name>"
+      // opens the file, "fadd <off> <len> <sum> <base64>" lines append to it
+      // (self-checking, see cliPutChunk), "fend" closes it.
+      // Same physical-access trust level as "rm" and "erase" above, with a
+      // NARROWER scope: only the two sideload directories the Store writes.
+      cliPutBegin(&cli_command[5]);
+    } else if (memcmp(cli_command, "fadd ", 5) == 0) {
+      cliPutChunk(&cli_command[5]);
+    } else if (strcmp(cli_command, "fend") == 0) {
+      cliPutEnd();
+#endif
     } else if (strcmp(cli_command, "reboot") == 0) {
       board.reboot();  // doesn't return
     } else {
@@ -5434,6 +5461,77 @@ void MyMesh::checkCLIRescueCmd() {
     cli_command[0] = 0;  // reset command buffer
   }
 }
+
+#if defined(ESP32)
+// ---- serial sideload: fput / fadd / fend -----------------------------------
+// Writes go to the same storage the Store installs into (the hot-data FS,
+// root-aware: the SD card's /meshcomod on an adopted card, the internal FS
+// otherwise). Replies are single lines the host script keys on: "ok ..." or
+// "Error: ...".
+void MyMesh::cliPutBegin(const char* path) {
+  if (_cli_put) { _cli_put.close(); _cli_put_len = 0; }
+  const char* dir = nullptr;
+  if (memcmp(path, "/apps/", 6) == 0) dir = "/apps";
+  else if (memcmp(path, "/lang/", 6) == 0) dir = "/lang";
+  if (!dir) { Serial.println("Error: path must be /apps/<name> or /lang/<name>"); return; }
+  const char* name = path + 6;
+  const size_t nlen = strlen(name);
+  if (nlen == 0 || nlen > 40) { Serial.println("Error: bad file name length"); return; }
+  for (size_t i = 0; i < nlen; i++) {
+    const char c = name[i];
+    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                    c == '.' || c == '_' || c == '-';
+    if (!ok) { Serial.println("Error: file name may only use A-Z a-z 0-9 . _ -"); return; }
+  }
+  if (name[0] == '.') { Serial.println("Error: file name may not start with '.'"); return; }
+  FILESYSTEM* fs = _store->getHotDataFS();
+  if (!fs) { Serial.println("Error: storage not ready"); return; }
+  if (!_store->mkdirRooted(fs, dir)) { Serial.printf("Error: cannot create %s\n", dir); return; }
+  _cli_put = _store->openWrite(fs, path);
+  if (!_cli_put) { Serial.printf("Error: cannot open %s for writing\n", path); return; }
+  _cli_put_len = 0;
+  Serial.printf("ok fput %s\n", path);
+}
+
+// "fadd <offset> <len> <sum> <base64>". Every field is checked before a byte
+// is written: the UART ISR is not IRAM-resident, so whenever the loop is
+// inside a flash-cache pause the hardware FIFO (128 bytes) is all that
+// buffers the line and the middle of a long one simply vanishes — a bare
+// base64 payload would then decode to plausible garbage. Offset catches a
+// lost or duplicated line, len catches truncation, the byte sum catches
+// corruption; the host re-sends on any "Error:" reply.
+void MyMesh::cliPutChunk(const char* args) {
+  if (!_cli_put) { Serial.println("Error: no file open (fput first)"); return; }
+  unsigned off = 0, len = 0, sum = 0; int consumed = 0;
+  if (sscanf(args, "%u %u %u %n", &off, &len, &sum, &consumed) != 3 || consumed == 0) {
+    Serial.println("Error: usage fadd <offset> <len> <sum> <base64>");
+    return;
+  }
+  if (off != _cli_put_len) { Serial.printf("Error: offset %u\n", (unsigned)_cli_put_len); return; }
+  const char* b64 = args + consumed;
+  uint8_t buf[160];
+  size_t olen = 0;
+  const int rc = mbedtls_base64_decode(buf, sizeof buf, &olen, (const unsigned char*)b64, strlen(b64));
+  if (rc != 0 || olen != len) { Serial.printf("Error: chunk damaged at %u\n", (unsigned)_cli_put_len); return; }
+  unsigned s = 0;
+  for (size_t i = 0; i < olen; i++) s += buf[i];
+  if ((s & 0xFFFF) != (sum & 0xFFFF)) { Serial.printf("Error: checksum at %u\n", (unsigned)_cli_put_len); return; }
+  if (olen && _cli_put.write(buf, olen) != olen) {
+    Serial.println("Error: write failed (card full?)");
+    _cli_put.close(); _cli_put_len = 0;
+    return;
+  }
+  _cli_put_len += olen;
+  Serial.printf("ok fadd %u\n", (unsigned)_cli_put_len);
+}
+
+void MyMesh::cliPutEnd() {
+  if (!_cli_put) { Serial.println("Error: no file open (fput first)"); return; }
+  _cli_put.close();
+  Serial.printf("ok fend %u bytes\n", (unsigned)_cli_put_len);
+  _cli_put_len = 0;
+}
+#endif  // ESP32
 
 void MyMesh::checkSerialInterface() {
   bool handled_cmd = false;

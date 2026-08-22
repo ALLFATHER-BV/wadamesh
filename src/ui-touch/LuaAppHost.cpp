@@ -17,6 +17,7 @@
 #include <math.h>   // isnan for optional sensor fields   // wada.sys.epoch/datetime (#245)
 #include "AppPage.h"
 #include "device_caps.h"
+#include "i18n.h"   // wada.sys.tr: apps can use the same translation table the UI does
 #include "helpers/esp32/WdtHeavyGuard.h"   // wada.fs writes can trigger SPIFFS GC
 
 extern "C" {
@@ -29,9 +30,15 @@ extern "C" {
 // to keep this TU decoupled from the 47k-line UITask.cpp).
 extern const lv_font_t* luaHostFontForSize(int size_class);       // 12/14/16 -> g_font_*
 extern void             luaHostToast(const char* msg, int ms);    // showAlert passthrough
-extern bool             luaHostBeep();                            // notification chime; false = no sounder / muted
+extern bool             luaHostBeep();
+extern bool             luaHostScreenOn();   // false = display asleep; app ticks pause
+extern void             luaHostKeepAwake(bool on);   // hold the screen + ticks for a measuring app                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
 extern void             luaHostAppPath(char* out, size_t cap, const char* rel);   // prefixes the store root
+#if CAP_LUA_SD_LIST
+extern fs::FS*          luaHostSdFs(bool* busy);                  // mounted physical SD, or null
+extern bool             luaHostSdReadFailed();                    // failed open was a dead card
+#endif
 extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
                              double* lat, double* lon, char* pk_hex, size_t pk_cap,
                              int32_t* lat_e6, int32_t* lon_e6);
@@ -55,8 +62,13 @@ extern void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lo
 extern void luaHostBattery(uint16_t* mv, int* pct, bool* charging);
 // No HDOP: MeshCore's LocationProvider interface does not expose one, and a
 // fabricated accuracy figure is worse than none for anything that would use it.
+// speed_kmh / course_deg come back NAN where the board's provider does not
+// report them (only boards built on WadaNmeaLocationProvider do). They are
+// appended AFTER the fix_time / micro-degree outputs so ONE signature serves
+// both callers -- the merge of two independent widenings of this bridge.
 extern bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, uint32_t* fix_time,
-                       int32_t* lat_e6, int32_t* lon_e6);
+                       int32_t* lat_e6, int32_t* lon_e6,
+                       float* speed_kmh, float* course_deg);
 #endif
 #if CAP_SENSORS
 extern void luaHostEnv(bool* ok, bool* have_t, float* temp_c, bool* have_h, float* hum_pct,
@@ -88,6 +100,12 @@ extern int   luaHostMapLine(void* v, double la1, double lo1, double la2, double 
 extern int      luaHostProbePerm(const char* app_id);
 extern void     luaHostRequestProbePerm(const char* app_id, const char* app_name);
 extern uint32_t luaHostMeshDiscover(int type_filter);
+#endif
+#if CAP_COMPASS
+extern bool luaHostCompass(float* x_gauss, float* y_gauss, float* z_gauss, bool* overflow);   // sensor frame, uncalibrated
+#endif
+#if CAP_IMU
+extern bool luaHostAccel(float* x_g, float* y_g, float* z_g);   // sensor frame, g
 #endif
 // DO NOT name the network client type here. What "WiFiClient" means depends on the
 // board: a real class on the S3 envs, a `using WiFiClient = NetworkClient` alias
@@ -293,9 +311,14 @@ int cvPos(lua_State* L) {
   return 0;
 }
 int cvGc(lua_State* L) {
-  // The buffer is heap_caps memory owned by the userdata; the lv object dies
-  // with the app root. Free the pixels only when Lua collects the handle AND
-  // the app is closing (root gone) — during app lifetime the canvas holds it.
+  // Frees the pixel buffer. This runs only when the Lua state is closed (see
+  // uiCanvas: every canvas is pinned in the registry for the app's lifetime),
+  // so the LVGL object is never left pointing at freed pixels.
+  //
+  // The comment here used to claim the free was conditional on the app
+  // closing; it never was, and nothing stopped an ordinary collection cycle
+  // from reclaiming a canvas whose Lua handle had gone out of scope while the
+  // widget was still on screen and being drawn from that buffer.
   CanvasUd* c = (CanvasUd*)luaL_checkudata(L, 1, "wada.canvas");
   if (c->buf) { heap_caps_free(c->buf); c->buf = nullptr; }
   c->obj = nullptr;
@@ -316,6 +339,15 @@ int uiCanvas(lua_State* L) {
   CanvasUd* ud = (CanvasUd*)lua_newuserdatauv(L, sizeof(CanvasUd), 0);
   ud->obj = cv; ud->buf = buf; ud->w = w; ud->h = h;
   luaL_setmetatable(L, "wada.canvas");
+  // Pin the handle in the registry for the app's lifetime. LVGL draws straight
+  // out of this buffer, so the pixels must outlive the widget — and an app that
+  // creates a canvas without keeping a reference (or drops one) would otherwise
+  // have it collected mid-run, leaving the widget reading freed memory. The
+  // registry dies with the state at lua_close, which is where __gc frees the
+  // buffer; the ref id is deliberately not tracked, since there is no API to
+  // destroy a canvas early.
+  lua_pushvalue(L, -1);
+  luaL_ref(L, LUA_REGISTRYINDEX);
   return 1;
 }
 
@@ -339,11 +371,19 @@ int lbColor(lua_State* L) {
   return 0;
 }
 
-int lbWidth(lua_State* L) {   // label:width(px) — wraps instead of overflowing
+int lbWidth(lua_State* L) {   // label:width(px [, "left"|"center"|"right"]) — wraps instead of overflowing
   WidgetUd* u = checkLabel(L);
   if (u->obj) {
     lv_obj_set_width(u->obj, (lv_coord_t)luaL_checkinteger(L, 2));
     lv_label_set_long_mode(u->obj, LV_LABEL_LONG_WRAP);
+    // Optional alignment inside that width: the only way an app can centre a
+    // line exactly, since it cannot measure glyphs itself.
+    const char* al = luaL_optstring(L, 3, nullptr);
+    if (al) {
+      lv_text_align_t a = strcmp(al, "center") == 0 ? LV_TEXT_ALIGN_CENTER
+                        : strcmp(al, "right")  == 0 ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_LEFT;
+      lv_obj_set_style_text_align(u->obj, a, LV_PART_MAIN);
+    }
   }
   return 0;
 }
@@ -724,11 +764,12 @@ int sysBeep(lua_State* L) { lua_pushboolean(L, luaHostBeep()); return 1; }
 // rather than assume: the extended SDK is absent on low-resource boards (see
 // CAP_LUA_SDK_EXT in device_caps.h), and a store app runs on all of them.
 int sysCaps(lua_State* L) {
-  lua_createtable(L, 0, 7);
+  lua_createtable(L, 0, 14);
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "sdk_ext");
   lua_pushboolean(L, CAP_KEYBOARD);     lua_setfield(L, -2, "keyboard");
   lua_pushboolean(L, CAP_TOUCH);        lua_setfield(L, -2, "touch");
   lua_pushboolean(L, CAP_SD);           lua_setfield(L, -2, "sd");
+  lua_pushboolean(L, CAP_LUA_SD_LIST);  lua_setfield(L, -2, "sd_list");
   // Feature flags for the calls added after the first extended SDK shipped, so
   // an app can degrade instead of erroring on firmware that predates them.
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "discover");   // wada.mesh.discover
@@ -739,6 +780,8 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "measure");    // ui.text_w / text_lines
   lua_pushboolean(L, CAP_SENSORS);      lua_setfield(L, -2, "sensors");    // wada.sys.env
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "map");        // wada.map.view
+  lua_pushboolean(L, CAP_COMPASS);      lua_setfield(L, -2, "compass");    // wada.sys.compass()
+  lua_pushboolean(L, CAP_IMU);          lua_setfield(L, -2, "accel");      // wada.sys.accel()
   return 1;
 }
 
@@ -753,13 +796,19 @@ int sysBattery(lua_State* L) {
   lua_pushboolean(L, chg);     lua_setfield(L, -2, "charging");
   return 1;
 }
-// wada.sys.gps() -> { lat, lon, sats } or nil with NO fix.
-// nil rather than stale coordinates: wada.mesh.self() already hands out the last
-// known position, and an app plotting a track needs to know the difference.
+// wada.sys.gps() -> { lat, lon, lat_e6, lon_e6, sats, alt_m, [time],
+// [speed_kmh], [course] } or nil with NO fix. nil rather than stale
+// coordinates: wada.mesh.self() already hands out the last known position, and
+// an app plotting a track needs to know the difference. alt_m is metres; time
+// is satellite time, absent until the receiver has decoded the date. speed_kmh and course (degrees clockwise from north) are
+// present only on boards whose GPS provider reports them, and course only
+// while actually moving — a stationary receiver's course is meaningless, so it
+// is absent rather than 0.
 int sysGps(lua_State* L) {
   double lat = 0, lon = 0; int sats = 0, alt = 0; uint32_t ftime = 0; int32_t lat6 = 0, lon6 = 0;
-  if (!luaHostGps(&lat, &lon, &sats, &alt, &ftime, &lat6, &lon6)) { lua_pushnil(L); return 1; }
-  lua_createtable(L, 0, 7);
+  float spd = NAN, crs = NAN;
+  if (!luaHostGps(&lat, &lon, &sats, &alt, &ftime, &lat6, &lon6, &spd, &crs)) { lua_pushnil(L); return 1; }
+  lua_createtable(L, 0, 9);
   lua_pushnumber(L, lat);   lua_setfield(L, -2, "lat");
   lua_pushnumber(L, lon);   lua_setfield(L, -2, "lon");
   // Exact micro-degrees: Lua floats here are single precision (LUA_32BITS), so
@@ -769,9 +818,56 @@ int sysGps(lua_State* L) {
   lua_pushinteger(L, sats); lua_setfield(L, -2, "sats");
   lua_pushinteger(L, alt);  lua_setfield(L, -2, "alt_m");
   if (ftime) { lua_pushinteger(L, (lua_Integer)ftime); lua_setfield(L, -2, "time"); }
+  if (!isnan(spd)) { lua_pushnumber(L, spd); lua_setfield(L, -2, "speed_kmh"); }
+  if (!isnan(crs)) { lua_pushnumber(L, crs); lua_setfield(L, -2, "course"); }
   return 1;
 }
 #endif  // CAP_LUA_SDK_EXT
+
+#if CAP_COMPASS
+// wada.sys.compass() -> { x, y, z, ovfl } in Gauss, SENSOR frame, uncalibrated
+// -- or nil when the chip is absent, not answering, or has nothing fresh. On
+// the hardware gate (CAP_COMPASS), not the memory gate.
+// `ovfl` is true when the chip flagged the sample as saturated (magnet nearby,
+// or a hard-iron bias beyond the range): the numbers are delivered so the app
+// can say so, but they are not a heading.
+// Deliberately no `heading`: a heading needs hard-iron offsets (the M9 carries
+// a large on-board bias that the user has to calibrate away by rotating the
+// device) and the sensor-to-screen axis mapping, both of which belong in the
+// app where they can be adjusted and persisted per user. Once the offsets are
+// subtracted and the axes mapped so fx points along the screen's top edge and
+// fy along its right edge, heading = math.atan(-fy, fx) (clockwise from
+// magnetic north) -- deploy/apps/gpscompass is the worked example.
+int sysCompass(lua_State* L) {
+  float x = 0, y = 0, z = 0; bool ovfl = false;
+  if (!luaHostCompass(&x, &y, &z, &ovfl)) { lua_pushnil(L); return 1; }
+  lua_createtable(L, 0, 4);
+  lua_pushnumber(L, x);     lua_setfield(L, -2, "x");
+  lua_pushnumber(L, y);     lua_setfield(L, -2, "y");
+  lua_pushnumber(L, z);     lua_setfield(L, -2, "z");
+  lua_pushboolean(L, ovfl); lua_setfield(L, -2, "ovfl");
+  return 1;
+}
+#endif  // CAP_COMPASS
+
+#if CAP_IMU
+// wada.sys.accel() -> { x, y, z } in g, SENSOR frame — or nil when the chip is
+// absent or has nothing fresh. Held still, the magnitude is 1 and the axis
+// pointing at the sky carries it, which is how an app identifies the axes.
+// Its purpose here is tilt: a magnetic heading taken from two axes is wrong by
+// roughly 1.5 degrees per degree of tilt at mid latitudes, because the field
+// dips ~60 degrees and tipping the device swaps some of that vertical field
+// into the horizontal pair.
+int sysAccel(lua_State* L) {
+  float x = 0, y = 0, z = 0;
+  if (!luaHostAccel(&x, &y, &z)) { lua_pushnil(L); return 1; }
+  lua_createtable(L, 0, 3);
+  lua_pushnumber(L, x); lua_setfield(L, -2, "x");
+  lua_pushnumber(L, y); lua_setfield(L, -2, "y");
+  lua_pushnumber(L, z); lua_setfield(L, -2, "z");
+  return 1;
+}
+#endif  // CAP_IMU
 
 #if CAP_SENSORS
 // wada.sys.env() -> { temp_c, humidity, pressure_hpa, alt_m }, or nil.
@@ -804,10 +900,11 @@ int sysEnv(lua_State* L) {
 // chip does in microseconds.
 //
 // NOTE ON "COMPASS": bearing() is a TRUE bearing from one coordinate to
-// another. It is NOT a magnetic heading and this is not a compass -- no board
-// in the matrix has a magnetometer. To point a user at something you need
-// their course over ground (successive GPS fixes) or a physical compass; this
-// gives you the direction to steer, not the direction they are facing.
+// another. It is NOT a magnetic heading and this is not a compass. To know
+// which way the user is FACING you need either their course over ground
+// (successive GPS fixes, or wada.sys.gps().course where the board reports it)
+// or a magnetometer -- wada.sys.compass(), which only the CAP_COMPASS boards
+// have. This gives you the direction to steer, not the direction they face.
 static double geoRad(double d) { return d * M_PI / 180.0; }
 
 int geoDistance(lua_State* L) {
@@ -839,6 +936,14 @@ int geoCardinal(lua_State* L) {
   lua_pushstring(L, kPts[idx]);
   return 1;
 }
+// wada.sys.keep_awake(on) — for an app that is measuring rather than showing:
+// holds the screen on and keeps on_tick running. Cleared automatically when the
+// app closes. Use it around a calibration or a capture, not for the whole app.
+int sysKeepAwake(lua_State* L) {
+  const bool on = lua_isnoneornil(L, 1) ? true : lua_toboolean(L, 1);
+  luaHostKeepAwake(on);
+  return 0;
+}
 int sysToast(lua_State* L)  { luaHostToast(luaL_checkstring(L, 1), (int)luaL_optinteger(L, 2, 1500)); return 0; }
 int sysRandom(lua_State* L) {
   // esp_random-backed: apps should not have to seed math.random for games
@@ -847,6 +952,20 @@ int sysRandom(lua_State* L) {
   lua_pushinteger(L, lo + (lua_Integer)(esp_random() % (uint32_t)(hi - lo + 1)));
   return 1;
 }
+// wada.sys.tr(s) -- translate through the same table the UI uses.
+//
+// Lua apps had no way to reach it, so every built-in app (airtime's "channel
+// busy", the monitor, the games) was hard-English no matter what language the
+// device was set to, and a translator could file the string but nothing could
+// consume it (#257). Keys go in deploy/apps/lang/*.lang exactly like the
+// firmware's own; an untranslated key returns unchanged, so an app that calls
+// this is never worse off than one that does not.
+static int sysTr(lua_State* L) {
+  const char* s = luaL_checkstring(L, 1);
+  lua_pushstring(L, TR(s));
+  return 1;
+}
+
 int sysBoard(lua_State* L) {
   lua_createtable(L, 0, 6);
   lua_pushinteger(L, s_h ? s_h->body_w : lv_disp_get_hor_res(nullptr));
@@ -865,6 +984,11 @@ int sysBoard(lua_State* L) {
 void tickTimerCb(lv_timer_t* t) {
   (void)t;
   if (!s_h || !s_h->L) return;
+  // Screen asleep: nothing the app draws is visible, and an app polling a
+  // sensor would keep the hardware awake for a dark screen. Skip the tick and
+  // let it resume on wake — dt is derived from millis(), so the app sees the
+  // pause as one long frame rather than a broken clock.
+  if (!luaHostScreenOn()) { s_h->last_tick = 0; return; }
   uint32_t now = millis();
   uint32_t dt = s_h->last_tick ? now - s_h->last_tick : 0;
   s_h->last_tick = now;
@@ -903,6 +1027,12 @@ void namedTimerCb(lv_timer_t* t) {
   if (slot < 0 || slot >= Host::kMaxTimers) return;
   Host::AppTimer& s = s_h->timers[slot];
   if (s.cb == LUA_NOREF) return;
+  // Same rule as on_tick: a REPEATING timer does not run while the display is
+  // asleep, since its usual job is polling something nobody can see. A one-shot
+  // still fires — it is a scheduled piece of app logic, and skipping it would
+  // drop that work permanently rather than defer it (the slot is released
+  // around the call), which is not the same trade at all.
+  if (!s.once && !luaHostScreenOn()) return;
   lua_State* L = s_h->L;
   // A one-shot is released BEFORE the call, so the callback may safely start
   // another timer in the same slot without it being torn down underneath.
@@ -1349,6 +1479,88 @@ int fsList(lua_State* L) {
   dir.close();
   return 1;
 }
+
+#if CAP_LUA_SD_LIST
+// ---- wada.sd: read-only physical SD directory listing ----------------------
+// Unlike wada.fs, this intentionally accepts paths, but only absolute paths
+// rooted on the card. Reject traversal rather than normalising it into a
+// different valid path. Directory work is bounded so one huge card folder
+// cannot consume an app's entire Lua heap.
+static const size_t kSdMaxPath = 192;
+static const int kSdMaxEntries = 192;
+
+static bool sdSafePath(const char* in, size_t len, char* out, size_t cap) {
+  if (!in || len == 0 || len >= cap || in[0] != '/') return false;
+  if (len > 1 && in[len - 1] == '/') return false;
+  if (len == 1) { out[0] = '/'; out[1] = '\0'; return true; }
+
+  size_t segment = 1;
+  for (size_t i = 1; i <= len; ++i) {
+    if (i < len) {
+      const unsigned char c = (unsigned char)in[i];
+      if (c == 0 || c < 0x20 || c == 0x7F || c == '\\') return false;
+      if (c != '/') continue;
+    }
+    const size_t n = i - segment;
+    if (n == 0 || (n == 1 && in[segment] == '.') ||
+        (n == 2 && in[segment] == '.' && in[segment + 1] == '.')) return false;
+    segment = i + 1;
+  }
+  memcpy(out, in, len);
+  out[len] = '\0';
+  return true;
+}
+
+static int sdListError(lua_State* L, const char* error) {
+  lua_pushnil(L);
+  lua_pushstring(L, error);
+  return 2;
+}
+
+// wada.sd.list(path) -> entries | nil,error
+// entries is an array of { name, type = "file"|"dir", size, mtime } and gains
+// entries.truncated = true only when the directory exceeds kSdMaxEntries.
+int sdList(lua_State* L) {
+  const char* requested = "/";
+  size_t requested_len = 1;
+  if (!lua_isnoneornil(L, 1)) requested = luaL_checklstring(L, 1, &requested_len);
+  char path[kSdMaxPath];
+  if (!sdSafePath(requested, requested_len, path, sizeof path))
+    return sdListError(L, "bad path");
+
+  bool busy = false;
+  fs::FS* fs = luaHostSdFs(&busy);
+  if (!fs) return sdListError(L, busy ? "busy" : "no sd");
+  File dir = fs->open(path, "r");
+  if (!dir) return sdListError(L, luaHostSdReadFailed() ? "no sd" : "not found");
+  if (!dir.isDirectory()) { dir.close(); return sdListError(L, "not a directory"); }
+
+  lua_newtable(L);
+  int count = 0;
+  bool truncated = false;
+  for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    const char* full = entry.name();
+    const char* base = full ? strrchr(full, '/') : nullptr;
+    base = base ? base + 1 : full;
+    if (!base || !base[0]) { entry.close(); continue; }
+    if (count >= kSdMaxEntries) { truncated = true; entry.close(); break; }
+
+    const bool is_dir = entry.isDirectory();
+    lua_createtable(L, 0, 4);
+    lua_pushstring(L, base);                         lua_setfield(L, -2, "name");
+    lua_pushstring(L, is_dir ? "dir" : "file");  lua_setfield(L, -2, "type");
+    lua_pushinteger(L, is_dir ? 0 : (lua_Integer)entry.size());
+                                                     lua_setfield(L, -2, "size");
+    lua_pushinteger(L, (lua_Integer)entry.getLastWrite());
+                                                     lua_setfield(L, -2, "mtime");
+    lua_rawseti(L, -2, ++count);
+    entry.close();
+  }
+  dir.close();
+  if (truncated) { lua_pushboolean(L, 1); lua_setfield(L, -2, "truncated"); }
+  return 1;
+}
+#endif
 #endif  // CAP_LUA_SDK_EXT
 
 void storePath(char* out, size_t cap) {
@@ -1473,8 +1685,12 @@ void pressCb(lv_event_t* e) {
   if (indev) lv_indev_get_point(indev, &p);
   lv_area_t a;
   lv_obj_get_coords(s_h->body, &a);
+  // Content coordinates, not viewport ones: once an app has turned on
+  // ui.scroll() and the body is scrolled, a hit-test against where the app
+  // PLACED its widgets only works if the scroll offset is folded in.
   sendInput(lv_event_get_code(e) == LV_EVENT_PRESSED ? "down" : "up", nullptr,
-            p.x - a.x1, p.y - a.y1);
+            p.x - a.x1 + lv_obj_get_scroll_x(s_h->body),
+            p.y - a.y1 + lv_obj_get_scroll_y(s_h->body));
 }
 
 // ---- wada.mesh (read-only) ----
@@ -1878,11 +2094,12 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, uiTextH);  lua_setfield(L, -2, "text_h");
   lua_pushcfunction(L, uiTextW);     lua_setfield(L, -2, "text_w");
   lua_pushcfunction(L, uiTextLines); lua_setfield(L, -2, "text_lines");
-  lua_createtable(L, 0, 6);                              // wada.ui.colors (theme)
+  lua_createtable(L, 0, 7);                              // wada.ui.colors (theme)
   lua_pushinteger(L, 0x15B6A6); lua_setfield(L, -2, "accent");
   lua_pushinteger(L, 0xE6E9ED); lua_setfield(L, -2, "text");
   lua_pushinteger(L, 0x7A7F87); lua_setfield(L, -2, "sub");
-  lua_pushinteger(L, 0x0E1216); lua_setfield(L, -2, "bg");
+  lua_pushinteger(L, 0x000000); lua_setfield(L, -2, "bg");      // the page ground (matches the firmware)
+  lua_pushinteger(L, 0x15181B); lua_setfield(L, -2, "panel");   // a raised surface on top of it
   lua_pushinteger(L, 0xD7574E); lua_setfield(L, -2, "bad");
   lua_pushinteger(L, 0x53C06B); lua_setfield(L, -2, "good");
   lua_setfield(L, -2, "colors");
@@ -1893,7 +2110,9 @@ void openWada(lua_State* L) {
   lua_newtable(L);                                       // wada.sys
   lua_pushcfunction(L, sysMillis); lua_setfield(L, -2, "millis");
   lua_pushcfunction(L, sysToast);  lua_setfield(L, -2, "toast");
+  lua_pushcfunction(L, sysKeepAwake); lua_setfield(L, -2, "keep_awake");
   lua_pushcfunction(L, sysBoard);  lua_setfield(L, -2, "board");
+  lua_pushcfunction(L, sysTr);     lua_setfield(L, -2, "tr");      // #257
   lua_pushcfunction(L, sysRandom); lua_setfield(L, -2, "random");
   lua_pushcfunction(L, sysEpoch);    lua_setfield(L, -2, "epoch");     // #245
   lua_pushcfunction(L, sysDatetime); lua_setfield(L, -2, "datetime");  // #245
@@ -1902,6 +2121,12 @@ void openWada(lua_State* L) {
 #if CAP_LUA_SDK_EXT
   lua_pushcfunction(L, sysBattery);  lua_setfield(L, -2, "battery");
   lua_pushcfunction(L, sysGps);      lua_setfield(L, -2, "gps");
+#endif
+#if CAP_COMPASS
+  lua_pushcfunction(L, sysCompass);  lua_setfield(L, -2, "compass");   // hardware-gated, see caps().compass
+#endif
+#if CAP_IMU
+  lua_pushcfunction(L, sysAccel);    lua_setfield(L, -2, "accel");     // tilt, see caps().accel
 #endif
 #if CAP_SENSORS
   lua_pushcfunction(L, sysEnv);      lua_setfield(L, -2, "env");   // HARDWARE gate, not the memory one
@@ -1939,6 +2164,12 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, fsList);   lua_setfield(L, -2, "list");
   lua_pushcfunction(L, fsRemove); lua_setfield(L, -2, "remove");
   lua_setfield(L, -2, "fs");
+#endif
+
+#if CAP_LUA_SD_LIST
+  lua_newtable(L);                                       // wada.sd (read-only physical card)
+  lua_pushcfunction(L, sdList); lua_setfield(L, -2, "list");
+  lua_setfield(L, -2, "sd");
 #endif
 
   lua_newtable(L);                                       // wada.mesh (read-only)
@@ -2186,12 +2417,19 @@ void hostTeardown() {
     h->timers[i].cb = LUA_NOREF;
     s_timer_gen[i]++;              // any handle Lua still holds is now inert
   }
+  luaHostKeepAwake(false);          // an app cannot hold the screen after it closes
   if (h->timer) { lv_timer_del(h->timer); h->timer = nullptr; }
   if (s_net_poll) { lv_timer_del(s_net_poll); s_net_poll = nullptr; }
   if (h->L && s_net_cb != LUA_NOREF) { luaL_unref(h->L, LUA_REGISTRYINDEX, s_net_cb); }
   s_net_cb = LUA_NOREF;              // a worker fetch may still land; netDeliver sees no app and drops it
-  // s_net_buf and s_net_body are deliberately NOT freed here. The worker task
-  // may be mid-request and still reading both; the next request frees them.
+  // The fetch buffer (up to 32 KB of PSRAM) and the POST body belong to a fetch,
+  // and with no app there is no fetch -- hold them only while the worker could
+  // still be reading them (s_net_pending), otherwise they sit allocated until
+  // some later app happens to call http_get/http_post.
+  if (!s_net_pending) {
+    if (s_net_buf)  { heap_caps_free(s_net_buf);  s_net_buf  = nullptr; s_net_cap = 0; }
+    if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
+  }
   if (h->L) {
     // best-effort on_close + store flush before the state dies
     lua_State* L = h->L;
@@ -2206,8 +2444,9 @@ void hostTeardown() {
     storeFlush();
     s_h = nullptr;
     lua_close(L);          // runs canvas __gc -> frees pixel buffers
-    Serial.printf("[LUAAPP] %s closed, leaked=%u peak=%u\n", h->id,
-                  (unsigned)h->heap.used, (unsigned)h->heap.peak);
+    Serial.printf("[LUAAPP] %s closed, leaked=%u peak=%u psram_free=%u\n", h->id,
+                  (unsigned)h->heap.used, (unsigned)h->heap.peak,
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
   }
   if (h->root) appPageDeleteRootAsync(h->root);
   appPageEnd(&luaAppDismiss);
@@ -2239,9 +2478,18 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   h->root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(h->root);
   lv_obj_set_size(h->root, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr));
-  lv_obj_set_style_bg_color(h->root, lv_color_hex(0x0E1216), LV_PART_MAIN);
+  // Pure black, the same ground the rest of the firmware paints (COLOR_BG in
+  // UITask.cpp) — an app page must not read as a lighter panel floating over
+  // the UI. Apps that want a raised surface draw one (wada.ui.colors.panel).
+  lv_obj_set_style_bg_color(h->root, lv_color_hex(0x000000), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(h->root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(h->root, LV_OBJ_FLAG_SCROLLABLE);
+  // A plain lv_obj is CLICKABLE by default, and it has to stay so (it is the
+  // overlay that keeps touches off the screen underneath) — but it must not be
+  // a keyboard-nav focus target either, or the focus highlight paints it
+  // solid: with only the body excluded, navCollect simply promoted the root to
+  // the leaf target and the app went white all the same (seen on the M9).
+  lv_obj_add_flag(h->root, NAV_PASSTHRU_FLAG);
   lv_obj_add_event_cb(h->root, luaAppRootDeletedCb, LV_EVENT_DELETE, nullptr);
 
   h->body = lv_obj_create(h->root);
@@ -2253,6 +2501,11 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   lv_obj_set_size(h->body, h->body_w, h->body_h);
   lv_obj_clear_flag(h->body, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(h->body, LV_OBJ_FLAG_CLICKABLE);
+  // Clickable for touch, but never a keyboard-nav focus target: on the M9 the
+  // nav collector harvested this body as a leaf and the focus highlight's
+  // reverse-video fill painted the whole app white under its widgets. The
+  // flag leaves the app's own buttons reachable (see AppPage.h).
+  lv_obj_add_flag(h->body, NAV_PASSTHRU_FLAG);
   lv_obj_add_event_cb(h->body, gestureCb, LV_EVENT_GESTURE, nullptr);
   lv_obj_add_event_cb(h->body, pressCb, LV_EVENT_PRESSED, nullptr);
   lv_obj_add_event_cb(h->body, pressCb, LV_EVENT_RELEASED, nullptr);
@@ -2304,7 +2557,12 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
     guardedCall(h, 2);
   }
   serviceDeferredClose();
-  if (s_h) Serial.printf("[LUAAPP] %s open, heap=%u\n", id, (unsigned)h->heap.used);
+  // PSRAM is reported alongside the Lua heap because the app heap does NOT
+  // account for canvas pixel buffers (allocated directly), so it cannot show
+  // whether an app really gave everything back. Compare this against the same
+  // figure on the matching "closed" line.
+  if (s_h) Serial.printf("[LUAAPP] %s open, heap=%u psram_free=%u\n", id, (unsigned)h->heap.used,
+                         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
   return s_h != nullptr;
 }
 
@@ -2337,12 +2595,25 @@ bool luaAppLaunchFile(const char* id, const char* title, const char* embedded, s
 // ---- net worker entry points (UITask's tile/net worker calls these) --------
 bool luaNetWorkerPending() { return s_net_pending; }
 void luaNetWorkerService(void* client, void* http) {
-  s_net_pending = false;
+  // s_net_pending stays TRUE for the whole request and is cleared at the end,
+  // not here. It is the only thing telling the UI thread that the worker may
+  // still be reading s_net_buf / s_net_body: clearing it first left a window
+  // the length of an HTTP round trip in which an app closing (hostTeardown)
+  // would free both buffers out from under this function. The caller runs one
+  // service() per loop pass and re-checks the flag afterwards, so holding it
+  // across the call cannot re-enter, and http_get/http_post keep rejecting a
+  // second fetch while it is set -- which is what we want anyway.
   if (!s_net_buf)            s_net_result = -1;
   else if (s_net_body)       s_net_result = luaStoreHttpPostOpaque(client, http, s_net_url, s_net_buf,
                                                                    s_net_cap, s_net_body, s_net_body_len,
                                                                    s_net_ctype);
   else                       s_net_result = luaStoreHttpGetOpaque(client, http, s_net_url, s_net_buf, s_net_cap);
+  // Order matters: drop the in-flight flag BEFORE announcing the result, so a
+  // teardown that observes done=true can never also observe pending=true and
+  // decide to hold the buffers forever. Between the two writes the request is
+  // finished and s_net_result is set, and netDeliver drops the payload without
+  // touching s_net_buf when the app is already gone.
+  s_net_pending = false;
   s_net_done = true;
 }
 

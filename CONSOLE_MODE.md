@@ -309,3 +309,74 @@ Worth settling before Phase 1 rather than during it.
    follow safely.
 3. **Does this replace the Terminal app** in graphical mode eventually, or do
    both stay?
+
+---
+
+## Audit: every UI surface, and its console equivalent
+
+Done by enumerating the real thing rather than from memory: the tab list, the
+app-drawer action enum (`APPACT_*`), the 19 settings categories, and the node
+CLI's own command table in `CommonCLI.cpp`.
+
+**The single most useful finding: the node CLI already covers far more than
+expected.** `advert`, `board`, `clock`, `clock sync`, `erase`, `get`/`set`,
+`gps` (on/off/sync/setloc/advert), `log`, `neighbors`, `ota url`, `password`,
+`poweroff`, `powersaving`, `reboot`, `region`, `sensor list/get/set`,
+`shutdown`, `start ota`, `tempradio`, `time`, `ver`. All of that arrives free,
+which is why the console needed far fewer new commands than the UI has screens.
+
+### Tabs and apps
+
+| UI surface | Console | State |
+|---|---|---|
+| Chats: read a thread | `chat <name>` | **done** |
+| Chats: send | `to <name>` + `msg <text>` | **done** |
+| Chats: unread badges | `unread`, `read <name>` | **done**, and the monitor never clears them |
+| Live incoming messages | the monitor, `monitor on\|off` | **done** |
+| Contacts list | `contacts` | **done** |
+| Contacts: favourite / block / delete | none | gap |
+| Channels list | `chans` | **done** |
+| Discover | `discover`, `discovered` | **done**, with both link directions |
+| Advertise | CLI `advert` | free |
+| Signal / traffic | `stat` | **done** |
+| Map | none | needs the `wada.map` blit path; not console-shaped yet |
+| Terminal | this *is* the console | n/a |
+| Files | none | gap |
+| Spectrum | none | gap, and heavy |
+| Store / Lua apps | none | Phase 4 |
+| Web reader | none | gap |
+| VNC / Remote | none | deliberate: another front end, not a console feature |
+| Power menu | CLI `poweroff` / `reboot` | free |
+| Mentions | `unread` shows counts | partial |
+
+### Settings, all 19 categories
+
+| Category | Console | State |
+|---|---|---|
+| Radio & Mesh | CLI `get`/`set`, `region`, `tempradio` | free |
+| GPS | CLI `gps *` | free |
+| Clock & time | CLI `clock`, `time` | free |
+| Sensors | CLI `sensor *` | free |
+| About | CLI `ver`, `board`; `mem` | free |
+| Battery | `batt` | **done** |
+| Wi-Fi | `wifi` (state only) | partial |
+| Bluetooth | none | gap |
+| Auto-add | none | gap |
+| Display / Keyboard / Sound / Lock screen | none | not meaningful without the UI |
+| Quick replies | none | gap |
+| Backups | none | gap |
+| Language | none | gap |
+| MQTT bridge | none | gap |
+| App permissions | none | with Phase 4 |
+| General | `console`/`ui` toggle | partial |
+
+### What the gaps have in common
+
+Almost everything still missing is either **Phase 4** (anything Lua), **not
+console-shaped** (Display, Keyboard, Lock screen: settings for a UI that is not
+running), or **a list-and-act flow** (files, backups, quick replies, contact
+actions) that all wants the same small pattern: number the list, act on the
+number. That pattern is worth building once rather than six times.
+
+The two genuinely interesting gaps are **Files** and **contact actions**
+(favourite, block, delete), because both are things people do reach for.

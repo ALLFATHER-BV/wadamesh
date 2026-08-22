@@ -108,6 +108,7 @@ public:
   FILESYSTEM* getHotDataFS() const { return _getContactsChannelsFS(); }
   File openAppend(FILESYSTEM* fs, const char* filename);             // create if missing
   bool fileExists(FILESYSTEM* fs, const char* filename);
+  bool mkdirRooted(FILESYSTEM* fs, const char* dir);                  // true if it exists afterwards
   bool removeRooted(FILESYSTEM* fs, const char* filename);
   bool renameFile(FILESYSTEM* fs, const char* from, const char* to);
 #endif

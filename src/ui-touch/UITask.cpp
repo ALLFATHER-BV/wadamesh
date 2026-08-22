@@ -92,7 +92,9 @@
   #endif
 #elif defined(TLORA_PAGER)
   #include <SD.h>             // microSD (CS=21) on the shared radio/display SPI bus --
-                               // storage + file manager/WAV access; formatting stays disabled
+                               // storage + file manager/WAV access. No sd_diskio.h/f_mkfs
+                               // here: formatting is deliberately off on this board (the
+                               // reasons are on the format-helper guard in the file manager).
   #define PIN_SD_CS PAGER_PIN_SD_CS   // from TLoraPagerBoard.h, already visible via
                                       // MyMesh.h -> target.h -> TLoraPagerBoard.h above
   #include <driver/i2s.h>     // pager ES8311 codec (notification tones + WAV playback)
@@ -120,6 +122,12 @@
     #include <helpers/input/TDeckKeyboard.h>
   #elif defined(HAS_M9_KEYBOARD)
     #include <M9Keyboard.h>
+  #endif
+  #if defined(HAS_M9_COMPASS)
+    #include <M9Compass.h>           // wada.sys.compass() source (luaHostCompass)
+  #endif
+  #if defined(HAS_M9_IMU)
+    #include <M9Imu.h>               // wada.sys.accel() source (luaHostAccel)
   #endif
   #if defined(HAS_PAGER_KEYBOARD)
     #include <helpers/input/PagerKeyboard.h>
@@ -4358,7 +4366,8 @@ static bool navCollect(lv_obj_t* obj) {
     if (c && navCollect(c) && !lv_obj_has_flag(c, NAV_HMOVE_FLAG)) descHasClickable = true;
   }
   bool meClickable = lv_obj_has_flag(obj, LV_OBJ_FLAG_CLICKABLE)
-                     && !lv_obj_has_flag(obj, NAV_SKIP_FLAG);   // skip explicit non-nav targets (e.g. the map catcher)
+                     && !lv_obj_has_flag(obj, NAV_SKIP_FLAG)      // skip explicit non-nav targets (e.g. the map catcher)
+                     && !lv_obj_has_flag(obj, NAV_PASSTHRU_FLAG); // container that only exists to catch touches (Lua app body)
   if (meClickable && !descHasClickable) {
     // LVGL's btn/switch/checkbox widgets ship with LV_OBJ_FLAG_SCROLL_ON_FOCUS,
     // and lv_obj's own FOCUSED handler scrolls them into view — bypassing our
@@ -4863,6 +4872,7 @@ static void chanScopeClose();    // fwd
 static bool blockedModalIsOpen();// fwd: the bar's Back chevron also closes the blocked-users sheet
 static void blockedModalClose(); // fwd
 static void openBlockedUsersModal();                            // ignore-list manager (unblock)
+static void openRegionsModal();                                 // known-regions manager (#271)
 static bool overlayBlocksTabSwipe();   // theme/channel-scope pickers swallow tab swipes
 static bool drawerPopupOpen();         // popups floating over the app drawer (signal/mentions/power/files)
 static void refreshContactsList();
@@ -5411,6 +5421,21 @@ static void otaButtonRefreshState() {
 // the ACTIVE update channel (stable, or beta when "Get test builds" is on)
 // into /BINS/wadamesh-beta_<N>-<stable|beta>.bin on the SD card. The download
 // streams on the tile worker; this UI side mirrors the OTA poll pattern.
+// Wording is board-conditional and the two sets are SEPARATE TR() keys on purpose.
+// Only the T-Deck has bmorcelli's Launcher; now that this feature is gated on
+// CAP_SD it also compiles for the Pager, the ThinkNode M9 and the Heltec V4-R8,
+// where "flash it from the Launcher" names something the user does not have. The
+// T-Deck strings must stay byte-identical: they are translated in all 13 .lang
+// files, and editing the English key orphans every translation of it (audit with
+// scripts/build/audit-lang.py).
+#if defined(HAS_TDECK_GT911)
+  #define SDFW_SAVED_FMT TR("Saved: %s\nFlash it from the Launcher.")
+  #define SDFW_HINT_TEXT TR("For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).")
+#else
+  #define SDFW_SAVED_FMT TR("Saved: %s\nReady for offline flashing.")
+  #define SDFW_HINT_TEXT TR("Saves the latest firmware of the selected channel to the SD card (BINS folder).")
+#endif
+
 static volatile bool s_sdfw_request  = false;   // UI -> worker
 static volatile int  s_sdfw_state    = 0;       // 0 idle, 1 running, 2 ok, 3 error
 static volatile int  s_sdfw_pct      = 0;
@@ -5434,7 +5459,7 @@ static void sdFwPollTimerCb(lv_timer_t* t) {
   if (st == 2) {
     if (s_sdfw_status_lbl) {
       char b[112];
-      snprintf(b, sizeof b, TR("Saved: %s\nFlash it from the Launcher."), s_sdfw_msg);
+      snprintf(b, sizeof b, SDFW_SAVED_FMT, s_sdfw_msg);
       lv_label_set_text(s_sdfw_status_lbl, b);
     }
     if (g_lv.task) g_lv.task->showAlert(TR("Update bin saved to SD"), 3000);
@@ -8313,10 +8338,26 @@ static void tabChangedCb(lv_event_t* e) {
   } else {
     if (prev_t == MAP_TAB_INDEX) applyMapChrome(false);   // restore opaque chrome
     clearRouteReplay();    // drop any route-replay overlay when leaving the map
-    // Drop tile JPEGs from PSRAM the moment we leave the tab — keeps the
-    // working set small and lets the map cold-load with fresh data on
-    // the next visit. (CPU stays at 160 MHz — the whole UI runs there.)
-    freeMapTiles();
+    // Leaving the map used to drop all nine decoded tiles, so every re-open
+    // paid the full read + JPEG decode again — measured at ~2.5 s of blocked
+    // UI on the M9 ([STALL] ui:lvgl), on EVERY visit, not just the first.
+    // The grid costs 9 x 128 KB = 1.15 MB of PSRAM, which only matters on the
+    // 2 MB V4 (the same board renderMapTiles already caps to a 4-tile pool),
+    // so keep the decodes on boards with room and re-open as a pure blit.
+    // Freshness is unaffected: renderMapTiles re-attempts MISSING tiles on
+    // every pass, and a style / mode / storage change frees the cache at its
+    // own call sites.
+    // Nothing is released on a roomy board: the slots keep their identity,
+    // their pixels AND their widgets, which is exactly the state panning
+    // within the tab already leaves them in — the tab is simply not drawn
+    // while it is hidden. (releaseMapTileSlot is not enough here: it clears
+    // in_use, so the next render would treat the tile as absent and decode
+    // it again.)
+    static const size_t kPsramTotalB = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    // No non-zero guard: a board reporting 0 belongs on the CONSERVATIVE side of
+    // this test, not the roomy one.
+    const bool low_psram = (kPsramTotalB < 4u * 1024 * 1024);
+    if (low_psram) freeMapTiles();
   }
 
   // The status bar is shown on every tab now: the Settings page is a clean
@@ -9227,6 +9268,11 @@ static void saveRadioParamsCb(lv_event_t* e) {
   if (has_region_ta) {
     the_mesh.setDefaultFloodScope(region);
     touchPrefsSetRegionScope(region);
+    // #271: keep the registry in step with the region we just adopted, so its
+    // messages are named immediately. Any previously-registered region keeps its
+    // slot, so changing our own region does not un-name the history we
+    // received while we were in the old one.
+    if (region[0]) the_mesh.regionRegistry().ensureRegion(region);
     has_region = (region[0] != '\0');
   }
   if (ok) {
@@ -9838,19 +9884,19 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     const uint8_t mask = prefs ? (prefs->autoadd_config & static_cast<uint8_t>(
         AUTO_ADD_CHAT | AUTO_ADD_REPEATER | AUTO_ADD_ROOM_SERVER | AUTO_ADD_SENSOR)) : 0u;
     if (mask) {
-      char hint[120];
-      char types[64]; types[0] = '\0';
+      char hint[240];   // translations run long; the HU string is ~1.6x English
+      char types[128]; types[0] = '\0';   // 4 translated plurals, UTF-8
       size_t off = 0;
       auto add = [&](const char* s) {
         if (off > 0 && off + 3 < sizeof(types)) { types[off++] = ','; types[off++] = ' '; types[off] = '\0'; }
         size_t n = strlen(s);
         if (off + n < sizeof(types)) { memcpy(types + off, s, n); off += n; types[off] = '\0'; }
       };
-      if (mask & AUTO_ADD_CHAT)        add("chats");
-      if (mask & AUTO_ADD_REPEATER)    add("repeaters");
-      if (mask & AUTO_ADD_ROOM_SERVER) add("rooms");
-      if (mask & AUTO_ADD_SENSOR)      add("sensors");
-      snprintf(hint, sizeof(hint), "Auto-add on for %s — new %s land in Contacts automatically.",
+      if (mask & AUTO_ADD_CHAT)        add(TR("chats"));
+      if (mask & AUTO_ADD_REPEATER)    add(TR("repeaters"));
+      if (mask & AUTO_ADD_ROOM_SERVER) add(TR("rooms"));
+      if (mask & AUTO_ADD_SENSOR)      add(TR("sensors"));
+      snprintf(hint, sizeof(hint), TR("Auto-add on for %s — new %s land in Contacts automatically."),
                types, types);
       lv_obj_t* l = lv_label_create(body);
       lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
@@ -10707,6 +10753,25 @@ static void buildRadioSettings() {
     lv_obj_set_pos(note, 2, y);
     lv_obj_update_layout(note);
     y += lv_obj_get_height(note) + SC(8);
+  }
+  // #271: the regions above are the ones we SEND under. This opens the list of
+  // regions we can RECOGNISE. Naming them in message details needs only the
+  // name, since the key is derived from it.
+  {
+    lv_obj_t* rb = lv_btn_create(body);
+    lv_obj_set_size(rb, s_settings_content_w - SC(4), SC(34));
+    lv_obj_set_pos(rb, 2, y);
+    styleButton(rb);
+    lv_obj_add_event_cb(rb, [](lv_event_t* e) {
+      if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+      closeSettingsModal();
+      openRegionsModal();
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* rl = lv_label_create(rb);
+    lv_label_set_text(rl, TR(LV_SYMBOL_LIST "  Known regions"));
+    lv_obj_set_style_text_font(rl, &g_font_14, LV_PART_MAIN);
+    lv_obj_center(rl);
+    y += SC(40);
   }
 
   // Opt-in: also scope DIRECT messages / logins / remote-management floods to the region
@@ -13404,7 +13469,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_set_style_pad_right(crow, 10, LV_PART_MAIN);
     lv_obj_clear_flag(crow, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t* cl = lv_label_create(crow);
-    lv_label_set_text(cl, TR("Text console (no UI)"));
+    lv_label_set_text(cl, TR("Text console (experimental)"));
     useChainedFont(cl);
     lv_obj_set_style_text_color(cl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_label_set_long_mode(cl, LV_LABEL_LONG_DOT);
@@ -13418,9 +13483,10 @@ static void buildDeviceSettings(int sec) {
     y += SC(42);
   }
   y += settingsRowLabel(body, y, 0,
-        TR("Boots into a text console with no graphical interface: type commands, read replies. "
-           "Frees the memory and processor time the interface uses. Type 'ui' in the console to "
-           "come back. Toggling reboots."),
+        TR("EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, "
+           "read replies. Frees the memory and processor time the interface uses. Type 'ui' in "
+           "the console to come back, and if it ever fails to start the device returns here on "
+           "its own. Toggling reboots."),
         COLOR_SUB, &g_font_12, 1) + 8;
   }
 #endif
@@ -19677,6 +19743,27 @@ static bool handleWebDataCmd(const char* cmd) {
 }
 #endif  // !HAS_TANMATSU
 
+#if CAP_CONSOLE
+// Outside the !HAS_TANMATSU block above ON PURPOSE. The Settings row that binds
+// this callback lives in buildDeviceSettings, which every board compiles, and
+// the console boot path itself is only gated on CAP_CONSOLE -- so leaving the
+// callback in a board-excluded region gave the Tanmatsu a switch it could see,
+// could not link, and would not have worked from anyway.
+// Console mode is a boot mode like remote mode, so it is toggled the same way:
+// set the pref, then reboot through rebootDevice() so chat history is flushed
+// first rather than lost to the reset.
+static void consoleModeToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetConsoleMode(on);
+  if (g_lv.task) {
+    g_lv.task->showAlert(on ? TR("Entering console mode - rebooting...")
+                            : TR("Leaving console mode - rebooting..."), 1600);
+    g_lv.task->rebootDevice();
+  }
+}
+#endif
+
+
 // Scrollable command picker, modelled on openAdminCmdPicker. Tapping a row
 // stuffs the template into the terminal input and keeps it focused so Enter
 // (or the value typed after a "set ..." template) sends it.
@@ -20162,6 +20249,27 @@ static void fmSdClickCb(lv_event_t* e) {
   if (s_sd_mounted) fmOpenStorage(&SD, "SD", "/");
 }
 
+#if defined(TLORA_PAGER)
+// Recovery entry for a card the Pager can SEE (card-detect asserted) but cannot
+// mount: exFAT/NTFS, or a damaged FAT. Without this the roots page renders no SD
+// row at all (fmShowRoots below), so there is no way to tell "no card" from "card
+// the firmware won't take", and no way to retry without a reboot.
+//
+// Deliberately NON-destructive. It clears the mount backoff and makes exactly the
+// one vendor-compatible 4 MHz attempt fmSdTryMount() already makes — it does not
+// add a retry ladder and never tears down the live shared display/radio bus. If
+// that attempt fails the card needs formatting, and on this board that is a
+// deliberate host-side task: see the format-helper guard below for why the in-app
+// formatter stays off for the Pager.
+static void fmSdPagerRetryMountCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_sd_retry_after_ms = 0;                       // explicit user retry — bypass the backoff
+  if (fmSdTryMount() && s_sd_mounted) { fmShowRoots(); return; }
+  if (g_lv.task)
+    g_lv.task->showAlert(TR("SD unreadable - format it as FAT32 on a computer"), 3600);
+}
+#endif
+
 #endif  // HAS_TDECK_GT911 || TLORA_PAGER || HAS_THINKNODE_M9 || HELTEC_LORA_V4_R8 (microSD mount helpers; the busy overlays below are generic LVGL)
 
 // Full-screen "busy" notice (copy/move/format). Pure LVGL — used by the generic paste path too.
@@ -20189,6 +20297,24 @@ static void fmHideFormatOverlay() {
   if (s_fm_fmt_overlay) { popupClose(&s_fm_fmt_overlay); }
 }
 
+// TLORA_PAGER is deliberately NOT in this list — the in-app formatter is omitted
+// on the Pager, not merely unimplemented. Three reasons, in order of weight:
+//  1. f_mkfs needs SD.end() + sdcard_init/uninit around it. That is a card and
+//     diskio lifecycle teardown on a bus the display AND the radio are actively
+//     driving, and this board's mount path is explicitly documented (fmSdTryMount
+//     above) to make ONE 4 MHz attempt and never tear the live shared bus down.
+//     The Arduino SD library never touches the SPI peripheral itself, so this is
+//     very likely fine — but "very likely" is not a basis for a one-way, whole-card
+//     erase, and it has never been run on Pager hardware.
+//  2. There is no touchscreen, so the T-Deck's tap-to-open / hold-to-format split
+//     does not map. The nearest equivalent is holding ENTER on the focused row —
+//     an undiscoverable gesture that destroys the card, on a device where the
+//     encoder and ENTER are the only ways to move at all.
+//  3. The recoverable case is already covered non-destructively:
+//     fmSdPagerRetryMountCb above surfaces a detected-but-unmountable card and
+//     retries the mount, and the alert it raises on failure points at the host.
+// Formatting a card on a computer is a 30-second task with no such risk. Revisit
+// only with a Pager in hand and a card that is safe to lose.
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)   // SD format helpers resume (Arduino SD, T-Deck + M9 + V4-R8)
 // Confirm callback: paint the formatting notice, then defer the (blocking)
 // f_mkfs to UITask::loop so the notice is on-screen before the loop freezes.
@@ -20706,7 +20832,7 @@ static void fmOpenActions(const char* name, bool isdir) {
 #endif
   }
   if (s_fm_clip.active) {
-    fmActionBtn(card, s_fm_clip.is_cut ? "Paste (move)" : "Paste (copy)", fmActPasteCb, 0x2D4A2D);
+    fmActionBtn(card, s_fm_clip.is_cut ? TR("Paste (move)") : TR("Paste (copy)"), fmActPasteCb, 0x2D4A2D);
   }
 }
 
@@ -21489,7 +21615,7 @@ static void fmShowRoots() {
     fmStyleRow(sd, COLOR_SUB);
     lv_obj_add_event_cb(sd, fmSdMountOrFormatCb, LV_EVENT_CLICKED, nullptr);
   }
-#elif defined(TLORA_PAGER)   // microSD row — browse only this pass, no format (see fmSdTryMount())
+#elif defined(TLORA_PAGER)   // microSD row — browse + mount recovery, no in-app format
   // The card-detect line makes "not present" unambiguous, unlike the T-Deck (no detect
   // pin at all) -- so unlike its always-shown "tap to mount/format" fallback row, a bare
   // pager just shows no SD row at all rather than a row that can never succeed.
@@ -21501,6 +21627,13 @@ static void fmShowRoots() {
     lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, sdl);
     fmStyleRow(sd, COLOR_TEXT);
     lv_obj_add_event_cb(sd, fmSdClickCb, LV_EVENT_SHORT_CLICKED, nullptr);
+  } else if (board.sdCardPresent()) {
+    // Detected but not mounted. Surfacing it (greyed) is the whole recovery path
+    // on this board: it distinguishes "card the firmware won't take" from the
+    // absent case above, and gives a retry that bypasses the mount backoff.
+    lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, TR("SD card   (unreadable - tap to retry)"));
+    fmStyleRow(sd, COLOR_SUB);
+    lv_obj_add_event_cb(sd, fmSdPagerRetryMountCb, LV_EVENT_CLICKED, nullptr);
   }
 #endif
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
@@ -22451,7 +22584,8 @@ static void openReaderPage() {
   lv_obj_set_pos(s_reader_status, 6, top + 44);
   lv_obj_set_style_text_font(s_reader_status, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_reader_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_label_set_text(s_reader_status, s_reader_msg[0] ? s_reader_msg : "On-device text browser \xc2\xb7 no proxy, no tracking");
+  lv_label_set_text(s_reader_status, s_reader_msg[0] ? s_reader_msg
+                                                    : TR("On-device text browser \xc2\xb7 no proxy, no tracking"));
   // (Collapsed state shows the URL in the status-bar title zone — see readerSetAddrExpanded.)
   // --- Body: a vertical scroll container we fill with paragraph + link labels ---
   s_reader_scroll = lv_obj_create(s_reader_root);
@@ -22712,21 +22846,42 @@ static void discoverBuildFeed() {
       (unsigned)discTypeColor(h.node_type), disp_esc, discTypeShort(h.node_type),
       (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, direct, dist_seg, ago);
   }
-  if (q == 0) snprintf(buf, sizeof buf, "#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#");
+  if (q == 0) snprintf(buf, sizeof buf, TR("#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#"));
   else if (buf[q - 1] == '\n') buf[q - 1] = '\0';
   lv_label_set_text(s_discover_feed, buf);
   if (s_discover_status)
     lv_label_set_text_fmt(s_discover_status, TR("%s \xC2\xB7 %d nearby (%d rpt, %d comp)"), s_discover_scanning ? "Scanning\xE2\x80\xA6" : "Paused", (int)m, rpt, comp);
 }
 
+// Sweep interval, backing off. A probe is not one packet: it is our zero-hop
+// broadcast PLUS a reply from every node that hears it, so a fixed 4 s sweep
+// with the page left open put a burst on the whole neighbourhood every four
+// seconds, for as long as it stayed open. Reported from a regional packet
+// monitor as "a ton of Control packets" that could not be attributed to any
+// node (a discovery REQ carries no sender identity, by design).
+//
+// The answer is not simply "slower": the first seconds are when the user is
+// actually looking, so those stay fast and the steady state goes quiet. Same
+// reasoning as the 15 s floor the Lua SDK enforces on wada.mesh.discover(),
+// which this used to undercut by nearly 4x while being the built-in.
+static const uint32_t kDiscSweepMs[]  = { 4000, 4000, 8000, 15000, 30000 };
+static uint8_t        s_disc_sweep_n  = 0;
+
+static uint32_t discoverSweepInterval() {
+  const uint8_t n = sizeof(kDiscSweepMs) / sizeof(kDiscSweepMs[0]);
+  return kDiscSweepMs[s_disc_sweep_n < n ? s_disc_sweep_n : (n - 1)];
+}
+
 static void discoverTimerCb(lv_timer_t* t) {
   (void)t;
   if (!s_discover_root) return;
   const uint32_t now = millis();
-  if (s_discover_scanning && (s_discover_last_scan_ms == 0 || (now - s_discover_last_scan_ms) >= 4000)) {
+  if (s_discover_scanning &&
+      (s_discover_last_scan_ms == 0 || (now - s_discover_last_scan_ms) >= discoverSweepInterval())) {
     if (the_mesh.getRemainingTxBudget() >= 300) {   // airtime gate: keep a duty-cycle cushion
       the_mesh.uiStartDiscoverScan(0);              // 0 = all node types
       s_discover_last_scan_ms = now;
+      if (s_disc_sweep_n < 250) s_disc_sweep_n++;
     }
   }
   discoverBuildFeed();
@@ -22736,7 +22891,10 @@ static void discoverTimerCb(lv_timer_t* t) {
 static void discoverScanToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   s_discover_scanning = !s_discover_scanning;
-  if (s_discover_scanning) s_discover_last_scan_ms = 0;   // resume -> sweep immediately
+  if (s_discover_scanning) {
+    s_discover_last_scan_ms = 0;   // resume -> sweep immediately...
+    s_disc_sweep_n = 0;            // ...and at the fast cadence again
+  }
   if (s_discover_btn_lbl) lv_label_set_text(s_discover_btn_lbl, s_discover_scanning ? "Stop" : "Scan");
   discoverBuildFeed();
 }
@@ -22778,6 +22936,7 @@ static void closeDiscoverPage() {
   s_discover_feed = s_discover_status = s_discover_btn_lbl = s_disc_footer = nullptr;
   s_disc_row_n = 0;
   s_discover_scanning = true;
+  s_disc_sweep_n = 0;   // a fresh look starts fast, then backs off
   if (s_apppage_close == closeDiscoverPage) {
     s_apppage_title = nullptr; s_apppage_close = nullptr;
     statusBarSetTall(false); updateGlobalStatusBar();
@@ -22858,6 +23017,7 @@ static void openDiscoverPage() {
 
   the_mesh.discoverClear();
   s_discover_scanning = true;
+  s_disc_sweep_n = 0;   // a fresh look starts fast, then backs off
   s_discover_last_scan_ms = 0;                // fire the first sweep on the first tick
   discoverBuildFeed();
   s_discover_timer = lv_timer_create(discoverTimerCb, 1000, nullptr);
@@ -23429,21 +23589,6 @@ int consoleHostHistoryAt(const char* thread, int back, char* sender, size_t sc,
 }
 #endif
 
-#if CAP_CONSOLE
-// Console mode is a boot mode like remote mode, so it is toggled the same way:
-// set the pref, then reboot through rebootDevice() so chat history is flushed
-// first rather than lost to the reset.
-static void consoleModeToggleCb(lv_event_t* e) {
-  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  touchPrefsSetConsoleMode(on);
-  if (g_lv.task) {
-    g_lv.task->showAlert(on ? TR("Entering console mode - rebooting...")
-                            : TR("Leaving console mode - rebooting..."), 1600);
-    g_lv.task->rebootDevice();
-  }
-}
-#endif
-
 static void remoteLandscapeCb(lv_event_t* e) {
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetRemoteLandscape(on);
@@ -23636,15 +23781,15 @@ static void openRemotePage() {
 #if CAP_CONSOLE
   // ---- 2b. Console mode (no LVGL at all; reboots) ----
   lv_obj_t* ch = lv_label_create(s_remote_root);
-  lv_label_set_text(ch, TR("Console mode"));
+  lv_label_set_text(ch, TR("Console mode (experimental)"));
   lv_obj_set_style_text_font(ch, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(ch, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_width(ch, cw);
 
   lv_obj_t* cexpl = lv_label_create(s_remote_root);
-  lv_label_set_text(cexpl, TR("Boots into a text console with no graphical interface: type commands, "
-                              "read replies. Frees the memory and processor time the interface uses. "
-                              "Type 'ui' in the console to come back. Toggling reboots the device."));
+  lv_label_set_text(cexpl, TR("EXPERIMENTAL. Boots into a text console with no graphical interface: "
+                              "type commands, read replies. Frees the memory and processor time the "
+                              "interface uses. Type 'ui' in the console to come back. Toggling reboots."));
   lv_obj_set_style_text_font(cexpl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(cexpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_label_set_long_mode(cexpl, LV_LABEL_LONG_WRAP);
@@ -26044,7 +26189,11 @@ fs::FS* luaHostAppFs();                                        // bridges (defin
 void    luaHostAppPath(char* out, size_t cap, const char* rel);
 
 struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; };
-struct LuaInstApp { char id[20]; char name[28]; char ver[12]; };
+// `icon` is the manifest's optional icon NAME (not a glyph): the device's JSON
+// scanner only reads quoted strings, and a name is reviewable in a store
+// submission where a raw private-use codepoint would not be. Mapped to a glyph
+// by luaAppIconGlyph(); empty = the generic app symbol.
+struct LuaInstApp { char id[20]; char name[28]; char ver[12]; char icon[12]; };
 static const int kLuaCatMax = 16, kLuaInstMax = 16, kLangCatMax = LANG_COUNT + 2, kLangInstMax = 12;
 static LuaCatApp* s_lua_cat = nullptr;      // PSRAM, allocated on first store use
 static int        s_lua_cat_n = 0;          // -1 = last fetch failed
@@ -26559,11 +26708,19 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_ota_state = 2;   // success -> the UI poll timer reboots into the new slot
 }
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 // Stream the app-only bin for the active update channel onto the SD card
 // (/BINS/wadamesh-beta_<N>-<stable|beta>.bin) so the Launcher can flash it —
 // the no-A/B-slot counterpart to otaWorkerRun above. Same immutable versioned
 // URL, same worker, but the bytes go to SD instead of the spare OTA slot.
+//
+// This feature is spread over SIX #if regions (state+callbacks, this worker,
+// the tile-worker dispatch below, the About button, the settings-close teardown,
+// and the sdHealthTick bail-out). They are character-for-character identical on
+// purpose. A board admitted to some but not all of them still COMPILES — the
+// worker's only caller sits behind the same gate, so nothing link-errors — and
+// then hangs at "Saving to SD… 0%" with a poll timer writing to a label the
+// teardown never nulled. Change all six or none.
 static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_sdfw_pct = 0;
   if (SD.cardType() == CARD_NONE) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "no SD card"); s_sdfw_state = 3; return; }
@@ -26820,7 +26977,7 @@ static void tileFetchTaskFn(void* arg) {
       otaWorkerRun(client, http);
       continue;
     }
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
     // SD firmware download for Launcher installs (user-initiated from About).
     if (s_sdfw_request) {
       s_sdfw_request = false;
@@ -29278,18 +29435,17 @@ static void mapOptInfoCb(lv_event_t* e) {
   // Attribution header is style-dependent (legal requirement). OpenTopoMap's map
   // style is CC-BY-SA and must be credited; its underlying data is still OSM+SRTM.
   const char* attrib = (s_map_style == 1)
-    ? "Map style \xC2\xA9 OpenTopoMap (CC-BY-SA) \xE2\x80\x94 opentopomap.org\n"
-      "Map data \xC2\xA9 OpenStreetMap contributors (ODbL) + SRTM.\n\n"
-    : "Map data \xC2\xA9 OpenStreetMap contributors.\n"
-      "openstreetmap.org/copyright\n"
-      "Licensed under the Open Database License (ODbL).\n\n";
-  static const size_t CREDITS_SZ = 820;
-  static char* credits = (char*)psAlloc(CREDITS_SZ);   // lazy-PSRAM (frees 820 B internal .bss)
-  if (!credits) return;                                // OOM only: skip the credits text
-  snprintf(credits, CREDITS_SZ, "%s%s", attrib,
+    ? TR("Map style \xC2\xA9 OpenTopoMap (CC-BY-SA) \xE2\x80\x94 opentopomap.org\n"
+         "Map data \xC2\xA9 OpenStreetMap contributors (ODbL) + SRTM.\n\n")
+    : TR("Map data \xC2\xA9 OpenStreetMap contributors.\n"
+         "openstreetmap.org/copyright\n"
+         "Licensed under the Open Database License (ODbL).\n\n");
+  // NOTE: the literal break after \x97 is REQUIRED — "\xC3\x97256" would parse the
+  // trailing 256 as part of the hex escape (all hex digits) and emit one garbage byte.
+  // Kept as ONE translatable block: it is continuous prose, and splitting it per
+  // paragraph would hand translators fragments that only make sense together.
+  const char* body = TR(
     "How tiles work:\n"
-    // NOTE: the literal break after \x97 is REQUIRED — "\xC3\x97256" would parse the
-    // trailing 256 as part of the hex escape (all hex digits) and emit one garbage byte.
     "The map is built from 256\xC3\x97" "256 \"slippy\" tiles. Only the tiles for the "
     "area you're viewing are fetched \xE2\x80\x94 there is no bulk pre-download.\n\n"
     "Because this device can't do HTTPS (not enough heap after Wi-Fi starts) "
@@ -29299,6 +29455,12 @@ static void mapOptInfoCb(lv_event_t* e) {
     "each tile to its own flash, so a tile is only downloaded once.\n\n"
     "Use Options \xE2\x86\x92 Reload tiles to re-download the tiles currently in "
     "view if one looks corrupted.");
+  // Sized for the longest translation, not for English: Hungarian runs ~1.5x and
+  // the Cyrillic/Greek files are two bytes per letter in UTF-8.
+  static const size_t CREDITS_SZ = 2048;
+  static char* credits = (char*)psAlloc(CREDITS_SZ);   // lazy-PSRAM (nothing in .bss)
+  if (!credits) return;                                // OOM only: skip the credits text
+  snprintf(credits, CREDITS_SZ, "%s%s", attrib, body);
   lv_label_set_text(lbl, credits);
 }
 
@@ -31558,7 +31720,7 @@ static void settingsCatBuild(int cat) {
           lv_obj_set_width(s_sdfw_status_lbl, lblw);
           lv_obj_set_style_text_font(s_sdfw_status_lbl, &g_font_12, LV_PART_MAIN);
           lv_obj_set_style_text_color(s_sdfw_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-          lv_label_set_text(s_sdfw_status_lbl, TR("For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder)."));
+          lv_label_set_text(s_sdfw_status_lbl, SDFW_HINT_TEXT);
         }
 #endif
       }
@@ -31573,8 +31735,8 @@ static void settingsCatBuild(int cat) {
         lv_obj_set_style_bg_color(crash_btn, lv_color_hex(0x8A3B2E), LV_PART_MAIN);  // warning red-brown
         lv_obj_add_event_cb(crash_btn, crashDumpExportCb, LV_EVENT_CLICKED, nullptr);
         lv_obj_t* cbl = lv_label_create(crash_btn);
-        char ct[56];
-        snprintf(ct, sizeof ct, LV_SYMBOL_WARNING "  Export crash report (%uK)",
+        char ct[96];   // room for a translated label
+        snprintf(ct, sizeof ct, TR(LV_SYMBOL_WARNING "  Export crash report (%uK)"),
                  (unsigned)(s_crash_dump_size / 1024));
         lv_label_set_text(cbl, ct);
         lv_obj_set_style_text_font(cbl, &g_font_14, LV_PART_MAIN);
@@ -31616,7 +31778,7 @@ static void closeSettingsCategory() {
   hideKb();
   if (s_settings_open_cat == CAT_ABOUT) {   // null the live-label ptrs (freed with the sheet)
     s_sysinfo_lbl = nullptr; s_sysinfo_rest_lbl = nullptr; s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
-#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
     s_sdfw_status_lbl = nullptr;
 #endif
     s_ota_btn = nullptr; s_ota_btn_lbl = nullptr;
@@ -32478,8 +32640,22 @@ static void openMessageInfoPopup(int msg_idx) {
       // changing (#259). Report what was actually determined: whether it verified
       // against our own region key. The hex stays, in parentheses, for anyone
       // cross-checking a capture.
+      // #271: when the code verified against one of the registered regions we can
+      // name it outright. Fall back to the older my-region / another-region
+      // answer when nothing matched, which is still all we can honestly say.
       char region[40];
-      if (m.meta_flags & UITask::MSG_META_SCOPE_HOME) {
+      const uint8_t rslot = UITask::metaScopeSlot(m.meta_flags);
+      const char* rname = (rslot && rslot != REGION_SLOT_AMBIGUOUS)
+                            ? the_mesh.regionRegistry().nameForSlot(rslot) : nullptr;
+      if (rslot == REGION_SLOT_AMBIGUOUS) {
+        // Several registered regions produced this same 16-bit code. Naming any
+        // one of them would be a guess, and a confident wrong region reads worse
+        // than an honest "cannot tell". The tag is only 16 bits, so with N keys
+        // live a collision runs at about N/65534 per packet.
+        snprintf(region, sizeof region, "%s", TR("ambiguous (several regions matched)"));
+      } else if (rname) {
+        snprintf(region, sizeof region, "%s", rname);
+      } else if (m.meta_flags & UITask::MSG_META_SCOPE_HOME) {
         char home[24] = {0};
         touchPrefsGetRegionScope(home, sizeof home);
         snprintf(region, sizeof region, "%s", home[0] ? home : TR("my region"));
@@ -39095,7 +39271,12 @@ static void powerRebootCb(lv_event_t* e) {
   g_lv.task->showAlert(TR("Rebooting\xE2\x80\xA6"), 600);
   g_lv.task->rebootDevice();   // flushes chat history, then reboots
 }
-#if !defined(HAS_THINKNODE_M9)   // M9 has no Power-off row (no wake-capable button — see openPowerMenu)
+// Gated on PIN_USER_BTN, which is exactly what arms the deep-sleep wake below.
+// A power-off nobody can undo is not a power-off, it is a brick until the user
+// finds the hardware switch — and that is what the T-Display P4 did: no wake
+// source armed at all, under a toast promising a trackball it does not have
+// (#310). Boards without the symbol get no Power-off row (see openPowerMenu).
+#if defined(PIN_USER_BTN)
 static void powerOffCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
@@ -39108,10 +39289,12 @@ static void powerOffCb(lv_event_t* e) {
     the_mesh.flushContactsIfDirty();       // and any coalesced contacts refresh
     the_mesh.persistSyncHistoryNow();      // and the app-sync replay ring (RAM is lost in deep sleep)
     touchPrefsFlush();                     // and all queued A/B preference snapshots
-#if defined(HELTEC_LORA_V4_R8)
-    g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
-#else
+    // Name the control this board actually has. "Click trackball" was shown on
+    // every board that reached here, trackball or not.
+#if defined(HAS_TDECK_GT911)
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 click trackball to wake"), 1500);
+#else
+    g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
 #endif
   }
   // Let the toast paint, then enter deep sleep.
@@ -39153,7 +39336,7 @@ static void powerOffCb(lv_event_t* e) {
   esp_deep_sleep_start();   // never returns; a press wakes via full reboot
 #endif
 }
-#endif  // !HAS_THINKNODE_M9 (powerOffCb)
+#endif  // PIN_USER_BTN (powerOffCb)
 
 #if defined(ESP32)
 #if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
@@ -39254,11 +39437,12 @@ static void openPowerMenu() {
     lv_obj_center(l);
     return b;
   };
-#if defined(HAS_THINKNODE_M9)
-  // No "Power off" here: deep sleep would arm ext0 wake on a user button this
-  // board doesn't have (only a power-cut slider and reset, neither a wakeable
-  // GPIO) — an off state recoverable only by cycling the slider. The slider IS
-  // the power-off. Remaining rows shift up one slot.
+#if !defined(PIN_USER_BTN)
+  // No "Power off" here: nothing on this board can wake it from deep sleep.
+  // The M9 has a power-cut slider and reset, neither a wakeable GPIO; the
+  // T-Display P4 and Tanmatsu have no user button either. On those the physical
+  // switch IS the power-off, and offering a software one that cannot be undone
+  // reads as a freeze (#310). Remaining rows shift up one slot.
   const int p_y = p_y0;
 #else
   mk(TR(LV_SYMBOL_POWER "  Power off"),        powerOffCb,      0xC44B55, p_y0);
@@ -39972,6 +40156,7 @@ static void luaStoreScanInstalledFs(bool force) {
         if (luaJsonField(buf, "id", a.id, sizeof a.id) &&
             luaJsonField(buf, "name", a.name, sizeof a.name)) {
           if (!luaJsonField(buf, "ver", a.ver, sizeof a.ver)) a.ver[0] = 0;
+          if (!luaJsonField(buf, "icon", a.icon, sizeof a.icon)) a.icon[0] = 0;
           s_lua_inst_n++;
         }
       } else if (pass == 1 && ln > 4 && strcmp(leaf + ln - 4, ".lua") == 0) {
@@ -39984,6 +40169,7 @@ static void luaStoreScanInstalledFs(bool force) {
           snprintf(a.id, sizeof a.id, "%s", id);
           snprintf(a.name, sizeof a.name, "%s", id);
           snprintf(a.ver, sizeof a.ver, "dev");
+          a.icon[0] = 0;
           s_lua_inst_n++;
         }
       }
@@ -41647,6 +41833,35 @@ static void appDrawerSettingsCb(lv_event_t* e) {
   openAppGridSheet();
 }
 
+// Manifest icon name -> glyph for a Lua app's drawer tile. Names only, and only
+// glyphs the UI fonts already carry: a submission cannot ship its own artwork,
+// so an unknown or absent name falls back to the generic app symbol rather than
+// drawing a missing-glyph box. LUA_APPS.md promised manifests an "icon" field
+// from the start; this is it.
+static const char* luaAppIconGlyph(const char* name) {
+  if (!name || !name[0]) return LV_SYMBOL_PLAY;
+  static const struct { const char* name; const char* glyph; } kMap[] = {
+    { "gps",      LV_SYMBOL_GPS },        // location pin — compass / navigation apps
+    { "compass",  LV_SYMBOL_GPS },
+    { "map",      LV_SYMBOL_GPS },
+    { "radio",    TOUCH_SYM_ANTENNA },
+    { "signal",   LV_SYMBOL_WIFI },
+    { "chart",    LV_SYMBOL_IMAGE },
+    { "list",     LV_SYMBOL_LIST },
+    { "message",  LV_SYMBOL_ENVELOPE },
+    { "person",   TOUCH_SYM_PERSON },
+    { "group",    TOUCH_SYM_GROUP },
+    { "bell",     TOUCH_SYM_BELL },
+    { "star",     TOUCH_SYM_STAR },
+    { "search",   TOUCH_SYM_ZOOM },
+    { "settings", LV_SYMBOL_SETTINGS },
+    { "battery",  LV_SYMBOL_CHARGE },
+    { "game",     LV_SYMBOL_PLAY },
+  };
+  for (const auto& e : kMap) if (strcmp(e.name, name) == 0) return e.glyph;
+  return LV_SYMBOL_PLAY;
+}
+
 static void openAppDrawer() {
   closeAppDrawer();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -41768,7 +41983,7 @@ static void openAppDrawer() {
     const int oi = s_draw_order[i];
     if (oi < 0) {   // installed Lua app (dynamic)
       const LuaInstApp& a = s_lua_inst[-oi - 1];
-      addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, LV_SYMBOL_PLAY, a.name,
+      addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, luaAppIconGlyph(a.icon), a.name,
                  APPACT_LUA_BASE + (-oi - 1), 0, 0x15B6A6, big_grid);
       continue;
     }
@@ -44325,6 +44540,11 @@ static void chanScopeSaveCb(lv_event_t* e) {
     const char* t = lv_textarea_get_text(s_chanscope_ta);
 #if defined(ESP32)
     touchPrefsSetChannelScope(s_chanscope_slot, t ? t : "");
+    // #271: register it now rather than at next boot, so messages arriving in
+    // this region are named from the next packet on. Idempotent; the old region
+    // keeps its slot, since a slot outlives the config that introduced it (old
+    // messages must keep resolving to the region they actually arrived under).
+    if (t && t[0]) the_mesh.regionRegistry().ensureRegion(t);
 #endif
   }
   chanScopeClose();
@@ -44385,6 +44605,153 @@ static void blockedUnblockNameCb(lv_event_t* e) {
   }
   openBlockedUsersModal();   // rebuild the list
 }
+// ---- Known regions manager (#271) -------------------------------------------
+// The list that makes scope naming possible. A region's key is derived from its
+// NAME (SHA256("#tag")), so holding the name is enough to recompute an incoming
+// packet's transport code and recognise it. That is why adding a region here
+// names its traffic even though we do not participate in it.
+//
+// Adding is the whole point of the feature; removing is deliberately "retire":
+// the slot and name are kept so messages already received under that region keep
+// resolving, it just stops being matched from now on. See RegionRegistry.
+static lv_obj_t* s_regions_modal = nullptr;
+static lv_obj_t* s_regions_ta    = nullptr;
+static void openRegionsModal();   // fwd: the add/remove callbacks rebuild the page
+
+static void regionsModalClose() {
+  if (s_regions_modal) { hideKb(); popupClose(&s_regions_modal); }
+  s_regions_ta = nullptr;
+  if (s_apppage_close == regionsModalClose) {
+    s_apppage_title = nullptr; s_apppage_close = nullptr;
+    statusBarSetTall(false); updateGlobalStatusBar();
+  }
+}
+static void regionsAddCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!s_regions_ta) return;
+  const char* t = lv_textarea_get_text(s_regions_ta);
+  if (!t || !t[0]) { if (g_lv.task) g_lv.task->showAlert(TR("Enter a region name"), 1400); return; }
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  if (reg.ensureRegion(t) == REGION_SLOT_NONE) {
+    // Two different failures, and the user can only act on one of them: the list
+    // being full, or the name canonicalising away to nothing (blank, or a bare
+    // "#"). Say which rather than silently not adding a row.
+    if (g_lv.task) g_lv.task->showAlert(reg.isFull() ? TR("Region list is full")
+                                                     : TR("Enter a region name"), 2000);
+    return;
+  }
+  openRegionsModal();   // rebuild (closes first)
+}
+static void regionsRemoveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const uint8_t slot = (uint8_t)(intptr_t)lv_event_get_user_data(e);
+  the_mesh.regionRegistry().retire(slot);
+  openRegionsModal();   // rebuild
+}
+
+static void openRegionsModal() {
+  regionsModalClose();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+
+  // Go tall BEFORE measuring, and measure with statusBarCurH() rather than
+  // chatBarH(). They disagree on the Pager: chatBarH() is one row there (that
+  // board keeps back/cog/title on a single line), but statusBarSetTall() still
+  // doubles the bar to STATUSBAR_H * 2. Laying out against chatBarH() therefore
+  // put the page origin a whole row UNDER the bar and the top control was clipped
+  // by it. statusBarCurH() is the height the bar actually has once tall, so the
+  // content clears it on every board and this stays identical elsewhere.
+  s_apppage_title = "Known regions";
+  s_apppage_close = regionsModalClose;
+  statusBarSetTall(true);
+  const lv_coord_t top = statusBarCurH();
+
+  s_regions_modal = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_regions_modal);
+  lv_obj_set_size(s_regions_modal, sw, sh - top);
+  lv_obj_set_pos(s_regions_modal, 0, top);
+  lv_obj_set_style_bg_color(s_regions_modal, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_regions_modal, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_regions_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+  updateGlobalStatusBar();
+  lv_obj_move_foreground(s_regions_modal);
+  if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
+
+  const lv_coord_t pad = SC(6);
+  lv_coord_t y = SC(6);
+
+  // Add row: field + button on one line, so the common action is reachable
+  // without scrolling on the short panels too.
+  const lv_coord_t btn_w = SC(64);
+  s_regions_ta = lv_textarea_create(s_regions_modal);
+  lv_textarea_set_one_line(s_regions_ta, true);
+  lv_textarea_set_max_length(s_regions_ta, TOUCH_REGION_SCOPE_MAXLEN - 1);
+  lv_obj_set_size(s_regions_ta, sw - pad * 3 - btn_w, SC(32));
+  lv_obj_set_pos(s_regions_ta, pad, y);
+  taSetPlaceholder(s_regions_ta, TR("#region"));
+  attachSettingsTaEvents(s_regions_ta);
+
+  lv_obj_t* add = lv_btn_create(s_regions_modal);
+  lv_obj_set_size(add, btn_w, SC(32));
+  lv_obj_set_pos(add, sw - pad - btn_w, y);
+  styleButton(add);
+  lv_obj_add_event_cb(add, regionsAddCb, LV_EVENT_CLICKED, nullptr);
+  { lv_obj_t* l = lv_label_create(add); lv_label_set_text(l, TR("Add"));
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l); }
+  y += SC(38);
+
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  if (reg.count() <= 0) {
+    lv_obj_t* empty = lv_label_create(s_regions_modal);
+    lv_label_set_text(empty, TR("No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details."));
+    lv_label_set_long_mode(empty, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(empty, sw - pad * 2);
+    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(empty, pad, y);
+    return;
+  }
+
+  lv_obj_t* list = lv_obj_create(s_regions_modal);
+  lv_obj_remove_style_all(list);
+  lv_obj_set_size(list, sw - pad * 2, sh - top - y - SC(6));
+  lv_obj_set_pos(list, pad, y);
+  lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(list, SC(5), LV_PART_MAIN);
+  lv_obj_set_scroll_dir(list, LV_DIR_VER);
+
+  for (uint8_t slot = 1; slot <= REGION_SLOT_MAX; ++slot) {
+    if (!reg.isActive(slot)) continue;
+    const char* nm = reg.nameForSlot(slot);
+    if (!nm || !nm[0]) continue;
+
+    lv_obj_t* row = lv_obj_create(list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, sw - pad * 2 - SC(4), SC(36));
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(row, 6, LV_PART_MAIN);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* lbl = lv_label_create(row);
+    lv_label_set_text(lbl, nm);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(lbl, sw - pad * 2 - SC(4) - SC(84));
+    lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, SC(6), 0);
+
+    lv_obj_t* rm = lv_btn_create(row);
+    lv_obj_set_size(rm, SC(72), SC(28));
+    lv_obj_align(rm, LV_ALIGN_RIGHT_MID, -SC(5), 0);
+    styleButton(rm);
+    lv_obj_add_event_cb(rm, regionsRemoveCb, LV_EVENT_CLICKED, (void*)(intptr_t)slot);
+    { lv_obj_t* l = lv_label_create(rm); lv_label_set_text(l, TR("Remove"));
+      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l); }
+  }
+}
+
 static void openBlockedUsersModal() {
   blockedModalClose();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -46797,6 +47164,30 @@ static bool uiDataFsReady() {
 #if CAP_LUA_APPS
 // ---- Lua app host bridges (LuaAppHost.cpp externs) ----
 // The host lives in its own TU; these three shims are its only view of UITask.
+// A Lua app's timer keeps firing while the screen is off — lv_timer_handler runs
+// unconditionally — so an app polling a sensor at 10 Hz went on doing it into a
+// dark screen. Nothing it draws can be seen, so the host skips the tick; the app
+// resumes on wake and sees the gap through sys.millis() like any other pause.
+static bool s_lua_keep_awake = false;
+// wada.sys.keep_awake(true): an app that is MEASURING rather than displaying —
+// a calibration sweep, a timed capture — must keep running and must not have
+// the screen blank underneath it. Pausing app ticks with the screen (below)
+// truncated exactly such a sweep: the M9's default screen timeout is 20 s and
+// GPS Compass calibrates for 20 s, so collection stopped at the same instant
+// the countdown was supposed to end. This keeps BOTH alive, and is cleared
+// when the app closes so it cannot leak into the next one.
+void luaHostKeepAwake(bool on) {
+  s_lua_keep_awake = on;
+  if (on && g_lv.task) g_lv.task->noteUserInput();   // push the idle timer out now
+}
+bool luaHostScreenOn() {
+  if (s_lua_keep_awake) {
+    if (g_lv.task) g_lv.task->noteUserInput();       // and keep pushing it, tick by tick
+    return true;
+  }
+  return g_lv.task ? !g_lv.task->isScreenOff() : true;
+}
+
 const lv_font_t* luaHostFontForSize(int size_class) {
   return size_class <= 12 ? &g_font_12 : size_class <= 14 ? &g_font_14 : &g_font_16;
 }
@@ -46818,6 +47209,26 @@ fs::FS* luaHostAppFs() { return uiDataFsReady() ? s_ui_data_fs : nullptr; }
 void luaHostAppPath(char* out, size_t cap, const char* rel) {
   snprintf(out, cap, "%s%s", s_ui_data_root, rel);   // SD-rooted stores prefix /meshcomod
 }
+#if CAP_LUA_SD_LIST
+// Return the physical removable card, never the app-data filesystem. Mounting
+// stays in UITask so Lua cannot bypass shared-bus coordination or create a
+// second SD lifecycle. The existing backoff keeps repeated no-card calls cheap.
+fs::FS* luaHostSdFs(bool* busy) {
+  if (busy) *busy = false;
+  if (s_sd_fail_note_ms) return nullptr;
+  if (!s_sd_mounted && !sdAdoptLiveMount()) {
+    if (sdRuntimeLifecycleBusy()) {
+      if (busy) *busy = true;
+      return nullptr;
+    }
+    if (!fmSdTryMount()) return nullptr;
+  }
+  if (!s_sd_mounted) return nullptr;
+  markSdIo();
+  return &SD;
+}
+bool luaHostSdReadFailed() { return sdReadFailedCardDead(); }
+#endif
 // ---- wada.mesh read-only bridges (no mesh types cross into the host TU) ----
 // Hex-encode the first n bytes of a public key. 4 bytes (8 hex chars) is what the
 // rest of the UI uses to name a node, and it is what an app needs to line up a
@@ -46844,7 +47255,13 @@ int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* 
   *lon = ci.gps_lon / 1.0e6;
   if (lat_e6) *lat_e6 = ci.gps_lat;   // stored as micro-degrees already
   if (lon_e6) *lon_e6 = ci.gps_lon;
-  uint32_t now = the_mesh.getRTCClock() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
+  // One clock read per contacts() walk, not one per contact: on boards whose
+  // clock is an I2C RTC (the M9's PCF8563 on Wire) getCurrentTime() is a bus
+  // transaction, and an app listing 100 contacts would otherwise stall the UI
+  // loop for ~100 ms each call. meshContacts() always walks from idx 0.
+  static uint32_t s_walk_now = 0;
+  if (idx == 0) s_walk_now = the_mesh.getRTCClock() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
+  const uint32_t now = s_walk_now;
   *secs_ago = (ci.last_advert_timestamp && now > ci.last_advert_timestamp)
                   ? now - ci.last_advert_timestamp : 0;
   return 1;
@@ -47135,15 +47552,30 @@ void luaHostBattery(uint16_t* mv, int* pct, bool* charging) {
 }
 // wada.sys.gps(). False when there is no fix -- the caller then gets nil rather
 // than the last known position, which wada.mesh.self() already provides. An app
-// plotting a track needs to tell a live fix from a stale one.
-// Altitude is included because height dominates LoRa range: two samples a metre
-// apart on the map can be a hilltop and a hollow, and a coverage survey that
-// records only lat/lon cannot tell them apart afterwards. `time` is satellite
-// time (0 until the receiver has decoded the date), which is the only clock a
+// plotting a track needs to tell a live fix from a stale one. Also false while
+// the user has GPS switched off (same gate updateGpsLocation() applies), so a
+// last sentence parsed before the toggle cannot masquerade as a live fix.
+// Altitude (getGpsAltitude(), metres, the accessor the Device page uses) is
+// included because height dominates LoRa range: two samples a metre apart on
+// the map can be a hilltop and a hollow, and a coverage survey that records
+// only lat/lon cannot tell them apart afterwards. `time` is satellite time
+// (0 until the receiver has decoded the date), which is the only clock a
 // logger can trust before the device has been near a network.
+// Speed/course exist only where the board's target.cpp provides wadaGpsMotion()
+// on top of WadaNmeaLocationProvider (HAS_GPS_MOTION); the core provider keeps
+// its RMC fields private, so other boards report NAN and the binding omits the
+// fields.
+#if defined(HAS_GPS_MOTION)
+extern bool wadaGpsMotion(float* speed_kmh, float* course_deg);
+#endif
 bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, uint32_t* fix_time,
-                int32_t* lat_e6, int32_t* lon_e6) {
-  if (!g_lv.task || !g_lv.task->getGpsFix()) return false;
+                int32_t* lat_e6, int32_t* lon_e6, float* speed_kmh, float* course_deg) {
+  // Pre-set the motion fields BEFORE the fix gate: a caller that bails on a
+  // false return still reads defined values, and boards without HAS_GPS_MOTION
+  // report NAN so the binding can omit the fields rather than publish a 0.
+  if (speed_kmh)  *speed_kmh  = NAN;
+  if (course_deg) *course_deg = NAN;
+  if (!g_lv.task || !g_lv.task->getGPSState() || !g_lv.task->getGpsFix()) return false;
   const double la = g_lv.task->getNodeLat(), lo = g_lv.task->getNodeLon();
   if (lat)  *lat  = la;
   if (lon)  *lon  = lo;
@@ -47156,9 +47588,48 @@ bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, uint32_t* fix_t
   // (180e6 is well inside its range). A track logger should write these.
   if (lat_e6) *lat_e6 = (int32_t)llround(la * 1.0e6);
   if (lon_e6) *lon_e6 = (int32_t)llround(lo * 1.0e6);
+#if defined(HAS_GPS_MOTION)
+  {
+    float spd = NAN, crs = NAN;
+    if (wadaGpsMotion(&spd, &crs)) {
+      if (speed_kmh)  *speed_kmh  = spd;
+      if (course_deg) *course_deg = crs;
+    }
+  }
+#endif
   return true;
 }
 #endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
+
+#if CAP_COMPASS
+// wada.sys.compass(). Raw field vector from the board's magnetometer; the only
+// one wired so far is the M9's QMC6309 (variants/thinknode_m9/M9Compass.*).
+// Runs on the UI thread like every other luaHost* bridge; the driver's I2C
+// reads are short and the bus (Wire) has no other task on it.
+#if CAP_IMU
+// wada.sys.accel(). Acceleration in g, sensor frame, as the chip reports it —
+// the mapping to the device's own axes is the consumer's, for the same reason
+// as the magnetometer: it is not documented for this board and had to be
+// measured.
+bool luaHostAccel(float* x, float* y, float* z) {
+#if defined(HAS_M9_IMU)
+  return m9ImuRead(x, y, z);
+#else
+  (void)x; (void)y; (void)z;
+  return false;
+#endif
+}
+#endif  // CAP_IMU
+
+bool luaHostCompass(float* x, float* y, float* z, bool* overflow) {
+#if defined(HAS_M9_COMPASS)
+  return m9CompassRead(x, y, z, overflow);
+#else
+  (void)x; (void)y; (void)z; (void)overflow;
+  return false;
+#endif
+}
+#endif  // CAP_COMPASS
 
 #if CAP_LUA_SDK_EXT || CAP_CONSOLE   // console mode needs it on the V4 too
 // ---- Settings -> App permissions -------------------------------------------
@@ -49581,6 +50052,16 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     consoleWriteLine("");
     Serial.println("[BOOT] console: text ok"); Serial.flush();
     the_mesh.setTerminalSink(&consoleWriteLine);
+    // Screen-timeout state. Set further down begin() for the graphical path,
+    // which console mode returns before, so without this _screen_timeout_ms
+    // stayed at its constructor value and the panel never slept: the console
+    // stayed lit indefinitely. Same pref the UI reads.
+    touchPrefsBegin();
+    _screen_timeout_ms = (uint32_t)touchPrefsGetScreenTimeoutSecs() * 1000u;
+    _last_input_ms     = millis();
+    _screen_off        = false;
+    Serial.printf("[BOOT] console: screen timeout %lus\n",
+                  (unsigned long)(_screen_timeout_ms / 1000u));
     Serial.println("[BOOT] console: sink set"); Serial.flush();
     return;
   }
@@ -49594,6 +50075,27 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // configured ~91% duty). Exact-preset matches with the old value get the correct
   // factor rewritten + persisted; see healPresetAirtimeFactor for the guard.
   healPresetAirtimeFactor();
+
+  // #271: seed the region registry with the default and per-channel scopes held
+  // in touch prefs. MyMesh::begin() seeds the companion-configured default from
+  // NodePrefs; the touch UI stores its display name separately, so it must be
+  // included here as well. ensureRegion() canonicalises and de-duplicates, so
+  // channels sharing a region collapse to one slot and re-running each boot is a
+  // no-op. Registering a region is what lets an incoming message be NAMED as
+  // being from it. A channel scoped to "#denmark" means we hold that key, so
+  // every "#denmark" message becomes identifiable, not just this channel's.
+  {
+    char rgn[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    if (touchPrefsGetRegionScope(rgn, sizeof rgn) > 0 && rgn[0])
+      the_mesh.regionRegistry().ensureRegion(rgn);
+  }
+#ifdef MAX_GROUP_CHANNELS
+  for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+    char rgn[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    if (touchPrefsGetChannelScope(i, rgn, sizeof rgn) > 0 && rgn[0])
+      the_mesh.regionRegistry().ensureRegion(rgn);
+  }
+#endif
 
   // #207 auto-retry: apply the persisted Radio & Mesh toggle (default ON).
   the_mesh.setCompanionRetryEnabled(touchPrefsGetRetryEcho());
@@ -51617,8 +52119,12 @@ void UITask::rebootDevice() {
     char why[64]; chatSaveFailText(why, sizeof why);
     char msg[128];
     snprintf(msg, sizeof msg, "%s\n%s", TR("Chat history save FAILED"), why);
-    showAlert(msg, 1800);
+    showAlert(msg, 1800);          // console-aware: prints instead when there is no LVGL
+#if CAP_CONSOLE
+    if (!s_console_mode) lv_refr_now(NULL);
+#else
     lv_refr_now(NULL);
+#endif
     delay(1500);   // let the warning actually paint before the reset
   }
   discoveredFlushNow();   // persist the Discovered ring before we go down
@@ -51627,6 +52133,27 @@ void UITask::rebootDevice() {
   touchPrefsFlush();       // finish queued A/B snapshots before reset
   if (_board) _board->reboot();
 }
+
+#if CAP_CONSOLE && defined(ESP32)
+// The console's way back to the graphical UI (the `ui` / `exit` command).
+//
+// It must go through rebootDevice(), not ESP.restart(), and the reason is not
+// obvious: touchPrefsSetConsoleMode() only QUEUES an A/B snapshot. SdNvsPrefs
+// deliberately keeps filesystem I/O off the calling thread, and
+// touchPrefsFlush() -- which rebootDevice() calls last -- is what forces the
+// queued write out. Restarting directly discarded it, so the pref still said
+// "console" on the next boot and `ui` looked like it did nothing.
+//
+// Going through rebootDevice() also means the console exits on the same terms
+// as everything else: chat history, the Discovered ring and the sync replay
+// ring are all persisted first.
+void consoleHostRebootToUi() {
+  touchPrefsSetConsoleMode(false);
+  if (g_lv.task) { g_lv.task->rebootDevice(); return; }
+  touchPrefsFlush();   // no UITask (should not happen): at least do not lose the pref
+  ESP.restart();
+}
+#endif
 
 void UITask::msgRead(int msgcount) { _msgcount = msgcount; }
 
@@ -51750,6 +52277,10 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       meta_flags |= MSG_META_HAS_SCOPE;
       // Verified at RX (the check needs the packet); the popup only reads the bit.
       if (the_mesh.lastRxScopeIsHome()) meta_flags |= MSG_META_SCOPE_HOME;
+      // Which registered region it verified against (#271), also decided at RX
+      // for the same reason: the packet is gone by the time the popup opens, so
+      // the answer has to be captured here and persisted with the message.
+      meta_flags = metaWithScopeSlot(meta_flags, the_mesh.lastRxScopeSlot());
     }
   }
   const int msg_slot = _ui_msg_head;   // appendMessage writes _ui_msgs[head], then advances head
@@ -51795,10 +52326,23 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // message is stored and still counts as unread. Watching it scroll past is not
   // reading it; opening the thread is.
   if (s_console_mode && touchPrefsGetConsoleMonitor()) {
-    char line[200];
-    if (channel) snprintf(line, sizeof line, "#%s %s: %s", thread, sender, body);
-    else         snprintf(line, sizeof line, "%s: %s", sender, body);
-    consoleWriteLine(line);
+    char line[220];
+    // Three colours, because the three parts answer different questions:
+    // WHERE it arrived (channel, cyan), WHO said it (sender, yellow) and WHAT
+    // they said (grey). A DM has no channel, so its sender takes the magenta
+    // slot instead and stands out in a busy feed.
+    int n1 = 0, n2 = 0;
+    if (channel) {
+      n1 = snprintf(line, sizeof line, "#%s ", thread);
+      if (n1 < 0) n1 = 0;
+      n2 = snprintf(line + n1, sizeof line - n1, "%s: ", sender);
+      if (n2 < 0) n2 = 0;
+    } else {
+      n2 = snprintf(line, sizeof line, "%s: ", sender);
+      if (n2 < 0) n2 = 0;
+    }
+    snprintf(line + n1 + n2, sizeof line - n1 - n2, "%s", body ? body : "");
+    consoleWriteLineSeg(CC_CHAN, n1, channel ? CC_SENDER : CC_DM, n2, line);
   }
 #endif
 #if defined(HAS_TOUCH_UI)
@@ -52185,8 +52729,8 @@ static void sdHealthTick() {
     return;
   }
 #endif
-#if (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
-  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS
 #endif
   // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
   // also on a slow 30 s background cadence — a card yanked while nothing is
@@ -52278,14 +52822,64 @@ void UITask::loop() {
     // The physical-keyboard drain lives further down this function, below this
     // return, so console mode has to do its own. Same ring, filled by the task
     // started above.
+    bool con_activity = false;
 #if defined(HAS_TDECK_KEYBOARD)
     for (int kbi = 0; kbi < 12; ++kbi) {
       int key = tdeckKeyboardReadKey();
       if (key <= 0) break;
+      con_activity = true;
+      s_kb_last_key_ms = now;
+      // A key pressed on a dark screen WAKES rather than types, the same as a
+      // touch does in the UI. Otherwise the character you used to see the screen
+      // ends up in the command you are typing.
+      if (_screen_off) { wakeScreen(); continue; }
       consoleKey(key);
     }
 #endif
-    consoleLoop();
+#if CAP_TOUCH
+    { uint16_t _tx, _ty; if (heltecV4CapTouchGetLive(&_tx, &_ty)) { con_activity = true; } }
+#endif
+#if defined(HAS_TDECK_TRACKBALL)
+    // Trackball scrolls the scrollback. Roll up for history, down for live.
+    // Accumulated because the ball reports many small deltas per physical flick;
+    // one line per detent would race past everything.
+    {
+      int tdx = 0, tdy = 0;
+      if (tdeckTrackballReadMotion(&tdx, &tdy) && tdy != 0) {
+        static int tb_accum = 0;
+        tb_accum += tdy;
+        while (tb_accum <= -2) { consoleScroll(+1); tb_accum += 2; }   // up = back
+        while (tb_accum >=  2) { consoleScroll(-1); tb_accum -= 2; }   // down = live
+        con_activity = true;
+        if (_screen_off) wakeScreen();
+      }
+    }
+#endif
+    if (con_activity) _last_input_ms = now;
+
+    // Screen timeout. The graphical path does this far below, so without it a
+    // console stayed lit forever: battery drain, and burn-in on the panels that
+    // suffer from it. Same pref, same helpers.
+    if (!_screen_off && _screen_timeout_ms > 0 &&
+        (uint32_t)(now - _last_input_ms) >= _screen_timeout_ms) {
+      touchScreenBacklight(false);
+      setCpuForScreen(false);       // idle -> 80 MHz, as the UI does
+      _screen_off = true;
+    }
+
+#if defined(HAS_TDECK_KEYBOARD)
+    // Keyboard backlight: off / on / auto, and dark whenever the screen is.
+    {
+      uint8_t kb_bl = 0;
+      if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();
+      else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = tdeckKbBlLevel();
+      if (_screen_off) kb_bl = 0;
+      tdeckKeyboardSetBacklight(kb_bl);
+    }
+#endif
+
+    // Nothing to draw while the panel is dark; skip the render entirely.
+    if (!_screen_off) consoleLoop();
     return;                      // the graphical loop is never entered
   }
 #endif
@@ -52419,7 +53013,8 @@ void UITask::loop() {
   uiCp("ui:disc");
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
   uiCp("ui:gps");
-  updateGpsLocation(now);   // sync + persist node location from GPS once fixed
+  updateGpsLocation(now);
+  uiCp("ui:timers");   // GPS sync/persist is its own bucket: it can write prefs   // sync + persist node location from GPS once fixed
   ++s_live_diag_loops;
   if (_alert_expiry != 0 && now >= _alert_expiry) {
     _alert[0]     = '\0';
@@ -52793,6 +53388,7 @@ void UITask::loop() {
   }
 #endif
 
+  uiCp("ui:threads");
   if (now >= _next_mesh_thread_refresh) {
     /* Pick up contact / channel additions that came in from the companion
      * serial client (CMD_SET_CHANNEL etc.). 4 s is the backstop — the app
@@ -52833,6 +53429,7 @@ void UITask::loop() {
     _next_refresh = now + UI_REFRESH_MS;
   }
 #if CAP_TRACKBALL
+  uiCp("ui:input");
   updateTrackball(now);
 #elif defined(HAS_PAGER_ENCODER)
   updatePagerEncoder(now);
@@ -52972,6 +53569,12 @@ void UITask::loop() {
   // the current tree before draining (cheap: sig-compare early-out).
   if (s_kbd_nav || s_tb_nav) navMaybeRebuild();
   m9KeyboardPoll();
+#if defined(HAS_M9_COMPASS)
+  m9CompassIdleTick();   // park the magnetometer when no app is reading it
+#endif
+#if defined(HAS_M9_IMU)
+  m9ImuIdleTick();       // and the accelerometer
+#endif
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = m9KeyboardReadKey();
     if (key <= 0) break;
@@ -53109,6 +53712,7 @@ void UITask::loop() {
   // hits the CH32 over I2C when the value actually changes.
   tanKbBacklightTick(_screen_off || _manual_lock);
 #endif
+  uiCp("ui:diag");
   refreshLiveDiag(now);
   // Keep the signal fresh with a "discover" probe: send a ZERO-HOP advert whenever
   // we have no recent DIRECT signal. Zero-hop = neighbours only, never re-broadcast,
