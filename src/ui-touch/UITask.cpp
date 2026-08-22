@@ -49157,10 +49157,42 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
 // ============================================================
 // UITask::begin
 // ============================================================
+#if CAP_CONSOLE
+#include "ConsoleUI.h"
+// Console mode (CONSOLE_MODE.md). Decided once at begin() from a boot pref and
+// never re-read, so nothing can flip the front end mid-session. When set, LVGL
+// is never initialised and no draw buffer is allocated: that skip IS the saving,
+// so it has to be a genuine one and not a hidden LVGL instance.
+static bool s_console_mode = false;
+bool uiConsoleModeActive() { return s_console_mode; }
+
+// Route a UI alert to the console. Callers in main.cpp keep calling showAlert()
+// and do not need to know which front end is running.
+static void consoleAlert(const char* msg) {
+  if (s_console_mode && msg) consoleWriteLine(msg);
+}
+#else
+bool uiConsoleModeActive() { return false; }
+#endif
+
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
   _display    = display;
   _sensors    = sensors;
   _node_prefs = node_prefs;
+
+#if CAP_CONSOLE && defined(ESP32)
+  s_console_mode = touchPrefsGetConsoleMode();
+  if (s_console_mode) {
+    // Nothing below this point runs: no lv_init(), no draw buffer, no widget
+    // tree. The console owns the panel from here.
+    consoleBegin(_display);
+    consoleWriteLine("wadamesh console");
+    consoleWriteLine("type 'help', or 'ui' to go back to the graphical UI");
+    consoleWriteLine("");
+    the_mesh.setTerminalSink(&consoleWriteLine);
+    return;
+  }
+#endif
 
 #if defined(WADA_LUA_SPIKE)
   luaSpikeRun();   // Phase 0 measurement pass (LUA_APPS.md) — spike builds only
@@ -50111,6 +50143,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 // ============================================================
 void UITask::showAlert(const char* text, int duration_millis) {
   if (!text) return;
+#if CAP_CONSOLE
+  // main.cpp reports Wi-Fi and Bluetooth outcomes through here in ~20 places.
+  // They keep calling showAlert and do not need to know which front end is up.
+  if (s_console_mode) { consoleAlert(text); return; }
+#endif
   strncpy(_alert, text, sizeof(_alert) - 1);
   _alert[sizeof(_alert) - 1] = '\0';
   _alert_expiry = millis() + static_cast<unsigned long>(duration_millis);
@@ -51842,6 +51879,12 @@ static void sdHealthTick() {
 
 void UITask::loop() {
   unsigned long now = millis();
+#if CAP_CONSOLE
+  if (s_console_mode) {
+    consoleLoop();
+    return;                      // the graphical loop is never entered
+  }
+#endif
 #if defined(ESP32)
   // Snapshot copying is quick; all filesystem I/O runs on the core-0 worker.
   touchPrefsTick(now);

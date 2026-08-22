@@ -15,6 +15,9 @@
 // Terminal app uses, so console mode inherits the full command set rather than
 // growing a private one.
 #include "../MyMesh.h"   // declares the_mesh itself (a reference on PSRAM boards)
+#if defined(ESP32)
+  #include "../helpers/esp32/TouchPrefsStore.h"
+#endif
 
 #if CAP_TOUCH
 // Board touch driver, read directly. lvglTouchRead() is only an adapter that
@@ -68,6 +71,116 @@ const char* ringGet(int i) {
   return lineAt((start + i) % kMaxLines);
 }
 
+#if CAP_TOUCH && !CAP_KEYBOARD
+// ---- on-screen keypad -------------------------------------------------------
+// Touch boards have no hardware keyboard and the firmware's own on-screen one is
+// LVGL, so console mode draws its own. Deliberate: the V4 is the board this
+// feature exists for, so it has to be usable there without a keyboard.
+//
+// Three layers rather than a shift key that changes every glyph: lower, upper,
+// and symbols. Fewer states to get wrong, and the label on a key is always what
+// that key types.
+constexpr int kRows = 4;
+const char* const kLayer[3][kRows] = {
+  { "qwertyuiop", "asdfghjkl",  "\x01zxcvbnm\x08", "\x02 \n" },   // lower
+  { "QWERTYUIOP", "ASDFGHJKL",  "\x01ZXCVBNM\x08", "\x02 \n" },   // upper
+  { "1234567890", "-/:;()$&@\"", "\x01.,?!'#\x08",  "\x02 \n" },   // symbols
+};
+// \x01 = layer cycle, \x02 = scroll-back toggle, \x08 = backspace, \n = enter.
+int  s_layer = 0;
+int  s_kb_top = 0;          // y where the keypad starts; scrollback ends here
+int  s_key_h  = 0;
+
+void keypadLayout() {
+  if (!s_disp) return;
+  s_key_h  = s_disp->height() / 12;          // proportional, so it fits 240x320 and bigger
+  if (s_key_h < 14) s_key_h = 14;
+  s_kb_top = s_disp->height() - kRows * s_key_h;
+}
+
+void keypadDraw() {
+  if (!s_disp) return;
+  for (int r = 0; r < kRows; r++) {
+    const char* row = kLayer[s_layer][r];
+    const int n = (int)strlen(row);
+    if (n <= 0) continue;
+    const int kw = s_disp->width() / n;
+    const int y  = s_kb_top + r * s_key_h;
+    for (int c = 0; c < n; c++) {
+      const int x = c * kw;
+      s_disp->setColor(UIColor::secondary_txt);
+      s_disp->drawRect(x, y, kw - 1, s_key_h - 1);
+      char lbl[8];
+      switch (row[c]) {
+        case '\x01': snprintf(lbl, sizeof lbl, "%s", s_layer == 2 ? "ab" : (s_layer == 1 ? "12" : "AB")); break;
+        case '\x02': snprintf(lbl, sizeof lbl, "%s", "^v"); break;
+        case '\x08': snprintf(lbl, sizeof lbl, "%s", "<-"); break;
+        case '\n':   snprintf(lbl, sizeof lbl, "%s", "ret"); break;
+        case ' ':    snprintf(lbl, sizeof lbl, "%s", "spc"); break;
+        default:     lbl[0] = row[c]; lbl[1] = '\0'; break;
+      }
+      s_disp->setColor(UIColor::primary_txt);
+      s_disp->drawTextCentered(x + kw / 2, y + (s_key_h - s_line_h) / 2, lbl);
+    }
+  }
+}
+
+// Which key is under (x, y)? Returns 0 when the tap missed the keypad.
+char keypadHit(int x, int y) {
+  if (!s_disp || y < s_kb_top) return 0;
+  int r = (y - s_kb_top) / (s_key_h ? s_key_h : 1);
+  if (r < 0) r = 0;
+  if (r >= kRows) r = kRows - 1;
+  const char* row = kLayer[s_layer][r];
+  const int n = (int)strlen(row);
+  if (n <= 0) return 0;
+  const int kw = s_disp->width() / n;
+  int c = kw ? (x / kw) : 0;
+  if (c < 0) c = 0;
+  if (c >= n) c = n - 1;
+  return row[c];
+}
+
+uint32_t s_touch_start = 0;
+uint16_t s_touch_x = 0, s_touch_y = 0;
+bool     s_scroll_mode = false;   // ^v pressed: taps above the keypad scroll
+
+void touchTick() {
+  uint16_t tx, ty;
+  const bool pressed = heltecV4CapTouchGetLive(&tx, &ty);
+  const uint32_t now = millis();
+  if (pressed && !s_touch_start) {
+    s_touch_start = now;
+    s_touch_x = tx; s_touch_y = ty;
+    return;
+  }
+  if (pressed || !s_touch_start) return;
+  const uint32_t held = now - s_touch_start;
+  s_touch_start = 0;
+  if (!s_disp) return;
+
+  const char k = keypadHit(s_touch_x, s_touch_y);
+  if (k) {
+    switch (k) {
+      case '\x01': s_layer = (s_layer + 1) % 3; s_dirty = true; break;
+      case '\x02': s_scroll_mode = !s_scroll_mode; s_dirty = true; break;
+      case '\x08': consoleKey('\b'); break;
+      case '\n':   consoleKey('\n'); break;
+      default:     consoleKey(k); break;
+    }
+    return;
+  }
+  // Above the keypad. In scroll mode the halves page the scrollback; otherwise a
+  // long press there is the way out, mirroring how remote mode is left.
+  if (s_scroll_mode) {
+    if (s_touch_y < s_kb_top / 2) { if (s_scroll < s_count - s_rows) { s_scroll++; s_dirty = true; } }
+    else                          { if (s_scroll > 0)                { s_scroll--; s_dirty = true; } }
+  } else if (held >= 1200) {
+    consoleWriteLine("(hold registered - use the 'ui' command to leave console mode)");
+  }
+}
+#endif  // CAP_TOUCH && !CAP_KEYBOARD
+
 // ---- metrics ----------------------------------------------------------------
 // DisplayDriver has getTextWidth but no text height, and the concrete drivers
 // scale a fixed 6x8 cell, so derive the height from the measured width instead
@@ -84,6 +197,12 @@ void measure() {
   if (s_cols > kLineCap) s_cols = kLineCap;
   // Rows available for scrollback: everything except the input line.
   s_rows = (s_disp->height() / s_line_h) - 1;
+#if CAP_TOUCH && !CAP_KEYBOARD
+  keypadLayout();
+  // The keypad owns the bottom of the panel, so the scrollback and the input
+  // line have to live above it rather than under it.
+  s_rows = (s_kb_top / s_line_h) - 1;
+#endif
   if (s_rows < 2) s_rows = 2;
 }
 
@@ -107,8 +226,13 @@ void render() {
     y += s_line_h;
   }
 
-  // Input line, pinned to the bottom with a blinking block cursor.
+  // Input line, directly under the scrollback (above the keypad where there is
+  // one) with a blinking block cursor.
+#if CAP_TOUCH && !CAP_KEYBOARD
+  const int iy = s_kb_top - s_line_h;
+#else
   const int iy = s_disp->height() - s_line_h;
+#endif
   s_disp->setColor(UIColor::title_txt);
   s_disp->setCursor(0, iy);
   s_disp->print(">");
@@ -132,6 +256,9 @@ void render() {
     s_disp->drawTextRightAlign(s_disp->width() - 2, iy, tag);
   }
 
+#if CAP_TOUCH && !CAP_KEYBOARD
+  keypadDraw();
+#endif
   s_disp->endFrame();
   s_dirty = false;
 }
@@ -156,6 +283,18 @@ void submit() {
     s_dirty = true;
     return;
   }
+#if defined(ESP32)
+  // The way back to the graphical UI. One of three, per CONSOLE_MODE.md: this,
+  // a key held at boot, and clearing the pref over serial or the flasher.
+  if (!strcasecmp(cmd, "ui") || !strcasecmp(cmd, "exit")) {
+    touchPrefsSetConsoleMode(false);
+    consoleWriteLine("switching to the graphical UI, rebooting...");
+    render();
+    delay(600);            // let the line land on the panel before the reset
+    ESP.restart();
+    return;
+  }
+#endif
   if (!strcasecmp(cmd, "help")) {
     consoleWriteLine("console: clear, help, ui");
     consoleWriteLine("node: everything the CLI answers, e.g.");
@@ -164,39 +303,6 @@ void submit() {
   }
   the_mesh.runLocalCli(cmd);
 }
-
-#if CAP_TOUCH
-// ---- on-screen keypad -------------------------------------------------------
-// Touch boards have no hardware keyboard and the firmware's on-screen one is
-// LVGL, so console mode draws its own. Deliberate: the V4 is the board this
-// feature exists for, so it has to be usable there.
-//
-// Phase 1 ships the tap plumbing and a scroll/exit strip; the full key grid is
-// the next step and is why kKeypadRows is a table rather than inline code.
-uint32_t s_touch_start = 0;
-uint16_t s_touch_x = 0, s_touch_y = 0;
-
-void touchTick() {
-  uint16_t tx, ty;
-  const bool pressed = heltecV4CapTouchGetLive(&tx, &ty);
-  const uint32_t now = millis();
-  if (pressed && !s_touch_start) {
-    s_touch_start = now;
-    s_touch_x = tx; s_touch_y = ty;
-  } else if (!pressed && s_touch_start) {
-    const uint32_t held = now - s_touch_start;
-    s_touch_start = 0;
-    if (!s_disp) return;
-    // Top third scrolls back, bottom third scrolls forward. A tap in the middle
-    // is reserved for the key grid.
-    const int h = s_disp->height();
-    if (held < 700) {
-      if (s_touch_y < h / 3 && s_scroll < s_count - s_rows) { s_scroll++; s_dirty = true; }
-      else if (s_touch_y > (2 * h) / 3 && s_scroll > 0)     { s_scroll--; s_dirty = true; }
-    }
-  }
-}
-#endif  // CAP_TOUCH
 
 }  // namespace
 
@@ -264,7 +370,7 @@ bool consoleKey(int c) {
 
 void consoleLoop() {
   if (!s_active || !s_disp) return;
-#if CAP_TOUCH
+#if CAP_TOUCH && !CAP_KEYBOARD
   touchTick();
 #endif
   const uint32_t now = millis();

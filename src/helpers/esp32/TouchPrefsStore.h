@@ -191,6 +191,8 @@ bool    touchPrefsSetMsgFlash(bool on);
 
 /* Advertise on boot (#76): fire one flood self-advert ~6s after boot so peers with auto-add on
  * refresh our pubkey (useful after a reflash wiped storage). Opt-in, default off. All boards. */
+bool    touchPrefsGetConsoleMode();   // boot into the LVGL-free console (CONSOLE_MODE.md)
+bool    touchPrefsSetConsoleMode(bool on);
 bool    touchPrefsGetBootAdvert();
 bool    touchPrefsSetBootAdvert(bool on);
 
