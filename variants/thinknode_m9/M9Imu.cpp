@@ -9,7 +9,7 @@
 // second so the sensor's axis orientation on this board can be derived from
 // readings in known attitudes. Set to 0 once the mapping is baked in.
 #ifndef M9_IMU_DEBUG
-  #define M9_IMU_DEBUG 1
+  #define M9_IMU_DEBUG 0
 #endif
 
 namespace {

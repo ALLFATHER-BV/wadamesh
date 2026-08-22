@@ -569,10 +569,55 @@ logging the raw vector (`M9_COMPASS_DEBUG` in M9Compass.cpp) at four headings
    "Field saturated" (OVFL, raw counts logged every 10 s) means a magnet is
    nearby.
 
-**Calibration must TUMBLE the device, not just spin it flat.** A flat-only
-sweep leaves Z unvarying, so the min/max pass subtracts the true vertical
-field along with the bias — which also disables the dip check the manual
-fallback relies on.
+**Calibration must ROTATE THE DEVICE IN ONE PLACE.** Carrying it around while
+turning it does not only rotate it, it also TRANSLATES it through the field of
+a laptop, a desk frame, anything ferrous — and that corrupts the fit. Measured
+consequence: a centre that moved 0.15 G between hand-tumbled sessions against a
+0.26 G horizontal signal, i.e. tens of degrees of direction-dependent error,
+reported on hardware as "it drifts when rotating". The app now measures
+coverage from GRAVITY (the accelerometer, below) and refuses a sweep that never
+turned the device over, naming the axis.
+
+## IMU (QMI8658) + tilt compensation (2026-08-22)
+
+`variants/thinknode_m9/M9Imu.{h,cpp}`, `HAS_M9_IMU=1` → `CAP_IMU` →
+`wada.sys.accel()`. Accelerometer only — the gyro is most of the part's power
+budget and nothing here needs it. QMI8658 at **0x6B** on the same peripheral
+bus; this board carries the **A** die (`WHO_AM_I 0x05`, `REVISION_ID 0x7C`).
+±2 g at 62.5 Hz with the accel low-pass on, soft reset (0x60←0xB0) then a
+160 ms wait covering both die variants and a 0x4D==0x80 check, same idle
+suspend as the compass.
+
+**CTRL1 bit6 (ADDR_AI) must be set and read back.** With it clear the burst
+read from 0x35 silently returns six copies of one byte — a sensor that probes
+fine and reports nonsense.
+
+**Axes MEASURED** (three attitudes, `M9_IMU_DEBUG` logging):
+
+| attitude | reading | conclusion |
+|---|---|---|
+| flat, screen up | z = −1.02 | **+Z into the screen** (down) |
+| on bottom edge, top edge up | x = +0.97 | **+X at the top edge** (forward) |
+| on left edge, right edge up | y = +1.08 | **+Y at the right edge** |
+
+So the IMU is already in the aerospace body frame (forward / right / down), and
+it agrees independently with the magnetometer's measured +Z-into-screen. The
+magnetometer maps into that frame as `(fwd, right, down) = (my−oy, −(mx−ox),
+mz−oz)`.
+
+**Why tilt compensation was needed at all:** the field dips ~60° here, so the
+vertical component is 1.6× the horizontal one and tipping the device leaks it
+into the pair the heading is made from — about **1.5° of heading per 1° of
+tilt**. A hand-held reading wandered by tens of degrees. The app now rotates
+the field back into the horizontal plane using gravity (NXP AN4248 / ST AN3192)
+before taking the angle, shows the tilt angle, and says "too steep to read"
+past 55° instead of lying. Confirmed working on hardware.
+
+**Not copied from Meshtastic:** its M9 driver passes both sensors through
+untransformed, carries a dead 180° constant, has its axis swaps commented out,
+and mirrors the heading on the sign of accel Z — so its compass flips when the
+device is turned over.
+
 
 **Hardware-verify recipe:** flash; boot log shows the `M9 compass:` line;
 push the app over the console — the M9's card is soldered on, so
