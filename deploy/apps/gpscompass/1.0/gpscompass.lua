@@ -208,8 +208,15 @@ local function pt(deg, r)
   return math.floor(CX + math.sin(a) * r + 0.5), math.floor(CY - math.cos(a) * r + 0.5)
 end
 
--- canvas text is left-anchored; approximate glyph width as 0.55 x line height
-local function text_w(s, lh) return math.floor(#s * lh * 0.55) end
+-- Canvas text is left-anchored and the app cannot measure glyphs, so widths
+-- are estimated at ~0.55 x line height per CHARACTER — counting characters,
+-- not bytes: "°" is two bytes in UTF-8 and counting those pushed centred text
+-- half a glyph off.
+local function text_w(s, lh)
+  local n = 0
+  for _ in s:gmatch("[%z\1-\127\194-\244]") do n = n + 1 end
+  return math.floor(n * lh * 0.55)
+end
 
 local function draw_dial(tgt_bearing)
   local h = heading or 0
@@ -252,10 +259,15 @@ local function draw_dial(tgt_bearing)
     cv:circle(mx, my, 4, AMBER, true)
   end
 
-  -- centre: heading number, cardinal under it
+  -- centre: heading number with the degree sign hanging off its right edge —
+  -- the DIGITS are what should sit centred, so the number does not appear to
+  -- shift when the reading crosses 100 or 200
   if live then
-    local txt = string.format("%03d\194\176", math.floor(h + 0.5) % 360)
-    cv:text(CX - math.floor(text_w(txt, TH16) / 2) + 2, CY - TH16 + 1, txt, C.text, 16)
+    local digits = string.format("%03d", math.floor(h + 0.5) % 360)
+    local dw = text_w(digits, TH16)
+    local dx = CX - math.floor(dw / 2)
+    cv:text(dx, CY - TH16 + 1, digits, C.text, 16)
+    cv:text(dx + dw, CY - TH16 + 1, "\194\176", C.sub, 16)
     local cd = cardinal(h)
     cv:text(CX - math.floor(text_w(cd, TH12) / 2), CY + 3, cd, src == "mag" and C.accent or AMBER, 12)
   else
@@ -314,28 +326,23 @@ local function refresh(now)
   local sk = sats_n .. "|" .. sats_col
   if sk ~= last_sats_key then draw_sats(sats_n, sats_col); last_sats_key = sk end
 
-  -- heading source line (long form <= 22 glyphs, compact form <= 16)
-  local MAG = compact and "Mag" or "Magnetometer"
+  -- heading-source line over the dial (<= 18 glyphs: it spans the dial width)
   if calib then
     local left = CAL_SECS - math.floor((now - calib.t0) / 1000)
     set_text("src", string.format("Calibrating  %ds", math.max(left, 0)), AMBER)
   elseif mag_sat then
-    set_text("src", MAG .. " saturated", C.bad)
+    set_text("src", "Field saturated", C.bad)
   elseif src == "mag" then
-    if cal then
-      set_text("src", string.format("%s  %.2f G", MAG, mag_norm or 0), C.good)
-    else
-      set_text("src", compact and "Uncalibrated: C" or "Uncalibrated  press C", AMBER)
-    end
+    set_text("src", cal and "Magnetometer ok" or "Calibrate: press C", cal and C.good or AMBER)
   elseif src == "gps" then
     set_text("src", "GPS course", AMBER)
   elseif has_compass then
-    set_text("src", MAG .. ": no data", C.bad)
+    set_text("src", "Sensor: no data", C.bad)
   else
-    set_text("src", compact and "GPS when moving" or "GPS heading (moving)", C.sub)
+    set_text("src", "GPS when moving", C.sub)
   end
 
-  -- target
+  -- target: name, range + bearing, which way to turn, when it was last heard
   local tgt_bearing
   local t = targets[target_i]
   if t then
@@ -345,12 +352,32 @@ local function refresh(now)
       tgt_bearing = brg
       set_text("tgt2", string.format("%s  %03d\194\176 %s", fmt_dist(dist), math.floor(brg + 0.5) % 360,
                                      cardinal(brg)), C.text)
+      if heading then
+        local rel = norm360(brg - heading)
+        local turn = rel <= 180 and rel or 360 - rel
+        local s
+        if turn <= 6 then s = "ahead"
+        elseif turn >= 174 then s = "behind"
+        else s = string.format("%d\194\176 %s", math.floor(turn + 0.5), rel <= 180 and "right" or "left") end
+        set_text("rel", s, turn <= 6 and C.good or C.text)
+      else
+        set_text("rel", "no heading", C.sub)
+      end
     else
       set_text("tgt2", compact and "no own position" or "own position unknown", C.sub)
+      set_text("rel", "", C.sub)
     end
+    local ago = t.ago_s or 0
+    if ago <= 0 then set_text("seen", "", C.sub)
+    elseif ago < 60 then set_text("seen", "heard just now", C.sub)
+    elseif ago < 3600 then set_text("seen", string.format("heard %dm ago", math.floor(ago / 60)), C.sub)
+    elseif ago < 86400 then set_text("seen", string.format("heard %dh ago", math.floor(ago / 3600)), C.sub)
+    else set_text("seen", string.format("heard %dd ago", math.floor(ago / 86400)), C.sub) end
   else
     set_text("tgt", #targets > 0 and string.format("none  (%d)  <>", #targets) or "none", C.sub)
     set_text("tgt2", "", C.sub)
+    set_text("rel", "", C.sub)
+    set_text("seen", "", C.sub)
   end
 
   -- dial: redraw only when what it shows changed
@@ -375,7 +402,11 @@ local function toggle_cal()
     else
       cal = { ox = (mn[1] + mx[1]) / 2, oy = (mn[2] + mx[2]) / 2, oz = (mn[3] + mx[3]) / 2 }
       save_cal()
-      sys.toast("Compass calibrated", 1200)
+      -- field strength: a fully rotated axis spans +/-|B|, so the widest half-
+      -- span is the field. Earth is 0.25..0.65 G; far off means a magnet
+      -- nearby or a poor calibration
+      local hb = math.max((mx[1] - mn[1]) / 2, (mx[2] - mn[2]) / 2, (mx[3] - mn[3]) / 2)
+      sys.toast(string.format("Calibrated  field %.2f G", hb), 2000)
     end
     calib = nil
   else
@@ -416,20 +447,26 @@ function app.on_open(w, h)
   TH12, TH14, TH16 = ui.text_h(12), ui.text_h(14), ui.text_h(16)
 
   -- panel rows: { name, key } — a key/value pair per row, keys in the muted
-  -- colour at x0, values at x0 + key column. "src" spans the row; "tgt2" is
-  -- the target's range/bearing under the target name; "hint" is last.
+  -- colour at x0, values in the value column. Key-less rows after TGT are the
+  -- target's detail lines and sit in the value column. The magnetometer
+  -- status line is not a row: it is centred over the dial. The key hint is
+  -- not a row either: it sits on the bottom edge of the view.
   local rows = {
-    { "src" }, { "fix", "FIX" }, { "lat", "LAT" }, { "lon", "LON" }, { "alt", "ALT" },
-    { "spd", "SPD" }, { "tgt", "TGT" }, { "tgt2" }, { "hint" },
+    { "fix", "FIX" }, { "lat", "LAT" }, { "lon", "LON" }, { "alt", "ALT" }, { "spd", "SPD" },
+    { "tgt", "TGT" }, { "tgt2", false }, { "rel", false }, { "seen", false },
   }
-  local gap_before = { tgt = 4, hint = 4 }   -- group spacing
+  local gap_before = { tgt = 4 }   -- group spacing
   local x0, y0, colw, line
+  local hint_y
 
   if landscape then
-    -- the dial takes what is left after a panel wide enough for the values
-    D = math.min(h - 4, w - 176)
+    -- status line over the dial, the dial below it taking what is left after
+    -- a panel wide enough for the values, the hint along the bottom edge
+    hint_y = h - TH12 - 3
+    dial_y = TH12 + 4
+    D = math.min(hint_y - 4 - dial_y, w - 176)
     cv = ui.canvas(D, D)
-    dial_x, dial_y = 2, math.floor((h - D) / 2)
+    dial_x = 2
     x0, y0 = D + 10, 4
     colw = w - x0 - 4
     line = TH12 + 2
@@ -438,13 +475,14 @@ function app.on_open(w, h)
       for _, r in ipairs(rows) do t = t + line + (gap_before[r[1]] or 0) end
       return t
     end
-    while #rows > 7 and total() > h - 8 do table.remove(rows) end
-    if total() > h - 8 then line = math.floor((h - 16) / #rows) end
+    local room = hint_y - 4 - y0                 -- rows must clear the hint line
+    while #rows > 6 and total() > room do table.remove(rows) end
+    if total() > room then line = math.floor(room / #rows) end
   else
     D = math.min(w - 8, 200)
     cv = ui.canvas(D, D)
-    dial_x, dial_y = math.floor((w - D) / 2), 2
-    x0, y0 = 6, D + 8
+    dial_x, dial_y = math.floor((w - D) / 2), TH12 + 4
+    x0, y0 = 6, dial_y + D + 6
     colw = w - 12
     line = TH12 + 2
     if caps.touch then ui.scroll(true) end
@@ -452,24 +490,25 @@ function app.on_open(w, h)
   cv:pos(dial_x, dial_y)
   R = math.floor(D / 2) - 2
   CX, CY = math.floor(D / 2), math.floor(D / 2)
+  -- magnetometer / heading-source status, centred over the dial
+  L.src = ui.label("", dial_x, 2, 12, C.sub)
+  L.src:width(D, "center")
 
   local keyw = math.floor(TH12 * 2.1)           -- "LON" at 12 px is ~24 px; leave a gap
   local valx = x0 + keyw + 6
   local valw = colw - keyw - 6
   name_max = math.max(8, math.min(18, math.floor((valw - 4) / (TH12 * 0.62))))
-  -- Montserrat runs ~0.48 x line height per glyph: a 22-glyph line needs ~10.6 x
-  compact = colw < TH12 * 10.7
+  -- Montserrat runs ~0.48 x line height per glyph: the status line over the
+  -- dial is the longest (22 glyphs, ~10.6 x); go compact when the dial is
+  -- narrower than that
+  compact = D < TH12 * 10.7
 
   local y = y0
   for _, r in ipairs(rows) do
     local name, key = r[1], r[2]
     y = y + (gap_before[name] or 0)
-    if key then
-      ui.label(key, x0, y, 12, C.sub)
-      label(name, valx, y, 12, C.text, valw)
-    else
-      label(name, x0, y, 12, C.text, colw)
-    end
+    if key then ui.label(key, x0, y, 12, C.sub) end
+    label(name, valx, y, 12, C.text, valw)   -- key-less rows line up with the values
     if name == "fix" then
       SATS_W = math.min(52, math.max(30, valw - math.floor(TH12 * 0.55 * 8)))
       sats_cv = ui.canvas(SATS_W, SATS_H)
@@ -479,16 +518,6 @@ function app.on_open(w, h)
     y = y + line
   end
 
-  -- control hints (the keyboard shortcuts only exist where there is a keyboard)
-  if caps.keyboard then
-    local wide = colw >= TH12 * 14
-    set_text("hint", has_compass and (wide and "C cal  O rot  F flip  <> target" or "C cal  O rot  F flip")
-                                  or "<> target", C.sub)
-  elseif caps.touch then
-    set_text("hint", "Tap dial: next target", C.sub)
-  else
-    set_text("hint", "<> target", C.sub)
-  end
   -- touch boards in portrait: the same actions as buttons (keys may not exist)
   if caps.touch and not landscape then
     local bw, bh = math.floor((w - 12 - 9) / 4), 30
@@ -500,6 +529,22 @@ function app.on_open(w, h)
       ui.button("Flip", bx, by, bw, bh, flip_frame);  bx = bx + bw + 3
     end
     ui.button("Target", bx, by, bw, bh, function() cycle_target(1) end)
+    y = by + bh + 4
+  end
+
+  -- key hint: centred across the whole view on the bottom edge in landscape,
+  -- below everything else in portrait (where the body scrolls)
+  L.hint = ui.label("", 0, hint_y or (y + 2), 12, C.sub)
+  L.hint:width(w, "center")
+  if caps.keyboard then
+    local wide = w >= TH12 * 20                 -- room for the target hint too
+    set_text("hint", has_compass and (wide and "C calibrate   O rotate   F flip   <> target"
+                                              or "C calibrate   O rotate   F flip")
+                                  or "<> target", C.sub)
+  elseif caps.touch then
+    set_text("hint", "Tap dial: next target", C.sub)
+  else
+    set_text("hint", "<> target", C.sub)
   end
 
   refresh_contacts()

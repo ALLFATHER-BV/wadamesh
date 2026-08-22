@@ -293,11 +293,19 @@ int lbColor(lua_State* L) {
   return 0;
 }
 
-int lbWidth(lua_State* L) {   // label:width(px) — wraps instead of overflowing
+int lbWidth(lua_State* L) {   // label:width(px [, "left"|"center"|"right"]) — wraps instead of overflowing
   WidgetUd* u = checkLabel(L);
   if (u->obj) {
     lv_obj_set_width(u->obj, (lv_coord_t)luaL_checkinteger(L, 2));
     lv_label_set_long_mode(u->obj, LV_LABEL_LONG_WRAP);
+    // Optional alignment inside that width: the only way an app can centre a
+    // line exactly, since it cannot measure glyphs itself.
+    const char* al = luaL_optstring(L, 3, nullptr);
+    if (al) {
+      lv_text_align_t a = strcmp(al, "center") == 0 ? LV_TEXT_ALIGN_CENTER
+                        : strcmp(al, "right")  == 0 ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_LEFT;
+      lv_obj_set_style_text_align(u->obj, a, LV_PART_MAIN);
+    }
   }
   return 0;
 }
@@ -1318,6 +1326,12 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   lv_obj_set_style_bg_color(h->root, lv_color_hex(0x0E1216), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(h->root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(h->root, LV_OBJ_FLAG_SCROLLABLE);
+  // A plain lv_obj is CLICKABLE by default, and it has to stay so (it is the
+  // overlay that keeps touches off the screen underneath) — but it must not be
+  // a keyboard-nav focus target either, or the focus highlight paints it
+  // solid: with only the body excluded, navCollect simply promoted the root to
+  // the leaf target and the app went white all the same (seen on the M9).
+  lv_obj_add_flag(h->root, NAV_PASSTHRU_FLAG);
   lv_obj_add_event_cb(h->root, luaAppRootDeletedCb, LV_EVENT_DELETE, nullptr);
 
   h->body = lv_obj_create(h->root);

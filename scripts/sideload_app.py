@@ -93,9 +93,23 @@ def command(s, line, expect, timeout=4.0):   # the loop stalls for ~0.5 s on GPS
     raise TimeoutError("no reply to: %s" % line[:40])
 
 
+def command_retry(s, line, expect):
+    """fput/fend: short lines, but the same byte loss can garble them — a
+    mangled line answers "Error: unknown command" or nothing at all."""
+    for attempt in range(RETRIES):
+        try:
+            return command(s, line, expect)
+        except (DeviceError, TimeoutError) as e:
+            if isinstance(e, DeviceError) and "unknown command" not in str(e):
+                raise
+            s.write(b"\n")
+            time.sleep(0.2)
+    raise RuntimeError("no usable reply to: " + line)
+
+
 def push(s, local_path, remote_path):
     data = open(local_path, "rb").read()
-    command(s, "fput " + remote_path, "ok fput")
+    command_retry(s, "fput " + remote_path, "ok fput")
     off, retries = 0, 0
     while off < len(data):
         piece = data[off:off + CHUNK]
@@ -123,7 +137,7 @@ def push(s, local_path, remote_path):
         if sys.stdout.isatty():
             sys.stdout.write("\r  %s: %d / %d bytes" % (remote_path, off, len(data)))
             sys.stdout.flush()
-    reply = command(s, "fend", "ok fend")
+    reply = command_retry(s, "fend", "ok fend")
     total = int(reply.split()[2])
     if sys.stdout.isatty():
         print()
