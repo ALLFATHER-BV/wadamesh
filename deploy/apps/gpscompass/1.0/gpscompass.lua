@@ -55,6 +55,14 @@ local targets, target_i = {}, 0   -- contacts with a position; 0 = none
 local next_contacts_ms = 0
 local CONTACTS_EVERY = 20000      -- positions only change on adverts
 
+-- Units: altitude and speed each carry their own, imperial by default. Up and
+-- down move the selection between the two rows; OK (or a tap on the row)
+-- switches that row's units.
+local UNITS = { alt = true, spd = true }   -- true = imperial
+local sel = "alt"
+local row_hit = {}                -- name -> { y, h } in body coordinates
+local col_x0, col_x1 = 0, 0       -- the stats column's horizontal span
+
 local press = nil                 -- pending touch: { x, y } from the last "down"
 local last_swipe_ms = -100000     -- debounce: LVGL's gesture and the hardware swipe
                                   -- detector can both report one finger swipe
@@ -85,6 +93,8 @@ local function load_prefs()
   end
   align = tonumber(store.get("align", 0)) or 0
   mirror = (store.get("mirror", 0) == 1)
+  UNITS.alt = store.get("u_alt", 1) == 1
+  UNITS.spd = store.get("u_spd", 1) == 1
 end
 
 local function save_align()
@@ -200,10 +210,28 @@ local function geo(lat1, lon1, lat2, lon2)
   return dist, norm360(math.deg(math.atan(y, x)))
 end
 
+-- range to a target follows the ALTITUDE row's units (one "how far" setting)
 local function fmt_dist(m)
+  if UNITS.alt then
+    local ft = m * 3.28084
+    if ft < 1000 then return string.format("%d ft", math.floor(ft + 0.5)) end
+    local mi = m / 1609.344
+    if mi < 10 then return string.format("%.2f mi", mi) end
+    return string.format("%.1f mi", mi)
+  end
   if m < 1000 then return string.format("%d m", math.floor(m + 0.5)) end
   if m < 10000 then return string.format("%.2f km", m / 1000) end
   return string.format("%.1f km", m / 1000)
+end
+
+local function fmt_alt(m)
+  if UNITS.alt then return string.format("%d ft", math.floor(m * 3.28084 + 0.5)) end
+  return string.format("%d m", math.floor(m + 0.5))
+end
+
+local function fmt_speed(kmh)
+  if UNITS.spd then return string.format("%.1f mph", kmh * 0.621371) end
+  return string.format("%.1f km/h", kmh)
 end
 
 -- ---------------------------------------------------------------------------
@@ -316,9 +344,9 @@ local function refresh(now)
     set_text("fix", string.format("%d sats", sats_n), C.text)
     set_text("lat", string.format("%.5f", g.lat), C.text)
     set_text("lon", string.format("%.5f", g.lon), C.text)
-    set_text("alt", string.format("%d m", g.alt or 0), C.text)
+    set_text("alt", fmt_alt(g.alt or 0), C.text)
     if g.speed_kmh then
-      local s = string.format("%.1f km/h", g.speed_kmh)
+      local s = fmt_speed(g.speed_kmh)
       if g.course then s = s .. string.format("  %03d\194\176", math.floor(g.course + 0.5) % 360) end
       set_text("spd", s, C.text)
     else
@@ -476,6 +504,34 @@ end
 
 -- Fallback when align_north cannot read the dip (near the magnetic equator, or
 -- no position at all): flip the direction of travel by hand.
+-- the selected row's key is drawn in the accent colour so it is obvious which
+-- one OK will switch
+local function paint_selection()
+  for _, n in ipairs({ "alt", "spd" }) do
+    local kl = L["k_" .. n]
+    if kl then kl:color(n == sel and C.accent or C.sub) end
+  end
+end
+
+local function move_sel(dir)
+  sel = (sel == "alt") and "spd" or "alt"
+  paint_selection()
+end
+
+local function toggle_units(which)
+  which = which or sel
+  UNITS[which] = not UNITS[which]
+  store.set(which == "alt" and "u_alt" or "u_spd", UNITS[which] and 1 or 0)
+  sel = which
+  paint_selection()
+  last_text[which] = nil                      -- force the row to re-render now
+  if which == "alt" then
+    sys.toast(UNITS.alt and "Altitude and range: feet / miles" or "Altitude and range: metres / km", 1400)
+  else
+    sys.toast(UNITS.spd and "Speed: mph" or "Speed: km/h", 1200)
+  end
+end
+
 local function flip_frame()
   mirror = not mirror
   align = 0
@@ -552,6 +608,7 @@ function app.on_open(w, h)
   local keyw = math.floor(TH12 * 2.1)           -- "LON" at 12 px is ~24 px; leave a gap
   local valx = x0 + keyw + 6
   local valw = colw - keyw - 6
+  col_x0, col_x1 = x0, x0 + colw
   name_max = math.max(8, math.min(18, math.floor((valw - 4) / (TH12 * 0.62))))
   -- Montserrat runs ~0.48 x line height per glyph: the status line over the
   -- dial is the longest (22 glyphs, ~10.6 x); go compact when the dial is
@@ -562,8 +619,12 @@ function app.on_open(w, h)
   for _, r in ipairs(rows) do
     local name, key = r[1], r[2]
     y = y + (gap_before[name] or 0)
-    if key then ui.label(key, x0, y, 12, C.sub) end
+    if key then
+      local kl = ui.label(key, x0, y, 12, C.sub)
+      if name == "alt" or name == "spd" then L["k_" .. name] = kl end
+    end
     label(name, valx, y, 12, C.text, valw)   -- key-less rows line up with the values
+    if name == "alt" or name == "spd" then row_hit[name] = { y = y, h = line } end
     if name == "fix" then
       SATS_W = math.min(52, math.max(30, valw - math.floor(TH12 * 0.55 * 8)))
       sats_cv = ui.canvas(SATS_W, SATS_H)
@@ -593,15 +654,16 @@ function app.on_open(w, h)
   L.hint:width(w, "center")
   if caps.keyboard then
     local wide = w >= TH12 * 20                 -- room for the target hint too
-    set_text("hint", has_compass and (wide and "C calibrate   A set north   <> target"
-                                              or "C calibrate   A set north")
-                                  or "<> target", C.sub)
+    set_text("hint", has_compass and (wide and "C calibrate   A set north   up/down + OK units   <> target"
+                                              or "C calibrate   A north   OK units   <> target")
+                                  or "up/down + OK units   <> target", C.sub)
   elseif caps.touch then
-    set_text("hint", "Tap dial: next target", C.sub)
+    set_text("hint", "Tap a row for units, the dial for the next target", C.sub)
   else
-    set_text("hint", "<> target", C.sub)
+    set_text("hint", "up/down + OK units   <> target", C.sub)
   end
 
+  paint_selection()
   refresh_contacts()
   next_contacts_ms = sys.millis() + CONTACTS_EVERY
   refresh(sys.millis())
@@ -622,6 +684,15 @@ local function in_dial(x, y)
   return x >= dial_x and x < dial_x + D and y >= dial_y and y < dial_y + D
 end
 
+-- which stats row a press landed on, or nil
+local function row_at(x, y)
+  if x < col_x0 or x > col_x1 then return nil end
+  for name, r in pairs(row_hit) do
+    if y >= r.y - 2 and y < r.y + r.h + 2 then return name end
+  end
+  return nil
+end
+
 function app.on_input(ev)
   if ev.type == "swipe" then
     press = nil
@@ -630,8 +701,10 @@ function app.on_input(ev)
     local now = sys.millis()
     if (now - last_swipe_ms) < 300 then return end
     last_swipe_ms = now
+    -- the M9's d-pad arrives here, not as key events
     if ev.dir == "left" then cycle_target(-1)
     elseif ev.dir == "right" then cycle_target(1)
+    elseif ev.dir == "up" or ev.dir == "down" then move_sel(ev.dir)
     end
   elseif ev.type == "down" then
     -- "down" fires at the start of every touch, swipe or scroll drag, so a tap
@@ -641,14 +714,28 @@ function app.on_input(ev)
   elseif ev.type == "up" then
     if press then
       local dx, dy = (ev.x or 0) - press.x, (ev.y or 0) - press.y
-      -- without a touchscreen the only down/up pair is the OK key's synthetic
-      -- one, so it counts wherever the host placed it
-      if dx * dx + dy * dy <= 144 and (not caps.touch or in_dial(press.x, press.y)) then cycle_target(1) end
+      if dx * dx + dy * dy <= 144 then
+        if caps.touch then
+          -- a tap on the ALT or SPD row switches that row's units; on the dial
+          -- it steps the target
+          local r = row_at(press.x, press.y)
+          if r then toggle_units(r)
+          elseif in_dial(press.x, press.y) then cycle_target(1) end
+        else
+          -- no touchscreen: this is the OK key's synthetic press, wherever the
+          -- host put it — it switches the selected row's units
+          toggle_units()
+        end
+      end
       press = nil
     end
   elseif ev.type == "key" then
     local k = ev.key
-    if k == "c" or k == "C" then toggle_cal()
+    -- deliberately no "enter" here: the host answers OK with a synthetic
+    -- down/up pair AND an enter key event, so acting on both would toggle
+    -- twice and look like nothing happened
+    if k == "up" or k == "down" then move_sel(k)
+    elseif k == "c" or k == "C" then toggle_cal()
     elseif k == "a" or k == "A" then align_north()
     elseif k == "f" or k == "F" then flip_frame()      -- fallback, see align_north
     elseif k == "x" or k == "X" then
