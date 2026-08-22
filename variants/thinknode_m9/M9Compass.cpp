@@ -18,20 +18,24 @@ constexpr uint8_t kChipId    = 0x90;
 constexpr uint8_t kStatDrdy  = 0x01;
 constexpr uint8_t kStatOvfl  = 0x02;
 
-// CTRL2 = ODR 50 Hz (0b010<<4) | range ±32 G (0b00<<2) | set/reset on (0b00).
-// 50 Hz so a consumer polling at 10 Hz always finds DRDY set. ±32 G rather
+// CTRL2 = ODR 100 Hz (0b011<<4) | range ±32 G (0b00<<2) | set/reset on (0b00).
+// 100 Hz so a consumer polling at 10 Hz always finds DRDY set and the
+// low-pass below adds little lag (4 samples = 40 ms). ±32 G rather
 // than ±8 G: Earth's field is only 0.25..0.65 G, but Meshtastic's M9 driver
 // hard-codes calibration extrema around -6..-7.6 G per axis — if that
 // on-board hard-iron bias is real it sits right at the ±8 G rail, and a
 // saturated axis is worse than a coarser one. At 1000 LSB/G the resolution is
 // still 1 mG (≈0.13° of heading in a 0.45 G horizontal field); the sensor's
 // own noise floor (~2.5 mG at OSR 8) dominates either way.
-constexpr uint8_t kCtrl2 = 0x20;
-// CTRL1 = OSR2 (low-pass depth) 8 (0b011<<5) | OSR1 8 (0b00<<3) | normal mode
-// (0b01). This is the datasheet's own worked example ("0x61: normal mode,
-// OSR1=8, OSR2=8"). Normal mode honours the ODR above (≈0.5 mA at 50 Hz);
+constexpr uint8_t kCtrl2 = 0x30;
+// CTRL1 = OSR2 (low-pass depth) 4 (0b010<<5) | OSR1 8 (0b00<<3) | normal mode
+// (0b01). OSR1 8 is the low-noise oversampling; the low-pass depth is the
+// heading's group delay, and 8 deep at 50 Hz (the datasheet's 0x61 example)
+// read as sluggish on the dial — 4 deep at 100 Hz keeps the noise figure
+// close (madflight measured 1.4 LSB σ at depth 16 vs 6.7 at depth 1) with a
+// quarter of the lag. Normal mode honours the ODR (≈1 mA at 100 Hz/OSR 8);
 // continuous mode free-runs at the maximum rate and is not needed here.
-constexpr uint8_t kCtrl1 = 0x61;
+constexpr uint8_t kCtrl1 = 0x41;
 
 constexpr float    kGaussPerLsb   = 1.0f / 1000.0f;   // ±32 G range
 constexpr uint32_t kOvflLogEvery  = 10000;            // ms between overflow log lines
@@ -109,7 +113,7 @@ bool probe(bool log) {
     if (log) Serial.println("M9 compass: QMC6309 found but configuration did not stick");
     return false;
   }
-  if (log) Serial.println("M9 compass: QMC6309 ok (id=0x90, 50 Hz, +/-32 G, OSR 8/8)");
+  if (log) Serial.println("M9 compass: QMC6309 ok (id=0x90, 100 Hz, +/-32 G, OSR 8, LPF 4)");
   s_errors = 0;
   s_have_sample = false;
   return true;

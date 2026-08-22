@@ -1,10 +1,10 @@
--- GPS Compass — a compass rose plus the live GPS fix.
+-- GPS Compass — heading dial plus the live GPS fix, in the RF Monitor's look.
 --
 -- Heading comes from the magnetometer where the board has one (ThinkNode M9:
 -- QMC6309, via wada.sys.compass()) and falls back to GPS course-over-ground
--- while moving on every other board. The rose turns so the heading sits
--- under the fixed index at the top; a contact with a known position can be
--- picked as a target and is drawn on the rose with its bearing and distance.
+-- while moving on every other board. The dial turns so the heading sits
+-- under the fixed lubber mark at the top; a contact with a known position
+-- can be picked as a target and is drawn on the dial with bearing and range.
 --
 -- The magnetometer is raw: the firmware hands out x/y/z in Gauss in the
 -- sensor's own frame, uncalibrated. This app does the rest —
@@ -12,20 +12,23 @@
 --     orientation for ~20 s, press C again. Offsets persist in wada.store.
 --   * orientation: the sensor's axes vs. the screen are not documented for
 --     the M9, so O (Rot) steps the frame by 90° and F (Flip) mirrors it.
---     Point the top of the device at a known north and adjust until the rose
---     reads 0° and the number grows as you turn clockwise. Persisted too.
+--     Point the top of the device at a known north and adjust until the dial
+--     reads 000 and the number grows as you turn clockwise. Persisted too.
 -- Magnetic declination is not applied: this is a magnetic compass.
 local ui, sys, mesh, store, timer = wada.ui, wada.sys, wada.mesh, wada.store, wada.timer
 local C = ui.colors
-local AMBER = 0xE8A33D
+local AMBER  = 0xE8A33D
+local RING   = 0x3A424A        -- dial ring + minor ticks
+local RING2  = 0x1C2228        -- inner ring
 local app = {}
 
 local caps, W, H
 local landscape
-local cv, D, R, CX, CY            -- rose canvas, diameter, radius, centre
-local rose_x, rose_y = 0, 0       -- canvas position in the body (tap hit-test)
+local cv, D, R, CX, CY            -- dial canvas, diameter, radius, centre
+local dial_x, dial_y = 0, 0       -- canvas position in the body (tap hit-test)
+local sats_cv, SATS_W, SATS_H = nil, 52, 8
 local TH12, TH14, TH16 = 15, 17, 19   -- font line heights, replaced from ui.text_h
-local L = {}                      -- readout labels by name
+local L = {}                      -- labels by name
 
 local has_compass = false
 local cal = nil                   -- { ox, oy, oz } hard-iron offsets
@@ -38,6 +41,8 @@ local hv_x, hv_y = 0, 0           -- smoothed heading unit vector
 local heading = nil               -- degrees 0..360, or nil
 local src = "none"                -- "mag" | "gps" | "none"
 local last_mag_ms = 0
+local TICK_MS = 100               -- dial update rate
+local SMOOTH = 0.5                -- per-tick blend toward the new heading (1 = none)
 
 local targets, target_i = {}, 0   -- contacts with a position; 0 = none
 local next_contacts_ms = 0
@@ -46,10 +51,10 @@ local CONTACTS_EVERY = 20000      -- positions only change on adverts
 local press = nil                 -- pending touch: { x, y } from the last "down"
 local last_swipe_ms = -100000     -- debounce: LVGL's gesture and the hardware swipe
                                   -- detector can both report one finger swipe
-local name_max = 18               -- target-name characters that fit the column
-local compact = false             -- narrow column at a big font: drop the cardinals
+local name_max = 16               -- target-name characters that fit the value column
+local compact = false             -- narrow column at a big font: short strings
 local last_text = {}              -- label text cache: LVGL relayout only on change
-local last_rose_key = nil
+local last_dial_key, last_sats_key = nil, nil
 local CAL_SECS = 20
 
 local CARD = { "N","NNE","NE","ENE","E","ESE","SE","SSE",
@@ -103,8 +108,8 @@ local function smooth_heading(h)
   if hv_x == 0 and hv_y == 0 then
     hv_x, hv_y = sx, sy
   else
-    hv_x = hv_x + (sx - hv_x) * 0.35
-    hv_y = hv_y + (sy - hv_y) * 0.35
+    hv_x = hv_x + (sx - hv_x) * SMOOTH
+    hv_y = hv_y + (sy - hv_y) * SMOOTH
   end
   return norm360(math.deg(math.atan(hv_x, hv_y)))
 end
@@ -206,49 +211,67 @@ end
 -- canvas text is left-anchored; approximate glyph width as 0.55 x line height
 local function text_w(s, lh) return math.floor(#s * lh * 0.55) end
 
-local function draw_rose(tgt_bearing)
+local function draw_dial(tgt_bearing)
   local h = heading or 0
   local live = heading ~= nil
-  local ring = live and C.text or C.sub
   cv:fill(C.bg)
-  cv:circle(CX, CY, R, ring, false, 1)
+  -- rings
+  cv:circle(CX, CY, R, live and RING or RING2, false, 2)
+  cv:circle(CX, CY, R - 14, RING2, false, 1)
 
-  -- ticks every 10°, longer every 30°, cardinal letters every 90°; the rose
-  -- rotates by -heading so the current heading is under the top index
+  -- graduations: every 10° a minor tick, every 30° a major one, the four
+  -- cardinals as letters. The whole card rotates by -heading so the current
+  -- heading sits under the lubber mark.
   for deg = 0, 350, 10 do
     local a = deg - h
-    local len = (deg % 90 == 0) and 10 or (deg % 30 == 0) and 7 or 3
-    local x1, y1 = pt(a, R - 1)
-    local x2, y2 = pt(a, R - 1 - len)
-    local col = (deg == 0) and C.bad or ((deg % 90 == 0) and C.text or C.sub)
-    cv:line(x1, y1, x2, y2, col, (deg % 90 == 0) and 2 or 1)
-    if deg % 90 == 0 then
-      local lx, ly = pt(a, R - 12 - math.floor(TH12 / 2))
+    local major = deg % 30 == 0
+    local cardinalp = deg % 90 == 0
+    local len = cardinalp and 9 or major and 6 or 3
+    local x1, y1 = pt(a, R - 3)
+    local x2, y2 = pt(a, R - 3 - len)
+    local col = (deg == 0) and C.bad or (major and (live and C.text or C.sub) or RING)
+    cv:line(x1, y1, x2, y2, col, cardinalp and 2 or 1)
+    if cardinalp then
+      local lx, ly = pt(a, R - 14 - math.floor(TH12 * 0.6))
       local letter = CARD[math.floor(deg / 90) * 4 + 1]
       cv:text(lx - math.floor(TH12 * 0.3), ly - math.floor(TH12 / 2), letter, col, 12)
     end
   end
 
-  -- fixed index at the top
-  cv:line(CX, 1, CX - 6, 12, C.accent, 2)
-  cv:line(CX, 1, CX + 6, 12, C.accent, 2)
-  cv:line(CX - 6, 12, CX + 6, 12, C.accent, 2)
+  -- lubber mark: a small solid triangle pointing in from the top
+  for i = 0, 6 do
+    cv:line(CX - 6 + i, i, CX + 6 - i, i, C.accent, 1)
+  end
+  cv:line(CX, 0, CX, 9, C.accent, 2)
 
-  -- target marker, relative to the rose
+  -- target: dot on the inner ring plus a thin spoke, relative to the card
   if tgt_bearing then
-    local mx, my = pt(tgt_bearing - h, R - 22 - TH12)
+    local mx, my = pt(tgt_bearing - h, R - 14)
+    local sx, sy = pt(tgt_bearing - h, R - 26)
+    cv:line(CX, CY, sx, sy, RING, 1)
     cv:circle(mx, my, 4, AMBER, true)
-    cv:line(CX, CY, mx, my, AMBER, 1)
   end
 
-  -- centre: heading number + cardinal
+  -- centre: heading number, cardinal under it
   if live then
     local txt = string.format("%03d\194\176", math.floor(h + 0.5) % 360)
-    cv:text(CX - math.floor(text_w(txt, TH16) / 2) + 2, CY - TH16, txt, C.text, 16)
+    cv:text(CX - math.floor(text_w(txt, TH16) / 2) + 2, CY - TH16 + 1, txt, C.text, 16)
     local cd = cardinal(h)
-    cv:text(CX - math.floor(text_w(cd, TH14) / 2), CY + 2, cd, src == "mag" and C.accent or AMBER, 14)
+    cv:text(CX - math.floor(text_w(cd, TH12) / 2), CY + 3, cd, src == "mag" and C.accent or AMBER, 12)
   else
     cv:text(CX - math.floor(text_w("--", TH16) / 2), CY - math.floor(TH16 / 2), "--", C.sub, 16)
+  end
+end
+
+-- satellite meter: ten cells, filled in the status colour up to the count
+local function draw_sats(n, col)
+  if not sats_cv then return end
+  sats_cv:fill(C.bg)
+  local cw = math.floor((SATS_W - 9) / 10)
+  for i = 0, 9 do
+    local x = i * (cw + 1)
+    if i < n then sats_cv:rect(x, 0, cw, SATS_H, col, true)
+    else sats_cv:rect(x, 0, cw, SATS_H, RING, true) end
   end
 end
 
@@ -258,81 +281,85 @@ local function refresh(now)
   -- GPS readout
   local g = caps.sdk_ext and sys.gps() or nil
   local me_lat, me_lon
+  local sats_n, sats_col = 0, RING
   if g then
     me_lat, me_lon = g.lat, g.lon
-    set_text("lat", string.format("Lat %.5f", g.lat), C.text)
-    set_text("lon", string.format("Lon %.5f", g.lon), C.text)
-    set_text("alt", string.format("Alt %d m  Sats %d", g.alt or 0, g.sats or 0), C.text)
-    local mot
+    sats_n = g.sats or 0
+    sats_col = sats_n >= 6 and C.good or AMBER
+    set_text("fix", string.format("%d sats", sats_n), C.text)
+    set_text("lat", string.format("%.5f", g.lat), C.text)
+    set_text("lon", string.format("%.5f", g.lon), C.text)
+    set_text("alt", string.format("%d m", g.alt or 0), C.text)
     if g.speed_kmh then
-      mot = string.format("%.1f km/h", g.speed_kmh)
-      if g.course then
-        mot = mot .. string.format(" Crs %03d\194\176", math.floor(g.course + 0.5) % 360)
-        if not compact then mot = mot .. " " .. cardinal(g.course) end
-      else
-        mot = mot .. " (still)"
-      end
+      local s = string.format("%.1f km/h", g.speed_kmh)
+      if g.course then s = s .. string.format("  %03d\194\176", math.floor(g.course + 0.5) % 360) end
+      set_text("spd", s, C.text)
     else
-      mot = "Speed --"
+      set_text("spd", "--", C.sub)
     end
-    set_text("mot", mot, C.text)
   else
     local me = mesh.self()
     if me and (me.lat ~= 0 or me.lon ~= 0) then
       me_lat, me_lon = me.lat, me.lon
-      set_text("lat", string.format("Lat %.5f", me.lat), C.sub)
-      set_text("lon", string.format("Lon %.5f (last)", me.lon), C.sub)
+      set_text("lat", string.format("%.5f", me.lat), C.sub)
+      set_text("lon", string.format("%.5f", me.lon), C.sub)
     else
-      set_text("lat", "Lat --", C.sub)
-      set_text("lon", "Lon --", C.sub)
+      set_text("lat", "--", C.sub)
+      set_text("lon", "--", C.sub)
     end
-    set_text("alt", caps.sdk_ext and "No GPS fix" or "No GPS on this board", C.sub)
-    set_text("mot", "Speed --", C.sub)
+    set_text("fix", caps.sdk_ext and "no fix" or "no GPS", C.sub)
+    set_text("alt", "--", C.sub)
+    set_text("spd", "--", C.sub)
   end
+  local sk = sats_n .. "|" .. sats_col
+  if sk ~= last_sats_key then draw_sats(sats_n, sats_col); last_sats_key = sk end
 
-  -- heading source line (fits a 160 px column at the 12 px font)
+  -- heading source line (long form <= 22 glyphs, compact form <= 16)
+  local MAG = compact and "Mag" or "Magnetometer"
   if calib then
     local left = CAL_SECS - math.floor((now - calib.t0) / 1000)
-    set_text("src", string.format("CAL: turn device %ds", math.max(left, 0)), AMBER)
+    set_text("src", string.format("Calibrating  %ds", math.max(left, 0)), AMBER)
   elseif mag_sat then
-    set_text("src", "Compass SATURATED", C.bad)
+    set_text("src", MAG .. " saturated", C.bad)
   elseif src == "mag" then
-    set_text("src", string.format("%s %s %.2f G", compact and "Mag" or "Compass", cal and "ok" or "UNCAL",
-                                  mag_norm or 0), cal and C.good or AMBER)
+    if cal then
+      set_text("src", string.format("%s  %.2f G", MAG, mag_norm or 0), C.good)
+    else
+      set_text("src", compact and "Uncalibrated: C" or "Uncalibrated  press C", AMBER)
+    end
   elseif src == "gps" then
-    set_text("src", "Heading: GPS course", AMBER)
+    set_text("src", "GPS course", AMBER)
   elseif has_compass then
-    set_text("src", "Compass: no data", C.bad)
+    set_text("src", MAG .. ": no data", C.bad)
   else
-    set_text("src", "Heading: GPS (move)", C.sub)
+    set_text("src", compact and "GPS when moving" or "GPS heading (moving)", C.sub)
   end
 
   -- target
   local tgt_bearing
   local t = targets[target_i]
   if t then
-    set_text("tgt", "> " .. t.name:sub(1, name_max), AMBER)
+    set_text("tgt", t.name:sub(1, name_max), AMBER)
     if me_lat then
       local dist, brg = geo(me_lat, me_lon, t.lat, t.lon)
       tgt_bearing = brg
-      local s = string.format("%s brg %03d\194\176", fmt_dist(dist), math.floor(brg + 0.5) % 360)
-      if not compact then s = s .. " " .. cardinal(brg) end
-      set_text("tgt2", s, C.text)
+      set_text("tgt2", string.format("%s  %03d\194\176 %s", fmt_dist(dist), math.floor(brg + 0.5) % 360,
+                                     cardinal(brg)), C.text)
     else
-      set_text("tgt2", "need own position", C.sub)
+      set_text("tgt2", compact and "no own position" or "own position unknown", C.sub)
     end
   else
-    set_text("tgt", #targets > 0 and string.format("No target (%d avail)", #targets) or "No target", C.sub)
+    set_text("tgt", #targets > 0 and string.format("none  (%d)  <>", #targets) or "none", C.sub)
     set_text("tgt2", "", C.sub)
   end
 
-  -- rose: redraw only when what it shows changed
+  -- dial: redraw only when what it shows changed
   local key = string.format("%d|%s|%s|%s|%s", heading and math.floor(heading + 0.5) or -1, src,
                             tgt_bearing and math.floor(tgt_bearing + 0.5) or "-", tostring(cal ~= nil),
                             tostring(mag_sat))
-  if key ~= last_rose_key then
-    draw_rose(tgt_bearing)
-    last_rose_key = key
+  if key ~= last_dial_key then
+    draw_dial(tgt_bearing)
+    last_dial_key = key
   end
 end
 
@@ -388,51 +415,77 @@ function app.on_open(w, h)
   landscape = w >= h * 1.3
   TH12, TH14, TH16 = ui.text_h(12), ui.text_h(14), ui.text_h(16)
 
-  -- readout rows, most expendable last: the hint rows go first when the body
-  -- is too short for all of them at the user's font size
-  local rows = { "src", "lat", "lon", "alt", "mot", "tgt", "tgt2", "hint", "hint2" }
+  -- panel rows: { name, key } — a key/value pair per row, keys in the muted
+  -- colour at x0, values at x0 + key column. "src" spans the row; "tgt2" is
+  -- the target's range/bearing under the target name; "hint" is last.
+  local rows = {
+    { "src" }, { "fix", "FIX" }, { "lat", "LAT" }, { "lon", "LON" }, { "alt", "ALT" },
+    { "spd", "SPD" }, { "tgt", "TGT" }, { "tgt2" }, { "hint" },
+  }
+  local gap_before = { tgt = 4, hint = 4 }   -- group spacing
   local x0, y0, colw, line
 
   if landscape then
-    -- the rose takes what is left after a column wide enough for ~22 glyphs
+    -- the dial takes what is left after a panel wide enough for the values
     D = math.min(h - 4, w - 176)
     cv = ui.canvas(D, D)
-    rose_x, rose_y = 2, math.floor((h - D) / 2)
-    x0, y0 = D + 8, 4
+    dial_x, dial_y = 2, math.floor((h - D) / 2)
+    x0, y0 = D + 10, 4
     colw = w - x0 - 4
     line = TH12 + 2
-    while #rows > 7 and #rows * line > h - 8 do table.remove(rows) end
-    if #rows * line > h - 8 then line = math.floor((h - 8) / #rows) end
+    local function total()
+      local t = 0
+      for _, r in ipairs(rows) do t = t + line + (gap_before[r[1]] or 0) end
+      return t
+    end
+    while #rows > 7 and total() > h - 8 do table.remove(rows) end
+    if total() > h - 8 then line = math.floor((h - 16) / #rows) end
   else
-    D = math.min(w - 8, 240)
+    D = math.min(w - 8, 200)
     cv = ui.canvas(D, D)
-    rose_x, rose_y = math.floor((w - D) / 2), 2
+    dial_x, dial_y = math.floor((w - D) / 2), 2
     x0, y0 = 6, D + 8
     colw = w - 12
     line = TH12 + 2
     if caps.touch then ui.scroll(true) end
   end
-  cv:pos(rose_x, rose_y)
+  cv:pos(dial_x, dial_y)
   R = math.floor(D / 2) - 2
   CX, CY = math.floor(D / 2), math.floor(D / 2)
-  -- what fits one row: names by a pixel budget (capitals run ~0.62 x line
-  -- height), and the widest fixed strings (~10.5 x line height) decide
-  -- whether the cardinal suffixes have to go
-  name_max = math.max(8, math.min(18, math.floor((colw - 14) / (TH12 * 0.62))))
-  compact = colw < TH12 * 10.5
+
+  local keyw = math.floor(TH12 * 2.1)           -- "LON" at 12 px is ~24 px; leave a gap
+  local valx = x0 + keyw + 6
+  local valw = colw - keyw - 6
+  name_max = math.max(8, math.min(18, math.floor((valw - 4) / (TH12 * 0.62))))
+  -- Montserrat runs ~0.48 x line height per glyph: a 22-glyph line needs ~10.6 x
+  compact = colw < TH12 * 10.7
 
   local y = y0
-  for _, name in ipairs(rows) do
-    label(name, x0, y, 12, C.text, colw)
+  for _, r in ipairs(rows) do
+    local name, key = r[1], r[2]
+    y = y + (gap_before[name] or 0)
+    if key then
+      ui.label(key, x0, y, 12, C.sub)
+      label(name, valx, y, 12, C.text, valw)
+    else
+      label(name, x0, y, 12, C.text, colw)
+    end
+    if name == "fix" then
+      SATS_W = math.min(52, math.max(30, valw - math.floor(TH12 * 0.55 * 8)))
+      sats_cv = ui.canvas(SATS_W, SATS_H)
+      sats_cv:pos(valx + valw - SATS_W, y + math.floor((TH12 - SATS_H) / 2))
+      sats_cv:fill(C.bg)
+    end
     y = y + line
   end
 
   -- control hints (the keyboard shortcuts only exist where there is a keyboard)
   if caps.keyboard then
-    set_text("hint", has_compass and "C cal  O rot  F flip" or "", C.sub)
-    set_text("hint2", "<> target", C.sub)
+    local wide = colw >= TH12 * 14
+    set_text("hint", has_compass and (wide and "C cal  O rot  F flip  <> target" or "C cal  O rot  F flip")
+                                  or "<> target", C.sub)
   elseif caps.touch then
-    set_text("hint", "Tap rose: next target", C.sub)
+    set_text("hint", "Tap dial: next target", C.sub)
   else
     set_text("hint", "<> target", C.sub)
   end
@@ -452,7 +505,7 @@ function app.on_open(w, h)
   refresh_contacts()
   next_contacts_ms = sys.millis() + CONTACTS_EVERY
   refresh(sys.millis())
-  timer.every(150)
+  timer.every(TICK_MS)
 end
 
 function app.on_tick(dt)
@@ -465,8 +518,8 @@ function app.on_tick(dt)
   refresh(now)
 end
 
-local function in_rose(x, y)
-  return x >= rose_x and x < rose_x + D and y >= rose_y and y < rose_y + D
+local function in_dial(x, y)
+  return x >= dial_x and x < dial_x + D and y >= dial_y and y < dial_y + D
 end
 
 function app.on_input(ev)
@@ -489,9 +542,8 @@ function app.on_input(ev)
     if press then
       local dx, dy = (ev.x or 0) - press.x, (ev.y or 0) - press.y
       -- without a touchscreen the only down/up pair is the OK key's synthetic
-      -- one, so it counts wherever the host placed it (the body centre is not
-      -- inside the rose on every layout)
-      if dx * dx + dy * dy <= 144 and (not caps.touch or in_rose(press.x, press.y)) then cycle_target(1) end
+      -- one, so it counts wherever the host placed it
+      if dx * dx + dy * dy <= 144 and (not caps.touch or in_dial(press.x, press.y)) then cycle_target(1) end
       press = nil
     end
   elseif ev.type == "key" then

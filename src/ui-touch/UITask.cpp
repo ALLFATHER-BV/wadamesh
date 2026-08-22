@@ -4327,7 +4327,8 @@ static bool navCollect(lv_obj_t* obj) {
     if (c && navCollect(c) && !lv_obj_has_flag(c, NAV_HMOVE_FLAG)) descHasClickable = true;
   }
   bool meClickable = lv_obj_has_flag(obj, LV_OBJ_FLAG_CLICKABLE)
-                     && !lv_obj_has_flag(obj, NAV_SKIP_FLAG);   // skip explicit non-nav targets (e.g. the map catcher)
+                     && !lv_obj_has_flag(obj, NAV_SKIP_FLAG)      // skip explicit non-nav targets (e.g. the map catcher)
+                     && !lv_obj_has_flag(obj, NAV_PASSTHRU_FLAG); // container that only exists to catch touches (Lua app body)
   if (meClickable && !descHasClickable) {
     // LVGL's btn/switch/checkbox widgets ship with LV_OBJ_FLAG_SCROLL_ON_FOCUS,
     // and lv_obj's own FOCUSED handler scrolls them into view — bypassing our

@@ -502,9 +502,10 @@ but nothing ever talked to it; the QMI8658 IMU still has no driver.
 
 - **Driver: `M9Compass.{h,cpp}`** (`HAS_M9_COMPASS=1` in the env). Probe =
   chip id 0x00 == 0x90; soft reset (0x0B=0x80 then the mandatory 0x0B=0x00 —
-  the bit is not self-clearing); CTRL2 0x0B=0x20 (ODR 50 Hz, ±32 G, set/reset
-  on), CTRL1 0x0A=0x61 (normal mode, OSR1 8, low-pass 8 — the datasheet's own
-  worked example), both read back and re-written once if they did not stick.
+  the bit is not self-clearing); CTRL2 0x0B=0x30 (ODR 100 Hz, ±32 G, set/reset
+  on), CTRL1 0x0A=0x41 (normal mode, OSR1 8, low-pass 4 — the datasheet's
+  0x61 example is low-pass 8 at 50 Hz, which read as sluggish on the dial),
+  both read back and re-written once if they did not stick.
   Read path: status 0x09 (bit0 DRDY, cleared by the read; bit1 OVFL → sample
   kept but flagged, logged at most every 10 s), then 6 bytes from 0x01
   little-endian int16, ×1/1000 → Gauss (±32 G chosen over ±8 G because of
@@ -513,7 +514,7 @@ but nothing ever talked to it; the QMI8658 IMU still has no driver.
   transactions at 100 kHz, no poll hook), cached sample valid 1 s, re-probe
   every 2 s while absent (rail-powered part may still be in POR when
   `radio_init()` runs), eight consecutive bus errors → forget and re-probe.
-  Boot log: `M9 compass: QMC6309 ok (id=0x90, 50 Hz, +/-32 G, OSR 8/8)` or the
+  Boot log: `M9 compass: QMC6309 ok (id=0x90, 100 Hz, +/-32 G, OSR 8, LPF 4)` or the
   reason it is not. Register layout cross-checked against the Rev A datasheet
   and the SlimeVR/madflight/Tildagon drivers — NOT SensorLib, whose
   `setOutputDataRate()` writes the ODR into 0x0A (the OSR bits); Meshtastic
@@ -568,8 +569,16 @@ the console is not serviced until `[BOOT] ui ready`; the UART interrupt is
 not IRAM-resident, so while the loop sits in a flash-cache pause only the
 128-byte hardware FIFO buffers input and the middle of a longer line is
 lost — hence the sideload's short, self-checking lines. Done on 2026-08-22:
-`M9 compass: QMC6309 ok (id=0x90, 50 Hz, +/-32 G, OSR 8/8)` on the first
-flash (0x7C answers, config sticks); app files pushed and listed by `ls /apps`.
+`M9 compass: QMC6309 ok` on the first flash (0x7C answers, config sticks);
+app files pushed and listed by `ls /apps`; calibration + rotation confirmed
+working by Chris on the device the same night.
+
+Two more M9 findings from that session: (1) the keypad-nav focus highlight
+painted the whole Lua app body white — the body is a clickable object on the
+top layer, so `navCollect` focused it and `navFocusCb`'s reverse-video fill
+covered it (the canvas on top stayed dark). Fixed in the host with
+`NAV_SKIP_FLAG` on the body, the same exclusion the map's touch catcher uses.
+(2) Low-pass depth 8 at 50 Hz felt laggy; now 4 at 100 Hz.
 
 ## Deferred — hardware-verify list
 

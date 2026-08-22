@@ -1329,6 +1329,11 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   lv_obj_set_size(h->body, h->body_w, h->body_h);
   lv_obj_clear_flag(h->body, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(h->body, LV_OBJ_FLAG_CLICKABLE);
+  // Clickable for touch, but never a keyboard-nav focus target: on the M9 the
+  // nav collector harvested this body as a leaf and the focus highlight's
+  // reverse-video fill painted the whole app white under its widgets. The
+  // flag leaves the app's own buttons reachable (see AppPage.h).
+  lv_obj_add_flag(h->body, NAV_PASSTHRU_FLAG);
   lv_obj_add_event_cb(h->body, gestureCb, LV_EVENT_GESTURE, nullptr);
   lv_obj_add_event_cb(h->body, pressCb, LV_EVENT_PRESSED, nullptr);
   lv_obj_add_event_cb(h->body, pressCb, LV_EVENT_RELEASED, nullptr);
