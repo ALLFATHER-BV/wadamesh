@@ -580,6 +580,27 @@ covered it (the canvas on top stayed dark). Fixed in the host with
 `NAV_SKIP_FLAG` on the body, the same exclusion the map's touch catcher uses.
 (2) Low-pass depth 8 at 50 Hz felt laggy; now 4 at 100 Hz.
 
+## Map re-open cost (2026-08-22) — measured and fixed
+
+`[STALL] ui:lvgl 2597ms` on EVERY map open, not just the first: leaving the
+Map tab called `freeMapTiles()` (UITask.cpp, tab-change handler), so the next
+visit re-read and re-decoded all nine 256x256 JPEGs. Boards with >=4 MB PSRAM
+now leave the slots exactly as panning within the tab leaves them — the grid
+costs 9 x 128 KB = 1.15 MB, which only matters on the 2 MB V4 (already capped
+to a 4-tile pool by renderMapTiles), so that board keeps the old free.
+
+Measured on the M9 after the change: cold open (first after boot) 2598 ms,
+every re-open **245 ms**.
+
+Gotchas for anyone revisiting this:
+- `releaseMapTileSlot()` is NOT a substitute: it clears `in_use`, so the next
+  render treats the tile as absent and decodes it again. Keeping the slots
+  fully intact is what makes renderMapTiles' pass-1 match-and-reposition hit.
+- The remaining cold-open cost is the SJPG decode, not the SD read. Raising the
+  CPU to 240 MHz is already ruled out (RGB565 noise from the PSRAM bus, see
+  onMapTabActivated). The open levers are decoding on core 0, or the M9's SD
+  clock (still 4 MHz — see the deferred list below).
+
 ## Deferred — hardware-verify list
 
 These are left intentionally unset/unwired rather than guessed:
