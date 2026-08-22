@@ -2397,12 +2397,25 @@ bool luaAppLaunchFile(const char* id, const char* title, const char* embedded, s
 // ---- net worker entry points (UITask's tile/net worker calls these) --------
 bool luaNetWorkerPending() { return s_net_pending; }
 void luaNetWorkerService(void* client, void* http) {
-  s_net_pending = false;
+  // s_net_pending stays TRUE for the whole request and is cleared at the end,
+  // not here. It is the only thing telling the UI thread that the worker may
+  // still be reading s_net_buf / s_net_body: clearing it first left a window
+  // the length of an HTTP round trip in which an app closing (hostTeardown)
+  // would free both buffers out from under this function. The caller runs one
+  // service() per loop pass and re-checks the flag afterwards, so holding it
+  // across the call cannot re-enter, and http_get/http_post keep rejecting a
+  // second fetch while it is set -- which is what we want anyway.
   if (!s_net_buf)            s_net_result = -1;
   else if (s_net_body)       s_net_result = luaStoreHttpPostOpaque(client, http, s_net_url, s_net_buf,
                                                                    s_net_cap, s_net_body, s_net_body_len,
                                                                    s_net_ctype);
   else                       s_net_result = luaStoreHttpGetOpaque(client, http, s_net_url, s_net_buf, s_net_cap);
+  // Order matters: drop the in-flight flag BEFORE announcing the result, so a
+  // teardown that observes done=true can never also observe pending=true and
+  // decide to hold the buffers forever. Between the two writes the request is
+  // finished and s_net_result is set, and netDeliver drops the payload without
+  // touching s_net_buf when the app is already gone.
+  s_net_pending = false;
   s_net_done = true;
 }
 
