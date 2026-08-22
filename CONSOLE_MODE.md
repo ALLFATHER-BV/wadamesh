@@ -47,17 +47,24 @@ that is already there and already tested.
 Worth being precise, because the obvious assumption is wrong in one direction
 and right in another.
 
-### PSRAM: a large, real saving
+### PSRAM: a real saving, and it is the object tree, not the draw buffer
 
-Both of LVGL's big consumers are in PSRAM:
+Everything LVGL allocates is PSRAM: `include/lv_conf.h` sets `LV_MEM_CUSTOM 1`
+with `LV_MEM_CUSTOM_ALLOC lvglPsramAlloc`, so every object, style and font cache
+entry is a PSRAM allocation, and the draw buffer is `MALLOC_CAP_SPIRAM` too.
 
-- **The object heap.** `include/lv_conf.h` sets `LV_MEM_CUSTOM 1` with
-  `LV_MEM_CUSTOM_ALLOC lvglPsramAlloc`, so every LVGL object, style and font
-  cache entry is a PSRAM allocation.
-- **The draw buffer.** `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`, sized
-  `800 * LV_DRAW_BUF_LINES` pixels at 2 bytes each on the big panels.
+**The draw buffer is not the prize.** `LV_DRAW_BUF_LINES` is 24, so it is
+37.5 KB on the 800 px panels and **11.2 KB on the V4**. Worth having back, not
+worth building a mode for.
 
-Console mode frees both outright.
+The saving is the **object tree**: every screen, tab, list row, label, style and
+cached glyph, all of it live for the life of the session. That is the number
+Phase 0 exists to measure, because it is the one nobody here can quote from
+memory.
+
+For scale on the V4, its PSRAM is also carrying up to four 128 KB map tiles, so
+whatever LVGL is holding sits alongside that. Console mode frees the LVGL half
+outright.
 
 **This matters most exactly where you said it hurts.** The Heltec V4 has 2 MB of
 PSRAM, and PSRAM pressure there is a recurring source of real bugs: map tiles
@@ -297,12 +304,8 @@ Worth settling before Phase 1 rather than during it.
 
 1. ~~Keyboard required?~~ **Decided: no.** Touch boards get a drawn on-screen
    keypad, because the V4 is exactly the board this feature is for.
-2. **Is the goal a console, or a lighter UI?** A third option exists: keep LVGL
-   but ship a minimal skin. Cheaper, saves much less, and does not serve the
-   terminal users at all. Worth naming so it is a choice rather than an
-   oversight.
-3. **Do Lua apps matter in v1?** Phases 0 to 3 are worth shipping without them.
+2. **Do Lua apps matter in v1?** Phases 0 to 3 are worth shipping without them.
    The translator is now a known quantity rather than a question mark, so it can
    follow safely.
-4. **Does this replace the Terminal app** in graphical mode eventually, or do
+3. **Does this replace the Terminal app** in graphical mode eventually, or do
    both stay?
