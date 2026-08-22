@@ -90,9 +90,9 @@ end
 -- ---------------------------------------------------------------------------
 -- persistence
 local function load_prefs()
-  local ox, oy, oz = store.get("cal_ox"), store.get("cal_oy"), store.get("cal_oz")
-  if type(ox) == "number" and type(oy) == "number" and type(oz) == "number" then
-    cal = { ox = ox, oy = oy, oz = oz }
+  local ox, oy, r = store.get("cal_ox"), store.get("cal_oy"), store.get("cal_r")
+  if type(ox) == "number" and type(oy) == "number" then
+    cal = { ox = ox, oy = oy, r = (type(r) == "number" and r > 0) and r or nil }
   end
   -- Orientation settings are versioned: the heading formula changed once the
   -- M9's axes were measured, so values saved against the old one would push a
@@ -118,102 +118,114 @@ end
 
 local function save_cal()
   if cal then
-    store.set("cal_ox", cal.ox); store.set("cal_oy", cal.oy); store.set("cal_oz", cal.oz)
+    store.set("cal_ox", cal.ox); store.set("cal_oy", cal.oy); store.set("cal_r", cal.r)
   else
-    store.set("cal_ox", nil); store.set("cal_oy", nil); store.set("cal_oz", nil)
+    store.set("cal_ox", nil); store.set("cal_oy", nil); store.set("cal_r", nil)
   end
+  store.set("cal_oz", nil)   -- the 3D fit's third offset; nothing reads it now
 end
 
 -- ---------------------------------------------------------------------------
--- calibration: least-squares sphere fit
+-- calibration: least-squares circle fit from a FLAT, IN-PLACE turn
 --
--- Rotating the device sweeps a sphere whose CENTRE is the hard-iron offset and
--- whose radius is the true field. Taking the midpoint of each axis's min/max
--- finds that centre only from a complete sweep, and is skewed by whichever
--- extreme was missed — on this hardware the bias is ~7x the field, so a centre
--- that is off by a tenth of a Gauss is a third of the whole signal and the
--- heading error then swings with direction (measured: -1 deg at north but +22
--- at west). A sphere fit uses EVERY sample instead of six extremes.
+-- Turning the device flat traces a circle in the sensor's x/y plane whose
+-- CENTRE is the hard-iron offset and whose radius is the local horizontal
+-- field. Only that centre is needed for a heading, so this fits exactly it.
 --
--- Fitting |p - c|^2 = r^2 is linear in (c, k = r^2 - |c|^2):
---     2*cx*x + 2*cy*y + 2*cz*z + k = x^2 + y^2 + z^2
--- so the normal equations are a 4x4 solve over running sums — no sample
--- storage, which matters inside a 256 KB app heap. Coordinates are kept
--- relative to the first sample: Lua here is single-precision, and squaring raw
--- values near 3.5 G loses the precision the fit depends on.
+-- Why flat-and-in-place rather than tumbling the device by hand: hard-iron
+-- calibration assumes the device ROTATES in a uniform field. Carrying it
+-- through the air around a desk also TRANSLATES it through the field of the
+-- laptop, the desk frame and anything else ferrous, which corrupts the fit --
+-- measured here as a centre that moved 0.15 G between sessions, which is more
+-- than half the entire horizontal signal. Rotated flat on one spot, the same
+-- sensor fitted a circle to within 4%.
+--
+-- |p - c|^2 = r^2 is linear in (c, k = r^2 - |c|^2), so this is a 3x3 solve
+-- over running sums: no sample storage, which matters in a 256 KB app heap.
+-- Sums are kept relative to the first sample because Lua here is
+-- single-precision and squaring raw values near 3.5 G throws away the
+-- precision the fit depends on.
 local function calib_new()
   return { n = 0, o = nil, t0 = sys.millis(),
-           sx = 0, sy = 0, sz = 0, sxx = 0, syy = 0, szz = 0,
-           sxy = 0, sxz = 0, syz = 0, sxs = 0, sys_ = 0, szs = 0, ss = 0,
-           mn = { 1e9, 1e9, 1e9 }, mx = { -1e9, -1e9, -1e9 } }
+           sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sxs = 0, sys_ = 0, ss = 0,
+           mnx = 1e9, mxx = -1e9, mny = 1e9, mxy = -1e9 }
 end
 
 local function calib_add(m)
   local c = calib
-  if not c.o then c.o = { m.x, m.y, m.z } end
-  local x, y, z = m.x - c.o[1], m.y - c.o[2], m.z - c.o[3]
-  local s = x * x + y * y + z * z
+  if not c.o then c.o = { m.x, m.y } end
+  local x, y = m.x - c.o[1], m.y - c.o[2]
+  local s = x * x + y * y
   c.n = c.n + 1
-  c.sx = c.sx + x; c.sy = c.sy + y; c.sz = c.sz + z
-  c.sxx = c.sxx + x * x; c.syy = c.syy + y * y; c.szz = c.szz + z * z
-  c.sxy = c.sxy + x * y; c.sxz = c.sxz + x * z; c.syz = c.syz + y * z
-  c.sxs = c.sxs + x * s; c.sys_ = c.sys_ + y * s; c.szs = c.szs + z * s
-  c.ss = c.ss + s
-  local mn, mx = c.mn, c.mx
-  if m.x < mn[1] then mn[1] = m.x end; if m.x > mx[1] then mx[1] = m.x end
-  if m.y < mn[2] then mn[2] = m.y end; if m.y > mx[2] then mx[2] = m.y end
-  if m.z < mn[3] then mn[3] = m.z end; if m.z > mx[3] then mx[3] = m.z end
+  c.sx = c.sx + x; c.sy = c.sy + y
+  c.sxx = c.sxx + x * x; c.syy = c.syy + y * y; c.sxy = c.sxy + x * y
+  c.sxs = c.sxs + x * s; c.sys_ = c.sys_ + y * s; c.ss = c.ss + s
+  if x < c.mnx then c.mnx = x end; if x > c.mxx then c.mxx = x end
+  if y < c.mny then c.mny = y end; if y > c.mxy then c.mxy = y end
 end
 
--- Gaussian elimination with partial pivoting on the 4x4 normal equations.
-local function solve4(M, v)
-  for col = 1, 4 do
+local function solve3(M, v)
+  for col = 1, 3 do
     local piv, best = col, math.abs(M[col][col])
-    for r = col + 1, 4 do
+    for r = col + 1, 3 do
       local a = math.abs(M[r][col])
       if a > best then piv, best = r, a end
     end
-    if best < 1e-9 then return nil end          -- singular: coverage too poor
+    if best < 1e-9 then return nil end
     if piv ~= col then M[col], M[piv] = M[piv], M[col]; v[col], v[piv] = v[piv], v[col] end
     local d = M[col][col]
-    for r = col + 1, 4 do
+    for r = col + 1, 3 do
       local f = M[r][col] / d
       if f ~= 0 then
-        for k = col, 4 do M[r][k] = M[r][k] - f * M[col][k] end
+        for k = col, 3 do M[r][k] = M[r][k] - f * M[col][k] end
         v[r] = v[r] - f * v[col]
       end
     end
   end
   local out = {}
-  for r = 4, 1, -1 do
+  for r = 3, 1, -1 do
     local acc = v[r]
-    for k = r + 1, 4 do acc = acc - M[r][k] * out[k] end
+    for k = r + 1, 3 do acc = acc - M[r][k] * out[k] end
     out[r] = acc / M[r][r]
   end
   return out
 end
 
--- Returns offsets + the fitted field radius, or nil plus why it was refused.
+-- Returns { ox, oy, r } or nil plus the reason it was refused. Every refusal
+-- leaves the previous calibration in place: a silently-accepted bad fit is
+-- worse than no new one, and that is exactly how the last one went wrong.
 local function calib_solve()
   local c = calib
-  if c.n < 40 then return nil, "too few samples" end
+  if c.n < 60 then return nil, "too few readings - turn slower" end
   local M = {
-    { 4 * c.sxx, 4 * c.sxy, 4 * c.sxz, 2 * c.sx },
-    { 4 * c.sxy, 4 * c.syy, 4 * c.syz, 2 * c.sy },
-    { 4 * c.sxz, 4 * c.syz, 4 * c.szz, 2 * c.sz },
-    { 2 * c.sx,  2 * c.sy,  2 * c.sz,  c.n },
+    { 4 * c.sxx, 4 * c.sxy, 2 * c.sx },
+    { 4 * c.sxy, 4 * c.syy, 2 * c.sy },
+    { 2 * c.sx,  2 * c.sy,  c.n },
   }
-  local v = { 2 * c.sxs, 2 * c.sys_, 2 * c.szs, c.ss }
-  local sol = solve4(M, v)
-  if not sol then return nil, "turn the device in more directions" end
-  local cx, cy, cz, k = sol[1], sol[2], sol[3], sol[4]
-  local r2 = k + cx * cx + cy * cy + cz * cz
-  if r2 <= 0 then return nil, "turn the device in more directions" end
+  local v = { 2 * c.sxs, 2 * c.sys_, c.ss }
+  local sol = solve3(M, v)
+  if not sol then return nil, "turn it right around" end
+  local cx, cy, k = sol[1], sol[2], sol[3]
+  local r2 = k + cx * cx + cy * cy
+  if r2 <= 0 then return nil, "turn it right around" end
   local r = math.sqrt(r2)
-  -- Earth's total field is 0.25..0.65 G everywhere on the planet; a fit far
-  -- outside that has locked onto the wrong sphere and must not be saved.
-  if r < 0.15 or r > 1.2 then return nil, string.format("fit looks wrong (%.2f G)", r) end
-  return { ox = c.o[1] + cx, oy = c.o[2] + cy, oz = c.o[3] + cz }, r
+  -- Earth's HORIZONTAL field is 0.08 G near the poles and 0.41 G at the
+  -- magnetic equator. Outside that the fit has locked onto something else.
+  if r < 0.08 or r > 0.45 then return nil, string.format("field reads %.2f G", r) end
+  -- Coverage: a full turn makes each axis span 2r. Much less than that means
+  -- an arc, and an arc puts the centre almost anywhere.
+  if (c.mxx - c.mnx) < 1.4 * r or (c.mxy - c.mny) < 1.4 * r then
+    return nil, "turn it a FULL circle"
+  end
+  -- Roundness: sums give the mean square radius in closed form, so the
+  -- residual costs nothing to check. A fit distorted by moving the device
+  -- through nearby metal shows up here with a perfectly normal radius.
+  local mean_r2 = (c.ss - 2 * (cx * c.sx + cy * c.sy)) / c.n + cx * cx + cy * cy
+  local resid = math.sqrt(math.max(mean_r2 - r * r, 0))
+  if resid > 0.18 * r then
+    return nil, string.format("too distorted (%.0f%%) - move away from metal", 100 * resid / r)
+  end
+  return { ox = c.o[1] + cx, oy = c.o[2] + cy, r = r }, r
 end
 
 -- ---------------------------------------------------------------------------
@@ -259,10 +271,12 @@ local function update_heading(now)
     mag_sat = m.ovfl == true
     if not mag_sat then
       if calib then calib_add(m) end
-      local x, y, z = m.x, m.y, m.z
-      if cal then x, y, z = x - cal.ox, y - cal.oy, z - cal.oz end
-      mag_norm = math.sqrt(x * x + y * y + z * z)
-      mag_z = z
+      -- horizontal magnitude: that is what the heading is made of, and what
+      -- the calibrated radius can be compared against to detect tilt
+      local x, y = m.x, m.y
+      if cal then x, y = x - cal.ox, y - cal.oy end
+      mag_norm = math.sqrt(x * x + y * y)
+      mag_z = m.z
       heading, src = smooth_heading(mag_heading(m)), "mag"
     end
     return
@@ -484,11 +498,28 @@ local function refresh(now)
   -- heading-source line over the dial (<= 18 glyphs: it spans the dial width)
   if calib then
     local left = CAL_SECS - math.floor((now - calib.t0) / 1000)
-    set_text("src", string.format("Calibrating %ds  %d pts", math.max(left, 0), calib.n), AMBER)
+    -- coverage, not just a countdown: the span of each axis reaches 2r over a
+    -- full turn, so this reads ~100% exactly when the sweep is complete
+    local spanx, spany = calib.mxx - calib.mnx, calib.mxy - calib.mny
+    local cov = math.floor(math.min(spanx, spany) / 0.5 * 100)
+    set_text("src", string.format("Turn it round  %ds  %d%%", math.max(left, 0), math.min(cov, 99)), AMBER)
   elseif mag_sat then
     set_text("src", "Field saturated", C.bad)
   elseif src == "mag" then
-    set_text("src", cal and "Magnetometer ok" or "Calibrate: press C", cal and C.good or AMBER)
+    -- Tilt is the accuracy ceiling for a 2-axis compass: the field dips ~60
+    -- degrees at mid latitudes, so tipping the device swaps vertical field
+    -- into the horizontal pair and swings the heading. The app cannot correct
+    -- that without the IMU, but it CAN notice: held level the horizontal
+    -- magnitude equals the calibrated radius, and tilting shrinks or inflates
+    -- it. So say when the reading should not be trusted.
+    local level_off = cal and cal.r and mag_norm and math.abs(mag_norm - cal.r) > 0.22 * cal.r
+    if not cal then
+      set_text("src", "Calibrate: press C", AMBER)
+    elseif level_off then
+      set_text("src", "Hold it level", AMBER)
+    else
+      set_text("src", "Magnetometer ok", C.good)
+    end
   elseif src == "gps" then
     set_text("src", "GPS course", AMBER)
   elseif has_compass then
@@ -501,11 +532,11 @@ local function refresh(now)
   -- from the screen instead of guessed at. Takes over the target rows.
   if diag then
     local m = diag_m
-    set_text("tgt", string.format("cal %s", cal and string.format("%.2f %.2f %.2f", cal.ox, cal.oy, cal.oz)
+    set_text("tgt", string.format("cal %s", cal and string.format("%.3f %.3f r%.2f", cal.ox, cal.oy, cal.r or 0)
                                                 or "NONE - press C"), cal and C.text or C.bad)
     set_text("tgt2", m and string.format("raw %.2f %.2f %.2f", m.x, m.y, m.z) or "raw --", C.text)
     if m and cal then
-      set_text("rel", string.format("hor %.2f %.2f", m.x - cal.ox, m.y - cal.oy), C.text)
+      set_text("rel", string.format("hor %.3f %.3f |H| %.3f", m.x - cal.ox, m.y - cal.oy, mag_norm or 0), C.text)
     else
       set_text("rel", "hor --", C.sub)
     end
@@ -575,12 +606,17 @@ local function toggle_cal()
       save_cal()
       sys.toast(string.format("Calibrated  field %.2f G", r), 2200)
     else
-      sys.toast("Not calibrated: " .. tostring(r), 2600)
+      sys.toast("Not calibrated: " .. tostring(r), 2800)
     end
     calib = nil
+    if sys.keep_awake then sys.keep_awake(false) end
   else
+    -- Hold the screen and the app's tick for the sweep: the default screen
+    -- timeout is the same 20 s as this calibration, and a blanked screen used
+    -- to stop the sampling dead half way through and save the partial fit.
+    if sys.keep_awake then sys.keep_awake(true) end
     calib = calib_new()
-    sys.toast("Turn the device every way - tumble it, do not just spin it", 2600)
+    sys.toast("Lay it FLAT and turn it slowly right around", 2800)
   end
   hv_x, hv_y = 0, 0
 end

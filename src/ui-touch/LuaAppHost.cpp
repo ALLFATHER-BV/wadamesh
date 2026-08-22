@@ -30,7 +30,8 @@ extern "C" {
 extern const lv_font_t* luaHostFontForSize(int size_class);       // 12/14/16 -> g_font_*
 extern void             luaHostToast(const char* msg, int ms);    // showAlert passthrough
 extern bool             luaHostBeep();
-extern bool             luaHostScreenOn();   // false = display asleep; app ticks pause                            // notification chime; false = no sounder / muted
+extern bool             luaHostScreenOn();   // false = display asleep; app ticks pause
+extern void             luaHostKeepAwake(bool on);   // hold the screen + ticks for a measuring app                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
 extern void             luaHostAppPath(char* out, size_t cap, const char* rel);   // prefixes the store root
 extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
@@ -867,6 +868,14 @@ int geoCardinal(lua_State* L) {
   int idx = (int)((fmod(deg, 360.0) + 22.5) / 45.0) & 7;
   lua_pushstring(L, kPts[idx]);
   return 1;
+}
+// wada.sys.keep_awake(on) — for an app that is measuring rather than showing:
+// holds the screen on and keeps on_tick running. Cleared automatically when the
+// app closes. Use it around a calibration or a capture, not for the whole app.
+int sysKeepAwake(lua_State* L) {
+  const bool on = lua_isnoneornil(L, 1) ? true : lua_toboolean(L, 1);
+  luaHostKeepAwake(on);
+  return 0;
 }
 int sysToast(lua_State* L)  { luaHostToast(luaL_checkstring(L, 1), (int)luaL_optinteger(L, 2, 1500)); return 0; }
 int sysRandom(lua_State* L) {
@@ -1936,6 +1945,7 @@ void openWada(lua_State* L) {
   lua_newtable(L);                                       // wada.sys
   lua_pushcfunction(L, sysMillis); lua_setfield(L, -2, "millis");
   lua_pushcfunction(L, sysToast);  lua_setfield(L, -2, "toast");
+  lua_pushcfunction(L, sysKeepAwake); lua_setfield(L, -2, "keep_awake");
   lua_pushcfunction(L, sysBoard);  lua_setfield(L, -2, "board");
   lua_pushcfunction(L, sysRandom); lua_setfield(L, -2, "random");
   lua_pushcfunction(L, sysEpoch);    lua_setfield(L, -2, "epoch");     // #245
@@ -2232,6 +2242,7 @@ void hostTeardown() {
     h->timers[i].cb = LUA_NOREF;
     s_timer_gen[i]++;              // any handle Lua still holds is now inert
   }
+  luaHostKeepAwake(false);          // an app cannot hold the screen after it closes
   if (h->timer) { lv_timer_del(h->timer); h->timer = nullptr; }
   if (s_net_poll) { lv_timer_del(s_net_poll); s_net_poll = nullptr; }
   if (h->L && s_net_cb != LUA_NOREF) { luaL_unref(h->L, LUA_REGISTRYINDEX, s_net_cb); }

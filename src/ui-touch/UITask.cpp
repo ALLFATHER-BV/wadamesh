@@ -46536,7 +46536,25 @@ static bool uiDataFsReady() {
 // unconditionally — so an app polling a sensor at 10 Hz went on doing it into a
 // dark screen. Nothing it draws can be seen, so the host skips the tick; the app
 // resumes on wake and sees the gap through sys.millis() like any other pause.
-bool luaHostScreenOn() { return g_lv.task ? !g_lv.task->isScreenOff() : true; }
+static bool s_lua_keep_awake = false;
+// wada.sys.keep_awake(true): an app that is MEASURING rather than displaying —
+// a calibration sweep, a timed capture — must keep running and must not have
+// the screen blank underneath it. Pausing app ticks with the screen (below)
+// truncated exactly such a sweep: the M9's default screen timeout is 20 s and
+// GPS Compass calibrates for 20 s, so collection stopped at the same instant
+// the countdown was supposed to end. This keeps BOTH alive, and is cleared
+// when the app closes so it cannot leak into the next one.
+void luaHostKeepAwake(bool on) {
+  s_lua_keep_awake = on;
+  if (on && g_lv.task) g_lv.task->noteUserInput();   // push the idle timer out now
+}
+bool luaHostScreenOn() {
+  if (s_lua_keep_awake) {
+    if (g_lv.task) g_lv.task->noteUserInput();       // and keep pushing it, tick by tick
+    return true;
+  }
+  return g_lv.task ? !g_lv.task->isScreenOff() : true;
+}
 
 const lv_font_t* luaHostFontForSize(int size_class) {
   return size_class <= 12 ? &g_font_12 : size_class <= 14 ? &g_font_14 : &g_font_16;
