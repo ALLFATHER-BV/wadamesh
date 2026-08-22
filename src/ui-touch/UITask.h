@@ -318,6 +318,8 @@ public:
   // one deliberately. Kept separate so the monitor cannot mark anything read.
   int  consoleThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_channel);
   bool consoleMarkThreadRead(const char* name);
+  int  consoleHistoryAt(const char* thread, int back, char* sender, size_t sc,
+                        char* text, size_t tc, uint32_t* ts, bool* outgoing);
   void markActiveThreadRead();    // clear the currently-open thread's unread (viewing == read)
   void markAllThreadsRead();      // clear every thread's unread count
   bool threadHasMention(int idx) const;   // unread @mention of me in this thread

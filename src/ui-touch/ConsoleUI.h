@@ -12,6 +12,8 @@
 // skipping LVGL entirely is Phase 2; this module is self-contained until then
 // so it can be exercised without touching the graphical path.
 #include "device_caps.h"
+#include <stdint.h>
+#include <stddef.h>
 
 #if CAP_CONSOLE
 class DisplayDriver;
@@ -25,10 +27,30 @@ bool consoleActive();
 // Call every loop while active: polls touch, blinks the cursor, redraws when dirty.
 void consoleLoop();
 
+// Line colours. Kept as a small named set rather than raw values so the console
+// reads as one thing: the meaning of a line picks the colour, not the caller's
+// taste.
+enum ConsoleColor : uint8_t {
+  CC_TEXT = 0,   // normal output
+  CC_DIM,        // secondary / hints
+  CC_ECHO,       // the command you typed
+  CC_OK,         // success
+  CC_WARN,       // warnings, refusals
+  CC_ERR,        // failures
+  CC_CHAN,       // an incoming channel message
+  CC_DM,         // an incoming direct message
+  CC_HEAD,       // section headings, the banner
+};
+
 // Append one line of output. This is the MyMesh terminal-sink signature, so it
 // can be handed to setTerminalSink() directly. Wraps long lines.
 void consoleWriteLine(const char* line);
+void consoleWriteLineC(uint8_t colour, const char* line);
 void consolePrintf(const char* fmt, ...);
+void consolePrintfC(uint8_t colour, const char* fmt, ...);
+
+// The login banner: ASCII mark, who this node is, and the quick-launch menu.
+void consoleBanner(const char* node_name, const char* version);
 
 // Feed one character from a hardware keyboard. '\n' submits, '\b' deletes.
 // Returns true if the console consumed it.

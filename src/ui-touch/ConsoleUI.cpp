@@ -17,6 +17,7 @@
 #include "../MyMesh.h"   // declares the_mesh itself (a reference on PSRAM boards)
 #if defined(ESP32)
   #include "../helpers/esp32/TouchPrefsStore.h"
+  #include "../helpers/esp32/WifiRuntimeStore.h"   // wifiConfigGetRadioEnabled
 #endif
 
 // Contacts, channels and the send path, all from UITask so the console reuses
@@ -34,6 +35,16 @@ extern bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_r
 extern int  consoleHostUnreadTotal();
 extern int  consoleHostThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_channel);
 extern bool consoleHostMarkRead(const char* name);
+extern int  consoleHostHistoryAt(const char* thread, int back, char* sender, size_t sc,
+                                 char* text, size_t tc, uint32_t* ts, bool* outgoing);
+extern void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uint32_t* tx_air_s,
+                              uint32_t* rx_pkts, uint32_t* rx_err, int* budget_ms);
+extern void luaHostBattery(uint16_t* mv, int* pct, bool* charging);
+extern uint32_t luaHostMeshDiscover(int type_filter);
+extern int  luaHostDiscoverCount();
+extern int  luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, size_t name_cap,
+                              int* type, int* rssi, float* snr, float* their_snr, int* hops,
+                              uint32_t* first_ms_ago, uint32_t* last_ms_ago, int* heard);
 
 #if CAP_TOUCH
 // Board touch driver, read directly. lvglTouchRead() is only an adapter that
@@ -52,6 +63,7 @@ constexpr int  kLineCap  = 96;      // chars per stored line, excluding the NUL
 constexpr int  kInputCap = 128;
 
 char*    s_ring       = nullptr;    // kMaxLines * (kLineCap + 1)
+uint8_t* s_ring_col   = nullptr;    // one ConsoleColor per stored line
 int      s_head       = 0;          // next write slot
 int      s_count      = 0;
 int      s_scroll     = 0;          // lines scrolled back from the newest
@@ -75,12 +87,15 @@ bool     s_blink_on  = true;
 
 inline char* lineAt(int i) { return s_ring + (size_t)i * (kLineCap + 1); }
 
+uint8_t s_push_col = CC_TEXT;      // colour applied by the next ringPush
+
 void ringPush(const char* s, int len) {
   if (!s_ring) return;
   if (len > kLineCap) len = kLineCap;
   char* dst = lineAt(s_head);
   memcpy(dst, s, len);
   dst[len] = '\0';
+  if (s_ring_col) s_ring_col[s_head] = s_push_col;
   s_head = (s_head + 1) % kMaxLines;
   if (s_count < kMaxLines) s_count++;
   s_scroll = 0;              // any new output jumps back to the live tail
@@ -96,6 +111,28 @@ const char* ringGet(int i) {
   if (i < 0 || i >= s_count) return nullptr;
   const int start = (s_head - s_count + kMaxLines * 2) % kMaxLines;
   return lineAt((start + i) % kMaxLines);
+}
+uint8_t ringGetCol(int i) {
+  if (!s_ring_col || i < 0 || i >= s_count) return CC_TEXT;
+  const int start = (s_head - s_count + kMaxLines * 2) % kMaxLines;
+  return s_ring_col[(start + i) % kMaxLines];
+}
+
+// One place that decides what a colour means on this panel. UIColor is the
+// core's named set, so the console tracks the rest of the firmware rather than
+// inventing its own values.
+uint16_t colourFor(uint8_t c) {
+  switch (c) {
+    case CC_DIM:  return UIColor::secondary_txt;
+    case CC_ECHO: return UIColor::title_txt;
+    case CC_OK:   return UIColor::corp_blue;
+    case CC_WARN: return UIColor::warning_txt;
+    case CC_ERR:  return UIColor::warning_txt;
+    case CC_CHAN: return UIColor::corp_blue;
+    case CC_DM:   return UIColor::title_txt;
+    case CC_HEAD: return UIColor::title_txt;
+    default:      return UIColor::primary_txt;
+  }
 }
 
 #if CAP_TOUCH && !CAP_KEYBOARD
@@ -246,7 +283,7 @@ void render() {
     const int idx = first + r;
     const char* l = (idx >= 0) ? ringGet(idx) : nullptr;
     if (l && *l) {
-      s_disp->setColor(UIColor::primary_txt);
+      s_disp->setColor(colourFor(ringGetCol(idx)));
       s_disp->setCursor(0, y);
       s_disp->print(l);
     }
@@ -335,6 +372,48 @@ void drawCursorOnly(bool on) {
   s_disp->fillRect(s_cur_x, s_cur_y, s_char_w, s_line_h);
 }
 
+// ---- boot banner + quick menu -----------------------------------------------
+// A login banner in the server tradition: what this machine is, then what it can
+// do, so the first screen answers "now what?" instead of leaving a bare prompt.
+// Deliberately narrow: 26 columns fits the smallest panel we ship (the V4 at
+// 240 px), so nobody sees a broken box.
+const char* const kBanner[] = {
+  " _ _ _ ___ ___ ___ ",
+  "| | | | .'|   |  _|",
+  "|_____|__,|_|_|_|  ",
+  "  m e s h",
+};
+
+// The quick menu. Numbers because typing 1 is faster than typing 'contacts',
+// and because a numbered list is how you discover what exists at all.
+struct QuickItem { const char* key; const char* label; const char* cmd; };
+const QuickItem kQuick[] = {
+  { "1", "Unread",   "unread"   },
+  { "2", "Contacts", "contacts" },
+  { "3", "Channels", "chans"    },
+  { "4", "Discover", "discover" },
+  { "5", "Signal",   "stat"     },
+  { "6", "Battery",  "batt"     },
+  { "7", "Wi-Fi",    "wifi"     },
+  { "8", "Memory",   "mem"      },
+  { "9", "Node",     "status"   },
+};
+const int kQuickN = (int)(sizeof(kQuick) / sizeof(kQuick[0]));
+
+void cmdMenu() {
+  consoleWriteLineC(CC_HEAD, "quick launch");
+  for (int i = 0; i < kQuickN; i += 2) {
+    char line[kLineCap];
+    if (i + 1 < kQuickN)
+      snprintf(line, sizeof line, " %s %-10s  %s %-10s",
+               kQuick[i].key, kQuick[i].label, kQuick[i + 1].key, kQuick[i + 1].label);
+    else
+      snprintf(line, sizeof line, " %s %-10s", kQuick[i].key, kQuick[i].label);
+    consoleWriteLine(line);
+  }
+  consoleWriteLineC(CC_DIM, "type a number, or 'help'");
+}
+
 // ---- command dispatch -------------------------------------------------------
 void submit() {
   if (s_input_len == 0) return;
@@ -343,9 +422,20 @@ void submit() {
   consoleWriteLine("");              // blank line between commands, for legibility
   char echo[kLineCap + 4];
   snprintf(echo, sizeof echo, "> %s", cmd);
-  consoleWriteLine(echo);
+  consoleWriteLineC(CC_ECHO, echo);
   s_input[0] = '\0';
   s_input_len = 0;
+
+  // A bare number is a quick-launch shortcut. Checked first so it cannot be
+  // shadowed by anything the node CLI happens to accept.
+  if (cmd[0] >= '1' && cmd[0] <= '9' && cmd[1] == '\0') {
+    for (int i = 0; i < kQuickN; i++) {
+      if (kQuick[i].key[0] != cmd[0]) continue;
+      snprintf(cmd, sizeof cmd, "%s", kQuick[i].cmd);
+      break;
+    }
+  }
+  if (!strcasecmp(cmd, "menu") || !strcasecmp(cmd, "apps")) { cmdMenu(); return; }
 
   // Console-only commands first, then everything else to the node CLI. Keeping
   // this list short is deliberate: anything CommonCLI already answers should go
@@ -370,6 +460,9 @@ void submit() {
   if (!strcasecmp(cmd, "help")) {
     consoleWriteLine("console  clear, help, mem, ui");
     consoleWriteLine("mesh     contacts, chans, unread");
+    consoleWriteLine("         chat <name>    show a thread");
+    consoleWriteLine("         discover / discovered");
+    consoleWriteLine("radio    stat, batt, wifi");
     consoleWriteLine("         read <name>    clear that thread's unread");
     consoleWriteLine("         monitor on|off show arriving messages");
     consoleWriteLine("         to <name>   pick a contact or channel");
@@ -425,7 +518,68 @@ void submit() {
   if (!strncasecmp(cmd, "read ", 5)) {
     const char* who = cmd + 5;
     if (consoleHostMarkRead(who)) consolePrintf("marked %s read", who);
-    else                          consolePrintf("no thread named '%s'", who);
+    else                          consolePrintfC(CC_ERR, "no thread named '%s'", who);
+    return;
+  }
+  // Read a thread. Deliberately does NOT mark it read: use 'read <name>'.
+  if (!strncasecmp(cmd, "chat ", 5)) {
+    const char* who = cmd + 5;
+    char sender[40], text[176]; uint32_t ts; bool out;
+    int shown = 0;
+    // Collect newest-first, print oldest-first, so it reads like a conversation.
+    for (int i = 11; i >= 0; i--) {
+      if (!consoleHostHistoryAt(who, i, sender, sizeof sender, text, sizeof text, &ts, &out)) continue;
+      consolePrintfC(out ? CC_DIM : CC_TEXT, "%s%s: %s", out ? "> " : "", sender, text);
+      shown++;
+    }
+    if (!shown) consolePrintfC(CC_WARN, "nothing stored for '%s'", who);
+    else        consoleWriteLineC(CC_DIM, "('read <name>' to clear unread)");
+    return;
+  }
+  // Radio + traffic, the Signal page's numbers.
+  if (!strcasecmp(cmd, "stat") || !strcasecmp(cmd, "signal")) {
+    float rssi, noise; uint32_t rxa, txa, rxp, rxe; int budget;
+    luaHostRadioStats(&rssi, &noise, &rxa, &txa, &rxp, &rxe, &budget);
+    consolePrintf("rssi %.0f  noise %.0f  margin %.0f dB", rssi, noise, rssi - noise);
+    consolePrintf("rx %lu pkts, %lu err", (unsigned long)rxp, (unsigned long)rxe);
+    consolePrintf("airtime rx %lus  tx %lus", (unsigned long)rxa, (unsigned long)txa);
+    consolePrintfC(budget > 0 ? CC_OK : CC_WARN, "tx budget %d ms", budget);
+    return;
+  }
+  if (!strcasecmp(cmd, "batt") || !strcasecmp(cmd, "battery")) {
+    uint16_t mv = 0; int pct = -1; bool chg = false;
+    luaHostBattery(&mv, &pct, &chg);
+    consolePrintfC(pct >= 0 && pct < 20 ? CC_WARN : CC_TEXT,
+                   "%d%%  %u mV%s", pct, (unsigned)mv, chg ? "  charging" : "");
+    return;
+  }
+  if (!strcasecmp(cmd, "wifi")) {
+#if defined(ESP32)
+    consolePrintf("wifi %s", wifiConfigGetRadioEnabled() ? "on" : "off");
+    consoleWriteLineC(CC_DIM, "(use the CLI: 'set wifi.ssid', or the UI)");
+#endif
+    return;
+  }
+  // The active probe. It transmits and makes every neighbour reply, so it says
+  // so rather than doing it silently.
+  if (!strcasecmp(cmd, "discover")) {
+    if (!luaHostMeshDiscover(0)) { consoleWriteLineC(CC_ERR, "probe failed (radio busy?)"); return; }
+    consoleWriteLineC(CC_OK, "probe sent - replies arrive over a few seconds");
+    consoleWriteLineC(CC_DIM, "'discovered' to list who answered");
+    return;
+  }
+  if (!strcasecmp(cmd, "discovered")) {
+    char pk[12], name[36]; int type, rssi, hops, heard; float snr, tsnr; uint32_t fa, la;
+    const int n = luaHostDiscoverCount();
+    for (int i = 0; i < n && i < 30; i++) {
+      if (!luaHostDiscoverAt(i, pk, sizeof pk, name, sizeof name, &type, &rssi, &snr,
+                             &tsnr, &hops, &fa, &la, &heard)) break;
+      // Both link directions: theirs matters as much as ours, and only a probe
+      // reply can tell you how well they heard YOU.
+      consolePrintfC(hops == 0 ? CC_OK : CC_TEXT, "%-14s %5.1f/%-5.1f %s",
+                     name[0] ? name : pk, snr, tsnr, hops == 0 ? "direct" : "relayed");
+    }
+    if (!n) consoleWriteLineC(CC_DIM, "nothing yet - run 'discover' first");
     return;
   }
   if (!strcasecmp(cmd, "contacts")) { cmdContacts(); return; }
@@ -436,17 +590,17 @@ void submit() {
     return;
   }
   if (!strncasecmp(cmd, "msg ", 4)) {
-    if (!s_to[0]) { consoleWriteLine("no recipient - use 'to <name>' first"); return; }
+    if (!s_to[0]) { consoleWriteLineC(CC_WARN, "no recipient - use 'to <name>' first"); return; }
     const char* text = cmd + 4;
     // Try a channel first, then a contact. Channels and contacts share a name
     // space here on purpose: the user typed a name, not a category.
-    if (luaHostMeshSendChannel(s_to, text)) { consolePrintf("sent to #%s", s_to); return; }
+    if (luaHostMeshSendChannel(s_to, text)) { consolePrintfC(CC_OK, "sent to #%s", s_to); return; }
     bool was_room = false;
     if (luaHostMeshSendDM(s_to, text, &was_room)) {
-      consolePrintf("sent to %s%s", s_to, was_room ? " (room)" : "");
+      consolePrintfC(CC_OK, "sent to %s%s", s_to, was_room ? " (room)" : "");
       return;
     }
-    consolePrintf("no channel or contact named '%s'", s_to);
+    consolePrintfC(CC_ERR, "no channel or contact named '%s'", s_to);
     return;
   }
   the_mesh.runLocalCli(cmd);
@@ -466,11 +620,29 @@ void consoleBegin(DisplayDriver* d) {
     if (!s_ring) s_ring = (char*)malloc(bytes);
     if (!s_ring) return;                      // no scrollback, no console
     memset(s_ring, 0, bytes);
+#if defined(ESP32)
+    s_ring_col = (uint8_t*)heap_caps_malloc(kMaxLines, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+    if (!s_ring_col) s_ring_col = (uint8_t*)malloc(kMaxLines);
+    if (s_ring_col) memset(s_ring_col, CC_TEXT, kMaxLines);   // null is tolerated: all text
   }
   s_active = true;
   measure();
   s_dirty = true;
   render();
+}
+
+// Printed once at boot by UITask::begin. Not inside consoleBegin, because the
+// node name and version are not knowable until the mesh is up.
+void consoleBanner(const char* node_name, const char* version) {
+  for (unsigned i = 0; i < sizeof(kBanner) / sizeof(kBanner[0]); i++)
+    consoleWriteLineC(CC_HEAD, kBanner[i]);
+  consoleWriteLine("");
+  if (node_name && *node_name) consolePrintfC(CC_OK, "node   %s", node_name);
+  if (version   && *version)   consolePrintfC(CC_DIM, "build  %s", version);
+  consoleWriteLine("");
+  cmdMenu();
+  consoleWriteLine("");
 }
 
 void consoleEnd() { s_active = false; }
@@ -511,6 +683,21 @@ void consoleWriteLine(const char* line) {
     if (!nl) break;
     seg = nl + 1;
   }
+}
+
+void consoleWriteLineC(uint8_t colour, const char* line) {
+  s_push_col = colour;
+  consoleWriteLine(line);
+  s_push_col = CC_TEXT;
+}
+
+void consolePrintfC(uint8_t colour, const char* fmt, ...) {
+  char buf[256];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof buf, fmt, ap);
+  va_end(ap);
+  consoleWriteLineC(colour, buf);
 }
 
 void consolePrintf(const char* fmt, ...) {

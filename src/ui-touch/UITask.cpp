@@ -23297,6 +23297,10 @@ int consoleHostThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_c
 bool consoleHostMarkRead(const char* name) {
   return g_lv.task ? g_lv.task->consoleMarkThreadRead(name) : false;
 }
+int consoleHostHistoryAt(const char* thread, int back, char* sender, size_t sc,
+                         char* text, size_t tc, uint32_t* ts, bool* outgoing) {
+  return g_lv.task ? g_lv.task->consoleHistoryAt(thread, back, sender, sc, text, tc, ts, outgoing) : 0;
+}
 #endif
 
 #if CAP_CONSOLE
@@ -46967,7 +46971,7 @@ bool luaHostMeshSendChannel(const char* chan_name, const char* text) {
 }
 #endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
 
-#if CAP_LUA_SDK_EXT
+#if CAP_LUA_SDK_EXT || CAP_CONSOLE   // console mode needs it on the V4 too
 // wada.sys.battery(). Reads the SMOOTHED millivolts the status bar uses, not a
 // raw ADC sample, so a Lua chart cannot show noise the rest of the UI hides.
 void luaHostBattery(uint16_t* mv, int* pct, bool* charging) {
@@ -47001,9 +47005,9 @@ bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, uint32_t* fix_t
   if (lon_e6) *lon_e6 = (int32_t)llround(lo * 1.0e6);
   return true;
 }
-#endif  // CAP_LUA_SDK_EXT
+#endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
 
-#if CAP_LUA_SDK_EXT
+#if CAP_LUA_SDK_EXT || CAP_CONSOLE   // console mode needs it on the V4 too
 // ---- Settings -> App permissions -------------------------------------------
 // You could GRANT a permission but not review or take one back, which is only
 // acceptable on a bench. "Which apps can transmit as me?" has to be answerable,
@@ -47162,7 +47166,7 @@ void luaHostRequestProbePerm(const char* app_id, const char* app_name) {
 uint32_t luaHostMeshDiscover(int type_filter) {
   return the_mesh.uiStartDiscoverScan((uint8_t)(type_filter & 0xFF));
 }
-#endif  // CAP_LUA_SDK_EXT
+#endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
 
 void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon,
                     char* pk_hex, size_t pk_cap, int32_t* lat_e6, int32_t* lon_e6) {
@@ -48624,6 +48628,28 @@ int UITask::consoleThreadAt(int idx, char* name, size_t cap, int* unread, bool* 
   return 0;
 }
 
+// Read back a thread's stored messages, NEWEST first. Read-only, like
+// consoleThreadAt: showing history is not the same act as clearing unread, so
+// the caller decides whether to also mark it read.
+int UITask::consoleHistoryAt(const char* thread, int back, char* sender, size_t sc,
+                             char* text, size_t tc, uint32_t* ts, bool* outgoing) {
+  if (!_ui_msgs || !thread || !*thread || back < 0) return 0;
+  int seen = 0;
+  for (int n = 0; n < _ui_msg_count; ++n) {
+    // walk backwards from the newest record in the ring
+    int i = (_ui_msg_head - 1 - n + _ui_msg_cap * 2) % _ui_msg_cap;
+    const UIMessage& m = _ui_msgs[i];
+    if (strncmp(m.thread, thread, MAX_THREAD_NAME) != 0) continue;
+    if (seen++ != back) continue;
+    snprintf(sender, sc, "%s", m.sender);
+    snprintf(text,   tc, "%s", m.text);
+    if (ts)       *ts       = m.ts;
+    if (outgoing) *outgoing = m.outgoing;
+    return 1;
+  }
+  return 0;
+}
+
 // Clearing unread is an explicit act, which is the whole point: the monitor
 // showing a message must not count as having read it.
 bool UITask::consoleMarkThreadRead(const char* name) {
@@ -49396,8 +49422,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     Serial.println("[BOOT] console: begin"); Serial.flush();
     consoleBegin(_display);
     Serial.println("[BOOT] console: panel up"); Serial.flush();
-    consoleWriteLine("wadamesh console");
-    consoleWriteLine("type 'help', or 'ui' to go back to the graphical UI");
+    consoleBanner(the_mesh.getNodePrefs() ? the_mesh.getNodePrefs()->node_name : nullptr,
+                  FIRMWARE_VERSION);
+    consoleWriteLineC(CC_DIM, "'help' for everything, 'ui' for the graphical interface");
     consoleWriteLine("");
     Serial.println("[BOOT] console: text ok"); Serial.flush();
     the_mesh.setTerminalSink(&consoleWriteLine);
