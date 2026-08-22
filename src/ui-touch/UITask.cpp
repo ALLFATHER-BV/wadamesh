@@ -39121,7 +39121,12 @@ static void powerRebootCb(lv_event_t* e) {
   g_lv.task->showAlert(TR("Rebooting\xE2\x80\xA6"), 600);
   g_lv.task->rebootDevice();   // flushes chat history, then reboots
 }
-#if !defined(HAS_THINKNODE_M9)   // M9 has no Power-off row (no wake-capable button — see openPowerMenu)
+// Gated on PIN_USER_BTN, which is exactly what arms the deep-sleep wake below.
+// A power-off nobody can undo is not a power-off, it is a brick until the user
+// finds the hardware switch — and that is what the T-Display P4 did: no wake
+// source armed at all, under a toast promising a trackball it does not have
+// (#310). Boards without the symbol get no Power-off row (see openPowerMenu).
+#if defined(PIN_USER_BTN)
 static void powerOffCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
@@ -39134,10 +39139,12 @@ static void powerOffCb(lv_event_t* e) {
     the_mesh.flushContactsIfDirty();       // and any coalesced contacts refresh
     the_mesh.persistSyncHistoryNow();      // and the app-sync replay ring (RAM is lost in deep sleep)
     touchPrefsFlush();                     // and all queued A/B preference snapshots
-#if defined(HELTEC_LORA_V4_R8)
-    g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
-#else
+    // Name the control this board actually has. "Click trackball" was shown on
+    // every board that reached here, trackball or not.
+#if defined(HAS_TDECK_GT911)
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 click trackball to wake"), 1500);
+#else
+    g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
 #endif
   }
   // Let the toast paint, then enter deep sleep.
@@ -39179,7 +39186,7 @@ static void powerOffCb(lv_event_t* e) {
   esp_deep_sleep_start();   // never returns; a press wakes via full reboot
 #endif
 }
-#endif  // !HAS_THINKNODE_M9 (powerOffCb)
+#endif  // PIN_USER_BTN (powerOffCb)
 
 #if defined(ESP32)
 #if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
@@ -39280,11 +39287,12 @@ static void openPowerMenu() {
     lv_obj_center(l);
     return b;
   };
-#if defined(HAS_THINKNODE_M9)
-  // No "Power off" here: deep sleep would arm ext0 wake on a user button this
-  // board doesn't have (only a power-cut slider and reset, neither a wakeable
-  // GPIO) — an off state recoverable only by cycling the slider. The slider IS
-  // the power-off. Remaining rows shift up one slot.
+#if !defined(PIN_USER_BTN)
+  // No "Power off" here: nothing on this board can wake it from deep sleep.
+  // The M9 has a power-cut slider and reset, neither a wakeable GPIO; the
+  // T-Display P4 and Tanmatsu have no user button either. On those the physical
+  // switch IS the power-off, and offering a software one that cannot be undone
+  // reads as a freeze (#310). Remaining rows shift up one slot.
   const int p_y = p_y0;
 #else
   mk(TR(LV_SYMBOL_POWER "  Power off"),        powerOffCb,      0xC44B55, p_y0);
