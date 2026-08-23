@@ -41,7 +41,14 @@ fi
 # 1. Pull the current published tree so listings stay complete across tags.
 if [ -n "$DEST" ]; then
   mkdir -p "$OUT"
-  rsync -a "$DEST:$DEST_PATH/" "$OUT/" 2>/dev/null || echo "note: first publish (nothing to pull yet)"
+  # --exclude apps/: the Lua app + language store lives under the same document
+  # root but is NOT ours. It is published by scripts/deploy-apps.sh from
+  # deploy/apps/, which is the canonical copy. Pulling it into out/ makes a local
+  # mirror that the push below then sends back, overwriting a newer store with
+  # whatever was current when it was pulled. That happened on 2026-08-23: the
+  # beta_69 firmware push reverted the store to sdktest 1.2 and language v15 and
+  # deleted two apps, minutes after deploy-apps.sh had published them.
+  rsync -a --exclude 'apps/' "$DEST:$DEST_PATH/" "$OUT/" 2>/dev/null || echo "note: first publish (nothing to pull yet)"
 fi
 mkdir -p "$ARCH/$TAG" "$FEED"
 
@@ -151,7 +158,10 @@ fi
 
 # 4. Publish to the VPS (Cloudflare caches at the edge).
 if [ -n "$DEST" ]; then
-  rsync -av "$OUT/" "$DEST:$DEST_PATH/"
+  # Same exclusion on the way out, so a stale apps/ left in out/ by an older
+  # checkout cannot clobber the store either. The firmware release never
+  # publishes the store; deploy-apps.sh does, and only that.
+  rsync -av --exclude 'apps/' "$OUT/" "$DEST:$DEST_PATH/"
   echo "published $TAG ($MODE) -> $DEST:$DEST_PATH"
 else
   echo "WADAMESH_VPS not set — built + staged in $ARCH/$TAG + $FEED only (no publish)."
