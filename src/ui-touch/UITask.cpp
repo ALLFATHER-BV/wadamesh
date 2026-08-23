@@ -3979,6 +3979,10 @@ static char      s_altacc_key    = 0;         // letter driving the open picker
 static lv_obj_t* s_altacc_ta     = nullptr;   // field the pick inserts into
 static bool tanAltAccentHandleKey(char c, lv_obj_t* ta);
 static void tanAltAccentAltReleased();
+static bool mentionNavActive();
+static void mentionNavMove(int delta);
+static void mentionNavConfirm();
+static void mentionBoxHide();
 // The UP/DOWN/LEFT/RIGHT action, factored out so a HELD arrow can auto-repeat it (navPump's
 // per-frame tick re-fires this). Recomputes the focused field each call so repeat stays correct.
 static void navArrowAction(uint32_t key) {
@@ -4093,6 +4097,36 @@ static void navPump() {
     // Hard screen lock: the overlay absorbs everything else (Vol- was already handled above).
     if (g_lv.task && g_lv.task->isManualLocked()) continue;
 #endif
+    // Mention rows are intentionally outside the LVGL focus group. Route the
+    // Tanmatsu's dedicated navigation events into their private selection state
+    // before ordinary field/caret navigation sees them. Printable keyboard input
+    // still falls through and narrows the list.
+    if (mentionNavActive()) {
+      if (ev.type == INPUT_EVENT_TYPE_NAVIGATION) {
+        const bool down = ev.args_navigation.state;
+        switch (ev.args_navigation.key) {
+          case BSP_INPUT_NAVIGATION_KEY_UP:    if (down) mentionNavMove(-1); continue;
+          case BSP_INPUT_NAVIGATION_KEY_DOWN:  if (down) mentionNavMove(+1); continue;
+          case BSP_INPUT_NAVIGATION_KEY_RETURN:
+          case BSP_INPUT_NAVIGATION_KEY_GAMEPAD_A:
+          case BSP_INPUT_NAVIGATION_KEY_JOYSTICK_PRESS:
+            if (down) mentionNavConfirm(); continue;
+          case BSP_INPUT_NAVIGATION_KEY_F1:
+          case BSP_INPUT_NAVIGATION_KEY_ESC:
+          case BSP_INPUT_NAVIGATION_KEY_GAMEPAD_B:
+            if (down) mentionBoxHide(); continue;
+          case BSP_INPUT_NAVIGATION_KEY_LEFT:
+          case BSP_INPUT_NAVIGATION_KEY_RIGHT:
+            if (down) mentionBoxHide();
+            break;   // dismiss, then let normal caret navigation handle it
+          default: break;
+        }
+      } else if (ev.type == INPUT_EVENT_TYPE_KEYBOARD) {
+        const char c = ev.args_keyboard.ascii;
+        if (c == '\r' || c == '\n') { mentionNavConfirm(); continue; }
+        if (c == 8 || c == 127)      { mentionBoxHide(); continue; }
+      }
+    }
     // An open dropdown captures input: arrows move the highlight (LV_KEY_UP/DOWN, NOT prev/next),
     // Enter selects + closes, Esc/✕ closes. navMaybeRebuild() leaves the group alone while it's open.
     if (navOpenDropdown()) {
@@ -6699,43 +6733,46 @@ static void accentBoxMaybeShow() {
 }
 
 // ---- @-mention contact picker (issue #42) --------------------------------
-// Typing "@name" in a chat composer pops a touch list of matching contacts —
-// modeled on the accent box: a passive overlay (NAV_SKIP_FLAG) that never steals
-// keyboard-nav focus and, for now, is selected by TOUCH only. Tapping a row
-// replaces the "@partial" with "@FullName ".
+// Typing "@name" in a chat composer pops a list of matching recently-heard
+// chat identities. It is modeled on the accent box: a passive overlay
+// (NAV_SKIP_FLAG) that never steals keyboard-nav focus. Touch or the board's
+// hardware selector replaces the active token with the chosen full name.
 static lv_obj_t* s_mentionbox    = nullptr;
 static lv_obj_t* s_mentionbox_ta = nullptr;
 static constexpr int k_mention_max = 6;
+static constexpr int k_mention_source_max = 16;
 static char s_mention_names[k_mention_max][32];   // kept alive for the cell callbacks
-#if defined(TLORA_PAGER)
-// No touch on this board, and the cells below are NAV_SKIP_FLAG (excluded from
-// the normal keyboard/encoder focus group by design, since touch boards pick
-// them by tap) -- without this, the box is completely unreachable here.
-// Unlike the accent box (armed explicitly via Fn+Space), this list grabs the
-// encoder the INSTANT it's shown (mentionBoxMaybeShow() sets
-// s_mentionnav_active=true directly) -- see that function for why. The rotary
-// encoder walks s_mentionbox_cells (updatePagerEncoder()); Enter (the
-// encoder's own click) confirms via mentionNavConfirm(); Backspace cancels.
+#if CAP_KEYPAD_NAV
+// The rows stay outside the normal focus group so rebuilding this per keystroke
+// never steals focus from the composer. Each board routes its selector into
+// this private state: trackball, Pager encoder, M9 d-pad, or Tanmatsu arrows.
 static lv_obj_t* s_mentionbox_cells[k_mention_max];
 static uint8_t   s_mentionbox_cell_n  = 0;
 static bool      s_mentionnav_active  = false;
 static int       s_mentionnav_idx     = 0;
+static bool mentionNavActive() { return s_mentionnav_active; }
 #endif
 static void mentionBoxHide() {
   if (s_mentionbox) { lv_obj_del(s_mentionbox); s_mentionbox = nullptr; }
   s_mentionbox_ta = nullptr;
-#if defined(TLORA_PAGER)
+#if CAP_KEYPAD_NAV
   s_mentionnav_active = false;
   s_mentionbox_cell_n = 0;
 #endif
 }
-#if defined(TLORA_PAGER)
+#if CAP_KEYPAD_NAV
 static void mentionNavRestyle() {
   for (uint8_t i = 0; i < s_mentionbox_cell_n; ++i) {
     if (!s_mentionbox_cells[i]) continue;
     lv_obj_set_style_bg_color(s_mentionbox_cells[i],
       lv_color_hex((int)i == s_mentionnav_idx ? COLOR_ACCENT : 0x1B2B3A), LV_PART_MAIN);
   }
+}
+static void mentionNavMove(int delta) {
+  if (!s_mentionnav_active || s_mentionbox_cell_n == 0 || delta == 0) return;
+  while (delta > 0) { s_mentionnav_idx = (s_mentionnav_idx + 1) % (int)s_mentionbox_cell_n; --delta; }
+  while (delta < 0) { s_mentionnav_idx = (s_mentionnav_idx - 1 + (int)s_mentionbox_cell_n) % (int)s_mentionbox_cell_n; ++delta; }
+  mentionNavRestyle();
 }
 // Encoder's short-click while picking: fire the highlighted cell's own CLICKED
 // binding (mentionBoxCellCb, below) rather than duplicating its delete-partial
@@ -6748,20 +6785,75 @@ static void mentionNavConfirm() {
   }
 }
 #endif
-// Index of the active mention's '@' in `text`, or -1. The active mention is the
-// last '@' that begins a word (start of text or after whitespace) with no
-// whitespace between it and the end (where the caret is).
-static int mentionAtPos(const char* text) {
-  if (!text) return -1;
-  for (int i = (int)strlen(text) - 1; i >= 0; --i) {
-    const char c = text[i];
-    if (c == ' ' || c == '\n' || c == '\t') return -1;     // a space before any '@' -> not in a mention
-    if (c == '@') {
-      const bool at_word_start = (i == 0) || text[i-1] == ' ' || text[i-1] == '\n' || text[i-1] == '\t';
-      return at_word_start ? i : -1;                       // '@' mid-word (e.g. an email) isn't a mention
+static uint32_t taCpToByte(const char* txt, uint32_t cp_target);
+static uint32_t taByteToCp(const char* txt, uint32_t byte_target);
+
+static int collectRecentMentionNames(char out[][32], int max_num) {
+  if (!out || max_num <= 0) return 0;
+  RecentlyHeardName heard[k_mention_source_max];
+  const int heard_n = the_mesh.getRecentlyHeard(heard, k_mention_source_max);
+  const uint8_t* self = the_mesh.getSelfPubKey();
+  int count = 0;
+  for (int i = 0; i < heard_n && count < max_num; ++i) {
+    if (heard[i].type != ADV_TYPE_CHAT || !heard[i].name[0]) continue;
+    if (self && memcmp(heard[i].pubkey_prefix, self, sizeof(heard[i].pubkey_prefix)) == 0) continue;
+    if (the_mesh.uiIsMeshcomodRecipient(heard[i].pubkey_prefix)) continue;
+    if (touchPrefsIsIgnored(heard[i].pubkey_prefix)) continue;
+    bool duplicate = false;
+    for (int j = 0; j < count; ++j) {
+      if (strcasecmp(out[j], heard[i].name) == 0) { duplicate = true; break; }
     }
+    if (duplicate) continue;
+    strlcpy(out[count++], heard[i].name, 32);
   }
-  return -1;
+  return count;
+}
+
+static bool mentionWhitespace(unsigned char c) {
+  return c == ' ' || c == '\n' || c == '\t' || c == '\r';
+}
+static bool mentionPunctuation(unsigned char c) {
+  switch (c) {
+    case ',': case '.': case ';': case ':': case '!': case '?':
+    case '(': case ')': case '[': case ']': case '{': case '}':
+    case '<': case '>':
+      return true;
+    default:
+      return false;
+  }
+}
+
+struct MentionToken {
+  size_t at;
+  size_t caret;
+  size_t end;
+};
+
+// Locate the active @token around the actual caret. The start must be at text
+// start or after whitespace, so an email address never opens the picker.
+static bool mentionTokenAtCaret(lv_obj_t* ta, MentionToken& token) {
+  if (!ta) return false;
+  const char* text = lv_textarea_get_text(ta);
+  if (!text) return false;
+  const size_t len = strlen(text);
+  size_t caret = taCpToByte(text, lv_textarea_get_cursor_pos(ta));
+  if (caret > len) caret = len;
+
+  size_t at = caret;
+  bool found = false;
+  while (at > 0) {
+    const unsigned char c = (unsigned char)text[at - 1];
+    if (c == '@') { --at; found = true; break; }
+    if (mentionWhitespace(c) || mentionPunctuation(c)) return false;
+    --at;
+  }
+  if (!found || (at > 0 && !mentionWhitespace((unsigned char)text[at - 1]))) return false;
+
+  size_t end = caret;
+  while (end < len && !mentionWhitespace((unsigned char)text[end]) &&
+         !mentionPunctuation((unsigned char)text[end])) ++end;
+  token = { at, caret, end };
+  return true;
 }
 static void mentionBoxCellCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -6769,48 +6861,62 @@ static void mentionBoxCellCb(lv_event_t* e) {
   lv_obj_t* ta = s_mentionbox_ta;
   if (ta && name && name[0]) {
     const char* text = lv_textarea_get_text(ta);
-    const int at = mentionAtPos(text);
-    if (at >= 0) {
-      char out[300];
-      snprintf(out, sizeof out, "%.*s@%s ", at, text, name);   // keep text before '@', then "@Name "
-      lv_textarea_set_text(ta, out);
-      if (ta == s_kb_mirror_ta) kbMirrorSyncToReal();
+    MentionToken token{};
+    if (text && mentionTokenAtCaret(ta, token)) {
+      char out[UITask::MAX_MSG_TEXT + 1];
+      const size_t name_len = strlen(name);
+      const size_t suffix_len = strlen(text + token.end);
+      const bool add_space = text[token.end] == '\0';
+      const size_t needed = token.at + 1 + name_len + (add_space ? 1 : 0) + suffix_len;
+      if (needed <= UITask::MAX_MSG_TEXT) {
+        size_t pos = 0;
+        memcpy(out + pos, text, token.at); pos += token.at;
+        out[pos++] = '@';
+        memcpy(out + pos, name, name_len); pos += name_len;
+        if (add_space) out[pos++] = ' ';
+        const size_t caret_byte = pos;
+        memcpy(out + pos, text + token.end, suffix_len + 1);
+
+        mentionBoxHide();   // setting text emits VALUE_CHANGED; tear down first
+        if (ta == s_kb_mirror_ta) {
+          lv_textarea_set_text(ta, out);
+          lv_textarea_set_cursor_pos(ta, (int32_t)taByteToCp(out, caret_byte));
+          kbMirrorSyncToReal();
+          if (s_kb_bind_ta)
+            lv_textarea_set_cursor_pos(s_kb_bind_ta, (int32_t)taByteToCp(out, caret_byte));
+        } else {
+          setTextareaSynced(ta, out);
+          lv_textarea_set_cursor_pos(ta, (int32_t)taByteToCp(out, caret_byte));
+          if (s_kb_bind_ta == ta && s_kb_mirror_ta)
+            lv_textarea_set_cursor_pos(s_kb_mirror_ta, (int32_t)taByteToCp(out, caret_byte));
+        }
+        return;
+      }
     }
   }
   mentionBoxHide();
 }
-// Show the contact picker when the composer ends in "@partial". Returns true
+// Show the recent-name picker for the @token at the caret. Returns true
 // when a picker is shown (so the caller suppresses the accent box).
-static bool mentionBoxMaybeShow() {
+static bool mentionBoxMaybeShow(lv_obj_t* ta) {
   mentionBoxHide();
-#if defined(HAS_M9_KEYBOARD)
-  return false;   // suppressed like the accent box (see accentBoxMaybeShow): touch-only cells, no key path here
-#endif
-  if (!g_lv.keyboard) return false;
-  lv_obj_t* ta = lv_keyboard_get_textarea(g_lv.keyboard);
   if (!ta) return false;
   const char* text = lv_textarea_get_text(ta);
-  const int at = mentionAtPos(text);
-  if (at < 0) return false;
-  const char* partial = text + at + 1;
-  const size_t plen = strlen(partial);
+  MentionToken token{};
+  if (!text || !mentionTokenAtCaret(ta, token)) return false;
+  const char* partial = text + token.at + 1;
+  const size_t plen = token.caret - token.at - 1;
+  char recent[k_mention_source_max][32];
+  const int recent_n = collectRecentMentionNames(recent, k_mention_source_max);
   int n = 0;
-  const int total = the_mesh.getNumContacts();
-  for (int i = 0; i < total && n < k_mention_max; ++i) {
-    ContactInfo c;
-    if (!the_mesh.getContactByIdx(i, c) || !c.name[0]) continue;
-    if (plen > 0 && strncasecmp(c.name, partial, plen) != 0) continue;   // prefix match (case-insensitive)
-    strlcpy(s_mention_names[n], c.name, sizeof s_mention_names[n]);
+  for (int i = 0; i < recent_n && n < k_mention_max; ++i) {
+    if (plen > 0 && strncasecmp(recent[i], partial, plen) != 0) continue;
+    strlcpy(s_mention_names[n], recent[i], sizeof s_mention_names[n]);
     ++n;
   }
   if (n == 0) return false;
   s_mentionbox_ta = ta;
-#if defined(TLORA_PAGER)
-  // Unlike the accent box (armed explicitly via Fn+Space, since it pops up
-  // after almost every letter typed and must not steal focus from ongoing
-  // typing), the mention list only appears when the user has deliberately
-  // typed "@partial" looking for someone to pick -- so it grabs the encoder
-  // immediately, no arming gesture needed.
+#if CAP_KEYPAD_NAV
   s_mentionnav_active = true;
   s_mentionnav_idx = 0;
   s_mentionbox_cell_n = (uint8_t)n;
@@ -6836,7 +6942,7 @@ static bool mentionBoxMaybeShow() {
     lv_obj_set_style_bg_color(b, lv_color_hex(0x1B2B3A), LV_PART_MAIN);
     lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_add_event_cb(b, mentionBoxCellCb, LV_EVENT_CLICKED, (void*)s_mention_names[i]);
-#if defined(TLORA_PAGER)
+  #if CAP_KEYPAD_NAV
     if (i < k_mention_max) s_mentionbox_cells[i] = b;
 #endif
     lv_obj_t* l = lv_label_create(b);
@@ -6848,8 +6954,8 @@ static bool mentionBoxMaybeShow() {
     lv_obj_center(l);
   }
   lv_obj_set_size(s_mentionbox, boxw + 8, n * rowh + (n - 1) * 3 + 8);
-#if defined(TLORA_PAGER)
-  mentionNavRestyle();   // highlight entry 0 immediately -- see the auto-arm note above
+#if CAP_KEYPAD_NAV
+  mentionNavRestyle();
 #endif
   // Place it above the composer, clamped above the keyboard (mirrors the accent box).
   lv_obj_update_layout(s_mentionbox);
@@ -6867,12 +6973,14 @@ static bool mentionBoxMaybeShow() {
   lv_obj_move_foreground(s_mentionbox);
   return true;
 }
-// One entry point for the composer's typing-time suggestion overlays: the
-// @-mention picker takes priority over the accent box (never both at once).
-static void composerSuggestRefresh() {
-  if (mentionBoxMaybeShow()) { accentBoxHide(); return; }
+static void composerMentionRefresh(lv_obj_t* ta) {
+  if (mentionBoxMaybeShow(ta)) { accentBoxHide(); return; }
   mentionBoxHide();
-  accentBoxMaybeShow();
+}
+static void composerSuggestChangedCb(lv_event_t* e) {
+  lv_obj_t* ta = lv_event_get_target(e);
+  if (kbMirrorActive() && s_kb_bind_ta == ta && s_kb_mirror_ta) ta = s_kb_mirror_ta;
+  composerMentionRefresh(ta);
 }
 
 static void keyboardCb(lv_event_t* e) {
@@ -6902,7 +7010,7 @@ static void keyboardCb(lv_event_t* e) {
   else if (code == LV_EVENT_VALUE_CHANGED) {
     kbSetRotateArrowsOpa(LV_OPA_20);
     accentHandleValueChanged();
-    composerSuggestRefresh();   // @mention contact picker, else the accent box
+    if (!s_mentionbox) accentBoxMaybeShow();
   }
 }
 
@@ -19274,7 +19382,7 @@ static void terminalSubmit() {
 #if !defined(HAS_TANMATSU)
 static char*          s_webdata_buf  = nullptr;
 static const size_t   WEBDATA_BUF    = 16000;
-static volatile bool  s_web_rx_nudge = false;   // set by onThreadsChanged (mesh ctx); the UI loop does the actual pushTermData (keeps it single-producer)
+static volatile bool  s_web_rx_nudge = false;   // set by mesh callbacks; the UI loop does the actual pushTermData (keeps it single-producer)
 
 static void jsonEsc(char*& p, const char* e, const char* s) {
   for (; s && *s && p < e - 8; ++s) {
@@ -19384,6 +19492,23 @@ static void webPushContacts() {
     p += snprintf(p, e - p, "{\"i\":%d,\"t\":%d,\"n\":\"", s, t);
     jsonEsc(p, e, cd.name);
     p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webPushMentionNames(uint32_t request_id) {
+  if (!s_webdata_buf) return;
+  char names[k_mention_source_max][32];
+  const int count = collectRecentMentionNames(names, k_mention_source_max);
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p, "{\"t\":\"mh\",\"q\":%lu,\"names\":[",
+                (unsigned long)request_id);
+  for (int i = 0; i < count && p < e - 48; ++i) {
+    if (i) *p++ = ',';
+    *p++ = '"';
+    jsonEsc(p, e, names[i]);
+    *p++ = '"';
   }
   p += snprintf(p, e - p, "]}");
   g_web_mirror.pushTermData(s_webdata_buf);
@@ -19599,6 +19724,7 @@ static bool handleWebDataCmd(const char* cmd) {
   if (a[0] == 's' && a[1] == 'g' && (a[2] == 0 || a[2] == ' ')) { webPushSettings(); return true; }
   if (a[0] == 's' && a[1] == 'r' && a[2] == ' ') { float fq=0,bw=0; int sf=0,cr=0,tx=0; sscanf(a+3, "%f %f %d %d %d", &fq,&bw,&sf,&cr,&tx); webSetRadio(fq,bw,sf,cr,tx); return true; }
   if (a[0] == 's' && a[1] == 't' && (a[2] == 0 || a[2] == ' ')) { webPushStatus(); return true; }
+  if (a[0] == 'm' && a[1] == 'h' && (a[2] == 0 || a[2] == ' ')) { webPushMentionNames((uint32_t)strtoul(a + 2, nullptr, 10)); return true; }
   if (a[0] == 'm' && a[1] == ' ')                 { webPushMessages(atoi(a + 2)); return true; }
   if (a[0] == 'o' && a[1] == 'c' && a[2] == ' ')  { webOpenContact(atoi(a + 3)); return true; }
   if (a[0] == 'o' && a[1] == 'h' && a[2] == ' ')  { webOpenChannel(atoi(a + 3)); return true; }
@@ -31133,6 +31259,7 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_add_event_cb(p.composer_ta, kbActivityPressCb, LV_EVENT_PRESSED, nullptr);
   // Grow / shrink the composer row as the message wraps (every text change).
   lv_obj_add_event_cb(p.composer_ta, composerAutoGrowCb, LV_EVENT_VALUE_CHANGED, &p);
+  lv_obj_add_event_cb(p.composer_ta, composerSuggestChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
   // Double-tap a word to select it; long-press for Cut/Copy/Paste/Select-All.
   lv_obj_add_event_cb(p.composer_ta, composerEditClickedCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(p.composer_ta, composerEditLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
@@ -35836,6 +35963,20 @@ static void updateTrackball(unsigned long now) {
     return;
   }
 
+  // Mention picker selector. It remains a NAV_SKIP overlay so the composer's
+  // focus/edit state is stable; trackball motion walks its private highlight.
+  if (s_mentionnav_active && s_mentionbox) {
+    s_tb_click_press = false;   // the button path confirms; never inject a pointer tap
+    if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
+      lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
+    if (moved && (dx != 0 || dy != 0)) {
+      const int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+      mentionNavMove((adx >= ady ? dx : dy) > 0 ? 1 : -1);
+      if (g_lv.task) g_lv.task->noteUserInput();
+    }
+    return;
+  }
+
   // ---- Emoji picker selector mode ----
   // While the emoji sheet is open the trackball drives a grid highlight instead
   // of the soft cursor: each motion step moves one cell, the centre click
@@ -36450,7 +36591,7 @@ static void updatePagerEncoder(unsigned long now) {
     // @-mention contact picker (handleHwKey()'s Fn+Space entry / mentionNavConfirm()):
     // captures the encoder exclusively while active, same priority as the accent
     // picker and an open dropdown below (mention and accent never show at once —
-    // composerSuggestRefresh() -- so there's no ordering conflict between them).
+    // composerMentionRefresh() -- so there's no ordering conflict between them).
     const bool turned = (delta != 0);
     if (s_mentionbox_cell_n > 0) {
       for (; delta > 0; delta--) s_mentionnav_idx = (s_mentionnav_idx + 1) % (int)s_mentionbox_cell_n;
@@ -38447,7 +38588,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     return;
   }
   txtMenuHide();   // any keypress while editing dismisses an open edit menu
-#if defined(TLORA_PAGER)
+#if CAP_KEYPAD_NAV
   // Accent-variant / @-mention popups (issues #22, #42) are otherwise
   // unreachable here: no touch, and their cells are NAV_SKIP_FLAG by design
   // (touch boards pick them by tap). The rotary encoder walks the highlighted
@@ -38461,10 +38602,19 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   // vowel/consonant typed, so stealing focus immediately would swallow normal
   // typing -- it stays passive until explicitly armed with Fn(Alt)+Space.
   if (s_mentionnav_active) {
+#if defined(HAS_M9_KEYBOARD)
+    if (key == M9_KEY_UP)             { mentionNavMove(-1); return; }
+    if (key == M9_KEY_DOWN)           { mentionNavMove(+1); return; }
+    if (key == M9_KEY_LEFT || key == M9_KEY_RIGHT) {
+      mentionBoxHide();   // normal M9 caret handling continues below
+    } else if (key == M9_KEY_HW_BACK) { mentionBoxHide(); return; }
+#endif
     if (key == 0x08 || key == 0x7F) { mentionBoxHide(); return; }
     if (key == 0x0D)                { mentionNavConfirm(); return; }
-    return;   // swallow everything else while picking (typing, etc.)
+    // Printable input falls through to the textarea and re-filters the list.
   }
+#endif
+#if defined(TLORA_PAGER)
   if (s_accentnav_active) {
     if (key == 0x08 || key == 0x7F) { accentBoxHide(); return; }
     if (key == 0x0D)                { accentNavConfirm(); return; }
@@ -38609,7 +38759,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     } else {
       lv_textarea_add_char(ta, (uint32_t)key);
     }
-    composerSuggestRefresh();   // @mention contact picker, else the accent box
+    composerMentionRefresh(ta);   // @mention contact picker, else the accent box
   }
   if (g_lv.task) g_lv.task->noteUserInput();
 }
@@ -45722,6 +45872,9 @@ void UITask::stepComposerAction(int delta) { _composer_action_idx += delta; }
 void UITask::userLedHandler() {}
 
 void UITask::discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len) {
+#if !defined(HAS_TANMATSU)
+  s_web_rx_nudge = true;
+#endif
   /* `is_new=false` → contact is already in contacts[]; nothing to do (the
    * Discovered modal only shows pending nodes that haven't been added yet).
    * On `is_new=true` we either update the existing slot for this pubkey or
@@ -52950,6 +53103,14 @@ void UITask::loop() {
       s_tb_click_press = false;      // never deliver clicks as taps while locked
     } else if (_screen_off) {
       if (tb_pressed && s_user_btn_prev == HIGH) { wakeScreen(); s_tb_wake_consume = true; }
+      s_tb_click_press = false;
+    } else if (s_mentionnav_active) {
+      // The mention rows are NAV_SKIP, so the trackball button confirms the
+      // private highlight instead of injecting a pointer tap behind the popup.
+      if (tb_pressed && s_user_btn_prev == HIGH) {
+        mentionNavConfirm();
+        s_tb_last_active_ms = now; noteUserInput();
+      }
       s_tb_click_press = false;
     } else if (s_emoji_sheet) {
       // Emoji picker open: a fresh press inserts the highlighted glyph via the

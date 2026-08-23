@@ -2627,6 +2627,48 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
       _serial->writeFrameToAll(out_frame, 1 + PUB_KEY_SIZE);
     }
   }
+  // Add the accepted named advert to the session-local recent-heard cache.
+  // A monotonic sequence, not the remote advert timestamp or local RTC, defines
+  // order so an unset/adjusted clock cannot make a fresh node look stale.
+  if (path_len <= sizeof(AdvertPath::path) && (path_len == 0 || path)) {
+    const uint32_t recv_timestamp = getRTCClock()->getCurrentTime();
+#if defined(ESP32)
+    portENTER_CRITICAL(&advert_paths_mux);
+#endif
+    int found = -1, free_slot = -1, oldest_slot = 0;
+    uint32_t oldest_seq = UINT32_MAX;
+    for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
+      if (advert_paths[i].used &&
+          memcmp(advert_paths[i].pubkey_prefix, contact.id.pub_key,
+                 sizeof(AdvertPath::pubkey_prefix)) == 0) {
+        found = i;
+        break;
+      }
+      if (!advert_paths[i].used && free_slot < 0) free_slot = i;
+      if (advert_paths[i].used && advert_paths[i].recv_seq < oldest_seq) {
+        oldest_seq = advert_paths[i].recv_seq;
+        oldest_slot = i;
+      }
+    }
+    AdvertPath* p = &advert_paths[found >= 0 ? found : (free_slot >= 0 ? free_slot : oldest_slot)];
+    memcpy(p->pubkey_prefix, contact.id.pub_key, sizeof(p->pubkey_prefix));
+    // contact.name is from an over-the-air advert and may fill its 32-byte field
+    // with no NUL terminator; an unbounded strcpy would then run past p->name and
+    // corrupt the advert_paths table (garbled "Found"/recently-heard entries).
+    strncpy(p->name, contact.name, sizeof(p->name) - 1);
+    p->name[sizeof(p->name) - 1] = '\0';
+    p->recv_timestamp = recv_timestamp;
+    if (++advert_recv_seq == 0) ++advert_recv_seq;
+    p->recv_seq = advert_recv_seq;
+    p->type = contact.type;
+    p->used = true;
+    p->path_len = path_len;
+    if (path_len) memcpy(p->path, path, path_len);
+#if defined(ESP32)
+    portEXIT_CRITICAL(&advert_paths_mux);
+#endif
+  }
+
 #ifdef DISPLAY_CLASS
   // Notify the touch UI whether or not a companion app is connected. This used to
   // fire only in the standalone (else) branch, so a contact discovered while the
@@ -2641,46 +2683,39 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
   if (_ui) _ui->discoveredContact(contact, is_new, path_len);
 #endif
 
-  // add inbound-path to mem cache
-  if (path && path_len <= sizeof(AdvertPath::path)) {  // check path is valid
-    AdvertPath* p = advert_paths;
-    uint32_t oldest = 0xFFFFFFFF;
-    for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {   // check if already in table, otherwise evict oldest
-      if (memcmp(advert_paths[i].pubkey_prefix, contact.id.pub_key, sizeof(AdvertPath::pubkey_prefix)) == 0) {
-        p = &advert_paths[i];   // found
-        break;
-      }
-      if (advert_paths[i].recv_timestamp < oldest) {
-        oldest = advert_paths[i].recv_timestamp;
-        p = &advert_paths[i];
-      }
-    }
-
-    memcpy(p->pubkey_prefix, contact.id.pub_key, sizeof(p->pubkey_prefix));
-    // contact.name is from an over-the-air advert and may fill its 32-byte field
-    // with no NUL terminator; an unbounded strcpy would then run past p->name and
-    // corrupt the advert_paths table (garbled "Found"/recently-heard entries).
-    strncpy(p->name, contact.name, sizeof(p->name) - 1);
-    p->name[sizeof(p->name) - 1] = '\0';
-    p->recv_timestamp = getRTCClock()->getCurrentTime();
-    p->path_len = path_len;
-    memcpy(p->path, path, p->path_len);
-  }
-
   if (!is_new) dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY); // only schedule lazy write for contacts that are in contacts[]
 }
 
 static int sort_by_recent(const void *a, const void *b) {
-  return ((AdvertPath *) b)->recv_timestamp - ((AdvertPath *) a)->recv_timestamp;
+  const RecentlyHeardName* x = static_cast<const RecentlyHeardName*>(a);
+  const RecentlyHeardName* y = static_cast<const RecentlyHeardName*>(b);
+  if (x->recv_seq == y->recv_seq) return memcmp(x->pubkey_prefix, y->pubkey_prefix, sizeof(x->pubkey_prefix));
+  return (int32_t)(x->recv_seq - y->recv_seq) > 0 ? -1 : 1;
 }
 
-int MyMesh::getRecentlyHeard(AdvertPath dest[], int max_num) {
-  if (max_num > ADVERT_PATH_TABLE_SIZE) max_num = ADVERT_PATH_TABLE_SIZE;
-  qsort(advert_paths, ADVERT_PATH_TABLE_SIZE, sizeof(advert_paths[0]), sort_by_recent);
-
-  for (int i = 0; i < max_num; i++) {
-    dest[i] = advert_paths[i];
+int MyMesh::getRecentlyHeard(RecentlyHeardName dest[], int max_num) {
+  if (!dest || max_num <= 0) return 0;
+  RecentlyHeardName snapshot[ADVERT_PATH_TABLE_SIZE];
+  int count = 0;
+#if defined(ESP32)
+  portENTER_CRITICAL(&advert_paths_mux);
+#endif
+  for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
+    const AdvertPath& p = advert_paths[i];
+    if (!p.used || !p.name[0]) continue;
+    RecentlyHeardName& out = snapshot[count++];
+    memcpy(out.pubkey_prefix, p.pubkey_prefix, sizeof(out.pubkey_prefix));
+    memcpy(out.name, p.name, sizeof(out.name));
+    out.name[sizeof(out.name) - 1] = '\0';
+    out.recv_seq = p.recv_seq;
+    out.type = p.type;
   }
+#if defined(ESP32)
+  portEXIT_CRITICAL(&advert_paths_mux);
+#endif
+  qsort(snapshot, count, sizeof(snapshot[0]), sort_by_recent);
+  if (max_num > count) max_num = count;
+  memcpy(dest, snapshot, (size_t)max_num * sizeof(dest[0]));
   return max_num;
 }
 
@@ -4880,20 +4915,28 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_GET_ADVERT_PATH && len >= PUB_KEY_SIZE+2) {
     // FUTURE use:  uint8_t reserved = cmd_frame[1];
     uint8_t *pub_key = &cmd_frame[2];
-    AdvertPath* found = NULL;
+    AdvertPath found = {};
+    bool has_found = false;
+#if defined(ESP32)
+    portENTER_CRITICAL(&advert_paths_mux);
+#endif
     for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
-      auto p = &advert_paths[i];
-      if (memcmp(p->pubkey_prefix, pub_key, sizeof(p->pubkey_prefix)) == 0) {
+      const AdvertPath& p = advert_paths[i];
+      if (p.used && memcmp(p.pubkey_prefix, pub_key, sizeof(p.pubkey_prefix)) == 0) {
         found = p;
+        has_found = true;
         break;
       }
     }
-    if (found) {
+#if defined(ESP32)
+    portEXIT_CRITICAL(&advert_paths_mux);
+#endif
+    if (has_found) {
       out_frame[0] = RESP_CODE_ADVERT_PATH;
-      memcpy(&out_frame[1], &found->recv_timestamp, 4);
-      out_frame[5] = found->path_len;
-      memcpy(&out_frame[6], found->path, found->path_len);
-      _serial->writeFrame(out_frame, 6 + found->path_len);
+      memcpy(&out_frame[1], &found.recv_timestamp, 4);
+      out_frame[5] = found.path_len;
+      memcpy(&out_frame[6], found.path, found.path_len);
+      _serial->writeFrame(out_frame, 6 + found.path_len);
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND);
     }
