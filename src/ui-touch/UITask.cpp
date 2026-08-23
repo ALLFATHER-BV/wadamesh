@@ -47489,10 +47489,20 @@ bool luaHostCompass(float* x, float* y, float* z, bool* overflow) {
 // than appearing out of nowhere the first time it wants the radio.
 // user_data packs (app index << 4) | permission bit -- ids[] outlives the sheet.
 static char s_appperm_ids[12][24];
+// user_data packs (app index, permission bit) into one pointer. The shift MUST
+// stay wider than the widest permission bit: it was 4, and LUA_PERM_PROBE is 16,
+// so the probe switch overflowed straight into the index field. Toggling it
+// addressed the NEXT app with bit 0 -- changing no permission, but still writing
+// that app's record, which marks it "asked". An app that has been asked and not
+// granted is refused outright instead of prompting, so an unrelated app silently
+// lost the ability to send with no dialog ever shown (reported on Discord).
+#define APPPERM_SHIFT 8
+static_assert(LUA_PERM_PROBE < (1 << APPPERM_SHIFT),
+              "APPPERM_SHIFT must exceed the widest LUA_PERM_* bit");
 static void appPermsToggleCb(lv_event_t* e) {
   const intptr_t packed = (intptr_t)lv_event_get_user_data(e);
-  const int idx = (int)(packed >> 4);
-  const int bit = (int)(packed & 0xF);
+  const int idx = (int)(packed >> APPPERM_SHIFT);
+  const int bit = (int)(packed & ((1 << APPPERM_SHIFT) - 1));
   if (idx < 0 || idx >= 12 || !s_appperm_ids[idx][0]) return;
   const char* id = s_appperm_ids[idx];
   bool asked = false;
@@ -47587,7 +47597,7 @@ static void buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw) {
       if (mask & perms[k].bit) lv_obj_add_state(sw, LV_STATE_CHECKED);
       // user_data packs the app index and the bit, so one callback serves both.
       lv_obj_add_event_cb(sw, appPermsToggleCb, LV_EVENT_VALUE_CHANGED,
-                          (void*)(intptr_t)((i << 4) | perms[k].bit));
+                          (void*)(intptr_t)((i << APPPERM_SHIFT) | perms[k].bit));
       sy += 30;
     }
     if (!asked) {
