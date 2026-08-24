@@ -22,6 +22,7 @@ Usage:
     scripts/sideload_app.py --port /dev/cu.wchusbserial10 deploy/apps/gpscompass/1.0
     scripts/sideload_app.py --port ... --reboot deploy/apps/gpscompass/1.0/gpscompass.lua
     scripts/sideload_app.py --port ... --dest /lang deploy/apps/lang/11/de.lang
+    scripts/sideload_app.py --port ... --remote /apps/audio_test.d/test.mp3 ~/Music/test.mp3
 
 Pass an app VERSION directory to send its <id>.lua + <id>.json, or individual
 files. --reboot restarts the device afterwards so the drawer/Store rescan
@@ -152,6 +153,7 @@ def main():
     ap.add_argument("--port", required=True)
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--dest", default="/apps", help="/apps (default) or /lang")
+    ap.add_argument("--remote", help="exact remote path for one file, including /apps/<id>.d/<name>")
     ap.add_argument("--reboot", action="store_true", help="reboot the device afterwards")
     args = ap.parse_args()
 
@@ -170,10 +172,19 @@ def main():
         else:
             sys.exit("not found: " + p)
 
+    if args.remote:
+        if len(files) != 1:
+            sys.exit("--remote requires exactly one input file")
+        if not args.remote.startswith(("/apps/", "/lang/")):
+            sys.exit("--remote must begin with /apps/ or /lang/")
+
     s = open_port(args.port, args.baud)
     try:
-        for f in files:
-            push(s, f, "%s/%s" % (args.dest.rstrip("/"), os.path.basename(f)))
+        if args.remote:
+            push(s, files[0], args.remote)
+        else:
+            for f in files:
+                push(s, f, "%s/%s" % (args.dest.rstrip("/"), os.path.basename(f)))
         if args.reboot:
             s.write(b"reboot\n")
             s.flush()

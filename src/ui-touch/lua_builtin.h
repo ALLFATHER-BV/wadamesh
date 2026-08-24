@@ -340,6 +340,8 @@ static const char kLuaSrc_sdktest[] = R"WADALUA(-- SDK self-test. Exercises the 
 -- windowed wada.fs.read.
 -- 1.6 adds wada.sd.list: capability reporting, traversal rejection, root
 -- metadata, and a nested directory listing when the card contains one.
+-- 1.7 adds storage-neutral wada.audio capability and API-shape checks. Playback
+-- stays manual so opening the bench test never emits sound unexpectedly.
 -- 1.5 uses wada.ui.text_lines() to measure instead of estimating, where the
 -- firmware has it. That call was added because of the 1.3 bug below: an app
 -- could ask how tall a line is but not how wide, so laying out rows meant
@@ -396,6 +398,21 @@ function app.on_open(w, h)
     row("caps: sd_list=" .. yn(c.sd_list) .. "  discover=" .. yn(c.discover) ..
       "  input=" .. yn(c.input) ..
          "  rx_identity=" .. yn(c.rx_identity), C.accent)
+    row("caps: audio=" .. yn(c.audio) .. "  wav=" .. yn(c.audio_wav) ..
+           "  mp3=" .. yn(c.audio_mp3) .. "  audio_sd=" .. yn(c.audio_sd), C.accent)
+    if c.audio then
+      local api_ok = wada.audio and type(wada.audio.play) == "function" and
+                     type(wada.audio.pause) == "function" and
+                     type(wada.audio.resume) == "function" and
+                     type(wada.audio.stop) == "function" and
+                     type(wada.audio.status) == "function"
+      local status = api_ok and wada.audio.status() or nil
+      api_ok = api_ok and type(status) == "table" and type(status.state) == "string"
+      row("wada.audio API: " .. (api_ok and ("PASS (" .. status.state .. ")") or "FAIL"),
+          api_ok and C.good or C.bad)
+    else
+      row("wada.audio: unavailable on this board", C.sub)
+    end
   row("layout: " .. (ui.text_lines and "measured (ui.text_lines)" or "estimated (older firmware)"),
       ui.text_lines and C.good or C.sub)
   -- crypto: published test vectors, so this is checkable rather than merely alive
@@ -1775,7 +1792,7 @@ static const LuaBuiltinApp kLuaBuiltin[] = {
   { "monitor", "RF Monitor", "1.3", kLuaSrc_monitor },
   { "airtime", "Airtime", "1.4", kLuaSrc_airtime },
   { "snake", "Snake", "1.0", kLuaSrc_snake },
-  { "sdktest", "SDK Test", "1.6", kLuaSrc_sdktest },
+  { "sdktest", "SDK Test", "1.7", kLuaSrc_sdktest },
   { "2048", "2048", "1.2", kLuaSrc_2048 },
   { "wardrive", "Wardrive", "1.0", kLuaSrc_wardrive },
   { "nearby", "Nearby", "1.0", kLuaSrc_nearby },

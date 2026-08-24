@@ -26,6 +26,13 @@ local cfg = {}           -- per-scenario device config
 local widgets = { canvases = 0, labels = 0, buttons = 0, scroll = false, timer_ms = nil }
 local drawlog = { text = {}, circles = {}, ops = 0 }
 local storekv = {}
+local audio_state = { state = "stopped", path = "", source = "", format = "", error = nil }
+local audio_log = {}
+
+local function audio_host_close()
+  audio_state.state = "stopped"
+  audio_log[#audio_log + 1] = "release"
+end
 
 local function mkcanvas(w, h)
   checkint(w, "canvas w"); checkint(h, "canvas h")
@@ -102,7 +109,11 @@ local function build_wada()
   wada.sys.beep = function() return false end
   wada.sys.caps = function() return { sdk_ext = cfg.caps.sdk_ext, keyboard = cfg.caps.keyboard,
                                        touch = cfg.caps.touch, sd = true, compass = cfg.caps.compass,
-                                       accel = cfg.caps.accel } end
+                                       accel = cfg.caps.accel, sd_list = cfg.caps.sd_list or false,
+                                       audio = cfg.caps.audio or false,
+                                       audio_wav = cfg.caps.audio or false,
+                                       audio_mp3 = cfg.caps.audio or false,
+                                       audio_sd = cfg.caps.audio_sd or false } end
   if cfg.caps.sdk_ext then
     wada.sys.battery = function() return { mv = 3900, pct = 70, charging = false } end
     wada.sys.gps = function() return cfg.gps and cfg.gps() or nil end
@@ -126,6 +137,56 @@ local function build_wada()
 
   wada.timer.every = function(ms) checkint(ms, "timer.every"); if ms < 33 then ms = 33 end; widgets.timer_ms = ms end
   wada.timer.stop = function() widgets.timer_ms = nil end
+
+  if cfg.caps.audio then
+    wada.audio = {}
+    wada.audio.play = function(path)
+      assert(type(path) == "string", "audio.play path must be a string")
+      local source = "app"
+      if path:sub(1, 3) == "sd:" then
+        if not cfg.caps.audio_sd then return nil, "no sd" end
+        local card_path = path:sub(4)
+        if card_path:sub(1, 1) ~= "/" or card_path:find("//", 1, true) or
+           card_path:find("/../", 1, true) or card_path:sub(-3) == "/.." or
+           card_path:sub(-2) == "/." or card_path:sub(-1) == "/" then
+          return nil, "bad path"
+        end
+        source = "sd"
+      elseif #path == 0 or #path > 32 or path:sub(1, 1) == "." or
+             not path:match("^[A-Za-z0-9._-]+$") then
+        return nil, "bad path"
+      end
+      local format = path:lower():sub(-4)
+      if format ~= ".wav" and format ~= ".mp3" then return nil, "unsupported format" end
+      audio_state = { state = "playing", path = path, source = source,
+              format = format:sub(2), error = nil }
+      audio_log[#audio_log + 1] = "play:" .. path
+      return true
+    end
+    wada.audio.pause = function()
+      if audio_state.state ~= "playing" then return false end
+      audio_state.state = "paused"; audio_log[#audio_log + 1] = "pause"; return true
+    end
+    wada.audio.resume = function()
+      if audio_state.state ~= "paused" then return false end
+      audio_state.state = "playing"; audio_log[#audio_log + 1] = "resume"; return true
+    end
+    wada.audio.stop = function()
+      if audio_state.state ~= "playing" and audio_state.state ~= "paused" then return false end
+      audio_state.state = "stopped"; audio_log[#audio_log + 1] = "stop"; return true
+    end
+    wada.audio.status = function()
+      local out = {}
+      for key, value in pairs(audio_state) do out[key] = value end
+      return out
+    end
+  end
+  if cfg.caps.sd_list then
+    wada.sd = { list = function(path)
+      assert(path == "/", "mock SD only exposes the root")
+      return {}
+    end }
+  end
   return wada
 end
 
@@ -159,6 +220,8 @@ local function reset_world()
   widgets = { canvases = 0, labels = 0, buttons = 0, scroll = false, timer_ms = nil }
   labels, buttons, toasts, drawlog = {}, {}, {}, { text = {}, circles = {}, ops = 0 }
   clock_ms = 1000
+  audio_state = { state = "stopped", path = "", source = "", format = "", error = nil }
+  audio_log = {}
 end
 
 -- simulated magnetometer: Earth field 0.45 G at true heading `deg` (device frame ==
@@ -683,6 +746,61 @@ scenarios.tanmatsu = function()
   if app.on_close then guarded(BUDGET, app.on_close) end
 end
 
+scenarios.audio_api = function()
+  cfg = { w = 320, h = 196,
+     caps = { sdk_ext = true, keyboard = true, touch = false,
+         audio = true, audio_sd = true, sd_list = true } }
+  wada = build_wada()
+  local caps = wada.sys.caps()
+    assert(caps.audio and caps.audio_wav and caps.audio_mp3 and caps.audio_sd,
+      "audio capability flags do not match the WAV/MP3 contract")
+  assert(wada.audio and wada.audio.play and wada.audio.pause and wada.audio.resume and
+    wada.audio.stop and wada.audio.status, "wada.audio API is incomplete")
+
+  assert(wada.audio.play("track.wav"))
+  local status = wada.audio.status()
+  assert(status.state == "playing" and status.path == "track.wav" and
+    status.source == "app" and status.format == "wav", "app-storage play status is wrong")
+  assert(wada.audio.pause() and wada.audio.status().state == "paused", "pause failed")
+  assert(wada.audio.resume() and wada.audio.status().state == "playing", "resume failed")
+  assert(wada.audio.play("next.wav") and wada.audio.status().path == "next.wav",
+    "a second play must replace the active track")
+  assert(wada.audio.play("sd:/Music/card.wav"))
+  assert(wada.audio.status().source == "sd", "sd: source was not reported")
+
+  local value, err = wada.audio.play("../escape.wav")
+  assert(value == nil and err == "bad path", "app sandbox traversal was accepted")
+  value, err = wada.audio.play("sd:/Music/../escape.wav")
+  assert(value == nil and err == "bad path", "SD traversal was accepted")
+    assert(wada.audio.play("track.mp3") and wada.audio.status().format == "mp3",
+      "MP3 playback was not accepted or reported")
+    value, err = wada.audio.play("track.flac")
+    assert(value == nil and err == "unsupported format", "unknown audio format was accepted")
+
+  assert(wada.audio.stop() and wada.audio.status().state == "stopped", "stop failed")
+  assert(wada.audio.play("close.wav"))
+  audio_host_close()
+  assert(wada.audio.status().state == "stopped" and audio_log[#audio_log] == "release",
+    "host close did not release playback")
+  print("  transport + storage sandbox: PASS (" .. #audio_log .. " host calls)")
+
+  if APP_PATH:match("audio_test%.lua$") then
+    local app = load_app()
+    assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+    assert(#buttons == 5, "audio test app did not create all transport/source buttons")
+    buttons[1].fn(); assert(wada.audio.status().state == "playing", "Play button failed")
+    buttons[2].fn(); assert(wada.audio.status().state == "paused", "Pause button failed")
+    buttons[3].fn(); assert(wada.audio.status().state == "playing", "Resume button failed")
+    buttons[4].fn(); assert(wada.audio.status().state == "stopped", "Stop button failed")
+    buttons[5].fn(); buttons[1].fn()
+    assert(wada.audio.status().source == "app", "source switch did not select app storage")
+    guarded(BUDGET, app.on_tick)
+    guarded(BUDGET, app.on_close)
+    assert(wada.audio.status().state == "stopped", "test app close did not stop playback")
+    print("  scripts/audio_test.lua UI: PASS")
+  end
+end
+
 -- instruction cost of one heavy tick (redraw forced every tick by spinning the heading)
 scenarios.cost = function()
   cfg = { w = 320, h = 196, caps = { sdk_ext = true, keyboard = true, touch = false, compass = true, accel = true },
@@ -711,7 +829,7 @@ scenarios.cost = function()
   assert(worst < BUDGET / 4, "tick too expensive")
 end
 
-local order = { "declination", "align_nofix", "bearings_absolute", "m9", "r8", "v4", "pager", "pager_portrait_jumbo", "tanmatsu", "cost" }
+local order = { "declination", "align_nofix", "bearings_absolute", "m9", "r8", "v4", "pager", "pager_portrait_jumbo", "tanmatsu", "audio_api", "cost" }
 for _, name in ipairs(order) do
   if SCENARIO == "all" or SCENARIO == name then
     print("== " .. name)

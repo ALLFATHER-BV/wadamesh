@@ -5445,7 +5445,7 @@ void MyMesh::checkCLIRescueCmd() {
       // opens the file, "fadd <off> <len> <sum> <base64>" lines append to it
       // (self-checking, see cliPutChunk), "fend" closes it.
       // Same physical-access trust level as "rm" and "erase" above, with a
-      // NARROWER scope: only the two sideload directories the Store writes.
+      // NARROWER scope: Store files plus one app's private <id>.d directory.
       cliPutBegin(&cli_command[5]);
     } else if (memcmp(cli_command, "fadd ", 5) == 0) {
       cliPutChunk(&cli_command[5]);
@@ -5470,24 +5470,51 @@ void MyMesh::checkCLIRescueCmd() {
 // "Error: ...".
 void MyMesh::cliPutBegin(const char* path) {
   if (_cli_put) { _cli_put.close(); _cli_put_len = 0; }
+  _cli_put_ended = false;
   const char* dir = nullptr;
   if (memcmp(path, "/apps/", 6) == 0) dir = "/apps";
   else if (memcmp(path, "/lang/", 6) == 0) dir = "/lang";
   if (!dir) { Serial.println("Error: path must be /apps/<name> or /lang/<name>"); return; }
   const char* name = path + 6;
-  const size_t nlen = strlen(name);
-  if (nlen == 0 || nlen > 40) { Serial.println("Error: bad file name length"); return; }
-  for (size_t i = 0; i < nlen; i++) {
-    const char c = name[i];
-    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                    c == '.' || c == '_' || c == '-';
+  const char* slash = strchr(name, '/');
+  const char* leaf = slash ? slash + 1 : name;
+  const size_t dir_len = slash ? (size_t)(slash - name) : 0;
+  const size_t leaf_len = strlen(leaf);
+  if (!leaf_len || leaf_len > 40 || (slash && leaf_len > 32) ||
+      leaf[0] == '.' || strchr(leaf, '/')) {
+    Serial.println("Error: bad file name");
+    return;
+  }
+  for (size_t i = 0; i < leaf_len; i++) {
+    const char c = leaf[i];
+    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
     if (!ok) { Serial.println("Error: file name may only use A-Z a-z 0-9 . _ -"); return; }
   }
-  if (name[0] == '.') { Serial.println("Error: file name may not start with '.'"); return; }
+
+  char app_data_dir[48] = "";
+  if (slash) {
+    // The only nested destination is /apps/<id>.d/<file>, matching wada.fs.
+    if (strcmp(dir, "/apps") != 0 || dir_len < 3 || dir_len > 25 ||
+        name[dir_len - 2] != '.' || name[dir_len - 1] != 'd' || name[0] == '.') {
+      Serial.println("Error: nested path must be /apps/<id>.d/<name>");
+      return;
+    }
+    for (size_t i = 0; i + 2 < dir_len; i++) {
+      const char c = name[i];
+      const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                      (c >= '0' && c <= '9') || c == '_' || c == '-';
+      if (!ok) { Serial.println("Error: bad app id"); return; }
+    }
+    snprintf(app_data_dir, sizeof app_data_dir, "/apps/%.*s", (int)dir_len, name);
+  }
   FILESYSTEM* fs = _store->getHotDataFS();
   if (!fs) { Serial.println("Error: storage not ready"); return; }
-  if (!_store->mkdirRooted(fs, dir)) { Serial.printf("Error: cannot create %s\n", dir); return; }
-  _cli_put = _store->openWrite(fs, path);
+  // Hierarchical filesystems create these directories. SPIFFS returns ENOTSUP
+  // but accepts the complete slash-containing path as a flat file key.
+  _store->mkdirRooted(fs, dir);
+  if (app_data_dir[0]) _store->mkdirRooted(fs, app_data_dir);
+  _cli_put = _store->openWriteRootedFlatSafe(fs, path);
   if (!_cli_put) { Serial.printf("Error: cannot open %s for writing\n", path); return; }
   _cli_put_len = 0;
   Serial.printf("ok fput %s\n", path);
@@ -5518,7 +5545,7 @@ void MyMesh::cliPutChunk(const char* args) {
   if ((s & 0xFFFF) != (sum & 0xFFFF)) { Serial.printf("Error: checksum at %u\n", (unsigned)_cli_put_len); return; }
   if (olen && _cli_put.write(buf, olen) != olen) {
     Serial.println("Error: write failed (card full?)");
-    _cli_put.close(); _cli_put_len = 0;
+    _cli_put.close(); _cli_put_len = 0; _cli_put_ended = false;
     return;
   }
   _cli_put_len += olen;
@@ -5526,9 +5553,15 @@ void MyMesh::cliPutChunk(const char* args) {
 }
 
 void MyMesh::cliPutEnd() {
-  if (!_cli_put) { Serial.println("Error: no file open (fput first)"); return; }
+  if (!_cli_put) {
+    if (_cli_put_ended) Serial.printf("ok fend %u bytes\n", (unsigned)_cli_put_last_len);
+    else Serial.println("Error: no file open (fput first)");
+    return;
+  }
   _cli_put.close();
-  Serial.printf("ok fend %u bytes\n", (unsigned)_cli_put_len);
+  _cli_put_last_len = _cli_put_len;
+  _cli_put_ended = true;
+  Serial.printf("ok fend %u bytes\n", (unsigned)_cli_put_last_len);
   _cli_put_len = 0;
 }
 #endif  // ESP32

@@ -35,6 +35,18 @@ extern bool             luaHostScreenOn();   // false = display asleep; app tick
 extern void             luaHostKeepAwake(bool on);   // hold the screen + ticks for a measuring app                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
 extern void             luaHostAppPath(char* out, size_t cap, const char* rel);   // prefixes the store root
+#if CAP_LUA_AUDIO
+extern bool             luaHostAudioPlay(fs::FS* fs, const char* path, const char* shown,
+                                         const char* source, uint32_t owner,
+                                         char* error, size_t error_cap);
+extern bool             luaHostAudioPause(uint32_t owner, bool pause);
+extern bool             luaHostAudioStop(uint32_t owner, bool release);
+extern void             luaHostAudioStatus(uint32_t owner, char* state, size_t state_cap,
+                                           char* path, size_t path_cap,
+                                           char* source, size_t source_cap,
+                                           char* format, size_t format_cap,
+                                           char* error, size_t error_cap);
+#endif
 #if CAP_LUA_SD_LIST
 extern fs::FS*          luaHostSdFs(bool* busy);                  // mounted physical SD, or null
 extern bool             luaHostSdReadFailed();                    // failed open was a dead card
@@ -184,10 +196,12 @@ struct Host {
   AppTimer    timers[kMaxTimers];
   bool        in_lua = false;        // re-entrancy guard (dismiss from inside a callback)
   bool        want_close = false;
+  uint32_t    generation = 0;      // resource ownership across close/reopen
   char        id[24]    = "";
   char        title[32] = "";
 };
 Host* s_h = nullptr;
+uint32_t s_host_generation = 0;
 
 char s_bar_title[40];   // appPageBegin keeps the pointer — must outlive the page
 
@@ -764,12 +778,17 @@ int sysBeep(lua_State* L) { lua_pushboolean(L, luaHostBeep()); return 1; }
 // rather than assume: the extended SDK is absent on low-resource boards (see
 // CAP_LUA_SDK_EXT in device_caps.h), and a store app runs on all of them.
 int sysCaps(lua_State* L) {
-  lua_createtable(L, 0, 14);
+  lua_createtable(L, 0, 20);
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "sdk_ext");
   lua_pushboolean(L, CAP_KEYBOARD);     lua_setfield(L, -2, "keyboard");
   lua_pushboolean(L, CAP_TOUCH);        lua_setfield(L, -2, "touch");
   lua_pushboolean(L, CAP_SD);           lua_setfield(L, -2, "sd");
   lua_pushboolean(L, CAP_LUA_SD_LIST);  lua_setfield(L, -2, "sd_list");
+  lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio");
+  lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_wav");
+  lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_mp3");
+  lua_pushboolean(L, CAP_LUA_AUDIO && CAP_LUA_SD_LIST);
+  lua_setfield(L, -2, "audio_sd");
   // Feature flags for the calls added after the first extended SDK shipped, so
   // an app can degrade instead of erroring on firmware that predates them.
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "discover");   // wada.mesh.discover
@@ -1563,6 +1582,93 @@ int sdList(lua_State* L) {
 #endif
 #endif  // CAP_LUA_SDK_EXT
 
+#if CAP_LUA_AUDIO
+static bool audioSafeName(const char* name, size_t len) {
+  if (!name || len == 0 || len > 32 || name[0] == '.') return false;
+  for (size_t i = 0; i < len; ++i) {
+    const char c = name[i];
+    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+    if (!ok) return false;
+  }
+  return true;
+}
+
+static int audioError(lua_State* L, const char* error) {
+  lua_pushnil(L);
+  lua_pushstring(L, error);
+  return 2;
+}
+
+// wada.audio.play(name) resolves inside /apps/<id>.d on the board's active
+// storage backend. An explicit sd:/... path is available only with sd_list.
+int audioPlay(lua_State* L) {
+  if (!s_h) return audioError(L, "closed");
+  size_t requested_len = 0;
+  const char* requested = luaL_checklstring(L, 1, &requested_len);
+  fs::FS* fs = nullptr;
+  char path[224] = "";
+  const char* source = "app";
+
+  if (requested_len >= 3 && !memcmp(requested, "sd:", 3)) {
+#if CAP_LUA_SD_LIST
+    const char* card_path = requested + 3;
+    const size_t card_len = requested_len - 3;
+    if (!sdSafePath(card_path, card_len, path, sizeof path)) return audioError(L, "bad path");
+    bool busy = false;
+    fs = luaHostSdFs(&busy);
+    if (!fs) return audioError(L, busy ? "busy" : "no sd");
+    source = "sd";
+#else
+    return audioError(L, "no sd");
+#endif
+  } else {
+    if (!audioSafeName(requested, requested_len)) return audioError(L, "bad path");
+    fs = luaHostAppFs();
+    if (!fs) return audioError(L, "no storage");
+    char rel[96];
+    snprintf(rel, sizeof rel, "/apps/%s.d/%s", s_h->id, requested);
+    luaHostAppPath(path, sizeof path, rel);
+  }
+
+  char error[40] = "";
+  if (!luaHostAudioPlay(fs, path, requested, source, s_h->generation, error, sizeof error))
+    return audioError(L, error[0] ? error : "playback failed");
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+int audioPause(lua_State* L) {
+  lua_pushboolean(L, s_h && luaHostAudioPause(s_h->generation, true));
+  return 1;
+}
+
+int audioResume(lua_State* L) {
+  lua_pushboolean(L, s_h && luaHostAudioPause(s_h->generation, false));
+  return 1;
+}
+
+int audioStop(lua_State* L) {
+  lua_pushboolean(L, s_h && luaHostAudioStop(s_h->generation, false));
+  return 1;
+}
+
+int audioStatus(lua_State* L) {
+  char state[12], path[192], source[8], format[8], error[40];
+  luaHostAudioStatus(s_h ? s_h->generation : 0,
+                     state, sizeof state, path, sizeof path,
+                     source, sizeof source, format, sizeof format,
+                     error, sizeof error);
+  lua_createtable(L, 0, 5);
+  lua_pushstring(L, state);  lua_setfield(L, -2, "state");
+  lua_pushstring(L, path);   lua_setfield(L, -2, "path");
+  lua_pushstring(L, source); lua_setfield(L, -2, "source");
+  lua_pushstring(L, format); lua_setfield(L, -2, "format");
+  if (error[0]) { lua_pushstring(L, error); lua_setfield(L, -2, "error"); }
+  return 1;
+}
+#endif
+
 void storePath(char* out, size_t cap) {
   char rel[40];
   snprintf(rel, sizeof rel, "/apps/%s.sav", s_h->id);
@@ -2172,6 +2278,16 @@ void openWada(lua_State* L) {
   lua_setfield(L, -2, "sd");
 #endif
 
+#if CAP_LUA_AUDIO
+  lua_newtable(L);                                       // wada.audio (app storage + optional SD)
+  lua_pushcfunction(L, audioPlay);   lua_setfield(L, -2, "play");
+  lua_pushcfunction(L, audioPause);  lua_setfield(L, -2, "pause");
+  lua_pushcfunction(L, audioResume); lua_setfield(L, -2, "resume");
+  lua_pushcfunction(L, audioStop);   lua_setfield(L, -2, "stop");
+  lua_pushcfunction(L, audioStatus); lua_setfield(L, -2, "status");
+  lua_setfield(L, -2, "audio");
+#endif
+
   lua_newtable(L);                                       // wada.mesh (read-only)
   lua_pushcfunction(L, meshContacts); lua_setfield(L, -2, "contacts");
   lua_pushcfunction(L, meshRxLog);    lua_setfield(L, -2, "rx_log");
@@ -2397,6 +2513,9 @@ void hostTeardown() {
   Host* h = s_h;
   if (!h) return;
   s_h = nullptr;                     // bindings see "closed" from here on
+#if CAP_LUA_AUDIO
+  luaHostAudioStop(h->generation, true);
+#endif
   // A wada.ui.input dialog lives on lv_layer_top, so it would outlive the app
   // that opened it. Drop it before the state goes, not after.
   luaHostTextPromptDismiss();
@@ -2465,6 +2584,8 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
 
   Host* h = new Host();
   h->heap.cap = kHeapCap;
+  h->generation = ++s_host_generation;
+  if (!h->generation) h->generation = ++s_host_generation;
   snprintf(h->id, sizeof h->id, "%s", id);
   snprintf(h->title, sizeof h->title, "%s", title ? title : id);
 

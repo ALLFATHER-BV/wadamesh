@@ -1296,6 +1296,8 @@ private:
   // Serial sideload state ("fput" / "fadd" / "fend"): the file being written.
   File _cli_put;
   uint32_t _cli_put_len = 0;
+  uint32_t _cli_put_last_len = 0;
+  bool _cli_put_ended = false;
   void cliPutBegin(const char* path);
   void cliPutChunk(const char* args);
   void cliPutEnd();
