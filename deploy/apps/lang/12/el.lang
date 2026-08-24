@@ -1,0 +1,1016 @@
+# wadamesh language file
+# canonical source - translators: edit this file and PR it
+# code: el
+# ver: 12
+# name: Ελληνικά
+# base: el
+ (device behind)	 (συσκευή πίσω)
+#7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d σημεία κάλυψης · %lu στην SD#
+#7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: αναμονή στίγματος GPS…#
+#7A7F87 Wardrive: …#	#7A7F87 Wardrive: …#
+#region	#region
+%.3f MHz · SF%u · TX %+ddBm	%.3f MHz · SF%u · TX %+ddBm
+%d on map	%d στον χάρτη
+%s · %d nearby (%d rpt, %d comp)	%s · %d κοντά (%d rpt, %d comp)
+%u types · hops %u · manual %s	%u τύποι · άλματα %u · χειροκίνητα %s
+(RTC unset)	(RTC μη ορισμένο)
+(device behind)	(συσκευή πίσω)
+(no default)	(χωρίς προεπιλογή)
+0123456789abcdef…	0123456789abcdef…
+1 byte (legacy)\n2 bytes\n3 bytes	1 byte (παλαιό)\n2 bytes\n3 bytes
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nΧωρίς όριο
+12-hour clock	Ρολόι 12 ωρών
+32 hex characters	32 hex χαρακτήρες
+32-hex secret. Anyone with this can read the channel.	Μυστικό 32 hex. Όποιος το έχει διαβάζει το κανάλι.
+>_  Terminal	>_  Terminal
+@  Mentions	@  Αναφορές
+@ mention sound	Ήχος αναφορών @
+AF	AF
+AUTOMATIC ADVERTS	ΑΥΤΟΜΑΤΑ ADVERTS
+About	Σχετικά
+About the map	Σχετικά με τον χάρτη
+Accent popups	Αναδυόμενα τόνων
+Accent popups: off	Αναδυόμενα τόνων: όχι
+Accent popups: on	Αναδυόμενα τόνων: ναι
+Ack	Ack
+Active	Ενεργό
+Add	Προσθήκη
+Add channel	Προσθήκη καναλιού
+Add contact	Προσθήκη επαφής
+Added	Προστέθηκε
+Added to contacts	Προστέθηκε στις επαφές
+Added to favorites	Προστέθηκε στα αγαπημένα
+Admin	Διαχείριση
+Advert	Advert
+Advert failed	Αποτυχία advert
+Advert location	Τοποθεσία advert
+Advert policy saved	Η πολιτική advert αποθηκεύτηκε
+Advert sent	Στάλθηκε advert
+All marked read	Όλα ως αναγνωσμένα
+Already exists	Υπάρχει ήδη
+Already exists or table full.	Υπάρχει ήδη ή ο πίνακας είναι πλήρης.
+Already in contacts	Ήδη στις επαφές
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	Μετά από επανεκκίνηση ξεκινά πάντα με την ενσωματωμένη κεραία. Επιλέξτε Εξωτερική μόνο με κεραία στην υποδοχή.
+Analyzing terrain…	Ανάλυση εδάφους…
+Analyzing terrain…\n(retry %d of 3)	Ανάλυση εδάφους…\n(προσπάθεια %d από 3)
+Answer telemetry requests	Απάντηση σε αιτήματα τηλεμετρίας
+Anyone can join. Key is derived from the hashtag (lowercase).	Όλοι μπορούν να συμμετάσχουν. Κλειδί από το hashtag (πεζά).
+App drawer as home	Συρτάρι εφαρμογών ως αρχική
+App icon size	Μέγεθος εικονιδίων εφαρμογών
+Applies after restart.	Ισχύει μετά την επανεκκίνηση.
+Apply	Εφαρμογή
+Apply auto-poll	Εφαρμογή auto-poll
+Apply radio params	Εφαρμογή παραμέτρων ράδιο
+Apps	Εφαρμογές
+Arrows + Enter always work. These letters are extra — tap a row, then press a key.	Βέλη + Enter λειτουργούν πάντα. Τα γράμματα είναι έξτρα — αγγίξτε μια γραμμή και πατήστε ένα πλήκτρο.
+Auto advert	Αυτόματη ανακοίνωση
+Auto chat	Αυτόματη συνομιλία
+Auto repeater	Αυτόματος αναμεταδότης
+Auto room	Αυτόματο δωμάτιο
+Auto sensor	Αυτόματος αισθητήρας
+Auto-Join	Αυτόματη συμμετοχή
+Auto-add	
+Auto-add contacts	Αυτόματη προσθήκη επαφών
+Auto-add saved	Η αυτόματη προσθήκη αποθηκεύτηκε
+Auto-add settings	Ρυθμίσεις αυτόματης προσθήκης
+Auto-delete above hops	Αυτ. διαγραφή πάνω από άλματα
+Auto-delete oldest	Αυτ. διαγραφή παλαιότερων
+Auto-delete oldest makes room when full. Hops: 0 = keep all; nodes heard via more hops are removed.	Η αυτ. διαγραφή παλαιότερων ελευθερώνει χώρο όταν γεμίσει. Άλματα: 0 = όλα· κόμβοι που ακούγονται με περισσότερα άλματα αφαιρούνται.
+Auto-discover	Αυτόματη ανακάλυψη
+Auto-discover off	Αυτ. ανακάλυψη ανενεργή
+Auto-discover on	Αυτ. ανακάλυψη ενεργή
+Auto-poll every	Auto-poll κάθε
+Auto-refresh off	Αυτ. ανανέωση ανενεργή
+Auto-refresh on	Αυτ. ανανέωση ενεργή
+Available	Διαθέσιμες
+BLE off	BLE όχι
+BLE on	BLE ναι
+BT	BT
+Back	Πίσω
+Backups	Αντίγραφα
+Battery	Μπαταρία
+Battery & power history	Ιστορικό μπαταρίας & τροφοδοσίας
+Battery (V)	Μπαταρία (V)
+Battery calibration reset to default	Επαναφορά βαθμονόμησης μπαταρίας
+Battery read too low — charge fully first	Πολύ χαμηλή μέτρηση — φορτίστε πρώτα
+Battery saver (experimental)	Εξοικονόμηση μπαταρίας (πειραματικό)
+Battery — last 24h	Μπαταρία — τελευταίο 24ωρο
+Battery:	Μπαταρία:
+Block	Αποκλεισμός
+Block list full	Λίστα αποκλεισμού πλήρης
+Blocked list	Λίστα αποκλεισμένων
+Blocked users	Αποκλεισμένοι χρήστες
+Blocked — their messages are hidden	Αποκλεισμένος — τα μηνύματα κρύβονται
+Blocking unsupported	Ο αποκλεισμός δεν υποστηρίζεται
+Blue battery  Last 6 min	Μπλε μπαταρία  Τελευταία 6 λεπ.
+Blue battery  Orange temp  Cyan humidity	Μπλε μπαταρία  Πορτοκαλί θερμ.  Κυανό υγρασία
+Bluetooth	Bluetooth
+Bluetooth already off	Το Bluetooth είναι ήδη ανενεργό
+Bluetooth already on	Το Bluetooth είναι ήδη ενεργό
+Bluetooth deferred; retry from Settings	
+Bluetooth off	Bluetooth όχι
+Bluetooth on	Bluetooth ναι
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Η σύζευξη Bluetooth δεν είναι διαθέσιμη σε αυτή τη συσκευή.\n\nΤο εργοστασιακό firmware του chip δεν την υποστηρίζει.\n\nΣυζεύξτε την εφαρμογή μέσω Wi-Fi: συνδέστε τη συσκευή στο δίκτυο και προσθέστε την στην εφαρμογή με τη διεύθυνση IP (TCP, θύρα 5000) — φαίνεται στις Ρυθμίσεις > Δίκτυο. Λειτουργεί και το USB.
+Bluetooth unavailable; retry from Settings	
+Bluetooth will start after Wi-Fi connects or times out.	
+Broker host / IP	Host / IP του broker
+Buffered receive (experimental)	Λήψη με buffer (πειραματικό)
+Built-in	Ενσωματωμένο
+Built-in (default)	Ενσωματωμένο (προεπιλογή)
+CR	CR
+Calibrate battery (full = 100%)	Βαθμονόμηση μπαταρίας (πλήρης = 100%)
+Calibrated: 100%% = %u.%02u V  (long-press to reset)	Βαθμονομήθηκε: 100%% = %u.%02u V  (παρατεταμένο για επαναφορά)
+Can't block — not a contact	Αδυναμία αποκλεισμού — δεν είναι επαφή
+Can't display image\n(JPEG only, <= 1024 px)	Αδυναμία εμφάνισης εικόνας\n(μόνο JPEG, <= 1024 px)
+Cancel	Άκυρο
+Cancelled	Ακυρώθηκε
+Cannot open file	Αδυναμία ανοίγματος αρχείου
+Catalog unavailable	Ο κατάλογος δεν είναι διαθέσιμος
+Centered on %s	Κεντραρισμένο σε %s
+Changing orientation - rebooting...	Αλλαγή προσανατολισμού - επανεκκίνηση...
+Channel created	Το κανάλι δημιουργήθηκε
+Channel joined	Συμμετοχή στο κανάλι
+Channel name	Όνομα καναλιού
+Channel not found	Το κανάλι δεν βρέθηκε
+Channel removed	Το κανάλι αφαιρέθηκε
+Channel scope saved	Το εύρος καναλιού αποθηκεύτηκε
+Channel settings	Ρυθμίσεις καναλιού
+Channel table is full	Ο πίνακας καναλιών είναι πλήρης
+Channel table is full.	Ο πίνακας καναλιών είναι γεμάτος.
+Channel-specific regions can be set in each channel's settings.	Οι περιοχές ανά κανάλι ορίζονται στις ρυθμίσεις κάθε καναλιού.
+Channels:	Κανάλια:
+Chat bubbles	Φυσαλίδες συνομιλίας
+Chat bubbles: plain	Φούσκες: απλές
+Chat history is NOT saving	Το ιστορικό συνομιλίας ΔΕΝ αποθηκεύεται
+Chat history save FAILED	Η αποθήκευση του ιστορικού ΑΠΕΤΥΧΕ
+Chat icon	Εικονίδιο συνομιλίας
+Chat icon reset to letters	Εικονίδιο συνομιλίας ξανά σε γράμματα
+Chat icon set	Ορίστηκε εικονίδιο συνομιλίας
+Chat removed	Η συνομιλία αφαιρέθηκε
+Chat save fallback (failed tries)	Εφεδρική αποθήκευση συνομιλίας (αποτυχίες)
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Συνομιλίες, επαφές, ρυθμίσεις και τερματικό mesh - όλα στον browser. Χωρίς επανεκκίνηση· η συσκευή κρατά την οθόνη της.
+Choose .wav from files	Επιλογή .wav από αρχεία
+Choose your name	Επιλέξτε το όνομά σας
+Choose your region	Επιλέξτε την περιοχή σας
+Clear	Εκκαθάριση
+Clear battery history?	Διαγραφή ιστορικού μπαταρίας;
+Clear history	Εκκαθάριση ιστορικού
+Clear telemetry history for this node?	Διαγραφή ιστορικού τηλεμετρίας του κόμβου;
+Client repeat	Επανάληψη πελάτη
+Clock & time	
+Clock synced	Το ρολόι συγχρονίστηκε
+Clock: 12-hour	Ρολόι: 12ωρο
+Clock: 24-hour	Ρολόι: 24ωρο
+Close	Κλείσιμο
+Colourful chat bubbles	Χρωματιστές φούσκες
+Commands	Εντολές
+Community Preset	Προεπιλογή κοινότητας
+Community preset (meshcomod web)	Προεπιλογή κοινότητας (meshcomod web)
+Compact	
+Compact messages	Συμπαγή μηνύματα
+Compact messages (IRC style)	Συμπαγή μηνύματα (στυλ IRC)
+Connect	Σύνδεση
+Connect Wi-Fi to reload tiles	Συνδέστε Wi-Fi για επαναφόρτωση πλακιδίων
+Connect to Wi-Fi	Σύνδεση σε Wi-Fi
+Connect to Wi-Fi first	Συνδεθείτε πρώτα στο Wi-Fi
+Connect to Wi-Fi first, then try again.	Συνδεθείτε πρώτα στο Wi-Fi και δοκιμάστε ξανά.
+Connect to Wi-Fi to get a browser address.	Συνδεθείτε στο Wi-Fi για διεύθυνση προγράμματος περιήγησης.
+Connected	Συνδεδεμένο
+Connected - a browser is viewing this screen.	Συνδέθηκε - ένα πρόγραμμα περιήγησης βλέπει την οθόνη.
+Connecting...	Σύνδεση...
+Connecting…	Σύνδεση…
+Console not available on this build	Η κονσόλα δεν είναι διαθέσιμη σε αυτό το build
+Contact added	Η επαφή προστέθηκε
+Contact deleted	Η επαφή διαγράφηκε
+Contact gone	Η επαφή χάθηκε
+Contact missing	Η επαφή λείπει
+Contacts	Επαφές
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Οι επαφές είναι στην εσωτερική μνήμη - η κάρτα SD δεν προσαρτήθηκε στην εκκίνηση. Επανατοποθετήστε την και επανεκκινήστε.
+Contacts are on internal flash.	Οι επαφές είναι στην εσωτερική μνήμη.
+Contacts are saved to the SD card.	Οι επαφές αποθηκεύονται στην κάρτα SD.
+Contacts full	Οι επαφές είναι πλήρεις
+Contacts:	Επαφές:
+Control	Έλεγχος
+Control this device from a browser	Ελέγξτε τη συσκευή από πρόγραμμα περιήγησης
+Copied %s	Αντιγράφηκε %s
+Copied - Paste in a folder	Αντιγράφηκε - επικολλήστε σε φάκελο
+Copy	Αντιγραφή
+Copy blocked: SD card holds a different or unreadable profile	
+Copy blocked: SD profile could not be prepared safely	
+Copy blocked: internal data is busy	
+Copy blocked: migration guard unavailable	
+Copy failed (no internal identity)	Αποτυχία αντιγραφής (χωρίς εσωτερική ταυτότητα)
+Copy incomplete: SD data may be mixed. Retry before reboot.	
+Copy internal data to SD	Αντιγραφή δεδομένων στην SD
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	
+Copy secret	Αντιγραφή μυστικού
+Copying internal data to SD...	Αντιγραφή εσωτερικών δεδομένων στην SD...
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	
+Could not add	Αδύνατη η προσθήκη
+Could not save the crash report	Η αναφορά σφάλματος δεν αποθηκεύτηκε
+Couldn't delete	Αδυναμία διαγραφής
+Couldn't fetch terrain data.\nCheck the connection and the\nelevation server, then\ntry again.	Αδύνατη η λήψη δεδομένων εδάφους.\nΕλέγξτε τη σύνδεση και τον\nδιακομιστή υψομέτρου και\nδοκιμάστε ξανά.
+Couldn't save the name to storage	Το όνομα δεν αποθηκεύτηκε
+Couldn't send login	Αποτυχία αποστολής σύνδεσης
+Couldn't start the analyzer.\nTry again.	Αδυναμία εκκίνησης αναλυτή.\nΔοκιμάστε ξανά.
+Crash export failed	Αποτυχία εξαγωγής αναφοράς σφάλματος
+Create	Δημιουργία
+Create QR	Δημιουργία QR
+Create a private channel	Δημιουργία ιδιωτικού καναλιού
+Create failed	Αποτυχία δημιουργίας
+Create private channel	Δημιουργία ιδιωτικού καναλιού
+Current tile transfer is busy - retry	
+Custom UTC offset (hours)	Προσαρμοσμένη μετατόπιση UTC (ώρες)
+Cut	Αποκοπή
+Cut - Paste in a folder	Αποκόπηκε - επικολλήστε σε φάκελο
+DM sound	Ήχος DM
+DND	DND
+Danger zone	Ζώνη κινδύνου
+Data -> SD card on reboot\n(card must be inserted)	Δεδομένα -> κάρτα SD στην επανεκκίνηση\n(απαιτείται κάρτα)
+Data -> internal on reboot	Δεδομένα -> εσωτερικά στην επανεκκίνηση
+Delete	Διαγραφή
+Delete %d contact(s)?	Διαγραφή %d επαφών;
+Delete chat	Διαγραφή συνομιλίας
+Delete chat with "%s"?\nMessage history will be cleared.	Διαγραφή συνομιλίας με "%s";\nΤο ιστορικό θα διαγραφεί.
+Delete failed	Αποτυχία διαγραφής
+Delete history	Διαγραφή ιστορικού
+Delete this backup file?\nThis cannot be undone.	Διαγραφή αυτού του αρχείου;\nΔεν αναιρείται.
+Delete this chat's entire history?\nThe chat itself stays.	Διαγραφή όλου του ιστορικού αυτής της συνομιλίας;\nΗ συνομιλία παραμένει.
+Deleted	Διαγράφηκε
+Deleted %d	Διαγράφηκαν %d
+Deleted %d messages	Διαγράφηκαν %d μηνύματα
+Deleting contacts	Διαγραφή επαφών
+Delivered	Παραδόθηκε
+Detailed sensors	Αναλυτικοί αισθητήρες
+Device clock differs from "%s" by %lu h%s	Το ρολόι διαφέρει από "%s" κατά %lu ώ.%s
+Device clock differs from "%s" by %lu min%s	Το ρολόι διαφέρει από "%s" κατά %lu λεπ.%s
+Device name hidden	Όνομα συσκευής κρυφό
+Device name shown	Όνομα συσκευής ορατό
+Device time:	Ώρα συσκευής:
+Diagnostics	Διαγνωστικά
+Diagnostics are on the About page.	O diagnóstico está na página Sobre.
+Discovered	Ανακαλύφθηκαν
+Discovered settings	Ρυθμίσεις εντοπισμένων
+Display	Οθόνη
+Display name	Εμφανιζόμενο όνομα
+Distance in miles	Απόσταση σε μίλια
+Distance: km	Απόσταση: km
+Distance: miles	Απόσταση: μίλια
+Do Not Disturb	Μην ενοχλείτε
+Do Not Disturb off	Μην ενοχλείτε: ανενεργό
+Do Not Disturb on	Μην ενοχλείτε: ενεργό
+Down	
+Download failed	Η λήψη απέτυχε
+Download failed (network?)	Η λήψη απέτυχε (δίκτυο;)
+Download mode	Λειτουργία λήψης
+Download mode… reflash over USB	Λειτουργία download… κάντε ξανά flash μέσω USB
+Downloaded - tap Use to switch	Λήφθηκε - πατήστε Χρήση για αλλαγή
+Downloading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive\nand are saved for offline use.	Λήψη πλακιδίων χάρτη…\n\nΚρατήστε το Wi-Fi συνδεδεμένο.\nΤα πλακίδια εμφανίζονται καθώς φτάνουν\nκαι αποθηκεύονται για χρήση εκτός σύνδεσης.
+Downloading…	Λήψη…
+Duty meter	Μετρητής κύκλου
+Edge scroll	Κύλιση στην άκρη
+Edit in Settings → Quick replies	Επεξεργασία στις Ρυθμίσεις → Γρήγορες απαντήσεις
+Editing	Επεξεργασία
+Empty = plaintext to a private broker	Κενό = απλό κείμενο σε ιδιωτικό broker
+Empty file	Κενό αρχείο
+Enable Bluetooth	Ενεργοποίηση Bluetooth
+Enable MQTT bridge	Ενεργοποίηση γέφυρας MQTT
+Enable only if your repeater re-floods just one region. Otherwise leave off — it can block cross-region login/DMs.	Ενεργοποιήστε μόνο αν ο αναμεταδότης σας ξαναπλημμυρίζει μία μόνο περιοχή. Αλλιώς αφήστε το κλειστό — μπορεί να μπλοκάρει σύνδεση/ΠΜ μεταξύ περιοχών.
+Enable web access	Ενεργοποίηση πρόσβασης web
+Encryption key (optional)	Κλειδί κρυπτογράφησης (προαιρετικό)
+End time	Ώρα λήξης
+Enter SSID first	Εισαγάγετε πρώτα το SSID
+Enter a name	Εισαγάγετε όνομα
+Enter a network name	Εισαγάγετε όνομα δικτύου
+Enter adds a new line	Το Enter προσθέτει γραμμή
+Enter exactly 32 hex characters.	Εισαγάγετε ακριβώς 32 hex χαρακτήρες.
+Enter key sends message	Το πλήκτρο Enter στέλνει το μήνυμα
+Enter sends messages	Το Enter στέλνει μηνύματα
+Enter the 32-hex secret shared by the channel creator.	Εισαγάγετε το μυστικό 32 hex του δημιουργού του καναλιού.
+Entering remote mode - rebooting...	Είσοδος σε απομακρυσμένη λειτουργία - επανεκκίνηση...
+Erase all	Διαγραφή όλων
+Erases identity, contacts, channels, messages, Wi-Fi and all settings, then reboots.	Διαγράφει ταυτότητα, επαφές, κανάλια, μηνύματα, Wi-Fi και όλες τις ρυθμίσεις, μετά επανεκκίνηση.
+Erasing everything…	Διαγραφή όλων…
+Every node you talk to must match. You can change this later in Settings.	Κάθε κόμβος πρέπει να ταιριάζει. Αλλαγή αργότερα στις Ρυθμίσεις.
+Expansion Kit	Κιτ επέκτασης
+Experimental	Πειραματικά
+Experimental - has known issues. Off = soft mouse cursor.	Πειραματικό - έχει γνωστά προβλήματα. Κλειστό = δρομέας λογισμικού.
+Experimental saved	Πειραματικά αποθηκεύτηκαν
+Export failed (can't open file)	Αποτυχία εξαγωγής (αδυναμία ανοίγματος)
+Export new backup	Νέο αντίγραφο
+Export settings	Εξαγωγή ρυθμίσεων
+Exporting settings…	Εξαγωγή ρυθμίσεων…
+External antenna selected	Επιλέχθηκε εξωτερική κεραία
+Factory reset	Επαναφορά εργοστ.
+Factory reset blocked: SD activity is still running; close tools and retry.	
+Factory reset blocked: storage is busy	
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	
+Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Επαναφορά εργοστασίου;\n\nΔιαγράφει ταυτότητα, επαφές, κανάλια, μηνύματα, Wi-Fi και κάθε ρύθμιση. Μη αναστρέψιμο.
+Failed to save channel.	Αποτυχία αποθήκευσης καναλιού.
+Favorites full (max %d)	Αγαπημένα γεμάτα (μέγ %d)
+Favorites unsupported	Τα αγαπημένα δεν υποστηρίζονται
+Fetching the app list from firmware.wadamesh.com	Λήψη λίστας εφαρμογών από firmware.wadamesh.com
+Files	Αρχεία
+Find	Εύρεση
+Finish	Τέλος
+Firmware beta_%d\nCouldn't reach the update server	Firmware beta_%d\nΑδυναμία πρόσβασης στον διακομιστή
+Firmware:	Firmware:
+Flash on new message	Αναβόσβημα σε νέο μήνυμα
+Flood	Flood
+Flood advert sent	Στάλθηκε flood advert
+Flood every	Flood κάθε
+Flood: relayed across the mesh (multi-hop).\nZero-hop: neighbours only (no relaying).	Flood: αναμετάδοση στο mesh (πολλαπλά άλματα).\nZero-hop: μόνο γείτονες (χωρίς αναμετάδοση).
+Folder created	Ο φάκελος δημιουργήθηκε
+For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).	Για εγκαταστάσεις Launcher: αποθηκεύει το πιο πρόσφατο firmware του επιλεγμένου καναλιού στην κάρτα SD (φάκελος BINS).
+Forget network	Διαγραφή δικτύου
+Format	Διαμόρφωση
+Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased.	Διαμόρφωση SD ως MESHCOMOD (FAT32);\nΌλα τα δεδομένα στην κάρτα θα διαγραφούν.
+Format failed (no card / SD error)	Αποτυχία διαμόρφωσης (χωρίς κάρτα / σφάλμα SD)
+Frequency / bandwidth	Συχνότητα / εύρος ζώνης
+Full	Πλήρες
+GPS	GPS
+GPS %s · Buzzer %s	GPS %s · Βομβητής %s
+GPS %s · Buzzer %s\n%s	GPS %s · Βομβητής %s\n%s
+GPS off	GPS όχι
+GPS on	GPS ναι
+GPS serial baud	GPS σειριακό baud
+GPS unset	GPS μη ορισμένο
+GPS: acquiring...	GPS: αναζήτηση...
+GPS: fix	GPS: στίγμα
+GPS: off	GPS: ανενεργό
+GPS: searching	GPS: αναζήτηση
+Game over  —  score %d   (tap to restart)	Τέλος παιχνιδιού  —  σκορ %d   (πατήστε για επανεκκίνηση)
+General	
+Get	Λήψη
+Get Started	Ξεκινήστε
+Get test builds (beta)	Λήψη δοκιμαστικών εκδόσεων (beta)
+Go	Μετάβαση
+Green pressure  Gray altitude	Πράσινο πίεση  Γκρι υψόμετρο
+Hashtag name	Όνομα hashtag
+Hidden - turn it back on in the Lua Store	Κρύφτηκε - ενεργοποιήστε το ξανά στο Lua Store
+Hidden network	Κρυφό δίκτυο
+Hide	Απόκρυψη
+Hide device name	Απόκρυψη ονόματος συσκευής
+Hide this app from the drawer?	Απόκρυψη της εφαρμογής από το συρτάρι;
+High-gain receiver (FEM LNA)	Δέκτης υψηλής ενίσχυσης (FEM LNA)
+Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Άκρως πειραματικό. Προωθεί το κείμενο, το όνομα αποστολέα και τη χρονική σήμανση κάθε μηνύματος που λαμβάνει ο κόμβος σας σε έναν broker MQTT, όπου οποιοσδήποτε μπορεί να διαβάσει τον broker μπορεί να τα διαβάσει. Τα άμεσα μηνύματα είναι ιδιωτικά, από άλλους που ποτέ δεν συμφώνησαν να κοινοποιηθούν. Χρησιμοποιήστε broker που ελέγχετε, ορίστε κλειδί κρυπτογράφησης παρακάτω, και ποτέ δημόσιο broker.
+History limit off	Όριο ιστορικού ανενεργό
+Home	
+Hotkey saved	Το πλήκτρο αποθηκεύτηκε
+How you'll appear to other nodes. You can change this later in Settings.	Πώς θα εμφανίζεστε σε άλλους κόμβους. Αλλαγή στις Ρυθμίσεις.
+Humidity	Υγρασία
+I accept the privacy risk	Αποδέχομαι τον κίνδυνο απορρήτου
+Identity (public key)	Ταυτότητα (δημόσιο κλειδί)
+Idle power-save	Εξοικονόμηση σε αδράνεια
+Idle sleep disabled	Αναστολή σε αδράνεια απενεργ.
+Idle sleep enabled	Αναστολή σε αδράνεια ενεργή
+Image too large (>4 MB)	Πολύ μεγάλη εικόνα (>4 MB)
+Import	Εισαγωγή
+Import backup	Εισαγωγή αντιγράφου
+Import failed (bad/unreadable JSON)	Αποτυχία εισαγωγής (μη έγκυρο JSON)
+Import settings	Εισαγωγή ρυθμίσεων
+Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Εισαγωγή αντιγράφου;\nΑντικαθιστά ταυτότητα,\nκανάλια & επαφές,\nμετά επανεκκινεί.
+Import: storage unavailable	Εισαγωγή: μη διαθέσιμος χώρος
+Importing settings…	Εισαγωγή ρυθμίσεων…
+Inactive	Ανενεργό
+Info	Πληροφορίες
+Insert emoji / symbol	Εισαγωγή emoji / συμβόλου
+Install	Εγκατάσταση
+Install a previous version	Εγκατάσταση προηγούμενης έκδοσης
+Install an earlier version	Εγκατάσταση παλαιότερης έκδοσης
+Install failed (network?)	Η εγκατάσταση απέτυχε (δίκτυο;)
+Install update	Εγκατάσταση ενημέρωσης
+Installed	Εγκατεστημένες
+Installing…	Εγκατάσταση…
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Εσωτερική (ενσωματωμένη)\nΕξωτερική (MMCX)\nΑυτόματα (παλαιό, ανά εκπομπή)
+Internal has no folders	Η εσωτερική δεν έχει φακέλους
+Internal storage   %s / %s	Εσωτ. χώρος   %s / %s
+Invalid lat/lon	Μη έγκυρες συντ.
+Invalid max hops	Μη έγκυρα μέγ. άλματα
+Invalid radio values	Μη έγκυρες τιμές ράδιο
+Join	Συμμετοχή
+Join a hashtag channel	Είσοδος σε κανάλι hashtag
+Join a private channel	Είσοδος σε ιδιωτικό κανάλι
+Join hashtag channel	Συμμετοχή σε κανάλι hashtag
+Join network	Σύνδεση σε δίκτυο
+Join private channel	Συμμετοχή σε ιδιωτικό κανάλι
+Join the public channel	Είσοδος στο δημόσιο κανάλι
+Joined %.40s	Συμμετοχή σε %.40s
+Keep per chat (messages)	Διατήρηση ανά συνομιλία (μηνύματα)
+Key already in use	Το κλειδί χρησιμοποιείται ήδη
+Keyboard	Πληκτρολόγιο
+Keyboard backlight	Οπίσθιος φωτισμός πληκτρολογίου
+Keyboard light auto	Φωτισμός πληκτρολογίου αυτόματος
+Keyboard light off	Φωτισμός πληκτρολογίου ανενεργός
+Keyboard light on	Φωτισμός πληκτρολογίου ενεργός
+Keyboard nav: WASDZ on	Πλοήγηση πληκτρ.: WASDZ ενεργό
+Keyboard nav: off	Πλοήγηση πληκτρ.: κλειστό
+Keyboard navigation	Πλοήγηση με πληκτρολόγιο
+Keys	
+LOS → %s	Οπτική επαφή → %s
+Landscape (desktop)	Οριζόντια (desktop)
+Landscape set - applies when remote mode starts.	Ορίστηκε οριζόντια - ισχύει όταν ξεκινήσει η απομακρυσμένη λειτουργία.
+Language	Γλώσσα
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Ο κατάλογος γλωσσών δεν είναι διαθέσιμος - ελέγξτε το Wi-Fi και ξανανοίξτε την καρτέλα.
+Language updated - restarting to apply it…	Η γλώσσα ενημερώθηκε - επανεκκίνηση για εφαρμογή…
+Languages	Γλώσσες
+Large (bigger icons)	
+Latitude	Γεωγραφικό πλάτος
+Leave empty if not required	Αφήστε κενό αν δεν απαιτείται
+Leaving remote mode - rebooting...	Έξοδος από απομακρυσμένη λειτουργία - επανεκκίνηση...
+Left	
+Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Ας ρυθμίσουμε τη συσκευή σας.\n\nΘα επιλέξετε όνομα και την περιοχή LoRa. Διαρκεί περίπου ένα λεπτό.
+Letters only	Μόνο γράμματα
+LoRa antenna (P4)	Κεραία LoRa (P4)
+Loading catalog…	Φόρτωση καταλόγου…
+Loading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive.	Φόρτωση πλακιδίων χάρτη…\n\nΚρατήστε το Wi-Fi συνδεδεμένο.\nΤα πλακίδια εμφανίζονται καθώς φτάνουν.
+Loading map…	Φόρτωση χάρτη…
+Loading the language catalog…	Φόρτωση καταλόγου γλωσσών…
+Loading...	Φόρτωση...
+Local every	Τοπικά κάθε
+Local sensors	Τοπικοί αισθητήρες
+Lock	Κλείδωμα
+Lock screen	Οθόνη κλειδώματος
+Lock screen wallpaper	Ταπετσαρία οθόνης κλειδώματος
+Lock text colour	Χρώμα κειμένου κλειδώματος
+Lock text colour set	Ορίστηκε χρώμα κειμένου κλειδώματος
+Lock wallpaper	Ταπετσαρία κλειδώματος
+Lock wallpaper set	Ορίστηκε ταπετσαρία κλειδώματος
+Lock when screen off	Κλείδωμα με κλειστή οθόνη
+Locking…	Κλείδωμα…
+Locks when screen off\n(hold Backspace to unlock)	Κλειδώνει με σβηστή οθόνη\n(κρατήστε Backspace για ξεκλείδωμα)
+Locks when screen off\n(hold the d-pad to unlock)	Κλειδώνει με κλειστή οθόνη\n(κρατήστε το d-pad για ξεκλείδωμα)
+Locks when screen off\n(hold the trackball to unlock)	Κλειδώνει με κλειστή οθόνη\n(κρατήστε το trackball για ξεκλείδωμα)
+Locks when screen off\n(press Volume Down to unlock)	Κλειδώνει με κλειστή οθόνη\n(πατήστε Μείωση έντασης για ξεκλείδωμα)
+Locks when screen off\n(press the button to unlock)	Κλειδώνει με κλειστή οθόνη\n(πατήστε το κουμπί για ξεκλείδωμα)
+Log in again	Σύνδεση ξανά
+Logging in again...	Επανασύνδεση...
+Logging in…	Σύνδεση…
+Login OK (perms %u)	Σύνδεση OK (δικαι. %u)
+Login failed	Αποτυχία σύνδεσης
+Logs	Αρχεία καταγραφής
+Longitude	Γεωγραφικό μήκος
+Lua Store	Κατάστημα Lua
+MHz	MHz
+MQTT bridge	Γέφυρα MQTT
+Map	Χάρτης
+Map options	Επιλογές χάρτη
+Map storage error.\nReflash the tiles partition.	Σφάλμα αποθήκευσης χάρτη.\nΞαναφλασάρετε το tiles partition.
+Map storage error.\n\nSD card detected but the\ntile cache didn't mount.\nReboot to retry.	Σφάλμα αποθήκευσης χάρτη.\n\nΕντοπίστηκε κάρτα SD αλλά η\nμνήμη πλακιδίων δεν προσαρτήθηκε.\nΕπανεκκίνηση για νέα προσπάθεια.
+Map tiles: microSD	Πλακίδια: microSD
+Map tiles: microSD\n\n/maps/osm/z/x/y.png\n(or /tiles/z/x/y.jpg)\n\nMap appears when a tile\nfor this area is found.	Πλακίδια χάρτη: microSD\n\n/maps/osm/z/x/y.png\n(ή /tiles/z/x/y.jpg)\n\nΟ χάρτης εμφανίζεται όταν βρεθεί\nπλακίδιο για αυτήν την περιοχή.
+Map tiles: server	Πλακίδια: διακομιστής
+Map — no tile pack on SPIFFS yet.\n\nUpload a tile pack to /tiles/<z>/<x>/<y>.jpg with the host-side generator.	Χάρτης — δεν υπάρχει ακόμη πακέτο πλακιδίων στο SPIFFS.\n\nΑνεβάστε πακέτο στο /tiles/<z>/<x>/<y>.jpg με τη γεννήτρια πλευράς host.
+Map — set your location\nin Settings → Profile to\nshow the map here.	Χάρτης — ορίστε την τοποθεσία\nστις Ρυθμίσεις → Προφίλ για\nνα εμφανιστεί ο χάρτης εδώ.
+Mark all chats and channels as read?	Σήμανση όλων ως αναγνωσμένα;
+Mark as read	Σήμανση ως αναγνωσμένο
+Mark read	Σήμανση ως αναγνωσμένο
+Marked read	Σημειώθηκε ως αναγνωσμένο
+Max hops (0..64)	Μέγ. άλματα (0..64)
+Max zoom for this pack	Μέγ. ζουμ για αυτό το πακέτο
+Memory detail	Λεπτομέρειες μνήμης
+Mesh health: a flood advert is rebroadcast by every repeater in range, so frequent floods add airtime for the whole network. Keep them infrequent (a day or more). Your neighbours still see you from zero-hop adverts and your message replies, so flood mainly when distant nodes need to rediscover you. Leave both Off to advertise only when you tap the buttons above.	Υγεία mesh: ένα flood advert αναμεταδίδεται από κάθε αναμεταδότη σε εμβέλεια, οπότε τα συχνά flood προσθέτουν χρόνο εκπομπής για όλο το δίκτυο. Κρατήστε τα σπάνια (μία μέρα ή περισσότερο). Οι γείτονες σας βλέπουν ακόμη από zero-hop adverts και τις απαντήσεις σας, γι' αυτό κάντε flood κυρίως όταν μακρινοί κόμβοι πρέπει να σας ξαναβρούν. Αφήστε και τα δύο κλειστά για να διαφημίζεστε μόνο πατώντας τα κουμπιά πάνω.
+Message	Μήνυμα
+Message LED	LED μηνυμάτων
+Message LED off	LED μηνυμάτων κλειστό
+Message LED on	LED μηνυμάτων ανοιχτό
+Message deleted	Το μήνυμα διαγράφηκε
+Message didn't get through.\nResend it?	Το μήνυμα δεν έφτασε.\nΝα σταλεί ξανά;
+Message info	Πληροφορίες μηνύματος
+Message sound	Ήχος μηνυμάτων
+Messages	
+Min zoom for this pack	Ελάχ. ζουμ για αυτό το πακέτο
+Mode: BLE starting / low memory	Λειτουργία: BLE εκκινεί / λίγη μνήμη
+Model:	Μοντέλο:
+Multi ACKs	Πολλαπλά ACK
+Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Επανάλ. %s · RX boost %s
+Multi-byte routing (path hash)	Δρομολόγηση πολλών byte (hash διαδρομής)
+Mute @	Σίγαση @
+Mute msgs	Σίγαση μην.
+Mute notification sound	Σίγαση ήχου ειδοποιήσεων
+My position (no GPS fix)	Η θέση μου (χωρίς στίγμα GPS)
+Name	Όνομα
+Name can't be empty.	Το όνομα δεν μπορεί να είναι κενό.
+Name fragment	Τμήμα ονόματος
+Name saved	Το όνομα αποθηκεύτηκε
+Navigation keys	Πλήκτρα πλοήγησης
+Navigation keys — tap a row, then press a key	Πλήκτρα πλοήγησης — πατήστε μια γραμμή, μετά ένα πλήκτρο
+Nearby on map	Κοντά στον χάρτη
+Network name	Όνομα δικτύου
+Network name (SSID)	Όνομα δικτύου (SSID)
+New	Νέο
+New DM	Νέο ΠΜ
+New channel msg	Νέο μήνυμα καναλιού
+New contact	Νέα επαφή
+New file	Νέο αρχείο
+New folder	Νέος φάκελος
+New game	Νέο παιχνίδι
+New room msg	Νέο μήνυμα δωματίου
+Next	Επόμενο
+Night mode (invert)	Νυχτερινή λειτουργία (αντιστροφή)
+No .json backups found.\nExport one first, or copy a\nmeshcore-backup.json to the\nSD card or internal flash.	Δεν βρέθηκαν αντίγραφα .json.\nΕξαγάγετε ένα ή αντιγράψτε\nmeshcore-backup.json στην\nκάρτα SD ή στο εσωτ. flash.
+No @mentions yet	Καμία @αναφορά ακόμη
+No Bluetooth on this device	Δεν υπάρχει Bluetooth σε αυτή τη συσκευή
+No DM key	Χωρίς κλειδί ΠΜ
+No GPS module on this device.	Χωρίς μονάδα GPS σε αυτή τη συσκευή.
+No JPEGs found in /lock/.\nAdd images via the file\nmanager or an SD card.	Δεν βρέθηκαν JPEG στο /lock/.\nΠροσθέστε εικόνες μέσω του\nδιαχειριστή αρχείων ή κάρτας SD.
+No SD card	Χωρίς κάρτα SD
+No SD card (or unreadable format)	Χωρίς κάρτα SD (ή μη αναγνώσιμη μορφή)
+No backups yet. Tap Export new backup above to create one.	Δεν υπάρχουν αντίγραφα. Πατήστε «Νέο αντίγραφο» πάνω για δημιουργία.
+No battery history yet.\n\nLogged every 5 minutes.	Δεν υπάρχει ιστορικό μπαταρίας.\n\nΚαταγραφή κάθε 5 λεπτά.
+No blocked users.\n\nLong-press a message and tap\nBlock to add one.	Κανένας αποκλεισμένος χρήστης.\n\nΠατήστε παρατεταμένα ένα μήνυμα και\nΑποκλεισμός για προσθήκη.
+No contact for thread	Καμία επαφή για το νήμα
+No contact to trace	Καμία επαφή για ιχνηλάτηση
+No contacts have shared\na GPS location yet.	Καμία επαφή δεν έχει\nμοιραστεί θέση GPS ακόμη.
+No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Δεν βρέθηκαν κόμβοι ακόμη.\n\nΟτιδήποτε ακούγεται στον αέρα και δεν είναι στις επαφές σας θα εμφανιστεί εδώ. Όταν η αυτόματη προσθήκη είναι κλειστή, μπορείτε να προσθέσετε κόμβους χειροκίνητα.
+No earlier versions yet	Δεν υπάρχουν προηγούμενες εκδόσεις
+No local expansion data	Δεν υπάρχουν τοπικά δεδομένα επέκτασης
+No location for this contact	Καμία τοποθεσία για αυτήν την επαφή
+No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Χωρίς αποθήκευση χάρτη.\n\nΕισαγάγετε κάρτα SD για πλακίδια\nWi-Fi (ή ξαναφλασάρετε για\nτο tiles partition).
+No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Δεν υπάρχουν πλακίδια εδώ.\n\nΣυνδεθείτε στο Wi-Fi (Ρυθμίσεις → Wi-Fi)\nγια λήψη αυτής της περιοχής.
+No mapped repeaters in this route	Δεν υπάρχουν χαρτογραφημένοι αναμεταδότες σε αυτή τη διαδρομή
+No networks found (2.4 GHz only)	Δεν βρέθηκαν δίκτυα (μόνο 2.4 GHz)
+No onboard GPS	Χωρίς ενσωματωμένο GPS
+No other networks found	Δεν βρέθηκαν άλλα δίκτυα
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Δεν υπάρχει ακόμη θέση. Η ψυχρή εκκίνηση θέλει ανοιχτό ουρανό και μπορεί να πάρει λεπτά.
+No reply from %s	Καμία απάντηση από %s
+No reply. Check password, server,\nor device clock (device: %s)	Καμία απάντηση. Ελέγξτε κωδικό, διακομιστή\nή ρολόι συσκευής (συσκευή: %s)
+No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Δεν υπάρχουν αποθηκευμένα πλακίδια εδώ.\n\nΣυνδεθείτε στο Wi-Fi (Ρυθμίσεις → Wi-Fi)\nγια λήψη αυτής της περιοχής.\nΤα αποθηκευμένα πλακίδια μένουν διαθέσιμα εκτός σύνδεσης.
+No system time yet	Δεν υπάρχει ακόμη ώρα συστήματος
+No telemetry in this window.\nRequest one, or widen the range below.	Δεν υπάρχει τηλεμετρία σε αυτό το παράθυρο.\nΖητήστε μία ή διευρύνετε το εύρος παρακάτω.
+No tiles (non-ESP32)	Χωρίς πλακίδια (μη ESP32)
+No version known yet. Wi-Fi and a completed update check are needed first.	Καμία γνωστή έκδοση ακόμη. Χρειάζονται πρώτα Wi-Fi και ολοκληρωμένος έλεγχος ενημέρωσης.
+Node name	Όνομα κόμβου
+Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime	Κόμβος\nΠεριοχή\nΡαδιό\nΣήμα\nΕπαφές\nΚανάλια\nΜπαταρία\nΧρόνος λειτουργίας
+Normal (100%)\nLarge (150%)\nHuge (200%)	Κανονικό (100%)\nΜεγάλο (150%)\nΤεράστιο (200%)
+Not enough free memory for Bluetooth. Turn Wi-Fi off first.	Ανεπαρκής μνήμη για Bluetooth. Απενεργοποιήστε πρώτα το Wi-Fi.
+Not enough free memory for Wi-Fi. Turn Bluetooth off first.	Ανεπαρκής μνήμη για Wi-Fi. Απενεργοποιήστε πρώτα το Bluetooth.
+Not enough free memory to fetch it. Reboot and try again.	Δεν υπάρχει αρκετή ελεύθερη μνήμη για τη λήψη. Επανεκκινήστε και δοκιμάστε ξανά.
+Nothing selected	Τίποτα δεν επιλέχθηκε
+Notification sound set	Ήχος ειδοποίησης ορίστηκε
+Notify on new contact	Ειδοποίηση για νέα επαφή
+Off	Ανενεργό
+Off\n1 day\n2 days\n3 days\n7 days	Ανενεργό\n1 ημέρα\n2 ημέρες\n3 ημέρες\n7 ημέρες
+Off\n1\n2\n3\n5\n8	Ανενεργό\n1\n2\n3\n5\n8
+Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours	Ανενεργό\n60 λεπτά\n90 λεπτά\n2 ώρες\n3 ώρες\n4 ώρες
+Offline	Εκτός σύνδεσης
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Παλαιότερα μηνύματα πέραν αυτού διαγράφονται. Πολύ μεγάλο ή απεριόριστο ιστορικό επιβραδύνει τη λίστα.
+On - open the address above in a phone browser.	Ενεργό - ανοίξτε την παραπάνω διεύθυνση στο κινητό.
+On boot	Στην εκκίνηση
+On map	Στον χάρτη
+Open Advertise app	Άνοιγμα εφαρμογής Advertise
+Open a .wav, then tap 'Set as notification sound'	Ανοίξτε ένα .wav και πατήστε «Ορισμός ως ήχος ειδοποίησης»
+Open a JPEG, then tap 'Set as wallpaper'	Ανοίξτε ένα JPEG και πατήστε «Ορισμός ως ταπετσαρία»
+Open chat	Άνοιγμα συνομιλίας
+Open in a browser (same Wi-Fi):	Ανοίξτε σε πρόγραμμα περιήγησης (ίδιο Wi-Fi):
+Open in web	Άνοιγμα στον ιστό
+Open mesh console	Άνοιγμα κονσόλας mesh
+Optional — type your network, or leave blank to skip.	Προαιρετικό — πληκτρολογήστε δίκτυο ή αφήστε κενό.
+Orange temp  Cyan humidity	Πορτοκαλί θερμ.  Κυανό υγρασία
+Orientation (tap to rotate, reboots)	Προσανατολισμός (πατήστε για περιστροφή)
+Out of memory	Ανεπαρκής μνήμη
+Overwrite oldest	Αντικατάσταση παλαιότερου
+Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?	Αντικατάσταση ρυθμίσεων και ταυτότητας κάρτας SD\nμε τα εσωτερικά αντίγραφα\nκαι επανεκκίνηση;
+PNG isn't supported here\nUse a JPEG	Το PNG δεν υποστηρίζεται εδώ\nΧρησιμοποιήστε JPEG
+Pairing code	Κωδικός σύζευξης
+Pairing code saved — reboot to apply	Ο κωδικός σύζευξης αποθηκεύτηκε — επανεκκίνηση για εφαρμογή
+Pairing code: %06lu	Κωδικός σύζευξης: %06lu
+Pairing code: n/a	Κωδικός σύζευξης: μ/δ
+Password (empty = open)	Κωδικός (κενό = ανοιχτό)
+Password (empty = skip Wi-Fi)	Κωδικός (κενό = παράλειψη Wi-Fi)
+Password (optional)	Κωδικός (προαιρετικό)
+Password too long	Ο κωδικός είναι πολύ μακρύς
+Paste	Επικόλληση
+Paste failed	Αποτυχία επικόλλησης
+Paste the 64-hex public key and a name. Useful when you want to DM someone before their advert has arrived.	Επικολλήστε το δημόσιο κλειδί 64 hex και ένα όνομα. Χρήσιμο για ΠΜ πριν το advert.
+Pasted	Επικολλήθηκε
+Path hash: %u byte%s	Hash διαδρομής: %u byte%s
+Path reset	Η διαδρομή επαναφέρθηκε
+Path reset failed	Αποτυχία επαναφοράς διαδρομής
+Paused  —  score %d	Σε παύση  —  σκορ %d
+Per-transmit switching on	Εναλλαγή ανά εκπομπή ενεργή
+Pick colour	Επιλογή χρώματος
+Ping	Ping
+Ping failed	Αποτυχία ping
+Pinged (direct) — waiting…	Ping (άμεσο) — αναμονή…
+Pinged (flood) — waiting…	Ping (flood) — αναμονή…
+Play	Αναπαραγωγή
+Poll (min)	Δημοσκόπηση (λεπτά)
+Poll every	Δημοσκόπηση κάθε
+Poll every %d min	Δημοσκόπηση κάθε %d λεπτά
+Port	Θύρα
+Portrait set - applies when remote mode starts.	Ορίστηκε κατακόρυφη - ισχύει όταν ξεκινήσει η απομακρυσμένη λειτουργία.
+Position saved	Η θέση αποθηκεύτηκε
+Power	Ενέργεια
+Power off	Απενεργοποίηση
+Powering off… click trackball to wake	Απενεργοποίηση… κλικ στο trackball για αφύπνιση
+Press a key…	Πατήστε ένα πλήκτρο…
+Probe now	Μέτρηση τώρα
+Probing neighbours…	Έλεγχος γειτόνων…
+Profile	Προφίλ
+Pubkey must be 64 hex chars.	Το δημόσιο κλειδί πρέπει 64 hex.
+Public channel ready	Το δημόσιο κανάλι είναι έτοιμο
+Public key (64 hex chars)	Δημόσιο κλειδί (64 hex)
+Public key:	Δημόσιο κλειδί:
+Publish channel messages	Δημοσίευση μηνυμάτων καναλιού
+Publish direct messages	Δημοσίευση άμεσων μηνυμάτων
+Purge	Εκκαθάριση
+Purge all discovered nodes?	Εκκαθάριση όλων των κόμβων που βρέθηκαν;
+Quick replies	Γρήγορες απαντήσεις
+Quick reply	Γρήγορη απάντηση
+RAM %u%%  ·  PSRAM %u%%	RAM %u%%  ·  PSRAM %u%%
+RX %d entries · Raw %d entries	RX %d καταχωρήσεις · Raw %d καταχωρήσεις
+RX boosted gain	Ενισχυμένο κέρδος RX
+RX log	Αρχείο RX
+Radio & Mesh	Ράδιο & Mesh
+Radio + region set	Ορίστηκαν ράδιο + περιοχή
+Radio applied	Εφαρμόστηκε ράδιο
+Radio off	Ράδιο ανενεργό
+Radio: off	Ράδιο: ανενεργό
+Range test	Δοκιμή εμβέλειας
+RangeTest failed	Αποτυχία RangeTest
+RangeTest sent (direct)	Στάλθηκε RangeTest (άμεσο)
+RangeTest sent (flood)	Στάλθηκε RangeTest (flood)
+Raw log	Ακατέργαστο αρχείο
+Reads packets on a background task so a busy screen can't drop them.	Διαβάζει πακέτα σε εργασία παρασκηνίου ώστε μια απασχολημένη οθόνη να μην τα χάνει.
+Reboot	Επανεκκίνηση
+Reboot device	Επανεκκίνηση συσκευής
+Rebooting...	Επανεκκίνηση...
+Rebooting…	Επανεκκίνηση…
+Receive unreleased test firmware — newer features, but less tested. The update check and Install update both follow the beta channel.	Λήψη μη κυκλοφορημένου δοκιμαστικού firmware — νεότερες λειτουργίες, αλλά λιγότερο δοκιμασμένες. Ο έλεγχος και η εγκατάσταση ακολουθούν το κανάλι beta.
+Recently heard	Ακούστηκε πρόσφατα
+Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Επαναδιαμόρφωση SD ως MESHCOMOD (FAT32);\nΟΛΑ τα δεδομένα στην κάρτα θα διαγραφούν.
+Region & scope	Περιοχή & εμβέλεια
+Region scope (#tag) for this channel.\nBlank = use the default scope.	Εύρος περιοχής (#tag) για αυτό το κανάλι.\nΚενό = προεπιλεγμένο εύρος.
+Region scope (#tag), blank = default.	Εύρος περιοχής (#tag), κενό = προεπιλογή.
+Region scope (#tag, blank = none)	Εύρος περιοχής (#tag, κενό = κανένα)
+Remember password	Απομνημόνευση κωδικού
+Remote UI	Απομακρυσμένο UI
+Remote UI (on)	Απομακρυσμένο UI (ενεργό)
+Remote access	Απομακρυσμένη πρόσβαση
+Remote terminal	Απομακρυσμένο τερματικό
+Remote terminal (recommended)	Απομακρυσμένο τερματικό (συνιστάται)
+Remote terminal off	Απομακρυσμένο τερματικό ανενεργό
+Remove	Αφαίρεση
+Remove %s?	Αφαίρεση του %s;
+Remove channel	Αφαίρεση καναλιού
+Remove channel "%s"?\nLeaves it on this device only.	Αφαίρεση καναλιού "%s";\nΜόνο από αυτή τη συσκευή.
+Removed	Αφαιρέθηκε
+Removed from favorites	Αφαιρέθηκε από τα αγαπημένα
+Rename	Μετονομασία
+Rename failed	Αποτυχία μετονομασίας
+Renamed	Μετονομάστηκε
+Replay	Επανάληψη
+Replay route on map	Επανάληψη διαδρομής στον χάρτη
+Replaying route…	Επανάληψη διαδρομής…
+Resend	Επαναποστολή
+Resend failed	Η επαναποστολή απέτυχε
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Επαναλαμβάνει το μήνυμα μέχρι να το αναμεταδώσει επαναλήπτης ή να επιβεβαιώσει ο παραλήπτης. Απενεργοποιήστε για μία μόνο αποστολή.
+Reset	Επαναφορά
+Reset path	Επαναφορά διαδρομής
+Restarting to apply the language…	Επανεκκίνηση για εφαρμογή της γλώσσας…
+Restarting to enable Bluetooth	
+Resume	
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	
+Retry sends until heard	Επανάληψη αποστολής μέχρι να ακουστεί
+Reverse scrollball	Αντιστροφή scrollball
+Right	
+Roll to highlight • click to insert	Κυλήστε για επισήμανση • κλικ για εισαγωγή
+Room is read-only for you.\nJoin with the room password to post.	Το δωμάτιο είναι μόνο για ανάγνωση για εσάς.\nΣυνδεθείτε με τον κωδικό του δωματίου για δημοσίευση.
+Rotating - reconnecting...	Περιστροφή - επανασύνδεση...
+Rotating… rebooting	Περιστροφή… επανεκκίνηση
+Run setup again	Εκτέλεση ρύθμισης ξανά
+SD card   %s	Κάρτα SD   %s
+SD card   %s   (hold: format)	Κάρτα SD   %s   (κράτημα: διαμόρφωση)
+SD card   (tap to mount)	Κάρτα SD   (πατήστε για προσάρτηση)
+SD card inserted	Η κάρτα SD εισήχθη
+SD card lost - reinsert to recover	Η κάρτα SD χάθηκε - επανατοποθετήστε
+SD card remounted	Η κάρτα SD επανασυνδέθηκε
+SD card removed	Η κάρτα SD αφαιρέθηκε
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	
+SD download failed: %s	Η λήψη στην SD απέτυχε: %s
+SD formatted - %s (MESHCOMOD)	SD διαμορφώθηκε - %s (MESHCOMOD)
+SD is busy - close tools and retry	
+SD removed - card-backed data cannot be saved	
+SD stayed busy - format cancelled, retry	
+SF	SF
+SF / CR / TX / AF	SF / CR / TX / AF
+SPIFFS %u/%u KB used	SPIFFS %u/%u KB σε χρήση
+SSID set — enter password, then Save	Ορίστηκε SSID — εισαγάγετε κωδικό, μετά Αποθήκευση
+SSID too long	Το SSID είναι πολύ μακρύ
+Sample text	Δείγμα κειμένου
+Save	Αποθήκευση
+Save & restart	Αποθήκευση & επανεκκίνηση
+Save / turn on	Αποθήκευση / ενεργοποίηση
+Save auto-add	Αποθήκευση αυτόματης προσθήκης
+Save experimental	Αποθήκευση πειραματικών
+Save failed	Αποτυχία αποθήκευσης
+Save name	Αποθήκευση ονόματος
+Save policy	Αποθήκευση πολιτικής
+Save position	Αποθήκευση θέσης
+Save quick replies	Αποθήκευση γρήγορων απαντήσεων
+Save report	Αποθήκευση αναφοράς
+Save update bin to SD	Αποθήκευση ενημέρωσης στην SD
+Saved	Αποθηκεύτηκε
+Saved backups	Αποθηκευμένα αντίγραφα
+Saved network	Αποθηκευμένο δίκτυο
+Saved profiles	Αποθηκευμένα προφίλ
+Saved to slot %d	Αποθηκεύτηκε στη θέση %d
+Saved — applying…	
+Saved — rebooting	Αποθηκεύτηκε — επανεκκίνηση
+Saved — reconnecting…	Αποθηκεύτηκε — επανασύνδεση…
+Saved: %s\nFlash it from the Launcher.	Αποθηκεύτηκε: %s\nΕγκαταστήστε το από τον Launcher.
+Saving to SD… %d%%	Αποθήκευση στην SD… %d%%
+Saving to SD… 0%	Αποθήκευση στην SD… 0%
+Scan to open on phone	Σαρώστε για άνοιγμα στο κινητό
+Scanning…	Σάρωση…
+Scope direct msgs to region	Περιορισμός άμεσων μηνυμάτων στην περιοχή
+Screen	
+Screen locked	Η οθόνη κλειδώθηκε
+Screen timeout (s, 0 = never)	Λήξη οθόνης (s, 0 = ποτέ)
+Screen timeout (s, 0 = never, min 10)	Λήξη οθόνης (δ, 0 = ποτέ, ελάχ 10)
+Screen timeout: %ds	Λήξη οθόνης: %ds
+Screen timeout: never	Λήξη οθόνης: ποτέ
+Screen-off just dims	Οθόνη κλειστή απλώς σκοτεινιάζει
+Screenshot needs an SD card	Το στιγμιότυπο χρειάζεται κάρτα SD
+Screenshot: low memory	Στιγμιότυπο: λίγη μνήμη
+Screenshot: no SD card	Στιγμιότυπο: καμία κάρτα SD
+Screenshot: write failed	Στιγμιότυπο: αποτυχία εγγραφής
+Scroll down	
+Scroll up	
+Scrollball: normal	Scrollball: κανονικό
+Scrollball: reversed	Scrollball: αντεστραμμένο
+Search	Αναζήτηση
+Search contacts	Αναζήτηση επαφών
+Secondary keyboards	Δευτερεύοντα πληκτρολόγια
+Secret (32 hex chars)	Μυστικό (32 hex)
+Secret (32 hex, optional)	Μυστικό (32 hex, προαιρ.)
+Secret must be 32 hex chars (or empty).	Το μυστικό πρέπει 32 hex (ή κενό).
+Select	
+Select a DM thread	Επιλέξτε νήμα ΠΜ
+Select all	Επιλογή όλων
+Select network	Επιλογή δικτύου
+Send advert	Αποστολή advert
+Send advert now	Αποστολή advert
+Send an advert now, or set how often you re-advertise.	Στείλτε ένα advert τώρα ή ορίστε πόσο συχνά επαναλαμβάνετε.
+Send failed	Αποτυχία αποστολής
+Sender blocked	Ο αποστολέας αποκλείστηκε
+Sensors	
+Sensors tab: off (restart to apply)	Καρτέλα αισθητήρων: κλειστή (επανεκκίνηση για εφαρμογή)
+Sensors tab: on (restart to apply)	Καρτέλα αισθητήρων: ανοιχτή (επανεκκίνηση για εφαρμογή)
+Sent	Στάλθηκε
+Set	Ορισμός
+Set an SSID first	Ορίστε πρώτα ένα SSID
+Set as notification sound	Ορισμός ως ήχος ειδοποίησης
+Set as wallpaper	Ορισμός ως ταπετσαρία
+Set your location first	Ορίστε πρώτα την τοποθεσία σας
+Settings	Ρυθμίσεις
+Setup complete	Η ρύθμιση ολοκληρώθηκε
+Share QR	Κοινοποίηση QR
+Share channel	Κοινή χρήση καναλιού
+Share location in advert	Κοινή χρήση θέσης στο advert
+Share secret	Κοινοποίηση μυστικού
+Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Μοιραστείτε το μυστικό 32 χαρακτήρων για να συμμετάσχουν άλλοι. Κενό = τυχαίο.
+Share: %s	Κοινή χρήση: %s
+Show	Εμφάνιση
+Show Sensors tab	Εμφάνιση καρτέλας αισθητήρων
+Show in the app drawer	Εμφάνιση στο συρτάρι εφαρμογών
+Show link lines	Εμφάνιση γραμμών σύνδεσης
+Show menu-bar letters	Εμφάνιση γραμμάτων μενού
+Show on chart	Εμφάνιση στο γράφημα
+Show on map	Εμφάνιση στον χάρτη
+Sightline	Οπτική επαφή
+Signal & traffic	Σήμα & κίνηση
+Signal probe	Ανίχνευση σήματος
+Skip	Παράλειψη
+Sleep ready	Έτοιμο για ύπνο
+Slot %d cleared	Η θέση %d εκκαθαρίστηκε
+Slot empty	Κενή θέση
+Small\nMedium\nLarge	Μικρό\nΜεσαίο\nΜεγάλο
+Snake	
+Snake  —  swipe or roll the trackball	Snake  —  σύρετε ή κυλήστε το trackball
+Sort	Ταξινόμηση
+Sound	Ήχος
+Sound off	Ήχος όχι
+Sound on	Ήχος ναι
+Sound: %s	Ήχος: %s
+Start time	Ώρα έναρξης
+Status	Κατάσταση
+Step 1 of 3	Βήμα 1 από 3
+Step 2 of 3	Βήμα 2 από 3
+Step 3 of 3	Βήμα 3 από 3
+Still analyzing the previous\npath… try again in a moment.	Ακόμη αναλύεται η προηγούμενη\nδιαδρομή… δοκιμάστε σε λίγο.
+Stop	Διακοπή
+Storage	Αποθηκευτικός χώρος
+Store	Κατάστημα
+Store data on SD (reboot)	Αποθήκευση δεδομένων σε SD (επανεκκίνηση)
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Μεταδίδει την οθόνη ως ζωντανή εικόνα που πατάτε για έλεγχο. Βαρύτερο· το πάνελ δείχνει placeholder. Η εναλλαγή επανεκκινεί τη συσκευή.
+Switch	Εναλλαγή
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Αλλαγή στην εξωτερική κεραία;\n\nΒεβαιωθείτε πρώτα ότι υπάρχει κεραία στην υποδοχή. Η εκπομπή χωρίς κεραία μπορεί να βλάψει τον πομποδέκτη.\n\nΕπανέρχεται στην ενσωματωμένη σε κάθε επανεκκίνηση.
+Sync clock from system	Συγχρονισμός ρολογιού
+System	Σύστημα
+System info	Πληροφορίες συστήματος
+TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nΠελάτες WS %d  GPS %s  Βομβητής %s
+TCP off	TCP όχι
+TCP on	TCP ναι
+TOUCH BETA	TOUCH BETA
+TX	TX
+Tab hotkeys — tap a row, then press a key	Πλήκτρα καρτέλας — πατήστε μια σειρά, μετά ένα πλήκτρο
+Tap Use to switch - the device reboots to apply.	Πατήστε Χρήση για αλλαγή — η συσκευή επανεκκινεί για να εφαρμοστεί.
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Πατήστε Χρήση για αλλαγή - η συσκευή επανεκκινεί. Τα αρχεία γλώσσας βρίσκονται στο /lang· επεξεργαστείτε τα ή προσθέστε δικά σας.
+Tap a language; the device reboots to apply.	Πατήστε μια γλώσσα· η συσκευή επανεκκινεί.
+Taste the rainbow!	Γευτείτε το ουράνιο τόξο!
+Telemetry	Τηλεμετρία
+Telemetry req (direct)…	Αίτημα τηλεμετρίας (άμεσο)…
+Telemetry req (flood)…	Αίτημα τηλεμετρίας (flood)…
+Telemetry req failed	Αποτυχία αιτήματος τηλεμετρίας
+Telemetry requests allowed	Επιτρέπονται αιτήματα τηλεμετρίας
+Telemetry requests off	Αιτήματα τηλεμετρίας ανενεργά
+Telemetry req…	Αιτήματα τηλε…
+Telemetry settings	Ρυθμίσεις τηλεμετρίας
+Temperature	Θερμοκρασία
+Test builds: off	Δοκιμαστικά builds: off
+Test builds: on	Δοκιμαστικά builds: on
+Theme	Θέμα
+Theme colour	Χρώμα θέματος
+Then pick a mode:	Μετά επιλέξτε λειτουργία:
+This contact hasn't shared\na GPS position.	Αυτή η επαφή δεν μοιράστηκε\nθέση GPS.
+This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Αυτή η συσκευή μπορεί να χρησιμοποιεί Wi-Fi και Bluetooth ταυτόχρονα, ως αυτόνομος πομποδέκτης και συνοδός τηλεφώνου (εφαρμογή MeshCore).\n\nΚαι τα δύο μαζί χρησιμοποιούν περισσότερη RAM, οπότε ενεργοποιήστε μόνο ό,τι χρειάζεστε.\n\nΡυθμίστε τα οποτεδήποτε στις Ρυθμίσεις.
+Throttles the CPU when idle to save power	Περιορίζει τη CPU σε αδράνεια για εξοικονόμηση ενέργειας
+Tile reload needs Wi-Fi build	Η επαναφόρτωση χρειάζεται έκδοση Wi-Fi
+Tiles cleared — reconnect Wi-Fi to re-download	Τα πλακίδια διαγράφηκαν — επανασυνδέστε Wi-Fi για λήψη
+Tiles from SD card	Πλακίδια από κάρτα SD
+Time   %s	Ώρα   %s
+Time offset (vs automatic)	Μετατόπιση ώρας (έναντι αυτόματης)
+Time offset: %+d h	Μετατόπιση ώρας: %+d h
+Time range (hours ago)	Χρονικό εύρος (ώρες πριν)
+Time zone	Ζώνη ώρας
+Time zone: %s	Ζώνη ώρας: %s
+Tip: you can scan for networks in Settings → Network after setup.	Συμβουλή: σαρώστε δίκτυα στις Ρυθμίσεις → Δίκτυο μετά τη ρύθμιση.
+Today	Σήμερα
+Toggle GPS	Εναλλαγή GPS
+Too large to edit (>8 KB)	Πολύ μεγάλο για επεξεργασία (>8 KB)
+Topographic map	Τοπογραφικός χάρτης
+Trace	Ιχνηλάτηση
+Trace SNR	Ανίχνευση SNR
+Trace failed	Αποτυχία ιχνηλάτησης
+Trace route	Ιχνηλάτηση διαδρομής
+Trace sent…	Στάλθηκε ιχνηλάτηση…
+Tracing route…	Ιχνηλάτηση διαδρομής…
+Trackball navigates UI	Το trackball πλοηγεί το UI
+Trackball: cursor	Trackball: δρομέας
+Trackball: navigate UI	Trackball: πλοήγηση UI
+Turn Wi-Fi on first	Ενεργοποιήστε πρώτα το Wi-Fi
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Ενεργοποιήστε το Wi-Fi και ανανεώστε. Οι εγκατεστημένες εφαρμογές λειτουργούν.
+Turn off	Απενεργοποίηση
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Ενεργοποίηση παλαιάς εναλλαγής ανά εκπομπή;\n\nΛειτουργία διάγνωσης, μόνο για σύγκριση. Εκπέμπει στην ενσωματωμένη και ακούει στην εξωτερική - το εξερχόμενο σήμα θα είναι πολύ ασθενέστερο.\n\nΕπανέρχεται στην ενσωματωμένη σε κάθε επανεκκίνηση.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Απενεργοποίηση ορίου ιστορικού;\n\nΈνα πολυσύχναστο κανάλι μπορεί να γεμίσει όλο τον χώρο μηνυμάτων - περισσότερος χώρος και αισθητά πιο αργή λίστα και εφαρμογή. Μόνο αν χρειάζεστε πράγματι όλο το ιστορικό.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Ενεργοποιήστε το και ανοίξτε την παρακάτω διεύθυνση σε browser στο ίδιο Wi-Fi - δεν χρειάζεται εφαρμογή. Η οθόνη εμφανίζεται ζωντανά και ελέγχεται με πάτημα.
+Type a URL, then Go	Πληκτρολογήστε URL και Μετάβαση
+Type a message...	Πληκτρολογήστε μήνυμα...
+Type a new 6-digit code · applies after a reboot	Πληκτρολογήστε νέο 6ψήφιο κωδικό · ισχύει μετά την επανεκκίνηση
+Type your network name — or switch to Wi-Fi in Settings to scan	Πληκτρολογήστε το όνομα δικτύου — ή στρέψτε σε Wi-Fi στις Ρυθμίσεις για σάρωση
+UI size (restart to apply)	Μέγεθος UI (επανεκκίνηση για εφαρμογή)
+UI size saved — restart to apply	Το μέγεθος UI αποθηκεύτηκε — επανεκκίνηση για εφαρμογή
+USB powered	Τροφοδοσία USB
+Unblock	Ξεμπλοκάρισμα
+Unblocked	Ξεμπλοκαρίστηκε
+Unfavorite it first	Αφαιρέστε το πρώτα από τα αγαπημένα
+Unlocking…	Ξεκλείδωμα…
+Unmute @	Ενεργοποίηση @
+Unmute msgs	Ενεργοποίηση μηνυμ.
+Unread %d	Μη αναγν. %d
+Unread %d\nRAM %u%%  ·  PSRAM %u%%	Μη αναγν. %d\nRAM %u%%  ·  PSRAM %u%%
+Unsupported WAV (need 16-bit PCM)	Μη υποστηριζόμενο WAV (χρειάζεται 16-bit PCM)
+Up	
+Update	Ενημέρωση
+Update bin saved to SD	Το αρχείο ενημέρωσης αποθηκεύτηκε στη SD
+Update complete.\nRebooting...	Η ενημέρωση ολοκληρώθηκε.\nΕπανεκκίνηση...
+Update manually at flasher.wadamesh.com\n(Wi-Fi update is paused for now)	Ενημερώστε χειροκίνητα στο flasher.wadamesh.com\n(η ενημέρωση Wi-Fi είναι σε παύση)
+Update via the Launcher	Ενημέρωση μέσω του Launcher
+Update via the Launcher / flasher.wadamesh.com	Ενημέρωση μέσω του Launcher / flasher.wadamesh.com
+Update via the Launcher / flasher.wadamesh.com.	Ενημέρωση μέσω του Launcher / flasher.wadamesh.com.
+Updated - rebooting…	Ενημερώθηκε - επανεκκίνηση…
+Use	Χρήση
+Username (optional)	Όνομα χρήστη (προαιρετικό)
+Volume	Ένταση
+W up  ·  A left  ·  D right  ·  Z down  ·  S select  ·  Q back	W πάνω  ·  A αριστερά  ·  D δεξιά  ·  Z κάτω  ·  S επιλογή  ·  Q πίσω
+WADA#15B6A6 MESH#	WADA#15B6A6 MESH#
+WADAMESH	WADAMESH
+Waiting for Wi-Fi...	Αναμονή για Wi-Fi...
+Welcome to WADAMESH	Καλώς ήρθατε στο WADAMESH
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Όσο είναι ενεργό, οποιοσδήποτε στο Wi-Fi σας μπορεί να βλέπει και να ελέγχει τη συσκευή. Απλό HTTP (μόνο τοπικό δίκτυο).
+Wi-Fi	Wi-Fi
+Wi-Fi & Bluetooth	Wi-Fi & Bluetooth
+Wi-Fi and Bluetooth unavailable; retry from Settings	
+Wi-Fi is not enabled in this build.	Το Wi-Fi δεν είναι ενεργό σε αυτή την έκδοση.
+Wi-Fi isn't available on this build.	Το Wi-Fi δεν είναι διαθέσιμο σε αυτή την έκδοση.
+Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	Απαιτείται Wi-Fi για το προφίλ\nεδάφους αυτής της διαδρομής.\nΣυνδεθείτε στις Ρυθμίσεις → Wi-Fi.
+Wi-Fi not connected	Το Wi-Fi δεν συνδέθηκε
+Wi-Fi off	Wi-Fi όχι
+Wi-Fi on	Wi-Fi ναι
+Wi-Fi on, scanning…	Wi-Fi ενεργό, σάρωση…
+Wi-Fi paused; Bluetooth disconnect timed out	
+Wi-Fi saved (radio off)	Το Wi-Fi αποθηκεύτηκε (ράδιο off)
+Wi-Fi saved, applying	
+Wi-Fi saved, reconnecting	Το Wi-Fi αποθηκεύτηκε, επανασύνδεση
+Wi-Fi unavailable; Bluetooth restored	
+Wi-Fi unavailable; retry from Settings	
+Yesterday	Χθες
+You can run setup later in Settings → Device	Μπορείτε να εκτελέσετε τη ρύθμιση αργότερα στις Ρυθμίσεις → Συσκευή
+Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Η τοποθεσία σας είναι άγνωστη.\nΟρίστε GPS / θέση στις\nΡυθμίσεις → Προφίλ πρώτα.
+Your name	Το όνομά σας
+Your own apps	Οι δικές σας εφαρμογές
+Zero-hop	Χωρίς άλμα
+Zero-hop advert sent	Στάλθηκε zero-hop advert
+Zoom: +/- buttons	Ζουμ: κουμπιά +/-
+client connected	ο πελάτης συνδέθηκε
+command	εντολή
+contacts (%d):	επαφές (%d):
+diag boot...	εκκίνηση διαγν...
+double-tap SPACE cycles through the ones you enable	διπλό πάτημα ΔΙΑΣΤΗΜΑ εναλλάσσει τα ενεργά
+drive the UI without the screen; keys still type in text fields	χειρισμός UI χωρίς οθόνη· τα πλήκτρα γράφουν στα πεδία
+e.g. Family	π.χ. Οικογένεια
+e.g. mesh	π.χ. mesh
+from	από
+h  to	ώ  έως
+hold Backspace to unlock	κρατήστε Backspace για ξεκλείδωμα
+hold the d-pad to unlock	κρατήστε το d-pad για ξεκλείδωμα
+hold the trackball to unlock	κρατήστε το trackball για ξεκλείδωμα
+kHz	kHz
+keep holding	κρατήστε πατημένο
+last wake:	
+last wake: 	τελευταία αφύπνιση: 
+leave empty to generate	κενό για δημιουργία
+lights the keyboard + wakes the screen on an incoming message	φωτίζει το πληκτρολόγιο + ξυπνά την οθόνη σε εισερχόμενο μήνυμα
+mesh  link  armed	σύνδεσμος mesh  ενεργός
+mesh busy	το mesh απασχολημένο
+min (0=off)	λεπτά (0=ανενεργό)
+mkdir failed	Αποτυχία δημιουργίας φακέλου
+n/a in this build	μ/δ σε αυτή την έκδοση
+now on channel %s	τώρα στο κανάλι %s
+now talking to %s	τώρα μιλάτε με %s
+off	ανενεργός
+off = Enter adds a new line; tap Send to send	off = το Enter προσθέτει γραμμή· πατήστε Αποστολή
+on	ενεργός
+peak --	κορυφή --
+pick accented letters as you type; off = plain typing	επιλογή τονισμένων γραμμάτων κατά την πληκτρολόγηση· ανενεργό = απλή
+press Volume Down to unlock	πατήστε Μείωση έντασης για ξεκλείδωμα
+push past a screen edge to scroll content	σπρώξτε πέρα από την άκρη για κύλιση
+score %d	σκορ %d
+search	αναζήτηση
+tap for details	πατήστε για λεπτομέρειες
+tap the language key (e.g. EN) on the keyboard to cycle the ones you enable	πατήστε το πλήκτρο γλώσσας (π.χ. EN) στο πληκτρολόγιο για εναλλαγή
+tap to cancel	πατήστε για ακύρωση
+tap to exit full screen	πατήστε για έξοδο από πλήρη οθόνη
+zoom	ζουμ
+zoom %d	ζουμ %d
+~17 dB amp for quiet/remote areas; turn off in noisy spots.	ενισχυτής ~17 dB για ήσυχες/απομακρυσμένες περιοχές· κλείστε σε θορυβώδεις.
+© OpenStreetMap	© OpenStreetMap
+© OpenTopoMap	© OpenTopoMap
+Scope	
+another region	
+my region	
+Save FAIL x%u	
+Save migrating	
+Saved %s	
+Sort discovered	
+Sort by	
+Peers	
+Favorites	
+Has location	
+Direct (0-hop)	
+Heard %s	
+Traffic (since boot)\n  Sent   %u flood, %u direct\n  Recv   %u flood, %u direct	
+Overwrite oldest non-favorite	
+"%s" wants to send messages on the mesh.\n\nThey will be sent as %s and cannot be told apart from messages you typed.\n\nOnly allow this for an app you trust.	"%s" wants to send messages on the mesh.\n\nThey will be sent as %s and cannot be told apart from messages you typed.\n\nOnly allow this for an app you trust.
+%d of %d on map	%d of %d on map
+1-character messages will be ignored	1-character messages will be ignored
+1-character messages will be shown	1-character messages will be shown
+All	All
+Allow	Allow
+Apps that may send messages on the mesh. Anything they send goes out under your node name and cannot be told apart from a message you typed. Turn one off to take the permission back.	Apps that may send messages on the mesh. Anything they send goes out under your node name and cannot be told apart from a message you typed. Turn one off to take the permission back.
+Ignore 1-character messages	Ignore 1-character messages
+Join w/ password	Join w/ password
+Location no longer shared	Location no longer shared
+Location shared with anyone who asks	Location shared with anyone who asks
+Location shared with chosen contacts only	Location shared with chosen contacts only
+Location shared with this contact	Location shared with this contact
+Location sharing off	Location sharing off
+Max dots	Max dots
+Most mesh spam is a single character, because it is the cheapest message to send. Dropped silently: no chat entry, no notification, no sound.	Most mesh spam is a single character, because it is the cheapest message to send. Dropped silently: no chat entry, no notification, no sound.
+Never\nChosen contacts only\nAnyone who asks	Never\nChosen contacts only\nAnyone who asks
+No apps installed.	No apps installed.
+No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)	No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)
+Not supported on this board	Not supported on this board
+Read incoming messages	Read incoming messages
+Reconnected to %.40s	Reconnected to %.40s
+Send messages as me	Send messages as me
+Sent only when that contact asks, encrypted to them. Nothing is broadcast. Needs "Answer telemetry requests" on. Pick contacts in a contact's menu.	Sent only when that contact asks, encrypted to them. Nothing is broadcast. Needs "Answer telemetry requests" on. Pick contacts in a contact's menu.
+Server has forgotten you.\nJoin with the room password.	Server has forgotten you.\nJoin with the room password.
+Share my loc	Share my loc
+Share my location when asked	Share my location when asked
+Stop sharing loc	Stop sharing loc
+not asked yet	not asked yet

@@ -64,6 +64,21 @@ public:
   bool savePrefs(const NodePrefs& prefs, double node_lat, double node_lon);
   void loadContacts(DataStoreHost* host);
   void saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c) = NULL);
+#if defined(ESP32)
+  // Patch only the contact records that changed, in place. True = live file is up to
+  // date; false = caller must do the full atomic rewrite. See the definition for why.
+  bool saveContactsInPlace(DataStoreHost* host, bool (*filter)(const ContactInfo& c));
+  // Cost of the most recent contacts save, for the About diagnostics (#222). A full
+  // rewrite here is the expensive path that stalls both cores on a card-less board.
+  uint16_t lastContactsSaveRecs() const { return _cs_recs; }
+  uint16_t lastContactsSaveMs()   const { return _cs_ms; }
+  bool     lastContactsSaveInPlace() const { return _cs_in_place; }
+  bool     lastContactsSaveValid() const { return _cs_any; }
+private:
+  uint16_t _cs_recs = 0, _cs_ms = 0;
+  bool     _cs_in_place = false, _cs_any = false;
+public:
+#endif
   void loadChannels(DataStoreHost* host);
   void saveChannels(DataStoreHost* host);
   void migrateToSecondaryFS();
@@ -83,8 +98,27 @@ public:
   // _root; setSecondaryFS sets _fsExtra) — FAT has no such GC. Lets callers coalesce
   // the advert-driven contacts save on card-less devices without changing SD boards.
   bool contactsOnInternalFlash() const { return _root[0] == '\0' && _fsExtra == nullptr; }
+
+  // Root-aware file helpers for the app-level stores that live beside the core
+  // data files (MyMesh's companion sync-history log, see MyMesh::loadSyncHistory).
+  // getHotDataFS() is whichever filesystem already takes the frequently-rewritten
+  // contacts/channels — the SD card when one is routed, else the primary FS — so
+  // an often-appended log never lands on GC-prone internal flash while a card
+  // exists. NB removeFile(fs, name) above is NOT root-aware (legacy); these are.
+  FILESYSTEM* getHotDataFS() const { return _getContactsChannelsFS(); }
+  File openAppend(FILESYSTEM* fs, const char* filename);             // create if missing
+  bool fileExists(FILESYSTEM* fs, const char* filename);
+  bool mkdirRooted(FILESYSTEM* fs, const char* dir);                  // true if it exists afterwards
+  bool removeRooted(FILESYSTEM* fs, const char* filename);
+  bool renameFile(FILESYSTEM* fs, const char* from, const char* to);
 #endif
 
 private:
   FILESYSTEM* _getContactsChannelsFS() const { if (_fsExtra) return _fsExtra; return _fs;};
 };
+
+#if defined(HAS_TDISPLAY_P4)
+// #167: run fn(arg) on the dedicated CORE-1 storage task, blocking the caller. See DataStore.cpp.
+void p4StorageCall(void (*fn)(void*), void* arg);
+bool p4OnStorageTask();   // true when the current task IS the storage task (wrapper re-entry guard)
+#endif

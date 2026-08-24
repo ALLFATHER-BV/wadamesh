@@ -83,7 +83,28 @@ void heltecV4CapTouchSetRotation(uint8_t lvgl_rot) { s_ui_rotation = lvgl_rot & 
 // ROT_90 (1) gets the 270-degree formula and vice-versa. Portrait stays
 // identity. (Verified on hardware — without the flip, taps landed at the
 // diagonally-opposite point.)
+#if defined(HELTEC_LORA_V4_R8)
+static uint8_t s_point_rotation_state();   // fwd: non-zero only when the PANEL is hardware-rotated
+#endif
 static void rotateSwipeDelta(int dx, int dy, int* odx, int* ody) {
+#if defined(HELTEC_LORA_V4_R8)
+  // R8: the swapped map below is justified by the PANEL baseline (LovyanGFX
+  // baseline-0 vs the V4 driver's rotation-2), so it applies only when the
+  // panel is actually hardware-rotated (s_point_rotation != 0). The transient
+  // keyboard landscape uses LVGL sw-rotate with the panel untouched — there
+  // the raw-touch geometry is identical to the plain V4, whose formulas are
+  // the hardware-verified ones (with the R8 map, left/right swipes inverted:
+  // swipe-back could close a chat unexpectedly).
+  if (s_point_rotation_state() != 0) {
+    switch (s_ui_rotation) {
+      case 1:  *odx =  dy; *ody = -dx; break;  // ROT_90  (baseline-0 panel)
+      case 2:  *odx = -dx; *ody = -dy; break;  // 180
+      case 3:  *odx = -dy; *ody =  dx; break;  // ROT_270
+      default: *odx =  dx; *ody =  dy; break;  // portrait
+    }
+    return;
+  }
+#endif
   switch (s_ui_rotation) {
     case 1:  *odx = -dy; *ody =  dx; break;  // ROT_90  (panel-rot-2 baseline)
     case 2:  *odx = -dx; *ody = -dy; break;  // 180
@@ -99,6 +120,9 @@ static void rotateSwipeDelta(int dx, int dy, int* odx, int* ody) {
 // it to LVGL. Stays 0 (identity) in portrait — there the keyboard's transient
 // landscape uses LVGL sw_rotate, which transforms the point itself.
 static uint8_t s_point_rotation = 0;
+#if defined(HELTEC_LORA_V4_R8)
+static uint8_t s_point_rotation_state() { return s_point_rotation; }   // fwd-declared above rotateSwipeDelta
+#endif
 void heltecV4CapTouchSetPointRotation(uint8_t r) { s_point_rotation = r & 3; }
 
 static void applyPointRotation(uint16_t* x, uint16_t* y) {
@@ -107,6 +131,20 @@ static void applyPointRotation(uint16_t* x, uint16_t* y) {
   const int H = 320;    // V4 panel portrait height
   const int px = *x, py = *y;
   int lx, ly;
+#if defined(HELTEC_LORA_V4_R8)
+  // R8 (LovyanGFX panel, offset_rotation 0, portrait = setRotation(0)): the panel has NO +180
+  // baseline, so the plain 90/270 maps apply -- exactly the V4's two landscape cases swapped.
+  // The V4-tuned maps below landed every landscape touch point-mirrored on this board (the
+  // stuck-in-landscape report). TESTER-VERIFY: confirmed geometry, unconfirmed sign -- if
+  // landscape touch is still mirrored, swap case 1 and case 3 back. Boot forces portrait on
+  // this board (UITask), so a wrong guess costs a reboot, not a stuck device.
+  switch (s_point_rotation) {
+    case 1:  lx = py;            ly = (W - 1) - px; break;  // ROT_90  -> 320x240 (plain 90)
+    case 2:  lx = (W - 1) - px;  ly = (H - 1) - py; break;  // 180
+    case 3:  lx = (H - 1) - py;  ly = px;           break;  // ROT_270 -> 320x240 (plain 270)
+    default: lx = px;            ly = py;           break;
+  }
+#else
   // Same +180 baseline as rotateSwipeDelta: ROT_90 uses the 270-degree map.
   switch (s_point_rotation) {
     case 1:  lx = (H - 1) - py;  ly = px;           break;  // ROT_90  -> 320x240
@@ -114,6 +152,7 @@ static void applyPointRotation(uint16_t* x, uint16_t* y) {
     case 3:  lx = py;            ly = (W - 1) - px; break;  // ROT_270 -> 320x240
     default: lx = px;            ly = py;           break;
   }
+#endif
   if (lx < 0) lx = 0;
   if (ly < 0) ly = 0;
   *x = (uint16_t)lx;
@@ -169,15 +208,18 @@ static void mapTouchToDisplay(uint16_t in_x, uint16_t in_y, uint16_t* out_x, uin
   if (out_y) *out_y = (uint16_t)y;
 }
 
-static bool probeTouchControllerAddress() {
-  // Known CHSC6x addresses seen across board variants/libraries.
+static uint8_t probeTouchControllerAddress() {
+  // Known CHSC6x addresses seen across board variants/libraries. Returns the
+  // ACKed address (0 if none) — the driver must READ from the address that
+  // actually answered: a variant at 0x15/0x14 used to pass this probe and then
+  // read the hardcoded 0x2E forever ("touch init ok", permanently dead touch).
   static const uint8_t kAddrCandidates[] = {0x2E, 0x15, 0x14};
   for (uint8_t i = 0; i < sizeof(kAddrCandidates); i++) {
     V4CAP_WIRE.beginTransmission(kAddrCandidates[i]);
     uint8_t rc = V4CAP_WIRE.endTransmission();
-    if (rc == 0) return true;
+    if (rc == 0) return kAddrCandidates[i];
   }
-  return false;
+  return 0;
 }
 
 bool heltecV4CapTouchBegin() {
@@ -195,7 +237,8 @@ bool heltecV4CapTouchBegin() {
   if (PIN_TOUCH_INT >= 0) pinMode(PIN_TOUCH_INT, INPUT_PULLUP);
 
   // If controller is absent or bus is unhealthy, skip init and keep UI alive.
-  if (!probeTouchControllerAddress()) {
+  const uint8_t found_addr = probeTouchControllerAddress();
+  if (!found_addr) {
     s_tp = nullptr;
     s_init_ok = false;
     return false;
@@ -204,6 +247,7 @@ bool heltecV4CapTouchBegin() {
   // Use our own INT pin handling above; avoid library-level attachInterrupt side effects.
   // Keep reset pin support so controller can still be hard-reset.
   static chsc6x instance_safe(&V4CAP_WIRE, PIN_TOUCH_SDA, PIN_TOUCH_SCL, -1, PIN_TOUCH_RST);
+  instance_safe._i2c_addr = found_addr;   // read from the address that actually ACKed
   s_tp = &instance_safe;
   s_tp->chsc6x_init();
   // chsc6x_init() re-runs Wire begin internally, so re-apply bounded bus settings.
@@ -379,14 +423,20 @@ bool heltecV4CapTouchPopSwipe(int8_t* x_dir, int8_t* y_dir) {
 static TaskHandle_t s_poll_task = nullptr;
 static uint32_t     s_poll_period_ms = 8;
 static volatile bool s_async_active = false;
+// Screen-off throttle (R8): the 8 ms poll is a ~2 ms blocking I2C read on the
+// SHARED sensor/RTC bus — 24/7, screen off included. 50 ms while dark keeps
+// wake-on-touch responsive enough (worst-case +42 ms to first reaction) and
+// cuts idle bus traffic ~6x. Only the R8 calls the setter; other boards keep
+// the fixed period.
+static volatile bool s_slow_poll = false;
+void heltecV4CapTouchSetSlowPoll(bool slow) { s_slow_poll = slow; }
 
 static void touchPollTaskFn(void* /*arg*/) {
   s_async_active = true;
-  const TickType_t period = pdMS_TO_TICKS(s_poll_period_ms ? s_poll_period_ms : 8);
   TickType_t last_wake = xTaskGetTickCount();
   for (;;) {
     (void)heltecV4CapTouchCheck();
-    vTaskDelayUntil(&last_wake, period);
+    vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(s_slow_poll ? 50 : (s_poll_period_ms ? s_poll_period_ms : 8)));
   }
 }
 

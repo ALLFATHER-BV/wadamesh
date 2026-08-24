@@ -1,0 +1,13 @@
+{
+  "name": "wadamesh — LilyGo T-LoRa Pager (LR1121)",
+  "version": "beta",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        { "path": "https://firmware.wadamesh.com/latest-beta/wadamesh-tlora-pager-lr1121-merged.bin", "offset": 0 }
+      ]
+    }
+  ]
+}

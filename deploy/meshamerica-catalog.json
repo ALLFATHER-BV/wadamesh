@@ -17,19 +17,19 @@
           "role": "gui",
           "title": "Touch UI",
           "version": {
-            "beta_50": {
-              "notes": "Fixed the on-device updater downloading the wrong firmware on several boards. The V4-R8, ThinkNode M9, RAK Tap V2, T-LoRa Pager and Attaky now each pull their own build instead of the Heltec V4 TFT one.\nT-Display P4: the \"Get test builds (beta)\" toggle and the on-device update now appear. They were hidden before, so the P4 could only be updated over USB. Newly enabled, please test and report.\nLock screen fixed: tap Backspace to peek the screen without unlocking, hold Backspace to unlock. The clock and text are repositioned to fit the wide screen and stay readable.\nOn-screen keyboard now works with the detachable keyboard module: the keys stay down while the module is attached, and the module's # key brings them back up for symbols. The POWER button toggles the screen and wakes the board.\nBoard fixes: correct LoRa clock (no false TCXO), GPS baud, and sensor probing that was colliding with the touch and keyboard chips.",
+            "beta_65": {
+              "notes": "Updating no longer leaves the device stuck on \"LoRa radio not detected\". On boards where the radio sits behind a peripheral power switch, an update ends in a software reset that drops that power and then checks for the radio before it has finished coming back up - so the first boot after an update could dead-end on the error screen until you power-cycled by hand. The firmware now does that power-cycle itself and tries again, so the update just works.\nLeaving an app by the back arrow no longer also pulls the status bar dropdown open. One tap did two things: it went back, and then the same tap fell through to the dropdown toggle.\nYou can now share your position with specific contacts instead of putting it in your advert. An advert is broadcast in the clear to every node in range; this is sent only when a contact you chose asks for it, and it is encrypted to them. Settings > Mesh > \"Share my location when asked\" - Never, Chosen contacts only, or Anyone who asks - and you pick the contacts from each contact's own menu, where you can also take it back later. Requested by janmashat.\nThe Lua SDK documentation at wadamesh.com/sdk.html was wrong about the most basic thing and is now correct. It said to define your callbacks as globals named on_start and on_stop; the firmware has never called those. An app is a table you build and return, with on_open, on_tick, on_input, on_message and on_close. Following the old page gave you an app where nothing ran and nothing was reported - a blank screen. If you tried to write an app and gave up, that is why, and it is worth another go.\nThe page also now documents everything added in beta_64: the clock, the buzzer, battery, GPS, per-app file storage, sending mesh messages, receiving them, and the permission model behind the last two.\nThe app and language Store is served from a place nothing was publishing to, so translations sat at an older version than the ones in the project and a published app never appeared at all. Fixed, with the Hungarian, German and Dutch updates now live along with the SDK Test app.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-heltec-v4-tft-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-heltec-v4-tft-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_65/wadamesh-heltec-v4-tft-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-heltec-v4-tft.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-heltec-v4-tft.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_65/wadamesh-heltec-v4-tft.bin",
                   "title": "Update (app only)"
                 }
               ]
@@ -49,19 +49,19 @@
           "role": "gui",
           "title": "Touch UI",
           "version": {
-            "beta_50": {
-              "notes": "Fixed the on-device updater downloading the wrong firmware on several boards. The V4-R8, ThinkNode M9, RAK Tap V2, T-LoRa Pager and Attaky now each pull their own build instead of the Heltec V4 TFT one.\nT-Display P4: the \"Get test builds (beta)\" toggle and the on-device update now appear. They were hidden before, so the P4 could only be updated over USB. Newly enabled, please test and report.\nLock screen fixed: tap Backspace to peek the screen without unlocking, hold Backspace to unlock. The clock and text are repositioned to fit the wide screen and stay readable.\nOn-screen keyboard now works with the detachable keyboard module: the keys stay down while the module is attached, and the module's # key brings them back up for symbols. The POWER button toggles the screen and wakes the board.\nBoard fixes: correct LoRa clock (no false TCXO), GPS baud, and sensor probing that was colliding with the touch and keyboard chips.",
+            "beta_65": {
+              "notes": "Updating no longer leaves the device stuck on \"LoRa radio not detected\". On boards where the radio sits behind a peripheral power switch, an update ends in a software reset that drops that power and then checks for the radio before it has finished coming back up - so the first boot after an update could dead-end on the error screen until you power-cycled by hand. The firmware now does that power-cycle itself and tries again, so the update just works.\nLeaving an app by the back arrow no longer also pulls the status bar dropdown open. One tap did two things: it went back, and then the same tap fell through to the dropdown toggle.\nYou can now share your position with specific contacts instead of putting it in your advert. An advert is broadcast in the clear to every node in range; this is sent only when a contact you chose asks for it, and it is encrypted to them. Settings > Mesh > \"Share my location when asked\" - Never, Chosen contacts only, or Anyone who asks - and you pick the contacts from each contact's own menu, where you can also take it back later. Requested by janmashat.\nThe Lua SDK documentation at wadamesh.com/sdk.html was wrong about the most basic thing and is now correct. It said to define your callbacks as globals named on_start and on_stop; the firmware has never called those. An app is a table you build and return, with on_open, on_tick, on_input, on_message and on_close. Following the old page gave you an app where nothing ran and nothing was reported - a blank screen. If you tried to write an app and gave up, that is why, and it is worth another go.\nThe page also now documents everything added in beta_64: the clock, the buzzer, battery, GPS, per-app file storage, sending mesh messages, receiving them, and the permission model behind the last two.\nThe app and language Store is served from a place nothing was publishing to, so translations sat at an older version than the ones in the project and a published app never appeared at all. Fixed, with the Hungarian, German and Dutch updates now live along with the SDK Test app.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-tdeck-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tdeck-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_65/wadamesh-tdeck-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-tdeck.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tdeck.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_65/wadamesh-tdeck.bin",
                   "title": "Update (app only)"
                 }
               ]
@@ -81,19 +81,19 @@
           "role": "gui",
           "title": "[LR1121] Touch UI",
           "version": {
-            "beta_50": {
-              "notes": "Fixed the on-device updater downloading the wrong firmware on several boards. The V4-R8, ThinkNode M9, RAK Tap V2, T-LoRa Pager and Attaky now each pull their own build instead of the Heltec V4 TFT one.\nT-Display P4: the \"Get test builds (beta)\" toggle and the on-device update now appear. They were hidden before, so the P4 could only be updated over USB. Newly enabled, please test and report.\nLock screen fixed: tap Backspace to peek the screen without unlocking, hold Backspace to unlock. The clock and text are repositioned to fit the wide screen and stay readable.\nOn-screen keyboard now works with the detachable keyboard module: the keys stay down while the module is attached, and the module's # key brings them back up for symbols. The POWER button toggles the screen and wakes the board.\nBoard fixes: correct LoRa clock (no false TCXO), GPS baud, and sensor probing that was colliding with the touch and keyboard chips.",
+            "beta_65": {
+              "notes": "Updating no longer leaves the device stuck on \"LoRa radio not detected\". On boards where the radio sits behind a peripheral power switch, an update ends in a software reset that drops that power and then checks for the radio before it has finished coming back up - so the first boot after an update could dead-end on the error screen until you power-cycled by hand. The firmware now does that power-cycle itself and tries again, so the update just works.\nLeaving an app by the back arrow no longer also pulls the status bar dropdown open. One tap did two things: it went back, and then the same tap fell through to the dropdown toggle.\nYou can now share your position with specific contacts instead of putting it in your advert. An advert is broadcast in the clear to every node in range; this is sent only when a contact you chose asks for it, and it is encrypted to them. Settings > Mesh > \"Share my location when asked\" - Never, Chosen contacts only, or Anyone who asks - and you pick the contacts from each contact's own menu, where you can also take it back later. Requested by janmashat.\nThe Lua SDK documentation at wadamesh.com/sdk.html was wrong about the most basic thing and is now correct. It said to define your callbacks as globals named on_start and on_stop; the firmware has never called those. An app is a table you build and return, with on_open, on_tick, on_input, on_message and on_close. Following the old page gave you an app where nothing ran and nothing was reported - a blank screen. If you tried to write an app and gave up, that is why, and it is worth another go.\nThe page also now documents everything added in beta_64: the clock, the buzzer, battery, GPS, per-app file storage, sending mesh messages, receiving them, and the permission model behind the last two.\nThe app and language Store is served from a place nothing was publishing to, so translations sat at an older version than the ones in the project and a published app never appeared at all. Fixed, with the Hungarian, German and Dutch updates now live along with the SDK Test app.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-tlora-pager-lr1121-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tlora-pager-lr1121-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_65/wadamesh-tlora-pager-lr1121-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-tlora-pager-lr1121.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tlora-pager-lr1121.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_65/wadamesh-tlora-pager-lr1121.bin",
                   "title": "Update (app only)"
                 }
               ]
@@ -104,19 +104,19 @@
           "role": "gui",
           "title": "[SX1262] Touch UI",
           "version": {
-            "beta_50": {
-              "notes": "Fixed the on-device updater downloading the wrong firmware on several boards. The V4-R8, ThinkNode M9, RAK Tap V2, T-LoRa Pager and Attaky now each pull their own build instead of the Heltec V4 TFT one.\nT-Display P4: the \"Get test builds (beta)\" toggle and the on-device update now appear. They were hidden before, so the P4 could only be updated over USB. Newly enabled, please test and report.\nLock screen fixed: tap Backspace to peek the screen without unlocking, hold Backspace to unlock. The clock and text are repositioned to fit the wide screen and stay readable.\nOn-screen keyboard now works with the detachable keyboard module: the keys stay down while the module is attached, and the module's # key brings them back up for symbols. The POWER button toggles the screen and wakes the board.\nBoard fixes: correct LoRa clock (no false TCXO), GPS baud, and sensor probing that was colliding with the touch and keyboard chips.",
+            "beta_65": {
+              "notes": "Updating no longer leaves the device stuck on \"LoRa radio not detected\". On boards where the radio sits behind a peripheral power switch, an update ends in a software reset that drops that power and then checks for the radio before it has finished coming back up - so the first boot after an update could dead-end on the error screen until you power-cycled by hand. The firmware now does that power-cycle itself and tries again, so the update just works.\nLeaving an app by the back arrow no longer also pulls the status bar dropdown open. One tap did two things: it went back, and then the same tap fell through to the dropdown toggle.\nYou can now share your position with specific contacts instead of putting it in your advert. An advert is broadcast in the clear to every node in range; this is sent only when a contact you chose asks for it, and it is encrypted to them. Settings > Mesh > \"Share my location when asked\" - Never, Chosen contacts only, or Anyone who asks - and you pick the contacts from each contact's own menu, where you can also take it back later. Requested by janmashat.\nThe Lua SDK documentation at wadamesh.com/sdk.html was wrong about the most basic thing and is now correct. It said to define your callbacks as globals named on_start and on_stop; the firmware has never called those. An app is a table you build and return, with on_open, on_tick, on_input, on_message and on_close. Following the old page gave you an app where nothing ran and nothing was reported - a blank screen. If you tried to write an app and gave up, that is why, and it is worth another go.\nThe page also now documents everything added in beta_64: the clock, the buzzer, battery, GPS, per-app file storage, sending mesh messages, receiving them, and the permission model behind the last two.\nThe app and language Store is served from a place nothing was publishing to, so translations sat at an older version than the ones in the project and a published app never appeared at all. Fixed, with the Hungarian, German and Dutch updates now live along with the SDK Test app.",
               "files": [
                 {
                   "type": "flash-wipe",
                   "name": "wadamesh-tlora-pager-sx1262-merged.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tlora-pager-sx1262-merged.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_65/wadamesh-tlora-pager-sx1262-merged.bin",
                   "title": "Full install (bootloader + firmware)"
                 },
                 {
                   "type": "flash-update",
                   "name": "wadamesh-tlora-pager-sx1262.bin",
-                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_50/wadamesh-tlora-pager-sx1262.bin",
+                  "url": "https://firmware.wadamesh.com/releases/TOUCH/beta_65/wadamesh-tlora-pager-sx1262.bin",
                   "title": "Update (app only)"
                 }
               ]

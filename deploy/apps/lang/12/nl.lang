@@ -1,0 +1,1016 @@
+# wadamesh language file
+# canonical source - translators: edit this file and PR it
+# code: nl
+# ver: 12
+# name: Nederlands
+# base: nl
+ (device behind)	(apparaat loopt achter)
+#7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d dekkingspunten · %lu opgeslagen op SD#
+#7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: wachten op GPS-fix…#
+#7A7F87 Wardrive: …#	#7A7F87 Wardrive: …#
+#region	#region
+%.3f MHz · SF%u · TX %+ddBm	%.3f MHz · SF%u · TX %+ddBm
+%d on map	%d op kaart
+%s · %d nearby (%d rpt, %d comp)	%s · %d dichtbij (%d rpt, %d comp)
+%u types · hops %u · manual %s	%u types · hops %u · handmatig %s
+(RTC unset)	(RTC niet ingesteld)
+(device behind)	(apparaat loopt achter)
+(no default)	(geen standaard)
+0123456789abcdef…	0123456789abcdef…
+1 byte (legacy)\n2 bytes\n3 bytes	1 byte (verouderd)\n2 bytes\n3 bytes
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nGeen limiet
+12-hour clock	12-uursklok
+32 hex characters	32 hex-tekens
+32-hex secret. Anyone with this can read the channel.	32-hex geheim. Iedereen hiermee kan het kanaal lezen.
+>_  Terminal	>_  Terminal
+@  Mentions	@  Vermeldingen
+@ mention sound	Geluid bij @-vermelding
+AF	AF
+AUTOMATIC ADVERTS	AUTOMATISCHE ADVERTS
+About	Over
+About the map	Over de kaart
+Accent popups	Accent-popups
+Accent popups: off	Accent-popups: uit
+Accent popups: on	Accent-popups: aan
+Ack	Ack
+Active	Actief
+Add	Toevoegen
+Add channel	Kanaal toevoegen
+Add contact	Contact toevoegen
+Added	Toegevoegd
+Added to contacts	Toegevoegd aan contacten
+Added to favorites	Toegevoegd aan favorieten
+Admin	Beheer
+Advert	Advert
+Advert failed	Advert mislukt
+Advert location	Advertlocatie
+Advert policy saved	Advertentiebeleid opgeslagen
+Advert sent	Advert verzonden
+All marked read	Alles gelezen
+Already exists	Bestaat al
+Already exists or table full.	Bestaat al of tabel vol.
+Already in contacts	Al in contacten
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	Start na een herstart altijd op de interne antenne. Kies Extern alleen met een antenne in de externe aansluiting.
+Analyzing terrain…	Terrein analyseren…
+Analyzing terrain…\n(retry %d of 3)	Terrein analyseren…\n(poging %d van 3)
+Answer telemetry requests	Telemetrieverzoeken beantwoorden
+Anyone can join. Key is derived from the hashtag (lowercase).	Iedereen kan deelnemen. Sleutel komt van de hashtag (kleine letters).
+App drawer as home	App-lade als startscherm
+App icon size	Grootte app-pictogrammen
+Applies after restart.	Actief na herstart.
+Apply	Toepassen
+Apply auto-poll	Auto-poll toepassen
+Apply radio params	Radioparameters toepassen
+Apps	Apps
+Arrows + Enter always work. These letters are extra — tap a row, then press a key.	Pijltjes + Enter werken altijd. Deze letters zijn extra — tik op een rij en druk dan op een toets.
+Auto advert	Automatische advert
+Auto chat	Auto chat
+Auto repeater	Auto repeater
+Auto room	Auto room
+Auto sensor	Auto sensor
+Auto-Join	Auto-deelnemen
+Auto-add	Auto toevoegen
+Auto-add contacts	Contacten automatisch toevoegen
+Auto-add saved	Auto-toevoegen opgeslagen
+Auto-add settings	Auto-toevoegen instellingen
+Auto-delete above hops	Auto-verwijderen boven hops
+Auto-delete oldest	Oudste auto-verwijderen
+Auto-delete oldest makes room when full. Hops: 0 = keep all; nodes heard via more hops are removed.	Oudste auto-verwijderen maakt ruimte als het vol is. Hops: 0 = alles bewaren; nodes gehoord via meer hops worden verwijderd.
+Auto-discover	Auto-ontdekken
+Auto-discover off	Auto-ontdekken uit
+Auto-discover on	Auto-ontdekken aan
+Auto-poll every	Auto-poll elke
+Auto-refresh off	Auto-verversen uit
+Auto-refresh on	Auto-verversen aan
+Available	Beschikbaar
+BLE off	BLE uit
+BLE on	BLE aan
+BT	BT
+Back	Terug
+Backups	Back-ups
+Battery	Batterij
+Battery & power history	Batterij- & energiegeschiedenis
+Battery (V)	Batterij (V)
+Battery calibration reset to default	Batterijkalibratie teruggezet
+Battery read too low — charge fully first	Batterijwaarde te laag — laad eerst volledig op
+Battery saver (experimental)	Batterijbesparing (experimenteel)
+Battery — last 24h	Batterij — laatste 24u
+Battery:	Batterij:
+Block	Blokkeren
+Block list full	Blokkeerlijst vol
+Blocked list	Blokkeerlijst
+Blocked users	Geblokkeerde gebruikers
+Blocked — their messages are hidden	Geblokkeerd — berichten verborgen
+Blocking unsupported	Blokkeren niet ondersteund
+Blue battery  Last 6 min	Blauw batterij  Laatste 6 min
+Blue battery  Orange temp  Cyan humidity	Blauw batterij  Oranje temp  Cyaan vocht
+Bluetooth	Bluetooth
+Bluetooth already off	Bluetooth al uit
+Bluetooth already on	Bluetooth al aan
+Bluetooth deferred; retry from Settings	Bluetooth uitgesteld; opnieuw proberen via Instellingen
+Bluetooth off	Bluetooth uit
+Bluetooth on	Bluetooth aan
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Bluetooth-koppelen is op dit apparaat niet beschikbaar.\n\nDe fabrieksfirmware van de radiochip ondersteunt het niet.\n\nKoppel de telefoon-app via Wi-Fi: verbind dit apparaat met je netwerk en voeg het in de app toe op IP-adres (TCP, poort 5000) — te vinden onder Instellingen > Netwerk. USB werkt ook.
+Bluetooth unavailable; retry from Settings	Bluetooth niet beschikbaar; opnieuw proberen via Instellingen
+Bluetooth will start after Wi-Fi connects or times out.	Bluetooth start na verbinding met Wi-Fi of na time-out.
+Broker host / IP	Broker-host / IP
+Buffered receive (experimental)	Gebufferde ontvangst (experimenteel)
+Built-in	Ingebouwd
+Built-in (default)	Ingebouwd (standaard)
+CR	CR
+Calibrate battery (full = 100%)	Batterij kalibreren (vol = 100%)
+Calibrated: 100%% = %u.%02u V  (long-press to reset)	Gekalibreerd: 100%% = %u.%02u V  (lang indrukken om te resetten)
+Can't block — not a contact	Kan niet blokkeren — geen contact
+Can't display image\n(JPEG only, <= 1024 px)	Kan afbeelding niet tonen\n(alleen JPEG, <= 1024 px)
+Cancel	Annuleren
+Cancelled	Geannuleerd
+Cannot open file	Kan bestand niet openen
+Catalog unavailable	Catalogus niet beschikbaar
+Centered on %s	Gecentreerd op %s
+Changing orientation - rebooting...	Oriëntatie wijzigen - herstarten...
+Channel created	Kanaal aangemaakt
+Channel joined	Deelgenomen aan kanaal
+Channel name	Kanaalnaam
+Channel not found	Kanaal niet gevonden
+Channel removed	Kanaal verwijderd
+Channel scope saved	Kanaalbereik opgeslagen
+Channel settings	Kanaalinstellingen
+Channel table is full	Kanaaltabel is vol
+Channel table is full.	De kanaaltabel is vol.
+Channel-specific regions can be set in each channel's settings.	Kanaalspecifieke regio's stel je in bij de instellingen van elk kanaal.
+Channels:	Kanalen:
+Chat bubbles	Chatbubbels
+Chat bubbles: plain	Chatbubbels: effen
+Chat history is NOT saving	Chatgeschiedenis wordt NIET opgeslagen
+Chat history save FAILED	Opslaan chatgeschiedenis MISLUKT
+Chat icon	Chatpictogram
+Chat icon reset to letters	Chatpictogram teruggezet naar letters
+Chat icon set	Chatpictogram ingesteld
+Chat removed	Chat verwijderd
+Chat save fallback (failed tries)	Chat-opslag terugval (mislukte pogingen)
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Chats, contacten, instellingen en een mesh-terminal - alles in de browser. Geen herstart; het apparaat houdt zijn normale scherm.
+Choose .wav from files	.wav kiezen uit bestanden
+Choose your name	Kies je naam
+Choose your region	Kies je regio
+Clear	Wissen
+Clear battery history?	Batterijgeschiedenis wissen?
+Clear history	Geschiedenis wissen
+Clear telemetry history for this node?	Telemetriegeschiedenis van deze node wissen?
+Client repeat	Client herhaling
+Clock & time	Klok & tijd
+Clock synced	Klok gesynchroniseerd
+Clock: 12-hour	Klok: 12-uurs
+Clock: 24-hour	Klok: 24-uurs
+Close	Sluiten
+Colourful chat bubbles	Kleurrijke chatbubbels
+Commands	Opdrachten
+Community Preset	Community-preset
+Community preset (meshcomod web)	Community-preset (meshcomod web)
+Compact	Compact
+Compact messages	Compacte berichten
+Compact messages (IRC style)	Compacte berichten (IRC-stijl)
+Connect	Verbinden
+Connect Wi-Fi to reload tiles	Verbind wifi om tegels te herladen
+Connect to Wi-Fi	Verbinden met wifi
+Connect to Wi-Fi first	Verbind eerst met Wi-Fi
+Connect to Wi-Fi first, then try again.	Verbind eerst met Wi-Fi en probeer het opnieuw.
+Connect to Wi-Fi to get a browser address.	Verbind met Wi-Fi voor een browseradres.
+Connected	Verbonden
+Connected - a browser is viewing this screen.	Verbonden - een browser bekijkt dit scherm.
+Connecting...	Verbinden...
+Connecting…	Verbinden…
+Console not available on this build	Console niet beschikbaar in deze build
+Contact added	Contact toegevoegd
+Contact deleted	Contact verwijderd
+Contact gone	Contact weg
+Contact missing	Contact ontbreekt
+Contacts	Contacten
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Contacten staan op intern flash - de SD-kaart is bij het opstarten niet gekoppeld. Plaats de kaart opnieuw en herstart.
+Contacts are on internal flash.	Contacten staan op intern flashgeheugen.
+Contacts are saved to the SD card.	Contacten worden op de SD-kaart opgeslagen.
+Contacts full	Contacten vol
+Contacts:	Contacten:
+Control	Bediening
+Control this device from a browser	Bedien dit apparaat vanuit een browser
+Copied %s	%s gekopieerd
+Copied - Paste in a folder	Gekopieerd - plak in een map
+Copy	Kopiëren
+Copy blocked: SD card holds a different or unreadable profile	Kopiëren geblokkeerd: SD-kaart heeft een ander of onleesbaar profiel
+Copy blocked: SD profile could not be prepared safely	Kopiëren geblokkeerd: SD-profiel kon niet veilig worden voorbereid
+Copy blocked: internal data is busy	Kopiëren geblokkeerd: interne data is bezig
+Copy blocked: migration guard unavailable	Kopiëren geblokkeerd: migratiebeveiliging niet beschikbaar
+Copy failed (no internal identity)	Kopiëren mislukt (geen interne identiteit)
+Copy incomplete: SD data may be mixed. Retry before reboot.	Kopiëren onvolledig: SD-data kan gemengd zijn. Opnieuw proberen vóór herstart.
+Copy internal data to SD	Interne data naar SD kopiëren
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	Alleen ontbrekende interne bestanden naar een passend SD-profiel kopiëren,\nbestaande SD-data behouden en daarna herstarten?
+Copy secret	Geheim kopiëren
+Copying internal data to SD...	Interne data naar SD kopiëren...
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	Interne data wordt naar SD gekopieerd...\nDit kan enkele minuten duren; apparaat ingeschakeld laten
+Could not add	Toevoegen mislukt
+Could not save the crash report	Kon het crashrapport niet opslaan
+Couldn't delete	Verwijderen mislukt
+Couldn't fetch terrain data.\nCheck the connection and the\nelevation server, then\ntry again.	Kon terreindata niet ophalen.\nControleer de verbinding en de\nhoogteserver en probeer\nhet opnieuw.
+Couldn't save the name to storage	Kon de naam niet opslaan
+Couldn't send login	Kon login niet versturen
+Couldn't start the analyzer.\nTry again.	Kon de analyser niet starten.\nProbeer opnieuw.
+Crash export failed	Crash-export mislukt
+Create	Aanmaken
+Create QR	QR maken
+Create a private channel	Privékanaal aanmaken
+Create failed	Aanmaken mislukt
+Create private channel	Privékanaal aanmaken
+Current tile transfer is busy - retry	Huidige tegeloverdracht is bezig - opnieuw proberen
+Custom UTC offset (hours)	Aangepaste UTC-offset (uren)
+Cut	Knippen
+Cut - Paste in a folder	Geknipt - plak in een map
+DM sound	DM-geluid
+DND	DND
+Danger zone	Gevarenzone
+Data -> SD card on reboot\n(card must be inserted)	Gegevens -> SD-kaart bij herstart\n(kaart moet geplaatst zijn)
+Data -> internal on reboot	Gegevens -> intern bij herstart
+Delete	Verwijderen
+Delete %d contact(s)?	%d contact(en) verwijderen?
+Delete chat	Chat verwijderen
+Delete chat with "%s"?\nMessage history will be cleared.	Chat met "%s" verwijderen?\nBerichtgeschiedenis wordt gewist.
+Delete failed	Verwijderen mislukt
+Delete history	Geschiedenis wissen
+Delete this backup file?\nThis cannot be undone.	Dit back-upbestand verwijderen?\nDit kan niet ongedaan worden gemaakt.
+Delete this chat's entire history?\nThe chat itself stays.	Volledige geschiedenis van deze chat verwijderen?\nDe chat zelf blijft staan.
+Deleted	Verwijderd
+Deleted %d	%d verwijderd
+Deleted %d messages	%d berichten verwijderd
+Deleting contacts	Contacten verwijderen
+Delivered	Afgeleverd
+Detailed sensors	Gedetailleerde sensoren
+Device clock differs from "%s" by %lu h%s	Apparaatklok verschilt van "%s" met %lu u%s
+Device clock differs from "%s" by %lu min%s	Apparaatklok verschilt van "%s" met %lu min%s
+Device name hidden	Apparaatnaam verborgen
+Device name shown	Apparaatnaam zichtbaar
+Device time:	Apparaattijd:
+Diagnostics	Diagnostiek
+Diagnostics are on the About page.	Diagnose ist auf der Seite Über.
+Discovered	Ontdekt
+Discovered settings	Instellingen ontdekte nodes
+Display	Scherm
+Display name	Weergavenaam
+Distance in miles	Afstand in mijlen
+Distance: km	Afstand: km
+Distance: miles	Afstand: mijlen
+Do Not Disturb	Niet storen
+Do Not Disturb off	Niet storen uit
+Do Not Disturb on	Niet storen aan
+Down	Omlaag
+Download failed	Download mislukt
+Download failed (network?)	Download mislukt (netwerk?)
+Download mode	Downloadmodus
+Download mode… reflash over USB	Downloadmodus… opnieuw flashen via USB
+Downloaded - tap Use to switch	Gedownload - tik Gebruik om te wisselen
+Downloading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive\nand are saved for offline use.	Kaarttegels downloaden…\n\nHoud Wi-Fi verbonden.\nTegels verschijnen zodra ze binnenkomen\nen worden opgeslagen voor offline gebruik.
+Downloading…	Downloaden…
+Duty meter	Duty-meter
+Edge scroll	Randscrollen
+Edit in Settings → Quick replies	Bewerk in Instellingen → Snelle antwoorden
+Editing	Bewerken
+Empty = plaintext to a private broker	Leeg = platte tekst naar een privé-broker
+Empty file	Leeg bestand
+Enable Bluetooth	Bluetooth inschakelen
+Enable MQTT bridge	MQTT-brug inschakelen
+Enable only if your repeater re-floods just one region. Otherwise leave off — it can block cross-region login/DMs.	Alleen inschakelen als je repeater slechts één regio herverspreidt. Laat anders uit — het kan login/DM's tussen regio's blokkeren.
+Enable web access	Webtoegang inschakelen
+Encryption key (optional)	Encryptiesleutel (optioneel)
+End time	Eindtijd
+Enter SSID first	Voer eerst SSID in
+Enter a name	Voer een naam in
+Enter a network name	Voer een netwerknaam in
+Enter adds a new line	Enter voegt een nieuwe regel toe
+Enter exactly 32 hex characters.	Voer precies 32 hex-tekens in.
+Enter key sends message	Enter verstuurt bericht
+Enter sends messages	Enter verstuurt berichten
+Enter the 32-hex secret shared by the channel creator.	Voer het 32-hex geheim in dat de kanaalmaker deelt.
+Entering remote mode - rebooting...	Externe modus starten - herstarten...
+Erase all	Alles wissen
+Erases identity, contacts, channels, messages, Wi-Fi and all settings, then reboots.	Wist identiteit, contacten, kanalen, berichten, wifi en alle instellingen, en herstart dan.
+Erasing everything…	Alles wissen…
+Every node you talk to must match. You can change this later in Settings.	Elke node waarmee je praat moet overeenkomen. Je kunt dit later wijzigen in Instellingen.
+Expansion Kit	Uitbreidingskit
+Experimental	Experimenteel
+Experimental - has known issues. Off = soft mouse cursor.	Experimenteel - heeft bekende problemen. Uit = zachte muiscursor.
+Experimental saved	Experimenteel opgeslagen
+Export failed (can't open file)	Export mislukt (kan bestand niet openen)
+Export new backup	Nieuwe back-up
+Export settings	Instellingen exporteren
+Exporting settings…	Instellingen exporteren…
+External antenna selected	Externe antenne geselecteerd
+Factory reset	Fabrieksreset
+Factory reset blocked: SD activity is still running; close tools and retry.	Fabrieksreset geblokkeerd: SD-activiteit loopt nog; sluit tools en probeer opnieuw.
+Factory reset blocked: storage is busy	Fabrieksreset geblokkeerd: opslag is bezig
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	Fabrieksreset onvolledig: SD-data kan al deels gewist zijn. Opnieuw proberen om te voltooien, of kaart verwijderen voordat interne data wordt gereset.
+Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Fabrieksreset?\n\nWist identiteit, contacten, kanalen, berichten, wifi en elke instelling. Onomkeerbaar.
+Failed to save channel.	Kan kanaal niet opslaan.
+Favorites full (max %d)	Favorieten vol (max %d)
+Favorites unsupported	Favorieten niet ondersteund
+Fetching the app list from firmware.wadamesh.com	App-lijst ophalen van firmware.wadamesh.com
+Files	Bestanden
+Find	Zoeken
+Finish	Voltooien
+Firmware beta_%d\nCouldn't reach the update server	Firmware beta_%d\nKon de updateserver niet bereiken
+Firmware:	Firmware:
+Flash on new message	Knipperen bij nieuw bericht
+Flood	Flood
+Flood advert sent	Flood-advert verzonden
+Flood every	Flood elke
+Flood: relayed across the mesh (multi-hop).\nZero-hop: neighbours only (no relaying).	Flood: doorgestuurd over het mesh (multi-hop).\nZero-hop: alleen buren (geen doorsturen).
+Folder created	Map aangemaakt
+For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).	Voor Launcher-installaties: slaat de nieuwste firmware van het geselecteerde kanaal op de SD-kaart op (BINS-map).
+Forget network	Netwerk vergeten
+Format	Formatteren
+Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased.	SD formatteren als MESHCOMOD (FAT32)?\nAlle gegevens op de kaart worden gewist.
+Format failed (no card / SD error)	Formatteren mislukt (geen kaart / SD-fout)
+Frequency / bandwidth	Frequentie / bandbreedte
+Full	Vol
+GPS	GPS
+GPS %s · Buzzer %s	GPS %s · Zoemer %s
+GPS %s · Buzzer %s\n%s	GPS %s · Zoemer %s\n%s
+GPS off	GPS uit
+GPS on	GPS aan
+GPS serial baud	GPS seriële baud
+GPS unset	GPS niet ingesteld
+GPS: acquiring...	GPS: zoeken...
+GPS: fix	GPS: fix
+GPS: off	GPS: uit
+GPS: searching	GPS: zoeken
+Game over  —  score %d   (tap to restart)	Game over  —  score %d   (tik om te herstarten)
+General	Algemeen
+Get	Ophalen
+Get Started	Aan de slag
+Get test builds (beta)	Testversies ontvangen (bèta)
+Go	Ga
+Green pressure  Gray altitude	Groen druk  Grijs hoogte
+Hashtag name	Hashtagnaam
+Hidden - turn it back on in the Lua Store	Verborgen - zet het weer aan in de Lua Store
+Hidden network	Verborgen netwerk
+Hide	Verberg
+Hide device name	Apparaatnaam verbergen
+Hide this app from the drawer?	Deze app verbergen uit de lade?
+High-gain receiver (FEM LNA)	Hoge-versterking ontvanger (FEM LNA)
+Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Zeer experimenteel. Dit stuurt de tekst, afzendernaam en tijdstempel van elk bericht dat je node ontvangt door naar een MQTT-broker, waar iedereen die de broker kan lezen ze kan lezen. Directe berichten zijn privéberichten van anderen die nooit met delen hebben ingestemd. Gebruik een broker die je zelf beheert, stel hieronder een encryptiesleutel in, en nooit een openbare broker.
+History limit off	Geschiedenislimiet uit
+Home	Start
+Hotkey saved	Sneltoets opgeslagen
+How you'll appear to other nodes. You can change this later in Settings.	Hoe je verschijnt voor andere nodes. Je kunt dit later wijzigen in Instellingen.
+Humidity	Vochtigheid
+I accept the privacy risk	Ik accepteer het privacyrisico
+Identity (public key)	Identiteit (publieke sleutel)
+Idle power-save	Energiebesparing bij inactiviteit
+Idle sleep disabled	Slaap bij inactiviteit uit
+Idle sleep enabled	Slaap bij inactiviteit aan
+Image too large (>4 MB)	Afbeelding te groot (>4 MB)
+Import	Importeren
+Import backup	Back-up importeren
+Import failed (bad/unreadable JSON)	Import mislukt (ongeldige JSON)
+Import settings	Instellingen importeren
+Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Deze back-up importeren?\nVervangt identiteit,\nkanalen & contacten,\nherstart daarna.
+Import: storage unavailable	Import: opslag niet beschikbaar
+Importing settings…	Instellingen importeren…
+Inactive	Inactief
+Info	Info
+Insert emoji / symbol	Emoji / symbool invoegen
+Install	Installeren
+Install a previous version	Een vorige versie installeren
+Install an earlier version	Een eerdere versie installeren
+Install failed (network?)	Installatie mislukt (netwerk?)
+Install update	Update installeren
+Installed	Geïnstalleerd
+Installing…	Installeren…
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Intern (on-board)\nExtern (MMCX)\nAuto (verouderd, per zending)
+Internal has no folders	Intern heeft geen mappen
+Internal storage   %s / %s	Interne opslag   %s / %s
+Invalid lat/lon	Ongeldige lat/lon
+Invalid max hops	Ongeldige max hops
+Invalid radio values	Ongeldige radiowaarden
+Join	Deelnemen
+Join a hashtag channel	Deelnemen aan hashtagkanaal
+Join a private channel	Deelnemen aan privékanaal
+Join hashtag channel	Deelnemen aan hashtagkanaal
+Join network	Verbinden met netwerk
+Join private channel	Deelnemen aan privékanaal
+Join the public channel	Deelnemen aan het publieke kanaal
+Joined %.40s	Deelgenomen aan %.40s
+Keep per chat (messages)	Bewaren per chat (berichten)
+Key already in use	Sleutel al in gebruik
+Keyboard	Toetsenbord
+Keyboard backlight	Toetsenbordverlichting
+Keyboard light auto	Toetsenbordverlichting auto
+Keyboard light off	Toetsenbordverlichting uit
+Keyboard light on	Toetsenbordverlichting aan
+Keyboard nav: WASDZ on	Toetsenbordnav.: WASDZ aan
+Keyboard nav: off	Toetsenbordnav.: uit
+Keyboard navigation	Toetsenbordnavigatie
+Keys	Toetsen
+LOS → %s	Zichtlijn → %s
+Landscape (desktop)	Liggend (desktop)
+Landscape set - applies when remote mode starts.	Liggend ingesteld - geldt zodra de externe modus start.
+Language	Taal
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Taalcatalogus niet beschikbaar - controleer Wi-Fi en open dit tabblad opnieuw.
+Language updated - restarting to apply it…	Taal bijgewerkt - opnieuw opstarten om toe te passen…
+Languages	Talen
+Large (bigger icons)	Groot (grotere pictogrammen)
+Latitude	Breedtegraad
+Leave empty if not required	Leeg laten indien niet vereist
+Leaving remote mode - rebooting...	Externe modus verlaten - herstarten...
+Left	Links
+Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Laten we je apparaat instellen.\n\nJe kiest een naam en je LoRa-regio. Duurt ongeveer een minuut.
+Letters only	Alleen letters
+LoRa antenna (P4)	LoRa-antenne (P4)
+Loading catalog…	Catalogus laden…
+Loading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive.	Kaarttegels laden…\n\nHoud Wi-Fi verbonden.\nTegels verschijnen zodra ze binnenkomen.
+Loading map…	Kaart laden…
+Loading the language catalog…	Taalcatalogus laden…
+Loading...	Laden...
+Local every	Lokaal elke
+Local sensors	Lokale sensoren
+Lock	Vergrendelen
+Lock screen	Vergrendelscherm
+Lock screen wallpaper	Vergrendelscherm-achtergrond
+Lock text colour	Tekstkleur vergrendeling
+Lock text colour set	Tekstkleur vergrendeling ingesteld
+Lock wallpaper	Vergrendelachtergrond
+Lock wallpaper set	Vergrendelachtergrond ingesteld
+Lock when screen off	Vergrendelen bij scherm uit
+Locking…	Vergrendelen…
+Locks when screen off\n(hold Backspace to unlock)	Vergrendelt bij scherm uit\n(houd Backspace vast om te ontgrendelen)
+Locks when screen off\n(hold the d-pad to unlock)	Vergrendelt bij scherm uit\n(houd de d-pad vast om te ontgrendelen)
+Locks when screen off\n(hold the trackball to unlock)	Vergrendelt bij scherm uit\n(houd de trackball vast om te ontgrendelen)
+Locks when screen off\n(press Volume Down to unlock)	Vergrendelt bij scherm uit\n(druk op Volume Omlaag om te ontgrendelen)
+Locks when screen off\n(press the button to unlock)	Vergrendelt bij scherm uit\n(druk op de knop om te ontgrendelen)
+Log in again	Opnieuw inloggen
+Logging in again...	Opnieuw inloggen...
+Logging in…	Inloggen…
+Login OK (perms %u)	Inloggen OK (rechten %u)
+Login failed	Inloggen mislukt
+Logs	Logboeken
+Longitude	Lengtegraad
+Lua Store	Lua Store
+MHz	MHz
+MQTT bridge	MQTT-brug
+Map	Kaart
+Map options	Kaartopties
+Map storage error.\nReflash the tiles partition.	Kaartopslagfout.\nFlash de tiles-partitie opnieuw.
+Map storage error.\n\nSD card detected but the\ntile cache didn't mount.\nReboot to retry.	Kaartopslagfout.\n\nSD-kaart gedetecteerd maar de\ntegelcache kon niet koppelen.\nHerstart om opnieuw te proberen.
+Map tiles: microSD	Kaarttegels: microSD
+Map tiles: microSD\n\n/maps/osm/z/x/y.png\n(or /tiles/z/x/y.jpg)\n\nMap appears when a tile\nfor this area is found.	Kaarttegels: microSD\n\n/maps/osm/z/x/y.png\n(of /tiles/z/x/y.jpg)\n\nKaart verschijnt zodra een tegel\nvoor dit gebied is gevonden.
+Map tiles: server	Kaarttegels: server
+Map — no tile pack on SPIFFS yet.\n\nUpload a tile pack to /tiles/<z>/<x>/<y>.jpg with the host-side generator.	Kaart — nog geen tegelpakket op SPIFFS.\n\nUpload een tegelpakket naar /tiles/<z>/<x>/<y>.jpg met de host-generator.
+Map — set your location\nin Settings → Profile to\nshow the map here.	Kaart — stel je locatie in\nbij Instellingen → Profiel om\nde kaart hier te tonen.
+Mark all chats and channels as read?	Alle chats en kanalen als gelezen markeren?
+Mark as read	Als gelezen markeren
+Mark read	Markeer als gelezen
+Marked read	Gemarkeerd als gelezen
+Max hops (0..64)	Max hops (0..64)
+Max zoom for this pack	Max zoom voor dit pakket
+Memory detail	Geheugendetail
+Mesh health: a flood advert is rebroadcast by every repeater in range, so frequent floods add airtime for the whole network. Keep them infrequent (a day or more). Your neighbours still see you from zero-hop adverts and your message replies, so flood mainly when distant nodes need to rediscover you. Leave both Off to advertise only when you tap the buttons above.	Mesh-gezondheid: een flood-advert wordt door elke repeater in bereik opnieuw uitgezonden, dus frequente floods verhogen de airtime voor het hele netwerk. Houd ze zeldzaam (een dag of meer). Je buren zien je nog steeds via zero-hop adverts en je berichtantwoorden, dus flood vooral wanneer verre nodes je opnieuw moeten ontdekken. Laat beide uit om alleen te adverteren als je op de knoppen hierboven tikt.
+Message	Bericht
+Message LED	Bericht-LED
+Message LED off	Bericht-LED uit
+Message LED on	Bericht-LED aan
+Message deleted	Bericht verwijderd
+Message didn't get through.\nResend it?	Bericht is niet aangekomen.\nOpnieuw versturen?
+Message info	Berichtinfo
+Message sound	Berichtgeluid
+Messages	Berichten
+Min zoom for this pack	Min zoom voor dit pakket
+Mode: BLE starting / low memory	Modus: BLE start / weinig geheugen
+Model:	Model:
+Multi ACKs	Multi-ACK's
+Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Herhalen %s · RX-boost %s
+Multi-byte routing (path hash)	Multi-byte routing (pad-hash)
+Mute @	Demp @
+Mute msgs	Berichten dempen
+Mute notification sound	Meldingsgeluid dempen
+My position (no GPS fix)	Mijn positie (geen GPS-fix)
+Name	Naam
+Name can't be empty.	Naam mag niet leeg zijn.
+Name fragment	Naamfragment
+Name saved	Naam opgeslagen
+Navigation keys	Navigatietoetsen
+Navigation keys — tap a row, then press a key	Navigatietoetsen — tik een rij, druk dan een toets
+Nearby on map	Dichtbij op kaart
+Network name	Netwerknaam
+Network name (SSID)	Netwerknaam (SSID)
+New	Nieuw
+New DM	Nieuw DM
+New channel msg	Nieuw kanaalbericht
+New contact	Nieuw contact
+New file	Nieuw bestand
+New folder	Nieuwe map
+New game	Nieuw spel
+New room msg	Nieuw roombericht
+Next	Volgende
+Night mode (invert)	Nachtmodus (omkeren)
+No .json backups found.\nExport one first, or copy a\nmeshcore-backup.json to the\nSD card or internal flash.	Geen .json back-ups gevonden.\nExporteer er eerst een, of kopieer\neen meshcore-backup.json naar de\nSD-kaart of interne flash.
+No @mentions yet	Nog geen @vermeldingen
+No Bluetooth on this device	Geen Bluetooth op dit apparaat
+No DM key	Geen DM-sleutel
+No GPS module on this device.	Geen GPS-module op dit apparaat.
+No JPEGs found in /lock/.\nAdd images via the file\nmanager or an SD card.	Geen JPEG's gevonden in /lock/.\nVoeg afbeeldingen toe via de\nbestandsbeheerder of een SD-kaart.
+No SD card	Nincs SD-kártya
+No SD card (or unreadable format)	Geen SD-kaart (of onleesbaar formaat)
+No backups yet. Tap Export new backup above to create one.	Nog geen back-ups. Tik hierboven op Nieuwe back-up om er een te maken.
+No battery history yet.\n\nLogged every 5 minutes.	Nog geen batterijgeschiedenis.\n\nElke 5 minuten gelogd.
+No blocked users.\n\nLong-press a message and tap\nBlock to add one.	Geen geblokkeerde gebruikers.\n\nHoud een bericht ingedrukt en tik\nop Blokkeren om er een toe te voegen.
+No contact for thread	Geen contact voor gesprek
+No contact to trace	Geen contact om te traceren
+No contacts have shared\na GPS location yet.	Nog geen contacten hebben\neen GPS-locatie gedeeld.
+No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Nog geen ontdekte nodes.\n\nAlles wat via de ether wordt gehoord en niet in je contacten staat, verschijnt hier. Als automatisch toevoegen uit staat, kun je nodes handmatig aan je contacten toevoegen.
+No earlier versions yet	Nog geen eerdere versies
+No local expansion data	Geen lokale uitbreidingsdata
+No location for this contact	Geen locatie voor dit contact
+No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Geen kaartopslag.\n\nPlaats een SD-kaart om wifi-tegels\nte cachen (of flash opnieuw om\nde tiles-partitie te herstellen).
+No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Hier geen kaarttegels.\n\nMaak verbinding met Wi-Fi (Instellingen → Wi-Fi)\nom dit gebied te downloaden.
+No mapped repeaters in this route	Geen repeaters op de kaart in deze route
+No networks found (2.4 GHz only)	Geen netwerken gevonden (alleen 2.4 GHz)
+No onboard GPS	Geen ingebouwde GPS
+No other networks found	Geen andere netwerken gevonden
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Nog geen positie. Een koude start heeft vrij zicht op de lucht nodig en kan enkele minuten duren.
+No reply from %s	Geen antwoord van %s
+No reply. Check password, server,\nor device clock (device: %s)	Geen antwoord. Controleer wachtwoord, server,\nof apparaatklok (apparaat: %s)
+No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Hier geen opgeslagen kaarttegels.\n\nMaak verbinding met Wi-Fi (Instellingen → Wi-Fi)\nom dit gebied te downloaden.\nOpgeslagen tegels blijven offline beschikbaar.
+No system time yet	Nog geen systeemtijd
+No telemetry in this window.\nRequest one, or widen the range below.	Geen telemetrie in dit venster.\nVraag er een aan, of verbreed het bereik hieronder.
+No tiles (non-ESP32)	Geen tegels (niet-ESP32)
+No version known yet. Wi-Fi and a completed update check are needed first.	Nog geen versie bekend. Eerst zijn Wi-Fi en een voltooide updatecontrole nodig.
+Node name	Nodenaam
+Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime	Node\nRegio\nRadio\nSignaal\nContacten\nKanalen\nBatterij\nBedrijfstijd
+Normal (100%)\nLarge (150%)\nHuge (200%)	Normaal (100%)\nGroot (150%)\nEnorm (200%)
+Not enough free memory for Bluetooth. Turn Wi-Fi off first.	Niet genoeg vrij geheugen voor Bluetooth. Schakel eerst Wi-Fi uit.
+Not enough free memory for Wi-Fi. Turn Bluetooth off first.	Niet genoeg vrij geheugen voor Wi-Fi. Schakel eerst Bluetooth uit.
+Not enough free memory to fetch it. Reboot and try again.	Onvoldoende vrij geheugen om het op te halen. Herstart en probeer opnieuw.
+Nothing selected	Niets geselecteerd
+Notification sound set	Meldingsgeluid ingesteld
+Notify on new contact	Melden bij nieuw contact
+Off	Uit
+Off\n1 day\n2 days\n3 days\n7 days	Uit\n1 dag\n2 dagen\n3 dagen\n7 dagen
+Off\n1\n2\n3\n5\n8	Uit\n1\n2\n3\n5\n8
+Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours	Uit\n60 min\n90 min\n2 uur\n3 uur\n4 uur
+Offline	Offline
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Oudere berichten vervallen hierboven. Een zeer grote of onbeperkte geschiedenis maakt de chatlijst trager.
+On - open the address above in a phone browser.	Aan - open het bovenstaande adres in de browser van je telefoon.
+On boot	Bij opstarten
+On map	Op kaart
+Open Advertise app	Advertentie-app openen
+Open a .wav, then tap 'Set as notification sound'	Open een .wav, tik dan op 'Instellen als meldingsgeluid'
+Open a JPEG, then tap 'Set as wallpaper'	Open een JPEG, tik dan op 'Instellen als achtergrond'
+Open chat	Chat openen
+Open in a browser (same Wi-Fi):	Open in een browser (zelfde Wi-Fi):
+Open in web	Openen op het web
+Open mesh console	Mesh-console openen
+Optional — type your network, or leave blank to skip.	Optioneel — typ je netwerk, of laat leeg om over te slaan.
+Orange temp  Cyan humidity	Oranje temp  Cyaan vocht
+Orientation (tap to rotate, reboots)	Oriëntatie (tik om te draaien, herstart)
+Out of memory	Onvoldoende geheugen
+Overwrite oldest	Oudste overschrijven
+Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?	Instellingen en identiteit van de SD-kaart\noverschrijven met de interne kopieën\nen dan herstarten?
+PNG isn't supported here\nUse a JPEG	PNG wordt hier niet ondersteund\nGebruik een JPEG
+Pairing code	Koppelcode
+Pairing code saved — reboot to apply	Koppelcode opgeslagen — herstart om toe te passen
+Pairing code: %06lu	Koppelcode: %06lu
+Pairing code: n/a	Koppelcode: n.v.t.
+Password (empty = open)	Wachtwoord (leeg = open)
+Password (empty = skip Wi-Fi)	Wachtwoord (leeg = wifi overslaan)
+Password (optional)	Wachtwoord (optioneel)
+Password too long	Wachtwoord te lang
+Paste	Plakken
+Paste failed	Plakken mislukt
+Paste the 64-hex public key and a name. Useful when you want to DM someone before their advert has arrived.	Plak de 64-hex publieke sleutel en een naam. Handig om iemand te DM'en voordat hun advert is aangekomen.
+Pasted	Geplakt
+Path hash: %u byte%s	Pad-hash: %u byte%s
+Path reset	Pad gereset
+Path reset failed	Pad resetten mislukt
+Paused  —  score %d	Gepauzeerd  —  score %d
+Per-transmit switching on	Per-zending schakelen aan
+Pick colour	Kies kleur
+Ping	Ping
+Ping failed	Ping mislukt
+Pinged (direct) — waiting…	Ping (direct) — wachten…
+Pinged (flood) — waiting…	Ping (flood) — wachten…
+Play	Afspelen
+Poll (min)	Ophalen (min)
+Poll every	Ophalen elke
+Poll every %d min	Ophalen elke %d min
+Port	Poort
+Portrait set - applies when remote mode starts.	Staand ingesteld - geldt zodra de externe modus start.
+Position saved	Positie opgeslagen
+Power	Energie
+Power off	Uitschakelen
+Powering off… click trackball to wake	Uitschakelen… klik trackball om te wekken
+Press a key…	Druk op een toets…
+Probe now	Nu meten
+Probing neighbours…	Buren onderzoeken…
+Profile	Profiel
+Pubkey must be 64 hex chars.	Pubkey moet 64 hex-tekens zijn.
+Public channel ready	Openbaar kanaal klaar
+Public key (64 hex chars)	Publieke sleutel (64 hex)
+Public key:	Publieke sleutel:
+Publish channel messages	Kanaalberichten publiceren
+Publish direct messages	Directe berichten publiceren
+Purge	Wissen
+Purge all discovered nodes?	Alle ontdekte nodes wissen?
+Quick replies	Snelle antwoorden
+Quick reply	Snel antwoord
+RAM %u%%  ·  PSRAM %u%%	RAM %u%%  ·  PSRAM %u%%
+RX %d entries · Raw %d entries	RX %d items · Raw %d items
+RX boosted gain	RX versterkte gain
+RX log	RX-logboek
+Radio & Mesh	Radio & Mesh
+Radio + region set	Radio + regio ingesteld
+Radio applied	Radio toegepast
+Radio off	Radio uit
+Radio: off	Radio: uit
+Range test	Bereiktest
+RangeTest failed	RangeTest mislukt
+RangeTest sent (direct)	RangeTest verzonden (direct)
+RangeTest sent (flood)	RangeTest verzonden (flood)
+Raw log	Ruwe log
+Reads packets on a background task so a busy screen can't drop them.	Leest pakketten in een achtergrondtaak zodat een druk scherm ze niet laat vallen.
+Reboot	Herstarten
+Reboot device	Apparaat herstarten
+Rebooting...	Opnieuw opstarten...
+Rebooting…	Opnieuw opstarten…
+Receive unreleased test firmware — newer features, but less tested. The update check and Install update both follow the beta channel.	Ontvang niet-uitgebrachte testfirmware — nieuwere functies, maar minder getest. De updatecontrole en Update installeren volgen beide het bètakanaal.
+Recently heard	Recent gehoord
+Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	SD herformatteren als MESHCOMOD (FAT32)?\nALLE data op de kaart wordt gewist.
+Region & scope	Regio en bereik
+Region scope (#tag) for this channel.\nBlank = use the default scope.	Regiobereik (#tag) voor dit kanaal.\nLeeg = standaardbereik gebruiken.
+Region scope (#tag), blank = default.	Regiobereik (#tag), leeg = standaard.
+Region scope (#tag, blank = none)	Regiobereik (#tag, leeg = geen)
+Remember password	Wachtwoord onthouden
+Remote UI	Externe UI
+Remote UI (on)	Externe UI (aan)
+Remote access	Externe toegang
+Remote terminal	Externe terminal
+Remote terminal (recommended)	Externe terminal (aanbevolen)
+Remote terminal off	Externe terminal uit
+Remove	Verwijderen
+Remove %s?	%s verwijderen?
+Remove channel	Kanaal verwijderen
+Remove channel "%s"?\nLeaves it on this device only.	Kanaal "%s" verwijderen?\nAlleen van dit apparaat.
+Removed	Verwijderd
+Removed from favorites	Verwijderd uit favorieten
+Rename	Hernoemen
+Rename failed	Hernoemen mislukt
+Renamed	Hernoemd
+Replay	Opnieuw afspelen
+Replay route on map	Route opnieuw afspelen op kaart
+Replaying route…	Route wordt opnieuw afgespeeld…
+Resend	Opnieuw versturen
+Resend failed	Opnieuw versturen mislukt
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Verstuurt een bericht opnieuw tot een repeater het echoot of de ontvanger bevestigt. Zet uit om maar één keer te verzenden.
+Reset	Herstellen
+Reset path	Pad resetten
+Restarting to apply the language…	Opnieuw opstarten om de taal toe te passen…
+Restarting to enable Bluetooth	Herstarten om Bluetooth te activeren
+Resume	Hervatten
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	Ontbrekende bestanden worden naar SD hervat...\nDit kan enkele minuten duren; apparaat ingeschakeld laten.
+Retry sends until heard	Opnieuw verzenden tot gehoord
+Reverse scrollball	Scrollball omkeren
+Right	Rechts
+Roll to highlight • click to insert	Rol om te markeren • klik om in te voegen
+Room is read-only for you.\nJoin with the room password to post.	De ruimte is voor jou alleen-lezen.\nDoe mee met het ruimtewachtwoord om te posten.
+Rotating - reconnecting...	Draaien - opnieuw verbinden...
+Rotating… rebooting	Draaien… opnieuw opstarten
+Run setup again	Setup opnieuw uitvoeren
+SD card   %s	SD-kaart   %s
+SD card   %s   (hold: format)	SD-kaart   %s   (vasthouden: formatteren)
+SD card   (tap to mount)	SD-kaart   (tik om te koppelen)
+SD card inserted	SD-kaart geplaatst
+SD card lost - reinsert to recover	SD-kaart verloren - plaats opnieuw
+SD card remounted	SD-kaart opnieuw gekoppeld
+SD card removed	SD-kaart verwijderd
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	SD-data niet beschikbaar - contacten en kanalen kunnen pas na opnieuw plaatsen van de kaart worden opgeslagen.
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	SD-data niet beschikbaar - identiteit, instellingen, contacten en kanalen kunnen pas na opnieuw plaatsen van de kaart worden opgeslagen.
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	SD-datamigratie onvolledig. Identiteit en instellingen blijven intern; gebruik Interne data naar SD kopiëren om opnieuw te proberen.
+SD download failed: %s	SD-download mislukt: %s
+SD formatted - %s (MESHCOMOD)	SD geformatteerd - %s (MESHCOMOD)
+SD is busy - close tools and retry	SD is bezig - sluit tools en probeer opnieuw
+SD removed - card-backed data cannot be saved	SD verwijderd - kaartgegevens kunnen niet worden opgeslagen
+SD stayed busy - format cancelled, retry	SD bleef bezig - formatteren geannuleerd, opnieuw proberen
+SF	SF
+SF / CR / TX / AF	SF / CR / TX / AF
+SPIFFS %u/%u KB used	SPIFFS %u/%u KB gebruikt
+SSID set — enter password, then Save	SSID ingesteld — voer wachtwoord in, dan Opslaan
+SSID too long	SSID te lang
+Sample text	Voorbeeldtekst
+Save	Opslaan
+Save & restart	Opslaan & herstarten
+Save / turn on	Opslaan / inschakelen
+Save auto-add	Auto-toevoegen opslaan
+Save experimental	Experimenteel opslaan
+Save failed	Opslaan mislukt
+Save name	Naam opslaan
+Save policy	Beleid opslaan
+Save position	Positie opslaan
+Save quick replies	Snelle antwoorden opslaan
+Save report	Rapport opslaan
+Save update bin to SD	Update-bin op SD opslaan
+Saved	Opgeslagen
+Saved backups	Opgeslagen back-ups
+Saved network	Opgeslagen netwerk
+Saved profiles	Opgeslagen profielen
+Saved to slot %d	Opgeslagen in slot %d
+Saved — applying…	Opgeslagen — wordt toegepast…
+Saved — rebooting	Opgeslagen — opnieuw opstarten
+Saved — reconnecting…	Opgeslagen — opnieuw verbinden…
+Saved: %s\nFlash it from the Launcher.	Opgeslagen: %s\nFlash het vanuit de Launcher.
+Saving to SD… %d%%	Opslaan naar SD… %d%%
+Saving to SD… 0%	Opslaan naar SD… 0%
+Scan to open on phone	Scan om op je telefoon te openen
+Scanning…	Scannen…
+Scope direct msgs to region	Directe berichten beperken tot regio
+Screen	Scherm
+Screen locked	Scherm vergrendeld
+Screen timeout (s, 0 = never)	Schermtime-out (s, 0 = nooit)
+Screen timeout (s, 0 = never, min 10)	Schermtime-out (s, 0 = nooit, min 10)
+Screen timeout: %ds	Schermtime-out: %ds
+Screen timeout: never	Schermtime-out: nooit
+Screen-off just dims	Scherm-uit dimt alleen
+Screenshot needs an SD card	Schermafbeelding vereist een SD-kaart
+Screenshot: low memory	Schermafbeelding: weinig geheugen
+Screenshot: no SD card	Schermafbeelding: geen SD-kaart
+Screenshot: write failed	Schermafbeelding: schrijven mislukt
+Scroll down	Omlaag scrollen
+Scroll up	Omhoog scrollen
+Scrollball: normal	Scrollball: normaal
+Scrollball: reversed	Scrollball: omgekeerd
+Search	Zoeken
+Search contacts	Contacten zoeken
+Secondary keyboards	Secundaire toetsenborden
+Secret (32 hex chars)	Geheim (32 hex)
+Secret (32 hex, optional)	Geheim (32 hex, optioneel)
+Secret must be 32 hex chars (or empty).	Geheim moet 32 hex-tekens zijn (of leeg).
+Select	Selecteren
+Select a DM thread	Kies een DM-gesprek
+Select all	Alles selecteren
+Select network	Netwerk kiezen
+Send advert	Advert verzenden
+Send advert now	Nu advert verzenden
+Send an advert now, or set how often you re-advertise.	Verstuur nu een advert, of stel in hoe vaak je opnieuw adverteert.
+Send failed	Verzenden mislukt
+Sender blocked	Afzender geblokkeerd
+Sensors	Sensoren
+Sensors tab: off (restart to apply)	Sensortab: uit (herstart om toe te passen)
+Sensors tab: on (restart to apply)	Sensortab: aan (herstart om toe te passen)
+Sent	Verzonden
+Set	Instellen
+Set an SSID first	Stel eerst een SSID in
+Set as notification sound	Instellen als meldingsgeluid
+Set as wallpaper	Instellen als achtergrond
+Set your location first	Stel eerst je locatie in
+Settings	Instellingen
+Setup complete	Installatie voltooid
+Share QR	QR delen
+Share channel	Kanaal delen
+Share location in advert	Locatie delen in advert
+Share secret	Geheim delen
+Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Deel het 32-teken geheim zodat anderen kunnen deelnemen. Leeg laten voor een willekeurig geheim.
+Share: %s	Delen: %s
+Show	Toon
+Show Sensors tab	Sensoren-tab tonen
+Show in the app drawer	Tonen in de app-lade
+Show link lines	Verbindingslijnen tonen
+Show menu-bar letters	Menubalk-letters tonen
+Show on chart	Op grafiek tonen
+Show on map	Op kaart tonen
+Sightline	Zichtlijn
+Signal & traffic	Signaal & verkeer
+Signal probe	Signaalmeting
+Skip	Overslaan
+Sleep ready	Klaar voor slaap
+Slot %d cleared	Slot %d gewist
+Slot empty	Slot leeg
+Small\nMedium\nLarge	Klein\nMiddel\nGroot
+Snake	Snake
+Snake  —  swipe or roll the trackball	Snake  —  veeg of rol de trackball
+Sort	Sorteer
+Sound	Geluid
+Sound off	Geluid uit
+Sound on	Geluid aan
+Sound: %s	Geluid: %s
+Start time	Starttijd
+Status	Status
+Step 1 of 3	Stap 1 van 3
+Step 2 of 3	Stap 2 van 3
+Step 3 of 3	Stap 3 van 3
+Still analyzing the previous\npath… try again in a moment.	Vorige pad wordt nog\ngeanalyseerd… probeer zo opnieuw.
+Stop	Stop
+Storage	Opslag
+Store	Store
+Store data on SD (reboot)	Gegevens op SD opslaan (herstart)
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Streamt het scherm als live beeld dat je aantikt om te bedienen. Zwaarder; het paneel toont een plaatshouder. Omschakelen herstart het apparaat.
+Switch	Wisselen
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Overschakelen naar de externe antenne?\n\nControleer eerst of er echt een antenne op de externe aansluiting zit. Zenden zonder antenne kan de radio beschadigen.\n\nValt bij elke herstart terug op de interne antenne.
+Sync clock from system	Klok synchroniseren
+System	Systeem
+System info	Systeeminfo
+TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nWS-clients %d  GPS %s  Zoemer %s
+TCP off	TCP uit
+TCP on	TCP aan
+TOUCH BETA	TOUCH BETA
+TX	TX
+Tab hotkeys — tap a row, then press a key	Tab-sneltoetsen — tik een rij, druk dan een toets
+Tap Use to switch - the device reboots to apply.	Tik op Gebruik om te wisselen – het apparaat herstart om dit toe te passen.
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Tik Gebruik om te wisselen - het apparaat herstart. Taalbestanden staan in /lang op de opslag; bewerk ze of voeg je eigen toe.
+Tap a language; the device reboots to apply.	Tik op een taal; het apparaat herstart.
+Taste the rainbow!	Proef de regenboog!
+Telemetry	Telemetrie
+Telemetry req (direct)…	Telemetrie-verzoek (direct)…
+Telemetry req (flood)…	Telemetrie-verzoek (flood)…
+Telemetry req failed	Telemetrie-verzoek mislukt
+Telemetry requests allowed	Telemetrie-verzoeken toegestaan
+Telemetry requests off	Telemetrie-verzoeken uit
+Telemetry req…	Telemetrie-verz…
+Telemetry settings	Telemetrie-instellingen
+Temperature	Temperatuur
+Test builds: off	Testbuilds: uit
+Test builds: on	Testbuilds: aan
+Theme	Thema
+Theme colour	Themakleur
+Then pick a mode:	Kies daarna een modus:
+This contact hasn't shared\na GPS position.	Dit contact heeft geen\nGPS-positie gedeeld.
+This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Dit apparaat kan Wi-Fi en Bluetooth tegelijk draaien, als zelfstandige radio én telefoon-companion (MeshCore-app) samen.\n\nBeide tegelijk gebruikt meer RAM, dus zet alleen aan wat je nodig hebt.\n\nStel ze altijd in via Instellingen.
+Throttles the CPU when idle to save power	Beperkt de CPU bij inactiviteit om stroom te sparen
+Tile reload needs Wi-Fi build	Tegels herladen vereist wifi-build
+Tiles cleared — reconnect Wi-Fi to re-download	Tegels gewist — verbind Wi-Fi opnieuw om te herladen
+Tiles from SD card	Tegels van SD-kaart
+Time   %s	Tijd   %s
+Time offset (vs automatic)	Tijdverschuiving (t.o.v. automatisch)
+Time offset: %+d h	Tijdverschuiving: %+d u
+Time range (hours ago)	Tijdsbereik (uren geleden)
+Time zone	Tijdzone
+Time zone: %s	Tijdzone: %s
+Tip: you can scan for networks in Settings → Network after setup.	Tip: je kunt netwerken scannen in Instellingen → Netwerk na de installatie.
+Today	Vandaag
+Toggle GPS	GPS aan/uit
+Too large to edit (>8 KB)	Te groot om te bewerken (>8 KB)
+Topographic map	Topografische kaart
+Trace	Traceren
+Trace SNR	SNR traceren
+Trace failed	Tracering mislukt
+Trace route	Route traceren
+Trace sent…	Tracering verzonden…
+Tracing route…	Route traceren…
+Trackball navigates UI	Trackball navigeert UI
+Trackball: cursor	Trackball: cursor
+Trackball: navigate UI	Trackball: navigeer UI
+Turn Wi-Fi on first	Zet eerst Wi-Fi aan
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Zet Wi-Fi aan en ververs. Al geïnstalleerde apps blijven werken.
+Turn off	Uitzetten
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Verouderd per-zending schakelen aanzetten?\n\nDiagnosemodus, alleen ter vergelijking. Zendt op de interne antenne en luistert op de externe, dus je uitgaande signaal is veel zwakker dan je inkomende.\n\nValt bij elke herstart terug op de interne antenne.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Geschiedenislimiet uitzetten?\n\nEen druk kanaal kan dan de hele berichtenopslag vullen, wat meer ruimte kost en de chatlijst en app merkbaar trager maakt. Doe dit alleen als je echt de volledige historie nodig hebt.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Zet dit aan en open het onderstaande adres in een browser op dezelfde Wi-Fi - geen app nodig. Het scherm van dit apparaat verschijnt live in de browser en je kunt tikken om het te bedienen.
+Type a URL, then Go	Typ een URL en tik Ga
+Type a message...	Typ een bericht...
+Type a new 6-digit code · applies after a reboot	Voer een nieuwe 6-cijferige code in · geldt na herstart
+Type your network name — or switch to Wi-Fi in Settings to scan	Typ je netwerknaam — of schakel naar wifi in Instellingen om te scannen
+UI size (restart to apply)	UI-grootte (herstart om toe te passen)
+UI size saved — restart to apply	UI-grootte opgeslagen — herstart om toe te passen
+USB powered	USB-gevoed
+Unblock	Deblokkeren
+Unblocked	Gedeblokkeerd
+Unfavorite it first	Eerst uit favorieten halen
+Unlocking…	Ontgrendelen…
+Unmute @	Dempen op @
+Unmute msgs	Berichten aan
+Unread %d	Ongelezen %d
+Unread %d\nRAM %u%%  ·  PSRAM %u%%	Ongelezen %d\nRAM %u%%  ·  PSRAM %u%%
+Unsupported WAV (need 16-bit PCM)	Niet-ondersteunde WAV (16-bit PCM vereist)
+Up	Omhoog
+Update	Bijwerken
+Update bin saved to SD	Update-bin opgeslagen op SD
+Update complete.\nRebooting...	Update voltooid.\nOpnieuw opstarten...
+Update manually at flasher.wadamesh.com\n(Wi-Fi update is paused for now)	Werk handmatig bij op flasher.wadamesh.com\n(wifi-update is voorlopig gepauzeerd)
+Update via the Launcher	Update via de Launcher
+Update via the Launcher / flasher.wadamesh.com	Update via de Launcher / flasher.wadamesh.com
+Update via the Launcher / flasher.wadamesh.com.	Update via de Launcher / flasher.wadamesh.com.
+Updated - rebooting…	Bijgewerkt - herstarten…
+Use	Gebruik
+Username (optional)	Gebruikersnaam (optioneel)
+Volume	Volume
+W up  ·  A left  ·  D right  ·  Z down  ·  S select  ·  Q back	W omhoog  ·  A links  ·  D rechts  ·  Z omlaag  ·  S kies  ·  Q terug
+WADA#15B6A6 MESH#	WADA#15B6A6 MESH#
+WADAMESH	WADAMESH
+Waiting for Wi-Fi...	Wachten op Wi-Fi...
+Welcome to WADAMESH	Welkom bij WADAMESH
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Zolang dit aan staat kan iedereen op je Wi-Fi dit apparaat bekijken en bedienen. Gebruikt gewoon HTTP (alleen lokaal netwerk).
+Wi-Fi	Wi-Fi
+Wi-Fi & Bluetooth	Wi-Fi & Bluetooth
+Wi-Fi and Bluetooth unavailable; retry from Settings	Wi-Fi en Bluetooth niet beschikbaar; opnieuw proberen via Instellingen
+Wi-Fi is not enabled in this build.	Wi-Fi is niet ingeschakeld in deze build.
+Wi-Fi isn't available on this build.	Wi-Fi is niet beschikbaar in deze build.
+Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	Wifi nodig om het terreinprofiel\nvoor dit pad op te halen.\nVerbind in Instellingen → Wi-Fi.
+Wi-Fi not connected	Wi-Fi niet verbonden
+Wi-Fi off	Wi-Fi uit
+Wi-Fi on	Wi-Fi aan
+Wi-Fi on, scanning…	Wi-Fi aan, scannen…
+Wi-Fi paused; Bluetooth disconnect timed out	Wi-Fi gepauzeerd; Bluetooth-verbinding verbreken mislukt door time-out
+Wi-Fi saved (radio off)	Wi-Fi opgeslagen (radio uit)
+Wi-Fi saved, applying	Wi-Fi opgeslagen, wordt toegepast
+Wi-Fi saved, reconnecting	Wi-Fi opgeslagen, opnieuw verbinden
+Wi-Fi unavailable; Bluetooth restored	Wi-Fi niet beschikbaar; Bluetooth hersteld
+Wi-Fi unavailable; retry from Settings	Wi-Fi niet beschikbaar; opnieuw proberen via Instellingen
+Yesterday	Gisteren
+You can run setup later in Settings → Device	Je kunt de installatie later uitvoeren in Instellingen → Apparaat
+Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Je locatie is onbekend.\nStel GPS / positie eerst in bij\nInstellingen → Profiel.
+Your name	Je naam
+Your own apps	Je eigen apps
+Zero-hop	Zero-hop
+Zero-hop advert sent	Zero-hop advert verzonden
+Zoom: +/- buttons	Zoom: +/- knoppen
+client connected	client verbonden
+command	opdracht
+contacts (%d):	contacten (%d):
+diag boot...	diag-boot...
+double-tap SPACE cycles through the ones you enable	dubbeltik op SPATIE wisselt tussen de ingeschakelde
+drive the UI without the screen; keys still type in text fields	bedien de UI zonder scherm; toetsen typen nog in tekstvelden
+e.g. Family	bijv. Familie
+e.g. mesh	bijv. mesh
+from	van
+h  to	u  tot
+hold Backspace to unlock	houd Backspace vast om te ontgrendelen
+hold the d-pad to unlock	houd de d-pad vast om te ontgrendelen
+hold the trackball to unlock	houd de trackball vast om te ontgrendelen
+kHz	kHz
+keep holding	blijf vasthouden
+last wake:	laatste ontwaken:
+last wake: 	laatst wakker: 
+leave empty to generate	leeg laten om te genereren
+lights the keyboard + wakes the screen on an incoming message	verlicht het toetsenbord + wekt het scherm bij een inkomend bericht
+mesh  link  armed	mesh  link  actief
+mesh busy	mesh bezig
+min (0=off)	min (0=uit)
+mkdir failed	map maken mislukt
+n/a in this build	n.v.t. in deze build
+now on channel %s	nu op kanaal %s
+now talking to %s	praat nu met %s
+off	uit
+off = Enter adds a new line; tap Send to send	uit = Enter voegt een regel toe; tik Verzenden om te versturen
+on	aan
+peak --	piek --
+pick accented letters as you type; off = plain typing	kies letters met accenten tijdens het typen; uit = gewoon typen
+press Volume Down to unlock	druk Volume Omlaag om te ontgrendelen
+push past a screen edge to scroll content	duw voorbij een schermrand om te scrollen
+score %d	score %d
+search	zoeken
+tap for details	tik voor details
+tap the language key (e.g. EN) on the keyboard to cycle the ones you enable	tik op de taaltoets (bijv. EN) op het toetsenbord om de ingeschakelde te doorlopen
+tap to cancel	tik om te annuleren
+tap to exit full screen	tik om volledig scherm te verlaten
+zoom	zoom
+zoom %d	zoom %d
+~17 dB amp for quiet/remote areas; turn off in noisy spots.	~17 dB versterker voor stille/afgelegen gebieden; uit in drukke plekken.
+© OpenStreetMap	© OpenStreetMap
+© OpenTopoMap	© OpenTopoMap
+Scope	
+another region	
+my region	
+Save FAIL x%u	
+Save migrating	
+Saved %s	
+Sort discovered	
+Sort by	
+Peers	
+Favorites	
+Has location	
+Direct (0-hop)	
+Heard %s	
+Traffic (since boot)\n  Sent   %u flood, %u direct\n  Recv   %u flood, %u direct	
+Overwrite oldest non-favorite	
+"%s" wants to send messages on the mesh.\n\nThey will be sent as %s and cannot be told apart from messages you typed.\n\nOnly allow this for an app you trust.	"%s" wants to send messages on the mesh.\n\nThey will be sent as %s and cannot be told apart from messages you typed.\n\nOnly allow this for an app you trust.
+%d of %d on map	%d of %d on map
+1-character messages will be ignored	1-character messages will be ignored
+1-character messages will be shown	1-character messages will be shown
+All	All
+Allow	Allow
+Apps that may send messages on the mesh. Anything they send goes out under your node name and cannot be told apart from a message you typed. Turn one off to take the permission back.	Apps that may send messages on the mesh. Anything they send goes out under your node name and cannot be told apart from a message you typed. Turn one off to take the permission back.
+Ignore 1-character messages	Ignore 1-character messages
+Join w/ password	Join w/ password
+Location no longer shared	Location no longer shared
+Location shared with anyone who asks	Location shared with anyone who asks
+Location shared with chosen contacts only	Location shared with chosen contacts only
+Location shared with this contact	Location shared with this contact
+Location sharing off	Location sharing off
+Max dots	Max dots
+Most mesh spam is a single character, because it is the cheapest message to send. Dropped silently: no chat entry, no notification, no sound.	Most mesh spam is a single character, because it is the cheapest message to send. Dropped silently: no chat entry, no notification, no sound.
+Never\nChosen contacts only\nAnyone who asks	Never\nChosen contacts only\nAnyone who asks
+No apps installed.	No apps installed.
+No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)	No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)
+Not supported on this board	Not supported on this board
+Read incoming messages	Read incoming messages
+Reconnected to %.40s	Reconnected to %.40s
+Send messages as me	Send messages as me
+Sent only when that contact asks, encrypted to them. Nothing is broadcast. Needs "Answer telemetry requests" on. Pick contacts in a contact's menu.	Sent only when that contact asks, encrypted to them. Nothing is broadcast. Needs "Answer telemetry requests" on. Pick contacts in a contact's menu.
+Server has forgotten you.\nJoin with the room password.	Server has forgotten you.\nJoin with the room password.
+Share my loc	Share my loc
+Share my location when asked	Share my location when asked
+Stop sharing loc	Stop sharing loc
+not asked yet	not asked yet

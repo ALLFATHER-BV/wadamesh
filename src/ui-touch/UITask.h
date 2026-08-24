@@ -56,7 +56,30 @@ public:
     MSG_META_HAS_RX    = (1u << 0),  // snr_q4/rssi/path_len populated
     MSG_META_IS_FLOOD  = (1u << 1),  // packet was flooded (path_len = hop count); else 0xFF / direct
     MSG_META_HAS_SCOPE = (1u << 2),  // in_scope holds a valid transport scope (transport_codes[0])
+    // The scope code is an HMAC of THIS packet's payload under the sender's
+    // region key, so it differs for every message and cannot be read as a region
+    // id (#259). The only thing a receiver can say about it is whether it
+    // verifies against a key we hold — which we check at RX, while the packet is
+    // still around, and record here.
+    MSG_META_SCOPE_HOME = (1u << 3),  // in_scope verified against OUR region key
+    // Bits 4-7: which REGISTERED region in_scope verified against (#271), as a
+    // RegionRegistry slot, where 0 = none/unknown, 15 = several regions matched
+    // and 1..14 name one. Packed into the spare top nibble on purpose: meta_flags is
+    // already persisted at a fixed offset, so this costs no record growth and no
+    // history version bump, and messages written before a region was registered
+    // read back 0, which is exactly the honest "unknown" state. A slot is stable
+    // for the life of the history and is never a list index, so deleting or
+    // reordering regions cannot relabel old messages.
+    MSG_META_SCOPE_SLOT_SHIFT = 4,
+    MSG_META_SCOPE_SLOT_MASK  = 0xF0,
   };
+  static uint8_t metaScopeSlot(uint8_t meta_flags) {
+    return (uint8_t)((meta_flags & MSG_META_SCOPE_SLOT_MASK) >> MSG_META_SCOPE_SLOT_SHIFT);
+  }
+  static uint8_t metaWithScopeSlot(uint8_t meta_flags, uint8_t slot) {
+    return (uint8_t)((meta_flags & ~MSG_META_SCOPE_SLOT_MASK)
+                     | ((slot & 0x0F) << MSG_META_SCOPE_SLOT_SHIFT));
+  }
 
   struct UIMessage {
     uint32_t ts;
@@ -170,6 +193,7 @@ private:
   unsigned long _next_thread_seed;
   UIMessage* _ui_msgs   = nullptr;   // ring of recent messages — PSRAM-allocated in begin()
   UIThread*  _ui_threads = nullptr;  // thread table — PSRAM-allocated in begin()
+  void allocMessageStore();          // ring + thread table; also used by console mode
   unsigned long ui_started_at, next_batt_chck;
   int next_backlight_btn_check = 0;
 #ifdef PIN_STATUS_LED
@@ -307,6 +331,12 @@ public:
   int  getUnreadTotal() const;
   int  getUnreadMentionCount() const;   // # of threads with an unread @mention of me
   void markThreadRead(int idx);   // clear one thread's unread count (persisted)
+  // Console mode: list threads with their unread counts (read-only), and clear
+  // one deliberately. Kept separate so the monitor cannot mark anything read.
+  int  consoleThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_channel);
+  bool consoleMarkThreadRead(const char* name);
+  int  consoleHistoryAt(const char* thread, int back, char* sender, size_t sc,
+                        char* text, size_t tc, uint32_t* ts, bool* outgoing);
   void markActiveThreadRead();    // clear the currently-open thread's unread (viewing == read)
   void markAllThreadsRead();      // clear every thread's unread count
   bool threadHasMention(int idx) const;   // unread @mention of me in this thread
@@ -352,6 +382,8 @@ public:
   // Active channel's mesh slot (-1 when the open thread isn't a channel). For the
   // status-bar channel-settings gear (per-channel region scope).
   int16_t activeChannelSlot() const {
+    // _ui_threads is null in console mode (allocated later in begin()).
+    if (!_ui_threads) return -1;
     if (!_active_thread_is_channel || _active_thread_idx < 0 || _active_thread_idx >= MAX_UI_THREADS) return -1;
     return _ui_threads[_active_thread_idx].mesh_channel_slot;
   }
@@ -361,6 +393,7 @@ public:
    *  deleting a channel actually drops its mesh-table entry — otherwise
    *  refreshThreadsFromMesh() recreates the thread from the surviving channel. */
   int16_t threadMeshChannelSlot(int idx) const {
+    if (!_ui_threads) return -1;                       // console mode: no table
     if (idx < 0 || idx >= MAX_UI_THREADS || !_ui_threads[idx].used || !_ui_threads[idx].channel) return -1;
     return _ui_threads[idx].mesh_channel_slot;
   }
@@ -459,6 +492,13 @@ public:
   bool getGpsFix();
   /** Satellites currently in view, or -1 if unknown / no GPS hardware. */
   int  getGpsSats();
+  /** UTC epoch the GPS itself has decoded, or 0 if it has none yet. A receiver decodes TIME from
+   *  the satellite stream well before it can solve a POSITION, so a valid time with no fix is
+   *  positive proof the module is alive and tracking, not dead. That is the distinction the GPS
+   *  page could not previously show, and it is what "acquiring..." was hiding. */
+  uint32_t getGpsTime();
+  /** Altitude in metres from the last fix (0 when there is no fix). */
+  int  getGpsAltitude();
   /** True once a valid fix has been seen this session. */
   bool getGpsHadFix() const { return _gps_had_fix; }
   double getNodeLat() const { return _sensors ? _sensors->node_lat : 0.0; }
@@ -477,6 +517,7 @@ public:
   void setPathHashMode(uint8_t mode);
   void setExperimentalFlags(uint8_t multi_acks, uint8_t client_repeat, uint8_t rx_boosted);
   void setTelemetryAllow(bool on);   // answer mesh telemetry requests (battery+env; location stays separate)
+  void setLocationTelemetryMode(uint8_t mode);   // TELEM_MODE_* — position on request (#266)
   /** Meshcomod CLI on device: `wifi on` / `wifi off`. */
   bool setWifiRadio(bool on);
   bool isTcpEnabled() const { return _serial && _serial->isTcpEnabled(); }
@@ -484,11 +525,9 @@ public:
   void disableTcp() { if (_serial) _serial->disableTcp(); }
   bool hasBleCapability() const { return _serial && _serial->hasBleCapability(); }
   bool isBleEnabled() const { return _serial && _serial->isBleEnabled(); }
-  // Live BLE enable, guarded like the boot co-init in main.cpp: NimBLE needs
-  // ~50 KB free internal heap + a 20 KB contiguous block, and starting it below
-  // that does not fail cleanly — it panics mid-init (the "reboots when I turn
-  // BLE on with Wi-Fi running" report). Returns false when refused; the caller
-  // shows the reason and reverts its switch. Defined in UITask.cpp.
+  // Live BLE enable. The concrete transport applies its heap guard only for a
+  // cold NimBLE allocation; re-enabling a pre-created stack is allocation-free.
+  // Returns false when a required cold start cannot be made safely.
   bool enableBle();
   void disableBle() { if (_serial) _serial->disableBle(); }
   int getWsConnectedCount() const { return _serial ? _serial->getWsConnectedCount() : 0; }

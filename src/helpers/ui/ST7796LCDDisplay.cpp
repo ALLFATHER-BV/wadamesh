@@ -16,6 +16,10 @@ this panel's 222px glass is narrower than the ST7796 controller's 320px GRAM, an
 ST7796_Rotation.h only applies the required 49px column/row offset when CGRAM_OFFSET is defined."
 #endif
 
+#if !defined(LOAD_GLCD)
+#error "ST7796LCDDisplay requires -D LOAD_GLCD=1 -- its DisplayDriver text API uses TFT_eSPI font 1."
+#endif
+
 #ifndef DISPLAY_ROTATION
   #define DISPLAY_ROTATION 3   // landscape, matches the other boards' default
 #endif
@@ -79,21 +83,12 @@ void ST7796LCDDisplay::turnOff() {
 
 void ST7796LCDDisplay::clear() { display.fillScreen(TFT_BLACK); }
 
-void ST7796LCDDisplay::startFrame(Color bkg) { (void)bkg; display.fillScreen(TFT_BLACK); }
+void ST7796LCDDisplay::startFrame(ColorVal bkg) { (void)bkg; display.fillScreen(TFT_BLACK); }
 
 void ST7796LCDDisplay::setTextSize(int sz) { display.setTextSize((uint8_t)(sz * DISPLAY_SCALE_X)); }
 
-void ST7796LCDDisplay::setColor(Color c) {
-  switch (c) {
-    case DisplayDriver::DARK:   _color = TFT_BLACK;  break;
-    case DisplayDriver::LIGHT:  _color = TFT_WHITE;  break;
-    case DisplayDriver::RED:    _color = TFT_RED;    break;
-    case DisplayDriver::GREEN:  _color = TFT_GREEN;  break;
-    case DisplayDriver::BLUE:   _color = TFT_BLUE;   break;
-    case DisplayDriver::YELLOW: _color = TFT_YELLOW; break;
-    case DisplayDriver::ORANGE: _color = TFT_ORANGE; break;
-    default:                    _color = TFT_WHITE;  break;
-  }
+void ST7796LCDDisplay::setColor(ColorVal c) {
+  _color = c;   // ColorVal IS RGB565 now (1.17 UIColor)
   display.setTextColor(_color);
 }
 

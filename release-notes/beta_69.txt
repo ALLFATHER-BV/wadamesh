@@ -1,0 +1,46 @@
+# beta_69 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Console mode: a very early preview ---------------------------------------------------
+Console mode is new, it is a preview, and it is nowhere near finished. Treat everything below as a first look rather than a feature.
+It boots the device into a plain text console with no graphical interface at all: no LVGL, no widgets, no draw buffer. You type commands and read replies, and the memory and processor time the interface would use are yours instead.
+It is off by default and lives in Settings, General, marked experimental. Turning it on or off reboots the device.
+Type "ui" or "exit" to come back to the graphical interface. If it ever crashes on the way up, the device notices and returns to the graphical interface by itself, so you cannot get stuck in it.
+What works today: contacts, channels, unread counts, reading a thread, sending to a contact or a channel, a live monitor of arriving messages, radio and battery and Wi-Fi readouts, discovery, and anything the node CLI already answers. A numbered menu launches the common ones.
+What does not work today: most of the graphical interface. There is no map, no file manager, no Lua apps, no settings editor. Expect rough edges, missing commands and text that does not wrap the way you would like.
+Please report what you reach for and cannot find. That is the most useful thing you can send us about this one.
+
+# --- The ThinkNode M9 gets its compass, by Christopher Van Hoose (@cvhviz, #292) -----------
+The M9's magnetometer was on the board and nothing had ever talked to it. It does now, with a driver written from the chip's own register map rather than a library that puts the sample rate in the wrong register.
+The axis orientation was measured on real hardware at four headings ninety degrees apart, not inherited from a declaration nobody had verified, so a calibrated device points north with no setup from you.
+A new GPS Compass app in the Store: a dial with bearing and range to a chosen contact, a satellite meter, hard iron calibration and per row imperial or metric units. On boards without a magnetometer it falls back to GPS course over ground.
+Apps can read speed and heading from the GPS, and the raw field vector from the magnetometer where there is one.
+Opening the Map used to cost about two and a half seconds every single time, because leaving the tab threw away every decoded tile. Boards with the memory to spare now keep them, so a return to the map is roughly ten times faster.
+Lua apps opened on a white page on keyboard and trackball boards. The focus highlight was treating the whole app page as something to highlight.
+An app closed while a web request was in flight could free the buffer the other processor core was still reading from.
+The icon field in an app's manifest finally does something. Every app had been drawing the same generic glyph.
+
+# --- The T-Lora Pager and regions, by Michael A. Cojocari (@oumike) ------------------------
+Saving an update to the SD card was half converted to the new capability flags, which left the T-Lora Pager without it (#291, closes #289).
+A Pager with an unreadable SD card had no way back; it does now, and the board documentation and flasher pages were corrected to match what the hardware actually is.
+Regions are a list you can add to, and a message scoped to a region says which one it came from (#311, closes #271, reported by @D-Melhede).
+Lua apps can list what is on the SD card, read only: no file contents, no writing, no renaming (#312, closes #309, requested by @pisti87).
+
+# --- Translations: the reason your language file did not work ------------------------------
+Fifty one strings could never be translated by anyone, and nobody could have known. The check that decides which text belongs in a language file only recognised one way of marking text as translatable, and three other ways are used throughout the firmware. Those strings translate correctly on the device, but they never appeared in any language file, so there was nothing for a translator to fill in, and adding the line by hand did nothing.
+That is the whole map options sheet, the sort menus, the contacts filters and the home screen buttons. They are in all thirteen language files now, and the check understands all four ways.
+The map's About and credits sheet was one block of English that was never wired for translation at all. It is translatable now, in Hungarian first, from @pisti87 (#257).
+Lua apps had no way to translate anything, so every built in app was English whatever your device was set to. They can use the firmware's own translations now, and the Airtime app is the first that does.
+Thirty three more Hungarian strings from @pisti87 (#294, #277), and four pieces of text that were never marked translatable in the first place: the browser's idle line, the empty Discover feed, the crash report button and Paste.
+
+# --- Fixes -------------------------------------------------------------------------------------
+Asking a contact for telemetry from the device always failed, while the phone app got it from the same contact, and that contact's position never moved on the map. Every request the device sent was preceded by a login that only repeaters and room servers understand, so a request to another handheld waited forever for an answer that could not come. Reported by @christianprim (#293).
+Powering off the T-Display P4 from the power menu appeared to freeze it, recoverable only with the hardware switch, under a message telling you to click a trackball it does not have. It really was powering off, with nothing configured that could wake it. Boards that cannot be woken no longer offer the option. Reported by @wb6zsu (#310).
+An open Discover page probed the neighbourhood every four seconds for as long as it was open, which is airtime spent on everyone's radio and not just yours. It now backs off to every thirty seconds, and starts over when you open the page or press Scan. Reported on Discord by kevin77.
+Two Store apps added in beta_68, Wardrive and Nearby, were never actually included on the boards that cannot reach the Store. The tool that bakes them in was reading a directory nothing writes to.
+Editing a translation and building could silently produce firmware carrying the old text, because the step meant to keep them in step was documented but never actually wired up. The same was true of the built in apps.
+
+# --- For testers -------------------------------------------------------------------------------
+Console mode is the headline and the least finished thing here. It has had one day on hardware. Please push on it.
+The M9 compass work is large and was tested by its author on an M9. If you have one, the compass and the GPS Compass app are worth your attention; if you have any other board, the map speed up and the Lua app fixes affect you too.
+If you translate, your language file is missing about a hundred and twenty strings that were invisible until now. They show as English placeholders and are yours to fill in.

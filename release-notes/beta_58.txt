@@ -1,0 +1,16 @@
+# beta_58 - fixes the beta_57 upgrade bug (remote mode / frozen logo), Hungarian, auto-retry now opt-in
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- The beta_57 upgrade bug ----------------------------------------------------------
+Fixes the beta_57 update bug: updating from beta_56 corrupted part of the stored settings, booting devices into remote mode (screen frozen on the boot logo while the device kept running headless), switching on the map debug overlay, and quietly disabling a chat-history safety flush. A new settings field had been inserted in the middle of the stored layout instead of at the end, shifting every later value. Found, analysed and fixed by PixPMusic (#229, PR #230). Affected devices repair themselves on this update - a normal install, no erase needed.
+On devices that ran beta_57 the repaired settings (web panel, remote mode and its orientation, web terminal, map debug overlay, history flush tuning) return to their defaults - the old values could not be recovered. Everything else is preserved.
+
+# --- Sending --------------------------------------------------------------------------
+Auto-retry ("Retry sends until heard") is now OFF by default. Turn it on under Settings > Radio & Mesh if you want sends retried until the mesh confirms them - beta_57 enabled it for everyone, and that choice should be yours.
+
+# --- Language -------------------------------------------------------------------------
+Hungarian translation, contributed by pisti87 (PR #227). Existing language choices are preserved across the update. Köszönjük!
+
+# --- Fixes ----------------------------------------------------------------------------
+The lock screen finally says WADAMESH. The old MESHCOMOD was baked into the wallpaper image itself rather than the text, so the earlier branding fix missed it - both the built-in wallpaper and the copy seeded to storage are replaced (#228, thanks smhawkes).
+T-Display P4: profile export and backups work again. The writer still pointed at the storage system beta_54 retired, so every save failed with "can't open file" (#231, thanks D-Melhede).

@@ -58,6 +58,10 @@ _CHANNELS = [
     dict(slot=1, t=-1, n="Emergency"),
 ]
 
+# Recent-heard mention candidates, newest first. Includes punctuation and HTML
+# metacharacters so the browser demo proves labels are rendered as text.
+_MENTION_NAMES = ["Sanne", "Sam <Ops>", "R&D \"QA\"", "Diego", "Marta", "Noah"]
+
 # ---------------------------------------------------------------------------
 # Messages per thread  (webPushMessages: msgs[] fields o,ts,ds,pl,sn,rs,rp,s,x)
 #   o  = outgoing (1) / incoming (0)
@@ -149,6 +153,10 @@ def contacts_payload(now):
         })
     channels = [{"i": ch["slot"], "t": ch["t"], "n": ch["n"]} for ch in _CHANNELS]
     return {"t": "c", "dc": len(_DISCOVERED), "contacts": out, "channels": channels}
+
+
+def mentions_payload(request_id):
+    return {"t": "mh", "q": request_id, "names": list(_MENTION_NAMES)}
 
 
 def _thread_last(tidx):

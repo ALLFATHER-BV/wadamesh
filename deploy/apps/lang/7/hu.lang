@@ -1,0 +1,921 @@
+# wadamesh language file
+# canonical source - translators: edit this file and PR it
+# code: hu
+# ver: 7
+# name: Magyar
+# base: hu
+Profile	Profil
+Radio & Mesh	Rádió és Mesh
+Display	Kijelző
+Keyboard	Billentyűzet
+Quick replies	Gyors válaszok
+Sound	Hang
+Lock screen	Képernyőzár
+System	Rendszer
+About	Névjegy
+Language	Nyelv
+Settings	Beállítások
+Tap a language; the device reboots to apply.	Érintsen meg egy nyelvet; az eszköz újraindul.
+Save	Mentés
+Toggle GPS	GPS be-/kikapcs.
+GPS serial baud	GPS soros baud
+Sync clock from system	Óra szinkronizálása a rendszerből
+Send advert now	Advert küldése most
+Reboot device	Eszköz újraindítása
+Run setup again	Futtassa újra a beállítást
+Distance in miles	Távolság mérföldben
+Colourful chat bubbles	Színes csevegőbuborékok
+Theme colour	Téma szine
+Pick colour	Színválasztás
+Secondary keyboards	Másodlagos billentyűk
+Accent popups	Accent popups
+Screen timeout (s, 0 = never)	Képernyő időkorlátja (s, 0=soha)
+Orientation (tap to rotate, reboots)	Tájolás (érintse meg az elforgatáshoz, újraindításhoz)
+Lock screen wallpaper	Képernyőzár háttérképe
+Lock text colour	Szöveg színének zárolása
+Time offset (vs automatic)	Időeltolás (vs automatikus)
+Store data on SD (reboot)	Adatok tárolása SD-n (újraindítás)
+Calibrate battery (full = 100%)	Akkumulátor kalibrálása (full = 100%)
+Sound: %s	Hang: %s
+on	be
+off	ki
+Model:	Modell
+Public key:	Nyilvános kulcs
+Contacts:	Névjegyek
+Channels:	Csatornák
+Battery:	Akkumlátor
+Device time:	Eszköz idő
+Close	Bezár
+Cancel	Mégse
+Add	Hozzáad
+Apply	Alkalmaz
+Clear	Tisztít
+Reset	Visszaállítás
+Create	Létrehoz
+Join	Csatlakozás
+Find	Keresés
+Unblock	Feloldás
+Add contact	Kontakt hozzáadás
+Add channel	Catorna hozzáadás
+Apply radio params	Rádióparaméterek alkalmazása
+Export settings	Beállítások exportálása
+Import settings	Beállítások importálása
+Memory detail	Memória részletei
+Map options	Térkép opciók
+Message info	Üzenet adatai
+Channel settings	Csatorna beállításai
+Blocked users	Letiltott felhasználók
+Save name	Név mentése
+Save position	Pozíció mentése
+Save policy	Szabályzat mentése
+Copy secret	Secret másolása
+Select network	Hálózat kiválasztása
+Added to contacts	Hozzáadva a kontaktokhoz
+Contact added	Kontakt hozzáadva
+Contact deleted	Kontact törölve
+Channel created	Csatorna létrehozva
+Channel joined	Csatlakozva a csatornához
+Clock synced	Óra szinkronizálva
+Deleted	Törölve
+Sent	Elküldve
+Send failed	Küldés sikertelen
+Login failed	Belépési hiba
+Name saved	Név mentve
+Position saved	Pozíció mentve
+Setup complete	Beállítás kész
+Slot empty	Üres hely
+Screen locked	képernyő lezárva
+Out of memory	Megtelt a memória
+Already exists	Már létezik
+Marked read	Olvasottként megjelölve
+All marked read	Összes megjelölve olvasottnak
+Enter a name	Írjon be egy nevet
+Invalid lat/lon	Hosszúság/szélesség érvénytelen
+SD card inserted	SD-kártya behelyezve
+SD card removed	SD-kártya eltávolítva
+SD card remounted	SD kártya újracsatolva
+SD card lost - reinsert to recover	SD-kártya elveszett - helyezze be újra a helyreállításhoz
+Chat history is NOT saving	A csevegési előzmények NEM kerülnek mentésre
+Chat history save FAILED	Csevegési előzmények mentése SIKERTELEN
+Enable Bluetooth	Bluetooth engedélyezése
+Network name (SSID)	Hálózat neve (SSID)
+Password (empty = open)	Jelszó (üres = nyitott)
+Saved profiles	Profil mentve
+Channel name	Csatorna neve
+Max hops (0..64)	Max ugrások (0-64)
+Offline	Offline
+Name	Név
+Status	Státusz
+Storage	Storage
+Diagnostics	Diagnosztika
+Active	Aktív
+Inactive	Inaktív
+New	Új
+About the map	A térképről
+Show link lines	Linkvonalak megjelenítése
+Tiles from SD card	Csempék SD-kártyáról
+Quick reply	Gyors válasz
+Contacts	Névjegyek
+Commands	Parancsok
+Editing	Szerkesztés
+Full	Tele
+Delivered	Kiszállítva
+New contact	Új névjegy
+New DM	Új DM
+New channel msg	Új csatornaüzenet
+New room msg	Új szobaüzenet
+Nearby on map	Közeli térképen
+Advert policy saved	Hirdetési szabályzat mentve
+Auto-add saved	Automatikus hozzáadás mentve
+Experimental saved	Kísérleti mentés
+Channel scope saved	Csatorna hatóköre mentve
+Couldn't delete	Nem sikerült törölni
+Create failed	Létrehozás sikertelen
+Delete failed	Törlés sikertelen
+Save failed	Mentés sikertelen
+Channel not found	Csatorna nem található
+Channel table is full	A csatornatáblázat megtelt
+Contact gone	Eltűnt névjegy
+Contact missing	Hiányzó névjegy
+Contacts full	Névjegyek tele
+Cannot open file	Nem lehet megnyitni a fájlt
+Connecting...	Csatlakozás...
+Loading...	Betöltés...
+Loading map…	Térkép betöltése…
+Scanning…	Szkennelés…
+Logging in…	Bejelentkezés…
+Rebooting...	Újraindítás...
+Rebooting…	Újraindítás…
+Locking…	Zárva…
+Unlocking…	Feloldva…
+Hashtag name	Hashtag név
+Public key (64 hex chars)	Nyilvános kulcs (64 hex karakter)
+Secret (32 hex chars)	Secret (32 hex karakter)
+Secret (32 hex, optional)	Secret (32 hex opcionális)
+Lock wallpaper	Zárolt háttérkép
+Lock wallpaper set	Zárolt háttérkép beállítása
+Lock text colour set	Zárolási szöveg színe beállítva
+Radio off	Rádió kikapcsolva
+Radio: off	Rádió: kikapcsolva
+Path reset	Útvonal visszaállítása
+Path reset failed	Útvonal visszaállítása sikertelen
+Ping failed	Ping sikertelen
+Public channel ready	Nyilvános csatorna készen
+Password too long	Jelszó túl hosszú
+SSID too long	Az SSID túl hosszú
+Enter SSID first	Először adja meg az SSID-t
+Set an SSID first	Először állítson be egy SSID-t
+Set your location first	Először állítsa be a tartózkodási helyét
+Wi-Fi saved (radio off)	Wi-Fi mentve (rádió kikapcsolva)
+Wi-Fi saved, reconnecting	Wi-Fi mentve, újracsatlakozás
+Select a DM thread	Válassz egy DM-szálat
+No Bluetooth on this device	Nincs Bluetooth ezen az eszközön
+No networks found (2.4 GHz only)	Nem található hálózat (csak 2,4 GHz)
+Insert emoji / symbol	Emoji / szimbólum beszúrása
+tap to cancel	koppintson a megszakításhoz
+keep holding	tartsd ki
+hold the trackball to unlock	tartsa lenyomva a trackballt a feloldáshoz
+Already exists or table full.	Már létezik, vagy a tábla megtelt.
+Battery calibration reset to default	Az akkumulátor kalibrálása visszaállt az alapértelmezett értékre
+Battery read too low — charge fully first	Az akkumulátor túl alacsony állapotban van – először töltse fel teljesen
+Connect Wi-Fi to reload tiles	Csatlakozz Wi-Fi-hez a csempék újratöltéséhez
+Diagnostics are on the About page.	A diagnosztika a Névjegy oldalon található.,Diagnostiek staat op de pagina Over.
+Edit in Settings → Quick replies	Szerkesztés a Beállítások → Gyors válaszok menüpontban
+Export failed (can't open file)	Exportálás sikertelen (nem lehet megnyitni a fájlt)
+Favorites unsupported	Kedvencek nem támogatottak
+Format failed (no card / SD error)	Formázás sikertelen (nincs kártya / SD hiba)
+Import failed (bad/unreadable JSON)	Importálás sikertelen (hibás/olvashatatlan JSON)
+Import: storage unavailable	Importálás: tárhely nem elérhető
+Internal has no folders	A belső mappákban nincsenek mappák
+Invalid max hops	Érvénytelen maximális ugrásszám
+Invalid radio values	Érvénytelen rádióértékek
+Max zoom for this pack	Maximális zoom ehhez a csomaghoz
+Min zoom for this pack	Minimális zoom ehhez a csomaghoz
+Mode: BLE starting / low memory	Mód: BLE indítás / kevés memória
+Name can't be empty.	A név mező nem lehet üres.
+No DM key	Nincs DM kulcs
+No contact for thread	Nincs elérhetőség a szálhoz
+No contact to trace	Nincs nyomon követhető kapcsolat
+No tiles (non-ESP32)	Nincsenek csempék (nem ESP32)
+Pubkey must be 64 hex chars.	A nyilvános kulcsnak 64 hexadecimális karakterből kell állnia.
+RX log	RX napló
+Raw log	Raw napló
+RangeTest failed	RangeTest sikertelen
+Telemetry req failed	Telemetriai kérés sikertelen
+Trace failed	Nyomkövetés sikertelen
+Tile reload needs Wi-Fi build	A csempe újratöltéséhez Wi-Fi-kapcsolat szükséges.
+Too large to edit (>8 KB)	Túl nagy a szerkesztéshez (>8 KB)
+Wi-Fi is not enabled in this build.	Ebben a buildben nincs engedélyezve a Wi-Fi.
+Wi-Fi isn't available on this build.	Wi-Fi nem érhető el ezen a builden.
+Analyzing terrain…	Terep elemzése…
+Exporting settings…	Beállítások exportálása…
+Importing settings…	Beállítások importálása…
+Trace sent…	Nyomkövetés elküldve…
+Tracing route…	Útvonal követése…
+Rotating… rebooting	Forgatás… újraindítás
+Saved — rebooting	Mentve — újraindítás
+Saved — reconnecting…	Mentve — újracsatlakozás…
+SSID set — enter password, then Save	SSID beállítva — adja meg a jelszót, majd mentse el
+Powering off… click trackball to wake	Kikapcsolás… kattintson a görgetőgombbal az ébresztéshez
+Roll to highlight • click to insert	Görgessen a kiemeléshez • kattintson a beszúráshoz
+mesh  link  armed	hálós összeköttetéssel felfegyverzett
+n/a in this build	n/a ebben a buildben
+tap to exit full screen	koppintson a teljes képernyős kilépéshez
+double-tap SPACE cycles through the ones you enable	A SPACE dupla koppintásával válthat az engedélyezettek között.
+pick accented letters as you type; off = plain typing	ékezetes betűk kiválasztása gépelés közben; kikapcsolva = sima gépelés
+tap the language key (e.g. EN) on the keyboard to cycle the ones you enable	koppintson a billentyűzeten a nyelvi billentyűre (pl. EN) az engedélyezettek közötti váltáshoz
+Sample text	Mintaszöveg
+Save & restart	Mentés és újraindítás
+Save / turn on	Mentés és bekapcsolás
+Save auto-add	Automatikus hozzáadás mentése
+Save experimental	Kísérleti mentés
+Save quick replies	Gyors válaszok mentése
+32-hex secret. Anyone with this can read the channel.	32 hexadecimális titok. Bárki, aki ezzel rendelkezik, olvashatja a csatornát.
+Anyone can join. Key is derived from the hashtag (lowercase).	Bárki csatlakozhat. A kulcs a hashtagből származik (kisbetűs).
+Enter the 32-hex secret shared by the channel creator.	Add meg a csatorna létrehozója által megosztott 32 hexadecimális titkos kódot.
+Paste the 64-hex public key and a name. Useful when you want to DM someone before their advert has arrived.	Illeszd be a 64 hexes nyilvános kulcsot és egy nevet. Hasznos, ha privát üzenetet szeretnél küldeni valakinek, mielőtt megérkezik a hirdetése.
+Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Oszd meg a 32 karakteres titkot, hogy mások is csatlakozhassanak. Hagyd üresen a titkot, hogy véletlenszerű titkos kódot generálj.
+Region scope (#tag) for this channel.\nBlank = use the default scope.	Régió hatóköre (#tag) ehhez a csatornához.\nÜres = az alapértelmezett hatókör használata.
+Map storage error.\nReflash the tiles partition.	Térképtárolási hiba.\nFlasheld újra a csempék partícióját.
+Map storage error.\n\nSD card detected but the\ntile cache didn't mount.\nReboot to retry.	Térképtárolási hiba.\n\nAz SD-kártya észlelve, de a\ntime gyorsítótár nem csatlakozott.\nIndítsa újra a gépet az újrapróbálkozáshoz.
+Map — set your location\nin Settings → Profile to\nshow the map here.	Térkép – a Beállítások → Profil menüpontban állítsd be a tartózkodási helyedet, hogy itt jelenjen meg a térkép.
+No .json backups found.\nExport one first, or copy a\nmeshcore-backup.json to the\nSD card or internal flash.	Nem található .json biztonsági mentés.\nElőször exportáljon egyet, vagy másolja át a\nmeshcore-backup.json fájlt az\nSD-kártyára vagy a belső flash memóriába.
+No JPEGs found in /lock/.\nAdd images via the file\nmanager or an SD card.	Nem található JPEG fájl a /lock/ mappában.\nKépek hozzáadása a fájlkezelőn vagy SD-kártyán keresztül.
+No blocked users.\n\nLong-press a message and tap\nBlock to add one.	Nincsenek blokkolt felhasználók.\n\nÉrintse meg hosszan az üzenetet, majd koppintson a\nBlokkolás lehetőségre egy hozzáadásához.
+No contacts have shared\na GPS location yet.	Még egyetlen kontakt sem osztotta meg GPS-helyzetét.
+No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Nincs térképtárhely.\n\nHelyezzen be egy SD-kártyát a Wi-Fi csempék gyorsítótárazásához (vagy flashelje újra a csempék partíciójának visszaállításához).
+PNG isn't supported here\nUse a JPEG	A PNG formátum nem támogatott.\nHasználjon JPEG formátumot.
+Still analyzing the previous\npath… try again in a moment.	Még mindig elemzem az előző\nútvonalat… próbáld újra egy pillanat múlva.
+This contact hasn't shared\na GPS position.	Ez a kapcsolat nem osztotta meg GPS-pozícióját.
+Tip: you can scan for networks in Settings → Network after setup.	Tipp: a beállítás után a Beállítások → Hálózat menüpontban kereshet hálózatokat.
+Type your network name — or switch to Wi-Fi in Settings to scan	Írd be a hálózatod nevét – vagy válts Wi-Fi-re a beállításokban a kereséshez
+Update manually at flasher.wadamesh.com\n(Wi-Fi update is paused for now)	Frissítsd manuálisan a flasher.wadamesh.com oldalon\n(A Wi-Fi frissítés egyelőre szünetel)
+Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	Wi-Fi szükséges a terepprofil lekéréséhez ehhez az útvonalhoz. Csatlakozás a Beállítások → Wi-Fi menüpontban.
+You can run setup later in Settings → Device	A beállítást később is futtathatja a Beállítások → Eszköz menüpontban.
+Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	A tartózkodási helye ismeretlen.\nElőször állítsa be a GPS-t / pozíciót a\nBeállítások → Profil menüpontban.
+Can't display image\n(JPEG only, <= 1024 px)	Nem tudom megjeleníteni a képet\n (csak JPEG, <= 1024 px)
+Couldn't start the analyzer.\nTry again.	Nem sikerült elindítani az analizátort.\nPróbáld újra.
+Auto-add contacts	Névjegyek automatikus hozzáadása
+Experimental	Kísérleti
+Discovered	Felfedezve
+Create private channel	Privát csatorna létrehozása
+Join hashtag channel	Csatlakozz a hashtag csatornához
+Join private channel	Csatlakozz privát csatornához
+Send advert	Hirdetés küldése
+Share channel	Csatorna megosztása
+Advert	Hirdetés
+Advert location	Hirdetés helye
+Latitude	Szélesség
+Longitude	Hosszúság
+Share location in advert	Helyszín megosztása a hirdetésben
+Node name	Node név
+Display name	Megjelenített név
+Identity (public key)	Azonosítás (nyilvános kulcs)
+Community preset (meshcomod web)	Közösségi előbeállítás (meshcomod web)
+Frequency / bandwidth	Frekvencia / sávszélesség
+SF / CR / TX / AF	SF / CR / TX / AF
+Multi-byte routing (path hash)	Többbájtos útválasztás (útvonal-hash)
+Region scope (#tag, blank = none)	Régió hatóköre (#címke, üres = nincs)
+Auto chat	Automatikus csevegés
+Auto repeater	Automatikus ismétlő
+Auto room	Auto room
+Auto sensor	Auto szenzor
+Overwrite oldest	Legrégebbi felülírása
+Multi ACKs	Multi ACKs
+Client repeat	Client repeat
+RX boosted gain	RX fokozott erősítés
+Duty meter	Üzemeltetési mérő
+Network name	Hálózat név
+Name fragment	Névtöredék
+Theme	Téma
+Lock	Zár
+Switch	Kapcsoló
+Wi-Fi on	WiFi bekapcsolva
+Wi-Fi off	WiFi kikapcsolva
+BLE on	BLE bekapcsolva
+BLE off	BLE kikapcsolva
+Bluetooth on	Bluetooth bekapcsolva
+Bluetooth off	Bluetooth kikapcsolva
+Bluetooth already on	Bluetooth már be van kapcsolva
+Bluetooth already off	Bluetooth már ki van kapcsolva
+GPS on	GPS bekapcsolva
+GPS off	GPS kikapcsolva
+Sound on	Hang bekapcsolva
+Sound off	Hang kikapcsolva
+TCP on	TCP bekapcsolva
+TCP off	TCP kikapcsolva
+Welcome to WADAMESH	Üdvözöl a WADAMESH
+Get Started	Kezdés
+Choose your name	Válaszd ki a neved
+Your name	A neved
+Choose your region	Válassza ki a régióját
+Next	Következő
+Skip	Kihagyás
+Finish	Befejezés
+Connect to Wi-Fi	Csatlakozás Wi-Fi-hez
+Password (empty = skip Wi-Fi)	Jelszó (üres = Wi-Fi kihagyása)
+Copy	Másolás
+Cut	Kivágás
+Delete	Töröl
+Remove	Eltávolítás
+Rename	Átnevezés
+Format	Formátum
+Paste	Beszúrás
+Back	Vissza
+Reboot	Újraindítás
+Mark read	Mark read
+New file	Új fájl
+New folder	Új mappa
+Folder created	Mappa létrehozva
+Empty file	Üres fájl
+Renamed	Átnevezve
+Rename failed	Átnevezés sikertelen
+Pasted	Beillesztve
+Paste failed	Beillesztés sikertelen
+Copied - Paste in a folder	Másolt - Beillesztés egy mappába
+Cut - Paste in a folder	Kivágás - Beillesztés egy mappába
+mkdir failed	mappa létrehozása sikertelen
+Image too large (>4 MB)	A kép túl nagy (>4 MB)
+Type a message...	Írj be egy üzenetet...
+search	keresés
+leave empty to generate	hagyja üresen a generáláshoz
+32 hex characters	32 hex karakter
+Enter exactly 32 hex characters.	Pontosan 32 hex karaktert adjon meg.
+Secret must be 32 hex chars (or empty).	A titkos kódnak 32 hex karakterből kell állnia (vagy üresen kell állnia).
+Optional — type your network, or leave blank to skip.	Opcionális – írja be a hálózatát, vagy hagyja üresen a kihagyáshoz.
+Saved	Mentett
+Advert sent	Advert elküldve
+Advert failed	Hirdetés sikertelen
+Flood advert sent	Flood advert elküldve
+Zero-hop advert sent	Zero-hop advert elküldve
+Radio applied	Rádió alkalmazva
+Radio + region set	Rádió + régió beállítva
+Chat removed	Chat eltávolítva
+Channel removed	Csatorna eltávolítva
+Sender blocked	Feladó blokkolva
+Can't block — not a contact	Nem blokkolható – nem egy névjegy
+Added to favorites	Hozzáadva a kedvencekhez
+Removed from favorites	Eltávolítva a kedvencek közül
+Taste the rainbow!	Ízleld meg a szivárványt!
+Chat bubbles: plain	Csevegőbuborékok: sima
+Accent popups: on	Accent popups: bekapcsolva
+Accent popups: off	Accent popups: kikapcsolva
+Failed to save channel.	Nem sikerült menteni a csatornát.
+Distance: km	Távolság: km
+Distance: miles	Távolság: mérföld
+Map tiles: microSD	Térképlapok: microSD
+Map tiles: server	Térképlapok: microSD
+Mark all chats and channels as read?	Az összes csevegést és csatornát megjelölöd olvasottként?
+Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Importálja ezt a biztonsági mentést?\nLecseréli az identitást,\ncsatornákat és\nkapcsolatokat, majd újraindul.
+Every node you talk to must match. You can change this later in Settings.	Minden csomópontnak, amellyel kommunikálsz, egyeznie kell. Ezt később módosíthatod a Beállításokban.
+How you'll appear to other nodes. You can change this later in Settings.	Hogyan fogsz megjelenni más csomópontok számára. Ezt később módosíthatod a Beállításokban.
+e.g. Family	pl. Család
+e.g. mesh	pl. mesh
+GPS: fix	GPS: fix
+GPS: off	GPS: kikapcsolva
+GPS: acquiring...	GPS: begyűjtés...
+GPS unset	GPS nincs beállítva
+(RTC unset)	(RTC nincs beállítva)
+Screen timeout: %ds	Képernyő időtúllépés: %ds
+Screen timeout: never	Képernyő időtúllépés: soha
+Time offset: %+d h	Időeltolódás: %+d óra
+Time   %s	Idő   %s
+Pairing code: %06lu	Párosítási kód: %06lu
+Pairing code: n/a	Párosítási kód: n/a
+Path hash: %u byte%s	Útvonal-hash: %u bájt%s
+Calibrated: 100%% = %u.%02u V  (long-press to reset)	Kalibrálva: 100%% = %u.%02u V (hosszan nyomva a visszaállításhoz)
+Centered on %s	Középre igazítva %s
+Copied %s	%s másolva
+No reply from %s	Nincs válasz %s-tól
+Joined %.40s	Csatlakozott %.40s alatt
+Login OK (perms %u)	Bejelentkezés rendben (engedélyek %u)
+Saved to slot %d	Mentve a(z) %d helyre
+Slot %d cleared	%d hely kiürítve
+now on channel %s	most a %s csatornán
+now talking to %s	most %s-szel beszélgetek
+Delete chat with "%s"?\nMessage history will be cleared.	Törli a csevegést "%s" felhasználóval?\nAz üzenetelőzmények törlődnek.
+Remove channel "%s"?\nLeaves it on this device only.	Eltávolítja a(z) „%s” csatornát?\nCsak ezen az eszközön hagyja.
+Firmware beta_%d\nCouldn't reach the update server	Firmware beta_%d\nNem sikerült elérni a frissítőszervert
+Internal storage   %s / %s	Belső tárhely %s / %s
+SD card   %s   (hold: format)	SD-kártya %s (tartás: formázás)
+SD formatted - %s (MESHCOMOD)	SD formázás - %s (MESHCOMOD)
+SPIFFS %u/%u KB used	SPIFFS %u/%u KB felhasználva
+contacts (%d):	névjegyek (%d):
+%d on map	%d a térképen
+Data -> SD card on reboot\n(card must be inserted)	Adatok -> SD-kártya újraindításkor\n(a kártyát be kell helyezni)
+Data -> internal on reboot	Adatok -> belső újraindításkor
+RangeTest sent (direct)	RangeTest küldve (közvetlenül)
+RangeTest sent (flood)	RangeTest elküldve (elárasztás)
+Telemetry req (direct)…	Telemetriai kérés (közvetlen)…
+Telemetry req (flood)…	Telemetriai kérés (flood)…
+Pinged (direct) — waiting…	Pingelt (közvetlen) — várakozás…
+Pinged (flood) — waiting…	Pingelt (flood) — várakozás…
+Unread %d	Olvasatlan %d
+Unread %d\nRAM %u%%  ·  PSRAM %u%%	Olvasatlan %d\nRAM %u%%  ·  PSRAM %u%%
+Analyzing terrain…\n(retry %d of 3)	Terep elemzése…\n(újrapróbálkozás: %d a 3-ból)
+Backups	Mentés
+Saved backups	Mentett biztonsági mentések
+Export new backup	Új biztonsági mentés exportálása
+Danger zone	Veszélyes zóna
+Factory reset	Gyári visszaállítás
+Erase all	Minden törlése
+Erasing everything…	Minden törlésre kerül…
+No backups yet. Tap Export new backup above to create one.	Még nincsenek biztonsági mentések. Koppintson a fenti Új biztonsági mentés exportálása gombra egy létrehozásához.
+Erases identity, contacts, channels, messages, Wi-Fi and all settings, then reboots.	Törli az identitást, a névjegyeket, a csatornákat, az üzeneteket, a Wi-Fi-t és az összes beállítást, majd újraindul.
+Delete this backup file?\nThis cannot be undone.	Törli ezt a biztonsági mentésfájlt?\nEz a művelet nem vonható vissza.
+Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Gyári beállítások visszaállítása?\n\nTörli az identitást, a névjegyeket,\ncsatornákat, üzeneteket, a Wi-Fi-t\nés minden beállítást. Ez\na művelet nem vonható vissza.
+ (device behind)	 (készülék hátulján)
+%.3f MHz · SF%u · TX %+ddBm	%.3f MHz · SF%u · TX %+ddBm
+%u types · hops %u · manual %s	%u tipus · ugrás %u · kézi %s
+(no default)	(nincs alapértelmezett)
+0123456789abcdef…	0123456789abcdef…
+1 byte (legacy)\n2 bytes\n3 bytes	1 bájt (hagyományos)\n2 bájt\n3 bájt
+12-hour clock	12 órás óra
+@  Mentions	@  Említések
+@ mention sound	@ említés hangja
+AUTOMATIC ADVERTS	AUTOMATIKUS ADVERTEK
+Answer telemetry requests	Telemetriai kérések megválaszolása
+App drawer as home	Alkalmazásfiók kezdőlapként
+App icon size	Alkalmazás ikon mérete
+Applies after restart.	Újraindítás után érvényes.
+Apply auto-poll	Automatikus szavazás alkalmazása
+Arrows + Enter always work. These letters are extra — tap a row, then press a key.	A nyilak + Enter mindig működik. Ezek a betűk extra – koppintson egy sorra, majd nyomjon meg egy billentyűt.
+Auto-Join	Automatikus csatlakozás
+Auto-delete above hops	Automatikus törlés a fenti hops-ok felett
+Auto-delete oldest	Legrégebbi automatikus törlése
+Auto-delete oldest makes room when full. Hops: 0 = keep all; nodes heard via more hops are removed.	A legrégebbi automatikus törlése helyet szabadít fel, ha megtelik. Hops-ok: 0 = összes megtartása; a további hops-on keresztül hallott nodeok eltávolításra kerülnek.
+Auto-discover	Automatikus felismerés
+Auto-discover off	Automatikus felismerés kikapcsolva
+Auto-discover on	Automatikus felismerés bekapcsolva
+Auto-poll every	Automatikus lekérdezés minden
+Auto-refresh off	Automatikus frissítés kikapcsolva
+Auto-refresh on	Automatikus frissítés bekapcsolva
+Battery	Akkumlátor
+Battery & power history	Akkumulátor és teljesítmény előzményei
+Battery (V)	Akkumlátor (V)
+Battery saver (experimental)	Akkumulátorkímélő (kísérleti)
+Battery — last 24h	Akkumulátor – elmúlt 24 óra
+Block list full	A feketelista megtelt
+Blocked — their messages are hidden	Blokkolt – az üzeneteik rejtve vannak
+Blocking unsupported	A blokkolás nem támogatott
+Blue battery  Last 6 min	Kék akkumulátor töltöttségi szintje: utolsó 6 perc
+Blue battery  Orange temp  Cyan humidity	Kék akkumulátor  Narancssárga hőmérséklet  Ciánkék páratartalom
+Broker host / IP	Broker host / IP
+Buffered receive (experimental)	Pufferelt fogadás (kísérleti)
+Built-in	Beépített
+Built-in (default)	Beépített (alapértelmezett)
+Cancelled	Lemondva
+Channel-specific regions can be set in each channel's settings.	A csatornaspecifikus régiók az egyes csatornák beállításaiban állíthatók be.
+Chat bubbles	Csetbuborékok
+Chat icon reset to letters	A csevegés ikon betűkre áll vissza
+Chat icon set	Csevegés ikonkészlet
+Clear battery history?	Törli az akkumulátorelőzményeket?
+Clear telemetry history for this node?	Törli a telemetriai előzményeket ehhez a csomóponthoz?
+Clock: 12-hour	Óra: 12 órás
+Clock: 24-hour	Óra: 24 órás
+Compact messages	Kompakt üzenetek
+Compact messages (IRC style)	Kompakt üzenetek (IRC stílus)
+Connect	Csatlakozás
+Connect to Wi-Fi first, then try again.	Először csatlakozz Wi-Fi-hez, majd próbáld újra.
+Connected	Csatlakoztatva
+Connecting…	Kapcsolódás…
+Console not available on this build	Konzol nem érhető el ezen a builden
+Copy failed (no internal identity)	Másolás sikertelen (nincs belső identitás)
+Copying internal data to SD...	Belső adatok másolása SD-kártyára...
+Could not save the crash report	Nem sikerült menteni a hibajelentést
+Couldn't fetch terrain data.\nCheck the connection and the\nelevation server, then\ntry again.	Nem sikerült lekérni a domborzati adatokat.\nEllenőrizze a kapcsolatot és a\nmagassági szervert, majd\npróbálja újra.
+Couldn't save the name to storage	Nem sikerült menteni a nevet a tárhelyre
+Couldn't send login	Nem sikerült elküldeni a bejelentkezést
+Crash export failed	A Crash exportálása sikertelen volt
+Custom UTC offset (hours)	Egyéni UTC eltolás (órában)
+DM sound	DM hang
+Delete %d contact(s)?	Törölt névjegy(ek)?
+Delete this chat's entire history?\nThe chat itself stays.	Törlöd a csevegés teljes előzményét?\nMaga a csevegés megmarad.
+Deleted %d	Törölt %d
+Deleted %d messages	%d üzenet törölve
+Deleting contacts	Névjegyek törlése
+Detailed sensors	Részletes szenzorok
+Device clock differs from "%s" by %lu h%s	Az eszköz órája %lu h%s-szal tér el a "%s"-től
+Device clock differs from "%s" by %lu min%s	Az eszköz órája %lu perc%s-szal tér el a "%s"-től
+Device name hidden	Eszköz neve rejtett
+Device name shown	Eszköz neve látható
+Discovered settings	Discovered beállítások
+Download mode… reflash over USB	Letöltési mód… újratöltés USB-n keresztül
+Downloading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive\nand are saved for offline use.	Térképlapok letöltése…\n\nWi-Fi kapcsolaton keresztül.\nA lapok érkezésükkor jelennek meg\nés offline használatra mentésre kerülnek.
+Edge scroll	Szélgörgetés
+Empty = plaintext to a private broker	Üres = sima szöveg egy privát brókernek
+Enable MQTT bridge	MQTT-bridge engedélyezése
+Enable only if your repeater re-floods just one region. Otherwise leave off — it can block cross-region login/DMs.	Csak akkor engedélyezd, ha az átjátszód csak egy régiót áraszt el újra. Egyéb esetben hagyd kikapcsolva – blokkolhatja a régiók közötti bejelentkezést/közvetlen üzeneteket.
+Encryption key (optional)	Titkosítási kulcs (opcionális)
+Enter a network name	Adjon meg egy hálózatnevet
+Enter adds a new line	Az Enter új sort ad hozzá
+Enter key sends message	Az Enter billentyű elküldi az üzenetet
+Enter sends messages	Az Enter üzeneteket küld
+Expansion Kit	Bővítőkészlet
+Experimental - has known issues. Off = soft mouse cursor.	Kísérleti – ismert problémák vannak benne. Ki = lágy egérmutató.
+Favorites full (max %d)	Kedvencek megteltek (max. %d)
+Firmware:	Firmware:
+Flash on new message	Villog, ha új üzenet érkezett
+Flood every	Flood every
+Flood: relayed across the mesh (multi-hop).\nZero-hop: neighbours only (no relaying).	Árvíz: a hálón keresztül továbbítva (többugrásos).\nNullaugrásos: csak szomszédok (nincs továbbítás).
+For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).	Indító telepítések esetén: a kiválasztott csatorna legújabb firmware-jét menti az SD-kártyára (BINS mappa).
+Forget network	Hálózat elfelejtése
+Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased.	Formázza az SD kártyát MESHCOMOD (FAT32) formátumban?\nA kártyán lévő összes adat törlődik.
+GPS %s · Buzzer %s	GPS %s · Buzzer %s
+GPS %s · Buzzer %s\n%s	GPS %s · Buzzer %s\n%s
+Game over  —  score %d   (tap to restart)	Vége a játéknak — %d pont (érintsd meg az újraindításhoz)
+Get test builds (beta)	Tesztverziók beszerzése (béta)
+Green pressure  Gray altitude	Zöld nyomás Szürke magasság
+Hidden network	Rejtett hálózat
+Hide device name	Eszköz nevének elrejtése
+High-gain receiver (FEM LNA)	Nagy nyereségű vevő (FEM LNA)
+Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Nagyon kísérleti jellegű. Ez a funkció továbbítja a csomópont által fogadott összes üzenet szövegét, feladó nevét és időbélyegét egy MQTT brókernek, ahol bárki, aki el tudja olvasni a brókert, elolvashatja azokat. A közvetlen üzenetek olyan személyek privát üzenetei, akik soha nem járultak hozzá a megosztásukhoz. Használjon egy általa felügyelt brókert, állítson be titkosítási kulcsot alább, és soha ne használjon nyilvános brókert.
+Hotkey saved	Gyorsbillentyű mentése
+Humidity	Páratartalom
+I accept the privacy risk	Elfogadom az adatvédelmi kockázatot
+Idle power-save	Alapjárati energiatakarékos mód
+Idle sleep disabled	Tétlen alvás letiltva
+Idle sleep enabled	Üresjárati alvás engedélyezve
+Import backup	Biztonsági mentés importálása
+Install a previous version	Telepítse az előző verziót
+Install an earlier version	Telepítse egy korábbi verziót
+Join network	Csatlakozás a hálózathoz
+Key already in use	Kulcs már hozzárendelve
+Keyboard backlight	Billentyűzet háttérvilágítás
+Keyboard nav: WASDZ on	Billentyűzet navigáció: WASDZ bekapcsolva
+Keyboard nav: off	Billentyűzetnavigáció: kikapcsolva
+Keyboard navigation	Billentyűzetnavigáció
+Leave empty if not required	Hagyja üresen, ha nem szükséges
+Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Állítsuk be az eszközt.\n\nVálassz egy nevet, és válaszd ki a LoRa régiódat. Körülbelül egy percet vesz igénybe.
+Letters only	Csak betűk
+Loading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive.	Térképcsempék betöltése…\n\nWi-Fi kapcsolaton keresztül.\nA csempék érkezésükkor jelennek meg.
+Local every	Helyi minden
+Local sensors	Helyi szenzorok
+Lock when screen off	Zárolás kikapcsolt képernyő esetén
+Locks when screen off\n(hold the d-pad to unlock)	Kikapcsolt képernyő esetén zárol\n(a feloldáshoz tartsa lenyomva a d-padot)
+Locks when screen off\n(hold the trackball to unlock)	Kikapcsolt képernyő esetén zárol\n(a feloldáshoz tartsa lenyomva a görgetőgolyót)
+Locks when screen off\n(press Volume Down to unlock)	Kikapcsolt képernyő esetén zárol\n(a feloldáshoz nyomja meg a Hangerő csökkentése gombot)
+Locks when screen off\n(press the button to unlock)	Lezár, ha a képernyő ki van kapcsolva\n(a feloldáshoz nyomja meg a gombot)
+Logging in again...	Újra bejelentkezés...
+Map tiles: microSD\n\n/maps/osm/z/x/y.png\n(or /tiles/z/x/y.jpg)\n\nMap appears when a tile\nfor this area is found.	Térképlapok: microSD\n\n/maps/osm/z/x/y.png\n(vagy /tiles/z/x/y.jpg)\n\nA térkép akkor jelenik meg, ha a rendszer talál egy lapot\nerre a területre vonatkozóan.
+Map — no tile pack on SPIFFS yet.\n\nUpload a tile pack to /tiles/<z>/<x>/<y>.jpg with the host-side generator.	Térkép — még nincs csempecsomag az SPIFFS-en.\n\nTölts fel egy csempecsomagot a /tiles/<z>/<x>/<y>.jpg fájlba a hosztoldali generátorral.
+Mesh health: a flood advert is rebroadcast by every repeater in range, so frequent floods add airtime for the whole network. Keep them infrequent (a day or more). Your neighbours still see you from zero-hop adverts and your message replies, so flood mainly when distant nodes need to rediscover you. Leave both Off to advertise only when you tap the buttons above.	Mesh állapota: az flood adverteket minden hatótávolságon belüli repeater újra sugározza, így a gyakori foold-ok növelik az egész hálózat sugárzási idejét. Tartsd őket ritkán (egy napig vagy tovább). A szomszédaid továbbra is látnak a nulla-ugrásos hirdetésekből és az üzenetre adott válaszokból, ezért az flood-ot főleg akkor alkalmazd, amikor a távoli node-oknak újra fel kell fedezniük téged. Hagyd mindkettőt kikapcsolva, ha csak akkor szeretnél advertezni, ha a fenti gombokra koppintasz.
+Message LED	Üzenet LED
+Message LED off	Üzenetjelző LED nem világít
+Message LED on	Üzenetjelző LED világít
+Message deleted	Üzenet törölve
+Message didn't get through.\nResend it?	Az üzenet nem érkezett meg.\nÚjraküldi?
+Message sound	Üzenet hangja
+Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Ismétlés %s · Vételnövelés %s
+Mute @	Némítás @
+Mute msgs	Üzenetek némítása
+Mute notification sound	Értesítési hang némítása
+My position (no GPS fix)	A pozícióm (nincs GPS-koordináta)
+Navigation keys	Navigációs billentyűk
+Navigation keys — tap a row, then press a key	Navigációs billentyűk – koppintson egy sorra, majd nyomjon meg egy billentyűt
+Night mode (invert)	Éjszakai mód (invertált)
+No @mentions yet	Még nincsenek @említések
+No GPS module on this device.	Nincs GPS modul ezen a készüléken.
+No SD card	Geen SD-kaart
+No SD card (or unreadable format)	Nincs SD-kártya (vagy olvashatatlan formátumú)
+No battery history yet.\n\nLogged every 5 minutes.	Még nincsenek akkumulátor-előzmények.\n\n5 percenként naplózva.
+No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Még nincsenek felfedezett csomópontok.\n\nMinden, amit a rádióban hallasz, és ami nem szerepel a névjegyeid között, itt fog megjelenni. Ha az automatikus hozzáadás ki van kapcsolva, manuálisan is hozzáadhatsz csomópontokat a névjegyeidhez.
+No earlier versions yet	Még nincsenek korábbi verziók
+No local expansion data	Nincsenek helyi bővítési adatok
+No location for this contact	Nincs hely ehhez a névjegyhez
+No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Nincsenek térképszeletek itt.\n\nCsatlakozzon Wi-Fi-hez (Beállítások → Wi-Fi)\na terület letöltéséhez.
+No mapped repeaters in this route	Nincsenek leképezett ismétlők ezen az útvonalon
+No onboard GPS	Nincs beépített GPS
+No other networks found	Nem található más hálózat
+No reply. Check password, server,\nor device clock (device: %s)	Nincs válasz. Ellenőrizze a jelszót, a szervert,\nvagy az eszköz óráját (eszköz: %s)
+No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Nincsenek mentett térképszeletek. \n\nCsatlakozzon Wi-Fi-hez (Beállítások → Wi-Fi) a terület letöltéséhez.\nA mentett szeletek offline is elérhetők maradnak.
+No telemetry in this window.\nRequest one, or widen the range below.	Nincs telemetria ebben az ablakban.\nKérjen egyet, vagy szélesítse az alábbi tartományt.
+No version known yet. Wi-Fi and a completed update check are needed first.	Egyelőre nincs ismert verzió. Először Wi-Fi-kapcsolat és egy frissítés-ellenőrzés szükséges.
+Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime	Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime
+Normal (100%)\nLarge (150%)\nHuge (200%)	Normál (100%)\nLarge (150%)\nHuge (200%)
+Not enough free memory for Bluetooth. Turn Wi-Fi off first.	Nincs elég szabad memória a Bluetooth-hoz. Először kapcsold ki a Wi-Fi-t.
+Not enough free memory for Wi-Fi. Turn Bluetooth off first.	Nincs elég szabad memória a Wi-Fi-hez. Először kapcsold ki a Bluetooth-t.
+Nothing selected	Semmi sincs kiválasztva
+Notification sound set	Értesítési hang beállítása
+Notify on new contact	Értesítés új kapcsolatfelvételről
+On boot	Indításkor
+Open Advertise app	Nyissa meg a Hirdetés alkalmazást
+Open a .wav, then tap 'Set as notification sound'	Nyisson meg egy .wav fájlt, majd koppintson a 'Beállítás értesítési hangként' lehetőségre.
+Open a JPEG, then tap 'Set as wallpaper'	Nyisson meg egy JPEG fájlt, majd koppintson a 'Beállítás háttérképként' lehetőségre.
+Open mesh console	Nyissa meg a mesh konzolt
+Orange temp  Cyan humidity	Narancssárga hőmérséklet Ciánkék páratartalom
+Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?	Felülírja az SD-kártya beállításait és\nidentitását a belső másolatokkal,\nmajd újraindítja?
+Pairing code	Párosítási kód
+Pairing code saved — reboot to apply	Párosítási kód mentve – újraindítás az alkalmazáshoz
+Password (optional)	Jelszó (opcionális)
+Paused  —  score %d	Szüneteltetve — Pontok %d
+Poll (min)	Lekérdezés (perc)
+Poll every	összes lekérdezése
+Poll every %d min	Lekérdezés %d percenként
+Port	Port
+Press a key…	Nyomj meg egy billentyűt…
+Probing neighbours…	Szomszédok fürkészése…
+Publish channel messages	Csatornaüzenetek közzététele
+Publish direct messages	Közvetlen üzenetek közzététele
+Purge	Purge
+Purge all discovered nodes?	Törölje az összes felfedezett csomópontot?
+RAM %u%%  ·  PSRAM %u%%	RAM %u%%  ·  PSRAM %u%%
+RX %d entries · Raw %d entries	RX %d bejegyzés · Raw %d bejegyzés
+Reads packets on a background task so a busy screen can't drop them.	Csomagokat olvas egy háttérfeladatban, így egy zsúfolt képernyő nem tudja azokat eldobni.
+Receive unreleased test firmware — newer features, but less tested. The update check and Install update both follow the beta channel.	Kiadatlan teszt firmware-t kapsz – újabb funkciók, de kevésbé teszteltek. A frissítések ellenőrzése és a frissítések telepítése is a béta verziót követi.
+Recently heard	Nemrég hallottam
+Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Újraformázza az SD kártyát MESHCOMOD (FAT32) formátumban?\nA kártyán lévő ÖSSZES adat törlődik.
+Region scope (#tag), blank = default.	Régió hatóköre (#tag), üres = alapértelmezett.
+Remember password	Jelszó megjegyzése
+Replay	Visszajátszás
+Replay route on map	Útvonal visszajátszása a térképen
+Replaying route…	Útvonal újrajátszása…
+Resend	Újraküldés
+Resend failed	Újraküldés sikertelen
+Reverse scrollball	Fordított görgetőgolyó
+Room is read-only for you.\nJoin with the room password to post.	A szoba csak írásvédett számodra.\nCsatlakozz a szoba jelszavával, hogy hozzászólhass.
+SD card   %s	SD-kártya %s
+SD card   (tap to mount)	SD-kártya (érintésre csatlakoztatható)
+SD download failed: %s	SD-letöltés sikertelen: %s
+Saved network	Mentett hálózat
+Saved: %s\nFlash it from the Launcher.	Mentett: %s\nFlash-eld a Launcher-ből.
+Saving to SD… %d%%	Mentés SD-kártyára… %d%%
+Saving to SD… 0%	Mentés SD-kártyára… 0%
+Scope direct msgs to region	Közvetlen üzenet a régiónak
+Screen timeout (s, 0 = never, min 10)	Képernyő időkorlátja (s, 0 = soha, min. 10)
+Screen-off just dims	A képernyő kikapcsolásakor csak elsötétül
+Screenshot needs an SD card	Screenshot-hoz SD-kártya szükséges
+Screenshot: low memory	Screenshot: kevés a memória
+Screenshot: no SD card	Screenshot: nincs sd kártya
+Screenshot: write failed	Screenshot: írási hiba
+Scrollball: normal	Scrollball: normális
+Scrollball: reversed	Scrollbar: megfordítva
+Select all	Összes kijelölése
+Send an advert now, or set how often you re-advertise.	Küldjön hirdetést most, vagy állítsa be, hogy milyen gyakran szeretné újrahirdetni.
+Sensors tab: off (restart to apply)	Érzékelők lap: kikapcsolva (újraindítás az alkalmazáshoz)
+Sensors tab: on (restart to apply)	Érzékelők lap: bekapcsolva (újraindítás az alkalmazáshoz)
+Share: %s	Megosztás: %s
+Show	Megmutat
+Show Sensors tab	Szenzorok lap megjelenítése
+Show menu-bar letters	Menüsáv betűinek megjelenítése
+Show on chart	Mutasd a diagramon
+Show on map	Mutasd a térképen
+Signal & traffic	Jelzés és forgalom
+Sleep ready	Készen áll az alvásra
+Snake  —  swipe or roll the trackball	Kígyó – pöccintsd vagy görgesd a görgetőgolyót
+Sort	Sort
+TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s BLE %s\nWS kliensek %d GPS %s Buzzer %s
+TOUCH BETA	TOUCH BETA
+Tab hotkeys — tap a row, then press a key	Tab gyorsbillentyűk – koppintson egy sorra, majd nyomjon meg egy billentyűt
+Telemetry requests allowed	Telemetriai kérések engedélyezettek
+Telemetry requests off	A telemetriai kérések kikapcsolva
+Telemetry req…	Telemetria igény…
+Telemetry settings	Telemetriai beállítások
+Temperature	Hőmérséklet
+Test builds: off	Tesztverziók: kikapcsolva
+Test builds: on	Tesztverziók: bekapcsolva
+This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Ez az eszköz egyszerre képes Wi-Fi-t és Bluetooth-t futtatni, önálló rádióként és telefonkiegészítőként (MeshCore alkalmazás) is.\n\nA kettő egyidejű futtatása több RAM-ot fogyaszt, ezért csak azt kapcsold be, amire szükséged van.\n\nBármikor beállíthatod őket a Beállításokban.
+Throttles the CPU when idle to save power	Energiatakarékosság érdekében tétlenségkor szabályozza a CPU működését
+Tiles cleared — reconnect Wi-Fi to re-download	Csempék törölve – csatlakozzon újra a Wi-Fi-hez az újbóli letöltéshez
+Time range (hours ago)	Időtartomány (órákkal ezelőtt)
+Time zone	Időzóna
+Time zone: %s	Időzóna:
+Today	Ma
+Topographic map	Topográfiai térkép
+Trace	Trace
+Trace route	Útvonal nyomkövetése
+Trackball navigates UI	Trackball navigál a felhasználói felületen
+Trackball: cursor	Trackball: kurzor
+Trackball: navigate UI	Trackball: navigáció az UI-n
+Turn Wi-Fi on first	Először kapcsold be a Wi-Fi-t
+Type a new 6-digit code · applies after a reboot	Írjon be egy új 6 jegyű kódot · újraindítás után érvényes
+UI size (restart to apply)	UI mérete (újraindítás az alkalmazáshoz)
+UI size saved — restart to apply	UI mérete mentve – indítsa újra a programot az alkalmazáshoz
+USB powered	USB-tápellátású
+Unblocked	Feloldva
+Unfavorite it first	Először is vedd le a kedvenceid közül
+Unmute @	@ némításának feloldása
+Unmute msgs	Üzenetek némításának feloldása
+Unsupported WAV (need 16-bit PCM)	Nem támogatott WAV (16 bites PCM szükséges)
+Update bin saved to SD	A frissítési láda SD-kártyára mentve
+Update complete.\nRebooting...	Frissítés kész.\nÚjraindítás...
+Update via the Launcher	Frissítés a Launcher
+Update via the Launcher / flasher.wadamesh.com	Frissítés a Launcher / flasher.wadamesh.com oldalon
+Update via the Launcher / flasher.wadamesh.com.	Frissítés a Launcher / flasher.wadamesh.com oldalon.
+Username (optional)	Felhasználónév (nem kötelező)
+Volume	Hangerő
+W up  ·  A left  ·  D right  ·  Z down  ·  S select  ·  Q back	W fel · A balra · D jobbra · Z le · S kiválasztás · Q vissza
+WADA#15B6A6 MESH#	WADA#15B6A6 MESH#
+WADAMESH	WADAMESH
+Wi-Fi not connected	Nincs Wi-Fi-kapcsolat
+Wi-Fi on, scanning…	Wi-Fi bekapcsolva, szkennelés…
+Yesterday	Tegnap
+Zoom: +/- buttons	Nagyítás: +/- gombok
+client connected	kliens csatlakozva
+command	parancs
+diag boot...	diag-boot...
+drive the UI without the screen; keys still type in text fields	a felhasználói felületet képernyő nélkül működtetik; a billentyűk továbbra is szövegmezőkben írnak
+from	from
+hold the d-pad to unlock	tartsa lenyomva a d-padot a feloldáshoz
+last wake: 	utolsó ébredés: 
+lights the keyboard + wakes the screen on an incoming message	bejövő üzenet esetén bekapcsolja a billentyűzet megvilágítását + felébreszti a képernyőt
+mesh busy	háló elfoglalt
+off = Enter adds a new line; tap Send to send	ki = Az Enter új sort hoz létre; a küldéshez koppintson a Küldés gombra
+peak --	peak
+press Volume Down to unlock	Nyomja meg a hangerő csökkentését a feloldáshoz
+push past a screen edge to scroll content	Görgetéshez húzza végig az ujját a képernyő szélén
+score %d	eredmény %d
+tap for details	Koppintson a részletekért
+zoom	zoom
+zoom %d	zoom %d
+~17 dB amp for quiet/remote areas; turn off in noisy spots.	~17 dB erősítővel csendes/távoli helyeken; zajos helyeken kapcsold ki.
+© OpenStreetMap	© OpenStreetMap
+© OpenTopoMap	© OpenTopoMap
+Apps	Appok
+Languages	Nyelvek
+Installed	Telepítve
+Available	Elérhető
+Get	Letölt
+Use	Használ
+Update	Frissít
+Hide	Elrejt
+Removed	Eltávolítva
+Remove %s?	Eltávolítod: %s?
+Added	Hozzáadva
+Already in contacts	Már a névjegyek közt
+Could not add	Nem sikerült hozzáadni
+Catalog unavailable	A katalógus nem érhető el
+Loading catalog…	Katalógus betöltése…
+Loading the language catalog…	Nyelvi katalógus betöltése…
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	A nyelvi katalógus nem érhető el - ellenőrizd a Wi-Fit, majd nyisd meg újra a lapot.
+Fetching the app list from firmware.wadamesh.com	Applista letöltése: firmware.wadamesh.com
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Kapcsold be a Wi-Fit, majd frissíts. A már telepített appok működnek.
+Installing…	Telepítés…
+Install failed (network?)	A telepítés nem sikerült (hálózat?)
+Downloading…	Letöltés…
+Download failed (network?)	A letöltés nem sikerült (hálózat?)
+Downloaded - tap Use to switch	Letöltve - a váltáshoz koppints a Használ gombra
+Hidden - turn it back on in the Lua Store	Elrejtve - a Lua Store-ban kapcsolhatod vissza
+Hide this app from the drawer?	Elrejted ezt az appot a menüből?
+Show in the app drawer	Megjelenítés az appmenüben
+Your own apps	Saját appok
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Váltáshoz koppints a Használ gombra - az eszköz újraindul. A nyelvi fájlok a tároló /lang mappájában vannak; szerkesztheted őket vagy hozzáadhatod a sajátodat.
+Do Not Disturb	Ne zavarj
+Do Not Disturb on	Ne zavarj bekapcsolva
+Do Not Disturb off	Ne zavarj kikapcsolva
+Start time	Kezdés
+End time	Befejezés
+Off	Ki
+Turn off	Kikapcsol
+Off\n1\n2\n3\n5\n8	Ki\n1\n2\n3\n5\n8
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nNincs korlát
+Keep per chat (messages)	Megőrzés csevegésenként (üzenet)
+History limit off	Előzménykorlát kikapcsolva
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Ezen túl a régebbi üzenetek törlődnek. A nagyon nagy vagy korlátlan előzmény lassítja a csevegőlistát.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Kikapcsolod az előzménykorlátot?\n\nEgy forgalmas csatorna így megtöltheti a teljes üzenettárat, ami több helyet foglal, és érezhetően lassítja a csevegőlistát és az appot. Csak akkor tedd, ha tényleg kell a teljes előzmény.
+Chat save fallback (failed tries)	Csevegésmentés tartalék (hibás próbák)
+Connect to Wi-Fi first	Előbb csatlakozz Wi-Fihez
+Connect to Wi-Fi to get a browser address.	Csatlakozz Wi-Fihez, hogy böngészőcímet kapj.
+Connected - a browser is viewing this screen.	Kapcsolódva - egy böngésző nézi ezt a képernyőt.
+Control this device from a browser	Vezéreld az eszközt böngészőből
+Enable web access	Webes hozzáférés bekapcsolása
+Open in a browser (same Wi-Fi):	Nyisd meg böngészőben (azonos Wi-Fi):
+On - open the address above in a phone browser.	Bekapcsolva - nyisd meg a fenti címet a telefon böngészőjében.
+Scan to open on phone	Olvasd be a telefonos megnyitáshoz
+Then pick a mode:	Majd válassz módot:
+Remote access	Távoli hozzáférés
+Remote UI	Távoli felület
+Remote UI (on)	Távoli felület (be)
+Remote terminal	Távoli terminál
+Remote terminal (recommended)	Távoli terminál (ajánlott)
+Remote terminal off	Távoli terminál kikapcsolva
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Csevegések, névjegyek, beállítások és mesh-terminál - mind a böngészőben. Nincs újraindítás; az eszköz képernyője változatlan marad.
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Élő képként közvetíti az eszköz képernyőjét, amelyre koppintva vezérelhetsz. Nehezebb; a panelen helykitöltő látszik. A váltás újraindítja az eszközt.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Kapcsold be, majd nyisd meg az alábbi címet bármely böngészőben ugyanazon a Wi-Fin - app nem kell. Az eszköz képernyője élőben jelenik meg a böngészőben, és koppintással vezérelheted.
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Amíg be van kapcsolva, a Wi-Fi hálózatodon bárki láthatja és vezérelheti az eszközt. Sima HTTP-t használ (csak helyi hálózat).
+Entering remote mode - rebooting...	Távoli módba lépés - újraindítás...
+Leaving remote mode - rebooting...	Kilépés a távoli módból - újraindítás...
+Changing orientation - rebooting...	Tájolásváltás - újraindítás...
+Rotating - reconnecting...	Forgatás - újracsatlakozás...
+Landscape (desktop)	Fekvő (asztali)
+Landscape set - applies when remote mode starts.	Fekvő beállítva - a távoli mód indulásakor lép életbe.
+Portrait set - applies when remote mode starts.	Álló beállítva - a távoli mód indulásakor lép életbe.
+Waiting for Wi-Fi...	Várakozás Wi-Fire...
+GPS: searching	GPS: keresés
+No system time yet	Még nincs rendszeridő
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Még nincs pozíció. A hidegindításhoz szabad égbolt kell, és több percig is tarthat.
+Contacts are saved to the SD card.	A névjegyek az SD-kártyára mentődnek.
+Contacts are on internal flash.	A névjegyek a belső tárolón vannak.
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	A névjegyek a belső tárolón vannak - az SD-kártya nem csatolódott induláskor. Helyezd be újra a kártyát, és indítsd újra.
+Keyboard light on	Billentyűzetfény be
+Keyboard light off	Billentyűzetfény ki
+Keyboard light auto	Billentyűzetfény auto
+Locks when screen off\n(hold Backspace to unlock)	Zárol képernyőkikapcsoláskor\n(feloldás: Backspace nyomva tartása)
+hold Backspace to unlock	feloldás: tartsd nyomva a Backspace-t
+Retry sends until heard	Újraküldés, míg meg nem hallják
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Addig küldi újra az üzenetet, míg egy ismétlő vissza nem sugározza vagy a címzett nem nyugtázza. Kikapcsolva csak egyszer küld.
+External antenna selected	Külső antenna kiválasztva
+Per-transmit switching on	Adásonkénti váltás bekapcsolva
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Belső (beépített)\nKülső (MMCX)\nAuto (régi, adásonként)
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	Újraindítás után mindig a beépített antennával indul. Csak akkor válassz Külsőt, ha tényleg van antenna a külső aljzatban.
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Váltasz a külső antennára?\n\nElőbb győződj meg róla, hogy tényleg van antenna a külső aljzatban. Antenna nélkül adni károsíthatja a rádiót.\n\nMinden újraindításkor visszaáll a beépített antennára.
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Bekapcsolod a régi adásonkénti váltást?\n\nDiagnosztikai mód, csak összehasonlításra. A beépített antennán ad és a külsőn hallgat, így a kimenő jeled sokkal gyengébb lesz a bejövőnél.\n\nMinden újraindításkor visszaáll a beépített antennára.
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Ezen az eszközön nincs Bluetooth-párosítás.\n\nA rádiócsip gyári firmware-e nem támogatja.\n\nPárosítsd a telefonos appot Wi-Fin: csatlakoztasd az eszközt a hálózatodra, majd add hozzá az appban IP-cím szerint (TCP, 5000-es port) — a Beállítások > Hálózat alatt látható. USB is működik.
+Updated - rebooting…	Frissítve - újraindítás…
+Install	Telepít
+Save report	Jelentés mentése
+Set	Beállít
+Stop	Leállít
+Map	Térkép
+Mark as read	Olvasottnak jelöl
+Share secret	Titok megosztása
+Region & scope	Régió és hatókör
+Chat icon	Csevegésikon
+Delete history	Előzmények törlése
+Log in again	Újra bejelentkezés
+Reset path	Útvonal visszaállítása
+Search	Keresés
+Auto-add settings	Automatikus hozzáadás beállításai
+Blocked list	Tiltólista
+Open in web	Megnyitás a weben
+Create QR	QR készítése
+Power off	Kikapcsolás
+Download mode	Letöltési mód
+(device behind)	(eszköz lemaradt)
+Copy internal data to SD	Belső adatok másolása SD-re
+Language updated - restarting to apply it…	Nyelv frissítve - újraindítás az alkalmazáshoz…
+Restarting to apply the language…	Újraindítás a nyelv alkalmazásához…
+Download failed	A letöltés nem sikerült
+Flood	Szórás
+Zero-hop	Nulla ugrás
+Share QR	QR megosztása
+Search contacts	Névjegyek keresése
+Go	Mehet
+Play	Lejátszás
+Set as notification sound	Beállítás értesítési hangnak
+Set as wallpaper	Beállítás háttérképnek
+Probe now	Mérés most
+On map	Térképen
+Install update	Frissítés telepítése
+Save update bin to SD	Frissítés mentése SD-re
+Choose .wav from files	.wav választása a fájlokból
+Power	Energia
+Clear history	Előzmények törlése
+New game	Új játék
+System info	Rendszerinfó
+Logs	Naplók
+Bluetooth	Bluetooth
+MQTT bridge	MQTT híd
+Lua Store	Lua áruház
+Import	Importálás
+Type a URL, then Go	Írj be egy URL-t, majd Mehet
+Small\nMedium\nLarge	Kicsi\nKözepes\nNagy
+Off\n1 day\n2 days\n3 days\n7 days	Ki\n1 nap\n2 nap\n3 nap\n7 nap
+Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours	Ki\n60 perc\n90 perc\n2 óra\n3 óra\n4 óra
+h  to	ó  →
+min (0=off)	perc (0=ki)
+LOS → %s	Rálátás → %s
+%s · %d nearby (%d rpt, %d comp)	%s · %d közeli (%d ism, %d társ)
+#7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: várakozás GPS-jelre…#
+#7A7F87 Wardrive: …#	#7A7F87 Wardrive: …#
+#7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d lefedettségi pont · %lu mentve SD-re#
+MHz	MHz
+kHz	kHz
+SF	SF
+CR	CR
+TX	TX
+AF	AF
+BT	BT
+GPS	GPS
+DND	DND
+Wi-Fi	Wi-Fi
+#region	#region
+>_  Terminal	>_  Terminal
+Remove channel	Csatorna eltávolítása
+Delete chat	Csevegés törlése
+Open chat	Csevegés megnyitása
+Message	Üzenet
+Ping	Ping
+Telemetry	Telemetria
+Trace SNR	SNR nyomkövetés
+Admin	Adminisztráció
+Range test	Hatótáv-teszt
+Sightline	Rálátás
+Block	Tiltás
+Ack	Nyugta
+Info	Infó
+Files	Fájlok
+Control	Vezérlés
+Community Preset	Közösségi profil
+Signal probe	Jelmérés
+Auto advert	Automatikus hirdetés
+LoRa antenna (P4)	LoRa antenna (P4)
+Create a private channel	Privát csatorna létrehozása
+Join a private channel	Csatlakozás privát csatornához
+Join the public channel	Csatlakozás a nyilvános csatornához
+Join a hashtag channel	Csatlakozás hashtag csatornához
+Channel table is full.	A csatornatábla megtelt.
+Wi-Fi & Bluetooth	Wi-Fi és Bluetooth
+Step 1 of 3	1. lépés a 3-ból
+Step 2 of 3	2. lépés a 3-ból
+Step 3 of 3	3. lépés a 3-ból

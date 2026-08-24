@@ -1,0 +1,17 @@
+# beta_55 - settings that stay put, fast SD boots, Pager text sizes, R8 sound
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Reliability (community) -----------------------------------------------------------
+Settings can no longer silently reset themselves. An interrupted settings write could truncate the settings file - the sound toggle turning itself back on, the setup wizard reappearing, a mystery #unknown channel. Settings now save through paired snapshots with checksums, written in the background: a torn write can only lose the very last change, never your configuration. By @PixPMusic (#195, #196).
+Settings changes also no longer cause interface hitches - saves happen off the interface thread.
+Note if you downgrade after running this build: the older firmware reads the settings file which can be one save behind.
+Fixed the 3-minute boot with an SD card inserted (T-Deck, mostly Launcher installs). A card that woke up at a low speed kept that speed for the whole session, so contacts and history loaded at ~25 KB/s - and the file manager showed the card as 0KB/empty. The mount now raises the clock back to full speed after a slow wake, the standard way. Thanks to scsirob for the report and testing (#194).
+
+# --- T-Pager (community) ---------------------------------------------------------------
+New UI size presets for the T-Pager: Small (current look, default), Medium and Large - bigger text without pushing controls off the short screen, with encoder scrolling for tall content. By @PixPMusic (#197). Please try Medium/Large and report anything that clips.
+
+# --- Heltec V4-R8 -----------------------------------------------------------------------
+The buzzer works. The Expansion Kit V2's buzzer sat behind a driver chip whose wiring was unconfirmed, so it shipped disabled - R8 users have never heard a chime. Heltec's schematic settled it. If it is still silent on your kit, check the small SW1 switch on the expansion board: it is a hardware mute.
+
+# --- General ----------------------------------------------------------------------------
+Long-pressing the GPS tile in the control centre now opens the GPS settings page instead of the radio page.

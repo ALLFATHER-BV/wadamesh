@@ -39,16 +39,8 @@
   #define CAP_TOUCH        0   // no touchscreen — keyboard + rotary encoder nav only
   #define CAP_ROTATABLE    0   // fixed 480x222 landscape via hardware MADCTL rotation
   #define CAP_LARGE_SCREEN 0   // native 480x222, no UI upscaling
-  // CAP_SD/CAP_FILESYSTEM are 0 despite the hardware having a microSD slot:
-  // the code these caps gate (fmSdTryMount(), the #include <SD.h> block, the
-  // file manager's SD-vs-FFat backend selection) is still hardcoded to
-  // HAS_TDECK_GT911/HAS_TANMATSU specifically, never migrated to be CAP_SD-
-  // generic — turning these on here just hits "SD"/"CARD_NONE"/"fmSdTryMount"
-  // undeclared, not real SD support. A real mount needs pager-specific wiring
-  // (CS 21, its own shared-SPI helper), which is unscheduled follow-up work,
-  // not part of this milestone.
-  #define CAP_SD           0
-  #define CAP_FILESYSTEM   0
+  #define CAP_SD           1   // microSD on the shared display/radio SPI bus
+  #define CAP_FILESYSTEM   1   // browsable filesystem (the SD card)
   #define CAP_GPS          1   // u-blox MIA-M10Q
   #define CAP_OTA          1   // dual-OTA partition layout, same shape as the T-Deck
   #define CAP_LOCK_SCREEN  1
@@ -93,12 +85,23 @@
   // HELTEC_LORA_V4_TFT to reuse all its UI code); the deltas are 8 MB octal
   // PSRAM (→ web browser) and a micro-SD slot on the Expansion Kit V2.
   #define CAP_TOUCH        1   // CHSC6x capacitive touch (Expansion Kit V2)
-  #define CAP_ROTATABLE    1   // user can flip portrait/landscape
+  // Rotation is OFF until a tester verifies the R8-specific landscape touch
+  // maps (HeltecV4CapTouch.cpp, TESTER-VERIFY): the boot guard at UITask.cpp
+  // ("V4-R8: force PORTRAIT at every boot") reverts any landscape pref anyway,
+  // so with 1 the Orientation control was a reboot trap that always landed
+  // back on Portrait (plus one garbled session, since the boot wordmark had
+  // already rotated the panel). Flip back to 1 together with removing that
+  // guard once landscape touch is confirmed on hardware.
+  #define CAP_ROTATABLE    0
   #define CAP_LARGE_SCREEN 0   // 240x320
   #define CAP_SD           1   // micro-SD on Expansion Kit V2 (shared TFT SPI bus, CS=3)
   #define CAP_FILESYSTEM   1   // browsable filesystem (the SD card)
   #define CAP_GPS          1
   #define CAP_OTA          1   // native dual-OTA slot
+  // 0: no unlock gesture exists yet — touch is deliberately inert while
+  // hard-locked and BOOT already wake-unlocks in the generic branch. Enabling
+  // needs a reveal+hold-to-unlock input path plus the DSEC_LOCK row gates
+  // (see UITask.cpp lockScreen()/noteUserInput) — a feature, not a cap flip.
   #define CAP_LOCK_SCREEN  0
 
 #elif defined(HAS_TDISPLAY_P4)        // ===== LilyGo T-Display P4 (ESP32-P4 + C6) =====
@@ -137,6 +140,15 @@
   #define CAP_GPS          1
   #define CAP_OTA          1
   #define CAP_LOCK_SCREEN  0
+#endif
+
+// Persisted, restart-to-apply UI-size selector. Large-screen boards already
+// expose it; the Pager adds font-only presets because its 480x222 viewport is
+// wide enough for larger type but too short for global geometry scaling.
+#if CAP_LARGE_SCREEN || defined(TLORA_PAGER)
+  #define CAP_UI_SIZE 1
+#else
+  #define CAP_UI_SIZE 0
 #endif
 
 // ---- Derived input capabilities ---------------------------------------------
@@ -182,10 +194,42 @@
   #define CAP_TRACKBALL 0
 #endif
 
+// Console mode (CONSOLE_MODE.md): a text front end drawn straight to the panel
+// with no LVGL. Needs a DisplayDriver, which every board that has a screen has,
+// so this is on wherever there is something to draw on. It does NOT imply the
+// device boots into it; that is a user pref read at startup.
+#ifndef CAP_CONSOLE
+  #if defined(DISPLAY_CLASS)
+    #define CAP_CONSOLE 1
+  #else
+    #define CAP_CONSOLE 0
+  #endif
+#endif
+
 #if defined(HAS_EXPANSION_KIT)
   #define CAP_SENSORS 1
 #else
   #define CAP_SENSORS 0
+#endif
+
+// Magnetometer readable by apps (wada.sys.compass(), caps().compass). A HARDWARE
+// gate, deliberately separate from CAP_SENSORS (the V4 expansion-kit env
+// sensors) and from the CAP_LUA_SDK_EXT memory gate: the ThinkNode M9's
+// QMC6309 is the only one wired so far (variants/thinknode_m9/M9Compass.*).
+#if defined(HAS_M9_COMPASS)
+  #define CAP_COMPASS 1
+#else
+  #define CAP_COMPASS 0
+#endif
+
+// Accelerometer readable by apps (wada.sys.accel(), caps().accel). Same kind of
+// hardware gate as CAP_COMPASS: the ThinkNode M9's QMI8658 is the only one
+// driven so far (variants/thinknode_m9/M9Imu.*). Its point is tilt — a 2-axis
+// magnetic heading is wrong by ~1.5 degrees per degree of tilt at mid latitudes.
+#if defined(HAS_M9_IMU)
+  #define CAP_IMU 1
+#else
+  #define CAP_IMU 0
 #endif
 
 #if defined(HAS_CC_BRIGHTNESS)
@@ -221,12 +265,8 @@
 // Per-event WAV notification sounds + the file-browsing sound picker. This is
 // deliberately NOT the same thing as CAP_SD/CAP_FILESYSTEM: it only means
 // "can browse and play WAV files for notifications." Both the T-Deck and the
-// pager can now pick a WAV from a real SD card too (their sound pickers write
-// an "sd:"-prefixed pref, UITask.cpp's wavOpen()/fmOpenAudio()) -- but the
-// pager's CAP_SD/CAP_FILESYSTEM stay 0 (see the comment on those above): that
-// SD support was added by widening the specific file-manager/WAV-picker call
-// sites individually (`|| defined(TLORA_PAGER)`), not by flipping the macros,
-// since CAP_SD also gates ~30 unrelated, still-pager-deferred features.
+// Pager provide that audio path; other boards may expose a filesystem without
+// having compatible notification-sound hardware.
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
   #define CAP_SOUND_FILES 1
 #else
@@ -243,4 +283,79 @@
   #define CAP_WEB_BROWSER 0   // 2 MB V4: TLS handshake can't fit
 #else
   #define CAP_WEB_BROWSER 1   // 8 MB boards incl. the V4-R8
+#endif
+
+// ---- Lua app host (LUA_APPS.md) --------------------------------------------
+// Sandboxed Lua 5.4 apps from the store catalog. Board-agnostic by design: the
+// VM costs +96 KB flash and allocates exclusively from PSRAM (256 KB/app cap),
+// so every touch board carries it. Opt out per-board above (define it 0 in the
+// board's block) only if a flash ceiling ever demands it.
+#ifndef CAP_LUA_APPS
+  #define CAP_LUA_APPS 1
+#endif
+
+// ---- Extended Lua SDK ------------------------------------------------------
+// The BASE SDK (drawing, timers, key/value store, read-only mesh + radio stats,
+// http_get) is board-agnostic and ships everywhere CAP_LUA_APPS is on.
+//
+// The EXTENDED SDK is the part with real running cost, and it is gated:
+//   wada.sys.battery/gps/sensors   live device state
+//   wada.fs.*                      scoped file read/write/list under /apps
+//   wada.net.http_post + wifi_scan
+//   wada.mesh.send + on_message    the only WRITE path into the mesh
+//   wada.ui.input/list + on_key    text entry, lists, key events
+//
+// Why it is not everywhere: these add per-app RAM (an inbound message queue, a
+// scan buffer, retained Lua callbacks) and invite apps that hold buffers and do
+// I/O. The 2 MB-PSRAM Heltec V4 already runs at ~95% internal RAM with Wi-Fi up
+// — the same headroom problem that gates CAP_WEB_BROWSER and forces
+// CAP_BUILTIN_LANGS there — so it gets the base SDK only.
+//
+// TO GATE A FUTURE LOW-RESOURCE BOARD, pick either:
+//   * define WADA_LOW_RESOURCE_BOARD in the board's block  (also gates future extras), or
+//   * define CAP_LUA_SDK_EXT 0 in the board's block        (gates only this)
+// Apps must feature-detect with wada.sys.caps().sdk_ext rather than assume.
+#ifndef CAP_LUA_SDK_EXT
+  #if !CAP_LUA_APPS || defined(WADA_LOW_RESOURCE_BOARD) || \
+      (defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8))
+    #define CAP_LUA_SDK_EXT 0   // 2 MB V4 (and anything marked low-resource)
+  #else
+    #define CAP_LUA_SDK_EXT 1   // 8 MB boards incl. the V4-R8
+  #endif
+#endif
+
+// Read-only access to a physical SD card's directory tree from Lua. This first
+// pass follows the existing shared-SPI Arduino SD lifecycle; P4 SD_MMC needs its
+// own removal/recovery contract before it can safely expose the same API.
+#ifndef CAP_LUA_SD_LIST
+  #if CAP_LUA_SDK_EXT && CAP_SD
+    #define CAP_LUA_SD_LIST 1
+  #else
+    #define CAP_LUA_SD_LIST 0
+  #endif
+#endif
+
+// Compile the translations into the image (i18n_builtin.h, generated from
+// deploy/apps/lang/*.lang) instead of relying on downloading a .lang file.
+// ON for boards where the Lua Store is not dependable — the V4 runs at ~95%
+// internal RAM with Wi-Fi up, so its net worker and the store are fragile and
+// it would otherwise be stuck on English. Costs ~400 KB of FLASH, no RAM.
+#ifndef CAP_BUILTIN_LANGS
+  #if defined(HELTEC_LORA_V4_TFT) || defined(HELTEC_LORA_V4)
+    #define CAP_BUILTIN_LANGS 1
+  #else
+    #define CAP_BUILTIN_LANGS 0
+  #endif
+#endif
+
+// Ship the catalog's Lua apps inside the image (lua_builtin.h, generated from
+// out/firmware/apps/) so a board that cannot reach the Lua Store still has
+// them in the drawer. A downloaded <data>/apps/<id>.lua always wins, because
+// luaAppLaunchFile() is file-first. Costs ~10 KB of FLASH, no RAM.
+#ifndef CAP_BUILTIN_LUA_APPS
+  #if defined(HELTEC_LORA_V4_TFT) || defined(HELTEC_LORA_V4)
+    #define CAP_BUILTIN_LUA_APPS 1
+  #else
+    #define CAP_BUILTIN_LUA_APPS 0
+  #endif
 #endif

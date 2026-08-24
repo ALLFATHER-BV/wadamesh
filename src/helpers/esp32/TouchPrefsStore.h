@@ -13,6 +13,11 @@ void touchPrefsBegin();
 // Force a fresh load of the settings blob. Call after SdNvsPrefs::useFile() at
 // boot: an earlier pref read may have cached the blob from the legacy backend.
 void touchPrefsReload();
+// Drive/force the deferred file-backed snapshot writer without exposing the
+// vendored core's stale SdNvsPrefs header to UI translation units.
+void touchPrefsTick(uint32_t now_ms);
+bool touchPrefsFlush(uint32_t timeout_ms = 12000);
+bool touchPrefsIoBusy();
 
 /** Screen timeout in seconds; 0 = never sleep. Default 20. */
 uint16_t touchPrefsGetScreenTimeoutSecs();
@@ -70,6 +75,10 @@ bool touchPrefsSetWebTerminal(bool on);
 /** UI language index (UiLang enum in i18n.h; 0 = English). Read at boot. */
 uint8_t touchPrefsGetUiLang();
 bool    touchPrefsSetUiLang(uint8_t lang);
+/** File-language code ("" = none). When set, translations load at boot from
+ *  <data>/lang/<code>.lang and overlay the built-in table (ui_lang = fallback). */
+void    touchPrefsGetLangFile(char* out, size_t cap);
+bool    touchPrefsSetLangFile(const char* code);
 
 /** User-configurable quick-reply macros: up to 6 short strings the user can
  *  drop into the composer with a single tap (e.g. "ok", "on the way",
@@ -94,7 +103,7 @@ bool touchPrefsGetUseMiles();
 bool touchPrefsSetUseMiles(bool use_miles);
 
 /** Map tile source: false = tile server + on-device cache (default), true = read tiles off the
- *  microSD card (/tiles/<z>/<x>/<y>.jpg). T-Deck only (the V4 TFT has no SD slot). */
+ *  microSD card (/tiles/<z>/<x>/<y>.jpg). Supported and persisted on T-Deck and T-Pager. */
 bool touchPrefsGetTilesFromSd();
 bool touchPrefsSetTilesFromSd(bool from_sd);
 
@@ -146,8 +155,8 @@ bool touchPrefsSetAppGridLarge(bool on);
 bool touchPrefsGetSleepIdle();
 bool touchPrefsSetSleepIdle(bool on);
 
-/* UI resolution scale (Tanmatsu): 0=100% (native 800x480), 1=150%, 2=200%. Applied at boot —
- * LVGL renders at a lower resolution and the flush upscales to the panel. Reboot to apply. */
+/* UI-size preset. Large-screen boards retain their 0..2 percentage mapping;
+ * the T-Pager exposes four 0..3 semantic font presets. Reboot to apply. */
 uint8_t touchPrefsGetUiScale();
 bool    touchPrefsSetUiScale(uint8_t scale);
 
@@ -182,6 +191,10 @@ bool    touchPrefsSetMsgFlash(bool on);
 
 /* Advertise on boot (#76): fire one flood self-advert ~6s after boot so peers with auto-add on
  * refresh our pubkey (useful after a reflash wiped storage). Opt-in, default off. All boards. */
+bool    touchPrefsGetConsoleMode();   // boot into the LVGL-free console (CONSOLE_MODE.md)
+bool    touchPrefsSetConsoleMode(bool on);
+bool    touchPrefsGetConsoleMonitor();      // console: show incoming messages live
+bool    touchPrefsSetConsoleMonitor(bool on);
 bool    touchPrefsGetBootAdvert();
 bool    touchPrefsSetBootAdvert(bool on);
 
@@ -195,6 +208,10 @@ bool    touchPrefsSetCompactChat(bool on);
  * (the missed-messages class). Opt-in, default off = stock receive path. */
 bool    touchPrefsGetRxQueue();
 bool    touchPrefsSetRxQueue(bool on);
+uint32_t touchPrefsGetAppHide();       // v46: app-drawer hide bitmask (Store page toggles)
+bool     touchPrefsSetAppHide(uint32_t mask);
+bool    touchPrefsGetRetryEcho();      // v44/v45: auto-retry sends until echoed/ACKed (opt-in)
+bool    touchPrefsSetRetryEcho(bool on);
 uint32_t touchPrefsGetClockFloor();               // monotonic send-timestamp floor (#89)
 bool    touchPrefsSetClockFloor(uint32_t epoch);  // only ever grows; no-op below current
 
@@ -384,6 +401,12 @@ void    touchPrefsSetDiscoveredAutoEvict(bool on);
 uint8_t touchPrefsGetDiscoveredMaxHops();      // auto-delete discovered nodes heard via more hops than this (0 = off)
 void    touchPrefsSetDiscoveredMaxHops(uint8_t hops);
 bool    touchPrefsGetSoundMentions();          // default true
+// Spam filter: drop incoming messages whose body is one character (#spam). Default OFF.
+// Map: most contact dots drawn at once. 0 = no limit (default).
+uint16_t touchPrefsGetMapMarkerCap();
+void     touchPrefsSetMapMarkerCap(uint16_t n);
+bool    touchPrefsGetIgnoreTinyMsgs();
+void    touchPrefsSetIgnoreTinyMsgs(bool on);
 void    touchPrefsSetSoundMentions(bool on);
 bool    touchPrefsGetSoundDirect();            // direct/DM chime on/off, default true
 void    touchPrefsSetSoundDirect(bool on);

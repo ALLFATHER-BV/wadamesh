@@ -1,0 +1,24 @@
+# beta_59 - Lua apps and the Store: apps and languages are now downloadable
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- The headline ---------------------------------------------------------------------
+WADAMESH now runs apps written in Lua. They install from a Store on the device, appear in the app drawer next to the built-ins, and update over the air without reflashing the firmware. The whole system ships in this one beta: the runtime, the API, the Store, and the first apps converted to it.
+Store lives in the app drawer and has three tabs. Apps lists what you can install, update or remove. Built-in lets you hide the stock apps you never use, so the drawer holds what you actually reach for. Languages downloads translations.
+RF Monitor and Airtime are now Lua apps rather than firmware pages, and they gained things the native versions never had along the way: RF Monitor scrolls through the full packet list, Airtime has proper Y-axis labels and a Reset button. Snake is a Lua app too. Removing one now really removes it, and reinstalling brings it back with your scores intact.
+You can write your own. Drop a bare .lua file into /apps/ on the card and it shows up in the drawer, no manifest needed. The API reference is at wadamesh.com/sdk.html - about thirty functions covering the screen, input, read-only mesh data, an HTTP fetch and a little storage.
+
+# --- Languages are files now -----------------------------------------------------------
+Translations are no longer baked into the firmware. They download from the Store's Languages tab as versioned files, which means a translation can be fixed and shipped without waiting for a firmware release - the device offers Update when a newer one exists.
+Every language got a full sweep. Around 150 strings that had quietly stayed English for months - the channel settings sheets, the message menus, most buttons - are translated now, across all 13 languages.
+Settings > Language opens the Languages tab directly, and switching one tells you it is restarting before it does, instead of rebooting under your finger.
+
+# --- Heltec V4 -------------------------------------------------------------------------
+The V4 has 2 MB of PSRAM and very little free internal memory, which made the Store unreliable there. It now ships every language and every catalog app inside the firmware image, so the apps are in the drawer on first boot and all 13 languages are already installed. Its Store is a picker rather than a shop.
+Around 17 KB of internal memory reclaimed on the V4, measured step by step: the store and Discover tables moved out of static memory, and the allocator now puts ordinary allocations in PSRAM instead of forcing everything under 4 KB into internal RAM.
+
+# --- Fixes -----------------------------------------------------------------------------
+"Save update bin to SD" works again. It failed with "SD write failed" at 1-7% on every T-Deck, and had been broken since the feature shipped in beta_36. The download buffer sat in PSRAM, which the SD card cannot reliably read from directly, so the write died partway through at a point that moved around with the network. Nothing to do with card size or formatting. Reported by Marshal W7TER, df2080 and Dennis.
+The same defect is fixed in two other places it had not been noticed yet: copying any file to the SD card from the Files app, and exporting a crash dump.
+The Store fits narrow and high-DPI screens properly. Cards measure their own text instead of assuming two lines, so nothing is cut off and a long title no longer lands on top of the description - this also fixes every board for languages whose text runs longer than the English.
+Installing an app or a language shows a spinner on the button for the whole download instead of a brief message, so a slow connection no longer looks like the tap did nothing.
+Opening the app drawer and the Store is quicker - the card was being re-scanned on the UI thread every single time the drawer opened.

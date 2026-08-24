@@ -1,0 +1,30 @@
+# beta_64 — test build. Stable stays beta_63.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- The big one: the Heltec V4 freeze, properly this time --------------------------------
+Heltec V4 units that freeze when a new contact arrives should be markedly better. beta_62 moved one storage delete off the packet path and that helped, but a reporter came back with the tell that mattered: the freezes got rarer AND longer. Rarer was the fix working; longer was the half nobody had measured.
+Here is what was actually costing the time. A contact record is 152 bytes and the table holds up to 2000 of them, so saving contacts rewrote the entire 304 KB file on every single change - and the crash-safe write keeps a second copy of the same size alongside it while it swaps. Roughly 600 KB of flash churn because one contact changed. On a board with no card that lands on internal flash, and its garbage collection suspends the flash cache, which stalls both CPU cores at once. That is why the whole device went away rather than just dropping a packet.
+The table never actually changes in bulk. Replacing the oldest contact overwrites one slot, and hearing from a node you already know touches one entry. So the firmware now compares each record against what is already stored and writes back only the ones that differ. A new contact replacing an old one writes 152 bytes instead of 304,000, and a save with nothing to change writes nothing at all.
+Because that is a new way of writing the file, it checks its own work: every patched record is read back and compared, and on any disagreement the firmware falls back to the old whole-file write instead. Your contact list cannot end up half-written by the new path.
+Contact deletes that overflowed the queue used to leak their stored record permanently. Fixed, and the queue is four times deeper.
+About > System info gained a Contact store section: how many contacts, how much space they use, how full internal flash is, and what the last save cost. If you report a freeze, that panel is the useful photograph.
+
+# --- Apps can do much more now -------------------------------------------------------------
+Lua apps gained a substantially larger toolkit: the real date and time, the buzzer, battery state, GPS position, a scoped and rate-limited private folder each, hardware key presses, and the ability to send mesh messages and receive replies.
+Anything that reaches outside an app now asks you first, per app, once. Sending mesh messages and reading incoming messages are separate permissions, so granting one does not grant the other, and refusing is remembered rather than nagged.
+New page: Settings > App permissions. Every installed app and exactly what it may do, with a switch to revoke anything you granted. Granting happens where the app asks for it; this page is for reviewing and taking it back.
+The extended toolkit is limited to boards with the memory to carry it, so the Heltec V4 keeps its resources for the mesh. Apps see which features exist and can adapt.
+A "SDK Test" app is in the Store. It exercises every new call and reports pass or fail per line - useful if you are writing apps, or if you want to check your own board.
+
+# --- Fixes ------------------------------------------------------------------------------------
+Accented and non-Latin characters showed as empty boxes in the grey hint text inside empty text fields - the Wi-Fi password box, the MQTT bridge fields, and about two dozen others. They render properly now, in every language.
+A translated line whose placeholders do not match the English original is ignored instead of used. A mismatch there let a language file crash the device, and language files now download from the Store, so this closes that off for good - including for files you write yourself.
+Messages on a channel could be silently dropped when an unused channel slot happened to match first. Channel sends also match by name at the moment of transmission, so a message can no longer go out encrypted to the wrong channel.
+The Store no longer jumps back to the top while you are scrolling it.
+"Overwrite oldest" now says plainly that favourites are never overwritten.
+A companion app can opt into receiving the full radio log over Bluetooth.
+More of the interface is translatable: the Discovered and Contacts sort menus, and the traffic panel.
+
+# --- Community ------------------------------------------------------------------------------
+Pager keyboard shortcuts, portrait layout fixes, a theme-matching Wi-Fi icon and Heltec UI tweaks (oumike, PR #263).
+Thanks to Yoss101 and pisti87, whose reports drove the contact-store work - particularly Yoss101 for coming back to say a fix had only half worked, which is the report that found the rest of it. Thanks to pisti87 also for the character-rendering reports, including finding the last text field with boxes in it.

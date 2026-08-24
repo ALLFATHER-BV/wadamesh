@@ -1,0 +1,27 @@
+# beta_67 — test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Lua apps: PLEASE TEST THIS ONE ---------------------------------------------------------
+Apps can now hold a whole conversation, not just post to a channel. New: send a direct message to a contact, post to a room server, list the channels configured on the device, and receive incoming messages tagged as channel, dm or room. This is the largest change to the app SDK so far and it is the part of this build most in need of real testing, especially by anyone writing an app.
+Permissions went from two to four, split the way the risk actually splits: post to channels as me, read channel messages, send private messages as me, read private messages. Posting to a channel you are already in is not the same act as writing to one person as you, and channel traffic is not your private conversations, so each is granted separately. Settings > App permissions lists all four per app and takes any of them back.
+Fixed along the way: granting one permission used to silently revoke another, because the grant wrote the whole permission set rather than the single switch. With one permission that never showed; with four it would have been constant.
+Also fixed: apps could only ever be handed channel messages. The delivery hook ran before the sender and message body were worked out, so direct messages and room posts never reached an app at all. It now runs after the block and spam filters too, so an app sees exactly the messages you see.
+New wada.crypto: SHA-1, SHA-256 and both HMACs, plus hex. Doing a HMAC in pure Lua does not fit inside the per-callback instruction budget, which is what an app author hit while writing a one-time-password app. The chip already carries the crypto library, so the same work is now microseconds instead of impossible. Available on every board, including the ones that do not get the rest of the extended toolkit, because it only computes over data the app already has.
+The SDK documentation at wadamesh.com/sdk.html covers all of the above, including why the permissions are split four ways and why crypto is not board-gated.
+
+# --- T-Display P4 --------------------------------------------------------------------------
+The battery percentage no longer flickers between 0 and the real value. The fuel gauge shares its wiring with several other chips, so an occasional lost reading is normal; the code was treating a failed read as a genuine 0%. It now keeps the last good figure, exactly as the voltage reading always did.
+
+# --- ThinkNode M9 and Heltec V4-R8 -----------------------------------------------------------
+A large audit pass on both boards, contributed by cvhviz (PR #287) and validated on hardware. M9: navigation soft-locks fixed, including a hardware Back key that had stopped working and a permission dialog that could not be answered on a board with no touchscreen; "Store data on SD" now actually honoured, with chat history and the map tile cache following it; deep sleep really drops the power rails; and the keyboard, terminal and update paths gained the features that had been quietly limited to the T-Deck.
+Spectrum on the M9 now runs to the radio chip's specification: roughly twice as fast per sweep, correct frequency limits, and opening it mid-transmission waits rather than cutting the packet off the air.
+V4-R8: chat history and the battery log follow the SD card properly, a reboot trap in the Orientation setting is defused, and a crash when Wi-Fi associated with Bluetooth already on is fixed.
+
+# --- Fixes ------------------------------------------------------------------------------------
+Map tile packs placed in MAPS/ on the card now load. The device creates that folder and the card's own readme names it, but the tile loader only ever looked for the lower-case spelling, so following our instructions exactly could leave the map blank. Reported via pisti87 on behalf of w7aaf.
+"Save update bin to SD" now appears on every board with a card, rather than a hand-maintained list of three that left the T-Lora Pager out. Reported by oumike.
+Every screen is fully translated again: forty strings added across recent releases had never reached the language files.
+The supported-device list finally matches reality. The T-Lora Pager, Heltec V4-R8, T-Display P4 and Attaky Mesh Series all ship and none of them were listed; the Pager was still filed under boards people had requested.
+
+# --- Community ----------------------------------------------------------------------------------
+The M9 and V4-R8 audit passes are cvhviz's work (PR #287). Hungarian translations by pisti87. Thanks to wb6zsu, who measured the P4 transmit-power fix on a test set and confirmed it, and to Tiamat and Jade, whose one-time-password app is the reason wada.crypto exists.

@@ -62,6 +62,7 @@
 #endif
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
   #include <SD.h>             // microSD — T-Deck/M9 on the LoRa SPI, V4-R8 on the TFT SPI
+  #include "SdFastClock.h"    // post-mount operating-clock raise (SD_SPI_FAST_HZ boards)
   #include "sd_diskio.h"      // internal Arduino-SD drive helpers (sdcard_init / sd_*_raw)
   extern SPIClass* tdeckSharedSPI();
   // FatFs mkfs (the prebuilt ESP-IDF compiles f_setlabel OUT — FF_USE_LABEL=0 —
@@ -75,7 +76,6 @@
   #endif
 #endif
 #if defined(HAS_THINKNODE_M9)
-  extern void m9SetBacklight(bool on);
   extern SPIClass* m9SharedSPI();
 #endif
 #if defined(HAS_TDECK_GT911)
@@ -92,8 +92,9 @@
   #endif
 #elif defined(TLORA_PAGER)
   #include <SD.h>             // microSD (CS=21) on the shared radio/display SPI bus --
-                               // file manager browse + WAV picker only; no format support
-                               // this pass (see fmSdTryMount()'s comment)
+                               // storage + file manager/WAV access. No sd_diskio.h/f_mkfs
+                               // here: formatting is deliberately off on this board (the
+                               // reasons are on the format-helper guard in the file manager).
   #define PIN_SD_CS PAGER_PIN_SD_CS   // from TLoraPagerBoard.h, already visible via
                                       // MyMesh.h -> target.h -> TLoraPagerBoard.h above
   #include <driver/i2s.h>     // pager ES8311 codec (notification tones + WAV playback)
@@ -106,7 +107,9 @@
 #include <Utils.h>
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
-#include "ChannelUtil.h"      // Apps → Airtime (self-contained channel-utilization tool)
+#include "LuaHost.h"          // Lua app host (LUA_APPS.md; Phase 0 spike gate)
+#include "LuaAppHost.h"       // sandboxed Lua apps (LUA_APPS.md Phase 1; self-gated on CAP_LUA_APPS)
+
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 
 #if defined(HAS_TOUCH_UI)
@@ -119,6 +122,12 @@
     #include <helpers/input/TDeckKeyboard.h>
   #elif defined(HAS_M9_KEYBOARD)
     #include <M9Keyboard.h>
+  #endif
+  #if defined(HAS_M9_COMPASS)
+    #include <M9Compass.h>           // wada.sys.compass() source (luaHostCompass)
+  #endif
+  #if defined(HAS_M9_IMU)
+    #include <M9Imu.h>               // wada.sys.accel() source (luaHostAccel)
   #endif
   #if defined(HAS_PAGER_KEYBOARD)
     #include <helpers/input/PagerKeyboard.h>
@@ -225,6 +234,11 @@ constexpr uint16_t k_ui_history_min_version = 6;   // v4/v5 used 96-char records
 // the ring (larger, scales with MAX_UI_MESSAGES) flushes lazily every 2 s,
 // reducing flash write pressure when the ring is large.
 constexpr const char* k_ui_threads_path = "/ui_threads_v1.bin";
+// Threads-index writes go tmp+rename (same discipline as the segment compacts):
+// a truncate-in-place "w" rewrite interrupted by a hard power-cut left a short
+// file the next boot quarantine-DELETED — chat list, unread counts and DM
+// entries gone (M9 power slider = rail cut; any board on a brownout).
+constexpr const char* k_ui_threads_tmp_path = "/ui_threads_v1.bin.tmp";
 constexpr const char* k_ui_msgs_path    = "/ui_msgs_v1.bin";
 constexpr const char* k_ui_msgs_tmp_path = "/ui_msgs_v1.bin.tmp";
 // Separate temp for the SYNCHRONOUS (shutdown/reboot/no-PSRAM) writer. The
@@ -505,6 +519,13 @@ extern "C" const lv_font_t extras_lat_28;
 #if defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911)
 extern "C" const lv_font_t extras_lat_20;
 #endif
+#if defined(TLORA_PAGER)
+// Full multilingual fallbacks at the Pager's accessible text sizes. These keep
+// accented Latin, Greek, Cyrillic, Arabic, punctuation, and units aligned with
+// the enlarged Montserrat primary instead of dropping back to 12/14/16 px.
+extern "C" const lv_font_t extras_20;
+extern "C" const lv_font_t extras_24;
+#endif
 #if defined(HAS_TANMATSU)
 // Compressed Latin-accent fonts at the scaled sizes so umlauts etc. match their
 // neighbours at Large/Huge UI scale (issue #129). Room for these was made by
@@ -515,6 +536,26 @@ extern "C" const lv_font_t extras_lat_24;
 static lv_font_t g_font_12;
 static lv_font_t g_font_14;
 static lv_font_t g_font_16;
+
+// Swap a label's RESOLVED raw Montserrat for its chained twin (g_font_NN), so
+// accents, Greek, Cyrillic and Arabic reach the fallback fonts instead of
+// rendering as tofu boxes. LVGL's theme puts a font on each widget, so a label
+// that sets none of its own lands on the stock LV_FONT_MONTSERRAT_* — which has
+// no fallback chain. That is the Hungarian "Lek□rdez□s (perc)" class of bug.
+//
+// Reads what the label actually resolves to rather than assuming 14, so a label
+// inheriting a larger font from its parent keeps that size. Anything already
+// chained, or using a deliberately different font, is left alone — so this is
+// safe to call after any lv_label_create.
+static void useChainedFont(lv_obj_t* label) {
+  if (!label) return;
+  const lv_font_t* f = lv_obj_get_style_text_font(label, LV_PART_MAIN);
+  const lv_font_t* repl = nullptr;
+  if      (f == &lv_font_montserrat_12) repl = &g_font_12;
+  else if (f == &lv_font_montserrat_14) repl = &g_font_14;
+  else if (f == &lv_font_montserrat_16) repl = &g_font_16;
+  if (repl) lv_obj_set_style_text_font(label, repl, LV_PART_MAIN);
+}
 
 // Auto-shrink a single-line label's font one baked step (16 -> 14 -> 12) until its
 // text fits within max_w, so a longer translation (French/German/Russian/…) fits a
@@ -562,8 +603,8 @@ static bool emojiImgfontPathCb(const lv_font_t* /*font*/, void* img_src, uint16_
 static lv_font_t* s_emoji_font[3] = { nullptr, nullptr, nullptr };  // one per text size
 #endif
 
-// UI scale (font-based, at NATIVE resolution so it stays crisp). 100 / 130 / 160 percent — set in
-// initTouchFontFallbacks() from the saved pref. SC() scales a layout dimension to match. The bottom
+// UI size (font-based, at native resolution so it stays crisp) is set in
+// initTouchFontFallbacks() from the saved preset. SC() scales geometry where a board supports it. The bottom
 // tab bar is deliberately NOT scaled (g_font_tab stays 16 px + TABBAR_H is fixed) — by request it
 // stays the Normal size at every level.
 static int s_ui_fscale = 100;
@@ -588,12 +629,62 @@ static inline lv_coord_t PCW(int px) {
   lv_coord_t cap = lv_disp_get_hor_res(nullptr) - SC(12);
   return (cap > 0 && w > cap) ? cap : w;
 }
-#if CAP_LARGE_SCREEN
+#if CAP_UI_SIZE
 static lv_font_t g_font_tab;     // fixed 16 px tab-bar icon font (montserrat_16 + person glyph)
 #endif
 
+// Compact UI chrome (tab icons, popup close affordances, overview actions) must
+// not grow with the semantic text preset. On the Pager's 222-px-tall panel a
+// Large-preset 24-px glyph inside fixed 28/32-px controls crowds neighbouring
+// content even though the control itself has not grown. Match the deliberately
+// fixed bottom toolbar wherever UI-size presets exist.
+static inline const lv_font_t* uiChromeFont() {
+#if CAP_UI_SIZE
+  return &g_font_tab;
+#else
+  return &g_font_16;
+#endif
+}
+
+// Jumbo is deliberately the Large UI with only conversation text taken to
+// the Pager's 24-px role. Keeping this separate avoids enlarging status chrome,
+// settings, timestamps, sender labels, and the composer on the Pager's short
+// display. Compact-chat rows use the same role because the message and metadata
+// share a single LVGL label there.
+static inline const lv_font_t* chatMessageFont() {
+#if defined(TLORA_PAGER)
+  return touchPrefsGetUiScale() == 3 ? &g_font_16 : &g_font_12;
+#else
+  return &g_font_12;
+#endif
+}
+
 static void initTouchFontFallbacks() {
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  // The Pager is wide but only 222 px tall. Grow the semantic text roles while
+  // leaving SC() at 100%; globally scaling every row/card made content
+  // unreachable. Layouts that need more room are bounded individually below.
+  s_ui_fscale = 100;
+  switch (touchPrefsGetUiScale()) {
+    case 1:
+      g_font_12 = lv_font_montserrat_16;
+      g_font_14 = lv_font_montserrat_18;
+      g_font_16 = lv_font_montserrat_20;
+      break;
+    case 2:
+    case 3:   // Jumbo keeps Large chrome; chat message text is bumped separately.
+      g_font_12 = lv_font_montserrat_18;
+      g_font_14 = lv_font_montserrat_20;
+      g_font_16 = lv_font_montserrat_24;
+      break;
+    default:
+      g_font_12 = lv_font_montserrat_12;
+      g_font_14 = lv_font_montserrat_14;
+      g_font_16 = lv_font_montserrat_16;
+      break;
+  }
+  g_font_tab = lv_font_montserrat_16;
+#elif CAP_LARGE_SCREEN
   // Crisp "UI size": render bigger by swapping in larger built-in Montserrat fonts (NOT by
   // upscaling a low-res frame). g_font_12/14/16 are what the whole UI draws with, so this scales
   // every screen at once. The colour-emoji + non-Latin fallbacks stay their baked sizes (they don't
@@ -621,6 +712,14 @@ static void initTouchFontFallbacks() {
   //   (Cyrillic/Greek/Arabic). The emoji font returns false for non-emoji
   //   codepoints, so they fall straight through to the size-matched extras.
   const lv_font_t* extras[3] = { &extras_12, &extras_14, &extras_16 };
+#if defined(TLORA_PAGER)
+  switch (touchPrefsGetUiScale()) {
+    case 1: extras[0] = &extras_16; extras[1] = &extras_20; extras[2] = &extras_20; break;
+    case 2:
+    case 3: extras[0] = &extras_20; extras[1] = &extras_20; extras[2] = &extras_24; break;
+    default: break;
+  }
+#endif
 #if defined(HAS_TANMATSU)
   // At Large/Huge scale the primaries become Montserrat 20/24/28 (ASCII-only),
   // so accents dropped to the 16 px fallback and looked tiny. Splice the
@@ -638,6 +737,22 @@ static void initTouchFontFallbacks() {
   }
 #endif
   lv_font_t*       prim[3]   = { &g_font_12, &g_font_14, &g_font_16 };
+#if defined(TLORA_PAGER)
+  // LVGL lays out every glyph in a fallback chain using the primary font's
+  // line box. The generated OFL fallbacks need a taller box than Montserrat at
+  // the Pager's accessible sizes, so carry those metrics onto the primary
+  // copies. Without this, non-Latin and accented glyphs can clip and multiline
+  // input grows by too little even though the fallback bitmap itself is the
+  // requested size.
+  if (touchPrefsGetUiScale() != 0) {
+    for (int i = 0; i < 3; ++i) {
+      if (extras[i]->line_height > prim[i]->line_height) {
+        prim[i]->line_height = extras[i]->line_height;
+        prim[i]->base_line = extras[i]->base_line;
+      }
+    }
+  }
+#endif
   for (int i = 0; i < 3; ++i) {
     s_emoji_font[i] = lv_imgfont_create(16, emojiImgfontPathCb);   // 16 px baked glyphs (~15% larger; sit on the text baseline)
     if (s_emoji_font[i]) { s_emoji_font[i]->fallback = extras[i]; prim[i]->fallback = s_emoji_font[i]; }
@@ -663,7 +778,7 @@ static void initTouchFontFallbacks() {
   s_cc_icons_font = cc_icons_16;
   s_cc_icons_font.fallback = g_font_16.fallback;
   g_font_16.fallback = &s_cc_icons_font;
-#if CAP_LARGE_SCREEN
+#if CAP_UI_SIZE
   // The fixed-size tab bar font needs the person glyph too (Contacts tab icon, U+F007) at 16 px.
   static lv_font_t s_tab_person; s_tab_person = person_font; s_tab_person.fallback = nullptr;
   g_font_tab.fallback = &s_tab_person;
@@ -701,6 +816,24 @@ static void initTouchFontFallbacks() {
   g_font_14.fallback = &s_person_font14;
 }
 
+#if defined(MULTI_TRANSPORT_COMPANION)
+// Cross-core queued + in-flight tile count. This drives progress/memory gates;
+// backend ownership is tracked separately beside s_tile_fs so a queued backlog
+// does not unnecessarily delay a safe cache handoff.
+volatile uint16_t s_tile_fetch_pending = 0;
+static inline uint16_t tileFetchPendingLoad() {
+  return __atomic_load_n(&s_tile_fetch_pending, __ATOMIC_ACQUIRE);
+}
+static inline void tileFetchPendingInc() {
+  __atomic_fetch_add(&s_tile_fetch_pending, (uint16_t)1, __ATOMIC_RELEASE);
+}
+static inline void tileFetchPendingDec() {
+  const uint16_t pending = tileFetchPendingLoad();
+  if (pending > 0)
+    __atomic_fetch_sub(&s_tile_fetch_pending, (uint16_t)1, __ATOMIC_RELEASE);
+}
+#endif
+
 // ---- I2S notification sound (T-Deck MAX98357A amp / pager ES8311 codec) ----
 // Synthesized beeps and small WAV playback for UI feedback (message arrived,
 // etc), both driven over I2S. The legacy genericBuzzer (RTTTL on a digital
@@ -709,8 +842,8 @@ static void initTouchFontFallbacks() {
 // below are shared; T-Deck and the pager each get their own I2S install/
 // tone/WAV functions, since the pager additionally drives an ES8311 codec
 // over I2C that the T-Deck's plain MAX98357A DAC doesn't have.
-#if defined(HELTEC_LORA_V4_R8)
-static bool fmSdTryMount();   // V4-R8 microSD — fwd decl (defined in the mount-helper block below)
+#if defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
+static bool fmSdTryMount();   // V4-R8/M9 microSD — fwd decl (defined in the mount-helper block below; sdRestoreRun needs it)
 #endif
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
 static constexpr int kI2sSampleRate = 16000;
@@ -719,8 +852,6 @@ static constexpr i2s_port_t kI2sPort = I2S_NUM_0;
 // beeping while tiles are downloading — the I2S DMA buffers + Wi-Fi RX DMA + a
 // tile decode all contend for the scarce internal DMA RAM, and this build is
 // already tight enough that tile downloads can OOM-reboot on their own.
-extern volatile uint16_t s_tile_fetch_pending;
-
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
 static bool fmSdTryMount();   // defined far below (microSD mount)
 #endif
@@ -894,9 +1025,9 @@ static bool wavOpen(const char* prefpath, File& f) {
   if (!prefpath || !prefpath[0]) return false;
   fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)   // only the T-Deck/pager sound picker ever writes an "sd:"-prefixed pref
-  // No fmSdTryMount() here: this runs on the throwaway notify task, and walking
-  // the SD.end()+SD.begin() mount ladder from a second task races the loop
-  // task's own SD use (the one documented single-task assumption). If the card
+  // No fmSdTryMount() here: this runs on the throwaway notify task, and changing
+  // the SD VFS lifecycle from a second task races the loop task's own SD use.
+  // If the card
   // isn't mounted the open below fails fast and the chime falls back; mounting
   // is owned by boot adoption / sdHealthTick's reinsert watch / the FM paths.
   if (!strncmp(prefpath, "sd:", 3)) { fsp = &SD; fp = prefpath + 3; }
@@ -985,7 +1116,7 @@ static void tdeckNotifyTaskFn(void* arg) {
 // download (DMA-RAM contention → reboot) and won't stack itself. Caller checks the
 // sound pref.
 static void tdeckPlayNotifySlot(int slot) {
-  if (s_tile_fetch_pending > 0) return;   // don't fight the Wi-Fi/tile DMA buffers
+  if (tileFetchPendingLoad() > 0) return;   // don't fight the Wi-Fi/tile DMA buffers
   if (s_notify_playing) return;           // already chiming — don't stack tasks/I2S
   s_notify_slot = slot;
   s_notify_vol = (int)touchPrefsGetSoundVolume() * 130;   // 0..100 -> 0..13000 amplitude
@@ -998,7 +1129,7 @@ static void tdeckPlayNotifySlot(int slot) {
 }
 // Preview an arbitrary WAV (not yet saved to a slot) on the notify task.
 static void tdeckPreviewWavFile(const char* prefpath) {
-  if (s_tile_fetch_pending > 0 || s_notify_playing) return;
+  if (tileFetchPendingLoad() > 0 || s_notify_playing) return;
   strncpy(s_notify_path, prefpath, sizeof s_notify_path - 1);
   s_notify_path[sizeof s_notify_path - 1] = '\0';
   s_notify_slot = TOUCH_SND_MSG;          // if the file fails, the task plays the msg chime
@@ -1072,7 +1203,7 @@ static void pagerNotifyTaskFn(void* arg) {
 }
 
 static void pagerPlayNotifySlot(int slot) {
-  if (s_tile_fetch_pending > 0) return;
+  if (tileFetchPendingLoad() > 0) return;
   if (s_notify_playing) return;
   s_notify_slot = slot;
   s_notify_vol = (int)touchPrefsGetSoundVolume();   // 0..100 -> the codec's hw volume register
@@ -1083,7 +1214,7 @@ static void pagerPlayNotifySlot(int slot) {
   }
 }
 static void pagerPreviewWavFile(const char* prefpath) {
-  if (s_tile_fetch_pending > 0 || s_notify_playing) return;
+  if (tileFetchPendingLoad() > 0 || s_notify_playing) return;
   strncpy(s_notify_path, prefpath, sizeof s_notify_path - 1);
   s_notify_path[sizeof s_notify_path - 1] = '\0';
   s_notify_slot = TOUCH_SND_MSG;
@@ -1272,8 +1403,8 @@ struct GlobalStatusBar {
   lv_obj_t* chan_gear;      // channel-settings gear, left of the thread name (channels only)
   lv_obj_t* sig_bars[4];    // mesh signal-strength bars (lit count = last-heard SNR)
   lv_obj_t* sig_box;        // container holding sig_bars (slides over when charging hides the %)
-  lv_obj_t* inbox_add;      // chat/channel-overview actions, shown in the lower row of the
-  lv_obj_t* inbox_mark;     // DOUBLE-height bar (only on the overview): [+ add | ✓ read | QR]
+  lv_obj_t* inbox_add;      // chat/channel-overview actions: [+ add | ✓ read | QR]
+  lv_obj_t* inbox_mark;
   lv_obj_t* inbox_qr;
   lv_obj_t* chat_back;      // "‹" affordance shown while in a chat (tap the bar = close)
   lv_obj_t* fade;           // glass backdrop for the lower row in a chat/overview: top-row solid,
@@ -1295,6 +1426,10 @@ static bool s_statusbar_tall = false;
 // centred in the bar; a tap on the bar calls s_apppage_close (see statusBarTapCb).
 static const char* s_apppage_title = nullptr;
 static void      (*s_apppage_close)() = nullptr;
+// Slim variant: the page keeps the "‹ title" + tap-to-close bar behavior but the
+// bar stays ONE line — no double-height glass row (the Lua Store's tab bar sits
+// right at the top of its content, which the glass row used to sit over).
+static bool        s_apppage_slim  = false;
 #if CAP_ROUND_CORNERS
 // The round-panel bar is already two rows tall in every state — the tall personalities
 // (settings title, inbox actions, open chat) reuse the two rows rather than doubling it.
@@ -1309,9 +1444,11 @@ static void statusBarSetTall(bool tall) {
   // NOT be called from here — it calls back into statusBarSetTall = recursion.)
 }
 
+void reserveTileFetchStack();   // fwd: claim the worker stack before Wi-Fi eats the heap
+
 // ---- AppPage: the shared full-screen app-page chrome (see AppPage.h) --------------
 // Thin wrappers over the machinery just above, exported so the self-contained app
-// modules (ChannelUtil = Airtime, SnakeGame) build the same page as the in-file tool
+// modules (SnakeGame) build the same page as the in-file tool
 // pages instead of hand-rolling it against a hardcoded bar height.
 lv_coord_t appPageContentTop() { return STATUSBAR_H; }
 lv_coord_t appPageContentH()   { return (lv_coord_t)(lv_disp_get_ver_res(nullptr) - STATUSBAR_H); }
@@ -1333,7 +1470,16 @@ lv_obj_t* appPageCreateRoot(uint32_t bg_color) {
 void appPageBegin(const char* title, void (*close_fn)()) {
   s_apppage_title = title;
   s_apppage_close = close_fn;
+  s_apppage_slim  = false;
   statusBarSetTall(true);
+  updateGlobalStatusBar();
+}
+
+void appPageBeginSlim(const char* title, void (*close_fn)()) {
+  s_apppage_title = title;
+  s_apppage_close = close_fn;
+  s_apppage_slim  = true;
+  statusBarSetTall(false);
   updateGlobalStatusBar();
 }
 
@@ -1341,6 +1487,7 @@ void appPageEnd(void (*close_fn)()) {
   if (s_apppage_close != close_fn) return;   // a different page owns the bar now — leave it
   s_apppage_title = nullptr;
   s_apppage_close = nullptr;
+  s_apppage_slim  = false;
   statusBarSetTall(false);
   updateGlobalStatusBar();
 }
@@ -1442,6 +1589,16 @@ constexpr int CHAT_COMP_H      = 64;   // big screen: ~2× the typing box (60px)
 constexpr int CHAT_COMP_H      = 34;   // composer row, single line (slimmed 50 → 40 → 34; hugs the 30px textbox)
 #endif
 constexpr int CHAT_COMP_MAX_LINES = 4; // composer grows up to this many wrapped lines, then scrolls vertically
+static inline lv_coord_t chatComposerBaseH() {
+#if defined(TLORA_PAGER)
+  // Preserve the 34-px Small composer, then add enough chrome around the live
+  // font line for Medium/Large without globally scaling the short viewport.
+  const lv_coord_t need = lv_font_get_line_height(&g_font_14) + 18;
+  return need > CHAT_COMP_H ? need : CHAT_COMP_H;
+#else
+  return CHAT_COMP_H;
+#endif
+}
 // Current composer-row height. The composer wraps long text to multiple lines
 // and grows UPWARD (its bottom stays pinned, the message list above shrinks)
 // instead of horizontally scrolling a single line. The chat layout helpers
@@ -1456,6 +1613,12 @@ constexpr int CHAT_KB_H        = 130;  // on-screen keyboard (portrait)
 // 320×180 landscape).
 #if CAP_LARGE_SCREEN
 constexpr int TABBAR_H = 46;   // taller on the big 800×480 panel — room for the coloured F-key shapes
+#elif defined(HAS_THINKNODE_M9)
+// No tab bar on this board: it is tap-only chrome (navMaybeRebuild deliberately
+// never adds it to the focus group), and the M9 has no touch — the dedicated
+// HOME/MESSAGE/MAP keys and the app drawer's Chats/Contacts/Map/Settings tiles
+// cover every tab. Reclaims the row for content (user request).
+constexpr int TABBAR_H = 0;
 #else
 constexpr int TABBAR_H = 30;   // bottom nav bar (trimmed from 38; icons stay g_font_16)
 #endif
@@ -1472,14 +1635,32 @@ static inline lv_coord_t modalAvailH() { return lv_disp_get_ver_res(nullptr) - S
 // kbApplyLayoutForRotation), full CHAT_KB_H in portrait.
 static inline bool       chatLandscape() { return lv_disp_get_hor_res(nullptr) > lv_disp_get_ver_res(nullptr); }
 static inline lv_coord_t chatScreenW()   { return lv_disp_get_hor_res(nullptr); }
-// The status bar is DOUBLE height in a chat (thread name on the lower row + a centred
-// cog). chatBarH() is that full visual height (used by the channel/blocked sheets). The
-// conversation itself, though, starts just under the SOLID top row (STATUSBAR_H): the
-// bar's lower row is a translucent glass strip (see updateGlobalStatusBar) that the
-// bubbles scroll UNDER — p.msgs carries a top inset == that row so the newest content
-// still rests below the bar.
-#if CAP_ROUND_CORNERS
-static inline lv_coord_t chatBarH()      { return STATUSBAR_H; }   // fixed two-row bar, no doubling
+static inline lv_coord_t chatComposerChipSz() {
+#if CAP_LARGE_SCREEN
+  return 56;
+#elif defined(TLORA_PAGER)
+  return chatComposerBaseH() - 4;
+#else
+  return 30;
+#endif
+}
+static inline lv_coord_t chatComposerSendSz() {
+#if defined(TLORA_PAGER)
+  return chatComposerChipSz();
+#else
+  return 34;
+#endif
+}
+static inline lv_coord_t chatComposerTaW() {
+  const lv_coord_t chip = chatComposerChipSz();
+  return chatScreenW() - (2 * chip + 12) - chatComposerSendSz() - 14;
+}
+// Most boards use a DOUBLE-height status bar in a chat (thread name on the lower
+// row + a centred cog). The round panel already has two physical rows, while the
+// short Pager keeps its back/cog/title in the regular single row. chatBarH() is
+// the full visual height used by channel/blocked sheets.
+#if CAP_ROUND_CORNERS || defined(TLORA_PAGER)
+static inline lv_coord_t chatBarH()      { return STATUSBAR_H; }
 #else
 static inline lv_coord_t chatBarH()      { return (lv_coord_t)(STATUSBAR_H * 2); }
 #endif
@@ -1817,13 +1998,16 @@ static void purgeDiscovered() {
   for (int i = 0; i < DISCOVERED_MAX; ++i) s_discovered[i].used = false;
 }
 
-// ---- Persist the discovered ring across reboots (NVS blob "disc") ----
+// ---- Persist the discovered ring across reboots ---------------------------
+// High-churn discovery data has its own namespace so an advert burst never
+// rewrites the critical touch settings snapshot.
 static const char*   KDISC = "disc";   // chunk 0 (older firmware wrote ≤24 records here)
+static const char*   DISC_NS = "discovered";
+static const char*   DISC_MARKER = "ver";
 static bool          s_disc_dirty   = false;
 static unsigned long s_disc_save_at = 0;
-// Compact on-disk record (84 B/entry). SdNvsPrefs's SD .kv backend (used under
-// Launcher) silently DROPS any single value > 2048 B on load (sdLoad bails on
-// the oversize record), so we cap each stored blob at DISC_PER_CHUNK records
+// Compact on-disk record (84 B/entry). SdNvsPrefs caps one value at 2048 B, so
+// we cap each stored blob at DISC_PER_CHUNK records
 // (2 + 24*84 = 2018 B) and split the ring across as many chunk keys ("disc",
 // "disc1", …) as DISCOVERED_MAX needs. We persist only what the Discovered list
 // redraws — the bulky parts of ContactInfo (out_path[64], shared_secret, …) are
@@ -1847,6 +2031,9 @@ static void discChunkKey(int chunk, char* out, size_t cap) {
 }
 static void saveDiscovered() {
   if (!s_discovered || !discBlob()) return;
+  SdNvsPrefs prefs;
+  if (!prefs.begin(DISC_NS, false)) return;
+  prefs.putUChar(DISC_MARKER, DISC_BLOB_VER);
   int src = 0;   // walk the ring once, emitting used entries into successive chunk blobs
   for (int chunk = 0; chunk < DISC_CHUNKS; ++chunk) {
     uint8_t* p = s_disc_blob;
@@ -1870,18 +2057,23 @@ static void saveDiscovered() {
     }
     *pcount = count;
     char key[8]; discChunkKey(chunk, key, sizeof key);
-    if (count > 0) touchPrefsSetBlob(key, s_disc_blob, (size_t)(p - s_disc_blob));
-    else           touchPrefsSetBlob(key, nullptr, 0);   // clear an empty trailing chunk
+    if (count > 0) prefs.putBytes(key, s_disc_blob, (size_t)(p - s_disc_blob));
+    else           prefs.remove(key);   // clear an empty trailing chunk
   }
+  prefs.end();
   s_disc_dirty = false;
 }
 static void loadDiscovered() {
   if (!s_discovered || !discBlob()) return;
   memset(s_discovered, 0, sizeof(LvDiscoveredEntry) * DISCOVERED_MAX);
+  SdNvsPrefs prefs;
+  const bool prefs_open = prefs.begin(DISC_NS, true);
+  const bool have_new = prefs_open && prefs.isKey(DISC_MARKER);
   int dst = 0;
   for (int chunk = 0; chunk < DISC_CHUNKS && dst < DISCOVERED_MAX; ++chunk) {
     char key[8]; discChunkKey(chunk, key, sizeof key);
-    size_t got = touchPrefsGetBlob(key, s_disc_blob, DISC_BLOB_SZ);
+    size_t got = have_new ? prefs.getBytes(key, s_disc_blob, DISC_BLOB_SZ)
+                          : touchPrefsGetBlob(key, s_disc_blob, DISC_BLOB_SZ);
     if (got < 2 || s_disc_blob[0] != DISC_BLOB_VER) continue;   // missing / garbage chunk -> skip
     uint8_t count = s_disc_blob[1];
     const uint8_t* p   = s_disc_blob + 2;
@@ -1902,6 +2094,20 @@ static void loadDiscovered() {
       e.ci.gps_lat      = (int32_t)discGetU32(p);
       e.ci.gps_lon      = (int32_t)discGetU32(p);
       e.ci.shared_secret_valid = false;   // force secret recompute on first use
+    }
+  }
+  prefs.end();
+  if (!have_new) {
+    // First boot after the split: queue the new namespace but leave legacy
+    // chunks intact until a later boot proves the new snapshot is durable.
+    saveDiscovered();
+  } else {
+    // The separate snapshot survived a reboot, so the old copies are now safe
+    // to retire from the critical touch namespace.
+    for (int chunk = 0; chunk < DISC_CHUNKS; ++chunk) {
+      char key[8]; discChunkKey(chunk, key, sizeof key);
+      if (touchPrefsGetBlob(key, s_disc_blob, DISC_BLOB_SZ) > 0)
+        touchPrefsSetBlob(key, nullptr, 0);
     }
   }
 }
@@ -1937,11 +2143,11 @@ static bool discoveredSweepHops() {
 static bool g_cap_touch_hw_started = false;
 
 // ---- LVGL draw buffer ----
-// 240x24 RGB565 = 11,520 bytes. Allocated in PSRAM at UITask::begin() so the
-// internal DRAM stays free for WiFi DMA buffers (esp_wifi_init needs ~50 KB
-// of DRAM; with the buffer + LVGL widgets in DRAM the device was OOM'ing as
-// soon as WiFi came up). PSRAM is slower than DRAM but the Adafruit ST7789
-// SPI driver reads the buffer linearly which the cache handles well.
+// 240x24 RGB565 = 11,520 bytes. The T-Pager keeps this in PSRAM so Wi-Fi +
+// NimBLE connection/security allocations retain enough contiguous internal
+// DRAM. Its ST7796 flush is synchronous TFT_eSPI::pushColors (no DMA), so the
+// external-RAM source is valid. Other boards retain the faster internal-DMA
+// allocation below unless it fails.
 //
 // 1.5x the original 240x16 size — modest bump to reduce setAddrWindow
 // round-trips without giving LVGL more headroom to over-invalidate.
@@ -1962,6 +2168,10 @@ static bool g_cap_touch_hw_started = false;
 // LVGL just calls flush_cb more often.
 static constexpr int LV_DRAW_BUF_LINES = 24;
 static lv_color_t* g_draw_buffer = nullptr;
+// Operating clock of the LAST successful SD.begin() on SPI-SD boards (0 = none). Recorded at
+// every mount/remount site (main.cpp boot adoption + the two UITask mounts) because SD.begin's
+// clock is the session clock; Settings -> About reports it on the R8 (no serial console there).
+uint32_t g_sd_operating_hz = 0;
 static uint32_t    g_draw_buf_px  = 240 * LV_DRAW_BUF_LINES;   // actual buffer size in px; shrinks if the full alloc fails at boot
 #if CAP_LARGE_SCREEN
 // UI resolution scaling (Tanmatsu, no touchscreen). LVGL renders at s_lv_pw x s_lv_ph (PHYSICAL
@@ -2049,7 +2259,9 @@ static void copyUtf8ReplacingMissingGlyphs(const lv_font_t* font, char* out, siz
     }
 
     if (uiFontHasGlyph(font, cp)) {
-      for (const char* q = seq_beg; q < p && w + 1 < out_cap; ++q) out[w++] = *q;
+      // Whole sequence or nothing: a glyph split at the cap leaves invalid UTF-8.
+      if (w + (size_t)(p - seq_beg) + 1 > out_cap) break;
+      for (const char* q = seq_beg; q < p; ++q) out[w++] = *q;
     } else {
       out[w++] = '*';
     }
@@ -2178,6 +2390,14 @@ static bool g_radio_preset_cb_silent = false;
 
 static void kbMirrorSyncToReal();  // keyboard mirror strip; defined below
 
+// #161: duty% -> the core's airtime_factor (Dispatcher: duty = 1/(1+af)), clamped to the
+// core's 0..9 range (af 9 = 10% duty, the regulatory floor the UI offers).
+static float meshPresetAirtimeFactor(uint8_t pct) {
+  if (pct == 0 || pct >= 100) return 0.0f;                 // unlimited
+  float af = (100.0f / (float)pct) - 1.0f;
+  return af > 9.0f ? 9.0f : af;
+}
+
 static int findMatchingMeshRadioPreset(const NodePrefs* prefs) {
   if (!prefs) return -1;
   for (size_t i = 0; i < k_mesh_radio_preset_count; ++i) {
@@ -2187,11 +2407,32 @@ static int findMatchingMeshRadioPreset(const NodePrefs* prefs) {
     if (prefs->sf != p.sf) continue;
     if (prefs->cr != p.cr) continue;
     if (prefs->tx_power_dbm != p.tx_dbm) continue;
-    const double exp_af = static_cast<double>(p.airtime_limit_pct) / 100.0;
-    if (std::fabs(static_cast<double>(prefs->airtime_factor) - exp_af) > 0.05) continue;
+    const double exp_af = (double)meshPresetAirtimeFactor(p.airtime_limit_pct);
+    const double old_af = static_cast<double>(p.airtime_limit_pct) / 100.0;   // pre-#161 buggy write
+    const double cur    = static_cast<double>(prefs->airtime_factor);
+    if (std::fabs(cur - exp_af) > 0.05 && std::fabs(cur - old_af) > 0.05) continue;
     return static_cast<int>(i);
   }
   return -1;
+}
+
+// #161 boot heal: devices configured by the OLD preset code carry af = pct/100 (~91% duty on a
+// 10% preset). If the radio params match a preset exactly and the stored factor matches the OLD
+// buggy value (and NOT a deliberate user choice near it -- the exact-preset match is the guard),
+// rewrite it to the correct factor once and persist.
+static void healPresetAirtimeFactor() {
+  NodePrefs* prefs = the_mesh.getNodePrefs();
+  if (!prefs) return;
+  const int m = findMatchingMeshRadioPreset(prefs);
+  if (m < 0) return;
+  const MeshRadioPreset& p = k_mesh_radio_presets[m];
+  const float good = meshPresetAirtimeFactor(p.airtime_limit_pct);
+  const float bad  = (float)p.airtime_limit_pct / 100.0f;
+  if (std::fabs(prefs->airtime_factor - bad) <= 0.05f &&
+      std::fabs(prefs->airtime_factor - good) > 0.05f) {
+    prefs->airtime_factor = good;
+    the_mesh.savePrefs();
+  }
 }
 
 static void applyMeshRadioPresetFields(unsigned preset_idx) {
@@ -2209,7 +2450,10 @@ static void applyMeshRadioPresetFields(unsigned preset_idx) {
   lv_textarea_set_text(g_set_modal.cr_ta, buf);
   snprintf(buf, sizeof(buf), "%d", static_cast<int>(p.tx_dbm));
   lv_textarea_set_text(g_set_modal.tx_ta, buf);
-  const float af = static_cast<float>(p.airtime_limit_pct) / 100.0f;
+  // #161: MeshCore's airtime_factor is a TX pacing multiplier -- the core's Dispatcher runs at
+  // duty = 1/(1+af). A 10% duty limit therefore needs af = 9, NOT 0.10: the old pct/100 write
+  // configured every preset user's radio to ~91% duty (and the Home meter honestly said so).
+  const float af = meshPresetAirtimeFactor(p.airtime_limit_pct);
   snprintf(buf, sizeof(buf), "%.2f", static_cast<double>(af));
   lv_textarea_set_text(g_set_modal.airtime_ta, buf);
 }
@@ -2249,18 +2493,54 @@ static bool settingsModalIsOpen() { return g_set_modal.root != nullptr; }
 
 // Compact one-line GPS status for the Device settings panel + control center.
 // TR("GPS: off") / "GPS: searching · N sats" / "GPS: fix · N sats  <lat>, <lon>".
-static const char* gpsStatusStr() {
-  static char s[72];
-  if (!g_lv.task || !g_lv.task->getGPSState()) { snprintf(s, sizeof s, TR("GPS: off")); return s; }
-  // satellitesCount() is satellites USED IN THE FIX (0 until a lock), so during
-  // cold acquisition it stays 0 — show "acquiring…" rather than a misleading
-  // "0 sats". On lock, show the sat count + the (auto-populated) coordinates.
-  if (!g_lv.task->getGpsFix()) { snprintf(s, sizeof s, TR("GPS: acquiring...")); return s; }
+// Stamped when acquisition starts so the page can show how long it has been searching; a stuck
+// receiver is then obvious from the elapsed time alone. Cleared on fix and when GPS is off.
+static uint32_t s_gps_acq_since = 0;
+
+// compact = the top-bar dropdown, which must stay ONE line (it shares this string with the GPS
+// settings page, and a two-line version pushed the whole dropdown taller). The settings page asks
+// for the full text, where there is room to explain what is happening.
+static const char* gpsStatusStr(bool compact = false) {
+  static char s[200];
+  if (!g_lv.task || !g_lv.task->getGPSState()) {
+    s_gps_acq_since = 0;
+    snprintf(s, sizeof s, TR("GPS: off"));
+    return s;
+  }
+  // satellitesCount() is satellites USED IN THE FIX, so it reads 0 for the whole cold acquisition
+  // and a bare "0 sats" looks like a fault. All the other reachable fields (lat/lon/alt/valid) are
+  // likewise empty until a fix lands, so from up here a receiver that is happily tracking
+  // satellites and one that is not powered look EXACTLY the same.
+  //
+  // That is a real limitation, not an oversight: the core's MicroNMEALocationProvider keeps its
+  // MicroNMEA object private and LocationProvider exposes no satellites-in-view, no SNR and no
+  // HDOP. Deducing "is it alive" from the decoded GPS time does NOT work either — MicroNMEA parses
+  // RMC left to right and bails out at the EMPTY latitude field of an unfixed sentence, so it
+  // never reaches parseDate and the time stays unset until there is already a fix. So do not claim
+  // to know whether data is arriving; report the honest thing (how long it has been trying) and
+  // point at the actual remedy. The serial boot probe prints the real sky view meanwhile.
+  if (!g_lv.task->getGpsFix()) {
+    const uint32_t now = millis();
+    if (!s_gps_acq_since) s_gps_acq_since = now;
+    const uint32_t secs = (now - s_gps_acq_since) / 1000u;
+    int n = snprintf(s, sizeof s, TR("GPS: searching"));
+    if (n < (int)sizeof s) {
+      if (secs < 600) n += snprintf(s + n, sizeof s - n, " %lum%02lus", (unsigned long)(secs / 60), (unsigned long)(secs % 60));
+      else            n += snprintf(s + n, sizeof s - n, " %lum", (unsigned long)(secs / 60));
+    }
+    if (!compact && n < (int)sizeof s)
+      snprintf(s + n, sizeof s - n, "\n%s",
+               TR("No position yet. A cold start needs a clear view of the sky and can take several minutes."));
+    return s;
+  }
+  s_gps_acq_since = 0;
   const int sats = g_lv.task->getGpsSats();
+  const int alt  = g_lv.task->getGpsAltitude();
   int n = snprintf(s, sizeof s, TR("GPS: fix"));
-  if (sats >= 0 && n < (int)sizeof s) n += snprintf(s + n, sizeof s - n, " · %d sats", sats);
+  if (sats > 0 && n < (int)sizeof s)        n += snprintf(s + n, sizeof s - n, " \xc2\xb7 %d sats", sats);
+  if (!compact && alt && n < (int)sizeof s) n += snprintf(s + n, sizeof s - n, " \xc2\xb7 %d m", alt);
   if (n < (int)sizeof s)
-    snprintf(s + n, sizeof s - n, "  %.5f, %.5f",
+    snprintf(s + n, sizeof s - n, "%s%.5f, %.5f", compact ? "  " : "\n",
              g_lv.task->getNodeLat(), g_lv.task->getNodeLon());
   return s;
 }
@@ -2454,6 +2734,7 @@ static lv_obj_t* s_cc_env_label = nullptr;   // Expansion-Kit local-env line in 
 static lv_obj_t* s_cc_sys_label = nullptr;   // CPU/RAM/PSRAM/IP line; refreshed live while CC open
 static void ccBuildSysInfo(char* buf, size_t n);   // fwd-decl; defined with the CC helpers below
 static void closeControlCenter();   // defined in the control-center section below
+static void openControlCenter();    // defined in the control-center section below (early decl for the M9 CTRL key)
 static lv_obj_t* s_power_menu   = nullptr;   // power off / reboot menu (control center)
 static void closePowerMenu();               // defined in the control-center section below
 static void openPowerMenu();                // hold the red ✕ (F1) on the Tanmatsu → power off / reboot
@@ -2518,6 +2799,29 @@ static void styleCard(lv_obj_t* obj) {
   lv_obj_set_style_border_color(obj, lv_color_hex(0x18191A), LV_PART_MAIN);
 }
 
+// LVGL draws a text area's PLACEHOLDER from LV_PART_TEXTAREA_PLACEHOLDER, and that
+// part does NOT inherit the LV_PART_MAIN font the creation sites set. So the hint
+// text fell back to the theme's plain Montserrat and every accented character in it
+// rendered as a box -- "H(box)l(box)zat n(box)v" for "Halozat nev" -- while text the
+// user typed into the same field was fine. 27 placeholders, and the part was styled
+// in none of them. The beta_62 sweep fixed ~79 LABELS; this is the other LVGL part
+// it never touched.
+//
+// Resolve the chained face from whatever MAIN already carries, so this cannot change
+// how any field looks -- only which glyphs it can draw. Placeholders are often set
+// BEFORE the site assigns MAIN's font, so an unrecognised font falls back to
+// g_font_14 (the size every such site ends up using anyway).
+static void taSetPlaceholder(lv_obj_t* ta, const char* txt) {
+  if (!ta) return;
+  lv_textarea_set_placeholder_text(ta, txt);
+  const lv_font_t* f = lv_obj_get_style_text_font(ta, LV_PART_MAIN);
+  if      (f == &lv_font_montserrat_12) f = &g_font_12;
+  else if (f == &lv_font_montserrat_14) f = &g_font_14;
+  else if (f == &lv_font_montserrat_16) f = &g_font_16;
+  else if (f != &g_font_12 && f != &g_font_14 && f != &g_font_16) f = &g_font_14;
+  lv_obj_set_style_text_font(ta, f, LV_PART_TEXTAREA_PLACEHOLDER);
+}
+
 static void styleButton(lv_obj_t* obj) {
   // Subdued slate chip. Background sits at the panel colour with a low
   // overall opacity so the pure-black BG bleeds through — chips read as
@@ -2534,13 +2838,21 @@ static void styleButton(lv_obj_t* obj) {
   lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
   lv_obj_set_style_border_opa(obj, LV_OPA_40, LV_PART_MAIN);
   lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  // ...and the font, for the same reason as the text colour. A button carries a
+  // font from the LVGL theme which its child label inherits, and that one has no
+  // fallback chain — so accents inside button labels came out as tofu boxes
+  // ("Eszk□z □jraind□t□sa") even after the screen-level default was fixed, because
+  // the button sits between the screen and the label. g_font_14 is the same face
+  // and metrics plus the accent/Greek/Cyrillic/Arabic fallbacks. Labels that set
+  // their own font are unaffected — a style on the label beats one on the button.
+  lv_obj_set_style_text_font(obj, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_radius(obj, 4, LV_PART_MAIN);
   lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN);
 }
 
 // "X" close affordance for popup cards. A bare 16-px glyph with an
-// invisible 32×32 tap target so it reads as just a symbol but is forgiving
-// to hit on a 240-px touch screen. Sits flush inside the card's top-right
+// Compact 24×24 visual target with a 32×32 extended hit area, so it reads as
+// just a symbol but remains forgiving to hit. Sits inside the card's top-right
 // corner — no border / bg, so it doesn't compete visually with the card's
 // own buttons.
 // IMPORTANT: each caller is responsible for keeping the top-right ~32×32
@@ -2557,37 +2869,36 @@ static inline void tanCloseRed(lv_obj_t* lbl) {
 static lv_obj_t* addCloseXBadge(lv_obj_t* card, lv_event_cb_t cb, void* user_data = nullptr) {
   lv_obj_t* x = lv_obj_create(card);
   lv_obj_remove_style_all(x);
-  lv_obj_set_size(x, 32, 32);
-  // Flush to top-right of the card. No outward offset — keeps the badge
-  // entirely on top of the card so it can't clip behind the modal backdrop.
-  lv_obj_align(x, LV_ALIGN_TOP_RIGHT, 0, 0);
+  lv_obj_set_size(x, 24, 24);
+  // Keep the visible focus tint tight around the centred glyph. ext_click_area
+  // restores the previous forgiving 32-px touch target without painting it.
+  lv_obj_align(x, LV_ALIGN_TOP_RIGHT, -2, 2);
+  lv_obj_set_ext_click_area(x, 4);
   // No fill / border — bare glyph. Pressed state nudges a faint dim so
   // there's *some* visual feedback on tap.
   lv_obj_set_style_bg_opa(x, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_bg_color(x, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(x, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_radius(x, 16, LV_PART_MAIN);
+  lv_obj_set_style_radius(x, 12, LV_PART_MAIN);
   lv_obj_set_style_border_width(x, 0, LV_PART_MAIN);
   lv_obj_set_style_pad_all(x, 0, LV_PART_MAIN);
   lv_obj_add_flag(x, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(x, LV_OBJ_FLAG_FLOATING);
   lv_obj_add_flag(x, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  // Keep the normal reverse-video navigation focus: a bright 24-px disk with
+  // the child X inverted to black. The larger 32-px hit target stays invisible.
   lv_obj_clear_flag(x, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_move_foreground(x);
   lv_obj_add_event_cb(x, cb, LV_EVENT_CLICKED, user_data);
   lv_obj_t* lbl = lv_label_create(x);
   lv_label_set_text(lbl, LV_SYMBOL_CLOSE);
-  lv_obj_set_style_text_font(lbl, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_font(lbl, uiChromeFont(), LV_PART_MAIN);
 #if defined(HAS_TANMATSU)
   lv_obj_set_style_text_color(lbl, lv_color_hex(0xE05544), LV_PART_MAIN);   // red ✕ — matches the F1 / Power button
 #else
   lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
 #endif
-  // Anchor the glyph itself to the TOP-RIGHT of the (32×32) tap area —
-  // centering it made the X look like it was floating in the middle of
-  // nothing. The 32×32 hit zone still extends down/left for an easy tap,
-  // but visually the glyph occupies the corner of the popup card.
-  lv_obj_align(lbl, LV_ALIGN_TOP_RIGHT, -6, 4);
+  lv_obj_center(lbl);
   return x;
 }
 
@@ -2624,7 +2935,73 @@ static uint32_t s_remote_exit_armed = 0;   // time of the first of two SPACE pre
 static void drawRemotePlaceholder(bool exit_armed = false) {
   const int W = display.width(), H = display.height();
   const bool up = (WiFi.status() == WL_CONNECTED) && ((uint32_t)WiFi.localIP() != 0);
-  display.startFrame(DisplayDriver::DARK);
+  display.startFrame((ColorVal)0x0000);   // explicit dark (core palettes vary -- see main.cpp boot splash)
+#if defined(TLORA_PAGER)
+  // The Pager panel is only 222 px tall in landscape. Give it a purpose-built
+  // two-column status screen instead of squeezing the tall touch-board layout
+  // underneath a 98 px logo. The outlined control is actionable with the
+  // encoder knob; SPACE twice remains the keyboard fallback.
+  if (W >= H) {
+    display.writePixelsRGB565(18, (H - WADAMESH_MARK_H) / 2,
+                              WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
+    const int panel_x = 190;
+    const int panel_w = W - panel_x - 14;
+    display.setColor((ColorVal)0xFFFF);
+    display.setTextSize(2);
+    display.drawTextCentered(panel_x + panel_w / 2, 14, "REMOTE UI");
+    display.setTextSize(1);
+    if (up) {
+      char url[48];
+      snprintf(url, sizeof url, "http://%s:" WEB_UI_PORT_STR, WiFi.localIP().toString().c_str());
+      display.setColor((ColorVal)0xFFFF);
+      display.drawTextCentered(panel_x + panel_w / 2, 48, "Open in browser:");
+      display.setColor((ColorVal)0x07E0);
+      display.drawTextCentered(panel_x + panel_w / 2, 66, url);
+    } else {
+      display.setColor((ColorVal)0xFD20);
+      display.drawTextCentered(panel_x + panel_w / 2, 58, "Connecting to Wi-Fi...");
+    }
+    display.setColor(exit_armed ? (ColorVal)0x0320 : (ColorVal)0x3000);
+    display.fillRect(panel_x, 98, panel_w, 60);
+    display.setColor(exit_armed ? (ColorVal)0x07E0 : (ColorVal)0xFBEF);
+    display.drawRect(panel_x, 98, panel_w, 60);
+    display.setTextSize(2);
+    display.drawTextCentered(panel_x + panel_w / 2, 106, "EXIT REMOTE");
+    display.setTextSize(1);
+    display.drawTextCentered(panel_x + panel_w / 2, 136,
+                             exit_armed ? "press SPACE again" : "press encoder knob");
+    display.setColor((ColorVal)0xFFE0);
+    display.drawTextCentered(panel_x + panel_w / 2, 180, "or press SPACE twice within 3s");
+  } else {
+    display.writePixelsRGB565((W - WADAMESH_MARK_W) / 2, 18,
+                              WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
+    display.setColor((ColorVal)0xFFFF);
+    display.setTextSize(2);
+    display.drawTextCentered(W / 2, 130, "REMOTE UI");
+    display.setTextSize(1);
+    if (up) {
+      char url[48];
+      snprintf(url, sizeof url, "http://%s:" WEB_UI_PORT_STR, WiFi.localIP().toString().c_str());
+      display.drawTextCentered(W / 2, 166, "Open in browser:");
+      display.setColor((ColorVal)0x07E0);
+      display.drawTextCentered(W / 2, 184, url);
+    } else {
+      display.setColor((ColorVal)0xFD20);
+      display.drawTextCentered(W / 2, 176, "Connecting to Wi-Fi...");
+    }
+    display.setColor(exit_armed ? (ColorVal)0x0320 : (ColorVal)0x3000);
+    display.fillRect(16, 220, W - 32, 62);
+    display.setColor(exit_armed ? (ColorVal)0x07E0 : (ColorVal)0xFBEF);
+    display.drawRect(16, 220, W - 32, 62);
+    display.setTextSize(2);
+    display.drawTextCentered(W / 2, 228, "EXIT REMOTE");
+    display.setTextSize(1);
+    display.drawTextCentered(W / 2, 258,
+                             exit_armed ? "press SPACE again" : "press encoder knob");
+    display.setColor((ColorVal)0xFFE0);
+    display.drawTextCentered(W / 2, 304, "or press SPACE twice within 3s");
+  }
+#else
   // wadamesh mesh mark up top (same white-on-black artwork as the boot splash). The
   // touch DisplayDriver runs at scale 1.0, so writePixelsRGB565 shares text coords.
   const int ly = (H >= 288) ? 46 : 14;   // portrait panels have room to breathe; landscape sits high
@@ -2632,7 +3009,7 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
                             WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
   int y = ly + WADAMESH_MARK_H + 18;
   // Prominent title (the logo already carries the brand — no redundant "wadamesh" line).
-  display.setColor(DisplayDriver::LIGHT);
+  display.setColor((ColorVal)0xFFFF);
   display.setTextSize(2);
   display.drawTextCentered(W / 2, y, "REMOTE MODE");
   y += 34;
@@ -2640,12 +3017,12 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
   if (up) {
     char u[48];
     snprintf(u, sizeof u, "http://%s:" WEB_UI_PORT_STR, WiFi.localIP().toString().c_str());
-    display.setColor(DisplayDriver::LIGHT);
+    display.setColor((ColorVal)0xFFFF);
     display.drawTextCentered(W / 2, y, "Open this address in a browser");
-    display.setColor(DisplayDriver::GREEN);
+    display.setColor((ColorVal)0x07E0);
     display.drawTextCentered(W / 2, y + 20, u);
   } else {
-    display.setColor(DisplayDriver::ORANGE);
+    display.setColor((ColorVal)0xFD20);
     display.drawTextCentered(W / 2, y, "Connecting to Wi-Fi...");
   }
   // Footer: how to leave remote mode — the physical method, plus the browser fallback.
@@ -2656,14 +3033,20 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
 #else
   const char* how = "Tap Exit in the browser to leave";
 #endif
-  display.setColor(exit_armed ? DisplayDriver::GREEN : DisplayDriver::YELLOW);
+  display.setColor(exit_armed ? (ColorVal)0x07E0 : (ColorVal)0xFFE0);
   display.drawTextCentered(W / 2, H - 30, how);
 #if CAP_KEYBOARD || CAP_TOUCH
-  display.setColor(DisplayDriver::LIGHT);
+  display.setColor((ColorVal)0xFFFF);
   display.drawTextCentered(W / 2, H - 14, "or tap Exit in the browser");
+#endif
 #endif
   display.endFrame();
   s_remote_ph_ip = up ? (uint32_t)WiFi.localIP() : 0;
+}
+
+static void exitRemoteModeNow() {
+  touchPrefsSetRemoteMode(false);
+  if (g_lv.task) g_lv.task->rebootDevice();
 }
 
 // In remote mode the panel shows only the placeholder, so the physical keyboard is the
@@ -2672,8 +3055,7 @@ static void remotePhysicalKey(int key) {
   if (key != ' ') return;
   uint32_t nowm = millis();
   if (s_remote_exit_armed && (nowm - s_remote_exit_armed) < 3000) {
-    touchPrefsSetRemoteMode(false);
-    if (g_lv.task) g_lv.task->rebootDevice();   // saves chat history, reboots to normal mode
+    exitRemoteModeNow();   // saves chat history + prefs, then reboots to normal mode
   } else {
     s_remote_exit_armed = nowm;
     drawRemotePlaceholder(true);
@@ -2693,8 +3075,7 @@ static void remoteTouchTick() {
   if (pressed) {
     if (!s_remote_touch_start) { s_remote_touch_start = nowm; drawRemotePlaceholder(true); }   // "Keep holding..."
     else if (nowm - s_remote_touch_start >= 3000) {                                            // held long enough -> leave
-      touchPrefsSetRemoteMode(false);
-      if (g_lv.task) g_lv.task->rebootDevice();
+      exitRemoteModeNow();
     }
   } else if (s_remote_touch_start) {
     s_remote_touch_start = 0;
@@ -2874,7 +3255,16 @@ static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t
     return;
   }
 #endif
+#if defined(HELTEC_LORA_V4_R8)
+  // Async DMA band flush: returns as soon as the swapped copy is handed to the SPI DMA, so
+  // LVGL renders the next band while this one drains; the last band of the refresh closes
+  // the frame transaction. The screenshot/web-mirror copies below read color_p, which the
+  // driver has already copied out — unaffected. (LGFXDisplay::flushBandRGB565)
+  display.flushBandRGB565(area->x1, area->y1, w, h, reinterpret_cast<uint16_t*>(color_p),
+                          lv_disp_flush_is_last(disp_drv));
+#else
   display.writePixelsRGB565(area->x1, area->y1, w, h, reinterpret_cast<uint16_t*>(color_p));
+#endif
   if (g_shot_buf) {                       // mirror this area into the screenshot buffer
     for (int32_t row = 0; row < h; ++row) {
       const int32_t dy = area->y1 + row;
@@ -3465,12 +3855,11 @@ static void navRefocusFirstVisible(lv_obj_t* p) {
 }
 // Small key hints over each menubar icon — shown only while keyboard nav is on.
 static void navMenubarKeysSync() {
-#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys. The
-  // pager has no such optional nav-mode toggle to hint at either (s_kbd_nav is
-  // T-Deck's trackball-nav-vs-touch concept, CAP_TRACKBALL-only, so it isn't
-  // even declared here) — no hints. A plain `return` isn't enough since the
-  // body below still needs s_kbd_nav to exist at compile time; exclude it.
+  // pager prints each fixed mnemonic beside its icon directly in the tab label,
+  // so neither target needs this optional overlay. The M9 has no tab bar at all. A plain `return` isn't enough
+  // since the body below still needs s_kbd_nav to exist at compile time; exclude it.
 #else
   if (!g_lv.tabview) return;
   lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
@@ -3602,6 +3991,10 @@ static char      s_altacc_key    = 0;         // letter driving the open picker
 static lv_obj_t* s_altacc_ta     = nullptr;   // field the pick inserts into
 static bool tanAltAccentHandleKey(char c, lv_obj_t* ta);
 static void tanAltAccentAltReleased();
+static bool mentionNavActive();
+static void mentionNavMove(int delta);
+static void mentionNavConfirm();
+static void mentionBoxHide();
 // The UP/DOWN/LEFT/RIGHT action, factored out so a HELD arrow can auto-repeat it (navPump's
 // per-frame tick re-fires this). Recomputes the focused field each call so repeat stays correct.
 static void navArrowAction(uint32_t key) {
@@ -3716,6 +4109,36 @@ static void navPump() {
     // Hard screen lock: the overlay absorbs everything else (Vol- was already handled above).
     if (g_lv.task && g_lv.task->isManualLocked()) continue;
 #endif
+    // Mention rows are intentionally outside the LVGL focus group. Route the
+    // Tanmatsu's dedicated navigation events into their private selection state
+    // before ordinary field/caret navigation sees them. Printable keyboard input
+    // still falls through and narrows the list.
+    if (mentionNavActive()) {
+      if (ev.type == INPUT_EVENT_TYPE_NAVIGATION) {
+        const bool down = ev.args_navigation.state;
+        switch (ev.args_navigation.key) {
+          case BSP_INPUT_NAVIGATION_KEY_UP:    if (down) mentionNavMove(-1); continue;
+          case BSP_INPUT_NAVIGATION_KEY_DOWN:  if (down) mentionNavMove(+1); continue;
+          case BSP_INPUT_NAVIGATION_KEY_RETURN:
+          case BSP_INPUT_NAVIGATION_KEY_GAMEPAD_A:
+          case BSP_INPUT_NAVIGATION_KEY_JOYSTICK_PRESS:
+            if (down) mentionNavConfirm(); continue;
+          case BSP_INPUT_NAVIGATION_KEY_F1:
+          case BSP_INPUT_NAVIGATION_KEY_ESC:
+          case BSP_INPUT_NAVIGATION_KEY_GAMEPAD_B:
+            if (down) mentionBoxHide(); continue;
+          case BSP_INPUT_NAVIGATION_KEY_LEFT:
+          case BSP_INPUT_NAVIGATION_KEY_RIGHT:
+            if (down) mentionBoxHide();
+            break;   // dismiss, then let normal caret navigation handle it
+          default: break;
+        }
+      } else if (ev.type == INPUT_EVENT_TYPE_KEYBOARD) {
+        const char c = ev.args_keyboard.ascii;
+        if (c == '\r' || c == '\n') { mentionNavConfirm(); continue; }
+        if (c == 8 || c == 127)      { mentionBoxHide(); continue; }
+      }
+    }
     // An open dropdown captures input: arrows move the highlight (LV_KEY_UP/DOWN, NOT prev/next),
     // Enter selects + closes, Esc/✕ closes. navMaybeRebuild() leaves the group alone while it's open.
     if (navOpenDropdown()) {
@@ -3955,7 +4378,8 @@ static bool navCollect(lv_obj_t* obj) {
     if (c && navCollect(c) && !lv_obj_has_flag(c, NAV_HMOVE_FLAG)) descHasClickable = true;
   }
   bool meClickable = lv_obj_has_flag(obj, LV_OBJ_FLAG_CLICKABLE)
-                     && !lv_obj_has_flag(obj, NAV_SKIP_FLAG);   // skip explicit non-nav targets (e.g. the map catcher)
+                     && !lv_obj_has_flag(obj, NAV_SKIP_FLAG)      // skip explicit non-nav targets (e.g. the map catcher)
+                     && !lv_obj_has_flag(obj, NAV_PASSTHRU_FLAG); // container that only exists to catch touches (Lua app body)
   if (meClickable && !descHasClickable) {
     // LVGL's btn/switch/checkbox widgets ship with LV_OBJ_FLAG_SCROLL_ON_FOCUS,
     // and lv_obj's own FOCUSED handler scrolls them into view — bypassing our
@@ -3977,6 +4401,29 @@ static bool      s_nav_dirty    = true;
 static lv_obj_t* s_nav_prev_scr = nullptr;
 static uint32_t  s_nav_prev_sig = 0xFFFFFFFFu;
 static void navMarkDirty() { s_nav_dirty = true; }
+
+// A virtualized chat rebuild destroys the currently-materialized row objects.
+// Detach the navigation group while every object (and every descendant label
+// remembered by navInvertText) is still alive. Letting lv_obj_del() remove the
+// focused row itself is unsafe: LVGL has already torn down that row's styles and
+// animations when lv_group_remove_obj() auto-focuses a survivor and calls
+// navFocusCb(), which then tries to restore styles on the half-destructed row.
+// The caller must rebuild the group after recreating the object tree.
+static bool navDetachBeforeTreeMutation() {
+  if (!s_nav_group) return false;
+  if (s_nav_styled) {
+    navUnstyle(s_nav_styled);
+    s_nav_styled = nullptr;
+  } else {
+    navRestoreText();
+  }
+  lv_group_remove_all_objs(s_nav_group);
+  s_nav_first = s_nav_last = nullptr;
+  s_nav_count = 0;
+  for (int i = 0; i < kNavMax; ++i) s_nav_objs[i] = nullptr;
+  navMarkDirty();
+  return true;
+}
 
 // Repopulate the focus group when the visible screen actually changes (screen
 // swap, modal open/close, or a within-screen content rebuild). A 2-level
@@ -4437,6 +4884,7 @@ static void chanScopeClose();    // fwd
 static bool blockedModalIsOpen();// fwd: the bar's Back chevron also closes the blocked-users sheet
 static void blockedModalClose(); // fwd
 static void openBlockedUsersModal();                            // ignore-list manager (unblock)
+static void openRegionsModal();                                 // known-regions manager (#271)
 static bool overlayBlocksTabSwipe();   // theme/channel-scope pickers swallow tab swipes
 static bool drawerPopupOpen();         // popups floating over the app drawer (signal/mentions/power/files)
 static void refreshContactsList();
@@ -4481,6 +4929,10 @@ static void formatDistanceBadge(char* out, size_t out_cap, double self_lat, doub
                                 int32_t c_lat_e6, int32_t c_lon_e6);          // defined with the contacts list
 static void openChannelLongPressActionSheet(int thread_idx, const char* name);
 static void usernameBubbleColors(const char* name, lv_color_t* bubble_bg, lv_color_t* name_col);
+// Room-server login recovery (#267). Both live with the admin-login code far below,
+// but the room thread sheet up here drives them.
+static void roomReloginBegin(const uint8_t pub[32]);          // blank re-login + no-reply watchdog
+static void openRoomJoinPrompt(const uint8_t pub[32], bool after_relogin_failed);  // passworded Join
 // ============================================================
 // Helpers
 // ============================================================
@@ -4571,10 +5023,22 @@ enum {
   CAT_BACKUPS,       // list/delete .json backups + factory reset
   CAT_LANGUAGE,      // UI language picker
   CAT_MQTT,          // MQTT bridge — broker host/port/credentials
+  CAT_APPPERMS,      // what each Lua app is allowed to do, and taking it back
   CAT_ABOUT,         // firmware / update / system info / diagnostics
   CAT_COUNT
 };
 struct SettingsCatDef { const char* label; const char* icon; };
+#if CAP_LUA_APPS
+// Built-in tile hide bits (app_hide pref). Order is FROZEN — append only.
+enum {
+  APPHIDE_SNAKE = 1u << 0,  APPHIDE_AIRTIME = 1u << 1, APPHIDE_MONITOR = 1u << 2,
+  APPHIDE_SPECTRUM = 1u << 3, APPHIDE_DISCOVER = 1u << 4, APPHIDE_VNC = 1u << 5,
+  APPHIDE_REMOTE = 1u << 6, APPHIDE_READER = 1u << 7, APPHIDE_TERMINAL = 1u << 8,
+  APPHIDE_FILES = 1u << 9, APPHIDE_SIGNAL = 1u << 10, APPHIDE_MENTIONS = 1u << 11,
+  APPHIDE_MQTT = 1u << 12,   // Settings -> MQTT bridge (hidden by default: experimental + privacy)
+};
+#endif
+
 static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "Profile",       LV_SYMBOL_EDIT },
   { "Radio & Mesh",  LV_SYMBOL_SHUFFLE },
@@ -4594,6 +5058,7 @@ static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "Backups",       LV_SYMBOL_SAVE },
   { "Language",      LV_SYMBOL_BARS },
   { "MQTT bridge",   LV_SYMBOL_UPLOAD },
+  { "App permissions", LV_SYMBOL_WARNING },
   { "About",         LV_SYMBOL_LIST },
 };
 // Which slice of the (formerly monolithic) Device settings a builder emits. One
@@ -4604,10 +5069,14 @@ static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
 enum { DSEC_DISPLAY = 0, DSEC_KEYBOARD, DSEC_SOUND, DSEC_LOCK,
        DSEC_GPS, DSEC_CLOCK, DSEC_BATTERY, DSEC_SENSORS, DSEC_GENERAL };
 static lv_obj_t* s_settings_landing  = nullptr;  // the category landing container
+static lv_obj_t* s_settings_cat_card[CAT_COUNT] = { nullptr };   // one card per category (for live hide/show)
 // s_settings_sheet / s_settings_open_cat / s_settings_from_cc are declared ABOVE the nav
 // functions (navMaybeRebuild needs them to collect the settings detail sheet for trackball nav).
 static void      closeSettingsCategory();        // fwd: tab-change + key-dismiss close the sheet
 static void      openSettingsCategory(int cat);  // fwd: the Contacts overflow links to CAT_AUTOADD
+#if CAP_LUA_SDK_EXT
+static void      buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw);   // fwd: defined with the perm helpers
+#endif
 
 // ---- Firmware update check (red badge on the Settings gear + About-tab line) ----
 // Compares our embedded release tag against the latest pre-alpha_N published to
@@ -4638,6 +5107,7 @@ static bool          s_verchk_recheck  = false;  // force a fresh check now (e.g
 // with the worker's own SD writes) — doing it on the UI thread froze the About sheet and
 // dropped the Back tap. Off-load it to the core-0 worker; sysInfoText reads these.
 static volatile bool s_sdinfo_request  = false;  // UI -> worker: rescan SD usage
+static volatile bool s_sdinfo_busy     = false;  // worker is inside the FAT scan
 // UI -> worker: write the chat-history snapshot to storage. The full-file write
 // can stall for multiple seconds in SPIFFS garbage collection on SD-less boards
 // (Heltec V4); on the loop thread that froze the whole UI, incl. touch wake
@@ -4797,6 +5267,7 @@ static int  segGatherRange(const UITask::UIMessage* ring, int cap, int count, in
 static UITask::UIMessage* segEnsureBuf(UITask::UIMessage** slot);
 // fwd decls — the ops live with the storage code far below.
 static void uiDataEnsureDirs();
+static bool uiHistWaitWorkerIdle();
 static int  uiSegScan(uint32_t* out_first_seqs, int max_out, bool sweep_tmps);
 static bool uiSegOpenValidated(uint32_t first_seq, File& f, uint16_t* rec_size_out);
 static bool uiSegReadRec(File& f, uint16_t disk_sz, UITask::UIMessage* out, uint32_t* seq_out);
@@ -4828,12 +5299,17 @@ static char          s_wifiscan_ssids[kWifiScanMax][WIFI_CONFIG_SSID_MAX];
 static volatile int  s_wifiscan_count   = 0;
 static volatile bool s_wifiscan_request = false;   // UI -> worker: scan now
 static volatile bool s_wifiscan_done    = false;   // worker -> UI: results ready
+#if defined(TLORA_PAGER)
+static bool          s_wifiscan_wait_for_radio = false; // main task must cold-start STA first
+static uint32_t      s_wifiscan_pager_guard_ms = 0;     // recover if worker never services request
+#endif
 // Scan-while-connected handshake (S3): the radio can't sweep reliably while
 // associated, so the MAIN task briefly drops the link before the worker scans and
 // rejoins after. All WiFi state changes happen on the main task (never the worker).
 static volatile bool s_wifiscan_drop_req       = false;  // UI -> main: drop link, then scan
 static bool          s_wifiscan_reconnect_after = false;  // main: rejoin once results land
 static uint32_t      s_wifiscan_drop_ms        = 0;      // main: disassoc-settle timer
+static uint32_t      s_wifiscan_guard_ms       = 0;      // main: cancel only an unclaimed scan
 // DEBUG: last wifiScanWatchdogSafe outcome (so the main-task list rebuild can log it).
 static volatile int16_t  s_swd_kick   = -9;
 static volatile int16_t  s_swd_st     = -9;
@@ -4949,7 +5425,7 @@ static void otaButtonRefreshState() {
   }
 }
 
-#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 // ---- Save-update-to-SD (Launcher installs) ---------------------------------
 // Launcher-managed T-Decks have no spare A/B slot (touchHasOtaUpdateSlot() is
 // false), so Wi-Fi OTA can't work there — but the Launcher itself can flash an
@@ -4957,6 +5433,21 @@ static void otaButtonRefreshState() {
 // the ACTIVE update channel (stable, or beta when "Get test builds" is on)
 // into /BINS/wadamesh-beta_<N>-<stable|beta>.bin on the SD card. The download
 // streams on the tile worker; this UI side mirrors the OTA poll pattern.
+// Wording is board-conditional and the two sets are SEPARATE TR() keys on purpose.
+// Only the T-Deck has bmorcelli's Launcher; now that this feature is gated on
+// CAP_SD it also compiles for the Pager, the ThinkNode M9 and the Heltec V4-R8,
+// where "flash it from the Launcher" names something the user does not have. The
+// T-Deck strings must stay byte-identical: they are translated in all 13 .lang
+// files, and editing the English key orphans every translation of it (audit with
+// scripts/build/audit-lang.py).
+#if defined(HAS_TDECK_GT911)
+  #define SDFW_SAVED_FMT TR("Saved: %s\nFlash it from the Launcher.")
+  #define SDFW_HINT_TEXT TR("For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).")
+#else
+  #define SDFW_SAVED_FMT TR("Saved: %s\nReady for offline flashing.")
+  #define SDFW_HINT_TEXT TR("Saves the latest firmware of the selected channel to the SD card (BINS folder).")
+#endif
+
 static volatile bool s_sdfw_request  = false;   // UI -> worker
 static volatile int  s_sdfw_state    = 0;       // 0 idle, 1 running, 2 ok, 3 error
 static volatile int  s_sdfw_pct      = 0;
@@ -4980,7 +5471,7 @@ static void sdFwPollTimerCb(lv_timer_t* t) {
   if (st == 2) {
     if (s_sdfw_status_lbl) {
       char b[112];
-      snprintf(b, sizeof b, TR("Saved: %s\nFlash it from the Launcher."), s_sdfw_msg);
+      snprintf(b, sizeof b, SDFW_SAVED_FMT, s_sdfw_msg);
       lv_label_set_text(s_sdfw_status_lbl, b);
     }
     if (g_lv.task) g_lv.task->showAlert(TR("Update bin saved to SD"), 3000);
@@ -5101,7 +5592,7 @@ static void otaPrevPickCb(lv_event_t* e) {
   otaPrevModalClose();
   char m[96];
   snprintf(m, sizeof m, "Install beta_%d?\nThis downgrades the firmware and reboots.", v);
-  showConfirm(m, "Install", otaConfirmInstallApply);
+  showConfirm(m, TR("Install"), otaConfirmInstallApply);
 }
 
 // "Install a previous version" button -> build the version-picker popup listing
@@ -5246,6 +5737,11 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
   // cap-touch — so this, not SnakeGame's gestureCb, is what makes touch steering
   // actually work. swipe_x<0 == left, swipe_y<0 == up (see the control-center
   // note below for the sign convention).
+  if (luaAppIsOpen()) {   // Lua apps get the same reliable hardware swipes as Snake did
+    if (swipe_x != 0)      luaAppSteer(swipe_x < 0 ? -1 : 1, 0);
+    else if (swipe_y != 0) luaAppSteer(0, swipe_y < 0 ? -1 : 1);
+    return;
+  }
   if (SnakeGame::isOpen()) {
     if (swipe_x != 0)      SnakeGame::steer(swipe_x < 0 ? -1 : 1, 0);
     else if (swipe_y != 0) SnakeGame::steer(0, swipe_y < 0 ? -1 : 1);
@@ -5399,7 +5895,7 @@ static void kbApplyLayoutForRotation(uint8_t rot) {
       lv_obj_set_y(s_kb_panel->composer_row, chatCompYKb());
     }
     if (s_kb_panel->composer_ta)
-      lv_obj_set_width(s_kb_panel->composer_ta, chatScreenW() - 120);
+      lv_obj_set_width(s_kb_panel->composer_ta, chatComposerTaW());
   }
   // Rotation arrows. Default: just above the keyboard's top edge. In the
   // chat panel that area is occupied by the composer row (QR + textarea +
@@ -5511,6 +6007,7 @@ static KeyboardLayoutId kbDefaultLayoutForUiLang(uint8_t lang) {
     case LANG_SR: return KeyboardLayoutId::SR;
     case LANG_EL: return KeyboardLayoutId::EL;
     case LANG_FR: return KeyboardLayoutId::FR;
+    case LANG_RO: return KeyboardLayoutId::RO;
     default:      return KeyboardLayoutId::EN;
   }
 }
@@ -5813,7 +6310,7 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   int lines = (int)((sz.y + lh - 1) / lh);   // ceil to whole lines
   if (lines < 1) lines = 1;
   if (lines > CHAT_COMP_MAX_LINES) lines = CHAT_COMP_MAX_LINES;
-  const lv_coord_t want = CHAT_COMP_H + (lv_coord_t)(lines - 1) * lh;
+  const lv_coord_t want = chatComposerBaseH() + (lv_coord_t)(lines - 1) * lh;
   if (want == s_comp_h) return;   // height unchanged → nothing to relayout
   s_comp_h = want;
   // Keyboard shown (V4) lifts the composer above the keys; otherwise (T-Deck, or
@@ -5842,8 +6339,8 @@ static void composerAutoGrowCb(lv_event_t* e) {
 // the extras_* fallback fonts (Latin-1 + Latin-Extended-A), so they render in
 // the textarea and chat. Keys carry LV_BTNMATRIX_CTRL_NO_REPEAT (KeyboardLayouts
 // .cpp) so a hold doesn't auto-repeat — it cleanly long-presses instead.
-static const char* const kAccA[]   = {"à","á","â","ä","ã","å","ą"};
-static const char* const kAccA_u[] = {"À","Á","Â","Ä","Ã","Å","Ą"};
+static const char* const kAccA[]   = {"à","á","â","ă","ä","ã","å","ą","æ"};   // æ: Danish/Norwegian (#237)
+static const char* const kAccA_u[] = {"À","Á","Â","Ă","Ä","Ã","Å","Ą","Æ"};
 static const char* const kAccE[]   = {"è","é","ê","ë","ě","ę"};
 static const char* const kAccE_u[] = {"È","É","Ê","Ë","Ě","Ę"};
 static const char* const kAccI[]   = {"ì","í","î","ï"};
@@ -5856,25 +6353,25 @@ static const char* const kAccN[]   = {"ñ","ń"};
 static const char* const kAccN_u[] = {"Ñ","Ń"};
 static const char* const kAccC[]   = {"ç","č","ć"};
 static const char* const kAccC_u[] = {"Ç","Č","Ć"};
-static const char* const kAccS[]   = {"ß","ś","š"};
+static const char* const kAccS[]   = {"ß","ś","š","ş"};
 static const char* const kAccY[]   = {"ý","ÿ"};
 // Czech carons / ring — base letters that otherwise carry no Latin-1 accent.
-static const char* const kAccT[]   = {"ť"};
-static const char* const kAccT_u[] = {"Ť"};
+static const char* const kAccT[]   = {"ť","ţ"};
+static const char* const kAccT_u[] = {"Ť","Ţ"};
 static const char* const kAccZ[]   = {"ž","ż","ź"};
 static const char* const kAccZ_u[] = {"Ž","Ż","Ź"};
 static const char* const kAccR[]   = {"ř"};
 static const char* const kAccR_u[] = {"Ř"};
 static const char* const kAccL[]   = {"ł"};
 static const char* const kAccL_u[] = {"Ł"};
-static const char* const kAccS_u[] = {"Ś","Š"};
+static const char* const kAccS_u[] = {"Ś","Š","Ş"};
 struct AccentSet { char key; const char* const* v; uint8_t n; };
 static const AccentSet kAccentSets[] = {
-  {'a',kAccA,7},{'A',kAccA_u,7},{'e',kAccE,6},{'E',kAccE_u,6},
+  {'a',kAccA,9},{'A',kAccA_u,9},{'e',kAccE,6},{'E',kAccE_u,6},
   {'i',kAccI,4},{'I',kAccI_u,4},{'o',kAccO,6},{'O',kAccO_u,6},
   {'u',kAccU,5},{'U',kAccU_u,5},{'n',kAccN,2},{'N',kAccN_u,2},
-  {'c',kAccC,3},{'C',kAccC_u,3},{'s',kAccS,3},{'S',kAccS_u,2},{'y',kAccY,2},
-  {'t',kAccT,1},{'T',kAccT_u,1},{'z',kAccZ,3},{'Z',kAccZ_u,3},
+  {'c',kAccC,3},{'C',kAccC_u,3},{'s',kAccS,4},{'S',kAccS_u,3},{'y',kAccY,2},
+  {'t',kAccT,2},{'T',kAccT_u,2},{'z',kAccZ,3},{'Z',kAccZ_u,3},
   {'l',kAccL,1},{'L',kAccL_u,1},{'r',kAccR,1},{'R',kAccR_u,1},
 };
 static const AccentSet* accentLookup(const char* key) {
@@ -6122,7 +6619,7 @@ static lv_obj_t* s_accbox_ta = nullptr;   // the field the box edits
 // (Alt)+Space jumps in (handleHwKey()); the rotary encoder then walks
 // s_accbox_cells (updatePagerEncoder()); Enter (the encoder's own click)
 // confirms via accentNavConfirm(); Backspace cancels.
-static constexpr int kAccentNavMax = 8;   // covers kAccentSets' largest set (7, 'a'/'A')
+static constexpr int kAccentNavMax = 8;   // covers kAccentSets' largest set (8, 'a'/'A')
 static lv_obj_t* s_accbox_cells[kAccentNavMax];
 static uint8_t   s_accbox_cell_n    = 0;
 static bool      s_accentnav_active = false;
@@ -6172,6 +6669,15 @@ static void accentBoxCellCb(lv_event_t* e) {
 }
 static void accentBoxMaybeShow() {
   accentBoxHide();                          // each new keystroke clears the last box
+#if defined(HAS_M9_KEYBOARD)
+  // Never on the M9: the box is tap-to-pick (its cells are NAV_SKIP_FLAG by
+  // design) and the key-selection machinery is pager-only (encoder walk +
+  // Enter) — with no touch and no nav path here it would float over the
+  // composer as dead chrome nothing can select. Deliberately suppressed
+  // until an M9 d-pad selection path is built; the Accent-popups settings
+  // row is hidden there for the same reason.
+  return;
+#endif
   if (!s_accent_popups) return;             // user turned accent popups off in settings
   if (!g_lv.keyboard) return;
   lv_obj_t* ta = lv_keyboard_get_textarea(g_lv.keyboard);
@@ -6239,43 +6745,46 @@ static void accentBoxMaybeShow() {
 }
 
 // ---- @-mention contact picker (issue #42) --------------------------------
-// Typing "@name" in a chat composer pops a touch list of matching contacts —
-// modeled on the accent box: a passive overlay (NAV_SKIP_FLAG) that never steals
-// keyboard-nav focus and, for now, is selected by TOUCH only. Tapping a row
-// replaces the "@partial" with "@FullName ".
+// Typing "@name" in a chat composer pops a list of matching recently-heard
+// chat identities. It is modeled on the accent box: a passive overlay
+// (NAV_SKIP_FLAG) that never steals keyboard-nav focus. Touch or the board's
+// hardware selector replaces the active token with the chosen full name.
 static lv_obj_t* s_mentionbox    = nullptr;
 static lv_obj_t* s_mentionbox_ta = nullptr;
 static constexpr int k_mention_max = 6;
+static constexpr int k_mention_source_max = 16;
 static char s_mention_names[k_mention_max][32];   // kept alive for the cell callbacks
-#if defined(TLORA_PAGER)
-// No touch on this board, and the cells below are NAV_SKIP_FLAG (excluded from
-// the normal keyboard/encoder focus group by design, since touch boards pick
-// them by tap) -- without this, the box is completely unreachable here.
-// Unlike the accent box (armed explicitly via Fn+Space), this list grabs the
-// encoder the INSTANT it's shown (mentionBoxMaybeShow() sets
-// s_mentionnav_active=true directly) -- see that function for why. The rotary
-// encoder walks s_mentionbox_cells (updatePagerEncoder()); Enter (the
-// encoder's own click) confirms via mentionNavConfirm(); Backspace cancels.
+#if CAP_KEYPAD_NAV
+// The rows stay outside the normal focus group so rebuilding this per keystroke
+// never steals focus from the composer. Each board routes its selector into
+// this private state: trackball, Pager encoder, M9 d-pad, or Tanmatsu arrows.
 static lv_obj_t* s_mentionbox_cells[k_mention_max];
 static uint8_t   s_mentionbox_cell_n  = 0;
 static bool      s_mentionnav_active  = false;
 static int       s_mentionnav_idx     = 0;
+static bool mentionNavActive() { return s_mentionnav_active; }
 #endif
 static void mentionBoxHide() {
   if (s_mentionbox) { lv_obj_del(s_mentionbox); s_mentionbox = nullptr; }
   s_mentionbox_ta = nullptr;
-#if defined(TLORA_PAGER)
+#if CAP_KEYPAD_NAV
   s_mentionnav_active = false;
   s_mentionbox_cell_n = 0;
 #endif
 }
-#if defined(TLORA_PAGER)
+#if CAP_KEYPAD_NAV
 static void mentionNavRestyle() {
   for (uint8_t i = 0; i < s_mentionbox_cell_n; ++i) {
     if (!s_mentionbox_cells[i]) continue;
     lv_obj_set_style_bg_color(s_mentionbox_cells[i],
       lv_color_hex((int)i == s_mentionnav_idx ? COLOR_ACCENT : 0x1B2B3A), LV_PART_MAIN);
   }
+}
+static void mentionNavMove(int delta) {
+  if (!s_mentionnav_active || s_mentionbox_cell_n == 0 || delta == 0) return;
+  while (delta > 0) { s_mentionnav_idx = (s_mentionnav_idx + 1) % (int)s_mentionbox_cell_n; --delta; }
+  while (delta < 0) { s_mentionnav_idx = (s_mentionnav_idx - 1 + (int)s_mentionbox_cell_n) % (int)s_mentionbox_cell_n; ++delta; }
+  mentionNavRestyle();
 }
 // Encoder's short-click while picking: fire the highlighted cell's own CLICKED
 // binding (mentionBoxCellCb, below) rather than duplicating its delete-partial
@@ -6288,20 +6797,75 @@ static void mentionNavConfirm() {
   }
 }
 #endif
-// Index of the active mention's '@' in `text`, or -1. The active mention is the
-// last '@' that begins a word (start of text or after whitespace) with no
-// whitespace between it and the end (where the caret is).
-static int mentionAtPos(const char* text) {
-  if (!text) return -1;
-  for (int i = (int)strlen(text) - 1; i >= 0; --i) {
-    const char c = text[i];
-    if (c == ' ' || c == '\n' || c == '\t') return -1;     // a space before any '@' -> not in a mention
-    if (c == '@') {
-      const bool at_word_start = (i == 0) || text[i-1] == ' ' || text[i-1] == '\n' || text[i-1] == '\t';
-      return at_word_start ? i : -1;                       // '@' mid-word (e.g. an email) isn't a mention
+static uint32_t taCpToByte(const char* txt, uint32_t cp_target);
+static uint32_t taByteToCp(const char* txt, uint32_t byte_target);
+
+static int collectRecentMentionNames(char out[][32], int max_num) {
+  if (!out || max_num <= 0) return 0;
+  RecentlyHeardName heard[k_mention_source_max];
+  const int heard_n = the_mesh.getRecentlyHeard(heard, k_mention_source_max);
+  const uint8_t* self = the_mesh.getSelfPubKey();
+  int count = 0;
+  for (int i = 0; i < heard_n && count < max_num; ++i) {
+    if (heard[i].type != ADV_TYPE_CHAT || !heard[i].name[0]) continue;
+    if (self && memcmp(heard[i].pubkey_prefix, self, sizeof(heard[i].pubkey_prefix)) == 0) continue;
+    if (the_mesh.uiIsMeshcomodRecipient(heard[i].pubkey_prefix)) continue;
+    if (touchPrefsIsIgnored(heard[i].pubkey_prefix)) continue;
+    bool duplicate = false;
+    for (int j = 0; j < count; ++j) {
+      if (strcasecmp(out[j], heard[i].name) == 0) { duplicate = true; break; }
     }
+    if (duplicate) continue;
+    strlcpy(out[count++], heard[i].name, 32);
   }
-  return -1;
+  return count;
+}
+
+static bool mentionWhitespace(unsigned char c) {
+  return c == ' ' || c == '\n' || c == '\t' || c == '\r';
+}
+static bool mentionPunctuation(unsigned char c) {
+  switch (c) {
+    case ',': case '.': case ';': case ':': case '!': case '?':
+    case '(': case ')': case '[': case ']': case '{': case '}':
+    case '<': case '>':
+      return true;
+    default:
+      return false;
+  }
+}
+
+struct MentionToken {
+  size_t at;
+  size_t caret;
+  size_t end;
+};
+
+// Locate the active @token around the actual caret. The start must be at text
+// start or after whitespace, so an email address never opens the picker.
+static bool mentionTokenAtCaret(lv_obj_t* ta, MentionToken& token) {
+  if (!ta) return false;
+  const char* text = lv_textarea_get_text(ta);
+  if (!text) return false;
+  const size_t len = strlen(text);
+  size_t caret = taCpToByte(text, lv_textarea_get_cursor_pos(ta));
+  if (caret > len) caret = len;
+
+  size_t at = caret;
+  bool found = false;
+  while (at > 0) {
+    const unsigned char c = (unsigned char)text[at - 1];
+    if (c == '@') { --at; found = true; break; }
+    if (mentionWhitespace(c) || mentionPunctuation(c)) return false;
+    --at;
+  }
+  if (!found || (at > 0 && !mentionWhitespace((unsigned char)text[at - 1]))) return false;
+
+  size_t end = caret;
+  while (end < len && !mentionWhitespace((unsigned char)text[end]) &&
+         !mentionPunctuation((unsigned char)text[end])) ++end;
+  token = { at, caret, end };
+  return true;
 }
 static void mentionBoxCellCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -6309,45 +6873,62 @@ static void mentionBoxCellCb(lv_event_t* e) {
   lv_obj_t* ta = s_mentionbox_ta;
   if (ta && name && name[0]) {
     const char* text = lv_textarea_get_text(ta);
-    const int at = mentionAtPos(text);
-    if (at >= 0) {
-      char out[300];
-      snprintf(out, sizeof out, "%.*s@%s ", at, text, name);   // keep text before '@', then "@Name "
-      lv_textarea_set_text(ta, out);
-      if (ta == s_kb_mirror_ta) kbMirrorSyncToReal();
+    MentionToken token{};
+    if (text && mentionTokenAtCaret(ta, token)) {
+      char out[UITask::MAX_MSG_TEXT + 1];
+      const size_t name_len = strlen(name);
+      const size_t suffix_len = strlen(text + token.end);
+      const bool add_space = text[token.end] == '\0';
+      const size_t needed = token.at + 1 + name_len + (add_space ? 1 : 0) + suffix_len;
+      if (needed <= UITask::MAX_MSG_TEXT) {
+        size_t pos = 0;
+        memcpy(out + pos, text, token.at); pos += token.at;
+        out[pos++] = '@';
+        memcpy(out + pos, name, name_len); pos += name_len;
+        if (add_space) out[pos++] = ' ';
+        const size_t caret_byte = pos;
+        memcpy(out + pos, text + token.end, suffix_len + 1);
+
+        mentionBoxHide();   // setting text emits VALUE_CHANGED; tear down first
+        if (ta == s_kb_mirror_ta) {
+          lv_textarea_set_text(ta, out);
+          lv_textarea_set_cursor_pos(ta, (int32_t)taByteToCp(out, caret_byte));
+          kbMirrorSyncToReal();
+          if (s_kb_bind_ta)
+            lv_textarea_set_cursor_pos(s_kb_bind_ta, (int32_t)taByteToCp(out, caret_byte));
+        } else {
+          setTextareaSynced(ta, out);
+          lv_textarea_set_cursor_pos(ta, (int32_t)taByteToCp(out, caret_byte));
+          if (s_kb_bind_ta == ta && s_kb_mirror_ta)
+            lv_textarea_set_cursor_pos(s_kb_mirror_ta, (int32_t)taByteToCp(out, caret_byte));
+        }
+        return;
+      }
     }
   }
   mentionBoxHide();
 }
-// Show the contact picker when the composer ends in "@partial". Returns true
+// Show the recent-name picker for the @token at the caret. Returns true
 // when a picker is shown (so the caller suppresses the accent box).
-static bool mentionBoxMaybeShow() {
+static bool mentionBoxMaybeShow(lv_obj_t* ta) {
   mentionBoxHide();
-  if (!g_lv.keyboard) return false;
-  lv_obj_t* ta = lv_keyboard_get_textarea(g_lv.keyboard);
   if (!ta) return false;
   const char* text = lv_textarea_get_text(ta);
-  const int at = mentionAtPos(text);
-  if (at < 0) return false;
-  const char* partial = text + at + 1;
-  const size_t plen = strlen(partial);
+  MentionToken token{};
+  if (!text || !mentionTokenAtCaret(ta, token)) return false;
+  const char* partial = text + token.at + 1;
+  const size_t plen = token.caret - token.at - 1;
+  char recent[k_mention_source_max][32];
+  const int recent_n = collectRecentMentionNames(recent, k_mention_source_max);
   int n = 0;
-  const int total = the_mesh.getNumContacts();
-  for (int i = 0; i < total && n < k_mention_max; ++i) {
-    ContactInfo c;
-    if (!the_mesh.getContactByIdx(i, c) || !c.name[0]) continue;
-    if (plen > 0 && strncasecmp(c.name, partial, plen) != 0) continue;   // prefix match (case-insensitive)
-    strlcpy(s_mention_names[n], c.name, sizeof s_mention_names[n]);
+  for (int i = 0; i < recent_n && n < k_mention_max; ++i) {
+    if (plen > 0 && strncasecmp(recent[i], partial, plen) != 0) continue;
+    strlcpy(s_mention_names[n], recent[i], sizeof s_mention_names[n]);
     ++n;
   }
   if (n == 0) return false;
   s_mentionbox_ta = ta;
-#if defined(TLORA_PAGER)
-  // Unlike the accent box (armed explicitly via Fn+Space, since it pops up
-  // after almost every letter typed and must not steal focus from ongoing
-  // typing), the mention list only appears when the user has deliberately
-  // typed "@partial" looking for someone to pick -- so it grabs the encoder
-  // immediately, no arming gesture needed.
+#if CAP_KEYPAD_NAV
   s_mentionnav_active = true;
   s_mentionnav_idx = 0;
   s_mentionbox_cell_n = (uint8_t)n;
@@ -6373,7 +6954,7 @@ static bool mentionBoxMaybeShow() {
     lv_obj_set_style_bg_color(b, lv_color_hex(0x1B2B3A), LV_PART_MAIN);
     lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_add_event_cb(b, mentionBoxCellCb, LV_EVENT_CLICKED, (void*)s_mention_names[i]);
-#if defined(TLORA_PAGER)
+  #if CAP_KEYPAD_NAV
     if (i < k_mention_max) s_mentionbox_cells[i] = b;
 #endif
     lv_obj_t* l = lv_label_create(b);
@@ -6385,8 +6966,8 @@ static bool mentionBoxMaybeShow() {
     lv_obj_center(l);
   }
   lv_obj_set_size(s_mentionbox, boxw + 8, n * rowh + (n - 1) * 3 + 8);
-#if defined(TLORA_PAGER)
-  mentionNavRestyle();   // highlight entry 0 immediately -- see the auto-arm note above
+#if CAP_KEYPAD_NAV
+  mentionNavRestyle();
 #endif
   // Place it above the composer, clamped above the keyboard (mirrors the accent box).
   lv_obj_update_layout(s_mentionbox);
@@ -6404,12 +6985,14 @@ static bool mentionBoxMaybeShow() {
   lv_obj_move_foreground(s_mentionbox);
   return true;
 }
-// One entry point for the composer's typing-time suggestion overlays: the
-// @-mention picker takes priority over the accent box (never both at once).
-static void composerSuggestRefresh() {
-  if (mentionBoxMaybeShow()) { accentBoxHide(); return; }
+static void composerMentionRefresh(lv_obj_t* ta) {
+  if (mentionBoxMaybeShow(ta)) { accentBoxHide(); return; }
   mentionBoxHide();
-  accentBoxMaybeShow();
+}
+static void composerSuggestChangedCb(lv_event_t* e) {
+  lv_obj_t* ta = lv_event_get_target(e);
+  if (kbMirrorActive() && s_kb_bind_ta == ta && s_kb_mirror_ta) ta = s_kb_mirror_ta;
+  composerMentionRefresh(ta);
 }
 
 static void keyboardCb(lv_event_t* e) {
@@ -6439,7 +7022,7 @@ static void keyboardCb(lv_event_t* e) {
   else if (code == LV_EVENT_VALUE_CHANGED) {
     kbSetRotateArrowsOpa(LV_OPA_20);
     accentHandleValueChanged();
-    composerSuggestRefresh();   // @mention contact picker, else the accent box
+    if (!s_mentionbox) accentBoxMaybeShow();
   }
 }
 
@@ -6514,7 +7097,7 @@ static void openChannelShareModal(const char* channel_name, const uint8_t secret
   strncpy(s_channel_share_name, channel_name ? channel_name : "Channel",
           sizeof(s_channel_share_name) - 1);
 
-  lv_obj_t* body = createSettingsModal("Share channel", SettingsModalKind::AddContact);  // reuse a kind
+  lv_obj_t* body = createSettingsModal(TR("Share channel"), SettingsModalKind::AddContact);  // reuse a kind
   int y = 0;
 
   lv_obj_t* name_l = lv_label_create(body);
@@ -6558,6 +7141,7 @@ static void openChannelShareModal(const char* channel_name, const uint8_t secret
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, channelShareCopyCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
+  useChainedFont(bl);
   lv_label_set_text(bl, TR("Copy secret"));
   lv_obj_center(bl);
 }
@@ -6605,7 +7189,7 @@ static void channelLongSheetDeleteCb(lv_event_t* e) {
   char msg[80];
   snprintf(msg, sizeof(msg),
            TR("Remove channel \"%s\"?\nLeaves it on this device only."), tname);
-  showConfirm(msg, "Remove", chatDeleteApply);
+  showConfirm(msg, TR("Remove"), chatDeleteApply);
 }
 
 static void threadSheetMarkReadCb(lv_event_t* e) {
@@ -6628,7 +7212,7 @@ static void threadSheetDeleteDmCb(lv_event_t* e) {
   s_chat_del_is_channel = false;
   char msg[96];
   snprintf(msg, sizeof(msg), TR("Delete chat with \"%s\"?\nMessage history will be cleared."), name);
-  showConfirm(msg, "Delete", chatDeleteApply);
+  showConfirm(msg, TR("Delete"), chatDeleteApply);
 }
 
 // Per-channel mute toggles (in the channel action sheet). Mute suppresses the
@@ -6698,16 +7282,30 @@ static void channelLongSheetBlockedCb(lv_event_t* e) {
 // LOGIN_OK re-arms our keep-alive, whose first REQ clears the server's
 // push-abandon counter — resuming a room that went one-way-dead (issue #89:
 // "no possibility to log in once it is done"). A REBOOTED server forgets
-// non-admin clients; that case needs the passworded Join from Contacts.
+// non-admin clients, and a blank login cannot recreate a record the server no
+// longer has: it simply never replies. roomReloginBegin() therefore arms the
+// no-reply watchdog, which escalates to the passworded Join prompt in place
+// rather than leaving the operator on a toast with no result (#267).
 static void threadSheetRoomLoginCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   const int idx = s_channel_long_idx;
   closeChannelLongSheet();
   uint8_t pub[32];
-  if (g_lv.task->getThreadContactPub(idx, pub) && the_mesh.uiRoomRelogin(pub) != MSG_SEND_FAILED)
-    g_lv.task->showAlert(TR("Logging in again..."), 1400);
-  else
-    g_lv.task->showAlert(TR("Couldn't send login"), 1400);
+  if (g_lv.task->getThreadContactPub(idx, pub)) roomReloginBegin(pub);
+  else g_lv.task->showAlert(TR("Couldn't send login"), 1400);
+}
+
+// "Join with password" (room threads) — the recovery that actually recreates a
+// forgotten client record, previously reachable only from the Contacts sheet
+// even though a room with a thread is something you reach from Chats (#267).
+static void threadSheetRoomJoinCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  const int idx = s_channel_long_idx;
+  closeChannelLongSheet();
+  uint8_t pub[32];
+  if (g_lv.task->getThreadContactPub(idx, pub))
+    openRoomJoinPrompt(pub, /*after_relogin_failed=*/false);
+  else g_lv.task->showAlert(TR("Contact gone"), 1200);
 }
 
 // "Reset path" (DM sheet) — wipes the cached return path for this chat's contact so
@@ -6804,7 +7402,17 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
 
   // Same metrics as the contact action sheet — the two sheets are siblings and
   // should read identically. (PSC is a no-op on the smaller boards.)
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  // The Pager is twice as wide as the 240/320-px touch layouts but substantially
+  // shorter. Spend that width: fixed-size one-line labels and shorter rows keep
+  // the complete channel menu visible at every text preset.
+  const int card_w  = lv_disp_get_hor_res(nullptr) - 80;
+  const int btn_h   = 26;
+  const int btn_gap = 3;
+  const int title_h = 32;   // reserve the full close-X focus/hit target
+  const int pad     = 6;
+  const lv_font_t* row_font = uiChromeFont();
+#elif CAP_LARGE_SCREEN
   const int card_w  = PCW(232);
   const int btn_h   = PSC(30);
   const int btn_gap = PSC(6);
@@ -6830,11 +7438,16 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   }
   // Everything except Remove/Delete goes in the 2-column grid; the danger row
   // spans the full width at the bottom. Channel: mark-read + region + the two
-  // mutes + share + blocked = 6 grid items (3 rows). Room: mark-read +
-  // login-again + reset-path + blocked = 4 (2 rows). DM: 3 (2 rows).
-  const int grid_items = is_channel ? 7 : (is_room_thread ? 4 : 3);   // channels: +Chat icon
+  // mutes + share + blocked + chat icon + delete history = 8 grid items
+  // (4 rows). Room: mark-read + login-again + join + reset-path + blocked +
+  // delete history = 6 (3 rows — the join row fills what was a half-empty
+  // bottom row, so the card height is unchanged). DM: mark-read + reset-path
+  // + blocked + delete history = 4 (2 rows).
+  const int grid_items = is_channel ? 8 : (is_room_thread ? 6 : 4);
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
-  int card_h = title_h + (grid_rows + 1) * (btn_h + btn_gap) + pad;
+  // Exact content height: outer padding + fixed header + grid rows + one
+  // full-width danger row. There is no trailing gap after the danger row.
+  int card_h = 2 * pad + title_h + (grid_rows + 1) * btn_h + grid_rows * btn_gap;
   const int max_h = lv_disp_get_ver_res(nullptr) - STATUSBAR_H - 12;
   const bool card_scroll = (card_h > max_h);            // safety net only — all three variants fit both S3 boards
   if (card_scroll) card_h = max_h;
@@ -6895,7 +7508,9 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     lv_label_set_text(l, TR(lbl));
     lv_obj_set_style_text_font(l, row_font, LV_PART_MAIN);
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(l, half_w - 8);
+    // LONG_DOT only stays on one line when height is constrained. Previously a
+    // Large-preset label wrapped into a second line and escaped its 30-px row.
+    lv_obj_set_size(l, half_w - 8, lv_font_get_line_height(row_font));
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_center(l);
     if (col == 0) col = 1;
@@ -6919,27 +7534,29 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     lv_obj_center(l);
     y += btn_h + btn_gap;
   };
-  mk(LV_SYMBOL_OK "  Mark as read", threadSheetMarkReadCb, 0);
+  mk(TR(LV_SYMBOL_OK "  Mark as read"), threadSheetMarkReadCb, 0);
   if (is_channel) {
-    mk(LV_SYMBOL_SETTINGS "  Region & scope", channelLongSheetRegionCb, 0);
+    mk(TR(LV_SYMBOL_SETTINGS "  Region & scope"), channelLongSheetRegionCb, 0);
     // The two mutes sit side by side on their own row; labels set by chmuteRefreshLabels().
     s_chmute_msg_btn = mk("", channelMuteMsgCb, 0);
     s_chmute_men_btn = mk("", channelMuteMenCb, 0);
     chmuteRefreshLabels();
-    mk(LV_SYMBOL_SHUFFLE  "  Share secret",   channelLongSheetShareCb,   0);
-    mk(LV_SYMBOL_CLOSE    "  Blocked users",  channelLongSheetBlockedCb, 0);
+    mk(TR(LV_SYMBOL_SHUFFLE  "  Share secret"),   channelLongSheetShareCb,   0);
+    mk(TR(LV_SYMBOL_CLOSE    "  Blocked users"),  channelLongSheetBlockedCb, 0);
     // Chat-list avatar emoji: tap = pick, long-press = back to the two-letter auto avatar.
-    lv_obj_t* icb = mk(LV_SYMBOL_IMAGE "  Chat icon", threadSheetIconCb, 0);
+    lv_obj_t* icb = mk(TR(LV_SYMBOL_IMAGE "  Chat icon"), threadSheetIconCb, 0);
     if (icb) lv_obj_add_event_cb(icb, threadSheetIconResetCb, LV_EVENT_LONG_PRESSED, nullptr);
-    mk(LV_SYMBOL_TRASH    "  Delete history", threadSheetClearHistCb,    0);
-    mk_full(LV_SYMBOL_TRASH "  Remove channel", channelLongSheetDeleteCb, 0xB23A48);
+    mk(TR(LV_SYMBOL_TRASH    "  Delete history"), threadSheetClearHistCb,    0);
+    mk_full(TR(LV_SYMBOL_TRASH "  Remove channel"), channelLongSheetDeleteCb, 0xB23A48);
   } else {
-    if (is_room_thread)
-      mk(LV_SYMBOL_REFRESH "  Log in again",  threadSheetRoomLoginCb,    0);
-    mk(LV_SYMBOL_LOOP     "  Reset path",     threadSheetResetPathCb,    0);
-    mk(LV_SYMBOL_CLOSE    "  Blocked users",  channelLongSheetBlockedCb, 0);
-    mk(LV_SYMBOL_TRASH    "  Delete history", threadSheetClearHistCb,    0);
-    mk_full(LV_SYMBOL_TRASH "  Delete chat",   threadSheetDeleteDmCb,     0xB23A48);
+    if (is_room_thread) {
+      mk(TR(LV_SYMBOL_REFRESH "  Log in again"),  threadSheetRoomLoginCb,    0);
+      mk(TR(LV_SYMBOL_LOOP    "  Join w/ password"), threadSheetRoomJoinCb,  0);
+    }
+    mk(TR(LV_SYMBOL_LOOP     "  Reset path"),     threadSheetResetPathCb,    0);
+    mk(TR(LV_SYMBOL_CLOSE    "  Blocked users"),  channelLongSheetBlockedCb, 0);
+    mk(TR(LV_SYMBOL_TRASH    "  Delete history"), threadSheetClearHistCb,    0);
+    mk_full(TR(LV_SYMBOL_TRASH "  Delete chat"), threadSheetDeleteDmCb, 0xB23A48);
   }
 }
 
@@ -7516,13 +8133,16 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   const int col_gap = 0;
 #elif defined(TLORA_PAGER)
   const int card_w  = 360;
-  const int btn_h   = 32;
-  const int pad     = 8;
-  const int title_h = 26;
-  const int hint_h  = 22;
-  const int row_gap = 4;
+  // Six replies fit in three compact rows. Keep the picker entirely inside
+  // the 200-px viewport instead of relying on a height clamp whose absolutely
+  // positioned footer was only reachable by scrolling past the card edge.
+  const int btn_h   = 30;
+  const int pad     = 6;
+  const int title_h = 24;
+  const int hint_h  = 18;
+  const int row_gap = 3;
   const int cols    = 2;
-  const int col_gap = 8;
+  const int col_gap = 6;
 #else
   const int card_w  = 220;
   const int btn_h   = 32;          // 34→32: 6 macro rows have to fit in the
@@ -7537,6 +8157,9 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   const int rows     = (TOUCH_QUICK_REPLY_COUNT + cols - 1) / cols;   // ceil, in case the macro count ever changes
   const int gps_row_h = btn_h + row_gap;   // GPS-position row: always full-width, sits above the macro grid
   int card_h = title_h + gps_row_h + rows * (btn_h + row_gap) + hint_h + pad;
+#if defined(TLORA_PAGER)
+  card_h += pad;   // both top and bottom content padding are inside the fixed-height card
+#endif
   if (card_h > sh - STATUSBAR_H - 8) card_h = sh - STATUSBAR_H - 8;   // never taller than the visible area
   lv_obj_t* card = lv_obj_create(s_qr_sheet);
   lv_obj_remove_style_all(card);
@@ -7559,7 +8182,11 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text(title, TR("Quick reply"));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  lv_obj_set_style_text_font(title, uiChromeFont(), LV_PART_MAIN);
+#else
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
+#endif
   lv_obj_set_pos(title, 0, 0);
 
 #if defined(ESP32)
@@ -7579,7 +8206,13 @@ static void openQuickReplyPicker(LvChatPanel* p) {
     lv_label_set_text(lbl, gbuf);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(lbl, card_w - 2 * pad - 16);
-    lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl,
+#if defined(TLORA_PAGER)
+                               uiChromeFont(),
+#else
+                               &g_font_12,
+#endif
+                               LV_PART_MAIN);
     lv_obj_set_style_text_color(lbl, lv_color_hex(fix ? COLOR_TEXT : COLOR_SUB), LV_PART_MAIN);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 8, 0);
   }
@@ -7598,7 +8231,13 @@ static void openQuickReplyPicker(LvChatPanel* p) {
     lv_label_set_text(lbl, buf);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(lbl, col_w - 16);
-    lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl,
+#if defined(TLORA_PAGER)
+                               uiChromeFont(),
+#else
+                               &g_font_12,
+#endif
+                               LV_PART_MAIN);
     lv_obj_set_style_text_color(lbl, lv_color_hex(n > 0 ? COLOR_TEXT : COLOR_SUB), LV_PART_MAIN);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 8, 0);
   }
@@ -7607,7 +8246,13 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   lv_obj_t* hint = lv_label_create(card);
   lv_label_set_text(hint, TR("Edit in Settings \xe2\x86\x92 Quick replies"));
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, LV_PART_MAIN);
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(hint, card_w - 2 * pad);
+#else
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+#endif
   lv_obj_set_pos(hint, 0, y + 2);
 }
 
@@ -7705,10 +8350,26 @@ static void tabChangedCb(lv_event_t* e) {
   } else {
     if (prev_t == MAP_TAB_INDEX) applyMapChrome(false);   // restore opaque chrome
     clearRouteReplay();    // drop any route-replay overlay when leaving the map
-    // Drop tile JPEGs from PSRAM the moment we leave the tab — keeps the
-    // working set small and lets the map cold-load with fresh data on
-    // the next visit. (CPU stays at 160 MHz — the whole UI runs there.)
-    freeMapTiles();
+    // Leaving the map used to drop all nine decoded tiles, so every re-open
+    // paid the full read + JPEG decode again — measured at ~2.5 s of blocked
+    // UI on the M9 ([STALL] ui:lvgl), on EVERY visit, not just the first.
+    // The grid costs 9 x 128 KB = 1.15 MB of PSRAM, which only matters on the
+    // 2 MB V4 (the same board renderMapTiles already caps to a 4-tile pool),
+    // so keep the decodes on boards with room and re-open as a pure blit.
+    // Freshness is unaffected: renderMapTiles re-attempts MISSING tiles on
+    // every pass, and a style / mode / storage change frees the cache at its
+    // own call sites.
+    // Nothing is released on a roomy board: the slots keep their identity,
+    // their pixels AND their widgets, which is exactly the state panning
+    // within the tab already leaves them in — the tab is simply not drawn
+    // while it is hidden. (releaseMapTileSlot is not enough here: it clears
+    // in_use, so the next render would treat the tile as absent and decode
+    // it again.)
+    static const size_t kPsramTotalB = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    // No non-zero guard: a board reporting 0 belongs on the CONSERVATIVE side of
+    // this test, not the roomy one.
+    const bool low_psram = (kPsramTotalB < 4u * 1024 * 1024);
+    if (low_psram) freeMapTiles();
   }
 
   // The status bar is shown on every tab now: the Settings page is a clean
@@ -7750,12 +8411,43 @@ static void toggleTcpCb(lv_event_t* e) {
   refreshStatusLabels();
 }
 
+static bool bleEnableWaitingForWifi() {
+#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
+  return wifiConfigPagerWifiBlocksBle();
+#else
+  return false;
+#endif
+}
+
+static const char* bleEnableFailureText() {
+  if (bleEnableWaitingForWifi())
+    return TR("Bluetooth will start after Wi-Fi connects or times out.");
+  return TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first.");
+}
+
+// "The user wants BLE on", covering the Pager's queued-behind-Wi-Fi request as
+// well as a live stack. Scoped to the Pager on purpose: only UITask::enableBle()
+// records a pending request (wifiConfigSetBleEnabled(true) on the deferral
+// path), and only main.cpp retries one after association. Everywhere else
+// wifiConfigGetBleEnabled() is a plain persisted preference that DEFAULTS TO ON
+// and can sit true with no stack begun (the boot co-init heap guard, an OTA
+// release) — folding that in there would make the toggles read ON while BLE is
+// dead, and turn the first tap into "clear my preference" instead of "start it".
+static bool bleRequestedOrEnabled() {
+  bool requested = g_lv.task && g_lv.task->isBleEnabled();
+#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
+  requested = requested || wifiConfigGetBleEnabled();
+#endif
+  return requested;
+}
+
 static void toggleBleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task || !g_lv.task->hasBleCapability()) return;
-  if (g_lv.task->isBleEnabled()) {
+  const bool requested = bleRequestedOrEnabled();
+  if (requested) {
     g_lv.task->disableBle();
   } else if (!g_lv.task->enableBle()) {
-    g_lv.task->showAlert(TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first."), 2200);
+    g_lv.task->showAlert(bleEnableFailureText(), 2600);
     refreshStatusLabels();
     return;
   }
@@ -8309,6 +9001,12 @@ static void kbBackspaceSelCb(lv_event_t* e) {
 
 static void closeSettingsModal() {
   hideKb();
+#if CAP_KEYPAD_NAV
+  // The synchronous lv_obj_del below can take down the group-focused object —
+  // detach first, exactly like the chat rebuilds do (navDetachBeforeTreeMutation
+  // has no !CAP_KEYPAD_NAV fallback, hence the gate; navMarkDirty below does).
+  navDetachBeforeTreeMutation();
+#endif
   if (g_set_modal.root) {
     lv_obj_del(g_set_modal.root);
   }
@@ -8322,6 +9020,7 @@ static void closeSettingsModal() {
   s_addct_name_ta    = nullptr;
   s_addct_error_l    = nullptr;
   resetSettingsModalState();
+  navMarkDirty();   // focus group re-roots to whatever the modal was covering
 }
 
 static void settingsCloseCb(lv_event_t* e) {
@@ -8441,6 +9140,7 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   styleButton(close_btn);
   lv_obj_add_event_cb(close_btn, settingsCloseCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* close_lbl = lv_label_create(close_btn);
+  useChainedFont(close_lbl);
 #if defined(HAS_TANMATSU)
   { char _cb[40]; snprintf(_cb, sizeof _cb, LV_SYMBOL_CLOSE "  %s", TR("Close")); lv_label_set_text(close_lbl, _cb);
     lv_obj_set_style_text_color(close_lbl, lv_color_hex(0xE05544), LV_PART_MAIN); }   // red ✕
@@ -8580,6 +9280,11 @@ static void saveRadioParamsCb(lv_event_t* e) {
   if (has_region_ta) {
     the_mesh.setDefaultFloodScope(region);
     touchPrefsSetRegionScope(region);
+    // #271: keep the registry in step with the region we just adopted, so its
+    // messages are named immediately. Any previously-registered region keeps its
+    // slot, so changing our own region does not un-name the history we
+    // received while we were in the old one.
+    if (region[0]) the_mesh.regionRegistry().ensureRegion(region);
     has_region = (region[0] != '\0');
   }
   if (ok) {
@@ -8876,7 +9581,8 @@ static void openAdvertPage() {
   styleButton(b_flood);
   lv_obj_add_event_cb(b_flood, advertFloodCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lf = lv_label_create(b_flood);
-  lv_label_set_text(lf, LV_SYMBOL_UPLOAD "  Flood");
+  useChainedFont(lf);
+  lv_label_set_text(lf, TR(LV_SYMBOL_UPLOAD "  Flood"));
   lv_obj_center(lf);
 
   lv_obj_t* b_zh = lv_btn_create(body);
@@ -8885,7 +9591,8 @@ static void openAdvertPage() {
   styleButton(b_zh);
   lv_obj_add_event_cb(b_zh, advertZeroHopCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lz = lv_label_create(b_zh);
-  lv_label_set_text(lz, LV_SYMBOL_WIFI "  Zero-hop");
+  useChainedFont(lz);
+  lv_label_set_text(lz, TR(LV_SYMBOL_WIFI "  Zero-hop"));
   lv_obj_center(lz);
   y += SC(54);
 
@@ -8916,7 +9623,7 @@ static void openAdvertPage() {
   lv_obj_set_style_text_color(flab, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_pos(flab, 2, y + SC(8));
   lv_obj_t* fdd = lv_dropdown_create(body);
-  lv_dropdown_set_options_static(fdd, "Off\n1 day\n2 days\n3 days\n7 days");
+  lv_dropdown_set_options_static(fdd, TR("Off\n1 day\n2 days\n3 days\n7 days"));
   lv_obj_set_width(fdd, SC(120));
   lv_obj_align(fdd, LV_ALIGN_TOP_RIGHT, -4, y);
   lv_dropdown_set_selected(fdd, advertDdIdx(kAutoFloodHrs, (int)(sizeof(kAutoFloodHrs)/sizeof(kAutoFloodHrs[0])), touchPrefsGetFloodAdvHrs()));
@@ -8929,7 +9636,7 @@ static void openAdvertPage() {
   lv_obj_set_style_text_color(llab, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_pos(llab, 2, y + SC(8));
   lv_obj_t* ldd = lv_dropdown_create(body);
-  lv_dropdown_set_options_static(ldd, "Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours");
+  lv_dropdown_set_options_static(ldd, TR("Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours"));
   lv_obj_set_width(ldd, SC(120));
   lv_obj_align(ldd, LV_ALIGN_TOP_RIGHT, -4, y);
   lv_dropdown_set_selected(ldd, advertDdIdx(kAutoLocalMin, 6, touchPrefsGetLocalAdvMin()));
@@ -9178,7 +9885,7 @@ static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
 
 static void openDiscoveredModalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_obj_t* body = createSettingsModal("Discovered", SettingsModalKind::Discovered);
+  lv_obj_t* body = createSettingsModal(TR("Discovered"), SettingsModalKind::Discovered);
   int y = 0;
 
   // Auto-add hint: any of the four "auto-add" type bits set means new contacts
@@ -9189,19 +9896,19 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     const uint8_t mask = prefs ? (prefs->autoadd_config & static_cast<uint8_t>(
         AUTO_ADD_CHAT | AUTO_ADD_REPEATER | AUTO_ADD_ROOM_SERVER | AUTO_ADD_SENSOR)) : 0u;
     if (mask) {
-      char hint[120];
-      char types[64]; types[0] = '\0';
+      char hint[240];   // translations run long; the HU string is ~1.6x English
+      char types[128]; types[0] = '\0';   // 4 translated plurals, UTF-8
       size_t off = 0;
       auto add = [&](const char* s) {
         if (off > 0 && off + 3 < sizeof(types)) { types[off++] = ','; types[off++] = ' '; types[off] = '\0'; }
         size_t n = strlen(s);
         if (off + n < sizeof(types)) { memcpy(types + off, s, n); off += n; types[off] = '\0'; }
       };
-      if (mask & AUTO_ADD_CHAT)        add("chats");
-      if (mask & AUTO_ADD_REPEATER)    add("repeaters");
-      if (mask & AUTO_ADD_ROOM_SERVER) add("rooms");
-      if (mask & AUTO_ADD_SENSOR)      add("sensors");
-      snprintf(hint, sizeof(hint), "Auto-add on for %s — new %s land in Contacts automatically.",
+      if (mask & AUTO_ADD_CHAT)        add(TR("chats"));
+      if (mask & AUTO_ADD_REPEATER)    add(TR("repeaters"));
+      if (mask & AUTO_ADD_ROOM_SERVER) add(TR("rooms"));
+      if (mask & AUTO_ADD_SENSOR)      add(TR("sensors"));
+      snprintf(hint, sizeof(hint), TR("Auto-add on for %s — new %s land in Contacts automatically."),
                types, types);
       lv_obj_t* l = lv_label_create(body);
       lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
@@ -9249,6 +9956,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
       styleButton(cog);
       lv_obj_add_event_cb(cog, openDiscoveredSettingsSheetCb, LV_EVENT_CLICKED, nullptr);
       lv_obj_t* cl = lv_label_create(cog);
+      useChainedFont(cl);
       lv_label_set_text(cl, LV_SYMBOL_SETTINGS);
       lv_obj_set_style_text_color(cl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_center(cl);
@@ -9260,6 +9968,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
       styleButton(srt);
       lv_obj_add_event_cb(srt, openDiscSortSheetCb, LV_EVENT_CLICKED, nullptr);
       lv_obj_t* srtl = lv_label_create(srt);
+      useChainedFont(srtl);
       lv_label_set_text(srtl, LV_SYMBOL_SHUFFLE);
       lv_obj_set_style_text_color(srtl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_center(srtl);
@@ -9271,6 +9980,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
         lv_obj_set_style_bg_color(pb, lv_color_hex(0x7A2A2A), LV_PART_MAIN);
         lv_obj_add_event_cb(pb, discoveredPurgeCb, LV_EVENT_CLICKED, nullptr);
         lv_obj_t* pl = lv_label_create(pb);
+        useChainedFont(pl);
         lv_label_set_text(pl, LV_SYMBOL_TRASH);
         lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
         lv_obj_center(pl);
@@ -9316,6 +10026,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     // Name label — clamped to ONE line (height = line height) so a long name
     // ellipsises instead of wrapping down onto the meta row below it.
     lv_obj_t* nm = lv_label_create(card);
+    useChainedFont(nm);
     char nm_buf[40];
     copyUtf8ReplacingMissingGlyphs(&g_font_14, nm_buf, sizeof(nm_buf), e_disc.ci.name);
     lv_label_set_text(nm, nm_buf[0] ? nm_buf : "(unnamed)");
@@ -9326,6 +10037,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
 
     // Type + hops + key prefix (single line, ellipsised, below the name)
     lv_obj_t* meta = lv_label_create(card);
+    useChainedFont(meta);
     const char* type_label = "node";
     switch (e_disc.ci.type) {
       case ADV_TYPE_NONE:     type_label = "none";     break;
@@ -9356,6 +10068,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     s_disc_add_ctx[idx].slot_idx = idx;
     lv_obj_add_event_cb(add_btn, discoveredAddCb, LV_EVENT_CLICKED, &s_disc_add_ctx[idx]);
     lv_obj_t* add_lbl = lv_label_create(add_btn);
+    useChainedFont(add_lbl);
     lv_label_set_text(add_lbl, TR("Add"));
     lv_obj_center(add_lbl);
 
@@ -9410,6 +10123,11 @@ static void doExportBackupFile(const char* fname);   // write a backup (SD if a 
 // for a control pinned to the card's right edge (~56 for a switch); pass 0 for a
 // full-width label. font==nullptr keeps the inherited default (g_font_14). The
 // text is run through TR() here, so callers pass the bare English literal.
+#if CAP_CONSOLE
+// Defined with the other boot-mode toggles further down, next to Remote UI's,
+// which is the same kind of switch. Declared here for Settings > General.
+static void consoleModeToggleCb(lv_event_t* e);
+#endif
 static int settingsRowLabel(lv_obj_t* body, int y, int y_off, const char* text,
                             uint32_t color, const lv_font_t* font, int reserve_right) {
   lv_obj_t* l = lv_label_create(body);
@@ -9417,7 +10135,13 @@ static int settingsRowLabel(lv_obj_t* body, int y, int y_off, const char* text,
   lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
   lv_label_set_text(l, TR(text));
   lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
-  if (font) lv_obj_set_style_text_font(l, font, LV_PART_MAIN);
+  // Always set a font. Inheriting looks equivalent but is not: the inherited
+  // value is LVGL's raw LV_FONT_MONTSERRAT_14, which carries no fallback chain,
+  // so every non-ASCII character in these labels rendered as a tofu box —
+  // "Közösségi profil" came out "K□z□ss□gi profil" while the title bar beside it
+  // was fine, because that one sets &g_font_16 explicitly. g_font_14 is the same
+  // typeface and metrics, plus the accent/Greek/Cyrillic/Arabic fallbacks.
+  lv_obj_set_style_text_font(l, font ? font : &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(l, 2, y + y_off);
   lv_obj_update_layout(l);
   return lv_obj_get_height(l);
@@ -9436,14 +10160,14 @@ static void buildProfileSettings() {
     lv_obj_set_size(ta, w, SC(30));
     lv_obj_set_pos(ta, x, y);
     lv_textarea_set_one_line(ta, true);
-    lv_textarea_set_placeholder_text(ta, TR(ph));
+    taSetPlaceholder(ta, TR(ph));
     lv_textarea_set_max_length(ta, max_len);
     attachSettingsTaEvents(ta);
     return ta;
   };
 
-  mk_label("Node name");
-  g_set_modal.name_ta = mk_ta(cw, 0, "Node name", 31);
+  mk_label(TR("Node name"));
+  g_set_modal.name_ta = mk_ta(cw, 0, TR("Node name"), 31);
   lv_obj_add_event_cb(g_set_modal.name_ta, saveProfileNameCb, LV_EVENT_DEFOCUSED, nullptr);  // auto-save on blur
   if (g_lv.task) {
     char nm_vis[40];
@@ -9452,10 +10176,10 @@ static void buildProfileSettings() {
     lv_textarea_set_text(g_set_modal.name_ta, nm_vis);
   }
   y += SC(36);
-  mk_label("Advert location");
+  mk_label(TR("Advert location"));
   const int loc_g = 8, loc_fw = (cw - loc_g) / 2;   // lat / lon fill the row evenly
-  g_set_modal.lat_ta = mk_ta(loc_fw, 0, "Latitude", 20);
-  g_set_modal.lon_ta = mk_ta(loc_fw, loc_fw + loc_g, "Longitude", 20);
+  g_set_modal.lat_ta = mk_ta(loc_fw, 0, TR("Latitude"), 20);
+  g_set_modal.lon_ta = mk_ta(loc_fw, loc_fw + loc_g, TR("Longitude"), 20);
   lv_obj_add_event_cb(g_set_modal.lat_ta, saveProfilePosCb, LV_EVENT_DEFOCUSED, nullptr);  // auto-save the pair on blur
   lv_obj_add_event_cb(g_set_modal.lon_ta, saveProfilePosCb, LV_EVENT_DEFOCUSED, nullptr);
   if (g_lv.task) {
@@ -9482,8 +10206,8 @@ static void buildProfileSettings() {
 
     // (Path-hash size moved to Radio settings as "Multi-byte routing" — it's the
     // same NodePrefs.path_hash_mode, so no duplicate control here.)
-    mk_label("Advert");
-    mk_switch("Share location in advert", &g_set_modal.share_loc_sw);
+    mk_label(TR("Advert"));
+    mk_switch(TR("Share location in advert"), &g_set_modal.share_loc_sw);
     NodePrefs* pol_prefs = the_mesh.getNodePrefs();
     if (pol_prefs && pol_prefs->advert_loc_policy)
       lv_obj_add_state(g_set_modal.share_loc_sw, LV_STATE_CHECKED);
@@ -9494,7 +10218,7 @@ static void buildProfileSettings() {
   // Public key — long-press copies. We don't surface the *private* key here
   // (LocalIdentity::prv_key is library-private, and private material on a touch
   // screen is a footgun).
-  mk_label("Identity (public key)");
+  mk_label(TR("Identity (public key)"));
   {
     const uint8_t* pk = the_mesh.getSelfPubKey();
     char pk_hex[2 * PUB_KEY_SIZE + 1];
@@ -9529,7 +10253,7 @@ static void buildProfileSettings() {
       openShareMyContactPopup();
     }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* sl = lv_label_create(sb);
-    lv_label_set_text(sl, LV_SYMBOL_IMAGE "   Share QR");
+    lv_label_set_text(sl, TR(LV_SYMBOL_IMAGE "   Share QR"));
     lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_font(sl, &g_font_14, LV_PART_MAIN);
     lv_obj_center(sl);
@@ -9578,6 +10302,28 @@ static void buildProfileSettings() {
   }
 }
 
+// Single-character spam filter. A lot of mesh spam is a 1-byte payload — the cheapest
+// message there is — and it still costs every receiver a notification and a chime.
+static void ignoreTinyMsgsChangedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetIgnoreTinyMsgs(on);
+  g_lv.task->showAlert(on ? TR("1-character messages will be ignored")
+                          : TR("1-character messages will be shown"), 1600);
+}
+// Location telemetry (#266). Separate from the plain telemetry switch on purpose:
+// battery/environment is not position, and a single "allow telemetry" must never be
+// able to hand out where you are. Dropdown order matches TELEM_MODE_*: 0 deny,
+// 1 allow-flags (chosen contacts), 2 allow-all.
+static void locTelemetryModeChangedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
+  const uint8_t sel = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
+  g_lv.task->setLocationTelemetryMode(sel);
+  const char* msg = (sel == TELEM_MODE_ALLOW_ALL)   ? TR("Location shared with anyone who asks")
+                  : (sel == TELEM_MODE_ALLOW_FLAGS) ? TR("Location shared with chosen contacts only")
+                                                    : TR("Location sharing off");
+  g_lv.task->showAlert(msg, 1600);
+}
 static void pathHashModeChangedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
   uint8_t sel = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
@@ -9709,6 +10455,14 @@ static void radioRxQueueToggleCb(lv_event_t* e) {
   touchPrefsSetRxQueue(on);
   radio_driver.rxQueueEnable(on);
 }
+// Auto-retry sends until the mesh confirms them (echo/ACK) — mikecarper's #207 retry train.
+// Persists + applies live; OFF stops new trains, an in-flight one finishes its schedule.
+static void radioRetryEchoToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetRetryEcho(on);
+  the_mesh.setCompanionRetryEnabled(on);
+}
 static void radioSigPollSaveCb(lv_event_t* e) {
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !s_radio_sig_poll_ta) return;
@@ -9760,7 +10514,7 @@ static void buildRadioSettings() {
     lv_obj_set_size(ta, w, SC(30));
     lv_obj_set_pos(ta, x, y);
     lv_textarea_set_one_line(ta, true);
-    lv_textarea_set_placeholder_text(ta, TR(ph));
+    taSetPlaceholder(ta, TR(ph));
     lv_textarea_set_max_length(ta, max_len);
     attachSettingsTaEvents(ta);
     lv_obj_add_event_cb(ta, saveRadioParamsCb, LV_EVENT_DEFOCUSED, nullptr);  // auto-save the group on blur (silent if mid-edit)
@@ -9786,7 +10540,7 @@ static void buildRadioSettings() {
 
   // No "RADIO" divider here — it duplicated the sub-tab name; the page opens straight on
   // the preset picker.
-  mk_label("Community Preset");
+  mk_label(TR("Community Preset"));
   {
     static const size_t PRESET_OPT_SZ = 1200;
     static char* preset_opt_buf = (char*)psAlloc(PRESET_OPT_SZ);   // lazy-PSRAM (frees 1.2 KB internal .bss)
@@ -9822,20 +10576,20 @@ static void buildRadioSettings() {
   }
 
   const lv_coord_t cw = s_settings_content_w;
-  mk_label("Frequency / bandwidth");
+  mk_label(TR("Frequency / bandwidth"));
   {
     const int g = 8, fw = (cw - g) / 2;           // two equal fields filling the row
-    g_set_modal.freq_ta = mk_ta(fw, 0,        "MHz", 15);
-    g_set_modal.bw_ta   = mk_ta(fw, fw + g,   "kHz", 10);
+    g_set_modal.freq_ta = mk_ta(fw, 0, TR("MHz"), 15);
+    g_set_modal.bw_ta   = mk_ta(fw, fw + g, TR("kHz"), 10);
   }
   y += SC(44);   // was SC(36): only left a 6px gap below the 30px-tall boxes, crowding the label below
-  mk_label("SF / CR / TX / AF");
+  mk_label(TR("SF / CR / TX / AF"));
   {
     const int g = 6, fw = (cw - 3 * g) / 4;       // four equal fields filling the row
-    g_set_modal.sf_ta      = mk_ta(fw, 0,              "SF", 2);
-    g_set_modal.cr_ta      = mk_ta(fw, fw + g,         "CR", 2);
-    g_set_modal.tx_ta      = mk_ta(fw, 2 * (fw + g),   "TX", 4);
-    g_set_modal.airtime_ta = mk_ta(fw, 3 * (fw + g),   "AF", 6);
+    g_set_modal.sf_ta      = mk_ta(fw, 0, TR("SF"), 2);
+    g_set_modal.cr_ta      = mk_ta(fw, fw + g, TR("CR"), 2);
+    g_set_modal.tx_ta      = mk_ta(fw, 2 * (fw + g), TR("TX"), 4);
+    g_set_modal.airtime_ta = mk_ta(fw, 3 * (fw + g), TR("AF"), 6);
   }
   y += SC(38);
 
@@ -9893,12 +10647,80 @@ static void buildRadioSettings() {
     y += LV_MAX(SC(40), h + SC(12));
   }
 
+  // Drop 1-character messages. Off by default: this filters other people's traffic,
+  // so it is a deliberate choice rather than something we decide for the operator.
+  {
+    int h = settingsRowLabel(body, y, 4, TR("Ignore 1-character messages"), COLOR_TEXT, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetIgnoreTinyMsgs()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, ignoreTinyMsgsChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(SC(40), h + SC(12));
+  }
+  {
+    lv_obj_t* note = lv_label_create(body);
+    lv_label_set_text(note, TR("Most mesh spam is a single character, because it is the cheapest "
+                               "message to send. Dropped silently: no chat entry, no notification, no sound."));
+    lv_obj_set_width(note, s_settings_content_w - SC(4));
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(note, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(note, 2, y);
+    lv_obj_update_layout(note);
+    y += lv_obj_get_height(note) + SC(10);
+  }
+
+  // Position sharing (#266). Until now the only way to share position was to put it
+  // in the advert, which broadcasts it in the clear to every node in range, forever.
+  // MeshCore can answer position on REQUEST instead — encrypted to the contact that
+  // asked, and only to contacts you picked — but nothing ever set telemetry_mode_loc,
+  // so that whole path was unreachable. "Chosen contacts" reads the per-contact
+  // permission set from each contact's own menu.
+  mk_label(TR("Share my location when asked"));
+  {
+    lv_obj_t* dd = lv_dropdown_create(body);
+    lv_obj_set_size(dd, lv_pct(100), SC(34));
+    lv_obj_set_pos(dd, 2, y);
+    // Order MUST match TELEM_MODE_*: 0 = deny, 1 = allow-flags, 2 = allow-all.
+    lv_dropdown_set_options(dd, TR("Never\nChosen contacts only\nAnyone who asks"));
+    lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_border_color(dd, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_t* loclist = lv_dropdown_get_list(dd);
+    lv_obj_set_style_bg_color(loclist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_text_color(loclist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(loclist, &g_font_12, LV_PART_MAIN);
+    uint8_t lm = prefs ? prefs->telemetry_mode_loc : TELEM_MODE_DENY;
+    if (lm > TELEM_MODE_ALLOW_ALL) lm = TELEM_MODE_DENY;
+    lv_dropdown_set_selected(dd, lm);
+    lv_obj_add_event_cb(dd, locTelemetryModeChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+    y += SC(40);
+  }
+  {
+    // Be explicit about the two things that surprise people: this is answered on
+    // request (nothing is broadcast), and MeshCore only replies at all when plain
+    // telemetry is allowed, so the switch above is a prerequisite rather than an
+    // unrelated setting.
+    lv_obj_t* note = lv_label_create(body);
+    lv_label_set_text(note, TR("Sent only when that contact asks, encrypted to them. Nothing is broadcast. "
+                               "Needs \"Answer telemetry requests\" on. Pick contacts in a contact's menu."));
+    lv_obj_set_width(note, s_settings_content_w - SC(4));
+    lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(note, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(note, 2, y);
+    lv_obj_update_layout(note);
+    y += lv_obj_get_height(note) + SC(10);
+  }
+
   // Multi-byte routing: how many bytes of each repeater's hash this node stamps
   // into the path when it adverts / sends. 1 byte (legacy) collides in large
   // regions; 2-3 bytes disambiguate. Applied immediately + persisted (no radio
   // reconfig). All repeaters on a path must support it (MeshCore >= v1.14);
   // older ones silently drop 2/3-byte packets.
-  mk_label("Multi-byte routing (path hash)");
+  mk_label(TR("Multi-byte routing (path hash)"));
   {
     lv_obj_t* dd = lv_dropdown_create(body);
     lv_obj_set_size(dd, lv_pct(100), SC(34));
@@ -9923,8 +10745,8 @@ static void buildRadioSettings() {
   // Region scope: tags outgoing floods with a region so repeaters that only
   // re-flood their own region (region-scoped networks) still propagate them.
   // Public "#hashtag" region -> key = SHA256("#name"); blank = unscoped (default).
-  mk_label("Region scope (#tag, blank = none)");
-  g_set_modal.region_ta = mk_ta(cw, 0, "#region", TOUCH_REGION_SCOPE_MAXLEN - 1);
+  mk_label(TR("Region scope (#tag, blank = none)"));
+  g_set_modal.region_ta = mk_ta(cw, 0, TR("#region"), TOUCH_REGION_SCOPE_MAXLEN - 1);
   {
     char rbuf[TOUCH_REGION_SCOPE_MAXLEN];
     if (touchPrefsGetRegionScope(rbuf, sizeof(rbuf)) > 0 && rbuf[0])
@@ -9943,6 +10765,25 @@ static void buildRadioSettings() {
     lv_obj_set_pos(note, 2, y);
     lv_obj_update_layout(note);
     y += lv_obj_get_height(note) + SC(8);
+  }
+  // #271: the regions above are the ones we SEND under. This opens the list of
+  // regions we can RECOGNISE. Naming them in message details needs only the
+  // name, since the key is derived from it.
+  {
+    lv_obj_t* rb = lv_btn_create(body);
+    lv_obj_set_size(rb, s_settings_content_w - SC(4), SC(34));
+    lv_obj_set_pos(rb, 2, y);
+    styleButton(rb);
+    lv_obj_add_event_cb(rb, [](lv_event_t* e) {
+      if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+      closeSettingsModal();
+      openRegionsModal();
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* rl = lv_label_create(rb);
+    lv_label_set_text(rl, TR(LV_SYMBOL_LIST "  Known regions"));
+    lv_obj_set_style_text_font(rl, &g_font_14, LV_PART_MAIN);
+    lv_obj_center(rl);
+    y += SC(40);
   }
 
   // Opt-in: also scope DIRECT messages / logins / remote-management floods to the region
@@ -9975,7 +10816,7 @@ static void buildRadioSettings() {
   // because keying the PA into an empty socket is how you destroy one. "Auto" keeps the old
   // per-transmit toggle purely for comparison: it sends internal and listens external, so Trace SNR
   // reads lopsided on it and roughly equal on a correctly pinned antenna.
-  mk_label("LoRa antenna (P4)");
+  mk_label(TR("LoRa antenna (P4)"));
   {
     lv_obj_t* dd = lv_dropdown_create(body);
     lv_obj_set_size(dd, lv_pct(100), SC(34));
@@ -10002,7 +10843,8 @@ static void buildRadioSettings() {
 
 #if defined(HELTEC_LORA_V4_TFT)
   // Heltec V4.3 only: the external FEM's high-gain receive amplifier (~17 dB). Bypassed by
-  // default; a big win in quiet/remote sites, but can desensitize in noisy areas. This is
+  // default on the plain V4 (ON by default on the V4-R8 since prefs v49); a big win in
+  // quiet/remote sites, but can desensitize in noisy areas. This is
   // SEPARATE from the SX1262's tiny internal "boosted gain". Hidden on V4.2 (no switchable LNA).
   if (board.femLnaControllable()) {
     int rh = settingsRowLabel(body, y, 4, TR("High-gain receiver (FEM LNA)"), COLOR_TEXT, &g_font_12, 56);
@@ -10028,10 +10870,22 @@ static void buildRadioSettings() {
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
 
+  // Auto-retry until heard (#207): resend until the mesh echoes/ACKs the packet.
+  {
+    int rh = settingsRowLabel(body, y, 4, TR("Retry sends until heard"), COLOR_TEXT, &g_font_12, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetRetryEcho()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, radioRetryEchoToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, rh + 10);
+    y += settingsRowLabel(body, y, 0, TR("Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only."),
+                          COLOR_SUB, &g_font_12, 0) + 2;
+  }
+
   // Signal probe — same setting as the home-graph Signal popup. A periodic
   // discover advert keeps the signal bars / graph fresh. Poll interval in whole
   // minutes (1..1440); the toggle saves immediately, the field on its Set button.
-  mk_label("Signal probe");
+  mk_label(TR("Signal probe"));
   {
     int rh = settingsRowLabel(body, y, 6, TR("Auto-discover"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -10042,6 +10896,7 @@ static void buildRadioSettings() {
 
     lv_obj_t* pl = lv_label_create(body);
     lv_label_set_text(pl, TR("Poll (min)"));
+    lv_obj_set_style_text_font(pl, &g_font_14, LV_PART_MAIN);   // accents need the fallback chain
     lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_pos(pl, 2, y + 6);
     s_radio_sig_poll_ta = lv_textarea_create(body);
@@ -10058,7 +10913,7 @@ static void buildRadioSettings() {
 
   // Auto advert — a shortcut to the Advertise app, where you send an advert now and set the
   // periodic flood / local self-advert timers. Surfaced here so it's discoverable from Radio & Mesh.
-  mk_label("Auto advert");
+  mk_label(TR("Auto advert"));
   {
     lv_obj_t* b_adv = lv_btn_create(body);
     lv_obj_set_size(b_adv, lv_pct(100), SC(34));
@@ -10066,6 +10921,7 @@ static void buildRadioSettings() {
     styleButton(b_adv);
     lv_obj_add_event_cb(b_adv, openAdvertModalCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* l_adv = lv_label_create(b_adv);
+    useChainedFont(l_adv);
     lv_label_set_text_fmt(l_adv, LV_SYMBOL_UPLOAD "  %s", TR("Open Advertise app"));
     lv_obj_center(l_adv);
     y += SC(42);
@@ -10086,7 +10942,7 @@ static void toggleNewContactToastCb(lv_event_t* e) {
 }
 
 static void buildAutoAddSettings() {
-  lv_obj_t* body = createSettingsModal("Auto-add contacts", SettingsModalKind::AutoAdd);
+  lv_obj_t* body = createSettingsModal(TR("Auto-add contacts"), SettingsModalKind::AutoAdd);
   NodePrefs* prefs = the_mesh.getNodePrefs();
   int y = 0;
   auto mk_switch = [&](const char* text, lv_obj_t** out) {
@@ -10097,11 +10953,14 @@ static void buildAutoAddSettings() {
     if (out) *out = sw;
     y += LV_MAX(34, h + 12);
   };
-  mk_switch("Auto chat", &g_set_modal.auto_chat_sw);
-  mk_switch("Auto repeater", &g_set_modal.auto_rep_sw);
-  mk_switch("Auto room", &g_set_modal.auto_room_sw);
-  mk_switch("Auto sensor", &g_set_modal.auto_sensor_sw);
-  mk_switch("Overwrite oldest", &g_set_modal.auto_overwrite_sw);
+  mk_switch(TR("Auto chat"), &g_set_modal.auto_chat_sw);
+  mk_switch(TR("Auto repeater"), &g_set_modal.auto_rep_sw);
+  mk_switch(TR("Auto room"), &g_set_modal.auto_room_sw);
+  mk_switch(TR("Auto sensor"), &g_set_modal.auto_sensor_sw);
+  // #178: favourites are already exempt — the core's eviction loop skips any
+  // contact with the favourite flag — but the label never said so, leaving users
+  // to guess whether starring a contact protected it while roaming.
+  mk_switch(TR("Overwrite oldest non-favorite"), &g_set_modal.auto_overwrite_sw);
   g_set_modal.manual_add_sw = nullptr;   // master "manual add" removed — per-type switches are authoritative now
 
   // "Notify on new contact" — a UI pref (not a NodePrefs autoadd bit), so it gets
@@ -10116,6 +10975,7 @@ static void buildAutoAddSettings() {
   }
 
   lv_obj_t* hops_l = lv_label_create(body);
+  useChainedFont(hops_l);
   lv_label_set_text(hops_l, TR("Max hops (0..64)"));
   lv_obj_set_style_text_color(hops_l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(hops_l, 2, y + 6);
@@ -10147,7 +11007,7 @@ static void buildAutoAddSettings() {
 }
 
 static void buildExperimentalSettings() {
-  lv_obj_t* body = createSettingsModal("Experimental", SettingsModalKind::Experimental);
+  lv_obj_t* body = createSettingsModal(TR("Experimental"), SettingsModalKind::Experimental);
   NodePrefs* prefs = the_mesh.getNodePrefs();
   int y = 0;
   auto mk_switch = [&](const char* text, lv_obj_t** out) {
@@ -10158,10 +11018,10 @@ static void buildExperimentalSettings() {
     y += LV_MAX(34, h + 12);
   };
 
-  mk_switch("Multi ACKs", &g_set_modal.exp_multi_sw);
-  mk_switch("Client repeat", &g_set_modal.exp_repeat_sw);
-  mk_switch("RX boosted gain", &g_set_modal.exp_boost_sw);
-  mk_switch("Duty meter", &g_set_modal.exp_dc_sw);
+  mk_switch(TR("Multi ACKs"), &g_set_modal.exp_multi_sw);
+  mk_switch(TR("Client repeat"), &g_set_modal.exp_repeat_sw);
+  mk_switch(TR("RX boosted gain"), &g_set_modal.exp_boost_sw);
+  mk_switch(TR("Duty meter"), &g_set_modal.exp_dc_sw);
 
   if (prefs) {
     if (prefs->multi_acks) lv_obj_add_state(g_set_modal.exp_multi_sw, LV_STATE_CHECKED);
@@ -10201,7 +11061,7 @@ static void saveQuickRepliesCb(lv_event_t* e) {
 }
 
 static void buildQuickReplySettings() {
-  lv_obj_t* body = createSettingsModal("Quick replies", SettingsModalKind::QuickReply);
+  lv_obj_t* body = createSettingsModal(TR("Quick replies"), SettingsModalKind::QuickReply);
   for (int i = 0; i < TOUCH_QUICK_REPLY_COUNT; ++i) g_set_modal.qr_tas[i] = nullptr;
 
   int y = 0;
@@ -10252,6 +11112,7 @@ static void buildQuickReplySettings() {
   styleButton(b);
   lv_obj_add_event_cb(b, saveQuickRepliesCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l = lv_label_create(b);
+  useChainedFont(l);
   lv_label_set_text(l, TR("Save quick replies"));
   lv_obj_center(l);
 }
@@ -10512,16 +11373,20 @@ static void sysInfoTextRest(char* buf, size_t cap) {
                 (unsigned)(sketch_size / 1024u),
                 (unsigned)(sketch_free / 1024u));
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // microSD size + free. The FAT scan (usedBytes()) is done by the core-0 worker — never
   // on this UI thread — so the About sheet can't freeze on it. We just read the worker's
   // cached result here and request a (re)scan at most every 30 s.
   {
     static uint32_t sd_req_ms = 0;
     const uint32_t nowm = millis();
+    // Once armed, only the worker may clear this request (after publishing
+    // busy). A loop-side timeout creates a false/false window in the VFS gate
+    // and can let SD.end() race the worker's totalBytes()/usedBytes() scan.
     if (!s_sdinfo_request && (sd_req_ms == 0 || (uint32_t)(nowm - sd_req_ms) >= 30000)) {
       sd_req_ms = nowm ? nowm : 1;
-      s_sdinfo_request = true;   // worker rescans off-thread
+      if (ensureTileFetchTaskRunning())
+        s_sdinfo_request = true;   // worker rescans off-thread
     }
     if (!s_sdinfo_done)
       p += snprintf(buf + p, cap - p, "microSD\n  \xE2\x80\xA6\n\n");          // … (computing)
@@ -10544,6 +11409,33 @@ static void sysInfoTextRest(char* buf, size_t cap) {
                   "NVS (settings store)\n  %u / %u entries (%u%%)\n  free: %u  namespaces: %u\n\n",
                   (unsigned)nvs.used_entries, (unsigned)nvs.total_entries, pct,
                   (unsigned)nvs.free_entries, (unsigned)nvs.namespace_count);
+  }
+
+  // Contact store pressure — the #222 diagnostic. The table is a flat file of 152-byte
+  // records, so its size follows the contact count directly, and on a card-less board it
+  // shares the internal volume with one blob file per contact. SPIFFS GC cost is driven by
+  // how FULL that volume is, and GC suspends the flash cache, which stalls both cores. So
+  // "used %" here is the number that predicts freezes; a reporter can photograph it.
+  {
+    const int nc = the_mesh.getNumContacts();
+    p += snprintf(buf + p, cap - p, "Contact store\n  %d / %d contacts (~%u KB)\n",
+                  nc, (int)MAX_CONTACTS, (unsigned)(((uint32_t)nc * 152u) / 1024u));
+    const size_t sp_tot = SPIFFS.totalBytes(), sp_used = SPIFFS.usedBytes();
+    if (sp_tot) {
+      p += snprintf(buf + p, cap - p, "  internal flash: %u / %u KB (%u%%)\n",
+                    (unsigned)(sp_used / 1024u), (unsigned)(sp_tot / 1024u),
+                    (unsigned)((uint64_t)sp_used * 100ull / sp_tot));
+    }
+    DataStore* ds = the_mesh.getStore();
+    if (ds && ds->lastContactsSaveValid()) {
+      p += snprintf(buf + p, cap - p, "  last save: %s, %u rec, %u ms\n",
+                    ds->lastContactsSaveInPlace() ? "in-place" : "FULL rewrite",
+                    (unsigned)ds->lastContactsSaveRecs(),
+                    (unsigned)ds->lastContactsSaveMs());
+    }
+    const uint32_t orph = the_mesh.getOrphanedBlobs();
+    if (orph) p += snprintf(buf + p, cap - p, "  orphaned blobs: %lu\n", (unsigned long)orph);
+    p += snprintf(buf + p, cap - p, "\n");
   }
 
   p += snprintf(buf + p, cap - p,
@@ -10634,7 +11526,7 @@ static void refreshSleepDiag(unsigned long now) {
 #endif  // HAS_TDECK_GT911
 
 static void buildSystemInfoSettings() {
-  lv_obj_t* body = createSettingsModal("System info", SettingsModalKind::SystemInfo);
+  lv_obj_t* body = createSettingsModal(TR("System info"), SettingsModalKind::SystemInfo);
   char buf[704];
 
   // Live tier (uptime + heap): a small constant-height label refreshed at 1 Hz.
@@ -10692,7 +11584,7 @@ static inline const char* mapTileUrlPath() { return s_map_style == 1 ? "/opentop
 
 // Distance units toggle (km <-> miles). Applies immediately — saves the
 // pref and forces the contacts list to re-render its distance badges.
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // Store all data (identity/prefs/contacts/channels) on SD under /meshcomod vs
 // internal SPIFFS. Read at boot before data loads, so it only takes effect on
 // the next reboot.
@@ -10706,34 +11598,118 @@ static void useSdStorageToggleCb(lv_event_t* e) {
                                          : TR("Data -> internal on reboot"), 1800);
 }
 
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
 // "Copy internal data to SD": recovery for the beta_36 upgrades where the live
 // profile was orphaned on internal flash while the honored SD toggle adopted an
-// empty card (which then minted a fresh identity). Overwrites the card's copies
-// with EVERYTHING from internal flash, forces the SD pref on, reboots.
+// empty card. Pager resumes only onto a card with no identity or the identical
+// profile; legacy targets retain their explicit overwrite behavior. On success
+// this forces the SD pref on and reboots.
 extern bool meshcomodMigrateSpiffsToSd(bool force);   // main.cpp
+extern bool meshcomodPrepareSdMigration();            // clears the prior commit marker / claims empty Pager tree
+#if defined(TLORA_PAGER)
+extern bool meshcomodSdProfileMatchesInternal();      // compares bytes without logging identity data
+#endif
+extern bool meshcomodArmSdMigLatch();                  // durable in-progress guard
 extern void meshcomodClearSdMigLatch();               // main.cpp (GH #142/#148 boot safe-mode)
-static void sdRestoreApply() {
-  if (!g_lv.task) return;
-  if (!fmSdTryMount()) { g_lv.task->showAlert(TR("No SD card"), 1600); return; }
-  g_lv.task->showAlert(TR("Copying internal data to SD..."), 6000);
-  lv_refr_now(nullptr);                 // paint the notice before the blocking copy
-  // Land everything in RAM first — this path used to reboot WITHOUT persisting,
-  // silently dropping every message since the last lazy flush.
+extern bool g_sd_migration_blocked;
+extern bool g_full_data_on_sd;                         // boot chose SD for identity/prefs
+static bool sdRuntimeLifecycleBusy();
+static bool s_sd_restore_pending = false;
+
+// Run the blocking filesystem walk only after lv_timer_handler() has returned.
+// Doing it directly in the confirmation callback stacked the migration's File
+// objects and path buffers on top of LVGL's event/render frames; on Pager that
+// eventually corrupted a source path and made SPIFFS reads fail mid-copy.
+// Quiesce both persistence workers before enumerating SPIFFS so no handle can
+// be rewritten underneath the walk.
+static void sdRestoreRun() {
+  if (!s_sd_restore_pending || !g_lv.task) return;
+  if (sdRuntimeLifecycleBusy()) return;
+  s_sd_restore_pending = false;
+
+  if (!fmSdTryMount()) {
+    g_lv.task->showAlert(TR("No SD card"), 1600);
+    return;
+  }
+
+  WdtHeavyGuard idle_wdt_guard;
+
+  // Land everything in RAM first. The history worker and queued A/B preference
+  // snapshots must both be idle before the migration opens either filesystem.
   g_lv.task->persistHistoryNow();
-  disableLoopWDT();
+  discoveredFlushNow();
+  the_mesh.flushContactsIfDirty();
+  the_mesh.persistSyncHistoryNow();
+  if (!touchPrefsFlush()) {
+    g_sd_migration_blocked = true;
+    g_lv.task->showAlert(TR("Copy blocked: internal data is busy"), 2600);
+    return;
+  }
+  // A separate SD consumer (tile/notification/info worker) may have started
+  // while the internal writers were draining. Defer instead of overlapping
+  // its open FAT handle with the migration.
+  if (sdRuntimeLifecycleBusy()) {
+    s_sd_restore_pending = true;
+    return;
+  }
+
+#if defined(TLORA_PAGER)
+  if (!meshcomodSdProfileMatchesInternal()) {
+    g_lv.task->showAlert(TR("Copy blocked: SD card holds a different or unreadable profile"), 3600);
+    return;
+  }
+#endif
+
+  if (!meshcomodPrepareSdMigration()) {
+    g_sd_migration_blocked = true;
+    g_lv.task->showAlert(TR("Copy blocked: SD profile could not be prepared safely"), 3200);
+    return;
+  }
+
+  if (!meshcomodArmSdMigLatch()) {
+    g_sd_migration_blocked = true;
+    g_lv.task->showAlert(TR("Copy blocked: migration guard unavailable"), 2600);
+    return;
+  }
+  const UBaseType_t low_water = uxTaskGetStackHighWaterMark(nullptr);
+  Serial.printf("[BOOT] deferred SD migration, loop stack low-water: %u bytes\n",
+                (unsigned)(low_water * sizeof(StackType_t)));
+  LoopWdtGuard loop_wdt_guard;
+#if defined(TLORA_PAGER)
+  const bool ok = meshcomodMigrateSpiffsToSd(false);
+#else
   const bool ok = meshcomodMigrateSpiffsToSd(true);
-  enableLoopWDT();
-  if (!ok) { g_lv.task->showAlert(TR("Copy failed (no internal identity)"), 2200); return; }
+#endif
+  if (!ok) {
+    g_sd_migration_blocked = true;
+    g_lv.task->showAlert(TR("Copy incomplete: SD data may be mixed. Retry before reboot."), 4200);
+    return;
+  }
   meshcomodClearSdMigLatch();           // manual copy succeeded -> re-arm boot auto-adoption (GH #142/#148)
   touchPrefsSetUseSdStorage(true);      // make sure the reboot adopts the card
   delay(400);                           // let the alert render before the restart
   board.reboot();
 }
+
+static void sdRestoreApply() {
+  if (!g_lv.task) return;
+  if (s_sd_restore_pending) return;
+#if defined(TLORA_PAGER)
+  g_lv.task->showAlert(TR("Resuming missing files to SD...\nThis may take a few minutes; keep powered."), 180000);
+#else
+  g_lv.task->showAlert(TR("Copying internal data to SD...\nThis may take a few minutes; keep powered."), 180000);
+#endif
+  s_sd_restore_pending = true;
+}
 static void sdRestoreFromInternalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+#if defined(TLORA_PAGER)
+  showConfirm(TR("Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?"),
+              TR("Resume"), sdRestoreApply);
+#else
   showConfirm(TR("Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?"),
               TR("Copy"), sdRestoreApply);
+#endif
 }
 #endif
 #endif
@@ -10789,9 +11765,9 @@ static void clock12hToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Clock: 12-hour") : TR("Clock: 24-hour"), 900);
 }
 
-#if CAP_LARGE_SCREEN
-// UI size (resolution scale) selector — saves the pref; applied at the next boot (the LVGL
-// resolution + flush upscaler are set up in begin()), so prompt for a restart.
+#if CAP_UI_SIZE
+// UI-size selector — saves the board-specific preset. Fonts and any matching
+// geometry are selected while the UI tree is built, so prompt for a restart.
 static void uiScaleSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   touchPrefsSetUiScale((uint8_t)lv_dropdown_get_selected(lv_event_get_target(e)));
@@ -10800,7 +11776,7 @@ static void uiScaleSelectCb(lv_event_t* e) {
 #endif
 
 // Hard-lock (not just dim) when the screen idles off, so the touchscreen is
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
 // Toggle idle light-sleep via the Settings row. Updates NVS, the live
 // touchSleep state, and the status-bar icon in one shot (mirrors lockOnScreenOffToggleCb).
 static void sleepIdleToggleCb(lv_event_t* e) {
@@ -11006,6 +11982,9 @@ static void showSensorsTabToggleCb(lv_event_t* e) {
 
 // Accent-popup picker on/off. Persisted + live: gates accentBoxMaybeShow() so
 // the tap-to-pick accent box stops appearing as you type. Default ON.
+// (Not compiled on the M9 — the pickers are suppressed there and its settings
+// row is hidden, see accentBoxMaybeShow.)
+#if !defined(HAS_M9_KEYBOARD)
 static void accentPopupsToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -11016,6 +11995,7 @@ static void accentPopupsToggleCb(lv_event_t* e) {
   if (!on) accentBoxHide();   // dismiss any box already on screen
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Accent popups: on") : TR("Accent popups: off"), 1100);
 }
+#endif
 
 // One handler for every per-language switch in the multi-select list. The
 // layout id is stashed in the switch's user_data. Flipping a switch updates the
@@ -11326,6 +12306,7 @@ static void openLocalSensorsPage() {
   styleButton(term);
   lv_obj_add_event_cb(term, localSensorsOpenTerminalCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* tl = lv_label_create(term);
+  useChainedFont(tl);
   lv_label_set_text(tl, TR("Open mesh console"));
   lv_obj_center(tl);
 
@@ -11386,6 +12367,7 @@ static void openExpansionCard() {
   styleButton(d);
   lv_obj_add_event_cb(d, openLocalSensorsPageCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* dl = lv_label_create(d);
+  useChainedFont(dl);
   lv_label_set_text(dl, TR("Detailed sensors"));
   lv_obj_center(dl);
 
@@ -11418,7 +12400,7 @@ static void lockwallDisplayName(const char* path, char* out, int cap) {
 static void openLockWallPickerCb(lv_event_t* e);   // defined with the picker, below
 static void lockColorChosenCb(lv_event_t* e);
 #endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9
-#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck (SD or SPIFFS) or pager (SPIFFS only)
+#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck/pager (SD or SPIFFS)
 // Per-event notification-sound picker (Settings -> Sound). Mirrors the wallpaper picker.
 static lv_obj_t* s_snd_btn_lbl[3] = { nullptr, nullptr, nullptr };
 static int  s_snd_pending_slot = TOUCH_SND_MSG;    // slot we're choosing a sound for
@@ -11542,7 +12524,8 @@ static void buildDeviceSettings(int sec) {
   lv_obj_set_style_text_font(g_set_modal.gps_status, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(g_set_modal.gps_status, 4, y);
   lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
-  y += SC(22);
+  lv_obj_update_layout(g_set_modal.gps_status);
+  y += LV_MAX(SC(22), lv_obj_get_height(g_set_modal.gps_status) + SC(6));   // status is 2 lines now
 
   // (Expansion Kit moved to the Sensors page — see the DSEC_SENSORS block below.)
 
@@ -11592,6 +12575,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b_exp);
     lv_obj_add_event_cb(b_exp, openExpansionCardCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* le = lv_label_create(b_exp);
+    useChainedFont(le);
     lv_label_set_text(le, TR("Expansion Kit"));
     lv_obj_center(le);
     y += SC(38);
@@ -11769,6 +12753,7 @@ static void buildDeviceSettings(int sec) {
   styleButton(b_time);
   lv_obj_add_event_cb(b_time, syncClockCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l_time = lv_label_create(b_time);
+  useChainedFont(l_time);
   lv_label_set_text(l_time, TR("Sync clock from system"));
   lv_obj_center(l_time);
   y += SC(40);
@@ -11781,6 +12766,7 @@ static void buildDeviceSettings(int sec) {
   styleButton(b_adv);
   lv_obj_add_event_cb(b_adv, advertNowCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l_adv = lv_label_create(b_adv);
+  useChainedFont(l_adv);
   lv_label_set_text(l_adv, TR("Send advert now"));
   lv_obj_center(l_adv);
   y += SC(40);
@@ -11849,13 +12835,16 @@ static void buildDeviceSettings(int sec) {
     y += SC(38);
   }
 
-#if CAP_LARGE_SCREEN
-  /* UI size (resolution scale): Normal 100% / Large 150% / Huge 200%. Renders the whole UI at a
-     lower resolution and upscales to the panel, so EVERYTHING grows. Applied at boot → restart. */
+#if CAP_UI_SIZE
+  /* Board-specific UI-size presets. Applied while the UI tree is built, so a restart is required. */
   {
     y += settingsRowLabel(body, y, 0, TR("UI size (restart to apply)"), COLOR_SUB, &g_font_12, 0) + 2;
     lv_obj_t* dd = lv_dropdown_create(body);
+#if defined(TLORA_PAGER)
+    lv_dropdown_set_options(dd, TR("Small\nMedium\nLarge\nJumbo"));
+#else
     lv_dropdown_set_options(dd, TR("Normal (100%)\nLarge (150%)\nHuge (200%)"));
+#endif
     lv_dropdown_set_selected(dd, touchPrefsGetUiScale());
     lv_obj_set_width(dd, lv_pct(100));
     lv_obj_set_pos(dd, 2, y);
@@ -12009,6 +12998,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b);
     lv_obj_add_event_cb(b, openAccentPickerCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* bl = lv_label_create(b);
+    useChainedFont(bl);
     lv_label_set_text(bl, TR("Pick colour"));
     lv_obj_center(bl);
     lv_obj_t* swatch = lv_obj_create(body);
@@ -12024,7 +13014,7 @@ static void buildDeviceSettings(int sec) {
   }
 
   if (sec == DSEC_GENERAL) {   // --- Storage (SD) ---
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   /* Store all data (identity/prefs/contacts/channels) on the SD card under
      /meshcomod instead of internal flash — for running under Launcher, or just
      to keep everything on a card. Read at boot, so it applies after a reboot. */
@@ -12038,19 +13028,28 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, useSdStorageToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   /* Where contacts ACTUALLY live this boot. The toggle above is only an intent — if the
      card failed to mount at boot (cold/slow card), contacts silently stay on internal flash
      even with it ON. This line shows the truth and flags that mismatch. */
   {
     extern bool g_contacts_on_sd;
+    extern bool g_sd_migration_blocked;
     const bool want_sd = touchPrefsGetUseSdStorage();
     lv_obj_t* st = lv_label_create(body);
     lv_label_set_long_mode(st, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(st, lv_pct(96));
     lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
     lv_obj_set_pos(st, 0, y);
-    if (g_contacts_on_sd) {
+    if (g_contacts_on_sd && SD.cardType() == CARD_NONE) {
+      lv_label_set_text(st, want_sd
+          ? TR("SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.")
+          : TR("SD data is unavailable - contacts and channels cannot be saved until the card is reinserted."));
+      lv_obj_set_style_text_color(st, lv_color_hex(0xE34B4B), LV_PART_MAIN);
+    } else if (want_sd && g_sd_migration_blocked) {
+      lv_label_set_text(st, TR("SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry."));
+      lv_obj_set_style_text_color(st, lv_color_hex(0xE3A127), LV_PART_MAIN);
+    } else if (g_contacts_on_sd) {
       lv_label_set_text(st, TR("Contacts are saved to the SD card."));
       lv_obj_set_style_text_color(st, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
     } else if (want_sd) {
@@ -12067,9 +13066,9 @@ static void buildDeviceSettings(int sec) {
   /* Recovery for the beta_36 "lost my profile" upgrades: the live data was
      orphaned on internal flash when the honored SD toggle adopted an empty (or
      fresh-identity) card. This copies EVERYTHING from internal flash over the
-     card's copies and reboots into the restored profile. T-Deck only: the
-     migration is SPIFFS->SD; the Tanmatsu's CAP_SD is SD_MMC with no SPIFFS. */
-#if defined(HAS_TDECK_GT911)
+     card's copies and reboots into the restored profile. This is a SPIFFS->SD
+     recovery on T-Deck, V4-R8 and Pager; Tanmatsu uses SD_MMC with no SPIFFS. */
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   {
     lv_obj_t* b = lv_btn_create(body);
     lv_obj_set_size(b, lv_pct(96), SC(30));
@@ -12083,7 +13082,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_center(lbl);
     y += SC(40);
   }
-#endif  // HAS_TDECK_GT911 (SPIFFS->SD recovery copy)
+#endif  // HAS_TDECK_GT911 || HELTEC_LORA_V4_R8 || TLORA_PAGER || HAS_THINKNODE_M9 (SPIFFS->SD recovery copy)
 #endif
 
   }
@@ -12119,6 +13118,7 @@ static void buildDeviceSettings(int sec) {
       lv_obj_set_pos(b, 2 + i * SC(54), y);
       lv_obj_add_event_cb(b, kbBlPresetCb, LV_EVENT_CLICKED, (void*)(intptr_t)k_presets[i].pct);
       lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, k_presets[i].txt); lv_obj_center(l);
+      useChainedFont(l);
     }
     y += SC(38);
   }
@@ -12134,6 +13134,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b);
     lv_obj_add_event_cb(b, pagerKbBlCycleCb, LV_EVENT_CLICKED, nullptr);
     s_pager_kbbl_lbl = lv_label_create(b);
+    useChainedFont(s_pager_kbbl_lbl);
     lv_label_set_text(s_pager_kbbl_lbl, pagerKbBlModeText());
     lv_obj_center(s_pager_kbbl_lbl);
     y += SC(42);
@@ -12164,7 +13165,7 @@ static void buildDeviceSettings(int sec) {
        non-EN layout or the loop below reads past the end. */
     static const char* k_kb_disp[] = {
       "Bulgarian", "Russian", "Ukrainian", "Serbian", "Greek", "Arabic (experimental)",
-      "French", "Dutch", "German", "Spanish", "Italian"
+      "French", "Dutch", "German", "Spanish", "Italian", "Romanian"
     };
     for (int id = 1; id < KEYBOARD_LAYOUT_COUNT; ++id) {
       int h = settingsRowLabel(body, y, 4, k_kb_disp[id - 1], COLOR_TEXT, &g_font_12, 56);
@@ -12177,8 +13178,11 @@ static void buildDeviceSettings(int sec) {
     }
   }
 
+#if !defined(HAS_M9_KEYBOARD)
   /* Accent popups. Typing a Latin letter that has accented variants pops up a
-     tap-to-pick box; turn this off for plain typing. Default on. */
+     tap-to-pick box; turn this off for plain typing. Default on. Not on the
+     M9: the pickers are suppressed there (no touch and no key-selection path
+     — see accentBoxMaybeShow), so the switch would control nothing. */
   {
     int h = settingsRowLabel(body, y, 4, TR("Accent popups"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -12194,6 +13198,7 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("pick accented letters as you type; off = plain typing"),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
+#endif
 
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   /* Enter sends the message (default) vs. inserts a newline so you send only via
@@ -12262,7 +13267,7 @@ static void buildDeviceSettings(int sec) {
 #endif
 
 #if CAP_TRACKBALL
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD)   // never the M9: nav is force-set on at boot there (the board's only input) and must not grow an off-switch
   /* Keyboard navigation: off (default) vs on. When no text field is focused, the
      WASDZ cluster moves focus so the whole UI is reachable from the keyboard (incl.
      Settings), and the tab hotkeys below jump straight to a tab. The trackball
@@ -12402,6 +13407,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b_rot);
     lv_obj_add_event_cb(b_rot, rotateScreenCycleCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lr = lv_label_create(b_rot);
+    useChainedFont(lr);
     lv_label_set_text(lr, uiRotationLabel());
     lv_obj_center(lr);
     y += SC(42);
@@ -12422,6 +13428,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b_wall);
     lv_obj_add_event_cb(b_wall, openLockWallPickerCb, LV_EVENT_CLICKED, nullptr);
     s_lockwall_btn_lbl = lv_label_create(b_wall);
+    useChainedFont(s_lockwall_btn_lbl);
     {
       char cur[TOUCH_LOCK_WALLPAPER_MAXLEN], disp[64];
       touchPrefsGetLockWallpaper(cur, sizeof cur);
@@ -12486,6 +13493,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(b_tz);
     lv_obj_add_event_cb(b_tz, openTimezoneCb, LV_EVENT_CLICKED, nullptr);
     s_tz_btn_lbl = lv_label_create(b_tz);
+    useChainedFont(s_tz_btn_lbl);
     lv_label_set_text(s_tz_btn_lbl, touchPrefsTimezoneLabel(touchPrefsGetTimezone()));
     lv_label_set_long_mode(s_tz_btn_lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_tz_btn_lbl, lv_pct(92));
@@ -12504,6 +13512,7 @@ static void buildDeviceSettings(int sec) {
     styleButton(bminus);
     lv_obj_add_event_cb(bminus, timeOffsetMinusCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lm = lv_label_create(bminus); lv_label_set_text(lm, "-1 h"); lv_obj_center(lm);
+    useChainedFont(lm);
 
     s_time_offset_lbl = lv_label_create(body);
     lv_obj_set_width(s_time_offset_lbl, 100);
@@ -12519,9 +13528,47 @@ static void buildDeviceSettings(int sec) {
     styleButton(bplus);
     lv_obj_add_event_cb(bplus, timeOffsetPlusCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lp = lv_label_create(bplus); lv_label_set_text(lp, "+1 h"); lv_obj_center(lp);
+    useChainedFont(lp);
     y += SC(42);
   }
   }
+
+#if CAP_CONSOLE
+  if (sec == DSEC_GENERAL) {   // --- Console mode (boot mode; reboots) ---
+  y += settingsRowLabel(body, y, 0, TR("Console mode"), COLOR_SUB, &g_font_12, 0) + 2;
+  {
+    lv_obj_t* crow = lv_obj_create(body);
+    lv_obj_remove_style_all(crow);
+    lv_obj_set_size(crow, lv_pct(100), SC(34));
+    lv_obj_set_pos(crow, 2, y);
+    lv_obj_set_style_bg_color(crow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(crow, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(crow, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(crow, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(crow, 10, LV_PART_MAIN);
+    lv_obj_clear_flag(crow, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* cl = lv_label_create(crow);
+    lv_label_set_text(cl, TR("Text console (experimental)"));
+    useChainedFont(cl);
+    lv_obj_set_style_text_color(cl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_label_set_long_mode(cl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(cl, lv_pct(70));
+    lv_obj_align(cl, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_t* csw = lv_switch_create(crow);
+    lv_obj_set_size(csw, 44, 24);
+    lv_obj_align(csw, LV_ALIGN_RIGHT_MID, 0, 0);
+    if (touchPrefsGetConsoleMode()) lv_obj_add_state(csw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(csw, consoleModeToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += SC(42);
+  }
+  y += settingsRowLabel(body, y, 0,
+        TR("EXPERIMENTAL. Boots into a text console with no graphical interface: type commands, "
+           "read replies. Frees the memory and processor time the interface uses. Type 'ui' in "
+           "the console to come back, and if it ever fails to start the device returns here on "
+           "its own. Toggling reboots."),
+        COLOR_SUB, &g_font_12, 1) + 8;
+  }
+#endif
 
   if (sec == DSEC_GENERAL) {   // --- Run setup + reboot ---
   // Re-run the first-boot setup flow (name / region / Wi-Fi) on demand.
@@ -12531,6 +13578,7 @@ static void buildDeviceSettings(int sec) {
   styleButton(b_setup);
   lv_obj_add_event_cb(b_setup, setupRerunCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l_setup = lv_label_create(b_setup);
+  useChainedFont(l_setup);
   lv_label_set_text_fmt(l_setup, LV_SYMBOL_REFRESH "  %s", TR("Run setup again"));
   lv_obj_center(l_setup);
   y += SC(42);
@@ -12544,6 +13592,7 @@ static void buildDeviceSettings(int sec) {
   lv_obj_set_style_text_color(b_reboot, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_add_event_cb(b_reboot, rebootCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l_reboot = lv_label_create(b_reboot);
+  useChainedFont(l_reboot);
   lv_label_set_text(l_reboot, TR("Reboot device"));
   lv_obj_center(l_reboot);
   y += SC(42);
@@ -12561,15 +13610,17 @@ static void buildDeviceSettings(int sec) {
     styleButton(b_bat);
     lv_obj_add_event_cb(b_bat, batteryTapCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* l_bat = lv_label_create(b_bat);
+    useChainedFont(l_bat);
     lv_label_set_text_fmt(l_bat, LV_SYMBOL_BATTERY_2 "  %s", TR("Battery & power history"));
     lv_obj_center(l_bat);
     y += SC(42);
   }
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
   // Experimental battery saver (idle power-save) — throttles the CPU when the
   // device is parked (screen off, on battery, standalone). Moved here from
-  // Settings -> Lock so it lives with the battery. T-Deck only (the gate never
-  // passes on the V4).
+  // Settings -> Lock so it lives with the battery. T-Deck + V4-R8 (the old
+  // "gate never passes on the V4" note was stale for the R8: batteryIsCharging
+  // can't block it there, and the other gates are user state).
   {
     int h = settingsRowLabel(body, y, 6, TR("Battery saver (experimental)"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -12599,6 +13650,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(b_cal, calibrateBatteryCb, LV_EVENT_SHORT_CLICKED, nullptr);
     lv_obj_add_event_cb(b_cal, calibrateBatteryCb, LV_EVENT_LONG_PRESSED, nullptr);
     lv_obj_t* l_cal = lv_label_create(b_cal);
+    useChainedFont(l_cal);
     lv_label_set_text_fmt(l_cal, LV_SYMBOL_BATTERY_FULL "  %s", TR("Calibrate battery (full = 100%)"));
     lv_obj_center(l_cal);
     y += SC(46);
@@ -12644,6 +13696,22 @@ static void buildDeviceSettings(int sec) {
     mk_info(TR("Model:"), "Heltec LoRa32 V4 TFT (touch)");
 #else
     mk_info(TR("Model:"), "Heltec LoRa32 V4");
+#endif
+#if defined(HELTEC_LORA_V4_R8)
+    // Perf-pass readout (2026-08-20). This board has no reachable serial console, so the
+    // four runtime facts that pass needs verified live here: CPU clock, display bus clock +
+    // flush mode (DMA = async band flush active), micro-SD operating clock, FEM LNA state.
+    {
+      char sd[16];
+      if (g_sd_operating_hz >= 1000000)   snprintf(sd, sizeof sd, "%lu MHz", (unsigned long)(g_sd_operating_hz / 1000000));
+      else if (g_sd_operating_hz > 0)     snprintf(sd, sizeof sd, "%lu kHz", (unsigned long)(g_sd_operating_hz / 1000));
+      else                                snprintf(sd, sizeof sd, "none");
+      snprintf(buf, sizeof(buf), "CPU %u · TFT %u MHz %s · SD %s · LNA %s",
+               (unsigned)getCpuFrequencyMhz(), (unsigned)(LGFX_SPI_WRITE_HZ / 1000000),
+               display.asyncFlushActive() ? "DMA" : "sync", sd,
+               board.femLnaControllable() ? (touchPrefsGetFemLna() ? "on" : "off") : "n/a");
+      mk_info(TR("Perf:"), buf);
+    }
 #endif
     // Public key prefix (first 8 bytes = 16 hex)
     {
@@ -12756,7 +13824,7 @@ static void saveTransportWifiCb(lv_event_t* e) {
       return;
     }
     wifiConfigRequestApply();
-    g_lv.task->showAlert(TR("Wi-Fi saved, reconnecting"), 1400);
+    g_lv.task->showAlert(TR("Wi-Fi saved, applying"), 1400);
   } else {
     wifiConfigRequestApply();
     g_lv.task->showAlert(TR("Wi-Fi saved (radio off)"), 1400);
@@ -12870,6 +13938,7 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_set_style_text_color(b_cancel, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_add_event_cb(b_cancel, confirmCancelEvt, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lc = lv_label_create(b_cancel);
+  useChainedFont(lc);
   lv_label_set_text(lc, TR("Cancel"));
   uiFitLabelWidth(lc, PSC(80) - 8);
   lv_obj_center(lc);
@@ -12880,30 +13949,42 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   styleButton(b_ok);
   lv_obj_add_event_cb(b_ok, confirmOkEvt, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lo = lv_label_create(b_ok);
+  useChainedFont(lo);
   lv_label_set_text(lo, ok_label ? TR(ok_label) : "OK");
   uiFitLabelWidth(lo, SC(100) - 8);
   lv_obj_center(lo);
 }
 
 // ----- Bluetooth settings page -----
-// Wi-Fi + BLE coexist now (NimBLE's host is light enough to share the ESP32-S3
-// internal heap with esp_wifi + LVGL), so this is a plain LIVE toggle of the BLE
-// radio — no reboot, and Wi-Fi is left untouched. State is persisted (ble_en).
+// Wi-Fi + BLE coexist once both stacks are allocated. Re-enabling a resident
+// stack is live; a cold Pager allocation restarts through setup's Wi-Fi-first
+// ordering. State is persisted (ble_en), and Wi-Fi is left enabled.
 // The pairing code is editable here (persisted to _prefs.ble_pin; applied at the
 // next boot, since the passkey is baked into serial_interface.begin()).
 static lv_obj_t* s_ble_pin_ta = nullptr;   // editable 6-digit pairing-code field on the BLE page
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-// Bluetooth enable switch: instant toggle (BLE on/off is live — enableBle() lazily brings
-// NimBLE up; no Save button, no reboot).
+// Bluetooth enable switch: resident BLE toggles live; enableBle() handles the
+// Pager's ordered-restart fallback for a cold stack. No Save button is needed.
 static void bleEnableSwitchCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
   if (!g_lv.task->hasBleCapability()) { g_lv.task->showAlert(TR("No Bluetooth on this device"), 1400); return; }
   const bool want = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  if (want == g_lv.task->isBleEnabled()) return;
+  const bool requested = bleRequestedOrEnabled();
+  if (want == requested) return;
   if (want) {
     if (!g_lv.task->enableBle()) {
-      lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);   // revert the switch
-      g_lv.task->showAlert(TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first."), 2200);
+      // A Pager request queued behind Wi-Fi is still ON as user intent. Keep it
+      // checked so a second tap can cancel; only a true refusal reverts to OFF.
+      // Other boards have no pending-request state, so a refusal always reverts.
+      bool still_requested = false;
+#if defined(TLORA_PAGER)
+      still_requested = wifiConfigGetBleEnabled();
+#endif
+      if (still_requested)
+        lv_obj_add_state(lv_event_get_target(e), LV_STATE_CHECKED);
+      else
+        lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);
+      g_lv.task->showAlert(bleEnableFailureText(), 2600);
       return;
     }
   } else {
@@ -12927,7 +14008,7 @@ static void blePinSaveCb(lv_event_t* e) {
 #endif
 
 static void buildBluetoothSettings() {
-  lv_obj_t* body = createSettingsModal("Bluetooth", SettingsModalKind::Bluetooth);
+  lv_obj_t* body = createSettingsModal(TR("Bluetooth"), SettingsModalKind::Bluetooth);
   int y = 0;
 
   if (!g_lv.task || !g_lv.task->hasBleCapability()) {
@@ -12950,12 +14031,16 @@ static void buildBluetoothSettings() {
   // ---- Mode line ---- (Wi-Fi + BLE coexist now; show both radios' state)
   const bool ble_active = g_lv.task && g_lv.task->hasBleCapability() && g_lv.task->isBleEnabled();
   lv_obj_t* mode = lv_label_create(body);
+  useChainedFont(mode);
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   const bool wifi_on_m = wifiConfigGetRadioEnabled();
   const bool ble_cap_m = g_lv.task && g_lv.task->hasBleCapability();
   if (ble_active)
     lv_label_set_text(mode, wifi_on_m ? "Mode: BLE on (+ Wi-Fi)" : "Mode: BLE on");
-  else if (ble_cap_m && wifiConfigGetBleEnabled())
+  // "starting" only where something will actually act on the request later
+  // (the Pager's post-association retry). Elsewhere a saved-but-not-resident
+  // preference just means off, and one tap brings the stack up.
+  else if (ble_cap_m && bleRequestedOrEnabled())
     lv_label_set_text(mode, TR("Mode: BLE starting / low memory"));
   else
     lv_label_set_text(mode, wifi_on_m ? "Mode: BLE off (Wi-Fi on)" : "Mode: BLE off");
@@ -12993,7 +14078,7 @@ static void buildBluetoothSettings() {
       char pb[12];
       if (cur >= 1 && cur <= 999999) snprintf(pb, sizeof pb, "%06lu", static_cast<unsigned long>(cur));
       else snprintf(pb, sizeof pb, "------");
-      lv_textarea_set_placeholder_text(s_ble_pin_ta, pb);
+      taSetPlaceholder(s_ble_pin_ta, pb);
       lv_textarea_set_text(s_ble_pin_ta, "");
     }
     attachSettingsTaEvents(s_ble_pin_ta);
@@ -13011,12 +14096,16 @@ static void buildBluetoothSettings() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   // ---- Enable switch + save button ----
   lv_obj_t* sw_lbl = lv_label_create(body);
+  useChainedFont(sw_lbl);
   lv_label_set_text(sw_lbl, TR("Enable Bluetooth"));
   lv_obj_set_style_text_color(sw_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(sw_lbl, 2, y + 6);
   g_set_modal.wifi_sw = lv_switch_create(body);  // reuse the same slot — only one switch lives in a modal at a time
   lv_obj_align(g_set_modal.wifi_sw, LV_ALIGN_TOP_RIGHT, 0, y);   // flush right
-  if (ble_active) lv_obj_add_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
+  // Must be the SAME predicate bleEnableSwitchCb compares against, or its
+  // `want == requested` early-out swallows the first tap.
+  if (ble_active || bleRequestedOrEnabled())
+    lv_obj_add_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(g_set_modal.wifi_sw, bleEnableSwitchCb, LV_EVENT_VALUE_CHANGED, nullptr);  // instant toggle (BLE is live)
   y += SC(38);
   // No Save button — the enable switch toggles BLE live, and the pairing code auto-saves on blur.
@@ -13048,13 +14137,12 @@ static void doApplyWifi() {
   wifiConfigSetRadioEnabled(s_pending_wifi_radio_on);
   wifiConfigRequestApply();
 
-  // Wi-Fi and BLE coexist now (NimBLE shares the heap with esp_wifi), so the main
-  // loop brings esp_wifi up / down live in response to these prefs — exactly like
-  // the control-center Wi-Fi toggle. No reboot to switch transports any more,
-  // whatever the previous transport was.
+  // Credential changes apply live. Pager first releases resident NimBLE in the
+  // main loop, re-associates Wi-Fi, then recreates BLE after GOT_IP.
   if (g_lv.task)
-    g_lv.task->showAlert(s_pending_wifi_radio_on ? TR("Saved — reconnecting\xE2\x80\xA6")
-                                                 : TR("Wi-Fi saved (radio off)"), 1600);
+    g_lv.task->showAlert(
+        s_pending_wifi_radio_on ? TR("Saved — applying\xE2\x80\xA6")
+                                : TR("Wi-Fi saved (radio off)"), 1600);
   refreshStatusLabels();
 }
 
@@ -13180,9 +14268,8 @@ static void saveWifiCb(lv_event_t* e) {
     lv_obj_add_state(g_set_modal.wifi_sw, LV_STATE_CHECKED);
   }
   s_pending_wifi_was_wifi = wifiConfigWantsWifi();   // kept for status display; no longer gates a reboot
-  // Wi-Fi + BLE coexist (NimBLE), so applying creds is always a live operation —
-  // the main loop brings the radio up/down with the new settings. No reboot and
-  // no confirm prompt; just save and (re)connect.
+  // Save immediately. Pager's main loop preserves Wi-Fi -> BLE ordering with a
+  // live controller handoff rather than a reboot.
   doApplyWifi();
 }
 #endif
@@ -13282,6 +14369,38 @@ static void openWifiScanPopup() {
 // results instantly (if any) while the rescan lands. Shared by the Settings
 // Wi-Fi page, the setup wizard's Scan button, and the wizard's auto-scan on
 // arrival. Caller must have already confirmed wifiConfigWantsWifi() (radio up).
+static void wifiQueueScanWhenReady() {
+  if (wifiScanIsActive() ||
+      __atomic_load_n(&s_wifiscan_request, __ATOMIC_ACQUIRE) ||
+      s_wifiscan_drop_req || s_wifiscan_drop_ms != 0
+#if defined(TLORA_PAGER)
+      || s_wifiscan_wait_for_radio
+#endif
+     ) return;
+  ensureTileFetchTaskRunning();   // the worker idles out after 5 s — respawn it
+#if defined(TLORA_PAGER)
+  wifiScanSetActive(true);   // suppress main-loop reconnects for the whole sweep
+  s_wifiscan_pager_guard_ms = millis();
+  s_wifiscan_reconnect_after = false;
+  if ((WiFi.getMode() & WIFI_MODE_STA) == 0 || wifiConfigPagerWifiBlocksBle()) {
+    // The worker must never call esp_wifi_init. Ask the main-loop handoff to
+    // initialize STA, and release the scan only after the ordering phase ends.
+    s_wifiscan_wait_for_radio = true;
+    if ((WiFi.getMode() & WIFI_MODE_STA) == 0) {
+      s_wifiscan_reconnect_after = wifiConfigHasRuntime();
+      wifiConfigRequestApply();
+    }
+    return;
+  }
+#elif defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
+  wifiScanSetActive(true);
+  s_wifiscan_guard_ms = millis();
+  s_wifiscan_reconnect_after =
+      wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED;
+#endif
+  __atomic_store_n(&s_wifiscan_request, true, __ATOMIC_RELEASE);
+}
+
 static void wifiScanOpenAndKick() {
   hideKb();   // unbind the keyboard mirror so it can't later revert the picked SSID
   openWifiScanPopup();
@@ -13293,36 +14412,60 @@ static void wifiScanOpenAndKick() {
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
   }
-  ensureTileFetchTaskRunning();   // the worker idles out after 5 s — respawn it
-  s_wifiscan_request = true;
+  wifiQueueScanWhenReady();
 }
 
 // Mirror of the BLE-enable guard: bringing esp_wifi up needs ~50 KB free internal
 // heap, and with BLE already holding its share on a tight board the init fails
-// DEEP in the Wi-Fi state machine (main.cpp) where nothing reports it — the UI
-// toasted "Wi-Fi on" while the radio never came up. Refuse at the toggle instead,
-// symmetrically with UITask::enableBle(). Thresholds match the boot co-init guard.
-static bool wifiEnableGuardOk() {
+// DEEP in the Wi-Fi state machine (main.cpp) where nothing reports it. Pager
+// uses the live main-loop BLE handoff; the preflight remains for other boards.
+enum class WifiEnableGate : uint8_t { Ready, LowMemory };
+
+static WifiEnableGate wifiEnableGate() {
 #if defined(ESP32)
-  return ESP.getFreeHeap() >= 50u * 1024u && ESP.getMaxAllocHeap() >= 20u * 1024u;
+  // Once esp_wifi is initialized, a live off/on toggle does not need its large
+  // one-time DMA allocation. Apply the reserve only to a cold start.
+  if (WiFi.getMode() != WIFI_MODE_NULL) return WifiEnableGate::Ready;
+#if defined(TLORA_PAGER)
+  // The main loop releases NimBLE, allocates Wi-Fi, then recreates NimBLE live.
+  // Let that path make the authoritative allocation attempt and report failure.
+  return WifiEnableGate::Ready;
 #else
-  return true;
+  const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  const size_t freeh = heap_caps_get_free_size(internal_caps);
+  const size_t maxblk = heap_caps_get_largest_free_block(internal_caps);
+  if (freeh >= 50u * 1024u && maxblk >= 20u * 1024u) return WifiEnableGate::Ready;
+  Serial.printf("[wifi] cold start refused: free=%u maxblk=%u\n",
+                (unsigned)freeh, (unsigned)maxblk);
+  return WifiEnableGate::LowMemory;
+#endif
+#else
+  return WifiEnableGate::Ready;
 #endif
 }
 
+static bool wifiPrepareEnable(lv_obj_t* switch_to_revert = nullptr) {
+  const WifiEnableGate gate = wifiEnableGate();
+  if (gate == WifiEnableGate::Ready) return true;
+  if (gate == WifiEnableGate::LowMemory) {
+    if (switch_to_revert) lv_obj_clear_state(switch_to_revert, LV_STATE_CHECKED);
+    if (g_lv.task)
+      g_lv.task->showAlert(TR("Not enough free memory for Wi-Fi. Turn Bluetooth off first."), 2200);
+    return false;
+  }
+  return true;
+}
+
 // "Scan" button -> open the popup + queue a scan on the core-0 worker. If Wi-Fi
-// is off (BLE active), bring the radio up LIVE first — it coexists with NimBLE,
-// no reboot — then scan; the worker brings STA up and lists networks.
+// is off, prepare the radio first, then let the main loop initialize it before
+// the worker lists networks.
 static void wifiScanStartCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(MULTI_TRANSPORT_COMPANION)
   if (!wifiConfigWantsWifi()) {
-    if (!wifiEnableGuardOk()) {
-      if (g_lv.task) g_lv.task->showAlert(TR("Not enough free memory for Wi-Fi. Turn Bluetooth off first."), 2200);
-      return;
-    }
+    if (!wifiPrepareEnable()) return;
     wifiConfigSetRadioEnabled(true);   // wantsWifi() now true -> the scan worker can bring STA up
-    wifiConfigRequestApply();          // main loop brings esp_wifi up live (no reboot)
+    wifiConfigRequestApply();          // main loop applies the live Pager handoff
     if (g_lv.task) g_lv.task->showAlert(TR("Wi-Fi on, scanning\xE2\x80\xA6"), 1200);
   }
   wifiScanOpenAndKick();
@@ -13332,17 +14475,24 @@ static void wifiScanStartCb(lv_event_t* e) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 static void wifiRebuildNetworkList();   // fwd: reworked Wi-Fi page list (defined before buildWifiSettings)
 #endif
-// Kick a Wi-Fi scan from the UI (LVGL ctx — only sets flags, never calls WiFi). On
-// the S3, scanning while associated is unreliable, so if we're connected we ask the
-// MAIN task to drop the link first (wifiScanMainService); otherwise scan straight away.
+// Kick a Wi-Fi scan from the UI (LVGL ctx — only sets flags, never calls WiFi).
+// Most S3 targets get more reliable results by dropping an association first.
+// Pager keeps an established link intact because re-authenticating while NimBLE
+// is resident crosses its known-unsafe coexistence boundary; its scan is
+// best-effort while associated and never turns a page-open into a reboot.
 static void wifiKickScan() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  if (wifiScanIsActive() ||
+      __atomic_load_n(&s_wifiscan_request, __ATOMIC_ACQUIRE) ||
+      s_wifiscan_drop_req || s_wifiscan_drop_ms != 0) return;
   ensureTileFetchTaskRunning();
 #if defined(HAS_TANMATSU)
-  s_wifiscan_request = true;                         // esp-hosted C6 sweeps fine while associated
+  __atomic_store_n(&s_wifiscan_request, true, __ATOMIC_RELEASE); // esp-hosted C6 sweeps fine while associated
+#elif defined(TLORA_PAGER)
+  wifiQueueScanWhenReady();                          // main task owns any cold STA allocation
 #else
   if (WiFi.status() == WL_CONNECTED) s_wifiscan_drop_req = true;
-  else                               s_wifiscan_request = true;
+  else                               wifiQueueScanWhenReady();
 #endif
 #endif
 }
@@ -13352,9 +14502,6 @@ static void wifiKickScan() {
 // here (sequential with main.cpp's wifi loop on the same task — no worker race, and
 // never eraseap, which wedges this radio). Drop the link, let the disassoc settle,
 // then kick the worker; wifiScanService rejoins once results land.
-// Wall-clock deadline for the scan gate below (0 = not armed). See the recovery
-// branch in wifiScanMainService for why this exists.
-static uint32_t s_wifiscan_guard_ms = 0;
 static void wifiScanMainService() {
   if (s_wifiscan_drop_req) {
     s_wifiscan_drop_req = false;
@@ -13366,11 +14513,11 @@ static void wifiScanMainService() {
       s_wifiscan_guard_ms = millis();     // arm the stuck-gate deadline (recovery below)
       s_wifiscan_reconnect_after = true;
     } else {
-      s_wifiscan_request = true;          // already disconnected — scan now
+      wifiQueueScanWhenReady();            // already disconnected — establish scan ownership now
     }
   } else if (s_wifiscan_drop_ms && (uint32_t)(millis() - s_wifiscan_drop_ms) >= 400) {
     s_wifiscan_drop_ms = 0;
-    s_wifiscan_request = true;            // disassoc settled -> run the sweep
+    __atomic_store_n(&s_wifiscan_request, true, __ATOMIC_RELEASE); // disassoc settled -> run the sweep
   }
   // RECOVERY: opening the Wi-Fi page drops the link and raises the scan gate, which is
   // normally lowered in wifiScanService() once the worker reports s_wifiscan_done. But
@@ -13379,18 +14526,29 @@ static void wifiScanMainService() {
   // long tile/LOS/OTA job. If it never reports, the gate LATCHES: autoreconnect is off
   // and main.cpp's 10 s reconnect retry stays suppressed (main.cpp gates it on
   // !wifiScanIsActive()), so Wi-Fi never comes back until a reboot — a plausible source
-  // of "connects on a fresh flash, never reconnects after a reboot" (issue #171). The
-  // deadline is deliberately far longer than any legitimate sweep (the worker's own scan
-  // path allows several seconds plus retries) so this can only fire when the normal
-  // completion path is genuinely lost, never mid-scan.
+  // of "connects on a fresh flash, never reconnects after a reboot" (issue #171).
+  // Only cancel a request the worker has not claimed. Once the worker atomically
+  // consumes the request, its bounded scan owns the gate until normal completion;
+  // clearing it on a wall-clock guess would race esp_wifi_scan_start.
   if (s_wifiscan_guard_ms && wifiScanIsActive() &&
-      (uint32_t)(millis() - s_wifiscan_guard_ms) >= 30000UL) {
+      (uint32_t)(millis() - s_wifiscan_guard_ms) >= 60000UL) {
     s_wifiscan_guard_ms = 0;
-    s_wifiscan_reconnect_after = false;
-    s_wifiscan_drop_ms = 0;
-    wifiScanSetActive(false);             // un-gate main.cpp's reconnect retry
-    WiFi.setAutoReconnect(true);
-    wifiConfigRequestApply();             // re-begin with the stored cred (main task)
+    bool cancelled = false;
+    if (s_wifiscan_drop_ms != 0) {
+      s_wifiscan_drop_ms = 0;
+      cancelled = true;
+    }
+    if (__atomic_exchange_n(&s_wifiscan_request, false, __ATOMIC_ACQ_REL))
+      cancelled = true;
+    if (cancelled) {
+      const bool reconnect = s_wifiscan_reconnect_after;
+      s_wifiscan_reconnect_after = false;
+      wifiScanSetActive(false);           // un-gate main.cpp's reconnect retry
+#if !defined(TLORA_PAGER)
+      WiFi.setAutoReconnect(true);
+#endif
+      if (reconnect) wifiConfigRequestApply();
+    }
   }
 }
 #endif
@@ -13400,35 +14558,73 @@ static void wifiScanService() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
   wifiScanMainService();   // drive the drop-link-then-scan handshake (main task)
 #endif
+#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
+  if (s_wifiscan_wait_for_radio) {
+    const bool sta_ready = (WiFi.getMode() & WIFI_MODE_STA) != 0;
+    if (!wifiConfigWantsWifi()) {
+      s_wifiscan_wait_for_radio = false;
+      s_wifiscan_reconnect_after = false;
+      s_wifiscan_done = true;
+    } else if (sta_ready && !wifiConfigPagerWifiBlocksBle()) {
+      s_wifiscan_wait_for_radio = false;
+      __atomic_store_n(&s_wifiscan_request, true, __ATOMIC_RELEASE);
+    } else if (!sta_ready && wifiConfigPagerBleFallbackActive()) {
+      // main.cpp already reported the failed allocation and restored BLE.
+      s_wifiscan_wait_for_radio = false;
+      s_wifiscan_reconnect_after = false;
+      s_wifiscan_done = true;
+    }
+  }
+  // Cancel only a wait or queue entry the worker has not claimed. If the worker
+  // already atomically consumed the request, normal completion alone releases
+  // the scan gate; a timeout must never race its esp_wifi_scan_start call.
+  if (s_wifiscan_pager_guard_ms && wifiScanIsActive() &&
+      (uint32_t)(millis() - s_wifiscan_pager_guard_ms) >= 60000UL) {
+    s_wifiscan_pager_guard_ms = 0;
+    bool cancelled = s_wifiscan_wait_for_radio;
+    s_wifiscan_wait_for_radio = false;
+    if (__atomic_exchange_n(&s_wifiscan_request, false, __ATOMIC_ACQ_REL))
+      cancelled = true;
+    if (cancelled) s_wifiscan_done = true;
+  }
+#endif
   if (!s_wifiscan_done) return;
   s_wifiscan_done = false;
   wifiScanFillList();   // legacy scan popup — no-op if closed
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   wifiRebuildNetworkList();   // refresh the reworked Wi-Fi page (guarded: no-op unless it's open)
 #if !defined(HAS_TANMATSU)
-  if (s_wifiscan_reconnect_after) {       // we dropped the link for this sweep — rejoin now
+#if defined(TLORA_PAGER)
+  const bool reconnect_after_scan = s_wifiscan_reconnect_after;
+  s_wifiscan_reconnect_after = false;
+  s_wifiscan_pager_guard_ms = 0;
+  wifiScanSetActive(false);
+  if (reconnect_after_scan) wifiConfigRequestApply();
+#else
+  if (wifiScanIsActive()) {
+    const bool reconnect_after_scan = s_wifiscan_reconnect_after;
     s_wifiscan_reconnect_after = false;
     s_wifiscan_guard_ms = 0;              // normal completion — disarm the stuck-gate deadline
     wifiScanSetActive(false);
+#if !defined(TLORA_PAGER)
     WiFi.setAutoReconnect(true);
-    wifiConfigRequestApply();             // main.cpp re-begins with the stored cred (main task)
+#endif
+    if (reconnect_after_scan)
+      wifiConfigRequestApply();           // main.cpp re-begins with the stored cred (main task)
   }
+#endif
 #endif
 #endif
 }
 
-// Live Wi-Fi radio toggle on the Wi-Fi settings page (mirrors the control-center
-// toggle). wifiConfigSetRadioEnabled persists the pref + flags an apply, so the
-// main loop brings esp_wifi up / down on the spot — no Save needed, no reboot.
+// Wi-Fi radio toggle on the Wi-Fi settings page (mirrors the control-center
+// toggle). Existing stacks apply live; a cold Pager uses the main-loop BLE
+// handoff above. No separate Save action is needed.
 static void wifiRadioToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  if (on && !wifiEnableGuardOk()) {
-    lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);   // revert the switch
-    if (g_lv.task) g_lv.task->showAlert(TR("Not enough free memory for Wi-Fi. Turn Bluetooth off first."), 2200);
-    return;
-  }
+  if (on && !wifiPrepareEnable(lv_event_get_target(e))) return;
   wifiConfigSetRadioEnabled(on);
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Wi-Fi on") : TR("Wi-Fi off"), 800);
   refreshStatusLabels();
@@ -13555,7 +14751,7 @@ static void openWifiJoinSheet(const char* ssid, bool manual) {
     s_wifi_sheet_ssid_ta = lv_textarea_create(body);
     lv_obj_set_size(s_wifi_sheet_ssid_ta, iw, SC(32)); lv_obj_set_pos(s_wifi_sheet_ssid_ta, 0, yy);
     lv_textarea_set_one_line(s_wifi_sheet_ssid_ta, true);
-    lv_textarea_set_placeholder_text(s_wifi_sheet_ssid_ta, TR("Network name"));
+    taSetPlaceholder(s_wifi_sheet_ssid_ta, TR("Network name"));
     lv_textarea_set_max_length(s_wifi_sheet_ssid_ta, WIFI_CONFIG_SSID_MAX - 1);
     attachSettingsTaEvents(s_wifi_sheet_ssid_ta);
     yy += SC(40);
@@ -13570,7 +14766,7 @@ static void openWifiJoinSheet(const char* ssid, bool manual) {
   lv_obj_set_size(s_wifi_sheet_pwd_ta, iw, SC(32)); lv_obj_set_pos(s_wifi_sheet_pwd_ta, 0, yy);
   lv_textarea_set_one_line(s_wifi_sheet_pwd_ta, true);
   lv_textarea_set_password_mode(s_wifi_sheet_pwd_ta, true);
-  lv_textarea_set_placeholder_text(s_wifi_sheet_pwd_ta, "PSK");
+  taSetPlaceholder(s_wifi_sheet_pwd_ta, "PSK");
   lv_textarea_set_max_length(s_wifi_sheet_pwd_ta, WIFI_CONFIG_PWD_MAX - 1);
   attachSettingsTaEvents(s_wifi_sheet_pwd_ta);
   // Prefill the saved passphrase if we already know this network.
@@ -13689,7 +14885,12 @@ static void wifiHiddenRowCb(lv_event_t* e) {
 static void wifiRefreshRowCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   if (!wifiConfigWantsWifi()) { if (g_lv.task) g_lv.task->showAlert(TR("Turn Wi-Fi on first"), 1200); return; }
-  if (s_wifiscan_request || s_wifiscan_drop_req || s_wifiscan_drop_ms) return;   // a scan is already queued/running
+  if (wifiScanIsActive() || s_wifiscan_request ||
+      s_wifiscan_drop_req || s_wifiscan_drop_ms
+#if defined(TLORA_PAGER)
+      || s_wifiscan_wait_for_radio
+#endif
+     ) return;   // a scan is already queued/running
   wifiKickScan();                                 // connected -> main task drops link first
   wifiRebuildNetworkList();                        // re-render so the row shows "Scanning…"
 }
@@ -13745,7 +14946,12 @@ static void wifiRebuildNetworkList() {
   const bool connected = (WiFi.status() == WL_CONNECTED);
   if (connected) strlcpy(cur, WiFi.SSID().c_str(), sizeof cur);
   // "Scanning…" spans the whole cycle: the main-task drop window AND the worker sweep.
-  const bool scanning_now = (s_wifiscan_request || s_wifiscan_drop_req || s_wifiscan_drop_ms != 0);
+  const bool scanning_now = (wifiScanIsActive() || s_wifiscan_request ||
+                             s_wifiscan_drop_req || s_wifiscan_drop_ms != 0
+#if defined(TLORA_PAGER)
+                             || s_wifiscan_wait_for_radio
+#endif
+                            );
 
   // Saved networks, most-recent first.
   TouchWifiNet nets[TOUCH_WIFI_NET_COUNT];
@@ -13839,7 +15045,7 @@ static void mqttSaveCb(lv_event_t* e) {
 
 static void buildMqttSettings() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-  lv_obj_t* body = createSettingsModal("MQTT bridge", SettingsModalKind::Mqtt);
+  lv_obj_t* body = createSettingsModal(TR("MQTT bridge"), SettingsModalKind::Mqtt);
   const lv_coord_t cw = s_settings_content_w;
   int y = 0;
 
@@ -13894,7 +15100,7 @@ static void buildMqttSettings() {
   lv_obj_set_size(g_set_modal.mqtt_host_ta, cw - 86, SC(30));
   lv_obj_set_pos(g_set_modal.mqtt_host_ta, 0, y);
   lv_textarea_set_one_line(g_set_modal.mqtt_host_ta, true);
-  lv_textarea_set_placeholder_text(g_set_modal.mqtt_host_ta, "192.168.1.x");
+  taSetPlaceholder(g_set_modal.mqtt_host_ta, "192.168.1.x");
   lv_textarea_set_max_length(g_set_modal.mqtt_host_ta, 63);
   attachSettingsTaEvents(g_set_modal.mqtt_host_ta);
   // Port field on the same row
@@ -13907,7 +15113,7 @@ static void buildMqttSettings() {
   lv_obj_set_size(g_set_modal.mqtt_port_ta, 80, SC(30));
   lv_obj_set_pos(g_set_modal.mqtt_port_ta, cw - 80, y);
   lv_textarea_set_one_line(g_set_modal.mqtt_port_ta, true);
-  lv_textarea_set_placeholder_text(g_set_modal.mqtt_port_ta, "1883");
+  taSetPlaceholder(g_set_modal.mqtt_port_ta, "1883");
   lv_textarea_set_max_length(g_set_modal.mqtt_port_ta, 5);
   lv_textarea_set_accepted_chars(g_set_modal.mqtt_port_ta, "0123456789");
   attachSettingsTaEvents(g_set_modal.mqtt_port_ta);
@@ -13924,7 +15130,7 @@ static void buildMqttSettings() {
   lv_obj_set_size(g_set_modal.mqtt_user_ta, lv_pct(100), SC(30));
   lv_obj_set_pos(g_set_modal.mqtt_user_ta, 0, y);
   lv_textarea_set_one_line(g_set_modal.mqtt_user_ta, true);
-  lv_textarea_set_placeholder_text(g_set_modal.mqtt_user_ta, TR("Leave empty if not required"));
+  taSetPlaceholder(g_set_modal.mqtt_user_ta, TR("Leave empty if not required"));
   lv_textarea_set_max_length(g_set_modal.mqtt_user_ta, 31);
   attachSettingsTaEvents(g_set_modal.mqtt_user_ta);
   y += SC(36);
@@ -13941,7 +15147,7 @@ static void buildMqttSettings() {
   lv_obj_set_pos(g_set_modal.mqtt_pwd_ta, 0, y);
   lv_textarea_set_one_line(g_set_modal.mqtt_pwd_ta, true);
   lv_textarea_set_password_mode(g_set_modal.mqtt_pwd_ta, true);
-  lv_textarea_set_placeholder_text(g_set_modal.mqtt_pwd_ta, TR("Leave empty if not required"));
+  taSetPlaceholder(g_set_modal.mqtt_pwd_ta, TR("Leave empty if not required"));
   lv_textarea_set_max_length(g_set_modal.mqtt_pwd_ta, 31);
   attachSettingsTaEvents(g_set_modal.mqtt_pwd_ta);
   y += SC(36);
@@ -13977,7 +15183,7 @@ static void buildMqttSettings() {
   lv_obj_set_pos(g_set_modal.mqtt_psk_ta, 0, y);
   lv_textarea_set_one_line(g_set_modal.mqtt_psk_ta, true);
   lv_textarea_set_password_mode(g_set_modal.mqtt_psk_ta, true);
-  lv_textarea_set_placeholder_text(g_set_modal.mqtt_psk_ta, TR("Empty = plaintext to a private broker"));
+  taSetPlaceholder(g_set_modal.mqtt_psk_ta, TR("Empty = plaintext to a private broker"));
   lv_textarea_set_max_length(g_set_modal.mqtt_psk_ta, 32);
   attachSettingsTaEvents(g_set_modal.mqtt_psk_ta);
   y += SC(36);
@@ -14021,7 +15227,7 @@ static void buildMqttSettings() {
   styleButton(b_save);
   lv_obj_add_event_cb(b_save, mqttSaveCb, LV_EVENT_CLICKED, nullptr);
   { lv_obj_t* sl = lv_label_create(b_save);
-    lv_label_set_text(sl, LV_SYMBOL_SAVE "  Save");
+    lv_label_set_text(sl, TR(LV_SYMBOL_SAVE "  Save"));
     lv_obj_center(sl); }
   y += SC(44);
 
@@ -14086,6 +15292,7 @@ static void buildWifiSettings() {
   (void)body;
   (void)y;
   lv_obj_t* unsup = lv_label_create(body);
+  useChainedFont(unsup);
   lv_label_set_text(unsup, TR("Wi-Fi is not enabled in this build."));
   lv_obj_set_style_text_color(unsup, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(unsup, 2, 8);
@@ -14095,7 +15302,7 @@ static void buildWifiSettings() {
 
 static void openLogModalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_obj_t* body = createSettingsModal("Logs", SettingsModalKind::Log);
+  lv_obj_t* body = createSettingsModal(TR("Logs"), SettingsModalKind::Log);
   int y = 0;
 
   g_set_modal.log_rx_btn = lv_btn_create(body);
@@ -14104,6 +15311,7 @@ static void openLogModalCb(lv_event_t* e) {
   styleButton(g_set_modal.log_rx_btn);
   lv_obj_add_event_cb(g_set_modal.log_rx_btn, logModeRxCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* rx_lbl = lv_label_create(g_set_modal.log_rx_btn);
+  useChainedFont(rx_lbl);
   lv_label_set_text(rx_lbl, TR("RX log"));
   lv_obj_center(rx_lbl);
 
@@ -14113,6 +15321,7 @@ static void openLogModalCb(lv_event_t* e) {
   styleButton(g_set_modal.log_raw_btn);
   lv_obj_add_event_cb(g_set_modal.log_raw_btn, logModeRawCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* raw_lbl = lv_label_create(g_set_modal.log_raw_btn);
+  useChainedFont(raw_lbl);
   lv_label_set_text(raw_lbl, TR("Raw log"));
   lv_obj_center(raw_lbl);
   y += 38;
@@ -14245,7 +15454,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   addCloseXBadge(card, contactsSearchSheetCloseCb);
 
   lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, LV_SYMBOL_EYE_OPEN "  Search contacts");
+  lv_label_set_text(title, TR(LV_SYMBOL_EYE_OPEN "  Search contacts"));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 0);
@@ -14256,7 +15465,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   styleCard(s_contacts_search_ta);
   lv_textarea_set_one_line(s_contacts_search_ta, true);
   lv_textarea_set_max_length(s_contacts_search_ta, (uint32_t)(sizeof(g_lv.contacts_search) - 1));
-  lv_textarea_set_placeholder_text(s_contacts_search_ta, TR("Name fragment"));
+  taSetPlaceholder(s_contacts_search_ta, TR("Name fragment"));
   lv_textarea_set_text(s_contacts_search_ta, g_lv.contacts_search);
   lv_obj_set_style_text_color(s_contacts_search_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_contacts_search_ta, &g_font_14, LV_PART_MAIN);
@@ -14275,6 +15484,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   styleButton(clear_btn);
   lv_obj_add_event_cb(clear_btn, contactsSearchClearCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* cl = lv_label_create(clear_btn);
+  useChainedFont(cl);
   lv_label_set_text(cl, TR("Clear"));
   lv_obj_center(cl);
 
@@ -14285,6 +15495,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   lv_obj_set_style_bg_color(apply_btn, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_add_event_cb(apply_btn, contactsSearchApplyCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* al = lv_label_create(apply_btn);
+  useChainedFont(al);
   lv_label_set_text(al, TR("Apply"));
   lv_obj_center(al);
 }
@@ -14336,7 +15547,7 @@ static bool     s_telem_manual_pending = false; // a manual request is awaiting 
 static uint32_t s_telem_deadline_ms = 0;        // manual-request timeout (separate from ping)
 static int      s_telem_win_now_h  = 0;         // display window: newer bound (hours ago)
 static int      s_telem_win_past_h = 24;        // display window: older bound (hours ago)
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 static void openTelemetryWindow(const uint8_t* key6, const char* name, int state);   // fwd
 #endif
 static constexpr unsigned long UI_PING_TIMEOUT_MS = 30000;  // 30 s for flood paths
@@ -14411,7 +15622,7 @@ static void actionSheetTelemetryCb(lv_event_t* e) {
   bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
   closeActionSheet();
   if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Open the telemetry window on its history; it does NOT auto-request. The user
   // taps the Request button (refresh glyph, left of the gear) to poll.
   memcpy(s_telem_node, c.id.pub_key, 6);
@@ -14454,6 +15665,21 @@ static char*     s_admin_log = (char*)psAlloc(ADMIN_LOG_SZ);  // ring-ish log bu
 // chat on success. -1 = the current login is a normal repeater admin login.
 static int       s_room_join_idx   = -1;
 static int       s_admin_log_len   = 0;
+// The room server a user-initiated "Log in again" is currently waiting on (#267).
+// That path sends a blank login WITHOUT opening the prompt, so it never sets
+// s_admin_pub32 — which is why onAdminLoginResult's identity guard used to drop
+// the reply and the row said nothing whether it worked or not. Tracked separately
+// so the two pending-login kinds can't be confused for one another.
+static uint8_t   s_room_relogin_pub32[32] = {0};
+static bool      s_room_relogin_active    = false;
+static void roomReloginClear() {
+  s_room_relogin_active = false;
+  memset(s_room_relogin_pub32, 0, sizeof s_room_relogin_pub32);
+}
+// Reason line for the next login prompt, consumed (and cleared) by
+// openAdminLoginPrompt. Lets the escalated Join explain why it appeared instead
+// of looking like a password box out of nowhere. nullptr = the default subtitle.
+static const char* s_admin_pw_reason = nullptr;
 
 // Static help banner shown when the console opens. Lists the common
 // CommonCLI commands plus the simple_repeater-specific extras. The repeater
@@ -14555,6 +15781,13 @@ static void closeAdminCmdPicker() {
 // attempt; any login result (or closing the prompt) disarms it. 20 s covers the
 // core's worst-case flood est_timeout on slow spreading factors, with margin.
 static lv_timer_t* s_login_wait_timer = nullptr;
+// What the pending attempt was, so the timeout can say something useful about
+// it (#267). A typed password that goes unanswered is a password/clock/server
+// problem; a blank room re-login that goes unanswered means the server has
+// forgotten our client record, which is a different message AND a different
+// remedy.
+enum class LoginWaitKind : uint8_t { Password, RoomRelogin };
+static LoginWaitKind s_login_wait_kind = LoginWaitKind::Password;
 static void loginWaitCancel() {
   if (s_login_wait_timer) { lv_timer_del(s_login_wait_timer); s_login_wait_timer = nullptr; }
 }
@@ -14562,18 +15795,46 @@ static void loginWaitTimeoutCb(lv_timer_t* t) {
   (void)t;
   s_login_wait_timer = nullptr;   // one-shot: LVGL frees the timer after this cb
   if (!g_lv.task) return;
+  // Blank room re-login went unanswered: the server no longer holds our client
+  // record (a reboot drops non-admin ACL entries), and no amount of passwordless
+  // retrying will recreate it. Escalate to the passworded Join right here rather
+  // than ending on a toast that leaves the operator with no result and no next
+  // step — the whole point of #267.
+  if (s_login_wait_kind == LoginWaitKind::RoomRelogin) {
+    if (!s_room_relogin_active) return;
+    uint8_t pub[32];
+    memcpy(pub, s_room_relogin_pub32, sizeof pub);
+    roomReloginClear();
+    openRoomJoinPrompt(pub, /*after_relogin_failed=*/true);
+    return;
+  }
   // Show what the DEVICE thinks the time is — a wrong clock here is the tell
   // for the replay-guard case (the other causes read the first two hints).
   char when[24] = "?";
   time_t tt = (time_t)the_mesh.getRTCClock()->getCurrentTime();
   struct tm tmv;
   if (localtime_r(&tt, &tmv)) strftime(when, sizeof when, "%H:%M %d %b", &tmv);
-  char msg[120];
-  snprintf(msg, sizeof msg, TR("No reply. Check password, server,\nor device clock (device: %s)"), when);
-  g_lv.task->showAlert(msg, 4500);
+  char msg[160];
+  // Multi-byte path hashing is the one setting that makes a login fail EXACTLY like
+  // this: a repeater that predates it, or does not implement it, silently drops 2- and
+  // 3-byte-hash packets, so the request never arrives and no error is ever generated
+  // anywhere. It is opt-in and defaults to 1 byte, but someone who turned it on has no
+  // way to connect that choice to "remote management stopped working" — reported twice
+  // (#278, #280), once explicitly while running 3-byte hashes. Name it here, where the
+  // operator is already looking, rather than leaving them to find it in Settings.
+  const uint8_t phm = the_mesh.getNodePrefs() ? the_mesh.getNodePrefs()->path_hash_mode : 0;
+  if (phm > 0) {
+    snprintf(msg, sizeof msg,
+             TR("No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)"),
+             (unsigned)(phm + 1));
+  } else {
+    snprintf(msg, sizeof msg, TR("No reply. Check password, server,\nor device clock (device: %s)"), when);
+  }
+  g_lv.task->showAlert(msg, 5000);
 }
-static void loginWaitArm() {
+static void loginWaitArm(LoginWaitKind kind) {
   loginWaitCancel();
+  s_login_wait_kind  = kind;
   s_login_wait_timer = lv_timer_create(loginWaitTimeoutCb, 20000, nullptr);
   if (s_login_wait_timer) lv_timer_set_repeat_count(s_login_wait_timer, 1);
 }
@@ -14856,7 +16117,7 @@ static void openAdminConsole(const ContactInfo& c) {
   styleCard(s_admin_cmd_ta);
   lv_textarea_set_one_line(s_admin_cmd_ta, true);
   lv_textarea_set_max_length(s_admin_cmd_ta, 64);
-  lv_textarea_set_placeholder_text(s_admin_cmd_ta, TR("command"));
+  taSetPlaceholder(s_admin_cmd_ta, TR("command"));
   lv_obj_set_style_text_color(s_admin_cmd_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_admin_cmd_ta, &g_font_14, LV_PART_MAIN);
   attachSettingsTaEvents(s_admin_cmd_ta);
@@ -14894,6 +16155,7 @@ static void openAdminConsole(const ContactInfo& c) {
                   LV_EVENT_CLICKED, nullptr);
   }, LV_EVENT_READY, send_btn);  // Enter key on textarea sends
   lv_obj_t* send_lbl = lv_label_create(send_btn);
+  useChainedFont(send_lbl);
   lv_label_set_text(send_lbl, LV_SYMBOL_RIGHT);
   lv_obj_center(send_lbl);
 }
@@ -14922,11 +16184,15 @@ static void adminPwSubmitCb(lv_event_t* e) {
   s_admin_pw_attempt[sizeof(s_admin_pw_attempt) - 1] = '\0';
   s_admin_pw_remember_flag = (s_admin_pw_remember &&
                               lv_obj_has_state(s_admin_pw_remember, LV_STATE_CHECKED));
+  // An explicit login supersedes any blank re-login still in flight (usually to
+  // this very room): without this, that one's late reply — or its watchdog —
+  // could pop the escalation prompt on top of the login the user just started.
+  roomReloginClear();
   int r = the_mesh.uiSendAdminLogin(*c, s_admin_pw_attempt);
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
     markMeshRequest();   // status-bar async spinner
     if (g_lv.task) g_lv.task->showAlert(TR("Logging in\xe2\x80\xa6"), 1500);
-    loginWaitArm();      // silence past 20 s gets a real error instead of forever-spin (#89)
+    loginWaitArm(LoginWaitKind::Password);   // silence past 20 s gets a real error instead of forever-spin (#89)
   } else {
     if (g_lv.task) g_lv.task->showAlert(TR("Send failed"), 1200);
   }
@@ -14941,6 +16207,17 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   closeAdminPwPrompt();
   closeAdminConsole();
   memcpy(s_admin_pub32, c.id.pub_key, 32);
+
+  // Consume the one-shot reason line before any layout maths — a reason needs two
+  // lines where the stock hint needs one, so the card grows by exactly one line
+  // and everything below the subtitle shifts down with it (#267). Bounded on
+  // purpose, and bounded TIGHT: the card is top-anchored inside a root only
+  // 218 px tall on a 240 px T-Deck, so a third line would leave no margin at all.
+  // A translation that overruns two lines clips rather than pushing the Join
+  // button off the card.
+  const char* const reason = s_admin_pw_reason;
+  s_admin_pw_reason        = nullptr;
+  const int         shift  = reason ? PSC(14) : 0;
 
   lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -14961,10 +16238,10 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
 
 #if CAP_LARGE_SCREEN
   const int card_w = PCW(220);
-  const int card_h = PSC(180);
+  const int card_h = PSC(180) + shift;
 #else
   const int card_w = 220;
-  const int card_h = 180;   // taller now: room for the Remember checkbox
+  const int card_h = 180 + shift;   // taller now: room for the Remember checkbox (+ a reason line)
 #endif
   lv_obj_t* card = lv_obj_create(s_admin_pw_root);
   lv_obj_remove_style_all(card);
@@ -15006,20 +16283,31 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   lv_obj_set_pos(title, 0, 0);
 
   lv_obj_t* sub = lv_label_create(card);
-  lv_label_set_text(sub, is_room ? "Room password (blank = guest)"
-                                 : "Password (blank = guest)");
+  // A caller-supplied reason wins over the generic hint: when this prompt opens
+  // by itself after a failed re-login it has to say why (#267), or it reads as a
+  // password box appearing out of nowhere.
+  lv_label_set_text(sub, reason ? reason
+                                : (is_room ? "Room password (blank = guest)"
+                                           : "Password (blank = guest)"));
   lv_obj_set_style_text_color(sub, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(sub, &g_font_12, LV_PART_MAIN);
+  // Only the reason gets a wrap box, sized to the two lines `shift` paid for.
+  // The stock one-line hint keeps its auto-size — pinning a height here would
+  // risk clipping it if the font's line height exceeds the guess.
+  if (reason) {
+    lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
+    lv_obj_set_size(sub, card_w - 20, PSC(28));
+  }
   lv_obj_set_pos(sub, 0, PSC(22));
 
   s_admin_pw_ta = lv_textarea_create(card);
   lv_obj_set_size(s_admin_pw_ta, card_w - 20, PSC(32));
-  lv_obj_set_pos(s_admin_pw_ta, 0, PSC(42));
+  lv_obj_set_pos(s_admin_pw_ta, 0, PSC(42) + shift);
   styleCard(s_admin_pw_ta);
   lv_textarea_set_one_line(s_admin_pw_ta, true);
   lv_textarea_set_password_mode(s_admin_pw_ta, true);
   lv_textarea_set_max_length(s_admin_pw_ta, 15);
-  lv_textarea_set_placeholder_text(s_admin_pw_ta, "");
+  taSetPlaceholder(s_admin_pw_ta, "");
   lv_obj_set_style_text_color(s_admin_pw_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_admin_pw_ta, &g_font_14, LV_PART_MAIN);
   attachSettingsTaEvents(s_admin_pw_ta);
@@ -15057,27 +16345,71 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   lv_checkbox_set_text(s_admin_pw_remember, TR("Remember password"));
   lv_obj_set_style_text_color(s_admin_pw_remember, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_admin_pw_remember, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_pos(s_admin_pw_remember, 0, PSC(82));
+  lv_obj_set_pos(s_admin_pw_remember, 0, PSC(82) + shift);
   lv_obj_add_state(s_admin_pw_remember, LV_STATE_CHECKED);
 
   lv_obj_t* cancel_btn = lv_btn_create(card);
   lv_obj_set_size(cancel_btn, PSC(88), PSC(32));
-  lv_obj_set_pos(cancel_btn, 0, PSC(116));
+  lv_obj_set_pos(cancel_btn, 0, PSC(116) + shift);
   styleButton(cancel_btn);
   lv_obj_add_event_cb(cancel_btn, adminPwCancelCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* cl = lv_label_create(cancel_btn);
+  useChainedFont(cl);
   lv_label_set_text(cl, TR("Cancel"));
   lv_obj_center(cl);
 
   lv_obj_t* login_btn = lv_btn_create(card);
   lv_obj_set_size(login_btn, PSC(100), PSC(32));
-  lv_obj_set_pos(login_btn, card_w - 20 - PSC(100), PSC(116));
+  lv_obj_set_pos(login_btn, card_w - 20 - PSC(100), PSC(116) + shift);
   styleButton(login_btn);
   lv_obj_set_style_bg_color(login_btn, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_add_event_cb(login_btn, adminPwSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* ll = lv_label_create(login_btn);
+  useChainedFont(ll);
   lv_label_set_text(ll, is_room ? "Join" : "Login");
   lv_obj_center(ll);
+}
+
+// Blank re-login to a room server, with the no-reply watchdog armed (#267). The
+// watchdog is what makes this row honest: a server that has forgotten our client
+// record never answers a passwordless login, so without it the action ended on
+// "Logging in again…" and nothing more, forever.
+//
+// Deliberately NOT used by the once-a-minute self-heal in the main loop — that
+// one runs unprompted while the operator reads a room, and must never be able to
+// throw a password prompt on screen by itself.
+static void roomReloginBegin(const uint8_t pub[32]) {
+  if (!g_lv.task) return;
+  if (the_mesh.uiRoomRelogin(pub) == MSG_SEND_FAILED) {
+    g_lv.task->showAlert(TR("Couldn't send login"), 1400);
+    return;
+  }
+  memcpy(s_room_relogin_pub32, pub, sizeof s_room_relogin_pub32);
+  s_room_relogin_active = true;
+  markMeshRequest();   // status-bar async spinner
+  g_lv.task->showAlert(TR("Logging in again..."), 1400);
+  loginWaitArm(LoginWaitKind::RoomRelogin);
+}
+
+// Passworded Join against a room server, from anywhere. This is the only action
+// that can RECREATE a client record the server has dropped — the blank re-login
+// can merely resume one that still exists. Reachable from the room thread sheet
+// and as the automatic escalation when a blank re-login goes unanswered, so the
+// recovery no longer depends on the operator knowing to walk back to Contacts.
+static void openRoomJoinPrompt(const uint8_t pub[32], bool after_relogin_failed) {
+  if (!g_lv.task) return;
+  ContactInfo* c = the_mesh.lookupContactByPubKey(pub, PUB_KEY_SIZE);
+  if (!c || c->type != ADV_TYPE_ROOM) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  // s_room_join_idx is what routes the LOGIN_OK into the room chat instead of the
+  // CLI console, and it is a contact-table index, not a thread index.
+  const int idx = the_mesh.uiContactIdxByPubKey(pub);
+  if (idx < 0) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  roomReloginClear();          // supersede the attempt that got us here
+  s_room_join_idx = idx;
+  if (after_relogin_failed)
+    // Two short lines: the 200 px-wide subtitle fits ~30 chars per line at font_12.
+    s_admin_pw_reason = TR("Server has forgotten you.\nJoin with the room password.");
+  openAdminLoginPrompt(*c);
 }
 
 static void actionSheetAdminCb(lv_event_t* e) {
@@ -15104,9 +16436,10 @@ static void actionSheetJoinRoomCb(lv_event_t* e) {
   openAdminLoginPrompt(c);
 }
 
-// Toggle a contact's favorite state. Persists in NVS via TouchPrefsStore so
-// both the star marker in the contact row and the favorites filter pick it
-// up. Pure UI metadata; the firmware contact table isn't touched.
+// Toggle a contact's favorite state. Persists in NVS via TouchPrefsStore (the
+// star marker + favorites filter) AND mirrors into the firmware contact
+// table's flags bit 0 — the bit the core's overwrite-oldest eviction skips
+// (#178). Without the mirror a device-starred contact was still evictable.
 static void actionSheetFavoriteCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   ContactInfo c;
@@ -15124,12 +16457,47 @@ static void actionSheetFavoriteCb(lv_event_t* e) {
     g_lv.task->showAlert(full_msg, 1500);
     return;
   }
+  the_mesh.uiSetContactFavorite(c.id.pub_key, now_fav);   // eviction protection (#178)
   g_lv.task->showAlert(now_fav ? TR("Added to favorites") : TR("Removed from favorites"), 1100);
   // Force a list rebuild so the star (or its removal) shows immediately — a plain
   // refresh hits the no-change cache (the contact count is unchanged by a fav toggle).
   contactsListForceRefresh();
 #else
   g_lv.task->showAlert(TR("Favorites unsupported"), 1100);
+#endif
+}
+
+// Share position with THIS contact (#266). Sharing position used to mean putting it
+// in the advert, i.e. broadcasting it in the clear to everyone in range. MeshCore can
+// instead answer position only when a contact asks, encrypted to that contact — the
+// permission is a bit in contact.flags, read whenever telemetry_mode_loc is
+// ALLOW_FLAGS. Granting is per contact and revocable from the same menu.
+static void actionSheetShareLocCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+#if defined(ESP32)
+  ContactInfo c;
+  const bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
+  closeActionSheet();
+  if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  const bool was = the_mesh.uiGetContactTelemetryPerm(c.id.pub_key, TELEM_PERM_LOCATION);
+  if (!the_mesh.uiSetContactTelemetryPerm(c.id.pub_key, TELEM_PERM_LOCATION, !was)) {
+    g_lv.task->showAlert(TR("Contact gone"), 1200);
+    return;
+  }
+  if (!was) {
+    // Granting one contact is an unambiguous "share with someone". If position sharing
+    // is switched off entirely the grant would silently do nothing, so move to the
+    // per-contact mode — which still shares with nobody except the contacts picked here.
+    NodePrefs* np = the_mesh.getNodePrefs();
+    if (np && np->telemetry_mode_loc == TELEM_MODE_DENY)
+      g_lv.task->setLocationTelemetryMode(TELEM_MODE_ALLOW_FLAGS);
+    g_lv.task->showAlert(TR("Location shared with this contact"), 1600);
+  } else {
+    g_lv.task->showAlert(TR("Location no longer shared"), 1600);
+  }
+#else
+  closeActionSheet();
+  g_lv.task->showAlert(TR("Not supported on this board"), 1100);
 #endif
 }
 
@@ -15189,6 +16557,7 @@ static void actionSheetRangeTestCb(lv_event_t* e) {
   uint32_t ack_hash = 0;
   int r = the_mesh.sendMessage(c, ts, 0, "RangeTest \xe2\x80\x94 ACK?", ack_hash, est, &hash4);
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
+    the_mesh.uiRegisterExpectedAck(ack_hash, c.id.pub_key);
     markMeshRequest();   // status-bar async spinner
     g_lv.task->showAlert(r == MSG_SEND_SENT_DIRECT ? TR("RangeTest sent (direct)")
                                                    : TR("RangeTest sent (flood)"), 1400);
@@ -15704,7 +17073,7 @@ static void openLosModal(uint32_t mesh_idx) {
   char nm[36];
   copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), c.name);
   lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text_fmt(title, LV_SYMBOL_GPS "  LOS \xe2\x86\x92 %s", nm[0] ? nm : "?");
+  lv_label_set_text_fmt(title, TR(LV_SYMBOL_GPS "  LOS \xe2\x86\x92 %s"), nm[0] ? nm : "?");
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
@@ -15784,9 +17153,8 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
 
   s_action_sheet_root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_action_sheet_root);
-  // Backdrop starts below the global status bar so the centered card is
-  // centered in the visible 298 px area (not the full 320 — that pushed
-  // the top of the 8-row repeater card behind the time/battery row).
+  // Backdrop starts below the global status bar so the card is centered in
+  // the visible content area instead of drifting behind the time/battery row.
   lv_obj_set_size(s_action_sheet_root, sw, sh - STATUSBAR_H);
   lv_obj_set_pos(s_action_sheet_root, 0, STATUSBAR_H);
   lv_obj_set_style_bg_color(s_action_sheet_root, lv_color_hex(0x000000), LV_PART_MAIN);
@@ -15798,23 +17166,30 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   lv_obj_add_event_cb(s_action_sheet_root, actionSheetCloseCb, LV_EVENT_CLICKED, nullptr);
 
   // On the big 800×480 Tanmatsu the 232-wide sheet looked lost in the middle, so
-  // widen the card and grow the rows/gaps/title. The non-Tanmatsu values are the
-  // historical integers, untouched (PSC is a no-op there).
-#if CAP_LARGE_SCREEN
+  // widen the card and grow the rows/gaps/title. The Pager gets its own wide,
+  // short layout; the remaining compact boards keep the historical integers.
+#if defined(TLORA_PAGER)
+  // Match the sibling chat-details sheet: use the Pager's width while keeping
+  // rows compact enough for its short display. Semantic text presets still
+  // resize the contact title; action labels remain fixed-size UI chrome.
+  const int card_w = sw - 80;
+  const int btn_h = 26;
+  const int btn_gap = 3;
+  const int title_h = 32;
+  const int padding = 6;
+#elif CAP_LARGE_SCREEN
   const int card_w = PCW(232);
-  int btn_h = PSC(30);           // vertical metrics are mutable: the shrink-to-fit below trims them
-  int btn_gap = PSC(6);          // when the big-screen 1.7x scale would push the sheet off-screen
-  int title_h = PSC(28);
+  const int btn_h = PSC(30);
+  const int btn_gap = PSC(6);
+  const int title_h = PSC(28);
   const int padding = PSC(6);
 #else
   const int card_w = 232;
-  // Two-column button grid so the (now up to 9) actions fit without
-  // clipping below the status bar. Delete spans the full width as the
-  // bottom danger row. Repeater worst case: 8 grid items -> 4 rows + 1
-  // delete row = 5 * (30+6) + title 28 + pad 6 = 214 px (fits in 298).
-  int btn_h = 30;
-  int btn_gap = 6;
-  int title_h = 28;
+  // Two-column button grid keeps the common actions compact. Delete spans the
+  // full-width bottom danger row, and unusually tall sets scroll below.
+  const int btn_h = 30;
+  const int btn_gap = 6;
+  const int title_h = 28;
   const int padding = 6;
 #endif
   // msg/ping + telemetry + (trace ping + admin, repeaters only) + range
@@ -15848,7 +17223,8 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // line-of-sight (1), + Show on map (1 when contact has GPS and !from_map).
   const int grid_items = (from_map ? 5 : 6) + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
-  int card_h = title_h + (grid_rows + 1) * (btn_h + btn_gap) + padding;
+  const int body_content_h = (grid_rows + 1) * btn_h + grid_rows * btn_gap;
+  int card_h = 2 * padding + title_h + body_content_h;
   // Cap the card to the visible area and let the BUTTON BODY (below the fixed title/X) scroll when it
   // overflows — so a tall sheet (repeater, big UI scale) always fits on-screen and every button stays
   // reachable (keyboard nav focus-scrolls it into view). Replaces the old shrink-to-fit-the-rows hack.
@@ -15877,9 +17253,9 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  // Trim 28 px on the right so the close-X badge doesn't sit on top of
+  // Trim 32 px on the right so the close-X badge doesn't sit on top of
   // the contact name when it's long.
-  lv_obj_set_width(title, card_w - 2 * padding - 28);
+  lv_obj_set_width(title, card_w - 2 * padding - 32);
   lv_obj_set_pos(title, 0, 0);
 
   // Scrollable button body below the fixed title/X. The absolute-positioned grid buttons go in here;
@@ -15889,12 +17265,14 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   lv_obj_set_pos(body, 0, title_h);
   lv_obj_set_size(body, card_w - 2 * padding, card_h - 2 * padding - title_h);
   lv_obj_set_style_pad_all(body, 0, LV_PART_MAIN);
-  if ((grid_rows + 1) * (btn_h + btn_gap) > card_h - 2 * padding - title_h)
+  if (body_content_h > card_h - 2 * padding - title_h)
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
   else
     lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
 
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  const int col_gap = btn_gap;
+#elif CAP_LARGE_SCREEN
   const int col_gap = PSC(6);
 #else
   const int col_gap = 6;
@@ -15902,9 +17280,11 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   const int half_w  = (card_w - 2 * padding - col_gap) / 2;
   int y   = 0;
   int col = 0;   // 0 = left column, 1 = right column
-  // On the Tanmatsu the rows are PSC-taller, so step the row label up one font
-  // size to fill them; the smaller boards keep the original g_font_12.
-#if CAP_LARGE_SCREEN
+  // Tanmatsu rows grow with the panel; the Pager uses fixed-size chrome so text
+  // presets do not overfill compact rows. Other boards retain g_font_12.
+#if defined(TLORA_PAGER)
+  const lv_font_t* row_font = uiChromeFont();
+#elif CAP_LARGE_SCREEN
   const lv_font_t* row_font = &g_font_14;
 #else
   const lv_font_t* row_font = &g_font_12;
@@ -15923,6 +17303,9 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, TR(label));
     lv_obj_set_style_text_font(l, row_font, LV_PART_MAIN);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(l, half_w - 8, lv_font_get_line_height(row_font));
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_center(l);
     if (col == 0) col = 1;
     else { col = 0; y += btn_h + btn_gap; }
@@ -15949,24 +17332,24 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // the thing to do first; the server only accepts posts + pushes you the room
   // history once you've joined. "Open chat" sits next to it.
   if (is_room) {
-    mk_btn(LV_SYMBOL_LOOP "  Join", actionSheetJoinRoomCb, COLOR_STATUS_OK);
-    mk_btn(LV_SYMBOL_ENVELOPE "  Open chat", actionSheetSendMsgCb, 0);
+    mk_btn(TR(LV_SYMBOL_LOOP "  Join"), actionSheetJoinRoomCb, COLOR_STATUS_OK);
+    mk_btn(TR(LV_SYMBOL_ENVELOPE "  Open chat"), actionSheetSendMsgCb, 0);
   } else if (is_repeater) {
-    mk_btn(LV_SYMBOL_REFRESH "  Ping", actionSheetPingCb, 0);
+    mk_btn(TR(LV_SYMBOL_REFRESH "  Ping"), actionSheetPingCb, 0);
   } else {
-    mk_btn(LV_SYMBOL_ENVELOPE "  Message", actionSheetSendMsgCb, 0);
+    mk_btn(TR(LV_SYMBOL_ENVELOPE "  Message"), actionSheetSendMsgCb, 0);
   }
-  mk_btn(LV_SYMBOL_BATTERY_3 "  Telemetry", actionSheetTelemetryCb, 0);
+  mk_btn(TR(LV_SYMBOL_BATTERY_3 "  Telemetry"), actionSheetTelemetryCb, 0);
   if (has_map_btn)
-    mk_btn(LV_SYMBOL_GPS "  Show on map", actionSheetShowOnMapCb, 0);
+    mk_btn(TR(LV_SYMBOL_GPS "  Show on map"), actionSheetShowOnMapCb, 0);
   if (is_repeater) {
-    mk_btn(LV_SYMBOL_GPS      "  Trace SNR", actionSheetTracePingCb, 0);
-    mk_btn(LV_SYMBOL_SETTINGS "  Admin",     actionSheetAdminCb,     0);
+    mk_btn(TR(LV_SYMBOL_GPS      "  Trace SNR"), actionSheetTracePingCb, 0);
+    mk_btn(TR(LV_SYMBOL_SETTINGS "  Admin"), actionSheetAdminCb, 0);
   }
-  mk_btn(LV_SYMBOL_WIFI "  Range test", actionSheetRangeTestCb, 0);
+  mk_btn(TR(LV_SYMBOL_WIFI "  Range test"), actionSheetRangeTestCb, 0);
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   // Terrain-aware line-of-sight (needs both GPS fixes; gated by has_los).
-  if (has_los) mk_btn(LV_SYMBOL_GPS "  Sightline", actionSheetLosCb, 0);
+  if (has_los) mk_btn(TR(LV_SYMBOL_GPS "  Sightline"), actionSheetLosCb, 0);
 #endif
   // Favorite toggle: label flips based on current state.
 #if defined(ESP32)
@@ -15983,7 +17366,20 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
 #else
   mk_btn(TOUCH_SYM_STAR "  Favorite", actionSheetFavoriteCb, 0);
 #endif
-  mk_btn(LV_SYMBOL_LOOP  "  Reset path", actionSheetResetPathCb, 0);
+  // Share position with this contact (#266) — label flips on the current grant.
+  // Hidden on the map-marker sheet, which stays compact.
+#if defined(ESP32)
+  if (!from_map) {
+    bool _loc_shared = false;
+    ContactInfo _lc;
+    if (the_mesh.getContactByIdx(s_action_sheet_mesh_idx, _lc))
+      _loc_shared = the_mesh.uiGetContactTelemetryPerm(_lc.id.pub_key, TELEM_PERM_LOCATION);
+    mk_btn(_loc_shared ? TR(LV_SYMBOL_GPS "  Stop sharing loc")
+                       : TR(LV_SYMBOL_GPS "  Share my loc"),
+           actionSheetShareLocCb, 0);
+  }
+#endif
+  mk_btn(TR(LV_SYMBOL_LOOP  "  Reset path"), actionSheetResetPathCb, 0);
   // Block / unblock — label flips on the current ignore state. Skipped when the
   // sheet is opened from a map marker (keeps that popup compact).
   if (!from_map) {
@@ -15993,10 +17389,25 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
     if (the_mesh.getContactByIdx(s_action_sheet_mesh_idx, _bc)) _blk = touchPrefsIsIgnored(_bc.id.pub_key);
     mk_btn(_blk ? LV_SYMBOL_OK "  Unblock" : LV_SYMBOL_CLOSE "  Block", actionSheetBlockCb, 0);
 #else
-    mk_btn(LV_SYMBOL_CLOSE "  Block", actionSheetBlockCb, 0);
+    mk_btn(TR(LV_SYMBOL_CLOSE "  Block"), actionSheetBlockCb, 0);
 #endif
   }
   mk_btn_full(LV_SYMBOL_TRASH "  Delete", actionSheetDeleteCb, 0xB23A48);
+
+  // Scrollability is decided HERE, from the height the buttons actually reached,
+  // not from the grid_items tally above. That tally is hand-maintained and has
+  // to be updated every time a conditional button is added; the location-sharing
+  // row added for #266 is not in it, so a contact showing that button has one
+  // more row than the card was sized for. When the estimate is short the body is
+  // left unscrollable and the overflow is simply unreachable, which is the shape
+  // of #306. `y` is the truth, so use it and let the tally be wrong harmlessly.
+  {
+    const int body_h = card_h - 2 * padding - title_h;
+    if (y > body_h) {
+      lv_obj_set_scroll_dir(body, LV_DIR_VER);
+      lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    }
+  }
 }
 
 static void contactSelectCb(lv_event_t* e) {
@@ -16093,14 +17504,14 @@ static void createPrivateChannelSubmitCb(lv_event_t* e) {
     for (int i = 0; i < 16; ++i) secret[i] = static_cast<uint8_t>(rand() & 0xFF);
 #endif
   } else if (!hexToSecret16(hex, secret)) {
-    setAddChannelError("Secret must be 32 hex chars (or empty).");
+    setAddChannelError(TR("Secret must be 32 hex chars (or empty)."));
     return;
   }
 
   const int slot = the_mesh.findFirstEmptyChannelSlot();
-  if (slot < 0) { setAddChannelError("Channel table is full."); return; }
+  if (slot < 0) { setAddChannelError(TR("Channel table is full.")); return; }
   if (!the_mesh.uiAddOrUpdateChannel(slot, name, secret)) {
-    setAddChannelError("Failed to save channel.");
+    setAddChannelError(TR("Failed to save channel."));
     return;
   }
   // Don't wait for the loop's deferred refresh — pull the channel into the
@@ -16177,7 +17588,7 @@ static void addContactSubmitCb(lv_event_t* e) {
 
 static void openAddContactModalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_obj_t* body = createSettingsModal("Add contact", SettingsModalKind::AddContact);
+  lv_obj_t* body = createSettingsModal(TR("Add contact"), SettingsModalKind::AddContact);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -16199,7 +17610,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_size(s_addct_pub_ta, lv_pct(100),56);
   lv_obj_set_pos(s_addct_pub_ta, 2, y);
   lv_textarea_set_one_line(s_addct_pub_ta, false);
-  lv_textarea_set_placeholder_text(s_addct_pub_ta, TR("0123456789abcdef…"));
+  taSetPlaceholder(s_addct_pub_ta, TR("0123456789abcdef…"));
   lv_textarea_set_max_length(s_addct_pub_ta, 80);
   attachSettingsTaEvents(s_addct_pub_ta);
   y += 60;
@@ -16214,7 +17625,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_size(s_addct_name_ta, lv_pct(100),30);
   lv_obj_set_pos(s_addct_name_ta, 2, y);
   lv_textarea_set_one_line(s_addct_name_ta, true);
-  lv_textarea_set_placeholder_text(s_addct_name_ta, TR("Display name"));
+  taSetPlaceholder(s_addct_name_ta, TR("Display name"));
   lv_textarea_set_max_length(s_addct_name_ta, 31);
   attachSettingsTaEvents(s_addct_name_ta);
   y += 36;
@@ -16236,12 +17647,13 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, addContactSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
+  useChainedFont(bl);
   lv_label_set_text(bl, TR("Add contact"));
   lv_obj_center(bl);
 }
 
 static void openCreatePrivateChannelModal() {
-  lv_obj_t* body = createSettingsModal("Create private channel", SettingsModalKind::ChCreatePrv);
+  lv_obj_t* body = createSettingsModal(TR("Create private channel"), SettingsModalKind::ChCreatePrv);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -16263,7 +17675,7 @@ static void openCreatePrivateChannelModal() {
   lv_obj_set_size(s_addch_name_ta, lv_pct(100),30);
   lv_obj_set_pos(s_addch_name_ta, 2, y);
   lv_textarea_set_one_line(s_addch_name_ta, true);
-  lv_textarea_set_placeholder_text(s_addch_name_ta, TR("e.g. Family"));
+  taSetPlaceholder(s_addch_name_ta, TR("e.g. Family"));
   lv_textarea_set_max_length(s_addch_name_ta, 31);
   attachSettingsTaEvents(s_addch_name_ta);
   y += 36;
@@ -16278,7 +17690,7 @@ static void openCreatePrivateChannelModal() {
   lv_obj_set_size(s_addch_secret_ta, lv_pct(100),30);
   lv_obj_set_pos(s_addch_secret_ta, 2, y);
   lv_textarea_set_one_line(s_addch_secret_ta, true);
-  lv_textarea_set_placeholder_text(s_addch_secret_ta, TR("leave empty to generate"));
+  taSetPlaceholder(s_addch_secret_ta, TR("leave empty to generate"));
   lv_textarea_set_max_length(s_addch_secret_ta, 32);
   attachSettingsTaEvents(s_addch_secret_ta);
   y += 36;
@@ -16300,6 +17712,7 @@ static void openCreatePrivateChannelModal() {
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, createPrivateChannelSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
+  useChainedFont(bl);
   lv_label_set_text(bl, TR("Create"));
   lv_obj_center(bl);
 }
@@ -16325,13 +17738,13 @@ static void joinPrivateChannelSubmitCb(lv_event_t* e) {
   hex[hn] = '\0';
   uint8_t secret[16];
   if (!hexToSecret16(hex, secret)) {
-    setAddChannelError("Enter exactly 32 hex characters.");
+    setAddChannelError(TR("Enter exactly 32 hex characters."));
     return;
   }
   const int slot = the_mesh.findFirstEmptyChannelSlot();
-  if (slot < 0) { setAddChannelError("Channel table is full."); return; }
+  if (slot < 0) { setAddChannelError(TR("Channel table is full.")); return; }
   if (!the_mesh.uiAddOrUpdateChannel(slot, jname, secret)) {
-    setAddChannelError("Failed to save channel.");
+    setAddChannelError(TR("Failed to save channel."));
     return;
   }
   if (g_lv.task) {
@@ -16343,7 +17756,7 @@ static void joinPrivateChannelSubmitCb(lv_event_t* e) {
 }
 
 static void openJoinPrivateChannelModal() {
-  lv_obj_t* body = createSettingsModal("Join private channel", SettingsModalKind::ChJoinPrv);
+  lv_obj_t* body = createSettingsModal(TR("Join private channel"), SettingsModalKind::ChJoinPrv);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -16365,7 +17778,7 @@ static void openJoinPrivateChannelModal() {
   lv_obj_set_size(s_addch_name_ta, lv_pct(100), 30);
   lv_obj_set_pos(s_addch_name_ta, 2, y);
   lv_textarea_set_one_line(s_addch_name_ta, true);
-  lv_textarea_set_placeholder_text(s_addch_name_ta, TR("Channel name"));
+  taSetPlaceholder(s_addch_name_ta, TR("Channel name"));
   lv_textarea_set_max_length(s_addch_name_ta, 30);
   attachSettingsTaEvents(s_addch_name_ta);
   y += 36;
@@ -16380,7 +17793,7 @@ static void openJoinPrivateChannelModal() {
   lv_obj_set_size(s_addch_secret_ta, lv_pct(100),30);
   lv_obj_set_pos(s_addch_secret_ta, 2, y);
   lv_textarea_set_one_line(s_addch_secret_ta, true);
-  lv_textarea_set_placeholder_text(s_addch_secret_ta, TR("32 hex characters"));
+  taSetPlaceholder(s_addch_secret_ta, TR("32 hex characters"));
   lv_textarea_set_max_length(s_addch_secret_ta, 32);
   attachSettingsTaEvents(s_addch_secret_ta);
   y += 36;
@@ -16402,6 +17815,7 @@ static void openJoinPrivateChannelModal() {
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, joinPrivateChannelSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
+  useChainedFont(bl);
   lv_label_set_text(bl, TR("Join"));
   lv_obj_center(bl);
 }
@@ -16434,9 +17848,9 @@ static void joinHashtagChannelSubmitCb(lv_event_t* e) {
                       (int)strlen(hashed));
 
   const int slot = the_mesh.findFirstEmptyChannelSlot();
-  if (slot < 0) { setAddChannelError("Channel table is full."); return; }
+  if (slot < 0) { setAddChannelError(TR("Channel table is full.")); return; }
   if (!the_mesh.uiAddOrUpdateChannel(slot, hashed, secret)) {
-    setAddChannelError("Failed to save channel.");
+    setAddChannelError(TR("Failed to save channel."));
     return;
   }
   if (g_lv.task) {
@@ -16448,7 +17862,7 @@ static void joinHashtagChannelSubmitCb(lv_event_t* e) {
 }
 
 static void openJoinHashtagChannelModal() {
-  lv_obj_t* body = createSettingsModal("Join hashtag channel", SettingsModalKind::ChJoinTag);
+  lv_obj_t* body = createSettingsModal(TR("Join hashtag channel"), SettingsModalKind::ChJoinTag);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -16470,7 +17884,7 @@ static void openJoinHashtagChannelModal() {
   lv_obj_set_size(s_addch_hashtag_ta, lv_pct(100),30);
   lv_obj_set_pos(s_addch_hashtag_ta, 2, y);
   lv_textarea_set_one_line(s_addch_hashtag_ta, true);
-  lv_textarea_set_placeholder_text(s_addch_hashtag_ta, TR("e.g. mesh"));
+  taSetPlaceholder(s_addch_hashtag_ta, TR("e.g. mesh"));
   lv_textarea_set_text(s_addch_hashtag_ta, "#");
   lv_textarea_set_max_length(s_addch_hashtag_ta, 31);
   attachSettingsTaEvents(s_addch_hashtag_ta);
@@ -16493,6 +17907,7 @@ static void openJoinHashtagChannelModal() {
   lv_obj_set_style_bg_color(b, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(b, joinHashtagChannelSubmitCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(b);
+  useChainedFont(bl);
   lv_label_set_text(bl, TR("Join"));
   lv_obj_center(bl);
 }
@@ -16595,10 +18010,10 @@ static void openAddChannelSheet() {
     lv_obj_center(l);
     y += btn_h + row_gap;
   };
-  mk("Create a private channel", addChannelCreatePrivateCb);
-  mk("Join a private channel",   addChannelJoinPrivateCb);
-  mk("Join the public channel",  addChannelJoinPublicCb);
-  mk("Join a hashtag channel",   addChannelJoinHashtagCb);
+  mk(TR("Create a private channel"), addChannelCreatePrivateCb);
+  mk(TR("Join a private channel"), addChannelJoinPrivateCb);
+  mk(TR("Join the public channel"), addChannelJoinPublicCb);
+  mk(TR("Join a hashtag channel"), addChannelJoinHashtagCb);
 }
 
 static void chatsAddBtnCb(lv_event_t* e) {
@@ -16614,7 +18029,7 @@ static void markAllReadApply() {
 }
 static void chatsMarkAllReadBtnCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  showConfirm(TR("Mark all chats and channels as read?"), "Mark read", markAllReadApply);
+  showConfirm(TR("Mark all chats and channels as read?"), TR("Mark read"), markAllReadApply);
 }
 
 // ---- Share-my-contact QR popup ------------------------------------------
@@ -16703,11 +18118,23 @@ static void openShareMyContactPopup() {
   // the operator wants to dictate it over voice and there's no camera).
   // Clamp to the usable area and scale the QR to fit so the popup never runs
   // off the shorter landscape screen.
-  int card_w = PCW(220);
+  int card_w;
+  int card_h;
+#if defined(TLORA_PAGER)
+  // The Pager is very wide and very short. Use that width instead of squeezing
+  // a portrait card into the middle: QR on the left, identity prefix on the
+  // right, with a single title row across the top.
+  card_w = 360;
   if (card_w > modalAvailW()) card_w = modalAvailW();
-  int card_h = PSC(270);
+  card_h = modalAvailH();
+  int qr_size = card_h - 54;   // 10-px card padding + 32-px title row + 2-px bottom breathing room
+#else
+  card_w = PCW(220);
+  if (card_w > modalAvailW()) card_w = modalAvailW();
+  card_h = PSC(270);
   if (card_h > modalAvailH()) card_h = modalAvailH();
   int qr_size = card_h - 34 - 30 - 20;   // title row + hex caption + padding
+#endif
   if (qr_size > PSC(160)) qr_size = PSC(160);   // bigger QR on the Tanmatsu panel
   if (qr_size > card_w - 20) qr_size = card_w - 20;
   if (qr_size < 96) qr_size = 96;
@@ -16727,7 +18154,9 @@ static void openShareMyContactPopup() {
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text_fmt(title, TR("Share: %s"), name);
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  lv_obj_set_width(title, card_w - 20 - 32);   // trim for close-X
+  // Constrain both dimensions: LONG_DOT with only a width can wrap to a second
+  // line, which puts a long node name on top of the QR.
+  lv_obj_set_size(title, card_w - 20 - 32, lv_font_get_line_height(&g_font_14));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 4);
@@ -16739,7 +18168,11 @@ static void openShareMyContactPopup() {
                                   lv_color_hex(0x000000),
                                   lv_color_hex(0xFFFFFF));
   lv_qrcode_update(qr, payload, strlen(payload));
+#if defined(TLORA_PAGER)
+  lv_obj_align(qr, LV_ALIGN_TOP_LEFT, 0, 32);
+#else
   lv_obj_align(qr, LV_ALIGN_TOP_MID, 0, 32);
+#endif
   // White frame around the QR so the camera-side QR detector doesn't get
   // confused by the dark card bleeding into the quiet zone.
   lv_obj_set_style_border_color(qr, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
@@ -16754,9 +18187,16 @@ static void openShareMyContactPopup() {
   lv_label_set_text(hex_lbl, prefix_buf);
   lv_obj_set_style_text_color(hex_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hex_lbl, &g_font_12, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  const int hex_w = card_w - 20 - qr_size - 12;
+  lv_obj_set_width(hex_lbl, hex_w);
+  lv_obj_set_style_text_align(hex_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_align_to(hex_lbl, qr, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
+#else
   // Anchor under the QR (not the card bottom) so it can't ride up onto the
   // code when the QR shrinks in landscape.
   lv_obj_align_to(hex_lbl, qr, LV_ALIGN_OUT_BOTTOM_MID, 0, 6);
+#endif
 }
 
 static void shareMyContactBtnCb(lv_event_t* e) {
@@ -16780,6 +18220,7 @@ static lv_obj_t* s_home_heartbeat = nullptr;
 static lv_obj_t*       s_home_chart       = nullptr;
 static lv_chart_series_t* s_home_chart_tx = nullptr;
 static lv_chart_series_t* s_home_chart_rx = nullptr;
+static int             s_home_chart_max_y = 10;   // shared with the Pager's full-width detail chart
 #if defined(HAS_EXPANSION_KIT)
 // Expansion Kit: tiny batt/temp/hum history chart on Home + the Advert button
 // pointer (relayoutHomeCharts repositions it under the re-flowed TX/RX chart).
@@ -16791,7 +18232,6 @@ static lv_obj_t*       s_home_adv_btn     = nullptr;
 #endif
 // Compact legend label above the chart showing live TX/RX totals.
 static lv_obj_t* s_home_chart_legend = nullptr;
-static lv_obj_t* s_home_store        = nullptr;   // chat-store chip, right half of the legend row
 static lv_obj_t* s_home_chart_sig    = nullptr;   // live signal chip drawn inside the graph box
 #if CAP_LARGE_SCREEN
 static lv_obj_t* s_home_info         = nullptr;   // Commander info-panel values column (big screen) — refreshed live
@@ -16828,7 +18268,10 @@ static uint16_t batteryFullMv() {
   return s_batt_full_mv ? s_batt_full_mv : 4200;
 }
 
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+// (R8: the divider is permanently connected — PIN_ADC_CTRL=-1 — so the same
+// EMA + above-full voltage heuristic applies; threshold accuracy vs the
+// uncalibrated ADC_MULTIPLIER=5.07 conversion needs on-device confirmation.)
 static constexpr uint16_t kBattChargingMv = 4250;
 
 // Per-board battery sampler: EMA over the noisy ADC so the value doesn't jitter
@@ -16895,6 +18338,17 @@ static const char* batteryGlyphForMv(uint16_t mv) {
 }
 
 static int batteryPercentFromMv(uint16_t mv) {
+#if defined(HAS_TDISPLAY_P4)
+  // This board has a BQ27220 fuel gauge, which coulomb-counts against its learned
+  // pack profile and therefore knows the actual state of charge. Ask it, and only
+  // fall back to the voltage curve below if it does not answer. Terminal voltage is
+  // charger-driven, so the curve read 100% the moment USB was plugged in while the
+  // pack was nearly empty, and never quite reached 100% resting on battery (#273).
+  {
+    const int soc = board.getBattStateOfCharge();
+    if (soc >= 0) return soc;
+  }
+#endif
   // Li-ion curve: 3.30 V empty, FULL = the calibrated full (default 4.20 V).
   // While charging the rail reads above full (charger-driven) — cap at 100
   // rather than show a bogus number; the real cell % isn't observable here.
@@ -16950,30 +18404,31 @@ static inline void sdNoteIoFailure() {
   s_sd_fail_note_ms = m ? m : 1;
 }
 
-// ----- Battery history: 5-minute log to SD + a 24h chart popup (T-Deck only) -----
+// ----- Battery history: 5-minute log + a 24h chart popup (every board) -----
 // Logging piggybacks the always-on UITask::loop (no extra wakeup): every
 // k_batt_log_period_ms a line is appended to /meshcomod/battery.log and the file
 // is trimmed to the last 24h. The rewrite streams line-by-line via a temp file,
 // so memory cost is one short String at a time. Tapping the battery in the status
 // bar opens a voltage chart built from that file.
-// Battery log prefers the SD card when present (T-Deck); on boards with no SD
-// slot — or a T-Deck with no card inserted — it falls back to internal SPIFFS so
-// the 24h chart still works. SD path lives under /meshcomod with the other files;
+// The log follows the RESOLVED ui-data backend (where chat history lives), not
+// bare card presence: telemetry/discover logging mkdirs /meshcomod on ANY
+// mounted card, which used to flip the battery log onto a card the profile
+// never opted into — the log and its chart then disagreed with where the rest
+// of the data lived. SD path lives under /meshcomod with the other files;
 // SPIFFS (flat) uses a top-level path.
 static fs::FS& battLogFs() {
-#if CAP_SD
-  if (SD.cardType() != CARD_NONE) {
+#if CAP_SD || defined(TLORA_PAGER)
+  if (uiDataFsIsSdCard()) {
     if (SD.exists("/meshcomod")) return SD;
-    // cardType() says present (cached) but real I/O failed — wedge/removal tell.
-    // (Or just a card without /meshcomod; sdHealthTick's probe arbitrates cheaply.)
+    // Backend resolved to SD but real I/O failed — wedge/removal tell.
     sdNoteIoFailure();
   }
 #endif
   return SPIFFS;
 }
 static bool battLogOnSd() {
-#if CAP_SD
-  return SD.cardType() != CARD_NONE && SD.exists("/meshcomod");
+#if CAP_SD || defined(TLORA_PAGER)
+  return uiDataFsIsSdCard() && SD.exists("/meshcomod");
 #else
   return false;
 #endif
@@ -17080,7 +18535,7 @@ static void batteryEstimateText(const uint32_t* eps, const uint16_t* mvs, int n,
     const double x = (double)(eps[i] - t0), y = (double)mvs[i];
     sx += x; sy += y; sxx += x * x; sxy += x * y; ++m; last_v = mvs[i]; last_t = eps[i];
   }
-  if (m < 3 || (last_t - t0) < 900) { snprintf(out, cap, "Battery life: gathering data\xe2\x80\xa6"); return; }
+  if (m < 3 || (last_t - t0) < 900) { snprintf(out, cap, "%s", TR("Battery life: gathering data\xe2\x80\xa6")); return; }
   const double denom = (double)m * sxx - sx * sx;
   if (denom <= 0) { snprintf(out, cap, "Battery life: \xe2\x80\x94"); return; }
   const double slope = ((double)m * sxy - sx * sy) / denom;   // mV/s (negative = discharging)
@@ -17279,6 +18734,7 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_bg_color(clr, lv_color_hex(0xB23A48), LV_PART_MAIN);
   lv_obj_add_event_cb(clr, batteryClearCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* clrl = lv_label_create(clr); lv_label_set_text(clrl, LV_SYMBOL_TRASH); lv_obj_center(clrl);
+  useChainedFont(clrl);
 
   // Show/hide the CPU-MHz series (same size/style as the trash button, to its left).
   lv_obj_t* cpub = lv_btn_create(card);
@@ -17331,7 +18787,7 @@ static void batteryTapCb(lv_event_t* e) {
   openBatteryChartWindow();
 }
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // ----- Per-node telemetry log (/meshcomod/telemetry/<id>.log) -----
 // One file per node (6-byte pubkey prefix, hex). Columns (tab-separated):
 //   epoch \t YYYY-MM-DD HH:MM \t battery_mv \t tempC*10 \t humidity%
@@ -17505,7 +18961,7 @@ static inline void feedLoopWDT() {}
 static char      s_fm_store[12]  = {0};     // storage label ("Internal" / "SD")
 static char      s_fm_filter[40] = {0};     // active search filter (empty = none)
 static uint8_t   s_fm_sort       = 0;       // 0 Name A-Z, 1 Z-A, 2 Size, 3 Type
-struct FmEntry { char name[64]; uint32_t size; bool isdir; };
+struct FmEntry { char name[64]; uint32_t size; uint32_t mtime; bool isdir; };   // mtime: epoch secs, 0 = unknown (#185)
 static const int FM_MAX_ENTRIES  = 192;
 static FmEntry*  s_fm_entries    = nullptr; // PSRAM-allocated while the file manager is open
 static int       s_fm_count      = 0;
@@ -17526,6 +18982,22 @@ static bool      s_fm_img_fs = false;       // viewer is in full-screen mode
 static bool          s_sd_mounted   = false;   // microSD mount state
 static uint64_t      s_sd_size      = 0;       // card capacity (bytes)
 static unsigned long s_sd_retry_after_ms = 0;  // don't re-probe SD before this (backoff)
+#if defined(TLORA_PAGER)
+static uint32_t      s_sd_data_warn_next_ms = 0;
+static inline uint32_t sdDataWarnDeadline(uint32_t now) {
+  const uint32_t next = now + 60000;
+  return next ? next : 1;
+}
+static inline void sdPagerParkCs() {
+  pinMode(PIN_SD_CS, OUTPUT);
+  digitalWrite(PIN_SD_CS, HIGH);
+}
+static const char* sdRemovedAlertText() {
+  extern bool g_contacts_on_sd;
+  return g_contacts_on_sd ? TR("SD removed - card-backed data cannot be saved")
+                          : TR("SD card removed");
+}
+#endif
 static int       s_sd_format_pending = 0;   // deferred FAT32 format (runs after notice paints)
 static lv_obj_t* s_fm_fmt_overlay = nullptr; // full-screen "formatting..." notice
 static lv_obj_t* s_fm_actions    = nullptr;  // per-entry action sheet
@@ -17728,6 +19200,7 @@ static lv_obj_t* openFullscreenView(const char* title) {
   styleButton(home);
   lv_obj_add_event_cb(home, fullscreenHomeCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* hl = lv_label_create(home);
+  useChainedFont(hl);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hl, LV_SYMBOL_CLOSE);   // red ✕ close
   lv_obj_set_style_text_color(hl, lv_color_hex(0xE05544), LV_PART_MAIN);
@@ -17988,7 +19461,7 @@ static void terminalSubmit() {
 #if !defined(HAS_TANMATSU)
 static char*          s_webdata_buf  = nullptr;
 static const size_t   WEBDATA_BUF    = 16000;
-static volatile bool  s_web_rx_nudge = false;   // set by onThreadsChanged (mesh ctx); the UI loop does the actual pushTermData (keeps it single-producer)
+static volatile bool  s_web_rx_nudge = false;   // set by mesh callbacks; the UI loop does the actual pushTermData (keeps it single-producer)
 
 static void jsonEsc(char*& p, const char* e, const char* s) {
   for (; s && *s && p < e - 8; ++s) {
@@ -18098,6 +19571,23 @@ static void webPushContacts() {
     p += snprintf(p, e - p, "{\"i\":%d,\"t\":%d,\"n\":\"", s, t);
     jsonEsc(p, e, cd.name);
     p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
+static void webPushMentionNames(uint32_t request_id) {
+  if (!s_webdata_buf) return;
+  char names[k_mention_source_max][32];
+  const int count = collectRecentMentionNames(names, k_mention_source_max);
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p, "{\"t\":\"mh\",\"q\":%lu,\"names\":[",
+                (unsigned long)request_id);
+  for (int i = 0; i < count && p < e - 48; ++i) {
+    if (i) *p++ = ',';
+    *p++ = '"';
+    jsonEsc(p, e, names[i]);
+    *p++ = '"';
   }
   p += snprintf(p, e - p, "]}");
   g_web_mirror.pushTermData(s_webdata_buf);
@@ -18313,6 +19803,7 @@ static bool handleWebDataCmd(const char* cmd) {
   if (a[0] == 's' && a[1] == 'g' && (a[2] == 0 || a[2] == ' ')) { webPushSettings(); return true; }
   if (a[0] == 's' && a[1] == 'r' && a[2] == ' ') { float fq=0,bw=0; int sf=0,cr=0,tx=0; sscanf(a+3, "%f %f %d %d %d", &fq,&bw,&sf,&cr,&tx); webSetRadio(fq,bw,sf,cr,tx); return true; }
   if (a[0] == 's' && a[1] == 't' && (a[2] == 0 || a[2] == ' ')) { webPushStatus(); return true; }
+  if (a[0] == 'm' && a[1] == 'h' && (a[2] == 0 || a[2] == ' ')) { webPushMentionNames((uint32_t)strtoul(a + 2, nullptr, 10)); return true; }
   if (a[0] == 'm' && a[1] == ' ')                 { webPushMessages(atoi(a + 2)); return true; }
   if (a[0] == 'o' && a[1] == 'c' && a[2] == ' ')  { webOpenContact(atoi(a + 3)); return true; }
   if (a[0] == 'o' && a[1] == 'h' && a[2] == ' ')  { webOpenChannel(atoi(a + 3)); return true; }
@@ -18330,6 +19821,27 @@ static bool handleWebDataCmd(const char* cmd) {
   return true;   // unknown '@' -> swallow (never run as a terminal command)
 }
 #endif  // !HAS_TANMATSU
+
+#if CAP_CONSOLE
+// Outside the !HAS_TANMATSU block above ON PURPOSE. The Settings row that binds
+// this callback lives in buildDeviceSettings, which every board compiles, and
+// the console boot path itself is only gated on CAP_CONSOLE -- so leaving the
+// callback in a board-excluded region gave the Tanmatsu a switch it could see,
+// could not link, and would not have worked from anyway.
+// Console mode is a boot mode like remote mode, so it is toggled the same way:
+// set the pref, then reboot through rebootDevice() so chat history is flushed
+// first rather than lost to the reset.
+static void consoleModeToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetConsoleMode(on);
+  if (g_lv.task) {
+    g_lv.task->showAlert(on ? TR("Entering console mode - rebooting...")
+                            : TR("Leaving console mode - rebooting..."), 1600);
+    g_lv.task->rebootDevice();
+  }
+}
+#endif
+
 
 // Scrollable command picker, modelled on openAdminCmdPicker. Tapping a row
 // stuffs the template into the terminal input and keeps it focused so Enter
@@ -18478,7 +19990,7 @@ static void buildTerminal(lv_obj_t* body) {
   styleCard(s_term_input_ta);
   lv_textarea_set_one_line(s_term_input_ta, true);
   lv_textarea_set_max_length(s_term_input_ta, 96);
-  lv_textarea_set_placeholder_text(s_term_input_ta, TR("command"));
+  taSetPlaceholder(s_term_input_ta, TR("command"));
   lv_obj_set_style_text_color(s_term_input_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_term_input_ta, &g_font_14, LV_PART_MAIN);
   attachSettingsTaEvents(s_term_input_ta);
@@ -18493,6 +20005,7 @@ static void buildTerminal(lv_obj_t* body) {
     terminalSubmit();
   }, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* send_lbl = lv_label_create(send_btn);
+  useChainedFont(send_lbl);
   lv_label_set_text(send_lbl, LV_SYMBOL_RIGHT);
   lv_obj_center(send_lbl);
 
@@ -18616,20 +20129,10 @@ static void fmFmtSize64(uint64_t bytes, char* out, size_t outsz) {
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)   // microSD mount/format helpers — Arduino SD on the shared SPI bus
 // One shared-SPI accessor per board: the T-Deck/M9 expose their pre-begun SPIClass
 // via tdeckSharedSPI()/m9SharedSPI(); the V4-R8's microSD shares its TFT FSPI bus
-// (heltecV4R8SharedSPI()); the pager's radio+display already share TFT_eSPI's own
-// instance directly (variants/lilygo_tlora_pager/target.cpp), so reuse that the
-// same way.
+// (heltecV4R8SharedSPI()); the pager accessor returns the same TFT_eSPI SPIClass
+// already used by its display and RadioLib module.
 #if defined(TLORA_PAGER)
-static inline SPIClass* sdSharedSPI() { return &TFT_eSPI::getSPIinstance(); }
-// Card-detect via the XL9555 expander (PAGER_EXPAND_SD_DET). Polarity is INVERTED
-// from what you'd guess — confirmed against LilyGoLib's own LilyGo_LoRa_Pager.cpp
-// installSD() (`if (io.digitalRead(EXPANDS_SD_DET)) return false;`): HIGH = no card
-// seated, LOW = card present. Skip the whole mount ladder when no card is seated,
-// so opening the File Manager / WAV picker on a bare pager doesn't grind through
-// the ladder's worst-case delay on every call.
-static inline bool pagerSdCardPresent() {
-  return board.io_expander.digitalRead(PAGER_EXPAND_SD_DET) == LOW;
-}
+static inline SPIClass* sdSharedSPI() { return tloraPagerSharedSPI(); }
 #elif defined(HELTEC_LORA_V4_R8)
 static inline SPIClass* sdSharedSPI() { return heltecV4R8SharedSPI(); }   // V4-R8: micro-SD shares the TFT FSPI bus (CS=3)
 #elif defined(HAS_THINKNODE_M9)
@@ -18640,8 +20143,33 @@ static inline SPIClass* sdSharedSPI() { return tdeckSharedSPI(); }
 // Mount the microSD on its shared SPI bus. Safe to call repeatedly (no-op
 // once mounted). SD.begin's internal spi.begin() is a no-op because the bus is
 // already initialised by the radio/display, so those pins are untouched.
+static bool sdAdoptLiveMount() {
+  if (SD.cardType() == CARD_NONE) return false;
+  s_sd_mounted = true;
+  s_sd_size = SD.cardSize();
+  s_sd_retry_after_ms = 0;
+  return true;
+}
+static bool sdRuntimeLifecycleBusy();
 static bool fmSdTryMount() {
-  if (s_sd_mounted) return true;
+  // main.cpp may already have mounted this global SD object for DataStore.
+  // Adopt that live VFS before considering any lifecycle operation: SD.end()
+  // here would invalidate open prefs/history files beneath the boot sequence.
+#if defined(TLORA_PAGER)
+  // An SD-backed worker can enter here while its own busy flag is set. It may
+  // use an already-live VFS without changing its lifetime. Keep the mount
+  // diagnostics coherent so every successful return has the same contract.
+  if (SD.cardType() != CARD_NONE && sdRuntimeLifecycleBusy()) {
+    if (board.sdCardState() == TLoraPagerBoard::SdCardState::Absent) return false;
+    s_sd_mounted = true;
+    s_sd_size = SD.cardSize();
+    s_sd_retry_after_ms = 0;
+    return true;
+  }
+#endif
+  if (sdAdoptLiveMount()) return true;
+  s_sd_mounted = false;
+  s_sd_size = 0;
   // Fast-fail inside the post-failure backoff window. Hot paths call this
   // directly (map tile lookups on the loop task, history writes via
   // uiDataFsReady, WAV chimes) — without this gate every such call re-walks
@@ -18649,10 +20177,18 @@ static bool fmSdTryMount() {
   // Explicit user retries clear the backoff first (fmSdMountOrFormatCb).
   if (s_sd_retry_after_ms && millis() < s_sd_retry_after_ms) return false;
 #if defined(TLORA_PAGER)
-  if (!pagerSdCardPresent()) return false;
+  if (sdRuntimeLifecycleBusy()) return false;
+  if (!board.sdCardPresent()) return false;
 #endif
   SPIClass* spi = sdSharedSPI();
   if (!spi) return false;
+#if defined(TLORA_PAGER)
+  // Vendor-compatible Pager sequence: the shared display/radio bus is already
+  // running, all other CS lines are parked HIGH, and the card gets one 4 MHz
+  // mount attempt. Never tear down that live shared bus or add a retry ladder.
+  const bool begin_ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
+  const bool mounted = begin_ok && SD.cardType() != CARD_NONE;
+#else
   // Cold microSD cards — especially the first mount after boot — often fail
   // the initial SD.begin and historically only recovered after a physical
   // reinsert (which power-cycles the card). The T-Deck shares ONE power rail
@@ -18688,29 +20224,72 @@ static bool fmSdTryMount() {
   };
   const int kAttempts = (int)(sizeof(kMountLadder) / sizeof(kMountLadder[0]));
   bool mounted = false;
-  disableLoopWDT();
-  for (int attempt = 0; attempt < kAttempts; ++attempt) {
-    SD.end();
-    delay(kMountLadder[attempt].settle_ms);
-    if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
-      mounted = true;
-      break;
+  uint32_t mounted_hz = 0;
+  {
+    LoopWdtGuard loop_wdt_guard;
+    for (int attempt = 0; attempt < kAttempts; ++attempt) {
+      SD.end();
+      delay(kMountLadder[attempt].settle_ms);
+      if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
+        mounted = true;
+        mounted_hz = kMountLadder[attempt].hz;
+        break;
+      }
     }
+    // Renegotiate upward after a slow-rung success (GH #194): the succeeding rung's clock used
+    // to become the SESSION clock, so a card whose wake-up needed 400 kHz served contacts,
+    // history and tiles at ~25 KB/s forever after ("slower is fine" above predates the SD being
+    // the primary store). Init slow, then raise — fall back to the proven clock if 4 MHz fails.
+    if (mounted && mounted_hz < 4000000) {
+      SD.end();
+      delay(60);
+      if (!(SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE)) {
+        SD.end();
+        delay(120);
+        mounted = SD.begin(PIN_SD_CS, *spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
+      } else {
+        mounted_hz = 4000000;
+      }
+    }
+    // Operating-clock raise with read-verify (SD_SPI_FAST_HZ boards only; no-op elsewhere).
+    if (mounted) { mounted_hz = sdTryFastClock(PIN_SD_CS, *spi, mounted_hz, "SD"); mounted = mounted_hz != 0; }
+    if (mounted) g_sd_operating_hz = mounted_hz;
   }
-  enableLoopWDT();
+#endif
   if (mounted) {
     s_sd_mounted = true;
     s_sd_size = SD.cardSize();
     s_sd_retry_after_ms = 0;                    // clear any prior backoff
     markSdIo();                                 // mount touched the card -> blip the LED
+#if defined(TLORA_PAGER)
+    // History stays pinned to the backend loaded during UITask::begin(); a
+    // later mount only restores the independently SD-backed data consumers.
+    s_sd_data_warn_next_ms = 0;
+#endif
     return true;
   }
+#if defined(TLORA_PAGER)
+  if (begin_ok) {
+    // Clean up only the unusable VFS created by our quiescent mount attempt.
+    // SD.end() leaves the display/radio SPIClass running.
+    SD.end();
+  }
+  sdPagerParkCs();
+#else
   SD.end();                                     // clean up on failure
+#endif
   s_sd_retry_after_ms = millis() + 10000;       // back off so we don't hammer the card
   return false;
 }
 static void fmSdUnmount() {
-  if (s_sd_mounted) { SD.end(); s_sd_mounted = false; s_sd_size = 0; }
+  if (s_sd_mounted) {
+    SD.end();
+#if defined(TLORA_PAGER)
+    sdPagerParkCs();
+#endif
+    s_sd_mounted = false;
+    s_sd_size = 0;
+  }
   s_sd_retry_after_ms = 0;   // a reinsert should be able to mount right away
 }
 // True when the card still answers real I/O. SD.cardType() is useless for this:
@@ -18749,6 +20328,27 @@ static void fmSdClickCb(lv_event_t* e) {
   if (s_sd_mounted) fmOpenStorage(&SD, "SD", "/");
 }
 
+#if defined(TLORA_PAGER)
+// Recovery entry for a card the Pager can SEE (card-detect asserted) but cannot
+// mount: exFAT/NTFS, or a damaged FAT. Without this the roots page renders no SD
+// row at all (fmShowRoots below), so there is no way to tell "no card" from "card
+// the firmware won't take", and no way to retry without a reboot.
+//
+// Deliberately NON-destructive. It clears the mount backoff and makes exactly the
+// one vendor-compatible 4 MHz attempt fmSdTryMount() already makes — it does not
+// add a retry ladder and never tears down the live shared display/radio bus. If
+// that attempt fails the card needs formatting, and on this board that is a
+// deliberate host-side task: see the format-helper guard below for why the in-app
+// formatter stays off for the Pager.
+static void fmSdPagerRetryMountCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_sd_retry_after_ms = 0;                       // explicit user retry — bypass the backoff
+  if (fmSdTryMount() && s_sd_mounted) { fmShowRoots(); return; }
+  if (g_lv.task)
+    g_lv.task->showAlert(TR("SD unreadable - format it as FAT32 on a computer"), 3600);
+}
+#endif
+
 #endif  // HAS_TDECK_GT911 || TLORA_PAGER || HAS_THINKNODE_M9 || HELTEC_LORA_V4_R8 (microSD mount helpers; the busy overlays below are generic LVGL)
 
 // Full-screen "busy" notice (copy/move/format). Pure LVGL — used by the generic paste path too.
@@ -18776,10 +20376,38 @@ static void fmHideFormatOverlay() {
   if (s_fm_fmt_overlay) { popupClose(&s_fm_fmt_overlay); }
 }
 
+// TLORA_PAGER is deliberately NOT in this list — the in-app formatter is omitted
+// on the Pager, not merely unimplemented. Three reasons, in order of weight:
+//  1. f_mkfs needs SD.end() + sdcard_init/uninit around it. That is a card and
+//     diskio lifecycle teardown on a bus the display AND the radio are actively
+//     driving, and this board's mount path is explicitly documented (fmSdTryMount
+//     above) to make ONE 4 MHz attempt and never tear the live shared bus down.
+//     The Arduino SD library never touches the SPI peripheral itself, so this is
+//     very likely fine — but "very likely" is not a basis for a one-way, whole-card
+//     erase, and it has never been run on Pager hardware.
+//  2. There is no touchscreen, so the T-Deck's tap-to-open / hold-to-format split
+//     does not map. The nearest equivalent is holding ENTER on the focused row —
+//     an undiscoverable gesture that destroys the card, on a device where the
+//     encoder and ENTER are the only ways to move at all.
+//  3. The recoverable case is already covered non-destructively:
+//     fmSdPagerRetryMountCb above surfaces a detected-but-unmountable card and
+//     retries the mount, and the alert it raises on failure points at the host.
+// Formatting a card on a computer is a 30-second task with no such risk. Revisit
+// only with a Pager in hand and a card that is safe to lose.
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)   // SD format helpers resume (Arduino SD, T-Deck + M9 + V4-R8)
 // Confirm callback: paint the formatting notice, then defer the (blocking)
 // f_mkfs to UITask::loop so the notice is on-screen before the loop freezes.
 static void fmSdDoFormat() {
+  // f_mkfs rewrites the volume under every open handle, and the SD.end() that
+  // precedes it unregisters the pdrv those handles point at. Never start that
+  // while an SD consumer is live — the tile worker can own an open File for a
+  // whole download — so apply the same gate on every board that carries the
+  // deferred formatter below (T-Deck, ThinkNode M9, and Heltec V4-R8).
+  if (sdRuntimeLifecycleBusy()) {
+    if (g_lv.task)
+      g_lv.task->showAlert(TR("SD is busy - close tools and retry"), 2600);
+    return;
+  }
   fmShowBusyOverlay("Formatting SD as MESHCOMOD (FAT32)\n\n"
                     "Creates the core folders too.\n"
                     "Do NOT power off, disconnect,\nor remove the card.\n\n"
@@ -18792,8 +20420,7 @@ static void fmSdMountOrFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   s_sd_retry_after_ms = 0;   // explicit user retry — bypass the mount backoff
   if (fmSdTryMount()) { fmShowRoots(); return; }
-  showConfirm(TR("Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased."),
-              "Format", fmSdDoFormat);
+  showConfirm(TR("Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased."), TR("Format"), fmSdDoFormat);
 }
 
 // Seed the core folder layout on a freshly-formatted MESHCOMOD card. These back
@@ -18883,8 +20510,7 @@ static void sdWriteFatLabel(uint8_t pdrv, const char* label) {
 // only mounts, or formats an already-unreadable card).
 static void fmSdLongPressFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
-  showConfirm(TR("Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased."),
-              "Format", fmSdDoFormat);
+  showConfirm(TR("Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased."), TR("Format"), fmSdDoFormat);
 }
 
 #endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (microSD mount/format helpers)
@@ -18898,8 +20524,10 @@ static void fmFullPath(const char* name, char* out, size_t outsz) {
   else                             snprintf(out, outsz, "%s/%s", s_fm_path, name);
 }
 
-// Recursively delete a file or directory tree.
-static void fmRmRecursive(fs::FS* fs, const char* path) {
+// Recursively delete a file or directory tree. Return false immediately when
+// an entry cannot be removed; rewinding onto the same undeletable FAT entry
+// forever would hang factory reset with its watchdog intentionally suspended.
+static bool fmRmRecursive(fs::FS* fs, const char* path) {
   File d = fs->open(path);
   const bool isdir = d && d.isDirectory();
   if (isdir) {
@@ -18919,25 +20547,34 @@ static void fmRmRecursive(fs::FS* fs, const char* path) {
       const bool have = (base[0] != '\0');
       if (have) snprintf(child, sizeof child, "%s/%s", path, base);
       e.close();
-      if (!have) break;                 // nameless entry — don't spin forever
-      if (cdir) fmRmRecursive(fs, child); else fs->remove(child);
+      if (!have) { d.close(); return false; }
+      const bool removed = cdir ? fmRmRecursive(fs, child) : fs->remove(child);
+      if (!removed) { d.close(); return false; }
       d.rewindDirectory();
     }
     d.close();
-    fs->rmdir(path);
+    return fs->rmdir(path);
   } else {
     if (d) d.close();
-    fs->remove(path);
+    return fs->remove(path);
   }
 }
 
 // ----- text-input modal (rename / new folder) -----
+// A Lua app driving this prompt (wada.ui.input) must hear about EVERY way it
+// closes, or it sits waiting on a callback that will never arrive. Set while an
+// OK is being delivered so the close below does not also report a cancel.
+void luaHostTextPromptCancel();
+static bool s_fm_prompt_ok = false;
 static void fmPromptClose() {
   if (s_fm_prompt) {
     hideKb();
     popupClose(&s_fm_prompt);
     s_fm_prompt_ta = nullptr;
   }
+#if CAP_LUA_APPS
+  if (!s_fm_prompt_ok) luaHostTextPromptCancel();
+#endif
 }
 static void fmPromptOkCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -18947,7 +20584,9 @@ static void fmPromptOkCb(lv_event_t* e) {
   const char* t = lv_textarea_get_text(s_fm_prompt_ta);
   snprintf(buf, sizeof buf, "%s", t ? t : "");
   void (*cb)(const char*) = s_fm_prompt_cb;
+  s_fm_prompt_ok = (cb && buf[0]);      // empty text is a cancel, not a delivery
   fmPromptClose();
+  s_fm_prompt_ok = false;
   if (cb && buf[0]) cb(buf);
 }
 static void fmPromptCancelCb(lv_event_t* e) {
@@ -19001,6 +20640,7 @@ static void fmTextPrompt(const char* title, const char* initial, void (*cb)(cons
   lv_obj_set_style_bg_color(bc, lv_color_hex(0x3A4A5C), LV_PART_MAIN);
   lv_obj_add_event_cb(bc, fmPromptCancelCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lc = lv_label_create(bc); lv_label_set_text(lc, TR("Cancel")); lv_obj_center(lc);
+  useChainedFont(lc);
 
   lv_obj_t* bo = lv_btn_create(card);
   lv_obj_set_size(bo, 80, 32);
@@ -19009,6 +20649,7 @@ static void fmTextPrompt(const char* title, const char* initial, void (*cb)(cons
   lv_obj_set_style_bg_color(bo, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_add_event_cb(bo, fmPromptOkCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lo = lv_label_create(bo); lv_label_set_text(lo, "OK"); lv_obj_center(lo);
+  useChainedFont(lo);
 
   if (g_lv.keyboard) kbMirrorBind(s_fm_prompt_ta);
 }
@@ -19061,9 +20702,11 @@ static bool fmCopyFile(fs::FS* sf, const char* sp, fs::FS* df, const char* dp) {
   if (!in) return false;
   File out = df->open(dp, "w");
   if (!out) { in.close(); return false; }
-  static uint8_t* buf = nullptr;   // copy scratch — lazy PSRAM (internal fallback): ~2 KB off internal DRAM
-  if (!buf) { buf = (uint8_t*)heap_caps_malloc(2048, MALLOC_CAP_SPIRAM);
-              if (!buf) buf = (uint8_t*)heap_caps_malloc(2048, MALLOC_CAP_8BIT); }
+  // Copy scratch, lazily allocated once. MUST be internal DMA-capable RAM: a
+  // destination on SD DMAs straight out of this buffer, and PSRAM as a DMA source
+  // short-writes at a random offset (same defect as the SD firmware download).
+  static uint8_t* buf = nullptr;
+  if (!buf) buf = (uint8_t*)heap_caps_malloc(2048, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
   if (!buf) { out.close(); in.close(); return false; }
   bool ok = true;
   int n;
@@ -19145,6 +20788,7 @@ static lv_obj_t* fmActionBtn(lv_obj_t* parent, const char* text, lv_event_cb_t c
   lv_obj_set_style_bg_color(b, lv_color_hex(bg), LV_PART_MAIN);
   lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* l = lv_label_create(b);
+  useChainedFont(l);
   lv_label_set_text(l, TR(text));
   lv_obj_center(l);
   return b;
@@ -19163,7 +20807,7 @@ static void fmActDeleteCb(lv_event_t* e) {
   char m[110];
   snprintf(m, sizeof m, "Delete %s%s?%s", s_fm_sel_isdir ? "folder " : "", s_fm_sel_name,
            s_fm_sel_isdir ? "\n(and everything inside)" : "");
-  showConfirm(m, "Delete", fmDoDelete);
+  showConfirm(m, TR("Delete"), fmDoDelete);
 }
 static void fmActNewFolderCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -19253,13 +20897,13 @@ static void fmOpenActions(const char* name, bool isdir) {
   lv_obj_set_style_text_font(tl, &g_font_12, LV_PART_MAIN);
 
   if (name) {
-    fmActionBtn(card, "Rename", fmActRenameCb, 0x2B3440);
-    fmActionBtn(card, "Copy",   fmActCopyCb,   0x2B3440);
-    fmActionBtn(card, "Cut",    fmActCutCb,    0x2B3440);
-    fmActionBtn(card, "Delete", fmActDeleteCb, 0x5A2D2D);
+    fmActionBtn(card, TR("Rename"), fmActRenameCb, 0x2B3440);
+    fmActionBtn(card, TR("Copy"), fmActCopyCb, 0x2B3440);
+    fmActionBtn(card, TR("Cut"), fmActCutCb, 0x2B3440);
+    fmActionBtn(card, TR("Delete"), fmActDeleteCb, 0x5A2D2D);
   } else {
-    fmActionBtn(card, "New file",   fmActNewFileCb,   0x2B3440);
-    fmActionBtn(card, "New folder", fmActNewFolderCb, 0x2B3440);
+    fmActionBtn(card, TR("New file"), fmActNewFileCb, 0x2B3440);
+    fmActionBtn(card, TR("New folder"), fmActNewFolderCb, 0x2B3440);
 #if defined(ESP32)
     if (s_fm_fs == &SPIFFS)   // Internal only: toggle MeshCore's hidden system files
       fmActionBtn(card, s_fm_show_hidden ? "Hide system files" : "Show system files",
@@ -19267,7 +20911,7 @@ static void fmOpenActions(const char* name, bool isdir) {
 #endif
   }
   if (s_fm_clip.active) {
-    fmActionBtn(card, s_fm_clip.is_cut ? "Paste (move)" : "Paste (copy)", fmActPasteCb, 0x2D4A2D);
+    fmActionBtn(card, s_fm_clip.is_cut ? TR("Paste (move)") : TR("Paste (copy)"), fmActPasteCb, 0x2D4A2D);
   }
 }
 
@@ -19467,8 +21111,13 @@ static void fmShowObj(lv_obj_t* o, bool show) {
 }
 
 // "Set as lock wallpaper" action shown in the windowed image viewer, plus the
-// open image's path / filesystem so the action can persist it.
+// open image's path / filesystem so the action can persist it. The button is
+// CAP_LOCK_SCREEN-gated: on the one filesystem board WITHOUT a lock screen
+// (V4-R8) nothing ever renders the wallpaper, so offering to set one — with a
+// "Lock wallpaper set" toast — was a dead control.
+#if CAP_LOCK_SCREEN
 static lv_obj_t* s_fm_img_wall = nullptr;
+#endif
 static char      s_fm_img_path[208] = {0};
 static bool      s_fm_img_on_sd     = false;
 
@@ -19487,7 +21136,9 @@ static void fmImageRelayout() {
   fmShowObj(s_fm_img_hdr,   !fs);
   fmShowObj(s_fm_img_close, !fs);
   fmShowObj(s_fm_img_full,  !fs);
+#if CAP_LOCK_SCREEN
   fmShowObj(s_fm_img_wall,  !fs);
+#endif
   fmShowObj(s_fm_img_hint,   fs);
   // The status bar lives on lv_layer_sys (above this overlay), so hide it
   // outright for a true full-screen image; restore it otherwise.
@@ -19533,13 +21184,14 @@ static void fmImageRootClickCb(lv_event_t* e) {
 // Persist the currently-viewed JPEG as the lock-screen wallpaper. By the time the
 // viewer is up the file is a confirmed JPEG (PNG is rejected earlier), so it's a
 // valid wallpaper. SD paths get the "sd:" prefix the decoder expects.
+#if CAP_LOCK_SCREEN
 static void fmSetWallpaperCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_fm_img_path[0]) return;
   char pref[TOUCH_LOCK_WALLPAPER_MAXLEN];
   if (s_fm_img_on_sd) snprintf(pref, sizeof pref, "sd:%s", s_fm_img_path);
   else                snprintf(pref, sizeof pref, "%s", s_fm_img_path);
   touchPrefsSetLockWallpaper(pref);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // the set of boards that declare s_lockwall_btn_lbl
   if (s_lockwall_btn_lbl && lv_obj_is_valid(s_lockwall_btn_lbl)) {   // update the settings button if still around
     char disp[64]; lockwallDisplayName(pref, disp, sizeof disp);
     lv_label_set_text(s_lockwall_btn_lbl, disp);
@@ -19548,6 +21200,7 @@ static void fmSetWallpaperCb(lv_event_t* e) {
   fmImageClose();
   if (g_lv.task) g_lv.task->showAlert(TR("Lock wallpaper set"), 1300);
 }
+#endif  // CAP_LOCK_SCREEN (fmSetWallpaperCb)
 
 #if CAP_SOUND_FILES
 // ---- .wav -> notification-sound chooser (opened from the File Manager) ------
@@ -19611,12 +21264,14 @@ static void fmOpenAudio(const char* name) {
   lv_obj_t* play = lv_btn_create(s_fm_snd_root);
   lv_obj_set_size(play, sw - 16, 40); lv_obj_set_pos(play, 8, 76); styleButton(play);
   lv_obj_add_event_cb(play, fmSndPlayCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* pl = lv_label_create(play); lv_label_set_text(pl, LV_SYMBOL_PLAY "  Play"); lv_obj_center(pl);
+  lv_obj_t* pl = lv_label_create(play); lv_label_set_text(pl, TR(LV_SYMBOL_PLAY "  Play")); lv_obj_center(pl);
+  useChainedFont(pl);
   lv_obj_t* setb = lv_btn_create(s_fm_snd_root);
   lv_obj_set_size(setb, sw - 16, 44); lv_obj_set_pos(setb, 8, 124); styleButton(setb);
   lv_obj_set_style_bg_color(setb, lv_color_hex(0x35C9C9), LV_PART_MAIN);
   lv_obj_add_event_cb(setb, fmSndSetCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* sl = lv_label_create(setb); lv_label_set_text(sl, LV_SYMBOL_OK "  Set as notification sound");
+  lv_obj_t* sl = lv_label_create(setb); lv_label_set_text(sl, TR(LV_SYMBOL_OK "  Set as notification sound"));
+  useChainedFont(sl);
   lv_obj_set_style_text_color(sl, lv_color_black(), LV_PART_MAIN); lv_obj_center(sl);
   lv_obj_t* close = lv_btn_create(s_fm_snd_root);
   lv_obj_set_size(close, 30, 26); lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 6); styleButton(close);
@@ -19738,6 +21393,7 @@ static void fmOpenImage(const char* name) {
   lv_obj_t* fll = lv_label_create(full); lv_label_set_text(fll, TR("Full"));
   lv_obj_set_style_text_font(fll, &g_font_12, LV_PART_MAIN); lv_obj_center(fll);
 
+#if CAP_LOCK_SCREEN
   // "Set as lock wallpaper" — bottom-left, windowed chrome only.
   lv_obj_t* wall = lv_btn_create(s_fm_img_root);
   lv_obj_set_height(wall, 30);
@@ -19746,11 +21402,12 @@ static void fmOpenImage(const char* name) {
   lv_obj_set_style_bg_color(wall, lv_color_hex(0x35C9C9), LV_PART_MAIN);
   lv_obj_add_event_cb(wall, fmSetWallpaperCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* wll = lv_label_create(wall);
-  lv_label_set_text(wll, LV_SYMBOL_IMAGE "  Set as wallpaper");
+  lv_label_set_text(wll, TR(LV_SYMBOL_IMAGE "  Set as wallpaper"));
   lv_obj_set_style_text_font(wll, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(wll, lv_color_black(), LV_PART_MAIN);
   lv_obj_center(wll);
   s_fm_img_wall = wall;
+#endif  // CAP_LOCK_SCREEN (wallpaper button)
 
   // "tap to exit" hint, shown only in full-screen mode.
   lv_obj_t* hint = lv_label_create(s_fm_img_root);
@@ -19826,13 +21483,22 @@ static void fmRender() {
   for (int i = 0; i < s_fm_count; ++i) {
     FmEntry& en = s_fm_entries[i];
     if (!fmContainsCI(en.name, s_fm_filter)) continue;
-    char label[96];
+    char label[120];
     if (en.isdir) {
       snprintf(label, sizeof label, "%s", en.name);
     } else {
       char sz[16];
       fmFmtSize((size_t)en.size, sz, sizeof sz);
-      snprintf(label, sizeof label, "%s   %s", en.name, sz);
+      // Timestamp when the FS provides one and it's sane (> 2001; FAT's 1980
+      // epoch / a clockless write shows as garbage, better omitted) (#185).
+      char ts[24] = "";
+      if (en.mtime > 978307200u) {
+        time_t t = (time_t)en.mtime;
+        struct tm tmv;
+        localtime_r(&t, &tmv);
+        strftime(ts, sizeof ts, "  %d %b %H:%M", &tmv);
+      }
+      snprintf(label, sizeof label, "%s   %s%s", en.name, sz, ts);
     }
     lv_obj_t* row = lv_list_add_btn(s_fm_list, en.isdir ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE, label);
     fmStyleRow(row, COLOR_TEXT);
@@ -19879,13 +21545,13 @@ static bool fmIsHiddenName(const char* base) {
   return false;
 }
 // Append an entry, de-duplicating by (name,isdir) so synthesised virtual folders collapse.
-static void fmAddEntry(const char* name, uint32_t size, bool isdir) {
+static void fmAddEntry(const char* name, uint32_t size, bool isdir, uint32_t mtime = 0) {
   if (!name[0] || s_fm_count >= FM_MAX_ENTRIES) return;
   for (int i = 0; i < s_fm_count; ++i)
     if (s_fm_entries[i].isdir == isdir && !strcmp(s_fm_entries[i].name, name)) return;
   FmEntry& en = s_fm_entries[s_fm_count++];
   snprintf(en.name, sizeof en.name, "%s", name);
-  en.size = size; en.isdir = isdir;
+  en.size = size; en.isdir = isdir; en.mtime = mtime;
 }
 
 static void fmRefresh() {
@@ -19910,6 +21576,7 @@ static void fmRefresh() {
       while (e) {
         const char* full = e.path();   // full path incl. leading '/' (name() is basename-only on this core)
         const uint32_t esz = (uint32_t)e.size();
+        const uint32_t emt = (uint32_t)e.getLastWrite();   // 0 when the FS has no mtime (#185)
         if (s_fm_show_hidden || !fmIsSystemPath(full)) {
           const char* rel = (full[0] == '/') ? full + 1 : full;
           if (!strncmp(rel, pfx, pfxlen)) {                 // belongs in the current virtual folder
@@ -19922,7 +21589,7 @@ static void fmRefresh() {
                 memcpy(seg, sub, n); seg[n] = '\0';
                 fmAddEntry(seg, 0, true);
               } else {
-                fmAddEntry(sub, esz, false);                // a file in this folder
+                fmAddEntry(sub, esz, false, emt);           // a file in this folder
               }
             }
           }
@@ -19941,7 +21608,7 @@ static void fmRefresh() {
         const char* full = e.name();
         const char* base = strrchr(full, '/'); base = base ? base + 1 : full;
         if (s_fm_show_hidden || !fmIsHiddenName(base))
-          fmAddEntry(base, (uint32_t)e.size(), e.isDirectory());
+          fmAddEntry(base, (uint32_t)e.size(), e.isDirectory(), (uint32_t)e.getLastWrite());
         e.close();
         e = dir.openNextFile();
       }
@@ -20027,17 +21694,25 @@ static void fmShowRoots() {
     fmStyleRow(sd, COLOR_SUB);
     lv_obj_add_event_cb(sd, fmSdMountOrFormatCb, LV_EVENT_CLICKED, nullptr);
   }
-#elif defined(TLORA_PAGER)   // microSD row — browse only this pass, no format (see fmSdTryMount())
+#elif defined(TLORA_PAGER)   // microSD row — browse + mount recovery, no in-app format
   // The card-detect line makes "not present" unambiguous, unlike the T-Deck (no detect
   // pin at all) -- so unlike its always-shown "tap to mount/format" fallback row, a bare
   // pager just shows no SD row at all rather than a row that can never succeed.
-  if (pagerSdCardPresent() && (s_sd_mounted || millis() >= s_sd_retry_after_ms) && fmSdTryMount()) {
+  if (board.sdCardPresent() && (s_sd_mounted || millis() >= s_sd_retry_after_ms) &&
+      fmSdTryMount() && s_sd_mounted) {
     char sdl[48], cs[16];
     fmFmtSize64(s_sd_size, cs, sizeof cs);
     snprintf(sdl, sizeof sdl, TR("SD card   %s"), cs);
     lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, sdl);
     fmStyleRow(sd, COLOR_TEXT);
     lv_obj_add_event_cb(sd, fmSdClickCb, LV_EVENT_SHORT_CLICKED, nullptr);
+  } else if (board.sdCardPresent()) {
+    // Detected but not mounted. Surfacing it (greyed) is the whole recovery path
+    // on this board: it distinguishes "card the firmware won't take" from the
+    // absent case above, and gives a retry that bypasses the mount backoff.
+    lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, TR("SD card   (unreadable - tap to retry)"));
+    fmStyleRow(sd, COLOR_SUB);
+    lv_obj_add_event_cb(sd, fmSdPagerRetryMountCb, LV_EVENT_CLICKED, nullptr);
   }
 #endif
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
@@ -20096,7 +21771,7 @@ static void fmToggleSearch() {
   lv_obj_set_size(s_fm_search_ta, w, 26);
   styleCard(s_fm_search_ta);
   lv_textarea_set_one_line(s_fm_search_ta, true);
-  lv_textarea_set_placeholder_text(s_fm_search_ta, TR("search"));
+  taSetPlaceholder(s_fm_search_ta, TR("search"));
   lv_textarea_set_max_length(s_fm_search_ta, sizeof(s_fm_filter) - 1);
   lv_obj_set_style_text_font(s_fm_search_ta, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_fm_search_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -20166,6 +21841,7 @@ static void buildFileManager(lv_obj_t* body) {
   lv_obj_set_style_pad_all(back, 0, LV_PART_MAIN);
   lv_obj_add_event_cb(back, fmBackCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* backl = lv_label_create(back);
+  useChainedFont(backl);
   lv_label_set_text(backl, LV_SYMBOL_LEFT);
   lv_obj_center(backl);
 
@@ -20178,6 +21854,7 @@ static void buildFileManager(lv_obj_t* body) {
   lv_obj_set_style_pad_all(add, 0, LV_PART_MAIN);
   lv_obj_add_event_cb(add, fmFolderMenuCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* addl = lv_label_create(add);
+  useChainedFont(addl);
   lv_label_set_text(addl, LV_SYMBOL_PLUS);
   lv_obj_center(addl);
 
@@ -20250,12 +21927,18 @@ static void homeFilesCb(lv_event_t* e) {
 // ===== Signal & traffic detail popup (tap the home RX/TX graph) =============
 static lv_obj_t* s_siginfo_root = nullptr;
 static lv_obj_t* s_sig_poll_ta  = nullptr;   // poll-interval entry (minutes) inside the popup
+static lv_obj_t* s_siginfo_chart = nullptr;
+static lv_chart_series_t* s_siginfo_chart_tx = nullptr;
+static lv_chart_series_t* s_siginfo_chart_rx = nullptr;
 static void closeSigInfoPopup() {
   if (s_siginfo_root) {
     // The poll-interval field can leave the shared on-screen keyboard up; tear it
     // down so it doesn't linger over the home screen after the popup is gone.
     if (g_lv.keyboard && !lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN)) hideKb();
     s_sig_poll_ta = nullptr;
+    s_siginfo_chart = nullptr;
+    s_siginfo_chart_tx = nullptr;
+    s_siginfo_chart_rx = nullptr;
     popupClose(&s_siginfo_root);
   }
 }
@@ -20348,11 +22031,78 @@ static void openSignalInfoPopup() {
     lv_obj_set_pos(o, x, y);
   };
 
-  sigCell(stale && heard ? "Signal (stale)" : "Signal", 0, 30, COLOR_TEXT);
+  int sig_hdr_y = 30;
+  int sig_row1_y = 48;
+  int sig_row2_y = 66;
+#if defined(TLORA_PAGER)
+  // The Home graph is necessarily shallow at Large/Jumbo because status text
+  // and the launcher column consume the short viewport. Put a full-width copy
+  // first in this scrollable detail card and mirror the same samples into it.
+  constexpr int detail_chart_y = 34;
+  constexpr int detail_chart_h = 104;
+  s_siginfo_chart = lv_chart_create(card);
+  lv_obj_set_size(s_siginfo_chart, card_w - 20, detail_chart_h);
+  lv_obj_set_pos(s_siginfo_chart, 0, detail_chart_y);
+  lv_obj_clear_flag(s_siginfo_chart, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_chart_set_type(s_siginfo_chart, LV_CHART_TYPE_LINE);
+  lv_chart_set_point_count(s_siginfo_chart, 60);
+  lv_chart_set_update_mode(s_siginfo_chart, LV_CHART_UPDATE_MODE_SHIFT);
+  lv_chart_set_range(s_siginfo_chart, LV_CHART_AXIS_PRIMARY_Y, 0, s_home_chart_max_y);
+  lv_chart_set_div_line_count(s_siginfo_chart, 3, 6);
+  lv_obj_set_style_bg_color(s_siginfo_chart, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_siginfo_chart, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_siginfo_chart, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_border_opa(s_siginfo_chart, LV_OPA_40, LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_siginfo_chart, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_siginfo_chart, 6, LV_PART_MAIN);
+  lv_obj_set_style_line_color(s_siginfo_chart, lv_color_hex(0x25292C), LV_PART_MAIN);
+  lv_obj_set_style_line_width(s_siginfo_chart, 2, LV_PART_ITEMS);
+  lv_obj_set_style_size(s_siginfo_chart, 0, LV_PART_INDICATOR);
+  s_siginfo_chart_tx = lv_chart_add_series(s_siginfo_chart, lv_color_hex(COLOR_STATUS_OK),
+                                           LV_CHART_AXIS_PRIMARY_Y);
+  s_siginfo_chart_rx = lv_chart_add_series(s_siginfo_chart, lv_color_hex(0x4F94CD),
+                                           LV_CHART_AXIS_PRIMARY_Y);
+  // Clone the Home chart in display order. New samples are mirrored in
+  // refreshStatusLabels(), so this remains live without a second sampler.
+  if (s_home_chart && s_home_chart_tx && s_home_chart_rx) {
+    uint16_t n = lv_chart_get_point_count(s_home_chart);
+    const uint16_t tx0 = lv_chart_get_x_start_point(s_home_chart, s_home_chart_tx);
+    const uint16_t rx0 = lv_chart_get_x_start_point(s_home_chart, s_home_chart_rx);
+    lv_coord_t* tx = lv_chart_get_y_array(s_home_chart, s_home_chart_tx);
+    lv_coord_t* rx = lv_chart_get_y_array(s_home_chart, s_home_chart_rx);
+    for (uint16_t i = 0; i < n; ++i) {
+      lv_chart_set_next_value(s_siginfo_chart, s_siginfo_chart_tx, tx[(tx0 + i) % n]);
+      lv_chart_set_next_value(s_siginfo_chart, s_siginfo_chart_rx, rx[(rx0 + i) % n]);
+    }
+  }
+  lv_obj_t* graph_legend = lv_label_create(s_siginfo_chart);
+  char graph_legend_text[40];
+  snprintf(graph_legend_text, sizeof graph_legend_text, "#%06X TX#   #4F94CD RX#",
+           (unsigned)COLOR_STATUS_OK);
+  lv_label_set_recolor(graph_legend, true);
+  lv_label_set_text(graph_legend, graph_legend_text);
+  lv_obj_set_style_text_font(graph_legend, &lv_font_montserrat_12, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(graph_legend, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(graph_legend, LV_OPA_70, LV_PART_MAIN);
+  lv_obj_set_style_pad_hor(graph_legend, 3, LV_PART_MAIN);
+  lv_obj_set_style_radius(graph_legend, 3, LV_PART_MAIN);
+  lv_obj_align(graph_legend, LV_ALIGN_TOP_LEFT, 3, 3);
+
+  const int sig_line_h = lv_font_get_line_height(&g_font_12);
+  sig_hdr_y = detail_chart_y + detail_chart_h + 10;
+  sig_row1_y = sig_hdr_y + sig_line_h;
+  sig_row2_y = sig_row1_y + sig_line_h + 2;
+#endif
+
+  sigCell(stale && heard ? "Signal (stale)" : "Signal", 0, sig_hdr_y, COLOR_TEXT);
   int cy;
   if (!heard) {
-    sigCell("nothing heard yet", 8, 48, COLOR_SUB);
+    sigCell("nothing heard yet", 8, sig_row1_y, COLOR_SUB);
+#if defined(TLORA_PAGER)
+    cy = sig_row1_y + lv_font_get_line_height(&g_font_12) + 10;
+#else
     cy = 48 + 18 + 12;
+#endif
   } else {
     const float snr  = the_mesh.uiSignalSnrQ4() / 4.0f;
     const int   rssi = the_mesh.uiSignalRssi();
@@ -20365,11 +22115,15 @@ static void openSignalInfoPopup() {
     snprintf(l1, sizeof l1, "SNR   %.1f dB", (double)snr);
     snprintf(r1, sizeof r1, "RSSI  %d dBm", rssi);
     snprintf(l2, sizeof l2, "Bars  %d / 4", level);
-    snprintf(r2, sizeof r2, "Heard %s", ago);
+    snprintf(r2, sizeof r2, TR("Heard %s"), ago);
     const int colx = (card_w - 20) / 2;              // second column start
-    sigCell(l1, 8, 48, COLOR_TEXT);  sigCell(r1, colx, 48, COLOR_TEXT);   // SNR | RSSI
-    sigCell(l2, 8, 66, COLOR_TEXT);  sigCell(r2, colx, 66, COLOR_TEXT);   // Bars | Heard
+    sigCell(l1, 8, sig_row1_y, COLOR_TEXT);  sigCell(r1, colx, sig_row1_y, COLOR_TEXT);   // SNR | RSSI
+    sigCell(l2, 8, sig_row2_y, COLOR_TEXT);  sigCell(r2, colx, sig_row2_y, COLOR_TEXT);   // Bars | Heard
+#if defined(TLORA_PAGER)
+    cy = sig_row2_y + lv_font_get_line_height(&g_font_12) + 10;
+#else
     cy = 66 + 18 + 12;
+#endif
   }
 
   // ---- Auto-discover: on/off toggle (the periodic signal probe in loop()) ----
@@ -20390,10 +22144,25 @@ static void openSignalInfoPopup() {
   lv_label_set_text(plbl, TR("Poll every"));
   lv_obj_set_style_text_color(plbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(plbl, &g_font_12, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  const int poll_line_h = lv_font_get_line_height(&g_font_12);
+  const int poll_h = LV_MAX(32, poll_line_h + 10);
+  lv_obj_update_layout(plbl);
+  const int poll_x = lv_obj_get_width(plbl) + 12;
+  const int poll_w = 64;
+  lv_obj_set_pos(plbl, 0, cy + (poll_h - poll_line_h) / 2);
+#else
   lv_obj_set_pos(plbl, 0, cy + 7);
+#endif
   s_sig_poll_ta = lv_textarea_create(card);
+#if defined(TLORA_PAGER)
+  lv_obj_set_size(s_sig_poll_ta, poll_w, poll_h);
+  lv_obj_set_pos(s_sig_poll_ta, poll_x, cy);
+  lv_obj_set_style_text_font(s_sig_poll_ta, &g_font_12, LV_PART_MAIN);
+#else
   lv_obj_set_size(s_sig_poll_ta, 46, 30);
   lv_obj_set_pos(s_sig_poll_ta, 70, cy);
+#endif
   lv_textarea_set_one_line(s_sig_poll_ta, true);
   lv_textarea_set_max_length(s_sig_poll_ta, 4);
   attachSettingsTaEvents(s_sig_poll_ta);
@@ -20403,16 +22172,38 @@ static void openSignalInfoPopup() {
   lv_label_set_text(ulbl, "min");
   lv_obj_set_style_text_color(ulbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(ulbl, &g_font_12, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  lv_obj_update_layout(ulbl);
+  const int unit_x = poll_x + poll_w + 10;
+  lv_obj_set_pos(ulbl, unit_x, cy + (poll_h - poll_line_h) / 2);
+#else
   lv_obj_set_pos(ulbl, 122, cy + 7);
+#endif
   lv_obj_t* setb = lv_btn_create(card);
+#if defined(TLORA_PAGER)
+  lv_obj_update_layout(ulbl);
+  const int set_x = unit_x + lv_obj_get_width(ulbl) + 12;
+  lv_obj_set_size(setb, 58, poll_h);
+  lv_obj_set_pos(setb, set_x, cy);
+#else
   lv_obj_set_size(setb, 50, 30);
   lv_obj_set_pos(setb, 168, cy);
+#endif
   styleButton(setb);
   lv_obj_add_event_cb(setb, sigPollSaveCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* setl = lv_label_create(setb);
-  lv_label_set_text(setl, "Set");
+  lv_label_set_text(setl, TR("Set"));
+#if defined(TLORA_PAGER)
+  lv_obj_set_style_text_font(setl, &g_font_12, LV_PART_MAIN);
+#endif
   lv_obj_center(setl);
+#if defined(TLORA_PAGER)
+  // The focused textarea's outline extends beyond its object bounds. Leave a
+  // full control gap so that outline cannot cover the Probe button below it.
+  cy += poll_h + 16;
+#else
   cy += 40;
+#endif
 
   // ---- Manual probe button ----
   lv_obj_t* rfb = lv_btn_create(card);
@@ -20421,7 +22212,7 @@ static void openSignalInfoPopup() {
   styleButton(rfb);
   lv_obj_add_event_cb(rfb, sigProbeNowCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* rfl = lv_label_create(rfb);
-  lv_label_set_text(rfl, LV_SYMBOL_REFRESH "  Probe now");
+  lv_label_set_text(rfl, TR(LV_SYMBOL_REFRESH "  Probe now"));
   lv_obj_set_style_text_font(rfl, &g_font_14, LV_PART_MAIN);
   lv_obj_center(rfl);
   cy += 40;
@@ -20429,7 +22220,7 @@ static void openSignalInfoPopup() {
   // ---- Traffic readout ----
   char tbody[160];
   snprintf(tbody, sizeof tbody,
-    "Traffic (since boot)\n  Sent   %u flood, %u direct\n  Recv   %u flood, %u direct",
+    TR("Traffic (since boot)\n  Sent   %u flood, %u direct\n  Recv   %u flood, %u direct"),
     (unsigned)the_mesh.getNumSentFlood(), (unsigned)the_mesh.getNumSentDirect(),
     (unsigned)the_mesh.getNumRecvFlood(), (unsigned)the_mesh.getNumRecvDirect());
   lv_obj_t* tlbl = lv_label_create(card);
@@ -20439,196 +22230,6 @@ static void openSignalInfoPopup() {
   lv_obj_set_style_text_color(tlbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(tlbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(tlbl, 0, cy);
-}
-
-// ============================================================
-// RF Monitor app  (app-drawer tile -> APPACT_MONITOR)
-// ============================================================
-// A companion-side RF/mesh sniffer + "repeater dashboard": the kind of live
-// radio insight a repeater operator gets on their node, brought to the touch
-// companion so a hybrid-CP user can see how well their node is hearing the
-// mesh. Three parts, top to bottom:
-//   1) a live channel-RSSI strip - instantaneous RSSI on the home frequency
-//      over a noise-floor baseline (the "scope"). Idle sits near the floor; a
-//      packet mid-reception spikes the cyan trace up.
-//   2) key metrics - noise floor / current / peak-hold RSSI, the LINK MARGIN of
-//      the last packet heard (its RSSI above the noise floor, colour-graded:
-//      green >=10 dB, amber 3-10, red <3 - the single most actionable number),
-//      and the live packet rate.
-//   3) a "Recently heard" feed - the last 16 received frames with type
-//      (TXT/ADV/ACK/TRC...), RSSI, SNR and hop count, so you can watch exactly
-//      what the radio is pulling out of the air in real time.
-// Data comes from the_mesh's recent-RX ring (filled in logRxRaw) plus a couple
-// of read-only radio registers. getCurrentRSSI()/getNoiseFloor() poke the LoRa
-// SPI bus, which is safe here ONLY because ui_task.loop() (where lv_timer
-// callbacks run) and the_mesh.loop() execute sequentially in the same loop()
-// task - never concurrently - so there is no SPI contention. A true
-// frequency-domain sweep would need core access to re-arm RX at each swept
-// frequency (startRecv() is protected) and is deferred to a core change.
-static const int MON_RSSI_MIN = -130;   // chart Y floor (dBm)
-static const int MON_RSSI_MAX = -20;    // chart Y ceiling (dBm)
-
-static lv_obj_t*          s_monitor_root    = nullptr;
-static lv_obj_t*          s_mon_chart       = nullptr;
-static lv_chart_series_t* s_mon_ser         = nullptr;   // live channel RSSI (cyan)
-static lv_chart_series_t* s_mon_nf_ser      = nullptr;   // noise-floor baseline (grey)
-static lv_obj_t*          s_mon_metrics_lbl = nullptr;   // noise/now/peak + margin + rate
-static lv_obj_t*          s_mon_feed_lbl    = nullptr;   // "Recently heard" feed (recolour)
-static lv_timer_t*        s_mon_timer       = nullptr;
-static float              s_mon_peak        = -200.0f;   // peak-hold (dBm), slow decay
-
-// 3-letter code + colour per MeshCore payload type (raw[0]>>2 & 0x0F).
-static const char* monPtypeName(uint8_t t) {
-  switch (t) {
-    case 0x00: return "REQ"; case 0x01: return "RSP"; case 0x02: return "TXT";
-    case 0x03: return "ACK"; case 0x04: return "ADV"; case 0x05: return "GRP";
-    case 0x06: return "GDT"; case 0x07: return "ANR"; case 0x08: return "PTH";
-    case 0x09: return "TRC"; case 0x0A: return "MUL"; case 0x0B: return "CTL";
-    case 0x0F: return "RAW"; default: return "?";
-  }
-}
-static uint32_t monPtypeColor(uint8_t t) {
-  switch (t) {
-    case 0x02: case 0x05: return 0x35C9C9;  // TXT / group text - cyan
-    case 0x04:            return 0xC9A227;  // ADV (advert)      - amber
-    case 0x03:            return 0x6FCF6F;  // ACK               - green
-    case 0x09: case 0x08: return 0xBB86FC;  // TRC / PTH (route) - purple
-    case 0x00: case 0x01: return 0x9AA0A6;  // REQ / RSP         - grey
-    default:              return 0xC0C4C8;  // others            - off-white
-  }
-}
-
-static void monitorBuildMetrics() {
-  if (!s_mon_metrics_lbl) return;
-  const int now_r = (int)radio_driver.getCurrentRSSI();
-  const int nf    = radio_driver.getNoiseFloor();
-  const uint32_t sms = the_mesh.uiSignalMs();
-  const bool heard   = (sms != 0);
-  const int  l_rssi  = the_mesh.uiSignalRssi();
-  const int  margin  = heard ? (l_rssi - nf) : 0;   // last packet's fade margin (dB)
-
-  // Live packet rate from the ring span (self-scales even when the ring is full)
-  int rate = 0;
-  const uint8_t cnt = the_mesh.uiRxLogCount();
-  if (cnt >= 2) {
-    MyMesh::UiRxRec newest, oldest;
-    if (the_mesh.uiRxLogGet(0, newest) && the_mesh.uiRxLogGet((uint8_t)(cnt - 1), oldest)) {
-      const uint32_t span = newest.ms - oldest.ms;
-      if (span > 0) rate = (int)(((uint32_t)(cnt - 1) * 60000UL) / span);
-    }
-  }
-  const uint32_t rxtot = radio_driver.getPacketsRecv();
-  const uint32_t mcol  = margin >= 10 ? 0x6FCF6F : margin >= 3 ? 0xC9A227 : 0xD05050;
-
-  const bool narrow = lv_disp_get_hor_res(nullptr) < 280;
-  char b[240];
-  if (narrow) {                                   // V4 portrait: 3 short lines
-    if (heard)
-      snprintf(b, sizeof b,
-        "Noise %d   Now %d\n"
-        "Peak %d   Mgn #%06X %+d dB#\n"
-        "RX ~%d/min   %lu rx",
-        nf, now_r, (int)s_mon_peak, (unsigned)mcol, margin, rate, (unsigned long)rxtot);
-    else
-      snprintf(b, sizeof b,
-        "Noise %d   Now %d\n"
-        "Peak %d   Mgn --\n"
-        "RX ~%d/min   %lu rx",
-        nf, now_r, (int)s_mon_peak, rate, (unsigned long)rxtot);
-  } else {                                         // landscape: 2 wide lines
-    if (heard)
-      snprintf(b, sizeof b,
-        "Noise %d    Now %d    Peak %d dBm\n"
-        "Margin #%06X %+d dB#    RX ~%d/min    (%lu rx)",
-        nf, now_r, (int)s_mon_peak, (unsigned)mcol, margin, rate, (unsigned long)rxtot);
-    else
-      snprintf(b, sizeof b,
-        "Noise %d    Now %d    Peak %d dBm\n"
-        "Margin --    RX ~%d/min    (%lu rx)",
-        nf, now_r, (int)s_mon_peak, rate, (unsigned long)rxtot);
-  }
-  lv_label_set_text(s_mon_metrics_lbl, b);
-}
-
-static void monitorBuildFeed() {
-  if (!s_mon_feed_lbl) return;
-  const bool narrow = lv_disp_get_hor_res(nullptr) < 280;
-  const uint8_t n = the_mesh.uiRxLogCount();
-  if (n == 0) {
-    lv_label_set_text(s_mon_feed_lbl, narrow ? "#5A6166 Listening\xE2\x80\xA6#"
-                                             : "#5A6166 Listening \xE2\x80\x94 nothing heard yet#");
-    return;
-  }
-  const uint32_t now = millis();
-  char b[760]; int q = 0;
-  for (uint8_t i = 0; i < n && q < (int)sizeof(b) - 72; i++) {
-    MyMesh::UiRxRec r;
-    if (!the_mesh.uiRxLogGet(i, r)) break;
-    const uint32_t age = now - r.ms;
-    char ago[10];
-    if (age < 60000UL)        snprintf(ago, sizeof ago, "%lus", (unsigned long)(age / 1000));
-    else if (age < 3600000UL) snprintf(ago, sizeof ago, "%lum", (unsigned long)(age / 60000));
-    else                      snprintf(ago, sizeof ago, "%luh", (unsigned long)(age / 3600000UL));
-    char hop[12];
-    if (narrow) {
-      if (r.hops == 0) snprintf(hop, sizeof hop, "dir");
-      else             snprintf(hop, sizeof hop, "%uh", (unsigned)r.hops);
-    } else {
-      if (r.hops == 0) snprintf(hop, sizeof hop, "direct");
-      else             snprintf(hop, sizeof hop, "%u hop%s", (unsigned)r.hops, r.hops == 1 ? "" : "s");
-    }
-    if (narrow)                                   // V4 portrait: drop unit words, tighter columns
-      q += snprintf(b + q, sizeof(b) - q,
-        "%-3s #%06X %-3s# %4d %4.1f %s\n",
-        ago, (unsigned)monPtypeColor(r.ptype), monPtypeName(r.ptype),
-        (int)r.rssi, (double)r.snr_q4 / 4.0, hop);
-    else
-      q += snprintf(b + q, sizeof(b) - q,
-        "%-4s #%06X %-3s#  %4d dBm  %4.1f  %s\n",
-        ago, (unsigned)monPtypeColor(r.ptype), monPtypeName(r.ptype),
-        (int)r.rssi, (double)r.snr_q4 / 4.0, hop);
-  }
-  if (q > 0 && b[q - 1] == '\n') b[q - 1] = '\0';   // trim trailing newline
-  lv_label_set_text(s_mon_feed_lbl, b);
-}
-
-static void monitorTimerCb(lv_timer_t* t) {
-  (void)t;
-  if (!s_monitor_root || !s_mon_chart) return;
-  const float rssi = radio_driver.getCurrentRSSI();
-  if (rssi > s_mon_peak) s_mon_peak = rssi;
-  else                   s_mon_peak -= 0.5f;          // slow decay so it tracks down after a burst
-  int v = (int)rssi;
-  if (v < MON_RSSI_MIN) v = MON_RSSI_MIN;
-  if (v > MON_RSSI_MAX) v = MON_RSSI_MAX;
-  lv_chart_set_next_value(s_mon_chart, s_mon_ser, (lv_coord_t)v);
-  if (s_mon_nf_ser) {
-    int nf = radio_driver.getNoiseFloor();
-    if (nf < MON_RSSI_MIN) nf = MON_RSSI_MIN;
-    if (nf > MON_RSSI_MAX) nf = MON_RSSI_MAX;
-    lv_chart_set_next_value(s_mon_chart, s_mon_nf_ser, (lv_coord_t)nf);
-  }
-  monitorBuildMetrics();
-  monitorBuildFeed();
-}
-
-static void closeMonitorPage() {
-  if (s_mon_timer)    { lv_timer_del(s_mon_timer);        s_mon_timer = nullptr; }
-  if (s_monitor_root) { popupClose(&s_monitor_root); }
-  s_mon_chart = nullptr; s_mon_ser = nullptr; s_mon_nf_ser = nullptr;
-  s_mon_metrics_lbl = nullptr; s_mon_feed_lbl = nullptr;
-  if (s_apppage_close == closeMonitorPage) {   // release the tall title bar back to normal
-    s_apppage_title = nullptr; s_apppage_close = nullptr;
-    statusBarSetTall(false); updateGlobalStatusBar();
-  }
-}
-static void monitorDismissCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  // Close only on the backdrop (root) or the X badge; taps that bubble up from a
-  // child (chart / feed) leave the page open.
-  if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;
-  lv_indev_t* a = lv_indev_get_act(); if (a) lv_indev_wait_release(a);
-  closeMonitorPage();
 }
 
 // ============================ Reader: on-device text browser =========================
@@ -21040,7 +22641,7 @@ static void openReaderPage() {
   // --- Expanded address bar: URL field + Go ---
   s_reader_url_ta = lv_textarea_create(s_reader_root);
   lv_textarea_set_one_line(s_reader_url_ta, true);
-  lv_textarea_set_placeholder_text(s_reader_url_ta, "Type a URL, then Go");
+  taSetPlaceholder(s_reader_url_ta, TR("Type a URL, then Go"));
   if (s_reader_url[0]) { lv_textarea_set_text(s_reader_url_ta, s_reader_url); s_reader_pristine = false; }
   else                 { lv_textarea_set_text(s_reader_url_ta, kReaderDefaultUrl); s_reader_pristine = true; }
   lv_obj_set_pos(s_reader_url_ta, 6, top);
@@ -21055,14 +22656,15 @@ static void openReaderPage() {
   lv_obj_align_to(s_reader_go, s_reader_url_ta, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
   styleButton(s_reader_go);
   lv_obj_add_event_cb(s_reader_go, readerGoCb, LV_EVENT_CLICKED, nullptr);
-  { lv_obj_t* gl = lv_label_create(s_reader_go); lv_label_set_text(gl, "Go"); lv_obj_center(gl); }
+  { lv_obj_t* gl = lv_label_create(s_reader_go); lv_label_set_text(gl, TR("Go")); lv_obj_center(gl); }
   s_reader_status = lv_label_create(s_reader_root);
   lv_label_set_long_mode(s_reader_status, LV_LABEL_LONG_DOT);
   lv_obj_set_width(s_reader_status, sw - 12);
   lv_obj_set_pos(s_reader_status, 6, top + 44);
   lv_obj_set_style_text_font(s_reader_status, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_reader_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_label_set_text(s_reader_status, s_reader_msg[0] ? s_reader_msg : "On-device text browser \xc2\xb7 no proxy, no tracking");
+  lv_label_set_text(s_reader_status, s_reader_msg[0] ? s_reader_msg
+                                                    : TR("On-device text browser \xc2\xb7 no proxy, no tracking"));
   // (Collapsed state shows the URL in the status-bar title zone — see readerSetAddrExpanded.)
   // --- Body: a vertical scroll container we fill with paragraph + link labels ---
   s_reader_scroll = lv_obj_create(s_reader_root);
@@ -21153,6 +22755,17 @@ static const char* discTypeName(uint8_t t) {
     default:                return "node";
   }
 }
+// Single-letter type for the LIST rows (#191): the full word plus a long node name pushed the
+// trailing last-heard age off the 320px line. The summary header keeps the full words.
+static const char* discTypeShort(uint8_t t) {
+  switch (t) {
+    case ADV_TYPE_REPEATER: return "R";
+    case ADV_TYPE_CHAT:     return "C";
+    case ADV_TYPE_ROOM:     return "Rm";
+    case ADV_TYPE_SENSOR:   return "S";
+    default:                return "?";
+  }
+}
 
 // ---- Wardriving: log GPS-tagged sightings as we scan (a standalone, on-device MeshMapper) ----
 // While the Discover app scans, sample our GPS position; at each sample, log every currently-heard
@@ -21169,7 +22782,7 @@ static uint32_t  s_disc_log_count = 0;     // sightings written to SD this sessi
 static lv_obj_t* s_disc_footer = nullptr;  // bottom status line: GPS / wardrive state
 
 static void discoverLogSighting(int32_t lat_e6, int32_t lon_e6, const MyMesh::DiscoverHit& h) {
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (SD.cardType() == CARD_NONE) return;
   markSdIo();
   SD.mkdir("/meshcomod");
@@ -21188,6 +22801,11 @@ static void discoverLogSighting(int32_t lat_e6, int32_t lon_e6, const MyMesh::Di
   (void)lat_e6; (void)lon_e6; (void)h;
 #endif
 }
+
+// Defined later (contacts detail section); used here for the Discover rows (#239).
+static void formatDistanceBadge(char* out, size_t out_cap,
+                                double self_lat, double self_lon,
+                                int32_t c_lat_e6, int32_t c_lon_e6);
 
 // Called every scan tick: refresh the footer + (once we've moved ~15 m) log a coverage sample.
 static void discoverWardriveTick() {
@@ -21218,23 +22836,33 @@ static void discoverWardriveTick() {
     }
   }
   if (s_disc_footer) {
-    if (!fix) lv_label_set_text(s_disc_footer, "#7A7F87 Wardrive: waiting for GPS fix\xE2\x80\xA6#");
-    else lv_label_set_text_fmt(s_disc_footer,
-           "#7A7F87 Wardrive: %d coverage pts \xC2\xB7 %lu logged to SD#",
-           s_disc_track_n > k_disc_track_max ? k_disc_track_max : s_disc_track_n,
-           (unsigned long)s_disc_log_count);
+    if (!fix) lv_label_set_text(s_disc_footer, TR("#7A7F87 Wardrive: waiting for GPS fix\xE2\x80\xA6#"));
+    else lv_label_set_text_fmt(s_disc_footer, TR("#7A7F87 Wardrive: %d coverage pts \xC2\xB7 %lu logged to SD#"), s_disc_track_n > k_disc_track_max ? k_disc_track_max : s_disc_track_n, (unsigned long)s_disc_log_count);
   }
 }
 
 // Per-row snapshot for tap-to-add (populated by discoverBuildFeed in the displayed sort order):
 // full pubkey + type + name, so a tap on the feed resolves to the exact node under it.
 static const int DISC_MAXROWS = 40;
-static uint8_t s_disc_row_key[DISC_MAXROWS][32];
+static uint8_t (*s_disc_row_key)[32] = nullptr;   // PSRAM, allocated when Discover opens
 static uint8_t s_disc_row_type[DISC_MAXROWS];
-static char    s_disc_row_name[DISC_MAXROWS][26];
+static char    (*s_disc_row_name)[26] = nullptr;  // PSRAM (see discoverRowsReady)
 static int     s_disc_row_n = 0;
 
+static void recolorEscape(char* dst, size_t cap, const char* src);   // defined with the chat helpers
+
 // Rebuild the feed label from the engine's _discover[] table, strongest-signal first.
+// Discover's per-row snapshots are ~2.3 KB that only matter while the page is
+// open; on the V4 that is a meaningful slice of internal DRAM, so PSRAM it is.
+static bool discoverRowsReady() {
+  if (s_disc_row_key) return true;
+  s_disc_row_key  = (uint8_t(*)[32])heap_caps_calloc(DISC_MAXROWS, 32, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  s_disc_row_name = (char(*)[26])   heap_caps_calloc(DISC_MAXROWS, 26, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_disc_row_key)  s_disc_row_key  = (uint8_t(*)[32])calloc(DISC_MAXROWS, 32);
+  if (!s_disc_row_name) s_disc_row_name = (char(*)[26])   calloc(DISC_MAXROWS, 26);
+  return s_disc_row_key && s_disc_row_name;
+}
+
 static void discoverBuildFeed() {
   if (!s_discover_feed) return;
   const uint32_t now = millis();
@@ -21257,10 +22885,16 @@ static void discoverBuildFeed() {
     const MyMesh::DiscoverHit& h = hits[idx[k]];
     if (h.node_type == ADV_TYPE_REPEATER) rpt++;
     else if (h.node_type == ADV_TYPE_CHAT) comp++;
+    // #223: a name can carry emoji (multi-byte UTF-8) or a literal '#'. Cutting it at
+    // a byte count splits a sequence, and an unescaped '#' toggles this label's
+    // recolor mode — either desyncs the '#RRGGBB …#' runs and visually kills every
+    // row after this one. Keep a structurally-clean copy here (font=nullptr: emoji
+    // preserved for the tap-to-add snapshot), and escape a capped display copy below.
     char name[26];
     ContactInfo* c = the_mesh.lookupContactByPubKey((uint8_t*)h.pubkey, 6);
-    if (c && c->name[0]) snprintf(name, sizeof name, "%s", c->name);
+    if (c && c->name[0]) copyUtf8ReplacingMissingGlyphs(nullptr, name, sizeof name, c->name);
     else                 snprintf(name, sizeof name, "Node \xC2\xB7%02X%02X", h.pubkey[0], h.pubkey[1]);
+    if (!discoverRowsReady()) break;
     memcpy(s_disc_row_key[k], h.pubkey, 32);           // snapshot this row for tap-to-add
     s_disc_row_type[k] = h.node_type;
     snprintf(s_disc_row_name[k], sizeof s_disc_row_name[k], "%s", name);
@@ -21270,27 +22904,63 @@ static void discoverBuildFeed() {
     if (age < 60) snprintf(ago, sizeof ago, "%us", (unsigned)age);
     else          snprintf(ago, sizeof ago, "%um", (unsigned)(age / 60));
     const char* direct = (h.path_len == 0) ? "  #53C06B direct#" : "";
+    // Distance (#239): the DISCOVER_RESP wire format carries no position, but a
+    // node we've also heard an advert from has lat/lon on its contact entry —
+    // pair that with our own fix. Empty badge = one of the fixes is unknown.
+    char dist[16] = "";
+    if (c && g_lv.task && g_lv.task->getGpsFix())
+      formatDistanceBadge(dist, sizeof dist,
+                          g_lv.task->getNodeLat(), g_lv.task->getNodeLon(),
+                          c->gps_lat, c->gps_lon);
+    char dist_seg[24] = "";
+    if (dist[0]) snprintf(dist_seg, sizeof dist_seg, "  %s", dist);
+    // #191: cap the name to 14 bytes (on a codepoint boundary, glyphs mapped to the
+    // feed's font) + single-letter type so the trailing age ALWAYS fits the line.
+    // recolorEscape doubles '#' so a hash in a name can't break the colour run.
+    char disp[15], disp_esc[30];
+    copyUtf8ReplacingMissingGlyphs(&g_font_12, disp, sizeof disp, name);
+    recolorEscape(disp_esc, sizeof disp_esc, disp);
     q += snprintf(buf + q, sizeof(buf) - q,
-      "#%06X %s#  %s  %ddBm %.1f%s  \xC2\xB7 %s\n",
-      (unsigned)discTypeColor(h.node_type), name, discTypeName(h.node_type),
-      (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, direct, ago);
+      "#%06X %s#  %s  %ddBm %.1f%s%s  \xC2\xB7 %s\n",
+      (unsigned)discTypeColor(h.node_type), disp_esc, discTypeShort(h.node_type),
+      (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, direct, dist_seg, ago);
   }
-  if (q == 0) snprintf(buf, sizeof buf, "#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#");
+  if (q == 0) snprintf(buf, sizeof buf, TR("#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#"));
   else if (buf[q - 1] == '\n') buf[q - 1] = '\0';
   lv_label_set_text(s_discover_feed, buf);
   if (s_discover_status)
-    lv_label_set_text_fmt(s_discover_status, "%s \xC2\xB7 %d nearby (%d rpt, %d comp)",
-      s_discover_scanning ? "Scanning\xE2\x80\xA6" : "Paused", (int)m, rpt, comp);
+    lv_label_set_text_fmt(s_discover_status, TR("%s \xC2\xB7 %d nearby (%d rpt, %d comp)"), s_discover_scanning ? "Scanning\xE2\x80\xA6" : "Paused", (int)m, rpt, comp);
+}
+
+// Sweep interval, backing off. A probe is not one packet: it is our zero-hop
+// broadcast PLUS a reply from every node that hears it, so a fixed 4 s sweep
+// with the page left open put a burst on the whole neighbourhood every four
+// seconds, for as long as it stayed open. Reported from a regional packet
+// monitor as "a ton of Control packets" that could not be attributed to any
+// node (a discovery REQ carries no sender identity, by design).
+//
+// The answer is not simply "slower": the first seconds are when the user is
+// actually looking, so those stay fast and the steady state goes quiet. Same
+// reasoning as the 15 s floor the Lua SDK enforces on wada.mesh.discover(),
+// which this used to undercut by nearly 4x while being the built-in.
+static const uint32_t kDiscSweepMs[]  = { 4000, 4000, 8000, 15000, 30000 };
+static uint8_t        s_disc_sweep_n  = 0;
+
+static uint32_t discoverSweepInterval() {
+  const uint8_t n = sizeof(kDiscSweepMs) / sizeof(kDiscSweepMs[0]);
+  return kDiscSweepMs[s_disc_sweep_n < n ? s_disc_sweep_n : (n - 1)];
 }
 
 static void discoverTimerCb(lv_timer_t* t) {
   (void)t;
   if (!s_discover_root) return;
   const uint32_t now = millis();
-  if (s_discover_scanning && (s_discover_last_scan_ms == 0 || (now - s_discover_last_scan_ms) >= 4000)) {
+  if (s_discover_scanning &&
+      (s_discover_last_scan_ms == 0 || (now - s_discover_last_scan_ms) >= discoverSweepInterval())) {
     if (the_mesh.getRemainingTxBudget() >= 300) {   // airtime gate: keep a duty-cycle cushion
       the_mesh.uiStartDiscoverScan(0);              // 0 = all node types
       s_discover_last_scan_ms = now;
+      if (s_disc_sweep_n < 250) s_disc_sweep_n++;
     }
   }
   discoverBuildFeed();
@@ -21300,7 +22970,10 @@ static void discoverTimerCb(lv_timer_t* t) {
 static void discoverScanToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   s_discover_scanning = !s_discover_scanning;
-  if (s_discover_scanning) s_discover_last_scan_ms = 0;   // resume -> sweep immediately
+  if (s_discover_scanning) {
+    s_discover_last_scan_ms = 0;   // resume -> sweep immediately...
+    s_disc_sweep_n = 0;            // ...and at the fast cadence again
+  }
   if (s_discover_btn_lbl) lv_label_set_text(s_discover_btn_lbl, s_discover_scanning ? "Stop" : "Scan");
   discoverBuildFeed();
 }
@@ -21342,6 +23015,7 @@ static void closeDiscoverPage() {
   s_discover_feed = s_discover_status = s_discover_btn_lbl = s_disc_footer = nullptr;
   s_disc_row_n = 0;
   s_discover_scanning = true;
+  s_disc_sweep_n = 0;   // a fresh look starts fast, then backs off
   if (s_apppage_close == closeDiscoverPage) {
     s_apppage_title = nullptr; s_apppage_close = nullptr;
     statusBarSetTall(false); updateGlobalStatusBar();
@@ -21368,7 +23042,7 @@ static void openDiscoverPage() {
   const int top = STATUSBAR_H + 8;
 
   s_discover_status = lv_label_create(s_discover_root);
-  lv_label_set_text(s_discover_status, "Scanning\xE2\x80\xA6");
+  lv_label_set_text(s_discover_status, TR("Scanning\xE2\x80\xA6"));
   lv_obj_set_style_text_font(s_discover_status, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_discover_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(s_discover_status, 10, top);
@@ -21381,7 +23055,8 @@ static void openDiscoverPage() {
   styleButton(btn);
   lv_obj_add_event_cb(btn, discoverScanToggleCb, LV_EVENT_CLICKED, nullptr);
   s_discover_btn_lbl = lv_label_create(btn);
-  lv_label_set_text(s_discover_btn_lbl, "Stop");
+  useChainedFont(s_discover_btn_lbl);
+  lv_label_set_text(s_discover_btn_lbl, TR("Stop"));
   lv_obj_center(s_discover_btn_lbl);
 
   lv_obj_t* mbtn = lv_btn_create(s_discover_root);          // Show on map
@@ -21390,7 +23065,8 @@ static void openDiscoverPage() {
   styleButton(mbtn);
   lv_obj_add_event_cb(mbtn, discoverShowMapCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* mlbl = lv_label_create(mbtn);
-  lv_label_set_text(mlbl, "Map");
+  useChainedFont(mlbl);
+  lv_label_set_text(mlbl, TR("Map"));
   lv_obj_center(mlbl);
 
   lv_obj_t* sc = lv_obj_create(s_discover_root);
@@ -21416,10 +23092,11 @@ static void openDiscoverPage() {
   lv_label_set_recolor(s_disc_footer, true);
   lv_obj_set_style_text_font(s_disc_footer, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(s_disc_footer, 10, STATUSBAR_H + H - 18);
-  lv_label_set_text(s_disc_footer, "#7A7F87 Wardrive: \xE2\x80\xA6#");
+  lv_label_set_text(s_disc_footer, TR("#7A7F87 Wardrive: \xE2\x80\xA6#"));
 
   the_mesh.discoverClear();
   s_discover_scanning = true;
+  s_disc_sweep_n = 0;   // a fresh look starts fast, then backs off
   s_discover_last_scan_ms = 0;                // fire the first sweep on the first tick
   discoverBuildFeed();
   s_discover_timer = lv_timer_create(discoverTimerCb, 1000, nullptr);
@@ -21427,139 +23104,12 @@ static void openDiscoverPage() {
   if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
 }
 
-static void openMonitorPage() {
-  closeMonitorPage();
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  const int H = sh - STATUSBAR_H;
-  s_monitor_root = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_monitor_root);
-  lv_obj_set_size(s_monitor_root, sw, H);
-  lv_obj_set_pos(s_monitor_root, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_monitor_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_monitor_root, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_clear_flag(s_monitor_root, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_event_cb(s_monitor_root, monitorDismissCb, LV_EVENT_CLICKED, nullptr);
-  s_mon_peak = radio_driver.getCurrentRSSI();
-
-  // Settings-subpage chrome: the GLOBAL status bar goes tall and shows "‹ RF Monitor"
-  // (tap the bar = Back). Content insets below the bar's lower row — no second header.
-  s_apppage_title = "RF Monitor";
-  s_apppage_close = closeMonitorPage;
-  statusBarSetTall(true);
-  updateGlobalStatusBar();
-  const int top = STATUSBAR_H + 8;
-
-  // ---- radio config line (static; what we're monitoring) ----
-  // Narrow (V4 portrait ~240 wide) drops the unit words + CR so it stays on one
-  // line; landscape (320, e.g. T-Deck) shows the full string.
-  const bool narrow = sw < 280;
-  NodePrefs* pr = the_mesh.getNodePrefs();
-  char cfg[88];
-  if (narrow)
-    snprintf(cfg, sizeof cfg, "%.3f  SF%u  BW%.0f  %+ddBm",
-      pr ? (double)pr->freq : 0.0, pr ? (unsigned)pr->sf : 0u,
-      pr ? (double)pr->bw : 0.0, pr ? (int)pr->tx_power_dbm : 0);
-  else
-    snprintf(cfg, sizeof cfg, "%.3f MHz  SF%u  BW%.0f  CR4/%u  %+ddBm",
-      pr ? (double)pr->freq : 0.0, pr ? (unsigned)pr->sf : 0u,
-      pr ? (double)pr->bw : 0.0,  pr ? (unsigned)pr->cr : 0u,
-      pr ? (int)pr->tx_power_dbm : 0);
-  lv_obj_t* cfgl = lv_label_create(s_monitor_root);
-  lv_label_set_text(cfgl, cfg);
-  lv_obj_set_style_text_font(cfgl, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(cfgl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(cfgl, 10, top + 2);
-
-  // ---- live channel-RSSI strip (the "scope") ----
-  // Chart is inset from the left so the dBm axis labels (which LVGL draws to the
-  // LEFT of the chart's outer edge) land in an on-screen gutter, not off-screen.
-  const int chart_x = 40;
-  const int chart_y = top + 20;
-  const int chart_w = sw - chart_x - 10;
-  const int chart_h = H * 28 / 100;                // ~28% of the page height
-  s_mon_chart = lv_chart_create(s_monitor_root);
-  lv_obj_set_size(s_mon_chart, chart_w, chart_h);
-  lv_obj_set_pos(s_mon_chart, chart_x, chart_y);
-  lv_obj_clear_flag(s_mon_chart, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(s_mon_chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_mon_chart, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_mon_chart, lv_color_hex(0x18191A), LV_PART_MAIN);
-  lv_obj_set_style_border_width(s_mon_chart, 1, LV_PART_MAIN);
-  lv_obj_set_style_radius(s_mon_chart, 6, LV_PART_MAIN);
-  lv_obj_set_style_line_color(s_mon_chart, lv_color_hex(0x1A1D1F), LV_PART_MAIN);   // grid lines
-  lv_obj_set_style_size(s_mon_chart, 0, LV_PART_INDICATOR);     // hide point dots
-  lv_obj_set_style_line_width(s_mon_chart, 2, LV_PART_ITEMS);
-  lv_chart_set_type(s_mon_chart, LV_CHART_TYPE_LINE);
-  lv_chart_set_point_count(s_mon_chart, 72);
-  lv_chart_set_update_mode(s_mon_chart, LV_CHART_UPDATE_MODE_SHIFT);
-  lv_chart_set_range(s_mon_chart, LV_CHART_AXIS_PRIMARY_Y, MON_RSSI_MIN, MON_RSSI_MAX);
-  lv_chart_set_div_line_count(s_mon_chart, 3, 0);
-  // dBm scale up the left edge: 3 labels (-20 top / -75 mid / -130 floor). The
-  // labels draw in a left gutter, so inset the plot area with pad_left and add a
-  // little top/bottom room so the end labels don't clip.
-  lv_obj_set_style_pad_left(s_mon_chart, 0, LV_PART_MAIN);
-  lv_obj_set_style_pad_top(s_mon_chart, 6, LV_PART_MAIN);
-  lv_obj_set_style_pad_bottom(s_mon_chart, 6, LV_PART_MAIN);
-  lv_obj_set_style_pad_left(s_mon_chart, 4, LV_PART_TICKS);    // gap between dBm label and tick
-  lv_obj_set_style_text_font(s_mon_chart, &g_font_12, LV_PART_TICKS);
-  lv_obj_set_style_text_color(s_mon_chart, lv_color_hex(COLOR_SUB), LV_PART_TICKS);
-  lv_obj_set_style_line_color(s_mon_chart, lv_color_hex(0x2A2E30), LV_PART_TICKS);
-  // draw_size (last arg) reserves the off-edge space for the labels so they
-  // aren't clipped; 40 covers a "-130" label + gap + tick within chart_x.
-  lv_chart_set_axis_tick(s_mon_chart, LV_CHART_AXIS_PRIMARY_Y, 4, 0, 3, 1, true, 40);
-  s_mon_nf_ser = lv_chart_add_series(s_mon_chart, lv_color_hex(0x4A5256), LV_CHART_AXIS_PRIMARY_Y);  // noise floor
-  s_mon_ser    = lv_chart_add_series(s_mon_chart, lv_color_hex(0x35C9C9), LV_CHART_AXIS_PRIMARY_Y);  // live RSSI
-  lv_chart_set_all_value(s_mon_chart, s_mon_ser,    MON_RSSI_MIN);
-  lv_chart_set_all_value(s_mon_chart, s_mon_nf_ser, MON_RSSI_MIN);
-
-  // ---- key metrics (recolour for the margin grade) ----
-  const int met_y = chart_y + chart_h + 6;
-  s_mon_metrics_lbl = lv_label_create(s_monitor_root);
-  lv_label_set_recolor(s_mon_metrics_lbl, true);
-  lv_obj_set_width(s_mon_metrics_lbl, sw - 20);   // full content width (label sits at x=10, not the chart gutter)
-  lv_obj_set_pos(s_mon_metrics_lbl, 10, met_y);
-  lv_obj_set_style_text_font(s_mon_metrics_lbl, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(s_mon_metrics_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-
-  // ---- "Recently heard" header ----
-  const int hdr_y = met_y + (narrow ? 52 : 36);   // narrow shows 3 metric lines, landscape 2
-  lv_obj_t* hdr = lv_label_create(s_monitor_root);
-  lv_label_set_text(hdr, TR("Recently heard"));
-  lv_obj_set_style_text_font(hdr, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(hdr, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(hdr, 10, hdr_y);
-
-  // ---- scrollable feed ----
-  lv_obj_t* sc = lv_obj_create(s_monitor_root);
-  lv_obj_remove_style_all(sc);
-  const int sc_y = hdr_y + 16;
-  lv_obj_set_pos(sc, 10, sc_y);
-  lv_obj_set_size(sc, sw - 20, H - sc_y - 6);
-  lv_obj_set_style_bg_opa(sc, LV_OPA_TRANSP, LV_PART_MAIN);
-  lv_obj_set_scroll_dir(sc, LV_DIR_VER);
-  lv_obj_set_scrollbar_mode(sc, LV_SCROLLBAR_MODE_AUTO);
-
-  s_mon_feed_lbl = lv_label_create(sc);
-  lv_label_set_recolor(s_mon_feed_lbl, true);
-  lv_label_set_long_mode(s_mon_feed_lbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(s_mon_feed_lbl, sw - 28);
-  lv_obj_set_pos(s_mon_feed_lbl, 0, 0);
-  lv_obj_set_style_text_font(s_mon_feed_lbl, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(s_mon_feed_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-
-  monitorBuildMetrics();
-  monitorBuildFeed();
-  s_mon_timer = lv_timer_create(monitorTimerCb, 300, nullptr);   // ~3 Hz refresh
-  lv_obj_move_foreground(s_monitor_root);
-  lv_obj_move_foreground(g_statusbar.root);   // keep the tall title bar above this page
-}
-
 // ============================================================
 // Spectrum app  (app-drawer tile -> APPACT_SPECTRUM)
 // ============================================================
-// A handheld swept-tuned spectrum analyzer built on the SX126x. While open it
-// BORROWS the radio from the mesh: main.cpp stops calling the_mesh.loop() (it
+// A handheld swept-tuned spectrum analyzer built on the mesh radio (SX126x on
+// most boards, LR1110 on the ThinkNode M9). While open it BORROWS the radio
+// from the mesh: main.cpp stops calling the_mesh.loop() (it
 // checks spectrumOwnsRadio()) so the mesh never re-arms RX on the home channel
 // while we are hopping the modem across the band. On close we re-apply the
 // mesh's saved radio params and clear the flag, so the next the_mesh.loop()
@@ -21581,11 +23131,23 @@ static void openMonitorPage() {
 // the radio while we own it.
 static const int   SPEC_BINS      = 160;     // frequency bins across the span
 static const int   SPEC_WF_ROWS   = 48;      // waterfall height (rows of history; zoomed to fit width)
-static const int   SPEC_CHUNK     = 8;       // bins swept per timer tick (~5 ms/bin -> ~42 ms UI block)
+static const int   SPEC_CHUNK     = 8;       // bins swept per timer tick (~5.5 ms/bin -> ~44 ms UI block)
+// Honest-coverage note: 24 MHz / 160 bins = 150 kHz of bin pitch, but each bin
+// listens through a 62.5 kHz channel filter — only ~42% of the span is inside a
+// filter on any sweep, so a narrowband carrier sitting between bin centers is
+// attenuated or invisible. That is the deliberate resolution-vs-coverage trade
+// of a swept analyzer at these constants: 62.5 kHz is the narrowest LoRa RBW the
+// chips offer (adjacent bins resolve crisply); an RBW >= the 150 kHz pitch would
+// close the gap but blur every peak across neighbouring bins.
 static const float SPEC_RBW_KHZ   = 62.5f;   // resolution bandwidth used for each bin read
 static const float SPEC_SPAN_MHZ  = 24.0f;   // total swept span (center ±12 MHz)
-static const float SPEC_FMIN_MHZ  = 137.0f;  // SX126x physical tuning floor (region-agnostic)
-static const float SPEC_FMAX_MHZ  = 1020.0f; // SX126x physical tuning ceiling
+// 150-960 is what BOTH in-tree drivers actually accept: SX1262::setFrequency
+// and LR1110::setFrequency each range-check exactly that (the old 137/1020
+// pair was the SX126x SILICON range, which the driver refuses anyway — bins
+// outside 150-960 silently kept the previous bin's tune and mis-attributed
+// its RSSI).
+static const float SPEC_FMIN_MHZ  = 150.0f;  // driver-enforced tuning floor (SX126x + LR11x0)
+static const float SPEC_FMAX_MHZ  = 960.0f;  // driver-enforced tuning ceiling
 static const int   SPEC_DBM_MIN   = -130;    // chart Y floor (dBm)
 static const int   SPEC_DBM_MAX   = -50;     // chart Y ceiling (dBm)
 static const int   SPEC_DWELL       = 6;     // RSSI reads per bin (peak-hold over the settle window)
@@ -21607,7 +23169,7 @@ static lv_chart_series_t* s_spec_ser      = nullptr;
 static lv_obj_t*          s_spec_wf       = nullptr;    // waterfall canvas
 static lv_color_t*        s_spec_wf_buf   = nullptr;    // PSRAM RGB565 backing buffer (SPEC_BINS x SPEC_WF_ROWS)
 static lv_obj_t*          s_spec_axis_lbl = nullptr;    // start/center/end MHz row
-static lv_obj_t*          s_spec_info_lbl = nullptr;    // "RBW … span … center … gain" readout
+static lv_obj_t*          s_spec_info_lbl = nullptr;    // "RBW … span" readout
 static lv_obj_t*          s_spec_peak_lbl = nullptr;    // live "peak −87 dBm @ 869.7" readout
 static lv_obj_t*          s_spec_scale_lbl = nullptr;   // vertical colour-scale: floor dBm (bottom)
 static lv_obj_t*          s_spec_scale_hi_lbl = nullptr;// vertical colour-scale: ceiling dBm (top)
@@ -21618,7 +23180,6 @@ static float              s_spec_step     = 0.0f;       // per-bin step (MHz)
 static int                s_spec_pos      = 0;          // next bin to sweep this pass
 static uint8_t            s_spec_sf       = 7;          // mesh SF/CR reused for the reads
 static uint8_t            s_spec_cr       = 5;
-static bool               s_spec_gain     = false;      // mesh rx_boosted_gain (for the readout)
 static int                s_spec_floor    = -120;       // smoothed noise-floor estimate (dBm) -> waterfall colour auto-scales to it
 static int                s_spec_ylo      = -130;       // dynamic trace Y range (dBm), tracks live min/max
 static int                s_spec_yhi      = -80;
@@ -21661,8 +23222,9 @@ static void spectrumUpdateFloor() {
 // Sweep a chunk of bins. Spread across several ticks so a full sweep doesn't block
 // the UI. Returns true when a full sweep just completed (caller paints a row).
 //
-// On SX126x boards (RADIO_CLASS defined) we drive the modem DIRECTLY — retune to the
-// bin, startReceive() to ARM RX, settle, then peak-hold several GET_RSSI_INST reads.
+// On boards with a raw RadioLib handle (RADIO_CLASS defined — SX126x family and the
+// M9's LR1110) we drive the modem DIRECTLY — retune to the bin, startReceive() to
+// ARM RX, settle, then peak-hold several GET_RSSI_INST reads.
 // This is the fix for the "dead trace": the wrapper path (setParams + recvRaw) left a
 // stale STATE_RX in the wrapper after the first retune, so recvRaw() never re-armed and
 // every later bin read a meaningless standby RSSI. Going direct also lets us peak-hold
@@ -21675,24 +23237,69 @@ static bool spectrumSweepChunk() {
 #if defined(RADIO_CLASS)
   for (int i = s_spec_pos; i < end; i++) {
     const float f = s_spec_start + (float)i * s_spec_step;
-    radio.setFrequency(f);                // retune (chip -> standby on the new freq)
+#if defined(HAS_THINKNODE_M9)
+    // LR1110: skipCalibration — LR1110::setFrequency(f) recalibrates image
+    // rejection whenever the retune jumps >= 20 MHz, which the 24 MHz wrap
+    // from band end back to band start does EVERY sweep, stalling the sweep
+    // for nothing. openSpectrumPage already ran one CalibImage over the whole
+    // swept span (begin()'s own calibration only reaches mesh_freq ±4 MHz), so
+    // every bin is inside a calibrated band without per-bin work.
+    // If the retune itself fails, skip the bin's reads (keep its previous
+    // value) rather than attributing the OLD frequency's RSSI to this bin.
+    if (radio.setFrequency(f, true) != RADIOLIB_ERR_NONE) continue;   // retune (chip stays in standby on the new freq)
+#else
+    // Same skip-on-failure as the LR1110 branch: a rejected retune must not
+    // attribute the old frequency's RSSI to this bin.
+    if (radio.setFrequency(f) != RADIOLIB_ERR_NONE) continue;   // retune (chip -> standby on the new freq)
+#endif
     radio.startReceive();                 // ARM RX — GET_RSSI_INST is only valid in RX
-    // The SX1262's instantaneous-RSSI register needs SEVERAL ms in RX to settle after
-    // arming: at ~1.5 ms it still reads the -127 dBm reset default, only by ~3-4 ms does
-    // it report the true channel power. So we settle, then peak-hold a handful of reads
-    // out to ~4 ms — the late (valid) reads dominate, the early -127s are discarded by
-    // the max(). A single short snapshot read here was the original "dead -127" bug.
+    // The modem's instantaneous-RSSI readout needs SEVERAL ms in RX to settle after
+    // arming (measured on the SX1262; the LR1110 behaves the same): at ~1.5 ms it
+    // still reads the reset default, only by ~3-4 ms does it report the true channel
+    // power. So we settle, then peak-hold a handful of reads out to ~4 ms — the late
+    // (valid) reads dominate, the early defaults are discarded by the max(). A single
+    // short snapshot read here was the original "dead -127" bug.
     delayMicroseconds(SPEC_SETTLE_US);
     int peak = -200;
     for (int k = 0; k < SPEC_DWELL; k++) {
+#if defined(HAS_THINKNODE_M9)
+      // LR11x0::getRSSI(false) is NOT the SX126x's cheap register read: it
+      // re-arms RX and drops to standby around EVERY call (startReceive +
+      // GetRssiInst + standby) — 6x per bin that both crawled the sweep
+      // (hundreds of extra chip commands + BUSY waits per chunk: the reported
+      // "spectrum refreshes poorly on M9") and, worse, sampled the unsettled
+      // post-arm default instead of live channel power, defeating the settle
+      // above. We hold RX ourselves through the dwell: skipReceive=true.
+      int r = (int)radio.getRSSI(false, true);
+#else
       int r = (int)radio.getRSSI(false);  // instantaneous channel RSSI (dBm)
-      if (r > peak) peak = r;
+#endif
+      // Both driver families return 0 dBm when the underlying RSSI read fails
+      // (an SPI/BUSY hiccup on this shared bus) — and 0 would win the peak-hold,
+      // paint a full-scale spike, and blow the auto-scaled Y range out for tens
+      // of sweeps (it only contracts SPEC_Y_DECAY dB per sweep). Real channel
+      // power can never plausibly reach -5 dBm at this RBW, so discard anything
+      // outside (-180, -5) instead of letting one glitch squash the trace.
+      if (r <= -5 && r >= -180 && r > peak) peak = r;
       delayMicroseconds(SPEC_READ_GAP_US);
     }
-    s_spec_rssi[i] = (int16_t)peak;
+#if defined(HAS_THINKNODE_M9)
+    // Park in STDBY_XOSC (raw mode byte 0x01), NOT the default standby(): the
+    // plain call selects STDBY_RC, which stops the TCXO on this board (it is
+    // powered from the chip's DIO3 rail), so the next bin's startReceive would
+    // re-pay the ~5 ms TCXO startup RadioLib programmed — roughly doubling the
+    // per-bin cost. XOSC standby keeps the TCXO running between bins (~5.5 ms
+    // per bin expected; re-verify with a micros() log on hardware). The raw
+    // byte is deliberate: this RadioLib defines RADIOLIB_LR11X0_STANDBY_XOSC
+    // with the SAME value as STANDBY_RC (both 0x00), so the named constant
+    // would silently select RC again. closeSpectrumPage's restore drops the
+    // chip back to a true STDBY_RC before handing it to the mesh.
+    radio.standby(0x01);
+#endif
+    if (peak > -200) s_spec_rssi[i] = (int16_t)peak;   // every read discarded -> keep the old bin
   }
 #else
-  // Non-SX126x fallback (e.g. the Tanmatsu LoRa bridge): wrapper single read.
+  // No raw radio handle (e.g. the Tanmatsu LoRa bridge): wrapper single read.
   uint8_t scratch[8];
   for (int i = s_spec_pos; i < end; i++) {
     const float f = s_spec_start + (float)i * s_spec_step;
@@ -21812,6 +23419,20 @@ static void spectrumTimerCb(lv_timer_t* t) {
 static void spectrumRestoreRadio() {
   if (!s_spectrum_active) return;     // idempotent — never restore/clear twice
   NodePrefs* p = the_mesh.getNodePrefs();
+#if defined(HAS_THINKNODE_M9)
+  // The sweep left the chip parked in STDBY_XOSC; drop to a true STDBY_RC first
+  // so the mesh gets the chip back in the standby mode RadioLib's own flow uses
+  // (and because CalibImage is only legal in RC standby). Then re-run image
+  // calibration over the mesh channel ±4 MHz — the exact band begin() had
+  // calibrated — so the mesh RX returns to its begin()-time image rejection
+  // instead of the sweep's span-wide compromise cal. setParams below normally
+  // stays under the driver's 20 MHz auto-recal trigger, so nothing else would
+  // restore it (a mesh channel within ~8 MHz of the 150/960 band edge clamps
+  // the span asymmetrically and CAN leave the last bin >20 MHz out — the
+  // auto-recal then fires redundantly before this explicit one; harmless).
+  radio.standby();
+  if (p) radio.calibrateImageRejection(p->freq - 4.0f, p->freq + 4.0f);
+#endif
   if (p) {
     radio_driver.setParams(p->freq, p->bw, p->sf, p->cr);
     radio_driver.setTxPower(p->tx_power_dbm);
@@ -22028,6 +23649,25 @@ static void remoteToggleCb(lv_event_t* e) {
   }
 }
 
+#if CAP_CONSOLE
+// ---- console bridges: unread state ------------------------------------------
+// The console shows messages as they arrive but must NOT mark them read; these
+// let it report what is waiting and clear a thread deliberately.
+int consoleHostUnreadTotal() { return g_lv.task ? g_lv.task->getUnreadTotal() : 0; }
+
+int consoleHostThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_channel) {
+  if (!g_lv.task) return 0;
+  return g_lv.task->consoleThreadAt(idx, name, cap, unread, is_channel);
+}
+bool consoleHostMarkRead(const char* name) {
+  return g_lv.task ? g_lv.task->consoleMarkThreadRead(name) : false;
+}
+int consoleHostHistoryAt(const char* thread, int back, char* sender, size_t sc,
+                         char* text, size_t tc, uint32_t* ts, bool* outgoing) {
+  return g_lv.task ? g_lv.task->consoleHistoryAt(thread, back, sender, sc, text, tc, ts, outgoing) : 0;
+}
+#endif
+
 static void remoteLandscapeCb(lv_event_t* e) {
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetRemoteLandscape(on);
@@ -22217,6 +23857,46 @@ static void openRemotePage() {
   lv_obj_add_event_cb(sw2, remoteToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_move_to_index(row, lv_obj_get_index(expl));   // toggle sits ABOVE its explanation
 
+#if CAP_CONSOLE
+  // ---- 2b. Console mode (no LVGL at all; reboots) ----
+  lv_obj_t* ch = lv_label_create(s_remote_root);
+  lv_label_set_text(ch, TR("Console mode (experimental)"));
+  lv_obj_set_style_text_font(ch, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(ch, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_width(ch, cw);
+
+  lv_obj_t* cexpl = lv_label_create(s_remote_root);
+  lv_label_set_text(cexpl, TR("EXPERIMENTAL. Boots into a text console with no graphical interface: "
+                              "type commands, read replies. Frees the memory and processor time the "
+                              "interface uses. Type 'ui' in the console to come back. Toggling reboots."));
+  lv_obj_set_style_text_font(cexpl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(cexpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(cexpl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(cexpl, cw);
+
+  lv_obj_t* crow = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(crow);
+  lv_obj_set_size(crow, cw, SC(42));
+  lv_obj_set_style_bg_color(crow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(crow, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(crow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(crow, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(crow, 12, LV_PART_MAIN);
+  lv_obj_clear_flag(crow, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* cll = lv_label_create(crow);
+  lv_label_set_text(cll, TR("Console mode"));
+  lv_obj_set_style_text_font(cll, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(cll, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(cll, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(cll, cw - 84);
+  lv_obj_align(cll, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* csw = lv_switch_create(crow);
+  lv_obj_align(csw, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (touchPrefsGetConsoleMode()) lv_obj_add_state(csw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(csw, consoleModeToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_move_to_index(crow, lv_obj_get_index(cexpl));
+#endif
+
   lv_obj_t* lrow = lv_obj_create(s_remote_root);
   lv_obj_remove_style_all(lrow);
   lv_obj_set_size(lrow, cw, SC(42));
@@ -22243,6 +23923,39 @@ static void openRemotePage() {
 
 static void openSpectrumPage() {
   closeSpectrumPage();
+#if defined(HAS_THINKNODE_M9)
+  // A mesh transmit may be ON AIR right now: sends are asynchronous (startSendRaw
+  // arms the chip and returns while the packet is still transmitting), and this
+  // callback runs right after the_mesh.loop() in the same task. Seizing the radio
+  // immediately would cut that packet off mid-air — lost packet plus a partial
+  // burst splattered across the channel. The mesh and UI share one task, so at
+  // this boundary the wrapper is in RX whenever no send is pending; if it is NOT,
+  // wait (bounded) for the transmit to finish before taking over. isSendComplete()
+  // consumes the TX-done event, so the dispatcher will later expire this packet as
+  // a timed-out send — a stats/log blemish, versus truncating it on the air (the
+  // packet double-counts: n_sent++ from the consumed TX-done plus the timeout
+  // path's logTxFail; that timeout's finishTransmit also blips the restored RX
+  // for one mesh-loop pass — all transient). The cap means a stuck flag can only
+  // delay the sweep, never hang it. Two accepted costs: this wait runs on the
+  // shared UI/mesh task, so LVGL and the keys freeze for its duration (~2.3 s at
+  // the shipping SF8/BW62.5 config, 6 s absolute cap) — tolerable because it only
+  // triggers while a packet is genuinely on air; and in the rare one-loop-pass
+  // window where a radio-error path left the wrapper IDLE (not RX, nothing
+  // pending), the wait burns the full cap for nothing — telling IDLE apart from
+  // TX-in-flight needs a wrapper accessor that doesn't exist yet; bounded and
+  // self-recovering, so tolerated. (The same truncation exists on every board,
+  // but only this port's dispatcher-recovery path has been re-validated, so the
+  // wait stays M9-only for now.)
+  if (!radio_driver.isInRecvMode()) {
+    uint32_t cap = radio_driver.getEstAirtimeFor(MAX_TRANS_UNIT) * 3 / 2;   // dispatcher's own worst-case send budget
+    if (cap > 6000) cap = 6000;
+    const uint32_t t0 = millis();
+    while (millis() - t0 < cap) {
+      if (radio_driver.isSendComplete() || radio_driver.isInRecvMode()) break;
+      delay(5);
+    }
+  }
+#endif
   // Park the buffered-receive drain task while this page drives the raw radio.
   // The acquire/release pair guarantees no drain is mid-flight when we take over.
   radio_driver.radioAcquire();
@@ -22257,11 +23970,10 @@ static void openSpectrumPage() {
   float center = pr ? pr->freq : 915.0f;
   s_spec_sf   = pr ? pr->sf : 7;
   s_spec_cr   = pr ? pr->cr : 5;
-  s_spec_gain = pr ? (pr->rx_boosted_gain != 0) : false;
   float span = SPEC_SPAN_MHZ;
   // Centre the sweep on the node's HOME frequency for ANY region (US915 / EU868 / 433 /
   // AU915 …) — never pin it to a US-ISM window, or non-US users would sweep an empty band
-  // that never includes their channel. Clamp only to the SX126x's physical tuning range.
+  // that never includes their channel. Clamp only to the radio's physical tuning range.
   float start = center - span * 0.5f;
   float stop  = center + span * 0.5f;
   if (start < SPEC_FMIN_MHZ) start = SPEC_FMIN_MHZ;
@@ -22278,6 +23990,19 @@ static void openSpectrumPage() {
   // Configure the modem ONCE for the scan: a narrow resolution bandwidth so adjacent
   // bins resolve, and boosted RX gain for sensitivity. The per-bin sweep then only
   // changes frequency, which keeps each bin fast. (Restored to mesh config on close.)
+  // Drop to standby FIRST: the chip is still in mesh RX at this point, and the
+  // datasheets describe these config commands as standby-mode commands. Whether the
+  // silicon actually rejects them from RX is unverified — but one SPI command is
+  // cheap hardening against the first sweep running on stale modem config.
+  radio.standby();
+#if defined(HAS_THINKNODE_M9)
+  // LR1110: image rejection is only calibrated where the chip was told to
+  // calibrate it — begin() covered mesh_freq ±4 MHz, NOT this ±12 MHz span. One
+  // CalibImage over the whole span (legal from the RC standby above, a few ms,
+  // once per open) makes every bin's skipCalibration retune within spec; the
+  // close path re-runs the mesh's own ±4 MHz calibration on the way out.
+  radio.calibrateImageRejection(start, stop);
+#endif
   radio.setBandwidth(SPEC_RBW_KHZ);
   radio.setRxBoostedGainMode(true);
 #endif
@@ -22290,6 +24015,12 @@ static void openSpectrumPage() {
   lv_obj_set_style_bg_opa(s_spec_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_spec_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_spec_root, spectrumDismissCb, LV_EVENT_CLICKED, nullptr);
+  // Keyboard/d-pad nav (M9, T-Deck, Tanmatsu): nothing on this page is actionable — the
+  // chart and the waterfall's scale box are plain containers, so the nav collector was
+  // highlighting them for no reason. Skip the whole subtree (same as the lock screen):
+  // the focus group stays empty and the only way out is Back (hardware key / bar chevron /
+  // Esc — all routed through the page ladder, none of which needs focus).
+  lv_obj_add_flag(s_spec_root, NAV_SKIP_FLAG);
 
   // Settings-subpage chrome: the GLOBAL status bar goes tall and shows "‹ Spectrum"
   // (tap the bar = Back). Content insets below the bar's lower row — no second header.
@@ -22412,9 +24143,11 @@ static void openSpectrumPage() {
   lv_obj_set_style_text_color(s_spec_axis_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(s_spec_axis_lbl, chart_x, wf_y + wf_disp_h + 3);
 
-  // Each bin needs ~4 ms (the SX1262 RSSI settle), so SPEC_CHUNK=5 caps the per-tick
-  // radio work at ~20 ms (smooth UI blocks); a 28 ms tick keeps ~30% idle for LVGL.
-  // A full 160-bin sweep takes ~32 ticks (~0.9 s) -> a fresh waterfall row ~every 0.9 s.
+  // Each bin costs ~5.5 ms (1.5 ms settle + ~2.4 ms of peak-hold reads + retune/RX
+  // command overhead), so SPEC_CHUNK=8 blocks the UI ~44 ms per tick; the 8 ms timer
+  // makes the ticks run essentially back-to-back, so a full 160-bin sweep is 20
+  // ticks ≈ ~1 s and the quarter-sweep waterfall rows land ~every 250 ms. (Numbers
+  // assume the between-bin XOSC standby holds the TCXO up — re-time on hardware.)
   s_spec_timer = lv_timer_create(spectrumTimerCb, 8, nullptr);    // ticks back-to-back with the sweep chunks; waterfall + trace repaint every quarter sweep (~250 ms)
   lv_obj_move_foreground(s_spec_root);
   lv_obj_move_foreground(g_statusbar.root);   // keep the tall title bar above this page
@@ -22463,32 +24196,6 @@ static void homeControlPanelCb(lv_event_t* e) {   // "Control panel" launcher ->
   if (lv_event_get_code(e) == LV_EVENT_CLICKED) toggleControlCenter();
 }
 
-// Chat-store chip for the Commander legend row (right of the TX/RX totals).
-// Deliberately terse — it shares one line with the traffic counts and must fit
-// half the chart width at g_font_12. The full story (backend, failure stage +
-// errno) stays on the About page's "Chat store" panel; this chip only has to
-// make a sick store impossible to miss from the home screen. Returns the text
-// colour to use.
-static uint32_t homeStoreChipText(char* out, size_t cap) {
-  if (s_msgs_write_fails) {                       // saves are failing right now
-    snprintf(out, cap, LV_SYMBOL_SAVE " FAIL x%u", (unsigned)s_msgs_write_fails);
-    return 0xE05252;                              // red — history is NOT landing
-  }
-  if (!s_seg_store_ready) {                       // old-format file not converted yet
-    snprintf(out, cap, LV_SYMBOL_SAVE " migrating");
-    return 0xF5A623;                              // amber
-  }
-  // Healthy: WHEN the store last saved. A clock time answers "is my history
-  // safe right now?" directly, where a size doesn't — and the segment count /
-  // byte total (plus the failure stage + errno) stay one tap away on the About
-  // page. Older than a day carries a "-<N>D" suffix so a store that quietly
-  // stopped saving yesterday can't read as fresh.
-  char when[16];
-  chatSaveStamp(when, sizeof when, s_msgs_write_ok_epoch);
-  snprintf(out, cap, LV_SYMBOL_SAVE " %s", when);
-  return COLOR_SUB;
-}
-
 static void makeHome(lv_obj_t* tab) {
   // Layout (240 wide × 282 tall): title + heartbeat + battery at top, status
   // lines, TX/RX chart in the middle, Send Advert button at the bottom.
@@ -22496,9 +24203,20 @@ static void makeHome(lv_obj_t* tab) {
   // Contacts / Settings.
   styleSurface(tab, COLOR_BG);
   lv_obj_set_style_pad_all(tab, 10, LV_PART_MAIN);
-  lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
-  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
-  lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+
+  const bool home_land = chatLandscape();
+  if (home_land) {
+    lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
+    lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+  } else {
+    // The live Expansion-Kit summary can add enough lines to push the charts
+    // and launcher row below the short portrait viewport. Let the page scroll
+    // instead of clipping those controls at the tab bar.
+    lv_obj_set_scroll_dir(tab, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+  }
 
   // Content width = screen width minus the 10-px tab padding on each side.
   // Tracks rotation (220 portrait / 300 landscape).
@@ -22506,10 +24224,21 @@ static void makeHome(lv_obj_t* tab) {
   // Landscape is short and wide: park the Send-advert button in the empty
   // right-hand strip (top-right) instead of a full-width bottom row, so the
   // TX/RX chart can use the freed vertical space and be ~2x taller.
-  const bool home_land = chatLandscape();
   // Right-hand button column. Scales with the UI size so bigger labels ("Terminal") don't clip;
   // RSTRIP is the strip the left-hand content (status text + chart + info) must stay clear of.
-  const int BTNW   = SC(100);
+#if defined(TLORA_PAGER)
+  const uint8_t pager_size = touchPrefsGetUiScale();
+  const int BTNW = pager_size >= 2 ? 136 : pager_size == 1 ? 120 : 100;
+  const int home_line_h = lv_font_get_line_height(&g_font_14);
+  const int home_state_y  = pager_size ? 2 : 4;
+  const int home_unread_y = pager_size ? home_state_y + home_line_h + 2 : 22;
+  const int home_stats_y  = pager_size ? home_unread_y + home_line_h + 2 : 40;
+#else
+  const int BTNW = SC(100);
+  const int home_state_y  = SC(4);
+  const int home_unread_y = SC(22);
+  const int home_stats_y  = SC(40);
+#endif
   const int RSTRIP = BTNW + 10;
 
   // The previous in-tab status row (heartbeat dot, MESHCOMOD title, clock,
@@ -22522,7 +24251,6 @@ static void makeHome(lv_obj_t* tab) {
   s_home_batt_pct   = nullptr;
   s_home_batt_icon  = nullptr;
   s_home_chart_sig  = nullptr;
-  s_home_store      = nullptr;   // created with the legend row below
   g_lv.home_apps    = nullptr;   // set below iff the right-hand launcher column is built (landscape)
 #if defined(HAS_EXPANSION_KIT)
   s_home_env_chart  = nullptr;
@@ -22538,7 +24266,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_label_set_text(g_lv.home_state, TR("Connecting..."));
   lv_obj_set_style_text_color(g_lv.home_state, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_lv.home_state, &g_font_14, LV_PART_MAIN);   // match the other status lines (scales with UI size)
-  lv_obj_align(g_lv.home_state, LV_ALIGN_TOP_LEFT, 0, SC(4));
+  lv_obj_align(g_lv.home_state, LV_ALIGN_TOP_LEFT, 0, home_state_y);
 
   // Unread line — its own tappable row (mail icon + live count) that jumps to
   // the Chats inbox. Kept separate from the memory line below so only the unread
@@ -22548,7 +24276,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_style_text_color(g_lv.home_unread, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_lv.home_unread, &g_font_14, LV_PART_MAIN);
   lv_obj_set_width(g_lv.home_unread, home_land ? (cw - RSTRIP) : cw);
-  lv_obj_align(g_lv.home_unread, LV_ALIGN_TOP_LEFT, 0, SC(22));
+  lv_obj_align(g_lv.home_unread, LV_ALIGN_TOP_LEFT, 0, home_unread_y);
   lv_obj_add_flag(g_lv.home_unread, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(g_lv.home_unread, 8);
   lv_obj_add_event_cb(g_lv.home_unread, homeUnreadClickedCb, LV_EVENT_CLICKED, nullptr);
@@ -22562,7 +24290,7 @@ static void makeHome(lv_obj_t* tab) {
   // In landscape, keep the status text clear of the top-right button column.
   lv_obj_set_width(g_lv.home_stats, home_land ? (cw - RSTRIP) : cw);
   lv_label_set_long_mode(g_lv.home_stats, LV_LABEL_LONG_WRAP);
-  lv_obj_align(g_lv.home_stats, LV_ALIGN_TOP_LEFT, 0, SC(40));
+  lv_obj_align(g_lv.home_stats, LV_ALIGN_TOP_LEFT, 0, home_stats_y);
   // home_dc_label/bar reserved for a future bar widget; meter for now is
   // appended into home_stats so it lives in the same scarce vertical band
   // and doesn't collide with the TX/RX chart legend at y=64.
@@ -22591,10 +24319,9 @@ static void makeHome(lv_obj_t* tab) {
   g_lv.home_env_chart = s_home_env_chart;
   lv_obj_set_size(s_home_env_chart, home_land ? (cw - RSTRIP) : cw, SC(34));
   lv_obj_align(s_home_env_chart, LV_ALIGN_TOP_LEFT, 0, SC(92));
-  lv_obj_clear_flag(s_home_env_chart, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(s_home_env_chart, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_ext_click_area(s_home_env_chart, 6);
-  lv_obj_add_event_cb(s_home_env_chart, openLocalSensorsPageCb, LV_EVENT_CLICKED, nullptr);
+  // Keep the graph passive so a portrait drag beginning here scrolls Home.
+  // The summary text directly above remains the explicit Sensors link.
+  lv_obj_clear_flag(s_home_env_chart, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
   lv_chart_set_type(s_home_env_chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(s_home_env_chart, kHomeEnvHistoryPoints);
   lv_chart_set_update_mode(s_home_env_chart, LV_CHART_UPDATE_MODE_SHIFT);
@@ -22603,10 +24330,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_chart_set_div_line_count(s_home_env_chart, 0, 0);
   lv_obj_set_style_bg_color(s_home_env_chart, lv_color_hex(COLOR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_home_env_chart, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_home_env_chart, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_border_opa(s_home_env_chart, LV_OPA_20, LV_PART_MAIN);
-  lv_obj_set_style_border_width(s_home_env_chart, 1, LV_PART_MAIN);
-  lv_obj_set_style_radius(s_home_env_chart, 6, LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_home_env_chart, 0, LV_PART_MAIN);
   lv_obj_set_style_size(s_home_env_chart, 0, LV_PART_INDICATOR);
   s_home_env_batt = lv_chart_add_series(s_home_env_chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);
   s_home_env_temp = lv_chart_add_series(s_home_env_chart, lv_color_hex(0xF5A623), LV_CHART_AXIS_SECONDARY_Y);
@@ -22629,7 +24353,9 @@ static void makeHome(lv_obj_t* tab) {
   // Expansion Kit boards push this down to make room for the env line + chart
   // (env label at SC(58), env chart at SC(92)); relayoutHomeCharts() then
   // re-flows the TX/RX legend + chart + advert button to the measured bottom.
-#if defined(HAS_EXPANSION_KIT)
+#if defined(TLORA_PAGER)
+  const int chart_y = pager_size ? home_stats_y + home_line_h + 4 : 60;
+#elif defined(HAS_EXPANSION_KIT)
   // With the env widget present, push the TX/RX chart down to clear the env
   // label (SC(58)) + env chart (SC(92)). With it hidden, sit at the normal
   // non-Expansion offset so Home matches a plain build. (relayoutHomeCharts()
@@ -22638,6 +24364,12 @@ static void makeHome(lv_obj_t* tab) {
 #else
   const int chart_y = SC(60);
 #endif
+#if defined(TLORA_PAGER)
+  const int chart_head_h = pager_size ? lv_font_get_line_height(&g_font_12) + 2 : 16;
+#else
+  const int chart_head_h = 16;
+#endif
+  const int chart_body_y = chart_y + chart_head_h;
   s_home_chart_legend = lv_label_create(tab);
   lv_label_set_text(s_home_chart_legend, "TX 0  /  RX 0");
   lv_obj_set_style_text_color(s_home_chart_legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -22653,23 +24385,6 @@ static void makeHome(lv_obj_t* tab) {
 #else
   const int chart_w = cw;
 #endif
-  // Chat-store chip: shares the legend row with the TX/RX totals, parked on the
-  // RIGHT HALF of the chart width (fixed width + right-aligned + CLIP, so it can
-  // never grow into the traffic counts on the left, at any UI scale). Not
-  // clickable — the legend owns this row's taps (signal/traffic popup).
-  s_home_store = lv_label_create(tab);
-  lv_label_set_long_mode(s_home_store, LV_LABEL_LONG_CLIP);
-  lv_obj_set_width(s_home_store, chart_w / 2);
-  lv_obj_set_style_text_align(s_home_store, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
-  lv_obj_set_style_text_font(s_home_store, &g_font_12, LV_PART_MAIN);
-  {
-    char chip[24];
-    const uint32_t col = homeStoreChipText(chip, sizeof chip);
-    lv_label_set_text(s_home_store, chip);
-    lv_obj_set_style_text_color(s_home_store, lv_color_hex(col), LV_PART_MAIN);
-  }
-  lv_obj_align(s_home_store, LV_ALIGN_TOP_LEFT, chart_w - chart_w / 2, chart_y);
-
   // Fit the chart in the remaining vertical space: content height minus the
   // tab padding, the chart's top offset, and the Send-advert button + gaps.
   // Portrait keeps the full 96 px; landscape (short screen) shrinks it so the
@@ -22677,7 +24392,7 @@ static void makeHome(lv_obj_t* tab) {
   const int home_avail = tabContentH() - 20;                 // inside 10-px pad
   // Landscape: button sits in the right column, so the chart runs to the
   // bottom (no reserved button row). Portrait: reserve the button row below.
-  int chart_h = home_avail - (chart_y + 16) - 4 - (home_land ? 0 : (8 + 36));
+  int chart_h = home_avail - chart_body_y - 4 - (home_land ? 0 : (8 + 36));
   if (chart_h > 96) chart_h = 96;
   if (chart_h < 28) chart_h = 28;
 #if CAP_LARGE_SCREEN
@@ -22707,7 +24422,7 @@ static void makeHome(lv_obj_t* tab) {
                   // lets the info card below fit all 8 rows (Battery/Uptime were clipping off)
   const int p4_btn_h   = 40;
   const int p4_btn_gap = 8;
-  const int p4_grid_y  = chart_y + 16 + chart_h + 10;
+  const int p4_grid_y  = chart_body_y + chart_h + 10;
   const int p4_grid_bottom = p4_grid_y + 3 * p4_btn_h + 2 * p4_btn_gap;
 #endif
 #else
@@ -22730,11 +24445,11 @@ static void makeHome(lv_obj_t* tab) {
   s_home_chart = home_scaled ? nullptr : lv_chart_create(tab);
   if (s_home_chart) {
     lv_obj_set_size(s_home_chart, chart_w, chart_h);
-    lv_obj_align(s_home_chart, LV_ALIGN_TOP_LEFT, 0, chart_y + 16);
+    lv_obj_align(s_home_chart, LV_ALIGN_TOP_LEFT, 0, chart_body_y);
     lv_chart_set_type(s_home_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(s_home_chart, 60);
     lv_chart_set_update_mode(s_home_chart, LV_CHART_UPDATE_MODE_SHIFT);
-    lv_chart_set_range(s_home_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 10);
+    lv_chart_set_range(s_home_chart, LV_CHART_AXIS_PRIMARY_Y, 0, s_home_chart_max_y);
     // No gridlines — keep the chart visually clean.
     lv_chart_set_div_line_count(s_home_chart, 0, 0);
     // Chart sits on pure BG (was COLOR_PANEL which still rendered as a
@@ -22790,7 +24505,7 @@ static void makeHome(lv_obj_t* tab) {
     const int info_y = p4_grid_bottom + 12;      // below the portrait launcher grid
     const int info_w = cw;                       // full width — no right button strip in portrait
 #else
-    const int info_y = chart_y + 16 + chart_h + 12;
+    const int info_y = chart_body_y + chart_h + 12;
     const int info_w = cw - RSTRIP;              // left/centre column, clear of the right button strip
 #endif
     lv_obj_t* card = lv_obj_create(tab);
@@ -22863,7 +24578,7 @@ static void makeHome(lv_obj_t* tab) {
   // Send Advert button. Portrait: full-width row below the chart. Landscape:
   // a compact button parked in the top-right strip (next to the status text),
   // which is why the chart above was allowed to run full-height.
-  const int adv_y = chart_y + 16 + chart_h + 8;
+  const int adv_y = chart_body_y + chart_h + 8;
 #if defined(HAS_TDISPLAY_P4) && CAP_LARGE_SCREEN
   (void)adv_y;   // P4 portrait-large uses the grid Ys (p4_grid_y); adv_y feeds the other layouts
 #endif
@@ -22898,7 +24613,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_add_event_cb(adv, openAdvertModalCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* adv_l = lv_label_create(adv);
   // Shorter label in the narrow landscape button + the half-width portrait button so it doesn't clip.
-  lv_label_set_text(adv_l, LV_SYMBOL_UPLOAD "  Advert");
+  lv_label_set_text(adv_l, TR(LV_SYMBOL_UPLOAD "  Advert"));
   lv_obj_set_style_text_font(adv_l, &g_font_14, LV_PART_MAIN);
   lv_obj_center(adv_l);
 
@@ -22927,7 +24642,7 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_add_event_cb(apb, homeAppsBtnCb, LV_EVENT_CLICKED, nullptr);
     g_lv.home_apps = apb;
     lv_obj_t* apl = lv_label_create(apb);
-    lv_label_set_text(apl, LV_SYMBOL_LIST "  Apps");
+    lv_label_set_text(apl, TR(LV_SYMBOL_LIST "  Apps"));
     lv_obj_set_style_text_font(apl, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(apl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_center(apl);
@@ -22984,27 +24699,27 @@ static void makeHome(lv_obj_t* tab) {
     // The accent's inverse — used for the "Apps" pop colour and the Control-panel button.
     const uint32_t inv_accent = 0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu);
 #if CAP_LARGE_SCREEN
-    make_launcher(">_  Terminal", tanBtnY(1), homeTerminalCb, 0, tan_btn_h);
+    make_launcher(TR(">_  Terminal"), tanBtnY(1), homeTerminalCb, 0, tan_btn_h);
 #if defined(HAS_TDECK_GT911)
-    make_launcher(LV_SYMBOL_DIRECTORY "  Files", tanBtnY(2), homeFilesCb, 0, tan_btn_h);
+    make_launcher(TR(LV_SYMBOL_DIRECTORY "  Files"), tanBtnY(2), homeFilesCb, 0, tan_btn_h);
     // "Apps" (opens the app drawer) pops with the negative / inverse of the theme accent.
-    g_lv.home_apps = make_launcher(LV_SYMBOL_LIST "  Apps", tanBtnY(3), homeAppsBtnCb, inv_accent, tan_btn_h);
+    g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tanBtnY(3), homeAppsBtnCb, inv_accent, tan_btn_h);
 #else
     // Real Tanmatsu (no GT911 / no Files): Apps in slot 2, Control panel fills slot 3.
-    g_lv.home_apps = make_launcher(LV_SYMBOL_LIST "  Apps", tanBtnY(2), homeAppsBtnCb, inv_accent, tan_btn_h);
-    make_launcher(LV_SYMBOL_BARS "  Control", tanBtnY(3), homeControlPanelCb, 0, tan_btn_h);   // ☰ (mirrors the CC sliders), not the settings gear
+    g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tanBtnY(2), homeAppsBtnCb, inv_accent, tan_btn_h);
+    make_launcher(TR(LV_SYMBOL_BARS "  Control"), tanBtnY(3), homeControlPanelCb, 0, tan_btn_h);   // ☰ (mirrors the CC sliders), not the settings gear
 #endif
 #else
     // T-Deck (and any other non-Tanmatsu landscape board): evenly-spread slots.
-    make_launcher(">_  Terminal", tdBtnY(1), homeTerminalCb, 0, td_btn_h);
+    make_launcher(TR(">_  Terminal"), tdBtnY(1), homeTerminalCb, 0, td_btn_h);
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
-    make_launcher(LV_SYMBOL_DIRECTORY "  Files", tdBtnY(2), homeFilesCb, 0, td_btn_h);
+    make_launcher(TR(LV_SYMBOL_DIRECTORY "  Files"), tdBtnY(2), homeFilesCb, 0, td_btn_h);
     // "Apps" (opens the app drawer) pops with the negative / inverse of the theme accent.
-    g_lv.home_apps = make_launcher(LV_SYMBOL_LIST "  Apps", tdBtnY(3), homeAppsBtnCb, inv_accent, td_btn_h);
-    make_launcher(LV_SYMBOL_SETTINGS "  Control", tdBtnY(4), homeControlPanelCb, 0, td_btn_h);
+    g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tdBtnY(3), homeAppsBtnCb, inv_accent, td_btn_h);
+    make_launcher(TR(LV_SYMBOL_SETTINGS "  Control"), tdBtnY(4), homeControlPanelCb, 0, td_btn_h);
 #else
-    g_lv.home_apps = make_launcher(LV_SYMBOL_LIST "  Apps", tdBtnY(2), homeAppsBtnCb, inv_accent, td_btn_h);
-    make_launcher(LV_SYMBOL_SETTINGS "  Control", tdBtnY(3), homeControlPanelCb, 0, td_btn_h);
+    g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tdBtnY(2), homeAppsBtnCb, inv_accent, td_btn_h);
+    make_launcher(TR(LV_SYMBOL_SETTINGS "  Control"), tdBtnY(3), homeControlPanelCb, 0, td_btn_h);
 #endif
 #endif
   }
@@ -23035,12 +24750,10 @@ static void makeChatList(lv_obj_t* tab, LvChatPanel& p, bool channel_mode, bool 
   styleSurface(tab, COLOR_BG, 0);
   lv_obj_set_style_pad_all(tab, 0, LV_PART_MAIN);
 
-  // Inbox/overview tab: the [+ add | ✓ mark-read | QR share] actions live in the
-  // global status bar, which goes DOUBLE height on this overview (see
-  // updateGlobalStatusBar / g_statusbar.inbox_*). The bar's lower row is a glass strip,
-  // so the list fills the whole tab and just INSETS its top by that row height — rows
-  // rest below the bar but scroll UNDER the glass like the chat bubbles do. (Channel
-  // detail panels get no inset.)
+  // Inbox/overview tab: the [+ add | ✓ mark-read | QR share] actions normally live in
+  // a second status-bar row, so the list needs one row of top inset. Pager puts those
+  // compact actions in the regular status row instead; reserving the old second row
+  // there leaves a full chat-row-sized hole above the first thread.
   p.list_cont = lv_list_create(tab);
   lv_obj_set_size(p.list_cont, tabContentW(), tabContentH());
   lv_obj_set_pos(p.list_cont, 0, 0);
@@ -23050,7 +24763,9 @@ static void makeChatList(lv_obj_t* tab, LvChatPanel& p, bool channel_mode, bool 
   // Inset the top so the FIRST row rests just below the tall bar (the inbox opens at the
   // top, unlike the chat which opens at the bottom). Older rows still scroll UP under the
   // glass lower row — and now read through it because the rows are a visible grey.
+#if !defined(TLORA_PAGER)
   if (inbox_combined) lv_obj_set_style_pad_top(p.list_cont, STATUSBAR_H, LV_PART_MAIN);
+#endif
   lv_obj_set_style_pad_row(p.list_cont, 1, LV_PART_MAIN);
   lv_obj_add_event_cb(p.list_cont, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
 }
@@ -23154,10 +24869,16 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   lv_obj_move_foreground(s_contacts_overflow_root);
   lv_obj_add_event_cb(s_contacts_overflow_root, contactsOverflowDismissCb, LV_EVENT_CLICKED, nullptr);
 
-  // Bigger on the 800-px Tanmatsu panel; unchanged on the smaller boards (PSC no-op).
+  // Bigger on the 800-px Tanmatsu panel. The Pager also has spare horizontal
+  // room, so give its longest action ("Auto-add settings") enough width at
+  // the larger text presets; compact boards retain the historical width.
   // Compact rows so all five buttons + title fit the T-Deck's short 240px landscape
   // screen (the 5th "Blocked list" item pushed the old 36px rows off-screen). #72.
+#if defined(TLORA_PAGER)
+  const int card_w = sw / 2;
+#else
   const int card_w = PCW(200);
+#endif
   const int btn_h = SC(30), btn_gap = SC(4), title_h = SC(22), padding = SC(8);  // SC not PSC: the 1.7x boost clipped the lower rows (Auto-add / Blocked) off-screen at Large scale
   const int rows = 5;
   int card_h = 2 * padding + title_h + rows * btn_h + (rows - 1) * btn_gap;  // reserve BOTH pad_all paddings (top+bottom) or the last row clips
@@ -23206,14 +24927,17 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, TR(label));
     lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(l, card_w - 2 * padding - 20,
+                    lv_font_get_line_height(&g_font_14));
     lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
     y += btn_h + btn_gap;
   };
-  mk(LV_SYMBOL_EYE_OPEN "  Search", contactsOverflowSearchCb, 0);
-  mk(LV_SYMBOL_LIST     "  Discovered", contactsOverflowFoundCb, 0);
-  mk(LV_SYMBOL_PLUS     "  Add contact", contactsOverflowAddCb, 0);
-  mk(LV_SYMBOL_DOWNLOAD "  Auto-add settings", contactsOverflowAutoAddCb, 0);
-  mk(LV_SYMBOL_CLOSE    "  Blocked list", contactsOverflowBlockedCb, 0);
+  mk(TR(LV_SYMBOL_EYE_OPEN "  Search"), contactsOverflowSearchCb, 0);
+  mk(TR(LV_SYMBOL_LIST     "  Discovered"), contactsOverflowFoundCb, 0);
+  mk(TR(LV_SYMBOL_PLUS     "  Add contact"), contactsOverflowAddCb, 0);
+  mk(TR(LV_SYMBOL_DOWNLOAD "  Auto-add settings"), contactsOverflowAutoAddCb, 0);
+  mk(TR(LV_SYMBOL_CLOSE    "  Blocked list"), contactsOverflowBlockedCb, 0);
 }
 
 // ============================================================
@@ -23572,7 +25296,7 @@ static lv_obj_t* ctOpenOptionSheet(const char* title){
 }
 static void openContactsSortSheet(){
   for(int i=0;i<6;++i) s_ct_filter_btns[i]=nullptr;   // the filter sheet's buttons are gone now
-  lv_obj_t* card = ctOpenOptionSheet("Sort by");
+  lv_obj_t* card = ctOpenOptionSheet(TR("Sort by"));
   // active=false here; ctSortRowsRepaint() below sets the real highlight + arrow.
   s_ct_sort_btns[0] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_AZ),         ctSortOptCb, CONTACTS_SORT_AZ,         false);
   s_ct_sort_btns[1] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_LAST_HEARD), ctSortOptCb, CONTACTS_SORT_LAST_HEARD, false);
@@ -23596,7 +25320,7 @@ static void discSortOptCb(lv_event_t* e){
   openDiscoveredModalCb(&synth);   // rebuild the Discovered list in the new order
 }
 static void openDiscSortSheet(){
-  lv_obj_t* card = ctOpenOptionSheet("Sort discovered");
+  lv_obj_t* card = ctOpenOptionSheet(TR("Sort discovered"));
   for(int i=0;i<DISC_SORT_COUNT;++i){
     const bool active=((uint8_t)i==g_disc_sort);
     // Pass the English name (ctSheetOption translates it); add the direction arrow
@@ -23615,10 +25339,10 @@ static void openContactsFilterSheet(){
   lv_obj_t* card = ctOpenOptionSheet("Filter");
   s_ct_filter_btns[0] = ctSheetOption(card, "All",            ctFilterOptCb, 0, g_lv.contacts_filter==0);
   s_ct_filter_btns[1] = ctSheetOption(card, "Repeaters",      ctFilterOptCb, 1, g_lv.contacts_filter==1);
-  s_ct_filter_btns[2] = ctSheetOption(card, "Peers",          ctFilterOptCb, 2, g_lv.contacts_filter==2);
-  s_ct_filter_btns[3] = ctSheetOption(card, "Favorites",      ctFilterOptCb, 3, g_lv.contacts_filter==3);
-  s_ct_filter_btns[4] = ctSheetOption(card, "Has location",   ctFilterOptCb, 4, g_lv.contacts_filter==4);
-  s_ct_filter_btns[5] = ctSheetOption(card, "Direct (0-hop)", ctFilterOptCb, 5, g_lv.contacts_filter==5);
+  s_ct_filter_btns[2] = ctSheetOption(card, TR("Peers"),          ctFilterOptCb, 2, g_lv.contacts_filter==2);
+  s_ct_filter_btns[3] = ctSheetOption(card, TR("Favorites"),      ctFilterOptCb, 3, g_lv.contacts_filter==3);
+  s_ct_filter_btns[4] = ctSheetOption(card, TR("Has location"),   ctFilterOptCb, 4, g_lv.contacts_filter==4);
+  s_ct_filter_btns[5] = ctSheetOption(card, TR("Direct (0-hop)"), ctFilterOptCb, 5, g_lv.contacts_filter==5);
 }
 static void openContactsFilterSheetCb(lv_event_t* e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) openContactsFilterSheet(); }
 
@@ -23674,7 +25398,7 @@ static void makeContactsTab(lv_obj_t* tab) {
     lv_obj_set_style_pad_ver(b, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(b, contactsOverflowFoundCb, LV_EVENT_CLICKED, nullptr);   // opens the Discovered list
     lv_obj_t* l = lv_label_create(b);
-    lv_label_set_text(l, LV_SYMBOL_EYE_OPEN "  Discovered");
+    lv_label_set_text(l, TR(LV_SYMBOL_EYE_OPEN "  Discovered"));
     lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
@@ -23689,7 +25413,14 @@ static void makeContactsTab(lv_obj_t* tab) {
     lv_obj_set_style_bg_color(s_ct_disc_badge, lv_color_hex(0xE0533D), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ct_disc_badge, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ct_disc_badge, lv_color_white(), LV_PART_MAIN);
+    // This is fixed-size chrome inside a 16-px pill, not semantic body text.
+    // Pager Large/Jumbo gives g_font_12 an oversized fallback line box, which
+    // clips the digits below the pill instead of centring them.
+#if defined(TLORA_PAGER)
+    lv_obj_set_style_text_font(s_ct_disc_badge, &lv_font_montserrat_12, LV_PART_MAIN);
+#else
     lv_obj_set_style_text_font(s_ct_disc_badge, &g_font_12, LV_PART_MAIN);
+#endif
     lv_obj_set_style_text_align(s_ct_disc_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(s_ct_disc_badge, 3, LV_PART_MAIN);
     lv_obj_align(s_ct_disc_badge, LV_ALIGN_RIGHT_MID, -2, 0);
@@ -23874,6 +25605,77 @@ static char           s_tile_root[16] = "";
 static fs::FS*        s_tile_fs_default   = nullptr;
 static char           s_tile_root_default[16] = "";
 
+#if defined(MULTI_TRANSPORT_COMPANION)
+// The fetch queue may contain dozens of requests, but only the request currently
+// executing can dereference s_tile_fs or own a File. A backend swap requests a
+// boundary pause, waits only for that one request, then lets the queued backlog
+// resume against the new backend. The critical section closes both races:
+// worker-start vs swap-request, and worker-finish vs the next queued request.
+static portMUX_TYPE   s_tile_backend_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool s_tile_worker_active = false;
+static volatile bool s_tile_backend_swap_requested = false;
+
+static bool tileBackendSwapTryBegin() {
+  bool ready;
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  s_tile_backend_swap_requested = true;
+  ready = !s_tile_worker_active;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+  return ready;
+}
+
+static void tileBackendSwapFinish() {
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  s_tile_backend_swap_requested = false;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+}
+
+static bool tileBackendSwapRequested() {
+  bool requested;
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  requested = s_tile_backend_swap_requested;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+  return requested;
+}
+
+static bool tileFetchWorkerActive() {
+  bool active;
+  portENTER_CRITICAL(&s_tile_backend_mux);
+  active = s_tile_worker_active;
+  portEXIT_CRITICAL(&s_tile_backend_mux);
+  return active;
+}
+
+class TileBackendWorkerLease {
+ public:
+  TileBackendWorkerLease() {
+    for (;;) {
+      portENTER_CRITICAL(&s_tile_backend_mux);
+      if (!s_tile_backend_swap_requested) {
+        s_tile_worker_active = true;
+        _held = true;
+      }
+      portEXIT_CRITICAL(&s_tile_backend_mux);
+      if (_held) break;
+      vTaskDelay(1);
+    }
+  }
+  ~TileBackendWorkerLease() { release(); }
+  void release() {
+    if (!_held) return;
+    portENTER_CRITICAL(&s_tile_backend_mux);
+    s_tile_worker_active = false;
+    portEXIT_CRITICAL(&s_tile_backend_mux);
+    _held = false;
+  }
+  TileBackendWorkerLease(const TileBackendWorkerLease&) = delete;
+  TileBackendWorkerLease& operator=(const TileBackendWorkerLease&) = delete;
+
+ private:
+  bool _held = false;
+};
+#endif
+
 // When the tile cache is on the SD fallback (s_tile_fs != the LittleFS partition),
 // every access is real microSD I/O -> light the activity LED. On the flash
 // partition this is a no-op (the LED tracks SD only).
@@ -23974,7 +25776,12 @@ static constexpr int     k_tile_fetch_queue_size = 64;   // holds a full zoomed-
 static QueueHandle_t     s_tile_fetch_queue   = nullptr;
 static TaskHandle_t      s_tile_fetch_task    = nullptr;
 static volatile bool     s_tile_fetch_dirty   = false;
-volatile uint16_t s_tile_fetch_pending = 0;   // non-static: tdeckPlayNotify reads it via extern (above)
+#if defined(TLORA_PAGER)
+// Card-detect sets this before the VFS can be unmounted. It stops producers and
+// requests a worker pause at the next request boundary, so the current SD File
+// can close while the queued backlog survives the fallback/remount handoff.
+static volatile bool     s_pager_sd_removal_pending = false;
+#endif
 static volatile uint16_t s_tile_fetch_ok      = 0;
 static volatile uint16_t s_tile_fetch_failed  = 0;
 // On-screen heartbeat: bumped each loop iteration of the fetch task so we
@@ -24325,6 +26132,16 @@ static uint8_t  s_map_zoom       = k_map_zoom_default;
 static bool     s_map_view_inited = false;  // first map open did the recenter+zoom-snap; after that, remember the user's view (issue #5)
 static bool       s_map_follow     = false; // auto-follow: recenter on self whenever the GPS coords change
 static lv_obj_t*  s_map_follow_btn = nullptr;
+#if defined(HAS_M9_KEYBOARD)
+// Map pan mode (M9): the Map key on the Map tab toggles it — arrows then pan
+// via mapNudge, Map/Back exits. Lives here with the map state because
+// mapAutoFollowTick must pause while it's active: auto-follow compares the GPS
+// fix against the MAP CENTER, so the pan itself creates the delta and follow
+// snapped the view back within one 250 ms tick of every nudge — no GPS
+// movement needed. Follow (if on) resumes, by design, the moment pan exits.
+static bool s_m9_map_pan = false;
+static bool s_m9_pan_gap_hinted = false;   // one "Wi-Fi off" hint per pan session
+#endif
 // Map zoom control style: false = slider (default, toggled by the on-map button),
 // true = a +/- button pair (issue #26). Loaded from prefs at boot; toggled in the
 // Map options popup. mapZoomControlsApply() positions/shows the right controls.
@@ -24442,6 +26259,406 @@ static int verchkFetchLatest(WiFiClient& client, HTTPClient& http) {
   http.end();
   return best;
 }
+
+#if CAP_LUA_APPS
+// ===== Lua app store: state + network side (LUA_APPS.md Phase 2) ============
+// Catalog + installs ride the SAME net worker as the version check (flag in,
+// worker services with its shared client/http, done-flag out, UI polls).
+fs::FS* luaHostAppFs();                                        // bridges (defined later in this TU)
+void    luaHostAppPath(char* out, size_t cap, const char* rel);
+
+struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; };
+// `icon` is the manifest's optional icon NAME (not a glyph): the device's JSON
+// scanner only reads quoted strings, and a name is reviewable in a store
+// submission where a raw private-use codepoint would not be. Mapped to a glyph
+// by luaAppIconGlyph(); empty = the generic app symbol.
+struct LuaInstApp { char id[20]; char name[28]; char ver[12]; char icon[12]; };
+static const int kLuaCatMax = 16, kLuaInstMax = 16, kLangCatMax = LANG_COUNT + 2, kLangInstMax = 12;
+static LuaCatApp* s_lua_cat = nullptr;      // PSRAM, allocated on first store use
+static int        s_lua_cat_n = 0;          // -1 = last fetch failed
+static LuaInstApp* s_lua_inst = nullptr;    // PSRAM (see luaStoreTablesReady)
+static int        s_lua_inst_n = 0;
+static char*      s_luacat_buf = nullptr;   // catalog JSON (PSRAM, worker-filled)
+static const size_t kLuaCatBufMax = 8192;
+static volatile bool s_luacat_request = false, s_luacat_done = false;
+static volatile bool s_luainst_request = false, s_luainst_done = false;
+static bool  s_luainst_ok = false;
+static char  s_luainst_id[20], s_luainst_ver[12];
+
+// minimal "key":"value" extractor for our own flat-JSON manifests + catalog
+static bool luaJsonField(const char* buf, const char* key, char* out, size_t cap) {
+  char pat[28]; snprintf(pat, sizeof pat, "\"%s\"", key);
+  const char* q = strstr(buf, pat);
+  if (!q) return false;
+  q = strchr(q + strlen(pat), ':');
+  if (!q) return false;
+  q++;
+  while (*q == ' ' || *q == '\t') q++;
+  if (*q != '"') return false;
+  q++;
+  size_t o = 0;
+  while (*q && *q != '"' && o + 1 < cap) out[o++] = *q++;
+  out[o] = 0;
+  return o > 0;
+}
+
+// Fetch url into a PSRAM buffer (cap'd). Returns bytes of response read, -1 on
+// failure. `body` non-null makes it a POST with that payload; null is a GET.
+int luaStoreHttpReq(WiFiClient& client, HTTPClient& http, const char* url,
+                    char* buf, size_t cap,
+                    const uint8_t* body, size_t body_len, const char* ctype) {
+  http.setReuse(false);
+  http.setConnectTimeout(8000);
+  http.setTimeout(12000);
+  http.setUserAgent("wadamesh-touch");
+  if (!http.begin(client, url)) return -1;
+  int code;
+  if (body) {
+    http.addHeader("Content-Type", (ctype && *ctype) ? ctype : "application/octet-stream");
+    code = http.POST((uint8_t*)body, body_len);
+  } else {
+    code = http.GET();
+  }
+  // Any 2xx counts: a POST that a server answers 201 or 204 succeeded, and
+  // demanding exactly 200 would fail every correctly-built upload endpoint.
+  if (code < 200 || code > 299) { http.end(); return -1; }
+  // Read by Content-Length. The old loop trusted connected() to mean "stream
+  // done" and could quit after the first TCP window (~16 KB) with the rest
+  // still in flight — a 49 KB language file came back one-third read. Now the
+  // only clean exit for a known length is receiving ALL of it; stalls get a
+  // progress-based 4 s grace (30 s absolute cap), and a short read FAILS
+  // instead of handing back a truncated buffer.
+  const int want = http.getSize();          // -1 when the server sent no length
+  auto* st = http.getStreamPtr();
+  size_t total = 0;
+  const unsigned long t0 = millis();
+  unsigned long last_progress = millis();
+  while (total < cap - 1 && (millis() - t0) < 30000) {
+    if (want > 0 && total >= (size_t)want) break;
+    int avail = st ? st->available() : 0;
+    if (avail <= 0) {
+      if (want <= 0 && (!st || (!st->connected() && !st->available()))) break;
+      if (millis() - last_progress > 4000) break;
+      vTaskDelay(pdMS_TO_TICKS(5));
+      continue;
+    }
+    int rd = st->read((uint8_t*)buf + total, min((size_t)avail, cap - 1 - total));
+    if (rd > 0) { total += rd; last_progress = millis(); }
+    else vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  http.end();
+  buf[total] = 0;
+  if (want > 0 && total < (size_t)want) return -1;   // truncated = failure, not data
+  return (int)total;
+}
+
+int luaStoreHttpGet(WiFiClient& client, HTTPClient& http, const char* url,
+                    char* buf, size_t cap) {
+  return luaStoreHttpReq(client, http, url, buf, cap, nullptr, 0, nullptr);
+}
+
+// Opaque bridge for LuaAppHost.cpp — see the long note at the top of that file. It
+// must not name the client type (WiFiClient is a real class here, an alias of
+// NetworkClient on the Tanmatsu, and a #define to C6Client on the T-Display P4), so
+// it hands us void* and this side, which owns the networking, casts them back.
+int luaStoreHttpGetOpaque(void* client, void* http, const char* url, char* buf, size_t cap) {
+  return luaStoreHttpGet(*static_cast<WiFiClient*>(client), *static_cast<HTTPClient*>(http),
+                         url, buf, cap);
+}
+int luaStoreHttpPostOpaque(void* client, void* http, const char* url, char* buf, size_t cap,
+                           const void* body, size_t body_len, const char* ctype) {
+  return luaStoreHttpReq(*static_cast<WiFiClient*>(client), *static_cast<HTTPClient*>(http),
+                         url, buf, cap, (const uint8_t*)body, body_len, ctype);
+}
+
+static void luaStoreFetchCatalogWorker(WiFiClient& client, HTTPClient& http) {
+  if (!s_luacat_buf)
+    s_luacat_buf = (char*)heap_caps_malloc(kLuaCatBufMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_luacat_buf) { return; }
+  s_luacat_buf[0] = 0;
+  luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/apps.json",
+                  s_luacat_buf, kLuaCatBufMax);
+}
+
+// Download <id>.lua + <id>.json (immutable per-version path) into /apps/.
+static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
+                                   const char* id, const char* ver) {
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return false;
+  char appsdir[48];
+  luaHostAppPath(appsdir, sizeof appsdir, "/apps");
+  fs->mkdir(appsdir);
+  static const char* const kExt[2] = { "lua", "json" };
+  const size_t kCap[2] = { 64 * 1024, 1024 };
+  for (int e = 0; e < 2; e++) {
+    char* buf = (char*)heap_caps_malloc(kCap[e], MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) return false;
+    char url[128];
+    snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/%s/%s/%s.%s", id, ver, id, kExt[e]);
+    int n = luaStoreHttpGet(client, http, url, buf, kCap[e]);
+    if (n <= 0) { heap_caps_free(buf); return false; }
+    char rel[40], path[64];
+    snprintf(rel, sizeof rel, "/apps/%s.%s", id, kExt[e]);
+    luaHostAppPath(path, sizeof path, rel);
+    File f = fs->open(path, "w");
+    if (!f) { heap_caps_free(buf); return false; }
+    size_t wr = f.write((const uint8_t*)buf, n);
+    f.close();
+    heap_caps_free(buf);
+    if (wr != (size_t)n) return false;
+  }
+  return true;
+}
+
+// ---- Language files (Store -> Languages tab): catalog + download ----------
+// Same worker/flag/poll pattern as the app catalog. A .lang file is the export
+// of one i18n table column (scripts/build/gen-lang-files.py) — or anything a
+// user writes themselves — living at <data>/lang/<code>.lang.
+struct LangCatEntry { char code[12]; char name[28]; char ver[8]; };
+static LangCatEntry* s_langcat = nullptr;   // PSRAM (see luaStoreTablesReady)
+static int s_langcat_n = 0;                  // 0 = not fetched, -1 = fetch failed
+static char* s_langcat_buf = nullptr;        // langs.json (PSRAM, worker-filled)
+static volatile bool s_langcat_request = false, s_langcat_done = false;
+static volatile bool s_langdl_request = false, s_langdl_done = false;
+static volatile bool s_langdl_ok = false;   // volatile: written on the worker, read at poll
+// Why the last language download failed, for the toast. "Download failed" on its own
+// produced a bug report with nothing to go on (#274): every failure path here is silent,
+// so the reporter could only say it never works. Written on the worker, read at poll.
+static const char* volatile s_langdl_err = nullptr;
+static char s_langdl_code[12];
+static char s_langdl_ver[8];                 // catalog ver -> immutable /lang/<ver>/ URL ("" = resolve on the worker)
+static bool s_langdl_reboot = false;         // an explicit Update of the ACTIVE language reboots on success
+static bool s_langdl_silent = false;         // boot self-heal: no user-facing toast on its result
+// Installed-apps rescan, moved off the UI thread (SD listing caused open lag).
+static volatile bool s_luascan_request = false, s_luascan_done = false;
+static void luaStoreScanInstalled(bool force = false);   // defined with the Store page
+static void luaStoreParseLangCatalog();                  // defined with the Store page
+static bool luaStoreTablesReady();                       // PSRAM tables (defined with the Store page)
+
+static void luaStoreFetchLangCatalogWorker(WiFiClient& client, HTTPClient& http) {
+  const size_t kCap = 2048;
+  if (!s_langcat_buf)
+    s_langcat_buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_langcat_buf) return;
+  s_langcat_buf[0] = 0;
+  luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/langs.json",
+                  s_langcat_buf, kCap);
+}
+
+// Chunked writer through an internal bounce buffer, tolerant of transient
+// short/zero returns (retries with backoff; four dead attempts = give up).
+static size_t langWriteAll(File& f, const uint8_t* src, size_t n) {
+  uint8_t* bounce = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!bounce) return 0;
+  size_t wr = 0;
+  int stalls = 0;
+  while (wr < n) {
+    size_t step = n - wr;
+    if (step > 4096) step = 4096;
+    memcpy(bounce, src + wr, step);
+    size_t w = f.write(bounce, step);
+    if (!w) {
+      if (++stalls > 3) break;
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
+    stalls = 0;
+    wr += w;
+  }
+  heap_caps_free(bounce);
+  return wr;
+}
+
+// Verify the temp file's on-card size, then atomically replace the target.
+static bool langVerifyInstall(fs::FS* fs, const char* tmp, const char* path, size_t n) {
+  File chk = fs->open(tmp, "r");
+  const size_t on_card = chk ? (size_t)chk.size() : 0;
+  if (chk) chk.close();
+  if (on_card != n) return false;
+  fs->remove(path);
+  return fs->rename(tmp, path);
+}
+
+// Download a language file into <data>/lang/<code>.lang. With a known catalog
+// ver the URL is the immutable /apps/lang/<ver>/<code>.lang copy — the flat path
+// sits behind a day-long edge cache, which would happily serve a stale file
+// right after a translation update (the exact trap the flasher once hit).
+static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
+                                       const char* code, const char* ver) {
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return false;
+  char dir[48];
+  luaHostAppPath(dir, sizeof dir, "/lang");
+  fs->mkdir(dir);
+  // A full 700+ row language is ~60 KB, so 128 KB was the comfortable size. But it is a
+  // CONTIGUOUS PSRAM request made while the Store page is up, and app downloads ask for
+  // only 64 KB — which is exactly why a device can install apps all day and never once
+  // get a language (#274, reported on a pager: /apps healthy and populated, /lang empty
+  // forever). Step down rather than give up, and fall back to internal heap, the same
+  // ladder the reader uses for its own big buffer.
+  size_t kCap = 128 * 1024;
+  char* buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!buf) { kCap =  96 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
+  if (!buf) { kCap =  72 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
+  if (!buf) { kCap =  72 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_8BIT); }
+  if (!buf) { s_langdl_err = "Not enough memory"; return false; }
+  char url[112];
+  if (ver && ver[0])
+    snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s/%s.lang", ver, code);
+  else
+    snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s.lang", code);
+  int n = luaStoreHttpGet(client, http, url, buf, kCap);
+  bool ok = false;
+  bool opened = false;
+  // -1 is "no 200, or the body stopped short of Content-Length". A language file is ~60 KB
+  // where an app is a few KB, so a link that drops mid-transfer fails here while app
+  // installs keep succeeding — indistinguishable from the memory case without saying so.
+  if (n <= 16) s_langdl_err = (n < 0) ? "Server or connection failed" : "Empty reply";
+  if (n > 16) {
+    // Write to a TEMP file, verify every byte landed, then rename over the real
+    // one. A truncated direct write used to leave a file whose '# ver:' header
+    // (at the TOP) already claimed the new version while the appended rows (at
+    // the END) were gone — "v4 installed", no Update offered, translations
+    // missing. Now a failed write changes nothing and Update stays available.
+    char rel[32], path[64], tmp[64];
+    snprintf(rel, sizeof rel, "/lang/%s.tmp", code);
+    luaHostAppPath(tmp, sizeof tmp, rel);
+    snprintf(rel, sizeof rel, "/lang/%s.lang", code);
+    luaHostAppPath(path, sizeof path, rel);
+    File f = fs->open(tmp, "w");
+    opened = (bool)f;
+    if (f) {
+      langWriteAll(f, (const uint8_t*)buf, (size_t)n);
+      f.close();
+      ok = langVerifyInstall(fs, tmp, path, (size_t)n);
+    }
+    if (!ok && opened) {
+      fs->remove(tmp);
+      // The write dies at the first cluster boundary while app installs to
+      // /apps succeed — the signature of a FAT chain corrupted under today's
+      // mid-write hard resets, localized to /lang. Prove it with an identical
+      // control write in /apps, then rebuild /lang from scratch and retry.
+      char ctl[64];
+      luaHostAppPath(ctl, sizeof ctl, "/apps/langtest.tmp");
+      size_t wr2 = 0;
+      File cf = fs->open(ctl, "w");
+      if (cf) { wr2 = langWriteAll(cf, (const uint8_t*)buf, (size_t)n); cf.close(); }
+      fs->remove(ctl);
+      if (wr2 == (size_t)n) {
+        // Healthy elsewhere -> nuke and recreate the /lang directory.
+        char ldir[48];
+        luaHostAppPath(ldir, sizeof ldir, "/lang");
+        File d = fs->open(ldir);
+        if (d && d.isDirectory()) {
+          File e;
+          while ((e = d.openNextFile())) {
+            char victim[80];
+            const char* nm = e.name();
+            e.close();
+            if (nm[0] == '/') snprintf(victim, sizeof victim, "%s", nm);
+            else snprintf(victim, sizeof victim, "%s/%s", ldir, nm);
+            fs->remove(victim);
+          }
+        }
+        if (d) d.close();
+        fs->rmdir(ldir);
+        fs->mkdir(ldir);
+        File rf = fs->open(tmp, "w");
+        if (rf) { langWriteAll(rf, (const uint8_t*)buf, (size_t)n); rf.close(); }
+        ok = langVerifyInstall(fs, tmp, path, (size_t)n);
+        if (!ok) fs->remove(tmp);
+      }
+    }
+  }
+  heap_caps_free(buf);
+  return ok;
+}
+
+// ---- Boot loader for the active .lang file --------------------------------
+// Reads the file into PSRAM once, parses `key<TAB>translation` lines in place
+// (\n, \t, \\ escapes; # lines are headers), sorts, and hands the table to
+// i18n. Allocations live for the session — switching languages reboots.
+static bool s_langfile_tried = false;
+static void uiLangFileBootLoad() {
+  if (s_langfile_tried) return;
+  char code[12];
+  touchPrefsGetLangFile(code, sizeof code);
+  if (!code[0]) {
+    // Migration: a built-in language picked before translations became files
+    // claims its file code now; the download self-heals below once Wi-Fi is up.
+    const uint8_t l = touchPrefsGetUiLang();
+    if (l > 0 && l < LANG_COUNT) {
+      touchPrefsSetLangFile(kUiLangCodes[l]);
+      touchPrefsGetLangFile(code, sizeof code);
+    }
+  }
+  if (!code[0]) { s_langfile_tried = true; return; }
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return;                       // storage not up yet — a later call retries
+  s_langfile_tried = true;
+  char rel[28], path[64];
+  snprintf(rel, sizeof rel, "/lang/%s.lang", code);
+  luaHostAppPath(path, sizeof path, rel);
+  File f = fs->open(path, "r");
+  if (!f) {
+    // Language chosen but its file is missing (fresh migration, or the store
+    // never finished the download): fetch it in the background. This boot runs
+    // English; the file applies from the next boot. Retries every boot.
+    snprintf(s_langdl_code, sizeof s_langdl_code, "%s", code);
+    s_langdl_ver[0] = 0;          // no catalog yet — the worker resolves the ver
+    s_langdl_reboot = false;      // background heal: never reboot under the user
+    s_langdl_silent = true;       // and never toast — it just retries next boot
+    s_langdl_done = false;
+    s_langdl_request = true;
+    ensureTileFetchTaskRunning();
+    return;
+  }
+  const size_t sz = f.size();
+  if (sz < 8 || sz > 256 * 1024) { f.close(); return; }
+  char* buf = (char*)heap_caps_malloc(sz + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!buf) { f.close(); return; }
+  size_t rd = f.read((uint8_t*)buf, sz);
+  f.close();
+  buf[rd] = 0;
+  int lines = 1;
+  for (size_t i = 0; i < rd; i++) if (buf[i] == '\n') lines++;
+  I18nPair* pairs = (I18nPair*)heap_caps_malloc(sizeof(I18nPair) * lines,
+                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!pairs) { heap_caps_free(buf); return; }
+  int n = 0;
+  char* p = buf;
+  while (p && *p) {
+    char* nl = strchr(p, '\n');
+    if (nl) { if (nl > p && nl[-1] == '\r') nl[-1] = 0; *nl = 0; }
+    {
+      // A line is a header/comment only when it has NO tab. Testing for a
+      // leading '#' instead silently dropped every key that starts with LVGL
+      // recolor markup ("#7A7F87 Wardrive: …#") — those could never translate.
+      char* tab = strchr(p, '\t');
+      if (tab) {
+        *tab = 0;
+        auto unesc = [](char* s) {           // \n \t \\ -> the real bytes, in place
+          char* w = s;
+          for (char* r = s; *r; r++) {
+            if (*r == '\\' && r[1]) { r++; *w++ = (*r == 'n') ? '\n' : (*r == 't') ? '\t' : *r; }
+            else *w++ = *r;
+          }
+          *w = 0;
+        };
+        unesc(p);
+        unesc(tab + 1);
+        if (*p && tab[1]) { pairs[n].key = p; pairs[n].val = tab + 1; n++; }
+      }
+    }
+    p = nl ? nl + 1 : nullptr;
+  }
+  if (!n) { heap_caps_free(pairs); heap_caps_free(buf); return; }
+  qsort(pairs, n, sizeof(I18nPair), [](const void* a, const void* b) {
+    return strcmp(((const I18nPair*)a)->key, ((const I18nPair*)b)->key);
+  });
+  i18nSetFileOverlay(pairs, n);
+}
+#endif  // CAP_LUA_APPS (store network side)
 
 // Watchdog-safe Wi-Fi scan. Starts an ASYNC scan and polls to completion with
 // vTaskDelay yields + a hard time cap, so the calling task never blocks long
@@ -24570,11 +26787,19 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_ota_state = 2;   // success -> the UI poll timer reboots into the new slot
 }
 
-#if defined(HAS_TDECK_GT911)
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 // Stream the app-only bin for the active update channel onto the SD card
 // (/BINS/wadamesh-beta_<N>-<stable|beta>.bin) so the Launcher can flash it —
 // the no-A/B-slot counterpart to otaWorkerRun above. Same immutable versioned
 // URL, same worker, but the bytes go to SD instead of the spare OTA slot.
+//
+// This feature is spread over SIX #if regions (state+callbacks, this worker,
+// the tile-worker dispatch below, the About button, the settings-close teardown,
+// and the sdHealthTick bail-out). They are character-for-character identical on
+// purpose. A board admitted to some but not all of them still COMPILES — the
+// worker's only caller sits behind the same gate, so nothing link-errors — and
+// then hangs at "Saving to SD… 0%" with a poll timer writing to a label the
+// teardown never nulled. Change all six or none.
 static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_sdfw_pct = 0;
   if (SD.cardType() == CARD_NONE) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "no SD card"); s_sdfw_state = 3; return; }
@@ -24596,13 +26821,36 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
   if (code != 200) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "HTTP %d", code); http.end(); s_sdfw_state = 3; return; }
   const int len = http.getSize();
   if (len <= 0) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "bad length"); http.end(); s_sdfw_state = 3; return; }
-  SD.remove(path);                       // refresh any stale copy of the same tag
+  // Free space, BEFORE writing a byte. Without this a full card fails partway
+  // through with a bare "SD write failed" — indistinguishable from the DMA-buffer
+  // short-write this path used to have, and the reported failure percentage is
+  // just however far the remaining space stretched. The tile cache is the usual
+  // culprit: it fills the card happily, and each tile is small enough to keep
+  // succeeding long after a 2.8 MB firmware image cannot fit.
+  SD.remove(path);                       // refresh any stale copy of the same tag (frees its space first)
+  {
+    const uint64_t total = SD.totalBytes(), used = SD.usedBytes();
+    const uint64_t freeb = (total > used) ? (total - used) : 0;
+    if (freeb < (uint64_t)len + (256u * 1024u)) {   // headroom for FAT metadata
+      snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "need %u MB, %u MB free",
+               (unsigned)(((uint64_t)len + 1048575u) / 1048576u),
+               (unsigned)(freeb / 1048576u));
+      http.end(); s_sdfw_state = 3; return;
+    }
+  }
   File f = SD.open(path, FILE_WRITE);
   if (!f) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD open failed"); http.end(); s_sdfw_state = 3; return; }
-  // Copy buffer off the worker's ~8 KB stack: PSRAM preferred, small DRAM fallback.
-  size_t bufsz = 8192;
-  uint8_t* buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (!buf) { bufsz = 2048; buf = (uint8_t*)malloc(bufsz); }
+  // The copy buffer MUST be internal DMA-capable RAM, NOT PSRAM. f.write() hands
+  // the pointer down to SD/SPI, which DMAs from it; a PSRAM source is not reliably
+  // DMA-capable, so the write commits fewer bytes than asked and the transfer dies
+  // at a random offset — this is the "SD write failed" at 1-7% that three T-Decks
+  // reported, and it has been broken since the feature landed in beta_36. The tile
+  // cache never hit it because it copies through a 1 KB *stack* buffer; the .lang
+  // installer did hit it and is fixed the same way (see langWriteAll).
+  // Do NOT "optimise" this back onto PSRAM to save internal heap.
+  size_t bufsz = 4096;
+  uint8_t* buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+  if (!buf) { bufsz = 1024; buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_DMA | MALLOC_CAP_8BIT); }
   if (!buf) { f.close(); http.end(); snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "out of memory"); s_sdfw_state = 3; return; }
   auto* st = http.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
   int received = 0;
@@ -24622,11 +26870,30 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
       continue;
     }
     last_data = millis();
-    if ((int)f.write(buf, (size_t)n) != n) {
+    // A busy card can legitimately commit a short write; push the remainder
+    // rather than declaring failure on the first one (four dead attempts in a
+    // row means the card really is gone).
+    int put = 0, stalls = 0;
+    while (put < n) {
+      const size_t w = f.write(buf + put, (size_t)(n - put));
+      if (!w) {
+        if (++stalls > 3) break;
+        vTaskDelay(pdMS_TO_TICKS(50));
+        continue;
+      }
+      stalls = 0;
+      put += (int)w;
+    }
+    if (put != n) {
       snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD write failed"); ok = false; break;
     }
     received += n;
     s_sdfw_pct = (int)((uint64_t)received * 100 / (uint64_t)len);
+    // Feed the IDLE task every chunk. read()'s internal yield only runs equal-
+    // priority tasks, and a ~3 MB download over a fast link spins this loop hot
+    // for long enough to starve the task watchdog — the same trap the tile
+    // fetcher documents a few hundred lines down.
+    vTaskDelay(1);
   }
   free(buf);
   f.close();
@@ -24712,9 +26979,64 @@ static void tileFetchTaskFn(void* arg) {
       s_verchk_done = true;
       continue;
     }
-#if CAP_SD
+#if CAP_LUA_APPS
+    // Lua app store: catalog fetch + app install (LUA_APPS.md Phase 2).
+    if (s_luacat_request) {
+      s_luacat_request = false;
+      luaStoreFetchCatalogWorker(client, http);
+      s_luacat_done = true;
+      continue;
+    }
+    if (s_luainst_request) {
+      s_luainst_request = false;
+      s_luainst_ok = luaStoreDownloadWorker(client, http, s_luainst_id, s_luainst_ver);
+      s_luainst_done = true;
+      continue;
+    }
+    if (s_luascan_request) {
+      s_luascan_request = false;
+      luaStoreScanInstalled(true);           // SD listing off the UI thread
+      s_luascan_done = true;
+      continue;
+    }
+    if (s_langcat_request) {
+      s_langcat_request = false;
+      luaStoreFetchLangCatalogWorker(client, http);
+      s_langcat_done = true;
+      continue;
+    }
+    if (s_langdl_request) {
+      s_langdl_request = false;
+      if (!s_langdl_ver[0]) {
+        // Boot self-heal has no catalog yet — fetch it here so the download can
+        // use the immutable versioned URL (falls back to the flat path if not).
+        luaStoreFetchLangCatalogWorker(client, http);
+        luaStoreParseLangCatalog();
+        for (int i = 0; i < s_langcat_n; i++)
+          if (strcmp(s_langcat[i].code, s_langdl_code) == 0) {
+            snprintf(s_langdl_ver, sizeof s_langdl_ver, "%s", s_langcat[i].ver);
+            break;
+          }
+      }
+      s_langdl_err = nullptr;   // fresh attempt: do not report the previous one's reason
+      s_langdl_ok = luaStoreLangDownloadWorker(client, http, s_langdl_code, s_langdl_ver);
+      if (!s_langdl_ok && !s_langdl_err) s_langdl_err = "Could not write to storage";
+      s_langdl_done = true;
+      continue;
+    }
+    {
+      extern bool luaNetWorkerPending();
+      extern void luaNetWorkerService(void* client, void* http);
+      if (luaNetWorkerPending()) { luaNetWorkerService(&client, &http); continue; }
+    }
+#endif
+#if CAP_SD || defined(TLORA_PAGER)
     // microSD usage for the About page — the FAT scan runs here, off the UI thread.
     if (s_sdinfo_request) {
+      // Publish busy before clearing request so the loop task never observes a
+      // false/false gap and tears down the VFS underneath totalBytes/usedBytes.
+      s_sdinfo_busy = true;
+      __sync_synchronize();
       s_sdinfo_request = false;
       if (SD.cardType() != CARD_NONE) {
         const uint64_t t = SD.totalBytes(), u = SD.usedBytes();
@@ -24723,6 +27045,7 @@ static void tileFetchTaskFn(void* arg) {
         s_sdinfo_ok = false;
       }
       s_sdinfo_done = true;
+      s_sdinfo_busy = false;
       continue;
     }
 #endif
@@ -24733,7 +27056,7 @@ static void tileFetchTaskFn(void* arg) {
       otaWorkerRun(client, http);
       continue;
     }
-#if defined(HAS_TDECK_GT911)
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
     // SD firmware download for Launcher installs (user-initiated from About).
     if (s_sdfw_request) {
       s_sdfw_request = false;
@@ -24744,16 +27067,26 @@ static void tileFetchTaskFn(void* arg) {
 #endif
     // Wi-Fi scan (user-initiated from the Network tab / setup wizard). Blocking
     // here on the Wi-Fi core, not the UI thread. Mirrors the CLI `wifi scan`.
-    if (s_wifiscan_request) {
-      s_wifiscan_request = false;
+    if (__atomic_exchange_n(&s_wifiscan_request, false, __ATOMIC_ACQ_REL)) {
       s_wifiscan_count = 0;
       // Never bring the Wi-Fi driver up from here when BLE owns the radio (fresh device
       // on BLE => Bluedroid holds the internal heap). WiFi.mode(STA)/esp_wifi_init would
       // then OOM-panic (BLE-vs-Wi-Fi mutex, see main.cpp). wantsWifi() mirrors the boot
       // transport choice: true only when Wi-Fi is the active transport.
       if (!wifiConfigWantsWifi()) { s_wifiscan_done = true; continue; }
+#if defined(TLORA_PAGER)
+      // Cold STA allocation is order-sensitive with NimBLE on the Pager and is
+      // owned exclusively by main.cpp. If the driver disappeared after the UI
+      // released this request, fail the sweep instead of initializing it here.
+      if ((WiFi.getMode() & WIFI_MODE_STA) == 0 || wifiConfigPagerWifiBlocksBle()) {
+        s_wifiscan_done = true;
+        continue;
+      }
+      vTaskDelay(pdMS_TO_TICKS(40));
+#else
       if ((WiFi.getMode() & WIFI_MODE_STA) == 0) { WiFi.mode(WIFI_STA); vTaskDelay(pdMS_TO_TICKS(180)); }
       else                                        { vTaskDelay(pdMS_TO_TICKS(40)); }
+#endif
       // One bounded, yielding async pass — the stable beta_19 scan. NEVER touch WiFi
       // state (disconnect/begin/eraseap) from this worker: it races main.cpp's wifi
       // state machine and wedges the radio (a hard lesson). Scanning while associated
@@ -24794,9 +27127,14 @@ static void tileFetchTaskFn(void* arg) {
       s_tile_fetch_last_wr = 'W';
       ++s_tile_fetch_failed;
       tileFetchForget(req.z, req.x, req.y);   // transient — re-arm for retry once Wi-Fi is back (#20)
-      if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+      tileFetchPendingDec();
       continue;
     }
+
+    // Serialize only the request that can actually touch the cache backend.
+    // A swap request pauses here between Files; queued requests remain intact
+    // and resume against the newly-selected filesystem after the pointer moves.
+    TileBackendWorkerLease backend_lease;
 
     // Capture the active map style ONCE per fetch so the cache path and the
     // upstream URL can't disagree if the user toggles topo mid-download (both
@@ -24823,7 +27161,15 @@ static void tileFetchTaskFn(void* arg) {
         vf.close();
         if (mr == 3 && m[0] == 0xFF && m[1] == 0xD8 && m[2] == 0xFF) {
           ++s_tile_fetch_ok;                         // already on disk + valid -> skip the re-download
-          if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+#if defined(HAS_THINKNODE_M9)
+          // A visible tile gets queued when its READ was transiently blocked
+          // (SD fail-note window, PSRAM pressure) even though it's on disk.
+          // Skipping WITHOUT arming the repaint left it blank until the next
+          // manual pan ("one pan behind"). Visible-zoom only, so draining a
+          // zoom-pack backlog doesn't fire spurious re-renders.
+          if (req.z == s_map_zoom) s_tile_fetch_dirty = true;
+#endif
+          tileFetchPendingDec();
           continue;
         }
         tileCacheRemove(path_jpg);   // present but unreadable/short/bad -> fall through and re-download
@@ -24856,7 +27202,7 @@ static void tileFetchTaskFn(void* arg) {
         s_tile_fetch_last_wr = 'H';
         ++s_tile_fetch_failed;
         tileFetchForget(req.z, req.x, req.y);
-        if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+        tileFetchPendingDec();
         continue;
       }
     }
@@ -24867,7 +27213,7 @@ static void tileFetchTaskFn(void* arg) {
       s_tile_fetch_last_wr = 'S';
       ++s_tile_fetch_failed;
       tileFetchForget(req.z, req.x, req.y);   // transient — retry after space frees (#20)
-      if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+      tileFetchPendingDec();
       continue;
     }
 
@@ -24906,7 +27252,11 @@ static void tileFetchTaskFn(void* arg) {
       s_tile_fetch_step = 'd';
       s_tile_fetch_last_wr = 'e';                  // HTTP error (code shown as "http" on the map)
     }
-    if (code == HTTP_CODE_OK) {
+    bool sd_cache_available = true;
+#if defined(TLORA_PAGER)
+    sd_cache_available = !(s_pager_sd_removal_pending && s_tile_fs == &SD);
+#endif
+    if (code == HTTP_CODE_OK && sd_cache_available) {
       s_tile_fetch_step = 'r';
       int content_len = http.getSize();
       // Sanity cap — refuse anything > 100 KB. Tiles are typically 10-30 KB.
@@ -24980,7 +27330,10 @@ static void tileFetchTaskFn(void* arg) {
     // remains and the device reboots.
     http.end();
     client.stop();
-    if (s_tile_fetch_pending > 0) --s_tile_fetch_pending;
+    tileFetchPendingDec();
+    // No cache/File access follows. Release before the 500 ms rate-limit delay
+    // so a lifecycle handoff waits for I/O, not an unrelated pacing sleep.
+    backend_lease.release();
 
     if (wrote) {
       WIRE_DBG("[TILE]  -> wrote %s\n", path_jpg);
@@ -25123,17 +27476,19 @@ static bool ensureHistFlushTaskRunning() {
 // tile was queued recently. Called from renderMapTiles after a SPIFFS
 // miss; the actual fetch happens off-thread.
 static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
-  // microSD-tile mode: fetch missing tiles only when the cache lives ON the card
-  // (s_tile_fs == &SD) — then downloads merge into the SD library (#20). Without an
-  // SD-backed cache, stay read-only/offline as before. (WiFi-down guard below still
-  // keeps it fully offline when there's no link.) SD exists only on the T-Deck build;
-  // elsewhere s_tiles_from_sd is always false, so the simple guard is equivalent.
-  // The SD-pack offline mode is OSM-only; topo has no SD packs, so it always
-  // fetches from the proxy regardless of the microSD-tiles setting.
-#if CAP_SD
-  if (s_map_style == 0 && s_tiles_from_sd && s_tile_fs != &SD) return;
+  // Boards with a microSD backend fetch whenever SOME cache is mounted, and the
+  // destination follows whatever s_tile_fs currently points at: the card in
+  // microSD-tile mode (downloads merge into the SD library, #20), or the
+  // internal cache while that card is absent, so maps stay online through the
+  // fallback until it returns. Boards without one keep the plain offline guard:
+  // no SD packs exist there, so microSD-tile mode can only mean "don't fetch".
+#if CAP_SD || defined(TLORA_PAGER)
+  if (!s_tiles_fs_ready || !s_tile_fs) return;
 #else
   if (s_map_style == 0 && s_tiles_from_sd) return;
+#endif
+#if defined(TLORA_PAGER)
+  if (s_pager_sd_removal_pending && s_tile_fs == &SD) return;
 #endif
   if (WiFi.status() != WL_CONNECTED) return;
   if (tileFetchSeen(z, x, y)) return;
@@ -25148,9 +27503,13 @@ static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
   if (!ensureTileFetchTaskRunning()) return;
   if (!s_tile_fetch_queue) return;
   TileFetchReq req = {z, x, y};
+  // Publish the lifecycle count before the queue item. Otherwise the worker can
+  // dequeue and open an SD File before the producer increments the count.
+  tileFetchPendingInc();
   if (xQueueSend(s_tile_fetch_queue, &req, 0) == pdTRUE) {
     tileFetchMarkSeen(z, x, y);    // only remember it once it's truly queued
-    ++s_tile_fetch_pending;
+  } else {
+    tileFetchPendingDec();
   }
 }
 
@@ -25253,8 +27612,10 @@ static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len, int* out_w
 // function just reads bytes — decode happens later in
 // decodeJpegToRgb565 (which is a misnomer now; it handles both).
 static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
-                         uint8_t** out_data, size_t* out_len) {
+                         uint8_t** out_data, size_t* out_len,
+                         bool* out_repairable_cache) {
 #if defined(ESP32)
+  if (out_repairable_cache) *out_repairable_cache = false;
   // Format support:
   //   • JPEG (.jpg)  — decoded by SJPG/TJpgDec straight to RGB565 in stripes (cheap).
   //                    The LittleFS online cache stores ONLY .jpg (the tiles.wadamesh.com
@@ -25267,8 +27628,8 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   char path[48];
   snprintf(path, sizeof(path), "%s/%u/%ld/%ld.jpg",
            mapTileRoot(), (unsigned)z, (long)x, (long)y);
-#if CAP_SD
-  if (s_tiles_from_sd && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
+#if CAP_SD || defined(TLORA_PAGER)
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
     // Tile source = microSD: read straight off the card (fully offline, no server fetch).
     if (s_sd_fail_note_ms) return false;   // card suspected dead — don't stack per-tile SPI timeouts (sdHealthTick arbitrates)
     // Mounted check only — a render loop must never walk the multi-second
@@ -25280,11 +27641,25 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     // Prefer the Meshtastic/MeshCore standard layout /maps/osm/{z}/{x}/{y}.png
     // (decoded via lodepng); fall back to the legacy /tiles/{z}/{x}/{y}.jpg.
     char ppath[56];
-    snprintf(ppath, sizeof(ppath), "/maps/osm/%u/%ld/%ld.png", (unsigned)z, (long)x, (long)y);
-    File fsd = SD.open(ppath, FILE_READ);
-    if (!fsd) {   // some tile packs name the extension upper-case (.PNG)
-      snprintf(ppath, sizeof(ppath), "/maps/osm/%u/%ld/%ld.PNG", (unsigned)z, (long)x, (long)y);
-      fsd = SD.open(ppath, FILE_READ);
+    // Directory case matters here even though FAT is nominally case-insensitive: what
+    // resolves depends on the card's long-filename entries and the FATFS build, and we
+    // were only ever asking for the lower-case spelling. Meanwhile our OWN card
+    // bootstrap creates "/MAPS" and the README we write onto the card says "MAPS/", so
+    // a user who followed our instructions to the letter could end up with a directory
+    // the loader never looked in. Reported by w7aaf via pisti87 (#286), who could not
+    // reproduce it on his own card — which is exactly the shape of a case-resolution
+    // difference rather than a wrong path.
+    //
+    // Ask for both spellings, upper first since that is the one we create.
+    File fsd;
+    static const char* const kMapRoots[2] = { "/MAPS", "/maps" };
+    static const char* const kPngExt[2]   = { "png", "PNG" };
+    for (int r = 0; r < 2 && !fsd; ++r) {
+      for (int e = 0; e < 2 && !fsd; ++e) {
+        snprintf(ppath, sizeof(ppath), "%s/osm/%u/%ld/%ld.%s",
+                 kMapRoots[r], (unsigned)z, (long)x, (long)y, kPngExt[e]);
+        fsd = SD.open(ppath, FILE_READ);
+      }
     }
     // Plain /tiles/<z>/<x>/<y>.{png,PNG} — a PNG pack dropped straight into /tiles/
     // (OSM's native format), not the /maps/osm layout. Decoded via lodepng like the
@@ -25297,7 +27672,15 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
       snprintf(ppath, sizeof(ppath), "/tiles/%u/%ld/%ld.PNG", (unsigned)z, (long)x, (long)y);
       fsd = SD.open(ppath, FILE_READ);
     }
-    if (!fsd) fsd = SD.open(path, FILE_READ);   // legacy /tiles/<z>/<x>/<y>.jpg
+    // /tiles/<z>/<x>/<y>.jpg is the WRITABLE download cache (where the fetcher
+    // merges Wi-Fi tiles into the library), not a read-only pack — track that so
+    // a corrupt one can be dropped and re-fetched below. The /maps/osm and PNG
+    // legs above are user-supplied packs and must never be removed.
+    bool sd_writable_cache = false;
+    if (!fsd) {
+      fsd = SD.open(path, FILE_READ);
+      sd_writable_cache = (bool)fsd;
+    }
     if (!fsd) { sdReadFailedCardDead(); return false; }   // missing tile (cheap, silent) vs dead card (stamp + short-circuit)
     const size_t szsd = fsd.size();
     if (szsd == 0 || szsd > 256 * 1024) { fsd.close(); return false; }   // PNG tiles run larger than JPEG
@@ -25306,6 +27689,22 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     const size_t nsd = fsd.read(bufsd, szsd);
     fsd.close();
     if (nsd != szsd) { lvglPsramFree(bufsd); sdReadFailedCardDead(); return false; }   // short read mid-tile = card died under us
+    // A garbled/partial download in the writable cache decodes to a blank/half
+    // tile and, because the decode failure path does not re-queue, stuck there
+    // until a manual "Reload visible tiles". Drop it so the render miss below
+    // re-queues a fresh fetch — same contract as the generic cache path, and
+    // still never applied to the read-only packs.
+    if (sd_writable_cache &&
+        (nsd < 4 || bufsd[0] != 0xFF || bufsd[1] != 0xD8 || bufsd[2] != 0xFF ||
+         bufsd[nsd - 2] != 0xFF || bufsd[nsd - 1] != 0xD9)) {
+      lvglPsramFree(bufsd);
+      SD.remove(path);
+#if defined(MULTI_TRANSPORT_COMPANION)
+      tileFetchForget(z, x, y);
+#endif
+      return false;
+    }
+    if (out_repairable_cache) *out_repairable_cache = sd_writable_cache;
     *out_data = bufsd; *out_len = szsd;
     return true;
   }
@@ -25339,19 +27738,26 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     n += (size_t)r;
   }
   f.close();
-  // Reject a cached tile whose header isn't a JPEG SOI — a garbled/partial download that slipped
-  // through decodes to a blank/half "twilight zone" tile otherwise. Drop it from the writable online
-  // cache so the render miss re-queues a fresh fetch; never touch read-only SD packs (can't re-fetch).
-  if (n < 3 || buf[0] != 0xFF || buf[1] != 0xD8 || buf[2] != 0xFF) {
+  // Reject a cached tile without both JPEG framing markers — a garbled/partial
+  // download can retain its SOI while losing the EOI and otherwise decode to a
+  // blank/half "twilight zone" tile. This generic path is the writable /tiles
+  // download cache; standard read-only /maps/osm packs return above.
+  if (n < 4 || buf[0] != 0xFF || buf[1] != 0xD8 || buf[2] != 0xFF ||
+      buf[n - 2] != 0xFF || buf[n - 1] != 0xD9) {
     lvglPsramFree(buf);
-    if (!s_tiles_from_sd) tileCacheRemove(path);
+    tileCacheRemove(path);
+#if defined(MULTI_TRANSPORT_COMPANION)
+    tileFetchForget(z, x, y);
+#endif
     return false;
   }
+  if (out_repairable_cache) *out_repairable_cache = true;
   *out_data = buf;
   *out_len  = n;
   return true;
 #else
   (void)z; (void)x; (void)y; (void)out_data; (void)out_len;
+  (void)out_repairable_cache;
   return false;
 #endif
 }
@@ -25375,26 +27781,78 @@ static void freeMapTiles() {
 //     outage are retried instead of being remembered as in-flight forever
 //   * re-renders immediately when the map is the visible tab
 static void mapNoteStorageChanged() {
-#if CAP_SD
-  if (s_sd_mounted && !s_tiles_fs_ready) {
-    // No tile backend was resolved at boot; the card can serve as one now
-    // (same layout the boot fallback uses: SD ROOT /tiles/<z>/<x>/<y>).
-    s_tile_fs        = &SD;
-    s_tile_root[0]   = '\0';
+#if CAP_SD || defined(TLORA_PAGER)
+  // A fetch snapshots its paths but still dereferences the global backend for
+  // every filesystem operation of the request, so the pointer may only move at
+  // a worker request boundary. The ownership handshake pauses dequeueing there;
+  // queued downloads survive and resume on the new backend. When the current
+  // request is still active, sdHealthTick retries the swap at the first safe
+  // boundary — but the invalidation below still has to run now, or a swapped
+  // card keeps showing the previous card's tiles with the dedup ring suppressing
+  // the re-fetch until that retry lands.
+  // Whether the backend actually has to move. Also decides whether a deferral
+  // leaves the pointer stale: most callers (a remount that changed nothing, a
+  // reinsert while already on the card) need no swap at all, and those must
+  // still repaint below even while a fetch is in flight.
+  const bool wants_teardown = !s_sd_mounted && s_tile_fs == &SD;
+  const bool wants_adopt    = s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready);
+  const bool wants_swap     = wants_teardown || (wants_adopt && s_tile_fs != &SD);
+  const bool may_swap       = !wants_swap || tileBackendSwapTryBegin();
+  const bool swap_deferred  =
+      !may_swap && wants_swap;
+  if (may_swap && wants_teardown) {
+    if (s_tile_fs_default && s_tile_fs_default != &SD) {
+      // SD tile mode lost its card, but the dedicated LittleFS cache is still
+      // mounted. Keep maps online instead of disabling that healthy fallback.
+      s_tile_fs = s_tile_fs_default;
+      strlcpy(s_tile_root, s_tile_root_default, sizeof(s_tile_root));
+      s_tiles_fs_ready = true;
+    } else {
+      // Launcher-style partition table: SD was the only tile backend.
+      s_tile_fs = nullptr;
+      s_tile_root[0] = '\0';
+      s_tile_fs_default = nullptr;
+      s_tile_root_default[0] = '\0';
+      s_tiles_fs_ready = false;
+    }
+  } else if (may_swap && wants_adopt) {
+    // Reinserted while SD mode is selected, or no internal backend exists.
+    // Preserve an existing LittleFS default so toggling SD mode off remains a
+    // valid fallback after any number of remove/reinsert cycles.
+    s_tile_fs = &SD;
+    s_tile_root[0] = '\0';
+    if (!s_tile_fs_default) {
+      s_tile_fs_default = &SD;
+      s_tile_root_default[0] = '\0';
+    }
     s_tiles_fs_ready = true;
   }
+  // Only a real swap request acquired (or extended) the pause above. A no-op
+  // notification must not clear a pause owned by card removal/remount or the
+  // health probe while that lifecycle operation is still draining consumers.
+  if (wants_swap && may_swap) tileBackendSwapFinish();
 #endif
   for (int i = 0; i < k_tile_fetch_dedup_size; ++i) s_tile_fetch_dedup[i] = 0;
   s_tile_fetch_dedup_head = 0;
   freeMapTiles();
+#if CAP_SD || defined(TLORA_PAGER)
+  // Drop the stale tiles above either way, but do not paint through a pointer
+  // we already know is wrong — that would probe &SD for a card that is gone and
+  // pay a full SPI timeout per tile on the loop task. Only skip when a swap was
+  // genuinely wanted and deferred; sdHealthTick repaints once it lands. When no
+  // swap was needed the backend is correct, so fall through and repaint now.
+  if (swap_deferred) return;
+#endif
   if (g_lv.tabview && lv_tabview_get_tab_act(g_lv.tabview) == MAP_TAB_INDEX) renderMapTiles();
 }
 
 #if defined(ESP32)
 // Is *some* tile source available to probe at all? (SD pack or LittleFS /tiles.)
 static bool mapTileSourceReady() {
-#if CAP_SD
-  if (s_tiles_from_sd) return true;
+#if CAP_SD || defined(TLORA_PAGER)
+  // Mirror loadTileJpeg's source selection: SD packs are OSM-only, so topo
+  // reads the generic /tiles/topo cache and its readiness is s_tiles_fs_ready.
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) return s_sd_mounted;
 #endif
   return s_tiles_fs_ready;
 }
@@ -25404,15 +27862,20 @@ static bool mapTileSourceReady() {
 // online cache), so an SD /maps/osm offline pack was invisible to zoom — the loader
 // drew its tiles but the buttons reported "Max/Min zoom for this pack" offline.
 static bool tileExistsAt(uint8_t z, long x, long y) {
-#if CAP_SD
-  if (s_tiles_from_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
+#if CAP_SD || defined(TLORA_PAGER)
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
     if (s_sd_fail_note_ms) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
     if (!s_sd_mounted) return false;       // never ladder from the zoom guard (see loadTileJpeg)
     char p[56];
-    snprintf(p, sizeof p, "/maps/osm/%u/%ld/%ld.png", (unsigned)z, x, y);
-    if (SD.exists(p)) return true;
-    snprintf(p, sizeof p, "/maps/osm/%u/%ld/%ld.PNG", (unsigned)z, x, y);   // upper-case packs
-    if (SD.exists(p)) return true;
+    // Both directory spellings, upper first: our own card bootstrap creates "/MAPS"
+    // while this only ever probed "/maps" (#286). Must stay in step with the loader in
+    // tileFromSd(), or zoom levels would advertise as reachable and then not draw.
+    for (const char* root : { "/MAPS", "/maps" }) {
+      for (const char* ext : { "png", "PNG" }) {
+        snprintf(p, sizeof p, "%s/osm/%u/%ld/%ld.%s", root, (unsigned)z, x, y, ext);
+        if (SD.exists(p)) return true;
+      }
+    }
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.png", (unsigned)z, x, y);      // PNG pack in /tiles/
     if (SD.exists(p)) return true;
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.PNG", (unsigned)z, x, y);
@@ -25622,7 +28085,9 @@ static void renderMapTiles() {
     if (!dst->rgb565) { ++n_missing; continue; }   // no buffer available this pass
     uint8_t* jpeg = nullptr;
     size_t   jlen = 0;
-    if (!loadTileJpeg(s_map_zoom, wanted[i].tx, wanted[i].ty, &jpeg, &jlen)) {
+    bool repairable_cache = false;
+    if (!loadTileJpeg(s_map_zoom, wanted[i].tx, wanted[i].ty,
+                      &jpeg, &jlen, &repairable_cache)) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       // Tile not on disk — queue an OSM download if Wi-Fi is up. No-op
       // when offline; if/when Wi-Fi comes up later, the next render
@@ -25641,7 +28106,21 @@ static void renderMapTiles() {
                      ? decodePngToRgb565(jpeg, jlen, &dw, &dh, dst->rgb565, kTileBufBytes)
                      : decodeJpegScaledToRgb565(jpeg, jlen, &dw, &dh, 256, dst->rgb565, kTileBufBytes);
     lvglPsramFree(jpeg);
-    if (!rgb) { ++n_missing; continue; }   // decode failed; buffer kept for reuse
+    if (!rgb) {
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      if (repairable_cache) {
+        char bad_path[48];
+        snprintf(bad_path, sizeof(bad_path), "%s/%u/%ld/%ld.jpg",
+                 mapTileRoot(), (unsigned)s_map_zoom,
+                 (long)wanted[i].tx, (long)wanted[i].ty);
+        tileCacheRemove(bad_path);
+        tileFetchForget(s_map_zoom, wanted[i].tx, wanted[i].ty);
+        queueTileForFetch(s_map_zoom, wanted[i].tx, wanted[i].ty);
+      }
+#endif
+      ++n_missing;
+      continue;   // decode failed; buffer kept for reuse
+    }
     // Night mode: invert the decoded RGB565 in place (render-only — the on-disk
     // tile is untouched). ~p flips all three channels; light maps go dark.
     if (s_map_night) {
@@ -25683,7 +28162,7 @@ static void renderMapTiles() {
     // screen, which is heavy on internal DMA RAM — doing that per-tile WHILE the
     // Wi-Fi worker holds a socket pushed the heap into an OOM reboot. When tiles
     // are arriving from the network, let LVGL batch one redraw at the end.
-    if (s_tile_fetch_pending == 0) lv_refr_now(NULL);
+    if (tileFetchPendingLoad() == 0) lv_refr_now(NULL);
     // Yield to the IDLE task after each tile's read + decode + paint. This loop
     // runs on loopTask, which is what the task watchdog watches via IDLE1; a full
     // 9-tile load (or a few slow SD reads) can otherwise pin the core long enough
@@ -25730,8 +28209,11 @@ static void renderMapTiles() {
   }
 
 #if defined(ESP32)
-#if CAP_SD
-  if (s_tiles_from_sd) {
+#if CAP_SD || defined(TLORA_PAGER)
+  // s_map_style == 0: SD packs are OSM-only. In topo the loader reads the
+  // online /tiles/topo cache, so pointing the user at /maps/osm would be wrong
+  // and would hide the download progress/diagnostics below.
+  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {
     lv_label_set_text(s_map_status_lbl,
         TR("Map tiles: microSD\n\n"
         "/maps/osm/z/x/y.png\n"
@@ -25740,9 +28222,11 @@ static void renderMapTiles() {
   } else
 #endif
   if (!s_tiles_fs_ready) {
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     // Pager included: under the launcher there's no "tiles" partition, so point the user at the
     // microSD fallback rather than the (launcher-wrong) "reflash the tiles partition" advice.
+    // M9 included: its cache PREFERS the built-in 16 GB microSD (every unit ships with one), so
+    // this state almost always means the card didn't mount — reflash advice would be the wrong fix.
     if (SD.cardType() != CARD_NONE)
       lv_label_set_text(s_map_status_lbl,
           TR("Map storage error.\n\nSD card detected but the\ntile cache didn't mount.\nReboot to retry."));
@@ -25779,10 +28263,14 @@ static void renderMapTiles() {
         "ok %u   fail %u   http %d   wr %c\n"
         "open-fail %u   short-wr %u\n\n"
         "Keep Wi-Fi connected.\nTiles appear as they arrive.",
-#if defined(HAS_TANMATSU)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
         (s_tile_fs == &SD_MMC ? "SD cache" : "flash cache"),
 #else
+#if CAP_SD || defined(TLORA_PAGER)
+        (s_tile_fs == &SD ? "SD cache" : "flash cache"),
+#else
         (s_tile_root[0] ? "SD cache" : "flash cache"),
+#endif
 #endif
         (unsigned)s_tile_fetch_ok, (unsigned)s_tile_fetch_failed,
         (int)s_tile_fetch_last_code, (char)s_tile_fetch_last_wr,
@@ -25818,20 +28306,334 @@ struct MapMarker {
   int       mesh_idx;   // ContactInfo index for real contacts; -1 for self
   lv_obj_t* obj;
 };
-constexpr int k_map_markers_max = 32;
+// Was 32, which with slot 0 reserved for self meant only 31 contact dots could ever
+// render while the bottom-right label counted every positioned contact with no cap at
+// all. Past that the map silently stopped drawing and the label kept counting, so the
+// two disagreed with nothing on screen to say why (reported as "new contacts never
+// appear on the map, but the number is right"). Markers are only built for contacts
+// INSIDE the viewport (see the cull in the fill loop), so this is the number visible
+// at once, not the contact count.
+// Hard ceiling on simultaneously-drawn contact dots. Was 32, which with slot 0 reserved
+// for self meant only 31 could ever render while the bottom-right label counted every
+// positioned contact with no cap at all — so past 31 the map silently stopped drawing
+// and the label kept counting, with nothing on screen to explain the difference
+// (reported as "new contacts never appear on the map, but the number is right").
+// Markers are only built for contacts INSIDE the viewport, so this is how many are
+// visible at once, not the contact count. Costs 8 bytes of static RAM per slot.
+
+#if CAP_LUA_SDK_EXT
+// ---------------------------------------------------------------------------
+// App map views (wada.map) -- a real slippy map an app can put on its page.
+//
+// Apps could previously draw geography only onto their own canvas, from
+// scratch, with no basemap. This gives them the firmware's actual tiles,
+// projection and cache.
+//
+// It does NOT share the map tab's tile pool. That pool is sized and culled for
+// a full-screen viewport and is rebuilt on pan/zoom; borrowing slots from it
+// would mean an app and the map tab evicting each other's tiles at whatever
+// rate they happened to redraw. A view owns a small pool of its own instead,
+// capped at kAppMapTilesMax so the cost is bounded and predictable: 128 KB per
+// tile, exactly like the map tab, and freed the moment the view is collected.
+static const int    kAppMapTilesMax  = 4;
+static const size_t kAppMapTileBytes = 256u * 256u * sizeof(lv_color_t);
+
+struct AppMapTile {
+  uint8_t  z; int32_t x, y;
+  uint8_t* rgb = nullptr;
+  int      w = 0, h = 0;
+  lv_img_dsc_t dsc;
+  lv_obj_t* img = nullptr;
+  bool     in_use = false;
+};
+struct AppMapView {
+  lv_obj_t* cont   = nullptr;   // clips to the app's requested rectangle
+  lv_obj_t* tiles  = nullptr;   // tile images
+  lv_obj_t* ovl    = nullptr;   // markers + lines, always above the tiles
+  int       w = 0, h = 0;
+  double    lat = 0, lon = 0;
+  uint8_t   zoom = 13;
+  int       placed = 0;         // tiles actually drawn at the last render
+  AppMapTile pool[kAppMapTilesMax];
+};
+
+static void appMapFreeTile(AppMapTile& t) {
+  if (t.img) { lv_obj_del(t.img); t.img = nullptr; }
+  if (t.rgb) { lvglPsramFree(t.rgb); t.rgb = nullptr; }
+  t.in_use = false;
+}
+
+void* luaHostMapCreate(int x, int y, int w, int h) {
+  if (!g_lv.task) return nullptr;
+  AppMapView* v = new (std::nothrow) AppMapView();
+  if (!v) return nullptr;
+  v->w = w; v->h = h;
+  extern lv_obj_t* luaHostAppBody();
+  lv_obj_t* body = luaHostAppBody();
+  if (!body) { delete v; return nullptr; }
+  v->cont = lv_obj_create(body);
+  lv_obj_remove_style_all(v->cont);
+  lv_obj_set_pos(v->cont, (lv_coord_t)x, (lv_coord_t)y);
+  lv_obj_set_size(v->cont, (lv_coord_t)w, (lv_coord_t)h);
+  lv_obj_set_style_bg_color(v->cont, lv_color_hex(0x11161B), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(v->cont, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(v->cont, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(v->cont, LV_OBJ_FLAG_CLICKABLE);
+  // Two layers so overlays can never be painted over by a tile that happens to
+  // be created later -- the exact bug the map tab fixes with move_background.
+  v->tiles = lv_obj_create(v->cont);
+  lv_obj_remove_style_all(v->tiles);
+  lv_obj_set_pos(v->tiles, 0, 0);
+  lv_obj_set_size(v->tiles, (lv_coord_t)w, (lv_coord_t)h);
+  lv_obj_clear_flag(v->tiles, LV_OBJ_FLAG_SCROLLABLE);
+  v->ovl = lv_obj_create(v->cont);
+  lv_obj_remove_style_all(v->ovl);
+  lv_obj_set_pos(v->ovl, 0, 0);
+  lv_obj_set_size(v->ovl, (lv_coord_t)w, (lv_coord_t)h);
+  lv_obj_clear_flag(v->ovl, LV_OBJ_FLAG_SCROLLABLE);
+  return v;
+}
+
+void luaHostMapDestroy(void* vp) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v) return;
+  for (int i = 0; i < kAppMapTilesMax; i++) appMapFreeTile(v->pool[i]);
+  if (v->cont) lv_obj_del(v->cont);      // takes the two layers and every overlay with it
+  delete v;
+}
+
+void luaHostMapSet(void* vp, double lat, double lon, int zoom) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v) return;
+  v->lat = lat; v->lon = lon;
+  if (zoom >= 1 && zoom <= 19) v->zoom = (uint8_t)zoom;
+}
+// Zoom alone. Separate from the call above because 0,0 is a real coordinate,
+// so there is no lat/lon value that can mean "leave the centre alone".
+void luaHostMapSetZoom(void* vp, int zoom) {
+  AppMapView* v = (AppMapView*)vp;
+  if (v && zoom >= 1 && zoom <= 19) v->zoom = (uint8_t)zoom;
+}
+int luaHostMapZoom(void* vp) { AppMapView* v = (AppMapView*)vp; return v ? v->zoom : 0; }
+int luaHostMapPlaced(void* vp) { AppMapView* v = (AppMapView*)vp; return v ? v->placed : 0; }
+
+// lat/lon -> pixel within the view. Deliberately NOT clamped: an app placing
+// its own labels needs to know a point is off-view, and a clamped coordinate
+// would silently pile everything onto the edge.
+void luaHostMapToScreen(void* vp, double lat, double lon, int* px, int* py) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v) { *px = *py = 0; return; }
+  double cwx, cwy, wx, wy;
+  latLonToWorldPx(v->lat, v->lon, v->zoom, &cwx, &cwy);
+  latLonToWorldPx(lat, lon, v->zoom, &wx, &wy);
+  *px = (int)lround(wx - cwx + v->w / 2.0);
+  *py = (int)lround(wy - cwy + v->h / 2.0);
+}
+void luaHostMapToLatLon(void* vp, int px, int py, double* lat, double* lon) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v) { *lat = *lon = 0; return; }
+  double cwx, cwy;
+  latLonToWorldPx(v->lat, v->lon, v->zoom, &cwx, &cwy);
+  worldPxToLatLon(cwx + (px - v->w / 2.0), cwy + (py - v->h / 2.0), v->zoom, lat, lon);
+}
+
+void luaHostMapClearOverlay(void* vp) {
+  AppMapView* v = (AppMapView*)vp;
+  if (v && v->ovl) lv_obj_clean(v->ovl);
+}
+
+int luaHostMapMarker(void* vp, double lat, double lon, uint32_t color, int size) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v || !v->ovl) return 0;
+  int px, py;
+  luaHostMapToScreen(vp, lat, lon, &px, &py);
+  if (size < 3) size = 3;
+  if (size > 24) size = 24;
+  // Off-view markers are dropped rather than created off-screen: they would be
+  // invisible LVGL objects accumulating on every redraw of a panning map.
+  if (px < -size || py < -size || px > v->w + size || py > v->h + size) return 0;
+  lv_obj_t* d = lv_obj_create(v->ovl);
+  lv_obj_remove_style_all(d);
+  lv_obj_set_size(d, size, size);
+  lv_obj_set_pos(d, px - size / 2, py - size / 2);
+  lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(d, lv_color_hex(color), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(d, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(d, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_color(d, lv_color_hex(0x0E1216), LV_PART_MAIN);
+  lv_obj_clear_flag(d, LV_OBJ_FLAG_SCROLLABLE);
+  return 1;
+}
+
+int luaHostMapLine(void* vp, double la1, double lo1, double la2, double lo2,
+                   uint32_t color, int width) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v || !v->ovl) return 0;
+  int x1, y1, x2, y2;
+  luaHostMapToScreen(vp, la1, lo1, &x1, &y1);
+  luaHostMapToScreen(vp, la2, lo2, &x2, &y2);
+  // Both ends off the same side means the segment cannot cross the view.
+  if ((x1 < 0 && x2 < 0) || (y1 < 0 && y2 < 0) ||
+      (x1 > v->w && x2 > v->w) || (y1 > v->h && y2 > v->h)) return 0;
+  // LVGL does not copy a line's point array, so it has to outlive the object.
+  // Attaching it as the object's user_data and freeing it on DELETE keeps the
+  // lifetime tied to the widget instead of to a fixed slot table.
+  lv_point_t* pts = (lv_point_t*)lv_mem_alloc(sizeof(lv_point_t) * 2);
+  if (!pts) return 0;
+  pts[0].x = (lv_coord_t)x1; pts[0].y = (lv_coord_t)y1;
+  pts[1].x = (lv_coord_t)x2; pts[1].y = (lv_coord_t)y2;
+  lv_obj_t* ln = lv_line_create(v->ovl);
+  lv_line_set_points(ln, pts, 2);
+  lv_obj_set_user_data(ln, pts);
+  lv_obj_add_event_cb(ln, [](lv_event_t* e) {
+    void* p = lv_obj_get_user_data(lv_event_get_target(e));
+    if (p) lv_mem_free(p);
+  }, LV_EVENT_DELETE, nullptr);
+  lv_obj_set_style_line_color(ln, lv_color_hex(color), LV_PART_MAIN);
+  lv_obj_set_style_line_width(ln, width < 1 ? 1 : (width > 8 ? 8 : width), LV_PART_MAIN);
+  lv_obj_set_style_line_opa(ln, LV_OPA_COVER, LV_PART_MAIN);
+  return 1;
+}
+
+// Render the tiles covering the view. Same slot-reuse idea as the map tab: a
+// small pan shares most tiles, so only newcomers are read and decoded.
+void luaHostMapRender(void* vp) {
+  AppMapView* v = (AppMapView*)vp;
+  if (!v || !v->tiles) return;
+  double cwx, cwy;
+  latLonToWorldPx(v->lat, v->lon, v->zoom, &cwx, &cwy);
+  const int32_t ctx = (int32_t)floor(cwx / 256.0);
+  const int32_t cty = (int32_t)floor(cwy / 256.0);
+  const int rx = (v->w / 2 + 255) / 256;      // tiles needed each side to cover the view
+  const int ry = (v->h / 2 + 255) / 256;
+
+  struct Want { int32_t tx, ty; double d2; bool placed; };
+  Want cand[25];
+  int nc = 0;
+  for (int dy = -ry; dy <= ry; dy++) {
+    for (int dx = -rx; dx <= rx; dx++) {
+      if (nc >= (int)(sizeof cand / sizeof cand[0])) break;
+      const int32_t tx = ctx + dx, ty = cty + dy;
+      // Cull to what actually touches the view, so the pool is spent on tiles
+      // the user can see rather than on the corners of an oversized grid.
+      const double sx = (double)tx * 256.0 - cwx + v->w / 2.0;
+      const double sy = (double)ty * 256.0 - cwy + v->h / 2.0;
+      if (sx > v->w || sy > v->h || sx + 256 < 0 || sy + 256 < 0) continue;
+      // Distance from the tile's centre to the view's, so that when a view is
+      // bigger than the pool can cover we keep the MOST VISIBLE tiles rather
+      // than whichever the scan happened to reach first -- that ordering put
+      // the gap in the middle of the view instead of at its edge.
+      const double mx = sx + 128.0 - v->w / 2.0, my = sy + 128.0 - v->h / 2.0;
+      cand[nc++] = { tx, ty, mx * mx + my * my, false };
+    }
+  }
+  for (int a = 1; a < nc; a++) {            // insertion sort; nc is at most 25
+    Want key = cand[a];
+    int b = a - 1;
+    while (b >= 0 && cand[b].d2 > key.d2) { cand[b + 1] = cand[b]; b--; }
+    cand[b + 1] = key;
+  }
+  const int nw = nc < kAppMapTilesMax ? nc : kAppMapTilesMax;
+  Want* wanted = cand;
+
+  for (int i = 0; i < kAppMapTilesMax; i++) {           // keep matches, free the rest
+    AppMapTile& t = v->pool[i];
+    if (!t.in_use) continue;
+    bool keep = false;
+    for (int k = 0; k < nw; k++) {
+      if (t.z == v->zoom && t.x == wanted[k].tx && t.y == wanted[k].ty) {
+        keep = true; wanted[k].placed = true;
+        lv_obj_set_pos(t.img, (lv_coord_t)((double)t.x * 256.0 - cwx + v->w / 2.0),
+                              (lv_coord_t)((double)t.y * 256.0 - cwy + v->h / 2.0));
+        break;
+      }
+    }
+    if (!keep) appMapFreeTile(t);
+  }
+
+  v->placed = 0;
+  for (int k = 0; k < nw; k++) {
+    if (wanted[k].placed) { v->placed++; continue; }
+    AppMapTile* dst = nullptr;
+    for (int i = 0; i < kAppMapTilesMax; i++) if (!v->pool[i].in_use) { dst = &v->pool[i]; break; }
+    if (!dst) break;
+    uint8_t* enc = nullptr; size_t elen = 0; bool repairable = false;
+    if (!loadTileJpeg(v->zoom, wanted[k].tx, wanted[k].ty, &enc, &elen, &repairable) || !enc) {
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      queueTileForFetch(v->zoom, wanted[k].tx, wanted[k].ty);   // fills in if Wi-Fi is up
+#endif
+      continue;
+    }
+    if (!dst->rgb) dst->rgb = (uint8_t*)lvglPsramAlloc(kAppMapTileBytes);
+    if (!dst->rgb) { lvglPsramFree(enc); break; }
+    int dw = 0, dh = 0;
+    uint8_t* rgb = (elen >= 4 && enc[0] == 0x89 && enc[1] == 'P' && enc[2] == 'N' && enc[3] == 'G')
+                     ? decodePngToRgb565(enc, elen, &dw, &dh, dst->rgb, kAppMapTileBytes)
+                     : decodeJpegScaledToRgb565(enc, elen, &dw, &dh, 256, dst->rgb, kAppMapTileBytes);
+    lvglPsramFree(enc);
+    if (!rgb) continue;
+    if (s_map_night) {   // follow the user's map setting rather than inventing a second one
+      uint16_t* px = (uint16_t*)rgb;
+      const int cnt = dw * dh;
+      for (int p = 0; p < cnt; ++p) px[p] = (uint16_t)~px[p];
+    }
+    dst->z = v->zoom; dst->x = wanted[k].tx; dst->y = wanted[k].ty;
+    dst->w = dw; dst->h = dh;
+    memset(&dst->dsc, 0, sizeof(dst->dsc));
+    dst->dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+    dst->dsc.header.w  = (uint32_t)dw;
+    dst->dsc.header.h  = (uint32_t)dh;
+    dst->dsc.data      = rgb;
+    dst->dsc.data_size = (uint32_t)((size_t)dw * dh * sizeof(lv_color_t));
+    lv_img_cache_invalidate_src(&dst->dsc);   // the buffer is reused at a stable address
+    dst->img = lv_img_create(v->tiles);
+    lv_img_set_src(dst->img, &dst->dsc);
+    lv_obj_set_pos(dst->img, (lv_coord_t)((double)dst->x * 256.0 - cwx + v->w / 2.0),
+                             (lv_coord_t)((double)dst->y * 256.0 - cwy + v->h / 2.0));
+    dst->in_use = true;
+    v->placed++;
+    // Same watchdog courtesy as the map tab: read + decode on the loop task can
+    // pin the core long enough to starve IDLE if several tiles land at once.
+    vTaskDelay(1);
+  }
+  if (v->ovl) lv_obj_move_foreground(v->ovl);
+}
+#endif  // CAP_LUA_SDK_EXT
+
+constexpr int k_map_markers_max = 256;
+// The self->contact link LINES keep their own, much smaller ceiling: each one holds a
+// persistent 2-point array LVGL does not copy, so they cost 12 bytes a slot rather than
+// 8, and a screen with hundreds of dotted lines on it is unreadable long before it is
+// slow. Raising the dot ceiling deliberately does not drag this up with it.
+constexpr int k_map_links_max = 32;
+// How many contact dots the last rebuild actually drew, and how many wanted to be
+// drawn. The status label reports the shortfall instead of hiding it.
+static int s_map_markers_drawn = 0;
+static int s_map_markers_wanted = 0;
 static MapMarker s_map_markers[k_map_markers_max] = {};
+// Effective dot limit: the user's setting (Map settings), clamped to the array. 0 in
+// the setting means "no limit", i.e. everything in view up to the firmware ceiling.
+static int mapMarkerCap() {
+#if defined(ESP32)
+  const uint16_t want = touchPrefsGetMapMarkerCap();
+  if (want == 0 || want > (uint16_t)(k_map_markers_max - 1)) return k_map_markers_max - 1;
+  return (int)want;
+#else
+  return k_map_markers_max - 1;
+#endif
+}
 
 // Dotted self->contact link lines (toggled by the on-map button). Each line
 // keeps its own persistent 2-point array — LVGL does not copy the points.
 static bool       s_map_show_links = true;
-static lv_obj_t*  s_map_link_objs[k_map_markers_max] = {};
-static lv_point_t s_map_link_pts[k_map_markers_max][2];
+static lv_obj_t*  s_map_link_objs[k_map_links_max] = {};
+static lv_point_t s_map_link_pts[k_map_links_max][2];
 
-// Per-element visibility of the map's on-screen text/markers (persisted; all
-// default shown). Coords = bottom-left read-out, TileXYZ = the zoom + tile path
-// line, Contacts = the contact markers.
+// Per-element visibility of the map's on-screen text/markers (persisted; coords +
+// contacts default shown, the tile line default hidden since prefs v50). Coords =
+// bottom-left read-out, TileXYZ = the zoom + tile path line, Contacts = the contact markers.
 static bool s_map_show_coords    = true;
-static bool s_map_show_tilexyz   = true;
+static bool s_map_show_tilexyz   = false;
 static bool s_map_show_contacts  = true;
 static bool s_map_tile_debug     = false;  // developer: tile-pipeline diagnostic overlay on the zoom line (off by default)
 static bool s_map_direct_only    = false;  // when true, only 0-hop (directly-heard) contacts appear
@@ -25987,7 +28789,7 @@ static void renderMapMarkers() {
       return (lv_coord_t)v;
     };
     int link_n = 0;
-    for (uint32_t i = 0; i < the_mesh.getNumContacts() && link_n < k_map_markers_max; ++i) {
+    for (uint32_t i = 0; i < the_mesh.getNumContacts() && link_n < k_map_links_max; ++i) {
       ContactInfo c;
       if (!the_mesh.getContactByIdx(i, c)) continue;
       if (c.gps_lat == 0 && c.gps_lon == 0) continue;
@@ -26034,8 +28836,10 @@ static void renderMapMarkers() {
   // ---- Contact markers — colored circles sized for taps (14×14 with a
   //      2-px black border so they read on any tile background).
   int slot = 1;   // slot 0 reserved for self
+  s_map_markers_wanted = 0;
   // Contact markers — skipped entirely when "Contacts on map" is off (self stays).
-  for (uint32_t i = 0; s_map_show_contacts && i < the_mesh.getNumContacts() && slot < k_map_markers_max; ++i) {
+  const int marker_cap = mapMarkerCap();
+  for (uint32_t i = 0; s_map_show_contacts && i < the_mesh.getNumContacts(); ++i) {
     ContactInfo c;
     if (!the_mesh.getContactByIdx(i, c)) continue;
     if (c.gps_lat == 0 && c.gps_lon == 0) continue;
@@ -26050,6 +28854,12 @@ static void renderMapMarkers() {
     // Cull off-screen markers — they'd just allocate widgets we never see.
     if (sx < -8 || sx >= k_map_canvas_w + 8 ||
         sy < -8 || sy >= k_map_canvas_h + 8) continue;
+
+    // Past the cull this contact is positioned AND on screen, so it wanted a dot.
+    // Count it either way — the status label reports the shortfall rather than
+    // letting the map and the number disagree in silence.
+    s_map_markers_wanted++;
+    if (slot >= marker_cap + 1) continue;   // +1: slot 0 is self
 
     // Color by contact type so a glance at the map maps to the chip
     // colors on the Contacts tab. Defaults to chat-peer orange.
@@ -26077,6 +28887,7 @@ static void renderMapMarkers() {
     lv_obj_clear_flag(m.obj, LV_OBJ_FLAG_SCROLLABLE);
     ++slot;
   }
+  s_map_markers_drawn = slot - 1;   // slot 0 is self
 
   // Discover wardriving coverage dots (my logged signal samples), under the route overlay.
   if (s_disc_track_n > 0) discoverDrawCoverage(parent, cwx, cwy);
@@ -26384,6 +29195,7 @@ static void showRouteHud() {
   lv_obj_set_style_bg_color(rb, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_event_cb(rb, routeReplayRestartCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* rl = lv_label_create(rb);
+  useChainedFont(rl);
   lv_label_set_text(rl, LV_SYMBOL_REFRESH);
   lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_center(rl);
@@ -26519,12 +29331,26 @@ static void mapOptZoomButtonsCb(lv_event_t* e) {
   mapZoomControlsApply();
 }
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // Map tile source toggle (in the map options popup): ON = tiles live on the microSD
 // card — read the user's SD library AND cache Wi-Fi-fetched gaps there (#20), so the
 // library grows and downloads survive; OFF = tile server + internal LittleFS cache.
 static void mapOptTilesSdCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  // Pause at a request boundary before repointing the cache. A queued backlog is
+  // harmless and resumes on the new backend; only the request currently owning
+  // a File must finish. Do not steal a pause already owned by remount/removal.
+  const bool pause_owned_elsewhere = tileBackendSwapRequested();
+  const bool pause_ready = !pause_owned_elsewhere && tileBackendSwapTryBegin();
+  if (!pause_ready) {
+    // If this callback asserted the pause but found an active request, cancel
+    // only its own request. Lifecycle-owned pauses stay asserted for their retry.
+    if (!pause_owned_elsewhere) tileBackendSwapFinish();
+    if (s_tiles_from_sd) lv_obj_add_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    else                 lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    if (g_lv.task) g_lv.task->showAlert(TR("Current tile transfer is busy - retry"), 1800);
+    return;
+  }
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetTilesFromSd(on);
   s_tiles_from_sd = on;
@@ -26532,13 +29358,22 @@ static void mapOptTilesSdCb(lv_event_t* e) {
   // the SD reader looks), so fetched tiles merge with the library; OFF -> the boot
   // default backend (LittleFS partition / SD fallback).
   if (on) {
-    if (fmSdTryMount() || SD.cardType() != CARD_NONE) { s_tile_fs = &SD; s_tile_root[0] = '\0'; }
+    if (fmSdTryMount() || SD.cardType() != CARD_NONE) {
+      s_tile_fs = &SD;
+      s_tile_root[0] = '\0';
+      s_tiles_fs_ready = true;
+      if (!s_tile_fs_default) {
+        s_tile_fs_default = &SD;
+        s_tile_root_default[0] = '\0';
+      }
+    }
   } else {
     s_tile_fs = s_tile_fs_default;
     strncpy(s_tile_root, s_tile_root_default, sizeof s_tile_root - 1);
   }
   freeMapTiles();                // drop stale tile widgets → reload from the new source
   renderMapTiles();
+  tileBackendSwapFinish();       // queued requests resume against the selected backend
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Map tiles: microSD") : TR("Map tiles: server"), 1400);
 }
 #endif
@@ -26576,8 +29411,12 @@ static void mapReloadVisibleTiles() {
       for (int dx = -s_map_grid_rx; dx <= s_map_grid_rx; ++dx) {
         const int32_t tx = zctx + dx, ty = zcty + dy;
         char path[48];
-        snprintf(path, sizeof(path), "/tiles/%u/%ld/%ld.jpg", (unsigned)z, (long)tx, (long)ty);
-        if (s_tiles_fs_ready && tileCacheExists(path)) { tileCacheRemove(path); ++n; }
+        snprintf(path, sizeof(path), "%s/%u/%ld/%ld.jpg",
+                 mapTileRoot(), (unsigned)z, (long)tx, (long)ty);
+        if (s_tiles_fs_ready && tileCacheExists(path)) {
+          tileCacheRemove(path);
+          ++n;
+        }
         const uint32_t k = tileFetchDedupKey((uint8_t)z, tx, ty);   // clear dedup so it re-queues
         for (int i = 0; i < k_tile_fetch_dedup_size; ++i)
           if (s_tile_fetch_dedup[i] == k) s_tile_fetch_dedup[i] = 0;
@@ -26597,6 +29436,31 @@ static void mapReloadVisibleTiles() {
 }
 #endif
 
+// Max contact dots drawn at once. Cycles All -> 200 -> 100 -> 50 -> 25 -> All, in
+// place, so the card keeps its compact switch-row shape instead of growing a dropdown.
+// "All" is the default and means every positioned contact in view, up to the firmware
+// ceiling; the lower steps exist for a board that struggles with a crowded viewport,
+// not because the map should be quietly limiting itself.
+static void mapOptMarkerCapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+#if defined(ESP32)
+  static const uint16_t kSteps[] = { 0, 200, 100, 50, 25 };
+  const uint16_t cur = touchPrefsGetMapMarkerCap();
+  int idx = 0;
+  for (int i = 0; i < (int)(sizeof kSteps / sizeof kSteps[0]); ++i)
+    if (kSteps[i] == cur) { idx = i; break; }
+  const uint16_t next = kSteps[(idx + 1) % (int)(sizeof kSteps / sizeof kSteps[0])];
+  touchPrefsSetMapMarkerCap(next);
+  // Relabel the button we were tapped on, so the card reflects it without a rebuild.
+  lv_obj_t* b = lv_event_get_target(e);
+  lv_obj_t* l = lv_obj_get_child(b, 0);
+  char txt[48];
+  if (next == 0) snprintf(txt, sizeof txt, LV_SYMBOL_GPS "  %s: %s", TR("Max dots"), TR("All"));
+  else           snprintf(txt, sizeof txt, LV_SYMBOL_GPS "  %s: %u", TR("Max dots"), (unsigned)next);
+  if (l) lv_label_set_text(l, txt);
+  renderMapMarkers();   // redraw with the new limit
+#endif
+}
 static void mapOptReloadCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeMapOptions();
@@ -26650,17 +29514,18 @@ static void mapOptInfoCb(lv_event_t* e) {
   // Attribution header is style-dependent (legal requirement). OpenTopoMap's map
   // style is CC-BY-SA and must be credited; its underlying data is still OSM+SRTM.
   const char* attrib = (s_map_style == 1)
-    ? "Map style \xC2\xA9 OpenTopoMap (CC-BY-SA) \xE2\x80\x94 opentopomap.org\n"
-      "Map data \xC2\xA9 OpenStreetMap contributors (ODbL) + SRTM.\n\n"
-    : "Map data \xC2\xA9 OpenStreetMap contributors.\n"
-      "openstreetmap.org/copyright\n"
-      "Licensed under the Open Database License (ODbL).\n\n";
-  static const size_t CREDITS_SZ = 820;
-  static char* credits = (char*)psAlloc(CREDITS_SZ);   // lazy-PSRAM (frees 820 B internal .bss)
-  if (!credits) return;                                // OOM only: skip the credits text
-  snprintf(credits, CREDITS_SZ, "%s%s", attrib,
+    ? TR("Map style \xC2\xA9 OpenTopoMap (CC-BY-SA) \xE2\x80\x94 opentopomap.org\n"
+         "Map data \xC2\xA9 OpenStreetMap contributors (ODbL) + SRTM.\n\n")
+    : TR("Map data \xC2\xA9 OpenStreetMap contributors.\n"
+         "openstreetmap.org/copyright\n"
+         "Licensed under the Open Database License (ODbL).\n\n");
+  // NOTE: the literal break after \x97 is REQUIRED — "\xC3\x97256" would parse the
+  // trailing 256 as part of the hex escape (all hex digits) and emit one garbage byte.
+  // Kept as ONE translatable block: it is continuous prose, and splitting it per
+  // paragraph would hand translators fragments that only make sense together.
+  const char* body = TR(
     "How tiles work:\n"
-    "The map is built from 256\xC3\x97256 \"slippy\" tiles. Only the tiles for the "
+    "The map is built from 256\xC3\x97" "256 \"slippy\" tiles. Only the tiles for the "
     "area you're viewing are fetched \xE2\x80\x94 there is no bulk pre-download.\n\n"
     "Because this device can't do HTTPS (not enough heap after Wi-Fi starts) "
     "and decodes JPEG far more cheaply than PNG, tiles come from the wadamesh "
@@ -26669,6 +29534,12 @@ static void mapOptInfoCb(lv_event_t* e) {
     "each tile to its own flash, so a tile is only downloaded once.\n\n"
     "Use Options \xE2\x86\x92 Reload tiles to re-download the tiles currently in "
     "view if one looks corrupted.");
+  // Sized for the longest translation, not for English: Hungarian runs ~1.5x and
+  // the Cyrillic/Greek files are two bytes per letter in UTF-8.
+  static const size_t CREDITS_SZ = 2048;
+  static char* credits = (char*)psAlloc(CREDITS_SZ);   // lazy-PSRAM (nothing in .bss)
+  if (!credits) return;                                // OOM only: skip the credits text
+  snprintf(credits, CREDITS_SZ, "%s%s", attrib, body);
   lv_label_set_text(lbl, credits);
 }
 
@@ -26706,7 +29577,7 @@ static void openMapOptions() {
   lv_obj_set_pos(title, 0, 0);
   int y = 26;
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Row: tile source — microSD (offline) vs the tile server. The important one,
   // so it sits at the very top.
   {
@@ -26819,6 +29690,29 @@ static void openMapOptions() {
     lv_obj_align(l, LV_ALIGN_LEFT_MID, 8, 0);
     y += 40;
   };
+  {
+    char capbuf[48];
+    const uint16_t cap_now =
+#if defined(ESP32)
+        touchPrefsGetMapMarkerCap();
+#else
+        0;
+#endif
+    if (cap_now == 0) snprintf(capbuf, sizeof capbuf, LV_SYMBOL_GPS "  %s: %s", TR("Max dots"), TR("All"));
+    else              snprintf(capbuf, sizeof capbuf, LV_SYMBOL_GPS "  %s: %u", TR("Max dots"), (unsigned)cap_now);
+    // mk_row_btn TR()s its argument; this string is already assembled + translated.
+    lv_obj_t* b = lv_btn_create(card);
+    lv_obj_set_size(b, cardw - 24, 38);
+    lv_obj_set_pos(b, 0, y);
+    styleButton(b);
+    lv_obj_add_event_cb(b, mapOptMarkerCapCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, capbuf);
+    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(l, LV_ALIGN_LEFT_MID, 8, 0);
+    y += 40;
+  }
   mk_row_btn(LV_SYMBOL_REFRESH "  Reload tiles in view", mapOptReloadCb);
   mk_row_btn(LV_SYMBOL_EYE_OPEN "  About / credits",     mapOptInfoCb);
 
@@ -27202,7 +30096,7 @@ static void openMapContactsList() {
   addCloseXBadge(card, mapContactsBackdropCb);
 
   lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, LV_SYMBOL_GPS "  On map");
+  lv_label_set_text(title, TR(LV_SYMBOL_GPS "  On map"));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 0, 2);
@@ -27348,13 +30242,14 @@ static void mapCanvasEventCb(lv_event_t* e) {
   refreshMapInfoLabel();
 }
 
-#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
-// Keyboard pan (Ctrl+Arrow on Tanmatsu / WASD on the pager, both on the Map
-// tab). Mirrors the drag-release math in mapCanvasEventCb: synthesize a pixel
-// delta of ~1/4 the visible span in the arrow direction, convert it through
-// the same world-px ↔ lat/lon helpers (so the lon step automatically scales
-// with the current zoom's degrees-per-pixel) and re-render. dir: 0=up(north,
-// +lat) 1=down(south,−lat) 2=left(west,−lon) 3=right(east,+lon).
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+// Keyboard pan (Ctrl+Arrow on Tanmatsu / WAXD on the pager / the M9's Map-key
+// pan mode, all on the Map tab). Mirrors the drag-release math in
+// mapCanvasEventCb: synthesize a pixel delta of ~1/4 the visible span in the
+// arrow direction, convert it through the same world-px ↔ lat/lon helpers (so
+// the lon step automatically scales with the current zoom's degrees-per-pixel)
+// and re-render. dir: 0=up(north, +lat) 1=down(south,−lat) 2=left(west,−lon)
+// 3=right(east,+lon).
 static void mapNudge(int dir) {
   if (!s_map_canvas) return;
   // No center yet (no GPS / location) → nothing to pan around.
@@ -27371,13 +30266,16 @@ static void mapNudge(int dir) {
     default: return;
   }
   worldPxToLatLon(cwx, cwy, s_map_zoom, &s_map_center_lat, &s_map_center_lon);
-  // Match the touch-drag: it does NOT clear s_map_follow, so neither do we
-  // (mapAutoFollowTick re-centers on the next GPS move regardless).
+  // Match the touch-drag: it does NOT clear s_map_follow. NB auto-follow
+  // recenters on the CENTER-vs-fix delta — the pan itself trips it, no GPS
+  // movement needed — so mapAutoFollowTick pauses while the M9's pan mode is
+  // active (s_m9_map_pan); on touch boards a drag away simply snaps back on
+  // the next 250 ms tick while follow is on, which is that button's contract.
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
 }
-#endif  // HAS_TANMATSU || TLORA_PAGER (mapNudge)
+#endif  // HAS_TANMATSU || TLORA_PAGER || HAS_THINKNODE_M9 (mapNudge)
 
 // ----- Zoom + recenter -----
 //
@@ -27404,6 +30302,36 @@ static bool mapZoomReachable(uint8_t z) {
 #endif
 // One zoom step, shared by the +/- buttons and the keyboard-nav scroll keys.
 // Skips levels the current tile source can't show (same walk the buttons did).
+// In slider mode the zoom number lives above the slider, so it is on screen the
+// whole time the slider is. Buttons mode hides the slider, and the readout was
+// hidden with it -- which left the +/- pair with no indication of the level at
+// all. Reported by a user who had switched to buttons and could no longer see
+// the zoom anywhere. So in buttons mode the readout is flashed beside the
+// buttons on each step instead.
+static lv_timer_t* s_map_zoomval_hide = nullptr;
+static void mapZoomValHideCb(lv_timer_t* t) {
+  if (s_map_zoom_val && lv_obj_is_valid(s_map_zoom_val))
+    lv_obj_add_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
+  if (t) lv_timer_del(t);
+  s_map_zoomval_hide = nullptr;
+}
+static void mapZoomValFlash() {
+  if (!s_map_zoom_val || !lv_obj_is_valid(s_map_zoom_val)) return;
+  lv_label_set_text_fmt(s_map_zoom_val, TR("zoom %d"), (int)s_map_zoom);
+  // Anchored to the slider at build time, which is hidden here. Re-anchor to the
+  // "+" button so it tracks the column: the buttons are placed with plain
+  // set_pos and no status-bar offset, so a hand-computed y would sit low.
+  if (s_map_btn_zoomin && lv_obj_is_valid(s_map_btn_zoomin))
+    lv_obj_align_to(s_map_zoom_val, s_map_btn_zoomin, LV_ALIGN_OUT_LEFT_MID, -6, 0);
+  else
+    lv_obj_align(s_map_zoom_val, LV_ALIGN_TOP_RIGHT, -(32 + 10), 4 + 32);
+  lv_obj_clear_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(s_map_zoom_val);
+  if (s_map_zoomval_hide) { lv_timer_del(s_map_zoomval_hide); s_map_zoomval_hide = nullptr; }
+  s_map_zoomval_hide = lv_timer_create(mapZoomValHideCb, 1400, nullptr);
+  if (s_map_zoomval_hide) lv_timer_set_repeat_count(s_map_zoomval_hide, 1);
+}
+
 static void mapZoomStep(bool zoom_in) {
   if (zoom_in  && s_map_zoom >= k_map_zoom_max) return;
   if (!zoom_in && s_map_zoom <= k_map_zoom_min) return;
@@ -27433,6 +30361,7 @@ static void mapZoomStep(bool zoom_in) {
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
+  if (s_map_zoom_buttons) mapZoomValFlash();   // slider mode already shows it permanently
 }
 static void mapZoomInCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -27507,6 +30436,8 @@ static void mapZoomControlsApply() {
     hide(s_map_btn_zoomtoggle);
     if (s_map_zoom_slider) lv_obj_add_flag(s_map_zoom_slider, LV_OBJ_FLAG_HIDDEN);   // no slider in buttons mode
     if (s_map_zoom_val)    lv_obj_add_flag(s_map_zoom_val, LV_OBJ_FLAG_HIDDEN);
+    // Starts hidden; mapZoomStep flashes it on each +/- press.
+    if (s_map_zoomval_hide) { lv_timer_del(s_map_zoomval_hide); s_map_zoomval_hide = nullptr; }
   } else {
     show(s_map_btn_zoomtoggle, y); y += H;
     hide(s_map_btn_zoomin);
@@ -27530,6 +30461,9 @@ static void mapRecenterCb(lv_event_t* e) {
 // moves meaningfully (or the view was panned away). Called from the map tick.
 static void mapAutoFollowTick() {
   if (!s_map_follow || !g_lv.task) return;
+#if defined(HAS_M9_KEYBOARD)
+  if (s_m9_map_pan) return;   // Map-key pan mode owns the center; follow resumes when pan exits
+#endif
   const double lat = g_lv.task->getNodeLat();
   const double lon = g_lv.task->getNodeLon();
   if (lat == 0.0 && lon == 0.0) return;                 // no fix yet
@@ -27667,8 +30601,11 @@ static void applyMapChrome(bool on) {
     applyBattColor();            // ...with the power-save amber overlaid if enabled
     if (g_statusbar.batt_pct)   lv_obj_set_style_text_color(g_statusbar.batt_pct, fg_sub, LV_PART_MAIN);
     if (g_statusbar.clock)      lv_obj_set_style_text_color(g_statusbar.clock, fg_sub, LV_PART_MAIN);
-    if (g_statusbar.conn_icon)   lv_obj_set_style_text_color(g_statusbar.conn_icon,  fg_sub, LV_PART_MAIN);
-    if (g_statusbar.ble_icon)    lv_obj_set_style_text_color(g_statusbar.ble_icon,   fg_sub, LV_PART_MAIN);
+    // The radio glyphs keep their accent tint off-map (matching the signal bars); on-map they
+    // join the rest of the chrome in black/off-white, which the light OSM tiles need for legibility.
+    const lv_color_t fg_radio = on ? fg_sub : lv_color_hex(COLOR_ACCENT);
+    if (g_statusbar.conn_icon)   lv_obj_set_style_text_color(g_statusbar.conn_icon,  fg_radio, LV_PART_MAIN);
+    if (g_statusbar.ble_icon)    lv_obj_set_style_text_color(g_statusbar.ble_icon,   fg_radio, LV_PART_MAIN);
 #if defined(HAS_TDECK_GT911)
     if (g_statusbar.sleep_icon)  lv_obj_set_style_text_color(g_statusbar.sleep_icon, fg_sub, LV_PART_MAIN);
 #endif
@@ -27693,6 +30630,15 @@ static void applyMapChrome(bool on) {
 }
 
 static void makeMapTab(lv_obj_t* tab) {
+#if defined(TLORA_PAGER)
+  // Diagnostic/map chrome stays compact at every Pager UI-size preset so the
+  // overlays do not hide the map itself.
+  const lv_font_t* map_info_font = &lv_font_montserrat_14;
+  const lv_font_t* map_control_font = &lv_font_montserrat_20;
+#else
+  const lv_font_t* map_info_font = &g_font_12;
+  const lv_font_t* map_control_font = &g_font_16;
+#endif
   lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
   lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
   lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
@@ -27740,7 +30686,7 @@ static void makeMapTab(lv_obj_t* tab) {
   lv_label_set_long_mode(s_map_status_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_map_status_lbl, k_map_canvas_w - 20);
   lv_obj_set_style_text_color(s_map_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_style_text_font(s_map_status_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_map_status_lbl, map_info_font, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_map_status_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_label_set_text(s_map_status_lbl,
       TR("Map — no tile pack on SPIFFS yet.\n\n"
@@ -27754,7 +30700,7 @@ static void makeMapTab(lv_obj_t* tab) {
   // dark map patches.
   auto style_corner = [&](lv_obj_t* l) {
     lv_obj_set_style_text_color(l, lv_color_hex(0x000000), LV_PART_MAIN);
-    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(l, map_info_font, LV_PART_MAIN);
     lv_obj_set_style_bg_color(l, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(l, LV_OPA_40, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(l, 4, LV_PART_MAIN);
@@ -27762,16 +30708,19 @@ static void makeMapTab(lv_obj_t* tab) {
     lv_obj_set_style_radius(l, 3, LV_PART_MAIN);
   };
   s_map_info_lbl = lv_label_create(tab);   // coords (bottom-left)
+  useChainedFont(s_map_info_lbl);
   style_corner(s_map_info_lbl);
   lv_label_set_text(s_map_info_lbl, "—");
   lv_obj_align(s_map_info_lbl, LV_ALIGN_BOTTOM_LEFT, 2, -2);
   s_map_count_lbl = lv_label_create(tab);  // marker / status count (bottom-right)
+  useChainedFont(s_map_count_lbl);
   style_corner(s_map_count_lbl);
   lv_label_set_text(s_map_count_lbl, "");
   lv_obj_align(s_map_count_lbl, LV_ALIGN_BOTTOM_RIGHT, -2, -2);
   // Zoom + tile path at the current center — a second line just under the
   // "© OpenStreetMap" status-bar attribution (top-left).
   s_map_zoom_lbl = lv_label_create(tab);
+  useChainedFont(s_map_zoom_lbl);
   style_corner(s_map_zoom_lbl);
   lv_label_set_text(s_map_zoom_lbl, "");
   lv_obj_align(s_map_zoom_lbl, LV_ALIGN_TOP_LEFT, 2, STATUSBAR_H + 2);
@@ -27812,7 +30761,7 @@ static void makeMapTab(lv_obj_t* tab) {
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, sym);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(l, map_control_font, LV_PART_MAIN);
     lv_obj_center(l);
     return b;
   };
@@ -27891,16 +30840,24 @@ static void refreshMapInfoLabel() {
   char tail[28];
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   const bool wifi_up = (WiFi.status() == WL_CONNECTED);
-  if (s_tile_fetch_pending > 0) {
+  if (tileFetchPendingLoad() > 0) {
     snprintf(tail, sizeof(tail), "\xe2\x86\x93 %u downloading",
-             (unsigned)s_tile_fetch_pending);
+             (unsigned)tileFetchPendingLoad());
   } else if (s_map_last_missing > 0 && !wifi_up) {
     snprintf(tail, sizeof(tail), "Wi-Fi off \xe2\x80\x94 gaps");
+  } else if (s_map_markers_wanted > s_map_markers_drawn) {
+    // More positioned contacts are on screen than we drew dots for. Say so: the old
+    // label counted every positioned contact and the map quietly stopped at its cap,
+    // so the two disagreed with no explanation anywhere.
+    snprintf(tail, sizeof(tail), TR("%d of %d on map"), s_map_markers_drawn, with_gps);
   } else {
     snprintf(tail, sizeof(tail), TR("%d on map"), with_gps);
   }
 #else
-  snprintf(tail, sizeof(tail), TR("%d on map"), with_gps);
+  if (s_map_markers_wanted > s_map_markers_drawn)
+    snprintf(tail, sizeof(tail), TR("%d of %d on map"), s_map_markers_drawn, with_gps);
+  else
+    snprintf(tail, sizeof(tail), TR("%d on map"), with_gps);
 #endif
   // Coords → bottom-left corner; count/status → bottom-right corner.
   char buf[40];
@@ -28133,7 +31090,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // Fresh panel starts at the single-line composer height; it grows as the user
   // types (chatComposerAutoGrow). Reset here so a previous chat's grown height
   // doesn't leak into this one's initial layout math below.
-  s_comp_h = CHAT_COMP_H;
+  s_comp_h = chatComposerBaseH();
 
   // ---- Message area (scrollable container of speech-bubble children) ----
   // Each message gets its own lv_obj bubble inside p.msgs so we can style
@@ -28145,16 +31102,20 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_border_width(p.msgs, 0, LV_PART_MAIN);
   lv_obj_set_style_radius(p.msgs, 0, LV_PART_MAIN);
   lv_obj_set_style_pad_all(p.msgs, 6, LV_PART_MAIN);
-  // The status bar's glass lower row floats over the TOP of the list — inset the top by
-  // that row height so the first bubble rests just below the bar and older ones scroll
-  // UNDER it (mirrors the composer at the bottom).
+  // The status bar's glass lower row floats over the TOP of the list on boards
+  // with a two-row chat header. Pager keeps the chat header in one regular row,
+  // so retaining that old row-sized inset only wastes message space.
+#if defined(TLORA_PAGER)
+  lv_obj_set_style_pad_top(p.msgs, 6, LV_PART_MAIN);
+#else
   lv_obj_set_style_pad_top(p.msgs, STATUSBAR_H + 6, LV_PART_MAIN);
+#endif
   // The composer floats over the list's lower edge (transparent row), so reserve a
   // bottom inset == the composer height: the newest bubble rests just above it and
   // older ones scroll UNDER it. Kept in sync with s_comp_h by chatComposerAutoGrow.
   lv_obj_set_style_pad_bottom(p.msgs, s_comp_h + 6, LV_PART_MAIN);
   lv_obj_set_style_text_color(p.msgs, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_style_text_font(p.msgs, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(p.msgs, chatMessageFont(), LV_PART_MAIN);
   lv_obj_set_scrollbar_mode(p.msgs, LV_SCROLLBAR_MODE_AUTO);
   lv_obj_set_scroll_dir(p.msgs, LV_DIR_VER);
   lv_obj_set_layout(p.msgs, 0);   // no flex/grid — bubbles use absolute Y; spacer sets scroll height
@@ -28237,8 +31198,9 @@ static void makeChatDetail(LvChatPanel& p) {
 #endif  // !TLORA_PAGER (jump_btn)
 
   // ---- Composer row ----
+  const lv_coord_t composer_h = chatComposerBaseH();
   p.composer_row = lv_obj_create(p.overlay);
-  lv_obj_set_size(p.composer_row, chatScreenW(), CHAT_COMP_H);
+  lv_obj_set_size(p.composer_row, chatScreenW(), composer_h);
   lv_obj_set_pos(p.composer_row, 0, chatCompYOpen());
   // Transparent row + no border: only the rounded chips / textarea / send button show,
   // and the chat bubbles scroll UNDER them (p.msgs extends to full height behind it).
@@ -28257,11 +31219,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // Composer chip size: ~2x on the large screen (Tanmatsu) so the QR/emoji chips
   // aren't tiny on the 800-px panel. The 64-px composer row (CHAT_COMP_H on
   // CAP_LARGE_SCREEN) has room; 30 px elsewhere keeps the small boards unchanged.
-#if CAP_LARGE_SCREEN
-  const lv_coord_t chip_sz = 56;
-#else
-  const lv_coord_t chip_sz = 30;
-#endif
+  const lv_coord_t chip_sz = chatComposerChipSz();
   const lv_coord_t chip_gap = 6;
 
   // Macro picker button: a compact chip taps to a popup grid of user-
@@ -28330,13 +31288,14 @@ static void makeChatDetail(LvChatPanel& p) {
   // Channel settings lives on the TOP status-bar gear (styled as the green ○ key), not a
   // composer chip — so the left chip row stays QR + emoji and the textarea geometry is fixed.
   const lv_coord_t comp_ta_x = 2 * chip_sz + 2 * chip_gap;       // start past both left chips + gaps
-  const lv_coord_t comp_ta_w = chatScreenW() - comp_ta_x - 48;   // leave the Send button area on the right
+  const lv_coord_t send_sz = chatComposerSendSz();
+  const lv_coord_t comp_ta_w = chatComposerTaW();
 
   p.composer_ta = lv_textarea_create(p.composer_row);
   // Fill the row between the two left chips and Send (right): content width is
   // screen - 8 (pad), minus QR(30)+gap(6)+Emoji(30)+gap(6) on the left and
   // gap(6)+Send(34) on the right => screen - 120. Widens with the screen.
-  lv_obj_set_size(p.composer_ta, comp_ta_w, CHAT_COMP_H - 4);
+  lv_obj_set_size(p.composer_ta, comp_ta_w, composer_h - 4);
   // 30 (QR) + 6 + 30 (Emoji) + 6 = 72 offset from content-left. Bottom-aligned so
   // the box grows UPWARD as the message wraps to more lines (chatComposerAutoGrow).
   lv_obj_align(p.composer_ta, LV_ALIGN_BOTTOM_LEFT, comp_ta_x, 0);
@@ -28358,7 +31317,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // messages at 127 bytes, shorter than this limit.)
   lv_textarea_set_max_length(p.composer_ta, UITask::MAX_MSG_TEXT);
   lv_obj_set_scrollbar_mode(p.composer_ta, LV_SCROLLBAR_MODE_OFF);
-  lv_textarea_set_placeholder_text(p.composer_ta, TR("Type a message..."));
+  taSetPlaceholder(p.composer_ta, TR("Type a message..."));
   lv_obj_set_style_text_color(p.composer_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(p.composer_ta, &g_font_14, LV_PART_MAIN);
   // Readable selection highlight: the label draws selected text using its OWN
@@ -28379,12 +31338,19 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_add_event_cb(p.composer_ta, kbActivityPressCb, LV_EVENT_PRESSED, nullptr);
   // Grow / shrink the composer row as the message wraps (every text change).
   lv_obj_add_event_cb(p.composer_ta, composerAutoGrowCb, LV_EVENT_VALUE_CHANGED, &p);
+  lv_obj_add_event_cb(p.composer_ta, composerSuggestChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
   // Double-tap a word to select it; long-press for Cut/Copy/Paste/Select-All.
   lv_obj_add_event_cb(p.composer_ta, composerEditClickedCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(p.composer_ta, composerEditLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
 
   lv_obj_t* send = lv_btn_create(p.composer_row);
-  lv_obj_set_size(send, 34, 30);
+  lv_obj_set_size(send, send_sz,
+#if defined(TLORA_PAGER)
+                  send_sz
+#else
+                  30
+#endif
+  );
   lv_obj_align(send, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
   styleButton(send);
   lv_obj_set_style_radius(send, 15, LV_PART_MAIN);
@@ -28466,6 +31432,9 @@ static void langChosenCb(lv_event_t* e) {
   uint8_t lang = (uint8_t)(intptr_t)lv_event_get_user_data(e);
 #if defined(ESP32)
   touchPrefsSetUiLang(lang);
+#if CAP_LUA_APPS
+  touchPrefsSetLangFile("");   // picking a built-in deactivates any .lang file overlay
+#endif
 #endif
   i18nSetLang(lang);
   kbApplyUiLangDefault(lang);   // auto-enable + select the matching keyboard layout for this UI language
@@ -28563,7 +31532,7 @@ static void crashDumpCheck() {
   // so the whole crash-report UI stays off (everything downstream gates on s_crash_dump_size,
   // which then stays 0). The panic coredump still sits in its flash partition for a USB/esptool
   // pull if we ever need it.
-#if CAP_FILESYSTEM
+#if CAP_FILESYSTEM || defined(TLORA_PAGER)
   crashWdtCaptureRead();   // pull the Task-WDT culprit (if any) before checking for a dump
   size_t addr = 0, size = 0;
   if (esp_core_dump_image_check() == ESP_OK &&
@@ -28588,7 +31557,7 @@ static bool crashDumpExport(char* out_path, size_t out_cap) {
   bool used_sd = false;
   fs::FS* dst = nullptr;
   const char* path = "/wadamesh-crash.elf";
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (fmSdTryMount()) { dst = &SD; used_sd = true; }
 #elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   if (tanSdTryMount()) { dst = &SD_MMC; used_sd = true; }   // microSD on SDMMC slot 0
@@ -28601,8 +31570,9 @@ static bool crashDumpExport(char* out_path, size_t out_cap) {
   File f = dst->open(path, "w");
   if (!f) return false;
 
-  uint8_t* buf = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
-  if (!buf) buf = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_8BIT);
+  // Internal DMA-capable RAM, not PSRAM — the dump lands on SD/SD_MMC, which
+  // DMAs from this buffer (see the SD firmware download for the full write-up).
+  uint8_t* buf = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
   if (!buf) { f.close(); return false; }
   bool ok = true; size_t off = 0;
   while (off < size) {
@@ -28677,7 +31647,7 @@ static void crashReportMaybePrompt() {
            LV_SYMBOL_WARNING "  The device restarted after a crash.\n\n%s%s"
            "Sending the crash report helps us find and fix the bug. Save it now?",
            s_crash_wdt_str[0] ? s_crash_wdt_str : "", s_crash_wdt_str[0] ? "\n\n" : "");
-  showConfirm(m, "Save report", crashReportConfirmCb);
+  showConfirm(m, TR("Save report"), crashReportConfirmCb);
 }
 #endif  // ESP32
 
@@ -28706,6 +31676,12 @@ static void settingsCatBuild(int cat) {
     case CAT_BACKUPS:      buildBackupsSettings(); break;
     case CAT_LANGUAGE:     buildLanguageSettings(); break;
     case CAT_MQTT:         buildMqttSettings(); break;
+    case CAT_APPPERMS:
+#if CAP_LUA_SDK_EXT
+      s_settings_inline_parent = nullptr;
+      buildAppPermsSettings(page, lblw);
+#endif
+      break;
     case CAT_ABOUT: {
       s_settings_inline_parent = nullptr;
       s_update_about_lbl = lv_label_create(page);   // update/firmware status (top)
@@ -28727,7 +31703,7 @@ static void settingsCatBuild(int cat) {
         lv_obj_set_style_bg_color(s_ota_btn, lv_color_hex(0x3B7039), LV_PART_MAIN | LV_STATE_PRESSED);
         lv_obj_add_event_cb(s_ota_btn, otaInstallLatestCb, LV_EVENT_CLICKED, nullptr);
         s_ota_btn_lbl = lv_label_create(s_ota_btn);
-        lv_label_set_text(s_ota_btn_lbl, LV_SYMBOL_DOWNLOAD "  Install update");
+        lv_label_set_text(s_ota_btn_lbl, TR(LV_SYMBOL_DOWNLOAD "  Install update"));
         lv_obj_set_style_text_font(s_ota_btn_lbl, &g_font_14, LV_PART_MAIN);
         lv_obj_set_style_text_color(s_ota_btn_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
         lv_obj_center(s_ota_btn_lbl);
@@ -28797,7 +31773,12 @@ static void settingsCatBuild(int cat) {
           lv_obj_set_style_text_color(beta_note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
         }
 
-#if defined(HAS_TDECK_GT911) && CAP_OTA
+// Gated on the CAPABILITY, not a list of board names: this needs a writable Arduino-SD
+// card and OTA, which is exactly CAP_SD && CAP_OTA. The board list had grown to three
+// entries and still left the T-Lora Pager out despite it having both (#289) — every new
+// board with a card had to remember to add itself here, which is the failure mode
+// device_caps.h exists to prevent.
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
         // "Save update bin to SD" — the Launcher-install update path: downloads
         // the app-only bin for the active channel into /BINS/ on the SD card,
         // named wadamesh-beta_<N>-<stable|beta>.bin, ready for the Launcher to
@@ -28808,7 +31789,7 @@ static void settingsCatBuild(int cat) {
           styleButton(sd_btn);
           lv_obj_add_event_cb(sd_btn, sdFwSaveToSdCb, LV_EVENT_CLICKED, nullptr);
           lv_obj_t* sl = lv_label_create(sd_btn);
-          lv_label_set_text(sl, LV_SYMBOL_SD_CARD "  Save update bin to SD");
+          lv_label_set_text(sl, TR(LV_SYMBOL_SD_CARD "  Save update bin to SD"));
           lv_obj_set_style_text_font(sl, &g_font_14, LV_PART_MAIN);
           lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
           lv_obj_center(sl);
@@ -28818,7 +31799,7 @@ static void settingsCatBuild(int cat) {
           lv_obj_set_width(s_sdfw_status_lbl, lblw);
           lv_obj_set_style_text_font(s_sdfw_status_lbl, &g_font_12, LV_PART_MAIN);
           lv_obj_set_style_text_color(s_sdfw_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-          lv_label_set_text(s_sdfw_status_lbl, TR("For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder)."));
+          lv_label_set_text(s_sdfw_status_lbl, SDFW_HINT_TEXT);
         }
 #endif
       }
@@ -28833,8 +31814,8 @@ static void settingsCatBuild(int cat) {
         lv_obj_set_style_bg_color(crash_btn, lv_color_hex(0x8A3B2E), LV_PART_MAIN);  // warning red-brown
         lv_obj_add_event_cb(crash_btn, crashDumpExportCb, LV_EVENT_CLICKED, nullptr);
         lv_obj_t* cbl = lv_label_create(crash_btn);
-        char ct[56];
-        snprintf(ct, sizeof ct, LV_SYMBOL_WARNING "  Export crash report (%uK)",
+        char ct[96];   // room for a translated label
+        snprintf(ct, sizeof ct, TR(LV_SYMBOL_WARNING "  Export crash report (%uK)"),
                  (unsigned)(s_crash_dump_size / 1024));
         lv_label_set_text(cbl, ct);
         lv_obj_set_style_text_font(cbl, &g_font_14, LV_PART_MAIN);
@@ -28876,7 +31857,7 @@ static void closeSettingsCategory() {
   hideKb();
   if (s_settings_open_cat == CAT_ABOUT) {   // null the live-label ptrs (freed with the sheet)
     s_sysinfo_lbl = nullptr; s_sysinfo_rest_lbl = nullptr; s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
-#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
     s_sdfw_status_lbl = nullptr;
 #endif
     s_ota_btn = nullptr; s_ota_btn_lbl = nullptr;
@@ -28976,10 +31957,35 @@ static void openSettingsCategory(int cat) {
   updateGlobalStatusBar();   // show the Back chevron + title in the bar immediately
 }
 
+#if CAP_LUA_APPS
+static void luaStoreOpenLanguages();   // fwd (defined with the Store page)
+#endif
+
 static void settingsCatOpenCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  openSettingsCategory((int)(intptr_t)lv_event_get_user_data(e));
+  const int cat = (int)(intptr_t)lv_event_get_user_data(e);
+#if CAP_LUA_APPS
+  if (cat == CAT_LANGUAGE) {   // languages live in the Lua Store now (files + picker)
+    luaStoreOpenLanguages();
+    return;
+  }
+#endif
+  openSettingsCategory(cat);
 }
+
+#if CAP_LUA_APPS
+// Apply the Lua Store's built-in hide bits to the settings landing WITHOUT
+// rebuilding it: the page is constructed once at boot, so a toggle taken later
+// has to flip the existing card (flex layout skips hidden children, so the grid
+// closes up on its own).
+void settingsApplyHiddenCats() {
+  const uint32_t hide = touchPrefsGetAppHide();
+  if (s_settings_cat_card[CAT_MQTT] && lv_obj_is_valid(s_settings_cat_card[CAT_MQTT])) {
+    if (hide & APPHIDE_MQTT) lv_obj_add_flag(s_settings_cat_card[CAT_MQTT], LV_OBJ_FLAG_HIDDEN);
+    else                     lv_obj_clear_flag(s_settings_cat_card[CAT_MQTT], LV_OBJ_FLAG_HIDDEN);
+  }
+}
+#endif
 
 static void makeSettings(lv_obj_t* tab) {
   styleSurface(tab, COLOR_BG);
@@ -29020,8 +32026,12 @@ static void makeSettings(lv_obj_t* tab) {
 #endif
 #if !defined(HAS_EXPANSION_KIT)
     if (c == CAT_SENSORS) continue;   // Sensors page only exists with the V4 Expansion Kit
+#if !CAP_LUA_SDK_EXT
+    if (c == CAT_APPPERMS) continue;  // nothing on this board can request a permission
+#endif
 #endif
     lv_obj_t* card = lv_btn_create(land);
+    s_settings_cat_card[c] = card;      // remembered so hiding can apply live
     lv_obj_remove_style_all(card);
     lv_obj_set_size(card, card_w, card_h);
     lv_obj_set_style_bg_color(card, lv_color_hex(0x121417), LV_PART_MAIN);
@@ -29077,6 +32087,9 @@ static void makeSettings(lv_obj_t* tab) {
   }
 
   versionCheckUpdateUi();   // reflect any completed check in the gear/About badges
+#if CAP_LUA_APPS
+  settingsApplyHiddenCats();
+#endif
 }
 
 // ============================================================
@@ -29331,8 +32344,16 @@ static void msgMenuResendCb(lv_event_t* e) {
   if (a) lv_indev_wait_release(a);
   closeMsgActionMenu();
   if (!s_msg_menu_text[0]) return;
-  if (!g_lv.task->composerSend(s_msg_menu_text))
+  if (!g_lv.task->composerSend(s_msg_menu_text)) {
     g_lv.task->showAlert(TR("Resend failed"), 1400);
+    return;
+  }
+  // The composer's send button refreshes the open detail itself; this
+  // programmatic path must too, or the new bubble only appears when something
+  // else redraws the thread (#248).
+  if (g_lv.dm.detail_open) refreshChatDetailAsync(g_lv.dm);
+  if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
+  g_lv.dirty_threads = true;
 }
 
 static void msgMenuDeleteCb(lv_event_t* e) {
@@ -29360,8 +32381,13 @@ static void msgMenuDeleteCb(lv_event_t* e) {
 static char s_retry_text[UITask::MAX_MSG_TEXT + 1] = "";
 static void retryConfirmedApply() {
   if (!g_lv.task || !s_retry_text[0]) return;
-  if (!g_lv.task->composerSend(s_retry_text))
+  if (!g_lv.task->composerSend(s_retry_text)) {
     g_lv.task->showAlert(TR("Resend failed"), 1400);
+    return;
+  }
+  if (g_lv.dm.detail_open) refreshChatDetailAsync(g_lv.dm);   // see msgMenuResendCb (#248)
+  if (g_lv.ch.detail_open) refreshChatDetailAsync(g_lv.ch);
+  g_lv.dirty_threads = true;
 }
 static void bubbleRetryTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
@@ -29464,7 +32490,14 @@ static void openMessageActionMenu(int msg_idx) {
   // smaller boards keep plain integers (PSC is a no-op there). Buttons sit TWO
   // per row — with Delete the menu carries up to 7 actions, and a single column
   // no longer fit the 240-px screens without scrolling.
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  // Spend the Pager's horizontal room instead of its scarce vertical room.
+  const int card_w = sw - 80;
+  const int btn_h  = 30;
+  const int gap    = 6;
+  const int pad    = 10;
+  const int hdr_h  = 32;   // keep the first row below the full close-X target
+#elif CAP_LARGE_SCREEN
   const int card_w = PCW(220);
   const int btn_h  = PSC(30);
   const int gap    = PSC(4);
@@ -29524,17 +32557,21 @@ static void openMessageActionMenu(int msg_idx) {
     lv_obj_center(lbl);
     ++bi;
   };
-  if (can_ack) mk_btn(LV_SYMBOL_OK "  Ack", msgMenuAckCb);
+  if (can_ack) mk_btn(TR(LV_SYMBOL_OK "  Ack"), msgMenuAckCb);
   if (can_mention) {
     char ml[UITask::MAX_SENDER_NAME + 16];
+#if defined(TLORA_PAGER)
+    snprintf(ml, sizeof ml, "@%.16s", m.sender);   // wide Pager cells can keep more of the name
+#else
     snprintf(ml, sizeof ml, "@%.10s", m.sender);   // "Mention" is implied by the @; half-width cell
+#endif
     mk_btn(ml, msgMenuMentionCb);
   }
-  mk_btn(LV_SYMBOL_COPY "  Copy", msgMenuCopyCb);
-  mk_btn(LV_SYMBOL_LIST "  Info", msgMenuInfoCb);
-  if (can_block)  mk_btn(LV_SYMBOL_CLOSE   "  Block",  msgMenuBlockCb);
-  if (can_resend) mk_btn(LV_SYMBOL_REFRESH "  Resend", msgMenuResendCb);
-  mk_btn(LV_SYMBOL_TRASH "  Delete", msgMenuDeleteCb);
+  mk_btn(TR(LV_SYMBOL_COPY "  Copy"), msgMenuCopyCb);
+  mk_btn(TR(LV_SYMBOL_LIST "  Info"), msgMenuInfoCb);
+  if (can_block)  mk_btn(TR(LV_SYMBOL_CLOSE   "  Block"), msgMenuBlockCb);
+  if (can_resend) mk_btn(TR(LV_SYMBOL_REFRESH "  Resend"), msgMenuResendCb);
+  mk_btn(TR(LV_SYMBOL_TRASH "  Delete"), msgMenuDeleteCb);
 }
 
 // "Trace route" from the message Info popup: run a full multi-hop trace to the
@@ -29604,7 +32641,12 @@ static void openMessageInfoPopup(int msg_idx) {
   const bool show_trace = !m.channel;
   const int  route_pts  = buildRouteFromMessage(m);
   const bool show_route = (route_pts >= 2);
-#if CAP_LARGE_SCREEN
+#if defined(TLORA_PAGER)
+  // Reduce wrapping across the wide, short Pager. The independently scrollable
+  // body handles routes and ACK details that exceed the available height.
+  const int card_w = sw - 28;
+  int card_h = sh - STATUSBAR_H - 8;
+#elif CAP_LARGE_SCREEN
   const int card_w = PCW(220);
   int card_h = (show_trace || show_route) ? PSC(290) : PSC(250);
 #else
@@ -29671,7 +32713,38 @@ static void openMessageInfoPopup(int msg_idx) {
     blen += snprintf(body + blen, sizeof(body) - blen,
                      "\nRSSI   %d dBm", (int)m.rssi);
     if (m.meta_flags & UITask::MSG_META_HAS_SCOPE) {
-      blen += snprintf(body + blen, sizeof(body) - blen, "\nScope  %04X", (unsigned)m.in_scope);
+      // The raw code is an HMAC of this packet under the sender's region key, so
+      // it is different on every message and means nothing on its own — showing
+      // the bare hex read as "the region", and people reasonably asked why it kept
+      // changing (#259). Report what was actually determined: whether it verified
+      // against our own region key. The hex stays, in parentheses, for anyone
+      // cross-checking a capture.
+      // #271: when the code verified against one of the registered regions we can
+      // name it outright. Fall back to the older my-region / another-region
+      // answer when nothing matched, which is still all we can honestly say.
+      char region[40];
+      const uint8_t rslot = UITask::metaScopeSlot(m.meta_flags);
+      const char* rname = (rslot && rslot != REGION_SLOT_AMBIGUOUS)
+                            ? the_mesh.regionRegistry().nameForSlot(rslot) : nullptr;
+      if (rslot == REGION_SLOT_AMBIGUOUS) {
+        // Several registered regions produced this same 16-bit code. Naming any
+        // one of them would be a guess, and a confident wrong region reads worse
+        // than an honest "cannot tell". The tag is only 16 bits, so with N keys
+        // live a collision runs at about N/65534 per packet.
+        snprintf(region, sizeof region, "%s", TR("ambiguous (several regions matched)"));
+      } else if (rname) {
+        snprintf(region, sizeof region, "%s", rname);
+      } else if (m.meta_flags & UITask::MSG_META_SCOPE_HOME) {
+        char home[24] = {0};
+        touchPrefsGetRegionScope(home, sizeof home);
+        snprintf(region, sizeof region, "%s", home[0] ? home : TR("my region"));
+      } else {
+        snprintf(region, sizeof region, "%s", TR("another region"));
+      }
+      // Key is "Scope" with no trailing space: TR() strips icon prefixes, NOT
+      // trailing whitespace, so "Scope " would never match its .lang row.
+      blen += snprintf(body + blen, sizeof(body) - blen,
+                       "\n%s  %s (%04X)", TR("Scope"), region, (unsigned)m.in_scope);
     }
     // Full inbound route — the repeaters this flood traversed. Resolve each hop's
     // hash to its repeater name when that contact is known. EVERY hop is listed
@@ -29726,7 +32799,7 @@ static void openMessageInfoPopup(int msg_idx) {
     // Bounded (<= ECHO_MAX_HOPS) + hard buffer guard + read-only lookup -> no risk.
     uint8_t rhc = the_mesh.uiRepeatHopCount(m.sent_fp);
     for (uint8_t r = 0; r < rhc; r++) {
-      if (blen >= (int)sizeof(body) - 56) break;
+      if (blen >= (int)sizeof(body) - 96) break;   // escaped name (<=64B) + markers must fit whole
       uint8_t hh[4];
       uint8_t hsz = the_mesh.uiRepeatHop(m.sent_fp, r, hh, sizeof(hh));
       if (hsz == 0) continue;
@@ -29734,10 +32807,15 @@ static void openMessageInfoPopup(int msg_idx) {
       for (uint8_t b = 0; b < hsz && b < 4; ++b)
         snprintf(hashstr + b * 2, sizeof(hashstr) - b * 2, "%02X", hh[b]);
       char nm[33];   // ContactInfo.name is 32B; hold the full name (emoji eat 4B each)
-      if (the_mesh.uiHopName(hh, hsz, nm, sizeof(nm)))
+      if (the_mesh.uiHopName(hh, hsz, nm, sizeof(nm))) {
+        // #223 class: this name sits inside a '#RRGGBB …#' run — a literal '#' or a
+        // broken UTF-8 tail in it desyncs every colour block after this line.
+        char nm_c[33], nm_esc[66];
+        copyUtf8ReplacingMissingGlyphs(nullptr, nm_c, sizeof nm_c, nm);
+        recolorEscape(nm_esc, sizeof nm_esc, nm_c);
         blen += snprintf(body + blen, sizeof(body) - blen, "\n  #%06X %s#",
-                         (unsigned)nodeSigColorHex(nm), nm);   // name resolved -> no redundant hash
-      else
+                         (unsigned)nodeSigColorHex(nm), nm_esc);   // name resolved -> no redundant hash
+      } else
         blen += snprintf(body + blen, sizeof(body) - blen, "\n  #%06X %s#",
                          (unsigned)nodeSigColorHex(hashstr), hashstr);
     }
@@ -29809,7 +32887,14 @@ static void openMessageInfoPopup(int msg_idx) {
   lv_obj_set_pos(bodywrap, 0, body_top);
   lv_obj_set_style_bg_opa(bodywrap, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_scroll_dir(bodywrap, LV_DIR_VER);
-  lv_obj_set_scrollbar_mode(bodywrap, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_set_scrollbar_mode(bodywrap,
+#if defined(TLORA_PAGER)
+                            LV_SCROLLBAR_MODE_ON
+#else
+                            LV_SCROLLBAR_MODE_AUTO
+#endif
+  );
+  lv_obj_add_event_cb(bodywrap, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
   // Thin visible scrollbar (remove_style_all wiped the theme's).
   lv_obj_set_style_width(bodywrap, 4, LV_PART_SCROLLBAR);
   lv_obj_set_style_bg_color(bodywrap, lv_color_hex(0x6FA8DA), LV_PART_SCROLLBAR);
@@ -29847,6 +32932,7 @@ static void bubbleLongPressMenuCb(lv_event_t* e) {
 // Helper: render a centered placeholder label into the (cleaned) msgs panel.
 static void chatDetailShowPlaceholder(LvChatPanel& p, const char* msg) {
   lv_obj_t* lbl = lv_label_create(p.msgs);
+  useChainedFont(lbl);
   lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(lbl, 200);
   lv_label_set_text(lbl, TR(msg));
@@ -30160,11 +33246,13 @@ static bool chatVirtNeedReflow(int new_i0, int new_i1) {
 }
 
 static void chatVirtCancelRenderTimer() {
-  if (s_chat_virt_render_timer) {
-    lv_timer_del(s_chat_virt_render_timer);
-    s_chat_virt_render_timer = nullptr;
-  }
   s_chat_virt_render_panel = nullptr;
+  // Keep one timer allocation for the lifetime of the UI.  This path is hit
+  // repeatedly while a fast scroll crosses virtual-window boundaries. Two
+  // matching dumps reached lv_timer_exec through an invalid callback (#251), so
+  // do not churn this timer's list node in the reproducing path. Pausing keeps
+  // its callback allocation stable while still cancelling the pending work.
+  if (s_chat_virt_render_timer) lv_timer_pause(s_chat_virt_render_timer);
 }
 
 static void chatVirtResetInputForMsgs(LvChatPanel* p) {
@@ -30192,18 +33280,16 @@ static void chatVirtFreeOffsets() {
 
 #if defined(TLORA_PAGER)
 // Encoder-nav focus survival across the virtualized re-render. The render
-// deletes and recreates every bubble row — LVGL hands focus of a deleted
-// object to the next surviving group entry (the chat header/composer once
-// every bubble is gone), which is how focus "fell out" of the message list
-// mid-history on this no-touch board. The pending logical index below is the
-// message the encoder is steering toward: chatVirtRenderWindow re-aims focus
-// at the matching recreated row via the existing one-shot s_nav_focus_hint
-// rebuild mechanism, and pagerEncoderChatEdgeScroll both sets it (edge detent
-// = neighbor index) and folds further detents into it while a render is in
-// flight — fast turning otherwise stepped focus out from the transiently
-// wrong focus position before the load landed. -1 = idle. The timestamp
-// expires a stale pending target (see the clamp) so a render that never
-// fires can't wedge encoder nav.
+// deletes and recreates every bubble row, so a row pointer cannot preserve
+// focus across the rebuild. The pending logical index below is the message the
+// encoder is steering toward: chatVirtRenderWindow safely detaches the group
+// before destruction, then re-aims focus at the matching recreated row via the
+// existing one-shot s_nav_focus_hint mechanism. pagerEncoderChatEdgeScroll sets
+// the target (an edge detent selects the neighboring logical index) and folds
+// further detents into it while a render is in flight — fast turning otherwise
+// stepped focus out from the transiently wrong focus position before the load
+// landed. -1 = idle. The timestamp expires a stale pending target (see the
+// clamp) so a render that never fires can't wedge encoder nav.
 static int      s_pager_chat_focus_i  = -1;
 static uint32_t s_pager_chat_focus_ms = 0;
 #endif
@@ -30282,7 +33368,7 @@ static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mod
     }
   }
   copyUtf8ReplacingMissingGlyphs(&g_font_12, d.san_sender, sizeof(d.san_sender), d.show_sender);
-  copyUtf8ReplacingMissingGlyphs(&g_font_12, d.san_text, sizeof(d.san_text), d.show_text);
+  copyUtf8ReplacingMissingGlyphs(chatMessageFont(), d.san_text, sizeof(d.san_text), d.show_text);
 }
 
 // ---- Chat virt serial diagnostics -------------------------------------------
@@ -30454,11 +33540,12 @@ static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool chann
   if (show_sender || meta_buf[0])
     inner_y += lv_font_get_line_height(&g_font_12);
 
+  const lv_font_t* msg_font = chatMessageFont();
   lv_point_t txt_size;
-  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  lv_txt_get_size(&txt_size, d.san_text, msg_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   const lv_coord_t txt_w_used = (txt_size.x <= inner_max_w) ? txt_size.x : inner_max_w;
   lv_point_t wrapped_size;
-  lv_txt_get_size(&wrapped_size, d.san_text, &g_font_12, 0, 0,
+  lv_txt_get_size(&wrapped_size, d.san_text, msg_font, 0, 0,
                   txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
 
   return kChatBubblePadV * 2 + inner_y + wrapped_size.y;
@@ -30571,7 +33658,7 @@ static lv_coord_t chatMeasureCompactRowHeight(const UITask::UIMessage& m, LvChat
                                  ? s_chat_virt.content_w - kPadH * 2
                                  : s_chat_virt.content_w;
   lv_point_t wrapped;
-  lv_txt_get_size(&wrapped, line, &g_font_12, 0, 0,
+  lv_txt_get_size(&wrapped, line, chatMessageFont(), 0, 0,
                   inner_w > 0 ? inner_w : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   return wrapped.y + kPadV * 2;
 }
@@ -30616,15 +33703,37 @@ static void chatVirtClearBubbleWidgets(LvChatPanel* p) {
 }
 
 // Sync purge — only call from lv_async_call / timer context, not indev handlers.
-static void chatVirtPurgeMsgsChildrenSync(LvChatPanel* p) {
-  if (!p || !p->msgs) return;
+// Returns true when keypad navigation was detached and must be rebuilt after the
+// replacement tree (normally a placeholder) has been created.
+static bool chatVirtPurgeMsgsChildrenSync(LvChatPanel* p) {
+  if (!p || !p->msgs) return false;
   chatVirtCancelRenderTimer();
+#if CAP_KEYPAD_NAV
+  const bool nav_detached = navDetachBeforeTreeMutation();
+#else
+  constexpr bool nav_detached = false;
+#endif
+  chatVirtResetInputForMsgs(p);
+  chatVirtBeforeMassDelete();
   for (int i = static_cast<int>(lv_obj_get_child_cnt(p->msgs)) - 1; i >= 0; --i) {
     lv_obj_t* ch = lv_obj_get_child(p->msgs, i);
     if (ch) lv_obj_del(ch);
   }
   s_chat_virt.spacer  = nullptr;
   s_chat_virt.divider = nullptr;
+  return nav_detached;
+}
+
+static void chatVirtResetToPlaceholder(LvChatPanel& p, const char* text) {
+  lv_indev_reset(nullptr, nullptr);
+  chatVirtReset(&p);
+  const bool nav_detached = chatVirtPurgeMsgsChildrenSync(&p);
+  chatDetailShowPlaceholder(p, text);
+#if CAP_KEYPAD_NAV
+  if (nav_detached) navMaybeRebuild();
+#else
+  (void)nav_detached;
+#endif
 }
 
 static void chatVirtEnsureSpacer(LvChatPanel* p, lv_coord_t total_h) {
@@ -31124,9 +34233,9 @@ static void openUrlMenu(const char* url) {
     by += btn_h + gap;
   };
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
-  mk(LV_SYMBOL_WIFI "  Open in web", urlMenuOpenWebCb);
+  mk(TR(LV_SYMBOL_WIFI "  Open in web"), urlMenuOpenWebCb);
 #endif
-  mk(LV_SYMBOL_IMAGE "  Create QR", urlMenuQrCb);
+  mk(TR(LV_SYMBOL_IMAGE "  Create QR"), urlMenuQrCb);
 }
 // Short tap on a chat bubble that contains a URL -> the action menu (re-extract the URL
 // from the live message; the ring may have rotated since the bubble was built).
@@ -31171,8 +34280,9 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   lv_obj_set_size(bubble, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 
   const lv_coord_t kInnerMaxW = kBubbleMaxW - 2 * kChatBubblePadH;
+  const lv_font_t* msg_font = chatMessageFont();
   lv_point_t txt_size;
-  lv_txt_get_size(&txt_size, d.san_text, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  lv_txt_get_size(&txt_size, d.san_text, msg_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
 
   char meta_buf[48];
@@ -31234,7 +34344,7 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   }
 
   lv_obj_t* tlbl = lv_label_create(bubble);
-  lv_obj_set_style_text_font(tlbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(tlbl, msg_font, LV_PART_MAIN);
   lv_obj_set_style_text_color(tlbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_label_set_text(tlbl, d.san_text);
   // Clickable URLs: tint any link blue (recolor tags are zero-width, so wrapping/height
@@ -31294,7 +34404,7 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
   lv_obj_t* row = lv_label_create(p->msgs);
   lv_label_set_recolor(row, true);
   lv_obj_add_flag(row, LV_OBJ_FLAG_FLOATING);
-  lv_obj_set_style_text_font(row, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(row, chatMessageFont(), LV_PART_MAIN);
   lv_obj_set_style_text_color(row, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_label_set_long_mode(row, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(row, s_chat_virt.content_w);
@@ -31419,20 +34529,26 @@ static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t
     chatVirtLogScrollTransition(p, old_i0, old_i1, i0, i1);
 #endif
 
+#if CAP_KEYPAD_NAV
+  // Preserve focus without letting lv_obj_del() remove a focused group member.
+  // Rows are recreated, so remember them by logical index; header/composer
+  // controls survive the rebuild and can be retained by pointer.
+  int refocus_i = -1;
 #if defined(TLORA_PAGER)
-  // Capture where encoder focus should land after the rebuild BEFORE the clear
-  // deletes the focused row (see s_pager_chat_focus_i above). An explicit
-  // pending target from the encoder clamp wins; otherwise preserve the row
-  // that has focus right now (covers renders the encoder didn't cause, e.g. an
-  // incoming message re-render yanking focus off the list mid-read).
-  int refocus_i = s_pager_chat_focus_i;
-  if (refocus_i < 0 && s_nav_group) {
+  // An explicit pending target from the Pager encoder edge clamp wins.
+  refocus_i = s_pager_chat_focus_i;
+#endif
+  lv_obj_t* stable_focus = nullptr;
+  if (s_nav_group) {
     lv_obj_t* foc = lv_group_get_focused(s_nav_group);
     if (foc && lv_obj_get_parent(foc) == p->msgs) {
       const intptr_t ud = reinterpret_cast<intptr_t>(lv_obj_get_user_data(foc));
-      if (ud >= 0) refocus_i = (int)ud;   // rows carry their logical index; dividers are negative
+      if (refocus_i < 0 && ud >= 0) refocus_i = (int)ud;
+    } else if (foc && lv_obj_is_valid(foc)) {
+      stable_focus = foc;
     }
   }
+  const bool nav_detached = navDetachBeforeTreeMutation();
 #endif
 
   const lv_coord_t saved_scroll_y = scroll_y;
@@ -31463,14 +34579,10 @@ static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t
   chatVirtSyncBubblePositions(p);
   CHAT_SCROLL_TRACE_DO(chatVirtCheckStoreEdges(p));
 
-#if defined(TLORA_PAGER)
-  // Re-aim focus at the recreated row for the captured/pending logical index
-  // (clamped into the freshly materialized window — a fast multi-detent target
-  // can briefly run past it; landing on the window edge keeps the traversal
-  // moving and the next render catches up). Uses the one-shot
-  // s_nav_focus_hint: the recreated rows change the nav tree signature, so
-  // navMaybeRebuild fires on the next pump and consumes the hint — same
-  // mechanism settings toggles use to hold focus across their own rebuilds.
+#if CAP_KEYPAD_NAV
+  // Re-aim focus at the recreated row for the captured logical index. A fast
+  // Pager encoder target can briefly run past the materialized window, so clamp
+  // it to the nearest fresh row and let the next reflow continue from there.
   if (refocus_i >= 0) {
     if (refocus_i < i0) refocus_i = i0;
     if (refocus_i > i1) refocus_i = i1;
@@ -31483,18 +34595,17 @@ static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t
         break;
       }
     }
+#if defined(TLORA_PAGER)
     s_pager_chat_focus_i = -1;   // consumed (whether or not the row was found)
-    // Land the re-aim NOW, not on the next loop-tick nav pump: deleting the
-    // focused row above already made LVGL auto-focus a survivor (the header
-    // gear / a bottom element), and this function runs in an lv_async_call —
-    // LVGL paints right after it returns, so waiting for the pump let that
-    // wrong focus reach the glass for a frame or two (reported: focus visibly
-    // hops out of the list and back on every edge load). A forced synchronous
-    // rebuild consumes the hint before the next paint, so the hop never shows.
-    if (s_nav_focus_hint) {
-      navMarkDirty();
-      navMaybeRebuild();
-    }
+#endif
+  } else if (stable_focus && lv_obj_is_valid(stable_focus)) {
+    s_nav_focus_hint = stable_focus;
+  }
+  // The group was deliberately empty throughout destruction. Recollect once,
+  // consume the focus hint, and land the final focus before LVGL paints.
+  if (nav_detached) {
+    navMarkDirty();
+    navMaybeRebuild();
   }
 #endif
 }
@@ -31531,16 +34642,18 @@ static void chatVirtRenderAsyncCb(void*) {
 
 static void chatVirtRenderTimerCb(lv_timer_t* t) {
   LvChatPanel* p = s_chat_virt_render_panel;
-  s_chat_virt_render_timer = nullptr;
-  s_chat_virt_render_panel = nullptr;
-  lv_timer_del(t);
-  if (!p || !p->detail_open || s_chat_virt.panel != p || s_chat_virt.n <= 0) return;
-  if (chatVirtIndevStillScrolling(p)) {
-    s_chat_virt_render_panel = p;
-    s_chat_virt_render_timer = lv_timer_create(chatVirtRenderTimerCb, 16, nullptr);
-    lv_timer_set_repeat_count(s_chat_virt_render_timer, 1);
+  if (!p || !p->detail_open || s_chat_virt.panel != p || s_chat_virt.n <= 0) {
+    s_chat_virt_render_panel = nullptr;
+    lv_timer_pause(t);
     return;
   }
+  if (chatVirtIndevStillScrolling(p)) {
+    lv_timer_set_period(t, 16);
+    lv_timer_reset(t);
+    return;
+  }
+  s_chat_virt_render_panel = nullptr;
+  lv_timer_pause(t);
   if (s_chat_virt_render_async_busy) return;
   s_chat_virt_render_async_panel = p;
   s_chat_virt_render_async_busy  = true;
@@ -31554,13 +34667,18 @@ static void chatVirtRenderTimerCb(lv_timer_t* t) {
 
 static void chatVirtScheduleRender(LvChatPanel* p) {
   if (!p || !p->detail_open || s_chat_virt.panel != p || s_chat_virt.n <= 0) return;
-  if (s_chat_virt_render_timer) {
-    lv_timer_reset(s_chat_virt_render_timer);
-    return;
-  }
   s_chat_virt_render_panel = p;
-  s_chat_virt_render_timer = lv_timer_create(chatVirtRenderTimerCb, 1, nullptr);
-  lv_timer_set_repeat_count(s_chat_virt_render_timer, 1);
+  if (!s_chat_virt_render_timer) {
+    s_chat_virt_render_timer = lv_timer_create(chatVirtRenderTimerCb, 1, nullptr);
+    if (!s_chat_virt_render_timer) {
+      s_chat_virt_render_panel = nullptr;
+      return;
+    }
+  } else {
+    lv_timer_set_period(s_chat_virt_render_timer, 1);
+    lv_timer_reset(s_chat_virt_render_timer);
+    lv_timer_resume(s_chat_virt_render_timer);
+  }
 }
 
 static void chatVirtOnScrollEnd(LvChatPanel* p) {
@@ -31651,16 +34769,16 @@ static void refreshChatDetail(LvChatPanel& p) {
 
   if (!g_lv.task->hasActiveThread() ||
       g_lv.task->activeThreadIsChannel() != p.channel_mode) {
-    lv_indev_reset(nullptr, nullptr);
-    chatVirtReset(&p);
-    lv_obj_clean(p.msgs);
-    chatDetailShowPlaceholder(p, "No thread selected.\n\nTap a chat to open it.");
+    chatVirtResetToPlaceholder(p, "No thread selected.\n\nTap a chat to open it.");
     return;
   }
   if (p.detail_open) g_lv.task->markActiveThreadRead();
 
   chatVirtEnsureMsgIdx();
-  if (!s_chat_msg_idx || s_chat_msg_idx_cap <= 0) { chatDetailShowPlaceholder(p, "Low memory"); return; }
+  if (!s_chat_msg_idx || s_chat_msg_idx_cap <= 0) {
+    chatVirtResetToPlaceholder(p, "Low memory");
+    return;
+  }
 
   const int n = g_lv.task->getActiveThreadMessageCount(s_chat_msg_idx, s_chat_msg_idx_cap, false);
 #if TRACE_MESSAGE_SCROLL_ACTIVITY
@@ -31674,10 +34792,7 @@ static void refreshChatDetail(LvChatPanel& p) {
   }
 #endif
   if (n <= 0) {
-    lv_indev_reset(nullptr, nullptr);
-    chatVirtReset(&p);
-    lv_obj_clean(p.msgs);
-    chatDetailShowPlaceholder(p, "No messages yet.\nSay hello!");
+    chatVirtResetToPlaceholder(p, "No messages yet.\nSay hello!");
     return;
   }
 
@@ -31703,16 +34818,21 @@ static void refreshChatDetail(LvChatPanel& p) {
                            !s_chat_virt.offsets || ring_changed ||
                            s_chat_virt.compact_chat != compact_chat;
   const bool divider_rebuild = !need_layout && divider_i >= 0 && s_chat_virt.divider_y < 0;
-  if (opening || need_layout || divider_rebuild)
-    chatVirtPurgeMsgsChildrenSync(&p);
-  if (opening || (need_layout && s_chat_virt.panel != &p))
+  const bool changing_panel = s_chat_virt.panel != &p;
+  if (opening || need_layout || divider_rebuild) chatVirtCancelRenderTimer();
+  if (opening || changing_panel) {
+    // The next protected render clears every stale child. Drop these aliases so
+    // it cannot preserve/reuse a spacer owned by a previous panel or thread.
+    s_chat_virt.spacer = nullptr;
+    s_chat_virt.divider = nullptr;
     s_chat_virt.scroll_virt_valid = false;
+  }
   if (need_layout) {
     lv_indev_reset(nullptr, nullptr);
     s_chat_virt.last_i0 = -1;
     s_chat_virt.last_i1 = -1;
     if (!chatVirtRebuildLayout(&p, n, divider_i)) {
-      chatDetailShowPlaceholder(p, "Low memory");
+      chatVirtResetToPlaceholder(p, "Low memory");
       return;
     }
   } else {
@@ -31722,7 +34842,7 @@ static void refreshChatDetail(LvChatPanel& p) {
       s_chat_virt.last_i0 = -1;
       s_chat_virt.last_i1 = -1;
       if (!chatVirtRebuildLayout(&p, n, divider_i)) {
-        chatDetailShowPlaceholder(p, "Low memory");
+        chatVirtResetToPlaceholder(p, "Low memory");
         return;
       }
     }
@@ -32015,8 +35135,22 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
     lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_min_height(btn, 56, LV_PART_MAIN);
-    lv_obj_set_height(btn, 56);
+#if defined(TLORA_PAGER)
+    // Small stays at 48 px. Medium/Large gain only the pixels their two live
+    // line boxes require, so name + preview cannot overlap without returning
+    // to the oversized rows that made the short Pager list cumbersome.
+    const lv_coord_t threadTextH = lv_font_get_line_height(&g_font_14) +
+                                   lv_font_get_line_height(&g_font_12);
+    const lv_coord_t kThreadRowH = LV_MAX((lv_coord_t)48, (lv_coord_t)(threadTextH + 2));
+    static constexpr lv_coord_t kThreadAvatar = 34;
+    const lv_font_t* rowMetaFont = touchPrefsGetUiScale() ? &lv_font_montserrat_14 : &g_font_12;
+#else
+    static constexpr lv_coord_t kThreadRowH = 56;
+    static constexpr lv_coord_t kThreadAvatar = 40;
+    const lv_font_t* rowMetaFont = &g_font_12;
+#endif
+    lv_obj_set_style_min_height(btn, kThreadRowH, LV_PART_MAIN);
+    lv_obj_set_height(btn, kThreadRowH);
     lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
     // Avatar: same FNV-1a hue family as the chat-bubble colours (see
@@ -32027,7 +35161,7 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_remove_style_all(av);
     lv_obj_add_flag(av, LV_OBJ_FLAG_IGNORE_LAYOUT);
     lv_obj_clear_flag(av, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);   // taps fall through to the row
-    lv_obj_set_size(av, 40, 40);
+    lv_obj_set_size(av, kThreadAvatar, kThreadAvatar);
     lv_obj_set_style_radius(av, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(av, lv_color_hsv_to_rgb((uint16_t)(hh % 360u), 55, 42), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(av, LV_OPA_COVER, LV_PART_MAIN);
@@ -32076,7 +35210,7 @@ static void refreshChatList(LvChatPanel& p) {
       lv_obj_remove_style_all(gear);
       lv_obj_add_flag(gear, LV_OBJ_FLAG_IGNORE_LAYOUT);
       lv_obj_add_flag(gear, NAV_HMOVE_FLAG);
-      lv_obj_set_size(gear, gear_w, 40);
+      lv_obj_set_size(gear, gear_w, kThreadRowH - 8);
       lv_obj_align(gear, LV_ALIGN_RIGHT_MID, -2, 0);
       lv_obj_add_event_cb(gear, threadGearCb, LV_EVENT_CLICKED, &p.ctx_store[i]);
       lv_obj_t* gl = lv_label_create(gear);
@@ -32093,18 +35227,18 @@ static void refreshChatList(LvChatPanel& p) {
     lv_coord_t time_w = 0;
     if (tbuf[0]) {
       lv_point_t tsz;
-      lv_txt_get_size(&tsz, tbuf, &g_font_12, 0, 0, LV_COORD_MAX, 0);
+      lv_txt_get_size(&tsz, tbuf, rowMetaFont, 0, 0, LV_COORD_MAX, 0);
       time_w = tsz.x;
       lv_obj_t* tlbl = lv_label_create(btn);
       lv_obj_add_flag(tlbl, LV_OBJ_FLAG_IGNORE_LAYOUT);
       lv_label_set_text(tlbl, tbuf);
-      lv_obj_set_style_text_font(tlbl, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_font(tlbl, rowMetaFont, LV_PART_MAIN);
       lv_obj_set_style_text_color(tlbl, lv_color_hex(unread > 0 ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
       lv_obj_align(tlbl, LV_ALIGN_TOP_RIGHT, time_x, 8);
     }
 
     // Name (top line) + last-message preview (bottom line), right of the avatar.
-    const lv_coord_t text_x = 8 + 40 + 8;
+    const lv_coord_t text_x = 8 + kThreadAvatar + 8;
     const lv_coord_t name_w = (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - time_w - 24);
     lv_obj_t* nm2 = lv_label_create(btn);
     lv_obj_add_flag(nm2, LV_OBJ_FLAG_IGNORE_LAYOUT);
@@ -32114,8 +35248,20 @@ static void refreshChatList(LvChatPanel& p) {
     lv_label_set_long_mode(nm2, LV_LABEL_LONG_DOT);
     // Fixed ONE-LINE height: with only a width, LONG_DOT lets a long name wrap to
     // a second line (never truncating) and it overlapped the preview underneath.
-    lv_obj_set_size(nm2, name_w, 18);
-    lv_obj_align(nm2, LV_ALIGN_TOP_LEFT, text_x, 9);
+    lv_obj_set_size(nm2, name_w,
+#if defined(TLORA_PAGER)
+                    lv_font_get_line_height(&g_font_14)
+#else
+                    18
+#endif
+    );
+    lv_obj_align(nm2, LV_ALIGN_TOP_LEFT, text_x,
+#if defined(TLORA_PAGER)
+                 touchPrefsGetUiScale() == 0 ? 3 : 1
+#else
+                 9
+#endif
+    );
 
     // Preview: "sender: text" for channels, "You: text" for own DMs, plain text otherwise.
     char psender[UITask::MAX_SENDER_NAME + 1] = "";
@@ -32138,8 +35284,20 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_text_font(pv, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(pv, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_label_set_long_mode(pv, LV_LABEL_LONG_DOT);
-    lv_obj_set_size(pv, (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - 60), 16);   // one line, ellipsized
-    lv_obj_align(pv, LV_ALIGN_BOTTOM_LEFT, text_x, -8);
+    lv_obj_set_size(pv, (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - 60),
+#if defined(TLORA_PAGER)
+                    lv_font_get_line_height(&g_font_12)
+#else
+                    16
+#endif
+    );   // one line, ellipsized
+    lv_obj_align(pv, LV_ALIGN_BOTTOM_LEFT, text_x,
+#if defined(TLORA_PAGER)
+                 touchPrefsGetUiScale() == 0 ? -3 : -1
+#else
+                 -8
+#endif
+    );
 
     // Unread pill bottom-right (under the time), @ to its left on a mention.
     if (unread > 0) {
@@ -32149,7 +35307,7 @@ static void refreshChatList(LvChatPanel& p) {
       if (unread > 99) snprintf(cnt, sizeof cnt, "99+");
       else             snprintf(cnt, sizeof cnt, "%u", (unsigned)unread);
       lv_label_set_text(badge, cnt);
-      lv_obj_set_style_text_font(badge, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_font(badge, rowMetaFont, LV_PART_MAIN);
       lv_obj_set_style_text_color(badge, lv_color_hex(0x0A0B0C), LV_PART_MAIN);
       lv_obj_set_style_bg_color(badge, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
       lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, LV_PART_MAIN);
@@ -32536,8 +35694,12 @@ static void refreshContactsList() {
   // scrolling the name (rejected) or gluing the value columns. TWO-LINE rows instead:
   //   line 1: the full name (one line, dot-ellipsized — never scrolls)
   //   line 2: heard-age and distance, small + dim under the name
-  const int  ROW_H   = mid_cols ? 46 : 34;
   const int  name_line_h_row = lv_font_get_line_height(&g_font_14);
+  // The Pager is in the wide, single-line column layout. Keep its original
+  // compact row geometry even when the UI-size preset selects larger fonts;
+  // stacking the name and metadata line heights here reserved a second line
+  // that the wide layout never draws.
+  const int  ROW_H   = mid_cols ? 46 : 34;
   const int  row2_y  = 5 + name_line_h_row + 2;          // line 2 top (below the name line)
   int        name_w  = heard_x - name_x - 6;
   if (name_w < 50) name_w = 50;
@@ -32616,6 +35778,7 @@ static void refreshContactsList() {
     char san[40];
     copyUtf8ReplacingMissingGlyphs(&g_font_14, san, sizeof(san), e.name);
     lv_obj_t* nm = lv_label_create(rb);
+    useChainedFont(nm);
     if (mid_cols) {
       lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
       // BOTH dimensions constrained: with free height LONG_DOT doesn't ellipsize — the name
@@ -32867,11 +36030,29 @@ static void updateTrackball(unsigned long now) {
 
   // ---- Snake game ----
   // While Snake is open the trackball steers it (no soft cursor on that page).
-  if (SnakeGame::isOpen()) {
+  if (SnakeGame::isOpen() || luaAppIsOpen()) {
     if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
       lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
     s_tb_click_press = false;
-    if (moved && (dx != 0 || dy != 0)) { SnakeGame::steer(dx, dy); if (g_lv.task) g_lv.task->noteUserInput(); }
+    if (moved && (dx != 0 || dy != 0)) {
+      if (luaAppIsOpen()) luaAppSteer(dx, dy);
+      else                SnakeGame::steer(dx, dy);
+      if (g_lv.task) g_lv.task->noteUserInput();
+    }
+    return;
+  }
+
+  // Mention picker selector. It remains a NAV_SKIP overlay so the composer's
+  // focus/edit state is stable; trackball motion walks its private highlight.
+  if (s_mentionnav_active && s_mentionbox) {
+    s_tb_click_press = false;   // the button path confirms; never inject a pointer tap
+    if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
+      lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
+    if (moved && (dx != 0 || dy != 0)) {
+      const int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+      mentionNavMove((adx >= ady ? dx : dy) > 0 ? 1 : -1);
+      if (g_lv.task) g_lv.task->noteUserInput();
+    }
     return;
   }
 
@@ -33031,13 +36212,14 @@ static void updateTrackball(unsigned long now) {
 
 #if defined(HAS_PAGER_ENCODER) || defined(HAS_PAGER_KEYBOARD)
 // "Back", extending the T-Deck/Tanmatsu back-key ladder: a popup/sheet on top
-// closes first, then an open chat/channel detail, then Home (the pager has no
-// dedicated Home hotkey and the bottom tab bar isn't a nav-group target, so a
-// bare main tab otherwise had no way back to Home), else plain ESC. Shared by
-// the rotary encoder's long-press (updatePagerEncoder) and the keyboard's
-// Backspace-hold alternative (updatePagerBackspaceHold) so both agree exactly.
+// closes first, then a full-screen AppPage (Store, Lua apps, tools), then an
+// open chat/channel detail, then Home (the H mnemonic is deliberately inactive
+// inside those nested views), else plain ESC. Shared by the rotary encoder's
+// long-press (updatePagerEncoder) and the keyboard's Backspace-hold alternative
+// (updatePagerBackspaceHold) so both agree exactly.
 static void pagerNavGoBack() {
   if (anyPopupOpen())                            hwKeyDismissTopPopup();
+  else if (s_apppage_close)                      s_apppage_close();
   else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
   else if (getActiveTab() != HOME_TAB_INDEX)     navGoToMainTab(HOME_TAB_INDEX);
   else                                           navPushTap(LV_KEY_ESC);
@@ -33256,6 +36438,42 @@ static void updatePagerKbBacklight(unsigned long now) {
 #endif
 
 #if defined(HAS_PAGER_ENCODER)
+// A focus step normally asks LVGL to reveal the next object. On the Pager that
+// makes a message or popup body taller than the viewport impossible to read:
+// the next detent abandons it and reveals the following object. Consume detents
+// as page-scrolls until the focused oversized object reaches its edge.
+static bool pagerEncoderScrollOversizedFocused(bool up) {
+  lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if (!focused || !lv_obj_is_valid(focused)) return false;
+
+  for (lv_obj_t* scroller = lv_obj_get_parent(focused); scroller;
+       scroller = lv_obj_get_parent(scroller)) {
+    if (!lv_obj_has_flag(scroller, LV_OBJ_FLAG_SCROLLABLE)) continue;
+
+    lv_area_t viewport;
+    lv_area_t item;
+    lv_obj_get_coords(scroller, &viewport);
+    lv_obj_get_coords(focused, &item);
+    viewport.y1 += lv_obj_get_style_pad_top(scroller, LV_PART_MAIN);
+    viewport.y2 -= lv_obj_get_style_pad_bottom(scroller, LV_PART_MAIN);
+    const lv_coord_t view_h = viewport.y2 - viewport.y1 + 1;
+    const lv_coord_t item_h = item.y2 - item.y1 + 1;
+    if (view_h <= 0 || item_h <= view_h) return false;
+
+    const bool unread_edge = up ? (item.y1 < viewport.y1) : (item.y2 > viewport.y2);
+    const lv_coord_t room = up ? lv_obj_get_scroll_top(scroller)
+                               : lv_obj_get_scroll_bottom(scroller);
+    if (!unread_edge || room <= 0) return false;
+
+    lv_coord_t step = view_h * 2 / 3;
+    if (step < 24) step = 24;
+    if (step > room) step = room;
+    lv_obj_scroll_by(scroller, 0, up ? step : -step, LV_ANIM_ON);
+    return true;
+  }
+  return false;
+}
+
 // T-LoRa Pager rotary encoder: a single linear nav axis (not 2D like the
 // trackball, so none of updateTrackball()'s game/emoji-grid/cursor special
 // cases apply) — each detent moves focus one step via the same navFifo the
@@ -33404,6 +36622,18 @@ static bool pagerChatComposerNav(bool up) {
 static void updatePagerEncoder(unsigned long now) {
   int delta = pagerEncoderReadDelta();
   const bool held = pagerEncoderClickHeld();
+  static bool s_remote_encoder_was_held = false;
+
+  // The physical Remote UI screen presents one focused action: EXIT REMOTE.
+  // Its drawn button is activated directly by pressing the encoder knob; do
+  // not leak encoder turns or click events into the off-screen browser UI.
+  if (s_remote_mode) {
+    const bool pressed = held && !s_remote_encoder_was_held;
+    s_remote_encoder_was_held = held;
+    if (pressed) exitRemoteModeNow();
+    return;
+  }
+  s_remote_encoder_was_held = held;
 
   // No touch and no trackball on this board: the encoder (and the keyboard,
   // see the HAS_PAGER_KEYBOARD drain in loop()) are the ONLY way to wake an
@@ -33440,7 +36670,7 @@ static void updatePagerEncoder(unsigned long now) {
     // @-mention contact picker (handleHwKey()'s Fn+Space entry / mentionNavConfirm()):
     // captures the encoder exclusively while active, same priority as the accent
     // picker and an open dropdown below (mention and accent never show at once —
-    // composerSuggestRefresh() -- so there's no ordering conflict between them).
+    // composerMentionRefresh() -- so there's no ordering conflict between them).
     const bool turned = (delta != 0);
     if (s_mentionbox_cell_n > 0) {
       for (; delta > 0; delta--) s_mentionnav_idx = (s_mentionnav_idx + 1) % (int)s_mentionbox_cell_n;
@@ -33474,13 +36704,10 @@ static void updatePagerEncoder(unsigned long now) {
     // Alt (the bottom-left orange key, otherwise a hold-only modifier for the
     // keyboard's symbol layer — free to reuse here since it types nothing on
     // its own) + turn jumps directly between the 5 main tabs (Chats/Contacts/
-    // Home/Map/Settings). The bottom tab bar is deliberately not a nav-group
-    // focus target (same as T-Deck/Tanmatsu), and unlike those boards the
-    // pager has no separate dedicated hotkeys to reach it, so plain turning
-    // could otherwise only ever move focus WITHIN the current screen —
-    // reported: the tab bar icons were unreachable from Home. Scoped to the
-    // main-tab level (navOnMainPage()) — reported bug: this used to fire even
-    // inside a settings sheet/chat, silently abandoning it to jump tabs.
+    // Home/Map/Settings). This remains a sequential alternative to the direct
+    // M/C/H/A/S mnemonics. Scoped to the main-tab level (navOnMainPage()) —
+    // reported bug: this used to fire even inside a settings sheet/chat,
+    // silently abandoning it to jump tabs.
     for (; delta > 0; delta--) navSwitchTab(+1);
     for (; delta < 0; delta++) navSwitchTab(-1);
   } else if (pagerKeyboardAltHeld()) {
@@ -33509,8 +36736,16 @@ static void updatePagerEncoder(unsigned long now) {
     // top-bar items / back into the bubbles (pagerChatComposerNav), and the
     // edge bubble of a still-loading history scrolls the list instead of
     // stepping focus out (pagerEncoderChatEdgeScroll).
-    for (; delta > 0; delta--) { if (!pagerChatComposerNav(false) && !pagerEncoderChatEdgeScroll(false)) navPushTap(LV_KEY_NEXT); }
-    for (; delta < 0; delta++) { if (!pagerChatComposerNav(true)  && !pagerEncoderChatEdgeScroll(true))  navPushTap(LV_KEY_PREV); }
+    for (; delta > 0; delta--) {
+      if (!pagerEncoderScrollOversizedFocused(false) &&
+          !pagerChatComposerNav(false) && !pagerEncoderChatEdgeScroll(false))
+        navPushTap(LV_KEY_NEXT);
+    }
+    for (; delta < 0; delta++) {
+      if (!pagerEncoderScrollOversizedFocused(true) &&
+          !pagerChatComposerNav(true) && !pagerEncoderChatEdgeScroll(true))
+        navPushTap(LV_KEY_PREV);
+    }
   }
 
   static constexpr uint32_t kLongPressMs = 1000;
@@ -33541,8 +36776,8 @@ static void updatePagerEncoder(unsigned long now) {
 // gestures so they don't leak to the drawer or switch tabs underneath them.
 // Defined OUTSIDE HAS_TDECK_KEYBOARD so the ungated gesture handlers can use it.
 static bool drawerPopupOpen() {
-  return s_siginfo_root || s_monitor_root || s_spec_root || s_mentions_root || s_power_menu || s_ct_sort_sheet || s_ctd_overlay || settingsModalIsOpen()
-#if defined(HAS_TDECK_GT911)
+  return s_siginfo_root || s_spec_root || s_mentions_root || s_power_menu || s_ct_sort_sheet || s_ctd_overlay || settingsModalIsOpen()
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
          || s_fullscreen_view
 #endif
          ;
@@ -33580,6 +36815,18 @@ static bool isDismissKey(int key) {
       return true;
     default: return false;
   }
+#elif defined(HAS_M9_KEYBOARD)
+  // The dedicated Back/Home function keys must always stay with the firmware —
+  // a Lua app may never swallow its own exit (see the forward in handleHwKey),
+  // and this board has no touchscreen fallback to tap its way out with. They
+  // are sentinel bytes the keyboard controller reserves, never typed text, so
+  // there is no typing conflict.
+  switch (key) {
+    case M9_KEY_HW_BACK:
+    case M9_KEY_HOME:
+      return true;
+    default: return false;
+  }
 #else
   // The pager's corner letters are real, constantly-typed QWERTY keys (unlike
   // the T-Deck's sparser layout) -- treating them as "dismiss" would eat normal
@@ -33593,14 +36840,28 @@ static bool isDismissKey(int key) {
 // drawerPopupOpen() / anyPopupOpen() are defined just above the
 // HAS_TDECK_KEYBOARD block so the (ungated) gesture handlers can call them too.
 
-// Bottom-tab a key jumps to (no popup, no field focused), or -1. Space/H Home,
-// M Chats, C Contacts, L Map, S Settings.
+// Bottom-tab a key jumps to (no popup, no field focused), or -1.
 static int tabForKey(int key) {
+#if defined(TLORA_PAGER)
+  // Pager mnemonic keys are only a bottom-bar shortcut at the top level. In
+  // an open chat, settings detail, app page, or popup they remain inert so a
+  // letter cannot unexpectedly abandon the inner screen.
+  if (!navOnMainPage()) return -1;
+  switch (key) {
+    case 'm': case 'M': return CHAT_INBOX_TAB_INDEX;
+    case 'c': case 'C': return CONTACTS_TAB_INDEX;
+    case 'h': case 'H': return HOME_TAB_INDEX;
+    case 'a': case 'A': return MAP_TAB_INDEX;
+    case 's': case 'S': return SETTINGS_TAB_INDEX;
+    default: return -1;
+  }
+#else
   // Old fixed letter tab-jumps (h/m/c/l/s) removed — tab jumps are now the
   // programmable keyboard-nav hotkeys (navTabForHotkey, default E/R/T/U/I), active
   // only while keyboard navigation is on.
   (void)key;
   return -1;
+#endif
 }
 #endif  // HAS_TDECK_KEYBOARD || HAS_PAGER_KEYBOARD || HAS_M9_KEYBOARD (keyboard helpers; the lock screen below is top-level)
 
@@ -33643,7 +36904,7 @@ static uint8_t* lockscreenDecodeWallpaper(int* out_w, int* out_h) {
   // this path only runs for user-selected wallpapers.)
   fs::FS* fsp = &SPIFFS;
   const char* fp = path;
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   if (!strncmp(path, "sd:", 3)) { fsp = &SD; fp = path + 3; fmSdTryMount(); }   // mount on demand so the chosen SD wallpaper decodes (T-Deck SD only)
 #endif
 
@@ -33914,6 +37175,7 @@ static void lockscreenShow() {
 #endif
 
   lv_obj_t* hint = lv_label_create(s_lock_root);
+  useChainedFont(hint);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hint, TR("press Volume Down to unlock"));
 #elif defined(HAS_PAGER_KEYBOARD)
@@ -33975,14 +37237,17 @@ static void serviceLockscreen() {
 }
 #endif  // core lock screen (HAS_TDECK_GT911 || HAS_TANMATSU)
 
-#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck (SD/SPIFFS) or pager (SPIFFS only)
+#if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck/pager (SD or SPIFFS)
 // ---- Notification-sound chooser (Settings -> Sound) ------------------------
 // Tapping a slot button opens a small menu: "Choose .wav from files" (opens the
 // File Manager, exactly like the wallpaper picker; opening a .wav there offers
 // "Set as notification sound"), or "Built-in (default)" to reset to the chime.
 static void soundDisplayName(const char* path, char* out, int cap) {
   if (!out || cap <= 0) return;
-  if (!path || !path[0]) { snprintf(out, cap, "Built-in"); return; }
+  // TR(), not a bare literal: this is the label shown for the default chime, and
+  // it was the one path of two that never went through the translation table, so
+  // the same word appeared translated in the menu and English on the button.
+  if (!path || !path[0]) { snprintf(out, cap, "%s", TR("Built-in")); return; }
   const bool sd = !strncmp(path, "sd:", 3);
   const char* p = sd ? path + 3 : path;
   const char* base = strrchr(p, '/'); base = base ? base + 1 : p;
@@ -34033,11 +37298,13 @@ static void openSoundMenu(int slot) {
   lv_obj_t* bf = lv_btn_create(s_snd_menu);
   lv_obj_set_size(bf, pw - 24, 40); lv_obj_set_pos(bf, 12, 44); styleButton(bf);
   lv_obj_add_event_cb(bf, sndMenuFilesCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* lf = lv_label_create(bf); lv_label_set_text(lf, LV_SYMBOL_DIRECTORY "  Choose .wav from files"); lv_obj_center(lf);
+  lv_obj_t* lf = lv_label_create(bf); lv_label_set_text(lf, TR(LV_SYMBOL_DIRECTORY "  Choose .wav from files")); lv_obj_center(lf);
+  useChainedFont(lf);
   lv_obj_t* bb = lv_btn_create(s_snd_menu);
   lv_obj_set_size(bb, pw - 24, 40); lv_obj_set_pos(bb, 12, 92); styleButton(bb);
   lv_obj_add_event_cb(bb, sndMenuBuiltinCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lb = lv_label_create(bb); lv_label_set_text(lb, TR("Built-in (default)")); lv_obj_center(lb);
+  useChainedFont(lb);
   lv_obj_t* close = lv_btn_create(s_snd_menu);
   lv_obj_set_size(close, 30, 26); lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 6); styleButton(close);
   lv_obj_add_event_cb(close, sndMenuCloseCb, LV_EVENT_CLICKED, nullptr);
@@ -34190,6 +37457,7 @@ static void openLockWallPicker() {
     styleButton(b);
     lv_obj_add_event_cb(b, lockwallChosenCb, LV_EVENT_CLICKED, s_lockwall_paths[i]);
     lv_obj_t* l = lv_label_create(b);
+    useChainedFont(l);
     char disp[64]; lockwallDisplayName(s_lockwall_paths[i], disp, sizeof disp);
     lv_label_set_text(l, disp);
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
@@ -34263,8 +37531,12 @@ static void backupAddPath(const char* stored, const char* disp) {
 // would fail on an already-mounted volume), plain SPIFFS on the T-Deck / V4. Mirrors the file
 // manager's "Internal" root so a backup lands where the user can actually see + restore it.
 static fs::FS* backupInternalFs() {
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
-  return &FFat;      // FAT data partition (locfd / 'storage'), mounted at boot; no SPIFFS here
+#if defined(HAS_TDISPLAY_P4)
+  // The P4 hot store moved from FFat to LittleFS('storage') in beta_54 (#167);
+  // FFat is never mounted here anymore, so opening it failed every backup (#231).
+  return &LittleFS;
+#elif defined(HAS_TANMATSU)
+  return &FFat;      // FAT data partition (locfd), mounted at boot; no SPIFFS here
 #else
   SPIFFS.begin(false);
   return &SPIFFS;
@@ -34289,7 +37561,7 @@ static void backupScan() {
     }
     root.close();
   }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // SD card: scan the root AND the /meshcomod data folder. SD-storage builds keep
   // their data under /meshcomod, so users naturally drop a backup next to it —
   // previously only the root was scanned, so a json in /meshcomod never showed up
@@ -34339,7 +37611,7 @@ static void doBackupImportChosen() {
   fs::FS* fsp = nullptr;
   const char* path = s_backup_chosen;
   if (!strncmp(path, "int:", 4)) { fsp = backupInternalFs(); path += 4; }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   else if (!strncmp(path, "sd:", 3)) { fsp = &SD; path += 3; }
 #endif
   if (!fsp) { g_lv.task->showAlert(TR("Import: storage unavailable"), 2000); return; }
@@ -34391,8 +37663,7 @@ static void backupChosenCb(lv_event_t* e) {
   strncpy(s_backup_chosen, stored, sizeof(s_backup_chosen) - 1);
   s_backup_chosen[sizeof(s_backup_chosen) - 1] = '\0';
   backupPickerClose();
-  showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."),
-              "Import", doBackupImportChosen);
+  showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."), TR("Import"), doBackupImportChosen);
 }
 static void openBackupPicker() {
   backupScan();
@@ -34442,6 +37713,7 @@ static void openBackupPicker() {
     styleButton(b);
     lv_obj_add_event_cb(b, backupChosenCb, LV_EVENT_CLICKED, s_backup_paths[i]);
     lv_obj_t* l = lv_label_create(b);
+    useChainedFont(l);
     lv_label_set_text(l, s_backup_disp[i]);
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
     lv_obj_set_width(l, lv_pct(94));
@@ -34497,7 +37769,7 @@ static void doExportBackupFile(const char* fname) {
 
   char path[96]; snprintf(path, sizeof path, "/%s", fname);
   File f; const char* where = "internal";
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Actually mount the card (SD.cardType alone reads CARD_NONE until something
   // mounts it) so a backup truly lands on — and lists from — the SD card.
   if (fmSdTryMount()) { f = SD.open(path, FILE_WRITE); if (f) where = "SD"; }
@@ -34519,7 +37791,7 @@ static void doDeleteBackup() {
   const char* path = s_backup_del_path;
   bool ok = false;
   if (!strncmp(path, "int:", 4)) { ok = backupInternalFs()->remove(path + 4); }   // FFat on Tanmatsu/P4, SPIFFS elsewhere
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   else if (!strncmp(path, "sd:", 3)) { if (fmSdTryMount()) ok = SD.remove(path + 3); }
 #endif
   s_backup_del_path[0] = '\0';
@@ -34532,45 +37804,22 @@ static void backupDeleteCb(lv_event_t* e) {
   if (!path) return;
   strncpy(s_backup_del_path, path, sizeof s_backup_del_path - 1);
   s_backup_del_path[sizeof s_backup_del_path - 1] = '\0';
-  showConfirm(TR("Delete this backup file?\nThis cannot be undone."), "Delete", doDeleteBackup);
+  showConfirm(TR("Delete this backup file?\nThis cannot be undone."), TR("Delete"), doDeleteBackup);
 }
 
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
 // Wipe the SD data folder (/meshcomod/*) — identity, prefs, logs, telemetry, and
 // any orphaned pre-#20 /meshcomod/tiles cache. The live Wi-Fi tile cache + offline
 // packs now live at the SD ROOT (/tiles, /maps/osm), outside /meshcomod, so a
 // factory reset keeps the map tiles automatically.
-static void factoryWipeSdData() {
-  if (!fmSdTryMount()) return;
-  File d = SD.open("/meshcomod");
-  if (!d || !d.isDirectory()) { if (d) d.close(); return; }
-  // Collect the entries to wipe FIRST, then delete. Removing during the
-  // openNextFile() walk skips entries on FatFS — a partial wipe is what left
-  // data behind after a factory reset.
-  static const int kMax = 24;
-  char names[kMax][48];
-  bool dirs[kMax];
-  int n = 0;
-  File e = d.openNextFile();
-  while (e && n < kMax) {
-    const char* full = e.name();
-    const char* base = strrchr(full, '/'); base = base ? base + 1 : full;
-    if (base[0]) {
-      strncpy(names[n], base, sizeof(names[n]) - 1);
-      names[n][sizeof(names[n]) - 1] = '\0';
-      dirs[n] = e.isDirectory();
-      ++n;
-    }
-    e.close();
-    e = d.openNextFile();
-  }
-  if (e) e.close();
-  d.close();
-  for (int i = 0; i < n; ++i) {
-    char child[200];
-    snprintf(child, sizeof child, "/meshcomod/%s", names[i]);
-    if (dirs[i]) fmRmRecursive(&SD, child); else SD.remove(child);
-  }
+static bool factoryWipeSdData() {
+  if (!fmSdTryMount() || !sdProbeAlive()) return false;
+  if (!SD.exists("/meshcomod"))
+    return sdProbeAlive() && !SD.exists("/meshcomod");
+  fmRmRecursive(&SD, "/meshcomod");
+  // A failed FAT operation can make exists() look false too, so verify the
+  // card still answers real I/O before accepting the destructive operation.
+  return sdProbeAlive() && !SD.exists("/meshcomod");
 }
 #endif
 
@@ -34591,8 +37840,50 @@ static void doFactoryReset() {
   lv_refr_now(nullptr);
   delay(150);                      // let the overlay actually hit the panel
   wdtHeavyBegin();                 // SPIFFS format is a long flash burst
-#if CAP_SD
-  factoryWipeSdData();             // SD /meshcomod data (tiles at /tiles root are kept)
+  touchPrefsFlush();               // do not format under an open prefs worker handle
+  uiHistWaitWorkerIdle();          // do not erase under an open history handle
+  if (s_hist_flush_busy) {
+    wdtHeavyEnd();
+    lv_obj_del(ov);
+    if (g_lv.task) {
+      g_lv.task->flushHistorySoon();
+      g_lv.task->showAlert(TR("Factory reset blocked: storage is busy"), 2600);
+    }
+    return;
+  }
+#if CAP_SD || defined(TLORA_PAGER)
+#if defined(TLORA_PAGER)
+  if (sdRuntimeLifecycleBusy()) {
+    wdtHeavyEnd();
+    lv_obj_del(ov);
+    if (g_lv.task) {
+      g_lv.task->flushHistorySoon();
+      g_lv.task->showAlert(TR("Factory reset blocked: SD activity is still running; close tools and retry."), 3600);
+    }
+    return;
+  }
+#endif
+  s_sd_retry_after_ms = 0;         // explicit reset request bypasses mount backoff
+  const bool sd_wiped = factoryWipeSdData();   // keeps root-level /tiles and /maps
+#if defined(TLORA_PAGER)
+  // Never erase internal identity/NVS unless the card data was verifiably wiped
+  // or the slot is positively empty. UNKNOWN is not absence: a transient XL9555
+  // read failure can coincide with an inserted but temporarily unreadable card.
+  const TLoraPagerBoard::SdCardState sd_state = board.sdCardState();
+  const bool card_may_still_hold_data =
+      sd_state != TLoraPagerBoard::SdCardState::Absent;
+  if (!sd_wiped && card_may_still_hold_data) {
+    wdtHeavyEnd();
+    lv_obj_del(ov);
+    if (g_lv.task) {
+      g_lv.task->flushHistorySoon();
+      g_lv.task->showAlert(TR("Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data."), 6000);
+    }
+    return;
+  }
+#else
+  (void)sd_wiped;
+#endif
 #endif
   the_mesh.uiFactoryReset();       // SPIFFS.format() + nvs_flash_erase()
   ESP.restart();                   // fresh boot: new identity + first-boot wizard
@@ -34600,8 +37891,7 @@ static void doFactoryReset() {
 }
 static void backupFactoryResetCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  showConfirm(TR("Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone."),
-              "Erase all", doFactoryReset);
+  showConfirm(TR("Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone."), TR("Erase all"), doFactoryReset);
 }
 
 static void buildBackupsSettings() {
@@ -34811,6 +38101,9 @@ static void serviceLockingCountdown(unsigned long now) {
 // handled HERE, in their own function, called before that swallow — not
 // wedged into T-Deck's CAP_TRACKBALL chain as an #elif. Returns true if the
 // key was consumed.
+// (s_m9_map_pan — the Map-key pan-mode flag — is declared with the map state,
+// next to s_map_follow: mapAutoFollowTick pauses while it's set.)
+
 static bool m9HandleNavKey(int key) {
   if (!s_kbd_nav) return false;
   switch (key) {
@@ -34827,30 +38120,133 @@ static bool m9HandleNavKey(int key) {
       if (foc && lv_obj_is_valid(foc)) lv_event_send(foc, LV_EVENT_LONG_PRESSED, nullptr);
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     }
+    case M9_KEY_HW_BACK:
+      // Restored after 0ea242c accidentally replaced this case with ENTER_LONG
+      // (the board's only Back). Ladder mirrors pagerNavGoBack(): innermost
+      // thing open closes first. An open dropdown LIST must take ESC before the
+      // registry, or Back would close the enclosing modal instead of the list.
+      // s_ct_select_mode is a flags=0 registry row (a MODE, not "a popup is
+      // open"), so anyPopupOpen() alone would never let Back leave it.
+      if (s_setup_root) return true;   // wizard: nothing to back out of
+      // Pan is only the innermost "thing open" while the bare map is frontmost.
+      // A popup stacked over it (CTRL) or a tab jump that missed a clear makes
+      // the flag stale — drop it silently so THIS press acts on what the user
+      // sees, instead of a "Map pan off" toast reading as a dead Back key.
+      if (s_m9_map_pan && (getActiveTab() != MAP_TAB_INDEX || anyPopupOpen()))
+        s_m9_map_pan = false;
+      if (s_m9_map_pan) {              // pan mode is the innermost "thing open" on the map
+        s_m9_map_pan = false;
+        if (g_lv.task) g_lv.task->showAlert(TR("Map pan off"), 900);
+      }
+      else if (navOpenDropdown())                    navPushTap(LV_KEY_ESC);
+      // CTRL stacks the Control Center (and its power menu) over ANY popup,
+      // but both sit near the BOTTOM of the popup registry — the generic
+      // dismiss would close whatever popup is buried BENEATH them (a Files
+      // rename prompt, typed name and all) while the screen looks unchanged.
+      // They are always frontmost when open: close them explicitly, power
+      // menu first (it opens over the CC).
+      else if (s_power_menu)                         closePowerMenu();
+      else if (s_cc_root)                            closeControlCenter();
+      // An open app page covers everything EXCEPT the CC / power menu (peeled
+      // above) and a confirm modal — the Lua send-permission ask is raised
+      // OVER the requesting app's page, and closing the page under the
+      // question would orphan it. The app drawer the page was launched from
+      // stays open BENEATH it by design — the generic registry dismiss used
+      // to eat that invisible drawer first, so Back looked dead inside every
+      // app (reported bug). Close the page itself; the drawer is then the
+      // next, visible Back target.
+      else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
+      else if (anyPopupOpen() || s_ct_select_mode)   hwKeyDismissTopPopup();
+      else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+      else                                           navPushTap(LV_KEY_ESC);
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_GPS_LONG:
+      // The controller's own long-press of SUB_MAP (0x84), labeled "GPS
+      // toggle" in Elecrow's keyboard firmware — mirror the CC GPS chip.
+      if (s_setup_root) return true;
+      if (g_lv.task) {
+        g_lv.task->toggleGPS();
+        g_lv.task->showAlert(g_lv.task->getGPSState() ? TR("GPS on") : TR("GPS off"), 800);
+      }
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_CTRL:
+      // The controller latches ONE key and resolves layers itself, so CTRL can
+      // never chord — bind the standalone press to the Control Center, a
+      // one-press quick-settings key matching its label.
+      if (s_setup_root) return true;
+      // The CC must never stack OVER the power menu: Back's ladder peels
+      // power first and would close it invisibly beneath the CC (the reverse
+      // stacking is fine — openPowerMenu() closes the CC itself).
+      if (s_power_menu) closePowerMenu();
+      openControlCenter();
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_HOME:
       if (s_setup_root) return true;
+      if (s_apppage_close) {
+        // A full-screen app page (Lua app, Snake, Web…) isn't a popup-registry
+        // row — close it and stop: one action per press, so HOME on the Home
+        // tab doesn't also toggle the drawer underneath the closing page.
+        // CTRL can stack the CC / power menu over the page, and the Lua
+        // send-permission confirm opens over its requesting app — peel the
+        // frontmost layer instead of yanking the page out from under it.
+        if      (s_power_menu)    closePowerMenu();
+        else if (s_cc_root)       closeControlCenter();
+        else if (s_confirm_modal) confirmDismiss();
+        else                      s_apppage_close();
+        s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+      }
       if (getActiveTab() == HOME_TAB_INDEX) {
         const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything
         for (int i = 0; i < 8 && anyPopupOpen(); i++) hwKeyDismissTopPopup();   // still closes anything else on top (registry untouched, Back/etc. keep working)
         setHomeDrawer(!was_open);                            // decide from the snapshot, not the now-mutated flag
       } else {
+        s_m9_map_pan = false;   // leaving the Map: pan must not outlive the tab (a stale flag ate the next Back press)
         navGoToMainTab(HOME_TAB_INDEX);
       }
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_LEFT_MESSAGE:
       if (s_setup_root) return true;
+      s_m9_map_pan = false;   // leaving the Map: same stale-pan clear as HOME
+      if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
       navGoToMainTab(CHAT_INBOX_TAB_INDEX);
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_SUB_MESSAGE:
       if (s_setup_root) return true;
+      s_m9_map_pan = false;   // the overlay covers the map: arrows must drive the list, not pan under it
+      // NOTHING may stay open beneath the overlay — mentions sits near the
+      // bottom of the popup registry, so any row left open (CC, a Files
+      // rename prompt, …) becomes Back's silent (invisible) next target.
+      // Same bounded loop as HOME; a null-close progress row stops the walk
+      // (blocker semantics), in which case don't stack the overlay either.
+      for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+      if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
+      if (s_apppage_close) s_apppage_close();
       openMentionsScreen();
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_MAP:
       if (s_setup_root) return true;
-      navGoToMainTab(MAP_TAB_INDEX);
+      if (getActiveTab() == MAP_TAB_INDEX && !anyPopupOpen() && !s_apppage_close) {
+        // Already on the map: toggle pan mode (arrows pan, Map/Back exits).
+        s_m9_map_pan = !s_m9_map_pan;
+        s_m9_pan_gap_hinted = false;   // fresh session: the Wi-Fi-off gap hint may fire once
+        if (g_lv.task) g_lv.task->showAlert(s_m9_map_pan ? TR("Map pan: arrows pan, Back exits")
+                                                         : TR("Map pan off"), 1200);
+      } else {
+        s_m9_map_pan = false;   // fresh entry always starts in nav mode
+        if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
+        navGoToMainTab(MAP_TAB_INDEX);
+      }
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_SUB_MAP:
       if (s_setup_root) return true;
+      s_m9_map_pan = false;   // the page covers the map: same stale-pan clear as SUB_MESSAGE
+      // Same full dismiss as SUB_MESSAGE: nothing may stay open beneath.
+      for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+      if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
+      // Close an open app page first — openAdvertPage() takes the single
+      // s_apppage_close slot, so opening OVER a Lua app would steal its only
+      // key-exit and strand the app unreachable behind the advert page.
+      if (s_apppage_close) s_apppage_close();
       openAdvertPage();
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     default: return false;
@@ -34861,23 +38257,94 @@ static bool m9HandleNavKey(int key) {
 #if defined(HAS_M9_KEYBOARD)
 static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
   if (!s_kbd_nav) return false;
+  // An open dropdown LIST owns the arrows (mirrors Tanmatsu's navPump capture):
+  // navMoveDir would move group focus off the dropdown, which closes the list —
+  // the "UP/DOWN closes the dropdown instead of moving its highlight" bug. The
+  // FIFO'd LV_KEY_UP/DOWN reach the focused dropdown's own LV_EVENT_KEY handler,
+  // which moves the highlighted option.
+  if (navOpenDropdown()) {
+    switch (key) {
+      case M9_KEY_UP:   navPushTap(LV_KEY_UP);   break;
+      case M9_KEY_DOWN: navPushTap(LV_KEY_DOWN); break;
+      case M9_KEY_LEFT: case M9_KEY_RIGHT:       break;   // swallow — the list is vertical-only
+      default: return false;
+    }
+    s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+    return true;
+  }
+  // Map pan mode (toggled by the Map key on the Map tab): arrows pan the map
+  // instead of moving focus. Self-clears if the user somehow left the tab or
+  // a popup got stacked over the map (CTRL's Control Center opens without
+  // changing the active tab) — the arrows must drive what's frontmost, not
+  // nudge the map buried beneath it.
+  if (s_m9_map_pan) {
+    if (getActiveTab() != MAP_TAB_INDEX || ta || anyPopupOpen()) {
+      s_m9_map_pan = false;
+    } else {
+      switch (key) {
+        case M9_KEY_UP:    mapNudge(0); break;
+        case M9_KEY_DOWN:  mapNudge(1); break;
+        case M9_KEY_LEFT:  mapNudge(2); break;
+        case M9_KEY_RIGHT: mapNudge(3); break;
+        default: return false;
+      }
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      // Panned into an area with no cached tiles while offline: the fetch
+      // queue silently no-ops without Wi-Fi, so the leading edge stays blank
+      // with only the small corner label saying why. Say it once per session.
+      if (!s_m9_pan_gap_hinted && s_map_last_missing > 0 && WiFi.status() != WL_CONNECTED) {
+        s_m9_pan_gap_hinted = true;
+        if (g_lv.task) g_lv.task->showAlert(TR("Wi-Fi off, new map areas can't download"), 1600);
+      }
+#endif
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return true;
+    }
+  }
   switch (key) {
-    case M9_KEY_UP:
+    case M9_KEY_UP: {
+      lv_obj_t* const was = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
       navMoveDir(NAV_UP);
+      // Focus had nowhere to go: page-scroll instead. A display-only Lua app
+      // scrolls its own body (RF Monitor's feed); everything else falls to
+      // navScrollFocused — nearest scrollable ancestor, else the biggest
+      // scrollable on screen — which is what makes sparse pages with few or
+      // NO focusable rows (the Signal info popup's stats) scrollable at all
+      // on a board with no touch to drag them.
+      if (s_nav_group && lv_group_get_focused(s_nav_group) == was) {
+        if (!(luaAppIsOpen() && luaAppScroll(true))) navScrollFocused(true);
+      }
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
       return true;
-    case M9_KEY_DOWN:
+    }
+    case M9_KEY_DOWN: {
+      lv_obj_t* const was = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
       navMoveDir(NAV_DOWN);
+      if (s_nav_group && lv_group_get_focused(s_nav_group) == was) {
+        if (!(luaAppIsOpen() && luaAppScroll(false))) navScrollFocused(false);
+      }
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
       return true;
+    }
     case M9_KEY_LEFT:
-      if (ta)                 lv_textarea_cursor_left(ta);
+      if (ta) {
+        // Caret already at the start: fall through to focus-move so arrows
+        // always eventually LEAVE the field (a silent boundary no-op read as
+        // "textareas need 3-4 presses to move off").
+        const uint32_t p = lv_textarea_get_cursor_pos(ta);
+        lv_textarea_cursor_left(ta);
+        if (lv_textarea_get_cursor_pos(ta) == p) navMoveDir(NAV_LEFT);
+      }
       else if (navOnTabBar()) navSwitchTab(-1);
       else                    navMoveDir(NAV_LEFT);
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
       return true;
     case M9_KEY_RIGHT:
-      if (ta)                 lv_textarea_cursor_right(ta);
+      if (ta) {
+        const uint32_t p = lv_textarea_get_cursor_pos(ta);
+        lv_textarea_cursor_right(ta);
+        if (lv_textarea_get_cursor_pos(ta) == p) navMoveDir(NAV_RIGHT);   // caret at end — same as LEFT
+      }
       else if (navOnTabBar()) navSwitchTab(+1);
       else                    navMoveDir(NAV_RIGHT);
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
@@ -34892,6 +38359,50 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
 // settings mirror textarea. No field open -> the key is ignored.
 static void handleHwKey(int key) {
   if (!g_lv.keyboard) return;
+  // A running Lua app gets the keyboard, which is what makes Lua apps usable at
+  // all on the boards that have one (T-Deck, Pager, M9, Attaky) -- until now an
+  // app only ever saw touch and trackball direction.
+  //
+  // The dismiss key is deliberately NOT forwarded: an app must never be able to
+  // trap the user by swallowing its own exit, whether by bug or by design.
+  if (luaAppIsOpen() && !isDismissKey(key)
+#if defined(HAS_M9_KEYBOARD)
+      // Locked or dark: the lock/wake handlers below must see the key — else
+      // ENTER_LONG (this board's only unlock) is eaten by the app and the
+      // device can never be unlocked again without the power slider.
+      && !(g_lv.task && (g_lv.task->isManualLock() || g_lv.task->isScreenOff()))
+      // A confirm modal (the Lua send-permission ask) is a question for the
+      // USER: arrows/Enter must reach its Allow/Deny buttons, not the app
+      // that raised it — forwarded keys would make the dialog unanswerable
+      // on a board with no touch to tap it.
+      && !s_confirm_modal
+      // Display-only apps (no on_input — Airtime, RF Monitor): forward nothing;
+      // the d-pad keeps its native meaning so it can focus the page's own
+      // buttons (Airtime's Reset), click them with Enter, and page-scroll the
+      // body (m9HandleArrowKey's luaAppScroll fallback). luaAppKey would
+      // otherwise eat every key into a callback that doesn't exist.
+      && luaAppHasOnInput()
+#endif
+     ) {
+#if defined(HAS_M9_KEYBOARD)
+    // The M9 d-pad emits raw sentinel bytes no app understands (sendKey maps
+    // only LV_KEY_*/printables) — feed them through the same steer/press
+    // channel the T-Deck trackball uses, so store apps (Snake, 2048, …) are
+    // playable here: arrows -> swipe, d-pad centre -> also a synthetic tap
+    // (store apps' "tap to start / retry" listens for type=="down").
+    switch (key) {
+      case M9_KEY_UP:    luaAppSteer(0, -1); if (g_lv.task) g_lv.task->noteUserInput(); return;
+      case M9_KEY_DOWN:  luaAppSteer(0,  1); if (g_lv.task) g_lv.task->noteUserInput(); return;
+      case M9_KEY_LEFT:  luaAppSteer(-1, 0); if (g_lv.task) g_lv.task->noteUserInput(); return;
+      case M9_KEY_RIGHT: luaAppSteer(1,  0); if (g_lv.task) g_lv.task->noteUserInput(); return;
+      case M9_KEY_ENTER: luaAppPress(); break;   // then also delivered as ev.key=="enter" below
+    }
+#endif
+    if (luaAppKey(key)) {
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
+    }
+  }
 if (g_lv.task && g_lv.task->isManualLock()) {
 #if defined(HAS_M9_KEYBOARD)
     // M9 has no trackball to hold — the keyboard controller's own long-press
@@ -35026,6 +38537,16 @@ if (g_lv.task && g_lv.task->isManualLock()) {
         return;
       }
     }
+    // Bottom-bar mnemonic shortcuts: active only on a bare main tab (the
+    // navOnMainPage gate lives in tabForKey). Do this before Map panning so S
+    // can leave Map for Settings. If the requested tab is already active, let
+    // the key continue: A on Map remains the west-pan control.
+    const int pager_tab = tabForKey(key);
+    if (pager_tab >= 0 && pager_tab != getActiveTab()) {
+      goToTab(pager_tab);
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
+    }
     // Slider nudge: this board has no touch/trackball to drag a slider's
     // knob, so a focused lv_slider (Control Center brightness, a Settings
     // slider, the Map zoom bar, …) is otherwise stuck at whatever value it
@@ -35033,7 +38554,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // (proportional ~20-presses-end-to-end step, live update + persist) —
     // the same adjustment the T-Deck trackball's LEFT/RIGHT already does —
     // rather than a fixed step that's wrong for every slider's range. (Was
-    // D/F; moved to Q/E to free up WASD for map panning below.)
+    // D/F; moved to Q/E to free up the map-panning keys below.)
     if (key == 'q' || key == 'Q' || key == 'e' || key == 'E') {
       lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
       if (focused && lv_obj_check_type(focused, &lv_slider_class)) {
@@ -35041,15 +38562,16 @@ if (g_lv.task && g_lv.task->isManualLock()) {
         return;
       }
     }
-    // Map pan: WASD moves the map around on the Map tab (no touch/trackball
+    // Map pan: W/A/X/D moves the map around on the Map tab (no touch/trackball
     // to drag it), reusing the same mapNudge() step/re-render Tanmatsu's
-    // Ctrl+Arrow already uses. W=north A=west S=south D=east.
+    // Ctrl+Arrow already uses. X replaces S because S is now the Settings
+    // mnemonic. W=north A=west X=south D=east.
     if ((key == 'w' || key == 'W' || key == 'a' || key == 'A' ||
-         key == 's' || key == 'S' || key == 'd' || key == 'D') &&
+         key == 'x' || key == 'X' || key == 'd' || key == 'D') &&
         getActiveTab() == MAP_TAB_INDEX) {
       switch (key) {
         case 'w': case 'W': mapNudge(0); break;
-        case 's': case 'S': mapNudge(1); break;
+        case 'x': case 'X': mapNudge(1); break;
         case 'a': case 'A': mapNudge(2); break;
         case 'd': case 'D': mapNudge(3); break;
       }
@@ -35145,7 +38667,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     return;
   }
   txtMenuHide();   // any keypress while editing dismisses an open edit menu
-#if defined(TLORA_PAGER)
+#if CAP_KEYPAD_NAV
   // Accent-variant / @-mention popups (issues #22, #42) are otherwise
   // unreachable here: no touch, and their cells are NAV_SKIP_FLAG by design
   // (touch boards pick them by tap). The rotary encoder walks the highlighted
@@ -35159,10 +38681,19 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   // vowel/consonant typed, so stealing focus immediately would swallow normal
   // typing -- it stays passive until explicitly armed with Fn(Alt)+Space.
   if (s_mentionnav_active) {
+#if defined(HAS_M9_KEYBOARD)
+    if (key == M9_KEY_UP)             { mentionNavMove(-1); return; }
+    if (key == M9_KEY_DOWN)           { mentionNavMove(+1); return; }
+    if (key == M9_KEY_LEFT || key == M9_KEY_RIGHT) {
+      mentionBoxHide();   // normal M9 caret handling continues below
+    } else if (key == M9_KEY_HW_BACK) { mentionBoxHide(); return; }
+#endif
     if (key == 0x08 || key == 0x7F) { mentionBoxHide(); return; }
     if (key == 0x0D)                { mentionNavConfirm(); return; }
-    return;   // swallow everything else while picking (typing, etc.)
+    // Printable input falls through to the textarea and re-filters the list.
   }
+#endif
+#if defined(TLORA_PAGER)
   if (s_accentnav_active) {
     if (key == 0x08 || key == 0x7F) { accentBoxHide(); return; }
     if (key == 0x0D)                { accentNavConfirm(); return; }
@@ -35187,6 +38718,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     s_nav_ta_editing = false;
     s_nav_show = true;
     accentBoxHide();
+    mentionBoxHide();   // leaving edit mode tears down BOTH typing popups, like Enter does
     if (g_lv.task) g_lv.task->noteUserInput();
     return;
   }
@@ -35242,7 +38774,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // goes through hideKb(); this covers the physical-keyboard Enter.
     accentBoxHide();
     mentionBoxHide();
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
     if (s_editor_ta && ta == s_editor_ta) {
       lv_textarea_add_char(ta, '\n');   // multiline editor: Enter inserts a newline
     } else if (s_term_input_ta && s_kb_bind_ta == s_term_input_ta) {
@@ -35306,7 +38838,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     } else {
       lv_textarea_add_char(ta, (uint32_t)key);
     }
-    composerSuggestRefresh();   // @mention contact picker, else the accent box
+    composerMentionRefresh(ta);   // @mention contact picker, else the accent box
   }
   if (g_lv.task) g_lv.task->noteUserInput();
 }
@@ -35478,7 +39010,18 @@ static const char* wifiStaStatusBrief(int s) {
       return "off";
     case WL_NO_SSID_AVAIL: return "AP not found";
     case WL_SCAN_COMPLETED: return "scan done";
-    case WL_CONNECT_FAILED: return "auth failed";
+    case WL_CONNECT_FAILED: {
+      // Append the esp_wifi disconnect reason — "auth failed" alone covers
+      // wrong password (r15, 4-way handshake timeout), WPA3-only/H2E SAE
+      // failures (r2/r202), and AP-side rejection alike.
+      extern volatile uint8_t g_wifi_last_disc_reason;   // defined at the foot of this file
+      static char s_auth_fail[24];
+      if (g_wifi_last_disc_reason) {
+        snprintf(s_auth_fail, sizeof s_auth_fail, "auth failed (r%u)", (unsigned)g_wifi_last_disc_reason);
+        return s_auth_fail;
+      }
+      return "auth failed";
+    }
     case WL_CONNECTION_LOST: return "link lost";
     case WL_DISCONNECTED: return "disconnected";
     default: return "connecting…";
@@ -35534,8 +39077,8 @@ static void refreshSettingsSectionSubtitles() {
     } else {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       lv_label_set_text(g_set_sec_sub[SEC_BLUETOOTH],
-                        (g_lv.task->hasBleCapability() && wifiConfigGetBleEnabled())
-                          ? "Starting…" : "Off");
+                        (g_lv.task->hasBleCapability() && bleRequestedOrEnabled())
+                          ? TR("Starting…") : TR("Off"));
 #else
       lv_label_set_text(g_set_sec_sub[SEC_BLUETOOTH], TR("Inactive"));
 #endif
@@ -35616,11 +39159,19 @@ static void refreshSettingsSectionSubtitles() {
     }
   }
 
-  // Live GPS fix status on the Device-settings line while it's open. (The
-  // control-center drop-down's GPS + system line are refreshed from the periodic
-  // refreshStatusLabels tick instead — this function only runs while Settings is.)
-  if (g_set_modal.root && g_set_modal.gps_status &&
-      g_set_modal.kind == SettingsModalKind::Device) {
+  // Live GPS status while the GPS page (or the legacy Device modal) is open. (The control-center
+  // drop-down's GPS + system line are refreshed from the periodic refreshStatusLabels tick
+  // instead — this function only runs while Settings is.)
+  //
+  // This used to require kind == SettingsModalKind::Device, which stopped being true when the
+  // settings reorg moved the GPS block into its own PAGE (CAT_GPS -> buildDeviceSettings(DSEC_GPS)).
+  // The condition then never matched, so the label was written once at build time and never again:
+  // the page looked frozen and only "updated" when you closed and reopened it — including the
+  // elapsed-search timer, which made a working receiver look stuck. Accept either host, and guard
+  // with lv_obj_is_valid so a stale pointer from a closed page can never be written.
+  if (g_set_modal.gps_status && lv_obj_is_valid(g_set_modal.gps_status) &&
+      (s_settings_open_cat == CAT_GPS ||
+       (g_set_modal.root && g_set_modal.kind == SettingsModalKind::Device))) {
     lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
   }
 
@@ -35643,8 +39194,8 @@ static void refreshSettingsSectionSubtitles() {
 // ============================================================
 // Status-bar control center (tap the top bar)
 // A small drop-down panel with date/time + battery/Wi-Fi info and quick
-// Wi-Fi / Bluetooth toggles, iPhone-control-center style. Both toggle live now
-// (NimBLE coexists with esp_wifi) — no reboot to switch.
+// Wi-Fi / Bluetooth toggles, iPhone-control-center style. Resident stacks
+// toggle live; a genuinely cold Pager allocation may take an ordered restart.
 // ============================================================
 
 static void closeControlCenter() {
@@ -35685,20 +39236,15 @@ static void openControlCenter();   // fwd — toggle cbs rebuild the panel
 // (no touch), so a long-press of the green ○ Home key triggers this (see navPump).
 static void toggleControlCenter() { if (s_cc_root) closeControlCenter(); else openControlCenter(); }
 
-// Wi-Fi and Bluetooth COEXIST now (NimBLE host shares the heap with esp_wifi),
-// so both are plain LIVE toggles — no reboot to switch. Each radio is
-// independent and its state is persisted (radio_en / ble_en).
+// Wi-Fi and Bluetooth coexist once allocated. Pager cold starts and
+// re-authentication release and recreate BLE live; no reboot is required.
 static void ccWifiCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(ESP32)
-  // Live: the main loop brings esp_wifi up (WiFi.mode/begin) or down (WIFI_OFF)
-  // in response to this pref — no reboot.
+  // Existing stacks apply live in the main loop; a cold Pager temporarily
+  // releases NimBLE so Wi-Fi can claim its allocation first.
   const bool on = wifiConfigGetRadioEnabled();
-  if (!on && !wifiEnableGuardOk()) {
-    if (g_lv.task) g_lv.task->showAlert(TR("Not enough free memory for Wi-Fi. Turn Bluetooth off first."), 2200);
-    openControlCenter();
-    return;
-  }
+  if (!on && !wifiPrepareEnable()) { openControlCenter(); return; }
   wifiConfigSetRadioEnabled(!on);
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Wi-Fi off") : TR("Wi-Fi on"), 800);
   openControlCenter();
@@ -35710,15 +39256,15 @@ static void ccBleCb(lv_event_t* e) {
     return;
 #if defined(ESP32)
   // Live: enableBle() lazily brings NimBLE up if it wasn't started at boot.
-  const bool on = g_lv.task->isBleEnabled();
-  if (on) {
+  const bool requested = bleRequestedOrEnabled();
+  if (requested) {
     g_lv.task->disableBle();
   } else if (!g_lv.task->enableBle()) {
-    g_lv.task->showAlert(TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first."), 2200);
+    g_lv.task->showAlert(bleEnableFailureText(), 2600);
     openControlCenter();
     return;
   }
-  g_lv.task->showAlert(on ? TR("Bluetooth off") : TR("Bluetooth on"), 800);
+  g_lv.task->showAlert(requested ? TR("Bluetooth off") : TR("Bluetooth on"), 800);
   openControlCenter();
 #endif
 }
@@ -35804,19 +39350,53 @@ static void powerRebootCb(lv_event_t* e) {
   g_lv.task->showAlert(TR("Rebooting\xE2\x80\xA6"), 600);
   g_lv.task->rebootDevice();   // flushes chat history, then reboots
 }
+// Gated on PIN_USER_BTN, which is exactly what arms the deep-sleep wake below.
+// A power-off nobody can undo is not a power-off, it is a brick until the user
+// finds the hardware switch — and that is what the T-Display P4 did: no wake
+// source armed at all, under a toast promising a trackball it does not have
+// (#310). Boards without the symbol get no Power-off row (see openPowerMenu).
+#if defined(PIN_USER_BTN)
 static void powerOffCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
 #if defined(ESP32)
+  WdtHeavyGuard idle_wdt_guard;
+  LoopWdtGuard loop_wdt_guard;
   if (g_lv.task) {
     g_lv.task->persistHistoryNow();        // flush chat before we go down
     discoveredFlushNow();                  // and the Discovered ring
     the_mesh.flushContactsIfDirty();       // and any coalesced contacts refresh
+    the_mesh.persistSyncHistoryNow();      // and the app-sync replay ring (RAM is lost in deep sleep)
+    touchPrefsFlush();                     // and all queued A/B preference snapshots
+    // Name the control this board actually has. "Click trackball" was shown on
+    // every board that reached here, trackball or not.
+#if defined(HAS_TDECK_GT911)
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 click trackball to wake"), 1500);
+#else
+    g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
+#endif
   }
   // Let the toast paint, then enter deep sleep.
   lv_refr_now(NULL);
   delay(900);
+#if defined(HELTEC_LORA_V4_R8)
+  // Park everything before sleeping — without this the SX1262 stayed in RX
+  // with the FEM enabled (pure drain, no wake purpose: all wake sources are
+  // cleared below except the button) and the non-RTC rail pins (VEXT=40,
+  // GPS_EN=42, backlight=44) lost their driven levels and floated.
+  radio_driver.powerOff();
+  board.loRaFEMControl.setSleepModeEnable();
+  pinMode(PIN_TFT_LEDA_CTL, OUTPUT);              // re-route from LEDC ch6 back to plain GPIO
+  digitalWrite(PIN_TFT_LEDA_CTL, LOW);            // backlight off
+  pinMode(PIN_GPS_EN, OUTPUT);
+  digitalWrite(PIN_GPS_EN, HIGH);                 // inactive (PIN_GPS_EN_ACTIVE=LOW)
+  pinMode(PIN_VEXT_EN, OUTPUT);
+  digitalWrite(PIN_VEXT_EN, HIGH);                // inactive (active LOW) — VEXT rail off
+  gpio_hold_en((gpio_num_t)PIN_VEXT_EN);          // non-RTC pads: hold levels through deep sleep
+  gpio_hold_en((gpio_num_t)PIN_GPS_EN);
+  gpio_hold_en((gpio_num_t)PIN_TFT_LEDA_CTL);
+  gpio_deep_sleep_hold_en();                      // released in HeltecV4Board::begin on wake
+#endif
 #if defined(PIN_USER_BTN)
   const gpio_num_t wake = (gpio_num_t)PIN_USER_BTN;   // GPIO0, trackball click, active-low
   // CRITICAL: the trackball button is held HIGH by a pull-up while idle and
@@ -35835,6 +39415,7 @@ static void powerOffCb(lv_event_t* e) {
   esp_deep_sleep_start();   // never returns; a press wakes via full reboot
 #endif
 }
+#endif  // PIN_USER_BTN (powerOffCb)
 
 #if defined(ESP32)
 #if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
@@ -35857,9 +39438,13 @@ static void powerDownloadCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
 #if defined(ESP32)
+  WdtHeavyGuard idle_wdt_guard;
+  LoopWdtGuard loop_wdt_guard;
   if (g_lv.task) {
     g_lv.task->persistHistoryNow();   // flush chat before we go down
     discoveredFlushNow();             // and the Discovered ring
+    the_mesh.persistSyncHistoryNow(); // and the app-sync replay ring
+    touchPrefsFlush();                 // and all queued A/B preference snapshots
     g_lv.task->showAlert(TR("Download mode\xE2\x80\xA6 reflash over USB"), 1500);
   }
   lv_refr_now(NULL);
@@ -35890,6 +39475,10 @@ static void openPowerMenu() {
   // ROM force-download leaves a COM that esptool cannot open on HW CDC — hide the entry.
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
   const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
+#elif defined(HAS_THINKNODE_M9)
+  // Power-off row hidden (see below) — 3 rows: Reboot / Download / Cancel.
+  const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
+  const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
 #else
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
   const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = 206;
@@ -35905,7 +39494,7 @@ static void openPowerMenu() {
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, LV_SYMBOL_POWER "  Power");
+  lv_label_set_text(title, TR(LV_SYMBOL_POWER "  Power"));
   lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
@@ -35927,13 +39516,23 @@ static void openPowerMenu() {
     lv_obj_center(l);
     return b;
   };
-  mk(LV_SYMBOL_POWER "  Power off",        powerOffCb,      0xC44B55, p_y0);
-  mk(LV_SYMBOL_REFRESH "  Reboot",         powerRebootCb,   0,        p_y0 + p_step);
-#if !defined(HAS_RAK_TAP_V2)
-  mk(LV_SYMBOL_DOWNLOAD "  Download mode", powerDownloadCb, 0,        p_y0 + 2 * p_step);
-  mk("Cancel",                             powerCancelCb,   0,        p_y0 + 3 * p_step);
+#if !defined(PIN_USER_BTN)
+  // No "Power off" here: nothing on this board can wake it from deep sleep.
+  // The M9 has a power-cut slider and reset, neither a wakeable GPIO; the
+  // T-Display P4 and Tanmatsu have no user button either. On those the physical
+  // switch IS the power-off, and offering a software one that cannot be undone
+  // reads as a freeze (#310). Remaining rows shift up one slot.
+  const int p_y = p_y0;
 #else
-  mk("Cancel",                             powerCancelCb,   0,        p_y0 + 2 * p_step);
+  mk(TR(LV_SYMBOL_POWER "  Power off"),        powerOffCb,      0xC44B55, p_y0);
+  const int p_y = p_y0 + p_step;
+#endif
+  mk(TR(LV_SYMBOL_REFRESH "  Reboot"),         powerRebootCb,   0,        p_y);
+#if !defined(HAS_RAK_TAP_V2)
+  mk(TR(LV_SYMBOL_DOWNLOAD "  Download mode"), powerDownloadCb, 0,        p_y + p_step);
+  mk(TR("Cancel"), powerCancelCb, 0, p_y + 2 * p_step);
+#else
+  mk(TR("Cancel"), powerCancelCb, 0, p_y + p_step);
 #endif
 }
 
@@ -36352,7 +39951,7 @@ static void openControlCenter() {
   s_cc_gps_label = lv_label_create(card);
   lv_label_set_long_mode(s_cc_gps_label, LV_LABEL_LONG_DOT);
   lv_obj_set_width(s_cc_gps_label, card_w - 20);
-  lv_label_set_text(s_cc_gps_label, gpsStatusStr());
+  lv_label_set_text(s_cc_gps_label, gpsStatusStr(true));   // one line — keeps the dropdown short
   lv_obj_set_style_text_font(s_cc_gps_label, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_cc_gps_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_align(s_cc_gps_label, LV_ALIGN_TOP_LEFT, 0, gps_y);
@@ -36473,7 +40072,7 @@ static void openControlCenter() {
 #if defined(ESP32)
   wifi_on = wifiConfigGetRadioEnabled();
 #endif
-  if (g_lv.task) ble_on = g_lv.task->isBleEnabled();
+  if (g_lv.task) ble_on = bleRequestedOrEnabled();
   lv_obj_t* row = lv_obj_create(card);
   lv_obj_remove_style_all(row);
 #if defined(HAS_TANMATSU)
@@ -36547,37 +40146,1121 @@ static void openControlCenter() {
 #endif
   // Each chip: tap = toggle, long-press = jump to that feature's settings page
   // (GPS -> Radio & Mesh, where the location-sharing settings live).
-  ccToggle(row, LV_SYMBOL_WIFI, "Wi-Fi", wifi_on, ccWifiCb, tw, th, CAT_WIFI);
+  ccToggle(row, LV_SYMBOL_WIFI, TR("Wi-Fi"), wifi_on, ccWifiCb, tw, th, CAT_WIFI);
   if (!g_lv.task || g_lv.task->hasBleCapability())
-    ccToggle(row, LV_SYMBOL_BLUETOOTH, "BT", ble_on, ccBleCb, tw, th, CAT_BLUETOOTH);
+    ccToggle(row, LV_SYMBOL_BLUETOOTH, TR("BT"), ble_on, ccBleCb, tw, th, CAT_BLUETOOTH);
 #if !CAP_GPS
-  ccToggle(row, LV_SYMBOL_GPS, "GPS", false, ccGpsNoneCb, tw, th, -1);   // no onboard GPS — info-only, untoggable
+  ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), false, ccGpsNoneCb, tw, th, -1);   // no onboard GPS — info-only, untoggable
 #else
-  ccToggle(row, LV_SYMBOL_GPS, "GPS", gps_on, ccGpsCb, tw, th, CAT_RADIO);
+  // Long-press opens the GPS settings PAGE. CAT_RADIO here was a leftover from before the
+  // settings reorg gave GPS its own category (the GPS block used to live under radio/device).
+  ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), gps_on, ccGpsCb, tw, th, CAT_GPS);
 #endif
-  ccToggle(row, LV_SYMBOL_TINT, "Theme", false, ccThemeCb, tw, th, CAT_DISPLAY);
+  ccToggle(row, LV_SYMBOL_TINT, TR("Theme"), false, ccThemeCb, tw, th, CAT_DISPLAY);
 #if CAP_KEYBOARD
   // Keyboard-backlight chip: the keyboard glyph WITH its off/on/auto mode word beneath it,
   // so the mode stays visible at a glance (sub_text stacks a small caption under the icon).
   const char* kb_mode = s_kb_bl_mode == 0 ? "off" : (s_kb_bl_mode == 1 ? "on" : "auto");
-  ccToggle(row, LV_SYMBOL_KEYBOARD, "Keyboard", s_kb_bl_mode != 0, ccKbBacklightCb, tw, th, CAT_KEYBOARD, kb_mode);
+  ccToggle(row, LV_SYMBOL_KEYBOARD, TR("Keyboard"), s_kb_bl_mode != 0, ccKbBacklightCb, tw, th, CAT_KEYBOARD, kb_mode);
 #endif
 #if defined(HAS_TDECK_GT911)
-  ccToggle(row, TOUCH_SYM_LOCK, "Lock", false, ccLockCb, tw, th, CAT_LOCK);   // real padlock, not an eye
+  ccToggle(row, TOUCH_SYM_LOCK, TR("Lock"), false, ccLockCb, tw, th, CAT_LOCK);   // real padlock, not an eye
 #endif
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
   // Sound on/off — the notification-tone mute (T-Deck I2S speaker / Heltec V4 piezo / Tanmatsu ES8156).
   const bool sound_on = g_lv.task && !g_lv.task->isBuzzerQuiet();
-  ccToggle(row, LV_SYMBOL_AUDIO, "Sound", sound_on, ccSoundCb, tw, th, CAT_SOUND);
+  ccToggle(row, LV_SYMBOL_AUDIO, TR("Sound"), sound_on, ccSoundCb, tw, th, CAT_SOUND);
 #endif
   // Do Not Disturb (the scheduled-silence feature) — dynamic bell: a plain bell when DND is off,
   // a bell-with-a-slash when it's on. All boards; the time window lives in Settings > Sound.
   {
     const bool dnd_on = touchPrefsGetDndEnabled();
-    ccToggle(row, dnd_on ? TOUCH_SYM_BELL_SLASH : TOUCH_SYM_BELL, "DND", dnd_on, ccDndCb, tw, th, CAT_SOUND);
+    ccToggle(row, dnd_on ? TOUCH_SYM_BELL_SLASH : TOUCH_SYM_BELL, TR("DND"), dnd_on, ccDndCb, tw, th, CAT_SOUND);
   }
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
 }
+
+#if CAP_LUA_APPS
+// ===== Lua app store: installed scan + Store page (LUA_APPS.md Phase 2) =====
+
+static const LuaInstApp* luaStoreFindInstalled(const char* id);   // fwd (defined below)
+static void luaStoreInvalidateInstalled();
+
+static bool s_lua_inst_valid = false;   // cache flag: the /apps listing is SD I/O
+static void luaStoreInvalidateInstalled() { s_lua_inst_valid = false; }
+
+#if CAP_BUILTIN_LUA_APPS
+#include "lua_builtin.h"   // generated: the catalog's apps, compiled in
+// Source for a seeded app, or nullptr when the id is not one of the built-ins.
+static const char* luaBuiltinSrc(const char* id) {
+  for (int i = 0; i < kLuaBuiltinCount; i++)
+    if (strcmp(kLuaBuiltin[i].id, id) == 0) return kLuaBuiltin[i].src;
+  return nullptr;
+}
+#else
+static const char* luaBuiltinSrc(const char*) { return nullptr; }
+#endif
+
+// The filesystem half of the scan; luaStoreScanInstalled() wraps it and then
+// seeds the compiled-in apps, so those exist even when storage is absent.
+static void luaStoreScanInstalledFs(bool force) {
+  if (!luaStoreTablesReady()) return;   // default arg on the fwd decl (worker side)
+  if (s_lua_inst_valid && !force) return;   // cached — the drawer opens without touching the card
+  s_lua_inst_n = 0;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return;              // storage not ready yet — stay invalid so we retry later
+  s_lua_inst_valid = true;
+  char appsdir[48];
+  luaHostAppPath(appsdir, sizeof appsdir, "/apps");
+  const int kMax = kLuaInstMax;
+  // Pass 1: manifests (store installs). Pass 2: bare .lua files with no
+  // manifest — a script dropped straight onto the card (any card reader, the
+  // Files app, USB) becomes an app named after its file. Skip macOS "._*"
+  // AppleDouble junk so a Mac-touched card doesn't grow ghost apps.
+  for (int pass = 0; pass < 2 && s_lua_inst_n < kMax; pass++) {
+    File dir = fs->open(appsdir);
+    if (!dir || !dir.isDirectory()) return;
+    File e;
+    while (s_lua_inst_n < kMax && (e = dir.openNextFile())) {
+      const char* nm = e.name();
+      const char* leaf = strrchr(nm, '/');
+      leaf = leaf ? leaf + 1 : nm;
+      size_t ln = strlen(leaf);
+      if (leaf[0] == '.') { e.close(); continue; }
+      if (pass == 0 && ln > 5 && strcmp(leaf + ln - 5, ".json") == 0 && e.size() > 0 && e.size() < 900) {
+        char buf[900];
+        size_t rd = e.read((uint8_t*)buf, sizeof buf - 1);
+        buf[rd] = 0;
+        LuaInstApp& a = s_lua_inst[s_lua_inst_n];
+        if (luaJsonField(buf, "id", a.id, sizeof a.id) &&
+            luaJsonField(buf, "name", a.name, sizeof a.name)) {
+          if (!luaJsonField(buf, "ver", a.ver, sizeof a.ver)) a.ver[0] = 0;
+          if (!luaJsonField(buf, "icon", a.icon, sizeof a.icon)) a.icon[0] = 0;
+          s_lua_inst_n++;
+        }
+      } else if (pass == 1 && ln > 4 && strcmp(leaf + ln - 4, ".lua") == 0) {
+        char id[20];
+        size_t o = 0;
+        for (size_t k = 0; k + 4 < ln && o + 1 < sizeof id; k++) id[o++] = leaf[k];
+        id[o] = 0;
+        if (!luaStoreFindInstalled(id)) {   // no manifest claimed this id in pass 1
+          LuaInstApp& a = s_lua_inst[s_lua_inst_n];
+          snprintf(a.id, sizeof a.id, "%s", id);
+          snprintf(a.name, sizeof a.name, "%s", id);
+          snprintf(a.ver, sizeof a.ver, "dev");
+          a.icon[0] = 0;
+          s_lua_inst_n++;
+        }
+      }
+      e.close();
+    }
+    dir.close();
+  }
+}
+
+static void luaStoreScanInstalled(bool force) {
+  if (s_lua_inst_valid && !force) return;
+  luaStoreScanInstalledFs(force);
+#if CAP_BUILTIN_LUA_APPS
+  // Seed AFTER the scan so a downloaded copy keeps its own entry and version;
+  // the built-in only fills a gap. Runs even with no filesystem, which is the
+  // whole point on a board that cannot depend on the Store.
+  const int kMaxInst = kLuaInstMax;
+  for (int b = 0; b < kLuaBuiltinCount && s_lua_inst_n < kMaxInst; b++) {
+    if (luaStoreFindInstalled(kLuaBuiltin[b].id)) continue;
+    LuaInstApp& a = s_lua_inst[s_lua_inst_n++];
+    snprintf(a.id,   sizeof a.id,   "%s", kLuaBuiltin[b].id);
+    snprintf(a.name, sizeof a.name, "%s", kLuaBuiltin[b].name);
+    snprintf(a.ver,  sizeof a.ver,  "%s", kLuaBuiltin[b].ver);
+  }
+#endif
+}
+
+static const LuaInstApp* luaStoreFindInstalled(const char* id) {
+  for (int i = 0; i < s_lua_inst_n; i++)
+    if (strcmp(s_lua_inst[i].id, id) == 0) return &s_lua_inst[i];
+  return nullptr;
+}
+
+// ---- installed .lang files (Languages tab) ----
+struct LangInst { char code[12]; char name[28]; char ver[8]; };
+static LangInst* s_langinst = nullptr;      // PSRAM (see luaStoreTablesReady)
+static int s_langinst_n = 0;
+
+// Read the "# name:" / "# base:" / "# ver:" header lines of an installed .lang file.
+static bool luaStoreLangFileMeta(const char* code, char* name, size_t name_cap,
+                                 char* base, size_t base_cap,
+                                 char* ver = nullptr, size_t ver_cap = 0) {
+  name[0] = 0;
+  if (base_cap) base[0] = 0;
+  if (ver && ver_cap) ver[0] = 0;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return false;
+  char rel[28], path[64];
+  snprintf(rel, sizeof rel, "/lang/%s.lang", code);
+  luaHostAppPath(path, sizeof path, rel);
+  File f = fs->open(path, "r");
+  if (!f) return false;
+  char head[192];
+  size_t rd = f.read((uint8_t*)head, sizeof head - 1);
+  f.close();
+  head[rd] = 0;
+  auto grab = [&](const char* tag, char* out, size_t cap) {
+    const char* q = strstr(head, tag);
+    if (!q) return;
+    q += strlen(tag);
+    while (*q == ' ') q++;
+    size_t o = 0;
+    while (q[o] && q[o] != '\n' && q[o] != '\r' && o + 1 < cap) { out[o] = q[o]; o++; }
+    out[o] = 0;
+  };
+  grab("# name:", name, name_cap);
+  if (base_cap) grab("# base:", base, base_cap);
+  if (ver && ver_cap) {
+    grab("# ver:", ver, ver_cap);
+    if (!ver[0]) snprintf(ver, ver_cap, "1");   // pre-versioning files are v1
+  }
+  return name[0] != 0;
+}
+
+// The store's tables live in PSRAM: they are ~4.4 KB that only matter while the
+// store is open, and internal DRAM on the V4 is the scarcest resource there.
+static bool luaStoreTablesReady() {
+  if (s_lua_cat) return true;
+  auto ps = [](size_t n) {
+    void* p = heap_caps_calloc(1, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? p : calloc(1, n);            // no PSRAM (or none free): fall back
+  };
+  s_lua_cat   = (LuaCatApp*)   ps(sizeof(LuaCatApp)  * kLuaCatMax);
+  s_lua_inst  = (LuaInstApp*)  ps(sizeof(LuaInstApp) * kLuaInstMax);
+  s_langcat   = (LangCatEntry*)ps(sizeof(LangCatEntry) * kLangCatMax);
+  s_langinst  = (LangInst*)    ps(sizeof(LangInst) * kLangInstMax);
+  return s_lua_cat && s_lua_inst && s_langcat && s_langinst;
+}
+
+static void luaStoreScanLangs() {
+  if (!luaStoreTablesReady()) return;
+  s_langinst_n = 0;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return;
+  char dir[48];
+  luaHostAppPath(dir, sizeof dir, "/lang");
+  File d = fs->open(dir);
+  if (!d || !d.isDirectory()) return;
+  File e;
+  while (s_langinst_n < kLangInstMax && (e = d.openNextFile())) {
+    const char* nm = e.name();
+    const char* leaf = strrchr(nm, '/');
+    leaf = leaf ? leaf + 1 : nm;
+    size_t ln = strlen(leaf);
+    if (leaf[0] != '.' && ln > 5 && ln - 5 < sizeof(s_langinst[0].code) &&
+        strcmp(leaf + ln - 5, ".lang") == 0) {
+      LangInst& L = s_langinst[s_langinst_n];
+      memcpy(L.code, leaf, ln - 5);
+      L.code[ln - 5] = 0;
+      e.close();
+      char base[12];
+      if (!luaStoreLangFileMeta(L.code, L.name, sizeof L.name, base, sizeof base,
+                                L.ver, sizeof L.ver))
+        snprintf(L.name, sizeof L.name, "%s", L.code);
+      if (!L.ver[0]) snprintf(L.ver, sizeof L.ver, "1");
+      s_langinst_n++;
+      continue;
+    }
+    e.close();
+  }
+  d.close();
+}
+
+static void luaStoreParseLangCatalog() {
+  if (!luaStoreTablesReady()) return;
+  s_langcat_n = 0;
+  if (!s_langcat_buf || !s_langcat_buf[0]) { s_langcat_n = -1; return; }
+  const char* p = s_langcat_buf;
+  while (s_langcat_n < kLangCatMax) {
+    const char* ob = strchr(p, '{');
+    if (!ob) break;
+    const char* cb = strchr(ob, '}');
+    if (!cb) break;
+    char obj[128];
+    size_t n = (size_t)(cb - ob + 1);
+    if (n >= sizeof obj) n = sizeof obj - 1;
+    memcpy(obj, ob, n);
+    obj[n] = 0;
+    LangCatEntry& c = s_langcat[s_langcat_n];
+    if (luaJsonField(obj, "code", c.code, sizeof c.code) &&
+        luaJsonField(obj, "name", c.name, sizeof c.name)) {
+      if (!luaJsonField(obj, "ver", c.ver, sizeof c.ver)) snprintf(c.ver, sizeof c.ver, "1");
+      s_langcat_n++;
+    }
+    p = cb + 1;
+  }
+  if (s_langcat_n == 0) s_langcat_n = -1;
+}
+
+// ---- the Store page ----
+static lv_obj_t* s_luastore_root = nullptr;
+static lv_obj_t* s_luastore_list = nullptr;
+static lv_timer_t* s_luastore_poll = nullptr;
+static lv_coord_t s_luastore_w = 240;   // list width, set at open — pre-layout get_width() reads 0
+static bool s_luastore_busy = false;      // an install/remove is in flight
+static int  s_lua_rm_pending = -1;        // long-press remove target (drawer tiles)
+static bool s_tile_lp_fired  = false;     // swallow the release-click after a long press
+static int  s_luastore_tab = 0;           // 0 = Apps, 1 = Built-in, 2 = Languages (kept across opens)
+static lv_obj_t* s_luastore_tabbtn[3] = { nullptr, nullptr, nullptr };
+
+static void luaStoreRebuildList();        // fwd
+static void langRebootWithNotice(const char* msg);   // fwd (Languages tab actions)
+void settingsApplyHiddenCats();           // fwd (defined with makeSettings)
+static void closeLuaStorePage() {
+  if (s_luastore_poll) { lv_timer_del(s_luastore_poll); s_luastore_poll = nullptr; }
+  s_luastore_list = nullptr;
+  s_luastore_tabbtn[0] = s_luastore_tabbtn[1] = s_luastore_tabbtn[2] = nullptr;
+  appPageEnd(&closeLuaStorePage);
+  popupClose(&s_luastore_root);
+  // The drawer underneath was built BEFORE any install/remove done in here —
+  // rebuild it so new tiles appear (and removed ones vanish) immediately.
+  if (s_appdrawer_root) { closeAppDrawer(); openAppDrawer(); }
+}
+
+static void luaStoreParseCatalog() {
+  if (!luaStoreTablesReady()) return;
+  s_lua_cat_n = 0;
+  if (!s_luacat_buf || !s_luacat_buf[0]) { s_lua_cat_n = -1; return; }
+  const char* p = s_luacat_buf;
+  while (s_lua_cat_n < kLuaCatMax) {
+    const char* ob = strchr(p, '{');
+    if (!ob) break;
+    const char* cb = strchr(ob, '}');
+    if (!cb) break;
+    char obj[512];
+    size_t n = (size_t)(cb - ob + 1);
+    if (n >= sizeof obj) n = sizeof obj - 1;
+    memcpy(obj, ob, n);
+    obj[n] = 0;
+    LuaCatApp& c = s_lua_cat[s_lua_cat_n];
+    if (luaJsonField(obj, "id", c.id, sizeof c.id) &&
+        luaJsonField(obj, "name", c.name, sizeof c.name) &&
+        luaJsonField(obj, "ver", c.ver, sizeof c.ver)) {
+      if (!luaJsonField(obj, "desc", c.desc, sizeof c.desc)) c.desc[0] = 0;
+      s_lua_cat_n++;
+    }
+    p = cb + 1;
+  }
+  if (s_lua_cat_n == 0) s_lua_cat_n = -1;
+}
+
+// Turn an action button into a "working on it" state. A download over a weak link
+// takes tens of seconds and the only feedback used to be a 1.2 s toast, so the tap
+// read as if nothing had happened and people pressed again.
+//
+// The caption is HIDDEN rather than deleted: this runs inside the button's own
+// click event, and deleting objects mid-dispatch is exactly how the popup
+// use-after-frees happened. Adding the spinner as a new child is safe.
+static void luaStoreMarkBtnBusy(lv_obj_t* b) {
+  if (!b) return;
+  const uint32_t n = lv_obj_get_child_cnt(b);
+  for (uint32_t k = 0; k < n; k++) lv_obj_add_flag(lv_obj_get_child(b, k), LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_style_bg_color(b, lv_color_hex(0x39404C), LV_PART_MAIN);
+#if LV_USE_SPINNER
+  lv_obj_t* sp = lv_spinner_create(b, 800, 60);
+  const lv_coord_t d = lv_font_get_line_height(&g_font_12) + 2;
+  lv_obj_set_size(sp, d, d);
+  lv_obj_center(sp);
+  lv_obj_clear_flag(sp, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_arc_width(sp, 2, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(sp, 2, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(sp, lv_color_hex(0x555E6B), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(sp, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+#else
+  lv_obj_t* dots = lv_label_create(b);      // no spinner widget: a static tell still beats nothing
+  lv_label_set_text(dots, "\xE2\x80\xA6");
+  lv_obj_set_style_text_font(dots, &g_font_12, LV_PART_MAIN);
+  lv_obj_center(dots);
+#endif
+}
+
+static void luaStoreInstallBtnCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
+  int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  if (idx < 0 || idx >= s_lua_cat_n) return;
+  snprintf(s_luainst_id, sizeof s_luainst_id, "%s", s_lua_cat[idx].id);
+  snprintf(s_luainst_ver, sizeof s_luainst_ver, "%s", s_lua_cat[idx].ver);
+  s_luastore_busy = true;
+  s_luainst_done = false;
+  s_luainst_request = true;
+  ensureTileFetchTaskRunning();
+  luaStoreMarkBtnBusy(lv_event_get_target(e));
+  if (g_lv.task) g_lv.task->showAlert(TR("Installing\xE2\x80\xA6"), 1200);
+}
+
+// Delete an installed app's files (.sav kept: reinstalls keep scores) + rescan.
+static void luaStoreRemoveApp(int idx) {
+  if (idx < 0 || idx >= s_lua_inst_n) return;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return;
+  static const char* const kExt[2] = { "lua", "json" };
+  for (int x = 0; x < 2; x++) {
+    char rel[40], path[64];
+    snprintf(rel, sizeof rel, "/apps/%s.%s", s_lua_inst[idx].id, kExt[x]);
+    luaHostAppPath(path, sizeof path, rel);
+    fs->remove(path);
+  }
+  luaStoreScanInstalled(true);   // files just deleted
+  if (g_lv.task) g_lv.task->showAlert(TR("Removed"), 1200);
+}
+
+static void luaStoreRemoveBtnCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
+  luaStoreRemoveApp((int)(intptr_t)lv_event_get_user_data(e));
+  luaStoreRebuildList();
+}
+
+static void luaStorePollCb(lv_timer_t* t) {
+  (void)t;
+  if (s_luacat_done) {
+    s_luacat_done = false;
+    luaStoreParseCatalog();
+    luaStoreRebuildList();
+  }
+  if (s_luascan_done) {
+    s_luascan_done = false;
+    luaStoreRebuildList();       // worker finished the card re-listing
+  }
+  if (s_langcat_done) {
+    s_langcat_done = false;
+    luaStoreParseLangCatalog();
+    luaStoreRebuildList();
+  }
+  if (s_langdl_done) {
+    s_langdl_done = false;
+    s_luastore_busy = false;
+    // "Download failed" alone sent a reporter to GitHub with nothing to go on, because
+    // every failure path in the worker is silent (#274). Name the cause when we know it.
+    auto langDlFailText = []() -> const char* {
+      static char msg[72];
+      const char* why = (const char*)s_langdl_err;
+      if (!why) return TR("Download failed");
+      snprintf(msg, sizeof msg, "%s\n%s", TR("Download failed"), TR(why));
+      return msg;
+    };
+    if (s_langdl_ok && s_langdl_reboot) {   // updated the active language
+      s_langdl_reboot = false;
+      langRebootWithNotice(TR("Language updated - restarting to apply it\xE2\x80\xA6"));
+      return;
+    }
+    s_langdl_reboot = false;
+    if (s_langdl_ok) luaStoreScanLangs();
+    luaStoreRebuildList();
+    if (g_lv.task && !s_langdl_silent) g_lv.task->showAlert(
+        s_langdl_ok ? TR("Downloaded - tap Use to switch") : langDlFailText(),
+        s_langdl_ok ? 1800 : 3200);
+    s_langdl_silent = false;
+  }
+  if (s_luainst_done) {
+    s_luainst_done = false;
+    s_luastore_busy = false;
+    // Reflect the install from what we just downloaded rather than trusting a
+    // re-listing of the directory we only now wrote (FAT dir entries can lag a
+    // write on some cards, which left the button reading "Get" until reopen).
+    if (s_luainst_ok && !luaStoreFindInstalled(s_luainst_id) &&
+        s_lua_inst_n < kLuaInstMax) {
+      LuaInstApp& a = s_lua_inst[s_lua_inst_n++];
+      snprintf(a.id, sizeof a.id, "%s", s_luainst_id);
+      snprintf(a.ver, sizeof a.ver, "%s", s_luainst_ver);
+      snprintf(a.name, sizeof a.name, "%s", s_luainst_id);
+      for (int c = 0; c < s_lua_cat_n; c++)                 // prefer the catalog's display name
+        if (strcmp(s_lua_cat[c].id, s_luainst_id) == 0) {
+          snprintf(a.name, sizeof a.name, "%s", s_lua_cat[c].name);
+          break;
+        }
+    } else if (s_luainst_ok) {
+      // already listed (an update): refresh its version in place
+      for (int i = 0; i < s_lua_inst_n; i++)
+        if (strcmp(s_lua_inst[i].id, s_luainst_id) == 0)
+          snprintf(s_lua_inst[i].ver, sizeof s_lua_inst[i].ver, "%s", s_luainst_ver);
+    }
+    luaStoreRebuildList();
+    if (g_lv.task) g_lv.task->showAlert(s_luainst_ok ? TR("Installed") : TR("Install failed (network?)"),
+                                        s_luainst_ok ? 1400 : 2200);
+  }
+}
+
+static void luaStoreHideSwitchCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  uint32_t bit = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
+  uint32_t mask = touchPrefsGetAppHide();
+  // switch ON = app visible -> bit cleared
+  if (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED)) mask &= ~bit;
+  else                                                            mask |= bit;
+  touchPrefsSetAppHide(mask);
+  settingsApplyHiddenCats();     // MQTT lives in Settings, not the drawer — apply now
+}
+
+// ---- Languages tab actions ----
+// Every language change needs a restart to re-render the whole UI. Show WHY
+// first: showAlert + an immediate rebootDevice() never painted (the reboot ran
+// before LVGL's next frame), so the device just went dark under the user's
+// finger. Schedule the reboot instead, so the notice is on screen for it.
+static void langRebootTimerCb(lv_timer_t* t) {
+  (void)t;                                  // repeat_count 1 -> LVGL deletes it
+  if (g_lv.task) g_lv.task->rebootDevice();
+}
+
+static void langRebootWithNotice(const char* msg) {
+  s_luastore_busy = true;                   // swallow further taps on the way out
+  if (g_lv.task) g_lv.task->showAlert(msg, 2400);
+  lv_timer_t* t = lv_timer_create(langRebootTimerCb, 1800, nullptr);
+  if (t) lv_timer_set_repeat_count(t, 1);
+  else if (g_lv.task) g_lv.task->rebootDevice();   // no timer slot: don't strand the user
+}
+// Switching language reboots (same as the Settings picker) so the whole UI —
+// fonts, keyboard layout, every built label — re-renders consistently.
+static void luaStoreLangBuiltinCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  uint8_t l = (uint8_t)(intptr_t)lv_event_get_user_data(e);
+  if (l >= LANG_COUNT) return;
+  touchPrefsSetLangFile("");
+  touchPrefsSetUiLang(l);
+  i18nSetLang(l);
+  kbApplyUiLangDefault(l);
+  langRebootWithNotice(TR("Restarting to apply the language\xE2\x80\xA6"));
+}
+
+static void luaStoreLangUseCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  if (i < 0 || i >= s_langinst_n) return;
+  // The file's "# base:" names the built-in column missing keys fall back to
+  // (a customized nl file degrades to built-in Dutch, not to English).
+  uint8_t base_lang = LANG_EN;
+  char name[28], base[12];
+  if (luaStoreLangFileMeta(s_langinst[i].code, name, sizeof name, base, sizeof base) && base[0]) {
+    for (uint8_t l = 0; l < LANG_COUNT; l++)
+      if (strcmp(base, kUiLangCodes[l]) == 0) { base_lang = l; break; }
+  }
+  touchPrefsSetUiLang(base_lang);
+  touchPrefsSetLangFile(s_langinst[i].code);
+  kbApplyUiLangDefault(base_lang);
+  langRebootWithNotice(TR("Restarting to apply the language\xE2\x80\xA6"));
+}
+
+static void luaStoreLangGetCb(lv_event_t* e) {   // Get AND Update (same download)
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  if (i < 0 || i >= s_langcat_n) return;
+  snprintf(s_langdl_code, sizeof s_langdl_code, "%s", s_langcat[i].code);
+  snprintf(s_langdl_ver, sizeof s_langdl_ver, "%s", s_langcat[i].ver);
+  s_langdl_silent = false;
+  // Updating the language currently in use: apply it by rebooting on success —
+  // the overlay in PSRAM is the old file, so a reboot is the honest apply.
+  char cur[12];
+  touchPrefsGetLangFile(cur, sizeof cur);
+  s_langdl_reboot = (cur[0] && strcmp(cur, s_langcat[i].code) == 0);
+  s_luastore_busy = true;
+  s_langdl_done = false;
+  s_langdl_request = true;
+  ensureTileFetchTaskRunning();
+  luaStoreMarkBtnBusy(lv_event_get_target(e));
+  if (g_lv.task) g_lv.task->showAlert(TR("Downloading\xE2\x80\xA6"), 1200);
+}
+
+static void luaStoreLangRemoveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_luastore_busy) return;
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  if (i < 0 || i >= s_langinst_n) return;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return;
+  char rel[28], path[64];
+  snprintf(rel, sizeof rel, "/lang/%s.lang", s_langinst[i].code);
+  luaHostAppPath(path, sizeof path, rel);
+  fs->remove(path);
+  char cur[12];
+  touchPrefsGetLangFile(cur, sizeof cur);
+  if (strcmp(cur, s_langinst[i].code) == 0) touchPrefsSetLangFile("");   // deleted the active one
+  luaStoreScanLangs();
+  luaStoreRebuildList();
+}
+
+static void luaStoreStyleTabs() {
+  for (int t = 0; t < 3; t++) {
+    lv_obj_t* b = s_luastore_tabbtn[t];
+    if (!b || !lv_obj_is_valid(b)) continue;
+    const bool on = (t == s_luastore_tab);
+    lv_obj_set_style_bg_color(b, lv_color_hex(on ? COLOR_ACCENT : COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t* l = lv_obj_get_child(b, 0);
+    if (l) lv_obj_set_style_text_color(l, lv_color_hex(on ? 0x0E1216 : COLOR_SUB), LV_PART_MAIN);
+  }
+}
+
+static void luaStoreTabCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int t = (int)(intptr_t)lv_event_get_user_data(e);
+  if (t == s_luastore_tab) return;
+  s_luastore_tab = t;
+  if (t == 2) {
+    luaStoreScanLangs();                          // tiny dir; sync is fine here
+    if (s_langcat_n <= 0) {                       // no lang catalog yet -> fetch
+      s_langcat_n = 0;
+      s_langcat_done = false;
+      s_langcat_request = true;
+      ensureTileFetchTaskRunning();
+    }
+  }
+  luaStoreRebuildList();
+}
+
+static void luaStoreRebuildList() {
+  if (!s_luastore_list) return;
+  // Keep the reader where they were. This runs from ASYNC completions -- the
+  // catalog fetch, the card scan, a language catalog -- which land a second or
+  // two after the Store opens, i.e. exactly while someone is scrolling down it.
+  // Rebuilding threw them back to the top every time, which also hid whatever
+  // they had scrolled to (an app near the bottom could look like it had no
+  // button at all). Restored after the rows exist, so the value is clamped
+  // against the NEW content height rather than the old one.
+  const lv_coord_t keep_scroll_y = lv_obj_get_scroll_y(s_luastore_list);
+  lv_obj_clean(s_luastore_list);
+  const uint32_t hide = touchPrefsGetAppHide();
+  const lv_coord_t W = s_luastore_w;
+  const lv_coord_t lh14 = lv_font_get_line_height(&g_font_14);
+  const lv_coord_t lh12 = lv_font_get_line_height(&g_font_12);
+  // The store was tuned on the 320 px T-Deck; the V4 / M9 panels are 240 px
+  // portrait, where a fixed 100 px button gutter eats half the text column.
+  const bool narrow = (W < 260);
+  const lv_coord_t act_w = narrow ? 62 : 78;      // Get / Update / Remove button
+  const lv_coord_t act_gut = act_w + (narrow ? 12 : 22);   // text column stops here
+
+  // Height a wrapped string actually needs in a column `w` wide. The cards used
+  // to hardcode "title + two description lines", which only held for the 320 px
+  // T-Deck the store was designed on: on the P4's 568 px portrait panel, and for
+  // any language whose translation runs longer than the English, the description
+  // wraps to three or four lines and the fixed card height cut it off. Measure
+  // the text and let the card follow it. lv_txt_get_size is a pure calculation,
+  // so this is safe before layout (reading lv_obj_get_height here returns 0).
+  auto wrapH = [](const char* txt, const lv_font_t* f, lv_coord_t w) -> lv_coord_t {
+    if (!txt || !txt[0] || w <= 0) return 0;
+    lv_point_t sz;
+    lv_txt_get_size(&sz, txt, f, 0, 0, w, LV_TEXT_FLAG_NONE);
+    return sz.y;
+  };
+
+  auto section = [&](const char* txt) {
+    lv_obj_t* l = lv_label_create(s_luastore_list);
+    char up[40];
+    snprintf(up, sizeof up, "%s", txt);
+    for (char* q = up; *q; ++q) if (*q >= 'a' && *q <= 'z') *q -= 32;   // small-caps header
+    lv_label_set_text(l, up);
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(l, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(l, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(l, 2, LV_PART_MAIN);
+  };
+
+  luaStoreStyleTabs();
+
+  if (s_luastore_tab == 1) {
+    // ==== tab: Built-in — show/hide the stock apps ====
+    section(TR("Show in the app drawer"));
+    struct { const char* name; uint32_t bit; } builtins[] = {
+      { "Spectrum", APPHIDE_SPECTRUM }, { "Discover", APPHIDE_DISCOVER },
+#if !defined(HAS_TANMATSU)
+      { "VNC", APPHIDE_VNC }, { "Remote", APPHIDE_REMOTE },
+#endif
+#if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
+      { "Web", APPHIDE_READER },
+#endif
+      { "Signal", APPHIDE_SIGNAL }, { "Mentions", APPHIDE_MENTIONS },
+#if defined(HAS_TOUCH_UI)
+      { "Terminal", APPHIDE_TERMINAL },
+#endif
+#if CAP_FILESYSTEM || defined(TLORA_PAGER)
+      { "Files", APPHIDE_FILES },
+#endif
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      { "MQTT bridge", APPHIDE_MQTT },   // a Settings section, not a drawer tile
+#endif
+    };
+    for (auto& bi : builtins) {
+      lv_obj_t* row = lv_obj_create(s_luastore_list);
+      lv_obj_remove_style_all(row);
+      lv_obj_set_size(row, W - 8, 34);
+      lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_t* nm = lv_label_create(row);
+      lv_label_set_text(nm, bi.name);
+      lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_align(nm, LV_ALIGN_LEFT_MID, 2, 0);
+      lv_obj_t* sw = lv_switch_create(row);
+      lv_obj_align(sw, LV_ALIGN_RIGHT_MID, 0, 0);
+      if (!(hide & bi.bit)) lv_obj_add_state(sw, LV_STATE_CHECKED);
+      lv_obj_add_event_cb(sw, luaStoreHideSwitchCb, LV_EVENT_VALUE_CHANGED, (void*)(uintptr_t)bi.bit);
+    }
+    return;
+  }
+
+  if (s_luastore_tab == 2) {
+    // ==== tab: Languages — built-in picks + downloadable/custom .lang files ====
+    char curFile[12];
+    touchPrefsGetLangFile(curFile, sizeof curFile);
+    const uint8_t curLang = i18nGetLang();
+
+    auto langRow = [&](const char* name, const char* sub) {
+      lv_obj_t* row = lv_obj_create(s_luastore_list);
+      lv_obj_remove_style_all(row);
+      lv_obj_set_size(row, W - 8, 38);
+      lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_radius(row, 10, LV_PART_MAIN);
+      lv_obj_set_style_border_color(row, lv_color_hex(0x232830), LV_PART_MAIN);
+      lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
+      lv_obj_set_style_pad_hor(row, 8, LV_PART_MAIN);
+      lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_t* nm = lv_label_create(row);
+      lv_label_set_text(nm, name);
+      lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_set_width(nm, W - (narrow ? 108 : 150));   // room for [trash][Use]
+      lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+      lv_obj_set_height(nm, lh14);   // one line: LONG_DOT only ellipsizes when the
+                                     // height is bounded, else it silently wraps
+      lv_obj_align(nm, LV_ALIGN_LEFT_MID, 0, sub ? -8 : 0);
+      if (sub) {
+        lv_obj_t* sb = lv_label_create(row);
+        lv_label_set_text(sb, sub);
+        lv_obj_set_style_text_font(sb, &g_font_12, LV_PART_MAIN);
+        lv_obj_set_style_text_color(sb, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+        lv_obj_align(sb, LV_ALIGN_LEFT_MID, 0, 8);
+      }
+      return row;
+    };
+    auto actionBtn = [&](lv_obj_t* row, const char* txt, uint32_t col,
+                         lv_event_cb_t cb, intptr_t ud, int xoff, int bw) {
+      lv_obj_t* b = lv_btn_create(row);
+      lv_obj_set_size(b, bw, 28);
+      lv_obj_align(b, LV_ALIGN_RIGHT_MID, xoff, 0);
+      lv_obj_set_style_radius(b, 8, LV_PART_MAIN);
+      lv_obj_set_style_bg_color(b, lv_color_hex(col), LV_PART_MAIN);
+      lv_obj_t* bl = lv_label_create(b);
+      lv_label_set_text(bl, txt);
+      lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
+      lv_obj_center(bl);
+      lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, (void*)ud);
+      return b;
+    };
+    auto activeTag = [&](lv_obj_t* row, int xoff) {
+      lv_obj_t* a = lv_label_create(row);
+      lv_label_set_text(a, TR("Active"));
+      lv_obj_set_style_text_font(a, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(a, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      lv_obj_align(a, LV_ALIGN_RIGHT_MID, xoff, 0);
+    };
+
+    lv_obj_t* hint = lv_label_create(s_luastore_list);
+#if CAP_BUILTIN_LANGS
+    lv_label_set_text(hint, TR("Tap Use to switch - the device reboots to apply."));
+#else
+    lv_label_set_text(hint, TR("Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own."));
+#endif
+    lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_width(hint, W - 12);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+
+#if CAP_BUILTIN_LANGS
+    // All translations ship in the image on this board: a picker, no downloads.
+    for (uint8_t l = 0; l < LANG_COUNT; ++l) {
+      lv_obj_t* row = langRow(kUiLangNames[l], nullptr);
+      if (!curFile[0] && l == curLang) activeTag(row, -6);
+      else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangBuiltinCb, (intptr_t)l, 0,
+                     narrow ? 52 : 58);
+    }
+    return;
+#endif
+    section(TR("Installed"));
+    {
+      // English is always here (it's the source keys). Every other language is
+      // a downloaded .lang file — the built-in table only backs the files up.
+      lv_obj_t* row = langRow("English", nullptr);
+      if (!curFile[0] && curLang == LANG_EN) activeTag(row, -6);
+      else actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangBuiltinCb, (intptr_t)LANG_EN, 0, narrow ? 52 : 58);
+    }
+    for (int i = 0; i < s_langinst_n; i++) {
+      // A newer catalog ver for this installed file -> offer Update in place.
+      int cat = -1;
+      for (int c = 0; c < s_langcat_n; c++)
+        if (strcmp(s_langcat[c].code, s_langinst[i].code) == 0) { cat = c; break; }
+      // #247: != treated ANY difference as "update available" — including an
+      // installed file NEWER than the catalog (a translator side-loading their
+      // work-in-progress), and clicking Update then DOWNGRADED it. Offer the
+      // update only when the catalog is numerically newer; non-numeric vers
+      // (atof 0 on both) fall back to the old inequality.
+      bool stale = false;
+      if (cat >= 0) {
+        const double cv = atof(s_langcat[cat].ver), iv = atof(s_langinst[i].ver);
+        stale = (cv > 0.0 || iv > 0.0) ? (cv > iv + 1e-9)
+                                       : strcmp(s_langcat[cat].ver, s_langinst[i].ver) != 0;
+      }
+      char sub[24];
+      snprintf(sub, sizeof sub, "%s.lang  v%s", s_langinst[i].code, s_langinst[i].ver);
+      lv_obj_t* row = langRow(s_langinst[i].name, sub);
+      const bool act = curFile[0] && strcmp(curFile, s_langinst[i].code) == 0;
+      const lv_coord_t tw = narrow ? 30 : 34;          // trash
+      const lv_coord_t uw = narrow ? 52 : 58;          // Use
+      const lv_coord_t upw = narrow ? 58 : 66;         // Update
+      const bool dl = s_luastore_busy && s_langdl_code[0] &&
+                      strcmp(s_langdl_code, s_langinst[i].code) == 0;   // this one is downloading
+      actionBtn(row, LV_SYMBOL_TRASH, 0x8A4444, luaStoreLangRemoveCb, (intptr_t)i, 0, tw);
+      if (stale) {
+        lv_obj_t* ub = actionBtn(row, TR("Update"), 0x4F9DF7, luaStoreLangGetCb, (intptr_t)cat, -(tw + 4), upw);
+        if (dl) luaStoreMarkBtnBusy(ub);      // survive a rebuild landing mid-download
+      }
+      else if (act)  activeTag(row, -(tw + 8));
+      else           actionBtn(row, TR("Use"), 0x2A5A8A, luaStoreLangUseCb, (intptr_t)i, -(tw + 4), uw);
+    }
+    section(TR("Available"));
+    for (int i = 0; i < s_langcat_n; i++) {
+      bool have = false;
+      for (int j = 0; j < s_langinst_n; j++)
+        if (strcmp(s_langinst[j].code, s_langcat[i].code) == 0) { have = true; break; }
+      if (have) continue;
+      lv_obj_t* row = langRow(s_langcat[i].name, s_langcat[i].code);
+      lv_obj_t* gb = actionBtn(row, TR("Get"), COLOR_ACCENT, luaStoreLangGetCb, (intptr_t)i, 0, narrow ? 52 : 58);
+      if (s_luastore_busy && s_langdl_code[0] && strcmp(s_langdl_code, s_langcat[i].code) == 0)
+        luaStoreMarkBtnBusy(gb);              // survive a rebuild landing mid-download
+    }
+    if (s_langcat_n <= 0) {
+      lv_obj_t* h = lv_label_create(s_luastore_list);
+      lv_label_set_text(h, s_langcat_n < 0
+          ? TR("Language catalog unavailable - check Wi-Fi, then reopen this tab.")
+          : TR("Loading the language catalog\xE2\x80\xA6"));
+      lv_obj_set_style_text_font(h, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(h, lv_color_hex(s_langcat_n < 0 ? 0xE08080 : COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_width(h, W - 12);
+      lv_label_set_long_mode(h, LV_LABEL_LONG_WRAP);
+    }
+    return;
+  }
+
+  // ==== tab: Apps (the catalog) ====
+  if (s_lua_cat_n <= 0) {
+    lv_obj_t* card = lv_obj_create(s_luastore_list);
+    lv_obj_remove_style_all(card);
+    // Height from the wrapped hint, not a one-line guess — on a 240 px panel
+    // the second/third line used to be cut off by the card's own bottom edge.
+    lv_obj_set_size(card, W - 8, lh14 + lh12 * (narrow ? 3 : 2) + 22);
+    lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* t = lv_label_create(card);
+    lv_label_set_text(t, s_lua_cat_n < 0 ? TR("Catalog unavailable") : TR("Loading catalog\xE2\x80\xA6"));
+    lv_obj_set_style_text_font(t, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(t, lv_color_hex(s_lua_cat_n < 0 ? 0xE08080 : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_pos(t, 0, 0);
+    lv_obj_t* h = lv_label_create(card);
+    useChainedFont(h);
+    if (s_lua_cat_n < 0 && s_tile_fetch_task == nullptr) {
+      // The network worker could not start: report the numbers that decide it
+      // (it needs one contiguous 8 KB internal block) right on screen, so this
+      // is diagnosable from the device instead of a serial cable.
+      char mem[128];
+      snprintf(mem, sizeof mem,
+               "%s\nfree %u KB, largest block %u KB (needs 8 KB)",
+               TR("Not enough free memory to fetch it. Reboot and try again."),
+               (unsigned)(ESP.getFreeHeap() / 1024),
+               (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) / 1024));
+      lv_label_set_text(h, mem);
+    } else {
+      lv_label_set_text(h, s_lua_cat_n < 0
+          ? TR("Turn Wi-Fi on, then tap refresh. Apps already installed still work.")
+          : TR("Fetching the app list from firmware.wadamesh.com"));
+    }
+    lv_obj_set_style_text_font(h, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(h, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_width(h, W - 26);
+    lv_label_set_long_mode(h, LV_LABEL_LONG_WRAP);
+    lv_obj_set_pos(h, 0, lh14 + 3);
+    // Size to whatever the (possibly translated, possibly multi-line diagnostic)
+    // body actually needs — read the text back so this can't drift from the
+    // branches above.
+    lv_obj_set_height(card, lh14 + 3 + wrapH(lv_label_get_text(h), &g_font_12, W - 26) + 16);
+  }
+  const int  chip_h  = lh14 + lh12 - 2;                  // icon chip (square)
+  const lv_coord_t pad_v = 14;                           // pad_all 7, top + bottom
+  for (int i = 0; i < s_lua_cat_n; i++) {
+    // Per card, because every description wraps differently. Content is the
+    // title line plus the wrapped description, but never shorter than the icon
+    // chip or the action button or those would poke out of a short card.
+    char title[64];
+    snprintf(title, sizeof title, "%s  %s", s_lua_cat[i].name, s_lua_cat[i].ver);
+    // Measure the TITLE too, don't assume one line. A long name plus its version
+    // wraps in the text column, and the description used to sit at a fixed
+    // lh14 + 2 regardless — so the second title line landed on top of it.
+    const lv_coord_t dsw   = W - (chip_h + 8) - act_gut;
+    const lv_coord_t ttlH  = wrapH(title, &g_font_14, dsw);
+    const lv_coord_t textH = ttlH + 2 + wrapH(s_lua_cat[i].desc, &g_font_12, dsw);
+    lv_coord_t contentH = textH;
+    if (contentH < chip_h) contentH = chip_h;
+    if (contentH < 32)     contentH = 32;                // the Get/Update/Remove button
+    lv_obj_t* row = lv_obj_create(s_luastore_list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, W - 8, contentH + pad_v);
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(row, 10, LV_PART_MAIN);
+    lv_obj_set_style_border_color(row, lv_color_hex(0x232830), LV_PART_MAIN);
+    lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(row, 7, LV_PART_MAIN);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    const LuaInstApp* inst = luaStoreFindInstalled(s_lua_cat[i].id);
+    // Squircle icon chip with the app's initial, matching the drawer's look.
+    const int chip = chip_h;
+    lv_obj_t* ico = lv_obj_create(row);
+    lv_obj_remove_style_all(ico);
+    lv_obj_clear_flag(ico, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(ico, chip, chip);
+    // Top-aligned, not centred: once a card can be four lines tall a centred chip
+    // drifts away from the title it belongs to.
+    lv_obj_align(ico, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(ico, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(ico, LV_OPA_20, LV_PART_MAIN);
+    lv_obj_set_style_border_color(ico, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_border_width(ico, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(ico, LV_OPA_50, LV_PART_MAIN);
+    lv_obj_set_style_radius(ico, chip * 24 / 100, LV_PART_MAIN);
+    lv_obj_t* il = lv_label_create(ico);
+    char initial[2] = { s_lua_cat[i].name[0], 0 };
+    lv_label_set_text(il, initial);
+    lv_obj_set_style_text_font(il, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(il, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_center(il);
+    const int tx = chip + 8;                        // text column starts past the chip
+    lv_obj_t* nm = lv_label_create(row);
+    lv_label_set_text(nm, title);
+    lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(nm, lv_color_hex(inst ? COLOR_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_width(nm, W - tx - act_gut);         // clear of the action button
+    lv_label_set_long_mode(nm, LV_LABEL_LONG_WRAP);   // WRAP, not DOT: the card grew to fit it
+    lv_obj_set_pos(nm, tx, 0);
+    // Description gets its own full-width line — it used to share the row with
+    // the version badge and was squeezed into an unreadable sliver.
+    lv_obj_t* ds = lv_label_create(row);
+    lv_label_set_text(ds, s_lua_cat[i].desc);
+    lv_obj_set_style_text_font(ds, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(ds, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_width(ds, W - tx - act_gut);   // same column as the title: never under the button
+    lv_label_set_long_mode(ds, LV_LABEL_LONG_WRAP);
+    lv_obj_set_pos(ds, tx, ttlH + 2);         // below the title's ACTUAL height, however it wrapped
+    lv_obj_t* b = lv_btn_create(row);
+    lv_obj_set_size(b, act_w, 32);
+    lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_radius(b, 8, LV_PART_MAIN);
+    lv_obj_t* bl = lv_label_create(b);
+    const bool cur = inst && strcmp(inst->ver, s_lua_cat[i].ver) == 0;
+    if (!inst) lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    else if (!cur) lv_obj_set_style_bg_color(b, lv_color_hex(0x4F9DF7), LV_PART_MAIN);
+    lv_label_set_text(bl, !inst ? TR("Get") : cur ? TR("Remove") : TR("Update"));
+    lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
+    lv_obj_center(bl);
+    if (inst && cur) {
+      // Remove needs the INSTALLED index
+      int ii = (int)(inst - s_lua_inst);
+      lv_obj_set_style_bg_color(b, lv_color_hex(0x8A4444), LV_PART_MAIN);
+      lv_obj_add_event_cb(b, luaStoreRemoveBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)ii);
+    } else {
+      lv_obj_add_event_cb(b, luaStoreInstallBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    }
+    // A rebuild can land mid-download (a card scan or the catalog fetch finishing)
+    // and would wipe the spinner set on tap, so repaint it from the in-flight id.
+    if (s_luastore_busy && s_luainst_id[0] && strcmp(s_luainst_id, s_lua_cat[i].id) == 0)
+      luaStoreMarkBtnBusy(b);
+  }
+
+  // ---- installed-but-not-in-catalog (sideloaded from the card) ----
+  {
+    bool any_side = false;
+    for (int i = 0; i < s_lua_inst_n; i++) {
+      bool in_cat = false;
+      for (int c = 0; c < s_lua_cat_n; c++)
+        if (strcmp(s_lua_cat[c].id, s_lua_inst[i].id) == 0) { in_cat = true; break; }
+      if (!in_cat) { any_side = true; break; }
+    }
+    if (any_side) section(TR("Your own apps"));
+  }
+  for (int i = 0; i < s_lua_inst_n; i++) {
+    bool in_cat = false;
+    for (int c = 0; c < s_lua_cat_n; c++)
+      if (strcmp(s_lua_cat[c].id, s_lua_inst[i].id) == 0) { in_cat = true; break; }
+    if (in_cat) continue;
+    lv_obj_t* row = lv_obj_create(s_luastore_list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, W - 8, 40);
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(row, 10, LV_PART_MAIN);
+    lv_obj_set_style_border_color(row, lv_color_hex(0x232830), LV_PART_MAIN);
+    lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(row, 7, LV_PART_MAIN);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* nm = lv_label_create(row);
+    char head[64];
+    snprintf(head, sizeof head, "%s  %s", s_lua_inst[i].name, s_lua_inst[i].ver);
+    lv_label_set_text(nm, head);
+    lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_width(nm, W - act_gut);    // clear of the Remove button
+    lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+    lv_obj_set_height(nm, lh12);          // one line (see the Languages rows above)
+    lv_obj_align(nm, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_t* b = lv_btn_create(row);
+    lv_obj_set_size(b, act_w, 28);
+    lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x8A4444), LV_PART_MAIN);
+    lv_obj_t* bl = lv_label_create(b);
+    lv_label_set_text(bl, TR("Remove"));
+    lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
+    lv_obj_center(bl);
+    lv_obj_add_event_cb(b, luaStoreRemoveBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+  }
+
+  if (keep_scroll_y > 0) {
+    lv_obj_update_layout(s_luastore_list);          // content height must be known first
+    lv_obj_scroll_to_y(s_luastore_list, keep_scroll_y, LV_ANIM_OFF);
+  }
+}
+
+static void openLuaStorePage() {
+  luaStoreTablesReady();
+  closeLuaStorePage();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
+  // lv_layer_top, below the status bar, exactly like the Monitor/Discover pages:
+  // created AFTER the app drawer (also on layer_top), so it stacks above it and
+  // closing reveals the drawer again.
+  s_luastore_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_luastore_root);
+  lv_obj_set_size(s_luastore_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_luastore_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_luastore_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_luastore_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_luastore_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_move_foreground(s_luastore_root);
+
+  // Segmented tab bar (fixed above the scrolling list): Apps | Built-in | Languages
+  // Follows the font instead of being a hardcoded 30 px: on the P4's high-DPI panel
+  // (and at the larger UI scales) a 12 px line box plus padding is taller than 30,
+  // so the tab label was clipped inside its own button. Floored at 30 so the S3
+  // boards keep exactly the bar they had.
+  lv_coord_t bar_h = lv_font_get_line_height(&g_font_12) + 14;
+  if (bar_h < 30) bar_h = 30;
+  {
+    lv_obj_t* bar = lv_obj_create(s_luastore_root);
+    lv_obj_remove_style_all(bar);
+    lv_obj_set_size(bar, sw - 12, bar_h);
+    lv_obj_set_pos(bar, 6, 4);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    static const char* const kStoreTabs[3] = { "Apps", "Built-in", "Languages" };
+#if CAP_BUILTIN_LUA_APPS
+    // This board ships its apps and languages inside the image, so there is
+    // nothing to browse or install — the page is a picker, not a shop.
+    const int t_first = 1, t_count = 2;
+#else
+    const int t_first = 0, t_count = 3;
+#endif
+    // Cells sized to their text, NOT even thirds. The P4 is 284 px logical and its
+    // fonts are scaled up, so an even third is ~90 px — "Languages" cannot fit that
+    // at the board's smallest font (uiFitLabelWidth bottoms out at g_font_12, which
+    // is montserrat_16/18/20 there), while "Apps" leaves half its cell empty. Hand
+    // out the bar in proportion to what each label actually measures and the long
+    // one gets the room the short one was wasting. Self-balancing for translations.
+    const lv_coord_t total = sw - 12;
+    lv_coord_t need[3] = { 0, 0, 0 };
+    int32_t need_sum = 0;
+    for (int t = t_first; t < 3; t++) {
+      lv_point_t sz;
+      lv_txt_get_size(&sz, TR(kStoreTabs[t]), &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      need[t] = sz.x + 16;                      // text plus breathing room
+      need_sum += need[t];
+    }
+    if (need_sum <= 0) need_sum = t_count;      // degenerate: fall back to even
+    lv_coord_t x = 0;
+    for (int t = t_first; t < 3; t++) {
+      // Last cell takes the remainder so rounding can never leave a gap or overrun.
+      const lv_coord_t cw = (t == 2) ? (total - x)
+                                     : (lv_coord_t)(((int32_t)total * need[t]) / need_sum);
+      lv_obj_t* b = lv_btn_create(bar);
+      s_luastore_tabbtn[t] = b;
+      lv_obj_remove_style_all(b);
+      lv_obj_set_size(b, cw - 4, bar_h - 4);
+      lv_obj_set_pos(b, x + 2, 0);
+      lv_obj_set_style_radius(b, 8, LV_PART_MAIN);
+      lv_obj_t* l = lv_label_create(b);
+      lv_label_set_text(l, TR(kStoreTabs[t]));
+      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+      // Shrink the font rather than setting a width: a width plus LONG_DOT does NOT
+      // ellipsize here (DOT only kicks in when the HEIGHT is bounded), it silently
+      // wraps the label onto a second line inside a one-line button.
+      uiFitLabelWidth(l, cw - 8);
+      lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+      lv_obj_center(l);
+      lv_obj_add_event_cb(b, luaStoreTabCb, LV_EVENT_CLICKED, (void*)(intptr_t)t);
+      x += cw;
+    }
+  }
+
+  s_luastore_list = lv_obj_create(s_luastore_root);
+  lv_obj_remove_style_all(s_luastore_list);
+  s_luastore_w = sw - 12;
+  lv_obj_set_size(s_luastore_list, s_luastore_w, sh - STATUSBAR_H - bar_h - 14);
+  lv_obj_set_pos(s_luastore_list, 6, 4 + bar_h + 4);
+  lv_obj_set_scroll_dir(s_luastore_list, LV_DIR_VER);
+  lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
+
+#if CAP_BUILTIN_LUA_APPS
+  if (s_luastore_tab == 0) s_luastore_tab = 2;   // no Apps tab on this board
+#endif
+  appPageBeginSlim(TR("Store"), &closeLuaStorePage);   // one-line bar; the tab bar is the page header
+
+  // Open instantly from the cached install list; the card re-listing (sideload
+  // pickup) runs on the worker and the poll timer repaints when it lands.
+  s_luascan_request = true;
+  if (s_lua_cat_n <= 0) {                 // no catalog yet this session -> fetch
+    s_lua_cat_n = 0;
+    s_luacat_done = false;
+    s_luacat_request = true;
+  }
+  const bool worker_up = ensureTileFetchTaskRunning();
+  // The net worker needs an 8 KB contiguous internal block. When memory is too
+  // tight to start it, nothing will ever service the request — so fail visibly
+  // instead of spinning on "Loading catalog..." forever.
+  if (!worker_up) {
+    s_lua_cat_n = -1;
+    s_luacat_request = false;
+    s_langcat_n = -1;
+    s_langcat_request = false;
+  }
+  if (s_luastore_tab == 2) {              // reopened straight onto Languages
+    luaStoreScanLangs();
+    if (s_langcat_n <= 0) {
+      s_langcat_n = 0;
+      s_langcat_done = false;
+      s_langcat_request = true;
+    }
+  }
+  luaStoreRebuildList();
+  s_luastore_poll = lv_timer_create(luaStorePollCb, 250, nullptr);
+}
+
+// Settings -> Language lands here: the Store, opened straight onto Languages.
+static void luaStoreOpenLanguages() {
+  s_luastore_tab = 2;
+  openLuaStorePage();
+}
+#endif  // CAP_LUA_APPS (store page)
 
 // ===== App drawer (full-screen grid launcher) =============================
 // Toggle-in alternative to the command-centre home: a grid of every tool. The
@@ -36587,8 +41270,9 @@ static void openControlCenter() {
 enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
-  APPACT_TERMINAL, APPACT_FILES, APPACT_MONITOR, APPACT_SPECTRUM, APPACT_AIRTIME, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
-  APPACT_DISCOVER,
+  APPACT_TERMINAL, APPACT_FILES, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
+  APPACT_DISCOVER, APPACT_STORE,
+  APPACT_LUA_BASE = 100,   // APPACT_LUA_BASE + i = installed Lua app s_lua_inst[i]
 };
 
 static void closeAppDrawer() {
@@ -36734,9 +41418,13 @@ static void openMentionsScreen() {
   lv_obj_add_event_cb(back, mentionsBackCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bks = lv_label_create(back);
   lv_label_set_text(bks, LV_SYMBOL_LEFT);
+  lv_obj_set_style_text_font(bks, uiChromeFont(), LV_PART_MAIN);
   lv_obj_center(bks);
 
-  const int header_h = 38;
+  // The title follows the selected semantic font role. At the Pager's larger
+  // presets its live fallback line box is taller than the historical 38-px
+  // header, so measure it instead of letting the title overlap the list.
+  const int header_h = LV_MAX(38, 14 + lv_font_get_line_height(&g_font_16));
   lv_obj_t* list = lv_obj_create(s_mentions_root);
   lv_obj_remove_style_all(list);
   lv_obj_set_size(list, sw, (sh - STATUSBAR_H - TABBAR_H) - header_h);
@@ -36775,13 +41463,17 @@ static void openMentionsScreen() {
   }
 
   const int row_w = sw - 16;   // list has 8 px padding each side
+  const int line_h = lv_font_get_line_height(&g_font_12);
+  const int row_top = 7;
+  const int body_y = row_top + line_h + 2;
+  const int row_h = body_y + 2 * line_h + 7;
   for (int k = 0; k < nf; k++) {
     UITask::UIMessage m;
     if (!g_lv.task->getMessageByIndex(found[k].idx, m)) continue;
 
     lv_obj_t* row = lv_btn_create(list);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, row_w, 68);   // taller: fits a 2-line message body
+    lv_obj_set_size(row, row_w, row_h);   // channel line + two-line preview + padding
     lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
@@ -36791,11 +41483,11 @@ static void openMentionsScreen() {
 
     lv_obj_t* chl = lv_label_create(row);   // channel name (accent)
     lv_label_set_long_mode(chl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(chl, row_w - 72);
+    lv_obj_set_size(chl, row_w - 72, line_h);
     lv_label_set_text(chl, m.thread);
     lv_obj_set_style_text_color(chl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_text_font(chl, &g_font_12, LV_PART_MAIN);
-    lv_obj_align(chl, LV_ALIGN_TOP_LEFT, 8, 7);
+    lv_obj_align(chl, LV_ALIGN_TOP_LEFT, 8, row_top);
 
     char when[16] = {0};
     if (m.ts > 1700000000UL) {
@@ -36807,18 +41499,18 @@ static void openMentionsScreen() {
       lv_label_set_text(tl, when);
       lv_obj_set_style_text_color(tl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
       lv_obj_set_style_text_font(tl, &g_font_12, LV_PART_MAIN);
-      lv_obj_align(tl, LV_ALIGN_TOP_RIGHT, -8, 7);
+      lv_obj_align(tl, LV_ALIGN_TOP_RIGHT, -8, row_top);
     }
 
     char bodytxt[UITask::MAX_SENDER_NAME + UITask::MAX_MSG_TEXT + 4];
     snprintf(bodytxt, sizeof bodytxt, "%s: %s", m.sender[0] ? m.sender : "?", m.text);
-    lv_obj_t* bd = lv_label_create(row);   // "sender: text", wraps to 2 lines
-    lv_label_set_long_mode(bd, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(bd, row_w - 16);
+    lv_obj_t* bd = lv_label_create(row);   // "sender: text", capped at 2 lines
+    lv_label_set_long_mode(bd, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(bd, row_w - 16, 2 * line_h);
     lv_label_set_text(bd, bodytxt);
     lv_obj_set_style_text_color(bd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_font(bd, &g_font_12, LV_PART_MAIN);
-    lv_obj_align(bd, LV_ALIGN_TOP_LEFT, 8, 25);
+    lv_obj_align(bd, LV_ALIGN_TOP_LEFT, 8, body_y);
   }
 }
 
@@ -36827,13 +41519,20 @@ static void appTileCb(lv_event_t* e) {
   const int act = (int)(intptr_t)lv_event_get_user_data(e);
   // Tools open OVER the drawer (do NOT close it), so dismissing them returns to
   // the drawer where they were launched — not the command centre.
+#if CAP_LUA_APPS
+  if (s_tile_lp_fired) { s_tile_lp_fired = false; return; }   // release-click after a long press
+  if (act >= APPACT_LUA_BASE && act < APPACT_LUA_BASE + s_lua_inst_n) {
+    const LuaInstApp& a = s_lua_inst[act - APPACT_LUA_BASE];
+    const char* emb = luaBuiltinSrc(a.id);   // file-first; this is the fallback
+    luaAppLaunchFile(a.id, a.name, emb, emb ? strlen(emb) : 0);
+    return;
+  }
+#endif
   switch (act) {
     case APPACT_MENTIONS:  openMentionsScreen();  return;
     case APPACT_CMDCENTER: setHomeDrawer(false);  return;   // explicit "back to command centre"
     case APPACT_SIGNAL:    openSignalInfoPopup(); return;   // signal/traffic + auto-discover settings
-    case APPACT_MONITOR:   openMonitorPage();    return;   // RF activity graph + repeater-style radio stats
     case APPACT_SPECTRUM:  openSpectrumPage();   return;   // swept RF spectrum analyzer (borrows the radio)
-    case APPACT_AIRTIME:   ChannelUtil::launch(); return;  // channel-utilization / congestion proof tool
     case APPACT_DISCOVER:  openDiscoverPage();   return;   // active node-discovery sweep + nearby list
 #if !defined(HAS_TANMATSU)
     case APPACT_VNC:       openVncPage();        return;   // screen mirror + remote control from a browser
@@ -36844,7 +41543,14 @@ static void appTileCb(lv_event_t* e) {
 #endif
     case APPACT_ADVERT:    openAdvertModalCb(e);  return;
     case APPACT_POWER:     openPowerMenu();      return;
+#if CAP_LUA_APPS
+    case APPACT_STORE:     openLuaStorePage();   return;
+    // Snake is store-only on Lua boards: install it from the catalog and it
+    // appears as a regular installed tile (the native module goes unreferenced
+    // here, so the linker drops it).
+#else
     case APPACT_SNAKE:     SnakeGame::launch();  return;
+#endif
 #if defined(HAS_TOUCH_UI)
     case APPACT_TERMINAL:  homeTerminalCb(e);    return;
 #endif
@@ -36867,6 +41573,60 @@ static void appTileCb(lv_event_t* e) {
 // One launcher tile: a rounded panel with an accent icon over a label. The icon
 // font is g_font_16 — it carries the LV_SYMBOL set AND the spliced person glyph,
 // so every tile (including Contacts) renders without tofu.
+#if CAP_LUA_APPS
+// Long-press on an installed Lua app tile -> confirm -> remove (files deleted,
+// drawer rebuilt). A long press must swallow the release CLICK so the app
+// doesn't also launch under the confirm sheet.
+static uint32_t s_lua_hide_pending = 0;
+static void luaTileHideConfirmed() {
+  touchPrefsSetAppHide(touchPrefsGetAppHide() | s_lua_hide_pending);
+  s_lua_hide_pending = 0;
+  settingsApplyHiddenCats();
+  if (s_appdrawer_root) { closeAppDrawer(); openAppDrawer(); }
+  if (g_lv.task) g_lv.task->showAlert(TR("Hidden - turn it back on in the Lua Store"), 2000);
+}
+
+static void luaTileRemoveConfirmed() {
+  luaStoreRemoveApp(s_lua_rm_pending);
+  s_lua_rm_pending = -1;
+  if (s_appdrawer_root) { closeAppDrawer(); openAppDrawer(); }   // rebuild tiles
+}
+// Which built-ins a long press can hide (the same set the Lua Store lists).
+static uint32_t appHideBitFor(int act) {
+  switch (act) {
+    case APPACT_SPECTRUM: return APPHIDE_SPECTRUM;
+    case APPACT_DISCOVER: return APPHIDE_DISCOVER;
+    case APPACT_VNC:      return APPHIDE_VNC;
+    case APPACT_REMOTE:   return APPHIDE_REMOTE;
+    case APPACT_READER:   return APPHIDE_READER;
+    case APPACT_TERMINAL: return APPHIDE_TERMINAL;
+    case APPACT_FILES:    return APPHIDE_FILES;
+    case APPACT_SIGNAL:   return APPHIDE_SIGNAL;
+    case APPACT_MENTIONS: return APPHIDE_MENTIONS;
+    default:              return 0;   // core tiles (Chats/Map/Settings/...) stay put
+  }
+}
+
+static void appTileLongPressCb(lv_event_t* e) {
+  int act = (int)(intptr_t)lv_event_get_user_data(e);
+  int idx = act - APPACT_LUA_BASE;
+  if (idx >= 0 && idx < s_lua_inst_n) {          // installed Lua app -> remove
+    if (luaBuiltinSrc(s_lua_inst[idx].id)) return;   // seeded in the image: nothing to uninstall
+    s_tile_lp_fired = true;
+    s_lua_rm_pending = idx;
+    char msg[64];
+    snprintf(msg, sizeof msg, TR("Remove %s?"), s_lua_inst[idx].name);
+    showConfirm(msg, TR("Remove"), luaTileRemoveConfirmed);
+    return;
+  }
+  const uint32_t bit = appHideBitFor(act);       // hideable built-in -> hide
+  if (!bit) return;
+  s_tile_lp_fired = true;
+  s_lua_hide_pending = bit;
+  showConfirm(TR("Hide this app from the drawer?"), TR("Hide"), luaTileHideConfirmed);
+}
+#endif
+
 static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
                        const char* icon, const char* label, int act, int badge,
                        uint32_t icon_col, bool big = false) {
@@ -36883,11 +41643,15 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_set_style_bg_opa(t, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_add_flag(t, NAV_ACCENTFOCUS_FLAG);   // keyboard/encoder focus = same accent tint as a touch press
   lv_obj_add_event_cb(t, appTileCb, LV_EVENT_CLICKED, (void*)(intptr_t)act);
+#if CAP_LUA_APPS
+  if (act >= APPACT_LUA_BASE || appHideBitFor(act))
+    lv_obj_add_event_cb(t, appTileLongPressCb, LV_EVENT_LONG_PRESSED, (void*)(intptr_t)act);
+#endif
 
   // Rounded-square chip (iOS-style squircle), tinted with the app's accent
   // colour, centred up top. Bigger + a small proportional corner radius so it
   // reads as a SQUARE app icon, not a circle.
-#if CAP_LARGE_SCREEN
+#if CAP_UI_SIZE
   // Reserve the ACTUAL label line height (it grows with the UI-scale font) so the
   // name never overlaps the icon chip on the big panel.
   int chip = h - (lv_font_get_line_height(big ? &g_font_14 : &g_font_12) + 10);
@@ -37148,6 +41912,35 @@ static void appDrawerSettingsCb(lv_event_t* e) {
   openAppGridSheet();
 }
 
+// Manifest icon name -> glyph for a Lua app's drawer tile. Names only, and only
+// glyphs the UI fonts already carry: a submission cannot ship its own artwork,
+// so an unknown or absent name falls back to the generic app symbol rather than
+// drawing a missing-glyph box. LUA_APPS.md promised manifests an "icon" field
+// from the start; this is it.
+static const char* luaAppIconGlyph(const char* name) {
+  if (!name || !name[0]) return LV_SYMBOL_PLAY;
+  static const struct { const char* name; const char* glyph; } kMap[] = {
+    { "gps",      LV_SYMBOL_GPS },        // location pin — compass / navigation apps
+    { "compass",  LV_SYMBOL_GPS },
+    { "map",      LV_SYMBOL_GPS },
+    { "radio",    TOUCH_SYM_ANTENNA },
+    { "signal",   LV_SYMBOL_WIFI },
+    { "chart",    LV_SYMBOL_IMAGE },
+    { "list",     LV_SYMBOL_LIST },
+    { "message",  LV_SYMBOL_ENVELOPE },
+    { "person",   TOUCH_SYM_PERSON },
+    { "group",    TOUCH_SYM_GROUP },
+    { "bell",     TOUCH_SYM_BELL },
+    { "star",     TOUCH_SYM_STAR },
+    { "search",   TOUCH_SYM_ZOOM },
+    { "settings", LV_SYMBOL_SETTINGS },
+    { "battery",  LV_SYMBOL_CHARGE },
+    { "game",     LV_SYMBOL_PLAY },
+  };
+  for (const auto& e : kMap) if (strcmp(e.name, name) == 0) return e.glyph;
+  return LV_SYMBOL_PLAY;
+}
+
 static void openAppDrawer() {
   closeAppDrawer();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -37192,9 +41985,7 @@ static void openAppDrawer() {
     { "\xF0\x9F\x8C\x90",  "Web",       APPACT_READER,   0,         0x6FB7FF },      // on-device text browser (globe)
 #endif
     { nullptr,             "Signal",    APPACT_SIGNAL,   0,         COLOR_ACCENT },  // theme (drawn signal bars)
-    { TOUCH_SYM_ANTENNA,   "Monitor",   APPACT_MONITOR,  0,         0x35C9C9 },      // RF monitor cyan
     { TOUCH_SYM_ANTENNA,   "Spectrum",  APPACT_SPECTRUM, 0,         0xE8A33D },      // RF spectrum analyzer amber
-    { "%",                 "Airtime",   APPACT_AIRTIME,  0,         0xF2793C },      // channel-utilization / congestion proof (orange)
     { "@",                 "Mentions",  APPACT_MENTIONS, mentions,  0xF2A33C },      // mention amber
     { LV_SYMBOL_SETTINGS,  "Settings",  APPACT_SETTINGS, 0,         0x9AA3AD },      // neutral gear grey
 #if defined(HAS_TOUCH_UI)
@@ -37203,10 +41994,44 @@ static void openAppDrawer() {
 #if CAP_FILESYSTEM || defined(TLORA_PAGER)
     { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
 #endif
-    { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // snake game (icon drawn from APPACT_SNAKE, not a glyph)
+#if !CAP_LUA_APPS
+    { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (Lua boards install it from the Store)
+#else
+    { LV_SYMBOL_DOWNLOAD,  "Store",      APPACT_STORE,   0,         0x15B6A6 },      // Lua app store (brand teal); short name = fits every panel
+#endif
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
-  const int n = (int)(sizeof(tiles) / sizeof(tiles[0]));
+  const int n_static = (int)(sizeof(tiles) / sizeof(tiles[0]));
+#if CAP_LUA_APPS
+  // Hide filter (Store page toggles) + installed Lua apps as dynamic tiles.
+  const uint32_t hide_mask = touchPrefsGetAppHide();
+  auto tileHidden = [&](int act) -> bool {
+    switch (act) {
+      case APPACT_SNAKE:    return hide_mask & APPHIDE_SNAKE;
+      case APPACT_SPECTRUM: return hide_mask & APPHIDE_SPECTRUM;
+      case APPACT_DISCOVER: return hide_mask & APPHIDE_DISCOVER;
+      case APPACT_VNC:      return hide_mask & APPHIDE_VNC;
+      case APPACT_REMOTE:   return hide_mask & APPHIDE_REMOTE;
+      case APPACT_READER:   return hide_mask & APPHIDE_READER;
+      case APPACT_TERMINAL: return hide_mask & APPHIDE_TERMINAL;
+      case APPACT_FILES:    return hide_mask & APPHIDE_FILES;
+      case APPACT_SIGNAL:   return hide_mask & APPHIDE_SIGNAL;
+      case APPACT_MENTIONS: return hide_mask & APPHIDE_MENTIONS;
+      default:              return false;
+    }
+  };
+  static int s_draw_order[40];
+  int n = 0;
+  for (int i = 0; i < n_static; i++)
+    if (!tileHidden(tiles[i].act)) s_draw_order[n++] = i;
+  luaStoreScanInstalled();
+  int dyn0 = n;
+  for (int i = 0; i < s_lua_inst_n && n < 40; i++)
+    s_draw_order[n++] = -(i + 1);                           // negative = dynamic index i
+  (void)dyn0;
+#else
+  const int n = n_static;
+#endif
 
   // Column count: 4 on the T-Deck, 3 on the V4 (a cleaner grid for the smaller
   // tile set). Tile height is sized to fit the rows on screen but CLAMPED to a
@@ -37232,9 +42057,21 @@ static void openAppDrawer() {
   if (tile_h < lo) tile_h = lo;
   for (int i = 0; i < n; i++) {
     const int col = i % cols, row = i / cols;
-    addAppTile(s_appdrawer_root, pad + col * (tile_w + gap), top + row * (tile_h + gap),
-               tile_w, tile_h, tiles[i].icon, tiles[i].label, tiles[i].act, tiles[i].badge,
-               tiles[i].color, big_grid);
+    const int x = pad + col * (tile_w + gap), y = top + row * (tile_h + gap);
+#if CAP_LUA_APPS
+    const int oi = s_draw_order[i];
+    if (oi < 0) {   // installed Lua app (dynamic)
+      const LuaInstApp& a = s_lua_inst[-oi - 1];
+      addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, luaAppIconGlyph(a.icon), a.name,
+                 APPACT_LUA_BASE + (-oi - 1), 0, 0x15B6A6, big_grid);
+      continue;
+    }
+    addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, tiles[oi].icon, tiles[oi].label,
+               tiles[oi].act, tiles[oi].badge, tiles[oi].color, big_grid);
+#else
+    addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, tiles[i].icon, tiles[i].label,
+               tiles[i].act, tiles[i].badge, tiles[i].color, big_grid);
+#endif
   }
 
   // Keep the scrollbar permanently visible only when the grid actually overflows
@@ -37268,6 +42105,13 @@ static void openAppDrawer() {
 // Status-bar long-hold (3 s) -> full-screen screenshot to /screenshots on SD.
 static uint32_t s_sb_press_ms  = 0;
 static bool     s_sb_shot_done = false;
+// millis() of a press the bar's PRESSED handler already used to leave an app page, so
+// the CLICKED from that same tap gets swallowed instead of toggling the control center.
+// TIMESTAMPED rather than a plain flag on purpose: the whole reason that handler closes
+// on touch-DOWN is that the matching CLICKED sometimes never arrives (the cap-touch swipe
+// detector aborts it), and a sticky bool would then eat the NEXT genuine bar tap. A stale
+// one simply expires.
+static uint32_t s_sb_back_ms = 0;
 static void takeScreenshotToSd();   // fwd
 static void statusBarHoldCb(lv_event_t* e) {
   switch (lv_event_get_code(e)) {
@@ -37292,6 +42136,11 @@ static void statusBarTapCb(lv_event_t* e) {
   // statusBarReaderBackCb, which they never got and which is the only reliable exit on a
   // cap-touch board that drops the lone CLICKED.
   if (s_sb_shot_done) { s_sb_shot_done = false; return; }   // this press was a screenshot hold
+  // …and this one already closed an app page on touch-DOWN (statusBarReaderBackCb).
+  // Without this the tap goes back AND falls through to the control-center toggle at
+  // the bottom of this function: "back also opens the status bar" (pisti87, beta_64).
+  if (s_sb_back_ms && (uint32_t)(millis() - s_sb_back_ms) < 1500) { s_sb_back_ms = 0; return; }
+  s_sb_back_ms = 0;
   // A full-screen tool page (RF Monitor / Spectrum) is up: the bar carries its Back
   // chevron + title, so a tap goes back (closes the page) just like settings.
   if (s_apppage_close) { s_apppage_close(); return; }
@@ -37326,15 +42175,20 @@ static void statusBarReaderBackCb(lv_event_t* e) {
   // exited only by the bar's CLICKED -> s_apppage_close. On cap-touch the swipe detector's
   // click-abort (lvglTouchRead) can drop that lone CLICKED, trapping the user on a touch-only board
   // (the P4). Close on PRESSED too — the proven Reader fallback, now generalised to every app page.
-  // close() clears s_apppage_close, so the later CLICKED in statusBarTapCb is then a no-op.
-  if (s_apppage_close) s_apppage_close();
+  //
+  // The CLICKED that follows this same tap must be SWALLOWED. Clearing s_apppage_close does not
+  // make it harmless (the original claim here): statusBarTapCb only skips its app-page branch and
+  // then falls through every other branch to the control-center toggle at its end — so exiting any
+  // app page by the "‹" also popped the dropdown open. Harmless while this was Reader-only, wrong
+  // for every app page since beta_49.
+  if (s_apppage_close) { s_apppage_close(); s_sb_back_ms = millis() | 1u; }   // |1: 0 means "none"
 }
 
 // Capture the composited screen to a 16-bit BMP on the SD card. BMP (no
 // compression) is the quickest viewable format to emit — rows are a direct copy
 // of the RGB565 framebuffer (LV_COLOR_16_SWAP is 0). Saved to /screenshots.
 static void takeScreenshotToSd() {
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   auto toast = [&](const char* m){ if (g_lv.task) g_lv.task->showAlert(m, 1800); };
   if (SD.cardType() == CARD_NONE) { toast(TR("Screenshot: no SD card")); return; }
   const int W = lv_disp_get_hor_res(nullptr);
@@ -37466,7 +42320,6 @@ static void docCaptureTour() {
   }
 
   navGoToMainTab(HOME_TAB_INDEX); docSettle(3);
-  openMonitorPage();  docSettle(14); captureScreenToSerial("app_rfmonitor"); closeMonitorPage();  docSettle(6);
   openSpectrumPage(); docSettle(14); captureScreenToSerial("app_spectrum");  closeSpectrumPage(); docSettle(6);
   openRemotePage();   docSettle(14); captureScreenToSerial("app_remote");    closeRemotePage();   docSettle(6);
 #if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
@@ -37504,15 +42357,23 @@ static bool tsBleOff()     {
 // — batteryIsCharging(batteryMvSmoothed())).
 static bool tsOnBattery()  { return !batteryIsCharging(batteryMvSmoothed()); }
 // tsMeshIdle: true when the radio is NOT mid-receive (preamble→RxDone race guarded),
-// AND no outbound packets are queued / no dirty contacts expiry is pending.
-// hasPendingWork() checks _mgr->getOutboundTotal() + dirty_contacts_expiry.
+// AND no outbound packet / retry / contact write is due now. Future retry and
+// write deadlines are allowed to use the timed idle-power-saving path.
 // isRadioReceiving() delegates to Dispatcher::_radio->isReceiving() (RadioLibWrapper override).
 static bool tsMeshIdle()   { return !the_mesh.hasPendingWork() && !the_mesh.isRadioReceiving(); }
-// tsNextWakeForcingDueMs: advert/sig-probe is the only wake-forcing deadline today;
-// clock alarms TBD.  s_sig_probe_at is promoted to file scope so we can read it here.
+// Bound the timed idle park by the earliest UI probe or companion retry.
 static uint32_t tsNextWakeForcingDueMs(uint32_t now_ms) {
-  if (s_sig_probe_at == 0) return UINT32_MAX;
-  return (uint32_t)(s_sig_probe_at > now_ms ? (s_sig_probe_at - now_ms) : 0);
+  uint32_t next_delay = UINT32_MAX;
+  if (s_sig_probe_at != 0) {
+    next_delay = (uint32_t)(s_sig_probe_at > now_ms ? (s_sig_probe_at - now_ms) : 0);
+  }
+
+  uint32_t retry_delay = 0;
+  if (the_mesh.getNextCompanionRetryWakeDelay(retry_delay)
+      && retry_delay < next_delay) {
+    next_delay = retry_delay;
+  }
+  return next_delay;
 }
 static uint32_t tsEpochNow() { return (uint32_t)time(nullptr); }
 
@@ -37647,10 +42508,10 @@ static void buildGlobalStatusBar() {
     }
   }
 
-  // Chat/channel-OVERVIEW actions: live in the LOWER row of the double-height bar,
-  // right-aligned [+ add | ✓ mark-read | QR share]. Hidden by default; shown only on
-  // the overview (updateGlobalStatusBar). y sits in the extra row (below STATUSBAR_H),
-  // so they're off-screen while the bar is normal height — and they're hidden anyway.
+  // Chat/channel-OVERVIEW actions: [+ add | ✓ mark-read | QR share]. Hidden by
+  // default and shown only on the overview (updateGlobalStatusBar). Most square
+  // panels centre them across the double-height bar; Pager keeps them aligned
+  // with the first-row status cluster so the compact header reads as one row.
   {
     // LEFT-aligned group. ~70% of the double-bar height so there's breathing room
     // above/below; soft rounded corners + a dimmer edge so they don't pop.
@@ -37659,9 +42520,21 @@ static void buildGlobalStatusBar() {
     // ROW 2's left, inside the corner inset — the status cluster occupies row-2 right.
     const lv_coord_t BH = 18, BW = 30, GAP = 6, BX0 = SB_INSET_X;
     const lv_coord_t BY = SB_TOP_PAD + SB_ROW + (SB_ROW - BH) / 2;
+#elif defined(TLORA_PAGER)
+    // Match the compact status cluster instead of spanning most of the two-row
+    // header. Keep all three actions in the first status-bar row, sharing its
+    // vertical centreline with the clock and connection/battery indicators.
+    const lv_coord_t BH = 20, BW = 26, GAP = 3, BX0 = 6;
+    const lv_coord_t BY = (STATUSBAR_H - BH) / 2;
 #else
-    const lv_coord_t BH = (lv_coord_t)((STATUSBAR_H * 2 - 4) * 7 / 10);
-    const lv_coord_t BW = 34, GAP = 4, BX0 = 6, BY = (lv_coord_t)(STATUSBAR_H * 2 - BH) / 2;
+  const bool portrait = lv_disp_get_hor_res(nullptr) < lv_disp_get_ver_res(nullptr);
+  const lv_coord_t BH = portrait ? 20 : (lv_coord_t)((STATUSBAR_H * 2 - 4) * 7 / 10);
+  const lv_coord_t BW = portrait ? 30 : 34;
+  const lv_coord_t GAP = 4, BX0 = 6;
+  // Portrait's clock occupies row 1. Keep the Mail actions wholly in row 2;
+  // centering them across both rows put their upper half through the time.
+  const lv_coord_t BY = portrait ? STATUSBAR_H + (STATUSBAR_H - BH) / 2
+                   : (lv_coord_t)(STATUSBAR_H * 2 - BH) / 2;
 #endif
     auto mk = [&](int slot_from_left) -> lv_obj_t* {
       lv_obj_t* b = lv_btn_create(g_statusbar.root);
@@ -37679,15 +42552,18 @@ static void buildGlobalStatusBar() {
     lv_obj_add_event_cb(g_statusbar.inbox_add, chatsAddBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* l = lv_label_create(g_statusbar.inbox_add); lv_label_set_text(l, LV_SYMBOL_PLUS);
       lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN); lv_obj_center(l); }
+      lv_obj_set_style_text_font(l, uiChromeFont(), LV_PART_MAIN); lv_obj_center(l); }
     g_statusbar.inbox_mark = mk(1);   // middle — mark all read
     lv_obj_add_event_cb(g_statusbar.inbox_mark, chatsMarkAllReadBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* ml = lv_label_create(g_statusbar.inbox_mark); lv_label_set_text(ml, LV_SYMBOL_OK);
       lv_obj_set_style_text_color(ml, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_set_style_text_font(ml, &g_font_14, LV_PART_MAIN); lv_obj_center(ml); }
+      lv_obj_set_style_text_font(ml, uiChromeFont(), LV_PART_MAIN); lv_obj_center(ml); }
     g_statusbar.inbox_qr   = mk(2);   // rightmost — share QR
     lv_obj_add_event_cb(g_statusbar.inbox_qr, shareMyContactBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* qimg = lv_img_create(g_statusbar.inbox_qr); lv_img_set_src(qimg, &qr_icon_dsc);
+#if defined(TLORA_PAGER)
+      lv_img_set_zoom(qimg, 228);   // baked 18 px glyph -> 16 px, matching uiChromeFont()
+#endif
       lv_obj_set_style_img_recolor(qimg, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_set_style_img_recolor_opa(qimg, LV_OPA_COVER, LV_PART_MAIN); lv_obj_center(qimg); }
   }
@@ -37699,6 +42575,12 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_color(g_statusbar.left_label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_14, LV_PART_MAIN);
   lv_obj_align(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 6, 0);
+#if defined(TLORA_PAGER)
+  // Keep the large-text title out of the clock/status cluster. Individual home
+  // names may opt into a marquee; other titles truncate inside this window.
+  lv_obj_set_width(g_statusbar.left_label, 200);
+  lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+#endif
   // Tapping the unread badge (✉ N) jumps to the Chats inbox. The CLICKABLE flag is
   // toggled per-tick in updateGlobalStatusBar so only the badge state intercepts the
   // tap; every other left-zone state falls through to the bar's control-center tap.
@@ -37710,8 +42592,13 @@ static void buildGlobalStatusBar() {
   g_statusbar.chat_back = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.chat_back, LV_SYMBOL_LEFT);
   lv_obj_set_style_text_color(g_statusbar.chat_back, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  lv_obj_set_style_text_font(g_statusbar.chat_back, uiChromeFont(), LV_PART_MAIN);
+  lv_obj_align(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, 6, 0);
+#else
   lv_obj_set_style_text_font(g_statusbar.chat_back, &g_font_16, LV_PART_MAIN);
   lv_obj_align(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, 12, 0);   // breathing room from the edge
+#endif
   lv_obj_add_flag(g_statusbar.chat_back, LV_OBJ_FLAG_HIDDEN);
 
   // Channel-settings gear — RIGHT of the back chevron, shown only inside a chat
@@ -37720,8 +42607,13 @@ static void buildGlobalStatusBar() {
   g_statusbar.chan_gear = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.chan_gear, LV_SYMBOL_SETTINGS);
   lv_obj_set_style_text_color(g_statusbar.chan_gear, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+  lv_obj_set_style_text_font(g_statusbar.chan_gear, uiChromeFont(), LV_PART_MAIN);
+  lv_obj_align(g_statusbar.chan_gear, LV_ALIGN_LEFT_MID, 30, 0);
+#else
   lv_obj_set_style_text_font(g_statusbar.chan_gear, &g_font_16, LV_PART_MAIN);
   lv_obj_align(g_statusbar.chan_gear, LV_ALIGN_LEFT_MID, 44, 0);   // gap after the back chevron
+#endif
   lv_obj_add_flag(g_statusbar.chan_gear, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(g_statusbar.chan_gear, 10);
   lv_obj_add_flag(g_statusbar.chan_gear, LV_OBJ_FLAG_HIDDEN);
@@ -37748,7 +42640,13 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.batt_pct, "?");
   lv_obj_set_style_text_color(g_statusbar.batt_pct, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.batt_pct, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.batt_pct, LV_ALIGN_RIGHT_MID, -SC(22), 0);
+  lv_obj_align(g_statusbar.batt_pct, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -32,
+#else
+               -SC(22),
+#endif
+               0);
 
   // Tapping the battery (icon or %) opens the 24h battery-history chart (logged to
   // SD on T-Deck, else internal SPIFFS — works on both builds). Generous ext-click
@@ -37773,23 +42671,43 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_font(g_statusbar.clock, &g_font_12, LV_PART_MAIN);
   // Unified across all boards: extra slot reserved for the DND/sleep moon glyph
   // (T-Deck's sleep_icon and the all-board dnd_icon below both live at -SC(105)).
-  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -SC(160), 0);
+  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -210,
+#else
+               -SC(160),
+#endif
+               0);
 
-  // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars).
+  // Wi-Fi glyph (right of the Bluetooth glyph, left of the signal bars). Painted in
+  // the accent, matching the lit signal bars beside it — the glyph is only ever shown
+  // while the STA is connected, so accent always reads as "this radio is up".
   g_statusbar.conn_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.conn_icon, "");
-  lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.conn_icon, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID, -SC(73), 0);
+  lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -104,
+#else
+               -SC(73),
+#endif
+               0);
 
   // Bluetooth glyph (left of the SD LED). Unified offset across all boards (see clock above).
   g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.ble_icon, "");
-  lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
   // Narrow bars (V4 portrait) have no DND slot beside BLE and their clock sits at -126, so BLE
   // stays at -111 there; wide bars keep -SC(127) (tight to the DND moon at -144).
-  lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID, (lv_disp_get_hor_res(nullptr) < 300) ? -111 : -SC(127), 0);
+  lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -142,
+#else
+               (lv_disp_get_hor_res(nullptr) < 300) ? -111 : -SC(127),
+#endif
+               0);
 
 #if defined(HAS_TDECK_GT911)
   // Idle power-save readiness indicator — moon glyph, left of the SD LED. T-Deck only,
@@ -37815,7 +42733,13 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.dnd_icon, TOUCH_SYM_MOON);
   lv_obj_set_style_text_color(g_statusbar.dnd_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.dnd_icon, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -SC(144), 0);
+  lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -164,
+#else
+               -SC(144),
+#endif
+               0);
   lv_obj_add_flag(g_statusbar.dnd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only while DND is active
   lv_obj_add_flag(g_statusbar.dnd_icon, NAV_SKIP_FLAG);        // passive status glyph, not a focus-nav target
 
@@ -37830,7 +42754,13 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_bg_color(g_statusbar.sd_icon, lv_color_hex(0xF5A623), LV_PART_MAIN);  // amber = SD activity
   lv_obj_set_style_bg_opa(g_statusbar.sd_icon, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_align(g_statusbar.sd_icon, LV_ALIGN_RIGHT_MID, -SC(91), 0);
+  lv_obj_align(g_statusbar.sd_icon, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+               -124,
+#else
+               -SC(91),
+#endif
+               0);
   lv_obj_add_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only during SD I/O
 
   // Async mesh-request spinner — a refresh glyph centred in the bar, blinking
@@ -37850,7 +42780,13 @@ static void buildGlobalStatusBar() {
     lv_obj_t* sb = lv_obj_create(g_statusbar.root);
     lv_obj_remove_style_all(sb);
     lv_obj_set_size(sb, 15, 12);
-    lv_obj_align(sb, LV_ALIGN_RIGHT_MID, -SC(54), 0);
+    lv_obj_align(sb, LV_ALIGN_RIGHT_MID,
+#if defined(TLORA_PAGER)
+                 -82,
+#else
+                 -SC(54),
+#endif
+                 0);
     lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
     g_statusbar.sig_box = sb;
     const int bw = 3, gap = 1;
@@ -37971,6 +42907,9 @@ static void updateGlobalStatusBar() {
     static bool s_bar_dim = false;
     const bool want_dim = anyPopupOpen() && !s_cc_root && !s_settings_sheet &&
                           !s_appdrawer_root && !chanScopeIsOpen() && !blockedModalIsOpen() &&
+#if CAP_LUA_APPS
+                          !s_luastore_root &&   // same: the Store page's ‹ back lives in the bar
+#endif
                           !s_reader_page_open;   // the reader uses the bar for its ‹ back — don't dim/block it
     if (want_dim != s_bar_dim) {
       s_bar_dim = want_dim;
@@ -37982,15 +42921,27 @@ static void updateGlobalStatusBar() {
   // ---- Double-height bar driver (edge-triggered) ----
   // The bar goes 2× tall for (a) settings detail pages, (b) the chat/channel OVERVIEW
   // (lower row = [+ ✓ QR] actions), and (c) an OPEN chat (lower row = thread name, cog
-  // centred across both rows).
+  // centred across both rows). Pager's compact overview and open-chat controls share
+  // the regular top row, so both states stay single-height.
   // An open app/tool page (the reader, RF Monitor, …) takes over the bar even when a
   // chat is still open underneath it, so suppress chat-mode chrome (the cog + back
   // chevron + centred title) then — otherwise they sit over the page's "‹ title" and
   // swallow its back tap.
-  const bool chat_open      = (s_chat_title[0] != '\0') && !s_apppage_title;
+  // ...and a settings detail page too. It sets s_settings_open_cat rather than
+  // s_apppage_title, so the guard above missed it: opening Settings from inside
+  // a chat left the chat's back chevron AND its cog drawn over the settings
+  // page's own "‹ Title". Two back chevrons on the left of the tall bar, and the
+  // cog is clickable, so a tap near the wrong one went to channel settings or
+  // nowhere instead of going back (#308).
+  const bool chat_open      = (s_chat_title[0] != '\0') && !s_apppage_title &&
+                              (s_settings_open_cat < 0);
   const bool inbox_overview = (getActiveTab() == CHAT_INBOX_TAB_INDEX) && !chat_open && (s_settings_open_cat < 0) && !s_apppage_title;
   {
-    const bool want_tall = (s_settings_open_cat >= 0) || s_apppage_title || inbox_overview || chat_open;
+#if defined(TLORA_PAGER)
+    const bool want_tall = (s_settings_open_cat >= 0) || (s_apppage_title && !s_apppage_slim);
+#else
+    const bool want_tall = (s_settings_open_cat >= 0) || (s_apppage_title && !s_apppage_slim) || inbox_overview || chat_open;
+#endif
     if (want_tall != s_statusbar_tall) statusBarSetTall(want_tall);
     // Glass lower row on EVERY double-height bar (settings detail, inbox/chat overview,
     // open chat) so the tall bar looks consistent everywhere it appears. Switch the
@@ -38080,9 +43031,21 @@ static void updateGlobalStatusBar() {
   }
 #else
   if (in_chan_chat) {
+#if defined(TLORA_PAGER)
+    // Back + gear occupy the first 48 px; cap the title before the clock so
+    // the entire open-chat header shares the overview/status baseline.
+    lv_obj_align(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 54, 0);
+    lv_obj_set_width(g_statusbar.left_label, 140);
+    lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+#else
     lv_obj_align(g_statusbar.left_label, LV_ALIGN_CENTER, 0, 0);
+#endif
   } else {
     lv_obj_align(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 6, 0);
+#if defined(TLORA_PAGER)
+    lv_obj_set_width(g_statusbar.left_label, 200);
+    lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+#endif
   }
 #endif
 
@@ -38096,12 +43059,17 @@ static void updateGlobalStatusBar() {
   {
     int htab = (g_lv.tabview) ? (int)lv_tabview_get_tab_act(g_lv.tabview) : -1;
     bool home_zone = (s_settings_open_cat < 0) && !s_apppage_title && (s_chat_title[0] == '\0') && (htab == HOME_TAB_INDEX);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
     if (s_fullscreen_view && s_fullscreen_title[0]) home_zone = false;
 #endif
     if (!home_zone && s_left_home_cfg) {
+#if defined(TLORA_PAGER)
+      lv_obj_set_width(g_statusbar.left_label, in_chan_chat ? 140 : 200);
+      lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+#else
       lv_obj_set_width(g_statusbar.left_label, LV_SIZE_CONTENT);
       lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_WRAP);
+#endif
       s_left_home_cfg = false;
       s_left_home_name[0] = '\0';   // force re-config on the next home entry
     }
@@ -38166,7 +43134,7 @@ static void updateGlobalStatusBar() {
       lv_label_set_text(g_statusbar.left_label, s_chat_title);
     }
   } else
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   if (s_fullscreen_view && s_fullscreen_title[0]) {
     // A fullscreen tool view (Terminal / Files) borrows the left zone for its
     // title, so it can drop its own header row and use the full height.
@@ -38180,7 +43148,12 @@ static void updateGlobalStatusBar() {
     // smaller font — otherwise on the narrow V4 portrait bar its end ("…Map")
     // runs into the Wi-Fi icon. Restore the normal font on other tabs.
     lv_obj_set_style_text_font(g_statusbar.left_label,
-                               tab == MAP_TAB_INDEX ? &g_font_12 : &g_font_14, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+                               tab == MAP_TAB_INDEX ? &lv_font_montserrat_14 : &g_font_14,
+#else
+                               tab == MAP_TAB_INDEX ? &g_font_12 : &g_font_14,
+#endif
+                               LV_PART_MAIN);
     if (tab == MAP_TAB_INDEX) {
       // On the immersive map the left zone carries the required OSM attribution.
       lv_label_set_text(g_statusbar.left_label, s_map_style == 1
@@ -38217,6 +43190,8 @@ static void updateGlobalStatusBar() {
         // runs from the left inset up to just before the leftmost icon (Bluetooth, whose
         // right anchor is 126+inset from the right edge — reserve its glyph + a margin).
         lv_obj_set_width(g_statusbar.left_label, sb_w - (SB_INSET_X + 126 + 44));
+#elif defined(TLORA_PAGER)
+        lv_obj_set_width(g_statusbar.left_label, 200);
 #else
         lv_obj_set_width(g_statusbar.left_label,
                          (sb_w >= 600) ? (sb_w - SC(190)) : (sb_w >= 300) ? 100 : 66);   // #47a: narrower window on the 240px V4 bar so a long name can't run into the clock
@@ -38305,8 +43280,16 @@ static void updateGlobalStatusBar() {
           // Dedicated slot — re-assert on entry/return so a CAP_ROTATABLE board
           // (V4) rotating out of portrait mid-DND self-heals from the borrowed
           // signal-bars position instead of staying stranded there.
-          const int d = batteryIsCharging(batteryMvSmoothed()) ? 32 : 0;
-#if CAP_LARGE_SCREEN
+          const int d = batteryIsCharging(batteryMvSmoothed()) ?
+#if defined(TLORA_PAGER)
+                        45
+#else
+                        32
+#endif
+                        : 0;
+#if defined(TLORA_PAGER)
+          lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -164 + d, 0);
+#elif CAP_LARGE_SCREEN
           lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -SC(144) + SC(d), 0);
 #else
           lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID, -144 + d, 0);
@@ -38367,6 +43350,14 @@ static void updateGlobalStatusBar() {
       // Round panel: re-apply the two-row layout, sliding the row-2 sub-battery cluster
       // right by the hidden %-column width so it stays snug against the bolt.
       statusBarLayoutTwoRow(charging ? 32 : 0);
+#elif defined(TLORA_PAGER)
+      const int d = charging ? 45 : 0;
+      if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -82  + d, 0);
+      if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -104 + d, 0);
+      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -124 + d, 0);
+      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -142 + d, 0);
+      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -164 + d, 0);
+      if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -232 + d, 0);
 #elif CAP_LARGE_SCREEN
       // Tanmatsu: the cluster is built with SC() UI-scaling, so this slide MUST scale too — the raw
       // offsets below marched the scaled glyphs (incl. the BLE icon) into each other at Large/Huge the
@@ -38486,8 +43477,13 @@ static void updateGlobalStatusBar() {
         // Wide bar shifted 18px further left of its old -142/-110 to open a clean
         // ~16-17px gap for the DND moon icon (now at -SC(144)) on Bluetooth's left
         // side, instead of the old cramped 15px gap that used to sit here.
-        const int clk_x = narrow_bar ? (charging ? -94 : -126)
+        const int clk_x =
+#if defined(TLORA_PAGER)
+                          charging ? -165 : -210;
+#else
+                          narrow_bar ? (charging ? -94 : -126)
                                      : (charging ? -SC(128) : -SC(160));
+#endif
         lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, clk_x, 0);
       }
       // Park the async-request spinner just LEFT of the clock wherever it lands,
@@ -38584,14 +43580,13 @@ static void relayoutHomeCharts() {
   if (!g_lv.home_env || !s_home_env_chart || !s_home_chart_legend) return;
 
   const bool home_land = lv_disp_get_hor_res(nullptr) > lv_disp_get_ver_res(nullptr);
-  const int cw = tabContentW();
+  // makeHome() gives the tab 10 px of padding on each side. Stay inside that
+  // content box; using the full screen width made the chart's top/right frame
+  // look like a stray L drawn across the portrait screen.
+  const int cw = tabContentW() - 20;
   const int BTNW = SC(100);
   const int RSTRIP = BTNW + 10;
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(HAS_RAK_TAP_V2) || defined(ATTAKY_MESH_SERIES)
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
-#else
-  const int chart_w = cw;
-#endif
 
   // The env summary line is hard-placed at SC(58) in the tree, which collides with
   // the (up to two-line, WRAP) stats line on the narrow V4 portrait — the stats line
@@ -38611,10 +43606,6 @@ static void relayoutHomeCharts() {
 
   const int legend_y = env_chart_y + SC(34) + SC(12);
   lv_obj_set_pos(s_home_chart_legend, 0, legend_y);
-  if (s_home_store) {                      // chat-store chip rides the same row
-    lv_obj_set_width(s_home_store, chart_w / 2);
-    lv_obj_set_pos(s_home_store, chart_w - chart_w / 2, legend_y);
-  }
 
   const int home_avail = tabContentH() - 20;
   int chart_h = home_avail - (legend_y + 16) - 4 - (home_land ? 0 : (8 + 36));
@@ -38631,8 +43622,15 @@ static void relayoutHomeCharts() {
   }
 
   if (s_home_adv_btn && !home_land) {
-    lv_obj_set_pos(s_home_adv_btn, 0, legend_y + 16 + chart_h + 8);
-    lv_obj_set_width(s_home_adv_btn, cw);
+    const int button_y = legend_y + 16 + chart_h + 8;
+    const int button_gap = 8;
+    const int button_w = (cw - button_gap) / 2;
+    lv_obj_set_pos(s_home_adv_btn, 0, button_y);
+    lv_obj_set_size(s_home_adv_btn, button_w, 36);
+    if (g_lv.home_apps && lv_obj_is_valid(g_lv.home_apps)) {
+      lv_obj_set_pos(g_lv.home_apps, button_w + button_gap, button_y);
+      lv_obj_set_size(g_lv.home_apps, button_w, 36);
+    }
   }
 }
 #endif  // HAS_EXPANSION_KIT
@@ -38650,7 +43648,7 @@ static void refreshStatusLabels() {
   // CPU/RAM/PSRAM/IP line current — e.g. the IP appears/clears as Wi-Fi
   // connects/drops, without having to close and reopen the panel.
   if (s_cc_root) {
-    if (s_cc_gps_label) setLabelIfChanged(s_cc_gps_label, gpsStatusStr());
+    if (s_cc_gps_label) setLabelIfChanged(s_cc_gps_label, gpsStatusStr(true));
 #if defined(HAS_EXPANSION_KIT)
     if (s_cc_env_label) setLabelIfChanged(s_cc_env_label, localEnvStatusStr());
 #endif
@@ -38664,19 +43662,6 @@ static void refreshStatusLabels() {
   if (g_lv.tabview) active_tab = lv_tabview_get_tab_act(g_lv.tabview);
   const bool home_active = (active_tab == HOME_TAB_INDEX);
   if (home_active) refreshHomeBattery();
-  // Chat-store chip (legend row). Updated independently of the TX/RX chart —
-  // the big-screen scaled layout drops the chart entirely, and the store state
-  // still has to be visible there.
-  if (home_active && s_home_store) {
-    char chip[24];
-    const uint32_t col = homeStoreChipText(chip, sizeof chip);
-    setLabelIfChanged(s_home_store, chip);
-    static uint32_t s_home_store_col = 0;   // avoid re-styling (and invalidating) every tick
-    if (col != s_home_store_col) {
-      s_home_store_col = col;
-      lv_obj_set_style_text_color(s_home_store, lv_color_hex(col), LV_PART_MAIN);
-    }
-  }
   // Push a TX/RX sample onto the home chart: delta packets since last tick.
   if (home_active && s_home_chart && s_home_chart_tx && s_home_chart_rx) {
     static uint32_t last_tx = 0;
@@ -38689,12 +43674,17 @@ static void refreshStatusLabels() {
     last_rx = cur_rx;
     lv_chart_set_next_value(s_home_chart, s_home_chart_tx, (lv_coord_t)dtx);
     lv_chart_set_next_value(s_home_chart, s_home_chart_rx, (lv_coord_t)drx);
+    if (s_siginfo_chart && s_siginfo_chart_tx && s_siginfo_chart_rx) {
+      lv_chart_set_next_value(s_siginfo_chart, s_siginfo_chart_tx, (lv_coord_t)dtx);
+      lv_chart_set_next_value(s_siginfo_chart, s_siginfo_chart_rx, (lv_coord_t)drx);
+    }
     // Auto-grow Y range (only grows — keeps the chart visually stable).
-    static int s_chart_max_y = 10;
     int peak = (int)((dtx > drx) ? dtx : drx);
-    if (peak > s_chart_max_y) {
-      s_chart_max_y = peak + 4;
-      lv_chart_set_range(s_home_chart, LV_CHART_AXIS_PRIMARY_Y, 0, s_chart_max_y);
+    if (peak > s_home_chart_max_y) {
+      s_home_chart_max_y = peak + 4;
+      lv_chart_set_range(s_home_chart, LV_CHART_AXIS_PRIMARY_Y, 0, s_home_chart_max_y);
+      if (s_siginfo_chart)
+        lv_chart_set_range(s_siginfo_chart, LV_CHART_AXIS_PRIMARY_Y, 0, s_home_chart_max_y);
     }
     // Legend: total counts since boot, plus the current y-range peak.
     {
@@ -38768,16 +43758,21 @@ static void refreshStatusLabels() {
       IPAddress ip = WiFi.localIP();
       snprintf(st, sizeof st, LV_SYMBOL_WIFI " %d.%d.%d.%d%s",
                ip[0], ip[1], ip[2], ip[3], ble_suffix);
-    } else if (WiFi.getMode() == WIFI_STA) {
+    // Gate on what the USER asked for, not on the driver mode. Reading only
+    // WiFi.getMode() meant that anything leaving the radio in STA made the home
+    // screen announce "Starting…" forever with Wi-Fi switched off, which is
+    // what #305 reported. The mode is still checked, so a genuinely idle STA is
+    // not described as connecting either.
+    } else if (wifiConfigGetRadioEnabled() && WiFi.getMode() == WIFI_STA) {
       const char* hint;
       switch (WiFi.status()) {
-        case WL_IDLE_STATUS:     hint = "Starting…";  break;
-        case WL_NO_SSID_AVAIL:   hint = "SSID not found"; break;
-        case WL_CONNECT_FAILED:  hint = "Auth failed";   break;
-        case WL_CONNECTION_LOST: hint = "Link lost";     break;
-        case WL_DISCONNECTED:    hint = "Connecting…";   break;
-        case WL_NO_SHIELD:       hint = "Init…";         break;
-        default:                 hint = "Connecting…";   break;
+        case WL_IDLE_STATUS:     hint = TR("Starting…");     break;
+        case WL_NO_SSID_AVAIL:   hint = TR("SSID not found"); break;
+        case WL_CONNECT_FAILED:  hint = TR("Auth failed");    break;
+        case WL_CONNECTION_LOST: hint = TR("Link lost");      break;
+        case WL_DISCONNECTED:    hint = TR("Connecting…");    break;
+        case WL_NO_SHIELD:       hint = TR("Init…");          break;
+        default:                 hint = TR("Connecting…");    break;
       }
       snprintf(st, sizeof st, LV_SYMBOL_WIFI " %s%s", hint, ble_suffix);
     } else if (ble_on) {
@@ -38982,7 +43977,7 @@ static void buildBootSplash() {
   // ---- Product line: MESHCOMOD (small, same size as the channel line, between
   //      the WADAMESH wordmark and TOUCH BETA) ----
   lv_obj_t* mc = lv_label_create(s_splash_root);
-  lv_label_set_text(mc, "MESHCOMOD");
+  lv_label_set_text(mc, "WADAMESH");   // #165: the unlock overlay still said MESHCOMOD after the rebrand
   lv_obj_set_style_text_font(mc, &lv_font_unscii_8, LV_PART_MAIN);
   lv_obj_set_style_text_color(mc, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_letter_space(mc, 4, LV_PART_MAIN);
@@ -39188,9 +44183,8 @@ static void setupFinishCb(lv_event_t* e) {
   }
 #endif
   // Region was applied live when the user advanced past the region step
-  // (setRadioParams -> applyRadioFromPrefs), and Wi-Fi re-associates live via the
-  // apply request above — so nothing here needs a reboot. Just close the wizard
-  // back to the main UI.
+  // (setRadioParams -> applyRadioFromPrefs). Close the wizard; the Wi-Fi apply
+  // request reconnects live; Pager temporarily releases BLE to preserve order.
   setupWizardClose();
   if (g_lv.task) g_lv.task->showAlert(TR("Setup complete"), 1400);
 }
@@ -39277,7 +44271,7 @@ static void setupShowStep(int step) {
   const lv_coord_t btn_y = sh - kSetupBtnH - 10;
 
   if (step == 0) {
-    setupHeader("Welcome to WADAMESH", nullptr, nullptr);
+    setupHeader(TR("Welcome to WADAMESH"), nullptr, nullptr);
     lv_obj_t* m = lv_label_create(s_setup_root);
     lv_label_set_text(m,
         TR("Let's set up your device.\n\n"
@@ -39287,29 +44281,25 @@ static void setupShowStep(int step) {
     lv_obj_set_style_text_font(m, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(m, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_pos(m, 12, 46);
-    setupBtn("Skip", setupSkipCb, false, 12, btn_y, 96);
-    setupBtn("Get Started", setupGetStartedCb, true, 12 + 96 + 8, btn_y, sw - 24 - 96 - 8);
+    setupBtn(TR("Skip"), setupSkipCb, false, 12, btn_y, 96);
+    setupBtn(TR("Get Started"), setupGetStartedCb, true, 12 + 96 + 8, btn_y, sw - 24 - 96 - 8);
   } else if (step == 1) {
-    int y = setupHeader("Choose your name",
-                        "How you'll appear to other nodes. You can change this later in Settings.",
-                        "Step 1 of 3");
+    int y = setupHeader(TR("Choose your name"), TR("How you'll appear to other nodes. You can change this later in Settings."), TR("Step 1 of 3"));
     s_setup_name_ta = lv_textarea_create(s_setup_root);
     lv_obj_set_size(s_setup_name_ta, sw - 24, 36);
     lv_obj_set_pos(s_setup_name_ta, 12, y + 6);
     lv_textarea_set_one_line(s_setup_name_ta, true);
-    lv_textarea_set_placeholder_text(s_setup_name_ta, TR("Your name"));
+    taSetPlaceholder(s_setup_name_ta, TR("Your name"));
     lv_textarea_set_max_length(s_setup_name_ta, 30);
     if (g_lv.task) {
       const char* cur = g_lv.task->getNodeNameCstr();
       if (cur && cur[0]) lv_textarea_set_text(s_setup_name_ta, cur);
     }
     attachSettingsTaEvents(s_setup_name_ta);
-    setupBtn("Back", setupBackCb, false, 12, btn_y, 72);
-    setupBtn("Next", setupNameNextCb, true, sw - 12 - 120, btn_y, 120);
+    setupBtn(TR("Back"), setupBackCb, false, 12, btn_y, 72);
+    setupBtn(TR("Next"), setupNameNextCb, true, sw - 12 - 120, btn_y, 120);
   } else if (step == 2) {
-    int y = setupHeader("Choose your region",
-                        "Every node you talk to must match. You can change this later in Settings.",
-                        "Step 2 of 3");
+    int y = setupHeader(TR("Choose your region"), TR("Every node you talk to must match. You can change this later in Settings."), TR("Step 2 of 3"));
     s_setup_region_list = lv_obj_create(s_setup_root);
     lv_obj_remove_style_all(s_setup_region_list);
     lv_obj_set_size(s_setup_region_list, sw - 24, btn_y - (y + 6) - 8);
@@ -39320,10 +44310,10 @@ static void setupShowStep(int step) {
     lv_obj_set_scrollbar_mode(s_setup_region_list, LV_SCROLLBAR_MODE_AUTO);
     if (s_setup_region_sel < 0) s_setup_region_sel = findMatchingMeshRadioPreset(the_mesh.getNodePrefs());
     setupFillRegionList();
-    setupBtn("Back", setupBackCb, false, 12, btn_y, 72);
-    s_setup_region_next_btn = setupBtn("Next", setupRegionNextCb, true, sw - 12 - 120, btn_y, 120);
+    setupBtn(TR("Back"), setupBackCb, false, 12, btn_y, 72);
+    s_setup_region_next_btn = setupBtn(TR("Next"), setupRegionNextCb, true, sw - 12 - 120, btn_y, 120);
   } else {
-    int y = setupHeader("Wi-Fi & Bluetooth", nullptr, "Step 3 of 3");
+    int y = setupHeader(TR("Wi-Fi & Bluetooth"), nullptr, TR("Step 3 of 3"));
     lv_obj_t* m = lv_label_create(s_setup_root);
     lv_label_set_text(m,
         TR("This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a "
@@ -39335,8 +44325,8 @@ static void setupShowStep(int step) {
     lv_obj_set_style_text_font(m, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(m, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_pos(m, 12, y + 6);
-    setupBtn("Back", setupBackCb, false, 12, btn_y, 72);
-    setupBtn("Finish", setupFinishCb, true, sw - 12 - 120, btn_y, 120);
+    setupBtn(TR("Back"), setupBackCb, false, 12, btn_y, 72);
+    setupBtn(TR("Finish"), setupFinishCb, true, sw - 12 - 120, btn_y, 120);
   }
 }
 
@@ -39530,6 +44520,7 @@ static void openAccentPicker() {
   lv_obj_remove_style_all(hexrow);
   lv_obj_set_size(hexrow, 150, 30);
   lv_obj_t* hash = lv_label_create(hexrow);
+  useChainedFont(hash);
   lv_label_set_text(hash, "#");
   lv_obj_set_style_text_color(hash, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_align(hash, LV_ALIGN_LEFT_MID, 2, 0);
@@ -39548,24 +44539,46 @@ static void openAccentPicker() {
   lv_obj_set_style_radius(s_accent_preview, 6, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_accent_preview, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_t* pv = lv_label_create(s_accent_preview);
+  useChainedFont(pv);
   lv_label_set_text(pv, TR("Sample text"));
   lv_obj_set_style_text_color(pv, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_center(pv);
 
+  // Buttons size to their label instead of to 124/84 px. Those numbers were
+  // measured against "Save & restart" / "Reset"; Hungarian's
+  // "Mentés és újraindítás" is half again as long and ran off both edges of its
+  // button (#307). A wrapping row means an over-long pair drops onto two lines
+  // rather than clipping, and the picker is a scrollable flex column so the
+  // extra height costs nothing. max_width keeps a single very long label inside
+  // the card instead of pushing the row wider than the screen.
   lv_obj_t* btnrow = lv_obj_create(s_accent_picker);
   lv_obj_remove_style_all(btnrow);
-  lv_obj_set_size(btnrow, 220, 32);
-  lv_obj_t* save = lv_btn_create(btnrow);
-  lv_obj_set_size(save, 124, 30); lv_obj_align(save, LV_ALIGN_LEFT_MID, 0, 0);
-  styleButton(save);
-  lv_obj_add_event_cb(save, accentSaveCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_set_width(btnrow, sw - 24);
+  lv_obj_set_height(btnrow, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(btnrow, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(btnrow, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(btnrow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(btnrow, 6, LV_PART_MAIN);
+  lv_obj_clear_flag(btnrow, LV_OBJ_FLAG_SCROLLABLE);
+
+  auto sized_btn = [&](lv_event_cb_t cb) {
+    lv_obj_t* b = lv_btn_create(btnrow);
+    lv_obj_set_size(b, LV_SIZE_CONTENT, 30);
+    lv_obj_set_style_max_width(b, LV_PCT(100), LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(b, 12, LV_PART_MAIN);
+    styleButton(b);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+    return b;
+  };
+  lv_obj_t* save = sized_btn(accentSaveCb);
   lv_obj_t* sl = lv_label_create(save); lv_label_set_text(sl, TR("Save & restart"));
   lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN); lv_obj_center(sl);
-  lv_obj_t* rst = lv_btn_create(btnrow);
-  lv_obj_set_size(rst, 84, 30); lv_obj_align(rst, LV_ALIGN_RIGHT_MID, 0, 0);
-  styleButton(rst);
-  lv_obj_add_event_cb(rst, accentResetCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* rl = lv_label_create(rst); lv_label_set_text(rl, TR("Reset")); lv_obj_center(rl);
+  useChainedFont(sl);
+  lv_obj_t* rst = sized_btn(accentResetCb);
+  lv_obj_t* rl = lv_label_create(rst); lv_label_set_text(rl, TR("Reset"));
+  lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN); lv_obj_center(rl);
+  useChainedFont(rl);
 
   accentSetSelection(touchPrefsGetAccentColor(), true);
 }
@@ -39606,6 +44619,11 @@ static void chanScopeSaveCb(lv_event_t* e) {
     const char* t = lv_textarea_get_text(s_chanscope_ta);
 #if defined(ESP32)
     touchPrefsSetChannelScope(s_chanscope_slot, t ? t : "");
+    // #271: register it now rather than at next boot, so messages arriving in
+    // this region are named from the next packet on. Idempotent; the old region
+    // keeps its slot, since a slot outlives the config that introduced it (old
+    // messages must keep resolving to the region they actually arrived under).
+    if (t && t[0]) the_mesh.regionRegistry().ensureRegion(t);
 #endif
   }
   chanScopeClose();
@@ -39666,6 +44684,153 @@ static void blockedUnblockNameCb(lv_event_t* e) {
   }
   openBlockedUsersModal();   // rebuild the list
 }
+// ---- Known regions manager (#271) -------------------------------------------
+// The list that makes scope naming possible. A region's key is derived from its
+// NAME (SHA256("#tag")), so holding the name is enough to recompute an incoming
+// packet's transport code and recognise it. That is why adding a region here
+// names its traffic even though we do not participate in it.
+//
+// Adding is the whole point of the feature; removing is deliberately "retire":
+// the slot and name are kept so messages already received under that region keep
+// resolving, it just stops being matched from now on. See RegionRegistry.
+static lv_obj_t* s_regions_modal = nullptr;
+static lv_obj_t* s_regions_ta    = nullptr;
+static void openRegionsModal();   // fwd: the add/remove callbacks rebuild the page
+
+static void regionsModalClose() {
+  if (s_regions_modal) { hideKb(); popupClose(&s_regions_modal); }
+  s_regions_ta = nullptr;
+  if (s_apppage_close == regionsModalClose) {
+    s_apppage_title = nullptr; s_apppage_close = nullptr;
+    statusBarSetTall(false); updateGlobalStatusBar();
+  }
+}
+static void regionsAddCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!s_regions_ta) return;
+  const char* t = lv_textarea_get_text(s_regions_ta);
+  if (!t || !t[0]) { if (g_lv.task) g_lv.task->showAlert(TR("Enter a region name"), 1400); return; }
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  if (reg.ensureRegion(t) == REGION_SLOT_NONE) {
+    // Two different failures, and the user can only act on one of them: the list
+    // being full, or the name canonicalising away to nothing (blank, or a bare
+    // "#"). Say which rather than silently not adding a row.
+    if (g_lv.task) g_lv.task->showAlert(reg.isFull() ? TR("Region list is full")
+                                                     : TR("Enter a region name"), 2000);
+    return;
+  }
+  openRegionsModal();   // rebuild (closes first)
+}
+static void regionsRemoveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const uint8_t slot = (uint8_t)(intptr_t)lv_event_get_user_data(e);
+  the_mesh.regionRegistry().retire(slot);
+  openRegionsModal();   // rebuild
+}
+
+static void openRegionsModal() {
+  regionsModalClose();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+
+  // Go tall BEFORE measuring, and measure with statusBarCurH() rather than
+  // chatBarH(). They disagree on the Pager: chatBarH() is one row there (that
+  // board keeps back/cog/title on a single line), but statusBarSetTall() still
+  // doubles the bar to STATUSBAR_H * 2. Laying out against chatBarH() therefore
+  // put the page origin a whole row UNDER the bar and the top control was clipped
+  // by it. statusBarCurH() is the height the bar actually has once tall, so the
+  // content clears it on every board and this stays identical elsewhere.
+  s_apppage_title = "Known regions";
+  s_apppage_close = regionsModalClose;
+  statusBarSetTall(true);
+  const lv_coord_t top = statusBarCurH();
+
+  s_regions_modal = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_regions_modal);
+  lv_obj_set_size(s_regions_modal, sw, sh - top);
+  lv_obj_set_pos(s_regions_modal, 0, top);
+  lv_obj_set_style_bg_color(s_regions_modal, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_regions_modal, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(s_regions_modal, LV_OBJ_FLAG_SCROLLABLE);
+
+  updateGlobalStatusBar();
+  lv_obj_move_foreground(s_regions_modal);
+  if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
+
+  const lv_coord_t pad = SC(6);
+  lv_coord_t y = SC(6);
+
+  // Add row: field + button on one line, so the common action is reachable
+  // without scrolling on the short panels too.
+  const lv_coord_t btn_w = SC(64);
+  s_regions_ta = lv_textarea_create(s_regions_modal);
+  lv_textarea_set_one_line(s_regions_ta, true);
+  lv_textarea_set_max_length(s_regions_ta, TOUCH_REGION_SCOPE_MAXLEN - 1);
+  lv_obj_set_size(s_regions_ta, sw - pad * 3 - btn_w, SC(32));
+  lv_obj_set_pos(s_regions_ta, pad, y);
+  taSetPlaceholder(s_regions_ta, TR("#region"));
+  attachSettingsTaEvents(s_regions_ta);
+
+  lv_obj_t* add = lv_btn_create(s_regions_modal);
+  lv_obj_set_size(add, btn_w, SC(32));
+  lv_obj_set_pos(add, sw - pad - btn_w, y);
+  styleButton(add);
+  lv_obj_add_event_cb(add, regionsAddCb, LV_EVENT_CLICKED, nullptr);
+  { lv_obj_t* l = lv_label_create(add); lv_label_set_text(l, TR("Add"));
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l); }
+  y += SC(38);
+
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  if (reg.count() <= 0) {
+    lv_obj_t* empty = lv_label_create(s_regions_modal);
+    lv_label_set_text(empty, TR("No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details."));
+    lv_label_set_long_mode(empty, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(empty, sw - pad * 2);
+    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(empty, pad, y);
+    return;
+  }
+
+  lv_obj_t* list = lv_obj_create(s_regions_modal);
+  lv_obj_remove_style_all(list);
+  lv_obj_set_size(list, sw - pad * 2, sh - top - y - SC(6));
+  lv_obj_set_pos(list, pad, y);
+  lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(list, SC(5), LV_PART_MAIN);
+  lv_obj_set_scroll_dir(list, LV_DIR_VER);
+
+  for (uint8_t slot = 1; slot <= REGION_SLOT_MAX; ++slot) {
+    if (!reg.isActive(slot)) continue;
+    const char* nm = reg.nameForSlot(slot);
+    if (!nm || !nm[0]) continue;
+
+    lv_obj_t* row = lv_obj_create(list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, sw - pad * 2 - SC(4), SC(36));
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(row, 6, LV_PART_MAIN);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* lbl = lv_label_create(row);
+    lv_label_set_text(lbl, nm);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(lbl, sw - pad * 2 - SC(4) - SC(84));
+    lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, SC(6), 0);
+
+    lv_obj_t* rm = lv_btn_create(row);
+    lv_obj_set_size(rm, SC(72), SC(28));
+    lv_obj_align(rm, LV_ALIGN_RIGHT_MID, -SC(5), 0);
+    styleButton(rm);
+    lv_obj_add_event_cb(rm, regionsRemoveCb, LV_EVENT_CLICKED, (void*)(intptr_t)slot);
+    { lv_obj_t* l = lv_label_create(rm); lv_label_set_text(l, TR("Remove"));
+      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l); }
+  }
+}
+
 static void openBlockedUsersModal() {
   blockedModalClose();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -39840,9 +45005,9 @@ static void openChannelScopeModal(int slot, const char* name) {
     touchPrefsGetChannelScope(slot, cur, sizeof cur);
     if (cur[0]) lv_textarea_set_text(s_chanscope_ta, cur);
     touchPrefsGetRegionScope(def, sizeof def);
-    lv_textarea_set_placeholder_text(s_chanscope_ta, def[0] ? def : TR("(no default)")); }
+    taSetPlaceholder(s_chanscope_ta, def[0] ? def : TR("(no default)")); }
 #else
-  lv_textarea_set_placeholder_text(s_chanscope_ta, TR("(no default)"));
+  taSetPlaceholder(s_chanscope_ta, TR("(no default)"));
 #endif
   attachSettingsTaEvents(s_chanscope_ta);
 
@@ -39867,6 +45032,7 @@ static void openChannelScopeModal(int slot, const char* name) {
   styleButton(save);
   lv_obj_add_event_cb(save, chanScopeSaveCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* sl = lv_label_create(save); lv_label_set_text(sl, TR("Save")); lv_obj_center(sl);
+  useChainedFont(sl);
 
   lv_obj_t* blk = lv_btn_create(s_chanscope_modal);
   lv_obj_set_size(blk, half_w, SC(34));
@@ -39874,6 +45040,7 @@ static void openChannelScopeModal(int slot, const char* name) {
   styleButton(blk);
   lv_obj_add_event_cb(blk, chanScopeBlockedCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* bl = lv_label_create(blk); lv_label_set_text(bl, TR("Blocked users")); lv_obj_center(bl);
+  useChainedFont(bl);
 }
 // Open settings for the currently-active chat: per-channel region scope for a channel (or the
 // blocked-users manager if its slot is unknown / it's a DM). Shared by the status-bar gear, the
@@ -40420,6 +45587,15 @@ static void buildUiTree() {
   }
 
   lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
+#if defined(HAS_THINKNODE_M9)
+  // No tab bar on this board (TABBAR_H == 0, see its definition): hide the zero-height
+  // btnmatrix outright so it can never paint, hit-test, or take focus — and build NONE of
+  // the bar chrome below (surface styling, Home re-tap / swipe-up gestures, key hints, the
+  // tab font, the accent "glow" indicator). The M9 switches screens with its dedicated
+  // HOME/MESSAGE/MAP keys and the app drawer; a bottom highlight over content was the only
+  // visible leftover of the bar once the icons went.
+  lv_obj_add_flag(tab_btns, LV_OBJ_FLAG_HIDDEN);
+#else
   // Tab bar bar itself sits on pure BG, not the panel — keeps the bottom
   // strip indistinguishable from the rest of the screen except for the
   // active-tab highlight.
@@ -40452,15 +45628,22 @@ static void buildUiTree() {
 #if CAP_TRACKBALL
   lv_obj_add_event_cb(tab_btns, navMenubarSizeCb, LV_EVENT_SIZE_CHANGED, nullptr);  // keep the keyboard-nav key hints positioned
 #endif
+#endif  // !HAS_THINKNODE_M9 — tab-bar chrome
 
-  // Tab labels: icons-only (house, envelope, list, GPS pin, gear) — saves
-  // space and lets all five tabs sit comfortably in the 240px wide bar
-  // (240/5 = 48 px per icon).
+  // Tab labels: icons-only on touch targets; the 480px-wide Pager prefixes each
+  // icon with its physical-keyboard mnemonic so the shortcuts are discoverable.
   // Add order == index order: Chats(0), Contacts(1), Home(2, middle), Map(3), Settings(4).
+#if defined(TLORA_PAGER)
+  lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE " M");
+  lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON " C");
+  lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME " H");
+  lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS " A");
+#else
   lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE);
   lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON);   // person icon (FA user)
   lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME);
   lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS);
+#endif
 #if defined(HAS_EXPANSION_KIT)
   // Sensors tab is conditional: only add it (and shift Settings to index 5) when
   // an env sensor is present and the user pref is on. Otherwise Settings lands
@@ -40478,9 +45661,19 @@ static void buildUiTree() {
     TAB_LAST           = 4;
   }
 #endif
+#if defined(TLORA_PAGER)
+  lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS " S");
+#else
   lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS);
+#endif
   // Slightly larger font for icons so they're easy to tap.
+#if defined(HAS_THINKNODE_M9)
+  // no tab bar on the M9 (see above) — nothing to size
+#elif CAP_UI_SIZE
+  lv_obj_set_style_text_font(tab_btns, &g_font_tab, LV_PART_MAIN);
+#else
   lv_obj_set_style_text_font(tab_btns, &g_font_16, LV_PART_MAIN);
+#endif
 
   // Home and Set tabs scroll vertically at the tab page level
   for (lv_obj_t* t : {tab_home, tab_settings}) {
@@ -40509,15 +45702,21 @@ static void buildUiTree() {
   // lock screen) that sit above it in the screen z-order.
   s_update_badge = lv_label_create(lv_scr_act());
   lv_label_set_text(s_update_badge, "!");
-  lv_obj_set_size(s_update_badge, 15, 15);
+  lv_obj_set_size(s_update_badge, 16, 16);
   lv_obj_set_style_radius(s_update_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
   lv_obj_set_style_bg_color(s_update_badge, lv_color_hex(0xE2403A), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_update_badge, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_update_badge, lv_color_white(), LV_PART_MAIN);
-  lv_obj_set_style_text_font(s_update_badge, &g_font_12, LV_PART_MAIN);
+  // Bottom-bar badges are fixed chrome too: a Large-preset 18-px line cannot
+  // be drawn inside the old 15-px circle without clipping.
+  lv_obj_set_style_text_font(s_update_badge, &lv_font_montserrat_12, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_update_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_update_badge, 0, LV_PART_MAIN);
-  lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -(TABBAR_H - 15));
+#if defined(HAS_THINKNODE_M9)
+  lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -4);   // no tab bar on this board
+#else
+  lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -(TABBAR_H - 16));
+#endif
   lv_obj_add_flag(s_update_badge, LV_OBJ_FLAG_HIDDEN);
 
   // Unread-count badge over the Chats (envelope) tab — leftmost of 5. Same
@@ -40525,28 +45724,34 @@ static void buildUiTree() {
   // sets the count + show/hide. Content-width so it grows for 2-3 digits.
   s_chat_unread_badge = lv_label_create(lv_scr_act());
   lv_label_set_text(s_chat_unread_badge, "");
-  lv_obj_set_size(s_chat_unread_badge, LV_SIZE_CONTENT, 15);
+  lv_obj_set_size(s_chat_unread_badge, LV_SIZE_CONTENT, 16);
+  lv_obj_set_style_min_width(s_chat_unread_badge, 16, LV_PART_MAIN);
   lv_obj_set_style_radius(s_chat_unread_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
   lv_obj_set_style_bg_color(s_chat_unread_badge, lv_color_hex(0xE0533D), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_chat_unread_badge, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_chat_unread_badge, lv_color_white(), LV_PART_MAIN);
-  lv_obj_set_style_text_font(s_chat_unread_badge, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_chat_unread_badge, &lv_font_montserrat_12, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_chat_unread_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_pad_hor(s_chat_unread_badge, 3, LV_PART_MAIN);
   lv_obj_set_style_pad_ver(s_chat_unread_badge, 0, LV_PART_MAIN);
   lv_obj_align(s_chat_unread_badge, LV_ALIGN_BOTTOM_LEFT,
-#if defined(HAS_EXPANSION_KIT)
-               lv_disp_get_hor_res(nullptr) / 12 + 7, -(TABBAR_H - 15));   // 6 tabs: half-cell over Chats
+#if defined(HAS_THINKNODE_M9)
+               8, -4);                                                     // no tab bar on this board — bottom-left corner
+#elif defined(HAS_EXPANSION_KIT)
+               lv_disp_get_hor_res(nullptr) / 12 + 7, -(TABBAR_H - 16));   // 6 tabs: half-cell over Chats
 #else
-               lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 15));   // 5 tabs: half-cell over Chats
+               lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 16));   // 5 tabs: half-cell over Chats
 #endif
   lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
 
+#if !defined(HAS_THINKNODE_M9)
   // Thin rounded accent "glow" bar that marks the active tab. A child of the
   // screen (like s_update_badge) created BEFORE the chat overlays so those cover
   // it, and above the tabview so it shows over the bottom bar. A soft accent
   // shadow gives it the glow; updateTabIndicator() slides it under the active
-  // tab and hides it on the map.
+  // tab and hides it on the map. NOT built on the M9 (no tab bar): it sat on the
+  // screen, not in the bar, so hiding the bar left it glowing over the content's
+  // bottom edge — the "lingering tab highlight". updateTabIndicator() null-guards.
   s_tab_indicator = lv_obj_create(lv_scr_act());
   lv_obj_remove_style_all(s_tab_indicator);
   lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -40559,6 +45764,7 @@ static void buildUiTree() {
   lv_obj_set_style_shadow_opa(s_tab_indicator, LV_OPA_40, LV_PART_MAIN);
   lv_obj_set_style_shadow_spread(s_tab_indicator, 0, LV_PART_MAIN);
   updateTabIndicator();   // place it under the initial active tab
+#endif  // !HAS_THINKNODE_M9
 
   // Create full-screen detail overlays (hidden until a thread is tapped)
   makeChatDetail(g_lv.dm);
@@ -40626,6 +45832,7 @@ static void buildUiTree() {
     lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* l = lv_label_create(b);
+    useChainedFont(l);
     lv_label_set_text(l, sym);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_center(l);
@@ -40744,6 +45951,9 @@ void UITask::stepComposerAction(int delta) { _composer_action_idx += delta; }
 void UITask::userLedHandler() {}
 
 void UITask::discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len) {
+#if !defined(HAS_TANMATSU)
+  s_web_rx_nudge = true;
+#endif
   /* `is_new=false` → contact is already in contacts[]; nothing to do (the
    * Discovered modal only shows pending nodes that haven't been added yet).
    * On `is_new=true` we either update the existing slot for this pubkey or
@@ -40893,7 +46103,7 @@ void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t
 // popup) instead of a single-slot toast, so the full multi-line reading stays on
 // screen until tapped away and can scroll if it's long. Tap the dimmed backdrop
 // to close.
-#if CAP_SD   // telemetry window + per-node log/poll are SD-backed (T-Deck only)
+#if CAP_SD || defined(TLORA_PAGER)   // telemetry window + per-node log/poll use the mounted SD store
 static lv_obj_t* s_telemetry_root    = nullptr;
 static lv_obj_t* s_telem_config_root = nullptr;   // settings panel spawned on top
 static lv_obj_t* s_telem_poll_ta     = nullptr;   // auto-poll interval input (config panel)
@@ -41297,7 +46507,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     char b1[8]; snprintf(b1, sizeof b1, "%d", s_telem_win_past_h); lv_textarea_set_text(s_telem_past_ta, b1);
 
     lv_obj_t* lt = lv_label_create(card);
-    lv_label_set_text(lt, "h  to");
+    lv_label_set_text(lt, TR("h  to"));
     lv_obj_set_style_text_font(lt, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(lt, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_pos(lt, 88, y + 8);
@@ -41320,6 +46530,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     styleButton(showb);
     lv_obj_add_event_cb(showb, telemWinApplyCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* sl = lv_label_create(showb); lv_label_set_text(sl, TR("Show")); lv_obj_center(sl);
+    useChainedFont(sl);
     y += 42;
   }
 }
@@ -41403,7 +46614,7 @@ static void openTelemetryConfigWindow() {
   attachSettingsTaEvents(s_telem_poll_ta);
   { char pb[8]; snprintf(pb, sizeof pb, "%d", telemetryPollGet(s_telem_node)); lv_textarea_set_text(s_telem_poll_ta, pb); }
   lv_obj_t* mlab = lv_label_create(card);
-  lv_label_set_text(mlab, "min (0=off)");
+  lv_label_set_text(mlab, TR("min (0=off)"));
   lv_obj_set_style_text_font(mlab, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(mlab, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(mlab, 182, y + 8);
@@ -41414,6 +46625,7 @@ static void openTelemetryConfigWindow() {
   lv_obj_set_style_bg_opa(ap, LV_OPA_40, LV_PART_MAIN);
   lv_obj_add_event_cb(ap, telemPollApplyCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* apl = lv_label_create(ap); lv_label_set_text(apl, TR("Apply auto-poll")); lv_obj_center(apl);
+  useChainedFont(apl);
   y += 86;
 
   // --- Clear history ---
@@ -41422,7 +46634,8 @@ static void openTelemetryConfigWindow() {
   styleButton(clr);
   lv_obj_set_style_bg_color(clr, lv_color_hex(0xB23A48), LV_PART_MAIN);
   lv_obj_add_event_cb(clr, telemClearCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* cl = lv_label_create(clr); lv_label_set_text(cl, LV_SYMBOL_TRASH "  Clear history"); lv_obj_center(cl);
+  lv_obj_t* cl = lv_label_create(clr); lv_label_set_text(cl, TR(LV_SYMBOL_TRASH "  Clear history")); lv_obj_center(cl);
+  useChainedFont(cl);
 }
 #endif  // HAS_TDECK_GT911 (telemetry window)
 
@@ -41552,7 +46765,7 @@ void UITask::onTelemetryReply(const ContactInfo& contact, const uint8_t* data, s
     if (p > 0 && (size_t)p >= body_cap - 1) break;   // body buffer full
   }
 done: {
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Log every reply (manual or auto-poll) to the per-node telemetry file.
   if (any) telemetryLogAppend(contact.id.pub_key, (uint32_t)time(nullptr), tl_mv, tl_t10, tl_h);
 #endif
@@ -41574,7 +46787,7 @@ done: {
     snprintf(msg, sizeof(msg), "%s: %uB %s",
              nm, (unsigned)len, hex);
   }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Update the telemetry window ONLY for the node it's showing, and only when a
   // manual request is in flight — auto-poll just logs (above) without a window.
   if (s_telem_manual_pending && memcmp(s_telem_node, contact.id.pub_key, 6) == 0) {
@@ -41617,7 +46830,16 @@ void UITask::onServerClock(const ContactInfo& contact, uint32_t server_epoch) {
 }
 
 void UITask::onAdminLoginResult(const ContactInfo& contact, bool success, uint8_t perms) {
-  loginWaitCancel();   // a reply arrived (either way) — disarm the no-reply watchdog (#89)
+  // Which pending attempt, if any, is this the reply to? Disarming the watchdog
+  // used to be unconditional, which was harmless while it only drove a toast —
+  // but it means the once-a-minute background room self-heal, logging in to some
+  // OTHER room, can call off the watchdog for the login the operator is actually
+  // standing in front of. Now that the timeout opens a prompt, that would silently
+  // lose the recovery (#267), so match the contact first.
+  const bool for_admin_attempt = (memcmp(contact.id.pub_key, s_admin_pub32, 32) == 0);
+  const bool for_room_relogin  = (s_room_relogin_active &&
+                                  memcmp(contact.id.pub_key, s_room_relogin_pub32, 32) == 0);
+  if (for_admin_attempt || for_room_relogin) loginWaitCancel();   // a reply arrived (#89)
   // Room read-only downgrade warning (issue #89 hardening): LOGIN_OK with the
   // zero-permission marker (server reply byte 6 == 2) means the room accepted us
   // as a READ-ONLY guest — our posts will be silently discarded with no ACK, so
@@ -41631,10 +46853,28 @@ void UITask::onAdminLoginResult(const ContactInfo& contact, bool success, uint8_
       showAlert(TR("Room is read-only for you.\nJoin with the room password to post."), 2600);
     }
   }
+  // Result of the room thread sheet's "Log in again". That path sends its login
+  // without opening the prompt, so it never sets s_admin_pub32 and both outcomes
+  // used to fall off the guard below — the row looked identical whether it had
+  // recovered the session or done nothing at all (#267).
+  if (for_room_relogin) {
+    roomReloginClear();
+    if (success) {
+      char msg[80];
+      snprintf(msg, sizeof msg, TR("Reconnected to %.40s"), contact.name);
+      showAlert(msg, 1400);
+      return;
+    }
+    // An explicit rejection means the blank login was understood and refused, so
+    // waiting out the remaining watchdog would only delay the same conclusion.
+    openRoomJoinPrompt(contact.id.pub_key, /*after_relogin_failed=*/true);
+    return;
+  }
+
   // Only react if the user opened a login prompt against THIS contact —
   // otherwise this could be a stale login from the companion-serial side
   // (the web app) bleeding into our touch flow.
-  if (memcmp(contact.id.pub_key, s_admin_pub32, 32) != 0) return;
+  if (!for_admin_attempt) return;
 #if defined(ESP32)
   // Save (or clear) the remembered password based on the Remember
   // checkbox snapshot. We do this on success only — saving a known-bad
@@ -41878,8 +47118,37 @@ void UITask::flushHistoryIfDue(unsigned long now) {
 // the chat to the SD card.
 static fs::FS* s_ui_data_fs       = nullptr;
 static char    s_ui_data_root[16] = "";
+#if defined(TLORA_PAGER)
+static bool    s_ui_data_boot_finalized = false;
+#endif
+// History stays on the filesystem selected during UITask::begin() for the
+// whole boot. Switching a live ring from SPIFFS to a newly inserted card can
+// purge history that was never loaded into RAM; switching a 5000-record SD ring
+// to SPIFFS can fill the small internal partition.
 static bool uiDataFsReady() {
   if (s_ui_data_fs != nullptr) return true;   // cache SUCCESS only — a failed resolve MUST stay retryable
+#if defined(TLORA_PAGER)
+  if (s_ui_data_boot_finalized) {
+    // A boot-adopted card owns the active identity/profile. Never fall back to
+    // another profile's internal history if that card becomes unavailable. If
+    // history failed to resolve during begin(), also never attach it later in
+    // this boot: the RAM ring was not loaded from that card, and a subsequent
+    // flush could otherwise replace its existing segments with an empty ring.
+    if (g_full_data_on_sd) {
+      return false;
+    }
+    // Never adopt unseen card history after the boot loader has finished, but
+    // keep retrying the already-loaded internal backend if its first mount was
+    // transiently unavailable. This avoids a RAM-only history session without
+    // risking a switch to a card whose history was never loaded.
+    if (SPIFFS.begin(false)) {
+      s_ui_data_fs = &SPIFFS;
+      s_ui_data_root[0] = '\0';
+      return true;
+    }
+    return false;
+  }
+#endif
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   // Tanmatsu + T-Display P4: prefer the microSD card. On the Tanmatsu the internal FFat 'locfd'
   // loses frequently-rewritten data (broken FAT metadata; see the tile-cache notes); on the
@@ -41887,6 +47156,12 @@ static bool uiDataFsReady() {
   // T-Deck's /meshcomod root; fall back to FFat only when no card is present. Both are mounted at
   // boot in main.cpp (g_sd_ok / g_fs_ok). (The P4 used to fall into the #else SPIFFS branch below —
   // no SPIFFS partition exists there, so history was never persisted and vanished on every reboot.)
+  // #167: hot UI data (chat history) lives on the INTERNAL LittleFS -- SD write bursts
+  // electrically disturb this board's AMOLED, and the P4's internal FAT layer is broken
+  // (see the storage note in tdisplay_p4/main/main.cpp). SD = degraded fallback only;
+  // tiles keep using the SD via their own selector.
+  extern bool g_fs_ok;
+  if (g_fs_ok) { s_ui_data_fs = &LittleFS; s_ui_data_root[0] = '\0'; return true; }
   extern bool g_sd_ok;
   if (g_sd_ok) {
     SD_MMC.mkdir("/meshcomod");
@@ -41894,21 +47169,63 @@ static bool uiDataFsReady() {
     strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
     return true;
   }
-  extern bool g_fs_ok;
-  if (g_fs_ok) { s_ui_data_fs = &FFat; s_ui_data_root[0] = '\0'; return true; }
+#elif defined(TLORA_PAGER)
+  // Follow the boot loader's primary-profile decision. An established card may
+  // legitimately predate the migration marker; falling back to SPIFFS history
+  // in that case would expose and update another identity's conversations.
+  if (g_full_data_on_sd) {
+    if (!fmSdTryMount()) return false;
+    SD.mkdir("/meshcomod");
+    s_ui_data_fs = &SD;
+    strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+    return true;
+  }
+  // The boot loader kept identity/preferences internal, either by user choice
+  // or because reconciliation failed closed. History must follow that same
+  // profile decision even when an inserted card carries a valid marker and
+  // history from another device. Never use foreign SD history as a fallback.
+  if (SPIFFS.begin(false)) {
+    s_ui_data_fs = &SPIFFS;
+    s_ui_data_root[0] = '\0';
+    return true;
+  }
+  return false;
 #elif defined(HAS_TDECK_GT911)
-  // T-Deck: the SD card is the persistent user-data store (large, removable,
-  // survives a reflash) and is where chat history already lives. Prefer it; only
-  // fall back to internal SPIFFS if no card is present. (Do NOT format/prefer
-  // SPIFFS here — doing so orphaned the on-SD history.)
-  if (SD.cardType() != CARD_NONE || fmSdTryMount()) {
-    s_sd_mounted = true;
+  // T-Deck: the SD card is the established persistent history store.
+  if (sdAdoptLiveMount() || fmSdTryMount()) {
     SD.mkdir("/meshcomod");
     s_ui_data_fs = &SD;
     strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
     return true;
   }
   if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
+#elif defined(HAS_THINKNODE_M9)
+  // ThinkNode M9: same Arduino-SD-on-shared-bus shape as the T-Deck (CAP_SD=1;
+  // used to fall into the V4 SPIFFS #else, losing the SD-backed deep message
+  // ring despite a mounted card).
+  if (sdAdoptLiveMount() || fmSdTryMount()) {
+    SD.mkdir("/meshcomod");
+    s_ui_data_fs = &SD;
+    strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+    return true;
+  }
+  if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
+#elif defined(HELTEC_LORA_V4_R8)
+  // R8 (Expansion Kit V2, REMOVABLE card): follow the boot adoption decision,
+  // never bare card presence — mirrors the pager's profile-keyed shape. When
+  // the boot store adopted the card (g_full_data_on_sd: identity/prefs/
+  // contacts live there), chat history + battery log + Lua app files follow;
+  // otherwise everything stays on internal SPIFFS as before. NB an R8 that
+  // adopted a card on an OLDER build carries a day-one /msgs snapshot on the
+  // card — Settings > Storage > "Copy internal data to SD" refreshes it.
+  if (g_full_data_on_sd) {
+    if (!(sdAdoptLiveMount() || fmSdTryMount())) return false;
+    SD.mkdir("/meshcomod");
+    s_ui_data_fs = &SD;
+    strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+    return true;
+  }
+  if (SPIFFS.begin(false) || SPIFFS.begin(true)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
 #else
   // V4 (no SD): internal SPIFFS. Format-on-fail so a fresh / never-formatted
   // partition becomes usable — that's the V4 history-loss fix. Safe: only formats
@@ -41922,6 +47239,743 @@ static bool uiDataFsReady() {
   // Not ready yet — do NOT cache the failure, so a later call can still resolve.
   return false;
 }
+
+#if CAP_LUA_APPS
+// ---- Lua app host bridges (LuaAppHost.cpp externs) ----
+// The host lives in its own TU; these three shims are its only view of UITask.
+// A Lua app's timer keeps firing while the screen is off — lv_timer_handler runs
+// unconditionally — so an app polling a sensor at 10 Hz went on doing it into a
+// dark screen. Nothing it draws can be seen, so the host skips the tick; the app
+// resumes on wake and sees the gap through sys.millis() like any other pause.
+static bool s_lua_keep_awake = false;
+// wada.sys.keep_awake(true): an app that is MEASURING rather than displaying —
+// a calibration sweep, a timed capture — must keep running and must not have
+// the screen blank underneath it. Pausing app ticks with the screen (below)
+// truncated exactly such a sweep: the M9's default screen timeout is 20 s and
+// GPS Compass calibrates for 20 s, so collection stopped at the same instant
+// the countdown was supposed to end. This keeps BOTH alive, and is cleared
+// when the app closes so it cannot leak into the next one.
+void luaHostKeepAwake(bool on) {
+  s_lua_keep_awake = on;
+  if (on && g_lv.task) g_lv.task->noteUserInput();   // push the idle timer out now
+}
+bool luaHostScreenOn() {
+  if (s_lua_keep_awake) {
+    if (g_lv.task) g_lv.task->noteUserInput();       // and keep pushing it, tick by tick
+    return true;
+  }
+  return g_lv.task ? !g_lv.task->isScreenOff() : true;
+}
+
+const lv_font_t* luaHostFontForSize(int size_class) {
+  return size_class <= 12 ? &g_font_12 : size_class <= 14 ? &g_font_14 : &g_font_16;
+}
+// Lua wada.sys.beep() (#245). Routes to the SAME per-board chime the UI uses, so
+// a Lua app cannot be louder or different from the rest of the firmware, and it
+// honours the user's sound setting rather than overriding it. Returns whether a
+// sound was actually produced: boards without a sounder, and a muted device,
+// both report false so an app can show something instead.
+bool luaHostBeep() {
+  if (!g_lv.task || g_lv.task->isBuzzerQuiet()) return false;
+  uiPlaySlot(TOUCH_SND_MSG);
+  return true;
+}
+
+void luaHostToast(const char* msg, int ms) {
+  if (g_lv.task) g_lv.task->showAlert(msg, ms);
+}
+fs::FS* luaHostAppFs() { return uiDataFsReady() ? s_ui_data_fs : nullptr; }
+void luaHostAppPath(char* out, size_t cap, const char* rel) {
+  snprintf(out, cap, "%s%s", s_ui_data_root, rel);   // SD-rooted stores prefix /meshcomod
+}
+#if CAP_LUA_SD_LIST
+// Return the physical removable card, never the app-data filesystem. Mounting
+// stays in UITask so Lua cannot bypass shared-bus coordination or create a
+// second SD lifecycle. The existing backoff keeps repeated no-card calls cheap.
+fs::FS* luaHostSdFs(bool* busy) {
+  if (busy) *busy = false;
+  if (s_sd_fail_note_ms) return nullptr;
+  if (!s_sd_mounted && !sdAdoptLiveMount()) {
+    if (sdRuntimeLifecycleBusy()) {
+      if (busy) *busy = true;
+      return nullptr;
+    }
+    if (!fmSdTryMount()) return nullptr;
+  }
+  if (!s_sd_mounted) return nullptr;
+  markSdIo();
+  return &SD;
+}
+bool luaHostSdReadFailed() { return sdReadFailedCardDead(); }
+#endif
+// ---- wada.mesh read-only bridges (no mesh types cross into the host TU) ----
+// Hex-encode the first n bytes of a public key. 4 bytes (8 hex chars) is what the
+// rest of the UI uses to name a node, and it is what an app needs to line up a
+// contact with a discovery hit or an overheard advert.
+static void luaPubkeyHex(const uint8_t* pk, int n, char* out, size_t cap) {
+  static const char* H = "0123456789abcdef";
+  size_t o = 0;
+  for (int i = 0; i < n && o + 2 < cap; i++) {
+    out[o++] = H[(pk[i] >> 4) & 0x0F];
+    out[o++] = H[pk[i] & 0x0F];
+  }
+  if (cap) out[o < cap ? o : cap - 1] = '\0';
+}
+
+int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
+                     double* lat, double* lon, char* pk_hex, size_t pk_cap,
+                     int32_t* lat_e6, int32_t* lon_e6) {
+  ContactInfo ci;
+  if (idx < 0 || !the_mesh.getContactByIdx((uint32_t)idx, ci)) return 0;
+  snprintf(name, name_cap, "%s", ci.name);
+  *type = ci.type;
+  if (pk_hex && pk_cap) luaPubkeyHex(ci.id.pub_key, 4, pk_hex, pk_cap);
+  *lat = ci.gps_lat / 1.0e6;
+  *lon = ci.gps_lon / 1.0e6;
+  if (lat_e6) *lat_e6 = ci.gps_lat;   // stored as micro-degrees already
+  if (lon_e6) *lon_e6 = ci.gps_lon;
+  // One clock read per contacts() walk, not one per contact: on boards whose
+  // clock is an I2C RTC (the M9's PCF8563 on Wire) getCurrentTime() is a bus
+  // transaction, and an app listing 100 contacts would otherwise stall the UI
+  // loop for ~100 ms each call. meshContacts() always walks from idx 0.
+  static uint32_t s_walk_now = 0;
+  if (idx == 0) s_walk_now = the_mesh.getRTCClock() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
+  const uint32_t now = s_walk_now;
+  *secs_ago = (ci.last_advert_timestamp && now > ci.last_advert_timestamp)
+                  ? now - ci.last_advert_timestamp : 0;
+  return 1;
+}
+int luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops,
+                   int* route, int* len, int* org_kind, char* org_hex, size_t org_cap,
+                   uint32_t* at_ms) {
+  MyMesh::UiRxRec r;
+  if (idx < 0 || !the_mesh.uiRxLogGet((uint8_t)idx, r)) return 0;
+  if (at_ms) *at_ms = r.ms;   // the record's own timestamp: a stable delivery key
+  *ms_ago = millis() - r.ms;
+  *ptype  = r.ptype;
+  *rssi   = r.rssi;
+  *snr    = (float)r.snr_q4 / 4.0f;
+  *hops   = r.hops;
+  *route  = r.route;
+  *len    = r.len;
+  *org_kind = r.org_kind;
+  // kind 1 = a real public-key prefix (advert); kind 2 = the one-byte
+  // destination and source hashes an addressed frame carries. Encoded to the
+  // width the frame actually justifies, so 8 hex chars always means a key.
+  if (org_hex && org_cap) luaPubkeyHex(r.org, r.org_kind == 1 ? 4 : 2, org_hex, org_cap);
+  return 1;
+}
+void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uint32_t* tx_air_s,
+                       uint32_t* rx_pkts, uint32_t* rx_err, int* budget_ms) {
+  *rssi     = radio_driver.getCurrentRSSI();
+  *noise    = radio_driver.getNoiseFloor();
+  *rx_air_s = (uint32_t)(the_mesh.getReceiveAirTime() / 1000UL);
+  *tx_air_s = (uint32_t)(the_mesh.getTotalAirTime() / 1000UL);
+  *rx_pkts  = radio_driver.getPacketsRecv();
+  *rx_err   = radio_driver.getPacketsRecvErrors();
+  *budget_ms = (int)the_mesh.getRemainingTxBudget();
+}
+void luaHostRadioStats2(uint32_t* rx_evt, uint32_t* rx_drop, uint32_t* tx_pkts,
+                        float* freq, float* bw, int* sf, int* duty_pct) {
+  *rx_evt  = radio_driver.getRxEvents();
+  *rx_drop = radio_driver.getRxQueueDrops();
+  *tx_pkts = radio_driver.getPacketsSent();
+  NodePrefs* p = the_mesh.getNodePrefs();
+  *freq = p->freq;
+  *bw   = p->bw;
+  *sf   = p->sf;
+  // airtime_factor -> the duty ceiling the dispatcher enforces (see #161)
+  *duty_pct = p->airtime_factor > 0 ? (int)(100.0f / (1.0f + p->airtime_factor) + 0.5f) : 100;
+}
+// Widened for console mode: CAP_LUA_SDK_EXT is OFF on the V4, which is exactly
+// the board console mode exists for, and the console needs the same send path.
+// Reusing it rather than duplicating matters most for luaHostMeshSendChannel:
+// it matches the channel BY NAME at transmit time, and a cached slot index is
+// how messages went out encrypted to the wrong channel before.
+#if CAP_LUA_SDK_EXT || CAP_CONSOLE
+// ---- Lua app permissions: mesh send ----------------------------------------
+// wada.mesh.send() is the first WRITE path a store app has into the mesh, and
+// anything it sends goes out under the user's own node name -- to readers it is
+// indistinguishable from the user typing it. That is a different category from
+// an app writing a file, so it needs explicit, informed, per-app consent.
+//
+// The grant is bound to ONE app id. Approving a beacon app grants nothing to any
+// other app, and re-installing under a different id asks again. Stored as a tiny
+// text file next to the app data so it survives reboots and can be inspected.
+//
+// The app cannot bypass this: it never sees a prompt API. wada.mesh.send simply
+// returns false until a grant exists, and the FIRST refusal raises the prompt.
+// Read by the confirm callback. Only one app runs at a time (apps are
+// full-screen) and only one dialog can be open, so a single slot is enough.
+static char s_lua_perm_target[24] = {0};
+
+static void luaPermPath(char* out, size_t cap) { luaHostAppPath(out, cap, "/apps/perms.kv"); }
+
+// Permission bits. The on-disk value is this mask as a decimal, which keeps every
+// file written before read permission existed valid: "=1" already meant send.
+//   0 = asked, nothing allowed    1 = send    2 = read    3 = both
+// Entry PRESENCE is what records "we asked" -- absent is not the same as refused,
+// and the settings page shows that difference.
+int luaHostAppPerms(const char* app_id, bool* asked) {
+  if (asked) *asked = false;
+  if (!app_id || !*app_id || !s_ui_data_fs) return 0;
+  char path[80]; luaPermPath(path, sizeof path);
+  File f = s_ui_data_fs->open(path, "r");
+  if (!f) return 0;
+  int mask = 0;
+  char line[64];
+  while (f.available()) {
+    const size_t n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+    line[n] = '\0';
+    char* eq = strchr(line, '=');
+    if (!eq) continue;
+    *eq = '\0';
+    if (strcmp(line, app_id) == 0) {
+      if (asked) *asked = true;
+      mask = atoi(eq + 1);
+      break;
+    }
+  }
+  f.close();
+  return mask;
+}
+
+// 1 = granted, -1 = refused, 0 = never asked.
+int luaHostSendPerm(const char* app_id) {
+  bool asked = false;
+  const int mask = luaHostAppPerms(app_id, &asked);
+  if (!asked) return 0;
+  return (mask & LUA_PERM_SEND) ? 1 : -1;
+}
+// True when the app may be shown incoming messages. No prompt is raised from
+// here: unlike send, this fires on someone ELSE's traffic arriving, so a dialog
+// would appear unbidden. An app asks for it in the settings page instead.
+bool luaHostReadPerm(const char* app_id) {
+  bool asked = false;
+  return (luaHostAppPerms(app_id, &asked) & LUA_PERM_READ) != 0;
+}
+
+// Private conversations are their own grants. Posting to a channel the user is
+// already in is a different act from writing to one person as them, and reading
+// channel traffic is different from reading their DMs — so an app that needs one
+// does not silently acquire the other.
+int luaHostDmSendPerm(const char* app_id) {
+  bool asked = false;
+  const int mask = luaHostAppPerms(app_id, &asked);
+  if (!asked) return 0;
+  return (mask & LUA_PERM_DM_SEND) ? 1 : -1;
+}
+bool luaHostDmReadPerm(const char* app_id) {
+  bool asked = false;
+  return (luaHostAppPerms(app_id, &asked) & LUA_PERM_DM_READ) != 0;
+}
+
+// Set or clear ONE permission bit, leaving the app's other grants alone. The
+// prompt path used to write a whole mask, so asking for send silently revoked a
+// read grant the user had given in Settings — harmless with one bit, wrong the
+// moment there is more than one.
+static void luaPermWrite(const char* app_id, int mask);
+static void luaPermSetBit(const char* app_id, int bit, bool on) {
+  bool asked = false;
+  int mask = luaHostAppPerms(app_id, &asked);
+  if (on) mask |= bit; else mask &= ~bit;
+  luaPermWrite(app_id, mask);
+}
+
+static void luaPermWrite(const char* app_id, int mask) {
+  if (!app_id || !*app_id || !s_ui_data_fs) return;
+  // Rewrite whole-file: the table is a handful of short lines, and an in-place
+  // edit would have to deal with a shrinking record.
+  char path[80]; luaPermPath(path, sizeof path);
+  String keep;
+  File in = s_ui_data_fs->open(path, "r");
+  if (in) {
+    char line[64];
+    while (in.available()) {
+      const size_t n = in.readBytesUntil('\n', line, sizeof(line) - 1);
+      line[n] = '\0';
+      if (!line[0]) continue;
+      char* eq = strchr(line, '=');
+      if (eq) { *eq = '\0'; const bool same = (strcmp(line, app_id) == 0); *eq = '='; if (same) continue; }
+      keep += line; keep += '\n';
+    }
+    in.close();
+  }
+  char rec[40];
+  snprintf(rec, sizeof rec, "%s=%d\n", app_id, mask);
+  keep += rec;
+  WdtHeavyGuard guard;                       // small, but it is still a flash write
+  char appsdir[80]; luaHostAppPath(appsdir, sizeof appsdir, "/apps");
+  s_ui_data_fs->mkdir(appsdir);
+  File out = s_ui_data_fs->open(path, "w");
+  if (!out) return;
+  out.write((const uint8_t*)keep.c_str(), keep.length());
+  out.close();
+}
+
+// Raised from wada.mesh.send's first refusal. Deliberately blunt about what is
+// being granted -- "send messages" understates it; the point the user needs is
+// that the messages carry THEIR name.
+void luaHostRequestSendPerm(const char* app_id, const char* app_name) {
+  if (!app_id || !*app_id) return;
+  snprintf(s_lua_perm_target, sizeof s_lua_perm_target, "%s", app_id);
+  // Record the refusal FIRST, so the answer is "no" unless the user says
+  // otherwise -- a power cut mid-dialog must not leave a grant. It also stops
+  // this app re-prompting: its next send sees -1 and fails without a dialog.
+  luaPermSetBit(app_id, LUA_PERM_SEND, false);   // refused unless the user says otherwise
+  const char* label = (app_name && *app_name) ? app_name : app_id;
+  char msg[220];
+  snprintf(msg, sizeof msg,
+           TR("\"%s\" wants to send messages on the mesh.\n\n"
+              "They will be sent as %s and cannot be told apart from messages you typed.\n\n"
+              "Only allow this for an app you trust."),
+           label, the_mesh.getNodePrefs()->node_name);
+  // Cancel needs no handler: the refusal is already on disk. The user can revisit
+  // a decision by deleting /apps/perms.kv.
+  showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_SEND, true); });
+}
+
+// Send on a channel matched BY NAME. Matching by name rather than a cached slot
+// index is deliberate: a stale slot transmits on the WRONG key, which is exactly
+// the bug behind the channel-send fix in the touch composer.
+// Send a direct message to a contact BY NAME, or post to a room server (a room is
+// just a contact of type ADV_TYPE_ROOM, and the send is identical — which is why one
+// call covers both). Mirrors into the on-device chat thread and registers the expected
+// ACK exactly as a composer send does, so an app-sent message is a first-class message
+// rather than something that vanishes off the radio with no local trace.
+bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_room) {
+  if (was_room) *was_room = false;
+  if (!to_name || !*to_name || !text || !*text) return false;
+  ContactInfo* by = nullptr;
+  const uint32_t n = the_mesh.getNumContacts();
+  for (uint32_t i = 0; i < n; ++i) {
+    ContactInfo c;
+    if (!the_mesh.getContactByIdx(i, c)) continue;
+    if (strcmp(c.name, to_name) != 0) continue;
+    by = the_mesh.lookupContactByPubKey(c.id.pub_key, PUB_KEY_SIZE);
+    break;
+  }
+  if (!by) return false;                      // no contact with that name
+  if (was_room) *was_room = (by->type == ADV_TYPE_ROOM);
+
+  ContactInfo rcpt = *by;
+  rcpt.out_path_len = OUT_PATH_UNKNOWN;       // flood, same as the Chats composer does
+  const uint32_t ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
+  uint32_t expected_ack = 0, est_timeout = 0;
+  const int rr = the_mesh.sendMessage(rcpt, ts, 0, (char*)text, expected_ack, est_timeout);
+  if (rr == MSG_SEND_FAILED) return false;
+  the_mesh.uiRegisterExpectedAck(expected_ack, by->id.pub_key);
+  if (g_lv.task)
+    g_lv.task->appSentMsgToContact(by->id.pub_key, by->name, text, expected_ack, the_mesh.uiLastSentFp());
+  return true;
+}
+
+// Names of the channels configured on this device, so an app can discover the
+// private ones rather than having to be told their names. Names only: the channel
+// SECRET is never exposed to Lua, so an app can post to a channel the user already
+// has but can never derive one or hand it to anybody.
+int luaHostMeshChannelNames(char out[][32], int max_n) {
+  int n = 0;
+  for (int i = 0; i < MAX_GROUP_CHANNELS && n < max_n; i++) {
+    ChannelDetails cd;
+    if (!the_mesh.getChannel(i, cd) || !cd.name[0]) continue;
+    snprintf(out[n], 32, "%s", cd.name);
+    n++;
+  }
+  return n;
+}
+
+// Raised from wada.mesh.send_dm's first refusal. Worded harder than the channel
+// prompt on purpose: a channel post is visible to everyone on that channel and is
+// obviously "from" the node, while a direct message arrives in one person's private
+// thread looking exactly like something the user typed to them.
+void luaHostRequestDmSendPerm(const char* app_id, const char* app_name) {
+  if (!app_id || !*app_id) return;
+  snprintf(s_lua_perm_target, sizeof s_lua_perm_target, "%s", app_id);
+  luaPermSetBit(app_id, LUA_PERM_DM_SEND, false);   // refused unless the user says otherwise
+  const char* label = (app_name && *app_name) ? app_name : app_id;
+  char msg[240];
+  snprintf(msg, sizeof msg,
+           TR("\"%s\" wants to send PRIVATE messages as you.\n\n"
+              "It could write to any of your contacts, or post to a room, and the "
+              "message will look exactly like one you typed.\n\n"
+              "Only allow this for an app you trust."),
+           label);
+  showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_DM_SEND, true); });
+}
+
+bool luaHostMeshSendChannel(const char* chan_name, const char* text) {
+  if (!chan_name || !*chan_name || !text || !*text) return false;
+  for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    ChannelDetails cd;
+    if (!the_mesh.getChannel(i, cd) || !cd.name[0]) continue;
+    if (strcmp(cd.name, chan_name) != 0) continue;
+    uint32_t ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
+    const char* sender = the_mesh.getNodePrefs()->node_name;
+    if (!the_mesh.sendGroupMessage(ts, cd.channel, sender, (char*)text, (int)strlen(text))) return false;
+    if (g_lv.task) g_lv.task->appSentMsgToChannel(cd.name, text, the_mesh.uiLastSentFp());
+    return true;
+  }
+  return false;   // no such channel on this device
+}
+#endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
+
+#if CAP_LUA_SDK_EXT || CAP_CONSOLE   // console mode needs it on the V4 too
+// wada.sys.battery(). Reads the SMOOTHED millivolts the status bar uses, not a
+// raw ADC sample, so a Lua chart cannot show noise the rest of the UI hides.
+void luaHostBattery(uint16_t* mv, int* pct, bool* charging) {
+  const uint16_t v = batteryMvSmoothed();
+  if (mv)       *mv = v;
+  if (pct)      *pct = batteryPercentFromMv(v);
+  if (charging) *charging = batteryIsCharging(v);
+}
+// wada.sys.gps(). False when there is no fix -- the caller then gets nil rather
+// than the last known position, which wada.mesh.self() already provides. An app
+// plotting a track needs to tell a live fix from a stale one. Also false while
+// the user has GPS switched off (same gate updateGpsLocation() applies), so a
+// last sentence parsed before the toggle cannot masquerade as a live fix.
+// Altitude (getGpsAltitude(), metres, the accessor the Device page uses) is
+// included because height dominates LoRa range: two samples a metre apart on
+// the map can be a hilltop and a hollow, and a coverage survey that records
+// only lat/lon cannot tell them apart afterwards. `time` is satellite time
+// (0 until the receiver has decoded the date), which is the only clock a
+// logger can trust before the device has been near a network.
+// Speed/course exist only where the board's target.cpp provides wadaGpsMotion()
+// on top of WadaNmeaLocationProvider (HAS_GPS_MOTION); the core provider keeps
+// its RMC fields private, so other boards report NAN and the binding omits the
+// fields.
+#if defined(HAS_GPS_MOTION)
+extern bool wadaGpsMotion(float* speed_kmh, float* course_deg);
+#endif
+bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, uint32_t* fix_time,
+                int32_t* lat_e6, int32_t* lon_e6, float* speed_kmh, float* course_deg) {
+  // Pre-set the motion fields BEFORE the fix gate: a caller that bails on a
+  // false return still reads defined values, and boards without HAS_GPS_MOTION
+  // report NAN so the binding can omit the fields rather than publish a 0.
+  if (speed_kmh)  *speed_kmh  = NAN;
+  if (course_deg) *course_deg = NAN;
+  if (!g_lv.task || !g_lv.task->getGPSState() || !g_lv.task->getGpsFix()) return false;
+  const double la = g_lv.task->getNodeLat(), lo = g_lv.task->getNodeLon();
+  if (lat)  *lat  = la;
+  if (lon)  *lon  = lo;
+  if (sats) *sats = g_lv.task->getGpsSats();
+  if (alt_m)    *alt_m    = g_lv.task->getGpsAltitude();
+  if (fix_time) *fix_time = g_lv.task->getGpsTime();
+  // Lua is built LUA_32BITS, so its floats are SINGLE precision: a latitude
+  // keeps roughly a metre. Fine to display, not fine to log -- so the exact
+  // micro-degrees go across as integers too, which int32 holds without loss
+  // (180e6 is well inside its range). A track logger should write these.
+  if (lat_e6) *lat_e6 = (int32_t)llround(la * 1.0e6);
+  if (lon_e6) *lon_e6 = (int32_t)llround(lo * 1.0e6);
+#if defined(HAS_GPS_MOTION)
+  {
+    float spd = NAN, crs = NAN;
+    if (wadaGpsMotion(&spd, &crs)) {
+      if (speed_kmh)  *speed_kmh  = spd;
+      if (course_deg) *course_deg = crs;
+    }
+  }
+#endif
+  return true;
+}
+#endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
+
+#if CAP_COMPASS
+// wada.sys.compass(). Raw field vector from the board's magnetometer; the only
+// one wired so far is the M9's QMC6309 (variants/thinknode_m9/M9Compass.*).
+// Runs on the UI thread like every other luaHost* bridge; the driver's I2C
+// reads are short and the bus (Wire) has no other task on it.
+#if CAP_IMU
+// wada.sys.accel(). Acceleration in g, sensor frame, as the chip reports it —
+// the mapping to the device's own axes is the consumer's, for the same reason
+// as the magnetometer: it is not documented for this board and had to be
+// measured.
+bool luaHostAccel(float* x, float* y, float* z) {
+#if defined(HAS_M9_IMU)
+  return m9ImuRead(x, y, z);
+#else
+  (void)x; (void)y; (void)z;
+  return false;
+#endif
+}
+#endif  // CAP_IMU
+
+bool luaHostCompass(float* x, float* y, float* z, bool* overflow) {
+#if defined(HAS_M9_COMPASS)
+  return m9CompassRead(x, y, z, overflow);
+#else
+  (void)x; (void)y; (void)z; (void)overflow;
+  return false;
+#endif
+}
+#endif  // CAP_COMPASS
+
+#if CAP_LUA_SDK_EXT || CAP_CONSOLE   // console mode needs it on the V4 too
+// ---- Settings -> App permissions -------------------------------------------
+// You could GRANT a permission but not review or take one back, which is only
+// acceptable on a bench. "Which apps can transmit as me?" has to be answerable,
+// and answerable without knowing a file path.
+//
+// Lists every app that has been ASKED (an entry in perms.kv) plus every INSTALLED
+// app, so an app that has not asked yet is visible with its answer pre-set rather
+// than appearing out of nowhere the first time it wants the radio.
+// user_data packs (app index << 4) | permission bit -- ids[] outlives the sheet.
+static char s_appperm_ids[12][24];
+// user_data packs (app index, permission bit) into one pointer. The shift MUST
+// stay wider than the widest permission bit: it was 4, and LUA_PERM_PROBE is 16,
+// so the probe switch overflowed straight into the index field. Toggling it
+// addressed the NEXT app with bit 0 -- changing no permission, but still writing
+// that app's record, which marks it "asked". An app that has been asked and not
+// granted is refused outright instead of prompting, so an unrelated app silently
+// lost the ability to send with no dialog ever shown (reported on Discord).
+#define APPPERM_SHIFT 8
+static_assert(LUA_PERM_PROBE < (1 << APPPERM_SHIFT),
+              "APPPERM_SHIFT must exceed the widest LUA_PERM_* bit");
+static void appPermsToggleCb(lv_event_t* e) {
+  const intptr_t packed = (intptr_t)lv_event_get_user_data(e);
+  const int idx = (int)(packed >> APPPERM_SHIFT);
+  const int bit = (int)(packed & ((1 << APPPERM_SHIFT) - 1));
+  if (idx < 0 || idx >= 12 || !s_appperm_ids[idx][0]) return;
+  const char* id = s_appperm_ids[idx];
+  bool asked = false;
+  int mask = luaHostAppPerms(id, &asked);
+  if (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED)) mask |= bit;
+  else                                                            mask &= ~bit;
+  luaPermWrite(id, mask);   // writing also RECORDS the decision (entry presence)
+}
+
+static void buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw) {
+  int y = 6;
+  lv_obj_t* hint = lv_label_create(page);
+  lv_label_set_text(hint, TR("What each installed app is allowed to do. Anything an app sends goes out "
+                             "under your node name and cannot be told apart from a message you "
+                             "typed. Private covers direct messages and room posts, and is kept "
+                             "separate from channels on purpose. Turn one off to take it back."));
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(hint, lblw);
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(hint, 6, y);
+  lv_obj_update_layout(hint);
+  y += lv_obj_get_height(hint) + 10;
+
+  // Collect ids: everything installed, plus anything already in perms.kv (an app
+  // can be removed while its decision lives on -- that decision must stay visible
+  // and revocable, or a reinstall silently inherits an old yes).
+  auto& ids = s_appperm_ids;
+  int n = 0;
+  for (int i = 0; i < s_lua_inst_n && n < 12; ++i) {
+    snprintf(ids[n], sizeof ids[n], "%s", s_lua_inst[i].id);
+    n++;
+  }
+  if (s_ui_data_fs) {
+    char path[80]; luaPermPath(path, sizeof path);
+    File f = s_ui_data_fs->open(path, "r");
+    if (f) {
+      char line[64];
+      while (f.available() && n < 12) {
+        const size_t got = f.readBytesUntil('\n', line, sizeof(line) - 1);
+        line[got] = '\0';
+        char* eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        bool dup = false;
+        for (int k = 0; k < n; ++k) if (strcmp(ids[k], line) == 0) { dup = true; break; }
+        if (!dup) { snprintf(ids[n], sizeof ids[n], "%s", line); n++; }
+      }
+      f.close();
+    }
+  }
+
+  if (n == 0) {
+    lv_obj_t* none = lv_label_create(page);
+    lv_label_set_text(none, TR("No apps installed."));
+    lv_obj_set_style_text_font(none, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(none, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(none, 6, y);
+    return;
+  }
+
+  for (int i = 0; i < n; ++i) {
+    const int perm = luaHostSendPerm(ids[i]);
+    char row[40];
+    snprintf(row, sizeof row, "%s", ids[i]);
+    const int h = settingsRowLabel(page, y, 6, row, COLOR_TEXT, nullptr, 56);
+    bool asked = false;
+    const int mask = luaHostAppPerms(ids[i], &asked);
+    const int rowh = (h > 0 ? h : 18);
+    // Four switches: speaking in your name vs reading what arrives, each split
+    // again between channels and private conversations. They are different risks --
+    // posting to a channel you are already in is not the same act as writing to one
+    // person as you, and channel traffic is not your DMs -- so an app that wants
+    // more than one has to be given each.
+    struct { const char* label; int bit; } perms[] = {
+      { TR("Post to channels as me"), LUA_PERM_SEND },
+      { TR("Read channel messages"), LUA_PERM_READ },
+      { TR("Send private messages as me"), LUA_PERM_DM_SEND },
+      { TR("Read private messages"), LUA_PERM_DM_READ },
+      { TR("Send discovery probes"), LUA_PERM_PROBE },
+    };
+    int sy = y + rowh + 2;
+    for (int k = 0; k < (int)(sizeof perms / sizeof perms[0]); ++k) {
+      lv_obj_t* pl = lv_label_create(page);
+      lv_label_set_text(pl, perms[k].label);
+      lv_obj_set_style_text_font(pl, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_pos(pl, 16, sy + 4);
+      lv_obj_t* sw = lv_switch_create(page);
+      lv_obj_set_size(sw, 44, 24);
+      lv_obj_set_pos(sw, lblw - 44 + 6, sy);
+      if (mask & perms[k].bit) lv_obj_add_state(sw, LV_STATE_CHECKED);
+      // user_data packs the app index and the bit, so one callback serves both.
+      lv_obj_add_event_cb(sw, appPermsToggleCb, LV_EVENT_VALUE_CHANGED,
+                          (void*)(intptr_t)((i << APPPERM_SHIFT) | perms[k].bit));
+      sy += 30;
+    }
+    if (!asked) {
+      lv_obj_t* st = lv_label_create(page);
+      lv_label_set_text(st, TR("not asked yet"));
+      lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(st, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_pos(st, 16, sy);
+      sy += 18;
+    }
+    y = sy + 8;
+    (void)perm;
+  }
+}
+
+// ---- wada.mesh.discover: the active half of discovery -----------------------
+// A probe is a zero-hop broadcast that asks every node in earshot to answer, so
+// one call costs airtime across the whole neighbourhood, not just ours. That is
+// also exactly what makes it worth having: a reply PROVES the link works from
+// where you are standing, which no amount of listening can establish.
+//
+// Its own permission rather than reusing "send": posting a message and making
+// every neighbour transmit are different impositions on other people's radios,
+// and a survey app has no business acquiring the ability to speak as the user.
+int luaHostProbePerm(const char* app_id) {
+  bool asked = false;
+  const int mask = luaHostAppPerms(app_id, &asked);
+  if (!asked) return 0;
+  return (mask & LUA_PERM_PROBE) ? 1 : -1;
+}
+void luaHostRequestProbePerm(const char* app_id, const char* app_name) {
+  if (!app_id || !*app_id) return;
+  snprintf(s_lua_perm_target, sizeof s_lua_perm_target, "%s", app_id);
+  luaPermSetBit(app_id, LUA_PERM_PROBE, false);   // refused unless the user says otherwise
+  const char* label = (app_name && *app_name) ? app_name : app_id;
+  char msg[240];
+  snprintf(msg, sizeof msg,
+           TR("\"%s\" wants to send discovery probes.\n\n"
+              "Each probe asks every node in range to reply, so it uses airtime "
+              "on the whole local mesh, not just yours.\n\n"
+              "Nothing is sent under your name and no message is transmitted."),
+           label);
+  showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_PROBE, true); });
+}
+// type_filter is a bitmask over ADV_TYPE_*; 0 means every node type.
+// Returns the scan tag (non-zero) if the probe went out.
+uint32_t luaHostMeshDiscover(int type_filter) {
+  return the_mesh.uiStartDiscoverScan((uint8_t)(type_filter & 0xFF));
+}
+#endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
+
+void luaHostSelfInfo(char* name, size_t name_cap, double* lat, double* lon,
+                    char* pk_hex, size_t pk_cap, int32_t* lat_e6, int32_t* lon_e6) {
+  snprintf(name, name_cap, "%s", the_mesh.getNodePrefs()->node_name);
+  *lat = g_lv.task ? g_lv.task->getNodeLat() : 0.0;
+  *lon = g_lv.task ? g_lv.task->getNodeLon() : 0.0;
+  if (lat_e6) *lat_e6 = (int32_t)llround(*lat * 1.0e6);
+  if (lon_e6) *lon_e6 = (int32_t)llround(*lon * 1.0e6);
+  if (pk_hex && pk_cap) luaPubkeyHex(the_mesh.self_id.pub_key, 4, pk_hex, pk_cap);
+}
+
+// ---- Discovery results (read side) -----------------------------------------
+// The table the Discover app fills. Reading it is passive -- these are replies
+// the radio already received -- so it is ungated, like contacts() and rx_log().
+// FIRING a probe is the gated half; see luaHostMeshDiscover below.
+int luaHostDiscoverCount() { return the_mesh.discoverCount(); }
+void luaHostDiscoverClear() { the_mesh.discoverClear(); }
+int luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, size_t name_cap,
+                      int* type, int* rssi, float* snr, float* their_snr, int* hops,
+                      uint32_t* first_ms_ago, uint32_t* last_ms_ago, int* heard) {
+  MyMesh::DiscoverHit h;
+  if (idx < 0 || !the_mesh.discoverGet((uint8_t)idx, h)) return 0;
+  luaPubkeyHex(h.pubkey, 4, pk_hex, pk_cap);
+  // A responder is only named if the user already has it as a contact. A
+  // discovery reply carries no name of its own, and inventing one would let an
+  // app present an unknown node as a known one.
+  ContactInfo* c = the_mesh.lookupContactByPubKey(h.pubkey, PUB_KEY_SIZE);
+  snprintf(name, name_cap, "%s", c ? c->name : "");
+  *type      = h.node_type;
+  *rssi      = h.our_rssi;
+  *snr       = (float)h.our_snr_q4 / 4.0f;
+  // The reverse link: how well THEY heard US. This is the half a wardriving
+  // survey cannot get any other way, and it is why a probe beats listening.
+  *their_snr = (float)h.their_snr_q4 / 4.0f;
+  *hops      = h.path_len;
+  const uint32_t now = millis();
+  *first_ms_ago = now - h.first_ms;
+  *last_ms_ago  = now - h.last_ms;
+  *heard        = h.heard;
+  return 1;
+}
+
+// ---- wada.ui.input: one modal text field, reusing the file-manager prompt ----
+// Exactly one callback per call: the text on OK, nullptr on any other close, so
+// an app can always re-enable itself.
+static void (*s_lua_prompt_cb)(const char*) = nullptr;
+static void luaPromptDeliver(const char* text) {
+  void (*cb)(const char*) = s_lua_prompt_cb;
+  s_lua_prompt_cb = nullptr;
+  if (cb) cb(text);
+}
+void luaHostTextPromptCancel() {          // closed some other way: report a cancel
+  void (*cb)(const char*) = s_lua_prompt_cb;
+  s_lua_prompt_cb = nullptr;
+  if (cb) cb(nullptr);
+}
+#if CAP_SENSORS
+// wada.sys.env(). Reports per-field presence rather than a value with a magic
+// "missing" number, so an app can distinguish an absent sensor from a real
+// reading of zero. The snapshot is the same one the Sensors tab renders.
+void luaHostEnv(bool* ok, bool* have_t, float* temp_c, bool* have_h, float* hum_pct,
+                bool* have_p, float* press_hpa, bool* have_alt, int* alt_m) {
+  *ok = false;
+  if (!g_lv.task) return;
+  UITask::LocalEnvSnapshot snap;
+  if (!g_lv.task->getLocalEnvSnapshot(snap) || !snap.query_ok) return;
+  // Two possible sources for temperature and humidity: the BME280 on the
+  // Expansion Kit and the GXHTC3 on the board. Prefer the BME, fall back.
+  *have_t = snap.have_bme_temp || snap.have_gxhtv3_temp;
+  *temp_c = snap.have_bme_temp ? snap.bme_temp_c : snap.gxhtv3_temp_c;
+  *have_h = snap.have_bme_hum || snap.have_gxhtv3_hum;
+  *hum_pct = snap.have_bme_hum ? snap.bme_hum_pct : snap.gxhtv3_hum_pct;
+  *have_p  = snap.have_bme_pressure;
+  *press_hpa = snap.bme_pressure_hpa;
+  *have_alt  = snap.have_bme_alt;
+  *alt_m     = snap.bme_alt_m;
+  *ok = (*have_t || *have_h || *have_p);
+}
+#endif
+
+// App teardown. Drops the callback FIRST so the close below cannot re-enter a
+// Lua state that is being torn down, then closes the dialog -- it lives on
+// lv_layer_top and would otherwise outlive the app that opened it.
+void luaHostTextPromptDismiss() {
+  s_lua_prompt_cb = nullptr;
+  fmPromptClose();
+}
+void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const char*)) {
+  luaHostTextPromptCancel();              // a second prompt cancels the first
+  // Register the callback AFTER the dialog exists. fmTextPrompt opens with its
+  // own fmPromptClose(), which reports a cancel to whatever is pending -- so
+  // setting cb first made every prompt fire cb(nil) before the user saw it.
+  fmTextPrompt(title && *title ? title : TR("Enter text"), initial, luaPromptDeliver);
+  s_lua_prompt_cb = cb;
+}
+#endif
 // True when the chat history lives on a removable SD card (T-Deck SPI SD or the
 // Tanmatsu's SD_MMC) rather than internal flash — those devices get the deep
 // message ring (MAX_UI_MESSAGES_SD) since the card has room for the bigger file.
@@ -41929,17 +47983,24 @@ static bool uiDataFsIsSdCard() {
   if (!uiDataFsReady()) return false;
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   return s_ui_data_fs == &SD_MMC;
-#elif defined(HAS_TDECK_GT911)
+#elif defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
   return s_ui_data_fs == &SD;
 #else
   return false;
 #endif
 }
 static File uiDataOpen(const char* name, const char* mode) {
+#if defined(TDP4_POKE_TRACE)
+  // #167 hunt: every ui-data open with its issuing core. Writes ([SDW]) were all correctly on
+  // core 0 during a flashing manual flow -- so now READS are traced too ([SDR]): a read is the
+  // same FATFS/SDMMC critical-section machinery, and UI flows read constantly from core 1.
+  if (mode && mode[0] != 'r') printf("[SDW] %lu core%d uiData %s %s\n", (unsigned long)millis(), xPortGetCoreID(), mode, name);
+  else                        printf("[SDR] %lu core%d uiData r %s\n", (unsigned long)millis(), xPortGetCoreID(), name);
+#endif
   if (!uiDataFsReady()) return File();
   char p[80]; snprintf(p, sizeof p, "%s%s", s_ui_data_root, name);
   File f = s_ui_data_fs->open(p, mode);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
   // A failed WRITE open on the SD-backed history store is the wedge tell (reads
   // fail legitimately on first boot). Called from the loop task AND the core-0
   // history worker — sdNoteIoFailure is a volatile stamp, safe from both.
@@ -41978,6 +48039,7 @@ static bool readHistoryRec(File& f, void* dst, size_t cur_sz, size_t disk_sz) {
 
 bool UITask::loadThreadsFromStorage() {
 #if defined(ESP32)
+  uiDataRemove(k_ui_threads_tmp_path);   // sweep an orphaned tmp from an interrupted save (mirrors the msgs-tmp sweep)
   File f = uiDataOpen(k_ui_threads_path, "r");
   if (!f) return false;
 
@@ -42491,8 +48553,19 @@ bool UITask::loadHistoryFromStorage() {
 
 bool UITask::saveThreadsToStorage() {
 #if defined(ESP32)
+#if defined(HAS_TDISPLAY_P4)
+  // #167: the threads file is rewritten on every contact add/delete and chat-state change --
+  // hop the write to the core-0 storage task like every other hot writer (see p4StorageCall).
+  if (!p4OnStorageTask()) {
+    struct A { UITask* t; bool ok; } a{ this, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->ok = a->t->saveThreadsToStorage(); }, &a);
+    return a.ok;
+  }
+#endif
   WdtHeavyGuard _wg;
-  File f = uiDataOpen(k_ui_threads_path, "w");
+  // Write to the tmp, commit with rename: a power cut mid-write leaves the old
+  // index intact instead of a short file the next boot would quarantine.
+  File f = uiDataOpen(k_ui_threads_tmp_path, "w");
   if (!f) return false;
 
   UiHistoryHeader hdr{};
@@ -42505,7 +48578,7 @@ bool UITask::saveThreadsToStorage() {
   // this (frequently-rewritten, small) file does instead.
   hdr.msgcount              = static_cast<uint32_t>(_msgcount);
   if (f.write(reinterpret_cast<const uint8_t*>(&hdr), sizeof(hdr)) != sizeof(hdr)) {
-    f.close(); return false;
+    f.close(); uiDataRemove(k_ui_threads_tmp_path); return false;
   }
 
   UiHistoryThread t{};
@@ -42522,11 +48595,11 @@ bool UITask::saveThreadsToStorage() {
     strncpy(t.name, _ui_threads[i].name, MAX_THREAD_NAME);
     t.name[MAX_THREAD_NAME] = '\0';
     if (f.write(reinterpret_cast<const uint8_t*>(&t), sizeof(t)) != sizeof(t)) {
-      f.close(); return false;
+      f.close(); uiDataRemove(k_ui_threads_tmp_path); return false;
     }
   }
   f.close();
-  return true;
+  return uiDataReplaceFile(k_ui_threads_path, k_ui_threads_tmp_path);
 #else
   return false;
 #endif
@@ -42555,7 +48628,7 @@ static bool uiMsgsWriteResult(bool ok) {
     s_msgs_write_fail_ms = m ? m : 1;
     s_msgs_write_fail_epoch = ep;
     if (s_msgs_write_fails < 0xFFFFu) s_msgs_write_fails = s_msgs_write_fails + 1;
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
     if (s_ui_data_fs == &SD) sdNoteIoFailure();
 #endif
   }
@@ -42660,6 +48733,15 @@ static bool uiSegWriteRecords(File& f, const UITask::UIMessage* recs, int n) {
 // the whole point of the segmented layout).
 static bool uiSegAppendRecords(uint32_t first_seq, bool create,
                                const UITask::UIMessage* recs, int n) {
+#if defined(HAS_TDISPLAY_P4)
+  // #167: history writes hop to the core-0 storage task (see p4StorageCall in DataStore.cpp) --
+  // a core-1 SD write can mask the DSI frame-restart ISR long enough to drop a display frame.
+  if (!p4OnStorageTask()) {
+    struct A { uint32_t fs; bool c; const UITask::UIMessage* r; int n; bool ok; } a{ first_seq, create, recs, n, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->ok = uiSegAppendRecords(a->fs, a->c, a->r, a->n); }, &a);
+    return a.ok;
+  }
+#endif
   WdtHeavyGuard _wg;
   errno = 0;
   char name[48];
@@ -42712,6 +48794,13 @@ static bool uiSegAppendRecords(uint32_t first_seq, bool create,
 // lesson from the single-file store).
 static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs, int n,
                               bool sync_writer) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {   // #167: hop to core 0 (see uiSegAppendRecords)
+    struct A { uint32_t fs; const UITask::UIMessage* r; int n; bool sw; bool ok; } a{ first_seq, recs, n, sync_writer, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->ok = uiSegCompactWrite(a->fs, a->r, a->n, a->sw); }, &a);
+    return a.ok;
+  }
+#endif
   WdtHeavyGuard _wg;
   errno = 0;
   char fin[48], tmp[48];
@@ -42745,6 +48834,12 @@ static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs,
 // Remove a retired segment (ring grew past retention; its records are gone
 // from RAM too).
 static void uiSegRemoveFile(uint32_t first_seq) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {   // #167: hop to core 0 (see uiSegAppendRecords)
+    p4StorageCall([](void* p){ uiSegRemoveFile((uint32_t)(uintptr_t)p); }, (void*)(uintptr_t)first_seq);
+    return;
+  }
+#endif
   char name[48];
   uiSegName(first_seq, "", name, sizeof name);
   uiDataRemove(name);
@@ -43229,8 +49324,67 @@ bool UITask::saveMsgsToStorage() {
 // ============================================================
 // Thread management
 // ============================================================
+#if CAP_CONSOLE
+// Walk the thread table for the console. Read-only: seeing a thread listed with
+// its unread count must not change that count.
+int UITask::consoleThreadAt(int idx, char* name, size_t cap, int* unread, bool* is_channel) {
+  if (!_ui_threads || idx < 0) return 0;
+  int seen = 0;
+  for (int i = 0; i < MAX_UI_THREADS; ++i) {
+    if (!_ui_threads[i].used) continue;
+    if (seen++ != idx) continue;
+    snprintf(name, cap, "%s", _ui_threads[i].name);
+    if (unread)     *unread     = (int)_ui_threads[i].unread;
+    if (is_channel) *is_channel = _ui_threads[i].channel;
+    return 1;
+  }
+  return 0;
+}
+
+// Read back a thread's stored messages, NEWEST first. Read-only, like
+// consoleThreadAt: showing history is not the same act as clearing unread, so
+// the caller decides whether to also mark it read.
+int UITask::consoleHistoryAt(const char* thread, int back, char* sender, size_t sc,
+                             char* text, size_t tc, uint32_t* ts, bool* outgoing) {
+  if (!_ui_msgs || !thread || !*thread || back < 0) return 0;
+  int seen = 0;
+  for (int n = 0; n < _ui_msg_count; ++n) {
+    // walk backwards from the newest record in the ring
+    int i = (_ui_msg_head - 1 - n + _ui_msg_cap * 2) % _ui_msg_cap;
+    const UIMessage& m = _ui_msgs[i];
+    if (strncmp(m.thread, thread, MAX_THREAD_NAME) != 0) continue;
+    if (seen++ != back) continue;
+    snprintf(sender, sc, "%s", m.sender);
+    snprintf(text,   tc, "%s", m.text);
+    if (ts)       *ts       = m.ts;
+    if (outgoing) *outgoing = m.outgoing;
+    return 1;
+  }
+  return 0;
+}
+
+// Clearing unread is an explicit act, which is the whole point: the monitor
+// showing a message must not count as having read it.
+bool UITask::consoleMarkThreadRead(const char* name) {
+  if (!_ui_threads || !name || !*name) return false;
+  for (int i = 0; i < MAX_UI_THREADS; ++i) {
+    if (!_ui_threads[i].used) continue;
+    if (strncmp(_ui_threads[i].name, name, MAX_THREAD_NAME) != 0) continue;
+    markThreadRead(i);
+    return true;
+  }
+  return false;
+}
+#endif
+
 int UITask::findOrCreateThread(const char* name, bool channel) {
   if (!name || !name[0]) return -1;
+  // _ui_threads is allocated further down begin(), which console mode returns
+  // before, so it is null there. An incoming message reached here and
+  // dereferenced it: the device panicked, and since it rebooted straight back
+  // into console mode it did so every time a message arrived. Guard rather than
+  // allocate: in console mode nothing reads the table.
+  if (!_ui_threads) return -1;
   for (int i = 0; i < MAX_UI_THREADS; ++i) {
     if (_ui_threads[i].used && _ui_threads[i].channel == channel &&
         strncmp(_ui_threads[i].name, name, MAX_THREAD_NAME) == 0) return i;
@@ -43372,6 +49526,13 @@ void UITask::refreshThreadsFromMesh() {
       _ui_threads[t].mesh_contact_idx = static_cast<int16_t>(i);
       memcpy(_ui_threads[t].mesh_contact_pub, c.id.pub_key, sizeof(_ui_threads[t].mesh_contact_pub));
       memcpy(_ui_threads[t].mesh_contact_key6, c.id.pub_key, sizeof(_ui_threads[t].mesh_contact_key6));
+      // Follow a peer's rename. The thread was matched by KEY above, but inbound
+      // messages are routed by findThreadByName(sender) — so leaving the old name
+      // here spawned a SECOND thread for the same peer the next time they wrote.
+      if (c.name[0] && strncmp(_ui_threads[t].name, c.name, MAX_THREAD_NAME) != 0) {
+        strlcpy(_ui_threads[t].name, c.name, sizeof(_ui_threads[t].name));
+        _threads_dirty = true;
+      }
     }
   }
 #ifdef MAX_GROUP_CHANNELS
@@ -43496,6 +49657,7 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
                           uint16_t in_scope) {
   int t_idx = findOrCreateThread(thread, channel);
   if (t_idx < 0) return -1;
+  if (!_ui_msgs) return -1;   // console mode: the ring is never allocated
   UIMessage& m = _ui_msgs[_ui_msg_head];
   // Full ring: this append overwrites the oldest record — tell the segment
   // table so a fully-aged-out segment file gets unlinked.
@@ -43888,10 +50050,144 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
 // ============================================================
 // UITask::begin
 // ============================================================
+#if CAP_CONSOLE
+#include "ConsoleUI.h"
+// Console mode (CONSOLE_MODE.md). Decided once at begin() from a boot pref and
+// never re-read, so nothing can flip the front end mid-session. When set, LVGL
+// is never initialised and no draw buffer is allocated: that skip IS the saving,
+// so it has to be a genuine one and not a hidden LVGL instance.
+static bool s_console_mode = false;
+bool uiConsoleModeActive() { return s_console_mode; }
+
+// Route a UI alert to the console. Callers in main.cpp keep calling showAlert()
+// and do not need to know which front end is running.
+static void consoleAlert(const char* msg) {
+  if (s_console_mode && msg) consoleWriteLine(msg);
+}
+#else
+bool uiConsoleModeActive() { return false; }
+#endif
+
+// The chat store: message ring + thread table, both PSRAM. Extracted from
+// begin() because CONSOLE MODE needs it too. Console mode returns from begin()
+// long before the LVGL setup, and skipping this left _ui_threads null, which an
+// incoming message then dereferenced. It is also what makes unread counts work
+// there: the console shows a message as it arrives, but the message is still
+// appended and still marked unread, so opening the thread later is what clears
+// it, not having seen it scroll past.
+void UITask::allocMessageStore() {
+#if defined(ESP32)
+  _ui_msg_cap = uiDataFsIsSdCard() ? MAX_UI_MESSAGES_SD : MAX_UI_MESSAGES;
+  uiDataEnsureDirs();   // segment dir exists before the loader scans / the first append
+#endif
+  size_t msgs_bytes          = sizeof(UIMessage) * (size_t)_ui_msg_cap;
+  const size_t threads_bytes = sizeof(UIThread)  * MAX_UI_THREADS;
+  if (!_ui_msgs) {
+    _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
+    if (!_ui_msgs && _ui_msg_cap > MAX_UI_MESSAGES) {
+      // PSRAM can't fit the deep ring (unexpected) — drop to the base size rather
+      // than strand 1.3 MB in internal RAM via the fallback below.
+      _ui_msg_cap = MAX_UI_MESSAGES;
+      msgs_bytes  = sizeof(UIMessage) * (size_t)_ui_msg_cap;
+      _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
+    }
+    if (!_ui_msgs) _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_8BIT);
+  }
+  if (!_ui_threads) {
+    _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_SPIRAM);
+    if (!_ui_threads) _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_8BIT);
+  }
+  if (_ui_msgs)    memset(_ui_msgs,    0, msgs_bytes);
+  if (_ui_threads) memset(_ui_threads, 0, threads_bytes);
+  for (int i = 0; i < MAX_UI_THREADS; ++i) {
+    _ui_threads[i].mesh_contact_idx  = -1;
+    memset(_ui_threads[i].mesh_contact_pub, 0, sizeof(_ui_threads[i].mesh_contact_pub));
+    memset(_ui_threads[i].mesh_contact_key6, 0, sizeof(_ui_threads[i].mesh_contact_key6));
+    _ui_threads[i].mesh_channel_slot = -1;
+  }
+}
+
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
   _display    = display;
   _sensors    = sensors;
   _node_prefs = node_prefs;
+
+#if CAP_CONSOLE && defined(ESP32)
+  s_console_mode = touchPrefsGetConsoleMode();
+  // SELF-HEAL. If the previous boot panicked while console mode was on, come up
+  // in the graphical UI and turn console mode off. Without this a crash on the
+  // console path is unrecoverable from the device: it panics, reboots into the
+  // console, panics again. The plan called for three ways out and this is the
+  // one that does not need the user to know anything.
+  if (s_console_mode && esp_reset_reason() == ESP_RST_PANIC) {
+    s_console_mode = false;
+    touchPrefsSetConsoleMode(false);
+    Serial.println("[BOOT] console mode disabled after a panic — starting the UI");
+  }
+  if (s_console_mode) {
+    // Nothing below this point runs: no lv_init(), no draw buffer, no widget
+    // tree. The console owns the panel from here.
+    // The chat store, exactly as the graphical path builds it. Console mode
+    // needs it for two reasons: an incoming message dereferences the thread
+    // table, and the monitor below relies on the NORMAL append path so a
+    // message stays unread until its thread is actually opened.
+    allocMessageStore();
+    Serial.println("[BOOT] console: begin"); Serial.flush();
+    consoleBegin(_display);
+    Serial.println("[BOOT] console: panel up"); Serial.flush();
+    consoleBanner(the_mesh.getNodePrefs() ? the_mesh.getNodePrefs()->node_name : nullptr,
+                  FIRMWARE_VERSION);
+    consoleWriteLineC(CC_DIM, "'help' for everything, 'ui' for the graphical interface");
+    consoleWriteLine("");
+    Serial.println("[BOOT] console: text ok"); Serial.flush();
+    the_mesh.setTerminalSink(&consoleWriteLine);
+    // Screen-timeout state. Set further down begin() for the graphical path,
+    // which console mode returns before, so without this _screen_timeout_ms
+    // stayed at its constructor value and the panel never slept: the console
+    // stayed lit indefinitely. Same pref the UI reads.
+    touchPrefsBegin();
+    _screen_timeout_ms = (uint32_t)touchPrefsGetScreenTimeoutSecs() * 1000u;
+    _last_input_ms     = millis();
+    _screen_off        = false;
+    Serial.printf("[BOOT] console: screen timeout %lus\n",
+                  (unsigned long)(_screen_timeout_ms / 1000u));
+    Serial.println("[BOOT] console: sink set"); Serial.flush();
+    return;
+  }
+#endif
+
+#if defined(WADA_LUA_SPIKE)
+  luaSpikeRun();   // Phase 0 measurement pass (LUA_APPS.md) — spike builds only
+#endif
+
+  // #161 one-time heal: presets used to write airtime_factor = pct/100 (a 10% preset
+  // configured ~91% duty). Exact-preset matches with the old value get the correct
+  // factor rewritten + persisted; see healPresetAirtimeFactor for the guard.
+  healPresetAirtimeFactor();
+
+  // #271: seed the region registry with the default and per-channel scopes held
+  // in touch prefs. MyMesh::begin() seeds the companion-configured default from
+  // NodePrefs; the touch UI stores its display name separately, so it must be
+  // included here as well. ensureRegion() canonicalises and de-duplicates, so
+  // channels sharing a region collapse to one slot and re-running each boot is a
+  // no-op. Registering a region is what lets an incoming message be NAMED as
+  // being from it. A channel scoped to "#denmark" means we hold that key, so
+  // every "#denmark" message becomes identifiable, not just this channel's.
+  {
+    char rgn[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    if (touchPrefsGetRegionScope(rgn, sizeof rgn) > 0 && rgn[0])
+      the_mesh.regionRegistry().ensureRegion(rgn);
+  }
+#ifdef MAX_GROUP_CHANNELS
+  for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+    char rgn[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    if (touchPrefsGetChannelScope(i, rgn, sizeof rgn) > 0 && rgn[0])
+      the_mesh.regionRegistry().ensureRegion(rgn);
+  }
+#endif
+
+  // #207 auto-retry: apply the persisted Radio & Mesh toggle (default ON).
+  the_mesh.setCompanionRetryEnabled(touchPrefsGetRetryEcho());
 
 #if defined(ESP32)
   // Clock floor (#89): restore the highest epoch this device ever handed out so
@@ -43918,6 +50214,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   if (_sensors && _node_prefs && _node_prefs->gps_enabled) {
     _sensors->setSettingValue("gps", "1");
   }
+  // Map options exposes the same source toggle on T-Deck and T-Pager. Restore
+  // that choice on both boards; forcing it off on Pager made a selected SD pack
+  // silently revert to the internal/server cache after every reboot.
   s_tiles_from_sd = touchPrefsGetTilesFromSd();   // map tile source: server (default) vs microSD
   s_map_night = touchPrefsGetMapNight();          // map night mode (render-time tile invert)
   s_map_show_coords   = touchPrefsGetMapShowCoords();     // per-element map text/marker visibility
@@ -43950,7 +50249,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // sluggishness. 160 MHz is the known-good 2x bump; 240 MHz showed RGB565
   // noise on the map's SJPG decode, so 160 is the ceiling. The T-Deck sets no
   // ESP32_CPU_FREQ so it already boots at the 240 MHz default — bumping only
-  // the V4 here avoids dragging the T-Deck *down* to 160.
+  // the V4 here avoids dragging the T-Deck *down* to 160. The V4-R8 env now
+  // sets ESP32_CPU_FREQ=240 itself (whole of setup() at full clock), so this
+  // is a no-op there.
 #if !defined(HAS_TDECK_GT911)
   setCpuFrequencyMhz(240);   // S3 max; watch the map tiles for SJPG decode noise (drop to 160 if it shows)
 #endif
@@ -43965,6 +50266,15 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     setenv("TZ", tz, 1);
     tzset();
   }
+
+#if defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8)
+  // Boot storage setup may have mounted SD before UITask starts. Synchronize
+  // the UI's lifecycle state before tile-backend selection and before the
+  // first loop tick can run health/remount logic. (R8: without this the
+  // reinsert watch SD.end()'d the LIVE DataStore volume ~30 s after boot —
+  // spurious "SD card remounted" toast, or a slow card stranded unmounted.)
+  sdAdoptLiveMount();
+#endif
 
   // Mount the dedicated tiles LittleFS partition. formatOnFail=true so a
   // pristine partition (all-0xFF after the partition-table upgrade) gets
@@ -44024,8 +50334,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // fmSdTryMount() unconditionally would SD.end()+remount the card mid-boot and
   // can fail while DataStore holds the volume — which left the map stuck on the
   // storage error. Only walk the mount ladder if the card isn't already up.
-  else if (SD.cardType() != CARD_NONE || fmSdTryMount()) {
-    s_sd_mounted = true;     // trust the live mount; skip future remount ladders
+  else if (sdAdoptLiveMount() || fmSdTryMount()) {
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';   // cache to the SD ROOT /tiles/<z>/<x>/<y>.jpg — the same place
                              // the offline library + microSD-tile mode use, so the Wi-Fi cache
@@ -44041,8 +50350,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // dedicated "tiles" partition — so the LittleFS mount above fails and the map showed
   // "Reflash the tiles partition". Fall back to the microSD card like the T-Deck: cache
   // Wi-Fi tiles to the SD ROOT /tiles/<z>/<x>/<y>.jpg (merges with any offline /maps library).
-  else if (SD.cardType() != CARD_NONE || fmSdTryMount()) {
-    s_sd_mounted     = true;
+  else if (fmSdTryMount()) {
     s_tile_fs        = &SD;
     s_tile_root[0]   = '\0';
     s_tiles_fs_ready = true;
@@ -44104,12 +50412,40 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // mirrors this when the toggle flips at runtime.
   s_tile_fs_default = s_tile_fs;
   strncpy(s_tile_root_default, s_tile_root, sizeof s_tile_root_default - 1);
-#if CAP_SD
-  if (s_tiles_from_sd && (SD.cardType() != CARD_NONE || fmSdTryMount())) {
-    s_sd_mounted = true;
+#if CAP_SD || defined(TLORA_PAGER)
+  if (s_tiles_from_sd && (sdAdoptLiveMount() || fmSdTryMount())) {
     s_tile_fs = &SD;
     s_tile_root[0] = '\0';
+    s_tiles_fs_ready = true;
+    if (!s_tile_fs_default) {
+      s_tile_fs_default = &SD;
+      s_tile_root_default[0] = '\0';
+    }
     WIRE_DBG("[TILE] microSD-tile mode -> caching Wi-Fi tiles on SD /tiles (merges with library)");
+  }
+#endif
+#if defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+  // Prefer the SD card for the Wi-Fi tile cache even when "Tiles from SD card"
+  // is off. The 4.75 MB tiles partition fills after a few panned screens of
+  // downloads and has NO eviction, after which every further tile fetch fails
+  // forever ("panning doesn't reload tiles"). Cache to the card root /tiles
+  // (same layout the Launcher T-Deck uses; merges with any dropped-in pack).
+  // The partition stays registered as s_tile_fs_default, so
+  // mapNoteStorageChanged falls back to it if the card ever wedges or (R8) is
+  // pulled — maps stay online either way.
+#if defined(HAS_THINKNODE_M9)
+  // M9: the card is BUILT IN — always worth walking the full mount ladder.
+  if (s_tile_fs != &SD && (sdAdoptLiveMount() || fmSdTryMount())) {
+#else
+  // R8: the Expansion-Kit card is REMOVABLE — follow the boot mount only
+  // (adopting is a cached cardType() check; a card-less boot pays nothing and
+  // a late-inserted card is adopted by sdHealthTick + mapNoteStorageChanged).
+  if (s_tile_fs != &SD && sdAdoptLiveMount()) {
+#endif
+    s_tile_fs = &SD;
+    s_tile_root[0] = '\0';
+    s_tiles_fs_ready = true;
+    printf("[TILE] caching Wi-Fi tiles on SD /tiles\n");
   }
 #endif
 #endif
@@ -44243,35 +50579,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // (5000 msgs ≈ 1.3 MB PSRAM — the card comfortably holds the bigger file);
   // internal-flash devices keep 500. Decided once, before the alloc; the loader
   // linearizes a history file written under either capacity.
-#if defined(ESP32)
-  _ui_msg_cap = uiDataFsIsSdCard() ? MAX_UI_MESSAGES_SD : MAX_UI_MESSAGES;
-  uiDataEnsureDirs();   // segment dir exists before the loader scans / the first append
-#endif
-  size_t msgs_bytes          = sizeof(UIMessage) * (size_t)_ui_msg_cap;
-  const size_t threads_bytes = sizeof(UIThread)  * MAX_UI_THREADS;
-  if (!_ui_msgs) {
-    _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
-    if (!_ui_msgs && _ui_msg_cap > MAX_UI_MESSAGES) {
-      // PSRAM can't fit the deep ring (unexpected) — drop to the base size rather
-      // than strand 1.3 MB in internal RAM via the fallback below.
-      _ui_msg_cap = MAX_UI_MESSAGES;
-      msgs_bytes  = sizeof(UIMessage) * (size_t)_ui_msg_cap;
-      _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_SPIRAM);
-    }
-    if (!_ui_msgs) _ui_msgs = (UIMessage*)heap_caps_malloc(msgs_bytes, MALLOC_CAP_8BIT);
-  }
-  if (!_ui_threads) {
-    _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_SPIRAM);
-    if (!_ui_threads) _ui_threads = (UIThread*)heap_caps_malloc(threads_bytes, MALLOC_CAP_8BIT);
-  }
-  if (_ui_msgs)    memset(_ui_msgs,    0, msgs_bytes);
-  if (_ui_threads) memset(_ui_threads, 0, threads_bytes);
-  for (int i = 0; i < MAX_UI_THREADS; ++i) {
-    _ui_threads[i].mesh_contact_idx  = -1;
-    memset(_ui_threads[i].mesh_contact_pub, 0, sizeof(_ui_threads[i].mesh_contact_pub));
-    memset(_ui_threads[i].mesh_contact_key6, 0, sizeof(_ui_threads[i].mesh_contact_key6));
-    _ui_threads[i].mesh_channel_slot = -1;
-  }
+  allocMessageStore();
   // NOTE: a dev-era "interop safety" block used to live here that, on EVERY
   // boot, force-reset manual_add_contacts=0 and OR'd AUTO_ADD_CHAT|REPEATER into
   // autoadd_config, then savePrefs()'d. That silently clobbered the user's saved
@@ -44284,6 +50592,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _msgs_dirty = false;
   _next_msgs_flush_ms = 0;
   loadHistoryFromStorage();
+#if defined(TLORA_PAGER)
+  // From here on, the loaded ring and its filesystem are one atomic history
+  // generation. If no backing store was available, wait for a reboot rather
+  // than adopting an inserted card whose on-disk history was never loaded.
+  s_ui_data_boot_finalized = true;
+#endif
   _next_mesh_thread_refresh = millis() + 2000;
   refreshThreadsFromMesh();
   _touch_screen = TouchUiScreen::Home;
@@ -44291,8 +50605,22 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(HAS_TOUCH_UI)
   g_lv.task = this;
   if (!g_lv.ready) {
+    // Claim the net worker's 8 KB internal stack NOW, while the heap is still
+    // whole. Its own comment always said "allocated at UITask::begin() time",
+    // but the only caller was the fallback inside ensureTileFetchTaskRunning()
+    // — which runs when the user first opens the map/store, by which point the
+    // Wi-Fi driver has taken the internal heap. On the V4 that left a 4-byte
+    // largest block, so the worker could never start and tiles, the update
+    // check and the app catalog were all silently dead.
+    reserveTileFetchStack();
     lv_init();
     initTouchFontFallbacks();
+    // NB: re-pointing the LVGL theme's font here does NOT work (tried, verified
+    // on device: no effect) and neither does a text_font style on the screen /
+    // top / sys layers — the theme applies a font per widget, which beats both.
+    // Non-ASCII coverage is handled at the label instead: useChainedFont() swaps
+    // a resolved raw Montserrat for its chained twin, and every label that sets
+    // no font of its own calls it.
 #if CAP_ROUND_CORNERS
     STATUSBAR_H = SB_TOP_PAD + SB_ROW * 2;   // top safe-area + two rows (round phone panel)
 #else
@@ -44328,17 +50656,25 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       const int draw_band_w = 240;
 #endif
       const size_t buf_bytes = sizeof(lv_color_t) * draw_band_w * LV_DRAW_BUF_LINES;
-      // Internal DMA-capable DRAM — this is the hot loop's read source
-      // during SPI flush. PSRAM (~80 MHz QSPI) is ~3× slower than
-      // internal SRAM. INTERNAL|DMA also makes it eligible for SPI DMA
-      // transfers if the display driver ever grows them. Fall back to
-      // PSRAM if internal DRAM is too fragmented at boot.
+      // Internal DMA-capable DRAM — this is the hot loop's read source during
+      // SPI flush. The T-Pager is deliberately the exception: ST7796LCDDisplay
+      // uses synchronous pushColors (not DMA), while BLE needs this contiguous
+      // internal block later when a client connects and negotiates security.
+#if defined(TLORA_PAGER)
+      g_draw_buffer = (lv_color_t*)heap_caps_malloc(
+          buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (!g_draw_buffer) {
+        g_draw_buffer = (lv_color_t*)heap_caps_malloc(
+            buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+      }
+#else
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(
           buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) {
         g_draw_buffer = (lv_color_t*)heap_caps_malloc(
             buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       }
+#endif
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
       // Last-ditch under severe DRAM pressure — e.g. a unit whose PSRAM didn't
       // init (some T-Deck clones are QSPI, not the expected OPI), so even SPIRAM
@@ -44363,6 +50699,26 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // is the single point where orientation is established for the session.
 #if defined(ESP32)
     s_ui_rotation = touchPrefsGetUiRotation();
+#if defined(HELTEC_LORA_V4_R8)
+    // V4-R8: force PORTRAIT at every boot. A tester who switched to landscape got stuck: the
+    // shared cap-touch landscape transform was tuned on the V4's ST7789 driver, whose portrait
+    // baseline is panel rotation 2 (+180) -- the R8's LovyanGFX panel runs baseline 0, so the
+    // same map landed every touch point-mirrored and the setting could not be reached to undo
+    // it. The R8-specific map in HeltecV4CapTouch.cpp is the candidate fix (tester-verify);
+    // until a tester confirms it, booting always returns to the known-good portrait, so the
+    // worst case of trying landscape is a reboot.
+    if (s_ui_rotation != LV_DISP_ROT_NONE) {
+      s_ui_rotation = LV_DISP_ROT_NONE;
+      touchPrefsSetUiRotation(LV_DISP_ROT_NONE);
+      // Heal the PANEL too: main.cpp's boot wordmark already applied the saved
+      // landscape rotation before this guard ran, so reverting only the pref
+      // left LVGL rendering portrait frames into a landscape-rotated panel —
+      // one fully garbled session per landscape attempt. (::display — the
+      // begin() parameter shadows the global, and the DisplayDriver base has
+      // no setDisplayRotation.)
+      ::display.setDisplayRotation(0);
+    }
+#endif
 #if defined(HAS_TDECK_GT911)
     // The T-Deck panel is landscape-native (320x240) — the early boot wordmark
     // already renders upright at panel rotation 3. Always run the UI in
@@ -44447,7 +50803,19 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
     // Accent-popup picker (both boards: on-screen + physical keyboard). Default on.
     s_accent_popups = touchPrefsGetAccentPopups();
+    {
+      multi_heap_info_t hi{};
+      heap_caps_get_info(&hi, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      Serial.printf("[MEM] boot int: total=%u free=%u largest=%u minfree=%u | psram free=%u\n",
+                    (unsigned)(hi.total_free_bytes + hi.total_allocated_bytes),
+                    (unsigned)hi.total_free_bytes, (unsigned)hi.largest_free_block,
+                    (unsigned)hi.minimum_free_bytes, (unsigned)ESP.getFreePsram());
+    }
     i18nSetLang(touchPrefsGetUiLang());   // active UI translation language (before the UI builds)
+#if CAP_LUA_APPS
+    uiLangFileBootLoad();   // overlay the active .lang file (mounts data storage a bit earlier)
+    s_luascan_request = true;             // pre-warm the installed-apps cache off the UI thread
+#endif
 #endif
     const bool ui_landscape = (s_ui_rotation == LV_DISP_ROT_90 ||
                                s_ui_rotation == LV_DISP_ROT_270);
@@ -44476,11 +50844,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     g_lv.disp_drv.ver_res  = 616;
   #endif
 #elif defined(TLORA_PAGER)
-    // Fixed landscape via hardware MADCTL rotation (like T-Deck/Heltec below),
-    // just a different native panel size — no ui_landscape ternary needed since
-    // this board is never portrait.
-    g_lv.disp_drv.hor_res  = 480;
-    g_lv.disp_drv.ver_res  = 222;
+    // The normal Pager UI is fixed landscape. Remote mode may rotate its virtual
+    // display for the browser without changing the physical placeholder panel.
+    g_lv.disp_drv.hor_res  = (s_remote_mode && !s_remote_landscape) ? 222 : 480;
+    g_lv.disp_drv.ver_res  = (s_remote_mode && !s_remote_landscape) ? 480 : 222;
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
@@ -44503,7 +50870,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // when the base orientation is portrait. In hardware landscape the LVGL
     // rotation is left at NONE so it never software-rotates on top of the panel.
     g_lv.disp_drv.sw_rotate = 1;
-    lv_disp_drv_register(&g_lv.disp_drv);
+  lv_disp_drv_register(&g_lv.disp_drv);
 #if defined(HAS_TANMATSU)
     // Apply the 270° software rotation now that the driver is registered: logical surface
     // becomes 800x480 and lv_disp_get_hor/ver_res report landscape for every layout query.
@@ -44557,6 +50924,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // (Audio: the I2S speaker amp is installed on demand per tone — see
     // tdeckPlayNotify — so nothing to set up at boot.)
 
+    // Load the saved theme accent BEFORE the bar is built: the status bar is the one
+    // widget tree created here in begin() rather than in buildUiTree (which loads the
+    // accent itself), so without this its accent-tinted glyphs — the Wi-Fi/Bluetooth
+    // icons — would freeze the compile-time default instead of the user's colour.
+    // Idempotent: buildUiTree's own call just re-sets the same globals.
+    applyAccent(touchPrefsGetAccentColor());
+
     // Build the always-on top status bar AFTER the display driver is
     // registered — lv_layer_sys() needs an active disp or it returns
     // nullptr, and creating a child of nullptr was the boot-loop cause.
@@ -44589,6 +50963,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       g_lv.indev_drv.disp    = lv_disp_get_default();
       if (!lv_indev_drv_register(&g_lv.indev_drv)) pushDiagLine("LVGL indev failed");
     }
+#endif
+
+#if !defined(HAS_TANMATSU)
     // Web UI mirror: stream this display + accept a phone browser's taps as a second
     // pointer indev (opt-in via the VNC/REMOTE apps; see WebMirror / the WS server).
     // Size the remote ring to just above ONE frame (w*h*2 + 48 KB) instead of a fixed
@@ -44605,13 +50982,20 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     g_web_mirror.setEnabled(s_remote_mode ? true : touchPrefsGetWebMirror());
     g_web_mirror.setRemote(s_remote_mode);    // browser shows the Rotate button only in remote mode
     g_web_mirror.setTerminalOn(!s_remote_mode && touchPrefsGetWebTerminal());   // web mesh terminal (runtime; not in the off-screen boot mode)
-    if (s_remote_mode) webMirrorEnsureBufs();   // pre-allocate the mirror shadow/band buffers up front
+    if (s_remote_mode) {
+      const bool mirror_ready = g_web_mirror.ringBytes() > 0 && webMirrorEnsureBufs();
+      Serial.printf("[REMOTE] mirror %dx%d ring=%u buffers=%s\n",
+            s_web_fb_w, s_web_fb_h, (unsigned)g_web_mirror.ringBytes(),
+            mirror_ready ? "ready" : "FAILED");
+    }
     lv_indev_drv_init(&s_web_indev_drv);
     s_web_indev_drv.type    = LV_INDEV_TYPE_POINTER;
     s_web_indev_drv.read_cb = webPointerRead;
     s_web_indev_drv.disp    = lv_disp_get_default();
     lv_indev_drv_register(&s_web_indev_drv);
-#if CAP_KEYPAD_NAV
+#endif
+
+#if CAP_KEYPAD_NAV && !defined(HAS_TANMATSU) && !defined(TLORA_PAGER)
     // Second indev for the keyboard/d-pad nav: a KEYPAD indev + focus group.
     // On the T-Deck it's optional (touchPrefsGetKbdNav()) since touch is the
     // primary input; on the M9 (no touch at all) it's always driven — see
@@ -44640,14 +51024,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     for (int i = 0; i < 8; i++) { uint8_t k = touchPrefsGetNavDirKey(i); if (k) s_dir_keys[i] = k; }   // load programmable control + scroll keys
 #endif
 #endif
-#endif
 
     // Opt-in (#64): push the persisted "scope direct floods to my region" flag into the
     // mesh so it survives reboot. OFF by default — no effect unless the user enabled it.
     the_mesh.setScopeDirectFloods(touchPrefsGetScopeDirect());
 #if defined(HELTEC_LORA_V4_TFT)
-    // Heltec V4.3 high-gain FEM LNA: apply the saved state at boot (default OFF / bypassed,
-    // matching the hardware). No-op on a V4.2 board (femLnaControllable() == false).
+    // Heltec V4.3 high-gain FEM LNA: apply the saved state at boot (default OFF / bypassed on
+    // the plain V4; ON on the V4-R8 since prefs v49). No-op on a V4.2 board (femLnaControllable() == false).
     if (board.femLnaControllable()) board.setFemLnaEnable(touchPrefsGetFemLna());
 #endif
 #if defined(HAS_TDISPLAY_P4)
@@ -44715,6 +51098,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 // ============================================================
 void UITask::showAlert(const char* text, int duration_millis) {
   if (!text) return;
+#if CAP_CONSOLE
+  // main.cpp reports Wi-Fi and Bluetooth outcomes through here in ~20 places.
+  // They keep calling showAlert and do not need to know which front end is up.
+  if (s_console_mode) { consoleAlert(text); return; }
+#endif
   strncpy(_alert, text, sizeof(_alert) - 1);
   _alert[sizeof(_alert) - 1] = '\0';
   _alert_expiry = millis() + static_cast<unsigned long>(duration_millis);
@@ -45071,13 +51459,6 @@ void UITask::onLvTabChanged(int tab_index) {
     if (tab_index > k_last) tab_index = k_last;
   }
   _touch_screen = static_cast<TouchUiScreen>(static_cast<uint8_t>(tab_index));
-#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
-  SdNvsPrefs prefs;
-  if (prefs.begin("meshTouch", false)) {
-    prefs.putUChar("tab", static_cast<uint8_t>(tab_index));
-    prefs.end();
-  }
-#endif
 }
 
 void UITask::appendDiag(const char* message) {
@@ -45146,6 +51527,31 @@ bool UITask::getGPSState() {
 
 #if defined(HAS_EXPANSION_KIT)
 bool UITask::getLocalEnvSnapshot(LocalEnvSnapshot& out) const {
+  // The sensor half of this is a LIVE I2C conversation with the BME280, and this
+  // function is called from refreshStatusLabels — the ~1 Hz home-screen refresh. So a
+  // V4-R8 with the Expansion Kit was running a repeated-start I2C transaction every
+  // second, forever, on the UI thread.
+  //
+  // That crashed a device in the field (coredump, beta_65 V4-R8): Adafruit's driver
+  // reads the BME280 with write_then_read, i.e. a repeated start, which puts Arduino's
+  // TwoWire into nonStop mode holding its lock across two calls. If that sequence does
+  // not complete — a slow or unhappy sensor is enough — nonStop stays set, and the NEXT
+  // beginTransmission takes the "release the lock" branch for a lock this task no longer
+  // holds. FreeRTOS asserts inside xQueueGenericSend and the device panics:
+  //   assert failed: xQueueGenericSend queue.c:832 (... xMutexHolder == xTaskGetCurrentTaskHandle())
+  // The bug is in TwoWire's lock accounting, which is not ours to fix, but polling it at
+  // 1 Hz is what turned a rare bus hiccup into a reboot.
+  //
+  // So cache the queried half and refresh it on a timer. The readings are room
+  // temperature and pressure; nobody needs them re-measured every frame. This also takes
+  // a blocking I2C round trip off the UI thread's per-refresh path.
+  static uint32_t s_env_cache_ms = 0;          // millis() of the last real query (0 = never)
+  static LocalEnvSnapshot s_env_cache;
+  static bool s_env_cache_valid = false;
+  const uint32_t env_now = millis();
+  const bool env_fresh = s_env_cache_valid && s_env_cache_ms != 0 &&
+                         (uint32_t)(env_now - s_env_cache_ms) < 3000;
+
   out = LocalEnvSnapshot();
   out.buzzer_available = true;
   out.buzzer_quiet = _node_prefs ? (_node_prefs->buzzer_quiet != 0) : true;
@@ -45161,9 +51567,23 @@ bool UITask::getLocalEnvSnapshot(LocalEnvSnapshot& out) const {
   }
   if (!_sensors) return localEnvHasAnySensors(out);
 
+  if (env_fresh) {
+    // Copy only the sensor-derived fields; GPS and battery above are cheap and stay live.
+    const LocalEnvSnapshot& c = s_env_cache;
+    out.query_ok          = c.query_ok;
+    out.have_bme_temp     = c.have_bme_temp;      out.bme_temp_c      = c.bme_temp_c;
+    out.have_bme_hum      = c.have_bme_hum;       out.bme_hum_pct     = c.bme_hum_pct;
+    out.have_bme_pressure = c.have_bme_pressure;  out.bme_pressure_hpa= c.bme_pressure_hpa;
+    out.have_bme_alt      = c.have_bme_alt;       out.bme_alt_m       = c.bme_alt_m;
+    out.have_gxhtv3_temp  = c.have_gxhtv3_temp;   out.gxhtv3_temp_c   = c.gxhtv3_temp_c;
+    out.have_gxhtv3_hum   = c.have_gxhtv3_hum;    out.gxhtv3_hum_pct  = c.gxhtv3_hum_pct;
+    return localEnvHasAnySensors(out);
+  }
+
   CayenneLPP telemetry(96);
   out.query_ok = _sensors->querySensors(TELEM_PERM_ENVIRONMENT, telemetry);
-  if (!out.query_ok) return localEnvHasAnySensors(out);
+  s_env_cache_ms = env_now ? env_now : 1;   // stamp even on failure: do not retry-storm a sick bus
+  if (!out.query_ok) { s_env_cache = out; s_env_cache_valid = true; return localEnvHasAnySensors(out); }
 
   LPPReader rd(telemetry.getBuffer(), telemetry.getSize());
   uint8_t channel = 0, type = 0;
@@ -45196,6 +51616,8 @@ bool UITask::getLocalEnvSnapshot(LocalEnvSnapshot& out) const {
         break;
     }
   }
+  s_env_cache = out;            // seed the cache with what we just measured
+  s_env_cache_valid = true;
   return localEnvHasAnySensors(out);
 }
 
@@ -45302,6 +51724,24 @@ int UITask::getGpsSats() {
   return lp ? (int)lp->satellitesCount() : -1;
 }
 
+uint32_t UITask::getGpsTime() {
+  if (!_sensors) return 0;
+  LocationProvider* lp = _sensors->getLocationProvider();
+  if (!lp) return 0;
+  const long t = lp->getTimestamp();
+  // The provider builds this from the NMEA date/time fields, which read as year 0 (epoch far in
+  // the past) until the receiver has actually decoded them off the air. Anything plausibly recent
+  // means real satellite time.
+  return (t > 1700000000L) ? (uint32_t)t : 0;
+}
+
+int UITask::getGpsAltitude() {
+  if (!_sensors) return 0;
+  LocationProvider* lp = _sensors->getLocationProvider();
+  if (!lp || !lp->isValid()) return 0;
+  return (int)(lp->getAltitude() / 1000);   // provider reports millimetres
+}
+
 // Keep the node's advertised location synced to GPS once we have a fix, and
 // persist it occasionally so a fix survives reboot ("had a fix at least once").
 // Called every UITask::loop(). No-op on boards without GPS (provider == NULL).
@@ -45370,6 +51810,21 @@ void UITask::setTelemetryAllow(bool on) {
   // setting so this simple toggle can't expose position.
   _node_prefs->telemetry_mode_base = on ? TELEM_MODE_ALLOW_ALL : TELEM_MODE_DENY;
   _node_prefs->telemetry_mode_env  = on ? TELEM_MODE_ALLOW_ALL : TELEM_MODE_DENY;
+  the_mesh.savePrefs();
+}
+// Position sharing, deliberately its own control rather than part of the switch above
+// (#266). DENY / ALLOW_FLAGS (only contacts you granted it) / ALLOW_ALL.
+void UITask::setLocationTelemetryMode(uint8_t mode) {
+  if (!_node_prefs) return;
+  if (mode > TELEM_MODE_ALLOW_ALL) mode = TELEM_MODE_DENY;
+  _node_prefs->telemetry_mode_loc = mode;
+  // MeshCore answers a telemetry request at all only when the BASE permission is set,
+  // so location would silently never be sent with the master switch off. Turning
+  // sharing ON implies answering requests; say so via the note under the dropdown
+  // rather than leaving the user with a setting that does nothing.
+  if (mode != TELEM_MODE_DENY && _node_prefs->telemetry_mode_base == TELEM_MODE_DENY) {
+    _node_prefs->telemetry_mode_base = TELEM_MODE_ALLOW_ALL;
+  }
   the_mesh.savePrefs();
 }
 
@@ -45488,6 +51943,16 @@ static inline void touchScreenBacklight(bool on) {
   if (on) touchPanelSleep(false);   // wake the panel BEFORE lighting it (old frame intact)
   ledcWrite(kBlPwmChannel, on ? ((uint32_t)s_brightness_pct * 255u / 100u) : 0u);
   if (!on) touchPanelSleep(true);   // then stop the panel driving the crystals (anti burn-in)
+#if defined(HELTEC_LORA_V4_R8)
+  // Dark screen: throttle the CHSC6x poll task (8 ms -> 50 ms) — its blocking
+  // I2C read rides the SHARED sensor/RTC bus on this board, and full-rate
+  // polling with the screen off was pure idle drain. Wake-on-touch keeps
+  // working, at most ~42 ms later. (Local extern: the include path resolves
+  // the VENDORED MeshCore copy of HeltecV4CapTouch.h, which predates this
+  // function — the compiled driver is the repo copy in src/helpers/input.)
+  extern void heltecV4CapTouchSetSlowPoll(bool slow);
+  heltecV4CapTouchSetSlowPoll(!on);
+#endif
 #elif defined(TFT_BL)
   pinMode(TFT_BL, OUTPUT);
   #ifdef TFT_BACKLIGHT_ON
@@ -45693,15 +52158,30 @@ static bool uiHistWaitWorkerIdle() {
 
 bool UITask::enableBle() {
   if (!_serial) return false;
-#if defined(ESP32)
-  // Same thresholds as the boot-time co-init guard (main.cpp) — keep in sync.
-  const size_t BLE_COEXIST_MIN_FREE  = 50u * 1024u;
-  const size_t BLE_COEXIST_MIN_BLOCK = 20u * 1024u;
-  if (ESP.getFreeHeap() < BLE_COEXIST_MIN_FREE || ESP.getMaxAllocHeap() < BLE_COEXIST_MIN_BLOCK)
+#if defined(TLORA_PAGER)
+  if (bleEnableWaitingForWifi()) {
+    // Remember the request; main.cpp enables BLE when this bounded association
+    // either succeeds or falls back. Wi-Fi intent without an active attempt
+    // never enters this branch.
+    wifiConfigSetBleEnabled(true);
     return false;
+  }
 #endif
   _serial->enableBle();
-  return true;
+  // The concrete transport applies the heap guard only when it must cold-start
+  // NimBLE. A resident disabled stack can always be re-enabled allocation-free.
+  if (_serial->isBleEnabled()) return true;
+#if defined(TLORA_PAGER)
+  // Same cold-start contract as Wi-Fi above. This is not an OOM failure the
+  // user can repair by toggling the other radio: remember the requested state
+  // and allocate NimBLE during the next ordered boot, before LVGL fragments
+  // internal DRAM. rebootDevice() flushes pending history before ESP.restart().
+  wifiConfigSetBleEnabled(true);
+  showAlert(TR("Restarting to enable Bluetooth"), 800);
+  lv_refr_now(NULL);
+  rebootDevice();
+#endif
+  return false;
 }
 
 void UITask::persistHistoryNow() {
@@ -45711,6 +52191,8 @@ void UITask::persistHistoryNow() {
 }
 
 void UITask::rebootDevice() {
+  WdtHeavyGuard idle_wdt_guard;
+  LoopWdtGuard loop_wdt_guard;
   // Persist chat history synchronously before we reboot — the periodic
   // flush is rate-capped, so without this a reboot could drop the most
   // recent chat history.
@@ -45726,14 +52208,41 @@ void UITask::rebootDevice() {
     char why[64]; chatSaveFailText(why, sizeof why);
     char msg[128];
     snprintf(msg, sizeof msg, "%s\n%s", TR("Chat history save FAILED"), why);
-    showAlert(msg, 1800);
+    showAlert(msg, 1800);          // console-aware: prints instead when there is no LVGL
+#if CAP_CONSOLE
+    if (!s_console_mode) lv_refr_now(NULL);
+#else
     lv_refr_now(NULL);
+#endif
     delay(1500);   // let the warning actually paint before the reset
   }
   discoveredFlushNow();   // persist the Discovered ring before we go down
   the_mesh.flushContactsIfDirty();   // and any coalesced contacts refresh (card-less devices)
+  the_mesh.persistSyncHistoryNow();  // and the app-sync replay ring
+  touchPrefsFlush();       // finish queued A/B snapshots before reset
   if (_board) _board->reboot();
 }
+
+#if CAP_CONSOLE && defined(ESP32)
+// The console's way back to the graphical UI (the `ui` / `exit` command).
+//
+// It must go through rebootDevice(), not ESP.restart(), and the reason is not
+// obvious: touchPrefsSetConsoleMode() only QUEUES an A/B snapshot. SdNvsPrefs
+// deliberately keeps filesystem I/O off the calling thread, and
+// touchPrefsFlush() -- which rebootDevice() calls last -- is what forces the
+// queued write out. Restarting directly discarded it, so the pref still said
+// "console" on the next boot and `ui` looked like it did nothing.
+//
+// Going through rebootDevice() also means the console exits on the same terms
+// as everything else: chat history, the Discovered ring and the sync replay
+// ring are all persisted first.
+void consoleHostRebootToUi() {
+  touchPrefsSetConsoleMode(false);
+  if (g_lv.task) { g_lv.task->rebootDevice(); return; }
+  touchPrefsFlush();   // no UITask (should not happen): at least do not lose the pref
+  ESP.restart();
+}
+#endif
 
 void UITask::msgRead(int msgcount) { _msgcount = msgcount; }
 
@@ -45909,6 +52418,7 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
                         const char* sender_override) {
   (void)path_len;
   _msgcount = msgcount;
+
   const bool have_sender_override = (sender_override && sender_override[0]);
   bool channel = (g_last_event == UIEventType::channelMessage);
   const char* thread = channel
@@ -45952,6 +52462,39 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // keeps using the pubkey filter and is unaffected — important, because a DM contact
   // sharing a display name with a blocked room bot must not vanish.
   if ((channel || have_sender_override) && touchPrefsIsNameIgnored(sender)) return;
+
+  // Single-character spam filter (Settings > Radio & Mesh). A lot of the junk on the
+  // mesh is a 1-byte payload, because that is the cheapest possible message to send
+  // and it still costs every receiver a notification. Nobody sends one character on
+  // purpose, so dropping them is safe in a way that a length threshold would not be.
+  //
+  // Tested on `body`, NOT on `text`: a channel post arrives on the wire as
+  // "SenderName: body", so the raw string is never short even when the message is.
+  // `body` is the parsed message for channels and the whole text for a DM.
+  //
+  // Placed with the block filters and BEFORE the chime below, so a dropped message
+  // is silent too — a spam filter that still beeps has not filtered anything.
+  if (touchPrefsGetIgnoreTinyMsgs()) {
+    const char* b = body ? body : "";
+    while (*b == ' ' || *b == '\t' || *b == '\r' || *b == '\n') b++;   // whitespace is not content
+    size_t blen = strlen(b);
+    while (blen > 0 && (b[blen-1] == ' ' || b[blen-1] == '\t' ||
+                        b[blen-1] == '\r' || b[blen-1] == '\n')) blen--;
+    if (blen <= 1) return;   // 0 or 1 character of actual content
+  }
+#endif
+
+#if CAP_LUA_SDK_EXT
+  // Hand a running Lua app the incoming message (app.on_message), AFTER the block
+  // and spam filters so an app sees exactly the messages the user does. Permission
+  // is rechecked per message inside deliverMessage, so revoking in Settings stops
+  // delivery at once rather than at the app's next launch. Channel traffic rides
+  // LUA_PERM_READ; direct messages and room posts need the separate, more sensitive
+  // LUA_PERM_DM_READ. "kind" lets an app tell them apart rather than inferring it.
+  if (luaAppIsOpen()) {
+    const char* kind = channel ? "channel" : (have_sender_override ? "room" : "dm");
+    luaAppMessage(kind, channel ? thread : "", sender, body);
+  }
 #endif
 
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
@@ -46029,11 +52572,23 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   uint8_t in_path[MAX_UI_PATH];
   uint8_t in_path_n = 0;
   uint16_t in_scope = 0;
-  if ((meta_flags & MSG_META_HAS_RX) && (meta_flags & MSG_META_IS_FLOOD)) {
-    in_path_n = the_mesh.lastRxPath(in_path, sizeof(in_path));
+  if (meta_flags & MSG_META_HAS_RX) {
+    // Route hashes only exist on floods, but the transport SCOPE also rides scoped DIRECT
+    // messages (the "Scope direct msgs to region" feature) -- reading it only under IS_FLOOD
+    // meant a scoped DM's Info popup showed no scope at all (#157).
+    if (meta_flags & MSG_META_IS_FLOOD)
+      in_path_n = the_mesh.lastRxPath(in_path, sizeof(in_path));
     bool has_scope = false;
     in_scope = the_mesh.lastRxScope(&has_scope);
-    if (has_scope) meta_flags |= MSG_META_HAS_SCOPE;
+    if (has_scope) {
+      meta_flags |= MSG_META_HAS_SCOPE;
+      // Verified at RX (the check needs the packet); the popup only reads the bit.
+      if (the_mesh.lastRxScopeIsHome()) meta_flags |= MSG_META_SCOPE_HOME;
+      // Which registered region it verified against (#271), also decided at RX
+      // for the same reason: the packet is gone by the time the popup opens, so
+      // the answer has to be captured here and persisted with the message.
+      meta_flags = metaWithScopeSlot(meta_flags, the_mesh.lastRxScopeSlot());
+    }
   }
   const int msg_slot = _ui_msg_head;   // appendMessage writes _ui_msgs[head], then advances head
   appendMessage(thread, sender, body, channel, false, true,
@@ -46052,9 +52607,11 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     if (emb_ts > 1700000000 && emb_ts < 2000000000) _ui_msgs[msg_slot].ts = emb_ts;
   }
   syncThreadMeshSlots(thread, channel);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   // Mirror incoming traffic into the terminal live feed (only while it's open).
   // Runs on the mesh thread (core 1, same as the UI loop) so the append is safe.
+  // M9 included: its terminal (and the chat mode's "to <name>"/"send") is fully
+  // wired, so without the mirror a console conversation showed only the TX side.
   if (s_term_log_box) {
     char line[200];
     const bool  has_snr = (meta_flags & MSG_META_HAS_RX);
@@ -46068,6 +52625,31 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       else         snprintf(line, sizeof line, "RX %s: %s", sender, body);
       termLogAppendC(TERM_C_RX_DM, nullptr, line);
     }
+  }
+#endif
+#if CAP_CONSOLE
+  // The monitor: show it as it arrives, without opening anything. Deliberately
+  // placed AFTER appendMessage, which was called with mark_unread = true, so the
+  // message is stored and still counts as unread. Watching it scroll past is not
+  // reading it; opening the thread is.
+  if (s_console_mode && touchPrefsGetConsoleMonitor()) {
+    char line[220];
+    // Three colours, because the three parts answer different questions:
+    // WHERE it arrived (channel, cyan), WHO said it (sender, yellow) and WHAT
+    // they said (grey). A DM has no channel, so its sender takes the magenta
+    // slot instead and stands out in a busy feed.
+    int n1 = 0, n2 = 0;
+    if (channel) {
+      n1 = snprintf(line, sizeof line, "#%s ", thread);
+      if (n1 < 0) n1 = 0;
+      n2 = snprintf(line + n1, sizeof line - n1, "%s: ", sender);
+      if (n2 < 0) n2 = 0;
+    } else {
+      n2 = snprintf(line, sizeof line, "%s: ", sender);
+      if (n2 < 0) n2 = 0;
+    }
+    snprintf(line + n1 + n2, sizeof line - n1 - n2, "%s", body ? body : "");
+    consoleWriteLineSeg(CC_CHAN, n1, channel ? CC_SENDER : CC_DM, n2, line);
   }
 #endif
 #if defined(HAS_TOUCH_UI)
@@ -46200,8 +52782,8 @@ void UITask::notify(UIEventType t) {
   if (t == UIEventType::contactMessage || t == UIEventType::channelMessage || t == UIEventType::roomMessage)
     msgLedFlash();
 #endif
-#if defined(HAS_TDECK_KEYBOARD)
-  // Same idea on the T-Deck (no notification LED): wake the screen + briefly light the keyboard.
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+  // Same idea on the T-Deck and M9 (no notification LED): wake the screen + briefly light the keyboard.
   if (touchPrefsGetMsgFlash() &&
       (t == UIEventType::contactMessage || t == UIEventType::channelMessage || t == UIEventType::roomMessage)) {
     s_msgflash_until = millis() + 1600;
@@ -46254,20 +52836,82 @@ static inline void uiCp(const char* next) {
 }
 
 #if CAP_SD || defined(TLORA_PAGER)
+// A mount lifecycle change invalidates every open FAT handle, so it must wait
+// until all UI-side and worker-side SD consumers are quiescent. SPI transaction
+// locking arbitrates individual transfers; this predicate arbitrates VFS lifetime.
+static bool sdRuntimeLifecycleBusy() {
+  bool busy = s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request ||
+              s_sdinfo_busy ||
+              touchPrefsIoBusy();
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+  busy = busy || s_notify_playing;
+#endif
+#if CAP_SD || defined(TLORA_PAGER)
+  // Before a lifecycle owner requests a backend pause, keep the conservative
+  // queued+active gate used by format/reset paths. Once the pause is asserted,
+  // no queued request can acquire a new lease, so only the current lease owns
+  // the VFS; the preserved backlog is not a reason to delay SD.end().
+  if (s_tile_fs == &SD) {
+    busy = busy || (tileBackendSwapRequested()
+        ? tileFetchWorkerActive()
+        : tileFetchPendingLoad() > 0);
+  }
+#endif
+  return busy;
+}
+
 // Runtime SD wedge detect + recover. Some writer saw an SD write fail while the
 // card was supposedly mounted (sdNoteIoFailure) — verify with real I/O and,
-// if the card stopped answering, drop the mount and re-run the full mount
-// ladder (SD.end() + staged SD.begin): exactly what the next reboot would do,
-// minus the reboot. Without this the firmware is blind to a wedged card:
+// if the card stopped answering, drop and remount it once all SD consumers are
+// quiescent. Without this the firmware is blind to a wedged card:
 // SD.cardType() keeps returning its cached mount-time type, s_sd_mounted stays
 // true so fmSdTryMount() no-ops, and every SD feature fails silently until the
 // user power-cycles (the "SD stops working until reboot" report).
 static void sdHealthTick() {
   static uint32_t s_next_probe_ms    = 0;
   static uint32_t s_next_bg_probe_ms = 0;
+#if defined(TLORA_PAGER)
+  static uint32_t s_next_detect_ms   = 0;
+  static uint32_t s_absent_first_ms  = 0;
+  static uint8_t  s_absent_samples   = 0;
+#endif
   const uint32_t now = (uint32_t)millis();
+#if defined(TLORA_PAGER)
+  if (!s_sd_mounted && !sdRuntimeLifecycleBusy() && sdAdoptLiveMount()) {
+    s_sd_data_warn_next_ms = 0;
+    if (!s_ui_data_fs) uiDataFsReady();
+    if (s_ui_data_fs == &SD) {
+      SD.mkdir("/meshcomod");
+      uiDataEnsureDirs();
+      if (g_lv.task) g_lv.task->flushHistorySoon();
+    }
+    mapNoteStorageChanged();
+    return;
+  }
+#endif
+#if CAP_SD || defined(TLORA_PAGER)
+  // A teardown may have completed while the tile worker still held its final
+  // File. Defer dropping the stale SD backend until that request is finished;
+  // this also closes the failed-format path below.
+  if (!s_sd_mounted && s_tile_fs == &SD && !tileFetchWorkerActive()) {
+    mapNoteStorageChanged();
+  }
+#endif
   if (!s_sd_mounted) {
+#if defined(TLORA_PAGER)
+    // Another loop-side owner (notably the open File Manager) may have won the
+    // quiescent unmount race after card-detect marked removal pending.
+    s_pager_sd_removal_pending = false;
+#endif
     s_sd_fail_note_ms = 0;
+#if defined(TLORA_PAGER)
+    extern bool g_contacts_on_sd;
+    if (g_contacts_on_sd && !touchSleep::isSleeping() &&
+        (!s_sd_data_warn_next_ms || (int32_t)(now - s_sd_data_warn_next_ms) >= 0)) {
+      s_sd_data_warn_next_ms = sdDataWarnDeadline(now);
+      if (g_lv.task) g_lv.task->showAlert(sdRemovedAlertText(), 5000);
+    }
+#endif
     // Reinsert watch. After a failed remount ("SD card lost") the SD VFS is
     // unregistered and NOTHING outside the file manager ever re-runs a mount
     // — a reinserted card then LOOKED recovered (battery quietly falls back
@@ -46279,43 +52923,121 @@ static void sdHealthTick() {
     if (touchSleep::isSleeping()) return;
     if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
     s_next_bg_probe_ms = now + 30000;
+    if (s_fm_list) return;               // FM open: its 2 s poll owns remounting
+    if (sdRuntimeLifecycleBusy()) return;
 #if defined(TLORA_PAGER)
-    if (!pagerSdCardPresent()) return;   // card-detect says the slot is empty
+    if (!board.sdCardPresent()) return;  // card-detect says the slot is empty
 #endif
-    if (s_fm_list) return;               // FM open: its 2 s poll owns remounting (full ladder)
     SPIClass* spi = sdSharedSPI();
     if (!spi) return;
+#if defined(TLORA_PAGER)
+    // The Pager shares this SPIClass with display + radio: one 4 MHz attempt,
+    // with every other CS parked HIGH and no SD.end() of a potentially live bus.
+    const bool begin_ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
+    const bool remounted = begin_ok && SD.cardType() != CARD_NONE;
+#else
     SD.end();
-    if (SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
+    bool remounted = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) &&
+                     SD.cardType() != CARD_NONE;
+    if (remounted) {
+      const uint32_t hz = sdTryFastClock(PIN_SD_CS, *spi, 4000000, "SD");   // no-op unless SD_SPI_FAST_HZ
+      remounted = hz != 0;
+      if (remounted) g_sd_operating_hz = hz;
+    }
+#endif
+    if (remounted) {
       s_sd_mounted        = true;
       s_sd_size           = SD.cardSize();
       s_sd_retry_after_ms = 0;
+#if defined(TLORA_PAGER)
+      s_sd_data_warn_next_ms = 0;
+#endif
       markSdIo();
       if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
       // Land the RAM ring on the card promptly, not up to 30+ s later: every
       // message received while the card was out is only in RAM. Armed as an
       // OFF-THREAD flush — a synchronous write here froze the UI for >30 s on
       // a card that mounts fine but times out on large writes. mkdir first —
       // a fresh replacement card has no /meshcomod yet, and without it every
       // history flush fails silently.
-      SD.mkdir("/meshcomod");
-      uiDataEnsureDirs();   // segment dir too — a fresh replacement card has neither
-      if (g_lv.task) g_lv.task->flushHistorySoon();
+      if (!s_ui_data_fs) uiDataFsReady();
+      if (s_ui_data_fs == &SD) {
+        SD.mkdir("/meshcomod");
+        uiDataEnsureDirs();   // segment dir too — a fresh replacement card has neither
+        if (g_lv.task) g_lv.task->flushHistorySoon();
+      }
 #endif
       mapNoteStorageChanged();   // the map layer has to be told too, or it stays blank
     } else {
+#if defined(TLORA_PAGER)
+      if (begin_ok) SD.end();             // release only our failed, quiescent mount
+      sdPagerParkCs();
+#else
       SD.end();                          // leave cardType() honestly CARD_NONE
+#endif
     }
     return;
   }
   if (s_sd_format_pending) return;                        // format owns the card right now
-  // Hold off while the core-0 worker is (or may be about to be) on the card —
-  // SD.end() under an open worker file handle is the crash we must not add.
-  // On a truly wedged card the worker's own ops fail fast, so this clears.
-  if (s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request) return;
-#if defined(HAS_TDECK_GT911) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
-  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS (T-Deck only)
+#if CAP_SD || defined(TLORA_PAGER)
+  // Reinsertion may have completed while an internal-cache fetch was still
+  // active. mapNoteStorageChanged deliberately deferred the backend swap; make
+  // it effective at the first idle tick without invalidating that open File.
+  // Skip it while card-detect has already confirmed removal: s_sd_mounted stays
+  // true until the teardown below wins quiescence, so adopting here would point
+  // the backend at a card that is physically gone and burn two full map
+  // re-renders on the loop task before the same tick undoes it.
+  bool sd_leaving = false;
+#if defined(TLORA_PAGER)
+  sd_leaving = s_pager_sd_removal_pending;
+#endif
+  if (!sd_leaving && s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready) &&
+      s_tile_fs != &SD && !tileFetchWorkerActive()) {
+    mapNoteStorageChanged();
+  }
+#endif
+#if defined(TLORA_PAGER)
+  // Card detect is pure I2C, so it must keep running even while an SD worker is
+  // busy. Once removal is confirmed, pause the worker at a request boundary;
+  // the normal lifecycle gate then waits only for the genuinely in-flight
+  // operation before SD.end(), preserving the queued backlog.
+  if (!s_pager_sd_removal_pending && (int32_t)(now - s_next_detect_ms) >= 0) {
+    s_next_detect_ms = now + 500;
+    const TLoraPagerBoard::SdCardState state = board.sdCardState();
+    if (state != TLoraPagerBoard::SdCardState::Absent) {
+      // Present resets the debounce. Unknown also resets it so an I2C fault can
+      // never be accumulated into a destructive VFS teardown.
+      s_absent_samples = 0;
+      s_absent_first_ms = 0;
+    } else if (!s_absent_samples || (uint32_t)(now - s_absent_first_ms) > 1100) {
+      s_absent_samples = 1;
+      s_absent_first_ms = now;
+    } else if (++s_absent_samples >= 2) {
+      s_absent_samples = 0;
+      s_absent_first_ms = 0;
+      s_pager_sd_removal_pending = true;
+      // Stop the worker at the next request boundary. Its current File may
+      // finish, but the queued backlog stays intact while SD.end() and the
+      // fallback selection run below.
+      tileBackendSwapTryBegin();
+      sdNoteIoFailure();
+    }
+  }
+  if (s_pager_sd_removal_pending) {
+    if (sdRuntimeLifecycleBusy()) return;
+    fmSdUnmount();
+    s_pager_sd_removal_pending = false;
+    mapNoteStorageChanged();
+    s_sd_data_warn_next_ms = sdDataWarnDeadline(now);
+    if (!touchSleep::isSleeping() && g_lv.task)
+      g_lv.task->showAlert(sdRemovedAlertText(), 5000);
+    if (s_fm_list && (s_fm_fs == &SD || !s_fm_fs)) fmShowRoots();
+    return;
+  }
+#endif
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS
 #endif
   // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
   // also on a slow 30 s background cadence — a card yanked while nothing is
@@ -46334,24 +53056,50 @@ static void sdHealthTick() {
     if (touchSleep::isSleeping()) return;
     if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
   }
+  // This tick is going to probe and may invalidate the VFS. Assert the backend
+  // pause before the lifecycle-busy check, so queued requests cannot repeatedly
+  // win the boundary while recovery waits. Other SD consumers still drain first.
+  tileBackendSwapTryBegin();
+  if (sdRuntimeLifecycleBusy()) return;
   s_next_probe_ms    = now + 5000;
   s_next_bg_probe_ms = now + 30000;
   s_sd_fail_note_ms = 0;
-  if (sdProbeAlive()) return;     // transient failure (card full, bad path, ...) — not a wedge
+  if (sdProbeAlive()) {
+    // Transient failure (card full, bad path, ...) — keep the mount and let the
+    // preserved tile queue continue on it.
+#if defined(MULTI_TRANSPORT_COMPANION) && defined(HAS_THINKNODE_M9)
+    // The note window blanked every SD tile read (loadTileJpeg bails on it) —
+    // arm the rate-capped map repaint so pan gaps heal without a keypress.
+    if (s_map_last_missing > 0) s_tile_fetch_dirty = true;
+#endif
+    tileBackendSwapFinish();
+    return;
+  }
   fmSdUnmount();                  // SD.end() so a fresh begin re-runs the full card handshake
   if (fmSdTryMount()) {
+#if defined(TLORA_PAGER)
+    s_sd_data_warn_next_ms = 0;
+#endif
     if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
-#if defined(HAS_TDECK_GT911)
-    SD.mkdir("/meshcomod");                            // fresh replacement card: recreate the data root
-    uiDataEnsureDirs();                                // segment dir too
-    if (g_lv.task) g_lv.task->flushHistorySoon();      // land the RAM ring promptly (off-thread — no UI stall)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+    if (!s_ui_data_fs) uiDataFsReady();
+    if (s_ui_data_fs == &SD) {
+      SD.mkdir("/meshcomod");                          // fresh replacement card: recreate the data root
+      uiDataEnsureDirs();                              // segment dir too
+      if (g_lv.task) g_lv.task->flushHistorySoon();    // land the RAM ring promptly (off-thread — no UI stall)
+    }
 #endif
     mapNoteStorageChanged();
   } else {
-    // Ladder failed — card needs a real power cycle (reinsert). s_sd_mounted is
+    // Remount failed — card needs a real power cycle (reinsert). s_sd_mounted is
     // now false and SD.cardType() reads CARD_NONE, so features degrade honestly
     // instead of silently failing, and the usual remount paths keep retrying.
+#if defined(TLORA_PAGER)
+    s_sd_data_warn_next_ms = sdDataWarnDeadline(now);
+    if (g_lv.task) g_lv.task->showAlert(sdRemovedAlertText(), 5000);
+#else
     if (g_lv.task) g_lv.task->showAlert(TR("SD card lost - reinsert to recover"), 2600);
+#endif
     mapNoteStorageChanged();   // drop tiles read off the card that just went away
   }
 }
@@ -46359,6 +53107,112 @@ static void sdHealthTick() {
 
 void UITask::loop() {
   unsigned long now = millis();
+#if CAP_CONSOLE
+  if (s_console_mode) {
+#if CAP_TOUCH
+    // Bring up the input hardware ourselves. The graphical path does this far
+    // below, behind `if (!g_lv.ready) return;` — and g_lv.ready is false here
+    // because LVGL is never initialised, so nothing ever started the poll task
+    // and the keyboard was never even begun. That is why keys did nothing.
+    //
+    // One call covers both: the background poll task owns the shared I2C bus
+    // and scans the touch panel AND (on the T-Deck) the keyboard, which is
+    // exactly why they must not be polled from two places at once.
+    static bool s_con_input_up = false;
+    if (!s_con_input_up) {
+      if (heltecV4CapTouchBegin()) {
+        heltecV4CapTouchStartBackgroundPoll(8);
+        s_con_input_up = true;
+      }
+    }
+#endif
+    // The physical-keyboard drain lives further down this function, below this
+    // return, so console mode has to do its own. Same ring, filled by the task
+    // started above.
+    bool con_activity = false;
+#if defined(HAS_TDECK_KEYBOARD)
+    for (int kbi = 0; kbi < 12; ++kbi) {
+      int key = tdeckKeyboardReadKey();
+      if (key <= 0) break;
+      con_activity = true;
+      s_kb_last_key_ms = now;
+      // A key pressed on a dark screen WAKES rather than types, the same as a
+      // touch does in the UI. Otherwise the character you used to see the screen
+      // ends up in the command you are typing.
+      if (_screen_off) { wakeScreen(); continue; }
+      consoleKey(key);
+    }
+#endif
+#if CAP_TOUCH
+    { uint16_t _tx, _ty; if (heltecV4CapTouchGetLive(&_tx, &_ty)) { con_activity = true; } }
+#endif
+#if defined(HAS_TDECK_TRACKBALL)
+    // Trackball scrolls the scrollback. Roll up for history, down for live.
+    // Accumulated because the ball reports many small deltas per physical flick;
+    // one line per detent would race past everything.
+    {
+      int tdx = 0, tdy = 0;
+      if (tdeckTrackballReadMotion(&tdx, &tdy) && tdy != 0) {
+        static int tb_accum = 0;
+        tb_accum += tdy;
+        while (tb_accum <= -2) { consoleScroll(+1); tb_accum += 2; }   // up = back
+        while (tb_accum >=  2) { consoleScroll(-1); tb_accum -= 2; }   // down = live
+        con_activity = true;
+        if (_screen_off) wakeScreen();
+      }
+    }
+#endif
+    if (con_activity) _last_input_ms = now;
+
+    // Screen timeout. The graphical path does this far below, so without it a
+    // console stayed lit forever: battery drain, and burn-in on the panels that
+    // suffer from it. Same pref, same helpers.
+    if (!_screen_off && _screen_timeout_ms > 0 &&
+        (uint32_t)(now - _last_input_ms) >= _screen_timeout_ms) {
+      touchScreenBacklight(false);
+      setCpuForScreen(false);       // idle -> 80 MHz, as the UI does
+      _screen_off = true;
+    }
+
+#if defined(HAS_TDECK_KEYBOARD)
+    // Keyboard backlight: off / on / auto, and dark whenever the screen is.
+    {
+      uint8_t kb_bl = 0;
+      if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();
+      else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = tdeckKbBlLevel();
+      if (_screen_off) kb_bl = 0;
+      tdeckKeyboardSetBacklight(kb_bl);
+    }
+#endif
+
+    // Nothing to draw while the panel is dark; skip the render entirely.
+    if (!_screen_off) consoleLoop();
+    return;                      // the graphical loop is never entered
+  }
+#endif
+#if defined(ESP32)
+  // Snapshot copying is quick; all filesystem I/O runs on the core-0 worker.
+  touchPrefsTick(now);
+  // One-shot (#178): contacts starred on-device before the flags mirror
+  // existed have their favorite only in TouchPrefs — invisible to the core's
+  // overwrite-oldest eviction. Stamp flags bit 0 once per boot, after the
+  // mesh + prefs are both up. Saves only when something actually changed.
+  {
+    static bool s_fav_synced = false;
+    if (!s_fav_synced && now > 9000) {
+      s_fav_synced = true;
+      bool changed = false;
+      const int n = the_mesh.getNumContacts();
+      for (int i = 0; i < n; ++i) {
+        ContactInfo c;
+        if (!the_mesh.getContactByIdx(i, c)) continue;
+        if ((c.flags & 0x01) == 0 && touchPrefsIsFavorite(c.id.pub_key))
+          changed |= the_mesh.uiSetContactFavorite(c.id.pub_key, true);
+      }
+      if (changed) Serial.println("[UI] favorite flags synced into contact table (#178)");
+    }
+  }
+#endif
 #if !defined(HAS_TANMATSU)
   // REMOTE mode: draw/refresh the physical-panel placeholder (first pass via the IP
   // sentinel, then whenever the IP changes), and clear the bootloop guard once this
@@ -46376,7 +53230,7 @@ void UITask::loop() {
     if (s_remote_exit_armed && (now - s_remote_exit_armed) >= 3000) { s_remote_exit_armed = 0; drawRemotePlaceholder(false); }
     // Exit button on the web page -> leave remote mode (board-agnostic; the main way out
     // for keyboard-less boards like the Heltec V4).
-    if (g_web_mirror.takeExit()) { touchPrefsSetRemoteMode(false); if (g_lv.task) g_lv.task->rebootDevice(); }
+    if (g_web_mirror.takeExit()) exitRemoteModeNow();
 #if CAP_TOUCH
     remoteTouchTick();   // 3 s touch-and-hold on the panel also leaves remote (no SPACE key)
 #endif
@@ -46404,9 +53258,8 @@ void UITask::loop() {
 #endif
   g_ui_stall_max = 0; g_ui_stall_tag = ""; s_ui_cp_tag = "ui:head"; s_ui_cp_t0 = now;
 #if defined(ESP32)
-  // Persist the clock floor every 15 min (small prefs-blob write; SdNvsPrefs
-  // rewrites a file on the Launcher-SD backend, so keep the cadence low). Power
-  // loss costs at most this window of floor progress — a soft reset keeps the
+  // Persist the clock floor every 15 min (coalesced into the next prefs snapshot).
+  // Power loss costs at most this window of floor progress — a soft reset keeps the
   // ESP32 RTC domain ticking, so only true power-off needs the persisted copy.
   { static unsigned long s_floor_due = 0;
     if (now >= s_floor_due) {
@@ -46467,7 +53320,8 @@ void UITask::loop() {
   uiCp("ui:disc");
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
   uiCp("ui:gps");
-  updateGpsLocation(now);   // sync + persist node location from GPS once fixed
+  updateGpsLocation(now);
+  uiCp("ui:timers");   // GPS sync/persist is its own bucket: it can write prefs   // sync + persist node location from GPS once fixed
   ++s_live_diag_loops;
   if (_alert_expiry != 0 && now >= _alert_expiry) {
     _alert[0]     = '\0';
@@ -46483,7 +53337,7 @@ void UITask::loop() {
     snprintf(msg, sizeof(msg), TR("No reply from %s"), s_ui_ping_target_name);
     showAlert(msg, 3500);
   }
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   // Manual telemetry request timed out — flip the open window to "failed" (it
   // still shows the history). Auto-poll has no deadline, so it never lands here.
   if (s_telem_manual_pending && s_telem_deadline_ms != 0 && now >= s_telem_deadline_ms) {
@@ -46546,6 +53400,14 @@ void UITask::loop() {
       s_tb_click_press = false;      // never deliver clicks as taps while locked
     } else if (_screen_off) {
       if (tb_pressed && s_user_btn_prev == HIGH) { wakeScreen(); s_tb_wake_consume = true; }
+      s_tb_click_press = false;
+    } else if (s_mentionnav_active) {
+      // The mention rows are NAV_SKIP, so the trackball button confirms the
+      // private highlight instead of injecting a pointer tap behind the popup.
+      if (tb_pressed && s_user_btn_prev == HIGH) {
+        mentionNavConfirm();
+        s_tb_last_active_ms = now; noteUserInput();
+      }
       s_tb_click_press = false;
     } else if (s_emoji_sheet) {
       // Emoji picker open: a fresh press inserts the highlighted glyph via the
@@ -46676,7 +53538,7 @@ void UITask::loop() {
     }
   }
 
-#if defined(HAS_TDECK_KEYBOARD)   // notify-flash (and so the notify wake) is a T-Deck feature
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)   // notify-flash (and so the notify wake): T-Deck + M9
   // Notify-wake re-dim: a screen lit by a MESSAGE (not user input) goes dark again after a
   // short bounded window. On a busy channel the per-message wakes otherwise keep a static
   // image lit for the full screen-timeout — or forever at "never" — which retains into the
@@ -46693,7 +53555,7 @@ void UITask::loop() {
       _screen_off = true;
     }
   }
-#endif  // HAS_TDECK_KEYBOARD (notify-wake re-dim)
+#endif  // HAS_TDECK_KEYBOARD || HAS_M9_KEYBOARD (notify-wake re-dim)
 
   // "At a glance" auto-hide: same re-dim shape as the msgflash window above,
   // but this feature's own fixed 5 s window (the last 200 ms of it spent
@@ -46825,8 +53687,8 @@ void UITask::loop() {
 #if CAP_SD || defined(TLORA_PAGER)
   sdHealthTick();   // wedge detect + remount, driven by writer-flagged failures (any task)
   // microSD insert/remove detection — only while the file manager is open, so
-  // there's no idle SPI traffic. SD.begin runs on this loop task (never
-  // concurrent with the radio's SPI), and reuses the radio's already-begun bus.
+  // there's no idle SPI traffic. Lifecycle changes run on this loop task; each
+  // device transfer uses the shared SPIClass's transaction arbitration.
   if (s_fm_list) {
     static unsigned long s_sd_poll_next = 0;
     if (now >= s_sd_poll_next) {
@@ -46834,33 +53696,40 @@ void UITask::loop() {
       if (!s_sd_mounted) {
         // Only re-probe after the backoff window — repeatedly re-initing an
         // unmountable card spikes current / churns the bus and can reset the board.
-        if (now >= s_sd_retry_after_ms && fmSdTryMount()) {
+        if (!sdRuntimeLifecycleBusy() && now >= s_sd_retry_after_ms && fmSdTryMount()) {
           showAlert(TR("SD card inserted"), 1500);
-#if defined(HAS_TDECK_GT911)
-          SD.mkdir("/meshcomod");   // fresh replacement card: recreate the data root
-          uiDataEnsureDirs();        // segment dir too
-          flushHistorySoon();       // land the RAM ring promptly (off-thread — no UI stall)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+          if (!s_ui_data_fs) uiDataFsReady();
+          if (s_ui_data_fs == &SD) {
+            SD.mkdir("/meshcomod"); // fresh replacement card: recreate the data root
+            uiDataEnsureDirs();      // segment dir too
+            flushHistorySoon();     // land the RAM ring promptly (off-thread — no UI stall)
+          }
 #endif
           mapNoteStorageChanged();
           if (!s_fm_fs) fmShowRoots();          // refresh roots so it appears
         }
-      } else if (!s_hist_flush_busy && !s_hist_flush_req && !sdProbeAlive()) {
+      } else if (!sdRuntimeLifecycleBusy() && !sdProbeAlive()) {
         // Real-I/O probe, NOT `SD.cardType() == CARD_NONE`: cardType() is cached
         // at mount and only SD.end() ever resets it, so the old check could never
         // fire — neither a yanked card nor a wedged one was ever detected here.
-        // Never probe/unmount under an in-flight history flush: SD.end() while
-        // the flush holds its open temp file leaves a stale FIL, and every
-        // later write on it fails FR_INVALID_OBJECT -> EBADF ("bad file
-        // number") — recovery must not sabotage the very write it protects.
+        // Never probe/unmount while any SD consumer is active: SD.end() leaves
+        // its open FAT handle stale and recovery would sabotage that operation.
         fmSdUnmount();
         mapNoteStorageChanged();
+#if defined(TLORA_PAGER)
+        s_sd_data_warn_next_ms = sdDataWarnDeadline(now);
+        showAlert(sdRemovedAlertText(), 5000);
+#else
         showAlert(TR("SD card removed"), 1500);
+#endif
         if (s_fm_fs == &SD || !s_fm_fs) fmShowRoots();
       }
     }
   }
 #endif
 
+  uiCp("ui:threads");
   if (now >= _next_mesh_thread_refresh) {
     /* Pick up contact / channel additions that came in from the companion
      * serial client (CMD_SET_CHANNEL etc.). 4 s is the backstop — the app
@@ -46901,6 +53770,7 @@ void UITask::loop() {
     _next_refresh = now + UI_REFRESH_MS;
   }
 #if CAP_TRACKBALL
+  uiCp("ui:input");
   updateTrackball(now);
 #elif defined(HAS_PAGER_ENCODER)
   updatePagerEncoder(now);
@@ -46949,15 +53819,29 @@ void UITask::loop() {
   // and drain right here, once per tick. Space press-and-hold locks the screen
   // (updatePagerSpaceHold); Backspace press-and-hold unlocks it again
   // (updatePagerBackspaceUnlockHold) -- the latter must run unconditionally,
-  // BEFORE the isScreenOff() split below, since it has to keep working while
-  // the screen is dark. updatePagerKbBacklight() is the same story -- it has
-  // to force the backlight dark the instant the screen goes off/locked, so it
-  // runs unconditionally too, rather than being skipped like the awake-only
-  // helpers in the else branch below.
+  // BEFORE the normal-mode isScreenOff() split below, since it has to keep
+  // working while the screen is dark. updatePagerKbBacklight() follows the
+  // same rule. Remote Mode pauses both because it owns the lit placeholder.
   pagerKeyboardPoll();
-  updatePagerBackspaceUnlockHold(now);
-  updatePagerKbBacklight(now);
-  if (g_lv.task && g_lv.task->isScreenOff()) {
+  // Remote Mode keeps the placeholder lit and reserves all keys for its local
+  // escape path, so normal lock/backlight state machines stay paused there.
+  if (!s_remote_mode) {
+    updatePagerBackspaceUnlockHold(now);
+    updatePagerKbBacklight(now);
+  }
+  if (s_remote_mode) {
+    // The physical panel is only a placeholder in Remote Mode. Match the
+    // T-Deck/M9 contract: discard normal input and use two SPACE presses as
+    // the local escape path.
+    for (int kbi = 0; kbi < 12; ++kbi) {
+      int key = pagerKeyboardReadKey();
+      if (key <= 0) break;
+      remotePhysicalKey(key);
+    }
+    pagerKeyboardConsumeAltTap();
+    pagerKeyboardConsumeAltShiftChord();
+    pagerKeyboardConsumeAltBackspaceChord();
+  } else if (g_lv.task && g_lv.task->isScreenOff()) {
     // Same rationale as updatePagerEncoder(): no touch/trackball wake path on
     // this board, so a keypress while idle-dimmed just wakes the screen
     // instead of being silently swallowed (which is what handleHwKey()'s own
@@ -47015,16 +53899,67 @@ void UITask::loop() {
 #elif defined(HAS_M9_KEYBOARD)
   // M9's keyboard controller is on its OWN bus (Wire1) — no touch task shares
   // it, so polling happens right here on the UI thread rather than from a
-  // separate core-0 task. No keyboard-backlight control exists on this
-  // controller (TODO — see M9_PORT.md if/when one is confirmed), so this is
-  // just poll + drain, no backlight tick.
+  // separate core-0 task (the poll itself rate-limits to ~15 ms inside
+  // m9KeyboardPoll so the free-running loop doesn't hammer the bus).
+  //
+  // Keys used to dispatch against a one-tick-stale nav mirror: Enter's tree
+  // mutations (open/close a modal) only land inside lv_timer_handler at the
+  // END of a tick, so the FIRST arrow of the next tick ran navMoveDir against
+  // s_nav_objs still mirroring the screen behind the modal — the intermittent
+  // "modal navigation breaks out to the screen behind" bug. Sync the group to
+  // the current tree before draining (cheap: sig-compare early-out).
+  if (s_kbd_nav || s_tb_nav) navMaybeRebuild();
   m9KeyboardPoll();
+#if defined(HAS_M9_COMPASS)
+  m9CompassIdleTick();   // park the magnetometer when no app is reading it
+#endif
+#if defined(HAS_M9_IMU)
+  m9ImuIdleTick();       // and the accelerometer
+#endif
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = m9KeyboardReadKey();
     if (key <= 0) break;
     if (!_screen_off) s_kb_last_key_ms = now;
     if (s_remote_mode) { remotePhysicalKey(key); continue; }   // remote mode: physical keys are the exit
     handleHwKey(key);
+  }
+  // New-message notify flash — same contract as the T-Deck branch above:
+  // hard-locked reveals the lock screen (lights the wallpaper, keeps the
+  // lock), an unlocked idle-dim gets the full wake. Especially useful here:
+  // no notification LED and no touch to check the screen with.
+  if (s_msgflash_wake) {
+    s_msgflash_wake = false;
+    if (_manual_lock)     { lockscreenReveal(); s_notify_wake_ms = millis(); }
+    else if (_screen_off) { wakeScreen();       s_notify_wake_ms = millis(); }
+  }
+  // Keyboard backlight: the controller DOES expose duty control (reg 0x02;
+  // it also auto-lights on keypress and times out after 10 s on its own —
+  // this sets the level/mode our side wants). off / on / auto follow the same
+  // s_kb_bl_mode the Control Center "Keyboard" chip cycles; write-on-change
+  // only, so the tick costs zero I2C in steady state.
+  {
+    uint8_t kb_bl = 0;
+    if (s_kb_bl_mode == 1) kb_bl = 255;
+    else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = 255;
+    if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
+    else if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = 255;   // notify pulse
+    // Cache the last duty the controller ACTUALLY took, not the last one
+    // computed: the write is dropped while the controller (its own MCU on the
+    // switched rail) is still booting, or on a NACK — latching a dropped
+    // write would leave the controller on its power-on default until the
+    // next mode/lock change. And 255 is a normal FIRST value (mode "On"
+    // restored from prefs; auto during the first idle window), so a 0xFF
+    // "never written" sentinel would swallow it — use -1, which no real duty
+    // can equal. A failed write stays pending but retries at a calm 250 ms
+    // cadence, not every free-running loop pass: a found-then-wedged bus
+    // would otherwise pay a real I2C transaction (worst case the full Wire
+    // timeout) per pass.
+    static int s_kb_bl_last = -1;
+    static uint32_t s_kb_bl_retry_ms = 0;
+    if ((int)kb_bl != s_kb_bl_last && (int32_t)(now - s_kb_bl_retry_ms) >= 0) {
+      if (m9KeyboardSetBacklight(kb_bl)) s_kb_bl_last = kb_bl;
+      else s_kb_bl_retry_ms = now + 250;
+    }
   }
   serviceLockscreen();
   serviceLockingCountdown(now);
@@ -47118,6 +54053,7 @@ void UITask::loop() {
   // hits the CH32 over I2C when the value actually changes.
   tanKbBacklightTick(_screen_off || _manual_lock);
 #endif
+  uiCp("ui:diag");
   refreshLiveDiag(now);
   // Keep the signal fresh with a "discover" probe: send a ZERO-HOP advert whenever
   // we have no recent DIRECT signal. Zero-hop = neighbours only, never re-broadcast,
@@ -47160,6 +54096,10 @@ void UITask::loop() {
         ContactInfo* rc = the_mesh.lookupContactByPubKey(rpub, PUB_KEY_SIZE);
         if (rc && rc->type == ADV_TYPE_ROOM) {
           s_room_relogin_ms = (uint32_t)now;
+          // Raw send on purpose — NOT roomReloginBegin(). This fires unprompted
+          // once a minute while the operator is reading a room; arming the
+          // watchdog here would let it escalate to a password prompt nobody
+          // asked for. Silent best-effort is the whole contract of a self-heal.
           the_mesh.uiRoomRelogin(rpub);   // LOGIN_OK re-arms the keep-alive + resyncs
         }
       }
@@ -47204,7 +54144,7 @@ void UITask::loop() {
   }
 
   batteryLogTick((uint32_t)now);   // 5-min battery sample (SD on T-Deck, else SPIFFS)
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   telemetryPollTick((uint32_t)now); // auto-poll due nodes -> log (no window)
 #endif
   uiCp("ui:verchk");
@@ -47230,7 +54170,7 @@ void UITask::loop() {
     }
     // Also hard-lock the tab bar while Snake is open so a swipe/tap near the
     // bottom can't slip through to the app switcher (e.g. into the map).
-    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen() || ChannelUtil::isOpen();
+    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen() || luaAppIsOpen();
     if (want_lock != s_tabbar_locked && g_lv.tabview) {
       lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
       if (tab_btns) {
@@ -47300,6 +54240,10 @@ void UITask::loop() {
   uiCp("ui:lvgl");
   lv_timer_handler();
   uiCp("ui:tail");
+#if (CAP_SD || defined(TLORA_PAGER)) && \
+    (defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9))
+  sdRestoreRun();   // intentionally outside the LVGL event/render call stack
+#endif
 #if !defined(HAS_TANMATSU)
   webMirrorTick();   // coalesced, rate-capped, backpressure-gated send of the dirty region
 #endif
@@ -47315,38 +54259,61 @@ void UITask::loop() {
       lv_group_focus_obj(s_nav_last);
   }
 #endif
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
   // Deferred microSD FAT32 format (runs a couple ticks after the notice paints).
   // f_mkfs blocks the loop for tens of seconds on a big card, so drop the loop
   // watchdog around it (CPU0 idle keeps running, so no reset) to avoid a
   // mid-format reset that would corrupt the card.
-  if (s_sd_format_pending && --s_sd_format_pending == 0) {
-    disableLoopWDT();
-    SPIClass* spi = tdeckSharedSPI();
-    bool ok = false;
-    if (spi) {
-      // Explicit reformat (not SD.begin's format_if_empty, which only formats an
-      // already-unreadable card): init the card to register the FatFs diskio at
-      // pdrv (no mount), f_mkfs to FAT32, write the MESHCOMOD label by hand while
-      // unmounted, release, then remount the fresh FS via SD.begin. Works on any
-      // card (FAT32, exFAT, blank) since f_mkfs hardware-inits + overwrites it.
-      SD.end();                                          // drop any existing mount
-      uint8_t pdrv = sdcard_init(PIN_SD_CS, spi, 4000000);
-      if (pdrv != 0xFF) {
-        char drv[3] = { (char)('0' + pdrv), ':', 0 };
-        void* work = malloc(4096);                       // f_mkfs scratch (>= FF_MAX_SS)
-        if (work) {
-          if (f_mkfs(drv, MC_FM_FAT32, 0, work, 4096) == 0 /*FR_OK*/) {
-            sdWriteFatLabel(pdrv, "MESHCOMOD");
-            ok = true;
-          }
-          free(work);
-        }
-        sdcard_uninit(pdrv);
-      }
-      if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
+  // Gate matches fmSdDoFormat (T-Deck + M9 + V4-R8): the Format button existed on
+  // all three, but this worker was T-Deck-only — on the others the formatting
+  // notice stayed up forever with no format running, and the pending latch even
+  // blocked remounting until reboot (#172).
+  // Re-check quiescence at fire time: the two ticks that let the notice paint
+  // are also two ticks in which a consumer can start (a map repaint queues tile
+  // fetches, history flushes, prefs snapshots). Hold the countdown rather than
+  // SD.end() under an open handle, but give up instead of waiting forever —
+  // the longest legitimate holder is a tile download, capped at 12 s.
+  static uint32_t s_sd_format_wait_until = 0;
+  if (s_sd_format_pending == 1 && sdRuntimeLifecycleBusy()) {
+    if (!s_sd_format_wait_until) s_sd_format_wait_until = millis() + 15000;
+    if ((int32_t)(millis() - s_sd_format_wait_until) < 0) {
+      s_sd_format_pending = 2;              // re-arm; the notice stays on screen
+    } else {
+      s_sd_format_wait_until = 0;
+      s_sd_format_pending = 0;
+      fmHideFormatOverlay();
+      showAlert(TR("SD stayed busy - format cancelled, retry"), 3000);
     }
-    enableLoopWDT();
+  }
+  if (s_sd_format_pending && --s_sd_format_pending == 0) {
+    s_sd_format_wait_until = 0;
+    bool ok = false;
+    {
+      LoopWdtGuard loop_wdt_guard;
+      SPIClass* spi = sdSharedSPI();   // this board's SD bus (T-Deck: LoRa SPI; R8: TFT FSPI; M9: shared SPI)
+      if (spi) {
+        // Explicit reformat (not SD.begin's format_if_empty, which only formats an
+        // already-unreadable card): init the card to register the FatFs diskio at
+        // pdrv (no mount), f_mkfs to FAT32, write the MESHCOMOD label by hand while
+        // unmounted, release, then remount the fresh FS via SD.begin. Works on any
+        // card (FAT32, exFAT, blank) since f_mkfs hardware-inits + overwrites it.
+        SD.end();                                          // drop any existing mount
+        uint8_t pdrv = sdcard_init(PIN_SD_CS, spi, 4000000);
+        if (pdrv != 0xFF) {
+          char drv[3] = { (char)('0' + pdrv), ':', 0 };
+          void* work = malloc(4096);                       // f_mkfs scratch (>= FF_MAX_SS)
+          if (work) {
+            if (f_mkfs(drv, MC_FM_FAT32, 0, work, 4096) == 0 /*FR_OK*/) {
+              sdWriteFatLabel(pdrv, "MESHCOMOD");
+              ok = true;
+            }
+            free(work);
+          }
+          sdcard_uninit(pdrv);
+        }
+        if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
+      }
+    }
     fmHideFormatOverlay();
     if (ok && SD.cardType() != CARD_NONE) {
       s_sd_mounted = true;
@@ -47365,20 +54332,27 @@ void UITask::loop() {
       showAlert(done, 3500);
     } else {
       s_sd_mounted = false;
+      // The backend handshake waits for any current File and preserves queued
+      // requests, then drops the failed SD backend without leaving a pause set.
+      mapNoteStorageChanged();
       showAlert(TR("Format failed (no card / SD error)"), 3500);
     }
     if (s_fm_list) fmShowRoots();
   }
-  // Deferred copy/move (paste). WDT off — a big tree can take a while.
+#endif
+  // Deferred copy/move (paste). WDT off — a big tree can take a while. Ungated
+  // like fmActPasteCb: every board with the Files app can paste, and with this
+  // worker T-Deck-only the busy overlay stayed up forever on the rest (#172 class).
   if (s_fm_paste_pending && --s_fm_paste_pending == 0) {
-    disableLoopWDT();
-    bool ok = fmDoPaste();
-    enableLoopWDT();
+    bool ok = false;
+    {
+      LoopWdtGuard loop_wdt_guard;
+      ok = fmDoPaste();
+    }
     fmHideFormatOverlay();
     showAlert(ok ? TR("Pasted") : TR("Paste failed"), ok ? 1500 : 2400);
     if (s_fm_list) fmRefresh();
   }
-#endif
 #endif
 }
 
@@ -47392,10 +54366,12 @@ void UITask::shutdown(bool restart) {
   if (_threads_dirty) saveThreadsToStorage();
   if (_msgs_dirty) saveMsgsToStorage();
 #if defined(ESP32)
-  touchPrefsSetClockFloor(rtc_clock.getFloor());   // clock floor: final synchronous save (#89)
+  touchPrefsSetClockFloor(rtc_clock.getFloor());   // queue final clock-floor update (#89)
+  touchPrefsFlush();                                // finish queued A/B snapshots
 #endif
   if (_display) {
-    _display->startFrame();
+    _display->startFrame((ColorVal)0x0000);   // explicit dark (core palettes vary)
+    _display->setColor((ColorVal)0xFFFF);
     _display->drawTextCentered(_display->width() / 2, _display->height() / 2, "Shutting down...");
     _display->endFrame();
   }
@@ -47421,7 +54397,6 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_urlqr_root),            []{ closeUrlQr(); },                 PF_COUNT },   // chat URL -> QR
   { P_OPEN(s_urlmenu_root),          []{ closeUrlMenu(); },               PF_COUNT },   // chat URL -> action menu
   { P_OPEN(s_meminfo_root),          []{ closeMemInfo(); },               PF_COUNT },
-  { P_OPEN(s_monitor_root),          []{ closeMonitorPage(); },           PF_COUNT },
   { P_OPEN(s_discover_root),         []{ closeDiscoverPage(); },          PF_COUNT },
   { P_OPEN(s_spec_root),             []{ closeSpectrumPage(); },          PF_COUNT },
   { P_OPEN(s_advert_root),           []{ closeAdvertPage(); },            PF_COUNT },   // was dismissable but never counted
@@ -47430,12 +54405,12 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_local_sensors_root),    []{ closeLocalSensorsPage(); },      PF_COUNT },   // was in no registry at all
 #endif
   { P_OPEN(s_siginfo_root),          []{ closeSigInfoPopup(); },          PF_COUNT },
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   { P_OPEN(s_fm_img_root),           []{ fmImageClose(); },               PF_COUNT },
   { P_OPEN(s_editor_root),           []{ fmEditorClose(); },              PF_COUNT },
   { P_OPEN(s_fm_prompt),             []{ fmPromptClose(); },              PF_COUNT },
   { P_OPEN(s_fm_actions),            []{ fmCloseActions(); },             PF_COUNT },
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_SOUND_FILES   // s_fm_snd_root exists only under this gate (same set as the old CAP_SD||PAGER inside this block, minus the M9)
   { P_OPEN(s_fm_snd_root),           []{ fmSndClose(); },                 PF_COUNT },   // was in no registry at all
 #endif
   { P_OPEN(s_fm_fmt_overlay),        nullptr,                             PF_COUNT },   // format progress: block keys, not dismissable
@@ -47446,11 +54421,11 @@ static const PopupEnt k_popup_registry[] = {
                                                                           PF_COUNT },
 #endif
   { P_OPEN(s_confirm_modal),         []{ confirmDismiss(); },             PF_COUNT },
-#if CAP_SD
+#if CAP_SD || defined(TLORA_PAGER)
   { P_OPEN(s_telem_config_root),     []{ telemetryConfigClose(); },       PF_COUNT },   // sits on the telemetry window
   { P_OPEN(s_telemetry_root),        []{ telemetryClose(); },             PF_COUNT },
 #endif
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   { P_OPEN(s_lockwall_picker),       []{ lockwallPickerClose(); },        PF_COUNT },
 #endif
   { P_OPEN(s_accent_picker),         []{ accentPickerClose(); },          PF_COUNT | PF_SWIPE },
@@ -47493,6 +54468,14 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_los_root),              []{ closeLosModal(); },              PF_COUNT },
 #endif
   { P_OPEN(s_admin_root),            []{ closeAdminConsole(); },          PF_COUNT },
+#if CAP_LUA_APPS
+  // The Store page (also where Settings -> Language lands, see luaStoreOpenLanguages)
+  // was never registered, so backspace/Esc did nothing on it and the ONLY way out was
+  // tapping the status bar's back chevron -- every other settings screen closes with the
+  // key (issue #281). Sits below the modals that open OVER the store (confirm, pickers)
+  // so those still close first.
+  { P_OPEN(s_luastore_root),         []{ closeLuaStorePage(); },          PF_COUNT },
+#endif
   { P_OPEN(s_settings_sheet),        []{ closeSettingsCategory(); },      PF_COUNT | PF_SWIPE },
   { []{ return settingsModalIsOpen(); }, []{ closeSettingsModal(); },     PF_COUNT },
   { P_OPEN(s_power_menu),            []{ closePowerMenu(); },             PF_COUNT },
@@ -47512,7 +54495,14 @@ static bool popupRegistryAny() {
 }
 static bool popupRegistryDismissTop() {
   for (const auto& e : k_popup_registry)
-    if (e.close && e.is_open()) { e.close(); return true; }
+    if (e.is_open()) {
+      // Stop at the first OPEN row either way: a null-close row is a key
+      // BLOCKER (progress overlay) — walking past it would dismiss whatever
+      // sits BENEATH the overlay mid-operation (e.g. the fullscreen Files
+      // view under a running SD format).
+      if (e.close) { e.close(); return true; }
+      return false;
+    }
   return false;
 }
 static bool popupRegistryBlocksSwipe() {
@@ -47520,3 +54510,12 @@ static bool popupRegistryBlocksSwipe() {
     if ((e.flags & PF_SWIPE) && e.is_open()) return true;
   return false;
 }
+
+// Last Wi-Fi STA disconnect reason, surfaced by wifiStaStatusBrief as
+// "auth failed (rNN)". Defined HERE rather than in src/main.cpp because every
+// target compiles this file, while the two ESP32-P4 targets are IDF builds with
+// their own main.cpp -- the S3-only definition left both of them failing to link.
+// The S3 Wi-Fi event handler in src/main.cpp writes it through an extern.
+#if defined(ESP32)
+volatile uint8_t g_wifi_last_disc_reason = 0;
+#endif

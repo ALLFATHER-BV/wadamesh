@@ -7,6 +7,11 @@
 #   ./build.sh flash -p /dev/cu.usbmodemXXXX
 #   ./build.sh menuconfig
 set -e
+
+# Keep the baked-in translation + Lua app tables in step with deploy/apps/.
+# Same for the seeded Lua apps. The PlatformIO envs get this from a pre: hook;
+# the IDF builds need it here or the P4 boards ship stale copies.
+python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/pre_gen_baked.py"
 cd "$(dirname "$0")"
 export IDF_TOOLS_PATH="$PWD/esp-idf-tools"
 # shellcheck disable=SC1091
@@ -71,6 +76,6 @@ WADA_FW_DATE="$(date '+%-d %b %Y')"
 
 exec idf.py -B build/tdisplay_p4 \
   -DDEVICE=tdisplay_p4 \
-  -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/tdisplay_p4;sdkconfigs/wadamesh" \
+  -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/wadamesh;sdkconfigs/tdisplay_p4" \
   -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
   -DIDF_TARGET=esp32p4 "$@"

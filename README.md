@@ -8,7 +8,7 @@
 <p align="center"><b>A real touchscreen UI for your mesh radio.</b> &middot; open source &middot; GPL-3.0</p>
 
 Touch-UI [MeshCore](https://github.com/meshcore-dev/MeshCore) companion-radio
-firmware for the **LilyGo T-Deck / T-Deck Plus** and **Heltec V4 + TFT**
+firmware for the **LilyGo T-Deck / T-Deck Plus**, **Heltec V4 + TFT** and eight other boards
 (ESP32-S3).
 
 An LVGL touch UI — map, chat, contacts, channels, settings — split out of
@@ -22,14 +22,18 @@ per-board status.
 
 - LilyGo T-Deck / T-Deck Plus — env `LilyGo_TDeck_companion_radio_touch` (stable)
 - Heltec V4 + TFT + CHSC6x touch — env `heltec_v4_tft_companion_radio_usb_tcp_touch` (stable)
-- Tanmatsu (ESP32-P4) — built from `tanmatsu/` (ESP-IDF), ships via the Tanmatsu app store
-- Elecrow ThinkNode M9 — env `ThinkNode_M9_companion_radio_touch` (beta)
+- Tanmatsu (ESP32-P4) — built from `tanmatsu/` (ESP-IDF), ships via the Tanmatsu app store — [sideload guide](TANMATSU_SIDELOAD.md) for running your own build
+- Elecrow ThinkNode M9 — env `ThinkNode_M9_companion_radio_touch` (beta) — [keyboard & d-pad guide](THINKNODE_M9_SHORTCUTS.md)
 - RAK WisMesh Tap V2 (RAK3312) — env `rak_tap_v2_companion_radio_touch` (beta)
+- LilyGo T-Lora Pager — envs `tlora_pager_lr1121_companion_radio_touch` / `tlora_pager_sx1262_companion_radio_touch` (beta) — [keyboard shortcuts](TLORA_PAGER_SHORTCUTS.md)
+- Heltec V4-R8 + Expansion Kit V2 — env `heltec_v4_r8_tft_companion_radio_usb_tcp_touch` (beta)
+- LilyGo T-Display P4 — built from `tdisplay_p4/` (ESP-IDF); AMOLED by default, `WADA_P4_LCD=1` for the TFT-LCD SKU (beta)
+- Attaky Mesh Series — env `attaky_mesh_series_companion_radio_touch` (beta)
 
 ## Architecture
 
 This repo holds only the **app**: the `companion_radio` glue, the `ui-touch`
-LVGL UI, the two boards' glue/variants, and `platformio.ini`. The **MeshCore
+LVGL UI, each board's glue/variants, and `platformio.ini`. The **MeshCore
 core is not vendored here** — it's pulled as a library via `lib_deps` from the
 [`ALLFATHER-BV/meshcomod`](https://github.com/ALLFATHER-BV/meshcomod) monorepo
 (the same repo as the non-touch firmware), pinned by a lean source-only `core-*`

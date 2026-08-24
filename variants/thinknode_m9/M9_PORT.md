@@ -55,13 +55,13 @@ this table as schematic-verified, not Meshtastic-derived, going forward.)
 | microSD                      | 48 (CS)         | Shared LoRa SPI bus (Arduino SD, same as T-Deck) — CS is GPIO48, schematic net `SPICLK_N`. NOT one of the GPIO33-37 octal-PSRAM lines; SPICLK_N/GPIO48 (and SPICLK_P/GPIO47) are only reserved on the R8V/R16V 1.8V-differential-clock variants — this board is a plain R8 (see Hardware summary), which uses the ordinary single-ended SPICLK instead, so GPIO48 is genuinely free. The earlier "CS=36 is octal-PSRAM-reserved" claim conflated physical package pin 36 with GPIO36 — they are not the same pin. Confirmed working on hardware. |
 | Peripheral I2C SDA/SCL       | 7 / 6           | RTC 0x51, IMU 0x6b, compass 0x7c                                                                                                                                                                                                                              |
 | Keyboard I2C SDA/SCL         | 20 / 21         | controller @ 0x6c, **own bus** (Wire1)                                                                                                                                                                                                                        |
-| Battery ADC                  | 13              | ADC1_CH2, **2:1 divider** (manufacturer-confirmed)                                                                                                                                                                                                            |
+| Battery ADC                  | 13              | **ADC2**_CH2 (S3: ADC1=GPIO1-10, ADC2=GPIO11-20 — earlier "ADC1_CH2" label was wrong; ADC2 is Wi-Fi-arbitrated, see getBattMilliVolts's per-sample filter), **2:1 divider** (manufacturer-confirmed)                                                                                                                                                                                                            |
 | GPS RX/TX                    | 2 / 3           | CC1167Q, UART1                                                                                                                                                                                                                                                |
 | GPS EN / ON_OFF / RST / 1PPS | 11 / 10 / 5 / 4 | EN+RST wired, **both active-LOW** (confirmed on schematic: same P-MOS circuit as the peripheral power rail for EN; GPS_RST1 -> R46 -> NPN Q16 base, GPIO HIGH turns Q16 on and pulls the module's reset line to GND, so HIGH asserts reset / LOW releases it — inverted vs. the library defaults, both now overridden in platformio.ini). ON_OFF + 1PPS unused |
 | Buzzer                       | 9               | wired — simple GPIO piezo (`THINKNODE_M9_BUZZER_PIN`), Arduino `tone()`/`noTone()`, shares the Heltec V4 buzzer code path |
 | ESP_WAKEUP (from KB MCU)     | 12              | not wired; behaviour undocumented                                                                                                                                                                                                                             |
 | KEY_LED                      | 46              | not wired                                                                                                                                                                                                                                                     |
-| User button (BOOT)           | 0               | only direct button besides the keyboard                                                                                                                                                                                                                       |
+| User button (BOOT)           | —               | **does not exist** (Deferred #6, schematic-confirmed): only a power-cut slider and a reset button, neither a GPIO. PIN_USER_BTN removed from the env — the old GPIO0 entry here contradicted Deferred #6 |                                                                                                                                                                                                                       |
 
 This turn's corrections vs. the earlier (incorrect) attempt:
 
@@ -90,7 +90,10 @@ This turn's corrections vs. the earlier (incorrect) attempt:
 
 ## Keyboard (confirmed on hardware — `M9Keyboard.h`)
 
-One raw byte per read, controller resolves shift/symbol layers itself:
+Write reg 0x01 then read one byte (single latched key — see the
+register-addressed-slave section below; the old "one raw byte per read" note
+here was the exact protocol misunderstanding that made builds 1-7 see no
+keys). The controller resolves shift/symbol layers itself:
 
 | Key                  | Raw  | Key          | Raw  |
 | -------------------- | ---- | ------------ | ---- |
@@ -112,8 +115,13 @@ focused — see "Deferred" below.
 
 - `boards/thinknode_m9.json` — ESP32-S3R8, 16 MB flash, 8 MB PSRAM.
 - `variants/thinknode_m9/M9Board.{h,cpp}` — board class: both active-low power
-  rails (periph rail + backlight) via `RefCountedDigitalPin`, 1:1 battery
-  divider, deep-sleep/wake on LR1110 IRQ.
+  rails (periph rail + backlight) via `RefCountedDigitalPin`, 2:1 battery
+  divider. Deep sleep is TIMER-ONLY: the original "wake on LR1110 IRQ
+  (GPIO42)" was electrically impossible (S3 RTC pads are GPIO0-21 — every
+  rtc_gpio_*/ext1 call on 42/39 failed with ESP_ERR_INVALID_ARG, unchecked),
+  so those calls were removed. The only RTC-capable wake candidate is
+  ESP_WAKEUP GPIO12 from the keyboard MCU — needs hardware characterization
+  (Deferred #6).
 - `variants/thinknode_m9/target.{h,cpp}` — manual LR1110 `radio_init()`,
   GPS/RTC/sensor wiring, ST7789 display instantiation, `m9SharedSPI()` (mirrors
   the T-Deck's `tdeckSharedSPI()` — used by the SD mount code below).
@@ -215,6 +223,450 @@ focused — see "Deferred" below.
   the dropdown still closes and focus moves to the next page element. Root
   cause not yet found; see Deferred list.
 
+## Audit pass (2026-08-19) — Back key restored + feature/perf/data fixes
+
+A full audit traced every M9 input path and closed the following (all
+compile-verified; on-device validation still wanted for the UX items):
+
+- **HW Back (0x86) restored in nav mode.** Commit `0ea242c` accidentally
+  REPLACED `case M9_KEY_HW_BACK:` in `m9HandleNavKey` with the new
+  `case M9_KEY_ENTER_LONG:` — since then Back only worked inside text-edit
+  mode. Restored with a fuller ladder than the ad98f66 original: open
+  dropdown list (ESC) → popup registry (incl. contacts select-mode) →
+  full-screen app page (`s_apppage_close`: Lua apps, Snake, Web) → open chat →
+  LV_KEY_ESC. This plus the registry-gate fixes below fully explains the old
+  "some modals close via Back, some don't".
+- **Lua-app hard trap fixed.** `isDismissKey()` had no M9 arm (returned false
+  for everything), so any Lua app consumed Back/Home with no touch fallback —
+  the only escape was the power slider. M9 arm added (Back + Home are always
+  firmware keys); HOME also closes app pages now. Keys are additionally kept
+  from apps while the screen is locked/dark, so `ENTER_LONG` (the board's only
+  unlock) can't be eaten by an app after auto-lock.
+- **Popup-registry gates widened to M9**: Files-manager overlays (image
+  viewer, editor, prompts, actions, format overlay), Terminal command picker,
+  fullscreen Files/Terminal view, wallpaper picker, and `drawerPopupOpen`'s
+  fullscreen-view term. These compiled and ran on M9 but were invisible to
+  Back/Home and `anyPopupOpen()`.
+- **Dropdown keypad nav fixed**: no `navOpenDropdown()` capture existed in any
+  M9 key path (the doc's earlier claim it was added never matched a commit) —
+  arrows now FIFO LV_KEY_UP/DOWN into the open list instead of navMoveDir
+  defocusing (and thereby closing) it; Back sends ESC to the list first.
+- **Textarea 3-4-press focus escape**: edit-mode LEFT/RIGHT now fall through
+  to navMoveDir when the caret is already at the text boundary.
+- **Modal "breaks out" mitigation**: the M9 drain now runs `navMaybeRebuild()`
+  BEFORE dispatching keys (they used to dispatch against a one-tick-stale
+  focus mirror), and `closeSettingsModal()` gained the idiomatic
+  `navDetachBeforeTreeMutation()`/`navMarkDirty()` pair.
+- **Lua apps get the d-pad**: arrows → `luaAppSteer` (swipe events, T-Deck
+  trackball parity), d-pad centre → synthetic centre tap (`luaAppPress`, new)
+  + `ev.key=="enter"` (sendKey now maps `'\r'`). Snake and other store apps
+  are playable, including "tap to retry".
+- **New key bindings**: GPS_LONG 0x87 → `toggleGPS()` + alert (matches the CC
+  chip; NB if hardware shows the latched slot also emitting the 0x84 tap
+  first, the Advert page will open too — needs on-device check); CTRL 0x90 →
+  Control Center. MIC 0x88 and 0x89 deliberately left unbound (documented in
+  M9Keyboard.h).
+- **Keyboard backlight wired**: `m9KeyboardSetBacklight()` (controller reg
+  0x02) is now driven from the drain-loop tick — off/on/auto via the CC
+  "Keyboard" chip, write-on-change only. The old drain comment claiming "no
+  backlight control exists" was wrong. (Audit pass 2 hardened this: the setter
+  reports success and the cache only latches written-and-ACKed duties — see
+  below.)
+- **Message flash/wake wired**: "Flash on new message" was a dead switch on M9
+  (producer/consumer were T-Deck-only). M9 now wakes (or lock-reveals) on
+  message and pulses the keyboard light; the 10 s notify re-dim applies.
+- **Terminal/editor Enter**: the Enter-submit/newline gate excluded M9 —
+  widened, so Enter runs the terminal command / inserts editor newlines.
+- **"Store data on SD" honored**: the boot data-store path in main.cpp
+  excluded M9, so the (shown, persisted) toggle silently did nothing —
+  extended, with `m9SharedSPI()` arms in both selector chains, plus the truth
+  label, recovery-copy button and migration machinery in Settings.
+- **SD-backed chat history**: `uiDataFsReady()` had no M9 arm (fell into the
+  V4 no-SD SPIFFS branch) — added the T-Deck-shaped SD arm plus the SD-history
+  hardening gates (write-failure tell, remount re-flush).
+- **Threads-index write made atomic (shared fix)**: `saveThreadsToStorage()`
+  rewrote in place ("w"); a power-cut mid-write got the file quarantine-deleted
+  at boot (chat list/unread/DM entries lost — the bulk of Deferred #9's
+  symptom). Now tmp+rename via `uiDataReplaceFile`, orphan tmp swept at load.
+- **Power menu**: the "Power off" row is hidden on M9 — it armed ext0 wake on
+  a user button this board doesn't have, leaving the device unrecoverable
+  until a slider cycle. The slider IS the power-off. Reboot/Download/Cancel
+  remain. `PIN_USER_BTN` removed from the env (no button exists; GPIO0 was a
+  floating strapping pin being polled by the screen-lock branch).
+- **"Save update bin to SD"** (About) widened to M9 (OTA_BIN_NAME arm already
+  existed).
+- **Battery reads**: GPIO13 is ADC2 (Wi-Fi-arbitrated) — `getBattMilliVolts()`
+  now discards ADC2-blocked samples (< 1250 mV at the pin) per-sample and
+  holds the last good reading. The battery log now follows the resolved
+  ui-data backend instead of bare card presence (Deferred #8's battLogOnSd fix
+  landed earlier in 4846d4f; this closes the "any card with /meshcomod hijacks
+  the log" residue).
+- **Perf**: keyboard I2C poll throttled to 15 ms (was a blocking ~0.5 ms
+  100 kHz transaction EVERY free-running loop iteration — hundreds/s), with a
+  bounded 3-read drain per poll so a second key struck inside the window isn't
+  lost; SD CS (GPIO48) parked HIGH at boot (was floating across 80 MHz shared-
+  bus traffic until the first lazy mount); `RADIOLIB_DEBUG_BASIC` bring-up
+  flag dropped per its own note.
+
+**Follow-up fixes from the third on-device test round (same day) — "panning
+doesn't reload tiles":** a multi-agent trace confirmed four contributors and
+ruled out the tile-slot pool, the tab-bar removal, and the key-drain timing:
+
+- **Tile cache now prefers the BUILT-IN 16 GB microSD** (every M9 has one).
+  It used to cache into the 4.75 MB "tiles" partition, which fills after a few
+  panned screens and has NO eviction — every later download then failed
+  forever. Cache goes to SD /tiles (Launcher-T-Deck layout, merges with packs);
+  the partition remains the fallback if the card wedges.
+- **Auto-follow paused during pan mode**: mapAutoFollowTick recenters on the
+  CENTER-vs-fix delta, so the pan itself tripped it (the old mapNudge comment
+  claiming "recenters on the next GPS move" was wrong) — with follow on, every
+  nudge snapped back within one 250 ms tick. Follow resumes when pan exits.
+- **Two self-heal repaints (M9-gated)**: (1) the fetch worker's
+  already-on-disk skip now arms the rate-capped repaint for visible-zoom tiles
+  (a tile whose read was transiently blocked stayed blank "one pan behind");
+  (2) clearing an SD fail-note (which blanks ALL tile reads for up to ~5 s per
+  stamp) now arms the repaint too when the last render had gaps.
+- **Offline UX**: entering pan mode and hitting uncached areas with Wi-Fi off
+  shows a one-per-session alert — the fetch queue silently no-ops offline and
+  only a small corner label said why.
+- Still-relevant user guidance: a PNG tile pack on the card (/maps/osm or
+  /tiles) is only read when Map options → "Tiles from SD card" is ON and the
+  style is OSM; the toggle re-points and re-renders immediately.
+
+**Follow-up fixes from the second on-device test round (same day):**
+
+- **Back inside apps looked dead**: apps launch from the app DRAWER, which
+  stays open BENEATH the full-screen app page by design (closing the app
+  returns you to it) — and the drawer is a PF_COUNT popup-registry row, so the
+  restored Back ladder's `anyPopupOpen()` rung dismissed the invisible drawer
+  under the app instead of the app itself (Home worked because its handler
+  closes the app page first). The Back ladder now closes an open app page
+  before the registry dismiss, EXCEPT when the Control Center or power menu is
+  open (the only popups a key can open OVER an app page on this board — CTRL
+  falls through to openControlCenter() in display-only apps).
+- **Map pan mode added** (see the resolved keypad-nav item above): Map key on
+  the Map tab toggles arrows between focus-nav and mapNudge() panning.
+- The Chats/Map jump keys now close an open app page before switching tabs —
+  the jump used to land invisibly beneath the still-covering page.
+
+**Follow-up fixes from the first on-device test round (same day):**
+
+- **D-pad in display-only Lua apps (Airtime, RF Monitor)**: these apps declare
+  no `on_input`, but `luaAppKey()` consumed every key anyway — the d-pad was
+  dead inside them. Keys are now forwarded to a Lua app only when it actually
+  declares `on_input` (new `luaAppHasOnInput()`); otherwise the d-pad keeps its
+  native meaning: arrows move focus between the app page's own LVGL widgets
+  (Airtime's Reset button), Enter clicks them, and when focus has nowhere to go
+  UP/DOWN page-scroll the app body (new `luaAppScroll()` — RF Monitor's feed).
+- **Bottom tab bar removed on M9** (user request): it was tap-only chrome —
+  navMaybeRebuild deliberately never adds it to the focus group, so on a
+  touchless board it was uncontrollable dead space. `TABBAR_H` is now 0 for
+  M9 and the btnmatrix is hidden; every tab remains reachable via the dedicated
+  HOME/MESSAGE/MAP keys and the app drawer's Chats/Contacts/Map/Settings tiles.
+  Content gains the 30 px row; the update / chat-unread badges anchor to the
+  bottom corners instead of the (gone) bar.
+- **Spectrum sweep crawl fixed (LR1110-specific)**: `LR11x0::getRSSI(false)` is
+  not the SX126x's cheap register read — it internally re-arms RX and drops to
+  standby around EVERY call, so the 6-read peak-hold per bin paid ~960 extra
+  arm/disarm cycles per 160-bin sweep (each a multi-command SPI exchange with
+  BUSY waits) and sampled the unsettled post-arm RSSI default rather than live
+  channel power. The M9 sweep now holds RX through the dwell
+  (`getRSSI(false, /*skipReceive=*/true)` + one explicit `standby()` per bin)
+  and skips the pointless image recalibration the 24 MHz wrap-around jump
+  triggered every sweep (`setFrequency(f, /*skipCalibration=*/true)`).
+
+## Audit pass 2 (2026-08-20) — second full sweep after the 08-19 fixes
+
+A second 7-dimension multi-agent audit (each dimension adversarially verified:
+30 findings, 29 confirmed, 1 refuted) over the tree WITH the 08-19 pass
+applied. All 29 fixed, compile-verified. On-device retest list at the end.
+
+**Key-trap / soft-lock class (all in UITask.cpp's M9 handlers):**
+
+- **SUB_MAP over a display-only Lua app orphaned the app** (the worst find):
+  0x84 opened the Advert page without closing the app page, the Advert page's
+  close stole the single `s_apppage_close` slot, and closing it nulled the
+  hook — the Lua app underneath became unreachable by ANY key (reboot/slider
+  only). SUB_MAP and SUB_MESSAGE now close an open app page first, like the
+  LEFT_MESSAGE/MAP jump keys always did.
+- **Back-ladder z-order redesign.** The old ladder's app-page rung assumed
+  "CC and power menu are the only popups that can stack over an app page" —
+  false for the Lua send-permission confirm (which the app itself raises) and
+  the registry walk closed the FIRST open row in declaration order, so Back
+  with the CC open over e.g. a Files rename prompt silently discarded the
+  prompt UNDERNEATH. New invariant: power menu and CC are always-frontmost
+  rungs (power before CC — CTRL peels an open power menu before opening the
+  CC so it holds in both stacking directions), the app-page rung defers to an
+  open confirm modal, and SUB_MESSAGE/SUB_MAP run HOME's bounded
+  dismiss-everything loop before opening their own overlay (refusing to
+  stack over a null-close progress blocker) so nothing is ever left open
+  beneath. HOME peels power/CC/confirm the same
+  way. Arrows/Enter are also no longer forwarded to an `on_input` Lua app
+  while a confirm modal is up — the send-permission dialog used to be
+  UNANSWERABLE on M9 (keys went to the app; Back/Home killed the app under
+  the dialog).
+- **Map pan-mode flag could go stale**: no popup guard (arrows panned the map
+  hidden under the CC) and no tab-jump clear (HOME with pan on left the flag
+  armed — the next Back anywhere was eaten by "Map pan off", and re-entering
+  the map via the drawer tile arrived still panning). Pan now self-clears on
+  any popup or tab leave; a stale flag is cleared silently, the toast only
+  fires for a genuine pan exit.
+- **Null-closer "blocker" popup rows now actually block**:
+  `popupRegistryDismissTop()` used to SKIP rows without a closer and dismiss
+  whatever sat beneath the progress overlay (Back during bulk-delete exited
+  select mode mid-operation; Back during SD format tore down the fullscreen
+  Files view the format returns to). The walker now stops at the first open
+  row; null-close rows refuse the dismiss. Shared fix (T-Deck had the same
+  hole). Behavior note: a tab jump during a progress overlay now leaves the
+  overlay up — intended blocker semantics.
+
+**Gate parity (compiled on M9 but wired only for the T-Deck):**
+
+- Terminal RX mirror — incoming mesh traffic never appeared in the M9's
+  terminal chat mode (TX echo only). Gate widened. (TLORA_PAGER also compiles
+  the terminal and still lacks the mirror — upstream follow-up, not M9's.)
+- Accent + @-mention pickers popped up while typing but were UNPICKABLE
+  (touch-only cells; the key-nav selection machinery is pager-only) — pure
+  dead chrome on a touchless board, and the mention box could linger after
+  leaving edit mode. Deliberate call: SUPPRESSED on M9 (auto-popups gated
+  off, dead settings row compiled out, `mentionBoxHide()` added to Back's
+  edit-mode branch). Porting the pager's key-nav selection is possible future
+  work if accents are ever wanted on this keyboard.
+- Fullscreen Terminal/Files title (status-bar borrow), wallpaper-set caption
+  refresh in the Device modal, and the map storage-error message (M9 now gets
+  the SD guidance, not "reflash the tiles partition") — all widened.
+- Dead `HAS_M9_KEYBOARD` alternative removed from a CAP_TRACKBALL-only
+  settings block (M9 nav is force-on at boot and must never grow an
+  off-switch).
+
+**Keyboard backlight cache**: `static uint8_t s_kb_bl_last = 0xFF` was meant
+as a never-written sentinel — but M9 duties are only 0/255 and 255 == 0xFF,
+so mode "On" restored from prefs skipped the first write EVERY BOOT (stuck on
+the controller's keypress-auto default until the first dim/wake cycle). The
+cache also latched duties whose I2C writes were dropped (controller still
+booting, NACK). `m9KeyboardSetBacklight()` now returns success (false on no
+bus / NACK), the cache is an int(-1) updated only on success — dropped writes
+retry until ACKed, at a 250 ms cadence so a found-then-wedged bus never pays
+an I2C transaction per free-running loop pass.
+
+**Board API (latent — nothing calls powerOff/enterDeepSleep on M9 today, but
+it shipped broken):** `enterDeepSleep()`'s single rail release left GPIO18
+driven ON (refcount was 2: board + display — `display.turnOff()` now drops
+the display's claim first), its backlight `digitalWrite` was inert (LEDC ch7
+owned the pad since UI boot — `pinMode()` re-route first, V4-R8 idiom), and
+no hold meant even correct levels were lost when pads tristate in sleep
+(`rtc_gpio_hold_en` on 17/18, `gpio_hold_en` + `gpio_deep_sleep_hold_en` for
+non-RTC NSS GPIO39; unconditional hold release at the top of `begin()` —
+RTC-domain holds survive the RST button). It also now mirrors the base-class
+sequence it was hiding: radio `powerOff()` + NSS parked HIGH, GPS provider
+stop, `Serial.flush()`, stale wake sources cleared — previously a "powered
+off" M9 kept the LR1110 in RX (mA-scale drain with no wake source that could
+ever use it) until the slider cut the battery.
+
+**Radio/build hardening:** the TCXO fallback in `radio_init()` still encoded
+the DISPROVEN tcxo=0 theory with a comment saying it "must stay 0" (a trap:
+the build only worked because platformio.ini defines the macro) — fallback is
+now 3.3f with the disproof recorded. `patch_radiolib_lr11x0.py` fail-closes:
+pattern drift with RadioLib present is a hard build error, and a pre-link
+check verifies the patch marker after libdeps exist (a fresh checkout's first
+`pio run` fails at link with a "patched — re-run" message rather than
+shipping an unpatched -706 binary; the second run builds clean). M9 env
+gained `ENV_SKIP_GPS_DETECT=1` (the cold-booting CC1167Q could miss the 1 s
+NMEA probe → `gps_detected` false all session → GPS toggle + GPS_LONG key
+dead; every sibling soldered-GPS env already set it) and `CORE_DEBUG_LEVEL=0`
+(ARDUHAL [E] spam on UART0, which doubles as the companion frame stream).
+Partition-CSV headroom prose refreshed (~2.99 MB firmware, ~0.88 MB headroom
+per slot). Refuted by the verifier, deliberately NOT applied:
+`RADIOLIB_EXCLUDE_SX126X`.
+
+**On-device retest list for this pass:** Airtime/RF-Monitor + SUB_MAP then
+Back (no orphan); CTRL over a Files rename prompt then Back (CC closes,
+prompt survives); send-permission dialog from a store app (arrows/Enter
+answer it); map pan → HOME → Back elsewhere (no eaten press); "Keyboard
+light: On" applied immediately at boot; GPS working from a cold boot without
+toggling; terminal chat shows the peer's replies; Back during an SD format
+does nothing.
+
+Still open / needs hardware (designed but deliberately NOT coded blind):
+ST7789 SLPIN/DISPOFF panel sleep on screen-off (shared-bus variant of the
+T-Deck's anti-burn-in path — a wrong sequence would look like a dead display);
+raising the SD operating clock above 4 MHz; deferring hist-flush during active
+input; Wire1 at 400 kHz; charging-detection (`batteryIsCharging` is
+compile-time false on M9); GPIO12 ESP_WAKEUP characterization for a real
+Power-off wake.
+
+## Compass (QMC6309) + GPS motion for Lua apps (2026-08-22)
+
+First use of the magnetometer. The chip was documented (peripheral bus, 0x7C)
+but nothing ever talked to it; the QMI8658 IMU still has no driver.
+
+- **Driver: `M9Compass.{h,cpp}`** (`HAS_M9_COMPASS=1` in the env). Probe =
+  chip id 0x00 == 0x90; soft reset (0x0B=0x80 then the mandatory 0x0B=0x00 —
+  the bit is not self-clearing); CTRL2 0x0B=0x30 (ODR 100 Hz, ±32 G, set/reset
+  on), CTRL1 0x0A=0x41 (normal mode, OSR1 8, low-pass 4 — the datasheet's
+  0x61 example is low-pass 8 at 50 Hz, which read as sluggish on the dial),
+  both read back and re-written once if they did not stick.
+  Read path: status 0x09 (bit0 DRDY, cleared by the read; bit1 OVFL → sample
+  kept but flagged, logged at most every 10 s), then 6 bytes from 0x01
+  little-endian int16, ×1/1000 → Gauss (±32 G chosen over ±8 G because of
+  the bias magnitude question below; 1 mG/count is still ≈0.13° of heading).
+  Synchronous on the UI thread from `luaHostCompass()` (three short
+  transactions at 100 kHz, no poll hook), cached sample valid 1 s, re-probe
+  every 2 s while absent (rail-powered part may still be in POR when
+  `radio_init()` runs), eight consecutive bus errors → forget and re-probe.
+  Boot log: `M9 compass: QMC6309 ok (id=0x90, 100 Hz, +/-32 G, OSR 8, LPF 4)` or the
+  reason it is not. Register layout cross-checked against the Rev A datasheet
+  and the SlimeVR/madflight/Tildagon drivers — NOT SensorLib, whose
+  `setOutputDataRate()` writes the ODR into 0x0A (the OSR bits); Meshtastic
+  inherits that bug and only works because it runs continuous mode.
+- **Exposure: `CAP_COMPASS`** (device_caps.h, hardware gate, `caps().compass`)
+  → `wada.sys.compass()` = `{x, y, z, ovfl}` Gauss, sensor frame,
+  uncalibrated. No heading on purpose: see the two unknowns below.
+- **GPS motion: `WadaNmeaLocationProvider`** (`src/helpers/`, `HAS_GPS_MOTION=1`)
+  replaces the core `MicroNMEALocationProvider` in `target.cpp` — a line-for-
+  line copy that also exposes RMC speed/course (the core keeps its parser
+  private; patching libdeps is the build-fragile route this repo avoids).
+  `wadaGpsMotion()` feeds `wada.sys.gps().speed_kmh/course`; course is absent
+  under 1 km/h because MicroNMEA parses an empty course field as 0 (= north).
+  `gps()` also returns nil while the GPS toggle is off.
+- **App: `deploy/apps/gpscompass/1.0`** (Store catalog entry added; not baked
+  into `lua_builtin.h` — `CAP_BUILTIN_LUA_APPS` also removes the Store > Apps
+  tab). Keys: `C` start/finish calibration (auto-finishes after 20 s), `O`
+  rotate the sensor frame 90°, `F` mirror it, `X` clear calibration, d-pad
+  left/right or OK = cycle the target contact. Offsets/orientation persist in
+  the app's KV store.
+
+**Both unknowns are now MEASURED (2026-08-22), not guessed.** Held flat,
+logging the raw vector (`M9_COMPASS_DEBUG` in M9Compass.cpp) at four headings
+90° apart:
+
+| heading | raw x | raw y | raw z | x−ox | y−oy |
+|---|---|---|---|---|---|
+| N | −0.395 | −3.068 | −2.768 | **−0.055** | **+0.310** |
+| E | −0.072 | −3.396 | −2.704 | **+0.268** | **−0.018** |
+| S | −0.327 | −3.653 | −2.752 | **+0.013** | **−0.275** |
+| W | −0.565 | −3.394 | −2.754 | **−0.225** | **−0.016** |
+
+1. **Axis orientation.** Hard-iron centre (ox, oy) = (−0.340, −3.378);
+   `atan2(x−ox, y−oy)` then reads 350° / 94° / 177° / 266° at N/E/S/W —
+   0/90/180/270 within a few degrees, counting UP clockwise. So **+Y points at
+   the device's top edge, +X to its left**, and (right-handed) +Z into the
+   screen. `deploy/apps/gpscompass` ships that as the default: correct after
+   calibration alone, with no orientation press. Repeatability: returning to
+   north landed within 0.066 G / 0.041 G of the first reading.
+   NB the app's first auto-handedness rule had this INVERTED — it assumed a
+   Z-out-of-screen sensor was the un-mirrored case — which is what made a
+   correctly-defaulted device turn the wrong way. The dip test now reads:
+   held flat, north of the magnetic equator, a Z-INTO-screen sensor sees the
+   downward field as POSITIVE z.
+2. **The hard-iron bias is real and large** — about −0.34 G on X, **−3.4 G on
+   Y**, −2.8 G on Z: ~7× Earth's field, which vindicates Meshtastic's
+   otherwise implausible hardcoded extrema. The horizontal signal riding on it
+   is only ~0.27 G, so an UNCALIBRATED M9 barely moves the dial — that is the
+   expected symptom, not a fault. It also confirms the ±32 G range: at ±8 G the
+   Y axis sits within half a scale of the rail before the user's own
+   environment is added. Expect `|B|` ≈ 0.25–0.65 G once calibrated;
+   "Field saturated" (OVFL, raw counts logged every 10 s) means a magnet is
+   nearby.
+
+**Calibration must ROTATE THE DEVICE IN ONE PLACE.** Carrying it around while
+turning it does not only rotate it, it also TRANSLATES it through the field of
+a laptop, a desk frame, anything ferrous — and that corrupts the fit. Measured
+consequence: a centre that moved 0.15 G between hand-tumbled sessions against a
+0.26 G horizontal signal, i.e. tens of degrees of direction-dependent error,
+reported on hardware as "it drifts when rotating". The app now measures
+coverage from GRAVITY (the accelerometer, below) and refuses a sweep that never
+turned the device over, naming the axis.
+
+## IMU (QMI8658) + tilt compensation (2026-08-22)
+
+`variants/thinknode_m9/M9Imu.{h,cpp}`, `HAS_M9_IMU=1` → `CAP_IMU` →
+`wada.sys.accel()`. Accelerometer only — the gyro is most of the part's power
+budget and nothing here needs it. QMI8658 at **0x6B** on the same peripheral
+bus; this board carries the **A** die (`WHO_AM_I 0x05`, `REVISION_ID 0x7C`).
+±2 g at 62.5 Hz with the accel low-pass on, soft reset (0x60←0xB0) then a
+160 ms wait covering both die variants and a 0x4D==0x80 check, same idle
+suspend as the compass.
+
+**CTRL1 bit6 (ADDR_AI) must be set and read back.** With it clear the burst
+read from 0x35 silently returns six copies of one byte — a sensor that probes
+fine and reports nonsense.
+
+**Axes MEASURED** (three attitudes, `M9_IMU_DEBUG` logging):
+
+| attitude | reading | conclusion |
+|---|---|---|
+| flat, screen up | z = −1.02 | **+Z into the screen** (down) |
+| on bottom edge, top edge up | x = +0.97 | **+X at the top edge** (forward) |
+| on left edge, right edge up | y = +1.08 | **+Y at the right edge** |
+
+So the IMU is already in the aerospace body frame (forward / right / down), and
+it agrees independently with the magnetometer's measured +Z-into-screen. The
+magnetometer maps into that frame as `(fwd, right, down) = (my−oy, −(mx−ox),
+mz−oz)`.
+
+**Why tilt compensation was needed at all:** the field dips ~60° here, so the
+vertical component is 1.6× the horizontal one and tipping the device leaks it
+into the pair the heading is made from — about **1.5° of heading per 1° of
+tilt**. A hand-held reading wandered by tens of degrees. The app now rotates
+the field back into the horizontal plane using gravity (NXP AN4248 / ST AN3192)
+before taking the angle, shows the tilt angle, and says "too steep to read"
+past 55° instead of lying. Confirmed working on hardware.
+
+**Not copied from Meshtastic:** its M9 driver passes both sensors through
+untransformed, carries a dead 180° constant, has its axis swaps commented out,
+and mirrors the heading on the sign of accel Z — so its compass flips when the
+device is turned over.
+
+
+**Hardware-verify recipe:** flash; boot log shows the `M9 compass:` line;
+push the app over the console — the M9's card is soldered on, so
+`scripts/sideload_app.py --port /dev/cu.wchusbserial10 --reboot
+deploy/apps/gpscompass/1.0` (the `fput`/`fadd`/`fend` CLI commands write into
+the Store's own `/apps/` on the card; "Your own apps" lists it, the catalog
+copy arrives once `deploy/apps` is published); open the app; `C`, TUMBLING (not just spinning) the
+device through every orientation for 20 s; check `|B|`; set O/F against a
+known north; walk with GPS on and confirm `Speed`/`Course` populate above
+~1 km/h; pick a contact and sanity-check the bearing against the map.
+
+Serial-console notes learned doing this: the CH34x bridge resets the board
+whenever the port is opened (DTR/RTS, regardless of what pyserial asks), and
+the console is not serviced until `[BOOT] ui ready`; the UART interrupt is
+not IRAM-resident, so while the loop sits in a flash-cache pause only the
+128-byte hardware FIFO buffers input and the middle of a longer line is
+lost — hence the sideload's short, self-checking lines. Done on 2026-08-22:
+`M9 compass: QMC6309 ok` on the first flash (0x7C answers, config sticks);
+app files pushed and listed by `ls /apps`; calibration + rotation confirmed
+working by Chris on the device the same night.
+
+Two more M9 findings from that session: (1) the keypad-nav focus highlight
+painted the whole Lua app body white — the body is a clickable object on the
+top layer, so `navCollect` focused it and `navFocusCb`'s reverse-video fill
+covered it (the canvas on top stayed dark). Fixed in the host with
+`NAV_SKIP_FLAG` on the body, the same exclusion the map's touch catcher uses.
+(2) Low-pass depth 8 at 50 Hz felt laggy; now 4 at 100 Hz.
+
+## Map re-open cost (2026-08-22) — measured and fixed
+
+`[STALL] ui:lvgl 2597ms` on EVERY map open, not just the first: leaving the
+Map tab called `freeMapTiles()` (UITask.cpp, tab-change handler), so the next
+visit re-read and re-decoded all nine 256x256 JPEGs. Boards with >=4 MB PSRAM
+now leave the slots exactly as panning within the tab leaves them — the grid
+costs 9 x 128 KB = 1.15 MB, which only matters on the 2 MB V4 (already capped
+to a 4-tile pool by renderMapTiles), so that board keeps the old free.
+
+Measured on the M9 after the change: cold open (first after boot) 2598 ms,
+every re-open **245 ms**.
+
+Gotchas for anyone revisiting this:
+- `releaseMapTileSlot()` is NOT a substitute: it clears `in_use`, so the next
+  render treats the tile as absent and decodes it again. Keeping the slots
+  fully intact is what makes renderMapTiles' pass-1 match-and-reposition hit.
+- The remaining cold-open cost is the SJPG decode, not the SD read. Raising the
+  CPU to 240 MHz is already ruled out (RGB565 noise from the PSRAM bus, see
+  onMapTabActivated). The open levers are decoding on core 0, or the M9's SD
+  clock (still 4 MHz — see the deferred list below).
+
 ## Deferred — hardware-verify list
 
 These are left intentionally unset/unwired rather than guessed:
@@ -242,84 +694,91 @@ These are left intentionally unset/unwired rather than guessed:
    declarations, implementation block all extended to M9, separated cleanly
    from the genuinely-T-Deck-only I2S notification-sound chooser). Confirmed
    working on hardware, including the dedicated Settings > Lock browsing UI.
-6. **Deep-sleep wake source has NO real GPIO on M9 — confirmed broken, not
-   just unverified.** The "Power off" menu's `esp_sleep_enable_ext0_wakeup()`
-   call is written against `PIN_USER_BTN`, which does not correspond to any
-   real button on this board — M9 has no BOOT/user button at all (only a
-   physical power-cut slider and a reset button, neither of which are GPIOs
-   the firmware can wake from). Confirmed on schematic: M9 has no such button.
-   Practical effect: using "Power off" currently leaves the device requiring
-   a full manual power cycle (slider) to wake — not a graceful wake at all.
-   **Fix path, not yet implemented:** `ESP_WAKEUP` (GPIO12, from the keyboard
-   MCU) is a strong candidate — it's specifically documented as an unwired
-   wake-pulse line separate from the normal I2C keyboard bus, exactly the
-   kind of signal meant to wake the host chip while the main bus is powered
-   down. Its actual trigger behavior (edge vs. level, polarity, pulse width)
-   is undocumented and needs characterizing on real hardware before wiring
-   `esp_sleep_enable_ext0_wakeup()`/`ext1_wakeup()` to it. Separately,
-   `M9Board::enterDeepSleep()` (a different, scheduled/automatic sleep path
-   used by the mesh stack, not the user-facing Power-off menu) also has no
-   button/GPIO wake source — only LR1110 `DIO1` (radio activity) and a timer
-   — same open question applies there once GPIO12 is characterized.
-7. **KEY_LED (GPIO46), MIC/CTRL keys.** Pins/keycodes exist; no driver/action
-   references them yet.
-8. **Battery reading appears stuck at "charging" voltage after charger
-   disconnect, and battery-history logging shows no entries over hours of
-   runtime.** Traced the entire software chain (`getBattMilliVolts()` ->
-   `batteryMvSampled()` -> `batteryMvSmoothed()` -> status bar) — every layer
-   either re-samples fresh from the ADC or holds a value for at most 20
-   seconds; nothing in the code caches indefinitely. No software bug found in
-   this specific path via static reading. Two real possibilities, not yet
-   distinguished: (a) genuine hardware/battery-chemistry behavior (Li-ion
-   charge-termination voltage recovery can legitimately take longer than
-   expected to settle), or (b) a real bug not yet found. Needs a raw
-   millivolt diagnostic print directly in `getBattMilliVolts()` to tell which.
-   Separately, but likely related: `battLogAppend()`'s SD-vs-SPIFFS selection
-   (`battLogOnSd()`) should check `SD.exists("/meshcomod")` and return false
-   if it doesn't exist (respecting DataStore's opt-in "store on SD" setting
-   rather than assuming SD whenever a card happens to be mounted) — identified
-   but not yet applied.
-9. **Message data loss on power cycle (not on a clean reboot).** Confirmed
-   with channel messages specifically — points at something not being
-   flushed to persistent storage before a hard power-off that a clean reboot
-   flushes correctly. Not yet investigated.
+6. **Deep-sleep wake source has NO real GPIO on M9 — MITIGATED in the 2026-08-19
+   audit pass, GPIO12 characterization still open.** M9 has no BOOT/user button
+   at all (only a physical power-cut slider and a reset button, neither a GPIO
+   — schematic-confirmed). The Power menu's "Power off" row is now HIDDEN on M9
+   (it deep-slept with ext0 armed on the nonexistent button — device
+   unrecoverable until a slider cycle; the slider IS the power-off), and
+   `PIN_USER_BTN` was removed from the env. `M9Board::enterDeepSleep()` was
+   cleaned to timer-only wake — its old "LR1110 DIO1 (GPIO42) wake" was
+   electrically impossible (S3 RTC pads are GPIO0-21; every rtc_gpio_*/ext1
+   call failed unchecked). **Still open, hardware-required:** characterize
+   `ESP_WAKEUP` (GPIO12, from the keyboard MCU — RTC-capable): edge vs. level,
+   polarity, pulse width. Once known, a real graceful Power-off can return via
+   ext0/ext1 on GPIO12.
+7. **KEY_LED (GPIO46) unwired; MIC deliberately unbound; CTRL now bound.**
+   CTRL (0x90) opens the Control Center (2026-08-19 pass; the controller
+   latches a single key so CTRL can never chord). GPS_LONG (0x87) toggles GPS.
+   MIC (0x88) and 0x89 are deliberately unbound — see M9Keyboard.h. KEY_LED
+   still has no driver.
+8. **Battery reading — largely addressed (2026-08-19 pass), one hardware
+   question left.** Three separate things were tangled here: (a) the
+   battLogOnSd `/meshcomod` check landed back in 4846d4f (2026-07-08) — the
+   "identified but not yet applied" note that used to sit here was stale; the
+   empty-history symptom was that pre-fix bug. The log selection is now keyed
+   off the RESOLVED ui-data backend (`uiDataFsIsSdCard()`), so a card that
+   merely has a /meshcomod dir (telemetry/discover logs mkdir it on any card)
+   can no longer hijack the log. (b) GPIO13 is **ADC2** (not ADC1 as the pin
+   table used to claim) and ADC2 is Wi-Fi-arbitrated: blocked samples return
+   ~offset-mV garbage — `getBattMilliVolts()` now filters per-sample and holds
+   the last good reading. (c) Still open, hardware: whether "stuck at charging
+   voltage after unplug" beyond that is pack/charger chemistry at the divider
+   node — needs the raw-mV serial print on a real unit. Related:
+   `batteryIsCharging()` is compile-time FALSE on M9 (no charge detection at
+   all); widening the T-Deck's voltage-threshold detection to M9 needs
+   hardware confirmation that the charger raises the divider node the same way.
+9. **Message data loss on power cycle — root cause found and fixed
+   (2026-08-19 pass), bench verification wanted.** `saveThreadsToStorage()`
+   rewrote the threads index in place (mode "w"): a hard power-cut mid-write
+   left a short file the next boot quarantine-DELETED — chat list, unread
+   counts and DM entries gone (threads rebuild by name for channels, so the
+   worst visible loss was exactly "channel messages disappeared" plus list
+   state). Now tmp+rename (`uiDataReplaceFile`), orphan tmp swept at load.
+   Residual, by design: messages inside the ~5 s SPIFFS coalesce window before
+   a cut are lost. Verify with a bench power-cut loop while a channel floods.
 10. **Commander (Home tab) landscape layout** — fixed (chart width, 5-button
     column height math). **Control-center overflow (6+ toggles not fitting)**
     — also fixed (row/chip sizing extended to M9, matching T-Deck's existing
     2-row wrap grid). Both confirmed working.
-11. **Keypad-nav quirks still open, all UI/UX not hardware:**
-    - Dropdown-list navigation doesn't work (dropdown closes and focus moves
-      to the next page element instead of moving the highlighted option).
-      Traced the entire mechanism — `navOpenDropdown()` detection, FIFO
-      push/pop, indev group assignment, LVGL's own dropdown `LV_EVENT_KEY`
-      handler, main-loop ordering relative to `lv_timer_handler()` — and
-      confirmed the M9 dispatch code is correct up to and including the
-      `navPushTap(LV_KEY_DOWN)` call itself (verified via an in-code Serial
-      print that the correct branch is taken). Root cause not found; likely
-      downstream in LVGL's own delivery/processing at runtime.
-    - Textarea fields specifically need 3-4 presses to move focus off them
-      (confirmed: buttons/toggles/icons/apps all traverse in one press, only
-      textareas affected). Ruled out the keyboard drain-loop/`lv_timer_handler()`
-      ordering as the cause (reducing the drain to one key per `loop()`
-      iteration didn't help). Root cause not found.
-    - Modal navigation occasionally "breaks out" to the screen behind and back
-      while navigating up through a modal's items. Likely candidate:
-      `createSettingsModal()`'s standalone-modal path (used for Device/About/
-      etc.) has no `navMarkDirty()` call after `closeSettingsModal()`, same
-      class of stale-focus-group bug the wizard and home-drawer fixes above
-      addressed — diagnosed, not yet applied/confirmed.
-    - Some apps/overlays don't close via the dedicated Home key — only some do
-      (inconsistent per-screen, not a HOME-key dispatch bug given other
-      overlays close correctly).
-    - Some modals close via Back, some don't — also inconsistent per-modal.
-    - The Snake game does not respond to d-pad input at all (confirmed the
-      hardware keys themselves work correctly elsewhere) — likely reads input
-      through its own loop rather than the shared `handleHwKey()`/nav-group
-      system; not yet traced.
-    - Map panning: currently no way to pan the map at all with the d-pad
-      (arrows only drive UI nav). Idea, not started: use `M9_KEY_ENTER_LONG`
-      (now wired and proven via the lock-screen/context-menu work below) to
-      toggle between UI-nav mode and map-pan mode.
+11. **Keypad-nav quirks — all but map panning addressed in the 2026-08-19
+    audit pass (fixes compile-verified; retest each on hardware):**
+    - Dropdown-list navigation: FIXED. The real root cause was simpler than
+      the old note here claimed — NO `navOpenDropdown()` dispatch existed in
+      any committed M9 key path (`git log -S navOpenDropdown` shows only the
+      pager and Tanmatsu commits; the "Serial-verified dispatch" described
+      below was never committed). `m9HandleArrowKey` now captures an open
+      dropdown and FIFOs LV_KEY_UP/DOWN into it (Tanmatsu's navPump pattern),
+      and the restored Back sends LV_KEY_ESC to the list before the popup
+      ladder.
+    - Textarea 3-4-press focus escape: FIXED (probable cause). Edit-mode
+      LEFT/RIGHT consumed arrows as silent caret moves that no-op forever at
+      the text boundary; they now fall through to `navMoveDir` when the caret
+      doesn't move. If a pure-UP/DOWN reproduction survives on hardware, the
+      cause is elsewhere (controller-side latching?) — retest.
+    - Modal "breaks out": FIXED (two-part). Keys were dispatched against a
+      one-tick-stale focus mirror (Enter's tree mutations land inside
+      `lv_timer_handler` at the END of a tick) — the M9 drain now runs
+      `navMaybeRebuild()` first; and `closeSettingsModal()` gained
+      `navDetachBeforeTreeMutation()` + `navMarkDirty()` (the diagnosis below
+      was necessary but not sufficient — the stale-mirror window was the part
+      that survived the automatic sig-rebuild).
+    - Home key not closing some overlays / Back inconsistent per-modal:
+      FIXED. Fully explained by (a) the 0ea242c HW_BACK regression (nav-mode
+      Back did NOTHING at all in the shipped tree) and (b) popup-registry rows
+      compiled out on M9 (Files overlays, Terminal picker, fullscreen view,
+      wallpaper picker) plus app pages (Lua/Snake/Web) not being registry rows
+      — HOME and Back now close app pages via `s_apppage_close`.
+    - Snake d-pad: FIXED. On M9 Snake is the store Lua app (native SnakeGame
+      is compiled out under CAP_LUA_APPS) and it only listens for swipe/tap
+      events no M9 path generated; the d-pad now feeds `luaAppSteer` (swipes)
+      and the d-pad centre sends a synthetic tap + `ev.key=="enter"`, so
+      start/steer/retry all work — for every store app, not just Snake.
+    - Map panning: FIXED (second on-device round). Pressing the dedicated Map
+      key while ALREADY on the Map tab toggles pan mode — arrows pan via
+      mapNudge(), Map or Back exits (with toasts). A fresh entry to the tab
+      always starts in nav mode. (Chosen over the old ENTER_LONG idea: the
+      Map key re-press is discoverable and was a no-op before.)
 
     **Resolved this pass:**
     - Lock-screen unlock: fixed via `M9_KEY_ENTER_LONG` (the keyboard
@@ -344,6 +803,59 @@ These are left intentionally unset/unwired rather than guessed:
       popup), then immediately reading the now-mutated `s_home_drawer_mode`
       flag and reopening it in the same keypress. Fixed by snapshotting the
       flag before the dismiss loop runs.
+12. **Spectrum app LR1110 pass (2026-08-20) — fixes compile-verified, three
+    on-device checks wanted:**
+    - Between-bin standby now sends the raw LR1110 `SetStandby(0x01)`
+      (STDBY_XOSC) so the DIO3-powered TCXO stays up across bins — the
+      vendored RadioLib's `RADIOLIB_LR11X0_STANDBY_XOSC` define equals
+      `STANDBY_RC` (both 0x00, upstream define bug), so the named constant
+      would silently re-select RC and re-pay the ~5 ms TCXO startup per bin.
+      VERIFY: a `micros()` log around `spectrumSweepChunk()` should show
+      ~5.5 ms/bin (~1 s full sweep), roughly half the pre-fix time.
+    - Open now runs one span-wide `calibrateImageRejection(start, stop)`
+      (begin() only calibrated mesh ±4 MHz); restore re-runs the mesh's own
+      ±4 MHz cal from a true STDBY_RC. VERIFY: mesh RX sensitivity unchanged
+      after a Spectrum session (image cal is back to the begin()-time band).
+    - Opening Spectrum during an in-flight mesh TX now waits (bounded by the
+      dispatcher's own 1.5x-airtime budget, capped 6 s) instead of truncating
+      the packet mid-air; the consumed TX-done means the dispatcher logs that
+      packet as a timed-out send — stats/log blemish only. VERIFY: open the
+      app while a long send is on air; the send should complete (watch for
+      the dispatcher's timeout warning, and no partial burst on a monitor).
+    Also fixed in the same pass: sweep clamps now 150-960 MHz (LR1110 range;
+    setFrequency failures skip the bin instead of mis-attributing RSSI), a
+    0-dBm failed-read sentinel guard in the peak-hold (shared with SX126x),
+    config commands now issued from standby on open, and the stale SX126x-era
+    comments/readout. Bin pitch (150 kHz) vs RBW (62.5 kHz) = ~42% span
+    coverage is documented at the constants, deliberately unchanged.
+13. **App sync after a power cycle — fixed (2026-08-20), bench verification
+    wanted.** User report: the V4-R8 "remembers the chats and syncs them when
+    connecting to an app (MeshCore / MeshCore One)" but the M9 does not. Two
+    separate stores are involved. (a) The on-device chat store (UITask
+    threads/segments) — its power-cut loss was Deferred #9 above, fixed on
+    this branch but NOT in any released build up to beta_66. (b) The
+    companion sync ring (`MyMesh::history_ring` + per-client cursors, what
+    `CMD_SYNC_NEXT_MESSAGE` / `SyncSince` replay to an app that connects
+    later) was RAM-only on EVERY board, so any power cycle emptied it. On the
+    V4 that mostly goes unnoticed (USB-powered / left on; its menu power-off
+    deep-sleeps and also loses RAM), but the M9's only "off" is the slider —
+    a hard VBAT cut — so every M9 session started with an empty ring and the
+    app got `NO_MORE_MESSAGES` for everything received while it was away.
+    Now persisted on all boards (shared code, `MyMesh.cpp`
+    "Companion sync-history persistence"): `/synchist` append-only log of the
+    message frames (~180 B per message, coalesced 3 s / 10 s max, compacted
+    tmp+swap once it holds > 2x the ring) and `/synccur` per-client
+    `last_delivered_seq` + `next_seq` (tiny tmp+swap, coalesced 5 s / 30 s
+    max, flushed immediately on app disconnect). Both live on
+    `DataStore::getHotDataFS()` — the SD card under /meshcomod when the store
+    adopted it, else SPIFFS — and are restored in `MyMesh::begin()`. All
+    reboot / power-off / download-mode / SD-copy paths flush them next to
+    `persistHistoryNow()`. VERIFY on hardware: receive a few DMs + channel
+    messages with the phone app disconnected, slide the M9 off, slide it on,
+    connect the app — the messages should arrive. Residuals by design:
+    messages inside the 3 s coalesce before a hard cut are not replayed
+    (the on-device store has its own 2-5 s window), and a cut inside the
+    cursor window can make the app re-receive a few already-seen messages.
 
 
 ## Keyboard: register-addressed I2C slave (protocol build #8, USB-pad release build #9)

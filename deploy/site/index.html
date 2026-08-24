@@ -259,6 +259,23 @@
   .cookiebar.show{display:flex}
   .cookiebar a{color:var(--teal-ink); cursor:pointer}
   .cookiebar button{background:var(--teal); color:#fff; border:0; border-radius:8px; padding:8px 16px; font-weight:650; cursor:pointer; font-size:.86rem; flex:none}
+
+/* Resources section: the four things people were only finding via the small
+   floating buttons on the right, which almost nobody noticed. Same icons, so
+   the rail still reads as a shortcut to these once you have seen them. */
+.rescards{display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(215px,1fr));
+  max-width:940px; margin:22px auto 0}
+.rescard{border:1px solid var(--line); background:var(--card); border-radius:14px; padding:20px;
+  display:flex; flex-direction:column; gap:9px; align-items:flex-start;
+  box-shadow:0 8px 26px -22px rgba(21,24,30,.5); transition:transform .16s ease, box-shadow .16s ease}
+.rescard:hover{transform:translateY(-2px); box-shadow:0 16px 34px -22px rgba(21,24,30,.55)}
+.rescard .ico{width:38px; height:38px; border-radius:10px; display:grid; place-items:center;
+  background:rgba(21,182,166,.10); color:var(--teal); flex:none}
+.rescard .ico svg{width:20px; height:20px}
+.rescard h4{font-size:1.02rem; margin:2px 0 0}
+.rescard p{color:var(--mut); font-size:.88rem; line-height:1.55; margin:0}
+.rescard .go{margin-top:auto; padding-top:6px; color:var(--teal); font-weight:650; font-size:.88rem}
+.rescard:hover .go{text-decoration:underline}
 </style>
 </head>
 <body>
@@ -284,6 +301,9 @@
   </a>
   <a class="fab" id="docsBtn" href="docs.html" aria-label="Documentation" title="Documentation">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+  </a>
+  <a class="fab" id="sdkBtn" href="sdk.html" aria-label="Lua app SDK" title="Lua app SDK">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
   </a>
   <a class="fab" href="https://t413.com/p/projects/MapTileDl/" target="_blank" rel="noopener" aria-label="Map tile downloader" title="Map tile downloader">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>
@@ -401,11 +421,11 @@
           <summary><span class="mfr-name">LilyGo</span><span class="mfr-count"></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></summary>
           <div class="boards mfr-boards">
             <div class="board" data-search="lilygo t-deck tdeck plus esp32-s3 keyboard handheld"><h4>LilyGo T-Deck / Plus</h4><p>ESP32-S3 keyboard handheld.</p>
-              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here — this is one of the two primary development boards, tested on every release.</span></span>
+              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here — tested on every release.</span></span>
               <esp-web-install-button id="inst-tdeck" manifest="https://firmware.wadamesh.com/latest/manifest-tdeck.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="tdeck" download href="https://firmware.wadamesh.com/latest/wadamesh-tdeck-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a></div>
             <div class="board" data-search="lilygo t-display p4 tdisplay amoled rm69a10 esp32-p4 touch handheld"><h4>LilyGo T-Display P4 <span style="font-weight:600;color:var(--mut)">(AMOLED)</span></h4><p>ESP32-P4 &middot; AMOLED touch handheld.</p>
-              <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>Early port — it's known that not everything works yet, but the core does: LoRa mesh communication, chat, map, GPS and the phone-app link over Wi-Fi or USB. Bluetooth pairing isn't available on this board (a hardware limitation of its stock radio firmware).</span></span>
+              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here — tested on every release. One exception: Bluetooth pairing isn't available on this board, a hardware limitation of its stock radio firmware. Use Wi-Fi or USB for the phone-app link.</span></span>
               <esp-web-install-button id="inst-tdp4" manifest="https://firmware.wadamesh.com/latest-beta/manifest-tdisplay-p4.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="tdisplay-p4" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-tdisplay-p4-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
               <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board: beta channel only until the next stable.</p></div>
@@ -430,7 +450,7 @@
           <summary><span class="mfr-name">Heltec</span><span class="mfr-count"></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></summary>
           <div class="boards mfr-boards">
             <div class="board" data-search="heltec v4 tft esp32-s3 chsc6x touch"><h4>Heltec V4 + TFT</h4><p>ESP32-S3 with CHSC6x touch.</p>
-              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here — this is one of the two primary development boards, tested on every release.</span></span>
+              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here — tested on every release.</span></span>
               <esp-web-install-button id="inst-heltec" manifest="https://firmware.wadamesh.com/latest/manifest-heltec-v4-tft.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="heltec-v4-tft" download href="https://firmware.wadamesh.com/latest/wadamesh-heltec-v4-tft-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a></div>
             <div class="board" data-search="heltec v4-r8 v4 r8 esp32-s3 psram sd card experimental"><h4>Heltec V4-R8 <span style="font-weight:600;color:var(--mut)">(experimental)</span></h4><p>ESP32-S3 &middot; 8&nbsp;MB PSRAM &middot; SD card.</p>
@@ -476,11 +496,11 @@
         <details class="mfr" data-mfr="Attaky">
           <summary><span class="mfr-name">Attaky</span><span class="mfr-count"></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></summary>
           <div class="boards mfr-boards">
-            <div class="board" data-search="attaky core esp32-s3 psram experimental"><h4>Attaky Core <span style="font-weight:600;color:var(--mut)">(experimental)</span></h4><p>ESP32-S3 &middot; 16&nbsp;MB &middot; 8&nbsp;MB PSRAM.</p>
-              <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>The core works: LoRa mesh communication, chat, contacts, channels and the phone-app link. This community-contributed board (PR #158) isn't hardware-verified by us yet — flash with care and report back.</span></span>
+            <div class="board" data-search="attaky core esp32-s3 psram experimental"><h4>Attaky Core</h4><p>ESP32-S3 &middot; 16&nbsp;MB &middot; 8&nbsp;MB PSRAM.</p>
+              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here — tested on every release. Contributed by the community (PR #158).</span></span>
               <esp-web-install-button id="inst-attaky" manifest="https://firmware.wadamesh.com/latest-beta/manifest-attaky.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="attaky" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-attaky-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
-              <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board, not yet hardware-tested &mdash; beta only. Please flash with care and report back.</p></div>
+              <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">Beta channel only until the next stable.</p></div>
           </div>
         </details>
       </div>
@@ -517,6 +537,51 @@
           <p style="margin:11px 0 0;font-size:.84rem;color:var(--mut);line-height:1.5">You're downloading version <b data-wn-tag style="color:var(--teal)">…</b><span data-wm-chlabel></span>.<br>The file saves as <code data-dl-fname style="font-size:.82em">wadamesh-tdeck.bin</code> — rename it if you keep several.</p></div>
       </div>
       <p class="hint">New to Launcher? It's the easiest way to try WADAMESH without giving up your other firmware — and you can fully switch to Standalone any time.</p>
+    </div>
+  </div>
+</section>
+
+<section id="resources">
+  <div class="wrap">
+    <h2 class="h2">Docs, tools and help</h2>
+    <p class="p">Everything past the install. These are also the small buttons on the right of the screen.</p>
+    <div class="rescards">
+
+      <a class="rescard" href="docs.html">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg></span>
+        <h4>User guide</h4>
+        <p>Every screen explained, from first boot and adding contacts through channels, room servers, the map and the settings that matter.</p>
+        <span class="go">Read the guide</span>
+      </a>
+
+      <a class="rescard" href="sdk.html">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg></span>
+        <h4>Lua app SDK</h4>
+        <p>Write your own apps. They install from the Store on the device and sit next to the built-ins. One file, no toolchain, no firmware build.</p>
+        <span class="go">Build an app</span>
+      </a>
+
+      <a class="rescard" href="tanmatsu.html">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg></span>
+        <h4>Tanmatsu sideload</h4>
+        <p>Building wadamesh yourself and running it on a Tanmatsu, where it installs as an app under the launcher rather than as standalone firmware.</p>
+        <span class="go">Read the guide</span>
+      </a>
+
+      <a class="rescard" href="https://t413.com/p/projects/MapTileDl/" target="_blank" rel="noopener">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg></span>
+        <h4>Offline map tiles</h4>
+        <p>Download the area you care about to the SD card so the map works with no Wi-Fi and no data, which is the point of carrying a mesh radio.</p>
+        <span class="go">Get map tiles</span>
+      </a>
+
+      <a class="rescard" href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="14" x="8" y="6" rx="4"/><path d="m19 7-3 2"/><path d="m5 7 3 2"/><path d="m19 19-3-2"/><path d="m5 19 3-2"/><path d="M20 13h-4"/><path d="M4 13h4"/><path d="m10 4 1 2"/><path d="m14 4-1 2"/></svg></span>
+        <h4>Bugs and requests</h4>
+        <p>Report anything broken or ask for a feature on GitHub. Reports with a board name and what you did get fixed fastest, and plenty already have.</p>
+        <span class="go">Open an issue</span>
+      </a>
+
     </div>
   </div>
 </section>
@@ -609,7 +674,7 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
 
 1. Company — ALLFATHER BV — KBO/Company No. BE 0791.469.718, Bijvoordestraat 3, 3370 Boutersem, Belgium. Contact: hey@allfather.io.
 
-2. Use — The Web Flasher flashes wadamesh firmware onto compatible LilyGo T-Deck and Heltec V4 devices via Web Serial. You must have the right to operate your device. wadamesh is open-source firmware licensed under GPL-3.0; the firmware itself is provided without warranty (see its LICENSE).
+2. Use — The Web Flasher flashes wadamesh firmware onto the supported devices listed on this page via Web Serial. You must have the right to operate your device. wadamesh is open-source firmware licensed under GPL-3.0; the firmware itself is provided without warranty (see its LICENSE).
 
 3. Disclaimer & Liability — The Tools are provided "as is" and "as available" without warranties of any kind. Flashing firmware may overwrite device data and settings. Use at your own risk. To the fullest extent permitted by law, we exclude implied warranties and limit liability to direct losses only. Nothing limits liability for intentional misconduct, gross negligence, death or personal injury caused by negligence, or other liability that cannot be excluded under applicable law.
 

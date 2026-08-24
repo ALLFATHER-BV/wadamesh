@@ -5,6 +5,60 @@ Goal: run the **full** wadamesh UI + functionality on the **LilyGo T-LoRa Pager*
 existing boards so a UI change ships everywhere at once. This file is the running
 plan/status — update it as we go.
 
+## Current status (2026-08-20)
+
+**The port has shipped.** Both radio variants debuted on the beta channel in
+**beta_45** (community PR #149, @codemonkeybr) and are installable from
+wadamesh.com; `README.md` and `DEVICES.md` list the pager as a supported beta
+board rather than a request. Milestones ⓪-⑦, ⑨ and ⑩ are done. Only ⑦b (the
+USB companion gate) and ⑧ (the on-device UI pass) are still open.
+
+Done since the milestone history below was written, and re-verified against the
+code on 2026-08-20:
+
+- **microSD is fully wired.** `CAP_SD`/`CAP_FILESYSTEM` are **1** — the staged
+  per-call-site widening finished, so DataStore contacts/channels routing, the
+  5000-message history ring, map-tile SD packs, settings/crash export and the
+  About-page `/BINS` firmware export all work. See risk 1h for what that
+  replaced.
+- **Release pipeline complete** — both envs in `release.sh`, both flasher
+  manifests generated, `FIRMWARE_OTA_ENV` set on each (worklist ⑨).
+- **SD recovery without formatting**: a detected-but-unmountable card now shows
+  a greyed tap-to-retry row. In-app format remains deliberately omitted on this
+  board; the reasoning lives on the format-helper guard in `UITask.cpp`.
+- **"Save update bin to SD" reaches the pager** via `CAP_SD && CAP_OTA`
+  (upstream e2d07d8) rather than a board-name list. Note that feature is spread
+  over six `#if` regions: e2d07d8 converted two, which left the pager with the
+  button but no worker — a hang plus a use-after-free on the status label, and
+  it still compiled. All six are now identical; do not widen them piecemeal.
+
+Still open, in priority order:
+
+1. **⑧'s actual stated scope — the 222 px vertical-layout audit and the
+   screen-by-screen focus-nav coverage pass — has still never been started**
+   (risk 8). Everything that landed under M8 was reactive bug-fixing from
+   user-reported issues. This remains the single biggest item in the port.
+2. **USB companion device-profile frame is still untested** (⑦b). Remove the
+   temporary `[DISP]` register readback in `ST7796LCDDisplay::begin()` once it
+   passes.
+3. Lock-screen wallpaper SD scanning is still T-Deck/M9-only (risk 1h).
+4. `deploy/flasher/` now carries pager cards + manifests for parity, but **no
+   deploy script publishes that directory** (`deploy-site.sh` ships
+   `deploy/site/` only) and `flasher.wadamesh.com` 301s to the apex. Decide
+   whether to wire it into a deploy target or retire it.
+
+Risk 11 (keyboard/encoder scroll not repainting) is **accepted as
+workaround-final**: the Alt+turn free-scroll gesture is the intended fix for
+this hardware.
+
+---
+
+## Milestone history
+
+The narrative below is kept as the port's working record — the war stories are
+why several non-obvious things are the way they are. Where it conflicts with
+the section above, the section above is current.
+
 Status: **M7's UI portion DONE — boot logo, full LVGL UI, QWERTY
 keyboard nav and rotary encoder all VERIFIED WORKING on real hardware
 (2026-07-07)**, after root-causing the intermittent black screen to the ST7796
@@ -30,7 +84,8 @@ milestone: the radio-settings blur-autosave lag (risk 12), the encoder not
 scrolling open dropdowns (fixed 2026-07-08, commit `4bbfcb5`), the keyboard
 backlight never being wired up (risk 9, fixed 2026-07-10), and microSD file
 manager + WAV-picker support (risk 1h, fixed 2026-07-10, scoped — DataStore
-SD routing/chat-history/tiles/wallpaper/backup remain deferred). An
+SD routing/chat-history/tiles/backup were still deferred at the time and have
+all since landed; only wallpaper scanning is left, see risk 1h). An
 unread-message LED notification was investigated and explicitly decided
 against (risk 13) — this board has no onboard LED at all. Risk 11
 (keyboard/encoder-driven scroll not repainting) was **ACCEPTED as
@@ -601,7 +656,7 @@ existing boards. Notes:
   **Gate:** all three envs build — verified.
 - [x] ⑥ **UITask wiring**: `device_caps.h` got its `TLORA_PAGER` cap block (no
   touch, no rotate, no large-screen, GPS 1, OTA 1, lock-screen 1; `CAP_SD`/
-  `CAP_FILESYSTEM` corrected to 0 — see below) plus widened `CAP_KEYBOARD`/
+  `CAP_FILESYSTEM` set to 0 at the time — both are 1 today, see risk 1h) plus widened `CAP_KEYBOARD`/
   `CAP_KEYPAD_NAV` derivations to recognize `HAS_PAGER_KEYBOARD`/
   `TLORA_PAGER`. `UITask.cpp` changes, all pager-gated: KEYPAD indev
   registered by widening the Tanmatsu branch's `#if` to
@@ -624,9 +679,10 @@ existing boards. Notes:
   vs. the milestone doc's assumptions, all found by compiling rather than
   assumed — see risks 1h/1i/1j:
   - `CAP_SD`/`CAP_FILESYSTEM` looked right from the hardware (real microSD
-    slot) but the actual mount code is hardcoded to `HAS_TDECK_GT911`, not
-    truly `CAP_SD`-generic — set back to 0, real support is unscheduled
-    follow-up.
+    slot) but the mount code was hardcoded to `HAS_TDECK_GT911`, not truly
+    `CAP_SD`-generic — set back to 0 for this milestone. *(Superseded: the
+    call sites were widened over the following passes and both macros are 1
+    today — risk 1h.)*
   - `navMaybeRebuild()` (populates the LVGL focus group every screen) wasn't
     reachable on the pager's own cap combination — added a
     `#elif defined(TLORA_PAGER)` arm; without it the KEYPAD indev would have
@@ -653,11 +709,23 @@ existing boards. Notes:
   above): still untested. **SD storage: DONE** — real mount, browse,
   read/write/delete, and insert/remove detection all confirmed on hardware
   (risk 1h). (DataStore/NVS-level SD use — routing contacts/channels to the
-  card — is a separate, still-deferred feature, not part of this bring-up
-  gate.) Remove the temporary `[DISP]` register readback in
+  card — was a separate feature outside this bring-up gate; it has since
+  landed, see risk 1h.) Remove the temporary `[DISP]` register readback in
   `ST7796LCDDisplay::begin()` once the USB piece passes.
 - [~] ⑧ **On-device UI pass** — ACTIVE: nav-coverage audit screen by screen (every interactive control reachable via focus group — the Tanmatsu work paved this), chat layout at 222 px, map pan via encoder/keys, fonts legibility at 480-wide, plus fixing any weird UI/keyboard behaviors surfaced by manual testing (human provides photos/repro steps).
-- [ ] ⑨ **Release pipeline**: add the env:binname pair to `release.sh` `ENVS`, flasher manifest (`deploy/flasher/manifest-tlora-pager.json`), OTA env name via `FIRMWARE_OTA_ENV`. Separate PR.
+- [x] ⑨ **Release pipeline** — DONE (verified against the scripts 2026-08-20).
+  Both envs are in `scripts/release.sh`'s `ENVS`
+  (`tlora_pager_lr1121_...:wadamesh-tlora-pager-lr1121`,
+  `tlora_pager_sx1262_...:wadamesh-tlora-pager-sx1262`); both manifests are
+  generated by `scripts/build/gen-flasher-meta.py`
+  (`manifest-tlora-pager-{lr1121,sx1262}.json`); both envs set
+  `FIRMWARE_OTA_ENV`. The install page (`deploy/site/index.html`, which
+  `flasher.wadamesh.com` 301s to) carries an install button + .bin download for
+  each variant off the beta feed. Shipped to users in **beta_45**.
+  One leftover, not user-facing: the legacy static `deploy/flasher/index.html`
+  still lists only the T-Deck and Heltec V4 cards and has no pager manifests
+  next to it. That page is no longer the install path — decide whether to add
+  the two cards for parity or retire the directory.
 - [x] ⑩ (Optional, cheap) `tlora_pager_sx1262_...` env for SX1262-variant owners — **DONE, hardware-verified 2026-07-13** (`tlora_pager_sx1262_companion_radio_touch`, all 4 envs green; see `TLORA_PAGER_PORT_MILESTONES.md`'s Milestone 10 for the full writeup, including the `target.h` missing-include bug found + fixed). Radio gate (M7 step 3) confirmed on real hardware: user sent + received messages on public, a custom `#` channel, and DM.
 
 ## UI-changes inventory (what actually changes in `src/ui-touch/`)
@@ -673,9 +741,11 @@ existing boards. Notes:
 | `navMaybeRebuild()` reachability | Added `#elif defined(TLORA_PAGER)` arm — was unreachable, would've left focus group permanently empty | small | done (bug fix) |
 | Vertical budget | Audit `STATUSBAR_H`, `TABBAR_H`, `CHAT_KB_H`, modal/chat height helpers for 222 px | **the real work** | deferred to M8 on-device (risk 8) |
 | Focus-nav coverage | Screen-by-screen pass that every control is in `s_nav_group` | medium, on-device | deferred to M8 |
-| device_caps.h | New `CAP_*` block: no touch, hw keyboard, encoder, 480×222, GPS, OTA, lock-screen; SD/filesystem left 0 by design — real SD support added via widened individual call sites instead (see risk 1h) | trivial | done |
+| device_caps.h | New `CAP_*` block: no touch, hw keyboard, encoder, 480×222, GPS, OTA, lock-screen. `CAP_SD`/`CAP_FILESYSTEM` were 0 while SD support was staged in per call site, and are now **1** (see risk 1h) | trivial | done |
 | Keyboard backlight (`pagerKeyboardSetBacklight()`) | `updatePagerKbBacklight()` tick + Settings → Keyboard cycle row (off/on/auto) | small | done (risk 9) |
-| microSD (file manager + WAV picker) | `fmSdTryMount()`/`fmShowRoots()`/`fmIsAudio()` etc. widened to `\|\| defined(TLORA_PAGER)`; DataStore SD routing, chat-history cap, tile/wallpaper/backup SD use still deferred | medium | done, scoped (risk 1h) |
+| microSD (file manager + WAV picker) | `fmSdTryMount()`/`fmShowRoots()`/`fmIsAudio()` etc. widened to `\|\| defined(TLORA_PAGER)`; DataStore routing, 5000-msg history, tiles and backup export all landed later. Only wallpaper SD scanning is still T-Deck/M9-only | medium | done (risk 1h) |
+| microSD recovery row | `fmSdPagerRetryMountCb` — a detected-but-unmountable card renders greyed with a tap-to-retry that clears the mount backoff. No in-app format on this board, by decision | small | done |
+| Save update bin to SD | About-page `/BINS` firmware export widened to the pager (`sdFwWorkerRun`); board-specific wording kept as separate TR() keys so the T-Deck's translated Launcher strings are not orphaned | small | done |
 | Chat bubble Enter/Backspace (`handleHwKey()` ~28808) | Enter on a focused bubble opens the Ack/Mention/Copy/Info/Block menu (`navEnterBubble()`); Backspace jumps to the newest message when the scroll-to-bottom button is showing | small | done |
 | Shift/Caps (`PagerKeyboard.cpp`) | Held Shift = momentary uppercase; held Alt+Shift = chord (see below for what it does) | small | done |
 | Accent-variant popup keyboard nav | Fn+Space arms it; encoder walks variants; encoder click/Enter confirms; Backspace cancels (`s_accentnav_active`/`accentNavRestyle()`/`accentNavConfirm()`) | medium | done |
@@ -776,29 +846,51 @@ MQTT, OTA) is resolution-agnostic or already keyed off caps.
    page-scroll backward/up instead. Fixed by negating once in
    `PagerEncoder.cpp`'s `pagerEncoderReadDelta()` (the driver, not UI code)
    so every consumer inherits the corrected sense from one place.
-1h. **`CAP_SD`/`CAP_FILESYSTEM` are 0 for the pager despite real microSD
-   hardware — a latent gap in `device_caps.h`'s own abstraction, not a pager
-   bug.** **File manager browsing + WAV notification-sound picker RESOLVED
-   2026-07-10** (commits `8c7fb6a`/`1514e76`), scoped deliberately: `CAP_SD`
-   turned out to gate ~37 call sites (file manager, WAV picker, DataStore
-   contacts/channels routing, tile-cache SD fallback, wallpaper scanning,
-   settings backup, screenshots), so flipping the macro itself would have
-   silently turned on ~30 unvetted, T-Deck-only-tested features at once.
-   Instead `CAP_SD`/`CAP_FILESYSTEM` stay 0 by design, and only the ~7
-   specific call sites needed for browsing + WAV picking were widened with
-   `|| defined(TLORA_PAGER)` — see those commits for the full categorized
-   site list. Added `pagerSdCardPresent()` (XL9555 `PAGER_EXPAND_SD_DET`,
-   confirmed-inverted polarity) and a pager `sdSharedSPI()` (reuses
-   `TFT_eSPI::getSPIinstance()`, the same bus the radio already shares).
-   Format support is explicitly out of scope (no `f_mkfs`/`sd_diskio.h` pulled
-   in) — the pager's SD row is tap-to-open only. Hardware-verified: mount,
-   browse, read/write/delete, insert/remove detection, and picking a WAV from
-   SD as a notification sound all confirmed on real hardware. **Still not
-   done** (unscheduled follow-up, deliberately deferred): DataStore
-   contacts/channels routing to SD (`setSecondaryFS`, what Tanmatsu/T-Deck
-   do to dodge SPIFFS GC stalls), the `MAX_UI_MESSAGES_SD` chat-history cap
-   bump, map-tile SD fallback/offline tile packs, lock-screen wallpaper SD
-   scanning, and settings/telemetry backup export-import to SD.
+1h. **microSD — RESOLVED; `CAP_SD`/`CAP_FILESYSTEM` are now 1.** They were 0
+   from M6 onward, which looked wrong against the hardware (there is a real
+   slot) but was deliberate: `CAP_SD` gates ~37 call sites (file manager, WAV
+   picker, DataStore contacts/channels routing, tile-cache SD fallback,
+   wallpaper scanning, settings backup, screenshots), so flipping the macro in
+   one go would have switched on ~30 unvetted, T-Deck-only-tested features at
+   once. The support was staged in instead, a group at a time:
+   - **File manager browsing + WAV notification-sound picker** — 2026-07-10
+     (commits `8c7fb6a`/`1514e76`), the first ~7 sites, widened with
+     `|| defined(TLORA_PAGER)`. Added `pagerSdCardPresent()` (XL9555
+     `PAGER_EXPAND_SD_DET`, confirmed-inverted polarity) and a pager
+     `sdSharedSPI()` (reuses `TFT_eSPI::getSPIinstance()`, the same bus the
+     radio already shares). Hardware-verified: mount, browse,
+     read/write/delete, insert/remove detection, and picking a WAV off the card
+     as a notification sound.
+   - **The rest** — verified in code 2026-08-20: DataStore contacts/channels
+     routing (`src/main.cpp`'s `setSecondaryFS`/`useSdStorage` blocks admit
+     `TLORA_PAGER`), the `MAX_UI_MESSAGES_SD` 5000-message history ring
+     (`uiDataFsIsSdCard()` admits the pager), map-tile SD fallback and offline
+     packs (the Map "tiles from SD" toggle; the tile-cache fix shipped in
+     beta_46), settings backup export/import plus crash-dump export
+     (`doExportBackupFile`), and firmware export to `/BINS` via About → "Save
+     update bin to SD".
+
+   With those vetted, both macros were flipped to 1 and `device_caps.h`
+   describes the hardware again. Cleanup left over: the belt-and-braces
+   `#if CAP_SD || defined(TLORA_PAGER)` at several sites is now redundant and
+   can be collapsed to plain `CAP_SD`.
+
+   **In-app format stays deliberately out of scope** on this board (no
+   `f_mkfs`/`sd_diskio.h` pulled in). The full reasoning now lives on the
+   format-helper guard in `UITask.cpp` so it is found from the code, not only
+   here: `f_mkfs` needs an `SD.end()` + `sdcard_init`/`uninit` lifecycle
+   teardown on the live shared display/radio bus; there is no touchscreen, so
+   the T-Deck's hold-to-format gesture does not map; and it has never been run
+   on pager hardware. The *recoverable* case is covered non-destructively
+   instead — a card the expander's SD_DET sees but that will not mount renders
+   a greyed **"SD card (unreadable - tap to retry)"** row
+   (`fmSdPagerRetryMountCb`) which clears the mount backoff and retries the
+   single 4 MHz attempt, then points the user at formatting on a computer.
+
+   **Still not done**: lock-screen wallpaper SD scanning — that picker block is
+   still `HAS_TDECK_GT911 || HAS_THINKNODE_M9`, so the pager keeps its baked
+   480x222 wallpaper (`lockscreen_wallpaper_pager_rgb565.h`) with no way to
+   choose one off the card.
 1i. **`navMaybeRebuild()` was unreachable for the pager in the first M6
    pass.** It's only called under `#if defined(HAS_TANMATSU) ... #elif
    CAP_TRACKBALL ...`, neither of which the pager's cap combination matches

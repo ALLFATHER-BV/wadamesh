@@ -1,0 +1,23 @@
+# beta_66 — test build. Stable is now beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- T-Display P4 ------------------------------------------------------------------------
+The P4 was transmitting at about a twentieth of its rated power. It never exceeded roughly +14 dBm however high you set it, and the steps stopped tracking near the top. The radio chip needs about 118 mA to deliver its full +22 dBm, but its over-current protection was left at the default 60 mA, so the amplifier was being current-limited long before it reached the power you asked for. Every other board already set this correctly; the P4 was the one that did not. Measured on a test set by wb6zsu, whose numbers found it.
+The P4 battery percentage now comes from the fuel gauge chip instead of being guessed from voltage. The gauge counts charge in and out and knows the real state of charge; voltage is driven by the charger, which is why the reading jumped to 100% the moment you plugged USB in, sat below 100% on a rested full pack, and once showed 71% on a pack that was actually at 11%. Calibrating "this is full" while charging also baked that error in permanently. Reported by D-Melhede and wb6zsu.
+Note this does not touch charging itself or the red/green charge light, which are a separate chip we do not talk to yet. That part of the report is still open.
+
+# --- Fixes -------------------------------------------------------------------------------
+The map stopped drawing contacts after 31 of them while the counter in the corner kept counting every one, so new contacts appeared to never reach the map. The limit is now 256, and if it is ever reached the counter says "31 of 45 on map" instead of quietly disagreeing with the screen. Map options gained a "Max dots" setting, defaulting to All, for anyone who wants to cap it on a busy view.
+A crash where the device rebooted while sitting on the home screen. Boards with the Expansion Kit were reading the temperature sensor over I2C on every single home-screen refresh, about once a second, and a stalled reading could leave the shared bus in a state that panics the firmware. The reading is now taken at most every few seconds and cached. Found from a crash log a user sent in.
+Language pack downloads failed on some devices while app downloads worked, and the error said nothing. Languages need a much larger working buffer than apps, and if that memory was not available the download gave up silently. It now falls back to smaller buffers, and when it does fail it says why: out of memory, connection failed, or could not write to storage. Reported by AtomAlex12.
+Every screen is fully translated again. Twenty-nine strings added over the last few releases had never reached the language files, so they showed in English whatever language you picked. Reported by pisti87, who also supplied the Hungarian for the longest of them.
+Leaving the Store or the Language page with the keyboard now works, instead of the back key doing nothing (oumike, PR #282, reported by ichliebespam).
+Remote Mode on the T-Lora Pager no longer leaves you with a black screen and no way out (oumike, PR #275, reported by AtomAlex12).
+Logging in to a room server that has forgotten you now offers the password prompt instead of silently doing nothing, and "Join with password" is reachable from the room's own chat rather than only from Contacts (oumike, PR #279).
+A login that gets no reply now tells you if multi-byte path hashing is switched on, since older repeaters silently drop those packets and that failure otherwise looks like nothing happening at all.
+
+# --- Changes ------------------------------------------------------------------------------
+New setting, Settings > Radio & Mesh > "Ignore 1-character messages", off by default. Most mesh spam is a single character because that is the cheapest message to send, and it still costs every receiver a notification and a chime. Dropped messages produce no chat entry, no notification and no sound.
+The save indicator has been removed from the home screen. It read "Save FAIL" permanently on the Tanmatsu, so on that board the one thing meant to warn you about storage trouble was crying wolf on every boot. Everything it showed, and more, is on Settings > About > Chat store.
+2048 is in the app Store, contributed by pisti87. It is the first community app in the catalog.
+The website has a proper section for the user guide, the app SDK, offline map tiles and reporting bugs. They were previously only reachable from small floating buttons that most people never noticed.

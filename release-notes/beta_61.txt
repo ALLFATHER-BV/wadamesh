@@ -1,0 +1,13 @@
+# beta_61 - fixes two contact-table regressions from the 1.17 rebase
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- The headline ---------------------------------------------------------------------
+Fixes a boot loop introduced by beta_60. A device whose contact list was empty - a fresh install, an erase-and-flash, or a card that had not mounted yet - crashed during startup and rebooted forever. Devices that already had contacts saved were unaffected, which is why it reached release: every board on the bench had a populated contact list. If you are stuck on beta_60, flashing beta_61 over it is enough; nothing needs erasing.
+Fixes contacts becoming unreachable on beta_60. MeshCore 1.17 reserved eight slots at the start of the contact table, and our contact list, action sheets and phone-app sync were still counting from the old start, so the eight most recently added contacts could not be shown or acted on. A contact you had just added was invisible, and buttons like a room server's Log in silently did nothing because they resolved to an empty reserved slot. Nothing was ever lost - those contacts were in the table the whole time and reappear on this build. Reported by myshoeisonfire.
+Upgrading from beta_60 also cleans up the empty placeholder contacts it wrote into the contacts file; they are dropped on load and gone for good after the next save.
+
+The T-Display P4 receives again. On beta_60 it could send but heard nothing at all - no channel messages, no delivery confirmations, no adverts - while the Monitor app still showed signal. The P4 is the one board whose radio interrupt line is not wired to the processor, so it has to ask the radio over SPI whether a packet arrived; that polling code was never in the repository (it lived only in a generated directory that gets rebuilt), so the 1.17 rebase erased it. It is rewritten and now version-controlled. Reported by D-Melhede.
+
+# --- Also fixed -------------------------------------------------------------------------
+A contact that changes its node name no longer leaves two chat threads behind. The thread is matched by key, but its title was never updated, while incoming messages are filed by sender name - so the next message after a rename started a second thread. The thread now follows the rename. Duplicates you already have can be deleted as before. Reported by myshoeisonfire.
+Release builds now derive the firmware version, build date and core version from the release itself, and a release aborts if any board's image does not carry its own tag. beta_60 shipped reporting v1.16.0-touch in About because that value was maintained by hand; it now cannot drift.

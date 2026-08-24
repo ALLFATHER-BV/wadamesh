@@ -1,0 +1,6 @@
+{
+  "id": "airtime",
+  "name": "Airtime",
+  "ver": "1.4",
+  "desc": "Utilization bars with a % axis, rx/tx split, duty ceiling, budget. Reset button top-right."
+}

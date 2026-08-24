@@ -29,6 +29,7 @@ public:
   void onBeforeTransmit(void) override { xl9535.rfSwitchTx(true); }
   void onAfterTransmit(void)  override { xl9535.rfSwitchTx(false); }
   uint16_t getBattMilliVolts() override;   // BQ27220 gauge on I2C_1 — TODO(device)
+  int      getBattStateOfCharge();         // BQ27220 StateOfCharge(), %; -1 = unavailable (#273)
   const char* getManufacturerName() const override { return "LilyGo T-Display P4"; }
 };
 

@@ -1,0 +1,19 @@
+# beta_54 - T-Display P4 screen flash fixed, P4 GPS fixed, Romanian, V4-R8 landscape rescue
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- T-Display P4 ----------------------------------------------------------------------
+The whole-screen blue flash (#167) is fixed. It was never the display: writing to the SD card delays the interrupt that restarts the screen's frame timer, and the panel shows the late frame as a flash. The fix moves your contacts, channels and chat history to fast internal storage - the SD card now carries only map tiles, backups and exports. Your data migrates across automatically on first boot; the card is not modified and everything on it stays as a backup.
+Because the card no longer holds your identity, swapping or removing the SD card can never again change who your node is or lose your contacts.
+GPS is really fixed this time: the firmware never actually read what the GPS module was saying (the sensor loop was missing on this board). It reads it now - fixes confirmed outdoors, and the T-Deck-style quick fix behaviour returns after the module has had sky time.
+The GPS settings page now shows live satellite info (in view, in use, signal strength) and updates while open, so "Searching" is no longer a black box.
+Storage writes now run on a dedicated background worker, so a big contact save cannot make the interface stutter.
+
+# --- Romanian (community) ---------------------------------------------------------------
+Romanian is the 13th interface language, with its own keyboard layout: ă on the home row, ş/ţ on the deck, â/î via the accent popups. Contributed by @jcyrio (#188, #189) - mulţumim!
+
+# --- Heltec V4-R8 -----------------------------------------------------------------------
+Fixed landscape mode registering every touch in the wrong place, which could leave the device stuck in landscape. The R8's screen sits rotated differently from the V4's, and the touch mapping assumed the V4. If you were stuck: this build boots back to portrait automatically.
+For safety the R8 returns to portrait on every boot for now; landscape can be re-tested from Settings and we will make it stick once a tester confirms the fix.
+
+# --- General ----------------------------------------------------------------------------
+The Airtime and Snake apps got a crash fix when closing.

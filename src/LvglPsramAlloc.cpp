@@ -40,9 +40,19 @@ extern "C" void* lvglPsramRealloc(void* ptr, size_t size) {
   if (!ptr) {
     return lvglPsramAlloc(size);
   }
-  // Plain realloc preserves whatever heap the original block was on (PSRAM
-  // stays in PSRAM, DRAM stays in DRAM). Migrating between heaps on realloc
-  // would need to know the original size to memcpy safely; not worth the
-  // complexity for LVGL's usage pattern.
+#if defined(ESP32)
+  // ESP-IDF documents plain realloc(ptr, size) as
+  // heap_caps_realloc(ptr, size, MALLOC_CAP_8BIT). That generic capability can
+  // move a PSRAM-backed LVGL block into the higher-priority internal heap. The
+  // UI performs many small text/style reallocations while building its tree,
+  // so the old implementation silently migrated roughly 60 KB back into the
+  // DRAM needed by Wi-Fi/BLE connection and security work. Preserve the PSRAM
+  // requirement explicitly. heap_caps_realloc handles copying even when ptr
+  // came from the internal fallback in lvglPsramAlloc().
+  void* p = heap_caps_realloc(ptr, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (p) return p;
+#endif
+  // PSRAM absent or exhausted: retain the original fallback semantics. A failed
+  // heap_caps_realloc leaves ptr valid, so the ordinary realloc remains safe.
   return realloc(ptr, size);
 }

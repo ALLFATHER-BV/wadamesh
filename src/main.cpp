@@ -15,6 +15,7 @@
 #include "helpers/esp32/TouchPrefsStore.h"   // QUOTED: get wadamesh's copy (touchPrefsReload), not the lib's stale one
 #include "helpers/esp32/SdNvsPrefs.h"        // route prefs to file storage (SD/SPIFFS), off NVS
                                              // (quoted: use wadamesh's src/ copy, not the lib's stale one)
+#include "ui-touch/i18n.h"                    // translated Pager transport-state alerts
 #include "wadamesh_mark_rgb.h"               // anti-aliased mesh-mark (RGB565) for the pre-LVGL boot screen
 #include "ui-touch/TouchSleep.h"             // idle light-sleep controller (loopEnd called at end of loop())
 #endif
@@ -48,11 +49,19 @@ static uint32_t _atoi(const char* sp) {
   DataStore store(LittleFS, rtc_clock);
 #elif defined(ESP32)
   #include <SPIFFS.h>
-  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     #include <SD.h>
+    #include "SdFastClock.h"   // post-mount operating-clock raise (SD_SPI_FAST_HZ boards)
     #include <Preferences.h>
+    #if defined(TLORA_PAGER)
+      #include <mbedtls/sha256.h>
+    #endif
     #ifndef PIN_SD_CS
-      #define PIN_SD_CS 39      // T-Deck microSD chip-select (V4-R8 sets 3 in the env)
+      #if defined(TLORA_PAGER)
+        #define PIN_SD_CS PAGER_PIN_SD_CS
+      #else
+        #define PIN_SD_CS 39    // T-Deck microSD chip-select (V4-R8 sets 3 in the env)
+      #endif
     #endif
   #endif
   extern "C" void set_boot_phase(int phase);
@@ -65,7 +74,11 @@ static uint32_t _atoi(const char* sp) {
 
 #ifdef ESP32
   #ifdef MULTI_TRANSPORT_COMPANION
-    #include <helpers/esp32/MultiTransportCompanionInterface.h>
+    // This class is extended locally (web mirror/P4 routing/BLE state). Include
+    // the matching project header explicitly: the MeshCore dependency ships an
+    // older class layout, and mixing that header with our local .cpp makes the
+    // placement allocation undersized and shifts every member after _ws_started.
+    #include "helpers/esp32/MultiTransportCompanionInterface.h"
     #include "helpers/esp32/MqttBridge.h"
     #include <esp_heap_caps.h>
     #include <new>
@@ -87,6 +100,38 @@ static uint32_t _atoi(const char* sp) {
     #endif
     #ifndef WS_PORT
       #define WS_PORT 8765
+    #endif
+
+    #if defined(TLORA_PAGER)
+    static void pagerLogInternalHeap(const char* phase) {
+      const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+      Serial.printf("[heap] %s: internal free=%u largest=%u low=%u dma=%u psram=%u\n",
+                    phase,
+                    (unsigned)heap_caps_get_free_size(caps),
+                    (unsigned)heap_caps_get_largest_free_block(caps),
+                    (unsigned)heap_caps_get_minimum_free_size(caps),
+                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    }
+    // Claim Wi-Fi's coexistence resources first. A cold STA allocation or real
+    // WPA association owns a bounded ordering window; idle/scannable Wi-Fi and
+    // a failed association both allow BLE to run.
+    static bool s_pager_ble_after_wifi = false;
+    static uint32_t s_pager_wifi_ble_deadline_ms = 0;
+    static const uint32_t PAGER_WIFI_BLE_HANDOFF_MS = 6000;
+
+    static void pagerWifiEnterBleFallback(const char* reason) {
+      WiFi.setAutoReconnect(false);
+      // Stop WPA without deinitializing esp_wifi. Keeping the STA allocation
+      // resident lets BLE come back immediately and avoids repeating the
+      // order-sensitive cold allocation for a later scan or explicit retry.
+      if ((WiFi.getMode() & WIFI_MODE_STA) != 0) {
+        WiFi.disconnect(false, false);
+      }
+      wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::BleFallback);
+      s_pager_wifi_ble_deadline_ms = 0;
+      Serial.printf("[wifi] BLE fallback: %s\n", reason ? reason : "association stopped");
+    }
     #endif
   #elif defined(WIFI_SSID)
     #include <helpers/esp32/SerialWifiInterface.h>
@@ -181,6 +226,15 @@ extern "C" void set_boot_phase(int phase) { g_boot_phase = phase; }
 // "Store data on SD" toggle is only a stored intent — if the card didn't mount at boot, contacts
 // silently stay on internal flash. The Storage settings page reads this to show the REAL location.
 bool g_contacts_on_sd = false;
+// True only when DataStore adopted SD as the primary identity/preferences
+// backend for this boot. The UI history selector uses the same decision so an
+// established card identity can never be paired with another profile's
+// internal chat history merely because an old card lacks a migration marker.
+bool g_full_data_on_sd = false;
+// True when full SD adoption was requested but the guarded SPIFFS -> SD copy
+// could not be proven complete. Settings surfaces the recovery action; contacts
+// may still use SD as the secondary store while identity/prefs remain internal.
+bool g_sd_migration_blocked = false;
 #endif
 
 
@@ -193,10 +247,23 @@ void halt() {
   bool wifi_needs_reconnect = false;
   unsigned long last_wifi_reconnect_attempt = 0;
 #endif
+#if defined(ESP32)
+// Last STA disconnect reason (esp_wifi wifi_err_reason_t). The UI's coarse
+// "auth failed" (WL_CONNECT_FAILED) covers wrong password, WPA3-SAE handshake
+// failure and AP-side rejection alike — the reason number tells them apart
+// (15 = 4-way handshake timeout ≈ wrong password; 2/202 = auth expired/failed
+// ≈ WPA3-only or auth mismatch; 201 = AP not found).
+//
+// DEFINED in ui-touch/UITask.cpp, not here. The ESP32-P4 targets (Tanmatsu,
+// T-Display P4) are IDF builds with their own main.cpp and never compile this
+// file, so a definition here links on the S3 boards and leaves both P4 targets
+// with an undefined reference from the UI that reads it.
+extern volatile uint8_t g_wifi_last_disc_reason;
+#endif
 
 #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)
 
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
 // ---- SPIFFS -> SD migration (fixes the beta_36 "lost my profile" upgrades) ----
 // Users who flipped "Store data on SD" before beta_36 ran with the toggle IGNORED
 // (the flag never survived a reboot), so their identity/prefs/contacts kept living
@@ -205,64 +272,366 @@ void halt() {
 // "lost profile settings". The data was never gone — it was orphaned on SPIFFS.
 // Copies every SPIFFS file into SD:/meshcomod ("/prefs/<ns>.kv" flattens to
 // "/meshcomod/<ns>.kv", matching SdNvsPrefs's SD layout). Returns true only when
-// the identity file landed on the card — the caller must NOT adopt the card
-// otherwise. force=true (the Settings "Copy internal data to SD" recovery button)
-// overwrites whatever the card holds; the boot path never clobbers existing files.
+// every file landed on the card and a last-written completion marker commits
+// that attempt. The caller must NOT adopt the card otherwise. force=true
+// (the Settings "Copy internal data to SD" recovery button) overwrites whatever
+// the card holds on legacy targets. Pager recovery is deliberately non-clobbering;
+// its boot and manual paths only fill missing files and commit the marker last.
 // Both filesystems must be mounted by the caller.
+static constexpr const char* kInternalIdentity = "/identity/_main.id";
+static constexpr const char* kSdIdentity = "/meshcomod/identity/_main.id";
+static constexpr const char* kSdMigrationComplete = "/meshcomod/.spiffs-migration-v1";
+static constexpr const char* kSdMigrationCompleteTmp = "/meshcomod/.spiffs-migration-v1.tmp";
+
+// Byte-compare the card's identity against the internal one without logging
+// either. Any read failure counts as a mismatch. True means the card carries
+// THIS device's profile — migration never deletes its SPIFFS sources, so a
+// device that already adopted the card still has a byte-identical copy here.
+static bool sdIdentityMatchesInternal() {
+  File internal = SPIFFS.open(kInternalIdentity, FILE_READ);
+  if (!internal) return false;
+  File card = SD.open(kSdIdentity, FILE_READ);
+  if (!card || internal.size() == 0 || internal.size() != card.size()) {
+    internal.close();
+    if (card) card.close();
+    return false;
+  }
+  uint8_t internal_buf[64];
+  uint8_t card_buf[64];
+  bool matches = true;
+  while (matches && internal.available()) {
+    const size_t n = internal.read(internal_buf, sizeof internal_buf);
+    if (n == 0 || card.read(card_buf, n) != n || memcmp(internal_buf, card_buf, n) != 0)
+      matches = false;
+  }
+  if (card.available()) matches = false;
+  internal.close();
+  card.close();
+  return matches;
+}
+
+#if defined(TLORA_PAGER)
+static constexpr const char* kSdMigrationOwner = "/meshcomod/.spiffs-migration-v1.owner";
+static constexpr const char* kSdMigrationOwnerTmp = "/meshcomod/.spiffs-migration-v1.owner.tmp";
+
+static bool sdProfileTreeContainsFile(const char* path, uint8_t depth = 0) {
+  // Only the root may be judged absent. A recursive child came straight from
+  // openNextFile(), so it provably exists and re-stat'ing it can only produce a
+  // false negative — which would be the one verdict that lets a foreign
+  // residual subtree read as empty and get claimed. Below the root, let the
+  // open() fail-closed path govern instead.
+  if (depth == 0 && !SD.exists(path)) return false;
+  if (depth >= 8) return true;   // unexpected/deep content is not safe to adopt
+  File dir = SD.open(path, FILE_READ);
+  if (!dir) return true;         // unreadable content is not an empty profile
+  if (!dir.isDirectory()) {
+    dir.close();
+    return true;
+  }
+  for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
+    const bool is_dir = entry.isDirectory();
+    if (!is_dir) {
+      entry.close();
+      dir.close();
+      return true;
+    }
+    char child[160];
+    const char* entry_path = entry.path();
+    const bool path_ok = entry_path && strlcpy(child, entry_path, sizeof child) < sizeof child;
+    entry.close();
+    // A truncated/unreadable directory name must fail closed. Treating the
+    // truncated path as absent could make a foreign residual subtree look empty.
+    if (!path_ok || child[0] == '\0' || sdProfileTreeContainsFile(child, depth + 1)) {
+      dir.close();
+      return true;
+    }
+  }
+  dir.close();
+  return false;
+}
+
+static bool internalIdentityDigest(uint8_t out[32]) {
+  File identity = SPIFFS.open(kInternalIdentity, FILE_READ);
+  if (!identity) return false;
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  int rc = mbedtls_sha256_starts_ret(&ctx, 0);
+  uint8_t chunk[128];
+  while (rc == 0 && identity.available()) {
+    const size_t n = identity.read(chunk, sizeof chunk);
+    if (n == 0) { rc = -1; break; }
+    rc = mbedtls_sha256_update_ret(&ctx, chunk, n);
+  }
+  if (rc == 0) rc = mbedtls_sha256_finish_ret(&ctx, out);
+  mbedtls_sha256_free(&ctx);
+  identity.close();
+  return rc == 0;
+}
+
+static bool sdDigestFileMatches(const char* path, const uint8_t expected[32]) {
+  File marker = SD.open(path, FILE_READ);
+  if (!marker || marker.size() != 32) {
+    if (marker) marker.close();
+    return false;
+  }
+  uint8_t actual[32];
+  const bool matches = marker.read(actual, sizeof actual) == sizeof actual &&
+                       memcmp(actual, expected, sizeof actual) == 0;
+  marker.close();
+  return matches;
+}
+
+static bool ensureSdMigrationOwner() {
+  uint8_t digest[32];
+  if (!internalIdentityDigest(digest)) return false;
+  if (SD.exists(kSdMigrationOwner))
+    return sdDigestFileMatches(kSdMigrationOwner, digest);
+  if (SD.exists(kSdMigrationOwnerTmp)) {
+    if (sdDigestFileMatches(kSdMigrationOwnerTmp, digest))
+      return SD.rename(kSdMigrationOwnerTmp, kSdMigrationOwner);
+    // Someone else's half-written claim. Clearing it is safe because the tree
+    // check below still refuses any card that holds real payload; a stranded
+    // tmp marker on an otherwise empty card is not an established profile.
+    if (!SD.remove(kSdMigrationOwnerTmp)) return false;
+  }
+  // Without a matching owner marker, only a tree containing no file payload is
+  // safe to claim. Empty directories from an interrupted mkdir sequence are OK.
+  if (sdProfileTreeContainsFile("/meshcomod")) return false;
+  if (!SD.exists("/meshcomod") && !SD.mkdir("/meshcomod")) return false;
+  File marker = SD.open(kSdMigrationOwnerTmp, FILE_WRITE);
+  const bool wrote = marker && marker.write(digest, sizeof digest) == sizeof digest;
+  if (marker) marker.close();
+  return wrote && SD.rename(kSdMigrationOwnerTmp, kSdMigrationOwner);
+}
+
+// Manual recovery may resume onto an empty card or the same profile, but it
+// must never fill one identity's missing files from another profile. Compare
+// the small identity files without logging their contents before arming the
+// durable migration latch. A read failure is treated as a mismatch.
+bool meshcomodSdProfileMatchesInternal() {
+  if (!SPIFFS.exists(kInternalIdentity)) return false;
+  // An empty card is claimable; a populated one must prove it is ours.
+  if (!SD.exists(kSdIdentity)) return ensureSdMigrationOwner();
+  return sdIdentityMatchesInternal();
+}
+#endif
+
+bool meshcomodPrepareSdMigration() {
+  if (SD.exists(kSdMigrationCompleteTmp) && !SD.remove(kSdMigrationCompleteTmp))
+    return false;
+  if (SD.exists(kSdMigrationComplete) && !SD.remove(kSdMigrationComplete))
+    return false;
+#if defined(TLORA_PAGER)
+  if (!SD.exists(kSdIdentity) && !ensureSdMigrationOwner()) return false;
+#endif
+  return true;
+}
+
 bool meshcomodMigrateSpiffsToSd(bool force) {
   if (!SPIFFS.exists("/identity/_main.id")) return false;   // nothing worth adopting
+#if defined(TLORA_PAGER)
+  // Pager recovery is always resumable/non-clobbering. Keep that invariant in
+  // the migration primitive itself so a future caller cannot accidentally turn
+  // a profile-reconciliation action into an overwrite.
+  force = false;
+#endif
   SD.mkdir("/meshcomod");
   SD.mkdir("/meshcomod/identity");
   SD.mkdir("/meshcomod/bl");
   SD.mkdir("/meshcomod/lock");
   SD.mkdir("/meshcomod/msgs");   // chat segments: SPIFFS names them flat ("/msgs/seg_*.bin"),
                                  // but the FAT card needs the real parent dir or every copy fails
+  SD.mkdir("/meshcomod/apps");   // Lua apps installed to internal storage before a card existed
   bool identity_ok = false;
+  bool identity_deferred = false;
   int copied = 0, failed = 0;
   static uint8_t buf[4096];
+  // This routine runs only on loopTask. Keep the working paths off its stack:
+  // the manual recovery used to be called from a deep LVGL event callback and
+  // field evidence showed this buffer being corrupted after dozens of files.
+  static char src[96];
+  static char dst[112];
+  static char tmp[120];
+  const UBaseType_t low_water = uxTaskGetStackHighWaterMark(nullptr);
+  Serial.printf("[BOOT] SD migration start, loop stack low-water: %u bytes\n",
+                (unsigned)(low_water * sizeof(StackType_t)));
+  auto ensureSdParents = [](const char* path) -> bool {
+    char parent[112];
+    strlcpy(parent, path, sizeof(parent));
+    for (char* slash = strchr(parent + 1, '/'); slash; slash = strchr(slash + 1, '/')) {
+      *slash = '\0';
+      const bool ok = SD.exists(parent) || SD.mkdir(parent);
+      *slash = '/';
+      if (!ok) return false;
+    }
+    return true;
+  };
+  // Copy identity last. Its presence is the boot-time adoption key, so landing
+  // it before a later history/settings failure could make a partial card look
+  // complete if the NVS in-progress breadcrumb were ever lost. Existing card
+  // identities are never replaced by the non-clobbering Pager path.
+  auto copyFile = [&](File& source, const char* destination,
+                      const char*& fail_stage) -> bool {
+    snprintf(tmp, sizeof tmp, "%s.mig", destination);
+    fail_stage = "parents";
+    bool ok = ensureSdParents(destination);
+    if (ok && SD.exists(tmp)) {
+      fail_stage = "stale temp";
+      ok = SD.remove(tmp);   // only our own prior migration residue
+    }
+    File d;
+    if (ok) {
+      fail_stage = "open temp";
+      d = SD.open(tmp, FILE_WRITE);
+      ok = (bool)d;
+    }
+    size_t since_feed = 0;
+    const size_t source_size = source.size();
+    size_t source_read = 0;
+    while (ok && source_read < source_size) {
+      fail_stage = "read source";
+      const size_t remain = source_size - source_read;
+      const size_t n = source.read(buf, remain < sizeof(buf) ? remain : sizeof(buf));
+      if (n == 0) { ok = false; break; }
+      fail_stage = "write temp";
+      if (d.write(buf, n) != n) { ok = false; break; }
+      source_read += n;
+      // A large history file on a slow card can exceed the task-WDT window.
+      since_feed += n;
+      if (since_feed >= 32768) { esp_task_wdt_reset(); since_feed = 0; }
+    }
+    source.close();
+    if (d) d.close();
+    // Commit only a complete temporary file, preserving the old destination
+    // until its replacement is ready.
+    if (ok) {
+      fail_stage = "replace destination";
+      if (force && SD.exists(destination) && !SD.remove(destination)) ok = false;
+      if (ok) {
+        fail_stage = "commit rename";
+        if (!SD.rename(tmp, destination)) ok = false;
+      }
+    }
+    return ok;
+  };
   File root = SPIFFS.open("/");
+  if (!root || !root.isDirectory()) {
+    if (root) root.close();
+    Serial.println("[BOOT] SD migrate FAILED: open SPIFFS root");
+    return false;
+  }
   for (File f = root.openNextFile(); f; f = root.openNextFile()) {
     if (f.isDirectory()) { f.close(); continue; }
-    // SPIFFS is flat: name() is the full path ("/identity/_main.id", "/prefs/touch.kv", ...)
-    const char* sp = f.name();
-    char src[96];
+    // Arduino-ESP32 File::name() is only the basename (pathToFileName()). Use
+    // path() so nested SPIFFS names retain identity/, prefs/, msgs/, etc. The
+    // old name() assumption made us reopen "/_main.id" instead of
+    // "/identity/_main.id", causing the first full-SD boot migration to fail.
+    const char* sp = f.path();
     snprintf(src, sizeof src, "%s%s", sp[0] == '/' ? "" : "/", sp);
-    char dst[112];
     if (strncmp(src, "/prefs/", 7) == 0)
       snprintf(dst, sizeof dst, "/meshcomod/%s", src + 7);   // kv files sit flat on the card
     else
       snprintf(dst, sizeof dst, "/meshcomod%s", src);
-    if (!force && SD.exists(dst)) { f.close(); continue; }   // boot path: never clobber
-    File s = SPIFFS.open(src, FILE_READ);
-    File d = s ? SD.open(dst, FILE_WRITE) : File();          // FILE_WRITE truncates
-    bool ok = s && d;
-    size_t since_feed = 0;
-    while (ok && s.available()) {
-      const size_t n = s.read(buf, sizeof buf);
-      if (n == 0 || d.write(buf, n) != n) ok = false;
-      // Feed the task-WDT mid-file: a large history file on a slow/cold SD card can take
-      // longer than the 20 s task-WDT to copy in 4 KB chunks, and this runs on loopTask
-      // during setup() — without the feed the dog panics and reboot-loops the boot (GH
-      // #142/#148). The copy still can't tolerate a genuinely wedged FAT layer; the
-      // NVS breadcrumb at the call site handles that.
-      since_feed += n;
-      if (since_feed >= 32768) { esp_task_wdt_reset(); since_feed = 0; }
+    if (!force && SD.exists(dst)) {
+      if (strcmp(src, "/identity/_main.id") == 0) identity_ok = true;
+      f.close();
+      continue;   // boot path: never clobber
     }
-    if (s) s.close();
-    if (d) d.close();
-    if (ok) { ++copied; if (strcmp(src, "/identity/_main.id") == 0) identity_ok = true; }
-    else    { ++failed; Serial.printf("[BOOT] SD migrate FAILED: %s\n", src); if (SD.exists(dst)) SD.remove(dst); }
-    f.close();
+    if (strcmp(src, "/identity/_main.id") == 0) {
+      identity_deferred = true;
+      f.close();
+      continue;
+    }
+    const char* fail_stage = nullptr;
+    const bool ok = copyFile(f, dst, fail_stage);
+    if (ok) {
+      ++copied;
+    } else {
+      ++failed;
+      Serial.printf("[BOOT] SD migrate FAILED (%s): %s\n", fail_stage, src);
+#if defined(TLORA_PAGER)
+      // A failed FAT operation can mean the card/volume is wedged. Do not issue
+      // remove(), exists(), or another copy against that same volume: the old
+      // cleanup call was exactly where the first requested SD boot could hang.
+      // The .mig name is never adopted and a later explicit retry removes it.
+      break;
+#else
+      SD.remove(tmp);
+#endif
+    }
     esp_task_wdt_reset();
     yield();
   }
   root.close();
+  if (failed != 0) {
+    Serial.printf("[BOOT] SPIFFS -> SD migration stopped after %d copied, %d failed\n",
+                  copied, failed);
+    return false;   // breadcrumb remains armed; no more SD calls on this boot
+  }
+  if (identity_deferred) {
+    strlcpy(src, "/identity/_main.id", sizeof(src));
+    strlcpy(dst, "/meshcomod/identity/_main.id", sizeof(dst));
+    File identity = SPIFFS.open(src, FILE_READ);
+    const char* fail_stage = "open source";
+    const bool identity_opened = (bool)identity;
+    bool ok = identity_opened;
+    if (ok) ok = copyFile(identity, dst, fail_stage);
+    if (!ok) {
+      if (identity) identity.close();
+      ++failed;
+      Serial.printf("[BOOT] SD migrate FAILED (%s): %s\n", fail_stage, src);
+#if !defined(TLORA_PAGER)
+      if (identity_opened) SD.remove(tmp);
+#endif
+      Serial.printf("[BOOT] SPIFFS -> SD migration stopped after %d copied, %d failed\n",
+                    copied, failed);
+      return false;
+    }
+    ++copied;
+    identity_ok = true;
+    esp_task_wdt_reset();
+    yield();
+  }
   // The boot path skips files the card already has — an identity already on the
-  // card counts as "landed" (nothing needed migrating).
-  if (!force && !identity_ok && SD.exists("/meshcomod/identity/_main.id")) identity_ok = true;
+  // card counts as "landed" (nothing needed migrating). Identity alone is not
+  // enough, though: adopting after a larger history/prefs copy failed hides the
+  // complete SPIFFS store behind a partial SD tree.
   Serial.printf("[BOOT] SPIFFS -> SD migration: %d copied, %d failed, identity %s\n",
                 copied, failed, identity_ok ? "ok" : "MISSING");
-  return identity_ok;
+  bool complete = identity_ok && failed == 0;
+  if (complete) {
+    if (SD.exists(kSdMigrationCompleteTmp) &&
+        !SD.remove(kSdMigrationCompleteTmp)) {
+      Serial.println("[BOOT] SD migrate FAILED: stale completion temp");
+      return false;
+    }
+    File marker = SD.open(kSdMigrationCompleteTmp, FILE_WRITE);
+    bool marker_ok = marker && marker.print("complete v1\n") == 12;
+    if (marker) marker.close();
+    if (marker_ok) {
+      if (SD.exists(kSdMigrationComplete) &&
+          !SD.remove(kSdMigrationComplete)) {
+        marker_ok = false;
+      } else {
+        marker_ok = SD.rename(kSdMigrationCompleteTmp, kSdMigrationComplete);
+      }
+    }
+    if (!marker_ok) {
+      Serial.println("[BOOT] SD migrate FAILED: completion marker");
+      // Treat marker failure like any other volume failure. Leaving the
+      // marker temp is harmless; touching the failed card again can hang.
+      return false;
+    }
+  }
+  return complete;
+}
+
+bool meshcomodArmSdMigLatch() {
+  Preferences prefs;
+  if (!prefs.begin("touch", false)) return false;
+  const bool armed = prefs.putBool("sd_mig_busy", true) == 1;
+  prefs.end();
+  return armed;
 }
 
 // Clear the boot safe-mode latch (see the SPIFFS->SD migration above): called after a
@@ -271,8 +640,10 @@ bool meshcomodMigrateSpiffsToSd(bool force) {
 void meshcomodClearSdMigLatch() {
   Preferences _mp;
   if (_mp.begin("touch", false)) { _mp.remove("sd_mig_busy"); _mp.end(); }
+  g_sd_migration_blocked = false;
 }
 #endif
+
 
 void setup() {
   Serial.begin(115200);
@@ -282,6 +653,13 @@ void setup() {
   delay(200);
 #endif
   Serial.println("[BOOT] setup start");
+  // The SDK ships CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096: every allocation
+  // under 4 KB is forced into internal DRAM even when PSRAM is free. On the V4
+  // that is why internal sat at ~99% while 800+ KB of PSRAM went unused. Lower
+  // the threshold at runtime so ordinary mallocs land in PSRAM; anything that
+  // genuinely needs internal/DMA memory asks for it by capability and is
+  // unaffected. Tunable — raise it if something misbehaves.
+  heap_caps_malloc_extmem_enable(256);
 
   // Widen the task-watchdog grace period. The ~5 s default trips during a legitimate-but-slow flash
   // burst — a SPIFFS garbage-collect, or a bulk save (DataStore issues ~12 flash ops per contact,
@@ -363,7 +741,10 @@ void setup() {
     // arrive with the LVGL splash. Centred exactly: the artwork is centred within
     // the bitmap, and the colour splash mark is centred to the same point, so the
     // hand-off stays in place.
-    display.startFrame();
+    // Explicit black: startFrame()'s default is UIColor::window_bkg, and on boards
+    // whose DISPLAY_CLASS is a core driver the 1.17 core's palette makes that WHITE
+    // (the boot logo grew a white border). Our pre-LVGL screens are always dark.
+    display.startFrame((ColorVal)0x0000);
     display.writePixelsRGB565((display.width()  - WADAMESH_MARK_W) / 2,
                               (display.height() - WADAMESH_MARK_H) / 2,
                               WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
@@ -371,7 +752,52 @@ void setup() {
   }
 #endif
 
-  if (!radio_init()) { halt(); }
+  bool radio_ok = radio_init();
+  if (!radio_ok) { delay(150); radio_ok = radio_init(); }   // one retry: transient SPI/reset flakes
+#if defined(PIN_PERF_POWERON)
+  // Last resort: do what the error screen would otherwise ask the USER to do —
+  // power-cycle the module — by bouncing the rail that feeds it.
+  //
+  // On boards with a peripheral power gate (T-Deck, GPIO10) the LoRa module is only
+  // powered once that pin is driven high in Board::begin(), a few milliseconds before
+  // it gets probed. A cold start survives that because the rail was already settled;
+  // a SOFTWARE reset does not. An OTA update ends in ESP.restart(), which releases the
+  // pin, collapses the rail, and re-drives it immediately — so the radio is probed
+  // while it is still coming up, and the boot dead-ends on "LoRa radio not detected"
+  // until the user power-cycles by hand (reported on a T-Deck straight after an
+  // update; a reboot cleared it). A brief, deliberate LOW gives the module a clean
+  // power-on reset regardless of how this boot was reached.
+  //
+  // Only reached when the alternative is halting with the fatal screen, so it cannot
+  // regress a healthy boot: a board that probes fine never runs any of this.
+  if (!radio_ok) {
+    Serial.println("[BOOT] radio not detected — power-cycling the peripheral rail and retrying");
+    digitalWrite(PIN_PERF_POWERON, LOW);
+    delay(120);                       // long enough for the rail to actually drain
+    digitalWrite(PIN_PERF_POWERON, HIGH);
+    delay(250);                       // POR + crystal startup before the module answers SPI
+    radio_ok = radio_init();
+    if (radio_ok) Serial.println("[BOOT] radio came up after the power-cycle");
+  }
+#endif
+  if (!radio_ok) {
+    // A dead or absent LoRa module used to halt behind the frozen boot logo,
+    // with the only clue on serial (#244). Say it on the panel instead.
+    Serial.println("[BOOT] FATAL: LoRa radio init failed — halting with on-screen notice");
+#ifdef DISPLAY_CLASS
+    if (disp) {
+      display.startFrame((ColorVal)0x0000);   // explicit dark (core palettes vary — see boot splash)
+      display.setTextSize(1);
+      display.setColor((ColorVal)0xF800);     // red
+      display.drawTextCentered(display.width() / 2, display.height() / 2 - 20, "LoRa radio not detected");
+      display.setColor((ColorVal)0xFFFF);     // white
+      display.drawTextCentered(display.width() / 2, display.height() / 2 + 2,  "wadamesh needs the LoRa module.");
+      display.drawTextCentered(display.width() / 2, display.height() / 2 + 16, "Check it is fitted, then power-cycle.");
+      display.endFrame();
+    }
+#endif
+    halt();
+  }
   Serial.println("[BOOT] radio ok");
 
   fast_rng.begin(radio_driver.getRngSeed());
@@ -466,10 +892,14 @@ void setup() {
   // failure falls back to SPIFFS so the device always boots.
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
   bool sd_storage = false;
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   {
-   #if defined(HELTEC_LORA_V4_R8)
+   #if defined(TLORA_PAGER)
+    extern SPIClass* tloraPagerSharedSPI();    // display/radio/SD shared bus
+   #elif defined(HELTEC_LORA_V4_R8)
     extern SPIClass* heltecV4R8SharedSPI();   // FSPI, shared with the TFT (CS=3)
+   #elif defined(HAS_THINKNODE_M9)
+    extern SPIClass* m9SharedSPI();           // radio/display/SD shared bus
    #else
     extern SPIClass* tdeckSharedSPI();        // LoRa SPI bus
    #endif
@@ -495,12 +925,43 @@ void setup() {
     // device has no usable SPIFFS, the user opted in, or it's a brand-new device.
     bool want_full_sd = !spiffs_ok || use_sd_pref || fresh_install;
 
-   #if defined(HELTEC_LORA_V4_R8)
+   #if defined(TLORA_PAGER)
+    SPIClass* _spi = tloraPagerSharedSPI();
+   #elif defined(HELTEC_LORA_V4_R8)
     SPIClass* _spi = heltecV4R8SharedSPI();
+   #elif defined(HAS_THINKNODE_M9)
+    SPIClass* _spi = m9SharedSPI();
    #else
     SPIClass* _spi = tdeckSharedSPI();
    #endif
     bool sd_mounted = false;
+#if defined(TLORA_PAGER)
+    if (!_spi) {
+      Serial.println("[BOOT] SD: shared SPI unavailable");
+    } else if (!board.sdCardPresent()) {
+      Serial.println("[BOOT] SD: no card detected");
+    } else {
+      // Match LilyGo's pager bring-up: the card shares the already-running
+      // display/radio SPIClass and gets one conservative 4 MHz mount attempt.
+      // Do not tear down that live shared bus or hide arbitration bugs behind
+      // delays/retry ladders.
+      Serial.println("[BOOT] SD: card detected; mounting at 4 MHz");
+      const bool sd_begin_ok = SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6);
+      sd_mounted = sd_begin_ok && SD.cardType() != CARD_NONE;
+      if (!sd_mounted) {
+        if (sd_begin_ok) {
+          // Release only the unusable mount created above. SD.end() unregisters
+          // this SD VFS; it does not stop the shared SPIClass used by TFT/radio.
+          SD.end();
+        }
+        // Keep the board bring-up invariant explicit even if the SD library
+        // changed this pin while unwinding a failed mount.
+        pinMode(PIN_SD_CS, OUTPUT);
+        digitalWrite(PIN_SD_CS, HIGH);
+      }
+      Serial.printf("[BOOT] SD mount: %s\n", sd_mounted ? "ok" : "failed");
+    }
+#else
     if (_spi) {
       // Try to mount the card on EVERY boot: even a device that keeps identity on SPIFFS
       // wants its churn-heavy contacts/channels on the card.
@@ -519,13 +980,41 @@ void setup() {
         { 300, 1000000 }, { 450, 1000000 }, { 650,  400000 }, { 900, 400000 },
       };
       int tries = want_full_sd ? 7 : 3;
+      uint32_t mounted_hz = 0;
       for (int a = 0; a < tries && !sd_mounted; ++a) {
         SD.end();
         delay(kBootMount[a].settle_ms);
-        if (SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 6) && SD.cardType() != CARD_NONE)
+        if (SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
           sd_mounted = true;
+          mounted_hz = kBootMount[a].hz;
+        }
       }
+      // RENEGOTIATE UPWARD after a slow-rung success (GH #194). Standard SD bring-up is
+      // "initialise at a conservative clock, then raise it" — but SD.begin's clock is the
+      // operating clock for the whole session, so a card that only WOKE at 400 kHz then ran
+      // its entire life at 400 kHz (~25 KB/s). With the card as the primary store that was a
+      // ~3-minute boot (contacts + history at modem speed), runtime f_getfree timeouts (the
+      // file manager showing an inserted card as 0 KB/empty), and wedged backups. An
+      // initialised card almost always sustains 4 MHz even when its power-up handshake needed
+      // 400 kHz; if the fast re-begin fails, fall back to the clock that just worked.
+      if (sd_mounted && mounted_hz < 4000000) {
+        SD.end();
+        delay(60);
+        if (SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
+          Serial.printf("[BOOT] SD renegotiated %lu -> 4000000 Hz\n", (unsigned long)mounted_hz);
+          mounted_hz = 4000000;
+        } else {
+          SD.end();
+          delay(120);
+          sd_mounted = SD.begin(PIN_SD_CS, *_spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
+          if (sd_mounted) Serial.printf("[BOOT] SD stays at %lu Hz (4 MHz renegotiation failed)\n", (unsigned long)mounted_hz);
+        }
+      }
+      // Operating-clock raise with read-verify (SD_SPI_FAST_HZ boards only; no-op elsewhere).
+      if (sd_mounted) { mounted_hz = sdTryFastClock(PIN_SD_CS, *_spi, mounted_hz, "BOOT"); sd_mounted = mounted_hz != 0; }
+      if (sd_mounted) { extern uint32_t g_sd_operating_hz; g_sd_operating_hz = mounted_hz; }   // About-page readout (UITask.cpp)
     }
+#endif
     if (sd_mounted) {
       g_contacts_on_sd = true;   // every branch below routes contacts/channels to the card
       if (want_full_sd) {
@@ -536,30 +1025,81 @@ void setup() {
         // card lacks; a failed migration keeps the device on SPIFFS this boot
         // rather than adopting a card without the identity on it.
         bool adopt = true;
-        if (SPIFFS.exists("/identity/_main.id") && !SD.exists("/meshcomod/identity/_main.id")) {
+        if (SPIFFS.exists("/identity/_main.id")) {
           // Boot safe-mode (GH #142/#148): a wedged or corrupt SD card can hang / WDT-reboot the
           // device mid-migration, stranding it on the boot screen EVERY boot (reset can't escape,
           // only a downgrade could). Drop an NVS breadcrumb before migrating and clear it only if
-          // the copy RETURNS. If it's still set at the next boot, the last migration never finished
+          // the copy fully completes. If it's still set at the next boot, the last migration failed
           // -> skip it and boot from SPIFFS (the data is safe there); Settings > "Copy internal data
           // to SD" re-arms a deliberate retry. A merely-slow (healthy) card completes thanks to the
           // in-loop WDT feed, so it never latches here.
           Preferences _mp;
           const bool mp_ok = _mp.begin("touch", false);
           const bool mig_busy = mp_ok && _mp.getBool("sd_mig_busy", false);
+          // An identity makes this an existing SD profile, even if it predates
+          // the Pager migration-complete marker. Never auto-overlay missing
+          // internal files onto an established card profile.
+          const bool needs_migration =
+              !SD.exists("/meshcomod/identity/_main.id");
           if (mig_busy) {
+            // A completion marker written after identity proves the interrupted
+            // state was only the tiny crash window before the NVS latch clear.
+            // Otherwise fail closed even if an older identity still exists.
+            const bool committed = !needs_migration && SD.exists(kSdMigrationComplete);
+            // Upgrade amnesty. Pre-#206 firmware had no completion marker and
+            // cleared the latch whenever the copy RETURNED, not when it
+            // succeeded. A device whose migration died after the identity landed
+            // therefore adopted the card anyway and has been running full-SD
+            // ever since, with sd_mig_busy stuck at 1 and no marker that could
+            // ever exist. Demanding the marker on upgrade would demote that live
+            // card to a months-stale SPIFFS snapshot. If the card's identity is
+            // byte-identical to ours the card demonstrably holds THIS profile
+            // and is the newer store, so adopt it -- but keep the recovery
+            // banner up so a reconciling Copy-to-SD can fill whatever the
+            // interrupted copy missed.
+            const bool legacy_adopted =
+                !committed && !needs_migration && sdIdentityMatchesInternal();
+            if (committed || legacy_adopted) {
+              if (mp_ok) _mp.remove("sd_mig_busy");
+              if (legacy_adopted) {
+                g_sd_migration_blocked = true;   // surface the reconcile action
+                Serial.println("[BOOT] pre-marker SD profile matches internal identity -> adopting; reconcile via Settings > Copy internal data to SD");
+              } else {
+                Serial.println("[BOOT] SD migration committed before reset -> adopting completed profile");
+              }
+            } else {
+              adopt = false;
+              g_sd_migration_blocked = true;
+              Serial.println("[BOOT] prior SD migration did not complete -> skipping (staying on SPIFFS); retry via Settings > Copy internal data to SD");
+            }
             if (mp_ok) _mp.end();
-            adopt = false;
-            Serial.println("[BOOT] prior SD migration did not complete -> skipping (staying on SPIFFS); retry via Settings > Copy internal data to SD");
+          } else if (needs_migration) {
+            // Do not start without a durable rollback breadcrumb. If NVS is
+            // unavailable, a reset after identity lands would otherwise leave
+            // no evidence that the SD tree is only partially migrated.
+            const bool prepared = mp_ok && meshcomodPrepareSdMigration();
+            const bool armed = prepared && _mp.putBool("sd_mig_busy", true) == 1;
+            if (mp_ok) _mp.end();
+            adopt = armed && meshcomodMigrateSpiffsToSd(false);
+            // Keep the breadcrumb latched after a returned-but-incomplete copy.
+            // That matters when identity landed before a larger history file
+            // failed: the next boot must not adopt the partial SD tree merely
+            // because the identity now exists. Manual Copy-to-SD clears it only
+            // after a fully successful retry.
+            if (adopt) {
+              Preferences _mp2; if (_mp2.begin("touch", false)) { _mp2.remove("sd_mig_busy"); _mp2.end(); }
+            }
+            g_sd_migration_blocked = !adopt;
+            if (!adopt) Serial.println(armed
+                ? "[BOOT] SD migration incomplete -> staying on SPIFFS this boot"
+                : "[BOOT] SD migration preparation/breadcrumb unavailable -> staying on SPIFFS this boot");
           } else {
-            if (mp_ok) { _mp.putBool("sd_mig_busy", true); _mp.end(); }
-            adopt = meshcomodMigrateSpiffsToSd(false);
-            Preferences _mp2; if (_mp2.begin("touch", false)) { _mp2.remove("sd_mig_busy"); _mp2.end(); }
-            if (!adopt) Serial.println("[BOOT] SD migration incomplete -> staying on SPIFFS this boot");
+            if (mp_ok) _mp.end();
           }
         }
         if (adopt) {
           sd_storage = store.useSdStorage();
+          g_full_data_on_sd = sd_storage;
           // On a genuine first run, persist the auto-pick so the "Store data on SD"
           // toggle reflects it and the choice sticks on every later boot.
           if (fresh_install && sd_storage && !use_sd_pref) {
@@ -590,7 +1130,7 @@ void setup() {
   // Route touch settings + Wi-Fi creds to the active filesystem (SD when that's
   // the data store, else SPIFFS) instead of NVS. Old NVS values still load and
   // migrate on their next save, so this is a transparent in-place upgrade.
-  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
   #else
@@ -641,30 +1181,84 @@ void setup() {
   serial_interface.begin(Serial, TCP_PORT, WS_PORT);
   Serial.println("[BOOT] serial_interface ok");
   serial_interface.setBroadcastResponses(true);  // RX log, channel messages, etc. go to all clients (USB + TCP + WS [+ BLE]), not only last sender
-  /* Pick BLE vs WiFi at boot. The ESP32-S3 doesn't have enough internal heap
-   * (esp_wifi_init needs ~50KB for DMA buffers) to run Bluedroid BLE +
-   * LVGL/TFT + WiFi all at once — esp_wifi_init silently returns ESP_ERR_NO_MEM,
-   * leaving WiFi.getMode() at WIFI_MODE_NULL. So we mutex them: if the user
-   * has saved WiFi credentials AND the radio is enabled, skip BLE init and
-   * use WiFi exclusively. Otherwise init BLE. Toggle by saving/clearing creds
-   * + reboot (saveWifiCb auto-restarts). On the touch build the user can also
-   * pick Wi-Fi with no creds yet (to scan/configure on-device) — wantsWifi()
-   * returns true for that case so the radio comes up scannable. */
+  /* Wi-Fi and NimBLE coexist, but their first allocations are order-sensitive
+   * on the Pager. Claim Wi-Fi's DMA/coexistence resources before starting BLE;
+   * T-Deck does not reproduce this sequencing constraint. */
   bool want_wifi = wifiConfigWantsWifi();
+#if defined(TLORA_PAGER)
+  bool pager_wifi_ready_for_ble = false;
+  const bool pager_want_ble = wifiConfigGetBleEnabled();
+  const bool pager_has_wifi_credentials = wifiConfigHasRuntime();
+  wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
+#endif
   /* Wi-Fi + BLE now COEXIST (NimBLE host is light enough — the old Bluedroid
    * heap clash is gone). Bring Wi-Fi up FIRST: esp_wifi_init grabs a big
    * contiguous DMA block, so let it claim memory before BLE. (Association
    * happens later in loop(); this just inits the stack.) */
   if (want_wifi) {
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);   // let esp_wifi rejoin on its own after a beacon loss / AP reboot
-                                   // (was false — the 10 s poll below was the ONLY recovery, and a
-                                   // bare begin() on a wedged supplicant is a no-op -> never reconnected)
+    const bool wifi_mode_ready = WiFi.mode(WIFI_STA);
+#if defined(TLORA_PAGER)
+    if (!wifi_mode_ready) {
+      pagerWifiEnterBleFallback("boot STA initialization failed");
+    }
+    // Pager reconnects are owned by the loop below. Background WPA retries are
+    // invisible to PagerWifiBlePhase and could overlap a cold NimBLE start.
+    WiFi.setAutoReconnect(false);
+#else
+    WiFi.setAutoReconnect(true);   // safe while NimBLE is not resident; disabled below once BLE
+                                   // exists so a later WPA re-auth cannot bypass Wi-Fi-first ordering
+#endif
     WiFi.persistent(false);
+    // Record WHY every STA disconnect happened — surfaced by the UI's Wi-Fi
+    // status string as "auth failed (rNN)" so failures are diagnosable on a
+    // device with no serial console. Additive: multiple onEvent handlers coexist.
+    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info){
+        g_wifi_last_disc_reason = info.wifi_sta_disconnected.reason;
+      }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
     // NOTE: do NOT enable modem-sleep here. On a fresh, *unassociated* STA (the
     // setup wizard, no creds yet) DTIM modem-sleep naps the radio through the
     // scan dwell, so WiFi.scanNetworks() comes back empty ("no networks found").
     // It's enabled once we actually associate — see the GOT_IP handler below.
+#if defined(TLORA_PAGER)
+    /* Arduino-ESP32 2.0.17 can watchdog in WPA3 SAE on the Pager when NimBLE
+     * already owns the coexistence path. Start the saved Wi-Fi association
+     * first and wait on the state transition (not a fixed delay), while
+     * internal heap is still plentiful; BLE starts below only after the link
+     * is established. T-Deck does not reproduce this ordering constraint. */
+    if (wifi_mode_ready && pager_has_wifi_credentials) {
+      char ssid[WIFI_CONFIG_SSID_MAX];
+      char pwd[WIFI_CONFIG_PWD_MAX];
+      wifiConfigGetSsid(ssid, sizeof(ssid));
+      wifiConfigGetPwd(pwd, sizeof(pwd));
+      if (ssid[0]) {
+        wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Associating);
+        const uint32_t assoc_start_ms = millis();
+        WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
+        while (WiFi.status() != WL_CONNECTED &&
+               (uint32_t)(millis() - assoc_start_ms) < 6000UL) {
+          delay(20);
+        }
+        pager_wifi_ready_for_ble = WiFi.status() == WL_CONNECTED;
+        if (pager_wifi_ready_for_ble) {
+          wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Connected);
+        } else if (pager_want_ble) {
+          // Do not strand BLE behind an unavailable AP. Stop authentication so
+          // NimBLE cannot race a background WPA retry, then leave Wi-Fi retry
+          // paused until an explicit Apply/toggle requests another handoff.
+          pagerWifiEnterBleFallback("boot association timed out");
+        }
+        Serial.printf("[boot] Pager Wi-Fi pre-BLE association: %s (%lums)\n",
+                      pager_wifi_ready_for_ble ? "ready" :
+                        (pager_want_ble ? "BLE fallback" : "still associating"),
+                      (unsigned long)(millis() - assoc_start_ms));
+        pagerLogInternalHeap("after Wi-Fi association");
+      }
+    } else if (wifi_mode_ready) {
+      // Keep STA available for the setup wizard's scan, but with no credentials
+      // there is no association to order ahead of BLE.
+      WiFi.setAutoReconnect(false);
+    }
+#endif
   }
 #if defined(BLE_PIN_CODE)
   /* Always stash the BLE params so the toggle can bring BLE up live later, even
@@ -679,6 +1273,38 @@ void setup() {
   { NodePrefs* _np = the_mesh.getNodePrefs();
     _np->node_name[sizeof(_np->node_name) - 1] = '\0'; }
   serial_interface.prepareBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+#if defined(TLORA_PAGER)
+  {
+    const bool want_ble = pager_want_ble;
+    /* Serialise the Pager's first association before BLE init. Once associated,
+     * the two radios coexist normally. Do not create a disabled NimBLE stack
+     * for Wi-Fi-only users: keeping Wi-Fi's normal auto-reconnect path avoids a
+     * needless device reboot when no Bluetooth controller is resident. */
+    if (!wifiConfigPagerWifiBlocksBle()) {
+      if (want_ble) {
+        // Use the same contiguous-heap guard as every other cold NimBLE start.
+        // Boot normally has the most headroom, but a future driver allocation
+        // must degrade to BLE-pending instead of OOM-panicking setup().
+        serial_interface.enableBle();
+        if (serial_interface.isBleEnabled()) {
+          Serial.printf("[boot] BLE stack ready (enabled=1 wifi=%d)\n", (int)want_wifi);
+          pagerLogInternalHeap("after BLE init");
+        } else {
+          // A future association edge or explicit Bluetooth retry can consume
+          // the request. This is a heap refusal, not Wi-Fi ownership.
+          s_pager_ble_after_wifi = true;
+          Serial.println("[boot] BLE cold start deferred: insufficient contiguous heap");
+        }
+      }
+    } else {
+      // Only an active association reaches here. Both success and the bounded
+      // fallback consume this pending request.
+      s_pager_ble_after_wifi = want_ble;
+      Serial.printf("[boot] BLE init deferred until ordered Wi-Fi association (enable=%d)\n",
+                    (int)want_ble);
+    }
+  }
+#else
   if (wifiConfigGetBleEnabled()) {
     const size_t BLE_COEXIST_MIN_FREE  = 50 * 1024;   // free heap after Wi-Fi to also start BLE
     const size_t BLE_COEXIST_MIN_BLOCK = 20 * 1024;   // largest contiguous block (NimBLE controller/host)
@@ -691,6 +1317,7 @@ void setup() {
       Serial.printf("[boot] BLE deferred: low heap (free=%u maxblk=%u) — Wi-Fi only\n", (unsigned)freeh, (unsigned)maxblk);
     }
   }
+#endif
 #endif
 #elif defined(WIFI_SSID)
   board.setInhibitSleep(true);   // prevent sleep when WiFi is active
@@ -762,12 +1389,28 @@ void setup() {
 #ifdef DISPLAY_CLASS
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());  // still want to pass this in as dependency, as prefs might be moved
   Serial.println("[BOOT] ui ready");
+#if defined(TLORA_PAGER) && defined(MULTI_TRANSPORT_COMPANION)
+  pagerLogInternalHeap("after UI init");
+#endif
 #endif
 
   board.onBootComplete();
 }
 
 void loop() {
+#ifdef R8_DIAG_BATT
+  // TEMP diagnostic (build with -DR8_DIAG_BATT, remove after): raw battery mV
+  // every 5 s to Serial AND as an on-screen toast every 8 s — the R8's
+  // USB-Serial-JTAG resets into the ROM bootloader whenever a host opens the
+  // port, so the screen is the only reliable live readout on this board.
+  { static uint32_t s_batt_next = 0;
+    if (millis() > s_batt_next) { s_batt_next = millis() + 5000;
+      Serial.printf("[BATT] %u mV\n", (unsigned)board.getBattMilliVolts()); } }
+  { static uint32_t s_batt_ui_next = 0;
+    if (millis() > s_batt_ui_next && millis() > 15000) { s_batt_ui_next = millis() + 8000;
+      char b[28]; snprintf(b, sizeof b, "BATT %u mV", (unsigned)board.getBattMilliVolts());
+      ui_task.showAlert(b, 2500); } }
+#endif
   // Run UI first every iteration so splash can dismiss at 3s even if mesh/serial blocks later (was stuck on version screen when the_mesh.loop() ran before ui_task.loop()).
 #ifdef DISPLAY_CLASS
   // ---- beta_31 field-freeze tracer (see UITask.cpp): time each loop section ----
@@ -790,13 +1433,29 @@ void loop() {
   static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
   static bool wifi_radio_prev = true;
   static bool wifi_radio_inited = false;
-  /* BLE-vs-WiFi mutex (chosen at setup based on saved creds + radio_en pref):
-   * if BLE was initialized, do NOT attempt to bring WiFi up here — esp_wifi_init
-   * would fail with ESP_ERR_NO_MEM after Bluedroid grabbed the internal heap,
-   * and the resulting OOM cascade freezes LVGL. Only run the WiFi state
-   * machine if creds are saved AND the radio pref is on, mirroring `want_wifi`
-   * in setup(). (Touch may also want Wi-Fi up with no creds, to scan.) */
+  /* Run the saved Wi-Fi state machine whenever its radio preference is on.
+   * Pager setup separately guarantees that Wi-Fi claims its coexistence
+   * resources before a cold BLE start. */
   bool wifi_radio_en = wifiConfigWantsWifi();
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+  // BLE fallback pauses automatic association so a missing AP cannot make the
+  // advertised GATT service disappear every retry interval. Turning Bluetooth
+  // off resumes retries only when the STA allocation itself is healthy; an
+  // allocation failure stays latched until an explicit Apply/toggle.
+  if (wifiConfigPagerBleFallbackActive() && !wifiConfigGetBleEnabled() &&
+      (WiFi.getMode() & WIFI_MODE_STA) != 0) {
+    wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
+  }
+  // An association may have started while Bluetooth was disabled. If the user
+  // requests BLE during that attempt, join the already-running ordered handoff
+  // immediately instead of waiting for the next 10-second Wi-Fi retry to arm it.
+  if (wifiConfigGetPagerWifiBlePhase() == PagerWifiBlePhase::Associating &&
+      wifiConfigGetBleEnabled() && !s_pager_ble_after_wifi) {
+    s_pager_ble_after_wifi = true;
+    s_pager_wifi_ble_deadline_ms = millis() + PAGER_WIFI_BLE_HANDOFF_MS;
+    Serial.println("[wifi] Bluetooth requested during association; handoff armed");
+  }
+#endif
   if (!wifi_radio_inited) {
     wifi_radio_inited = true;
     wifi_radio_prev = wifi_radio_en;
@@ -806,6 +1465,25 @@ void loop() {
       WiFi.disconnect(true);
       delay(50);
       WiFi.mode(WIFI_OFF);
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+      s_pager_wifi_ble_deadline_ms = 0;
+      wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
+      const bool ble_waiting = s_pager_ble_after_wifi ||
+                               (wifiConfigGetBleEnabled() &&
+                                !serial_interface.isBleStackBegun());
+      s_pager_ble_after_wifi = false;
+      if (ble_waiting) {
+        if (wifiConfigGetBleEnabled() && !serial_interface.isBleEnabled()) {
+          serial_interface.enableBle();
+          if (serial_interface.isBleEnabled()) {
+            Serial.println("[boot] deferred BLE enabled after T-Pager Wi-Fi was disabled");
+          } else {
+            Serial.println("[wifi] deferred BLE unavailable after Wi-Fi was disabled");
+            ui_task.showAlert(TR("Bluetooth unavailable; retry from Settings"), 2600);
+          }
+        }
+      }
+#endif
     }
     wifi_started = false;
   }
@@ -813,12 +1491,57 @@ void loop() {
    * by forcing wifi_started=false; on next iter the block below will WiFi.begin
    * with the freshly-saved credentials. Also handles toggling radio_en off
    * from the UI (the transition above already covered the on case). */
-  if (wifiConfigConsumeApplyRequest()) {
+  bool wifi_apply_ready = true;
+#if defined(ESP32)
+  // Keep a queued credential/radio re-apply pending until the worker releases
+  // its scan. Consuming it here would disconnect or reconfigure the driver
+  // underneath esp_wifi_scan_start on the other core.
+  wifi_apply_ready = !wifiScanIsActive();
+#endif
+  if (wifi_apply_ready && wifiConfigConsumeApplyRequest()) {
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+    // Cold Wi-Fi allocation and credential changes use the same live handoff:
+    // preserve BLE intent and bond state, quiesce BLE traffic, let the main task
+    // own esp_wifi_init and WPA, then resume BLE once Wi-Fi is stable (or has
+    // timed out).
+    if (wifi_radio_en) {
+      const bool cold_sta = (WiFi.getMode() & WIFI_MODE_STA) == 0;
+      const bool ordered_handoff = cold_sta || wifiConfigHasRuntime();
+      s_pager_ble_after_wifi = wifiConfigGetBleEnabled() &&
+          (ordered_handoff || !serial_interface.isBleStackBegun());
+      s_pager_wifi_ble_deadline_ms = 0;
+      wifiConfigSetPagerWifiBlePhase(ordered_handoff
+          ? PagerWifiBlePhase::Associating : PagerWifiBlePhase::Idle);
+      if (ordered_handoff && serial_interface.isBleStackBegun()) {
+        if (!serial_interface.suspendBleForWifiReconnect()) {
+          s_pager_ble_after_wifi = false;
+          s_pager_wifi_ble_deadline_ms = 0;
+          pagerWifiEnterBleFallback("BLE disconnect timed out; Wi-Fi start cancelled");
+          if (wifiConfigGetBleEnabled()) serial_interface.enableBle();
+          ui_task.showAlert(TR("Wi-Fi paused; Bluetooth disconnect timed out"), 2600);
+          return;
+        }
+        Serial.println("[wifi] BLE paused for ordered T-Pager Wi-Fi start");
+      }
+      // Give WPA its full window; the bounded asynchronous BLE disconnect above
+      // is part of quiescing the old transport, not part of association time.
+      s_pager_wifi_ble_deadline_ms =
+          (wifiConfigHasRuntime() && s_pager_ble_after_wifi)
+              ? millis() + PAGER_WIFI_BLE_HANDOFF_MS : 0;
+    } else {
+      s_pager_ble_after_wifi = false;
+      s_pager_wifi_ble_deadline_ms = 0;
+      wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
+    }
+    // Keep Pager WPA retries explicit even when BLE is currently absent. The
+    // loop below records Associating before each begin(), so a simultaneous
+    // Bluetooth request can never cold-start NimBLE over a hidden retry.
+    if (wifi_radio_en) WiFi.setAutoReconnect(false);
+#endif
     /* Only touch WiFi state if it was actually started this session. When
      * BLE is the active transport (no creds saved), WiFi was never inited
      * and calling WiFi.disconnect()/mode(WIFI_OFF) would trigger esp_wifi_init
-     * under low heap → crash. Setting wifi_started=false here is harmless;
-     * setup() will re-pick BLE-vs-WiFi on the auto-reboot from saveWifiCb. */
+     * under low heap → crash. Setting wifi_started=false here is harmless. */
     if (wifi_started) {
       if (!wifi_radio_en) {
         WiFi.disconnect(true);
@@ -832,19 +1555,69 @@ void loop() {
     wifi_started = false;
     last_wifi_retry_ms = 0;
   }
-  if (wifi_radio_en) {
+  bool wifi_state_machine_active = wifi_radio_en;
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+  wifi_state_machine_active = wifi_state_machine_active && !wifiConfigPagerBleFallbackActive();
+#endif
+  if (wifi_state_machine_active) {
     if (!wifi_started) {
-      wifi_started = true;
-      WiFi.mode(WIFI_STA);
-      if (wifiConfigHasRuntime()) {
+      const bool wifi_mode_ready = WiFi.mode(WIFI_STA);
+      if (!wifi_mode_ready) {
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+        const bool ble_waiting = s_pager_ble_after_wifi ||
+                                 (wifiConfigGetBleEnabled() &&
+                                  !serial_interface.isBleStackBegun());
+        s_pager_ble_after_wifi = false;
+        last_wifi_retry_ms = millis();
+        pagerWifiEnterBleFallback("STA initialization failed; Bluetooth restored");
+        if (ble_waiting && wifiConfigGetBleEnabled() &&
+            !serial_interface.isBleEnabled()) {
+          serial_interface.enableBle();
+        }
+        if (wifiConfigGetBleEnabled() && serial_interface.isBleEnabled()) {
+          ui_task.showAlert(TR("Wi-Fi unavailable; Bluetooth restored"), 2200);
+        } else if (wifiConfigGetBleEnabled()) {
+          ui_task.showAlert(TR("Wi-Fi and Bluetooth unavailable; retry from Settings"), 2800);
+        } else {
+          ui_task.showAlert(TR("Wi-Fi unavailable; retry from Settings"), 2200);
+        }
+#else
+        last_wifi_retry_ms = millis();
+#endif
+      } else {
+        wifi_started = true;
+      }
+      if (wifi_mode_ready && wifiConfigHasRuntime() && !wifiScanIsActive()) {
         char ssid[WIFI_CONFIG_SSID_MAX];
         char pwd[WIFI_CONFIG_PWD_MAX];
         wifiConfigGetSsid(ssid, sizeof(ssid));
         wifiConfigGetPwd(pwd, sizeof(pwd));
-        if (strlen(ssid) > 0) {
+        if (strlen(ssid) > 0 && WiFi.status() != WL_CONNECTED) {
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+          wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Associating);
+#endif
           WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
-          last_wifi_retry_ms = millis();
         }
+        last_wifi_retry_ms = millis();
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+      } else if (wifi_mode_ready) {
+        wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
+        s_pager_wifi_ble_deadline_ms = 0;
+        const bool ble_waiting = s_pager_ble_after_wifi ||
+                                 (wifiConfigGetBleEnabled() &&
+                                  !serial_interface.isBleStackBegun());
+        s_pager_ble_after_wifi = false;
+        if (ble_waiting && wifiConfigGetBleEnabled() &&
+            !serial_interface.isBleEnabled()) {
+          serial_interface.enableBle();
+          if (serial_interface.isBleEnabled()) {
+            Serial.println("[wifi] BLE restored after idle STA initialization");
+          } else {
+            Serial.println("[wifi] BLE unavailable after idle STA initialization");
+            ui_task.showAlert(TR("Bluetooth unavailable; retry from Settings"), 2600);
+          }
+        }
+#endif
       }
     }
     // Automatic WiFi recovery for TCP mode: retry connection periodically if link drops.
@@ -854,6 +1627,28 @@ void loop() {
       uint32_t now = millis();
       if ((uint32_t)(now - last_wifi_retry_ms) >= WIFI_RETRY_INTERVAL_MS) {
         last_wifi_retry_ms = now;
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+        s_pager_ble_after_wifi = wifiConfigGetBleEnabled();
+        s_pager_wifi_ble_deadline_ms = 0;
+        wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Associating);
+        if (serial_interface.isBleStackBegun()) {
+          // Auto-reconnect is disabled once NimBLE exists. Pause advertising and
+          // disconnect its peer first, then use the ordinary retry below; GOT_IP
+          // resumes BLE once Wi-Fi owns the coexistence path again. This preserves
+          // the bond and bounds an AP outage to transport reconnects.
+          if (!serial_interface.suspendBleForWifiReconnect()) {
+            s_pager_ble_after_wifi = false;
+            s_pager_wifi_ble_deadline_ms = 0;
+            pagerWifiEnterBleFallback("BLE disconnect timed out; Wi-Fi retry cancelled");
+            if (wifiConfigGetBleEnabled()) serial_interface.enableBle();
+            ui_task.showAlert(TR("Wi-Fi paused; Bluetooth disconnect timed out"), 2600);
+            return;
+          }
+          Serial.println("[wifi] BLE paused after link loss; re-associating");
+        }
+        s_pager_wifi_ble_deadline_ms = s_pager_ble_after_wifi
+            ? millis() + PAGER_WIFI_BLE_HANDOFF_MS : 0;
+#endif
         char ssid[WIFI_CONFIG_SSID_MAX];
         char pwd[WIFI_CONFIG_PWD_MAX];
         wifiConfigGetSsid(ssid, sizeof(ssid));
@@ -873,12 +1668,49 @@ void loop() {
     static bool sntp_pushed = false;
     static uint32_t sntp_kick_ms = 0;
     if (WiFi.status() == WL_CONNECTED) {
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+      wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Connected);
+      s_pager_wifi_ble_deadline_ms = 0;
+      // Consume only the explicit handoff token. If a cold NimBLE start is
+      // refused, do not hammer the allocator and alert on every loop while
+      // Wi-Fi remains connected; a resident stack simply resumes advertising.
+      const bool ble_waiting = s_pager_ble_after_wifi;
+      if (ble_waiting) {
+        s_pager_ble_after_wifi = false;
+        if (wifiConfigGetBleEnabled() && !serial_interface.isBleEnabled()) {
+          // Wi-Fi is now stable, so a cold BLE allocation cannot enter WPA in
+          // the unsafe order. A resident stack resumes allocation-free; the
+          // transport guards heap only if it genuinely needs a cold start.
+          serial_interface.enableBle();
+          if (serial_interface.isBleEnabled()) {
+            WiFi.setAutoReconnect(false);
+            Serial.println("[boot] deferred BLE enabled after T-Pager Wi-Fi association");
+          } else {
+            Serial.println("[boot] deferred BLE unavailable; retry from Bluetooth settings");
+            ui_task.showAlert(TR("Bluetooth deferred; retry from Settings"), 2600);
+          }
+        }
+      }
+#endif
       // Now that we're associated, enable DTIM modem-sleep (saves power + gives
       // BLE coexistence airtime). Deferred to here on purpose: enabling it on the
       // unassociated STA naps the radio through a scan dwell and breaks the setup
       // wizard's WiFi.scanNetworks() ("no networks found"). One-shot.
+      //
+      // Unconditional, and deliberately NOT a user preference. This was briefly
+      // configurable (default off on the V4-R8, for a lower-latency app link), but
+      // WIFI_PS_NONE is not a legal sleep mode while the BT controller is running --
+      // modem sleep is exactly what yields airtime to BLE, and the Wi-Fi PM blob
+      // aborts rather than refusing. An R8 with saved credentials and Bluetooth on
+      // crashed on association every time: task "wifi", abort() in pm_set_sleep_type.
+      // The latency it was buying did not exist either: profiling the companion link
+      // showed sync cost is round-trip COUNT (~40 CMD_GET_CHANNEL), with the firmware
+      // accounting for 0.3% of it. So there is nothing to trade away here.
       static bool modem_sleep_set = false;
-      if (!modem_sleep_set) { WiFi.setSleep(true); modem_sleep_set = true; }
+      if (!modem_sleep_set) {
+        WiFi.setSleep(true);
+        modem_sleep_set = true;
+      }
       if (!sntp_kicked) {
         /* Brussels timezone with DST rules baked in (POSIX "CET-1CEST,...").
          * On touch builds the base is shifted by the user's manual hour offset
@@ -905,9 +1737,35 @@ void loop() {
         }
       }
     } else {
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+      if (wifiConfigGetPagerWifiBlePhase() == PagerWifiBlePhase::Connected)
+        wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
+#endif
       // Link dropped: allow re-sync on next reconnect.
       if (sntp_kicked && !sntp_pushed) sntp_kicked = false;
     }
+#if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+    if (s_pager_wifi_ble_deadline_ms != 0 &&
+        (int32_t)(millis() - s_pager_wifi_ble_deadline_ms) >= 0) {
+      s_pager_wifi_ble_deadline_ms = 0;
+      if (s_pager_ble_after_wifi && wifiConfigGetBleEnabled() &&
+          WiFi.status() != WL_CONNECTED) {
+        s_pager_ble_after_wifi = false;
+        wifi_started = false;
+        pagerWifiEnterBleFallback("association timed out; Bluetooth restored");
+        serial_interface.enableBle();
+        if (serial_interface.isBleEnabled()) {
+          Serial.println("[wifi] BLE restored after failed T-Pager association");
+          ui_task.showAlert(TR("Wi-Fi unavailable; Bluetooth restored"), 2200);
+        } else {
+          Serial.println("[wifi] BLE restore failed after T-Pager association timeout");
+          ui_task.showAlert(TR("Bluetooth unavailable; retry from Settings"), 2600);
+        }
+      } else if (!wifiConfigGetBleEnabled()) {
+        s_pager_ble_after_wifi = false;
+      }
+    }
+#endif
   }
 #ifdef DISPLAY_CLASS
   { uint32_t _wfdt = millis() - _wf0; if (_wfdt >= 200) stallLog("wifi-sm", _wfdt); }

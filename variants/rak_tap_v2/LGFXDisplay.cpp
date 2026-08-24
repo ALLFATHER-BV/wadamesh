@@ -95,23 +95,11 @@ void LGFXDisplay::turnOff() {
   if (_periph_power) _periph_power->release();
 }
 void LGFXDisplay::clear()                     { _lcd.fillScreen(0x0000); }
-void LGFXDisplay::startFrame(Color)           { _lcd.fillScreen(0x0000); }
+void LGFXDisplay::startFrame(ColorVal)        { _lcd.fillScreen(0x0000); }
 void LGFXDisplay::setTextSize(int sz)         { _lcd.setTextSize(sz); }
 
-static inline uint16_t _c16(DisplayDriver::Color c) {
-  switch (c) {
-    case DisplayDriver::DARK:   return 0x0000;
-    case DisplayDriver::LIGHT:  return 0xFFFF;
-    case DisplayDriver::RED:    return 0xF800;
-    case DisplayDriver::GREEN:  return 0x07E0;
-    case DisplayDriver::BLUE:   return 0x001F;
-    case DisplayDriver::YELLOW: return 0xFFE0;
-    case DisplayDriver::ORANGE: return 0xFD20;
-    default:                    return 0xFFFF;
-  }
-}
-void LGFXDisplay::setColor(Color c) {
-  _color = _c16(c);
+void LGFXDisplay::setColor(ColorVal c) {
+  _color = c;   // ColorVal IS RGB565 (1.17 UIColor)
   _lcd.setTextColor(_color);
 }
 void LGFXDisplay::setCursor(int x, int y)     { _lcd.setCursor(x, y); }

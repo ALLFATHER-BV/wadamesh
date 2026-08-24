@@ -8,7 +8,7 @@ ThinkNodeM9Board board;
 // minewsemi_me25ls01). Module() takes the same (NSS, IRQ/DIO1, RESET, BUSY,
 // spi) signature either way. M9: NSS=39, DIO1=42, RESET=45, BUSY=41,
 // SCLK=40, MISO=38, MOSI=47 — all on the SAME physical SPI bus as the LCD
-// (CS=16) and the microSD slot (CS=36), so radio and display share the
+// (CS=16) and the microSD slot (CS=48), so radio and display share the
 // literal global `SPI` object — matching how T-Deck/Heltec V4's radio (a
 // plain default-constructed `static SPIClass spi;`, not an explicit-host
 // instance) and the LR1110 reference boards (thinknode_m3, me25ls01, which
@@ -26,7 +26,10 @@ WRAPPER_CLASS radio_driver(radio, board);
 ESP32RTCClock fallback_clock;
 ClockFloorRTC rtc_clock(
     fallback_clock); // wraps AutoDiscover: monotonic send-timestamp floor (#89)
-MicroNMEALocationProvider gps(Serial1, &rtc_clock);
+// Wadamesh's own provider rather than the core's MicroNMEALocationProvider:
+// identical behaviour, plus the RMC speed/course the core keeps private (see
+// src/helpers/WadaNmeaLocationProvider.h for why it is a copy, not a subclass).
+WadaNmeaLocationProvider gps(Serial1, &rtc_clock);
 EnvironmentSensorManager sensors(gps);
 
 #ifdef DISPLAY_CLASS
@@ -36,7 +39,9 @@ EnvironmentSensorManager sensors(gps);
 // (GPIO17, PNP) is handled separately by ThinkNodeM9Board — see M9Board.h
 // for why it's NOT routed through PIN_TFT_LEDA_CTL.
 DISPLAY_CLASS display(&board.periph_power);
-MomentaryButton user_btn(PIN_USER_BTN, 1000, true);
+// (No MomentaryButton here: the M9 has NO user/BOOT button — schematic-
+// confirmed, only a power-cut slider and reset. PIN_USER_BTN is undefined for
+// this env so UITask's button poll compiles out too.)
 #endif
 
 #ifndef LORA_CR
@@ -50,16 +55,28 @@ bool radio_init() {
 #if defined(HAS_M9_KEYBOARD)
   m9KeyboardBegin(); // own bus, Wire1 (20/21) — no contention with Wire
 #endif
+#if defined(HAS_M9_COMPASS)
+  // QMC6309 on the same peripheral bus as the RTC, behind the GPIO18 rail that
+  // board.begin() claimed well before this runs. Absent / still-booting chips
+  // are re-probed lazily from the read path, so a miss here is not fatal.
+  m9CompassBegin(Wire);
+#endif
+#if defined(HAS_M9_IMU)
+  m9ImuBegin(Wire);   // QMI8658 at 0x6B, same bus, same lazy re-probe
+#endif
 
 #ifdef LR11X0_DIO3_TCXO_VOLTAGE
   float tcxo = LR11X0_DIO3_TCXO_VOLTAGE;
 #else
-  // 0 = disable RadioLib's internal TCXO-bias feature. M9's LR1110 clock
-  // comes from Y1, a self-powered active oscillator (schematic-confirmed:
-  // VCC/GND/GND/OUT, output -> XTA directly) — not a passive crystal the
-  // chip needs to bias itself, so this must stay 0. See the build-flag
-  // comment in platformio.ini for the full explanation.
-  float tcxo = 0.0f;
+  // Fallback = the hardware-confirmed value, NOT 0. An earlier theory (Y1 =
+  // self-powered active oscillator, so disable RadioLib's TCXO bias) was
+  // disproven on the real unit: with tcxo=0 the chip boots on its internal
+  // RC (SPI alive) but the first command needing the true 32 MHz clock is
+  // rejected — radio init fails -707. The schematic's "VTCXO" rail feeding
+  // Y1 is the LR1110's own TCXO-supply output, so DIO3 must drive it at
+  // 3.3 V — see the LR11X0_DIO3_TCXO_VOLTAGE comment in platformio.ini for
+  // the empirical confirmation.
+  float tcxo = 3.3f;
 #endif
 
   // SPI bus itself was already begun once in ThinkNodeM9Board::begin() (the
@@ -150,9 +167,6 @@ SPIClass *m9SharedSPI() {
                // M9Board::begin()
 }
 
-void m9SetBacklight(bool on) {
-  if (on)
-    board.backlight.claim();
-  else
-    board.backlight.release();
+bool wadaGpsMotion(float *speed_kmh, float *course_deg) {
+  return gps.motion(speed_kmh, course_deg);
 }

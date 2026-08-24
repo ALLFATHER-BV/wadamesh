@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <string.h>
 #include "DataStore.h"
+#include <helpers/AdvertDataHelpers.h>   // ADV_TYPE_NONE (blank-record skip in loadContacts)
 #if defined(ESP32)
 #include <SD.h>
 #include "helpers/esp32/WdtHeavyGuard.h"   // suspend core-0 idle WDT during the (SPIFFS-GC-prone) contact write
@@ -46,6 +47,9 @@ const char* DataStore::_rp(const char* name) {
 }
 
 File DataStore::openWrite(FILESYSTEM* fs, const char* filename) {
+#if defined(TDP4_POKE_TRACE)
+  printf("[SDW] %lu core%d store w %s\n", (unsigned long)millis(), xPortGetCoreID(), filename);
+#endif
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   fs->remove(_rp(filename));
   return fs->open(_rp(filename), FILE_O_WRITE);
@@ -192,6 +196,9 @@ File DataStore::openRead(const char* filename) {
 }
 
 File DataStore::openRead(FILESYSTEM* fs, const char* filename) {
+#if defined(TDP4_POKE_TRACE)
+  printf("[SDR] %lu core%d store r %s\n", (unsigned long)millis(), (int)xPortGetCoreID(), filename);
+#endif
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   return fs->open(_rp(filename), FILE_O_READ);
 #elif defined(RP2040_PLATFORM)
@@ -208,6 +215,34 @@ bool DataStore::removeFile(const char* filename) {
 bool DataStore::removeFile(FILESYSTEM* fs, const char* filename) {
   return fs->remove(filename);
 }
+
+#if defined(ESP32)
+File DataStore::openAppend(FILESYSTEM* fs, const char* filename) {
+  return fs->open(_rp(filename), "a", true);
+}
+
+bool DataStore::fileExists(FILESYSTEM* fs, const char* filename) {
+  return fs->exists(_rp(filename));
+}
+
+bool DataStore::mkdirRooted(FILESYSTEM* fs, const char* dir) {
+  const char* p = _rp(dir);
+  return fs->exists(p) || fs->mkdir(p);
+}
+
+bool DataStore::removeRooted(FILESYSTEM* fs, const char* filename) {
+  return fs->remove(_rp(filename));
+}
+
+bool DataStore::renameFile(FILESYSTEM* fs, const char* from, const char* to) {
+  // _rp() hands back ONE shared scratch buffer, so the two paths must be built
+  // into independent buffers (same trap savePrefs documents).
+  char from_path[80], to_path[80];
+  snprintf(from_path, sizeof(from_path), "%s%s", _root, from);
+  snprintf(to_path,   sizeof(to_path),   "%s%s", _root, to);
+  return fs->rename(from_path, to_path);
+}
+#endif
 
 bool DataStore::formatFileSystem() {
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -365,6 +400,13 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
 }
 
 bool DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_lon) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; const NodePrefs* p; double la, lo; bool r; } a{ this, &_prefs, node_lat, node_lon, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->savePrefs(*a->p, a->la, a->lo); }, &a);
+    return a.r;
+  }
+#endif
   // Write to a temp file first and swap it in afterwards: a reboot / power cut
   // mid-write can then never destroy the only copy (the loader recovers from
   // whichever file survived). SPIFFS has no atomic rename-over, so the swap is
@@ -413,8 +455,17 @@ bool DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
       _fs->remove(_rp("/new_prefs.tmp"));   // short write (storage full?) — keep the old main file
       return false;
     }
-    _fs->remove(_rp("/new_prefs"));
-    return _fs->rename(_rp("/new_prefs.tmp"), _rp("/new_prefs"));
+    // _rp() returns a pointer to one shared scratch buffer when the store has
+    // a root prefix (for example SD:/meshcomod). Calling it twice in rename()
+    // therefore aliases both arguments to whichever path was formatted last,
+    // leaving new_prefs.tmp stranded even though the data itself was written.
+    // Keep the source and destination in independent buffers for the swap.
+    char tmp_path[48];
+    char live_path[48];
+    snprintf(tmp_path, sizeof(tmp_path), "%s/new_prefs.tmp", _root);
+    snprintf(live_path, sizeof(live_path), "%s/new_prefs", _root);
+    _fs->remove(live_path);
+    return _fs->rename(tmp_path, live_path);
   }
   return false;
 }
@@ -460,6 +511,12 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
 
         if (!success) break; // EOF
 
+        // Skip blank records. beta_60 saved the core's reserved anon slots (the
+        // save walked the raw table, which 1.17 had shifted), so an upgrade from
+        // it carries up to MAX_ANON_CONTACTS empty entries that would otherwise
+        // load as real, nameless contacts. The next save drops them for good.
+        if (c.type == ADV_TYPE_NONE || !c.name[0]) continue;
+
         c.id = mesh::Identity(pub_key);
         if (!host->onContactLoaded(c)) full = true;
       }
@@ -467,7 +524,148 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
     }
 }
 
+#if defined(ESP32)
+// A full contacts write REWRITES THE WHOLE TABLE — 152 bytes per contact, so 304 KB at
+// MAX_CONTACTS=2000 — and the atomic swap below keeps a same-sized .tmp alongside it, so
+// the peak cost is ~608 KB of a card-less V4's 3.375 MB SPIFFS volume that is already
+// carrying one blob file per contact. SPIFFS garbage collection suspends the flash cache,
+// which stalls BOTH cores, and it gets dramatically worse the fuller the volume — that is
+// the #222 freeze, and taking the eviction blob delete off the packet path only removed
+// the smaller half of it (the reporter still saw stalls, and LONGER ones, because this
+// rewrite is what was left).
+//
+// But the table only ever CHANGES one slot at a time: eviction replaces contacts[oldest]
+// in place (the array is unsorted and never shifts), and an advert refresh touches a
+// single entry. So compare each record we would write against the record already on disk
+// and patch only the ones that actually differ — 152 bytes instead of 304 KB, with no
+// .tmp and no free-space spike. Reads never trigger GC, so the scan itself is cheap.
+//
+// Returns true only if the live file is now fully up to date. False means "not
+// applicable" — the caller must fall back to the full atomic rewrite. This never
+// truncates or renames, and the fallback rewrite repairs a partial patch, so a false
+// return always ends with a valid list on disk.
+bool DataStore::saveContactsInPlace(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
+  static const size_t REC = 152;             // MUST match the record packing in saveContacts
+  static const size_t CHUNK_RECS = 16;
+
+  FILESYSTEM* fs = _getContactsChannelsFS();
+  if (!fs->exists(_rp("/contacts3"))) return false;    // no live file yet -> full write
+
+  // Count first, with no I/O at all. A table that SHRANK needs records dropped off the
+  // end and this FS API has no truncate, so bail BEFORE touching the file — that keeps
+  // the fallback a clean rewrite instead of a half-patched one.
+  uint32_t nrec = 0;
+  {
+    uint32_t idx = 0;
+    ContactInfo c;
+    while (host->getContactForSave(idx, c)) {
+      if (!filter || filter(c)) nrec++;
+      idx++;
+    }
+  }
+
+  File f = fs->open(_rp("/contacts3"), "r+");
+  if (!f) return false;
+  const size_t fsz = f.size();
+  if (fsz == 0 || (fsz % REC) != 0 || (fsz / REC) > nrec) { f.close(); return false; }
+  const uint32_t nfile = fsz / REC;          // records currently on disk
+
+  uint8_t* wbuf = (uint8_t*)malloc(REC * CHUNK_RECS);
+  uint8_t* rbuf = (uint8_t*)malloc(REC * CHUNK_RECS);
+  if (!wbuf || !rbuf) { free(wbuf); free(rbuf); f.close(); return false; }
+
+  const uint32_t t0 = millis();
+  bool ok = true;
+  uint32_t base = 0;                         // record number of wbuf[0]
+  size_t fill = 0;                           // records packed in wbuf
+  uint32_t written = 0;                      // records actually re-written (the cost)
+
+  // Reconcile one slab: read what is there, and write back only the records that differ.
+  // Records at or past the old end of file are appends (the table grew), written in
+  // ascending order so each one extends the file contiguously.
+  auto reconcile = [&](uint32_t at, size_t count) -> bool {
+    const size_t off = (size_t)at * REC;
+    const size_t bytes = count * REC;
+    size_t in_file = (at < nfile) ? ((size_t)(nfile - at) * REC) : 0;
+    if (in_file > bytes) in_file = bytes;
+    if (in_file) {
+      if (!f.seek(off)) return false;
+      if ((size_t)f.read(rbuf, in_file) != in_file) return false;
+      if (in_file == bytes && memcmp(rbuf, wbuf, bytes) == 0) return true;   // slab unchanged
+    }
+    bool touched = false;
+    for (size_t k = 0; k < count; k++) {
+      const size_t ro = k * REC;
+      if (ro + REC <= in_file && memcmp(rbuf + ro, wbuf + ro, REC) == 0) continue;
+      if (!f.seek(off + ro)) return false;
+      if (f.write(wbuf + ro, REC) != REC) return false;
+      written++;
+      touched = true;
+    }
+    // Read back what we just wrote and PROVE it landed. Positioned writes through
+    // fopen("r+") are a far less travelled path than the whole-file rewrite this
+    // replaces, it differs per filesystem (SPIFFS / FAT / LittleFS), and the data at
+    // stake is the operator's contact list — the one thing worth more than the freeze
+    // this fixes. If the read-back disagrees for any reason at all, bail and let the
+    // caller do the full atomic rewrite, which is the known-good path. Costs one extra
+    // read of only the slab that changed, and reads never trigger GC.
+    if (touched) {
+      if (!f.seek(off)) return false;
+      if ((size_t)f.read(rbuf, bytes) != bytes) return false;
+      if (memcmp(rbuf, wbuf, bytes) != 0) return false;
+    }
+    return true;
+  };
+
+  uint32_t idx = 0;
+  ContactInfo c;
+  uint8_t unused = 0;
+  while (ok) {
+    if (!host->getContactForSave(idx, c)) break;
+    idx++;
+    if (filter && !filter(c)) continue;
+
+    uint8_t* p = wbuf + fill * REC;
+    memcpy(p, c.id.pub_key, 32);                       p += 32;
+    memcpy(p, (uint8_t *)&c.name, 32);                 p += 32;
+    *p++ = c.type;
+    *p++ = c.flags;
+    *p++ = unused;
+    memcpy(p, (uint8_t *)&c.sync_since, 4);            p += 4;
+    memcpy(p, (uint8_t *)&c.out_path_len, 1);          p += 1;
+    memcpy(p, (uint8_t *)&c.last_advert_timestamp, 4); p += 4;
+    memcpy(p, c.out_path, 64);                         p += 64;
+    memcpy(p, (uint8_t *)&c.lastmod, 4);               p += 4;
+    memcpy(p, (uint8_t *)&c.gps_lat, 4);               p += 4;
+    memcpy(p, (uint8_t *)&c.gps_lon, 4);               p += 4;
+    fill++;
+
+    if (fill == CHUNK_RECS) { ok = reconcile(base, fill); base += fill; fill = 0; }
+  }
+  if (ok && fill > 0) { ok = reconcile(base, fill); base += fill; fill = 0; }
+
+  f.close();
+  free(wbuf);
+  free(rbuf);
+  // base is the number of records reconciled; if it disagrees with the pre-count the
+  // table changed underneath us — let the caller rewrite rather than trust the file.
+  if (!(ok && base == nrec)) return false;
+  _cs_recs = (uint16_t)(written > 0xFFFF ? 0xFFFF : written);
+  _cs_ms = (uint16_t)((millis() - t0) > 0xFFFF ? 0xFFFF : (millis() - t0));
+  _cs_in_place = true;
+  _cs_any = true;
+  return true;
+}
+#endif
+
 void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; DataStoreHost* h; bool (*f)(const ContactInfo&); } a{ this, host, filter };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->d->saveContacts(a->h, a->f); }, &a);
+    return;
+  }
+#endif
 #if defined(ESP32)
   // A full/fragmenting contacts write on SPIFFS can trigger a multi-second GC
   // pass that disables the flash cache and starves core 0's idle task, tripping
@@ -478,6 +676,12 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
   // that calls saveContacts stays balanced. On SD-routed devices this is cheap
   // (FAT has no such GC); it matters most for card-less SPIFFS devices.
   WdtHeavyGuard _wdt;
+
+  // Patch the live file in place when only individual records changed — the normal case
+  // by far, and the one that was freezing card-less V4s (#222). Falls through to the full
+  // atomic rewrite below whenever that is not provably safe.
+  if (saveContactsInPlace(host, filter)) return;
+  const uint32_t t0_full = millis();     // the expensive path — worth reporting when it runs
 #endif
 #if defined(ESP32)
   // Write to a TEMP file and swap it in only after it is FULLY written, so a partial
@@ -492,6 +696,7 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
 #endif
   File file = openWrite(_getContactsChannelsFS(), kContactsWriteTarget);
   bool wrote_ok = false;                     // true only if every record reached the file
+  uint32_t recs_out = 0;                     // records written by this (full) rewrite
   if (file) {
     bool ok = true;                          // cleared on any short write (partial file)
     uint32_t idx = 0;
@@ -527,6 +732,7 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
         memcpy(p, (uint8_t *)&c.gps_lat, 4);               p += 4;
         memcpy(p, (uint8_t *)&c.gps_lon, 4);               p += 4;
         fill += REC;
+        recs_out++;
         if (fill == REC * CHUNK_RECS) {
           ok = (file.write(buf, fill) == fill);
           fill = 0;
@@ -556,6 +762,7 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
 
         if (!success) { ok = false; break; } // write failed -> keep the live file
 
+        recs_out++;
         idx++;  // advance to next contact
       }
     }
@@ -578,6 +785,13 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
     } else {
       cfs->remove(tmp);           // discard the partial temp; the live contact list is untouched
     }
+  }
+  {
+    const uint32_t el = millis() - t0_full;
+    _cs_recs = (uint16_t)(recs_out > 0xFFFF ? 0xFFFF : recs_out);
+    _cs_ms = (uint16_t)(el > 0xFFFF ? 0xFFFF : el);
+    _cs_in_place = false;
+    _cs_any = true;
   }
 #endif
 }
@@ -608,6 +822,13 @@ void DataStore::loadChannels(DataStoreHost* host) {
 }
 
 void DataStore::saveChannels(DataStoreHost* host) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; DataStoreHost* h; } a{ this, host };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->d->saveChannels(a->h); }, &a);
+    return;
+  }
+#endif
   File file = openWrite(_getContactsChannelsFS(), "/channels2");
   if (file) {
     uint8_t channel_idx = 0;
@@ -778,6 +999,13 @@ uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_b
 }
 
 bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; const uint8_t* k; int kl; const uint8_t* b; uint8_t l; bool r; } a{ this, key, key_len, src_buf, len, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->putBlobByKey(a->k, a->kl, a->b, a->l); }, &a);
+    return a.r;
+  }
+#endif
   if (len < PUB_KEY_SIZE+4+SIGNATURE_SIZE || len > MAX_ADVERT_PKT_LEN) return false;
   checkAdvBlobFile();
   File file = _getContactsChannelsFS()->open("/adv_blobs", FILE_O_WRITE);
@@ -815,6 +1043,13 @@ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src
   return false; // error
 }
 bool DataStore::deleteBlobByKey(const uint8_t key[], int key_len) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; const uint8_t* k; int kl; bool r; } a{ this, key, key_len, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->deleteBlobByKey(a->k, a->kl); }, &a);
+    return a.r;
+  }
+#endif
   return true; // this is just a stub on NRF52/STM32 platforms
 }
 #else
@@ -841,6 +1076,13 @@ uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_b
 }
 
 bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; const uint8_t* k; int kl; const uint8_t* b; uint8_t l; bool r; } a{ this, key, key_len, src_buf, len, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->putBlobByKey(a->k, a->kl, a->b, a->l); }, &a);
+    return a.r;
+  }
+#endif
   char path[64];
   makeBlobPath(key, key_len, path, sizeof(path));
 
@@ -856,6 +1098,13 @@ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src
 }
 
 bool DataStore::deleteBlobByKey(const uint8_t key[], int key_len) {
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4OnStorageTask()) {
+    struct A { DataStore* d; const uint8_t* k; int kl; bool r; } a{ this, key, key_len, false };
+    p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->deleteBlobByKey(a->k, a->kl); }, &a);
+    return a.r;
+  }
+#endif
   char path[64];
   makeBlobPath(key, key_len, path, sizeof(path));
 
@@ -910,5 +1159,59 @@ bool DataStore::useSdMmcStorage() {
   _fsExtra = nullptr;
   identity_store.use(SD_MMC, "/meshcomod/identity");
   return true;
+}
+#endif
+
+#if defined(HAS_TDISPLAY_P4)
+// #167: core-0 storage dispatcher. The DSI panel's frame-restart ISR lives on core 1 (where
+// Arduino's loop task also runs); SDMMC/FATFS write paths entered FROM core 1 mask that core's
+// interrupts inside their critical sections long enough to drop a display frame -- the
+// whole-screen flash. Tiles write the same card from the core-0 tile task without ever
+// flashing; this moves every hot store write onto the same quiet core. The caller BLOCKS until
+// the write completes, so call-site semantics are exactly as before.
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+
+struct P4StoreJob { void (*fn)(void*); void* arg; SemaphoreHandle_t done; };
+static QueueHandle_t s_p4store_q = nullptr;
+
+static void p4StoreTaskFn(void*) {
+  P4StoreJob j;
+  for (;;) {
+    if (xQueueReceive(s_p4store_q, &j, portMAX_DELAY) == pdTRUE) {
+      j.fn(j.arg);
+      xSemaphoreGive(j.done);
+    }
+  }
+}
+
+static TaskHandle_t s_p4store_task = nullptr;
+
+bool p4OnStorageTask() { return xTaskGetCurrentTaskHandle() == s_p4store_task && s_p4store_task != nullptr; }
+
+void p4StorageCall(void (*fn)(void*), void* arg) {
+  // Guard on TASK IDENTITY, not core. The original core guard was written believing the main
+  // task ran on core 1; it runs on core 0 (ESP_MAIN_TASK_AFFINITY_CPU0), so the guard
+  // short-circuited and every "hopped" write actually ran inline on the main task -- proven by
+  // the sector-level trace (all SDIO on task 'main'). The storage task is pinned to CORE 1,
+  // which is essentially empty on this board: the DSI frame-restart ISR, the main (UI+mesh)
+  // task, the SDMMC ISR and the tile task all live on core 0, so SD critical sections executed
+  // on core 1 can never mask the display's interrupt regardless of what the UI is rendering.
+  if (p4OnStorageTask()) { fn(arg); return; }   // re-entry on the storage task
+  static SemaphoreHandle_t s_mtx = nullptr;
+  if (!s_mtx) s_mtx = xSemaphoreCreateMutex();      // races only at first-ever call during boot (single-threaded)
+  xSemaphoreTake(s_mtx, portMAX_DELAY);
+  if (!s_p4store_q) {
+    s_p4store_q = xQueueCreate(1, sizeof(P4StoreJob));
+    xTaskCreatePinnedToCore(p4StoreTaskFn, "store1", 8192, nullptr, 3, &s_p4store_task, 0);   // core 0: the SDMMC completion ISR lives there; core-1 I/O crawls on cross-core wakeups
+  }
+  static SemaphoreHandle_t s_done = nullptr;        // one in flight (serialized by s_mtx)
+  if (!s_done) s_done = xSemaphoreCreateBinary();
+  P4StoreJob j{ fn, arg, s_done };
+  xQueueSend(s_p4store_q, &j, portMAX_DELAY);
+  xSemaphoreTake(s_done, portMAX_DELAY);
+  xSemaphoreGive(s_mtx);
 }
 #endif

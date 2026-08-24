@@ -30,7 +30,9 @@ public:
   void stopTcpServer();   // stop TCP server and disconnect clients; prevents startTcpServer until enableTcp()
 
 #ifdef BLE_PIN_CODE
-  // Call after begin() and the_mesh is ready (e.g. after startInterface). Enables BLE by default.
+  // Call after begin() and the_mesh is ready (e.g. after startInterface).
+  // Creates and enables BLE; BLE-off Pager boots deliberately avoid a dormant
+  // NimBLE allocation so Wi-Fi retains its normal reconnect path.
   void beginBle(const char* prefix, char* name, uint32_t pin_code);
   // Store the BLE name/pin WITHOUT bringing the stack up. Used at boot when the
   // heap guard defers co-initialising BLE alongside Wi-Fi: the params are kept so
@@ -38,7 +40,13 @@ public:
   void prepareBle(const char* prefix, char* name, uint32_t pin_code);
   void enableBle() override;
   void disableBle() override;
+#if defined(TLORA_PAGER)
+  // Quiesce BLE without changing the saved intent or destroying its bond/GATT
+  // state. Wi-Fi can then re-associate before enableBle() resumes advertising.
+  bool suspendBleForWifiReconnect();
+#endif
   bool isBleEnabled() const override { return _ble_enabled; }
+  bool isBleStackBegun() const { return _ble_begun; }
 #if defined(HAS_TDISPLAY_P4)
   // T-Display P4: the factory C6 ESP-AT firmware has its BLE advertising commands stubbed
   // (BLEADVDATA/ADVSTART all ERROR — Meck-P4 hit the same wall and ships Wi-Fi companion), and
@@ -86,6 +94,13 @@ public:
    *  gets exactly the few frames the app needs and none of the flood (#94).
    *  Same-thread set-then-consume (both in the mesh loop), so no atomics. */
   static void bleAllowNextRxLog() { s_ble_rxlog_once = true; }
+  /** Opt a BLE companion into the FULL per-packet RX log (#256).
+   *  Off by default and NOT persisted: an app asks for it after connecting, via
+   *  CMD_SET_CUSTOM_VAR "ble.rxlog:1". Deliberately session-scoped — a stored
+   *  flag would silently reinstate the #46/#54 flood for someone who tried a
+   *  coverage app once and moved on, on a link that cannot afford it. */
+  static void bleSetRxLogFirehose(bool on) { s_ble_rxlog_all = on; }
+  static bool bleRxLogFirehose() { return s_ble_rxlog_all; }
   bool companionUnsolicitedPushesBroadcastToAll() const override { return _broadcast; }
   size_t checkRecvFrame(uint8_t dest[]) override;
 
@@ -97,6 +112,7 @@ public:
 
 private:
   static bool s_ble_rxlog_once;   // one-shot BLE pass for the next RX-log frame (#94)
+  static bool s_ble_rxlog_all;    // app opted into the whole RX log over BLE (#256); session-scoped
 public:
 
 private:
@@ -135,6 +151,7 @@ private:
   bool _ble_begun;    // beginBle() was called
   bool _ble_enabled;  // user has BLE on (toggle via UI)
   bool _ota_ble_released;
+  bool _ota_ble_was_enabled;
   char _ble_prefix[24];
   char _ble_name[48];
   uint32_t _ble_pin_code;

@@ -2,6 +2,16 @@
 #pragma once
 #include <lvgl.h>
 
+// Keyboard-nav: a CLICKABLE container that must never be a focus target itself
+// but whose children still are. Distinct from UITask.cpp's NAV_SKIP_FLAG, which
+// takes the whole subtree out of nav. Needed by the Lua app host: its body is
+// clickable so touch boards get press events, and on keypad-nav boards (M9,
+// Pager, Tanmatsu, T-Deck trackball) navCollect otherwise harvests that body as
+// a leaf target and navFocusCb's reverse-video fill paints the whole app white
+// under the app's own widgets. Lives here because AppPage.h is the header both
+// UITask.cpp and LuaAppHost.cpp already share.
+#define NAV_PASSTHRU_FLAG LV_OBJ_FLAG_USER_4
+
 // Shared chrome for full-screen "app pages" — Spectrum, RF Monitor, Discover, Airtime,
 // Snake, VNC, Remote, Reader. Every one of them must look and behave identically:
 //
@@ -13,7 +23,7 @@
 //   * the root is deleted ASYNCHRONOUSLY, never synchronously from inside an event
 //     callback on one of its own children
 //
-// These exist because the two self-contained modules (ChannelUtil, SnakeGame) hand-rolled
+// These exist because the self-contained app modules (SnakeGame, the Lua host) hand-rolled
 // the chrome against a hardcoded `kTopBar = 22`. STATUSBAR_H is a runtime value — SC(22)
 // once the UI scale is above 100%, and SB_TOP_PAD + SB_ROW*2 on the T-Display P4's
 // two-row bar — so on those boards the pages were positioned too high, which put their
@@ -35,6 +45,10 @@ lv_obj_t* appPageCreateRoot(uint32_t bg_color);
 
 /** Take the status bar over: tall, "< title", tap anywhere on it calls close_fn. */
 void appPageBegin(const char* title, void (*close_fn)());
+
+/** Same contract, but the bar stays ONE line (no tall glass row) — for pages whose
+ *  own chrome (e.g. the Lua Store's tab bar) starts right at the top. */
+void appPageBeginSlim(const char* title, void (*close_fn)());
 
 /**
  * Hand the status bar back — but only if `close_fn` is still the installed hook, so a

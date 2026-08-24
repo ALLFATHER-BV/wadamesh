@@ -2,11 +2,13 @@
 #
 # 16 MB layout with TWO EQUAL OTA app slots so the firmware can self-update
 # (HTTP OTA via the meshcomod proxy). The app region (app0+app1) is split
-# evenly at 3.875 MB each — the firmware is ~2.55 MB, leaving ~1.3 MB of growth
-# headroom per slot. The tiles + spiffs offsets are UNCHANGED from the previous
-# (single-big-app0) layout, so an OTA — or a one-time USB re-flash to install
-# this table — keeps the map tile cache and all user data (prefs / contacts /
-# channels / chat history) intact.
+# evenly at 3.875 MB each — the firmware is ~2.99 MB (2026-08 builds), leaving
+# ~0.88 MB of growth headroom per slot. Re-check that number at release time:
+# the slots CANNOT grow later without moving the tiles/spiffs offsets, which
+# the next paragraph forbids. The tiles + spiffs offsets are UNCHANGED from the
+# previous (single-big-app0) layout, so an OTA — or a one-time USB re-flash to
+# install this table — keeps the map tile cache and all user data (prefs /
+# contacts / channels / chat history) intact.
 #   - app0 3.875 MB (ota_0)   ┐ equal A/B slots; OTA ping-pongs between them
 #   - app1 3.875 MB (ota_1)   ┘
 #   - "tiles" 4.75 MB LittleFS partition (subtype 0x83) for the map tab's

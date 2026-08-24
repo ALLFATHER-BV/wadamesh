@@ -1,0 +1,972 @@
+# wadamesh language file
+# canonical source - translators: edit this file and PR it
+# code: ro
+# ver: 8
+# name: Română
+# base: ro
+ (device behind)	 (dispozitiv în urmă)
+#7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d puncte de acoperire · %lu salvate pe SD#
+#7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: se aşteaptă fix GPS…#
+#7A7F87 Wardrive: …#	#7A7F87 Wardrive: …#
+#region	#region
+%.3f MHz · SF%u · TX %+ddBm	%.3f MHz · SF%u · TX %+ddBm
+%d on map	%d pe hartă
+%s · %d nearby (%d rpt, %d comp)	%s · %d în apropiere (%d rpt, %d comp)
+%u types · hops %u · manual %s	%u tipuri · salturi %u · manual %s
+(RTC unset)	(RTC nesetat)
+(device behind)	(dispozitiv în urmă)
+(no default)	(fără implicit)
+0123456789abcdef…	0123456789abcdef…
+1 byte (legacy)\n2 bytes\n3 bytes	1 octet (vechi)\n2 octeţi\n3 octeţi
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nFără limită
+12-hour clock	Ceas de 12 ore
+32 hex characters	32 caractere hex
+32-hex secret. Anyone with this can read the channel.	Secret de 32 hex. Oricine îl are poate citi canalul.
+>_  Terminal	>_  Terminal
+@  Mentions	@  Menţiuni
+@ mention sound	Sunet menţiune @
+AF	AF
+AUTOMATIC ADVERTS	ADVERTURI AUTOMATE
+About	Despre
+About the map	Despre hartă
+Accent popups	Popupuri cu accente
+Accent popups: off	Popupuri accente: oprite
+Accent popups: on	Popupuri accente: pornite
+Ack	Ack
+Active	Activ
+Add	Adaugă
+Add channel	Adaugă canal
+Add contact	Adaugă contact
+Added	Adăugat
+Added to contacts	Adăugat la contacte
+Added to favorites	Adăugat la favorite
+Admin	Admin
+Advert	Advert
+Advert failed	Advert eşuat
+Advert location	Locaţie advert
+Advert policy saved	Politică advert salvată
+Advert sent	Advert trimis
+All marked read	Toate marcate ca citite
+Already exists	Există deja
+Already exists or table full.	Există deja sau tabela e plină.
+Already in contacts	Deja în contacte
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	După repornire porneşte mereu pe antena integrată. Alege Externă doar cu o antenă montată în mufa externă.
+Analyzing terrain…	Se analizează terenul…
+Analyzing terrain…\n(retry %d of 3)	Se analizează terenul…\n(încercarea %d din 3)
+Answer telemetry requests	Răspunde cererilor de telemetrie
+Anyone can join. Key is derived from the hashtag (lowercase).	Oricine poate intra. Cheia derivă din hashtag (litere mici).
+App drawer as home	Sertarul de aplicaţii ca ecran principal
+App icon size	Dimensiune pictograme aplicaţii
+Applies after restart.	Se aplică după repornire.
+Apply	Aplică
+Apply auto-poll	Aplică auto-interogarea
+Apply radio params	Aplică parametrii radio
+Apps	Aplicaţii
+Arrows + Enter always work. These letters are extra — tap a row, then press a key.	Săgeţile + Enter merg mereu. Aceste litere sunt în plus — atinge un rând, apoi apasă o tastă.
+Auto advert	Anunţ automat
+Auto chat	Chat auto
+Auto repeater	Repetor auto
+Auto room	Cameră auto
+Auto sensor	Senzor auto
+Auto-Join	Auto-intrare
+Auto-add	
+Auto-add contacts	Auto-adăugare contacte
+Auto-add saved	Auto-adăugare salvată
+Auto-add settings	Setări adăugare automată
+Auto-delete above hops	Auto-ştergere peste nr. de salturi
+Auto-delete oldest	Auto-ştergere cele mai vechi
+Auto-delete oldest makes room when full. Hops: 0 = keep all; nodes heard via more hops are removed.	Auto-ştergerea celor mai vechi face loc când e plin. Salturi: 0 = păstrează tot; nodurile auzite prin mai multe salturi sunt eliminate.
+Auto-discover	Auto-descoperire
+Auto-discover off	Auto-descoperire oprită
+Auto-discover on	Auto-descoperire pornită
+Auto-poll every	Auto-interogare la fiecare
+Auto-refresh off	Auto-reîmprospătare oprită
+Auto-refresh on	Auto-reîmprospătare pornită
+Available	Disponibile
+BLE off	BLE oprit
+BLE on	BLE pornit
+BT	BT
+Back	Înapoi
+Backups	Backupuri
+Battery	Baterie
+Battery & power history	Istoric baterie şi alimentare
+Battery (V)	Baterie (V)
+Battery calibration reset to default	Calibrare baterie resetată la implicit
+Battery read too low — charge fully first	Citire baterie prea mică — încarcă complet mai întâi
+Battery saver (experimental)	Economisire baterie (experimental)
+Battery — last 24h	Baterie — ultimele 24h
+Battery:	Baterie:
+Block	Blochează
+Block list full	Listă de blocare plină
+Blocked list	Lista de blocaţi
+Blocked users	Utilizatori blocaţi
+Blocked — their messages are hidden	Blocat — mesajele lui sunt ascunse
+Blocking unsupported	Blocarea nu este acceptată
+Blue battery  Last 6 min	Albastru baterie  Ultimele 6 min
+Blue battery  Orange temp  Cyan humidity	Albastru baterie  Portocaliu temp  Cyan umiditate
+Bluetooth	Bluetooth
+Bluetooth already off	Bluetooth deja oprit
+Bluetooth already on	Bluetooth deja pornit
+Bluetooth deferred; retry from Settings	
+Bluetooth off	Bluetooth oprit
+Bluetooth on	Bluetooth pornit
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Împerecherea Bluetooth nu este disponibilă pe acest dispozitiv.\n\nFirmware-ul din fabrică al cipului radio nu o suportă.\n\nÎmperechează aplicaţia prin Wi-Fi: conectează dispozitivul la reţea, apoi adaugă-l în aplicaţie după adresa IP (TCP, port 5000) — afişată la Setări > Reţea. Merge şi USB.
+Bluetooth unavailable; retry from Settings	
+Bluetooth will start after Wi-Fi connects or times out.	
+Broker host / IP	Gazdă broker / IP
+Buffered receive (experimental)	Recepţie cu buffer (experimental)
+Built-in	Încorporat
+Built-in (default)	Încorporat (implicit)
+CR	CR
+Calibrate battery (full = 100%)	Calibrează bateria (plină = 100%)
+Calibrated: 100%% = %u.%02u V  (long-press to reset)	Calibrat: 100%% = %u.%02u V  (apasă lung pentru resetare)
+Can't block — not a contact	Nu se poate bloca — nu e contact
+Can't display image\n(JPEG only, <= 1024 px)	Imaginea nu poate fi afişată\n(doar JPEG, <= 1024 px)
+Cancel	Anulează
+Cancelled	Anulat
+Cannot open file	Fişierul nu poate fi deschis
+Catalog unavailable	Catalog indisponibil
+Centered on %s	Centrat pe %s
+Changing orientation - rebooting...	Se schimbă orientarea - repornire...
+Channel created	Canal creat
+Channel joined	Intrat în canal
+Channel name	Nume canal
+Channel not found	Canal negăsit
+Channel removed	Canal eliminat
+Channel scope saved	Domeniu canal salvat
+Channel settings	Setări canal
+Channel table is full	Tabela de canale este plină
+Channel table is full.	Tabelul de canale este plin.
+Channel-specific regions can be set in each channel's settings.	Regiunile per canal se setează în setările fiecărui canal.
+Channels:	Canale:
+Chat bubbles	Baloane de chat
+Chat bubbles: plain	Baloane de chat: simple
+Chat history is NOT saving	Istoricul chatului NU se salvează
+Chat history save FAILED	Salvarea istoricului chatului A EŞUAT
+Chat icon	Pictograma conversaţiei
+Chat icon reset to letters	Pictogramă chat resetată la litere
+Chat icon set	Pictogramă chat setată
+Chat removed	Chat eliminat
+Chat save fallback (failed tries)	Salvare de rezervă a conversaţiei (eşecuri)
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Conversaţii, contacte, setări şi un terminal mesh - toate în browser. Fără repornire; dispozitivul îşi păstrează ecranul normal.
+Choose .wav from files	Alege .wav din fişiere
+Choose your name	Alege-ţi numele
+Choose your region	Alege-ţi regiunea
+Clear	Goleşte
+Clear battery history?	Goleşti istoricul bateriei?
+Clear history	Şterge istoricul
+Clear telemetry history for this node?	Goleşti istoricul de telemetrie al acestui nod?
+Client repeat	Repetare client
+Clock & time	
+Clock synced	Ceas sincronizat
+Clock: 12-hour	Ceas: 12 ore
+Clock: 24-hour	Ceas: 24 ore
+Close	Închide
+Colourful chat bubbles	Baloane de chat colorate
+Commands	Comenzi
+Community Preset	Presetare comunitară
+Community preset (meshcomod web)	Presetare comunitate (meshcomod web)
+Compact	
+Compact messages	Mesaje compacte
+Compact messages (IRC style)	Mesaje compacte (stil IRC)
+Connect	Conectează
+Connect Wi-Fi to reload tiles	Conectează Wi-Fi pentru a reîncărca dalele
+Connect to Wi-Fi	Conectare la Wi-Fi
+Connect to Wi-Fi first	Conectează-te mai întâi la Wi-Fi
+Connect to Wi-Fi first, then try again.	Conectează-te mai întâi la Wi-Fi, apoi reîncearcă.
+Connect to Wi-Fi to get a browser address.	Conectează-te la Wi-Fi pentru o adresă de browser.
+Connected	Conectat
+Connected - a browser is viewing this screen.	Conectat - un browser vede acest ecran.
+Connecting...	Se conectează...
+Connecting…	Se conectează…
+Console not available on this build	Consola nu e disponibilă în acest build
+Contact added	Contact adăugat
+Contact deleted	Contact şters
+Contact gone	Contact dispărut
+Contact missing	Contact lipsă
+Contacts	Contacte
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Contactele sunt pe memoria internă - cardul SD nu s-a montat la pornire. Reaşază cardul şi reporneşte.
+Contacts are on internal flash.	Contactele sunt pe memoria internă.
+Contacts are saved to the SD card.	Contactele se salvează pe cardul SD.
+Contacts full	Contacte pline
+Contacts:	Contacte:
+Control	Control
+Control this device from a browser	Controlează dispozitivul din browser
+Copied %s	Copiat %s
+Copied - Paste in a folder	Copiat - lipeşte într-un folder
+Copy	Copiază
+Copy blocked: SD card holds a different or unreadable profile	
+Copy blocked: SD profile could not be prepared safely	
+Copy blocked: internal data is busy	
+Copy blocked: migration guard unavailable	
+Copy failed (no internal identity)	Copiere eşuată (fără identitate internă)
+Copy incomplete: SD data may be mixed. Retry before reboot.	
+Copy internal data to SD	Copiază datele interne pe SD
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	
+Copy secret	Copiază secretul
+Copying internal data to SD...	Se copiază datele interne pe SD...
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	
+Could not add	Nu s-a putut adăuga
+Could not save the crash report	Raportul de eroare nu a putut fi salvat
+Couldn't delete	Nu s-a putut şterge
+Couldn't fetch terrain data.\nCheck the connection and the\nelevation server, then\ntry again.	Datele de teren nu au putut fi\nobţinute. Verifică conexiunea\nşi serverul de elevaţie, apoi\nreîncearcă.
+Couldn't save the name to storage	Numele nu a putut fi salvat în stocare
+Couldn't send login	Autentificarea nu a putut fi trimisă
+Couldn't start the analyzer.\nTry again.	Analizatorul nu a pornit.\nÎncearcă din nou.
+Crash export failed	Exportul raportului de eroare a eşuat
+Create	Creează
+Create QR	Creează QR
+Create a private channel	Creează un canal privat
+Create failed	Creare eşuată
+Create private channel	Creează canal privat
+Current tile transfer is busy - retry	
+Custom UTC offset (hours)	Decalaj UTC personalizat (ore)
+Cut	Decupează
+Cut - Paste in a folder	Decupat - lipeşte într-un folder
+DM sound	Sunet DM
+DND	DND
+Danger zone	Zonă periculoasă
+Data -> SD card on reboot\n(card must be inserted)	Date -> card SD la repornire\n(cardul trebuie introdus)
+Data -> internal on reboot	Date -> stocare internă la repornire
+Delete	Şterge
+Delete %d contact(s)?	Ştergi %d contact(e)?
+Delete chat	Şterge conversaţia
+Delete chat with "%s"?\nMessage history will be cleared.	Ştergi chatul cu "%s"?\nIstoricul mesajelor va fi şters.
+Delete failed	Ştergere eşuată
+Delete history	Şterge istoricul
+Delete this backup file?\nThis cannot be undone.	Ştergi acest fişier backup?\nNu poate fi anulat.
+Delete this chat's entire history?\nThe chat itself stays.	Ştergi tot istoricul acestui chat?\nChatul în sine rămâne.
+Deleted	Şters
+Deleted %d	Şterse %d
+Deleted %d messages	%d mesaje şterse
+Deleting contacts	Se şterg contactele
+Delivered	Livrat
+Detailed sensors	Senzori detaliaţi
+Device clock differs from "%s" by %lu h%s	Ceasul dispozitivului diferă de "%s" cu %lu h%s
+Device clock differs from "%s" by %lu min%s	Ceasul dispozitivului diferă de "%s" cu %lu min%s
+Device name hidden	Nume dispozitiv ascuns
+Device name shown	Nume dispozitiv afişat
+Device time:	Ora dispozitivului:
+Diagnostics	Diagnosticare
+Diagnostics are on the About page.	Diagnosticele sunt pe pagina Despre.
+Discovered	Descoperite
+Discovered settings	Setări noduri descoperite
+Display	Afişaj
+Display name	Nume afişat
+Distance in miles	Distanţă în mile
+Distance: km	Distanţă: km
+Distance: miles	Distanţă: mile
+Do Not Disturb	Nu deranja
+Do Not Disturb off	Nu deranja oprit
+Do Not Disturb on	Nu deranja pornit
+Down	
+Download failed	Descărcarea a eşuat
+Download failed (network?)	Descărcarea a eşuat (reţea?)
+Download mode	Mod descărcare
+Download mode… reflash over USB	Mod descărcare… rescrie prin USB
+Downloaded - tap Use to switch	Descărcat - atinge Foloseşte pentru a schimba
+Downloading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive\nand are saved for offline use.	Se descarcă dalele hărţii…\n\nPăstrează Wi-Fi conectat.\nDalele apar pe măsură ce sosesc\nşi se salvează pentru offline.
+Downloading…	Se descarcă…
+Duty meter	Contor duty
+Edge scroll	Derulare la margine
+Edit in Settings → Quick replies	Editează în Setări → Răspunsuri rapide
+Editing	Editare
+Empty = plaintext to a private broker	Gol = text simplu către un broker privat
+Empty file	Fişier gol
+Enable Bluetooth	Activează Bluetooth
+Enable MQTT bridge	Activează puntea MQTT
+Enable only if your repeater re-floods just one region. Otherwise leave off — it can block cross-region login/DMs.	Activează doar dacă repetorul tău redifuzează o singură regiune. Altfel lasă oprit — poate bloca autentificarea/DM-urile între regiuni.
+Enable web access	Activează accesul web
+Encryption key (optional)	Cheie de criptare (opţională)
+End time	Ora de sfârşit
+Enter SSID first	Introdu mai întâi SSID-ul
+Enter a name	Introdu un nume
+Enter a network name	Introdu un nume de reţea
+Enter adds a new line	Enter adaugă un rând nou
+Enter exactly 32 hex characters.	Introdu exact 32 caractere hex.
+Enter key sends message	Tasta Enter trimite mesajul
+Enter sends messages	Enter trimite mesajele
+Enter the 32-hex secret shared by the channel creator.	Introdu secretul de 32 hex partajat de creatorul canalului.
+Entering remote mode - rebooting...	Se intră în modul la distanţă - repornire...
+Erase all	Şterge tot
+Erases identity, contacts, channels, messages, Wi-Fi and all settings, then reboots.	Şterge identitatea, contactele, canalele, mesajele, Wi-Fi şi toate setările, apoi reporneşte.
+Erasing everything…	Se şterge tot…
+Every node you talk to must match. You can change this later in Settings.	Fiecare nod cu care vorbeşti trebuie să corespundă. Poţi schimba asta mai târziu în Setări.
+Expansion Kit	Kit de extensie
+Experimental	Experimental
+Experimental - has known issues. Off = soft mouse cursor.	Experimental - are probleme cunoscute. Oprit = cursor de mouse virtual.
+Experimental saved	Experimentale salvate
+Export failed (can't open file)	Export eşuat (fişierul nu se poate deschide)
+Export new backup	Exportă backup nou
+Export settings	Exportă setările
+Exporting settings…	Se exportă setările…
+External antenna selected	Antenă externă selectată
+Factory reset	Resetare din fabrică
+Factory reset blocked: SD activity is still running; close tools and retry.	
+Factory reset blocked: storage is busy	
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	
+Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Resetare din fabrică?\n\nŞterge identitatea, contactele,\ncanalele, mesajele, Wi-Fi\nşi fiecare setare. Nu poate\nfi anulată.
+Failed to save channel.	Salvarea canalului a eşuat.
+Favorites full (max %d)	Favorite pline (max %d)
+Favorites unsupported	Favoritele nu sunt acceptate
+Fetching the app list from firmware.wadamesh.com	Se preia lista de aplicaţii de la firmware.wadamesh.com
+Files	Fişiere
+Find	Caută
+Finish	Finalizează
+Firmware beta_%d\nCouldn't reach the update server	Firmware beta_%d\nServerul de actualizare nu a putut fi contactat
+Firmware:	Firmware:
+Flash on new message	Iluminează la mesaj nou
+Flood	Difuzare
+Flood advert sent	Advert flood trimis
+Flood every	Flood la fiecare
+Flood: relayed across the mesh (multi-hop).\nZero-hop: neighbours only (no relaying).	Flood: retransmis prin mesh (multi-salt).\nZero-hop: doar vecinii (fără retransmitere).
+Folder created	Folder creat
+For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).	Pentru instalări prin Launcher: salvează cel mai recent firmware al canalului selectat pe cardul SD (folderul BINS).
+Forget network	Uită reţeaua
+Format	Formatează
+Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased.	Formatezi SD ca MESHCOMOD (FAT32)?\nToate datele de pe card vor fi şterse.
+Format failed (no card / SD error)	Formatare eşuată (fără card / eroare SD)
+Frequency / bandwidth	Frecvenţă / lăţime de bandă
+Full	Plin
+GPS	GPS
+GPS %s · Buzzer %s	GPS %s · Buzzer %s
+GPS %s · Buzzer %s\n%s	GPS %s · Buzzer %s\n%s
+GPS off	GPS oprit
+GPS on	GPS pornit
+GPS serial baud	Baud serial GPS
+GPS unset	GPS nesetat
+GPS: acquiring...	GPS: căutare semnal...
+GPS: fix	GPS: fix
+GPS: off	GPS: oprit
+GPS: searching	GPS: căutare
+Game over  —  score %d   (tap to restart)	Joc terminat  —  scor %d   (atinge pentru restart)
+General	
+Get	Descarcă
+Get Started	Începe
+Get test builds (beta)	Primeşte versiuni de test (beta)
+Go	Mergi
+Green pressure  Gray altitude	Verde presiune  Gri altitudine
+Hashtag name	Nume hashtag
+Hidden - turn it back on in the Lua Store	Ascuns - reactivează-l din Lua Store
+Hidden network	Reţea ascunsă
+Hide	Ascunde
+Hide device name	Ascunde numele dispozitivului
+Hide this app from the drawer?	Ascunzi această aplicaţie din sertar?
+High-gain receiver (FEM LNA)	Receptor cu amplificare mare (FEM LNA)
+Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Extrem de experimental. Trimite textul, numele expeditorului şi ora fiecărui mesaj primit de nodul tău către un broker MQTT, unde oricine poate citi brokerul le poate citi şi el. Mesajele directe sunt mesaje private de la persoane care nu au acceptat să fie partajate. Foloseşte un broker pe care îl controlezi, setează o cheie de criptare mai jos şi nu folosi niciodată un broker public.
+History limit off	Limita istoricului oprită
+Home	
+Hotkey saved	Tastă rapidă salvată
+How you'll appear to other nodes. You can change this later in Settings.	Cum vei apărea altor noduri. Poţi schimba asta mai târziu în Setări.
+Humidity	Umiditate
+I accept the privacy risk	Accept riscul de confidenţialitate
+Identity (public key)	Identitate (cheie publică)
+Idle power-save	Economie de energie în repaus
+Idle sleep disabled	Somn în repaus dezactivat
+Idle sleep enabled	Somn în repaus activat
+Image too large (>4 MB)	Imagine prea mare (>4 MB)
+Import	Importă
+Import backup	Importă backup
+Import failed (bad/unreadable JSON)	Import eşuat (JSON invalid/ilizibil)
+Import settings	Importă setările
+Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Imporţi acest backup?\nÎnlocuieşte identitatea,\ncanalele şi contactele,\napoi reporneşte.
+Import: storage unavailable	Import: stocare indisponibilă
+Importing settings…	Se importă setările…
+Inactive	Inactiv
+Info	Info
+Insert emoji / symbol	Inserează emoji / simbol
+Install	Instalează
+Install a previous version	Instalează o versiune anterioară
+Install an earlier version	Instalează o versiune mai veche
+Install failed (network?)	Instalarea a eşuat (reţea?)
+Install update	Instalează actualizarea
+Installed	Instalate
+Installing…	Se instalează…
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Internă (integrată)\nExternă (MMCX)\nAuto (vechi, per transmisie)
+Internal has no folders	Stocarea internă nu are foldere
+Internal storage   %s / %s	Stocare internă   %s / %s
+Invalid lat/lon	Lat/lon nevalide
+Invalid max hops	Salturi max nevalide
+Invalid radio values	Valori radio nevalide
+Join	Intră
+Join a hashtag channel	Intră într-un canal hashtag
+Join a private channel	Intră într-un canal privat
+Join hashtag channel	Intră într-un canal hashtag
+Join network	Intră în reţea
+Join private channel	Intră într-un canal privat
+Join the public channel	Intră în canalul public
+Joined %.40s	Intrat în %.40s
+Keep per chat (messages)	Păstrează per conversaţie (mesaje)
+Key already in use	Tasta e deja folosită
+Keyboard	Tastatură
+Keyboard backlight	Iluminare tastatură
+Keyboard light auto	Lumina tastaturii auto
+Keyboard light off	Lumina tastaturii oprită
+Keyboard light on	Lumina tastaturii pornită
+Keyboard nav: WASDZ on	Navigare tastatură: WASDZ pornit
+Keyboard nav: off	Navigare tastatură: oprită
+Keyboard navigation	Navigare cu tastatura
+Keys	
+LOS → %s	Linie vizuală → %s
+Landscape (desktop)	Peisaj (desktop)
+Landscape set - applies when remote mode starts.	Peisaj setat - se aplică la pornirea modului la distanţă.
+Language	Limbă
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Catalog de limbi indisponibil - verifică Wi-Fi, apoi redeschide fila.
+Language updated - restarting to apply it…	Limbă actualizată - repornire pentru aplicare…
+Languages	Limbi
+Large (bigger icons)	
+Latitude	Latitudine
+Leave empty if not required	Lasă gol dacă nu e necesar
+Leaving remote mode - rebooting...	Se iese din modul la distanţă - repornire...
+Left	
+Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Să-ţi configurăm dispozitivul.\n\nÎţi alegi un nume şi regiunea LoRa. Durează cam un minut.
+Letters only	Doar litere
+LoRa antenna (P4)	Antenă LoRa (P4)
+Loading catalog…	Se încarcă catalogul…
+Loading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive.	Se încarcă dalele hărţii…\n\nPăstrează Wi-Fi conectat.\nDalele apar pe măsură ce sosesc.
+Loading map…	Se încarcă harta…
+Loading the language catalog…	Se încarcă catalogul de limbi…
+Loading...	Se încarcă...
+Local every	Local la fiecare
+Local sensors	Senzori locali
+Lock	Blochează
+Lock screen	Ecran de blocare
+Lock screen wallpaper	Fundal ecran de blocare
+Lock text colour	Culoare text blocare
+Lock text colour set	Culoare text blocare setată
+Lock wallpaper	Fundal blocare
+Lock wallpaper set	Fundal blocare setat
+Lock when screen off	Blochează când ecranul e stins
+Locking…	Se blochează…
+Locks when screen off\n(hold Backspace to unlock)	Se blochează cu ecranul stins\n(ţine Backspace pentru deblocare)
+Locks when screen off\n(hold the d-pad to unlock)	Se blochează când ecranul e stins\n(ţine d-pad pentru deblocare)
+Locks when screen off\n(hold the trackball to unlock)	Se blochează când ecranul e stins\n(ţine trackball-ul pentru deblocare)
+Locks when screen off\n(press Volume Down to unlock)	Se blochează când ecranul e stins\n(apasă Volum jos pentru deblocare)
+Locks when screen off\n(press the button to unlock)	Se blochează când ecranul e stins\n(apasă butonul pentru deblocare)
+Log in again	Autentificare din nou
+Logging in again...	Se autentifică din nou...
+Logging in…	Se autentifică…
+Login OK (perms %u)	Autentificare OK (permisiuni %u)
+Login failed	Autentificare eşuată
+Logs	Jurnale
+Longitude	Longitudine
+Lua Store	Magazin Lua
+MHz	MHz
+MQTT bridge	Punte MQTT
+Map	Hartă
+Map options	Opţiuni hartă
+Map storage error.\nReflash the tiles partition.	Eroare stocare hartă.\nRescrie partiţia de dale.
+Map storage error.\n\nSD card detected but the\ntile cache didn't mount.\nReboot to retry.	Eroare stocare hartă.\n\nCard SD detectat, dar\ncache-ul de dale nu s-a montat.\nReporneşte pentru reîncercare.
+Map tiles: microSD	Dale hartă: microSD
+Map tiles: microSD\n\n/maps/osm/z/x/y.png\n(or /tiles/z/x/y.jpg)\n\nMap appears when a tile\nfor this area is found.	Dale hartă: microSD\n\n/maps/osm/z/x/y.png\n(sau /tiles/z/x/y.jpg)\n\nHarta apare când se găseşte\no dală pentru această zonă.
+Map tiles: server	Dale hartă: server
+Map — no tile pack on SPIFFS yet.\n\nUpload a tile pack to /tiles/<z>/<x>/<y>.jpg with the host-side generator.	Hartă — încă niciun pachet de dale pe SPIFFS.\n\nÎncarcă un pachet de dale în /tiles/<z>/<x>/<y>.jpg cu generatorul de pe gazdă.
+Map — set your location\nin Settings → Profile to\nshow the map here.	Hartă — setează-ţi locaţia\nîn Setări → Profil pentru\na afişa harta aici.
+Mark all chats and channels as read?	Marchezi toate chaturile şi canalele ca citite?
+Mark as read	Marchează ca citit
+Mark read	Marchează citit
+Marked read	Marcat ca citit
+Max hops (0..64)	Salturi max (0..64)
+Max zoom for this pack	Zoom maxim pentru acest pachet
+Memory detail	Detalii memorie
+Mesh health: a flood advert is rebroadcast by every repeater in range, so frequent floods add airtime for the whole network. Keep them infrequent (a day or more). Your neighbours still see you from zero-hop adverts and your message replies, so flood mainly when distant nodes need to rediscover you. Leave both Off to advertise only when you tap the buttons above.	Sănătatea mesh-ului: un advert flood e redifuzat de fiecare repetor din rază, aşa că floodurile dese adaugă timp de emisie pentru toată reţeaua. Păstrează-le rare (o zi sau mai mult). Vecinii te văd oricum din adverturile zero-hop şi din răspunsurile tale, deci foloseşte flood mai ales când nodurile îndepărtate trebuie să te redescopere. Lasă ambele Oprite ca să te anunţi doar când atingi butoanele de mai sus.
+Message	Mesaj
+Message LED	LED mesaje
+Message LED off	LED mesaje oprit
+Message LED on	LED mesaje pornit
+Message deleted	Mesaj şters
+Message didn't get through.\nResend it?	Mesajul nu a ajuns.\nÎl retrimiţi?
+Message info	Informaţii mesaj
+Message sound	Sunet mesaj
+Messages	
+Min zoom for this pack	Zoom minim pentru acest pachet
+Mode: BLE starting / low memory	Mod: BLE porneşte / memorie redusă
+Model:	Model:
+Multi ACKs	ACK-uri multiple
+Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Repetare %s · Boost RX %s
+Multi-byte routing (path hash)	Rutare multi-octet (hash de cale)
+Mute @	Fără sunet @
+Mute msgs	Fără sunet mesaje
+Mute notification sound	Dezactivează sunetul notificărilor
+My position (no GPS fix)	Poziţia mea (fără fix GPS)
+Name	Nume
+Name can't be empty.	Numele nu poate fi gol.
+Name fragment	Fragment de nume
+Name saved	Nume salvat
+Navigation keys	Taste de navigare
+Navigation keys — tap a row, then press a key	Taste de navigare — atinge un rând, apoi apasă o tastă
+Nearby on map	În apropiere pe hartă
+Network name	Nume reţea
+Network name (SSID)	Nume reţea (SSID)
+New	Nou
+New DM	DM nou
+New channel msg	Mesaj nou pe canal
+New contact	Contact nou
+New file	Fişier nou
+New folder	Folder nou
+New game	Joc nou
+New room msg	Mesaj nou în cameră
+Next	Înainte
+Night mode (invert)	Mod nocturn (inversare)
+No .json backups found.\nExport one first, or copy a\nmeshcore-backup.json to the\nSD card or internal flash.	Niciun backup .json găsit.\nExportă unul mai întâi sau copiază\nun meshcore-backup.json pe cardul\nSD ori în flash-ul intern.
+No @mentions yet	Nicio menţiune @ încă
+No Bluetooth on this device	Fără Bluetooth pe acest dispozitiv
+No DM key	Fără cheie DM
+No GPS module on this device.	Fără modul GPS pe acest dispozitiv.
+No JPEGs found in /lock/.\nAdd images via the file\nmanager or an SD card.	Niciun JPEG găsit în /lock/.\nAdaugă imagini prin managerul\nde fişiere sau un card SD.
+No SD card	Fără card SD
+No SD card (or unreadable format)	Fără card SD (sau format ilizibil)
+No backups yet. Tap Export new backup above to create one.	Niciun backup încă. Atinge Exportă backup nou mai sus pentru a crea unul.
+No battery history yet.\n\nLogged every 5 minutes.	Niciun istoric al bateriei încă.\n\nSe înregistrează la 5 minute.
+No blocked users.\n\nLong-press a message and tap\nBlock to add one.	Niciun utilizator blocat.\n\nApasă lung pe un mesaj şi atinge\nBlochează pentru a adăuga unul.
+No contact for thread	Niciun contact pentru conversaţie
+No contact to trace	Niciun contact de trasat
+No contacts have shared\na GPS location yet.	Niciun contact nu a partajat\nîncă o locaţie GPS.
+No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Niciun nod descoperit încă.\n\nTot ce se aude prin eter şi nu e în contactele tale apare aici. Când auto-adăugarea e oprită, poţi adăuga manual noduri la contacte.
+No earlier versions yet	Nicio versiune anterioară încă
+No local expansion data	Fără date locale de extensie
+No location for this contact	Fără locaţie pentru acest contact
+No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Fără stocare pentru hartă.\n\nIntrodu un card SD pentru dalele\nWi-Fi (sau rescrie partiţia\nde dale ca s-o refaci).
+No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Fără dale de hartă aici.\n\nConectează Wi-Fi (Setări → Wi-Fi)\npentru a descărca această zonă.
+No mapped repeaters in this route	Niciun repetor cartografiat pe această rută
+No networks found (2.4 GHz only)	Nicio reţea găsită (doar 2,4 GHz)
+No onboard GPS	Fără GPS integrat
+No other networks found	Nicio altă reţea găsită
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Încă nicio poziţie. O pornire la rece are nevoie de cer liber şi poate dura câteva minute.
+No reply from %s	Niciun răspuns de la %s
+No reply. Check password, server,\nor device clock (device: %s)	Niciun răspuns. Verifică parola, serverul\nsau ceasul dispozitivului (dispozitiv: %s)
+No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Fără dale salvate aici.\n\nConectează Wi-Fi (Setări → Wi-Fi)\npentru a descărca zona.\nDalele salvate rămân offline.
+No system time yet	Încă nu există oră de sistem
+No telemetry in this window.\nRequest one, or widen the range below.	Fără telemetrie în acest interval.\nCere una sau lărgeşte intervalul de mai jos.
+No tiles (non-ESP32)	Fără dale (non-ESP32)
+No version known yet. Wi-Fi and a completed update check are needed first.	Nicio versiune cunoscută încă. E nevoie mai întâi de Wi-Fi şi de o verificare de actualizare completă.
+Node name	Nume nod
+Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime	Nod\nRegiune\nRadio\nSemnal\nContacte\nCanale\nBaterie\nTimp de funcţionare
+Normal (100%)\nLarge (150%)\nHuge (200%)	Normal (100%)\nMare (150%)\nFoarte mare (200%)
+Not enough free memory for Bluetooth. Turn Wi-Fi off first.	Memorie liberă insuficientă pentru Bluetooth. Opreşte mai întâi Wi-Fi.
+Not enough free memory for Wi-Fi. Turn Bluetooth off first.	Memorie liberă insuficientă pentru Wi-Fi. Opreşte mai întâi Bluetooth.
+Not enough free memory to fetch it. Reboot and try again.	Memorie liberă insuficientă pentru descărcare. Reporniți și încercați din nou.
+Nothing selected	Nimic selectat
+Notification sound set	Sunet de notificare setat
+Notify on new contact	Notifică la contact nou
+Off	Oprit
+Off\n1 day\n2 days\n3 days\n7 days	Oprit\n1 zi\n2 zile\n3 zile\n7 zile
+Off\n1\n2\n3\n5\n8	Oprit\n1\n2\n3\n5\n8
+Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours	Oprit\n60 min\n90 min\n2 ore\n3 ore\n4 ore
+Offline	Offline
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Mesajele mai vechi peste această limită se şterg. Un istoric foarte mare sau nelimitat încetineşte lista de conversaţii.
+On - open the address above in a phone browser.	Pornit - deschide adresa de mai sus în browserul telefonului.
+On boot	La pornire
+On map	Pe hartă
+Open Advertise app	Deschide aplicaţia Advertise
+Open a .wav, then tap 'Set as notification sound'	Deschide un .wav, apoi atinge 'Setează ca sunet de notificare'
+Open a JPEG, then tap 'Set as wallpaper'	Deschide un JPEG, apoi atinge 'Setează ca fundal'
+Open chat	Deschide conversaţia
+Open in a browser (same Wi-Fi):	Deschide într-un browser (acelaşi Wi-Fi):
+Open in web	Deschide pe web
+Open mesh console	Deschide consola mesh
+Optional — type your network, or leave blank to skip.	Opţional — tastează reţeaua sau lasă gol pentru a omite.
+Orange temp  Cyan humidity	Portocaliu temp  Cyan umiditate
+Orientation (tap to rotate, reboots)	Orientare (atinge pentru rotire, reporneşte)
+Out of memory	Memorie insuficientă
+Overwrite oldest	Suprascrie cele mai vechi
+Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?	Suprascrii setările şi identitatea\nde pe SD cu copiile interne,\napoi reporneşti?
+PNG isn't supported here\nUse a JPEG	PNG nu este acceptat aici\nFoloseşte un JPEG
+Pairing code	Cod de asociere
+Pairing code saved — reboot to apply	Cod de asociere salvat — reporneşte pentru aplicare
+Pairing code: %06lu	Cod de asociere: %06lu
+Pairing code: n/a	Cod de asociere: n/a
+Password (empty = open)	Parolă (gol = deschisă)
+Password (empty = skip Wi-Fi)	Parolă (gol = omite Wi-Fi)
+Password (optional)	Parolă (opţională)
+Password too long	Parolă prea lungă
+Paste	Lipeşte
+Paste failed	Lipire eşuată
+Paste the 64-hex public key and a name. Useful when you want to DM someone before their advert has arrived.	Lipeşte cheia publică de 64 hex şi un nume. Util când vrei să trimiţi un DM cuiva înainte să-i sosească advertul.
+Pasted	Lipit
+Path hash: %u byte%s	Hash cale: %u byte%s
+Path reset	Cale resetată
+Path reset failed	Resetarea căii a eşuat
+Paused  —  score %d	Pauză  —  scor %d
+Per-transmit switching on	Comutare per transmisie pornită
+Pick colour	Alege culoarea
+Ping	Ping
+Ping failed	Ping eşuat
+Pinged (direct) — waiting…	Ping trimis (direct) — se aşteaptă…
+Pinged (flood) — waiting…	Ping trimis (flood) — se aşteaptă…
+Play	Redă
+Poll (min)	Interogare (min)
+Poll every	Interogare la fiecare
+Poll every %d min	Interogare la %d min
+Port	Port
+Portrait set - applies when remote mode starts.	Portret setat - se aplică la pornirea modului la distanţă.
+Position saved	Poziţie salvată
+Power	Alimentare
+Power off	Opreşte
+Powering off… click trackball to wake	Se opreşte… apasă trackball-ul pentru trezire
+Press a key…	Apasă o tastă…
+Probe now	Măsoară acum
+Probing neighbours…	Se sondează vecinii…
+Profile	Profil
+Pubkey must be 64 hex chars.	Cheia publică trebuie să aibă 64 caractere hex.
+Public channel ready	Canal public pregătit
+Public key (64 hex chars)	Cheie publică (64 caractere hex)
+Public key:	Cheie publică:
+Publish channel messages	Publică mesajele canalelor
+Publish direct messages	Publică mesajele directe
+Purge	Curăţă
+Purge all discovered nodes?	Elimini toate nodurile descoperite?
+Quick replies	Răspunsuri rapide
+Quick reply	Răspuns rapid
+RAM %u%%  ·  PSRAM %u%%	RAM %u%%  ·  PSRAM %u%%
+RX %d entries · Raw %d entries	RX %d intrări · Brut %d intrări
+RX boosted gain	Amplificare RX crescută
+RX log	Jurnal RX
+Radio & Mesh	Radio şi mesh
+Radio + region set	Radio + regiune setate
+Radio applied	Radio aplicat
+Radio off	Radio oprit
+Radio: off	Radio: oprit
+Range test	Test de rază
+RangeTest failed	RangeTest eşuat
+RangeTest sent (direct)	RangeTest trimis (direct)
+RangeTest sent (flood)	RangeTest trimis (flood)
+Raw log	Jurnal brut
+Reads packets on a background task so a busy screen can't drop them.	Citeşte pachetele pe o sarcină de fundal, ca un ecran ocupat să nu le piardă.
+Reboot	Reporneşte
+Reboot device	Reporneşte dispozitivul
+Rebooting...	Se reporneşte...
+Rebooting…	Se reporneşte…
+Receive unreleased test firmware — newer features, but less tested. The update check and Install update both follow the beta channel.	Primeşti firmware de test nepublicat — funcţii mai noi, dar mai puţin testate. Verificarea de actualizare şi Instalează actualizarea urmează ambele canalul beta.
+Recently heard	Auzite recent
+Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Reformatezi SD ca MESHCOMOD (FAT32)?\nTOATE datele de pe card vor fi şterse.
+Region & scope	Regiune şi acoperire
+Region scope (#tag) for this channel.\nBlank = use the default scope.	Domeniu regional (#tag) pentru acest canal.\nGol = domeniul implicit.
+Region scope (#tag), blank = default.	Domeniu regional (#tag), gol = implicit.
+Region scope (#tag, blank = none)	Domeniu regional (#tag, gol = niciunul)
+Remember password	Reţine parola
+Remote UI	Interfaţă la distanţă
+Remote UI (on)	Interfaţă la distanţă (pornită)
+Remote access	Acces la distanţă
+Remote terminal	Terminal la distanţă
+Remote terminal (recommended)	Terminal la distanţă (recomandat)
+Remote terminal off	Terminal la distanţă oprit
+Remove	Elimină
+Remove %s?	Elimini %s?
+Remove channel	Elimină canalul
+Remove channel "%s"?\nLeaves it on this device only.	Elimini canalul "%s"?\nÎl elimină doar de pe acest dispozitiv.
+Removed	Eliminat
+Removed from favorites	Eliminat de la favorite
+Rename	Redenumeşte
+Rename failed	Redenumire eşuată
+Renamed	Redenumit
+Replay	Redă
+Replay route on map	Redă ruta pe hartă
+Replaying route…	Se redă ruta…
+Resend	Retrimite
+Resend failed	Retrimitere eşuată
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Retrimite mesajul până când un repetor îl reflectă sau destinatarul confirmă. Opreşte pentru o singură trimitere.
+Reset	Resetează
+Reset path	Resetează ruta
+Restarting to apply the language…	Repornire pentru aplicarea limbii…
+Restarting to enable Bluetooth	
+Resume	
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	
+Retry sends until heard	Retrimite până e auzit
+Reverse scrollball	Inversează scrollball-ul
+Right	
+Roll to highlight • click to insert	Rulează pentru evidenţiere • apasă pentru inserare
+Room is read-only for you.\nJoin with the room password to post.	Camera e doar în citire pentru tine.\nIntră cu parola camerei ca să postezi.
+Rotating - reconnecting...	Rotire - reconectare...
+Rotating… rebooting	Se roteşte… repornire
+Run setup again	Rulează configurarea din nou
+SD card   %s	Card SD   %s
+SD card   %s   (hold: format)	Card SD   %s   (ţine: formatare)
+SD card   (tap to mount)	Card SD   (atinge pentru montare)
+SD card inserted	Card SD introdus
+SD card lost - reinsert to recover	Card SD pierdut - reintrodu-l pentru recuperare
+SD card remounted	Card SD remontat
+SD card removed	Card SD scos
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	
+SD download failed: %s	Descărcare SD eşuată: %s
+SD formatted - %s (MESHCOMOD)	SD formatat - %s (MESHCOMOD)
+SD is busy - close tools and retry	
+SD removed - card-backed data cannot be saved	
+SD stayed busy - format cancelled, retry	
+SF	SF
+SF / CR / TX / AF	SF / CR / TX / AF
+SPIFFS %u/%u KB used	SPIFFS %u/%u KB folosiţi
+SSID set — enter password, then Save	SSID setat — introdu parola, apoi Salvează
+SSID too long	SSID prea lung
+Sample text	Text de probă
+Save	Salvează
+Save & restart	Salvează şi reporneşte
+Save / turn on	Salvează / porneşte
+Save auto-add	Salvează auto-adăugarea
+Save experimental	Salvează experimentalele
+Save failed	Salvare eşuată
+Save name	Salvează numele
+Save policy	Salvează politica
+Save position	Salvează poziţia
+Save quick replies	Salvează răspunsurile rapide
+Save report	Salvează raportul
+Save update bin to SD	Salvează actualizarea pe SD
+Saved	Salvat
+Saved backups	Backupuri salvate
+Saved network	Reţea salvată
+Saved profiles	Profiluri salvate
+Saved to slot %d	Salvat în slotul %d
+Saved — applying…	
+Saved — rebooting	Salvat — se reporneşte
+Saved — reconnecting…	Salvat — se reconectează…
+Saved: %s\nFlash it from the Launcher.	Salvat: %s\nInstalează-l din Launcher.
+Saving to SD… %d%%	Se salvează pe SD… %d%%
+Saving to SD… 0%	Se salvează pe SD… 0%
+Scan to open on phone	Scanează pentru a deschide pe telefon
+Scanning…	Se scanează…
+Scope direct msgs to region	Limitează DM-urile la regiune
+Screen	
+Screen locked	Ecran blocat
+Screen timeout (s, 0 = never)	Stingere ecran (s, 0 = niciodată)
+Screen timeout (s, 0 = never, min 10)	Stingere ecran (s, 0 = niciodată, min 10)
+Screen timeout: %ds	Stingere ecran: %ds
+Screen timeout: never	Stingere ecran: niciodată
+Screen-off just dims	Ecranul stins doar se întunecă
+Screenshot needs an SD card	Captura de ecran necesită un card SD
+Screenshot: low memory	Captură: memorie redusă
+Screenshot: no SD card	Captură: fără card SD
+Screenshot: write failed	Captură: scriere eşuată
+Scroll down	
+Scroll up	
+Scrollball: normal	Scrollball: normal
+Scrollball: reversed	Scrollball: inversat
+Search	Căutare
+Search contacts	Caută contacte
+Secondary keyboards	Tastaturi secundare
+Secret (32 hex chars)	Secret (32 caractere hex)
+Secret (32 hex, optional)	Secret (32 hex, opţional)
+Secret must be 32 hex chars (or empty).	Secretul trebuie să aibă 32 caractere hex (sau gol).
+Select	
+Select a DM thread	Selectează o conversaţie DM
+Select all	Selectează tot
+Select network	Selectează reţeaua
+Send advert	Trimite advert
+Send advert now	Trimite advert acum
+Send an advert now, or set how often you re-advertise.	Trimite un advert acum sau setează cât de des te re-anunţi.
+Send failed	Trimitere eşuată
+Sender blocked	Expeditor blocat
+Sensors	
+Sensors tab: off (restart to apply)	Fila Senzori: oprită (repornire pentru aplicare)
+Sensors tab: on (restart to apply)	Fila Senzori: pornită (repornire pentru aplicare)
+Sent	Trimis
+Set	Setează
+Set an SSID first	Setează mai întâi un SSID
+Set as notification sound	Setează ca sunet de notificare
+Set as wallpaper	Setează ca imagine de fundal
+Set your location first	Setează-ţi mai întâi locaţia
+Settings	Setări
+Setup complete	Configurare finalizată
+Share QR	Partajează QR
+Share channel	Partajează canalul
+Share location in advert	Partajează locaţia în advert
+Share secret	Partajează secretul
+Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Partajează secretul de 32 caractere ca să poată intra şi alţii. Lasă secretul gol pentru a genera unul aleatoriu.
+Share: %s	Partajare: %s
+Show	Arată
+Show Sensors tab	Arată fila Senzori
+Show in the app drawer	Afişează în sertarul de aplicaţii
+Show link lines	Arată liniile de legătură
+Show menu-bar letters	Arată literele barei de meniu
+Show on chart	Arată pe grafic
+Show on map	Arată pe hartă
+Sightline	Linie vizuală
+Signal & traffic	Semnal şi trafic
+Signal probe	Sondă de semnal
+Skip	Omite
+Sleep ready	Pregătit de somn
+Slot %d cleared	Slot %d golit
+Slot empty	Slot gol
+Small\nMedium\nLarge	Mic\nMediu\nMare
+Snake	
+Snake  —  swipe or roll the trackball	Snake  —  glisează sau roteşte trackball-ul
+Sort	Sortează
+Sound	Sunet
+Sound off	Sunet oprit
+Sound on	Sunet pornit
+Sound: %s	Sunet: %s
+Start time	Ora de început
+Status	Stare
+Step 1 of 3	Pasul 1 din 3
+Step 2 of 3	Pasul 2 din 3
+Step 3 of 3	Pasul 3 din 3
+Still analyzing the previous\npath… try again in a moment.	Încă se analizează calea\nanterioară… reîncearcă imediat.
+Stop	Opreşte
+Storage	Stocare
+Store	Magazin
+Store data on SD (reboot)	Stochează datele pe SD (repornire)
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Transmite ecranul ca imagine live pe care o atingi pentru control. Mai greu; panoul arată un substituent. Comutarea reporneşte dispozitivul.
+Switch	Comută
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Comuţi pe antena externă?\n\nAsigură-te întâi că e chiar conectată o antenă la mufa externă. Transmisia fără antenă poate defecta radioul.\n\nRevine la antena integrată la fiecare repornire.
+Sync clock from system	Sincronizează ceasul din sistem
+System	Sistem
+System info	Informaţii sistem
+TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nClienţi WS %d  GPS %s  Buzzer %s
+TCP off	TCP oprit
+TCP on	TCP pornit
+TOUCH BETA	TOUCH BETA
+TX	TX
+Tab hotkeys — tap a row, then press a key	Taste rapide pentru file — atinge un rând, apoi apasă o tastă
+Tap Use to switch - the device reboots to apply.	Atinge Foloseşte pentru a schimba – dispozitivul repornește pentru aplicare.
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Atinge Foloseşte pentru a schimba - dispozitivul reporneşte. Fişierele de limbă stau în /lang pe stocare; editează-le sau adaugă-le pe ale tale.
+Tap a language; the device reboots to apply.	Atinge o limbă; dispozitivul reporneşte pentru aplicare.
+Taste the rainbow!	Gustă curcubeul!
+Telemetry	Telemetrie
+Telemetry req (direct)…	Cerere telemetrie (direct)…
+Telemetry req (flood)…	Cerere telemetrie (flood)…
+Telemetry req failed	Cerere telemetrie eşuată
+Telemetry requests allowed	Cereri de telemetrie permise
+Telemetry requests off	Cereri de telemetrie oprite
+Telemetry req…	Cerere telemetrie…
+Telemetry settings	Setări telemetrie
+Temperature	Temperatură
+Test builds: off	Versiuni de test: oprite
+Test builds: on	Versiuni de test: pornite
+Theme	Temă
+Theme colour	Culoare temă
+Then pick a mode:	Apoi alege un mod:
+This contact hasn't shared\na GPS position.	Acest contact nu a partajat\no poziţie GPS.
+This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Acest dispozitiv poate rula Wi-Fi şi Bluetooth simultan, ca radio de sine stătător şi companion de telefon (aplicaţia MeshCore) în acelaşi timp.\n\nRularea ambelor foloseşte mai multă memorie RAM, deci porneşte doar ce îţi trebuie.\n\nLe poţi configura oricând în Setări.
+Throttles the CPU when idle to save power	Reduce frecvenţa CPU în repaus pentru economie de energie
+Tile reload needs Wi-Fi build	Reîncărcarea dalelor necesită build cu Wi-Fi
+Tiles cleared — reconnect Wi-Fi to re-download	Dale şterse — reconectează Wi-Fi pentru re-descărcare
+Tiles from SD card	Dale de pe cardul SD
+Time   %s	Ora   %s
+Time offset (vs automatic)	Decalaj orar (faţă de automat)
+Time offset: %+d h	Decalaj orar: %+d h
+Time range (hours ago)	Interval (ore în urmă)
+Time zone	Fus orar
+Time zone: %s	Fus orar: %s
+Tip: you can scan for networks in Settings → Network after setup.	Sfat: poţi scana reţele în Setări → Reţea după configurare.
+Today	Azi
+Toggle GPS	Comută GPS
+Too large to edit (>8 KB)	Prea mare pentru editare (>8 KB)
+Topographic map	Hartă topografică
+Trace	Trasează
+Trace SNR	Urmăreşte SNR
+Trace failed	Trasare eşuată
+Trace route	Trasează ruta
+Trace sent…	Trasare trimisă…
+Tracing route…	Se trasează ruta…
+Trackball navigates UI	Trackball-ul navighează UI-ul
+Trackball: cursor	Trackball: cursor
+Trackball: navigate UI	Trackball: navigare UI
+Turn Wi-Fi on first	Porneşte mai întâi Wi-Fi
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Porneşte Wi-Fi, apoi reîmprospătează. Aplicaţiile instalate funcţionează în continuare.
+Turn off	Opreşte
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Porneşti comutarea veche per transmisie?\n\nMod de diagnostic, doar pentru comparaţie. Transmite pe antena integrată şi ascultă pe cea externă, deci semnalul tău de ieşire va fi mult mai slab decât cel de intrare.\n\nRevine la antena integrată la fiecare repornire.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Opreşti limita istoricului?\n\nUn canal aglomerat poate umple tot spaţiul de mesaje - mai mult spaţiu ocupat şi listă/aplicaţie vizibil mai lente. Fă asta doar dacă ai cu adevărat nevoie de tot istoricul.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Porneşte asta, apoi deschide adresa de mai jos în orice browser pe acelaşi Wi-Fi - fără aplicaţie. Ecranul dispozitivului apare live în browser şi îl poţi controla prin atingere.
+Type a URL, then Go	Scrie un URL, apoi Mergi
+Type a message...	Scrie un mesaj...
+Type a new 6-digit code · applies after a reboot	Tastează un cod nou de 6 cifre · se aplică după repornire
+Type your network name — or switch to Wi-Fi in Settings to scan	Tastează numele reţelei — sau treci la Wi-Fi în Setări pentru scanare
+UI size (restart to apply)	Dimensiune UI (repornire pentru aplicare)
+UI size saved — restart to apply	Dimensiune UI salvată — reporneşte pentru aplicare
+USB powered	Alimentat prin USB
+Unblock	Deblochează
+Unblocked	Deblocat
+Unfavorite it first	Scoate-l mai întâi de la favorite
+Unlocking…	Se deblochează…
+Unmute @	Cu sunet @
+Unmute msgs	Cu sunet mesaje
+Unread %d	Necitite %d
+Unread %d\nRAM %u%%  ·  PSRAM %u%%	Necitite %d\nRAM %u%%  ·  PSRAM %u%%
+Unsupported WAV (need 16-bit PCM)	WAV neacceptat (necesită PCM 16-bit)
+Up	
+Update	Actualizează
+Update bin saved to SD	Bin de actualizare salvat pe SD
+Update complete.\nRebooting...	Actualizare completă.\nSe reporneşte...
+Update manually at flasher.wadamesh.com\n(Wi-Fi update is paused for now)	Actualizează manual la flasher.wadamesh.com\n(actualizarea Wi-Fi e momentan suspendată)
+Update via the Launcher	Actualizează prin Launcher
+Update via the Launcher / flasher.wadamesh.com	Actualizează prin Launcher / flasher.wadamesh.com
+Update via the Launcher / flasher.wadamesh.com.	Actualizează prin Launcher / flasher.wadamesh.com.
+Updated - rebooting…	Actualizat - repornire…
+Use	Foloseşte
+Username (optional)	Utilizator (opţional)
+Volume	Volum
+W up  ·  A left  ·  D right  ·  Z down  ·  S select  ·  Q back	W sus  ·  A stânga  ·  D dreapta  ·  Z jos  ·  S selectare  ·  Q înapoi
+WADA#15B6A6 MESH#	WADA#15B6A6 MESH#
+WADAMESH	WADAMESH
+Waiting for Wi-Fi...	Se aşteaptă Wi-Fi...
+Welcome to WADAMESH	Bun venit la WADAMESH
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Cât timp e pornit, oricine din reţeaua ta Wi-Fi poate vedea şi controla dispozitivul. Foloseşte HTTP simplu (doar reţea locală).
+Wi-Fi	Wi-Fi
+Wi-Fi & Bluetooth	Wi-Fi şi Bluetooth
+Wi-Fi and Bluetooth unavailable; retry from Settings	
+Wi-Fi is not enabled in this build.	Wi-Fi nu este activat în acest build.
+Wi-Fi isn't available on this build.	Wi-Fi nu este disponibil în acest build.
+Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	E nevoie de Wi-Fi pentru profilul\nde teren al acestei căi.\nConectează-te în Setări → Wi-Fi.
+Wi-Fi not connected	Wi-Fi neconectat
+Wi-Fi off	Wi-Fi oprit
+Wi-Fi on	Wi-Fi pornit
+Wi-Fi on, scanning…	Wi-Fi pornit, se scanează…
+Wi-Fi paused; Bluetooth disconnect timed out	
+Wi-Fi saved (radio off)	Wi-Fi salvat (radio oprit)
+Wi-Fi saved, applying	
+Wi-Fi saved, reconnecting	Wi-Fi salvat, se reconectează
+Wi-Fi unavailable; Bluetooth restored	
+Wi-Fi unavailable; retry from Settings	
+Yesterday	Ieri
+You can run setup later in Settings → Device	Poţi rula configurarea mai târziu în Setări → Dispozitiv
+Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Locaţia ta e necunoscută.\nSetează mai întâi GPS / poziţia\nîn Setări → Profil.
+Your name	Numele tău
+Your own apps	Aplicaţiile tale
+Zero-hop	Fără salt
+Zero-hop advert sent	Advert zero-hop trimis
+Zoom: +/- buttons	Zoom: butoane +/-
+client connected	client conectat
+command	comandă
+contacts (%d):	contacte (%d):
+diag boot...	pornire diag...
+double-tap SPACE cycles through the ones you enable	dublă atingere pe SPAŢIU comută între cele activate
+drive the UI without the screen; keys still type in text fields	controlează UI-ul fără ecran; tastele scriu în continuare în câmpurile text
+e.g. Family	ex. Familie
+e.g. mesh	ex. mesh
+from	de la
+h  to	h  la
+hold Backspace to unlock	ţine Backspace pentru deblocare
+hold the d-pad to unlock	ţine d-pad pentru deblocare
+hold the trackball to unlock	ţine trackball-ul apăsat pentru deblocare
+kHz	kHz
+keep holding	ţine apăsat
+last wake:	
+last wake: 	ultima trezire: 
+leave empty to generate	lasă gol pentru generare
+lights the keyboard + wakes the screen on an incoming message	aprinde tastatura + trezeşte ecranul la un mesaj primit
+mesh  link  armed	mesh  link  armat
+mesh busy	mesh ocupat
+min (0=off)	min (0=oprit)
+mkdir failed	mkdir eşuat
+n/a in this build	indisponibil în acest build
+now on channel %s	acum pe canalul %s
+now talking to %s	acum vorbeşti cu %s
+off	oprit
+off = Enter adds a new line; tap Send to send	oprit = Enter adaugă rând nou; atinge Trimite pentru trimitere
+on	pornit
+peak --	vârf --
+pick accented letters as you type; off = plain typing	alege litere cu accente în timp ce tastezi; oprit = tastare simplă
+press Volume Down to unlock	apasă Volum jos pentru deblocare
+push past a screen edge to scroll content	împinge peste marginea ecranului pentru a derula conţinutul
+score %d	scor %d
+search	caută
+tap for details	atinge pentru detalii
+tap the language key (e.g. EN) on the keyboard to cycle the ones you enable	atinge tasta de limbă (ex. EN) de pe tastatură pentru a comuta între cele activate
+tap to cancel	atinge pentru anulare
+tap to exit full screen	atinge pentru a ieşi din ecran complet
+zoom	zoom
+zoom %d	zoom %d
+~17 dB amp for quiet/remote areas; turn off in noisy spots.	amplificator ~17 dB pentru zone liniştite/izolate; opreşte-l în locuri zgomotoase.
+© OpenStreetMap	
+© OpenTopoMap	© OpenTopoMap

@@ -26,7 +26,9 @@ void TLoraPagerBoard::begin() {
     digitalWrite(pin, HIGH);
   }
 
+  if (!expander_mutex_) expander_mutex_ = xSemaphoreCreateMutex();
   const bool expander_ok = io_expander.begin(Wire, PAGER_XL9555_ADDR);
+  expander_ready_ = expander_ok;
   // Not just a nicety: every power rail AND the display's hardware reset hang
   // off this chip — if the probe fails silently, the symptom downstream is a
   // black screen with an otherwise clean boot log.
@@ -91,4 +93,42 @@ void TLoraPagerBoard::begin() {
     rtc_gpio_hold_dis((gpio_num_t)P_LORA_NSS);
     rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
   }
+}
+
+TLoraPagerBoard::SdCardState TLoraPagerBoard::sdCardState() {
+  // If the expander probe failed, don't turn an unreadable detect input into a
+  // permanent "empty slot" result. The non-formatting SD.begin() probe is the
+  // safe fallback arbiter (and will simply fail if the SD rail is unavailable).
+  if (!expander_ready_ || !expander_mutex_) return SdCardState::Unknown;
+  if (xSemaphoreTake(expander_mutex_, pdMS_TO_TICKS(50)) != pdTRUE)
+    return SdCardState::Unknown;
+  // LilyGo's pager implementation treats the XL9555 SD_DET input as
+  // active-low: HIGH is an empty slot, LOW is a seated card. Read the whole
+  // port so SensorLib's -1 I2C error remains distinguishable; digitalRead()
+  // narrows that error to 0xFF and would falsely report a live card removed.
+  const int port = io_expander.readPort(ExtensionIOXL9555::PORT1);
+  xSemaphoreGive(expander_mutex_);
+  if (port < 0) return SdCardState::Unknown;
+  return (port & (1 << (PAGER_EXPAND_SD_DET - 8))) == 0
+      ? SdCardState::Present : SdCardState::Absent;
+}
+
+bool TLoraPagerBoard::sdCardPresent() {
+  // Unknown is deliberately fail-present for normal operation: never tear down
+  // a live VFS because card-detect I2C was temporarily unavailable. A real,
+  // non-formatting SD transaction remains the final mount/alive arbiter.
+  return sdCardState() != SdCardState::Absent;
+}
+
+void TLoraPagerBoard::setAmpEnabled(bool on) {
+  if (!expander_ready_) return;
+  if (!expander_mutex_) {
+    io_expander.digitalWrite(PAGER_EXPAND_AMP_EN, on ? HIGH : LOW);
+    return;
+  }
+  // Audio must never pin the SD lifecycle gate forever if the I2C expander is
+  // unhealthy. A missed amp toggle is preferable to wedging the notify task.
+  if (xSemaphoreTake(expander_mutex_, pdMS_TO_TICKS(50)) != pdTRUE) return;
+  io_expander.digitalWrite(PAGER_EXPAND_AMP_EN, on ? HIGH : LOW);
+  xSemaphoreGive(expander_mutex_);
 }

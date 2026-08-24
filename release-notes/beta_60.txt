@@ -1,0 +1,25 @@
+# beta_60 - MeshCore 1.17: the whole core underneath wadamesh moved up a version
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- The headline: MeshCore 1.17 -------------------------------------------------------
+The MeshCore core under wadamesh moved from 1.16 to 1.17. Every board ships rebased on the new core: mesh routing, the seen-packet tables, radio drivers and the companion protocol are all the current upstream generation, with our buffered LoRa receive path carried over on top.
+1.17 lays the groundwork for channel activity detection (listen-before-talk): the radio can check the channel is clear before transmitting. It ships disabled in this build while upstream finishes making it configurable - a Radio & Mesh toggle follows in a later beta.
+This is the largest under-the-hood change since 1.16 landed, and it needs real-world hours more than any feature beta: please run beta_60 as your daily build and report anything that behaves differently from beta_59 - radio range, delivery, room servers, battery, pairing. The plan is to promote beta_60 to STABLE as soon as tester feedback clears it, so every new user starts on the 1.17 core.
+About now reports v1.17.0-touch.
+
+# --- Fixes -----------------------------------------------------------------------------
+Fixed a white frame around the boot logo in the first seconds after power-on (a 1.17 side effect caught on the bench: the early boot screen let the new core pick its background instead of forcing black).
+A LoRa radio that fails to start now says so on the screen - "LoRa radio not detected", with a hint to check the module - instead of leaving a silent boot with the only clue on serial (#244).
+Messages you retry from the failed state now appear in the open chat immediately instead of after leaving and reopening it (#248).
+Favorite contacts survive the contact-table cleanup. The star only lived in the touch UI's own records, so the core's eviction could silently drop a starred contact when the table filled; the star is now written through to the core's flags, which skips favorites (#178).
+Settings saves skip writes when nothing changed, ending the bursts of identical snapshot writes to flash that some actions triggered (#246).
+The Files app shows each file's modified date and time (#185).
+Discover rows show the distance to a node when both sides have a position fix (#239).
+The Store no longer offers a language "update" that is actually older than the installed one (#247, #232).
+The long-press accent picker gained ae/AE on the A key for Danish and Norwegian (#237).
+
+# --- Community: the T-Pager stack, by Pixel Perfect ------------------------------------
+Wi-Fi and BLE now hand off cleanly on the T-Lora Pager: enabling Wi-Fi no longer reboots the board, BLE bonds survive the handoff so the phone re-pairs without deleting the device, and BLE comes back automatically when Wi-Fi is unavailable (Pixel Perfect, #210).
+Map tiles on the T-Lora Pager load from the SD card reliably; SD access from different parts of the firmware no longer collides on the shared bus (Pixel Perfect, #206, #221).
+The T-Lora Pager lock screen carries the wadamesh brand mark (Pixel Perfect, #235).
+Hungarian translation updated to v9 - a full sweep by pisti87, with the one punctuation glyph our fonts lack swapped for its typographic twin.

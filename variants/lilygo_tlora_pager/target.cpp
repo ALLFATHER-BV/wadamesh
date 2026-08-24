@@ -22,6 +22,10 @@ RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BU
 
 WRAPPER_CLASS radio_driver(radio, board);
 
+SPIClass* tloraPagerSharedSPI() {
+  return &TFT_eSPI::getSPIinstance();
+}
+
 ESP32RTCClock fallback_clock;
 ClockFloorRTC        rtc_clock(fallback_clock);
 MicroNMEALocationProvider gps(Serial1, &rtc_clock);

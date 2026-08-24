@@ -16,6 +16,14 @@
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 
+// Display SPI write clock. 80 MHz (perf pass 2026-08-20) = parity with the plain V4's
+// TFT_eSPI driver; the S3's rungs are 80 / 40 / 26.7 / 20 MHz. Override with
+// -D LGFX_SPI_WRITE_HZ=40000000 if a unit shows tearing / garbled bands. Exposed here
+// (not just in the .cpp) so Settings -> About can report it.
+#ifndef LGFX_SPI_WRITE_HZ
+  #define LGFX_SPI_WRITE_HZ 80000000
+#endif
+
 class LGFXDisplay : public DisplayDriver {
 private:
   lgfx::Panel_ST7789  _panel;
@@ -27,6 +35,14 @@ private:
   uint16_t _color;
   RefCountedDigitalPin* _periph_power;
 
+  // Async LVGL flush state (see flushBandRGB565): one internal DMA-capable band buffer
+  // holding the byte-swapped copy of the LVGL band currently on the wire, and whether a
+  // frame-spanning startWrite() transaction is open on the (micro-SD-shared) bus.
+  uint16_t* _swap_buf;
+  size_t    _swap_px;
+  bool      _swap_alloc_failed;
+  bool      _frame_open;
+
 public:
   LGFXDisplay(RefCountedDigitalPin* peripher_power = nullptr);
   bool begin();
@@ -36,9 +52,9 @@ public:
   void turnOn() override;
   void turnOff() override;
   void clear() override;
-  void startFrame(Color bkg = DARK) override;
+  void startFrame(ColorVal bkg = UIColor::window_bkg) override;
   void setTextSize(int sz) override;
-  void setColor(Color c) override;
+  void setColor(ColorVal c) override;
   void setCursor(int x, int y) override;
   void print(const char* str) override;
   void fillRect(int x, int y, int w, int h) override;
@@ -47,8 +63,22 @@ public:
   uint16_t getTextWidth(const char* str) override;
   void endFrame() override;
 
-  // ---- LVGL flush entry point ----
+  // ---- LVGL flush entry points ----
+  // Synchronous: byte-swap + write, returns once the band is on the wire (LovyanGFX's
+  // convert path). Kept for non-LVGL callers and as the fallback of the async path.
   void writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels);
+  // Asynchronous (lvglFlush on the R8): swaps the band into an internal DMA buffer, kicks a
+  // single DMA and returns immediately so LVGL renders band N+1 while band N drains. `last`
+  // = lv_disp_flush_is_last(): waits for the DMA and closes the frame transaction so the
+  // shared micro-SD gets the bus back between frames. Falls back to the sync path if the
+  // DMA buffer could not be allocated.
+  void flushBandRGB565(int x, int y, int w, int h, const uint16_t* pixels, bool last);
+  // Wait for any in-flight band DMA and end the frame transaction (no-op if none is open).
+  // Every non-LVGL bus user below (sleep, rotation, clear) calls this first.
+  void finishFrame();
+  // True once the async path has its internal DMA buffer (i.e. LVGL flushes are async);
+  // false before the first flush or if internal DRAM was exhausted (sync fallback).
+  bool asyncFlushActive() const { return _swap_buf != nullptr; }
 
   // ---- Hardware panel rotation ----
   void setDisplayRotation(uint8_t r);

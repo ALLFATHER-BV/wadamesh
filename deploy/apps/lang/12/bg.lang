@@ -1,0 +1,1016 @@
+# wadamesh language file
+# canonical source - translators: edit this file and PR it
+# code: bg
+# ver: 12
+# name: Български
+# base: bg
+ (device behind)	 (устройството изостава)
+#7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d точки покритие · %lu записани на SD#
+#7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: изчакване на GPS…#
+#7A7F87 Wardrive: …#	#7A7F87 Wardrive: …#
+#region	#region
+%.3f MHz · SF%u · TX %+ddBm	%.3f MHz · SF%u · TX %+ddBm
+%d on map	%d на картата
+%s · %d nearby (%d rpt, %d comp)	%s · %d наблизо (%d повт, %d комп)
+%u types · hops %u · manual %s	%u типа · хопове %u · ръчно %s
+(RTC unset)	(RTC не е зададен)
+(device behind)	(устройството изостава)
+(no default)	(няма по подразбиране)
+0123456789abcdef…	0123456789abcdef…
+1 byte (legacy)\n2 bytes\n3 bytes	1 байт (стар)\n2 байта\n3 байта
+100\n250\n500\n1000\n2000\nNo limit	100\n250\n500\n1000\n2000\nБез лимит
+12-hour clock	12-часов формат
+32 hex characters	32 hex знака
+32-hex secret. Anyone with this can read the channel.	32-hex тайна. Всеки с нея може да чете канала.
+>_  Terminal	>_  Terminal
+@  Mentions	@  Споменавания
+@ mention sound	Звук при @ споменаване
+AF	AF
+AUTOMATIC ADVERTS	АВТОМАТИЧНИ АДВЕРТИ
+About	Относно
+About the map	Относно картата
+Accent popups	Изскачащи акценти
+Accent popups: off	Изскачащи акценти: изкл
+Accent popups: on	Изскачащи акценти: вкл
+Ack	Ack
+Active	Активно
+Add	Добави
+Add channel	Добави канал
+Add contact	Добави контакт
+Added	Добавено
+Added to contacts	Добавено в контактите
+Added to favorites	Добавено в любими
+Admin	Админ
+Advert	Advert
+Advert failed	Advert неуспешен
+Advert location	Местоположение на advert
+Advert policy saved	Правилото за advert е запазено
+Advert sent	Advert изпратен
+All marked read	Всичко прочетено
+Already exists	Вече съществува
+Already exists or table full.	Вече съществува или таблицата е пълна.
+Already in contacts	Вече в контактите
+Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.	След рестарт винаги тръгва на вградената антена. Избирай «Външна» само с монтирана антена на извода.
+Analyzing terrain…	Анализиране на терена…
+Analyzing terrain…\n(retry %d of 3)	Анализ на терена…\n(опит %d от 3)
+Answer telemetry requests	Отговаряй на заявки за телеметрия
+Anyone can join. Key is derived from the hashtag (lowercase).	Всеки може да се присъедини. Ключът е от хаштага (малки букви).
+App drawer as home	Меню с приложения като начален екран
+App icon size	Размер на иконите на приложенията
+Applies after restart.	Прилага се след рестарт.
+Apply	Приложи
+Apply auto-poll	Приложи авто-запитване
+Apply radio params	Приложи радио параметри
+Apps	Приложения
+Arrows + Enter always work. These letters are extra — tap a row, then press a key.	Стрелки + Enter винаги работят. Тези букви са допълнение — докосни ред, после натисни клавиш.
+Auto advert	Автоматична обява
+Auto chat	Авто чат
+Auto repeater	Авто ретранслатор
+Auto room	Авто стая
+Auto sensor	Авто сензор
+Auto-Join	Авто-присъединяване
+Auto-add	
+Auto-add contacts	Автоматично добавяне на контакти
+Auto-add saved	Авто-добавянето е запазено
+Auto-add settings	Настройки за автодобавяне
+Auto-delete above hops	Автоизтриване над хопове
+Auto-delete oldest	Автоизтриване на най-старите
+Auto-delete oldest makes room when full. Hops: 0 = keep all; nodes heard via more hops are removed.	Автоизтриването на най-старите освобождава място при запълване. Хопове: 0 = пази всички; възли, чути през повече хопове, се премахват.
+Auto-discover	Автооткриване
+Auto-discover off	Автооткриване изкл.
+Auto-discover on	Автооткриване вкл.
+Auto-poll every	Авто-запитване на всеки
+Auto-refresh off	Автообновяване изкл.
+Auto-refresh on	Автообновяване вкл.
+Available	Налични
+BLE off	BLE изкл
+BLE on	BLE вкл
+BT	BT
+Back	Назад
+Backups	Резервни копия
+Battery	Батерия
+Battery & power history	История на батерията и захранването
+Battery (V)	Батерия (V)
+Battery calibration reset to default	Калибрирането на батерията е нулирано
+Battery read too low — charge fully first	Отчитането е твърде ниско — заредете първо
+Battery saver (experimental)	Пестене на батерия (експериментално)
+Battery — last 24h	Батерия — последни 24 ч
+Battery:	Батерия:
+Block	Блокирай
+Block list full	Списъкът с блокирани е пълен
+Blocked list	Списък с блокирани
+Blocked users	Блокирани потребители
+Blocked — their messages are hidden	Блокиран — съобщенията му са скрити
+Blocking unsupported	Блокирането не се поддържа
+Blue battery  Last 6 min	Синьо — батерия  Последни 6 мин
+Blue battery  Orange temp  Cyan humidity	Синьо — батерия  Оранжево — темп.  Циан — влажност
+Bluetooth	Bluetooth
+Bluetooth already off	Bluetooth вече е изкл
+Bluetooth already on	Bluetooth вече е вкл
+Bluetooth deferred; retry from Settings	
+Bluetooth off	Bluetooth изкл
+Bluetooth on	Bluetooth вкл
+Bluetooth pairing isn't available on this device.\n\nThe radio chip's factory firmware doesn't support it.\n\nPair the phone app over Wi-Fi instead: connect this device to your network, then add it in the app by its IP address (TCP, port 5000) — shown under Settings > Network. USB works too.	Bluetooth сдвояване не е налично на това устройство.\n\nФабричният фърмуер на радиочипа не го поддържа.\n\nСвържи приложението през Wi-Fi: включи устройството в мрежата и го добави в приложението по IP адрес (TCP, порт 5000) — показан в Настройки > Мрежа. USB също работи.
+Bluetooth unavailable; retry from Settings	
+Bluetooth will start after Wi-Fi connects or times out.	
+Broker host / IP	Хост / IP на брокера
+Buffered receive (experimental)	Буфериран прием (експериментално)
+Built-in	Вграден
+Built-in (default)	Вграден (по подразбиране)
+CR	CR
+Calibrate battery (full = 100%)	Калибрирай батерията (пълна = 100%)
+Calibrated: 100%% = %u.%02u V  (long-press to reset)	Калибрирано: 100%% = %u.%02u V  (задръжте за нулиране)
+Can't block — not a contact	Не може да се блокира — не е контакт
+Can't display image\n(JPEG only, <= 1024 px)	Изображението не може да се покаже\n(само JPEG, <= 1024 px)
+Cancel	Отказ
+Cancelled	Отменено
+Cannot open file	Файлът не може да се отвори
+Catalog unavailable	Каталогът е недостъпен
+Centered on %s	Центрирано на %s
+Changing orientation - rebooting...	Смяна на ориентацията - рестартиране...
+Channel created	Каналът е създаден
+Channel joined	Присъединено към канала
+Channel name	Име на канала
+Channel not found	Каналът не е намерен
+Channel removed	Каналът е премахнат
+Channel scope saved	Обхватът на канала е запазен
+Channel settings	Настройки на канала
+Channel table is full	Таблицата с канали е пълна
+Channel table is full.	Таблицата с канали е пълна.
+Channel-specific regions can be set in each channel's settings.	Региони за отделни канали се задават в настройките на всеки канал.
+Channels:	Канали:
+Chat bubbles	Балончета в чата
+Chat bubbles: plain	Балончета: семпли
+Chat history is NOT saving	Историята на чата НЕ се записва
+Chat history save FAILED	Записът на историята на чата СЕ ПРОВАЛИ
+Chat icon	Икона на чата
+Chat icon reset to letters	Иконата на чата е върната към букви
+Chat icon set	Иконата на чата е зададена
+Chat removed	Чатът е премахнат
+Chat save fallback (failed tries)	Резервен запис на чата (неуспехи)
+Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen.	Чатове, контакти, настройки и mesh терминал - всичко в браузъра. Без рестарт; екранът на устройството си остава нормален.
+Choose .wav from files	Избери .wav от файловете
+Choose your name	Изберете името си
+Choose your region	Изберете региона си
+Clear	Изчисти
+Clear battery history?	Изчистване на историята на батерията?
+Clear history	Изчисти историята
+Clear telemetry history for this node?	Изчистване на телеметрията за този възел?
+Client repeat	Повтаряне от клиент
+Clock & time	
+Clock synced	Часовникът е синхронизиран
+Clock: 12-hour	Часовник: 12-часов
+Clock: 24-hour	Часовник: 24-часов
+Close	Затвори
+Colourful chat bubbles	Цветни чат балончета
+Commands	Команди
+Community Preset	Готова настройка на общността
+Community preset (meshcomod web)	Пресет на общността (meshcomod web)
+Compact	
+Compact messages	Компактни съобщения
+Compact messages (IRC style)	Компактни съобщения (IRC стил)
+Connect	Свързване
+Connect Wi-Fi to reload tiles	Свържете Wi-Fi за презареждане на плочките
+Connect to Wi-Fi	Свържи се с Wi-Fi
+Connect to Wi-Fi first	Първо се свържи с Wi-Fi
+Connect to Wi-Fi first, then try again.	Първо се свържете с Wi-Fi и опитайте отново.
+Connect to Wi-Fi to get a browser address.	Свържи се с Wi-Fi, за да получиш адрес за браузъра.
+Connected	Свързано
+Connected - a browser is viewing this screen.	Свързано - браузър гледа този екран.
+Connecting...	Свързване...
+Connecting…	Свързване…
+Console not available on this build	Конзолата не е налична в този билд
+Contact added	Контактът е добавен
+Contact deleted	Контактът е изтрит
+Contact gone	Контактът изчезна
+Contact missing	Контактът липсва
+Contacts	Контакти
+Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Контактите са във вътрешната памет - SD картата не се монтира при старт. Постави картата отново и рестартирай.
+Contacts are on internal flash.	Контактите са във вътрешната памет.
+Contacts are saved to the SD card.	Контактите се записват на SD картата.
+Contacts full	Контактите са пълни
+Contacts:	Контакти:
+Control	Управление
+Control this device from a browser	Управлявай устройството от браузър
+Copied %s	%s копирано
+Copied - Paste in a folder	Копирано - поставете в папка
+Copy	Копирай
+Copy blocked: SD card holds a different or unreadable profile	
+Copy blocked: SD profile could not be prepared safely	
+Copy blocked: internal data is busy	
+Copy blocked: migration guard unavailable	
+Copy failed (no internal identity)	Копирането не успя (няма вътрешна идентичност)
+Copy incomplete: SD data may be mixed. Retry before reboot.	
+Copy internal data to SD	Копирай данните на SD
+Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?	
+Copy secret	Копирай тайната
+Copying internal data to SD...	Копиране на вътрешните данни към SD...
+Copying internal data to SD...\nThis may take a few minutes; keep powered.	
+Could not add	Неуспешно добавяне
+Could not save the crash report	Докладът за срив не се записа
+Couldn't delete	Изтриването неуспешно
+Couldn't fetch terrain data.\nCheck the connection and the\nelevation server, then\ntry again.	Данните за терена не се заредиха.\nПроверете връзката и\nсървъра за височини и\nопитайте отново.
+Couldn't save the name to storage	Името не можа да се запише
+Couldn't send login	Заявката за вход не се изпрати
+Couldn't start the analyzer.\nTry again.	Анализаторът не можа да стартира.\nОпитайте пак.
+Crash export failed	Експортът на доклада за срив не успя
+Create	Създай
+Create QR	Създай QR
+Create a private channel	Създай частен канал
+Create failed	Създаването неуспешно
+Create private channel	Създай частен канал
+Current tile transfer is busy - retry	
+Custom UTC offset (hours)	Собствено UTC отместване (часове)
+Cut	Изрежи
+Cut - Paste in a folder	Изрязано - поставете в папка
+DM sound	Звук за DM
+DND	DND
+Danger zone	Опасна зона
+Data -> SD card on reboot\n(card must be inserted)	Данни -> SD карта при рестарт\n(нужна е карта)
+Data -> internal on reboot	Данни -> вътрешна при рестарт
+Delete	Изтрий
+Delete %d contact(s)?	Изтриване на %d контакт(а)?
+Delete chat	Изтрий чата
+Delete chat with "%s"?\nMessage history will be cleared.	Изтриване на чата с "%s"?\nИсторията ще се изчисти.
+Delete failed	Изтриването неуспешно
+Delete history	Изтрий историята
+Delete this backup file?\nThis cannot be undone.	Изтриване на този файл с копие?\nНе може да се отмени.
+Delete this chat's entire history?\nThe chat itself stays.	Изтриване на цялата история на този чат?\nСамият чат остава.
+Deleted	Изтрито
+Deleted %d	Изтрити: %d
+Deleted %d messages	Изтрити %d съобщения
+Deleting contacts	Изтриване на контакти
+Delivered	Доставено
+Detailed sensors	Подробни сензори
+Device clock differs from "%s" by %lu h%s	Часовникът се различава от "%s" с %lu ч%s
+Device clock differs from "%s" by %lu min%s	Часовникът се различава от "%s" с %lu мин%s
+Device name hidden	Името на устройството е скрито
+Device name shown	Името на устройството се показва
+Device time:	Време на устройството:
+Diagnostics	Диагностика
+Diagnostics are on the About page.	Дијагностика је на страници О програму.
+Discovered	Открити
+Discovered settings	Настройки на откритите
+Display	Дисплей
+Display name	Показвано име
+Distance in miles	Разстояние в мили
+Distance: km	Разстояние: км
+Distance: miles	Разстояние: мили
+Do Not Disturb	Не безпокой
+Do Not Disturb off	«Не безпокой» изкл.
+Do Not Disturb on	«Не безпокой» вкл.
+Down	
+Download failed	Изтеглянето се провали
+Download failed (network?)	Изтеглянето се провали (мрежа?)
+Download mode	Режим за изтегляне
+Download mode… reflash over USB	Режим download… флашнете отново през USB
+Downloaded - tap Use to switch	Изтеглено - докосни «Избери» за смяна
+Downloading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive\nand are saved for offline use.	Изтегляне на плочки на картата…\n\nЗапазете Wi-Fi връзката.\nПлочките се появяват при пристигане\nи се запазват за офлайн употреба.
+Downloading…	Изтегляне…
+Duty meter	Измервател на цикъла
+Edge scroll	Скрол в края
+Edit in Settings → Quick replies	Редактирай в Настройки → Бързи отговори
+Editing	Редактиране
+Empty = plaintext to a private broker	Празно = чист текст към частен брокер
+Empty file	Празен файл
+Enable Bluetooth	Включи Bluetooth
+Enable MQTT bridge	Активиране на MQTT мост
+Enable only if your repeater re-floods just one region. Otherwise leave off — it can block cross-region login/DMs.	Активирайте само ако вашият ретранслатор презалива само един регион. Иначе оставете изкл. — може да блокира вход/ЛС между региони.
+Enable web access	Включи уеб достъп
+Encryption key (optional)	Ключ за криптиране (по избор)
+End time	Краен час
+Enter SSID first	Първо въведете SSID
+Enter a name	Въведете име
+Enter a network name	Въведете име на мрежа
+Enter adds a new line	Enter добавя нов ред
+Enter exactly 32 hex characters.	Въведете точно 32 hex знака.
+Enter key sends message	Клавишът Enter изпраща съобщението
+Enter sends messages	Enter изпраща съобщения
+Enter the 32-hex secret shared by the channel creator.	Въведете 32-hex тайната, споделена от създателя на канала.
+Entering remote mode - rebooting...	Влизане в отдалечен режим - рестартиране...
+Erase all	Изтрий всичко
+Erases identity, contacts, channels, messages, Wi-Fi and all settings, then reboots.	Изтрива идентичност, контакти, канали, съобщения, Wi-Fi и всички настройки, после рестарт.
+Erasing everything…	Изтриване на всичко…
+Every node you talk to must match. You can change this later in Settings.	Всеки възел трябва да съвпада. Можете да промените по-късно в Настройки.
+Expansion Kit	Комплект за разширение
+Experimental	Експериментално
+Experimental - has known issues. Off = soft mouse cursor.	Експериментално - има известни проблеми. Изкл. = софтуерен курсор.
+Experimental saved	Експерим. запазено
+Export failed (can't open file)	Експортът неуспешен (файлът не се отваря)
+Export new backup	Ново копие
+Export settings	Експорт на настройки
+Exporting settings…	Експортиране на настройки…
+External antenna selected	Избрана е външна антена
+Factory reset	Фабрични настройки
+Factory reset blocked: SD activity is still running; close tools and retry.	
+Factory reset blocked: storage is busy	
+Factory reset incomplete: SD data may already be partially erased. Retry to finish, or remove the card before resetting internal data.	
+Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone.	Фабричен ресет?\n\nИзтрива идентичност, контакти, канали, съобщения, Wi-Fi и всички настройки. Необратимо.
+Failed to save channel.	Каналът не можа да се запази.
+Favorites full (max %d)	Любимите са пълни (макс %d)
+Favorites unsupported	Любими не се поддържат
+Fetching the app list from firmware.wadamesh.com	Изтегляне на списъка с приложения от firmware.wadamesh.com
+Files	Файлове
+Find	Намери
+Finish	Готово
+Firmware beta_%d\nCouldn't reach the update server	Фърмуер beta_%d\nСървърът за обновяване е недостъпен
+Firmware:	Фърмуер:
+Flash on new message	Мигане при ново съобщение
+Flood	Флуд
+Flood advert sent	Flood advert изпратен
+Flood every	Flood на всеки
+Flood: relayed across the mesh (multi-hop).\nZero-hop: neighbours only (no relaying).	Flood: препредаване през мрежата (мулти-хоп).\nZero-hop: само съседи (без препредаване).
+Folder created	Папката е създадена
+For Launcher installs: saves the latest firmware of the selected channel to the SD card (BINS folder).	За инсталации с Launcher: запазва най-новия фърмуер на избрания канал на SD картата (папка BINS).
+Forget network	Забрави мрежата
+Format	Форматирай
+Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased.	Форматиране на SD като MESHCOMOD (FAT32)?\nВсички данни на картата ще бъдат изтрити.
+Format failed (no card / SD error)	Форматирането неуспешно (няма карта / SD грешка)
+Frequency / bandwidth	Честота / лента
+Full	Пълно
+GPS	GPS
+GPS %s · Buzzer %s	GPS %s · Зумер %s
+GPS %s · Buzzer %s\n%s	GPS %s · Зумер %s\n%s
+GPS off	GPS изкл
+GPS on	GPS вкл
+GPS serial baud	GPS сериен baud
+GPS unset	GPS не е зададен
+GPS: acquiring...	GPS: търсене...
+GPS: fix	GPS: фикс
+GPS: off	GPS: изкл
+GPS: searching	GPS: търсене
+Game over  —  score %d   (tap to restart)	Край на играта  —  точки %d   (докоснете за рестарт)
+General	
+Get	Изтегли
+Get Started	Започни
+Get test builds (beta)	Получаване на тестови версии (бета)
+Go	Отиди
+Green pressure  Gray altitude	Зелено налягане  Сиво надм. височина
+Hashtag name	Име на хаштаг
+Hidden - turn it back on in the Lua Store	Скрито - включи го отново в Lua Store
+Hidden network	Скрита мрежа
+Hide	Скрий
+Hide device name	Скриване на името на устройството
+Hide this app from the drawer?	Да скрия ли това приложение от менюто?
+High-gain receiver (FEM LNA)	Приемник с високо усилване (FEM LNA)
+Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker.	Изключително експериментално. Препраща текста, името на подателя и времевия печат на всяко съобщение, което възелът ви получава, към MQTT брокер, където всеки с достъп до брокера може да ги чете. Директните съобщения са лични, от хора, които никога не са се съгласили да бъдат споделяни. Използвайте брокер, който контролирате, задайте ключ за криптиране по-долу и никога публичен брокер.
+History limit off	Лимитът на историята е изключен
+Home	
+Hotkey saved	Клавишът е запазен
+How you'll appear to other nodes. You can change this later in Settings.	Как ще изглеждате за други възли. Промяна в Настройки.
+Humidity	Влажност
+I accept the privacy risk	Приемам риска за поверителността
+Identity (public key)	Идентичност (публичен ключ)
+Idle power-save	Пестене на енергия в покой
+Idle sleep disabled	Заспиване в покой изключено
+Idle sleep enabled	Заспиване в покой включено
+Image too large (>4 MB)	Изображението е твърде голямо (>4 MB)
+Import	Импортирай
+Import backup	Импортиране на резервно копие
+Import failed (bad/unreadable JSON)	Импортът неуспешен (невалиден JSON)
+Import settings	Импорт на настройки
+Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Да внеса този архив?\nЗаменя самоличност,\nканали и контакти,\nпосле рестартира.
+Import: storage unavailable	Импорт: хранилището е недостъпно
+Importing settings…	Импортиране на настройки…
+Inactive	Неактивно
+Info	Инфо
+Insert emoji / symbol	Вмъкни емоджи / символ
+Install	Инсталирай
+Install a previous version	Инсталиране на предишна версия
+Install an earlier version	Инсталиране на по-ранна версия
+Install failed (network?)	Инсталирането се провали (мрежа?)
+Install update	Инсталирай обновление
+Installed	Инсталирани
+Installing…	Инсталиране…
+Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)	Вътрешна (вградена)\nВъншна (MMCX)\nАвто (старо, при предаване)
+Internal has no folders	Вътрешната памет няма папки
+Internal storage   %s / %s	Вътрешна памет   %s / %s
+Invalid lat/lon	Невалидни коорд.
+Invalid max hops	Невалидни макс. скокове
+Invalid radio values	Невалидни радио стойности
+Join	Присъедини се
+Join a hashtag channel	Присъедини се към хаштаг канал
+Join a private channel	Присъедини се към частен канал
+Join hashtag channel	Присъедини се към хаштаг канал
+Join network	Присъединяване към мрежа
+Join private channel	Присъедини се към частен канал
+Join the public channel	Присъедини се към публичния канал
+Joined %.40s	Присъединено към %.40s
+Keep per chat (messages)	Пазене на чат (съобщения)
+Key already in use	Ключът вече се използва
+Keyboard	Клавиатура
+Keyboard backlight	Подсветка на клавиатурата
+Keyboard light auto	Подсветка на клавиатурата: авто
+Keyboard light off	Подсветката на клавиатурата е изкл.
+Keyboard light on	Подсветката на клавиатурата е вкл.
+Keyboard nav: WASDZ on	Клавиатурна навиг.: WASDZ вкл.
+Keyboard nav: off	Клавиатурна навиг.: изкл.
+Keyboard navigation	Навигация с клавиатура
+Keys	
+LOS → %s	Пряка видимост → %s
+Landscape (desktop)	Пейзаж (десктоп)
+Landscape set - applies when remote mode starts.	Пейзажът е зададен - прилага се при стартиране на отдалечения режим.
+Language	Език
+Language catalog unavailable - check Wi-Fi, then reopen this tab.	Каталогът с езици е недостъпен - провери Wi-Fi и отвори раздела отново.
+Language updated - restarting to apply it…	Езикът е обновен - рестартиране за прилагане…
+Languages	Езици
+Large (bigger icons)	
+Latitude	Географска ширина
+Leave empty if not required	Оставете празно, ако не е нужно
+Leaving remote mode - rebooting...	Излизане от отдалечен режим - рестартиране...
+Left	
+Let's set up your device.\n\nYou'll pick a name and choose your LoRa region. Takes about a minute.	Нека настроим устройството ви.\n\nЩе изберете име и вашия LoRa регион. Отнема около минута.
+Letters only	Само букви
+LoRa antenna (P4)	LoRa антена (P4)
+Loading catalog…	Зареждане на каталога…
+Loading map tiles…\n\nKeep Wi-Fi connected.\nTiles appear as they arrive.	Зареждане на плочки на картата…\n\nЗапазете Wi-Fi връзката.\nПлочките се появяват при пристигане.
+Loading map…	Зареждане на картата…
+Loading the language catalog…	Зареждане на каталога с езици…
+Loading...	Зареждане...
+Local every	Локално на всеки
+Local sensors	Локални сензори
+Lock	Заключи
+Lock screen	Заключен екран
+Lock screen wallpaper	Тапет на заключен екран
+Lock text colour	Цвят на текста при заключване
+Lock text colour set	Цветът на текста при заключване е зададен
+Lock wallpaper	Тапет за заключване
+Lock wallpaper set	Тапетът за заключване е зададен
+Lock when screen off	Заключване при изключен екран
+Locking…	Заключване…
+Locks when screen off\n(hold Backspace to unlock)	Заключва се при изгасен екран\n(задръж Backspace за отключване)
+Locks when screen off\n(hold the d-pad to unlock)	Заключва се при изключен екран\n(задръжте d-pad за отключване)
+Locks when screen off\n(hold the trackball to unlock)	Заключва се при изключен екран\n(задръжте тракбола за отключване)
+Locks when screen off\n(press Volume Down to unlock)	Заключва се при изключен екран\n(натиснете Сила надолу за отключване)
+Locks when screen off\n(press the button to unlock)	Заключва се при изключен екран\n(натиснете бутона за отключване)
+Log in again	Влез отново
+Logging in again...	Повторно влизане...
+Logging in…	Вписване…
+Login OK (perms %u)	Вход OK (права %u)
+Login failed	Входът неуспешен
+Logs	Логове
+Longitude	Географска дължина
+Lua Store	Lua магазин
+MHz	MHz
+MQTT bridge	MQTT мост
+Map	Карта
+Map options	Опции на картата
+Map storage error.\nReflash the tiles partition.	Грешка в хранилището на картата.\nПрефлашнете дяла tiles.
+Map storage error.\n\nSD card detected but the\ntile cache didn't mount.\nReboot to retry.	Грешка в хранилището.\n\nSD картата е открита, но кешът\nна плочките не се монтира.\nРестартирайте за нов опит.
+Map tiles: microSD	Плочки: microSD
+Map tiles: microSD\n\n/maps/osm/z/x/y.png\n(or /tiles/z/x/y.jpg)\n\nMap appears when a tile\nfor this area is found.	Плочки на картата: microSD\n\n/maps/osm/z/x/y.png\n(или /tiles/z/x/y.jpg)\n\nКартата се появява, когато се намери\nплочка за тази област.
+Map tiles: server	Плочки: сървър
+Map — no tile pack on SPIFFS yet.\n\nUpload a tile pack to /tiles/<z>/<x>/<y>.jpg with the host-side generator.	Карта — все още няма пакет с плочки на SPIFFS.\n\nКачете пакет в /tiles/<z>/<x>/<y>.jpg с генератора от хоста.
+Map — set your location\nin Settings → Profile to\nshow the map here.	Карта — задайте местоположението\nв Настройки → Профил, за да\nсе покаже картата тук.
+Mark all chats and channels as read?	Да отбележа всички чатове и канали като прочетени?
+Mark as read	Отбележи като прочетено
+Mark read	Маркирай прочетено
+Marked read	Отбелязано като прочетено
+Max hops (0..64)	Макс. скокове (0..64)
+Max zoom for this pack	Макс. мащаб за този пакет
+Memory detail	Подробности за паметта
+Mesh health: a flood advert is rebroadcast by every repeater in range, so frequent floods add airtime for the whole network. Keep them infrequent (a day or more). Your neighbours still see you from zero-hop adverts and your message replies, so flood mainly when distant nodes need to rediscover you. Leave both Off to advertise only when you tap the buttons above.	Здраве на мрежата: flood advert се препредава от всеки ретранслатор в обхват, затова честите flood добавят ефирно време за цялата мрежа. Пазете ги редки (ден или повече). Съседите ви пак ви виждат по zero-hop адверти и отговорите ви, затова правете flood основно когато далечни възли трябва да ви открият отново. Оставете и двете изкл., за да се обявявате само при натискане на бутоните горе.
+Message	Съобщение
+Message LED	LED за съобщения
+Message LED off	LED за съобщения изкл.
+Message LED on	LED за съобщения вкл.
+Message deleted	Съобщението е изтрито
+Message didn't get through.\nResend it?	Съобщението не стигна.\nДа го изпратя ли пак?
+Message info	Информация за съобщението
+Message sound	Звук на съобщения
+Messages	
+Min zoom for this pack	Мин. мащаб за този пакет
+Mode: BLE starting / low memory	Режим: BLE стартира / малко памет
+Model:	Модел:
+Multi ACKs	Множествени ACK
+Multi-ack %s · Repeat %s · RX boost %s	Мулти-ack %s · Повтор %s · RX boost %s
+Multi-byte routing (path hash)	Многобайтово маршрутиране (хеш на пътя)
+Mute @	Заглуши @
+Mute msgs	Заглуши съобщ.
+Mute notification sound	Заглуши звука на известията
+My position (no GPS fix)	Моята позиция (няма GPS фиксация)
+Name	Име
+Name can't be empty.	Името не може да е празно.
+Name fragment	Част от име
+Name saved	Името е запазено
+Navigation keys	Навигационни клавиши
+Navigation keys — tap a row, then press a key	Навигационни клавиши — докоснете ред, после натиснете клавиш
+Nearby on map	Наблизо на картата
+Network name	Име на мрежата
+Network name (SSID)	Име на мрежата (SSID)
+New	Ново
+New DM	Ново ЛС
+New channel msg	Ново съобщ. в канал
+New contact	Нов контакт
+New file	Нов файл
+New folder	Нова папка
+New game	Нова игра
+New room msg	Ново съобщ. в стая
+Next	Напред
+Night mode (invert)	Нощен режим (инвертиране)
+No .json backups found.\nExport one first, or copy a\nmeshcore-backup.json to the\nSD card or internal flash.	Няма намерени .json архиви.\nЕкспортирайте един или копирайте\nmeshcore-backup.json на\nSD картата или вътр. флаш.
+No @mentions yet	Още няма @споменавания
+No Bluetooth on this device	Няма Bluetooth на това устройство
+No DM key	Няма ключ за ЛС
+No GPS module on this device.	Няма GPS модул на това устройство.
+No JPEGs found in /lock/.\nAdd images via the file\nmanager or an SD card.	Няма JPEG в /lock/.\nДобавете изображения чрез\nфайловия мениджър или SD карта.
+No SD card	Няма SD карта
+No SD card (or unreadable format)	Няма SD карта (или нечетим формат)
+No backups yet. Tap Export new backup above to create one.	Все още няма копия. Натиснете «Ново копие» горе, за да създадете.
+No battery history yet.\n\nLogged every 5 minutes.	Все още няма история на батерията.\n\nЗапис на всеки 5 минути.
+No blocked users.\n\nLong-press a message and tap\nBlock to add one.	Няма блокирани потребители.\n\nЗадръжте съобщение и докоснете\nБлокирай, за да добавите.
+No contact for thread	Няма контакт за разговора
+No contact to trace	Няма контакт за проследяване
+No contacts have shared\na GPS location yet.	Все още няма контакти,\nсподелили GPS местоположение.
+No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Все още няма открити възли.\n\nВсичко чуто в ефира, което не е в контактите ви, ще се появи тук. Когато авто-добавянето е изключено, можете да добавяте възли ръчно.
+No earlier versions yet	Все още няма по-ранни версии
+No local expansion data	Няма локални данни за разширение
+No location for this contact	Няма местоположение за този контакт
+No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Няма хранилище за карта.\n\nПоставете SD карта за кеш на\nWi-Fi плочки (или префлашнете за\nдяла tiles).
+No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Тук няма плочки на картата.\n\nСвържете се с Wi-Fi (Настройки → Wi-Fi),\nза да изтеглите този район.
+No mapped repeaters in this route	Няма картографирани ретранслатори по този маршрут
+No networks found (2.4 GHz only)	Няма намерени мрежи (само 2.4 GHz)
+No onboard GPS	Няма вграден GPS
+No other networks found	Не са открити други мрежи
+No position yet. A cold start needs a clear view of the sky and can take several minutes.	Още няма позиция. Студен старт изисква чисто небе и може да отнеме няколко минути.
+No reply from %s	Няма отговор от %s
+No reply. Check password, server,\nor device clock (device: %s)	Няма отговор. Проверете паролата, сървъра\nили часовника на устройството (устройство: %s)
+No saved map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.\nSaved tiles stay available offline.	Тук няма запазени плочки.\n\nСвържете се с Wi-Fi (Настройки → Wi-Fi),\nза да изтеглите този район.\nЗапазените плочки остават достъпни офлайн.
+No system time yet	Все още няма системно време
+No telemetry in this window.\nRequest one, or widen the range below.	Няма телеметрия в този прозорец.\nПоискайте или разширете обхвата по-долу.
+No tiles (non-ESP32)	Няма плочки (не ESP32)
+No version known yet. Wi-Fi and a completed update check are needed first.	Все още няма известна версия. Първо са нужни Wi-Fi и завършена проверка за обновления.
+Node name	Име на възела
+Node\nRegion\nRadio\nSignal\nContacts\nChannels\nBattery\nUptime	Възел\nРегион\nРадио\nСигнал\nКонтакти\nКанали\nБатерия\nВреме на работа
+Normal (100%)\nLarge (150%)\nHuge (200%)	Нормален (100%)\nГолям (150%)\nОгромен (200%)
+Not enough free memory for Bluetooth. Turn Wi-Fi off first.	Недостатъчно памет за Bluetooth. Първо изключете Wi-Fi.
+Not enough free memory for Wi-Fi. Turn Bluetooth off first.	Недостатъчно памет за Wi-Fi. Първо изключете Bluetooth.
+Not enough free memory to fetch it. Reboot and try again.	Недостатъчно свободна памет за изтегляне. Рестартирайте и опитайте отново.
+Nothing selected	Нищо не е избрано
+Notification sound set	Звукът за известие е зададен
+Notify on new contact	Известяване при нов контакт
+Off	Изкл
+Off\n1 day\n2 days\n3 days\n7 days	Изкл\n1 ден\n2 дни\n3 дни\n7 дни
+Off\n1\n2\n3\n5\n8	Изкл\n1\n2\n3\n5\n8
+Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours	Изкл\n60 мин\n90 мин\n2 часа\n3 часа\n4 часа
+Offline	Офлайн
+Older messages in a chat are dropped past this. A very large or unlimited history makes the chat list slower.	Старите съобщения над това се изтриват. Много голяма или неограничена история забавя списъка с чатове.
+On - open the address above in a phone browser.	Вкл. - отвори горния адрес в браузъра на телефона.
+On boot	При стартиране
+On map	На картата
+Open Advertise app	Отвори приложението Advertise
+Open a .wav, then tap 'Set as notification sound'	Отворете .wav, после докоснете 'Задай като звук за известие'
+Open a JPEG, then tap 'Set as wallpaper'	Отворете JPEG, после докоснете 'Задай като тапет'
+Open chat	Отвори чата
+Open in a browser (same Wi-Fi):	Отвори в браузър (същата Wi-Fi мрежа):
+Open in web	Отвори в уеб
+Open mesh console	Отвори mesh конзолата
+Optional — type your network, or leave blank to skip.	По избор — въведете мрежата си или оставете празно.
+Orange temp  Cyan humidity	Оранжево темп.  Циан влажн.
+Orientation (tap to rotate, reboots)	Ориентация (докоснете за завъртане, рестарт)
+Out of memory	Недостатъчна памет
+Overwrite oldest	Презапиши най-стария
+Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?	Да се презапишат настройките и идентичността на SD\nс вътрешните копия\nи да се рестартира?
+PNG isn't supported here\nUse a JPEG	PNG не се поддържа тук\nИзползвайте JPEG
+Pairing code	Код за сдвояване
+Pairing code saved — reboot to apply	Кодът за сдвояване е запазен — рестартирайте за прилагане
+Pairing code: %06lu	Код за сдвояване: %06lu
+Pairing code: n/a	Код за сдвояване: н/п
+Password (empty = open)	Парола (празно = отворена)
+Password (empty = skip Wi-Fi)	Парола (празно = пропусни Wi-Fi)
+Password (optional)	Парола (по избор)
+Password too long	Паролата е твърде дълга
+Paste	Постави
+Paste failed	Поставянето неуспешно
+Paste the 64-hex public key and a name. Useful when you want to DM someone before their advert has arrived.	Поставете 64-hex публичния ключ и име. Полезно за ЛС преди advert-а.
+Pasted	Поставено
+Path hash: %u byte%s	Хеш на пътя: %u байт%s
+Path reset	Пътят е нулиран
+Path reset failed	Нулирането на пътя неуспешно
+Paused  —  score %d	На пауза  —  резултат %d
+Per-transmit switching on	Превключване при всяко предаване вкл.
+Pick colour	Избери цвят
+Ping	Пинг
+Ping failed	Ping неуспешен
+Pinged (direct) — waiting…	Ping (директен) — изчакване…
+Pinged (flood) — waiting…	Ping (flood) — изчакване…
+Play	Възпроизведи
+Poll (min)	Запитване (мин)
+Poll every	Запитване на всеки
+Poll every %d min	Запитване на всеки %d мин
+Port	Порт
+Portrait set - applies when remote mode starts.	Портретът е зададен - прилага се при стартиране на отдалечения режим.
+Position saved	Позицията е запазена
+Power	Захранване
+Power off	Изключване
+Powering off… click trackball to wake	Изключване… щракнете топчето за събуждане
+Press a key…	Натиснете клавиш…
+Probe now	Измери сега
+Probing neighbours…	Проверка на съседи…
+Profile	Профил
+Pubkey must be 64 hex chars.	Публичният ключ трябва да е 64 hex.
+Public channel ready	Публичният канал е готов
+Public key (64 hex chars)	Публичен ключ (64 hex)
+Public key:	Публичен ключ:
+Publish channel messages	Публикуване на съобщения от канала
+Publish direct messages	Публикуване на директни съобщения
+Purge	Изчистване
+Purge all discovered nodes?	Изчистване на всички открити възли?
+Quick replies	Бързи отговори
+Quick reply	Бърз отговор
+RAM %u%%  ·  PSRAM %u%%	RAM %u%%  ·  PSRAM %u%%
+RX %d entries · Raw %d entries	RX %d записа · Raw %d записа
+RX boosted gain	Усилено RX
+RX log	RX дневник
+Radio & Mesh	Радио и меш
+Radio + region set	Радио + регион зададени
+Radio applied	Радиото е приложено
+Radio off	Радиото е изключено
+Radio: off	Радио: изключено
+Range test	Тест на обхват
+RangeTest failed	RangeTest неуспешен
+RangeTest sent (direct)	RangeTest изпратен (директен)
+RangeTest sent (flood)	RangeTest изпратен (flood)
+Raw log	Суров дневник
+Reads packets on a background task so a busy screen can't drop them.	Чете пакети във фонова задача, за да не ги изпуска зает екран.
+Reboot	Рестартирай
+Reboot device	Рестартирай устройството
+Rebooting...	Рестартиране...
+Rebooting…	Рестартиране…
+Receive unreleased test firmware — newer features, but less tested. The update check and Install update both follow the beta channel.	Получаване на неиздаден тестов firmware — по-нови функции, но по-малко тествани. Проверката и инсталирането следват бета канала.
+Recently heard	Наскоро чути
+Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased.	Форматиране на SD като MESHCOMOD (FAT32)?\nВСИЧКИ данни на картата ще бъдат изтрити.
+Region & scope	Регион и обхват
+Region scope (#tag) for this channel.\nBlank = use the default scope.	Регионален обхват (#tag) за този канал.\nПразно = обхват по подразбиране.
+Region scope (#tag), blank = default.	Обхват на регион (#tag), празно = по подразбиране.
+Region scope (#tag, blank = none)	Регионален обхват (#tag, празно = няма)
+Remember password	Запомни паролата
+Remote UI	Отдалечен интерфейс
+Remote UI (on)	Отдалечен интерфейс (вкл.)
+Remote access	Отдалечен достъп
+Remote terminal	Отдалечен терминал
+Remote terminal (recommended)	Отдалечен терминал (препоръчително)
+Remote terminal off	Отдалеченият терминал е изкл.
+Remove	Премахни
+Remove %s?	Премахни %s?
+Remove channel	Премахни канала
+Remove channel "%s"?\nLeaves it on this device only.	Премахване на канал "%s"?\nСамо от това устройство.
+Removed	Премахнато
+Removed from favorites	Премахнато от любими
+Rename	Преименувай
+Rename failed	Преименуването неуспешно
+Renamed	Преименувано
+Replay	Повтори
+Replay route on map	Повтори маршрута на картата
+Replaying route…	Повтаряне на маршрута…
+Resend	Изпрати отново
+Resend failed	Повторното изпращане е неуспешно
+Resends a message until a repeater echoes it or the recipient ACKs. Turn off to send once only.	Изпраща съобщението повторно, докато повторител го излъчи или получателят потвърди. Изключи за еднократно изпращане.
+Reset	Нулиране
+Reset path	Нулирай маршрута
+Restarting to apply the language…	Рестартиране за прилагане на езика…
+Restarting to enable Bluetooth	
+Resume	
+Resuming missing files to SD...\nThis may take a few minutes; keep powered.	
+Retry sends until heard	Повтаряй изпращането, докато бъде чуто
+Reverse scrollball	Обръщане на скролбол
+Right	
+Roll to highlight • click to insert	Превъртете за маркиране • щракнете за вмъкване
+Room is read-only for you.\nJoin with the room password to post.	Стаята е само за четене за вас.\nВлезте с паролата на стаята, за да публикувате.
+Rotating - reconnecting...	Завъртане - повторно свързване...
+Rotating… rebooting	Завъртане… рестарт
+Run setup again	Стартирай настройката отново
+SD card   %s	SD карта   %s
+SD card   %s   (hold: format)	SD карта   %s   (задръж: формат)
+SD card   (tap to mount)	SD карта   (докоснете за монтиране)
+SD card inserted	SD картата е поставена
+SD card lost - reinsert to recover	SD картата е изгубена - поставете я отново
+SD card remounted	SD картата е монтирана отново
+SD card removed	SD картата е извадена
+SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
+SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	
+SD download failed: %s	Изтеглянето на SD е неуспешно: %s
+SD formatted - %s (MESHCOMOD)	SD форматирана - %s (MESHCOMOD)
+SD is busy - close tools and retry	
+SD removed - card-backed data cannot be saved	
+SD stayed busy - format cancelled, retry	
+SF	SF
+SF / CR / TX / AF	SF / CR / TX / AF
+SPIFFS %u/%u KB used	SPIFFS %u/%u KB използвани
+SSID set — enter password, then Save	SSID зададен — въведете парола, после Запази
+SSID too long	SSID е твърде дълъг
+Sample text	Примерен текст
+Save	Запази
+Save & restart	Запази и рестартирай
+Save / turn on	Запази / включи
+Save auto-add	Запази авто-добавянето
+Save experimental	Запази експерименталното
+Save failed	Запазването неуспешно
+Save name	Запази името
+Save policy	Запази правилото
+Save position	Запази позицията
+Save quick replies	Запази бързите отговори
+Save report	Запази отчета
+Save update bin to SD	Запази обновлението на SD
+Saved	Запазено
+Saved backups	Запазени копия
+Saved network	Запазена мрежа
+Saved profiles	Запазени профили
+Saved to slot %d	Запазено в слот %d
+Saved — applying…	
+Saved — rebooting	Запазено — рестарт
+Saved — reconnecting…	Запазено — повторно свързване…
+Saved: %s\nFlash it from the Launcher.	Запазено: %s\nФлашнете го от Launcher.
+Saving to SD… %d%%	Запис на SD… %d%%
+Saving to SD… 0%	Запис на SD… 0%
+Scan to open on phone	Сканирай, за да отвориш на телефона
+Scanning…	Сканиране…
+Scope direct msgs to region	Ограничи директните съобщения до региона
+Screen	
+Screen locked	Екранът е заключен
+Screen timeout (s, 0 = never)	Изключване на екрана (с, 0 = никога)
+Screen timeout (s, 0 = never, min 10)	Изключване на екрана (с, 0 = никога, мин 10)
+Screen timeout: %ds	Изключване на екрана: %dс
+Screen timeout: never	Изключване на екрана: никога
+Screen-off just dims	Изключването на екрана само затъмнява
+Screenshot needs an SD card	Екранната снимка изисква SD карта
+Screenshot: low memory	Екранна снимка: малко памет
+Screenshot: no SD card	Екранна снимка: няма SD карта
+Screenshot: write failed	Екранна снимка: записът е неуспешен
+Scroll down	
+Scroll up	
+Scrollball: normal	Скролбол: нормален
+Scrollball: reversed	Скролбол: обърнат
+Search	Търсене
+Search contacts	Търсене на контакти
+Secondary keyboards	Допълнителни клавиатури
+Secret (32 hex chars)	Тайна (32 hex)
+Secret (32 hex, optional)	Тайна (32 hex, по избор)
+Secret must be 32 hex chars (or empty).	Тайната трябва да е 32 hex (или празно).
+Select	
+Select a DM thread	Изберете ЛС разговор
+Select all	Избери всичко
+Select network	Избери мрежа
+Send advert	Изпрати advert
+Send advert now	Изпрати advert
+Send an advert now, or set how often you re-advertise.	Изпратете advert сега или задайте колко често го повтаряте.
+Send failed	Изпращането неуспешно
+Sender blocked	Подателят е блокиран
+Sensors	
+Sensors tab: off (restart to apply)	Раздел сензори: изключен (рестарт за прилагане)
+Sensors tab: on (restart to apply)	Раздел сензори: включен (рестарт за прилагане)
+Sent	Изпратено
+Set	Задай
+Set an SSID first	Първо задайте SSID
+Set as notification sound	Задай като звук за известие
+Set as wallpaper	Задай като тапет
+Set your location first	Първо задайте местоположението
+Settings	Настройки
+Setup complete	Настройката е готова
+Share QR	Сподели QR
+Share channel	Сподели канала
+Share location in advert	Споделяй местоположението в advert
+Share secret	Сподели ключа
+Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Споделете 32-символната тайна, за да се присъединят други. Празно = случайна.
+Share: %s	Споделяне: %s
+Show	Покажи
+Show Sensors tab	Покажи раздел сензори
+Show in the app drawer	Показвай в менюто с приложения
+Show link lines	Показвай линиите на връзката
+Show menu-bar letters	Покажи буквите на менюто
+Show on chart	Покажи на графиката
+Show on map	Покажи на картата
+Sightline	Пряка видимост
+Signal & traffic	Сигнал и трафик
+Signal probe	Измерване на сигнала
+Skip	Пропусни
+Sleep ready	Готов за заспиване
+Slot %d cleared	Слот %d изчистен
+Slot empty	Слотът е празен
+Small\nMedium\nLarge	Малък\nСреден\nГолям
+Snake	
+Snake  —  swipe or roll the trackball	Snake  —  плъзни или завърти трекбола
+Sort	Сортирай
+Sound	Звук
+Sound off	Звук изкл
+Sound on	Звук вкл
+Sound: %s	Звук: %s
+Start time	Начален час
+Status	Състояние
+Step 1 of 3	Стъпка 1 от 3
+Step 2 of 3	Стъпка 2 от 3
+Step 3 of 3	Стъпка 3 от 3
+Still analyzing the previous\npath… try again in a moment.	Все още се анализира предишният\nпът… опитайте пак след малко.
+Stop	Спри
+Storage	Хранилище
+Store	Магазин
+Store data on SD (reboot)	Съхранявай данните на SD (рестарт)
+Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device.	Излъчва екрана като живо изображение, което докосваш за управление. По-тежко; панелът показва заместител. Превключването рестартира устройството.
+Switch	Превключи
+Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Превключване на външната антена?\n\nПърво се увери, че наистина има антена на външния извод. Предаване без антена може да повреди радиото.\n\nПри всеки рестарт се връща на вградената.
+Sync clock from system	Синхронизирай часовника
+System	Система
+System info	Системна информация
+TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nWS клиенти %d  GPS %s  Зумер %s
+TCP off	TCP изкл
+TCP on	TCP вкл
+TOUCH BETA	TOUCH BETA
+TX	TX
+Tab hotkeys — tap a row, then press a key	Клавиши за раздела — докосни ред, после натисни клавиш
+Tap Use to switch - the device reboots to apply.	Натиснете „Избери“, за да превключите — устройството ще се рестартира.
+Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Докосни «Избери» за смяна - устройството се рестартира. Езиковите файлове са в /lang в паметта; редактирай ги или добави свои.
+Tap a language; the device reboots to apply.	Изберете език; устройството ще се рестартира.
+Taste the rainbow!	Вкуси дъгата!
+Telemetry	Телеметрия
+Telemetry req (direct)…	Заявка за телеметрия (директен)…
+Telemetry req (flood)…	Заявка за телеметрия (flood)…
+Telemetry req failed	Заявката за телеметрия неуспешна
+Telemetry requests allowed	Заявките за телеметрия разрешени
+Telemetry requests off	Заявките за телеметрия изкл
+Telemetry req…	Заявки телем…
+Telemetry settings	Настройки за телеметрия
+Temperature	Температура
+Test builds: off	Тестови компилации: изкл
+Test builds: on	Тестови компилации: вкл
+Theme	Тема
+Theme colour	Цвят на темата
+Then pick a mode:	После избери режим:
+This contact hasn't shared\na GPS position.	Този контакт не е споделил\nGPS позиция.
+This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Това устройство може да ползва Wi-Fi и Bluetooth едновременно — като самостоятелно радио и телефонен компаньон (приложение MeshCore).\n\nДвете заедно ползват повече RAM, затова включвай само нужното.\n\nНастрой ги по всяко време в Настройки.
+Throttles the CPU when idle to save power	Ограничава процесора при бездействие за пестене на ток
+Tile reload needs Wi-Fi build	Презареждането изисква Wi-Fi компилация
+Tiles cleared — reconnect Wi-Fi to re-download	Плочките изчистени — свържи Wi-Fi отново за изтегляне
+Tiles from SD card	Плочки от SD картата
+Time   %s	Време   %s
+Time offset (vs automatic)	Изместване на времето (спрямо авто)
+Time offset: %+d h	Изместване: %+d ч
+Time range (hours ago)	Времеви обхват (часа назад)
+Time zone	Часова зона
+Time zone: %s	Часова зона: %s
+Tip: you can scan for networks in Settings → Network after setup.	Съвет: можете да сканирате мрежи в Настройки → Мрежа след настройката.
+Today	Днес
+Toggle GPS	Превключи GPS
+Too large to edit (>8 KB)	Твърде голям за редактиране (>8 KB)
+Topographic map	Топографска карта
+Trace	Проследяване
+Trace SNR	Проследи SNR
+Trace failed	Проследяването неуспешно
+Trace route	Проследи маршрута
+Trace sent…	Проследяването е изпратено…
+Tracing route…	Проследяване на маршрута…
+Trackball navigates UI	Трекболът навигира UI
+Trackball: cursor	Трекбол: курсор
+Trackball: navigate UI	Трекбол: навигирай UI
+Turn Wi-Fi on first	Първо включи Wi-Fi
+Turn Wi-Fi on, then tap refresh. Apps already installed still work.	Включи Wi-Fi и опресни. Инсталираните приложения продължават да работят.
+Turn off	Изключи
+Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Да включа ли старото превключване при предаване?\n\nДиагностичен режим, само за сравнение. Предава на вградената антена и слуша на външната - изходящият сигнал ще е много по-слаб от входящия.\n\nПри всеки рестарт се връща на вградената.
+Turn the history limit off?\n\nA busy channel can then fill the whole message store, which uses more space and makes the chat list and app noticeably slower. Only do this if you really need the full backlog.	Да изключа ли лимита на историята?\n\nНатоварен канал може да запълни цялото хранилище, което взима повече място и осезаемо забавя списъка и приложението. Направи го само ако наистина ти трябва целият архив.
+Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it.	Включи това и отвори долния адрес в браузър в същата Wi-Fi мрежа - без приложение. Екранът на устройството се появява на живо и можеш да го управляваш с докосване.
+Type a URL, then Go	Въведи URL и натисни «Отиди»
+Type a message...	Въведете съобщение...
+Type a new 6-digit code · applies after a reboot	Въведи нов 6-цифрен код · важи след рестарт
+Type your network name — or switch to Wi-Fi in Settings to scan	Въведете името на мрежата — или включете Wi-Fi в Настройки за сканиране
+UI size (restart to apply)	Размер на UI (рестарт за прилагане)
+UI size saved — restart to apply	Размерът на UI е запазен — рестарт за прилагане
+USB powered	Захранване от USB
+Unblock	Отблокирай
+Unblocked	Разблокиран
+Unfavorite it first	Първо махни от любими
+Unlocking…	Отключване…
+Unmute @	Възстанови @
+Unmute msgs	Възстанови съобщ.
+Unread %d	Непроч. %d
+Unread %d\nRAM %u%%  ·  PSRAM %u%%	Непроч. %d\nRAM %u%%  ·  PSRAM %u%%
+Unsupported WAV (need 16-bit PCM)	Неподдържан WAV (нужен 16-битов PCM)
+Up	
+Update	Обнови
+Update bin saved to SD	Файлът за обновяване е записан на SD
+Update complete.\nRebooting...	Обновяването завърши.\nРестартиране...
+Update manually at flasher.wadamesh.com\n(Wi-Fi update is paused for now)	Обновете ръчно на flasher.wadamesh.com\n(Wi-Fi обновяването е спряно засега)
+Update via the Launcher	Обнови през Launcher
+Update via the Launcher / flasher.wadamesh.com	Обнови през Launcher / flasher.wadamesh.com
+Update via the Launcher / flasher.wadamesh.com.	Обнови през Launcher / flasher.wadamesh.com.
+Updated - rebooting…	Обновено - рестартиране…
+Use	Избери
+Username (optional)	Потребителско име (по избор)
+Volume	Сила на звука
+W up  ·  A left  ·  D right  ·  Z down  ·  S select  ·  Q back	W нагоре  ·  A ляво  ·  D дясно  ·  Z надолу  ·  S избор  ·  Q назад
+WADA#15B6A6 MESH#	WADA#15B6A6 MESH#
+WADAMESH	WADAMESH
+Waiting for Wi-Fi...	Изчакване на Wi-Fi...
+Welcome to WADAMESH	Добре дошли в WADAMESH
+While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only).	Докато е включено, всеки в твоята Wi-Fi мрежа може да гледа и управлява устройството. Използва обикновен HTTP (само локална мрежа).
+Wi-Fi	Wi-Fi
+Wi-Fi & Bluetooth	Wi-Fi и Bluetooth
+Wi-Fi and Bluetooth unavailable; retry from Settings	
+Wi-Fi is not enabled in this build.	Wi-Fi не е разрешен в тази компилация.
+Wi-Fi isn't available on this build.	Wi-Fi не е наличен в тази компилация.
+Wi-Fi needed to fetch the\nterrain profile for this path.\nConnect in Settings → Wi-Fi.	Нужен е Wi-Fi за профила на\nтерена за този път.\nСвържете в Настройки → Wi-Fi.
+Wi-Fi not connected	Wi-Fi не е свързан
+Wi-Fi off	Wi-Fi изкл
+Wi-Fi on	Wi-Fi вкл
+Wi-Fi on, scanning…	Wi-Fi вкл, сканиране…
+Wi-Fi paused; Bluetooth disconnect timed out	
+Wi-Fi saved (radio off)	Wi-Fi запазен (радио изкл)
+Wi-Fi saved, applying	
+Wi-Fi saved, reconnecting	Wi-Fi запазен, повторно свързване
+Wi-Fi unavailable; Bluetooth restored	
+Wi-Fi unavailable; retry from Settings	
+Yesterday	Вчера
+You can run setup later in Settings → Device	Можете да стартирате настройката по-късно в Настройки → Устройство
+Your location is unknown.\nSet GPS / position in\nSettings → Profile first.	Местоположението е неизвестно.\nПърво задайте GPS / позиция в\nНастройки → Профил.
+Your name	Вашето име
+Your own apps	Твоите приложения
+Zero-hop	Без препредаване
+Zero-hop advert sent	Zero-hop advert изпратен
+Zoom: +/- buttons	Мащаб: бутони +/-
+client connected	клиент свързан
+command	команда
+contacts (%d):	контакти (%d):
+diag boot...	диаг. старт...
+double-tap SPACE cycles through the ones you enable	двойно докосване на ИНТЕРВАЛ превърта включените
+drive the UI without the screen; keys still type in text fields	управлявай UI без екрана; клавишите още пишат в полетата
+e.g. Family	напр. Семейство
+e.g. mesh	напр. mesh
+from	от
+h  to	ч  до
+hold Backspace to unlock	задръж Backspace за отключване
+hold the d-pad to unlock	задръж d-pad за отключване
+hold the trackball to unlock	задръжте топчето за отключване
+kHz	kHz
+keep holding	задръжте
+last wake:	
+last wake: 	последно събуждане: 
+leave empty to generate	оставете празно за генериране
+lights the keyboard + wakes the screen on an incoming message	осветява клавиатурата + събужда екрана при входящо съобщение
+mesh  link  armed	меш връзка  готова
+mesh busy	мрежата заета
+min (0=off)	мин (0=изкл)
+mkdir failed	Създаването на папка неуспешно
+n/a in this build	н/п в тази компилация
+now on channel %s	сега в канал %s
+now talking to %s	сега говорите с %s
+off	изключен
+off = Enter adds a new line; tap Send to send	изкл = Enter добавя нов ред; докосни Изпрати
+on	включен
+peak --	пик --
+pick accented letters as you type; off = plain typing	избор на букви с ударения при писане; изкл = обикновено писане
+press Volume Down to unlock	натисни Намаляване на звука за отключване
+push past a screen edge to scroll content	избутай отвъд ръба на екрана за превъртане
+score %d	точки %d
+search	търсене
+tap for details	докосни за детайли
+tap the language key (e.g. EN) on the keyboard to cycle the ones you enable	докоснете клавиша за език (напр. EN) на клавиатурата, за да превъртате включените
+tap to cancel	докоснете за отказ
+tap to exit full screen	докоснете за изход от цял екран
+zoom	мащаб
+zoom %d	мащаб %d
+~17 dB amp for quiet/remote areas; turn off in noisy spots.	усилвател ~17 dB за тихи/отдалечени места; изключи в шумни.
+© OpenStreetMap	© OpenStreetMap
+© OpenTopoMap	© OpenTopoMap
+Scope	
+another region	
+my region	
+Save FAIL x%u	
+Save migrating	
+Saved %s	
+Sort discovered	
+Sort by	
+Peers	
+Favorites	
+Has location	
+Direct (0-hop)	
+Heard %s	
+Traffic (since boot)\n  Sent   %u flood, %u direct\n  Recv   %u flood, %u direct	
+Overwrite oldest non-favorite	
+"%s" wants to send messages on the mesh.\n\nThey will be sent as %s and cannot be told apart from messages you typed.\n\nOnly allow this for an app you trust.	"%s" wants to send messages on the mesh.\n\nThey will be sent as %s and cannot be told apart from messages you typed.\n\nOnly allow this for an app you trust.
+%d of %d on map	%d of %d on map
+1-character messages will be ignored	1-character messages will be ignored
+1-character messages will be shown	1-character messages will be shown
+All	All
+Allow	Allow
+Apps that may send messages on the mesh. Anything they send goes out under your node name and cannot be told apart from a message you typed. Turn one off to take the permission back.	Apps that may send messages on the mesh. Anything they send goes out under your node name and cannot be told apart from a message you typed. Turn one off to take the permission back.
+Ignore 1-character messages	Ignore 1-character messages
+Join w/ password	Join w/ password
+Location no longer shared	Location no longer shared
+Location shared with anyone who asks	Location shared with anyone who asks
+Location shared with chosen contacts only	Location shared with chosen contacts only
+Location shared with this contact	Location shared with this contact
+Location sharing off	Location sharing off
+Max dots	Max dots
+Most mesh spam is a single character, because it is the cheapest message to send. Dropped silently: no chat entry, no notification, no sound.	Most mesh spam is a single character, because it is the cheapest message to send. Dropped silently: no chat entry, no notification, no sound.
+Never\nChosen contacts only\nAnyone who asks	Never\nChosen contacts only\nAnyone who asks
+No apps installed.	No apps installed.
+No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)	No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)
+Not supported on this board	Not supported on this board
+Read incoming messages	Read incoming messages
+Reconnected to %.40s	Reconnected to %.40s
+Send messages as me	Send messages as me
+Sent only when that contact asks, encrypted to them. Nothing is broadcast. Needs "Answer telemetry requests" on. Pick contacts in a contact's menu.	Sent only when that contact asks, encrypted to them. Nothing is broadcast. Needs "Answer telemetry requests" on. Pick contacts in a contact's menu.
+Server has forgotten you.\nJoin with the room password.	Server has forgotten you.\nJoin with the room password.
+Share my loc	Share my loc
+Share my location when asked	Share my location when asked
+Stop sharing loc	Stop sharing loc
+not asked yet	not asked yet
