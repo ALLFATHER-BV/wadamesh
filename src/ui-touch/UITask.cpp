@@ -2105,6 +2105,8 @@ struct SettingsModalState {
   lv_obj_t* exp_boost_sw;
   lv_obj_t* exp_dc_sw;
   lv_obj_t* wifi_sw;
+  lv_obj_t* glance_en_sw;
+  lv_obj_t* glance_locked_sw;
   lv_obj_t* wifi_ssid_ta;
   lv_obj_t* wifi_pwd_ta;
   /** Transports modal: live STA line (IP when connected, else Arduino WiFi status). */
@@ -10851,6 +10853,23 @@ static void glanceWhenLockedToggleCb(lv_event_t* e) {
   }
 }
 
+// Master "At a glance" toggle (Options > Display): gates the whole feature.
+// The secondary "while locked" switch's own saved preference is left
+// alone -- only its editability follows the master, so re-enabling always
+// restores its true prior state.
+static void glanceEnabledToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetGlanceEnabled(on);
+#endif
+  if (g_set_modal.glance_locked_sw) {
+    if (on) lv_obj_clear_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
+    else    lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
+  }
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("At a glance enabled") : TR("At a glance disabled"), 1200);
+}
+
 #if CAP_TRACKBALL
 // Invert the scrollball direction everywhere it drives motion (cursor, map pan,
 // emoji selector). Cached in s_tb_reverse so the per-tick poll never hits NVS.
@@ -11927,6 +11946,41 @@ static void buildDeviceSettings(int sec) {
     y += LV_MAX(40, h + 12);
   }
 
+  /* At a glance: master enable for the "at a glance" message-preview overlay
+     (see atGlanceShow()/newMsgImpl()) -- on by default, matching the
+     previously-unconditional behavior. Gates the "while locked" switch below. */
+  bool glance_on = true;
+  {
+    int h = settingsRowLabel(body, y, 6, TR("At a glance"), COLOR_SUB, nullptr, 56);
+    g_set_modal.glance_en_sw = lv_switch_create(body);
+    lv_obj_align(g_set_modal.glance_en_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    glance_on = touchPrefsGetGlanceEnabled();
+    if (glance_on) lv_obj_add_state(g_set_modal.glance_en_sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(g_set_modal.glance_en_sw, glanceEnabledToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+  }
+
+#if !defined(HAS_TDISPLAY_P4)
+  /* "At a glance" also fires while manually/idle locked, not just while
+     unlocked+dimmed -- off by default since it's a real trade-off (message
+     text becomes readable off a locked device). Disabled (not cleared) while
+     the master switch above is off. Moved here from Options > Lock screen so
+     it sits with the feature it modifies. */
+  {
+    int h = settingsRowLabel(body, y, 6, TR("At a glance while locked"), COLOR_SUB, nullptr, 56);
+    g_set_modal.glance_locked_sw = lv_switch_create(body);
+    lv_obj_align(g_set_modal.glance_locked_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (touchPrefsGetGlanceWhenLocked()) lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_CHECKED);
+    if (!glance_on) lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
+#endif
+    lv_obj_add_event_cb(g_set_modal.glance_locked_sw, glanceWhenLockedToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+  }
+#endif
+
 #if defined(HAS_EXPANSION_KIT)
   /* Show Sensors tab (V4 Expansion Kit): toggles the bottom Sensors tab + the
      Home env widget. Also auto-hidden when no environment sensor is attached.
@@ -12414,21 +12468,6 @@ static void buildDeviceSettings(int sec) {
     if (touchPrefsGetLockOnScreenOff()) lv_obj_add_state(sw, LV_STATE_CHECKED);
 #endif
     lv_obj_add_event_cb(sw, lockOnScreenOffToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    y += LV_MAX(40, h + 12);
-  }
-
-  // "At a glance" (see atGlanceShow()/newMsgImpl()) normally only fires while
-  // unlocked-but-idle-dimmed; this opts in to it firing while manually locked
-  // too, i.e. message previews become readable off a locked device -- off by
-  // default since that's a real trade-off, not just a convenience toggle.
-  {
-    int h = settingsRowLabel(body, y, 6, TR("At a glance while locked"), COLOR_SUB, nullptr, 56);
-    lv_obj_t* sw = lv_switch_create(body);
-    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
-#if defined(ESP32)
-    if (touchPrefsGetGlanceWhenLocked()) lv_obj_add_state(sw, LV_STATE_CHECKED);
-#endif
-    lv_obj_add_event_cb(sw, glanceWhenLockedToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
 #endif
@@ -45933,20 +45972,24 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
 #if defined(HAS_TOUCH_UI)
   // "At a glance": device unlocked but idle-dimmed to off -- light the plain
   // black glance overlay instead of the full app (see atGlanceShow() above).
-  // Skipped if DND is on. Manually locked is ALSO skipped unless the user
-  // opted in via Options > Lock screen > "At a glance while locked"
-  // (touchPrefsGetGlanceWhenLocked()) -- off by default since it's a real
-  // trade-off (message text becomes readable off a locked device). `_screen_off`
-  // covers the first message of a burst (wake + show); `s_glance_lit_ms`
-  // (already showing, from an earlier message in the same window) covers later
-  // ones -- update the text and restart the 5 s window instead of dropping
-  // them, since our own wake already cleared _screen_off by then.
+  // Master-disabled via Options > Display > "At a glance"
+  // (touchPrefsGetGlanceEnabled()) skips this entirely. Skipped if DND is on.
+  // Manually locked is ALSO skipped unless the user opted in via Options >
+  // Display > "At a glance while locked" (touchPrefsGetGlanceWhenLocked())
+  // -- off by default since it's a real trade-off (message text becomes
+  // readable off a locked device). `_screen_off` covers the first message of
+  // a burst (wake + show); `s_glance_lit_ms` (already showing, from an
+  // earlier message in the same window) covers later ones -- update the text
+  // and restart the 5 s window instead of dropping them, since our own wake
+  // already cleared _screen_off by then.
 #if defined(ESP32)
+  const bool glance_enabled_ok = touchPrefsGetGlanceEnabled();
   const bool glance_locked_ok = !_manual_lock || touchPrefsGetGlanceWhenLocked();
 #else
+  const bool glance_enabled_ok = true;
   const bool glance_locked_ok = !_manual_lock;
 #endif
-  if (!dndActive() && glance_locked_ok && (_screen_off || s_glance_lit_ms)) {
+  if (glance_enabled_ok && !dndActive() && glance_locked_ok && (_screen_off || s_glance_lit_ms)) {
     const bool was_off = _screen_off;
     atGlanceShow(thread, body, was_off);   // fade in only on the initial reveal of a burst
     if (was_off) {

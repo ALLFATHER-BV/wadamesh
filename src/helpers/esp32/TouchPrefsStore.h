@@ -430,6 +430,8 @@ bool    touchPrefsGetLockOnScreenOff();        // idle screen-off auto-locks; on
 void    touchPrefsSetLockOnScreenOff(bool on);
 bool    touchPrefsGetGlanceWhenLocked();       // "at a glance" also fires while manually/idle locked, not just unlocked+dimmed (default false)
 void    touchPrefsSetGlanceWhenLocked(bool on);
+bool    touchPrefsGetGlanceEnabled();          // master "at a glance" feature toggle (default true)
+void    touchPrefsSetGlanceEnabled(bool on);
 
 /** Per-channel mute, keyed by channel name. Bit 0 = mute messages, bit 1 =
  *  mute @-mentions. Suppresses the notification SOUND for that channel (the
