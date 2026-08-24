@@ -59,7 +59,7 @@ public:
       for (int i = 0; i < BATTERY_SAMPLES; i++) {
         sum += analogReadMilliVolts(PIN_VBAT_READ);
       }
-      return (uint16_t)(2 * (sum / BATTERY_SAMPLES));
+      return (uint16_t)(2.037f * (sum / BATTERY_SAMPLES));
     #else
       return 0;
     #endif
