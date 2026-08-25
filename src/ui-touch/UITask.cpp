@@ -2723,6 +2723,7 @@ static lv_obj_t* s_cc_sys_label = nullptr;   // CPU/RAM/PSRAM/IP line; refreshed
 static void ccBuildSysInfo(char* buf, size_t n);   // fwd-decl; defined with the CC helpers below
 static void closeControlCenter();   // defined in the control-center section below
 static void openControlCenter();    // defined in the control-center section below (early decl for the M9 CTRL key)
+static void takeScreenshotToSd();   // shared by the status-bar hold and M9 Control Center action
 static lv_obj_t* s_power_menu   = nullptr;   // power off / reboot menu (control center)
 static void closePowerMenu();               // defined in the control-center section below
 static void openPowerMenu();                // hold the red ✕ (F1) on the Tanmatsu → power off / reboot
@@ -39209,6 +39210,49 @@ static void ccThemeCb(lv_event_t* e) {
   openAccentPicker();
 }
 
+#if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+static uint8_t s_cc_screenshot_delay_s = 3;
+static lv_timer_t* s_cc_screenshot_timer = nullptr;
+
+static const char* ccScreenshotDelayText() {
+  return s_cc_screenshot_delay_s == 0 ? "now" :
+         s_cc_screenshot_delay_s == 3 ? "3s" : "10s";
+}
+
+static void ccScreenshotTimerCb(lv_timer_t*) {
+  s_cc_screenshot_timer = nullptr;
+  takeScreenshotToSd();
+}
+
+static void ccScreenshotDelayCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_cc_screenshot_delay_s = s_cc_screenshot_delay_s == 0 ? 3 :
+                            s_cc_screenshot_delay_s == 3 ? 10 : 0;
+  openControlCenter();
+}
+
+static void ccScreenshotCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (s_cc_screenshot_timer) {
+    lv_timer_del(s_cc_screenshot_timer);
+    s_cc_screenshot_timer = nullptr;
+  }
+  closeControlCenter();
+  const uint32_t wait_ms = (uint32_t)s_cc_screenshot_delay_s * 1000u + 150u;
+  s_cc_screenshot_timer = lv_timer_create(ccScreenshotTimerCb, wait_ms, nullptr);
+  if (!s_cc_screenshot_timer) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Screenshot: low memory"), 1800);
+    return;
+  }
+  lv_timer_set_repeat_count(s_cc_screenshot_timer, 1);
+  if (s_cc_screenshot_delay_s && g_lv.task) {
+    char msg[28];
+    snprintf(msg, sizeof msg, "Screenshot in %us", (unsigned)s_cc_screenshot_delay_s);
+    g_lv.task->showAlert(msg, 1200);
+  }
+}
+#endif
+
 #if CAP_KEYBOARD
 static void ccKbBacklightCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -39750,7 +39794,13 @@ static void openControlCenter() {
   lv_obj_remove_style_all(card);
 #if defined(HAS_TANMATSU)
   const int card_h = 384;   // bigger: header + 3 roomier sliders + toggle grid + sysinfo
-#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+#elif defined(HAS_THINKNODE_M9)
+  // The panel may report a 240px portrait viewport even though the physical
+  // display is mounted above the keyboard. Eight chips need three rows there;
+  // use the available height instead of clipping the last row in the old
+  // T-Deck-sized 200px card. Landscape still needs only two rows.
+  const int card_h = portrait ? (sh - STATUSBAR_H - 10) : 210;
+#elif defined(HAS_TDECK_GT911)
   const int card_h = 200;   // sysinfo + thin brightness slider + 2-row toggle grid (fits 240−22 screen)
 #elif defined(TLORA_PAGER)
   // 222-px-tall screen: the shared V4/T-Deck-landscape 212px card below is
@@ -39855,7 +39905,9 @@ static void openControlCenter() {
   // Brightness slider takes the first row (just under the date / battery) and the
   // GPS line follows it, so the slider sits ABOVE the GPS line. Boards without a
   // backlight PWM have no slider, so GPS reclaims that first row.
-#if defined(HAS_TANMATSU)
+#if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+  const int bl_y = row_y;             // keyboard-only boards use everything below this slider for controls
+#elif defined(HAS_TANMATSU)
   const int bl_y  = row_y;             // three stacked sliders: Screen / Keys / Sound
   const int gps_y = row_y + SC(100);   // GPS line sits below all three (scaled so it clears taller sliders)
 #elif defined(HAS_TDISPLAY_P4)
@@ -39868,6 +39920,7 @@ static void openControlCenter() {
   const int gps_y = row_y;
 #endif
 
+#if !defined(HAS_THINKNODE_M9) && !defined(TLORA_PAGER)
   // ---- GPS fix status (live; refreshed while the panel is open) ----
   s_cc_gps_label = lv_label_create(card);
   lv_label_set_long_mode(s_cc_gps_label, LV_LABEL_LONG_DOT);
@@ -39890,6 +39943,7 @@ static void openControlCenter() {
     lv_obj_align(s_cc_env_label, LV_ALIGN_TOP_LEFT, 0, gps_y + 12);
   }
 #endif
+#endif  // !HAS_THINKNODE_M9 && !TLORA_PAGER
 
 #if defined(HAS_TANMATSU)
   // ---- Three stacked sliders: Screen brightness, Keyboard backlight, Volume.
@@ -39968,6 +40022,7 @@ static void openControlCenter() {
   lv_obj_add_event_cb(bl, ccBrightnessReleaseCb, LV_EVENT_RELEASED,      nullptr);
 #endif
 
+#if !defined(HAS_THINKNODE_M9) && !defined(TLORA_PAGER)
   // ---- System info line (CPU + RAM% + PSRAM% + IP) — one thin line, pinned to
   //      the very bottom of the card. Memory is shown as % used so it stays
   //      compact and all four facts fit on one row.
@@ -39987,6 +40042,7 @@ static void openControlCenter() {
     lv_obj_set_style_text_color(sysl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_align(sysl, LV_ALIGN_BOTTOM_MID, 0, 0);
   }
+#endif
 
   // ---- Quick toggles (bottom row) ----
   bool wifi_on = false, ble_on = false;
@@ -40001,7 +40057,16 @@ static void openControlCenter() {
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_row(row, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_column(row, 10, LV_PART_MAIN);
-#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+#elif defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+  // Reclaim everything below brightness: no GPS/status line and no bottom
+  // system-info line. Five compact cells fit across the Pager landscape view;
+  // M9 portrait wraps to three rows. Spread the rows through the reclaimed band.
+  const int controls_y = bl_y + 16;
+  lv_obj_set_size(row, card_w - 20, card_h - controls_y - 20);
+  lv_obj_align(row, LV_ALIGN_TOP_MID, 0, controls_y);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_style_pad_row(row, 4, LV_PART_MAIN);
+#elif defined(HAS_TDECK_GT911)
   // 2-row grid: 4 chips per row, so chip 5 (Lock) wraps onto a 2nd row. Sits
   // ABOVE the bottom system-info line (-16 offset leaves room for it).
   lv_obj_set_size(row, card_w - 20, 80);
@@ -40016,9 +40081,15 @@ static void openControlCenter() {
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_column(row, 5, LV_PART_MAIN);
 #endif
+#if !defined(HAS_THINKNODE_M9) && !defined(TLORA_PAGER)
   // Bottom-anchored but lifted clear of the 1-line sysinfo (~16 px) plus a gap.
   lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, -20);
+#endif
+#if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_SPACE_EVENLY);
+#else
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+#endif
   lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
   const bool gps_on = g_lv.task && g_lv.task->getGPSState();
   // T-Deck: chips in a 2-row grid. V4/pager: chips sized to fit the card width
@@ -40028,7 +40099,9 @@ static void openControlCenter() {
   tw = (card_w - 20 - 20) / 3;   // 3 chips per row (Wi-Fi/BT/GPS/Theme/Keys/Sound → 2×3 grid)
   if (tw > 175) tw = 175;
   th = 80;
-#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+#elif defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+  tw = 56; th = 34;
+#elif defined(HAS_TDECK_GT911)
   tw = 58; th = 36;
 #else
   // Count only the chips this board/session will actually add below (which chips
@@ -40098,6 +40171,11 @@ static void openControlCenter() {
     const bool dnd_on = touchPrefsGetDndEnabled();
     ccToggle(row, dnd_on ? TOUCH_SYM_BELL_SLASH : TOUCH_SYM_BELL, TR("DND"), dnd_on, ccDndCb, tw, th, CAT_SOUND);
   }
+#if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+  ccToggle(row, LV_SYMBOL_REFRESH, "Timer", s_cc_screenshot_delay_s != 0,
+           ccScreenshotDelayCb, tw, th, -1, ccScreenshotDelayText());
+  ccToggle(row, LV_SYMBOL_IMAGE, "Screenshot", false, ccScreenshotCb, tw, th);
+#endif
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
 }
 
@@ -42033,7 +42111,6 @@ static bool     s_sb_shot_done = false;
 // detector aborts it), and a sticky bool would then eat the NEXT genuine bar tap. A stale
 // one simply expires.
 static uint32_t s_sb_back_ms = 0;
-static void takeScreenshotToSd();   // fwd
 static void statusBarHoldCb(lv_event_t* e) {
   switch (lv_event_get_code(e)) {
     case LV_EVENT_PRESSED:   s_sb_press_ms = millis(); s_sb_shot_done = false; break;
