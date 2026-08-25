@@ -183,6 +183,14 @@ bool pagerKeyboardAltHeld() { return s_alt; }
 
 void pagerKeyboardMarkAltUsed() { s_alt_used = true; }
 
+void pagerKeyboardDiscardAlt() {
+  s_alt = false;
+  s_alt_used = true;
+  s_alt_tap_pending = false;
+  s_alt_shift_chord_pending = false;
+  s_alt_backspace_chord_pending = false;
+}
+
 bool pagerKeyboardConsumeAltTap() {
   if (!s_alt_tap_pending) return false;
   s_alt_tap_pending = false;

@@ -66,4 +66,8 @@ int tdeckKeyboardReadKey() {
   return key;
 }
 
+void tdeckKeyboardDiscardModifiers() {}
+
+void tdeckKeyboardAllowModifiers() {}
+
 #endif
