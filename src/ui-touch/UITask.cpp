@@ -38103,6 +38103,7 @@ static bool m9HandleNavKey(int key) {
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_HOME:
       if (s_setup_root) return true;
+      s_nav_ta_editing = false;   // Home is global, including while a textarea is being edited
       if (s_apppage_close) {
         // A full-screen app page (Lua app, Snake, Web…) isn't a popup-registry
         // row — close it and stop: one action per press, so HOME on the Home
@@ -38408,6 +38409,10 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   lv_obj_t* ta = ta_focused;
 #endif
 #if defined(HAS_M9_KEYBOARD)
+  // Unlike directional keys and Back, the dedicated Home key is global. Route
+  // it before the textarea split so edit mode cannot swallow it as an unknown
+  // non-printable byte.
+  if (key == M9_KEY_HOME && m9HandleNavKey(key)) return;
   if (m9HandleArrowKey(key, ta)) return;    // ← runs BEFORE the if(!ta) split
 #endif
   if (!ta) {

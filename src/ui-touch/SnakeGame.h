@@ -6,9 +6,10 @@
 // Self-contained Snake mini-game launched from the Apps drawer.
 //
 // Owns a full-screen overlay on lv_layer_top: a canvas playfield filling the
-// unoccupied screen, a score line, and a close button. The game waits on a
-// "New game" button (doesn't start moving on open). Steer by swipe OR trackball
-// (UITask routes the trackball here via isOpen()/steer() and hides the cursor);
+// unoccupied screen, a score line, and a close button. The game can start from
+// the "New game" button OR from the first directional steer input. Steer by
+// swipe/gesture, trackball, or hardware directional keys (UITask routes board
+// input here via isOpen()/steer());
 // tap to restart after a game over; the X closes it. One instance at a time.
 //
 // Decoupled from UITask internals — depends only on LVGL and lvglPsramAlloc.

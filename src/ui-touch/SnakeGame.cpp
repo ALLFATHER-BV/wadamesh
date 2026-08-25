@@ -25,9 +25,12 @@ SnakeGame* SnakeGame::s_active = nullptr;
 bool SnakeGame::isOpen() { return s_active != nullptr && s_active->root_ != nullptr; }
 
 void SnakeGame::steer(int dx, int dy) {
-  if (!s_active || !s_active->started_ || s_active->over_) return;
+  if (!s_active || s_active->over_) return;
   // Trackball deltas -> one cardinal direction (dominant axis).
   if (dx == 0 && dy == 0) return;
+  // Keyboard-only boards (M9) have no touch "New game" tap target; first
+  // directional input should start immediately.
+  if (!s_active->started_) s_active->startGame();
   const int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
   if (adx >= ady) s_active->setDir(dx > 0 ? 1 : -1, 0);
   else            s_active->setDir(0, dy > 0 ? 1 : -1);
@@ -105,7 +108,7 @@ void SnakeGame::updateScoreLabel() {
   if (over_)         lv_label_set_text_fmt(score_, TR("Game over  \xe2\x80\x94  score %d   (tap to restart)"), score_val_);
   else if (paused_)  lv_label_set_text_fmt(score_, TR("Paused  \xe2\x80\x94  score %d"), score_val_);
   else if (started_) lv_label_set_text_fmt(score_, TR("score %d"), score_val_);
-  else               lv_label_set_text(score_, TR("Snake  \xe2\x80\x94  swipe or roll the trackball"));
+  else               lv_label_set_text(score_, TR("Snake  \xe2\x80\x94  swipe, roll, or press a direction"));
 }
 
 void SnakeGame::step() {
