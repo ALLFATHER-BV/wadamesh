@@ -18,6 +18,7 @@
 #include "AppPage.h"
 #include "device_caps.h"
 #include "i18n.h"   // wada.sys.tr: apps can use the same translation table the UI does
+#include "Utf8Text.h"
 #include "helpers/esp32/WdtHeavyGuard.h"   // wada.fs writes can trigger SPIFFS GC
 
 extern "C" {
@@ -246,6 +247,19 @@ uint32_t argColor(lua_State* L, int idx, uint32_t def = 0xFFFFFF) {
   return (uint32_t)luaL_optinteger(L, idx, (lua_Integer)def) & 0xFFFFFF;
 }
 
+// LVGL assumes structurally valid UTF-8 and can stop advancing when an app
+// hands it a partial codepoint. Keep one reusable repair buffer: valid strings
+// stay zero-copy, while malformed runs become one ASCII '?'. Every call below
+// is synchronous and LVGL copies label text before this buffer can be reused.
+const char* safeUiText(const char* text, size_t length, size_t* safe_length = nullptr,
+                       unsigned scratch_slot = 0) {
+  static std::string scratch_slots[2];
+  std::string& scratch = scratch_slots[scratch_slot & 1U];
+  const char* safe = Utf8Text::sanitize(text, length, scratch);
+  if (safe_length) *safe_length = safe == text ? length : scratch.size();
+  return safe;
+}
+
 // ---- canvas userdata ----
 struct CanvasUd { lv_obj_t* obj; lv_color_t* buf; int w, h; };
 
@@ -298,11 +312,14 @@ int cvCircle(lua_State* L) {
 int cvText(lua_State* L) {
   CanvasUd* c = checkCanvas(L);
   if (!c->obj) return 0;
+  const lv_coord_t x = (lv_coord_t)luaL_checkinteger(L, 2);
+  const lv_coord_t y = (lv_coord_t)luaL_checkinteger(L, 3);
+  size_t text_length = 0;
+  const char* text = luaL_checklstring(L, 4, &text_length);
   lv_draw_label_dsc_t d; lv_draw_label_dsc_init(&d);
   d.color = lv_color_hex(argColor(L, 5));
   d.font = luaHostFontForSize((int)luaL_optinteger(L, 6, 14));
-  lv_canvas_draw_text(c->obj, (lv_coord_t)luaL_checkinteger(L, 2), (lv_coord_t)luaL_checkinteger(L, 3),
-                      c->w, &d, luaL_checkstring(L, 4));
+  lv_canvas_draw_text(c->obj, x, y, c->w, &d, safeUiText(text, text_length));
   return 0;
 }
 int cvPos(lua_State* L) {
@@ -357,7 +374,9 @@ WidgetUd* checkLabel(lua_State* L) { return (WidgetUd*)luaL_checkudata(L, 1, "wa
 
 int lbSet(lua_State* L) {
   WidgetUd* u = checkLabel(L);
-  if (u->obj) lv_label_set_text(u->obj, luaL_checkstring(L, 2));
+  size_t length = 0;
+  const char* text = luaL_checklstring(L, 2, &length);
+  if (u->obj) lv_label_set_text(u->obj, safeUiText(text, length));
   return 0;
 }
 int lbPos(lua_State* L) {
@@ -390,11 +409,17 @@ int lbWidth(lua_State* L) {   // label:width(px [, "left"|"center"|"right"]) —
 
 int uiLabel(lua_State* L) {
   if (!s_h || !s_h->body) return luaL_error(L, "no app body");
+  size_t length = 0;
+  const char* text = luaL_checklstring(L, 1, &length);
+  const lv_coord_t x = (lv_coord_t)luaL_optinteger(L, 2, 0);
+  const lv_coord_t y = (lv_coord_t)luaL_optinteger(L, 3, 0);
+  const lv_font_t* font = luaHostFontForSize((int)luaL_optinteger(L, 4, 14));
+  const uint32_t color = argColor(L, 5, 0xE6E9ED);
   lv_obj_t* l = lv_label_create(s_h->body);
-  lv_label_set_text(l, luaL_checkstring(L, 1));
-  lv_obj_set_pos(l, (lv_coord_t)luaL_optinteger(L, 2, 0), (lv_coord_t)luaL_optinteger(L, 3, 0));
-  lv_obj_set_style_text_font(l, luaHostFontForSize((int)luaL_optinteger(L, 4, 14)), LV_PART_MAIN);
-  lv_obj_set_style_text_color(l, lv_color_hex(argColor(L, 5, 0xE6E9ED)), LV_PART_MAIN);
+  lv_label_set_text(l, safeUiText(text, length));
+  lv_obj_set_pos(l, x, y);
+  lv_obj_set_style_text_font(l, font, LV_PART_MAIN);
+  lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
   WidgetUd* ud = (WidgetUd*)lua_newuserdatauv(L, sizeof(WidgetUd), 0);
   ud->obj = l;
   luaL_setmetatable(L, "wada.label");
@@ -497,12 +522,17 @@ void btnEventCb(lv_event_t* e) {
 
 int uiButton(lua_State* L) {
   if (!s_h || !s_h->body) return luaL_error(L, "no app body");
-  const char* txt = luaL_checkstring(L, 1);
+  size_t text_length = 0;
+  const char* text = luaL_checklstring(L, 1, &text_length);
+  const lv_coord_t x = (lv_coord_t)luaL_checkinteger(L, 2);
+  const lv_coord_t y = (lv_coord_t)luaL_checkinteger(L, 3);
+  const lv_coord_t w = (lv_coord_t)luaL_optinteger(L, 4, 90);
+  const lv_coord_t h = (lv_coord_t)luaL_optinteger(L, 5, 34);
   lv_obj_t* b = lv_btn_create(s_h->body);
-  lv_obj_set_pos(b, (lv_coord_t)luaL_checkinteger(L, 2), (lv_coord_t)luaL_checkinteger(L, 3));
-  lv_obj_set_size(b, (lv_coord_t)luaL_optinteger(L, 4, 90), (lv_coord_t)luaL_optinteger(L, 5, 34));
+  lv_obj_set_pos(b, x, y);
+  lv_obj_set_size(b, w, h);
   lv_obj_t* bl = lv_label_create(b);
-  lv_label_set_text(bl, txt);
+  lv_label_set_text(bl, safeUiText(text, text_length));
   lv_obj_center(bl);
   if (lua_isfunction(L, 6)) {
     lua_rawgeti(L, LUA_REGISTRYINDEX, s_h->ref_btncb);
@@ -554,6 +584,7 @@ int uiTextW(lua_State* L) {
   size_t len = 0;
   const char* txt = luaL_checklstring(L, 1, &len);
   const lv_font_t* f = luaHostFontForSize((int)luaL_optinteger(L, 2, 14));
+  txt = safeUiText(txt, len, &len);
   lua_pushinteger(L, (lua_Integer)lv_txt_get_width(txt, (uint32_t)len, f, 0, LV_TEXT_FLAG_NONE));
   return 1;
 }
@@ -566,6 +597,7 @@ int uiTextLines(lua_State* L) {
   const char* txt = luaL_checklstring(L, 1, &len);
   const int w = (int)luaL_checkinteger(L, 2);
   const lv_font_t* f = luaHostFontForSize((int)luaL_optinteger(L, 3, 14));
+  txt = safeUiText(txt, len, &len);
   if (w <= 0) { lua_pushinteger(L, 1); return 1; }
   int lines = 0;
   const char* p = txt;
@@ -605,7 +637,8 @@ int uiList(lua_State* L) {
 // list:add(text [, fn]) -> index of the new row
 int lsAdd(lua_State* L) {
   ListUd* u = checkList(L);
-  const char* txt = luaL_checkstring(L, 2);
+  size_t text_length = 0;
+  const char* text = luaL_checklstring(L, 2, &text_length);
   if (!u->obj || !s_h) return 0;
   lv_obj_t* row = lv_btn_create(u->obj);
   lv_obj_set_width(row, LV_PCT(100));
@@ -614,7 +647,7 @@ int lsAdd(lua_State* L) {
   lv_obj_set_style_pad_all(row, 6, LV_PART_MAIN);
   listPaintRow(row, false);
   lv_obj_t* lb = lv_label_create(row);
-  lv_label_set_text(lb, txt);
+  lv_label_set_text(lb, safeUiText(text, text_length));
   lv_label_set_long_mode(lb, LV_LABEL_LONG_DOT);   // a long name truncates instead of reflowing the row
   lv_obj_set_width(lb, LV_PCT(100));
   lv_obj_set_style_text_font(lb, luaHostFontForSize(12), LV_PART_MAIN);
@@ -633,9 +666,11 @@ int lsAdd(lua_State* L) {
 int lsSet(lua_State* L) {
   ListUd* u = checkList(L);
   lv_obj_t* row = listRowAt(u, (int)luaL_checkinteger(L, 2));
+  size_t text_length = 0;
+  const char* text = luaL_checklstring(L, 3, &text_length);
   if (!row) return 0;
   lv_obj_t* lb = lv_obj_get_child(row, 0);
-  if (lb) lv_label_set_text(lb, luaL_checkstring(L, 3));
+  if (lb) lv_label_set_text(lb, safeUiText(text, text_length));
   return 0;
 }
 int lsColor(lua_State* L) {
@@ -1939,11 +1974,14 @@ void promptDeliver(const char* text) {
 }
 
 int uiInput(lua_State* L) {
-  const char* title   = luaL_optstring(L, 1, "");
-  const char* initial = luaL_optstring(L, 2, "");
+  size_t title_length = 0, initial_length = 0;
+  const char* title_raw = luaL_optlstring(L, 1, "", &title_length);
+  const char* initial_raw = luaL_optlstring(L, 2, "", &initial_length);
   luaL_checktype(L, 3, LUA_TFUNCTION);
   if (!s_h) return luaL_error(L, "no app");
   if (s_h->prompt_cb != LUA_NOREF) return luaL_error(L, "an input prompt is already open");
+  const char* title = safeUiText(title_raw, title_length, nullptr, 0);
+  const char* initial = safeUiText(initial_raw, initial_length, nullptr, 1);
   lua_pushvalue(L, 3);
   s_h->prompt_cb = luaL_ref(L, LUA_REGISTRYINDEX);
   luaHostTextPrompt(title, initial, promptDeliver);
