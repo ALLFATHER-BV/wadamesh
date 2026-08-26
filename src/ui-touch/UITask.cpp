@@ -15480,16 +15480,10 @@ static void actionSheetPingCb(lv_event_t* e) {
   bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
   closeActionSheet();
   if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
-  /* sendStatusPingWithGuestLoginForUI() pipelines a blank-password LOGIN
-   * before the STATUS REQ. Repeaters refuse to decrypt a PAYLOAD_TYPE_REQ
-   * from a sender that isn't already in their ACL, and the ACL is only
-   * populated by a successful sendLogin. A blank-password login matches
-   * repeaters with guest_password = "" (typical default) and adds us as a
-   * guest; subsequent REQs from this device then decrypt cleanly. The
-   * follow-up STATUS REQ also registers _ui_pending_status so the reply
-   * routes back via UITask::onPingReply (not eaten by the companion-serial
-   * pending_status branch). */
-  int r = the_mesh.sendStatusPingWithGuestLoginForUI(c);
+  /* Wait for the guest LOGIN response before sending STATUS. Besides avoiding
+   * the first-contact ACL race, the interactive login re-discovers the path so
+   * older repeaters can return LOGIN_OK before the request is sent. */
+  int r = the_mesh.uiSendRequestAfterGuestLogin(c, MyMesh::UiReqKind::Status);
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
     copyUtf8ReplacingMissingGlyphs(&g_font_14, s_ui_ping_target_name,
                                     sizeof(s_ui_ping_target_name),
@@ -15554,9 +15548,8 @@ static void actionSheetTelemetryCb(lv_event_t* e) {
   openTelemetryWindow(s_telem_node, s_telem_name, TELEM_HISTORY);
 #else
   // No telemetry window on this board — send straight away and toast the result.
-  // Chain a guest LOGIN ahead of the REQ (repeaters/sensors need us in their ACL
-  // before they decrypt a PAYLOAD_TYPE_REQ; see sendStatusPingWithGuestLoginForUI).
-  int r = the_mesh.sendTelemetryRequestWithGuestLoginForUI(c);
+  // Wait for guest LOGIN + path discovery before sending the telemetry REQ.
+  int r = the_mesh.uiSendRequestAfterGuestLogin(c, MyMesh::UiReqKind::Telemetry);
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT)
     g_lv.task->showAlert(TR("Telemetry req\xe2\x80\xa6"), 1400);
   else
@@ -53112,6 +53105,7 @@ void UITask::loop() {
    * doesn't fire later. */
   if (s_ui_ping_deadline_ms != 0 && now >= s_ui_ping_deadline_ms) {
     s_ui_ping_deadline_ms = 0;
+    the_mesh.cancelUIDeferredLogin();
     the_mesh.cancelUIPingPending();
     char msg[64];
     snprintf(msg, sizeof(msg), TR("No reply from %s"), s_ui_ping_target_name);
