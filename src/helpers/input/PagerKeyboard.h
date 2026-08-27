@@ -49,21 +49,9 @@ bool pagerKeyboardAltHeld();
  *  releasing Alt afterward does not arm the one-shot symbol layer. */
 void pagerKeyboardMarkAltUsed();
 
-<<<<<<< HEAD
-/** Clear held/tapped Alt and pending Alt chords when keyboard input is
- *  intentionally discarded during a UI mode transition. */
-void pagerKeyboardDiscardAlt();
-
-/** One-shot: true exactly once if Alt was pressed and released without being
- *  used as a modifier for anything else in between (no key typed, no
- *  pagerKeyboardMarkAltUsed() call) — a "solo tap", distinct from a
- *  symbol-layer or Alt+turn hold. Consumes the pending flag on read. */
-bool pagerKeyboardConsumeAltTap();
-=======
 /** Cancel one-shot/locked Alt, suppress a later release from a held Alt, and
  *  discard pending Alt chords. Used when input is intentionally discarded. */
 void pagerKeyboardDiscardAlt();
->>>>>>> pr/320
 
 /** True while Backspace is physically held WITHOUT Alt (raw state, mirrors
  *  pagerKeyboardAltHeld()). A plain press still immediately ring-pushes '\b'

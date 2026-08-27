@@ -167,11 +167,6 @@ int tdeckKeyboardReadKey() {
   return key;
 }
 
-<<<<<<< HEAD
-void tdeckKeyboardDiscardModifiers() {}
-
-void tdeckKeyboardAllowModifiers() {}
-=======
 void tdeckKeyboardDiscardModifiers() {
   portENTER_CRITICAL(&s_keyboard_mux);
   if (s_modifier_input_allowed) {
@@ -191,6 +186,5 @@ void tdeckKeyboardAllowModifiers() {
   }
   portEXIT_CRITICAL(&s_keyboard_mux);
 }
->>>>>>> pr/320
 
 #endif
