@@ -141,6 +141,7 @@
     <a href="#net">wada.net</a>
     <a href="#store">wada.store</a>
     <a href="#fs">wada.fs</a>
+    <a href="#audio">wada.audio</a>
     <a href="#sd">wada.sd</a>
     <a href="#sys">wada.sys</a>
     <a href="#timer">wada.timer</a>
@@ -441,6 +442,24 @@ end</code></pre>
       </div></div>
     </section>
 
+    <section class="doc" id="audio">
+      <h2>wada.audio <span class="chip">audio</span></h2>
+      <div class="row"><div class="prose">
+        <p>Asynchronous audio playback from the current app's private storage. A plain name such as <code>track.wav</code> resolves inside the same app folder as <a href="#fs">wada.fs</a>, whether that folder lives on internal flash, SD, or SD_MMC. Check <code>wada.sys.caps().audio</code> and <code>audio_wav</code> before using it.</p>
+        <table class="api">
+          <tr><th>Call</th><th>Returns / does</th></tr>
+          <tr><td>wada.audio.play(name)</td><td>Starts or replaces playback and returns <code>true</code>, or <code>nil, error</code>. Plain names use app-private storage. On boards with <code>caps().audio_sd</code>, <code>sd:/Music/track.wav</code> reads directly from the physical card.</td></tr>
+          <tr><td>wada.audio.pause()</td><td>Pauses an active track. Returns whether the command was accepted.</td></tr>
+          <tr><td>wada.audio.resume()</td><td>Resumes a paused track. Returns whether the command was accepted.</td></tr>
+          <tr><td>wada.audio.stop()</td><td>Stops the active track. Returns whether the command was accepted.</td></tr>
+          <tr><td>wada.audio.status()</td><td><code>{state, path, source, format, error}</code>. State is <code>stopped</code>, <code>playing</code>, <code>paused</code>, <code>ended</code>, or <code>error</code>; <code>error</code> is present only after a playback failure.</td></tr>
+        </table>
+        <p>Supported formats are PCM WAV (16-bit mono or stereo at 8&ndash;48&nbsp;kHz) and MPEG Layer III MP3, including CBR, VBR, and ID3-tagged files. Stereo is mixed to mono on the device. Check <code>audio_wav</code> or <code>audio_mp3</code> rather than assuming a format exists on older firmware.</p>
+        <p>Playback follows the user's Sound switch and volume, never blocks the Lua callback, and stops automatically when the app closes. A second <code>play()</code> replaces the current track. Playlist ordering belongs to the app, so there are no ambiguous host-side <code>next()</code> or <code>previous()</code> calls.</p>
+        <p>Plain names follow the same sandbox rules as <code>wada.fs</code>. Explicit <code>sd:</code> paths follow <a href="#sd">wada.sd</a> path validation. Expected errors include <code>bad path</code>, <code>no storage</code>, <code>no sd</code>, <code>not found</code>, <code>busy</code>, <code>muted</code>, and <code>unsupported format</code>.</p>
+      </div></div>
+    </section>
+
     <section class="doc" id="sd">
       <h2>wada.sd <span class="chip">sd_list</span></h2>
       <div class="row"><div class="prose">
@@ -466,7 +485,7 @@ end</code></pre>
           <tr><td>wada.sys.datetime()</td><td><code>{year, month, day, hour, min, sec, wday}</code> in local time. <code>wday</code> is 0 for Sunday.</td></tr>
           <tr><td>wada.sys.tr(s)</td><td>Translate <code>s</code> through the device's active language, using the same table the firmware's own interface uses. Returns <code>s</code> unchanged when there is no translation, so it is always safe to wrap a string. Add your keys to <code>deploy/apps/lang/&lt;code&gt;.lang</code> alongside the firmware's. Older firmware has no <code>sys.tr</code>: write <code>local tr = sys.tr or function(x) return x end</code> and call <code>tr()</code>.</td></tr>
           <tr><td>wada.sys.beep()</td><td>Short beep on boards with a buzzer; silent elsewhere, and silent when the user has sound off.</td></tr>
-          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, compass, accel, discover, input, rx_identity, list, packets, sensors, map, measure}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span> below, and <code>sd_list</code> before using <code>wada.sd</code>. The rest are feature flags for calls added after the extended SDK first shipped, so an app can degrade on older firmware instead of erroring.</td></tr>
+          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, audio, audio_wav, audio_mp3, audio_sd, compass, accel, discover, input, rx_identity, list, packets, sensors, map, measure}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span>, <code>sd_list</code> before using <code>wada.sd</code>, and <code>audio</code> plus the format flag before using <code>wada.audio</code>. <code>audio_sd</code> means direct <code>sd:</code> paths are available; plain audio names use app storage and do not require it.</td></tr>
           <tr><td>wada.sys.battery() <span class="chip">ext</span></td><td><code>{mv, pct, charging}</code>.</td></tr>
           <tr><td>wada.sys.env() <span class="chip">sensors</span></td><td><code>{temp_c, humidity, pressure_hpa, alt_m}</code>, or <code>nil</code>. A field is present only when the hardware actually reported it, so you can tell "no humidity sensor" from "0% humidity". Gated on <code>caps().sensors</code> &mdash; does this board <i>have</i> the sensor rail &mdash; and <b>not</b> on <code>sdk_ext</code>, which is a memory gate. Those are different questions: the plain Heltec V4 has the Expansion Kit but not the extended SDK, and most boards with the extended SDK have no sensors at all.</td></tr>
           <tr><td>wada.sys.gps() <span class="chip">ext</span></td><td><code>{lat, lon, lat_e6, lon_e6, sats, alt_m, time, speed_kmh, course}</code>, or <code>nil</code> with no fix &mdash; which is the normal indoor case, so handle it. <code>lat_e6</code>/<code>lon_e6</code> are exact micro-degrees; <code>lat</code>/<code>lon</code> are single-precision floats, so <a href="#discover">log the integers</a>. <code>alt_m</code> is metres. <code>time</code> is satellite time, absent until the receiver has decoded the date. <code>speed_kmh</code> and <code>course</code> (degrees clockwise from north) appear only on boards whose GPS provider reports them, and <code>course</code> only while actually moving &mdash; a stationary receiver has no course, so it is absent rather than 0. Treat those last three as optional.</td></tr>
@@ -587,7 +606,7 @@ end</code></pre>
       <div class="row"><div class="prose">
         <p>Apps run in a restricted environment. These are removed: <code>io</code>, <code>os</code>, <code>require</code>, <code>dofile</code>, and loading new chunks at runtime. Available: <code>math</code>, <code>string</code>, <code>table</code>, and the usual <code>pairs</code>, <code>ipairs</code>, <code>select</code>, <code>pcall</code>, <code>tostring</code>, <code>tonumber</code>.</p>
         <p>Memory comes from a capped pool in PSRAM, so an app that allocates without bound fails its own allocation rather than starving the radio or the UI. There is an <a href="#budget">instruction budget</a> on every callback for the same reason.</p>
-        <p><b>The extended calls are not on every board.</b> Anything marked <span class="chip">ext</span> above &mdash; <code>wada.fs</code>, <code>wada.mesh.send</code>, <code>wada.mesh.send_dm</code>, <code>wada.mesh.discover</code>, <code>sys.battery</code>, <code>sys.gps</code> &mdash; needs a board with the memory to carry it, so the Heltec V4 keeps its RAM for the mesh instead. Call <code>wada.sys.caps().sdk_ext</code> and degrade gracefully rather than assuming. <code>wada.sd</code> additionally needs a physical card interface, reported by <code>caps().sd_list</code>.</p>
+        <p><b>The extended calls are not on every board.</b> Anything marked <span class="chip">ext</span> above &mdash; <code>wada.fs</code>, <code>wada.mesh.send</code>, <code>wada.mesh.send_dm</code>, <code>wada.mesh.discover</code>, <code>sys.battery</code>, <code>sys.gps</code> &mdash; needs a board with the memory to carry it, so the Heltec V4 keeps its RAM for the mesh instead. Call <code>wada.sys.caps().sdk_ext</code> and degrade gracefully rather than assuming. <code>wada.sd</code> additionally needs a physical card interface, reported by <code>caps().sd_list</code>. <code>wada.audio</code> instead follows <code>caps().audio</code>: storage may be internal, but the device still needs a stream-capable speaker path.</p>
         <p>Rate limits are part of the contract, not a rainy-day guard: <code>wada.fs</code> writes are about one per second with a 32&nbsp;KB file cap, and <code>wada.mesh.send</code> has a 5&nbsp;second floor and a 180-character limit. They return <code>false, "too fast"</code> rather than throwing, and hitting them is expected &mdash; handle it.</p>
         <p>None of this makes a hostile app safe, which is why the catalog is curated. It makes an <i>honest</i> app that has a bug survivable: it gets closed, and the device keeps carrying traffic.</p>
       </div></div>

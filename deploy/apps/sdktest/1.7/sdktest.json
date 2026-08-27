@@ -1,0 +1,1 @@
+{"id":"sdktest","name":"SDK Test","ver":"1.7","desc":"Developer tool. Checks the extended Lua SDK on this board: capabilities, clock, battery, GPS, private files, audio API, read-only SD listing, crypto vectors, packet identity, channels, and opt-in transmit calls."}

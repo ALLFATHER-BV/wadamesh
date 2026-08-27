@@ -273,6 +273,15 @@
   #define CAP_SOUND_FILES 0
 #endif
 
+// Sustained PCM output for media playback. This is deliberately independent
+// of storage: Lua app files may live on internal flash, SD, or SD_MMC.
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || \
+    defined(HAS_TDISPLAY_P4) || defined(HAS_TANMATSU)
+  #define CAP_AUDIO_STREAM 1
+#else
+  #define CAP_AUDIO_STREAM 0
+#endif
+
 // ---- On-device web browser (the "Web" reader app) ---------------------------
 // The reader fetches pages over on-device HTTPS, and a TLS handshake needs ~30 KB of
 // free INTERNAL heap. Only the 8 MB-PSRAM boards (T-Deck, Tanmatsu, ThinkNode M9, RAK
@@ -292,6 +301,14 @@
 // board's block) only if a flash ceiling ever demands it.
 #ifndef CAP_LUA_APPS
   #define CAP_LUA_APPS 1
+#endif
+
+#ifndef CAP_LUA_AUDIO
+  #if CAP_LUA_APPS && CAP_AUDIO_STREAM
+    #define CAP_LUA_AUDIO 1
+  #else
+    #define CAP_LUA_AUDIO 0
+  #endif
 #endif
 
 // ---- Extended Lua SDK ------------------------------------------------------
