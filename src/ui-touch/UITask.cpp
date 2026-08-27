@@ -26396,7 +26396,12 @@ static int verchkFetchLatest(WiFiClient& client, HTTPClient& http) {
 fs::FS* luaHostAppFs();                                        // bridges (defined later in this TU)
 void    luaHostAppPath(char* out, size_t cap, const char* rel);
 
-struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; };
+// `requires` is an optional capability name the board must have for the app to
+// work at all ("sdk_ext" today). beta_69 published Wardrive and Nearby, both of
+// which need the extended SDK, and the Heltec V4 does not have it -- so the most
+// common board in the mesh offered a prominent Get button for two apps that then
+// refused to do anything, with no warning anywhere (reported on Discord).
+struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; char requires_cap[16]; };
 // `icon` is the manifest's optional icon NAME (not a glyph): the device's JSON
 // scanner only reads quoted strings, and a name is reviewable in a store
 // submission where a raw private-use codepoint would not be. Mapped to a glyph
@@ -40641,6 +40646,7 @@ static void luaStoreParseCatalog() {
         luaJsonField(obj, "name", c.name, sizeof c.name) &&
         luaJsonField(obj, "ver", c.ver, sizeof c.ver)) {
       if (!luaJsonField(obj, "desc", c.desc, sizeof c.desc)) c.desc[0] = 0;
+      if (!luaJsonField(obj, "requires", c.requires_cap, sizeof c.requires_cap)) c.requires_cap[0] = 0;
       s_lua_cat_n++;
     }
     p = cb + 1;
@@ -40655,6 +40661,16 @@ static void luaStoreParseCatalog() {
 // The caption is HIDDEN rather than deleted: this runs inside the button's own
 // click event, and deleting objects mid-dispatch is exactly how the popup
 // use-after-frees happened. Adding the spinner as a new child is safe.
+// Empty requirement = runs anywhere. Unknown requirement = allow: a newer
+// catalog must not disable apps on older firmware that has never heard of the
+// name, which would be the wrong way round.
+static bool luaStoreBoardMeets(const char* req) {
+  if (!req || !req[0]) return true;
+  if (!strcmp(req, "sdk_ext")) return CAP_LUA_SDK_EXT != 0;
+  if (!strcmp(req, "sd"))      return CAP_SD != 0;
+  return true;
+}
+
 static void luaStoreMarkBtnBusy(lv_obj_t* b) {
   if (!b) return;
   const uint32_t n = lv_obj_get_child_cnt(b);
@@ -41261,10 +41277,18 @@ static void luaStoreRebuildList() {
     const bool cur = inst && strcmp(inst->ver, s_lua_cat[i].ver) == 0;
     if (!inst) lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     else if (!cur) lv_obj_set_style_bg_color(b, lv_color_hex(0x4F9DF7), LV_PART_MAIN);
-    lv_label_set_text(bl, !inst ? TR("Get") : cur ? TR("Remove") : TR("Update"));
+    const bool runnable = luaStoreBoardMeets(s_lua_cat[i].requires_cap);
+    lv_label_set_text(bl, !runnable ? TR("N/A") : !inst ? TR("Get") : cur ? TR("Remove") : TR("Update"));
     lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
     lv_obj_center(bl);
-    if (inst && cur) {
+    if (!runnable && !inst) {
+      // Greyed and inert, with the reason on the row rather than a toast after
+      // a pointless download.
+      lv_obj_set_style_bg_color(b, lv_color_hex(0x39404C), LV_PART_MAIN);
+      lv_obj_clear_flag(b, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_style_text_color(ds, lv_color_hex(0xD7574E), LV_PART_MAIN);
+      lv_label_set_text(ds, TR("This board cannot run this app."));
+    } else if (inst && cur) {
       // Remove needs the INSTALLED index
       int ii = (int)(inst - s_lua_inst);
       lv_obj_set_style_bg_color(b, lv_color_hex(0x8A4444), LV_PART_MAIN);

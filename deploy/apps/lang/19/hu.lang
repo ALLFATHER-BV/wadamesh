@@ -1112,3 +1112,12 @@ Firmware beta_%d\nChecking for updates over Wi-Fi…	Firmware beta_%d\nChecking 
 Install beta_%d?\nThis downgrades the firmware and reboots.	A beta_%d telepítése?\nEz leminősíti a firmware-t és újraindul.
 Other (hidden) network…	Other (hidden) network…
 Paused	Paused
+At a glance	At a glance
+At a glance disabled	At a glance disabled
+At a glance enabled	At a glance enabled
+At a glance while locked	At a glance while locked
+Glance only shows when unlocked	Glance only shows when unlocked
+Glance shows message previews\nwhile the screen is locked	Glance shows message previews\nwhile the screen is locked
+Snake  —  swipe, roll, or press a direction	Snake  —  swipe, roll, or press a direction
+N/A	N/A
+This board cannot run this app.	This board cannot run this app.

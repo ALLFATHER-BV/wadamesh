@@ -1091,3 +1091,12 @@ Install beta_%d?\nThis downgrades the firmware and reboots.	Install beta_%d?\nTh
 Other (hidden) network…	Other (hidden) network…
 Paused	Paused
 Scan again	Scan again
+At a glance	At a glance
+At a glance disabled	At a glance disabled
+At a glance enabled	At a glance enabled
+At a glance while locked	At a glance while locked
+Glance only shows when unlocked	Glance only shows when unlocked
+Glance shows message previews\nwhile the screen is locked	Glance shows message previews\nwhile the screen is locked
+Snake  —  swipe, roll, or press a direction	Snake  —  swipe, roll, or press a direction
+N/A	N/A
+This board cannot run this app.	This board cannot run this app.

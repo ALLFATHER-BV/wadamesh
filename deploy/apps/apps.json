@@ -34,13 +34,15 @@
       "id": "wardrive",
       "name": "Wardrive",
       "ver": "1.1",
-      "desc": "LoRa coverage survey. Probes every 20s and logs each reply with GPS position, altitude and BOTH link directions (how well you heard them, how well they heard you) to a CSV. Reference app for wada.mesh.discover."
+      "desc": "LoRa coverage survey. Probes every 20s and logs each reply with GPS position, altitude and BOTH link directions (how well you heard them, how well they heard you) to a CSV. Reference app for wada.mesh.discover.",
+      "requires": "sdk_ext"
     },
     {
       "id": "nearby",
       "name": "Nearby",
       "ver": "1.0",
-      "desc": "Your contacts on a real map, sorted by distance, with bearing and a live frame counter. Reference app for wada.map, wada.ui.list, wada.geo and app.on_packet."
+      "desc": "Your contacts on a real map, sorted by distance, with bearing and a live frame counter. Reference app for wada.map, wada.ui.list, wada.geo and app.on_packet.",
+      "requires": "sdk_ext"
     },
     {
       "id": "gpscompass",
