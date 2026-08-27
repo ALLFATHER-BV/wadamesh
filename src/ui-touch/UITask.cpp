@@ -7015,7 +7015,12 @@ static void keyboardCb(lv_event_t* e) {
 }
 
 static void composerFocusCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_FOCUSED) return;
+  const lv_event_code_t code = lv_event_get_code(e);
+  if (code != LV_EVENT_FOCUSED && code != LV_EVENT_CLICKED) return;
+  if (code == LV_EVENT_CLICKED) {
+    lv_indev_t* act = lv_indev_get_act();
+    if (act && (lv_indev_get_scroll_obj(act) || lv_indev_get_scroll_dir(act) != LV_DIR_NONE)) return;
+  }
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
   if (p && p->detail_open) { showKb(p); noteKbActivity(); }
 }
@@ -31296,6 +31301,11 @@ static void makeChatDetail(LvChatPanel& p) {
   }
   // Tap on composer → show keyboard
   lv_obj_add_event_cb(p.composer_ta, composerFocusCb, LV_EVENT_FOCUSED, &p);
+#if CAP_TOUCH && !CAP_KEYBOARD
+  // A composer may remain group-focused after the keyboard is dismissed, so
+  // a later tap emits CLICKED without another FOCUSED event.
+  lv_obj_add_event_cb(p.composer_ta, composerFocusCb, LV_EVENT_CLICKED, &p);
+#endif
   lv_obj_add_event_cb(p.composer_ta, kbActivityPressCb, LV_EVENT_PRESSED, nullptr);
   // Grow / shrink the composer row as the message wraps (every text change).
   lv_obj_add_event_cb(p.composer_ta, composerAutoGrowCb, LV_EVENT_VALUE_CHANGED, &p);
