@@ -5,7 +5,7 @@ it ever touches a device. Not part of the firmware build.
 
 ```sh
 scripts/lua-harness/run.sh                                   # gpscompass, all scenarios
-scripts/lua-harness/run.sh deploy/apps/wardrive/1.0/wardrive.lua
+scripts/lua-harness/run.sh deploy/apps/wardrive/1.1/wardrive.lua
 SCENARIO=declination scripts/lua-harness/run.sh              # one scenario
 ```
 

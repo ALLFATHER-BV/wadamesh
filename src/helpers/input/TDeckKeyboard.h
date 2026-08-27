@@ -23,6 +23,12 @@ void tdeckKeyboardPoll();
 /** Pop the next buffered key (ASCII), or 0 if none. Safe from the UI thread. */
 int tdeckKeyboardReadKey();
 
+/** Compatibility hooks for UI mode transitions. Modifier state belongs to
+ *  the keyboard's C3 firmware in this legacy ASCII driver, so there is no
+ *  host-side state to clear or re-enable. */
+void tdeckKeyboardDiscardModifiers();
+void tdeckKeyboardAllowModifiers();
+
 /** Request a keyboard-backlight level (0 = off, 0xFF = on). Safe from the UI
  *  thread — the I2C write happens inside tdeckKeyboardPoll() (core 0), which
  *  owns the bus. Only re-sent when the value changes. */

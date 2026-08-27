@@ -33,7 +33,7 @@
     {
       "id": "wardrive",
       "name": "Wardrive",
-      "ver": "1.0",
+      "ver": "1.1",
       "desc": "LoRa coverage survey. Probes every 20s and logs each reply with GPS position, altitude and BOTH link directions (how well you heard them, how well they heard you) to a CSV. Reference app for wada.mesh.discover."
     },
     {

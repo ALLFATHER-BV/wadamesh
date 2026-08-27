@@ -10,6 +10,27 @@ local function checkint(v, what) assert(math.tointeger(v) ~= nil, what .. ": not
 local function checkcol(v, what) if v ~= nil then checkint(v, what .. " color") end end
 local function checkstr(v, what) assert(type(v) == "string" or type(v) == "number", what .. ": not a string") end
 
+local function valid_utf8(text)
+  local i, n = 1, #text
+  while i <= n do
+    local first = text:byte(i)
+    local width = first <= 0x7F and 1
+      or (first >= 0xC2 and first <= 0xDF and 2)
+      or (first >= 0xE0 and first <= 0xEF and 3)
+      or (first >= 0xF0 and first <= 0xF4 and 4) or 0
+    if width == 0 or i + width - 1 > n then return false end
+    for j = 2, width do
+      local byte = text:byte(i + j - 1)
+      if byte < 0x80 or byte > 0xBF then return false end
+    end
+    local second = width > 1 and text:byte(i + 1) or 0
+    if (first == 0xE0 and second < 0xA0) or (first == 0xED and second > 0x9F) or
+       (first == 0xF0 and second < 0x90) or (first == 0xF4 and second > 0x8F) then return false end
+    i = i + width
+  end
+  return true
+end
+
 -- instruction budget like guardedCall(): error() out of the hook, pcall catches
 local function guarded(budget, fn, ...)
   local count = 0
@@ -77,7 +98,7 @@ local function mkbutton(text, x, y, w, h, fn)
 end
 
 local function build_wada()
-  local wada = { ui = {}, sys = {}, mesh = {}, store = {}, timer = {}, net = {} }
+  local wada = { ui = {}, sys = {}, mesh = {}, store = {}, timer = {}, net = {}, fs = {} }
   wada.ui.colors = { accent = 0x15B6A6, text = 0xE6E9ED, sub = 0x7A7F87, bg = 0x000000, panel = 0x15181B, bad = 0xD7574E, good = 0x53C06B }
   wada.ui.canvas = mkcanvas
   wada.ui.label = mklabel
@@ -102,7 +123,7 @@ local function build_wada()
   wada.sys.beep = function() return false end
   wada.sys.caps = function() return { sdk_ext = cfg.caps.sdk_ext, keyboard = cfg.caps.keyboard,
                                        touch = cfg.caps.touch, sd = true, compass = cfg.caps.compass,
-                                       accel = cfg.caps.accel } end
+                                       accel = cfg.caps.accel, discover = cfg.caps.discover } end
   if cfg.caps.sdk_ext then
     wada.sys.battery = function() return { mv = 3900, pct = 70, charging = false } end
     wada.sys.gps = function() return cfg.gps and cfg.gps() or nil end
@@ -118,6 +139,12 @@ local function build_wada()
   wada.mesh.self = function() return { name = "me", lat = cfg.self_lat or 0, lon = cfg.self_lon or 0 } end
   wada.mesh.stats = function() return {} end
   wada.mesh.rx_log = function() return {} end
+  wada.mesh.discover = function() return "probe-1" end
+  wada.mesh.discovered = function() return cfg.discovered or {} end
+  wada.mesh.discover_clear = function() cfg.discovered = {} end
+
+  wada.fs.append = function(name, data) checkstr(name, "fs.append name"); checkstr(data, "fs.append data"); return true end
+  wada.fs.remove = function(name) checkstr(name, "fs.remove name"); return true end
 
   wada.store.get = function(k, d) assert(type(k) == "string"); local v = storekv[k]; if v == nil then return d end return v end
   wada.store.set = function(k, v) assert(type(k) == "string", "store key must be a string")
@@ -203,6 +230,36 @@ local contacts_fixture = {
 }
 
 local scenarios = {}
+
+scenarios.wardrive_utf8 = function()
+  cfg = {
+    w = 320, h = 196,
+    caps = { sdk_ext = true, keyboard = true, touch = false, compass = false, accel = false, discover = true },
+    discovered = {
+      { pubkey = "01020304", name = "Ouderkerk☀️", type = 2,
+        rssi = -72, snr = 7.25, their_snr = 6.5, hops = 0 }
+    }
+  }
+  cfg.gps = function()
+    return { lat = 52.295, lon = 4.907, lat_e6 = 52295000, lon_e6 = 4907000,
+             sats = 9, alt_m = 3, time = 1787620000 }
+  end
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(buttons[1] and buttons[1].fn, "Wardrive Start button missing")
+  assert(guarded(BUDGET, buttons[1].fn))
+  tick(app, 1, 100)
+  tick(app, 1, 4000)
+  local found = false
+  for _, label in ipairs(labels) do
+    assert(valid_utf8(label.text), "Wardrive rendered invalid UTF-8")
+    if label.text:find("Ouderkerk☀", 1, true) then found = true end
+  end
+  assert(found, "emoji-bearing repeater name was not rendered")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
 
 -- The declination model, as it actually ships. Rather than testing a copy in
 -- out/wmm, this pulls the do-block straight out of the app file that gets
@@ -711,7 +768,9 @@ scenarios.cost = function()
   assert(worst < BUDGET / 4, "tick too expensive")
 end
 
-local order = { "declination", "align_nofix", "bearings_absolute", "m9", "r8", "v4", "pager", "pager_portrait_jumbo", "tanmatsu", "cost" }
+local order = APP_PATH:find("/wardrive/", 1, true)
+  and { "wardrive_utf8" }
+  or { "declination", "align_nofix", "bearings_absolute", "m9", "r8", "v4", "pager", "pager_portrait_jumbo", "tanmatsu", "cost" }
 for _, name in ipairs(order) do
   if SCENARIO == "all" or SCENARIO == name then
     print("== " .. name)

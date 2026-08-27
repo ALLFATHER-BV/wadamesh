@@ -119,7 +119,7 @@
     #include <helpers/input/TDeckTrackball.h>
   #endif
   #if defined(HAS_TDECK_KEYBOARD)
-    #include <helpers/input/TDeckKeyboard.h>
+    #include "../helpers/input/TDeckKeyboard.h"
   #elif defined(HAS_M9_KEYBOARD)
     #include <M9Keyboard.h>
   #endif
@@ -130,7 +130,7 @@
     #include <M9Imu.h>               // wada.sys.accel() source (luaHostAccel)
   #endif
   #if defined(HAS_PAGER_KEYBOARD)
-    #include <helpers/input/PagerKeyboard.h>
+    #include "../helpers/input/PagerKeyboard.h"
   #endif
   #if defined(HAS_PAGER_ENCODER)
     #include <helpers/input/PagerEncoder.h>
@@ -36216,30 +36216,6 @@ static void updatePagerBackspaceHold(unsigned long now) {
   s_was_held = held;
 }
 
-// Orange/Alt key, tapped alone (not held as a symbol-layer modifier or for the
-// encoder's Alt+turn). In an open chat it takes over the old Backspace role:
-// jump to the latest message (when scrolled up in history) and drop focus in
-// the composer, ready to type — the natural "done reading, reply now" motion,
-// and the deliberate way OUT of the message list now that plain encoder turns
-// hold focus inside it while history loads (pagerEncoderChatEdgeScroll).
-// Everywhere else it stays the same "next field" as one rotary NEXT detent.
-// Call once per loop tick while the screen is on; screen-off handling discards
-// any pending tap instead (see loop()'s HAS_PAGER_KEYBOARD branch) so a stray
-// tap picked up while idle-dimmed can't fire the moment the screen wakes.
-static void updatePagerAltTapNext() {
-  if (!pagerKeyboardConsumeAltTap()) return;
-  LvChatPanel* cp = navOpenChatPanel();
-  if (cp && cp->msgs && cp->composer_ta && lv_obj_is_valid(cp->composer_ta)) {
-    if (chatVirtAwayFromBottom(cp)) chatVirtJumpToLatest(cp);
-    lv_group_focus_obj(cp->composer_ta);
-    s_nav_show = true;
-    if (g_lv.task) g_lv.task->noteUserInput();
-    return;
-  }
-  navPushTap(LV_KEY_NEXT);
-  if (g_lv.task) g_lv.task->noteUserInput();
-}
-
 // Alt(Fn)+Shift chord (PagerKeyboard.cpp only reports it, since the driver has
 // no UI visibility): toggles Caps Lock while actually editing a text field
 // (the field is where "Caps Lock" means anything) and is a deliberate no-op
@@ -36454,9 +36430,7 @@ static bool pagerEncoderScrollOversizedFocused(bool up) {
 // the list instead (same navScrollFocused the Alt+turn branch uses): the
 // scroll fires the virtualization render, the neighbor bubble joins the nav
 // group via the tree-signature rebuild, and the next detent walks onto it.
-// Focus only leaves the list at the TRUE oldest/newest message. The orange-key
-// solo tap (updatePagerAltTapNext) pushes LV_KEY_NEXT directly and never comes
-// through here, so it stays the deliberate "leave the messages now" exit.
+// Focus only leaves the list at the TRUE oldest/newest message.
 // Returns true when the detent was consumed as a scroll.
 static bool pagerEncoderChatEdgeScroll(bool up) {
   LvChatPanel* cp = navOpenChatPanel();
@@ -36627,8 +36601,8 @@ static void updatePagerEncoder(unsigned long now) {
   if ((delta != 0 || held) && g_lv.task) g_lv.task->noteUserInput();
   if (delta != 0 || held) noteKbActivity();   // same activity counts for the keyboard-backlight auto mode
 
-  // Alt+turn is a modifier combo, not a solo Alt tap -- mark it used so a
-  // release right after this doesn't ALSO fire updatePagerAltTapNext()'s NEXT.
+  // Alt+turn is a modifier combo, not a solo tap -- mark it used so releasing
+  // Alt afterward does not also arm the one-shot symbol layer.
   if (pagerKeyboardAltHeld() && delta != 0) pagerKeyboardMarkAltUsed();
 
   if (s_mentionnav_active) {
@@ -38479,9 +38453,9 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // below the "NEW ----" unread divider) and focus it, so the user reads the
     // new messages chronologically with plain encoder turns from there; with
     // no divider (nothing unread) it jumps to the NEWEST message instead.
-    // (The old Backspace role -- jump to latest + focus the composer -- moved
-    // to the solo orange/Alt tap, see updatePagerAltTapNext().) The divider
-    // jump reuses the exact scroll recipe refreshChatDetail's open-to-divider
+    // The former solo-Alt shortcut now latches the symbol layer; at the true
+    // newest message, the next encoder detent leaves the list for the composer.
+    // The divider jump reuses the exact scroll recipe refreshChatDetail's open-to-divider
     // path uses; both cases use the pending-focus re-aim so the recreated row
     // for the target message ends up focused after the virtualization render.
     // Outside a chat, Backspace keeps its normal no-op / hold-to-back
@@ -52959,6 +52933,8 @@ void UITask::loop() {
     // started above.
     bool con_activity = false;
 #if defined(HAS_TDECK_KEYBOARD)
+  if (_screen_off || _manual_lock) tdeckKeyboardDiscardModifiers();
+  else                             tdeckKeyboardAllowModifiers();
     for (int kbi = 0; kbi < 12; ++kbi) {
       int key = tdeckKeyboardReadKey();
       if (key <= 0) break;
@@ -52967,7 +52943,7 @@ void UITask::loop() {
       // A key pressed on a dark screen WAKES rather than types, the same as a
       // touch does in the UI. Otherwise the character you used to see the screen
       // ends up in the command you are typing.
-      if (_screen_off) { wakeScreen(); continue; }
+      if (_screen_off) { tdeckKeyboardDiscardModifiers(); wakeScreen(); continue; }
       consoleKey(key);
     }
 #endif
@@ -53571,12 +53547,15 @@ void UITask::loop() {
   updatePagerEncoder(now);
 #endif
 #if defined(HAS_TDECK_KEYBOARD)
+  if (_screen_off || _manual_lock || s_remote_mode) tdeckKeyboardDiscardModifiers();
+  else                                              tdeckKeyboardAllowModifiers();
   // Drain physical-keyboard presses buffered by the touch task into the field.
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = tdeckKeyboardReadKey();
     if (key <= 0) break;
     if (!_screen_off) s_kb_last_key_ms = now;   // a keypress while locked must not light the kb
-    if (s_remote_mode) { remotePhysicalKey(key); continue; }   // remote mode: physical keys are the exit
+    if (s_remote_mode) { tdeckKeyboardDiscardModifiers(); remotePhysicalKey(key); continue; } // remote mode: physical keys are the exit
+    if (_screen_off) tdeckKeyboardDiscardModifiers();
     handleHwKey(key);
   }
   // Focusing a text field (cursor starts blinking — tapped or auto-focused)
@@ -53618,6 +53597,7 @@ void UITask::loop() {
   // working while the screen is dark. updatePagerKbBacklight() follows the
   // same rule. Remote Mode pauses both because it owns the lit placeholder.
   pagerKeyboardPoll();
+  if (g_lv.task && g_lv.task->isManualLock()) pagerKeyboardDiscardAlt();
   // Remote Mode keeps the placeholder lit and reserves all keys for its local
   // escape path, so normal lock/backlight state machines stay paused there.
   if (!s_remote_mode) {
@@ -53633,7 +53613,7 @@ void UITask::loop() {
       if (key <= 0) break;
       remotePhysicalKey(key);
     }
-    pagerKeyboardConsumeAltTap();
+    pagerKeyboardDiscardAlt();
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
   } else if (g_lv.task && g_lv.task->isScreenOff()) {
@@ -53652,10 +53632,10 @@ void UITask::loop() {
       any = true;
       if (k == 0x08) saw_backspace = true;
     }
-    // Discard any Alt tap / Alt+Shift / Alt+Backspace chord picked up while
-    // idle-dimmed -- none of them may fire (NEXT / Caps toggle / jump Home)
+    // Discard any Alt latch / Alt+Shift / Alt+Backspace chord picked up while
+    // idle-dimmed -- none of them may fire (symbol layer / Caps / jump Home)
     // the instant the screen wakes.
-    pagerKeyboardConsumeAltTap();
+    pagerKeyboardDiscardAlt();
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
     // Hard-locked: an ordinary keypress must NOT wake/unlock -- only holding
@@ -53680,7 +53660,6 @@ void UITask::loop() {
       if (key <= 0) break;
       handleHwKey(key);
     }
-    updatePagerAltTapNext();
     updatePagerAltShiftChord();
     updatePagerAltBackspaceChord();
     updatePagerBackspaceHold(now);

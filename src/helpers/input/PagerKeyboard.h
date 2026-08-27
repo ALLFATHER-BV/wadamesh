@@ -50,6 +50,10 @@ bool pagerKeyboardAltHeld();
  *  pagerKeyboardConsumeAltTap(). */
 void pagerKeyboardMarkAltUsed();
 
+/** Clear held/tapped Alt and pending Alt chords when keyboard input is
+ *  intentionally discarded during a UI mode transition. */
+void pagerKeyboardDiscardAlt();
+
 /** One-shot: true exactly once if Alt was pressed and released without being
  *  used as a modifier for anything else in between (no key typed, no
  *  pagerKeyboardMarkAltUsed() call) — a "solo tap", distinct from a
