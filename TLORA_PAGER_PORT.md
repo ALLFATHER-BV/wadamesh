@@ -225,8 +225,8 @@ WASD-panning).
    `updatePagerAltShiftChord()` toggles Caps Lock ONLY while a text field is
    actually being edited (same "ta" derivation `handleHwKey()`'s TLORA_PAGER
    branch already uses to tell a bound-but-unfocused field apart from one
-   actually being edited), and jumps straight to Home (`navGoToMainTab`)
-   everywhere else.
+   actually being edited), and is a no-op everywhere else. Alt+Backspace is
+   the context-independent Home shortcut.
 3. **@-mention contact picker made encoder-navigable** (commit `57802eb`) —
    the same unreachable-without-touch problem the accent box had, fixed the
    same way (`mentionNavRestyle()`/`mentionNavConfirm()` mirror
@@ -622,9 +622,9 @@ existing boards. Notes:
   `pagerKeyboardConsumeAltShiftChord()`; `UITask.cpp`'s
   `updatePagerAltShiftChord()` toggles persistent Caps Lock ONLY while a text
   field is actually being edited (same "ta" derivation as `handleHwKey()`'s
-  TLORA_PAGER branch), and jumps straight Home (`navGoToMainTab`) everywhere
-  else — toggling Caps Lock with no field to see it change in was reported as
-  surprising/purposeless outside of typing.
+   TLORA_PAGER branch), and is a no-op everywhere else — toggling Caps Lock
+   with no field to see it change in was reported as surprising/purposeless
+   outside of typing. Alt+Backspace owns the Home shortcut.
   See `PagerKeyboard.cpp`'s matrix-legend comment for the one documented
   edge case (Alt+Shift+O or Alt+Shift+L all three held phantom-ghosts a
   stray 'q'/'a' — a diode-less-matrix limitation, not a bug, and not the
@@ -751,7 +751,7 @@ existing boards. Notes:
 | Accent-variant popup keyboard nav | Fn+Space arms it; encoder walks variants; encoder click/Enter confirms; Backspace cancels (`s_accentnav_active`/`accentNavRestyle()`/`accentNavConfirm()`) | medium | done |
 | @-mention picker keyboard nav | Auto-arms the instant the list appears (no Fn+Space needed); same encoder walk/confirm/cancel as the accent popup (`s_mentionnav_active`/`mentionNavRestyle()`/`mentionNavConfirm()`) | medium | done |
 | Encoder short click on a focused bubble | Mirrors keyboard Enter — opens the same action menu instead of a plain ENTER a bubble doesn't react to | small | done |
-| Fn+Shift chord effect | Toggles Caps Lock while editing a text field; jumps to Home (`navGoToMainTab`) everywhere else — `PagerKeyboard.cpp` only reports the chord, `UITask.cpp` decides the effect | small | done |
+| Fn+Shift chord effect | Toggles Caps Lock while editing a text field; no-op everywhere else. Fn+Backspace jumps Home — `PagerKeyboard.cpp` only reports the chords, `UITask.cpp` decides the effects | small | done |
 | Map pan (WASD) + slider nudge (Q/E) | WASD pans the Map tab (`mapNudge()`, shared with Tanmatsu's Ctrl+Arrow); Q/E adjust a focused slider (moved off D/F to avoid colliding with WASD) | small | done |
 | App-drawer tile focus highlight | `NAV_ACCENTFOCUS_FLAG` makes `navFocusCb` use the tile's own accent tint instead of the generic white reverse-fill, on every board | small | done |
 | SX1262-variant env | `tlora_pager_sx1262_companion_radio_touch` — same board/pins, `CustomSX1262`/`CustomSX1262Wrapper` instead of the LR1121 classes | medium | done (worklist ⑩) |

@@ -40,7 +40,7 @@ while editing a text field, where the keys type normally.
 
 | Gesture | Action | Keyboard equivalent |
 |---|---|---|
-| Turn | Move focus to the next/previous item on screen | **Fn (Alt) tapped alone** moves forward one step (NEXT only — no keyboard way to go backward) |
+| Turn | Move focus to the next/previous item on screen | none — encoder only |
 | Short click | Select / confirm the focused item | **Enter** |
 | Hold ~1 s, then release | **Back**: closes a popup → closes an open chat → goes Home → Esc (whichever applies first) | **Backspace held ~1 s** |
 | **Fn (Alt) + turn**, on a main tab | Move between the 5 main tabs (Mail / Contacts / Home / Map / Settings) | **M / C / H / A / S** jumps directly |
@@ -93,29 +93,19 @@ text box → Send**, in that order, in both directions — nothing is skipped.
 Turning past the △ chip (toward the messages) always jumps straight to the
 newest message, regardless of channel or DM.
 
-### Backspace and Fn (Alt) — leaving vs. catching up
+### Backspace — catching up
 
-These two keys are your shortcuts in and out of "reading mode" on this
-screen, and they do different things depending on whether you've got unread
-messages:
+**Backspace (tap)** jumps to whichever message needs your attention:
 
-- **Fn (Alt) tapped alone** — jumps straight to the **newest** message and
-  moves focus into the text box, ready to type a reply. This is the
-  deliberate "I'm done reading, let me respond" gesture — it works regardless
-  of where your focus currently is in the chat.
-- **Backspace (tap)** — jumps to whichever message needs your attention:
-  - If there are unread messages, it jumps to the first one — right below the
-    **"NEW ----"** divider — and selects it, so you can then turn forward
-    through your unread messages in order, oldest-of-the-unread first.
-  - If nothing is unread, it jumps to the newest message instead (same
-    destination as Fn+Alt, but leaves focus on the message itself rather than
-    the text box).
+- If there are unread messages, it jumps to the first one — right below the
+  **"NEW ----"** divider — and selects it, so you can then turn forward
+  through your unread messages in order, oldest-of-the-unread first.
+- If nothing is unread, it jumps to the newest message instead (same
+  destination, with focus left on the message).
 
 Backspace's override above only applies while you're inside an open chat and
 *not* actively editing the text box — the usual rule from the top of this
 guide; with a field focused, Backspace deletes a character as normal.
-Fn (Alt) tap's override fires the same way whether or not the text box
-already has focus, since landing there is the whole point of the gesture.
 
 ## Keyboard layout
 
@@ -128,7 +118,9 @@ a  s  d  f  g  h  j  k  l  [Enter]
 [Space]
 ```
 
-Hold **Fn (Alt)** for numbers/symbols instead:
+Hold **Fn (Alt)** for numbers/symbols, or tap it once to apply this layer to
+the next key only. Double-tap Fn to lock the symbol layer; tap it again to
+return to letters.
 
 ```
 1  2  3  4  5  6  7  8  9  0
@@ -162,7 +154,7 @@ Hold **Fn (Alt)** for numbers/symbols instead:
 | **Space** (tap) | Types a space | — |
 | **Space** (double-tap, within 250 ms) | Switches between English and your configured secondary keyboard layout | — |
 | **Space** (hold ~1 s) | — | Locks the screen (shows a "Locking…" progress bar; tapping any key cancels) |
-| **Fn (Alt)** tapped alone (press+release, nothing else) | — | Moves focus to the next field/item — a keyboard-only substitute for a turn of the encoder. In an open chat: jumps to the newest message and focuses the text box instead — see [Chat screen](#chat-screen) |
+| **Fn (Alt)** (tap / double-tap) | Next key uses symbols / lock symbols until tapped again | Same |
 
 The **BOOT** button (top of the device) instantly wakes the screen from
 idle-dim. It does *not* unlock a screen you've manually locked with the
@@ -249,13 +241,14 @@ that changes keyboard language.
 | Input | Action |
 |---|---|
 | M / C / H / A / S (top-level main screens only) | Open Mail / Contacts / Home / Map / Settings |
-| Turn encoder (or Fn tap = NEXT only) | Move focus |
+| Turn encoder | Move focus |
 | Turn, at the loaded edge of a chat | Load more history, keep moving — only exits the list at the true oldest/newest message |
 | Click encoder (or Enter) | Select / confirm |
 | Hold encoder ~1s (or hold Backspace ~1s) | Back |
 | Fn + turn (main tab) | Switch tabs |
 | Fn + turn (page/chat) | Scroll |
-| Fn tap alone | Next field (in a chat: jump to newest message + focus the text box) |
+| Fn tap alone | Use the symbol layer for the next key |
+| Fn double-tap | Lock the symbol layer; tap Fn again to unlock |
 | Hold Shift + letter | Momentary uppercase |
 | Fn + Shift (editing a field) | Toggle Caps Lock |
 | Fn + Shift (not editing a field) | Nothing |

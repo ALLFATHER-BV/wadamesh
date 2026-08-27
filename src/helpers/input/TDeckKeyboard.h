@@ -1,14 +1,16 @@
 #pragma once
 
 // LilyGo T-Deck physical keyboard. It's a separate ESP32-C3 running the
-// T-Keyboard firmware on the shared I2C bus (SDA 18 / SCL 8, addr 0x55): each
-// 1-byte read returns the ASCII code of the last key press (0 = none). The C3
-// resolves shift / sym layers itself, so we just receive final characters.
+// T-Keyboard firmware on the shared I2C bus (SDA 18 / SCL 8, addr 0x55).
+// Current controller firmware supports a five-byte raw matrix mode, which lets
+// this driver preserve held modifiers and add tap/double-tap latching. Older
+// firmware returns one resolved ASCII byte; startup detects that and restores
+// the original controller-side key mode automatically.
 //
 // CRITICAL: the keyboard shares the I2C bus with the GT911 touch controller,
 // which is polled from a core-0 task. To avoid two cores hitting Wire at once,
 // tdeckKeyboardPoll() must be called from THAT task; the UI thread only drains
-// the lock-free ring via tdeckKeyboardReadKey().
+// the critical-section-protected ring via tdeckKeyboardReadKey().
 #if defined(HAS_TDECK_KEYBOARD) && defined(ESP32)
 
 #include <stdint.h>
@@ -23,10 +25,12 @@ void tdeckKeyboardPoll();
 /** Pop the next buffered key (ASCII), or 0 if none. Safe from the UI thread. */
 int tdeckKeyboardReadKey();
 
-/** Compatibility hooks for UI mode transitions. Modifier state belongs to
- *  the keyboard's C3 firmware in this legacy ASCII driver, so there is no
- *  host-side state to clear or re-enable. */
+/** Cancel one-shot/locked modifiers and suppress a later release from a
+ * currently held modifier. Call when queued input is intentionally discarded. */
 void tdeckKeyboardDiscardModifiers();
+
+/** Stop continuously discarding raw modifier state after the UI returns to a
+ * mode where keyboard input is meaningful. */
 void tdeckKeyboardAllowModifiers();
 
 /** Request a keyboard-backlight level (0 = off, 0xFF = on). Safe from the UI
