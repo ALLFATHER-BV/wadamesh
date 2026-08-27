@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: hu
-# ver: 18
+# ver: 19
 # name: Magyar
 # base: hu
  (device behind)	 (készülék hátulján)
@@ -703,7 +703,7 @@ SD card remounted	SD kártya újracsatolva
 SD card removed	SD-kártya eltávolítva
 SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	Az SD-kártya adatai nem érhetők el – a névjegyek és a csatornák nem menthetők a kártya újbóli behelyezéséig.
 SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	Az SD-kártya adatai nem érhetők el – az azonosító, a beállítások, a névjegyek és a csatornák nem menthetők a kártya újbóli behelyezéséig.
-SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	Az SD-kártya adatainak áthelyezése nem teljes. Az azonosító és a beállítások továbbra is a belső tárhelyen vannak; a folytatáshoz használd a „Belső adatok másolása SD-kártyára” lehetőséget.
+SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	Az SD-kártya adatainak áthelyezése nem teljes. Az azonosító és a beállítások továbbra is a belső tárhelyen vannak; a folytatáshoz használd a "Belső adatok másolása SD-kártyára" lehetőséget.
 SD download failed: %s	SD-letöltés sikertelen: %s
 SD formatted - %s (MESHCOMOD)	SD formázás - %s (MESHCOMOD)
 SD is busy - close tools and retry	Az SD-kártya foglalt – zárd be az eszközöket, majd próbáld újra.
@@ -812,7 +812,6 @@ Sleep ready	Készen áll az alvásra
 Slot %d cleared	%d hely kiürítve
 Slot empty	Üres hely
 Small\nMedium\nLarge	Kicsi\nKözepes\nNagy
-Snake	Snake
 Snake  —  swipe or roll the trackball	Kígyó – pöccintsd vagy görgesd a görgetőgolyót
 Sort	Sort
 Sound	Hang
@@ -997,8 +996,6 @@ tap to exit full screen	koppintson a teljes képernyős kilépéshez
 zoom	zoom
 zoom %d	zoom %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	~17 dB erősítővel csendes/távoli helyeken; zajos helyeken kapcsold ki.
-© OpenStreetMap	© OpenStreetMap
-© OpenTopoMap	© OpenTopoMap
 Scope	Hatókör
 another region	másik régió
 my region	saját régió
@@ -1065,11 +1062,10 @@ sensors	érzékelők
 Auto-add on for %s — new %s land in Contacts automatically.	Automatikus hozzáadás bekapcsolva: %s — az új %s automatikusan a Névjegyek közé kerülnek.
 Map data © OpenStreetMap contributors.\nopenstreetmap.org/copyright\nLicensed under the Open Database License (ODbL).\n\n	Térkép adatok © OpenStreetMap közreműködői.\nopenstreetmap.org/copyright\nAz Open Database License (ODbL) licenc alatt.\n\n
 Map style © OpenTopoMap (CC-BY-SA) — opentopomap.org\nMap data © OpenStreetMap contributors (ODbL) + SRTM.\n\n	Térkép stílus © OpenTopoMap (CC-BY-SA) — opentopomap.org\nTérkép adatok © OpenStreetMap közreműködői (ODbL) + SRTM.\n\n
-How tiles work:\nThe map is built from 256×256 "slippy" tiles. Only the tiles for the area you're viewing are fetched — there is no bulk pre-download.\n\nBecause this device can't do HTTPS (not enough heap after Wi-Fi starts) and decodes JPEG far more cheaply than PNG, tiles come from the wadamesh proxy: it fetches the upstream PNG over HTTPS with an identifying User-Agent, re-encodes it as JPEG, and caches it. Your device then caches each tile to its own flash, so a tile is only downloaded once.\n\nUse Options → Reload tiles to re-download the tiles currently in view if one looks corrupted.	A csempék működése:\nA térkép 256×256 képpontos „slippy” csempékből épül fel. Csak a megtekintett területhez szükséges csempék töltődnek le — nincs tömeges előzetes letöltés.\n\nMivel az eszköz nem támogatja a HTTPS-t (a Wi-Fi elindítása után nincs elegendő heap memória), és a JPEG képek dekódolása sokkal kevesebb erőforrást igényel, mint a PNG-é, a csempék a wadamesh proxyn keresztül érkeznek: a proxy HTTPS-en keresztül lekéri a forrásból a PNG-t egy azonosító User-Agent használatával, JPEG formátumba kódolja át, majd eltárolja a gyorsítótárban. Az eszköz ezután minden csempét a saját flash memóriájában is eltárol, így egy csempét csak egyszer kell letölteni.\n\nAz Options → Reload tiles lehetőséggel újra letöltheted a jelenleg megtekintett terület csempéit, ha valamelyik hibásan jelenik meg.
+How tiles work:\nThe map is built from 256×256 "slippy" tiles. Only the tiles for the area you're viewing are fetched — there is no bulk pre-download.\n\nBecause this device can't do HTTPS (not enough heap after Wi-Fi starts) and decodes JPEG far more cheaply than PNG, tiles come from the wadamesh proxy: it fetches the upstream PNG over HTTPS with an identifying User-Agent, re-encodes it as JPEG, and caches it. Your device then caches each tile to its own flash, so a tile is only downloaded once.\n\nUse Options → Reload tiles to re-download the tiles currently in view if one looks corrupted.	A csempék működése:\nA térkép 256×256 képpontos "slippy" csempékből épül fel. Csak a megtekintett területhez szükséges csempék töltődnek le — nincs tömeges előzetes letöltés.\n\nMivel az eszköz nem támogatja a HTTPS-t (a Wi-Fi elindítása után nincs elegendő heap memória), és a JPEG képek dekódolása sokkal kevesebb erőforrást igényel, mint a PNG-é, a csempék a wadamesh proxyn keresztül érkeznek: a proxy HTTPS-en keresztül lekéri a forrásból a PNG-t egy azonosító User-Agent használatával, JPEG formátumba kódolja át, majd eltárolja a gyorsítótárban. Az eszköz ezután minden csempét a saját flash memóriájában is eltárol, így egy csempét csak egyszer kell letölteni.\n\nAz Options → Reload tiles lehetőséggel újra letöltheted a jelenleg megtekintett terület csempéit, ha valamelyik hibásan jelenik meg.
 "%s" wants to send discovery probes.\n\nEach probe asks every node in range to reply, so it uses airtime on the whole local mesh, not just yours.\n\nNothing is sent under your name and no message is transmitted.	"%s" felfedezési probe-ok küldését kéri.\n\nMinden probe válaszra kéri a hatótávolságon belüli node-okat, ezért a teljes helyi mesh hálózat airtime-ját használja, nem csak a tiédet.\n\nSemmi sem kerül elküldésre a nevedben, és üzenet sem kerül továbbításra.
 ?	?
 Auth failed	Auth failed
-Batteryactivityon	Batteryactivityon
 Console mode	Console mode
 Console mode (experimental)	Console mode (experimental)
 Direct (0-hop) only	Csak közvetlen (0-hop)
@@ -1078,16 +1074,12 @@ EXPERIMENTAL. Boots into a text console with no graphical interface: type comman
 Enter text	Szöveg megadása
 Entering console mode - rebooting...	Entering console mode - rebooting...
 Favorite	Favorite
-Geblokkeerde gebruikers	Geblokkeerde gebruikers
-Hide system filesShow system files	Hide system filesShow system files
 Init…	Init…
 Leaving console mode - rebooting...	Leaving console mode - rebooting...
 Link lost	Link lost
 MESH	MESH
 Name (A-Z)	Név (A–Z)
 Nearest first	Legközelebbi elöl
-Other networksNetworks	Other networksNetworks
-Paste (move)Paste (copy)	Paste (move)Paste (copy)
 Recent message	Legutóbbi üzenet
 Reload tiles in view	Csempék újratöltése
 Repeaters	Repeaters
@@ -1098,13 +1090,8 @@ Show contacts	Névjegyek megjelenítése
 Show coordinates	Koordináták
 Show tile z/x/y	Csempe z/x/y
 Starting…	Starting…
-Stop sharing loc  Share my loc	Stop sharing loc  Share my loc
-Supprimer	Supprimer
-Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.
 Text console (experimental)	Text console (experimental)
 Tile debug overlay	Csempe hiba keret
-Unblock  Block	Unblock  Block
-Unfav  Favorite	Unfav  Favorite
 tap to cycle off / on / auto	tap to cycle off / on / auto
 #7A7F87 Scanning… nothing has answered yet#	#7A7F87 Scanning… nothing has answered yet#
 Export crash report (%uK)	Hibajelentés exportálása (%uK)
@@ -1116,3 +1103,12 @@ channel busy %.1f%%	channel busy %.1f%%
 sampling...	sampling...
 teal = now   blue = average	teal = now   blue = average
 window restarted	window restarted
+Filter	Filter
+Hide system files	Hide system files
+Networks	Networks
+Show system files	Show system files
+Unfav	Unfav
+Firmware beta_%d\nChecking for updates over Wi-Fi…	Firmware beta_%d\nChecking for updates over Wi-Fi…
+Install beta_%d?\nThis downgrades the firmware and reboots.	A beta_%d telepítése?\nEz leminősíti a firmware-t és újraindul.
+Other (hidden) network…	Other (hidden) network…
+Paused	Paused

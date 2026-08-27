@@ -5362,7 +5362,7 @@ static void versionCheckUpdateUi() {
     snprintf(b, sizeof b, TR("Firmware beta_%d\nCouldn't reach the update server"), my_n);
     lv_obj_set_style_text_color(s_update_about_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   } else {
-    snprintf(b, sizeof b, "Firmware beta_%d\nChecking for updates over Wi-Fi…", my_n);
+    snprintf(b, sizeof b, TR("Firmware beta_%d\nChecking for updates over Wi-Fi…"), my_n);
     lv_obj_set_style_text_color(s_update_about_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   }
   lv_label_set_text(s_update_about_lbl, b);
@@ -5579,7 +5579,7 @@ static void otaPrevPickCb(lv_event_t* e) {
   s_ota_pending_n = v;
   otaPrevModalClose();
   char m[96];
-  snprintf(m, sizeof m, "Install beta_%d?\nThis downgrades the firmware and reboots.", v);
+  snprintf(m, sizeof m, TR("Install beta_%d?\nThis downgrades the firmware and reboots."), v);
   showConfirm(m, TR("Install"), otaConfirmInstallApply);
 }
 
@@ -14945,14 +14945,21 @@ static void wifiRebuildNetworkList() {
 
   // Manual rescan (the scan is also kicked on open). Label flips while one runs.
   s_wifi_list_y += SC(6);
-  wifiListRow(scanning_now ? LV_SYMBOL_REFRESH "  Scanning\xE2\x80\xA6"
-                           : LV_SYMBOL_REFRESH "  Scan again",
+  // The glyph has to be joined at runtime: TR() returns a pointer, so it cannot
+  // take part in the compiler's adjacent-string-literal concatenation.
+  char wifi_rescan[48];
+  snprintf(wifi_rescan, sizeof wifi_rescan, LV_SYMBOL_REFRESH "  %s",
+           scanning_now ? TR("Scanning\xE2\x80\xA6") : TR("Scan again"));
+  wifiListRow(wifi_rescan,
               nullptr, lv_color_hex(scanning_now ? COLOR_SUB : COLOR_TEXT),
               scanning_now ? nullptr : wifiRefreshRowCb, nullptr);
 
   // Hidden / manual network.
   s_wifi_list_y += SC(3);
-  wifiListRow(LV_SYMBOL_PLUS "  Other (hidden) network\xE2\x80\xA6", nullptr, lv_color_hex(COLOR_ACCENT), wifiHiddenRowCb, nullptr);
+  char wifi_hidden[64];
+  snprintf(wifi_hidden, sizeof wifi_hidden, LV_SYMBOL_PLUS "  %s",
+           TR("Other (hidden) network\xE2\x80\xA6"));
+  wifiListRow(wifi_hidden, nullptr, lv_color_hex(COLOR_ACCENT), wifiHiddenRowCb, nullptr);
   lv_obj_set_height(s_wifi_list_cont, s_wifi_list_y + SC(2));   // grow the card to fit
   navMarkDirty();
 }
@@ -22883,7 +22890,7 @@ static void discoverBuildFeed() {
   else if (buf[q - 1] == '\n') buf[q - 1] = '\0';
   lv_label_set_text(s_discover_feed, buf);
   if (s_discover_status)
-    lv_label_set_text_fmt(s_discover_status, TR("%s \xC2\xB7 %d nearby (%d rpt, %d comp)"), s_discover_scanning ? "Scanning\xE2\x80\xA6" : "Paused", (int)m, rpt, comp);
+    lv_label_set_text_fmt(s_discover_status, TR("%s \xC2\xB7 %d nearby (%d rpt, %d comp)"), s_discover_scanning ? TR("Scanning\xE2\x80\xA6") : TR("Paused"), (int)m, rpt, comp);
 }
 
 // Sweep interval, backing off. A probe is not one packet: it is our zero-hop

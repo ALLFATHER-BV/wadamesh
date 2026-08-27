@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: bg
-# ver: 18
+# ver: 19
 # name: Български
 # base: bg
  (device behind)	 (устройството изостава)
@@ -826,7 +826,7 @@ TCP on	TCP вкл
 TOUCH BETA	TOUCH BETA
 TX	TX
 Tab hotkeys — tap a row, then press a key	Клавиши за раздела — докосни ред, после натисни клавиш
-Tap Use to switch - the device reboots to apply.	Натиснете „Избери“, за да превключите — устройството ще се рестартира.
+Tap Use to switch - the device reboots to apply.	Натиснете "Избери", за да превключите — устройството ще се рестартира.
 Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own.	Докосни «Избери» за смяна - устройството се рестартира. Езиковите файлове са в /lang в паметта; редактирай ги или добави свои.
 Tap a language; the device reboots to apply.	Изберете език; устройството ще се рестартира.
 Taste the rainbow!	Вкуси дъгата!
@@ -977,8 +977,6 @@ tap to exit full screen	докоснете за изход от цял екра�
 zoom	мащаб
 zoom %d	мащаб %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	усилвател ~17 dB за тихи/отдалечени места; изключи в шумни.
-© OpenStreetMap	© OpenStreetMap
-© OpenTopoMap	© OpenTopoMap
 Scope	
 another region	
 my region	
@@ -1000,7 +998,6 @@ Overwrite oldest non-favorite
 1-character messages will be shown	1-character messages will be shown
 All	All
 Allow	Allow
-Apps that may send messages on the mesh. Anything they send goes out under your node name and cannot be told apart from a message you typed. Turn one off to take the permission back.	Apps that may send messages on the mesh. Anything they send goes out under your node name and cannot be told apart from a message you typed. Turn one off to take the permission back.
 Ignore 1-character messages	Ignore 1-character messages
 Join w/ password	Join w/ password
 Location no longer shared	Location no longer shared
@@ -1014,9 +1011,7 @@ Never\nChosen contacts only\nAnyone who asks	Never\nChosen contacts only\nAnyone
 No apps installed.	No apps installed.
 No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)	No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)
 Not supported on this board	Not supported on this board
-Read incoming messages	Read incoming messages
 Reconnected to %.40s	Reconnected to %.40s
-Send messages as me	Send messages as me
 Sent only when that contact asks, encrypted to them. Nothing is broadcast. Needs "Answer telemetry requests" on. Pick contacts in a contact's menu.	Sent only when that contact asks, encrypted to them. Nothing is broadcast. Needs "Answer telemetry requests" on. Pick contacts in a contact's menu.
 Server has forgotten you.\nJoin with the room password.	Server has forgotten you.\nJoin with the room password.
 Share my loc	Share my loc
@@ -1042,7 +1037,6 @@ App permissions	App permissions
 About / credits	About / credits
 Auth failed	Auth failed
 Auto-add on for %s — new %s land in Contacts automatically.	Auto-add on for %s — new %s land in Contacts automatically.
-Batteryactivityon	Batteryactivityon
 Console mode	Console mode
 Console mode (experimental)	Console mode (experimental)
 Direct (0-hop) only	Direct (0-hop) only
@@ -1051,8 +1045,6 @@ EXPERIMENTAL. Boots into a text console with no graphical interface: type comman
 Enter text	Enter text
 Entering console mode - rebooting...	Entering console mode - rebooting...
 Favorite	Favorite
-Geblokkeerde gebruikers	Geblokkeerde gebruikers
-Hide system filesShow system files	Hide system filesShow system files
 How tiles work:\nThe map is built from 256×256 "slippy" tiles. Only the tiles for the area you're viewing are fetched — there is no bulk pre-download.\n\nBecause this device can't do HTTPS (not enough heap after Wi-Fi starts) and decodes JPEG far more cheaply than PNG, tiles come from the wadamesh proxy: it fetches the upstream PNG over HTTPS with an identifying User-Agent, re-encodes it as JPEG, and caches it. Your device then caches each tile to its own flash, so a tile is only downloaded once.\n\nUse Options → Reload tiles to re-download the tiles currently in view if one looks corrupted.	How tiles work:\nThe map is built from 256×256 "slippy" tiles. Only the tiles for the area you're viewing are fetched — there is no bulk pre-download.\n\nBecause this device can't do HTTPS (not enough heap after Wi-Fi starts) and decodes JPEG far more cheaply than PNG, tiles come from the wadamesh proxy: it fetches the upstream PNG over HTTPS with an identifying User-Agent, re-encodes it as JPEG, and caches it. Your device then caches each tile to its own flash, so a tile is only downloaded once.\n\nUse Options → Reload tiles to re-download the tiles currently in view if one looks corrupted.
 Init…	Init…
 Leaving console mode - rebooting...	Leaving console mode - rebooting...
@@ -1062,8 +1054,6 @@ Map data © OpenStreetMap contributors.\nopenstreetmap.org/copyright\nLicensed u
 Map style © OpenTopoMap (CC-BY-SA) — opentopomap.org\nMap data © OpenStreetMap contributors (ODbL) + SRTM.\n\n	Map style © OpenTopoMap (CC-BY-SA) — opentopomap.org\nMap data © OpenStreetMap contributors (ODbL) + SRTM.\n\n
 Name (A-Z)	Name (A-Z)
 Nearest first	Nearest first
-Other networksNetworks	Other networksNetworks
-Paste (move)Paste (copy)	Paste (move)Paste (copy)
 Recent message	Recent message
 Reload tiles in view	Reload tiles in view
 Repeaters	Repeaters
@@ -1076,13 +1066,8 @@ Show contacts	Show contacts
 Show coordinates	Show coordinates
 Show tile z/x/y	Show tile z/x/y
 Starting…	Starting…
-Stop sharing loc  Share my loc	Stop sharing loc  Share my loc
-Supprimer	Supprimer
-Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.	Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.Turn on legacy per-transmit switching?\n\nDiagnostic mode, for comparison only. It transmits on the on-board antenna and listens on the external one, so your outbound signal will be much weaker than your inbound.\n\nResets to the on-board antenna on every reboot.
 Text console (experimental)	Text console (experimental)
 Tile debug overlay	Tile debug overlay
-Unblock  Block	Unblock  Block
-Unfav  Favorite	Unfav  Favorite
 chats	chats
 repeaters	repeaters
 rooms	rooms
@@ -1098,3 +1083,14 @@ channel busy %.1f%%	channel busy %.1f%%
 sampling...	sampling...
 teal = now   blue = average	teal = now   blue = average
 window restarted	window restarted
+Filter	Filter
+Hide system files	Hide system files
+Networks	Networks
+Other networks	Other networks
+Show system files	Show system files
+Unfav	Unfav
+Firmware beta_%d\nChecking for updates over Wi-Fi…	Firmware beta_%d\nChecking for updates over Wi-Fi…
+Install beta_%d?\nThis downgrades the firmware and reboots.	Install beta_%d?\nThis downgrades the firmware and reboots.
+Other (hidden) network…	Other (hidden) network…
+Paused	Paused
+Scan again	Scan again
