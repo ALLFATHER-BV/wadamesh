@@ -111,6 +111,7 @@
 #include "LuaAppHost.h"       // sandboxed Lua apps (LUA_APPS.md Phase 1; self-gated on CAP_LUA_APPS)
 
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
+#include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
@@ -22280,6 +22281,7 @@ static void openSignalInfoPopup() {
 // runs on a core-0 worker task so LVGL never blocks; the UI loop polls s_reader_dirty.
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 static const char    kReaderDefaultUrl[] = "wadamesh.com";
+static const char    kReaderHomeUrl[] = "sd:/home.htm";
 static lv_obj_t*     s_reader_root   = nullptr;
 static lv_obj_t*     s_reader_url_ta = nullptr;
 static lv_obj_t*     s_reader_go     = nullptr;
@@ -22291,13 +22293,19 @@ static char*         s_reader_text   = nullptr;    // PSRAM: extracted text (NUL
 static volatile bool s_reader_dirty  = false;      // worker -> UI: text/status changed
 static volatile bool s_reader_busy   = false;      // a fetch is in flight
 static volatile bool s_reader_ok     = false;      // last fetch produced a page (worker -> UI)
+static volatile bool s_reader_home_missing = false; // initial SD probe failed; restore URL-entry state
+static volatile bool s_reader_sd_busy = false;      // open reader File owns the removable-card VFS
+static TaskHandle_t  s_reader_sd_owner = nullptr;
+static volatile uint32_t s_reader_generation = 0;
+static volatile uint32_t s_reader_task_generation = 0;
+static char          s_reader_pending_url[300] = "";
 static char          s_reader_msg[110] = "";       // status text (worker writes, UI shows)
 static TaskHandle_t  s_reader_task    = nullptr;
 static bool          s_reader_pristine = false;    // URL field still holds the untouched default
 static const size_t  kReaderRawCap  = 192 * 1024;  // max raw HTML we buffer (PSRAM)
 static const size_t  kReaderTextCap =  60 * 1024;  // max extracted text we keep
 // Links found on the page: byte range in s_reader_text + resolved absolute href.
-struct ReaderLink { uint32_t start, end; char href[240]; };
+using ReaderLink = ReaderContent::Link;
 static const int     kReaderMaxLinks = 280;
 static ReaderLink*   s_reader_links   = nullptr;   // PSRAM array, lazily allocated
 static int           s_reader_nlinks  = 0;
@@ -22312,7 +22320,7 @@ static lv_obj_t*     s_reader_back     = nullptr;
 static lv_obj_t*     s_reader_fwd      = nullptr;
 
 static void closeReaderPage();
-static void readerNavigate(const char* in, bool push);
+static bool readerNavigate(const char* in, bool push);
 static void readerUpdateNavButtons();
 static void readerRenderBody();
 static void readerSetAddrExpanded(bool exp);
@@ -22325,135 +22333,107 @@ static bool readerCiPrefix(const char* s, size_t n, const char* pfx) {
     if (a >= 'A' && a <= 'Z') a += 32; if (b >= 'A' && b <= 'Z') b += 32; if (a != b) return false; }
   return true;
 }
-// Decode one HTML entity at s[0]=='&'. Writes UTF-8 to out (>=4 bytes), sets *wrote,
-// returns consumed input length; 0 if unrecognised (caller emits '&' literally).
-static size_t readerEntity(const char* s, size_t n, char* out, int* wrote) {
-  static const struct { const char* name; const char* utf8; } named[] = {
-    {"amp;","&"},{"lt;","<"},{"gt;",">"},{"quot;","\""},{"apos;","'"},{"nbsp;"," "},
-    {"mdash;","\xe2\x80\x94"},{"ndash;","\xe2\x80\x93"},{"hellip;","\xe2\x80\xa6"},
-    {"lsquo;","\xe2\x80\x98"},{"rsquo;","\xe2\x80\x99"},{"ldquo;","\xe2\x80\x9c"},
-    {"rdquo;","\xe2\x80\x9d"},{"copy;","\xc2\xa9"},{"reg;","\xc2\xae"},{"euro;","\xe2\x82\xac"},
-    {"deg;","\xc2\xb0"},{"middot;","\xc2\xb7"},{"bull;","\xe2\x80\xa2"},{"trade;","\xe2\x84\xa2"},
+// A bounded Stream lets HTTPClient remove chunk framing while writing directly into
+// PSRAM. Short-writing at the cap stops oversized pages without allocating a String.
+class ReaderBufferStream final : public Stream {
+ public:
+  ReaderBufferStream(uint8_t* data, size_t capacity, uint32_t generation)
+      : data_(data), capacity_(capacity), generation_(generation) {}
+  using Print::write;
+  size_t write(uint8_t byte) override { return write(&byte, 1); }
+  size_t write(const uint8_t* data, size_t size) override {
+    const size_t before = size_;
+    const size_t room = size_ < capacity_ ? capacity_ - size_ : 0;
+    const size_t copied = size < room ? size : room;
+    if (copied) {
+      memcpy(data_ + size_, data, copied);
+      size_ += copied;
+      if (generation_ == s_reader_generation && (before >> 14) != (size_ >> 14)) {
+        snprintf(s_reader_msg, sizeof s_reader_msg, "Loading\xe2\x80\xa6 %uk", (unsigned)(size_ / 1024));
+        s_reader_dirty = true;
+      }
+    }
+    return copied;
+  }
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+  void flush() override {}
+  size_t size() const { return size_; }
+  bool full() const { return size_ == capacity_; }
+
+ private:
+  uint8_t* data_;
+  size_t capacity_;
+  uint32_t generation_;
+  size_t size_ = 0;
+};
+
+enum class ReaderLocalResult : uint8_t { Ok, NoStorage, NotFound, ReadFailed };
+
+static ReaderLocalResult readerReadLocal(const char* url, uint8_t* raw, size_t capacity,
+                                         size_t* total, uint32_t generation) {
+  fs::FS* storage = nullptr;
+  bool storage_claimed = false;
+  auto releaseStorage = [&]() {
+    if (!storage_claimed) return;
+    s_reader_sd_owner = nullptr;
+    s_reader_sd_busy = false;
+    storage_claimed = false;
   };
-  for (auto& e : named) { size_t ln = strlen(e.name);
-    if (n > ln && strncmp(s + 1, e.name, ln) == 0) { int w = strlen(e.utf8); memcpy(out, e.utf8, w); *wrote = w; return ln + 1; } }
-  if (n > 3 && s[1] == '#') {                            // &#NNN; or &#xHH;
-    long cp = 0; bool hex = (s[2] == 'x' || s[2] == 'X'); size_t i = hex ? 3 : 2, start = i;
-    for (; i < n && s[i] != ';'; i++) { char c = s[i]; int d;
-      if (c >= '0' && c <= '9') d = c - '0';
-      else if (hex && c >= 'a' && c <= 'f') d = c - 'a' + 10;
-      else if (hex && c >= 'A' && c <= 'F') d = c - 'A' + 10; else { i = start; break; }
-      cp = cp * (hex ? 16 : 10) + d; }
-    if (i > start && i < n && s[i] == ';' && cp > 0 && cp <= 0x10FFFF) {
-      int w = 0;
-      if (cp < 0x80) out[w++] = (char)cp;
-      else if (cp < 0x800) { out[w++] = 0xC0 | (cp >> 6); out[w++] = 0x80 | (cp & 0x3F); }
-      else if (cp < 0x10000) { out[w++] = 0xE0 | (cp >> 12); out[w++] = 0x80 | ((cp >> 6) & 0x3F); out[w++] = 0x80 | (cp & 0x3F); }
-      else { out[w++] = 0xF0 | (cp >> 18); out[w++] = 0x80 | ((cp >> 12) & 0x3F); out[w++] = 0x80 | ((cp >> 6) & 0x3F); out[w++] = 0x80 | (cp & 0x3F); }
-      *wrote = w; return i + 1;
-    }
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+  s_reader_sd_busy = true;
+  s_reader_sd_owner = xTaskGetCurrentTaskHandle();
+  storage_claimed = true;
+  if (sdAdoptLiveMount()) storage = &SD;
+  else if (!sdRuntimeLifecycleBusy() && fmSdTryMount()) storage = &SD;
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  s_reader_sd_busy = true;
+  s_reader_sd_owner = xTaskGetCurrentTaskHandle();
+  storage_claimed = true;
+  if (tanSdTryMount()) storage = &SD_MMC;
+#endif
+  if (!storage) { releaseStorage(); return ReaderLocalResult::NoStorage; }
+
+  char path[300];
+  snprintf(path, sizeof path, "%s", url + 3);
+  char* query = strchr(path, '?');
+  if (query) *query = 0;
+  if (path[0] != '/') { releaseStorage(); return ReaderLocalResult::NotFound; }
+
+  markSdIo();
+  File file = storage->open(path, "r");
+  if (!file || file.isDirectory()) {
+    if (file) file.close();
+    releaseStorage();
+    return ReaderLocalResult::NotFound;
   }
-  return 0;
-}
-// Extract attribute `attr` (e.g. "href") from a tag body h[0..len) into out. Handles
-// quoted ("..", '..') and unquoted values. Returns true if found.
-static bool readerTagAttr(const char* h, size_t len, const char* attr, char* out, size_t cap) {
-  size_t al = strlen(attr);
-  for (size_t i = 0; i + al + 1 < len; i++) {
-    if (!readerCiPrefix(h + i, len - i, attr)) continue;
-    size_t j = i + al; while (j < len && (h[j] == ' ' || h[j] == '\t')) j++;
-    if (j >= len || h[j] != '=') continue;
-    j++; while (j < len && (h[j] == ' ' || h[j] == '\t')) j++;
-    char q = 0; if (j < len && (h[j] == '"' || h[j] == '\'')) { q = h[j]; j++; }
-    size_t o = 0;
-    while (j < len && o + 1 < cap) { char c = h[j]; if (q ? (c == q) : (c == ' ' || c == '>' || c == '\t')) break; out[o++] = c; j++; }
-    out[o] = 0; return o > 0;
-  }
-  return false;
-}
-// Resolve href against base into out (absolute). Returns false for unusable schemes
-// (#fragment, javascript:, mailto:, tel:, data:).
-static bool readerResolveUrl(const char* base, const char* href, char* out, size_t cap) {
-  while (*href == ' ') href++;
-  size_t hl = strlen(href);
-  if (!hl || href[0] == '#') return false;
-  if (readerCiPrefix(href, hl, "javascript:") || readerCiPrefix(href, hl, "mailto:") ||
-      readerCiPrefix(href, hl, "tel:") || readerCiPrefix(href, hl, "data:")) return false;
-  if (readerCiPrefix(href, hl, "http://") || readerCiPrefix(href, hl, "https://")) { snprintf(out, cap, "%s", href); }
-  else {
-    const char* se = strstr(base, "://"); if (!se) return false;
-    int sl = (int)(se - base); const char* host = se + 3;
-    const char* he = strchr(host, '/'); int hlen = he ? (int)(he - host) : (int)strlen(host);
-    if (href[0] == '/' && href[1] == '/')      snprintf(out, cap, "%.*s:%s", sl, base, href);            // //host/path
-    else if (href[0] == '/')                   snprintf(out, cap, "%.*s://%.*s%s", sl, base, hlen, host, href);  // root-relative
-    else {                                                                                              // relative to base dir
-      const char* ls = strrchr(base, '/');
-      if (ls && ls > se + 2) snprintf(out, cap, "%.*s%s", (int)(ls - base + 1), base, href);
-      else                   snprintf(out, cap, "%.*s://%.*s/%s", sl, base, hlen, host, href);
+
+  bool read_failed = false;
+  while (*total < capacity && file.available()) {
+    const size_t request = ((capacity - *total) < 4096) ? (capacity - *total) : 4096;
+    const int read_count = file.read(raw + *total, request);
+    if (read_count <= 0) { read_failed = true; break; }
+    *total += (size_t)read_count;
+    if (generation == s_reader_generation && ((*total) & 0x3FFF) == 0) {
+      snprintf(s_reader_msg, sizeof s_reader_msg, "Opening SD page\xe2\x80\xa6 %uk", (unsigned)(*total / 1024));
+      s_reader_dirty = true;
     }
+    vTaskDelay(1);
   }
-  char* frag = strchr(out, '#'); if (frag) *frag = 0;
-  return out[0] != 0;
+  file.close();
+  releaseStorage();
+  return read_failed ? ReaderLocalResult::ReadFailed : ReaderLocalResult::Ok;
 }
-// One-pass HTML -> text. Drops comments + <script>/<style> bodies, turns block tags
-// into newlines, decodes entities, collapses whitespace, and records <a href> ranges
-// (byte offsets into out + resolved absolute href) in s_reader_links. Returns text len.
-static size_t readerHtmlToText(const char* h, size_t n, char* out, size_t cap, const char* base) {
-  size_t o = 0; int pend_nl = 0; bool pend_sp = false, started = false;
-  s_reader_nlinks = 0;
-  bool in_a = false; uint32_t a_start = 0; char a_href[240] = "";
-  auto emit = [&](char c) { if (o + 1 < cap) out[o++] = c; };
-  auto flush = [&]() { if (!started) return; while (pend_nl > 0) { emit('\n'); pend_nl--; } if (pend_sp) { emit(' '); pend_sp = false; } };
-  static const char* blocks[] = { "p","div","br","li","ul","ol","tr","h1","h2","h3","h4","h5","h6",
-    "section","article","header","footer","table","blockquote","pre","hr","nav","title","body", nullptr };
-  size_t i = 0;
-  while (i < n && o + 5 < cap) {
-    char c = h[i];
-    if (c == '<') {
-      if (n - i >= 4 && h[i+1] == '!' && h[i+2] == '-' && h[i+3] == '-') {        // comment
-        size_t j = i + 4; while (j + 2 < n && !(h[j] == '-' && h[j+1] == '-' && h[j+2] == '>')) j++;
-        i = (j + 2 < n) ? j + 3 : n; continue;
-      }
-      bool scr = readerCiPrefix(h + i, n - i, "<script"), sty = !scr && readerCiPrefix(h + i, n - i, "<style");
-      if (scr || sty) {                                                          // skip body wholesale
-        const char* close = scr ? "</script" : "</style"; size_t j = i + 1;
-        while (j < n && !(h[j] == '<' && readerCiPrefix(h + j, n - j, close))) j++;
-        while (j < n && h[j] != '>') j++; i = (j < n) ? j + 1 : n;
-        if (pend_nl < 2) pend_nl++; continue;
-      }
-      size_t j = i + 1; bool closing = (j < n && h[j] == '/'); if (closing) j++;  // tag name
-      char name[12]; int ni = 0;
-      while (j < n && ni < 11) { char t = h[j]; if ((t>='a'&&t<='z')||(t>='A'&&t<='Z')||(t>='0'&&t<='9')) { name[ni++] = (t>='A'&&t<='Z')?t+32:t; j++; } else break; }
-      name[ni] = 0;
-      size_t k = i + 1; while (k < n && h[k] != '>') k++;                          // k = '>' position
-      // Links: record the anchor-text byte range + resolved href.
-      if (name[0] == 'a' && name[1] == 0) {
-        if (in_a) { if (o > a_start && s_reader_links && s_reader_nlinks < kReaderMaxLinks) {
-            s_reader_links[s_reader_nlinks].start = a_start; s_reader_links[s_reader_nlinks].end = (uint32_t)o;
-            snprintf(s_reader_links[s_reader_nlinks].href, sizeof s_reader_links[0].href, "%s", a_href); s_reader_nlinks++; }
-          in_a = false; }
-        if (!closing) { char raw[300];
-          if (base && s_reader_links && readerTagAttr(h + i, (k < n ? k : n) - i, "href", raw, sizeof raw) &&
-              readerResolveUrl(base, raw, a_href, sizeof a_href)) { in_a = true; a_start = (uint32_t)o; } }
-      }
-      i = (k < n) ? k + 1 : n;
-      for (int b = 0; blocks[b]; b++) if (strcmp(name, blocks[b]) == 0) { pend_sp = false; if (pend_nl < 2) pend_nl++; break; }
-      continue;
-    }
-    if (c == '&') {
-      char buf[8]; int w = 0; size_t used = readerEntity(h + i, n - i, buf, &w);
-      if (used) { for (int q = 0; q < w; q++) { char e = buf[q]; if (e == ' ') { if (started) pend_sp = true; } else { flush(); emit(e); started = true; } } i += used; continue; }
-      flush(); emit('&'); started = true; i++; continue;
-    }
-    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { if (started) pend_sp = true; i++; continue; }
-    flush(); emit(c); started = true; i++;
-  }
-  out[o < cap ? o : cap - 1] = 0; return o;
-}
-// Worker (core 0): fetch s_reader_url, strip to s_reader_text, publish via s_reader_dirty.
+
+// Worker (core 0): load s_reader_url, strip to s_reader_text, publish via s_reader_dirty.
 static void readerFetchTaskFn(void*) {
+  const uint32_t generation = s_reader_task_generation;
   char url[300]; strncpy(url, s_reader_url, sizeof url - 1); url[sizeof url - 1] = 0;
-  s_reader_ok = false;
+  bool result_ok = false;
+  bool result_home_missing = false;
+  char result_msg[sizeof s_reader_msg] = "";
+  const bool local = readerCiPrefix(url, strlen(url), "sd:/");
   const bool https = readerCiPrefix(url, strlen(url), "https://");
   // Big contiguous PSRAM is scarce on the 2 MB V4 (a chat's message ring fragments it),
   // so fall back to smaller buffers — a typical text page still fits in 48 KB.
@@ -22462,62 +22442,102 @@ static void readerFetchTaskFn(void*) {
   if (!raw) { rawcap = 96 * 1024; raw = (uint8_t*)heap_caps_malloc(rawcap, MALLOC_CAP_SPIRAM); }
   if (!raw) { rawcap = 48 * 1024; raw = (uint8_t*)heap_caps_malloc(rawcap, MALLOC_CAP_SPIRAM); }
   if (!raw) { rawcap = 24 * 1024; raw = (uint8_t*)heap_caps_malloc(rawcap, MALLOC_CAP_SPIRAM); }
-  int code = -1; size_t total = 0;
+  int code = -1; size_t total = 0; bool source_ok = false;
+  ReaderLocalResult local_result = ReaderLocalResult::NoStorage;
   if (raw) {
-    HTTPClient httpc;
-    httpc.setReuse(false); httpc.setConnectTimeout(9000); httpc.setTimeout(15000);
-    httpc.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS); httpc.setUserAgent("wadamesh-reader");
-    WiFiClientSecure scli; WiFiClient pcli; bool began;
-    if (https) { scli.setInsecure(); began = httpc.begin(scli, url); }
-    else       {                       began = httpc.begin(pcli, url); }
-    if (began) { httpc.addHeader("Accept-Encoding", "identity"); code = httpc.GET(); }
-    if (code == HTTP_CODE_OK) {
-      auto* st = httpc.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
-      unsigned long t0 = millis();
-      while (st && total < rawcap - 1 && (millis() - t0) < 20000) {
-        int a = st->available();
-        if (a <= 0) { if (!httpc.connected()) break; vTaskDelay(pdMS_TO_TICKS(8)); continue; }
-        int r = st->read(raw + total, (rawcap - 1) - total);
-        if (r <= 0) { if (!httpc.connected()) break; vTaskDelay(pdMS_TO_TICKS(5)); continue; }
-        total += (size_t)r;
-        if ((total & 0x3FFF) == 0) { snprintf(s_reader_msg, sizeof s_reader_msg, "Loading\xe2\x80\xa6 %uk", (unsigned)(total / 1024)); s_reader_dirty = true; }
-        vTaskDelay(1);
+    if (local) {
+      local_result = readerReadLocal(url, raw, rawcap - 1, &total, generation);
+      source_ok = local_result == ReaderLocalResult::Ok;
+    } else {
+      HTTPClient httpc;
+      httpc.setReuse(false); httpc.setConnectTimeout(9000); httpc.setTimeout(15000);
+      httpc.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS); httpc.setUserAgent("wadamesh-reader");
+      WiFiClientSecure scli; WiFiClient pcli; bool began;
+      if (https) { scli.setInsecure(); began = httpc.begin(scli, url); }
+      else       {                       began = httpc.begin(pcli, url); }
+      if (began) { httpc.addHeader("Accept-Encoding", "identity"); code = httpc.GET(); }
+      if (code == HTTP_CODE_OK) {
+        ReaderBufferStream sink(raw, rawcap - 1, generation);
+        const int transfer_result = httpc.writeToStream(&sink);
+        total = sink.size();
+        source_ok = transfer_result >= 0 || sink.full() || total > 0;
       }
+      httpc.end();
     }
-    httpc.end();
   }
-  if (!raw) snprintf(s_reader_msg, sizeof s_reader_msg, "Out of memory");
-  else if (code == HTTP_CODE_OK && total >= 2 && raw[0] == 0x1f && (uint8_t)raw[1] == 0x8b)
-    snprintf(s_reader_msg, sizeof s_reader_msg, "Page is gzip-compressed \xe2\x80\x94 not supported yet");
-  else if (code == HTTP_CODE_OK && total > 0) {
+  if (!raw) snprintf(result_msg, sizeof result_msg, "Out of memory");
+  else if (source_ok && total >= 2 && raw[0] == 0x1f && (uint8_t)raw[1] == 0x8b)
+    snprintf(result_msg, sizeof result_msg, "Page is gzip-compressed \xe2\x80\x94 not supported yet");
+  else if (source_ok) {
     if (!s_reader_text)  s_reader_text  = (char*)heap_caps_malloc(kReaderTextCap, MALLOC_CAP_SPIRAM);
     if (!s_reader_links) s_reader_links = (ReaderLink*)heap_caps_malloc(sizeof(ReaderLink) * kReaderMaxLinks, MALLOC_CAP_SPIRAM);
-    if (s_reader_text) { size_t tl = readerHtmlToText((const char*)raw, total, s_reader_text, kReaderTextCap, s_reader_url);
+    if (s_reader_text) { size_t parsed_links = 0;
+      size_t tl = ReaderContent::htmlToText((const char*)raw, total, s_reader_text, kReaderTextCap,
+                                            url, s_reader_links, kReaderMaxLinks, &parsed_links);
+      s_reader_nlinks = (int)parsed_links;
       if (tl == 0) { strcpy(s_reader_text, "(no readable text on this page)"); s_reader_nlinks = 0; }
-      snprintf(s_reader_msg, sizeof s_reader_msg, "%s", s_reader_url); s_reader_ok = true; }
-    else snprintf(s_reader_msg, sizeof s_reader_msg, "Out of memory");
+      snprintf(result_msg, sizeof result_msg, "%s", url); result_ok = true; }
+    else snprintf(result_msg, sizeof result_msg, "Out of memory");
   }
-  else if (code > 0) { snprintf(s_reader_msg, sizeof s_reader_msg, "HTTP %d", code); }
-  else               { snprintf(s_reader_msg, sizeof s_reader_msg, "Couldn't load (offline, bad URL, or TLS failed)"); }
+  else if (local) {
+    const bool home = strcmp(url, kReaderHomeUrl) == 0;
+    result_home_missing = home;
+    if (home) snprintf(result_msg, sizeof result_msg, "No SD /home.htm found");
+    else if (local_result == ReaderLocalResult::NoStorage) snprintf(result_msg, sizeof result_msg, "SD card not available");
+    else if (local_result == ReaderLocalResult::ReadFailed) snprintf(result_msg, sizeof result_msg, "Couldn't read SD file");
+    else snprintf(result_msg, sizeof result_msg, "SD file not found");
+  }
+  else if (code > 0) { snprintf(result_msg, sizeof result_msg, "HTTP %d", code); }
+  else               { snprintf(result_msg, sizeof result_msg, "Couldn't load (offline, bad URL, or TLS failed)"); }
   if (raw) heap_caps_free(raw);
-  s_reader_busy = false; s_reader_dirty = true; s_reader_task = nullptr;
+  if (generation == s_reader_generation) {
+    s_reader_ok = result_ok;
+    s_reader_home_missing = result_home_missing;
+    snprintf(s_reader_msg, sizeof s_reader_msg, "%s", result_msg);
+  }
+  s_reader_task = nullptr; s_reader_busy = false; s_reader_dirty = true;
   vTaskDelete(nullptr);
 }
 // Navigate to a URL. push=true records it in history (a fresh navigation from Go / a
 // link / Enter); push=false is a back / forward / refresh replay that must NOT grow
 // history. readerStart() is the public "new navigation" entry point.
-static void readerNavigate(const char* in, bool push) {
-  if (s_reader_busy || !in) return;
+static bool readerNavigate(const char* in, bool push) {
+  if (s_reader_busy || !in) return false;
   while (*in == ' ') in++;
-  if (readerCiPrefix(in, strlen(in), "http://") || readerCiPrefix(in, strlen(in), "https://"))
-       snprintf(s_reader_url, sizeof s_reader_url, "%s", in);
-  else snprintf(s_reader_url, sizeof s_reader_url, "https://%s", in);   // default to https
+  const bool local = readerCiPrefix(in, strlen(in), "sd:/");
+  char next_url[sizeof s_reader_url];
+  if (local || readerCiPrefix(in, strlen(in), "http://") || readerCiPrefix(in, strlen(in), "https://"))
+    snprintf(next_url, sizeof next_url, "%s", in);
+  else snprintf(next_url, sizeof next_url, "https://%s", in);   // default to https
+  if (!next_url[0] || (!local && !strchr(next_url, '.'))) { snprintf(s_reader_msg, sizeof s_reader_msg, "Enter a valid URL"); s_reader_dirty = true; if (s_reader_root) readerSetAddrExpanded(true); return false; }
+  if (!local && WiFi.status() != WL_CONNECTED) { snprintf(s_reader_msg, sizeof s_reader_msg, "Wi-Fi not connected (Settings \xe2\x86\x92 Wi-Fi)"); s_reader_dirty = true; if (s_reader_root) readerSetAddrExpanded(true); return false; }
+  char previous_url[sizeof s_reader_url];
+  snprintf(previous_url, sizeof previous_url, "%s", s_reader_url);
+  snprintf(s_reader_url, sizeof s_reader_url, "%s", next_url);
   // Keep the address field in sync with what we're actually loading, so a failed load
   // shows the URL we tried (not the stale default that made it look like it "opened
   // wadamesh.com").
   if (s_reader_url_ta) { lv_textarea_set_text(s_reader_url_ta, s_reader_url); s_reader_pristine = false; }
-  if (!s_reader_url[0] || !strchr(s_reader_url, '.')) { snprintf(s_reader_msg, sizeof s_reader_msg, "Enter a valid URL"); s_reader_dirty = true; if (s_reader_root) readerSetAddrExpanded(true); return; }
-  if (WiFi.status() != WL_CONNECTED) { snprintf(s_reader_msg, sizeof s_reader_msg, "Wi-Fi not connected (Settings \xe2\x86\x92 Wi-Fi)"); s_reader_dirty = true; if (s_reader_root) readerSetAddrExpanded(true); return; }
+  s_reader_ok = false;
+  s_reader_home_missing = false;
+  s_reader_task_generation = ++s_reader_generation;
+  s_reader_busy = true; snprintf(s_reader_msg, sizeof s_reader_msg, "%s", local ? "Opening SD page\xe2\x80\xa6" : "Connecting\xe2\x80\xa6"); s_reader_dirty = true;
+  // Immediate feedback (we're on the UI thread): collapse the URL into the topbar and
+  // show a Loading placeholder at once, so a tapped link visibly does something now.
+  if (s_reader_root) { readerSetAddrExpanded(false); readerShowLoading(); }
+  if (xTaskCreatePinnedToCore(readerFetchTaskFn, "reader", 16384, nullptr, 4, &s_reader_task, 0) != pdPASS) {
+    // Couldn't spawn the fetch worker (low internal RAM) — don't leave it stuck on
+    // "Loading…" forever; surface it and drop the busy flag so a retry works.
+    s_reader_task = nullptr; s_reader_busy = false;
+    snprintf(s_reader_msg, sizeof s_reader_msg, "Low memory \xe2\x80\x94 try again");
+    s_reader_ok = false; s_reader_dirty = true;
+    snprintf(s_reader_url, sizeof s_reader_url, "%s", previous_url);
+    if (s_reader_url_ta) {
+      lv_textarea_set_text(s_reader_url_ta, previous_url[0] ? previous_url : kReaderDefaultUrl);
+      s_reader_pristine = !previous_url[0];
+    }
+    return false;
+  }
   if (push && s_reader_hist) {
     // Drop any forward tail, then push (unless it repeats the current entry).
     if (s_reader_hist_pos < 0 || strcmp(s_reader_hist[s_reader_hist_pos], s_reader_url) != 0) {
@@ -22529,31 +22549,23 @@ static void readerNavigate(const char* in, bool push) {
     }
     s_reader_hist_n = s_reader_hist_pos + 1;
   }
-  s_reader_busy = true; snprintf(s_reader_msg, sizeof s_reader_msg, "Connecting\xe2\x80\xa6"); s_reader_dirty = true;
   readerUpdateNavButtons();
-  // Immediate feedback (we're on the UI thread): collapse the URL into the topbar and
-  // show a Loading placeholder at once, so a tapped link visibly does something now.
-  if (s_reader_root) { readerSetAddrExpanded(false); readerShowLoading(); }
-  if (xTaskCreatePinnedToCore(readerFetchTaskFn, "reader", 16384, nullptr, 4, &s_reader_task, 0) != pdPASS) {
-    // Couldn't spawn the fetch worker (low internal RAM) — don't leave it stuck on
-    // "Loading…" forever; surface it and drop the busy flag so a retry works.
-    s_reader_task = nullptr; s_reader_busy = false;
-    snprintf(s_reader_msg, sizeof s_reader_msg, "Low memory \xe2\x80\x94 try again");
-    s_reader_ok = false; s_reader_dirty = true;
-  }
+  return true;
 }
 static void readerStart(const char* in) { readerNavigate(in, true); }
 static void readerBackCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_reader_busy) return;
-  if (s_reader_hist_pos > 0) readerNavigate(s_reader_hist[--s_reader_hist_pos], false);
-  else closeReaderPage();   // at the first page, the ◀ button exits the browser (reliable exit)
+  if (s_reader_hist_pos > 0) {
+    const int target = s_reader_hist_pos - 1;
+    if (readerNavigate(s_reader_hist[target], false)) { s_reader_hist_pos = target; readerUpdateNavButtons(); }
+  }
 }
-static void readerFwdCb(lv_event_t* e)     { if (lv_event_get_code(e) == LV_EVENT_CLICKED && !s_reader_busy && s_reader_hist && s_reader_hist_pos + 1 < s_reader_hist_n) readerNavigate(s_reader_hist[++s_reader_hist_pos], false); }
+static void readerFwdCb(lv_event_t* e)     { if (lv_event_get_code(e) == LV_EVENT_CLICKED && !s_reader_busy && s_reader_hist && s_reader_hist_pos + 1 < s_reader_hist_n) { const int target = s_reader_hist_pos + 1; if (readerNavigate(s_reader_hist[target], false)) { s_reader_hist_pos = target; readerUpdateNavButtons(); } } }
 static void readerRefreshCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED && !s_reader_busy && s_reader_url[0])                             readerNavigate(s_reader_url, false); }
 // Dim the back / forward arrows when there's nowhere to go that way.
 static void readerUpdateNavButtons() {
   auto dim = [](lv_obj_t* b, bool on) { if (!b) return; lv_obj_t* l = lv_obj_get_child(b, 0); if (l) lv_obj_set_style_text_opa(l, on ? LV_OPA_COVER : LV_OPA_30, LV_PART_MAIN); };
-  dim(s_reader_back, true);   // always active: goes back in history, or exits at the first page
+  dim(s_reader_back, s_reader_hist && s_reader_hist_pos > 0);
   dim(s_reader_fwd,  s_reader_hist && s_reader_hist_pos + 1 < s_reader_hist_n);
 }
 static void readerGoCb(lv_event_t*) { if (s_reader_url_ta) readerStart(lv_textarea_get_text(s_reader_url_ta)); }
@@ -22630,21 +22642,36 @@ static void readerRenderBody() {
     return;
   }
   // Walk the text, emitting text[cursor..link.start] as paragraphs and each link
-  // range as a tappable label. NUL-swap in place so we never copy big runs.
+  // range as a tappable label. Boundary whitespace is redundant once a range becomes
+  // its own flex row; trimming it prevents paragraph newlines from becoming blank rows.
+  // NUL-swap in place so we never copy big runs.
   const uint32_t tlen = (uint32_t)strlen(s_reader_text);
+  auto mkRange = [&](uint32_t start, uint32_t end, bool link, int idx) {
+    auto boundarySpace = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+    while (start < end && boundarySpace(s_reader_text[start])) start++;
+    while (end > start && boundarySpace(s_reader_text[end - 1])) end--;
+    if (start == end) return false;
+    char saved = s_reader_text[end];
+    s_reader_text[end] = 0;
+    mkLabel(s_reader_text + start, link, idx);
+    s_reader_text[end] = saved;
+    return true;
+  };
   uint32_t cursor = 0; int blocks = 0;
   for (int i = 0; i < s_reader_nlinks && blocks < 500; i++) {
     ReaderLink& lk = s_reader_links[i];
     if (lk.start < cursor || lk.end > tlen || lk.end <= lk.start) continue;
-    if (lk.start > cursor) { char sv = s_reader_text[lk.start]; s_reader_text[lk.start] = 0; mkLabel(s_reader_text + cursor, false, -1); s_reader_text[lk.start] = sv; blocks++; }
-    { char sv = s_reader_text[lk.end]; s_reader_text[lk.end] = 0; mkLabel(s_reader_text[lk.start] ? s_reader_text + lk.start : "(link)", true, i); s_reader_text[lk.end] = sv; blocks++; }
+    if (lk.start > cursor && mkRange(cursor, lk.start, false, -1)) blocks++;
+    if (mkRange(lk.start, lk.end, true, i)) blocks++;
     cursor = lk.end;
   }
-  if (cursor < tlen) mkLabel(s_reader_text + cursor, false, -1);
+  if (cursor < tlen) mkRange(cursor, tlen, false, -1);
   lv_obj_scroll_to_y(s_reader_scroll, 0, LV_ANIM_OFF);
 }
 static void closeReaderPage() {
   if (!s_reader_root) return;
+  ++s_reader_generation;
+  s_reader_pending_url[0] = 0;
   s_apppage_title = nullptr; s_apppage_close = nullptr;
   s_reader_bar_url = false;   // un-hide the status-bar clock
   s_reader_page_open = false; // restore the tall-bar glass fade for other pages
@@ -22660,7 +22687,7 @@ static void readerEditBtnCb(lv_event_t* e) {
   readerSetAddrExpanded(true);
   if (s_reader_url_ta) { lv_textarea_set_text(s_reader_url_ta, s_reader_url); s_reader_pristine = false; lv_group_focus_obj(s_reader_url_ta); }
 }
-static void openReaderPage() {
+static void openReaderPage(const char* initial_url = nullptr) {
   closeReaderPage();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -22746,7 +22773,8 @@ static void openReaderPage() {
   s_reader_fwd     = navBtn(LV_SYMBOL_RIGHT,   readerFwdCb);
   navBtn(LV_SYMBOL_REFRESH, readerRefreshCb);
   s_reader_editbtn = navBtn(LV_SYMBOL_EDIT,    readerEditBtnCb);
-  readerRenderBody();
+  if (s_reader_busy) readerShowLoading();
+  else               readerRenderBody();
   // Reopen after a successful load -> collapsed (fullscreen reading); first open or
   // after an error -> expanded so you can type a URL.
   readerSetAddrExpanded(!(s_reader_ok && s_reader_text && s_reader_text[0]));
@@ -22755,6 +22783,15 @@ static void openReaderPage() {
   // this page opens over a chat, leaving the tall bar's lower row (the back tap) buried
   // under the reader root.
   if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
+  const char* target = initial_url && initial_url[0] ? initial_url : kReaderHomeUrl;
+  if (s_reader_busy) {
+    snprintf(s_reader_pending_url, sizeof s_reader_pending_url, "%s", target);
+    readerSetAddrExpanded(false);
+    readerShowLoading();
+  } else {
+    s_reader_pending_url[0] = 0;
+    readerStart(target);
+  }
 }
 #endif  // Reader
 
@@ -34222,7 +34259,7 @@ static void urlMenuOpenWebCb(lv_event_t* e) {
   // new fetch) and the previous page so openReaderPage doesn't re-render the last URL.
   if (!s_reader_task) s_reader_busy = false;
   s_reader_ok = false;
-  openReaderPage(); readerStart(u);
+  openReaderPage(u);
 }
 #endif
 static void openUrlMenu(const char* url) {
@@ -42425,7 +42462,7 @@ static void docCaptureTour() {
   // On-device web browser (8 MB boards only) + the chat-link menu + the QR popup.
   // The reader renders from the UI-update poll (which doesn't run while this tour
   // blocks the loop), so drive the fetch-wait + render inline here.
-  openReaderPage(); readerStart("wadamesh.com");
+  openReaderPage("wadamesh.com");
   { int _w = 0; while (s_reader_busy && _w < 700) { lv_timer_handler(); delay(22); ++_w; } esp_task_wdt_reset(); }
   if (s_reader_ok) { readerRenderBody(); readerSetAddrExpanded(false); }
   else             { readerShowMessage(s_reader_msg[0] ? s_reader_msg : "Couldn't load page", 0xE0A0A0); readerSetAddrExpanded(true); }
@@ -43813,14 +43850,31 @@ static void refreshStatusLabels() {
   // The page is a full-screen overlay (any tab), so gate on the page being open.
   if (s_reader_dirty && s_reader_root) {
     s_reader_dirty = false;
-    if (s_reader_status) lv_label_set_text(s_reader_status, s_reader_msg);
-    if (!s_reader_busy) {                   // the fetch finished
-      if (s_reader_ok) {                    // …with a page
-        readerRenderBody();
-        readerSetAddrExpanded(false);       // collapse the address bar -> fullscreen reading
-      } else {                              // …with an error — SHOW it (don't sit on "Loading…")
-        readerShowMessage(s_reader_msg[0] ? s_reader_msg : "Couldn't load page", 0xE0A0A0);
-        readerSetAddrExpanded(true);        // expand so the address bar + retry are reachable
+    if (!s_reader_busy && s_reader_pending_url[0]) {
+      char pending_url[sizeof s_reader_pending_url];
+      snprintf(pending_url, sizeof pending_url, "%s", s_reader_pending_url);
+      s_reader_pending_url[0] = 0;
+      readerStart(pending_url);
+    } else {
+      if (s_reader_status) lv_label_set_text(s_reader_status, s_reader_msg);
+      if (!s_reader_busy) {                 // the fetch finished
+        if (s_reader_ok) {                  // …with a page
+          readerRenderBody();
+          readerSetAddrExpanded(false);     // collapse the address bar -> fullscreen reading
+        } else if (s_reader_home_missing) { // no optional SD home page: retain the normal URL-entry UX
+          s_reader_home_missing = false;
+          s_reader_hist_n = 0; s_reader_hist_pos = -1;
+          s_reader_url[0] = 0;
+          if (s_reader_text) s_reader_text[0] = 0;
+          s_reader_nlinks = 0;
+          if (s_reader_url_ta) lv_textarea_set_text(s_reader_url_ta, kReaderDefaultUrl);
+          s_reader_pristine = true;
+          readerRenderBody();
+          readerSetAddrExpanded(true);
+        } else {                            // …with an error — SHOW it (don't sit on "Loading…")
+          readerShowMessage(s_reader_msg[0] ? s_reader_msg : "Couldn't load page", 0xE0A0A0);
+          readerSetAddrExpanded(true);      // expand so the address bar + retry are reachable
+        }
       }
     }
   }
@@ -52942,6 +52996,11 @@ static bool sdRuntimeLifecycleBusy() {
   bool busy = s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request ||
               s_sdinfo_busy ||
               touchPrefsIoBusy();
+#if defined(MULTI_TRANSPORT_COMPANION)
+  const bool reader_is_caller = s_reader_sd_busy &&
+                                s_reader_sd_owner == xTaskGetCurrentTaskHandle();
+  busy = busy || (s_reader_sd_busy && !reader_is_caller);
+#endif
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
   busy = busy || s_notify_playing;
 #endif
