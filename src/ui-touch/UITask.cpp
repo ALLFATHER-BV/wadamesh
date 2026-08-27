@@ -7038,6 +7038,13 @@ static bool mentionBoxMaybeShow(lv_obj_t* ta) {
 static void composerMentionRefresh(lv_obj_t* ta) {
   if (mentionBoxMaybeShow(ta)) { accentBoxHide(); return; }
   mentionBoxHide();
+  // Fall through to the accent box, as this function's predecessor did. Losing
+  // this is what killed accent popups for anyone typing on a PHYSICAL keyboard
+  // (#338): those keystrokes reach the composer's own VALUE_CHANGED, which ends
+  // up here, while the on-screen keyboard has a separate path that kept its
+  // call. Cheap to call twice, since accentBoxMaybeShow() hides the previous
+  // box before deciding whether to show one.
+  accentBoxMaybeShow();
 }
 static void composerSuggestChangedCb(lv_event_t* e) {
   lv_obj_t* ta = lv_event_get_target(e);
