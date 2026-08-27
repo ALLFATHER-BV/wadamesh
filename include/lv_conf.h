@@ -61,6 +61,13 @@
 #define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_MONTSERRAT_24 1
 #endif
+/* T-Deck-only, unrelated to the Large/Huge UI-scale block above: an experiment
+ * to shrink the "at a glance" notification's message body from 28px to 20px
+ * on this board only (see atGlanceEnsureFont() in UITask.cpp). Easy to revert
+ * by dropping this block + the T-Deck branch in atGlanceEnsureFont(). */
+#if defined(HAS_TDECK_GT911)
+#define LV_FONT_MONTSERRAT_20 1
+#endif
 /* 28 px Montserrat for the boot splash title — keeps the rest of the UI on
  * the smaller fonts so the .data cost stays modest. */
 #define LV_FONT_MONTSERRAT_28 1

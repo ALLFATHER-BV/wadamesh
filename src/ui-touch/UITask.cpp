@@ -507,6 +507,18 @@ extern "C" const lv_font_t cc_icons_16;
 extern "C" const lv_font_t extras_12;
 extern "C" const lv_font_t extras_14;
 extern "C" const lv_font_t extras_16;
+// extras_lat_28 used to be compiled HAS_TANMATSU-only (Large/Huge UI-scale Latin-
+// accent fallback, issue #129); it's now compiled on every board (extras_lat_28.c)
+// for the "at a glance" notification's message body (atGlanceEnsureFont()) --
+// montserrat_28 was picked over 24 because only 12/14/16/28 are actually built
+// into this project's vendored LVGL config (LV_FONT_MONTSERRAT_24 isn't enabled).
+extern "C" const lv_font_t extras_lat_28;
+// extras_lat_20 was HAS_TANMATSU-only too (Large/Huge UI-scale fallback); the
+// T-Deck now also builds it, for its 20px at-glance body experiment (see
+// atGlanceEnsureFont()) -- extras_lat_20.c's own gate was widened to match.
+#if defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911)
+extern "C" const lv_font_t extras_lat_20;
+#endif
 #if defined(TLORA_PAGER)
 // Full multilingual fallbacks at the Pager's accessible text sizes. These keep
 // accented Latin, Greek, Cyrillic, Arabic, punctuation, and units aligned with
@@ -519,9 +531,7 @@ extern "C" const lv_font_t extras_24;
 // neighbours at Large/Huge UI scale (issue #129). Room for these was made by
 // storing the extras fonts compressed (LV_USE_FONT_COMPRESSED) — nothing lost,
 // net binary SMALLER, so the P4 app-load ceiling is respected.
-extern "C" const lv_font_t extras_lat_20;
 extern "C" const lv_font_t extras_lat_24;
-extern "C" const lv_font_t extras_lat_28;
 #endif
 static lv_font_t g_font_12;
 static lv_font_t g_font_14;
@@ -2307,6 +2317,8 @@ struct SettingsModalState {
   lv_obj_t* exp_boost_sw;
   lv_obj_t* exp_dc_sw;
   lv_obj_t* wifi_sw;
+  lv_obj_t* glance_en_sw;
+  lv_obj_t* glance_locked_sw;
   lv_obj_t* wifi_ssid_ta;
   lv_obj_t* wifi_pwd_ta;
   /** Transports modal: live STA line (IP when connected, else Arduino WiFi status). */
@@ -11840,6 +11852,38 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(unlock_hint, 1600);
 }
 
+// "At a glance" is read straight from NVS at message time (not cached), same as
+// the sound/DND checks right next to its call site in newMsgImpl -- it's not a
+// per-loop hot path, just once per inbound message.
+static void glanceWhenLockedToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetGlanceWhenLocked(on);
+#endif
+  if (g_lv.task) {
+    g_lv.task->showAlert(on ? TR("Glance shows message previews\nwhile the screen is locked")
+                            : TR("Glance only shows when unlocked"), 1600);
+  }
+}
+
+// Master "At a glance" toggle (Options > Display): gates the whole feature.
+// The secondary "while locked" switch's own saved preference is left
+// alone -- only its editability follows the master, so re-enabling always
+// restores its true prior state.
+static void glanceEnabledToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetGlanceEnabled(on);
+#endif
+  if (g_set_modal.glance_locked_sw) {
+    if (on) lv_obj_clear_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
+    else    lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
+  }
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("At a glance enabled") : TR("At a glance disabled"), 1200);
+}
+
 #if CAP_TRACKBALL
 // Invert the scrollball direction everywhere it drives motion (cursor, map pan,
 // emoji selector). Cached in s_tb_reverse so the per-tick poll never hits NVS.
@@ -12928,6 +12972,41 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, hideNameToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
+
+  /* At a glance: master enable for the "at a glance" message-preview overlay
+     (see atGlanceShow()/newMsgImpl()) -- on by default, matching the
+     previously-unconditional behavior. Gates the "while locked" switch below. */
+  bool glance_on = true;
+  {
+    int h = settingsRowLabel(body, y, 6, TR("At a glance"), COLOR_SUB, nullptr, 56);
+    g_set_modal.glance_en_sw = lv_switch_create(body);
+    lv_obj_align(g_set_modal.glance_en_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    glance_on = touchPrefsGetGlanceEnabled();
+    if (glance_on) lv_obj_add_state(g_set_modal.glance_en_sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(g_set_modal.glance_en_sw, glanceEnabledToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+  }
+
+#if !defined(HAS_TDISPLAY_P4)
+  /* "At a glance" also fires while manually/idle locked, not just while
+     unlocked+dimmed -- off by default since it's a real trade-off (message
+     text becomes readable off a locked device). Disabled (not cleared) while
+     the master switch above is off. Moved here from Options > Lock screen so
+     it sits with the feature it modifies. */
+  {
+    int h = settingsRowLabel(body, y, 6, TR("At a glance while locked"), COLOR_SUB, nullptr, 56);
+    g_set_modal.glance_locked_sw = lv_switch_create(body);
+    lv_obj_align(g_set_modal.glance_locked_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (touchPrefsGetGlanceWhenLocked()) lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_CHECKED);
+    if (!glance_on) lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
+#endif
+    lv_obj_add_event_cb(g_set_modal.glance_locked_sw, glanceWhenLockedToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+  }
+#endif
 
 #if defined(HAS_EXPANSION_KIT)
   /* Show Sensors tab (V4 Expansion Kit): toggles the bottom Sensors tab + the
@@ -52266,6 +52345,169 @@ void consoleHostRebootToUi() {
 
 void UITask::msgRead(int msgcount) { _msgcount = msgcount; }
 
+// ---- "At a glance" notification --------------------------------------------
+// New, board-agnostic feature (distinct from the T-Deck's existing opt-in
+// "msgFlash", which fully wakes to the live app + pulses the keyboard
+// backlight): while the device is UNLOCKED but its screen has idle-dimmed to
+// off, an incoming message (DND permitting) briefly lights a plain black
+// overlay showing just the channel/sender name and the message text, then
+// dims back out on its own after a fixed window -- a glance, not a wake.
+// Never opens the chat, so the message stays unread, and whatever tab/chat
+// was open underneath is left exactly as it was. atGlanceShow() below only
+// builds/updates the overlay; UITask::newMsgImpl() decides whether to fire it
+// (and wakes the screen + arms the auto-hide window); UITask::loop() clears it.
+static lv_obj_t* s_glance_root       = nullptr;
+static lv_obj_t* s_glance_title      = nullptr;
+static lv_obj_t* s_glance_body       = nullptr;
+static uint32_t  s_glance_lit_ms     = 0;       // millis() when (re)shown, 0 = not showing -- loop() re-dims 5s later
+static bool      s_glance_fading_out = false;   // one-shot guard: the 200ms fade-out anim has already been started
+
+static void atGlanceOpaCb(void* var, int32_t v) {
+  lv_obj_set_style_opa(static_cast<lv_obj_t*>(var), static_cast<lv_opa_t>(v), LV_PART_MAIN);
+}
+
+// Message-body font, built once: stock Montserrat 28 (ASCII) -> extras_lat_28
+// (accented Latin, em-dash, ellipsis -- now compiled on every board, not just the
+// Tanmatsu; see extras_lat_28.c) -> extras_16 tail (Cyrillic/Greek/Arabic, baked at
+// 16 px so those scripts render a bit small relative to Latin text, but never a
+// missing-glyph box). 28, not 24: only 12/14/16/28 are actually enabled in this
+// project's vendored LVGL config (LV_FONT_MONTSERRAT_24 isn't). g_font_16 itself
+// is deliberately left alone -- it's the UI-scale-driven font hundreds of OTHER
+// widgets use, not something to repurpose for one feature.
+//
+// T-Deck experiment: 20px instead of 28px (LV_FONT_MONTSERRAT_20 + extras_lat_20
+// widened for this board specifically, see lv_conf.h/extras_lat_20.c) -- trying
+// a smaller glance body on this panel. Revert by dropping this branch + those
+// two gate widenings.
+static lv_font_t s_glance_body_font;
+static bool      s_glance_font_ready = false;
+static void atGlanceEnsureFont() {
+  if (s_glance_font_ready) return;
+  s_glance_font_ready = true;
+#if defined(HAS_TDECK_GT911)
+  static lv_font_t s_lat20;
+  s_lat20 = extras_lat_20;
+  s_lat20.fallback = &extras_16;
+  s_glance_body_font = lv_font_montserrat_20;
+  s_glance_body_font.fallback = &s_lat20;
+#else
+  static lv_font_t s_lat28;
+  s_lat28 = extras_lat_28;
+  s_lat28.fallback = &extras_16;
+  s_glance_body_font = lv_font_montserrat_28;
+  s_glance_body_font.fallback = &s_lat28;
+#endif
+}
+
+static void atGlanceHide() {
+  if (s_glance_root) {
+    // Only the TEXT fades (see atGlanceShow()) -- the root's own opa is never
+    // touched, so nothing to reset on it. Just cancel any in-flight label fades.
+    if (s_glance_title) { lv_anim_del(s_glance_title, atGlanceOpaCb); lv_obj_set_style_opa(s_glance_title, LV_OPA_COVER, LV_PART_MAIN); }
+    if (s_glance_body)  { lv_anim_del(s_glance_body,  atGlanceOpaCb); lv_obj_set_style_opa(s_glance_body,  LV_OPA_COVER, LV_PART_MAIN); }
+    lv_obj_add_flag(s_glance_root, LV_OBJ_FLAG_HIDDEN);
+  }
+  s_glance_lit_ms = 0;
+  s_glance_fading_out = false;
+}
+
+// `fade_in`: true on the first reveal of a burst (screen was off), false when
+// a later message in the same burst just updates the text on an already-lit
+// overlay -- no need to re-fade something already fully visible.
+static void atGlanceShow(const char* title, const char* body, bool fade_in) {
+  if (!g_lv.ready) return;
+  if (!s_glance_root) {
+    s_glance_root = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_glance_root);
+    lv_obj_set_style_bg_color(s_glance_root, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_glance_root, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_clear_flag(s_glance_root, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_glance_root, LV_OBJ_FLAG_CLICKABLE);   // absorb taps -- no UI leak underneath
+    // Never a keyboard/encoder nav target on any board: same reasoning as the
+    // lock screen's NAV_SKIP_FLAG (see lockscreenShow()) -- a CLICKABLE
+    // top-layer overlay with nothing to navigate to would otherwise be
+    // collected as the sole focus target, and navFocusCb's focus-highlight
+    // would invert its text to dark the instant the nav group (re)builds.
+    lv_obj_add_flag(s_glance_root, NAV_SKIP_FLAG);
+
+    // Small "eyebrow" label (channel/sender) above the message, in the app's
+    // accent colour -- the message itself is the thing that needs to be
+    // readable from a few feet away (desk-mounted device), so it gets the
+    // dominant size/position below and this stays a secondary context cue.
+    s_glance_title = lv_label_create(s_glance_root);
+    lv_obj_set_style_text_font(s_glance_title, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_glance_title, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_width(s_glance_title, lv_pct(85));
+    lv_obj_set_style_text_align(s_glance_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_label_set_long_mode(s_glance_title, LV_LABEL_LONG_DOT);   // single line, ellipsize -- guaranteed to fit every board's width
+    lv_obj_align(s_glance_title, LV_ALIGN_TOP_LEFT, 14, 30);   // below the ~22 px status bar band (the real status bar renders above this overlay)
+
+    // Message body: 28 px (bumped up from 16 -- 16 wasn't legible from a few
+    // feet away on a desk-mounted device) via atGlanceEnsureFont()'s own
+    // fallback chain, so arbitrary chat text (accents, em-dash, ellipsis)
+    // still never shows a missing-glyph box at this size.
+    atGlanceEnsureFont();
+    s_glance_body = lv_label_create(s_glance_root);
+    lv_obj_set_style_text_font(s_glance_body, &s_glance_body_font, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_glance_body, lv_color_hex(0xFFFFFFu), LV_PART_MAIN);
+    lv_obj_set_width(s_glance_body, lv_pct(85));
+    lv_obj_set_style_text_align(s_glance_body, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    // LV_LABEL_LONG_DOT only wraps across multiple lines (dot-ellipsizing the LAST
+    // one on overflow) when the label has a fixed HEIGHT, not just a fixed width --
+    // left at auto/content height (as this was), it sizes to exactly one line, so
+    // every board was effectively single-line regardless of panel size (reported:
+    // text cropped at the end of the first line instead of continuing on a second).
+    // Give it the actual remaining space below this label's own y-offset down to a
+    // small bottom margin, computed from this board's resolution + active body font,
+    // so it uses exactly what's available -- more lines on tall panels, fewer on the
+    // 222 px-tall Pager -- instead of a guessed fixed line count.
+    {
+      const lv_coord_t avail_h = lv_disp_get_ver_res(nullptr) - 60 - 10;
+      const lv_coord_t line_h  = lv_font_get_line_height(&s_glance_body_font);
+      lv_obj_set_height(s_glance_body, avail_h > line_h ? avail_h : line_h);
+    }
+    lv_label_set_long_mode(s_glance_body, LV_LABEL_LONG_DOT);
+    lv_obj_align(s_glance_body, LV_ALIGN_TOP_LEFT, 14, 60);   // a bit more clearance now the title above is 16 px, not 12
+  }
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  lv_obj_set_size(s_glance_root, sw, sh);
+  lv_obj_set_pos(s_glance_root, 0, 0);
+  lv_label_set_text(s_glance_title, title ? title : "");
+  lv_label_set_text(s_glance_body,  body  ? body  : "");
+  // Cancel any fade-out already begun (by an earlier message in this burst) on
+  // either label.
+  lv_anim_del(s_glance_title, atGlanceOpaCb);
+  lv_anim_del(s_glance_body,  atGlanceOpaCb);
+  lv_obj_clear_flag(s_glance_root, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(s_glance_root);
+  if (fade_in) {
+    // Only the TEXT fades in, never the root: the root's bg_opa is COVER (solid
+    // black) from the moment it's created and stays that way, so the very first
+    // frame -- forced-painted BEFORE the backlight comes on (see newMsgImpl()) --
+    // is already a clean black screen, not a transparent one letting the live
+    // app screen show through underneath for a frame (reported: "I see the app
+    // screen then I see the at-glance"). Fading the whole root's opa used to fade
+    // the background along with the text, which is what caused that.
+    lv_obj_set_style_opa(s_glance_title, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_opa(s_glance_body,  LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_t* targets[2] = { s_glance_title, s_glance_body };
+    for (lv_obj_t* t : targets) {
+      lv_anim_t a;
+      lv_anim_init(&a);
+      lv_anim_set_var(&a, t);
+      lv_anim_set_time(&a, 180);
+      lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+      lv_anim_set_exec_cb(&a, atGlanceOpaCb);
+      lv_anim_start(&a);
+    }
+  } else {
+    // Already visible -- just swap the text, no re-fade.
+    lv_obj_set_style_opa(s_glance_title, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_opa(s_glance_body,  LV_OPA_COVER, LV_PART_MAIN);
+  }
+}
+
 // Shared core for newMsg / newMsgFromPubWithMeta. Bundles the channel-vs-DM
 // sender parsing + thread routing in one place so the meta-aware path doesn't
 // drift from the plain path. `meta_flags` is 0 (no RX metadata) when called
@@ -52367,6 +52609,61 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       else if (is_dm) { if (touchPrefsGetSoundDirect()) uiPlaySlot(TOUCH_SND_DM); }
       else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          uiPlaySlot(TOUCH_SND_MSG);
     }
+  }
+#endif
+#if defined(HAS_TOUCH_UI)
+  // "At a glance": device unlocked but idle-dimmed to off -- light the plain
+  // black glance overlay instead of the full app (see atGlanceShow() above).
+  // Master-disabled via Options > Display > "At a glance"
+  // (touchPrefsGetGlanceEnabled()) skips this entirely. Skipped if DND is on.
+  // Manually locked is ALSO skipped unless the user opted in via Options >
+  // Display > "At a glance while locked" (touchPrefsGetGlanceWhenLocked())
+  // -- off by default since it's a real trade-off (message text becomes
+  // readable off a locked device). `_screen_off` covers the first message of
+  // a burst (wake + show); `s_glance_lit_ms` (already showing, from an
+  // earlier message in the same window) covers later ones -- update the text
+  // and restart the 5 s window instead of dropping them, since our own wake
+  // already cleared _screen_off by then.
+#if defined(ESP32)
+  const bool glance_enabled_ok = touchPrefsGetGlanceEnabled();
+  const bool glance_locked_ok = !_manual_lock || touchPrefsGetGlanceWhenLocked();
+#else
+  const bool glance_enabled_ok = true;
+  const bool glance_locked_ok = !_manual_lock;
+#endif
+  if (glance_enabled_ok && !dndActive() && glance_locked_ok && (_screen_off || s_glance_lit_ms)) {
+    const bool was_off = _screen_off;
+    atGlanceShow(thread, body, was_off);   // fade in only on the initial reveal of a burst
+    if (was_off) {
+      lv_refr_now(nullptr);   // paint before the backlight comes on -- no stale-frame flash
+      if (_manual_lock) {
+        // Locked: light the panel WITHOUT clearing the lock -- wakeScreen()
+        // unconditionally clears _manual_lock, which would silently unlock the
+        // device (touch/input live again) just to show a glance. Mirrors
+        // lockscreenReveal()'s peek path instead: same fields, lock untouched.
+        // The auto-hide re-dim below (UITask::loop()) is symmetric -- it never
+        // touches _manual_lock either, so the device is exactly as locked after
+        // the glance as before it.
+        setCpuForScreen(true);
+        touchScreenBacklight(true);
+        _screen_off = false;
+        // MUST bump this even though it's not real input: loop()'s generic idle
+        // screen-timeout check fires on !_screen_off && (now - _last_input_ms) >=
+        // _screen_timeout_ms regardless of _manual_lock -- leaving it stale (from
+        // before the lock) made that check true on the very next loop() tick,
+        // instantly flipping the backlight back off before the glance was ever
+        // seen (reported: sound played but nothing showed). wakeScreen() bumps
+        // this for the same reason; omitting it here was the bug.
+        _last_input_ms = millis();
+#if CAP_LOCK_SCREEN
+        _lock_lit_ms = millis();   // keep the lock screen's own burn-in guard armed too
+#endif
+      } else {
+        wakeScreen();
+      }
+    }
+    s_glance_lit_ms = millis();
+    s_glance_fading_out = false;   // a new message cancels any fade-out already begun
   }
 #endif
   // Inbound route (repeater hashes) for the Info popup — flood RX only; read
@@ -53361,6 +53658,40 @@ void UITask::loop() {
     }
   }
 #endif  // HAS_TDECK_KEYBOARD || HAS_M9_KEYBOARD (notify-wake re-dim)
+
+  // "At a glance" auto-hide: same re-dim shape as the msgflash window above,
+  // but this feature's own fixed 5 s window (the last 200 ms of it spent
+  // fading out, not a hard cut) and unconditional on every board (see
+  // atGlanceShow()/newMsgImpl() above). Real input during the window hands
+  // off to the user actually looking at the screen now -- don't snatch it
+  // back off from underneath them; just stop tracking it and let the normal
+  // idle timeout (already bumped by that real input) take over.
+  if (s_glance_lit_ms) {
+    if (_screen_off)                          atGlanceHide();   // already dark again some other way
+    else if (_last_input_ms > s_glance_lit_ms) atGlanceHide();   // user took over
+    else {
+      const int32_t elapsed = (int32_t)(now - s_glance_lit_ms);
+      if (!s_glance_fading_out && elapsed >= 4800) {
+        s_glance_fading_out = true;
+        lv_obj_t* targets[2] = { s_glance_title, s_glance_body };   // text only -- see atGlanceShow()
+        for (lv_obj_t* t : targets) {
+          lv_anim_t a;
+          lv_anim_init(&a);
+          lv_anim_set_var(&a, t);
+          lv_anim_set_time(&a, 200);
+          lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_TRANSP);
+          lv_anim_set_exec_cb(&a, atGlanceOpaCb);
+          lv_anim_start(&a);
+        }
+      }
+      if (elapsed >= 5000) {
+        atGlanceHide();
+        touchScreenBacklight(false);
+        setCpuForScreen(false);
+        _screen_off = true;
+      }
+    }
+  }
 
 #if defined(HAS_TOUCH_UI)
   if (!g_lv.ready) return;
