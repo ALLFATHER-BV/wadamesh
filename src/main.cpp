@@ -49,6 +49,10 @@ static uint32_t _atoi(const char* sp) {
   DataStore store(LittleFS, rtc_clock);
 #elif defined(ESP32)
   #include <SPIFFS.h>
+  #if defined(HAS_SQUARE)
+    #include <SD_MMC.h>
+    #include <SquareIo.h>
+  #endif
   #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     #include <SD.h>
     #include "SdFastClock.h"   // post-mount operating-clock raise (SD_SPI_FAST_HZ boards)
@@ -892,6 +896,25 @@ void setup() {
   // failure falls back to SPIFFS so the device always boots.
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
   bool sd_storage = false;
+#if defined(HAS_SQUARE)
+  // This target uses a dedicated one-bit SD_MMC bus rather than the LoRa SPI
+  // bus. Power the card first, set the non-default pins, and adopt it as the
+  // complete store when available; SPIFFS remains the graceful fallback.
+  bool square_sd_begun = false;
+  if (SquareIo::ready() && SquareIo::setSdPower(true) &&
+      SD_MMC.setPins(2, 3, 1) &&
+      (square_sd_begun = SD_MMC.begin("/sdcard", true, false)) &&
+      SD_MMC.cardType() != CARD_NONE) {
+    sd_storage = store.useSdMmcStorage();
+    g_contacts_on_sd = sd_storage;
+    g_full_data_on_sd = sd_storage;
+    Serial.printf("[BOOT] square SD_MMC: %s\n", sd_storage ? "adopted" : "mount only");
+  } else {
+    if (square_sd_begun) SD_MMC.end();
+    (void)SquareIo::setSdPower(false);
+    Serial.println("[BOOT] square SD_MMC unavailable; using SPIFFS");
+  }
+#endif
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   {
    #if defined(TLORA_PAGER)
@@ -1130,7 +1153,10 @@ void setup() {
   // Route touch settings + Wi-Fi creds to the active filesystem (SD when that's
   // the data store, else SPIFFS) instead of NVS. Old NVS values still load and
   // migrate on their next save, so this is a transparent in-place upgrade.
-  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+  #if defined(HAS_SQUARE)
+    SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD_MMC : (fs::FS*)&SPIFFS,
+                        sd_storage ? "/meshcomod" : "/prefs");
+  #elif defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
   #else

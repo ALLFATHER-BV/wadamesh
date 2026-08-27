@@ -25,7 +25,17 @@
 // =============================================================================
 
 // ---- Per-board structural capabilities (factored out of the device names) ----
-#if defined(HAS_TDECK_GT911)            // ===== LilyGo T-Deck (ESP32-S3) =====
+#if defined(HAS_SQUARE)                  // ===== square (ESP32-S3) =====
+  #define CAP_TOUCH        1
+  #define CAP_ROTATABLE    0
+  #define CAP_LARGE_SCREEN 0   // fixed 320x240 landscape
+  #define CAP_SD           0   // SD_MMC, not Arduino SD
+  #define CAP_FILESYSTEM   1
+  #define CAP_GPS          1
+  #define CAP_OTA          1
+  #define CAP_LOCK_SCREEN  1
+
+#elif defined(HAS_TDECK_GT911)          // ===== LilyGo T-Deck (ESP32-S3) =====
   #define CAP_TOUCH        1   // capacitive touchscreen (pointer input)
   #define CAP_ROTATABLE    0   // panel is fixed landscape
   #define CAP_LARGE_SCREEN 0   // 320x240
