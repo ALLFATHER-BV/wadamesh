@@ -184,6 +184,7 @@ Contact added	Контактът е добавен
 Contact deleted	Контактът е изтрит
 Contact gone	Контактът изчезна
 Contact missing	Контактът липсва
+Contact shared	Контактът е споделен
 Contacts	Контакти
 Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Контактите са във вътрешната памет - SD картата не се монтира при старт. Постави картата отново и рестартирай.
 Contacts are on internal flash.	Контактите са във вътрешната памет.
@@ -778,6 +779,8 @@ Settings	Настройки
 Setup complete	Настройката е готова
 Share QR	Сподели QR
 Share channel	Сподели канала
+Share contact	Сподели контакт
+Share failed	Споделянето неуспешно
 Share location in advert	Споделяй местоположението в advert
 Share secret	Сподели ключа
 Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Споделете 32-символната тайна, за да се присъединят други. Празно = случайна.

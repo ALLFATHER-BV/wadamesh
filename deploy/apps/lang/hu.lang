@@ -186,6 +186,7 @@ Contact added	Névjegy hozzáadva
 Contact deleted	Névjegy törölve
 Contact gone	Eltűnt névjegy
 Contact missing	Hiányzó névjegy
+Contact shared	Névjegy megosztva
 Contacts	Névjegyek
 Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	A névjegyek a belső tárolón vannak - az SD-kártya nem csatolódott induláskor. Helyezd be újra a kártyát, és indítsd újra.
 Contacts are on internal flash.	A névjegyek a belső tárolón vannak.
@@ -791,6 +792,8 @@ Settings	Beállítások
 Setup complete	Beállítás kész
 Share QR	QR megosztása
 Share channel	Csatorna megosztása
+Share contact	Névjegy megosztása
+Share failed	Megosztás sikertelen
 Share location in advert	Helyszín megosztása a hirdetésben
 Share secret	Titok megosztása
 Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Oszd meg a 32 karakteres titkot, hogy mások is csatlakozhassanak. Hagyd üresen a titkot, hogy véletlenszerű titkos kódot generálj.

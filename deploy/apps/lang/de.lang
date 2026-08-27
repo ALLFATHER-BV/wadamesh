@@ -184,6 +184,7 @@ Contact added	Kontakt hinzugefügt
 Contact deleted	Kontakt gelöscht
 Contact gone	Kontakt weg
 Contact missing	Kontakt fehlt
+Contact shared	Kontakt geteilt
 Contacts	Kontakte
 Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Kontakte liegen im internen Flash - die SD-Karte wurde beim Start nicht eingebunden. Karte neu einsetzen und neu starten.
 Contacts are on internal flash.	Kontakte liegen im internen Flash.
@@ -777,6 +778,8 @@ Settings	Einstellungen
 Setup complete	Einrichtung abgeschlossen
 Share QR	QR teilen
 Share channel	Kanal teilen
+Share contact	Kontakt teilen
+Share failed	Teilen fehlgeschlagen
 Share location in advert	Standort im Advert teilen
 Share secret	Geheimnis teilen
 Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Teilen Sie das 32-Zeichen-Geheimnis, damit andere beitreten. Leer lassen für ein zufälliges.
