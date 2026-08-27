@@ -22187,10 +22187,13 @@ static void openSignalInfoPopup() {
   sig_row2_y = sig_row1_y + sig_line_h + 2;
 #endif
 
-  sigCell(stale && heard ? "Signal (stale)" : "Signal", 0, sig_hdr_y, COLOR_TEXT);
+  // sigCell does not translate its argument, so these wrap at the call site. The
+  // home-graph signal popup has its own TR()'d copy of the same three strings;
+  // this one was missed, so the card read English in every language (pisti87).
+  sigCell(stale && heard ? TR("Signal (stale)") : TR("Signal"), 0, sig_hdr_y, COLOR_TEXT);
   int cy;
   if (!heard) {
-    sigCell("nothing heard yet", 8, sig_row1_y, COLOR_SUB);
+    sigCell(TR("nothing heard yet"), 8, sig_row1_y, COLOR_SUB);
 #if defined(TLORA_PAGER)
     cy = sig_row1_y + lv_font_get_line_height(&g_font_12) + 10;
 #else
