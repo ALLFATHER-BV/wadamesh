@@ -19,6 +19,11 @@ static uint8_t s_head = 0;
 static uint8_t s_tail = 0;
 static bool             s_inited = false;
 enum class KeyboardMode : uint8_t { Probe, Raw, Legacy };
+// How long to keep asking the C3 for raw frames before settling for legacy mode.
+// Generous on purpose: getting this wrong costs the user modifier latching for
+// the entire session, and the only cost of waiting is that the first second of
+// keystrokes goes through the legacy path, which still works.
+static const uint32_t kProbeWindowMs = 1500;
 static KeyboardMode       s_mode = KeyboardMode::Probe;
 static TDeckKeyboardState s_raw_state;
 static bool               s_modifier_input_allowed = true; // guarded by s_keyboard_mux
@@ -125,23 +130,46 @@ void tdeckKeyboardPoll() {
   if (s_mode == KeyboardMode::Probe) {
     // LilyGO keyboard firmware from June 2025 onward accepts 0x03 and returns
     // five column-state bytes. Older controllers ignore it and keep returning
-    // one resolved ASCII byte; restore 0x04 key mode immediately in that case.
+    // one resolved ASCII byte; restore 0x04 key mode when that is what we have.
+    //
+    // KEEP RETRYING before concluding "old firmware". This used to decide on a
+    // SINGLE read, and the first I2C read after boot is the least trustworthy
+    // one there is: the C3 is still coming up, so a short or garbled frame is
+    // ordinary. One such frame committed the device to legacy mode for the whole
+    // session, with no recovery short of a reboot -- reported as latching simply
+    // not working on a T-Deck carrying the June 2025 firmware (#332).
+    static uint32_t s_probe_start_ms = 0;
+    const uint32_t now = millis();
+    if (!s_probe_start_ms) s_probe_start_ms = now;
+
     keyboardCommand(0x03);
     uint8_t frame[TDeckKeyboardState::COLS] = {};
     const int count = keyboardRead(frame, sizeof frame);
     bool valid_raw = count == (int)sizeof frame;
-    for (size_t col = 0; col < sizeof frame && valid_raw; ++col)
-      valid_raw = (frame[col] & 0x80) == 0;
+    size_t bad_col = 0;
+    for (size_t col = 0; col < sizeof frame && valid_raw; ++col) {
+      if (frame[col] & 0x80) { valid_raw = false; bad_col = col; }
+    }
     if (valid_raw) {
       s_mode = KeyboardMode::Raw;
       Serial.println("[keyboard] T-Deck raw mode: modifier latching enabled");
       processRawFrame(frame, millis());
       return;
     }
+    // A legacy controller answers with one resolved byte. Deliver it either way
+    // so nothing typed during the probe window is dropped.
+    if (count == 1) { keyboardCommand(0x04); processLegacyKey(frame[0]); }
+    if ((uint32_t)(now - s_probe_start_ms) < kProbeWindowMs) return;   // try again next poll
+
     keyboardCommand(0x04);
     s_mode = KeyboardMode::Legacy;
-    Serial.println("[keyboard] T-Deck legacy mode: update keyboard C3 firmware for modifier latching");
-    if (count == 1) processLegacyKey(frame[0]);
+    // Say WHY, so the next report of "latching does not work" is one line to
+    // diagnose instead of a guess about which firmware someone has.
+    Serial.printf("[keyboard] T-Deck legacy mode: update keyboard C3 firmware for modifier "
+                  "latching (probe read %d bytes, wanted %d%s)\n",
+                  count, (int)sizeof frame,
+                  (count == (int)sizeof frame) ? ", high bit set in a column" : "");
+    (void)bad_col;
     return;
   }
   if (s_mode == KeyboardMode::Raw) {
