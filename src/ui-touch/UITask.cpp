@@ -54147,6 +54147,21 @@ void UITask::loop() {
       consoleKey(key);
     }
 #endif
+#if defined(HAS_M9_KEYBOARD)
+    // The M9 has no touchscreen, so this IS its only way to type. Its controller
+    // sits on Wire1 with nothing else on the bus, so it polls on this thread
+    // exactly as the graphical path does (m9KeyboardPoll rate-limits internally).
+    // Missing here is what stranded a device in console mode on beta_70.
+    m9KeyboardPoll();
+    for (int kbi = 0; kbi < 12; ++kbi) {
+      int key = m9KeyboardReadKey();
+      if (key <= 0) break;
+      con_activity = true;
+      s_kb_last_key_ms = now;
+      if (_screen_off) { wakeScreen(); continue; }   // a key on a dark screen wakes, not types
+      consoleKey(key);
+    }
+#endif
 #if CAP_TOUCH
     { uint16_t _tx, _ty; if (heltecV4CapTouchGetLive(&_tx, &_ty)) { con_activity = true; } }
 #endif
