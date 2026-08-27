@@ -8717,6 +8717,29 @@ static void settingsFieldDefocusCb(lv_event_t* /*e*/) { accentBoxHide(); }
 // The full text-edit gestures — defined further down with the edit-menu code.
 static void composerEditClickedCb(lv_event_t* e);
 static void composerEditLongPressCb(lv_event_t* e);
+// A widget being destroyed still gets one last LV_EVENT_DEFOCUSED, and that is a
+// trap for every save-on-blur handler in this file.
+//
+// obj_del_core sends LV_EVENT_DELETE, then runs the destructor, and the
+// destructor's lv_group_remove_obj refocuses the group -- which delivers
+// DEFOCUSED to the object that is already half torn down. A blur handler then
+// reads the textarea's text and writes it back, on memory the destructor is in
+// the middle of freeing.
+//
+// That is the beta_69 crash in #330: open Radio & mesh, go to Known regions, add
+// and remove a few, leave the page. The regions overlay is deleted
+// asynchronously, its teardown refocuses, and the poll-interval field's blur
+// save runs inside its own destructor. Decoded from the reporter's core dump.
+//
+// DELETE always arrives before the destructor, so recording the object here and
+// checking it in the blur handlers closes the window. The pointer is only ever
+// compared, never dereferenced.
+static lv_obj_t* s_ta_deleting = nullptr;
+static void settingsFieldDeleteCb(lv_event_t* e) { s_ta_deleting = lv_event_get_target(e); }
+static inline bool blurFromDelete(lv_event_t* e) {
+  return lv_event_get_target(e) == s_ta_deleting;
+}
+
 static void attachSettingsTaEvents(lv_obj_t* ta) {
   lv_obj_add_event_cb(ta, settingsFieldFocusCb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(ta, settingsFieldFocusCb, LV_EVENT_CLICKED, nullptr);
@@ -8731,6 +8754,9 @@ static void attachSettingsTaEvents(lv_obj_t* ta) {
   lv_obj_add_event_cb(ta, composerEditClickedCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(ta, composerEditLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
   lv_obj_add_event_cb(ta, settingsFieldDefocusCb, LV_EVENT_DEFOCUSED, nullptr);
+  // Must be on every settings field, not just the ones that save on blur: this is
+  // what tells those handlers the coming DEFOCUSED is a destructor, not a user.
+  lv_obj_add_event_cb(ta, settingsFieldDeleteCb, LV_EVENT_DELETE, nullptr);
 }
 
 // ===== Text selection + edit menu ==========================================
@@ -9177,6 +9203,7 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
 }
 
 static void saveProfileNameCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task || !g_set_modal.name_ta) return;
   kbMirrorSyncToReal();
@@ -9190,6 +9217,7 @@ static void saveProfileNameCb(lv_event_t* e) {
 }
 
 static void saveProfilePosCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
   const bool silent = (_c == LV_EVENT_DEFOCUSED);   // blur auto-save: quiet if mid-edit
@@ -9206,6 +9234,7 @@ static void saveProfilePosCb(lv_event_t* e) {
 }
 
 static void saveRadioParamsCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
   const bool silent = (_c == LV_EVENT_DEFOCUSED);   // blur auto-save: apply quietly, no alerts
@@ -9282,6 +9311,7 @@ static void saveRadioParamsCb(lv_event_t* e) {
 }
 
 static void saveAutoAddCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
   const bool silent = (_c == LV_EVENT_DEFOCUSED);   // blur auto-save: quiet if mid-edit
@@ -10452,6 +10482,7 @@ static void radioRetryEchoToggleCb(lv_event_t* e) {
   the_mesh.setCompanionRetryEnabled(on);
 }
 static void radioSigPollSaveCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !s_radio_sig_poll_ta) return;
   kbMirrorSyncToReal();
@@ -11106,6 +11137,7 @@ static void buildQuickReplySettings() {
 }
 
 static void saveScreenTimeoutCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
   if (!g_set_modal.screen_to_ta) return;
@@ -13916,6 +13948,7 @@ static void bleEnableSwitchCb(lv_event_t* e) {
 // Pairing code: persist a 6-digit PIN on blur (applies next reboot, same contract as the
 // companion CMD_SET_DEVICE_PIN). Silent if the field is mid-edit (not exactly 6 digits).
 static void blePinSaveCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   if (lv_event_get_code(e) != LV_EVENT_DEFOCUSED || !g_lv.task) return;
   if (!s_ble_pin_ta || !lv_obj_is_valid(s_ble_pin_ta)) return;
   kbMirrorSyncToReal();
