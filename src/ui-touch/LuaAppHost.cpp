@@ -179,6 +179,16 @@ constexpr size_t kMaxSrc      = 192 * 1024;   // app source size limit
 constexpr size_t kStoreMax    = 2048;         // per-app persisted KV budget (bytes, serialized)
 constexpr int    kMinTickMs   = 33;           // fastest on_tick cadence (~30 fps)
 
+// Bumped by wada.ui.clear(). Every widget handle records the generation it was
+// created in; a handle from an older one has already been destroyed, so the
+// accessors below null its pointer and the `if (u->obj)` guard that every
+// method already has does the rest.
+//
+// Without this, clear() would be a use-after-free generator: WidgetUd holds a
+// raw lv_obj_t*, so a Lua variable still referring to a label from the previous
+// screen would sail past the null check straight into freed memory.
+static uint32_t s_ui_gen = 1;
+
 struct Host {
   lua_State*  L = nullptr;
   LuaHeap     heap;
@@ -280,7 +290,7 @@ const char* safeUiText(const char* text, size_t length, size_t* safe_length = nu
 }
 
 // ---- canvas userdata ----
-struct CanvasUd { lv_obj_t* obj; lv_color_t* buf; int w, h; };
+struct CanvasUd { lv_obj_t* obj; lv_color_t* buf; int w, h; uint32_t gen; };
 
 CanvasUd* checkCanvas(lua_State* L) {
   return (CanvasUd*)luaL_checkudata(L, 1, "wada.canvas");
@@ -373,6 +383,7 @@ int uiCanvas(lua_State* L) {
   lv_canvas_set_buffer(cv, buf, w, h, LV_IMG_CF_TRUE_COLOR);
   lv_canvas_fill_bg(cv, lv_color_hex(0x000000), LV_OPA_COVER);
   CanvasUd* ud = (CanvasUd*)lua_newuserdatauv(L, sizeof(CanvasUd), 0);
+  ud->gen = s_ui_gen;
   ud->obj = cv; ud->buf = buf; ud->w = w; ud->h = h;
   luaL_setmetatable(L, "wada.canvas");
   // Pin the handle in the registry for the app's lifetime. LVGL draws straight
@@ -388,8 +399,12 @@ int uiCanvas(lua_State* L) {
 }
 
 // ---- label userdata ----
-struct WidgetUd { lv_obj_t* obj; };
-WidgetUd* checkLabel(lua_State* L) { return (WidgetUd*)luaL_checkudata(L, 1, "wada.label"); }
+struct WidgetUd { lv_obj_t* obj; uint32_t gen; };
+WidgetUd* checkLabel(lua_State* L) {
+  WidgetUd* u = (WidgetUd*)luaL_checkudata(L, 1, "wada.label");
+  if (u->gen != s_ui_gen) u->obj = nullptr;   // cleared out from under this handle
+  return u;
+}
 
 int lbSet(lua_State* L) {
   WidgetUd* u = checkLabel(L);
@@ -440,14 +455,19 @@ int uiLabel(lua_State* L) {
   lv_obj_set_style_text_font(l, font, LV_PART_MAIN);
   lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
   WidgetUd* ud = (WidgetUd*)lua_newuserdatauv(L, sizeof(WidgetUd), 0);
+  ud->gen = s_ui_gen;
   ud->obj = l;
   luaL_setmetatable(L, "wada.label");
   return 1;
 }
 
 // ---- chart userdata (the primitive the native Monitor/Airtime pages use) ----
-struct ChartUd { lv_obj_t* obj; lv_chart_series_t* ser[2]; int n_ser; };
-ChartUd* checkChart(lua_State* L) { return (ChartUd*)luaL_checkudata(L, 1, "wada.chart"); }
+struct ChartUd { lv_obj_t* obj; lv_chart_series_t* ser[2]; int n_ser; uint32_t gen; };
+ChartUd* checkChart(lua_State* L) {
+  ChartUd* u = (ChartUd*)luaL_checkudata(L, 1, "wada.chart");
+  if (u->gen != s_ui_gen) { u->obj = nullptr; u->n_ser = 0; }
+  return u;
+}
 
 int chPush(lua_State* L) {   // chart:push(series_idx, value)
   ChartUd* c = checkChart(L);
@@ -514,6 +534,7 @@ int uiChart(lua_State* L) {   // wada.ui.chart(w, h, points, color1 [, color2] [
   lv_obj_set_style_line_color(ch, lv_color_hex(0x1A1D1F), LV_PART_MAIN);   // grid
   lv_obj_set_style_line_width(ch, 2, LV_PART_ITEMS);
   ChartUd* ud = (ChartUd*)lua_newuserdatauv(L, sizeof(ChartUd), 0);
+  ud->gen = s_ui_gen;
   ud->obj = ch;
   ud->n_ser = 0;
   ud->ser[0] = lv_chart_add_series(ch, lv_color_hex(argColor(L, 4, 0x15B6A6)), LV_CHART_AXIS_PRIMARY_Y);
@@ -562,6 +583,7 @@ int uiButton(lua_State* L) {
     lv_obj_add_event_cb(b, btnEventCb, LV_EVENT_CLICKED, nullptr);
   }
   WidgetUd* ud = (WidgetUd*)lua_newuserdatauv(L, sizeof(WidgetUd), 0);
+  ud->gen = s_ui_gen;
   ud->obj = b;
   luaL_setmetatable(L, "wada.label");   // shares set/pos/color methods
   return 1;
@@ -578,8 +600,12 @@ int uiButton(lua_State* L) {
 // keyboard/trackball focus navigation walks them on touchless boards for free,
 // and a tap works on the ones with a screen. Per-row callbacks ride the same
 // button-callback table uiButton uses.
-struct ListUd { lv_obj_t* obj; int sel; };
-ListUd* checkList(lua_State* L) { return (ListUd*)luaL_checkudata(L, 1, "wada.list"); }
+struct ListUd { lv_obj_t* obj; int sel; uint32_t gen; };
+ListUd* checkList(lua_State* L) {
+  ListUd* u = (ListUd*)luaL_checkudata(L, 1, "wada.list");
+  if (u->gen != s_ui_gen) u->obj = nullptr;
+  return u;
+}
 
 lv_obj_t* listRowAt(ListUd* u, int i) {          // i is 1-based, as everywhere in Lua
   if (!u->obj || i < 1) return nullptr;
@@ -631,6 +657,24 @@ int uiTextLines(lua_State* L) {
   return 1;
 }
 
+// wada.ui.clear() -- remove every widget from the app's page.
+//
+// The SDK documented building widgets in on_open() and gave no way to take them
+// down again, so an app with more than one screen drew the second on top of the
+// first. Reported by pisti87, who had been working around it with buttons.
+//
+// Bumping the generation is what makes this safe. A Lua variable still holding a
+// label from the screen just cleared keeps a raw pointer to freed memory; the
+// accessors compare generations and null it, so the existing `if (u->obj)` guard
+// in every method turns a stale call into a no-op instead of a crash.
+static int uiClear(lua_State* L) {
+  (void)L;
+  if (!s_h || !s_h->body) return 0;
+  lv_obj_clean(s_h->body);   // deletes the children, keeps the page itself
+  ++s_ui_gen;
+  return 0;
+}
+
 int uiList(lua_State* L) {
   if (!s_h || !s_h->body) return luaL_error(L, "no app body");
   const int x = (int)luaL_checkinteger(L, 1), y = (int)luaL_checkinteger(L, 2);
@@ -648,6 +692,7 @@ int uiList(lua_State* L) {
   lv_obj_set_scroll_dir(c, LV_DIR_VER);
   lv_obj_add_flag(c, LV_OBJ_FLAG_SCROLLABLE);
   ListUd* ud = (ListUd*)lua_newuserdatauv(L, sizeof(ListUd), 0);
+  ud->gen = s_ui_gen;
   ud->obj = c; ud->sel = 0;
   luaL_setmetatable(L, "wada.list");
   return 1;
@@ -2279,6 +2324,7 @@ void openWada(lua_State* L) {
   lua_setfield(L, -2, "colors");
   lua_pushcfunction(L, uiInput); lua_setfield(L, -2, "input");   // modal text entry
   lua_pushcfunction(L, uiList);  lua_setfield(L, -2, "list");    // scrollable selectable rows
+  lua_pushcfunction(L, uiClear); lua_setfield(L, -2, "clear");   // wipe the page (#318 / Discord)
   lua_setfield(L, -2, "ui");
 
   lua_newtable(L);                                       // wada.sys
