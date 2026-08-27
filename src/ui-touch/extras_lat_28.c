@@ -1,5 +1,8 @@
 #include "device_caps.h"
-#if defined(HAS_TANMATSU)
+// Was HAS_TANMATSU-only (only consumer used to be the Tanmatsu's Large/Huge UI-scale
+// accented-Latin fallback); now compiled on every board too for the "at a glance"
+// notification's 28 px message body (see atGlanceEnsureFont() in UITask.cpp), which
+// needs accented Latin / em-dash / ellipsis glyph coverage at that size on any board.
 
 /*******************************************************************************
  * Size: 28 px
@@ -3637,6 +3640,3 @@ lv_font_t extras_lat_28 = {
 
 
 #endif /*#if EXTRAS_LAT_28*/
-
-
-#endif /* HAS_TANMATSU */

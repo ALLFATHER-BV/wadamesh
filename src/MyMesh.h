@@ -415,6 +415,17 @@ public:
     return sendTelemetryRequestForUI(recipient);
   }
 
+  /** Interactive logins must rediscover the route. MeshCore 1.16 repeaters
+   *  answer a direct login by flooding the response without refreshing their
+   *  return path; a flooded login returns PATH + LOGIN_OK and refreshes both
+   *  sides before the deferred request or first admin command is sent. */
+  void uiResetPathForLogin(ContactInfo& recipient) {
+    if (recipient.out_path_len == OUT_PATH_UNKNOWN) return;
+    uiResetContactPath(recipient.id.pub_key);
+    recipient.out_path_len = OUT_PATH_UNKNOWN;
+    memset(recipient.out_path, 0, sizeof(recipient.out_path));
+  }
+
   /** Touch-UI manual STATUS/TELEMETRY request that DEFERS the REQ until the
    *  guest LOGIN is acknowledged. The chained helpers above fire LOGIN and REQ
    *  back-to-back, but a repeater drops a PAYLOAD_TYPE_REQ from a sender it
@@ -435,6 +446,7 @@ public:
       return (kind == UiReqKind::Telemetry) ? sendTelemetryRequestForUI(recipient)
                                             : sendStatusPingForUI(recipient);
     }
+    uiResetPathForLogin(recipient);
     uint32_t login_est = 0;
     int r = sendLogin(recipient, "", login_est);
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
@@ -453,6 +465,7 @@ public:
    *  AbstractUITask::onAdminLoginResult so the UI can flip from "logging
    *  in…" to "logged in" (or "failed"). */
   int uiSendAdminLogin(ContactInfo& recipient, const char* password) {
+    uiResetPathForLogin(recipient);
     uint32_t est = 0;
     int r = sendLogin(recipient, password ? password : "", est);
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
@@ -1296,6 +1309,8 @@ private:
   // Serial sideload state ("fput" / "fadd" / "fend"): the file being written.
   File _cli_put;
   uint32_t _cli_put_len = 0;
+  uint32_t _cli_put_last_len = 0;
+  bool _cli_put_ended = false;
   void cliPutBegin(const char* path);
   void cliPutChunk(const char* args);
   void cliPutEnd();

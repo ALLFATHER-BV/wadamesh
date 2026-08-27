@@ -3,8 +3,8 @@
 
 // T-LoRa Pager physical QWERTY keyboard: a TCA8418 I2C matrix controller (4
 // rows x 10 cols, addr 0x34) on the shared I2C bus (SDA 3 / SCL 2). Unlike
-// the T-Deck's keyboard (a second MCU that resolves ASCII itself before we
-// ever see a byte), the TCA8418 only reports raw row/col matrix events — the
+// the T-Deck's keyboard (a second MCU, with raw mode only on newer firmware),
+// the TCA8418 always reports raw row/col matrix events — the
 // keymap + shift/sym/alt state machine lives HERE, so pagerKeyboardReadKey()
 // produces the same final ASCII/control-code stream handleHwKey() already
 // expects from the T-Deck; no UI-side changes needed to consume it.
@@ -13,7 +13,7 @@
 // must be called from a single, consistent context each tick (whichever task
 // ends up owning it — wired in a later milestone; this board has no
 // pre-existing shared-bus task the way the T-Deck's touch poll does).
-// pagerKeyboardReadKey() only pops from a lock-free ring and is safe to call
+// pagerKeyboardReadKey() only pops from a critical-section-protected ring and is safe to call
 // from the UI thread regardless of which context polls.
 #if defined(HAS_PAGER_KEYBOARD) && defined(ESP32)
 
@@ -46,15 +46,12 @@ bool pagerKeyboardAltHeld();
 
 /** Mark the currently-held Alt as "used as a modifier" — call this when some
  *  other gesture (e.g. the rotary encoder's Alt+turn) consumes the hold, so
- *  releasing Alt afterward isn't also read as a solo tap by
- *  pagerKeyboardConsumeAltTap(). */
+ *  releasing Alt afterward does not arm the one-shot symbol layer. */
 void pagerKeyboardMarkAltUsed();
 
-/** One-shot: true exactly once if Alt was pressed and released without being
- *  used as a modifier for anything else in between (no key typed, no
- *  pagerKeyboardMarkAltUsed() call) — a "solo tap", distinct from a
- *  symbol-layer or Alt+turn hold. Consumes the pending flag on read. */
-bool pagerKeyboardConsumeAltTap();
+/** Cancel one-shot/locked Alt, suppress a later release from a held Alt, and
+ *  discard pending Alt chords. Used when input is intentionally discarded. */
+void pagerKeyboardDiscardAlt();
 
 /** True while Backspace is physically held WITHOUT Alt (raw state, mirrors
  *  pagerKeyboardAltHeld()). A plain press still immediately ring-pushes '\b'

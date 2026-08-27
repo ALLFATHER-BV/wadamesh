@@ -230,6 +230,13 @@ bool DataStore::mkdirRooted(FILESYSTEM* fs, const char* dir) {
   return fs->exists(p) || fs->mkdir(p);
 }
 
+File DataStore::openWriteRootedFlatSafe(FILESYSTEM* fs, const char* filename) {
+  // Do not pass create=true here. Arduino's VFS implementation interprets it
+  // as "mkdir every parent first", but SPIFFS is flat and returns ENOTSUP for
+  // mkdir while still accepting slash-containing file keys.
+  return fs->open(_rp(filename), "w");
+}
+
 bool DataStore::removeRooted(FILESYSTEM* fs, const char* filename) {
   return fs->remove(_rp(filename));
 }

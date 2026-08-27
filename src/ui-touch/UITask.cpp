@@ -19,6 +19,20 @@
 #include <cstdlib>
 #include <cmath>
 #include <cerrno>   // chat-store write diagnostics surface errno (ENFILE vs ENOSPC vs EIO)
+#if CAP_LUA_AUDIO
+static void* wadaMp3Scratch();
+#define MINIMP3_ONLY_MP3
+#define MINIMP3_NO_SIMD
+#define MINIMP3_SCRATCH ((mp3dec_scratch_t*)wadaMp3Scratch())
+#define MINIMP3_IMPLEMENTATION
+#include "../../lib/minimp3/minimp3.h"
+#undef MINIMP3_IMPLEMENTATION
+#undef MINIMP3_SCRATCH
+#undef MINIMP3_NO_SIMD
+#undef MINIMP3_ONLY_MP3
+static void* s_wada_mp3_scratch = nullptr;
+static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
+#endif
 #if defined(ESP32)
   #include <time.h>
   #include <SPIFFS.h>
@@ -52,6 +66,7 @@
   #include <esp_core_dump.h>   // detect/read/erase the panic coredump for the crash-report export
   #include <freertos/FreeRTOS.h>
   #include <freertos/task.h>   // xTaskGetCurrentTaskHandleForCPU / pcTaskGetName — Task-WDT crash self-record
+  #include <freertos/queue.h>
   #else
   // Tanmatsu's 16M.csv has no coredump partition yet — stub so the crash-export compiles + links.
   #include <esp_err.h>
@@ -111,6 +126,7 @@
 #include "LuaAppHost.h"       // sandboxed Lua apps (LUA_APPS.md Phase 1; self-gated on CAP_LUA_APPS)
 
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
+#include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
@@ -119,7 +135,7 @@
     #include <helpers/input/TDeckTrackball.h>
   #endif
   #if defined(HAS_TDECK_KEYBOARD)
-    #include <helpers/input/TDeckKeyboard.h>
+    #include "../helpers/input/TDeckKeyboard.h"
   #elif defined(HAS_M9_KEYBOARD)
     #include <M9Keyboard.h>
   #endif
@@ -130,7 +146,7 @@
     #include <M9Imu.h>               // wada.sys.accel() source (luaHostAccel)
   #endif
   #if defined(HAS_PAGER_KEYBOARD)
-    #include <helpers/input/PagerKeyboard.h>
+    #include "../helpers/input/PagerKeyboard.h"
   #endif
   #if defined(HAS_PAGER_ENCODER)
     #include <helpers/input/PagerEncoder.h>
@@ -507,6 +523,18 @@ extern "C" const lv_font_t cc_icons_16;
 extern "C" const lv_font_t extras_12;
 extern "C" const lv_font_t extras_14;
 extern "C" const lv_font_t extras_16;
+// extras_lat_28 used to be compiled HAS_TANMATSU-only (Large/Huge UI-scale Latin-
+// accent fallback, issue #129); it's now compiled on every board (extras_lat_28.c)
+// for the "at a glance" notification's message body (atGlanceEnsureFont()) --
+// montserrat_28 was picked over 24 because only 12/14/16/28 are actually built
+// into this project's vendored LVGL config (LV_FONT_MONTSERRAT_24 isn't enabled).
+extern "C" const lv_font_t extras_lat_28;
+// extras_lat_20 was HAS_TANMATSU-only too (Large/Huge UI-scale fallback); the
+// T-Deck now also builds it, for its 20px at-glance body experiment (see
+// atGlanceEnsureFont()) -- extras_lat_20.c's own gate was widened to match.
+#if defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911)
+extern "C" const lv_font_t extras_lat_20;
+#endif
 #if defined(TLORA_PAGER)
 // Full multilingual fallbacks at the Pager's accessible text sizes. These keep
 // accented Latin, Greek, Cyrillic, Arabic, punctuation, and units aligned with
@@ -519,9 +547,7 @@ extern "C" const lv_font_t extras_24;
 // neighbours at Large/Huge UI scale (issue #129). Room for these was made by
 // storing the extras fonts compressed (LV_USE_FONT_COMPRESSED) — nothing lost,
 // net binary SMALLER, so the P4 app-load ceiling is respected.
-extern "C" const lv_font_t extras_lat_20;
 extern "C" const lv_font_t extras_lat_24;
-extern "C" const lv_font_t extras_lat_28;
 #endif
 static lv_font_t g_font_12;
 static lv_font_t g_font_14;
@@ -832,6 +858,56 @@ static inline void tileFetchPendingDec() {
 // below are shared; T-Deck and the pager each get their own I2S install/
 // tone/WAV functions, since the pager additionally drives an ES8311 codec
 // over I2C that the T-Deck's plain MAX98357A DAC doesn't have.
+#if CAP_AUDIO_STREAM
+static uint32_t wavRd32(File& f){ uint8_t b[4]; if(f.read(b,4)!=4) return 0; return (uint32_t)b[0]|((uint32_t)b[1]<<8)|((uint32_t)b[2]<<16)|((uint32_t)b[3]<<24); }
+static uint16_t wavRd16(File& f){ uint8_t b[2]; if(f.read(b,2)!=2) return 0; return (uint16_t)(b[0]|(b[1]<<8)); }
+static bool wavParse(File& f, uint16_t* pch, uint32_t* prate, uint32_t* pdata) {
+  char tag[4];
+  if (f.read((uint8_t*)tag,4)!=4 || memcmp(tag,"RIFF",4)) return false;
+  const uint32_t riff_size = wavRd32(f);
+  const uint64_t riff_end = 8u + (uint64_t)riff_size;
+  if (riff_size < 4 || riff_end > f.size() || riff_end > 0xFFFFFFFFu) return false;
+  if (f.read((uint8_t*)tag,4)!=4 || memcmp(tag,"WAVE",4)) return false;
+  uint16_t fmt=0, ch=0, bits=0; uint32_t rate=0, dlen=0; bool hf=false, hd=false;
+  while ((uint64_t)f.position() + 8u <= riff_end) {
+    if (f.read((uint8_t*)tag,4)!=4) break;
+    uint32_t csz = wavRd32(f);
+    if (!memcmp(tag,"fmt ",4)) {
+      if (csz < 16) return false;
+      fmt = wavRd16(f); ch = wavRd16(f); rate = wavRd32(f); wavRd32(f); wavRd16(f); bits = wavRd16(f);
+      const uint64_t skip = (uint64_t)(csz - 16) + (csz & 1u);
+      const uint64_t next = (uint64_t)f.position() + skip;
+      if (next > riff_end || (skip && !f.seek((uint32_t)next))) return false;
+      hf = true;
+    } else if (!memcmp(tag,"data",4)) {
+      if ((uint64_t)f.position() + csz > riff_end) return false;
+      dlen = csz; hd = true; break;
+    } else {
+      const uint64_t skip = (uint64_t)csz + (csz & 1u);
+      const uint64_t next = (uint64_t)f.position() + skip;
+      if (next > riff_end || (skip && !f.seek((uint32_t)next))) return false;
+    }
+  }
+  if (!hf || !hd || fmt != 1 || bits != 16 || (ch != 1 && ch != 2) || rate < 8000 || rate > 48000)
+    return false;
+  if (pch) *pch = ch; if (prate) *prate = rate; if (pdata) *pdata = dlen;
+  return true;
+}
+#endif
+
+#if CAP_LUA_AUDIO
+static volatile bool s_lua_audio_active = false;
+static volatile uint32_t s_lua_audio_storage_pending = 0;
+static volatile bool s_lua_audio_storage_active = false;
+static inline bool luaAudioActive() {
+  return __atomic_load_n(&s_lua_audio_active, __ATOMIC_ACQUIRE);
+}
+static inline bool luaAudioStorageBusy() {
+  return __atomic_load_n(&s_lua_audio_storage_pending, __ATOMIC_ACQUIRE) != 0 ||
+         __atomic_load_n(&s_lua_audio_storage_active, __ATOMIC_ACQUIRE);
+}
+#endif
+
 #if defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
 static bool fmSdTryMount();   // V4-R8/M9 microSD — fwd decl (defined in the mount-helper block below; sdRestoreRun needs it)
 #endif
@@ -988,29 +1064,6 @@ static void pagerPlayToneRaw(int freq, int ms) {
 // amp. Supports PCM 16-bit, mono or stereo (downmixed to the mono amp), sample
 // rate read from the header; capped to ~6 s so a stray big file can't hold the
 // notify task. Any problem -> false, and the caller falls back to the chime.
-static uint32_t wavRd32(File& f){ uint8_t b[4]; if(f.read(b,4)!=4) return 0; return (uint32_t)b[0]|((uint32_t)b[1]<<8)|((uint32_t)b[2]<<16)|((uint32_t)b[3]<<24); }
-static uint16_t wavRd16(File& f){ uint8_t b[2]; if(f.read(b,2)!=2) return 0; return (uint16_t)(b[0]|(b[1]<<8)); }
-static bool wavParse(File& f, uint16_t* pch, uint32_t* prate, uint32_t* pdata) {
-  char tag[4];
-  if (f.read((uint8_t*)tag,4)!=4 || memcmp(tag,"RIFF",4)) return false;
-  wavRd32(f);
-  if (f.read((uint8_t*)tag,4)!=4 || memcmp(tag,"WAVE",4)) return false;
-  uint16_t fmt=0, ch=0, bits=0; uint32_t rate=0, dlen=0; bool hf=false, hd=false;
-  while (f.available() >= 8) {
-    if (f.read((uint8_t*)tag,4)!=4) break;
-    uint32_t csz = wavRd32(f);
-    if (!memcmp(tag,"fmt ",4)) {
-      fmt = wavRd16(f); ch = wavRd16(f); rate = wavRd32(f); wavRd32(f); wavRd16(f); bits = wavRd16(f);
-      if (csz > 16) f.seek(f.position() + (csz - 16));
-      hf = true;
-    } else if (!memcmp(tag,"data",4)) { dlen = csz; hd = true; break; }
-    else f.seek(f.position() + csz + (csz & 1));
-  }
-  if (!hf || !hd || fmt != 1 || bits != 16 || (ch != 1 && ch != 2) || rate < 8000 || rate > 48000)
-    return false;
-  if (pch) *pch = ch; if (prate) *prate = rate; if (pdata) *pdata = dlen;
-  return true;
-}
 static bool wavOpen(const char* prefpath, File& f) {
   if (!prefpath || !prefpath[0]) return false;
   fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
@@ -1302,6 +1355,9 @@ static void tanBeep();   // I2S notification tick; defined far below (with the C
 #endif
 // Play the platform's notification chime. Caller checks the buzzer/sound pref.
 static inline void uiPlaySlot(int slot) {
+#if CAP_LUA_AUDIO
+  if (luaAudioActive()) return;
+#endif
 #if defined(HAS_TDECK_GT911)
   tdeckPlayNotifySlot(slot);
 #elif defined(HAS_TDISPLAY_P4)
@@ -1321,6 +1377,9 @@ static inline void uiPlayMention() { uiPlaySlot(TOUCH_SND_MEN); }
 // Preview an arbitrary WAV file (not yet saved to a slot) -- used by the
 // sound picker's "play" button before the user commits to a choice.
 static inline void uiPreviewWavFile(const char* path) {
+#if CAP_LUA_AUDIO
+  if (luaAudioActive()) return;
+#endif
 #if defined(HAS_TDECK_GT911)
   tdeckPreviewWavFile(path);
 #elif defined(TLORA_PAGER)
@@ -2307,6 +2366,8 @@ struct SettingsModalState {
   lv_obj_t* exp_boost_sw;
   lv_obj_t* exp_dc_sw;
   lv_obj_t* wifi_sw;
+  lv_obj_t* glance_en_sw;
+  lv_obj_t* glance_locked_sw;
   lv_obj_t* wifi_ssid_ta;
   lv_obj_t* wifi_pwd_ta;
   /** Transports modal: live STA line (IP when connected, else Arduino WiFi status). */
@@ -2723,6 +2784,7 @@ static lv_obj_t* s_cc_sys_label = nullptr;   // CPU/RAM/PSRAM/IP line; refreshed
 static void ccBuildSysInfo(char* buf, size_t n);   // fwd-decl; defined with the CC helpers below
 static void closeControlCenter();   // defined in the control-center section below
 static void openControlCenter();    // defined in the control-center section below (early decl for the M9 CTRL key)
+static void takeScreenshotToSd();   // shared by the status-bar hold and M9 Control Center action
 static lv_obj_t* s_power_menu   = nullptr;   // power off / reboot menu (control center)
 static void closePowerMenu();               // defined in the control-center section below
 static void openPowerMenu();                // hold the red ✕ (F1) on the Tanmatsu → power off / reboot
@@ -5362,7 +5424,7 @@ static void versionCheckUpdateUi() {
     snprintf(b, sizeof b, TR("Firmware beta_%d\nCouldn't reach the update server"), my_n);
     lv_obj_set_style_text_color(s_update_about_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   } else {
-    snprintf(b, sizeof b, "Firmware beta_%d\nChecking for updates over Wi-Fi…", my_n);
+    snprintf(b, sizeof b, TR("Firmware beta_%d\nChecking for updates over Wi-Fi…"), my_n);
     lv_obj_set_style_text_color(s_update_about_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   }
   lv_label_set_text(s_update_about_lbl, b);
@@ -5579,7 +5641,7 @@ static void otaPrevPickCb(lv_event_t* e) {
   s_ota_pending_n = v;
   otaPrevModalClose();
   char m[96];
-  snprintf(m, sizeof m, "Install beta_%d?\nThis downgrades the firmware and reboots.", v);
+  snprintf(m, sizeof m, TR("Install beta_%d?\nThis downgrades the firmware and reboots."), v);
   showConfirm(m, TR("Install"), otaConfirmInstallApply);
 }
 
@@ -7015,7 +7077,12 @@ static void keyboardCb(lv_event_t* e) {
 }
 
 static void composerFocusCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_FOCUSED) return;
+  const lv_event_code_t code = lv_event_get_code(e);
+  if (code != LV_EVENT_FOCUSED && code != LV_EVENT_CLICKED) return;
+  if (code == LV_EVENT_CLICKED) {
+    lv_indev_t* act = lv_indev_get_act();
+    if (act && (lv_indev_get_scroll_obj(act) || lv_indev_get_scroll_dir(act) != LV_DIR_NONE)) return;
+  }
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
   if (p && p->detail_open) { showKb(p); noteKbActivity(); }
 }
@@ -8717,6 +8784,29 @@ static void settingsFieldDefocusCb(lv_event_t* /*e*/) { accentBoxHide(); }
 // The full text-edit gestures — defined further down with the edit-menu code.
 static void composerEditClickedCb(lv_event_t* e);
 static void composerEditLongPressCb(lv_event_t* e);
+// A widget being destroyed still gets one last LV_EVENT_DEFOCUSED, and that is a
+// trap for every save-on-blur handler in this file.
+//
+// obj_del_core sends LV_EVENT_DELETE, then runs the destructor, and the
+// destructor's lv_group_remove_obj refocuses the group -- which delivers
+// DEFOCUSED to the object that is already half torn down. A blur handler then
+// reads the textarea's text and writes it back, on memory the destructor is in
+// the middle of freeing.
+//
+// That is the beta_69 crash in #330: open Radio & mesh, go to Known regions, add
+// and remove a few, leave the page. The regions overlay is deleted
+// asynchronously, its teardown refocuses, and the poll-interval field's blur
+// save runs inside its own destructor. Decoded from the reporter's core dump.
+//
+// DELETE always arrives before the destructor, so recording the object here and
+// checking it in the blur handlers closes the window. The pointer is only ever
+// compared, never dereferenced.
+static lv_obj_t* s_ta_deleting = nullptr;
+static void settingsFieldDeleteCb(lv_event_t* e) { s_ta_deleting = lv_event_get_target(e); }
+static inline bool blurFromDelete(lv_event_t* e) {
+  return lv_event_get_target(e) == s_ta_deleting;
+}
+
 static void attachSettingsTaEvents(lv_obj_t* ta) {
   lv_obj_add_event_cb(ta, settingsFieldFocusCb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(ta, settingsFieldFocusCb, LV_EVENT_CLICKED, nullptr);
@@ -8731,6 +8821,9 @@ static void attachSettingsTaEvents(lv_obj_t* ta) {
   lv_obj_add_event_cb(ta, composerEditClickedCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_event_cb(ta, composerEditLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
   lv_obj_add_event_cb(ta, settingsFieldDefocusCb, LV_EVENT_DEFOCUSED, nullptr);
+  // Must be on every settings field, not just the ones that save on blur: this is
+  // what tells those handlers the coming DEFOCUSED is a destructor, not a user.
+  lv_obj_add_event_cb(ta, settingsFieldDeleteCb, LV_EVENT_DELETE, nullptr);
 }
 
 // ===== Text selection + edit menu ==========================================
@@ -9177,6 +9270,7 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
 }
 
 static void saveProfileNameCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task || !g_set_modal.name_ta) return;
   kbMirrorSyncToReal();
@@ -9190,6 +9284,7 @@ static void saveProfileNameCb(lv_event_t* e) {
 }
 
 static void saveProfilePosCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
   const bool silent = (_c == LV_EVENT_DEFOCUSED);   // blur auto-save: quiet if mid-edit
@@ -9206,6 +9301,7 @@ static void saveProfilePosCb(lv_event_t* e) {
 }
 
 static void saveRadioParamsCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
   const bool silent = (_c == LV_EVENT_DEFOCUSED);   // blur auto-save: apply quietly, no alerts
@@ -9282,6 +9378,7 @@ static void saveRadioParamsCb(lv_event_t* e) {
 }
 
 static void saveAutoAddCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
   const bool silent = (_c == LV_EVENT_DEFOCUSED);   // blur auto-save: quiet if mid-edit
@@ -10452,6 +10549,7 @@ static void radioRetryEchoToggleCb(lv_event_t* e) {
   the_mesh.setCompanionRetryEnabled(on);
 }
 static void radioSigPollSaveCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !s_radio_sig_poll_ta) return;
   kbMirrorSyncToReal();
@@ -11106,6 +11204,7 @@ static void buildQuickReplySettings() {
 }
 
 static void saveScreenTimeoutCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
   if (!g_set_modal.screen_to_ta) return;
@@ -11800,6 +11899,38 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
   const char* unlock_hint = on ? TR("Locks when screen off\n(press the button to unlock)") : TR("Screen-off just dims");
 #endif
   if (g_lv.task) g_lv.task->showAlert(unlock_hint, 1600);
+}
+
+// "At a glance" is read straight from NVS at message time (not cached), same as
+// the sound/DND checks right next to its call site in newMsgImpl -- it's not a
+// per-loop hot path, just once per inbound message.
+static void glanceWhenLockedToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetGlanceWhenLocked(on);
+#endif
+  if (g_lv.task) {
+    g_lv.task->showAlert(on ? TR("Glance shows message previews\nwhile the screen is locked")
+                            : TR("Glance only shows when unlocked"), 1600);
+  }
+}
+
+// Master "At a glance" toggle (Options > Display): gates the whole feature.
+// The secondary "while locked" switch's own saved preference is left
+// alone -- only its editability follows the master, so re-enabling always
+// restores its true prior state.
+static void glanceEnabledToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetGlanceEnabled(on);
+#endif
+  if (g_set_modal.glance_locked_sw) {
+    if (on) lv_obj_clear_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
+    else    lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
+  }
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("At a glance enabled") : TR("At a glance disabled"), 1200);
 }
 
 #if CAP_TRACKBALL
@@ -12891,6 +13022,41 @@ static void buildDeviceSettings(int sec) {
     y += LV_MAX(40, h + 12);
   }
 
+  /* At a glance: master enable for the "at a glance" message-preview overlay
+     (see atGlanceShow()/newMsgImpl()) -- on by default, matching the
+     previously-unconditional behavior. Gates the "while locked" switch below. */
+  bool glance_on = true;
+  {
+    int h = settingsRowLabel(body, y, 6, TR("At a glance"), COLOR_SUB, nullptr, 56);
+    g_set_modal.glance_en_sw = lv_switch_create(body);
+    lv_obj_align(g_set_modal.glance_en_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    glance_on = touchPrefsGetGlanceEnabled();
+    if (glance_on) lv_obj_add_state(g_set_modal.glance_en_sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(g_set_modal.glance_en_sw, glanceEnabledToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+  }
+
+#if !defined(HAS_TDISPLAY_P4)
+  /* "At a glance" also fires while manually/idle locked, not just while
+     unlocked+dimmed -- off by default since it's a real trade-off (message
+     text becomes readable off a locked device). Disabled (not cleared) while
+     the master switch above is off. Moved here from Options > Lock screen so
+     it sits with the feature it modifies. */
+  {
+    int h = settingsRowLabel(body, y, 6, TR("At a glance while locked"), COLOR_SUB, nullptr, 56);
+    g_set_modal.glance_locked_sw = lv_switch_create(body);
+    lv_obj_align(g_set_modal.glance_locked_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (touchPrefsGetGlanceWhenLocked()) lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_CHECKED);
+    if (!glance_on) lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
+#endif
+    lv_obj_add_event_cb(g_set_modal.glance_locked_sw, glanceWhenLockedToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+  }
+#endif
+
 #if defined(HAS_EXPANSION_KIT)
   /* Show Sensors tab (V4 Expansion Kit): toggles the bottom Sensors tab + the
      Home env widget. Also auto-hidden when no environment sensor is attached.
@@ -13916,6 +14082,7 @@ static void bleEnableSwitchCb(lv_event_t* e) {
 // Pairing code: persist a 6-digit PIN on blur (applies next reboot, same contract as the
 // companion CMD_SET_DEVICE_PIN). Silent if the field is mid-edit (not exactly 6 digits).
 static void blePinSaveCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
   if (lv_event_get_code(e) != LV_EVENT_DEFOCUSED || !g_lv.task) return;
   if (!s_ble_pin_ta || !lv_obj_is_valid(s_ble_pin_ta)) return;
   kbMirrorSyncToReal();
@@ -14912,14 +15079,21 @@ static void wifiRebuildNetworkList() {
 
   // Manual rescan (the scan is also kicked on open). Label flips while one runs.
   s_wifi_list_y += SC(6);
-  wifiListRow(scanning_now ? LV_SYMBOL_REFRESH "  Scanning\xE2\x80\xA6"
-                           : LV_SYMBOL_REFRESH "  Scan again",
+  // The glyph has to be joined at runtime: TR() returns a pointer, so it cannot
+  // take part in the compiler's adjacent-string-literal concatenation.
+  char wifi_rescan[48];
+  snprintf(wifi_rescan, sizeof wifi_rescan, LV_SYMBOL_REFRESH "  %s",
+           scanning_now ? TR("Scanning\xE2\x80\xA6") : TR("Scan again"));
+  wifiListRow(wifi_rescan,
               nullptr, lv_color_hex(scanning_now ? COLOR_SUB : COLOR_TEXT),
               scanning_now ? nullptr : wifiRefreshRowCb, nullptr);
 
   // Hidden / manual network.
   s_wifi_list_y += SC(3);
-  wifiListRow(LV_SYMBOL_PLUS "  Other (hidden) network\xE2\x80\xA6", nullptr, lv_color_hex(COLOR_ACCENT), wifiHiddenRowCb, nullptr);
+  char wifi_hidden[64];
+  snprintf(wifi_hidden, sizeof wifi_hidden, LV_SYMBOL_PLUS "  %s",
+           TR("Other (hidden) network\xE2\x80\xA6"));
+  wifiListRow(wifi_hidden, nullptr, lv_color_hex(COLOR_ACCENT), wifiHiddenRowCb, nullptr);
   lv_obj_set_height(s_wifi_list_cont, s_wifi_list_y + SC(2));   // grow the card to fit
   navMarkDirty();
 }
@@ -15479,16 +15653,10 @@ static void actionSheetPingCb(lv_event_t* e) {
   bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
   closeActionSheet();
   if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
-  /* sendStatusPingWithGuestLoginForUI() pipelines a blank-password LOGIN
-   * before the STATUS REQ. Repeaters refuse to decrypt a PAYLOAD_TYPE_REQ
-   * from a sender that isn't already in their ACL, and the ACL is only
-   * populated by a successful sendLogin. A blank-password login matches
-   * repeaters with guest_password = "" (typical default) and adds us as a
-   * guest; subsequent REQs from this device then decrypt cleanly. The
-   * follow-up STATUS REQ also registers _ui_pending_status so the reply
-   * routes back via UITask::onPingReply (not eaten by the companion-serial
-   * pending_status branch). */
-  int r = the_mesh.sendStatusPingWithGuestLoginForUI(c);
+  /* Wait for the guest LOGIN response before sending STATUS. Besides avoiding
+   * the first-contact ACL race, the interactive login re-discovers the path so
+   * older repeaters can return LOGIN_OK before the request is sent. */
+  int r = the_mesh.uiSendRequestAfterGuestLogin(c, MyMesh::UiReqKind::Status);
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
     copyUtf8ReplacingMissingGlyphs(&g_font_14, s_ui_ping_target_name,
                                     sizeof(s_ui_ping_target_name),
@@ -15553,9 +15721,8 @@ static void actionSheetTelemetryCb(lv_event_t* e) {
   openTelemetryWindow(s_telem_node, s_telem_name, TELEM_HISTORY);
 #else
   // No telemetry window on this board — send straight away and toast the result.
-  // Chain a guest LOGIN ahead of the REQ (repeaters/sensors need us in their ACL
-  // before they decrypt a PAYLOAD_TYPE_REQ; see sendStatusPingWithGuestLoginForUI).
-  int r = the_mesh.sendTelemetryRequestWithGuestLoginForUI(c);
+  // Wait for guest LOGIN + path discovery before sending the telemetry REQ.
+  int r = the_mesh.uiSendRequestAfterGuestLogin(c, MyMesh::UiReqKind::Telemetry);
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT)
     g_lv.task->showAlert(TR("Telemetry req\xe2\x80\xa6"), 1400);
   else
@@ -20033,8 +20200,10 @@ static void fmOpenStorage(fs::FS* fs, const char* store, const char* path) {
 }
 static void fmInternalClickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
-  fmOpenStorage(&FFat, "Internal", "/");   // the internal FAT data partition (locfd / 'storage')
+#if defined(HAS_TANMATSU)
+  fmOpenStorage(&FFat, "Internal", "/");   // internal FAT data partition (locfd)
+#elif defined(HAS_TDISPLAY_P4)
+  fmOpenStorage(&LittleFS, "Internal", "/");   // internal LittleFS 'storage' partition
 #else
   fmOpenStorage(&SPIFFS, "Internal", "/");
 #endif
@@ -21552,6 +21721,9 @@ static uint64_t s_tan_sd_size        = 0;
 static uint32_t s_tan_sd_retry_after = 0;   // backoff so an absent/cold card isn't re-probed every render
 static bool tanSdTryMount() {
   if (s_tan_sd_mounted) return true;
+#if CAP_LUA_AUDIO
+  if (luaAudioStorageBusy()) return false;
+#endif
   if (millis() < s_tan_sd_retry_after) return false;
 #if defined(HAS_TDISPLAY_P4)
   // Hot-insert path (no-op when main.cpp already mounted at boot): 20 MHz like the boot ladder,
@@ -22015,10 +22187,13 @@ static void openSignalInfoPopup() {
   sig_row2_y = sig_row1_y + sig_line_h + 2;
 #endif
 
-  sigCell(stale && heard ? "Signal (stale)" : "Signal", 0, sig_hdr_y, COLOR_TEXT);
+  // sigCell does not translate its argument, so these wrap at the call site. The
+  // home-graph signal popup has its own TR()'d copy of the same three strings;
+  // this one was missed, so the card read English in every language (pisti87).
+  sigCell(stale && heard ? TR("Signal (stale)") : TR("Signal"), 0, sig_hdr_y, COLOR_TEXT);
   int cy;
   if (!heard) {
-    sigCell("nothing heard yet", 8, sig_row1_y, COLOR_SUB);
+    sigCell(TR("nothing heard yet"), 8, sig_row1_y, COLOR_SUB);
 #if defined(TLORA_PAGER)
     cy = sig_row1_y + lv_font_get_line_height(&g_font_12) + 10;
 #else
@@ -22162,6 +22337,7 @@ static void openSignalInfoPopup() {
 // runs on a core-0 worker task so LVGL never blocks; the UI loop polls s_reader_dirty.
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 static const char    kReaderDefaultUrl[] = "wadamesh.com";
+static const char    kReaderHomeUrl[] = "sd:/home.htm";
 static lv_obj_t*     s_reader_root   = nullptr;
 static lv_obj_t*     s_reader_url_ta = nullptr;
 static lv_obj_t*     s_reader_go     = nullptr;
@@ -22173,13 +22349,19 @@ static char*         s_reader_text   = nullptr;    // PSRAM: extracted text (NUL
 static volatile bool s_reader_dirty  = false;      // worker -> UI: text/status changed
 static volatile bool s_reader_busy   = false;      // a fetch is in flight
 static volatile bool s_reader_ok     = false;      // last fetch produced a page (worker -> UI)
+static volatile bool s_reader_home_missing = false; // initial SD probe failed; restore URL-entry state
+static volatile bool s_reader_sd_busy = false;      // open reader File owns the removable-card VFS
+static TaskHandle_t  s_reader_sd_owner = nullptr;
+static volatile uint32_t s_reader_generation = 0;
+static volatile uint32_t s_reader_task_generation = 0;
+static char          s_reader_pending_url[300] = "";
 static char          s_reader_msg[110] = "";       // status text (worker writes, UI shows)
 static TaskHandle_t  s_reader_task    = nullptr;
 static bool          s_reader_pristine = false;    // URL field still holds the untouched default
 static const size_t  kReaderRawCap  = 192 * 1024;  // max raw HTML we buffer (PSRAM)
 static const size_t  kReaderTextCap =  60 * 1024;  // max extracted text we keep
 // Links found on the page: byte range in s_reader_text + resolved absolute href.
-struct ReaderLink { uint32_t start, end; char href[240]; };
+using ReaderLink = ReaderContent::Link;
 static const int     kReaderMaxLinks = 280;
 static ReaderLink*   s_reader_links   = nullptr;   // PSRAM array, lazily allocated
 static int           s_reader_nlinks  = 0;
@@ -22194,7 +22376,7 @@ static lv_obj_t*     s_reader_back     = nullptr;
 static lv_obj_t*     s_reader_fwd      = nullptr;
 
 static void closeReaderPage();
-static void readerNavigate(const char* in, bool push);
+static bool readerNavigate(const char* in, bool push);
 static void readerUpdateNavButtons();
 static void readerRenderBody();
 static void readerSetAddrExpanded(bool exp);
@@ -22207,135 +22389,107 @@ static bool readerCiPrefix(const char* s, size_t n, const char* pfx) {
     if (a >= 'A' && a <= 'Z') a += 32; if (b >= 'A' && b <= 'Z') b += 32; if (a != b) return false; }
   return true;
 }
-// Decode one HTML entity at s[0]=='&'. Writes UTF-8 to out (>=4 bytes), sets *wrote,
-// returns consumed input length; 0 if unrecognised (caller emits '&' literally).
-static size_t readerEntity(const char* s, size_t n, char* out, int* wrote) {
-  static const struct { const char* name; const char* utf8; } named[] = {
-    {"amp;","&"},{"lt;","<"},{"gt;",">"},{"quot;","\""},{"apos;","'"},{"nbsp;"," "},
-    {"mdash;","\xe2\x80\x94"},{"ndash;","\xe2\x80\x93"},{"hellip;","\xe2\x80\xa6"},
-    {"lsquo;","\xe2\x80\x98"},{"rsquo;","\xe2\x80\x99"},{"ldquo;","\xe2\x80\x9c"},
-    {"rdquo;","\xe2\x80\x9d"},{"copy;","\xc2\xa9"},{"reg;","\xc2\xae"},{"euro;","\xe2\x82\xac"},
-    {"deg;","\xc2\xb0"},{"middot;","\xc2\xb7"},{"bull;","\xe2\x80\xa2"},{"trade;","\xe2\x84\xa2"},
+// A bounded Stream lets HTTPClient remove chunk framing while writing directly into
+// PSRAM. Short-writing at the cap stops oversized pages without allocating a String.
+class ReaderBufferStream final : public Stream {
+ public:
+  ReaderBufferStream(uint8_t* data, size_t capacity, uint32_t generation)
+      : data_(data), capacity_(capacity), generation_(generation) {}
+  using Print::write;
+  size_t write(uint8_t byte) override { return write(&byte, 1); }
+  size_t write(const uint8_t* data, size_t size) override {
+    const size_t before = size_;
+    const size_t room = size_ < capacity_ ? capacity_ - size_ : 0;
+    const size_t copied = size < room ? size : room;
+    if (copied) {
+      memcpy(data_ + size_, data, copied);
+      size_ += copied;
+      if (generation_ == s_reader_generation && (before >> 14) != (size_ >> 14)) {
+        snprintf(s_reader_msg, sizeof s_reader_msg, "Loading\xe2\x80\xa6 %uk", (unsigned)(size_ / 1024));
+        s_reader_dirty = true;
+      }
+    }
+    return copied;
+  }
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+  void flush() override {}
+  size_t size() const { return size_; }
+  bool full() const { return size_ == capacity_; }
+
+ private:
+  uint8_t* data_;
+  size_t capacity_;
+  uint32_t generation_;
+  size_t size_ = 0;
+};
+
+enum class ReaderLocalResult : uint8_t { Ok, NoStorage, NotFound, ReadFailed };
+
+static ReaderLocalResult readerReadLocal(const char* url, uint8_t* raw, size_t capacity,
+                                         size_t* total, uint32_t generation) {
+  fs::FS* storage = nullptr;
+  bool storage_claimed = false;
+  auto releaseStorage = [&]() {
+    if (!storage_claimed) return;
+    s_reader_sd_owner = nullptr;
+    s_reader_sd_busy = false;
+    storage_claimed = false;
   };
-  for (auto& e : named) { size_t ln = strlen(e.name);
-    if (n > ln && strncmp(s + 1, e.name, ln) == 0) { int w = strlen(e.utf8); memcpy(out, e.utf8, w); *wrote = w; return ln + 1; } }
-  if (n > 3 && s[1] == '#') {                            // &#NNN; or &#xHH;
-    long cp = 0; bool hex = (s[2] == 'x' || s[2] == 'X'); size_t i = hex ? 3 : 2, start = i;
-    for (; i < n && s[i] != ';'; i++) { char c = s[i]; int d;
-      if (c >= '0' && c <= '9') d = c - '0';
-      else if (hex && c >= 'a' && c <= 'f') d = c - 'a' + 10;
-      else if (hex && c >= 'A' && c <= 'F') d = c - 'A' + 10; else { i = start; break; }
-      cp = cp * (hex ? 16 : 10) + d; }
-    if (i > start && i < n && s[i] == ';' && cp > 0 && cp <= 0x10FFFF) {
-      int w = 0;
-      if (cp < 0x80) out[w++] = (char)cp;
-      else if (cp < 0x800) { out[w++] = 0xC0 | (cp >> 6); out[w++] = 0x80 | (cp & 0x3F); }
-      else if (cp < 0x10000) { out[w++] = 0xE0 | (cp >> 12); out[w++] = 0x80 | ((cp >> 6) & 0x3F); out[w++] = 0x80 | (cp & 0x3F); }
-      else { out[w++] = 0xF0 | (cp >> 18); out[w++] = 0x80 | ((cp >> 12) & 0x3F); out[w++] = 0x80 | ((cp >> 6) & 0x3F); out[w++] = 0x80 | (cp & 0x3F); }
-      *wrote = w; return i + 1;
-    }
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+  s_reader_sd_busy = true;
+  s_reader_sd_owner = xTaskGetCurrentTaskHandle();
+  storage_claimed = true;
+  if (sdAdoptLiveMount()) storage = &SD;
+  else if (!sdRuntimeLifecycleBusy() && fmSdTryMount()) storage = &SD;
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  s_reader_sd_busy = true;
+  s_reader_sd_owner = xTaskGetCurrentTaskHandle();
+  storage_claimed = true;
+  if (tanSdTryMount()) storage = &SD_MMC;
+#endif
+  if (!storage) { releaseStorage(); return ReaderLocalResult::NoStorage; }
+
+  char path[300];
+  snprintf(path, sizeof path, "%s", url + 3);
+  char* query = strchr(path, '?');
+  if (query) *query = 0;
+  if (path[0] != '/') { releaseStorage(); return ReaderLocalResult::NotFound; }
+
+  markSdIo();
+  File file = storage->open(path, "r");
+  if (!file || file.isDirectory()) {
+    if (file) file.close();
+    releaseStorage();
+    return ReaderLocalResult::NotFound;
   }
-  return 0;
-}
-// Extract attribute `attr` (e.g. "href") from a tag body h[0..len) into out. Handles
-// quoted ("..", '..') and unquoted values. Returns true if found.
-static bool readerTagAttr(const char* h, size_t len, const char* attr, char* out, size_t cap) {
-  size_t al = strlen(attr);
-  for (size_t i = 0; i + al + 1 < len; i++) {
-    if (!readerCiPrefix(h + i, len - i, attr)) continue;
-    size_t j = i + al; while (j < len && (h[j] == ' ' || h[j] == '\t')) j++;
-    if (j >= len || h[j] != '=') continue;
-    j++; while (j < len && (h[j] == ' ' || h[j] == '\t')) j++;
-    char q = 0; if (j < len && (h[j] == '"' || h[j] == '\'')) { q = h[j]; j++; }
-    size_t o = 0;
-    while (j < len && o + 1 < cap) { char c = h[j]; if (q ? (c == q) : (c == ' ' || c == '>' || c == '\t')) break; out[o++] = c; j++; }
-    out[o] = 0; return o > 0;
-  }
-  return false;
-}
-// Resolve href against base into out (absolute). Returns false for unusable schemes
-// (#fragment, javascript:, mailto:, tel:, data:).
-static bool readerResolveUrl(const char* base, const char* href, char* out, size_t cap) {
-  while (*href == ' ') href++;
-  size_t hl = strlen(href);
-  if (!hl || href[0] == '#') return false;
-  if (readerCiPrefix(href, hl, "javascript:") || readerCiPrefix(href, hl, "mailto:") ||
-      readerCiPrefix(href, hl, "tel:") || readerCiPrefix(href, hl, "data:")) return false;
-  if (readerCiPrefix(href, hl, "http://") || readerCiPrefix(href, hl, "https://")) { snprintf(out, cap, "%s", href); }
-  else {
-    const char* se = strstr(base, "://"); if (!se) return false;
-    int sl = (int)(se - base); const char* host = se + 3;
-    const char* he = strchr(host, '/'); int hlen = he ? (int)(he - host) : (int)strlen(host);
-    if (href[0] == '/' && href[1] == '/')      snprintf(out, cap, "%.*s:%s", sl, base, href);            // //host/path
-    else if (href[0] == '/')                   snprintf(out, cap, "%.*s://%.*s%s", sl, base, hlen, host, href);  // root-relative
-    else {                                                                                              // relative to base dir
-      const char* ls = strrchr(base, '/');
-      if (ls && ls > se + 2) snprintf(out, cap, "%.*s%s", (int)(ls - base + 1), base, href);
-      else                   snprintf(out, cap, "%.*s://%.*s/%s", sl, base, hlen, host, href);
+
+  bool read_failed = false;
+  while (*total < capacity && file.available()) {
+    const size_t request = ((capacity - *total) < 4096) ? (capacity - *total) : 4096;
+    const int read_count = file.read(raw + *total, request);
+    if (read_count <= 0) { read_failed = true; break; }
+    *total += (size_t)read_count;
+    if (generation == s_reader_generation && ((*total) & 0x3FFF) == 0) {
+      snprintf(s_reader_msg, sizeof s_reader_msg, "Opening SD page\xe2\x80\xa6 %uk", (unsigned)(*total / 1024));
+      s_reader_dirty = true;
     }
+    vTaskDelay(1);
   }
-  char* frag = strchr(out, '#'); if (frag) *frag = 0;
-  return out[0] != 0;
+  file.close();
+  releaseStorage();
+  return read_failed ? ReaderLocalResult::ReadFailed : ReaderLocalResult::Ok;
 }
-// One-pass HTML -> text. Drops comments + <script>/<style> bodies, turns block tags
-// into newlines, decodes entities, collapses whitespace, and records <a href> ranges
-// (byte offsets into out + resolved absolute href) in s_reader_links. Returns text len.
-static size_t readerHtmlToText(const char* h, size_t n, char* out, size_t cap, const char* base) {
-  size_t o = 0; int pend_nl = 0; bool pend_sp = false, started = false;
-  s_reader_nlinks = 0;
-  bool in_a = false; uint32_t a_start = 0; char a_href[240] = "";
-  auto emit = [&](char c) { if (o + 1 < cap) out[o++] = c; };
-  auto flush = [&]() { if (!started) return; while (pend_nl > 0) { emit('\n'); pend_nl--; } if (pend_sp) { emit(' '); pend_sp = false; } };
-  static const char* blocks[] = { "p","div","br","li","ul","ol","tr","h1","h2","h3","h4","h5","h6",
-    "section","article","header","footer","table","blockquote","pre","hr","nav","title","body", nullptr };
-  size_t i = 0;
-  while (i < n && o + 5 < cap) {
-    char c = h[i];
-    if (c == '<') {
-      if (n - i >= 4 && h[i+1] == '!' && h[i+2] == '-' && h[i+3] == '-') {        // comment
-        size_t j = i + 4; while (j + 2 < n && !(h[j] == '-' && h[j+1] == '-' && h[j+2] == '>')) j++;
-        i = (j + 2 < n) ? j + 3 : n; continue;
-      }
-      bool scr = readerCiPrefix(h + i, n - i, "<script"), sty = !scr && readerCiPrefix(h + i, n - i, "<style");
-      if (scr || sty) {                                                          // skip body wholesale
-        const char* close = scr ? "</script" : "</style"; size_t j = i + 1;
-        while (j < n && !(h[j] == '<' && readerCiPrefix(h + j, n - j, close))) j++;
-        while (j < n && h[j] != '>') j++; i = (j < n) ? j + 1 : n;
-        if (pend_nl < 2) pend_nl++; continue;
-      }
-      size_t j = i + 1; bool closing = (j < n && h[j] == '/'); if (closing) j++;  // tag name
-      char name[12]; int ni = 0;
-      while (j < n && ni < 11) { char t = h[j]; if ((t>='a'&&t<='z')||(t>='A'&&t<='Z')||(t>='0'&&t<='9')) { name[ni++] = (t>='A'&&t<='Z')?t+32:t; j++; } else break; }
-      name[ni] = 0;
-      size_t k = i + 1; while (k < n && h[k] != '>') k++;                          // k = '>' position
-      // Links: record the anchor-text byte range + resolved href.
-      if (name[0] == 'a' && name[1] == 0) {
-        if (in_a) { if (o > a_start && s_reader_links && s_reader_nlinks < kReaderMaxLinks) {
-            s_reader_links[s_reader_nlinks].start = a_start; s_reader_links[s_reader_nlinks].end = (uint32_t)o;
-            snprintf(s_reader_links[s_reader_nlinks].href, sizeof s_reader_links[0].href, "%s", a_href); s_reader_nlinks++; }
-          in_a = false; }
-        if (!closing) { char raw[300];
-          if (base && s_reader_links && readerTagAttr(h + i, (k < n ? k : n) - i, "href", raw, sizeof raw) &&
-              readerResolveUrl(base, raw, a_href, sizeof a_href)) { in_a = true; a_start = (uint32_t)o; } }
-      }
-      i = (k < n) ? k + 1 : n;
-      for (int b = 0; blocks[b]; b++) if (strcmp(name, blocks[b]) == 0) { pend_sp = false; if (pend_nl < 2) pend_nl++; break; }
-      continue;
-    }
-    if (c == '&') {
-      char buf[8]; int w = 0; size_t used = readerEntity(h + i, n - i, buf, &w);
-      if (used) { for (int q = 0; q < w; q++) { char e = buf[q]; if (e == ' ') { if (started) pend_sp = true; } else { flush(); emit(e); started = true; } } i += used; continue; }
-      flush(); emit('&'); started = true; i++; continue;
-    }
-    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { if (started) pend_sp = true; i++; continue; }
-    flush(); emit(c); started = true; i++;
-  }
-  out[o < cap ? o : cap - 1] = 0; return o;
-}
-// Worker (core 0): fetch s_reader_url, strip to s_reader_text, publish via s_reader_dirty.
+
+// Worker (core 0): load s_reader_url, strip to s_reader_text, publish via s_reader_dirty.
 static void readerFetchTaskFn(void*) {
+  const uint32_t generation = s_reader_task_generation;
   char url[300]; strncpy(url, s_reader_url, sizeof url - 1); url[sizeof url - 1] = 0;
-  s_reader_ok = false;
+  bool result_ok = false;
+  bool result_home_missing = false;
+  char result_msg[sizeof s_reader_msg] = "";
+  const bool local = readerCiPrefix(url, strlen(url), "sd:/");
   const bool https = readerCiPrefix(url, strlen(url), "https://");
   // Big contiguous PSRAM is scarce on the 2 MB V4 (a chat's message ring fragments it),
   // so fall back to smaller buffers — a typical text page still fits in 48 KB.
@@ -22344,62 +22498,102 @@ static void readerFetchTaskFn(void*) {
   if (!raw) { rawcap = 96 * 1024; raw = (uint8_t*)heap_caps_malloc(rawcap, MALLOC_CAP_SPIRAM); }
   if (!raw) { rawcap = 48 * 1024; raw = (uint8_t*)heap_caps_malloc(rawcap, MALLOC_CAP_SPIRAM); }
   if (!raw) { rawcap = 24 * 1024; raw = (uint8_t*)heap_caps_malloc(rawcap, MALLOC_CAP_SPIRAM); }
-  int code = -1; size_t total = 0;
+  int code = -1; size_t total = 0; bool source_ok = false;
+  ReaderLocalResult local_result = ReaderLocalResult::NoStorage;
   if (raw) {
-    HTTPClient httpc;
-    httpc.setReuse(false); httpc.setConnectTimeout(9000); httpc.setTimeout(15000);
-    httpc.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS); httpc.setUserAgent("wadamesh-reader");
-    WiFiClientSecure scli; WiFiClient pcli; bool began;
-    if (https) { scli.setInsecure(); began = httpc.begin(scli, url); }
-    else       {                       began = httpc.begin(pcli, url); }
-    if (began) { httpc.addHeader("Accept-Encoding", "identity"); code = httpc.GET(); }
-    if (code == HTTP_CODE_OK) {
-      auto* st = httpc.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
-      unsigned long t0 = millis();
-      while (st && total < rawcap - 1 && (millis() - t0) < 20000) {
-        int a = st->available();
-        if (a <= 0) { if (!httpc.connected()) break; vTaskDelay(pdMS_TO_TICKS(8)); continue; }
-        int r = st->read(raw + total, (rawcap - 1) - total);
-        if (r <= 0) { if (!httpc.connected()) break; vTaskDelay(pdMS_TO_TICKS(5)); continue; }
-        total += (size_t)r;
-        if ((total & 0x3FFF) == 0) { snprintf(s_reader_msg, sizeof s_reader_msg, "Loading\xe2\x80\xa6 %uk", (unsigned)(total / 1024)); s_reader_dirty = true; }
-        vTaskDelay(1);
+    if (local) {
+      local_result = readerReadLocal(url, raw, rawcap - 1, &total, generation);
+      source_ok = local_result == ReaderLocalResult::Ok;
+    } else {
+      HTTPClient httpc;
+      httpc.setReuse(false); httpc.setConnectTimeout(9000); httpc.setTimeout(15000);
+      httpc.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS); httpc.setUserAgent("wadamesh-reader");
+      WiFiClientSecure scli; WiFiClient pcli; bool began;
+      if (https) { scli.setInsecure(); began = httpc.begin(scli, url); }
+      else       {                       began = httpc.begin(pcli, url); }
+      if (began) { httpc.addHeader("Accept-Encoding", "identity"); code = httpc.GET(); }
+      if (code == HTTP_CODE_OK) {
+        ReaderBufferStream sink(raw, rawcap - 1, generation);
+        const int transfer_result = httpc.writeToStream(&sink);
+        total = sink.size();
+        source_ok = transfer_result >= 0 || sink.full() || total > 0;
       }
+      httpc.end();
     }
-    httpc.end();
   }
-  if (!raw) snprintf(s_reader_msg, sizeof s_reader_msg, "Out of memory");
-  else if (code == HTTP_CODE_OK && total >= 2 && raw[0] == 0x1f && (uint8_t)raw[1] == 0x8b)
-    snprintf(s_reader_msg, sizeof s_reader_msg, "Page is gzip-compressed \xe2\x80\x94 not supported yet");
-  else if (code == HTTP_CODE_OK && total > 0) {
+  if (!raw) snprintf(result_msg, sizeof result_msg, "Out of memory");
+  else if (source_ok && total >= 2 && raw[0] == 0x1f && (uint8_t)raw[1] == 0x8b)
+    snprintf(result_msg, sizeof result_msg, "Page is gzip-compressed \xe2\x80\x94 not supported yet");
+  else if (source_ok) {
     if (!s_reader_text)  s_reader_text  = (char*)heap_caps_malloc(kReaderTextCap, MALLOC_CAP_SPIRAM);
     if (!s_reader_links) s_reader_links = (ReaderLink*)heap_caps_malloc(sizeof(ReaderLink) * kReaderMaxLinks, MALLOC_CAP_SPIRAM);
-    if (s_reader_text) { size_t tl = readerHtmlToText((const char*)raw, total, s_reader_text, kReaderTextCap, s_reader_url);
+    if (s_reader_text) { size_t parsed_links = 0;
+      size_t tl = ReaderContent::htmlToText((const char*)raw, total, s_reader_text, kReaderTextCap,
+                                            url, s_reader_links, kReaderMaxLinks, &parsed_links);
+      s_reader_nlinks = (int)parsed_links;
       if (tl == 0) { strcpy(s_reader_text, "(no readable text on this page)"); s_reader_nlinks = 0; }
-      snprintf(s_reader_msg, sizeof s_reader_msg, "%s", s_reader_url); s_reader_ok = true; }
-    else snprintf(s_reader_msg, sizeof s_reader_msg, "Out of memory");
+      snprintf(result_msg, sizeof result_msg, "%s", url); result_ok = true; }
+    else snprintf(result_msg, sizeof result_msg, "Out of memory");
   }
-  else if (code > 0) { snprintf(s_reader_msg, sizeof s_reader_msg, "HTTP %d", code); }
-  else               { snprintf(s_reader_msg, sizeof s_reader_msg, "Couldn't load (offline, bad URL, or TLS failed)"); }
+  else if (local) {
+    const bool home = strcmp(url, kReaderHomeUrl) == 0;
+    result_home_missing = home;
+    if (home) snprintf(result_msg, sizeof result_msg, "No SD /home.htm found");
+    else if (local_result == ReaderLocalResult::NoStorage) snprintf(result_msg, sizeof result_msg, "SD card not available");
+    else if (local_result == ReaderLocalResult::ReadFailed) snprintf(result_msg, sizeof result_msg, "Couldn't read SD file");
+    else snprintf(result_msg, sizeof result_msg, "SD file not found");
+  }
+  else if (code > 0) { snprintf(result_msg, sizeof result_msg, "HTTP %d", code); }
+  else               { snprintf(result_msg, sizeof result_msg, "Couldn't load (offline, bad URL, or TLS failed)"); }
   if (raw) heap_caps_free(raw);
-  s_reader_busy = false; s_reader_dirty = true; s_reader_task = nullptr;
+  if (generation == s_reader_generation) {
+    s_reader_ok = result_ok;
+    s_reader_home_missing = result_home_missing;
+    snprintf(s_reader_msg, sizeof s_reader_msg, "%s", result_msg);
+  }
+  s_reader_task = nullptr; s_reader_busy = false; s_reader_dirty = true;
   vTaskDelete(nullptr);
 }
 // Navigate to a URL. push=true records it in history (a fresh navigation from Go / a
 // link / Enter); push=false is a back / forward / refresh replay that must NOT grow
 // history. readerStart() is the public "new navigation" entry point.
-static void readerNavigate(const char* in, bool push) {
-  if (s_reader_busy || !in) return;
+static bool readerNavigate(const char* in, bool push) {
+  if (s_reader_busy || !in) return false;
   while (*in == ' ') in++;
-  if (readerCiPrefix(in, strlen(in), "http://") || readerCiPrefix(in, strlen(in), "https://"))
-       snprintf(s_reader_url, sizeof s_reader_url, "%s", in);
-  else snprintf(s_reader_url, sizeof s_reader_url, "https://%s", in);   // default to https
+  const bool local = readerCiPrefix(in, strlen(in), "sd:/");
+  char next_url[sizeof s_reader_url];
+  if (local || readerCiPrefix(in, strlen(in), "http://") || readerCiPrefix(in, strlen(in), "https://"))
+    snprintf(next_url, sizeof next_url, "%s", in);
+  else snprintf(next_url, sizeof next_url, "https://%s", in);   // default to https
+  if (!next_url[0] || (!local && !strchr(next_url, '.'))) { snprintf(s_reader_msg, sizeof s_reader_msg, "Enter a valid URL"); s_reader_dirty = true; if (s_reader_root) readerSetAddrExpanded(true); return false; }
+  if (!local && WiFi.status() != WL_CONNECTED) { snprintf(s_reader_msg, sizeof s_reader_msg, "Wi-Fi not connected (Settings \xe2\x86\x92 Wi-Fi)"); s_reader_dirty = true; if (s_reader_root) readerSetAddrExpanded(true); return false; }
+  char previous_url[sizeof s_reader_url];
+  snprintf(previous_url, sizeof previous_url, "%s", s_reader_url);
+  snprintf(s_reader_url, sizeof s_reader_url, "%s", next_url);
   // Keep the address field in sync with what we're actually loading, so a failed load
   // shows the URL we tried (not the stale default that made it look like it "opened
   // wadamesh.com").
   if (s_reader_url_ta) { lv_textarea_set_text(s_reader_url_ta, s_reader_url); s_reader_pristine = false; }
-  if (!s_reader_url[0] || !strchr(s_reader_url, '.')) { snprintf(s_reader_msg, sizeof s_reader_msg, "Enter a valid URL"); s_reader_dirty = true; if (s_reader_root) readerSetAddrExpanded(true); return; }
-  if (WiFi.status() != WL_CONNECTED) { snprintf(s_reader_msg, sizeof s_reader_msg, "Wi-Fi not connected (Settings \xe2\x86\x92 Wi-Fi)"); s_reader_dirty = true; if (s_reader_root) readerSetAddrExpanded(true); return; }
+  s_reader_ok = false;
+  s_reader_home_missing = false;
+  s_reader_task_generation = ++s_reader_generation;
+  s_reader_busy = true; snprintf(s_reader_msg, sizeof s_reader_msg, "%s", local ? "Opening SD page\xe2\x80\xa6" : "Connecting\xe2\x80\xa6"); s_reader_dirty = true;
+  // Immediate feedback (we're on the UI thread): collapse the URL into the topbar and
+  // show a Loading placeholder at once, so a tapped link visibly does something now.
+  if (s_reader_root) { readerSetAddrExpanded(false); readerShowLoading(); }
+  if (xTaskCreatePinnedToCore(readerFetchTaskFn, "reader", 16384, nullptr, 4, &s_reader_task, 0) != pdPASS) {
+    // Couldn't spawn the fetch worker (low internal RAM) — don't leave it stuck on
+    // "Loading…" forever; surface it and drop the busy flag so a retry works.
+    s_reader_task = nullptr; s_reader_busy = false;
+    snprintf(s_reader_msg, sizeof s_reader_msg, "Low memory \xe2\x80\x94 try again");
+    s_reader_ok = false; s_reader_dirty = true;
+    snprintf(s_reader_url, sizeof s_reader_url, "%s", previous_url);
+    if (s_reader_url_ta) {
+      lv_textarea_set_text(s_reader_url_ta, previous_url[0] ? previous_url : kReaderDefaultUrl);
+      s_reader_pristine = !previous_url[0];
+    }
+    return false;
+  }
   if (push && s_reader_hist) {
     // Drop any forward tail, then push (unless it repeats the current entry).
     if (s_reader_hist_pos < 0 || strcmp(s_reader_hist[s_reader_hist_pos], s_reader_url) != 0) {
@@ -22411,31 +22605,23 @@ static void readerNavigate(const char* in, bool push) {
     }
     s_reader_hist_n = s_reader_hist_pos + 1;
   }
-  s_reader_busy = true; snprintf(s_reader_msg, sizeof s_reader_msg, "Connecting\xe2\x80\xa6"); s_reader_dirty = true;
   readerUpdateNavButtons();
-  // Immediate feedback (we're on the UI thread): collapse the URL into the topbar and
-  // show a Loading placeholder at once, so a tapped link visibly does something now.
-  if (s_reader_root) { readerSetAddrExpanded(false); readerShowLoading(); }
-  if (xTaskCreatePinnedToCore(readerFetchTaskFn, "reader", 16384, nullptr, 4, &s_reader_task, 0) != pdPASS) {
-    // Couldn't spawn the fetch worker (low internal RAM) — don't leave it stuck on
-    // "Loading…" forever; surface it and drop the busy flag so a retry works.
-    s_reader_task = nullptr; s_reader_busy = false;
-    snprintf(s_reader_msg, sizeof s_reader_msg, "Low memory \xe2\x80\x94 try again");
-    s_reader_ok = false; s_reader_dirty = true;
-  }
+  return true;
 }
 static void readerStart(const char* in) { readerNavigate(in, true); }
 static void readerBackCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_reader_busy) return;
-  if (s_reader_hist_pos > 0) readerNavigate(s_reader_hist[--s_reader_hist_pos], false);
-  else closeReaderPage();   // at the first page, the ◀ button exits the browser (reliable exit)
+  if (s_reader_hist_pos > 0) {
+    const int target = s_reader_hist_pos - 1;
+    if (readerNavigate(s_reader_hist[target], false)) { s_reader_hist_pos = target; readerUpdateNavButtons(); }
+  }
 }
-static void readerFwdCb(lv_event_t* e)     { if (lv_event_get_code(e) == LV_EVENT_CLICKED && !s_reader_busy && s_reader_hist && s_reader_hist_pos + 1 < s_reader_hist_n) readerNavigate(s_reader_hist[++s_reader_hist_pos], false); }
+static void readerFwdCb(lv_event_t* e)     { if (lv_event_get_code(e) == LV_EVENT_CLICKED && !s_reader_busy && s_reader_hist && s_reader_hist_pos + 1 < s_reader_hist_n) { const int target = s_reader_hist_pos + 1; if (readerNavigate(s_reader_hist[target], false)) { s_reader_hist_pos = target; readerUpdateNavButtons(); } } }
 static void readerRefreshCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED && !s_reader_busy && s_reader_url[0])                             readerNavigate(s_reader_url, false); }
 // Dim the back / forward arrows when there's nowhere to go that way.
 static void readerUpdateNavButtons() {
   auto dim = [](lv_obj_t* b, bool on) { if (!b) return; lv_obj_t* l = lv_obj_get_child(b, 0); if (l) lv_obj_set_style_text_opa(l, on ? LV_OPA_COVER : LV_OPA_30, LV_PART_MAIN); };
-  dim(s_reader_back, true);   // always active: goes back in history, or exits at the first page
+  dim(s_reader_back, s_reader_hist && s_reader_hist_pos > 0);
   dim(s_reader_fwd,  s_reader_hist && s_reader_hist_pos + 1 < s_reader_hist_n);
 }
 static void readerGoCb(lv_event_t*) { if (s_reader_url_ta) readerStart(lv_textarea_get_text(s_reader_url_ta)); }
@@ -22512,21 +22698,36 @@ static void readerRenderBody() {
     return;
   }
   // Walk the text, emitting text[cursor..link.start] as paragraphs and each link
-  // range as a tappable label. NUL-swap in place so we never copy big runs.
+  // range as a tappable label. Boundary whitespace is redundant once a range becomes
+  // its own flex row; trimming it prevents paragraph newlines from becoming blank rows.
+  // NUL-swap in place so we never copy big runs.
   const uint32_t tlen = (uint32_t)strlen(s_reader_text);
+  auto mkRange = [&](uint32_t start, uint32_t end, bool link, int idx) {
+    auto boundarySpace = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+    while (start < end && boundarySpace(s_reader_text[start])) start++;
+    while (end > start && boundarySpace(s_reader_text[end - 1])) end--;
+    if (start == end) return false;
+    char saved = s_reader_text[end];
+    s_reader_text[end] = 0;
+    mkLabel(s_reader_text + start, link, idx);
+    s_reader_text[end] = saved;
+    return true;
+  };
   uint32_t cursor = 0; int blocks = 0;
   for (int i = 0; i < s_reader_nlinks && blocks < 500; i++) {
     ReaderLink& lk = s_reader_links[i];
     if (lk.start < cursor || lk.end > tlen || lk.end <= lk.start) continue;
-    if (lk.start > cursor) { char sv = s_reader_text[lk.start]; s_reader_text[lk.start] = 0; mkLabel(s_reader_text + cursor, false, -1); s_reader_text[lk.start] = sv; blocks++; }
-    { char sv = s_reader_text[lk.end]; s_reader_text[lk.end] = 0; mkLabel(s_reader_text[lk.start] ? s_reader_text + lk.start : "(link)", true, i); s_reader_text[lk.end] = sv; blocks++; }
+    if (lk.start > cursor && mkRange(cursor, lk.start, false, -1)) blocks++;
+    if (mkRange(lk.start, lk.end, true, i)) blocks++;
     cursor = lk.end;
   }
-  if (cursor < tlen) mkLabel(s_reader_text + cursor, false, -1);
+  if (cursor < tlen) mkRange(cursor, tlen, false, -1);
   lv_obj_scroll_to_y(s_reader_scroll, 0, LV_ANIM_OFF);
 }
 static void closeReaderPage() {
   if (!s_reader_root) return;
+  ++s_reader_generation;
+  s_reader_pending_url[0] = 0;
   s_apppage_title = nullptr; s_apppage_close = nullptr;
   s_reader_bar_url = false;   // un-hide the status-bar clock
   s_reader_page_open = false; // restore the tall-bar glass fade for other pages
@@ -22542,7 +22743,7 @@ static void readerEditBtnCb(lv_event_t* e) {
   readerSetAddrExpanded(true);
   if (s_reader_url_ta) { lv_textarea_set_text(s_reader_url_ta, s_reader_url); s_reader_pristine = false; lv_group_focus_obj(s_reader_url_ta); }
 }
-static void openReaderPage() {
+static void openReaderPage(const char* initial_url = nullptr) {
   closeReaderPage();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -22628,7 +22829,8 @@ static void openReaderPage() {
   s_reader_fwd     = navBtn(LV_SYMBOL_RIGHT,   readerFwdCb);
   navBtn(LV_SYMBOL_REFRESH, readerRefreshCb);
   s_reader_editbtn = navBtn(LV_SYMBOL_EDIT,    readerEditBtnCb);
-  readerRenderBody();
+  if (s_reader_busy) readerShowLoading();
+  else               readerRenderBody();
   // Reopen after a successful load -> collapsed (fullscreen reading); first open or
   // after an error -> expanded so you can type a URL.
   readerSetAddrExpanded(!(s_reader_ok && s_reader_text && s_reader_text[0]));
@@ -22637,6 +22839,15 @@ static void openReaderPage() {
   // this page opens over a chat, leaving the tall bar's lower row (the back tap) buried
   // under the reader root.
   if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
+  const char* target = initial_url && initial_url[0] ? initial_url : kReaderHomeUrl;
+  if (s_reader_busy) {
+    snprintf(s_reader_pending_url, sizeof s_reader_pending_url, "%s", target);
+    readerSetAddrExpanded(false);
+    readerShowLoading();
+  } else {
+    s_reader_pending_url[0] = 0;
+    readerStart(target);
+  }
 }
 #endif  // Reader
 
@@ -22850,7 +23061,7 @@ static void discoverBuildFeed() {
   else if (buf[q - 1] == '\n') buf[q - 1] = '\0';
   lv_label_set_text(s_discover_feed, buf);
   if (s_discover_status)
-    lv_label_set_text_fmt(s_discover_status, TR("%s \xC2\xB7 %d nearby (%d rpt, %d comp)"), s_discover_scanning ? "Scanning\xE2\x80\xA6" : "Paused", (int)m, rpt, comp);
+    lv_label_set_text_fmt(s_discover_status, TR("%s \xC2\xB7 %d nearby (%d rpt, %d comp)"), s_discover_scanning ? TR("Scanning\xE2\x80\xA6") : TR("Paused"), (int)m, rpt, comp);
 }
 
 // Sweep interval, backing off. A probe is not one packet: it is our zero-hop
@@ -26188,7 +26399,12 @@ static int verchkFetchLatest(WiFiClient& client, HTTPClient& http) {
 fs::FS* luaHostAppFs();                                        // bridges (defined later in this TU)
 void    luaHostAppPath(char* out, size_t cap, const char* rel);
 
-struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; };
+// `requires` is an optional capability name the board must have for the app to
+// work at all ("sdk_ext" today). beta_69 published Wardrive and Nearby, both of
+// which need the extended SDK, and the Heltec V4 does not have it -- so the most
+// common board in the mesh offered a prominent Get button for two apps that then
+// refused to do anything, with no warning anywhere (reported on Discord).
+struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; char requires_cap[16]; };
 // `icon` is the manifest's optional icon NAME (not a glyph): the device's JSON
 // scanner only reads quoted strings, and a name is reviewable in a store
 // submission where a raw private-use codepoint would not be. Mapped to a glyph
@@ -26310,7 +26526,7 @@ static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
   luaHostAppPath(appsdir, sizeof appsdir, "/apps");
   fs->mkdir(appsdir);
   static const char* const kExt[2] = { "lua", "json" };
-  const size_t kCap[2] = { 64 * 1024, 1024 };
+  const size_t kCap[2] = { 192 * 1024, 1024 };   // must match kMaxSrc in LuaAppHost.cpp
   for (int e = 0; e < 2; e++) {
     char* buf = (char*)heap_caps_malloc(kCap[e], MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf) return false;
@@ -31256,6 +31472,11 @@ static void makeChatDetail(LvChatPanel& p) {
   }
   // Tap on composer → show keyboard
   lv_obj_add_event_cb(p.composer_ta, composerFocusCb, LV_EVENT_FOCUSED, &p);
+#if CAP_TOUCH && !CAP_KEYBOARD
+  // A composer may remain group-focused after the keyboard is dismissed, so
+  // a later tap emits CLICKED without another FOCUSED event.
+  lv_obj_add_event_cb(p.composer_ta, composerFocusCb, LV_EVENT_CLICKED, &p);
+#endif
   lv_obj_add_event_cb(p.composer_ta, kbActivityPressCb, LV_EVENT_PRESSED, nullptr);
   // Grow / shrink the composer row as the message wraps (every text change).
   lv_obj_add_event_cb(p.composer_ta, composerAutoGrowCb, LV_EVENT_VALUE_CHANGED, &p);
@@ -34099,7 +34320,7 @@ static void urlMenuOpenWebCb(lv_event_t* e) {
   // new fetch) and the previous page so openReaderPage doesn't re-render the last URL.
   if (!s_reader_task) s_reader_busy = false;
   s_reader_ok = false;
-  openReaderPage(); readerStart(u);
+  openReaderPage(u);
 }
 #endif
 static void openUrlMenu(const char* url) {
@@ -36172,30 +36393,6 @@ static void updatePagerBackspaceHold(unsigned long now) {
   s_was_held = held;
 }
 
-// Orange/Alt key, tapped alone (not held as a symbol-layer modifier or for the
-// encoder's Alt+turn). In an open chat it takes over the old Backspace role:
-// jump to the latest message (when scrolled up in history) and drop focus in
-// the composer, ready to type — the natural "done reading, reply now" motion,
-// and the deliberate way OUT of the message list now that plain encoder turns
-// hold focus inside it while history loads (pagerEncoderChatEdgeScroll).
-// Everywhere else it stays the same "next field" as one rotary NEXT detent.
-// Call once per loop tick while the screen is on; screen-off handling discards
-// any pending tap instead (see loop()'s HAS_PAGER_KEYBOARD branch) so a stray
-// tap picked up while idle-dimmed can't fire the moment the screen wakes.
-static void updatePagerAltTapNext() {
-  if (!pagerKeyboardConsumeAltTap()) return;
-  LvChatPanel* cp = navOpenChatPanel();
-  if (cp && cp->msgs && cp->composer_ta && lv_obj_is_valid(cp->composer_ta)) {
-    if (chatVirtAwayFromBottom(cp)) chatVirtJumpToLatest(cp);
-    lv_group_focus_obj(cp->composer_ta);
-    s_nav_show = true;
-    if (g_lv.task) g_lv.task->noteUserInput();
-    return;
-  }
-  navPushTap(LV_KEY_NEXT);
-  if (g_lv.task) g_lv.task->noteUserInput();
-}
-
 // Alt(Fn)+Shift chord (PagerKeyboard.cpp only reports it, since the driver has
 // no UI visibility): toggles Caps Lock while actually editing a text field
 // (the field is where "Caps Lock" means anything) and is a deliberate no-op
@@ -36410,9 +36607,7 @@ static bool pagerEncoderScrollOversizedFocused(bool up) {
 // the list instead (same navScrollFocused the Alt+turn branch uses): the
 // scroll fires the virtualization render, the neighbor bubble joins the nav
 // group via the tree-signature rebuild, and the next detent walks onto it.
-// Focus only leaves the list at the TRUE oldest/newest message. The orange-key
-// solo tap (updatePagerAltTapNext) pushes LV_KEY_NEXT directly and never comes
-// through here, so it stays the deliberate "leave the messages now" exit.
+// Focus only leaves the list at the TRUE oldest/newest message.
 // Returns true when the detent was consumed as a scroll.
 static bool pagerEncoderChatEdgeScroll(bool up) {
   LvChatPanel* cp = navOpenChatPanel();
@@ -36583,8 +36778,8 @@ static void updatePagerEncoder(unsigned long now) {
   if ((delta != 0 || held) && g_lv.task) g_lv.task->noteUserInput();
   if (delta != 0 || held) noteKbActivity();   // same activity counts for the keyboard-backlight auto mode
 
-  // Alt+turn is a modifier combo, not a solo Alt tap -- mark it used so a
-  // release right after this doesn't ALSO fire updatePagerAltTapNext()'s NEXT.
+  // Alt+turn is a modifier combo, not a solo tap -- mark it used so releasing
+  // Alt afterward does not also arm the one-shot symbol layer.
   if (pagerKeyboardAltHeld() && delta != 0) pagerKeyboardMarkAltUsed();
 
   if (s_mentionnav_active) {
@@ -38103,6 +38298,7 @@ static bool m9HandleNavKey(int key) {
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_HOME:
       if (s_setup_root) return true;
+      s_nav_ta_editing = false;   // Home is global, including while a textarea is being edited
       if (s_apppage_close) {
         // A full-screen app page (Lua app, Snake, Web…) isn't a popup-registry
         // row — close it and stop: one action per press, so HOME on the Home
@@ -38408,6 +38604,10 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   lv_obj_t* ta = ta_focused;
 #endif
 #if defined(HAS_M9_KEYBOARD)
+  // Unlike directional keys and Back, the dedicated Home key is global. Route
+  // it before the textarea split so edit mode cannot swallow it as an unknown
+  // non-printable byte.
+  if (key == M9_KEY_HOME && m9HandleNavKey(key)) return;
   if (m9HandleArrowKey(key, ta)) return;    // ← runs BEFORE the if(!ta) split
 #endif
   if (!ta) {
@@ -38430,9 +38630,9 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // below the "NEW ----" unread divider) and focus it, so the user reads the
     // new messages chronologically with plain encoder turns from there; with
     // no divider (nothing unread) it jumps to the NEWEST message instead.
-    // (The old Backspace role -- jump to latest + focus the composer -- moved
-    // to the solo orange/Alt tap, see updatePagerAltTapNext().) The divider
-    // jump reuses the exact scroll recipe refreshChatDetail's open-to-divider
+    // The former solo-Alt shortcut now latches the symbol layer; at the true
+    // newest message, the next encoder detent leaves the list for the composer.
+    // The divider jump reuses the exact scroll recipe refreshChatDetail's open-to-divider
     // path uses; both cases use the pending-focus re-aim so the recreated row
     // for the target message ends up focused after the virtualization render.
     // Outside a chat, Backspace keeps its normal no-op / hold-to-back
@@ -39209,6 +39409,49 @@ static void ccThemeCb(lv_event_t* e) {
   openAccentPicker();
 }
 
+#if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+static uint8_t s_cc_screenshot_delay_s = 3;
+static lv_timer_t* s_cc_screenshot_timer = nullptr;
+
+static const char* ccScreenshotDelayText() {
+  return s_cc_screenshot_delay_s == 0 ? "now" :
+         s_cc_screenshot_delay_s == 3 ? "3s" : "10s";
+}
+
+static void ccScreenshotTimerCb(lv_timer_t*) {
+  s_cc_screenshot_timer = nullptr;
+  takeScreenshotToSd();
+}
+
+static void ccScreenshotDelayCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_cc_screenshot_delay_s = s_cc_screenshot_delay_s == 0 ? 3 :
+                            s_cc_screenshot_delay_s == 3 ? 10 : 0;
+  openControlCenter();
+}
+
+static void ccScreenshotCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (s_cc_screenshot_timer) {
+    lv_timer_del(s_cc_screenshot_timer);
+    s_cc_screenshot_timer = nullptr;
+  }
+  closeControlCenter();
+  const uint32_t wait_ms = (uint32_t)s_cc_screenshot_delay_s * 1000u + 150u;
+  s_cc_screenshot_timer = lv_timer_create(ccScreenshotTimerCb, wait_ms, nullptr);
+  if (!s_cc_screenshot_timer) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Screenshot: low memory"), 1800);
+    return;
+  }
+  lv_timer_set_repeat_count(s_cc_screenshot_timer, 1);
+  if (s_cc_screenshot_delay_s && g_lv.task) {
+    char msg[28];
+    snprintf(msg, sizeof msg, "Screenshot in %us", (unsigned)s_cc_screenshot_delay_s);
+    g_lv.task->showAlert(msg, 1200);
+  }
+}
+#endif
+
 #if CAP_KEYBOARD
 static void ccKbBacklightCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -39611,6 +39854,11 @@ static void tanKbBacklightTick(bool off = false) {
   if (v != s_last) { s_last = v; bsp_input_set_backlight_brightness(v); }
 }
 static uint8_t s_volume_pct = 70;
+static SemaphoreHandle_t s_tan_audio_mutex = nullptr;
+static SemaphoreHandle_t tanAudioMutex() {
+  if (!s_tan_audio_mutex) s_tan_audio_mutex = xSemaphoreCreateMutex();
+  return s_tan_audio_mutex;
+}
 // The audio subsystem (ES8156 codec + I2S) is brought up by bsp_device_initialize()
 // at boot — so here we only set the codec volume and toggle the speaker amplifier.
 static void applyVolume(uint8_t pct) {
@@ -39627,11 +39875,13 @@ static void applyVolume(uint8_t pct) {
 // which leaves every descriptor zeroed once played out, and the tone stops cleanly.
 static void tanBeep() {
   if (s_volume_pct == 0) return;
+  SemaphoreHandle_t mutex = tanAudioMutex();
+  if (!mutex || xSemaphoreTake(mutex, 0) != pdTRUE) return;
   static uint32_t s_last_beep = 0;             // throttle: holding the slider ramps fast, but
-  if (millis() - s_last_beep < 200) return;    // don't machine-gun a tone on every repeat step
+  if (millis() - s_last_beep < 200) { xSemaphoreGive(mutex); return; } // don't machine-gun a tone on every repeat step
   s_last_beep = millis();
   i2s_chan_handle_t h = nullptr;
-  if (bsp_audio_get_i2s_handle(&h) != ESP_OK || !h) return;
+  if (bsp_audio_get_i2s_handle(&h) != ESP_OK || !h) { xSemaphoreGive(mutex); return; }
   const int rate = 44100, freq = 880;
   const int tone  = rate * 30 / 1000;             // ~30 ms tone …
   const int total = tone + rate * 50 / 1000;      // … then ~50 ms silence (> the DMA ring) flushes the loop
@@ -39650,6 +39900,7 @@ static void tanBeep() {
   }
   size_t wr = 0;
   i2s_channel_write(h, buf, (size_t)n * 2 * sizeof(int16_t), &wr, 200 / portTICK_PERIOD_MS);
+  xSemaphoreGive(mutex);
 }
 #elif defined(HAS_TDISPLAY_P4)
 // T-Display P4: the RM69A10 AMOLED has no backlight — brightness is the panel's own DCS
@@ -39750,7 +40001,13 @@ static void openControlCenter() {
   lv_obj_remove_style_all(card);
 #if defined(HAS_TANMATSU)
   const int card_h = 384;   // bigger: header + 3 roomier sliders + toggle grid + sysinfo
-#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+#elif defined(HAS_THINKNODE_M9)
+  // The panel may report a 240px portrait viewport even though the physical
+  // display is mounted above the keyboard. Eight chips need three rows there;
+  // use the available height instead of clipping the last row in the old
+  // T-Deck-sized 200px card. Landscape still needs only two rows.
+  const int card_h = portrait ? (sh - STATUSBAR_H - 10) : 210;
+#elif defined(HAS_TDECK_GT911)
   const int card_h = 200;   // sysinfo + thin brightness slider + 2-row toggle grid (fits 240−22 screen)
 #elif defined(TLORA_PAGER)
   // 222-px-tall screen: the shared V4/T-Deck-landscape 212px card below is
@@ -39855,7 +40112,9 @@ static void openControlCenter() {
   // Brightness slider takes the first row (just under the date / battery) and the
   // GPS line follows it, so the slider sits ABOVE the GPS line. Boards without a
   // backlight PWM have no slider, so GPS reclaims that first row.
-#if defined(HAS_TANMATSU)
+#if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+  const int bl_y = row_y;             // keyboard-only boards use everything below this slider for controls
+#elif defined(HAS_TANMATSU)
   const int bl_y  = row_y;             // three stacked sliders: Screen / Keys / Sound
   const int gps_y = row_y + SC(100);   // GPS line sits below all three (scaled so it clears taller sliders)
 #elif defined(HAS_TDISPLAY_P4)
@@ -39868,6 +40127,7 @@ static void openControlCenter() {
   const int gps_y = row_y;
 #endif
 
+#if !defined(HAS_THINKNODE_M9) && !defined(TLORA_PAGER)
   // ---- GPS fix status (live; refreshed while the panel is open) ----
   s_cc_gps_label = lv_label_create(card);
   lv_label_set_long_mode(s_cc_gps_label, LV_LABEL_LONG_DOT);
@@ -39890,6 +40150,7 @@ static void openControlCenter() {
     lv_obj_align(s_cc_env_label, LV_ALIGN_TOP_LEFT, 0, gps_y + 12);
   }
 #endif
+#endif  // !HAS_THINKNODE_M9 && !TLORA_PAGER
 
 #if defined(HAS_TANMATSU)
   // ---- Three stacked sliders: Screen brightness, Keyboard backlight, Volume.
@@ -39968,6 +40229,7 @@ static void openControlCenter() {
   lv_obj_add_event_cb(bl, ccBrightnessReleaseCb, LV_EVENT_RELEASED,      nullptr);
 #endif
 
+#if !defined(HAS_THINKNODE_M9) && !defined(TLORA_PAGER)
   // ---- System info line (CPU + RAM% + PSRAM% + IP) — one thin line, pinned to
   //      the very bottom of the card. Memory is shown as % used so it stays
   //      compact and all four facts fit on one row.
@@ -39987,6 +40249,7 @@ static void openControlCenter() {
     lv_obj_set_style_text_color(sysl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_align(sysl, LV_ALIGN_BOTTOM_MID, 0, 0);
   }
+#endif
 
   // ---- Quick toggles (bottom row) ----
   bool wifi_on = false, ble_on = false;
@@ -40001,7 +40264,16 @@ static void openControlCenter() {
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_row(row, 10, LV_PART_MAIN);
   lv_obj_set_style_pad_column(row, 10, LV_PART_MAIN);
-#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+#elif defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+  // Reclaim everything below brightness: no GPS/status line and no bottom
+  // system-info line. Five compact cells fit across the Pager landscape view;
+  // M9 portrait wraps to three rows. Spread the rows through the reclaimed band.
+  const int controls_y = bl_y + 16;
+  lv_obj_set_size(row, card_w - 20, card_h - controls_y - 20);
+  lv_obj_align(row, LV_ALIGN_TOP_MID, 0, controls_y);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_style_pad_row(row, 4, LV_PART_MAIN);
+#elif defined(HAS_TDECK_GT911)
   // 2-row grid: 4 chips per row, so chip 5 (Lock) wraps onto a 2nd row. Sits
   // ABOVE the bottom system-info line (-16 offset leaves room for it).
   lv_obj_set_size(row, card_w - 20, 80);
@@ -40016,9 +40288,15 @@ static void openControlCenter() {
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_column(row, 5, LV_PART_MAIN);
 #endif
+#if !defined(HAS_THINKNODE_M9) && !defined(TLORA_PAGER)
   // Bottom-anchored but lifted clear of the 1-line sysinfo (~16 px) plus a gap.
   lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, -20);
+#endif
+#if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_SPACE_EVENLY);
+#else
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+#endif
   lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
   const bool gps_on = g_lv.task && g_lv.task->getGPSState();
   // T-Deck: chips in a 2-row grid. V4/pager: chips sized to fit the card width
@@ -40028,7 +40306,9 @@ static void openControlCenter() {
   tw = (card_w - 20 - 20) / 3;   // 3 chips per row (Wi-Fi/BT/GPS/Theme/Keys/Sound → 2×3 grid)
   if (tw > 175) tw = 175;
   th = 80;
-#elif defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+#elif defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+  tw = 56; th = 34;
+#elif defined(HAS_TDECK_GT911)
   tw = 58; th = 36;
 #else
   // Count only the chips this board/session will actually add below (which chips
@@ -40098,6 +40378,11 @@ static void openControlCenter() {
     const bool dnd_on = touchPrefsGetDndEnabled();
     ccToggle(row, dnd_on ? TOUCH_SYM_BELL_SLASH : TOUCH_SYM_BELL, TR("DND"), dnd_on, ccDndCb, tw, th, CAT_SOUND);
   }
+#if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+  ccToggle(row, LV_SYMBOL_REFRESH, "Timer", s_cc_screenshot_delay_s != 0,
+           ccScreenshotDelayCb, tw, th, -1, ccScreenshotDelayText());
+  ccToggle(row, LV_SYMBOL_IMAGE, "Screenshot", false, ccScreenshotCb, tw, th);
+#endif
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
 }
 
@@ -40364,6 +40649,7 @@ static void luaStoreParseCatalog() {
         luaJsonField(obj, "name", c.name, sizeof c.name) &&
         luaJsonField(obj, "ver", c.ver, sizeof c.ver)) {
       if (!luaJsonField(obj, "desc", c.desc, sizeof c.desc)) c.desc[0] = 0;
+      if (!luaJsonField(obj, "requires", c.requires_cap, sizeof c.requires_cap)) c.requires_cap[0] = 0;
       s_lua_cat_n++;
     }
     p = cb + 1;
@@ -40378,6 +40664,16 @@ static void luaStoreParseCatalog() {
 // The caption is HIDDEN rather than deleted: this runs inside the button's own
 // click event, and deleting objects mid-dispatch is exactly how the popup
 // use-after-frees happened. Adding the spinner as a new child is safe.
+// Empty requirement = runs anywhere. Unknown requirement = allow: a newer
+// catalog must not disable apps on older firmware that has never heard of the
+// name, which would be the wrong way round.
+static bool luaStoreBoardMeets(const char* req) {
+  if (!req || !req[0]) return true;
+  if (!strcmp(req, "sdk_ext")) return CAP_LUA_SDK_EXT != 0;
+  if (!strcmp(req, "sd"))      return CAP_SD != 0;
+  return true;
+}
+
 static void luaStoreMarkBtnBusy(lv_obj_t* b) {
   if (!b) return;
   const uint32_t n = lv_obj_get_child_cnt(b);
@@ -40984,10 +41280,18 @@ static void luaStoreRebuildList() {
     const bool cur = inst && strcmp(inst->ver, s_lua_cat[i].ver) == 0;
     if (!inst) lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     else if (!cur) lv_obj_set_style_bg_color(b, lv_color_hex(0x4F9DF7), LV_PART_MAIN);
-    lv_label_set_text(bl, !inst ? TR("Get") : cur ? TR("Remove") : TR("Update"));
+    const bool runnable = luaStoreBoardMeets(s_lua_cat[i].requires_cap);
+    lv_label_set_text(bl, !runnable ? TR("N/A") : !inst ? TR("Get") : cur ? TR("Remove") : TR("Update"));
     lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
     lv_obj_center(bl);
-    if (inst && cur) {
+    if (!runnable && !inst) {
+      // Greyed and inert, with the reason on the row rather than a toast after
+      // a pointless download.
+      lv_obj_set_style_bg_color(b, lv_color_hex(0x39404C), LV_PART_MAIN);
+      lv_obj_clear_flag(b, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_style_text_color(ds, lv_color_hex(0xD7574E), LV_PART_MAIN);
+      lv_label_set_text(ds, TR("This board cannot run this app."));
+    } else if (inst && cur) {
       // Remove needs the INSTALLED index
       int ii = (int)(inst - s_lua_inst);
       lv_obj_set_style_bg_color(b, lv_color_hex(0x8A4444), LV_PART_MAIN);
@@ -42033,7 +42337,6 @@ static bool     s_sb_shot_done = false;
 // detector aborts it), and a sticky bool would then eat the NEXT genuine bar tap. A stale
 // one simply expires.
 static uint32_t s_sb_back_ms = 0;
-static void takeScreenshotToSd();   // fwd
 static void statusBarHoldCb(lv_event_t* e) {
   switch (lv_event_get_code(e)) {
     case LV_EVENT_PRESSED:   s_sb_press_ms = millis(); s_sb_shot_done = false; break;
@@ -42247,7 +42550,7 @@ static void docCaptureTour() {
   // On-device web browser (8 MB boards only) + the chat-link menu + the QR popup.
   // The reader renders from the UI-update poll (which doesn't run while this tour
   // blocks the loop), so drive the fetch-wait + render inline here.
-  openReaderPage(); readerStart("wadamesh.com");
+  openReaderPage("wadamesh.com");
   { int _w = 0; while (s_reader_busy && _w < 700) { lv_timer_handler(); delay(22); ++_w; } esp_task_wdt_reset(); }
   if (s_reader_ok) { readerRenderBody(); readerSetAddrExpanded(false); }
   else             { readerShowMessage(s_reader_msg[0] ? s_reader_msg : "Couldn't load page", 0xE0A0A0); readerSetAddrExpanded(true); }
@@ -43635,14 +43938,31 @@ static void refreshStatusLabels() {
   // The page is a full-screen overlay (any tab), so gate on the page being open.
   if (s_reader_dirty && s_reader_root) {
     s_reader_dirty = false;
-    if (s_reader_status) lv_label_set_text(s_reader_status, s_reader_msg);
-    if (!s_reader_busy) {                   // the fetch finished
-      if (s_reader_ok) {                    // …with a page
-        readerRenderBody();
-        readerSetAddrExpanded(false);       // collapse the address bar -> fullscreen reading
-      } else {                              // …with an error — SHOW it (don't sit on "Loading…")
-        readerShowMessage(s_reader_msg[0] ? s_reader_msg : "Couldn't load page", 0xE0A0A0);
-        readerSetAddrExpanded(true);        // expand so the address bar + retry are reachable
+    if (!s_reader_busy && s_reader_pending_url[0]) {
+      char pending_url[sizeof s_reader_pending_url];
+      snprintf(pending_url, sizeof pending_url, "%s", s_reader_pending_url);
+      s_reader_pending_url[0] = 0;
+      readerStart(pending_url);
+    } else {
+      if (s_reader_status) lv_label_set_text(s_reader_status, s_reader_msg);
+      if (!s_reader_busy) {                 // the fetch finished
+        if (s_reader_ok) {                  // …with a page
+          readerRenderBody();
+          readerSetAddrExpanded(false);     // collapse the address bar -> fullscreen reading
+        } else if (s_reader_home_missing) { // no optional SD home page: retain the normal URL-entry UX
+          s_reader_home_missing = false;
+          s_reader_hist_n = 0; s_reader_hist_pos = -1;
+          s_reader_url[0] = 0;
+          if (s_reader_text) s_reader_text[0] = 0;
+          s_reader_nlinks = 0;
+          if (s_reader_url_ta) lv_textarea_set_text(s_reader_url_ta, kReaderDefaultUrl);
+          s_reader_pristine = true;
+          readerRenderBody();
+          readerSetAddrExpanded(true);
+        } else {                            // …with an error — SHOW it (don't sit on "Loading…")
+          readerShowMessage(s_reader_msg[0] ? s_reader_msg : "Couldn't load page", 0xE0A0A0);
+          readerSetAddrExpanded(true);      // expand so the address bar + retry are reachable
+        }
       }
     }
   }
@@ -47071,18 +47391,22 @@ static bool uiDataFsReady() {
   }
 #endif
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
-  // Tanmatsu + T-Display P4: prefer the microSD card. On the Tanmatsu the internal FFat 'locfd'
-  // loses frequently-rewritten data (broken FAT metadata; see the tile-cache notes); on the
-  // T-Display P4 SD-first keeps history on the same medium the DataStore adopts. Mirror the
-  // T-Deck's /meshcomod root; fall back to FFat only when no card is present. Both are mounted at
-  // boot in main.cpp (g_sd_ok / g_fs_ok). (The P4 used to fall into the #else SPIFFS branch below —
-  // no SPIFFS partition exists there, so history was never persisted and vanished on every reboot.)
+  // Tanmatsu + T-Display P4: use each board's mounted internal data partition
+  // (Tanmatsu FFat 'locfd', P4 LittleFS 'storage'), with SD_MMC as fallback.
   // #167: hot UI data (chat history) lives on the INTERNAL LittleFS -- SD write bursts
   // electrically disturb this board's AMOLED, and the P4's internal FAT layer is broken
   // (see the storage note in tdisplay_p4/main/main.cpp). SD = degraded fallback only;
   // tiles keep using the SD via their own selector.
   extern bool g_fs_ok;
-  if (g_fs_ok) { s_ui_data_fs = &LittleFS; s_ui_data_root[0] = '\0'; return true; }
+  if (g_fs_ok) {
+#if defined(HAS_TANMATSU)
+    s_ui_data_fs = &FFat;
+#else
+    s_ui_data_fs = &LittleFS;
+#endif
+    s_ui_data_root[0] = '\0';
+    return true;
+  }
   extern bool g_sd_ok;
   if (g_sd_ok) {
     SD_MMC.mkdir("/meshcomod");
@@ -47209,6 +47533,752 @@ fs::FS* luaHostAppFs() { return uiDataFsReady() ? s_ui_data_fs : nullptr; }
 void luaHostAppPath(char* out, size_t cap, const char* rel) {
   snprintf(out, cap, "%s%s", s_ui_data_root, rel);   // SD-rooted stores prefix /meshcomod
 }
+
+#if CAP_LUA_AUDIO
+namespace {
+enum class LuaAudioCommandKind : uint8_t { Play, Pause, Resume, Stop, Release };
+enum class LuaAudioState : uint8_t { Stopped, Playing, Paused, Ended, Error };
+enum class LuaAudioRunResult : uint8_t { Ended, Stopped, Replaced, Released, Error };
+enum class LuaAudioTaskState : uint8_t { Stopped, Starting, Running, Stopping };
+enum class LuaAudioFormat : uint8_t { Wav, Mp3 };
+
+struct LuaAudioCommand {
+  LuaAudioCommandKind kind = LuaAudioCommandKind::Stop;
+  fs::FS* fs = nullptr;
+  uint32_t owner = 0;
+  LuaAudioFormat format = LuaAudioFormat::Wav;
+  char path[224] = "";
+  char shown[192] = "";
+  char source[8] = "";
+};
+
+struct LuaAudioStatus {
+  uint32_t owner = 0;
+  LuaAudioState state = LuaAudioState::Stopped;
+  char path[192] = "";
+  char source[8] = "";
+  char format[8] = "";
+  char error[40] = "";
+};
+
+struct LuaAudioSinkSession {
+  uint32_t output_rate = 0;
+  float gain = 1.0f;
+  bool open = false;
+#if defined(HAS_TANMATSU)
+  i2s_chan_handle_t handle = nullptr;
+  SemaphoreHandle_t mutex = nullptr;
+#endif
+};
+
+class LuaAudioStorageLease {
+ public:
+  LuaAudioStorageLease() {
+    __atomic_store_n(&s_lua_audio_storage_active, true, __ATOMIC_RELEASE);
+    if (__atomic_load_n(&s_lua_audio_storage_pending, __ATOMIC_ACQUIRE) != 0)
+      __atomic_fetch_sub(&s_lua_audio_storage_pending, 1u, __ATOMIC_ACQ_REL);
+  }
+  ~LuaAudioStorageLease() {
+    __atomic_store_n(&s_lua_audio_storage_active, false, __ATOMIC_RELEASE);
+  }
+};
+
+static QueueHandle_t s_lua_audio_queue = nullptr;
+static TaskHandle_t s_lua_audio_task = nullptr;
+static LuaAudioTaskState s_lua_audio_task_state = LuaAudioTaskState::Stopped;
+static portMUX_TYPE s_lua_audio_mux = portMUX_INITIALIZER_UNLOCKED;
+static LuaAudioStatus s_lua_audio_status;
+
+static void luaAudioCopy(char* out, size_t cap, const char* value) {
+  if (!cap) return;
+  snprintf(out, cap, "%s", value ? value : "");
+}
+
+static void luaAudioSetTrackStatus(const LuaAudioCommand& command, LuaAudioState state,
+                                   const char* error = nullptr) {
+  portENTER_CRITICAL(&s_lua_audio_mux);
+  s_lua_audio_status.owner = command.owner;
+  s_lua_audio_status.state = state;
+  luaAudioCopy(s_lua_audio_status.path, sizeof s_lua_audio_status.path, command.shown);
+  luaAudioCopy(s_lua_audio_status.source, sizeof s_lua_audio_status.source, command.source);
+  luaAudioCopy(s_lua_audio_status.format, sizeof s_lua_audio_status.format,
+               command.format == LuaAudioFormat::Mp3 ? "mp3" : "wav");
+  luaAudioCopy(s_lua_audio_status.error, sizeof s_lua_audio_status.error, error);
+  portEXIT_CRITICAL(&s_lua_audio_mux);
+}
+
+static void luaAudioSetState(uint32_t owner, LuaAudioState state, const char* error = nullptr) {
+  portENTER_CRITICAL(&s_lua_audio_mux);
+  if (s_lua_audio_status.owner == owner) {
+    s_lua_audio_status.state = state;
+    luaAudioCopy(s_lua_audio_status.error, sizeof s_lua_audio_status.error, error);
+  }
+  portEXIT_CRITICAL(&s_lua_audio_mux);
+}
+
+static bool luaAudioSinkBegin(uint32_t source_rate, LuaAudioSinkSession* sink,
+                              const char** error) {
+  if (!sink) return false;
+  const int volume = (int)touchPrefsGetSoundVolume();
+  if (volume <= 0) { if (error) *error = "muted"; return false; }
+
+#if defined(HAS_TDECK_GT911)
+  if (s_notify_playing) { if (error) *error = "busy"; return false; }
+  if (!tdeckAudioInstallRate((int)source_rate)) {
+    if (error) *error = "audio unavailable";
+    return false;
+  }
+  sink->output_rate = source_rate;
+  sink->gain = (float)volume / 100.0f;
+#elif defined(TLORA_PAGER)
+  if (s_notify_playing) { if (error) *error = "busy"; return false; }
+  board.setAmpEnabled(true);
+  if (!pagerAudioInstallRate((int)source_rate)) {
+    board.setAmpEnabled(false);
+    if (error) *error = "audio unavailable";
+    return false;
+  }
+  s_pager_codec.setVolumePercent((uint8_t)volume);
+  s_pager_codec.setMute(false);
+  sink->output_rate = source_rate;
+#elif defined(HAS_TDISPLAY_P4)
+  if (!p4AudioStreamBegin()) {
+    if (error) *error = "audio unavailable";
+    return false;
+  }
+  sink->output_rate = p4AudioStreamRate();
+  sink->gain = (float)volume / 100.0f;
+#elif defined(HAS_TANMATSU)
+  sink->mutex = tanAudioMutex();
+  if (!sink->mutex || xSemaphoreTake(sink->mutex, pdMS_TO_TICKS(300)) != pdTRUE) {
+    if (error) *error = "busy";
+    return false;
+  }
+  if (bsp_audio_get_i2s_handle(&sink->handle) != ESP_OK || !sink->handle) {
+    xSemaphoreGive(sink->mutex);
+    sink->mutex = nullptr;
+    if (error) *error = "audio unavailable";
+    return false;
+  }
+  applyVolume((uint8_t)volume);
+  sink->output_rate = 44100;
+#endif
+
+  sink->open = sink->output_rate != 0;
+  return sink->open;
+}
+
+static bool luaAudioSinkWrite(LuaAudioSinkSession* sink, const int16_t* samples, size_t frames) {
+  if (!sink || !sink->open || !samples || !frames) return false;
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+  size_t written = 0;
+  const size_t bytes = frames * sizeof(int16_t);
+  return i2s_write(kI2sPort, samples, bytes, &written, pdMS_TO_TICKS(300)) == ESP_OK &&
+         written == bytes;
+#elif defined(HAS_TDISPLAY_P4)
+  return p4AudioStreamWrite(samples, frames);
+#elif defined(HAS_TANMATSU)
+  static int16_t stereo[256 * 2];
+  if (frames > 256) return false;
+  for (size_t i = 0; i < frames; ++i)
+    stereo[2 * i] = stereo[2 * i + 1] = samples[i];
+  size_t written = 0;
+  const size_t bytes = frames * 2 * sizeof(int16_t);
+  return i2s_channel_write(sink->handle, stereo, bytes, &written, pdMS_TO_TICKS(300)) == ESP_OK &&
+         written == bytes;
+#endif
+}
+
+static void luaAudioSinkEnd(LuaAudioSinkSession* sink) {
+  if (!sink || !sink->open) return;
+#if defined(HAS_TDECK_GT911)
+  i2s_zero_dma_buffer(kI2sPort);
+  i2s_driver_uninstall(kI2sPort);
+#elif defined(TLORA_PAGER)
+  pagerAudioUninstall();
+  board.setAmpEnabled(false);
+#elif defined(HAS_TDISPLAY_P4)
+  p4AudioStreamEnd();
+#elif defined(HAS_TANMATSU)
+  static const int16_t silence[256 * 2] = {};
+  for (int i = 0; i < 16; ++i) {
+    size_t written = 0;
+    i2s_channel_write(sink->handle, silence, sizeof silence, &written, pdMS_TO_TICKS(300));
+  }
+  if (sink->mutex) xSemaphoreGive(sink->mutex);
+  sink->handle = nullptr;
+  sink->mutex = nullptr;
+#endif
+  sink->open = false;
+}
+
+static bool luaAudioControlMatches(const LuaAudioCommand& control, uint32_t owner) {
+  return control.kind == LuaAudioCommandKind::Play || control.owner == owner;
+}
+
+static bool luaAudioPollControl(const LuaAudioCommand& command,
+                                LuaAudioCommand* replacement,
+                                LuaAudioRunResult* result) {
+  LuaAudioCommand control;
+  if (xQueueReceive(s_lua_audio_queue, &control, 0) != pdTRUE ||
+      !luaAudioControlMatches(control, command.owner)) return false;
+
+  if (control.kind == LuaAudioCommandKind::Play) {
+    if (replacement) *replacement = control;
+    if (result) *result = LuaAudioRunResult::Replaced;
+    return true;
+  }
+  if (control.kind == LuaAudioCommandKind::Stop) {
+    if (result) *result = LuaAudioRunResult::Stopped;
+    return true;
+  }
+  if (control.kind == LuaAudioCommandKind::Release) {
+    if (result) *result = LuaAudioRunResult::Released;
+    return true;
+  }
+  if (control.kind != LuaAudioCommandKind::Pause) return false;
+
+  luaAudioSetState(command.owner, LuaAudioState::Paused);
+  for (;;) {
+    if (xQueueReceive(s_lua_audio_queue, &control, portMAX_DELAY) != pdTRUE) continue;
+    if (!luaAudioControlMatches(control, command.owner)) continue;
+    if (control.kind == LuaAudioCommandKind::Resume) {
+      luaAudioSetState(command.owner, LuaAudioState::Playing);
+      return false;
+    }
+    if (control.kind == LuaAudioCommandKind::Play) {
+      if (replacement) *replacement = control;
+      if (result) *result = LuaAudioRunResult::Replaced;
+      return true;
+    }
+    if (control.kind == LuaAudioCommandKind::Release) {
+      if (result) *result = LuaAudioRunResult::Released;
+      return true;
+    }
+    if (control.kind == LuaAudioCommandKind::Stop) {
+      if (result) *result = LuaAudioRunResult::Stopped;
+      return true;
+    }
+  }
+}
+
+static LuaAudioRunResult luaAudioRunTrack(const LuaAudioCommand& command,
+                                          LuaAudioCommand* replacement) {
+  LuaAudioStorageLease storage_lease;
+  File file = command.fs ? command.fs->open(command.path, "r") : File();
+  if (!file || file.isDirectory()) {
+    if (file) file.close();
+    luaAudioSetTrackStatus(command, LuaAudioState::Error, "not found");
+    return LuaAudioRunResult::Error;
+  }
+
+  uint16_t channels = 0;
+  uint32_t source_rate = 0, data_len = 0;
+  if (!wavParse(file, &channels, &source_rate, &data_len) ||
+      data_len < (uint32_t)channels * sizeof(int16_t)) {
+    file.close();
+    luaAudioSetTrackStatus(command, LuaAudioState::Error, "unsupported format");
+    return LuaAudioRunResult::Error;
+  }
+
+  LuaAudioSinkSession sink;
+  const char* sink_error = nullptr;
+  __atomic_store_n(&s_lua_audio_active, true, __ATOMIC_RELEASE);
+  if (!luaAudioSinkBegin(source_rate, &sink, &sink_error)) {
+    __atomic_store_n(&s_lua_audio_active, false, __ATOMIC_RELEASE);
+    file.close();
+    luaAudioSetTrackStatus(command, LuaAudioState::Error,
+                           sink_error ? sink_error : "audio unavailable");
+    return LuaAudioRunResult::Error;
+  }
+
+  luaAudioSetTrackStatus(command, LuaAudioState::Playing);
+  LuaAudioRunResult result = LuaAudioRunResult::Ended;
+  const char* run_error = nullptr;
+  bool interrupted = false;
+  uint32_t remaining = data_len;
+  uint64_t resample_phase = 0;
+  int16_t input[256];
+  int16_t output[256];
+  size_t output_count = 0;
+  const uint32_t frame_bytes = (uint32_t)channels * sizeof(int16_t);
+
+  while (remaining >= frame_bytes && !interrupted) {
+    if (luaAudioPollControl(command, replacement, &result)) break;
+
+    size_t want = sizeof input;
+    if (want > remaining) want = remaining;
+    want -= want % frame_bytes;
+    const int got = file.read((uint8_t*)input, want);
+    if (got <= 0) {
+      result = LuaAudioRunResult::Error;
+      run_error = "read failed";
+      break;
+    }
+    const size_t frames = (size_t)got / frame_bytes;
+    for (size_t i = 0; i < frames; ++i) {
+      int32_t sample = channels == 2
+        ? ((int32_t)input[2 * i] + input[2 * i + 1]) / 2
+        : input[i];
+      sample = (int32_t)((float)sample * sink.gain);
+      if (sample > 32767) sample = 32767;
+      else if (sample < -32768) sample = -32768;
+
+      resample_phase += sink.output_rate;
+      while (resample_phase >= source_rate) {
+        output[output_count++] = (int16_t)sample;
+        resample_phase -= source_rate;
+        if (output_count == sizeof output / sizeof output[0]) {
+          if (!luaAudioSinkWrite(&sink, output, output_count)) {
+            result = LuaAudioRunResult::Error;
+            run_error = "output failed";
+            interrupted = true;
+            break;
+          }
+          output_count = 0;
+        }
+      }
+      if (interrupted) break;
+    }
+    remaining -= (uint32_t)got;
+  }
+
+  if (!interrupted && result == LuaAudioRunResult::Ended && output_count &&
+      !luaAudioSinkWrite(&sink, output, output_count)) {
+    result = LuaAudioRunResult::Error;
+    run_error = "output failed";
+  }
+
+  luaAudioSinkEnd(&sink);
+  file.close();
+  __atomic_store_n(&s_lua_audio_active, false, __ATOMIC_RELEASE);
+
+  if (result == LuaAudioRunResult::Ended)
+    luaAudioSetState(command.owner, LuaAudioState::Ended);
+  else if (result == LuaAudioRunResult::Stopped || result == LuaAudioRunResult::Released)
+    luaAudioSetState(command.owner, LuaAudioState::Stopped);
+  else if (result == LuaAudioRunResult::Error)
+    luaAudioSetState(command.owner, LuaAudioState::Error, run_error ? run_error : "playback failed");
+  return result;
+}
+
+struct LuaMp3Work {
+  mp3dec_t decoder;
+  mp3dec_scratch_t scratch;
+  uint8_t input[16 * 1024];
+  mp3d_sample_t pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
+};
+
+static uint32_t luaAudioReadLe32(const uint8_t* value) {
+  return (uint32_t)value[0] | ((uint32_t)value[1] << 8) |
+         ((uint32_t)value[2] << 16) | ((uint32_t)value[3] << 24);
+}
+
+static uint32_t luaAudioMp3DataEnd(File& file) {
+  uint32_t end = (uint32_t)file.size();
+  uint8_t footer[128];
+  if (end >= 128 && file.seek(end - 128) && file.read(footer, 3) == 3 &&
+      !memcmp(footer, "TAG", 3)) {
+    end -= 128;
+  }
+  if (end >= 32 && file.seek(end - 32) && file.read(footer, 32) == 32 &&
+      !memcmp(footer, "APETAGEX", 8)) {
+    const uint32_t version = luaAudioReadLe32(footer + 8);
+    const uint32_t tag_size = luaAudioReadLe32(footer + 12);
+    const uint32_t flags = luaAudioReadLe32(footer + 20);
+    const uint64_t total_size = (uint64_t)tag_size + ((flags & 0x80000000u) ? 32u : 0u);
+    if ((version == 1000 || version == 2000) && tag_size >= 32 && total_size <= end)
+      end -= (uint32_t)total_size;
+  }
+  file.seek(0);
+  return end;
+}
+
+static LuaAudioRunResult luaAudioRunMp3Track(const LuaAudioCommand& command,
+                                             LuaAudioCommand* replacement) {
+  LuaAudioStorageLease storage_lease;
+  File file = command.fs ? command.fs->open(command.path, "r") : File();
+  if (!file || file.isDirectory()) {
+    if (file) file.close();
+    luaAudioSetTrackStatus(command, LuaAudioState::Error, "not found");
+    return LuaAudioRunResult::Error;
+  }
+
+  LuaMp3Work* work = (LuaMp3Work*)heap_caps_malloc(
+    sizeof(LuaMp3Work), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!work) {
+    file.close();
+    luaAudioSetTrackStatus(command, LuaAudioState::Error, "out of memory");
+    return LuaAudioRunResult::Error;
+  }
+  s_wada_mp3_scratch = &work->scratch;
+  mp3dec_init(&work->decoder);
+  const uint32_t data_end = luaAudioMp3DataEnd(file);
+  if (!data_end) {
+    s_wada_mp3_scratch = nullptr;
+    heap_caps_free(work);
+    file.close();
+    luaAudioSetTrackStatus(command, LuaAudioState::Error, "unsupported format");
+    return LuaAudioRunResult::Error;
+  }
+
+  __atomic_store_n(&s_lua_audio_active, true, __ATOMIC_RELEASE);
+  luaAudioSetTrackStatus(command, LuaAudioState::Playing);
+  LuaAudioRunResult result = LuaAudioRunResult::Ended;
+  const char* run_error = nullptr;
+  LuaAudioSinkSession sink;
+  uint32_t source_rate = 0;
+  uint64_t resample_phase = 0;
+  int16_t output[256];
+  size_t output_count = 0;
+  size_t input_start = 0, input_count = 0;
+  bool eof = false, decoded_any = false, interrupted = false;
+
+  while (!interrupted) {
+    if (luaAudioPollControl(command, replacement, &result)) break;
+
+    if (!eof && input_count < 4096) {
+      if (input_start && input_start + input_count + 4096 > sizeof work->input) {
+        memmove(work->input, work->input + input_start, input_count);
+        input_start = 0;
+      }
+      size_t room = sizeof work->input - (input_start + input_count);
+      const uint32_t position = (uint32_t)file.position();
+      const uint32_t remaining = position < data_end ? data_end - position : 0;
+      if (room > remaining) room = remaining;
+      const int got = room ? file.read(work->input + input_start + input_count, room) : 0;
+      if (got > 0) {
+        input_count += (size_t)got;
+        eof = file.position() >= data_end;
+      } else if (file.position() < data_end) {
+        result = LuaAudioRunResult::Error;
+        run_error = "read failed";
+        break;
+      } else {
+        eof = true;
+      }
+    }
+
+    if (!input_count) {
+      if (!decoded_any) {
+        result = LuaAudioRunResult::Error;
+        run_error = "unsupported format";
+      }
+      break;
+    }
+
+    mp3dec_frame_info_t info = {};
+    const int samples = mp3dec_decode_frame(&work->decoder,
+      work->input + input_start, (int)input_count, work->pcm, &info);
+    if (info.frame_bytes < 0 || (size_t)info.frame_bytes > input_count) {
+      result = LuaAudioRunResult::Error;
+      run_error = "decode failed";
+      break;
+    }
+    if (info.frame_bytes > 0) {
+      input_start += (size_t)info.frame_bytes;
+      input_count -= (size_t)info.frame_bytes;
+      if (!input_count) input_start = 0;
+    } else if (eof) {
+      if (!decoded_any) {
+        result = LuaAudioRunResult::Error;
+        run_error = "unsupported format";
+      }
+      break;
+    } else if (input_start + input_count == sizeof work->input) {
+      result = LuaAudioRunResult::Error;
+      run_error = "decode failed";
+      break;
+    } else {
+      continue;
+    }
+
+    if (samples <= 0) continue;
+    if (info.layer != 3 || (info.channels != 1 && info.channels != 2) ||
+        info.hz < 8000 || info.hz > 48000) {
+      result = LuaAudioRunResult::Error;
+      run_error = "unsupported format";
+      break;
+    }
+    if (!sink.open) {
+      const char* sink_error = nullptr;
+      if (!luaAudioSinkBegin((uint32_t)info.hz, &sink, &sink_error)) {
+        result = LuaAudioRunResult::Error;
+        run_error = sink_error ? sink_error : "audio unavailable";
+        break;
+      }
+      source_rate = (uint32_t)info.hz;
+    } else if (source_rate != (uint32_t)info.hz) {
+      result = LuaAudioRunResult::Error;
+      run_error = "sample rate changed";
+      break;
+    }
+
+    decoded_any = true;
+    for (int i = 0; i < samples; ++i) {
+      int32_t sample = info.channels == 2
+        ? ((int32_t)work->pcm[2 * i] + work->pcm[2 * i + 1]) / 2
+        : work->pcm[i];
+      sample = (int32_t)((float)sample * sink.gain);
+      if (sample > 32767) sample = 32767;
+      else if (sample < -32768) sample = -32768;
+
+      resample_phase += sink.output_rate;
+      while (resample_phase >= source_rate) {
+        output[output_count++] = (int16_t)sample;
+        resample_phase -= source_rate;
+        if (output_count == sizeof output / sizeof output[0]) {
+          if (!luaAudioSinkWrite(&sink, output, output_count)) {
+            result = LuaAudioRunResult::Error;
+            run_error = "output failed";
+            interrupted = true;
+            break;
+          }
+          output_count = 0;
+        }
+      }
+      if (interrupted) break;
+    }
+  }
+
+  if (!interrupted && result == LuaAudioRunResult::Ended && output_count &&
+      !luaAudioSinkWrite(&sink, output, output_count)) {
+    result = LuaAudioRunResult::Error;
+    run_error = "output failed";
+  }
+
+  luaAudioSinkEnd(&sink);
+  s_wada_mp3_scratch = nullptr;
+  heap_caps_free(work);
+  file.close();
+  __atomic_store_n(&s_lua_audio_active, false, __ATOMIC_RELEASE);
+
+  if (result == LuaAudioRunResult::Ended)
+    luaAudioSetState(command.owner, LuaAudioState::Ended);
+  else if (result == LuaAudioRunResult::Stopped || result == LuaAudioRunResult::Released)
+    luaAudioSetState(command.owner, LuaAudioState::Stopped);
+  else if (result == LuaAudioRunResult::Error)
+    luaAudioSetState(command.owner, LuaAudioState::Error,
+                     run_error ? run_error : "playback failed");
+  return result;
+}
+
+static void luaAudioWorker(void*) {
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  bool release = false;
+  while (!release) {
+    LuaAudioCommand command;
+    if (xQueueReceive(s_lua_audio_queue, &command, portMAX_DELAY) != pdTRUE) continue;
+    if (command.kind == LuaAudioCommandKind::Release) {
+      luaAudioSetState(command.owner, LuaAudioState::Stopped);
+      break;
+    }
+    if (command.kind == LuaAudioCommandKind::Stop) {
+      luaAudioSetState(command.owner, LuaAudioState::Stopped);
+      continue;
+    }
+    if (command.kind != LuaAudioCommandKind::Play) continue;
+
+    for (;;) {
+      LuaAudioCommand replacement;
+      const LuaAudioRunResult result = command.format == LuaAudioFormat::Mp3
+        ? luaAudioRunMp3Track(command, &replacement)
+        : luaAudioRunTrack(command, &replacement);
+      if (result == LuaAudioRunResult::Replaced) {
+        command = replacement;
+        continue;
+      }
+      release = result == LuaAudioRunResult::Released;
+      break;
+    }
+  }
+
+  __atomic_store_n(&s_lua_audio_active, false, __ATOMIC_RELEASE);
+  __atomic_store_n(&s_lua_audio_storage_pending, 0u, __ATOMIC_RELEASE);
+  __atomic_store_n(&s_lua_audio_storage_active, false, __ATOMIC_RELEASE);
+  xQueueReset(s_lua_audio_queue);
+  portENTER_CRITICAL(&s_lua_audio_mux);
+  s_lua_audio_task = nullptr;
+  s_lua_audio_task_state = LuaAudioTaskState::Stopped;
+  portEXIT_CRITICAL(&s_lua_audio_mux);
+  vTaskDelete(nullptr);
+}
+
+static bool luaAudioReturnError(char* error, size_t cap, const char* message) {
+  luaAudioCopy(error, cap, message);
+  return false;
+}
+
+static bool luaAudioPathEndsWith(const char* path, const char* suffix) {
+  if (!path || !suffix) return false;
+  const size_t path_len = strlen(path), suffix_len = strlen(suffix);
+  if (path_len < suffix_len) return false;
+  path += path_len - suffix_len;
+  for (size_t i = 0; i < suffix_len; ++i) {
+    char a = path[i], b = suffix[i];
+    if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+    if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+    if (a != b) return false;
+  }
+  return true;
+}
+}  // namespace
+
+bool luaHostAudioPlay(fs::FS* fs, const char* path, const char* shown, const char* source,
+                      uint32_t owner, char* error, size_t error_cap) {
+  if (!fs) return luaAudioReturnError(error, error_cap, "no storage");
+  if (!path || !path[0] || strlen(path) >= 224)
+    return luaAudioReturnError(error, error_cap, "bad path");
+  if (!g_lv.task || g_lv.task->isBuzzerQuiet() || touchPrefsGetSoundVolume() == 0)
+    return luaAudioReturnError(error, error_cap, "muted");
+
+  File probe = fs->open(path, "r");
+  if (!probe || probe.isDirectory()) {
+    if (probe) probe.close();
+    return luaAudioReturnError(error, error_cap, "not found");
+  }
+  uint16_t channels = 0;
+  uint32_t rate = 0, data_len = 0;
+  LuaAudioFormat format;
+  bool supported = false;
+  if (luaAudioPathEndsWith(shown, ".wav")) {
+    format = LuaAudioFormat::Wav;
+    supported = wavParse(probe, &channels, &rate, &data_len) && data_len > 0;
+  } else if (luaAudioPathEndsWith(shown, ".mp3")) {
+    format = LuaAudioFormat::Mp3;
+    supported = probe.size() > 0;
+  }
+  probe.close();
+  if (!supported) return luaAudioReturnError(error, error_cap, "unsupported format");
+
+  if (!s_lua_audio_queue) s_lua_audio_queue = xQueueCreate(4, sizeof(LuaAudioCommand));
+  if (!s_lua_audio_queue) return luaAudioReturnError(error, error_cap, "out of memory");
+
+  bool start_task = false;
+  portENTER_CRITICAL(&s_lua_audio_mux);
+  if (s_lua_audio_task_state == LuaAudioTaskState::Stopped) {
+    s_lua_audio_task_state = LuaAudioTaskState::Starting;
+    start_task = true;
+  } else if (s_lua_audio_task_state != LuaAudioTaskState::Running) {
+    portEXIT_CRITICAL(&s_lua_audio_mux);
+    return luaAudioReturnError(error, error_cap, "busy");
+  }
+  portEXIT_CRITICAL(&s_lua_audio_mux);
+
+  TaskHandle_t task = nullptr;
+  if (start_task) {
+    if (xTaskCreate(luaAudioWorker, "lua-audio", 8192, nullptr, 3, &task) != pdPASS) {
+      portENTER_CRITICAL(&s_lua_audio_mux);
+      s_lua_audio_task_state = LuaAudioTaskState::Stopped;
+      portEXIT_CRITICAL(&s_lua_audio_mux);
+      return luaAudioReturnError(error, error_cap, "out of memory");
+    }
+    portENTER_CRITICAL(&s_lua_audio_mux);
+    s_lua_audio_task = task;
+    s_lua_audio_task_state = LuaAudioTaskState::Running;
+    portEXIT_CRITICAL(&s_lua_audio_mux);
+  }
+
+  LuaAudioCommand command;
+  command.kind = LuaAudioCommandKind::Play;
+  command.fs = fs;
+  command.owner = owner;
+  command.format = format;
+  luaAudioCopy(command.path, sizeof command.path, path);
+  luaAudioCopy(command.shown, sizeof command.shown, shown);
+  luaAudioCopy(command.source, sizeof command.source, source);
+  __atomic_fetch_add(&s_lua_audio_storage_pending, 1u, __ATOMIC_ACQ_REL);
+  if (xQueueSend(s_lua_audio_queue, &command, 0) != pdPASS) {
+    __atomic_fetch_sub(&s_lua_audio_storage_pending, 1u, __ATOMIC_ACQ_REL);
+    if (start_task) xTaskNotifyGive(task);
+    return luaAudioReturnError(error, error_cap, "busy");
+  }
+  luaAudioSetTrackStatus(command, LuaAudioState::Playing);
+  if (start_task) xTaskNotifyGive(task);
+  return true;
+}
+
+bool luaHostAudioPause(uint32_t owner, bool pause) {
+  LuaAudioState state;
+  TaskHandle_t task;
+  LuaAudioTaskState task_state;
+  portENTER_CRITICAL(&s_lua_audio_mux);
+  state = s_lua_audio_status.owner == owner ? s_lua_audio_status.state : LuaAudioState::Stopped;
+  task = s_lua_audio_task;
+  task_state = s_lua_audio_task_state;
+  portEXIT_CRITICAL(&s_lua_audio_mux);
+  if (!task || task_state != LuaAudioTaskState::Running ||
+      (pause ? state != LuaAudioState::Playing : state != LuaAudioState::Paused)) return false;
+  LuaAudioCommand command;
+  command.kind = pause ? LuaAudioCommandKind::Pause : LuaAudioCommandKind::Resume;
+  command.owner = owner;
+  return xQueueSend(s_lua_audio_queue, &command, 0) == pdPASS;
+}
+
+bool luaHostAudioStop(uint32_t owner, bool release) {
+  TaskHandle_t task;
+  LuaAudioTaskState task_state;
+  portENTER_CRITICAL(&s_lua_audio_mux);
+  task = s_lua_audio_task;
+  task_state = s_lua_audio_task_state;
+  if (release && task && task_state == LuaAudioTaskState::Running)
+    s_lua_audio_task_state = LuaAudioTaskState::Stopping;
+  portEXIT_CRITICAL(&s_lua_audio_mux);
+  if (!task || task_state == LuaAudioTaskState::Stopped) {
+    luaAudioSetState(owner, LuaAudioState::Stopped);
+    return true;
+  }
+  if (task_state != LuaAudioTaskState::Running) return false;
+
+  LuaAudioCommand command;
+  command.kind = release ? LuaAudioCommandKind::Release : LuaAudioCommandKind::Stop;
+  command.owner = owner;
+  const BaseType_t queued = release
+    ? xQueueSendToFront(s_lua_audio_queue, &command, pdMS_TO_TICKS(100))
+    : xQueueSend(s_lua_audio_queue, &command, 0);
+  if (queued != pdPASS) {
+    if (release) {
+      portENTER_CRITICAL(&s_lua_audio_mux);
+      if (s_lua_audio_task_state == LuaAudioTaskState::Stopping)
+        s_lua_audio_task_state = LuaAudioTaskState::Running;
+      portEXIT_CRITICAL(&s_lua_audio_mux);
+    }
+    return false;
+  }
+  if (!release) return true;
+
+  for (int i = 0; i < 160; ++i) {
+    vTaskDelay(pdMS_TO_TICKS(5));
+    portENTER_CRITICAL(&s_lua_audio_mux);
+    task = s_lua_audio_task;
+    portEXIT_CRITICAL(&s_lua_audio_mux);
+    if (!task) return true;
+  }
+  return false;
+}
+
+void luaHostAudioStatus(uint32_t owner, char* state, size_t state_cap,
+                        char* path, size_t path_cap, char* source, size_t source_cap,
+                        char* format, size_t format_cap, char* error, size_t error_cap) {
+  LuaAudioStatus status;
+  portENTER_CRITICAL(&s_lua_audio_mux);
+  status = s_lua_audio_status;
+  portEXIT_CRITICAL(&s_lua_audio_mux);
+  if (status.owner != owner) status = LuaAudioStatus();
+
+  const char* state_name = "stopped";
+  if (status.state == LuaAudioState::Playing) state_name = "playing";
+  else if (status.state == LuaAudioState::Paused) state_name = "paused";
+  else if (status.state == LuaAudioState::Ended) state_name = "ended";
+  else if (status.state == LuaAudioState::Error) state_name = "error";
+  luaAudioCopy(state, state_cap, state_name);
+  luaAudioCopy(path, path_cap, status.path);
+  luaAudioCopy(source, source_cap, status.source);
+  luaAudioCopy(format, format_cap, status.format);
+  luaAudioCopy(error, error_cap, status.error);
+}
+#endif
+
 #if CAP_LUA_SD_LIST
 // Return the physical removable card, never the app-data filesystem. Mounting
 // stays in UITask so Lua cannot bypass shared-bus coordination or create a
@@ -52167,6 +53237,169 @@ void consoleHostRebootToUi() {
 
 void UITask::msgRead(int msgcount) { _msgcount = msgcount; }
 
+// ---- "At a glance" notification --------------------------------------------
+// New, board-agnostic feature (distinct from the T-Deck's existing opt-in
+// "msgFlash", which fully wakes to the live app + pulses the keyboard
+// backlight): while the device is UNLOCKED but its screen has idle-dimmed to
+// off, an incoming message (DND permitting) briefly lights a plain black
+// overlay showing just the channel/sender name and the message text, then
+// dims back out on its own after a fixed window -- a glance, not a wake.
+// Never opens the chat, so the message stays unread, and whatever tab/chat
+// was open underneath is left exactly as it was. atGlanceShow() below only
+// builds/updates the overlay; UITask::newMsgImpl() decides whether to fire it
+// (and wakes the screen + arms the auto-hide window); UITask::loop() clears it.
+static lv_obj_t* s_glance_root       = nullptr;
+static lv_obj_t* s_glance_title      = nullptr;
+static lv_obj_t* s_glance_body       = nullptr;
+static uint32_t  s_glance_lit_ms     = 0;       // millis() when (re)shown, 0 = not showing -- loop() re-dims 5s later
+static bool      s_glance_fading_out = false;   // one-shot guard: the 200ms fade-out anim has already been started
+
+static void atGlanceOpaCb(void* var, int32_t v) {
+  lv_obj_set_style_opa(static_cast<lv_obj_t*>(var), static_cast<lv_opa_t>(v), LV_PART_MAIN);
+}
+
+// Message-body font, built once: stock Montserrat 28 (ASCII) -> extras_lat_28
+// (accented Latin, em-dash, ellipsis -- now compiled on every board, not just the
+// Tanmatsu; see extras_lat_28.c) -> extras_16 tail (Cyrillic/Greek/Arabic, baked at
+// 16 px so those scripts render a bit small relative to Latin text, but never a
+// missing-glyph box). 28, not 24: only 12/14/16/28 are actually enabled in this
+// project's vendored LVGL config (LV_FONT_MONTSERRAT_24 isn't). g_font_16 itself
+// is deliberately left alone -- it's the UI-scale-driven font hundreds of OTHER
+// widgets use, not something to repurpose for one feature.
+//
+// T-Deck experiment: 20px instead of 28px (LV_FONT_MONTSERRAT_20 + extras_lat_20
+// widened for this board specifically, see lv_conf.h/extras_lat_20.c) -- trying
+// a smaller glance body on this panel. Revert by dropping this branch + those
+// two gate widenings.
+static lv_font_t s_glance_body_font;
+static bool      s_glance_font_ready = false;
+static void atGlanceEnsureFont() {
+  if (s_glance_font_ready) return;
+  s_glance_font_ready = true;
+#if defined(HAS_TDECK_GT911)
+  static lv_font_t s_lat20;
+  s_lat20 = extras_lat_20;
+  s_lat20.fallback = &extras_16;
+  s_glance_body_font = lv_font_montserrat_20;
+  s_glance_body_font.fallback = &s_lat20;
+#else
+  static lv_font_t s_lat28;
+  s_lat28 = extras_lat_28;
+  s_lat28.fallback = &extras_16;
+  s_glance_body_font = lv_font_montserrat_28;
+  s_glance_body_font.fallback = &s_lat28;
+#endif
+}
+
+static void atGlanceHide() {
+  if (s_glance_root) {
+    // Only the TEXT fades (see atGlanceShow()) -- the root's own opa is never
+    // touched, so nothing to reset on it. Just cancel any in-flight label fades.
+    if (s_glance_title) { lv_anim_del(s_glance_title, atGlanceOpaCb); lv_obj_set_style_opa(s_glance_title, LV_OPA_COVER, LV_PART_MAIN); }
+    if (s_glance_body)  { lv_anim_del(s_glance_body,  atGlanceOpaCb); lv_obj_set_style_opa(s_glance_body,  LV_OPA_COVER, LV_PART_MAIN); }
+    lv_obj_add_flag(s_glance_root, LV_OBJ_FLAG_HIDDEN);
+  }
+  s_glance_lit_ms = 0;
+  s_glance_fading_out = false;
+}
+
+// `fade_in`: true on the first reveal of a burst (screen was off), false when
+// a later message in the same burst just updates the text on an already-lit
+// overlay -- no need to re-fade something already fully visible.
+static void atGlanceShow(const char* title, const char* body, bool fade_in) {
+  if (!g_lv.ready) return;
+  if (!s_glance_root) {
+    s_glance_root = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_glance_root);
+    lv_obj_set_style_bg_color(s_glance_root, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_glance_root, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_clear_flag(s_glance_root, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_glance_root, LV_OBJ_FLAG_CLICKABLE);   // absorb taps -- no UI leak underneath
+    // Never a keyboard/encoder nav target on any board: same reasoning as the
+    // lock screen's NAV_SKIP_FLAG (see lockscreenShow()) -- a CLICKABLE
+    // top-layer overlay with nothing to navigate to would otherwise be
+    // collected as the sole focus target, and navFocusCb's focus-highlight
+    // would invert its text to dark the instant the nav group (re)builds.
+    lv_obj_add_flag(s_glance_root, NAV_SKIP_FLAG);
+
+    // Small "eyebrow" label (channel/sender) above the message, in the app's
+    // accent colour -- the message itself is the thing that needs to be
+    // readable from a few feet away (desk-mounted device), so it gets the
+    // dominant size/position below and this stays a secondary context cue.
+    s_glance_title = lv_label_create(s_glance_root);
+    lv_obj_set_style_text_font(s_glance_title, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_glance_title, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_width(s_glance_title, lv_pct(85));
+    lv_obj_set_style_text_align(s_glance_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_label_set_long_mode(s_glance_title, LV_LABEL_LONG_DOT);   // single line, ellipsize -- guaranteed to fit every board's width
+    lv_obj_align(s_glance_title, LV_ALIGN_TOP_LEFT, 14, 30);   // below the ~22 px status bar band (the real status bar renders above this overlay)
+
+    // Message body: 28 px (bumped up from 16 -- 16 wasn't legible from a few
+    // feet away on a desk-mounted device) via atGlanceEnsureFont()'s own
+    // fallback chain, so arbitrary chat text (accents, em-dash, ellipsis)
+    // still never shows a missing-glyph box at this size.
+    atGlanceEnsureFont();
+    s_glance_body = lv_label_create(s_glance_root);
+    lv_obj_set_style_text_font(s_glance_body, &s_glance_body_font, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_glance_body, lv_color_hex(0xFFFFFFu), LV_PART_MAIN);
+    lv_obj_set_width(s_glance_body, lv_pct(85));
+    lv_obj_set_style_text_align(s_glance_body, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    // LV_LABEL_LONG_DOT only wraps across multiple lines (dot-ellipsizing the LAST
+    // one on overflow) when the label has a fixed HEIGHT, not just a fixed width --
+    // left at auto/content height (as this was), it sizes to exactly one line, so
+    // every board was effectively single-line regardless of panel size (reported:
+    // text cropped at the end of the first line instead of continuing on a second).
+    // Give it the actual remaining space below this label's own y-offset down to a
+    // small bottom margin, computed from this board's resolution + active body font,
+    // so it uses exactly what's available -- more lines on tall panels, fewer on the
+    // 222 px-tall Pager -- instead of a guessed fixed line count.
+    {
+      const lv_coord_t avail_h = lv_disp_get_ver_res(nullptr) - 60 - 10;
+      const lv_coord_t line_h  = lv_font_get_line_height(&s_glance_body_font);
+      lv_obj_set_height(s_glance_body, avail_h > line_h ? avail_h : line_h);
+    }
+    lv_label_set_long_mode(s_glance_body, LV_LABEL_LONG_DOT);
+    lv_obj_align(s_glance_body, LV_ALIGN_TOP_LEFT, 14, 60);   // a bit more clearance now the title above is 16 px, not 12
+  }
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  lv_obj_set_size(s_glance_root, sw, sh);
+  lv_obj_set_pos(s_glance_root, 0, 0);
+  lv_label_set_text(s_glance_title, title ? title : "");
+  lv_label_set_text(s_glance_body,  body  ? body  : "");
+  // Cancel any fade-out already begun (by an earlier message in this burst) on
+  // either label.
+  lv_anim_del(s_glance_title, atGlanceOpaCb);
+  lv_anim_del(s_glance_body,  atGlanceOpaCb);
+  lv_obj_clear_flag(s_glance_root, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(s_glance_root);
+  if (fade_in) {
+    // Only the TEXT fades in, never the root: the root's bg_opa is COVER (solid
+    // black) from the moment it's created and stays that way, so the very first
+    // frame -- forced-painted BEFORE the backlight comes on (see newMsgImpl()) --
+    // is already a clean black screen, not a transparent one letting the live
+    // app screen show through underneath for a frame (reported: "I see the app
+    // screen then I see the at-glance"). Fading the whole root's opa used to fade
+    // the background along with the text, which is what caused that.
+    lv_obj_set_style_opa(s_glance_title, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_opa(s_glance_body,  LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_t* targets[2] = { s_glance_title, s_glance_body };
+    for (lv_obj_t* t : targets) {
+      lv_anim_t a;
+      lv_anim_init(&a);
+      lv_anim_set_var(&a, t);
+      lv_anim_set_time(&a, 180);
+      lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+      lv_anim_set_exec_cb(&a, atGlanceOpaCb);
+      lv_anim_start(&a);
+    }
+  } else {
+    // Already visible -- just swap the text, no re-fade.
+    lv_obj_set_style_opa(s_glance_title, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_opa(s_glance_body,  LV_OPA_COVER, LV_PART_MAIN);
+  }
+}
+
 // Shared core for newMsg / newMsgFromPubWithMeta. Bundles the channel-vs-DM
 // sender parsing + thread routing in one place so the meta-aware path doesn't
 // drift from the plain path. `meta_flags` is 0 (no RX metadata) when called
@@ -52268,6 +53501,61 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       else if (is_dm) { if (touchPrefsGetSoundDirect()) uiPlaySlot(TOUCH_SND_DM); }
       else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          uiPlaySlot(TOUCH_SND_MSG);
     }
+  }
+#endif
+#if defined(HAS_TOUCH_UI)
+  // "At a glance": device unlocked but idle-dimmed to off -- light the plain
+  // black glance overlay instead of the full app (see atGlanceShow() above).
+  // Master-disabled via Options > Display > "At a glance"
+  // (touchPrefsGetGlanceEnabled()) skips this entirely. Skipped if DND is on.
+  // Manually locked is ALSO skipped unless the user opted in via Options >
+  // Display > "At a glance while locked" (touchPrefsGetGlanceWhenLocked())
+  // -- off by default since it's a real trade-off (message text becomes
+  // readable off a locked device). `_screen_off` covers the first message of
+  // a burst (wake + show); `s_glance_lit_ms` (already showing, from an
+  // earlier message in the same window) covers later ones -- update the text
+  // and restart the 5 s window instead of dropping them, since our own wake
+  // already cleared _screen_off by then.
+#if defined(ESP32)
+  const bool glance_enabled_ok = touchPrefsGetGlanceEnabled();
+  const bool glance_locked_ok = !_manual_lock || touchPrefsGetGlanceWhenLocked();
+#else
+  const bool glance_enabled_ok = true;
+  const bool glance_locked_ok = !_manual_lock;
+#endif
+  if (glance_enabled_ok && !dndActive() && glance_locked_ok && (_screen_off || s_glance_lit_ms)) {
+    const bool was_off = _screen_off;
+    atGlanceShow(thread, body, was_off);   // fade in only on the initial reveal of a burst
+    if (was_off) {
+      lv_refr_now(nullptr);   // paint before the backlight comes on -- no stale-frame flash
+      if (_manual_lock) {
+        // Locked: light the panel WITHOUT clearing the lock -- wakeScreen()
+        // unconditionally clears _manual_lock, which would silently unlock the
+        // device (touch/input live again) just to show a glance. Mirrors
+        // lockscreenReveal()'s peek path instead: same fields, lock untouched.
+        // The auto-hide re-dim below (UITask::loop()) is symmetric -- it never
+        // touches _manual_lock either, so the device is exactly as locked after
+        // the glance as before it.
+        setCpuForScreen(true);
+        touchScreenBacklight(true);
+        _screen_off = false;
+        // MUST bump this even though it's not real input: loop()'s generic idle
+        // screen-timeout check fires on !_screen_off && (now - _last_input_ms) >=
+        // _screen_timeout_ms regardless of _manual_lock -- leaving it stale (from
+        // before the lock) made that check true on the very next loop() tick,
+        // instantly flipping the backlight back off before the glance was ever
+        // seen (reported: sound played but nothing showed). wakeScreen() bumps
+        // this for the same reason; omitting it here was the bug.
+        _last_input_ms = millis();
+#if CAP_LOCK_SCREEN
+        _lock_lit_ms = millis();   // keep the lock screen's own burn-in guard armed too
+#endif
+      } else {
+        wakeScreen();
+      }
+    }
+    s_glance_lit_ms = millis();
+    s_glance_fading_out = false;   // a new message cancels any fade-out already begun
   }
 #endif
   // Inbound route (repeater hashes) for the Info popup — flood RX only; read
@@ -52546,6 +53834,17 @@ static bool sdRuntimeLifecycleBusy() {
   bool busy = s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request ||
               s_sdinfo_busy ||
               touchPrefsIoBusy();
+#if defined(MULTI_TRANSPORT_COMPANION)
+  // The web reader and the Lua audio player are independent SD consumers, so
+  // both gate the mount lifecycle. The reader excludes ITSELF: it calls this
+  // from its own task while holding the card, and would otherwise deadlock.
+  const bool reader_is_caller = s_reader_sd_busy &&
+                                s_reader_sd_owner == xTaskGetCurrentTaskHandle();
+  busy = busy || (s_reader_sd_busy && !reader_is_caller);
+#endif
+#if CAP_LUA_AUDIO
+  busy = busy || luaAudioStorageBusy();
+#endif
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
   busy = busy || s_notify_playing;
 #endif
@@ -52834,6 +54133,8 @@ void UITask::loop() {
     // started above.
     bool con_activity = false;
 #if defined(HAS_TDECK_KEYBOARD)
+  if (_screen_off || _manual_lock) tdeckKeyboardDiscardModifiers();
+  else                             tdeckKeyboardAllowModifiers();
     for (int kbi = 0; kbi < 12; ++kbi) {
       int key = tdeckKeyboardReadKey();
       if (key <= 0) break;
@@ -52842,7 +54143,7 @@ void UITask::loop() {
       // A key pressed on a dark screen WAKES rather than types, the same as a
       // touch does in the UI. Otherwise the character you used to see the screen
       // ends up in the command you are typing.
-      if (_screen_off) { wakeScreen(); continue; }
+      if (_screen_off) { tdeckKeyboardDiscardModifiers(); wakeScreen(); continue; }
       consoleKey(key);
     }
 #endif
@@ -53035,6 +54336,7 @@ void UITask::loop() {
    * doesn't fire later. */
   if (s_ui_ping_deadline_ms != 0 && now >= s_ui_ping_deadline_ms) {
     s_ui_ping_deadline_ms = 0;
+    the_mesh.cancelUIDeferredLogin();
     the_mesh.cancelUIPingPending();
     char msg[64];
     snprintf(msg, sizeof(msg), TR("No reply from %s"), s_ui_ping_target_name);
@@ -53260,6 +54562,40 @@ void UITask::loop() {
   }
 #endif  // HAS_TDECK_KEYBOARD || HAS_M9_KEYBOARD (notify-wake re-dim)
 
+  // "At a glance" auto-hide: same re-dim shape as the msgflash window above,
+  // but this feature's own fixed 5 s window (the last 200 ms of it spent
+  // fading out, not a hard cut) and unconditional on every board (see
+  // atGlanceShow()/newMsgImpl() above). Real input during the window hands
+  // off to the user actually looking at the screen now -- don't snatch it
+  // back off from underneath them; just stop tracking it and let the normal
+  // idle timeout (already bumped by that real input) take over.
+  if (s_glance_lit_ms) {
+    if (_screen_off)                          atGlanceHide();   // already dark again some other way
+    else if (_last_input_ms > s_glance_lit_ms) atGlanceHide();   // user took over
+    else {
+      const int32_t elapsed = (int32_t)(now - s_glance_lit_ms);
+      if (!s_glance_fading_out && elapsed >= 4800) {
+        s_glance_fading_out = true;
+        lv_obj_t* targets[2] = { s_glance_title, s_glance_body };   // text only -- see atGlanceShow()
+        for (lv_obj_t* t : targets) {
+          lv_anim_t a;
+          lv_anim_init(&a);
+          lv_anim_set_var(&a, t);
+          lv_anim_set_time(&a, 200);
+          lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_TRANSP);
+          lv_anim_set_exec_cb(&a, atGlanceOpaCb);
+          lv_anim_start(&a);
+        }
+      }
+      if (elapsed >= 5000) {
+        atGlanceHide();
+        touchScreenBacklight(false);
+        setCpuForScreen(false);
+        _screen_off = true;
+      }
+    }
+  }
+
 #if defined(HAS_TOUCH_UI)
   if (!g_lv.ready) return;
 
@@ -53445,12 +54781,15 @@ void UITask::loop() {
   updatePagerEncoder(now);
 #endif
 #if defined(HAS_TDECK_KEYBOARD)
+  if (_screen_off || _manual_lock || s_remote_mode) tdeckKeyboardDiscardModifiers();
+  else                                              tdeckKeyboardAllowModifiers();
   // Drain physical-keyboard presses buffered by the touch task into the field.
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = tdeckKeyboardReadKey();
     if (key <= 0) break;
     if (!_screen_off) s_kb_last_key_ms = now;   // a keypress while locked must not light the kb
-    if (s_remote_mode) { remotePhysicalKey(key); continue; }   // remote mode: physical keys are the exit
+    if (s_remote_mode) { tdeckKeyboardDiscardModifiers(); remotePhysicalKey(key); continue; } // remote mode: physical keys are the exit
+    if (_screen_off) tdeckKeyboardDiscardModifiers();
     handleHwKey(key);
   }
   // Focusing a text field (cursor starts blinking — tapped or auto-focused)
@@ -53492,6 +54831,7 @@ void UITask::loop() {
   // working while the screen is dark. updatePagerKbBacklight() follows the
   // same rule. Remote Mode pauses both because it owns the lit placeholder.
   pagerKeyboardPoll();
+  if (g_lv.task && g_lv.task->isManualLock()) pagerKeyboardDiscardAlt();
   // Remote Mode keeps the placeholder lit and reserves all keys for its local
   // escape path, so normal lock/backlight state machines stay paused there.
   if (!s_remote_mode) {
@@ -53507,7 +54847,7 @@ void UITask::loop() {
       if (key <= 0) break;
       remotePhysicalKey(key);
     }
-    pagerKeyboardConsumeAltTap();
+    pagerKeyboardDiscardAlt();
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
   } else if (g_lv.task && g_lv.task->isScreenOff()) {
@@ -53526,10 +54866,10 @@ void UITask::loop() {
       any = true;
       if (k == 0x08) saw_backspace = true;
     }
-    // Discard any Alt tap / Alt+Shift / Alt+Backspace chord picked up while
-    // idle-dimmed -- none of them may fire (NEXT / Caps toggle / jump Home)
+    // Discard any Alt latch / Alt+Shift / Alt+Backspace chord picked up while
+    // idle-dimmed -- none of them may fire (symbol layer / Caps / jump Home)
     // the instant the screen wakes.
-    pagerKeyboardConsumeAltTap();
+    pagerKeyboardDiscardAlt();
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
     // Hard-locked: an ordinary keypress must NOT wake/unlock -- only holding
@@ -53554,7 +54894,6 @@ void UITask::loop() {
       if (key <= 0) break;
       handleHwKey(key);
     }
-    updatePagerAltTapNext();
     updatePagerAltShiftChord();
     updatePagerAltBackspaceChord();
     updatePagerBackspaceHold(now);

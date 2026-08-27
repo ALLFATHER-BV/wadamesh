@@ -1,0 +1,39 @@
+# beta_70 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- The crash on the regions screen ------------------------------------------------------
+Adding or removing known regions and then leaving that screen crashed the device. If you have been unable to get out of Radio & mesh without resetting, this was why.
+The cause was general, not specific to regions: when a text field is destroyed, the interface library sends it one last "you lost focus" event, and seven fields in the firmware save their value on losing focus. So a field was reading and rewriting itself from inside its own destructor. All seven now ignore a blur that is really a deletion.
+Found by decoding the core dump attached to the report, against a rebuilt beta_69 image. Thank you for sending it.
+
+# --- Translations: undoing damage we caused ------------------------------------------------
+Language file v18 contained keys that do not exist anywhere in the firmware. Entries like "Paste (move)Paste (copy)" and "Unblock Block" were two separate buttons glued into one, and one entry was a Dutch phrase that appears only inside a source-code comment.
+That was a bug in the tool that decides which text belongs in a language file, introduced in the last release. It has been fixed twice over: it no longer joins the two halves of a choice into one entry, and it no longer reads text out of comments.
+202 invented entries are gone from all thirteen files. Nothing a translator had actually translated was touched.
+The curly quotes in the Hungarian map credits showed as empty boxes because no bundled font contains them. Replaced with straight quotes.
+Five more strings are translatable: the Wi-Fi rescan and hidden-network rows, the update check, and the downgrade prompt.
+Language files are at v19. v18 is withdrawn.
+
+# --- The Store stops offering apps your board cannot run -----------------------------------
+Wardrive and Nearby need the extended SDK, which the Heltec V4 does not have. The Store offered both anyway, so the most common board in the mesh could download, install and open two apps that then refused to work, with no warning. Apps can now say what they need, and the Store says so on the row instead.
+
+# --- Community work, by Michael A. Cojocari (@oumike) ---------------------------------------
+Lua apps can play WAV and MP3 audio, from the SD card or from memory.
+@-mention autocomplete in the device chat and the web interface, suggesting people whose adverts this device actually heard rather than everyone in your contacts.
+Symbol and alt keys latch: tap once for the next key, tap twice to lock the layer until you tap again. No more holding a modifier down.
+The web reader opens a home page from the SD card if you put one there, so a device with no internet still has somewhere to start.
+Wardrive no longer stops when a node name contains an emoji. Names are cut on character boundaries now, and text coming from an app is checked before it reaches the screen.
+Screenshots from the Control Center on the ThinkNode M9 and both T-Lora Pagers, with a timer for immediate, 3-second or 10-second capture.
+The M9's Home key works while you are typing in a text field, and the built-in Snake starts from the first direction you press.
+Tapping a chat composer that is already focused reopens the on-screen keyboard instead of doing nothing.
+
+# --- Community work, by Tesso M Costa (@codemonkeybr) --------------------------------------
+A new "At a glance" notification style: when a message arrives while the screen is dimmed, it shows a short preview without fully waking the device or lighting the keyboard. Optional, and it can be limited to when the device is unlocked.
+
+# --- Also fixed -----------------------------------------------------------------------------
+Granting an app permission could silently take a permission away from a different app. The switches packed the app's position and the permission into too few bits, so "Send discovery probes" wrote the wrong app's record, marking an app you never touched as refused. That is why apps reported "permission denied" with every permission granted.
+
+# --- For testers ------------------------------------------------------------------------------
+The regions crash is the fix most worth confirming: add and remove a few known regions, leave the screen, and check the device stays up.
+If you translate, your language file is clean again but has more untranslated entries than before, because strings that were previously invisible to the checker are now listed.
+Console mode is still an early preview and has not changed this release.

@@ -89,6 +89,7 @@ bool p4AudioReady() {
   if (s_ready)  return true;
   if (s_failed) return false;
   if (!s_mtx) s_mtx = xSemaphoreCreateMutex();
+  if (!s_mtx) return false;
   xSemaphoreTake(s_mtx, portMAX_DELAY);
   if (s_ready || s_failed) { xSemaphoreGive(s_mtx); return s_ready; }
 
@@ -125,6 +126,9 @@ bool p4AudioReady() {
   if (i2s_channel_init_std_mode(s_tx, &std_cfg) != ESP_OK ||
       i2s_channel_enable(s_tx) != ESP_OK) {
     printf("[P4AUDIO] I2S init failed\n");
+    i2s_channel_disable(s_tx);
+    i2s_del_channel(s_tx);
+    s_tx = nullptr;
     s_failed = true;
     xSemaphoreGive(s_mtx);
     return false;
@@ -139,7 +143,7 @@ void p4AudioTone(int freq_hz, int duration_ms, int amplitude) {
   if (amplitude <= 0 || freq_hz <= 0 || duration_ms <= 0) return;
   if (!p4AudioReady()) return;
   if (amplitude > 30000) amplitude = 30000;
-  xSemaphoreTake(s_mtx, portMAX_DELAY);
+  if (xSemaphoreTake(s_mtx, 0) != pdTRUE) return;
   const int total = P4A_RATE * duration_ms / 1000;
   const int fade  = P4A_RATE * 4 / 1000;             // 4 ms in/out fade kills the click
   static int16_t buf[256 * 2];                       // stereo frames, chunked
@@ -160,6 +164,38 @@ void p4AudioTone(int freq_hz, int duration_ms, int amplitude) {
     size_t wr = 0;
     i2s_channel_write(s_tx, buf, (size_t)n * 2 * sizeof(int16_t), &wr, pdMS_TO_TICKS(300));
   }
+  xSemaphoreGive(s_mtx);
+}
+
+uint32_t p4AudioStreamRate() { return P4A_RATE; }
+
+bool p4AudioStreamBegin() {
+  if (!p4AudioReady()) return false;
+  return xSemaphoreTake(s_mtx, portMAX_DELAY) == pdTRUE;
+}
+
+bool p4AudioStreamWrite(const int16_t* samples, size_t frames) {
+  if (!samples || !frames || !s_tx) return false;
+  static int16_t stereo[256 * 2];
+  while (frames) {
+    const size_t count = frames > 256 ? 256 : frames;
+    for (size_t i = 0; i < count; ++i)
+      stereo[2 * i] = stereo[2 * i + 1] = samples[i];
+    size_t written = 0;
+    const size_t bytes = count * 2 * sizeof(int16_t);
+    if (i2s_channel_write(s_tx, stereo, bytes, &written, pdMS_TO_TICKS(300)) != ESP_OK ||
+        written != bytes) return false;
+    samples += count;
+    frames -= count;
+  }
+  return true;
+}
+
+void p4AudioStreamEnd() {
+  if (!s_mtx) return;
+  static const int16_t silence[256 * 2] = {};
+  size_t written = 0;
+  i2s_channel_write(s_tx, silence, sizeof silence, &written, pdMS_TO_TICKS(300));
   xSemaphoreGive(s_mtx);
 }
 
