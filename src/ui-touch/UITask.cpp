@@ -26523,7 +26523,7 @@ static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
   luaHostAppPath(appsdir, sizeof appsdir, "/apps");
   fs->mkdir(appsdir);
   static const char* const kExt[2] = { "lua", "json" };
-  const size_t kCap[2] = { 64 * 1024, 1024 };
+  const size_t kCap[2] = { 192 * 1024, 1024 };   // must match kMaxSrc in LuaAppHost.cpp
   for (int e = 0; e < 2; e++) {
     char* buf = (char*)heap_caps_malloc(kCap[e], MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf) return false;

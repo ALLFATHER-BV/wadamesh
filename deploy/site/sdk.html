@@ -292,7 +292,8 @@ return app</code></pre>
       <h2>wada.mesh</h2>
       <div class="row"><div class="prose">
         <table class="api">
-          <tr><td>wada.mesh.contacts()</td><td>Array of <code>{name, pubkey, type, ago_s, lat, lon, lat_e6, lon_e6}</code>. <code>pubkey</code> is the first 4 bytes as 8 hex characters &mdash; the same short form the rest of the interface uses, and what lines a contact up with a discovery hit.</td></tr>
+          <tr><td>wada.mesh.contacts([offset], [limit])</td><td>Array of <code>{name, pubkey, type, ago_s, lat, lon, lat_e6, lon_e6}</code>. <code>pubkey</code> is the first 4 bytes as 8 hex characters &mdash; the same short form the rest of the interface uses, and what lines a contact up with a discovery hit. Returns at most <code>limit</code> entries (default 100, maximum 250) starting at <code>offset</code>, because every entry is an eight-field table and building thousands in one call would exhaust the app heap. On a device with more contacts than that, page through them: ask for 100, then 100 from offset 100, and so on.</td></tr>
+          <tr><td>wada.mesh.contact_count()</td><td>How many contacts the device holds, so you can page through <code>contacts()</code> without calling it repeatedly to find where the list ends.</td></tr>
           <tr><td>wada.mesh.rx_log()</td><td>Recent packets, newest first: <code>{ago_ms, type, rssi, snr, hops, route, len}</code>, plus whatever identity the frame actually carried &mdash; see below. The RF Monitor feed.</td></tr>
           <tr><td>wada.mesh.stats()</td><td><code>{rssi, noise, rx_air_s, tx_air_s, rx_pkts, rx_err, tx_budget_ms, rx_events, rx_dropped, tx_pkts, freq, bw, sf, duty_pct}</code>.</td></tr>
           <tr><td>wada.mesh.self()</td><td>This node: <code>{name, pubkey, lat, lon, lat_e6, lon_e6}</code>.</td></tr>
@@ -410,7 +411,7 @@ end</code></pre>
         </table>
         <p><code>http://</code> only, both of them. On-device TLS is not workable at the heap these boards have left once Wi-Fi has associated, so there is no <code>https</code> to offer; put a proxy in front if you need it. One request in flight at a time per app.</p>
         <p>The fetch is asynchronous and runs on the firmware's existing network worker, so it does not block the UI. Your callback runs on the UI thread once the body is in memory.</p>
-        <div class="note"><p><b>Plain HTTP only, and that is not an oversight.</b> After Wi-Fi associates there is not enough free internal memory on the smaller boards for a TLS handshake — mbedTLS wants around 30&nbsp;KB and roughly 5&nbsp;KB is free. If you need an HTTPS source, put a small proxy in front of it, the way the map tiles do. Responses are capped (64&nbsp;KB by default).</p></div>
+        <div class="note"><p><b>Plain HTTP only, and that is not an oversight.</b> After Wi-Fi associates there is not enough free internal memory on the smaller boards for a TLS handshake — mbedTLS wants around 30&nbsp;KB and roughly 5&nbsp;KB is free. If you need an HTTPS source, put a small proxy in front of it, the way the map tiles do. Responses are capped (192&nbsp;KB by default).</p></div>
       </div></div>
     </section>
 

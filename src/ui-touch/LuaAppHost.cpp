@@ -170,7 +170,12 @@ void budgetHook(lua_State* L, lua_Debug*) {
 // host state
 // ---------------------------------------------------------------------------
 constexpr size_t kHeapCap     = 256 * 1024;   // per-app PSRAM cap
-constexpr size_t kMaxSrc      = 64 * 1024;    // app source size limit
+// App source size limit. Was 64 KB, which a real app can reach: reported from a
+// 2000-contact device whose author hit it writing an ordinary Lua program, not
+// anything pathological. The source lives in PSRAM only until luaL_loadbuffer
+// has compiled it, so this is a transient allocation rather than a per-app cost,
+// and the compiled chunk still has to fit the 256 KB per-app heap below.
+constexpr size_t kMaxSrc      = 192 * 1024;   // app source size limit
 constexpr size_t kStoreMax    = 2048;         // per-app persisted KV budget (bytes, serialized)
 constexpr int    kMinTickMs   = 33;           // fastest on_tick cadence (~30 fps)
 
@@ -1835,10 +1840,35 @@ void pressCb(lv_event_t* e) {
 }
 
 // ---- wada.mesh (read-only) ----
+// wada.mesh.contacts([offset], [limit])
+//
+// Used to scan the first 200 contacts and return at most 100, with no way to see
+// past that and nothing to say it had truncated. On a device with 2000 contacts
+// an app simply could not reach most of them (reported by Jade).
+//
+// It takes an offset and a limit now. The default limit stays 100 because every
+// entry is an 8-field Lua table and building thousands of them in one call would
+// blow the per-app heap -- but the window can be moved, so all contacts are
+// reachable by asking twice. wada.mesh.contact_count() says how many there are.
+// How many contacts the device holds, so an app can page through them without
+// calling contacts() repeatedly just to discover where the list ends.
+static int meshContactCount(lua_State* L) {
+  char name[36], pk[12]; int type; uint32_t ago; double lat, lon; int32_t lat6, lon6;
+  int n = 0;
+  while (n < 4096 && luaHostContactAt(n, name, sizeof name, &type, &ago, &lat, &lon,
+                                      pk, sizeof pk, &lat6, &lon6)) ++n;
+  lua_pushinteger(L, n);
+  return 1;
+}
+
 int meshContacts(lua_State* L) {
+  const int offset = (int)luaL_optinteger(L, 1, 0);
+  int limit = (int)luaL_optinteger(L, 2, 100);
+  if (limit < 1) limit = 1;
+  if (limit > 250) limit = 250;      // one call still has to fit the app's heap
   lua_newtable(L);
   char name[36], pk[12]; int type; uint32_t ago; double lat, lon; int32_t lat6, lon6;
-  for (int i = 0, out = 0; i < 200 && out < 100; i++) {
+  for (int i = (offset > 0 ? offset : 0), out = 0; out < limit; i++) {
     if (!luaHostContactAt(i, name, sizeof name, &type, &ago, &lat, &lon, pk, sizeof pk,
                           &lat6, &lon6)) break;
     lua_createtable(L, 0, 8);
@@ -2328,6 +2358,7 @@ void openWada(lua_State* L) {
 
   lua_newtable(L);                                       // wada.mesh (read-only)
   lua_pushcfunction(L, meshContacts); lua_setfield(L, -2, "contacts");
+  lua_pushcfunction(L, meshContactCount); lua_setfield(L, -2, "contact_count");
   lua_pushcfunction(L, meshRxLog);    lua_setfield(L, -2, "rx_log");
   lua_pushcfunction(L, meshStats);    lua_setfield(L, -2, "stats");
   lua_pushcfunction(L, meshSelf);     lua_setfield(L, -2, "self");
