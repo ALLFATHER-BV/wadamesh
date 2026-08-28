@@ -11635,34 +11635,49 @@ static void buildSystemInfoSettings() {
   lv_obj_t* body = createSettingsModal(TR("System info"), SettingsModalKind::SystemInfo);
   char buf[704];
 
-  // Live tier (uptime + heap): a small constant-height label refreshed at 1 Hz.
+  // FLEX COLUMN, deliberately not the manual y cursor the rest of this file uses.
+  // Both labels below are re-texted AFTER build with text whose LINE COUNT
+  // genuinely varies:
+  //   • the live tier gains a hard '\n' the moment a chat-store write fails
+  //     (sysInfoTextLive's "last save: FAIL ...\n  append failed: ..." branch),
+  //     and it is refreshed at 1 Hz while this page is open;
+  //   • the slow tier grows as the off-thread microSD scan publishes its
+  //     size/free lines, and as the loop-stall ring fills from "none recorded"
+  //     to six "-Ns <tag> Nms" rows — on a page that is itself a documented
+  //     stall source.
+  // The old code pinned each child to the MEASURED height of the one above it,
+  // so any of that growth printed straight over the next widget: the live tier
+  // over the "Chip / ESP32-S3" heading, the slow tier over the Memory detail
+  // button. Reserving a worst case is not viable here — neither the stall ring
+  // nor the SD strings have a fixed upper bound — so let the container reflow
+  // instead. Children are created in visual order, which is what flex needs.
+  lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(body, 6, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(body, 2, LV_PART_MAIN);
+
+  // Live tier (uptime + heap), refreshed at 1 Hz.
   lv_obj_t* lbl = lv_label_create(body);
   s_sysinfo_lbl = lbl;
   lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(lbl, lv_pct(100));
-  lv_obj_set_pos(lbl, 2, 0);
   lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   sysInfoTextLive(buf, sizeof buf);
   lv_label_set_text(lbl, buf);
 
   // Slow tier below it: chip/flash/SD/NVS/stalls/build — re-set only on change.
-  lv_obj_update_layout(lbl);
   lv_obj_t* rest = lv_label_create(body);
   s_sysinfo_rest_lbl = rest;
   lv_label_set_long_mode(rest, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(rest, lv_pct(100));
-  lv_obj_set_pos(rest, 2, lv_obj_get_y(lbl) + lv_obj_get_height(lbl) + 2);
   lv_obj_set_style_text_font(rest, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(rest, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   sysInfoTextRest(buf, sizeof buf);
   lv_label_set_text(rest, buf);
 
   // "Memory detail" button below the info text (per-region heap breakdown).
-  lv_obj_update_layout(rest);
   lv_obj_t* membtn = lv_btn_create(body);
   lv_obj_set_size(membtn, lv_pct(96), SC(34));
-  lv_obj_set_pos(membtn, 2, lv_obj_get_y(rest) + lv_obj_get_height(rest) + 8);
   styleButton(membtn);
   lv_obj_add_event_cb(membtn, openMemoryDetailCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* mbl = lv_label_create(membtn);
@@ -12643,9 +12658,37 @@ static void buildDeviceSettings(int sec) {
   lv_obj_set_style_text_color(g_set_modal.gps_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_set_modal.gps_status, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(g_set_modal.gps_status, 4, y);
-  lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
-  lv_obj_update_layout(g_set_modal.gps_status);
-  y += LV_MAX(SC(22), lv_obj_get_height(g_set_modal.gps_status) + SC(6));   // status is 2 lines now
+  // RESERVE THE WORST-CASE HEIGHT, don't measure the current text. This label is
+  // re-texted every tick while the page is open (updateSettingsLiveFields), and
+  // every row below it is positioned ABSOLUTELY from this build-time `y` — so a
+  // status that grows after the page was built lands on top of them. Concretely:
+  // open the page with GPS off and the text is a one-line "GPS: off", so `y`
+  // advanced ~22 px; toggle GPS on — the obvious thing to do on this page — and
+  // the text becomes "GPS: searching Nm" plus the ~100-character cold-start
+  // sentence, which wraps to several lines on a 240 px panel and printed over
+  // the "GPS serial baud" label and its dropdown.
+  // Measure the tallest string this label can ever hold, with the real font and
+  // width, and PIN the height to it. A later refresh then cannot reflow anything.
+  // Both long variants are probed because which one is tallest depends on the
+  // active translation, not just on English.
+  {
+    char probe[200];
+    snprintf(probe, sizeof probe, "%s 00m00s\n%s", TR("GPS: searching"),
+             TR("No position yet. A cold start needs a clear view of the sky and can take several minutes."));
+    lv_label_set_text(g_set_modal.gps_status, probe);
+    lv_obj_update_layout(g_set_modal.gps_status);
+    lv_coord_t worst_h = lv_obj_get_height(g_set_modal.gps_status);
+
+    snprintf(probe, sizeof probe, "%s \xc2\xb7 00 sats \xc2\xb7 0000 m\n00.00000, 000.00000", TR("GPS: fix"));
+    lv_label_set_text(g_set_modal.gps_status, probe);
+    lv_obj_update_layout(g_set_modal.gps_status);
+    if (lv_obj_get_height(g_set_modal.gps_status) > worst_h)
+      worst_h = lv_obj_get_height(g_set_modal.gps_status);
+
+    lv_obj_set_height(g_set_modal.gps_status, worst_h);
+    lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
+    y += LV_MAX(SC(22), worst_h + SC(6));
+  }
 
   // (Expansion Kit moved to the Sensors page — see the DSEC_SENSORS block below.)
 
@@ -15400,6 +15443,15 @@ static void buildWifiSettings() {
   lv_obj_set_width(g_set_modal.wifi_sta_status_l, cw - SC(54));   // clear of the switch
   lv_obj_set_style_text_color(g_set_modal.wifi_sta_status_l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_set_modal.wifi_sta_status_l, &g_font_12, LV_PART_MAIN);
+  // Pin it to ONE line, as the header comment above promises. LV_LABEL_LONG_DOT
+  // only ellipsizes against the object's HEIGHT — with the label's default
+  // LV_SIZE_CONTENT height there is nothing to ellipsize against, so a long
+  // status just wrapped and grew instead. That matters here because this label
+  // is re-texted live (wifiRefreshStatus) with SSIDs and IP addresses, and the
+  // header only reserves SC(30) below it: at the M9's narrow content width a
+  // two-line status ran from y+SC(7) straight into s_wifi_list_cont, which is
+  // pinned at SC(30) and painted after it. A fixed height makes the dots work.
+  lv_obj_set_height(g_set_modal.wifi_sta_status_l, SC(16));
   lv_obj_set_pos(g_set_modal.wifi_sta_status_l, 2, y + SC(7));
   lv_label_set_text(g_set_modal.wifi_sta_status_l, TR("Loading..."));
   y += SC(30);
@@ -22059,6 +22111,14 @@ static void buildFileManager(lv_obj_t* body) {
   lv_label_set_long_mode(s_fm_path_lbl, LV_LABEL_LONG_DOT);
   lv_obj_set_pos(s_fm_path_lbl, loc_x, 6);
   lv_obj_set_width(s_fm_path_lbl, loc_w);
+  // One line, fixed. LV_LABEL_LONG_DOT ellipsizes against the object's HEIGHT,
+  // and a label defaults to LV_SIZE_CONTENT — so with no height set, a path too
+  // long for loc_w wrapped and grew downward instead of getting its dots. This
+  // text changes every time the user walks into a directory, the field sits at
+  // y=6 inside a header only HDR_H (34) tall, and s_fm_list is pinned at HDR_H
+  // and painted after it, so the overflow disappeared under the list. Height =
+  // one line of g_font_12 plus the 3 px pad_ver either side.
+  lv_obj_set_height(s_fm_path_lbl, SC(21));
   lv_obj_set_style_text_font(s_fm_path_lbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_fm_path_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_bg_color(s_fm_path_lbl, lv_color_hex(0x101418), LV_PART_MAIN);
