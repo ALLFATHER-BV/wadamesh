@@ -24313,12 +24313,14 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES)
-  // Landscape boards keep the chart clear of the right-hand button strip.
+  // Keep the chart clear of the right-hand button strip. NOT board-gated: the
+  // Advert + launcher column below is built for ANY landscape board (`if
+  // (home_land)`, no #if), so `home_land` already IS the condition. The old
+  // board whitelist here had to be extended by hand for every new landscape
+  // target and silently wasn't — square (320x240) and the Heltecs in landscape
+  // fell through to the full-width `cw`, so the chart ran under the buttons and
+  // its "Sig" chip sat on top of them.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
-#else
-  const int chart_w = cw;
-#endif
   // Fit the chart in the remaining vertical space: content height minus the
   // tab padding, the chart's top offset, and the Send-advert button + gaps.
   // Portrait keeps the full 96 px; landscape (short screen) shrinks it so the
@@ -27861,7 +27863,11 @@ static void renderMapTiles() {
   // Fall back to placeholder when no usable GPS center.
   if (s_map_center_lat == 0.0 && s_map_center_lon == 0.0) {
     freeMapTiles();
+    const bool had_pack = s_map_has_pack;
     s_map_has_pack = false;
+    // Same re-tint as the main path below: nothing is painted now, so the
+    // chrome has to flip to its light ink or it disappears into the canvas.
+    if (had_pack && getActiveTab() == MAP_TAB_INDEX) applyMapChrome(true);
     if (s_map_status_lbl) {
       lv_label_set_text(s_map_status_lbl,
           TR("Map — set your location\nin Settings \xe2\x86\x92 Profile to\nshow the map here."));
@@ -28123,7 +28129,15 @@ static void renderMapTiles() {
   //     Missing edge tiles just fill in as they download.
   //   • nothing rendered (panned into an un-tiled area) → show a clear,
   //     human message that depends on whether we can actually fetch.
-  s_map_has_pack = any_loaded;
+  // Re-tint the on-map chrome when this flips: the status bar and tab bar pick
+  // their ink from s_map_has_pack (see applyMapChrome), and it is set HERE,
+  // after applyMapChrome already ran on tab entry. Without this the first tiles
+  // to land leave light-on-light chrome until something else re-applies it.
+  {
+    const bool had_pack = s_map_has_pack;
+    s_map_has_pack = any_loaded;
+    if (had_pack != any_loaded && getActiveTab() == MAP_TAB_INDEX) applyMapChrome(true);
+  }
   // Remember the gap count so the bottom info bar can show a compact
   // "downloading" / "Wi-Fi off" hint even when the map is partially loaded
   // (any_loaded true) — that's the common "panned toward the edge of my
@@ -30527,7 +30541,11 @@ static void applyMapChrome(bool on) {
     lv_obj_set_style_border_opa(g_statusbar.root, on ? LV_OPA_TRANSP : LV_OPA_30, LV_PART_MAIN);
     // Night mode inverts the tiles to DARK, so the on-map chrome flips from black
     // (legible over light tiles) to off-white (legible over the dark inverted tiles).
-    const bool night = on && s_map_night;
+    // !s_map_has_pack means NO tile ever painted, so what shows through is the
+    // canvas' own near-black 0x0A0B0C — black chrome on black, i.e. the status
+    // bar and the bottom nav simply vanished. Treat that like night: the bar
+    // stays fully transparent (no grey slab over the tiles), only the ink flips.
+    const bool night = on && (s_map_night || !s_map_has_pack);
     const lv_color_t fg     = lv_color_hex(!on ? COLOR_TEXT : (night ? 0xF0F0F0 : 0x000000));
     const lv_color_t fg_sub = lv_color_hex(!on ? COLOR_SUB  : (night ? 0xC8CCD0 : 0x000000));
     if (g_statusbar.left_label) lv_obj_set_style_text_color(g_statusbar.left_label, fg, LV_PART_MAIN);
@@ -30552,7 +30570,7 @@ static void applyMapChrome(bool on) {
       // map tiles, no grey bar behind them.
       lv_obj_set_style_bg_opa(btns, on ? LV_OPA_TRANSP : LV_OPA_COVER, LV_PART_MAIN);
       // Day map: black icons over light tiles. Night map: off-white over dark tiles.
-      const bool night_tabs = on && s_map_night;
+      const bool night_tabs = on && (s_map_night || !s_map_has_pack);
       lv_obj_set_style_text_color(btns, lv_color_hex(!on ? COLOR_SUB : (night_tabs ? 0xE6EAEE : 0x101010)), LV_PART_ITEMS);
       // Off-map: active icon back to the ACCENT colour (not white). On-map: high-
       // contrast icon for the tile brightness. (The accent indicator bar is hidden
@@ -53492,6 +53510,10 @@ void UITask::loop() {
     refreshThreadsFromMesh();
     g_lv.dirty_threads  = true;
   }
+  // Split out of ui:threads: on a board whose data store lives on removable
+  // media these two do very different I/O, and one bucket covering both could
+  // only ever say "somewhere in here".
+  uiCp("ui:status");
   if (now >= _next_refresh) {
     refreshStatusLabels();
     // Unread-count badge over the Chats tab icon (bottom bar).
@@ -53523,8 +53545,13 @@ void UITask::loop() {
     }
     _next_refresh = now + UI_REFRESH_MS;
   }
-#if CAP_TRACKBALL
+  // UNCONDITIONAL: this checkpoint CLOSES the section above, so compiling it out
+  // silently widened that bucket to the next checkpoint (ui:diag, ~280 lines on)
+  // on every board without a trackball or pager encoder — square included. The
+  // bucket then reported times for code it does not even contain. The pollers
+  // below stay board-gated; only the measurement is now board-neutral.
   uiCp("ui:input");
+#if CAP_TRACKBALL
   updateTrackball(now);
 #elif defined(HAS_PAGER_ENCODER)
   updatePagerEncoder(now);

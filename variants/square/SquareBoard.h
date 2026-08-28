@@ -14,6 +14,7 @@ public:
 
 private:
   bool ensureBatteryAdc();
+  int16_t readBatteryAdcBounded();   // timeout-bounded single-ended read (see .cpp)
 
   Adafruit_ADS1115 _batteryAdc;
   bool _batteryAdcReady = false;
