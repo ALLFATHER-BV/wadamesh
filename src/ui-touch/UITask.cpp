@@ -55095,6 +55095,15 @@ void UITask::loop() {
     serviceLockscreen();
   }
 #elif defined(HAS_M9_KEYBOARD)
+  // Own the stall buckets for everything a keypress triggers. The "ui:input"
+  // checkpoint further up is inside #if CAP_TRACKBALL, which is 0 on this board
+  // (device_caps.h) — so with no checkpoint here, every keypress-driven action
+  // on the M9 (a map open, a tab jump, a Back press: the d-pad is the ONLY
+  // input this board has) was billed to whichever bucket happened to be open,
+  // which is "ui:threads". That made the stall ring actively misleading on the
+  // one board where it matters most: a 2.5 s cold map open was reported as a
+  // slow chat-threads refresh. The three checkpoints below tag it honestly AND
+  // split it — see the note at ui:navreb.
   // M9's keyboard controller is on its OWN bus (Wire1) — no touch task shares
   // it, so polling happens right here on the UI thread rather than from a
   // separate core-0 task (the poll itself rate-limits to ~15 ms inside
@@ -55106,7 +55115,20 @@ void UITask::loop() {
   // s_nav_objs still mirroring the screen behind the modal — the intermittent
   // "modal navigation breaks out to the screen behind" bug. Sync the group to
   // the current tree before draining (cheap: sig-compare early-out).
+  //
+  // The three checkpoints below split what used to be one "ui:input" bucket. It
+  // spanned the focus-group rebuild, the I2C keyboard/sensor polls AND every
+  // action handleHwKey dispatches, so a ~1.2 s stall reported as "ui:input" said
+  // almost nothing about where the time went. Measure the split before
+  // optimising: on the map, the obvious suspect (JPEG decode) turned out to cost
+  // less than the compositing nobody had counted. uiCp() is two loads and a
+  // compare, so these checkpoints are free.
+  //   ui:navreb — nav focus-group rebuild (walks the widget tree)
+  //   ui:kbpoll — I2C keyboard drain + compass/IMU idle ticks
+  //   ui:keys   — handleHwKey: the actual action (page builds, list rebuilds, …)
+  uiCp("ui:navreb");
   if (s_kbd_nav || s_tb_nav) navMaybeRebuild();
+  uiCp("ui:kbpoll");
   m9KeyboardPoll();
 #if defined(HAS_M9_COMPASS)
   m9CompassIdleTick();   // park the magnetometer when no app is reading it
@@ -55114,6 +55136,7 @@ void UITask::loop() {
 #if defined(HAS_M9_IMU)
   m9ImuIdleTick();       // and the accelerometer
 #endif
+  uiCp("ui:keys");
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = m9KeyboardReadKey();
     if (key <= 0) break;
