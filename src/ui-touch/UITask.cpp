@@ -55502,6 +55502,7 @@ void UITask::loop() {
   if (s_sd_format_pending && --s_sd_format_pending == 0) {
     s_sd_format_wait_until = 0;
     bool ok = false;
+    bool mkfs_ok = false;   // the format ITSELF succeeded, independent of the remount below
     {
       LoopWdtGuard loop_wdt_guard;
       SPIClass* spi = sdSharedSPI();   // this board's SD bus (T-Deck: LoRa SPI; R8: TFT FSPI; M9: shared SPI)
@@ -55519,13 +55520,28 @@ void UITask::loop() {
           if (work) {
             if (f_mkfs(drv, MC_FM_FAT32, 0, work, 4096) == 0 /*FR_OK*/) {
               sdWriteFatLabel(pdrv, "MESHCOMOD");
+              mkfs_ok = true;
               ok = true;
             }
             free(work);
           }
           sdcard_uninit(pdrv);
         }
-        if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
+        // Remount through the FULL mount ladder, not a bare single-shot begin.
+        // sdcard_uninit() above issues GO_IDLE_STATE, so the card is back in SPI
+        // idle and has to re-run its whole power-up handshake — exactly the case
+        // fmSdTryMount's ladder exists for (7 rungs, 4 MHz down to 400 kHz with
+        // 40-900 ms settles, and an upward renegotiation after a slow success).
+        // A single 4 MHz SD.begin with no settle made a card that HAD just been
+        // formatted fall into the failure branch and report itself as ABSENT —
+        // upstream #343, "SD card reported missing when formatting". That
+        // ladder's own comment flags it as unverified on M9 timing, which is
+        // precisely why the format path must not hand-roll a weaker version of
+        // it. Clear the backoff first: this is an explicit user action, and the
+        // preceding SD.end()/uninit may have stamped one.
+        // (fmSdTryMount takes its own LoopWdtGuard; nesting is a no-op because
+        // the inner guard sees the WDT already unsubscribed.)
+        if (ok) { s_sd_retry_after_ms = 0; ok = fmSdTryMount(); }
       }
     }
     fmHideFormatOverlay();
@@ -55549,7 +55565,19 @@ void UITask::loop() {
       // The backend handshake waits for any current File and preserves queued
       // requests, then drops the failed SD backend without leaving a pause set.
       mapNoteStorageChanged();
-      showAlert(TR("Format failed (no card / SD error)"), 3500);
+      // Do NOT say "no card" when the card was in fact formatted successfully
+      // and only the remount missed — that reads as "the device cannot see my
+      // card" and sends people hunting a hardware fault that isn't there
+      // (upstream #343). Separate the two outcomes: f_mkfs failing is a real
+      // format failure; mkfs_ok with a failed remount is a card that is fine and
+      // freshly FAT32, just not answering yet.
+      // A failed remount stamped a 10 s backoff inside fmSdTryMount. Clear it:
+      // fmShowRoots() runs immediately below and gates the SD row on that same
+      // backoff, so leaving it set hides the card for 10 s while the user is
+      // reading a toast telling them to reinsert it.
+      s_sd_retry_after_ms = 0;
+      showAlert(mkfs_ok ? TR("Formatted OK - card did not remount, reinsert it")
+                        : TR("Format failed (no card / SD error)"), 3500);
     }
     if (s_fm_list) fmShowRoots();
   }
