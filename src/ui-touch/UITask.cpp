@@ -15500,7 +15500,15 @@ static void goToTab(int idx) {
 #if CAP_KEYPAD_NAV
   if (s_nav_styled) { navUnstyle(s_nav_styled); s_nav_styled = nullptr; }
 #endif
-  lv_tabview_set_act(g_lv.tabview, static_cast<uint32_t>(idx), LV_ANIM_ON);
+  // The map's first paint blocks this thread for ~2.5 s inside the tab-change
+  // handler. With the 200-400 ms slide still running, the lv_refr_now that
+  // pushes the "Loading map…" hint can land while the map page is still
+  // off-screen — the hint never reaches the panel and the board reads as
+  // frozen on the previous tab. Skip the slide for the map only; every other
+  // tab keeps it. (Swipe-driven switches call lv_tabview_set_act inside LVGL
+  // and are unaffected.)
+  lv_tabview_set_act(g_lv.tabview, static_cast<uint32_t>(idx),
+                     idx == MAP_TAB_INDEX ? LV_ANIM_OFF : LV_ANIM_ON);
   // lv_tabview_set_act() does NOT emit LV_EVENT_VALUE_CHANGED, so the full
   // tab-change handler (tabChangedCb → onMapTabActivated, status bar, chat
   // overlay cleanup, onLvTabChanged, heavy refresh) was skipped for swipe-driven
@@ -26010,6 +26018,7 @@ static volatile int16_t  s_tile_fetch_last_code = 0;
 //   'w' wrote ok   'O' open("w") failed (dir missing / SD write-protect / bus)
 //   'P' short/failed disk write (card full or SD error mid-write)
 //   'Z' bad/oversized content-length   'e' HTTP != 200
+//   'J' body was not a JPEG (proxy error page / blank body)
 //   'S' cache low-space gate   'H' internal-heap gate   'W' Wi-Fi down
 static volatile char     s_tile_fetch_last_wr   = '-';
 static volatile uint16_t s_tile_fetch_open_fail = 0;   // tileCacheOpen("w") returned an invalid File
@@ -26083,6 +26092,11 @@ static int        k_map_canvas_h      = 226;
 constexpr uint8_t k_map_zoom_min      = 3;
 constexpr uint8_t k_map_zoom_max      = 19;
 constexpr uint8_t k_map_zoom_default  = 14;
+// Minimum gap between the progressive per-tile repaints in renderMapTiles. Each
+// repaint is a full-screen composite plus the two transparent chrome bars (~115 ms
+// on the M9), so painting after every tile dominated the cold open. 350 ms still
+// gives ~3 visible fill-in steps across a ~1 s read+decode pass.
+constexpr uint32_t k_map_progressive_ms = 350;
 // 3×3 grid covers a 768×768-px slab — ~130 px of pan buffer on each side
 // of the 240×226 viewport. We tried 5×5 (25 tiles, 3.2 MB PSRAM) for the
 // bigger buffer but it pushed PSRAM usage to the edge on the S3 boards —
@@ -27470,6 +27484,25 @@ static void tileFetchTaskFn(void* arg) {
       s_tile_fetch_step = 'r';
       int content_len = http.getSize();
       // Sanity cap — refuse anything > 100 KB. Tiles are typically 10-30 KB.
+      // NOTE (2026-08-28): a "stream it anyway when Content-Length is absent"
+      // variant was tried here for upstream #339 and REVERTED. Two reasons, both
+      // worth knowing before anyone tries it again:
+      //   1. It was aimed at the wrong target. The `wrZ` in that report is STALE
+      //      telemetry (the same screenshot shows Wi-Fi off), and the maintainer's
+      //      own curl against the proxy returns a valid Content-Length, so
+      //      getSize() == -1 does not apply. The live symptom there is `d0/9` —
+      //      the SD READ path finding nothing — not this write path.
+      //   2. It would not have worked. On arduino-esp32 2.0.17 http.getStreamPtr()
+      //      hands back the RAW client; chunk de-framing lives only inside
+      //      writeToStream(). Reading the raw stream on a genuinely chunked reply
+      //      writes the hex chunk headers into the cache file, so the SOI check
+      //      below rejects it anyway — 'Z' simply becomes 'J'. It also spun
+      //      readBytes() for the full 2 s socket timeout at the end of every body
+      //      (Stream::readBytes is an unyielded byte-at-a-time loop), on the
+      //      core-0 task whose IDLE feeds the watchdog.
+      // If chunked support is ever genuinely needed, use http.writeToStream(&f)
+      // (fs::File is a Stream) and validate the file afterwards, rather than
+      // hand-rolling the framing here.
       if (content_len > 0 && content_len <= 100 * 1024) {
         File f = tileCacheOpen(path_jpg, "w");
         if (f) {
@@ -27550,7 +27583,14 @@ static void tileFetchTaskFn(void* arg) {
       s_tile_fetch_step = 'w';
       s_tile_fetch_last_wr = 'w';
       ++s_tile_fetch_ok;
-      s_tile_fetch_dirty = true;        // render thread picks this up
+      // Visible zoom ONLY — same rule as the already-cached path above. A
+      // settled centre also enqueues a 29-tile background pyramid (z7/z8/z9 +
+      // two singles), and flagging dirty for those drove a full grid re-render
+      // AND marker rebuild on the LVGL thread up to 2.5x/s for the whole
+      // download window, for tiles that are not on screen at any point. Those
+      // passes also chew the internal DMA heap this very worker gates on, so
+      // they slowed the downloads they were waiting for.
+      if (req.z == s_map_zoom) s_tile_fetch_dirty = true;   // render thread picks this up
     } else {
       WIRE_DBG("[TILE]  -> FAILED %s\n", path_jpg);
       ++s_tile_fetch_failed;
@@ -28102,8 +28142,14 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
   // which would make the zoom guard think whole levels are un-cached. A successful open == it's there.
   snprintf(p, sizeof p, "%s/%u/%ld/%ld.jpg", mapTileRoot(), (unsigned)z, x, y);
   { File f = tileCacheOpen(p, "r"); if (f) { f.close(); return true; } }
-  snprintf(p, sizeof p, "%s/%u/%ld/%ld.png", mapTileRoot(), (unsigned)z, x, y);
-  { File f = tileCacheOpen(p, "r"); if (f) { f.close(); return true; } }
+  // .jpg ONLY — deliberately no .png leg here. This branch must mirror the
+  // generic loader, and that builds exactly one path ("%s/%u/%ld/%ld.jpg", see
+  // loadTileJpeg) with no .png fallback: the LittleFS cache is JPEG-only by
+  // design. Probing .png made the zoom guard advertise — and the auto-snap
+  // select — levels the loader then could not draw, i.e. a silently blank map
+  // instead of an honest "Max zoom for this pack". Dropping it also halves the
+  // cost of every probe, which matters because bestAvailableZoom and
+  // mapZoomStep walk many levels per call.
   return false;
 }
 #endif  // ESP32
@@ -28260,6 +28306,9 @@ static void renderMapTiles() {
   lv_obj_t* parent = s_map_pan_layer ? s_map_pan_layer : s_map_canvas;
   bool any_loaded = false;
   int  n_missing  = 0;   // visible tiles we couldn't load from disk
+  // Progressive-paint throttle — see the lv_refr_now() call inside the loop.
+  uint32_t prog_last_ms = 0;
+  int      prog_painted = 0;
   for (int i = 0; i < n_wanted; ++i) {
     if (wanted[i].placed) { any_loaded = true; continue; }
     // Pick an empty slot, PREFERRING one that already owns a reusable 128 KB
@@ -28372,7 +28421,23 @@ static void renderMapTiles() {
     // screen, which is heavy on internal DMA RAM — doing that per-tile WHILE the
     // Wi-Fi worker holds a socket pushed the heap into an OOM reboot. When tiles
     // are arriving from the network, let LVGL batch one redraw at the end.
-    if (tileFetchPendingLoad() == 0) lv_refr_now(NULL);
+    // THROTTLED. Each of these composites the whole 240x320 screen AND alpha-
+    // blends the transparent status + tab bars over it — measured on the M9 at
+    // ~115 ms a call: measured 1042 ms of compositing across a 9-tile cold open, against
+    // read=497ms and decode=539ms. The per-tile paint was therefore costing MORE
+    // than the SD reads and the JPEG decodes COMBINED, to draw intermediate
+    // frames that flick past too fast to read individually. Paint the first tile
+    // straight away (so the map starts filling immediately), then at most every
+    // k_map_progressive_ms. Still visibly progressive, roughly a third of the
+    // cost. The final frame is painted by the normal LVGL tick once this returns.
+    if (tileFetchPendingLoad() == 0) {
+      const uint32_t now_ms = millis();
+      if (prog_painted == 0 || (uint32_t)(now_ms - prog_last_ms) >= k_map_progressive_ms) {
+        lv_refr_now(NULL);
+        prog_last_ms = millis();   // AFTER the paint: throttle the gap between paints, not their starts
+        ++prog_painted;
+      }
+    }
     // Yield to the IDLE task after each tile's read + decode + paint. This loop
     // runs on loopTask, which is what the task watchdog watches via IDLE1; a full
     // 9-tile load (or a few slow SD reads) can otherwise pin the core long enough
@@ -30720,6 +30785,18 @@ static void onMapTabActivated() {
   memset(s_tile_fetch_dedup, 0, sizeof(s_tile_fetch_dedup));
   s_tile_fetch_dedup_head = 0;
 #endif
+  // Nine tile reads + JPEG decodes block this callback for ~2.5 s on the first
+  // open after boot (measured: [STALL] ui:lvgl 2597ms, M9_PORT.md). Show the
+  // hint and flush a frame FIRST — ahead of the recenter/zoom-probe block
+  // below, not just ahead of renderMapTiles. Sitting after that block, the hint
+  // could not paint until the probe had already finished, so the whole scan
+  // happened with the OUTGOING tab still frozen on the panel and the device
+  // looking wedged. Nothing here depends on the centre or zoom.
+  if (s_map_status_lbl) {
+    lv_label_set_text(s_map_status_lbl, TR("Loading map\xe2\x80\xa6"));
+    lv_obj_clear_flag(s_map_status_lbl, LV_OBJ_FLAG_HIDDEN);
+  }
+  lv_refr_now(NULL);   // drain one frame so the label reaches the panel before we block
   // The entire UI is now clocked at 160 MHz from UITask::begin, so there's
   // no per-tab boost dance here anymore. (Tried 240 MHz briefly — the
   // PSRAM bus tightens enough at that clock for the SJPG decoder to
@@ -30745,18 +30822,23 @@ static void onMapTabActivated() {
 #if defined(ESP32)
     have_saved_zoom = (touchPrefsGetMapZoom() != 0);
 #endif
-    const uint8_t best = bestAvailableZoom(s_map_center_lat, s_map_center_lon);
+    // Only probe when the answer can actually be USED. Two ways it could not:
+    //   • a persisted zoom wins outright, so the result is discarded one line
+    //     down — but the walk was paid anyway, on every boot's first map open;
+    //   • a still-zero centre has no tile to find at ANY level, so the walk ran
+    //     all 17 zoom levels against the card and returned 0. That case is not
+    //     first-open-only: s_map_view_inited below only latches once a centre
+    //     exists, so without a fix (or a Profile location) the guard above never
+    //     closes and this repeated on EVERY map open, forever.
+    // bestAvailableZoom has no other caller, so this is pure dead-work removal.
+    const bool centred = !(s_map_center_lat == 0.0 && s_map_center_lon == 0.0);
+    const uint8_t best = (have_saved_zoom || !centred)
+                       ? 0 : bestAvailableZoom(s_map_center_lat, s_map_center_lon);
     if (best != 0 && !have_saved_zoom) s_map_zoom = best;
-    if (!(s_map_center_lat == 0.0 && s_map_center_lon == 0.0)) s_map_view_inited = true;
+    if (centred) s_map_view_inited = true;
   }
-  // 9 SPIFFS reads + JPEG decodes take ~1-3 seconds on first paint. Show a
-  // visible "loading" hint and force an LVGL render pass BEFORE we block on
-  // the actual tile reads, so the user doesn't think the device froze.
-  if (s_map_status_lbl) {
-    lv_label_set_text(s_map_status_lbl, TR("Loading map\xe2\x80\xa6"));
-    lv_obj_clear_flag(s_map_status_lbl, LV_OBJ_FLAG_HIDDEN);
-  }
-  lv_refr_now(NULL);   // drain one frame so the label paints before we block
+  // (The "Loading map…" hint + frame flush moved to the top of this function —
+  // it has to precede the zoom probe above, not just the tile reads below.)
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
