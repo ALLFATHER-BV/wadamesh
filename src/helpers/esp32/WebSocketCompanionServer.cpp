@@ -374,7 +374,7 @@ static const char WS_HTML_TERMINAL_PAGE[] =
   "function showSettings(d){var g=E;\n"
   " var h='<div class=sset><label>NODE NAME</label><div class=srow><input type=text id=sfname><button class=sbtn id=sbname>Save</button></div>';\n"
   " h+='<label>RADIO (applies live)</label><div class=sgrid>';\n"
-  " h+='<div class=f><label>Freq MHz</label><input type=number step=0.001 id=sffreq></div><div class=f><label>BW kHz</label><input type=number id=sfbw></div>';\n"
+  " h+='<div class=f><label>Freq MHz</label><input type=number step=0.001 id=sffreq></div><div class=f><label>BW kHz</label><input type=number step=0.1 id=sfbw></div>';\n"
   " h+='<div class=f><label>SF</label><input type=number id=sfsf></div><div class=f><label>CR</label><input type=number id=sfcr></div>';\n"
   " h+='<div class=f><label>TX dBm</label><input type=number id=sftx></div><div class=f><label>&nbsp;</label><button class=sbtn id=sbradio style=width:100%>Apply</button></div></div>';\n"
   " h+='<label>CONNECTIVITY</label><div class=stog><b>Wi-Fi</b><div class=sw id=swifi><i></i></div></div>';\n"

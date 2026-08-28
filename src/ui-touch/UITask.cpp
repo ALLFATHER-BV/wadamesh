@@ -19887,7 +19887,7 @@ static void webPushSettings() {
   const bool wc = (WiFi.status() == WL_CONNECTED);
   char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
   p += snprintf(p, e - p,
-    "{\"t\":\"sg\",\"freq\":%.3f,\"bw\":%.0f,\"sf\":%d,\"cr\":%d,\"tx\":%d,\"wifi\":%d,\"ble\":%d,\"blecap\":%d,\"tcp\":%d,\"name\":\"",
+    "{\"t\":\"sg\",\"freq\":%.3f,\"bw\":%.1f,\"sf\":%d,\"cr\":%d,\"tx\":%d,\"wifi\":%d,\"ble\":%d,\"blecap\":%d,\"tcp\":%d,\"name\":\"",
     pr ? pr->freq : 0.0f, pr ? pr->bw : 0.0f, pr ? pr->sf : 0, pr ? pr->cr : 0, pr ? (int)pr->tx_power_dbm : 0,
     wc ? 1 : 0, g_lv.task->isBleEnabled() ? 1 : 0, g_lv.task->hasBleCapability() ? 1 : 0,
     g_lv.task->isTcpEnabled() ? 1 : 0);
