@@ -163,13 +163,16 @@
 // Focus-group D-pad navigation (no pointer): Tanmatsu keypad, T-Deck trackball,
 // the pager (no touch at all — the rotary encoder is its only nav input, so
 // like Tanmatsu this is always-on, not an optional toggle like the T-Deck's),
-// or the ThinkNode M9's d-pad. The underlying machinery (navFifo, navMoveDir,
-// the focus group, the secondary KEYPAD indev) is generic — only the *pump*
-// that feeds it differs per board: Tanmatsu's navPump() reads bsp-input events;
-// T-Deck's WASDZ-letter nav and the M9's raw d-pad bytes are both fed straight
-// from handleHwKey() instead (see UITask.cpp's `#elif defined(HAS_M9_KEYBOARD)`
-// block, parallel to the T-Deck's `#if CAP_TRACKBALL` block).
-#if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+// the ThinkNode M9's d-pad, or the Attaky's front D-pad + SELECT. The underlying
+// machinery (navFifo, navMoveDir, the focus group, the secondary KEYPAD indev)
+// is generic — only the *pump* that feeds it differs per board: Tanmatsu's
+// navPump() reads bsp-input events; T-Deck's WASDZ-letter nav and the M9's raw
+// d-pad bytes are both fed straight from handleHwKey() instead (see UITask.cpp's
+// `#elif defined(HAS_M9_KEYBOARD)` block, parallel to the T-Deck's `#if
+// CAP_TRACKBALL` block); the Attaky drains its expander queue in attakyNavPump().
+// NOTE: the Attaky is the first board here with CAP_KEYBOARD == 0, so anything
+// this flag pulls in must not assume a physical keyboard is also compiled.
+#if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES)
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0

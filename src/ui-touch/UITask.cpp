@@ -1917,6 +1917,18 @@ static bool tbFingerTouchOnTabBarBlocked(uint16_t y) {
 static bool s_kbd_nav = true;
 #endif
 
+#if defined(ATTAKY_MESH_SERIES)
+// Attaky Mesh Deck: touch is the primary input, and the front D-pad + SELECT are
+// a second one — so this takes the same CAP_KEYPAD_NAV "secondary indev" path as
+// the M9 block below, fed by attakyNavPump() draining the @0x59 expander queue.
+// The three symbols are the ones that path needs (see the M9's note); nav is
+// always on because the buttons are soldered to the board — there is nothing to
+// toggle off, and with no press the group just sits unfocused and invisible.
+static bool           s_kbd_nav        = true;
+static bool           s_tb_nav         = false;  // no trackball — read by the shared nav-rebuild gate, never set
+static lv_indev_drv_t s_nav_keypad_drv;
+#endif
+
 #if defined(HAS_THINKNODE_M9)
 // Keyboard-only device (no touch, no trackball): nav is always on, same as Tanmatsu above.
 // Unlike Tanmatsu (which registers its KEYPAD indev as the PRIMARY one, driven by navPump()
@@ -36910,11 +36922,14 @@ static bool popupRegistryBlocksSwipe();
 // True if any popup/modal is currently up (rows flagged PF_COUNT).
 static bool anyPopupOpen() { return popupRegistryAny(); }
 
-#if CAP_KEYBOARD
+#if CAP_KEYBOARD || CAP_KEYPAD_NAV
 // Close the topmost popup/modal (registry order = front-to-back priority),
 // like tapping its X / close button. Returns true if one was dismissed.
+// Widened past CAP_KEYBOARD for the Attaky: navGoToMainTab() (inside the
+// CAP_KEYPAD_NAV block) calls this, and that board navigates with a D-pad but
+// has no physical keyboard, so the old gate left the declaration undefined.
 static bool hwKeyDismissTopPopup() { return popupRegistryDismissTop(); }
-#endif  // HAS_TDECK_KEYBOARD || HAS_TANMATSU (hwKeyDismissTopPopup)
+#endif  // CAP_KEYBOARD || CAP_KEYPAD_NAV (hwKeyDismissTopPopup)
 
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD) || defined(HAS_M9_KEYBOARD)
 // Keys that act as "close the popup" when no text field is focused.
@@ -38962,6 +38977,89 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     composerMentionRefresh(ta);   // @mention contact picker, else the accent box
   }
   if (g_lv.task) g_lv.task->noteUserInput();
+}
+#endif
+
+#if defined(ATTAKY_MESH_SERIES)
+// ---- Attaky front D-pad -> focus navigation ---------------------------------
+// The five nav buttons on the @0x59 expander (P00 down, P01 left, P02 select,
+// P03 right, P04 up) drive the SAME focus group the Tanmatsu arrows and the
+// T-Deck trackball use, so they reach every screen with no per-screen handling.
+// Touch stays this board's primary input and the D-pad is a second one — which
+// is why the focus ring starts hidden (s_nav_show is false until a press) and
+// nothing here is toggleable: the buttons are soldered on, so "off" would just
+// make them dead.
+//
+// This board compiles no handleHwKey() (its keyboard module types straight into
+// the focused textarea), so the nav routing the T-Deck and M9 do from there
+// lives here instead. Deliberately narrower than the M9's: that board has no
+// touch, so it also needs d-pad paths for Back, Home, the chat-bubble action
+// menu and map panning — all of which are still a tap away here.
+static void attakyNavPump() {
+  // The field currently bound to the keyboard, and whether the D-pad should be
+  // editing it: focus has to be really ON it (a tap sets s_nav_ta_editing), so
+  // arrows moving through a page don't get swallowed as caret moves.
+  lv_obj_t* const ta_focused = g_lv.keyboard ? lv_keyboard_get_textarea(g_lv.keyboard) : nullptr;
+  lv_obj_t* const ta = (ta_focused && s_nav_ta_editing) ? ta_focused : nullptr;
+
+  for (int i = 0; i < 8; ++i) {
+    const int ev = attakyNavKeyRead();
+    if (ev == ATTAKY_NAV_NONE) break;
+
+    switch (ev) {
+      case ATTAKY_NAV_UP:
+      case ATTAKY_NAV_DOWN: {
+        const bool up = (ev == ATTAKY_NAV_UP);
+        // The @-mention picker owns up/down while it shows: its cells carry
+        // NAV_SKIP_FLAG (they're tap targets on touch boards), so the focus
+        // group cannot reach them at all.
+        if (mentionNavActive()) { mentionNavMove(up ? -1 : +1); break; }
+        // An open dropdown LIST owns them too — navMoveDir would move focus
+        // off the dropdown, which closes it. The FIFO'd LV_KEY_UP/DOWN reach
+        // the dropdown's own handler, which moves the highlighted option.
+        if (navOpenDropdown()) { navPushTap(up ? LV_KEY_UP : LV_KEY_DOWN); break; }
+        lv_obj_t* const was = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+        navMoveDir(up ? NAV_UP : NAV_DOWN);
+        // Focus had nowhere to go: page-scroll instead. A display-only Lua app
+        // scrolls its own body; everything else falls to navScrollFocused, so
+        // pages with few or no focusable rows still move under the D-pad.
+        if (s_nav_group && lv_group_get_focused(s_nav_group) == was) {
+          if (!(luaAppIsOpen() && luaAppScroll(up))) navScrollFocused(up);
+        }
+        break;
+      }
+      case ATTAKY_NAV_LEFT:
+      case ATTAKY_NAV_RIGHT: {
+        const bool left = (ev == ATTAKY_NAV_LEFT);
+        if (mentionNavActive() || navOpenDropdown()) break;   // vertical-only: swallow
+        if (ta) {
+          // Caret already at the edge: fall through to a focus move, so the
+          // pad always eventually LEAVES the field instead of no-oping.
+          const uint32_t p = lv_textarea_get_cursor_pos(ta);
+          if (left) lv_textarea_cursor_left(ta); else lv_textarea_cursor_right(ta);
+          if (lv_textarea_get_cursor_pos(ta) == p) navMoveDir(left ? NAV_LEFT : NAV_RIGHT);
+        }
+        else if (navOnTabBar()) navSwitchTab(left ? -1 : +1);
+        else                    navMoveDir(left ? NAV_LEFT : NAV_RIGHT);
+        break;
+      }
+      case ATTAKY_NAV_SELECT:
+        if (mentionNavActive()) { mentionNavConfirm(); break; }
+        if (navOnTabBar()) { navSwitchTab(+1); break; }
+        // First SELECT on a focused field starts typing (the caret appears and
+        // left/right walk it); the next one activates whatever is focused.
+        if (ta_focused && !ta && s_nav_group && lv_group_get_focused(s_nav_group) == ta_focused) {
+          s_nav_ta_editing = true;
+          break;
+        }
+        navMarkEntered(s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr);
+        navPushTap(LV_KEY_ENTER);
+        break;
+      default: break;
+    }
+    s_nav_show = true;
+    if (g_lv.task) g_lv.task->noteUserInput();
+  }
 }
 #endif
 
@@ -52004,6 +52102,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(ESP32)
 #if defined(HAS_TANMATSU) || defined(HAS_THINKNODE_M9)
     s_kbd_nav = true;   // keyboard-only device: nav is always on (no touch to fall back to)
+#elif defined(ATTAKY_MESH_SERIES)
+    // Soldered-on D-pad, and no settings row toggles it (the "Keyboard navigation"
+    // switch is CAP_TRACKBALL-only) — reading the pref here would let a value left
+    // over from another board leave the buttons dead with no way to turn them back on.
+    s_kbd_nav = true;
 #else
     s_kbd_nav = touchPrefsGetKbdNav();
 #endif
@@ -54979,6 +55082,22 @@ void UITask::loop() {
   if (attakyPowerKeyPressed()) {
     if (_screen_off) wakeScreen();
     else             sleepScreen();
+  }
+  // Front D-pad (P00..P04) -> focus navigation. Two things have to happen before
+  // the drain: with the screen dark a press only WAKES (and is swallowed, so a
+  // wake never also activates whatever the ring happened to be on — the pager's
+  // encoder-wake bug), and in remote mode the panel is a placeholder the browser
+  // drives. Otherwise sync the focus group to the current tree first: Enter's
+  // tree mutations only land inside lv_timer_handler at the END of a tick, so a
+  // drain against a stale mirror navigates the screen behind a just-opened modal
+  // (the same fix the M9's branch above carries).
+  if (_screen_off || s_remote_mode) {
+    const bool any = (attakyNavKeyRead() != ATTAKY_NAV_NONE);
+    attakyNavKeysDiscard();
+    if (any && _screen_off) wakeScreen();
+  } else {
+    navMaybeRebuild();
+    attakyNavPump();
   }
 #endif
 #if defined(HAS_ATTAKY_MESH_KEYBOARD)
