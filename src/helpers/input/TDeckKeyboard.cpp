@@ -75,6 +75,27 @@ static void processRawFrame(const uint8_t frame[TDeckKeyboardState::COLS], uint3
   portEXIT_CRITICAL(&s_keyboard_mux);
 }
 
+// True when a five-byte answer can only be a legacy ASCII reply: the character
+// in byte 0 with padding after it. A real matrix frame puts one bit per pressed
+// key in that key's own column, so three or more bits in byte 0 with every other
+// column empty is not something the hardware can report.
+static bool looksLikeAscii(const uint8_t frame[TDeckKeyboardState::COLS]) {
+  for (size_t col = 1; col < TDeckKeyboardState::COLS; ++col) if (frame[col]) return false;
+  if (frame[0] < 0x20 || frame[0] > 0x7E) return false;   // must be a printable character
+  int bits = 0;
+  for (int b = 0; b < 8; ++b) if (frame[0] & (1u << b)) ++bits;
+  return bits > 2;
+}
+
+// Verified against the real tables rather than assumed:
+//   - all 26 lowercase letters set 3 or more bits, so ANY letter demotes on the
+//     first press. Only '0', ' ' and '!' do not, and space happens to render
+//     correctly anyway (column 0 bit 5 IS space).
+//   - going the other way, a genuine frame reaching this needs three or more of
+//     {q, w, a, space} held at once and nothing else. The printable-range test
+//     above removes q+w+a (0x0B); what remains are combinations including space,
+//     which is a fumble rather than typing, and costs a reboot to undo.
+
 static void processLegacyKey(uint8_t key) {
   portENTER_CRITICAL(&s_keyboard_mux);
   const uint32_t generation = s_modifier_mode_generation;
@@ -128,16 +149,28 @@ void tdeckKeyboardPoll() {
   if (!s_inited) return;
   tdeckKeyboardFlushBacklight();
   if (s_mode == KeyboardMode::Probe) {
-    // LilyGO keyboard firmware from June 2025 onward accepts 0x03 and returns
-    // five column-state bytes. Older controllers ignore it and keep returning
-    // one resolved ASCII byte; restore 0x04 key mode when that is what we have.
+    // Deciding whether this controller speaks the raw column protocol.
     //
-    // KEEP RETRYING before concluding "old firmware". This used to decide on a
-    // SINGLE read, and the first I2C read after boot is the least trustworthy
-    // one there is: the C3 is still coming up, so a short or garbled frame is
-    // ordinary. One such frame committed the device to legacy mode for the whole
-    // session, with no recovery short of a reboot -- reported as latching simply
-    // not working on a T-Deck carrying the June 2025 firmware (#332).
+    // The old test was "five bytes came back and no high bit is set", which a
+    // LEGACY controller passes trivially: it answers a five-byte read with the
+    // pressed character followed by padding, and every lowercase letter has its
+    // high bit clear. Read as a column bitmap, 'a' (0x61) emits "q " and 'm'
+    // (0x6d) emits "qa ". That is the garbage Vybo reported on an older T-Deck
+    // (#341), and the retry window added in beta_72 made it MORE likely to
+    // latch, not less.
+    //
+    // The positive test: a real matrix frame from a key press has ONE bit set,
+    // in whichever column that key lives. A legacy reply only ever has byte 0
+    // non-zero, and an ASCII letter sets three or four bits at once. So:
+    //
+    //   any non-zero byte in columns 1..4  -> genuinely raw (padding is never
+    //                                         non-zero there)
+    //   byte 0 with >2 bits set, rest zero -> an ASCII character, so legacy
+    //
+    // An all-zero frame is idle and proves nothing either way, so keep probing.
+    // If the window expires having seen only column-0 activity, fall back to
+    // LEGACY. That is the safe default: the cost of being wrong is losing
+    // modifier latching, never losing the keyboard.
     static uint32_t s_probe_start_ms = 0;
     const uint32_t now = millis();
     if (!s_probe_start_ms) s_probe_start_ms = now;
@@ -145,37 +178,70 @@ void tdeckKeyboardPoll() {
     keyboardCommand(0x03);
     uint8_t frame[TDeckKeyboardState::COLS] = {};
     const int count = keyboardRead(frame, sizeof frame);
-    bool valid_raw = count == (int)sizeof frame;
-    size_t bad_col = 0;
-    for (size_t col = 0; col < sizeof frame && valid_raw; ++col) {
-      if (frame[col] & 0x80) { valid_raw = false; bad_col = col; }
-    }
-    if (valid_raw) {
+
+    bool shape_ok = (count == (int)sizeof frame);
+    for (size_t col = 0; col < sizeof frame && shape_ok; ++col)
+      if (frame[col] & 0x80) shape_ok = false;
+
+    if (shape_ok) {
+      bool cols1plus = false;
+      for (size_t col = 1; col < sizeof frame; ++col) if (frame[col]) cols1plus = true;
+      int b0bits = 0;
+      for (int b = 0; b < 8; ++b) if (frame[0] & (1u << b)) ++b0bits;
+
+      if (cols1plus) {                       // only a real matrix reaches here
+        s_mode = KeyboardMode::Raw;
+        Serial.println("[keyboard] T-Deck raw mode: modifier latching enabled");
+        processRawFrame(frame, now);
+        return;
+      }
+      if (frame[0] && b0bits > 2) {          // an ASCII byte, not a column
+        keyboardCommand(0x04);
+        s_mode = KeyboardMode::Legacy;
+        Serial.printf("[keyboard] T-Deck legacy mode: controller answered with a character "
+                      "(0x%02X), not a column frame\n", frame[0]);
+        processLegacyKey(frame[0]);
+        return;
+      }
+      if ((uint32_t)(now - s_probe_start_ms) < kProbeWindowMs) return;   // idle: keep looking
+      // Window expired with a well-formed, idle frame every time. That is what a
+      // raw controller looks like when nobody is typing, so take it -- a legacy
+      // one would have shown us a character by now if it had one, and if it has
+      // not, looksLikeAscii() below still demotes the moment it does.
       s_mode = KeyboardMode::Raw;
       Serial.println("[keyboard] T-Deck raw mode: modifier latching enabled");
-      processRawFrame(frame, millis());
       return;
+    } else if ((uint32_t)(now - s_probe_start_ms) < kProbeWindowMs) {
+      if (count == 1) { keyboardCommand(0x04); processLegacyKey(frame[0]); }
+      return;                                 // short/garbled read: the C3 may still be waking
     }
-    // A legacy controller answers with one resolved byte. Deliver it either way
-    // so nothing typed during the probe window is dropped.
-    if (count == 1) { keyboardCommand(0x04); processLegacyKey(frame[0]); }
-    if ((uint32_t)(now - s_probe_start_ms) < kProbeWindowMs) return;   // try again next poll
 
     keyboardCommand(0x04);
     s_mode = KeyboardMode::Legacy;
-    // Say WHY, so the next report of "latching does not work" is one line to
-    // diagnose instead of a guess about which firmware someone has.
-    Serial.printf("[keyboard] T-Deck legacy mode: update keyboard C3 firmware for modifier "
-                  "latching (probe read %d bytes, wanted %d%s)\n",
-                  count, (int)sizeof frame,
-                  (count == (int)sizeof frame) ? ", high bit set in a column" : "");
-    (void)bad_col;
+    Serial.printf("[keyboard] T-Deck legacy mode: no raw column frame seen in %lu ms "
+                  "(probe read %d bytes)\n", (unsigned long)kProbeWindowMs, count);
+    if (count == 1) processLegacyKey(frame[0]);
     return;
   }
+
   if (s_mode == KeyboardMode::Raw) {
     uint8_t frame[TDeckKeyboardState::COLS] = {};
     if (keyboardRead(frame, sizeof frame) != (int)sizeof frame) return;
     for (size_t col = 0; col < sizeof frame; ++col) if (frame[col] & 0x80) return;
+    // Raw mode has to be able to admit it guessed wrong. An idle controller of
+    // either kind answers with zeros, so the probe cannot tell them apart until
+    // someone types -- and on a legacy controller that first character arrives
+    // in byte 0 with three or four bits set, which no single key press can
+    // produce. Demote on the spot and deliver the character, so the worst case
+    // is one odd keystroke rather than a keyboard that types nonsense forever.
+    if (looksLikeAscii(frame)) {
+      keyboardCommand(0x04);
+      s_mode = KeyboardMode::Legacy;
+      Serial.printf("[keyboard] T-Deck legacy mode: raw guess withdrawn, controller sent a "
+                    "character (0x%02X)\n", frame[0]);
+      processLegacyKey(frame[0]);
+      return;
+    }
     processRawFrame(frame, millis());
     return;
   }
