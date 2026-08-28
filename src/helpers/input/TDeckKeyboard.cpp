@@ -111,6 +111,12 @@ static void processLegacyKey(uint8_t key) {
   portEXIT_CRITICAL(&s_keyboard_mux);
 }
 
+// Set from the UI at boot (Settings > Keyboard). When true the probe is skipped
+// entirely and the older protocol is used, which is the escape hatch for a
+// controller that detection gets wrong (#351).
+static bool s_force_legacy = false;
+void tdeckKeyboardForceLegacy(bool on) { s_force_legacy = on; }
+
 void tdeckKeyboardBegin() {
   s_mode = KeyboardMode::Probe;
   s_raw_state = TDeckKeyboardState{};
@@ -148,6 +154,11 @@ void tdeckKeyboardFlushBacklight() {
 void tdeckKeyboardPoll() {
   if (!s_inited) return;
   tdeckKeyboardFlushBacklight();
+  if (s_force_legacy && s_mode != KeyboardMode::Legacy) {
+    keyboardCommand(0x04);
+    s_mode = KeyboardMode::Legacy;
+    Serial.println("[keyboard] T-Deck legacy mode: forced in settings");
+  }
   if (s_mode == KeyboardMode::Probe) {
     // Deciding whether this controller speaks the raw column protocol.
     //

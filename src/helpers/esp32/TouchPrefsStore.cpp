@@ -135,6 +135,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.boot_advert       = 0;      // OFF: no automatic advert on boot — opt-in (#76)
   c.console_mode      = 0;      // OFF: boot into the graphical UI (CONSOLE_MODE.md)
   c.console_monitor   = 1;      // ON: the console shows messages as they arrive
+  c.kb_force_legacy   = 0;      // OFF: detect the keyboard protocol automatically
   c.compact_chat      = 0;      // OFF: bubble chat layout (opt-in IRC-style dense rows)
   c.clock_floor       = 0;      // no persisted send-timestamp floor yet
   c.rx_queue          = 1;      // ON: buffered receive (test-channel default; opt-out toggle in Radio & Mesh)
@@ -242,6 +243,7 @@ static void cfgLoadOrMigrate() {
         // a garbage 1 would boot a user into a console they did not ask for.
         if (stored_version < 51) s_cfg.console_mode = 0;
         if (stored_version < 52) s_cfg.console_monitor = 1;   // new trailing field: on by default
+        if (stored_version < 53) s_cfg.kb_force_legacy = 0;   // new trailing field: auto-detect
         if (stored_version < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
         if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
@@ -1111,6 +1113,16 @@ bool touchPrefsGetConsoleMode() {
 bool touchPrefsSetConsoleMode(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.console_mode = on ? 1 : 0;
+  return cfgFlush();
+}
+
+bool touchPrefsGetKbForceLegacy() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.kb_force_legacy != 0;
+}
+bool touchPrefsSetKbForceLegacy(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.kb_force_legacy = on ? 1 : 0;
   return cfgFlush();
 }
 

@@ -1126,3 +1126,7 @@ N/A	N/A
 This board cannot run this app.	This board cannot run this app.
 Signal (stale)	Jel (elavult)
 nothing heard yet	Még semmi hír.
+Detecting the keyboard protocol	Detecting the keyboard protocol
+Older keyboard protocol	Older keyboard protocol
+Using the older keyboard protocol	Using the older keyboard protocol
+turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching

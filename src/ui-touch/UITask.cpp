@@ -11852,6 +11852,20 @@ static void enterSendsToggleCb(lv_event_t* e) {
 static volatile uint32_t s_msgflash_until = 0;     // keyboard-backlight pulse deadline (0 = idle)
 static volatile bool     s_msgflash_wake  = false; // one-shot screen-wake request (consumed in loop())
 static uint32_t          s_notify_wake_ms = 0;     // screen lit BY a message (not input) at this ms — re-dims after a short window (burn-in)
+#if defined(HAS_TDECK_KEYBOARD)
+// Escape hatch for a keyboard the protocol detection gets wrong. Reachable by
+// TOUCH, which is the whole point: when detection is wrong the keyboard types
+// nonsense, so any fix that needs the keyboard is no fix at all (#341, #351).
+static void kbForceLegacyToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetKbForceLegacy(on);
+  tdeckKeyboardForceLegacy(on);   // applies now; no reboot needed to get typing back
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Using the older keyboard protocol")
+                                         : TR("Detecting the keyboard protocol"), 1600);
+}
+#endif
+
 static void msgFlashToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -13336,6 +13350,25 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("lights the keyboard + wakes the screen on an incoming message"),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
+#if defined(HAS_TDECK_KEYBOARD)
+  /* Older keyboard controllers do not speak the raw protocol that modifier
+     latching needs, and the detection cannot be certain while nobody is typing.
+     When it guesses wrong the keyboard types the wrong letters, so this switch
+     exists to be reachable BY TOUCH and end it. */
+  {
+    int h = settingsRowLabel(body, y, 4, TR("Older keyboard protocol"), COLOR_TEXT, &g_font_12, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (touchPrefsGetKbForceLegacy()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(sw, kbForceLegacyToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, h + 10);
+    y += settingsRowLabel(body, y, 0, TR("turn on if your keyboard types the wrong letters; disables modifier latching"),
+                          COLOR_SUB, &g_font_12, 0) + 2;
+  }
+#endif
+
 #endif
 
 #if defined(HAS_TANMATSU)
@@ -51669,6 +51702,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   uint16_t to_s = touchPrefsGetScreenTimeoutSecs();
   _screen_timeout_ms = static_cast<uint32_t>(to_s) * 1000u;
   s_lock_on_screen_off = touchPrefsGetLockOnScreenOff();
+#if defined(HAS_TDECK_KEYBOARD)
+  // Applied here rather than at tdeckKeyboardBegin(), which runs on the touch
+  // task before prefs are up. The driver re-checks this every poll, so it takes
+  // effect on the next one either way, including demoting out of raw mode.
+  tdeckKeyboardForceLegacy(touchPrefsGetKbForceLegacy());
+#endif
 #endif
   _last_input_ms = millis();
   _screen_off    = false;

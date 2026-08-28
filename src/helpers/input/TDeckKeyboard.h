@@ -19,6 +19,10 @@
  *  driver, so this just enables polling. */
 void tdeckKeyboardBegin();
 
+/** Force the older keyboard protocol, skipping raw detection. Escape hatch for a
+ *  controller the probe gets wrong; call before/at begin and on the setting. */
+void tdeckKeyboardForceLegacy(bool on);
+
 /** Read one key over I2C and push it into the ring. CORE-0 ONLY (touch task). */
 void tdeckKeyboardPoll();
 
