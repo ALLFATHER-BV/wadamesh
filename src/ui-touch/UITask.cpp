@@ -27385,7 +27385,16 @@ static void tileFetchTaskFn(void* arg) {
         tileCacheRemove(path_jpg);   // present but unreadable/short/bad -> fall through and re-download
       }
     }
-    tileCacheRemove(path_png);   // drop any stale .png from an older build — remove is a no-op if absent (don't gate on the broken exists())
+    // Drop any stale .png from an older build — but ONLY on the firmware's own
+    // LittleFS cache partition, which is what this cleanup was written for.
+    // s_tile_fs is re-pointed at the SD ROOT on boards that cache tiles to the
+    // card (M9 always; see UITask::begin), and s_tile_root is "" there — so
+    // unguarded this resolved to SD.remove("/tiles/<z>/<x>/<y>.png"), deleting
+    // the user's own offline map pack. The skip-check above only ever tests the
+    // .jpg, so every queued tile whose .jpg was absent erased the co-located
+    // .png. Same discriminator tileCacheMarkSdIo/tilesFsLowSpace already use.
+    if (s_tile_fs == &s_tiles_fs)
+      tileCacheRemove(path_png);   // no-op if absent (don't gate on the broken exists())
 
     // Heap-safety gate: opening a TCP socket costs ~6 KB of internal DMA
     // RAM, and the Wi-Fi driver needs more on top for RX. If internal
