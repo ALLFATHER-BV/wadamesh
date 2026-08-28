@@ -7050,6 +7050,13 @@ static bool mentionBoxMaybeShow(lv_obj_t* ta) {
 static void composerMentionRefresh(lv_obj_t* ta) {
   if (mentionBoxMaybeShow(ta)) { accentBoxHide(); return; }
   mentionBoxHide();
+  // Fall through to the accent box, as this function's predecessor did. Losing
+  // this is what killed accent popups for anyone typing on a PHYSICAL keyboard
+  // (#338): those keystrokes reach the composer's own VALUE_CHANGED, which ends
+  // up here, while the on-screen keyboard has a separate path that kept its
+  // call. Cheap to call twice, since accentBoxMaybeShow() hides the previous
+  // box before deciding whether to show one.
+  accentBoxMaybeShow();
 }
 static void composerSuggestChangedCb(lv_event_t* e) {
   lv_obj_t* ta = lv_event_get_target(e);
@@ -15712,6 +15719,22 @@ static void actionSheetResetPathCb(lv_event_t* e) {
   }
 }
 
+// Hand this contact to whoever is in direct range: re-broadcast its advert as a
+// zero-hop packet. No refreshContactsList() — unlike Reset path / Delete this
+// does not touch the contact table, it only puts a packet on the air.
+static void actionSheetShareContactCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  ContactInfo c;
+  bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
+  closeActionSheet();
+  if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
+  if (the_mesh.uiShareContact(c.id.pub_key)) {
+    g_lv.task->showAlert(TR("Contact shared"), 1000);
+  } else {
+    g_lv.task->showAlert(TR("Share failed"), 1200);
+  }
+}
+
 // "Telemetry" — fire REQ_TYPE_GET_TELEMETRY_DATA at the selected contact.
 // The reply lands on UITask::onPingReply (same as STATUS) with the raw LPP
 // payload; the user sees "<name>: reply (N bytes)" until proper LPP
@@ -17319,9 +17342,10 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   }
   // Everything except Delete goes in a 2-column grid; Delete is a full-width
   // bottom row. Grid items = msg/ping + telemetry + range + favorite + reset +
-  // block (6), + trace/admin for repeaters (2), + Join for rooms (1), +
-  // line-of-sight (1), + Show on map (1 when contact has GPS and !from_map).
-  const int grid_items = (from_map ? 5 : 6) + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
+  // block + share contact (7), + trace/admin for repeaters (2), + Join for
+  // rooms (1), + line-of-sight (1), + Show on map (1 when contact has GPS and
+  // !from_map).
+  const int grid_items = (from_map ? 5 : 7) + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
   const int body_content_h = (grid_rows + 1) * btn_h + grid_rows * btn_gap;
   int card_h = 2 * padding + title_h + body_content_h;
@@ -17480,6 +17504,10 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   }
 #endif
   mk_btn(TR(LV_SYMBOL_LOOP  "  Reset path"), actionSheetResetPathCb, 0);
+  // Share this contact with nodes in direct range (#321). Contacts-screen
+  // action; the map-marker sheet stays compact.
+  if (!from_map)
+    mk_btn(TR(LV_SYMBOL_UPLOAD "  Share contact"), actionSheetShareContactCb, 0);
   // Block / unblock — label flips on the current ignore state. Skipped when the
   // sheet is opened from a map marker (keeps that popup compact).
   if (!from_map) {
@@ -54247,6 +54275,21 @@ void UITask::loop() {
       // touch does in the UI. Otherwise the character you used to see the screen
       // ends up in the command you are typing.
       if (_screen_off) { tdeckKeyboardDiscardModifiers(); wakeScreen(); continue; }
+      consoleKey(key);
+    }
+#endif
+#if defined(HAS_M9_KEYBOARD)
+    // The M9 has no touchscreen, so this IS its only way to type. Its controller
+    // sits on Wire1 with nothing else on the bus, so it polls on this thread
+    // exactly as the graphical path does (m9KeyboardPoll rate-limits internally).
+    // Missing here is what stranded a device in console mode on beta_70.
+    m9KeyboardPoll();
+    for (int kbi = 0; kbi < 12; ++kbi) {
+      int key = m9KeyboardReadKey();
+      if (key <= 0) break;
+      con_activity = true;
+      s_kb_last_key_ms = now;
+      if (_screen_off) { wakeScreen(); continue; }   // a key on a dark screen wakes, not types
       consoleKey(key);
     }
 #endif

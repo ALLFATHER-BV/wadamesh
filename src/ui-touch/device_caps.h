@@ -198,11 +198,26 @@
 #endif
 
 // Console mode (CONSOLE_MODE.md): a text front end drawn straight to the panel
-// with no LVGL. Needs a DisplayDriver, which every board that has a screen has,
-// so this is on wherever there is something to draw on. It does NOT imply the
-// device boots into it; that is a user pref read at startup.
+// with no LVGL. It does NOT imply the device boots into it; that is a user pref
+// read at startup.
+//
+// A DISPLAY IS NOT ENOUGH. This used to be gated on DISPLAY_CLASS alone, which
+// reasons about output and says nothing about whether the user can type. The
+// console's only input paths are the T-Deck keyboard, the M9 keyboard and the
+// on-screen keypad (CAP_TOUCH), so on any other board it booted, painted
+// "type 'ui' to go back", and accepted nothing: an unbootable-out state that
+// survived a power cycle and a reset, because the pref persists and the panic
+// self-heal never fires when nothing has actually crashed. A ThinkNode M9 was
+// stranded exactly this way on beta_70 (gadgeteerza).
+//
+// Any board added here must have a drain in the console branch of UITask::loop.
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD) || CAP_TOUCH
+  #define CAP_CONSOLE_INPUT 1
+#else
+  #define CAP_CONSOLE_INPUT 0
+#endif
 #ifndef CAP_CONSOLE
-  #if defined(DISPLAY_CLASS)
+  #if defined(DISPLAY_CLASS) && CAP_CONSOLE_INPUT
     #define CAP_CONSOLE 1
   #else
     #define CAP_CONSOLE 0

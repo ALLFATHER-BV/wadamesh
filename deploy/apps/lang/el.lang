@@ -184,6 +184,7 @@ Contact added	Η επαφή προστέθηκε
 Contact deleted	Η επαφή διαγράφηκε
 Contact gone	Η επαφή χάθηκε
 Contact missing	Η επαφή λείπει
+Contact shared	Η επαφή κοινοποιήθηκε
 Contacts	Επαφές
 Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Οι επαφές είναι στην εσωτερική μνήμη - η κάρτα SD δεν προσαρτήθηκε στην εκκίνηση. Επανατοποθετήστε την και επανεκκινήστε.
 Contacts are on internal flash.	Οι επαφές είναι στην εσωτερική μνήμη.
@@ -778,6 +779,8 @@ Settings	Ρυθμίσεις
 Setup complete	Η ρύθμιση ολοκληρώθηκε
 Share QR	Κοινοποίηση QR
 Share channel	Κοινή χρήση καναλιού
+Share contact	Κοινοποίηση επαφής
+Share failed	Αποτυχία κοινοποίησης
 Share location in advert	Κοινή χρήση θέσης στο advert
 Share secret	Κοινοποίηση μυστικού
 Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Μοιραστείτε το μυστικό 32 χαρακτήρων για να συμμετάσχουν άλλοι. Κενό = τυχαίο.

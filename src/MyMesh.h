@@ -1003,6 +1003,17 @@ public:
     return true;
   }
 
+  /** Re-broadcast a contact's advert as a zero-hop packet so nodes in direct
+   *  range can add it. Mirrors the CMD_SHARE_CONTACT serial handler. Zero-hop
+   *  deliberately: flooding a third party's advert spends the whole mesh's
+   *  airtime on a packet nobody asked for. Returns false when the contact isn't
+   *  in the table any more, or the send fails. */
+  bool uiShareContact(const uint8_t pub_key[32]) {
+    ContactInfo* slot = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+    if (!slot) return false;
+    return shareContactZeroHop(*slot);
+  }
+
   /** Update a contact's stored GPS position (microdegrees, *1e6) — e.g. from a
    *  telemetry reply that carried a CayenneLPP GPS field. Lets contacts that
    *  don't flood position adverts (but do answer telemetry) appear on the map
