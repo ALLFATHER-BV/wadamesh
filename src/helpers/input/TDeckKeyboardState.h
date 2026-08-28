@@ -39,13 +39,17 @@ class TDeckKeyboardState {
     if (!modifiers_enabled) {
       symbol_.baseline(down(0, 2));
       alt_.baseline(down(0, 4));
+      shift_.baseline(down(1, 6) || down(2, 3));
     }
     if (modifiers_enabled && pressed(0, 2)) symbol_.press();
     if (modifiers_enabled && pressed(0, 4)) alt_.press();
     if (modifiers_enabled && released(0, 2)) symbol_.release(now_ms);
     if (modifiers_enabled && released(0, 4)) alt_.release(now_ms);
+    if (modifiers_enabled && (pressed(1, 6) || pressed(2, 3)))  shift_.press();
+    if (modifiers_enabled && (released(1, 6) || released(2, 3))) shift_.release(now_ms);
 
-    const bool shift = modifiers_enabled && (down(1, 6) || down(2, 3));
+    // Held OR latched: a tap arms it for the next key, a double tap locks it.
+    const bool shift = modifiers_enabled && (down(1, 6) || down(2, 3) || shift_.latched());
     size_t written = 0;
     auto emit = [&](uint8_t key) {
       if (written < out_capacity) out[written++] = key;
@@ -81,6 +85,7 @@ class TDeckKeyboardState {
         if (modifiers_enabled) {
           symbol_.consumeForKey();
           if (!physical_alt) alt_.consumeForKey();
+          shift_.consumeForKey();   // one-shot shift expires on the key it capitalised
         }
         if (key == '\0') continue;
         char resolved = key;
@@ -108,4 +113,9 @@ class TDeckKeyboardState {
   uint8_t previous_[COLS] = {};
   LatchedModifier symbol_;
   LatchedModifier alt_;
+  // Shift latches like the other two (#344). It used to be a bare "is it held"
+  // test, so a capital letter meant holding shift down while reaching for the
+  // key. The board has two shift keys and they share one latch: whichever you
+  // press arms it, and either releases it.
+  LatchedModifier shift_;
 };
