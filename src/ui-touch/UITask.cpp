@@ -24222,10 +24222,17 @@ static void openSpectrumPage() {
   lv_obj_add_event_cb(s_spec_root, spectrumDismissCb, LV_EVENT_CLICKED, nullptr);
   // Keyboard/d-pad nav (M9, T-Deck, Tanmatsu): nothing on this page is actionable — the
   // chart and the waterfall's scale box are plain containers, so the nav collector was
-  // highlighting them for no reason. Skip the whole subtree (same as the lock screen):
-  // the focus group stays empty and the only way out is Back (hardware key / bar chevron /
-  // Esc — all routed through the page ladder, none of which needs focus).
-  lv_obj_add_flag(s_spec_root, NAV_SKIP_FLAG);
+  // highlighting them for no reason. The focus group should stay empty and the only way
+  // out be Back (hardware key / bar chevron / Esc — all routed through the page ladder,
+  // none of which needs focus).
+  // PASSTHRU, not SKIP: NAV_SKIP_FLAG hides this root from navTopHasVisibleChild and
+  // navTopFrontmostChild too, so the collector decided the top layer showed nothing and
+  // re-rooted the group onto the ACTIVE SCREEN — i.e. the app drawer still open beneath
+  // this full-screen page (tool tiles deliberately leave it up). The d-pad then moved an
+  // unseen focus ring across hidden drawer tiles and OK launched them. PASSTHRU keeps the
+  // page as the focus container while excluding the container itself as a target, which
+  // is what the paragraph above actually describes.
+  lv_obj_add_flag(s_spec_root, NAV_PASSTHRU_FLAG);
 
   // Settings-subpage chrome: the GLOBAL status bar goes tall and shows "‹ Spectrum"
   // (tap the bar = Back). Content insets below the bar's lower row — no second header.
@@ -24263,6 +24270,12 @@ static void openSpectrumPage() {
   lv_obj_set_size(s_spec_chart, chart_w, chart_h);
   lv_obj_set_pos(s_spec_chart, chart_x, chart_y);
   lv_obj_clear_flag(s_spec_chart, LV_OBJ_FLAG_SCROLLABLE);
+  // The trace is a read-out, never a control. lv_chart does NOT clear
+  // LV_OBJ_FLAG_CLICKABLE the way lv_label / lv_img do (LVGL 8.4 lv_obj.c sets
+  // it in the base constructor), so without this the nav collector takes the
+  // chart as the page's FIRST focus stop and navFocusCb paints it reverse-video
+  // — a solid fill straight over the live trace. Reported on the M9.
+  lv_obj_add_flag(s_spec_chart, NAV_SKIP_FLAG);
   lv_obj_set_style_bg_color(s_spec_chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_spec_chart, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_border_color(s_spec_chart, lv_color_hex(0x18191A), LV_PART_MAIN);
@@ -24322,6 +24335,7 @@ static void openSpectrumPage() {
       lv_obj_set_style_bg_color(sw_box, lv_color_hex(kRampStops[s]), LV_PART_MAIN);
       lv_obj_set_style_bg_opa(sw_box, LV_OPA_COVER, LV_PART_MAIN);
       lv_obj_clear_flag(sw_box, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_add_flag(sw_box, NAV_SKIP_FLAG);   // inert colour key — same reason as the chart above
     }
     s_spec_scale_hi_lbl = lv_label_create(s_spec_root);   // ceiling dBm (top, strong)
     lv_label_set_text(s_spec_scale_hi_lbl, "--");
@@ -39265,6 +39279,12 @@ static void showSubtleNotifyLvgl(const char* text, uint32_t duration_ms) {
     lv_obj_clear_flag(s_notify_chip, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(s_notify_chip, LV_OBJ_FLAG_CLICKABLE);   // taps pass through
     lv_obj_add_flag(s_notify_chip, LV_OBJ_FLAG_FLOATING);
+    // …and pass through keyboard nav too. Without this the chip counts as a
+    // visible lv_layer_top child, so navCollect re-roots the focus group onto it
+    // — and finds nothing focusable inside, because it is not CLICKABLE. The
+    // group came up EMPTY for the chip's ~1.1 s life: d-pad and OK inert, and
+    // the status-bar actions skipped, on every incoming message.
+    lv_obj_add_flag(s_notify_chip, NAV_SKIP_FLAG);
 
     lv_obj_t* l = lv_label_create(s_notify_chip);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
