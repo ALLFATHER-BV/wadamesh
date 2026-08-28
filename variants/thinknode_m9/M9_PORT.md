@@ -667,6 +667,211 @@ Gotchas for anyone revisiting this:
   onMapTabActivated). The open levers are decoding on core 0, or the M9's SD
   clock (still 4 MHz — see the deferred list below).
 
+  **SUPERSEDED by measurement, 2026-08-28.** The decode-vs-read framing above is
+  directionally right but was reasoning about the two SMALLER halves. Instrumented
+  on hardware (`[MAPPROF]`, audit pass 3 below), a 9-tile cold open split:
+
+  ```
+  total=2189ms probe=0ms render=2080ms
+        [read=497ms  decode=539ms  other=1042ms  tiles=9]  markers=10ms
+  ```
+
+  `other` — the per-tile `lv_refr_now()` progressive paint — cost **more than the
+  SD reads and the JPEG decodes combined**. On the immersive full-screen map each
+  call composites the whole 240x320 panel *and* alpha-blends the transparent
+  status + tab bars over it: ~115 ms a call, nine times. Throttling that to one
+  paint per 350 ms (`k_map_progressive_ms`) is a bigger win than either lever
+  named above, and it is board-independent. Measure before optimising here: the
+  intuition that "it must be the decode" was wrong by a factor of two.
+
+## Audit pass 3 (2026-08-28) — cold map open + a real Back history
+
+Third full sweep, prompted by two field reports: "the map doesn't load fast the
+first time" and "Back should go back to the previous navigation". Both were
+real; both had one identifiable cause. All eight PlatformIO envs compile-verified
+(the shared `UITask.cpp` is the blast radius); on-device validation still wanted.
+
+**Map, cold open.** The 2026-08-22 pass above fixed the *re-open* cost and left
+cold open at 2598 ms, correctly attributing the bulk to the SJPG decode. What it
+did not catch is what runs *in front* of that decode:
+
+- **`bestAvailableZoom()` was called unconditionally** (`onMapTabActivated`) and
+  its result discarded one line later whenever a zoom was persisted — which it
+  is as soon as the user touches +/- once. It walks z19→z3 probing the card at
+  each level, returning at the first hit. Now skipped when the answer cannot be
+  used. It has no other caller, so this is pure dead-work removal.
+- **The no-fix case was never first-open-only.** `s_map_view_inited` only latches
+  once a non-zero centre exists, so with no GPS fix and no Profile location the
+  recenter guard never closed: the full 17-level walk ran against lat/lon 0,0 —
+  tiles that cannot exist — on *every* map open, forever, and `renderMapTiles`
+  then bailed to the placeholder and freed the slots anyway. The centre is not
+  persisted across reboots either (only the zoom is), so every boot starts here.
+- **The "Loading map…" hint could not paint.** It was set *after* the probe, so
+  the whole scan happened with the outgoing tab still frozen on the panel. Moved
+  to the top of the function, and `goToTab` now uses `LV_ANIM_OFF` for the map
+  tab so the flush is not racing a 200-400 ms slide. Zero ms saved, but it turns
+  a frozen screen into visible progress — which is most of the reported bug.
+- **`tileExistsAt` probed `.png`, the generic loader only opens `.jpg`.** The
+  zoom guard therefore advertised, and the auto-snap selected, levels that render
+  blank. The `.png` leg is gone: the guard now mirrors the loader, and every
+  probe costs half as much.
+
+**Map, data loss (ship this one regardless).** `tileCacheRemove(path_png)` in the
+fetch worker — "drop any stale .png from an older build" — was written for the
+firmware's private LittleFS partition. `UITask::begin` re-points `s_tile_fs` at
+the SD **root** on this board with `s_tile_root = ""`, so it resolved to
+`SD.remove("/tiles/<z>/<x>/<y>.png")`: the user's own offline map pack. The
+skip-check above it only ever tests the `.jpg`, so every queued tile whose `.jpg`
+was absent erased the co-located `.png`. Now gated on `s_tile_fs == &s_tiles_fs`,
+the same discriminator `tileCacheMarkSdIo`/`tilesFsLowSpace` use. Wi-Fi-only
+trigger, permanent loss.
+
+**Back.** The ladder was a faithful copy of `pagerNavGoBack` **minus one rung** —
+`else if (getActiveTab() != HOME_TAB_INDEX) navGoToMainTab(HOME_TAB_INDEX);`.
+Without it Back fell through to `navPushTap(LV_KEY_ESC)`, and nothing in this
+build consumes `LV_KEY_ESC`: the sole consumer is `lv_dropdown`, peeled several
+rungs above, and `navMaybeRebuild` deliberately keeps the tab bar out of the
+focus group. The press was consumed by the `return true` and nothing happened, on
+every bare tab.
+
+Restoring that rung alone gives *Home*, not *back*, so this pass also adds the
+history that never existed anywhere in this UI (`s_lv_tab_prev` is a single
+transition latch; `s_apppage_close` is depth 1; the popup registry walks in
+static table order):
+
+- **`s_m9_nav[]` — 12 entries, 24 B.** Records main-tab switches only. Pushed
+  from `goToTab` (the single choke point, and the only place that fires
+  `LV_EVENT_VALUE_CHANGED` explicitly), popped by a new rung placed **below**
+  every peel rung, so modals still close innermost-first and a null-close blocker
+  row still stops Back at the registry rung.
+- **Deliberately not stacked:** the app drawer (a registry row rung 6 already
+  closes, whose mode survives a tab switch and is restored on return to Home) and
+  app pages / chats / settings sheets (all peeled above). Duplicating those here
+  would double-close.
+- **Never store an `lv_obj_t*`** — settings sheets, app pages and the drawer are
+  destroyed, often via `del_async`. Entries are tab indices; one that no longer
+  applies is skipped, never a dead press.
+- **`s_m9_nav_replaying`** suppresses the re-push from a pop's own `goToTab`.
+  The Home-fallback rung needs it too: without it that jump recorded the tab it
+  was leaving and the next Back popped straight back — Back ping-ponging forever.
+- **HOME clears the trail** (it means "go to root"); MSG/MAP are lateral jumps
+  and keep pushing.
+
+Also closed in this pass, all confirmed and all reachable on this board:
+
+- **`openMeshContactDm` bypassed the choke point** — a bare `lv_tabview_set_act`
+  with no event send, so `tabChangedCb` never ran, `s_lv_tab_prev` went stale,
+  and the *next* real tab change computed `leaving_inbox` false and skipped the
+  only code that hides the DM overlay. The chat stayed painted over whatever tab
+  you moved to. The switch now fires the event, and moved above the overlay
+  setup so `tabChangedCb`'s own `hideKb()` cannot undo it.
+- **Setup wizard Back was a dead key** for the whole wizard, even on the three
+  steps that draw a working on-screen Back wired to `setupBackCb`. The comment
+  claimed "nothing to back out of"; the wizard is a four-step stack.
+- **Contacts select mode outlived its tab.** Its registry row has `flags=0`, so
+  `anyPopupOpen()` never reported it and nothing cleared it on tab change —
+  leaving Back to close it *invisibly* from another tab. `ctExitSelectMode()` now
+  runs on leaving Contacts, the same discipline `s_m9_map_pan` already gets.
+- **`navGoToMainTab` ignored key-blocker rows** — the unconditional 8-iteration
+  drain spun closing nothing and switched tabs out from under a running SD format
+  or bulk delete. Now returns bool and stops. (The board's SUB_MESSAGE/SUB_MAP
+  cases already did this correctly; HOME and `navGoToMainTab` did not.)
+- **Two focus-group blackouts** that made Back's *result* undrivable: the
+  notification chip was a non-`NAV_SKIP` `lv_layer_top` child with nothing
+  focusable inside, emptying the group for its ~1.1 s life on every incoming
+  message; and the Spectrum page's `NAV_SKIP_FLAG` root hid it from
+  `navTopHasVisibleChild`, re-rooting the group onto the app drawer still open
+  beneath it (d-pad moved an unseen ring over hidden tiles, OK launched them).
+
+  **The Spectrum fix needs BOTH halves — `NAV_PASSTHRU_FLAG` alone is a trap.**
+  Passthru excludes only the container; `navCollect` still recurses into the
+  subtree. `lv_chart` does **not** clear `LV_OBJ_FLAG_CLICKABLE` (LVGL 8.4 sets
+  it in the base `lv_obj` constructor; only `lv_label` and `lv_img`/`lv_canvas`
+  clear it), and `lv_obj_remove_style_all()` on the five colour-ramp swatches
+  removes styles, not flags. So passthru-on-root alone handed the page six focus
+  stops where it previously had zero, and `navFocusCb`'s reverse-video fill
+  painted a solid white block straight over the live trace — caught on hardware
+  within a minute of flashing. The chart and each swatch now carry
+  `NAV_SKIP_FLAG` so the group ends up genuinely empty, which is what the
+  original comment always claimed. Anything added to this page later must do the
+  same, or it becomes a focus stop by default.
+
+  Known consequence: with the page as the focus container, `useTop` is true and
+  `navAddStatusBarActions()` is skipped, so the "‹ Spectrum" chevron is no
+  longer a d-pad target. Back (hardware key / registry row) still closes the
+  page on every board, which is the documented exit.
+
+- **`ctExitSelectMode` must not go through `ctSetSelectMode(false)`.** That
+  setter ends in `s_ct_list_force = true; refreshContactsList();` — the full
+  teardown+rebuild measured at ~1.3 s with a large list (#82). Called from
+  `tabChangedCb` as the user LEAVES Contacts, inside the tabview's
+  `VALUE_CHANGED` chain, that freezes the tab they are moving *to*, on every
+  board. It now restores the toolbars and only ARMS `s_ct_list_force`; the
+  rebuild lands on the way back in, where `tabChangedCb` already calls
+  `refreshContactsList()` and the user can see it.
+
+- **Blocker check must precede the app-page close.** With `navGoToMainTab` now
+  refusing to switch while a null-close progress row owns the screen,
+  `M9_KEY_LEFT_MESSAGE` and `M9_KEY_MAP` — which called `s_apppage_close()`
+  *first* — would have destroyed the page and then not jumped, leaving the user
+  with neither. Both now drain-and-bail before closing anything, the order
+  `SUB_MESSAGE` / `SUB_MAP` already used.
+
+**Measured on hardware after the above** (`[MAPPROF]`, a `HAS_M9_KEYBOARD`-only
+`Serial.printf` in `onMapTabActivated` with `micros()` accumulators around
+`loadTileJpeg` and the decode — **diagnostic scaffolding, strip or gate it before
+release**):
+
+| | cold open (first after boot) | re-open |
+|---|---|---|
+| before this pass | 2598 ms | 245 ms |
+| after dead-work removal | 2189 ms | 141-165 ms |
+| **after repaint throttle** | **1507 ms** | **~150-190 ms** |
+| split, before throttle | read 497 / decode 539 / **other 1042** / markers 10 | render 5-6, tiles=0 |
+| split, after throttle | read 499 / decode 539 / other **358** / markers 10 | render 7, tiles=0 |
+
+The throttle moved `other` and nothing else (read 497->499, decode 539->539 are
+run-to-run noise), which is the confirmation that it cut compositing rather than
+starving the load path. Cold open is down **42%** from the 2598 ms baseline; the
+`[STALL] ui:lvgl` bucket for the same action fell 2497 ms -> 1822 ms.
+
+With compositing no longer dominant, the two levers named in the superseded note
+above finally ARE the top of the list, and they are now roughly equal in size:
+decode 539 ms (core-0 decoding) and read 499 ms (the 4 MHz SD clock — one line,
+`SD_SPI_FAST_HZ`, which only the V4-R8 env sets today). Treat the SD clock with
+care: this board shares one SPI peripheral across radio + display + card, and
+deferred item 4 records that the M9's mount-ladder timing margins were never
+characterised.
+
+Three things this settled that static reading could not:
+
+1. **`probe=0ms` confirms the `bestAvailableZoom` guard fires.** The 2598→2189
+   delta (~410 ms) is the scan that used to run and be discarded — the top of the
+   100-500 ms band the audit estimated.
+2. **`other` dominates.** See the correction under "Map re-open cost" above. The
+   progressive per-tile repaint, not decode and not SD, was the biggest single
+   cost. Now throttled via `k_map_progressive_ms`.
+3. **The retained-slot path works exactly as designed** — a re-open reports
+   `tiles=0`, `render=5-6ms`: a true pure blit. Note that ~135 ms of the ~150 ms
+   re-open is now the "Loading map…" hint's `lv_refr_now`, which fires even when
+   the render will not block. Suppressing it when a pure blit is predictable
+   (same zoom + centre as the last render, and `s_map_last_missing == 0`) is the
+   obvious next trim, and is NOT done.
+
+Stall attribution had to be fixed first, or none of these numbers meant what they
+said: `uiCp("ui:input")` lives inside `#if CAP_TRACKBALL`, which is **0** on the
+M9, while the keyboard drain sits between the `ui:threads` and `ui:diag`
+checkpoints. So on the one board whose *only* input is the d-pad, every
+keypress-driven action — map opens included — was billed to `ui:threads`. A cold
+map open was being reported as a slow chat-threads refresh. The M9 now has its own
+`uiCp("ui:input")`. (Work that reaches LVGL via `navPushTap` still lands in
+`ui:lvgl`, since the handler runs inside `lv_timer_handler`; that is correct.)
+
+Still open on the map, in win/risk order: a priority lane for visible tiles
+(`xQueueSendToFront` — today the nine tiles you are looking at queue *behind* the
+29-tile background prefetch pyramid on every pan), a retry pump so a dropped
+fetch heals without a manual pan, and the SD clock below.
+
 ## Deferred — hardware-verify list
 
 These are left intentionally unset/unwired rather than guessed:
