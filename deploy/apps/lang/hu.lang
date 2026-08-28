@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: hu
-# ver: 20
+# ver: 21
 # name: Magyar
 # base: hu
  (device behind)	 (készülék hátulján)
@@ -414,7 +414,7 @@ Keyboard nav: WASDZ on	Billentyűzet navigáció: WASDZ bekapcsolva
 Keyboard nav: off	Billentyűzetnavigáció: kikapcsolva
 Keyboard navigation	Billentyűzetnavigáció
 Keys	Kulcsok
-Known regions	Known regions
+Known regions	Ismert régiók
 LOS → %s	Rálátás → %s
 Landscape (desktop)	Fekvő (asztali)
 Landscape set - applies when remote mode starts.	Fekvő beállítva - a távoli mód indulásakor lép életbe.
@@ -899,7 +899,7 @@ Turn this on, then open the address below in any web browser on the same Wi-Fi -
 Type	Tipus
 Type a URL, then Go	Írj be egy URL-t, majd Mehet
 Type a message...	Írj be egy üzenetet...
-Type a new 6-digit code · applies after a reboot	Írjon be egy új 6 jegyű kódot · újraindítás után érvényes
+Type a new 6-digit code · applies after a reboot	Írjon be egy 6 jegyű kódot · újraindítás után él
 Type your network name — or switch to Wi-Fi in Settings to scan	Írd be a hálózatod nevét – vagy válts Wi-Fi-re a beállításokban a kereséshez
 UI size (restart to apply)	UI mérete (újraindítás az alkalmazáshoz)
 UI size saved — restart to apply	UI mérete mentve – indítsa újra a programot az alkalmazáshoz

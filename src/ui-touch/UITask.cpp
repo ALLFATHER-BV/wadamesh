@@ -32929,15 +32929,20 @@ static void openMessageInfoPopup(int msg_idx) {
       blen += snprintf(body + blen, sizeof(body) - blen, "\nRoute");
       int off = 0;
       for (uint8_t h = 0; h < cnt && off + (int)hsz <= m.in_path_n; ++h, off += hsz) {
-        if (blen >= (int)sizeof(body) - 56) break;     // hard guard: never overflow body[]
+        if (blen >= (int)sizeof(body) - 72) break;     // hard guard: never overflow body[]
+        // Always lead with the path-hash prefix, then the name when we know it.
+        // The hash is what the node is actually keyed by on the wire, so it is
+        // the part that stays true when a repeater is named misleadingly or two
+        // of them share a name -- which is exactly when you are reading a route
+        // (#348). Showing only the resolved name threw that away.
+        char hashstr[9] = {0};
+        for (uint8_t b = 0; b < hsz && b < 4; ++b)
+          snprintf(hashstr + b * 2, sizeof(hashstr) - b * 2, "%02X", m.in_path[off + b]);
         char nm[33];   // ContactInfo.name is 32B; hold the full name (emoji eat 4B each)
         if (the_mesh.uiHopName(&m.in_path[off], hsz, nm, sizeof(nm))) {
-          blen += snprintf(body + blen, sizeof(body) - blen, "\n %u. #%06X %s#",
-                           (unsigned)(h + 1), (unsigned)nodeSigColorHex(nm), nm);
+          blen += snprintf(body + blen, sizeof(body) - blen, "\n %u. #%06X %s %s#",
+                           (unsigned)(h + 1), (unsigned)nodeSigColorHex(nm), hashstr, nm);
         } else {
-          char hashstr[9] = {0};
-          for (uint8_t b = 0; b < hsz && b < 4; ++b)
-            snprintf(hashstr + b * 2, sizeof(hashstr) - b * 2, "%02X", m.in_path[off + b]);
           blen += snprintf(body + blen, sizeof(body) - blen, "\n %u. #%06X %s#",
                            (unsigned)(h + 1), (unsigned)nodeSigColorHex(hashstr), hashstr);
         }
