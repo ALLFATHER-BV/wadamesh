@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: hu
-# ver: 19
+# ver: 20
 # name: Magyar
 # base: hu
  (device behind)	 (készülék hátulján)
@@ -401,7 +401,7 @@ Join a private channel	Belépés priváthoz
 Join hashtag channel	Csatlakozz # csatornához
 Join network	Csatlakozás a hálózathoz
 Join private channel	Csatlakozz privát csatornához
-Join the public channel	Csatlakozás a nyilvános csatornához
+Join the public channel	Belépés a nyilvánoshoz
 Joined %.40s	Csatlakozott %.40s alatt
 Keep per chat (messages)	Megőrzés csevegésenként (üzenet)
 Key already in use	Kulcs már hozzárendelve
@@ -472,7 +472,7 @@ Map — no tile pack on SPIFFS yet.\n\nUpload a tile pack to /tiles/<z>/<x>/<y>.
 Map — set your location\nin Settings → Profile to\nshow the map here.	Térkép – a Beállítások → Profil menüpontban állítsd be a tartózkodási helyedet, hogy itt jelenjen meg a térkép.
 Mark all chats and channels as read?	Az összes csevegést és csatornát megjelölöd olvasottként?
 Mark as read	Olvasottnak jelöl
-Mark read	Mark read
+Mark read	Olvasott
 Marked read	Olvasottként megjelölve
 Max hops (0..64)	Max ugrások (0-64)
 Max zoom for this pack	Maximális zoom ehhez a csomaghoz

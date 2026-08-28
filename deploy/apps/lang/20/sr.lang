@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: sr
-# ver: 19
+# ver: 20
 # name: Српски
 # base: sr
  (device behind)	 (уређај касни)
@@ -184,6 +184,7 @@ Contact added	Контакт додат
 Contact deleted	Контакт обрисан
 Contact gone	Контакт нестао
 Contact missing	Контакт недостаје
+Contact shared	Контакт подељен
 Contacts	Контакти
 Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Контакти су у унутрашњој меморији - SD картица се није монтирала при покретању. Поново убаци картицу и рестартуј.
 Contacts are on internal flash.	Контакти су у унутрашњој меморији.
@@ -778,6 +779,8 @@ Settings	Подешавања
 Setup complete	Подешавање завршено
 Share QR	Подели QR
 Share channel	Подели канал
+Share contact	Подели контакт
+Share failed	Дељење није успело
 Share location in advert	Дели локацију у advert-у
 Share secret	Подели тајну
 Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Поделите тајну од 32 знака да се други придруже. Празно = насумична.
@@ -1103,3 +1106,6 @@ Glance shows message previews\nwhile the screen is locked	Glance shows message p
 Snake  —  swipe, roll, or press a direction	Snake  —  swipe, roll, or press a direction
 N/A	N/A
 This board cannot run this app.	This board cannot run this app.
+Signal	Signal
+Signal (stale)	Signal (stale)
+nothing heard yet	nothing heard yet

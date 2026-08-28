@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: it
-# ver: 19
+# ver: 20
 # name: Italiano
 # base: it
  (device behind)	 (dispositivo indietro)
@@ -184,6 +184,7 @@ Contact added	Contatto aggiunto
 Contact deleted	Contatto eliminato
 Contact gone	Contatto perso
 Contact missing	Contatto mancante
+Contact shared	Contatto condiviso
 Contacts	Contatti
 Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	I contatti sono sulla memoria interna - la scheda SD non si è montata all'avvio. Reinserisci la scheda e riavvia.
 Contacts are on internal flash.	I contatti sono sulla memoria interna.
@@ -777,6 +778,8 @@ Settings	Impostazioni
 Setup complete	Configurazione completata
 Share QR	Condividi QR
 Share channel	Condividi canale
+Share contact	Condividi contatto
+Share failed	Condivisione non riuscita
 Share location in advert	Condividi posizione in advert
 Share secret	Condividi segreto
 Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Condividi il segreto di 32 caratteri per far unire altri. Lascia vuoto per uno casuale.
@@ -1102,3 +1105,6 @@ Glance shows message previews\nwhile the screen is locked	Glance shows message p
 Snake  —  swipe, roll, or press a direction	Snake  —  swipe, roll, or press a direction
 N/A	N/A
 This board cannot run this app.	This board cannot run this app.
+Signal	Signal
+Signal (stale)	Signal (stale)
+nothing heard yet	nothing heard yet

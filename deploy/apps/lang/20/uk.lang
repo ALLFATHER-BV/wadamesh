@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: uk
-# ver: 19
+# ver: 20
 # name: Українська
 # base: uk
  (device behind)	 (пристрій відстає)
@@ -184,6 +184,7 @@ Contact added	Контакт додано
 Contact deleted	Контакт видалено
 Contact gone	Контакт зник
 Contact missing	Контакт відсутній
+Contact shared	Контакт надіслано
 Contacts	Контакти
 Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot.	Контакти у внутрішній пам'яті - SD-карта не змонтувалася під час завантаження. Переставте картку і перезавантажте.
 Contacts are on internal flash.	Контакти у внутрішній пам'яті.
@@ -778,6 +779,8 @@ Settings	Налаштування
 Setup complete	Налаштування завершено
 Share QR	Поділитися QR
 Share channel	Поділитися каналом
+Share contact	Поділитися контактом
+Share failed	Не вдалося надіслати контакт
 Share location in advert	Ділитися місцезнаходженням в advert
 Share secret	Поділитися ключем
 Share the 32-char secret so others can join. Leave the secret empty to generate a random one.	Поділіться секретом із 32 символів, щоб інші приєдналися. Порожньо = випадковий.
@@ -1103,3 +1106,6 @@ Glance shows message previews\nwhile the screen is locked	Glance shows message p
 Snake  —  swipe, roll, or press a direction	Snake  —  swipe, roll, or press a direction
 N/A	N/A
 This board cannot run this app.	This board cannot run this app.
+Signal	Signal
+Signal (stale)	Signal (stale)
+nothing heard yet	nothing heard yet
