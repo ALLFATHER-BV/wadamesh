@@ -23540,7 +23540,28 @@ static void openDiscoverPage() {
 // the radio while we own it.
 static const int   SPEC_BINS      = 160;     // frequency bins across the span
 static const int   SPEC_WF_ROWS   = 48;      // waterfall height (rows of history; zoomed to fit width)
-static const int   SPEC_CHUNK     = 8;       // bins swept per timer tick (~5.5 ms/bin -> ~44 ms UI block)
+static const int   SPEC_CHUNK     = 8;       // MAX bins per timer tick (~5.5 ms/bin -> ~44 ms UI block)
+// The ~5.5 ms/bin figure above is CORRECT — verified on M9 hardware 2026-08-28,
+// which is the "re-verify with a micros() log on hardware" the standby(0x01)
+// comment further down asks for. Measured: 5181-5904 us/bin, so 8 bins really is
+// the ~44 ms tick the constant promises. Recorded here so nobody re-derives it.
+//
+// It was measured while chasing repeated ~1.7 s "ui:lvgl" stalls that appear
+// ONLY while this page is open, on the theory that the sweep was overrunning.
+// It is not: the sweep is on budget. The time is in the REDRAW path
+// (spectrumPushWaterfall / spectrumDrawTrace) — instrumenting the flush
+// callback showed ~1.8 s of LVGL compute against only ~190 ms of actual panel
+// flush, i.e. the cost is LVGL rendering, not SPI bandwidth.
+// Do not "fix" the sweep; look at the waterfall canvas and the 160-point chart.
+//
+// The wall-clock bound below therefore is NOT that fix. It is a cheap guard so a
+// slower radio or a busier bus can never turn this tick into a multi-second UI
+// block, plus the permanent per-bin measurement. It is clamped so it can only
+// ever REDUCE bins per tick, never raise them above SPEC_CHUNK — on hardware it
+// simply settles at 7-8, i.e. today's behaviour, on every board.
+static const uint32_t SPEC_TICK_BUDGET_US = 45000;   // the ~44 ms UI block this was designed around
+static int         s_spec_chunk   = SPEC_CHUNK;      // adaptive bins/tick, retuned each sweep chunk
+static uint32_t    s_spec_bin_us  = 0;               // last measured per-bin sweep cost
 // Honest-coverage note: 24 MHz / 160 bins = 150 kHz of bin pitch, but each bin
 // listens through a 62.5 kHz channel filter — only ~42% of the span is inside a
 // filter on any sweep, so a narrowband carrier sitting between bin centers is
@@ -23641,7 +23662,9 @@ static void spectrumUpdateFloor() {
 // snapshot almost always missed. (The mesh is paused — spectrumOwnsRadio() — so nothing
 // else touches the modem while we hop it across the band.)
 static bool spectrumSweepChunk() {
-  int end = s_spec_pos + SPEC_CHUNK;
+  const int      start_pos = s_spec_pos;
+  const uint32_t t_chunk0  = micros();
+  int end = s_spec_pos + s_spec_chunk;
   if (end > SPEC_BINS) end = SPEC_BINS;
 #if defined(RADIO_CLASS)
   for (int i = s_spec_pos; i < end; i++) {
@@ -23721,6 +23744,38 @@ static bool spectrumSweepChunk() {
   }
 #endif
   s_spec_pos = end;
+
+  // Size the NEXT tick from what these bins actually cost. micros() subtraction
+  // is unsigned, so the ~71 min wrap is handled. Always advance at least one bin
+  // (forward progress beats a perfectly smooth UI that never finishes a sweep),
+  // and never exceed SPEC_CHUNK so a radio that already met the 5.5 ms/bin
+  // assumption is bit-for-bit unchanged. The log fires only when the value moves,
+  // so it stays quiet in use — and it is the "micros() log on hardware" the
+  // standby(0x01) comment above asks for, now permanent instead of a one-off.
+  const int swept = end - start_pos;
+  if (swept > 0) {
+    const uint32_t tick_us = (uint32_t)(micros() - t_chunk0);
+    s_spec_bin_us = tick_us / (uint32_t)swept;
+    // HYSTERESIS, not a control loop that chases the jitter. Shrink as soon as a
+    // tick actually overruns the budget; grow only when the tick is comfortably
+    // (2x) inside it. Without this the chunk flapped 7<->8 forever, because
+    // 8 bins x ~5.5 ms sits within jitter of the 45 ms budget.
+    int want = s_spec_chunk;
+    if (tick_us > SPEC_TICK_BUDGET_US && s_spec_bin_us) {
+      want = (int)(SPEC_TICK_BUDGET_US / s_spec_bin_us);
+    } else if (tick_us * 2u < SPEC_TICK_BUDGET_US && s_spec_chunk < SPEC_CHUNK) {
+      want = s_spec_chunk + 1;
+    }
+    if (want < 1)          want = 1;    // always make progress
+    if (want > SPEC_CHUNK) want = SPEC_CHUNK;
+    if (want != s_spec_chunk) {
+      Serial.printf("[SPEC] %lu us/bin, tick %lu us -> %d bins/tick (was %d, budget %lu us)\n",
+                    (unsigned long)s_spec_bin_us, (unsigned long)tick_us, want, s_spec_chunk,
+                    (unsigned long)SPEC_TICK_BUDGET_US);
+      s_spec_chunk = want;
+    }
+  }
+
   if (s_spec_pos >= SPEC_BINS) { s_spec_pos = 0; spectrumUpdateFloor(); return true; }
   return false;
 }
