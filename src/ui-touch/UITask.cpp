@@ -184,7 +184,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
   #include <helpers/TouchDiagTrace.h>
   #if defined(ESP32)
     #include <Preferences.h>
-    #include <helpers/esp32/SdNvsPrefs.h>   // NVS-or-SD prefs backend (Launcher-safe)
+    #include "../helpers/esp32/SdNvsPrefs.h"  // QUOTED: force local header (vendored tree ships a stale copy)
     #include "helpers/esp32/WdtHeavyGuard.h" // shared ref-counted core-0 WDT suspend (history/backup saves + core saveContacts)
     // QUOTED on purpose: the vendored core lib ships a STALE copy of this header in
     // its include path, so an angle include picks that up and misses accessors we
@@ -54083,10 +54083,19 @@ StallRec g_stall_ring[16];   // struct defined above sysInfoText (About shows th
 uint8_t  g_stall_cnt = 0, g_stall_w = 0;
 void stallLog(const char* tag, uint32_t dur_ms) {
   if (dur_ms < 200) return;
-  g_stall_ring[g_stall_w] = { (uint32_t)(millis() / 1000u), (uint16_t)(dur_ms > 65535 ? 65535 : dur_ms), tag };
+  const uint32_t ended_ms = millis();
+  g_stall_ring[g_stall_w] = { ended_ms / 1000u, (uint16_t)(dur_ms > 65535 ? 65535 : dur_ms), tag };
   g_stall_w = (uint8_t)((g_stall_w + 1) % 16);
   if (g_stall_cnt < 16) g_stall_cnt++;
-  Serial.printf("[STALL] %s %lums\n", tag, (unsigned long)dur_ms);
+  const char* prefs_phase = nullptr;
+  uint32_t prefs_elapsed_ms = 0;
+  if (SdNvsPrefs::slowIoOverlap(ended_ms - dur_ms, ended_ms,
+                                prefs_phase, prefs_elapsed_ms)) {
+    Serial.printf("[STALL] %s %lums prefs-fatfs=%s/%lums\n", tag,
+                  (unsigned long)dur_ms, prefs_phase, (unsigned long)prefs_elapsed_ms);
+  } else {
+    Serial.printf("[STALL] %s %lums\n", tag, (unsigned long)dur_ms);
+  }
 }
 const char*   g_ui_stall_tag = "";     // slowest section of the current UITask::loop pass
 uint16_t      g_ui_stall_max = 0;

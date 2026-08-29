@@ -28,6 +28,7 @@ static constexpr uint32_t PREFS_MAGIC       = 0x32504657u;  // "WFP2"
 static constexpr uint16_t PREFS_FORMAT      = 1;
 static constexpr uint32_t PREFS_QUIET_MS    = 750;
 static constexpr uint32_t PREFS_MAX_WAIT_MS = 5000;
+static constexpr uint32_t PREFS_SLOW_IO_MS  = 200;
 // These are settings namespaces, not a general object store. A hard ceiling
 // bounds the RAM snapshot + worker copy on boards without PSRAM; current touch
 // and discovered payloads are both well below 16 KB.
@@ -72,6 +73,68 @@ static std::vector<FileCache> s_caches;
 static SemaphoreHandle_t s_cache_mutex = nullptr;
 static QueueHandle_t s_write_queue = nullptr;
 static TaskHandle_t s_write_task = nullptr;
+
+struct PrefsIoTrace {
+  const char* active_phase = nullptr;
+  uint32_t active_started_ms = 0;
+  const char* last_slow_phase = nullptr;
+  uint32_t last_slow_started_ms = 0;
+  uint32_t last_slow_ended_ms = 0;
+  uint32_t last_slow_elapsed_ms = 0;
+};
+
+static portMUX_TYPE s_io_trace_mux = portMUX_INITIALIZER_UNLOCKED;
+static PrefsIoTrace s_io_trace;
+
+static bool msIntervalsOverlap(uint32_t lhs_start, uint32_t lhs_end,
+                               uint32_t rhs_start, uint32_t rhs_end) {
+  return (int32_t)(lhs_end - rhs_start) >= 0 && (int32_t)(rhs_end - lhs_start) >= 0;
+}
+
+class PrefsIoPhase {
+public:
+  PrefsIoPhase(bool enabled, const char* phase, const char* path, char slot)
+      : _enabled(enabled), _phase(phase), _path(path), _slot(slot) {
+    if (!_enabled) return;
+    _started_ms = millis();
+    portENTER_CRITICAL(&s_io_trace_mux);
+    s_io_trace.active_phase = _phase;
+    s_io_trace.active_started_ms = _started_ms;
+    portEXIT_CRITICAL(&s_io_trace_mux);
+  }
+
+  ~PrefsIoPhase() {
+    if (!_enabled) return;
+    const uint32_t ended_ms = millis();
+    const uint32_t elapsed_ms = ended_ms - _started_ms;
+    portENTER_CRITICAL(&s_io_trace_mux);
+    if (s_io_trace.active_phase == _phase &&
+        s_io_trace.active_started_ms == _started_ms) {
+      s_io_trace.active_phase = nullptr;
+      s_io_trace.active_started_ms = 0;
+    }
+    if (elapsed_ms >= PREFS_SLOW_IO_MS) {
+      s_io_trace.last_slow_phase = _phase;
+      s_io_trace.last_slow_started_ms = _started_ms;
+      s_io_trace.last_slow_ended_ms = ended_ms;
+      s_io_trace.last_slow_elapsed_ms = elapsed_ms;
+    }
+    portEXIT_CRITICAL(&s_io_trace_mux);
+    if (elapsed_ms >= PREFS_SLOW_IO_MS)
+      Serial.printf("[PREFS] slow FATFS %s %s slot %c: %lums\n", _phase, _path, _slot,
+                    (unsigned long)elapsed_ms);
+  }
+
+  PrefsIoPhase(const PrefsIoPhase&) = delete;
+  PrefsIoPhase& operator=(const PrefsIoPhase&) = delete;
+
+private:
+  bool _enabled;
+  const char* _phase;
+  const char* _path;
+  char _slot;
+  uint32_t _started_ms = 0;
+};
 
 static uint32_t crc32Update(uint32_t crc, const uint8_t* data, size_t len) {
   crc = ~crc;
@@ -152,21 +215,43 @@ static bool readLegacyFile(fs::FS* fs, const char* path, std::vector<SdNvsPrefs:
 }
 
 static bool readSnapshot(fs::FS* fs, const char* path, std::vector<SdNvsPrefs::Kv>& out,
-                         uint32_t& generation) {
-  if (!fs || !fs->exists(path)) return false;
-  File f = fs->open(path, FILE_READ);
+                         uint32_t& generation, bool trace_io = false, char slot = 0) {
+  if (!fs) return false;
+  bool exists = false;
+  {
+    PrefsIoPhase io(trace_io, "verify-stat", path, slot);
+    exists = fs->exists(path);
+  }
+  if (!exists) return false;
+  File f;
+  {
+    PrefsIoPhase io(trace_io, "verify-open", path, slot);
+    f = fs->open(path, FILE_READ);
+  }
   if (!f) return false;
-  const size_t size = f.size();
+  size_t size = 0;
+  {
+    PrefsIoPhase io(trace_io, "verify-size", path, slot);
+    size = f.size();
+  }
   if (size < sizeof(SnapshotFooter) || size - sizeof(SnapshotFooter) > PREFS_MAX_PAYLOAD) {
+    PrefsIoPhase io(trace_io, "verify-close", path, slot);
     f.close();
     return false;
   }
   const size_t payload_size = size - sizeof(SnapshotFooter);
   std::vector<uint8_t> payload(payload_size);
   SnapshotFooter footer{};
-  bool ok = (payload_size == 0 || f.read(payload.data(), payload_size) == (int)payload_size) &&
-            f.read((uint8_t*)&footer, sizeof(footer)) == (int)sizeof(footer);
-  f.close();
+  bool ok = false;
+  {
+    PrefsIoPhase io(trace_io, "verify-read", path, slot);
+    ok = (payload_size == 0 || f.read(payload.data(), payload_size) == (int)payload_size) &&
+         f.read((uint8_t*)&footer, sizeof(footer)) == (int)sizeof(footer);
+  }
+  {
+    PrefsIoPhase io(trace_io, "verify-close", path, slot);
+    f.close();
+  }
   if (!ok || footer.magic != PREFS_MAGIC || footer.format != PREFS_FORMAT ||
       footer.footer_size != sizeof(footer) || footer.payload_size != payload_size ||
       footer.payload_crc != crc32(payload.data(), payload.size()) ||
@@ -184,7 +269,11 @@ static bool writeSnapshot(fs::FS* fs, const char* legacy_path, char slot, uint32
   char dir[40];
   strncpy(dir, legacy_path, sizeof(dir) - 1); dir[sizeof(dir) - 1] = '\0';
   char* slash = strrchr(dir, '/');
-  if (slash && slash != dir) { *slash = '\0'; fs->mkdir(dir); }
+  if (slash && slash != dir) {
+    *slash = '\0';
+    PrefsIoPhase io(true, "mkdir", path, slot);
+    fs->mkdir(dir);
+  }
 
   std::vector<uint8_t> payload;
   if (!serializeKv(kv, payload)) return false;
@@ -195,17 +284,32 @@ static bool writeSnapshot(fs::FS* fs, const char* legacy_path, char slot, uint32
 #if defined(TDP4_POKE_TRACE)
   printf("[SDW] %lu core%d prefs %s\n", (unsigned long)millis(), (int)xPortGetCoreID(), path);
 #endif
-  File f = fs->open(path, FILE_WRITE);
+  File f;
+  {
+    PrefsIoPhase io(true, "open", path, slot);
+    f = fs->open(path, FILE_WRITE);
+  }
   if (!f) return false;
-  bool ok = (payload.empty() || f.write(payload.data(), payload.size()) == payload.size()) &&
-            f.write((const uint8_t*)&footer, sizeof(footer)) == sizeof(footer);
-  f.flush();
-  f.close();
+  bool ok = false;
+  {
+    PrefsIoPhase io(true, "write", path, slot);
+    ok = (payload.empty() || f.write(payload.data(), payload.size()) == payload.size()) &&
+         f.write((const uint8_t*)&footer, sizeof(footer)) == sizeof(footer);
+  }
+  {
+    PrefsIoPhase io(true, "flush", path, slot);
+    f.flush();
+  }
+  {
+    PrefsIoPhase io(true, "close", path, slot);
+    f.close();
+  }
   if (!ok) return false;
 
   std::vector<SdNvsPrefs::Kv> verify;
   uint32_t verify_generation = 0;
-  return readSnapshot(fs, path, verify, verify_generation) && verify_generation == generation;
+  return readSnapshot(fs, path, verify, verify_generation, true, slot) &&
+         verify_generation == generation;
 }
 
 static bool newerGeneration(uint32_t lhs, uint32_t rhs) {
@@ -267,7 +371,7 @@ static void prefsWriterTask(void*) {
       }
     }
     xSemaphoreGive(s_cache_mutex);
-    if (ok && elapsed >= 200)
+    if (ok && elapsed >= PREFS_SLOW_IO_MS)
       Serial.printf("[PREFS] slow snapshot %s slot %c: %lums\n", job->legacy_path,
                     job->slot, (unsigned long)elapsed);
     delete job;
@@ -595,6 +699,30 @@ bool SdNvsPrefs::busy() {
     if (cache.writing) { result = true; break; }
   xSemaphoreGive(s_cache_mutex);
   return result;
+}
+
+bool SdNvsPrefs::slowIoOverlap(uint32_t start_ms, uint32_t end_ms,
+                               const char*& phase, uint32_t& elapsed_ms) {
+  phase = nullptr;
+  elapsed_ms = 0;
+  portENTER_CRITICAL(&s_io_trace_mux);
+  if (s_io_trace.active_phase) {
+    const uint32_t active_elapsed = end_ms - s_io_trace.active_started_ms;
+    if (active_elapsed >= PREFS_SLOW_IO_MS &&
+        msIntervalsOverlap(start_ms, end_ms, s_io_trace.active_started_ms, end_ms)) {
+      phase = s_io_trace.active_phase;
+      elapsed_ms = active_elapsed;
+    }
+  }
+  if (s_io_trace.last_slow_phase &&
+      s_io_trace.last_slow_elapsed_ms > elapsed_ms &&
+      msIntervalsOverlap(start_ms, end_ms, s_io_trace.last_slow_started_ms,
+                         s_io_trace.last_slow_ended_ms)) {
+    phase = s_io_trace.last_slow_phase;
+    elapsed_ms = s_io_trace.last_slow_elapsed_ms;
+  }
+  portEXIT_CRITICAL(&s_io_trace_mux);
+  return phase != nullptr;
 }
 
 static bool explicitNamespacePath(const char* dir, const char* ns, char* out, size_t cap) {
