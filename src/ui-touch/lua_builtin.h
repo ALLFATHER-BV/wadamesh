@@ -340,6 +340,8 @@ static const char kLuaSrc_sdktest[] = R"WADALUA(-- SDK self-test. Exercises the 
 -- windowed wada.fs.read.
 -- 1.6 adds wada.sd.list: capability reporting, traversal rejection, root
 -- metadata, and a nested directory listing when the card contains one.
+-- 1.7 adds storage-neutral wada.audio capability and API-shape checks. Playback
+-- stays manual so opening the bench test never emits sound unexpectedly.
 -- 1.5 uses wada.ui.text_lines() to measure instead of estimating, where the
 -- firmware has it. That call was added because of the 1.3 bug below: an app
 -- could ask how tall a line is but not how wide, so laying out rows meant
@@ -396,6 +398,21 @@ function app.on_open(w, h)
     row("caps: sd_list=" .. yn(c.sd_list) .. "  discover=" .. yn(c.discover) ..
       "  input=" .. yn(c.input) ..
          "  rx_identity=" .. yn(c.rx_identity), C.accent)
+    row("caps: audio=" .. yn(c.audio) .. "  wav=" .. yn(c.audio_wav) ..
+           "  mp3=" .. yn(c.audio_mp3) .. "  audio_sd=" .. yn(c.audio_sd), C.accent)
+    if c.audio then
+      local api_ok = wada.audio and type(wada.audio.play) == "function" and
+                     type(wada.audio.pause) == "function" and
+                     type(wada.audio.resume) == "function" and
+                     type(wada.audio.stop) == "function" and
+                     type(wada.audio.status) == "function"
+      local status = api_ok and wada.audio.status() or nil
+      api_ok = api_ok and type(status) == "table" and type(status.state) == "string"
+      row("wada.audio API: " .. (api_ok and ("PASS (" .. status.state .. ")") or "FAIL"),
+          api_ok and C.good or C.bad)
+    else
+      row("wada.audio: unavailable on this board", C.sub)
+    end
   row("layout: " .. (ui.text_lines and "measured (ui.text_lines)" or "estimated (older firmware)"),
       ui.text_lines and C.good or C.sub)
   -- crypto: published test vectors, so this is checkable rather than merely alive
@@ -1473,6 +1490,34 @@ local pending = {}            -- lines waiting on the 1 write/sec limit
 
 local function logname() return run .. ".csv" end
 
+-- Return at most max_bytes without splitting a UTF-8 sequence. The row's
+-- fixed-width columns are byte-budgeted, not character-budgeted; a raw
+-- string.sub(1, 14) cut Ouderkerk + sun + VS16 inside the final codepoint and
+-- left LVGL unable to advance through the label (#323, same class as #223).
+local function utf8_prefix_bytes(text, max_bytes)
+  local offset, last, length = 1, 0, #text
+  while offset <= length and offset <= max_bytes do
+    local first = text:byte(offset)
+    local width = first <= 0x7F and 1
+      or (first >= 0xC2 and first <= 0xDF and 2)
+      or (first >= 0xE0 and first <= 0xEF and 3)
+      or (first >= 0xF0 and first <= 0xF4 and 4) or 0
+    if width == 0 or offset + width - 1 > length or offset + width - 1 > max_bytes then break end
+    local valid = true
+    for i = 2, width do
+      local byte = text:byte(offset + i - 1)
+      if byte < 0x80 or byte > 0xBF then valid = false; break end
+    end
+    local second = width > 1 and text:byte(offset + 1) or 0
+    if (first == 0xE0 and second < 0xA0) or (first == 0xED and second > 0x9F) or
+       (first == 0xF0 and second < 0x90) or (first == 0xF4 and second > 0x8F) then valid = false end
+    if not valid then break end
+    last = offset + width - 1
+    offset = last + 1
+  end
+  return text:sub(1, last)
+end
+
 -- Lua here is built with 32-bit floats, so fix.lat is good to about a metre and
 -- no better. fix.lat_e6 is the same reading as an exact integer in
 -- micro-degrees, which is what belongs in a log: a survey you plot months later
@@ -1554,7 +1599,7 @@ local function redraw()
     local e = list[i]
     if e then
       rows[i]:set(string.format("%-14s %-8s best %5.1f  worst %5.1f  x%d",
-        e.n.name:sub(1, 14), TYPE[e.n.type] or "?", e.n.best, e.n.worst, e.n.seen))
+        utf8_prefix_bytes(e.n.name, 14), TYPE[e.n.type] or "?", e.n.best, e.n.worst, e.n.seen))
       rows[i]:color(e.n.best > 0 and C.good or C.text)
     else
       rows[i]:set(i == 1 and "nothing has answered a probe yet" or "")
@@ -1775,9 +1820,9 @@ static const LuaBuiltinApp kLuaBuiltin[] = {
   { "monitor", "RF Monitor", "1.3", kLuaSrc_monitor },
   { "airtime", "Airtime", "1.4", kLuaSrc_airtime },
   { "snake", "Snake", "1.0", kLuaSrc_snake },
-  { "sdktest", "SDK Test", "1.6", kLuaSrc_sdktest },
+  { "sdktest", "SDK Test", "1.7", kLuaSrc_sdktest },
   { "2048", "2048", "1.2", kLuaSrc_2048 },
-  { "wardrive", "Wardrive", "1.0", kLuaSrc_wardrive },
+  { "wardrive", "Wardrive", "1.1", kLuaSrc_wardrive },
   { "nearby", "Nearby", "1.0", kLuaSrc_nearby },
 };
 static const int kLuaBuiltinCount = (int)(sizeof(kLuaBuiltin)/sizeof(kLuaBuiltin[0]));

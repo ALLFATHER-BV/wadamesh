@@ -42,6 +42,10 @@ the transports, …) are dropped from the lib via `-DMC_VENDORED_TOUCH_APP` so t
 aren't compiled twice. The build is byte-identical to the original in-tree
 meshcomod firmware.
 
+Lua apps use the on-device SDK described in [LUA_APPS.md](LUA_APPS.md). For
+WAV/MP3 playback, including a ready-to-sideload transport test app and exact SD
+and internal-storage paths, see [AUDIO_PLAYBACK_TESTING.md](AUDIO_PLAYBACK_TESTING.md).
+
 ## Build
 
 [PlatformIO](https://platformio.org/) pulls the core fork and all libraries

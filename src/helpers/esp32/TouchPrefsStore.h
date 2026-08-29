@@ -193,6 +193,13 @@ bool    touchPrefsSetMsgFlash(bool on);
  * refresh our pubkey (useful after a reflash wiped storage). Opt-in, default off. All boards. */
 bool    touchPrefsGetConsoleMode();   // boot into the LVGL-free console (CONSOLE_MODE.md)
 bool    touchPrefsSetConsoleMode(bool on);
+// Skip raw-protocol detection on the T-Deck keyboard and always use the older
+// one. Reachable by touch, so it is a way out when a misdetection has left the
+// keyboard typing nonsense (#341, #351).
+bool    touchPrefsGetKbForceLegacy();
+bool    touchPrefsSetKbForceLegacy(bool on);
+bool    touchPrefsGetKbForceLegacy();
+bool    touchPrefsSetKbForceLegacy(bool on);
 bool    touchPrefsGetConsoleMonitor();      // console: show incoming messages live
 bool    touchPrefsSetConsoleMonitor(bool on);
 bool    touchPrefsGetBootAdvert();
@@ -451,6 +458,10 @@ bool    touchPrefsGetEdgeScroll();             // push cursor past edge to scrol
 void    touchPrefsSetEdgeScroll(bool on);
 bool    touchPrefsGetLockOnScreenOff();        // idle screen-off auto-locks; only a deliberate hold wakes (default false)
 void    touchPrefsSetLockOnScreenOff(bool on);
+bool    touchPrefsGetGlanceWhenLocked();       // "at a glance" also fires while manually/idle locked, not just unlocked+dimmed (default false)
+void    touchPrefsSetGlanceWhenLocked(bool on);
+bool    touchPrefsGetGlanceEnabled();          // master "at a glance" feature toggle (default true)
+void    touchPrefsSetGlanceEnabled(bool on);
 
 /** Per-channel mute, keyed by channel name. Bit 0 = mute messages, bit 1 =
  *  mute @-mentions. Suppresses the notification SOUND for that channel (the

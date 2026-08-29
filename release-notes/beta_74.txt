@@ -1,0 +1,25 @@
+# beta_74 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- If your T-Deck types the wrong letters -----------------------------------------------
+There is now a switch that fixes it, and you can reach it without typing: Settings, Keyboard, "Older keyboard protocol". It skips the automatic detection and uses the protocol every T-Deck keyboard understands.
+This exists because the detection cannot always be certain, and when it gets it wrong the keyboard types the wrong letters, so any fix that needs you to type is not a fix. The switch is operated by touch and applies immediately, with no reboot.
+Turning it on costs modifier latching, which a keyboard that needs the switch cannot do anyway.
+The automatic detection is unchanged and still the default. If beta_73 fixed your keyboard, nothing here changes for you.
+
+# --- Web settings could quietly change your radio ------------------------------------------
+The remote web page showed a bandwidth of 62.5 as 62, and pressing Apply sent 62 back to the device. Opening the page and applying anything reconfigured the radio onto a bandwidth the mesh was not using. Both halves of that are fixed: the device now sends the fraction, and the form accepts it.
+
+# --- Keyboard ---------------------------------------------------------------------------------
+Shift latches like the symbol and alt keys do: tap once for the next letter, tap twice to lock until you tap again. No more holding shift down while reaching for a key.
+The Attaky Mesh Deck's front D-pad and SELECT button work now. The board has nine buttons and only the power button did anything.
+
+# --- Reading a route ------------------------------------------------------------------------
+Each hop in a message route shows its path prefix next to the repeater name. When a repeater is named misleadingly, or two share a name, the prefix is the part that still identifies it, which is exactly when you are looking at a route.
+
+# --- Translations ---------------------------------------------------------------------------------
+"Known regions" and the Bluetooth pairing hint are translatable and translated into Hungarian.
+
+# --- For testers ------------------------------------------------------------------------------
+Still open and not fixed here: a map that renders nothing since beta_71, a screen that will not stay dark after a manual lock, the web flasher hanging at "wrapping up" on the T-Display P4, and an M9 that reports no SD card when formatting.
+A reminder that two separate settings control whether an arriving message lights a dark screen. "Flash on new message" is in Settings, Keyboard, and it is the one that wakes the screen. "At a glance" is in Settings, Display, and it draws the preview text. Turning off the second one alone will not stop the screen lighting up.

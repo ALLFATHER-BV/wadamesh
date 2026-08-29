@@ -16,13 +16,17 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 | LilyGo T-Lora Pager | ESP32-S3, LR1121 or SX1262 | 2.33" IPS LCD, 480x222 (no touch), QWERTY + rotary encoder | Web flasher (pick the build matching your radio) | Beta (new in beta_45) | Fully supported; keyboard-first navigation, microSD, map tile packs |
 | Heltec V4-R8 + Expansion Kit V2 | ESP32-S3 (8 MB octal PSRAM), SX1262 | 2.4" touch (CHSC6x) | Web flasher | Beta (new in beta_45) | As the V4 plus microSD and the Expansion Kit sensors; buzzer supported |
 | LilyGo T-Display P4 | ESP32-P4 + ESP32-C6, SX1262 | AMOLED or TFT-LCD, touch | Web flasher (AMOLED) or the .bin for the LCD SKU | Beta (new in beta_45) | Two screen SKUs; fuel-gauge battery reporting, full TX power |
-| Attaky Mesh Series | ESP32-S3, SX1262 | Touch display | Web flasher | Beta (new in beta_47) | Community port by attakygit (#158/#169); detachable keyboard supported |
+| Attaky Mesh Series | ESP32-S3, SX1262 | Touch display + front D-pad | Web flasher | Beta (new in beta_47) | Community port by attakygit (#158/#169); detachable keyboard supported; the front D-pad + SELECT navigate the UI |
 
 ## Feature notes per board
 
 - **T-Deck**: the everything device: touch, physical keyboard, trackball cursor
   or d-pad navigation, microSD (deep 5000-message chat history, map tile packs,
   data storage), GPS on the Plus, notification sounds through the I2S speaker.
+  Tap Sym or Alt for one symbol, or double-tap either to lock the symbol layer;
+  this needs [LilyGO keyboard-controller firmware with raw matrix mode](https://github.com/Xinyuan-LilyGO/T-Deck/tree/master/examples/Keyboard_ESP32C3)
+  (June 2025 or newer). Older controller firmware keeps normal typing and
+  reports the unavailable latch mode on Serial.
 - **Heltec V4 + TFT**: touch UI with the on-screen keyboard; the optional
   Expansion Kit adds environment sensors (home-screen chart) and a piezo
   buzzer. V4.3 boards get the switchable high-gain receive LNA toggle.
@@ -33,6 +37,8 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 - **T-Lora Pager**: no touchscreen at all — the QWERTY keyboard and the rotary
   encoder drive everything (Alt+turn free-scrolls a page; see
   [TLORA_PAGER_SHORTCUTS.md](TLORA_PAGER_SHORTCUTS.md) for the full key map).
+  Tap Fn/Alt for one symbol or double-tap it to lock the symbol layer; physical
+  hold combinations keep their existing behavior.
   GPS, microSD, keyboard backlight, lock screen and notification sound through
   the onboard codec and amp all work. Two builds, one per radio: LR1121 and
   SX1262 — flashing the wrong one leaves you with no radio, so check the label

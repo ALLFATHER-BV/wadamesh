@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 52;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON)
+static constexpr uint8_t CURRENT_VERSION = 53;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON)
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs
@@ -83,6 +83,12 @@ struct __attribute__((packed)) Config {
   // every field after it, which is what v45 had to undo. Append, never insert.
   uint8_t  console_mode;     // v51: boot into the LVGL-free text console (CONSOLE_MODE.md)
   uint8_t  console_monitor;  // v52: console mode shows incoming messages as they arrive
+  // v53: never probe for the raw keyboard protocol, always use the older one.
+  // The detection cannot be certain while nobody is typing, and when it guesses
+  // wrong the keyboard types nonsense -- which also makes it very hard to reach
+  // a setting to fix it. This is reachable by touch, so it is a way out that
+  // does not need the keyboard that is broken (#341, #351).
+  uint8_t  kb_force_legacy;
 };
 
 static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
@@ -90,7 +96,7 @@ static constexpr size_t STABLE_V44_PREFIX_SIZE = offsetof(Config, web_mirror);
 
 static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeof(Config::rx_queue),
               "the pre-v44 suffix moved");
-static_assert(offsetof(Config, console_monitor) + sizeof(Config::console_monitor) == sizeof(Config),
+static_assert(offsetof(Config, kb_force_legacy) + sizeof(Config::kb_force_legacy) == sizeof(Config),
               "new preference fields must remain trailing");
 // lang_file must stay immediately before the tail, or a v48-era blob overlays
 // onto the wrong bytes. Checking both ends means the next person to append is

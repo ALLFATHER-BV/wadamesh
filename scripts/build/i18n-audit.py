@@ -31,7 +31,7 @@ def source_keys():
     keys = set()
     for f in glob.glob(os.path.join(ROOT, 'src/ui-touch/*.cpp')) + \
              glob.glob(os.path.join(ROOT, 'src/ui-touch/*.h')):
-        src = open(f, encoding='utf-8').read()
+        src = strip_comments(open(f, encoding='utf-8').read())
         # An optional LV_SYMBOL_* macro may precede the literal: TR(LV_SYMBOL_OK "  Text").
         # Requiring the group to START with a quote silently skipped every such
         # call - the audit's worst blind spot (the sheet rows never got checked).
@@ -55,7 +55,7 @@ def source_keys():
     # collecting keeps a translation alive, under-collecting deletes one.
     for f in glob.glob(os.path.join(ROOT, 'src/ui-touch/*.cpp')) + \
              glob.glob(os.path.join(ROOT, 'src/ui-touch/*.h')):
-        src = open(f, encoding='utf-8').read()
+        src = strip_comments(open(f, encoding='utf-8').read())
         for name in set(re.findall(r'TR\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\[', src)):
             for m in re.finditer(r'\b' + re.escape(name) + r'\s*\[[^\]]*\]\s*=\s*\{', src):
                 i, depth = m.end(), 1
@@ -80,24 +80,22 @@ def source_keys():
     # parameters and note which parameter, then pull the literal out of that
     # argument position at every call site.
     for f in _sources():
-        src = open(f, encoding='utf-8').read()
+        src = strip_comments(open(f, encoding='utf-8').read())
         for name, idx in _tr_wrapping_helpers(src):
             for arg in _call_args_at(src, name, idx):
-                parts = re.findall(r'"((?:[^"\\]|\\.)*)"', arg)
-                if not parts:
-                    continue
-                k = unescape_c(''.join(parts))
-                while k and 0xE000 <= ord(k[0]) <= 0xF8FF:
-                    k = k[1:]
-                k = k.lstrip(' ')
-                if k.strip():
-                    keys.add(k)
+                for lit in literal_groups(arg):
+                    k = unescape_c(lit)
+                    while k and 0xE000 <= ord(k[0]) <= 0xF8FF:
+                        k = k[1:]
+                    k = k.lstrip(' ')
+                    if k.strip():
+                        keys.add(k)
 
     # RANGE-FOR over a local table: `struct {...} rows[] = {{"Show contacts", ...}};`
     # then `for (auto& r : rows) TR(r.label)`. Same blind spot as the helper case --
     # correct at runtime, invisible to a TR("literal") scan, so untranslatable.
     for f in _sources():
-        src = open(f, encoding='utf-8').read()
+        src = strip_comments(open(f, encoding='utf-8').read())
         for m in re.finditer(r'for\s*\(\s*(?:const\s+)?auto\s*&?\s*(\w+)\s*:\s*(\w+)\s*\)', src):
             var, tbl = m.group(1), m.group(2)
             brace = src.find('{', m.end())
@@ -119,7 +117,7 @@ def source_keys():
     # TR(someFunc(...)): a helper that RETURNS one of several literals, translated
     # by the caller. Every literal it can return is a key.
     for f in _sources():
-        src = open(f, encoding='utf-8').read()
+        src = strip_comments(open(f, encoding='utf-8').read())
         for name in set(re.findall(r'TR\(\s*([A-Za-z_]\w*)\s*\(', src)):
             for d in re.finditer(r'\b' + re.escape(name) + r'\s*\([^;{}]*\)\s*\{', src):
                 seg = src[d.end() - 1:_balanced(src, d.end() - 1)]
@@ -130,12 +128,72 @@ def source_keys():
     # LUA APPS: wada.sys.tr("...") (aliased to a local `tr` by convention). The
     # apps ship from the same catalog and their strings belong in the same files.
     for f in sorted(glob.glob(os.path.join(ROOT, 'deploy/apps/*/*/*.lua'))):
-        src = open(f, encoding='utf-8').read()
+        src = strip_comments(open(f, encoding='utf-8').read())
         for lit in re.findall(r'\b(?:sys\.)?tr\(\s*"((?:[^"\\]|\\.)*)"', src):
             k = unescape_c(lit)
             if k.strip():
                 keys.add(k)
     return keys
+
+
+def strip_comments(src):
+    """Blank out //... and /*...*/ while preserving string/char literals and line
+    count. The extractor scans raw text, so a quoted phrase inside a comment was
+    being collected as a translatable key -- that is how the Dutch string
+    "Geblokkeerde gebruikers", which only appears in a comment explaining how a
+    long translation degrades, ended up as a KEY in all thirteen files."""
+    out, i, n = [], 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == '"' or c == "'":
+            q = c; out.append(c); i += 1
+            while i < n:
+                out.append(src[i])
+                if src[i] == '\\' and i + 1 < n:
+                    out.append(src[i + 1]); i += 2; continue
+                if src[i] == q: i += 1; break
+                i += 1
+            continue
+        if c == '/' and i + 1 < n and src[i + 1] == '/':
+            while i < n and src[i] != '\n': i += 1
+            continue
+        if c == '/' and i + 1 < n and src[i + 1] == '*':
+            i += 2
+            while i + 1 < n and not (src[i] == '*' and src[i + 1] == '/'):
+                if src[i] == '\n': out.append('\n')
+                i += 1
+            i += 2
+            continue
+        out.append(c); i += 1
+    return ''.join(out)
+
+
+def literal_groups(arg):
+    """Keys from one call argument.
+
+    A C compiler concatenates ADJACENT string literals, so `"a" "b"` is one
+    string. `cond ? "a" : "b"` is two, and joining them (which this used to do)
+    invented keys that exist nowhere: "Paste (move)Paste (copy)",
+    "Unblock  Block", "Unfav  Favorite". Those shipped to every translator in
+    v18. Only whitespace and an LV_SYMBOL_* macro may sit between literals of
+    one group; anything else starts a new one."""
+    groups, cur, i, n = [], [], 0, len(arg)
+    while i < n:
+        c = arg[i]
+        if c == '"':
+            j, buf = i + 1, []
+            while j < n:
+                if arg[j] == '\\' and j + 1 < n: buf.append(arg[j:j + 2]); j += 2; continue
+                if arg[j] == '"': break
+                buf.append(arg[j]); j += 1
+            cur.append(''.join(buf)); i = j + 1; continue
+        if c.isspace(): i += 1; continue
+        m = re.match(r'LV_SYMBOL_[A-Z0-9_]+', arg[i:])
+        if m: i += m.end(); continue
+        if cur: groups.append(cur); cur = []
+        i += 1
+    if cur: groups.append(cur)
+    return [''.join(g) for g in groups]
 
 
 def _sources():

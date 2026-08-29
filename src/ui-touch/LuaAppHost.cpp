@@ -18,6 +18,7 @@
 #include "AppPage.h"
 #include "device_caps.h"
 #include "i18n.h"   // wada.sys.tr: apps can use the same translation table the UI does
+#include "Utf8Text.h"
 #include "helpers/esp32/WdtHeavyGuard.h"   // wada.fs writes can trigger SPIFFS GC
 
 extern "C" {
@@ -35,6 +36,18 @@ extern bool             luaHostScreenOn();   // false = display asleep; app tick
 extern void             luaHostKeepAwake(bool on);   // hold the screen + ticks for a measuring app                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
 extern void             luaHostAppPath(char* out, size_t cap, const char* rel);   // prefixes the store root
+#if CAP_LUA_AUDIO
+extern bool             luaHostAudioPlay(fs::FS* fs, const char* path, const char* shown,
+                                         const char* source, uint32_t owner,
+                                         char* error, size_t error_cap);
+extern bool             luaHostAudioPause(uint32_t owner, bool pause);
+extern bool             luaHostAudioStop(uint32_t owner, bool release);
+extern void             luaHostAudioStatus(uint32_t owner, char* state, size_t state_cap,
+                                           char* path, size_t path_cap,
+                                           char* source, size_t source_cap,
+                                           char* format, size_t format_cap,
+                                           char* error, size_t error_cap);
+#endif
 #if CAP_LUA_SD_LIST
 extern fs::FS*          luaHostSdFs(bool* busy);                  // mounted physical SD, or null
 extern bool             luaHostSdReadFailed();                    // failed open was a dead card
@@ -157,9 +170,24 @@ void budgetHook(lua_State* L, lua_Debug*) {
 // host state
 // ---------------------------------------------------------------------------
 constexpr size_t kHeapCap     = 256 * 1024;   // per-app PSRAM cap
-constexpr size_t kMaxSrc      = 64 * 1024;    // app source size limit
+// App source size limit. Was 64 KB, which a real app can reach: reported from a
+// 2000-contact device whose author hit it writing an ordinary Lua program, not
+// anything pathological. The source lives in PSRAM only until luaL_loadbuffer
+// has compiled it, so this is a transient allocation rather than a per-app cost,
+// and the compiled chunk still has to fit the 256 KB per-app heap below.
+constexpr size_t kMaxSrc      = 192 * 1024;   // app source size limit
 constexpr size_t kStoreMax    = 2048;         // per-app persisted KV budget (bytes, serialized)
 constexpr int    kMinTickMs   = 33;           // fastest on_tick cadence (~30 fps)
+
+// Bumped by wada.ui.clear(). Every widget handle records the generation it was
+// created in; a handle from an older one has already been destroyed, so the
+// accessors below null its pointer and the `if (u->obj)` guard that every
+// method already has does the rest.
+//
+// Without this, clear() would be a use-after-free generator: WidgetUd holds a
+// raw lv_obj_t*, so a Lua variable still referring to a label from the previous
+// screen would sail past the null check straight into freed memory.
+static uint32_t s_ui_gen = 1;
 
 struct Host {
   lua_State*  L = nullptr;
@@ -184,10 +212,12 @@ struct Host {
   AppTimer    timers[kMaxTimers];
   bool        in_lua = false;        // re-entrancy guard (dismiss from inside a callback)
   bool        want_close = false;
+  uint32_t    generation = 0;      // resource ownership across close/reopen
   char        id[24]    = "";
   char        title[32] = "";
 };
 Host* s_h = nullptr;
+uint32_t s_host_generation = 0;
 
 char s_bar_title[40];   // appPageBegin keeps the pointer — must outlive the page
 
@@ -246,8 +276,21 @@ uint32_t argColor(lua_State* L, int idx, uint32_t def = 0xFFFFFF) {
   return (uint32_t)luaL_optinteger(L, idx, (lua_Integer)def) & 0xFFFFFF;
 }
 
+// LVGL assumes structurally valid UTF-8 and can stop advancing when an app
+// hands it a partial codepoint. Keep one reusable repair buffer: valid strings
+// stay zero-copy, while malformed runs become one ASCII '?'. Every call below
+// is synchronous and LVGL copies label text before this buffer can be reused.
+const char* safeUiText(const char* text, size_t length, size_t* safe_length = nullptr,
+                       unsigned scratch_slot = 0) {
+  static std::string scratch_slots[2];
+  std::string& scratch = scratch_slots[scratch_slot & 1U];
+  const char* safe = Utf8Text::sanitize(text, length, scratch);
+  if (safe_length) *safe_length = safe == text ? length : scratch.size();
+  return safe;
+}
+
 // ---- canvas userdata ----
-struct CanvasUd { lv_obj_t* obj; lv_color_t* buf; int w, h; };
+struct CanvasUd { lv_obj_t* obj; lv_color_t* buf; int w, h; uint32_t gen; };
 
 CanvasUd* checkCanvas(lua_State* L) {
   return (CanvasUd*)luaL_checkudata(L, 1, "wada.canvas");
@@ -298,11 +341,14 @@ int cvCircle(lua_State* L) {
 int cvText(lua_State* L) {
   CanvasUd* c = checkCanvas(L);
   if (!c->obj) return 0;
+  const lv_coord_t x = (lv_coord_t)luaL_checkinteger(L, 2);
+  const lv_coord_t y = (lv_coord_t)luaL_checkinteger(L, 3);
+  size_t text_length = 0;
+  const char* text = luaL_checklstring(L, 4, &text_length);
   lv_draw_label_dsc_t d; lv_draw_label_dsc_init(&d);
   d.color = lv_color_hex(argColor(L, 5));
   d.font = luaHostFontForSize((int)luaL_optinteger(L, 6, 14));
-  lv_canvas_draw_text(c->obj, (lv_coord_t)luaL_checkinteger(L, 2), (lv_coord_t)luaL_checkinteger(L, 3),
-                      c->w, &d, luaL_checkstring(L, 4));
+  lv_canvas_draw_text(c->obj, x, y, c->w, &d, safeUiText(text, text_length));
   return 0;
 }
 int cvPos(lua_State* L) {
@@ -337,6 +383,7 @@ int uiCanvas(lua_State* L) {
   lv_canvas_set_buffer(cv, buf, w, h, LV_IMG_CF_TRUE_COLOR);
   lv_canvas_fill_bg(cv, lv_color_hex(0x000000), LV_OPA_COVER);
   CanvasUd* ud = (CanvasUd*)lua_newuserdatauv(L, sizeof(CanvasUd), 0);
+  ud->gen = s_ui_gen;
   ud->obj = cv; ud->buf = buf; ud->w = w; ud->h = h;
   luaL_setmetatable(L, "wada.canvas");
   // Pin the handle in the registry for the app's lifetime. LVGL draws straight
@@ -352,12 +399,18 @@ int uiCanvas(lua_State* L) {
 }
 
 // ---- label userdata ----
-struct WidgetUd { lv_obj_t* obj; };
-WidgetUd* checkLabel(lua_State* L) { return (WidgetUd*)luaL_checkudata(L, 1, "wada.label"); }
+struct WidgetUd { lv_obj_t* obj; uint32_t gen; };
+WidgetUd* checkLabel(lua_State* L) {
+  WidgetUd* u = (WidgetUd*)luaL_checkudata(L, 1, "wada.label");
+  if (u->gen != s_ui_gen) u->obj = nullptr;   // cleared out from under this handle
+  return u;
+}
 
 int lbSet(lua_State* L) {
   WidgetUd* u = checkLabel(L);
-  if (u->obj) lv_label_set_text(u->obj, luaL_checkstring(L, 2));
+  size_t length = 0;
+  const char* text = luaL_checklstring(L, 2, &length);
+  if (u->obj) lv_label_set_text(u->obj, safeUiText(text, length));
   return 0;
 }
 int lbPos(lua_State* L) {
@@ -390,20 +443,31 @@ int lbWidth(lua_State* L) {   // label:width(px [, "left"|"center"|"right"]) —
 
 int uiLabel(lua_State* L) {
   if (!s_h || !s_h->body) return luaL_error(L, "no app body");
+  size_t length = 0;
+  const char* text = luaL_checklstring(L, 1, &length);
+  const lv_coord_t x = (lv_coord_t)luaL_optinteger(L, 2, 0);
+  const lv_coord_t y = (lv_coord_t)luaL_optinteger(L, 3, 0);
+  const lv_font_t* font = luaHostFontForSize((int)luaL_optinteger(L, 4, 14));
+  const uint32_t color = argColor(L, 5, 0xE6E9ED);
   lv_obj_t* l = lv_label_create(s_h->body);
-  lv_label_set_text(l, luaL_checkstring(L, 1));
-  lv_obj_set_pos(l, (lv_coord_t)luaL_optinteger(L, 2, 0), (lv_coord_t)luaL_optinteger(L, 3, 0));
-  lv_obj_set_style_text_font(l, luaHostFontForSize((int)luaL_optinteger(L, 4, 14)), LV_PART_MAIN);
-  lv_obj_set_style_text_color(l, lv_color_hex(argColor(L, 5, 0xE6E9ED)), LV_PART_MAIN);
+  lv_label_set_text(l, safeUiText(text, length));
+  lv_obj_set_pos(l, x, y);
+  lv_obj_set_style_text_font(l, font, LV_PART_MAIN);
+  lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
   WidgetUd* ud = (WidgetUd*)lua_newuserdatauv(L, sizeof(WidgetUd), 0);
+  ud->gen = s_ui_gen;
   ud->obj = l;
   luaL_setmetatable(L, "wada.label");
   return 1;
 }
 
 // ---- chart userdata (the primitive the native Monitor/Airtime pages use) ----
-struct ChartUd { lv_obj_t* obj; lv_chart_series_t* ser[2]; int n_ser; };
-ChartUd* checkChart(lua_State* L) { return (ChartUd*)luaL_checkudata(L, 1, "wada.chart"); }
+struct ChartUd { lv_obj_t* obj; lv_chart_series_t* ser[2]; int n_ser; uint32_t gen; };
+ChartUd* checkChart(lua_State* L) {
+  ChartUd* u = (ChartUd*)luaL_checkudata(L, 1, "wada.chart");
+  if (u->gen != s_ui_gen) { u->obj = nullptr; u->n_ser = 0; }
+  return u;
+}
 
 int chPush(lua_State* L) {   // chart:push(series_idx, value)
   ChartUd* c = checkChart(L);
@@ -470,6 +534,7 @@ int uiChart(lua_State* L) {   // wada.ui.chart(w, h, points, color1 [, color2] [
   lv_obj_set_style_line_color(ch, lv_color_hex(0x1A1D1F), LV_PART_MAIN);   // grid
   lv_obj_set_style_line_width(ch, 2, LV_PART_ITEMS);
   ChartUd* ud = (ChartUd*)lua_newuserdatauv(L, sizeof(ChartUd), 0);
+  ud->gen = s_ui_gen;
   ud->obj = ch;
   ud->n_ser = 0;
   ud->ser[0] = lv_chart_add_series(ch, lv_color_hex(argColor(L, 4, 0x15B6A6)), LV_CHART_AXIS_PRIMARY_Y);
@@ -497,12 +562,17 @@ void btnEventCb(lv_event_t* e) {
 
 int uiButton(lua_State* L) {
   if (!s_h || !s_h->body) return luaL_error(L, "no app body");
-  const char* txt = luaL_checkstring(L, 1);
+  size_t text_length = 0;
+  const char* text = luaL_checklstring(L, 1, &text_length);
+  const lv_coord_t x = (lv_coord_t)luaL_checkinteger(L, 2);
+  const lv_coord_t y = (lv_coord_t)luaL_checkinteger(L, 3);
+  const lv_coord_t w = (lv_coord_t)luaL_optinteger(L, 4, 90);
+  const lv_coord_t h = (lv_coord_t)luaL_optinteger(L, 5, 34);
   lv_obj_t* b = lv_btn_create(s_h->body);
-  lv_obj_set_pos(b, (lv_coord_t)luaL_checkinteger(L, 2), (lv_coord_t)luaL_checkinteger(L, 3));
-  lv_obj_set_size(b, (lv_coord_t)luaL_optinteger(L, 4, 90), (lv_coord_t)luaL_optinteger(L, 5, 34));
+  lv_obj_set_pos(b, x, y);
+  lv_obj_set_size(b, w, h);
   lv_obj_t* bl = lv_label_create(b);
-  lv_label_set_text(bl, txt);
+  lv_label_set_text(bl, safeUiText(text, text_length));
   lv_obj_center(bl);
   if (lua_isfunction(L, 6)) {
     lua_rawgeti(L, LUA_REGISTRYINDEX, s_h->ref_btncb);
@@ -513,6 +583,7 @@ int uiButton(lua_State* L) {
     lv_obj_add_event_cb(b, btnEventCb, LV_EVENT_CLICKED, nullptr);
   }
   WidgetUd* ud = (WidgetUd*)lua_newuserdatauv(L, sizeof(WidgetUd), 0);
+  ud->gen = s_ui_gen;
   ud->obj = b;
   luaL_setmetatable(L, "wada.label");   // shares set/pos/color methods
   return 1;
@@ -529,8 +600,12 @@ int uiButton(lua_State* L) {
 // keyboard/trackball focus navigation walks them on touchless boards for free,
 // and a tap works on the ones with a screen. Per-row callbacks ride the same
 // button-callback table uiButton uses.
-struct ListUd { lv_obj_t* obj; int sel; };
-ListUd* checkList(lua_State* L) { return (ListUd*)luaL_checkudata(L, 1, "wada.list"); }
+struct ListUd { lv_obj_t* obj; int sel; uint32_t gen; };
+ListUd* checkList(lua_State* L) {
+  ListUd* u = (ListUd*)luaL_checkudata(L, 1, "wada.list");
+  if (u->gen != s_ui_gen) u->obj = nullptr;
+  return u;
+}
 
 lv_obj_t* listRowAt(ListUd* u, int i) {          // i is 1-based, as everywhere in Lua
   if (!u->obj || i < 1) return nullptr;
@@ -554,6 +629,7 @@ int uiTextW(lua_State* L) {
   size_t len = 0;
   const char* txt = luaL_checklstring(L, 1, &len);
   const lv_font_t* f = luaHostFontForSize((int)luaL_optinteger(L, 2, 14));
+  txt = safeUiText(txt, len, &len);
   lua_pushinteger(L, (lua_Integer)lv_txt_get_width(txt, (uint32_t)len, f, 0, LV_TEXT_FLAG_NONE));
   return 1;
 }
@@ -566,6 +642,7 @@ int uiTextLines(lua_State* L) {
   const char* txt = luaL_checklstring(L, 1, &len);
   const int w = (int)luaL_checkinteger(L, 2);
   const lv_font_t* f = luaHostFontForSize((int)luaL_optinteger(L, 3, 14));
+  txt = safeUiText(txt, len, &len);
   if (w <= 0) { lua_pushinteger(L, 1); return 1; }
   int lines = 0;
   const char* p = txt;
@@ -578,6 +655,24 @@ int uiTextLines(lua_State* L) {
   }
   lua_pushinteger(L, lines < 1 ? 1 : lines);
   return 1;
+}
+
+// wada.ui.clear() -- remove every widget from the app's page.
+//
+// The SDK documented building widgets in on_open() and gave no way to take them
+// down again, so an app with more than one screen drew the second on top of the
+// first. Reported by pisti87, who had been working around it with buttons.
+//
+// Bumping the generation is what makes this safe. A Lua variable still holding a
+// label from the screen just cleared keeps a raw pointer to freed memory; the
+// accessors compare generations and null it, so the existing `if (u->obj)` guard
+// in every method turns a stale call into a no-op instead of a crash.
+static int uiClear(lua_State* L) {
+  (void)L;
+  if (!s_h || !s_h->body) return 0;
+  lv_obj_clean(s_h->body);   // deletes the children, keeps the page itself
+  ++s_ui_gen;
+  return 0;
 }
 
 int uiList(lua_State* L) {
@@ -597,6 +692,7 @@ int uiList(lua_State* L) {
   lv_obj_set_scroll_dir(c, LV_DIR_VER);
   lv_obj_add_flag(c, LV_OBJ_FLAG_SCROLLABLE);
   ListUd* ud = (ListUd*)lua_newuserdatauv(L, sizeof(ListUd), 0);
+  ud->gen = s_ui_gen;
   ud->obj = c; ud->sel = 0;
   luaL_setmetatable(L, "wada.list");
   return 1;
@@ -605,7 +701,8 @@ int uiList(lua_State* L) {
 // list:add(text [, fn]) -> index of the new row
 int lsAdd(lua_State* L) {
   ListUd* u = checkList(L);
-  const char* txt = luaL_checkstring(L, 2);
+  size_t text_length = 0;
+  const char* text = luaL_checklstring(L, 2, &text_length);
   if (!u->obj || !s_h) return 0;
   lv_obj_t* row = lv_btn_create(u->obj);
   lv_obj_set_width(row, LV_PCT(100));
@@ -614,7 +711,7 @@ int lsAdd(lua_State* L) {
   lv_obj_set_style_pad_all(row, 6, LV_PART_MAIN);
   listPaintRow(row, false);
   lv_obj_t* lb = lv_label_create(row);
-  lv_label_set_text(lb, txt);
+  lv_label_set_text(lb, safeUiText(text, text_length));
   lv_label_set_long_mode(lb, LV_LABEL_LONG_DOT);   // a long name truncates instead of reflowing the row
   lv_obj_set_width(lb, LV_PCT(100));
   lv_obj_set_style_text_font(lb, luaHostFontForSize(12), LV_PART_MAIN);
@@ -633,9 +730,11 @@ int lsAdd(lua_State* L) {
 int lsSet(lua_State* L) {
   ListUd* u = checkList(L);
   lv_obj_t* row = listRowAt(u, (int)luaL_checkinteger(L, 2));
+  size_t text_length = 0;
+  const char* text = luaL_checklstring(L, 3, &text_length);
   if (!row) return 0;
   lv_obj_t* lb = lv_obj_get_child(row, 0);
-  if (lb) lv_label_set_text(lb, luaL_checkstring(L, 3));
+  if (lb) lv_label_set_text(lb, safeUiText(text, text_length));
   return 0;
 }
 int lsColor(lua_State* L) {
@@ -764,12 +863,17 @@ int sysBeep(lua_State* L) { lua_pushboolean(L, luaHostBeep()); return 1; }
 // rather than assume: the extended SDK is absent on low-resource boards (see
 // CAP_LUA_SDK_EXT in device_caps.h), and a store app runs on all of them.
 int sysCaps(lua_State* L) {
-  lua_createtable(L, 0, 14);
+  lua_createtable(L, 0, 20);
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "sdk_ext");
   lua_pushboolean(L, CAP_KEYBOARD);     lua_setfield(L, -2, "keyboard");
   lua_pushboolean(L, CAP_TOUCH);        lua_setfield(L, -2, "touch");
   lua_pushboolean(L, CAP_SD);           lua_setfield(L, -2, "sd");
   lua_pushboolean(L, CAP_LUA_SD_LIST);  lua_setfield(L, -2, "sd_list");
+  lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio");
+  lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_wav");
+  lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_mp3");
+  lua_pushboolean(L, CAP_LUA_AUDIO && CAP_LUA_SD_LIST);
+  lua_setfield(L, -2, "audio_sd");
   // Feature flags for the calls added after the first extended SDK shipped, so
   // an app can degrade instead of erroring on firmware that predates them.
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "discover");   // wada.mesh.discover
@@ -1563,6 +1667,93 @@ int sdList(lua_State* L) {
 #endif
 #endif  // CAP_LUA_SDK_EXT
 
+#if CAP_LUA_AUDIO
+static bool audioSafeName(const char* name, size_t len) {
+  if (!name || len == 0 || len > 32 || name[0] == '.') return false;
+  for (size_t i = 0; i < len; ++i) {
+    const char c = name[i];
+    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+    if (!ok) return false;
+  }
+  return true;
+}
+
+static int audioError(lua_State* L, const char* error) {
+  lua_pushnil(L);
+  lua_pushstring(L, error);
+  return 2;
+}
+
+// wada.audio.play(name) resolves inside /apps/<id>.d on the board's active
+// storage backend. An explicit sd:/... path is available only with sd_list.
+int audioPlay(lua_State* L) {
+  if (!s_h) return audioError(L, "closed");
+  size_t requested_len = 0;
+  const char* requested = luaL_checklstring(L, 1, &requested_len);
+  fs::FS* fs = nullptr;
+  char path[224] = "";
+  const char* source = "app";
+
+  if (requested_len >= 3 && !memcmp(requested, "sd:", 3)) {
+#if CAP_LUA_SD_LIST
+    const char* card_path = requested + 3;
+    const size_t card_len = requested_len - 3;
+    if (!sdSafePath(card_path, card_len, path, sizeof path)) return audioError(L, "bad path");
+    bool busy = false;
+    fs = luaHostSdFs(&busy);
+    if (!fs) return audioError(L, busy ? "busy" : "no sd");
+    source = "sd";
+#else
+    return audioError(L, "no sd");
+#endif
+  } else {
+    if (!audioSafeName(requested, requested_len)) return audioError(L, "bad path");
+    fs = luaHostAppFs();
+    if (!fs) return audioError(L, "no storage");
+    char rel[96];
+    snprintf(rel, sizeof rel, "/apps/%s.d/%s", s_h->id, requested);
+    luaHostAppPath(path, sizeof path, rel);
+  }
+
+  char error[40] = "";
+  if (!luaHostAudioPlay(fs, path, requested, source, s_h->generation, error, sizeof error))
+    return audioError(L, error[0] ? error : "playback failed");
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+int audioPause(lua_State* L) {
+  lua_pushboolean(L, s_h && luaHostAudioPause(s_h->generation, true));
+  return 1;
+}
+
+int audioResume(lua_State* L) {
+  lua_pushboolean(L, s_h && luaHostAudioPause(s_h->generation, false));
+  return 1;
+}
+
+int audioStop(lua_State* L) {
+  lua_pushboolean(L, s_h && luaHostAudioStop(s_h->generation, false));
+  return 1;
+}
+
+int audioStatus(lua_State* L) {
+  char state[12], path[192], source[8], format[8], error[40];
+  luaHostAudioStatus(s_h ? s_h->generation : 0,
+                     state, sizeof state, path, sizeof path,
+                     source, sizeof source, format, sizeof format,
+                     error, sizeof error);
+  lua_createtable(L, 0, 5);
+  lua_pushstring(L, state);  lua_setfield(L, -2, "state");
+  lua_pushstring(L, path);   lua_setfield(L, -2, "path");
+  lua_pushstring(L, source); lua_setfield(L, -2, "source");
+  lua_pushstring(L, format); lua_setfield(L, -2, "format");
+  if (error[0]) { lua_pushstring(L, error); lua_setfield(L, -2, "error"); }
+  return 1;
+}
+#endif
+
 void storePath(char* out, size_t cap) {
   char rel[40];
   snprintf(rel, sizeof rel, "/apps/%s.sav", s_h->id);
@@ -1694,10 +1885,35 @@ void pressCb(lv_event_t* e) {
 }
 
 // ---- wada.mesh (read-only) ----
+// wada.mesh.contacts([offset], [limit])
+//
+// Used to scan the first 200 contacts and return at most 100, with no way to see
+// past that and nothing to say it had truncated. On a device with 2000 contacts
+// an app simply could not reach most of them (reported by Jade).
+//
+// It takes an offset and a limit now. The default limit stays 100 because every
+// entry is an 8-field Lua table and building thousands of them in one call would
+// blow the per-app heap -- but the window can be moved, so all contacts are
+// reachable by asking twice. wada.mesh.contact_count() says how many there are.
+// How many contacts the device holds, so an app can page through them without
+// calling contacts() repeatedly just to discover where the list ends.
+static int meshContactCount(lua_State* L) {
+  char name[36], pk[12]; int type; uint32_t ago; double lat, lon; int32_t lat6, lon6;
+  int n = 0;
+  while (n < 4096 && luaHostContactAt(n, name, sizeof name, &type, &ago, &lat, &lon,
+                                      pk, sizeof pk, &lat6, &lon6)) ++n;
+  lua_pushinteger(L, n);
+  return 1;
+}
+
 int meshContacts(lua_State* L) {
+  const int offset = (int)luaL_optinteger(L, 1, 0);
+  int limit = (int)luaL_optinteger(L, 2, 100);
+  if (limit < 1) limit = 1;
+  if (limit > 250) limit = 250;      // one call still has to fit the app's heap
   lua_newtable(L);
   char name[36], pk[12]; int type; uint32_t ago; double lat, lon; int32_t lat6, lon6;
-  for (int i = 0, out = 0; i < 200 && out < 100; i++) {
+  for (int i = (offset > 0 ? offset : 0), out = 0; out < limit; i++) {
     if (!luaHostContactAt(i, name, sizeof name, &type, &ago, &lat, &lon, pk, sizeof pk,
                           &lat6, &lon6)) break;
     lua_createtable(L, 0, 8);
@@ -1939,11 +2155,14 @@ void promptDeliver(const char* text) {
 }
 
 int uiInput(lua_State* L) {
-  const char* title   = luaL_optstring(L, 1, "");
-  const char* initial = luaL_optstring(L, 2, "");
+  size_t title_length = 0, initial_length = 0;
+  const char* title_raw = luaL_optlstring(L, 1, "", &title_length);
+  const char* initial_raw = luaL_optlstring(L, 2, "", &initial_length);
   luaL_checktype(L, 3, LUA_TFUNCTION);
   if (!s_h) return luaL_error(L, "no app");
   if (s_h->prompt_cb != LUA_NOREF) return luaL_error(L, "an input prompt is already open");
+  const char* title = safeUiText(title_raw, title_length, nullptr, 0);
+  const char* initial = safeUiText(initial_raw, initial_length, nullptr, 1);
   lua_pushvalue(L, 3);
   s_h->prompt_cb = luaL_ref(L, LUA_REGISTRYINDEX);
   luaHostTextPrompt(title, initial, promptDeliver);
@@ -2105,6 +2324,7 @@ void openWada(lua_State* L) {
   lua_setfield(L, -2, "colors");
   lua_pushcfunction(L, uiInput); lua_setfield(L, -2, "input");   // modal text entry
   lua_pushcfunction(L, uiList);  lua_setfield(L, -2, "list");    // scrollable selectable rows
+  lua_pushcfunction(L, uiClear); lua_setfield(L, -2, "clear");   // wipe the page (#318 / Discord)
   lua_setfield(L, -2, "ui");
 
   lua_newtable(L);                                       // wada.sys
@@ -2172,8 +2392,19 @@ void openWada(lua_State* L) {
   lua_setfield(L, -2, "sd");
 #endif
 
+#if CAP_LUA_AUDIO
+  lua_newtable(L);                                       // wada.audio (app storage + optional SD)
+  lua_pushcfunction(L, audioPlay);   lua_setfield(L, -2, "play");
+  lua_pushcfunction(L, audioPause);  lua_setfield(L, -2, "pause");
+  lua_pushcfunction(L, audioResume); lua_setfield(L, -2, "resume");
+  lua_pushcfunction(L, audioStop);   lua_setfield(L, -2, "stop");
+  lua_pushcfunction(L, audioStatus); lua_setfield(L, -2, "status");
+  lua_setfield(L, -2, "audio");
+#endif
+
   lua_newtable(L);                                       // wada.mesh (read-only)
   lua_pushcfunction(L, meshContacts); lua_setfield(L, -2, "contacts");
+  lua_pushcfunction(L, meshContactCount); lua_setfield(L, -2, "contact_count");
   lua_pushcfunction(L, meshRxLog);    lua_setfield(L, -2, "rx_log");
   lua_pushcfunction(L, meshStats);    lua_setfield(L, -2, "stats");
   lua_pushcfunction(L, meshSelf);     lua_setfield(L, -2, "self");
@@ -2397,6 +2628,9 @@ void hostTeardown() {
   Host* h = s_h;
   if (!h) return;
   s_h = nullptr;                     // bindings see "closed" from here on
+#if CAP_LUA_AUDIO
+  luaHostAudioStop(h->generation, true);
+#endif
   // A wada.ui.input dialog lives on lv_layer_top, so it would outlive the app
   // that opened it. Drop it before the state goes, not after.
   luaHostTextPromptDismiss();
@@ -2465,6 +2699,8 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
 
   Host* h = new Host();
   h->heap.cap = kHeapCap;
+  h->generation = ++s_host_generation;
+  if (!h->generation) h->generation = ++s_host_generation;
   snprintf(h->id, sizeof h->id, "%s", id);
   snprintf(h->title, sizeof h->title, "%s", title ? title : id);
 

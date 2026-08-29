@@ -54,6 +54,13 @@ ed25519 (bundled in lib/ed25519)
     Orson Peters / orlp — public domain (Creative Commons Zero / zlib)
     https://github.com/orlp/ed25519
 
+minimp3 (bundled in lib/minimp3)
+    lieff/minimp3 contributors — CC0 1.0 Universal
+    https://github.com/lieff/minimp3
+    Pinned at ea99364f61c14656440e8d77e9c233ccf3124633. The bundled header has
+    a small opt-in scratch-storage hook so the decoder workspace can live in
+    PSRAM; default upstream behavior is unchanged when that hook is not used.
+
 AsyncElegantOTA (vendored in arch/esp32/AsyncElegantOTA)
     Copyright (c) Ayush Sharma — MIT License
 

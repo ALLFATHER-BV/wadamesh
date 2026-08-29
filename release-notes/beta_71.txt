@@ -1,0 +1,14 @@
+# beta_71 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- For people writing Lua apps ------------------------------------------------------------
+Apps can clear their page. There was no way to remove the widgets an app had already created, so anything with a second screen drew it on top of the first. wada.ui.clear() takes the page back to empty, and any widget you were still holding from before the clear becomes inert rather than dangerous.
+Apps can reach all your contacts. The list stopped at 100, and it only ever looked at the first 200 in the first place, so on a device with a lot of contacts most of them were unreachable and nothing said so. wada.mesh.contacts() now takes an offset and a limit, and wada.mesh.contact_count() tells an app how many there are to page through.
+Apps can be three times larger. The limit was 64 KB, which an ordinary program can reach. It is 192 KB now.
+
+# --- T-Deck keyboard ---------------------------------------------------------------------------
+Modifier latching could fail to turn on even with the right keyboard firmware installed. The firmware asked the keyboard what it was capable of exactly once, on the first read after boot, and the first read after boot is the one most likely to come back garbled because the keyboard controller is still starting. One bad answer meant no latching for the rest of the session, and rebooting simply asked again at the same unlucky moment. It now keeps asking for a second and a half before giving up, and says what it actually saw when it does.
+
+# --- For testers ---------------------------------------------------------------------------------
+This is a small drop on top of beta_70, which carried the fix for the crash when leaving the known-regions screen. If you have not tried that yet, it is still the thing most worth confirming: add and remove a few regions, leave the screen, check the device stays up.
+If your screen is not going to sleep, we are still investigating (issue 333) and it is not fixed here.

@@ -1,0 +1,17 @@
+# beta_73 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Older T-Decks could not be typed on ------------------------------------------------------
+If your T-Deck types the wrong letters, this release fixes it. Pressing "a" produced "q " and "m" produced "qa ", which made the keyboard unusable for writing, navigating or locking the screen.
+It affects the older T-Deck keyboards, the ones without the controllable backlight, and it started in beta_70. The firmware asks the keyboard at startup whether it speaks the newer protocol that modifier latching needs, and an older keyboard's answer looked enough like a yes to be taken as one. Everything typed after that was read the wrong way round.
+Nothing can tell the two keyboards apart while nobody is typing, so the firmware now simply corrects itself: the first letter you press is unmistakably a character rather than a key-position report, and it switches to the older protocol on the spot and delivers that letter. You lose modifier latching, which your keyboard cannot do anyway, and you get a working keyboard.
+Newer keyboards are unaffected and keep latching.
+The beta_72 change that was meant to make this detection more reliable made it worse, because it gave an older keyboard more chances to look like a newer one.
+
+# --- Translations ---------------------------------------------------------------------------------
+Two Hungarian strings: "Mark read", which had never been translated, and a shorter wording for joining the public channel so it fits its button. These are already on devices, since language files publish separately from the firmware.
+
+# --- For testers -------------------------------------------------------------------------------
+If your keyboard was typing nonsense, you should be able to install this normally rather than needing a cable.
+A reminder that two settings control whether an arriving message lights a dark or locked screen, and they are separate: Message flash wakes the screen, and At a glance draws the preview text on it. Both are in Options, Display. Turning off At a glance alone will not stop the screen lighting up.
+Still open and not fixed here: a map that renders nothing after beta_71, a screen that will not stay dark after a manual lock, and a web flasher that hangs at "wrapping up" on the T-Display P4.

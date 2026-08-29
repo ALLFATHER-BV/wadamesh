@@ -173,13 +173,16 @@
 // Focus-group D-pad navigation (no pointer): Tanmatsu keypad, T-Deck trackball,
 // the pager (no touch at all — the rotary encoder is its only nav input, so
 // like Tanmatsu this is always-on, not an optional toggle like the T-Deck's),
-// or the ThinkNode M9's d-pad. The underlying machinery (navFifo, navMoveDir,
-// the focus group, the secondary KEYPAD indev) is generic — only the *pump*
-// that feeds it differs per board: Tanmatsu's navPump() reads bsp-input events;
-// T-Deck's WASDZ-letter nav and the M9's raw d-pad bytes are both fed straight
-// from handleHwKey() instead (see UITask.cpp's `#elif defined(HAS_M9_KEYBOARD)`
-// block, parallel to the T-Deck's `#if CAP_TRACKBALL` block).
-#if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+// the ThinkNode M9's d-pad, or the Attaky's front D-pad + SELECT. The underlying
+// machinery (navFifo, navMoveDir, the focus group, the secondary KEYPAD indev)
+// is generic — only the *pump* that feeds it differs per board: Tanmatsu's
+// navPump() reads bsp-input events; T-Deck's WASDZ-letter nav and the M9's raw
+// d-pad bytes are both fed straight from handleHwKey() instead (see UITask.cpp's
+// `#elif defined(HAS_M9_KEYBOARD)` block, parallel to the T-Deck's `#if
+// CAP_TRACKBALL` block); the Attaky drains its expander queue in attakyNavPump().
+// NOTE: the Attaky is the first board here with CAP_KEYBOARD == 0, so anything
+// this flag pulls in must not assume a physical keyboard is also compiled.
+#if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES)
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0
@@ -205,11 +208,26 @@
 #endif
 
 // Console mode (CONSOLE_MODE.md): a text front end drawn straight to the panel
-// with no LVGL. Needs a DisplayDriver, which every board that has a screen has,
-// so this is on wherever there is something to draw on. It does NOT imply the
-// device boots into it; that is a user pref read at startup.
+// with no LVGL. It does NOT imply the device boots into it; that is a user pref
+// read at startup.
+//
+// A DISPLAY IS NOT ENOUGH. This used to be gated on DISPLAY_CLASS alone, which
+// reasons about output and says nothing about whether the user can type. The
+// console's only input paths are the T-Deck keyboard, the M9 keyboard and the
+// on-screen keypad (CAP_TOUCH), so on any other board it booted, painted
+// "type 'ui' to go back", and accepted nothing: an unbootable-out state that
+// survived a power cycle and a reset, because the pref persists and the panic
+// self-heal never fires when nothing has actually crashed. A ThinkNode M9 was
+// stranded exactly this way on beta_70 (gadgeteerza).
+//
+// Any board added here must have a drain in the console branch of UITask::loop.
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD) || CAP_TOUCH
+  #define CAP_CONSOLE_INPUT 1
+#else
+  #define CAP_CONSOLE_INPUT 0
+#endif
 #ifndef CAP_CONSOLE
-  #if defined(DISPLAY_CLASS)
+  #if defined(DISPLAY_CLASS) && CAP_CONSOLE_INPUT
     #define CAP_CONSOLE 1
   #else
     #define CAP_CONSOLE 0
@@ -283,6 +301,15 @@
   #define CAP_SOUND_FILES 0
 #endif
 
+// Sustained PCM output for media playback. This is deliberately independent
+// of storage: Lua app files may live on internal flash, SD, or SD_MMC.
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || \
+    defined(HAS_TDISPLAY_P4) || defined(HAS_TANMATSU)
+  #define CAP_AUDIO_STREAM 1
+#else
+  #define CAP_AUDIO_STREAM 0
+#endif
+
 // ---- On-device web browser (the "Web" reader app) ---------------------------
 // The reader fetches pages over on-device HTTPS, and a TLS handshake needs ~30 KB of
 // free INTERNAL heap. Only the 8 MB-PSRAM boards (T-Deck, Tanmatsu, ThinkNode M9, RAK
@@ -302,6 +329,14 @@
 // board's block) only if a flash ceiling ever demands it.
 #ifndef CAP_LUA_APPS
   #define CAP_LUA_APPS 1
+#endif
+
+#ifndef CAP_LUA_AUDIO
+  #if CAP_LUA_APPS && CAP_AUDIO_STREAM
+    #define CAP_LUA_AUDIO 1
+  #else
+    #define CAP_LUA_AUDIO 0
+  #endif
 #endif
 
 // ---- Extended Lua SDK ------------------------------------------------------

@@ -108,6 +108,7 @@ public:
   File openAppend(FILESYSTEM* fs, const char* filename);             // create if missing
   bool fileExists(FILESYSTEM* fs, const char* filename);
   bool mkdirRooted(FILESYSTEM* fs, const char* dir);                  // true if it exists afterwards
+  File openWriteRootedFlatSafe(FILESYSTEM* fs, const char* filename); // SPIFFS accepts slash keys but no mkdir
   bool removeRooted(FILESYSTEM* fs, const char* filename);
   bool renameFile(FILESYSTEM* fs, const char* from, const char* to);
 #endif

@@ -1,0 +1,18 @@
+# beta_72 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Two things broken in the last two betas ------------------------------------------------
+Console mode could be entered on a board that had no way to type into it. On the ThinkNode M9 it painted the prompt, showed the line telling you to type 'ui' to get back, and accepted nothing: a power cycle and the reset button both returned straight to it. The M9's keyboard now works in the console, and any board without a console keyboard no longer offers the mode at all. The T-Lora Pager was one setting away from the same state and no longer shows the option either.
+Accent popups stopped appearing for anyone typing on a physical keyboard, and the setting to turn them on and off did nothing. The accent box and the new @-mention picker share one piece of code, and when the mention work went in the accent half was dropped from the path a physical keyboard uses. Touchscreen typing was unaffected, which is why it looked like a settings problem.
+
+# --- New ----------------------------------------------------------------------------------------
+Share a contact with whoever is next to you. The contact menu has a Share entry that re-broadcasts that contact so nodes in direct range can add them. It is deliberately direct-range only: putting someone else's node on the whole mesh is a lot of airtime for a packet nobody asked for.
+The signal card is translatable. Signal, Signal (stale) and "nothing heard yet" were never wired for translation, so that card stayed English in every language while the same words were translated everywhere else.
+
+# --- Fixed --------------------------------------------------------------------------------------
+The T-Deck reported a full battery as 4.09 V. The conversion from the board's voltage divider was slightly off, so every T-Deck read low.
+
+# --- For testers ------------------------------------------------------------------------------
+If you are on a ThinkNode M9 or a T-Lora Pager, update before touching console mode. On those boards the previous two releases could leave you unable to get out.
+If your M9 is already stuck: hold BOOT, tap RESET, release BOOT, then flash normally. The device is fine, it just has to be flashed from the bootloader rather than from the running app, which is why a normal reflash reported a failure.
+Still open and not fixed here: a screen that will not stay dark after a manual lock (issue 333). We are narrowing it down.
