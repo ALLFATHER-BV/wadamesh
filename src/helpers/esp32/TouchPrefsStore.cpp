@@ -142,7 +142,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.retry_echo        = 0;      // OFF: auto-retry is opt-in (toggle in Radio & Mesh)
   c.app_hide          = (1u << 12);  // APPHIDE_MQTT: the MQTT bridge starts hidden (experimental + privacy)
   memset(c.lang_file, 0, sizeof c.lang_file);   // no file language: built-in ui_lang column
-  c.sleep_idle        = 0;      // default: idle light-sleep OFF
+  c.sleep_idle        = 1;      // default: idle light-sleep ON (v56: flipped from OFF)
   { const char* d = "ertui"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // default tab hotkeys E/R/T/U/I
   c.map_zoom_buttons  = 0;      // default: map zoom = slider
 #if defined(HAS_TANMATSU)
@@ -166,6 +166,17 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.web_terminal       = 0;     // OFF: web mesh terminal is opt-in (runtime; mutually exclusive with VNC)
   c.map_tile_debug     = 0;     // OFF: map tile-pipeline diagnostic overlay is opt-in (developer)
   c.hist_sync_after    = 2;     // chat flush: 2 failed background writes -> synchronous loop-task fallback
+  // v53: lock screen display prefs
+  c.lock_show_time    = 1;
+  c.lock_show_date    = 1;
+  c.lock_show_weekday = 1;
+  c.lock_show_username = 1;
+  c.lock_show_unread  = 1;
+  c.lock_show_batt    = 1;
+  c.lock_bg_color     = 0x000000u;  // black
+  c.lock_always_on    = 1;          // ON: always-on dim lock screen by default (v57)
+  c.lock_msg_preview  = 1;          // ON: show message preview card on lock screen
+  c.lock_dim_pct      = 8;          // 8% — readable but low power
 }
 
 // Update the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
@@ -243,7 +254,15 @@ static void cfgLoadOrMigrate() {
         // a garbage 1 would boot a user into a console they did not ask for.
         if (stored_version < 51) s_cfg.console_mode = 0;
         if (stored_version < 52) s_cfg.console_monitor = 1;   // new trailing field: on by default
-        if (stored_version < 53) s_cfg.kb_force_legacy = 0;   // new trailing field: auto-detect
+        if (stored_version < 53) {  // v53: lock screen prefs — all on by default, black bg, always-on off
+          s_cfg.lock_show_time    = 1; s_cfg.lock_show_date     = 1; s_cfg.lock_show_weekday  = 1;
+          s_cfg.lock_show_username = 1; s_cfg.lock_show_unread   = 1; s_cfg.lock_show_batt     = 1;
+          s_cfg.lock_bg_color     = 0x000000u; s_cfg.lock_always_on = 0;
+        }
+        if (stored_version < 54) s_cfg.lock_msg_preview = 1;  // v54: message preview on lock screen, default ON
+        if (stored_version < 55) s_cfg.lock_dim_pct = 8;      // v55: always-on dim brightness, default 8%
+        if (stored_version < 56) s_cfg.sleep_idle = 1;        // v56: idle sleep ON by default (was OFF)
+        if (stored_version < 57) s_cfg.lock_always_on = 1;    // v57: always-on lock screen ON by default (was OFF)
         if (stored_version < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
         if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
@@ -1914,10 +1933,30 @@ bool touchPrefsGetEdgeScroll()      { if (!s_begun) touchPrefsBegin(); return s_
 void touchPrefsSetEdgeScroll(bool on)      { if (!s_begun) touchPrefsBegin(); prefsPutUChar("tb_edgesc", on ? 1 : 0); }
 bool touchPrefsGetLockOnScreenOff() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("lock_off", 0) != 0; }
 void touchPrefsSetLockOnScreenOff(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("lock_off", on ? 1 : 0); }
-bool touchPrefsGetGlanceWhenLocked() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_lck", 0) != 0; }
-void touchPrefsSetGlanceWhenLocked(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glance_lck", on ? 1 : 0); }
-bool touchPrefsGetGlanceEnabled()   { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_en", 1) != 0; }
-void touchPrefsSetGlanceEnabled(bool on)    { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glance_en", on ? 1 : 0); }
+uint8_t touchPrefsGetUiTheme()       { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ui_theme", 0); }
+void    touchPrefsSetUiTheme(uint8_t t) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ui_theme", t); }
+
+// v53: lock screen display prefs (cfg blob)
+bool    touchPrefsGetLockShowTime()     { if (!s_begun) touchPrefsBegin(); return s_cfg.lock_show_time    != 0; }
+void    touchPrefsSetLockShowTime(bool on)    { if (!s_begun) touchPrefsBegin(); s_cfg.lock_show_time    = on?1:0; cfgFlush(); }
+bool    touchPrefsGetLockShowDate()     { if (!s_begun) touchPrefsBegin(); return s_cfg.lock_show_date    != 0; }
+void    touchPrefsSetLockShowDate(bool on)    { if (!s_begun) touchPrefsBegin(); s_cfg.lock_show_date    = on?1:0; cfgFlush(); }
+bool    touchPrefsGetLockShowWeekday()  { if (!s_begun) touchPrefsBegin(); return s_cfg.lock_show_weekday != 0; }
+void    touchPrefsSetLockShowWeekday(bool on) { if (!s_begun) touchPrefsBegin(); s_cfg.lock_show_weekday = on?1:0; cfgFlush(); }
+bool    touchPrefsGetLockShowUsername() { if (!s_begun) touchPrefsBegin(); return s_cfg.lock_show_username != 0; }
+void    touchPrefsSetLockShowUsername(bool on){ if (!s_begun) touchPrefsBegin(); s_cfg.lock_show_username= on?1:0; cfgFlush(); }
+bool    touchPrefsGetLockShowUnread()   { if (!s_begun) touchPrefsBegin(); return s_cfg.lock_show_unread  != 0; }
+void    touchPrefsSetLockShowUnread(bool on)  { if (!s_begun) touchPrefsBegin(); s_cfg.lock_show_unread  = on?1:0; cfgFlush(); }
+bool    touchPrefsGetLockShowBatt()     { if (!s_begun) touchPrefsBegin(); return s_cfg.lock_show_batt    != 0; }
+void    touchPrefsSetLockShowBatt(bool on)    { if (!s_begun) touchPrefsBegin(); s_cfg.lock_show_batt    = on?1:0; cfgFlush(); }
+uint32_t touchPrefsGetLockBgColor()    { if (!s_begun) touchPrefsBegin(); return s_cfg.lock_bg_color & 0xFFFFFFu; }
+bool     touchPrefsSetLockBgColor(uint32_t rgb){ if (!s_begun) touchPrefsBegin(); s_cfg.lock_bg_color = rgb & 0xFFFFFFu; return cfgFlush(); }
+bool    touchPrefsGetLockAlwaysOn()    { if (!s_begun) touchPrefsBegin(); return s_cfg.lock_always_on    != 0; }
+void    touchPrefsSetLockAlwaysOn(bool on)    { if (!s_begun) touchPrefsBegin(); s_cfg.lock_always_on    = on?1:0; cfgFlush(); }
+bool    touchPrefsGetLockMsgPreview()  { if (!s_begun) touchPrefsBegin(); return s_cfg.lock_msg_preview  != 0; }
+void    touchPrefsSetLockMsgPreview(bool on)  { if (!s_begun) touchPrefsBegin(); s_cfg.lock_msg_preview  = on?1:0; cfgFlush(); }
+uint8_t touchPrefsGetLockDimPct()     { if (!s_begun) touchPrefsBegin(); uint8_t v = s_cfg.lock_dim_pct; return (v < 1) ? 1 : (v > 100) ? 100 : v; }
+void    touchPrefsSetLockDimPct(uint8_t pct)  { if (!s_begun) touchPrefsBegin(); s_cfg.lock_dim_pct = (pct < 1) ? 1 : (pct > 100) ? 100 : pct; cfgFlush(); }
 
 #if defined(HAS_TANMATSU)   // only the Tanmatsu has the message LED — keep S3 (T-Deck/V4) bins unchanged
 bool touchPrefsGetMsgLed() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("msg_led", 1) != 0; }   // default ON
